@@ -15,6 +15,7 @@
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.hpp"
+#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusFireStudioProjectProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/WeissIntProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
@@ -232,6 +233,58 @@ TEST(DiceProfileTests, PreSonusStudioLiveSafetyOffsetsAndLatencies) {
     EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 128);
     EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 29);
     EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 29);
+}
+
+TEST(DiceProfileTests, FireStudioProjectUsesCapturedLowRateGeometryAndDefaultsTo48k) {
+    // Captured active TX/RX and low/middle EAP descriptors, 2026-09-07:
+    // 10 PCM, one MIDI port, one stream per direction. Extra allocated
+    // descriptor blocks are not extra streams. DBS is standard-AM824 derived.
+    const auto* base = AudioProfileRegistry::FindProfile(
+        0x000a92, 0x00000b, 0x000A920402D07FACULL);
+    ASSERT_NE(base, nullptr);
+    EXPECT_STREQ(base->Name(), "PreSonus FireStudio Project (DICE)");
+    EXPECT_EQ(base->SupportedSampleRates(), (std::vector<uint32_t>{44100, 48000}));
+    EXPECT_EQ(base->TxChannelCount(), 10U);
+    EXPECT_EQ(base->RxChannelCount(), 10U);
+    EXPECT_EQ(base->TxDbs(), 11U);
+    EXPECT_EQ(base->RxDbs(), 11U);
+    EXPECT_EQ(base->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+    EXPECT_EQ(base->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+
+    const auto* profile = static_cast<const IAudioStreamProfile*>(base);
+    EXPECT_EQ(profile->TxStreamCount(), 1U);
+    EXPECT_EQ(profile->RxStreamCount(), 1U);
+    AudioStreamConfig tx{}, rx{};
+    ASSERT_TRUE(profile->BuildDefaultTxStreamConfig(tx));
+    ASSERT_TRUE(profile->BuildDefaultRxStreamConfig(rx));
+    EXPECT_EQ(tx.direction, AudioStreamDirection::HostToDevice);
+    EXPECT_EQ(rx.direction, AudioStreamDirection::DeviceToHost);
+    for (const auto& config : {tx, rx}) {
+        EXPECT_EQ(config.sampleRate, 48000U);
+        EXPECT_EQ(config.pcmChannels, 10U);
+        EXPECT_EQ(config.midiSlots, 1U);
+        EXPECT_EQ(config.dbs, 11U);
+        EXPECT_EQ(config.framesPerDataPacket, 8U);
+        EXPECT_EQ(config.streamMode, ASFW::Encoding::StreamMode::kBlocking);
+        EXPECT_EQ(config.fmt, 0x10U);
+        EXPECT_EQ(config.fdf, 0x02U);
+        EXPECT_EQ(8U + config.framesPerDataPacket * config.dbs * 4U, 360U);
+    }
+    EXPECT_EQ(profile->TxStreamPolicy().defaultNonAudioSlotWord, 0x80000000U);
+    EXPECT_TRUE(profile->TxStreamPolicy().initializeNonAudioSlots);
+    EXPECT_FALSE(profile->TxStreamPolicy().preserveFdfInNoDataPackets);
+}
+
+TEST(DiceProfileTests, FireStudioProjectNeverMatchesOtherPreSonusDevicesOrVendors) {
+    Profiles::PreSonusFireStudioProjectProfile profile;
+    EXPECT_TRUE(profile.Matches({.vendorId = 0x000a92, .modelId = 0x00000b}));
+    for (const uint32_t other : {0x000008U, 0x00000cU, 0x000011U, 0x000013U}) {
+        EXPECT_FALSE(profile.Matches({.vendorId = 0x000a92, .modelId = other}));
+    }
+    EXPECT_FALSE(profile.Matches({.vendorId = 0x00130e, .modelId = 0x00000b}));
+    // The captured unit's GUID cannot override an incorrect vendor/model pair.
+    EXPECT_FALSE(profile.Matches({.guid = 0x000A920402D07FACULL,
+                                  .vendorId = 0x00130e, .modelId = 0x00000b}));
 }
 
 TEST(DiceProfileTests, PreSonusVendorWithWrongModelDoesNotMatchStudioLiveProfile) {

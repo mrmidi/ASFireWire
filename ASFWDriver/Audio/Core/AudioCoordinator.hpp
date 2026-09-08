@@ -9,6 +9,7 @@
 
 #include "IAVCAudioConfigListener.hpp"
 #include "AudioNubPublisher.hpp"
+#include "AudioStreamReservation.hpp"
 #include "../Protocols/Backends/AVCAudioBackend.hpp"
 #include "../Protocols/Backends/DiceAudioBackend.hpp"
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
@@ -89,7 +90,7 @@ private:
     AVCAudioBackend avc_;
 
     IOLock* lock_{nullptr};
-    uint64_t activeGuid_{0};
+    AudioStreamReservation streamReservation_;
     // A CoreAudio StopIO can arrive after discovery has retired the GUID. Keep
     // that callback from re-entering a backend that now has no remote device.
     std::unordered_set<uint64_t> remoteLostGuids_{};

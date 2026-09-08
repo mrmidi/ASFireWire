@@ -135,8 +135,8 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     if (toAck != 0U) {
         hw.ClearIntEvents(toAck);
     }
-    hw.ClearIsoXmitEvents(snapshot.isoXmitEvent);
-    hw.ClearIsoRecvEvents(snapshot.isoRecvEvent);
+    // InterruptDispatcher owns the fresh per-context read/ack after this
+    // global acknowledgement. Do not clear saved context bits here.
 }
 
 void ControllerCore::LogInterruptContext(const InterruptSnapshot& snapshot,

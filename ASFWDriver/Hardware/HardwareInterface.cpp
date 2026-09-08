@@ -336,8 +336,39 @@ InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp
     if (!access) return snapshot;
     snapshot.intEvent = access.Read(Register32::kIntEvent);
     snapshot.intMask = 0;
-    snapshot.isoXmitEvent = access.Read(Register32::kIsoXmitEvent);
-    snapshot.isoRecvEvent = access.Read(Register32::kIsoRecvEvent);
+    // Per-context events must be sampled after the global acknowledgement,
+    // not carried through the controller's async/reset processing as stale bits.
+    return snapshot;
+}
+
+InterruptSnapshot HardwareInterface::CaptureAndAcknowledgeIsochInterrupts(
+    const InterruptSnapshot& globalSnapshot) noexcept {
+    InterruptSnapshot snapshot = globalSnapshot;
+    snapshot.isoXmitEvent = 0;
+    snapshot.isoRecvEvent = 0;
+    if ((snapshot.intEvent & (IntEventBits::kIsochRx | IntEventBits::kIsochTx)) == 0) {
+        return snapshot;
+    }
+
+    auto access = TryBeginAccess();
+    if (!access) return snapshot;
+
+    // Linux drivers/firewire/ohci.c:2067-2109 (28924df2a08f) acknowledges
+    // global events, then reads and clears each signalled context mask once.
+    // Keep the fresh read/clear together; a later second clear of saved bits
+    // can erase a new completion for the same context.
+    if ((snapshot.intEvent & IntEventBits::kIsochRx) != 0) {
+        snapshot.isoRecvEvent = access.Read(Register32::kIsoRecvIntEventClear);
+        if (snapshot.isoRecvEvent != 0) {
+            access.WriteAndFlush(Register32::kIsoRecvIntEventClear, snapshot.isoRecvEvent);
+        }
+    }
+    if ((snapshot.intEvent & IntEventBits::kIsochTx) != 0) {
+        snapshot.isoXmitEvent = access.Read(Register32::kIsoXmitIntEventClear);
+        if (snapshot.isoXmitEvent != 0) {
+            access.WriteAndFlush(Register32::kIsoXmitIntEventClear, snapshot.isoXmitEvent);
+        }
+    }
     return snapshot;
 }
 

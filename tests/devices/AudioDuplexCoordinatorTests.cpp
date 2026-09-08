@@ -2,6 +2,7 @@
 
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
+#include "Audio/Core/AudioStreamReservation.hpp"
 #include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "Audio/Protocols/Backends/AudioDuplexCoordinator.hpp"
 #include "Audio/Protocols/DICE/Core/DICETypes.hpp"
@@ -930,6 +931,68 @@ TEST_F(AudioDuplexCoordinatorTests, IdleClockApplyUsesDeviceOnlyPathAndReturnsTo
     EXPECT_EQ(LogSnapshot(), (std::vector<std::string>{"device.apply_clock"}));
 }
 
+TEST_F(AudioDuplexCoordinatorTests, FailedInitialIdleClockApplyKeepsDefaultClockForNextStart) {
+    protocol_->applyClockStatus = kIOReturnTimeout;
+    ASSERT_EQ(coordinator_.RequestClockConfig(
+                  kTestGuid, AudioClockConfig{.sampleRateHz = 44100U},
+                  DiceRestartReason::kSampleRateChange),
+              kIOReturnTimeout);
+
+    const auto failed = GetSession();
+    ASSERT_TRUE(failed.has_value());
+    EXPECT_EQ(failed->phase, DiceRestartPhase::kFailed);
+    EXPECT_EQ(failed->desiredClock.sampleRateHz, 0U);
+    ASSERT_TRUE(failed->lastClockCompletion.has_value());
+    EXPECT_EQ(failed->lastClockCompletion->outcome, DiceClockRequestOutcome::kFailed);
+    EXPECT_EQ(failed->lastClockCompletion->desiredClock.sampleRateHz, 44100U);
+    EXPECT_EQ(hostTransport_.beginCalls, 0);
+
+    // CoreAudio rejected the change and will configure TX at the old 48 kHz
+    // default. A later successful prepare must use that same rate.
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 48000U);
+    const auto running = GetSession();
+    ASSERT_TRUE(running.has_value());
+    EXPECT_EQ(running->desiredClock.sampleRateHz, 48000U);
+    EXPECT_EQ(running->appliedClock.sampleRateHz, 48000U);
+}
+
+TEST_F(AudioDuplexCoordinatorTests, FailedIdleClockApplyKeepsPreviouslySelectedClockForNextStart) {
+    constexpr AudioClockConfig previousClock{.sampleRateHz = 44100U};
+    protocol_->applyCaps_.sampleRateHz = previousClock.sampleRateHz;
+    ASSERT_EQ(coordinator_.RequestClockConfig(kTestGuid, previousClock,
+                                              DiceRestartReason::kSampleRateChange),
+              kIOReturnSuccess);
+
+    protocol_->applyClockStatus = kIOReturnError;
+    ASSERT_EQ(coordinator_.RequestClockConfig(kTestGuid, kSupportedClock,
+                                              DiceRestartReason::kSampleRateChange),
+              kIOReturnError);
+
+    const auto failed = GetSession();
+    ASSERT_TRUE(failed.has_value());
+    EXPECT_EQ(failed->desiredClock.sampleRateHz, previousClock.sampleRateHz);
+    EXPECT_EQ(failed->appliedClock.sampleRateHz, previousClock.sampleRateHz);
+    EXPECT_EQ(failed->runtimeCaps.sampleRateHz, previousClock.sampleRateHz);
+    ASSERT_TRUE(failed->lastClockCompletion.has_value());
+    EXPECT_EQ(failed->lastClockCompletion->outcome, DiceClockRequestOutcome::kFailed);
+    EXPECT_EQ(failed->lastClockCompletion->desiredClock.sampleRateHz, 48000U);
+    EXPECT_EQ(hostTransport_.beginCalls, 0);
+
+    protocol_->prepareCaps_.sampleRateHz = previousClock.sampleRateHz;
+    protocol_->confirmCaps_.sampleRateHz = previousClock.sampleRateHz;
+    protocol_->healthStatusValue =
+        ASFW::Audio::DICE::StatusBits::kSourceLocked |
+        (ASFW::Audio::DICE::ClockRateIndex::k44100
+         << ASFW::Audio::DICE::StatusBits::kNominalRateShift);
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, previousClock.sampleRateHz);
+    const auto running = GetSession();
+    ASSERT_TRUE(running.has_value());
+    EXPECT_EQ(running->desiredClock.sampleRateHz, previousClock.sampleRateHz);
+    EXPECT_EQ(running->appliedClock.sampleRateHz, previousClock.sampleRateHz);
+}
+
 TEST_F(AudioDuplexCoordinatorTests, RunningClockRequestPerformsFullStopAndRestart) {
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
     ClearLog();
@@ -1358,6 +1421,132 @@ TEST_F(AudioDuplexCoordinatorTests, NonRetryableFailedSessionDoesNotRestartOnRec
     EXPECT_EQ(session->state, DiceRestartState::kFailed);
     EXPECT_EQ(protocol_->prepareCalls, 1);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
+}
+
+// Tests the exact reservation state machine used by AudioCoordinator without
+// instantiating its DriverKit publisher and concrete hardware backends. The
+// counters stand in for backend dispatch after a Begin admission.
+struct StreamReservationHarness {
+    using Reservation = ASFW::Audio::AudioStreamReservation;
+    using Admission = Reservation::Admission;
+    Reservation reservation;
+    unsigned backendStarts{0};
+    unsigned backendStops{0};
+
+    Admission Start(uint64_t guid, bool backendSuccess = true) {
+        const auto decision = reservation.BeginStart(guid);
+        if (decision.admission == Admission::Begin) {
+            ++backendStarts;
+            reservation.CompleteStart(decision.token, backendSuccess);
+        }
+        return decision.admission;
+    }
+    Admission Stop(uint64_t guid, bool backendSuccess = true) {
+        const auto decision = reservation.BeginStop(guid);
+        if (decision.admission == Admission::Begin) {
+            ++backendStops;
+            reservation.CompleteStop(decision.token, backendSuccess);
+        }
+        return decision.admission;
+    }
+};
+
+TEST(AudioStreamReservationTests, FailedStopReservesGuidWithoutFalseStartOrOverlappingCleanup) {
+    StreamReservationHarness harness;
+    using Admission = StreamReservationHarness::Admission;
+    using State = StreamReservationHarness::Reservation::State;
+    ASSERT_EQ(harness.Start(kTestGuid), Admission::Begin);
+    ASSERT_EQ(harness.Stop(kTestGuid, false), Admission::Begin);
+    ASSERT_EQ(harness.reservation.GetState(), State::CleanupFailed);
+    EXPECT_EQ(harness.reservation.Guid(), kTestGuid);
+
+    EXPECT_EQ(harness.Start(kTestGuid), Admission::CleanupFailed);
+    EXPECT_EQ(harness.Stop(kTestGuid), Admission::CleanupFailed);
+    EXPECT_EQ(harness.Start(kTestGuid + 1), Admission::Busy);
+    EXPECT_EQ(harness.Stop(kTestGuid + 1), Admission::Busy);
+    EXPECT_TRUE(harness.reservation.BlocksNewWork(kTestGuid));
+    EXPECT_EQ(harness.backendStarts, 1U);
+    EXPECT_EQ(harness.backendStops, 1U);
+}
+
+TEST(AudioStreamReservationTests, CleanStartStopRetainsIdempotentRunningAndAllowsRestart) {
+    StreamReservationHarness harness;
+    using Admission = StreamReservationHarness::Admission;
+    ASSERT_EQ(harness.Start(kTestGuid), Admission::Begin);
+    EXPECT_EQ(harness.Start(kTestGuid), Admission::AlreadyRunning);
+    EXPECT_FALSE(harness.reservation.BlocksNewWork(kTestGuid));
+    EXPECT_EQ(harness.backendStarts, 1U);
+    EXPECT_EQ(harness.Stop(kTestGuid), Admission::Begin);
+    EXPECT_EQ(harness.reservation.Guid(), 0U);
+    EXPECT_EQ(harness.Start(kTestGuid), Admission::Begin);
+    EXPECT_EQ(harness.backendStarts, 2U);
+    EXPECT_EQ(harness.backendStops, 1U);
+}
+
+TEST(AudioStreamReservationTests, InFlightStopRejectsDuplicateStopAndStart) {
+    StreamReservationHarness harness;
+    using Admission = StreamReservationHarness::Admission;
+    ASSERT_EQ(harness.Start(kTestGuid), Admission::Begin);
+    const auto stop = harness.reservation.BeginStop(kTestGuid);
+    ASSERT_EQ(stop.admission, Admission::Begin);
+    EXPECT_TRUE(harness.reservation.BlocksNewWork(kTestGuid));
+    EXPECT_EQ(harness.Stop(kTestGuid), Admission::Busy);
+    EXPECT_EQ(harness.Start(kTestGuid), Admission::Busy);
+    EXPECT_EQ(harness.backendStops, 0U);
+    EXPECT_EQ(harness.backendStarts, 1U);
+    harness.reservation.CompleteStop(stop.token, true);
+    EXPECT_EQ(harness.Start(kTestGuid), Admission::Begin);
+}
+
+TEST(AudioStreamReservationTests, StopSupersedesStartWithoutLateCompletionPublishingRunning) {
+    using Reservation = ASFW::Audio::AudioStreamReservation;
+    Reservation reservation;
+    const auto start = reservation.BeginStart(kTestGuid);
+    ASSERT_EQ(start.admission, Reservation::Admission::Begin);
+    EXPECT_EQ(reservation.BeginStart(kTestGuid).admission, Reservation::Admission::Busy);
+    const auto stop = reservation.BeginStop(kTestGuid);
+    ASSERT_EQ(stop.admission, Reservation::Admission::Begin);
+    EXPECT_FALSE(reservation.CompleteStart(start.token, true));
+    EXPECT_EQ(reservation.GetState(), Reservation::State::Stopping);
+    EXPECT_TRUE(reservation.CompleteStop(stop.token, false));
+    EXPECT_FALSE(reservation.CompleteStart(start.token, false));
+    EXPECT_EQ(reservation.GetState(), Reservation::State::CleanupFailed);
+    EXPECT_EQ(reservation.Guid(), kTestGuid);
+}
+
+TEST(AudioStreamReservationTests, ConfirmedRemovalClearsFailureAndFencesStaleCompletions) {
+    using Reservation = ASFW::Audio::AudioStreamReservation;
+    Reservation reservation;
+    const auto oldStart = reservation.BeginStart(kTestGuid);
+    reservation.CompleteStart(oldStart.token, true);
+    const auto oldStop = reservation.BeginStop(kTestGuid);
+    reservation.CompleteStop(oldStop.token, false);
+    reservation.Clear(kTestGuid + 1); // Another device's removal is irrelevant.
+    EXPECT_EQ(reservation.GetState(), Reservation::State::CleanupFailed);
+    reservation.Clear(kTestGuid);
+    const auto newStart = reservation.BeginStart(kTestGuid);
+    ASSERT_EQ(newStart.admission, Reservation::Admission::Begin);
+    EXPECT_FALSE(reservation.CompleteStop(oldStop.token, true));
+    EXPECT_FALSE(reservation.CompleteStart(oldStart.token, false));
+    EXPECT_EQ(reservation.GetState(), Reservation::State::Starting);
+    EXPECT_TRUE(reservation.CompleteStart(newStart.token, true));
+    EXPECT_EQ(reservation.GetState(), Reservation::State::Running);
+    reservation.ClearAll(); // Service teardown also invalidates the epoch.
+    EXPECT_FALSE(reservation.CompleteStart(newStart.token, true));
+    EXPECT_EQ(reservation.GetState(), Reservation::State::Idle);
+    EXPECT_EQ(reservation.Guid(), 0U);
+}
+
+TEST(AudioStreamReservationTests, FailedStartReleasesReservationAndInvalidGuidCannotReserve) {
+    StreamReservationHarness harness;
+    using Admission = StreamReservationHarness::Admission;
+    EXPECT_EQ(harness.Start(0), Admission::Busy);
+    EXPECT_EQ(harness.Stop(0), Admission::Busy);
+    EXPECT_EQ(harness.backendStarts, 0U);
+    EXPECT_EQ(harness.backendStops, 0U);
+    EXPECT_EQ(harness.Start(kTestGuid, false), Admission::Begin);
+    EXPECT_EQ(harness.reservation.Guid(), 0U);
+    EXPECT_EQ(harness.Start(kTestGuid + 1), Admission::Begin);
 }
 
 } // namespace

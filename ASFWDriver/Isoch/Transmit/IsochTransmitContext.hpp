@@ -39,7 +39,10 @@ enum class ITState {
     Unconfigured,
     Configured,
     Running,
-    Stopped
+    Stopped,
+    // RUN has been cleared after a transport fault, but DMA may still be
+    // ACTIVE. Only Stop() may declare this context quiesced and reusable.
+    Faulted
 };
 
 /**
@@ -94,6 +97,11 @@ public:
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
 
     State GetState() const noexcept { return state_; }
+    // Faulted suppresses new refill work while retaining the same DMA-release
+    // barrier as a running context.
+    [[nodiscard]] bool NeedsQuiesce() const noexcept {
+        return state_ == State::Running || state_ == State::Faulted;
+    }
     
     uint64_t PacketsAssembled() const noexcept { return packetsAssembled_; }
     
@@ -103,6 +111,7 @@ public:
 private:
     void WakeHardware() noexcept;
     void DoRefillOnce(uint64_t eventHostTicks, bool publishTimingEvent) noexcept;
+    // Caller holds refillInProgress_, with no HardwareAccessScope outstanding.
     void StopImmediatelyForTxFault() noexcept;
 
     // ==========================================================================

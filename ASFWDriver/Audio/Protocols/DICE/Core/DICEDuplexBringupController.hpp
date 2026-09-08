@@ -78,6 +78,9 @@ public:
     void ConfirmDuplex48kStart(VoidCallback callback);
     [[nodiscard]] IOReturn StopDuplex();       // stays sync — pure writes, no HW wait
     void ReleaseOwner(VoidCallback callback);
+    // Reuse the normal rollback sequence when an outer policy rejects a
+    // successfully prepared/refreshed stream topology.
+    void AbortDuplex(IOReturn error, VoidCallback callback);
 
     [[nodiscard]] bool IsPrepared() const noexcept { return restartSession_.devicePrepared; }
     [[nodiscard]] bool IsArmed() const noexcept { return restartSession_.deviceTxArmed; }

@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -68,9 +69,9 @@ void LogSectionPreview(const char* label, const uint8_t* data, size_t size) {
 // the Venice F32 needs 8 + 2*280 = 568 bytes, and stream 1's 256-byte label
 // blob starts at byte 304 — past a single 512-byte read. Chain fixed-size
 // chunk reads into one buffer so ParseStreamConfig sees every stream's labels.
-// A failure after the first chunk delivers the partial buffer (the parser
-// guards each stream's core/label region against the buffer size), matching
-// the old best-effort behavior; only a failed first chunk is a hard error.
+// A failure after the first chunk delivers the partial buffer. The parser
+// requires every declared stream's core; missing labels or unused trailing
+// descriptor capacity remain optional. A failed first chunk is a hard error.
 constexpr size_t kSectionReadChunkBytes = 512;
 constexpr size_t kMaxSectionReadBytes = 4096;
 
@@ -295,10 +296,6 @@ void CopyLabelBlob(char (&dst)[256], const uint8_t* src, size_t bytesAvailable) 
     dst[copyBytes] = '\0';
 }
 
-uint32_t ClampStreamCount(uint32_t count) noexcept {
-    return (count > 4u) ? 4u : count;
-}
-
 StreamConfig ParseStreamConfig(const uint8_t* data, size_t size, bool isRxLayout) {
     StreamConfig config;
     config.isRxLayout = isRxLayout;
@@ -309,9 +306,14 @@ StreamConfig ParseStreamConfig(const uint8_t* data, size_t size, bool isRxLayout
 
     const uint32_t reportedStreams = ReadBE32(data);
     const uint32_t entryQuadlets = ReadBE32(data + 4);
-    config.numStreams = ClampStreamCount(reportedStreams);
     config.entrySizeBytes = entryQuadlets * 4u;
     config.parsedEntrySizeBytes = config.entrySizeBytes;
+    if (reportedStreams > std::size(config.streams)) {
+        ASFW_LOG(DICE, "DICE %{public}s stream format: unsupported stream count %u",
+                 isRxLayout ? "RX" : "TX", reportedStreams);
+        return config;
+    }
+    config.numStreams = reportedStreams;
 
     if (config.entrySizeBytes < kStreamEntryMinCoreBytes) {
         ASFW_LOG(DICE, "DICE %{public}s stream format: invalid entry size %u bytes (reported streams=%u)",
@@ -355,14 +357,15 @@ StreamConfig ParseStreamConfig(const uint8_t* data, size_t size, bool isRxLayout
 
     if (parsedCount < config.numStreams) {
         ASFW_LOG(DICE,
-                 "DICE %{public}s stream format truncated: reported=%u clamped=%u parsed=%u readSize=%zu entrySize=%u",
+                 "DICE %{public}s stream cores truncated: reported=%u parsed=%u readSize=%zu entrySize=%u",
                  isRxLayout ? "RX" : "TX",
                  reportedStreams,
-                 ClampStreamCount(reportedStreams),
                  parsedCount,
                  size,
                  config.entrySizeBytes);
-        config.numStreams = parsedCount;
+        // Never reinterpret partial geometry as a smaller, supported device.
+        // Counts of zero make the whole direction unusable to runtime policy.
+        config.numStreams = 0;
     }
 
     return config;

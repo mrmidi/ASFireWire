@@ -30,6 +30,8 @@ const char* TxStateName(ITState state) noexcept {
         return "running";
     case ITState::Stopped:
         return "stopped";
+    case ITState::Faulted:
+        return "faulted";
     }
     return "unknown";
 }
@@ -84,6 +86,9 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
 
     if (!payloadSlab || !metadataRing || !controlBlock) {
         return kIOReturnBadArgument;
+    }
+    if (NeedsQuiesce()) {
+        return kIOReturnBusy;
     }
 
     // Unmap any existing maps first
@@ -350,7 +355,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 }
 
 kern_return_t IsochTransmitContext::Stop() noexcept {
-    if (state_ == State::Running && hardware_) {
+    if (NeedsQuiesce() && hardware_) {
         // This gate also covers watchdog Poll().  Acquire it before clearing
         // RUN so an already-dispatched refill cannot retain a direct-audio
         // mapping past the point this function reports quiesced.
@@ -505,7 +510,7 @@ void IsochTransmitContext::SetTxPreparationCallback(
 }
 
 void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
-    if (state_ == State::Stopped) {
+    if (state_ != State::Running) {
         return;
     }
     if (hardware_) {
@@ -523,8 +528,11 @@ void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
             controlBlock_->statusWord.store(IsochTxQueueStatus::kDeadContext, std::memory_order_release);
         }
     }
-    state_ = State::Stopped;
-    ASFW_LOG(Isoch, "IT FATAL STOP: RUN cleared and interrupt masked");
+    // Clearing RUN suppresses new work, but is not an ACTIVE-clear barrier.
+    // Keep the existing Stop() quiesce path mandatory before DMA bindings may
+    // be released or this context reconfigured.
+    state_ = State::Faulted;
+    ASFW_LOG(Isoch, "IT FATAL STOP: stop requested; awaiting normal context quiesce");
 }
 
 void IsochTransmitContext::Poll() noexcept {
@@ -562,10 +570,21 @@ void IsochTransmitContext::Poll() noexcept {
                 // interrupt path died mid-session and the watchdog fed the
                 // wire for 35 minutes of corrupt audio). Sustained interrupt
                 // silence is a transport fault, not jitter.
-                auto access = hardware_ ? hardware_->TryBeginAccess() : Driver::HardwareAccessScope{};
-                const uint32_t ctrl = access ? access.Read(static_cast<Register32>(
-                    DMAContextHelpers::IsoXmitContextControl(contextIndex_))) : 0;
-                const uint32_t latchedIntEvents = access ? access.Read(Register32::kIntEvent) : 0;
+                if (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+                    return;
+                }
+                if (state_ != State::Running) {
+                    refillInProgress_.clear(std::memory_order_release);
+                    return;
+                }
+                uint32_t ctrl = 0;
+                uint32_t latchedIntEvents = 0;
+                {
+                    auto access = hardware_ ? hardware_->TryBeginAccess() : Driver::HardwareAccessScope{};
+                    ctrl = access ? access.Read(static_cast<Register32>(
+                        DMAContextHelpers::IsoXmitContextControl(contextIndex_))) : 0;
+                    latchedIntEvents = access ? access.Read(Register32::kIntEvent) : 0;
+                }
                 ASFW_LOG(Isoch,
                          "IT FATAL: interrupt path silent across %u "
                          "consecutive watchdog kicks; stopping context "
@@ -573,7 +592,10 @@ void IsochTransmitContext::Poll() noexcept {
                          irqSilentKickStreak_,
                          ctrl,
                          latchedIntEvents);
+                // The diagnostic scope must end before the stop helper takes
+                // its own revocable MMIO scope; HardwareAccessGate is not recursive.
                 StopImmediatelyForTxFault();
+                refillInProgress_.clear(std::memory_order_release);
                 return;
             }
             if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {

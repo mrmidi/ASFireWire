@@ -10,6 +10,8 @@
 #include "Audio/Protocols/DICE/TCAT/DICETcatProtocol.hpp"
 
 #include <array>
+#include <atomic>
+#include <thread>
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -21,11 +23,22 @@ namespace ASFW::Audio::DICE::TCAT {
 
 class DICETcatProtocolTestPeer {
 public:
-    static void CacheRuntimeCaps(DICETcatProtocol& protocol,
+    static bool CacheRuntimeCaps(DICETcatProtocol& protocol,
                                  const GlobalState& global,
                                  const StreamConfig& tx,
                                  const StreamConfig& rx) {
-        protocol.CacheRuntimeCaps(global, tx, rx);
+        return protocol.CacheRuntimeCaps(global, tx, rx);
+    }
+
+    static bool UpdateOperationalCaps(DICETcatProtocol& protocol,
+                                      const AudioStreamRuntimeCaps& caps) {
+        return protocol.UpdateOperationalCaps(caps);
+    }
+
+    static bool HasDuplexState(const DICETcatProtocol& protocol) {
+        return protocol.duplexCtrl_ &&
+            (protocol.duplexCtrl_->IsPrepared() || protocol.duplexCtrl_->IsArmed() ||
+             protocol.duplexCtrl_->IsRunning() || protocol.duplexCtrl_->IsOwnerClaimed());
     }
 
     static bool MakeDiceClockConfiguration(const AudioClockConfig& requested,
@@ -83,6 +96,10 @@ constexpr uint32_t kGlobalBaseLo = static_cast<uint32_t>(
 constexpr uint32_t kAppSectionQuadletOffset = 0x1FU;
 constexpr uint32_t kAppSectionBaseLo = kExtensionBaseLo + (kAppSectionQuadletOffset * 4U);
 constexpr uint32_t kGlobalReadBytes = 104U;
+constexpr uint32_t kGlobalSectionBytes = 0x5FU * 4U;
+constexpr uint32_t kTxBaseLo = kDiceBaseLo + 0x69U * 4U;
+constexpr uint32_t kRxBaseLo = kDiceBaseLo + 0xF7U * 4U;
+constexpr uint32_t kStreamSectionBytes = 70U * 4U;
 constexpr uint32_t kClockSelect48kInternal =
     (ASFW::Audio::DICE::ClockRateIndex::k48000 << ASFW::Audio::DICE::ClockSelect::kRateShift) |
     static_cast<uint32_t>(ClockSource::Internal);
@@ -92,6 +109,44 @@ constexpr uint32_t kLocked48kStatus =
 
 void PutBe32(uint8_t* dst, uint32_t value) {
     ASFW::FW::WriteBE32(dst, value);
+}
+
+std::vector<uint8_t> MakeStreamSectionWire(
+    bool isRx, uint32_t count, uint32_t pcm, uint32_t midi, uint32_t iso,
+    uint32_t entryQuadlets = 70, uint32_t sectionBytes = kStreamSectionBytes,
+    const char* labels = "") {
+    std::vector<uint8_t> bytes(sectionBytes, 0);
+    PutBe32(bytes.data(), count);
+    PutBe32(bytes.data() + 4, entryQuadlets);
+    PutBe32(bytes.data() + 8, iso);
+    PutBe32(bytes.data() + 12, isRx ? 0 : pcm);
+    PutBe32(bytes.data() + 16, isRx ? pcm : midi);
+    PutBe32(bytes.data() + 20, isRx ? midi : 2);
+    // TX_NAMES/RX_NAMES begin after the header and four stream quadlets.
+    for (size_t i = 0; labels[i] != '\0' && 24 + i < bytes.size(); ++i) {
+        bytes[24 + (i & ~size_t{3}) + (3 - (i & 3))] = labels[i];
+    }
+    return bytes;
+}
+
+AudioStreamRuntimeCaps RequiredTenChannelGeometry() {
+    AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 10,
+        .hostOutputPcmChannels = 10,
+        .deviceToHostAm824Slots = 11,
+        .hostToDeviceAm824Slots = 11,
+        .sampleRateHz = 48000,
+        .deviceToHostStreamCount = 1,
+        .hostToDeviceStreamCount = 1,
+    };
+    caps.deviceToHostStreams[0] = {.pcmChannels = 10, .am824Slots = 11, .midiPorts = 1};
+    caps.hostToDeviceStreams[0] = {.pcmChannels = 10, .am824Slots = 11, .midiPorts = 1};
+    return caps;
+}
+
+DICETcatRuntimePolicy LowRateTenChannelPolicy() {
+    return {.requiredRuntimeGeometry = RequiredTenChannelGeometry(),
+            .allowedSampleRatesHz = {44100, 48000}};
 }
 
 std::array<uint8_t, ExtensionSections::kWireSize> MakeExtensionSectionsWire() {
@@ -156,18 +211,40 @@ public:
             callback(AsyncStatus::kStaleGeneration, {});
             return NextHandle();
         }
+        if (failedReadAddress_ && address.addressLo == *failedReadAddress_) {
+            callback(AsyncStatus::kTimeout, {});
+            return NextHandle();
+        }
 
         std::vector<uint8_t> payload(length, 0);
         if (address.addressHi == 0xFFFFU && address.addressLo == kDiceBaseLo &&
             length >= GeneralSections::kWireSize) {
             ++generalReadCount;
-            const auto bytes = MakeGeneralSectionsWire();
+            auto bytes = MakeGeneralSectionsWire();
+            PutBe32(bytes.data() + 0x14, rxSectionBytes_ / 4);
             payload.assign(bytes.begin(), bytes.end());
-        } else if (address.addressHi == 0xFFFFU && address.addressLo == kGlobalBaseLo &&
-                   length >= kGlobalReadBytes) {
+        } else if (address.addressHi == 0xFFFFU && address.addressLo >= kGlobalBaseLo &&
+                   address.addressLo + length <= kGlobalBaseLo + kGlobalSectionBytes) {
             ++globalReadCount;
-            const auto bytes = MakeGlobalStateWire(clockSelect_, status_, extStatus_, sampleRate_, notification_);
-            payload.assign(bytes.begin(), bytes.end());
+            const auto core = MakeGlobalStateWire(clockSelect_, status_, extStatus_, sampleRate_, notification_);
+            std::vector<uint8_t> bytes(kGlobalSectionBytes, 0);
+            std::copy(core.begin(), core.end(), bytes.begin());
+            ASFW::FW::WriteBE64(bytes.data(), owner_);
+            PutBe32(bytes.data() + ASFW::Audio::DICE::GlobalOffset::kEnable, enable_);
+            const auto offset = address.addressLo - kGlobalBaseLo;
+            payload.assign(bytes.begin() + offset, bytes.begin() + offset + length);
+        } else if (address.addressHi == 0xFFFFU && address.addressLo >= kTxBaseLo &&
+                   address.addressLo + length <= kTxBaseLo + kStreamSectionBytes) {
+            const auto bytes = MakeStreamSectionWire(false, txCount_, txPcm_, txMidi_, txIso_,
+                                                      70, kStreamSectionBytes, "Input 1\\Input 2\\\\");
+            const auto offset = address.addressLo - kTxBaseLo;
+            payload.assign(bytes.begin() + offset, bytes.begin() + offset + length);
+        } else if (address.addressHi == 0xFFFFU && address.addressLo >= kRxBaseLo &&
+                   address.addressLo + length <= kRxBaseLo + rxSectionBytes_) {
+            const auto bytes = MakeStreamSectionWire(true, rxCount_, rxPcm_, rxMidi_, rxIso_,
+                                                     rxEntryQuadlets_, rxSectionBytes_, "Output 1\\Output 2\\\\");
+            const auto offset = address.addressLo - kRxBaseLo;
+            payload.assign(bytes.begin() + offset, bytes.begin() + offset + length);
         } else if (address.addressHi == 0xFFFFU && address.addressLo == kExtensionBaseLo &&
             length >= ExtensionSections::kWireSize) {
             ++extensionReadCount;
@@ -181,7 +258,14 @@ public:
             PutBe32(payload.data(), 0U);
         }
 
-        callback(AsyncStatus::kSuccess, std::span<const uint8_t>(payload.data(), payload.size()));
+        if (deferredReadAddress_ && address.addressLo == *deferredReadAddress_) {
+            deferredReadAddress_.reset();
+            completeRead_ = [callback = std::move(callback), payload = std::move(payload)] {
+                callback(AsyncStatus::kSuccess, payload);
+            };
+        } else {
+            callback(AsyncStatus::kSuccess, std::span<const uint8_t>(payload.data(), payload.size()));
+        }
         return NextHandle();
     }
 
@@ -197,6 +281,30 @@ public:
         (void)data;
         (void)speed;
         ++writeCount;
+        if (address.addressHi == 0xFFFFU && data.size() == 4) {
+            const uint32_t value = ASFW::FW::ReadBE32(data.data());
+            if (address.addressLo == kGlobalBaseLo + ASFW::Audio::DICE::GlobalOffset::kEnable) {
+                enable_ = value;
+                if (value != 0) ++enableWriteCount_;
+            } else if (address.addressLo == kTxBaseLo + 8) {
+                txIso_ = value;
+                if (value != 0xFFFFFFFFU) ++activeIsoWriteCount_;
+            } else if (address.addressLo == kRxBaseLo + 8) {
+                rxIso_ = value;
+                if (value != 0xFFFFFFFFU) ++activeIsoWriteCount_;
+            } else if (address.addressLo == kGlobalBaseLo + ASFW::Audio::DICE::GlobalOffset::kClockSelect) {
+                clockWrites_.push_back(value);
+                if (applyClockWrites_) {
+                    clockSelect_ = value;
+                    const uint32_t rateIndex = (value >> 8) & 0xff;
+                    if (rateIndex == 1 || rateIndex == 2) {
+                        sampleRate_ = rateIndex == 1 ? 44100 : 48000;
+                        status_ = 1U | (rateIndex << 8); // Locked, nominal rate.
+                        notification_ = 0x20; // CLOCK_ACCEPTED.
+                    }
+                }
+            }
+        }
         callback(AsyncStatus::kSuccess, {});
         return NextHandle();
     }
@@ -217,6 +325,13 @@ public:
         (void)speed;
         ++lockCount;
         std::vector<uint8_t> payload(responseLength, 0);
+        if (address.addressHi == 0xFFFFU && address.addressLo == kGlobalBaseLo &&
+            lockOp == LockOp::kCompareSwap && operand.size() == 16 && responseLength == 8) {
+            ASFW::FW::WriteBE64(payload.data(), owner_);
+            if (ASFW::FW::ReadBE64(operand.data()) == owner_) {
+                owner_ = ASFW::FW::ReadBE64(operand.data() + 8);
+            }
+        }
         callback(AsyncStatus::kSuccess, std::span<const uint8_t>(payload.data(), payload.size()));
         return NextHandle();
     }
@@ -240,6 +355,9 @@ public:
     Generation GetGeneration() const override { return generation_; }
     NodeId GetLocalNodeID() const override { return localNodeId_; }
 
+    void SetGeneration(Generation generation) { generation_ = generation; }
+    std::optional<uint32_t> deferredReadAddress_;
+    std::function<void()> completeRead_;
     int readCount{0};
     int writeCount{0};
     int lockCount{0};
@@ -252,6 +370,23 @@ public:
     uint32_t extStatus_{0};
     uint32_t sampleRate_{48000};
     uint32_t notification_{0x20};
+    bool applyClockWrites_{false};
+    std::vector<uint32_t> clockWrites_;
+    std::optional<uint32_t> failedReadAddress_{};
+    uint32_t txCount_{1};
+    uint32_t rxCount_{1};
+    uint32_t rxSectionBytes_{kStreamSectionBytes};
+    uint32_t rxEntryQuadlets_{70};
+    uint32_t txPcm_{10};
+    uint32_t rxPcm_{10};
+    uint32_t txMidi_{1};
+    uint32_t rxMidi_{1};
+    uint32_t txIso_{0xFFFFFFFFU};
+    uint32_t rxIso_{0xFFFFFFFFU};
+    uint64_t owner_{ASFW::Audio::DICE::kOwnerNoOwner};
+    uint32_t enable_{0};
+    uint32_t enableWriteCount_{0};
+    uint32_t activeIsoWriteCount_{0};
 
 private:
     AsyncHandle NextHandle() {
@@ -273,6 +408,797 @@ TEST(DICETcatProtocolTests, InitializeIsSideEffectFree) {
     AudioStreamRuntimeCaps caps{};
     EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
     EXPECT_EQ(bus.readCount, 0);
+    EXPECT_EQ(bus.writeCount, 0);
+    EXPECT_EQ(bus.lockCount, 0);
+}
+
+TEST(DICETcatProtocolTests, RuntimeDiscoveryAcceptsCompleteInactiveStreamsWithoutWrites) {
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                              nullptr, {.requiredRuntimeGeometry = RequiredTenChannelGeometry()});
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    int completions = 0;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+        ++completions;
+        EXPECT_EQ(status, kIOReturnSuccess);
+    });
+    ASSERT_EQ(completions, 1);
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 10U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 10U);
+    EXPECT_EQ(caps.deviceToHostStreams[0].midiPorts, 1U);
+    EXPECT_EQ(caps.hostToDeviceStreams[0].am824Slots, 11U);
+    EXPECT_EQ(caps.deviceToHostIsoChannel, AudioStreamRuntimeCaps::kInvalidIsoChannel);
+    const int reads = bus.readCount;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+        ++completions;
+        EXPECT_EQ(status, kIOReturnSuccess);
+    });
+    EXPECT_EQ(completions, 2);
+    EXPECT_EQ(bus.readCount, reads);
+    EXPECT_EQ(bus.writeCount, 0);
+    EXPECT_EQ(bus.lockCount, 0);
+}
+
+TEST(DICETcatProtocolTests, RuntimeDiscoveryReadErrorsLeaveNoUsableCaps) {
+    for (const uint32_t failedAddress : {kDiceBaseLo, kGlobalBaseLo, kTxBaseLo, kRxBaseLo}) {
+        SCOPED_TRACE(failedAddress);
+        CountingFireWireBus bus;
+        bus.failedReadAddress_ = failedAddress;
+        RouteState routeState;
+        DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+        ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+        int completions = 0;
+        protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+            ++completions;
+            EXPECT_NE(status, kIOReturnSuccess);
+        });
+        EXPECT_EQ(completions, 1);
+        AudioStreamRuntimeCaps caps{};
+        EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(bus.writeCount, 0);
+        EXPECT_EQ(bus.lockCount, 0);
+    }
+}
+
+TEST(DICETcatProtocolTests, RequiredGeometryRejectsMissingDeclaredStreamCoreAfterReadFailure) {
+    CountingFireWireBus bus;
+    bus.rxCount_ = 2;
+    bus.rxEntryQuadlets_ = 128; // Core 2 begins at byte 520, beyond the first chunk.
+    bus.rxSectionBytes_ = 8 + 2 * 512;
+    bus.failedReadAddress_ = kRxBaseLo + 512;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                              nullptr, {.requiredRuntimeGeometry = RequiredTenChannelGeometry()});
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    int completions = 0;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+        ++completions;
+        EXPECT_NE(status, kIOReturnSuccess);
+    });
+    EXPECT_EQ(completions, 1);
+    AudioStreamRuntimeCaps caps{};
+    EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(bus.writeCount, 0);
+    EXPECT_EQ(bus.lockCount, 0);
+}
+
+TEST(DICETcatProtocolTests, RequiredGeometryAllowsMissingLabelsAndUnusedSectionTail) {
+    for (bool missingLabelTail : {false, true}) {
+        SCOPED_TRACE(missingLabelTail);
+        CountingFireWireBus bus;
+        // Only one stream is declared. Its core is complete in either case:
+        // a section ending before labels, or a failed unused trailing chunk.
+        bus.rxSectionBytes_ = missingLabelTail ? 24 : 1032;
+        if (!missingLabelTail) bus.failedReadAddress_ = kRxBaseLo + 512;
+        RouteState routeState;
+        DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                                  nullptr, {.requiredRuntimeGeometry = RequiredTenChannelGeometry()});
+        ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+        int completions = 0;
+        protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+            ++completions;
+            EXPECT_EQ(status, kIOReturnSuccess);
+        });
+        EXPECT_EQ(completions, 1);
+        AudioStreamRuntimeCaps caps{};
+        ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(caps.hostToDeviceStreamCount, 1U);
+        EXPECT_EQ(caps.hostToDeviceStreams[0].pcmChannels, 10U);
+        EXPECT_EQ(caps.hostToDeviceStreams[0].midiPorts, 1U);
+        EXPECT_EQ(bus.writeCount, 0);
+        EXPECT_EQ(bus.lockCount, 0);
+    }
+}
+
+TEST(DICETcatProtocolTests, RuntimeDiscoveryRejectsStreamCountBeyondParserCapacity) {
+    CountingFireWireBus bus;
+    bus.rxCount_ = 5;
+    bus.rxEntryQuadlets_ = 4; // All five cores fit; truncation is not the reason to reject.
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    int completions = 0;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+        ++completions;
+        EXPECT_NE(status, kIOReturnSuccess);
+    });
+    EXPECT_EQ(completions, 1);
+    AudioStreamRuntimeCaps caps{};
+    EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(bus.writeCount, 0);
+    EXPECT_EQ(bus.lockCount, 0);
+}
+
+TEST(DICETcatProtocolTests, RuntimeDiscoveryRejectsZeroAndPartialGeometryAndCanRetry) {
+    for (uint32_t failure = 0; failure < 4; ++failure) {
+        SCOPED_TRACE(failure);
+        CountingFireWireBus bus;
+        if (failure == 0) bus.sampleRate_ = 0;
+        if (failure == 1) bus.txCount_ = 0;
+        if (failure == 2) bus.rxCount_ = 0;
+        if (failure == 3) bus.rxPcm_ = 0;
+        RouteState routeState;
+        DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+        ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+        int completions = 0;
+        protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+            ++completions;
+            EXPECT_NE(status, kIOReturnSuccess);
+        });
+        EXPECT_EQ(completions, 1);
+        AudioStreamRuntimeCaps caps{};
+        EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
+
+        bus.sampleRate_ = 48000;
+        bus.txCount_ = bus.rxCount_ = 1;
+        bus.rxPcm_ = 10;
+        protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+            ++completions;
+            EXPECT_EQ(status, kIOReturnSuccess);
+        });
+        EXPECT_EQ(completions, 2);
+        EXPECT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(bus.writeCount, 0);
+        EXPECT_EQ(bus.lockCount, 0);
+    }
+}
+
+TEST(DICETcatProtocolTests, RequiredGeometryRejectsRatePcmMidiAndStreamCountDifferences) {
+    for (uint32_t failure = 0; failure < 6; ++failure) {
+        SCOPED_TRACE(failure);
+        CountingFireWireBus bus;
+        auto required = RequiredTenChannelGeometry();
+        if (failure == 0) bus.sampleRate_ = 44100;
+        if (failure == 1) bus.txPcm_ = 9;
+        if (failure == 2) bus.rxPcm_ = 9;
+        // Two MIDI ports still occupy one wire slot, so this checks per-stream
+        // metadata rather than only comparing aggregate PCM/DBS totals.
+        if (failure == 3) bus.txMidi_ = 2;
+        if (failure == 4) bus.rxMidi_ = 2;
+        if (failure == 5) required.deviceToHostStreamCount = 2;
+        RouteState routeState;
+        DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                                  nullptr, {.requiredRuntimeGeometry = required});
+        ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+        int completions = 0;
+        protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+            ++completions;
+            EXPECT_EQ(status, kIOReturnUnsupported);
+        });
+        EXPECT_EQ(completions, 1);
+        AudioStreamRuntimeCaps caps{};
+        EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(bus.writeCount, 0);
+        EXPECT_EQ(bus.lockCount, 0);
+    }
+}
+
+TEST(DICETcatProtocolTests, PrepareGeometryMismatchRollsBackOwnerBeforeCompletingOnce) {
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                              nullptr, {.requiredRuntimeGeometry = RequiredTenChannelGeometry()});
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn status) {
+        ASSERT_EQ(status, kIOReturnSuccess);
+    });
+    bus.txPcm_ = 9; // A subsequent prepare must not trust the earlier capture.
+    const uint64_t originalOwner = bus.owner_;
+    int completions = 0;
+    protocol.PrepareDuplex({}, AudioClockConfig{.sampleRateHz = 48000},
+        [&](IOReturn status, ASFW::Audio::DICE::DiceDuplexPrepareResult) {
+            ++completions;
+            EXPECT_EQ(status, kIOReturnUnsupported);
+            EXPECT_EQ(bus.owner_, originalOwner);
+            EXPECT_FALSE(ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::HasDuplexState(protocol));
+        });
+    ASSERT_EQ(completions, 1);
+    EXPECT_EQ(bus.lockCount, 2); // Claim and rollback compare/swap.
+    EXPECT_EQ(bus.enable_, 0U);
+    EXPECT_EQ(bus.enableWriteCount_, 0U);
+    EXPECT_EQ(bus.activeIsoWriteCount_, 0U);
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 10U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 10U);
+
+    const int writes = bus.writeCount;
+    int programCompletions = 0;
+    protocol.ProgramRx([&](IOReturn status, ASFW::Audio::DICE::DiceDuplexStageResult) {
+        ++programCompletions;
+        EXPECT_NE(status, kIOReturnSuccess);
+    });
+    EXPECT_EQ(programCompletions, 1);
+    EXPECT_EQ(bus.writeCount, writes);
+}
+
+TEST(DICETcatProtocolTests, RequiredGeometryRejectsOtherRateRequestsBeforeBusAccess) {
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                              nullptr, {.requiredRuntimeGeometry = RequiredTenChannelGeometry()});
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    int completions = 0;
+    protocol.PrepareDuplex({}, AudioClockConfig{.sampleRateHz = 44100},
+        [&](IOReturn status, ASFW::Audio::DICE::DiceDuplexPrepareResult) {
+            ++completions;
+            EXPECT_EQ(status, kIOReturnUnsupported);
+        });
+    protocol.ApplyClockConfig(AudioClockConfig{.sampleRateHz = 44100},
+        [&](IOReturn status, ASFW::Audio::DICE::DiceClockApplyResult) {
+            ++completions;
+            EXPECT_EQ(status, kIOReturnUnsupported);
+        });
+    EXPECT_EQ(completions, 2);
+    EXPECT_EQ(bus.readCount, 0);
+    EXPECT_EQ(bus.writeCount, 0);
+    EXPECT_EQ(bus.lockCount, 0);
+}
+
+TEST(DICETcatProtocolTests, RateAllowlistAcceptsBothLowRatesWithExactTenChannelGeometry) {
+    for (const uint32_t rate : {44100U, 48000U}) {
+        SCOPED_TRACE(rate);
+        CountingFireWireBus bus;
+        bus.sampleRate_ = rate;
+        RouteState routeState;
+        DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                                  nullptr, LowRateTenChannelPolicy());
+        ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+        int completions = 0;
+        protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+            ++completions;
+            EXPECT_EQ(status, kIOReturnSuccess);
+        });
+        ASSERT_EQ(completions, 1);
+        AudioStreamRuntimeCaps caps{};
+        ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(caps.sampleRateHz, rate);
+        EXPECT_EQ(caps.hostInputPcmChannels, 10U);
+        EXPECT_EQ(caps.hostOutputPcmChannels, 10U);
+        EXPECT_EQ(caps.deviceToHostAm824Slots, 11U);
+        EXPECT_EQ(caps.hostToDeviceAm824Slots, 11U);
+        EXPECT_EQ(caps.deviceToHostStreamCount, 1U);
+        EXPECT_EQ(caps.hostToDeviceStreamCount, 1U);
+        EXPECT_EQ(caps.deviceToHostStreams[0].midiPorts, 1U);
+        EXPECT_EQ(caps.hostToDeviceStreams[0].midiPorts, 1U);
+        EXPECT_EQ(bus.writeCount, 0);
+        EXPECT_EQ(bus.lockCount, 0);
+    }
+}
+
+TEST(DICETcatProtocolTests, RateAllowlistRejectsOtherRequestedAndObservedRates) {
+    for (const uint32_t rate : {0U, 32000U, 88200U, 96000U, 176400U, 192000U}) {
+        SCOPED_TRACE(rate);
+        CountingFireWireBus bus;
+        bus.sampleRate_ = rate;
+        RouteState routeState;
+        DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                                  nullptr, LowRateTenChannelPolicy());
+        ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+        int completions = 0;
+        protocol.PrepareDuplex({}, AudioClockConfig{.sampleRateHz = rate},
+            [&](IOReturn status, ASFW::Audio::DICE::DiceDuplexPrepareResult) {
+                ++completions;
+                EXPECT_EQ(status, kIOReturnUnsupported);
+            });
+        protocol.ApplyClockConfig(AudioClockConfig{.sampleRateHz = rate},
+            [&](IOReturn status, ASFW::Audio::DICE::DiceClockApplyResult) {
+                ++completions;
+                EXPECT_EQ(status, kIOReturnUnsupported);
+            });
+        EXPECT_EQ(completions, 2);
+        EXPECT_EQ(bus.readCount, 0);
+        protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+            ++completions;
+            EXPECT_NE(status, kIOReturnSuccess);
+        });
+        EXPECT_EQ(completions, 3);
+        AudioStreamRuntimeCaps caps{};
+        EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(bus.writeCount, 0);
+        EXPECT_EQ(bus.lockCount, 0);
+    }
+}
+
+TEST(DICETcatProtocolTests, RateAllowlistKeeps44100AfterIdleClockChangeAndRestores48000) {
+    CountingFireWireBus bus;
+    bus.applyClockWrites_ = true;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                              nullptr, LowRateTenChannelPolicy());
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn status) {
+        ASSERT_EQ(status, kIOReturnSuccess);
+    });
+    int completions = 0;
+    protocol.ApplyClockConfig(AudioClockConfig{.sampleRateHz = 44100},
+        [&](IOReturn status, ASFW::Audio::DICE::DiceClockApplyResult result) {
+            ++completions;
+            EXPECT_EQ(status, kIOReturnSuccess);
+            EXPECT_EQ(result.appliedClock.sampleRateHz, 44100U);
+            EXPECT_EQ(result.runtimeCaps.sampleRateHz, 44100U);
+        });
+    ASSERT_EQ(completions, 1);
+    EXPECT_EQ(bus.sampleRate_, 44100U);
+    EXPECT_EQ(bus.owner_, ASFW::Audio::DICE::kOwnerNoOwner);
+    ASSERT_FALSE(bus.clockWrites_.empty());
+    EXPECT_EQ(bus.clockWrites_.back(), 0x0000010cU); // 44.1 kHz, Internal.
+
+    // The legacy StartIO method name must not restore its old 48 kHz default.
+    protocol.PrepareDuplex48k({}, [&](IOReturn status) {
+        ++completions;
+        EXPECT_EQ(status, kIOReturnSuccess);
+    });
+    ASSERT_EQ(completions, 2);
+    EXPECT_EQ(bus.sampleRate_, 44100U);
+    EXPECT_EQ(bus.clockWrites_.back(), 0x0000010cU);
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.sampleRateHz, 44100U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 10U);
+    ASSERT_EQ(protocol.StopDuplex(), kIOReturnSuccess);
+    EXPECT_EQ(bus.owner_, ASFW::Audio::DICE::kOwnerNoOwner);
+
+    protocol.ApplyClockConfig(AudioClockConfig{.sampleRateHz = 48000},
+        [&](IOReturn status, ASFW::Audio::DICE::DiceClockApplyResult result) {
+            ++completions;
+            EXPECT_EQ(status, kIOReturnSuccess);
+            EXPECT_EQ(result.runtimeCaps.sampleRateHz, 48000U);
+        });
+    EXPECT_EQ(completions, 3);
+    EXPECT_EQ(bus.clockWrites_.back(), kClockSelect48kInternal);
+    EXPECT_EQ(bus.sampleRate_, 48000U);
+    EXPECT_EQ(bus.owner_, ASFW::Audio::DICE::kOwnerNoOwner);
+    EXPECT_EQ(bus.enableWriteCount_, 0U);
+    EXPECT_EQ(bus.activeIsoWriteCount_, 0U);
+}
+
+TEST(DICETcatProtocolTests, RateAllowlistStillRollsBackChangedWireGeometryAt44100) {
+    for (uint32_t failure = 0; failure < 6; ++failure) {
+        SCOPED_TRACE(failure);
+        CountingFireWireBus bus;
+        bus.sampleRate_ = 44100;
+        bus.clockSelect_ = 0x0000010c;
+        bus.status_ = 0x00000101;
+        RouteState routeState;
+        DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                                  nullptr, LowRateTenChannelPolicy());
+        ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+        protocol.EnsureRuntimeStreamGeometry([](IOReturn status) {
+            ASSERT_EQ(status, kIOReturnSuccess);
+        });
+        if (failure == 0) bus.txPcm_ = 9;
+        if (failure == 1) bus.rxPcm_ = 9;
+        if (failure == 2) bus.txMidi_ = 2;
+        if (failure == 3) bus.rxMidi_ = 2;
+        if (failure == 4) bus.txCount_ = 2;
+        if (failure == 5) bus.rxCount_ = 2;
+        const uint64_t originalOwner = bus.owner_;
+        int completions = 0;
+        protocol.PrepareDuplex({}, AudioClockConfig{.sampleRateHz = 44100},
+            [&](IOReturn status, ASFW::Audio::DICE::DiceDuplexPrepareResult) {
+                ++completions;
+                EXPECT_NE(status, kIOReturnSuccess);
+                EXPECT_EQ(bus.owner_, originalOwner);
+                EXPECT_FALSE(ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::HasDuplexState(protocol));
+            });
+        ASSERT_EQ(completions, 1);
+        EXPECT_EQ(bus.lockCount, 2); // Claim and rollback compare/swap.
+        EXPECT_EQ(bus.enable_, 0U);
+        EXPECT_EQ(bus.enableWriteCount_, 0U);
+        EXPECT_EQ(bus.activeIsoWriteCount_, 0U);
+        AudioStreamRuntimeCaps caps{};
+        ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(caps.hostInputPcmChannels, 10U);
+        EXPECT_EQ(caps.hostOutputPcmChannels, 10U);
+        const int writes = bus.writeCount;
+        protocol.ProgramRx([&](IOReturn status, ASFW::Audio::DICE::DiceDuplexStageResult) {
+            ++completions;
+            EXPECT_NE(status, kIOReturnSuccess);
+        });
+        EXPECT_EQ(completions, 2);
+        EXPECT_EQ(bus.writeCount, writes);
+    }
+}
+
+TEST(DICETcatProtocolTests, FailedClockOperationsDoNotChangeLegacyStartRate) {
+    for (const bool prepareFailure : {false, true}) {
+        for (const bool geometryFailure : {false, true}) {
+            SCOPED_TRACE(testing::Message() << "prepare=" << prepareFailure
+                                           << " geometry=" << geometryFailure);
+            CountingFireWireBus bus;
+            bus.applyClockWrites_ = true;
+            RouteState routeState;
+            DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                                      nullptr, LowRateTenChannelPolicy());
+            ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+            protocol.EnsureRuntimeStreamGeometry([](IOReturn status) {
+                ASSERT_EQ(status, kIOReturnSuccess);
+            });
+            int completions = 0;
+            protocol.ApplyClockConfig(AudioClockConfig{.sampleRateHz = 48000},
+                [&](IOReturn status, ASFW::Audio::DICE::DiceClockApplyResult) {
+                    ++completions;
+                    ASSERT_EQ(status, kIOReturnSuccess);
+                });
+            ASSERT_EQ(completions, 1);
+            if (geometryFailure) {
+                bus.txPcm_ = 9; // Failure after the hardware clock changes.
+            } else {
+                // Failure before any clock programming or owner claim.
+                bus.failedReadAddress_ = kGlobalBaseLo + ASFW::Audio::DICE::GlobalOffset::kStatus;
+            }
+            if (prepareFailure) {
+                protocol.PrepareDuplex({}, AudioClockConfig{.sampleRateHz = 44100},
+                    [&](IOReturn status, ASFW::Audio::DICE::DiceDuplexPrepareResult) {
+                        ++completions;
+                        EXPECT_NE(status, kIOReturnSuccess);
+                    });
+            } else {
+                protocol.ApplyClockConfig(AudioClockConfig{.sampleRateHz = 44100},
+                    [&](IOReturn status, ASFW::Audio::DICE::DiceClockApplyResult) {
+                        ++completions;
+                        EXPECT_NE(status, kIOReturnSuccess);
+                    });
+            }
+            ASSERT_EQ(completions, 2);
+            EXPECT_EQ(bus.sampleRate_, geometryFailure ? 44100U : 48000U);
+            EXPECT_EQ(bus.owner_, ASFW::Audio::DICE::kOwnerNoOwner);
+            const size_t clockWritesAfterFailure = bus.clockWrites_.size();
+            bus.failedReadAddress_.reset();
+            bus.txPcm_ = 10;
+
+            // A later StartIO must use the prior successful selection, not
+            // silently retry the failed request for 44.1 kHz.
+            protocol.PrepareDuplex48k({}, [&](IOReturn status) {
+                ++completions;
+                EXPECT_EQ(status, kIOReturnSuccess);
+            });
+            ASSERT_EQ(completions, 3);
+            EXPECT_EQ(bus.sampleRate_, 48000U);
+            EXPECT_EQ(bus.clockSelect_, kClockSelect48kInternal);
+            // A read failure left 48 kHz selected, so no redundant write is
+            // needed. A post-clock geometry failure requires one return write.
+            EXPECT_EQ(bus.clockWrites_.size(), clockWritesAfterFailure + (geometryFailure ? 1U : 0U));
+            if (geometryFailure) {
+                ASSERT_FALSE(bus.clockWrites_.empty());
+                EXPECT_EQ(bus.clockWrites_.back(), kClockSelect48kInternal);
+            }
+            AudioStreamRuntimeCaps caps{};
+            ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+            EXPECT_EQ(caps.sampleRateHz, 48000U);
+            EXPECT_EQ(protocol.StopDuplex(), kIOReturnSuccess);
+            EXPECT_EQ(bus.owner_, ASFW::Audio::DICE::kOwnerNoOwner);
+        }
+    }
+}
+
+TEST(DICETcatProtocolTests, FailedPrepareRetainsEarlierSuccessfulDiscovery) {
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn status) {
+        ASSERT_EQ(status, kIOReturnSuccess);
+    });
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    bus.failedReadAddress_ = kDiceBaseLo;
+    int completions = 0;
+    protocol.PrepareDuplex({}, AudioClockConfig{.sampleRateHz = 48000},
+        [&](IOReturn status, ASFW::Audio::DICE::DiceDuplexPrepareResult) {
+            ++completions;
+            EXPECT_NE(status, kIOReturnSuccess);
+        });
+    EXPECT_EQ(completions, 1);
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 10U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 10U);
+    std::vector<std::string> inNames, outNames;
+    ASSERT_TRUE(protocol.GetChannelLabels(inNames, outNames));
+    EXPECT_EQ(inNames, (std::vector<std::string>{"Input 1", "Input 2"}));
+    EXPECT_EQ(outNames, (std::vector<std::string>{"Output 1", "Output 2"}));
+    const int reads = bus.readCount;
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn status) {
+        EXPECT_EQ(status, kIOReturnSuccess);
+    });
+    EXPECT_EQ(bus.readCount, reads);
+    EXPECT_EQ(bus.owner_, ASFW::Audio::DICE::kOwnerNoOwner);
+    EXPECT_EQ(bus.writeCount, 0);
+    EXPECT_EQ(bus.lockCount, 0);
+}
+
+TEST(DICETcatProtocolTests, TransientStageFailuresPreserveDiscoveryAndRecoverAfterBusReset) {
+    for (uint32_t stage = 0; stage < 3; ++stage) {
+        SCOPED_TRACE(stage);
+        CountingFireWireBus bus;
+        RouteState routeState;
+        DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                                  nullptr, LowRateTenChannelPolicy());
+        ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+        protocol.EnsureRuntimeStreamGeometry([](IOReturn status) {
+            ASSERT_EQ(status, kIOReturnSuccess);
+        });
+        if (stage == 1) {
+            protocol.PrepareDuplex({}, AudioClockConfig{.sampleRateHz = 48000},
+                [](IOReturn status, auto) { ASSERT_EQ(status, kIOReturnSuccess); });
+            protocol.ProgramRx([](IOReturn status, auto) { ASSERT_EQ(status, kIOReturnSuccess); });
+            protocol.ProgramTxAndEnableDuplex(
+                [](IOReturn status, auto) { ASSERT_EQ(status, kIOReturnSuccess); });
+        }
+        bus.failedReadAddress_ = stage == 0 ? kDiceBaseLo
+            : kGlobalBaseLo + ASFW::Audio::DICE::GlobalOffset::kStatus;
+        int failedCompletions = 0;
+        auto failed = [&](IOReturn status, auto) {
+            ++failedCompletions;
+            EXPECT_NE(status, kIOReturnSuccess);
+        };
+        if (stage == 0) {
+            protocol.PrepareDuplex({}, AudioClockConfig{.sampleRateHz = 48000}, failed);
+        } else if (stage == 1) {
+            protocol.ConfirmDuplexStart(failed);
+        } else {
+            protocol.ApplyClockConfig(AudioClockConfig{.sampleRateHz = 44100}, failed);
+        }
+        ASSERT_EQ(failedCompletions, 1);
+        AudioStreamRuntimeCaps caps{};
+        ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(caps.sampleRateHz, 48000U);
+        EXPECT_EQ(caps.deviceToHostStreams[0].pcmChannels, 10U);
+        EXPECT_EQ(caps.hostToDeviceStreams[0].midiPorts, 1U);
+        std::vector<std::string> inputs, outputs;
+        ASSERT_TRUE(protocol.GetChannelLabels(inputs, outputs));
+        EXPECT_EQ(inputs, (std::vector<std::string>{"Input 1", "Input 2"}));
+        EXPECT_EQ(outputs, (std::vector<std::string>{"Output 1", "Output 2"}));
+
+        // Bus reset supplies a new route; static discovery remains available
+        // even while transaction reads still fail during recovery.
+        ASFW::Discovery::ConfigROM rom{};
+        rom.bib.guid = 0xD1CE000000000002ULL;
+        rom.gen = Generation{2};
+        rom.nodeId = 3;
+        (void)routeState.registry.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+        bus.SetGeneration(rom.gen);
+        protocol.UpdateRuntimeContext(*routeState.registry.CurrentRoute(rom.bib.guid), nullptr);
+        const int reads = bus.readCount;
+        protocol.EnsureRuntimeStreamGeometry([](IOReturn status) {
+            EXPECT_EQ(status, kIOReturnSuccess);
+        });
+        EXPECT_EQ(bus.readCount, reads);
+        bus.failedReadAddress_.reset();
+        bus.owner_ = ASFW::Audio::DICE::kOwnerNoOwner;
+        bus.enable_ = 0;
+        bus.txIso_ = bus.rxIso_ = 0xFFFFFFFFU;
+        protocol.PrepareDuplex({}, AudioClockConfig{.sampleRateHz = 48000},
+            [](IOReturn status, auto) { EXPECT_EQ(status, kIOReturnSuccess); });
+        EXPECT_EQ(protocol.StopDuplex(), kIOReturnSuccess);
+        ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(caps.deviceToHostStreams[0].pcmChannels, 10U);
+        ASSERT_TRUE(protocol.GetChannelLabels(inputs, outputs));
+        EXPECT_EQ(outputs.front(), "Output 1");
+    }
+}
+
+TEST(DICETcatProtocolTests, OverlappingDiscoveryRequestsPreserveFirstPublishedSnapshot) {
+    CountingFireWireBus bus;
+    bus.deferredReadAddress_ = kDiceBaseLo;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    int completions = 0;
+    auto complete = [&](IOReturn status) {
+        ++completions;
+        EXPECT_EQ(status, kIOReturnSuccess);
+    };
+    protocol.EnsureRuntimeStreamGeometry(complete);
+    protocol.EnsureRuntimeStreamGeometry(complete);
+    // The second discovery completes while the first read is still in flight.
+    EXPECT_EQ(completions, 1);
+    ASSERT_TRUE(bus.completeRead_);
+    bus.rxPcm_ = 8;
+    auto finishRead = std::move(bus.completeRead_);
+    finishRead();
+    EXPECT_EQ(completions, 2);
+    EXPECT_EQ(bus.generalReadCount, 2);
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostOutputPcmChannels, 10U);
+}
+
+TEST(DICETcatProtocolTests, RuntimeUpdatesAndLateDiscoveryCannotRewritePublishedTopologyOrLabels) {
+    using Peer = ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer;
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn status) {
+        ASSERT_EQ(status, kIOReturnSuccess);
+    });
+    AudioStreamRuntimeCaps live = RequiredTenChannelGeometry();
+    live.sampleRateHz = 44100;
+    live.deviceToHostIsoChannel = 5;
+    live.hostToDeviceIsoChannel = 6;
+    live.deviceToHostStreams[0].isoChannel = 5;
+    live.hostToDeviceStreams[0].isoChannel = 6;
+    // Unconstrained profiles may observe changed runtime geometry. That result
+    // must not mutate topology already published to readers or Core Audio.
+    live.hostInputPcmChannels = live.deviceToHostStreams[0].pcmChannels = 9;
+    ASSERT_TRUE(Peer::UpdateOperationalCaps(protocol, live));
+    ASFW::Audio::DICE::GlobalState global{};
+    global.sampleRate = 48000;
+    ASFW::Audio::DICE::StreamConfig tx{}, rx{};
+    tx.numStreams = rx.numStreams = 1;
+    tx.streams[0].pcmChannels = rx.streams[0].pcmChannels = 2;
+    strlcpy(tx.streams[0].labels, "Late Input\\\\", sizeof(tx.streams[0].labels));
+    strlcpy(rx.streams[0].labels, "Late Output\\\\", sizeof(rx.streams[0].labels));
+    ASSERT_TRUE(Peer::CacheRuntimeCaps(protocol, global, tx, rx));
+    AudioStreamRuntimeCaps observed{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(observed));
+    EXPECT_EQ(observed.sampleRateHz, 44100U);
+    EXPECT_EQ(observed.deviceToHostIsoChannel, 5U);
+    EXPECT_EQ(observed.hostToDeviceStreams[0].isoChannel, 6U);
+    EXPECT_EQ(observed.hostInputPcmChannels, 10U);
+    EXPECT_EQ(observed.deviceToHostStreams[0].pcmChannels, 10U);
+    EXPECT_EQ(observed.hostToDeviceStreams[0].pcmChannels, 10U);
+    std::vector<std::string> inputs, outputs;
+    ASSERT_TRUE(protocol.GetChannelLabels(inputs, outputs));
+    EXPECT_EQ(inputs.front(), "Input 1");
+    EXPECT_EQ(outputs.front(), "Output 1");
+}
+
+TEST(DICETcatProtocolTests, ConcurrentRuntimeReadersRetainImmutableDiscoverySnapshot) {
+    using Peer = ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer;
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn status) {
+        ASSERT_EQ(status, kIOReturnSuccess);
+    });
+    std::atomic<bool> reading{false};
+    std::atomic<bool> done{false};
+    std::atomic<bool> consistent{true};
+    std::thread reader([&] {
+        reading.store(true, std::memory_order_release);
+        do {
+            AudioStreamRuntimeCaps caps{};
+            std::vector<std::string> inputs, outputs;
+            if (!protocol.GetRuntimeAudioStreamCaps(caps) ||
+                caps.hostInputPcmChannels != 10 ||
+                caps.deviceToHostStreams[0].pcmChannels != 10 ||
+                caps.hostToDeviceStreams[0].midiPorts != 1 ||
+                !protocol.GetChannelLabels(inputs, outputs) ||
+                inputs != std::vector<std::string>{"Input 1", "Input 2"} ||
+                outputs != std::vector<std::string>{"Output 1", "Output 2"}) {
+                consistent.store(false, std::memory_order_relaxed);
+            }
+        } while (!done.load(std::memory_order_acquire));
+    });
+    while (!reading.load(std::memory_order_acquire)) { std::this_thread::yield(); }
+    for (uint32_t i = 0; i < 500; ++i) {
+        auto caps = RequiredTenChannelGeometry();
+        caps.sampleRateHz = i % 2 == 0 ? 44100 : 48000;
+        caps.hostInputPcmChannels = caps.deviceToHostStreams[0].pcmChannels = 9;
+        EXPECT_TRUE(Peer::UpdateOperationalCaps(protocol, caps));
+        caps.sampleRateHz = 0; // Rejected operational result must not reset discovery.
+        EXPECT_FALSE(Peer::UpdateOperationalCaps(protocol, caps));
+        ASFW::Audio::DICE::GlobalState global{};
+        global.sampleRate = 48000;
+        ASFW::Audio::DICE::StreamConfig tx{}, rx{};
+        tx.numStreams = rx.numStreams = 1;
+        tx.streams[0].pcmChannels = rx.streams[0].pcmChannels = 2;
+        strlcpy(tx.streams[0].labels, "Late\\\\", sizeof(tx.streams[0].labels));
+        EXPECT_TRUE(Peer::CacheRuntimeCaps(protocol, global, tx, rx));
+    }
+    done.store(true, std::memory_order_release);
+    reader.join();
+    EXPECT_TRUE(consistent.load());
+}
+
+TEST(DICETcatProtocolTests, ConcurrentDiscoveryPublishesOneCompleteSnapshot) {
+    using Peer = ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer;
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    ASFW::Audio::DICE::GlobalState global{};
+    global.sampleRate = 48000;
+    ASFW::Audio::DICE::StreamConfig first{}, second{};
+    first.numStreams = second.numStreams = 1;
+    first.streams[0].pcmChannels = 2;
+    second.streams[0].pcmChannels = 4;
+    strlcpy(first.streams[0].labels, "First\\\\", sizeof(first.streams[0].labels));
+    strlcpy(second.streams[0].labels, "Second\\\\", sizeof(second.streams[0].labels));
+    std::atomic<bool> start{false};
+    auto publish = [&](const auto& config) {
+        while (!start.load(std::memory_order_acquire)) { std::this_thread::yield(); }
+        EXPECT_TRUE(Peer::CacheRuntimeCaps(protocol, global, config, config));
+    };
+    std::thread a([&] { publish(first); });
+    std::thread b([&] { publish(second); });
+    start.store(true, std::memory_order_release);
+    a.join();
+    b.join();
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    std::vector<std::string> inputs, outputs;
+    ASSERT_TRUE(protocol.GetChannelLabels(inputs, outputs));
+    const bool firstWon = caps.hostInputPcmChannels == 2;
+    EXPECT_EQ(caps.hostOutputPcmChannels, firstWon ? 2U : 4U);
+    EXPECT_EQ(caps.deviceToHostStreams[0].pcmChannels, firstWon ? 2U : 4U);
+    EXPECT_EQ(caps.hostToDeviceStreams[0].pcmChannels, firstWon ? 2U : 4U);
+    EXPECT_EQ(inputs, (std::vector<std::string>{firstWon ? "First" : "Second"}));
+    EXPECT_EQ(outputs, inputs);
+}
+
+TEST(DICETcatProtocolTests, LateInitialDiscoveryDoesNotOverwriteSuccessfulClockAndIsoState) {
+    using Peer = ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer;
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    auto caps = RequiredTenChannelGeometry();
+    caps.sampleRateHz = 44100;
+    caps.deviceToHostIsoChannel = 5;
+    caps.hostToDeviceIsoChannel = 6;
+    caps.deviceToHostStreams[0].isoChannel = 5;
+    caps.hostToDeviceStreams[0].isoChannel = 6;
+    ASSERT_TRUE(Peer::UpdateOperationalCaps(protocol, caps));
+    EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn status) {
+        ASSERT_EQ(status, kIOReturnSuccess);
+    });
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.sampleRateHz, 44100U);
+    EXPECT_EQ(caps.deviceToHostIsoChannel, 5U);
+    EXPECT_EQ(caps.hostToDeviceIsoChannel, 6U);
+    EXPECT_EQ(caps.deviceToHostStreams[0].isoChannel, 5U);
+    EXPECT_EQ(caps.hostToDeviceStreams[0].isoChannel, 6U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 10U);
+}
+
+TEST(DICETcatProtocolTests, RequiredWireGeometryAllowsHiddenCoreAudioCapture) {
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                              nullptr, {.exposeDeviceToHostToCoreAudio = false,
+                                        .requiredRuntimeGeometry = RequiredTenChannelGeometry()});
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    int completions = 0;
+    for (uint32_t attempt = 0; attempt < 2; ++attempt) {
+        protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) {
+            ++completions;
+            EXPECT_EQ(status, kIOReturnSuccess);
+        });
+    }
+    EXPECT_EQ(completions, 2);
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 0U);
+    EXPECT_EQ(caps.deviceToHostStreams[0].pcmChannels, 10U);
+    EXPECT_EQ(caps.deviceToHostStreams[0].am824Slots, 11U);
     EXPECT_EQ(bus.writeCount, 0);
     EXPECT_EQ(bus.lockCount, 0);
 }
@@ -397,12 +1323,15 @@ TEST(DICETcatProtocolTests, ChannelLabelsFlattenAcrossStreamsInChannelOrder) {
     // Host input == device TX; two streams, names concatenated in stream order.
     ASFW::Audio::DICE::StreamConfig tx{};
     tx.numStreams = 2;
+    tx.streams[0].pcmChannels = 2;
+    tx.streams[1].pcmChannels = 2;
     strlcpy(tx.streams[0].labels, "Mic 1\\Mic 2\\\\", sizeof(tx.streams[0].labels));
     strlcpy(tx.streams[1].labels, "Line 3\\Line 4\\\\", sizeof(tx.streams[1].labels));
 
     // Host output == device RX.
     ASFW::Audio::DICE::StreamConfig rx{};
     rx.numStreams = 1;
+    rx.streams[0].pcmChannels = 2;
     strlcpy(rx.streams[0].labels, "Main L\\Main R\\\\", sizeof(rx.streams[0].labels));
 
     ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::CacheRuntimeCaps(protocol, global, tx, rx);

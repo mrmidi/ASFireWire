@@ -12,6 +12,8 @@
 #include "../../IDeviceProtocol.hpp"
 #include "../../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 
+#include <DriverKit/IOLib.h>
+#include <array>
 #include <atomic>
 #include <functional>
 #include <optional>
@@ -37,6 +39,14 @@ struct DICETcatRuntimePolicy final {
     // are flowing; it does not select ARX1 as a clock source.
     bool requireSourceLockBeforeStreamEnable{true};
     bool requireSourceLockAtConfirm{true};
+    // Optional captured wire geometry. Isochronous channel assignments are not
+    // compared; PCM/MIDI widths, slot totals and stream counts remain exact.
+    std::optional<AudioStreamRuntimeCaps> requiredRuntimeGeometry{};
+    // Optional bounded rate allowlist (seven standard DICE rates maximum).
+    // Zero entries are unused. With no nonzero entries, preserve the captured
+    // geometry's exact rate, or the generic rate behavior when unconstrained.
+    // An allowlist changes only the rate check, never the required wire shape.
+    std::array<uint32_t, 7> allowedSampleRatesHz{};
 };
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
@@ -56,6 +66,8 @@ public:
                      ::ASFW::IRM::IRMClient* irmClient = nullptr,
                      ::ASFW::Scheduling::ITimerScheduler* timerScheduler = nullptr,
                      DICETcatRuntimePolicy runtimePolicy = {});
+
+    ~DICETcatProtocol() override;
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
@@ -99,10 +111,12 @@ private:
         DiceClockConfiguration& out) noexcept;
     void EnsureSectionsLoaded(VoidCallback callback);
     void EnsureRuntimeCapsLoaded(VoidCallback callback);
-    void CacheRuntimeCaps(const GlobalState& global,
+    [[nodiscard]] bool SampleRateMatchesPolicy(uint32_t sampleRateHz) const noexcept;
+    [[nodiscard]] bool RuntimeCapsMatchPolicy(const AudioStreamRuntimeCaps& caps) const noexcept;
+    [[nodiscard]] bool CacheRuntimeCaps(const GlobalState& global,
                           const StreamConfig& tx,
                           const StreamConfig& rx) noexcept;
-    void CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept;
+    [[nodiscard]] bool UpdateOperationalCaps(const AudioStreamRuntimeCaps& caps) noexcept;
     void ResetRuntimeCaps() noexcept;
 
     Protocols::Ports::FireWireBusInfo& busInfo_;
@@ -116,17 +130,25 @@ private:
     GeneralSections sections_{};
     bool initialized_{false};
     bool sectionsLoaded_{false};
+    // Serializes initial discovery publication only. Never held during I/O or
+    // client callbacks, and never acquired by stream-capability readers.
+    IOLock* discoveryLock_{nullptr};
 
     // The user-selected device clock, remembered across StartIO cycles so the
     // per-StartIO bring-up (PrepareDuplex48k) targets the live rate instead of a
-    // hardcoded 48 kHz. Updated whenever a real clock is applied (ApplyClockConfig
-    // for idle rate changes, PrepareDuplex for restarts). Default {0} means
+    // hardcoded 48 kHz. Updated after a successful, geometry-validated clock
+    // apply or preparation; failed requests retain the last selection. Default {0} means
     // "nothing selected yet" → PrepareDuplex48k falls back to 48 kHz. Without this
     // every StartIO rewrites CLOCK_SELECT back to 48 kHz and fights a 44.1 kHz
     // selection, flapping the device PLL and starving audio.
     AudioClockConfig selectedClock_{};
 
+    // Live state is written only by successful operational requests. Until the
+    // first one completes, getters use the immutable discovery values below.
     std::atomic<uint32_t> runtimeSampleRateHz_{0};
+    uint32_t discoverySampleRateHz_{0};
+    uint8_t discoveryDeviceToHostIsoChannel_{AudioStreamRuntimeCaps::kInvalidIsoChannel};
+    uint8_t discoveryHostToDeviceIsoChannel_{AudioStreamRuntimeCaps::kInvalidIsoChannel};
     std::atomic<uint32_t> hostInputPcmChannels_{0};
     std::atomic<uint32_t> hostOutputPcmChannels_{0};
     std::atomic<uint32_t> deviceToHostAm824Slots_{0};
@@ -135,19 +157,22 @@ private:
     std::atomic<uint32_t> hostToDeviceIsoChannel_{AudioStreamRuntimeCaps::kInvalidIsoChannel};
 
     // Per-stream wire geometry (DICE TX_NUMBER/RX_NUMBER + per-stream channels).
-    // Counts are atomic; the arrays are plain and published through the
-    // runtimeCapsValid_ release/acquire fence (written before the release-store,
-    // read after the acquire-load), mirroring the scalar fields above.
+    // Written once during discovery and published by runtimeCapsValid_. The
+    // plain arrays must remain immutable until quiesced Shutdown: storing true
+    // again does not protect readers that already passed the acquire-load.
+    // Live ISO assignments are atomic overlays, separate from static topology.
     std::atomic<uint32_t> deviceToHostStreamCount_{0};
     std::atomic<uint32_t> hostToDeviceStreamCount_{0};
     AudioStreamWireInfo deviceToHostStreams_[kMaxAudioStreamsPerDirection]{};
     AudioStreamWireInfo hostToDeviceStreams_[kMaxAudioStreamsPerDirection]{};
+    std::atomic<uint8_t> deviceToHostStreamIsoChannels_[kMaxAudioStreamsPerDirection]{};
+    std::atomic<uint8_t> hostToDeviceStreamIsoChannels_[kMaxAudioStreamsPerDirection]{};
 
     // Per-channel device labels, flattened across this direction's streams in
     // channel order (input == device TX, output == device RX). Published
     // through the runtimeCapsValid_ release/acquire fence like the arrays above;
-    // only the (global, tx, rx) cache path fills them (the caps-only overload
-    // leaves them intact). Covers the widest supported interface (32x32).
+    // only initial discovery fills them. Runtime operations and later discovery
+    // requests leave them intact. Covers the widest supported interface (32x32).
     static constexpr uint32_t kMaxChannelLabels = 32;
     std::atomic<uint32_t> inputChannelLabelCount_{0};
     std::atomic<uint32_t> outputChannelLabelCount_{0};

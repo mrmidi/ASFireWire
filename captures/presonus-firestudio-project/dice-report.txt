@@ -1,0 +1,465 @@
+ASFW DICE DEVICE REPORT
+=======================
+Generated: 2026-09-08T09:13:36Z
+Report app: 0.3.0 (build 9)
+Driver:     0.3.0 (458673e on pr/presonus-firestudio-project, dirty) built 2026-09-08T08:40:12Z
+Rate mode: low (32-48k)
+
+This is a read-only dump of the device's DICE register spaces.
+Paste it whole into the issue; do not trim sections.
+
+IDENTITY
+--------
+GUID:          0x000A920402D07FAC
+Vendor:        PreSonus
+Model:         FireStudio Project
+Node / gen:    1 / 2
+TCAT vendor:   0x000A92
+TCAT category: 0x04  (standard DICE)
+TCAT product:  0x00B
+TCAT serial:   1081260
+ASIC:          TCD2210 (DICE Mini)
+
+SECTION TABLES  (offsets and sizes in quadlets)
+-----------------------------------------------
+general space @ 0xFFFFE0000000
+  global         offset=0x0000A (0x000028 B)  size=0x0005A (360 B)
+  tx             offset=0x00064 (0x000190 B)  size=0x0008E (568 B)
+  rx             offset=0x000F2 (0x0003C8 B)  size=0x0011A (1128 B)
+  ext_sync       offset=0x0020C (0x000830 B)  size=0x00004 (16 B)
+  unused2        offset=0x00000 (0x000000 B)  size=0x00000 (0 B)
+
+extension space @ 0xFFFFE0200000
+  caps           offset=0x00013 (0x00004C B)  size=0x00004 (16 B)
+  cmd            offset=0x00017 (0x00005C B)  size=0x00002 (8 B)
+  mixer          offset=0x00019 (0x000064 B)  size=0x00121 (1156 B)
+  peak           offset=0x0013A (0x0004E8 B)  size=0x00080 (512 B)
+  router         offset=0x001BA (0x0006E8 B)  size=0x00081 (516 B)
+  stream_format  offset=0x0023B (0x0008EC B)  size=0x0010E (1080 B)
+  current_config offset=0x00349 (0x000D24 B)  size=0x01800 (24576 B)
+  standalone     offset=0x01B49 (0x006D24 B)  size=0x00010 (64 B)
+  application    offset=0x01B59 (0x006D64 B)  size=0x00008 (32 B)
+
+GLOBAL
+--------
+OWNER              = 0xFFFF000000000000  (no owner)
+NOTIFICATION       = 0x00000040   EXT_STATUS
+NICK_NAME          = 'FireStudio Project'
+CLOCK_SELECT       = 0x0000010C   source=12 (internal)  rate=1 (44100)
+ENABLE             = 0x00000000   streaming=no
+STATUS             = 0x00000101   locked=yes  nominal=44100
+EXTENDED_STATUS    = 0x00000000
+    locked  : -
+    slipped : -
+    NOTE: slip bits are read-to-clear and fluctuate without notification;
+          this is an instantaneous sample, not a stable value.
+SAMPLE_RATE        = 44100 Hz  (measured)
+VERSION            = 0x01000400   (1.0.4.0)
+CLOCK_CAPABILITIES = 0x1102001F
+    rates   : 32000 44100 48000 88200 96000
+    sources : aes2 arx1 internal
+CLOCK_SOURCE_NAMES:
+    0   aes1      'AES12'
+    1   aes2      'SPDIF'
+    2   aes3      'AES56'
+    3   aes4      'AES78'
+    4   aes_any   'AES_ANY'
+    5   adat      'ADAT'
+    6   tdif      'ADAT_AUX'
+    7   wc        'Word Clock'
+    8   arx1      'Unused'
+    9   arx2      'Unused'
+    10  arx3      'Unused'
+    11  arx4      'Unused'
+    12  internal  'Internal'
+
+TX STREAMS  (device transmits -> host capture)
+----------------------------------------------
+NUMBER = 1   SIZE = 70 quadlets (280 bytes)
+
+  [stream 0]
+    ISOCHRONOUS  = -1  (disabled)
+    PCM channels = 10
+    MIDI ports   = 1
+    SPEED        = S400
+    AC3_CAPS     = <not implemented: stream block too short>
+    NAMES:
+      0   'Mic 1'
+      1   'Mic 2'
+      2   'Mic 3'
+      3   'Mic 4'
+      4   'Mic 5'
+      5   'Mic 6'
+      6   'Mic 7'
+      7   'Mic 8'
+      8   'SPDIF L'
+      9   'SPDIF R'
+
+RX STREAMS  (device receives <- host playback)
+----------------------------------------------
+NUMBER = 1   SIZE = 70 quadlets (280 bytes)
+
+  [stream 0]
+    ISOCHRONOUS  = -1  (disabled)
+    SEQ_START    = 0
+    PCM channels = 10
+    MIDI ports   = 1
+    AC3_CAPS     = <not implemented: stream block too short>
+    NAMES:
+      0   'daw rt.1'
+      1   'daw rt.2'
+      2   'daw rt.3'
+      3   'daw rt.4'
+      4   'daw rt.5'
+      5   'daw rt.6'
+      6   'daw rt.7'
+      7   'daw rt.8'
+      8   'daw rt.9'
+      9   'daw rt.10'
+
+EXT_SYNC
+--------
+CLOCK_SOURCE   = 12 (internal)
+LOCKED         = yes
+RATE           = 1 (44100)
+ADAT_USER_DATA = no-data
+
+EAP CAPABILITIES
+----------------
+Router : exposed=true readOnly=false storable=true maxEntries=128
+Mixer  : exposed=true readOnly=false storable=true inDevId=2 outDevId=2 inputs=18 outputs=16
+General: dynamicStreamFormat=true storage=true peak=true
+         maxTxStreams=1 maxRxStreams=1 formatStorable=true
+         asic=TCD2210 (DICE Mini)
+
+EAP STREAM FORMAT STAGING AREA  (written, then LOADed — not the live config)
+----------------------------------------------------------------------------
+  <empty — nothing staged>
+
+EAP CURRENT CONFIG — STREAM FORMATS PER RATE MODE
+-------------------------------------------------
+These describe the layout at EVERY rate mode. The plain TX/RX
+registers above only describe the mode the device is in now.
+
+[low (32-48k)]
+  tx 0: pcm=10 midi=1  ac3=0x00000000
+    names: Mic 1, Mic 2, Mic 3, Mic 4, Mic 5, Mic 6, Mic 7, Mic 8, SPDIF L, SPDIF R
+  rx 0: pcm=10 midi=1  ac3=0x00000000
+    names: daw rt.1, daw rt.2, daw rt.3, daw rt.4, daw rt.5, daw rt.6, daw rt.7, daw rt.8, daw rt.9, daw rt.10
+
+[middle (88.2-96k)]
+  tx 0: pcm=10 midi=1  ac3=0x00000000
+    names: Mic 1, Mic 2, Mic 3, Mic 4, Mic 5, Mic 6, Mic 7, Mic 8, SPDIF L, SPDIF R
+  rx 0: pcm=10 midi=1  ac3=0x00000000
+    names: daw rt.1, daw rt.2, daw rt.3, daw rt.4, daw rt.5, daw rt.6, daw rt.7, daw rt.8, daw rt.9, daw rt.10
+
+[high (176.4-192k)]
+  tx 0: pcm=8 midi=1  ac3=0x000000FF
+    names: AES1, AES2, AES3, AES4, AES5, AES6, AES7, AES8
+  rx 0: pcm=8 midi=1  ac3=0x000000FF
+    names: AES1, AES2, AES3, AES4, AES5, AES6, AES7, AES8
+
+EAP STANDALONE  (behaviour with no host attached)
+-------------------------------------------------
+clockSource     = 0 (aes1)
+aesHighRate     = false
+adatMode        = Normal
+wordClockMode   = Normal  rate=1/1
+internalRate    = 32000
+
+EAP ROUTER STAGING AREA  (written, then LOADed — not the live config)
+---------------------------------------------------------------------
+  <empty — nothing staged>
+
+EAP CURRENT ROUTER — low (32-48k)  (82 entries)  [ACTIVE]
+---------------------------------------------------------
+  0    Avs0:0            <- Ins0:0
+  1    Avs0:1            <- Ins0:1
+  2    Avs0:2            <- Ins0:2
+  3    Avs0:3            <- Ins0:3
+  4    Avs0:4            <- Ins0:4
+  5    Avs0:5            <- Ins0:5
+  6    Avs0:6            <- Ins0:6
+  7    Avs0:7            <- Ins0:7
+  8    Avs0:8            <- AES:2
+  9    Avs0:9            <- AES:3
+  10   AES:0             <- AES:0
+  11   AES:0             <- AES:0
+  12   AES:0             <- AES:0
+  13   AES:0             <- AES:0
+  14   AES:0             <- AES:0
+  15   AES:0             <- AES:0
+  16   AES:0             <- AES:0
+  17   AES:0             <- AES:0
+  18   AES:0             <- AES:0
+  19   AES:0             <- AES:0
+  20   AES:0             <- AES:0
+  21   AES:0             <- AES:0
+  22   AES:0             <- AES:0
+  23   AES:0             <- AES:0
+  24   AES:0             <- AES:0
+  25   AES:0             <- AES:0
+  26   AES:0             <- AES:0
+  27   AES:0             <- AES:0
+  28   AES:0             <- AES:0
+  29   AES:0             <- AES:0
+  30   AES:0             <- AES:0
+  31   AES:0             <- AES:0
+  32   MixerTx0:0        <- Ins0:0
+  33   MixerTx0:1        <- Ins0:1
+  34   MixerTx0:2        <- Ins0:2
+  35   MixerTx0:3        <- Ins0:3
+  36   MixerTx0:4        <- Ins0:4
+  37   MixerTx0:5        <- Ins0:5
+  38   MixerTx0:6        <- Ins0:6
+  39   MixerTx0:7        <- Ins0:7
+  40   MixerTx0:8        <- AES:2
+  41   MixerTx0:9        <- AES:3
+  42   MixerTx0:10       <- Avs0:0
+  43   MixerTx0:11       <- Avs0:1
+  44   MixerTx0:12       <- Avs0:2
+  45   MixerTx0:13       <- Avs0:3
+  46   MixerTx0:14       <- Avs0:4
+  47   MixerTx0:15       <- Avs0:5
+  48   MixerTx1:0        <- Avs0:6
+  49   MixerTx1:1        <- Avs0:7
+  50   AES:0             <- AES:0
+  51   AES:0             <- AES:0
+  52   AES:0             <- AES:0
+  53   AES:0             <- AES:0
+  54   AES:0             <- AES:0
+  55   AES:0             <- AES:0
+  56   AES:0             <- AES:0
+  57   AES:0             <- AES:0
+  58   AES:0             <- AES:0
+  59   AES:0             <- AES:0
+  60   AES:0             <- AES:0
+  61   AES:0             <- AES:0
+  62   AES:0             <- AES:0
+  63   AES:0             <- AES:0
+  64   Ins0:0            <- Mixer:0
+  65   Ins0:1            <- Mixer:1
+  66   Ins0:2            <- Avs0:2
+  67   Ins0:3            <- Avs0:3
+  68   Ins0:4            <- Avs0:4
+  69   Ins0:5            <- Avs0:5
+  70   Ins0:6            <- Avs0:6
+  71   Ins0:7            <- Avs0:7
+  72   AES:2             <- Mixer:8
+  73   AES:3             <- Mixer:9
+  74   AES:0             <- AES:0
+  75   AES:0             <- AES:0
+  76   AES:0             <- AES:0
+  77   AES:0             <- AES:0
+  78   AES:0             <- AES:0
+  79   AES:0             <- AES:0
+  80   AES:0             <- AES:0
+  81   AES:0             <- AES:0
+
+EAP CURRENT ROUTER — middle (88.2-96k)  (82 entries)
+----------------------------------------------------
+  0    Avs0:0            <- Ins0:0
+  1    Avs0:1            <- Ins0:1
+  2    Avs0:2            <- Ins0:2
+  3    Avs0:3            <- Ins0:3
+  4    Avs0:4            <- Ins0:4
+  5    Avs0:5            <- Ins0:5
+  6    Avs0:6            <- Ins0:6
+  7    Avs0:7            <- Ins0:7
+  8    Avs0:8            <- AES:2
+  9    Avs0:9            <- AES:3
+  10   AES:0             <- AES:0
+  11   AES:0             <- AES:0
+  12   AES:0             <- AES:0
+  13   AES:0             <- AES:0
+  14   AES:0             <- AES:0
+  15   AES:0             <- AES:0
+  16   AES:0             <- AES:0
+  17   AES:0             <- AES:0
+  18   AES:0             <- AES:0
+  19   AES:0             <- AES:0
+  20   AES:0             <- AES:0
+  21   AES:0             <- AES:0
+  22   AES:0             <- AES:0
+  23   AES:0             <- AES:0
+  24   AES:0             <- AES:0
+  25   AES:0             <- AES:0
+  26   AES:0             <- AES:0
+  27   AES:0             <- AES:0
+  28   AES:0             <- AES:0
+  29   AES:0             <- AES:0
+  30   AES:0             <- AES:0
+  31   AES:0             <- AES:0
+  32   MixerTx0:0        <- Ins0:0
+  33   MixerTx0:1        <- Ins0:1
+  34   MixerTx0:2        <- Ins0:2
+  35   MixerTx0:3        <- Ins0:3
+  36   MixerTx0:4        <- Ins0:4
+  37   MixerTx0:5        <- Ins0:5
+  38   MixerTx0:6        <- Ins0:6
+  39   MixerTx0:7        <- Ins0:7
+  40   MixerTx0:8        <- AES:2
+  41   MixerTx0:9        <- AES:3
+  42   MixerTx0:10       <- Avs0:0
+  43   MixerTx0:11       <- Avs0:1
+  44   MixerTx0:12       <- Avs0:2
+  45   MixerTx0:13       <- Avs0:3
+  46   MixerTx0:14       <- Avs0:4
+  47   MixerTx0:15       <- Avs0:5
+  48   MixerTx1:0        <- Avs0:6
+  49   MixerTx1:1        <- Avs0:7
+  50   AES:0             <- AES:0
+  51   AES:0             <- AES:0
+  52   AES:0             <- AES:0
+  53   AES:0             <- AES:0
+  54   AES:0             <- AES:0
+  55   AES:0             <- AES:0
+  56   AES:0             <- AES:0
+  57   AES:0             <- AES:0
+  58   AES:0             <- AES:0
+  59   AES:0             <- AES:0
+  60   AES:0             <- AES:0
+  61   AES:0             <- AES:0
+  62   AES:0             <- AES:0
+  63   AES:0             <- AES:0
+  64   Ins0:0            <- Mixer:0
+  65   Ins0:1            <- Mixer:1
+  66   Ins0:2            <- Avs0:2
+  67   Ins0:3            <- Avs0:3
+  68   Ins0:4            <- Avs0:4
+  69   Ins0:5            <- Avs0:5
+  70   Ins0:6            <- Avs0:6
+  71   Ins0:7            <- Avs0:7
+  72   AES:2             <- Mixer:8
+  73   AES:3             <- Mixer:9
+  74   AES:0             <- AES:0
+  75   AES:0             <- AES:0
+  76   AES:0             <- AES:0
+  77   AES:0             <- AES:0
+  78   AES:0             <- AES:0
+  79   AES:0             <- AES:0
+  80   AES:0             <- AES:0
+  81   AES:0             <- AES:0
+
+EAP CURRENT ROUTER — high (176.4-192k)  (2 entries)
+---------------------------------------------------
+  0    ADAT:2            <- Avs1:6
+  1    ADAT:3            <- Avs1:7
+
+EAP PEAK  (82 of 128 entries carry data, instantaneous)
+-------------------------------------------------------
+Peak is 12-bit: full scale = 4095.  dBFS = 20*log10(peak/4095).
+Reading it as 16-bit would understate every level by 24 dB.
+  0    Avs0:0            <- Ins0:0            peak=  148
+  1    Avs0:1            <- Ins0:1            peak= 2671
+  2    Avs0:2            <- Ins0:2            peak= 1796
+  3    Avs0:3            <- Ins0:3            peak= 3713
+  4    Avs0:4            <- Ins0:4            peak= 1026
+  5    Avs0:5            <- Ins0:5            peak= 1542
+  6    Avs0:6            <- Ins0:6            peak= 3077
+  7    Avs0:7            <- Ins0:7            peak=  111
+  8    Avs0:8            <- AES:2             peak=    0
+  9    Avs0:9            <- AES:3             peak=    0
+  10   AES:0             <- AES:0             peak=    0
+  11   AES:0             <- AES:0             peak=    0
+  12   AES:0             <- AES:0             peak=    0
+  13   AES:0             <- AES:0             peak=    0
+  14   AES:0             <- AES:0             peak=    0
+  15   AES:0             <- AES:0             peak=    0
+  16   AES:0             <- AES:0             peak=    0
+  17   AES:0             <- AES:0             peak=    0
+  18   AES:0             <- AES:0             peak=    0
+  19   AES:0             <- AES:0             peak=    0
+  20   AES:0             <- AES:0             peak=    0
+  21   AES:0             <- AES:0             peak=    0
+  22   AES:0             <- AES:0             peak=    0
+  23   AES:0             <- AES:0             peak=    0
+  24   AES:0             <- AES:0             peak=    0
+  25   AES:0             <- AES:0             peak=    0
+  26   AES:0             <- AES:0             peak=    0
+  27   AES:0             <- AES:0             peak=    0
+  28   AES:0             <- AES:0             peak=    0
+  29   AES:0             <- AES:0             peak=    0
+  30   AES:0             <- AES:0             peak=    0
+  31   AES:0             <- AES:0             peak=    0
+  32   MixerTx0:0        <- Ins0:0            peak=    0
+  33   MixerTx0:1        <- Ins0:1            peak=    1
+  34   MixerTx0:2        <- Ins0:2            peak=    0
+  35   MixerTx0:3        <- Ins0:3            peak=    1
+  36   MixerTx0:4        <- Ins0:4            peak=    1
+  37   MixerTx0:5        <- Ins0:5            peak=    0
+  38   MixerTx0:6        <- Ins0:6            peak=    0
+  39   MixerTx0:7        <- Ins0:7            peak=    1
+  40   MixerTx0:8        <- AES:2             peak=    0
+  41   MixerTx0:9        <- AES:3             peak=    0
+  42   MixerTx0:10       <- Avs0:0            peak=    0
+  43   MixerTx0:11       <- Avs0:1            peak=    0
+  44   MixerTx0:12       <- Avs0:2            peak=    0
+  45   MixerTx0:13       <- Avs0:3            peak=    0
+  46   MixerTx0:14       <- Avs0:4            peak=    0
+  47   MixerTx0:15       <- Avs0:5            peak=    0
+  48   MixerTx1:0        <- Avs0:6            peak=    0
+  49   MixerTx1:1        <- Avs0:7            peak=    0
+  50   AES:0             <- AES:0             peak=    0
+  51   AES:0             <- AES:0             peak=    0
+  52   AES:0             <- AES:0             peak=    0
+  53   AES:0             <- AES:0             peak=    0
+  54   AES:0             <- AES:0             peak=    0
+  55   AES:0             <- AES:0             peak=    0
+  56   AES:0             <- AES:0             peak=    0
+  57   AES:0             <- AES:0             peak=    0
+  58   AES:0             <- AES:0             peak=    0
+  59   AES:0             <- AES:0             peak=    0
+  60   AES:0             <- AES:0             peak=    0
+  61   AES:0             <- AES:0             peak=    0
+  62   AES:0             <- AES:0             peak=    0
+  63   AES:0             <- AES:0             peak=    0
+  64   Ins0:0            <- Mixer:0           peak=    5
+  65   Ins0:1            <- Mixer:1           peak=    5
+  66   Ins0:2            <- Avs0:2            peak=    0
+  67   Ins0:3            <- Avs0:3            peak=    0
+  68   Ins0:4            <- Avs0:4            peak=    0
+  69   Ins0:5            <- Avs0:5            peak=    0
+  70   Ins0:6            <- Avs0:6            peak=    0
+  71   Ins0:7            <- Avs0:7            peak=    0
+  72   AES:2             <- Mixer:8           peak=    5
+  73   AES:3             <- Mixer:9           peak=    5
+  74   AES:0             <- AES:0             peak=    0
+  75   AES:0             <- AES:0             peak=    0
+  76   AES:0             <- AES:0             peak=    0
+  77   AES:0             <- AES:0             peak=    0
+  78   AES:0             <- AES:0             peak=    0
+  79   AES:0             <- AES:0             peak=    0
+  80   AES:0             <- AES:0             peak=    0
+  81   AES:0             <- AES:0             peak=    0
+  (46 further slots are beyond the active router and hold uninitialised data — omitted)
+
+EAP MIXER  (16 outputs x 18 inputs)
+-----------------------------------
+Gains are dB relative to unity (0.0 dB); mute is a zero coefficient.
+  Values are 2:14 fixed-point internally and rounded to 0.1 dB here.
+  Maximum gain is +12.0 dB.
+saturation = 0x000003FF   (bit n set = output n clipped)
+            0      1      2      3      4      5      6      7      8      9     10     11     12     13     14     15     16     17
+    0    -3.0  -12.7   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -9.9   mute   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0
+    1    -3.0  -12.7   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   mute  -10.2   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0
+    2    -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0
+    3    -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0
+    4    -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0
+    5    -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0
+    6    -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0
+    7    -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0
+    8    -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0
+    9    -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0   -3.0
+   10    mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute
+   11    mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute
+   12    mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute
+   13    mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute
+   14    mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute
+   15    mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute   mute
+
+NOTES
+--------
+- TX section is allocated for 2 stream block(s) but NUMBER reports 1.
+- RX section is allocated for 4 stream block(s) but NUMBER reports 1.
+- EAP application section is vendor-specific (32 bytes at offset 0x006D64) and is not decoded.

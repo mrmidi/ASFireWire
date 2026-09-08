@@ -109,6 +109,11 @@ targets:
           # so generation gives the same pbxproj whether or not it exists
           # (fresh checkouts / CI don't have it).
           - "Version/DriverVersion.hpp"
+          # Listed explicitly below so the captured experimental profile is
+          # included once and remains visible in the generated build graph.
+          - "Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusFireStudioProjectProfile.*"
+      - path: ASFWDriver/Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusFireStudioProjectProfile.hpp
+      - path: ASFWDriver/Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusFireStudioProjectProfile.cpp
     preBuildScripts:
       - name: Bump Version
         shell: /bin/sh

@@ -48,7 +48,8 @@ What is real today:
 - AV/C FCP and CMP plumbing exists and is working on the main test rig.
 - Audio publication and experimental streaming paths exist in-tree.
 - Audio hardware tested by the maintainer: the Apogee Duet FireWire path, Terratec PHASE 88 Rack, and Focusrite Saffire Pro 24 DSP. Contributors have additionally verified the PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out streaming) and the Midas Venice F32 (full duplex 32-in/32-out streaming).
-- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, PreSonus StudioLive 16.0.2, and the Midas Venice F32.
+- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, PreSonus StudioLive 16.0.2, PreSonus FireStudio Project (44.1/48 kHz), and the Midas Venice F32.
+- FireStudio Project raw-PCM build 9 passed short silent start/stop checks across 44.1/48 kHz and 44.1 kHz S/PDIF tones with quiet gaps through a Roland VM-3100. The contributor also reported over two minutes of GarageBand playback without issues; its complete 411.647-second driver session, including any silence, ended with zero TX underruns and clean resource release. A Thunderbolt-adapter reconnect can leave the Mac root with its cycle master disabled; this remains unfixed, although a FireStudio power cycle restored operation in the controlled test. Earlier labelled-AM824 recording/input/analogue-output results have not been repeated with build 9. See the [capture provenance and validation limits](captures/presonus-firestudio-project/README.md).
 - **Multi-stream DICE now works.** The Midas Venice F32 runs two isochronous streams per direction (2×16 channels = 32×32 total duplex).
 - **Host-controlled sample-rate switching is implemented**, including 44.1 kHz alongside 48 kHz. The driver decodes the device's advertised clock capabilities and drives DICE `CLOCK_SELECT`, so a rate change in the host (e.g. Logic) reprograms the device live without a reconnect. Switching rates on a CoreAudio aggregate device whose clock master is the FireWire interface is supported.
 - **Per-channel names** (device nickname plus per-channel TX/RX labels) are read from DICE devices and surfaced to CoreAudio.
@@ -66,6 +67,7 @@ Please test these currently enabled DICE devices:
 - Focusrite Saffire Pro 24
 - Focusrite Saffire Pro 24 DSP
 - PreSonus StudioLive 16.0.2 (contributor-verified on one unit; broader validation welcome)
+- PreSonus FireStudio Project (44.1/48 kHz; bounded raw-PCM S/PDIF and GarageBand playback validation; known adapter-reconnect timing issue; [validation limits](captures/presonus-firestudio-project/README.md))
 - Midas Venice F32 (contributor-verified; broader validation welcome)
 
 StudioLive 16.4.2 / 24.4.2 / 32.4.2 owners can help too: the driver recognizes these mixers but does not enable audio yet because their stream layout has not been captured from hardware. If you own one, open an issue — a short register capture using the ASFW app is all that is needed to add support.
@@ -114,6 +116,7 @@ Audio-device support in tree today:
 - Focusrite Saffire Pro 24
 - Focusrite Saffire Pro 24 DSP
 - PreSonus StudioLive 16.0.2
+- PreSonus FireStudio Project (experimental, 44.1/48 kHz)
 - Midas Venice F32 (multi-stream DICE, 32-in/32-out)
 - Terratec PHASE 88 Rack
 - Weiss INT202 and INT203 (DICE 2-channel layout; wired up but **never run against real hardware**)
@@ -127,6 +130,7 @@ Personally tested with working audio (hardware owned by the maintainer):
 Verified working by contributors on their own hardware:
 
 - PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out) — [@klochowicz](https://github.com/klochowicz)
+- PreSonus FireStudio Project (raw-PCM build 9: 44.1 kHz S/PDIF and GarageBand playback, short 44.1/48 kHz lifecycle/rate-switch checks; earlier labelled-AM824 builds: 48 kHz guitar inputs 1/2, stereo headphones and reported GarageBand recording; adapter-reconnect issue remains unfixed; [evidence and limits](captures/presonus-firestudio-project/README.md)) — [@seeward](https://github.com/seeward)
 - Midas Venice F32 (32×32 full duplex, 44.1 kHz and 48 kHz, live host-driven rate switching) — [@alicankaralar](https://github.com/alicankaralar)
 - Nikon Coolscan 9000 and Coolscan 4000 — SBP-2/SCSI film scanners, plug and play — [@mhellevang](https://github.com/mhellevang)
 - Panasonic MiniDV camcorder — DV capture and tape transport — [@hoffmabc](https://github.com/hoffmabc)

@@ -151,6 +151,106 @@ TEST(IsochServiceTxPreparation, ActiveTransmitStopRetainsQueueUntilHardwareQuies
     EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Stopped);
 }
 
+TEST(IsochServiceTxPreparation, InterruptSilenceFaultStopsWithoutRecursiveHardwareAccess) {
+    // HardwareInterface's host access gate uses a nonrecursive mutex, matching
+    // the production gate. Poll must release its diagnostic read scope before
+    // the immediate-fault stop requests its own hardware access.
+    HardwareInterface hardware;
+    IsochService service;
+    IOMemoryDescriptor* payloadDescriptor = nullptr;
+    IOMemoryDescriptor* metadataDescriptor = nullptr;
+    IOMemoryDescriptor* controlDescriptor = nullptr;
+    ASSERT_EQ(service.AllocateTxIsochResources(
+                  0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor,
+                  &metadataDescriptor, &controlDescriptor),
+              kIOReturnSuccess);
+
+    IOAddressSegment metadataRange{};
+    ASSERT_EQ(metadataDescriptor->GetAddressRange(&metadataRange), kIOReturnSuccess);
+    auto* metadata = reinterpret_cast<IsochTxPacketMeta*>(metadataRange.address);
+    for (uint64_t packetIndex = 0;
+         packetIndex < AudioTimingGeometry::kTxSharedSlotPackets; ++packetIndex) {
+        auto& meta = metadata[packetIndex];
+        meta.packetIndex = packetIndex;
+        meta.payloadLength = 8;
+        meta.commitGeneration.store(
+            ExpectedTxCommitGeneration(packetIndex, AudioTimingGeometry::kTxSharedSlotPackets),
+            std::memory_order_release);
+    }
+    IOAddressSegment controlRange{};
+    ASSERT_EQ(controlDescriptor->GetAddressRange(&controlRange), kIOReturnSuccess);
+    auto* queue = reinterpret_cast<IsochTxQueueControl*>(controlRange.address);
+    queue->ResetProducerForStart();
+    queue->committedEnd.store(AudioTimingGeometry::kTxPreparationLeadPackets,
+                              std::memory_order_release);
+    ASSERT_EQ(service.StartTransmit(3, hardware, 0x3f), kIOReturnSuccess);
+    auto* context = service.TransmitContext();
+    ASSERT_NE(context, nullptr);
+
+    // No interrupts and a stationary command pointer: watchdog refill sees no
+    // new completions, then reaches the fatal silent-interrupt threshold.
+    for (uint32_t poll = 0; poll < 100 &&
+         context->GetState() == ASFW::Isoch::ITState::Running; ++poll) {
+        context->Poll();
+    }
+
+    EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Faulted);
+    EXPECT_EQ(queue->statusWord.load(std::memory_order_acquire),
+              ASFW::Isoch::IsochTxQueueStatus::kDeadContext);
+    const Register32 controlClear = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlClear(0));
+    EXPECT_EQ(hardware.GetTestRegister(controlClear), ASFW::Driver::ContextControl::kRun);
+    EXPECT_EQ(hardware.GetTestRegister(Register32::kIsoXmitIntMaskClear), 1U);
+    EXPECT_TRUE(hardware.TryBeginAccess());
+
+    // A fault requests a stop; it does not prove OHCI has stopped DMA. Even
+    // after the immediate RUN-clear, an ACTIVE context must retain its queue
+    // until the normal quiesce path succeeds.
+    const Register32 controlSet = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlSet(0));
+    hardware.SetTestRegister(controlSet, ASFW::Driver::ContextControl::kActive);
+    EXPECT_EQ(service.StopAll(), kIOReturnTimeout);
+    EXPECT_EQ(service.TransmitContext(), context);
+    EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Faulted);
+    EXPECT_TRUE(context->NeedsQuiesce());
+    EXPECT_TRUE(hardware.IsIsochStreamingActive());
+    EXPECT_EQ(queue->statusWord.load(std::memory_order_acquire),
+              ASFW::Isoch::IsochTxQueueStatus::kDeadContext);
+    EXPECT_EQ(context->Configure(3, 0x3f), kIOReturnBusy);
+    EXPECT_EQ(context->Start(), kIOReturnNotReady);
+    EXPECT_EQ(context->SetSharedMemoryDescriptors(
+                  payloadDescriptor, metadataDescriptor, controlDescriptor,
+                  AudioTimingGeometry::kTxPacketsPerGroup),
+              kIOReturnBusy);
+    EXPECT_EQ(service.FreeTxIsochResources(), kIOReturnBusy);
+    IOMemoryDescriptor* replacementPayload = nullptr;
+    IOMemoryDescriptor* replacementMetadata = nullptr;
+    IOMemoryDescriptor* replacementControl = nullptr;
+    EXPECT_EQ(service.AllocateTxIsochResources(
+                  0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  AudioTimingGeometry::kTxPacketsPerGroup, &replacementPayload,
+                  &replacementMetadata, &replacementControl),
+              kIOReturnBusy);
+    EXPECT_EQ(replacementPayload, nullptr);
+    EXPECT_EQ(replacementMetadata, nullptr);
+    EXPECT_EQ(replacementControl, nullptr);
+
+    const auto operationsAfterFault = hardware.CopyTestOperations();
+    context->Poll();
+    context->HandleInterrupt();
+    EXPECT_EQ(hardware.CopyTestOperations(), operationsAfterFault);
+
+    hardware.SetTestRegister(controlSet, 0);
+    EXPECT_EQ(service.StopAll(), kIOReturnSuccess);
+    EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Stopped);
+    EXPECT_FALSE(context->NeedsQuiesce());
+    EXPECT_FALSE(hardware.IsIsochStreamingActive());
+    EXPECT_EQ(queue->statusWord.load(std::memory_order_acquire),
+              ASFW::Isoch::IsochTxQueueStatus::kStopped);
+    EXPECT_EQ(service.FreeTxIsochResources(), kIOReturnSuccess);
+}
+
 // Secondary-stream container: a multi-stream DICE device (Venice F32 = 2×16)
 // needs IsochService to manage a second IR and second IT context on their own
 // OHCI context indices, while the master (stream 0) is untouched. This pass only

@@ -7,8 +7,8 @@ namespace ASFW::Protocols::Audio::AMDTP {
 
 // Design decisions (see ../../../README.md, Step 3):
 //
-// 1. Configure() selects the cadence from streamMode + sampleRate and rejects
-//    anything but 48 kHz — honest failure over an untested rate path.
+// 1. Configure() selects the cadence from streamMode + sampleRate. Blocking
+//    uses the supported rate geometry; non-blocking remains 48 kHz only.
 // 2. packetIndex comes from the caller's TxPacketSlotView; the packetizer owns
 //    no cycle numbering.
 // 3. Slot bytes are wire-order (big-endian); this is the single

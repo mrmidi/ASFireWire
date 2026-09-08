@@ -7,6 +7,7 @@
 
 #include "../../Model/ASFWAudioDevice.hpp"
 #include "../AudioTypes.hpp"
+#include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
 #include <algorithm>
 
@@ -53,6 +54,41 @@ namespace ASFW::Audio {
     // (HandleChangeSampleRate -> RequestSampleRateChange), which reprograms
     // CLOCK_SELECT and is the only place the device's clock should move.
     return true;
+}
+
+enum class DicePublicationConfigResult {
+    kDefer,
+    kProfileFallback,
+    kRuntimeGeometry,
+};
+
+// Preserve established DICE publication on missing/failed discovery: available
+// runtime caps enrich the profile, but a transient read failure must not prevent
+// other DICE devices from publishing. Only the exact FireStudio Project profile
+// requires successfully discovered wire geometry before its first publication.
+// This prepares a candidate config; deferring does not remove an existing nub.
+[[nodiscard]] inline DicePublicationConfigResult PrepareDiceDeviceConfigForPublication(
+    const AudioStreamRuntimeCaps* caps,
+    bool geometryReadSucceeded,
+    Model::ASFWAudioDevice& config) {
+    const bool requiresRuntimeGeometry =
+        config.vendorId == DeviceProfiles::Audio::kPreSonusVendorId &&
+        config.modelId == DeviceProfiles::Audio::kFireStudioProjectModelId;
+    if (requiresRuntimeGeometry &&
+        (!geometryReadSucceeded || !caps ||
+         caps->deviceToHostAm824Slots == 0 || caps->hostToDeviceAm824Slots == 0 ||
+         caps->deviceToHostStreamCount == 0 ||
+         caps->deviceToHostStreamCount > kMaxAudioStreamsPerDirection ||
+         caps->hostToDeviceStreamCount == 0 ||
+         caps->hostToDeviceStreamCount > kMaxAudioStreamsPerDirection)) {
+        return DicePublicationConfigResult::kDefer;
+    }
+
+    if (caps && ApplyDiceRuntimeCapsToDeviceConfig(*caps, config)) {
+        return DicePublicationConfigResult::kRuntimeGeometry;
+    }
+    return requiresRuntimeGeometry ? DicePublicationConfigResult::kDefer
+                                   : DicePublicationConfigResult::kProfileFallback;
 }
 
 } // namespace ASFW::Audio

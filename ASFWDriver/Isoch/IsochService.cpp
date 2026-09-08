@@ -548,6 +548,11 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
     *outMetadataRing = nullptr;
     *outControlBlock = nullptr;
 
+    if (const auto* context = TransmitContext(streamIndex);
+        context && context->NeedsQuiesce()) {
+        return kIOReturnBusy;
+    }
+
     // Free only this stream's prior resources; other streams keep theirs.
     txPayloadSlab_[streamIndex] = nullptr;
     txMetadataRing_[streamIndex] = nullptr;
@@ -608,6 +613,14 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
 }
 
 kern_return_t IsochService::FreeTxIsochResources() {
+    // AudioDriverKit cleanup can request this even when its preceding stop
+    // failed. Retain every stream's resources until all contexts are quiesced.
+    for (uint32_t i = 0; i < kMaxStreamsPerDirection; ++i) {
+        if (const auto* context = TransmitContext(i);
+            context && context->NeedsQuiesce()) {
+            return kIOReturnBusy;
+        }
+    }
     for (uint32_t i = 0; i < kMaxStreamsPerDirection; ++i) {
         txPayloadSlab_[i] = nullptr;
         txMetadataRing_[i] = nullptr;
@@ -646,11 +659,11 @@ void IsochService::UpdateStreamingActiveState() noexcept {
             active = true;
         }
     }
-    if (isochTransmitContext_ && isochTransmitContext_->GetState() == ITState::Running) {
+    if (isochTransmitContext_ && isochTransmitContext_->NeedsQuiesce()) {
         active = true;
     }
     for (auto& ctx : secondaryTransmitContexts_) {
-        if (ctx && ctx->GetState() == ITState::Running) {
+        if (ctx && ctx->NeedsQuiesce()) {
             active = true;
         }
     }

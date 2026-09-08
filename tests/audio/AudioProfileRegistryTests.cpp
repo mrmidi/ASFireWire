@@ -167,6 +167,55 @@ TEST(AudioProfileRegistryTests, RecognizesPreSonusStudioLive1602DiceProfile) {
     EXPECT_EQ(profile->family, AudioProtocolFamily::DICE);
 }
 
+TEST(AudioProfileRegistryTests, RecognizesCapturedFireStudioProjectAsDice) {
+    // Config-ROM identity confirmed on hardware on 2026-09-07. The matching
+    // DICE report describes the stream geometry; framing remains experimental.
+    const DeviceProfileQuery query{.guid = 0x000A920402D07FACULL,
+                                   .vendorId = 0x000A92,
+                                   .modelId = 0x00000B};
+    const auto identity = AudioProfileRegistry::LookupIdentity(query);
+    ASSERT_TRUE(identity.has_value());
+    EXPECT_EQ(identity->vendorId, ids::kPreSonusVendorId);
+    EXPECT_EQ(identity->modelId, ids::kFireStudioProjectModelId);
+    EXPECT_STREQ(identity->vendorName, "PreSonus");
+    EXPECT_STREQ(identity->modelName, "FireStudio Project");
+    EXPECT_EQ(identity->source, ASFW::DeviceProfiles::MatchSource::VendorModel);
+    const auto audio = AudioProfileRegistry::LookupBestAudioProfile(query);
+    ASSERT_TRUE(audio.has_value());
+    EXPECT_EQ(audio->family, AudioProtocolFamily::DICE);
+    EXPECT_EQ(audio->mode, AudioIntegrationMode::kHardcodedNub);
+
+    // Recognition is by vendor/model, not by this unit's serial number.
+    EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
+                    ByVendorModel(ids::kPreSonusVendorId, ids::kFireStudioProjectModelId))
+                    .has_value());
+}
+
+TEST(AudioProfileRegistryTests, DoesNotInferFireStudioProjectFromGuid) {
+    const DeviceProfileQuery guidOnly{.guid = 0x000A920402D07FACULL};
+    EXPECT_FALSE(AudioProfileRegistry::LookupIdentity(guidOnly).has_value());
+    EXPECT_FALSE(AudioProfileRegistry::LookupBestAudioProfile(guidOnly).has_value());
+
+    const DeviceProfileQuery missingModel{.guid = guidOnly.guid,
+                                          .vendorId = ids::kPreSonusVendorId};
+    EXPECT_FALSE(AudioProfileRegistry::LookupIdentity(missingModel).has_value());
+    EXPECT_FALSE(AudioProfileRegistry::LookupBestAudioProfile(missingModel).has_value());
+}
+
+TEST(AudioProfileRegistryTests, FireStudioProjectRequiresExactVendorAndModel) {
+    for (const DeviceProfileQuery query : {
+             DeviceProfileQuery{.guid = 0x000A920402D07FACULL,
+                                .vendorId = 0x00ABCDEF,
+                                .modelId = ids::kFireStudioProjectModelId},
+             DeviceProfileQuery{.guid = 0x000A920402D07FACULL,
+                                .vendorId = ids::kPreSonusVendorId,
+                                .modelId = 0x000008}}) {
+        EXPECT_FALSE(AudioProfileRegistry::LookupIdentity(query).has_value());
+        EXPECT_FALSE(AudioProfileRegistry::LookupBestAudioProfile(query).has_value());
+        EXPECT_EQ(ModeFor(query.vendorId, query.modelId), AudioIntegrationMode::kNone);
+    }
+}
+
 TEST(AudioProfileRegistryTests, RejectsOtherPreSonusModels) {
     // PreSonus BeBoB devices (FireBox/FP10/Inspire) and the DICE FireStudio share
     // the OUI but must not resolve to the StudioLive profile.

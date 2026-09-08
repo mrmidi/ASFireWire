@@ -1627,6 +1627,7 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
         return kIOReturnNotReady;
     }
 
+    const AudioClockConfig previousDesiredClock = session.desiredClock;
     const uint64_t restartId = AllocateRestartId();
     session.guid = guid;
     session.restartId = restartId;
@@ -1648,6 +1649,11 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
         if (apply.status == kIOReturnAborted && TeardownRequested()) {
             RecordTeardownAbort("IdleClockApply", guid);
         }
+        // The HAL keeps its previous rate when this request fails. Retain that
+        // selection for the next StartIO; otherwise a transient failure can
+        // make a later start apply the rejected rate beneath the old host format.
+        // Keep the attempted rate in the clock-request completion diagnostics.
+        session.desiredClock = previousDesiredClock;
         session.terminalError = apply.status;
         RecordIssue(session, session.lastFailure, DuplexRestartPhase::kPreparingDevice,
                     DuplexRestartErrorClass::kStageFailure, DuplexRestartFailureCause::kIdleClockApply,
@@ -1659,6 +1665,7 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
         return apply.status;
     }
     if (!IsRestartEpochCurrent(guid, restartId, *route)) {
+        session.desiredClock = previousDesiredClock;
         session.terminalError = kIOReturnSuccess;
         RecordIssue(session, session.lastInvalidation, DuplexRestartPhase::kPreparingDevice,
                     IsStopRequested(guid) ? DuplexRestartErrorClass::kStopIntent

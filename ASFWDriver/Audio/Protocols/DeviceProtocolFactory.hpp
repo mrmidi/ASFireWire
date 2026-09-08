@@ -75,6 +75,7 @@ public:
     static constexpr uint32_t kMidasVendorId = DeviceProfiles::Audio::kMidasVendorId;
     static constexpr uint32_t kMidasVeniceModelId = DeviceProfiles::Audio::kMidasVeniceModelId;
     static constexpr uint32_t kPreSonusVendorId = DeviceProfiles::Audio::kPreSonusVendorId;
+    static constexpr uint32_t kFireStudioProjectModelId = DeviceProfiles::Audio::kFireStudioProjectModelId;
     static constexpr uint32_t kStudioLive1602ModelId =
         DeviceProfiles::Audio::kStudioLive1602ModelId;
     static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 =

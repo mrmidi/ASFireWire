@@ -16,10 +16,10 @@ LookupIdentity(const DeviceProfileQuery& query) noexcept {
     if (query.vendorId != kPreSonusVendorId) {
         return std::nullopt;
     }
-    // StudioLive siblings are recognized by name only until their stream geometry
-    // is captured from hardware — see LookupAudioProfile.
+    // Identity recognition and audio integration are separate policies.
     const char* modelName = nullptr;
     switch (query.modelId) {
+    case kFireStudioProjectModelId: modelName = kFireStudioProjectModelName; break;
     case kStudioLive1602ModelId: modelName = kStudioLive1602ModelName; break;
     case kStudioLive1642ModelId: modelName = kStudioLive1642ModelName; break;
     case kStudioLive2442ModelId: modelName = kStudioLive2442ModelName; break;
@@ -35,6 +35,14 @@ LookupIdentity(const DeviceProfileQuery& query) noexcept {
 
 [[nodiscard]] constexpr std::optional<AudioProfileHint>
 LookupAudioProfile(const DeviceProfileQuery& query) noexcept {
+    if (query.vendorId == kPreSonusVendorId && query.modelId == kFireStudioProjectModelId) {
+        // Captured 2026-09-07: one stream/direction, 10 PCM + 1 MIDI,
+        // captured at 48 kHz internal. The protocol enforces this geometry;
+        // the experimental stream profile allows 44.1 and 48 kHz.
+        return AudioProfileHint{.family = AudioProtocolFamily::DICE,
+                                .mode = AudioIntegrationMode::kHardcodedNub,
+                                .source = MatchSource::VendorModel};
+    }
     if (query.vendorId == kPreSonusVendorId && query.modelId == kStudioLive1602ModelId) {
         // Identity captured live from the hardware (2026-07-08): GUID
         // 0x000A920404FE2011, unit directory specifier 0x000A92 version 0x000001.

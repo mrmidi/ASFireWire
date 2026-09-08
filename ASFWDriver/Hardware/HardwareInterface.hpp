@@ -90,6 +90,10 @@ class HardwareInterface {
 
     void SetInterruptMask(uint32_t mask, bool enable);
     [[nodiscard]] InterruptSnapshot CaptureInterruptSnapshot(uint64_t timestamp) const noexcept;
+    // Call after ControllerCore has acknowledged the global interrupt events.
+    // Per-context events are read fresh and acknowledged once before dispatch.
+    [[nodiscard]] InterruptSnapshot CaptureAndAcknowledgeIsochInterrupts(
+        const InterruptSnapshot& globalSnapshot) noexcept;
     void SetLinkControlBits(uint32_t bits);
     void ClearLinkControlBits(uint32_t bits);
     void ClearIntEvents(uint32_t mask);

@@ -82,7 +82,8 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
     bool recoverActiveStream = false;
     if (lock_) {
         IOLockLock(lock_);
-        recoverActiveStream = (activeGuid_ == guid);
+        recoverActiveStream = streamReservation_.Guid() == guid &&
+                              !streamReservation_.BlocksNewWork(guid);
         IOLockUnlock(lock_);
     }
 
@@ -109,7 +110,8 @@ void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> de
     bool suspendedActiveStream = false;
     if (lock_) {
         IOLockLock(lock_);
-        suspendedActiveStream = (activeGuid_ == guid);
+        suspendedActiveStream = streamReservation_.Guid() == guid &&
+                                !streamReservation_.BlocksNewWork(guid);
         IOLockUnlock(lock_);
     }
 
@@ -132,9 +134,9 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     if (lock_) {
         IOLockLock(lock_);
         firstRemoval = remoteLostGuids_.insert(guid).second;
-        wasActive = (activeGuid_ == guid);
+        wasActive = (streamReservation_.Guid() == guid);
         if (wasActive) {
-            activeGuid_ = 0;
+            streamReservation_.Clear(guid);
         }
         IOLockUnlock(lock_);
     }
@@ -194,7 +196,8 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
     uint64_t guid = 0;
     if (lock_) {
         IOLockLock(lock_);
-        guid = activeGuid_;
+        guid = streamReservation_.Guid();
+        if (streamReservation_.BlocksNewWork(guid)) guid = 0;
         IOLockUnlock(lock_);
     }
 
@@ -238,61 +241,48 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
 
 IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
     if (guid == 0) return kIOReturnBadArgument;
-
-    bool setActive = false;
-    if (lock_) {
-        IOLockLock(lock_);
-        if (remoteLostGuids_.contains(guid)) {
-            IOLockUnlock(lock_);
-            return kIOReturnNoDevice;
-        }
-        if (activeGuid_ == 0) {
-            activeGuid_ = guid;
-            setActive = true;
-        } else if (activeGuid_ == guid) {
-            IOLockUnlock(lock_);
-            // Idempotent start: avoid reconfiguring already-running IR/IT contexts.
-            return kIOReturnSuccess;
-        } else {
-            const uint64_t active = activeGuid_;
-            IOLockUnlock(lock_);
-
-            ASFW_LOG_WARNING(Audio,
-                             "AudioCoordinator: StartStreaming busy requested=0x%016llx active=0x%016llx",
-                             guid,
-                             active);
-            // TODO(ASFW-MULTIDEVICE): Multi-device streaming is not implemented.
-            // This is the explicit v1 multi-device boundary: multiple GUIDs may
-            // publish nubs/runtimes, but only one GUID may own isoch transport.
-            // Simultaneous streaming starts here and requires per-GUID IR/IT
-            // contexts, timing bridge, IRM/channel allocation, and backend sessions.
-            return kIOReturnBusy;
-        }
+    if (teardownRequested_.load(std::memory_order_acquire)) return kIOReturnAborted;
+    if (!lock_) return kIOReturnNoResources;
+    IOLockLock(lock_);
+    if (remoteLostGuids_.contains(guid)) {
         IOLockUnlock(lock_);
+        return kIOReturnNoDevice;
+    }
+    const auto decision = streamReservation_.BeginStart(guid);
+    const uint64_t reservedGuid = streamReservation_.Guid();
+    IOLockUnlock(lock_);
+    if (decision.admission == AudioStreamReservation::Admission::AlreadyRunning) {
+        return kIOReturnSuccess;
+    }
+    if (decision.admission != AudioStreamReservation::Admission::Begin) {
+        const bool cleanupFailed = decision.admission == AudioStreamReservation::Admission::CleanupFailed;
+        ASFW_LOG_WARNING(Audio,
+                         "AudioCoordinator: StartStreaming refused requested=0x%016llx reserved=0x%016llx cleanupFailed=%u",
+                         guid, reservedGuid, cleanupFailed ? 1U : 0U);
+        return cleanupFailed ? kIOReturnNotReady : kIOReturnBusy;
     }
 
     auto* backend = BackendForGuid(guid);
     if (!backend) {
-        if (setActive && lock_) {
-            IOLockLock(lock_);
-            if (activeGuid_ == guid) activeGuid_ = 0;
-            IOLockUnlock(lock_);
-        }
+        IOLockLock(lock_);
+        streamReservation_.CompleteStart(decision.token, false);
+        IOLockUnlock(lock_);
         return kIOReturnNotReady;
     }
 
     const IOReturn kr = backend->StartStreaming(guid);
+    IOLockLock(lock_);
+    const bool completionAccepted = streamReservation_.CompleteStart(decision.token, kr == kIOReturnSuccess);
+    IOLockUnlock(lock_);
+    // Removal, teardown, or a superseding stop invalidated this operation.
+    // Never report a late backend success as a newly running stream.
+    if (!completionAccepted) return kIOReturnAborted;
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
                        "AudioCoordinator: StartStreaming failed backend=%{public}s GUID=0x%016llx kr=0x%x",
                        backend->Name(),
                        guid,
                        kr);
-        if (setActive && lock_) {
-            IOLockLock(lock_);
-            if (activeGuid_ == guid) activeGuid_ = 0;
-            IOLockUnlock(lock_);
-        }
         return kr;
     }
 
@@ -305,29 +295,37 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
 
 IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
     if (guid == 0) return kIOReturnBadArgument;
-
-    if (lock_) {
-        IOLockLock(lock_);
-        if (remoteLostGuids_.contains(guid)) {
-            IOLockUnlock(lock_);
-            return kIOReturnSuccess;
-        }
-        if (activeGuid_ != 0 && activeGuid_ != guid) {
-            const uint64_t active = activeGuid_;
-            IOLockUnlock(lock_);
-            ASFW_LOG_WARNING(Audio,
-                             "AudioCoordinator: StopStreaming busy requested=0x%016llx active=0x%016llx",
-                             guid,
-                             active);
-            return kIOReturnBusy;
-        }
+    if (teardownRequested_.load(std::memory_order_acquire)) return kIOReturnAborted;
+    if (!lock_) return kIOReturnNoResources;
+    IOLockLock(lock_);
+    if (remoteLostGuids_.contains(guid)) {
         IOLockUnlock(lock_);
+        return kIOReturnSuccess;
+    }
+    const auto decision = streamReservation_.BeginStop(guid);
+    const uint64_t reservedGuid = streamReservation_.Guid();
+    IOLockUnlock(lock_);
+    if (decision.admission != AudioStreamReservation::Admission::Begin) {
+        const bool cleanupFailed = decision.admission == AudioStreamReservation::Admission::CleanupFailed;
+        ASFW_LOG_WARNING(Audio,
+                         "AudioCoordinator: StopStreaming refused requested=0x%016llx reserved=0x%016llx cleanupFailed=%u",
+                         guid, reservedGuid, cleanupFailed ? 1U : 0U);
+        return cleanupFailed ? kIOReturnNotReady : kIOReturnBusy;
     }
 
     auto* backend = BackendForGuid(guid);
-    if (!backend) return kIOReturnNotReady;
+    if (!backend) {
+        IOLockLock(lock_);
+        streamReservation_.CompleteStop(decision.token, false);
+        IOLockUnlock(lock_);
+        return kIOReturnNotReady;
+    }
 
     const IOReturn kr = backend->StopStreaming(guid);
+    IOLockLock(lock_);
+    const bool completionAccepted = streamReservation_.CompleteStop(decision.token, kr == kIOReturnSuccess);
+    IOLockUnlock(lock_);
+    if (!completionAccepted) return kIOReturnAborted;
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
                        "AudioCoordinator: StopStreaming failed backend=%{public}s GUID=0x%016llx kr=0x%x",
@@ -335,12 +333,6 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
                        guid,
                        kr);
         return kr;
-    }
-
-    if (lock_) {
-        IOLockLock(lock_);
-        if (activeGuid_ == guid) activeGuid_ = 0;
-        IOLockUnlock(lock_);
     }
 
     ASFW_LOG(Audio,
@@ -357,20 +349,21 @@ IOReturn AudioCoordinator::RequestClockConfig(
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
+    if (teardownRequested_.load(std::memory_order_acquire)) return kIOReturnAborted;
+    if (!lock_) return kIOReturnNoResources;
 
-    if (lock_) {
-        IOLockLock(lock_);
-        if (activeGuid_ != 0 && activeGuid_ != guid) {
-            const uint64_t active = activeGuid_;
-            IOLockUnlock(lock_);
-            ASFW_LOG_WARNING(Audio,
-                             "AudioCoordinator: RequestClockConfig busy requested=0x%016llx active=0x%016llx",
-                             guid,
-                             active);
-            return kIOReturnBusy;
-        }
+    IOLockLock(lock_);
+    if ((streamReservation_.Guid() != 0 && streamReservation_.Guid() != guid) ||
+        streamReservation_.BlocksNewWork(guid)) {
+        const uint64_t active = streamReservation_.Guid();
         IOLockUnlock(lock_);
+        ASFW_LOG_WARNING(Audio,
+                         "AudioCoordinator: RequestClockConfig busy requested=0x%016llx active=0x%016llx",
+                         guid,
+                         active);
+        return kIOReturnBusy;
     }
+    IOLockUnlock(lock_);
 
     const auto record = registry_.SnapshotByGuid(guid);
     if (!record.has_value()) {
@@ -427,7 +420,7 @@ void AudioCoordinator::BeginTeardown() noexcept {
 
     if (lock_) {
         IOLockLock(lock_);
-        activeGuid_ = 0;
+        streamReservation_.ClearAll();
         IOLockUnlock(lock_);
     }
 }
@@ -448,8 +441,9 @@ void AudioCoordinator::HandleHostTimingLoss(uint64_t guid) noexcept {
     if (lock_) {
         IOLockLock(lock_);
         const bool remoteLost = remoteLostGuids_.contains(guid);
+        const bool cleanupBlocked = streamReservation_.BlocksNewWork(guid);
         IOLockUnlock(lock_);
-        if (remoteLost) {
+        if (remoteLost || cleanupBlocked) {
             return;
         }
     }

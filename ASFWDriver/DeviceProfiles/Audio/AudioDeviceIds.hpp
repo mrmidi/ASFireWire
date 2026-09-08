@@ -67,6 +67,9 @@ inline constexpr uint32_t kMidasVeniceModelId  = 0x000001;
 // hardware-verified — the siblings are recognized by name but not audio-enabled
 // until their stream geometry is captured from real hardware.
 inline constexpr uint32_t kPreSonusVendorId      = 0x000a92;
+// Config-ROM vendor/model confirmed on FireStudio Project hardware (2026-09-07),
+// GUID 0x000A920402D07FAC. See captures/presonus-firestudio-project/.
+inline constexpr uint32_t kFireStudioProjectModelId = 0x00000b;
 inline constexpr uint32_t kStudioLive1602ModelId = 0x000013;
 inline constexpr uint32_t kStudioLive1642ModelId = 0x000010;
 inline constexpr uint32_t kStudioLive2442ModelId = 0x000012;
@@ -100,6 +103,7 @@ inline constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
 inline constexpr const char* kMidasVendorName         = "Midas";
 inline constexpr const char* kMidasVeniceModelName    = "Venice F32";
 inline constexpr const char* kPreSonusVendorName      = "PreSonus";
+inline constexpr const char* kFireStudioProjectModelName = "FireStudio Project";
 inline constexpr const char* kStudioLive1602ModelName = "StudioLive 16.0.2";
 inline constexpr const char* kStudioLive1642ModelName = "StudioLive 16.4.2";
 inline constexpr const char* kStudioLive2442ModelName = "StudioLive 24.4.2";

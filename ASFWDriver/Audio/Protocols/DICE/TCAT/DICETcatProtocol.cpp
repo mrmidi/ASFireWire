@@ -22,7 +22,11 @@ namespace {
     return caps.sampleRateHz != 0 &&
         caps.hostOutputPcmChannels != 0 &&
         caps.deviceToHostAm824Slots != 0 &&
-        caps.hostToDeviceAm824Slots != 0;
+        caps.hostToDeviceAm824Slots != 0 &&
+        caps.deviceToHostStreamCount != 0 &&
+        caps.deviceToHostStreamCount <= kMaxAudioStreamsPerDirection &&
+        caps.hostToDeviceStreamCount != 0 &&
+        caps.hostToDeviceStreamCount <= kMaxAudioStreamsPerDirection;
 }
 
 void LogRuntimeCaps(const char* source, const AudioStreamRuntimeCaps& caps) {
@@ -84,10 +88,20 @@ DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
     , io_(busOps, busInfo, routeRegistry, route)
     , diceReader_(io_)
     , timerScheduler_(timerScheduler)
-    , runtimePolicy_(runtimePolicy) {
+    , runtimePolicy_(runtimePolicy)
+    , discoveryLock_(IOLockAlloc()) {
+}
+
+DICETcatProtocol::~DICETcatProtocol() {
+    if (discoveryLock_) {
+        IOLockFree(discoveryLock_);
+    }
 }
 
 IOReturn DICETcatProtocol::Initialize() {
+    if (!discoveryLock_) {
+        return kIOReturnNoMemory;
+    }
     if (!duplexCtrl_) {
         duplexCtrl_.emplace(diceReader_, io_, busInfo_, nullptr /*workQueue*/, GeneralSections{},
                             timerScheduler_,
@@ -133,15 +147,18 @@ bool DICETcatProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps
         return false;
     }
 
-    outCaps.sampleRateHz = runtimeSampleRateHz_.load(std::memory_order_relaxed);
+    const uint32_t liveRate = runtimeSampleRateHz_.load(std::memory_order_acquire);
+    outCaps.sampleRateHz = liveRate != 0 ? liveRate : discoverySampleRateHz_;
     outCaps.hostInputPcmChannels = hostInputPcmChannels_.load(std::memory_order_relaxed);
     outCaps.hostOutputPcmChannels = hostOutputPcmChannels_.load(std::memory_order_relaxed);
     outCaps.deviceToHostAm824Slots = deviceToHostAm824Slots_.load(std::memory_order_relaxed);
     outCaps.hostToDeviceAm824Slots = hostToDeviceAm824Slots_.load(std::memory_order_relaxed);
-    outCaps.deviceToHostIsoChannel =
-        static_cast<uint8_t>(deviceToHostIsoChannel_.load(std::memory_order_relaxed));
-    outCaps.hostToDeviceIsoChannel =
-        static_cast<uint8_t>(hostToDeviceIsoChannel_.load(std::memory_order_relaxed));
+    outCaps.deviceToHostIsoChannel = liveRate != 0
+        ? static_cast<uint8_t>(deviceToHostIsoChannel_.load(std::memory_order_relaxed))
+        : discoveryDeviceToHostIsoChannel_;
+    outCaps.hostToDeviceIsoChannel = liveRate != 0
+        ? static_cast<uint8_t>(hostToDeviceIsoChannel_.load(std::memory_order_relaxed))
+        : discoveryHostToDeviceIsoChannel_;
 
     // Per-stream geometry: the runtimeCapsValid_ acquire-load above establishes
     // happens-before with the writer's release-store, so the plain arrays are
@@ -151,6 +168,12 @@ bool DICETcatProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps
     for (uint32_t i = 0; i < kMaxAudioStreamsPerDirection; ++i) {
         outCaps.deviceToHostStreams[i] = deviceToHostStreams_[i];
         outCaps.hostToDeviceStreams[i] = hostToDeviceStreams_[i];
+        if (liveRate != 0) {
+            outCaps.deviceToHostStreams[i].isoChannel =
+                deviceToHostStreamIsoChannels_[i].load(std::memory_order_relaxed);
+            outCaps.hostToDeviceStreams[i].isoChannel =
+                hostToDeviceStreamIsoChannels_[i].load(std::memory_order_relaxed);
+        }
     }
     return true;
 }
@@ -175,23 +198,28 @@ void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
     }
 
     DiceClockConfiguration diceClock{};
-    if (!MakeDiceClockConfiguration(desiredClock, diceClock)) {
+    if (!MakeDiceClockConfiguration(desiredClock, diceClock) ||
+        !SampleRateMatchesPolicy(desiredClock.sampleRateHz)) {
         callback(kIOReturnUnsupported, {});
         return;
-    }
-
-    // Remember the live clock so a later per-StartIO PrepareDuplex48k targets it
-    // rather than reverting the device to 48 kHz (see selectedClock_).
-    if (desiredClock.sampleRateHz != 0) {
-        selectedClock_ = desiredClock;
     }
 
     duplexCtrl_->PrepareDuplex(
         channels,
         diceClock,
         [this, callback = std::move(callback)](IOReturn status, DiceDuplexPrepareResult result) mutable {
+            if (status == kIOReturnSuccess && !UpdateOperationalCaps(result.runtimeCaps)) {
+                duplexCtrl_->AbortDuplex(kIOReturnUnsupported,
+                    [callback = std::move(callback)](IOReturn rollbackStatus) mutable {
+                        callback(rollbackStatus, {});
+                    });
+                return;
+            }
             if (status == kIOReturnSuccess) {
-                CacheRuntimeCaps(result.runtimeCaps);
+                // Only a completed, geometry-validated preparation may change
+                // the next legacy StartIO target. A failed request is not a
+                // selected device rate, even if it reached CLOCK_SELECT.
+                selectedClock_ = result.appliedClock;
             }
             callback(status, result);
         });
@@ -223,8 +251,12 @@ void DICETcatProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
 
     duplexCtrl_->ConfirmDuplexStart(
         [this, callback = std::move(callback)](IOReturn status, DiceDuplexConfirmResult result) mutable {
-            if (status == kIOReturnSuccess) {
-                CacheRuntimeCaps(result.runtimeCaps);
+            if (status == kIOReturnSuccess && !UpdateOperationalCaps(result.runtimeCaps)) {
+                duplexCtrl_->AbortDuplex(kIOReturnUnsupported,
+                    [callback = std::move(callback)](IOReturn rollbackStatus) mutable {
+                        callback(rollbackStatus, {});
+                    });
+                return;
             }
             callback(status, result);
         });
@@ -238,23 +270,27 @@ void DICETcatProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
     }
 
     DiceClockConfiguration diceClock{};
-    if (!MakeDiceClockConfiguration(desiredClock, diceClock)) {
+    if (!MakeDiceClockConfiguration(desiredClock, diceClock) ||
+        !SampleRateMatchesPolicy(desiredClock.sampleRateHz)) {
         callback(kIOReturnUnsupported, {});
         return;
-    }
-
-    // An idle sample-rate change lands here (RunIdleClockApply). Remember it so
-    // the next StartIO's PrepareDuplex48k keeps the device at this rate instead
-    // of rewriting CLOCK_SELECT back to 48 kHz (see selectedClock_).
-    if (desiredClock.sampleRateHz != 0) {
-        selectedClock_ = desiredClock;
     }
 
     duplexCtrl_->ApplyClockConfig(
         diceClock,
         [this, callback = std::move(callback)](IOReturn status, DiceClockApplyResult result) mutable {
+            if (status == kIOReturnSuccess && !UpdateOperationalCaps(result.runtimeCaps)) {
+                duplexCtrl_->AbortDuplex(kIOReturnUnsupported,
+                    [callback = std::move(callback)](IOReturn rollbackStatus) mutable {
+                        callback(rollbackStatus, {});
+                    });
+                return;
+            }
             if (status == kIOReturnSuccess) {
-                CacheRuntimeCaps(result.runtimeCaps);
+                // Preserve the last successful rate on read/clock/geometry
+                // failure; otherwise StartIO would silently retry a failed
+                // idle rate change after its caller has already rejected it.
+                selectedClock_ = result.appliedClock;
             }
             callback(status, result);
         });
@@ -362,7 +398,10 @@ void DICETcatProtocol::EnsureSectionsLoaded(VoidCallback callback) {
         return;
     }
 
-    if (sectionsLoaded_) {
+    IOLockLock(discoveryLock_);
+    const bool loaded = sectionsLoaded_;
+    IOLockUnlock(discoveryLock_);
+    if (loaded) {
         callback(kIOReturnSuccess);
         return;
     }
@@ -374,8 +413,12 @@ void DICETcatProtocol::EnsureSectionsLoaded(VoidCallback callback) {
             return;
         }
 
-        sections_ = sections;
-        sectionsLoaded_ = true;
+        IOLockLock(discoveryLock_);
+        if (!sectionsLoaded_) {
+            sections_ = sections;
+            sectionsLoaded_ = true;
+        }
+        IOLockUnlock(discoveryLock_);
         ASFW_LOG(DICE,
                  "DICETcatProtocol: loaded sections global=%u/%u tx=%u/%u rx=%u/%u ext=%u/%u",
                  sections_.global.offset,
@@ -453,14 +496,13 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
 
                                 state->rx = rx;
                                 LogStreamConfigSummary("RX", state->rx);
-                                CacheRuntimeCaps(state->global, state->tx, state->rx);
+                                if (!CacheRuntimeCaps(state->global, state->tx, state->rx)) {
+                                    callback(kIOReturnUnsupported);
+                                    return;
+                                }
                                 AudioStreamRuntimeCaps caps{};
                                 (void)GetRuntimeAudioStreamCaps(caps);
                                 LogRuntimeCaps("standard-dice", caps);
-                                if (!HasUsableRuntimeCaps(caps)) {
-                                    ASFW_LOG(DICE,
-                                             "DICETcatProtocol: standard DICE discovery produced zero or partial caps; audio publication should fail closed");
-                                }
                                 callback(kIOReturnSuccess);
                             });
                     });
@@ -468,7 +510,7 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
     });
 }
 
-void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
+bool DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
                                         const StreamConfig& tx,
                                         const StreamConfig& rx) noexcept {
     AudioStreamRuntimeCaps caps{
@@ -506,8 +548,20 @@ void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
     fillPerStream(tx, caps.deviceToHostStreamCount, caps.deviceToHostStreams);
     fillPerStream(rx, caps.hostToDeviceStreamCount, caps.hostToDeviceStreams);
 
+    if (!RuntimeCapsMatchPolicy(caps)) {
+        ASFW_LOG(DICE, "DICETcatProtocol: rejecting unusable or unexpected discovery geometry");
+        LogRuntimeCaps("rejected", caps);
+        return false;
+    }
+
+    IOLockLock(discoveryLock_);
+    if (runtimeCapsValid_.load(std::memory_order_acquire)) {
+        IOLockUnlock(discoveryLock_);
+        return true;
+    }
+
     // Per-channel device labels from the DICE TX/RX name sections, flattened
-    // across streams in channel order. Written BEFORE CacheRuntimeCaps(caps)'s
+    // across streams in channel order. Written BEFORE initial publication's
     // release-store so GetChannelLabels readers see a consistent snapshot.
     // Host input == device TX, host output == device RX (AudioTypes.hpp).
     auto fillLabels = [](const StreamConfig& sc,
@@ -534,7 +588,25 @@ void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
     fillLabels(tx, inputChannelLabelCount_, inputChannelLabels_);
     fillLabels(rx, outputChannelLabelCount_, outputChannelLabels_);
 
-    CacheRuntimeCaps(caps);
+    const uint32_t exposedInputChannels = runtimePolicy_.exposeDeviceToHostToCoreAudio
+                                              ? caps.hostInputPcmChannels : 0;
+    hostInputPcmChannels_.store(exposedInputChannels, std::memory_order_relaxed);
+    deviceToHostAm824Slots_.store(caps.deviceToHostAm824Slots, std::memory_order_relaxed);
+    hostOutputPcmChannels_.store(caps.hostOutputPcmChannels, std::memory_order_relaxed);
+    hostToDeviceAm824Slots_.store(caps.hostToDeviceAm824Slots, std::memory_order_relaxed);
+    deviceToHostStreamCount_.store(caps.deviceToHostStreamCount, std::memory_order_relaxed);
+    hostToDeviceStreamCount_.store(caps.hostToDeviceStreamCount, std::memory_order_relaxed);
+    for (uint32_t i = 0; i < kMaxAudioStreamsPerDirection; ++i) {
+        deviceToHostStreams_[i] = caps.deviceToHostStreams[i];
+        hostToDeviceStreams_[i] = caps.hostToDeviceStreams[i];
+    }
+    discoverySampleRateHz_ = caps.sampleRateHz;
+    discoveryDeviceToHostIsoChannel_ = caps.deviceToHostIsoChannel;
+    discoveryHostToDeviceIsoChannel_ = caps.hostToDeviceIsoChannel;
+    runtimeCapsValid_.store(true, std::memory_order_release);
+    IOLockUnlock(discoveryLock_);
+    LogRuntimeCaps("discovery-cache", caps);
+    return true;
 }
 
 bool DICETcatProtocol::GetChannelLabels(std::vector<std::string>& inNames,
@@ -557,35 +629,83 @@ bool DICETcatProtocol::GetChannelLabels(std::vector<std::string>& inNames,
     return inCount > 0 || outCount > 0;
 }
 
-void DICETcatProtocol::CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept {
-    const uint32_t exposedInputChannels = runtimePolicy_.exposeDeviceToHostToCoreAudio
-                                              ? caps.hostInputPcmChannels
-                                              : 0;
-    hostInputPcmChannels_.store(exposedInputChannels, std::memory_order_relaxed);
-    deviceToHostAm824Slots_.store(caps.deviceToHostAm824Slots, std::memory_order_relaxed);
-    hostOutputPcmChannels_.store(caps.hostOutputPcmChannels, std::memory_order_relaxed);
-    hostToDeviceAm824Slots_.store(caps.hostToDeviceAm824Slots, std::memory_order_relaxed);
-    runtimeSampleRateHz_.store(caps.sampleRateHz, std::memory_order_relaxed);
+bool DICETcatProtocol::SampleRateMatchesPolicy(uint32_t sampleRateHz) const noexcept {
+    if (sampleRateHz == 0) {
+        return false;
+    }
+    bool hasAllowedRate = false;
+    for (const uint32_t allowedRate : runtimePolicy_.allowedSampleRatesHz) {
+        if (allowedRate == sampleRateHz) {
+            return true;
+        }
+        hasAllowedRate |= allowedRate != 0;
+    }
+    return !hasAllowedRate &&
+           (!runtimePolicy_.requiredRuntimeGeometry ||
+            sampleRateHz == runtimePolicy_.requiredRuntimeGeometry->sampleRateHz);
+}
+
+bool DICETcatProtocol::RuntimeCapsMatchPolicy(const AudioStreamRuntimeCaps& caps) const noexcept {
+    if (!HasUsableRuntimeCaps(caps) || !SampleRateMatchesPolicy(caps.sampleRateHz)) {
+        return false;
+    }
+    if (!runtimePolicy_.requiredRuntimeGeometry) {
+        return true;
+    }
+    const auto& expected = *runtimePolicy_.requiredRuntimeGeometry;
+    if ((runtimePolicy_.exposeDeviceToHostToCoreAudio &&
+         caps.hostInputPcmChannels != expected.hostInputPcmChannels) ||
+        caps.hostOutputPcmChannels != expected.hostOutputPcmChannels ||
+        caps.deviceToHostAm824Slots != expected.deviceToHostAm824Slots ||
+        caps.hostToDeviceAm824Slots != expected.hostToDeviceAm824Slots ||
+        caps.deviceToHostStreamCount != expected.deviceToHostStreamCount ||
+        caps.hostToDeviceStreamCount != expected.hostToDeviceStreamCount) {
+        return false;
+    }
+    auto sameStreams = [](const AudioStreamWireInfo* observed,
+                          const AudioStreamWireInfo* required, uint32_t count) {
+        for (uint32_t i = 0; i < count; ++i) {
+            if (observed[i].pcmChannels != required[i].pcmChannels ||
+                observed[i].midiPorts != required[i].midiPorts ||
+                observed[i].am824Slots != required[i].am824Slots) {
+                return false;
+            }
+        }
+        return true;
+    };
+    return sameStreams(caps.deviceToHostStreams, expected.deviceToHostStreams,
+                       caps.deviceToHostStreamCount) &&
+           sameStreams(caps.hostToDeviceStreams, expected.hostToDeviceStreams,
+                       caps.hostToDeviceStreamCount);
+}
+
+bool DICETcatProtocol::UpdateOperationalCaps(const AudioStreamRuntimeCaps& caps) noexcept {
+    if (!RuntimeCapsMatchPolicy(caps)) {
+        ASFW_LOG(DICE, "DICETcatProtocol: rejecting unusable or unexpected runtime geometry");
+        LogRuntimeCaps("rejected", caps);
+        return false;
+    }
+    // The result has been validated independently of discovery. Clock and ISO
+    // assignments are live state; topology, labels and validity are not.
     deviceToHostIsoChannel_.store(caps.deviceToHostIsoChannel, std::memory_order_relaxed);
     hostToDeviceIsoChannel_.store(caps.hostToDeviceIsoChannel, std::memory_order_relaxed);
-
-    // Per-stream geometry: write the plain arrays + counts BEFORE the
-    // release-store of runtimeCapsValid_ so readers that pass the acquire-load
-    // observe a consistent snapshot.
-    deviceToHostStreamCount_.store(caps.deviceToHostStreamCount, std::memory_order_relaxed);
-    hostToDeviceStreamCount_.store(caps.hostToDeviceStreamCount, std::memory_order_relaxed);
     for (uint32_t i = 0; i < kMaxAudioStreamsPerDirection; ++i) {
-        deviceToHostStreams_[i] = caps.deviceToHostStreams[i];
-        hostToDeviceStreams_[i] = caps.hostToDeviceStreams[i];
+        deviceToHostStreamIsoChannels_[i].store(caps.deviceToHostStreams[i].isoChannel,
+                                               std::memory_order_relaxed);
+        hostToDeviceStreamIsoChannels_[i].store(caps.hostToDeviceStreams[i].isoChannel,
+                                               std::memory_order_relaxed);
     }
-
-    runtimeCapsValid_.store(true, std::memory_order_release);
-    LogRuntimeCaps("cache", caps);
+    runtimeSampleRateHz_.store(caps.sampleRateHz, std::memory_order_release);
+    return true;
 }
 
 void DICETcatProtocol::ResetRuntimeCaps() noexcept {
+    // Shutdown is called only after dependent readers and callbacks quiesce.
     runtimeCapsValid_.store(false, std::memory_order_release);
     runtimeSampleRateHz_.store(0, std::memory_order_relaxed);
+    discoverySampleRateHz_ = 0;
+    discoveryDeviceToHostIsoChannel_ = AudioStreamRuntimeCaps::kInvalidIsoChannel;
+    discoveryHostToDeviceIsoChannel_ = AudioStreamRuntimeCaps::kInvalidIsoChannel;
     hostInputPcmChannels_.store(0, std::memory_order_relaxed);
     hostOutputPcmChannels_.store(0, std::memory_order_relaxed);
     deviceToHostAm824Slots_.store(0, std::memory_order_relaxed);
@@ -597,6 +717,10 @@ void DICETcatProtocol::ResetRuntimeCaps() noexcept {
     for (uint32_t i = 0; i < kMaxAudioStreamsPerDirection; ++i) {
         deviceToHostStreams_[i] = AudioStreamWireInfo{};
         hostToDeviceStreams_[i] = AudioStreamWireInfo{};
+        deviceToHostStreamIsoChannels_[i].store(AudioStreamWireInfo::kInvalidIsoChannel,
+                                               std::memory_order_relaxed);
+        hostToDeviceStreamIsoChannels_[i].store(AudioStreamWireInfo::kInvalidIsoChannel,
+                                               std::memory_order_relaxed);
     }
     inputChannelLabelCount_.store(0, std::memory_order_relaxed);
     outputChannelLabelCount_.store(0, std::memory_order_relaxed);

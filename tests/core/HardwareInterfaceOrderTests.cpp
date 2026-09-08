@@ -62,6 +62,101 @@ protected:
 
 namespace {
 
+TEST_F(HardwareInterfaceOrderTests, InitialInterruptSnapshotDefersIsochContextReads) {
+    const uint32_t events = IntEventBits::kIsochRx | IntEventBits::kIsochTx;
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIntEvent), _))
+        .WillOnce([events](uint8_t, uint64_t, uint32_t* value) { *value = events; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoXmitEvent), _))
+        .Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoRecvEvent), _))
+        .Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+
+    const auto snapshot = hardware_.CaptureInterruptSnapshot(12345);
+    EXPECT_EQ(snapshot.intEvent, events);
+    EXPECT_EQ(snapshot.timestamp, 12345U);
+    EXPECT_EQ(snapshot.isoXmitEvent, 0U);
+    EXPECT_EQ(snapshot.isoRecvEvent, 0U);
+}
+
+TEST_F(HardwareInterfaceOrderTests, IsochAcknowledgementUsesFreshEventsAfterGlobalClear) {
+    const uint32_t events = IntEventBits::kIsochRx | IntEventBits::kIsochTx;
+    InterruptSnapshot stale{};
+    stale.intEvent = events;
+    stale.isoRecvEvent = 1;
+    stale.isoXmitEvent = 1;
+    stale.timestamp = 12345;
+
+    InSequence sequence;
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(
+        0, static_cast<uint64_t>(Register32::kIntEventClear), events));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(
+        0, static_cast<uint64_t>(Register32::kHCControl), _));
+    // Contexts 2 and 3 completed after the initial snapshot. The saved bit 0
+    // must not select the contexts to acknowledge or subsequently dispatch.
+    EXPECT_CALL(*mockDevice_, MemoryRead32(
+        0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 4; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(
+        0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), 4));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(
+        0, static_cast<uint64_t>(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(
+        0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 8; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(
+        0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), 8));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(
+        0, static_cast<uint64_t>(Register32::kHCControl), _));
+
+    hardware_.ClearIntEvents(events);
+    const auto dispatch = hardware_.CaptureAndAcknowledgeIsochInterrupts(stale);
+    EXPECT_EQ(dispatch.intEvent, events);
+    EXPECT_EQ(dispatch.timestamp, stale.timestamp);
+    EXPECT_EQ(dispatch.isoRecvEvent, 4U);
+    EXPECT_EQ(dispatch.isoXmitEvent, 8U);
+}
+
+TEST_F(HardwareInterfaceOrderTests, CompletionArrivingAfterIsochAckRemainsLatched) {
+    InterruptSnapshot snapshot{};
+    snapshot.intEvent = IntEventBits::kIsochTx;
+    uint32_t pending = 1;
+
+    InSequence sequence;
+    EXPECT_CALL(*mockDevice_, MemoryRead32(
+        0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), _))
+        .WillOnce([&](uint8_t, uint64_t, uint32_t* value) { *value = pending; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(
+        0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), 1))
+        .WillOnce([&](uint8_t, uint64_t, uint32_t value) { pending &= ~value; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(
+        0, static_cast<uint64_t>(Register32::kHCControl), _))
+        .WillOnce([&](uint8_t, uint64_t, uint32_t* value) {
+            // A second completion for context 0 arrives after its first ack.
+            pending |= 1;
+            *value = 0;
+        });
+
+    const auto dispatch = hardware_.CaptureAndAcknowledgeIsochInterrupts(snapshot);
+    EXPECT_EQ(dispatch.isoXmitEvent, 1U);
+    EXPECT_EQ(dispatch.isoRecvEvent, 0U);
+    EXPECT_EQ(pending, 1U); // No second clear of the saved mask consumed it.
+}
+
+TEST_F(HardwareInterfaceOrderTests, RevokedIsochAckDoesNotDispatchStaleContextBits) {
+    InterruptSnapshot stale{};
+    stale.intEvent = IntEventBits::kIsochRx | IntEventBits::kIsochTx;
+    stale.isoRecvEvent = 1;
+    stale.isoXmitEvent = 1;
+    hardware_.LatchProviderRevokedAndDrain();
+    EXPECT_CALL(*mockDevice_, MemoryRead32(_, _, _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+
+    const auto dispatch = hardware_.CaptureAndAcknowledgeIsochInterrupts(stale);
+    EXPECT_EQ(dispatch.isoRecvEvent, 0U);
+    EXPECT_EQ(dispatch.isoXmitEvent, 0U);
+}
+
 TEST_F(HardwareInterfaceOrderTests, CompareSwapLocalIRMResource_WritesDataCompareControlInOrder) {
     InSequence seq;
 

@@ -16,13 +16,12 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
                                          IsochService& isoch, StatusPublisher& statusPublisher,
                                          ASFW::Async::IAsyncSubsystemPort* asyncSubsystem) {
     controller.HandleInterrupt(snap);
+    const auto isochSnapshot = hardware.CaptureAndAcknowledgeIsochInterrupts(snap);
 
     // ===== ISOCHRONOUS RECEIVE INTERRUPT =====
     // Per OHCI §9.1: kIsochRx (bit 7) indicates one or more IR contexts have completed descriptors.
-    // We read isoRecvEvent to determine which contexts, clear it, then dispatch processing.
-    if ((snap.intEvent & IntEventBits::kIsochRx) && snap.isoRecvEvent != 0) {
-        // Clear the per-context event bits to acknowledge
-        hardware.ClearIsoRecvEvents(snap.isoRecvEvent);
+    // The post-global snapshot already acknowledged these context events once.
+    if ((isochSnapshot.intEvent & IntEventBits::kIsochRx) && isochSnapshot.isoRecvEvent != 0) {
 
         // One OHCI IR context backs each capture stream (contextIndex ==
         // streamIndex). A multi-stream DICE device (Venice F32 = 2×16) runs a
@@ -32,7 +31,7 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
         // its channel slice (e.g. 17–32) would never reach the input buffer.
         // Poll the master first so the producer timeline is published before the
         // secondary slices anchor to it.
-        const uint32_t recvEvent = snap.isoRecvEvent;
+        const uint32_t recvEvent = isochSnapshot.isoRecvEvent;
         workQueue.DispatchAsync(^{
           for (uint32_t ctxIdx = 0; ctxIdx < IsochService::kMaxStreamsPerDirection; ++ctxIdx) {
               if ((recvEvent & (1u << ctxIdx)) == 0) {
@@ -47,17 +46,14 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
 
     // ===== ISOCHRONOUS TRANSMIT INTERRUPT =====
     // Per OHCI §9.2: kIsochTx (bit 6) indicates IT context completion.
-    // Similar to IR, we read IsoXmitEvent, clear it, and process.
-    if ((snap.intEvent & IntEventBits::kIsochTx) && snap.isoXmitEvent != 0) {
+    // As with IR, dispatch only the freshly read and acknowledged context mask.
+    if ((isochSnapshot.intEvent & IntEventBits::kIsochTx) && isochSnapshot.isoXmitEvent != 0) {
         // DEBUG: Sample interrupt rate
         static uint32_t txIrqCtr = 0;
         if ((++txIrqCtr % 100) == 0) {
             ASFW_LOG_V3(Controller, "[IRQ] IsoTx Fired! Count=%u IsoTxEvent=0x%08x", txIrqCtr,
-                        snap.isoXmitEvent);
+                        isochSnapshot.isoXmitEvent);
         }
-
-        // Clear event bits to acknowledge
-        hardware.ClearIsoXmitEvents(snap.isoXmitEvent);
 
         // One OHCI IT context backs each playback stream (contextIndex ==
         // streamIndex). A multi-stream DICE device (Venice F32 = 2×16) runs a
@@ -65,7 +61,7 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
         // Process every signalled context directly in ISR for lowest latency
         // (IT RefillRing is fast; DispatchAsync would add underrun-prone latency).
         for (uint32_t ctxIdx = 0; ctxIdx < IsochService::kMaxStreamsPerDirection; ++ctxIdx) {
-            if ((snap.isoXmitEvent & (1u << ctxIdx)) == 0) {
+            if ((isochSnapshot.isoXmitEvent & (1u << ctxIdx)) == 0) {
                 continue;
             }
             if (auto* tx = isoch.TransmitContext(ctxIdx)) {

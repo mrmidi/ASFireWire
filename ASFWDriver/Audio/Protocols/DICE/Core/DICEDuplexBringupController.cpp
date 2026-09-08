@@ -1251,6 +1251,10 @@ void DICEDuplexBringupController::RefreshRuntimeCaps(VoidCallback cb) {
         });
 }
 
+void DICEDuplexBringupController::AbortDuplex(IOReturn error, VoidCallback callback) {
+    DoRollback(error, std::move(callback));
+}
+
 void DICEDuplexBringupController::DoRollback(IOReturn error, VoidCallback cb) {
     CancelScheduledRetry();
     restartSession_.phase = DiceRestartPhase::kFailed;

@@ -6,6 +6,7 @@
 #include "DeviceProtocolFactory.hpp"
 #include "DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "DICE/TCAT/DICETcatProtocol.hpp"
+#include "../DriverKit/Config/DICE/Isoch/Profiles/PreSonusFireStudioProjectProfile.hpp"
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "BeBoB/Phase88Protocol.hpp"
 #include "BeBoB/GenericBeBoBProtocol.hpp"
@@ -92,6 +93,39 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  nodeId);
         return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
                                                                 route, irmClient, timerScheduler);
+    }
+
+    if (vendorId == kPreSonusVendorId && modelId == kFireStudioProjectModelId) {
+        using Profile = ASFW::Isoch::Audio::DICE::Profiles::PreSonusFireStudioProjectProfile;
+        // The captured low-rate layout is the only one this profile can drive.
+        // Validate physical wire geometry, including MIDI, before publication
+        // and after clock preparation. ISO channels are assigned at runtime.
+        AudioStreamRuntimeCaps expected{};
+        expected.sampleRateHz = Profile::kSampleRateHz;
+        expected.hostInputPcmChannels = Profile::kPcmChannels;
+        expected.hostOutputPcmChannels = Profile::kPcmChannels;
+        expected.deviceToHostAm824Slots = Profile::kDbs;
+        expected.hostToDeviceAm824Slots = Profile::kDbs;
+        expected.deviceToHostStreamCount = Profile::kStreamCount;
+        expected.hostToDeviceStreamCount = Profile::kStreamCount;
+        const AudioStreamWireInfo stream{
+            .pcmChannels = Profile::kPcmChannels,
+            .am824Slots = Profile::kDbs,
+            .midiPorts = Profile::kMidiPorts,
+        };
+        expected.deviceToHostStreams[0] = stream;
+        expected.hostToDeviceStreams[0] = stream;
+        DICE::TCAT::DICETcatRuntimePolicy policy{.requiredRuntimeGeometry = expected};
+        static_assert(Profile::kSupportedSampleRatesHz.size() <= policy.allowedSampleRatesHz.size());
+        for (size_t index = 0; index < Profile::kSupportedSampleRatesHz.size(); ++index) {
+            policy.allowedSampleRatesHz[index] = Profile::kSupportedSampleRatesHz[index];
+        }
+        ASFW_LOG(DICE,
+                 "Creating experimental 44.1/48k FireStudio Project TCAT protocol node=0x%04x",
+                 nodeId);
+        return std::make_unique<DICE::TCAT::DICETcatProtocol>(
+            busOps, busInfo, routeRegistry, route, irmClient, timerScheduler,
+            policy);
     }
 
     if (vendorId == kPreSonusVendorId && modelId == kStudioLive1602ModelId) {
