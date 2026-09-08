@@ -118,6 +118,26 @@ uint32_t AudioRuntimeRegistry::CopyConfigurationEndpointIds(
     return count;
 }
 
+uint32_t AudioRuntimeRegistry::CopyRuntimeTuningEndpointIds(
+    std::array<Devices::AudioEndpointId,
+               Shared::kMaxAudioRuntimeTuningEndpoints>& out) noexcept {
+    out.fill({});
+    if (!lock_) return 0;
+
+    uint32_t count = 0;
+    IOLockLock(lock_);
+    for (const auto& [endpointId, entry] : endpoints_) {
+        // A resolved runtime is the whole predicate. Tuning is served from the
+        // published nub, and the nub exists for every endpoint that got this
+        // far, whether or not the device also exposes rate or optical controls.
+        if (!entry.runtime) continue;
+        out[count++] = endpointId;
+        if (count == out.size()) break;
+    }
+    IOLockUnlock(lock_);
+    return count;
+}
+
 uint32_t AudioRuntimeRegistry::CopySemanticTopologyEndpointIds(
     std::array<Devices::AudioEndpointId,
                kMaxAudioSemanticTopologyEndpoints>& out) noexcept {

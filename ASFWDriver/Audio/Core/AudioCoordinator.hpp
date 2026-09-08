@@ -109,6 +109,8 @@ public:
     [[nodiscard]] IOReturn CopyDeviceConfigurationSnapshot(
         EndpointId endpointId,
         Configuration::DeviceConfigurationSnapshot& outSnapshot) noexcept;
+    [[nodiscard]] uint32_t CopyRuntimeTuningEndpointIds(
+        std::array<EndpointId, Shared::kMaxAudioRuntimeTuningEndpoints>& out) noexcept;
     [[nodiscard]] uint32_t CopyConfigurationEndpointIds(
         std::array<EndpointId,
                    Configuration::kMaxConfigurationSnapshotCapabilities>& out) noexcept;

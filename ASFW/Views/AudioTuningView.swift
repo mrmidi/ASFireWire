@@ -309,7 +309,7 @@ struct AudioTuningView: View {
     private func reload(rediscover: Bool, seedEdits: Bool) {
         var endpoint = endpointID
         if rediscover || endpoint == nil {
-            let endpoints = connector.getAudioConfigurationEndpointIDs()
+            let endpoints = connector.getAudioRuntimeTuningEndpointIDs()
             endpoint = endpoint.flatMap { endpoints.contains($0) ? $0 : nil }
                 ?? endpoints.first
         }

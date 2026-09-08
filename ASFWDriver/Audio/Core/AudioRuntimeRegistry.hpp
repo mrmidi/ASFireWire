@@ -8,6 +8,7 @@
 
 #include "../Devices/ResolvedAudioEndpointProfile.hpp"
 #include "../Runtime/AudioTelemetrySnapshot.hpp"
+#include "../Shared/AudioRuntimeTuning.hpp"
 #include "../Shared/Configuration/DeviceConfigurationSnapshot.hpp"
 #include "../Shared/Topology/IAudioSemanticMatrix.hpp"
 #include "../Shared/Topology/IAudioSemanticTopology.hpp"
@@ -51,6 +52,15 @@ public:
     [[nodiscard]] uint32_t CopyConfigurationEndpointIds(
         std::array<Devices::AudioEndpointId,
                    Configuration::kMaxConfigurationSnapshotCapabilities>& out) noexcept;
+    /// Lists every endpoint the driver has resolved a runtime for, which is the
+    /// set that has runtime tuning and geometry to report. Deliberately not the
+    /// configuration list: that one additionally requires rate/optical
+    /// capabilities, so a device with none -- a Saffire Pro 24 DSP, say --
+    /// enumerated empty and the geometry panel said no endpoint was published
+    /// while its telemetry was streaming beside it.
+    [[nodiscard]] uint32_t CopyRuntimeTuningEndpointIds(
+        std::array<Devices::AudioEndpointId,
+                   Shared::kMaxAudioRuntimeTuningEndpoints>& out) noexcept;
     /// Lists only endpoints whose protocol publishes a semantic topology. This
     /// is deliberately separate from configuration-capability discovery: a
     /// mixer-only device such as Duet need not expose rate/optical controls.

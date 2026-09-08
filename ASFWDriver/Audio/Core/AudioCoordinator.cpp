@@ -506,6 +506,11 @@ IOReturn AudioCoordinator::CopyDeviceConfigurationSnapshot(
     return foundCommitted ? kIOReturnSuccess : kIOReturnError;
 }
 
+uint32_t AudioCoordinator::CopyRuntimeTuningEndpointIds(
+    std::array<EndpointId, Shared::kMaxAudioRuntimeTuningEndpoints>& out) noexcept {
+    return runtime_.CopyRuntimeTuningEndpointIds(out);
+}
+
 uint32_t AudioCoordinator::CopyConfigurationEndpointIds(
     std::array<EndpointId,
                Configuration::kMaxConfigurationSnapshotCapabilities>& out) noexcept {

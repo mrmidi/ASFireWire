@@ -103,6 +103,11 @@ public:
         kMethodRequestAudioConfigurationAsync = 1027,
         kMethodGetAudioRuntimeTuning         = 1033,
         kMethodRequestAudioRuntimeTuning     = 1034,
+        // Discovery contract for runtime tuning and geometry. Kept separate
+        // from configuration endpoints for the same reason 1029 is: those
+        // require rate/optical support, which an endpoint with perfectly good
+        // geometry to report need not have.
+        kMethodGetAudioRuntimeTuningEndpoints = 1035,
         // Immutable semantic graph for the endpoint's currently committed
         // topology. Runtime values and meter samples are intentionally not
         // part of this reply.

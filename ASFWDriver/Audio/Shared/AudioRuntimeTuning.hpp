@@ -35,6 +35,13 @@
 
 namespace ASFW::Audio::Shared {
 
+/// Bound on runtime-tuning endpoint discovery. Lives here rather than with the
+/// registry that fills it, because the coordinator's header only forward-
+/// declares that registry. Pinned to the endpoint-list wire capacity by a
+/// static_assert in the user client, so a device can never be dropped from the
+/// reply without the build saying so.
+inline constexpr uint32_t kMaxAudioRuntimeTuningEndpoints = 8;
+
 // Which groups a request wants applied. A request that touches no group is a
 // query, not a change, and must not restart anything.
 enum class TuningGroup : uint32_t {

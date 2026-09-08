@@ -114,6 +114,21 @@ extension ASFWDriverConnector {
         return AudioConfigurationWireDecoder.decodeEndpointIDs(data)
     }
 
+    /// Every endpoint with runtime tuning and geometry to report.
+    ///
+    /// Distinct from `getAudioConfigurationEndpointIDs`, which additionally
+    /// requires the device to advertise rate/optical capabilities. A device with
+    /// none still has geometry, and gating discovery on the narrower list made
+    /// the tuning panel claim no endpoint was published while its own telemetry
+    /// streamed beside it. Same reply shape, so the same decoder serves both.
+    func getAudioRuntimeTuningEndpointIDs() -> [AudioEndpointID] {
+        guard isConnected,
+              let data = callStruct(.getAudioRuntimeTuningEndpoints, initialCap: 72) else {
+            return []
+        }
+        return AudioConfigurationWireDecoder.decodeEndpointIDs(data)
+    }
+
     func getAudioConfiguration(endpointID: AudioEndpointID) -> AudioConfigurationSnapshot? {
         guard isConnected, connection != 0, endpointID.rawValue != 0 else { return nil }
         var scalarInput = endpointID.rawValue

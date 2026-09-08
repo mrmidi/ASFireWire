@@ -76,6 +76,7 @@ enum {
     kMethodRequestAudioConfigurationAsync = 1027,
     kMethodGetAudioRuntimeTuning = 1033,
     kMethodRequestAudioRuntimeTuning = 1034,
+    kMethodGetAudioRuntimeTuningEndpoints = 1035,
     kMethodGetAudioSemanticTopology = 1028,
     kMethodGetAudioSemanticTopologyEndpoints = 1029,
     kMethodGetAudioSemanticConsoleLayout = 1030,
@@ -355,6 +356,8 @@ kern_return_t HandleRequestAudioConfiguration(
     ASFWDriver& driver, IOUserClientMethodArguments* arguments);
 kern_return_t HandleGetAudioConfigurationEndpoints(
     ASFWDriver& driver, IOUserClientMethodArguments* arguments);
+kern_return_t HandleGetAudioRuntimeTuningEndpoints(
+    ASFWDriver& driver, IOUserClientMethodArguments* arguments);
 kern_return_t HandleGetAudioControlSurface(
     ASFWDriver& driver, IOUserClientMethodArguments* arguments);
 kern_return_t HandleGetAudioSemanticTopology(
@@ -433,6 +436,8 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
         return HandleRequestAudioRuntimeTuning(driver, arguments);
     case kMethodGetAudioConfigurationEndpoints:
         return HandleGetAudioConfigurationEndpoints(driver, arguments);
+    case kMethodGetAudioRuntimeTuningEndpoints:
+        return HandleGetAudioRuntimeTuningEndpoints(driver, arguments);
     case kMethodGetAudioControlSurface:
         return HandleGetAudioControlSurface(driver, arguments);
     case kMethodGetAudioSemanticTopology:
@@ -609,6 +614,36 @@ kern_return_t HandleGetAudioConfigurationEndpoints(
     const uint32_t endpointCount =
         context->audioCoordinator->CopyConfigurationEndpointIds(endpointIds);
 
+    ASFW::UserClient::Wire::AudioConfigurationEndpointListWire wire{};
+    wire.endpointCount = endpointCount;
+    for (uint32_t i = 0; i < endpointCount; ++i) {
+        wire.endpointIds[i] = endpointIds[i].value;
+    }
+    auto* data = OSData::withBytes(&wire, sizeof(wire));
+    if (!data) return kIOReturnNoMemory;
+    arguments->structureOutput = data;
+    arguments->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
+static_assert(ASFW::Audio::Shared::kMaxAudioRuntimeTuningEndpoints <=
+                  ASFW::UserClient::Wire::kAudioConfigurationMaxCapabilities,
+              "Runtime-tuning discovery must fit the endpoint-list reply it "
+              "shares with configuration discovery");
+
+kern_return_t HandleGetAudioRuntimeTuningEndpoints(
+    ASFWDriver& driver, IOUserClientMethodArguments* arguments) {
+    if (!arguments || arguments->scalarInputCount != 0) return kIOReturnBadArgument;
+    auto* context = static_cast<ServiceContext*>(driver.GetServiceContext());
+    if (!context || !context->audioCoordinator) return kIOReturnNotReady;
+
+    std::array<ASFW::Audio::Devices::AudioEndpointId,
+               ASFW::Audio::Shared::kMaxAudioRuntimeTuningEndpoints> endpointIds{};
+    const uint32_t endpointCount =
+        context->audioCoordinator->CopyRuntimeTuningEndpointIds(endpointIds);
+
+    // Same reply shape as the configuration list, so the app decodes both with
+    // one decoder. Only the discovery predicate differs.
     ASFW::UserClient::Wire::AudioConfigurationEndpointListWire wire{};
     wire.endpointCount = endpointCount;
     for (uint32_t i = 0; i < endpointCount; ++i) {

@@ -89,6 +89,7 @@ final class ASFWDriverConnector: ObservableObject {
         case getAudioSemanticMatrixEndpoints = 1032
         case getAudioRuntimeTuning = 1033
         case requestAudioRuntimeTuning = 1034
+        case getAudioRuntimeTuningEndpoints = 1035
     }
 
     // MARK: - Re-exported Models
