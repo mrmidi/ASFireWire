@@ -93,6 +93,44 @@ struct RxSequenceReplayReadDiagnostic final {
     return offset - transferDelayTicks;
 }
 
+// The window a SYT can address. IEC 61883-1 section 6.2 names the presentation
+// cycle by its low four bits only, so anything reconstructed from a SYT is
+// defined modulo sixteen cycles -- 49,152 ticks, 2 ms, 96 audio frames at
+// 48 kHz.
+inline constexpr uint32_t kSytCycleWindowTicks =
+    16u * ASFW::Timing::kTicksPerCycle;
+
+// Turn a replay phase back into an absolute forward lead from the cycle the
+// packet is referenced to.
+//
+// `ComputeReplaySytOffset` above subtracts the transfer delay and, when that
+// would go negative, lifts the value by one whole window to keep it unsigned.
+// Its return is therefore a *phase* -- an element of the quotient, whose only
+// contract is that `ComputeReplaySyt` inverts it -- and not a duration. Two
+// different phases can encode the same wire SYT, which is the tell.
+//
+// Adding the delay back recovers the original lead plus an artefact sixteen
+// cycles whenever the lift fired. `ComputeReplaySyt` never noticed, because it
+// masks the cycle to four bits and the artefact falls off the wire. Every
+// consumer that added the same sum to an absolute bus time inherited the 2 ms.
+//
+// Reducing into the window is what keeps the two uses apart. It is exact: a SYT
+// cannot express a lead of a full window or more, so the reduction only ever
+// removes the artefact. And because RX and TX apply the identical correction,
+// the difference between their presentation coordinates -- which is what seeds
+// the TX content cursor -- comes out unchanged.
+[[nodiscard]] inline uint32_t ComputePresentationLeadTicks(
+    uint32_t sytOffset,
+    uint32_t transferDelayTicks) noexcept {
+    if (sytOffset == UINT32_MAX) {
+        return UINT32_MAX;
+    }
+    return static_cast<uint32_t>(
+        (static_cast<uint64_t>(sytOffset) +
+         static_cast<uint64_t>(transferDelayTicks)) %
+        kSytCycleWindowTicks);
+}
+
 [[nodiscard]] inline uint16_t ComputeReplaySyt(
     uint32_t sytOffset,
     uint32_t outputCycleTimer,

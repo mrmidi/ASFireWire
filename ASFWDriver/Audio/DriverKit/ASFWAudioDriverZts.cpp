@@ -772,10 +772,18 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 timing.disposition = replayData
                     ? AmdtpDisposition::Data : AmdtpDisposition::NoData;
                 if (replayData) {
+                    // Same reduction as the RX anchor. The wire SYT is
+                    // unaffected -- SytForPresentation masks the cycle to four
+                    // bits, so a whole-window shift was always invisible there
+                    // -- but this coordinate also reaches PreviewTxRange, where
+                    // it places the TX content cursor. Correcting both sides
+                    // identically is what keeps their difference, and therefore
+                    // the content seed, where it was.
                     presentationBusTicks = transmitBusTicks +
-                        replayEntry.sytOffset +
-                        control->txTransferDelayTicks.load(
-                            std::memory_order_relaxed);
+                        ASFW::Audio::Runtime::ComputePresentationLeadTicks(
+                            replayEntry.sytOffset,
+                            control->txTransferDelayTicks.load(
+                                std::memory_order_relaxed));
                     timing.txClockValid = true;
                     timing.nextDataSyt = SytForPresentation(
                         presentationBusTicks);

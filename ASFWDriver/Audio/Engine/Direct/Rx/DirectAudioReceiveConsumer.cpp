@@ -488,10 +488,16 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         }
         busTicksInitialized_ = true;
         lastUnwrappedBusTicks_ = packetBusTicks;
+        // The replay entry carries a phase, not a duration -- see
+        // ComputePresentationLeadTicks. Adding the raw sum here put every
+        // anchor 49,152 ticks (2 ms, 96 frames) late whenever the replay
+        // helper's unsigned lift had fired, which for a device whose SYT lead
+        // sits below the configured transfer delay is every single packet.
         const uint64_t presentationBusTicks = packetBusTicks +
-            replayEntry.sytOffset +
-            inputView_.control->rxTransferDelayTicks.load(
-                std::memory_order_relaxed);
+            ::ASFW::Audio::Runtime::ComputePresentationLeadTicks(
+                replayEntry.sytOffset,
+                inputView_.control->rxTransferDelayTicks.load(
+                    std::memory_order_relaxed));
         ::ASFW::Audio::Runtime::HardwareZeroTimestamp boundary{};
         const auto observed = inputView_.control->hardwareTimeline.Observe({
             .epoch = inputView_.control->hardwareTimeline.Epoch(),
