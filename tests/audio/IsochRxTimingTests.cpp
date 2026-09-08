@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace {
@@ -57,7 +58,136 @@ void FillTwoChannelAmdtpPacket(std::array<uint8_t, PacketSize>& packet,
     WriteBE32(packet.data() + 20, slot1);
 }
 
+// One AMDTP data packet: `frames` events over two slots, a receive timestamp in
+// the OHCI prefix and a SYT naming its presentation cycle.
+struct AmdtpDataPacket final {
+    std::array<uint8_t, 8 + 8 + (8 * 2 * 4)> bytes{};
+    size_t length{0};
+    std::span<const uint8_t> View() const {
+        return {bytes.data(), length};
+    }
+};
+
+AmdtpDataPacket MakeAmdtpDataPacket(uint32_t receiveSeconds,
+                                    uint32_t receiveCycle,
+                                    uint32_t sytFieldTicks,
+                                    uint8_t dbc,
+                                    uint32_t frames) {
+    AmdtpDataPacket packet{};
+    packet.length = 16 + frames * 2 * 4;
+    const uint16_t stamp = static_cast<uint16_t>(
+        ((receiveSeconds & 0x7u) << 13) | (receiveCycle & 0x1FFFu));
+    packet.bytes[0] = static_cast<uint8_t>(stamp & 0xFFu);
+    packet.bytes[1] = static_cast<uint8_t>(stamp >> 8);
+    const uint32_t reduced = sytFieldTicks % (16u * ASFW::Timing::kTicksPerCycle);
+    const uint16_t syt = static_cast<uint16_t>(
+        ((reduced / ASFW::Timing::kTicksPerCycle) << 12) |
+        (reduced % ASFW::Timing::kTicksPerCycle));
+    WriteBE32(packet.bytes.data() + 8, 0x02020000u | dbc);
+    WriteBE32(packet.bytes.data() + 12, 0x90020000u | syt);
+    for (uint32_t frame = 0; frame < frames; ++frame) {
+        WriteBE32(packet.bytes.data() + 16 + frame * 8, 0x40000000u);
+        WriteBE32(packet.bytes.data() + 20 + frame * 8, 0x40000000u);
+    }
+    return packet;
+}
+
 } // namespace
+
+// A packet the controller never delivered leaves no trace: the cursor is an
+// accumulator, so the timeline simply becomes shorter than the audio it
+// describes while every counter stays clean. The device's own SYT phase is the
+// witness -- it advances whether or not we saw the packet -- so the gap between
+// phase and cursor is exactly the frames that went missing.
+//
+// The stream here is one data packet per isochronous cycle carrying six events,
+// which puts the SYT step at exactly one cycle and keeps the lead constant. The
+// correction reads only phase against frames, so the packet cadence is not what
+// is under test; a blocking stream's NO-DATA packets would add nothing but the
+// need to model them.
+TEST(IsochRxTimingTests, DroppedPacketsAreDetectedAndTheCursorIsCorrected) {
+    constexpr uint32_t kFramesPerPacket = 6;
+    constexpr uint32_t kStep = kFramesPerPacket * 512;  // == kTicksPerCycle
+    constexpr uint32_t kStartCycle = 200;
+    constexpr uint32_t kSytLeadTicks = 2 * ASFW::Timing::kTicksPerCycle;
+    constexpr uint32_t kHolePackets = 3;
+
+    std::array<float, 2048> input{};
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    FixedDirectAudioBindingSource source({
+        .generation = 1,
+        .inputBase = input.data(),
+        .inputBytes = sizeof(input),
+        .inputFrames = 1024,
+        .inputChannels = 2,
+        .control = &control,
+        .sampleRateHz = 48000,
+        .valid = true,
+    });
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer(
+        &source, {.am824Slots = 2, .streamChannels = 2});
+    consumer.OnReceiveActivated();
+
+    uint32_t dbc = 0;
+    // `index` counts packets on the wire, including any the test declines to
+    // deliver, so the SYT and the receive cycle advance across a hole exactly as
+    // the device would have driven them.
+    const auto feed = [&](uint32_t index) {
+        const uint32_t cycle = kStartCycle + index;
+        const AmdtpDataPacket packet = MakeAmdtpDataPacket(
+            0, cycle, cycle * ASFW::Timing::kTicksPerCycle + kSytLeadTicks,
+            static_cast<uint8_t>(index * kFramesPerPacket), kFramesPerPacket);
+        const ASFW::Isoch::IsochReceiveBatch batch{
+            .drainCycleTimer = EncodeCycleTimer(0, cycle + 4, 0),
+            .drainHostTicks = 1'000'000 + cycle * 100,
+        };
+        consumer.BeginReceiveBatch(batch);
+        consumer.ConsumePacket(batch, {
+            .descriptorIndex = index % 64,
+            .payload = packet.View(),
+        });
+    };
+    (void)dbc;
+
+    constexpr uint32_t kWarm = ASFW::Driver::RxSytCadence::kWarmupUpdates + 8;
+    for (uint32_t i = 0; i < kWarm; ++i) {
+        feed(i);
+    }
+    ASFW::Driver::RxSytCadence::Snapshot warm{};
+    ASSERT_TRUE(control.rxSytCadence.TrySnapshot(warm));
+    ASSERT_TRUE(warm.established) << "the ring must be primed before the hole";
+    ASSERT_EQ(control.rxCursorCorrections.load(std::memory_order_relaxed), 0u)
+        << "a clean chain must not correct anything";
+    const uint64_t cleanEnd =
+        control.inputProducedEndFrame.load(std::memory_order_acquire);
+    ASSERT_EQ(cleanEnd, kWarm * kFramesPerPacket);
+
+    // Now drop packets: the SYT keeps advancing, the cursor does not.
+    feed(kWarm + kHolePackets);
+
+    EXPECT_EQ(control.rxCursorCorrections.load(std::memory_order_relaxed), 1u);
+    EXPECT_EQ(control.rxCursorCorrectedFrames.load(std::memory_order_relaxed),
+              static_cast<int64_t>(kHolePackets) * kFramesPerPacket)
+        << "the correction must equal the frames that never arrived";
+    EXPECT_EQ(
+        control.rxCursorMaxCorrectionFrames.load(std::memory_order_relaxed),
+        static_cast<int64_t>(kHolePackets) * kFramesPerPacket);
+
+    // The correction lands on the next packet rather than retroactively on the
+    // one that revealed the gap, so that packet's anchor still agrees with where
+    // its audio was written.
+    feed(kWarm + kHolePackets + 1);
+    EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire),
+              cleanEnd + (kHolePackets + 2) * kFramesPerPacket);
+    EXPECT_EQ(control.rxCursorCorrections.load(std::memory_order_relaxed), 1u)
+        << "the same gap must not be reported twice";
+
+    // And the recovered cursor stays in step afterwards.
+    for (uint32_t i = 0; i < 32; ++i) {
+        feed(kWarm + kHolePackets + 2 + i);
+    }
+    EXPECT_EQ(control.rxCursorCorrections.load(std::memory_order_relaxed), 1u);
+}
 
 TEST(IsochRxTimingTests, DecodesOhciTimestampFromReceivePrefix) {
     std::array<uint8_t, 16> packet{

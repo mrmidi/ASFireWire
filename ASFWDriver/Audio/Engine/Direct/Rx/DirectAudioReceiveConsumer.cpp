@@ -225,6 +225,13 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         }
     }
 
+    if (pendingCursorCorrectionFrames_ != 0) {
+        absoluteFrameCursor_ = static_cast<uint64_t>(
+            static_cast<int64_t>(absoluteFrameCursor_) +
+            pendingCursorCorrectionFrames_);
+        pendingCursorCorrectionFrames_ = 0;
+    }
+
     const uint32_t channels = configuration_.streamChannels > 0
         ? configuration_.streamChannels
         : inputView_.memory.inputChannels;
@@ -385,6 +392,25 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         cycleFields.cycle;
     constexpr uint32_t kCycleDomain =
         ::ASFW::Timing::kFWTimeWrapSeconds * ::ASFW::Timing::kCyclesPerSecond;
+    // Ahead of the continuity check on purpose. A receive-cycle gap is the
+    // commonest way frames go missing, and its handler resets the cadence ring
+    // -- so measuring after it would blind the comparison to exactly the case it
+    // exists for, and for the 513 packets the ring then takes to re-establish.
+    if (result.framesDecoded != 0 && result.hasValidCip &&
+        result.syt != 0xffff && inputView_.control) {
+        ::ASFW::Driver::RxSytCadence::Snapshot preCadence{};
+        if (inputView_.control->rxSytCadence.TrySnapshot(preCadence) &&
+            preCadence.established) {
+            const int64_t currentPhase = ::ASFW::Timing::normalizeOffsetDomain(
+                ::ASFW::Timing::extendTstampFromCycleTimer(timestamp.cycleTimer,
+                                                           result.syt));
+            MeasureCursorAgainstPhase(
+                preCadence, currentPhase,
+                absoluteFrameCursor_ - result.framesDecoded,
+                result.framesDecoded);
+        }
+    }
+
     if (replayCycleInitialized_ &&
         cycleOrdinal != (lastReplayCycleOrdinal_ + 1) % kCycleDomain) {
         ResetReplayEpochForDiscontinuity(
@@ -412,20 +438,21 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         replayEntry.flags |= ::ASFW::Audio::Runtime::RxSequenceFlags::kValidCip;
     }
     if (result.hasValidCip && result.syt != 0xffff) {
-        const bool cadenceAccepted = inputView_.control->rxSytCadence.Observe(
-            result.syt, timestamp.cycleTimer);
-        if (!cadenceAccepted && inputView_.control->rxSequenceReplay.IsEstablished()) {
-            ResetReplayEpochForDiscontinuity(
-                ReplayResetReason::kSytCadenceRejected,
-                {
-                    .descriptorIndex = packet.descriptorIndex,
-                    .payloadBytes = static_cast<uint32_t>(packet.payload.size()),
-                    .drainCycleTimer = batch.drainCycleTimer,
-                    .receiveCycleTimestamp = result.receiveCycleTimestamp,
-                    .syt = result.syt,
-                    .observedCycleOrdinal = cycleOrdinal,
-                    .sampleFrame = absoluteFrameCursor_,
-                });
+        // A chain seed is no longer a replay-epoch reset. The old escalation
+        // fired on a non-advancing SYT delta, which a burst loss of six or more
+        // data packets produces by aliasing rather than by any fault the epoch
+        // reset repairs -- see RxSytCadence::Observe. Loss is now measured
+        // directly by the phase comparison below, so this only has to be
+        // counted.
+        if (inputView_.control->rxSytCadence.Observe(
+                result.syt, timestamp.cycleTimer) ==
+            ::ASFW::Driver::RxSytCadence::Update::kSeeded) {
+            inputView_.control->rxCadenceSeeds.fetch_add(
+                1, std::memory_order_relaxed);
+            // A restart invalidates the reference pair: its phase predates the
+            // break, so a delta measured against it would report the break as
+            // lost frames.
+            cursorPhaseAnchorValid_ = false;
         }
         replayEntry.sytOffset = ::ASFW::Audio::Runtime::ComputeReplaySytOffset(
             result.syt, timestamp.cycleTimer,
@@ -552,6 +579,107 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                 : ::ASFW::Audio::Runtime::ZtsEventKind::kUpdate);
             ztsTelemetry_.Record(record);
         }
+    }
+}
+
+// Compare where the cursor thinks it is against where the device's own SYT
+// phase puts it, and correct the difference.
+//
+// The cursor is an accumulator: it only ever advances by frames that decoded.
+// Every path that returns without advancing -- an empty completion, a rejected
+// packet, a DMA drop the controller never reported -- silently shortens the
+// timeline, and nothing downstream can tell a shortened timeline from a slow
+// device. The SYT phase is the independent witness: in blocking mode it steps by
+// a fixed amount per data packet, so phase and frame count measure the same
+// quantity by two different routes and any gap between them is frames that did
+// not arrive.
+//
+// This is not rate recovery. For a device whose SYT is a pure function of its
+// own frame counter -- the Apogee Duet measurably is, to better than 0.0001 ppm
+// over 13 minutes -- the phase contributes exactly zero information about rate.
+// It contributes all of the information about loss, which is why the comparison
+// is worth making on exactly such a device.
+void DirectAudioReceiveConsumer::MeasureCursorAgainstPhase(
+    const ::ASFW::Driver::RxSytCadence::Snapshot& cadence,
+    int64_t currentPhaseTicks,
+    uint64_t packetFirstFrame,
+    uint32_t framesDecoded) noexcept {
+    if (!inputView_.control) {
+        return;
+    }
+    if (!cursorPhaseAnchorValid_) {
+        cursorPhaseAnchorTicks_ = currentPhaseTicks;
+        cursorPhaseAnchorFrame_ = packetFirstFrame;
+        cursorPhaseAnchorValid_ = true;
+        return;
+    }
+
+    const int64_t phaseDelta = ::ASFW::Timing::extOffsetDiff(
+        currentPhaseTicks, cursorPhaseAnchorTicks_);
+    int64_t expectedFrames = 0;
+    if (!::ASFW::Driver::FramesForPhaseDelta(phaseDelta,
+                                             cadence.rollingCadenceTicks,
+                                             framesDecoded, expectedFrames)) {
+        return;
+    }
+
+    const int64_t observedFrames =
+        static_cast<int64_t>(packetFirstFrame) -
+        static_cast<int64_t>(cursorPhaseAnchorFrame_);
+    const int64_t drift = observedFrames - expectedFrames;
+
+    // Re-anchor once per ZTS period. extOffsetDiff resolves an eight-second
+    // domain and is only unambiguous well inside half of it, so the window has
+    // to be bounded whether or not anything was wrong; one ZTS period is three
+    // and a half orders of magnitude inside that limit and lines the reference
+    // pair up with the anchor we publish.
+    const bool windowElapsed =
+        observedFrames >= static_cast<int64_t>(
+            ::ASFW::Audio::Runtime::HardwareSampleTimeline::
+                kZeroTimestampPeriodFrames);
+
+    // One whole data packet is the smallest loss that can occur, so anything
+    // below it is the integer division and not an event. Correcting on rounding
+    // noise would walk the cursor.
+    if (drift <= -static_cast<int64_t>(framesDecoded) ||
+        drift >= static_cast<int64_t>(framesDecoded)) {
+        pendingCursorCorrectionFrames_ = -drift;
+        inputView_.control->rxCursorCorrections.fetch_add(
+            1, std::memory_order_relaxed);
+        inputView_.control->rxCursorCorrectedFrames.fetch_add(
+            -drift, std::memory_order_relaxed);
+        const int64_t magnitude = drift < 0 ? -drift : drift;
+        int64_t worst = inputView_.control->rxCursorMaxCorrectionFrames.load(
+            std::memory_order_relaxed);
+        while (magnitude > worst &&
+               !inputView_.control->rxCursorMaxCorrectionFrames
+                    .compare_exchange_weak(worst, magnitude,
+                                           std::memory_order_relaxed)) {
+        }
+        if (cursorCorrectionLogBudget_ != 0) {
+            --cursorCorrectionLogBudget_;
+            ASFW_LOG_ERROR(
+                DirectAudio,
+                "[RxCursor] drift=%lld frames observed=%lld expected=%lld "
+                "phaseDelta=%lld cadence=%u seeds=%u frame=%llu",
+                static_cast<long long>(drift),
+                static_cast<long long>(observedFrames),
+                static_cast<long long>(expectedFrames),
+                static_cast<long long>(phaseDelta),
+                cadence.rollingCadenceTicks, cadence.seedCount,
+                static_cast<unsigned long long>(packetFirstFrame));
+        }
+        // The correction lands on the next packet, so the reference pair has to
+        // move with it or the same gap would be re-reported for a whole window.
+        cursorPhaseAnchorTicks_ = currentPhaseTicks;
+        cursorPhaseAnchorFrame_ =
+            static_cast<uint64_t>(static_cast<int64_t>(packetFirstFrame) - drift);
+        return;
+    }
+
+    if (windowElapsed) {
+        cursorPhaseAnchorTicks_ = currentPhaseTicks;
+        cursorPhaseAnchorFrame_ = packetFirstFrame;
     }
 }
 

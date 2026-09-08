@@ -164,6 +164,10 @@ add_audio_test(RxSequencePresentationLeadTests
     RxSequencePresentationLeadTests.cpp
 )
 
+add_audio_test(RxSytCadenceTests
+    RxSytCadenceTests.cpp
+)
+
 add_audio_test(HardwareSampleTimelineTests
     HardwareSampleTimelineTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"

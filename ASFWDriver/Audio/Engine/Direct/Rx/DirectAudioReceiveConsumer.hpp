@@ -6,6 +6,7 @@
 #include "../../../../Isoch/Core/IsochTypes.hpp"
 #include "../../../../Isoch/Receive/IsochRxTiming.hpp"
 #include "../../../Runtime/ZtsTelemetry.hpp"
+#include "../../../Wire/AMDTP/RxSytCadence.hpp"
 #include "../../../DriverKit/Runtime/AudioGraphBinding.hpp"
 #include "../../../DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "../AudioClockPublisher.hpp"
@@ -108,6 +109,11 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         const RxAudioPacketProcessorResult& result) noexcept;
     void DrainReceiveTelemetry(uint32_t maxRecords);
     void LogTransmitTimingTrace();
+    void MeasureCursorAgainstPhase(
+        const ::ASFW::Driver::RxSytCadence::Snapshot& cadence,
+        int64_t currentPhaseTicks,
+        uint64_t packetFirstFrame,
+        uint32_t framesDecoded) noexcept;
 
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
     uint64_t lastBindingGeneration_{0};
@@ -120,6 +126,20 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     bool secondaryAnchored_{false};
     uint64_t secondaryAnchorEpoch_{0};
     uint64_t absoluteFrameCursor_{0};
+    // Reference pair for the cursor correction: the recovered SYT phase of a
+    // past packet and the frame the cursor stood at when it arrived. Held for
+    // one ZTS period at a time, because extOffsetDiff resolves an eight-second
+    // domain and only a delta well inside half of that is unambiguous.
+    int64_t cursorPhaseAnchorTicks_{0};
+    uint64_t cursorPhaseAnchorFrame_{0};
+    bool cursorPhaseAnchorValid_{false};
+    // Deferred by one packet on purpose. The packet that reveals the gap has
+    // already been decoded at the old position, so applying the correction to it
+    // would move its anchor away from where its audio actually landed. Applied
+    // before the next decode instead, which leaves anchor and buffer agreeing on
+    // every packet and puts the hole between them.
+    int64_t pendingCursorCorrectionFrames_{0};
+    uint32_t cursorCorrectionLogBudget_{16};
     // Set whenever a new stream/timeline epoch begins, so the next decoded
     // packet primes the head of the capture delay line instead of inheriting
     // the previous epoch's audio.

@@ -830,6 +830,17 @@ struct AudioTransportControlBlock final {
     std::atomic<uint32_t> txTransferDelayTicks{12800};
     std::atomic<uint64_t> rxReplayEntries{0};
     std::atomic<uint64_t> rxReplayEpochResets{0};
+    // Cursor-versus-phase disagreement, which is receive frames that never
+    // arrived. `rxCursorCorrections` counts the events, `rxCursorCorrectedFrames`
+    // sums their signed magnitude, and `rxCursorMaxCorrectionFrames` keeps the
+    // worst one: a run of small same-sign corrections and one large drop are
+    // different faults and must not read alike.
+    std::atomic<uint64_t> rxCursorCorrections{0};
+    std::atomic<int64_t> rxCursorCorrectedFrames{0};
+    std::atomic<int64_t> rxCursorMaxCorrectionFrames{0};
+    // Chain seeds and restarts in the SYT cadence ring, mirrored out of
+    // RxSytCadence so a snapshot reader need not take the seqlock.
+    std::atomic<uint64_t> rxCadenceSeeds{0};
 
     // Bring-up attribution. Every packet the master stream decodes bumps
     // rxPacketsSeen plus at most one outcome counter, so a stream that never
@@ -1022,6 +1033,10 @@ struct AudioTransportControlBlock final {
         rxSequenceReplay.Reset();
         rxReplayEntries.store(0, std::memory_order_relaxed);
         rxReplayEpochResets.store(0, std::memory_order_relaxed);
+        rxCursorCorrections.store(0, std::memory_order_relaxed);
+        rxCursorCorrectedFrames.store(0, std::memory_order_relaxed);
+        rxCursorMaxCorrectionFrames.store(0, std::memory_order_relaxed);
+        rxCadenceSeeds.store(0, std::memory_order_relaxed);
         rxPacketsSeen.store(0, std::memory_order_relaxed);
         rxDataPackets.store(0, std::memory_order_relaxed);
         rxNoDataPackets.store(0, std::memory_order_relaxed);
