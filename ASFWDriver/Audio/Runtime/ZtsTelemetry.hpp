@@ -57,6 +57,13 @@ struct ZtsTelemetryRecord final {
 // the gate and emit immediately so lifecycle transitions remain visible.
 class ZtsTelemetryLogGate final {
 public:
+    // DIAGNOSTIC, 2026-09-08. A gated capture can only show the AVERAGE slope
+    // across the gap, so per-anchor jitter is structurally invisible to it --
+    // a 1-in-16 capture reported the anchors collinear while Instruments
+    // measured 504 us of per-anchor error on the same stream. At a
+    // 12288-frame period this is 3.91 lines/s at 48 kHz, which the ring
+    // absorbs easily. Set back to false once that question is settled.
+    static constexpr bool kEmitEveryAnchor = true;
     static constexpr uint32_t kIntervalSeconds = 4;
 
     void Reset() noexcept {
@@ -79,6 +86,9 @@ public:
         }
 
         lastSampleFrame_ = rec.sampleFrame;
+        if constexpr (kEmitEveryAnchor) {
+            return true;
+        }
         if (sampleRateHz == 0 || rec.sampleFrame < nextLogSampleFrame_) {
             return false;
         }

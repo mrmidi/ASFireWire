@@ -59,7 +59,15 @@ TEST(ZtsTelemetryLogGateTests,
     record.sampleFrame =
         kStartFrame + kRate *
             ASFW::Audio::Runtime::ZtsTelemetryLogGate::kIntervalSeconds - 1;
-    EXPECT_FALSE(gate.ShouldEmit(record, kRate));
+    // kEmitEveryAnchor is a diagnostic override, so the interval arithmetic is
+    // only reachable when it is off. Assert both branches rather than skipping
+    // the suppression case: with the override on, the contract is that nothing
+    // between the interval marks is dropped.
+    if constexpr (ASFW::Audio::Runtime::ZtsTelemetryLogGate::kEmitEveryAnchor) {
+        EXPECT_TRUE(gate.ShouldEmit(record, kRate));
+    } else {
+        EXPECT_FALSE(gate.ShouldEmit(record, kRate));
+    }
 
     record.sampleFrame =
         kStartFrame + kRate *
@@ -67,8 +75,14 @@ TEST(ZtsTelemetryLogGateTests,
     EXPECT_TRUE(gate.ShouldEmit(record, kRate));
 
     ++record.sampleFrame;
-    EXPECT_FALSE(gate.ShouldEmit(record, kRate));
+    if constexpr (ASFW::Audio::Runtime::ZtsTelemetryLogGate::kEmitEveryAnchor) {
+        EXPECT_TRUE(gate.ShouldEmit(record, kRate));
+    } else {
+        EXPECT_FALSE(gate.ShouldEmit(record, kRate));
+    }
 
+    // A backwards frame grid re-arms in either mode: this is the lifecycle
+    // path, not the interval path.
     record.sampleFrame = 0;
     EXPECT_TRUE(gate.ShouldEmit(record, kRate));
 }
