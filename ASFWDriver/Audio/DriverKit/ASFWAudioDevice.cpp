@@ -231,8 +231,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         control->ResetForStart();
         ivars.runtime.txPlanBusTicksValid = false;
         ivars.runtime.lastTxPlanBusTicks = 0;
-        ivars.runtime.txObservationBusTicksValid = false;
-        ivars.runtime.lastTxObservationBusTicks = 0;
+        ivars.runtime.txCorrelationUnwrap = {};
         ivars.runtime.txNoCycleAnchorEvents = 0;
         ivars.runtime.txNoPresentationOriginEvents = 0;
         ivars.runtime.txAlignmentDeltaFrames = 0;

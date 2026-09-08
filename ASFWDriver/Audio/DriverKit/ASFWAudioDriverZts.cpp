@@ -152,36 +152,13 @@ void TraceCycle(ASFW::Audio::Runtime::AudioTransportControlBlock& control,
     uint32_t correlationCycleTimer,
     uint64_t& completionBusTicks,
     uint64_t& correlationBusTicks) noexcept {
-    // One implementation of the OUTPUT_LAST seconds[2:0] lift, shared with the
-    // TX plan path. This used to carry its own copy whose only correction was
-    // `completionRaw > correlationRaw`, with no tolerance at all -- so the
-    // ordinary publish race (clockPair from the top of a refill pass, the
-    // stamp from its bottom) could push an observation a full eight seconds
-    // into the past.
-    int64_t completionTicks = 0;
-    int64_t correlationTicks = 0;
-    ASFW::Audio::Shared::LiftCompletionAgainstCorrelation(
-        completionCycleTimer, correlationCycleTimer,
-        completionTicks, correlationTicks);
-
-    if (!UnwrapBusTicks(static_cast<uint64_t>(correlationTicks),
-                        ivars.runtime.txObservationBusTicksValid,
-                        ivars.runtime.lastTxObservationBusTicks,
-                        correlationBusTicks)) {
-        return false;
-    }
-
-    // `age` is signed: a completion may sit microseconds AFTER its correlation
-    // when the stamp comes from a newer pass than the clockPair read.
-    const int64_t age = correlationTicks - completionTicks;
-    const int64_t completionSigned =
-        static_cast<int64_t>(correlationBusTicks) - age;
-    if (completionSigned < 0) return false;
-    completionBusTicks = static_cast<uint64_t>(completionSigned);
-    // The next callback is ordered by completion, not by the slightly later
-    // controller correlation read.
-    ivars.runtime.lastTxObservationBusTicks = completionBusTicks;
-    return true;
+    // Thin wrapper. The arithmetic and its state contract live in
+    // TxCycleAnchor.hpp so they can be tested without DriverKit; this used to
+    // be written out here and was the only clock path in the audio stack with
+    // no coverage at all.
+    return ASFW::Audio::Shared::ExpandCompletionAgainstCorrelation(
+        ivars.runtime.txCorrelationUnwrap, completionCycleTimer,
+        correlationCycleTimer, completionBusTicks, correlationBusTicks);
 }
 
 [[nodiscard]] bool PublishTimelineBoundary(
@@ -1049,8 +1026,7 @@ void RepublishTxRingForRestart(ASFWAudioDriver_IVars& ivars) noexcept {
     // high-water mark would reject every anchor until it caught up.
     ivars.runtime.txPlanBusTicksValid = false;
     ivars.runtime.lastTxPlanBusTicks = 0;
-    ivars.runtime.txObservationBusTicksValid = false;
-    ivars.runtime.lastTxObservationBusTicks = 0;
+    ivars.runtime.txCorrelationUnwrap = {};
     PrefillTxRingBeforeStart(ivars);
 }
 

@@ -318,8 +318,10 @@ struct AudioDriverRuntimeState {
     bool rxStartupDrained{false};
     bool txPlanBusTicksValid{false};
     uint64_t lastTxPlanBusTicks{0};
-    bool txObservationBusTicksValid{false};
-    uint64_t lastTxObservationBusTicks{0};
+    // Correlation-only high-water mark for the completion-stamp expansion.
+    // Named for what it holds: the pair it replaced was written with completion
+    // times and checked against correlation times.
+    ASFW::Audio::Shared::TxCorrelationUnwrapState txCorrelationUnwrap{};
 
     // Silent-NO-DATA attribution. A plan that never reaches the PCM cache
     // leaves every copy counter at zero, so the two paths that can drop a

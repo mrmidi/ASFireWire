@@ -206,3 +206,121 @@ TEST(TxCycleAnchorTests, BoundaryStraddleStaysMonotonicForTheUnwrapper) {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// ExpandCompletionAgainstCorrelation: the state contract.
+//
+// This path had no coverage at all, and it wedged on an M-Audio FireWire 1814:
+// bursts of 1024, 4096 and finally 131,072 consecutive conversion failures over
+// 414 seconds, which starved the zero-timestamp boundaries entirely. Instruments
+// showed "No Data" for a 4.7-second capture while audio was still playing.
+
+namespace {
+
+using ASFW::Audio::Shared::ExpandCompletionAgainstCorrelation;
+using ASFW::Audio::Shared::TxCorrelationUnwrapState;
+
+struct Expansion final {
+    bool ok{false};
+    uint64_t completion{0};
+    uint64_t correlation{0};
+};
+
+Expansion Expand(TxCorrelationUnwrapState& state,
+                 uint32_t completionStamp,
+                 uint32_t correlationTimer) {
+    Expansion out{};
+    out.ok = ExpandCompletionAgainstCorrelation(
+        state, completionStamp, correlationTimer, out.completion,
+        out.correlation);
+    return out;
+}
+
+}  // namespace
+
+TEST(TxCycleAnchorTests, ExpansionRecoversTheCompletionAgeFromTheCorrelation) {
+    TxCorrelationUnwrapState state{};
+    const auto r = Expand(state, CompletionStamp(6, 5520),
+                          encodeCycleTimer(6, 5520, 1479));
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.correlation - r.completion, 1479u)
+        << "the completion sits one correlation offset behind";
+}
+
+TEST(TxCycleAnchorTests, ExpansionAcceptsCompletionsWalkedNewestFirst) {
+    // The M-Audio path reads the stamp queue backwards to find the freshest
+    // DATA stamp, so completions descend under one correlation read. Enforcing
+    // monotonicity on them here rejected almost every stamp.
+    TxCorrelationUnwrapState state{};
+    const uint32_t correlation = encodeCycleTimer(6, 5520, 1479);
+    uint64_t previous = 0;
+    for (const uint32_t cycle : {5520u, 5519u, 5517u, 5513u}) {
+        const auto r = Expand(state, CompletionStamp(6, cycle), correlation);
+        ASSERT_TRUE(r.ok) << "cycle " << cycle;
+        if (previous != 0) EXPECT_LT(r.completion, previous);
+        previous = r.completion;
+    }
+}
+
+TEST(TxCycleAnchorTests, ExpansionSurvivesACompletionAheadOfItsCorrelation) {
+    // THE REGRESSION. IsochTxDmaRing publishes clockPair at the top of a refill
+    // pass and its stamps at the bottom, so a stamp can be newer than the
+    // correlation it is paired with. The old code stored that completion as the
+    // high-water mark the NEXT call's correlation was checked against, and
+    // because the check returns before updating, the mark stayed in the future
+    // and every later call failed until the bus clock caught up.
+    TxCorrelationUnwrapState state{};
+    const auto ahead = Expand(state, CompletionStamp(6, 5522),
+                              encodeCycleTimer(6, 5520, 1479));
+    ASSERT_TRUE(ahead.ok);
+    EXPECT_GT(ahead.completion, ahead.correlation);
+
+    // Everything that follows must still convert.
+    for (uint32_t i = 1; i <= 8; ++i) {
+        const auto r = Expand(state, CompletionStamp(6, 5520 + i),
+                              encodeCycleTimer(6, 5520 + i, 1479));
+        ASSERT_TRUE(r.ok) << "wedged " << i << " calls after the overshoot";
+    }
+}
+
+TEST(TxCycleAnchorTests, ExpansionRejectsABackwardCorrelationWithoutWedging) {
+    // A controller read that lands behind the mark is refused -- the caller
+    // counts it -- but it must not poison the mark, or one bad read costs every
+    // later conversion.
+    TxCorrelationUnwrapState state{};
+    ASSERT_TRUE(Expand(state, CompletionStamp(6, 5520),
+                       encodeCycleTimer(6, 5520, 1479)).ok);
+    EXPECT_FALSE(Expand(state, CompletionStamp(6, 5000),
+                        encodeCycleTimer(6, 5000, 0)).ok);
+    EXPECT_TRUE(Expand(state, CompletionStamp(6, 5521),
+                       encodeCycleTimer(6, 5521, 0)).ok)
+        << "the next forward read must recover on its own";
+}
+
+TEST(TxCycleAnchorTests, ExpansionStaysMonotoneAcrossTheEightSecondStamp) {
+    // The stamp only carries seconds[2:0], so it repeats every eight seconds
+    // while the correlation keeps counting to 128.
+    TxCorrelationUnwrapState state{};
+    uint64_t previous = 0;
+    for (uint32_t seconds = 6; seconds <= 12; ++seconds) {
+        const auto r = Expand(state, CompletionStamp(seconds, 100),
+                              encodeCycleTimer(seconds, 100, 512));
+        ASSERT_TRUE(r.ok) << "seconds " << seconds;
+        EXPECT_GT(r.correlation, previous);
+        EXPECT_EQ(r.correlation - r.completion, 512u);
+        previous = r.correlation;
+    }
+}
+
+TEST(TxCycleAnchorTests, ExpansionUnwrapsThe128SecondCorrelationWrap) {
+    TxCorrelationUnwrapState state{};
+    const auto before = Expand(state, CompletionStamp(127, 7999),
+                               encodeCycleTimer(127, 7999, 0));
+    ASSERT_TRUE(before.ok);
+    const auto after = Expand(state, CompletionStamp(0, 0),
+                              encodeCycleTimer(0, 0, 0));
+    ASSERT_TRUE(after.ok) << "the wrap must lift, not be read as a backward step";
+    EXPECT_GT(after.correlation, before.correlation);
+    EXPECT_EQ(after.correlation - before.correlation,
+              static_cast<uint64_t>(kTicksPerCycle));
+}

@@ -95,6 +95,76 @@ inline void LiftCompletionAgainstCorrelation(
     outCompletionTicks = completionTicks;
 }
 
+/// Running reference for unwrapping the controller's correlation reads into a
+/// monotone 64-bit bus timeline.
+///
+/// It holds CORRELATION times and nothing else. That is not incidental: the
+/// unwrap has to decide which 128-second window a raw read belongs to, and it
+/// can only do that against a previous sample of the same clock.
+struct TxCorrelationUnwrapState final {
+    bool valid{false};
+    uint64_t lastCorrelationBusTicks{0};
+};
+
+/// Expand one transmit completion stamp and its correlated CYCLE_TIMER read
+/// into monotone 64-bit bus times.
+///
+/// Ordering is deliberately NOT enforced here. Callers walk the completion
+/// stamp queue in both directions -- the M-Audio path reads it newest-first to
+/// find the freshest DATA stamp -- so completions legitimately arrive
+/// descending, and a monotonic guard on them would reject almost everything.
+/// HardwareSampleTimeline::Observe already rejects an out-of-order observation,
+/// which is the layer that owns that question.
+///
+/// This used to keep one state slot and use it for both quantities: the guard
+/// inside the unwrap compared this call's correlation against the previous
+/// call's completion, because the caller overwrote the slot with the completion
+/// afterwards. Two samples of two different clocks in one high-water mark. And
+/// because the unwrap returns before updating on failure, any completion that
+/// landed ahead of its correlation -- which the lift above explains is normal
+/// -- left the mark in the future and wedged every later call until the bus
+/// clock caught up. Measured on an M-Audio FireWire 1814: bursts of 1024, 4096
+/// and finally 131,072 consecutive failures over 414 seconds, which starved the
+/// zero-timestamp boundaries and left CoreAudio reanchoring on 14 of every 17
+/// periods.
+[[nodiscard]] inline bool ExpandCompletionAgainstCorrelation(
+    TxCorrelationUnwrapState& state,
+    uint32_t completionCycleTimer,
+    uint32_t correlationCycleTimer,
+    uint64_t& outCompletionBusTicks,
+    uint64_t& outCorrelationBusTicks) noexcept {
+    int64_t completionTicks = 0;
+    int64_t correlationTicks = 0;
+    LiftCompletionAgainstCorrelation(completionCycleTimer, correlationCycleTimer,
+                                     completionTicks, correlationTicks);
+
+    const uint64_t domain = static_cast<uint64_t>(kBusDomainTicks);
+    uint64_t raw = static_cast<uint64_t>(correlationTicks) % domain;
+    uint64_t unwrapped = raw;
+    if (state.valid) {
+        unwrapped = (state.lastCorrelationBusTicks / domain) * domain + raw;
+        if (unwrapped + domain / 2 < state.lastCorrelationBusTicks) {
+            unwrapped += domain;
+        }
+        // A correlation that still lands behind the mark is a controller read
+        // out of order, which the caller counts. Leaving the mark untouched is
+        // what keeps one such read from wedging the path: the next forward read
+        // passes on its own.
+        if (unwrapped < state.lastCorrelationBusTicks) return false;
+    }
+
+    // Signed on purpose: a completion may sit slightly after its correlation.
+    const int64_t age = correlationTicks - completionTicks;
+    const int64_t completionSigned = static_cast<int64_t>(unwrapped) - age;
+    if (completionSigned < 0) return false;
+
+    state.valid = true;
+    state.lastCorrelationBusTicks = unwrapped;
+    outCorrelationBusTicks = unwrapped;
+    outCompletionBusTicks = static_cast<uint64_t>(completionSigned);
+    return true;
+}
+
 [[nodiscard]] inline bool TransmitPacketBusTicks(
     uint32_t completionCycleTimer,
     uint32_t correlationCycleTimer,
