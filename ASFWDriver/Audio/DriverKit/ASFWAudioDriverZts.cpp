@@ -10,6 +10,7 @@
 
 #include <DriverKit/DriverKit.h>
 
+#include <array>
 #include <cstdint>
 #include <limits>
 
@@ -437,18 +438,57 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
     bool finalityStamped = false;
 
     if (useMAudio && txDrivesTimeline) {
-        // The M-Audio warm-up state machine counts transport wakes, not
-        // packets: ObserveHardwareWake refuses a second call for the same
-        // transport generation, so draining into it would discard every stamp
-        // after the first. Hand it the newest DATA packet of this wake instead.
-        // That keeps one group per wake while removing the defect that a
-        // trailing NO-DATA packet hid the audio which completed beside it.
+        // Two jobs, and they need different amounts of the wake.
+        //
+        // The warm-up state machine counts transport wakes, not packets:
+        // ObserveHardwareWake refuses a second call for the same transport
+        // generation, so it gets exactly one -- the newest DATA packet of this
+        // wake, which is also what keeps a trailing NO-DATA packet from hiding
+        // the audio that completed beside it.
+        //
+        // The timeline needs all of them. It publishes a boundary only when the
+        // boundary falls inside the frame range it was handed, so submitting one
+        // packet per wake offers it 8 frames out of the 48 a wake advances. The
+        // generic path below already learned this ("reading the newest stamp
+        // alone lost five boundaries in six") -- but here it is worse than
+        // five in six, because 12'288 frames is exactly 256 wakes. The boundary
+        // therefore lands at the same offset inside every wake, so a fixed
+        // sampling position either straddles it always or misses it always. On
+        // an M-Audio FireWire 1814 it missed always: one boundary published at
+        // StartIO and none afterwards, with Instruments showing no zero
+        // timestamps at all across a 4.7-second capture while audio played.
+        //
+        // At the previous 8'192-frame period the same code limped, because
+        // 8192/48 is not a whole number and the boundary walked through the
+        // wake. The geometry change did not cause this; it removed the accident
+        // that was hiding it.
+        struct WakeDataPacket final {
+            uint64_t completionBusTicks{0};
+            uint64_t correlationBusTicks{0};
+            uint64_t firstAudioFrame{0};
+            uint32_t frameCount{0};
+        };
+        // A wake is one completion group. The margin is for a wake that arrives
+        // late and drains several; beyond it the newest packets are the ones
+        // worth keeping, so collection stops and the observer still gets its
+        // one call exactly as before.
+        constexpr uint32_t kMaxWakeDataPackets =
+            4 * ASFW::Shared::Isoch::IsochQueueGeometry::kPacketsPerCompletionGroup;
+        std::array<WakeDataPacket, kMaxWakeDataPackets> dataPackets{};
+        uint32_t dataPacketCount = 0;
+
         uint64_t completionBusTicks = 0;
         uint64_t correlationBusTicks = 0;
         uint64_t sampleFrame = 0;
         uint32_t frameCount = 0;
         bool haveStamp = false;
-        for (uint64_t stampIndex = stampCount; stampIndex-- > cursor;) {
+        bool haveData = false;
+        // Forward, so the collected packets come out in ascending frame order --
+        // HardwareSampleTimeline::Observe rejects an observation that moves
+        // backwards. Overwriting as it goes leaves the newest readable stamp and
+        // the newest DATA packet in hand at the end, which is the same pair the
+        // backwards scan this replaced arrived at.
+        for (uint64_t stampIndex = cursor; stampIndex < stampCount; ++stampIndex) {
             uint64_t packetIndex = 0;
             uint64_t stampCompletion = 0;
             uint64_t stampCorrelation = 0;
@@ -457,13 +497,13 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                                        stampCompletion, stampCorrelation)) {
                 continue;
             }
-            if (!haveStamp) {
-                // Newest readable stamp: the fallback zero-frame warm-up event
-                // if this whole wake turns out to carry no audio.
+            if (!haveData) {
+                // Fallback for a wake that turns out to carry no audio: the
+                // warm-up still wants a zero-frame event to count.
                 completionBusTicks = stampCompletion;
                 correlationBusTicks = stampCorrelation;
-                haveStamp = true;
             }
+            haveStamp = true;
             const auto* slot = timeline.SlotByIndex(
                 static_cast<uint32_t>(packetIndex));
             if (!slot || !slot->isData || slot->framesInPacket == 0 ||
@@ -474,7 +514,15 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
             correlationBusTicks = stampCorrelation;
             sampleFrame = slot->firstAudioFrame;
             frameCount = slot->framesInPacket;
-            break;
+            haveData = true;
+            if (dataPacketCount < kMaxWakeDataPackets) {
+                dataPackets[dataPacketCount++] = {
+                    .completionBusTicks = stampCompletion,
+                    .correlationBusTicks = stampCorrelation,
+                    .firstAudioFrame = slot->firstAudioFrame,
+                    .frameCount = slot->framesInPacket,
+                };
+            }
         }
         ivars.runtime.txCompletionStampCursor = stampCount;
         if (!haveStamp) return;
@@ -493,9 +541,29 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                      converted.captureReference.hostTicks);
         }
         if (!converted.observationReady) return;
-        control->mAudioTxDerivedObservations.fetch_add(
-            1, std::memory_order_relaxed);
-        SubmitTxObservation(ivars, control, converted.observation, "maudio-tx");
+
+        // The observer's presentation offset, recovered rather than re-derived:
+        // it built converted.observation from the newest DATA packet's own
+        // completion, so the difference is the constant it applied. Reading it
+        // back keeps one owner for that constant.
+        const uint64_t presentationOffset =
+            converted.observation.presentationBusTicks - completionBusTicks;
+        for (uint32_t i = 0; i < dataPacketCount; ++i) {
+            const auto& entry = dataPackets[i];
+            control->mAudioTxDerivedObservations.fetch_add(
+                1, std::memory_order_relaxed);
+            SubmitTxObservation(ivars, control, {
+                .epoch = converted.observation.epoch,
+                .source = ASFW::Audio::Runtime::HardwareTimelineSource::Transmit,
+                .sampleFrame = entry.firstAudioFrame,
+                .frameCount = entry.frameCount,
+                .presentationBusTicks =
+                    entry.completionBusTicks + presentationOffset,
+                .correlationBusTicks = entry.correlationBusTicks,
+                .correlationHostTicks =
+                    converted.observation.correlationHostTicks,
+            }, "maudio-tx");
+        }
         return;
     }
 
