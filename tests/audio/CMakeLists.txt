@@ -70,6 +70,12 @@ add_audio_test(MotuV2ProfileTests
     MotuV2ProfileTests.cpp
 )
 
+# MOTU device->host payload extraction tests
+add_audio_test(MotuPayloadReaderTests
+    MotuPayloadReaderTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+)
+
 # MOTU per-data-block presentation offset cache
 add_audio_test(MotuEventOffsetCacheTests
     MotuEventOffsetCacheTests.cpp
