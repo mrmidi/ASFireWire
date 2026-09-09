@@ -128,7 +128,8 @@ public:
         }
     }
 
-    /// Arm a new measurement session. Returns false if not in Idle or Frozen state.
+    /// Arm a new measurement session. Returns false if not in Idle or Frozen state,
+    /// or if in-flight writers from a prior session are still active.
     [[nodiscard]] bool Arm(uint32_t sessionId,
                            uint64_t epoch,
                            uint32_t sampleRateHz,
@@ -142,12 +143,21 @@ public:
             return false;
         }
 
-        // Wait until writer is completely quiescent before rearming.
-        if (writerActive_.load(std::memory_order_acquire) != 0) {
+        // Wait until all writers from previous session are completely drained.
+        if (activeWriters_.load(std::memory_order_seq_cst) != 0) {
             return false;
         }
 
         state_.store(TxLatencySessionState::Arming, std::memory_order_seq_cst);
+
+        // Re-verify no writers registered while transitioning to Arming.
+        if (activeWriters_.load(std::memory_order_seq_cst) != 0) {
+            state_.store(current, std::memory_order_seq_cst);
+            return false;
+        }
+
+        // Advance session generation. Any stale writer that enters will detect this bump.
+        sessionGeneration_.fetch_add(1, std::memory_order_seq_cst);
 
         sessionId_ = sessionId;
         epoch_ = epoch;
@@ -180,7 +190,6 @@ public:
         matchedCount_.store(0, std::memory_order_relaxed);
         substitutedCount_.store(0, std::memory_order_relaxed);
         unresolvedCount_.store(0, std::memory_order_relaxed);
-        agedOutCount_.store(0, std::memory_order_relaxed);
         transmitFailedCount_.store(0, std::memory_order_relaxed);
         invalidCount_.store(0, std::memory_order_relaxed);
         stampsMissedCount_.store(0, std::memory_order_relaxed);
@@ -196,6 +205,8 @@ public:
 
         recordCount_.store(0, std::memory_order_relaxed);
         terminationReason_ = TxLatencyTerminationReason::None;
+        pendingTerminationReason_.store(TxLatencyTerminationReason::None, std::memory_order_release);
+        finalizerClaimed_.store(false, std::memory_order_release);
 
         startHostTicks_ = mach_absolute_time();
         const uint64_t durationNs = static_cast<uint64_t>(durationSeconds_) * 1'000'000'000ULL;
@@ -208,31 +219,66 @@ public:
 
     /// Request session stop.
     void RequestStop(TxLatencyTerminationReason reason = TxLatencyTerminationReason::UserStopped) noexcept {
-        auto expected = TxLatencySessionState::Capturing;
-        if (state_.compare_exchange_strong(expected, TxLatencySessionState::StopRequested,
+        // 1. Atomically store the pending termination reason if not already set.
+        TxLatencyTerminationReason expectedReason = TxLatencyTerminationReason::None;
+        pendingTerminationReason_.compare_exchange_strong(
+            expectedReason, reason, std::memory_order_acq_rel);
+
+        // 2. Transition state from Capturing to StopRequested.
+        auto expectedState = TxLatencySessionState::Capturing;
+        if (state_.compare_exchange_strong(expectedState, TxLatencySessionState::StopRequested,
                                            std::memory_order_seq_cst)) {
-            terminationReason_ = reason;
-            PollQuiescence();
+            (void)TryFinalize();
+        } else if (expectedState == TxLatencySessionState::StopRequested) {
+            // Already in StopRequested; attempt finalization if writers have now drained.
+            (void)TryFinalize();
         }
+    }
+
+    /// Synchronize and finalize session into Frozen state once writers have drained.
+    /// Uses an atomic claim latch to serialize finalization so exactly one caller
+    /// records termination metadata and publishes Frozen.
+    bool TryFinalize() noexcept {
+        if (state_.load(std::memory_order_acquire) != TxLatencySessionState::StopRequested) {
+            return false;
+        }
+        if (activeWriters_.load(std::memory_order_acquire) != 0) {
+            return false;
+        }
+
+        bool expectedClaim = false;
+        if (!finalizerClaimed_.compare_exchange_strong(expectedClaim, true,
+                                                      std::memory_order_acq_rel)) {
+            return false; // Another caller is already finalizing or has finalized.
+        }
+
+        // Exclusive owner of finalization:
+        terminationReason_ = pendingTerminationReason_.load(std::memory_order_acquire);
+        if (terminationReason_ == TxLatencyTerminationReason::None) {
+            terminationReason_ = TxLatencyTerminationReason::UserStopped;
+        }
+        frozenHostTicks_ = mach_absolute_time();
+
+        statusSeq_.fetch_add(1, std::memory_order_release);
+        // Publish Frozen AFTER metadata (terminationReason_, frozenHostTicks_) is fully written.
+        state_.store(TxLatencySessionState::Frozen, std::memory_order_release);
+        statusSeq_.fetch_add(1, std::memory_order_release);
+        return true;
     }
 
     /// Check if in-flight writer has exited and publish Frozen.
     void PollQuiescence() noexcept {
-        if (state_.load(std::memory_order_seq_cst) != TxLatencySessionState::StopRequested) {
-            return;
-        }
-
-        if (writerActive_.load(std::memory_order_acquire) == 0) {
-            frozenHostTicks_ = mach_absolute_time();
-            state_.store(TxLatencySessionState::Frozen, std::memory_order_seq_cst);
-        }
+        (void)CheckExpiration();
+        (void)TryFinalize();
     }
 
     /// Reset session to idle on explicit teardown or rearm.
     void Reset() noexcept {
         state_.store(TxLatencySessionState::Idle, std::memory_order_seq_cst);
-        writerActive_.store(0, std::memory_order_seq_cst);
+        activeWriters_.store(0, std::memory_order_seq_cst);
         recordCount_.store(0, std::memory_order_relaxed);
+        finalizerClaimed_.store(false, std::memory_order_relaxed);
+        pendingTerminationReason_.store(TxLatencyTerminationReason::None, std::memory_order_relaxed);
     }
 
     /// Process a completed completion stamp from the audio observer loop.
@@ -244,31 +290,43 @@ public:
         const Protocols::Audio::AMDTP::AmdtpPacketTimeline& timeline,
         const PublicationRangeRing& publicationRing,
         uint64_t currentHostNow) noexcept {
-        if (state_.load(std::memory_order_relaxed) != TxLatencySessionState::Capturing) {
+
+        // 1. Register active writer BEFORE checking state or generation.
+        activeWriters_.fetch_add(1, std::memory_order_seq_cst);
+        struct WriterGuard {
+            TxLatencySession& session;
+            ~WriterGuard() {
+                if (session.activeWriters_.fetch_sub(1, std::memory_order_seq_cst) == 1) {
+                    // Last active writer drained; finalize if stop was requested.
+                    (void)session.TryFinalize();
+                }
+            }
+        } guard{*this};
+
+        // 2. Load generation and state.
+        const uint32_t myGen = sessionGeneration_.load(std::memory_order_acquire);
+        if (state_.load(std::memory_order_acquire) != TxLatencySessionState::Capturing) {
             return;
         }
 
-        // Deadline check: stop automatically if session deadline has expired.
+        // 3. Discard any old completions predating this session's start time.
+        if (currentHostNow < startHostTicks_) {
+            return;
+        }
+
+        // 4. Deadline check: stop automatically if session deadline has expired.
         if (currentHostNow >= deadlineHostTicks_) {
             RequestStop(TxLatencyTerminationReason::DeadlineExpired);
             return;
         }
 
-        writerActive_.store(1, std::memory_order_seq_cst);
-        if (state_.load(std::memory_order_seq_cst) != TxLatencySessionState::Capturing) {
-            writerActive_.store(0, std::memory_order_release);
-            return;
-        }
-
         const auto* slot = timeline.SlotByIndex(static_cast<uint32_t>(packetIndex));
         if (!slot || !slot->isData || slot->framesInPacket == 0) {
-            writerActive_.store(0, std::memory_order_release);
             return;
         }
 
         // Epoch mismatch causes immediate stop to prevent mixing coordinates.
         if (slot->epoch != epoch_) {
-            writerActive_.store(0, std::memory_order_release);
             RequestStop(TxLatencyTerminationReason::EpochChanged);
             return;
         }
@@ -290,14 +348,18 @@ public:
 
         if (!selectThisPacket) {
             statusSeq_.fetch_add(1, std::memory_order_release);
-            writerActive_.store(0, std::memory_order_release);
+            return;
+        }
+
+        // Verify generation and state are still valid before claiming a slot.
+        if (sessionGeneration_.load(std::memory_order_acquire) != myGen ||
+            state_.load(std::memory_order_acquire) != TxLatencySessionState::Capturing) {
             return;
         }
 
         const uint32_t curRecords = recordCount_.load(std::memory_order_relaxed);
         if (curRecords >= sampleBudget_ || curRecords >= kTxLatencyMaxSamples) {
             statusSeq_.fetch_add(1, std::memory_order_release);
-            writerActive_.store(0, std::memory_order_release);
             RequestStop(TxLatencyTerminationReason::CapacityReached);
             return;
         }
@@ -332,6 +394,12 @@ public:
         const auto outcome = ClassifyTxLatencySample(
             eventCode, haveProvenance, isSubstitution, coverage, txBounds, pubEarliest, pubLatest, reason);
 
+        // Re-verify generation before committing the sample.
+        if (sessionGeneration_.load(std::memory_order_acquire) != myGen ||
+            state_.load(std::memory_order_acquire) != TxLatencySessionState::Capturing) {
+            return;
+        }
+
         // Record the sample.
         auto& rec = records_[curRecords];
         rec.packetIndex = packetIndex;
@@ -361,20 +429,17 @@ public:
                 unresolvedCount_.fetch_add(1, std::memory_order_relaxed);
                 CountUnresolvedReason(reason);
                 break;
-            case TxLatencyOutcome::AgedOut:
-                agedOutCount_.fetch_add(1, std::memory_order_relaxed);
-                CountUnresolvedReason(reason);
-                break;
             case TxLatencyOutcome::TransmitFailed:
                 transmitFailedCount_.fetch_add(1, std::memory_order_relaxed);
                 break;
             case TxLatencyOutcome::Invalid:
                 invalidCount_.fetch_add(1, std::memory_order_relaxed);
                 break;
+            case TxLatencyOutcome::Unknown:
+                break;
         }
 
         statusSeq_.fetch_add(1, std::memory_order_release);
-        writerActive_.store(0, std::memory_order_release);
     }
 
     void NoteStampsMissed(uint64_t count) noexcept {
@@ -417,7 +482,7 @@ public:
         outHeader.matchedCount = snap.resolvedCount;
         outHeader.substitutedCount = snap.substitutionCount;
         outHeader.unresolvedCount = snap.unresolvedCount;
-        outHeader.agedOutCount = snap.unresolvedCount;
+        outHeader.agedOutCount = snap.reasonPublicationAgedOut + snap.reasonProvenanceAgedOut;
         outHeader.transmitFailedCount = snap.transmitFailedCount;
         outHeader.invalidCount = snap.invalidCount;
         outHeader.stampsMissedCount = snap.stampsMissedCount;
@@ -659,7 +724,10 @@ private:
     }
 
     std::atomic<TxLatencySessionState> state_{TxLatencySessionState::Idle};
-    std::atomic<uint32_t> writerActive_{0};
+    std::atomic<uint32_t> sessionGeneration_{0};
+    std::atomic<uint32_t> activeWriters_{0};
+    std::atomic<TxLatencyTerminationReason> pendingTerminationReason_{TxLatencyTerminationReason::None};
+    std::atomic<bool> finalizerClaimed_{false};
     mutable std::atomic<uint32_t> statusSeq_{0};
 
     uint32_t sessionId_{0};
@@ -687,7 +755,6 @@ private:
     std::atomic<uint64_t> matchedCount_{0};
     std::atomic<uint64_t> substitutedCount_{0};
     std::atomic<uint64_t> unresolvedCount_{0};
-    std::atomic<uint64_t> agedOutCount_{0};
     std::atomic<uint64_t> transmitFailedCount_{0};
     std::atomic<uint64_t> invalidCount_{0};
     std::atomic<uint64_t> stampsMissedCount_{0};

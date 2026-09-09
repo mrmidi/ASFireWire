@@ -7,7 +7,7 @@
 using namespace ASFW::Audio::Runtime;
 
 TEST(TxLatencyMeasurementTests, RationalMathExactness) {
-    ASFW::Timing::initializeHostTimebase();
+    (void)ASFW::Timing::initializeHostTimebase();
 
     // 3072 bus ticks @ 24.576 MHz is exactly 125 microseconds = 125,000 nanoseconds.
     EXPECT_EQ(BusTicksToNanos(3072), 125'000ULL);
@@ -23,7 +23,7 @@ TEST(TxLatencyMeasurementTests, RationalMathExactness) {
 }
 
 TEST(TxLatencyMeasurementTests, ComputeTransmitBoundsValid) {
-    ASFW::Timing::initializeHostTimebase();
+    (void)ASFW::Timing::initializeHostTimebase();
 
     ASFW::Isoch::IsochTxClockPairSample pair{};
     // Correlation anchor: cycle 1000, second 2
@@ -46,7 +46,7 @@ TEST(TxLatencyMeasurementTests, ComputeTransmitBoundsValid) {
 }
 
 TEST(TxLatencyMeasurementTests, ComputeTransmitBoundsStaleCorrelationRejected) {
-    ASFW::Timing::initializeHostTimebase();
+    (void)ASFW::Timing::initializeHostTimebase();
 
     ASFW::Isoch::IsochTxClockPairSample pair{};
     const uint32_t corrCycleTimer = (0U << 25) | (0U << 12) | 0U;
@@ -63,7 +63,7 @@ TEST(TxLatencyMeasurementTests, ComputeTransmitBoundsStaleCorrelationRejected) {
 }
 
 TEST(TxLatencyMeasurementTests, ClassifyTxLatencySampleOutcomes) {
-    ASFW::Timing::initializeHostTimebase();
+    (void)ASFW::Timing::initializeHostTimebase();
 
     TransmitBounds txBounds{};
     txBounds.valid = true;
@@ -113,7 +113,7 @@ TEST(TxLatencyMeasurementTests, ClassifyTxLatencySampleOutcomes) {
     // 5. Missing image provenance (aged out)
     outcome = ClassifyTxLatencySample(
         kSuccessAck, false, false, PublicationCoverageResult::Resolved, txBounds, 85'000, 90'000, reason);
-    EXPECT_EQ(outcome, TxLatencyOutcome::AgedOut);
+    EXPECT_EQ(outcome, TxLatencyOutcome::Unresolved);
     EXPECT_EQ(reason, TxLatencyUnresolvedReason::ProvenanceAgedOut);
 
     // 6. Substitution
@@ -142,7 +142,7 @@ TEST(TxLatencyMeasurementTests, ClassifyTxLatencySampleOutcomes) {
     // 10. Aged Out
     outcome = ClassifyTxLatencySample(
         kSuccessAck, true, false, PublicationCoverageResult::AgedOut, txBounds, 85'000, 90'000, reason);
-    EXPECT_EQ(outcome, TxLatencyOutcome::AgedOut);
+    EXPECT_EQ(outcome, TxLatencyOutcome::Unresolved);
     EXPECT_EQ(reason, TxLatencyUnresolvedReason::PublicationAgedOut);
 
     // 11. Overlapping intervals: P=[95'000, 105'000], T=[100'000, 110'000].

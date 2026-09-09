@@ -40,13 +40,13 @@ inline constexpr uint32_t kDefaultAssumedDriftPpm = 100;
     return (ticks * 15'625ULL) / 384ULL;
 }
 
-enum class TxLatencyOutcome : uint32_t {
-    Matched = 0,
-    Substituted,
-    Unresolved,
-    AgedOut,
-    TransmitFailed,
-    Invalid,
+enum class TxLatencyOutcome : uint8_t {
+    Unknown = 0,
+    Matched = 1,
+    Substituted = 2,
+    Unresolved = 3,
+    TransmitFailed = 4,
+    Invalid = 5,
 };
 
 enum class TxLatencyUnresolvedReason : uint32_t {
@@ -220,7 +220,7 @@ struct TransmitBounds final {
     // 4. Content provenance could not be proven.
     if (!pcmIdentityProven) {
         outReason = TxLatencyUnresolvedReason::ProvenanceAgedOut;
-        return TxLatencyOutcome::AgedOut;
+        return TxLatencyOutcome::Unresolved;
     }
 
     // 5. Publication coverage evaluation.
@@ -238,7 +238,7 @@ struct TransmitBounds final {
             return TxLatencyOutcome::Unresolved;
         case PublicationCoverageResult::AgedOut:
             outReason = TxLatencyUnresolvedReason::PublicationAgedOut;
-            return TxLatencyOutcome::AgedOut;
+            return TxLatencyOutcome::Unresolved;
     }
 
     // 6. Temporal ordering check:

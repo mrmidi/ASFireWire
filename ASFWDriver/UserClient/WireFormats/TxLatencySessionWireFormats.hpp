@@ -24,7 +24,7 @@ struct TxLatencySampleWire final {
     int64_t  waitMinNanos{0};
     int64_t  waitMaxNanos{0};
     uint32_t uncertaintyHostTicks{0};
-    uint8_t  outcome{0};          // TxLatencyOutcome
+    uint8_t  outcome{0};          // TxLatencyOutcome: 0=Unknown, 1=Matched, 2=Substituted, 3=Unresolved, 4=TransmitFailed, 5=Invalid
     uint8_t  unresolvedReason{0}; // TxLatencyUnresolvedReason
     uint8_t  selectedImage{0};    // 0 or 1
     uint8_t  arbitrationPhase{0}; // 0..7
