@@ -70,6 +70,14 @@ add_audio_test(MotuV2ProfileTests
     MotuV2ProfileTests.cpp
 )
 
+# MOTU host->device payload placement tests
+add_audio_test(MotuPayloadWriterTests
+    MotuPayloadWriterTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+)
+
 # MOTU v2 Protocol Adapter Tests
 # DeviceRegistry is linked because the protocol now takes a registry-issued route token
 # (ProtocolRegisterIO validates the route on every transaction), so the test fixture has
