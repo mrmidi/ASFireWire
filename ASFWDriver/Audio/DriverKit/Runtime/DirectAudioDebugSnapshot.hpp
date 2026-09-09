@@ -148,8 +148,8 @@ struct DirectAudioDebugLogState final {
         static_cast<uint64_t>(reinterpret_cast<uintptr_t>(binding.memory.inputBase));
     snapshot.outputBufferAddress =
         static_cast<uint64_t>(reinterpret_cast<uintptr_t>(binding.memory.outputBase));
-    snapshot.inputFrameCapacity = binding.memory.inputFrameCapacity;
-    snapshot.outputFrameCapacity = binding.memory.outputFrameCapacity;
+    snapshot.inputFrameCapacity = binding.memory.activeInputRingFrames;
+    snapshot.outputFrameCapacity = binding.memory.activeOutputRingFrames;
     snapshot.inputChannels = binding.memory.inputChannels;
     snapshot.outputChannels = binding.memory.outputChannels;
     snapshot.ioBufferFrameSize = ioBufferFrameSize;

@@ -77,7 +77,7 @@ struct Fixture {
             .memory =
                 AudioStreamMemory{
                     .inputBase = inputBuffer.data(),
-                    .inputFrameCapacity = 512,
+                    .activeInputRingFrames = 512,
                     .inputChannels = kSlots,
                 },
             .control = &control,

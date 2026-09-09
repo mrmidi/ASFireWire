@@ -65,6 +65,27 @@ inline uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
     return static_cast<uint8_t>(hw.ReadNodeID() & 0x3Fu);
 }
 
+static void CommitSessionConfiguration(
+    DuplexRestartSession& session,
+    const AudioClockConfig& appliedClock,
+    const AudioStreamRuntimeCaps& runtimeCaps) noexcept {
+    const bool rateChanged = !session.committedConfig.valid ||
+                             session.committedConfig.clock.sampleRateHz != appliedClock.sampleRateHz;
+    const uint64_t nextRevision = !session.committedConfig.valid
+        ? 1
+        : (rateChanged ? session.committedConfig.revision + 1 : session.committedConfig.revision);
+
+    session.committedConfig = CommittedDuplexConfiguration{
+        .clock = appliedClock,
+        .runtimeCaps = runtimeCaps,
+        .revision = nextRevision,
+        .valid = true,
+    };
+    session.desiredClock = appliedClock;
+    session.appliedClock = appliedClock;
+    session.runtimeCaps = runtimeCaps;
+}
+
 } // namespace
 
 // FW-70: the execution body of a duplex start/stop/idle-clock transaction.  The
@@ -465,15 +486,21 @@ void AudioDuplexCoordinator::AcknowledgeDevicePresent(EndpointId endpointId) noe
 void AudioDuplexCoordinator::SynchronizeCommittedConfiguration(
     EndpointId endpointId,
     const AudioClockConfig& clock,
-    const AudioStreamRuntimeCaps& runtimeCaps) noexcept {
+    const AudioStreamRuntimeCaps& runtimeCaps,
+    uint64_t revision) noexcept {
     if (!endpointId || !IsSupportedAudioClockConfig(clock)) {
         return;
     }
     DuplexRestartSession session = store_.LoadSession(endpointId);
     session.endpointId = endpointId;
+    session.committedConfig = CommittedDuplexConfiguration{
+        .clock = clock,
+        .runtimeCaps = runtimeCaps,
+        .revision = revision,
+        .valid = true,
+    };
     session.desiredClock = clock;
     session.appliedClock = clock;
-    session.pendingClock = clock;
     session.runtimeCaps = runtimeCaps;
     store_.StoreSession(session);
 }
@@ -512,27 +539,23 @@ IOReturn AudioDuplexCoordinator::RunStartStreaming(EndpointId endpointId) noexce
     }
 
     DuplexRestartSession session = LoadSession(endpointId);
-    // Honor a clock the user selected before streaming began. A rate pick while
-    // idle runs the idle clock-apply path, which persists the rate into
-    // desiredClock / appliedClock (NOT pendingClock) — so resolve all three,
-    // newest first, mirroring the bus-reset rebind path. Without this the start
-    // drops the selected rate and forces 48 kHz, leaving the device clocked at
-    // 48k while the host runs at the picked rate.
+    // The committed configuration revision is authoritative for startup.
+    // Hardware preparation, timeline, and HAL projection must all agree on this state.
     AudioClockConfig desiredClock{
         .sampleRateHz = 48000U,
     };
-    if (IsSupportedAudioClockConfig(session.pendingClock)) {
-        desiredClock = session.pendingClock;
-    } else if (IsSupportedAudioClockConfig(session.desiredClock)) {
-        desiredClock = session.desiredClock;
-    } else if (IsSupportedAudioClockConfig(session.appliedClock)) {
-        desiredClock = session.appliedClock;
+    if (session.committedConfig.valid && IsSupportedAudioClockConfig(session.committedConfig.clock)) {
+        desiredClock = session.committedConfig.clock;
     } else if (auto ep = runtime_.FindEndpointRuntime(endpointId)) {
         uint32_t activeRate = 0, inCh = 0, outCh = 0;
         uint64_t revision = 0;
         if (ep->CopyActiveConfiguration(activeRate, inCh, outCh, revision) && activeRate != 0) {
             desiredClock = AudioClockConfig{.sampleRateHz = activeRate};
         }
+    } else if (IsSupportedAudioClockConfig(session.appliedClock)) {
+        desiredClock = session.appliedClock;
+    } else if (IsSupportedAudioClockConfig(session.desiredClock)) {
+        desiredClock = session.desiredClock;
     }
 
     // Reject startup if its rate disagrees with the prepared host geometry.
@@ -1611,9 +1634,8 @@ SetSessionPhase(session, DuplexRestartPhase::kRunning);
 SetSessionState(session, DuplexRestartState::kRunning, "confirmed_running");
 session.generation = confirm.value.generation;
 session.deviceRunning = true;
-session.appliedClock = confirm.value.appliedClock;
-session.runtimeCaps = confirm.value.runtimeCaps;
 session.terminalError = kIOReturnSuccess;
+CommitSessionConfiguration(session, confirm.value.appliedClock, confirm.value.runtimeCaps);
 ClearFailureSnapshot(session);
 StoreSession(session);
 LogTerminal(session);
@@ -1886,9 +1908,8 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
     }
 
     session.generation = apply.value.generation;
-    session.appliedClock = apply.value.appliedClock;
-    session.runtimeCaps = apply.value.runtimeCaps;
     session.terminalError = kIOReturnSuccess;
+    CommitSessionConfiguration(session, apply.value.appliedClock, apply.value.runtimeCaps);
     ClearFailureSnapshot(session);
     ApplyTerminalPhase(session, DuplexRestartPhase::kIdle, "idle_apply_complete");
     StoreSession(session);

@@ -63,7 +63,8 @@ public:
     void SynchronizeCommittedConfiguration(
         EndpointId endpointId,
         const AudioClockConfig& clock,
-        const AudioStreamRuntimeCaps& runtimeCaps) noexcept;
+        const AudioStreamRuntimeCaps& runtimeCaps,
+        uint64_t revision = 0) noexcept;
     // Backend work queues use this before any device-side probe or recovery.
     // It covers both service teardown and a endpoint retired by discovery.
     [[nodiscard]] bool IsDeviceOperationCancelled(EndpointId endpointId) const noexcept;

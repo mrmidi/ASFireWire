@@ -12,6 +12,7 @@
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../Shared/AudioGeometryPolicy.hpp"
 #include "../Shared/AudioTimingGeometry.hpp"
+#include "Config/HalTimingProjection.hpp"
 #include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -231,8 +232,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
     // The init argument is the declared zero-timestamp period. Shared stream
     // memory is sized separately by the selected HAL buffer profile.
-    constexpr auto bufferProfile =
-        ASFW::Audio::Shared::kActiveAudioHalBufferProfile;
+    const auto bufferProfile =
+        ASFW::Audio::Shared::AudioHalBufferProfileForRate(
+            static_cast<uint32_t>(ivars.device.currentSampleRate));
     const uint32_t target_period =
         ASFW::Audio::Shared::AudioTimingGeometry::ZeroTimestampPeriodFrames(
             static_cast<uint32_t>(ivars.device.currentSampleRate));
@@ -651,61 +653,60 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return error;
     }
     const double currentSampleRate = ivars.device.currentSampleRate;
-    const auto* profile = &ivars.resolvedProfile;
-
-    uint32_t outLatency = 0;
-    uint32_t inLatency = 0;
-    uint32_t outSafety = 0;
-    uint32_t inSafety = 0;
-
-    outLatency = profile->TxReportedLatencyFrames(currentSampleRate);
-    inLatency = profile->RxReportedLatencyFrames(currentSampleRate);
-    outSafety = profile->TxSafetyOffsetFrames(currentSampleRate);
-    inSafety = profile->RxSafetyOffsetFrames(currentSampleRate);
-
-    const uint32_t profileOutputSafety = outSafety;
-    outSafety = ASFW::Audio::Shared::AudioGeometryPolicy::
-        RequiredOutputSafetyFrames(
-            outSafety, static_cast<uint32_t>(currentSampleRate));
-    if (outSafety == 0) {
+    const auto projection = DeriveHalTimingProjection(ivars.resolvedProfile, currentSampleRate);
+    if (!projection) {
         ASFW_LOG_ERROR(
             Audio,
             "ASFWAudioDriver: unsupported V3 safety rate=%.0f",
             currentSampleRate);
         return kIOReturnUnsupported;
     }
-    if (outSafety != profileOutputSafety) {
+
+    if (ivars.runtime.directAudioSkeletonBound.load(std::memory_order_acquire) &&
+        ivars.runtime.directAudioGraph.memory.activeOutputRingFrames !=
+            projection->resolvedGeometry.activeOutputRingFrames) {
+        ASFW_LOG_ERROR(
+            Audio,
+            "ASFWAudioDriver: direct output ring (%u) does not match resolved active ring (%u)",
+            ivars.runtime.directAudioGraph.memory.activeOutputRingFrames,
+            projection->resolvedGeometry.activeOutputRingFrames);
+        return kIOReturnBadArgument;
+    }
+
+    if (projection->outputSafetyOffsetFrames != projection->rawProfileOutputSafetyFrames) {
         ASFW_LOG(
             Audio,
             "ASFWAudioDriver: output safety %u -> %u (finalitySlots=%u)",
-            profileOutputSafety, outSafety,
+            projection->rawProfileOutputSafetyFrames,
+            projection->outputSafetyOffsetFrames,
             ASFW::Audio::Shared::AudioTimingGeometry::
                 kTxContentFreezeCycleSlots);
     }
 
     if (!requireAdkSuccess(
             "device.SetOutputLatency",
-            ivars.audioDevice->SetOutputLatency(outLatency))) {
+            ivars.audioDevice->SetOutputLatency(projection->outputLatencyFrames))) {
         return error;
     }
     if (!requireAdkSuccess(
             "device.SetInputLatency",
-            ivars.audioDevice->SetInputLatency(inLatency))) {
+            ivars.audioDevice->SetInputLatency(projection->inputLatencyFrames))) {
         return error;
     }
     if (!requireAdkSuccess(
             "device.SetOutputSafetyOffset",
-            ivars.audioDevice->SetOutputSafetyOffset(outSafety))) {
+            ivars.audioDevice->SetOutputSafetyOffset(projection->outputSafetyOffsetFrames))) {
         return error;
     }
     if (!requireAdkSuccess(
             "device.SetInputSafetyOffset",
-            ivars.audioDevice->SetInputSafetyOffset(inSafety))) {
+            ivars.audioDevice->SetInputSafetyOffset(projection->inputSafetyOffsetFrames))) {
         return error;
     }
 
     ASFW_LOG(Audio, "ASFWAudioDriver: Reported HAL latency out=%u/in=%u, safety out=%u/in=%u frames",
-             outLatency, inLatency, outSafety, inSafety);
+             projection->outputLatencyFrames, projection->inputLatencyFrames,
+             projection->outputSafetyOffsetFrames, projection->inputSafetyOffsetFrames);
 
     const uint32_t configuredZtsPeriod =
         ivars.audioDevice->GetZeroTimestampPeriod();
@@ -733,15 +734,13 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
 
     auto effective = ivars.runtime.activeTuning;
-    effective.outputLatencyFrames = outLatency;
-    effective.inputLatencyFrames = inLatency;
-    effective.outputSafetyOffsetFrames = outSafety;
-    effective.inputSafetyOffsetFrames = inSafety;
-    effective.frameRingFrames = bufferProfile.frameRingFrames;
-    effective.clientIoBudgetFrames = bufferProfile.clientIoBudgetFrames;
-    effective.zeroTimestampPeriodFrames =
-        ASFW::Audio::Shared::AudioTimingGeometry::ZeroTimestampPeriodFrames(
-            static_cast<uint32_t>(ivars.device.currentSampleRate));
+    effective.outputLatencyFrames = projection->outputLatencyFrames;
+    effective.inputLatencyFrames = projection->inputLatencyFrames;
+    effective.outputSafetyOffsetFrames = projection->outputSafetyOffsetFrames;
+    effective.inputSafetyOffsetFrames = projection->inputSafetyOffsetFrames;
+    effective.frameRingFrames = projection->resolvedGeometry.activeOutputRingFrames;
+    effective.clientIoBudgetFrames = projection->resolvedGeometry.clientIoBudgetFrames;
+    effective.zeroTimestampPeriodFrames = projection->zeroTimestampPeriodFrames;
     ivars.runtime.activeTuning = effective;
     ivars.device.audioNub->PublishRuntimeTuningGraph(effective,
         static_cast<uint32_t>(ivars.device.currentSampleRate),

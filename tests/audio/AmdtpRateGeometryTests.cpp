@@ -1,4 +1,5 @@
 #include "Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
+#include "Audio/DriverKit/ASFWAudioDeviceTokens.hpp"
 #include "Audio/Shared/AudioTimingGeometry.hpp"
 #include "Isoch/Core/IsochDmaGeometry.hpp"
 
@@ -54,7 +55,14 @@ TEST(AudioTimingGeometryTests, V3GeometryIsUnified) {
     EXPECT_EQ(Geometry::kMaximumNominalFramesPerInterrupt, 48U);
     EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 48U);
     EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets, 504U);
-    EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, 24576U);
+    EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, 12288U);
+    EXPECT_EQ(Geometry::kAllocatedPcmPublicationCacheFrames, 24576U);
+    EXPECT_EQ(Geometry::PcmPublicationCacheFrames(48'000), 12288U);
+    EXPECT_EQ(Geometry::PcmPublicationCacheFrames(96'000), 24576U);
+    EXPECT_EQ(Geometry::kFrameRingFrames, 12288U);
+    EXPECT_EQ(Geometry::kAllocatedFrameRingFrames, 24576U);
+    EXPECT_EQ(Geometry::FrameRingFrames(48'000), 12288U);
+    EXPECT_EQ(Geometry::FrameRingFrames(96'000), 24576U);
     EXPECT_EQ(Geometry::kTxSharedSlotPackets, 1512U);
     EXPECT_EQ(Geometry::kTxHardwareRingPackets, 504U);
     EXPECT_EQ(Geometry::kTxPreparationLatencyHistogramBuckets, 6U);
@@ -79,9 +87,11 @@ TEST(AudioTimingGeometryTests, V3GeometryIsUnified) {
     // DMA completion cadence and the ZTS grid are intentionally independent.
     EXPECT_NE(Geometry::kHalZeroTimestampPeriodFrames,
               Geometry::kNominalFramesPerTimingGroup);
-    EXPECT_EQ(Geometry::kFrameRingFrames %
-                  Geometry::kHalZeroTimestampPeriodFrames, 0U);
-    EXPECT_EQ(Geometry::kFrameRingFrames %
+    EXPECT_EQ(Geometry::FrameRingFrames(48'000) %
+                  Geometry::ZeroTimestampPeriodFrames(48'000), 0U);
+    EXPECT_EQ(Geometry::FrameRingFrames(96'000) %
+                  Geometry::ZeroTimestampPeriodFrames(96'000), 0U);
+    EXPECT_EQ(Geometry::kAllocatedFrameRingFrames %
                   Geometry::ZeroTimestampPeriodFrames(96'000), 0U);
     EXPECT_EQ(Geometry::kFrameRingFrames %
                   Geometry::kHalIoPeriodFrames, 0U);
@@ -105,23 +115,33 @@ TEST(AudioTimingGeometryTests, V3PublishesOnlyExactIntegerTickRates) {
 
 TEST(AudioTimingGeometryTests, HalBufferProfileIsGlobalV3Geometry) {
     using namespace ASFW::Audio::Shared;
-    EXPECT_EQ(kAudioHalBufferProfileV3.frameRingFrames, 24576U);
+    EXPECT_EQ(kAudioHalBufferProfileV3.frameRingFrames, 12288U);
     EXPECT_EQ(kAudioHalBufferProfileV3.clientIoBudgetFrames, 1024U);
     EXPECT_EQ(kAudioHalBufferProfileV3.zeroTimestampPeriodFrames, 12288U);
     EXPECT_TRUE(IsValidAudioHalBufferProfile(kActiveAudioHalBufferProfile));
-    EXPECT_EQ(kActiveAudioHalBufferProfile.frameRingFrames, 24576U);
+    EXPECT_EQ(kActiveAudioHalBufferProfile.frameRingFrames, 12288U);
+
+    const auto p48 = AudioHalBufferProfileForRate(48'000);
+    EXPECT_EQ(p48.frameRingFrames, 12288U);
+    EXPECT_EQ(p48.clientIoBudgetFrames, 1024U);
+    EXPECT_EQ(p48.zeroTimestampPeriodFrames, 12288U);
+
+    const auto p96 = AudioHalBufferProfileForRate(96'000);
+    EXPECT_EQ(p96.frameRingFrames, 24576U);
+    EXPECT_EQ(p96.clientIoBudgetFrames, 1024U);
+    EXPECT_EQ(p96.zeroTimestampPeriodFrames, 24576U);
 }
 
 TEST(AudioTimingGeometryTests, ZtsPeriodTokenRoundTripsCorrectly) {
-    using Geometry = ASFW::Audio::Shared::AudioTimingGeometry;
+    using namespace ASFW::Audio::DriverKit;
     for (uint32_t period : {12'288U, 24'576U, 49'152U}) {
-        const uint64_t token = Geometry::ZtsPeriodToken(period);
-        EXPECT_TRUE(Geometry::IsZtsPeriodToken(token));
-        EXPECT_EQ(Geometry::ZtsPeriodFromToken(token), period);
+        const uint64_t token = ZtsPeriodToken(period);
+        EXPECT_TRUE(IsZtsPeriodToken(token));
+        EXPECT_EQ(ZtsPeriodFromToken(token), period);
     }
-    EXPECT_FALSE(Geometry::IsZtsPeriodToken(0));
-    EXPECT_FALSE(Geometry::IsZtsPeriodToken(12288));
-    EXPECT_FALSE(Geometry::IsZtsPeriodToken(0xA5F7000000003000ULL)); // TuningToken prefix
+    EXPECT_FALSE(IsZtsPeriodToken(0));
+    EXPECT_FALSE(IsZtsPeriodToken(12288));
+    EXPECT_FALSE(IsZtsPeriodToken(0xA5F7000000003000ULL)); // TuningToken prefix
 }
 
 } // namespace

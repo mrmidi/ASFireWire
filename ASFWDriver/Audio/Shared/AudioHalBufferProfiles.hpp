@@ -33,12 +33,36 @@ struct AudioHalBufferProfile final {
 // so the HAL clock filter takes proportionally longer to lock after a
 // start or a reseed. 6144 is the alternative if that trade is unwanted --
 // 7.81/s, but the client ceiling drops to 2304.
-inline constexpr AudioHalBufferProfile kAudioHalBufferProfileV3{
-    "audio-engine-v3",
-    24'576,
-    1'024,
-    12'288,
-};
+inline constexpr AudioHalBufferProfile AudioHalBufferProfileForRate(
+    uint32_t sampleRateHz) noexcept {
+    switch (sampleRateHz) {
+        case 96'000:
+            return {
+                "audio-engine-v3-96k",
+                24'576,
+                1'024,
+                24'576,
+            };
+        case 192'000:
+            return {
+                "audio-engine-v3-192k",
+                49'152,
+                1'024,
+                49'152,
+            };
+        case 48'000:
+        default:
+            return {
+                "audio-engine-v3-48k",
+                12'288,
+                1'024,
+                12'288,
+            };
+    }
+}
+
+inline constexpr AudioHalBufferProfile kAudioHalBufferProfileV3 =
+    AudioHalBufferProfileForRate(48'000);
 
 // Largest blocking-mode frames-per-data-packet in V3: 8 @1x, 16 @2x,
 // 32 @4x. Boundaries inside packets are projected by HardwareSampleTimeline;
@@ -58,6 +82,9 @@ inline constexpr uint32_t kMaxBlockingFramesPerDataPacket = 32;
                0;
 }
 
+static_assert(IsValidAudioHalBufferProfile(AudioHalBufferProfileForRate(48'000)));
+static_assert(IsValidAudioHalBufferProfile(AudioHalBufferProfileForRate(96'000)));
+static_assert(IsValidAudioHalBufferProfile(AudioHalBufferProfileForRate(192'000)));
 static_assert(IsValidAudioHalBufferProfile(kAudioHalBufferProfileV3));
 inline constexpr AudioHalBufferProfile kActiveAudioHalBufferProfile =
     kAudioHalBufferProfileV3;

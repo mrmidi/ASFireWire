@@ -8,41 +8,76 @@
 
 namespace ASFW::Audio::Runtime {
 
-bool PcmPublicationCache::Configure(uint32_t channels,
-                                    uint32_t frameCapacity) noexcept {
-    if (channels == 0 || frameCapacity == 0) return false;
-    const uint64_t sampleCount = static_cast<uint64_t>(channels) * frameCapacity;
+std::optional<PcmPublicationCache::StagedStorage>
+PcmPublicationCache::AllocateStorage(
+    uint32_t channels, uint32_t cacheCapacityFrames) noexcept {
+    if (channels == 0 || cacheCapacityFrames == 0) return std::nullopt;
+    const uint64_t sampleCount =
+        static_cast<uint64_t>(channels) * cacheCapacityFrames;
     if (sampleCount > std::numeric_limits<size_t>::max() /
                           sizeof(std::atomic<uint32_t>)) {
-        return false;
+        return std::nullopt;
     }
 
-    if (!sampleBits_ || channels_ != channels || frameCapacity_ != frameCapacity) {
-        auto samples = std::unique_ptr<std::atomic<uint32_t>[]>{
-            new (std::nothrow) std::atomic<uint32_t>[sampleCount]};
-        auto sequences = std::unique_ptr<std::atomic<uint64_t>[]>{
-            new (std::nothrow) std::atomic<uint64_t>[frameCapacity]};
-        auto epochs = std::unique_ptr<std::atomic<uint64_t>[]>{
-            new (std::nothrow) std::atomic<uint64_t>[frameCapacity]};
-        auto frames = std::unique_ptr<std::atomic<uint64_t>[]>{
-            new (std::nothrow) std::atomic<uint64_t>[frameCapacity]};
-        if (!samples || !sequences || !epochs || !frames) return false;
-        for (uint64_t i = 0; i < sampleCount; ++i) {
-            samples[i].store(0, std::memory_order_relaxed);
-        }
-        for (uint32_t i = 0; i < frameCapacity; ++i) {
-            sequences[i].store(0, std::memory_order_relaxed);
-            epochs[i].store(0, std::memory_order_relaxed);
-            frames[i].store(UINT64_MAX, std::memory_order_relaxed);
-        }
-        sampleBits_ = std::move(samples);
-        frameSequences_ = std::move(sequences);
-        frameEpochs_ = std::move(epochs);
-        frameAbsoluteFrames_ = std::move(frames);
-        channels_ = channels;
-        frameCapacity_ = frameCapacity;
+    auto samples = std::unique_ptr<std::atomic<uint32_t>[]>{
+        new (std::nothrow) std::atomic<uint32_t>[sampleCount]};
+    auto sequences = std::unique_ptr<std::atomic<uint64_t>[]>{
+        new (std::nothrow) std::atomic<uint64_t>[cacheCapacityFrames]};
+    auto epochs = std::unique_ptr<std::atomic<uint64_t>[]>{
+        new (std::nothrow) std::atomic<uint64_t>[cacheCapacityFrames]};
+    auto frames = std::unique_ptr<std::atomic<uint64_t>[]>{
+        new (std::nothrow) std::atomic<uint64_t>[cacheCapacityFrames]};
+    if (!samples || !sequences || !epochs || !frames) return std::nullopt;
+
+    for (uint64_t i = 0; i < sampleCount; ++i) {
+        samples[i].store(0, std::memory_order_relaxed);
     }
+    for (uint32_t i = 0; i < cacheCapacityFrames; ++i) {
+        sequences[i].store(0, std::memory_order_relaxed);
+        epochs[i].store(0, std::memory_order_relaxed);
+        frames[i].store(UINT64_MAX, std::memory_order_relaxed);
+    }
+
+    return StagedStorage{
+        .sampleBits = std::move(samples),
+        .frameSequences = std::move(sequences),
+        .frameEpochs = std::move(epochs),
+        .frameAbsoluteFrames = std::move(frames),
+        .channels = channels,
+        .cacheCapacityFrames = cacheCapacityFrames,
+    };
+}
+
+void PcmPublicationCache::CommitStorage(StagedStorage&& staged) noexcept {
+    if (!staged.sampleBits || !staged.frameSequences || !staged.frameEpochs ||
+        !staged.frameAbsoluteFrames || staged.channels == 0 ||
+        staged.cacheCapacityFrames == 0) {
+        return;
+    }
+
+    sampleBits_ = std::move(staged.sampleBits);
+    frameSequences_ = std::move(staged.frameSequences);
+    frameEpochs_ = std::move(staged.frameEpochs);
+    frameAbsoluteFrames_ = std::move(staged.frameAbsoluteFrames);
+    channels_ = staged.channels;
+    cacheCapacityFrames_ = staged.cacheCapacityFrames;
     BeginEpoch(0);
+}
+
+bool PcmPublicationCache::Configure(uint32_t channels,
+                                    uint32_t cacheCapacityFrames) noexcept {
+    if (channels == 0 || cacheCapacityFrames == 0) return false;
+
+    if (sampleBits_ && channels_ == channels &&
+        cacheCapacityFrames_ == cacheCapacityFrames) {
+        BeginEpoch(0);
+        return true;
+    }
+
+    auto staged = AllocateStorage(channels, cacheCapacityFrames);
+    if (!staged) return false;
+
+    CommitStorage(std::move(*staged));
     return true;
 }
 
@@ -64,7 +99,7 @@ void PcmPublicationCache::BeginEpoch(uint64_t epoch) noexcept {
     publishedEndFrame_.store(0, std::memory_order_relaxed);
     hasRange_.store(false, std::memory_order_release);
     if (frameSequences_) {
-        for (uint32_t frame = 0; frame < frameCapacity_; ++frame) {
+        for (uint32_t frame = 0; frame < cacheCapacityFrames_; ++frame) {
             const uint64_t old = frameSequences_[frame].load(
                 std::memory_order_relaxed);
             frameSequences_[frame].store((old | 1U) + 1U,
@@ -80,7 +115,7 @@ void PcmPublicationCache::BeginEpoch(uint64_t epoch) noexcept {
 
 PcmPublishResult PcmPublicationCache::Publish(
     const PcmPublicationView& view) noexcept {
-    if (!sampleBits_ || channels_ == 0 || frameCapacity_ == 0) {
+    if (!sampleBits_ || channels_ == 0 || cacheCapacityFrames_ == 0) {
         return PcmPublishResult::NotConfigured;
     }
     const uint64_t transitionBefore =
@@ -102,7 +137,7 @@ PcmPublishResult PcmPublicationCache::Publish(
     if (!view.interleavedFloat32 || view.channels != channels_ ||
         view.frameCount == 0 || view.frameCapacity == 0 ||
         view.frameCount > view.frameCapacity ||
-        view.frameCount > frameCapacity_ ||
+        view.frameCount > cacheCapacityFrames_ ||
         view.firstFrame > UINT64_MAX - view.frameCount) {
         return PcmPublishResult::InvalidView;
     }
@@ -139,7 +174,7 @@ PcmPublishResult PcmPublicationCache::Publish(
          ++absoluteFrame) {
         const uint64_t sourceFrame = absoluteFrame % view.frameCapacity;
         const float* source = view.interleavedFloat32 + sourceFrame * view.channels;
-        const uint64_t physicalFrame = absoluteFrame % frameCapacity_;
+        const uint64_t physicalFrame = absoluteFrame % cacheCapacityFrames_;
         const uint64_t destinationBase = physicalFrame * channels_;
         const uint64_t oldSequence = frameSequences_[physicalFrame].load(
             std::memory_order_relaxed);
@@ -167,8 +202,8 @@ PcmPublishResult PcmPublicationCache::Publish(
 
     const uint64_t segmentStart = (!hadRange || discontinuity)
         ? copyStart : oldestValidFrame_.load(std::memory_order_relaxed);
-    const uint64_t capacityFloor = incomingEnd > frameCapacity_
-        ? incomingEnd - frameCapacity_ : 0;
+    const uint64_t capacityFloor = incomingEnd > cacheCapacityFrames_
+        ? incomingEnd - cacheCapacityFrames_ : 0;
     const uint64_t newOldest = segmentStart > capacityFloor
         ? segmentStart : capacityFloor;
     const uint64_t previousOldest =
@@ -241,7 +276,7 @@ ASFW::Audio::Ports::PcmCopyResult PcmPublicationCache::CopyExact(
         bool stable = true;
         for (uint32_t frame = 0; frame < request.frameCount; ++frame) {
             const uint64_t absoluteFrame = request.firstFrame + frame;
-            const uint64_t physicalFrame = absoluteFrame % frameCapacity_;
+            const uint64_t physicalFrame = absoluteFrame % cacheCapacityFrames_;
             const uint64_t before = frameSequences_[physicalFrame].load(
                 std::memory_order_acquire);
             if ((before & 1U) != 0U ||

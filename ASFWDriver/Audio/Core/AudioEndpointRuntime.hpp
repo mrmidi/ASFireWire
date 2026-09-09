@@ -8,6 +8,8 @@
 #include "../Runtime/AudioTelemetrySnapshot.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
+#include "../Shared/AudioGeometryResolver.hpp"
+#include "../Shared/AudioTimingGeometry.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>
@@ -40,6 +42,9 @@ public:
           configuredOutputChannels_(PhysicalPlaybackChannels(profile.runtimeCaps)),
           configuredInputChannels_(PhysicalCaptureChannels(profile.runtimeCaps)),
           currentSampleRateHz_(profile.currentSampleRateHz),
+          allocationLimits_(ComputeAllocationLimits(profile)),
+          allocatedOutputBytes_(allocationLimits_.allocatedOutputBytes),
+          allocatedInputBytes_(allocationLimits_.allocatedInputBytes),
           lock_(IOLockAlloc()) {}
     ~AudioEndpointRuntime() noexcept {
         ReleaseDirectAudioMemory();
@@ -57,6 +62,17 @@ public:
         return deviceInstanceId_;
     }
     [[nodiscard]] uint64_t ObservedGuid() const noexcept { return observedGuid_; }
+    [[nodiscard]] const Shared::DirectAudioAllocationLimits& AllocationLimits() const noexcept {
+        return allocationLimits_;
+    }
+    [[nodiscard]] uint64_t AllocatedOutputBytes() const noexcept { return allocatedOutputBytes_; }
+    [[nodiscard]] uint64_t AllocatedInputBytes() const noexcept { return allocatedInputBytes_; }
+    [[nodiscard]] uint32_t DirectActiveOutputRingFrames() const noexcept {
+        return directActiveOutputRingFrames_;
+    }
+    [[nodiscard]] uint32_t DirectActiveInputRingFrames() const noexcept {
+        return directActiveInputRingFrames_;
+    }
 
     [[nodiscard]] bool CopyActiveConfiguration(uint32_t& outSampleRateHz,
                                                uint32_t& outInputChannels,
@@ -111,6 +127,10 @@ public:
         }
         if (directSampleRateHz_ != 0 && directSampleRateHz_ != sampleRateHz) {
             directSampleRateHz_ = sampleRateHz;
+            directActiveOutputRingFrames_ =
+                Shared::AudioTimingGeometry::FrameRingFrames(sampleRateHz);
+            directActiveInputRingFrames_ =
+                Shared::AudioTimingGeometry::FrameRingFrames(sampleRateHz);
             ++directGeneration_;
         }
         if (lock_) {
@@ -145,6 +165,10 @@ public:
             ++topologyRevision_;
         }
         if (HasCompleteDirectAudioMemoryLocked() && changed) {
+            directActiveOutputRingFrames_ =
+                Shared::AudioTimingGeometry::FrameRingFrames(runtimeCaps.sampleRateHz);
+            directActiveInputRingFrames_ =
+                Shared::AudioTimingGeometry::FrameRingFrames(runtimeCaps.sampleRateHz);
             directOutputChannels_ = outputChannels;
             directInputChannels_ = inputChannels;
             directSampleRateHz_ = runtimeCaps.sampleRateHz;
@@ -250,9 +274,9 @@ public:
         *outOutputMemory = directOutputMemory_;
         *outInputMemory = directInputMemory_;
         *outControlMemory = directControlMemory_;
-        *outOutputFrames = directOutputCapacityFrames_;
+        *outOutputFrames = directActiveOutputRingFrames_;
         *outOutputChannels = directOutputChannels_;
-        *outInputFrames = directInputCapacityFrames_;
+        *outInputFrames = directActiveInputRingFrames_;
         *outInputChannels = directInputChannels_;
         *outSampleRateHz = directSampleRateHz_;
         *outGeneration = directGeneration_;
@@ -312,10 +336,10 @@ public:
                         static_cast<void*>(directControl_),
                         directSampleRateHz_,
                         static_cast<const void*>(directOutputBase_),
-                        directOutputCapacityFrames_,
+                        directActiveOutputRingFrames_,
                         directOutputChannels_,
                         static_cast<void*>(directInputBase_),
-                        directInputCapacityFrames_,
+                        directActiveInputRingFrames_,
                         directInputChannels_);
             return false;
         }
@@ -324,11 +348,11 @@ public:
         out.generation = directGeneration_;
         out.outputBase = directOutputBase_;
         out.outputBytes = directOutputBytes_;
-        out.outputFrames = directOutputCapacityFrames_;
+        out.outputFrames = directActiveOutputRingFrames_;
         out.outputChannels = directOutputChannels_;
         out.inputBase = directInputBase_;
         out.inputBytes = directInputBytes_;
-        out.inputFrames = directInputCapacityFrames_;
+        out.inputFrames = directActiveInputRingFrames_;
         out.inputChannels = directInputChannels_;
         out.control = directControl_;
         out.sampleRateHz = directSampleRateHz_;
@@ -372,7 +396,7 @@ public:
             out.sampleRateHz = directSampleRateHz_;
             out.outputChannels = directOutputChannels_;
             out.inputChannels = directInputChannels_;
-            out.inputFrameCapacityFrames = directInputCapacityFrames_;
+            out.inputFrameCapacityFrames = directActiveInputRingFrames_;
             Runtime::CopyAudioTelemetrySnapshot(*directControl_, out);
         } else {
             // Keep a registered endpoint visible to diagnostics even before a
@@ -497,8 +521,8 @@ private:
                directOutputBase_ &&
                directInputBase_ &&
                directControl_ &&
-               directOutputCapacityFrames_ != 0 &&
-               directInputCapacityFrames_ != 0 &&
+               directActiveOutputRingFrames_ != 0 &&
+               directActiveInputRingFrames_ != 0 &&
                directOutputChannels_ != 0 &&
                directInputChannels_ != 0 &&
                directSampleRateHz_ != 0;
@@ -525,11 +549,11 @@ private:
                  directGeneration_,
                  static_cast<const void*>(directOutputBase_),
                  directOutputBytes_,
-                 directOutputCapacityFrames_,
+                 directActiveOutputRingFrames_,
                  directOutputChannels_,
                  static_cast<void*>(directInputBase_),
                  directInputBytes_,
-                 directInputCapacityFrames_,
+                 directActiveInputRingFrames_,
                  directInputChannels_,
                  static_cast<void*>(directControl_),
                  directSampleRateHz_);
@@ -538,12 +562,12 @@ private:
     void ReleaseDirectAudioMemoryLocked() noexcept {
         directOutputBase_ = nullptr;
         directOutputBytes_ = 0;
-        directOutputCapacityFrames_ = 0;
+        directActiveOutputRingFrames_ = 0;
         directOutputChannels_ = 0;
         directOutputCapacityChannels_ = 0;
         directInputBase_ = nullptr;
         directInputBytes_ = 0;
-        directInputCapacityFrames_ = 0;
+        directActiveInputRingFrames_ = 0;
         directInputChannels_ = 0;
         directInputCapacityChannels_ = 0;
         directControl_ = nullptr;
@@ -587,8 +611,10 @@ private:
         const uint32_t outputCapacityChannels = maximumOutputChannels_;
         const uint32_t inputCapacityChannels = maximumInputChannels_;
         const uint32_t sampleRateHz = currentSampleRateHz_;
-        const uint32_t outputFrames = Config::kAudioRingBufferFrames;
-        const uint32_t inputFrames = Config::kAudioRingBufferFrames;
+        const uint32_t activeFrames =
+            Shared::AudioTimingGeometry::FrameRingFrames(sampleRateHz);
+        const uint32_t outputFrames = activeFrames;
+        const uint32_t inputFrames = activeFrames;
 
         if (outputChannels == 0 || inputChannels == 0 || outputCapacityChannels == 0 ||
             inputCapacityChannels == 0 || sampleRateHz == 0) {
@@ -603,6 +629,11 @@ private:
         }
 
         if (HasCompleteDirectAudioMemoryLocked()) {
+            directActiveOutputRingFrames_ = outputFrames;
+            directActiveInputRingFrames_ = inputFrames;
+            directOutputChannels_ = outputChannels;
+            directInputChannels_ = inputChannels;
+            directSampleRateHz_ = sampleRateHz;
             ASFW_LOG(DirectAudio,
                      "ADK DBG MEM runtime ensure reuse observedGuid=0x%016llx gen=%llu outFrames=%u outCh=%u inFrames=%u inCh=%u rate=%u",
                      observedGuid_,
@@ -617,8 +648,8 @@ private:
 
         ReleaseDirectAudioMemoryLocked();
 
-        const uint64_t outputBytes = static_cast<uint64_t>(outputFrames) * outputCapacityChannels * sizeof(float);
-        const uint64_t inputBytes = static_cast<uint64_t>(inputFrames) * inputCapacityChannels * sizeof(int32_t);
+        const uint64_t outputBytes = allocatedOutputBytes_;
+        const uint64_t inputBytes = allocatedInputBytes_;
         const uint64_t controlBytes = sizeof(Runtime::AudioTransportControlBlock);
 
         ASFW_LOG(DirectAudio,
@@ -655,10 +686,10 @@ private:
             return kr;
         }
 
-        directOutputCapacityFrames_ = outputFrames;
+        directActiveOutputRingFrames_ = outputFrames;
         directOutputChannels_ = outputChannels;
         directOutputCapacityChannels_ = outputCapacityChannels;
-        directInputCapacityFrames_ = inputFrames;
+        directActiveInputRingFrames_ = inputFrames;
         directInputChannels_ = inputChannels;
         directInputCapacityChannels_ = inputCapacityChannels;
         directSampleRateHz_ = sampleRateHz;
@@ -678,6 +709,76 @@ private:
         return HasCompleteDirectAudioMemoryLocked() ? kIOReturnSuccess : kIOReturnNotReady;
     }
 
+    [[nodiscard]] static Shared::DirectAudioAllocationLimits
+    ComputeAllocationLimits(
+        const Devices::ResolvedAudioEndpointProfile& profile) noexcept {
+        uint64_t maxOutBytes = 0;
+        uint64_t maxInBytes = 0;
+        const uint32_t maxOutCh = MaximumPlaybackChannels(profile);
+        const uint32_t maxInCh = MaximumCaptureChannels(profile);
+
+        const uint8_t count = std::min(
+            profile.configurationCapabilityCount,
+            static_cast<uint8_t>(profile.configurationCapabilities.size()));
+        for (uint8_t i = 0; i < count; ++i) {
+            const auto& caps = profile.configurationCapabilities[i].runtimeCaps;
+            if (caps.sampleRateHz == 0 || caps.sampleRateHz > 96000) continue;
+            const uint32_t frames =
+                Shared::AudioTimingGeometry::FrameRingFrames(caps.sampleRateHz);
+            const uint64_t outBytes =
+                static_cast<uint64_t>(frames) * PhysicalPlaybackChannels(caps) * sizeof(float);
+            const uint64_t inBytes =
+                static_cast<uint64_t>(frames) * PhysicalCaptureChannels(caps) * sizeof(float);
+            maxOutBytes = std::max(maxOutBytes, outBytes);
+            maxInBytes = std::max(maxInBytes, inBytes);
+        }
+
+        const auto& fallbackCaps = profile.runtimeCaps;
+        const uint32_t fallbackRate =
+            fallbackCaps.sampleRateHz != 0 ? fallbackCaps.sampleRateHz : 48000;
+        if (fallbackRate <= 96000) {
+            const uint32_t frames =
+                Shared::AudioTimingGeometry::FrameRingFrames(fallbackRate);
+            const uint64_t outBytes =
+                static_cast<uint64_t>(frames) * PhysicalPlaybackChannels(fallbackCaps) * sizeof(float);
+            const uint64_t inBytes =
+                static_cast<uint64_t>(frames) * PhysicalCaptureChannels(fallbackCaps) * sizeof(float);
+            maxOutBytes = std::max(maxOutBytes, outBytes);
+            maxInBytes = std::max(maxInBytes, inBytes);
+        }
+
+        if (count == 0) {
+            maxOutBytes = std::max(
+                maxOutBytes,
+                static_cast<uint64_t>(Shared::AudioTimingGeometry::kAllocatedFrameRingFrames) *
+                    maxOutCh * sizeof(float));
+            maxInBytes = std::max(
+                maxInBytes,
+                static_cast<uint64_t>(Shared::AudioTimingGeometry::kAllocatedFrameRingFrames) *
+                    maxInCh * sizeof(float));
+        }
+
+        if (maxOutBytes == 0 && maxOutCh != 0) {
+            maxOutBytes = static_cast<uint64_t>(Shared::AudioTimingGeometry::kAllocatedFrameRingFrames) *
+                maxOutCh * sizeof(float);
+        }
+        if (maxInBytes == 0 && maxInCh != 0) {
+            maxInBytes = static_cast<uint64_t>(Shared::AudioTimingGeometry::kAllocatedFrameRingFrames) *
+                maxInCh * sizeof(float);
+        }
+
+        if (maxOutBytes == 0) maxOutBytes = 64;
+        if (maxInBytes == 0) maxInBytes = 64;
+
+        return Shared::DirectAudioAllocationLimits{
+            .allocatedOutputBytes = maxOutBytes,
+            .allocatedInputBytes = maxInBytes,
+            .maxOutputChannels = maxOutCh,
+            .maxInputChannels = maxInCh,
+            .maxAllocatedFrames = Shared::AudioTimingGeometry::kAllocatedFrameRingFrames,
+        };
+    }
+
     const Devices::AudioEndpointId endpointId_{};
     const Discovery::DeviceInstanceId deviceInstanceId_{};
     const uint64_t observedGuid_{0}; // Config-ROM evidence; diagnostics only
@@ -686,6 +787,9 @@ private:
     uint32_t configuredOutputChannels_{0};
     uint32_t configuredInputChannels_{0};
     uint32_t currentSampleRateHz_{0};
+    const Shared::DirectAudioAllocationLimits allocationLimits_{};
+    const uint64_t allocatedOutputBytes_{0};
+    const uint64_t allocatedInputBytes_{0};
     /// Structural configuration revision. Control and meter frames must name
     /// this exact resolved stream/topology shape before the UI combines them.
     uint64_t topologyRevision_{1};
@@ -701,12 +805,12 @@ private:
     IOMemoryMap* directControlMap_{nullptr};
     const float* directOutputBase_{nullptr};
     uint64_t directOutputBytes_{0};
-    uint32_t directOutputCapacityFrames_{0};
+    uint32_t directActiveOutputRingFrames_{0};
     uint32_t directOutputChannels_{0};
     uint32_t directOutputCapacityChannels_{0};
     float* directInputBase_{nullptr};
     uint64_t directInputBytes_{0};
-    uint32_t directInputCapacityFrames_{0};
+    uint32_t directActiveInputRingFrames_{0};
     uint32_t directInputChannels_{0};
     uint32_t directInputCapacityChannels_{0};
     Runtime::AudioTransportControlBlock* directControl_{nullptr};

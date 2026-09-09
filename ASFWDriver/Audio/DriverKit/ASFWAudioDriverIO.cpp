@@ -29,7 +29,7 @@ void PublishPlaybackRingWriteEnd(ASFW::Audio::Runtime::AudioGraphBinding& graph,
         control.playbackRingOldestValidFrame.load(std::memory_order_acquire);
     const uint64_t consumed =
         control.playbackRingReadFrame.load(std::memory_order_acquire);
-    const uint32_t capacity = graph.memory.outputFrameCapacity;
+    const uint32_t capacity = graph.memory.activeOutputRingFrames;
     const auto update = ASFW::Audio::Runtime::UpdatePlaybackRingRange(
         previous, previousOldest, writeStart, writeEnd, consumed, capacity);
     if (update.writtenEndFrame == previous) {
@@ -132,7 +132,7 @@ bool PrepareCaptureRingForBeginRead(ASFW::Audio::Runtime::AudioGraphBinding& gra
 
     const uint64_t write =
         control.captureRingWriteFrame.load(std::memory_order_acquire);
-    const uint32_t capacity = graph.memory.inputFrameCapacity;
+    const uint32_t capacity = graph.memory.activeInputRingFrames;
     const uint64_t oldest = (capacity != 0 && write > capacity) ? (write - capacity) : 0;
     bool starved = false;
     uint32_t starvedFrames = 0;
@@ -265,7 +265,7 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 // ADK permits operation spans that differ from the nominal IO
                 // size. The stream ring capacity is the actual hard bound.
                 if (ioBufferFrameSize >
-                    driverIvars->runtime.directAudioGraph.memory.inputFrameCapacity) {
+                    driverIvars->runtime.directAudioGraph.memory.activeInputRingFrames) {
                     return returnError(kIOReturnBadArgument);
                 }
                 control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
@@ -304,7 +304,7 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 // See BeginRead above: CoreAudio may choose a larger span than
                 // kHalIoPeriodFrames while remaining within the stream ring.
                 if (ioBufferFrameSize >
-                    driverIvars->runtime.directAudioGraph.memory.outputFrameCapacity) {
+                    driverIvars->runtime.directAudioGraph.memory.activeOutputRingFrames) {
                     return returnError(kIOReturnBadArgument);
                 }
                 const auto& memory =
@@ -316,7 +316,7 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                         .epoch = control->hardwareTimeline.Epoch(),
                         .firstFrame = sampleTime,
                         .frameCount = ioBufferFrameSize,
-                        .frameCapacity = memory.outputFrameCapacity,
+                        .frameCapacity = memory.activeOutputRingFrames,
                         .channels = memory.outputChannels,
                     });
                 const uint64_t publicationEnd = mach_absolute_time();

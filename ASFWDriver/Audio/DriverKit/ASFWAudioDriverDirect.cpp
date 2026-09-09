@@ -300,8 +300,8 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
         .memory = ASFW::Audio::Runtime::AudioStreamMemory{
             .inputBase = reinterpret_cast<float*>(static_cast<uintptr_t>(ivars.inputMap->GetAddress())),
             .outputBase = reinterpret_cast<const float*>(static_cast<uintptr_t>(ivars.outputMap->GetAddress())),
-            .inputFrameCapacity = physicalGeometry.inputFrames,
-            .outputFrameCapacity = physicalGeometry.outputFrames,
+            .activeInputRingFrames = physicalGeometry.inputFrames,
+            .activeOutputRingFrames = physicalGeometry.outputFrames,
             .inputChannels = physicalGeometry.inputChannels,
             .outputChannels = physicalGeometry.outputChannels,
             .storage = ASFW::Audio::Runtime::AudioSampleStorage::kFloat32Native,
@@ -323,10 +323,10 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
              "ADK DBG BIND skeleton %{public}s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p audioDevice=%p rate=%u",
              "bound",
              static_cast<const void*>(ivars.runtime.directAudioGraph.memory.outputBase),
-             ivars.runtime.directAudioGraph.memory.outputFrameCapacity,
+             ivars.runtime.directAudioGraph.memory.activeOutputRingFrames,
              ivars.runtime.directAudioGraph.memory.outputChannels,
              static_cast<void*>(ivars.runtime.directAudioGraph.memory.inputBase),
-             ivars.runtime.directAudioGraph.memory.inputFrameCapacity,
+             ivars.runtime.directAudioGraph.memory.activeInputRingFrames,
              ivars.runtime.directAudioGraph.memory.inputChannels,
              static_cast<void*>(ivars.runtime.directAudioGraph.control),
              static_cast<void*>(ivars.runtime.directAudioGraph.audioDevice),
@@ -357,16 +357,16 @@ bool UpdateDirectAudioGeometry(ASFWAudioDriver_IVars& ivars,
 
     auto& graph = ivars.runtime.directAudioGraph;
     graph.sampleRateHz = static_cast<uint32_t>(ivars.device.currentSampleRate);
-    graph.memory.inputFrameCapacity = physicalGeometry.inputFrames;
-    graph.memory.outputFrameCapacity = physicalGeometry.outputFrames;
+    graph.memory.activeInputRingFrames = physicalGeometry.inputFrames;
+    graph.memory.activeOutputRingFrames = physicalGeometry.outputFrames;
     graph.memory.inputChannels = physicalGeometry.inputChannels;
     graph.memory.outputChannels = physicalGeometry.outputChannels;
     graph.deviceToHostAm824Slots = physicalGeometry.inputChannels;
     graph.hostToDeviceAm824Slots = physicalGeometry.outputChannels;
     ASFW_LOG(DirectAudio,
              "[AudioConfig] ADK direct view updated rate=%u in=%u/%u out=%u/%u",
-             graph.sampleRateHz, graph.memory.inputFrameCapacity,
-             graph.memory.inputChannels, graph.memory.outputFrameCapacity,
+             graph.sampleRateHz, graph.memory.activeInputRingFrames,
+             graph.memory.inputChannels, graph.memory.activeOutputRingFrames,
              graph.memory.outputChannels);
     return graph.IsValid();
 }

@@ -35,8 +35,8 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
         .memory = AudioStreamMemory{
             .inputBase = input.data(),
             .outputBase = output.data(),
-            .inputFrameCapacity = 8,
-            .outputFrameCapacity = 8,
+            .activeInputRingFrames = 8,
+            .activeOutputRingFrames = 8,
             .inputChannels = 2,
             .outputChannels = 2,
         },

@@ -305,7 +305,7 @@ TEST(IsochRxTimingTests, PacketProcessorWritesAM824CaptureAsFloat32) {
         .sampleRateHz = 48000,
         .memory = ASFW::Audio::Runtime::AudioStreamMemory{
             .inputBase = input.data(),
-            .inputFrameCapacity = 4,
+            .activeInputRingFrames = 4,
             .inputChannels = 2,
         },
         .control = &control,
@@ -341,7 +341,7 @@ TEST(IsochRxTimingTests, CaptureMailboxWrapIsNotAnOverrunUntilCoreAudioReads) {
         .sampleRateHz = 48000,
         .memory = ASFW::Audio::Runtime::AudioStreamMemory{
             .inputBase = input.data(),
-            .inputFrameCapacity = 4,
+            .activeInputRingFrames = 4,
             .inputChannels = 2,
         },
         .control = &control,
@@ -611,7 +611,7 @@ TEST(IsochRxTimingTests, PacketProcessorCanDecodeRawPcm24In32CaptureWhenExplicit
         .sampleRateHz = 48000,
         .memory = ASFW::Audio::Runtime::AudioStreamMemory{
             .inputBase = input.data(),
-            .inputFrameCapacity = 4,
+            .activeInputRingFrames = 4,
             .inputChannels = 2,
         },
         .control = &control,

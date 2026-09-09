@@ -3,6 +3,8 @@
 #include "CommonProfileBuilder.hpp"
 
 #include "../../Shared/AudioGeometryPolicy.hpp"
+#include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
+#include "../../Wire/AMDTP/AmdtpTransferDelay.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -109,14 +111,18 @@ void AddDefaultTiming(Devices::ResolvedAudioEndpointProfile& profile,
         // graph's old input-safety floor was hiding that.
         const uint32_t batchFrames =
             Shared::AudioGeometryPolicy::CompletionBatchFrames(rate);
+        const auto geom = Encoding::AmdtpRateGeometryForSampleRate(rate);
+        const uint8_t sytInterval = static_cast<uint8_t>(geom ? geom->sytIntervalFrames : 8);
+        const uint32_t delayTicks = Encoding::AmdtpTransferDelayTicks(
+            rate, sytInterval, Encoding::CipStreamMode::Blocking);
         profile.timing[i] = Devices::RateTimingPolicy{
             .sampleRateHz = rate,
             .inputLatencyFrames = 32,
             .outputLatencyFrames = 32,
             .inputSafetyFrames = batchFrames,
             .outputSafetyFrames = batchFrames,
-            .rxTransferDelayTicks = 12800,
-            .txTransferDelayTicks = 12800,
+            .rxTransferDelayTicks = delayTicks,
+            .txTransferDelayTicks = delayTicks,
             .anchorTimeoutMs = anchorTimeoutMs,
         };
     }

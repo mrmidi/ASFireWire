@@ -28,6 +28,7 @@
 
 #include "AudioGeometryPolicy.hpp"
 #include "AudioTimingGeometry.hpp"
+#include "../Wire/AMDTP/AmdtpTransferDelay.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -107,6 +108,7 @@ struct AudioGeometryReport final {
     uint32_t txRingLapFrames{0};
 
     // --- host-side buffer structure ------------------------------------------
+    uint32_t activeRingFrames{0};
     uint32_t schedulingJitterFrames{0};
     uint32_t frameAlignmentFrames{0};
     uint32_t pcmPublicationCacheFrames{0};
@@ -158,7 +160,6 @@ struct AudioGeometryReport final {
 
     out.schedulingJitterFrames = G::kSchedulingJitterFrames;
     out.frameAlignmentFrames = G::kFrameAlignment;
-    out.pcmPublicationCacheFrames = G::kPcmPublicationCacheFrames;
     out.maxBlockingFramesPerDataPacket = kMaxBlockingFramesPerDataPacket;
 
     out.txDispatchSlackFloorPackets = G::kTxDispatchSlackFloorPackets;
@@ -169,6 +170,9 @@ struct AudioGeometryReport final {
     if (!G::IsV3SampleRate(sampleRateHz)) {
         return out;
     }
+
+    out.activeRingFrames = G::FrameRingFrames(sampleRateHz);
+    out.pcmPublicationCacheFrames = G::PcmPublicationCacheFrames(sampleRateHz);
 
     const double rate = static_cast<double>(sampleRateHz);
     const uint32_t framesPerDataPacket = P::FramesPerPacket(rate);
@@ -199,8 +203,12 @@ struct AudioGeometryReport final {
     out.completionBatchFrames = P::CompletionBatchFrames(rate);
 
     out.zeroTimestampPeriodFrames = G::ZeroTimestampPeriodFrames(sampleRateHz);
-    out.rxTransferDelayTicks = 12'800;
-    out.txTransferDelayTicks = 12'800;
+    const uint8_t sytInterval = static_cast<uint8_t>(framesPerDataPacket != 0 ? framesPerDataPacket : 8);
+    const uint32_t delayTicks = sampleRateHz == 0
+        ? 0
+        : Encoding::AmdtpTransferDelayTicks(sampleRateHz, sytInterval, Encoding::CipStreamMode::Blocking);
+    out.rxTransferDelayTicks = delayTicks;
+    out.txTransferDelayTicks = delayTicks;
     return out;
 }
 
@@ -249,6 +257,14 @@ static_assert(DeriveGeometryReport(48'000).zeroTimestampPeriodFrames == 12'288,
               "48k zero-timestamp period must be 12288 frames");
 static_assert(DeriveGeometryReport(96'000).zeroTimestampPeriodFrames == 24'576,
               "96k zero-timestamp period must be 24576 frames");
+static_assert(DeriveGeometryReport(48'000).activeRingFrames == 12'288,
+              "48k active ring must be 12288 frames");
+static_assert(DeriveGeometryReport(96'000).activeRingFrames == 24'576,
+              "96k active ring must be 24576 frames");
+static_assert(DeriveGeometryReport(48'000).pcmPublicationCacheFrames == 12'288,
+              "48k PCM publication cache must be 12288 frames");
+static_assert(DeriveGeometryReport(96'000).pcmPublicationCacheFrames == 24'576,
+              "96k PCM publication cache must be 24576 frames");
 static_assert(DeriveGeometryReport(48'000).rxTransferDelayTicks == 12'800,
               "48k RX transfer delay must be 12800 ticks");
 static_assert(DeriveGeometryReport(96'000).rxTransferDelayTicks == 12'800,
@@ -261,6 +277,10 @@ static_assert(DeriveGeometryReport(0).framesPerDataPacket == 0,
               "an unknown rate must not report the 48 kHz cadence");
 static_assert(DeriveGeometryReport(0).zeroTimestampPeriodFrames == 0,
               "an unknown rate must not report a zero-timestamp period");
+static_assert(DeriveGeometryReport(0).rxTransferDelayTicks == 0,
+              "an unknown rate must report 0 transfer delay ticks");
+static_assert(DeriveGeometryReport(0).txTransferDelayTicks == 0,
+              "an unknown rate must report 0 transfer delay ticks");
 static_assert(DeriveGeometryReport(0).txDispatchSlackFloorPackets ==
                   AudioTimingGeometry::kTxDispatchSlackFloorPackets,
               "rate-independent structure is reportable before streaming");

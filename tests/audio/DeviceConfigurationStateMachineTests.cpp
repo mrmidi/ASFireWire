@@ -110,6 +110,11 @@ TEST(DeviceConfigurationStateMachineTests, CoreAudioRateIntentUsesGrantedWindow)
         .candidate = Config(44'100),
     }});
     ASSERT_TRUE(transition);
+    EXPECT_TRUE(std::holds_alternative<AwaitingADKPerform>(transition->next.state));
+    ASSERT_TRUE(std::holds_alternative<RequestADKWindowEffect>(transition->effects[0]));
+
+    transition = Reduce(transition->next, ConfigurationEvent{ADKPerformGranted{.identity = identity}});
+    ASSERT_TRUE(transition);
     EXPECT_TRUE(std::holds_alternative<AwaitingHardware>(transition->next.state));
     ASSERT_TRUE(std::holds_alternative<ApplyHardwareEffect>(transition->effects[0]));
 }
@@ -142,6 +147,10 @@ TEST(DeviceConfigurationStateMachineTests, UnknownHardwareStateQuiescesAndObserv
     ASSERT_TRUE(transition);
     machine = transition->next;
 
+    transition = Reduce(machine, ConfigurationEvent{ADKPerformGranted{.identity = identity}});
+    ASSERT_TRUE(transition);
+    machine = transition->next;
+
     transition = Reduce(machine, ConfigurationEvent{HardwareCompleted{
         .identity = identity,
         .outcome = HardwareUnknown{},
@@ -169,6 +178,59 @@ TEST(DeviceConfigurationStateMachineTests, RejectsStaleCompletionToken) {
     }});
     ASSERT_FALSE(stale);
     EXPECT_EQ(stale.error(), StateMachineError::StaleToken);
+}
+
+TEST(DeviceConfigurationStateMachineTests, RapidSuccessiveRequestsYieldBusy) {
+    Machine machine = Baseline();
+    auto transition = Reduce(machine, ConfigurationEvent{CoreAudioRateIntent{
+        .endpointId = kEndpointId,
+        .routeGeneration = kGeneration,
+        .sampleRate = 96'000,
+    }});
+    ASSERT_TRUE(transition);
+    machine = transition->next;
+    EXPECT_TRUE(std::holds_alternative<AwaitingCandidate>(machine.state));
+
+    // A second rate intent while the first is in-flight must be rejected as Busy.
+    const auto second = Reduce(machine, ConfigurationEvent{CoreAudioRateIntent{
+        .endpointId = kEndpointId,
+        .routeGeneration = kGeneration,
+        .sampleRate = 48'000,
+    }});
+    ASSERT_FALSE(second);
+    EXPECT_EQ(second.error(), StateMachineError::Busy);
+}
+
+TEST(DeviceConfigurationStateMachineTests, AbortedADKWindowRollsBackToPriorCommitted) {
+    Machine machine = Baseline();
+    auto transition = Reduce(machine, ConfigurationEvent{CoreAudioRateIntent{
+        .endpointId = kEndpointId,
+        .routeGeneration = kGeneration,
+        .sampleRate = 96'000,
+    }});
+    ASSERT_TRUE(transition);
+    machine = transition->next;
+    const auto identity = PendingIdentity(machine);
+
+    transition = Reduce(machine, ConfigurationEvent{CandidateAccepted{
+        .identity = identity,
+        .candidate = Config(96'000),
+    }});
+    ASSERT_TRUE(transition);
+    machine = transition->next;
+    EXPECT_TRUE(std::holds_alternative<AwaitingADKPerform>(machine.state));
+
+    // Simulate ADK denying/rejecting the configuration window.
+    transition = Reduce(machine, ConfigurationEvent{ADKWindowRejected{
+        .identity = identity,
+    }});
+    ASSERT_TRUE(transition);
+    const auto* idle = std::get_if<Idle>(&transition->next.state);
+    ASSERT_NE(idle, nullptr);
+    EXPECT_EQ(idle->committed.revision, 4U);
+    EXPECT_EQ(idle->committed.configuration.sampleRate, 48'000U);
+    ASSERT_TRUE(idle->lastFailure.has_value());
+    EXPECT_EQ(idle->lastFailure->reason, FailureReason::ADKWindowRejected);
 }
 
 } // namespace

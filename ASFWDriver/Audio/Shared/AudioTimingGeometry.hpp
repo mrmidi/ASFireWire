@@ -36,6 +36,17 @@ struct AudioTimingGeometry final {
                sampleRateHz == 192'000;
     }
 
+    static constexpr uint32_t kAllocatedFrameRingFrames = 24'576U;
+
+    [[nodiscard]] static constexpr uint32_t FrameRingFrames(
+        uint32_t sampleRateHz) noexcept {
+        switch (sampleRateHz) {
+            case 96'000: return 24'576U;
+            case 192'000: return 49'152U;
+            default: return 12'288U;
+        }
+    }
+
     [[nodiscard]] static constexpr uint32_t ZeroTimestampPeriodFrames(
         uint32_t sampleRateHz) noexcept {
         switch (sampleRateHz) {
@@ -45,15 +56,9 @@ struct AudioTimingGeometry final {
         }
     }
 
-    static constexpr uint64_t kZtsPeriodTokenPrefix = 0xA5F8000000000000ULL;
-    [[nodiscard]] static constexpr uint64_t ZtsPeriodToken(uint32_t periodFrames) noexcept {
-        return kZtsPeriodTokenPrefix | periodFrames;
-    }
-    [[nodiscard]] static constexpr bool IsZtsPeriodToken(uint64_t token) noexcept {
-        return (token & 0xffffffff00000000ULL) == kZtsPeriodTokenPrefix;
-    }
-    [[nodiscard]] static constexpr uint32_t ZtsPeriodFromToken(uint64_t token) noexcept {
-        return static_cast<uint32_t>(token & 0xffffffffULL);
+    [[nodiscard]] static constexpr uint32_t PcmPublicationCacheFrames(
+        uint32_t sampleRateHz) noexcept {
+        return FrameRingFrames(sampleRateHz);
     }
 
     static constexpr uint32_t kSampleRateHz = 48000;
@@ -134,6 +139,8 @@ struct AudioTimingGeometry final {
     // Exactly one HAL revolution of immutable, epoch-keyed PCM. This is byte
     // retention only; it has no scheduling or latency meaning.
     static constexpr uint32_t kPcmPublicationCacheFrames = kFrameRingFrames;
+    static constexpr uint32_t kAllocatedPcmPublicationCacheFrames =
+        kAllocatedFrameRingFrames;
 
     // Packet-domain TX policy. The 48-slot ownership guard protects descriptors
     // already visible to OHCI. The 96-slot dispatch allowance keeps a measured
@@ -318,10 +325,21 @@ static_assert(AudioTimingGeometry::kFrameRingFrames %
                   AudioTimingGeometry::ZeroTimestampPeriodFrames(48'000) ==
               0,
               "Frame ring must be an integer number of ZTS periods at 48k");
-static_assert(AudioTimingGeometry::kFrameRingFrames %
+static_assert(AudioTimingGeometry::FrameRingFrames(96'000) %
                   AudioTimingGeometry::ZeroTimestampPeriodFrames(96'000) ==
               0,
               "Frame ring must be an integer number of ZTS periods at 96k");
+static_assert(AudioTimingGeometry::kAllocatedFrameRingFrames %
+                  AudioTimingGeometry::ZeroTimestampPeriodFrames(48'000) ==
+              0,
+              "Allocated frame ring must be an integer number of ZTS periods at 48k");
+static_assert(AudioTimingGeometry::kAllocatedFrameRingFrames %
+                  AudioTimingGeometry::ZeroTimestampPeriodFrames(96'000) ==
+              0,
+              "Allocated frame ring must be an integer number of ZTS periods at 96k");
+static_assert(AudioTimingGeometry::kAllocatedFrameRingFrames >=
+                  AudioTimingGeometry::kFrameRingFrames,
+              "Allocated frame ring must cover active nominal frame ring");
 static_assert(AudioTimingGeometry::ZeroTimestampPeriodFrames(48'000) % 48 == 0,
               "48k ZTS must be an integer number of completion groups");
 static_assert(AudioTimingGeometry::ZeroTimestampPeriodFrames(96'000) % 96 == 0,

@@ -14,7 +14,7 @@ TEST(AudioStreamMemoryTests, InputFrameWrapsByFrameCapacityAndUsesChannelStride)
 
     const AudioStreamMemory memory{
         .inputBase = input.data(),
-        .inputFrameCapacity = 4,
+        .activeInputRingFrames = 4,
         .inputChannels = 2,
     };
 
@@ -29,7 +29,7 @@ TEST(AudioStreamMemoryTests, OutputFrameWrapsByFrameCapacityAndUsesChannelStride
 
     const AudioStreamMemory memory{
         .outputBase = output.data(),
-        .outputFrameCapacity = 4,
+        .activeOutputRingFrames = 4,
         .outputChannels = 3,
     };
 
@@ -55,12 +55,12 @@ TEST(AudioStreamMemoryTests, MemoryIsValidWithEitherDirection) {
 
     const AudioStreamMemory inputOnly{
         .inputBase = input.data(),
-        .inputFrameCapacity = 1,
+        .activeInputRingFrames = 1,
         .inputChannels = 2,
     };
     const AudioStreamMemory outputOnly{
         .outputBase = output.data(),
-        .outputFrameCapacity = 1,
+        .activeOutputRingFrames = 1,
         .outputChannels = 2,
     };
 

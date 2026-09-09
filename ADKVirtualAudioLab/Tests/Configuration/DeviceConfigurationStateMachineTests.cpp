@@ -152,8 +152,8 @@ void RunDeviceConfigurationStateMachineTests(TestContext& ctx) {
         CHECK(ctx, std::holds_alternative<PublishSnapshotEffect>(step->effects[0]));
     }
 
-    // Core Audio's validated rate callback does not request another ADK
-    // window; after resolution it proceeds directly to hardware application.
+    // Core Audio's validated rate callback requests an ADK window;
+    // once granted it proceeds to hardware application.
     {
         Machine machine = Baseline();
         auto step = Reduce(machine, ConfigurationEvent{CoreAudioRateIntent{
@@ -169,6 +169,13 @@ void RunDeviceConfigurationStateMachineTests(TestContext& ctx) {
             .identity = identity,
             .candidate = Config(44100),
         }});
+        REQUIRE(ctx, step.has_value());
+        machine = step->next;
+        CHECK(ctx, std::holds_alternative<AwaitingADKPerform>(machine.state));
+        CHECK(ctx, step->effects.size() == 1);
+        CHECK(ctx, std::holds_alternative<RequestADKWindowEffect>(step->effects[0]));
+
+        step = Reduce(machine, ConfigurationEvent{ADKPerformGranted{.identity = identity}});
         REQUIRE(ctx, step.has_value());
         machine = step->next;
         CHECK(ctx, std::holds_alternative<AwaitingHardware>(machine.state));
@@ -217,6 +224,9 @@ void RunDeviceConfigurationStateMachineTests(TestContext& ctx) {
             .identity = coreAudioIdentity,
             .candidate = Config(44100),
         }});
+        REQUIRE(ctx, step.has_value());
+        machine = step->next;
+        step = Reduce(machine, ConfigurationEvent{ADKPerformGranted{.identity = coreAudioIdentity}});
         REQUIRE(ctx, step.has_value());
         machine = step->next;
         step = Reduce(machine, ConfigurationEvent{HardwareCompleted{
@@ -316,6 +326,11 @@ void RunDeviceConfigurationStateMachineTests(TestContext& ctx) {
             .identity = identity,
             .candidate = Config(44100),
         }});
+        REQUIRE(ctx, step.has_value());
+        machine = step->next;
+        REQUIRE(ctx, std::holds_alternative<AwaitingADKPerform>(machine.state));
+
+        step = Reduce(machine, ConfigurationEvent{ADKPerformGranted{.identity = identity}});
         REQUIRE(ctx, step.has_value());
         machine = step->next;
         REQUIRE(ctx, std::holds_alternative<AwaitingHardware>(machine.state));

@@ -259,12 +259,7 @@ Reduce(const Machine& machine, const ConfigurationEvent& event) noexcept {
                 .work = ApplyCandidate{},
             };
             TransitionResult result{.next = std::move(next)};
-            if (transition.origin == ConfigurationOrigin::CoreAudio) {
-                result.next.state = AwaitingHardware{.transition = transition};
-                (void)result.effects.push(ApplyHardwareEffect{.transition = transition});
-            } else {
-                (void)result.effects.push(RequestADKWindowEffect{.identity = transition.identity});
-            }
+            (void)result.effects.push(RequestADKWindowEffect{.identity = transition.identity});
             return result;
         } else if constexpr (std::is_same_v<Event, CandidateRejected>) {
             const auto valid = RequirePending(machine, value.identity);

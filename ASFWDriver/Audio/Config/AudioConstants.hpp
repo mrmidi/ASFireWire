@@ -20,9 +20,14 @@ static_assert(kMaxPcmChannels <= kMaxAmdtpDbs,
 // Shared queue / buffer sizing.
 inline constexpr uint32_t kTxQueueCapacityFrames = 4096;
 inline constexpr uint32_t kRxQueueCapacityFrames = 4096;
+// Backing allocated buffer capacity in frames. Preallocated for maximum rate (24,576 frames)
+// so dynamic rate switching does not require buffer reallocation.
+inline constexpr uint32_t kAllocatedAudioRingBufferFrames =
+    ::ASFW::Audio::Shared::AudioTimingGeometry::kAllocatedFrameRingFrames;
+
 // Frame ring: an exact integer number of ZTS periods and max HAL IO periods
 // (asserted in AudioTimingGeometry.hpp) so anchor grid, IO chunks, and ring
-// wrap can never drift out of phase.
+// wrap can never drift out of phase. Nominal active frame ring at 48k base.
 inline constexpr uint32_t kAudioRingBufferFrames =
     ::ASFW::Audio::Shared::AudioTimingGeometry::kFrameRingFrames;
 inline constexpr uint32_t kAudioIoPeriodFrames =
@@ -49,5 +54,9 @@ static_assert((kAudioRingBufferFrames % kAudioIoPeriodFrames) == 0,
 static_assert((kAudioRingBufferFrames %
                ::ASFW::Audio::Shared::AudioTimingGeometry::kFrameAlignment) == 0,
               "Frame ring must be divisible by 32 frames");
+static_assert(kAllocatedAudioRingBufferFrames >= kAudioRingBufferFrames,
+              "Allocated frame ring must cover active nominal frame ring");
+static_assert((kAllocatedAudioRingBufferFrames % kAudioRingBufferFrames) == 0,
+              "Allocated frame ring must be an integer multiple of nominal active frame ring");
 
 } // namespace ASFW::Audio::Config

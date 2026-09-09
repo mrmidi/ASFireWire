@@ -243,3 +243,149 @@ TEST(AudioEndpointRuntime, ConfigurationChangesReuseMaximumCapacityDescriptors) 
     secondInput->release();
     secondControl->release();
 }
+
+TEST(AudioEndpointRuntime, AllocationLimitsComputedAcrossFormations) {
+    ASFW::Audio::Devices::ResolvedAudioEndpointProfile profile{};
+    profile.endpointId = ASFW::Audio::Devices::AudioEndpointId{50};
+    profile.deviceInstanceId = ASFW::Discovery::DeviceInstanceId{20};
+    profile.observedGuid = 0x1122334455667788ULL;
+    profile.currentSampleRateHz = 48000;
+    profile.runtimeCaps.sampleRateHz = 48000;
+    profile.runtimeCaps.hostInputPcmChannels = 8;
+    profile.runtimeCaps.hostOutputPcmChannels = 8;
+    profile.runtimeCaps.deviceToHostStreamCount = 1;
+    profile.runtimeCaps.hostToDeviceStreamCount = 1;
+    profile.runtimeCaps.deviceToHostStreams[0] = {.pcmChannels = 8, .am824Slots = 8};
+    profile.runtimeCaps.hostToDeviceStreams[0] = {.pcmChannels = 8, .am824Slots = 8};
+
+    profile.supportedRates[0] = 48000;
+    profile.supportedRates[1] = 96000;
+    profile.supportedRateCount = 2;
+
+    auto& cap48 = profile.configurationCapabilities[0].runtimeCaps;
+    cap48.sampleRateHz = 48000;
+    cap48.hostOutputPcmChannels = 8;
+    cap48.hostInputPcmChannels = 8;
+    cap48.hostToDeviceStreamCount = 1;
+    cap48.deviceToHostStreamCount = 1;
+    cap48.hostToDeviceStreams[0] = {.pcmChannels = 8, .am824Slots = 8};
+    cap48.deviceToHostStreams[0] = {.pcmChannels = 8, .am824Slots = 8};
+
+    auto& cap96 = profile.configurationCapabilities[1].runtimeCaps;
+    cap96.sampleRateHz = 96000;
+    cap96.hostOutputPcmChannels = 6;
+    cap96.hostInputPcmChannels = 4;
+    cap96.hostToDeviceStreamCount = 1;
+    cap96.deviceToHostStreamCount = 1;
+    cap96.hostToDeviceStreams[0] = {.pcmChannels = 6, .am824Slots = 6};
+    cap96.deviceToHostStreams[0] = {.pcmChannels = 4, .am824Slots = 4};
+    profile.configurationCapabilityCount = 2;
+
+    ASFW::Audio::AudioEndpointRuntime runtime(profile);
+    const auto& limits = runtime.AllocationLimits();
+
+    constexpr uint64_t expectedMaxOut = 24'576ULL * 6ULL * sizeof(float); // 589,824
+    constexpr uint64_t expectedMaxIn = 12'288ULL * 8ULL * sizeof(float);  // 393,216
+    EXPECT_EQ(limits.allocatedOutputBytes, expectedMaxOut);
+    EXPECT_EQ(limits.allocatedInputBytes, expectedMaxIn);
+    EXPECT_EQ(limits.maxOutputChannels, 8U);
+    EXPECT_EQ(limits.maxInputChannels, 8U);
+    EXPECT_EQ(limits.maxAllocatedFrames, 24'576U);
+}
+
+TEST(AudioEndpointRuntime, RateTransitionPreservesBackingMemoryWhileUpdatingActiveFrames) {
+    ASFW::Audio::Devices::ResolvedAudioEndpointProfile profile = MakeProfile();
+    profile.supportedRates[0] = 48000;
+    profile.supportedRates[1] = 96000;
+    profile.supportedRateCount = 2;
+
+    auto& cap48 = profile.configurationCapabilities[0].runtimeCaps;
+    cap48.sampleRateHz = 48000;
+    cap48.hostOutputPcmChannels = 4;
+    cap48.hostInputPcmChannels = 6;
+    cap48.hostToDeviceStreamCount = 1;
+    cap48.deviceToHostStreamCount = 1;
+    cap48.hostToDeviceStreams[0] = {.pcmChannels = 4, .am824Slots = 4};
+    cap48.deviceToHostStreams[0] = {.pcmChannels = 6, .am824Slots = 6};
+
+    auto& cap96 = profile.configurationCapabilities[1].runtimeCaps;
+    cap96.sampleRateHz = 96000;
+    cap96.hostOutputPcmChannels = 4;
+    cap96.hostInputPcmChannels = 6;
+    cap96.hostToDeviceStreamCount = 1;
+    cap96.deviceToHostStreamCount = 1;
+    cap96.hostToDeviceStreams[0] = {.pcmChannels = 4, .am824Slots = 4};
+    cap96.deviceToHostStreams[0] = {.pcmChannels = 6, .am824Slots = 6};
+    profile.configurationCapabilityCount = 2;
+
+    ASFW::Audio::AudioEndpointRuntime runtime(profile);
+
+    IOMemoryDescriptor* firstOut = nullptr;
+    IOMemoryDescriptor* firstIn = nullptr;
+    IOMemoryDescriptor* firstCtl = nullptr;
+    uint32_t outFrames = 0, outCh = 0, inFrames = 0, inCh = 0, rate = 0;
+    uint64_t gen1 = 0;
+
+    // 1. Initial 48k memory copy
+    ASSERT_EQ(runtime.CopyDirectAudioMemory(
+                  &firstOut, &firstIn, &firstCtl, &outFrames,
+                  &outCh, &inFrames, &inCh, &rate, &gen1),
+              kIOReturnSuccess);
+    EXPECT_EQ(rate, 48'000U);
+    EXPECT_EQ(outFrames, 12'288U);
+    EXPECT_EQ(inFrames, 12'288U);
+
+    uint64_t outLen = 0, inLen = 0;
+    ASSERT_EQ(firstOut->GetLength(&outLen), kIOReturnSuccess);
+    ASSERT_EQ(firstIn->GetLength(&inLen), kIOReturnSuccess);
+    EXPECT_GE(outLen, 24'576ULL * 4 * sizeof(float));
+    EXPECT_GE(inLen, 24'576ULL * 6 * sizeof(float));
+
+    // 2. Transition to 96k
+    ASSERT_TRUE(runtime.ApplyConfiguration(cap96));
+
+    IOMemoryDescriptor* secondOut = nullptr;
+    IOMemoryDescriptor* secondIn = nullptr;
+    IOMemoryDescriptor* secondCtl = nullptr;
+    uint64_t gen2 = 0;
+    ASSERT_EQ(runtime.CopyDirectAudioMemory(
+                  &secondOut, &secondIn, &secondCtl, &outFrames,
+                  &outCh, &inFrames, &inCh, &rate, &gen2),
+              kIOReturnSuccess);
+    EXPECT_EQ(secondOut, firstOut);
+    EXPECT_EQ(secondIn, firstIn);
+    EXPECT_EQ(secondCtl, firstCtl);
+    EXPECT_EQ(rate, 96'000U);
+    EXPECT_EQ(outFrames, 24'576U);
+    EXPECT_EQ(inFrames, 24'576U);
+    EXPECT_GT(gen2, gen1);
+
+    // 3. Transition back to 48k
+    ASSERT_TRUE(runtime.ApplyConfiguration(cap48));
+
+    IOMemoryDescriptor* thirdOut = nullptr;
+    IOMemoryDescriptor* thirdIn = nullptr;
+    IOMemoryDescriptor* thirdCtl = nullptr;
+    uint64_t gen3 = 0;
+    ASSERT_EQ(runtime.CopyDirectAudioMemory(
+                  &thirdOut, &thirdIn, &thirdCtl, &outFrames,
+                  &outCh, &inFrames, &inCh, &rate, &gen3),
+              kIOReturnSuccess);
+    EXPECT_EQ(thirdOut, firstOut);
+    EXPECT_EQ(thirdIn, firstIn);
+    EXPECT_EQ(thirdCtl, firstCtl);
+    EXPECT_EQ(rate, 48'000U);
+    EXPECT_EQ(outFrames, 12'288U);
+    EXPECT_EQ(inFrames, 12'288U);
+    EXPECT_GT(gen3, gen2);
+
+    firstOut->release();
+    firstIn->release();
+    firstCtl->release();
+    secondOut->release();
+    secondIn->release();
+    secondCtl->release();
+    thirdOut->release();
+    thirdIn->release();
+    thirdCtl->release();
+}

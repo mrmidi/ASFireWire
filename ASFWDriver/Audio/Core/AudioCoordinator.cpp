@@ -89,7 +89,8 @@ void AudioCoordinator::EndpointReady(
     duplexCoordinator_.SynchronizeCommittedConfiguration(
         profile->endpointId,
         AudioClockConfig{.sampleRateHz = profile->currentSampleRateHz},
-        profile->runtimeCaps);
+        profile->runtimeCaps,
+        runtime->CopyTopologyRevision());
     if (lock_) {
         IOLockLock(lock_);
         invalidatedEndpoints_.erase(profile->endpointId);
@@ -341,7 +342,8 @@ IOReturn AudioCoordinator::CommitDeviceConfiguration(
     duplexCoordinator_.SynchronizeCommittedConfiguration(
         endpointId,
         AudioClockConfig{.sampleRateHz = confirmed.configuration.sampleRate},
-        confirmed.runtimeCaps);
+        confirmed.runtimeCaps,
+        endpoint->CopyTopologyRevision());
     return kIOReturnSuccess;
 }
 

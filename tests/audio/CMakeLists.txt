@@ -160,6 +160,10 @@ add_audio_test(AmdtpRateGeometryTests
     AmdtpRateGeometryTests.cpp
 )
 
+add_audio_test(AmdtpTransferDelayTests
+    AmdtpTransferDelayTests.cpp
+)
+
 add_audio_test(RxSequencePresentationLeadTests
     RxSequencePresentationLeadTests.cpp
 )
@@ -256,4 +260,9 @@ add_audio_test(BeBoBVirtualUartTests
 
 add_audio_test(TxRefillFlightRecorderTests
     TxRefillFlightRecorderTests.cpp
+)
+
+# Audio Geometry Resolver Tests
+add_audio_test(AudioGeometryResolverTests
+    AudioGeometryResolverTests.cpp
 )

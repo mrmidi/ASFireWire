@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace ASFW::Audio::Runtime {
 
@@ -86,10 +87,22 @@ enum class PcmPublishResult : uint8_t {
 // the identity, copies, and accepts only an unchanged even sequence.
 class PcmPublicationCache final : public ASFW::Audio::Ports::ITxPcmSource {
 public:
-    PcmPublicationCache() noexcept = default;
+    struct StagedStorage final {
+        std::unique_ptr<std::atomic<uint32_t>[]> sampleBits{};
+        std::unique_ptr<std::atomic<uint64_t>[]> frameSequences{};
+        std::unique_ptr<std::atomic<uint64_t>[]> frameEpochs{};
+        std::unique_ptr<std::atomic<uint64_t>[]> frameAbsoluteFrames{};
+        uint32_t channels{0};
+        uint32_t cacheCapacityFrames{0};
+    };
+
+    [[nodiscard]] static std::optional<StagedStorage> AllocateStorage(
+        uint32_t channels, uint32_t cacheCapacityFrames) noexcept;
+
+    void CommitStorage(StagedStorage&& staged) noexcept;
 
     [[nodiscard]] bool Configure(uint32_t channels,
-                                 uint32_t frameCapacity) noexcept;
+                                 uint32_t cacheCapacityFrames) noexcept;
     void BindTelemetry(PcmPublicationTelemetry* telemetry) noexcept;
     void BeginEpoch(uint64_t epoch) noexcept;
 
@@ -106,14 +119,17 @@ public:
     [[nodiscard]] uint64_t Epoch() const noexcept override;
 
     [[nodiscard]] uint32_t ChannelCount() const noexcept { return channels_; }
+    [[nodiscard]] uint32_t CacheCapacityFrames() const noexcept {
+        return cacheCapacityFrames_;
+    }
     [[nodiscard]] uint32_t FrameCapacity() const noexcept {
-        return frameCapacity_;
+        return cacheCapacityFrames_;
     }
 
 #if defined(ASFW_HOST_TEST)
     void ForceFrameWritingForTest(uint64_t absoluteFrame) noexcept {
-        if (!frameSequences_ || frameCapacity_ == 0) return;
-        const uint64_t physical = absoluteFrame % frameCapacity_;
+        if (!frameSequences_ || cacheCapacityFrames_ == 0) return;
+        const uint64_t physical = absoluteFrame % cacheCapacityFrames_;
         const uint64_t old = frameSequences_[physical].load(
             std::memory_order_relaxed);
         frameSequences_[physical].store(old | 1U, std::memory_order_release);
@@ -130,7 +146,7 @@ private:
     std::unique_ptr<std::atomic<uint64_t>[]> frameEpochs_{};
     std::unique_ptr<std::atomic<uint64_t>[]> frameAbsoluteFrames_{};
     uint32_t channels_{0};
-    uint32_t frameCapacity_{0};
+    uint32_t cacheCapacityFrames_{0};
 
     std::atomic<uint64_t> epoch_{0};
     // Odd while BeginEpoch invalidates physical slots. This makes a recovery

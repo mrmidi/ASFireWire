@@ -14,8 +14,8 @@ struct AudioStreamMemory final {
     float* inputBase{nullptr};
     const float* outputBase{nullptr};
 
-    uint32_t inputFrameCapacity{0};
-    uint32_t outputFrameCapacity{0};
+    uint32_t activeInputRingFrames{0};
+    uint32_t activeOutputRingFrames{0};
 
     uint32_t inputChannels{0};
     uint32_t outputChannels{0};
@@ -24,13 +24,13 @@ struct AudioStreamMemory final {
 
     [[nodiscard]] bool HasInput() const noexcept {
         return inputBase != nullptr &&
-               inputFrameCapacity > 0 &&
+               activeInputRingFrames > 0 &&
                inputChannels > 0;
     }
 
     [[nodiscard]] bool HasOutput() const noexcept {
         return outputBase != nullptr &&
-               outputFrameCapacity > 0 &&
+               activeOutputRingFrames > 0 &&
                outputChannels > 0;
     }
 
@@ -43,7 +43,7 @@ struct AudioStreamMemory final {
             return nullptr;
         }
 
-        const uint64_t frameIndex = absoluteFrame % inputFrameCapacity;
+        const uint64_t frameIndex = absoluteFrame % activeInputRingFrames;
         return inputBase + (frameIndex * inputChannels);
     }
 
@@ -52,7 +52,7 @@ struct AudioStreamMemory final {
             return nullptr;
         }
 
-        const uint64_t frameIndex = absoluteFrame % outputFrameCapacity;
+        const uint64_t frameIndex = absoluteFrame % activeOutputRingFrames;
         return outputBase + (frameIndex * outputChannels);
     }
 };

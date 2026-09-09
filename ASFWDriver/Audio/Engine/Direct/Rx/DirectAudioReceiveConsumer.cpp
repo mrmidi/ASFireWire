@@ -148,7 +148,7 @@ void DirectAudioReceiveConsumer::BeginReceiveBatch(
         inputView_.endpointId = snapshot.endpointId;
         inputView_.sampleRateHz = snapshot.sampleRateHz;
         inputView_.memory.inputBase = snapshot.inputBase;
-        inputView_.memory.inputFrameCapacity = snapshot.inputFrames;
+        inputView_.memory.activeInputRingFrames = snapshot.inputFrames;
         inputView_.memory.inputChannels = snapshot.inputChannels;
         inputView_.memory.storage =
             ::ASFW::Audio::Runtime::AudioSampleStorage::kFloat32Native;

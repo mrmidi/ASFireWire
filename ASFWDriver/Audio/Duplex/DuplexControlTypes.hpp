@@ -161,6 +161,13 @@ struct DuplexHealthResult final {
     uint32_t extStatus{0};
 };
 
+struct CommittedDuplexConfiguration final {
+    AudioClockConfig clock{};
+    AudioStreamRuntimeCaps runtimeCaps{};
+    uint64_t revision{0};
+    bool valid{false};
+};
+
 struct DuplexRestartSession final {
     Devices::AudioEndpointId endpointId{};
     uint64_t restartId{0};
@@ -169,6 +176,7 @@ struct DuplexRestartSession final {
     FW::Generation topologyGeneration{0};
     AudioDuplexChannels channels{};
     DuplexRestartReason reason{DuplexRestartReason::kInitialStart};
+    CommittedDuplexConfiguration committedConfig{};
     AudioClockConfig desiredClock{};
     AudioClockConfig appliedClock{};
     AudioClockConfig pendingClock{};

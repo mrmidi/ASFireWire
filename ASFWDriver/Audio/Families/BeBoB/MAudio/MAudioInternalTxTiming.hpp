@@ -10,6 +10,7 @@
 
 #include "../../../Wire/AMDTP/AmdtpCadence.hpp"
 #include "../../../Wire/AMDTP/AmdtpRateGeometry.hpp"
+#include "../../../Wire/AMDTP/AmdtpTransferDelay.hpp"
 #include "../../../../Common/TimingUtils.hpp"
 
 #include <cstdint>
@@ -19,18 +20,12 @@ namespace ASFW::Audio::Families::BeBoB::MAudio {
 
 inline constexpr uint8_t kInternalTxSytInterval = 8;
 
-/// IEC 61883-6 blocking transfer delay. Linux derives the same integer-tick
-/// value in firewire/amdtp-stream.c:303-307: default device buffering plus one
-/// SYT interval, which absorbs the cadence NO-DATA packets.
+/// IEC 61883-6 blocking transfer delay. Delegates to shared AMDTP transfer delay calculation.
 [[nodiscard]] constexpr uint32_t InternalTxTransferDelayTicks(
     const uint32_t sampleRateHz,
     const uint8_t sytInterval) noexcept {
-    return sampleRateHz == 0
-        ? 0
-        : ASFW::Timing::kTransferDelayTicks - ASFW::Timing::kTicksPerCycle +
-              static_cast<uint32_t>((uint64_t(ASFW::Timing::kTicksPerSecond) *
-                                     sytInterval) /
-                                    sampleRateHz);
+    return ASFW::Encoding::AmdtpTransferDelayTicks(
+        sampleRateHz, sytInterval, ASFW::Encoding::CipStreamMode::Blocking);
 }
 
 static_assert(InternalTxTransferDelayTicks(48'000, 8) == 12'800,

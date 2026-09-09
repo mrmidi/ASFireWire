@@ -48,7 +48,7 @@ public:
 
         uint64_t read =
             control->captureRingReadFrame.load(std::memory_order_acquire);
-        const uint32_t capacity = binding_->memory.inputFrameCapacity;
+        const uint32_t capacity = binding_->memory.activeInputRingFrames;
         if (capacity != 0 && producedEndFrame > read &&
             (producedEndFrame - read) > capacity) {
             const uint64_t overwrittenFrames = producedEndFrame - read - capacity;
