@@ -15,6 +15,7 @@
 #include "Audio/Protocols/MOTU/MotuV2Protocol.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -63,6 +64,10 @@ public:
     std::vector<Write> writes;
     std::vector<uint32_t> reads;
     std::optional<uint32_t> readValue;
+    /// Per-register replay, keyed by address low bits. Consulted before `readValue`, so a
+    /// sequence touching several registers (duplex bring-up reads the optical config and
+    /// the packet format) can give each one a distinct value.
+    std::map<uint32_t, uint32_t> readValues;
     AsyncStatus readStatus{AsyncStatus::kSuccess};
     AsyncStatus writeStatus{AsyncStatus::kSuccess};
     AsyncStatus failWritesAfterFirst{AsyncStatus::kSuccess};
@@ -71,11 +76,14 @@ public:
                           ASFW::FW::FwSpeed,
                           ASFW::Async::InterfaceCompletionCallback callback) override {
         reads.push_back(address.addressLo);
-        if (readStatus != AsyncStatus::kSuccess || !readValue.has_value()) {
+        const auto perAddress = readValues.find(address.addressLo);
+        if (readStatus != AsyncStatus::kSuccess ||
+            (perAddress == readValues.end() && !readValue.has_value())) {
             callback(readStatus, {});
             return AsyncHandle{1};
         }
-        const uint32_t value = *readValue;
+        const uint32_t value =
+            (perAddress != readValues.end()) ? perAddress->second : *readValue;
         const uint8_t payload[4] = {static_cast<uint8_t>(value >> 24),
                                     static_cast<uint8_t>(value >> 16),
                                     static_cast<uint8_t>(value >> 8),
@@ -303,6 +311,248 @@ TEST(MotuV2ProtocolTests, ShutdownReleasesOnlyWhenRegistered) {
     EXPECT_EQ(bus.writes[2].value, 0U);
     EXPECT_EQ(bus.writes[3].value, 0U);
     EXPECT_FALSE(protocol.HasRegisteredAsyncAddress());
+}
+
+//==============================================================================
+// Duplex bring-up
+//
+// Register semantics from Linux motu-stream.c: begin_session (:62-83) writes both
+// iso channels and both activation bits in one word; ensure_packet_formats
+// (:201-225) sets the exclude-differed-chunks bit per direction only when that
+// direction carries just its fixed chunk count, and ORs in the link speed.
+//==============================================================================
+
+namespace {
+
+/// Optical config word (0x0c04): input mode in bits [9:8], output in [11:10].
+constexpr uint32_t OpticalWord(uint32_t inMode, uint32_t outMode) {
+    return ((inMode & 0x3U) << 8) | ((outMode & 0x3U) << 10);
+}
+constexpr uint32_t kOptNone = 0U;
+constexpr uint32_t kOptAdat = 1U;
+constexpr uint32_t kOptSpdif = 2U;
+
+/// RecordingBus reports S400, whose wire code is 2 (IEEE 1394-1995 §8.4.2.4).
+constexpr uint32_t kExpectedSpeedCode = 2U;
+
+constexpr uint8_t kRxChannel = 5U;  // host->device (playback)
+constexpr uint8_t kTxChannel = 9U;  // device->host (capture)
+
+ASFW::Audio::AudioDuplexChannels MakeChannels() {
+    ASFW::Audio::AudioDuplexChannels channels{};
+    channels.hostToDeviceIsoChannel = kRxChannel;
+    channels.deviceToHostIsoChannel = kTxChannel;
+    return channels;
+}
+
+} // namespace
+
+TEST(MotuV2DuplexTests, PrepareSetsBothExcludeBitsWhenOpticalIsNotAdat) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<IOReturn> status;
+    protocol.PrepareDuplex48k(MakeChannels(), [&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnSuccess);
+
+    // Optical config must be consulted before the packet format can be computed.
+    ASSERT_EQ(bus.reads.size(), 2U);
+    EXPECT_EQ(bus.reads[0], LowOf(Reg::InOutConfV2));
+    EXPECT_EQ(bus.reads[1], LowOf(Reg::PacketFormat));
+
+    ASSERT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::PacketFormat));
+    // 0x80 = TX exclude, 0x40 = RX exclude, low nibble = speed.
+    EXPECT_EQ(bus.writes[0].value, 0x80U | 0x40U | kExpectedSpeedCode);
+}
+
+TEST(MotuV2DuplexTests, PrepareClearsExcludeBitsWhenOpticalIsAdat) {
+    RecordingBus bus;
+    // ADAT on both directions adds chunks beyond the fixed baseline, so neither
+    // direction may claim the fixed layout (motu-protocol-v2.c:253-269).
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0x000000C0U; // both bits already set
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<IOReturn> status;
+    protocol.PrepareDuplex48k(MakeChannels(), [&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnSuccess);
+    ASSERT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(bus.writes[0].value, kExpectedSpeedCode); // both exclude bits cleared
+}
+
+TEST(MotuV2DuplexTests, PrepareTreatsUndecodableOpticalConfigAsDifferedChunks) {
+    RecordingBus bus;
+    // Mode 3 is reserved; decoding fails. Claiming the fixed layout on unproven
+    // evidence would truncate the stream, so both bits must stay clear.
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(3U, 3U);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0x000000C0U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<IOReturn> status;
+    protocol.PrepareDuplex48k(MakeChannels(), [&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnSuccess);
+    ASSERT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(bus.writes[0].value, kExpectedSpeedCode);
+}
+
+TEST(MotuV2DuplexTests, PrepareReportsOpticalReadFailureWithoutWriting) {
+    RecordingBus bus;
+    bus.readStatus = AsyncStatus::kTimeout;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<IOReturn> status;
+    protocol.PrepareDuplex48k(MakeChannels(), [&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnTimeout);
+    EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST(MotuV2DuplexTests, EnableActivatesBothDirectionsWithTheirChannels) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    protocol.PrepareDuplex48k(MakeChannels(), [](IOReturn) {});
+    bus.writes.clear();
+
+    std::optional<IOReturn> status;
+    protocol.ProgramTxAndEnableDuplex48k([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnSuccess);
+    ASSERT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::IsocCommControl));
+    // change|activate for RX (bits 31/30) with channel 5 at shift 24, and the same
+    // for TX (bits 23/22) with channel 9 at shift 16.
+    EXPECT_EQ(bus.writes[0].value, 0xC5C90000U);
+}
+
+TEST(MotuV2DuplexTests, EnableBeforePrepareIsRejectedAndWritesNothing) {
+    RecordingBus bus;
+    bus.readValue = 0U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<IOReturn> status;
+    protocol.ProgramTxAndEnableDuplex48k([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnNotReady);
+    EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST(MotuV2DuplexTests, ProgramRxIsASuccessfulNoOpOnV2) {
+    RecordingBus bus;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<IOReturn> status;
+    protocol.ProgramRxForDuplex48k([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnSuccess);
+    EXPECT_TRUE(bus.writes.empty());
+    EXPECT_TRUE(bus.reads.empty());
+}
+
+TEST(MotuV2DuplexTests, ConfirmAcceptsBothDirectionsOnTheExpectedChannels) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC5C90000U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    protocol.PrepareDuplex48k(MakeChannels(), [](IOReturn) {});
+
+    std::optional<IOReturn> status;
+    protocol.ConfirmDuplex48kStart([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnSuccess);
+}
+
+TEST(MotuV2DuplexTests, ConfirmRejectsWhenTheDeviceReportsDifferentChannels) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    // Activated, but on channels 1/2 rather than the 5/9 we asked for.
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC1C20000U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    protocol.PrepareDuplex48k(MakeChannels(), [](IOReturn) {});
+
+    std::optional<IOReturn> status;
+    protocol.ConfirmDuplex48kStart([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnNotReady);
+}
+
+TEST(MotuV2DuplexTests, ConfirmRejectsWhenOnlyOneDirectionIsActivated) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    // RX activated on 5, TX channel right but its activation bit clear.
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC5890000U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    protocol.PrepareDuplex48k(MakeChannels(), [](IOReturn) {});
+
+    std::optional<IOReturn> status;
+    protocol.ConfirmDuplex48kStart([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnNotReady);
+}
+
+TEST(MotuV2DuplexTests, StopDeactivatesBothDirectionsAndKeepsTheChannelFields) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC5C90000U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    protocol.PrepareDuplex48k(MakeChannels(), [](IOReturn) {});
+    protocol.ProgramTxAndEnableDuplex48k([](IOReturn) {});
+    bus.writes.clear();
+
+    EXPECT_EQ(protocol.StopDuplex(), kIOReturnSuccess);
+
+    ASSERT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::IsocCommControl));
+    // Activation bits cleared, change bits set, channel numbers untouched.
+    EXPECT_EQ(bus.writes[0].value, 0x85890000U);
+}
+
+TEST(MotuV2DuplexTests, StopIsANoOpWhenDuplexWasNeverEnabled) {
+    RecordingBus bus;
+    bus.readValue = 0U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    EXPECT_EQ(protocol.StopDuplex(), kIOReturnSuccess);
+    EXPECT_TRUE(bus.writes.empty());
 }
 
 } // namespace

@@ -33,6 +33,7 @@ MotuV2Protocol::MotuV2Protocol(Protocols::Ports::FireWireBusOps& busOps,
                                const Discovery::DeviceRouteToken& route,
                                uint32_t unitSwVersion)
     : io_(busOps, busInfo, routeRegistry, route)
+    , busInfo_(busInfo)
     , unitSwVersion_(unitSwVersion) {}
 
 const char* MotuV2Protocol::GetName() const {
@@ -203,6 +204,192 @@ void MotuV2Protocol::RegisterAsyncMessageAddress(uint16_t hostNodeId,
 
 void MotuV2Protocol::ReleaseAsyncMessageAddress(CompletionCallback callback) {
     WriteAsyncAddrPair(AsyncAddrValues{.hi = 0U, .lo = 0U}, false, std::move(callback));
+}
+
+//==============================================================================
+// Duplex bring-up
+//==============================================================================
+
+void MotuV2Protocol::ModifyRegister(Reg reg,
+                                    std::function<uint32_t(uint32_t)> transform,
+                                    CompletionCallback callback) {
+    (void)io_.ReadQuadBE(
+        AddressOf(reg),
+        [this, reg, transform = std::move(transform), callback = std::move(callback)](
+            Async::AsyncStatus status, uint32_t current) mutable {
+            const IOReturn readResult = Protocols::Ports::MapAsyncStatusToIOReturn(status);
+            if (readResult != kIOReturnSuccess) {
+                if (callback) {
+                    callback(readResult);
+                }
+                return;
+            }
+            (void)io_.WriteQuadBE(
+                AddressOf(reg),
+                transform(current),
+                [callback = std::move(callback)](Async::AsyncStatus writeStatus) mutable {
+                    if (callback) {
+                        callback(Protocols::Ports::MapAsyncStatusToIOReturn(writeStatus));
+                    }
+                });
+        });
+}
+
+void MotuV2Protocol::PrepareDuplex48k(const AudioDuplexChannels& channels,
+                                      VoidCallback callback) {
+    deviceRxChannel_.store(channels.PlaybackChannel(0), std::memory_order_release);
+    deviceTxChannel_.store(channels.CaptureChannel(0), std::memory_order_release);
+    duplexPrepared_.store(true, std::memory_order_release);
+
+    // The exclude-differed-chunks bits say "this direction carries only its fixed chunk
+    // count". That is true exactly when the optical interface is not in ADAT mode: ADAT
+    // adds chunks on top of the fixed baseline (motu-protocol-v2.c:253-269), so the
+    // optical config has to be read before the packet format can be computed
+    // (motu-stream.c:201-225). Capture (TX, device->host) follows the optical *input*;
+    // playback (RX) follows the optical *output*.
+    // FW::Speed's enumerators are the IEEE 1394-1995 wire codes (S100=0 .. S800=3), which
+    // is exactly what this register field expects -- the same value Linux takes from
+    // fw_parent_device(unit)->max_speed (motu-stream.c:218).
+    const uint32_t speedCode = static_cast<uint32_t>(busInfo_.GetSpeed(io_.NodeId()));
+
+    (void)io_.ReadQuadBE(
+        AddressOf(Reg::InOutConfV2),
+        [this, speedCode, callback = std::move(callback)](Async::AsyncStatus status,
+                                                          uint32_t optRaw) mutable {
+            const IOReturn readResult = Protocols::Ports::MapAsyncStatusToIOReturn(status);
+            if (readResult != kIOReturnSuccess) {
+                ASFW_LOG(Audio, "MotuV2Protocol: optical config read failed: 0x%x", readResult);
+                if (callback) {
+                    callback(readResult);
+                }
+                return;
+            }
+
+            // A reserved encoding means we cannot prove the chunk counts. Treat that as
+            // "differed chunks may be present" (clear both bits) rather than guessing the
+            // device is in the fixed layout: claiming fixed when it is not truncates the
+            // stream, while the conservative direction only costs the optimisation.
+            const auto optical = DecodeOptIfaceConfig(optRaw);
+            const bool txOnlyFixedChunks =
+                optical.has_value() && optical->input != OptIfaceMode::Adat;
+            const bool rxOnlyFixedChunks =
+                optical.has_value() && optical->output != OptIfaceMode::Adat;
+
+            ASFW_LOG(Audio,
+                     "MotuV2Protocol: prepare duplex opt=0x%08x txFixed=%d rxFixed=%d speed=%u "
+                     "rxCh=%u txCh=%u",
+                     optRaw,
+                     txOnlyFixedChunks ? 1 : 0,
+                     rxOnlyFixedChunks ? 1 : 0,
+                     speedCode,
+                     deviceRxChannel_.load(std::memory_order_acquire),
+                     deviceTxChannel_.load(std::memory_order_acquire));
+
+            ModifyRegister(
+                Reg::PacketFormat,
+                [speedCode, txOnlyFixedChunks, rxOnlyFixedChunks](uint32_t current) {
+                    return EncodePacketFormat(current, txOnlyFixedChunks, rxOnlyFixedChunks,
+                                              speedCode);
+                },
+                std::move(callback));
+        });
+}
+
+void MotuV2Protocol::ProgramRxForDuplex48k(VoidCallback callback) {
+    // No device-side RX-only step exists on v2: both directions are activated together in
+    // the single iso-comm write issued by ProgramTxAndEnableDuplex48k
+    // (motu-stream.c:62-83, begin_session). The hook stays a success so the coordinator's
+    // ordering (RX leg, then TX leg + enable) is preserved for protocols that need it.
+    if (callback) {
+        callback(kIOReturnSuccess);
+    }
+}
+
+void MotuV2Protocol::ProgramTxAndEnableDuplex48k(VoidCallback callback) {
+    if (!duplexPrepared_.load(std::memory_order_acquire)) {
+        // Without PrepareDuplex48k the iso channels are unknown, and writing channel 0/0
+        // would point the device at whatever is on those channels.
+        ASFW_LOG(Audio, "MotuV2Protocol: enable requested before prepare");
+        if (callback) {
+            callback(kIOReturnNotReady);
+        }
+        return;
+    }
+
+    const uint32_t rxChannel = deviceRxChannel_.load(std::memory_order_acquire);
+    const uint32_t txChannel = deviceTxChannel_.load(std::memory_order_acquire);
+
+    ModifyRegister(
+        Reg::IsocCommControl,
+        [rxChannel, txChannel](uint32_t current) {
+            return EncodeIsoCommStart(current, rxChannel, txChannel);
+        },
+        [this, callback = std::move(callback)](IOReturn status) mutable {
+            if (status == kIOReturnSuccess) {
+                duplexActive_.store(true, std::memory_order_release);
+            }
+            if (callback) {
+                callback(status);
+            }
+        });
+}
+
+void MotuV2Protocol::ConfirmDuplex48kStart(VoidCallback callback) {
+    // Read the iso-comm register back and require the device to report both directions
+    // activated on the channels we asked for. The write completing only means the
+    // transaction was accepted.
+    const uint32_t expectedRx = deviceRxChannel_.load(std::memory_order_acquire);
+    const uint32_t expectedTx = deviceTxChannel_.load(std::memory_order_acquire);
+
+    (void)io_.ReadQuadBE(
+        AddressOf(Reg::IsocCommControl),
+        [expectedRx, expectedTx, callback = std::move(callback)](Async::AsyncStatus status,
+                                                                 uint32_t value) mutable {
+            const IOReturn readResult = Protocols::Ports::MapAsyncStatusToIOReturn(status);
+            if (readResult != kIOReturnSuccess) {
+                if (callback) {
+                    callback(readResult);
+                }
+                return;
+            }
+
+            const IsoCommState state = DecodeIsoCommState(value);
+            const bool ok = state.rxActivated && state.txActivated &&
+                            state.rxChannel == expectedRx && state.txChannel == expectedTx;
+            if (!ok) {
+                ASFW_LOG(Audio,
+                         "MotuV2Protocol: duplex not confirmed raw=0x%08x rx=%u/%u tx=%u/%u",
+                         value,
+                         state.rxActivated ? 1U : 0U,
+                         expectedRx,
+                         state.txActivated ? 1U : 0U,
+                         expectedTx);
+            }
+            if (callback) {
+                callback(ok ? kIOReturnSuccess : kIOReturnNotReady);
+            }
+        });
+}
+
+IOReturn MotuV2Protocol::StopDuplex() {
+    if (!duplexActive_.exchange(false, std::memory_order_acq_rel)) {
+        return kIOReturnSuccess;
+    }
+    duplexPrepared_.store(false, std::memory_order_release);
+
+    // Synchronous hook over an async transport: issue the deactivate and report that it
+    // was dispatched. A device that has already gone away cannot be deactivated anyway,
+    // which is the same fire-and-forget contract Shutdown() uses for the async address.
+    ModifyRegister(
+        Reg::IsocCommControl,
+        [](uint32_t current) { return EncodeIsoCommStop(current); },
+        [](IOReturn status) {
+            if (status != kIOReturnSuccess) {
+                ASFW_LOG(Audio, "MotuV2Protocol: iso-comm stop failed: 0x%x", status);
+            }
+        });
+
+    return kIOReturnSuccess;
 }
 
 } // namespace ASFW::Audio::Motu

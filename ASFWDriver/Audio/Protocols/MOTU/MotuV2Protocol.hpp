@@ -50,6 +50,29 @@ public:
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
 
+    //==========================================================================
+    // Duplex bring-up (IDeviceProtocol hooks).
+    //
+    // MOTU v2 activates both directions in a single write to the iso-comm
+    // control register, so the device-side choreography is only two registers:
+    // packet format first, then iso-comm (motu-stream.c:376-401,
+    // snd_motu_stream_start_duplex). The host owns iso channel allocation and
+    // hands the assignments in via AudioDuplexChannels.
+    //
+    // NOTE: bringing the device's streams up does NOT by itself produce audio.
+    // MOTU is duplex-always and recovers its media clock from the host replaying
+    // the device's own cadence -- both the data-blocks-per-packet sequence and
+    // the per-block SPH presentation times (motu-stream.c:205-207). Wiring that
+    // replay to RxSequenceReplay is the remaining work; these hooks are the
+    // register half of it.
+    //==========================================================================
+
+    void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) override;
+    void ProgramRxForDuplex48k(VoidCallback callback) override;
+    void ProgramTxAndEnableDuplex48k(VoidCallback callback) override;
+    void ConfirmDuplex48kStart(VoidCallback callback) override;
+    IOReturn StopDuplex() override;
+
     /// Read and decode the clock status register.
     void ReadClockStatus(ClockStatusCallback callback);
 
@@ -92,11 +115,29 @@ private:
                             bool registered,
                             CompletionCallback callback);
 
+    /// Read-modify-write one register: read it, transform the value, write it back.
+    /// Every duplex register on this device is RMW (reserved/low bits must survive), so
+    /// the read failure and the write failure both surface through `callback`.
+    void ModifyRegister(Reg reg,
+                        std::function<uint32_t(uint32_t)> transform,
+                        CompletionCallback callback);
+
     Protocols::Ports::ProtocolRegisterIO io_;
+    /// Kept for the link speed written into the packet-format register; the register IO
+    /// owns its own copy but does not expose speed resolution.
+    Protocols::Ports::FireWireBusInfo& busInfo_;
     const uint32_t unitSwVersion_;
     std::atomic<uint32_t> cachedSampleRateHz_{0};
     std::atomic<bool> asyncAddressRegistered_{false};
     bool initialized_{false};
+
+    // Iso channels the host assigned, latched by PrepareDuplex48k and consumed by
+    // ProgramTxAndEnableDuplex48k. Device-relative naming: RX is host->device
+    // (playback), TX is device->host (capture).
+    std::atomic<uint8_t> deviceRxChannel_{0};
+    std::atomic<uint8_t> deviceTxChannel_{0};
+    std::atomic<bool> duplexPrepared_{false};
+    std::atomic<bool> duplexActive_{false};
 };
 
 } // namespace ASFW::Audio::Motu
