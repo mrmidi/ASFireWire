@@ -115,6 +115,27 @@ private:
 
 class TxLatencySession final {
 public:
+    [[nodiscard]] static constexpr uint64_t PackLifecycle(
+        uint32_t generation,
+        TxLatencySessionState state,
+        TxLatencyTerminationReason reason) noexcept {
+        return (static_cast<uint64_t>(generation) << 32) |
+               (static_cast<uint64_t>(static_cast<uint16_t>(state)) << 16) |
+               static_cast<uint64_t>(static_cast<uint16_t>(reason));
+    }
+
+    [[nodiscard]] static constexpr uint32_t LifecycleGeneration(uint64_t lc) noexcept {
+        return static_cast<uint32_t>(lc >> 32);
+    }
+
+    [[nodiscard]] static constexpr TxLatencySessionState LifecycleState(uint64_t lc) noexcept {
+        return static_cast<TxLatencySessionState>(static_cast<uint16_t>((lc >> 16) & 0xFFFFU));
+    }
+
+    [[nodiscard]] static constexpr TxLatencyTerminationReason LifecycleTerminationReason(uint64_t lc) noexcept {
+        return static_cast<TxLatencyTerminationReason>(static_cast<uint16_t>(lc & 0xFFFFU));
+    }
+
     TxLatencySession() noexcept = default;
 
     TxLatencySession(const TxLatencySession&) = delete;
@@ -122,14 +143,15 @@ public:
 
     /// Check if session deadline has passed without completions arriving.
     bool CheckExpiration(uint64_t currentHostTicks = 0) noexcept {
-        if (state_.load(std::memory_order_acquire) != TxLatencySessionState::Capturing) {
+        const uint64_t cur = lifecycle_.load(std::memory_order_acquire);
+        if (LifecycleState(cur) != TxLatencySessionState::Capturing) {
             return false;
         }
         if (currentHostTicks == 0) {
             currentHostTicks = mach_absolute_time();
         }
         if (currentHostTicks >= deadlineHostTicks_) {
-            RequestStop(TxLatencyTerminationReason::DeadlineExpired);
+            RequestStop(TxLatencyTerminationReason::DeadlineExpired, LifecycleGeneration(cur));
             PollQuiescence();
             return true;
         }
@@ -138,9 +160,10 @@ public:
 
     /// Graceful stream reset: freeze in-flight session with StreamReset reason instead of wiping to Idle.
     void HandleStreamReset() noexcept {
-        const auto st = state_.load(std::memory_order_acquire);
+        const uint64_t cur = lifecycle_.load(std::memory_order_acquire);
+        const auto st = LifecycleState(cur);
         if (st == TxLatencySessionState::Capturing || st == TxLatencySessionState::StopRequested) {
-            RequestStop(TxLatencyTerminationReason::StreamReset);
+            RequestStop(TxLatencyTerminationReason::StreamReset, LifecycleGeneration(cur));
             PollQuiescence();
         }
     }
@@ -155,7 +178,8 @@ public:
                            uint32_t seed = 0,
                            uint32_t strataSize = 0,
                            uint32_t assumedDriftPpm = 100) noexcept {
-        auto current = state_.load(std::memory_order_acquire);
+        uint64_t cur = lifecycle_.load(std::memory_order_acquire);
+        const auto current = LifecycleState(cur);
         if (current != TxLatencySessionState::Idle && current != TxLatencySessionState::Frozen) {
             return false;
         }
@@ -165,16 +189,18 @@ public:
             return false;
         }
 
-        state_.store(TxLatencySessionState::Arming, std::memory_order_seq_cst);
+        const uint32_t nextGen = LifecycleGeneration(cur) + 1;
+        const uint64_t armingLifecycle = PackLifecycle(nextGen, TxLatencySessionState::Arming, TxLatencyTerminationReason::None);
 
-        // Re-verify no writers registered while transitioning to Arming.
-        if (activeWriters_.load(std::memory_order_seq_cst) != 0) {
-            state_.store(current, std::memory_order_seq_cst);
+        if (!lifecycle_.compare_exchange_strong(cur, armingLifecycle, std::memory_order_seq_cst)) {
             return false;
         }
 
-        // Advance session generation. Any stale writer that enters will detect this bump.
-        sessionGeneration_.fetch_add(1, std::memory_order_seq_cst);
+        // Re-verify no writers registered while transitioning to Arming.
+        if (activeWriters_.load(std::memory_order_seq_cst) != 0) {
+            lifecycle_.store(cur, std::memory_order_seq_cst);
+            return false;
+        }
 
         sessionId_ = sessionId;
         epoch_ = epoch;
@@ -222,37 +248,43 @@ public:
 
         recordCount_.store(0, std::memory_order_relaxed);
         terminationReason_ = TxLatencyTerminationReason::None;
-        pendingTerminationReason_.store(TxLatencyTerminationReason::None, std::memory_order_release);
 
         startHostTicks_ = mach_absolute_time();
         const uint64_t durationNs = static_cast<uint64_t>(durationSeconds_) * 1'000'000'000ULL;
         deadlineHostTicks_ = startHostTicks_ + Timing::nanosToHostTicks(durationNs);
         frozenHostTicks_ = 0;
 
-        state_.store(TxLatencySessionState::Capturing, std::memory_order_seq_cst);
+        lifecycle_.store(PackLifecycle(nextGen, TxLatencySessionState::Capturing, TxLatencyTerminationReason::None),
+                         std::memory_order_seq_cst);
         return true;
     }
 
-    /// Request session stop.
-    void RequestStop(TxLatencyTerminationReason reason = TxLatencyTerminationReason::UserStopped) noexcept {
-        const uint32_t currentGen = sessionGeneration_.load(std::memory_order_acquire);
-        if (currentGen == 0) {
+    /// Request session stop. Atomically transitions both generation and state to StopRequested.
+    void RequestStop(TxLatencyTerminationReason reason = TxLatencyTerminationReason::UserStopped,
+                     uint32_t expectedGeneration = 0) noexcept {
+        uint64_t cur = lifecycle_.load(std::memory_order_acquire);
+        const uint32_t targetGen = (expectedGeneration != 0)
+                                       ? expectedGeneration
+                                       : LifecycleGeneration(cur);
+        if (targetGen == 0) {
             return;
         }
 
-        // 1. Atomically store the pending termination reason if not already set.
-        TxLatencyTerminationReason expectedReason = TxLatencyTerminationReason::None;
-        pendingTerminationReason_.compare_exchange_strong(
-            expectedReason, reason, std::memory_order_acq_rel);
+        while (LifecycleGeneration(cur) == targetGen &&
+               LifecycleState(cur) == TxLatencySessionState::Capturing) {
+            const uint64_t desired = PackLifecycle(targetGen, TxLatencySessionState::StopRequested, reason);
+            if (lifecycle_.compare_exchange_weak(cur, desired,
+                                                 std::memory_order_seq_cst,
+                                                 std::memory_order_acquire)) {
+                (void)TryFinalize(targetGen);
+                return;
+            }
+        }
 
-        // 2. Transition state from Capturing to StopRequested.
-        auto expectedState = TxLatencySessionState::Capturing;
-        if (state_.compare_exchange_strong(expectedState, TxLatencySessionState::StopRequested,
-                                           std::memory_order_seq_cst)) {
-            (void)TryFinalize(currentGen);
-        } else if (expectedState == TxLatencySessionState::StopRequested) {
-            // Already in StopRequested; attempt finalization if writers have now drained.
-            (void)TryFinalize(currentGen);
+        // If already in StopRequested for targetGen, attempt finalization if writers have now drained.
+        if (LifecycleGeneration(cur) == targetGen &&
+            LifecycleState(cur) == TxLatencySessionState::StopRequested) {
+            (void)TryFinalize(targetGen);
         }
     }
 
@@ -260,16 +292,17 @@ public:
     /// Uses an atomic claim latch on finalizedGeneration_ so exactly one caller
     /// records termination metadata and publishes Frozen for this session generation.
     bool TryFinalize(uint32_t expectedGeneration = 0) noexcept {
+        uint64_t cur = lifecycle_.load(std::memory_order_acquire);
         const uint32_t targetGen = (expectedGeneration != 0)
                                        ? expectedGeneration
-                                       : sessionGeneration_.load(std::memory_order_acquire);
+                                       : LifecycleGeneration(cur);
         if (targetGen == 0) {
             return false;
         }
-        if (sessionGeneration_.load(std::memory_order_acquire) != targetGen) {
+        if (LifecycleGeneration(cur) != targetGen) {
             return false;
         }
-        if (state_.load(std::memory_order_acquire) != TxLatencySessionState::StopRequested) {
+        if (LifecycleState(cur) != TxLatencySessionState::StopRequested) {
             return false;
         }
         if (activeWriters_.load(std::memory_order_acquire) != 0) {
@@ -289,23 +322,26 @@ public:
             return false; // Another caller already claimed/finalized for targetGen or newer.
         }
 
-        // Re-verify that sessionGeneration_ has not moved and state is still StopRequested.
-        if (sessionGeneration_.load(std::memory_order_acquire) != targetGen ||
-            state_.load(std::memory_order_acquire) != TxLatencySessionState::StopRequested) {
+        // Re-verify that lifecycle_ has not moved and state is still StopRequested for targetGen.
+        cur = lifecycle_.load(std::memory_order_acquire);
+        if (LifecycleGeneration(cur) != targetGen ||
+            LifecycleState(cur) != TxLatencySessionState::StopRequested) {
             return false;
         }
 
         // Exclusive owner of finalization for targetGen:
-        terminationReason_ = pendingTerminationReason_.load(std::memory_order_acquire);
-        if (terminationReason_ == TxLatencyTerminationReason::None) {
-            terminationReason_ = TxLatencyTerminationReason::UserStopped;
+        TxLatencyTerminationReason reason = LifecycleTerminationReason(cur);
+        if (reason == TxLatencyTerminationReason::None) {
+            reason = TxLatencyTerminationReason::UserStopped;
         }
+        terminationReason_ = reason;
         frozenHostTicks_ = mach_absolute_time();
 
         {
             SeqlockWriteGuard seqGuard(statusSeq_);
             // Publish Frozen AFTER metadata (terminationReason_, frozenHostTicks_) is fully written.
-            state_.store(TxLatencySessionState::Frozen, std::memory_order_release);
+            lifecycle_.store(PackLifecycle(targetGen, TxLatencySessionState::Frozen, reason),
+                             std::memory_order_release);
         }
         return true;
     }
@@ -318,12 +354,13 @@ public:
 
     /// Reset session to idle on explicit teardown or rearm.
     void Reset() noexcept {
-        state_.store(TxLatencySessionState::Idle, std::memory_order_seq_cst);
+        const uint32_t curGen = LifecycleGeneration(lifecycle_.load(std::memory_order_relaxed));
+        lifecycle_.store(PackLifecycle(curGen, TxLatencySessionState::Idle, TxLatencyTerminationReason::None),
+                         std::memory_order_seq_cst);
         activeWriters_.store(0, std::memory_order_seq_cst);
         recordCount_.store(0, std::memory_order_relaxed);
         terminationReason_ = TxLatencyTerminationReason::None;
         frozenHostTicks_ = 0;
-        pendingTerminationReason_.store(TxLatencyTerminationReason::None, std::memory_order_relaxed);
     }
 
     /// Process a completed completion stamp from the audio observer loop.
@@ -338,7 +375,8 @@ public:
 
         // 1. Register active writer BEFORE checking state or generation.
         activeWriters_.fetch_add(1, std::memory_order_seq_cst);
-        const uint32_t myGen = sessionGeneration_.load(std::memory_order_acquire);
+        const uint64_t admissionLc = lifecycle_.load(std::memory_order_acquire);
+        const uint32_t myGen = LifecycleGeneration(admissionLc);
         struct WriterGuard {
             TxLatencySession& session;
             uint32_t gen;
@@ -351,7 +389,7 @@ public:
         } guard{*this, myGen};
 
         // 2. Check state.
-        if (state_.load(std::memory_order_acquire) != TxLatencySessionState::Capturing) {
+        if (myGen == 0 || LifecycleState(admissionLc) != TxLatencySessionState::Capturing) {
             return;
         }
 
@@ -362,7 +400,7 @@ public:
 
         // 4. Deadline check: stop automatically if session deadline has expired.
         if (currentHostNow >= deadlineHostTicks_) {
-            RequestStop(TxLatencyTerminationReason::DeadlineExpired);
+            RequestStop(TxLatencyTerminationReason::DeadlineExpired, myGen);
             return;
         }
 
@@ -373,7 +411,7 @@ public:
 
         // Epoch mismatch causes immediate stop to prevent mixing coordinates.
         if (slot->epoch != epoch_) {
-            RequestStop(TxLatencyTerminationReason::EpochChanged);
+            RequestStop(TxLatencyTerminationReason::EpochChanged, myGen);
             return;
         }
 
@@ -397,14 +435,15 @@ public:
         }
 
         // Verify generation and state are still valid before claiming a slot.
-        if (sessionGeneration_.load(std::memory_order_acquire) != myGen ||
-            state_.load(std::memory_order_acquire) != TxLatencySessionState::Capturing) {
+        const uint64_t preSlotLc = lifecycle_.load(std::memory_order_acquire);
+        if (LifecycleGeneration(preSlotLc) != myGen ||
+            LifecycleState(preSlotLc) != TxLatencySessionState::Capturing) {
             return;
         }
 
         const uint32_t curRecords = recordCount_.load(std::memory_order_relaxed);
         if (curRecords >= sampleBudget_ || curRecords >= kTxLatencyMaxSamples) {
-            RequestStop(TxLatencyTerminationReason::CapacityReached);
+            RequestStop(TxLatencyTerminationReason::CapacityReached, myGen);
             return;
         }
 
@@ -439,8 +478,9 @@ public:
             eventCode, haveProvenance, isSubstitution, coverage, txBounds, pubEarliest, pubLatest, reason);
 
         // Re-verify generation before committing the sample.
-        if (sessionGeneration_.load(std::memory_order_acquire) != myGen ||
-            state_.load(std::memory_order_acquire) != TxLatencySessionState::Capturing) {
+        const uint64_t preCommitLc = lifecycle_.load(std::memory_order_acquire);
+        if (LifecycleGeneration(preCommitLc) != myGen ||
+            LifecycleState(preCommitLc) != TxLatencySessionState::Capturing) {
             return;
         }
 
@@ -489,7 +529,7 @@ public:
     }
 
     [[nodiscard]] TxLatencySessionState State() const noexcept {
-        return state_.load(std::memory_order_acquire);
+        return LifecycleState(lifecycle_.load(std::memory_order_acquire));
     }
 
     [[nodiscard]] uint32_t SessionId() const noexcept {
@@ -497,7 +537,7 @@ public:
     }
 
     [[nodiscard]] uint32_t SessionGeneration() const noexcept {
-        return sessionGeneration_.load(std::memory_order_relaxed);
+        return LifecycleGeneration(lifecycle_.load(std::memory_order_relaxed));
     }
 
     [[nodiscard]] uint32_t StatusSequence() const noexcept {
@@ -512,7 +552,8 @@ public:
         const auto snap = ReadCountersSnapshot();
         outHeader.version = kTxLatencySessionWireVersion;
         outHeader.sessionId = sessionId_;
-        const auto st = state_.load(std::memory_order_acquire);
+        const uint64_t lc = lifecycle_.load(std::memory_order_acquire);
+        const auto st = LifecycleState(lc);
         outHeader.state = st;
         if (st == TxLatencySessionState::Frozen) {
             outHeader.terminationReason = terminationReason_;
@@ -559,7 +600,7 @@ public:
     [[nodiscard]] uint32_t ReadRecordsPage(uint32_t cursor,
                                            uint32_t maxRecords,
                                            TxLatencyRecord* outRecords) const noexcept {
-        if (state_.load(std::memory_order_acquire) != TxLatencySessionState::Frozen) {
+        if (State() != TxLatencySessionState::Frozen) {
             return 0;
         }
         const uint32_t total = recordCount_.load(std::memory_order_acquire);
@@ -588,7 +629,8 @@ public:
         const auto snap = ReadCountersSnapshot();
         out = {};
         out.header.version = UserClient::Wire::kTxLatencyWireVersion;
-        const auto st = state_.load(std::memory_order_acquire);
+        const uint64_t lc = lifecycle_.load(std::memory_order_acquire);
+        const auto st = LifecycleState(lc);
         out.header.sessionState = static_cast<uint32_t>(st);
         if (st == TxLatencySessionState::Frozen) {
             out.header.terminationReason = static_cast<uint32_t>(terminationReason_);
@@ -785,10 +827,8 @@ private:
         }
     }
 
-    std::atomic<TxLatencySessionState> state_{TxLatencySessionState::Idle};
-    std::atomic<uint32_t> sessionGeneration_{0};
+    std::atomic<uint64_t> lifecycle_{PackLifecycle(0, TxLatencySessionState::Idle, TxLatencyTerminationReason::None)};
     std::atomic<uint32_t> activeWriters_{0};
-    std::atomic<TxLatencyTerminationReason> pendingTerminationReason_{TxLatencyTerminationReason::None};
     std::atomic<uint32_t> finalizedGeneration_{0};
     mutable std::atomic<uint32_t> statusSeq_{0};
 

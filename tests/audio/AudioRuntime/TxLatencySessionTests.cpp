@@ -388,3 +388,82 @@ TEST(TxLatencySessionTests, LiveHeaderReadsDuringCapturingAndStopRequested) {
     EXPECT_EQ(page.header.terminationReason, static_cast<uint32_t>(TxLatencyTerminationReason::UserStopped));
     EXPECT_GT(page.header.frozenHostTicks, 0ULL);
 }
+
+TEST(TxLatencySessionTests, PausedOldStopDoesNotAffectRearmedSession) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    TxLatencySession session;
+
+    // 1. Arm Session 1 (generation 1, sessionId 10)
+    ASSERT_TRUE(session.Arm(10, 1, 48000, 10, 100, 0x1234, 1, 100));
+    EXPECT_EQ(session.SessionGeneration(), 1U);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Capturing);
+
+    // 2. Simulate Thread A entering RequestStop while session 1 is capturing.
+    // It captures targetGen = 1, but then pauses before executing the CAS.
+    const uint32_t pausedOldGen = session.SessionGeneration();
+    EXPECT_EQ(pausedOldGen, 1U);
+
+    // 3. While Thread A is paused, another event stops Session 1 normally.
+    session.RequestStop(TxLatencyTerminationReason::UserStopped);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Frozen);
+
+    // 4. Session 2 is now armed (generation 2, sessionId 20).
+    ASSERT_TRUE(session.Arm(20, 1, 48000, 10, 100, 0x5678, 1, 100));
+    EXPECT_EQ(session.SessionGeneration(), 2U);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Capturing);
+    EXPECT_EQ(session.SessionId(), 20U);
+
+    // 5. Now Thread A resumes and attempts to execute its stop request with the old generation!
+    // In the old implementation, this would blindly CAS state from Capturing to StopRequested.
+    // In the atomic lifecycle implementation, the CAS is conditioned on generation 1 and must fail.
+    session.RequestStop(TxLatencyTerminationReason::CapacityReached, pausedOldGen);
+
+    // 6. Verify Session 2 was completely unaffected:
+    // It must STILL be in Capturing state, not StopRequested or Frozen!
+    EXPECT_EQ(session.State(), TxLatencySessionState::Capturing);
+    EXPECT_EQ(session.SessionGeneration(), 2U);
+    EXPECT_EQ(session.SessionId(), 20U);
+
+    // 7. Verify Session 2 can continue capturing data.
+    ASFW::Protocols::Audio::AMDTP::AmdtpPacketTimeline timeline{};
+    std::array<ASFW::Protocols::Audio::AMDTP::PacketTimelineSlot, 8> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), static_cast<uint32_t>(slots.size())));
+    slots[0].packetIndex = 0;
+    slots[0].isData = 1;
+    slots[0].framesInPacket = 8;
+    slots[0].epoch = 1;
+    slots[0].firstAudioFrame = 1000;
+    slots[0].cycleOrdinal = 0;
+    slots[0].state.store(ASFW::Protocols::Audio::AMDTP::PacketSlotState::Finalized);
+    timeline.SetImageProvenance(0, 0, 1, 1000, 8, static_cast<uint8_t>(ASFW::Audio::Ports::PcmCopyResult::Ready));
+
+    PublicationRangeRing pubRing{};
+    const uint64_t now = mach_absolute_time();
+    pubRing.Record(1, 1000, 1008, now - 200'000, now - 100'000);
+
+    ASFW::Isoch::IsochTxClockPairSample pair{};
+    pair.cycleTimer32 = (1U << 25) | (100U << 12) | 0U;
+    pair.hostTimeMid = now;
+    pair.bracketTicks = 10;
+
+    session.ObserveCompletion(0, (1U << 25) | (100U << 12) | 0U,
+                             ASFW::Isoch::PackCompletionMetadata(0, 0, 0x11),
+                             pair, timeline, pubRing, now + 1000);
+
+    TxLatencySessionHeader header{};
+    session.ReadHeader(header);
+    EXPECT_EQ(header.sessionId, 20U);
+    EXPECT_EQ(header.state, TxLatencySessionState::Capturing);
+    EXPECT_EQ(header.sampledCount, 1U);
+    EXPECT_EQ(header.terminationReason, TxLatencyTerminationReason::None);
+
+    // 8. Finally stop Session 2 with its own generation and verify clean finalization.
+    session.RequestStop(TxLatencyTerminationReason::DeadlineExpired, 2);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Frozen);
+
+    session.ReadHeader(header);
+    EXPECT_EQ(header.sessionId, 20U);
+    EXPECT_EQ(header.state, TxLatencySessionState::Frozen);
+    EXPECT_EQ(header.terminationReason, TxLatencyTerminationReason::DeadlineExpired);
+    EXPECT_GT(header.sessionFrozenHostTicks, 0ULL);
+}
