@@ -114,7 +114,9 @@ void PcmPublicationCache::BeginEpoch(uint64_t epoch) noexcept {
 }
 
 PcmPublishResult PcmPublicationCache::Publish(
-    const PcmPublicationView& view) noexcept {
+    const PcmPublicationView& view,
+    uint64_t* outCommittedStart,
+    uint64_t* outCommittedEnd) noexcept {
     if (!sampleBits_ || channels_ == 0 || cacheCapacityFrames_ == 0) {
         return PcmPublishResult::NotConfigured;
     }
@@ -228,6 +230,8 @@ PcmPublishResult PcmPublicationCache::Publish(
         telemetry_->publishedEndFrame.store(incomingEnd,
                                              std::memory_order_release);
     }
+    if (outCommittedStart) *outCommittedStart = copyStart;
+    if (outCommittedEnd) *outCommittedEnd = incomingEnd;
     return PcmPublishResult::Published;
 }
 

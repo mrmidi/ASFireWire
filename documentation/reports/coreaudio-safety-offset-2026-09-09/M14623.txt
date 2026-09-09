@@ -1,0 +1,98 @@
+Database ID: 14623
+Date: 2004-10-14T16:37:15-07:00
+Author: William Stewart <email@hidden>
+Subject: re: I/O Latency
+Archive: 2004/Oct/msg00187.html
+
+Title: re: I/O Latency
+
+
+
+Thanks for all of the comments – I’m not quoting any of these as this might be a longish email...
+
+
+
+I want to make it clear to everyone that we care a great deal about this area and have (and will) spend time on getting this right.
+
+
+
+Application Buffering
+
+
+
+Firstly, with reference to the comments about Logic needing an extra buffer on X compared with 9. I don’t understand the requirement for this. There are latencies when scheduling interrupts (just as there are with scheduling threads), and from our point of view, there is no need to soften the latency in this manner to account for those – that is, the scheduling latencies should be in the noise. If they aren’t, then we would definitely want a bug report and we will ensure the culprit is addressed.
+
+
+
+Now, it is possible that the jitter that Logic (or other apps) are trying to address through this mechanism is actually not an I/O Jitter, but rather the spikes of loads that might occur as the processing requirements of the I/O Proc work change. We’ve certainly seen for instance, problems with audio units not loading code, not heating memory, etc... These problems can cause spikes in the execution time of the I/O proc – where it can then overload and miss the time constraint for its I/O. With Tiger we have been doing more work on providing tools that AU developers can use for developing their AudioUnits, and this type of situation (running in the I/O Proc) is a “feature” of one of these tools for this very reason. The Tiger seeds have these, and I encourage developers to gain access to these seeds and use them.
+
+
+
+Safety Offset
+
+
+
+Secondly, its worth discussing the safety offset (and I’ll summarise Jeff’s comments). There are two facets to the safety offset, and after some consideration (this has come up before), we think the best way forward is to deprecate this property of a device (it will still keep working!) in favour of two additional properties (I’m not sure what their final names will be). If the HAL finds a driver that supports these two properties, it will then calculate a “safety offset” that it needs to apply based on its scheduling model. The intention here is that the driver doesn’t have to “fudge” these figures, but can provide accurate and empirically verifiable values for each of these numbers – the HAL knows how to take these and schedule appropriately.
+
+
+
+(1) DMA Transfer Limit
+
+    - Expressed in samples. This is the limit on how close (all other things being equal), that the HAL can get to “now” (where “now” is the current position of the driver). Its worth noting that typically DMA transfers are in bytes rather than frames – the implication of this is that as a device has more channels, the DMA Transfer Limit would be lower than a device with fewer number of channels. Some padding (depending on the vagaries of PCI bus transfers, etc) might have to be done here by the driver (it has to provide a reasonable “worst-case” estimation), but ideally this is based solely on the mechanics and constraints of the driver’s DMA architecture.
+
+
+
+(2) Time Stamp Resolution
+
+    - Expressed in samples. This is an _expression_ of the accuracy of the time stamps that a driver can provide (the time stamps are a relationship between a given sample number on the device and the CPU clock). When the HAL knows this figure, it also can with certainty (we have a proof for this), how to adjust the scheduling behaviour.
+
+
+
+We believe that it is possible with certain architectures for the DMA transfer to be minimal (a few samples). With good timing models, the TS Resolution can be within a single sample. So, it should be possible to have a combined “safety offset” in the single digit sample range. 
+
+We’d like to understand the problems that arise for a driver to achieve this kind of figure and to fix them.
+
+
+
+Thanks again.
+
+
+
+Bill
+
+
+
+-- 
+
+mailto:email@hidden
+
+tel: +1 408 974 4056
+
+
+
+__________________________________________________________________________
+
+Culture Ship Names:
+
+Ravished By The Sheer Implausibility Of That Last Statement [GSV]
+
+I said, I've Got A Big Stick [OU]
+
+Inappropiate Response [OU]
+
+Far Over The Borders Of Insanity And Still Accelerating [Eccentric]
+
+__________________________________________________________________________
+
+
+
+
+
+
+
+ _______________________________________________
+Do not post admin requests to the list. They will be ignored.
+Coreaudio-api mailing list      (email@hidden)
+Help/Unsubscribe/Update your Subscription:
+
+This email sent to email@hidden

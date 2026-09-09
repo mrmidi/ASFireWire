@@ -10,6 +10,7 @@
 #include "ASFWDriver.h"
 #include "ControllerCoreAccess.hpp"
 #include "../WireFormats/DiagnosticsWireEnvelope.hpp"
+#include "../WireFormats/TxLatencySessionWireFormats.hpp"
 
 #include <DriverKit/OSData.h>
 #include <cstddef>
@@ -270,6 +271,62 @@ kern_return_t DiagnosticsHandler::ClearAsyncTrace(IOUserClientMethodArguments* a
     
     // Return empty status payload
     OSData* data = OSData::withCapacity(0);
+    if (!data) {
+        return kIOReturnNoMemory;
+    }
+    args->structureOutput = data;
+    args->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
+kern_return_t DiagnosticsHandler::StartTxLatencySession(
+    IOUserClientMethodArguments* args) {
+    if (!args || !args->scalarInput || args->scalarInputCount < 1 || !driver_) {
+        return kIOReturnBadArgument;
+    }
+    auto* controller = GetControllerCorePtr(driver_);
+    auto* runtime = controller ? controller->GetAudioRuntimeRegistry() : nullptr;
+    if (!runtime) {
+        return kIOReturnNotReady;
+    }
+
+    const auto endpointId = Audio::Devices::AudioEndpointId{args->scalarInput[0]};
+    const uint32_t durationSeconds = (args->scalarInputCount > 1) ? static_cast<uint32_t>(args->scalarInput[1]) : 5;
+    const uint32_t strataSize = (args->scalarInputCount > 2) ? static_cast<uint32_t>(args->scalarInput[2]) : 0;
+    const uint32_t seed = (args->scalarInputCount > 3) ? static_cast<uint32_t>(args->scalarInput[3]) : 0;
+    const uint32_t assumedDriftPpm = (args->scalarInputCount > 4) ? static_cast<uint32_t>(args->scalarInput[4]) : 100;
+    const uint32_t action = (args->scalarInputCount > 5) ? static_cast<uint32_t>(args->scalarInput[5]) : 0; // 0=Start, 1=Stop
+
+    if (action == 1) {
+        return runtime->StopTxLatencySession(endpointId) ? kIOReturnSuccess : kIOReturnNotReady;
+    }
+
+    return runtime->StartTxLatencySession(endpointId, durationSeconds, strataSize, seed, assumedDriftPpm)
+               ? kIOReturnSuccess
+               : kIOReturnNotReady;
+}
+
+kern_return_t DiagnosticsHandler::GetTxLatencyResults(
+    IOUserClientMethodArguments* args) {
+    if (!args || !args->scalarInput || args->scalarInputCount < 1 || !driver_) {
+        return kIOReturnBadArgument;
+    }
+    auto* controller = GetControllerCorePtr(driver_);
+    auto* runtime = controller ? controller->GetAudioRuntimeRegistry() : nullptr;
+    if (!runtime) {
+        return kIOReturnNotReady;
+    }
+
+    const auto endpointId = Audio::Devices::AudioEndpointId{args->scalarInput[0]};
+    const uint32_t pageIndex = (args->scalarInputCount > 1) ? static_cast<uint32_t>(args->scalarInput[1]) : 0;
+    const uint32_t samplesPerPage = (args->scalarInputCount > 2) ? static_cast<uint32_t>(args->scalarInput[2]) : Wire::kTxLatencyMaxSamplesPerPage;
+
+    Wire::TxLatencyResultsPageWire page{};
+    if (!runtime->CopyTxLatencyResults(endpointId, pageIndex, samplesPerPage, page)) {
+        return kIOReturnNotReady;
+    }
+
+    OSData* data = OSData::withBytes(&page, sizeof(page));
     if (!data) {
         return kIOReturnNoMemory;
     }

@@ -20,6 +20,12 @@ void AmdtpPacketTimeline::Reset() noexcept {
         slot.cycleOrdinal = 0;
         slot.presentationBusTicks = 0;
         slot.state.store(PacketSlotState::Empty, std::memory_order_relaxed);
+        for (auto& img : slot.images) {
+            img.commitGeneration.store(0, std::memory_order_relaxed);
+            img.firstFrame = 0;
+            img.frameCount = 0;
+            img.pcmCopyResult = 0;
+        }
     }
 }
 
@@ -89,6 +95,40 @@ void AmdtpPacketTimeline::MarkPublished(uint32_t packetIndex) noexcept {
         slot->state.store(PacketSlotState::Published,
                           std::memory_order_release);
     }
+}
+
+void AmdtpPacketTimeline::SetImageProvenance(uint32_t packetIndex, uint8_t imageIndex,
+                                             uint64_t commitGeneration, uint64_t firstFrame,
+                                             uint32_t frameCount, uint8_t pcmCopyResult) noexcept {
+    if (!slots_ || slotCount_ == 0 || imageIndex >= 2) return;
+    auto& slot = slots_[packetIndex % slotCount_];
+    auto& img = slot.images[imageIndex];
+    img.commitGeneration.store(0, std::memory_order_relaxed);
+    img.firstFrame = firstFrame;
+    img.frameCount = frameCount;
+    img.pcmCopyResult = pcmCopyResult;
+    img.commitGeneration.store(commitGeneration, std::memory_order_release);
+}
+
+bool AmdtpPacketTimeline::ReadImageProvenance(uint32_t packetIndex, uint8_t imageIndex,
+                                              uint64_t expectedCommitGen,
+                                              ImageProvenance& out) const noexcept {
+    if (!slots_ || slotCount_ == 0 || imageIndex >= 2) return false;
+    const auto& slot = slots_[packetIndex % slotCount_];
+    if (slot.packetIndex != packetIndex) return false;
+    const auto& img = slot.images[imageIndex];
+    const uint64_t genBefore = img.commitGeneration.load(std::memory_order_acquire);
+    if (genBefore == 0 || (expectedCommitGen != 0 && genBefore != expectedCommitGen)) {
+        return false;
+    }
+    out.firstFrame = img.firstFrame;
+    out.frameCount = img.frameCount;
+    out.pcmCopyResult = img.pcmCopyResult;
+    out.commitGeneration.store(genBefore, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (img.commitGeneration.load(std::memory_order_relaxed) != genBefore) return false;
+    if (slot.packetIndex != packetIndex) return false;
+    return true;
 }
 
 const PacketTimelineSlot* AmdtpPacketTimeline::SlotByIndex(

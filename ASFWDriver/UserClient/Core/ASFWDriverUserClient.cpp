@@ -77,6 +77,8 @@ enum {
     kMethodGetAudioRuntimeTuning = 1033,
     kMethodRequestAudioRuntimeTuning = 1034,
     kMethodGetAudioRuntimeTuningEndpoints = 1035,
+    kMethodStartTxLatencySession = 1036,
+    kMethodGetTxLatencyResults = 1037,
     kMethodGetAudioSemanticTopology = 1028,
     kMethodGetAudioSemanticTopologyEndpoints = 1029,
     kMethodGetAudioSemanticConsoleLayout = 1030,
@@ -527,6 +529,8 @@ constexpr uint64_t kMethodDiagGetLogRecords       = 1011;
 constexpr uint64_t kMethodDiagGetLogStats         = 1012;
 constexpr uint64_t kMethodDiagGetAudioTelemetry   = 1013;
 constexpr uint64_t kMethodDiagGetLogCatalog       = 1014;
+constexpr uint64_t kMethodDiagStartTxLatencySession = 1036;
+constexpr uint64_t kMethodDiagGetTxLatencyResults   = 1037;
 
 [[nodiscard]] uint8_t OpticalModeToWire(
     const std::optional<ASFW::Configuration::OpticalMode>& mode) noexcept {
@@ -1228,6 +1232,10 @@ MethodDispatchResult DispatchDiagnosticsMethods(
         return runtimeState.Diagnostics().GetAudioTelemetry(arguments);
     case kMethodDiagGetLogCatalog:
         return runtimeState.Diagnostics().GetLogCatalog(arguments);
+    case kMethodDiagStartTxLatencySession:
+        return runtimeState.Diagnostics().StartTxLatencySession(arguments);
+    case kMethodDiagGetTxLatencyResults:
+        return runtimeState.Diagnostics().GetTxLatencyResults(arguments);
     default:
         return std::nullopt;
     }

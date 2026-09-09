@@ -65,6 +65,12 @@ public:
     // Selector 1014: LogRing category names and driver-defined presets.
     kern_return_t GetLogCatalog(IOUserClientMethodArguments* args);
 
+    // Selector 1036: Start or stop a TX latency measurement session.
+    kern_return_t StartTxLatencySession(IOUserClientMethodArguments* args);
+
+    // Selector 1037: Paged query for TX latency measurement results.
+    kern_return_t GetTxLatencyResults(IOUserClientMethodArguments* args);
+
 private:
     ASFWDriver* driver_{nullptr};
     Diagnostics::DiagnosticsService* service_{nullptr};

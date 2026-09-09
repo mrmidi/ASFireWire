@@ -107,7 +107,9 @@ public:
     void BeginEpoch(uint64_t epoch) noexcept;
 
     [[nodiscard]] PcmPublishResult Publish(
-        const PcmPublicationView& hostView) noexcept;
+        const PcmPublicationView& hostView,
+        uint64_t* outCommittedStart = nullptr,
+        uint64_t* outCommittedEnd = nullptr) noexcept;
 
     [[nodiscard]] ASFW::Audio::Ports::PcmCopyResult CopyExact(
         const ASFW::Audio::Ports::TxPcmReadRequest& request,

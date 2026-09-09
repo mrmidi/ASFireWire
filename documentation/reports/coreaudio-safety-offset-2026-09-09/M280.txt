@@ -1,0 +1,67 @@
+Database ID: 280
+Date: 2013-08-09T11:31:38-07:00
+Author: Jeff Moore <email@hidden>
+Subject: Re: AudioHardwarePlugIn vs AudioServerPlugIn
+Archive: 2013/Aug/msg00030.html
+
+On Aug 9, 2013, at 2:46 AM, Bertrand Van Kempen <email@hidden> wrote:
+
+> Hi,
+>
+> I'm a new CoreAudio driver developer; I "inherit" of a CoreAudio driver (HAL plugin) for a network protocol.
+> The driver works under 10.7 but it has some issue under 10.8 and Sandboxed application.
+>
+> I have a look on CoreAudio.framework and noticed that the AudioHardwarePlugIn.h says that, starting in 10.8 AudioHardwarePlugin is deprecated.
+> So, I'm wonder if I have to port the driver to AudioServerPlugin to have my plugin working properly in 10.8 and OSX Maveriks?
+
+Yes. That is correct. AudioHardwarePlugIns have been deprecated because of the problems you mention with sandboxing. AudioServerPlugIns are the replacement.
+
+
+> Is AudioServerPlugin will be mandatory in next release of OSX?
+
+That isn’t something we can get into.
+
+
+> Are only AudioServerPlugin drivers work with SandBoxed applications?
+
+AudioServerPlugIns are the only user-land drivers that are guaranteed to work with all sandboxed applications.
+
+Technically, whether an AudioHardwarePlugIn works in a given application depends entirely on what that the application’s sandbox allows. For example, if the AudioHardwarePlugIn just needs to talk to the network, it would work in an application whose sandbox allowed for network access. On the other hand, if the AudioHardwarePlugIn needs to open a connection to a custom IOKit driver, it is highly unlikely that any application’s sandbox would allow that.
+
+
+> If I understand well the bigger difference between AudioHardwarePlugIn and AudioServerPlugIn is that AudioServerPlugIn doesn't call the Host at each new IOProcess (for example triggered by an interrupt) but now it is the Host which ask to the plugin to process IO at a predicted time: right?
+
+The IO model for AudioServerPlugIns is the same model we’ve been using with IOAudio-based kernel drivers since the beginning of OS X.
+
+
+> If true, do you know how values returned by GetZeroTimeStamp() must be precise? What is the jitter allowed?
+
+They need to be as accurate as you can make them. Note that you can use the safety offset to pad for a jittery clock.
+
+
+> I only found documentation in AudioServerPlugIn.h and some explanations on email@hidden but I must admit that this does not allow me to understand all.
+> Could you point me to documentation?
+
+While, there isn’t a document describing the AudioServerPlugIn beyond what is in the header, the developer website does have sample code. In fact, we have a new release of that sample code making its way through the release process now.
+
+Additionally, the documentation for writing an IOAudio-based IOKit driver would probably be helpful too. Obviously, the programming interface between the two are very different, but the concepts of what the driver needs to do are the same, especially where clocking is concerned.
+
+
+—
+
+Jeff Moore
+Core Audio
+Apple
+
+
+
+
+
+
+
+ _______________________________________________
+Do not post admin requests to the list. They will be ignored.
+Coreaudio-api mailing list      (email@hidden)
+Help/Unsubscribe/Update your Subscription:
+
+This email sent to email@hidden

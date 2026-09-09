@@ -759,6 +759,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     ivars.device.audioNub->PublishRuntimeTuningGraph(effective,
         static_cast<uint32_t>(ivars.device.currentSampleRate),
         ivars.device.inputChannelCount, ivars.device.outputChannelCount);
+    ivars.device.audioNub->RegisterTxLatencySession(&ivars.runtime.txLatencySession);
 
     ASFW_LOG(Audio,
              "✅ ASFWAudioDriver: Started - device '%{public}s' (in=%u out=%u aggregate=%u)",
@@ -772,6 +773,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 void TearDownAudioGraph(ASFWAudioDriver& driver,
                         ASFWAudioDriver_IVars& ivars,
                         AudioGraphStartState* state) noexcept {
+    if (ivars.device.audioNub) {
+        ivars.device.audioNub->UnregisterTxLatencySession(&ivars.runtime.txLatencySession);
+    }
     ivars.runtime.isRunning.store(false, std::memory_order_release);
     UnbindDirectAudioSkeleton(ivars);
 

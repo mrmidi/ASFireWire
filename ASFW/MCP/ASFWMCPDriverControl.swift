@@ -47,6 +47,10 @@ protocol ASFWDriverControlling {
     func logRingStats() async -> ASFWLogRingStats?
     func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth]
     func fetchAudioCursors() async -> [ASFWMCPAudioCursorSnapshot]
+    func startTxLatencySession(endpointID: AudioEndpointID, durationSeconds: UInt32, strataSize: UInt32, seed: UInt32, assumedDriftPpm: UInt32) async -> Bool
+    func stopTxLatencySession(endpointID: AudioEndpointID) async -> Bool
+    func fetchTxLatencyReport(endpointID: AudioEndpointID) async -> TxLatencySessionReport?
+    func fetchTxLatencyResultsPage(endpointID: AudioEndpointID, pageIndex: UInt32, samplesPerPage: UInt32) async -> TxLatencyResultsPage?
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
@@ -725,6 +729,77 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             firstFaultCompletionPacket: 0,
             firstFaultCommittedPacketEnd: 0
         )]
+    }
+
+    func startTxLatencySession(endpointID: AudioEndpointID, durationSeconds: UInt32, strataSize: UInt32, seed: UInt32, assumedDriftPpm: UInt32) async -> Bool {
+        true
+    }
+
+    func stopTxLatencySession(endpointID: AudioEndpointID) async -> Bool {
+        true
+    }
+
+    func fetchTxLatencyReport(endpointID: AudioEndpointID) async -> TxLatencySessionReport? {
+        let header = TxLatencySessionHeader(
+            version: 1,
+            sessionState: .frozen,
+            terminationReason: .durationExpired,
+            endpointId: endpointID,
+            epoch: 1,
+            startHostTicks: 1_000_000,
+            deadlineHostTicks: 2_000_000,
+            frozenHostTicks: 2_000_100,
+            durationSeconds: 5,
+            strataSize: 8,
+            seed: 42,
+            assumedDriftPpm: 100,
+            dataPacketsSeen: 8000,
+            samplesCaptured: 100,
+            stampsMissedCount: 0,
+            resolvedCount: 98,
+            unresolvedCount: 2,
+            transmitFailedCount: 0,
+            substitutionCount: 0,
+            invalidCount: 0,
+            eligibleByPhase: [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
+            reasonStaleCorrelation: 0,
+            reasonCoveragePending: 0,
+            reasonCoverageGap: 0,
+            reasonEpochMismatch: 0,
+            reasonPublicationAgedOut: 2,
+            reasonProvenanceAgedOut: 0,
+            reasonUnrecognizedEventCode: 0,
+            reasonImageUnavailable: 0,
+            totalRingRecords: 100,
+            ringHead: 100,
+            ringTail: 0
+        )
+        let sample = TxLatencySample(
+            packetIndex: 100,
+            pcmCommittedStartFrame: 600,
+            pcmCommittedEndFrame: 606,
+            pubLatestHostTicks: 1_010_000,
+            txCycleStartHostTicks: 1_020_000,
+            uncertaintyHostTicks: 120,
+            waitMinNanos: 400_000,
+            waitMaxNanos: 420_000,
+            outcome: .matched,
+            unresolvedReason: .none,
+            selectedImage: 1,
+            arbitrationPhase: 2,
+            pcmIdentityProven: true
+        )
+        return TxLatencySessionReport(header: header, samples: [sample])
+    }
+
+    func fetchTxLatencyResultsPage(endpointID: AudioEndpointID, pageIndex: UInt32, samplesPerPage: UInt32) async -> TxLatencyResultsPage? {
+        guard let report = await fetchTxLatencyReport(endpointID: endpointID) else { return nil }
+        return TxLatencyResultsPage(
+            header: report.header,
+            pageIndex: 0,
+            totalPages: 1,
+            samples: report.samples
+        )
     }
 
     func recordUnexpectedWriteAttempt() {

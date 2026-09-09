@@ -1,0 +1,335 @@
+Database ID: 13961
+Date: 2003-06-17T16:30:44-07:00
+Author: Jeff Moore <email@hidden>
+Subject: Re: fIsMixable
+Archive: 2003/Jun/msg00270.html
+
+On Tuesday, June 17, 2003, at 3:44 PM, BlazeAudio Developer wrote:
+
+
+
+
+> Jeff,
+
+
+
+Can you tell me what parts of the CoreAudio driver quality determine
+the
+
+latency?
+
+
+The most important thing is the quality of the time stamps the driver
+provides. The second most important thing is coming up with a proper
+safety offset. The other second most important thing is coming up with
+a proper value for the hardware latency figure.
+
+
+
+The rule of thumb for the time stamps is to take them as close as
+possible to when the hardware actually reached that time. This
+generally means doing it from the primary hardware interrupt.
+
+
+
+The safety offset is trickier. The reason why is that the safety offset
+needs to both absorb jitter and account for any physical limitations of
+transferring data to the hardware. Factors such as cache line size and
+how programmable your DMA hardware is will enter into the picture. One
+needs to thoroughly instrument the driver and do lots of experiments to
+come up with the proper number.
+
+
+
+The latency factor itself totally depends on the hardware and DAC
+latency and is a separate figure from the safety offset because it is
+not accounted for in the time stamps the HAL provides to it's clients'
+IOProcs.
+
+
+
+
+> From what I understand, these are the main factors (for a PCI based
+audio
+
+device):
+
+
+
+a. The size of the stream/dma buffers.
+
+
+Unless this buffering takes place after the DMA and prior to the data
+hitting the wire, the size of the DMA buffers really has nothing to do
+with the latency of the system. The reason why is that client apps' IO
+is totally decoupled from the hardware interrupt. So the two buffer
+sizes really don't influence each other.
+
+
+
+
+> b. Accuracy of position reported by getCurrentSampleFrame().
+
+
+Not really that important.
+
+
+
+
+> c. The "latency" between receiving an interrupt (interruptFilter()) and
+
+calling takeTimeStamp().
+
+
+
+This is the key factor here in determining the quality of your driver's
+time stamps. My advice is to take the time stamp as the very first
+thing your primary interrupt does.
+
+
+
+
+> Is there a general "guideline" for the stream buffer size? How should
+one
+
+determine what size to use?
+
+
+
+What are other drivers using?
+
+
+About the only general guideline for the size of the ring buffer is to
+make it big enough that HAL clients can use reasonably large IO
+buffers. The HAL limits the upper bound on it's clients' buffers to
+3/8ths the size of the ring buffer. I've seen clients that want to run
+their buffers as big as 35-50 milliseconds.
+
+
+
+There is a trade off you make with the size of the ring buffer. The
+larger the ring buffer the fewer interrupts per second your hardware
+will generate, which is good since it leaves the vast majority of the
+time to client code rather than handling interrupts. But, if your audio
+clock drifts with respect to the CPU clock, then larger ring buffers
+mean more time between time stamps which makes responding to the drift
+that much slower.
+
+
+
+So you need to balance the size of your ring buffer against these
+factors in addition to the any constraints your hardware has.
+
+
+
+
+> Thanks.
+
+Devendra.
+
+
+
+At 03:22 PM 6/17/2003, Jeff Moore wrote:
+
+
+
+  The latencies for CoreAudio/IOAudio are pretty much the same or
+
+  better than ASIO for the same piece of hardware. That said, the
+
+  quality of the driver is just as important, if not more important, on
+
+  Mac OS X as it is on ASIO for determining the latency.
+
+
+
+  On Tuesday, June 17, 2003, at 2:42 PM, BlazeAudio Developer wrote:
+
+
+
+    Everybody, thank you for your input!!
+
+
+
+    I think I will stay away from the Hog mode.
+
+
+
+    However, I have related questions (perhaps I should start another
+
+    thread).
+
+
+
+    How does CoreAudio compare against ASIO (OS9) in terms of
+
+    workable
+
+    latencies, say on a 500 MHz Dual G4, given everything else sort
+
+    of equal!
+
+
+
+    Thanks.
+
+    Devendra.
+
+
+
+    At 02:08 PM 6/17/2003, Markus Fritze wrote:
+
+
+
+      On Dienstag, Juni 17, 2003, at 01:12  Uhr, James Chandler Jr
+
+    wrote:
+
+
+
+        If just playing or recording a file, it might be desirable to
+
+        avoid float-int conversions.
+
+
+
+      But in this case performance is not an issue anyhow :-)
+
+
+
+      Logic does all it's internal processing in float (or even
+
+    double, if
+
+      necessary). I would expect that every even half-professional
+
+    audio
+
+      application does so, too. You don't have to deal with clipping
+
+    and
+
+      you can do real math without converting (converting float->int
+
+    is
+
+      extremely costly on a PowerPC!). How much effort is even a
+
+    volume
+
+      control with clipping in integer math? It is one cycle in
+
+    float...
+
+
+
+      BTW: On of CoreAudios real advantages _IS_ multi-client support
+
+    and
+
+      the customers love it. Only because they _had_ to use ASIO
+
+    under Mac
+
+      OS 9, doesn't mean that they prefer the old solution.
+
+
+
+      Ok, users don't like system beeps on their audio hardware, but
+
+    they
+
+      can change that in the system preferences, so this is no longer
+
+    a
+
+      problem.
+
+
+
+      I really would recommend not to deal with hog mode (BTW: we
+
+    never
+
+      tested Logic with hog mode, because AFAIK no audio hardware
+
+    supports
+
+      it :-), your tech support will be flooded (why is iTunes not
+
+    working,
+
+      etc.)
+
+
+
+      MMM
+
+
+
+      --
+
+      Markus Fritze
+
+      Apple Computer, Inc. <http://www.apple.com>
+
+      Senior Engineer - Audio/Music Applications
+
+      _______________________________________________
+
+      coreaudio-api mailing list | email@hidden
+
+      Help/Unsubscribe/Archives:
+
+      http://www.lists.apple.com/mailman/listinfo/coreaudio-api
+
+      Do not post admin requests to the list. They will be ignored.
+
+    _______________________________________________
+
+    coreaudio-api mailing list | email@hidden
+
+    Help/Unsubscribe/Archives:
+
+    http://www.lists.apple.com/mailman/listinfo/coreaudio-api
+
+    Do not post admin requests to the list. They will be ignored.
+
+
+
+  --
+
+
+
+  Jeff Moore
+
+  Core Audio
+
+  Apple
+
+  _______________________________________________
+
+  coreaudio-api mailing list | email@hidden
+
+  Help/Unsubscribe/Archives:
+
+  http://www.lists.apple.com/mailman/listinfo/coreaudio-api
+
+  Do not post admin requests to the list. They will be ignored.
+
+_______________________________________________
+
+coreaudio-api mailing list | email@hidden
+
+Help/Unsubscribe/Archives:
+http://www.lists.apple.com/mailman/listinfo/coreaudio-api
+
+Do not post admin requests to the list. They will be ignored.
+
+_______________________________________________
+
+coreaudio-api mailing list | email@hidden
+
+Help/Unsubscribe/Archives: http://www.lists.apple.com/mailman/listinfo/coreaudio-api
+
+Do not post admin requests to the list. They will be ignored.

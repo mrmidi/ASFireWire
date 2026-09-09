@@ -16,6 +16,8 @@
 #include "../Families/BeBoB/MAudio/MAudioInternalTxTiming.hpp"
 #include "../Families/BeBoB/MAudio/MAudioPresentationObserver.hpp"
 #include "../Runtime/PcmPublicationCache.hpp"
+#include "../Runtime/PublicationRangeRing.hpp"
+#include "../Runtime/TxLatencySession.hpp"
 #include "../Shared/Configuration/DeviceConfigurationStateMachine.hpp"
 #include "../Shared/TxCycleAnchor.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
@@ -373,6 +375,8 @@ struct AudioDriverRuntimeState {
     // Audio-owned immutable publication boundary between CoreAudio WriteEnd
     // and physical TX planning. It retains bytes only and owns no clock.
     ASFW::Audio::Runtime::PcmPublicationCache pcmPublicationCache;
+    ASFW::Audio::Runtime::PublicationRangeRing publicationHistory;
+    ASFW::Audio::Runtime::TxLatencySession txLatencySession;
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Audio::Runtime::RxSequenceReplayReader txReplayReader;

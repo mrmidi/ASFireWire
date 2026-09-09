@@ -1,0 +1,120 @@
+Database ID: 34926
+Date: 2004-10-27T12:19:49-07:00
+Author: William Stewart <email@hidden>
+Subject: Re: AudioTimeStamps in HAL IOProc & HW latency
+Archive: 2004/Oct/msg00267.html
+
+Following up from previous emails on this topic I thought I might add some
+additional comments.
+
+As described previously, the safety offset (on both input and output) is
+there to account for two factors in the driver. First was the hardware DMA
+offset (ie. The driver cannot touch some samples close to now because of
+restrictions related to the transfer of data to/from the CPU and the
+hardware), and secondly the jitter in the accuracy of the time stamps
+provided by the driver to CoreAudio.
+
+The hardware DMA offset is also a factor with other I/O mechanisms of
+course. How this affects a double-buffered scheme like ASIO I believe is as
+follows (and if I'm incorrect on this, I'd be happy to be corrected). ASIO's
+output is double buffered, one buffer is being read by the driver and
+transferred to the hardware, whilst the other is being filled by the
+application client.
+
+If the client were to take 100% of the time filling the second buffer, then
+this DMA time would encroach on the time represented by the app's buffer to
+the hardware, and would thus be unable to transfer those samples to the
+hardware (its now too late)... The implication of this is that the client in
+an ASIO system can only use up to some percentage of the time represented by
+these buffers, because the client has to return the second filled buffer to
+the driver in time for the driver to transfer those contents to the hardware
+(ie. The latest possible time I can return is the "output time" minus the
+size of the hardware DMA)... ASIO doesn't publish these figures, but this is
+I believe the restrictions placed on an ASIO system.
+
+This further means that there exists a low-end restriction on the size of
+the I/O that is possible using such a scheme - the I/O size must at least be
+bigger than this hardware DMA size (unless of course the driver can do some
+additional buffering to account for this - I'm not sure if this is a common
+practise or not).
+
+For input, the reverse of course is true (and the input samples presented in
+both an ASIO and CA system are fairly similar) - they can only be samples
+presented up to now less the hardware DMA restrictions.
+
+The second facet of the safety offset in CoreAudio's I/O system is the need
+to account for time-stamp jitter. We can provide more information on this,
+but essentially the allowance a driver needs to make here is the following:
+Input:
+Time Stamp Jitter * 2 (thus, if the jitter in the time stamps is one sample
+for example, the driver will need to allow for 2 samples in the safety
+offset)
+Output
+Time Stamp Jitter * 3
+
+
+With CoreAudio's I/O system, we wanted to explicitly call out these
+restrictions placed by the driver's I/O mechanisms, rather than implicitly
+as in other I/O systems.
+
+By explicitly calling out these restrictions, I/O size is not restricted by
+these limitations - this allows us for instance to do I/O in very small
+sample numbers and still utilise the "full" time represented by those small
+buffers. We'll have more to say on this topic in the future... In this case
+we're limited by the same kinds of conditions that are placed on *any* I/O
+system - thread scheduling latency and reliability.
+
+When CA's I/O system was designed, we considered that the difference in
+latency between this and the single-client interrupt based models would be
+insignificant (as the overall constraints here are similar). The advantages
+we gain with this model, multi-client (inc. each client having its own
+buffer size ("latency") as needed) are we believe both significant and
+compelling.
+
+One thing that we probably haven't done as good a job at explaining as we
+could have is the importance of the accuracy of the time stamps provided by
+the driver, and the deleterious affect that can have on latency if these are
+jittery. For many devices however, we still believe that sample (or
+sub-sample) accurate time stamps are both feasible and possible - and as I
+said earlier, we still remain very willing to work with developers to
+resolve any outstanding issues in this area.
+
+On 27/10/04 6:57 AM, "Sven Behne" <email@hidden> wrote:
+
+> Hi,
+>...
+>
+> If these assumptions are right so far, the minimum thru time for a
+> device should be in_hw_latency + in_buf_size + in_safety_offset  +
+> out_buf_size + out_safety_offset + out_hw_latency?
+
+Yes.. This is correct
+
+Thanks
+
+Bill
+
+> Regards,
+>
+> Sven
+
+--
+mailto:email@hidden
+tel: +1 408 974 4056
+
+__________________________________________________________________________
+Culture Ship Names:
+Ravished By The Sheer Implausibility Of That Last Statement [GSV]
+I said, I've Got A Big Stick [OU]
+Inappropiate Response [OU]
+Far Over The Borders Of Insanity And Still Accelerating [Eccentric]
+__________________________________________________________________________
+
+
+
+ _______________________________________________
+Do not post admin requests to the list. They will be ignored.
+Coreaudio-api mailing list      (email@hidden)
+Help/Unsubscribe/Update your Subscription:
+
+This email sent to email@hidden

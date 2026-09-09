@@ -22,6 +22,7 @@ enum ASFWMCPToolCatalog {
             + diceTcatTools
             + bebobTools
             + audioStreamTools
+            + txLatencyTools
             + loggingTools
     }
 

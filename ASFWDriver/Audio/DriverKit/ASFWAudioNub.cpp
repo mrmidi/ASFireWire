@@ -648,6 +648,20 @@ ASFWDriver* ASFWAudioNub::GetParentDriver() const
     return ivars ? OSDynamicCast(ASFWDriver, ivars->parentDriver) : nullptr;
 }
 
+void ASFWAudioNub::RegisterTxLatencySession(void* session)
+{
+    if (auto endpoint = FindEndpointRuntime(ivars)) {
+        endpoint->RegisterTxLatencySession(reinterpret_cast<ASFW::Audio::Runtime::TxLatencySession*>(session));
+    }
+}
+
+void ASFWAudioNub::UnregisterTxLatencySession(void* session)
+{
+    if (auto endpoint = FindEndpointRuntime(ivars)) {
+        endpoint->UnregisterTxLatencySession(reinterpret_cast<ASFW::Audio::Runtime::TxLatencySession*>(session));
+    }
+}
+
 
 kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
 {

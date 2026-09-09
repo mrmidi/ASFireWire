@@ -4,6 +4,7 @@
 
 #include "AudioEndpointRuntime.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
+#include "../../UserClient/WireFormats/TxLatencySessionWireFormats.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <algorithm>
@@ -174,6 +175,34 @@ uint32_t AudioRuntimeRegistry::CopySemanticMatrixEndpointIds(
     }
     IOLockUnlock(lock_);
     return count;
+}
+
+bool AudioRuntimeRegistry::StartTxLatencySession(
+    Devices::AudioEndpointId endpointId,
+    uint32_t durationSeconds,
+    uint32_t strataSize,
+    uint32_t seed,
+    uint32_t assumedDriftPpm) noexcept {
+    auto runtime = FindEndpointRuntime(endpointId);
+    if (!runtime) return false;
+    return runtime->StartTxLatencySession(durationSeconds, strataSize, seed, assumedDriftPpm);
+}
+
+bool AudioRuntimeRegistry::StopTxLatencySession(
+    Devices::AudioEndpointId endpointId) noexcept {
+    auto runtime = FindEndpointRuntime(endpointId);
+    if (!runtime) return false;
+    return runtime->StopTxLatencySession();
+}
+
+bool AudioRuntimeRegistry::CopyTxLatencyResults(
+    Devices::AudioEndpointId endpointId,
+    uint32_t pageIndex,
+    uint32_t samplesPerPage,
+    UserClient::Wire::TxLatencyResultsPageWire& out) noexcept {
+    auto runtime = FindEndpointRuntime(endpointId);
+    if (!runtime) return false;
+    return runtime->CopyTxLatencyResults(pageIndex, samplesPerPage, out);
 }
 
 void AudioRuntimeRegistry::Remove(Devices::AudioEndpointId endpointId) noexcept {

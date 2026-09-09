@@ -108,6 +108,8 @@ public:
         // require rate/optical support, which an endpoint with perfectly good
         // geometry to report need not have.
         kMethodGetAudioRuntimeTuningEndpoints = 1035,
+        kMethodStartTxLatencySession          = 1036,
+        kMethodGetTxLatencyResults            = 1037,
         // Immutable semantic graph for the endpoint's currently committed
         // topology. Runtime values and meter samples are intentionally not
         // part of this reply.

@@ -1,0 +1,113 @@
+Database ID: 14602
+Date: 2004-10-14T12:11:34-07:00
+Author: Jeff Moore <email@hidden>
+Subject: Re: Safety Offset (Was: I/O Latency (Was: Layman with a mission))
+Archive: 2004/Oct/msg00166.html
+
+The safety offset is not there to account for scheduling latency in the
+IO thread. In fact, the safety offset has no effect on the HAL's IO
+thread or the HAL's timing at all. The safety offset is there to
+control how close to "now" the HAL can read/write data.
+
+
+
+The safety offset is there primarily to allow for physical transfer
+issues. Given how caches and DMAs work, there really isn't any real
+hardware that would have a safety offset of 0.
+
+
+
+For example, the USB Audio driver has to be some number of packets
+ahead of where the USB hardware is because of how the USB hardware
+works. This requirement is reflected in the safety offset the driver
+reports.
+
+
+
+The safety offset secondarily allows a driver to add some padding to
+where the HAL reads/writes the data. This padding is useful for drivers
+whose hardware has trouble generating accurate time stamps. Inaccurate
+time stamps keep the HAL's clock from locking on to the true sample
+rate of the hardware which causes the HAL's concept of "now" to drift
+which leads to reading/writing data in places where the driver isn't
+prepared which causes glitching.
+
+
+
+An example of jittery hardware (and my favorite whipping boy) is USB
+Audio. The primary reason for the jitter is the fact that USB works
+with clock whose granularity is 1 millisecond. This gives you time
+stamps that have a an average jitter of around half a millisecond.
+That's quite a bit of jitter, so the USB driver pads it's safety offset
+to keep bad time stamps from steering the HAL too close to "now".
+
+
+
+Because it's not an exact science, driver writers need to examine their
+requirements carefully and do some profiling and experimentation to
+figure out the best number to report as the safety offset for their
+hardware.
+
+
+
+On Oct 13, 2004, at 11:13 PM, Philippe Wicker wrote:
+
+
+> 
+On Oct 13, 2004, at 7:17 PM, William Stewart wrote:
+
+By "now" I mean this. On the input side, the "now" is the real, "what
+is the
+
+time now" minus the safety offset of the driver. So, if the safety
+offset is
+
+24 samples, then "now" for input is the real now - 24 samples - so
+you get
+
+the 64 samples that were written in up to 24 samples ago. On output,
+"now"
+
+is the real now plus the safety offset of the driver.
+
+
+What are the factors that determine the safety offset value? I can
+think of a protection against a possible jitter in the OS wake up
+time? Or to give the time for these 64 samples to be transmitted on
+the USB, Firewire cable, etc from the device to the computer? Any
+other factor?
+
+
+
+Thanks,
+
+Philippe
+
+
+> 
+Bill
+
+
+
+Philippe Wicker
+email@hidden
+
+_______________________________________________
+Do not post admin requests to the list. They will be ignored.
+Coreaudio-api mailing list      (email@hidden)
+Help/Unsubscribe/Update your Subscription:
+This email sent to email@hidden
+
+
+--
+
+Jeff Moore
+Core Audio
+Apple
+
+
+_______________________________________________
+Do not post admin requests to the list. They will be ignored.
+Coreaudio-api mailing list      (email@hidden)
+Help/Unsubscribe/Update your Subscription:
+This email sent to email@hidden

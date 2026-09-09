@@ -14,7 +14,7 @@
 
 namespace ASFW::Isoch {
 
-inline constexpr uint32_t kTxQueueAbiVersion = 11;
+inline constexpr uint32_t kTxQueueAbiVersion = 12;
 
 /// Payload images per producer slot.
 ///
@@ -204,18 +204,21 @@ inline constexpr uint64_t kTxPayloadArbitrationPhaseBits = 2;
 struct IsochTxClockPairSample final {
     uint64_t hostTimeMid{0};
     uint32_t cycleTimer32{0};
+    uint32_t bracketTicks{0};
 };
 
 struct IsochTxClockPairSeqlock final {
     std::atomic<uint32_t> sequence{0};
     std::atomic<uint64_t> hostTimeMid{0};
     std::atomic<uint32_t> cycleTimer32{0};
+    std::atomic<uint32_t> bracketTicks{0};
 
     void Publish(const IsochTxClockPairSample& sample) noexcept {
         const uint32_t sequenceBefore = sequence.load(std::memory_order_relaxed);
         sequence.store(sequenceBefore + 1, std::memory_order_release);
         hostTimeMid.store(sample.hostTimeMid, std::memory_order_relaxed);
         cycleTimer32.store(sample.cycleTimer32, std::memory_order_relaxed);
+        bracketTicks.store(sample.bracketTicks, std::memory_order_relaxed);
         sequence.store(sequenceBefore + 2, std::memory_order_release);
     }
 
@@ -227,6 +230,7 @@ struct IsochTxClockPairSeqlock final {
             const IsochTxClockPairSample sample{
                 .hostTimeMid = hostTimeMid.load(std::memory_order_relaxed),
                 .cycleTimer32 = cycleTimer32.load(std::memory_order_relaxed),
+                .bracketTicks = bracketTicks.load(std::memory_order_relaxed),
             };
             std::atomic_thread_fence(std::memory_order_acquire);
             if (sequence.load(std::memory_order_relaxed) == before) {
@@ -240,10 +244,31 @@ struct IsochTxClockPairSeqlock final {
 
 inline constexpr uint32_t kIsochTxCompletionStampSlots = 32;
 
+[[nodiscard]] constexpr uint32_t PackCompletionMetadata(
+    uint8_t selectedImage,
+    uint8_t arbitrationPhase,
+    uint16_t eventCode) noexcept {
+    return (static_cast<uint32_t>(selectedImage) & 0xFFu) |
+           ((static_cast<uint32_t>(arbitrationPhase) & 0xFFu) << 8) |
+           ((static_cast<uint32_t>(eventCode) & 0xFFFFu) << 16);
+}
+
+[[nodiscard]] constexpr uint8_t CompletionSelectedImage(uint32_t metadata) noexcept {
+    return static_cast<uint8_t>(metadata & 0xFFu);
+}
+
+[[nodiscard]] constexpr uint8_t CompletionArbitrationPhase(uint32_t metadata) noexcept {
+    return static_cast<uint8_t>((metadata >> 8) & 0xFFu);
+}
+
+[[nodiscard]] constexpr uint16_t CompletionEventCode(uint32_t metadata) noexcept {
+    return static_cast<uint16_t>((metadata >> 16) & 0xFFFFu);
+}
+
 struct IsochTxCompletionStamp final {
     std::atomic<uint64_t> packetIndex{0};
     std::atomic<uint32_t> cycleTimestamp{0};
-    uint32_t reserved{0};
+    std::atomic<uint32_t> metadata{0};
 };
 static_assert(sizeof(IsochTxCompletionStamp) == 16);
 
@@ -385,23 +410,34 @@ struct IsochTxQueueControl final {
         return finalitySealSequence.load(std::memory_order_acquire) == published;
     }
 
-    void PushCompletionStamp(uint64_t packetIndex, uint32_t cycleTimestamp) noexcept {
+    void PushCompletionStamp(uint64_t packetIndex, uint32_t cycleTimestamp,
+                             uint32_t metadata = 0) noexcept {
         const uint64_t count = completionStampCount.load(std::memory_order_relaxed);
         auto& slot = completionStamps[count % kIsochTxCompletionStampSlots];
         slot.packetIndex.store(packetIndex, std::memory_order_relaxed);
         slot.cycleTimestamp.store(cycleTimestamp, std::memory_order_relaxed);
+        slot.metadata.store(metadata, std::memory_order_relaxed);
         completionStampCount.store(count + 1, std::memory_order_release);
     }
 
     [[nodiscard]] bool ReadCompletionStamp(uint64_t stampIndex,
                                            uint64_t& outPacketIndex,
-                                           uint32_t& outCycleTimestamp) const noexcept {
+                                           uint32_t& outCycleTimestamp,
+                                           uint32_t& outMetadata) const noexcept {
         const auto& slot = completionStamps[stampIndex % kIsochTxCompletionStampSlots];
         outPacketIndex = slot.packetIndex.load(std::memory_order_relaxed);
         outCycleTimestamp = slot.cycleTimestamp.load(std::memory_order_relaxed);
+        outMetadata = slot.metadata.load(std::memory_order_relaxed);
         const uint64_t countAfter = completionStampCount.load(std::memory_order_acquire);
         return stampIndex < countAfter &&
                countAfter - stampIndex <= kIsochTxCompletionStampSlots;
+    }
+
+    [[nodiscard]] bool ReadCompletionStamp(uint64_t stampIndex,
+                                           uint64_t& outPacketIndex,
+                                           uint32_t& outCycleTimestamp) const noexcept {
+        uint32_t ignoredMetadata = 0;
+        return ReadCompletionStamp(stampIndex, outPacketIndex, outCycleTimestamp, ignoredMetadata);
     }
 };
 

@@ -13,6 +13,13 @@ enum class PacketSlotState : uint8_t {
     Published = 2,
 };
 
+struct ImageProvenance final {
+    std::atomic<uint64_t> commitGeneration{0};
+    uint64_t firstFrame{0};
+    uint32_t frameCount{0};
+    uint8_t pcmCopyResult{0};
+};
+
 struct PacketTimelineSlot final {
     uint32_t packetIndex{0};
 
@@ -28,6 +35,8 @@ struct PacketTimelineSlot final {
     uint64_t presentationBusTicks{0};
 
     std::atomic<PacketSlotState> state{PacketSlotState::Empty};
+
+    ImageProvenance images[2]{};
 };
 
 class AmdtpPacketTimeline final {
@@ -43,6 +52,14 @@ public:
 
     void MarkNoDataPacket(const PreparedTxPacket& packet) noexcept;
     void MarkPublished(uint32_t packetIndex) noexcept;
+
+    void SetImageProvenance(uint32_t packetIndex, uint8_t imageIndex,
+                            uint64_t commitGeneration, uint64_t firstFrame,
+                            uint32_t frameCount, uint8_t pcmCopyResult) noexcept;
+
+    [[nodiscard]] bool ReadImageProvenance(uint32_t packetIndex, uint8_t imageIndex,
+                                           uint64_t expectedCommitGen,
+                                           ImageProvenance& out) const noexcept;
 
     PacketTimelineSlot* SlotByIndex(uint32_t packetIndex) noexcept;
     const PacketTimelineSlot* SlotByIndex(uint32_t packetIndex) const noexcept;

@@ -18,6 +18,10 @@
 #include <map>
 #include <memory>
 
+namespace ASFW::UserClient::Wire {
+struct TxLatencyResultsPageWire;
+}
+
 namespace ASFW::Audio {
 
 class IDeviceProtocol;
@@ -73,6 +77,22 @@ public:
     [[nodiscard]] uint32_t CopySemanticMatrixEndpointIds(
         std::array<Devices::AudioEndpointId,
                    kMaxAudioSemanticMatrixEndpoints>& out) noexcept;
+
+    [[nodiscard]] bool StartTxLatencySession(
+        Devices::AudioEndpointId endpointId,
+        uint32_t durationSeconds,
+        uint32_t strataSize,
+        uint32_t seed,
+        uint32_t assumedDriftPpm) noexcept;
+
+    [[nodiscard]] bool StopTxLatencySession(
+        Devices::AudioEndpointId endpointId) noexcept;
+
+    [[nodiscard]] bool CopyTxLatencyResults(
+        Devices::AudioEndpointId endpointId,
+        uint32_t pageIndex,
+        uint32_t samplesPerPage,
+        UserClient::Wire::TxLatencyResultsPageWire& out) noexcept;
 
     void Remove(Devices::AudioEndpointId endpointId) noexcept;
     void Clear() noexcept;

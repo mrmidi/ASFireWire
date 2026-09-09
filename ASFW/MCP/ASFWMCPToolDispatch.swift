@@ -137,6 +137,12 @@ extension ASFWMCPCore {
             return await dispatchAudioStreamHealth(name)
         case "asfw_get_audio_cursors":
             return await dispatchAudioCursors(name)
+        case "asfw_start_tx_latency_session":
+            return await dispatchStartTxLatencySession(name, decoder: decoder)
+        case "asfw_stop_tx_latency_session":
+            return await dispatchStopTxLatencySession(name, decoder: decoder)
+        case "asfw_get_tx_latency_results":
+            return await dispatchGetTxLatencyResults(name, decoder: decoder)
         case "asfw_dice_decode_status":
             return await dispatchDiceDecodeStatus(name, decoder: decoder)
         case "asfw_dice_write_register":
@@ -673,6 +679,139 @@ extension ASFWMCPCore {
             ]),
             errors: []
         )
+    }
+
+    private func dispatchStartTxLatencySession(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let endpointRaw: UInt64
+            if let intVal = try? decoder.uint64("endpointId") {
+                endpointRaw = intVal
+            } else if let strVal = try? decoder.string("endpointId"), let parsed = UInt64(strVal) {
+                endpointRaw = parsed
+            } else {
+                return malformedToolResult(name, reason: "endpointId is required (integer or numeric string).")
+            }
+
+            let endpointId = AudioEndpointID(endpointRaw)
+            let duration = (try? decoder.uint32("durationSeconds")) ?? 5
+            let strata = (try? decoder.uint32("strataSize")) ?? 8
+            let seed = (try? decoder.uint32("seed")) ?? 0
+            let drift = (try? decoder.uint32("assumedDriftPpm")) ?? 100
+
+            let ok = await driver.startTxLatencySession(
+                endpointID: endpointId,
+                durationSeconds: duration,
+                strataSize: strata,
+                seed: seed,
+                assumedDriftPpm: drift
+            )
+
+            if ok {
+                return ASFWMCPToolCallResult(
+                    toolName: name,
+                    ok: true,
+                    data: .object([
+                        "endpointId": .uint64(endpointRaw),
+                        "status": .string("armed"),
+                        "durationSeconds": .int(Int(duration)),
+                        "strataSize": .int(Int(strata)),
+                        "seed": .int(Int(seed)),
+                        "assumedDriftPpm": .int(Int(drift))
+                    ]),
+                    errors: []
+                )
+            } else {
+                return .failure(
+                    toolName: name,
+                    code: .driverNotConnected,
+                    reason: "Failed to start TX latency session. Ensure driver is active and endpoint is streaming."
+                )
+            }
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    private func dispatchStopTxLatencySession(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let endpointRaw: UInt64
+            if let intVal = try? decoder.uint64("endpointId") {
+                endpointRaw = intVal
+            } else if let strVal = try? decoder.string("endpointId"), let parsed = UInt64(strVal) {
+                endpointRaw = parsed
+            } else {
+                return malformedToolResult(name, reason: "endpointId is required.")
+            }
+
+            let endpointId = AudioEndpointID(endpointRaw)
+            let ok = await driver.stopTxLatencySession(endpointID: endpointId)
+
+            return ASFWMCPToolCallResult(
+                toolName: name,
+                ok: ok,
+                data: .object([
+                    "endpointId": .uint64(endpointRaw),
+                    "status": .string(ok ? "stop_requested" : "failed")
+                ]),
+                errors: ok ? [] : [ASFWMCPResourceError(code: .driverNotConnected, reason: "Failed to stop session.")]
+            )
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    private func dispatchGetTxLatencyResults(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let endpointRaw: UInt64
+            if let intVal = try? decoder.uint64("endpointId") {
+                endpointRaw = intVal
+            } else if let strVal = try? decoder.string("endpointId"), let parsed = UInt64(strVal) {
+                endpointRaw = parsed
+            } else {
+                return malformedToolResult(name, reason: "endpointId is required.")
+            }
+
+            let endpointId = AudioEndpointID(endpointRaw)
+
+            if let pageIndex = try? decoder.uint32("pageIndex") {
+                let samplesPerPage = (try? decoder.uint32("samplesPerPage")) ?? 32
+                if let page = await driver.fetchTxLatencyResultsPage(
+                    endpointID: endpointId,
+                    pageIndex: pageIndex,
+                    samplesPerPage: samplesPerPage
+                ) {
+                    return ASFWMCPToolCallResult(
+                        toolName: name,
+                        ok: true,
+                        data: page.mcpValue,
+                        errors: []
+                    )
+                } else {
+                    return .failure(
+                        toolName: name,
+                        code: .driverNotConnected,
+                        reason: "Results unavailable for endpoint \(endpointRaw) page \(pageIndex)."
+                    )
+                }
+            } else {
+                if let report = await driver.fetchTxLatencyReport(endpointID: endpointId) {
+                    return ASFWMCPToolCallResult(
+                        toolName: name,
+                        ok: true,
+                        data: report.mcpValue,
+                        errors: []
+                    )
+                } else {
+                    return .failure(
+                        toolName: name,
+                        code: .driverNotConnected,
+                        reason: "Session report unavailable for endpoint \(endpointRaw)."
+                    )
+                }
+            }
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
     }
 
     private func dispatchIrmSnapshot(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {

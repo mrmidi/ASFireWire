@@ -1,0 +1,64 @@
+Database ID: 16906
+Date: 2004-10-27T11:51:44-07:00
+Author: Jeff Moore <email@hidden>
+Subject: Re: AudioTimeStamps in HAL IOProc & HW latency
+Archive: 2004/Oct/msg00266.html
+
+You have things correct. In an IOProc, in_buf_size is always equal to
+out_buf_size. I guess the documentation can't be all bad =)
+
+
+
+On Oct 27, 2004, at 6:57 AM, Sven Behne wrote:
+
+
+> Hi,
+
+I have a few questions regarding the input and ouput time stamps in
+the AudioDevice's IOProc, where the documentation and the CoreAudio
+header files are a little vague (at least to me).
+
+
+
+Is the input time stamp (no matter wheter mSampleTime or mHostTime)
+the time when the driver receives the audio data from the hardware? If
+yes, this would mean input time stamp minus input hardware latency
+(kAudioDevicePropertyLatency) is the point in time when the (analog)
+audio signal was recorded (via mic/DI or whatever).
+
+For the output this would mean, that the output time stamp is the
+estimate time when the driver will receive the data and the signal
+will be audible kAudioDevicePropertyLatency frames later?
+
+
+
+If these assumptions are right so far, the minimum thru time for a
+device should be in_hw_latency + in_buf_size + in_safety_offset  +
+out_buf_size + out_safety_offset + out_hw_latency?
+
+
+
+Regards,
+
+Sven
+
+_______________________________________________
+Do not post admin requests to the list. They will be ignored.
+Coreaudio-api mailing list      (email@hidden)
+Help/Unsubscribe/Update your Subscription:
+This email sent to email@hidden
+
+
+
+--
+
+Jeff Moore
+Core Audio
+Apple
+
+
+_______________________________________________
+Do not post admin requests to the list. They will be ignored.
+Coreaudio-api mailing list      (email@hidden)
+Help/Unsubscribe/Update your Subscription:
+This email sent to email@hidden

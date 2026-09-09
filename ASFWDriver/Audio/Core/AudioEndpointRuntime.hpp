@@ -10,6 +10,8 @@
 #include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../Shared/AudioGeometryResolver.hpp"
 #include "../Shared/AudioTimingGeometry.hpp"
+#include "../Runtime/TxLatencySession.hpp"
+#include "../../UserClient/WireFormats/TxLatencySessionWireFormats.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>
@@ -427,6 +429,53 @@ public:
         return true;
     }
 
+    void RegisterTxLatencySession(Runtime::TxLatencySession* session) noexcept {
+        txLatencySession_.store(session, std::memory_order_release);
+    }
+
+    void UnregisterTxLatencySession(Runtime::TxLatencySession* session) noexcept {
+        Runtime::TxLatencySession* expected = session;
+        txLatencySession_.compare_exchange_strong(expected, nullptr, std::memory_order_release);
+    }
+
+    [[nodiscard]] bool StartTxLatencySession(uint32_t durationSeconds,
+                                             uint32_t strataSize,
+                                             uint32_t seed,
+                                             uint32_t assumedDriftPpm) noexcept {
+        auto* session = txLatencySession_.load(std::memory_order_acquire);
+        if (!session) return false;
+        uint64_t epoch = 0;
+        uint32_t rate = currentSampleRateHz_;
+        if (lock_) {
+            IOLockLock(lock_);
+            if (directControl_) {
+                epoch = directControl_->hardwareTimeline.Epoch();
+            }
+            if (directSampleRateHz_ != 0) {
+                rate = directSampleRateHz_;
+            }
+            IOLockUnlock(lock_);
+        }
+        return session->Arm(1 /* sessionId */, epoch, rate, durationSeconds,
+                            Runtime::kTxLatencyMaxSamples, seed, strataSize, assumedDriftPpm);
+    }
+
+    [[nodiscard]] bool StopTxLatencySession() noexcept {
+        auto* session = txLatencySession_.load(std::memory_order_acquire);
+        if (!session) return false;
+        session->RequestStop(Runtime::TxLatencyTerminationReason::UserStopped);
+        return true;
+    }
+
+    [[nodiscard]] bool CopyTxLatencyResults(
+        uint32_t pageIndex,
+        uint32_t samplesPerPage,
+        UserClient::Wire::TxLatencyResultsPageWire& out) const noexcept {
+        auto* session = txLatencySession_.load(std::memory_order_acquire);
+        if (!session) return false;
+        return session->CopyWirePage(pageIndex, samplesPerPage, endpointId_.value, out);
+    }
+
 private:
     [[nodiscard]] static uint32_t SumPcmChannels(
         const AudioStreamWireInfo* streams, uint32_t count) noexcept {
@@ -830,6 +879,7 @@ private:
     uint32_t directInputCapacityChannels_{0};
     Runtime::AudioTransportControlBlock* directControl_{nullptr};
     uint32_t directSampleRateHz_{0};
+    std::atomic<Runtime::TxLatencySession*> txLatencySession_{nullptr};
 };
 
 } // namespace ASFW::Audio

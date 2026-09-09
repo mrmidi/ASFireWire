@@ -230,13 +230,15 @@ void HandlePendingTimelineEpoch(ASFWAudioDriver_IVars& ivars) noexcept {
     uint32_t correlationCycleTimer,
     uint64_t& outPacketIndex,
     uint64_t& outCompletionBusTicks,
-    uint64_t& outCorrelationBusTicks) noexcept {
-    uint32_t completionCycleTimer = 0;
+    uint64_t& outCorrelationBusTicks,
+    uint32_t& outCompletionCycleTimer,
+    uint32_t& outCompletionMetadata) noexcept {
     if (!queue->ReadCompletionStamp(stampIndex, outPacketIndex,
-                                    completionCycleTimer)) {
+                                    outCompletionCycleTimer,
+                                    outCompletionMetadata)) {
         return false;
     }
-    if (ExpandCompletionAndCorrelation(ivars, completionCycleTimer,
+    if (ExpandCompletionAndCorrelation(ivars, outCompletionCycleTimer,
                                        correlationCycleTimer,
                                        outCompletionBusTicks,
                                        outCorrelationBusTicks)) {
@@ -249,9 +251,26 @@ void HandlePendingTimelineEpoch(ASFWAudioDriver_IVars& ivars) noexcept {
         ASFW_LOG_ERROR(
             DirectAudio,
             "[BackendTiming] conversionFailure=%llu completion=0x%08x correlation=0x%08x",
-            failures, completionCycleTimer, correlationCycleTimer);
+            failures, outCompletionCycleTimer, correlationCycleTimer);
     }
     return false;
+}
+
+bool ExpandCompletionStamp(
+    ASFWAudioDriver_IVars& ivars,
+    ASFW::Isoch::IsochTxQueueControl* queue,
+    ASFW::Audio::Runtime::AudioTransportControlBlock* control,
+    uint64_t stampIndex,
+    uint32_t correlationCycleTimer,
+    uint64_t& outPacketIndex,
+    uint64_t& outCompletionBusTicks,
+    uint64_t& outCorrelationBusTicks) noexcept {
+    uint32_t dummyTimer = 0;
+    uint32_t dummyMeta = 0;
+    return ExpandCompletionStamp(ivars, queue, control, stampIndex,
+                                 correlationCycleTimer, outPacketIndex,
+                                 outCompletionBusTicks, outCorrelationBusTicks,
+                                 dummyTimer, dummyMeta);
 }
 
 /// Submit one packet's presentation observation and publish any ZTS boundary it
@@ -324,9 +343,9 @@ void LogLedgerInterval(const char* name,
              stats.histogram[7].load(std::memory_order_relaxed));
 }
 
-/// Bus ticks run at 24.576 MHz; host ticks are converted through the timebase.
+/// Bus ticks run at 24.576 MHz; 3072 ticks = 125 us exact.
 [[nodiscard]] constexpr uint64_t BusTicksToMicros(uint64_t ticks) noexcept {
-    return ticks / 24U;  // 24.576 ticks/us; the truncation is under 3%.
+    return (ticks * 125ULL) / 3072ULL;
 }
 
 /// Account every packet whose payload choice became final since the last wake:
@@ -381,6 +400,7 @@ void RecordLedgerFinality(
 void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                        uint64_t transportGeneration,
                        bool useMAudio) noexcept {
+    ivars.runtime.txLatencySession.PollQuiescence();
     auto* queue = ivars.runtime.txSlotProvider.queueControl;
     auto* control = ivars.runtime.directAudioGraph.control;
     if (!queue || !control) return;
@@ -404,6 +424,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
         ivars.runtime.txCompletionStampCursor, stampCount,
         ASFW::Isoch::kIsochTxCompletionStampSlots);
     if (drain.missed != 0) {
+        ivars.runtime.txLatencySession.NoteStampsMissed(drain.missed);
         const uint64_t missed =
             control->backendCompletionStampsMissed.fetch_add(
                 drain.missed, std::memory_order_relaxed) + drain.missed;
@@ -416,6 +437,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
     }
     if (drain.Empty()) {
         ivars.runtime.txCompletionStampCursor = stampCount;
+        ivars.runtime.txLatencySession.PollQuiescence();
         return;
     }
     const uint64_t cursor = drain.first;
@@ -493,11 +515,17 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
             uint64_t packetIndex = 0;
             uint64_t stampCompletion = 0;
             uint64_t stampCorrelation = 0;
+            uint32_t compCycleTimer = 0;
+            uint32_t compMetadata = 0;
             if (!ExpandCompletionStamp(ivars, queue, control, stampIndex,
                                        pair.cycleTimer32, packetIndex,
-                                       stampCompletion, stampCorrelation)) {
+                                       stampCompletion, stampCorrelation,
+                                       compCycleTimer, compMetadata)) {
                 continue;
             }
+            ivars.runtime.txLatencySession.ObserveCompletion(
+                packetIndex, compCycleTimer, compMetadata, pair, timeline,
+                ivars.runtime.publicationHistory, pair.hostTimeMid);
             if (!haveData) {
                 // Fallback for a wake that turns out to carry no audio: the
                 // warm-up still wants a zero-frame event to count.
@@ -526,6 +554,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
             }
         }
         ivars.runtime.txCompletionStampCursor = stampCount;
+        ivars.runtime.txLatencySession.PollQuiescence();
         if (!haveStamp) return;
 
         const auto converted =
@@ -565,6 +594,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                     converted.observation.correlationHostTicks,
             }, "maudio-tx");
         }
+        ivars.runtime.txLatencySession.PollQuiescence();
         return;
     }
 
@@ -581,11 +611,17 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
         uint64_t packetIndex = 0;
         uint64_t completionBusTicks = 0;
         uint64_t correlationBusTicks = 0;
+        uint32_t compCycleTimer = 0;
+        uint32_t compMetadata = 0;
         if (!ExpandCompletionStamp(ivars, queue, control, stampIndex,
                                    pair.cycleTimer32, packetIndex,
-                                   completionBusTicks, correlationBusTicks)) {
+                                   completionBusTicks, correlationBusTicks,
+                                   compCycleTimer, compMetadata)) {
             continue;
         }
+        ivars.runtime.txLatencySession.ObserveCompletion(
+            packetIndex, compCycleTimer, compMetadata, pair, timeline,
+            ivars.runtime.publicationHistory, pair.hostTimeMid);
         if (!finalityStamped) {
             // One stamp per wake, recorded before any lookup consults the ring.
             // Omitting this is what left I2 with every sample unresolved: the
@@ -656,6 +692,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
         }
     }
     ivars.runtime.txCompletionStampCursor = stampCount;
+    ivars.runtime.txLatencySession.PollQuiescence();
 }
 
 } // namespace
@@ -1091,6 +1128,8 @@ void RepublishTxRingForRestart(ASFWAudioDriver_IVars& ivars) noexcept {
     if (ivars.runtime.txSecondaryActive) {
         ivars.runtime.txStreamEngineSecondary.ResetForStart(0);
     }
+    ivars.runtime.publicationHistory.Reset();
+    ivars.runtime.txLatencySession.Reset();
     // The new stream re-derives its bus-time origin; carrying the old
     // high-water mark would reject every anchor until it caught up.
     ivars.runtime.txPlanBusTicksValid = false;

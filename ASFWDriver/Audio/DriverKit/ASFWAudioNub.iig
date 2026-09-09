@@ -146,6 +146,8 @@ public:
     void NotifyDeviceClockChanged(uint32_t nominalRateHz) LOCALONLY;
     [[nodiscard]] bool NotifyDeviceConfigurationRequested(
         uint32_t sampleRateHz, uint32_t opticalInput, uint32_t opticalOutput) LOCALONLY;
+    void RegisterTxLatencySession(void* session) LOCALONLY;
+    void UnregisterTxLatencySession(void* session) LOCALONLY;
 
     // Request IDs bind each callback to one locked transaction.
     virtual void RuntimeTuningRequested(OSAction* action TARGET, uint32_t requestId);

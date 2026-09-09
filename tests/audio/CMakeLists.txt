@@ -92,6 +92,9 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/HostClockAnchorTests.cpp
     AudioRuntime/AudioLedgerIntervalTests.cpp
     AudioRuntime/PlaybackRingRangeTests.cpp
+    AudioRuntime/TxLatencyMeasurementTests.cpp
+    AudioRuntime/PublicationRangeRingTests.cpp
+    AudioRuntime/TxLatencySessionTests.cpp
 )
 
 

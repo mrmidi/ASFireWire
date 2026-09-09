@@ -806,15 +806,15 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     // load provides a true midpoint without widening the MMIO batch. Any
     // smoothing or projection belongs to the content producer's clock domain.
     {
-        const uint64_t hostTime = cycleReadAfterHostTicks >=
-                cycleReadBeforeHostTicks
-            ? cycleReadBeforeHostTicks +
-                (cycleReadAfterHostTicks - cycleReadBeforeHostTicks) / 2
-            : cycleReadAfterHostTicks;
+        const uint64_t bracket = cycleReadAfterHostTicks >= cycleReadBeforeHostTicks
+            ? (cycleReadAfterHostTicks - cycleReadBeforeHostTicks) / 2
+            : 0;
+        const uint64_t hostTime = cycleReadBeforeHostTicks + bracket;
 
         IsochTxClockPairSample sample{};
         sample.hostTimeMid = hostTime;
         sample.cycleTimer32 = refillCycleTimer;
+        sample.bracketTicks = static_cast<uint32_t>(std::min<uint64_t>(bracket, UINT32_MAX));
         controlBlock->clockPair.Publish(sample);
     }
 
@@ -992,14 +992,25 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
         const uint16_t hwTimestamp =
             static_cast<uint16_t>(desc2->statusWord & 0xFFFF);
+        const uint16_t eventCode =
+            static_cast<uint16_t>((desc2->statusWord >> 16) & 0x1Fu);
 
         // OHCI OUTPUT_LAST reports sec[2:0]:cycle[12:0] and omits the
         // intra-cycle offset. Reconstruct the packet cycle at offset zero.
         const uint32_t completionCycleTimer =
             (static_cast<uint32_t>((hwTimestamp >> 13) & 0x7u) << 25) |
             (static_cast<uint32_t>(hwTimestamp & 0x1FFFu) << 12);
+
+        const uint8_t arbitrationPhase = static_cast<uint8_t>(
+            completedMeta.payloadArbitration.load(std::memory_order_relaxed) & 0xFFu);
+        const uint32_t metadata = ASFW::Isoch::PackCompletionMetadata(
+            static_cast<uint8_t>(completedMeta.selectedPayloadImage),
+            arbitrationPhase,
+            eventCode);
+
         controlBlock->PushCompletionStamp(currentAbsIdx,
-                                          completionCycleTimer);
+                                          completionCycleTimer,
+                                          metadata);
     }
     if (deltaConsumed > 0) {
         controlBlock->completionCursor.store(completedAbsIdx + deltaConsumed, std::memory_order_release);

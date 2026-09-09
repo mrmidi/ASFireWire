@@ -1,0 +1,163 @@
+Database ID: 28860
+Date: 2005-08-29T12:52:39-07:00
+Author: Jeff Moore <email@hidden>
+Subject: Re: Audio Hardware Plugin and Drift
+Archive: 2005/Aug/msg00269.html
+
+On Aug 29, 2005, at 7:24 AM, Dirk Musfeldt wrote:
+
+
+> Hi Jeff,
+
+The most likely culprit is the time stamps you provide to the IOProcs
+
+
+
+I provide mSampleTime. I have also tried with hostTime taken when the
+
+process callback starts running for both inNow and inInputTime
+parameters.
+
+Those time stamps are going to be dependent on the messaging latency.
+Basically, this is the amount of time between sending the message and
+the receiver acting on it. Depending on the current CPU load and the
+priorities of the threads involved, this can be a pretty random number.
+
+
+
+Plus, chances are that time stamps derived this way would have little
+to do with what the hardware is doing. The job of these time stamps
+is to describe as accurately as possible the hardware's time base as
+represented in two units, sample frames and CPU ticks.
+
+
+
+
+> and how you are handling the time translation functions.
+
+
+
+Neither DeviceGetCurrentTime() nor DeviceTranslateTime()  function
+are ever
+
+called. When should these be called?
+
+QT uses AudioDeviceGetCurrentTime() (which filters down to
+DeviceGetCurrentTime()) to drive the audio clock. If this isn't being
+called it could mean that QT isn't using your audio device as it's
+clock. That in and of itself is probably enough to cause drift.
+
+
+
+
+> 
+Our plug-in is called with a CFMessagePort message from a daemon
+when audio
+
+is to be processed. The plug-in in turn processes the registered
+
+AudioDeviceIOProcs.
+
+
+
+The audio belongs to an AV stream and I have noticed the drift just by
+watching both audio and video.
+
+When I dropped the plug-in in favor of a simple output from the daemon
+(similar to the PlayAudioFileLite sample) I did not notice any drift.
+
+What is essential for the timestamps?
+
+
+The time stamps and the time translation services are the key feature
+of your driver. IO should be governed completely by them. They need
+to be as accurate as your device will allow. The time stamps along
+with the latency figures are the way that applications know what is
+going on in the hardware. Apps need this so that they can reconcile
+it with the other media that need to be synchronized. Inaccuracies
+here lead the app to make
+
+
+
+AV devices are no exception. You can get at the time stamps for your
+transport mechanism (FireWire, USB, PCI, etc.). If the transport is
+jittery or otherwise inaccurate, you need to derive better estimates
+for the true values by filtering what the transport reports or using
+other statistical tricks to improve the accuracy. This is arguably
+the hardest part of writing an audio driver.
+
+
+
+That said, QT doesn't pay attention to the host time in it's IOProcs.
+Rather, it uses AudioDeviceGetCurrentTime() to drive it's clock
+component that tracks your device. The fact that you say that
+AudioDeviceGetCurrentTime() isn't being called on your driver implies
+that either QT thinks your hardware isn't running or, like I said
+above, it is using some other clock. Either would cause drift between
+the video track and audio track.
+
+
+
+
+
+
+> Of course,
+it's hard to give any advice with so little info about the problem.
+Could you elaborate a bit on both how your plugin works as well as on
+how you are doing the testing and I'll try to help you figure out
+what you're doing wrong.
+
+On Aug 26, 2005, at 6:17 AM, Dirk Musfeldt wrote:
+
+
+
+Hi,
+
+I have an audio hardware plugin that provides a system-wide audio
+input from
+user space.
+
+It seems to be running fine. But unfortunately I have found out
+that there's
+some drift in the audio chain, i.e. the audio is not played from the
+speakers as fast as it is processed by the AudioDeviceIOProcs.
+
+On some machines the drift is noticeable after one hour on other
+machines
+after four hours or more.
+
+Does anyboy have an idea what might be the cause and how I could
+prevent
+that?
+
+
+Regards
+
+Dirk
+
+
+
+Regards
+
+Dirk
+
+
+
+
+
+
+
+
+
+--
+
+Jeff Moore
+Core Audio
+Apple
+
+
+_______________________________________________
+Do not post admin requests to the list. They will be ignored.
+Coreaudio-api mailing list      (email@hidden)
+Help/Unsubscribe/Update your Subscription:
+This email sent to email@hidden

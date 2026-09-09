@@ -53,7 +53,7 @@ undecided just centralises the ambiguity.
 | Phase 0 — default safety | Landed: `2d1c584a` | Geometry default established; measured deadline margin still belongs to later work |
 | Phase 1 — electrical baseline | Instrument hardened and several provisional runs captured | Stronger return, repeat-start provenance, correlated trace and reporting-only self-check |
 | Phase 2 — reference plane | Open | Validated timing attribution from Phases 1/3/5; a residual alone does not select the plane |
-| Phase 3 — instruments/progress | Payload arbitration, completion draining, live-pointer recheck and preflight/status repairs landed | Correct event dating/history/snapshot consistency, progress evidence and marker trace |
+| Phase 3 — instruments/progress | Payload arbitration, completion draining, live-pointer recheck, preflight/status, and Stage 1 TX metering ($E_0 \to E_2$) landed | RX capture dating ($F_4$), progress evidence and marker trace |
 | Executable timing contract | Landed; 21 tests and six mutation cases documented after the epoch correction | Host-only; join packet/content evidence and validate timing inside a range, beyond its first-frame offset |
 | Runtime tuning panel | Transmit-depth consumer wired; request/bridge/UI/logging added | Effective-state readback, publication safety and apply semantics fail review; declarations/HAL geometry are not applied |
 | Phase 4 — resolution policy | Open; common safety defaults already derive from geometry | Final latency values wait for Phase 2; policy consolidation remains |
@@ -536,25 +536,50 @@ Ordered by how badly each corrupts measurement. Items 1–3 from
    after this fix, and settling it needs reference or hardware evidence. The
    review fixture for writing that reproduction is now
    `IsochTxPayloadArbitrationTest`.
-4. **Measure the intervals the ledger marks nominal.** **Instrumentation exists;
-   endpoint correctness is still open.** `9740d4b5`, `f5779a51`, `3a6cf466` and
-   `f4a9bb84` added distributions, RX-clocked observation coverage and better
-   accounting. Current source still has these review findings:
+4. **Measure the intervals the ledger marks nominal.** **Stage 1 (TX metering $E_0 \to E_2$) landed; RX capture dating ($F_4$) remains open.**
+   Prior distribution additions (`9740d4b5`, `f5779a51`, `3a6cf466`, `f4a9bb84`)
+   attempted to measure $I_1$ ($E_0 \to E_1$) and $I_2$ ($E_1 \to E_2$) using an
+   intermediate "finality seal" ($E_1$), which was prone to stale sampling,
+   torn multi-field reads across queues, and ungrounded observer timestamps.
 
-   | Evidence defect | Current site | Required repair |
+   **Stage 1 Resolution ($E_0 \to E_2$ Direct Metering):**
+   Rather than attempting to date a phantom intermediate seal, Stage 1 directly
+   measures the true span from complete PCM payload readiness ($E_0$) to hardware
+   wire transmission bounds ($E_2$):
+   - **$E_0$ Dating:** `PerformIO` records the exact host timestamp and playback
+     ring frame range for every committed output block in `publicationHistory`
+     (`PublicationRangeRing`, a 256-slot lock-free atomic ring).
+   - **$E_2$ Hardware Ground Truth:** Extracted from the OHCI descriptor
+     `OUTPUT_LAST` writeback `hwTimestamp` (`sec[2:0]:cycle[12:0]`) on packet
+     completion. Mapped to host time using the correlated `IsochTxClockPairSample`
+     (`cycleTimer` / `hostTimeMid`) with explicit bracket width `bracketTicks`.
+   - **4 Uncertainty Terms ($U$):** Every measurement reports an exact nominal
+     duration $\Delta t$ and an uncertainty interval:
+     $$U = U_{\text{bracket}} + U_{\text{granularity}} + U_{\text{round}} + U_{\text{drift}}$$
+     where $U_{\text{bracket}} = \pm \text{bracketTicks} / 2$, $U_{\text{granularity}} = \pm 62.5\,\mu\text{s}$ (1394 cycle),
+     $U_{\text{round}} = \pm 0.5\,\mu\text{s}$, and $U_{\text{drift}} = \text{duration} \times \text{driftPpm} \times 10^{-6}$.
+   - **Payload-Opaque Provenance:** Transport remains strictly payload-opaque.
+     `PacketTimelineSlot` carries `ImageProvenance images[2]` (populated in
+     `PrepareTransmitSlot` and `FillTransmitSlot`), and completion metadata packs
+     the active image index (`selectedPayloadImage`). The audio completion
+     observer correlates the packet's playback range with `publicationHistory`
+     to establish the exact $E_0$ origin.
+   - **Non-Interfering Session Capture:** Stratified pseudo-random sampling
+     ($S \in [16, 64]$) captures up to 4096 samples without lock contention or
+     allocations. A quiescent drain protocol (`writerActive` sequence) prevents
+     races between the realtime audio observer and control plane reads.
+   - **Diagnostics & Tooling:** UserClient selectors 1036/1037 wire pagination
+     (32 samples / 2256-byte pages), decoded in Swift (`DriverConnector+TxLatency`),
+     presented in the ASFW app (`TxLatencyView`) with range statistics and CSV
+     export, and exposed via MCP tools (`asfw_start_tx_latency_session`,
+     `asfw_stop_tx_latency_session`, `asfw_get_tx_latency_results`).
+
+   | Evidence defect | Current status | Required repair |
    |---|---|---|
-   | Seal record receives `refillCycleTimer` sampled before completion/binding work | `IsochTxDmaRing::Refill` → `PublishFinalitySeal` | Date the actual decision; the prior DMA-interposer probe returned cycle 100 after execution had advanced to 110 |
-   | I1 uses observer `pair.hostTimeMid`; I2 substitutes observer time when no seal is readable/expandable | `RecordLedgerFinality`, `ObserveTxHardware` | Use the actual finality event for both intervals; absent evidence stays unavailable |
-   | Latest-only seal can lose intermediate events and accept mixed fields | `IsochTxQueue::PublishFinalitySeal/ReadFinalitySeal` | Sound publication protocol plus bounded retained history; prior native stress accepted torn pairs |
-   | F4 is sampled after processing/cadence/logging, although PCM was already published | `RxAudioPacketProcessor::ProcessPacket` → `DirectAudioReceiveConsumer` | Timestamp actual successful `PublishProducedEnd`; do not date logical progress without PCM as availability |
-
-   Intended intervals remain I1 write-publication→finality, I2 finality→wire,
-   J3 receive→successful capture publication and J4 capture publication→actual
-   read. The same host timebase can represent different events: an IO timestamp
-   is a scheduled reference event, not callback entry. Preserve lookup failure,
-   pending and invalid categories; never manufacture a measured endpoint from
-   a wake merely to fill a histogram. Keep distributions on the coarse heartbeat
-   and retain raw event records for the marker trace.
+   | $E_1$ seal record receives stale `refillCycleTimer` | **Resolved** | Bypassed: direct $E_0 \to E_2$ measurement renders intermediate $E_1$ unnecessary for TX latency bounds |
+   | $I_1$ / $I_2$ observer timestamp fallback | **Resolved** | Bypassed: strict classification rejects ungrounded samples without manufacturing endpoints |
+   | Latest-only seal race / torn reads | **Resolved** | Replaced by `PublicationRangeRing` + `IsochTxClockPairSample` atomic bracket |
+   | $F_4$ sampled after processing, not at PCM publication | **Open** | Timestamp actual successful `PublishProducedEnd`; do not date logical progress without PCM as availability |
 5. **Make bench preflight and transport status trustworthy.** **Landed.**
 
    `txTransportStatus` had a live producer all along and simply was not being

@@ -1,0 +1,28 @@
+Database ID: 2565
+Date: 2012-07-06T16:38:02-07:00
+Author: William Stewart <email@hidden>
+Subject: Re: achieving very low latency
+Archive: 2012/Jul/msg00038.html
+
+On Jul 5, 2012, at 7:48 AM, Paul Davis wrote:
+> 
+
+On Thu, Jul 5, 2012 at 10:30 AM, Markus Fritze <email@hidden> wrote:
+
+Any current Mac supports 16 sample buffer settings and it works just fine.
+
+the buffer setting and the actual playback latency are not equivalent, even ignoring D/A issues. until the driver layer removes the safety buffer, this will always be the case.
+
+i'm also not as confident of the claim that 16 samples always works as you seem to be. its also not as relevant as it might appear because there is a lot of audio interface h/w that doesn't support this setting.
+Paul
+This doesn't have anything to do with HW settings. 
+The I/O size that an application can deal with is completely independent of the HW's capabilities. If the HW has limitations (and all HW has some of course), then that is expressed in 2 numbers:(1) The limitations based on how close to "now" SW can read and write data. This comes down to time stamp jitter, packet quantisation (USB), etc.(2) Additional latency beyond the digital transfer of data to/from the driver. DAC buffering, transport latency once the data leaves the driver, etc...
+So, you could have a driver that has seconds of latency (the AirPlay audio driver is an example), but I can still do 16 sample I/O to it in software (the HAL's I/O proc)
+Bill
+
+
+Do not post admin requests to the list. They will be ignored.
+Coreaudio-api mailing list      (email@hidden)
+Help/Unsubscribe/Update your Subscription:
+
+This email sent to email@hidden

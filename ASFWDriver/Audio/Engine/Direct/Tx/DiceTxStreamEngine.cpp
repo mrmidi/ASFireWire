@@ -1,4 +1,5 @@
 #include "DiceTxStreamEngine.hpp"
+#include "../../../../Isoch/Core/IsochTxQueue.hpp"
 
 #include <algorithm>
 
@@ -184,6 +185,18 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareTransmitSlot(
         armedFilled_[index] = false;
     }
 
+    if (packet.isData && slotProvider_->SlotCount() != 0) {
+        const uint64_t expectedGen = ASFW::Isoch::ExpectedTxCommitGeneration(
+            packet.packetIndex, slotProvider_->SlotCount());
+        timeline_.SetImageProvenance(
+            packet.packetIndex,
+            0,
+            expectedGen,
+            packet.firstAudioFrame,
+            packet.framesInPacket,
+            static_cast<uint8_t>(ASFW::Audio::Ports::PcmCopyResult::NotYetPublished));
+    }
+
     cadence_->AdvanceCycle();
     counters_.packetsPrepared.fetch_add(1, std::memory_order_relaxed);
     if (packet.isData) {
@@ -252,6 +265,18 @@ TxSlotFillResult DiceTxStreamEngine::FillTransmitSlot(
             .channelCount = packetizer_.StreamConfig().pcmChannels,
         },
         pcmScratch_.data(), static_cast<uint32_t>(pcmScratch_.size()));
+    if (slotProvider_->SlotCount() != 0) {
+        const uint64_t expectedGen = ASFW::Isoch::ExpectedTxCommitGeneration(
+            packetIndex, slotProvider_->SlotCount());
+        timeline_.SetImageProvenance(
+            packetIndex,
+            1,
+            expectedGen,
+            armed.firstAudioFrame,
+            armed.framesInPacket,
+            static_cast<uint8_t>(result));
+    }
+
     using CopyResult = ASFW::Audio::Ports::PcmCopyResult;
     switch (result) {
         case CopyResult::Ready:

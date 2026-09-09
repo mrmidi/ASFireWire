@@ -252,6 +252,71 @@ extension ASFWMCPToolDefinition {
                 ),
                 "additionalProperties": .bool(false)
             ])
+        case "asfw_start_tx_latency_session":
+            return .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "endpointId": .object([
+                        "type": .string("integer"), "minimum": .int(1),
+                        "description": .string("Target audio endpoint ID.")
+                    ]),
+                    "durationSeconds": .object([
+                        "type": .string("integer"), "minimum": .int(1), "maximum": .int(60),
+                        "default": .int(5),
+                        "description": .string("Capture duration in seconds.")
+                    ]),
+                    "strataSize": .object([
+                        "type": .string("integer"), "minimum": .int(1), "maximum": .int(64),
+                        "default": .int(8),
+                        "description": .string("Stratified sampling period (packets per sampled datum).")
+                    ]),
+                    "seed": .object([
+                        "type": .string("integer"), "minimum": .int(0),
+                        "default": .int(0),
+                        "description": .string("PRNG seed for reproducible stratified sampling (0 = randomize).")
+                    ]),
+                    "assumedDriftPpm": .object([
+                        "type": .string("integer"), "minimum": .int(0), "maximum": .int(1000),
+                        "default": .int(100),
+                        "description": .string("Clock drift ceiling in PPM across the correlation interval.")
+                    ])
+                ]),
+                "required": .array([.string("endpointId")]),
+                "additionalProperties": .bool(false)
+            ])
+        case "asfw_stop_tx_latency_session":
+            return .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "endpointId": .object([
+                        "type": .string("integer"), "minimum": .int(1),
+                        "description": .string("Target audio endpoint ID.")
+                    ])
+                ]),
+                "required": .array([.string("endpointId")]),
+                "additionalProperties": .bool(false)
+            ])
+        case "asfw_get_tx_latency_results":
+            return .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "endpointId": .object([
+                        "type": .string("integer"), "minimum": .int(1),
+                        "description": .string("Target audio endpoint ID.")
+                    ]),
+                    "pageIndex": .object([
+                        "type": .string("integer"), "minimum": .int(0),
+                        "description": .string("Optional page index to fetch (0-based). If omitted, returns all pages consolidated.")
+                    ]),
+                    "samplesPerPage": .object([
+                        "type": .string("integer"), "minimum": .int(1), "maximum": .int(32),
+                        "default": .int(32),
+                        "description": .string("Max samples per page when pageIndex is specified.")
+                    ])
+                ]),
+                "required": .array([.string("endpointId")]),
+                "additionalProperties": .bool(false)
+            ])
         default:
             return .object([
                 "type": .string("object"),

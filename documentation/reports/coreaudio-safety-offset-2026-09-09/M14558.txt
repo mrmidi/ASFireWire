@@ -1,0 +1,174 @@
+Database ID: 14558
+Date: 2004-10-12T17:55:15-07:00
+Author: William Stewart <email@hidden>
+Subject: I/O Latency (Was: Layman with a mission)
+Archive: 2004/Oct/msg00122.html
+
+Title: I/O Latency (Was: Layman with a mission)
+
+
+
+So I can get all I want to say I’ve  removed previous postings... Yes, you raise some interesting questions.
+
+
+
+Firstly... There’s an article – I couldn’t find a direct link for it:
+
+Audio Latency Measurements of Desktop Operating Systems 
+
+Karl MacMillan, Michael Droettboom, Ichiro Fujinaga Peabody Institute of the Johns Hopkins University email: {karlmac,mdboom,ich}@peabody.jhu.edu 
+
+
+
+I don’t have the exact date of the article, I believe its around first half of 2001.
+
+
+
+The article contrasted Mac OS (9 and X), Win and Linux and the results were quite interesting. Rather than quote the full range, the results that I think are most accurate are those showing a system under load (i.e. actually doing some work):
+
+
+
+Spirit Digital Mixer 1.8msecs
+
+MacOS X CoreAudio 2.83 msecs
+
+Linux 2.4.1 (IM) ALSA (L) 4.30 msecs
+
+Linux 2.4.5 (AM) ALSA (L) 4.30 msecs
+
+Linux 2.4.2 ALSA (L) 4.30 msecs
+
+Windows 2000 ASIO 6.03 msecs
+
+MacOS 9.04 ASIO 6.80 msecs
+
+Windows 2000 MME (P) 245.17 msecs
+
+
+
+
+
+Secondly. I have some measurements (I don’t know exactly where these came from), but I believe they are reasonable measurements and were made with Logic on both X and Win:
+
+
+
+Mac OS X:
+
+DIGIFACE+ADI8-PRO : 64 buffer size 316 samples 7.1 msec@44100 
+
+MOTU 896 : 64 buffer size 304 samples 6.9 msec@44100 
+
+
+
+Win:
+
+DIGIFACE+ADI8-PRO : 64 buffer size 219 samples 4.8 msec@44100
+
+I don’t have a figure for 64 samples for the MOTU driver on Win.
+
+
+
+When we’ve measured the latency of the MOTU interfaces on X, we get the following:
+
+MOTU 896 : 64 buffer size 244 samples 5.5msec @44100
+
+
+
+So there’s some discrepancies here that are worth exploring some more – and hopefully this will help to understand what contributes to latency on any system. I’ll talk about these in terms of Core Audio’s concepts.
+
+
+
+The MOTU figure above (244 samples) can be broken down as follows:
+
+I/O Latency – 68 samples (34 on input, 34 on output)
+
+Safety Offset – 48 samples (24 on input, 24 on output)
+
+Buffer Size Latency – 128 samples (64 on input, 64 on output) - this is the 64 sample buffer size referred to above
+
+
+
+(1) I/O Latency is the latency within the hardware itself. This is buffering in the converters (both ADC and DAC). You can see this easily enough by using the digital I/O’s of the 896 (in that case the I/O latency goes from 68 samples to 4). You can get lower latency in the converters, but then the conversion operation itself will suffer with a degradation of the resultant conversion. In fact, on some of the more expensive I/O interfaces you will see larger latencies than this as the manufacturer has preferred quality over latency.
+
+
+
+(2) Safety Offset – this is the latency incurred by the driver, the environment it is working within (in terms of its transport medium (USB/FW/PCI)), for CoreAudio this also takes into account issues such as the accuracy of the time stamps provided by the driver. For instance, if the time stamps are jittery, then driver writers can compensate for this by either improving their time stamps (preferred solution) or padding out the safety offset - not preferred :-).
+
+
+
+These two factors are totally “hard-wired”, in that taken together there is no way we can go less than these figures. Various tools that we’ve produced in the CoreAudio SDK over the years (Daisy, HAL Lab) report both of these figures as the drivers report them.
+
+
+
+So, if you have latency that seems too much to you, this is the first place to look. To my mind, if the driver is reporting figures above what MOTU’s figures are (and the device is a “professional quality” I/O device) - then they have some work to do, and you as a user of their device, should make this known to them. USB has problems in this area, so for low-latency work (sub 10msecs) in general I’d exclude USB – but PCI or FW can demonstrably achieve this.
+
+
+
+(3) Buffer Size – this is the number of samples that are processed in each I/O cycle. This is the area where you as a user can affect the latency – in this case there can be a trade-off between latency and efficiency. In general, the smaller the buffer size the lower the latency but the less work that can be done in general.
+
+
+
+To take the MOTU device. If I increase the buffer size to 128 frames, then the latency looks like this:
+
+I/O Latency – 68 samples (34 on input, 34 on output)
+
+Safety Offset – 48 samples (24 on input, 24 on output)
+
+Buffer Size Latency – 256 samples (128 on input, 128 on output) - this is the 128 sample buffer size referred to above
+
+Giving me a total through-put latency of 372 samples (8.4ms @44100).
+
+
+
+If I change the buffer size to 32 samples, then the total latency is (68 + 48 + 64) == 180 samples (4.08ms@44100)
+
+
+
+Its also worth noting that on Mac OS X at least, the sample rate doesn’t alter the actual sample latency (unless of course the I/O latency of the device itself differs (and it can) with different sample rate), but does alter the time. Thus, with all other things being equal in the driver, running these test at 48K will give you a 10% less latency (e.g. 180 samples @ 48K == 3.75msec)
+
+
+
+Discrepancies
+
+As noted above, different apps used to measure latency can provide different results. At least on Mac OS X, the figures we’ve measured are describing the current best possible results that can be achieved on the system. And I think they are at least as competitive as any other system currently available (modulo special purpose hardware). We’ve also measured the PC in a box type of systems for running plugins, etc, and the I/O figures we can achieve with Mac OS X solutions are just as good (if not better) as these systems are (the result is usually 5-6msecs – what the MOTU boxes does on X at 64 frames). We aren’t as good as custom digital solutions (the Sprint mixer above).
+
+
+
+An application can introduce latency to provide a more robust I/O path – much like the trade-off converter’s make for latency vs quality, applications (not just on Mac OS X) can introduce some buffering to avoid audio drop outs as a result of random spikes, interrupt latencies, etc... So, before you condemn an application for some perceived short-coming, there are issues or questions I think that should be asked first.
+
+
+
+Of course the drivers themselves may not report their numbers correctly (and we’ve seen this often, and filed bug reports when we do). The only way to know is to measure, but when you do measure, you have to bare in mind that you are measuring just that one system and that the measurement you make is only as good as the driver and hardware you measure, and the application’s usage of the “OS Layer” (whether that’s CoreAudio, or ASIO).
+
+
+
+This is an area we pay a great deal of attention too. In the most recently available SDK, there’s a Diagnotic AU called AUPulseDetector – its a mono AU that can be hosted as an effect in any host app. It needs to be wired up to be on the I/O chain – and a wire needs to be connected between the output and input channel you want to measure of the hardware. Then it sends a pulse, and displays how many samples it takes for that pulse to come back into it. Its very handy for doing this kind of measurement. But just remember, you are measuring the driver’s efficiency as well as the applications usage of I/O services. With Tiger we will be providing more tools that can be used to make these kinds of measurements. 
+
+
+
+Is this good enough? Remember, sound takes 1msec to travel a foot, so the latency for you to hear my guitar playing if you are 20 feet away from my speaker is 20msecs, an orchestra has at least 50msecs of latency from side to side...etc..., enough for one day I think.
+
+
+
+HTH
+
+
+
+Bill
+
+
+
+
+
+
+
+
+
+
+
+ _______________________________________________
+Do not post admin requests to the list. They will be ignored.
+Coreaudio-api mailing list      (email@hidden)
+Help/Unsubscribe/Update your Subscription:
+
+This email sent to email@hidden

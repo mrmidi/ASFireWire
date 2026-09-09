@@ -54,6 +54,7 @@ struct ModernContentView: View {
         case romExplorer = "ROM Explorer"
         case audioTelemetry = "Audio Telemetry"
         case audioTuning = "Audio Geometry"
+        case txLatency = "TX Latency"
         case dvCapture = "DV Capture"
         case busReset = "Bus Reset History"
         case logs = "System Logs"
@@ -83,6 +84,7 @@ struct ModernContentView: View {
             case .romExplorer: return "memorychip"
             case .audioTelemetry: return "waveform.path.ecg"
             case .audioTuning: return "slider.horizontal.3"
+            case .txLatency: return "timer"
             case .dvCapture: return "video.fill"
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
@@ -142,6 +144,8 @@ struct ModernContentView: View {
                     AudioTelemetryView(connector: debugVM.connector)
                 case .audioTuning:
                     AudioTuningView(connector: debugVM.connector)
+                case .txLatency:
+                    TxLatencyView(connector: debugVM.connector)
                 case .dvCapture:
                     DVCaptureView(viewModel: debugVM)
                 case .busReset:

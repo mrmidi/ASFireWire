@@ -310,6 +310,8 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 const auto& memory =
                     driverIvars->runtime.directAudioGraph.memory;
                 const uint64_t publicationStart = mach_absolute_time();
+                uint64_t committedStart = 0;
+                uint64_t committedEnd = 0;
                 const auto publishResult =
                     driverIvars->runtime.pcmPublicationCache.Publish({
                         .interleavedFloat32 = memory.outputBase,
@@ -318,7 +320,7 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                         .frameCount = ioBufferFrameSize,
                         .frameCapacity = memory.activeOutputRingFrames,
                         .channels = memory.outputChannels,
-                    });
+                    }, &committedStart, &committedEnd);
                 const uint64_t publicationEnd = mach_absolute_time();
                 RecordPcmPublicationCost(
                     control->pcmPublicationTelemetry, ioBufferFrameSize,
@@ -337,6 +339,17 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     // moving hardware time or any packet cursor.
                     control->counters.CountWriteEnd();
                     return kIOReturnSuccess;
+                }
+
+                // Record the actual newly committed suffix into the publication history
+                // with conservative visibility host-time bounds.
+                if (committedEnd > committedStart) {
+                    driverIvars->runtime.publicationHistory.Record(
+                        control->hardwareTimeline.Epoch(),
+                        committedStart,
+                        committedEnd,
+                        publicationStart,
+                        publicationEnd);
                 }
 
                 // E0 for the ledger's I1: the instant these frames became
