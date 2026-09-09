@@ -19,6 +19,7 @@
 #include "Vendors/BeBoBDeviceProfiles.hpp"
 #include "Vendors/FocusriteAudioProfiles.hpp"
 #include "Vendors/MidasAudioProfiles.hpp"
+#include "Vendors/MotuAudioProfiles.hpp"
 #include "Vendors/PreSonusAudioProfiles.hpp"
 #include "Vendors/TerraTecAudioProfiles.hpp"
 #include "Vendors/WeissAudioProfiles.hpp"
@@ -38,6 +39,7 @@ public:
         if (auto hint = Apogee::LookupIdentity(query)) { return hint; }
         if (auto hint = Alesis::LookupIdentity(query)) { return hint; }
         if (auto hint = Midas::LookupIdentity(query)) { return hint; }
+        if (auto hint = Motu::LookupIdentity(query)) { return hint; }
         if (auto hint = PreSonus::LookupIdentity(query)) { return hint; }
         if (auto hint = TerraTec::LookupIdentity(query)) { return hint; }
         if (auto hint = BeBoB::LookupIdentity(query)) { return hint; }
@@ -55,6 +57,7 @@ public:
         if (auto hint = Apogee::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Alesis::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Midas::LookupAudioProfile(query)) { return hint; }
+        if (auto hint = Motu::LookupAudioProfile(query)) { return hint; }
         if (auto hint = PreSonus::LookupAudioProfile(query)) { return hint; }
         if (auto hint = TerraTec::LookupAudioProfile(query)) { return hint; }
         if (auto hint = BeBoB::LookupAudioProfile(query)) { return hint; }

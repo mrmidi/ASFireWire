@@ -55,6 +55,31 @@ add_audio_test(CIPHeaderBuilderTests
     CIPHeaderBuilderTests.cpp
 )
 
+# MOTU Block Codec Tests
+add_audio_test(MotuBlockCodecTests
+    MotuBlockCodecTests.cpp
+)
+
+# MOTU v2 Register Plane Tests
+add_audio_test(MotuV2RegisterTests
+    MotuV2RegisterTests.cpp
+)
+
+# MOTU Device Profile / Factory Identity Tests
+add_audio_test(MotuV2ProfileTests
+    MotuV2ProfileTests.cpp
+)
+
+# MOTU v2 Protocol Adapter Tests
+# DeviceRegistry is linked because the protocol now takes a registry-issued route token
+# (ProtocolRegisterIO validates the route on every transaction), so the test fixture has
+# to build a real registry entry. Mirrors tests/devices/DICETcatProtocolTests.
+add_audio_test(MotuV2ProtocolTests
+    MotuV2ProtocolTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MotuV2Protocol.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+
 # Blocking Cadence Tests
 add_audio_test(BlockingCadenceTests
     BlockingCadenceTests.cpp

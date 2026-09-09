@@ -150,7 +150,9 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
         record.vendorId, record.modelId, *busOps, *busInfo, routeRegistry,
         *route,
         irmClient,
-        cmpClient_, timerScheduler_);
+        cmpClient_, timerScheduler_,
+        DeviceProtocolFactory::UnitIdentity{.specId = record.unitSpecId.value_or(0U),
+                                            .swVersion = record.unitSwVersion.value_or(0U)});
     if (!created) {
         return nullptr;
     }
