@@ -70,6 +70,11 @@ add_audio_test(MotuV2ProfileTests
     MotuV2ProfileTests.cpp
 )
 
+# MOTU capture-side presentation timing (SPH -> replay offset)
+add_audio_test(MotuRxTimingTests
+    MotuRxTimingTests.cpp
+)
+
 # MOTU host->device payload placement tests
 add_audio_test(MotuPayloadWriterTests
     MotuPayloadWriterTests.cpp
