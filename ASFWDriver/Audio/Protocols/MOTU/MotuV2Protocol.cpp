@@ -31,9 +31,11 @@ MotuV2Protocol::MotuV2Protocol(Protocols::Ports::FireWireBusOps& busOps,
                                Protocols::Ports::FireWireBusInfo& busInfo,
                                Discovery::DeviceRegistry& routeRegistry,
                                const Discovery::DeviceRouteToken& route,
-                               uint32_t unitSwVersion)
+                               uint32_t unitSwVersion,
+                               ::ASFW::IRM::IRMClient* irmClient)
     : io_(busOps, busInfo, routeRegistry, route)
     , busInfo_(busInfo)
+    , irmClient_(irmClient)
     , unitSwVersion_(unitSwVersion) {}
 
 const char* MotuV2Protocol::GetName() const {
@@ -235,32 +237,71 @@ void MotuV2Protocol::ModifyRegister(Reg reg,
         });
 }
 
-void MotuV2Protocol::PrepareDuplex48k(const AudioDuplexChannels& channels,
-                                      VoidCallback callback) {
+AudioStreamRuntimeCaps MotuV2Protocol::MakeRuntimeCaps() const noexcept {
+    AudioStreamRuntimeCaps caps{};
+    caps.hostInputPcmChannels = txPcmChunks_.load(std::memory_order_acquire);
+    caps.hostOutputPcmChannels = rxPcmChunks_.load(std::memory_order_acquire);
+    // MOTU does not carry AM824 slots: its data blocks are 3-byte chunks past an SPH
+    // quadlet. The slot fields stay zero so nothing mistakes this for an AM824 stream.
+    caps.deviceToHostAm824Slots = 0;
+    caps.hostToDeviceAm824Slots = 0;
+    caps.sampleRateHz = preparedRateHz_.load(std::memory_order_acquire);
+    return caps;
+}
+
+void MotuV2Protocol::SetAssignedChannels(const AudioDuplexChannels& channels) noexcept {
+    // IRM allocation can replace the provisional numbers after PrepareDuplex, and the
+    // device must be told the committed values before ProgramTxAndEnableDuplex writes
+    // them into the iso-comm register.
     deviceRxChannel_.store(channels.PlaybackChannel(0), std::memory_order_release);
     deviceTxChannel_.store(channels.CaptureChannel(0), std::memory_order_release);
-    duplexPrepared_.store(true, std::memory_order_release);
+}
 
-    // The exclude-differed-chunks bits say "this direction carries only its fixed chunk
-    // count". That is true exactly when the optical interface is not in ADAT mode: ADAT
-    // adds chunks on top of the fixed baseline (motu-protocol-v2.c:253-269), so the
-    // optical config has to be read before the packet format can be computed
-    // (motu-stream.c:201-225). Capture (TX, device->host) follows the optical *input*;
-    // playback (RX) follows the optical *output*.
-    // FW::Speed's enumerators are the IEEE 1394-1995 wire codes (S100=0 .. S800=3), which
-    // is exactly what this register field expects -- the same value Linux takes from
+void MotuV2Protocol::PrepareDuplex(const AudioDuplexChannels& channels,
+                                   const AudioClockConfig& desiredClock,
+                                   PrepareCallback callback) {
+    SetAssignedChannels(channels);
+
+    const uint32_t rateHz = desiredClock.sampleRateHz != 0U ? desiredClock.sampleRateHz : 48000U;
+    const int32_t rateIndex = Encoding::Motu::RateToIndex(rateHz);
+    if (rateIndex < 0) {
+        ASFW_LOG(Audio, "MotuV2Protocol: unsupported duplex rate %u", rateHz);
+        if (callback) {
+            callback(kIOReturnUnsupported, DuplexPrepareResult{});
+        }
+        return;
+    }
+    const uint32_t mode = Encoding::Motu::IndexToMode(static_cast<uint32_t>(rateIndex));
+    const uint32_t fixedChunks = Encoding::Motu::k828mk2FixedPcmChunks[mode];
+    if (fixedChunks == 0U) {
+        // Mode 2 (176.4/192k) is not implemented by the v2 fixed-chunk models.
+        ASFW_LOG(Audio, "MotuV2Protocol: rate %u has no chunk layout for this model", rateHz);
+        if (callback) {
+            callback(kIOReturnUnsupported, DuplexPrepareResult{});
+        }
+        return;
+    }
+
+    // The exclude-differed-chunks bit per direction is only correct when that direction
+    // carries just its fixed chunk count, and ADAT adds chunks on top of the baseline
+    // (motu-protocol-v2.c:253-269) -- so the optical config has to be read before the
+    // packet format can be computed (motu-stream.c:201-225). Capture (TX, device->host)
+    // follows the optical input; playback (RX) follows the optical output.
+    //
+    // FW::Speed's enumerators are the IEEE 1394-1995 wire codes, which is what this
+    // register field expects -- the same value Linux takes from
     // fw_parent_device(unit)->max_speed (motu-stream.c:218).
     const uint32_t speedCode = static_cast<uint32_t>(busInfo_.GetSpeed(io_.NodeId()));
 
     (void)io_.ReadQuadBE(
         AddressOf(Reg::InOutConfV2),
-        [this, speedCode, callback = std::move(callback)](Async::AsyncStatus status,
-                                                          uint32_t optRaw) mutable {
+        [this, speedCode, rateHz, mode, fixedChunks, callback = std::move(callback)](
+            Async::AsyncStatus status, uint32_t optRaw) mutable {
             const IOReturn readResult = Protocols::Ports::MapAsyncStatusToIOReturn(status);
             if (readResult != kIOReturnSuccess) {
                 ASFW_LOG(Audio, "MotuV2Protocol: optical config read failed: 0x%x", readResult);
                 if (callback) {
-                    callback(readResult);
+                    callback(readResult, DuplexPrepareResult{});
                 }
                 return;
             }
@@ -270,17 +311,25 @@ void MotuV2Protocol::PrepareDuplex48k(const AudioDuplexChannels& channels,
             // device is in the fixed layout: claiming fixed when it is not truncates the
             // stream, while the conservative direction only costs the optimisation.
             const auto optical = DecodeOptIfaceConfig(optRaw);
-            const bool txOnlyFixedChunks =
-                optical.has_value() && optical->input != OptIfaceMode::Adat;
-            const bool rxOnlyFixedChunks =
-                optical.has_value() && optical->output != OptIfaceMode::Adat;
+            const bool inputIsAdat = optical.has_value() && optical->input == OptIfaceMode::Adat;
+            const bool outputIsAdat = optical.has_value() && optical->output == OptIfaceMode::Adat;
+            const bool txOnlyFixedChunks = optical.has_value() && !inputIsAdat;
+            const bool rxOnlyFixedChunks = optical.has_value() && !outputIsAdat;
+
+            const uint32_t adatExtra = Encoding::Motu::AdatExtraChunks(mode);
+            txPcmChunks_.store(fixedChunks + (inputIsAdat ? adatExtra : 0U),
+                               std::memory_order_release);
+            rxPcmChunks_.store(fixedChunks + (outputIsAdat ? adatExtra : 0U),
+                               std::memory_order_release);
+            preparedRateHz_.store(rateHz, std::memory_order_release);
 
             ASFW_LOG(Audio,
-                     "MotuV2Protocol: prepare duplex opt=0x%08x txFixed=%d rxFixed=%d speed=%u "
-                     "rxCh=%u txCh=%u",
+                     "MotuV2Protocol: prepare duplex rate=%u opt=0x%08x txChunks=%u rxChunks=%u "
+                     "speed=%u rxCh=%u txCh=%u",
+                     rateHz,
                      optRaw,
-                     txOnlyFixedChunks ? 1 : 0,
-                     rxOnlyFixedChunks ? 1 : 0,
+                     txPcmChunks_.load(std::memory_order_acquire),
+                     rxPcmChunks_.load(std::memory_order_acquire),
                      speedCode,
                      deviceRxChannel_.load(std::memory_order_acquire),
                      deviceTxChannel_.load(std::memory_order_acquire));
@@ -291,27 +340,52 @@ void MotuV2Protocol::PrepareDuplex48k(const AudioDuplexChannels& channels,
                     return EncodePacketFormat(current, txOnlyFixedChunks, rxOnlyFixedChunks,
                                               speedCode);
                 },
-                std::move(callback));
+                [this, rateHz, callback = std::move(callback)](IOReturn status) mutable {
+                    if (status != kIOReturnSuccess) {
+                        if (callback) {
+                            callback(status, DuplexPrepareResult{});
+                        }
+                        return;
+                    }
+                    duplexPrepared_.store(true, std::memory_order_release);
+
+                    DuplexPrepareResult result{};
+                    result.generation = busInfo_.GetGeneration();
+                    result.channels.deviceToHostIsoChannel =
+                        deviceTxChannel_.load(std::memory_order_acquire);
+                    result.channels.hostToDeviceIsoChannel =
+                        deviceRxChannel_.load(std::memory_order_acquire);
+                    result.appliedClock = AudioClockConfig{.sampleRateHz = rateHz};
+                    result.runtimeCaps = MakeRuntimeCaps();
+                    if (callback) {
+                        callback(kIOReturnSuccess, result);
+                    }
+                });
         });
 }
 
-void MotuV2Protocol::ProgramRxForDuplex48k(VoidCallback callback) {
-    // No device-side RX-only step exists on v2: both directions are activated together in
-    // the single iso-comm write issued by ProgramTxAndEnableDuplex48k
-    // (motu-stream.c:62-83, begin_session). The hook stays a success so the coordinator's
-    // ordering (RX leg, then TX leg + enable) is preserved for protocols that need it.
+void MotuV2Protocol::ProgramRx(StageCallback callback) {
+    // No device-side RX-only step exists on v2: both directions are activated together
+    // in the single iso-comm write issued by ProgramTxAndEnableDuplex
+    // (motu-stream.c:62-83, begin_session). The stage stays a success so the
+    // coordinator's RX-then-TX ordering is preserved for protocols that need it.
+    DuplexStageResult result{};
+    result.generation = busInfo_.GetGeneration();
+    result.channels.deviceToHostIsoChannel = deviceTxChannel_.load(std::memory_order_acquire);
+    result.channels.hostToDeviceIsoChannel = deviceRxChannel_.load(std::memory_order_acquire);
+    result.runtimeCaps = MakeRuntimeCaps();
     if (callback) {
-        callback(kIOReturnSuccess);
+        callback(kIOReturnSuccess, result);
     }
 }
 
-void MotuV2Protocol::ProgramTxAndEnableDuplex48k(VoidCallback callback) {
+void MotuV2Protocol::ProgramTxAndEnableDuplex(StageCallback callback) {
     if (!duplexPrepared_.load(std::memory_order_acquire)) {
-        // Without PrepareDuplex48k the iso channels are unknown, and writing channel 0/0
+        // Without PrepareDuplex the iso channels are unknown, and writing channel 0/0
         // would point the device at whatever is on those channels.
         ASFW_LOG(Audio, "MotuV2Protocol: enable requested before prepare");
         if (callback) {
-            callback(kIOReturnNotReady);
+            callback(kIOReturnNotReady, DuplexStageResult{});
         }
         return;
     }
@@ -324,17 +398,27 @@ void MotuV2Protocol::ProgramTxAndEnableDuplex48k(VoidCallback callback) {
         [rxChannel, txChannel](uint32_t current) {
             return EncodeIsoCommStart(current, rxChannel, txChannel);
         },
-        [this, callback = std::move(callback)](IOReturn status) mutable {
-            if (status == kIOReturnSuccess) {
-                duplexActive_.store(true, std::memory_order_release);
+        [this, rxChannel, txChannel, callback = std::move(callback)](IOReturn status) mutable {
+            if (status != kIOReturnSuccess) {
+                if (callback) {
+                    callback(status, DuplexStageResult{});
+                }
+                return;
             }
+            duplexActive_.store(true, std::memory_order_release);
+
+            DuplexStageResult result{};
+            result.generation = busInfo_.GetGeneration();
+            result.channels.hostToDeviceIsoChannel = static_cast<uint8_t>(rxChannel);
+            result.channels.deviceToHostIsoChannel = static_cast<uint8_t>(txChannel);
+            result.runtimeCaps = MakeRuntimeCaps();
             if (callback) {
-                callback(status);
+                callback(kIOReturnSuccess, result);
             }
         });
 }
 
-void MotuV2Protocol::ConfirmDuplex48kStart(VoidCallback callback) {
+void MotuV2Protocol::ConfirmDuplexStart(ConfirmCallback callback) {
     // Read the iso-comm register back and require the device to report both directions
     // activated on the channels we asked for. The write completing only means the
     // transaction was accepted.
@@ -343,12 +427,12 @@ void MotuV2Protocol::ConfirmDuplex48kStart(VoidCallback callback) {
 
     (void)io_.ReadQuadBE(
         AddressOf(Reg::IsocCommControl),
-        [expectedRx, expectedTx, callback = std::move(callback)](Async::AsyncStatus status,
-                                                                 uint32_t value) mutable {
+        [this, expectedRx, expectedTx, callback = std::move(callback)](Async::AsyncStatus status,
+                                                                       uint32_t value) mutable {
             const IOReturn readResult = Protocols::Ports::MapAsyncStatusToIOReturn(status);
             if (readResult != kIOReturnSuccess) {
                 if (callback) {
-                    callback(readResult);
+                    callback(readResult, DuplexConfirmResult{});
                 }
                 return;
             }
@@ -365,10 +449,68 @@ void MotuV2Protocol::ConfirmDuplex48kStart(VoidCallback callback) {
                          state.txActivated ? 1U : 0U,
                          expectedTx);
             }
+
+            DuplexConfirmResult result{};
+            result.generation = busInfo_.GetGeneration();
+            result.channels.hostToDeviceIsoChannel = static_cast<uint8_t>(expectedRx);
+            result.channels.deviceToHostIsoChannel = static_cast<uint8_t>(expectedTx);
+            result.appliedClock =
+                AudioClockConfig{.sampleRateHz = preparedRateHz_.load(std::memory_order_acquire)};
+            result.runtimeCaps = MakeRuntimeCaps();
+            result.status = value;
             if (callback) {
-                callback(ok ? kIOReturnSuccess : kIOReturnNotReady);
+                callback(ok ? kIOReturnSuccess : kIOReturnNotReady, result);
             }
         });
+}
+
+void MotuV2Protocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
+                                      ClockApplyCallback callback) {
+    const uint32_t rateHz = desiredClock.sampleRateHz;
+    SetSampleRate(rateHz, [this, rateHz, callback = std::move(callback)](IOReturn status) mutable {
+        if (status == kIOReturnSuccess) {
+            preparedRateHz_.store(rateHz, std::memory_order_release);
+        }
+        ClockApplyResult result{};
+        result.generation = busInfo_.GetGeneration();
+        result.appliedClock = AudioClockConfig{.sampleRateHz = CachedSampleRateHz()};
+        result.runtimeCaps = MakeRuntimeCaps();
+        if (callback) {
+            callback(status, result);
+        }
+    });
+}
+
+void MotuV2Protocol::ReadDuplexHealth(HealthCallback callback) {
+    // v2 has no notification mailbox or lock-status register: the clock status word is
+    // the only health evidence the device publishes. A decodable rate and source is
+    // reported as locked; anything unreadable stays unlocked so a needed recovery is
+    // never suppressed on missing evidence.
+    ReadClockStatus([this, callback = std::move(callback)](IOReturn status,
+                                                           ClockStatus clock) mutable {
+        DuplexHealthResult result{};
+        result.generation = busInfo_.GetGeneration();
+        result.runtimeCaps = MakeRuntimeCaps();
+
+        if (status != kIOReturnSuccess) {
+            result.sourceLocked = false;
+            result.clockReferenceHealthy = false;
+            if (callback) {
+                callback(status, result);
+            }
+            return;
+        }
+
+        const bool decoded = clock.sampleRateHz != 0U && clock.source.has_value();
+        result.sourceLocked = decoded;
+        result.clockReferenceHealthy = decoded;
+        result.nominalRateHz = clock.sampleRateHz;
+        result.appliedClock = AudioClockConfig{.sampleRateHz = clock.sampleRateHz};
+        result.status = clock.raw;
+        if (callback) {
+            callback(kIOReturnSuccess, result);
+        }
+    });
 }
 
 IOReturn MotuV2Protocol::StopDuplex() {

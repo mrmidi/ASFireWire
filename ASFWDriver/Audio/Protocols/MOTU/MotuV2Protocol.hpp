@@ -16,6 +16,7 @@
 
 #include "MotuV2Registers.hpp"
 #include "../IDeviceProtocol.hpp"
+#include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 
 #include <atomic>
@@ -32,7 +33,13 @@ struct ClockStatus {
     std::optional<ClockSourceV2> source{};   ///< nullopt for reserved source codes.
 };
 
-class MotuV2Protocol final : public IDeviceProtocol {
+/// MOTU protocol-v2 register device.
+///
+/// Also serves as its own IDuplexDeviceControl: AudioDuplexCoordinator reaches every
+/// protocol through IDeviceProtocol::AsDuplexDeviceControl(), so that -- not the
+/// DICE-internal *48k hooks on IDeviceProtocol -- is the seam a new family must
+/// implement to be driven at all.
+class MotuV2Protocol final : public IDeviceProtocol, public IDuplexDeviceControl {
 public:
     using ClockStatusCallback = std::function<void(IOReturn, ClockStatus)>;
     using CompletionCallback = std::function<void(IOReturn)>;
@@ -41,7 +48,8 @@ public:
                    Protocols::Ports::FireWireBusInfo& busInfo,
                    Discovery::DeviceRegistry& routeRegistry,
                    const Discovery::DeviceRouteToken& route,
-                   uint32_t unitSwVersion);
+                   uint32_t unitSwVersion,
+                   ::ASFW::IRM::IRMClient* irmClient = nullptr);
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
@@ -67,11 +75,26 @@ public:
     // register half of it.
     //==========================================================================
 
-    void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) override;
-    void ProgramRxForDuplex48k(VoidCallback callback) override;
-    void ProgramTxAndEnableDuplex48k(VoidCallback callback) override;
-    void ConfirmDuplex48kStart(VoidCallback callback) override;
-    IOReturn StopDuplex() override;
+    // IDeviceProtocol -> IDuplexDeviceControl bridge. Returning `this` is what makes
+    // AudioDuplexCoordinator able to drive this protocol at all.
+    Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
+    const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override {
+        return this;
+    }
+
+    // ---- IDuplexDeviceControl ----
+    void PrepareDuplex(const AudioDuplexChannels& channels,
+                       const AudioClockConfig& desiredClock,
+                       PrepareCallback callback) override;
+    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept override;
+    void ProgramRx(StageCallback callback) override;
+    void ProgramTxAndEnableDuplex(StageCallback callback) override;
+    void ConfirmDuplexStart(ConfirmCallback callback) override;
+    void ApplyClockConfig(const AudioClockConfig& desiredClock,
+                          ClockApplyCallback callback) override;
+    void ReadDuplexHealth(HealthCallback callback) override;
+    [[nodiscard]] IOReturn StopDuplex() override;
+    [[nodiscard]] ::ASFW::IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
 
     /// Read and decode the clock status register.
     void ReadClockStatus(ClockStatusCallback callback);
@@ -126,6 +149,9 @@ private:
     /// Kept for the link speed written into the packet-format register; the register IO
     /// owns its own copy but does not expose speed resolution.
     Protocols::Ports::FireWireBusInfo& busInfo_;
+    /// Iso channel/bandwidth allocation is owned by the coordinator, which reaches it
+    /// through GetIRMClient(); the protocol only carries the handle.
+    ::ASFW::IRM::IRMClient* irmClient_{nullptr};
     const uint32_t unitSwVersion_;
     std::atomic<uint32_t> cachedSampleRateHz_{0};
     std::atomic<bool> asyncAddressRegistered_{false};
@@ -138,6 +164,15 @@ private:
     std::atomic<uint8_t> deviceTxChannel_{0};
     std::atomic<bool> duplexPrepared_{false};
     std::atomic<bool> duplexActive_{false};
+
+    // Chunk geometry resolved during PrepareDuplex (fixed baseline plus any ADAT
+    // extras), reported back through the duplex result structs.
+    std::atomic<uint32_t> txPcmChunks_{0};
+    std::atomic<uint32_t> rxPcmChunks_{0};
+    std::atomic<uint32_t> preparedRateHz_{0};
+
+    /// Fill the runtime capability block from the geometry resolved by PrepareDuplex.
+    [[nodiscard]] AudioStreamRuntimeCaps MakeRuntimeCaps() const noexcept;
 };
 
 } // namespace ASFW::Audio::Motu

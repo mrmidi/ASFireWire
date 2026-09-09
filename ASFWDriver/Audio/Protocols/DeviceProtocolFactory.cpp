@@ -43,8 +43,10 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         ASFW_LOG(Audio,
                  "Creating MotuV2Protocol vendor=0x%06x version=0x%06x node=0x%04x",
                  vendorId, unit.swVersion, nodeId);
+        // The IRM client must reach the protocol: the coordinator allocates iso channels
+        // through IDuplexDeviceControl::GetIRMClient() before programming the device.
         return std::make_unique<Motu::MotuV2Protocol>(busOps, busInfo, routeRegistry, route,
-                                                      unit.swVersion);
+                                                      unit.swVersion, irmClient);
     }
 
     if (vendorId == kFocusriteVendorId) {

@@ -30,6 +30,9 @@ using ASFW::Audio::Motu::kAsyncMessageRegionStart;
 using ASFW::Audio::Motu::ClockSourceV2;
 using ASFW::Audio::Motu::MotuV2Protocol;
 using ASFW::Audio::Motu::Reg;
+using ASFW::Audio::DuplexPrepareResult;
+using ASFW::Audio::DuplexStageResult;
+using ASFW::Audio::DuplexConfirmResult;
 
 constexpr uint32_t k828mk2SwVersion = 0x000003U;
 constexpr uint16_t kNodeId = 0x0001U;
@@ -335,6 +338,8 @@ constexpr uint32_t kOptSpdif = 2U;
 /// RecordingBus reports S400, whose wire code is 2 (IEEE 1394-1995 §8.4.2.4).
 constexpr uint32_t kExpectedSpeedCode = 2U;
 
+constexpr ASFW::Audio::AudioClockConfig kClock48k{.sampleRateHz = 48000U};
+
 constexpr uint8_t kRxChannel = 5U;  // host->device (playback)
 constexpr uint8_t kTxChannel = 9U;  // device->host (capture)
 
@@ -347,6 +352,146 @@ ASFW::Audio::AudioDuplexChannels MakeChannels() {
 
 } // namespace
 
+// The coordinator reaches every protocol through
+// IDeviceProtocol::AsDuplexDeviceControl(). A protocol that returns nullptr there is
+// simply never driven -- no bring-up, no streaming, silently. This is the single
+// assertion that MOTU is reachable at all, so it guards the whole family.
+TEST(MotuV2DuplexTests, ExposesItselfAsDuplexDeviceControl) {
+    RecordingBus bus;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    ASFW::Audio::IDeviceProtocol& asProtocol = protocol;
+    EXPECT_NE(asProtocol.AsDuplexDeviceControl(), nullptr);
+
+    const ASFW::Audio::IDeviceProtocol& asConstProtocol = protocol;
+    EXPECT_NE(asConstProtocol.AsDuplexDeviceControl(), nullptr);
+}
+
+TEST(MotuV2DuplexTests, ReportsChunkGeometryThroughRuntimeCaps) {
+    RecordingBus bus;
+    // No ADAT: both directions carry only the fixed 14 chunks the v2 models use at
+    // 44.1/48 kHz (motu-protocol-v2.c:274-282, snd_motu_spec_828mk2/ultralite).
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<DuplexPrepareResult> result;
+    protocol.PrepareDuplex(MakeChannels(), kClock48k,
+                           [&](IOReturn status, DuplexPrepareResult r) {
+                               EXPECT_EQ(status, kIOReturnSuccess);
+                               result = r;
+                           });
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->runtimeCaps.hostInputPcmChannels, 14U);
+    EXPECT_EQ(result->runtimeCaps.hostOutputPcmChannels, 14U);
+    EXPECT_EQ(result->runtimeCaps.sampleRateHz, 48000U);
+    EXPECT_EQ(result->appliedClock.sampleRateHz, 48000U);
+    // MOTU is not an AM824 stream; the slot counts must stay zero so nothing treats it
+    // as one.
+    EXPECT_EQ(result->runtimeCaps.deviceToHostAm824Slots, 0U);
+    EXPECT_EQ(result->runtimeCaps.hostToDeviceAm824Slots, 0U);
+    EXPECT_EQ(result->channels.hostToDeviceIsoChannel, kRxChannel);
+    EXPECT_EQ(result->channels.deviceToHostIsoChannel, kTxChannel);
+}
+
+TEST(MotuV2DuplexTests, AdatOpticalAddsChunksToTheAffectedDirection) {
+    RecordingBus bus;
+    // ADAT on the optical input only: capture (TX, device->host) gains the 8 extra
+    // chunks at mode 0; playback keeps the fixed baseline
+    // (motu-protocol-v2.c:253-269).
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptSpdif);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<DuplexPrepareResult> result;
+    protocol.PrepareDuplex(MakeChannels(), kClock48k,
+                           [&](IOReturn, DuplexPrepareResult r) { result = r; });
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->runtimeCaps.hostInputPcmChannels, 22U);  // 14 + 8
+    EXPECT_EQ(result->runtimeCaps.hostOutputPcmChannels, 14U);
+}
+
+TEST(MotuV2DuplexTests, RejectsARateWithNoChunkLayoutWithoutTouchingTheDevice) {
+    RecordingBus bus;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    // 192 kHz is mode 2, whose fixed chunk count is 0 for these models -- unsupported.
+    std::optional<IOReturn> status;
+    protocol.PrepareDuplex(MakeChannels(), ASFW::Audio::AudioClockConfig{.sampleRateHz = 192000U},
+                           [&](IOReturn s, DuplexPrepareResult) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnUnsupported);
+    EXPECT_TRUE(bus.writes.empty());
+    EXPECT_TRUE(bus.reads.empty());
+}
+
+TEST(MotuV2DuplexTests, HealthReportsLockedOnlyWhenTheClockWordDecodes) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<ASFW::Audio::DuplexHealthResult> health;
+    protocol.ReadDuplexHealth([&](IOReturn status, ASFW::Audio::DuplexHealthResult r) {
+        EXPECT_EQ(status, kIOReturnSuccess);
+        health = r;
+    });
+
+    ASSERT_TRUE(health.has_value());
+    EXPECT_TRUE(health->sourceLocked);
+    EXPECT_TRUE(health->clockReferenceHealthy);
+    EXPECT_EQ(health->nominalRateHz, 48000U);
+}
+
+TEST(MotuV2DuplexTests, HealthReportsUnlockedWhenTheClockReadFails) {
+    RecordingBus bus;
+    bus.readStatus = AsyncStatus::kTimeout;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<ASFW::Audio::DuplexHealthResult> health;
+    protocol.ReadDuplexHealth(
+        [&](IOReturn, ASFW::Audio::DuplexHealthResult r) { health = r; });
+
+    // Missing evidence must never be reported as healthy, or a needed recovery is
+    // suppressed.
+    ASSERT_TRUE(health.has_value());
+    EXPECT_FALSE(health->sourceLocked);
+    EXPECT_FALSE(health->clockReferenceHealthy);
+}
+
+TEST(MotuV2DuplexTests, SetAssignedChannelsOverridesTheProvisionalIsoChannels) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+
+    // IRM allocation replaced the provisional numbers after prepare; the device must be
+    // programmed with the committed ones.
+    ASFW::Audio::AudioDuplexChannels committed{};
+    committed.hostToDeviceIsoChannel = 11U;
+    committed.deviceToHostIsoChannel = 12U;
+    protocol.SetAssignedChannels(committed);
+
+    bus.writes.clear();
+    protocol.ProgramTxAndEnableDuplex([](IOReturn, DuplexStageResult) {});
+
+    ASSERT_EQ(bus.writes.size(), 1U);
+    // 11 at shift 24, 12 at shift 16, with both change/activate pairs set.
+    EXPECT_EQ(bus.writes[0].value, 0xCBCC0000U);
+}
+
 TEST(MotuV2DuplexTests, PrepareSetsBothExcludeBitsWhenOpticalIsNotAdat) {
     RecordingBus bus;
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
@@ -355,7 +500,8 @@ TEST(MotuV2DuplexTests, PrepareSetsBothExcludeBitsWhenOpticalIsNotAdat) {
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
-    protocol.PrepareDuplex48k(MakeChannels(), [&](IOReturn s) { status = s; });
+    protocol.PrepareDuplex(MakeChannels(), kClock48k,
+                           [&](IOReturn s, DuplexPrepareResult) { status = s; });
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnSuccess);
@@ -381,7 +527,8 @@ TEST(MotuV2DuplexTests, PrepareClearsExcludeBitsWhenOpticalIsAdat) {
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
-    protocol.PrepareDuplex48k(MakeChannels(), [&](IOReturn s) { status = s; });
+    protocol.PrepareDuplex(MakeChannels(), kClock48k,
+                           [&](IOReturn s, DuplexPrepareResult) { status = s; });
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnSuccess);
@@ -399,7 +546,8 @@ TEST(MotuV2DuplexTests, PrepareTreatsUndecodableOpticalConfigAsDifferedChunks) {
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
-    protocol.PrepareDuplex48k(MakeChannels(), [&](IOReturn s) { status = s; });
+    protocol.PrepareDuplex(MakeChannels(), kClock48k,
+                           [&](IOReturn s, DuplexPrepareResult) { status = s; });
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnSuccess);
@@ -414,7 +562,8 @@ TEST(MotuV2DuplexTests, PrepareReportsOpticalReadFailureWithoutWriting) {
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
-    protocol.PrepareDuplex48k(MakeChannels(), [&](IOReturn s) { status = s; });
+    protocol.PrepareDuplex(MakeChannels(), kClock48k,
+                           [&](IOReturn s, DuplexPrepareResult) { status = s; });
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnTimeout);
@@ -429,11 +578,11 @@ TEST(MotuV2DuplexTests, EnableActivatesBothDirectionsWithTheirChannels) {
     RouteState routes;
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
-    protocol.PrepareDuplex48k(MakeChannels(), [](IOReturn) {});
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
     bus.writes.clear();
 
     std::optional<IOReturn> status;
-    protocol.ProgramTxAndEnableDuplex48k([&](IOReturn s) { status = s; });
+    protocol.ProgramTxAndEnableDuplex([&](IOReturn s, DuplexStageResult) { status = s; });
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnSuccess);
@@ -451,7 +600,7 @@ TEST(MotuV2DuplexTests, EnableBeforePrepareIsRejectedAndWritesNothing) {
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
-    protocol.ProgramTxAndEnableDuplex48k([&](IOReturn s) { status = s; });
+    protocol.ProgramTxAndEnableDuplex([&](IOReturn s, DuplexStageResult) { status = s; });
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnNotReady);
@@ -464,7 +613,7 @@ TEST(MotuV2DuplexTests, ProgramRxIsASuccessfulNoOpOnV2) {
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
-    protocol.ProgramRxForDuplex48k([&](IOReturn s) { status = s; });
+    protocol.ProgramRx([&](IOReturn s, DuplexStageResult) { status = s; });
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnSuccess);
@@ -480,10 +629,10 @@ TEST(MotuV2DuplexTests, ConfirmAcceptsBothDirectionsOnTheExpectedChannels) {
     RouteState routes;
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
-    protocol.PrepareDuplex48k(MakeChannels(), [](IOReturn) {});
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
 
     std::optional<IOReturn> status;
-    protocol.ConfirmDuplex48kStart([&](IOReturn s) { status = s; });
+    protocol.ConfirmDuplexStart([&](IOReturn s, DuplexConfirmResult) { status = s; });
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnSuccess);
@@ -498,10 +647,10 @@ TEST(MotuV2DuplexTests, ConfirmRejectsWhenTheDeviceReportsDifferentChannels) {
     RouteState routes;
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
-    protocol.PrepareDuplex48k(MakeChannels(), [](IOReturn) {});
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
 
     std::optional<IOReturn> status;
-    protocol.ConfirmDuplex48kStart([&](IOReturn s) { status = s; });
+    protocol.ConfirmDuplexStart([&](IOReturn s, DuplexConfirmResult) { status = s; });
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnNotReady);
@@ -516,10 +665,10 @@ TEST(MotuV2DuplexTests, ConfirmRejectsWhenOnlyOneDirectionIsActivated) {
     RouteState routes;
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
-    protocol.PrepareDuplex48k(MakeChannels(), [](IOReturn) {});
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
 
     std::optional<IOReturn> status;
-    protocol.ConfirmDuplex48kStart([&](IOReturn s) { status = s; });
+    protocol.ConfirmDuplexStart([&](IOReturn s, DuplexConfirmResult) { status = s; });
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnNotReady);
@@ -533,8 +682,8 @@ TEST(MotuV2DuplexTests, StopDeactivatesBothDirectionsAndKeepsTheChannelFields) {
     RouteState routes;
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
-    protocol.PrepareDuplex48k(MakeChannels(), [](IOReturn) {});
-    protocol.ProgramTxAndEnableDuplex48k([](IOReturn) {});
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+    protocol.ProgramTxAndEnableDuplex([](IOReturn, DuplexStageResult) {});
     bus.writes.clear();
 
     EXPECT_EQ(protocol.StopDuplex(), kIOReturnSuccess);
