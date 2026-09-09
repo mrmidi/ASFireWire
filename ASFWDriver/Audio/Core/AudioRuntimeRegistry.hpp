@@ -83,7 +83,8 @@ public:
         uint32_t durationSeconds,
         uint32_t strataSize,
         uint32_t seed,
-        uint32_t assumedDriftPpm) noexcept;
+        uint32_t assumedDriftPpm,
+        uint32_t* outSessionId = nullptr) noexcept;
 
     [[nodiscard]] bool StopTxLatencySession(
         Devices::AudioEndpointId endpointId) noexcept;
@@ -92,6 +93,7 @@ public:
         Devices::AudioEndpointId endpointId,
         uint32_t pageIndex,
         uint32_t samplesPerPage,
+        uint32_t requestedSessionId,
         UserClient::Wire::TxLatencyResultsPageWire& out) noexcept;
 
     void Remove(Devices::AudioEndpointId endpointId) noexcept;

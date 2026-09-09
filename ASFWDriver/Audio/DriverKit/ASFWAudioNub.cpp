@@ -651,14 +651,22 @@ ASFWDriver* ASFWAudioNub::GetParentDriver() const
 void ASFWAudioNub::RegisterTxLatencySession(void* session)
 {
     if (auto endpoint = FindEndpointRuntime(ivars)) {
-        endpoint->RegisterTxLatencySession(reinterpret_cast<ASFW::Audio::Runtime::TxLatencySession*>(session));
+        if (session) {
+            auto* pShared = reinterpret_cast<std::shared_ptr<ASFW::Audio::Runtime::TxLatencySession>*>(session);
+            endpoint->RegisterTxLatencySession(*pShared);
+        }
     }
 }
 
 void ASFWAudioNub::UnregisterTxLatencySession(void* session)
 {
     if (auto endpoint = FindEndpointRuntime(ivars)) {
-        endpoint->UnregisterTxLatencySession(reinterpret_cast<ASFW::Audio::Runtime::TxLatencySession*>(session));
+        if (session) {
+            auto* pShared = reinterpret_cast<std::shared_ptr<ASFW::Audio::Runtime::TxLatencySession>*>(session);
+            endpoint->UnregisterTxLatencySession(*pShared);
+        } else {
+            endpoint->UnregisterTxLatencySession(nullptr);
+        }
     }
 }
 

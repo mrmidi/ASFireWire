@@ -56,7 +56,7 @@ final class TxLatencyViewModel: ObservableObject {
         isCapturing = true
 
         let seedVal = UInt32(seed) ?? 0
-        let kr = connector.startTxLatencySession(
+        let (kr, sessionId) = connector.startTxLatencySession(
             endpointID: endpoint,
             durationSeconds: UInt32(durationSeconds),
             strataSize: UInt32(strataSize),
@@ -70,7 +70,7 @@ final class TxLatencyViewModel: ObservableObject {
             return
         }
 
-        startPolling(endpoint: endpoint)
+        startPolling(endpoint: endpoint, sessionId: sessionId)
     }
 
     func stopSession() {
@@ -78,20 +78,20 @@ final class TxLatencyViewModel: ObservableObject {
         _ = connector.stopTxLatencySession(endpointID: endpoint)
     }
 
-    private func startPolling(endpoint: AudioEndpointID) {
+    private func startPolling(endpoint: AudioEndpointID, sessionId: UInt32) {
         pollTask?.cancel()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(400))
                 guard let self = self else { return }
 
-                if let page = self.connector.getTxLatencyResultsPage(endpointID: endpoint, pageIndex: 0, samplesPerPage: 1) {
+                if let page = self.connector.getTxLatencyResultsPage(endpointID: endpoint, pageIndex: 0, samplesPerPage: 1, sessionId: sessionId) {
                     self.currentHeader = page.header
                     self.lastFetchTime = Date()
 
                     if page.header.sessionState == .frozen {
                         // Capture complete, fetch full report
-                        if let fullReport = self.connector.fetchTxLatencySession(endpointID: endpoint) {
+                        if let fullReport = self.connector.fetchTxLatencySession(endpointID: endpoint, sessionId: sessionId) {
                             self.report = fullReport
                             self.currentHeader = fullReport.header
                         }
@@ -263,6 +263,14 @@ struct TxLatencyView: View {
         GroupBox("Session Status") {
             HStack(spacing: 24) {
                 statusBadge(header.sessionState)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Session ID")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("#\(header.sessionId)")
+                        .font(.headline.monospacedDigit())
+                }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Packets Seen")

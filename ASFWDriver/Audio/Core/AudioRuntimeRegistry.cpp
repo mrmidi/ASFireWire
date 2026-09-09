@@ -182,10 +182,11 @@ bool AudioRuntimeRegistry::StartTxLatencySession(
     uint32_t durationSeconds,
     uint32_t strataSize,
     uint32_t seed,
-    uint32_t assumedDriftPpm) noexcept {
+    uint32_t assumedDriftPpm,
+    uint32_t* outSessionId) noexcept {
     auto runtime = FindEndpointRuntime(endpointId);
     if (!runtime) return false;
-    return runtime->StartTxLatencySession(durationSeconds, strataSize, seed, assumedDriftPpm);
+    return runtime->StartTxLatencySession(durationSeconds, strataSize, seed, assumedDriftPpm, outSessionId);
 }
 
 bool AudioRuntimeRegistry::StopTxLatencySession(
@@ -199,10 +200,11 @@ bool AudioRuntimeRegistry::CopyTxLatencyResults(
     Devices::AudioEndpointId endpointId,
     uint32_t pageIndex,
     uint32_t samplesPerPage,
+    uint32_t requestedSessionId,
     UserClient::Wire::TxLatencyResultsPageWire& out) noexcept {
     auto runtime = FindEndpointRuntime(endpointId);
     if (!runtime) return false;
-    return runtime->CopyTxLatencyResults(pageIndex, samplesPerPage, out);
+    return runtime->CopyTxLatencyResults(pageIndex, samplesPerPage, requestedSessionId, out);
 }
 
 void AudioRuntimeRegistry::Remove(Devices::AudioEndpointId endpointId) noexcept {

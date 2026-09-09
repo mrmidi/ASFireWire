@@ -429,25 +429,48 @@ public:
         return true;
     }
 
-    void RegisterTxLatencySession(Runtime::TxLatencySession* session) noexcept {
-        txLatencySession_.store(session, std::memory_order_release);
+    void RegisterTxLatencySession(std::shared_ptr<Runtime::TxLatencySession> session) noexcept {
+        if (lock_) {
+            IOLockLock(lock_);
+            txLatencySession_ = std::move(session);
+            IOLockUnlock(lock_);
+        } else {
+            txLatencySession_ = std::move(session);
+        }
     }
 
-    void UnregisterTxLatencySession(Runtime::TxLatencySession* session) noexcept {
-        Runtime::TxLatencySession* expected = session;
-        txLatencySession_.compare_exchange_strong(expected, nullptr, std::memory_order_release);
+    void UnregisterTxLatencySession(const std::shared_ptr<Runtime::TxLatencySession>& session) noexcept {
+        std::shared_ptr<Runtime::TxLatencySession> oldSession;
+        if (lock_) {
+            IOLockLock(lock_);
+            if (!session || txLatencySession_ == session) {
+                oldSession = std::move(txLatencySession_);
+                txLatencySession_.reset();
+            }
+            IOLockUnlock(lock_);
+        } else {
+            if (!session || txLatencySession_ == session) {
+                oldSession = std::move(txLatencySession_);
+                txLatencySession_.reset();
+            }
+        }
+        if (oldSession) {
+            oldSession->RequestStop(Runtime::TxLatencyTerminationReason::DriverTeardown);
+            oldSession->PollQuiescence();
+        }
     }
 
     [[nodiscard]] bool StartTxLatencySession(uint32_t durationSeconds,
                                              uint32_t strataSize,
                                              uint32_t seed,
-                                             uint32_t assumedDriftPpm) noexcept {
-        auto* session = txLatencySession_.load(std::memory_order_acquire);
-        if (!session) return false;
+                                             uint32_t assumedDriftPpm,
+                                             uint32_t* outSessionId = nullptr) noexcept {
+        std::shared_ptr<Runtime::TxLatencySession> session;
         uint64_t epoch = 0;
         uint32_t rate = currentSampleRateHz_;
         if (lock_) {
             IOLockLock(lock_);
+            session = txLatencySession_;
             if (directControl_) {
                 epoch = directControl_->hardwareTimeline.Epoch();
             }
@@ -455,25 +478,53 @@ public:
                 rate = directSampleRateHz_;
             }
             IOLockUnlock(lock_);
+        } else {
+            session = txLatencySession_;
         }
-        return session->Arm(1 /* sessionId */, epoch, rate, durationSeconds,
+        if (!session) return false;
+
+        uint32_t sid = nextSessionId_.fetch_add(1, std::memory_order_relaxed);
+        if (sid == 0) {
+            sid = nextSessionId_.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (outSessionId) {
+            *outSessionId = sid;
+        }
+
+        return session->Arm(sid, epoch, rate, durationSeconds,
                             Runtime::kTxLatencyMaxSamples, seed, strataSize, assumedDriftPpm);
     }
 
     [[nodiscard]] bool StopTxLatencySession() noexcept {
-        auto* session = txLatencySession_.load(std::memory_order_acquire);
+        std::shared_ptr<Runtime::TxLatencySession> session;
+        if (lock_) {
+            IOLockLock(lock_);
+            session = txLatencySession_;
+            IOLockUnlock(lock_);
+        } else {
+            session = txLatencySession_;
+        }
         if (!session) return false;
         session->RequestStop(Runtime::TxLatencyTerminationReason::UserStopped);
+        session->PollQuiescence();
         return true;
     }
 
     [[nodiscard]] bool CopyTxLatencyResults(
         uint32_t pageIndex,
         uint32_t samplesPerPage,
+        uint32_t requestedSessionId,
         UserClient::Wire::TxLatencyResultsPageWire& out) const noexcept {
-        auto* session = txLatencySession_.load(std::memory_order_acquire);
+        std::shared_ptr<Runtime::TxLatencySession> session;
+        if (lock_) {
+            IOLockLock(lock_);
+            session = txLatencySession_;
+            IOLockUnlock(lock_);
+        } else {
+            session = txLatencySession_;
+        }
         if (!session) return false;
-        return session->CopyWirePage(pageIndex, samplesPerPage, endpointId_.value, out);
+        return session->CopyWirePage(pageIndex, samplesPerPage, requestedSessionId, endpointId_.value, out);
     }
 
 private:
@@ -879,7 +930,8 @@ private:
     uint32_t directInputCapacityChannels_{0};
     Runtime::AudioTransportControlBlock* directControl_{nullptr};
     uint32_t directSampleRateHz_{0};
-    std::atomic<Runtime::TxLatencySession*> txLatencySession_{nullptr};
+    std::shared_ptr<Runtime::TxLatencySession> txLatencySession_{nullptr};
+    mutable std::atomic<uint32_t> nextSessionId_{1};
 };
 
 } // namespace ASFW::Audio

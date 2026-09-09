@@ -660,19 +660,19 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
         nil
     }
 
-    func mcpStartTxLatencySession(endpointID: AudioEndpointID, durationSeconds: UInt32, strataSize: UInt32, seed: UInt32, assumedDriftPpm: UInt32) -> Bool {
-        true
+    func mcpStartTxLatencySession(endpointID: AudioEndpointID, durationSeconds: UInt32, strataSize: UInt32, seed: UInt32, assumedDriftPpm: UInt32) -> (ok: Bool, sessionId: UInt32) {
+        (true, 1)
     }
 
     func mcpStopTxLatencySession(endpointID: AudioEndpointID) -> Bool {
         true
     }
 
-    func mcpGetTxLatencyResultsPage(endpointID: AudioEndpointID, pageIndex: UInt32, samplesPerPage: UInt32) -> TxLatencyResultsPage? {
+    func mcpGetTxLatencyResultsPage(endpointID: AudioEndpointID, pageIndex: UInt32, samplesPerPage: UInt32, sessionId: UInt32) -> TxLatencyResultsPage? {
         nil
     }
 
-    func mcpFetchTxLatencyReport(endpointID: AudioEndpointID) -> TxLatencySessionReport? {
+    func mcpFetchTxLatencyReport(endpointID: AudioEndpointID, sessionId: UInt32) -> TxLatencySessionReport? {
         nil
     }
 }

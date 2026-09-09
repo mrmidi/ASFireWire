@@ -73,65 +73,86 @@ TEST(TxLatencyMeasurementTests, ClassifyTxLatencySampleOutcomes) {
     txBounds.uncertaintyHostTicks = 500;
 
     TxLatencyUnresolvedReason reason = TxLatencyUnresolvedReason::None;
+    constexpr uint16_t kSuccessAck = 0x11; // ack_complete (17)
 
-    // 1. Success case: Resolved, published before tx, identity proven, no substitution.
+    // 1. Success case: ack_complete (0x11), resolved, published before tx, identity proven, no substitution.
     auto outcome = ClassifyTxLatencySample(
-        0, true, false, PublicationCoverageResult::Resolved, txBounds, 90'000, reason);
+        kSuccessAck, true, false, PublicationCoverageResult::Resolved, txBounds, 85'000, 90'000, reason);
     EXPECT_EQ(outcome, TxLatencyOutcome::Matched);
     EXPECT_EQ(reason, TxLatencyUnresolvedReason::None);
 
-    // 2. Hardware event error
+    // 2. Event code 0 (evt_no_status) is unresolved (unrecognized event code)
     outcome = ClassifyTxLatencySample(
-        0x12, true, false, PublicationCoverageResult::Resolved, txBounds, 90'000, reason);
+        0, true, false, PublicationCoverageResult::Resolved, txBounds, 85'000, 90'000, reason);
     EXPECT_EQ(outcome, TxLatencyOutcome::Unresolved);
     EXPECT_EQ(reason, TxLatencyUnresolvedReason::UnrecognizedEventCode);
 
-    // 3. Stale correlation
+    // 3. Hardware failure event codes -> TransmitFailed
+    // Underrun (0x04)
+    outcome = ClassifyTxLatencySample(
+        0x04, true, false, PublicationCoverageResult::Resolved, txBounds, 85'000, 90'000, reason);
+    EXPECT_EQ(outcome, TxLatencyOutcome::TransmitFailed);
+    // Missing ack (0x03)
+    outcome = ClassifyTxLatencySample(
+        0x03, true, false, PublicationCoverageResult::Resolved, txBounds, 85'000, 90'000, reason);
+    EXPECT_EQ(outcome, TxLatencyOutcome::TransmitFailed);
+    // Bus reset (0x1D)
+    outcome = ClassifyTxLatencySample(
+        0x1D, true, false, PublicationCoverageResult::Resolved, txBounds, 85'000, 90'000, reason);
+    EXPECT_EQ(outcome, TxLatencyOutcome::TransmitFailed);
+
+    // 4. Stale correlation
     TransmitBounds staleBounds{};
     staleBounds.valid = false;
     staleBounds.failureReason = TxLatencyUnresolvedReason::StaleCorrelation;
     outcome = ClassifyTxLatencySample(
-        0, true, false, PublicationCoverageResult::Resolved, staleBounds, 90'000, reason);
+        kSuccessAck, true, false, PublicationCoverageResult::Resolved, staleBounds, 85'000, 90'000, reason);
     EXPECT_EQ(outcome, TxLatencyOutcome::Unresolved);
     EXPECT_EQ(reason, TxLatencyUnresolvedReason::StaleCorrelation);
 
-    // 4. Missing image provenance (aged out)
+    // 5. Missing image provenance (aged out)
     outcome = ClassifyTxLatencySample(
-        0, false, false, PublicationCoverageResult::Resolved, txBounds, 90'000, reason);
+        kSuccessAck, false, false, PublicationCoverageResult::Resolved, txBounds, 85'000, 90'000, reason);
     EXPECT_EQ(outcome, TxLatencyOutcome::AgedOut);
     EXPECT_EQ(reason, TxLatencyUnresolvedReason::ProvenanceAgedOut);
 
-    // 5. Substitution
+    // 6. Substitution
     outcome = ClassifyTxLatencySample(
-        0, true, true, PublicationCoverageResult::Resolved, txBounds, 90'000, reason);
+        kSuccessAck, true, true, PublicationCoverageResult::Resolved, txBounds, 85'000, 90'000, reason);
     EXPECT_EQ(outcome, TxLatencyOutcome::Substituted);
 
-    // 6. Coverage Pending
+    // 7. Coverage Pending
     outcome = ClassifyTxLatencySample(
-        0, true, false, PublicationCoverageResult::Pending, txBounds, 90'000, reason);
+        kSuccessAck, true, false, PublicationCoverageResult::Pending, txBounds, 85'000, 90'000, reason);
     EXPECT_EQ(outcome, TxLatencyOutcome::Unresolved);
     EXPECT_EQ(reason, TxLatencyUnresolvedReason::CoveragePending);
 
-    // 7. Coverage Gap
+    // 8. Coverage Gap
     outcome = ClassifyTxLatencySample(
-        0, true, false, PublicationCoverageResult::Gap, txBounds, 90'000, reason);
+        kSuccessAck, true, false, PublicationCoverageResult::Gap, txBounds, 85'000, 90'000, reason);
     EXPECT_EQ(outcome, TxLatencyOutcome::Unresolved);
     EXPECT_EQ(reason, TxLatencyUnresolvedReason::CoverageGap);
 
-    // 8. Epoch Mismatch
+    // 9. Epoch Mismatch
     outcome = ClassifyTxLatencySample(
-        0, true, false, PublicationCoverageResult::EpochMismatch, txBounds, 90'000, reason);
+        kSuccessAck, true, false, PublicationCoverageResult::EpochMismatch, txBounds, 85'000, 90'000, reason);
     EXPECT_EQ(outcome, TxLatencyOutcome::Unresolved);
     EXPECT_EQ(reason, TxLatencyUnresolvedReason::EpochMismatch);
 
-    // 9. Aged Out
+    // 10. Aged Out
     outcome = ClassifyTxLatencySample(
-        0, true, false, PublicationCoverageResult::AgedOut, txBounds, 90'000, reason);
+        kSuccessAck, true, false, PublicationCoverageResult::AgedOut, txBounds, 85'000, 90'000, reason);
     EXPECT_EQ(outcome, TxLatencyOutcome::AgedOut);
     EXPECT_EQ(reason, TxLatencyUnresolvedReason::PublicationAgedOut);
 
-    // 10. Physically impossible (transmission latest strictly before publication)
+    // 11. Overlapping intervals: P=[95'000, 105'000], T=[100'000, 110'000].
+    // Since T_latest (110'000) >= P_earliest (95'000), physically possible -> Matched.
     outcome = ClassifyTxLatencySample(
-        0, true, false, PublicationCoverageResult::Resolved, txBounds, 120'000, reason);
+        kSuccessAck, true, false, PublicationCoverageResult::Resolved, txBounds, 95'000, 105'000, reason);
+    EXPECT_EQ(outcome, TxLatencyOutcome::Matched);
+
+    // 12. Physically impossible: T_latest (110'000) < P_earliest (115'000) -> Invalid.
+    outcome = ClassifyTxLatencySample(
+        kSuccessAck, true, false, PublicationCoverageResult::Resolved, txBounds, 115'000, 120'000, reason);
     EXPECT_EQ(outcome, TxLatencyOutcome::Invalid);
 }

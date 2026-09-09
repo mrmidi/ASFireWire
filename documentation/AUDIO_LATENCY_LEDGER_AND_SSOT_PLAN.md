@@ -259,7 +259,7 @@ Follow one frame. Events:
 
 | Event | Meaning | Observed? |
 |-------|---------|-----------|
-| `E0` | HAL client writes the frame into the shared output buffer | publication hook exists; correlate actual event/time |
+| `E0` | HAL client writes the frame into the shared output buffer | publication bracket $[P_{\text{earliest}}, P_{\text{latest}}]$; observed across commit interval |
 | `E1` | the packet carrying it reaches payload finality (`finalizedEnd` passes it) | decision exists; timestamp/history still need repair |
 | `E2` | OHCI IT DMA transmits that packet onto the wire | per-packet completion evidence; absolute execution identity must be justified |
 | `E3` | the packet is received by the device | **no — never observed** |

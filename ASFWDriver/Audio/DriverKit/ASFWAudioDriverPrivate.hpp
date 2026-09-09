@@ -372,11 +372,10 @@ struct AudioDriverRuntimeState {
     ASFW::Audio::Families::BeBoB::MAudio::InternalTxTiming
         mAudioInternalTxTiming;
 
-    // Audio-owned immutable publication boundary between CoreAudio WriteEnd
-    // and physical TX planning. It retains bytes only and owns no clock.
     ASFW::Audio::Runtime::PcmPublicationCache pcmPublicationCache;
     ASFW::Audio::Runtime::PublicationRangeRing publicationHistory;
-    ASFW::Audio::Runtime::TxLatencySession txLatencySession;
+    std::shared_ptr<ASFW::Audio::Runtime::TxLatencySession> txLatencySession{
+        std::make_shared<ASFW::Audio::Runtime::TxLatencySession>()};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Audio::Runtime::RxSequenceReplayReader txReplayReader;

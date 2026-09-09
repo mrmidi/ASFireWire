@@ -400,7 +400,9 @@ void RecordLedgerFinality(
 void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                        uint64_t transportGeneration,
                        bool useMAudio) noexcept {
-    ivars.runtime.txLatencySession.PollQuiescence();
+    if (ivars.runtime.txLatencySession) {
+        ivars.runtime.txLatencySession->PollQuiescence();
+    }
     auto* queue = ivars.runtime.txSlotProvider.queueControl;
     auto* control = ivars.runtime.directAudioGraph.control;
     if (!queue || !control) return;
@@ -424,7 +426,9 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
         ivars.runtime.txCompletionStampCursor, stampCount,
         ASFW::Isoch::kIsochTxCompletionStampSlots);
     if (drain.missed != 0) {
-        ivars.runtime.txLatencySession.NoteStampsMissed(drain.missed);
+        if (ivars.runtime.txLatencySession) {
+            ivars.runtime.txLatencySession->NoteStampsMissed(drain.missed);
+        }
         const uint64_t missed =
             control->backendCompletionStampsMissed.fetch_add(
                 drain.missed, std::memory_order_relaxed) + drain.missed;
@@ -437,7 +441,9 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
     }
     if (drain.Empty()) {
         ivars.runtime.txCompletionStampCursor = stampCount;
-        ivars.runtime.txLatencySession.PollQuiescence();
+        if (ivars.runtime.txLatencySession) {
+            ivars.runtime.txLatencySession->PollQuiescence();
+        }
         return;
     }
     const uint64_t cursor = drain.first;
@@ -523,9 +529,11 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                                        compCycleTimer, compMetadata)) {
                 continue;
             }
-            ivars.runtime.txLatencySession.ObserveCompletion(
-                packetIndex, compCycleTimer, compMetadata, pair, timeline,
-                ivars.runtime.publicationHistory, pair.hostTimeMid);
+            if (ivars.runtime.txLatencySession) {
+                ivars.runtime.txLatencySession->ObserveCompletion(
+                    packetIndex, compCycleTimer, compMetadata, pair, timeline,
+                    ivars.runtime.publicationHistory, pair.hostTimeMid);
+            }
             if (!haveData) {
                 // Fallback for a wake that turns out to carry no audio: the
                 // warm-up still wants a zero-frame event to count.
@@ -554,7 +562,9 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
             }
         }
         ivars.runtime.txCompletionStampCursor = stampCount;
-        ivars.runtime.txLatencySession.PollQuiescence();
+        if (ivars.runtime.txLatencySession) {
+            ivars.runtime.txLatencySession->PollQuiescence();
+        }
         if (!haveStamp) return;
 
         const auto converted =
@@ -594,7 +604,9 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                     converted.observation.correlationHostTicks,
             }, "maudio-tx");
         }
-        ivars.runtime.txLatencySession.PollQuiescence();
+        if (ivars.runtime.txLatencySession) {
+            ivars.runtime.txLatencySession->PollQuiescence();
+        }
         return;
     }
 
@@ -619,9 +631,11 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                                    compCycleTimer, compMetadata)) {
             continue;
         }
-        ivars.runtime.txLatencySession.ObserveCompletion(
-            packetIndex, compCycleTimer, compMetadata, pair, timeline,
-            ivars.runtime.publicationHistory, pair.hostTimeMid);
+        if (ivars.runtime.txLatencySession) {
+            ivars.runtime.txLatencySession->ObserveCompletion(
+                packetIndex, compCycleTimer, compMetadata, pair, timeline,
+                ivars.runtime.publicationHistory, pair.hostTimeMid);
+        }
         if (!finalityStamped) {
             // One stamp per wake, recorded before any lookup consults the ring.
             // Omitting this is what left I2 with every sample unresolved: the
@@ -692,7 +706,9 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
         }
     }
     ivars.runtime.txCompletionStampCursor = stampCount;
-    ivars.runtime.txLatencySession.PollQuiescence();
+    if (ivars.runtime.txLatencySession) {
+        ivars.runtime.txLatencySession->PollQuiescence();
+    }
 }
 
 } // namespace
@@ -1129,7 +1145,9 @@ void RepublishTxRingForRestart(ASFWAudioDriver_IVars& ivars) noexcept {
         ivars.runtime.txStreamEngineSecondary.ResetForStart(0);
     }
     ivars.runtime.publicationHistory.Reset();
-    ivars.runtime.txLatencySession.Reset();
+    if (ivars.runtime.txLatencySession) {
+        ivars.runtime.txLatencySession->HandleStreamReset();
+    }
     // The new stream re-derives its bus-time origin; carrying the old
     // high-water mark would reject every anchor until it caught up.
     ivars.runtime.txPlanBusTicksValid = false;

@@ -698,7 +698,7 @@ extension ASFWMCPCore {
             let seed = (try? decoder.uint32("seed")) ?? 0
             let drift = (try? decoder.uint32("assumedDriftPpm")) ?? 100
 
-            let ok = await driver.startTxLatencySession(
+            let (ok, sessionId) = await driver.startTxLatencySession(
                 endpointID: endpointId,
                 durationSeconds: duration,
                 strataSize: strata,
@@ -712,6 +712,7 @@ extension ASFWMCPCore {
                     ok: true,
                     data: .object([
                         "endpointId": .uint64(endpointRaw),
+                        "sessionId": .int(Int(sessionId)),
                         "status": .string("armed"),
                         "durationSeconds": .int(Int(duration)),
                         "strataSize": .int(Int(strata)),
@@ -772,13 +773,15 @@ extension ASFWMCPCore {
             }
 
             let endpointId = AudioEndpointID(endpointRaw)
+            let requestedSessionId = (try? decoder.uint32("sessionId")) ?? 0
 
             if let pageIndex = try? decoder.uint32("pageIndex") {
                 let samplesPerPage = (try? decoder.uint32("samplesPerPage")) ?? 32
                 if let page = await driver.fetchTxLatencyResultsPage(
                     endpointID: endpointId,
                     pageIndex: pageIndex,
-                    samplesPerPage: samplesPerPage
+                    samplesPerPage: samplesPerPage,
+                    sessionId: requestedSessionId
                 ) {
                     return ASFWMCPToolCallResult(
                         toolName: name,
@@ -794,7 +797,7 @@ extension ASFWMCPCore {
                     )
                 }
             } else {
-                if let report = await driver.fetchTxLatencyReport(endpointID: endpointId) {
+                if let report = await driver.fetchTxLatencyReport(endpointID: endpointId, sessionId: requestedSessionId) {
                     return ASFWMCPToolCallResult(
                         toolName: name,
                         ok: true,

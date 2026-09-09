@@ -19,13 +19,14 @@ struct TxLatencyWireParsingTests {
         }
     }
 
-    private func fixture(version: UInt32 = 1, sampleCount: UInt32 = 2) -> Data {
+    private func fixture(version: UInt32 = 2, sampleCount: UInt32 = 2) -> Data {
         var wire = Data(repeating: 0, count: TxLatencyWireDecoder.pageBytes)
 
         // Header (192 bytes)
         setLE(version, at: 0, in: &wire)
         setLE(UInt32(4), at: 4, in: &wire) // sessionState: 4 = frozen
-        setLE(UInt32(1), at: 8, in: &wire) // termReason: 1 = durationExpired
+        setLE(UInt32(2), at: 8, in: &wire) // termReason: 2 = deadlineExpired
+        setLE(UInt32(42), at: 12, in: &wire) // sessionId: 42
         setLE(UInt64(101), at: 16, in: &wire) // endpointId
         setLE(UInt64(1), at: 24, in: &wire) // epoch
         setLE(UInt64(1_000_000), at: 32, in: &wire) // startHostTicks
@@ -53,40 +54,42 @@ struct TxLatencyWireParsingTests {
         setLE(UInt32(1), at: 196, in: &wire) // totalPages
         setLE(sampleCount, at: 200, in: &wire) // samplesInPage
 
-        // Sample 0 at offset 208
+        // Sample 0 at offset 208 (80 bytes)
         if sampleCount >= 1 {
             let s0 = 208
             setLE(UInt64(42), at: s0 + 0, in: &wire) // packetIndex
             setLE(UInt64(1000), at: s0 + 8, in: &wire) // startFrame
             setLE(UInt64(1006), at: s0 + 16, in: &wire) // endFrame
-            setLE(UInt64(1_010_000), at: s0 + 24, in: &wire) // pubTicks
-            setLE(UInt64(1_020_000), at: s0 + 32, in: &wire) // txTicks
-            setLE(UInt32(150), at: s0 + 40, in: &wire) // uncertainty
-            setLE(UInt32(350_000), at: s0 + 44, in: &wire) // waitMinNanos
-            setLE(UInt32(450_000), at: s0 + 48, in: &wire) // waitMaxNanos
-            wire[s0 + 52] = 1 // outcome = matched
-            wire[s0 + 53] = 0 // unresolvedReason = none
-            wire[s0 + 54] = 1 // selectedImage = 1
-            wire[s0 + 55] = 3 // arbitrationPhase = 3
-            wire[s0 + 56] = 1 // pcmProven = 1
+            setLE(UInt64(1_008_000), at: s0 + 24, in: &wire) // pubEarliest
+            setLE(UInt64(1_010_000), at: s0 + 32, in: &wire) // pubLatest
+            setLE(UInt64(1_020_000), at: s0 + 40, in: &wire) // txTicks
+            setLE(Int64(350_000), at: s0 + 48, in: &wire) // waitMinNanos
+            setLE(Int64(450_000), at: s0 + 56, in: &wire) // waitMaxNanos
+            setLE(UInt32(150), at: s0 + 64, in: &wire) // uncertainty
+            wire[s0 + 68] = 1 // outcome = matched
+            wire[s0 + 69] = 0 // unresolvedReason = none
+            wire[s0 + 70] = 1 // selectedImage = 1
+            wire[s0 + 71] = 3 // arbitrationPhase = 3
+            wire[s0 + 72] = 1 // pcmProven = 1
         }
 
-        // Sample 1 at offset 208 + 64 = 272
+        // Sample 1 at offset 208 + 80 = 288 (80 bytes)
         if sampleCount >= 2 {
-            let s1 = 208 + 64
+            let s1 = 208 + 80
             setLE(UInt64(50), at: s1 + 0, in: &wire) // packetIndex
             setLE(UInt64(1048), at: s1 + 8, in: &wire) // startFrame
             setLE(UInt64(1054), at: s1 + 16, in: &wire) // endFrame
-            setLE(UInt64(1_030_000), at: s1 + 24, in: &wire) // pubTicks
-            setLE(UInt64(1_042_000), at: s1 + 32, in: &wire) // txTicks
-            setLE(UInt32(160), at: s1 + 40, in: &wire) // uncertainty
-            setLE(UInt32(400_000), at: s1 + 44, in: &wire) // waitMinNanos
-            setLE(UInt32(500_000), at: s1 + 48, in: &wire) // waitMaxNanos
-            wire[s1 + 52] = 1 // outcome = matched
-            wire[s1 + 53] = 0 // unresolvedReason = none
-            wire[s1 + 54] = 0 // selectedImage = 0
-            wire[s1 + 55] = 5 // arbitrationPhase = 5
-            wire[s1 + 56] = 1 // pcmProven = 1
+            setLE(UInt64(1_028_000), at: s1 + 24, in: &wire) // pubEarliest
+            setLE(UInt64(1_030_000), at: s1 + 32, in: &wire) // pubLatest
+            setLE(UInt64(1_042_000), at: s1 + 40, in: &wire) // txTicks
+            setLE(Int64(400_000), at: s1 + 48, in: &wire) // waitMinNanos
+            setLE(Int64(500_000), at: s1 + 56, in: &wire) // waitMaxNanos
+            setLE(UInt32(160), at: s1 + 64, in: &wire) // uncertainty
+            wire[s1 + 68] = 1 // outcome = matched
+            wire[s1 + 69] = 0 // unresolvedReason = none
+            wire[s1 + 70] = 0 // selectedImage = 0
+            wire[s1 + 71] = 5 // arbitrationPhase = 5
+            wire[s1 + 72] = 1 // pcmProven = 1
         }
 
         return wire
@@ -96,9 +99,10 @@ struct TxLatencyWireParsingTests {
         let wire = fixture()
         let page = try #require(TxLatencyWireDecoder.decodePage(wire))
 
-        #expect(page.header.version == 1)
+        #expect(page.header.version == 2)
         #expect(page.header.sessionState == .frozen)
-        #expect(page.header.terminationReason == .durationExpired)
+        #expect(page.header.terminationReason == .deadlineExpired)
+        #expect(page.header.sessionId == 42)
         #expect(page.header.endpointId == AudioEndpointID(101))
         #expect(page.header.durationSeconds == 5)
         #expect(page.header.strataSize == 8)
@@ -118,6 +122,10 @@ struct TxLatencyWireParsingTests {
         #expect(s0.pcmCommittedStartFrame == 1000)
         #expect(s0.pcmCommittedEndFrame == 1006)
         #expect(s0.frameSpan == 6)
+        #expect(s0.pubEarliestHostTicks == 1_008_000)
+        #expect(s0.pubLatestHostTicks == 1_010_000)
+        #expect(s0.waitMinNanos == 350_000)
+        #expect(s0.waitMaxNanos == 450_000)
         #expect(s0.waitMinMicros == 350.0)
         #expect(s0.waitMaxMicros == 450.0)
         #expect(s0.waitCenterMicros == 400.0)
@@ -132,6 +140,21 @@ struct TxLatencyWireParsingTests {
         #expect(s1.waitCenterMicros == 450.0)
         #expect(s1.selectedImage == 0)
         #expect(s1.arbitrationPhase == 5)
+    }
+
+    @Test func decodesSignedNegativeWaitTime() throws {
+        var wire = fixture(sampleCount: 1)
+        let s0 = 208
+        setLE(Int64(-25_000), at: s0 + 48, in: &wire) // waitMinNanos negative
+        setLE(Int64(75_000), at: s0 + 56, in: &wire)  // waitMaxNanos positive
+        let page = try #require(TxLatencyWireDecoder.decodePage(wire))
+        let s = page.samples[0]
+        #expect(s.waitMinNanos == -25_000)
+        #expect(s.waitMaxNanos == 75_000)
+        #expect(s.waitMinMicros == -25.0)
+        #expect(s.waitMaxMicros == 75.0)
+        #expect(s.waitCenterMicros == 25.0)
+        #expect(s.uncertaintyMicros == 50.0)
     }
 
     @Test func rejectsTruncatedOrVersionMismatch() {
@@ -162,9 +185,9 @@ struct TxLatencyWireParsingTests {
         let csv = report.toCSV()
 
         #expect(csv.contains("# ASFW FireWire TX Latency Session Report (E0 -> E2)"))
+        #expect(csv.contains("# Session ID: 42"))
         #expect(csv.contains("# Endpoint ID: 101"))
         #expect(csv.contains("packet_index,pcm_start_frame,pcm_end_frame"))
-        #expect(csv.contains("42,1000,1006,6,Matched,None,1,3,1"))
-        #expect(csv.contains("50,1048,1054,6,Matched,None,0,5,1"))
+        #expect(csv.contains("42,1000,1006,6,Matched,None,1,3,1,1008000,1010000,1020000,150,350000,450000,350.000,450.000,400.000,50.000"))
     }
 }

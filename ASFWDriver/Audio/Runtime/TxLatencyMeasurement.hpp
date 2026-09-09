@@ -8,6 +8,7 @@
 
 #include "PublicationRangeRing.hpp"
 #include "../../Common/TimingUtils.hpp"
+#include "../../Hardware/OHCIEventCodes.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
 
 #include <algorithm>
@@ -153,6 +154,36 @@ struct TransmitBounds final {
     return bounds;
 }
 
+[[nodiscard]] constexpr bool IsOHCITransmitSuccess(uint16_t eventCode) noexcept {
+    return eventCode == static_cast<uint16_t>(ASFW::Async::OHCIEventCode::kAckComplete);
+}
+
+[[nodiscard]] constexpr bool IsOHCITransmitFailure(uint16_t eventCode) noexcept {
+    switch (static_cast<ASFW::Async::OHCIEventCode>(eventCode & 0x1Fu)) {
+        case ASFW::Async::OHCIEventCode::kEvtLongPacket:
+        case ASFW::Async::OHCIEventCode::kEvtMissingAck:
+        case ASFW::Async::OHCIEventCode::kEvtUnderrun:
+        case ASFW::Async::OHCIEventCode::kEvtOverrun:
+        case ASFW::Async::OHCIEventCode::kEvtDescriptorRead:
+        case ASFW::Async::OHCIEventCode::kEvtDataRead:
+        case ASFW::Async::OHCIEventCode::kEvtDataWrite:
+        case ASFW::Async::OHCIEventCode::kEvtBusReset:
+        case ASFW::Async::OHCIEventCode::kEvtTimeout:
+        case ASFW::Async::OHCIEventCode::kEvtTcodeErr:
+        case ASFW::Async::OHCIEventCode::kEvtUnknown:
+        case ASFW::Async::OHCIEventCode::kEvtFlushed:
+        case ASFW::Async::OHCIEventCode::kAckBusyX:
+        case ASFW::Async::OHCIEventCode::kAckBusyA:
+        case ASFW::Async::OHCIEventCode::kAckBusyB:
+        case ASFW::Async::OHCIEventCode::kAckTardy:
+        case ASFW::Async::OHCIEventCode::kAckDataError:
+        case ASFW::Async::OHCIEventCode::kAckTypeError:
+            return true;
+        default:
+            return false;
+    }
+}
+
 /// Pure classification of a sampled transmission.
 [[nodiscard]] inline TxLatencyOutcome ClassifyTxLatencySample(
     uint16_t eventCode,
@@ -160,17 +191,17 @@ struct TransmitBounds final {
     bool isSubstitution,
     PublicationCoverageResult coverageResult,
     const TransmitBounds& txBounds,
+    uint64_t pubEarliestHostTicks,
     uint64_t pubLatestHostTicks,
     TxLatencyUnresolvedReason& outReason) noexcept {
     outReason = TxLatencyUnresolvedReason::None;
 
-    // 1. Descriptor reports transmission failure (xferStatus event code).
-    // Note: Event 0 indicates successful transmission completion in OHCI IT descriptors.
-    if (eventCode != 0) {
-        // Non-zero event code: if unrecognized or error, evaluate failure.
-        // In the initial stage, treat non-zero as TransmitFailed if error, or Unresolved.
-        // Here, eventCode != 0 is classified as Unresolved(UnrecognizedEventCode)
-        // or TransmitFailed if high bit/error bit is set.
+    // 1. Descriptor reports transmission status (xferStatus event code).
+    // OHCI Table 3-2: ack_complete (0x11) indicates successful transmission.
+    if (!IsOHCITransmitSuccess(eventCode)) {
+        if (IsOHCITransmitFailure(eventCode)) {
+            return TxLatencyOutcome::TransmitFailed;
+        }
         outReason = TxLatencyUnresolvedReason::UnrecognizedEventCode;
         return TxLatencyOutcome::Unresolved;
     }
@@ -211,11 +242,13 @@ struct TransmitBounds final {
     }
 
     // 6. Temporal ordering check:
-    // rawWaitMax = txLatestHost - publicationEarliest (or pubLatest).
-    // Ordering is physically impossible only when txLatestHost < pubEarliest/pubLatest (waitMax < 0).
-    // A same-cycle publication and transmission where txEarliestHost < pubLatestHost <= txLatestHost
-    // is a valid short wait (rawWaitMin < 0 <= rawWaitMax), not Invalid.
-    if (txBounds.txLatestHost < pubLatestHostTicks) {
+    // With publication bracket [pubEarliest, pubLatest] and transmission bounds [txEarliest, txLatest]:
+    // waitMin = txEarliest - pubLatest
+    // waitMax = txLatest   - pubEarliest
+    // Ordering is physically impossible only when txLatestHost < pubEarliestHostTicks (waitMax < 0).
+    // An overlapping bracket where txEarliestHost < pubLatestHost <= txLatestHost
+    // is a valid short wait (waitMin < 0 <= waitMax), not Invalid.
+    if (txBounds.txLatestHost < pubEarliestHostTicks) {
         return TxLatencyOutcome::Invalid;
     }
 

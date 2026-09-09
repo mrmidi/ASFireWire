@@ -47,10 +47,10 @@ protocol ASFWDriverControlling {
     func logRingStats() async -> ASFWLogRingStats?
     func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth]
     func fetchAudioCursors() async -> [ASFWMCPAudioCursorSnapshot]
-    func startTxLatencySession(endpointID: AudioEndpointID, durationSeconds: UInt32, strataSize: UInt32, seed: UInt32, assumedDriftPpm: UInt32) async -> Bool
+    func startTxLatencySession(endpointID: AudioEndpointID, durationSeconds: UInt32, strataSize: UInt32, seed: UInt32, assumedDriftPpm: UInt32) async -> (ok: Bool, sessionId: UInt32)
     func stopTxLatencySession(endpointID: AudioEndpointID) async -> Bool
-    func fetchTxLatencyReport(endpointID: AudioEndpointID) async -> TxLatencySessionReport?
-    func fetchTxLatencyResultsPage(endpointID: AudioEndpointID, pageIndex: UInt32, samplesPerPage: UInt32) async -> TxLatencyResultsPage?
+    func fetchTxLatencyReport(endpointID: AudioEndpointID, sessionId: UInt32) async -> TxLatencySessionReport?
+    func fetchTxLatencyResultsPage(endpointID: AudioEndpointID, pageIndex: UInt32, samplesPerPage: UInt32, sessionId: UInt32) async -> TxLatencyResultsPage?
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
@@ -731,19 +731,20 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         )]
     }
 
-    func startTxLatencySession(endpointID: AudioEndpointID, durationSeconds: UInt32, strataSize: UInt32, seed: UInt32, assumedDriftPpm: UInt32) async -> Bool {
-        true
+    func startTxLatencySession(endpointID: AudioEndpointID, durationSeconds: UInt32, strataSize: UInt32, seed: UInt32, assumedDriftPpm: UInt32) async -> (ok: Bool, sessionId: UInt32) {
+        (true, 1)
     }
 
     func stopTxLatencySession(endpointID: AudioEndpointID) async -> Bool {
         true
     }
 
-    func fetchTxLatencyReport(endpointID: AudioEndpointID) async -> TxLatencySessionReport? {
+    func fetchTxLatencyReport(endpointID: AudioEndpointID, sessionId: UInt32 = 0) async -> TxLatencySessionReport? {
         let header = TxLatencySessionHeader(
-            version: 1,
+            version: 2,
             sessionState: .frozen,
-            terminationReason: .durationExpired,
+            terminationReason: .deadlineExpired,
+            sessionId: sessionId != 0 ? sessionId : 1,
             endpointId: endpointID,
             epoch: 1,
             startHostTicks: 1_000_000,
@@ -778,11 +779,12 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             packetIndex: 100,
             pcmCommittedStartFrame: 600,
             pcmCommittedEndFrame: 606,
+            pubEarliestHostTicks: 1_005_000,
             pubLatestHostTicks: 1_010_000,
             txCycleStartHostTicks: 1_020_000,
-            uncertaintyHostTicks: 120,
             waitMinNanos: 400_000,
             waitMaxNanos: 420_000,
+            uncertaintyHostTicks: 120,
             outcome: .matched,
             unresolvedReason: .none,
             selectedImage: 1,
@@ -792,8 +794,8 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         return TxLatencySessionReport(header: header, samples: [sample])
     }
 
-    func fetchTxLatencyResultsPage(endpointID: AudioEndpointID, pageIndex: UInt32, samplesPerPage: UInt32) async -> TxLatencyResultsPage? {
-        guard let report = await fetchTxLatencyReport(endpointID: endpointID) else { return nil }
+    func fetchTxLatencyResultsPage(endpointID: AudioEndpointID, pageIndex: UInt32, samplesPerPage: UInt32, sessionId: UInt32 = 0) async -> TxLatencyResultsPage? {
+        guard let report = await fetchTxLatencyReport(endpointID: endpointID, sessionId: sessionId) else { return nil }
         return TxLatencyResultsPage(
             header: report.header,
             pageIndex: 0,
