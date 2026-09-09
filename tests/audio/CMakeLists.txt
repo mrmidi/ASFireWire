@@ -70,6 +70,11 @@ add_audio_test(MotuV2ProfileTests
     MotuV2ProfileTests.cpp
 )
 
+# MOTU per-data-block presentation offset cache
+add_audio_test(MotuEventOffsetCacheTests
+    MotuEventOffsetCacheTests.cpp
+)
+
 # MOTU transmit-side SPH replay
 add_audio_test(MotuTxTimingTests
     MotuTxTimingTests.cpp
