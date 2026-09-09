@@ -96,6 +96,23 @@ struct TxLatencySessionHeader final {
     uint32_t recordCount{0};
 };
 
+class SeqlockWriteGuard final {
+public:
+    explicit SeqlockWriteGuard(std::atomic<uint32_t>& seq) noexcept
+        : seq_(seq) {
+        seq_.fetch_add(1, std::memory_order_release);
+    }
+    ~SeqlockWriteGuard() noexcept {
+        seq_.fetch_add(1, std::memory_order_release);
+    }
+    SeqlockWriteGuard(const SeqlockWriteGuard&) = delete;
+    SeqlockWriteGuard& operator=(const SeqlockWriteGuard&) = delete;
+    SeqlockWriteGuard(SeqlockWriteGuard&&) = delete;
+    SeqlockWriteGuard& operator=(SeqlockWriteGuard&&) = delete;
+private:
+    std::atomic<uint32_t>& seq_;
+};
+
 class TxLatencySession final {
 public:
     TxLatencySession() noexcept = default;
@@ -206,7 +223,6 @@ public:
         recordCount_.store(0, std::memory_order_relaxed);
         terminationReason_ = TxLatencyTerminationReason::None;
         pendingTerminationReason_.store(TxLatencyTerminationReason::None, std::memory_order_release);
-        finalizerClaimed_.store(false, std::memory_order_release);
 
         startHostTicks_ = mach_absolute_time();
         const uint64_t durationNs = static_cast<uint64_t>(durationSeconds_) * 1'000'000'000ULL;
@@ -219,6 +235,11 @@ public:
 
     /// Request session stop.
     void RequestStop(TxLatencyTerminationReason reason = TxLatencyTerminationReason::UserStopped) noexcept {
+        const uint32_t currentGen = sessionGeneration_.load(std::memory_order_acquire);
+        if (currentGen == 0) {
+            return;
+        }
+
         // 1. Atomically store the pending termination reason if not already set.
         TxLatencyTerminationReason expectedReason = TxLatencyTerminationReason::None;
         pendingTerminationReason_.compare_exchange_strong(
@@ -228,17 +249,26 @@ public:
         auto expectedState = TxLatencySessionState::Capturing;
         if (state_.compare_exchange_strong(expectedState, TxLatencySessionState::StopRequested,
                                            std::memory_order_seq_cst)) {
-            (void)TryFinalize();
+            (void)TryFinalize(currentGen);
         } else if (expectedState == TxLatencySessionState::StopRequested) {
             // Already in StopRequested; attempt finalization if writers have now drained.
-            (void)TryFinalize();
+            (void)TryFinalize(currentGen);
         }
     }
 
     /// Synchronize and finalize session into Frozen state once writers have drained.
-    /// Uses an atomic claim latch to serialize finalization so exactly one caller
-    /// records termination metadata and publishes Frozen.
-    bool TryFinalize() noexcept {
+    /// Uses an atomic claim latch on finalizedGeneration_ so exactly one caller
+    /// records termination metadata and publishes Frozen for this session generation.
+    bool TryFinalize(uint32_t expectedGeneration = 0) noexcept {
+        const uint32_t targetGen = (expectedGeneration != 0)
+                                       ? expectedGeneration
+                                       : sessionGeneration_.load(std::memory_order_acquire);
+        if (targetGen == 0) {
+            return false;
+        }
+        if (sessionGeneration_.load(std::memory_order_acquire) != targetGen) {
+            return false;
+        }
         if (state_.load(std::memory_order_acquire) != TxLatencySessionState::StopRequested) {
             return false;
         }
@@ -246,23 +276,37 @@ public:
             return false;
         }
 
-        bool expectedClaim = false;
-        if (!finalizerClaimed_.compare_exchange_strong(expectedClaim, true,
-                                                      std::memory_order_acq_rel)) {
-            return false; // Another caller is already finalizing or has finalized.
+        uint32_t currentFinalized = finalizedGeneration_.load(std::memory_order_acquire);
+        while (currentFinalized < targetGen) {
+            if (finalizedGeneration_.compare_exchange_weak(
+                    currentFinalized, targetGen,
+                    std::memory_order_acq_rel,
+                    std::memory_order_acquire)) {
+                break;
+            }
+        }
+        if (currentFinalized >= targetGen) {
+            return false; // Another caller already claimed/finalized for targetGen or newer.
         }
 
-        // Exclusive owner of finalization:
+        // Re-verify that sessionGeneration_ has not moved and state is still StopRequested.
+        if (sessionGeneration_.load(std::memory_order_acquire) != targetGen ||
+            state_.load(std::memory_order_acquire) != TxLatencySessionState::StopRequested) {
+            return false;
+        }
+
+        // Exclusive owner of finalization for targetGen:
         terminationReason_ = pendingTerminationReason_.load(std::memory_order_acquire);
         if (terminationReason_ == TxLatencyTerminationReason::None) {
             terminationReason_ = TxLatencyTerminationReason::UserStopped;
         }
         frozenHostTicks_ = mach_absolute_time();
 
-        statusSeq_.fetch_add(1, std::memory_order_release);
-        // Publish Frozen AFTER metadata (terminationReason_, frozenHostTicks_) is fully written.
-        state_.store(TxLatencySessionState::Frozen, std::memory_order_release);
-        statusSeq_.fetch_add(1, std::memory_order_release);
+        {
+            SeqlockWriteGuard seqGuard(statusSeq_);
+            // Publish Frozen AFTER metadata (terminationReason_, frozenHostTicks_) is fully written.
+            state_.store(TxLatencySessionState::Frozen, std::memory_order_release);
+        }
         return true;
     }
 
@@ -277,7 +321,8 @@ public:
         state_.store(TxLatencySessionState::Idle, std::memory_order_seq_cst);
         activeWriters_.store(0, std::memory_order_seq_cst);
         recordCount_.store(0, std::memory_order_relaxed);
-        finalizerClaimed_.store(false, std::memory_order_relaxed);
+        terminationReason_ = TxLatencyTerminationReason::None;
+        frozenHostTicks_ = 0;
         pendingTerminationReason_.store(TxLatencyTerminationReason::None, std::memory_order_relaxed);
     }
 
@@ -293,18 +338,19 @@ public:
 
         // 1. Register active writer BEFORE checking state or generation.
         activeWriters_.fetch_add(1, std::memory_order_seq_cst);
+        const uint32_t myGen = sessionGeneration_.load(std::memory_order_acquire);
         struct WriterGuard {
             TxLatencySession& session;
+            uint32_t gen;
             ~WriterGuard() {
                 if (session.activeWriters_.fetch_sub(1, std::memory_order_seq_cst) == 1) {
-                    // Last active writer drained; finalize if stop was requested.
-                    (void)session.TryFinalize();
+                    // Last active writer drained; finalize if stop was requested for this generation.
+                    (void)session.TryFinalize(gen);
                 }
             }
-        } guard{*this};
+        } guard{*this, myGen};
 
-        // 2. Load generation and state.
-        const uint32_t myGen = sessionGeneration_.load(std::memory_order_acquire);
+        // 2. Check state.
         if (state_.load(std::memory_order_acquire) != TxLatencySessionState::Capturing) {
             return;
         }
@@ -333,7 +379,7 @@ public:
 
         const uint8_t phase = static_cast<uint8_t>(slot->cycleOrdinal % 8);
 
-        statusSeq_.fetch_add(1, std::memory_order_release);
+        SeqlockWriteGuard seqGuard(statusSeq_);
 
         eligibleByPhase_[phase].fetch_add(1, std::memory_order_relaxed);
         dataPacketsSeen_.fetch_add(1, std::memory_order_relaxed);
@@ -347,7 +393,6 @@ public:
         }
 
         if (!selectThisPacket) {
-            statusSeq_.fetch_add(1, std::memory_order_release);
             return;
         }
 
@@ -359,7 +404,6 @@ public:
 
         const uint32_t curRecords = recordCount_.load(std::memory_order_relaxed);
         if (curRecords >= sampleBudget_ || curRecords >= kTxLatencyMaxSamples) {
-            statusSeq_.fetch_add(1, std::memory_order_release);
             RequestStop(TxLatencyTerminationReason::CapacityReached);
             return;
         }
@@ -438,8 +482,6 @@ public:
             case TxLatencyOutcome::Unknown:
                 break;
         }
-
-        statusSeq_.fetch_add(1, std::memory_order_release);
     }
 
     void NoteStampsMissed(uint64_t count) noexcept {
@@ -454,6 +496,14 @@ public:
         return sessionId_;
     }
 
+    [[nodiscard]] uint32_t SessionGeneration() const noexcept {
+        return sessionGeneration_.load(std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] uint32_t StatusSequence() const noexcept {
+        return statusSeq_.load(std::memory_order_relaxed);
+    }
+
     /// Read session header with synchronized seqlock snapshot. Valid in any state.
     void ReadHeader(TxLatencySessionHeader& outHeader) noexcept {
         CheckExpiration();
@@ -462,15 +512,21 @@ public:
         const auto snap = ReadCountersSnapshot();
         outHeader.version = kTxLatencySessionWireVersion;
         outHeader.sessionId = sessionId_;
-        outHeader.state = state_.load(std::memory_order_acquire);
-        outHeader.terminationReason = terminationReason_;
+        const auto st = state_.load(std::memory_order_acquire);
+        outHeader.state = st;
+        if (st == TxLatencySessionState::Frozen) {
+            outHeader.terminationReason = terminationReason_;
+            outHeader.sessionFrozenHostTicks = frozenHostTicks_;
+        } else {
+            outHeader.terminationReason = TxLatencyTerminationReason::None;
+            outHeader.sessionFrozenHostTicks = 0;
+        }
         outHeader.epoch = epoch_;
         outHeader.sampleRateHz = sampleRateHz_;
         outHeader.samplingSeed = samplingSeed_;
         outHeader.strataSize = strataSize_;
         outHeader.sessionStartHostTicks = startHostTicks_;
         outHeader.sessionDeadlineHostTicks = deadlineHostTicks_;
-        outHeader.sessionFrozenHostTicks = frozenHostTicks_;
 
         outHeader.dataPacketsSeen = snap.dataPacketsSeen;
         for (size_t i = 0; i < 8; ++i) {
@@ -532,14 +588,20 @@ public:
         const auto snap = ReadCountersSnapshot();
         out = {};
         out.header.version = UserClient::Wire::kTxLatencyWireVersion;
-        out.header.sessionState = static_cast<uint32_t>(state_.load(std::memory_order_acquire));
-        out.header.terminationReason = static_cast<uint32_t>(terminationReason_);
+        const auto st = state_.load(std::memory_order_acquire);
+        out.header.sessionState = static_cast<uint32_t>(st);
+        if (st == TxLatencySessionState::Frozen) {
+            out.header.terminationReason = static_cast<uint32_t>(terminationReason_);
+            out.header.frozenHostTicks = frozenHostTicks_;
+        } else {
+            out.header.terminationReason = static_cast<uint32_t>(TxLatencyTerminationReason::None);
+            out.header.frozenHostTicks = 0;
+        }
         out.header.sessionId = sessionId_;
         out.header.endpointId = endpointId;
         out.header.epoch = epoch_;
         out.header.startHostTicks = startHostTicks_;
         out.header.deadlineHostTicks = deadlineHostTicks_;
-        out.header.frozenHostTicks = frozenHostTicks_;
         out.header.durationSeconds = durationSeconds_;
         out.header.strataSize = strataSize_;
         out.header.seed = samplingSeed_;
@@ -583,7 +645,7 @@ public:
         out.pageIndex = pageIndex;
         out.totalPages = totalPages;
 
-        if (state_.load(std::memory_order_acquire) != TxLatencySessionState::Frozen || pageIndex >= totalPages) {
+        if (st != TxLatencySessionState::Frozen || pageIndex >= totalPages) {
             out.samplesInPage = 0;
             return true;
         }
@@ -727,7 +789,7 @@ private:
     std::atomic<uint32_t> sessionGeneration_{0};
     std::atomic<uint32_t> activeWriters_{0};
     std::atomic<TxLatencyTerminationReason> pendingTerminationReason_{TxLatencyTerminationReason::None};
-    std::atomic<bool> finalizerClaimed_{false};
+    std::atomic<uint32_t> finalizedGeneration_{0};
     mutable std::atomic<uint32_t> statusSeq_{0};
 
     uint32_t sessionId_{0};

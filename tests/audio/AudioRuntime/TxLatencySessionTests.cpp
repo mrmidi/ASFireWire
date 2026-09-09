@@ -269,3 +269,122 @@ TEST(TxLatencySessionTests, SampleAccountingEquationHoldsWithAgedOut) {
     EXPECT_EQ(page.header.unresolvedCount, 1U);
     EXPECT_EQ(page.header.transmitFailedCount, 1U);
 }
+
+TEST(TxLatencySessionTests, SeqlockParityBalancedOnAllExits) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    TxLatencySession session;
+    ASSERT_TRUE(session.Arm(101, 1, 48000, 10, 2, 0x1234, 1, 100));
+
+    // Sequence must start at 0 (even)
+    EXPECT_EQ(session.StatusSequence() % 2, 0U);
+
+    ASFW::Protocols::Audio::AMDTP::AmdtpPacketTimeline timeline{};
+    std::array<ASFW::Protocols::Audio::AMDTP::PacketTimelineSlot, 8> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), static_cast<uint32_t>(slots.size())));
+    slots[0].packetIndex = 0;
+    slots[0].isData = 1;
+    slots[0].framesInPacket = 8;
+    slots[0].epoch = 1;
+    slots[0].firstAudioFrame = 1000;
+    slots[0].cycleOrdinal = 0;
+    slots[0].state.store(ASFW::Protocols::Audio::AMDTP::PacketSlotState::Finalized);
+    timeline.SetImageProvenance(0, 0, 1, 1000, 8, static_cast<uint8_t>(ASFW::Audio::Ports::PcmCopyResult::Ready));
+
+    PublicationRangeRing pubRing{};
+    const uint64_t now = mach_absolute_time();
+    pubRing.Record(1, 1000, 1008, now - 200'000, now - 100'000);
+
+    ASFW::Isoch::IsochTxClockPairSample pair{};
+    pair.cycleTimer32 = (1U << 25) | (100U << 12) | 0U;
+    pair.hostTimeMid = now;
+    pair.bracketTicks = 10;
+
+    // Observe sample 1: normal matched sample
+    session.ObserveCompletion(0, (1U << 25) | (100U << 12) | 0U,
+                             ASFW::Isoch::PackCompletionMetadata(0, 0, 0x11),
+                             pair, timeline, pubRing, now + 1000);
+    EXPECT_EQ(session.StatusSequence() % 2, 0U); // must remain even!
+
+    // Observe sample 2: reaches capacity (budget was 2)
+    session.ObserveCompletion(0, (1U << 25) | (101U << 12) | 0U,
+                             ASFW::Isoch::PackCompletionMetadata(0, 0, 0x11),
+                             pair, timeline, pubRing, now + 2000);
+    EXPECT_EQ(session.StatusSequence() % 2, 0U); // must remain even on capacity reached!
+
+    // Observe sample 3: capacity reached early return path
+    session.ObserveCompletion(0, (1U << 25) | (102U << 12) | 0U,
+                             ASFW::Isoch::PackCompletionMetadata(0, 0, 0x11),
+                             pair, timeline, pubRing, now + 3000);
+    EXPECT_EQ(session.StatusSequence() % 2, 0U); // must remain even!
+
+    // Header read must successfully read counters (not zeroed due to spin-failure)
+    TxLatencySessionHeader header{};
+    session.ReadHeader(header);
+    EXPECT_EQ(header.sampledCount, 2U);
+    EXPECT_EQ(header.matchedCount, 2U);
+}
+
+TEST(TxLatencySessionTests, StaleGenerationFinalizerRejected) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    TxLatencySession session;
+    ASSERT_TRUE(session.Arm(1, 1, 48000, 10, 100, 0x1234, 1, 100));
+    EXPECT_EQ(session.SessionGeneration(), 1U);
+
+    // Stop and freeze session 1
+    session.RequestStop(TxLatencyTerminationReason::UserStopped);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Frozen);
+
+    // Arm session 2 (generation 2)
+    ASSERT_TRUE(session.Arm(2, 1, 48000, 10, 100, 0x5678, 1, 100));
+    EXPECT_EQ(session.SessionGeneration(), 2U);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Capturing);
+
+    // A stale finalizer thread with target generation 1 attempts to finalize
+    const bool finalizedStale = session.TryFinalize(1);
+    EXPECT_FALSE(finalizedStale);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Capturing); // Session 2 must remain Capturing!
+
+    // Session 2 stops and finalizes normally with generation 2
+    session.RequestStop(TxLatencyTerminationReason::DeadlineExpired);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Frozen);
+
+    TxLatencySessionHeader header{};
+    session.ReadHeader(header);
+    EXPECT_EQ(header.sessionId, 2U);
+    EXPECT_EQ(header.terminationReason, TxLatencyTerminationReason::DeadlineExpired);
+}
+
+TEST(TxLatencySessionTests, LiveHeaderReadsDuringCapturingAndStopRequested) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    TxLatencySession session;
+    ASSERT_TRUE(session.Arm(55, 1, 48000, 10, 100, 0x1234, 1, 100));
+
+    // While capturing, termination reason must report None and frozen ticks must be 0
+    TxLatencySessionHeader header{};
+    session.ReadHeader(header);
+    EXPECT_EQ(header.state, TxLatencySessionState::Capturing);
+    EXPECT_EQ(header.terminationReason, TxLatencyTerminationReason::None);
+    EXPECT_EQ(header.sessionFrozenHostTicks, 0ULL);
+
+    ASFW::UserClient::Wire::TxLatencyResultsPageWire page{};
+    ASSERT_TRUE(session.CopyWirePage(0, 32, 55, 1, page));
+    EXPECT_EQ(page.header.sessionState, static_cast<uint32_t>(TxLatencySessionState::Capturing));
+    EXPECT_EQ(page.header.terminationReason, static_cast<uint32_t>(TxLatencyTerminationReason::None));
+    EXPECT_EQ(page.header.frozenHostTicks, 0ULL);
+    EXPECT_EQ(page.samplesInPage, 0U);
+
+    // Freeze session
+    session.RequestStop(TxLatencyTerminationReason::UserStopped);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Frozen);
+
+    // Now frozen, termination metadata is visible
+    session.ReadHeader(header);
+    EXPECT_EQ(header.state, TxLatencySessionState::Frozen);
+    EXPECT_EQ(header.terminationReason, TxLatencyTerminationReason::UserStopped);
+    EXPECT_GT(header.sessionFrozenHostTicks, 0ULL);
+
+    ASSERT_TRUE(session.CopyWirePage(0, 32, 55, 1, page));
+    EXPECT_EQ(page.header.sessionState, static_cast<uint32_t>(TxLatencySessionState::Frozen));
+    EXPECT_EQ(page.header.terminationReason, static_cast<uint32_t>(TxLatencyTerminationReason::UserStopped));
+    EXPECT_GT(page.header.frozenHostTicks, 0ULL);
+}
