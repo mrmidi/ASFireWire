@@ -78,6 +78,43 @@ public:
         ASFW::Audio::Shared::AudioTimingGeometry::
             kHalZeroTimestampPeriodFrames;
 
+    [[nodiscard]] static constexpr bool IsSupportedSampleRate(
+        uint32_t sampleRateHz) noexcept {
+        switch (sampleRateHz) {
+            case 44'100:
+            case 48'000:
+            case 96'000:
+            case 192'000:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    [[nodiscard]] static constexpr uint64_t BusTicksToAudioFrames(
+        uint64_t busTicks, uint32_t sampleRateHz) noexcept {
+        if (sampleRateHz == 0) return 0;
+        const unsigned __int128 product =
+            static_cast<unsigned __int128>(busTicks) * sampleRateHz;
+        const unsigned __int128 frames = product / 24'576'000ULL;
+        if (frames > std::numeric_limits<uint64_t>::max()) {
+            return std::numeric_limits<uint64_t>::max();
+        }
+        return static_cast<uint64_t>(frames);
+    }
+
+    [[nodiscard]] static constexpr uint64_t AudioFramesToBusTicks(
+        uint64_t audioFrames, uint32_t sampleRateHz) noexcept {
+        if (sampleRateHz == 0) return 0;
+        const unsigned __int128 product =
+            static_cast<unsigned __int128>(audioFrames) * 24'576'000ULL;
+        const unsigned __int128 ticks = product / sampleRateHz;
+        if (ticks > std::numeric_limits<uint64_t>::max()) {
+            return std::numeric_limits<uint64_t>::max();
+        }
+        return static_cast<uint64_t>(ticks);
+    }
+
     [[nodiscard]] static constexpr uint32_t NominalBusTicksPerFrame(
         uint32_t sampleRateHz) noexcept {
         switch (sampleRateHz) {
@@ -93,10 +130,10 @@ public:
         HardwareTimelineDiscontinuity reason,
         uint32_t sampleRateHz,
         uint64_t baseFrame) noexcept {
-        const uint32_t nominalTicks = NominalBusTicksPerFrame(sampleRateHz);
-        if (source == HardwareTimelineSource::None || nominalTicks == 0) {
+        if (source == HardwareTimelineSource::None || !IsSupportedSampleRate(sampleRateHz)) {
             return 0;
         }
+        const uint32_t nominalTicks = NominalBusTicksPerFrame(sampleRateHz);
         epochTransitionSequence_.fetch_add(1, std::memory_order_acq_rel);
         while (activeObservers_.load(std::memory_order_acquire) != 0) {
             std::atomic_signal_fence(std::memory_order_seq_cst);
@@ -210,11 +247,14 @@ public:
             lastObservationFrame_.load(std::memory_order_relaxed);
         const uint64_t observedBus =
             lastPresentationBusTicks_.load(std::memory_order_relaxed);
-        const uint32_t nominal =
-            nominalBusTicksPerFrame_.load(std::memory_order_relaxed);
-        if (presentationBusTicks < observedBus || nominal == 0) return false;
-        outFirstFrame =
-            observedFrame + (presentationBusTicks - observedBus) / nominal;
+        const uint32_t rate = sampleRateHz_.load(std::memory_order_relaxed);
+        if (presentationBusTicks < observedBus || rate == 0) return false;
+        const uint64_t deltaTicks = presentationBusTicks - observedBus;
+        const uint64_t deltaFrames = BusTicksToAudioFrames(deltaTicks, rate);
+        if (deltaFrames > std::numeric_limits<uint64_t>::max() - observedFrame) {
+            return false;
+        }
+        outFirstFrame = observedFrame + deltaFrames;
         return true;
     }
 
@@ -284,10 +324,8 @@ public:
             rejectedObservations_.fetch_add(1, std::memory_order_relaxed);
             return HardwareObservationResult::WrongSource;
         }
-        const uint32_t nominalTicks =
-            nominalBusTicksPerFrame_.load(std::memory_order_relaxed);
         const uint32_t rate = sampleRateHz_.load(std::memory_order_relaxed);
-        if (nominalTicks == 0 || rate == 0 || observation.frameCount == 0 ||
+        if (!IsSupportedSampleRate(rate) || observation.frameCount == 0 ||
             observation.correlationHostTicks == 0 ||
             observation.sampleFrame >
                 std::numeric_limits<uint64_t>::max() - observation.frameCount) {
@@ -327,6 +365,11 @@ public:
             zeroTimestampPeriodFrames_.load(std::memory_order_relaxed);
         const uint32_t effectiveZtsPeriod =
             ztsPeriod != 0 ? ztsPeriod : kZeroTimestampPeriodFrames;
+        if (observation.sampleFrame >
+            std::numeric_limits<uint64_t>::max() - effectiveZtsPeriod) {
+            rejectedObservations_.fetch_add(1, std::memory_order_relaxed);
+            return HardwareObservationResult::Invalid;
+        }
         const uint64_t boundary =
             ((observation.sampleFrame + effectiveZtsPeriod - 1) /
              effectiveZtsPeriod) * effectiveZtsPeriod;
@@ -337,8 +380,13 @@ public:
             return HardwareObservationResult::DuplicateBoundary;
         }
 
-        const uint64_t boundaryBusTicks = observation.presentationBusTicks +
-            (boundary - observation.sampleFrame) * nominalTicks;
+        const uint64_t deltaFrames = boundary - observation.sampleFrame;
+        const uint64_t deltaTicks = AudioFramesToBusTicks(deltaFrames, rate);
+        if (deltaTicks > std::numeric_limits<uint64_t>::max() - observation.presentationBusTicks) {
+            rejectedObservations_.fetch_add(1, std::memory_order_relaxed);
+            return HardwareObservationResult::Invalid;
+        }
+        const uint64_t boundaryBusTicks = observation.presentationBusTicks + deltaTicks;
         uint64_t boundaryHostTicks = 0;
         if (!ProjectBusToHost(observation.correlationBusTicks,
                               observation.correlationHostTicks,

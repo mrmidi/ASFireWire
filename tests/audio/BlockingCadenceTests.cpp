@@ -204,6 +204,25 @@ TEST(BlockingCadenceTests, FortyFourKNoDriftAcrossTenSeconds) {
     EXPECT_EQ(totalSamples, 441000u);
 }
 
+TEST(BlockingCadenceTests, FortyFourKEightCycleGroupsCarryFortyOrFortyEightFrames) {
+    BlockingCadence cadence;
+    ASSERT_TRUE(cadence.Configure(44100, 8));
+    for (int group = 0; group < 1000; ++group) {
+        uint32_t groupFrames = 0;
+        uint32_t dataPackets = 0;
+        for (int cycle = 0; cycle < 8; ++cycle) {
+            if (cadence.CurrentCycleIsData()) {
+                groupFrames += cadence.CurrentCycleDataFrames();
+                ++dataPackets;
+            }
+            cadence.AdvanceCycle();
+        }
+        EXPECT_TRUE(dataPackets == 5 || dataPackets == 6);
+        EXPECT_TRUE(groupFrames == 40 || groupFrames == 48);
+        EXPECT_EQ(groupFrames, dataPackets * 8);
+    }
+}
+
 // The adapter is a seeded RationalBlockingCadence; it must reproduce the
 // FFADO accumulate-then-test rule (cip.c: data iff pending + rate/8000 frames
 // >= syt_interval) exactly, cycle for cycle, at every supported rate. The

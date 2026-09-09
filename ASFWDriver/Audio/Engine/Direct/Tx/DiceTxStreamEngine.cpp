@@ -36,7 +36,8 @@ bool DiceTxStreamEngine::Configure(
     }
     const auto geometry =
         ASFW::Encoding::AmdtpRateGeometryForSampleRate(txConfig.sampleRate);
-    if (!geometry || (txConfig.sampleRate != 48'000 &&
+    if (!geometry || (txConfig.sampleRate != 44'100 &&
+                      txConfig.sampleRate != 48'000 &&
                       txConfig.sampleRate != 96'000 &&
                       txConfig.sampleRate != 192'000)) {
         return false;

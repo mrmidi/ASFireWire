@@ -1867,4 +1867,81 @@ TEST_F(AudioDuplexCoordinatorTests, StaleClockCompletionDoesNotCorruptNewerCommi
     EXPECT_EQ(session->lastClockCompletion->reason, DiceRestartReason::kRecoverAfterTimingLoss);
 }
 
+TEST_F(AudioDuplexCoordinatorTests, FullRateCycle44kTo48kTo96kTo44kTracksRevisionAndRateAgreement) {
+    const auto record = registry_.UpsertFromROM(MakeConfigRom(kObservedGuid), LinkPolicy{});
+    auto prof = MakeProfile(record);
+    prof->supportedRates = {44100, 48000, 96000};
+    prof->supportedRateCount = 3;
+    runtime_.Clear();
+    ASSERT_NE(runtime_.InsertResolved(prof, protocol_), nullptr);
+
+    const AudioClockConfig rate44k{.sampleRateHz = 44100U};
+    AudioStreamRuntimeCaps caps44k = kDefaultRuntimeCaps;
+    caps44k.sampleRateHz = 44100;
+
+    const AudioClockConfig rate48k{.sampleRateHz = 48000U};
+    AudioStreamRuntimeCaps caps48k = kDefaultRuntimeCaps;
+    caps48k.sampleRateHz = 48000;
+
+    const AudioClockConfig rate96k{.sampleRateHz = 96000U};
+    AudioStreamRuntimeCaps caps96k = kDefaultRuntimeCaps;
+    caps96k.sampleRateHz = 96000;
+
+    // 1. Initial 44.1 kHz commit at revision 1.
+    coordinator_.SynchronizeCommittedConfiguration(kTestEndpointId, rate44k, caps44k, 1);
+    bindingSource_.sampleRateHz = 44100U;
+    protocol_->healthStatusValue = 0x101; // 44.1 kHz (index 1 << 8 | 1)
+    ASSERT_EQ(coordinator_.StartStreaming(kTestEndpointId), kIOReturnSuccess);
+
+    auto session = GetSession();
+    ASSERT_TRUE(session.has_value());
+    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
+    EXPECT_EQ(session->appliedClock.sampleRateHz, 44100U);
+    EXPECT_TRUE(session->committedConfig.valid);
+    EXPECT_EQ(session->committedConfig.revision, 1U);
+    EXPECT_EQ(session->committedConfig.clock.sampleRateHz, 44100U);
+
+    // 2. Transition 44.1 kHz -> 48 kHz at revision 2.
+    bindingSource_.sampleRateHz = 48000U;
+    protocol_->healthStatusValue = 0x201; // 48 kHz (index 2 << 8 | 1)
+    ASSERT_EQ(coordinator_.RequestClockConfig(kTestEndpointId, rate48k, DiceRestartReason::kSampleRateChange),
+              kIOReturnSuccess);
+
+    session = GetSession();
+    ASSERT_TRUE(session.has_value());
+    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
+    EXPECT_EQ(session->appliedClock.sampleRateHz, 48000U);
+    EXPECT_TRUE(session->committedConfig.valid);
+    EXPECT_EQ(session->committedConfig.revision, 2U);
+    EXPECT_EQ(session->committedConfig.clock.sampleRateHz, 48000U);
+
+    // 3. Transition 48 kHz -> 96 kHz at revision 3.
+    bindingSource_.sampleRateHz = 96000U;
+    protocol_->healthStatusValue = 0x401; // 96 kHz (index 4 << 8 | 1)
+    ASSERT_EQ(coordinator_.RequestClockConfig(kTestEndpointId, rate96k, DiceRestartReason::kSampleRateChange),
+              kIOReturnSuccess);
+
+    session = GetSession();
+    ASSERT_TRUE(session.has_value());
+    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
+    EXPECT_EQ(session->appliedClock.sampleRateHz, 96000U);
+    EXPECT_TRUE(session->committedConfig.valid);
+    EXPECT_EQ(session->committedConfig.revision, 3U);
+    EXPECT_EQ(session->committedConfig.clock.sampleRateHz, 96000U);
+
+    // 4. Transition 96 kHz -> 44.1 kHz at revision 4.
+    bindingSource_.sampleRateHz = 44100U;
+    protocol_->healthStatusValue = 0x101; // 44.1 kHz (index 1 << 8 | 1)
+    ASSERT_EQ(coordinator_.RequestClockConfig(kTestEndpointId, rate44k, DiceRestartReason::kSampleRateChange),
+              kIOReturnSuccess);
+
+    session = GetSession();
+    ASSERT_TRUE(session.has_value());
+    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
+    EXPECT_EQ(session->appliedClock.sampleRateHz, 44100U);
+    EXPECT_TRUE(session->committedConfig.valid);
+    EXPECT_EQ(session->committedConfig.revision, 4U);
+    EXPECT_EQ(session->committedConfig.clock.sampleRateHz, 44100U);
+}
+
 } // namespace

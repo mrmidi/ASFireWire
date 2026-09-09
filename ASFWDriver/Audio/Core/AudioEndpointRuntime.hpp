@@ -145,13 +145,28 @@ public:
         const AudioStreamRuntimeCaps& runtimeCaps) noexcept {
         const uint32_t outputChannels = PhysicalPlaybackChannels(runtimeCaps);
         const uint32_t inputChannels = PhysicalCaptureChannels(runtimeCaps);
+        const uint32_t activeRingFrames =
+            Shared::AudioTimingGeometry::FrameRingFrames(runtimeCaps.sampleRateHz);
+        const uint64_t reqOutBytes =
+            static_cast<uint64_t>(activeRingFrames) * outputChannels * sizeof(float);
+        const uint64_t reqInBytes =
+            static_cast<uint64_t>(activeRingFrames) * inputChannels * sizeof(float);
         if (runtimeCaps.sampleRateHz == 0 || outputChannels == 0 || inputChannels == 0 ||
             outputChannels > maximumOutputChannels_ ||
-            inputChannels > maximumInputChannels_ || !lock_) {
+            inputChannels > maximumInputChannels_ ||
+            (allocationLimits_.maxAllocatedFrames != 0 &&
+             activeRingFrames > allocationLimits_.maxAllocatedFrames) ||
+            (allocationLimits_.allocatedOutputBytes != 0 &&
+             reqOutBytes > allocationLimits_.allocatedOutputBytes) ||
+            (allocationLimits_.allocatedInputBytes != 0 &&
+             reqInBytes > allocationLimits_.allocatedInputBytes) ||
+            !lock_) {
             ASFW_LOG_ERROR(DirectAudio,
-                           "[AudioConfig] runtime projection rejected guid=0x%016llx rate=%u out=%u/%u in=%u/%u",
+                           "[AudioConfig] runtime projection rejected guid=0x%016llx rate=%u out=%u/%u in=%u/%u frames=%u reqOut=%llu/%llu reqIn=%llu/%llu",
                            observedGuid_, runtimeCaps.sampleRateHz, outputChannels,
-                           maximumOutputChannels_, inputChannels, maximumInputChannels_);
+                           maximumOutputChannels_, inputChannels, maximumInputChannels_,
+                           activeRingFrames, reqOutBytes, allocationLimits_.allocatedOutputBytes,
+                           reqInBytes, allocationLimits_.allocatedInputBytes);
             return false;
         }
         IOLockLock(lock_);

@@ -30,9 +30,7 @@ struct TimebaseGuard final {
 
 TEST(HardwareSampleTimelineTests, ProjectsBoundaryInsidePacketAtEveryV3Rate) {
     TimebaseGuard timebase{};
-    for (const auto [rate, nominal] :
-         std::array{std::pair{48'000U, 512U}, std::pair{96'000U, 256U},
-                    std::pair{192'000U, 128U}}) {
+    for (const uint32_t rate : {44'100U, 48'000U, 96'000U, 192'000U}) {
         HardwareSampleTimeline timeline{};
         const uint64_t epoch = timeline.BeginEpoch(
             HardwareTimelineSource::Receive,
@@ -53,9 +51,82 @@ TEST(HardwareSampleTimelineTests, ProjectsBoundaryInsidePacketAtEveryV3Rate) {
                   }, &boundary),
                   HardwareObservationResult::BoundaryReady);
         EXPECT_EQ(boundary.sampleFrame, ztsPeriod);
+        const uint64_t deltaTicks =
+            HardwareSampleTimeline::AudioFramesToBusTicks(8, rate);
         EXPECT_EQ(boundary.hostTicks,
-                  kHost + BusDeltaAsHostTicks(8ULL * nominal));
+                  kHost + BusDeltaAsHostTicks(deltaTicks));
     }
+}
+
+TEST(HardwareSampleTimelineTests, Projects441TimelineExactRational) {
+    HardwareSampleTimeline timeline{};
+    const uint64_t epoch = timeline.BeginEpoch(
+        HardwareTimelineSource::Receive,
+        HardwareTimelineDiscontinuity::StartIO, 44'100U, 0);
+    ASSERT_NE(epoch, 0U);
+
+    EXPECT_EQ(HardwareSampleTimeline::AudioFramesToBusTicks(8, 44'100U), 4458ULL);
+    EXPECT_EQ(HardwareSampleTimeline::BusTicksToAudioFrames(4458, 44'100U), 7ULL);
+    EXPECT_EQ(HardwareSampleTimeline::BusTicksToAudioFrames(4459, 44'100U), 8ULL);
+
+    constexpr uint64_t kObsBus = 1'000'000;
+    constexpr uint64_t kObsFrame = 100;
+    HardwareZeroTimestamp boundary{};
+    EXPECT_EQ(timeline.Observe({
+                  .epoch = epoch,
+                  .source = HardwareTimelineSource::Receive,
+                  .sampleFrame = kObsFrame,
+                  .frameCount = 8,
+                  .presentationBusTicks = kObsBus,
+                  .correlationBusTicks = kObsBus,
+                  .correlationHostTicks = 10'000,
+              }, &boundary),
+              HardwareObservationResult::Accepted);
+
+    uint64_t projected = 0;
+    EXPECT_TRUE(timeline.ProjectFirstFrameFromObservation(kObsBus + 4459, projected));
+    EXPECT_EQ(projected, kObsFrame + 8);
+}
+
+TEST(HardwareSampleTimelineTests, BoundaryInputOverflowDoesNotCrashOrWrap) {
+    constexpr uint64_t kMax = std::numeric_limits<uint64_t>::max();
+    EXPECT_EQ(HardwareSampleTimeline::BusTicksToAudioFrames(kMax, 192'000U), kMax / 128ULL);
+    EXPECT_EQ(HardwareSampleTimeline::AudioFramesToBusTicks(kMax, 44'100U), kMax);
+
+    HardwareSampleTimeline timeline{};
+    const uint64_t epoch = timeline.BeginEpoch(
+        HardwareTimelineSource::Receive,
+        HardwareTimelineDiscontinuity::StartIO, 48'000U, 0);
+    ASSERT_NE(epoch, 0U);
+
+    const uint32_t ztsPeriod = timeline.ZeroTimestampPeriodFrames();
+    const uint64_t safeNearMaxFrame = kMax - ztsPeriod;
+
+    HardwareZeroTimestamp boundary{};
+    EXPECT_EQ(timeline.Observe({
+                  .epoch = epoch,
+                  .source = HardwareTimelineSource::Receive,
+                  .sampleFrame = safeNearMaxFrame,
+                  .frameCount = 8,
+                  .presentationBusTicks = 1'000,
+                  .correlationBusTicks = 1'000,
+                  .correlationHostTicks = 10'000,
+              }, &boundary),
+              HardwareObservationResult::Accepted);
+
+    uint64_t projected = 0;
+    EXPECT_FALSE(timeline.ProjectFirstFrameFromObservation(1'000 + 24'576'000ULL, projected));
+
+    EXPECT_EQ(timeline.Observe({
+                  .epoch = epoch,
+                  .source = HardwareTimelineSource::Receive,
+                  .sampleFrame = kMax - 10,
+                  .frameCount = 8,
+                  .presentationBusTicks = 2'000,
+                  .correlationBusTicks = 2'000,
+                  .correlationHostTicks = 20'000,
+              }, &boundary),
+              HardwareObservationResult::Invalid);
 }
 
 TEST(HardwareSampleTimelineTests,

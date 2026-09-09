@@ -158,7 +158,7 @@ TEST(AudioGeometryResolverTests, EnforcesAllocationLimits) {
 }
 
 TEST(AudioGeometryResolverTests, RejectsUnsupportedSampleRates) {
-    for (uint32_t badRate : {0U, 44'100U, 88'200U, 176'400U, 384'000U}) {
+    for (uint32_t badRate : {0U, 88'200U, 176'400U, 384'000U}) {
         AudioDeviceFormation formation{
             .sampleRateHz = badRate,
             .inputChannels = 2,
@@ -259,6 +259,47 @@ TEST(AudioGeometryResolverTests, AppliesRuntimeTuningOverrides) {
     // But active HAL stream ring remains locked to rate geometry
     EXPECT_EQ(res->activeOutputRingFrames, 12'288U);
     EXPECT_EQ(res->activeInputRingFrames, 12'288U);
+}
+
+TEST(AudioGeometryResolverTests, Resolves441kHzActiveGeometry) {
+    AudioDeviceFormation formation{
+        .sampleRateHz = 44'100,
+        .inputChannels = 2,
+        .outputChannels = 2,
+        .fdf = 0x01,
+        .sytIntervalFrames = 8,
+    };
+    AudioDeviceTimingPolicy timingPolicy{
+        .txReportedLatencyFrames = 128,
+        .rxReportedLatencyFrames = 64,
+        .txSafetyOffsetFrames = 48,
+        .rxSafetyOffsetFrames = 32,
+        .txTransferDelayTicks = 13'162,
+        .rxTransferDelayTicks = 13'162,
+    };
+    DirectAudioAllocationLimits limits{
+        .allocatedOutputBytes = 24'576 * 2 * sizeof(float),
+        .allocatedInputBytes = 24'576 * 2 * sizeof(float),
+        .maxOutputChannels = 2,
+        .maxInputChannels = 2,
+        .maxAllocatedFrames = 24'576,
+    };
+
+    auto result = ResolveAudioGeometry(formation, timingPolicy, nullptr, limits, 99);
+    ASSERT_TRUE(result.has_value());
+
+    const auto& geom = result.value();
+    EXPECT_EQ(geom.sampleRateHz, 44'100U);
+    EXPECT_EQ(geom.topologyRevision, 99U);
+    EXPECT_EQ(geom.activeOutputRingFrames, 12'288U);
+    EXPECT_EQ(geom.activeInputRingFrames, 12'288U);
+    EXPECT_EQ(geom.outputChannels, 2U);
+    EXPECT_EQ(geom.inputChannels, 2U);
+    EXPECT_EQ(geom.zeroTimestampPeriodFrames, 12'288U);
+    EXPECT_EQ(geom.clientIoBudgetFrames, 1'024U);
+    EXPECT_EQ(geom.pcmCacheCapacityFrames, 12'288U);
+    EXPECT_EQ(geom.txTransferDelayTicks, 13'162U);
+    EXPECT_EQ(geom.rxTransferDelayTicks, 13'162U);
 }
 
 } // namespace

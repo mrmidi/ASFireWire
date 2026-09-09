@@ -653,7 +653,21 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return error;
     }
     const double currentSampleRate = ivars.device.currentSampleRate;
-    const auto projection = DeriveHalTimingProjection(ivars.resolvedProfile, currentSampleRate);
+    const Shared::DirectAudioAllocationLimits allocationLimits{
+        .allocatedOutputBytes = ivars.outputMap ? ivars.outputMap->GetLength() : 0,
+        .allocatedInputBytes = ivars.inputMap ? ivars.inputMap->GetLength() : 0,
+        .maxOutputChannels = ivars.resolvedProfile.TxChannelCount(),
+        .maxInputChannels = ivars.resolvedProfile.RxChannelCount(),
+        .maxAllocatedFrames = Shared::AudioTimingGeometry::kAllocatedFrameRingFrames,
+    };
+    uint64_t topologyRevision = 0;
+    if (ivars.device.audioNub) {
+        (void)ivars.device.audioNub->GetTopologyRevision(&topologyRevision);
+    }
+    const auto projection = DeriveHalTimingProjection(
+        ivars.resolvedProfile, currentSampleRate,
+        /*inputChannels=*/0, /*outputChannels=*/0,
+        /*tuningRequest=*/nullptr, &allocationLimits, topologyRevision);
     if (!projection) {
         ASFW_LOG_ERROR(
             Audio,

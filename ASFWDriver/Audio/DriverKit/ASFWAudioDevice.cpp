@@ -417,18 +417,24 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                      maxPacketBytes);
             ivars.runtime.pcmPublicationCache.BindTelemetry(
                 &control->pcmPublicationTelemetry);
-            if (!ivars.runtime.pcmPublicationCache.Configure(
-                    ivars.runtime.directAudioGraph.memory.outputChannels,
-                    ASFW::Audio::Shared::AudioTimingGeometry::
-                        kPcmPublicationCacheFrames)) {
-                ASFW_LOG(
-                    Audio,
-                    "ASFWAudioDevice: PCM publication cache allocation failed channels=%u frames=%u",
-                    ivars.runtime.directAudioGraph.memory.outputChannels,
-                    ASFW::Audio::Shared::AudioTimingGeometry::
-                        kPcmPublicationCacheFrames);
-                kr = failStart(kIOReturnNoMemory, "ConfigurePcmPublicationCache");
-                return;
+            const uint32_t committedChannels =
+                ivars.runtime.directAudioGraph.memory.outputChannels != 0
+                    ? ivars.runtime.directAudioGraph.memory.outputChannels
+                    : 2U;
+            const uint32_t committedCapacity =
+                ASFW::Audio::Shared::AudioTimingGeometry::
+                    PcmPublicationCacheFrames(txConfig.sampleRate);
+            if (ivars.runtime.pcmPublicationCache.ChannelCount() != committedChannels ||
+                ivars.runtime.pcmPublicationCache.CacheCapacityFrames() != committedCapacity) {
+                if (!ivars.runtime.pcmPublicationCache.Configure(
+                        committedChannels, committedCapacity)) {
+                    ASFW_LOG(
+                        Audio,
+                        "ASFWAudioDevice: PCM publication cache allocation failed channels=%u frames=%u",
+                        committedChannels, committedCapacity);
+                    kr = failStart(kIOReturnNoMemory, "ConfigurePcmPublicationCache");
+                    return;
+                }
             }
             const auto timelineSource =
                 (useMAudioTxClock || ivars.device.inputChannelCount == 0)
@@ -972,7 +978,8 @@ OpticalModeFromWire(uint32_t raw) noexcept {
     ASFWAudioDevice& device, ASFWAudioDriver_IVars& driverIvars,
     const ASFW::Configuration::DeviceConfiguration& configuration,
     uint32_t inputChannels, uint32_t outputChannels,
-    bool inPerformConfigurationChange) noexcept {
+    bool inPerformConfigurationChange,
+    const std::optional<ASFW::Audio::DriverKit::HalTimingProjection>& preResolvedProjection = std::nullopt) noexcept {
     const auto* capability = driverIvars.resolvedProfile.Value().ConfigurationFor(configuration);
     if (!capability || inputChannels != capability->runtimeCaps.hostInputPcmChannels ||
         outputChannels != capability->runtimeCaps.hostOutputPcmChannels ||
@@ -985,32 +992,53 @@ OpticalModeFromWire(uint32_t raw) noexcept {
     }
 
     const double targetRate = static_cast<double>(configuration.sampleRate);
-    const auto projection = DeriveHalTimingProjection(
-        driverIvars.resolvedProfile, targetRate, inputChannels, outputChannels);
-    if (!projection) {
+    std::optional<ASFW::Audio::DriverKit::HalTimingProjection> resolvedProjection;
+    if (preResolvedProjection &&
+        preResolvedProjection->resolvedGeometry.inputChannels == inputChannels &&
+        preResolvedProjection->resolvedGeometry.outputChannels == outputChannels &&
+        preResolvedProjection->resolvedGeometry.sampleRateHz == configuration.sampleRate) {
+        resolvedProjection = preResolvedProjection;
+    } else {
+        const ASFW::Audio::Shared::DirectAudioAllocationLimits allocationLimits{
+            .allocatedOutputBytes = driverIvars.outputMap ? driverIvars.outputMap->GetLength() : 0,
+            .allocatedInputBytes = driverIvars.inputMap ? driverIvars.inputMap->GetLength() : 0,
+            .maxOutputChannels = driverIvars.resolvedProfile.TxChannelCount(),
+            .maxInputChannels = driverIvars.resolvedProfile.RxChannelCount(),
+            .maxAllocatedFrames = ASFW::Audio::Shared::AudioTimingGeometry::kAllocatedFrameRingFrames,
+        };
+        uint64_t topologyRevision = 0;
+        if (driverIvars.device.audioNub) {
+            (void)driverIvars.device.audioNub->GetTopologyRevision(&topologyRevision);
+        }
+        resolvedProjection = DeriveHalTimingProjection(
+            driverIvars.resolvedProfile, targetRate, inputChannels, outputChannels,
+            /*tuningRequest=*/nullptr, &allocationLimits, topologyRevision);
+    }
+    if (!resolvedProjection) {
         ASFW_LOG_ERROR(Audio, "[AudioConfig] unsupported V3 safety rate=%.0f", targetRate);
         return kIOReturnUnsupported;
     }
+    const auto& projection = *resolvedProjection;
 
     const uint32_t priorRate = static_cast<uint32_t>(device.GetSampleRate());
     kern_return_t kr = device.SetSampleRate(targetRate);
     if (kr != kIOReturnSuccess) return kr;
 
-    if (device.GetZeroTimestampPeriod() != projection->zeroTimestampPeriodFrames) {
+    if (device.GetZeroTimestampPeriod() != projection.zeroTimestampPeriodFrames) {
         if (inPerformConfigurationChange) {
-            kr = device.SetZeroTimeStampPeriod(projection->zeroTimestampPeriodFrames);
+            kr = device.SetZeroTimeStampPeriod(projection.zeroTimestampPeriodFrames);
             if (kr != kIOReturnSuccess) {
                 ASFW_LOG_ERROR(
                     Audio,
                     "[AudioConfig] SetZeroTimeStampPeriod(%u) failed kr=0x%x",
-                    projection->zeroTimestampPeriodFrames, kr);
+                    projection.zeroTimestampPeriodFrames, kr);
                 return kr;
             }
         } else {
             ASFW_LOG_ERROR(
                 Audio,
                 "[AudioConfig] ZTS period change (%u) requested outside perform window",
-                projection->zeroTimestampPeriodFrames);
+                projection.zeroTimestampPeriodFrames);
             return kIOReturnNotPermitted;
         }
     }
@@ -1028,16 +1056,16 @@ OpticalModeFromWire(uint32_t raw) noexcept {
         return kr;
     }
 
-    if ((kr = device.SetOutputLatency(projection->outputLatencyFrames)) != kIOReturnSuccess) {
+    if ((kr = device.SetOutputLatency(projection.outputLatencyFrames)) != kIOReturnSuccess) {
         return kr;
     }
-    if ((kr = device.SetInputLatency(projection->inputLatencyFrames)) != kIOReturnSuccess) {
+    if ((kr = device.SetInputLatency(projection.inputLatencyFrames)) != kIOReturnSuccess) {
         return kr;
     }
-    if ((kr = device.SetOutputSafetyOffset(projection->outputSafetyOffsetFrames)) != kIOReturnSuccess) {
+    if ((kr = device.SetOutputSafetyOffset(projection.outputSafetyOffsetFrames)) != kIOReturnSuccess) {
         return kr;
     }
-    if ((kr = device.SetInputSafetyOffset(projection->inputSafetyOffsetFrames)) != kIOReturnSuccess) {
+    if ((kr = device.SetInputSafetyOffset(projection.inputSafetyOffsetFrames)) != kIOReturnSuccess) {
         return kr;
     }
 
@@ -1101,19 +1129,19 @@ OpticalModeFromWire(uint32_t raw) noexcept {
              packetGeometry->fdf, packetGeometry->sytIntervalFrames);
     if (!ASFW::Audio::DriverKit::UpdateDirectAudioGeometry(
             driverIvars,
-            {.inputFrames = projection->resolvedGeometry.activeInputRingFrames,
-             .outputFrames = projection->resolvedGeometry.activeOutputRingFrames,
+            {.inputFrames = projection.resolvedGeometry.activeInputRingFrames,
+             .outputFrames = projection.resolvedGeometry.activeOutputRingFrames,
               .inputChannels = inputChannels,
               .outputChannels = outputChannels})) {
         return kIOReturnError;
     }
-    driverIvars.runtime.activeTuning.outputLatencyFrames = projection->outputLatencyFrames;
-    driverIvars.runtime.activeTuning.inputLatencyFrames = projection->inputLatencyFrames;
-    driverIvars.runtime.activeTuning.outputSafetyOffsetFrames = projection->outputSafetyOffsetFrames;
-    driverIvars.runtime.activeTuning.inputSafetyOffsetFrames = projection->inputSafetyOffsetFrames;
-    driverIvars.runtime.activeTuning.zeroTimestampPeriodFrames = projection->zeroTimestampPeriodFrames;
-    driverIvars.runtime.activeTuning.frameRingFrames = projection->resolvedGeometry.activeOutputRingFrames;
-    driverIvars.runtime.activeTuning.clientIoBudgetFrames = projection->resolvedGeometry.clientIoBudgetFrames;
+    driverIvars.runtime.activeTuning.outputLatencyFrames = projection.outputLatencyFrames;
+    driverIvars.runtime.activeTuning.inputLatencyFrames = projection.inputLatencyFrames;
+    driverIvars.runtime.activeTuning.outputSafetyOffsetFrames = projection.outputSafetyOffsetFrames;
+    driverIvars.runtime.activeTuning.inputSafetyOffsetFrames = projection.inputSafetyOffsetFrames;
+    driverIvars.runtime.activeTuning.zeroTimestampPeriodFrames = projection.zeroTimestampPeriodFrames;
+    driverIvars.runtime.activeTuning.frameRingFrames = projection.resolvedGeometry.activeOutputRingFrames;
+    driverIvars.runtime.activeTuning.clientIoBudgetFrames = projection.resolvedGeometry.clientIoBudgetFrames;
     driverIvars.device.audioNub->PublishRuntimeTuningGraph(driverIvars.runtime.activeTuning,
         configuration.sampleRate, inputChannels, outputChannels);
     return kIOReturnSuccess;
@@ -1421,10 +1449,54 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
     }
     const auto apply = std::get<ASFW::Configuration::ApplyHardwareEffect>(transition.effects[0]);
     const auto* candidateCap = driverIvars.resolvedProfile.Value().ConfigurationFor(apply.transition.candidate);
-    const uint32_t candOutChannels = candidateCap ? candidateCap->runtimeCaps.hostOutputPcmChannels
-                                                  : driverIvars.resolvedProfile.TxChannelCount();
-    const uint32_t candCacheFrames = ASFW::Audio::Shared::AudioTimingGeometry::PcmPublicationCacheFrames(
-        apply.transition.candidate.sampleRate);
+    if (!candidateCap ||
+        !ASFW::Audio::Shared::AudioTimingGeometry::IsV3SampleRate(apply.transition.candidate.sampleRate) ||
+        !ASFW::Encoding::AmdtpRateGeometryForSampleRate(apply.transition.candidate.sampleRate).has_value()) {
+        (void)dispatch(ASFW::Configuration::HardwareCompleted{
+            .identity = apply.transition.identity,
+            .outcome = ASFW::Configuration::HardwareUnknown{},
+        });
+        (void)super::PerformDeviceConfigurationChange(change_action, in_change_info);
+        uint64_t expected = identity.token;
+        (void)ivars->configurationInFlightToken.compare_exchange_strong(
+            expected, 0, std::memory_order_acq_rel);
+        return kIOReturnBadArgument;
+    }
+
+    const uint32_t candInChannels = candidateCap->runtimeCaps.hostInputPcmChannels;
+    const uint32_t candOutChannels = candidateCap->runtimeCaps.hostOutputPcmChannels;
+    const double candTargetRate = static_cast<double>(apply.transition.candidate.sampleRate);
+    const ASFW::Audio::Shared::DirectAudioAllocationLimits allocationLimits{
+        .allocatedOutputBytes = driverIvars.outputMap ? driverIvars.outputMap->GetLength() : 0,
+        .allocatedInputBytes = driverIvars.inputMap ? driverIvars.inputMap->GetLength() : 0,
+        .maxOutputChannels = driverIvars.resolvedProfile.TxChannelCount(),
+        .maxInputChannels = driverIvars.resolvedProfile.RxChannelCount(),
+        .maxAllocatedFrames = ASFW::Audio::Shared::AudioTimingGeometry::kAllocatedFrameRingFrames,
+    };
+    uint64_t topologyRevision = 0;
+    if (driverIvars.device.audioNub) {
+        (void)driverIvars.device.audioNub->GetTopologyRevision(&topologyRevision);
+    }
+    const auto candidateProjection = DeriveHalTimingProjection(
+        driverIvars.resolvedProfile, candTargetRate, candInChannels, candOutChannels,
+        /*tuningRequest=*/nullptr, &allocationLimits, topologyRevision);
+    if (!candidateProjection) {
+        ASFW_LOG_ERROR(Audio,
+                       "[AudioConfig] candidate geometry rejected before hardware apply endpoint=%llu token=%llu rate=%u",
+                       driverIvars.device.endpointId, identity.token,
+                       static_cast<uint32_t>(apply.transition.candidate.sampleRate));
+        (void)dispatch(ASFW::Configuration::HardwareCompleted{
+            .identity = apply.transition.identity,
+            .outcome = ASFW::Configuration::HardwareUnknown{},
+        });
+        (void)super::PerformDeviceConfigurationChange(change_action, in_change_info);
+        uint64_t expected = identity.token;
+        (void)ivars->configurationInFlightToken.compare_exchange_strong(
+            expected, 0, std::memory_order_acq_rel);
+        return kIOReturnUnsupported;
+    }
+
+    const uint32_t candCacheFrames = candidateProjection->resolvedGeometry.pcmCacheCapacityFrames;
     auto stagedStorage = ASFW::Audio::Runtime::PcmPublicationCache::AllocateStorage(
         candOutChannels != 0 ? candOutChannels : 2U, candCacheFrames);
     if (!stagedStorage) {
@@ -1480,7 +1552,8 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
     const auto project = std::get<ASFW::Configuration::ProjectADKEffect>(transition.effects[0]);
     const kern_return_t mutation = ApplyADKConfigurationProjection(
         *this, driverIvars, project.plan.confirmed.configuration,
-        inputChannels, outputChannels, /*inPerformConfigurationChange=*/true);
+        inputChannels, outputChannels, /*inPerformConfigurationChange=*/true,
+        candidateProjection);
     const kern_return_t runtimeKr = mutation == kIOReturnSuccess
         ? driverIvars.device.audioNub->CommitDeviceConfiguration(
               project.plan.confirmed.configuration.sampleRate,

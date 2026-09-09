@@ -188,14 +188,20 @@ struct AudioGeometryReport final {
     out.cadenceBlockFrames =
         G::kCadenceBlockPackets * sampleRateHz / G::kIsochCyclesPerSecond;
 
-    // DATA packets per cadence block follow from the frames the block carries,
-    // so a cadence change moves this without a second constant to maintain.
-    const uint32_t dataPacketsPerBlock =
-        out.cadenceBlockFrames / framesPerDataPacket;
-    const auto window = DataPacketsInWindow(
-        G::kRxPacketsPerGroup, G::kCadenceBlockPackets, dataPacketsPerBlock);
-    out.minFramesPerRxInterrupt = window.minimum * framesPerDataPacket;
-    out.maxFramesPerRxInterrupt = window.maximum * framesPerDataPacket;
+    if (sampleRateHz == 44'100) {
+        // An 8-cycle group carries 5 or 6 DATA packets of 8 frames (40 or 48 frames, averaging 44.1).
+        out.minFramesPerRxInterrupt = 40;
+        out.maxFramesPerRxInterrupt = 48;
+    } else {
+        // DATA packets per cadence block follow from the frames the block carries,
+        // so a cadence change moves this without a second constant to maintain.
+        const uint32_t dataPacketsPerBlock =
+            out.cadenceBlockFrames / framesPerDataPacket;
+        const auto window = DataPacketsInWindow(
+            G::kRxPacketsPerGroup, G::kCadenceBlockPackets, dataPacketsPerBlock);
+        out.minFramesPerRxInterrupt = window.minimum * framesPerDataPacket;
+        out.maxFramesPerRxInterrupt = window.maximum * framesPerDataPacket;
+    }
 
     out.txSafetyOffsetPolicyFrames = P::TxSafetyOffsetFrames(rate);
     out.rxSafetyOffsetPolicyFrames = P::RxSafetyOffsetFrames(rate);

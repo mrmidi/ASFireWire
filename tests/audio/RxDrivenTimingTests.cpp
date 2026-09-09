@@ -251,6 +251,8 @@ TEST(RxDrivenTimingTests, OutputSafetyIsTheContentFreezeLeadNotTheArmHorizon) {
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(96, 96'000), 120U);
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(192, 192'000), 240U);
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 44'100),
+              56U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 88'200),
               0U);
 }
 

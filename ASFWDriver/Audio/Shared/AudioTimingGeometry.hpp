@@ -32,8 +32,8 @@ namespace ASFW::Audio::Shared {
 struct AudioTimingGeometry final {
     [[nodiscard]] static constexpr bool IsV3SampleRate(
         uint32_t sampleRateHz) noexcept {
-        return sampleRateHz == 48'000 || sampleRateHz == 96'000 ||
-               sampleRateHz == 192'000;
+        return sampleRateHz == 44'100 || sampleRateHz == 48'000 ||
+               sampleRateHz == 96'000 || sampleRateHz == 192'000;
     }
 
     static constexpr uint32_t kAllocatedFrameRingFrames = 24'576U;

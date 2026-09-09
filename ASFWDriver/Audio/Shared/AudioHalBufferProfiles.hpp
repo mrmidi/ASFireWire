@@ -50,6 +50,13 @@ inline constexpr AudioHalBufferProfile AudioHalBufferProfileForRate(
                 1'024,
                 49'152,
             };
+        case 44'100:
+            return {
+                "audio-engine-v3-44.1k",
+                12'288,
+                1'024,
+                12'288,
+            };
         case 48'000:
         default:
             return {

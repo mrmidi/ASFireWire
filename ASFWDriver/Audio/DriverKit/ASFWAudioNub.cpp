@@ -306,6 +306,23 @@ kern_return_t IMPL(ASFWAudioNub, GetCycleTimePair)
     return ctx->isoch.GetCycleTimePair(outHostTimeMid, outCycleTimer, *ctx->deps.hardware);
 }
 
+kern_return_t IMPL(ASFWAudioNub, GetTopologyRevision)
+{
+    if (!outTopologyRevision) {
+        return kIOReturnBadArgument;
+    }
+    *outTopologyRevision = 0;
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+    auto endpoint = FindEndpointRuntime(ivars);
+    if (!endpoint) {
+        return kIOReturnNotReady;
+    }
+    *outTopologyRevision = endpoint->CopyTopologyRevision();
+    return kIOReturnSuccess;
+}
+
 kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
 {
     if (!ivars) {

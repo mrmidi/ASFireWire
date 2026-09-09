@@ -86,6 +86,12 @@ public:
      */
     virtual kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer);
 
+    /**
+     * @brief Query the authoritative topology revision from the endpoint runtime.
+     * @param outTopologyRevision Pointer to receive the revision.
+     */
+    virtual kern_return_t GetTopologyRevision(uint64_t* outTopologyRevision);
+
     virtual void TxPreparationReady(OSAction* action TARGET,
                                     uint64_t generation);
     virtual kern_return_t RegisterTxPreparationAction(

@@ -389,3 +389,22 @@ TEST(AudioEndpointRuntime, RateTransitionPreservesBackingMemoryWhileUpdatingActi
     thirdIn->release();
     thirdCtl->release();
 }
+
+TEST(AudioEndpointRuntime, RejectsConfigurationExceedingAllocationLimits) {
+    ASFW::Audio::Devices::ResolvedAudioEndpointProfile profile{};
+    profile.endpointId = ASFW::Audio::Devices::AudioEndpointId{52};
+    profile.deviceInstanceId = ASFW::Discovery::DeviceInstanceId{22};
+    profile.unitInstanceId = ASFW::Discovery::UnitInstanceId{22, 0};
+    profile.runtimeCaps.sampleRateHz = 48000;
+    profile.runtimeCaps.hostOutputPcmChannels = 4;
+    profile.runtimeCaps.hostInputPcmChannels = 4;
+    profile.runtimeCaps.deviceToHostStreams[0] = {.pcmChannels = 4, .am824Slots = 4};
+    profile.runtimeCaps.hostToDeviceStreams[0] = {.pcmChannels = 4, .am824Slots = 4};
+
+    ASFW::Audio::AudioEndpointRuntime runtime(profile);
+
+    // 192 kHz requires 49,152 frames, which exceeds kAllocatedFrameRingFrames (24,576)
+    ASFW::Audio::AudioStreamRuntimeCaps cap192 = profile.runtimeCaps;
+    cap192.sampleRateHz = 192000;
+    EXPECT_FALSE(runtime.ApplyConfiguration(cap192));
+}

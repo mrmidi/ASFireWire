@@ -103,12 +103,12 @@ TEST(AudioTimingGeometryTests, V3GeometryIsUnified) {
               2U * Geometry::kTxPacketsPerGroup);
 }
 
-TEST(AudioTimingGeometryTests, V3PublishesOnlyExactIntegerTickRates) {
+TEST(AudioTimingGeometryTests, V3PublishesSupportedRates) {
     using Geometry = ASFW::Audio::Shared::AudioTimingGeometry;
+    EXPECT_TRUE(Geometry::IsV3SampleRate(44'100));
     EXPECT_TRUE(Geometry::IsV3SampleRate(48'000));
     EXPECT_TRUE(Geometry::IsV3SampleRate(96'000));
     EXPECT_TRUE(Geometry::IsV3SampleRate(192'000));
-    EXPECT_FALSE(Geometry::IsV3SampleRate(44'100));
     EXPECT_FALSE(Geometry::IsV3SampleRate(88'200));
     EXPECT_FALSE(Geometry::IsV3SampleRate(176'400));
 }

@@ -69,7 +69,8 @@ TEST(AudioGeometryReport, FramesPerInterruptScaleWithTheRate) {
     // (2026-09-08). The swing existed only because 6 packets straddled the
     // D,D,D,N pattern; the rows are kept in min/nominal/max form so a future
     // group that reintroduces a swing still has somewhere to express it.
-    for (const Row row : {Row{48'000, 8, 48, 48, 48},
+    for (const Row row : {Row{44'100, 8, 44, 40, 48},
+                          Row{48'000, 8, 48, 48, 48},
                           Row{96'000, 16, 96, 96, 96},
                           Row{192'000, 32, 192, 192, 192}}) {
         const auto g = DeriveGeometryReport(row.rate);
@@ -90,10 +91,9 @@ TEST(AudioGeometryReport, FramesPerInterruptScaleWithTheRate) {
 
 // A rate the driver does not run must not be answered with the 48 kHz numbers.
 // The panel distinguishes "not streaming" from "6 frames a packet" by these
-// zeroes, and a 44.1 kHz answer here is exactly the truncation that made the
-// old framesPerPacketAverage field report 5.
+// zeroes.
 TEST(AudioGeometryReport, UnsupportedRatesReportNoCadenceAtAll) {
-    for (uint32_t rate : {0U, 44'100U, 88'200U, 176'400U}) {
+    for (uint32_t rate : {0U, 88'200U, 176'400U}) {
         const auto g = DeriveGeometryReport(rate);
         EXPECT_EQ(g.framesPerDataPacket, 0U) << "rate " << rate;
         EXPECT_EQ(g.framesPerCompletionGroupRx, 0U) << "rate " << rate;
@@ -152,7 +152,7 @@ TEST(AudioGeometryReport, RingLapIsTheLatticeQuantum) {
     }
     // No rate, no lattice: the quantum is a frame count and frames need a rate.
     EXPECT_EQ(DeriveGeometryReport(0).txRingLapFrames, 0U);
-    EXPECT_EQ(DeriveGeometryReport(44'100).txRingLapFrames, 0U);
+    EXPECT_EQ(DeriveGeometryReport(88'200).txRingLapFrames, 0U);
 }
 
 // The panel prints packet counts as milliseconds. That conversion is only
