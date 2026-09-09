@@ -75,6 +75,16 @@ protected:
         }
     }
 
+    // Completion counter for tests that deliberately leave a command outstanding.
+    //
+    // TearDown() calls Shutdown(), which by design completes every pending and queued
+    // command with kTransportError rather than leaking them. For a test whose command
+    // never completes (route invalidated on purpose), that callback therefore runs
+    // *after* TestBody() has returned. A `[&local]` capture would then write into a dead
+    // stack frame -- stack-use-after-return, which crashes in release-shaped builds and
+    // is reported by ASan. Owning the counter here keeps it alive through TearDown.
+    int outstandingCompletionCount_{0};
+
     DeferredFireWireBus bus_;
     FakeSessionScheduler scheduler_;
     DeviceRegistry routes_;
@@ -125,7 +135,9 @@ TEST_F(FCPTransportTests, IgnoresResponseFromDifferentGeneration) {
 }
 
 TEST_F(FCPTransportTests, RejectsResponseForInvalidatedRouteAfterRebind) {
-    int completionCount = 0;
+    // This command never completes (the route is invalidated below), so its completion
+    // is fired by Shutdown() during TearDown -- see outstandingCompletionCount_.
+    int& completionCount = outstandingCompletionCount_;
     ASSERT_TRUE(transport_->SubmitCommand(
                              MakeUnitInfoCommand(),
                              [&completionCount](FCPStatus, const FCPFrame&) { ++completionCount; })
@@ -147,7 +159,8 @@ TEST_F(FCPTransportTests, RejectsResponseForInvalidatedRouteAfterRebind) {
 }
 
 TEST_F(FCPTransportTests, RejectsWriteCompletionFromInvalidatedRoute) {
-    int completionCount = 0;
+    // As above: the rebind strands this command, so Shutdown() completes it at TearDown.
+    int& completionCount = outstandingCompletionCount_;
     ASSERT_TRUE(transport_->SubmitCommand(
                              MakeUnitInfoCommand(),
                              [&completionCount](FCPStatus, const FCPFrame&) { ++completionCount; })
