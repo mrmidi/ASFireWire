@@ -414,10 +414,35 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.lastHalZeroTimestampHostTicks.load(
                 std::memory_order_acquire);
         if (initialZtsHostTicks == 0) {
-            ASFW_LOG(
-                Audio,
-                "ASFWAudioDevice: initial hardware ZTS timed out after %u ms",
-                ztsWaitMs);
+            // The anchor is fed by the receive path, so a timeout means no usable
+            // capture packet was decoded. AudioTransportControlBlock keeps a split
+            // attribution for exactly this case (see its rxPacketsSeen comment):
+            // all zero means nothing arrived at all -- wrong channel, context never
+            // started, or the device was never enabled; seen == noData means the
+            // device is sending only CIP NO-DATA; a non-zero reject counter means we
+            // discarded its packets, with geometry pointing at a profile/device
+            // disagreement on channels or DBS. Report them here so the failure is
+            // classifiable without another capture.
+            if (const auto* control = ivars.runtime.directAudioGraph.control) {
+                ASFW_LOG(Audio,
+                         "ASFWAudioDevice: initial hardware ZTS timed out after %u ms "
+                         "rxSeen=%llu data=%llu noData=%llu short=%llu badCip=%llu "
+                         "zeroDbs=%llu geometry=%llu",
+                         ztsWaitMs,
+                         control->rxPacketsSeen.load(std::memory_order_relaxed),
+                         control->rxDataPackets.load(std::memory_order_relaxed),
+                         control->rxNoDataPackets.load(std::memory_order_relaxed),
+                         control->rxShortPackets.load(std::memory_order_relaxed),
+                         control->rxInvalidCipHeaders.load(std::memory_order_relaxed),
+                         control->rxZeroDataBlockSize.load(std::memory_order_relaxed),
+                         control->rxGeometryMismatch.load(std::memory_order_relaxed));
+            } else {
+                ASFW_LOG(
+                    Audio,
+                    "ASFWAudioDevice: initial hardware ZTS timed out after %u ms "
+                    "(no control block)",
+                    ztsWaitMs);
+            }
             kr = failStart(kIOReturnTimeout, "WaitForInitialHardwareZts");
             return;
         }
