@@ -1045,9 +1045,24 @@ LocalCSRReadResult HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) 
     if (!IsAvailable()) {
         return {LocalCSRLockResult::Status::HardwareUnavailable, 0};
     }
+    // OHCI 1.1 §5.5.1: the CSR resource mechanism has no read-only mode -- writing
+    // kCSRControl ALWAYS performs a compare-swap using whatever kCSRData and
+    // kCSRCompareData currently hold. Triggering it without setting both first runs the
+    // swap against stale values left by the previous operation, and whenever that stale
+    // compare happens to match the target register, the stale data is silently written
+    // into it. That is how a bandwidth-shaped 0x00001332 ended up in
+    // CHANNELS_AVAILABLE_31_0, a value no channel allocation can produce (those only
+    // clear single bits), after which every channel reservation failed.
+    //
+    // Linux writes all three registers unconditionally and zeroes both data registers for
+    // a plain quadlet read (ohci.c:1504-1517, handle_local_lock). Comparing against zero
+    // either mismatches -- no swap -- or matches a register already holding zero and
+    // writes zero back, so it is a no-op for every value.
     {
         auto access = TryBeginAccess();
         if (!access) return {LocalCSRLockResult::Status::HardwareUnavailable, 0};
+        access.Write(Register32::kCSRData, 0u);
+        access.Write(Register32::kCSRCompareData, 0u);
         access.WriteAndFlush(Register32::kCSRControl, selectCode & 0x3u);
     }
     
