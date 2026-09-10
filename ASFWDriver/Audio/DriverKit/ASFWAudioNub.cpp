@@ -526,8 +526,19 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
     ProtocolRuntimeBinding binding{};
     const kern_return_t bindingStatus = ResolveProtocolRuntimeBinding(ivars, binding);
     if (bindingStatus == kIOReturnSuccess && binding.device.has_value()) {
+        // MOTU is the one family (vendor_id, model_id) cannot discriminate: the root
+        // directory publishes model_id 0 and the model lives in the unit directory's
+        // Unit_Sw_Version. The two-argument lookup defaults unit to {}, so the MOTU
+        // profile -- which gates on Unit_Sw_Version -- never matches and the device
+        // reports kNone. That drops it into the AV/C rebind gate below, which protocol v2
+        // can never pass: it is register-based and has no FCP transport, so
+        // StartAudioStreaming returned kIOReturnNotReady on every StartIO. Pass the unit
+        // identity, exactly as AudioCoordinator::BackendForGuid does.
+        const ASFW::Audio::DeviceProtocolFactory::UnitIdentity unit{
+            .specId = binding.device->unitSpecId.value_or(0U),
+            .swVersion = binding.device->unitSwVersion.value_or(0U)};
         const auto integration = ASFW::Audio::DeviceProtocolFactory::LookupIntegrationMode(
-            binding.device->vendorId, binding.device->modelId);
+            binding.device->vendorId, binding.device->modelId, unit);
         if (integration != ASFW::Audio::DeviceIntegrationMode::kHardcodedNub) {
             auto* transport = binding.avcDiscovery
                 ? binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId)
