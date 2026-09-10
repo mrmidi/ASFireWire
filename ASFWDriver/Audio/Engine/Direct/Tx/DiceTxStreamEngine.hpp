@@ -61,6 +61,11 @@ public:
 
     [[nodiscard]] bool IsFrameCursorAligned() const noexcept;
 
+    /// True for families that carry no presentation time in the CIP SYT field -- Linux's
+    /// CIP_UNAWARE_SYT. MOTU is the only one: it times each data block with an SPH quadlet
+    /// (StampMotuSph) instead, so its replayed capture entries legitimately have no SYT.
+    [[nodiscard]] bool IsSytUnaware() const noexcept { return isMotu_; }
+
     [[nodiscard]] TxSlotPrepareResult PrepareNextTransmitSlot(
         uint32_t packetIndex,
         const AMDTP::AmdtpTimingState& timing) noexcept;
