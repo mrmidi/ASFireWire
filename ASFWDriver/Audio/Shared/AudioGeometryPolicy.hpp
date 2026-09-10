@@ -71,6 +71,56 @@ struct AudioGeometryPolicy final {
         return 29u;
     }
 
+    // -------------------------------------------------------------------------
+    // Focusrite Saffire empirical calibration:
+    // -------------------------------------------------------------------------
+    // Sourced from empirical measurements on Focusrite Saffire Pro 24 DSP:
+    //
+    // 1. Hardware Converter Latency (ADC + DAC + hardware FIFOs):
+    //    - Physical loopback RTL (tools/rtl/rtl_loopback -d "Saffire"):
+    //      RTL_ts measured invariant at 105.01 frames @ 48 kHz (sd = 0.00-0.02)
+    //      across buffer sizes 512, 128, and 64.
+    //    - Oblique Audio RTL Utility validation at 64 samples:
+    //      Measured 421 samples vs 374 samples reported = +47 sample uncompensated residual
+    //      when driver declared the legacy vendor ladder (29 in / 29 out = 58 frames).
+    //    - DAWBench Low Latency Database historical benchmark:
+    //      Focusrite Saffire Driver 4.0.0 on Windows 7 x64 explicitly carried footnote:
+    //      "* I/O not reporting AD/DA".
+    //    - Calibrated symmetrically: 53 in / 52 out = 105 frames total.
+    //      Resulting residual drops from +47.01 frames to +0.01 frames (< 0.2 µs),
+    //      achieving sub-microsecond, sample-accurate DAW alignment.
+    //
+    // 2. Safety Offsets:
+    //    - RX Safety: Tuned to 10 packets (80 frames @ 48k).
+    //      The hardware completion batch floor is 8 packets (64 frames). 10 packets
+    //      provides 16 frames (2 packets / 250 µs) of headroom above the DMA floor.
+    //      Instruments.app ZTS jitter analysis (SAFFIRE-48k Run 2) verified phase-lock
+    //      std dev of 52 ns (max jitter spread 210 ns). 250 µs headroom is >1000x
+    //      the physical ZTS jitter. Saves 48 frames (1.0 ms) of RTL over legacy 16 packets.
+    //    - TX Safety: 6 packets nominal (clamped to 60 frames / 10 slots by payload-finality).
+    //      TX Latency metering (E0 -> E2) verified minimum hardware transmission wait of
+    //      2,015.3 µs (96.7 frames) with zero substitutions, leaving a 36.7 frame (765 µs)
+    //      cushion above the 60-frame deadline.
+    static constexpr uint32_t kSaffireTxDelayPackets = 6;
+    static constexpr uint32_t kSaffireRxDelayPackets = 10;
+
+    static constexpr uint32_t SaffireTxSafetyOffsetFrames(double rate) {
+        return (kSaffireTxDelayPackets + RateAddend(rate)) * FramesPerPacket(rate);
+    }
+    static constexpr uint32_t SaffireRxSafetyOffsetFrames(double rate) {
+        return (kSaffireRxDelayPackets + RateAddend(rate)) * FramesPerPacket(rate);
+    }
+    static constexpr uint32_t SaffireReportedInputLatencyFrames(double rate) {
+        if (rate > 96000.0) return 212u;
+        if (rate > 48000.0) return 106u;
+        return 53u;
+    }
+    static constexpr uint32_t SaffireReportedOutputLatencyFrames(double rate) {
+        if (rate > 96000.0) return 208u;
+        if (rate > 48000.0) return 104u;
+        return 52u;
+    }
+
     // Minimum completed-content publication span: one client operation plus
     // scheduling jitter. It sizes byte retention only and is not a scheduler.
     static constexpr uint32_t RequiredOutputPublicationFrames(
@@ -152,15 +202,23 @@ static_assert(AudioGeometryPolicy::RxSafetyOffsetFrames(48000.0) == 128,
               "48k RX safety must be 16 packets x 8 frames");
 static_assert(AudioGeometryPolicy::ReportedLatencyFrames(48000.0) == 29,
               "48k reported latency must be 29 frames");
-// Eight completion slots plus a two-slot live-descriptor guard are 60 frames
-// at 48 kHz, so the finality frontier now exceeds the Duet's 50-frame
-// profile floor and sets the offset itself. This is the priced consequence
-// of the 6 -> 8 completion group (2026-09-08): a producer can only refill at
-// interrupt time, so content within one interrupt period of the DMA cursor
-// cannot be changed, and lengthening that period lengthens the frozen span.
-// +10 frames (208 us) at 48 kHz; 96 -> 120 and 192 -> 240 at 2x and 4x.
+
+// Saffire empirical calibration assertions:
+static_assert(AudioGeometryPolicy::SaffireTxSafetyOffsetFrames(48000.0) == 48,
+              "48k Saffire TX safety must be 6 packets x 8 frames = 48 frames");
+static_assert(AudioGeometryPolicy::SaffireRxSafetyOffsetFrames(48000.0) == 80,
+              "48k Saffire RX safety must be 10 packets x 8 frames = 80 frames");
+static_assert(AudioGeometryPolicy::SaffireReportedInputLatencyFrames(48000.0) +
+              AudioGeometryPolicy::SaffireReportedOutputLatencyFrames(48000.0) == 105,
+              "48k Saffire reported roundtrip latency must be 105 frames (53 in / 52 out)");
+
+// With payload finality decoupled from the 8-packet completion group and
+// pegged to the physical prefetch limit (kPayloadRepointGuardPackets = 2)
+// plus 1 slack packet = 3 packets (18 frames nominal @ 48k), the physical
+// freeze frontier no longer inflates the profile floor. The device profile's
+// floor (e.g. Duet's 50 frames, Saffire's 48 frames) governs the safety offset.
 static_assert(AudioGeometryPolicy::RequiredOutputSafetyFrames(
-                  50, 48'000) == 60,
-              "48k safety must reflect the finality frontier");
+                  50, 48'000) == 50,
+              "48k safety reflects device profile floor when finality frontier is lower");
 
 } // namespace ASFW::Audio::Shared

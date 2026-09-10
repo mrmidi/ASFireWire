@@ -52,8 +52,24 @@ struct IsochQueueGeometry final {
     // OHCI descriptor prefetch quantum; the tail address itself is one aligned
     // 32-bit store owned by transport.
     static constexpr uint32_t kPayloadRepointGuardPackets = 2;
+    // Decoupled from completion grouping (kPacketsPerCompletionGroup):
+    // In legacy reference (Focusrite Saffire.kext, reversed in IDA Pro at
+    // Saffire::UpdateIsochBufferParams 0xf506 and Saffire::PrepareSendDCLs 0x10304),
+    // the hardware completion group was 10-12 packets (1.25-1.5 ms), but the
+    // TX delay was only 2 packets (16 frames / 333 us). The interrupt frequency
+    // governs only descriptor ring recycling, not content finality.
+    //
+    // Image 0 (silence) is pre-armed in all descriptors during refill.
+    // The physical point-of-no-return for repointing to Image 1 is strictly the
+    // OHCI 32-byte prefetch horizon (kPayloadRepointGuardPackets = 2) plus 1
+    // cycle dispatch slack = 3 packets (375 us).
+    // Sealing 10 packets ahead (8-packet group + 2-packet guard) was an artificial
+    // software artifact that starved 32-sample CoreAudio buffers (which have only
+    // 67 frames / 8.3 packets of wire runway due to the 25-frame IEC 61883-6
+    // transfer delay), causing 46 packet substitutions per 3,751 packets on
+    // Focusrite Saffire Pro 24 DSP (87% on Phase 2 at the completion boundary).
     static constexpr uint32_t kPayloadFinalityLeadPackets =
-        kPacketsPerCompletionGroup + kPayloadRepointGuardPackets;
+        kPayloadRepointGuardPackets + 1;
 };
 
 static_assert(IsochQueueGeometry::kPacketsPerCompletionGroup != 0);

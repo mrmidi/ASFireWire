@@ -444,9 +444,10 @@ void IsochTxDmaRing::RefreshLatePayloadBindings(
                            payloadDmaMap, out);
     }
 
-    // Between completion callbacks the command pointer can advance by one
-    // completion group. Keep that interval plus the live-descriptor repoint
-    // guard final even if a producer reads this frontier at the worst instant.
+    // The finality frontier reflects the physical hardware prefetch horizon
+    // (kPayloadRepointGuardPackets = 2) plus dispatch slack, decoupled from
+    // the completion callback interval. Packets outside this lead remain open
+    // for late binding on subsequent passes or CoreAudio IO wakeups.
     const uint64_t nextFinalizedEnd = std::min<uint64_t>(
         mappedEnd,
         hardwareAbsIdx + Geometry::kPayloadFinalityLeadPackets);

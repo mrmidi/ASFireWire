@@ -242,18 +242,16 @@ TEST(RxDrivenTimingTests, GeometryUsesEightCycleInterruptsAndCurrentTxDepths) {
 
 TEST(RxDrivenTimingTests, OutputSafetyIsTheContentFreezeLeadNotTheArmHorizon) {
     using Policy = ASFW::Audio::Shared::AudioGeometryPolicy;
-    // Ten content-finality slots (8-packet group + 2-packet repoint guard),
-    // not the arm horizon. Backend transfer delay is latency and is not
-    // counted again as safety. The frontier now exceeds every profile floor
-    // passed here, so it sets the offset itself: +10/+24/+48 frames versus
-    // the 6-packet group, which is the priced cost of the 1 ms interrupt.
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(50, 48'000), 60U);
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(96, 96'000), 120U);
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(192, 192'000), 240U);
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 44'100),
-              56U);
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 88'200),
-              0U);
+    // Decoupled finality lead: 3 packets (OHCI 32-byte prefetch guard of 2 packets
+    // + 1 dispatch slack packet). The nominal finality lead is 18 frames @ 48k, 36 @ 96k,
+    // 72 @ 192k, 17 @ 44.1k. The profile floors (50, 96, 192, 48) now exceed
+    // the finality frontier, so the device floor governs rather than being inflated
+    // by the interrupt interval.
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(50, 48'000), 50U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(96, 96'000), 96U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(192, 192'000), 192U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 44'100), 48U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 88'200), 0U);
 }
 
 } // namespace

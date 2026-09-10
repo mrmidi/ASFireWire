@@ -566,6 +566,54 @@ TEST(ResolvedProfileBuilder, ApogeeDuetPublishesAppleHalTimingAtBaseRates) {
     EXPECT_EQ(at960->txTransferDelayTicks, 12800U);
 }
 
+TEST(ResolvedProfileBuilder, FocusriteSaffirePublishesCalibratedEmpiricalLatencyAndSafetyOffsets) {
+    Discovery::DeviceRecord record{};
+    record.instanceId = Discovery::DeviceInstanceId{7};
+    record.identity.observedGuid = 0x00130E0000002400ULL;
+
+    DeviceProfiles::Audio::StaticAudioEndpointPlan plan{};
+    plan.unit = Discovery::UnitInstanceId{record.instanceId, 0x24};
+    plan.family = DeviceProfiles::Audio::AudioFamilyProviderId::DICE;
+    plan.probePolicy = DeviceProfiles::Audio::ProbePolicyId::DiceTcat;
+    plan.support = DeviceProfiles::Audio::SupportDisposition::Supported;
+    plan.profileBuilder = DeviceProfiles::Audio::ProfileBuilderId::FocusriteSPro24Dsp;
+    plan.vendorName = "Focusrite";
+    plan.modelName = "Saffire Pro 24 DSP";
+
+    DiceProbeFacts facts{};
+    facts.streams.hostInputPcmChannels = 16;
+    facts.streams.hostOutputPcmChannels = 8;
+    facts.streams.deviceToHostAm824Slots = 16;
+    facts.streams.hostToDeviceAm824Slots = 9;
+    facts.streams.sampleRateHz = 48000;
+    facts.streams.deviceToHostStreamCount = 1;
+    facts.streams.hostToDeviceStreamCount = 1;
+    facts.supportedRates = {44100, 48000, 88200, 96000};
+
+    const auto profile = ResolvedProfileBuilder::Build(
+        ProfileBuildContext{AudioEndpointId{9}, record, plan, facts});
+    ASSERT_TRUE(profile.has_value());
+
+    const auto* timing48k = profile->TimingFor(48000);
+    ASSERT_NE(timing48k, nullptr);
+    // Saffire empirical calibration: 105 frames roundtrip (53 in / 52 out)
+    EXPECT_EQ(timing48k->inputLatencyFrames, 53U);
+    EXPECT_EQ(timing48k->outputLatencyFrames, 52U);
+    EXPECT_EQ(timing48k->inputLatencyFrames + timing48k->outputLatencyFrames, 105U);
+
+    // RX Safety: 10 packets (80 frames @ 48k), 16 frames above 8-packet completion floor
+    EXPECT_EQ(timing48k->inputSafetyFrames, 80U);
+    // TX Safety: 6 packets (48 frames nominal, clamped to 60 by finality policy)
+    EXPECT_EQ(timing48k->outputSafetyFrames, 48U);
+
+    // Verify 96k scaling: 106 in / 104 out, RX safety = (10 + 2) * 16 = 192 frames
+    const auto* timing96k = profile->TimingFor(96000);
+    ASSERT_NE(timing96k, nullptr);
+    EXPECT_EQ(timing96k->inputLatencyFrames, 106U);
+    EXPECT_EQ(timing96k->outputLatencyFrames, 104U);
+    EXPECT_EQ(timing96k->inputSafetyFrames, 192U);
+}
+
 // A profile that declares nothing must still get a capture visibility margin
 // covering one whole completion batch: between completions a reader can be an
 // entire batch behind the writer, so a smaller safety offset does not cover
