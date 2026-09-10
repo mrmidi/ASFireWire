@@ -26,6 +26,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                              return endpoint ? endpoint.get() : nullptr;
                          })
     , dice_(publisher_, registry_, runtime_, duplexCoordinator_, hardware)
+    , motu_(publisher_, registry_, runtime_, duplexCoordinator_, hardware)
     , avc_(publisher_, registry_, runtime_, hostTransport_, duplexCoordinator_, hardware) {
     lock_ = IOLockAlloc();
     if (!lock_) {
@@ -228,8 +229,22 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
         return &avc_;
     }
 
-    const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
+    // MOTU is the one family (vendor_id, model_id) cannot discriminate: the root
+    // directory publishes model_id 0 and the model lives in the unit directory's
+    // Unit_Sw_Version. Passing the unit identity is what makes the lookup resolve at all
+    // -- without it every MOTU device falls through to the AV/C backend, which cannot
+    // drive it.
+    const DeviceProtocolFactory::UnitIdentity unit{
+        .specId = record->unitSpecId.value_or(0U),
+        .swVersion = record->unitSwVersion.value_or(0U)};
+
+    const auto integration =
+        DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId, unit);
     if (integration == DeviceIntegrationMode::kHardcodedNub) {
+        if (record->vendorId == DeviceProfiles::Audio::kMotuVendorId &&
+            unit.specId == DeviceProfiles::Audio::kMotuVendorId) {
+            return &motu_;
+        }
         return &dice_;
     }
 
@@ -417,6 +432,7 @@ void AudioCoordinator::BeginTeardown() noexcept {
     // queue. The coordinator owns this one subscription for every family.
     hostTransport_.SetTimingLossCallback({});
     dice_.BeginTeardown();
+    motu_.BeginTeardown();
     avc_.BeginTeardown();
     const kern_return_t hostStatus = StopHostTransport("service-teardown");
     if (hostStatus != kIOReturnSuccess) {

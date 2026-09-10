@@ -203,7 +203,8 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         uint8_t channel, HardwareInterface&,
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0, uint32_t streamChannels = 0) noexcept override {
+        uint32_t am824Slots = 0, uint32_t streamChannels = 0, uint32_t motuPcmChunks = 0) noexcept override {
+        (void)motuPcmChunks;
         log_.Add("host.prepare_receive");
         lastReceiveChannel = channel;
         lastReceiveBindingSource = bindingSource;
@@ -228,8 +229,9 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
         uint32_t streamChannels,
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0) noexcept override {
+        uint32_t am824Slots = 0, uint32_t motuPcmChunks = 0) noexcept override {
         log_.Add("host.prepare_receive_stream");
+        lastSecondaryReceiveMotuPcmChunks = motuPcmChunks;
         lastSecondaryReceiveIndex = streamIndex;
         lastSecondaryReceiveChannel = channel;
         lastSecondaryReceiveOffset = channelOffset;
@@ -323,6 +325,7 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     uint8_t lastSecondaryReceiveChannel{0};
     uint32_t lastSecondaryReceiveOffset{0};
     uint32_t lastSecondaryReceiveChannels{0};
+    uint32_t lastSecondaryReceiveMotuPcmChunks{0};
     ASFW::Audio::Runtime::IDirectAudioBindingSource* lastSecondaryReceiveBindingSource{nullptr};
     uint32_t lastSecondaryTransmitIndex{0};
     uint8_t lastSecondaryTransmitChannel{0};
