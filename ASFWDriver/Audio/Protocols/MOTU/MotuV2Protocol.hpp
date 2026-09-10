@@ -58,6 +58,12 @@ public:
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
 
+    /// Report the device's stream geometry. Before PrepareDuplex has run this answers
+    /// from the model's fixed chunk table rather than failing, so the nub can be
+    /// published before streaming -- see MotuAudioBackend::EnsureNubForGuid for why that
+    /// ordering matters.
+    bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+
     //==========================================================================
     // Duplex bring-up (IDeviceProtocol hooks).
     //
@@ -67,12 +73,11 @@ public:
     // snd_motu_stream_start_duplex). The host owns iso channel allocation and
     // hands the assignments in via AudioDuplexChannels.
     //
-    // NOTE: bringing the device's streams up does NOT by itself produce audio.
-    // MOTU is duplex-always and recovers its media clock from the host replaying
-    // the device's own cadence -- both the data-blocks-per-packet sequence and
-    // the per-block SPH presentation times (motu-stream.c:205-207). Wiring that
-    // replay to RxSequenceReplay is the remaining work; these hooks are the
-    // register half of it.
+    // These hooks are only the register half. MOTU is duplex-always and recovers its
+    // media clock from the host replaying the device's own cadence -- both the
+    // data-blocks-per-packet sequence and the per-block SPH presentation times
+    // (motu-stream.c:205-207). That half lives in Audio/Wire/MOTU: MotuEventOffsetCache
+    // captures the offsets on receive, MotuTxTiming stamps them back on transmit.
     //==========================================================================
 
     // IDeviceProtocol -> IDuplexDeviceControl bridge. Returning `this` is what makes

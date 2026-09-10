@@ -237,6 +237,23 @@ void MotuV2Protocol::ModifyRegister(Reg reg,
         });
 }
 
+bool MotuV2Protocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
+    outCaps = MakeRuntimeCaps();
+    if (outCaps.sampleRateHz == 0) {
+        // Not prepared yet: answer from the model's fixed layout so the nub can be
+        // published. The v2 fixed-chunk models carry 14 PCM chunks per direction at
+        // 44.1/48 kHz (motu-protocol-v2.c:274-282). Prefer the rate the device last
+        // reported over assuming 48k.
+        const uint32_t cachedRate = cachedSampleRateHz_.load(std::memory_order_acquire);
+        outCaps.hostInputPcmChannels = Encoding::Motu::k828mk2FixedPcmChunks[0];
+        outCaps.hostOutputPcmChannels = Encoding::Motu::k828mk2FixedPcmChunks[0];
+        outCaps.deviceToHostPcmChunks = outCaps.hostInputPcmChannels;
+        outCaps.hostToDevicePcmChunks = outCaps.hostOutputPcmChannels;
+        outCaps.sampleRateHz = cachedRate != 0 ? cachedRate : 48000U;
+    }
+    return true;
+}
+
 AudioStreamRuntimeCaps MotuV2Protocol::MakeRuntimeCaps() const noexcept {
     AudioStreamRuntimeCaps caps{};
     caps.hostInputPcmChannels = txPcmChunks_.load(std::memory_order_acquire);
@@ -245,6 +262,8 @@ AudioStreamRuntimeCaps MotuV2Protocol::MakeRuntimeCaps() const noexcept {
     // quadlet. The slot fields stay zero so nothing mistakes this for an AM824 stream.
     caps.deviceToHostAm824Slots = 0;
     caps.hostToDeviceAm824Slots = 0;
+    caps.deviceToHostPcmChunks = caps.hostInputPcmChannels;
+    caps.hostToDevicePcmChunks = caps.hostOutputPcmChannels;
     caps.sampleRateHz = preparedRateHz_.load(std::memory_order_acquire);
     return caps;
 }

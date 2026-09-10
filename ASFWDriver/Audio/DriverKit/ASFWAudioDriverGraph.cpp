@@ -147,7 +147,22 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
             parsedConfig.vendorId, parsedConfig.modelId, parsedConfig.guid)) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Resolved profile '%{public}s'", profile->Name());
-        strlcpy(parsedConfig.deviceName, profile->Name(), sizeof(parsedConfig.deviceName));
+
+        // Only name the device from the profile when the nub did not supply one.
+        //
+        // FindProfile matches on (vendorId, modelId), which cannot identify every family:
+        // MOTU publishes model_id 0, so it resolves the generic DICE profile and this
+        // copy used to rename a MOTU UltraLite to "Generic DICE" in CoreAudio. The nub's
+        // name comes from the protocol that actually claimed the device, so it is the
+        // more specific answer whenever it exists.
+        if (parsedConfig.deviceName[0] == '\0') {
+            strlcpy(parsedConfig.deviceName, profile->Name(), sizeof(parsedConfig.deviceName));
+        } else if (strcmp(parsedConfig.deviceName, profile->Name()) != 0) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDriver: keeping nub-supplied name '%{public}s' over profile "
+                     "'%{public}s'",
+                     parsedConfig.deviceName, profile->Name());
+        }
 
         const uint32_t rxChannels = profile->RxChannelCount();
         const uint32_t txChannels = profile->TxChannelCount();
