@@ -5,6 +5,7 @@
 // Global profile registry dispatcher.
 
 #include "AudioProfileRegistry.hpp"
+#include "MOTU/MotuV2Profile.hpp"
 #include "AVC/ApogeeDuetProfile.hpp"
 #include "AVC/BeBoBProfile.hpp"
 #include "AVC/Phase88Profile.hpp"
@@ -38,6 +39,28 @@ const IAudioDeviceProfile* AudioProfileRegistry::FindProfile(uint32_t vendorId,
     if (vendorId == DeviceProfiles::Audio::kTerraTecVendorId &&
         modelId == DeviceProfiles::Audio::kPhase88RackFwModelId) {
         return &phase88Profile;
+    }
+
+    // MOTU before the DICE lookup. This registry only receives (vendorId, modelId, guid),
+    // and MOTU publishes model_id 0, so the vendor OUI is the only discriminator
+    // available here -- which is sufficient, since ASFW claims a MOTU device only when
+    // DeviceProfiles has already matched its unit directory.
+    //
+    // Without this, MOTU falls through to the generic DICE profile below, whose
+    // BuildDefaultTxStreamConfig describes an AM824 stream. StartIO then sizes the
+    // isochronous resources for the wrong wire format and fails with
+    // kAudioHardwareUnspecifiedError ('what').
+    static MOTU::Profiles::MotuV2Profile motuUltraliteProfile{
+        DeviceProfiles::Audio::kMotuUltraliteSwVersion};
+    static MOTU::Profiles::MotuV2Profile motu828mk2Profile{
+        DeviceProfiles::Audio::kMotu828mk2SwVersion};
+    if (vendorId == DeviceProfiles::Audio::kMotuVendorId) {
+        // modelId carries the unit software version for MOTU (DeviceProfiles reports it
+        // that way, since it is the only stable model discriminator the device offers).
+        if (modelId == DeviceProfiles::Audio::kMotu828mk2SwVersion) {
+            return &motu828mk2Profile;
+        }
+        return &motuUltraliteProfile;
     }
 
     // Map identity to the DICE family structures
