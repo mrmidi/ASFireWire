@@ -115,6 +115,10 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{};
     ReplayReadyCallback replayReadyCallback_{};
     bool replayReadyNotified_{false};
+    /// MOTU has no SYT, so RxSytCadence can never establish for it. Latched once the
+    /// per-data-block SPH offsets start caching, which is the equivalent evidence that
+    /// this device's timing is readable. Cleared wherever replayReadyNotified_ is.
+    bool motuTimingEstablished_{false};
     bool replayResetForStart_{false};
     // Bounded [RxReplayReset] records for a stream that has not established yet.
     // Re-armed at each bring-up; without a budget a permanently-rejected stream

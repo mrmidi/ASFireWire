@@ -77,6 +77,7 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     timestampInvalidCount_ = 0;
     cadenceEstablishedLogged_ = false;
     replayReadyNotified_ = false;
+    motuTimingEstablished_ = false;
     replayResetForStart_ = false;
     replayCycleInitialized_ = false;
     lastReplayCycleOrdinal_ = 0;
@@ -303,12 +304,19 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     // SYT field (amdtp-motu.c:19-25). Cache one offset per block for the transmit side to
     // replay; the packet-granular sytOffset below stays unset, since a single offset
     // cannot represent what this device timed per block.
-    if (configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kMotuV2) {
+    const bool isMotu =
+        configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kMotuV2;
+    if (isMotu) {
         const uint32_t cached = motuOffsetCache_.Capture(
             std::span<const uint8_t>(packet.payload.data(), packet.payload.size()),
             result.dbs, result.framesDecoded, kMotuCipPrefixBytes);
-        if (cached > 0 && inputView_.control) {
-            inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
+        if (cached > 0) {
+            // Readable SPH offsets are this device's equivalent of an established SYT
+            // cadence: they are the timing evidence the transmit side replays.
+            motuTimingEstablished_ = true;
+            if (inputView_.control) {
+                inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
 
@@ -337,7 +345,15 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
 
     ::ASFW::Driver::RxSytCadence::Snapshot cadence{};
-    if (inputView_.control->rxSytCadence.TrySnapshot(cadence) && cadence.established) {
+    (void)inputView_.control->rxSytCadence.TrySnapshot(cadence);
+    // RxSytCadence establishes by observing valid SYTs, but MOTU sets SYT to 0xFFFF on
+    // every packet -- Linux marks the family CIP_SYT_HAS_NO_MEANING and times it from the
+    // per-data-block SPH instead (amdtp-motu.c:19-25). Gating on the SYT cadence
+    // therefore blocks a MOTU stream forever: the capture path decoded 18185 packets with
+    // nothing rejected, yet the clock anchor was never published and StartIO failed at
+    // WaitForInitialHardwareZts. Use the SPH capture as the establishment signal instead.
+    const bool timingEstablished = isMotu ? motuTimingEstablished_ : cadence.established;
+    if (timingEstablished) {
         if (!inputView_.control->rxSequenceReplay.IsEstablished()) {
             (void)inputView_.control->rxSequenceReplay.MarkEstablished();
         }
@@ -373,7 +389,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         static_cast<uint32_t>((1'000'000'000ULL << 8) / inputView_.sampleRateHz);
     if (kZtsPeriodFrames != 0 && result.framesDecoded != 0 &&
         (packetFirstFrame % kZtsPeriodFrames) == 0 && packetHostTicks != 0 &&
-        nanosPerSampleQ8 != 0 && clockPublisher_.IsBound() && cadence.established) {
+        nanosPerSampleQ8 != 0 && clockPublisher_.IsBound() && timingEstablished) {
         const auto publish = clockPublisher_.Publish(packetFirstFrame, packetHostTicks,
                                                      nanosPerSampleQ8);
         if (!publish.accepted) {
@@ -429,6 +445,7 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
     const uint64_t resetEpoch =
         control->rxReplayEpochResets.fetch_add(1, std::memory_order_relaxed) + 1;
     replayReadyNotified_ = false;
+    motuTimingEstablished_ = false;
     cadenceEstablishedLogged_ = false;
     replayCycleInitialized_ = false;
     dbcInitialized_ = false;
