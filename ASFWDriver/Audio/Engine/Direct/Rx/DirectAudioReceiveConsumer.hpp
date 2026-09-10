@@ -11,6 +11,7 @@
 #include "../AudioClockPublisher.hpp"
 #include "../DirectInputWriter.hpp"
 #include "RxAudioPacketProcessor.hpp"
+#include "../../../Wire/MOTU/MotuEventOffsetCache.hpp"
 
 #include <functional>
 
@@ -19,6 +20,8 @@ namespace ASFW::AudioEngine::Direct::Rx {
 // Owns all content interpretation for one IR stream. Isoch supplies only an
 // opaque payload and its controller-time correlation; this class owns audio
 // decode, replay, ZTS and device-policy callbacks.
+// MOTU replays per-data-block SPH timing; the cache lives with the consumer that
+// fills it. See Audio/Wire/MOTU/MotuEventOffsetCache.hpp.
 class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveConsumer {
   public:
     struct Configuration final {
@@ -28,6 +31,9 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         uint32_t channelOffset{0};
         uint32_t streamChannels{0};
         bool isSecondary{false};
+        /// MOTU only: PCM chunks this direction carries per data block. The
+        /// quadlet-slot families leave this zero and use am824Slots.
+        uint32_t motuPcmChunks{0};
     };
 
     using TimingLossCallback = std::function<void()>;
@@ -44,6 +50,12 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
     void SetReplayReadyCallback(ReplayReadyCallback callback) noexcept;
     [[nodiscard]] bool IsReplayEstablished() const noexcept;
+
+    /// MOTU replays per-data-block SPH timing. The cache is filled here, on the receive
+    /// path, and drained by the transmit side; it is inert for every other family.
+    [[nodiscard]] ::ASFW::Encoding::Motu::MotuEventOffsetCache& MotuOffsetCache() noexcept {
+        return motuOffsetCache_;
+    }
 
     void OnReceiveActivated() noexcept override;
     void OnReceiveQuiesced() noexcept override;
@@ -120,6 +132,10 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint64_t prevLoggedAnchorHostTicks_{0};
     uint32_t prevLoggedAnchorRate_{0};
     bool prevLoggedAnchorValid_{false};
+
+    /// Per-data-block presentation offsets captured from MOTU streams, drained by
+    /// the transmit side. Unused (and untouched) by the quadlet-slot families.
+    ::ASFW::Encoding::Motu::MotuEventOffsetCache motuOffsetCache_{};
 };
 
 } // namespace ASFW::AudioEngine::Direct::Rx

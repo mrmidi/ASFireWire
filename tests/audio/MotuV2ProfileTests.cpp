@@ -126,4 +126,46 @@ TEST(MotuFactoryTests, RecognizesKnownDeviceViaUnitIdentity) {
     EXPECT_FALSE(DeviceProtocolFactory::IsKnownDevice(kMotuVendorId, 0x000000U));
 }
 
+
+//==============================================================================
+// UltraLite enablement (unit version 0x0d)
+//==============================================================================
+
+TEST(MotuProfileTests, UltraLiteIsAudioEnabledAndNamed) {
+    // The gate deciding whether a protocol is ever constructed for this device. The
+    // UltraLite shares the 828mk2's {14,14,0} chunk layout (snd_motu_spec_ultralite vs
+    // snd_motu_spec_828mk2), differing only in the Spartan fetching-mode write.
+    const DeviceProfileQuery ultralite{.vendorId = 0x0001f2u,
+                                       .modelId = 0u,
+                                       .unitSpecId = 0x0001f2u,
+                                       .unitSwVersion = 0x00000du};
+
+    EXPECT_TRUE(
+        ASFW::DeviceProfiles::Audio::Motu::LookupAudioProfile(ultralite).has_value());
+
+    const auto identity = ASFW::DeviceProfiles::Audio::Motu::LookupIdentity(ultralite);
+    ASSERT_TRUE(identity.has_value());
+    EXPECT_STREQ(identity->modelName, "UltraLite");
+    // model_id is reported as the software version, the only stable discriminator MOTU
+    // publishes.
+    EXPECT_EQ(identity->modelId, 0x00000du);
+}
+
+TEST(MotuProfileTests, SiblingsWithUnconfirmedLayoutsStayAudioDisabled) {
+    // 896HD (0x05), Traveler (0x09) and 8pre (0x0f) resolve an identity so they appear
+    // by name in diagnostics, but no protocol is constructed: their chunk layouts are
+    // unverified, and the 8pre has a second optical interface with a different ADAT rule
+    // (motu-protocol-v2.c:253-269).
+    for (const uint32_t version : {0x000005u, 0x000009u, 0x00000fu}) {
+        const DeviceProfileQuery q{.vendorId = 0x0001f2u,
+                                   .modelId = 0u,
+                                   .unitSpecId = 0x0001f2u,
+                                   .unitSwVersion = version};
+        EXPECT_TRUE(ASFW::DeviceProfiles::Audio::Motu::LookupIdentity(q).has_value())
+            << "version " << version;
+        EXPECT_FALSE(ASFW::DeviceProfiles::Audio::Motu::LookupAudioProfile(q).has_value())
+            << "version " << version;
+    }
+}
+
 } // namespace

@@ -3,6 +3,8 @@
 
 #include "DirectAudioReceiveConsumer.hpp"
 
+#include <span>
+
 #include "../../../../Common/TimingUtils.hpp"
 #include "../../../../Logging/Logging.hpp"
 #include "../../../../Shared/Isoch/AudioTimingGeometry.hpp"
@@ -10,6 +12,13 @@
 #include <utility>
 
 namespace ASFW::AudioEngine::Direct::Rx {
+
+namespace {
+/// A received payload begins with the 8-byte isoch header (timestamp + 1394 header),
+/// then the two CIP quadlets. MOTU's first data block therefore starts 16 bytes in --
+/// not the 8 the pure wire helpers default to, which count from the CIP header.
+constexpr uint32_t kMotuCipPrefixBytes = 16;
+} // namespace
 
 const char* DirectAudioReceiveConsumer::ReplayResetReasonName(
     ReplayResetReason reason) noexcept {
@@ -175,7 +184,8 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     const auto result = processor_.ProcessPacket(
         packet.payload.data(), packet.payload.size(), absoluteFrameCursor_, channels,
         inputView_.deviceToHostAm824Slots, configuration_.wireFormat,
-        configuration_.channelOffset, !configuration_.isSecondary);
+        configuration_.channelOffset, !configuration_.isSecondary,
+        configuration_.motuPcmChunks);
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {
@@ -289,6 +299,19 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     if (result.hasValidCip) {
         replayEntry.flags |= ::ASFW::Audio::Runtime::RxSequenceFlags::kValidCip;
     }
+    // MOTU carries presentation time in a per-data-block SPH quadlet rather than the CIP
+    // SYT field (amdtp-motu.c:19-25). Cache one offset per block for the transmit side to
+    // replay; the packet-granular sytOffset below stays unset, since a single offset
+    // cannot represent what this device timed per block.
+    if (configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kMotuV2) {
+        const uint32_t cached = motuOffsetCache_.Capture(
+            std::span<const uint8_t>(packet.payload.data(), packet.payload.size()),
+            result.dbs, result.framesDecoded, kMotuCipPrefixBytes);
+        if (cached > 0 && inputView_.control) {
+            inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
     if (result.hasValidCip && result.syt != 0xffff) {
         const bool cadenceAccepted = inputView_.control->rxSytCadence.Observe(
             result.syt, timestamp.cycleTimer);

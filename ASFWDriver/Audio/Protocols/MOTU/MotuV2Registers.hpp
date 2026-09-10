@@ -17,6 +17,8 @@
 #pragma once
 
 #include "../../Wire/MOTU/MotuBlockLayout.hpp"
+#include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
+
 #include <cstdint>
 #include <optional>
 
@@ -214,9 +216,43 @@ struct AsyncAddrValues {
 inline constexpr uint64_t kAsyncMessageRegionStart = 0xffffe0000000ull;
 inline constexpr uint64_t kAsyncMessageRegionEnd = 0xffffe000ffffull;
 
-/// 828mk2 and 896HD require no fetching-mode write around streaming; other
-/// v2 models do (motu-protocol-v2.c:190-225). Encoded here as a capability
-/// flag for the protocol layer.
-inline constexpr bool k828mk2NeedsFetchingModeWrite = false;
+//==============================================================================
+// Fetching mode (motu-protocol-v2.c:190-225)
+//==============================================================================
+
+/// 828mk2 (Altera ACEX 1K) and 896HD (Altera Cyclone) need no fetching-mode write around
+/// streaming. Every other v2 model does; the UltraLite and 8pre implement a Xilinx
+/// Spartan XC3S200 and take the variant below.
+[[nodiscard]] constexpr bool NeedsFetchingModeWrite(uint32_t unitSwVersion) noexcept {
+    return unitSwVersion != DeviceProfiles::Audio::kMotu828mk2SwVersion &&
+           unitSwVersion != DeviceProfiles::Audio::kMotu896hdSwVersion;
+}
+
+inline constexpr uint32_t kClockFetchEnable = 0x02000000u;
+inline constexpr uint32_t kClockModelSpecific = 0x04000000u;
+
+/// Read-modify-write for the clock status register when enabling or disabling fetching.
+///
+/// The Spartan variant additionally sets the model-specific bit, but only when the device
+/// is slaved to source packet headers above 48 kHz (switch_fetching_mode_spartan,
+/// motu-protocol-v2.c:168-189). At 44.1/48 kHz on any clock source, and at any rate on an
+/// internal clock, it reduces to the plain fetch-enable write.
+[[nodiscard]] constexpr uint32_t EncodeFetchingMode(uint32_t currentData,
+                                                    bool enable,
+                                                    bool spartan) noexcept {
+    uint32_t data = currentData & ~(kClockFetchEnable | kClockModelSpecific);
+    if (enable) {
+        data |= kClockFetchEnable;
+    }
+    if (spartan) {
+        const auto source = DecodeClockSourceV2(currentData);
+        const auto rate = DecodeRateV2(currentData);
+        if (source.has_value() && *source == ClockSourceV2::Sph && rate.has_value() &&
+            *rate > 48000U) {
+            data |= kClockModelSpecific;
+        }
+    }
+    return data;
+}
 
 } // namespace ASFW::Audio::Motu

@@ -34,6 +34,8 @@ using ASFW::Audio::DuplexPrepareResult;
 using ASFW::Audio::DuplexStageResult;
 using ASFW::Audio::DuplexConfirmResult;
 
+constexpr uint32_t kUltraliteSwVersion = 0x00000dU;
+
 constexpr uint32_t k828mk2SwVersion = 0x000003U;
 constexpr uint16_t kNodeId = 0x0001U;
 
@@ -702,6 +704,51 @@ TEST(MotuV2DuplexTests, StopIsANoOpWhenDuplexWasNeverEnabled) {
 
     EXPECT_EQ(protocol.StopDuplex(), kIOReturnSuccess);
     EXPECT_TRUE(bus.writes.empty());
+}
+
+
+//==============================================================================
+// UltraLite enablement (unit version 0x0d)
+//==============================================================================
+
+TEST(MotuV2DuplexTests, UltraLiteWritesFetchingModeDuringPrepare) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, kUltraliteSwVersion);
+
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+
+    // The Spartan models need the fetch-enable write the 828mk2 skips
+    // (motu-protocol-v2.c:190-225). At 48 kHz on an internal clock the model-specific bit
+    // stays clear, so only bit 25 is set.
+    bool sawFetchWrite = false;
+    for (const auto& w : bus.writes) {
+        if (w.addressLo == LowOf(Reg::ClockStatusV2)) {
+            sawFetchWrite = true;
+            EXPECT_EQ(w.value & 0x02000000U, 0x02000000U) << "fetch enable not set";
+            EXPECT_EQ(w.value & 0x04000000U, 0U) << "model-specific set at 48k internal";
+        }
+    }
+    EXPECT_TRUE(sawFetchWrite) << "UltraLite must write the clock status register";
+}
+
+TEST(MotuV2DuplexTests, The828mk2SkipsTheFetchingModeWrite) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+
+    for (const auto& w : bus.writes) {
+        EXPECT_NE(w.addressLo, LowOf(Reg::ClockStatusV2))
+            << "828mk2 (Altera ACEX 1K) must not write fetching mode";
+    }
 }
 
 } // namespace

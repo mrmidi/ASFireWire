@@ -348,6 +348,7 @@ void MotuV2Protocol::PrepareDuplex(const AudioDuplexChannels& channels,
                         return;
                     }
                     duplexPrepared_.store(true, std::memory_order_release);
+                    ApplyFetchingModeIfNeeded(true, [](IOReturn) {});
 
                     DuplexPrepareResult result{};
                     result.generation = busInfo_.GetGeneration();
@@ -361,6 +362,34 @@ void MotuV2Protocol::PrepareDuplex(const AudioDuplexChannels& channels,
                         callback(kIOReturnSuccess, result);
                     }
                 });
+        });
+}
+
+void MotuV2Protocol::ApplyFetchingModeIfNeeded(bool enable,
+                                               CompletionCallback callback) {
+    // 828mk2 and 896HD need no fetching-mode write; the UltraLite and 8pre implement a
+    // Xilinx Spartan XC3S200 and do (motu-protocol-v2.c:190-225). Fire-and-forget by
+    // design: this rides alongside bring-up, and a device that has gone away cannot be
+    // configured anyway.
+    if (!NeedsFetchingModeWrite(unitSwVersion_)) {
+        if (callback) {
+            callback(kIOReturnSuccess);
+        }
+        return;
+    }
+    const bool spartan = true; // every model reaching here is Spartan-based
+    ModifyRegister(
+        Reg::ClockStatusV2,
+        [enable, spartan](uint32_t current) {
+            return EncodeFetchingMode(current, enable, spartan);
+        },
+        [callback = std::move(callback)](IOReturn status) mutable {
+            if (status != kIOReturnSuccess) {
+                ASFW_LOG(Audio, "MotuV2Protocol: fetching-mode write failed: 0x%x", status);
+            }
+            if (callback) {
+                callback(status);
+            }
         });
 }
 

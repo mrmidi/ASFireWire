@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// MotuV2Protocol.hpp - Device protocol for MOTU protocol-v2 register devices (828mkII).
+// MotuV2Protocol.hpp - Device protocol for MOTU protocol-v2 register devices.
 //
 // Thin adapter: all wire encoding/decoding lives in the pure codecs of
 // MotuV2Registers.hpp; this class owns only transport (async register IO against
 // kAddrBase + offset) and the cached device state those reads produce.
 //
-// Streaming bring-up is deliberately NOT implemented here. MOTU playback must replay the
-// capture stream's SPH timestamps (see docs/motu-828mk2-backend-design.md §6), which
-// needs the shared IR->IT cadence conduit that is being built upstream; the base class
-// returns kIOReturnUnsupported for those hooks until it lands.
+// Device-side streaming bring-up IS implemented here, through IDuplexDeviceControl.
+// The host-side half -- replaying the device's per-data-block SPH presentation times --
+// lives in Audio/Wire/MOTU (MotuEventOffsetCache captures, MotuTxTiming stamps), because
+// it belongs with packet timing rather than register control.
 
 #pragma once
 
@@ -137,6 +137,10 @@ private:
     void WriteAsyncAddrPair(AsyncAddrValues values,
                             bool registered,
                             CompletionCallback callback);
+
+    /// Apply the model-specific fetching-mode write around streaming, if this model
+    /// needs one. A no-op success for the 828mk2 and 896HD.
+    void ApplyFetchingModeIfNeeded(bool enable, CompletionCallback callback);
 
     /// Read-modify-write one register: read it, transform the value, write it back.
     /// Every duplex register on this device is RMW (reserved/low bits must survive), so

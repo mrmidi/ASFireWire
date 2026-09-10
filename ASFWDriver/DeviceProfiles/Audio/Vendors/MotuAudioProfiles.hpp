@@ -58,10 +58,17 @@ LookupAudioProfile(const DeviceProfileQuery& query) noexcept {
     if (!IsMotuUnit(query)) {
         return std::nullopt;
     }
-    // Only the 828mk2 is hardware-verified. The other protocol-v2 siblings resolve an
-    // identity (above) so they are named in diagnostics, but stay kNone — no protocol is
-    // constructed for them until their chunk layouts are confirmed on real hardware.
-    if (query.unitSwVersion == kMotu828mk2SwVersion) {
+    // 828mk2 and UltraLite share a chunk layout: both are {14, 14, 0} with 2nd-quadlet
+    // MIDI in each direction (snd_motu_spec_828mk2 vs snd_motu_spec_ultralite,
+    // motu-protocol-v2.c:274-282 and :302-310). The UltraLite differs only in needing the
+    // Xilinx Spartan fetching-mode write the 828mk2 skips, which the protocol handles.
+    //
+    // The remaining v2 siblings (896HD, Traveler, 8pre) resolve an identity above so they
+    // are named in diagnostics, but stay kNone until their layouts are confirmed against
+    // real hardware — the 8pre in particular has two optical interfaces and a different
+    // ADAT chunk rule (motu-protocol-v2.c:253-269).
+    if (query.unitSwVersion == kMotu828mk2SwVersion ||
+        query.unitSwVersion == kMotuUltraliteSwVersion) {
         return AudioProfileHint{.family = AudioProtocolFamily::VendorSpecific,
                                 .mode = AudioIntegrationMode::kHardcodedNub,
                                 .source = MatchSource::ConfigROM};
