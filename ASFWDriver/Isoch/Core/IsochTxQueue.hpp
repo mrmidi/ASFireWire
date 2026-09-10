@@ -813,6 +813,14 @@ struct IsochTxQueueControl final {
             slot.descriptorUpdateHostTicks.store(0, std::memory_order_relaxed);
             slot.sealStartHostTicks.store(0, std::memory_order_relaxed);
             slot.sealEndHostTicks.store(0, std::memory_order_relaxed);
+            // These must be cleared here even though nothing else writes them
+            // on this path. They are deliberately left untouched by the
+            // NotExamined observations below -- that is what keeps a verdict
+            // from being erased by the sweep -- so a packet that only ever
+            // receives such observations would otherwise inherit whatever the
+            // slot's previous occupant concluded and export it as its own.
+            slot.lastAttemptPassId.store(0, std::memory_order_relaxed);
+            slot.lastAttemptPacked.store(0, std::memory_order_relaxed);
             slot.lastBeforeOffer.Clear();
             slot.firstAfterOffer.Clear();
             slot.terminal.Clear();

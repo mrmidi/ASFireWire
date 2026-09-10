@@ -726,3 +726,95 @@ TEST(TxDecisionTelemetryTests, SweepDoesNotClobberAConcludedAttempt) {
               static_cast<uint8_t>(LatePayloadBindResult::RejectedUnavailableHwPos));
     EXPECT_EQ(snap.lastAttemptPassId, 4U);
 }
+
+TEST(TxDecisionTelemetryTests, SlotReuseDoesNotInheritAnEarlierAttemptResult) {
+    // The attempt fields are deliberately preserved across the NotExamined
+    // sweep, which is what stops a verdict being erased. That same preservation
+    // means a slot opening for a NEW packet must clear them explicitly: a
+    // packet that only ever draws NotExamined observations would otherwise
+    // report the previous occupant's rejection as its own, under a Valid join.
+    auto ctrl = MakeControl();
+    ctrl->BeginCapture(7, 3);
+
+    constexpr uint64_t kOld = 200;
+    const uint64_t kNew = kOld + kSlots;  // same slot, next lap
+    ctrl->RecordTransportExamination(
+        kToken, kOld, SlotGen(kOld), /*passId=*/4, /*hostTicks=*/4000, 1,
+        LatePayloadBindResult::RejectedUnavailableHwPos, 0, false,
+        /*offerVisible=*/true, /*terminal=*/false);
+
+    TxTransportDecisionSnapshot before{};
+    ASSERT_EQ(ctrl->ReadTransportDecision(kOld, kToken, SlotGen(kOld), before),
+              TxDecisionJoinResult::Valid);
+    ASSERT_EQ(before.lastAttemptBindResult,
+              static_cast<uint8_t>(LatePayloadBindResult::RejectedUnavailableHwPos));
+
+    // The next lap's packet is only ever swept: never offered, never attempted.
+    ctrl->RecordTransportExamination(
+        kToken, kNew, SlotGen(kNew), /*passId=*/9, /*hostTicks=*/9000, 0,
+        LatePayloadBindResult::NotExamined, 0, false,
+        /*offerVisible=*/false, /*terminal=*/false);
+
+    TxTransportDecisionSnapshot after{};
+    ASSERT_EQ(ctrl->ReadTransportDecision(kNew, kToken, SlotGen(kNew), after),
+              TxDecisionJoinResult::Valid);
+    EXPECT_EQ(after.lastAttemptBindResult,
+              static_cast<uint8_t>(LatePayloadBindResult::NotExamined));
+    EXPECT_EQ(after.lastAttemptPassId, 0U);
+}
+
+TEST(TxDecisionTelemetryTests, SlotReuseDoesNotInheritAnEarlierSuccessfulBind) {
+    // The same hazard with the more misleading value: inheriting Bound would
+    // report a packet as having received its replacement content.
+    auto ctrl = MakeControl();
+    ctrl->BeginCapture(7, 3);
+
+    constexpr uint64_t kOld = 201;
+    const uint64_t kNew = kOld + kSlots;
+    ctrl->RecordTransportExamination(kToken, kOld, SlotGen(kOld), 4, 4000, 1,
+                                     LatePayloadBindResult::Bound, 50, true,
+                                     true, /*terminal=*/true);
+
+    ctrl->RecordTransportExamination(kToken, kNew, SlotGen(kNew), 9, 9000, 0,
+                                     LatePayloadBindResult::NotExamined, 0,
+                                     false, /*offerVisible=*/false,
+                                     /*terminal=*/false);
+
+    TxTransportDecisionSnapshot after{};
+    ASSERT_EQ(ctrl->ReadTransportDecision(kNew, kToken, SlotGen(kNew), after),
+              TxDecisionJoinResult::Valid);
+    EXPECT_EQ(after.lastAttemptBindResult,
+              static_cast<uint8_t>(LatePayloadBindResult::NotExamined));
+    EXPECT_EQ(after.lastAttemptPassId, 0U);
+    // The terminal event is likewise the new packet's, not the old one's.
+    EXPECT_EQ(after.flags & kTxTransportFlagTerminalRecorded, 0U);
+}
+
+TEST(TxDecisionTelemetryTests, RearmedCaptureDoesNotInheritAttemptResult) {
+    // Same slot, same packet index, but a different capture: the record is
+    // reopened, so the previous capture's verdict must not carry over.
+    auto ctrl = MakeControl();
+    constexpr uint64_t kPkt = 202;
+    const uint64_t gen = SlotGen(kPkt);
+
+    const uint64_t first = MakeTxCaptureToken(1, 1);
+    ctrl->BeginCapture(1, 1);
+    ctrl->RecordTransportExamination(first, kPkt, gen, 4, 4000, 1,
+                                     LatePayloadBindResult::RejectedInsideGuard,
+                                     50, true, true, /*terminal=*/true);
+
+    const uint64_t second = MakeTxCaptureToken(2, 9);
+    ctrl->BeginCapture(2, 9);
+    ctrl->RecordTransportExamination(second, kPkt, gen, 1, 1000, 0,
+                                     LatePayloadBindResult::NotExamined, 0,
+                                     false, /*offerVisible=*/false,
+                                     /*terminal=*/false);
+
+    TxTransportDecisionSnapshot snap{};
+    ASSERT_EQ(ctrl->ReadTransportDecision(kPkt, second, gen, snap),
+              TxDecisionJoinResult::Valid);
+    EXPECT_EQ(snap.lastAttemptBindResult,
+              static_cast<uint8_t>(LatePayloadBindResult::NotExamined));
+    EXPECT_EQ(snap.lastAttemptPassId, 0U);
+    EXPECT_EQ(snap.sealRecorded, 0);
+}
