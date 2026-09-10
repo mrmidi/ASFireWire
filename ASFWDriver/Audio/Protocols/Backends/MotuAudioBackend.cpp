@@ -14,6 +14,7 @@
 #include "../DeviceProtocolFactory.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../MOTU/MotuV2Protocol.hpp"
+#include "../../Wire/MOTU/MotuBlockLayout.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -55,6 +56,13 @@ void MotuAudioBackend::BeginTeardown() noexcept {
     }
 }
 
+void MotuAudioBackend::OnDeviceRecordUpdated(uint64_t guid) noexcept {
+    if (stopping_.load(std::memory_order_acquire)) {
+        return;
+    }
+    EnsureNubForGuid(guid);
+}
+
 void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     if (guid == 0) {
         return;
@@ -90,18 +98,33 @@ void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.sampleRates = {44100u, 48000u};
     dev.currentSampleRate = 48000u;
 
+    // Geometry: prefer the device's live answer, but fall back to the model's known
+    // chunk layout.
+    //
+    // The fallback is not an optimisation, it is required. Live caps only exist after
+    // PrepareDuplex, which runs during streaming; CoreAudio only streams to a device it
+    // can see; and it can only see a published nub. Waiting for caps before publishing
+    // deadlocks those two against each other and the device never appears at all.
+    //
+    // The v2 fixed-chunk models carry 14 PCM chunks per direction at 44.1/48 kHz
+    // (motu-protocol-v2.c:274-282), which is the geometry to publish with until the
+    // hardware says otherwise.
     AudioStreamRuntimeCaps caps{};
-    if (protocol->GetRuntimeAudioStreamCaps(caps) && caps.sampleRateHz != 0) {
+    const bool haveLiveCaps =
+        protocol->GetRuntimeAudioStreamCaps(caps) && caps.sampleRateHz != 0;
+    if (haveLiveCaps) {
         dev.inputChannelCount = caps.hostInputPcmChannels;
         dev.outputChannelCount = caps.hostOutputPcmChannels;
         dev.currentSampleRate = caps.sampleRateHz;
     } else {
-        // Not yet prepared: publish nothing rather than a nub with zero channels, which
-        // CoreAudio would surface as a broken device the user has to remove by hand.
+        const uint32_t fixedChunks = ::ASFW::Encoding::Motu::k828mk2FixedPcmChunks[0];
+        dev.inputChannelCount = fixedChunks;
+        dev.outputChannelCount = fixedChunks;
+        dev.currentSampleRate = 48000u;
         ASFW_LOG(Audio,
-                 "MotuAudioBackend::EnsureNubForGuid: runtime caps unavailable for GUID=0x%016llx; deferring publish",
-                 guid);
-        return;
+                 "MotuAudioBackend::EnsureNubForGuid: no live caps yet for GUID=0x%016llx; "
+                 "publishing the model's fixed geometry (%u x %u @ 48k)",
+                 guid, fixedChunks, fixedChunks);
     }
     dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
 

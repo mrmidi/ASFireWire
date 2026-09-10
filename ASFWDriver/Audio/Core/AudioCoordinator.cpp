@@ -61,8 +61,11 @@ void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device
         remoteLostGuids_.erase(guid);
         IOLockUnlock(lock_);
     }
-    if (BackendForGuid(guid) == &dice_) {
+    auto* addedBackend = BackendForGuid(guid);
+    if (addedBackend == &dice_) {
         dice_.OnDeviceRecordUpdated(guid);
+    } else if (addedBackend == &motu_) {
+        motu_.OnDeviceRecordUpdated(guid);
     }
 }
 
@@ -78,6 +81,8 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
     auto* backend = BackendForGuid(guid);
     if (backend == &dice_) {
         dice_.OnDeviceRecordUpdated(guid);
+    } else if (backend == &motu_) {
+        motu_.OnDeviceRecordUpdated(guid);
     }
 
     bool recoverActiveStream = false;

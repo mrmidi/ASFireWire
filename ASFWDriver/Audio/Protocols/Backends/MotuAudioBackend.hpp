@@ -63,6 +63,12 @@ public:
     /// Idempotent.
     void BeginTeardown() noexcept;
 
+    /// Publish (or refresh) the nub for a discovered device. Called when discovery adds
+    /// or resumes a MOTU, which is the only chance to publish: the nub must exist before
+    /// CoreAudio will ever ask to stream, and streaming is what produces live runtime
+    /// caps -- so waiting for caps first deadlocks the two against each other.
+    void OnDeviceRecordUpdated(uint64_t guid) noexcept;
+
 private:
     void EnsureNubForGuid(uint64_t guid) noexcept;
 
