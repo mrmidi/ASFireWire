@@ -9,7 +9,23 @@
 namespace ASFW::UserClient::Wire {
 
 inline constexpr uint32_t kTxLatencyWireVersion = 5;
-inline constexpr uint32_t kTxLatencyMaxSamplesPerPage = 32;
+/// Samples per page.
+///
+/// This is sized so the whole page fits IOKit's INLINE structure-output path,
+/// which caps at 4096 bytes. Above that the kernel does not hand back a usable
+/// length, so the caller's size guard rejects the entire payload and the
+/// feature fails closed and silent -- a spinner, not an error. The page grew
+/// past that cap when the sample did, and the symptom was indistinguishable
+/// from "the capture is still running".
+///
+/// Pages are already the transport unit here (pageIndex / totalPages), so
+/// carrying fewer samples per page costs an extra round trip and nothing else.
+/// If the sample grows again, lower this rather than raising the cap -- or move
+/// the handler to structureOutputDescriptor, which is the only way past 4096.
+inline constexpr uint32_t kTxLatencyMaxSamplesPerPage = 12;
+
+/// IOKit's inline structure-output limit. Not ours to raise.
+inline constexpr size_t kIOKitInlineStructureOutputLimit = 4096;
 
 #pragma pack(push, 8)
 
@@ -250,7 +266,14 @@ struct TxLatencyResultsPageWire final {
     uint32_t reserved{0};
     TxLatencySampleWire samples[kTxLatencyMaxSamplesPerPage]{};
 };
-static_assert(sizeof(TxLatencyResultsPageWire) == 192 + 16 + 32 * 288, "TxLatencyResultsPageWire size mismatch");
+static_assert(sizeof(TxLatencyResultsPageWire) ==
+                  192 + 16 + kTxLatencyMaxSamplesPerPage * 288,
+              "TxLatencyResultsPageWire size mismatch");
+// The guard that makes the failure above a build error instead of a spinner.
+static_assert(sizeof(TxLatencyResultsPageWire) <= kIOKitInlineStructureOutputLimit,
+              "TX latency page must fit IOKit's inline structure-output limit; "
+              "lower kTxLatencyMaxSamplesPerPage or switch the handler to "
+              "structureOutputDescriptor");
 
 #pragma pack(pop)
 

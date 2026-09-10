@@ -512,10 +512,13 @@ struct TxLatencySessionReport: Sendable, Codable {
 
 enum TxLatencyWireDecoder {
     static let wireVersion: UInt32 = 5
-    static let maxSamplesPerPage: Int = 32
+    /// Mirrors kTxLatencyMaxSamplesPerPage. Sized so a page fits IOKit's
+    /// 4096-byte inline structure-output limit; above it the kernel returns no
+    /// usable length and the size guard below discards the whole page.
+    static let maxSamplesPerPage: Int = 12
     static let sampleBytes: Int = 288
     static let headerBytes: Int = 192
-    static let pageBytes: Int = 192 + 16 + (32 * 288) // 9424 bytes
+    static let pageBytes: Int = 192 + 16 + (maxSamplesPerPage * 288) // 3664 bytes
 
     static func decodePage(_ data: Data) -> TxLatencyResultsPage? {
         guard data.count >= pageBytes else { return nil }

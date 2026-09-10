@@ -120,7 +120,12 @@ TEST(TxLatencySessionTests, HandleStreamResetPreservesRecords) {
 TEST(TxLatencySessionTests, WireFormatSampleOffsets) {
     static_assert(sizeof(ASFW::UserClient::Wire::TxLatencySampleWire) == 288);
     static_assert(sizeof(ASFW::UserClient::Wire::TxLatencySessionWireHeader) == 192);
-    static_assert(sizeof(ASFW::UserClient::Wire::TxLatencyResultsPageWire) == 192 + 16 + 32 * 288);
+    static_assert(sizeof(ASFW::UserClient::Wire::TxLatencyResultsPageWire) ==
+              192 + 16 + ASFW::UserClient::Wire::kTxLatencyMaxSamplesPerPage * 288);
+    // A page that exceeds IOKit's inline structure-output limit is returned
+    // with no usable length, so the reader discards it and the UI shows a
+    // spinner forever. Keep this assertion adjacent to the size one.
+    static_assert(sizeof(ASFW::UserClient::Wire::TxLatencyResultsPageWire) <= 4096);
 }
 
 TEST(TxLatencySessionTests, ConcurrentFinalizationSerialization) {
