@@ -39,7 +39,13 @@ public:
                                                              uint32_t am824Slots,
                                                              ASFW::Encoding::AudioWireFormat format,
                                                              uint32_t channelOffset = 0,
-                                                             bool publishTimeline = true) noexcept;
+                                                             bool publishTimeline = true,
+                                                             // MOTU only: PCM chunks this
+                                                             // direction carries per data
+                                                             // block. Ignored by the
+                                                             // quadlet-slot formats, whose
+                                                             // unit count is am824Slots.
+                                                             uint32_t motuPcmChunks = 0) noexcept;
 
 private:
     DirectInputWriter& writer_;

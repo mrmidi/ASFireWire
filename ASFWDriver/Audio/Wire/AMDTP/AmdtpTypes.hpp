@@ -122,6 +122,10 @@ enum class StreamMode : uint8_t {
 enum class AudioWireFormat : uint8_t {
     kAM824 = 0,
     kRawPcm24In32 = 1,
+    // MOTU protocol-v2: 3-byte PCM chunks from byte offset 10 of a data block, behind an
+    // SPH quadlet and two message chunks. Not a quadlet-slot format, so the slot-based
+    // encode/decode helpers do not apply -- see Audio/Wire/MOTU.
+    kMotuV2 = 2,
 };
 
 } // namespace ASFW::Encoding

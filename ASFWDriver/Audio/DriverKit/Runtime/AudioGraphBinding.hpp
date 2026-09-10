@@ -19,6 +19,10 @@ enum class AudioWireFormat : uint32_t {
     kUnknown = 0,
     kAM824 = 1,
     kRawPcm24In32 = 2,
+    // Mirrors ASFW::Encoding::AudioWireFormat::kMotuV2. The two enums are deliberately
+    // separate (this one is part of the shared control block's ABI and carries
+    // kUnknown), so a value added to either must be added to both.
+    kMotuV2 = 3,
 };
 
 struct AudioGraphBinding final {
