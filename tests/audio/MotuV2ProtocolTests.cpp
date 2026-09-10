@@ -372,6 +372,9 @@ TEST(MotuV2DuplexTests, ExposesItselfAsDuplexDeviceControl) {
 
 TEST(MotuV2DuplexTests, ReportsChunkGeometryThroughRuntimeCaps) {
     RecordingBus bus;
+    // PrepareDuplex now sets the device clock rate first, mirroring Linux's
+    // snd_motu_stream_reserve_duplex (motu-stream.c:143-164), so the clock word must read back.
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
     // No ADAT: both directions carry only the fixed 14 chunks the v2 models use at
     // 44.1/48 kHz (motu-protocol-v2.c:274-282, snd_motu_spec_828mk2/ultralite).
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
@@ -401,6 +404,9 @@ TEST(MotuV2DuplexTests, ReportsChunkGeometryThroughRuntimeCaps) {
 
 TEST(MotuV2DuplexTests, AdatOpticalAddsChunksToTheAffectedDirection) {
     RecordingBus bus;
+    // PrepareDuplex now sets the device clock rate first, mirroring Linux's
+    // snd_motu_stream_reserve_duplex (motu-stream.c:143-164), so the clock word must read back.
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
     // ADAT on the optical input only: capture (TX, device->host) gains the 8 extra
     // chunks at mode 0; playback keeps the fixed baseline
     // (motu-protocol-v2.c:253-269).
@@ -471,6 +477,9 @@ TEST(MotuV2DuplexTests, HealthReportsUnlockedWhenTheClockReadFails) {
 
 TEST(MotuV2DuplexTests, SetAssignedChannelsOverridesTheProvisionalIsoChannels) {
     RecordingBus bus;
+    // PrepareDuplex now sets the device clock rate first, mirroring Linux's
+    // snd_motu_stream_reserve_duplex (motu-stream.c:143-164), so the clock word must read back.
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     bus.readValues[LowOf(Reg::IsocCommControl)] = 0U;
@@ -496,6 +505,9 @@ TEST(MotuV2DuplexTests, SetAssignedChannelsOverridesTheProvisionalIsoChannels) {
 
 TEST(MotuV2DuplexTests, PrepareSetsBothExcludeBitsWhenOpticalIsNotAdat) {
     RecordingBus bus;
+    // PrepareDuplex now sets the device clock rate first, mirroring Linux's
+    // snd_motu_stream_reserve_duplex (motu-stream.c:143-164), so the clock word must read back.
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     RouteState routes;
@@ -509,10 +521,15 @@ TEST(MotuV2DuplexTests, PrepareSetsBothExcludeBitsWhenOpticalIsNotAdat) {
     EXPECT_EQ(*status, kIOReturnSuccess);
 
     // Optical config must be consulted before the packet format can be computed.
-    ASSERT_EQ(bus.reads.size(), 2U);
-    EXPECT_EQ(bus.reads[0], LowOf(Reg::InOutConfV2));
-    EXPECT_EQ(bus.reads[1], LowOf(Reg::PacketFormat));
+    // The clock rate is applied before the optical config is consulted, so its
+    // read-modify-write leads both sequences.
+    ASSERT_EQ(bus.reads.size(), 3U);
+    EXPECT_EQ(bus.reads[0], LowOf(Reg::ClockStatusV2));
+    EXPECT_EQ(bus.reads[1], LowOf(Reg::InOutConfV2));
+    EXPECT_EQ(bus.reads[2], LowOf(Reg::PacketFormat));
 
+    // The device is already at the requested rate here, and SetSampleRate skips a
+    // no-op clock write, so only the packet format is written.
     ASSERT_EQ(bus.writes.size(), 1U);
     EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::PacketFormat));
     // 0x80 = TX exclude, 0x40 = RX exclude, low nibble = speed.
@@ -521,6 +538,9 @@ TEST(MotuV2DuplexTests, PrepareSetsBothExcludeBitsWhenOpticalIsNotAdat) {
 
 TEST(MotuV2DuplexTests, PrepareClearsExcludeBitsWhenOpticalIsAdat) {
     RecordingBus bus;
+    // PrepareDuplex now sets the device clock rate first, mirroring Linux's
+    // snd_motu_stream_reserve_duplex (motu-stream.c:143-164), so the clock word must read back.
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
     // ADAT on both directions adds chunks beyond the fixed baseline, so neither
     // direction may claim the fixed layout (motu-protocol-v2.c:253-269).
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
@@ -534,12 +554,15 @@ TEST(MotuV2DuplexTests, PrepareClearsExcludeBitsWhenOpticalIsAdat) {
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnSuccess);
-    ASSERT_EQ(bus.writes.size(), 1U);
+    ASSERT_EQ(bus.writes.size(), 1U); // clock already at rate; only packet format written
     EXPECT_EQ(bus.writes[0].value, kExpectedSpeedCode); // both exclude bits cleared
 }
 
 TEST(MotuV2DuplexTests, PrepareTreatsUndecodableOpticalConfigAsDifferedChunks) {
     RecordingBus bus;
+    // PrepareDuplex now sets the device clock rate first, mirroring Linux's
+    // snd_motu_stream_reserve_duplex (motu-stream.c:143-164), so the clock word must read back.
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
     // Mode 3 is reserved; decoding fails. Claiming the fixed layout on unproven
     // evidence would truncate the stream, so both bits must stay clear.
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(3U, 3U);
@@ -553,8 +576,37 @@ TEST(MotuV2DuplexTests, PrepareTreatsUndecodableOpticalConfigAsDifferedChunks) {
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, kIOReturnSuccess);
-    ASSERT_EQ(bus.writes.size(), 1U);
+    ASSERT_EQ(bus.writes.size(), 1U); // clock already at rate; only packet format written
     EXPECT_EQ(bus.writes[0].value, kExpectedSpeedCode);
+}
+
+TEST(MotuV2DuplexTests, PrepareMovesADeviceOffAMismatchedClockRate) {
+    // The regression this guards: RunDuplexStart never calls ApplyClockConfig, so if
+    // PrepareDuplex does not apply the rate the device stays where it powered up. A
+    // UltraLite at 44.1 kHz with the host asking for 48 kHz then fails
+    // WaitForStableGlobalClock forever, which overruns CoreAudio's StartDevice budget and
+    // surfaces as kIOReturnTimeout. Linux applies the rate in the reserve stage for the
+    // same reason (motu-stream.c:143-164).
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000000U; // 44.1 kHz, internal
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<IOReturn> status;
+    protocol.PrepareDuplex(MakeChannels(), kClock48k,
+                           [&](IOReturn s, DuplexPrepareResult) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnSuccess);
+
+    // The clock word is rewritten before the packet format, and the rate field
+    // (bits [5:3]) moves to index 1 = 48 kHz while the source bits stay put.
+    ASSERT_EQ(bus.writes.size(), 2U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::ClockStatusV2));
+    EXPECT_EQ(bus.writes[0].value, 0x00000008U);
+    EXPECT_EQ(bus.writes[1].addressLo, LowOf(Reg::PacketFormat));
 }
 
 TEST(MotuV2DuplexTests, PrepareReportsOpticalReadFailureWithoutWriting) {
@@ -574,6 +626,9 @@ TEST(MotuV2DuplexTests, PrepareReportsOpticalReadFailureWithoutWriting) {
 
 TEST(MotuV2DuplexTests, EnableActivatesBothDirectionsWithTheirChannels) {
     RecordingBus bus;
+    // PrepareDuplex now sets the device clock rate first, mirroring Linux's
+    // snd_motu_stream_reserve_duplex (motu-stream.c:143-164), so the clock word must read back.
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     bus.readValues[LowOf(Reg::IsocCommControl)] = 0U;
@@ -678,6 +733,9 @@ TEST(MotuV2DuplexTests, ConfirmRejectsWhenOnlyOneDirectionIsActivated) {
 
 TEST(MotuV2DuplexTests, StopDeactivatesBothDirectionsAndKeepsTheChannelFields) {
     RecordingBus bus;
+    // PrepareDuplex now sets the device clock rate first, mirroring Linux's
+    // snd_motu_stream_reserve_duplex (motu-stream.c:143-164), so the clock word must read back.
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC5C90000U;

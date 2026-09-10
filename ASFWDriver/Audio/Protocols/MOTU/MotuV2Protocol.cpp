@@ -312,6 +312,34 @@ void MotuV2Protocol::PrepareDuplex(const AudioDuplexChannels& channels,
     // fw_parent_device(unit)->max_speed (motu-stream.c:218).
     const uint32_t speedCode = static_cast<uint32_t>(busInfo_.GetSpeed(io_.NodeId()));
 
+    // Set the device's clock rate before anything else in the prepare stage. Linux does
+    // exactly this in snd_motu_stream_reserve_duplex (motu-stream.c:143-164): read the
+    // current rate, and write the requested one before caching packet formats and keeping
+    // iso resources.
+    //
+    // ASFW's start path never applied the clock at all -- ApplyClockConfig is only reached
+    // from DuplexStartTransaction::ApplyIdleClock, which RunDuplexStart does not call. The
+    // UltraLite therefore stayed on whatever rate it powered up with (44.1 kHz, clock
+    // status reading 0x00000000) while the host had negotiated 48 kHz. WaitForStableGlobalClock
+    // requires nominalRateHz == desiredClock.sampleRateHz, so it could never succeed: it
+    // spun for its full 1000 ms budget on every attempt. That wait runs inside a
+    // DispatchSync chain rooted in coreaudiod's StartDevice external method, so overrunning
+    // it makes the HAL abandon the call with kIOReturnTimeout -- surfacing to CoreAudio as
+    // _TellHardwareToStart returning 0x77686174 ('what') with no failure logged by us.
+    SetSampleRate(
+        rateHz,
+        [this, speedCode, rateHz, mode, fixedChunks, callback = std::move(callback)](
+            IOReturn rateStatus) mutable {
+            if (rateStatus != kIOReturnSuccess) {
+                ASFW_LOG(Audio, "MotuV2Protocol: set clock rate %u failed: 0x%x", rateHz,
+                         rateStatus);
+                if (callback) {
+                    callback(rateStatus, DuplexPrepareResult{});
+                }
+                return;
+            }
+            ASFW_LOG(Audio, "MotuV2Protocol: clock rate set to %u before prepare", rateHz);
+
     (void)io_.ReadQuadBE(
         AddressOf(Reg::InOutConfV2),
         [this, speedCode, rateHz, mode, fixedChunks, callback = std::move(callback)](
@@ -381,6 +409,7 @@ void MotuV2Protocol::PrepareDuplex(const AudioDuplexChannels& channels,
                         callback(kIOReturnSuccess, result);
                     }
                 });
+        });
         });
 }
 
