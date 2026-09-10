@@ -702,4 +702,118 @@ TEST(TxLatencySessionTests, ConcurrentAudioAndControlPollingSafety) {
     EXPECT_EQ(finalHeader.state, TxLatencySessionState::Frozen);
 }
 
+TEST(TxLatencySessionTests, RetriesExcludedDuringFinalizationAndProhibitedOnceFrozen) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    TxLatencySession session;
+    ASSERT_TRUE(session.Arm(70, 1, 48000, 10, 100, 0x1234, 1, 100));
 
+    ASFW::Protocols::Audio::AMDTP::AmdtpPacketTimeline timeline{};
+    std::array<ASFW::Protocols::Audio::AMDTP::PacketTimelineSlot, 8> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), static_cast<uint32_t>(slots.size())));
+    slots[0].packetIndex = 0;
+    slots[0].isData = 1;
+    slots[0].framesInPacket = 8;
+    slots[0].epoch = 1;
+    slots[0].firstAudioFrame = 5000;
+    slots[0].cycleOrdinal = 0;
+    slots[0].state.store(ASFW::Protocols::Audio::AMDTP::PacketSlotState::Finalized);
+    timeline.SetImageProvenance(0, 0, 1, 5000, 8, static_cast<uint8_t>(ASFW::Audio::Ports::PcmCopyResult::Ready));
+
+    PublicationRangeRing pubRing{};
+    const uint64_t now = mach_absolute_time();
+
+    ASFW::Isoch::IsochTxClockPairSample pair{};
+    pair.cycleTimer32 = (1U << 25) | (100U << 12) | 0U;
+    pair.hostTimeMid = now;
+    pair.bracketTicks = 10;
+
+    // Observe completion when publication receipt is pending: outcome = Unresolved
+    session.ObserveCompletion(0, (1U << 25) | (100U << 12) | 0U,
+                              ASFW::Isoch::PackCompletionMetadata(0, 0, 0x11),
+                              pair, timeline, pubRing, now + 1000);
+
+    // Stop and freeze session
+    session.RequestStop(TxLatencyTerminationReason::UserStopped);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Frozen);
+
+    auto result = session.GetCompletedResult();
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(result->header.state, TxLatencySessionState::Frozen);
+    EXPECT_EQ(result->header.matchedCount, 0U);
+    EXPECT_EQ(result->header.unresolvedCount, 1U);
+
+    // Publication receipt arrives AFTER freezing
+    pubRing.Record(1, 4900, 5100, now - 200'000, now - 100'000);
+
+    // Polling after freeze MUST NOT retry or mutate live counters or records
+    session.PollQuiescence(&pubRing);
+
+    TxLatencySessionHeader liveHeader{};
+    session.ReadHeader(liveHeader);
+    EXPECT_EQ(liveHeader.state, TxLatencySessionState::Frozen);
+    EXPECT_EQ(liveHeader.matchedCount, 0U);
+    EXPECT_EQ(liveHeader.unresolvedCount, 1U);
+
+    ASFW::UserClient::Wire::TxLatencyResultsPageWire page{};
+    ASSERT_TRUE(session.CopyWirePage(0, 32, 70, 1, page));
+    EXPECT_EQ(page.header.resolvedCount, 0U);
+    EXPECT_EQ(page.header.unresolvedCount, 1U);
+    EXPECT_EQ(page.samplesInPage, 1U);
+    EXPECT_EQ(page.samples[0].outcome, static_cast<uint8_t>(TxLatencyOutcome::Unresolved));
+
+    TxLatencyRecord record{};
+    EXPECT_EQ(session.ReadRecordsPage(0, 1, &record), 1U);
+    EXPECT_EQ(record.outcome, TxLatencyOutcome::Unresolved);
+}
+
+
+
+TEST(TxLatencySessionTests, ReadCollisionExportsDistinctReasonWithoutEvictionCount) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    TxLatencySession session;
+    ASSERT_TRUE(session.Arm(30, 1, 48000, 10, 100, 0x1234, 1, 100));
+
+    ASFW::Protocols::Audio::AMDTP::AmdtpPacketTimeline timeline{};
+    std::array<ASFW::Protocols::Audio::AMDTP::PacketTimelineSlot, 8> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), static_cast<uint32_t>(slots.size())));
+    slots[0].packetIndex = 0;
+    slots[0].isData = 1;
+    slots[0].framesInPacket = 8;
+    slots[0].epoch = 1;
+    slots[0].firstAudioFrame = 5000;
+    slots[0].cycleOrdinal = 0;
+    slots[0].state.store(ASFW::Protocols::Audio::AMDTP::PacketSlotState::Finalized);
+    timeline.SetImageProvenance(0, 0, 1, 5000, 8, static_cast<uint8_t>(ASFW::Audio::Ports::PcmCopyResult::Ready));
+
+    // Force all bounded coverage attempts to collide with unrelated eviction.
+    PublicationRangeRing pubRing{};
+    for (uint64_t i = 0; i < 256; ++i)
+        pubRing.Record(1, i * 100, (i + 1) * 100, i * 1000, i * 1000 + 10);
+    pubRing.SetLookupSnapshotHook([](void* context) {
+        auto& ring = *static_cast<PublicationRangeRing*>(context);
+        const auto n = ring.Count();
+        ring.Record(1, n * 100, (n + 1) * 100, n * 1000, n * 1000 + 10);
+    }, &pubRing);
+    const uint64_t now = mach_absolute_time();
+
+    ASFW::Isoch::IsochTxClockPairSample pair{};
+    pair.cycleTimer32 = (1U << 25) | (100U << 12) | 0U;
+    pair.hostTimeMid = now;
+    pair.bracketTicks = 10;
+
+    session.ObserveCompletion(0, (1U << 25) | (100U << 12) | 0U,
+                              ASFW::Isoch::PackCompletionMetadata(0, 0, 0x11),
+                              pair, timeline, pubRing, now + 1000);
+
+    session.RequestStop();
+    auto result = session.GetCompletedResult();
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(result->header.unresolvedCount, 1U);
+    EXPECT_EQ(result->header.reasonPublicationAgedOut, 0U);
+    ASFW::UserClient::Wire::TxLatencyResultsPageWire page{};
+    ASSERT_TRUE(session.CopyWirePage(0, 32, 30, 1, page));
+    ASSERT_EQ(page.samplesInPage, 1U);
+    EXPECT_EQ(page.samples[0].unresolvedReason,
+              static_cast<uint8_t>(TxLatencyUnresolvedReason::PublicationReadCollision));
+    EXPECT_EQ(page.samples[0].validityFlags & ASFW::UserClient::Wire::kTxLatencyFlagPubValid, 0U);
+}

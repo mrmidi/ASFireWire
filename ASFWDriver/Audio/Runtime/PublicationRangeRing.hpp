@@ -21,6 +21,7 @@ enum class PublicationCoverageResult : uint8_t {
     Gap,
     EpochMismatch,
     AgedOut,
+    ReadCollision,
 };
 
 struct PublicationRangeEntry final {
@@ -36,6 +37,9 @@ class PublicationRangeRing final {
 public:
     PublicationRangeRing() noexcept = default;
 
+    // Single serialized publisher. Reset requires publisher/reader quiescence.
+    // All entry operations are SC: a reader accepting the same sequence before
+    // and after its scalar loads cannot accept fields from a concurrent rewrite.
     void Record(uint64_t epoch,
                 uint64_t firstFrame,
                 uint64_t endFrame,
@@ -43,18 +47,18 @@ public:
                 uint64_t hostTicksLatest) noexcept {
         if (endFrame <= firstFrame) return;
 
-        const uint64_t n = count_.load(std::memory_order_relaxed);
+        const uint64_t n = count_.load(std::memory_order_seq_cst);
         auto& entry = entries_[n % kPublicationRangeSlots];
 
         // Sequence 0 signals write-in-progress.
-        entry.sequence.store(0, std::memory_order_relaxed);
-        entry.epoch.store(epoch, std::memory_order_relaxed);
-        entry.firstFrame.store(firstFrame, std::memory_order_relaxed);
-        entry.endFrame.store(endFrame, std::memory_order_relaxed);
-        entry.hostTicksEarliest.store(hostTicksEarliest, std::memory_order_relaxed);
-        entry.hostTicksLatest.store(hostTicksLatest, std::memory_order_relaxed);
-        entry.sequence.store(n + 1, std::memory_order_release);
-        count_.store(n + 1, std::memory_order_release);
+        entry.sequence.store(0, std::memory_order_seq_cst);
+        entry.epoch.store(epoch, std::memory_order_seq_cst);
+        entry.firstFrame.store(firstFrame, std::memory_order_seq_cst);
+        entry.endFrame.store(endFrame, std::memory_order_seq_cst);
+        entry.hostTicksEarliest.store(hostTicksEarliest, std::memory_order_seq_cst);
+        entry.hostTicksLatest.store(hostTicksLatest, std::memory_order_seq_cst);
+        entry.sequence.store(n + 1, std::memory_order_seq_cst);
+        count_.store(n + 1, std::memory_order_seq_cst);
     }
 
     struct SnapshotEntry final {
@@ -69,15 +73,15 @@ public:
                                         uint64_t index,
                                         SnapshotEntry& out) noexcept {
         const uint64_t expected = index + 1;
-        if (entry.sequence.load(std::memory_order_acquire) != expected) {
+        if (entry.sequence.load(std::memory_order_seq_cst) != expected) {
             return false;
         }
-        out.epoch = entry.epoch.load(std::memory_order_relaxed);
-        out.firstFrame = entry.firstFrame.load(std::memory_order_relaxed);
-        out.endFrame = entry.endFrame.load(std::memory_order_relaxed);
-        out.hostTicksEarliest = entry.hostTicksEarliest.load(std::memory_order_relaxed);
-        out.hostTicksLatest = entry.hostTicksLatest.load(std::memory_order_relaxed);
-        return entry.sequence.load(std::memory_order_acquire) == expected;
+        out.epoch = entry.epoch.load(std::memory_order_seq_cst);
+        out.firstFrame = entry.firstFrame.load(std::memory_order_seq_cst);
+        out.endFrame = entry.endFrame.load(std::memory_order_seq_cst);
+        out.hostTicksEarliest = entry.hostTicksEarliest.load(std::memory_order_seq_cst);
+        out.hostTicksLatest = entry.hostTicksLatest.load(std::memory_order_seq_cst);
+        return entry.sequence.load(std::memory_order_seq_cst) == expected;
     }
 
     /// Prove whether the requested frame range [firstFrame, firstFrame + frameCount)
@@ -91,35 +95,64 @@ public:
         uint32_t frameCount,
         uint64_t& outEarliest,
         uint64_t& outLatest) const noexcept {
+        outEarliest = 0;
+        outLatest = 0;
         if (frameCount == 0) return PublicationCoverageResult::Resolved;
+        // Work is bounded even under a continuously advancing publisher.
+        for (unsigned attempt = 0; attempt < 3; ++attempt) {
+            const auto result = LookupOnce(targetEpoch, firstFrame, frameCount,
+                                           outEarliest, outLatest);
+            if (result != PublicationCoverageResult::ReadCollision) return result;
+        }
+        return PublicationCoverageResult::ReadCollision;
+    }
+
+#if defined(ASFW_HOST_TEST)
+    // Deterministic interleaving after the count snapshot; absent in production.
+    void SetLookupSnapshotHook(void (*hook)(void*), void* context) noexcept {
+        lookupSnapshotHook_ = hook;
+        lookupSnapshotContext_ = context;
+    }
+#endif
+
+private:
+    [[nodiscard]] PublicationCoverageResult LookupOnce(
+        uint64_t targetEpoch, uint64_t firstFrame, uint32_t frameCount,
+        uint64_t& outEarliest, uint64_t& outLatest) const noexcept {
         const uint64_t requiredEnd = firstFrame + frameCount;
 
-        const uint64_t n = count_.load(std::memory_order_acquire);
+        const uint64_t n = count_.load(std::memory_order_seq_cst);
         if (n == 0) return PublicationCoverageResult::Pending;
 
+#if defined(ASFW_HOST_TEST)
+        if (lookupSnapshotHook_) lookupSnapshotHook_(lookupSnapshotContext_);
+#endif
         const uint64_t oldest = n > kPublicationRangeSlots ? n - kPublicationRangeSlots : 0;
 
         SnapshotEntry oldestSnap{};
         if (!ReadEntry(entries_[oldest % kPublicationRangeSlots], oldest, oldestSnap)) {
-            return PublicationCoverageResult::AgedOut;
+            return PublicationCoverageResult::ReadCollision;
         }
 
-        // If the packet begins before the oldest retained entry, it has aged out.
+        if (oldestSnap.epoch != targetEpoch) {
+            return PublicationCoverageResult::EpochMismatch;
+        }
+        // Only a successfully read, same-epoch retention boundary proves eviction.
         if (firstFrame < oldestSnap.firstFrame) {
-            return PublicationCoverageResult::AgedOut;
+            return oldest > 0 ? PublicationCoverageResult::AgedOut
+                              : PublicationCoverageResult::Gap;
         }
 
         uint64_t maxEarliest = 0;
         uint64_t maxLatest = 0;
         uint64_t cursor = firstFrame;
-        bool sawEpochMismatch = false;
 
         // Scan retained entries from oldest to newest to find covering segments.
         for (uint64_t index = oldest; index < n; ++index) {
             const auto& entry = entries_[index % kPublicationRangeSlots];
             SnapshotEntry snap{};
             if (!ReadEntry(entry, index, snap)) {
-                return PublicationCoverageResult::AgedOut;
+                return PublicationCoverageResult::ReadCollision;
             }
 
             if (snap.endFrame <= cursor) {
@@ -134,7 +167,6 @@ public:
 
             // Entry covers [cursor, min(snap.endFrame, requiredEnd)).
             if (snap.epoch != targetEpoch) {
-                sawEpochMismatch = true;
                 return PublicationCoverageResult::EpochMismatch;
             }
 
@@ -147,13 +179,9 @@ public:
             }
         }
 
-        // Check if entries were overwritten during our walk.
-        if (count_.load(std::memory_order_acquire) > oldest + kPublicationRangeSlots) {
-            return PublicationCoverageResult::AgedOut;
-        }
-
+        // Each contributing receipt was copied coherently. Later eviction of an
+        // already copied receipt does not invalidate its immutable publication bounds.
         if (cursor < requiredEnd) {
-            if (sawEpochMismatch) return PublicationCoverageResult::EpochMismatch;
             return PublicationCoverageResult::Pending;
         }
 
@@ -162,23 +190,28 @@ public:
         return PublicationCoverageResult::Resolved;
     }
 
+public:
     void Reset() noexcept {
-        count_.store(0, std::memory_order_relaxed);
+        count_.store(0, std::memory_order_seq_cst);
         for (auto& entry : entries_) {
-            entry.sequence.store(0, std::memory_order_relaxed);
-            entry.epoch.store(0, std::memory_order_relaxed);
-            entry.firstFrame.store(0, std::memory_order_relaxed);
-            entry.endFrame.store(0, std::memory_order_relaxed);
-            entry.hostTicksEarliest.store(0, std::memory_order_relaxed);
-            entry.hostTicksLatest.store(0, std::memory_order_relaxed);
+            entry.sequence.store(0, std::memory_order_seq_cst);
+            entry.epoch.store(0, std::memory_order_seq_cst);
+            entry.firstFrame.store(0, std::memory_order_seq_cst);
+            entry.endFrame.store(0, std::memory_order_seq_cst);
+            entry.hostTicksEarliest.store(0, std::memory_order_seq_cst);
+            entry.hostTicksLatest.store(0, std::memory_order_seq_cst);
         }
     }
 
     [[nodiscard]] uint64_t Count() const noexcept {
-        return count_.load(std::memory_order_relaxed);
+        return count_.load(std::memory_order_seq_cst);
     }
 
 private:
+#if defined(ASFW_HOST_TEST)
+    void (*lookupSnapshotHook_)(void*){nullptr};
+    void* lookupSnapshotContext_{nullptr};
+#endif
     std::atomic<uint64_t> count_{0};
     PublicationRangeEntry entries_[kPublicationRangeSlots]{};
 };

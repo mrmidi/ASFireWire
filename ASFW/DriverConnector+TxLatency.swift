@@ -41,6 +41,7 @@ enum TxLatencyUnresolvedReason: UInt8, Codable, Sendable, CustomStringConvertibl
     case provenanceAgedOut = 6
     case unrecognizedEventCode = 7
     case imageUnavailable = 8
+    case publicationReadCollision = 9
 
     var description: String {
         switch self {
@@ -53,6 +54,7 @@ enum TxLatencyUnresolvedReason: UInt8, Codable, Sendable, CustomStringConvertibl
         case .provenanceAgedOut: return "Provenance Aged Out"
         case .unrecognizedEventCode: return "Unrecognized Event Code"
         case .imageUnavailable: return "Image Unavailable"
+        case .publicationReadCollision: return "Publication Read Collision"
         }
     }
 }
@@ -310,7 +312,7 @@ struct TxLatencySessionReport: Sendable, Codable {
 // MARK: - Binary Wire Decoder
 
 enum TxLatencyWireDecoder {
-    static let wireVersion: UInt32 = 3
+    static let wireVersion: UInt32 = 4
     static let maxSamplesPerPage: Int = 32
     static let sampleBytes: Int = 80
     static let headerBytes: Int = 192

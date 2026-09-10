@@ -19,7 +19,17 @@ struct TxLatencyWireParsingTests {
         }
     }
 
-    private func fixture(version: UInt32 = 3, sampleCount: UInt32 = 2) -> Data {
+    @Test func distinguishesReadCollisionFromEviction() throws {
+        var data = fixture(sampleCount: 1)
+        setLE(UInt8(3), at: 208 + 72, in: &data) // unresolved
+        setLE(UInt8(9), at: 208 + 73, in: &data) // read collision
+        let page = try #require(TxLatencyWireDecoder.decodePage(data))
+        #expect(page.samples[0].unresolvedReason == .publicationReadCollision)
+        #expect(page.samples[0].unresolvedReason.description == "Publication Read Collision")
+        #expect(TxLatencyWireDecoder.decodePage(fixture(version: 3)) == nil)
+    }
+
+    private func fixture(version: UInt32 = 4, sampleCount: UInt32 = 2) -> Data {
         var wire = Data(repeating: 0, count: TxLatencyWireDecoder.pageBytes)
 
         // Header (192 bytes)
@@ -108,7 +118,7 @@ struct TxLatencyWireParsingTests {
         let wire = fixture()
         let page = try #require(TxLatencyWireDecoder.decodePage(wire))
 
-        #expect(page.header.version == 3)
+        #expect(page.header.version == 4)
         #expect(page.header.sessionState == .frozen)
         #expect(page.header.terminationReason == .deadlineExpired)
         #expect(page.header.sessionId == 42)

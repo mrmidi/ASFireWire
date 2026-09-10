@@ -60,6 +60,7 @@ enum class TxLatencyUnresolvedReason : uint32_t {
     ProvenanceAgedOut,
     UnrecognizedEventCode,
     ImageUnavailable,
+    PublicationReadCollision,
 };
 
 struct TransmitBounds final {
@@ -236,6 +237,9 @@ struct TransmitBounds final {
             return TxLatencyOutcome::Unresolved;
         case PublicationCoverageResult::EpochMismatch:
             outReason = TxLatencyUnresolvedReason::EpochMismatch;
+            return TxLatencyOutcome::Unresolved;
+        case PublicationCoverageResult::ReadCollision:
+            outReason = TxLatencyUnresolvedReason::PublicationReadCollision;
             return TxLatencyOutcome::Unresolved;
         case PublicationCoverageResult::AgedOut:
             outReason = TxLatencyUnresolvedReason::PublicationAgedOut;

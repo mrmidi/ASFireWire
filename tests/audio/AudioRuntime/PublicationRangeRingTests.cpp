@@ -102,3 +102,70 @@ TEST(PublicationRangeRingTests, AgedOutAfterRingWraps) {
     res = ring.LookupPacketCoverage(1, 29050, 16, earliest, latest);
     EXPECT_EQ(res, PublicationCoverageResult::Resolved);
 }
+
+namespace {
+struct PublishingDuringLookup {
+    PublicationRangeRing* ring;
+    unsigned remaining;
+    unsigned calls{0};
+    static void Advance(void* raw) {
+        auto& self = *static_cast<PublishingDuringLookup*>(raw);
+        ++self.calls;
+        if (self.remaining == 0) return;
+        --self.remaining;
+        const auto n = self.ring->Count();
+        self.ring->Record(1, n * 100, (n + 1) * 100, n * 1000, n * 1000 + 10);
+    }
+};
+void FillHistory(PublicationRangeRing& ring) {
+    for (uint64_t i = 0; i < kPublicationRangeSlots; ++i)
+        ring.Record(1, i * 100, (i + 1) * 100, i * 1000, i * 1000 + 10);
+}
+}
+
+TEST(PublicationRangeRingTests, UnrelatedEvictionDuringScanRetriesRecentPacket) {
+    PublicationRangeRing ring;
+    FillHistory(ring);
+    PublishingDuringLookup hook{&ring, 1};
+    ring.SetLookupSnapshotHook(PublishingDuringLookup::Advance, &hook);
+    uint64_t earliest = 99, latest = 99;
+    EXPECT_EQ(ring.LookupPacketCoverage(1, 25050, 8, earliest, latest),
+              PublicationCoverageResult::Resolved);
+    EXPECT_EQ(earliest, 250000U);
+    EXPECT_EQ(latest, 250010U);
+    EXPECT_EQ(hook.calls, 2U);
+}
+
+TEST(PublicationRangeRingTests, SustainedContentionIsBoundedAndNotEviction) {
+    PublicationRangeRing ring;
+    FillHistory(ring);
+    PublishingDuringLookup hook{&ring, 10};
+    ring.SetLookupSnapshotHook(PublishingDuringLookup::Advance, &hook);
+    uint64_t earliest = 99, latest = 99;
+    EXPECT_EQ(ring.LookupPacketCoverage(1, 25050, 8, earliest, latest),
+              PublicationCoverageResult::ReadCollision);
+    EXPECT_EQ(hook.calls, 3U);
+    EXPECT_EQ(earliest, 0U);
+    EXPECT_EQ(latest, 0U);
+    ring.SetLookupSnapshotHook(nullptr, nullptr);
+    EXPECT_EQ(ring.LookupPacketCoverage(1, 25050, 8, earliest, latest),
+              PublicationCoverageResult::Resolved);
+}
+
+TEST(PublicationRangeRingTests, EvictedTargetIsProvenAfterRetry) {
+    PublicationRangeRing ring;
+    FillHistory(ring);
+    PublishingDuringLookup hook{&ring, 1};
+    ring.SetLookupSnapshotHook(PublishingDuringLookup::Advance, &hook);
+    uint64_t earliest = 0, latest = 0;
+    EXPECT_EQ(ring.LookupPacketCoverage(1, 50, 8, earliest, latest),
+              PublicationCoverageResult::AgedOut);
+}
+
+TEST(PublicationRangeRingTests, NeverRecordedPrefixIsNotEviction) {
+    PublicationRangeRing ring;
+    ring.Record(1, 1000, 1100, 100, 110);
+    uint64_t earliest = 0, latest = 0;
+    EXPECT_EQ(ring.LookupPacketCoverage(1, 950, 8, earliest, latest), PublicationCoverageResult::Gap);
+    EXPECT_EQ(ring.LookupPacketCoverage(2, 950, 8, earliest, latest), PublicationCoverageResult::EpochMismatch);
+}

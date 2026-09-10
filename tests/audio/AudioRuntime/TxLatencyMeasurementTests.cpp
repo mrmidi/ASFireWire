@@ -156,3 +156,12 @@ TEST(TxLatencyMeasurementTests, ClassifyTxLatencySampleOutcomes) {
         kSuccessAck, true, false, PublicationCoverageResult::Resolved, txBounds, 115'000, 120'000, reason);
     EXPECT_EQ(outcome, TxLatencyOutcome::Invalid);
 }
+
+TEST(TxLatencyMeasurementTests, ReadCollisionHasDistinctUnresolvedReason) {
+    TransmitBounds bounds{};
+    bounds.valid = true;
+    TxLatencyUnresolvedReason reason{};
+    EXPECT_EQ(ClassifyTxLatencySample(0x11, true, false,
+        PublicationCoverageResult::ReadCollision, bounds, 0, 0, reason), TxLatencyOutcome::Unresolved);
+    EXPECT_EQ(reason, TxLatencyUnresolvedReason::PublicationReadCollision);
+}

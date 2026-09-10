@@ -284,6 +284,11 @@ public:
             return false; // Another caller already claimed/finalized for targetGen or newer.
         }
 
+        // Hold pendingJoinsLock_ continuously throughout final retry, snapshot construction,
+        // completedResult publication, and the freeze transition to prevent any concurrent
+        // or post-freeze retries from racing with or mutating records and counters.
+        SpinLockGuard joinsGuard(pendingJoinsLock_);
+
         // Re-verify that lifecycle_ has not moved and state is still StopRequested for targetGen.
         cur = lifecycle_.load(std::memory_order_acquire);
         if (LifecycleGeneration(cur) != targetGen ||
@@ -294,7 +299,7 @@ public:
         // Perform final retry of pending joins before taking immutable snapshot
         const auto* ring = publicationRing_.load(std::memory_order_acquire);
         if (ring) {
-            RetryPendingJoins(*ring);
+            RetryPendingJoinsLocked(*ring);
         }
 
         // Exclusive owner of finalization for targetGen:
@@ -328,6 +333,11 @@ public:
             lifecycle_.store(PackLifecycle(targetGen, TxLatencySessionState::Frozen, reason),
                              std::memory_order_release);
         }
+
+        for (auto& pj : pendingJoins_) {
+            pj.active = false;
+        }
+
         return true;
     }
 
@@ -338,9 +348,13 @@ public:
 
     /// Check if in-flight writer has exited and publish Frozen.
     void PollQuiescence(const PublicationRangeRing* pubRing = nullptr) noexcept {
-        if (pubRing != nullptr) {
-            publicationRing_.store(pubRing, std::memory_order_release);
-            RetryPendingJoins(*pubRing);
+        const auto lc = lifecycle_.load(std::memory_order_acquire);
+        const auto st = LifecycleState(lc);
+        if (st == TxLatencySessionState::Capturing || st == TxLatencySessionState::StopRequested) {
+            if (pubRing != nullptr) {
+                publicationRing_.store(pubRing, std::memory_order_release);
+                RetryPendingJoins(*pubRing);
+            }
         }
         (void)CheckExpiration();
         (void)TryFinalize();
@@ -359,8 +373,11 @@ public:
             SpinLockGuard guard(completedResultLock_);
             completedResult_.reset();
         }
-        for (auto& pj : pendingJoins_) {
-            pj.active = false;
+        {
+            SpinLockGuard guard(pendingJoinsLock_);
+            for (auto& pj : pendingJoins_) {
+                pj.active = false;
+            }
         }
     }
 
@@ -621,6 +638,14 @@ public:
 
     /// Read session header with synchronized seqlock snapshot. Valid in any state.
     void ReadHeader(TxLatencySessionHeader& outHeader) const noexcept {
+        const uint64_t lc = lifecycle_.load(std::memory_order_acquire);
+        if (LifecycleState(lc) == TxLatencySessionState::Frozen) {
+            auto completed = GetCompletedResult();
+            if (completed) {
+                outHeader = completed->header;
+                return;
+            }
+        }
         PopulateHeaderLocked(outHeader);
     }
 
@@ -630,6 +655,17 @@ public:
                                            TxLatencyRecord* outRecords) const noexcept {
         if (State() != TxLatencySessionState::Frozen) {
             return 0;
+        }
+        auto completed = GetCompletedResult();
+        if (completed) {
+            const uint32_t total = static_cast<uint32_t>(completed->records.size());
+            if (!outRecords || cursor >= total) return 0;
+            const uint32_t available = total - cursor;
+            const uint32_t toCopy = std::min(maxRecords, available);
+            for (uint32_t i = 0; i < toCopy; ++i) {
+                outRecords[i] = completed->records[cursor + i];
+            }
+            return toCopy;
         }
         const uint32_t total = recordCount_.load(std::memory_order_acquire);
         if (!outRecords || cursor >= total) return 0;
@@ -836,6 +872,9 @@ private:
 
     void CountUnresolvedReason(TxLatencyUnresolvedReason reason) noexcept {
         switch (reason) {
+            case TxLatencyUnresolvedReason::PublicationReadCollision:
+                // Preserved per record; not eviction and not pending publication.
+                break;
             case TxLatencyUnresolvedReason::None:
                 break;
             case TxLatencyUnresolvedReason::StaleCorrelation:
@@ -924,8 +963,7 @@ private:
         bool active{false};
     };
 
-    void RetryPendingJoins(const PublicationRangeRing& publicationRing) noexcept {
-        SpinLockGuard guard(pendingJoinsLock_);
+    void RetryPendingJoinsLocked(const PublicationRangeRing& publicationRing) noexcept {
         SeqlockWriteGuard seqGuard(statusSeq_);
         for (auto& pj : pendingJoins_) {
             if (!pj.active) {
@@ -979,6 +1017,16 @@ private:
             }
             pj.active = false;
         }
+    }
+
+    void RetryPendingJoins(const PublicationRangeRing& publicationRing) noexcept {
+        SpinLockGuard guard(pendingJoinsLock_);
+        const auto lc = lifecycle_.load(std::memory_order_acquire);
+        const auto st = LifecycleState(lc);
+        if (st != TxLatencySessionState::Capturing && st != TxLatencySessionState::StopRequested) {
+            return;
+        }
+        RetryPendingJoinsLocked(publicationRing);
     }
 
     std::atomic<uint32_t> recordCount_{0};
