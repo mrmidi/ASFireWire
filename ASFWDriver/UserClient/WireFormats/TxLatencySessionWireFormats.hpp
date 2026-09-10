@@ -8,7 +8,7 @@
 
 namespace ASFW::UserClient::Wire {
 
-inline constexpr uint32_t kTxLatencyWireVersion = 2;
+inline constexpr uint32_t kTxLatencyWireVersion = 3;
 inline constexpr uint32_t kTxLatencyMaxSamplesPerPage = 32;
 
 #pragma pack(push, 8)

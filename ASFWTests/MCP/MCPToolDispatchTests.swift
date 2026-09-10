@@ -420,6 +420,34 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 0)
     }
 
+    @Test func stopTxLatencySessionRejectsMalformedSessionId() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
+
+        let result = await transport.callTool("asfw_stop_tx_latency_session", arguments: .object([
+            "endpointId": .int(1),
+            "sessionId": .string("invalid_non_numeric")
+        ]))
+
+        #expect(result.ok == false)
+        #expect(result.errors.first?.code == .malformedRequest)
+    }
+
+    @Test func stopTxLatencySessionAcceptsValidSessionId() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
+
+        let result = await transport.callTool("asfw_stop_tx_latency_session", arguments: .object([
+            "endpointId": .int(1),
+            "sessionId": .int(42)
+        ]))
+
+        #expect(result.ok == true)
+        let data = try object(result)
+        #expect(data["sessionId"] == .int(42))
+        #expect(data["status"] == .string("stop_requested"))
+    }
+
     @Test func everyCatalogToolHasADispatchOutcome() async {
         let driver = MockASFWDriverControl(nodes: MockASFWDriverControl.defaultNodes + [MockASFWDriverControl.sbp2Node])
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))

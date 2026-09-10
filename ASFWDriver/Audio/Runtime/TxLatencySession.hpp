@@ -10,6 +10,7 @@
 #include "TxLatencyMeasurement.hpp"
 #include "TxLatencySessionResult.hpp"
 #include "../Ports/ITxPcmSource.hpp"
+#include "../Shared/AudioTimingGeometry.hpp"
 #include "../Wire/AMDTP/AmdtpPacketTimeline.hpp"
 #include "../../UserClient/WireFormats/TxLatencySessionWireFormats.hpp"
 
@@ -20,6 +21,26 @@
 #include <memory>
 
 namespace ASFW::Audio::Runtime {
+
+class SpinLockGuard final {
+public:
+    explicit SpinLockGuard(std::atomic_flag& flag) noexcept : flag_(flag) {
+        while (flag_.test_and_set(std::memory_order_acquire)) {
+            #if defined(__x86_64__) || defined(__i386__)
+            __builtin_ia32_pause();
+            #elif defined(__aarch64__)
+            asm volatile("yield");
+            #endif
+        }
+    }
+    ~SpinLockGuard() noexcept {
+        flag_.clear(std::memory_order_release);
+    }
+    SpinLockGuard(const SpinLockGuard&) = delete;
+    SpinLockGuard& operator=(const SpinLockGuard&) = delete;
+private:
+    std::atomic_flag& flag_;
+};
 
 class SeqlockWriteGuard final {
 public:
@@ -102,7 +123,10 @@ public:
                            uint32_t sampleBudget,
                            uint32_t seed = 0,
                            uint32_t strataSize = 0,
-                           uint32_t assumedDriftPpm = 100) noexcept {
+                           uint32_t assumedDriftPpm = 100,
+                           uint32_t preparationLeadPackets = Shared::AudioTimingGeometry::kTxPreparationLeadPackets,
+                           uint32_t hardwareRingPackets = Shared::AudioTimingGeometry::kTxHardwareRingPackets,
+                           const PublicationRangeRing* pubRing = nullptr) noexcept {
         uint64_t cur = lifecycle_.load(std::memory_order_acquire);
         const auto current = LifecycleState(cur);
         if (current != TxLatencySessionState::Idle && current != TxLatencySessionState::Frozen) {
@@ -146,6 +170,9 @@ public:
             strataSize_ = static_cast<uint32_t>(std::max<uint64_t>(1, expectedPackets / sampleBudget_));
         }
         assumedDriftPpm_ = (assumedDriftPpm > 0) ? assumedDriftPpm : 100;
+        preparationLeadPackets_ = (preparationLeadPackets > 0) ? preparationLeadPackets : Shared::AudioTimingGeometry::kTxPreparationLeadPackets;
+        hardwareRingPackets_ = (hardwareRingPackets > 0) ? hardwareRingPackets : Shared::AudioTimingGeometry::kTxHardwareRingPackets;
+        publicationRing_.store(pubRing, std::memory_order_release);
         currentStratumOffset_ = 0;
         targetOffsetInStratum_ = prngState_ % strataSize_;
 
@@ -173,9 +200,15 @@ public:
 
         recordCount_.store(0, std::memory_order_relaxed);
         terminationReason_ = TxLatencyTerminationReason::None;
-        completedResult_.reset();
-        for (auto& pj : pendingJoins_) {
-            pj.active = false;
+        {
+            SpinLockGuard guard(completedResultLock_);
+            completedResult_.reset();
+        }
+        {
+            SpinLockGuard guard(pendingJoinsLock_);
+            for (auto& pj : pendingJoins_) {
+                pj.active = false;
+            }
         }
 
         startHostTicks_ = mach_absolute_time();
@@ -258,6 +291,12 @@ public:
             return false;
         }
 
+        // Perform final retry of pending joins before taking immutable snapshot
+        const auto* ring = publicationRing_.load(std::memory_order_acquire);
+        if (ring) {
+            RetryPendingJoins(*ring);
+        }
+
         // Exclusive owner of finalization for targetGen:
         TxLatencyTerminationReason reason = LifecycleTerminationReason(cur);
         if (reason == TxLatencyTerminationReason::None) {
@@ -266,32 +305,41 @@ public:
         terminationReason_ = reason;
         frozenHostTicks_ = mach_absolute_time();
 
+        // Create immutable result snapshot BEFORE exposing Frozen!
+        auto res = std::make_shared<TxLatencySessionResult>();
+        PopulateHeaderLocked(res->header);
+        res->header.state = TxLatencySessionState::Frozen;
+        res->header.terminationReason = reason;
+        res->header.sessionFrozenHostTicks = frozenHostTicks_;
+        res->header.assumedDriftPpm = assumedDriftPpm_;
+        const uint32_t cnt = std::min(recordCount_.load(std::memory_order_acquire), kTxLatencyMaxSamples);
+        res->records.assign(records_.begin(), records_.begin() + cnt);
+        res->preparationLeadPackets = preparationLeadPackets_;
+        res->hardwareRingPackets = hardwareRingPackets_;
+
+        {
+            SpinLockGuard guard(completedResultLock_);
+            completedResult_ = std::move(res);
+        }
+
         {
             SeqlockWriteGuard seqGuard(statusSeq_);
-            // Publish Frozen AFTER metadata (terminationReason_, frozenHostTicks_) is fully written.
+            // Publish Frozen AFTER completedResult_ is published and metadata is fully written.
             lifecycle_.store(PackLifecycle(targetGen, TxLatencySessionState::Frozen, reason),
                              std::memory_order_release);
         }
-
-        // Create immutable result snapshot for outstanding page readers.
-        auto res = std::make_shared<TxLatencySessionResult>();
-        PopulateHeaderLocked(res->header);
-        const uint32_t cnt = std::min(recordCount_.load(std::memory_order_acquire), kTxLatencyMaxSamples);
-        res->records.assign(records_.begin(), records_.begin() + cnt);
-        res->preparationLeadPackets = 6;
-        res->hardwareRingPackets = 16;
-        completedResult_ = std::move(res);
         return true;
     }
 
     [[nodiscard]] std::shared_ptr<const TxLatencySessionResult> GetCompletedResult() const noexcept {
+        SpinLockGuard guard(completedResultLock_);
         return completedResult_;
     }
 
     /// Check if in-flight writer has exited and publish Frozen.
     void PollQuiescence(const PublicationRangeRing* pubRing = nullptr) noexcept {
-        if (pubRing) {
-            SeqlockWriteGuard seqGuard(statusSeq_);
+        if (pubRing != nullptr) {
+            publicationRing_.store(pubRing, std::memory_order_release);
             RetryPendingJoins(*pubRing);
         }
         (void)CheckExpiration();
@@ -307,7 +355,10 @@ public:
         recordCount_.store(0, std::memory_order_relaxed);
         terminationReason_ = TxLatencyTerminationReason::None;
         frozenHostTicks_ = 0;
-        completedResult_.reset();
+        {
+            SpinLockGuard guard(completedResultLock_);
+            completedResult_.reset();
+        }
         for (auto& pj : pendingJoins_) {
             pj.active = false;
         }
@@ -329,14 +380,10 @@ public:
         const uint32_t myGen = LifecycleGeneration(admissionLc);
         struct WriterGuard {
             TxLatencySession& session;
-            uint32_t gen;
             ~WriterGuard() {
-                if (session.activeWriters_.fetch_sub(1, std::memory_order_seq_cst) == 1) {
-                    // Last active writer drained; finalize if stop was requested for this generation.
-                    (void)session.TryFinalize(gen);
-                }
+                session.activeWriters_.fetch_sub(1, std::memory_order_seq_cst);
             }
-        } guard{*this, myGen};
+        } guard{*this};
 
         // 2. Check state.
         if (myGen == 0 || LifecycleState(admissionLc) != TxLatencySessionState::Capturing) {
@@ -350,6 +397,8 @@ public:
 
         // 4. Deadline check: stop automatically if session deadline has expired.
         if (currentHostNow >= deadlineHostTicks_) {
+            publicationRing_.store(&publicationRing, std::memory_order_release);
+            RetryPendingJoins(publicationRing);
             RequestStop(TxLatencyTerminationReason::DeadlineExpired, myGen);
             return;
         }
@@ -367,7 +416,7 @@ public:
 
         const uint8_t phase = static_cast<uint8_t>(slot->cycleOrdinal % 8);
 
-        SeqlockWriteGuard seqGuard(statusSeq_);
+        publicationRing_.store(&publicationRing, std::memory_order_release);
         RetryPendingJoins(publicationRing);
 
         eligibleByPhase_[phase].fetch_add(1, std::memory_order_relaxed);
@@ -454,7 +503,9 @@ public:
         rec.pcmIdentityProven = haveProvenance ? 1 : 0;
         rec.validityFlags = ComputeTxLatencyValidityFlags(pubEarliest, pubLatest, txBounds, haveProvenance);
 
-        if (coverage == PublicationCoverageResult::Pending) {
+        if (outcome == TxLatencyOutcome::Unresolved &&
+            reason == TxLatencyUnresolvedReason::CoveragePending) {
+            SpinLockGuard guard(pendingJoinsLock_);
             for (auto& pj : pendingJoins_) {
                 if (!pj.active) {
                     pj.packetIndex = packetIndex;
@@ -538,6 +589,7 @@ public:
         outHeader.sampleRateHz = sampleRateHz_;
         outHeader.samplingSeed = samplingSeed_;
         outHeader.strataSize = strataSize_;
+        outHeader.assumedDriftPpm = assumedDriftPpm_;
         outHeader.sessionStartHostTicks = startHostTicks_;
         outHeader.sessionDeadlineHostTicks = deadlineHostTicks_;
 
@@ -568,9 +620,7 @@ public:
     }
 
     /// Read session header with synchronized seqlock snapshot. Valid in any state.
-    void ReadHeader(TxLatencySessionHeader& outHeader) noexcept {
-        CheckExpiration();
-        PollQuiescence();
+    void ReadHeader(TxLatencySessionHeader& outHeader) const noexcept {
         PopulateHeaderLocked(outHeader);
     }
 
@@ -596,10 +646,7 @@ public:
                                     uint32_t samplesPerPage,
                                     uint32_t requestedSessionId,
                                     uint64_t endpointId,
-                                    UserClient::Wire::TxLatencyResultsPageWire& out) noexcept {
-        CheckExpiration();
-        PollQuiescence();
-
+                                    UserClient::Wire::TxLatencyResultsPageWire& out) const noexcept {
         if (requestedSessionId != 0 && sessionId_ != requestedSessionId) {
             return false;
         }
@@ -607,8 +654,11 @@ public:
         const uint64_t lc = lifecycle_.load(std::memory_order_acquire);
         const auto st = LifecycleState(lc);
 
-        if (st == TxLatencySessionState::Frozen && completedResult_) {
-            return completedResult_->CopyWirePage(pageIndex, samplesPerPage, requestedSessionId, endpointId, out);
+        if (st == TxLatencySessionState::Frozen) {
+            auto completed = GetCompletedResult();
+            if (completed) {
+                return completed->CopyWirePage(pageIndex, samplesPerPage, requestedSessionId, endpointId, out);
+            }
         }
 
         const auto snap = ReadCountersSnapshot();
@@ -657,7 +707,7 @@ public:
         out.header.totalRingRecords = snap.samplesCaptured;
         out.header.ringHead = snap.samplesCaptured;
         out.header.ringTail = 0;
-        out.header.geometryProvenance = (16 << 16) | 6;
+        out.header.geometryProvenance = (hardwareRingPackets_ << 16) | (preparationLeadPackets_ & 0xFFFF);
 
         const uint32_t perPage = std::min(samplesPerPage == 0 ? UserClient::Wire::kTxLatencyMaxSamplesPerPage : samplesPerPage,
                                           UserClient::Wire::kTxLatencyMaxSamplesPerPage);
@@ -875,6 +925,8 @@ private:
     };
 
     void RetryPendingJoins(const PublicationRangeRing& publicationRing) noexcept {
+        SpinLockGuard guard(pendingJoinsLock_);
+        SeqlockWriteGuard seqGuard(statusSeq_);
         for (auto& pj : pendingJoins_) {
             if (!pj.active) {
                 continue;
@@ -931,7 +983,12 @@ private:
 
     std::atomic<uint32_t> recordCount_{0};
     std::array<TxLatencyRecord, kTxLatencyMaxSamples> records_{};
+    mutable std::atomic_flag completedResultLock_{};
     std::shared_ptr<const TxLatencySessionResult> completedResult_{};
+    mutable std::atomic_flag pendingJoinsLock_{};
+    std::atomic<const PublicationRangeRing*> publicationRing_{nullptr};
+    uint32_t preparationLeadPackets_{Shared::AudioTimingGeometry::kTxPreparationLeadPackets};
+    uint32_t hardwareRingPackets_{Shared::AudioTimingGeometry::kTxHardwareRingPackets};
     std::array<PendingJoinEntry, 16> pendingJoins_{};
 };
 

@@ -531,3 +531,175 @@ TEST(TxLatencySessionTests, DelayedPublicationReceiptJoinsAndUpdatesSample) {
     EXPECT_TRUE(page.samples[0].validityFlags & ASFW::UserClient::Wire::kTxLatencyFlagPubValid);
     EXPECT_TRUE(page.samples[0].validityFlags & ASFW::UserClient::Wire::kTxLatencyFlagTxValid);
 }
+
+TEST(TxLatencySessionTests, FailedTransmissionDoesNotCorruptCountersOnRetry) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    TxLatencySession session;
+    ASSERT_TRUE(session.Arm(31, 1, 48000, 10, 100, 0x1234, 1, 100));
+
+    ASFW::Protocols::Audio::AMDTP::AmdtpPacketTimeline timeline{};
+    std::array<ASFW::Protocols::Audio::AMDTP::PacketTimelineSlot, 8> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), static_cast<uint32_t>(slots.size())));
+    slots[0].packetIndex = 0;
+    slots[0].isData = 1;
+    slots[0].framesInPacket = 8;
+    slots[0].epoch = 1;
+    slots[0].firstAudioFrame = 5000;
+    slots[0].cycleOrdinal = 0;
+    slots[0].state.store(ASFW::Protocols::Audio::AMDTP::PacketSlotState::Finalized);
+    timeline.SetImageProvenance(0, 0, 1, 5000, 8, static_cast<uint8_t>(ASFW::Audio::Ports::PcmCopyResult::Ready));
+
+    PublicationRangeRing pubRing{};
+    const uint64_t now = mach_absolute_time();
+
+    ASFW::Isoch::IsochTxClockPairSample pair{};
+    pair.cycleTimer32 = (1U << 25) | (100U << 12) | 0U;
+    pair.hostTimeMid = now;
+    pair.bracketTicks = 10;
+
+    // Non-zero event code indicating failure (e.g. 0x02 = evt_underrun, not 0x11 AckComplete)
+    session.ObserveCompletion(0, (1U << 25) | (100U << 12) | 0U,
+                              ASFW::Isoch::PackCompletionMetadata(0, 0, 0x02),
+                              pair, timeline, pubRing, now + 1000);
+
+    TxLatencySessionHeader headerBefore{};
+    session.ReadHeader(headerBefore);
+    EXPECT_EQ(headerBefore.sampledCount, 1U);
+    EXPECT_EQ(headerBefore.matchedCount, 0U);
+    EXPECT_EQ(headerBefore.unresolvedCount, 0U);
+    EXPECT_EQ(headerBefore.transmitFailedCount, 1U);
+
+    // Provide publication coverage that would cover the frames if it were pending
+    pubRing.Record(1, 4900, 5100, now - 200'000, now - 100'000);
+
+    // PollQuiescence must NOT retry failed transmissions or corrupt counters
+    session.PollQuiescence(&pubRing);
+
+    TxLatencySessionHeader headerAfter{};
+    session.ReadHeader(headerAfter);
+    EXPECT_EQ(headerAfter.sampledCount, 1U);
+    EXPECT_EQ(headerAfter.matchedCount, 0U);
+    EXPECT_EQ(headerAfter.unresolvedCount, 0U);
+    EXPECT_EQ(headerAfter.transmitFailedCount, 1U);
+    EXPECT_LT(headerAfter.unresolvedCount, 100U); // must not wrap to UINT64_MAX
+}
+
+TEST(TxLatencySessionTests, PreservesAssumedDriftAndGeometry) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    TxLatencySession session;
+    constexpr uint32_t kCustomDriftPpm = 300;
+    ASSERT_TRUE(session.Arm(32, 1, 48000, 5, 100, 0x1234, 4, kCustomDriftPpm));
+
+    TxLatencySessionHeader header{};
+    session.ReadHeader(header);
+    EXPECT_EQ(header.assumedDriftPpm, kCustomDriftPpm);
+
+    session.RequestStop(TxLatencyTerminationReason::UserStopped);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Frozen);
+
+    ASFW::UserClient::Wire::TxLatencyResultsPageWire page{};
+    ASSERT_TRUE(session.CopyWirePage(0, 32, 32, 1, page));
+    EXPECT_EQ(page.header.assumedDriftPpm, kCustomDriftPpm);
+    EXPECT_EQ(page.header.geometryProvenance, (504U << 16) | 1008U);
+
+    auto completed = session.GetCompletedResult();
+    ASSERT_NE(completed, nullptr);
+    EXPECT_EQ(completed->header.assumedDriftPpm, kCustomDriftPpm);
+    EXPECT_EQ(completed->preparationLeadPackets, 1008U);
+    EXPECT_EQ(completed->hardwareRingPackets, 504U);
+}
+
+TEST(TxLatencySessionTests, LiveHeadersReportCapturedGeometry) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    TxLatencySession session;
+    constexpr uint32_t kLead = 1008;
+    constexpr uint32_t kRing = 504;
+    ASSERT_TRUE(session.Arm(60, 1, 48000, 5, 100, 0x1234, 4, 100, kLead, kRing));
+    EXPECT_EQ(session.State(), TxLatencySessionState::Capturing);
+
+    // Live CopyWirePage during Capturing state must report actual captured geometry, not 6/16
+    ASFW::UserClient::Wire::TxLatencyResultsPageWire page{};
+    ASSERT_TRUE(session.CopyWirePage(0, 32, 60, 1, page));
+    EXPECT_EQ(page.header.sessionState, static_cast<uint32_t>(TxLatencySessionState::Capturing));
+    EXPECT_EQ(page.header.geometryProvenance, (kRing << 16) | kLead);
+}
+
+TEST(TxLatencySessionTests, ConcurrentAudioAndControlPollingSafety) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    TxLatencySession session;
+    PublicationRangeRing pubRing{};
+    ASSERT_TRUE(session.Arm(55, 1, 48000, 10, 100, 0x1234, 1, 100,
+                            ASFW::Audio::Shared::AudioTimingGeometry::kTxPreparationLeadPackets,
+                            ASFW::Audio::Shared::AudioTimingGeometry::kTxHardwareRingPackets,
+                            &pubRing));
+
+    ASFW::Protocols::Audio::AMDTP::AmdtpPacketTimeline timeline{};
+    std::array<ASFW::Protocols::Audio::AMDTP::PacketTimelineSlot, 8> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), static_cast<uint32_t>(slots.size())));
+    for (size_t i = 0; i < slots.size(); ++i) {
+        slots[i].packetIndex = i;
+        slots[i].isData = 1;
+        slots[i].framesInPacket = 8;
+        slots[i].epoch = 1;
+        slots[i].firstAudioFrame = i * 8;
+        slots[i].cycleOrdinal = i;
+        slots[i].state.store(ASFW::Protocols::Audio::AMDTP::PacketSlotState::Finalized);
+        timeline.SetImageProvenance(static_cast<uint32_t>(i), 0, 1, i * 8, 8,
+                                    static_cast<uint8_t>(ASFW::Audio::Ports::PcmCopyResult::Ready));
+    }
+
+    std::atomic<bool> running{true};
+    const uint64_t now = mach_absolute_time();
+
+    // Audio thread: continuously observes completions and calls PollQuiescence(&pubRing)
+    std::thread audioThread([&]() {
+        ASFW::Isoch::IsochTxClockPairSample pair{};
+        pair.cycleTimer32 = (1U << 25) | (100U << 12) | 0U;
+        pair.hostTimeMid = now;
+        pair.bracketTicks = 10;
+        uint64_t pkt = 0;
+        while (running.load(std::memory_order_relaxed)) {
+            session.ObserveCompletion(pkt % 8, (1U << 25) | (100U << 12) | 0U,
+                                      ASFW::Isoch::PackCompletionMetadata(0, 0, 0x11),
+                                      pair, timeline, pubRing, now + 1000);
+            session.PollQuiescence(&pubRing);
+            ++pkt;
+        }
+    });
+
+    // Control/timer thread: continuously calls PollQuiescence() without pubRing and checks status
+    std::thread controlThread([&]() {
+        while (running.load(std::memory_order_relaxed)) {
+            session.PollQuiescence();
+        }
+    });
+
+    // Reader thread: continuously reads header and pages wire results
+    std::thread readerThread([&]() {
+        ASFW::UserClient::Wire::TxLatencyResultsPageWire page{};
+        TxLatencySessionHeader header{};
+        while (running.load(std::memory_order_relaxed)) {
+            session.ReadHeader(header);
+            (void)session.CopyWirePage(0, 32, 55, 1, page);
+        }
+    });
+
+    // Run for 50 milliseconds under heavy concurrent contention
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    running.store(false, std::memory_order_relaxed);
+
+    audioThread.join();
+    controlThread.join();
+    readerThread.join();
+
+    // Session can be cleanly stopped
+    session.RequestStop(TxLatencyTerminationReason::UserStopped);
+    EXPECT_EQ(session.State(), TxLatencySessionState::Frozen);
+
+    TxLatencySessionHeader finalHeader{};
+    session.ReadHeader(finalHeader);
+    EXPECT_EQ(finalHeader.sessionId, 55U);
+    EXPECT_EQ(finalHeader.state, TxLatencySessionState::Frozen);
+}
+
+

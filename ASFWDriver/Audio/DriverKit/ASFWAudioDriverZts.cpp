@@ -401,7 +401,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                        uint64_t transportGeneration,
                        bool useMAudio) noexcept {
     if (ivars.runtime.txLatencySession) {
-        ivars.runtime.txLatencySession->PollQuiescence();
+        ivars.runtime.txLatencySession->PollQuiescence(&ivars.runtime.publicationHistory);
     }
     auto* queue = ivars.runtime.txSlotProvider.queueControl;
     auto* control = ivars.runtime.directAudioGraph.control;
@@ -442,7 +442,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
     if (drain.Empty()) {
         ivars.runtime.txCompletionStampCursor = stampCount;
         if (ivars.runtime.txLatencySession) {
-            ivars.runtime.txLatencySession->PollQuiescence();
+            ivars.runtime.txLatencySession->PollQuiescence(&ivars.runtime.publicationHistory);
         }
         return;
     }
@@ -563,7 +563,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
         }
         ivars.runtime.txCompletionStampCursor = stampCount;
         if (ivars.runtime.txLatencySession) {
-            ivars.runtime.txLatencySession->PollQuiescence();
+            ivars.runtime.txLatencySession->PollQuiescence(&ivars.runtime.publicationHistory);
         }
         if (!haveStamp) return;
 
@@ -605,7 +605,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
             }, "maudio-tx");
         }
         if (ivars.runtime.txLatencySession) {
-            ivars.runtime.txLatencySession->PollQuiescence();
+            ivars.runtime.txLatencySession->PollQuiescence(&ivars.runtime.publicationHistory);
         }
         return;
     }
@@ -707,7 +707,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
     }
     ivars.runtime.txCompletionStampCursor = stampCount;
     if (ivars.runtime.txLatencySession) {
-        ivars.runtime.txLatencySession->PollQuiescence();
+        ivars.runtime.txLatencySession->PollQuiescence(&ivars.runtime.publicationHistory);
     }
 }
 

@@ -291,6 +291,10 @@ extension ASFWMCPToolDefinition {
                     "endpointId": .object([
                         "type": .string("integer"), "minimum": .int(1),
                         "description": .string("Target audio endpoint ID.")
+                    ]),
+                    "sessionId": .object([
+                        "type": .string("integer"), "minimum": .int(1),
+                        "description": .string("Optional target session ID to stop.")
                     ])
                 ]),
                 "required": .array([.string("endpointId")]),

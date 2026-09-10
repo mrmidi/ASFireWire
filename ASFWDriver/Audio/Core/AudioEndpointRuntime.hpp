@@ -486,41 +486,56 @@ public:
         }
     }
 
-    [[nodiscard]] bool StartTxLatencySession(uint32_t durationSeconds,
-                                             uint32_t strataSize,
-                                             uint32_t seed,
-                                             uint32_t assumedDriftPpm,
-                                             uint32_t* outSessionId = nullptr) noexcept {
+    void ArchiveCompletedResultLocked(std::shared_ptr<const Runtime::TxLatencySessionResult> completed) noexcept {
+        if (!completed) return;
+        if (lock_) {
+            IOLockLock(lock_);
+            bool found = false;
+            for (const auto& r : retainedTxLatencyResults_) {
+                if (r && r->header.sessionId == completed->header.sessionId) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                if (retainedTxLatencyResults_.size() >= 4) {
+                    retainedTxLatencyResults_.erase(retainedTxLatencyResults_.begin());
+                }
+                retainedTxLatencyResults_.push_back(std::move(completed));
+            }
+            IOLockUnlock(lock_);
+        } else {
+            bool found = false;
+            for (const auto& r : retainedTxLatencyResults_) {
+                if (r && r->header.sessionId == completed->header.sessionId) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                if (retainedTxLatencyResults_.size() >= 4) {
+                    retainedTxLatencyResults_.erase(retainedTxLatencyResults_.begin());
+                }
+                retainedTxLatencyResults_.push_back(std::move(completed));
+            }
+        }
+    }
+
+    [[nodiscard]] bool StartTxLatencySession(
+        uint32_t durationSeconds = 5,
+        uint32_t strataSize = 8,
+        uint32_t seed = 0,
+        uint32_t assumedDriftPpm = 100,
+        uint32_t* outSessionId = nullptr) noexcept {
         std::shared_ptr<Runtime::TxLatencySession> session;
-        Scheduling::TimerToken oldTimer = Scheduling::kInvalidTimerToken;
         Scheduling::ITimerScheduler* scheduler = nullptr;
         uint64_t epoch = 0;
-        uint32_t rate = currentSampleRateHz_;
+        uint32_t rate = 48000;
+
         if (lock_) {
             IOLockLock(lock_);
             session = txLatencySession_;
             scheduler = timerScheduler_;
-            if (activeDeadlineTimerToken_ != Scheduling::kInvalidTimerToken) {
-                oldTimer = activeDeadlineTimerToken_;
-                activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
-            }
-            if (session) {
-                if (auto completed = session->GetCompletedResult()) {
-                    bool found = false;
-                    for (const auto& r : retainedTxLatencyResults_) {
-                        if (r && r->header.sessionId == completed->header.sessionId) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        if (retainedTxLatencyResults_.size() >= 4) {
-                            retainedTxLatencyResults_.erase(retainedTxLatencyResults_.begin());
-                        }
-                        retainedTxLatencyResults_.push_back(std::move(completed));
-                    }
-                }
-            }
             if (directControl_) {
                 epoch = directControl_->hardwareTimeline.Epoch();
             }
@@ -531,32 +546,21 @@ public:
         } else {
             session = txLatencySession_;
             scheduler = timerScheduler_;
-            oldTimer = activeDeadlineTimerToken_;
-            activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
-            if (session) {
-                if (auto completed = session->GetCompletedResult()) {
-                    bool found = false;
-                    for (const auto& r : retainedTxLatencyResults_) {
-                        if (r && r->header.sessionId == completed->header.sessionId) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        if (retainedTxLatencyResults_.size() >= 4) {
-                            retainedTxLatencyResults_.erase(retainedTxLatencyResults_.begin());
-                        }
-                        retainedTxLatencyResults_.push_back(std::move(completed));
-                    }
-                }
-            }
-        }
-
-        if (scheduler && oldTimer != Scheduling::kInvalidTimerToken) {
-            scheduler->Cancel(oldTimer);
         }
 
         if (!session) return false;
+
+        // Verify session is Idle or Frozen before attempting to arm.
+        // If already capturing or stopping, reject immediately without touching active timer!
+        const auto st = session->State();
+        if (st != Runtime::TxLatencySessionState::Idle && st != Runtime::TxLatencySessionState::Frozen) {
+            return false;
+        }
+
+        // Archive completed result from previous session if frozen
+        if (auto completed = session->GetCompletedResult()) {
+            ArchiveCompletedResultLocked(completed);
+        }
 
         uint32_t sid = nextSessionId_.fetch_add(1, std::memory_order_relaxed);
         if (sid == 0) {
@@ -568,7 +572,26 @@ public:
 
         const bool armed = session->Arm(sid, epoch, rate, durationSeconds,
                                         Runtime::kTxLatencyMaxSamples, seed, strataSize, assumedDriftPpm);
-        if (armed && scheduler) {
+        if (!armed) {
+            return false;
+        }
+
+        // Arm succeeded! Now cancel any previous timer and schedule the new deadline timer.
+        Scheduling::TimerToken oldTimer = Scheduling::kInvalidTimerToken;
+        if (lock_) {
+            IOLockLock(lock_);
+            oldTimer = activeDeadlineTimerToken_;
+            activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
+            IOLockUnlock(lock_);
+        } else {
+            oldTimer = activeDeadlineTimerToken_;
+            activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
+        }
+        if (scheduler && oldTimer != Scheduling::kInvalidTimerToken) {
+            scheduler->Cancel(oldTimer);
+        }
+
+        if (scheduler) {
             const uint64_t durationNs = static_cast<uint64_t>(durationSeconds) * 1'000'000'000ULL;
             const uint64_t delayNs = durationNs + 50'000'000ULL;
             std::weak_ptr<Runtime::TxLatencySession> weakSession = session;
@@ -594,17 +617,32 @@ public:
                 activeDeadlineTimerToken_ = token;
             }
         }
-        return armed;
+        return true;
     }
 
     [[nodiscard]] bool StopTxLatencySession(uint32_t targetSessionId = 0) noexcept {
         std::shared_ptr<Runtime::TxLatencySession> session;
-        Scheduling::TimerToken timerToCancel = Scheduling::kInvalidTimerToken;
         Scheduling::ITimerScheduler* scheduler = nullptr;
+        Scheduling::TimerToken timerToCancel = Scheduling::kInvalidTimerToken;
+
         if (lock_) {
             IOLockLock(lock_);
             session = txLatencySession_;
             scheduler = timerScheduler_;
+            if (!session) {
+                IOLockUnlock(lock_);
+                return false;
+            }
+            if (targetSessionId != 0 && session->SessionId() != targetSessionId) {
+                IOLockUnlock(lock_);
+                return false;
+            }
+            const auto st = session->State();
+            if (st != Runtime::TxLatencySessionState::Capturing &&
+                st != Runtime::TxLatencySessionState::Arming) {
+                IOLockUnlock(lock_);
+                return false;
+            }
             if (activeDeadlineTimerToken_ != Scheduling::kInvalidTimerToken) {
                 timerToCancel = activeDeadlineTimerToken_;
                 activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
@@ -613,6 +651,15 @@ public:
         } else {
             session = txLatencySession_;
             scheduler = timerScheduler_;
+            if (!session) return false;
+            if (targetSessionId != 0 && session->SessionId() != targetSessionId) {
+                return false;
+            }
+            const auto st = session->State();
+            if (st != Runtime::TxLatencySessionState::Capturing &&
+                st != Runtime::TxLatencySessionState::Arming) {
+                return false;
+            }
             timerToCancel = activeDeadlineTimerToken_;
             activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
         }
@@ -621,46 +668,12 @@ public:
             scheduler->Cancel(timerToCancel);
         }
 
-        if (!session) return false;
-        if (targetSessionId != 0 && session->SessionId() != targetSessionId) {
-            return false;
-        }
-
-        session->RequestStop(Runtime::TxLatencyTerminationReason::UserStopped);
+        const uint32_t targetGen = (targetSessionId != 0) ? session->SessionGeneration() : 0;
+        session->RequestStop(Runtime::TxLatencyTerminationReason::UserStopped, targetGen);
         session->PollQuiescence();
 
         if (auto completed = session->GetCompletedResult()) {
-            if (lock_) {
-                IOLockLock(lock_);
-                bool found = false;
-                for (const auto& r : retainedTxLatencyResults_) {
-                    if (r && r->header.sessionId == completed->header.sessionId) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    if (retainedTxLatencyResults_.size() >= 4) {
-                        retainedTxLatencyResults_.erase(retainedTxLatencyResults_.begin());
-                    }
-                    retainedTxLatencyResults_.push_back(std::move(completed));
-                }
-                IOLockUnlock(lock_);
-            } else {
-                bool found = false;
-                for (const auto& r : retainedTxLatencyResults_) {
-                    if (r && r->header.sessionId == completed->header.sessionId) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    if (retainedTxLatencyResults_.size() >= 4) {
-                        retainedTxLatencyResults_.erase(retainedTxLatencyResults_.begin());
-                    }
-                    retainedTxLatencyResults_.push_back(std::move(completed));
-                }
-            }
+            ArchiveCompletedResultLocked(completed);
         }
         return true;
     }

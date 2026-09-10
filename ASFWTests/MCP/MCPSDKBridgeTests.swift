@@ -47,6 +47,24 @@ struct MCPSDKBridgeTests {
         #expect(properties["swapHex"] != nil)
     }
 
+    @Test func stopTxLatencySessionSchemaPublishesOptionalSessionId() async throws {
+        let tools = await bridge(configuration: ASFWMCPRuntimeConfiguration(
+            mode: .developerWriteEnabled,
+            writePolicyAvailable: true,
+            swiftTestGatePassed: true,
+            rawDeveloperTierEnabled: false
+        )).listTools()
+        let stopTool = try #require(tools.first { $0.name == "asfw_stop_tx_latency_session" })
+        guard case .object(let schema) = stopTool.inputSchema,
+              case .object(let properties)? = schema["properties"],
+              case .object(let sessionId)? = properties["sessionId"] else {
+            Issue.record("Stop TX latency schema should publish optional sessionId.")
+            return
+        }
+        #expect(sessionId["type"] == .string("integer"))
+        #expect(sessionId["minimum"] == .int(1))
+    }
+
     @Test func resourceMetadataMapsToJSONResources() async throws {
         let resources = await bridge().listResources()
         let health = try #require(resources.first { $0.uri == "asfw://control-plane/health" })

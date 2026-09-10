@@ -310,7 +310,7 @@ struct TxLatencySessionReport: Sendable, Codable {
 // MARK: - Binary Wire Decoder
 
 enum TxLatencyWireDecoder {
-    static let wireVersion: UInt32 = 2
+    static let wireVersion: UInt32 = 3
     static let maxSamplesPerPage: Int = 32
     static let sampleBytes: Int = 80
     static let headerBytes: Int = 192

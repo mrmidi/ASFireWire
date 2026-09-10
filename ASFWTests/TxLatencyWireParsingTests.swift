@@ -19,7 +19,7 @@ struct TxLatencyWireParsingTests {
         }
     }
 
-    private func fixture(version: UInt32 = 2, sampleCount: UInt32 = 2) -> Data {
+    private func fixture(version: UInt32 = 3, sampleCount: UInt32 = 2) -> Data {
         var wire = Data(repeating: 0, count: TxLatencyWireDecoder.pageBytes)
 
         // Header (192 bytes)
@@ -50,7 +50,7 @@ struct TxLatencyWireParsingTests {
             setLE(UInt32(1000), at: 112 + i * 4, in: &wire) // eligibleByPhase
         }
 
-        setLE(UInt32((16 << 16) | 6), at: 188, in: &wire) // geometryProvenance
+        setLE(UInt32((504 << 16) | 1008), at: 188, in: &wire) // geometryProvenance: hwRing=504, lead=1008
 
         // Paging fields at offset 192
         setLE(UInt32(0), at: 192, in: &wire) // pageIndex
@@ -108,7 +108,7 @@ struct TxLatencyWireParsingTests {
         let wire = fixture()
         let page = try #require(TxLatencyWireDecoder.decodePage(wire))
 
-        #expect(page.header.version == 2)
+        #expect(page.header.version == 3)
         #expect(page.header.sessionState == .frozen)
         #expect(page.header.terminationReason == .deadlineExpired)
         #expect(page.header.sessionId == 42)
@@ -123,9 +123,9 @@ struct TxLatencyWireParsingTests {
         #expect(page.header.eligibleByPhase[0] == 1000)
 
         #expect(page.header.sampleRateHz == 48000)
-        #expect(page.header.geometryProvenance == (16 << 16) | 6)
-        #expect(page.header.preparationLeadPackets == 6)
-        #expect(page.header.hardwareRingPackets == 16)
+        #expect(page.header.geometryProvenance == (504 << 16) | 1008)
+        #expect(page.header.preparationLeadPackets == 1008)
+        #expect(page.header.hardwareRingPackets == 504)
 
         #expect(page.pageIndex == 0)
         #expect(page.totalPages == 1)
@@ -179,6 +179,7 @@ struct TxLatencyWireParsingTests {
     @Test func rejectsTruncatedOrVersionMismatch() {
         let wire = fixture()
         #expect(TxLatencyWireDecoder.decodePage(wire.dropLast()) == nil)
+        #expect(TxLatencyWireDecoder.decodePage(fixture(version: 2)) == nil)
         #expect(TxLatencyWireDecoder.decodePage(fixture(version: 99)) == nil)
     }
 
@@ -206,7 +207,7 @@ struct TxLatencyWireParsingTests {
         #expect(csv.contains("# ASFW FireWire TX Latency Session Report (E0 -> E2)"))
         #expect(csv.contains("# Session ID: 42"))
         #expect(csv.contains("# Endpoint ID: 101"))
-        #expect(csv.contains("# Rate: 48000 Hz, Geometry: lead=6pkts, hwRing=16pkts"))
+        #expect(csv.contains("# Rate: 48000 Hz, Geometry: lead=1008pkts, hwRing=504pkts"))
         #expect(csv.contains("packet_index,pcm_start_frame,pcm_end_frame"))
         #expect(csv.contains("42,1000,1006,6,Matched,None,1,3,2,1,31,100,1008000,1010000,1020000,150,350000,450000,350.000,450.000,400.000,50.000"))
     }

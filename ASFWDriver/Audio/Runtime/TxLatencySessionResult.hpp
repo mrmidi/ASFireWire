@@ -16,7 +16,7 @@
 namespace ASFW::Audio::Runtime {
 
 inline constexpr uint32_t kTxLatencyMaxSamples = 4096;
-inline constexpr uint32_t kTxLatencySessionWireVersion = 1;
+inline constexpr uint32_t kTxLatencySessionWireVersion = 3;
 
 enum class TxLatencySessionState : uint32_t {
     Idle = 0,
@@ -65,6 +65,7 @@ struct TxLatencySessionHeader final {
     uint32_t sampleRateHz{0};
     uint32_t samplingSeed{0};
     uint32_t strataSize{1};
+    uint32_t assumedDriftPpm{100};
     uint64_t sessionStartHostTicks{0};
     uint64_t sessionDeadlineHostTicks{0};
     uint64_t sessionFrozenHostTicks{0};
@@ -131,7 +132,7 @@ struct TxLatencySessionResult final {
                 : 5);
         out.header.strataSize = header.strataSize;
         out.header.seed = header.samplingSeed;
-        out.header.assumedDriftPpm = 100;
+        out.header.assumedDriftPpm = header.assumedDriftPpm;
         out.header.dataPacketsSeen = header.dataPacketsSeen;
         out.header.samplesCaptured = static_cast<uint32_t>(records.size());
         out.header.stampsMissedCount = static_cast<uint32_t>(header.stampsMissedCount);

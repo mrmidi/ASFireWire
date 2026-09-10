@@ -745,7 +745,12 @@ extension ASFWMCPCore {
             }
 
             let endpointId = AudioEndpointID(endpointRaw)
-            let sessionId = (try? decoder.uint32("sessionId")) ?? 0
+            let sessionId: UInt32
+            if decoder.contains("sessionId") {
+                sessionId = try decoder.uint32("sessionId")
+            } else {
+                sessionId = 0
+            }
             let ok = await driver.stopTxLatencySession(endpointID: endpointId, sessionId: sessionId)
 
             return ASFWMCPToolCallResult(

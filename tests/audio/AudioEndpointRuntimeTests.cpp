@@ -499,3 +499,34 @@ TEST(AudioEndpointRuntime, TargetedStopRejectsMismatchedSession) {
 
     runtime.UnregisterTxLatencySession(session);
 }
+
+TEST(AudioEndpointRuntime, TargetedStopPreservesDeadlineTimerOnMismatchedSession) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    ASFW::Audio::AudioEndpointRuntime runtime(MakeProfile());
+    ASFW::Testing::FakeTimerScheduler scheduler;
+    runtime.SetTimerScheduler(&scheduler);
+
+    auto session = std::make_shared<ASFW::Audio::Runtime::TxLatencySession>();
+    runtime.RegisterTxLatencySession(session);
+
+    uint32_t sid = 0;
+    ASSERT_TRUE(runtime.StartTxLatencySession(1, 1, 0x1234, 100, &sid));
+    EXPECT_EQ(session->State(), ASFW::Audio::Runtime::TxLatencySessionState::Capturing);
+    EXPECT_EQ(scheduler.PendingCount(), 1U);
+
+    // Attempting to stop with mismatched session ID must fail and NOT cancel the deadline timer
+    EXPECT_FALSE(runtime.StopTxLatencySession(sid + 999));
+    EXPECT_EQ(session->State(), ASFW::Audio::Runtime::TxLatencySessionState::Capturing);
+    EXPECT_EQ(scheduler.PendingCount(), 1U);
+
+    // The deadline timer fires after elapsed time and successfully freezes the session
+    scheduler.Advance(1'100'000'000ULL);
+    EXPECT_EQ(session->State(), ASFW::Audio::Runtime::TxLatencySessionState::Frozen);
+
+    ASFW::Audio::Runtime::TxLatencySessionHeader header{};
+    session->ReadHeader(header);
+    EXPECT_EQ(header.terminationReason, ASFW::Audio::Runtime::TxLatencyTerminationReason::DeadlineExpired);
+
+    runtime.UnregisterTxLatencySession(session);
+}
+

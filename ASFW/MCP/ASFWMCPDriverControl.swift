@@ -741,7 +741,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
 
     func fetchTxLatencyReport(endpointID: AudioEndpointID, sessionId: UInt32 = 0) async -> TxLatencySessionReport? {
         let header = TxLatencySessionHeader(
-            version: 2,
+            version: 3,
             sessionState: .frozen,
             terminationReason: .deadlineExpired,
             sessionId: sessionId != 0 ? sessionId : 1,
