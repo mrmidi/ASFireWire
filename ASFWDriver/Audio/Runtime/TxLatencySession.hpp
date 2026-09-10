@@ -546,7 +546,16 @@ public:
         }
 
         // Record the sample.
+        //
+        // Reset first. Fields below are assigned per branch, so anything whose
+        // branch does not fire keeps the value left by the previous occupant of
+        // this array slot. That is how substituted packets came to carry a
+        // nonzero offer-to-descriptor-update interval while their
+        // descriptorUpdateHostTicks was zero: the derived field outlived the
+        // timestamp it was derived from, and read as evidence of a rebind that
+        // never happened.
         auto& rec = records_[curRecords];
+        rec = TxLatencyRecord{};
         rec.packetIndex = packetIndex;
         rec.firstAudioFrame = slot->firstAudioFrame;
         rec.frameCount = slot->framesInPacket;

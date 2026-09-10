@@ -2109,3 +2109,93 @@ TEST_F(IsochTxPayloadArbitrationTest, FailedDetachedBatchNeverOpensTheLiveTail) 
     EXPECT_EQ(tail->branchWord, 0U);
     EXPECT_EQ(primeControl_.mappedEnd.load(), Layout::kNumPackets);
 }
+
+// --- The servicing window has zero slack --------------------------------
+//
+// Measured on hardware 2026-09-10: 1316 substituted packets all acquired a
+// slot, encoded image 1 and WON the offer CAS, yet the wire carried the armed
+// image. Median offer -> first examination was 512 us against a 1.0 ms
+// completion-group cadence -- the signature of an offer that waits for the
+// next interrupt because nothing wakes transport when one is published.
+//
+// These two tests isolate why waiting is fatal rather than merely late. The
+// offer window and the service window abut exactly:
+//
+//   a packet is sealed by the pass that reaches its finality frontier, so the
+//   lowest index whose CAS can still win is H + kPayloadFinalityLeadPackets;
+//
+//   the next pass will only rebind at or above liveHw + kPayloadRepointGuard,
+//   which for a punctual one-group advance is exactly that same index.
+//
+// So the earliest offerable packet is serviceable only if the very next pass
+// is perfectly punctual. One packet of slip -- 125 us -- and it is skipped by
+// the bind loop and sealed with no offer-visible examination at all, which is
+// what the capture reports for every phase-7 substitution.
+TEST_F(IsochTxPayloadArbitrationTest,
+       OfferAtTheFrontierIsLostEvenWhenTheNextPassIsPunctual) {
+    auto metadataRing = MakeMetadataRing();
+    PrimeRebindable(metadataRing);
+    PointAt(0);
+    ASSERT_TRUE(Refill(metadataRing).ok);
+
+    // The lowest index the producer can still win: everything below it was
+    // sealed by the pass above.
+    constexpr uint32_t kOffered = kSeal;
+    ASSERT_TRUE(OfferLateImage(metadataRing, kOffered))
+        << "offer must win the CAS, as it did for all 1316 measured packets";
+
+    // One completion group of hardware advance: the next interrupt, on time.
+    PointAt(ASFW::Shared::Isoch::IsochQueueGeometry::kPacketsPerCompletionGroup);
+    const auto outcome = Refill(metadataRing);
+    ASSERT_TRUE(outcome.ok);
+
+    // MEASURED, not predicted. A punctual pass does not merely arrive with no
+    // margin -- it never examines the packet for binding at all:
+    //
+    //   rebinds              = 0   never bound
+    //   rebindRejected       = 0   not a shape rejection
+    //   rebindMissedDeadline = 0   not a live-guard rejection
+    //   lostPublications     = 1   sealed while an offer stood
+    //
+    // All four together are the phase-7 signature from the 2026-09-10 capture:
+    // offer won, no offer-visible binding examination recorded, sealed after.
+    // So the servicing window for the earliest offerable packet is not zero-
+    // slack, it is negative: one completion group of advance is already too
+    // late, and no amount of punctuality recovers it.
+    //
+    // OPEN: which early return in TryBindLatePayload skips it. All three
+    // rejection counters are zero, so it leaves through one of the silent
+    // paths (identity/generation, offer-not-visible, or hardware position
+    // unavailable) rather than through a counted rejection. Determining which
+    // is the next step, and it decides whether the fix is a producer wake, a
+    // wider frontier-to-guard margin, or both.
+    EXPECT_EQ(metadataRing[kOffered].selectedPayloadImage, 0U);
+    EXPECT_EQ(outcome.latePayloadRebinds, 0U);
+    EXPECT_EQ(outcome.latePayloadRebindRejected, 0U);
+    EXPECT_EQ(outcome.latePayloadRebindMissedDeadline, 0U);
+    EXPECT_EQ(outcome.latePayloadLostPublications, 1U);
+}
+
+TEST_F(IsochTxPayloadArbitrationTest,
+       OfferAtTheFrontierIsLostWhenTheNextPassSlipsOnePacket) {
+    auto metadataRing = MakeMetadataRing();
+    PrimeRebindable(metadataRing);
+    PointAt(0);
+    ASSERT_TRUE(Refill(metadataRing).ok);
+
+    constexpr uint32_t kOffered = kSeal;
+    ASSERT_TRUE(OfferLateImage(metadataRing, kOffered));
+
+    // 125 us later than the test above. Nothing else differs.
+    PointAt(ASFW::Shared::Isoch::IsochQueueGeometry::kPacketsPerCompletionGroup + 1);
+    const auto outcome = Refill(metadataRing);
+    ASSERT_TRUE(outcome.ok);
+
+    // The armed image transmits and the producer's content is discarded --
+    // and because the packet fell below firstRepointable it is never examined
+    // for binding at all, so the only trace is the seal. That is precisely the
+    // phase-7 signature: offer won, no binding examination, sealed after.
+    EXPECT_EQ(metadataRing[kOffered].selectedPayloadImage, 0U)
+        << "one packet of slip loses content that was ready and accepted";
+    EXPECT_EQ(outcome.latePayloadLostPublications, 1U);
+}
