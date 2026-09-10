@@ -1,6 +1,12 @@
 #include "DiceTxStreamEngine.hpp"
 #include "../../../../Isoch/Core/IsochTxQueue.hpp"
 
+#ifdef ASFW_HOST_TEST
+#include <mach/mach_time.h>
+#else
+#include <DriverKit/IOLib.h> // mach_time
+#endif
+
 #include <algorithm>
 
 #include <iterator>
@@ -324,6 +330,13 @@ TxSlotFillResult DiceTxStreamEngine::FillTransmitSlot(
     };
     if (!packetizer_.RefillPcm(slot, armed, pcm)) {
         return TxSlotFillResult::Rejected;
+    }
+    // Gated on the capture, not merely stored conditionally: this runs once per
+    // packet on the encode path, so an unconditional clock read would tax every
+    // stream whether or not a session is measuring one.
+    if (slotProvider_->CaptureActive()) {
+        slotProvider_->RecordEncodingCompleted(packetIndex,
+                                               mach_absolute_time());
     }
     return TxSlotFillResult::Filled;
 }

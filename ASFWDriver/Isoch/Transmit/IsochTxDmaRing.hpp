@@ -211,7 +211,11 @@ private:
         uint32_t numSlots,
         uint8_t* payloadBase,
         const TxPayloadDmaMap& payloadDmaMap,
-        RefillOutcome& out) noexcept;
+        RefillOutcome& out,
+        uint64_t captureToken = 0,
+        uint64_t passId = 0,
+        uint64_t passStartHostTicks = 0,
+        uint64_t passStartHwPos = 0) noexcept;
     /// Decide one packet: bind image 1 if the producer offered a usable one,
     /// otherwise leave the armed image standing. Never seals a packet that is
     /// still open, so it is safe to call more than once for the same packet.
@@ -225,7 +229,11 @@ private:
         uint32_t numSlots,
         uint8_t* payloadBase,
         const TxPayloadDmaMap& payloadDmaMap,
-        RefillOutcome& out) noexcept;
+        RefillOutcome& out,
+        uint64_t captureToken = 0,
+        uint64_t passId = 0,
+        uint64_t passStartHostTicks = 0,
+        uint64_t passStartHwPos = 0) noexcept;
     /// Declare one packet final on its armed image, counting the discarded
     /// offer if the producer had published one. The single site at which a lost
     /// publication becomes a number.
@@ -242,9 +250,16 @@ private:
         IsochTxPacketMeta& meta,
         uint64_t generation,
         IsochTxQueueControl* controlBlock,
-        RefillOutcome& out) noexcept;
+        RefillOutcome& out,
+        SealReason reason = SealReason::None,
+        uint64_t captureToken = 0,
+        uint64_t passId = 0,
+        uint64_t liveHwPos = 0,
+        bool liveHwPosValid = false,
+        bool positionIsSnapshot = false) noexcept;
 
     uint8_t channel_{0};
+    uint64_t passId_{0};
     IsochTxDescriptorSlab slab_{};
     Memory::IIsochDMAMemory* dmaMemory_{nullptr};
 

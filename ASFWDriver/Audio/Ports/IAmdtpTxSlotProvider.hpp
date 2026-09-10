@@ -33,6 +33,17 @@ public:
     /// bound mutable tail. Losing the finality race is normal.
     [[nodiscard]] virtual bool PublishLatePayload(
         uint32_t packetIndex) noexcept = 0;
+
+    /// True while a decision capture is running. Callers gate clock reads on
+    /// this: sampling a timestamp nobody will store still costs the read, and
+    /// the encode path runs for every packet whether or not anyone is
+    /// measuring.
+    [[nodiscard]] virtual bool CaptureActive() const noexcept { return false; }
+
+    /// Record the host timestamp at which image 1 finished encoding. Only
+    /// meaningful while CaptureActive(); a no-op otherwise.
+    virtual void RecordEncodingCompleted(uint32_t /*packetIndex*/,
+                                         uint64_t /*hostTicks*/) noexcept {}
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP

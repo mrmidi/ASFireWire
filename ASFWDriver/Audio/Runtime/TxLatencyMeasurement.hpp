@@ -285,4 +285,12 @@ struct TransmitBounds final {
     return flags;
 }
 
+[[nodiscard]] constexpr int64_t DiffNanos(uint64_t to, uint64_t from) noexcept {
+    if (to >= from) {
+        return static_cast<int64_t>(Timing::hostTicksToNanos(to - from));
+    } else {
+        return -static_cast<int64_t>(Timing::hostTicksToNanos(from - to));
+    }
+}
+
 } // namespace ASFW::Audio::Runtime

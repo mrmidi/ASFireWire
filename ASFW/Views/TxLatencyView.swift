@@ -405,7 +405,7 @@ struct TxLatencyView: View {
                 .width(min: 120, ideal: 140)
 
                 TableColumn("Phase / Image") { s in
-                    Text("P\(s.arbitrationPhase) · Img \(s.selectedImage)")
+                    Text("P\(s.cyclePhaseMod8) · Img \(s.selectedImage)")
                         .font(.caption)
                 }
                 .width(min: 90, ideal: 100)
@@ -415,13 +415,20 @@ struct TxLatencyView: View {
                         Text(s.unresolvedReason.description)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    } else if s.hasTransportDecision {
+                        // Gated on the join result, not on a field being
+                        // non-zero: SealResult 0 is a real outcome, so a zero
+                        // seal cannot stand in for "no decision recorded".
+                        Text(s.decisionEvidenceSummary)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(s.bindResult == 1 ? .green : .orange)
                     } else {
                         Text(s.pcmIdentityProven ? "Proven" : "Unproven")
                             .font(.caption)
                             .foregroundStyle(s.pcmIdentityProven ? .green : .secondary)
                     }
                 }
-                .width(min: 140, ideal: 180)
+                .width(min: 160, ideal: 200)
             }
             .frame(minHeight: 300)
         }

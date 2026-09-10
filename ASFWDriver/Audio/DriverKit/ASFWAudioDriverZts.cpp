@@ -532,7 +532,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
             if (ivars.runtime.txLatencySession) {
                 ivars.runtime.txLatencySession->ObserveCompletion(
                     packetIndex, compCycleTimer, compMetadata, pair, timeline,
-                    ivars.runtime.publicationHistory, pair.hostTimeMid);
+                    ivars.runtime.publicationHistory, pair.hostTimeMid, queue);
             }
             if (!haveData) {
                 // Fallback for a wake that turns out to carry no audio: the
@@ -634,7 +634,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
         if (ivars.runtime.txLatencySession) {
             ivars.runtime.txLatencySession->ObserveCompletion(
                 packetIndex, compCycleTimer, compMetadata, pair, timeline,
-                ivars.runtime.publicationHistory, pair.hostTimeMid);
+                ivars.runtime.publicationHistory, pair.hostTimeMid, queue);
         }
         if (!finalityStamped) {
             // One stamp per wake, recorded before any lookup consults the ring.

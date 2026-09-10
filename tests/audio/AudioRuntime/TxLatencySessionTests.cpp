@@ -3,7 +3,10 @@
 
 #include "Audio/Runtime/TxLatencySession.hpp"
 #include "Audio/Wire/AMDTP/AmdtpPacketTimeline.hpp"
+#include "Isoch/Core/IsochTxQueue.hpp"
 #include <gtest/gtest.h>
+#include <memory>
+#include <array>
 #include <thread>
 #include <vector>
 
@@ -114,10 +117,10 @@ TEST(TxLatencySessionTests, HandleStreamResetPreservesRecords) {
     EXPECT_EQ(page.header.terminationReason, static_cast<uint32_t>(TxLatencyTerminationReason::StreamReset));
 }
 
-TEST(TxLatencySessionTests, WireFormat80ByteSampleOffsets) {
-    static_assert(sizeof(ASFW::UserClient::Wire::TxLatencySampleWire) == 80);
+TEST(TxLatencySessionTests, WireFormatSampleOffsets) {
+    static_assert(sizeof(ASFW::UserClient::Wire::TxLatencySampleWire) == 288);
     static_assert(sizeof(ASFW::UserClient::Wire::TxLatencySessionWireHeader) == 192);
-    static_assert(sizeof(ASFW::UserClient::Wire::TxLatencyResultsPageWire) == 192 + 16 + 32 * 80);
+    static_assert(sizeof(ASFW::UserClient::Wire::TxLatencyResultsPageWire) == 192 + 16 + 32 * 288);
 }
 
 TEST(TxLatencySessionTests, ConcurrentFinalizationSerialization) {
@@ -816,4 +819,102 @@ TEST(TxLatencySessionTests, ReadCollisionExportsDistinctReasonWithoutEvictionCou
     EXPECT_EQ(page.samples[0].unresolvedReason,
               static_cast<uint8_t>(TxLatencyUnresolvedReason::PublicationReadCollision));
     EXPECT_EQ(page.samples[0].validityFlags & ASFW::UserClient::Wire::kTxLatencyFlagPubValid, 0U);
+}
+
+TEST(TxLatencySessionTests, LatePublicationJoinKeepsDecisionEvidence) {
+    // A sample whose publication receipt arrives after the completion is
+    // resolved later by RetryPendingJoins. That path used to overwrite the
+    // whole validity mask with the freshly computed E0/E2 bits, wiping every
+    // producer/transport/offer/bind/seal flag ObserveCompletion had already
+    // recorded -- so the samples that took longest to join were exactly the
+    // ones that lost their diagnosis.
+    (void)ASFW::Timing::initializeHostTimebase();
+
+    auto queue = std::make_unique<ASFW::Isoch::IsochTxQueueControl>();
+    queue->abiVersion = ASFW::Isoch::kTxQueueAbiVersion;
+    queue->numSlots = ASFW::Audio::Shared::AudioTimingGeometry::kTxSharedSlotPackets;
+
+    TxLatencySession session;
+    ASSERT_TRUE(session.Arm(31, 1, 48000, 10, 100, 0x1234, 1, 100,
+                            ASFW::Audio::Shared::AudioTimingGeometry::kTxPreparationLeadPackets,
+                            ASFW::Audio::Shared::AudioTimingGeometry::kTxHardwareRingPackets,
+                            nullptr, queue.get()));
+
+    // Decision evidence for packet 0, under the capture the Arm just began.
+    const uint64_t token = queue->ActiveCaptureToken();
+    ASSERT_NE(token, 0ULL);
+    const uint64_t slotGen =
+        ASFW::Isoch::ExpectedTxCommitGeneration(0, queue->numSlots);
+    queue->RecordProducerAcquire(token, 0, slotGen,
+                                 ASFW::Isoch::LatePayloadAcquireResult::Success,
+                                 false);
+    queue->RecordProducerEncode(token, 0, 900);
+    queue->RecordProducerOffer(token, 0, slotGen, 1000, 1050, true, 0);
+    queue->RecordTransportExamination(
+        token, 0, slotGen, /*passId=*/3, /*hostTicks=*/1200, 1,
+        ASFW::Isoch::LatePayloadBindResult::Bound, 5, true, true,
+        /*terminal=*/true);
+    queue->RecordTransportClaim(token, 0, 1210, 1220, 1230, true);
+
+    ASFW::Protocols::Audio::AMDTP::AmdtpPacketTimeline timeline{};
+    std::array<ASFW::Protocols::Audio::AMDTP::PacketTimelineSlot, 8> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), static_cast<uint32_t>(slots.size())));
+    slots[0].packetIndex = 0;
+    slots[0].isData = 1;
+    slots[0].framesInPacket = 8;
+    slots[0].epoch = 1;
+    slots[0].firstAudioFrame = 5000;
+    slots[0].cycleOrdinal = 0;
+    slots[0].state.store(ASFW::Protocols::Audio::AMDTP::PacketSlotState::Finalized);
+    // Image 1 is the bound one, so its provenance is what the join reads.
+    timeline.SetImageProvenance(0, 1, 1, 5000, 8,
+                                static_cast<uint8_t>(ASFW::Audio::Ports::PcmCopyResult::Ready));
+
+    // Empty ring: coverage for frame 5000 is still pending.
+    PublicationRangeRing pubRing{};
+    const uint64_t now = mach_absolute_time();
+    ASFW::Isoch::IsochTxClockPairSample pair{};
+    pair.cycleTimer32 = (1U << 25) | (100U << 12) | 0U;
+    pair.hostTimeMid = now;
+    pair.bracketTicks = 10;
+
+    session.ObserveCompletion(0, (1U << 25) | (100U << 12) | 0U,
+                              ASFW::Isoch::PackCompletionMetadata(1, 2, 0x11),
+                              pair, timeline, pubRing, now + 1000, queue.get());
+
+    TxLatencySessionHeader before{};
+    session.ReadHeader(before);
+    ASSERT_EQ(before.reasonCoveragePending, 1U);
+
+    // The receipt lands and the join is retried.
+    pubRing.Record(1, 4900, 5100, now - 200'000, now - 100'000);
+    session.PollQuiescence(&pubRing);
+
+    TxLatencySessionHeader after{};
+    session.ReadHeader(after);
+    EXPECT_EQ(after.matchedCount, 1U);
+    EXPECT_EQ(after.reasonCoveragePending, 0U);
+
+    session.RequestStop(TxLatencyTerminationReason::UserStopped);
+    ASFW::UserClient::Wire::TxLatencyResultsPageWire page{};
+    ASSERT_TRUE(session.CopyWirePage(0, 32, 31, 100, page));
+    ASSERT_GE(page.samplesInPage, 1U);
+    const auto& sw = page.samples[0];
+
+    namespace W = ASFW::UserClient::Wire;
+    // The E0/E2 half was recomputed...
+    EXPECT_NE(sw.validityFlags & W::kTxLatencyFlagPubValid, 0);
+    // ...and the decision half survived it.
+    EXPECT_NE(sw.validityFlags & W::kTxLatencyFlagProducerDecisionValid, 0);
+    EXPECT_NE(sw.validityFlags & W::kTxLatencyFlagTransportDecisionValid, 0);
+    EXPECT_NE(sw.validityFlags & W::kTxLatencyFlagOfferValid, 0);
+    EXPECT_NE(sw.validityFlags & W::kTxLatencyFlagBindValid, 0);
+    EXPECT_NE(sw.validityFlags & W::kTxLatencyFlagDescriptorUpdateValid, 0);
+    EXPECT_EQ(sw.offerStartHostTicks, 1000U);
+    EXPECT_EQ(sw.descriptorUpdateHostTicks, 1230U);
+
+    // Bound, never sealed: no seal flag and no fabricated seal interval.
+    EXPECT_EQ(sw.validityFlags & W::kTxLatencyFlagSealValid, 0);
+    EXPECT_EQ(sw.sealRelativeToOfferNanosMin, 0);
+    EXPECT_EQ(sw.sealRelativeToOfferNanosMax, 0);
 }

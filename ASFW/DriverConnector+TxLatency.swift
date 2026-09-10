@@ -101,6 +101,24 @@ enum TxLatencyTerminationReason: UInt32, Codable, Sendable, CustomStringConverti
 
 // MARK: - Models
 
+/// Mirrors kTxLatencyFlag* in TxLatencySessionWireFormats.hpp.
+enum TxLatencyFlags {
+    static let pubValid: UInt16               = 1 << 0
+    static let txValid: UInt16                = 1 << 1
+    static let waitValid: UInt16              = 1 << 2
+    static let provenanceValid: UInt16        = 1 << 3
+    static let correlationValid: UInt16       = 1 << 4
+    static let producerDecisionValid: UInt16  = 1 << 5
+    static let transportDecisionValid: UInt16 = 1 << 6
+    static let imageReadyValid: UInt16        = 1 << 7
+    static let offerValid: UInt16             = 1 << 8
+    static let bindValid: UInt16              = 1 << 9
+    static let descriptorUpdateValid: UInt16  = 1 << 10
+    static let sealValid: UInt16              = 1 << 11
+    static let decisionOverwritten: UInt16    = 1 << 12
+    static let terminalPosIsSnapshot: UInt16  = 1 << 13
+}
+
 struct TxLatencySample: Identifiable, Sendable, Codable, Equatable {
     var id: UInt64 { packetIndex }
 
@@ -117,10 +135,55 @@ struct TxLatencySample: Identifiable, Sendable, Codable, Equatable {
     let outcome: TxLatencyOutcome
     let unresolvedReason: TxLatencyUnresolvedReason
     let selectedImage: UInt8
-    let arbitrationPhase: UInt8
+    let cyclePhaseMod8: UInt8
     let packetGeneration: UInt8
     let pcmIdentityProven: Bool
     let validityFlags: UInt16
+
+    let encodeCompleteHostTicks: UInt64
+    let offerStartHostTicks: UInt64
+    let offerEndHostTicks: UInt64
+    /// When the terminal examination happened, not when its pass started.
+    let transExaminedHostTicks: UInt64
+    let descriptorUpdateHostTicks: UInt64
+    let sealStartHostTicks: UInt64
+    let sealEndHostTicks: UInt64
+    /// Last transport look that found nothing on offer, and the first that saw
+    /// the offer. Their gap brackets when the offer became visible.
+    let lastBeforeOfferHostTicks: UInt64
+    let firstAfterOfferHostTicks: UInt64
+    let lastBeforeOfferPassId: UInt64
+    let firstAfterOfferPassId: UInt64
+    let passId: UInt64
+    let liveHwPos: UInt64
+    let e0ToImageReadyNanos: Int64
+    // Bound pairs: the offer is a CAS bracket, so an interval measured from it
+    // is a range. min < 0 < max means the ordering was not established.
+    let offerToExaminedNanosMin: Int64
+    let offerToExaminedNanosMax: Int64
+    let offerToFirstServiceNanosMin: Int64
+    let offerToFirstServiceNanosMax: Int64
+    let offerToDescriptorUpdateNanosMin: Int64
+    let offerToDescriptorUpdateNanosMax: Int64
+    let sealRelativeToOfferNanosMin: Int64
+    let sealRelativeToOfferNanosMax: Int64
+    let producerFlags: UInt32
+    let transportFlags: UInt32
+    let examinationCount: UInt32
+    let hwDistancePackets: Int32
+    let acquireResult: UInt8
+    let offerResult: UInt8
+    let bindResult: UInt8
+    let sealResult: UInt8
+    let sealReason: UInt8
+    let observedArbPhase: UInt8
+    let examinedArbPhase: UInt8
+    let producerJoinResult: UInt8
+    let transportJoinResult: UInt8
+    /// Outcome of the most recent concluded bind attempt. Distinct from
+    /// `bindResult`, which comes from the terminal event and is absent when an
+    /// attempt failed without deciding the packet.
+    let lastAttemptBindResult: UInt8
 
     var waitMinMicros: Double {
         Double(waitMinNanos) / 1_000.0
@@ -136,6 +199,105 @@ struct TxLatencySample: Identifiable, Sendable, Codable, Equatable {
 
     var uncertaintyMicros: Double {
         (waitMaxMicros - waitMinMicros) / 2.0
+    }
+
+    var e0ToImageReadyMicros: Double {
+        Double(e0ToImageReadyNanos) / 1_000.0
+    }
+
+    /// Midpoint of a bound pair, for display only. Anything that decides
+    /// something should use the bounds, not this.
+    private static func centerMicros(_ lo: Int64, _ hi: Int64) -> Double {
+        (Double(lo) + Double(hi)) / 2_000.0
+    }
+
+    var offerToExaminedMicros: Double {
+        Self.centerMicros(offerToExaminedNanosMin, offerToExaminedNanosMax)
+    }
+
+    var offerToFirstServiceMicros: Double {
+        Self.centerMicros(offerToFirstServiceNanosMin, offerToFirstServiceNanosMax)
+    }
+
+    var offerToDescriptorUpdateMicros: Double {
+        Self.centerMicros(offerToDescriptorUpdateNanosMin, offerToDescriptorUpdateNanosMax)
+    }
+
+    var sealRelativeToOfferMicros: Double {
+        Self.centerMicros(sealRelativeToOfferNanosMin, sealRelativeToOfferNanosMax)
+    }
+
+    /// True when a bound pair straddles zero: the brackets overlap, so the
+    /// ordering of the two events was not established by this measurement.
+    var offerToFirstServiceOrderEstablished: Bool {
+        offerToFirstServiceNanosMin > 0 || offerToFirstServiceNanosMax < 0
+    }
+
+    /// Why a lane's decision record could or could not be joined. Mirrors
+    /// ASFW::Isoch::TxDecisionJoinResult.
+    enum DecisionJoin: UInt8, Sendable, Codable {
+        case valid = 0
+        case neverWritten = 1
+        case captureStartedLater = 2
+        case tokenMismatch = 3
+        case slotReused = 4
+        case snapshotCollision = 5
+        case packetMismatch = 6
+
+        var description: String {
+            switch self {
+            case .valid: return "Valid"
+            case .neverWritten: return "No record"
+            case .captureStartedLater: return "Capture started later"
+            case .tokenMismatch: return "Different capture"
+            case .slotReused: return "Overwritten"
+            case .snapshotCollision: return "Read collision"
+            case .packetMismatch: return "Stale record"
+            }
+        }
+    }
+
+    var producerJoin: DecisionJoin {
+        DecisionJoin(rawValue: producerJoinResult) ?? .neverWritten
+    }
+
+    var transportJoin: DecisionJoin {
+        DecisionJoin(rawValue: transportJoinResult) ?? .neverWritten
+    }
+
+    var hasProducerDecision: Bool { producerJoin == .valid }
+    var hasTransportDecision: Bool { transportJoin == .valid }
+
+    /// A bound packet is terminal but never sealed, so seal fields are only
+    /// meaningful when the driver flagged an actual seal.
+    var hasSeal: Bool {
+        validityFlags & TxLatencyFlags.sealValid != 0
+    }
+
+    /// One line describing what actually happened to this packet's replacement
+    /// content, or why we cannot say.
+    var decisionEvidenceSummary: String {
+        guard hasTransportDecision else { return transportJoin.description }
+        var parts: [String] = []
+        if hasProducerDecision {
+            parts.append("Acq:\(acquireResult)")
+            parts.append(offerResult == 1 ? "Offer:won"
+                         : (offerResult == 2 ? "Offer:lost" : "Offer:none"))
+        } else {
+            parts.append("Prod:\(producerJoin.description)")
+        }
+        if bindResult != 0 {
+            parts.append("Bind:\(bindResult)")
+        } else if lastAttemptBindResult != 0 {
+            // Attempted and failed without deciding the packet -- not the same
+            // as never having been serviced.
+            parts.append("Attempt:\(lastAttemptBindResult)")
+        }
+        if hasSeal {
+            parts.append("Seal:\(sealResult)/\(sealReason)")
+        }
+        parts.append("Exams:\(examinationCount)")
+        return parts.joined(separator: " ")
     }
 
     var frameSpan: UInt64 {
@@ -276,7 +438,7 @@ struct TxLatencySessionReport: Sendable, Codable {
         lines.append("# Range Stats (Matched): count=\(matchedStats.sampleCount), min=\(String(format: "%.2f", matchedStats.minWaitMicros))us, med=\(String(format: "%.2f", matchedStats.medianWaitMicros))us, p95=\(String(format: "%.2f", matchedStats.p95WaitMicros))us, max=\(String(format: "%.2f", matchedStats.maxWaitMicros))us, meanUncertainty=±\(String(format: "%.2f", matchedStats.meanUncertaintyMicros))us")
         lines.append("")
         // CSV columns
-        lines.append("packet_index,pcm_start_frame,pcm_end_frame,frame_span,outcome,unresolved_reason,selected_image,arbitration_phase,packet_generation,pcm_proven,validity_flags,correlation_age_ticks,pub_earliest_host_ticks,pub_latest_host_ticks,tx_host_ticks,uncertainty_ticks,wait_min_ns,wait_max_ns,wait_min_us,wait_max_us,wait_center_us,uncertainty_us")
+        lines.append("packet_index,pcm_start_frame,pcm_end_frame,frame_span,outcome,unresolved_reason,selected_image,cycle_phase_mod8,packet_generation,pcm_proven,validity_flags,correlation_age_ticks,pub_earliest_host_ticks,pub_latest_host_ticks,tx_host_ticks,uncertainty_ticks,wait_min_ns,wait_max_ns,wait_min_us,wait_max_us,wait_center_us,uncertainty_us,encode_host_ticks,offer_start_host_ticks,offer_end_host_ticks,exam_host_ticks,desc_update_host_ticks,seal_start_host_ticks,seal_end_host_ticks,last_before_offer_ticks,first_after_offer_ticks,last_before_offer_pass,first_after_offer_pass,e0_to_image_ready_us,offer_to_examined_us_min,offer_to_examined_us_max,offer_to_first_service_us_min,offer_to_first_service_us_max,offer_to_desc_update_us_min,offer_to_desc_update_us_max,seal_relative_to_offer_us_min,seal_relative_to_offer_us_max,pass_id,live_hw_pos,hw_distance_pkts,exam_count,producer_flags,transport_flags,acquire_result,offer_result,bind_result,seal_result,seal_reason,observed_arb_phase,examined_arb_phase,producer_join,transport_join")
 
         for s in samples {
             let row = [
@@ -287,7 +449,7 @@ struct TxLatencySessionReport: Sendable, Codable {
                 "\(s.outcome)",
                 "\(s.unresolvedReason)",
                 "\(s.selectedImage)",
-                "\(s.arbitrationPhase)",
+                "\(s.cyclePhaseMod8)",
                 "\(s.packetGeneration)",
                 "\(s.pcmIdentityProven ? 1 : 0)",
                 "\(s.validityFlags)",
@@ -301,7 +463,44 @@ struct TxLatencySessionReport: Sendable, Codable {
                 String(format: "%.3f", s.waitMinMicros),
                 String(format: "%.3f", s.waitMaxMicros),
                 String(format: "%.3f", s.waitCenterMicros),
-                String(format: "%.3f", s.uncertaintyMicros)
+                String(format: "%.3f", s.uncertaintyMicros),
+                "\(s.encodeCompleteHostTicks)",
+                "\(s.offerStartHostTicks)",
+                "\(s.offerEndHostTicks)",
+                "\(s.transExaminedHostTicks)",
+                "\(s.descriptorUpdateHostTicks)",
+                "\(s.sealStartHostTicks)",
+                "\(s.sealEndHostTicks)",
+                "\(s.lastBeforeOfferHostTicks)",
+                "\(s.firstAfterOfferHostTicks)",
+                "\(s.lastBeforeOfferPassId)",
+                "\(s.firstAfterOfferPassId)",
+                String(format: "%.3f", s.e0ToImageReadyMicros),
+                // Bounds, not a single delta: exporting a midpoint alone would
+                // let an overlapping pair read as a confident ordering.
+                String(format: "%.3f", Double(s.offerToExaminedNanosMin) / 1_000.0),
+                String(format: "%.3f", Double(s.offerToExaminedNanosMax) / 1_000.0),
+                String(format: "%.3f", Double(s.offerToFirstServiceNanosMin) / 1_000.0),
+                String(format: "%.3f", Double(s.offerToFirstServiceNanosMax) / 1_000.0),
+                String(format: "%.3f", Double(s.offerToDescriptorUpdateNanosMin) / 1_000.0),
+                String(format: "%.3f", Double(s.offerToDescriptorUpdateNanosMax) / 1_000.0),
+                String(format: "%.3f", Double(s.sealRelativeToOfferNanosMin) / 1_000.0),
+                String(format: "%.3f", Double(s.sealRelativeToOfferNanosMax) / 1_000.0),
+                "\(s.passId)",
+                "\(s.liveHwPos)",
+                "\(s.hwDistancePackets)",
+                "\(s.examinationCount)",
+                "\(s.producerFlags)",
+                "\(s.transportFlags)",
+                "\(s.acquireResult)",
+                "\(s.offerResult)",
+                "\(s.bindResult)",
+                "\(s.sealResult)",
+                "\(s.sealReason)",
+                "\(s.observedArbPhase)",
+                "\(s.examinedArbPhase)",
+                "\(s.producerJoinResult)",
+                "\(s.transportJoinResult)"
             ].joined(separator: ",")
             lines.append(row)
         }
@@ -312,11 +511,11 @@ struct TxLatencySessionReport: Sendable, Codable {
 // MARK: - Binary Wire Decoder
 
 enum TxLatencyWireDecoder {
-    static let wireVersion: UInt32 = 4
+    static let wireVersion: UInt32 = 5
     static let maxSamplesPerPage: Int = 32
-    static let sampleBytes: Int = 80
+    static let sampleBytes: Int = 288
     static let headerBytes: Int = 192
-    static let pageBytes: Int = 192 + 16 + (32 * 80) // 2768 bytes
+    static let pageBytes: Int = 192 + 16 + (32 * 288) // 9424 bytes
 
     static func decodePage(_ data: Data) -> TxLatencyResultsPage? {
         guard data.count >= pageBytes else { return nil }
@@ -426,15 +625,51 @@ enum TxLatencyWireDecoder {
                 let txTicks = base.loadUnaligned(fromByteOffset: sOffset + 40, as: UInt64.self)
                 let waitMin = base.loadUnaligned(fromByteOffset: sOffset + 48, as: Int64.self)
                 let waitMax = base.loadUnaligned(fromByteOffset: sOffset + 56, as: Int64.self)
-                let uncertainty = base.loadUnaligned(fromByteOffset: sOffset + 64, as: UInt32.self)
-                let correlationAgeTicks = base.loadUnaligned(fromByteOffset: sOffset + 68, as: UInt32.self)
-                let outcomeRaw = base.loadUnaligned(fromByteOffset: sOffset + 72, as: UInt8.self)
-                let unresRaw = base.loadUnaligned(fromByteOffset: sOffset + 73, as: UInt8.self)
-                let selImg = base.loadUnaligned(fromByteOffset: sOffset + 74, as: UInt8.self)
-                let phase = base.loadUnaligned(fromByteOffset: sOffset + 75, as: UInt8.self)
-                let packetGen = base.loadUnaligned(fromByteOffset: sOffset + 76, as: UInt8.self)
-                let proven = base.loadUnaligned(fromByteOffset: sOffset + 77, as: UInt8.self)
-                let validityFlags = base.loadUnaligned(fromByteOffset: sOffset + 78, as: UInt16.self)
+                let encodeCompleteTicks = base.loadUnaligned(fromByteOffset: sOffset + 64, as: UInt64.self)
+                let offerStartTicks = base.loadUnaligned(fromByteOffset: sOffset + 72, as: UInt64.self)
+                let offerEndTicks = base.loadUnaligned(fromByteOffset: sOffset + 80, as: UInt64.self)
+                let transExaminedTicks = base.loadUnaligned(fromByteOffset: sOffset + 88, as: UInt64.self)
+                let descriptorUpdateTicks = base.loadUnaligned(fromByteOffset: sOffset + 96, as: UInt64.self)
+                let sealStartTicks = base.loadUnaligned(fromByteOffset: sOffset + 104, as: UInt64.self)
+                let sealEndTicks = base.loadUnaligned(fromByteOffset: sOffset + 112, as: UInt64.self)
+                let lastBeforeOfferTicks = base.loadUnaligned(fromByteOffset: sOffset + 120, as: UInt64.self)
+                let firstAfterOfferTicks = base.loadUnaligned(fromByteOffset: sOffset + 128, as: UInt64.self)
+                let lastBeforeOfferPass = base.loadUnaligned(fromByteOffset: sOffset + 136, as: UInt64.self)
+                let firstAfterOfferPass = base.loadUnaligned(fromByteOffset: sOffset + 144, as: UInt64.self)
+                let passId = base.loadUnaligned(fromByteOffset: sOffset + 152, as: UInt64.self)
+                let liveHwPos = base.loadUnaligned(fromByteOffset: sOffset + 160, as: UInt64.self)
+                let e0ToImageReadyNs = base.loadUnaligned(fromByteOffset: sOffset + 168, as: Int64.self)
+                let offerToExaminedNsMin = base.loadUnaligned(fromByteOffset: sOffset + 176, as: Int64.self)
+                let offerToExaminedNsMax = base.loadUnaligned(fromByteOffset: sOffset + 184, as: Int64.self)
+                let offerToFirstServiceNsMin = base.loadUnaligned(fromByteOffset: sOffset + 192, as: Int64.self)
+                let offerToFirstServiceNsMax = base.loadUnaligned(fromByteOffset: sOffset + 200, as: Int64.self)
+                let offerToDescUpdateNsMin = base.loadUnaligned(fromByteOffset: sOffset + 208, as: Int64.self)
+                let offerToDescUpdateNsMax = base.loadUnaligned(fromByteOffset: sOffset + 216, as: Int64.self)
+                let sealRelToOfferNsMin = base.loadUnaligned(fromByteOffset: sOffset + 224, as: Int64.self)
+                let sealRelToOfferNsMax = base.loadUnaligned(fromByteOffset: sOffset + 232, as: Int64.self)
+                let uncertainty = base.loadUnaligned(fromByteOffset: sOffset + 240, as: UInt32.self)
+                let correlationAgeTicks = base.loadUnaligned(fromByteOffset: sOffset + 244, as: UInt32.self)
+                let prodFlags = base.loadUnaligned(fromByteOffset: sOffset + 248, as: UInt32.self)
+                let transFlags = base.loadUnaligned(fromByteOffset: sOffset + 252, as: UInt32.self)
+                let examCount = base.loadUnaligned(fromByteOffset: sOffset + 256, as: UInt32.self)
+                let hwDistPackets = base.loadUnaligned(fromByteOffset: sOffset + 260, as: Int32.self)
+                let validityFlags = base.loadUnaligned(fromByteOffset: sOffset + 264, as: UInt16.self)
+                let outcomeRaw = base.loadUnaligned(fromByteOffset: sOffset + 266, as: UInt8.self)
+                let unresRaw = base.loadUnaligned(fromByteOffset: sOffset + 267, as: UInt8.self)
+                let selImg = base.loadUnaligned(fromByteOffset: sOffset + 268, as: UInt8.self)
+                let phase = base.loadUnaligned(fromByteOffset: sOffset + 269, as: UInt8.self)
+                let packetGen = base.loadUnaligned(fromByteOffset: sOffset + 270, as: UInt8.self)
+                let proven = base.loadUnaligned(fromByteOffset: sOffset + 271, as: UInt8.self)
+                let acqRes = base.loadUnaligned(fromByteOffset: sOffset + 272, as: UInt8.self)
+                let offRes = base.loadUnaligned(fromByteOffset: sOffset + 273, as: UInt8.self)
+                let bndRes = base.loadUnaligned(fromByteOffset: sOffset + 274, as: UInt8.self)
+                let slRes = base.loadUnaligned(fromByteOffset: sOffset + 275, as: UInt8.self)
+                let slRsn = base.loadUnaligned(fromByteOffset: sOffset + 276, as: UInt8.self)
+                let obsArb = base.loadUnaligned(fromByteOffset: sOffset + 277, as: UInt8.self)
+                let exmArb = base.loadUnaligned(fromByteOffset: sOffset + 278, as: UInt8.self)
+                let prodJoin = base.loadUnaligned(fromByteOffset: sOffset + 279, as: UInt8.self)
+                let transJoin = base.loadUnaligned(fromByteOffset: sOffset + 280, as: UInt8.self)
+                let lastAttempt = base.loadUnaligned(fromByteOffset: sOffset + 281, as: UInt8.self)
 
                 samples.append(TxLatencySample(
                     packetIndex: packetIndex,
@@ -450,10 +685,46 @@ enum TxLatencyWireDecoder {
                     outcome: TxLatencyOutcome(rawValue: outcomeRaw) ?? .unknown,
                     unresolvedReason: TxLatencyUnresolvedReason(rawValue: unresRaw) ?? .none,
                     selectedImage: selImg,
-                    arbitrationPhase: phase,
+                    cyclePhaseMod8: phase,
                     packetGeneration: packetGen,
                     pcmIdentityProven: proven != 0,
-                    validityFlags: validityFlags
+                    validityFlags: validityFlags,
+                    encodeCompleteHostTicks: encodeCompleteTicks,
+                    offerStartHostTicks: offerStartTicks,
+                    offerEndHostTicks: offerEndTicks,
+                    transExaminedHostTicks: transExaminedTicks,
+                    descriptorUpdateHostTicks: descriptorUpdateTicks,
+                    sealStartHostTicks: sealStartTicks,
+                    sealEndHostTicks: sealEndTicks,
+                    lastBeforeOfferHostTicks: lastBeforeOfferTicks,
+                    firstAfterOfferHostTicks: firstAfterOfferTicks,
+                    lastBeforeOfferPassId: lastBeforeOfferPass,
+                    firstAfterOfferPassId: firstAfterOfferPass,
+                    passId: passId,
+                    liveHwPos: liveHwPos,
+                    e0ToImageReadyNanos: e0ToImageReadyNs,
+                    offerToExaminedNanosMin: offerToExaminedNsMin,
+                    offerToExaminedNanosMax: offerToExaminedNsMax,
+                    offerToFirstServiceNanosMin: offerToFirstServiceNsMin,
+                    offerToFirstServiceNanosMax: offerToFirstServiceNsMax,
+                    offerToDescriptorUpdateNanosMin: offerToDescUpdateNsMin,
+                    offerToDescriptorUpdateNanosMax: offerToDescUpdateNsMax,
+                    sealRelativeToOfferNanosMin: sealRelToOfferNsMin,
+                    sealRelativeToOfferNanosMax: sealRelToOfferNsMax,
+                    producerFlags: prodFlags,
+                    transportFlags: transFlags,
+                    examinationCount: examCount,
+                    hwDistancePackets: hwDistPackets,
+                    acquireResult: acqRes,
+                    offerResult: offRes,
+                    bindResult: bndRes,
+                    sealResult: slRes,
+                    sealReason: slRsn,
+                    observedArbPhase: obsArb,
+                    examinedArbPhase: exmArb,
+                    producerJoinResult: prodJoin,
+                    transportJoinResult: transJoin,
+                    lastAttemptBindResult: lastAttempt
                 ))
             }
 

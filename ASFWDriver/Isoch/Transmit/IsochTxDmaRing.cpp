@@ -247,16 +247,49 @@ void IsochTxDmaRing::SealOnArmedImage(
     IsochTxPacketMeta& meta,
     const uint64_t generation,
     IsochTxQueueControl* controlBlock,
-    RefillOutcome& out) noexcept {
-    if (!FinalizeTxPayloadOnArmedImage(meta, generation)) {
-        return;
+    RefillOutcome& out,
+    SealReason reason,
+    uint64_t captureToken,
+    uint64_t passId,
+    uint64_t liveHwPos,
+    bool liveHwPosValid,
+    bool positionIsSnapshot) noexcept {
+    uint64_t previousArb = 0;
+    // Reading the clock is not free, and a capture that is not running has no
+    // use for the number. Gating the read -- not just the store -- is what
+    // keeps an instrumented build the same shape as a shipping one.
+    const bool capturing = captureToken != 0;
+    const uint64_t sealStartTicks = capturing ? mach_absolute_time() : 0;
+    const SealResult res = FinalizeTxPayloadOnArmedImage(meta, generation, previousArb);
+    const uint64_t sealEndTicks = capturing ? mach_absolute_time() : 0;
+
+    if (res == SealResult::SealedDiscardingAlternative) {
+        // The producer published an image the wire will not carry. Counting it
+        // here, at the only place that can know, is what lets the engine correct
+        // an optimistic fill count into a truthful one.
+        ++out.latePayloadLostPublications;
+        controlBlock->latePayloadLostPublicationCount.fetch_add(
+            1, std::memory_order_relaxed);
     }
-    // The producer published an image the wire will not carry. Counting it
-    // here, at the only place that can know, is what lets the engine correct
-    // an optimistic fill count into a truthful one.
-    ++out.latePayloadLostPublications;
-    controlBlock->latePayloadLostPublicationCount.fetch_add(
-        1, std::memory_order_relaxed);
+
+    if (capturing && (res == SealResult::SealedWithoutAlternative ||
+                      res == SealResult::SealedDiscardingAlternative)) {
+        const uint8_t previousPhase = static_cast<uint8_t>(
+            previousArb & ((1ULL << kTxPayloadArbitrationPhaseBits) - 1));
+        // The seal IS the terminal examination of this packet, so record it as
+        // one. Recording it only as a seal would leave the terminal event empty
+        // for every packet transport froze without examining an offer.
+        controlBlock->RecordTransportExamination(
+            captureToken, meta.packetIndex, generation, passId, sealStartTicks,
+            previousPhase, LatePayloadBindResult::NotExamined, liveHwPos,
+            liveHwPosValid, /*offerVisible=*/
+            previousPhase == static_cast<uint8_t>(
+                                 TxPayloadArbitration::kLateImageReady),
+            /*terminal=*/true);
+        controlBlock->RecordTransportSeal(captureToken, meta.packetIndex, res,
+                                          reason, sealStartTicks, sealEndTicks,
+                                          positionIsSnapshot);
+    }
 }
 
 void IsochTxDmaRing::TryBindLatePayload(
@@ -269,7 +302,11 @@ void IsochTxDmaRing::TryBindLatePayload(
     const uint32_t numSlots,
     uint8_t* payloadBase,
     const TxPayloadDmaMap& payloadDmaMap,
-    RefillOutcome& out) noexcept {
+    RefillOutcome& out,
+    const uint64_t captureToken,
+    const uint64_t passId,
+    const uint64_t passStartHostTicks,
+    const uint64_t passStartHwPos) noexcept {
     const uint32_t producerSlot = static_cast<uint32_t>(packetAbs % numSlots);
     auto& meta = metadataRing[producerSlot];
     const uint64_t expectedGeneration =
@@ -280,12 +317,50 @@ void IsochTxDmaRing::TryBindLatePayload(
         meta.selectedPayloadImage == 1) {
         return;
     }
+    const bool capturing = captureToken != 0;
     // A peek, only to avoid validating a packet that has nothing on offer. It
     // is not the decision -- the decision is the claim below.
-    if (meta.payloadArbitration.load(std::memory_order_acquire) !=
-        MakeTxPayloadArbitration(expectedGeneration,
-                                 TxPayloadArbitration::kLateImageReady)) {
+    const uint64_t examinedArb = meta.payloadArbitration.load(std::memory_order_acquire);
+    const uint8_t examinedArbPhase = static_cast<uint8_t>(
+        examinedArb & ((1ULL << kTxPayloadArbitrationPhaseBits) - 1));
+    const bool offerVisible =
+        examinedArb == MakeTxPayloadArbitration(
+                           expectedGeneration,
+                           TxPayloadArbitration::kLateImageReady);
+
+    if (!offerVisible) {
+        // A look that found nothing on offer is evidence, not a non-event: it
+        // is the only thing that can prove a ready image sat unserviced across
+        // a pass boundary rather than never having been offered at all.
+        //
+        // Dated from the pass, deliberately. Every packet in the window is
+        // swept on every pass, so a fresh clock read here would be several
+        // hundred reads per pass -- enough to move the timings this capture
+        // exists to measure. The question this record answers is "which pass
+        // last looked and saw nothing", and the pass is the unit of that
+        // answer; nothing finer is claimed.
+        if (capturing) {
+            controlBlock->RecordTransportExamination(
+                captureToken, packetAbs, expectedGeneration, passId,
+                passStartHostTicks, examinedArbPhase,
+                LatePayloadBindResult::NotExamined, passStartHwPos,
+                /*hwPosValid=*/false, /*offerVisible=*/false,
+                /*terminal=*/false);
+        }
         return;
+    }
+
+    // From here the packet has an offer pending, which is rare compared with
+    // the sweep above -- roughly one per produced packet rather than one per
+    // packet per pass -- so this side can afford a precise timestamp, and
+    // needs one: it is the near end of the offer-to-service interval.
+    const uint64_t examinedTicks = capturing ? mach_absolute_time() : 0;
+    if (capturing) {
+        controlBlock->RecordTransportExamination(
+            captureToken, packetAbs, expectedGeneration, passId, examinedTicks,
+            examinedArbPhase, LatePayloadBindResult::NotExamined,
+            passStartHwPos, /*hwPosValid=*/false, /*offerVisible=*/true,
+            /*terminal=*/false);
     }
 
     const uint32_t payloadLength = meta.payloadLength;
@@ -327,7 +402,17 @@ void IsochTxDmaRing::TryBindLatePayload(
         ++out.latePayloadRebindRejected;
         controlBlock->latePayloadRebindRejectedCount.fetch_add(
             1, std::memory_order_relaxed);
-        SealOnArmedImage(meta, expectedGeneration, controlBlock, out);
+        if (capturing) {
+            controlBlock->RecordTransportExamination(
+                captureToken, packetAbs, expectedGeneration, passId,
+                mach_absolute_time(), examinedArbPhase,
+                LatePayloadBindResult::RejectedShapeMismatch, passStartHwPos,
+                /*hwPosValid=*/false, /*offerVisible=*/true, /*terminal=*/true);
+        }
+        SealOnArmedImage(meta, expectedGeneration, controlBlock, out,
+                         SealReason::ShapeRejection, captureToken, passId,
+                         passStartHwPos, /*liveHwPosValid=*/false,
+                         /*positionIsSnapshot=*/true);
         return;
     }
 
@@ -348,17 +433,28 @@ void IsochTxDmaRing::TryBindLatePayload(
     // abandon the rebind if it has reached the packet. The armed image is
     // complete and already bound, so abandoning costs content, never a holed
     // ring.
-    //
-    // This closes snapshot age only. Controller prefetch, and controller
-    // progress between this read and the store below, remain open questions
-    // that need reference or hardware evidence to settle.
     uint64_t liveAbsIdx = hardwareAbsIdx;
-    if (!ReadLiveHardwareAbsIndex(hw, contextIndex, hardwareAbsIdx,
-                                  liveAbsIdx)) {
+    const bool hwPosValid = ReadLiveHardwareAbsIndex(hw, contextIndex, hardwareAbsIdx,
+                                                    liveAbsIdx);
+    const uint64_t hwReadAfterTicks = capturing ? mach_absolute_time() : 0;
+    if (!hwPosValid) {
         // No authority to decide, so decide nothing. The packet stays open for
         // a later pass, and the finality seal accounts it if it runs out of
         // time first. Sealing here would turn a transient loss of MMIO access
         // into permanently discarded content.
+        if (capturing) {
+            // Not terminal: the packet stays open, so this must not claim the
+            // terminal slot a later real decision needs. It is still a
+            // concluded attempt, so the store keeps it as the last attempt
+            // result -- otherwise the reason service failed would be lost
+            // between a firstAfterOffer slot that is already taken and a
+            // terminal slot that is deliberately never filled.
+            controlBlock->RecordTransportExamination(
+                captureToken, packetAbs, expectedGeneration, passId,
+                hwReadAfterTicks, examinedArbPhase,
+                LatePayloadBindResult::RejectedUnavailableHwPos, passStartHwPos,
+                /*hwPosValid=*/false, /*offerVisible=*/true, /*terminal=*/false);
+        }
         return;
     }
     if (packetAbs < liveAbsIdx +
@@ -371,13 +467,36 @@ void IsochTxDmaRing::TryBindLatePayload(
         ++out.latePayloadRebindMissedDeadline;
         controlBlock->latePayloadRebindMissedDeadlineCount.fetch_add(
             1, std::memory_order_relaxed);
-        SealOnArmedImage(meta, expectedGeneration, controlBlock, out);
+        if (capturing) {
+            controlBlock->RecordTransportExamination(
+                captureToken, packetAbs, expectedGeneration, passId,
+                hwReadAfterTicks, examinedArbPhase,
+                LatePayloadBindResult::RejectedInsideGuard, liveAbsIdx,
+                /*hwPosValid=*/true, /*offerVisible=*/true, /*terminal=*/true);
+        }
+        SealOnArmedImage(meta, expectedGeneration, controlBlock, out,
+                         SealReason::LiveGuardRejection, captureToken, passId,
+                         liveAbsIdx, /*liveHwPosValid=*/true,
+                         /*positionIsSnapshot=*/false);
         return;
     }
 
     // Single linearization point for "transport chose image 1". After it
     // succeeds no producer can still be told it owns this packet.
-    if (!ClaimLateTxPayload(meta, expectedGeneration)) {
+    const uint64_t claimStartTicks = capturing ? mach_absolute_time() : 0;
+    const bool claimed = ClaimLateTxPayload(meta, expectedGeneration);
+    const uint64_t claimEndTicks = capturing ? mach_absolute_time() : 0;
+    if (!claimed) {
+        if (capturing) {
+            controlBlock->RecordTransportExamination(
+                captureToken, packetAbs, expectedGeneration, passId,
+                claimEndTicks, examinedArbPhase,
+                LatePayloadBindResult::RejectedArbitrationLost, liveAbsIdx,
+                /*hwPosValid=*/true, /*offerVisible=*/true, /*terminal=*/true);
+            controlBlock->RecordTransportClaim(
+                captureToken, packetAbs, claimStartTicks, claimEndTicks,
+                /*descriptorUpdateTicks=*/0, /*descriptorWritten=*/false);
+        }
         return;
     }
 
@@ -393,6 +512,23 @@ void IsochTxDmaRing::TryBindLatePayload(
         dmaMemory_->PublishBarrier();
     } else {
         ASFW::Driver::WriteBarrier();
+    }
+    // Taken AFTER the publish barrier: before it, the store is not yet visible
+    // to the device, so an earlier timestamp would date the descriptor update
+    // to an instant at which the device could still have fetched the old
+    // address.
+    const uint64_t descriptorUpdateHostTicks =
+        capturing ? mach_absolute_time() : 0;
+
+    if (capturing) {
+        controlBlock->RecordTransportExamination(
+            captureToken, packetAbs, expectedGeneration, passId,
+            descriptorUpdateHostTicks, examinedArbPhase,
+            LatePayloadBindResult::Bound, liveAbsIdx, /*hwPosValid=*/true,
+            /*offerVisible=*/true, /*terminal=*/true);
+        controlBlock->RecordTransportClaim(
+            captureToken, packetAbs, claimStartTicks, claimEndTicks,
+            descriptorUpdateHostTicks, /*descriptorWritten=*/true);
     }
 
     // Against the position actually checked, so the reported minimum is a
@@ -422,7 +558,11 @@ void IsochTxDmaRing::RefreshLatePayloadBindings(
     const uint32_t numSlots,
     uint8_t* payloadBase,
     const TxPayloadDmaMap& payloadDmaMap,
-    RefillOutcome& out) noexcept {
+    RefillOutcome& out,
+    const uint64_t captureToken,
+    const uint64_t passId,
+    const uint64_t passStartHostTicks,
+    const uint64_t passStartHwPos) noexcept {
     using Geometry = ASFW::Shared::Isoch::IsochQueueGeometry;
 
     const uint64_t mappedEnd =
@@ -441,7 +581,8 @@ void IsochTxDmaRing::RefreshLatePayloadBindings(
          ++packetAbs) {
         TryBindLatePayload(hw, contextIndex, packetAbs, hardwareAbsIdx,
                            metadataRing, controlBlock, numSlots, payloadBase,
-                           payloadDmaMap, out);
+                           payloadDmaMap, out, captureToken, passId,
+                           passStartHostTicks, passStartHwPos);
     }
 
     // The finality frontier reflects the physical hardware prefetch horizon
@@ -472,13 +613,20 @@ void IsochTxDmaRing::RefreshLatePayloadBindings(
         if (packetAbs >= firstRepointable) {
             TryBindLatePayload(hw, contextIndex, packetAbs, hardwareAbsIdx,
                                metadataRing, controlBlock, numSlots,
-                               payloadBase, payloadDmaMap, out);
+                               payloadBase, payloadDmaMap, out, captureToken,
+                               passId, passStartHostTicks, passStartHwPos);
         }
         auto& meta = metadataRing[static_cast<uint32_t>(packetAbs % numSlots)];
         if (meta.packetIndex != packetAbs) continue;
+        // hardwareAbsIdx is the position sampled at the top of the pass, not a
+        // fresh read, so it is flagged as a snapshot rather than presented as
+        // an observation of where the controller was at the seal.
         SealOnArmedImage(meta,
                          ExpectedTxCommitGeneration(packetAbs, numSlots),
-                         controlBlock, out);
+                         controlBlock, out,
+                         SealReason::FinalityFrontier, captureToken, passId,
+                         hardwareAbsIdx, /*liveHwPosValid=*/true,
+                         /*positionIsSnapshot=*/true);
     }
 
     controlBlock->finalizedEnd.store(
@@ -665,7 +813,11 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         if (meta.packetIndex != packetAbs) continue;
         SealOnArmedImage(meta,
                          ExpectedTxCommitGeneration(packetAbs, numSlots),
-                         controlBlock, primeSeal);
+                         controlBlock, primeSeal,
+                         SealReason::StartupPolicy,
+                         controlBlock->ActiveCaptureToken(), /*passId=*/0,
+                         /*liveHwPos=*/0, /*liveHwPosValid=*/false,
+                         /*positionIsSnapshot=*/false);
     }
     controlBlock->finalizedEnd.store(primedFinalizedEnd,
                                      std::memory_order_release);
@@ -760,6 +912,12 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         ctrl = access.Read(ctrlReg);
         cmdPtr = access.Read(cmdPtrReg);
     }
+    // One token load per pass. Loading it per packet would let a capture start
+    // or stop midway through a walk and split one pass's evidence across two
+    // capture identities.
+    const uint64_t captureToken = controlBlock->ActiveCaptureToken();
+    const uint64_t currentPassId = ++passId_;
+    const uint64_t passStartHostTicks = cycleReadBeforeHostTicks;
 
 #if ASFW_TX_FLIGHT_RECORDER
     TxRefillRecord capture{};
@@ -1050,7 +1208,11 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         numSlots,
         payloadBase,
         payloadDmaMap,
-        out);
+        out,
+        captureToken,
+        currentPassId,
+        passStartHostTicks,
+        completedAbsIdx + deltaConsumed);
 
     // Build a detached, zero-terminated batch in retired descriptor slots.
     // The exhaustion check guarantees that the old tail is not among them.

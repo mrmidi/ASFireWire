@@ -404,6 +404,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProvider.slotStrideBytes = maxPacketBytes;
 
             ivars.runtime.txExecutionTimeline.queueControl = queueControl;
+            if (ivars.runtime.txLatencySession) {
+                ivars.runtime.txLatencySession->SetQueueControl(queueControl);
+            }
 
             if (!ivars.runtime.txStreamEngine.Configure(*profile, txConfig)) {
                 ASFW_LOG(Audio, "ASFWAudioDevice: txStreamEngine Configure failed");
@@ -892,6 +895,9 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.txSlotProvider.audioControl = nullptr;
         ivars.runtime.txSlotProvider.numSlots = 0;
         ivars.runtime.txExecutionTimeline.queueControl = nullptr;
+        if (ivars.runtime.txLatencySession) {
+            ivars.runtime.txLatencySession->SetQueueControl(nullptr);
+        }
         ivars.runtime.txStreamEngine.BindPcmSource(nullptr);
 
         // Secondary playback stream teardown. Drop txSecondaryActive first so the

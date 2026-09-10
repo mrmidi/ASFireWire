@@ -159,21 +159,57 @@ public:
         noexcept override {
         if (!payloadBase || !queueControl || numSlots == 0 ||
             slotStrideBytes == 0) {
+            if (queueControl) {
+                const uint64_t token = queueControl->ActiveCaptureToken();
+                queueControl->RecordProducerAcquire(
+                    token, packetIndex, 0,
+                    ASFW::Isoch::LatePayloadAcquireResult::RejectedInvalidConfig,
+                    /*staleSlotSeen=*/false);
+            }
             return false;
         }
+        // One load, used for every record written below, so a capture that
+        // starts or stops mid-call cannot split this decision across two
+        // identities. Zero means no capture, and every Record* call below is
+        // then a no-op that reads no clock.
+        const uint64_t token = queueControl->ActiveCaptureToken();
+        const uint64_t expectedGen =
+            ASFW::Isoch::ExpectedTxCommitGeneration(packetIndex, numSlots);
+
         // The packet must already be armed -- a late image only ever replaces
         // bytes for a packet whose geometry transport has accepted.
         const uint64_t committedEnd =
             queueControl->committedEnd.load(std::memory_order_acquire);
-        if (packetIndex >= committedEnd) return false;
+        if (packetIndex >= committedEnd) {
+            queueControl->RecordProducerAcquire(
+                token, packetIndex, expectedGen,
+                ASFW::Isoch::LatePayloadAcquireResult::RejectedNotArmed,
+                /*staleSlotSeen=*/false);
+            return false;
+        }
         // ...and its payload choice must not be final. The producer writes only
         // image 1; transport alone changes a live descriptor address, so a
         // stale frontier can waste a fill but cannot tear transmitted bytes.
         if (packetIndex <
             queueControl->finalizedEnd.load(std::memory_order_acquire)) {
+            queueControl->RecordProducerAcquire(
+                token, packetIndex, expectedGen,
+                ASFW::Isoch::LatePayloadAcquireResult::RejectedFinalized,
+                /*staleSlotSeen=*/false);
             return false;
         }
         const uint32_t slotIdx = packetIndex % numSlots;
+        // Observed, never acted on. Turning this into a rejection would change
+        // what the driver does under measurement, and a telemetry patch that
+        // alters the behaviour it measures cannot be used to explain it.
+        const bool staleSlotSeen =
+            metadataRing != nullptr &&
+            metadataRing[slotIdx].packetIndex != packetIndex;
+
+        queueControl->RecordProducerAcquire(
+            token, packetIndex, expectedGen,
+            ASFW::Isoch::LatePayloadAcquireResult::Success, staleSlotSeen);
+
         outSlot.packetIndex = packetIndex;
         outSlot.bytes = payloadBase +
             ASFW::Isoch::TxPayloadImageOffset(slotIdx, 1, slotStrideBytes);
@@ -181,20 +217,41 @@ public:
         return true;
     }
 
+    [[nodiscard]] bool CaptureActive() const noexcept override {
+        return queueControl != nullptr &&
+               queueControl->ActiveCaptureToken() != 0;
+    }
+
+    void RecordEncodingCompleted(
+        uint32_t packetIndex, uint64_t hostTicks) noexcept override {
+        if (!queueControl) return;
+        queueControl->RecordProducerEncode(
+            queueControl->ActiveCaptureToken(), packetIndex, hostTicks);
+    }
+
     [[nodiscard]] bool PublishLatePayload(uint32_t packetIndex) noexcept override {
         if (!metadataRing || !queueControl || numSlots == 0) return false;
         const uint32_t slotIdx = packetIndex % numSlots;
         auto& meta = metadataRing[slotIdx];
         if (meta.packetIndex != packetIndex) return false;
-        // Offer image 1 and learn whether we won, as one operation. The CAS
-        // releases the bytes written above and fails if transport has already
-        // sealed this packet -- which it does per packet, before it moves the
-        // frontier. Comparing against that frontier instead would let this
-        // return success for a packet transport had already passed, because the
-        // skip and the frontier advance are not the same instant.
-        return ASFW::Isoch::OfferLateTxPayload(
-            meta,
-            ASFW::Isoch::ExpectedTxCommitGeneration(packetIndex, numSlots));
+        const uint64_t expectedGen =
+            ASFW::Isoch::ExpectedTxCommitGeneration(packetIndex, numSlots);
+        const uint64_t token = queueControl->ActiveCaptureToken();
+        const bool capturing = token != 0;
+        uint64_t observedArb = 0;
+        const uint64_t startTicks = capturing ? mach_absolute_time() : 0;
+        const bool won = ASFW::Isoch::OfferLateTxPayload(
+            meta, expectedGen, observedArb);
+        const uint64_t endTicks = capturing ? mach_absolute_time() : 0;
+        if (capturing) {
+            const uint8_t observedPhase = static_cast<uint8_t>(
+                observedArb &
+                ((1ULL << ASFW::Isoch::kTxPayloadArbitrationPhaseBits) - 1));
+            queueControl->RecordProducerOffer(token, packetIndex, expectedGen,
+                                              startTicks, endTicks, won,
+                                              observedPhase);
+        }
+        return won;
     }
 
     [[nodiscard]] bool PublishSlot(

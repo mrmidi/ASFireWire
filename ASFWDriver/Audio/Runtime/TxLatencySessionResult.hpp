@@ -53,7 +53,44 @@ struct TxLatencyRecord final {
     uint8_t packetGeneration{0};
     uint8_t pcmIdentityProven{0};
     uint16_t validityFlags{0};
-    uint32_t reserved{0};
+
+    // Decision timeline & intervals
+    uint64_t encodeCompleteHostTicks{0};
+    uint64_t offerStartHostTicks{0};
+    uint64_t offerEndHostTicks{0};
+    uint64_t transExaminedHostTicks{0};
+    uint64_t descriptorUpdateHostTicks{0};
+    uint64_t sealStartHostTicks{0};
+    uint64_t sealEndHostTicks{0};
+    uint64_t lastBeforeOfferHostTicks{0};
+    uint64_t firstAfterOfferHostTicks{0};
+    uint64_t lastBeforeOfferPassId{0};
+    uint64_t firstAfterOfferPassId{0};
+    uint64_t passId{0};
+    uint64_t liveHwPos{0};
+    int64_t  e0ToImageReadyNanos{0};
+    int64_t  offerToExaminedNanosMin{0};
+    int64_t  offerToExaminedNanosMax{0};
+    int64_t  offerToFirstServiceNanosMin{0};
+    int64_t  offerToFirstServiceNanosMax{0};
+    int64_t  offerToDescriptorUpdateNanosMin{0};
+    int64_t  offerToDescriptorUpdateNanosMax{0};
+    int64_t  sealRelativeToOfferNanosMin{0};
+    int64_t  sealRelativeToOfferNanosMax{0};
+    uint32_t producerFlags{0};
+    uint32_t transportFlags{0};
+    uint32_t examinationCount{0};
+    int32_t  hwDistancePackets{0};
+    uint8_t  acquireResult{0};
+    uint8_t  offerResult{0};
+    uint8_t  bindResult{0};
+    uint8_t  sealResult{0};
+    uint8_t  sealReason{0};
+    uint8_t  observedArbPhase{0};
+    uint8_t  examinedArbPhase{0};
+    uint8_t  producerJoinResult{0};
+    uint8_t  transportJoinResult{0};
+    uint8_t  lastAttemptBindResult{0};
 };
 
 struct TxLatencySessionHeader final {
@@ -208,10 +245,47 @@ struct TxLatencySessionResult final {
             sw.outcome = static_cast<uint8_t>(rec.outcome);
             sw.unresolvedReason = static_cast<uint8_t>(rec.unresolvedReason);
             sw.selectedImage = rec.selectedImage;
-            sw.arbitrationPhase = rec.groupPhase;
+            sw.cyclePhaseMod8 = rec.groupPhase;
             sw.packetGeneration = rec.packetGeneration;
             sw.pcmIdentityProven = rec.pcmIdentityProven;
             sw.validityFlags = rec.validityFlags;
+
+            sw.encodeCompleteHostTicks = rec.encodeCompleteHostTicks;
+            sw.offerStartHostTicks = rec.offerStartHostTicks;
+            sw.offerEndHostTicks = rec.offerEndHostTicks;
+            sw.transExaminedHostTicks = rec.transExaminedHostTicks;
+            sw.descriptorUpdateHostTicks = rec.descriptorUpdateHostTicks;
+            sw.sealStartHostTicks = rec.sealStartHostTicks;
+            sw.sealEndHostTicks = rec.sealEndHostTicks;
+            sw.lastBeforeOfferHostTicks = rec.lastBeforeOfferHostTicks;
+            sw.firstAfterOfferHostTicks = rec.firstAfterOfferHostTicks;
+            sw.lastBeforeOfferPassId = rec.lastBeforeOfferPassId;
+            sw.firstAfterOfferPassId = rec.firstAfterOfferPassId;
+            sw.passId = rec.passId;
+            sw.liveHwPos = rec.liveHwPos;
+            sw.e0ToImageReadyNanos = rec.e0ToImageReadyNanos;
+            sw.offerToExaminedNanosMin = rec.offerToExaminedNanosMin;
+            sw.offerToExaminedNanosMax = rec.offerToExaminedNanosMax;
+            sw.offerToFirstServiceNanosMin = rec.offerToFirstServiceNanosMin;
+            sw.offerToFirstServiceNanosMax = rec.offerToFirstServiceNanosMax;
+            sw.offerToDescriptorUpdateNanosMin = rec.offerToDescriptorUpdateNanosMin;
+            sw.offerToDescriptorUpdateNanosMax = rec.offerToDescriptorUpdateNanosMax;
+            sw.sealRelativeToOfferNanosMin = rec.sealRelativeToOfferNanosMin;
+            sw.sealRelativeToOfferNanosMax = rec.sealRelativeToOfferNanosMax;
+            sw.producerFlags = rec.producerFlags;
+            sw.transportFlags = rec.transportFlags;
+            sw.examinationCount = rec.examinationCount;
+            sw.hwDistancePackets = rec.hwDistancePackets;
+            sw.acquireResult = rec.acquireResult;
+            sw.offerResult = rec.offerResult;
+            sw.bindResult = rec.bindResult;
+            sw.sealResult = rec.sealResult;
+            sw.sealReason = rec.sealReason;
+            sw.observedArbPhase = rec.observedArbPhase;
+            sw.examinedArbPhase = rec.examinedArbPhase;
+            sw.producerJoinResult = rec.producerJoinResult;
+            sw.transportJoinResult = rec.transportJoinResult;
+            sw.lastAttemptBindResult = rec.lastAttemptBindResult;
         }
         return true;
     }

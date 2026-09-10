@@ -408,6 +408,9 @@ void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexc
         ivars.runtime.txSlotProvider.audioControl = nullptr;
         ivars.runtime.txSlotProvider.numSlots = 0;
         ivars.runtime.txExecutionTimeline.queueControl = nullptr;
+        if (ivars.runtime.txLatencySession) {
+            ivars.runtime.txLatencySession->SetQueueControl(nullptr);
+        }
 
         // Secondary playback stream teardown (mirrors the master above).
         ivars.runtime.txSecondaryActive = false;

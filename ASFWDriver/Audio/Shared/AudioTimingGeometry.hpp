@@ -2,6 +2,7 @@
 
 #include "AudioHalBufferProfiles.hpp"
 #include "../../Shared/Isoch/IsochQueueGeometry.hpp"
+#include "../../Isoch/Core/IsochTxQueue.hpp"
 
 #include <cstdint>
 
@@ -422,6 +423,14 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets %
                   AudioTimingGeometry::kTxPacketsPerGroup ==
               0,
               "TX shared slot ring must be an integer number of groups");
+// Decision diagnostics are indexed by the packet's queue slot so that a record
+// lives exactly as long as the packet it describes. That only holds while the
+// diagnostic array is at least as large as the shared slot ring; a smaller one
+// recycles evidence for packets still in flight, which is the failure the
+// per-slot indexing exists to prevent.
+static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
+                  ::ASFW::Isoch::kTxDecisionRingSlots,
+              "TX decision diagnostics must retain one record per queue slot");
 static_assert(AudioTimingGeometry::kTxHardwareRingPackets %
                   AudioTimingGeometry::kTxPacketsPerGroup ==
               0,

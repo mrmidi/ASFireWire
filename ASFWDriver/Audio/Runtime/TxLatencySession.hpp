@@ -12,6 +12,7 @@
 #include "../Ports/ITxPcmSource.hpp"
 #include "../Shared/AudioTimingGeometry.hpp"
 #include "../Wire/AMDTP/AmdtpPacketTimeline.hpp"
+#include "../../Isoch/Core/IsochTxQueue.hpp"
 #include "../../UserClient/WireFormats/TxLatencySessionWireFormats.hpp"
 
 #include <algorithm>
@@ -124,9 +125,10 @@ public:
                            uint32_t seed = 0,
                            uint32_t strataSize = 0,
                            uint32_t assumedDriftPpm = 100,
-                           uint32_t preparationLeadPackets = Shared::AudioTimingGeometry::kTxPreparationLeadPackets,
-                           uint32_t hardwareRingPackets = Shared::AudioTimingGeometry::kTxHardwareRingPackets,
-                           const PublicationRangeRing* pubRing = nullptr) noexcept {
+                            uint32_t preparationLeadPackets = Shared::AudioTimingGeometry::kTxPreparationLeadPackets,
+                            uint32_t hardwareRingPackets = Shared::AudioTimingGeometry::kTxHardwareRingPackets,
+                            const PublicationRangeRing* pubRing = nullptr,
+                            Isoch::IsochTxQueueControl* queueControl = nullptr) noexcept {
         uint64_t cur = lifecycle_.load(std::memory_order_acquire);
         const auto current = LifecycleState(cur);
         if (current != TxLatencySessionState::Idle && current != TxLatencySessionState::Frozen) {
@@ -173,6 +175,15 @@ public:
         preparationLeadPackets_ = (preparationLeadPackets > 0) ? preparationLeadPackets : Shared::AudioTimingGeometry::kTxPreparationLeadPackets;
         hardwareRingPackets_ = (hardwareRingPackets > 0) ? hardwareRingPackets : Shared::AudioTimingGeometry::kTxHardwareRingPackets;
         publicationRing_.store(pubRing, std::memory_order_release);
+        if (queueControl != nullptr) {
+            queueControl_.store(queueControl, std::memory_order_release);
+        }
+        if (auto* qc = queueControl_.load(std::memory_order_acquire)) {
+            // One coherent token. Publishing generation and epoch separately
+            // let a writer observe the new generation beside the old epoch and
+            // stamp records belonging to neither capture.
+            qc->BeginCapture(nextGen, static_cast<uint32_t>(epoch & 0xFFFFFFFFU));
+        }
         currentStratumOffset_ = 0;
         targetOffsetInStratum_ = prngState_ % strataSize_;
 
@@ -221,6 +232,24 @@ public:
         return true;
     }
 
+    void SetQueueControl(Isoch::IsochTxQueueControl* queueControl) noexcept {
+        auto* previous = queueControl_.exchange(queueControl, std::memory_order_acq_rel);
+        if (previous != nullptr && previous != queueControl) {
+            // The queue this session was capturing against is going away, so
+            // its lanes can no longer be joined. Stopping the capture there is
+            // safe regardless of generation: nothing else can be using it.
+            previous->EndAnyCapture();
+        }
+        if (queueControl) {
+            const uint64_t cur = lifecycle_.load(std::memory_order_acquire);
+            if (LifecycleState(cur) == TxLatencySessionState::Capturing) {
+                queueControl->BeginCapture(
+                    LifecycleGeneration(cur),
+                    static_cast<uint32_t>(epoch_ & 0xFFFFFFFFU));
+            }
+        }
+    }
+
     /// Request session stop. Atomically transitions both generation and state to StopRequested.
     void RequestStop(TxLatencyTerminationReason reason = TxLatencyTerminationReason::UserStopped,
                      uint32_t expectedGeneration = 0) noexcept {
@@ -230,6 +259,13 @@ public:
                                        : LifecycleGeneration(cur);
         if (targetGen == 0) {
             return;
+        }
+        // Stop only the capture this call names. An unconditional store here
+        // let a stop that had been queued for an already-finished session
+        // silence the session that replaced it, so a rearm raced by a late stop
+        // recorded nothing and looked like a driver that never offered.
+        if (auto* qc = queueControl_.load(std::memory_order_acquire)) {
+            (void)qc->EndCapture(targetGen);
         }
 
         while (LifecycleGeneration(cur) == targetGen &&
@@ -334,6 +370,10 @@ public:
                              std::memory_order_release);
         }
 
+        if (auto* qc = queueControl_.load(std::memory_order_acquire)) {
+            (void)qc->EndCapture(targetGen);
+        }
+
         for (auto& pj : pendingJoins_) {
             pj.active = false;
         }
@@ -363,6 +403,9 @@ public:
     /// Reset session to idle on explicit teardown or rearm.
     void Reset() noexcept {
         const uint32_t curGen = LifecycleGeneration(lifecycle_.load(std::memory_order_relaxed));
+        if (auto* qc = queueControl_.load(std::memory_order_acquire)) {
+            (void)qc->EndCapture(curGen);
+        }
         lifecycle_.store(PackLifecycle(curGen, TxLatencySessionState::Idle, TxLatencyTerminationReason::None),
                          std::memory_order_seq_cst);
         activeWriters_.store(0, std::memory_order_seq_cst);
@@ -389,7 +432,8 @@ public:
         const Isoch::IsochTxClockPairSample& pair,
         const Protocols::Audio::AMDTP::AmdtpPacketTimeline& timeline,
         const PublicationRangeRing& publicationRing,
-        uint64_t currentHostNow) noexcept {
+        uint64_t currentHostNow,
+        const Isoch::IsochTxQueueControl* queueControl = nullptr) noexcept {
 
         // 1. Register active writer BEFORE checking state or generation.
         activeWriters_.fetch_add(1, std::memory_order_seq_cst);
@@ -480,7 +524,7 @@ public:
 
         const bool pcmReady = haveProvenance &&
                                (provenance.pcmCopyResult ==
-                                static_cast<uint8_t>(Ports::PcmCopyResult::Ready));
+                                 static_cast<uint8_t>(Ports::PcmCopyResult::Ready));
         const bool isSubstitution = (selectedImage == 0 && !pcmReady) ||
                                     (selectedImage == 1 && haveProvenance && !pcmReady);
 
@@ -519,6 +563,157 @@ public:
         rec.packetGeneration = static_cast<uint8_t>(provenance.commitGeneration & 0xFF);
         rec.pcmIdentityProven = haveProvenance ? 1 : 0;
         rec.validityFlags = ComputeTxLatencyValidityFlags(pubEarliest, pubLatest, txBounds, haveProvenance);
+
+        const auto* qc = (queueControl != nullptr) ? queueControl : queueControl_.load(std::memory_order_acquire);
+        if (qc) {
+            // The slot generation must be computed against the SAME modulus
+            // the producer stamped with, which is the queue's shared slot
+            // count -- not the hardware ring. Using the ring here made every
+            // expected generation disagree with every recorded one, so no
+            // decision record ever joined and the whole lane read as silent.
+            const uint32_t decisionSlots =
+                (qc->numSlots != 0) ? qc->numSlots : hardwareRingPackets_;
+            const uint64_t expectedSlotGen =
+                ASFW::Isoch::ExpectedTxCommitGeneration(packetIndex, decisionSlots);
+            const uint64_t expectedToken = ASFW::Isoch::MakeTxCaptureToken(
+                myGen, static_cast<uint32_t>(epoch_ & 0xFFFFFFFFU));
+
+            Isoch::TxProducerDecisionSnapshot prodRec{};
+            const auto prodJoin = qc->ReadProducerDecision(
+                packetIndex, expectedToken, expectedSlotGen, prodRec);
+
+            Isoch::TxTransportDecisionSnapshot transRec{};
+            const auto transJoin = qc->ReadTransportDecision(
+                packetIndex, expectedToken, expectedSlotGen, transRec);
+
+            rec.producerJoinResult = static_cast<uint8_t>(prodJoin);
+            rec.transportJoinResult = static_cast<uint8_t>(transJoin);
+
+            const bool haveProd = prodJoin == Isoch::TxDecisionJoinResult::Valid;
+            const bool haveTrans = transJoin == Isoch::TxDecisionJoinResult::Valid;
+
+            // Overwritten evidence is a property of the run, not of the packet:
+            // it means the retention window was too short and the numbers that
+            // did survive cannot be trusted to be representative. It is kept
+            // separate from "no record exists" so a capture that started late
+            // is never mistaken for one that lost its history.
+            if (prodJoin == Isoch::TxDecisionJoinResult::SlotReused ||
+                transJoin == Isoch::TxDecisionJoinResult::SlotReused) {
+                rec.validityFlags |= UserClient::Wire::kTxLatencyFlagDecisionOverwritten;
+            }
+
+            if (haveProd) {
+                rec.validityFlags |= UserClient::Wire::kTxLatencyFlagProducerDecisionValid;
+                rec.acquireResult = prodRec.acquireResult;
+                rec.offerResult = prodRec.offerResult;
+                rec.observedArbPhase = prodRec.observedArbitrationPhase;
+                rec.encodeCompleteHostTicks = prodRec.encodeHostTicks;
+                rec.offerStartHostTicks = prodRec.offerStartHostTicks;
+                rec.offerEndHostTicks = prodRec.offerEndHostTicks;
+                rec.producerFlags = prodRec.flags;
+
+                if ((prodRec.flags & Isoch::kTxProducerFlagEncodeRecorded) != 0) {
+                    rec.validityFlags |= UserClient::Wire::kTxLatencyFlagImageReadyValid;
+                    if (pubLatest != 0) {
+                        rec.e0ToImageReadyNanos =
+                            DiffNanos(prodRec.encodeHostTicks, pubLatest);
+                    }
+                }
+                if ((prodRec.flags & Isoch::kTxProducerFlagOfferRecorded) != 0) {
+                    rec.validityFlags |= UserClient::Wire::kTxLatencyFlagOfferValid;
+                }
+            }
+
+            if (haveTrans) {
+                rec.validityFlags |= UserClient::Wire::kTxLatencyFlagTransportDecisionValid;
+                rec.transportFlags = transRec.flags;
+                rec.examinationCount = transRec.examinationCount;
+                rec.sealResult = transRec.sealResult;
+                rec.sealReason = transRec.sealReason;
+                rec.sealStartHostTicks = transRec.sealStartHostTicks;
+                rec.sealEndHostTicks = transRec.sealEndHostTicks;
+                rec.descriptorUpdateHostTicks = transRec.descriptorUpdateHostTicks;
+
+                // Three distinct examinations, exported separately. A single
+                // "last result" cannot answer whether a ready image sat
+                // unserviced, because the terminal decision overwrites the
+                // evidence of the passes that skipped it.
+                rec.lastBeforeOfferPassId = transRec.lastBeforeOffer.passId;
+                rec.lastBeforeOfferHostTicks = transRec.lastBeforeOffer.hostTicks;
+                rec.firstAfterOfferPassId = transRec.firstAfterOffer.passId;
+                rec.firstAfterOfferHostTicks = transRec.firstAfterOffer.hostTicks;
+
+                const auto& term = transRec.terminal;
+                rec.passId = term.passId;
+                rec.transExaminedHostTicks = term.hostTicks;
+                rec.examinedArbPhase = term.arbitrationPhase;
+                rec.bindResult = term.bindResult;
+                if (term.hwPosValid != 0) {
+                    rec.liveHwPos = term.liveHwPos;
+                    rec.hwDistancePackets =
+                        static_cast<int32_t>(static_cast<int64_t>(packetIndex) -
+                                             static_cast<int64_t>(term.liveHwPos));
+                }
+                if (term.bindResult ==
+                    static_cast<uint8_t>(Isoch::LatePayloadBindResult::Bound)) {
+                    rec.validityFlags |= UserClient::Wire::kTxLatencyFlagBindValid;
+                }
+                if ((transRec.flags & Isoch::kTxTransportFlagDescriptorWritten) != 0) {
+                    rec.validityFlags |= UserClient::Wire::kTxLatencyFlagDescriptorUpdateValid;
+                }
+                rec.lastAttemptBindResult = transRec.lastAttemptBindResult;
+                if (Isoch::IsochTxQueueControl::TransportSealRecorded(transRec)) {
+                    rec.validityFlags |= UserClient::Wire::kTxLatencyFlagSealValid;
+                    if ((transRec.flags &
+                         Isoch::kTxTransportFlagTerminalPosIsSnapshot) != 0) {
+                        rec.validityFlags |=
+                            UserClient::Wire::kTxLatencyFlagTerminalPosIsSnapshot;
+                    }
+                }
+
+                // Intervals are exported as BOUNDS. The offer is a CAS bracket,
+                // not an instant: when that bracket overlaps the transport
+                // event a single signed delta asserts an ordering the
+                // measurement does not establish. Min uses the far ends, max
+                // the near ones, so a straddling pair reports min<0<max rather
+                // than a confident sign.
+                if (haveProd &&
+                    (prodRec.flags & Isoch::kTxProducerFlagOfferRecorded) != 0) {
+                    const uint64_t oStart = prodRec.offerStartHostTicks;
+                    const uint64_t oEnd = prodRec.offerEndHostTicks;
+                    if (term.present != 0 && term.hostTicks != 0) {
+                        rec.offerToExaminedNanosMin = DiffNanos(term.hostTicks, oEnd);
+                        rec.offerToExaminedNanosMax = DiffNanos(term.hostTicks, oStart);
+                    }
+                    if ((transRec.flags & Isoch::kTxTransportFlagDescriptorWritten) != 0) {
+                        rec.offerToDescriptorUpdateNanosMin =
+                            DiffNanos(transRec.descriptorUpdateHostTicks, oEnd);
+                        rec.offerToDescriptorUpdateNanosMax =
+                            DiffNanos(transRec.descriptorUpdateHostTicks, oStart);
+                    }
+                    // Only when a seal actually happened. A bound packet has
+                    // no seal timestamps, and differencing zeroes against the
+                    // offer produced a large negative "interval" for every
+                    // packet that succeeded.
+                    if (Isoch::IsochTxQueueControl::TransportSealRecorded(transRec) &&
+                        transRec.sealStartHostTicks != 0) {
+                        rec.sealRelativeToOfferNanosMin =
+                            DiffNanos(transRec.sealStartHostTicks, oEnd);
+                        rec.sealRelativeToOfferNanosMax =
+                            DiffNanos(transRec.sealEndHostTicks, oStart);
+                    }
+                    // The window in which a ready image existed and transport
+                    // had not yet looked at it. This is the number the whole
+                    // lane exists to produce.
+                    if (transRec.firstAfterOffer.present != 0) {
+                        rec.offerToFirstServiceNanosMin =
+                            DiffNanos(transRec.firstAfterOffer.hostTicks, oEnd);
+                        rec.offerToFirstServiceNanosMax =
+                            DiffNanos(transRec.firstAfterOffer.hostTicks, oStart);
+                    }
+                }
+            }
+        }
 
         if (outcome == TxLatencyOutcome::Unresolved &&
             reason == TxLatencyUnresolvedReason::CoveragePending) {
@@ -789,10 +984,47 @@ public:
             sw.outcome = static_cast<uint8_t>(rec.outcome);
             sw.unresolvedReason = static_cast<uint8_t>(rec.unresolvedReason);
             sw.selectedImage = rec.selectedImage;
-            sw.arbitrationPhase = rec.groupPhase;
+            sw.cyclePhaseMod8 = rec.groupPhase;
             sw.packetGeneration = rec.packetGeneration;
             sw.pcmIdentityProven = rec.pcmIdentityProven;
             sw.validityFlags = rec.validityFlags;
+
+            sw.encodeCompleteHostTicks = rec.encodeCompleteHostTicks;
+            sw.offerStartHostTicks = rec.offerStartHostTicks;
+            sw.offerEndHostTicks = rec.offerEndHostTicks;
+            sw.transExaminedHostTicks = rec.transExaminedHostTicks;
+            sw.descriptorUpdateHostTicks = rec.descriptorUpdateHostTicks;
+            sw.sealStartHostTicks = rec.sealStartHostTicks;
+            sw.sealEndHostTicks = rec.sealEndHostTicks;
+            sw.lastBeforeOfferHostTicks = rec.lastBeforeOfferHostTicks;
+            sw.firstAfterOfferHostTicks = rec.firstAfterOfferHostTicks;
+            sw.lastBeforeOfferPassId = rec.lastBeforeOfferPassId;
+            sw.firstAfterOfferPassId = rec.firstAfterOfferPassId;
+            sw.passId = rec.passId;
+            sw.liveHwPos = rec.liveHwPos;
+            sw.e0ToImageReadyNanos = rec.e0ToImageReadyNanos;
+            sw.offerToExaminedNanosMin = rec.offerToExaminedNanosMin;
+            sw.offerToExaminedNanosMax = rec.offerToExaminedNanosMax;
+            sw.offerToFirstServiceNanosMin = rec.offerToFirstServiceNanosMin;
+            sw.offerToFirstServiceNanosMax = rec.offerToFirstServiceNanosMax;
+            sw.offerToDescriptorUpdateNanosMin = rec.offerToDescriptorUpdateNanosMin;
+            sw.offerToDescriptorUpdateNanosMax = rec.offerToDescriptorUpdateNanosMax;
+            sw.sealRelativeToOfferNanosMin = rec.sealRelativeToOfferNanosMin;
+            sw.sealRelativeToOfferNanosMax = rec.sealRelativeToOfferNanosMax;
+            sw.producerFlags = rec.producerFlags;
+            sw.transportFlags = rec.transportFlags;
+            sw.examinationCount = rec.examinationCount;
+            sw.hwDistancePackets = rec.hwDistancePackets;
+            sw.acquireResult = rec.acquireResult;
+            sw.offerResult = rec.offerResult;
+            sw.bindResult = rec.bindResult;
+            sw.sealResult = rec.sealResult;
+            sw.sealReason = rec.sealReason;
+            sw.observedArbPhase = rec.observedArbPhase;
+            sw.examinedArbPhase = rec.examinedArbPhase;
+            sw.producerJoinResult = rec.producerJoinResult;
+            sw.transportJoinResult = rec.transportJoinResult;
+            sw.lastAttemptBindResult = rec.lastAttemptBindResult;
         }
         return true;
     }
@@ -988,8 +1220,22 @@ private:
                 rec.payloadReadyHostTicksLatest = pubLatest;
                 rec.outcome = outcome;
                 rec.unresolvedReason = reason;
-                rec.validityFlags = ComputeTxLatencyValidityFlags(
-                    pubEarliest, pubLatest, pj.txBounds, pj.pcmIdentityProven != 0);
+                // Replace only the E0/E2 half. ObserveCompletion already
+                // populated the decision-evidence bits for this record, and a
+                // whole-word assignment here erased every one of them for
+                // exactly the samples whose publication resolved late -- so
+                // the packets that took longest to join lost the diagnosis.
+                rec.validityFlags =
+                    static_cast<uint16_t>(
+                        (rec.validityFlags &
+                         ~UserClient::Wire::kTxLatencyFlagsE0E2Mask) |
+                        ComputeTxLatencyValidityFlags(
+                            pubEarliest, pubLatest, pj.txBounds,
+                            pj.pcmIdentityProven != 0));
+
+                if (rec.encodeCompleteHostTicks != 0 && pubLatest != 0) {
+                    rec.e0ToImageReadyNanos = DiffNanos(rec.encodeCompleteHostTicks, pubLatest);
+                }
 
                 unresolvedCount_.fetch_sub(1, std::memory_order_relaxed);
                 reasonCoveragePending_.fetch_sub(1, std::memory_order_relaxed);
@@ -1037,6 +1283,7 @@ private:
     std::atomic<const PublicationRangeRing*> publicationRing_{nullptr};
     uint32_t preparationLeadPackets_{Shared::AudioTimingGeometry::kTxPreparationLeadPackets};
     uint32_t hardwareRingPackets_{Shared::AudioTimingGeometry::kTxHardwareRingPackets};
+    std::atomic<Isoch::IsochTxQueueControl*> queueControl_{nullptr};
     std::array<PendingJoinEntry, 16> pendingJoins_{};
 };
 

@@ -95,6 +95,7 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/TxLatencyMeasurementTests.cpp
     AudioRuntime/PublicationRangeRingTests.cpp
     AudioRuntime/TxLatencySessionTests.cpp
+    AudioRuntime/TxDecisionTelemetryTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
 )
 
