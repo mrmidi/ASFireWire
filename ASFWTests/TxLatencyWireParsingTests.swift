@@ -44,10 +44,13 @@ struct TxLatencyWireParsingTests {
         setLE(UInt32(0), at: 96, in: &wire) // transmitFailedCount
         setLE(UInt32(0), at: 100, in: &wire) // substitutionCount
         setLE(UInt32(0), at: 104, in: &wire) // invalidCount
+        setLE(UInt32(48000), at: 108, in: &wire) // sampleRateHz
 
         for i in 0..<8 {
             setLE(UInt32(1000), at: 112 + i * 4, in: &wire) // eligibleByPhase
         }
+
+        setLE(UInt32((16 << 16) | 6), at: 188, in: &wire) // geometryProvenance
 
         // Paging fields at offset 192
         setLE(UInt32(0), at: 192, in: &wire) // pageIndex
@@ -66,11 +69,14 @@ struct TxLatencyWireParsingTests {
             setLE(Int64(350_000), at: s0 + 48, in: &wire) // waitMinNanos
             setLE(Int64(450_000), at: s0 + 56, in: &wire) // waitMaxNanos
             setLE(UInt32(150), at: s0 + 64, in: &wire) // uncertainty
-            wire[s0 + 68] = 1 // outcome = matched
-            wire[s0 + 69] = 0 // unresolvedReason = none
-            wire[s0 + 70] = 1 // selectedImage = 1
-            wire[s0 + 71] = 3 // arbitrationPhase = 3
-            wire[s0 + 72] = 1 // pcmProven = 1
+            setLE(UInt32(100), at: s0 + 68, in: &wire) // correlationAgeTicks
+            wire[s0 + 72] = 1 // outcome = matched
+            wire[s0 + 73] = 0 // unresolvedReason = none
+            wire[s0 + 74] = 1 // selectedImage = 1
+            wire[s0 + 75] = 3 // arbitrationPhase = 3
+            wire[s0 + 76] = 2 // packetGeneration = 2
+            wire[s0 + 77] = 1 // pcmProven = 1
+            setLE(UInt16(0x1F), at: s0 + 78, in: &wire) // validityFlags
         }
 
         // Sample 1 at offset 208 + 80 = 288 (80 bytes)
@@ -85,11 +91,14 @@ struct TxLatencyWireParsingTests {
             setLE(Int64(400_000), at: s1 + 48, in: &wire) // waitMinNanos
             setLE(Int64(500_000), at: s1 + 56, in: &wire) // waitMaxNanos
             setLE(UInt32(160), at: s1 + 64, in: &wire) // uncertainty
-            wire[s1 + 68] = 1 // outcome = matched
-            wire[s1 + 69] = 0 // unresolvedReason = none
-            wire[s1 + 70] = 0 // selectedImage = 0
-            wire[s1 + 71] = 5 // arbitrationPhase = 5
-            wire[s1 + 72] = 1 // pcmProven = 1
+            setLE(UInt32(110), at: s1 + 68, in: &wire) // correlationAgeTicks
+            wire[s1 + 72] = 1 // outcome = matched
+            wire[s1 + 73] = 0 // unresolvedReason = none
+            wire[s1 + 74] = 0 // selectedImage = 0
+            wire[s1 + 75] = 5 // arbitrationPhase = 5
+            wire[s1 + 76] = 2 // packetGeneration = 2
+            wire[s1 + 77] = 1 // pcmProven = 1
+            setLE(UInt16(0x1F), at: s1 + 78, in: &wire) // validityFlags
         }
 
         return wire
@@ -113,6 +122,11 @@ struct TxLatencyWireParsingTests {
         #expect(page.header.eligibleByPhase.count == 8)
         #expect(page.header.eligibleByPhase[0] == 1000)
 
+        #expect(page.header.sampleRateHz == 48000)
+        #expect(page.header.geometryProvenance == (16 << 16) | 6)
+        #expect(page.header.preparationLeadPackets == 6)
+        #expect(page.header.hardwareRingPackets == 16)
+
         #expect(page.pageIndex == 0)
         #expect(page.totalPages == 1)
         #expect(page.samples.count == 2)
@@ -130,16 +144,21 @@ struct TxLatencyWireParsingTests {
         #expect(s0.waitMaxMicros == 450.0)
         #expect(s0.waitCenterMicros == 400.0)
         #expect(s0.uncertaintyMicros == 50.0)
+        #expect(s0.correlationAgeTicks == 100)
         #expect(s0.outcome == .matched)
         #expect(s0.selectedImage == 1)
         #expect(s0.arbitrationPhase == 3)
+        #expect(s0.packetGeneration == 2)
         #expect(s0.pcmIdentityProven == true)
+        #expect(s0.validityFlags == 0x1F)
 
         let s1 = page.samples[1]
         #expect(s1.packetIndex == 50)
         #expect(s1.waitCenterMicros == 450.0)
         #expect(s1.selectedImage == 0)
         #expect(s1.arbitrationPhase == 5)
+        #expect(s1.packetGeneration == 2)
+        #expect(s1.validityFlags == 0x1F)
     }
 
     @Test func decodesSignedNegativeWaitTime() throws {
@@ -187,7 +206,8 @@ struct TxLatencyWireParsingTests {
         #expect(csv.contains("# ASFW FireWire TX Latency Session Report (E0 -> E2)"))
         #expect(csv.contains("# Session ID: 42"))
         #expect(csv.contains("# Endpoint ID: 101"))
+        #expect(csv.contains("# Rate: 48000 Hz, Geometry: lead=6pkts, hwRing=16pkts"))
         #expect(csv.contains("packet_index,pcm_start_frame,pcm_end_frame"))
-        #expect(csv.contains("42,1000,1006,6,Matched,None,1,3,1,1008000,1010000,1020000,150,350000,450000,350.000,450.000,400.000,50.000"))
+        #expect(csv.contains("42,1000,1006,6,Matched,None,1,3,2,1,31,100,1008000,1010000,1020000,150,350000,450000,350.000,450.000,400.000,50.000"))
     }
 }

@@ -8,6 +8,7 @@
 
 #include "PublicationRangeRing.hpp"
 #include "TxLatencyMeasurement.hpp"
+#include "TxLatencySessionResult.hpp"
 #include "../Ports/ITxPcmSource.hpp"
 #include "../Wire/AMDTP/AmdtpPacketTimeline.hpp"
 #include "../../UserClient/WireFormats/TxLatencySessionWireFormats.hpp"
@@ -16,85 +17,9 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 namespace ASFW::Audio::Runtime {
-
-inline constexpr uint32_t kTxLatencyMaxSamples = 4096;
-inline constexpr uint32_t kTxLatencySessionWireVersion = 1;
-
-enum class TxLatencySessionState : uint32_t {
-    Idle = 0,
-    Arming = 1,
-    Capturing = 2,
-    StopRequested = 3,
-    Frozen = 4,
-};
-
-enum class TxLatencyTerminationReason : uint32_t {
-    None = 0,
-    UserStopped = 1,
-    DeadlineExpired = 2,
-    EpochChanged = 3,
-    CapacityReached = 4,
-    StreamReset = 5,
-    DriverTeardown = 6,
-};
-
-struct TxLatencyRecord final {
-    uint64_t packetIndex{0};
-    uint64_t firstAudioFrame{0};
-    uint64_t payloadReadyHostTicksEarliest{0};
-    uint64_t payloadReadyHostTicksLatest{0};
-    uint64_t txEarliestHostTicks{0};
-    uint64_t txLatestHostTicks{0};
-    uint32_t frameCount{0};
-    TxLatencyOutcome outcome{TxLatencyOutcome::Unresolved};
-    TxLatencyUnresolvedReason unresolvedReason{TxLatencyUnresolvedReason::None};
-    uint32_t correlationAgeBusTicks{0};
-    uint16_t eventCode{0};
-    uint8_t selectedImage{0};
-    uint8_t groupPhase{0};
-    uint64_t reserved{0};
-};
-
-struct TxLatencySessionHeader final {
-    uint32_t version{kTxLatencySessionWireVersion};
-    uint32_t sessionId{0};
-    TxLatencySessionState state{TxLatencySessionState::Idle};
-    TxLatencyTerminationReason terminationReason{TxLatencyTerminationReason::None};
-    uint64_t epoch{0};
-    uint32_t sampleRateHz{0};
-    uint32_t samplingSeed{0};
-    uint32_t strataSize{1};
-    uint64_t sessionStartHostTicks{0};
-    uint64_t sessionDeadlineHostTicks{0};
-    uint64_t sessionFrozenHostTicks{0};
-
-    uint64_t dataPacketsSeen{0};
-    std::array<uint64_t, 8> eligibleByPhase{};
-    std::array<uint64_t, 8> sampledByPhase{};
-
-    uint64_t sampledCount{0};
-    uint64_t matchedCount{0};
-    uint64_t substitutedCount{0};
-    uint64_t unresolvedCount{0};
-    uint64_t agedOutCount{0};
-    uint64_t transmitFailedCount{0};
-    uint64_t invalidCount{0};
-    uint64_t stampsMissedCount{0};
-
-    // Unresolved reason breakdown
-    uint64_t reasonStaleCorrelation{0};
-    uint64_t reasonCoveragePending{0};
-    uint64_t reasonCoverageGap{0};
-    uint64_t reasonEpochMismatch{0};
-    uint64_t reasonPublicationAgedOut{0};
-    uint64_t reasonProvenanceAgedOut{0};
-    uint64_t reasonUnrecognizedEventCode{0};
-    uint64_t reasonImageUnavailable{0};
-
-    uint32_t recordCount{0};
-};
 
 class SeqlockWriteGuard final {
 public:
@@ -248,6 +173,10 @@ public:
 
         recordCount_.store(0, std::memory_order_relaxed);
         terminationReason_ = TxLatencyTerminationReason::None;
+        completedResult_.reset();
+        for (auto& pj : pendingJoins_) {
+            pj.active = false;
+        }
 
         startHostTicks_ = mach_absolute_time();
         const uint64_t durationNs = static_cast<uint64_t>(durationSeconds_) * 1'000'000'000ULL;
@@ -343,11 +272,28 @@ public:
             lifecycle_.store(PackLifecycle(targetGen, TxLatencySessionState::Frozen, reason),
                              std::memory_order_release);
         }
+
+        // Create immutable result snapshot for outstanding page readers.
+        auto res = std::make_shared<TxLatencySessionResult>();
+        PopulateHeaderLocked(res->header);
+        const uint32_t cnt = std::min(recordCount_.load(std::memory_order_acquire), kTxLatencyMaxSamples);
+        res->records.assign(records_.begin(), records_.begin() + cnt);
+        res->preparationLeadPackets = 6;
+        res->hardwareRingPackets = 16;
+        completedResult_ = std::move(res);
         return true;
     }
 
+    [[nodiscard]] std::shared_ptr<const TxLatencySessionResult> GetCompletedResult() const noexcept {
+        return completedResult_;
+    }
+
     /// Check if in-flight writer has exited and publish Frozen.
-    void PollQuiescence() noexcept {
+    void PollQuiescence(const PublicationRangeRing* pubRing = nullptr) noexcept {
+        if (pubRing) {
+            SeqlockWriteGuard seqGuard(statusSeq_);
+            RetryPendingJoins(*pubRing);
+        }
         (void)CheckExpiration();
         (void)TryFinalize();
     }
@@ -361,6 +307,10 @@ public:
         recordCount_.store(0, std::memory_order_relaxed);
         terminationReason_ = TxLatencyTerminationReason::None;
         frozenHostTicks_ = 0;
+        completedResult_.reset();
+        for (auto& pj : pendingJoins_) {
+            pj.active = false;
+        }
     }
 
     /// Process a completed completion stamp from the audio observer loop.
@@ -418,6 +368,7 @@ public:
         const uint8_t phase = static_cast<uint8_t>(slot->cycleOrdinal % 8);
 
         SeqlockWriteGuard seqGuard(statusSeq_);
+        RetryPendingJoins(publicationRing);
 
         eligibleByPhase_[phase].fetch_add(1, std::memory_order_relaxed);
         dataPacketsSeen_.fetch_add(1, std::memory_order_relaxed);
@@ -462,8 +413,8 @@ public:
             static_cast<uint32_t>(packetIndex), selectedImage, 0, provenance);
 
         const bool pcmReady = haveProvenance &&
-                              (provenance.pcmCopyResult ==
-                               static_cast<uint8_t>(Ports::PcmCopyResult::Ready));
+                               (provenance.pcmCopyResult ==
+                                static_cast<uint8_t>(Ports::PcmCopyResult::Ready));
         const bool isSubstitution = (selectedImage == 0 && !pcmReady) ||
                                     (selectedImage == 1 && haveProvenance && !pcmReady);
 
@@ -499,6 +450,30 @@ public:
         rec.eventCode = eventCode;
         rec.selectedImage = selectedImage;
         rec.groupPhase = phase;
+        rec.packetGeneration = static_cast<uint8_t>(provenance.commitGeneration & 0xFF);
+        rec.pcmIdentityProven = haveProvenance ? 1 : 0;
+        rec.validityFlags = ComputeTxLatencyValidityFlags(pubEarliest, pubLatest, txBounds, haveProvenance);
+
+        if (coverage == PublicationCoverageResult::Pending) {
+            for (auto& pj : pendingJoins_) {
+                if (!pj.active) {
+                    pj.packetIndex = packetIndex;
+                    pj.recordIndex = curRecords;
+                    pj.epoch = epoch_;
+                    pj.firstAudioFrame = slot->firstAudioFrame;
+                    pj.frameCount = slot->framesInPacket;
+                    pj.txBounds = txBounds;
+                    pj.eventCode = eventCode;
+                    pj.selectedImage = selectedImage;
+                    pj.groupPhase = phase;
+                    pj.packetGeneration = rec.packetGeneration;
+                    pj.pcmIdentityProven = rec.pcmIdentityProven;
+                    pj.isSubstitution = isSubstitution ? 1 : 0;
+                    pj.active = true;
+                    break;
+                }
+            }
+        }
 
         recordCount_.store(curRecords + 1, std::memory_order_relaxed);
         sampledCount_.fetch_add(1, std::memory_order_relaxed);
@@ -544,11 +519,8 @@ public:
         return statusSeq_.load(std::memory_order_relaxed);
     }
 
-    /// Read session header with synchronized seqlock snapshot. Valid in any state.
-    void ReadHeader(TxLatencySessionHeader& outHeader) noexcept {
-        CheckExpiration();
-        PollQuiescence();
-
+    /// Populate session header without triggering quiescence polling or side effects.
+    void PopulateHeaderLocked(TxLatencySessionHeader& outHeader) const noexcept {
         const auto snap = ReadCountersSnapshot();
         outHeader.version = kTxLatencySessionWireVersion;
         outHeader.sessionId = sessionId_;
@@ -592,8 +564,14 @@ public:
         outHeader.reasonProvenanceAgedOut = snap.reasonProvenanceAgedOut;
         outHeader.reasonUnrecognizedEventCode = snap.reasonUnrecognizedEventCode;
         outHeader.reasonImageUnavailable = snap.reasonImageUnavailable;
-
         outHeader.recordCount = snap.samplesCaptured;
+    }
+
+    /// Read session header with synchronized seqlock snapshot. Valid in any state.
+    void ReadHeader(TxLatencySessionHeader& outHeader) noexcept {
+        CheckExpiration();
+        PollQuiescence();
+        PopulateHeaderLocked(outHeader);
     }
 
     /// Paged record reader. Permitted ONLY when session is Frozen.
@@ -626,11 +604,16 @@ public:
             return false;
         }
 
+        const uint64_t lc = lifecycle_.load(std::memory_order_acquire);
+        const auto st = LifecycleState(lc);
+
+        if (st == TxLatencySessionState::Frozen && completedResult_) {
+            return completedResult_->CopyWirePage(pageIndex, samplesPerPage, requestedSessionId, endpointId, out);
+        }
+
         const auto snap = ReadCountersSnapshot();
         out = {};
         out.header.version = UserClient::Wire::kTxLatencyWireVersion;
-        const uint64_t lc = lifecycle_.load(std::memory_order_acquire);
-        const auto st = LifecycleState(lc);
         out.header.sessionState = static_cast<uint32_t>(st);
         if (st == TxLatencySessionState::Frozen) {
             out.header.terminationReason = static_cast<uint32_t>(terminationReason_);
@@ -656,6 +639,7 @@ public:
         out.header.transmitFailedCount = static_cast<uint32_t>(snap.transmitFailedCount);
         out.header.substitutionCount = static_cast<uint32_t>(snap.substitutionCount);
         out.header.invalidCount = static_cast<uint32_t>(snap.invalidCount);
+        out.header.sampleRateHz = sampleRateHz_;
 
         for (size_t i = 0; i < 8; ++i) {
             out.header.eligibleByPhase[i] = static_cast<uint32_t>(snap.eligibleByPhase[i]);
@@ -673,6 +657,7 @@ public:
         out.header.totalRingRecords = snap.samplesCaptured;
         out.header.ringHead = snap.samplesCaptured;
         out.header.ringTail = 0;
+        out.header.geometryProvenance = (16 << 16) | 6;
 
         const uint32_t perPage = std::min(samplesPerPage == 0 ? UserClient::Wire::kTxLatencyMaxSamplesPerPage : samplesPerPage,
                                           UserClient::Wire::kTxLatencyMaxSamplesPerPage);
@@ -708,6 +693,7 @@ public:
             sw.uncertaintyHostTicks = (rec.txLatestHostTicks > rec.txEarliestHostTicks)
                                           ? static_cast<uint32_t>(rec.txLatestHostTicks - rec.txEarliestHostTicks)
                                           : 0;
+            sw.correlationAgeTicks = rec.correlationAgeBusTicks;
             sw.waitMinNanos = (rec.payloadReadyHostTicksLatest != 0 && rec.txEarliestHostTicks != 0)
                                   ? DiffNanos(rec.txEarliestHostTicks, rec.payloadReadyHostTicksLatest)
                                   : 0;
@@ -718,7 +704,9 @@ public:
             sw.unresolvedReason = static_cast<uint8_t>(rec.unresolvedReason);
             sw.selectedImage = rec.selectedImage;
             sw.arbitrationPhase = rec.groupPhase;
-            sw.pcmIdentityProven = (rec.outcome == TxLatencyOutcome::Matched) ? 1 : 0;
+            sw.packetGeneration = rec.packetGeneration;
+            sw.pcmIdentityProven = rec.pcmIdentityProven;
+            sw.validityFlags = rec.validityFlags;
         }
         return true;
     }
@@ -870,8 +858,81 @@ private:
     std::atomic<uint64_t> reasonUnrecognizedEventCode_{0};
     std::atomic<uint64_t> reasonImageUnavailable_{0};
 
+    struct PendingJoinEntry {
+        uint64_t packetIndex{0};
+        uint32_t recordIndex{0};
+        uint64_t epoch{0};
+        uint64_t firstAudioFrame{0};
+        uint32_t frameCount{0};
+        TransmitBounds txBounds{};
+        uint16_t eventCode{0};
+        uint8_t selectedImage{0};
+        uint8_t groupPhase{0};
+        uint8_t packetGeneration{0};
+        uint8_t pcmIdentityProven{0};
+        uint8_t isSubstitution{0};
+        bool active{false};
+    };
+
+    void RetryPendingJoins(const PublicationRangeRing& publicationRing) noexcept {
+        for (auto& pj : pendingJoins_) {
+            if (!pj.active) {
+                continue;
+            }
+            uint64_t pubEarliest = 0;
+            uint64_t pubLatest = 0;
+            const auto coverage = publicationRing.LookupPacketCoverage(
+                pj.epoch, pj.firstAudioFrame, pj.frameCount, pubEarliest, pubLatest);
+            if (coverage == PublicationCoverageResult::Pending) {
+                continue;
+            }
+
+            TxLatencyUnresolvedReason reason = TxLatencyUnresolvedReason::None;
+            const auto outcome = ClassifyTxLatencySample(
+                pj.eventCode, pj.pcmIdentityProven != 0, pj.isSubstitution != 0,
+                coverage, pj.txBounds, pubEarliest, pubLatest, reason);
+
+            if (pj.recordIndex < kTxLatencyMaxSamples) {
+                auto& rec = records_[pj.recordIndex];
+                rec.payloadReadyHostTicksEarliest = pubEarliest;
+                rec.payloadReadyHostTicksLatest = pubLatest;
+                rec.outcome = outcome;
+                rec.unresolvedReason = reason;
+                rec.validityFlags = ComputeTxLatencyValidityFlags(
+                    pubEarliest, pubLatest, pj.txBounds, pj.pcmIdentityProven != 0);
+
+                unresolvedCount_.fetch_sub(1, std::memory_order_relaxed);
+                reasonCoveragePending_.fetch_sub(1, std::memory_order_relaxed);
+
+                switch (outcome) {
+                    case TxLatencyOutcome::Matched:
+                        matchedCount_.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    case TxLatencyOutcome::Substituted:
+                        substitutedCount_.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    case TxLatencyOutcome::Unresolved:
+                        unresolvedCount_.fetch_add(1, std::memory_order_relaxed);
+                        CountUnresolvedReason(reason);
+                        break;
+                    case TxLatencyOutcome::TransmitFailed:
+                        transmitFailedCount_.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    case TxLatencyOutcome::Invalid:
+                        invalidCount_.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    case TxLatencyOutcome::Unknown:
+                        break;
+                }
+            }
+            pj.active = false;
+        }
+    }
+
     std::atomic<uint32_t> recordCount_{0};
     std::array<TxLatencyRecord, kTxLatencyMaxSamples> records_{};
+    std::shared_ptr<const TxLatencySessionResult> completedResult_{};
+    std::array<PendingJoinEntry, 16> pendingJoins_{};
 };
 
 } // namespace ASFW::Audio::Runtime

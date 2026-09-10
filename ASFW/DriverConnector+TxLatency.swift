@@ -111,11 +111,14 @@ struct TxLatencySample: Identifiable, Sendable, Codable, Equatable {
     let waitMinNanos: Int64
     let waitMaxNanos: Int64
     let uncertaintyHostTicks: UInt32
+    let correlationAgeTicks: UInt32
     let outcome: TxLatencyOutcome
     let unresolvedReason: TxLatencyUnresolvedReason
     let selectedImage: UInt8
     let arbitrationPhase: UInt8
+    let packetGeneration: UInt8
     let pcmIdentityProven: Bool
+    let validityFlags: UInt16
 
     var waitMinMicros: Double {
         Double(waitMinNanos) / 1_000.0
@@ -163,6 +166,7 @@ struct TxLatencySessionHeader: Sendable, Codable, Equatable {
     let transmitFailedCount: UInt32
     let substitutionCount: UInt32
     let invalidCount: UInt32
+    let sampleRateHz: UInt32
 
     let eligibleByPhase: [UInt32]
 
@@ -178,6 +182,10 @@ struct TxLatencySessionHeader: Sendable, Codable, Equatable {
     let totalRingRecords: UInt32
     let ringHead: UInt32
     let ringTail: UInt32
+    let geometryProvenance: UInt32
+
+    var preparationLeadPackets: UInt16 { UInt16(geometryProvenance & 0xFFFF) }
+    var hardwareRingPackets: UInt16 { UInt16(geometryProvenance >> 16) }
 }
 
 struct TxLatencyResultsPage: Sendable, Codable {
@@ -259,13 +267,14 @@ struct TxLatencySessionReport: Sendable, Codable {
         lines.append("# Endpoint ID: \(header.endpointId.rawValue)")
         lines.append("# Session State: \(header.sessionState)")
         lines.append("# Termination Reason: \(header.terminationReason)")
+        lines.append("# Rate: \(header.sampleRateHz) Hz, Geometry: lead=\(header.preparationLeadPackets)pkts, hwRing=\(header.hardwareRingPackets)pkts")
         lines.append("# Duration: \(header.durationSeconds)s, Strata: \(header.strataSize), Seed: \(header.seed), Drift: \(header.assumedDriftPpm) ppm")
         lines.append("# Packets Seen: \(header.dataPacketsSeen), Samples: \(header.samplesCaptured), Missed Stamps: \(header.stampsMissedCount)")
         lines.append("# Resolved: \(header.resolvedCount), Unresolved: \(header.unresolvedCount), Failed: \(header.transmitFailedCount), Substituted: \(header.substitutionCount), Invalid: \(header.invalidCount)")
         lines.append("# Range Stats (Matched): count=\(matchedStats.sampleCount), min=\(String(format: "%.2f", matchedStats.minWaitMicros))us, med=\(String(format: "%.2f", matchedStats.medianWaitMicros))us, p95=\(String(format: "%.2f", matchedStats.p95WaitMicros))us, max=\(String(format: "%.2f", matchedStats.maxWaitMicros))us, meanUncertainty=±\(String(format: "%.2f", matchedStats.meanUncertaintyMicros))us")
         lines.append("")
         // CSV columns
-        lines.append("packet_index,pcm_start_frame,pcm_end_frame,frame_span,outcome,unresolved_reason,selected_image,arbitration_phase,pcm_proven,pub_earliest_host_ticks,pub_latest_host_ticks,tx_host_ticks,uncertainty_ticks,wait_min_ns,wait_max_ns,wait_min_us,wait_max_us,wait_center_us,uncertainty_us")
+        lines.append("packet_index,pcm_start_frame,pcm_end_frame,frame_span,outcome,unresolved_reason,selected_image,arbitration_phase,packet_generation,pcm_proven,validity_flags,correlation_age_ticks,pub_earliest_host_ticks,pub_latest_host_ticks,tx_host_ticks,uncertainty_ticks,wait_min_ns,wait_max_ns,wait_min_us,wait_max_us,wait_center_us,uncertainty_us")
 
         for s in samples {
             let row = [
@@ -277,7 +286,10 @@ struct TxLatencySessionReport: Sendable, Codable {
                 "\(s.unresolvedReason)",
                 "\(s.selectedImage)",
                 "\(s.arbitrationPhase)",
+                "\(s.packetGeneration)",
                 "\(s.pcmIdentityProven ? 1 : 0)",
+                "\(s.validityFlags)",
+                "\(s.correlationAgeTicks)",
                 "\(s.pubEarliestHostTicks)",
                 "\(s.pubLatestHostTicks)",
                 "\(s.txCycleStartHostTicks)",
@@ -334,6 +346,7 @@ enum TxLatencyWireDecoder {
             let transmitFailedCount = base.loadUnaligned(fromByteOffset: 96, as: UInt32.self)
             let substitutionCount = base.loadUnaligned(fromByteOffset: 100, as: UInt32.self)
             let invalidCount = base.loadUnaligned(fromByteOffset: 104, as: UInt32.self)
+            let sampleRateHz = base.loadUnaligned(fromByteOffset: 108, as: UInt32.self)
 
             var eligibleByPhase: [UInt32] = []
             eligibleByPhase.reserveCapacity(8)
@@ -353,6 +366,7 @@ enum TxLatencyWireDecoder {
             let totalRingRecords = base.loadUnaligned(fromByteOffset: 176, as: UInt32.self)
             let ringHead = base.loadUnaligned(fromByteOffset: 180, as: UInt32.self)
             let ringTail = base.loadUnaligned(fromByteOffset: 184, as: UInt32.self)
+            let geometryProvenance = base.loadUnaligned(fromByteOffset: 188, as: UInt32.self)
 
             let header = TxLatencySessionHeader(
                 version: version,
@@ -376,6 +390,7 @@ enum TxLatencyWireDecoder {
                 transmitFailedCount: transmitFailedCount,
                 substitutionCount: substitutionCount,
                 invalidCount: invalidCount,
+                sampleRateHz: sampleRateHz,
                 eligibleByPhase: eligibleByPhase,
                 reasonStaleCorrelation: reasonStale,
                 reasonCoveragePending: reasonPending,
@@ -387,7 +402,8 @@ enum TxLatencyWireDecoder {
                 reasonImageUnavailable: reasonImgUnavail,
                 totalRingRecords: totalRingRecords,
                 ringHead: ringHead,
-                ringTail: ringTail
+                ringTail: ringTail,
+                geometryProvenance: geometryProvenance
             )
 
             let pageIndex = base.loadUnaligned(fromByteOffset: 192, as: UInt32.self)
@@ -409,11 +425,14 @@ enum TxLatencyWireDecoder {
                 let waitMin = base.loadUnaligned(fromByteOffset: sOffset + 48, as: Int64.self)
                 let waitMax = base.loadUnaligned(fromByteOffset: sOffset + 56, as: Int64.self)
                 let uncertainty = base.loadUnaligned(fromByteOffset: sOffset + 64, as: UInt32.self)
-                let outcomeRaw = base.loadUnaligned(fromByteOffset: sOffset + 68, as: UInt8.self)
-                let unresRaw = base.loadUnaligned(fromByteOffset: sOffset + 69, as: UInt8.self)
-                let selImg = base.loadUnaligned(fromByteOffset: sOffset + 70, as: UInt8.self)
-                let phase = base.loadUnaligned(fromByteOffset: sOffset + 71, as: UInt8.self)
-                let proven = base.loadUnaligned(fromByteOffset: sOffset + 72, as: UInt8.self)
+                let correlationAgeTicks = base.loadUnaligned(fromByteOffset: sOffset + 68, as: UInt32.self)
+                let outcomeRaw = base.loadUnaligned(fromByteOffset: sOffset + 72, as: UInt8.self)
+                let unresRaw = base.loadUnaligned(fromByteOffset: sOffset + 73, as: UInt8.self)
+                let selImg = base.loadUnaligned(fromByteOffset: sOffset + 74, as: UInt8.self)
+                let phase = base.loadUnaligned(fromByteOffset: sOffset + 75, as: UInt8.self)
+                let packetGen = base.loadUnaligned(fromByteOffset: sOffset + 76, as: UInt8.self)
+                let proven = base.loadUnaligned(fromByteOffset: sOffset + 77, as: UInt8.self)
+                let validityFlags = base.loadUnaligned(fromByteOffset: sOffset + 78, as: UInt16.self)
 
                 samples.append(TxLatencySample(
                     packetIndex: packetIndex,
@@ -425,11 +444,14 @@ enum TxLatencyWireDecoder {
                     waitMinNanos: waitMin,
                     waitMaxNanos: waitMax,
                     uncertaintyHostTicks: uncertainty,
+                    correlationAgeTicks: correlationAgeTicks,
                     outcome: TxLatencyOutcome(rawValue: outcomeRaw) ?? .unknown,
                     unresolvedReason: TxLatencyUnresolvedReason(rawValue: unresRaw) ?? .none,
                     selectedImage: selImg,
                     arbitrationPhase: phase,
-                    pcmIdentityProven: proven != 0
+                    packetGeneration: packetGen,
+                    pcmIdentityProven: proven != 0,
+                    validityFlags: validityFlags
                 ))
             }
 
@@ -487,7 +509,7 @@ extension ASFWDriverConnector {
 
     /// Stop an active TX latency metering session early.
     @discardableResult
-    func stopTxLatencySession(endpointID: AudioEndpointID) -> kern_return_t {
+    func stopTxLatencySession(endpointID: AudioEndpointID, sessionId: UInt32 = 0) -> kern_return_t {
         guard connection != 0, endpointID.rawValue != 0 else { return kIOReturnNotOpen }
 
         var scalarInput: [UInt64] = [
@@ -496,7 +518,8 @@ extension ASFWDriverConnector {
             0, // strata
             0, // seed
             0, // drift
-            1  // action: 1 = Stop
+            1, // action: 1 = Stop
+            UInt64(sessionId) // targetSessionId: 0 = active session
         ]
 
         let result = IOConnectCallScalarMethod(

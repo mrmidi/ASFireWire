@@ -745,13 +745,15 @@ extension ASFWMCPCore {
             }
 
             let endpointId = AudioEndpointID(endpointRaw)
-            let ok = await driver.stopTxLatencySession(endpointID: endpointId)
+            let sessionId = (try? decoder.uint32("sessionId")) ?? 0
+            let ok = await driver.stopTxLatencySession(endpointID: endpointId, sessionId: sessionId)
 
             return ASFWMCPToolCallResult(
                 toolName: name,
                 ok: ok,
                 data: .object([
                     "endpointId": .uint64(endpointRaw),
+                    "sessionId": .int(Int(sessionId)),
                     "status": .string(ok ? "stop_requested" : "failed")
                 ]),
                 errors: ok ? [] : [ASFWMCPResourceError(code: .driverNotConnected, reason: "Failed to stop session.")]

@@ -10,6 +10,7 @@
 #include "../../Common/TimingUtils.hpp"
 #include "../../Hardware/OHCIEventCodes.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
+#include "../../UserClient/WireFormats/TxLatencySessionWireFormats.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -253,6 +254,31 @@ struct TransmitBounds final {
     }
 
     return TxLatencyOutcome::Matched;
+}
+
+/// Compute explicit validity flags for exported wire records.
+[[nodiscard]] constexpr uint16_t ComputeTxLatencyValidityFlags(
+    uint64_t pubEarliestHostTicks,
+    uint64_t pubLatestHostTicks,
+    const TransmitBounds& txBounds,
+    bool pcmIdentityProven) noexcept {
+    uint16_t flags = 0;
+    if (pubEarliestHostTicks != 0 && pubLatestHostTicks != 0) {
+        flags |= UserClient::Wire::kTxLatencyFlagPubValid;
+    }
+    if (txBounds.valid && txBounds.txEarliestHost != 0 && txBounds.txLatestHost != 0) {
+        flags |= UserClient::Wire::kTxLatencyFlagTxValid;
+    }
+    if ((flags & UserClient::Wire::kTxLatencyFlagPubValid) && (flags & UserClient::Wire::kTxLatencyFlagTxValid)) {
+        flags |= UserClient::Wire::kTxLatencyFlagWaitValid;
+    }
+    if (pcmIdentityProven) {
+        flags |= UserClient::Wire::kTxLatencyFlagProvenanceValid;
+    }
+    if (txBounds.valid && txBounds.correlationAgeBusTicks <= kMaxCorrelationAgeBusTicks) {
+        flags |= UserClient::Wire::kTxLatencyFlagCorrelationValid;
+    }
+    return flags;
 }
 
 } // namespace ASFW::Audio::Runtime

@@ -439,6 +439,10 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         return failStart(kr, "SBP-2 dependency preparation failed");
     }
 
+    if (ctx.deps.audioRuntimeRegistry && ctx.deps.sbp2SessionScheduler) {
+        ctx.deps.audioRuntimeRegistry->SetTimerScheduler(ctx.deps.sbp2SessionScheduler.get());
+    }
+
     if (!ctx.deps.avcDiscovery && ctx.deps.deviceManager && ctx.deps.deviceRegistry) {
         auto& bus = ctx.controller->Bus();
         ctx.deps.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(

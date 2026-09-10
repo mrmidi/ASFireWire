@@ -33,7 +33,7 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpLogRingStats() -> ASFWLogRingStats?
     func mcpAudioTelemetry() -> AudioTelemetrySnapshot?
     func mcpStartTxLatencySession(endpointID: AudioEndpointID, durationSeconds: UInt32, strataSize: UInt32, seed: UInt32, assumedDriftPpm: UInt32) -> (ok: Bool, sessionId: UInt32)
-    func mcpStopTxLatencySession(endpointID: AudioEndpointID) -> Bool
+    func mcpStopTxLatencySession(endpointID: AudioEndpointID, sessionId: UInt32) -> Bool
     func mcpGetTxLatencyResultsPage(endpointID: AudioEndpointID, pageIndex: UInt32, samplesPerPage: UInt32, sessionId: UInt32) -> TxLatencyResultsPage?
     func mcpFetchTxLatencyReport(endpointID: AudioEndpointID, sessionId: UInt32) -> TxLatencySessionReport?
 }
@@ -167,8 +167,8 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
         return (kr == KERN_SUCCESS, sessionId)
     }
 
-    func mcpStopTxLatencySession(endpointID: AudioEndpointID) -> Bool {
-        stopTxLatencySession(endpointID: endpointID) == KERN_SUCCESS
+    func mcpStopTxLatencySession(endpointID: AudioEndpointID, sessionId: UInt32 = 0) -> Bool {
+        stopTxLatencySession(endpointID: endpointID, sessionId: sessionId) == KERN_SUCCESS
     }
 
     func mcpGetTxLatencyResultsPage(endpointID: AudioEndpointID, pageIndex: UInt32, samplesPerPage: UInt32, sessionId: UInt32) -> TxLatencyResultsPage? {
@@ -945,9 +945,9 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         return backend.mcpStartTxLatencySession(endpointID: endpointID, durationSeconds: durationSeconds, strataSize: strataSize, seed: seed, assumedDriftPpm: assumedDriftPpm)
     }
 
-    func stopTxLatencySession(endpointID: AudioEndpointID) async -> Bool {
+    func stopTxLatencySession(endpointID: AudioEndpointID, sessionId: UInt32 = 0) async -> Bool {
         guard backend.mcpIsConnected else { return false }
-        return backend.mcpStopTxLatencySession(endpointID: endpointID)
+        return backend.mcpStopTxLatencySession(endpointID: endpointID, sessionId: sessionId)
     }
 
     func fetchTxLatencyReport(endpointID: AudioEndpointID, sessionId: UInt32 = 0) async -> TxLatencySessionReport? {

@@ -60,7 +60,10 @@ extension TxLatencySample {
         obj["unresolvedReason"] = .string(unresolvedReason.description)
         obj["selectedImage"] = .int(Int(selectedImage))
         obj["arbitrationPhase"] = .int(Int(arbitrationPhase))
+        obj["packetGeneration"] = .int(Int(packetGeneration))
         obj["pcmIdentityProven"] = .bool(pcmIdentityProven)
+        obj["validityFlags"] = .int(Int(validityFlags))
+        obj["correlationAgeTicks"] = .int(Int(correlationAgeTicks))
         return .object(obj)
     }
 }
@@ -74,6 +77,7 @@ extension TxLatencySessionHeader {
         obj["sessionId"] = .int(Int(sessionId))
         obj["endpointId"] = .uint64(endpointId.rawValue)
         obj["epoch"] = .uint64(epoch)
+        obj["sampleRateHz"] = .int(Int(sampleRateHz))
         obj["startHostTicks"] = .uint64(startHostTicks)
         obj["deadlineHostTicks"] = .uint64(deadlineHostTicks)
         obj["frozenHostTicks"] = .uint64(frozenHostTicks)
@@ -104,6 +108,11 @@ extension TxLatencySessionHeader {
             "totalRecords": .int(Int(totalRingRecords)),
             "head": .int(Int(ringHead)),
             "tail": .int(Int(ringTail))
+        ])
+        obj["geometryProvenance"] = .object([
+            "raw": .int(Int(geometryProvenance)),
+            "preparationLeadPackets": .int(Int(preparationLeadPackets)),
+            "hardwareRingPackets": .int(Int(hardwareRingPackets))
         ])
         return .object(obj)
     }

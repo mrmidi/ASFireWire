@@ -3,6 +3,7 @@
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Audio/Core/AudioEndpointRuntime.hpp"
 #include "Audio/Config/AudioConstants.hpp"
+#include "FakeTimerScheduler.hpp"
 
 namespace {
 
@@ -407,4 +408,94 @@ TEST(AudioEndpointRuntime, RejectsConfigurationExceedingAllocationLimits) {
     ASFW::Audio::AudioStreamRuntimeCaps cap192 = profile.runtimeCaps;
     cap192.sampleRateHz = 192000;
     EXPECT_FALSE(runtime.ApplyConfiguration(cap192));
+}
+
+TEST(AudioEndpointRuntime, ReaderIsolatedAcrossSessionRearm) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    ASFW::Audio::AudioEndpointRuntime runtime(MakeProfile());
+    auto session = std::make_shared<ASFW::Audio::Runtime::TxLatencySession>();
+    runtime.RegisterTxLatencySession(session);
+
+    uint32_t sid1 = 0;
+    ASSERT_TRUE(runtime.StartTxLatencySession(10, 1, 0x1234, 100, &sid1));
+    EXPECT_GT(sid1, 0U);
+
+    // Stop session 1
+    EXPECT_TRUE(runtime.StopTxLatencySession(sid1));
+
+    // Page session 1 before rearm
+    ASFW::UserClient::Wire::TxLatencyResultsPageWire page{};
+    EXPECT_TRUE(runtime.CopyTxLatencyResults(0, 32, sid1, page));
+    EXPECT_EQ(page.header.sessionId, sid1);
+    EXPECT_EQ(page.header.sessionState, static_cast<uint32_t>(ASFW::Audio::Runtime::TxLatencySessionState::Frozen));
+
+    // Arm session 2
+    uint32_t sid2 = 0;
+    ASSERT_TRUE(runtime.StartTxLatencySession(10, 1, 0x5678, 100, &sid2));
+    EXPECT_NE(sid1, sid2);
+
+    // Outstanding reader pages session 1 AFTER session 2 was armed and is capturing!
+    ASFW::UserClient::Wire::TxLatencyResultsPageWire retainedPage{};
+    EXPECT_TRUE(runtime.CopyTxLatencyResults(0, 32, sid1, retainedPage));
+    EXPECT_EQ(retainedPage.header.sessionId, sid1);
+    EXPECT_EQ(retainedPage.header.sessionState, static_cast<uint32_t>(ASFW::Audio::Runtime::TxLatencySessionState::Frozen));
+
+    // Reader querying active session gets session 2
+    ASFW::UserClient::Wire::TxLatencyResultsPageWire activePage{};
+    EXPECT_TRUE(runtime.CopyTxLatencyResults(0, 32, sid2, activePage));
+    EXPECT_EQ(activePage.header.sessionId, sid2);
+    EXPECT_EQ(activePage.header.sessionState, static_cast<uint32_t>(ASFW::Audio::Runtime::TxLatencySessionState::Capturing));
+
+    runtime.UnregisterTxLatencySession(session);
+}
+
+TEST(AudioEndpointRuntime, IndependentDeadlineTimerFiresWithoutInterrupts) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    ASFW::Audio::AudioEndpointRuntime runtime(MakeProfile());
+    ASFW::Testing::FakeTimerScheduler scheduler;
+    runtime.SetTimerScheduler(&scheduler);
+
+    auto session = std::make_shared<ASFW::Audio::Runtime::TxLatencySession>();
+    runtime.RegisterTxLatencySession(session);
+
+    uint32_t sid = 0;
+    // 1 second duration
+    ASSERT_TRUE(runtime.StartTxLatencySession(1, 1, 0x1234, 100, &sid));
+    EXPECT_EQ(session->State(), ASFW::Audio::Runtime::TxLatencySessionState::Capturing);
+    EXPECT_EQ(scheduler.PendingCount(), 1U);
+
+    // Advance clock past the deadline (1s + 50ms buffer = 1.05s)
+    scheduler.Advance(1'100'000'000ULL);
+
+    // Session must be Frozen with DeadlineExpired without any audio completions arriving!
+    EXPECT_EQ(session->State(), ASFW::Audio::Runtime::TxLatencySessionState::Frozen);
+
+    ASFW::UserClient::Wire::TxLatencyResultsPageWire page{};
+    EXPECT_TRUE(runtime.CopyTxLatencyResults(0, 32, sid, page));
+    EXPECT_EQ(page.header.sessionId, sid);
+    EXPECT_EQ(page.header.sessionState, static_cast<uint32_t>(ASFW::Audio::Runtime::TxLatencySessionState::Frozen));
+    EXPECT_EQ(page.header.terminationReason, static_cast<uint32_t>(ASFW::Audio::Runtime::TxLatencyTerminationReason::DeadlineExpired));
+
+    runtime.UnregisterTxLatencySession(session);
+}
+
+TEST(AudioEndpointRuntime, TargetedStopRejectsMismatchedSession) {
+    (void)ASFW::Timing::initializeHostTimebase();
+    ASFW::Audio::AudioEndpointRuntime runtime(MakeProfile());
+    auto session = std::make_shared<ASFW::Audio::Runtime::TxLatencySession>();
+    runtime.RegisterTxLatencySession(session);
+
+    uint32_t sid = 0;
+    ASSERT_TRUE(runtime.StartTxLatencySession(10, 1, 0x1234, 100, &sid));
+    EXPECT_EQ(session->State(), ASFW::Audio::Runtime::TxLatencySessionState::Capturing);
+
+    // Stopping with mismatched sessionId must fail and leave session capturing
+    EXPECT_FALSE(runtime.StopTxLatencySession(sid + 999));
+    EXPECT_EQ(session->State(), ASFW::Audio::Runtime::TxLatencySessionState::Capturing);
+
+    // Stopping with matching sessionId must succeed and freeze session
+    EXPECT_TRUE(runtime.StopTxLatencySession(sid));
+    EXPECT_EQ(session->State(), ASFW::Audio::Runtime::TxLatencySessionState::Frozen);
+
+    runtime.UnregisterTxLatencySession(session);
 }

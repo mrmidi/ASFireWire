@@ -296,13 +296,14 @@ kern_return_t DiagnosticsHandler::StartTxLatencySession(
     const uint32_t seed = (args->scalarInputCount > 3) ? static_cast<uint32_t>(args->scalarInput[3]) : 0;
     const uint32_t assumedDriftPpm = (args->scalarInputCount > 4) ? static_cast<uint32_t>(args->scalarInput[4]) : 100;
     const uint32_t action = (args->scalarInputCount > 5) ? static_cast<uint32_t>(args->scalarInput[5]) : 0; // 0=Start, 1=Stop
+    const uint32_t targetSessionId = (args->scalarInputCount > 6) ? static_cast<uint32_t>(args->scalarInput[6]) : 0;
 
     if (action == 1) {
         if (args->scalarOutput && args->scalarOutputCount >= 1) {
             args->scalarOutput[0] = 0;
             args->scalarOutputCount = 1;
         }
-        return runtime->StopTxLatencySession(endpointId) ? kIOReturnSuccess : kIOReturnNotReady;
+        return runtime->StopTxLatencySession(endpointId, targetSessionId) ? kIOReturnSuccess : kIOReturnNotReady;
     }
 
     uint32_t sessionId = 0;

@@ -75,7 +75,8 @@ final class TxLatencyViewModel: ObservableObject {
 
     func stopSession() {
         guard let endpoint = selectedEndpointID else { return }
-        _ = connector.stopTxLatencySession(endpointID: endpoint)
+        let sid = currentHeader?.sessionId ?? 0
+        _ = connector.stopTxLatencySession(endpointID: endpoint, sessionId: sid)
     }
 
     private func startPolling(endpoint: AudioEndpointID, sessionId: UInt32) {

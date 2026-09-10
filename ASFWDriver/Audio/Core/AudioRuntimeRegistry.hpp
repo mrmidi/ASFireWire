@@ -22,6 +22,10 @@ namespace ASFW::UserClient::Wire {
 struct TxLatencyResultsPageWire;
 }
 
+namespace ASFW::Scheduling {
+class ITimerScheduler;
+}
+
 namespace ASFW::Audio {
 
 class IDeviceProtocol;
@@ -78,6 +82,8 @@ public:
         std::array<Devices::AudioEndpointId,
                    kMaxAudioSemanticMatrixEndpoints>& out) noexcept;
 
+    void SetTimerScheduler(Scheduling::ITimerScheduler* scheduler) noexcept;
+
     [[nodiscard]] bool StartTxLatencySession(
         Devices::AudioEndpointId endpointId,
         uint32_t durationSeconds,
@@ -87,7 +93,8 @@ public:
         uint32_t* outSessionId = nullptr) noexcept;
 
     [[nodiscard]] bool StopTxLatencySession(
-        Devices::AudioEndpointId endpointId) noexcept;
+        Devices::AudioEndpointId endpointId,
+        uint32_t targetSessionId = 0) noexcept;
 
     [[nodiscard]] bool CopyTxLatencyResults(
         Devices::AudioEndpointId endpointId,
@@ -108,6 +115,7 @@ private:
 
     IOLock* lock_{nullptr};
     std::map<Devices::AudioEndpointId, Entry> endpoints_;
+    Scheduling::ITimerScheduler* timerScheduler_{nullptr};
 };
 
 } // namespace ASFW::Audio

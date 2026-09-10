@@ -48,7 +48,7 @@ protocol ASFWDriverControlling {
     func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth]
     func fetchAudioCursors() async -> [ASFWMCPAudioCursorSnapshot]
     func startTxLatencySession(endpointID: AudioEndpointID, durationSeconds: UInt32, strataSize: UInt32, seed: UInt32, assumedDriftPpm: UInt32) async -> (ok: Bool, sessionId: UInt32)
-    func stopTxLatencySession(endpointID: AudioEndpointID) async -> Bool
+    func stopTxLatencySession(endpointID: AudioEndpointID, sessionId: UInt32) async -> Bool
     func fetchTxLatencyReport(endpointID: AudioEndpointID, sessionId: UInt32) async -> TxLatencySessionReport?
     func fetchTxLatencyResultsPage(endpointID: AudioEndpointID, pageIndex: UInt32, samplesPerPage: UInt32, sessionId: UInt32) async -> TxLatencyResultsPage?
 }
@@ -735,7 +735,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         (true, 1)
     }
 
-    func stopTxLatencySession(endpointID: AudioEndpointID) async -> Bool {
+    func stopTxLatencySession(endpointID: AudioEndpointID, sessionId: UInt32 = 0) async -> Bool {
         true
     }
 
@@ -762,6 +762,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             transmitFailedCount: 0,
             substitutionCount: 0,
             invalidCount: 0,
+            sampleRateHz: 48000,
             eligibleByPhase: [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
             reasonStaleCorrelation: 0,
             reasonCoveragePending: 0,
@@ -773,7 +774,8 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             reasonImageUnavailable: 0,
             totalRingRecords: 100,
             ringHead: 100,
-            ringTail: 0
+            ringTail: 0,
+            geometryProvenance: (16 << 16) | 6
         )
         let sample = TxLatencySample(
             packetIndex: 100,
@@ -785,11 +787,14 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             waitMinNanos: 400_000,
             waitMaxNanos: 420_000,
             uncertaintyHostTicks: 120,
+            correlationAgeTicks: 100,
             outcome: .matched,
             unresolvedReason: .none,
             selectedImage: 1,
             arbitrationPhase: 2,
-            pcmIdentityProven: true
+            packetGeneration: 1,
+            pcmIdentityProven: true,
+            validityFlags: 0x1F
         )
         return TxLatencySessionReport(header: header, samples: [sample])
     }

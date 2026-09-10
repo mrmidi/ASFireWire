@@ -62,6 +62,9 @@ std::shared_ptr<AudioEndpointRuntime> AudioRuntimeRegistry::InsertResolved(
     Entry replacement{std::move(protocol), runtime, std::move(profile)};
     Entry previous{};
     IOLockLock(lock_);
+    if (timerScheduler_) {
+        runtime->SetTimerScheduler(timerScheduler_);
+    }
     if (auto it = endpoints_.find(replacement.profile->endpointId);
         it != endpoints_.end()) {
         previous = std::move(it->second);
@@ -177,6 +180,18 @@ uint32_t AudioRuntimeRegistry::CopySemanticMatrixEndpointIds(
     return count;
 }
 
+void AudioRuntimeRegistry::SetTimerScheduler(Scheduling::ITimerScheduler* scheduler) noexcept {
+    if (!lock_) return;
+    IOLockLock(lock_);
+    timerScheduler_ = scheduler;
+    for (auto& [id, entry] : endpoints_) {
+        if (entry.runtime) {
+            entry.runtime->SetTimerScheduler(scheduler);
+        }
+    }
+    IOLockUnlock(lock_);
+}
+
 bool AudioRuntimeRegistry::StartTxLatencySession(
     Devices::AudioEndpointId endpointId,
     uint32_t durationSeconds,
@@ -190,10 +205,11 @@ bool AudioRuntimeRegistry::StartTxLatencySession(
 }
 
 bool AudioRuntimeRegistry::StopTxLatencySession(
-    Devices::AudioEndpointId endpointId) noexcept {
+    Devices::AudioEndpointId endpointId,
+    uint32_t targetSessionId) noexcept {
     auto runtime = FindEndpointRuntime(endpointId);
     if (!runtime) return false;
-    return runtime->StopTxLatencySession();
+    return runtime->StopTxLatencySession(targetSessionId);
 }
 
 bool AudioRuntimeRegistry::CopyTxLatencyResults(

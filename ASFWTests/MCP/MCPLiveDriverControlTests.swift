@@ -664,7 +664,7 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
         (true, 1)
     }
 
-    func mcpStopTxLatencySession(endpointID: AudioEndpointID) -> Bool {
+    func mcpStopTxLatencySession(endpointID: AudioEndpointID, sessionId: UInt32 = 0) -> Bool {
         true
     }
 

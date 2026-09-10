@@ -536,7 +536,7 @@ Ordered by how badly each corrupts measurement. Items 1–3 from
    after this fix, and settling it needs reference or hardware evidence. The
    review fixture for writing that reproduction is now
    `IsochTxPayloadArbitrationTest`.
-4. **Measure the intervals the ledger marks nominal.** **Stage 1 (TX metering $E_0 \to E_2$) landed; RX capture dating ($F_4$) remains open.**
+4. **Measure the intervals the ledger marks nominal.** **Stage 1 (TX metering $E_0 \to E_2$) in tree (bench verification pending); RX capture dating ($F_4$) remains open.**
    Prior distribution additions (`9740d4b5`, `f5779a51`, `3a6cf466`, `f4a9bb84`)
    attempted to measure $I_1$ ($E_0 \to E_1$) and $I_2$ ($E_1 \to E_2$) using an
    intermediate "finality seal" ($E_1$), which was prone to stale sampling,
@@ -569,16 +569,16 @@ Ordered by how badly each corrupts measurement. Items 1–3 from
      allocations. A quiescent drain protocol (`writerActive` sequence) prevents
      races between the realtime audio observer and control plane reads.
    - **Diagnostics & Tooling:** UserClient selectors 1036/1037 wire pagination
-     (32 samples / 2256-byte pages), decoded in Swift (`DriverConnector+TxLatency`),
+     (32 samples / 2768-byte pages), decoded in Swift (`DriverConnector+TxLatency`),
      presented in the ASFW app (`TxLatencyView`) with range statistics and CSV
      export, and exposed via MCP tools (`asfw_start_tx_latency_session`,
      `asfw_stop_tx_latency_session`, `asfw_get_tx_latency_results`).
 
    | Evidence defect | Current status | Required repair |
    |---|---|---|
-   | $E_1$ seal record receives stale `refillCycleTimer` | **Resolved** | Bypassed: direct $E_0 \to E_2$ measurement renders intermediate $E_1$ unnecessary for TX latency bounds |
-   | $I_1$ / $I_2$ observer timestamp fallback | **Resolved** | Bypassed: strict classification rejects ungrounded samples without manufacturing endpoints |
-   | Latest-only seal race / torn reads | **Resolved** | Replaced by `PublicationRangeRing` + `IsochTxClockPairSample` atomic bracket |
+   | $E_1$ seal record receives stale `refillCycleTimer` | **Addressed in tree (bench pending)** | Bypassed: direct $E_0 \to E_2$ measurement renders intermediate $E_1$ unnecessary for TX latency bounds |
+   | $I_1$ / $I_2$ observer timestamp fallback | **Addressed in tree (bench pending)** | Bypassed: strict classification rejects ungrounded samples without manufacturing endpoints |
+   | Latest-only seal race / torn reads | **Addressed in tree (bench pending)** | Replaced by `PublicationRangeRing` + `IsochTxClockPairSample` atomic bracket |
    | $F_4$ sampled after processing, not at PCM publication | **Open** | Timestamp actual successful `PublishProducedEnd`; do not date logical progress without PCM as availability |
 5. **Make bench preflight and transport status trustworthy.** **Landed.**
 

@@ -11,8 +11,11 @@
 #include "../Shared/AudioGeometryResolver.hpp"
 #include "../Shared/AudioTimingGeometry.hpp"
 #include "../Runtime/TxLatencySession.hpp"
+#include "../../Scheduling/ITimerScheduler.hpp"
 #include "../../UserClient/WireFormats/TxLatencySessionWireFormats.hpp"
 #include "../../Logging/Logging.hpp"
+
+#include <vector>
 
 #include <DriverKit/IOLib.h>
 
@@ -439,20 +442,43 @@ public:
         }
     }
 
-    void UnregisterTxLatencySession(const std::shared_ptr<Runtime::TxLatencySession>& session) noexcept {
-        std::shared_ptr<Runtime::TxLatencySession> oldSession;
+    void SetTimerScheduler(Scheduling::ITimerScheduler* scheduler) noexcept {
         if (lock_) {
             IOLockLock(lock_);
+            timerScheduler_ = scheduler;
+            IOLockUnlock(lock_);
+        } else {
+            timerScheduler_ = scheduler;
+        }
+    }
+
+    void UnregisterTxLatencySession(const std::shared_ptr<Runtime::TxLatencySession>& session) noexcept {
+        std::shared_ptr<Runtime::TxLatencySession> oldSession;
+        Scheduling::TimerToken timerToCancel = Scheduling::kInvalidTimerToken;
+        Scheduling::ITimerScheduler* scheduler = nullptr;
+        if (lock_) {
+            IOLockLock(lock_);
+            scheduler = timerScheduler_;
+            if (activeDeadlineTimerToken_ != Scheduling::kInvalidTimerToken) {
+                timerToCancel = activeDeadlineTimerToken_;
+                activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
+            }
             if (!session || txLatencySession_ == session) {
                 oldSession = std::move(txLatencySession_);
                 txLatencySession_.reset();
             }
             IOLockUnlock(lock_);
         } else {
+            scheduler = timerScheduler_;
+            timerToCancel = activeDeadlineTimerToken_;
+            activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
             if (!session || txLatencySession_ == session) {
                 oldSession = std::move(txLatencySession_);
                 txLatencySession_.reset();
             }
+        }
+        if (scheduler && timerToCancel != Scheduling::kInvalidTimerToken) {
+            scheduler->Cancel(timerToCancel);
         }
         if (oldSession) {
             oldSession->RequestStop(Runtime::TxLatencyTerminationReason::DriverTeardown);
@@ -466,11 +492,35 @@ public:
                                              uint32_t assumedDriftPpm,
                                              uint32_t* outSessionId = nullptr) noexcept {
         std::shared_ptr<Runtime::TxLatencySession> session;
+        Scheduling::TimerToken oldTimer = Scheduling::kInvalidTimerToken;
+        Scheduling::ITimerScheduler* scheduler = nullptr;
         uint64_t epoch = 0;
         uint32_t rate = currentSampleRateHz_;
         if (lock_) {
             IOLockLock(lock_);
             session = txLatencySession_;
+            scheduler = timerScheduler_;
+            if (activeDeadlineTimerToken_ != Scheduling::kInvalidTimerToken) {
+                oldTimer = activeDeadlineTimerToken_;
+                activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
+            }
+            if (session) {
+                if (auto completed = session->GetCompletedResult()) {
+                    bool found = false;
+                    for (const auto& r : retainedTxLatencyResults_) {
+                        if (r && r->header.sessionId == completed->header.sessionId) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        if (retainedTxLatencyResults_.size() >= 4) {
+                            retainedTxLatencyResults_.erase(retainedTxLatencyResults_.begin());
+                        }
+                        retainedTxLatencyResults_.push_back(std::move(completed));
+                    }
+                }
+            }
             if (directControl_) {
                 epoch = directControl_->hardwareTimeline.Epoch();
             }
@@ -480,7 +530,32 @@ public:
             IOLockUnlock(lock_);
         } else {
             session = txLatencySession_;
+            scheduler = timerScheduler_;
+            oldTimer = activeDeadlineTimerToken_;
+            activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
+            if (session) {
+                if (auto completed = session->GetCompletedResult()) {
+                    bool found = false;
+                    for (const auto& r : retainedTxLatencyResults_) {
+                        if (r && r->header.sessionId == completed->header.sessionId) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        if (retainedTxLatencyResults_.size() >= 4) {
+                            retainedTxLatencyResults_.erase(retainedTxLatencyResults_.begin());
+                        }
+                        retainedTxLatencyResults_.push_back(std::move(completed));
+                    }
+                }
+            }
         }
+
+        if (scheduler && oldTimer != Scheduling::kInvalidTimerToken) {
+            scheduler->Cancel(oldTimer);
+        }
+
         if (!session) return false;
 
         uint32_t sid = nextSessionId_.fetch_add(1, std::memory_order_relaxed);
@@ -491,22 +566,102 @@ public:
             *outSessionId = sid;
         }
 
-        return session->Arm(sid, epoch, rate, durationSeconds,
-                            Runtime::kTxLatencyMaxSamples, seed, strataSize, assumedDriftPpm);
+        const bool armed = session->Arm(sid, epoch, rate, durationSeconds,
+                                        Runtime::kTxLatencyMaxSamples, seed, strataSize, assumedDriftPpm);
+        if (armed && scheduler) {
+            const uint64_t durationNs = static_cast<uint64_t>(durationSeconds) * 1'000'000'000ULL;
+            const uint64_t delayNs = durationNs + 50'000'000ULL;
+            std::weak_ptr<Runtime::TxLatencySession> weakSession = session;
+            const uint32_t currentSid = sid;
+            const uint32_t currentGen = session->SessionGeneration();
+
+            auto token = scheduler->ScheduleAfter(
+                delayNs,
+                [weakSession, currentSid, currentGen]() {
+                    if (auto s = weakSession.lock()) {
+                        if (s->SessionId() == currentSid && s->SessionGeneration() == currentGen) {
+                            s->RequestStop(Runtime::TxLatencyTerminationReason::DeadlineExpired, currentGen);
+                            s->PollQuiescence();
+                        }
+                    }
+                });
+
+            if (lock_) {
+                IOLockLock(lock_);
+                activeDeadlineTimerToken_ = token;
+                IOLockUnlock(lock_);
+            } else {
+                activeDeadlineTimerToken_ = token;
+            }
+        }
+        return armed;
     }
 
-    [[nodiscard]] bool StopTxLatencySession() noexcept {
+    [[nodiscard]] bool StopTxLatencySession(uint32_t targetSessionId = 0) noexcept {
         std::shared_ptr<Runtime::TxLatencySession> session;
+        Scheduling::TimerToken timerToCancel = Scheduling::kInvalidTimerToken;
+        Scheduling::ITimerScheduler* scheduler = nullptr;
         if (lock_) {
             IOLockLock(lock_);
             session = txLatencySession_;
+            scheduler = timerScheduler_;
+            if (activeDeadlineTimerToken_ != Scheduling::kInvalidTimerToken) {
+                timerToCancel = activeDeadlineTimerToken_;
+                activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
+            }
             IOLockUnlock(lock_);
         } else {
             session = txLatencySession_;
+            scheduler = timerScheduler_;
+            timerToCancel = activeDeadlineTimerToken_;
+            activeDeadlineTimerToken_ = Scheduling::kInvalidTimerToken;
         }
+
+        if (scheduler && timerToCancel != Scheduling::kInvalidTimerToken) {
+            scheduler->Cancel(timerToCancel);
+        }
+
         if (!session) return false;
+        if (targetSessionId != 0 && session->SessionId() != targetSessionId) {
+            return false;
+        }
+
         session->RequestStop(Runtime::TxLatencyTerminationReason::UserStopped);
         session->PollQuiescence();
+
+        if (auto completed = session->GetCompletedResult()) {
+            if (lock_) {
+                IOLockLock(lock_);
+                bool found = false;
+                for (const auto& r : retainedTxLatencyResults_) {
+                    if (r && r->header.sessionId == completed->header.sessionId) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    if (retainedTxLatencyResults_.size() >= 4) {
+                        retainedTxLatencyResults_.erase(retainedTxLatencyResults_.begin());
+                    }
+                    retainedTxLatencyResults_.push_back(std::move(completed));
+                }
+                IOLockUnlock(lock_);
+            } else {
+                bool found = false;
+                for (const auto& r : retainedTxLatencyResults_) {
+                    if (r && r->header.sessionId == completed->header.sessionId) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    if (retainedTxLatencyResults_.size() >= 4) {
+                        retainedTxLatencyResults_.erase(retainedTxLatencyResults_.begin());
+                    }
+                    retainedTxLatencyResults_.push_back(std::move(completed));
+                }
+            }
+        }
         return true;
     }
 
@@ -515,14 +670,37 @@ public:
         uint32_t samplesPerPage,
         uint32_t requestedSessionId,
         UserClient::Wire::TxLatencyResultsPageWire& out) const noexcept {
+        std::shared_ptr<const Runtime::TxLatencySessionResult> retainedMatch;
         std::shared_ptr<Runtime::TxLatencySession> session;
+
         if (lock_) {
             IOLockLock(lock_);
+            if (requestedSessionId != 0) {
+                for (const auto& r : retainedTxLatencyResults_) {
+                    if (r && r->header.sessionId == requestedSessionId) {
+                        retainedMatch = r;
+                        break;
+                    }
+                }
+            }
             session = txLatencySession_;
             IOLockUnlock(lock_);
         } else {
+            if (requestedSessionId != 0) {
+                for (const auto& r : retainedTxLatencyResults_) {
+                    if (r && r->header.sessionId == requestedSessionId) {
+                        retainedMatch = r;
+                        break;
+                    }
+                }
+            }
             session = txLatencySession_;
         }
+
+        if (retainedMatch) {
+            return retainedMatch->CopyWirePage(pageIndex, samplesPerPage, requestedSessionId, endpointId_.value, out);
+        }
+
         if (!session) return false;
         return session->CopyWirePage(pageIndex, samplesPerPage, requestedSessionId, endpointId_.value, out);
     }
@@ -931,6 +1109,9 @@ private:
     Runtime::AudioTransportControlBlock* directControl_{nullptr};
     uint32_t directSampleRateHz_{0};
     std::shared_ptr<Runtime::TxLatencySession> txLatencySession_{nullptr};
+    std::vector<std::shared_ptr<const Runtime::TxLatencySessionResult>> retainedTxLatencyResults_{};
+    Scheduling::ITimerScheduler* timerScheduler_{nullptr};
+    Scheduling::TimerToken activeDeadlineTimerToken_{Scheduling::kInvalidTimerToken};
     mutable std::atomic<uint32_t> nextSessionId_{1};
 };
 
