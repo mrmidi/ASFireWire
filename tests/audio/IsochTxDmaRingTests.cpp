@@ -2110,65 +2110,56 @@ TEST_F(IsochTxPayloadArbitrationTest, FailedDetachedBatchNeverOpensTheLiveTail) 
     EXPECT_EQ(primeControl_.mappedEnd.load(), Layout::kNumPackets);
 }
 
-// --- The servicing window has zero slack --------------------------------
+// --- The offer window and the service window do not overlap -------------
 //
 // Measured on hardware 2026-09-10: 1316 substituted packets all acquired a
 // slot, encoded image 1 and WON the offer CAS, yet the wire carried the armed
-// image. Median offer -> first examination was 512 us against a 1.0 ms
-// completion-group cadence -- the signature of an offer that waits for the
-// next interrupt because nothing wakes transport when one is published.
+// image. Median offer -> first examination 512 us against a 1.0 ms completion
+// group -- the signature of an offer waiting for the next interrupt.
 //
-// These two tests isolate why waiting is fatal rather than merely late. The
-// offer window and the service window abut exactly:
+// The cause is that two constants are coupled through the service cadence and
+// were set as if they were independent:
 //
-//   a packet is sealed by the pass that reaches its finality frontier, so the
-//   lowest index whose CAS can still win is H + kPayloadFinalityLeadPackets;
+//   kPayloadFinalityLeadPackets = 3   the producer may still offer at hw+3
+//   guard + one completion group = 10 transport can only act on a packet at
+//                                     or above hw+10 when the next pass runs
 //
-//   the next pass will only rebind at or above liveHw + kPayloadRepointGuard,
-//   which for a punctual one-group advance is exactly that same index.
+// so every offer for a packet in [hw+3, hw+10) -- seven of every eight -- is
+// accepted and then discarded. 2026-09-08 (c3e27a53) lowered the lead from 10
+// to 3 to stop 32-sample buffers starving, reasoning that "the interrupt
+// frequency governs only descriptor ring recycling, not content finality".
+// That holds only if something services offers between interrupts. Nothing
+// does: DoRefillOnce has exactly two callers, the IT completion interrupt and
+// a watchdog path gated on interrupt silence, and PublishLatePayload schedules
+// nothing. So the cadence does govern finality, and lowering the lead widened
+// the band rather than closing it.
 //
-// So the earliest offerable packet is serviceable only if the very next pass
-// is perfectly punctual. One packet of slip -- 125 us -- and it is skipped by
-// the bind loop and sealed with no offer-visible examination at all, which is
-// what the capture reports for every phase-7 substitution.
+// These tests pin the band. Fixing this means making the premise true -- wake
+// transport when an offer is published -- not moving the constant again.
 TEST_F(IsochTxPayloadArbitrationTest,
-       OfferAtTheFrontierIsLostEvenWhenTheNextPassIsPunctual) {
+       OfferInsideTheServiceGapIsAcceptedThenDiscarded) {
+    using Geometry = ASFW::Shared::Isoch::IsochQueueGeometry;
     auto metadataRing = MakeMetadataRing();
     PrimeRebindable(metadataRing);
     PointAt(0);
     ASSERT_TRUE(Refill(metadataRing).ok);
 
-    // The lowest index the producer can still win: everything below it was
-    // sealed by the pass above.
+    // The lowest index the producer is still allowed to offer for.
     constexpr uint32_t kOffered = kSeal;
+    static_assert(kSeal == Geometry::kPayloadFinalityLeadPackets);
     ASSERT_TRUE(OfferLateImage(metadataRing, kOffered))
-        << "offer must win the CAS, as it did for all 1316 measured packets";
+        << "the producer is told this packet is still open -- and it is";
 
-    // One completion group of hardware advance: the next interrupt, on time.
-    PointAt(ASFW::Shared::Isoch::IsochQueueGeometry::kPacketsPerCompletionGroup);
+    // The next interrupt, exactly on time.
+    PointAt(Geometry::kPacketsPerCompletionGroup);
     const auto outcome = Refill(metadataRing);
     ASSERT_TRUE(outcome.ok);
 
-    // MEASURED, not predicted. A punctual pass does not merely arrive with no
-    // margin -- it never examines the packet for binding at all:
-    //
-    //   rebinds              = 0   never bound
-    //   rebindRejected       = 0   not a shape rejection
-    //   rebindMissedDeadline = 0   not a live-guard rejection
-    //   lostPublications     = 1   sealed while an offer stood
-    //
-    // All four together are the phase-7 signature from the 2026-09-10 capture:
-    // offer won, no offer-visible binding examination recorded, sealed after.
-    // So the servicing window for the earliest offerable packet is not zero-
-    // slack, it is negative: one completion group of advance is already too
-    // late, and no amount of punctuality recovers it.
-    //
-    // OPEN: which early return in TryBindLatePayload skips it. All three
-    // rejection counters are zero, so it leaves through one of the silent
-    // paths (identity/generation, offer-not-visible, or hardware position
-    // unavailable) rather than through a counted rejection. Determining which
-    // is the next step, and it decides whether the fix is a producer wake, a
-    // wider frontier-to-guard margin, or both.
+    // By now the packet is below liveHw + guard, so the bind sweep starts past
+    // it and the seal loop's re-bind attempt is skipped too. It is never
+    // examined for binding at all -- all three rejection counters stay zero,
+    // which is exactly the capture's phase-7 signature: offer won, no
+    // offer-visible binding examination, sealed afterwards.
     EXPECT_EQ(metadataRing[kOffered].selectedPayloadImage, 0U);
     EXPECT_EQ(outcome.latePayloadRebinds, 0U);
     EXPECT_EQ(outcome.latePayloadRebindRejected, 0U);
@@ -2176,26 +2167,28 @@ TEST_F(IsochTxPayloadArbitrationTest,
     EXPECT_EQ(outcome.latePayloadLostPublications, 1U);
 }
 
+// The other edge of the same band: a packet far enough ahead that the next
+// pass can still reach it binds normally. Nothing is wrong with the binding
+// path -- only with which packets the producer is invited to offer for.
 TEST_F(IsochTxPayloadArbitrationTest,
-       OfferAtTheFrontierIsLostWhenTheNextPassSlipsOnePacket) {
+       OfferAtOrAboveGuardPlusCadenceIsStillBound) {
+    using Geometry = ASFW::Shared::Isoch::IsochQueueGeometry;
     auto metadataRing = MakeMetadataRing();
     PrimeRebindable(metadataRing);
     PointAt(0);
     ASSERT_TRUE(Refill(metadataRing).ok);
 
-    constexpr uint32_t kOffered = kSeal;
-    ASSERT_TRUE(OfferLateImage(metadataRing, kOffered));
+    // The first index outside the gap: guard + one completion group.
+    constexpr uint32_t kServiceable =
+        Geometry::kPayloadRepointGuardPackets +
+        Geometry::kPacketsPerCompletionGroup;
+    ASSERT_TRUE(OfferLateImage(metadataRing, kServiceable));
 
-    // 125 us later than the test above. Nothing else differs.
-    PointAt(ASFW::Shared::Isoch::IsochQueueGeometry::kPacketsPerCompletionGroup + 1);
+    PointAt(Geometry::kPacketsPerCompletionGroup);
     const auto outcome = Refill(metadataRing);
     ASSERT_TRUE(outcome.ok);
 
-    // The armed image transmits and the producer's content is discarded --
-    // and because the packet fell below firstRepointable it is never examined
-    // for binding at all, so the only trace is the seal. That is precisely the
-    // phase-7 signature: offer won, no binding examination, sealed after.
-    EXPECT_EQ(metadataRing[kOffered].selectedPayloadImage, 0U)
-        << "one packet of slip loses content that was ready and accepted";
-    EXPECT_EQ(outcome.latePayloadLostPublications, 1U);
+    EXPECT_EQ(metadataRing[kServiceable].selectedPayloadImage, 1U)
+        << "content offered above the gap reaches the wire";
+    EXPECT_EQ(outcome.latePayloadLostPublications, 0U);
 }
