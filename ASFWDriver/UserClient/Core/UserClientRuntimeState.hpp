@@ -41,6 +41,7 @@ class UserClientRuntimeState final {
         if (driver == nullptr) {
             return false;
         }
+        driver_ = driver;
 
         busResetHandler_ = std::make_unique<BusResetHandler>(driver);
         topologyHandler_ = std::make_unique<TopologyHandler>(driver);
@@ -76,13 +77,25 @@ class UserClientRuntimeState final {
         topologyHandler_.reset();
         busResetHandler_.reset();
         diagnosticsHandler_.reset();
+        driver_ = nullptr;
     }
 
     void ReleaseOwner(void* owner) noexcept {
         if (isochHandler_ != nullptr) {
             isochHandler_->ReleaseOwner();
         }
-        if (owner != nullptr && sbp2Handler_ != nullptr) {
+        // SBP2Handler snapshots raw AddressSpaceManager/SessionRegistry pointers at bind
+        // time -- unlike its sibling handlers, which re-resolve through
+        // GetControllerCorePtr() on every call. ServiceContext::Reset() destroys those
+        // objects during quiesce, and quiesce runs on the driver's work queue, so it can
+        // complete while this user client is still stopping on ASFWDriverUserClient-Default.
+        // Releasing sessions then walks a freed std::map: a zeroed __begin_node_ makes
+        // begin() null while end() still points inside the object, so the very first
+        // iteration dereferences null at SessionRecord::owner (node+0x30). This is the
+        // FW-60 cross-queue teardown class. Reset() drops `controller` alongside the
+        // registry, so a live core is the validity signal for both raw pointers.
+        if (owner != nullptr && sbp2Handler_ != nullptr &&
+            GetControllerCorePtr(driver_) != nullptr) {
             sbp2Handler_->ReleaseOwner(owner);
         }
     }
@@ -111,6 +124,9 @@ class UserClientRuntimeState final {
     [[nodiscard]] DiagnosticsHandler& Diagnostics() noexcept { return *diagnosticsHandler_; }
 
   private:
+    /// Provider that owns every handler's driver-side state. Non-owning: IOKit keeps the
+    /// provider alive across its clients' Stop, and BindDriver/ResetHandlers bracket it.
+    ASFWDriver* driver_{nullptr};
     TransactionStorage transactionStorage_{};
     std::unique_ptr<BusResetHandler> busResetHandler_{};
     std::unique_ptr<TopologyHandler> topologyHandler_{};
