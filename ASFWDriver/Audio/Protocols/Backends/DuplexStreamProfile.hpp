@@ -10,6 +10,7 @@
 #include "../../../Discovery/DiscoveryTypes.hpp"
 #include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
+#include "../../Wire/MOTU/MotuPortLayout.hpp"
 #include "../AudioTypes.hpp"
 #include "../IDeviceProtocol.hpp"
 
@@ -86,6 +87,9 @@ struct DuplexStreamProfile {
     // and the receive path needs this instead. Zero for every other family.
     uint32_t captureMotuPcmChunks{0};
     uint32_t playbackMotuPcmChunks{0};
+    // MOTU only: which chunk each host input channel reads. The playback map rides the
+    // audio driver's TxStreamPolicy instead, since that side encodes playback.
+    Encoding::Motu::MotuPortMap captureMotuPorts{};
     DuplexStartOrderRecipe startOrder{};
     DuplexStopOrderRecipe stopOrder{};
 };
@@ -329,6 +333,8 @@ class DuplexStreamProfileResolver final {
             profile.playbackMotuPcmChunks = caps.hostToDevicePcmChunks != 0
                                                 ? caps.hostToDevicePcmChunks
                                                 : caps.hostOutputPcmChannels;
+            profile.captureMotuPorts =
+                Encoding::Motu::CapturePortsForSwVersion(record.unitSwVersion.value_or(0U));
         }
 
         if (IsSPro24Dsp(record) && caps.hostInputPcmChannels == 8 &&

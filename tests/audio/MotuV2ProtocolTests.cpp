@@ -17,6 +17,7 @@
 
 #include <map>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace {
@@ -810,3 +811,36 @@ TEST(MotuV2DuplexTests, The828mk2SkipsTheFetchingModeWrite) {
 }
 
 } // namespace
+
+//==============================================================================
+// Channel labels
+//==============================================================================
+
+TEST(MotuV2ProtocolChannelLabelTests, UltraLiteNamesFollowHostChannelOrder) {
+    RecordingBus bus;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, kUltraliteSwVersion);
+
+    std::vector<std::string> inNames;
+    std::vector<std::string> outNames;
+    ASSERT_TRUE(protocol.GetChannelLabels(inNames, outNames));
+    ASSERT_EQ(inNames.size(), 14U);
+    ASSERT_EQ(outNames.size(), 14U);
+    EXPECT_EQ(inNames[0], "Mic 1");
+    EXPECT_EQ(inNames[1], "Mic 2");
+    EXPECT_EQ(outNames[0], "Main L");
+    EXPECT_EQ(outNames[1], "Main R");
+    EXPECT_EQ(outNames[12], "Phones L");
+    // Labels are static, so no register traffic is needed to answer.
+    EXPECT_TRUE(bus.reads.empty());
+}
+
+TEST(MotuV2ProtocolChannelLabelTests, UnmappedModelsReportNoLabels) {
+    RecordingBus bus;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, /*896HD*/ 0x000005U);
+
+    std::vector<std::string> inNames;
+    std::vector<std::string> outNames;
+    EXPECT_FALSE(protocol.GetChannelLabels(inNames, outNames));
+}

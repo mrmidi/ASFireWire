@@ -8,6 +8,7 @@
 #include "../../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "../../../../DeviceProfiles/Audio/Vendors/MotuAudioProfiles.hpp"
 #include "../../../Wire/MOTU/MotuBlockLayout.hpp"
+#include "../../../Wire/MOTU/MotuPortLayout.hpp"
 
 namespace ASFW::Isoch::Audio::MOTU::Profiles {
 
@@ -78,6 +79,8 @@ AudioStreamTxPolicy MotuV2Profile::TxStreamPolicy() const noexcept {
     // slots -- its message chunks are plain bytes -- so nothing should be pre-filled.
     policy.initializeNonAudioSlots = false;
     policy.defaultNonAudioSlotWord = 0;
+    // Wire order puts the headphone pair first; the map moves Main to host channels 1-2.
+    policy.motuPlaybackPorts = ::ASFW::Encoding::Motu::PlaybackPortsForSwVersion(unitSwVersion_);
     return policy;
 }
 

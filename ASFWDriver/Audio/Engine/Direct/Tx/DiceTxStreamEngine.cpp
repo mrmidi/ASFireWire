@@ -61,7 +61,8 @@ bool DiceTxStreamEngine::Configure(const ASFW::Isoch::Audio::IAudioStreamProfile
         motuPayloadWriter_.Configure(
             ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
                 .pcmChunks = motuPcmChunks_,
-                .sourceChannelOffset = packetizer_.StreamConfig().sourceChannelOffset});
+                .sourceChannelOffset = packetizer_.StreamConfig().sourceChannelOffset,
+                .ports = txPolicy.motuPlaybackPorts});
         motuPayloadWriter_.BindTimeline(&timeline_);
     }
 

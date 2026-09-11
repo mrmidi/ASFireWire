@@ -203,9 +203,11 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         uint8_t channel, HardwareInterface&,
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0, uint32_t streamChannels = 0, uint32_t motuPcmChunks = 0) noexcept override {
-        (void)motuPcmChunks;
+        uint32_t am824Slots = 0, uint32_t streamChannels = 0, uint32_t motuPcmChunks = 0,
+        ASFW::Encoding::Motu::MotuPortMap motuPorts = {}) noexcept override {
         log_.Add("host.prepare_receive");
+        lastReceiveMotuPcmChunks = motuPcmChunks;
+        lastReceiveMotuPorts = motuPorts;
         lastReceiveChannel = channel;
         lastReceiveBindingSource = bindingSource;
         lastReceiveWireFormat = wireFormat;
@@ -229,7 +231,9 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
         uint32_t streamChannels,
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0, uint32_t motuPcmChunks = 0) noexcept override {
+        uint32_t am824Slots = 0, uint32_t motuPcmChunks = 0,
+        ASFW::Encoding::Motu::MotuPortMap motuPorts = {}) noexcept override {
+        (void)motuPorts;
         log_.Add("host.prepare_receive_stream");
         lastSecondaryReceiveMotuPcmChunks = motuPcmChunks;
         lastSecondaryReceiveIndex = streamIndex;
@@ -306,6 +310,8 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     ASFW::Encoding::AudioWireFormat lastReceiveWireFormat{ASFW::Encoding::AudioWireFormat::kAM824};
     uint32_t lastReceiveAm824Slots{0};
     uint32_t lastReceiveStreamChannels{0};
+    uint32_t lastReceiveMotuPcmChunks{0};
+    ASFW::Encoding::Motu::MotuPortMap lastReceiveMotuPorts{};
     uint8_t lastTransmitChannel{0};
     uint8_t lastTransmitSourceId{0};
     uint32_t lastTransmitMode{0};

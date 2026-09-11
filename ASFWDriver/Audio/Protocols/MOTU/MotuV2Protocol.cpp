@@ -13,6 +13,7 @@
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "../../../DeviceProfiles/Audio/Vendors/MotuAudioProfiles.hpp"
 #include "../../../Logging/Logging.hpp"
+#include "../../Wire/MOTU/MotuPortLayout.hpp"
 
 namespace ASFW::Audio::Motu {
 
@@ -250,6 +251,26 @@ bool MotuV2Protocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) 
         outCaps.deviceToHostPcmChunks = outCaps.hostInputPcmChannels;
         outCaps.hostToDevicePcmChunks = outCaps.hostOutputPcmChannels;
         outCaps.sampleRateHz = cachedRate != 0 ? cachedRate : 48000U;
+    }
+    return true;
+}
+
+bool MotuV2Protocol::GetChannelLabels(std::vector<std::string>& inNames,
+                                      std::vector<std::string>& outNames) const {
+    const Encoding::Motu::MotuPortMap capture =
+        Encoding::Motu::CapturePortsForSwVersion(unitSwVersion_);
+    const Encoding::Motu::MotuPortMap playback =
+        Encoding::Motu::PlaybackPortsForSwVersion(unitSwVersion_);
+    if (capture.empty() && playback.empty()) {
+        return false;
+    }
+    inNames.clear();
+    outNames.clear();
+    for (const Encoding::Motu::MotuPort& port : capture) {
+        inNames.emplace_back(port.name);
+    }
+    for (const Encoding::Motu::MotuPort& port : playback) {
+        outNames.emplace_back(port.name);
     }
     return true;
 }

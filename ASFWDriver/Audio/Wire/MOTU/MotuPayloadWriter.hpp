@@ -27,6 +27,7 @@
 
 #include "MotuBlockCodec.hpp"
 #include "MotuBlockLayout.hpp"
+#include "MotuPortLayout.hpp"
 #include "../AMDTP/AmdtpPacketTimeline.hpp"
 #include "../AMDTP/AmdtpTypes.hpp"
 
@@ -56,6 +57,8 @@ struct MotuPayloadStreamConfig final {
     /// First host buffer channel this stream encodes, mirroring
     /// AmdtpStreamConfig::sourceChannelOffset.
     uint32_t sourceChannelOffset{0};
+    /// Chunk behind each host channel; empty encodes in wire order.
+    MotuPortMap ports{};
 };
 
 class MotuPayloadWriter final {

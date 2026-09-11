@@ -3,6 +3,7 @@
 #include "../DirectInputWriter.hpp"
 #include "DirectRxTypes.hpp"
 #include "../../../Wire/AMDTP/AmdtpTypes.hpp"
+#include "../../../Wire/MOTU/MotuPortLayout.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -45,7 +46,8 @@ public:
                                                              // block. Ignored by the
                                                              // quadlet-slot formats, whose
                                                              // unit count is am824Slots.
-                                                             uint32_t motuPcmChunks = 0) noexcept;
+                                                             uint32_t motuPcmChunks = 0,
+                                                             ::ASFW::Encoding::Motu::MotuPortMap motuPorts = {}) noexcept;
 
 private:
     DirectInputWriter& writer_;

@@ -23,6 +23,8 @@ using ASFW::Encoding::Motu::DataBlocksInPayload;
 using ASFW::Encoding::Motu::DecodeMotuBlock;
 using ASFW::Encoding::Motu::kBytesPerChunk;
 using ASFW::Encoding::Motu::kPcmByteOffset;
+using ASFW::Encoding::Motu::kUltraLiteCapture;
+using ASFW::Encoding::Motu::DataBlockBytes;
 using ASFW::Encoding::Motu::Signed24ToFloat32;
 using ASFW::Encoding::Motu::WritePcmSample;
 using ASFW::Protocols::Audio::AMDTP::PcmSlotCodec;
@@ -55,6 +57,25 @@ TEST(MotuPayloadReaderTests, DecodesChunksFromTheMotuOffsets) {
 
     EXPECT_NEAR(out[0], 1.0f, 1e-6f);
     EXPECT_NEAR(out[1], -1.0f, 1e-6f);
+}
+
+TEST(MotuPayloadReaderTests, PortMapReadsEachHostChannelFromItsPhysicalPort) {
+    // UltraLite capture: host input 1-2 must be the mic chunks (2-3), not the CueMix
+    // return that wire order puts first.
+    constexpr uint32_t chunks = 14;
+    std::vector<float> wire(chunks);
+    for (uint32_t c = 0; c < chunks; ++c) {
+        wire[c] = static_cast<float>(c + 1) / 32.0f;
+    }
+    const auto block = MakeBlock(wire, DataBlockBytes(chunks));
+    std::array<float, chunks> out{};
+    DecodeMotuBlock(block, chunks, 0, out.data(), chunks, kUltraLiteCapture);
+
+    for (uint32_t ch = 0; ch < chunks; ++ch) {
+        EXPECT_NEAR(out[ch], wire[kUltraLiteCapture[ch].chunk], 1e-6f)
+            << kUltraLiteCapture[ch].name;
+    }
+    EXPECT_NEAR(out[0], wire[2], 1e-6f); // Mic 1
 }
 
 TEST(MotuPayloadReaderTests, RoundTripsThroughTheWriterScale) {

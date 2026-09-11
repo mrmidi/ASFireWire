@@ -64,6 +64,12 @@ public:
     /// ordering matters.
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
 
+    /// Port names in host channel order (MotuPortLayout.hpp). They come from the model's
+    /// static table, so unlike DICE they are available before PrepareDuplex. Optical
+    /// extras past the table are left unnamed for the caller to synthesize.
+    bool GetChannelLabels(std::vector<std::string>& inNames,
+                          std::vector<std::string>& outNames) const override;
+
     //==========================================================================
     // Duplex bring-up (IDeviceProtocol hooks).
     //

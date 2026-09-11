@@ -20,6 +20,8 @@ namespace {
 
 using ASFW::Encoding::Motu::kBytesPerChunk;
 using ASFW::Encoding::Motu::kPcmByteOffset;
+using ASFW::Encoding::Motu::kV2Playback;
+using ASFW::Encoding::Motu::DataBlockQuadlets;
 using ASFW::Encoding::Motu::MotuPayloadStreamConfig;
 using ASFW::Encoding::Motu::MotuPayloadWriter;
 using ASFW::Protocols::Audio::AMDTP::AmdtpPacketTimeline;
@@ -108,6 +110,40 @@ TEST(MotuPayloadWriterTests, PlacesPcmAtTheMotuChunkOffsets) {
     EXPECT_EQ(ReadChunk(h.Block(1), 0),
               static_cast<int32_t>(static_cast<uint32_t>(PcmSlotCodec::Float32ToSigned24(0.5f))
                                    << 8));
+}
+
+TEST(MotuPayloadWriterTests, PortMapSendsEachHostChannelToItsPhysicalPort) {
+    // Full 14-chunk v2 playback: host channels 1-2 must land on the Main chunks (10-11),
+    // not the headphone pair that wire order puts first.
+    constexpr uint32_t chunks = 14;
+    constexpr uint32_t dbs = DataBlockQuadlets(chunks);
+    TimelineHarness h{1, 0, dbs};
+    MotuPayloadWriter writer{};
+    writer.Configure(MotuPayloadStreamConfig{.pcmChunks = chunks,
+                                             .sourceChannelOffset = 0,
+                                             .ports = kV2Playback});
+    writer.BindTimeline(&h.timeline);
+
+    std::array<float, chunks> samples{};
+    for (uint32_t ch = 0; ch < chunks; ++ch) {
+        samples[ch] = static_cast<float>(ch + 1) / 32.0f;
+    }
+    HostAudioBufferView view{};
+    view.interleavedFloat32 = samples.data();
+    view.frameCount = 1;
+    view.frameCapacity = 1;
+    view.channels = chunks;
+
+    writer.WriteFloat32Interleaved(view, 0);
+
+    const uint8_t* block = h.bytes.data() + kCipHeaderBytes;
+    for (uint32_t ch = 0; ch < chunks; ++ch) {
+        const int32_t expected = static_cast<int32_t>(
+            static_cast<uint32_t>(PcmSlotCodec::Float32ToSigned24(samples[ch])) << 8);
+        EXPECT_EQ(ReadChunk(block, kV2Playback[ch].chunk), expected) << kV2Playback[ch].name;
+    }
+    EXPECT_EQ(ReadChunk(block, 10), static_cast<int32_t>(static_cast<uint32_t>(
+                                        PcmSlotCodec::Float32ToSigned24(samples[0])) << 8));
 }
 
 TEST(MotuPayloadWriterTests, LeavesTheSphQuadletAndMessageChunksUntouched) {

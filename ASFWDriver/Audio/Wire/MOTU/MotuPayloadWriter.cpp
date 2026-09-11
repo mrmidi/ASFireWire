@@ -57,6 +57,7 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     uint64_t outsidePacket = 0;
     uint64_t truncated = 0;
     uint64_t nonZeroFrames = 0;
+    const MotuPortMap ports = EffectivePortMap(streamConfig_.ports, streamConfig_.pcmChunks);
 
     for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
         const uint64_t absoluteFrame = hostBuffer.firstFrame + i;
@@ -102,8 +103,11 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
 
         const uint32_t srcOffset = streamConfig_.sourceChannelOffset;
         bool frameNonZero = false;
-        for (uint32_t chunk = 0; chunk < streamConfig_.pcmChunks; ++chunk) {
-            const uint32_t srcCh = srcOffset + chunk;
+        // Walk host channels rather than chunks: the port map is a permutation of the
+        // chunk range, so every chunk is still written exactly once.
+        for (uint32_t hostCh = 0; hostCh < streamConfig_.pcmChunks; ++hostCh) {
+            const uint32_t chunk = ChunkForHostChannel(ports, hostCh);
+            const uint32_t srcCh = srcOffset + hostCh;
             // Chunks beyond the host buffer encode PCM zero -- MOTU's fixed chunk count
             // always covers every physical port, including ones CoreAudio is not
             // driving, and those must carry silence rather than stale bytes.

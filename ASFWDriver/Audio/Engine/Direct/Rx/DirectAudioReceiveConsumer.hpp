@@ -34,6 +34,8 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         /// MOTU only: PCM chunks this direction carries per data block. The
         /// quadlet-slot families leave this zero and use am824Slots.
         uint32_t motuPcmChunks{0};
+        /// MOTU only: chunk behind each host input channel; empty decodes in wire order.
+        ::ASFW::Encoding::Motu::MotuPortMap motuPorts{};
     };
 
     using TimingLossCallback = std::function<void()>;

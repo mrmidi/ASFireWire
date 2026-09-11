@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace ASFW::Audio {
 
@@ -127,6 +128,15 @@ void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                  guid, fixedChunks, fixedChunks);
     }
     dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
+
+    // Port names in host channel order, which is not wire order: the encoder and decoder
+    // apply the same model table, so these line up with what each channel carries.
+    std::vector<std::string> inNames;
+    std::vector<std::string> outNames;
+    if (protocol->GetChannelLabels(inNames, outNames)) {
+        dev.inputChannelNames = std::move(inNames);
+        dev.outputChannelNames = std::move(outNames);
+    }
 
     if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
         endpoint->UpdateConfig(dev);

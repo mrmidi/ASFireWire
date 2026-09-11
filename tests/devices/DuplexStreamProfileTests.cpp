@@ -196,3 +196,31 @@ TEST(DuplexStreamProfileTests, AlesisModelsClampAdvertisedCaptureStreamsToOne) {
 }
 
 } // namespace
+
+TEST(DuplexStreamProfileTests, MotuCaptureCarriesTheModelPortMap) {
+    AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 14,
+        .hostOutputPcmChannels = 14,
+        .sampleRateHz = 48000,
+        .deviceToHostStreamCount = 1,
+        .hostToDeviceStreamCount = 1,
+    };
+    DeviceRecord record{};
+    record.vendorId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+    record.unitSpecId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+    record.unitSwVersion = ASFW::DeviceProfiles::Audio::kMotuUltraliteSwVersion;
+
+    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+
+    EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kMotuV2);
+    EXPECT_EQ(profile.captureMotuPcmChunks, 14U);
+    ASSERT_EQ(profile.captureMotuPorts.size(), 14U);
+    EXPECT_EQ(profile.captureMotuPorts.data(), ASFW::Encoding::Motu::kUltraLiteCapture);
+}
+
+TEST(DuplexStreamProfileTests, NonMotuDevicesCarryNoPortMap) {
+    DeviceRecord record{};
+    AudioStreamRuntimeCaps caps{.hostInputPcmChannels = 2, .hostOutputPcmChannels = 2};
+    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+    EXPECT_TRUE(profile.captureMotuPorts.empty());
+}

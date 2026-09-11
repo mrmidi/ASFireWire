@@ -19,6 +19,7 @@
 
 #include "MotuBlockCodec.hpp"
 #include "MotuBlockLayout.hpp"
+#include "MotuPortLayout.hpp"
 
 #include <cstdint>
 #include <span>
@@ -37,21 +38,24 @@ namespace ASFW::Encoding::Motu {
 /// Decode one data block's PCM chunks into an interleaved float frame.
 ///
 /// `block` spans the whole data block (SPH quadlet first). `pcmChunks` is how many the
-/// device carries; `outPcmFrame` receives `outChannels` floats starting at
-/// `channelOffset` within the block's chunks, mirroring the channelOffset split the
-/// AMDTP path uses for multi-stream devices.
+/// device carries; `outPcmFrame` receives `outChannels` floats for host channels
+/// starting at `channelOffset`, mirroring the channelOffset split the AMDTP path uses
+/// for multi-stream devices. `ports` picks the chunk behind each host channel; empty
+/// decodes in wire order.
 ///
 /// Chunks the block cannot supply decode as silence rather than reading past its end.
 inline void DecodeMotuBlock(std::span<const uint8_t> block,
                             uint32_t pcmChunks,
                             uint32_t channelOffset,
                             float* outPcmFrame,
-                            uint32_t outChannels) noexcept {
+                            uint32_t outChannels,
+                            MotuPortMap ports = {}) noexcept {
     if (outPcmFrame == nullptr) {
         return;
     }
+    const MotuPortMap map = EffectivePortMap(ports, pcmChunks);
     for (uint32_t ch = 0; ch < outChannels; ++ch) {
-        const uint32_t chunk = channelOffset + ch;
+        const uint32_t chunk = ChunkForHostChannel(map, channelOffset + ch);
         const size_t chunkEnd =
             static_cast<size_t>(kPcmByteOffset) + (chunk + 1U) * kBytesPerChunk;
         if (chunk >= pcmChunks || chunkEnd > block.size()) {

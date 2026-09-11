@@ -70,6 +70,11 @@ add_audio_test(MotuV2ProfileTests
     MotuV2ProfileTests.cpp
 )
 
+# MOTU host channel <-> physical port tables
+add_audio_test(MotuPortLayoutTests
+    MotuPortLayoutTests.cpp
+)
+
 # MOTU device->host payload extraction tests
 add_audio_test(MotuPayloadReaderTests
     MotuPayloadReaderTests.cpp

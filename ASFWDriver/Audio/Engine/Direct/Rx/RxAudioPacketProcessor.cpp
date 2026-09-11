@@ -20,7 +20,8 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
                                                                    ASFW::Encoding::AudioWireFormat format,
                                                                    uint32_t channelOffset,
                                                                    bool publishTimeline,
-                                                                   uint32_t motuPcmChunks) noexcept {
+                                                                   uint32_t motuPcmChunks,
+                                                                   ::ASFW::Encoding::Motu::MotuPortMap motuPorts) noexcept {
     RxAudioPacketProcessorResult result{};
 
     if (length < kIsochHeaderSize + 8) {
@@ -128,7 +129,7 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
             // within the block, matching the AMDTP path's multi-stream split.
             ASFW::Encoding::Motu::DecodeMotuBlock(
                 std::span<const uint8_t>(blockBytes + i * dbsBytes, dbsBytes),
-                motuPcmChunks, channelOffset, frameOut + channelOffset, channels);
+                motuPcmChunks, channelOffset, frameOut + channelOffset, channels, motuPorts);
         } else {
             const uint32_t* frameIn = dataBlocks + (i * cip->dataBlockSize);
             DecodeDirectRxFrame(frameIn, channels, cip->dataBlockSize, format,
