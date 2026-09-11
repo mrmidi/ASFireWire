@@ -844,3 +844,68 @@ TEST(MotuV2ProtocolChannelLabelTests, UnmappedModelsReportNoLabels) {
     std::vector<std::string> outNames;
     EXPECT_FALSE(protocol.GetChannelLabels(inNames, outNames));
 }
+
+//==============================================================================
+// Hardware output volume (register 0x0c0c) behind the master volume control
+//==============================================================================
+
+TEST(MotuV2ProtocolVolumeTests, UltraLiteBacksTheMasterOutputVolume) {
+    RecordingBus bus;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, kUltraliteSwVersion);
+
+    ASFW::Audio::ControlInfo info{};
+    ASSERT_TRUE(protocol.DescribeControl(ASFW::Audio::kMasterOutputVolumeKey, info));
+    EXPECT_TRUE(info.isSettable);
+    EXPECT_FLOAT_EQ(info.minDecibels, -64.0f);
+    EXPECT_FLOAT_EQ(info.maxDecibels, 0.0f);
+
+    // Input volume on the same element is a different key and is not backed.
+    auto inputKey = ASFW::Audio::kMasterOutputVolumeKey;
+    inputKey.scopeFourCC = ASFW::Audio::kControlScopeInput;
+    EXPECT_FALSE(protocol.DescribeControl(inputKey, info));
+}
+
+TEST(MotuV2ProtocolVolumeTests, UnmappedModelsBackNoVolume) {
+    RecordingBus bus;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, /*896HD*/ 0x000005U);
+
+    ASFW::Audio::ControlInfo info{};
+    EXPECT_FALSE(protocol.DescribeControl(ASFW::Audio::kMasterOutputVolumeKey, info));
+    EXPECT_EQ(protocol.WriteControl(ASFW::Audio::kMasterOutputVolumeKey,
+                                    ASFW::Audio::ControlValue{.decibels = -6.0f}),
+              kIOReturnUnsupported);
+    EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST(MotuV2ProtocolVolumeTests, WritingTheControlWritesTheMainVolumeRegister) {
+    RecordingBus bus;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, kUltraliteSwVersion);
+
+    ASSERT_EQ(protocol.WriteControl(ASFW::Audio::kMasterOutputVolumeKey,
+                                    ASFW::Audio::ControlValue{.decibels = -12.0f}),
+              kIOReturnSuccess);
+    ASSERT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::MainOutputVolume));
+    EXPECT_EQ(bus.writes[0].value, 0x68U); // (-12 + 64) * 2, bare as ctl-services writes it
+
+    ASFW::Audio::ControlValue read{};
+    ASSERT_EQ(protocol.ReadControl(ASFW::Audio::kMasterOutputVolumeKey, read), kIOReturnSuccess);
+    EXPECT_FLOAT_EQ(read.decibels, -12.0f);
+}
+
+TEST(MotuV2ProtocolVolumeTests, ReadsWaitForTheDeviceUntilSeeded) {
+    RecordingBus bus;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, kUltraliteSwVersion);
+
+    ASFW::Audio::ControlValue read{};
+    EXPECT_EQ(protocol.ReadControl(ASFW::Audio::kMasterOutputVolumeKey, read), kIOReturnNotReady);
+
+    bus.readValues[LowOf(Reg::MainOutputVolume)] = 0x50;
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    ASSERT_EQ(protocol.ReadControl(ASFW::Audio::kMasterOutputVolumeKey, read), kIOReturnSuccess);
+    EXPECT_FLOAT_EQ(read.decibels, -24.0f);
+}

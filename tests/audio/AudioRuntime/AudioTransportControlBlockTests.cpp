@@ -327,3 +327,16 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
 }
 
 } // namespace
+
+TEST(AudioTransportControlBlockReportedLevelTests, EncodingRoundTripsAndZeroMeansUnreported) {
+    using ASFW::Audio::Runtime::DecodeReportedLevel;
+    using ASFW::Audio::Runtime::EncodeReportedLevel;
+
+    float db = 1.0f;
+    EXPECT_FALSE(DecodeReportedLevel(0, db));
+    for (const float value : {0.0f, -0.5f, -24.0f, -64.0f}) {
+        ASSERT_TRUE(DecodeReportedLevel(EncodeReportedLevel(value), db)) << value;
+        EXPECT_FLOAT_EQ(db, value);
+    }
+    EXPECT_NE(EncodeReportedLevel(0.0f), 0U) << "0 dB must be distinguishable from no report";
+}

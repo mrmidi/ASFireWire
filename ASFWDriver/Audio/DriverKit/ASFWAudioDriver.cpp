@@ -52,6 +52,9 @@ void ASFWAudioDriver::free()
         ivars->device.boolControlCount = 0;
         ASFW::Isoch::Audio::ResetBoolControlSlots(ivars->device.boolControls,
                                                   ASFW::Isoch::Audio::kMaxBoolControls);
+        ivars->device.outputVolumeControl.reset();
+        ivars->controlSyncTimer.reset();
+        ivars->controlSyncAction.reset();
 
         ivars->outputStream.reset();
         ivars->inputStream.reset();

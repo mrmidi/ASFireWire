@@ -75,6 +75,16 @@ add_audio_test(MotuPortLayoutTests
     MotuPortLayoutTests.cpp
 )
 
+# MOTU output-volume encoding and capture-stream DSP messages
+add_audio_test(MotuRegisterDspTests
+    MotuRegisterDspTests.cpp
+)
+
+# MOTU latest-value-wins level register writer
+add_audio_test(MotuLevelWriterTests
+    MotuLevelWriterTests.cpp
+)
+
 # MOTU device->host payload extraction tests
 add_audio_test(MotuPayloadReaderTests
     MotuPayloadReaderTests.cpp

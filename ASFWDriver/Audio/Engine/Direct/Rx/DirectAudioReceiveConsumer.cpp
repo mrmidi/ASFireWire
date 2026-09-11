@@ -9,6 +9,8 @@
 #include "../../../../Logging/Logging.hpp"
 #include "../../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
+#include "../../../Wire/MOTU/MotuRegisterDsp.hpp"
+
 #include <utility>
 
 namespace ASFW::AudioEngine::Direct::Rx {
@@ -78,6 +80,7 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     cadenceEstablishedLogged_ = false;
     replayReadyNotified_ = false;
     motuTimingEstablished_ = false;
+    lastReportedOutputLevel_ = 0;
     replayResetForStart_ = false;
     replayCycleInitialized_ = false;
     lastReplayCycleOrdinal_ = 0;
@@ -318,6 +321,22 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             motuTimingEstablished_ = true;
             inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
         }
+
+        // Register-DSP models report their front-panel state in each block's message
+        // chunk, the main volume knob included (MotuRegisterDsp.hpp). Surface it for the
+        // volume control; store only on change, since this runs for every packet.
+        if (const auto raw = ::ASFW::Encoding::Motu::LatestDspMessageValue(
+                std::span<const uint8_t>(packet.payload.data(), packet.payload.size()),
+                result.dbs, result.framesDecoded, kMotuCipPrefixBytes,
+                ::ASFW::Encoding::Motu::RegisterDspMessage::kMainOutputVolume)) {
+            const uint32_t encoded = ::ASFW::Audio::Runtime::EncodeReportedLevel(
+                ::ASFW::Encoding::Motu::OutputVolumeToDb(*raw));
+            if (encoded != lastReportedOutputLevel_) {
+                lastReportedOutputLevel_ = encoded;
+                inputView_.control->deviceReportedOutputLevel.store(
+                    encoded, std::memory_order_relaxed);
+            }
+        }
     }
 
     if (result.hasValidCip && result.syt != 0xffff) {
@@ -446,6 +465,7 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
         control->rxReplayEpochResets.fetch_add(1, std::memory_order_relaxed) + 1;
     replayReadyNotified_ = false;
     motuTimingEstablished_ = false;
+    lastReportedOutputLevel_ = 0;
     cadenceEstablishedLogged_ = false;
     replayCycleInitialized_ = false;
     dbcInitialized_ = false;

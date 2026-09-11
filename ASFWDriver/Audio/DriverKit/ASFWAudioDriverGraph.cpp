@@ -59,6 +59,7 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     }
     ASFW::Isoch::Audio::ResetBoolControlSlots(device.boolControls,
                                               ASFW::Isoch::Audio::kMaxBoolControls);
+    device.outputVolumeControl.reset();
     for (uint32_t index = 0; index < device.boolControlCount; ++index) {
         device.boolControls[index].descriptor = parsedConfig.boolControls[index];
         device.boolControls[index].valid = true;
@@ -656,6 +657,19 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         ivars.device.boolControlCount);
     if (!requireAdkSuccess("device.AddBooleanControls", error)) {
         return error;
+    }
+
+    // Hardware master output volume, when the protocol backs one (design note §3 item 1).
+    // Non-fatal like the other optional controls: a device without it is still a device.
+    if (ivars.outputStream) {
+        float initialDb = 0.0f;
+        const kern_return_t volumeStatus = ASFW::Isoch::Audio::AddProtocolOutputVolumeToDevice(
+            driver, *ivars.audioDevice, ivars.device.outputVolumeControl, initialDb);
+        if (volumeStatus == kIOReturnSuccess) {
+            ivars.runtime.outputVolumeControlDbBits.store(ASFW::Audio::DecibelBits(initialDb),
+                                                          std::memory_order_relaxed);
+        }
+        ASFW_LOG(Audio, "ADK GRAPH op=device.AddProtocolOutputVolume kr=0x%x", volumeStatus);
     }
 
     // The device is the source of truth for its own control state - we poll

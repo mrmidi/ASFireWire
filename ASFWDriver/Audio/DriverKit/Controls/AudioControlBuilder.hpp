@@ -2,6 +2,7 @@
 
 #include "ASFWAudioDriver.h"
 #include "ASFWProtocolBooleanControl.h"
+#include "ASFWProtocolLevelControl.h"
 #include "../Config/AudioDriverConfig.hpp"
 
 #include <AudioDriverKit/AudioDriverKit.h>
@@ -22,5 +23,14 @@ void ResetBoolControlSlots(BoolControlSlot* slots, uint32_t count);
     IOUserAudioDevice& audioDevice,
     BoolControlSlot* slots,
     uint32_t slotCount);
+
+/// Publish the protocol's master output volume ('vlme', output, main) -- what the volume
+/// keys drive -- when the device backs one. Returns kIOReturnUnsupported, having added
+/// nothing, when it does not. `outInitialDecibels` is the value the control starts at.
+[[nodiscard]] kern_return_t AddProtocolOutputVolumeToDevice(
+    ASFWAudioDriver& driver,
+    IOUserAudioDevice& audioDevice,
+    OSSharedPtr<ASFWProtocolLevelControl>& outControl,
+    float& outInitialDecibels);
 
 } // namespace ASFW::Isoch::Audio

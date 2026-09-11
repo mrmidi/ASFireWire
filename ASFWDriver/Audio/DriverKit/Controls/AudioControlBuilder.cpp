@@ -1,6 +1,7 @@
 #include "AudioControlBuilder.hpp"
 
 #include "../../../Logging/Logging.hpp"
+#include "../../Protocols/DeviceControl.hpp"
 
 #include <DriverKit/OSString.h>
 
@@ -136,6 +137,67 @@ void ResetBoolControlSlots(BoolControlSlot* slots, uint32_t count) {
                  controlValue ? 1u : 0u);
     }
 
+    return kIOReturnSuccess;
+}
+
+kern_return_t AddProtocolOutputVolumeToDevice(
+    ASFWAudioDriver& driver,
+    IOUserAudioDevice& audioDevice,
+    OSSharedPtr<ASFWProtocolLevelControl>& outControl,
+    float& outInitialDecibels) {
+    using ASFW::Audio::kControlClassVolume;
+    using ASFW::Audio::kControlElementMain;
+    using ASFW::Audio::kControlScopeOutput;
+
+    bool settable = false;
+    float minDb = 0.0f;
+    float maxDb = 0.0f;
+    if (driver.DescribeProtocolLevelControl(kControlClassVolume, kControlScopeOutput,
+                                            kControlElementMain, &settable, &minDb,
+                                            &maxDb) != kIOReturnSuccess) {
+        return kIOReturnUnsupported;
+    }
+
+    // Until the device answers, start quiet rather than loud: a volume-key press from a
+    // too-high starting point would write a too-high level.
+    constexpr float kFallbackDb = -30.0f;
+    float initialDb = kFallbackDb < minDb ? minDb : (kFallbackDb > maxDb ? maxDb : kFallbackDb);
+    float readDb = 0.0f;
+    const kern_return_t readStatus = driver.ReadProtocolLevelControl(
+        kControlClassVolume, kControlScopeOutput, kControlElementMain, &readDb);
+    if (readStatus == kIOReturnSuccess) {
+        initialDb = readDb;
+    } else {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDriver: output volume not read yet (0x%x); starting at %d dB",
+                 readStatus, static_cast<int>(initialDb));
+    }
+
+    auto control = ASFWProtocolLevelControl::Create(&driver,
+                                                    settable,
+                                                    initialDb,
+                                                    minDb,
+                                                    maxDb,
+                                                    IOUserAudioObjectPropertyElementMain,
+                                                    IOUserAudioObjectPropertyScope::Output,
+                                                    IOUserAudioClassID::VolumeControl,
+                                                    kControlClassVolume,
+                                                    kControlScopeOutput,
+                                                    kControlElementMain);
+    if (!control) {
+        return kIOReturnNoMemory;
+    }
+    const kern_return_t status = audioDevice.AddControl(control.get());
+    if (status != kIOReturnSuccess) {
+        return status;
+    }
+
+    outControl = control;
+    outInitialDecibels = initialDb;
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: Added hardware output volume range=[%d, %d] dB initialCentiDb=%d",
+             static_cast<int>(minDb), static_cast<int>(maxDb),
+             static_cast<int>(initialDb * 100.0f));
     return kIOReturnSuccess;
 }
 

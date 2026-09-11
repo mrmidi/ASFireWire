@@ -33,6 +33,9 @@ enum class Reg : uint32_t {
     PacketFormat = 0x0b10,
     ClockStatusV2 = 0x0b14,
     InOutConfV2 = 0x0c04,
+    /// Main and phones output volume, 0..0x80 (see Wire/MOTU/MotuRegisterDsp.hpp).
+    MainOutputVolume = 0x0c0c,
+    PhonesVolume = 0x0c10,
 };
 
 //==============================================================================

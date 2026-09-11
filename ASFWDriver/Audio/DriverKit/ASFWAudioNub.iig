@@ -160,6 +160,33 @@ public:
         uint32_t classIdFourCC,
         uint32_t element,
         bool value);
+
+    // Typed protocol-backed controls (documentation/AUDIO_BACKENDS_CONTROLS.md §5.2), keyed
+    // (kind, class, scope, element) with kind from ControlKind. Level values cross as float
+    // bits (DeviceControl.hpp); the range packs min in the high word, max in the low.
+    // Unlike the boolean bridge these need no AV/C transport, so register-based families
+    // can answer them. Write is fire-and-forget: it returns once the value is queued.
+    virtual kern_return_t DescribeProtocolControl(
+        uint32_t kind,
+        uint32_t classIdFourCC,
+        uint32_t scopeFourCC,
+        uint32_t element,
+        bool* outSettable,
+        uint64_t* outRangeBits);
+
+    virtual kern_return_t ReadProtocolControl(
+        uint32_t kind,
+        uint32_t classIdFourCC,
+        uint32_t scopeFourCC,
+        uint32_t element,
+        uint64_t* outValueBits);
+
+    virtual kern_return_t WriteProtocolControl(
+        uint32_t kind,
+        uint32_t classIdFourCC,
+        uint32_t scopeFourCC,
+        uint32_t element,
+        uint64_t valueBits);
 };
 
 struct ASFWAudioNub_IVars {
