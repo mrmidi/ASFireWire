@@ -50,8 +50,6 @@ public:
     void Reset() noexcept {
         captureCursor_.store(0, std::memory_order_relaxed);
         playbackCursor_.store(0, std::memory_order_relaxed);
-        captureCycleCount_.store(0, std::memory_order_relaxed);
-        playbackCycleCount_.store(0, std::memory_order_relaxed);
         established_.store(false, std::memory_order_release);
     }
 
@@ -61,17 +59,26 @@ public:
     /// number of blocks cached, which is short of `dataBlocks` only when the payload
     /// cannot hold them -- a truncated packet must not contribute invented timing.
     ///
-    /// Mirrors cache_event_offsets (amdtp-motu.c:303-329): the base is this packet's
-    /// whole-cycle count, and the counter advances one cycle per packet regardless of
-    /// how many blocks were present.
+    /// Mirrors cache_event_offsets (amdtp-motu.c:303-329): each offset is the block's
+    /// SPH tick minus the whole-cycle base of the cycle the packet was received in.
+    ///
+    /// `receiveCycle` is that cycle, taken from the packet's own receive timestamp.
+    /// Linux gets the same value from a counter seeded with the stream's real start
+    /// cycle (processing_cycle.tx_start, :340-341) and advanced once per packet, empty
+    /// or not. The previous port started its counter at 0 and advanced it only for
+    /// packets that carried blocks, so every offset came out as the device's absolute
+    /// bus time -- thousands of cycles -- instead of the small in-cycle presentation
+    /// offset the transmit side needs, and it drifted further on every empty packet.
+    /// Passing the real cycle removes both failure modes rather than re-seeding them.
     uint32_t Capture(std::span<const uint8_t> payload,
                      uint32_t dbs,
                      uint32_t dataBlocks,
+                     uint32_t receiveCycle,
                      uint32_t cipHeaderBytes = 8U) noexcept {
         if (dbs == 0 || dataBlocks == 0) {
             return 0;
         }
-        const uint32_t baseTick = BaseTickForCycle(captureCycleCount_.load(std::memory_order_relaxed));
+        const uint32_t baseTick = BaseTickForCycle(receiveCycle);
         const uint64_t blockBytes = static_cast<uint64_t>(dbs) * 4ULL;
 
         uint32_t cached = 0;
@@ -92,8 +99,6 @@ public:
         // Publish the new cursor last: a reader that sees it is guaranteed to see the
         // slot writes above (release pairs with the acquire in Take).
         captureCursor_.store(cursor + cached, std::memory_order_release);
-        captureCycleCount_.store(AdvanceCycleCount(captureCycleCount_.load(std::memory_order_relaxed)),
-                                 std::memory_order_relaxed);
         if (cached > 0) {
             established_.store(true, std::memory_order_release);
         }
@@ -117,25 +122,23 @@ public:
         if (cursor + out.size() > producer) {
             return false; // playback has caught up with capture
         }
+        uint64_t start = cursor;
         if (producer - cursor > kCapacity) {
-            return false; // the run we want has been overwritten
+            // The run we wanted has been overwritten: playback fell a whole ring behind,
+            // which a replay reclamp on the transmit side can cause in one step. Failing
+            // here fails every later call too, so the stream would go permanently
+            // unstamped -- silent -- with nothing to recover it. Linux never fails at
+            // all: write_sph (amdtp-motu.c:373-393) reads whatever is at its head, which
+            // after an overrun is newer capture history. Resync to the newest complete
+            // run instead; recent offsets are the right magnitude, a zero SPH is not.
+            start = producer - out.size();
         }
 
         for (size_t i = 0; i < out.size(); ++i) {
-            out[i] = slots_[(cursor + i) & (kCapacity - 1)].load(std::memory_order_relaxed);
+            out[i] = slots_[(start + i) & (kCapacity - 1)].load(std::memory_order_relaxed);
         }
-        playbackCursor_.store(cursor + out.size(), std::memory_order_release);
+        playbackCursor_.store(start + out.size(), std::memory_order_release);
         return true;
-    }
-
-    /// Cycle count the next transmitted packet should be based on, and its advance.
-    /// Kept here so the pair of counters stays together, matching the reference.
-    [[nodiscard]] uint32_t PlaybackCycleCount() const noexcept {
-        return playbackCycleCount_.load(std::memory_order_relaxed);
-    }
-    void AdvancePlaybackCycle() noexcept {
-        playbackCycleCount_.store(AdvanceCycleCount(playbackCycleCount_.load(std::memory_order_relaxed)),
-                                  std::memory_order_relaxed);
     }
 
     /// True once at least one block has been captured, so the transmit side knows the
@@ -164,8 +167,6 @@ private:
     std::atomic<uint32_t> slots_[kCapacity]{};
     std::atomic<uint64_t> captureCursor_{0};
     std::atomic<uint64_t> playbackCursor_{0};
-    std::atomic<uint32_t> captureCycleCount_{0};
-    std::atomic<uint32_t> playbackCycleCount_{0};
     std::atomic<bool> established_{false};
 };
 

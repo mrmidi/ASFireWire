@@ -90,7 +90,8 @@ public:
 private:
     /// Replay one cached SPH offset onto each data block of a prepared MOTU packet.
     void StampMotuSph(const AMDTP::TxPacketSlotView& slot,
-                      const AMDTP::PreparedTxPacket& packet) noexcept;
+                      const AMDTP::PreparedTxPacket& packet,
+                      const AMDTP::AmdtpTimingState& timing) noexcept;
 
     AMDTP::AmdtpTxPolicy BuildTxPolicy(
         const ASFW::Isoch::Audio::AudioStreamTxPolicy& policy) const noexcept;

@@ -51,12 +51,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     void SetReplayReadyCallback(ReplayReadyCallback callback) noexcept;
     [[nodiscard]] bool IsReplayEstablished() const noexcept;
 
-    /// MOTU replays per-data-block SPH timing. The cache is filled here, on the receive
-    /// path, and drained by the transmit side; it is inert for every other family.
-    [[nodiscard]] ::ASFW::Encoding::Motu::MotuEventOffsetCache& MotuOffsetCache() noexcept {
-        return motuOffsetCache_;
-    }
-
     void OnReceiveActivated() noexcept override;
     void OnReceiveQuiesced() noexcept override;
     void BeginReceiveBatch(const ::ASFW::Isoch::IsochReceiveBatch& batch) noexcept override;
@@ -139,7 +133,7 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
 
     /// Per-data-block presentation offsets captured from MOTU streams, drained by
     /// the transmit side. Unused (and untouched) by the quadlet-slot families.
-    ::ASFW::Encoding::Motu::MotuEventOffsetCache motuOffsetCache_{};
+
 };
 
 } // namespace ASFW::AudioEngine::Direct::Rx

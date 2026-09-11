@@ -108,6 +108,10 @@ struct AmdtpTimingState final {
     uint16_t replayDataBlocks{0};
     bool replayValid{false};
     uint64_t nextAudioFrame{0};
+    /// Bus cycle (0..7999) this packet is transmitted in. MOTU bases each block's SPH on
+    /// it (write_sph, amdtp-motu.c:373-393); families that time by SYT ignore it.
+    uint32_t transmitCycle{0};
+    bool transmitCycleValid{false};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP

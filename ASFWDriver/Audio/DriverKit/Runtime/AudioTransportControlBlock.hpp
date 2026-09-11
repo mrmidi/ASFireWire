@@ -9,6 +9,7 @@
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Wire/AMDTP/RxSequenceReplay.hpp"
 #include "../../Wire/AMDTP/RxSytCadence.hpp"
+#include "../../Wire/MOTU/MotuEventOffsetCache.hpp"
 #include "../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
 #include <atomic>
@@ -582,6 +583,11 @@ struct AudioTransportControlBlock final {
     // RX control block members
     ASFW::Driver::RxSytCadence rxSytCadence{};
     RxSequenceReplayState rxSequenceReplay{};
+    /// MOTU's per-data-block SPH offsets: written by the capture consumer on the transport
+    /// side, drained by the transmit engine on the audio side. Hosted here, next to its
+    /// AM824 counterpart above, because this block is the lifetime-owned seam both
+    /// services map; neither side may hold a pointer into the other's memory.
+    ::ASFW::Encoding::Motu::MotuEventOffsetCache motuEventOffsets{};
     std::atomic<uint32_t> rxTransferDelayTicks{12800};
     std::atomic<uint32_t> txTransferDelayTicks{12800};
     std::atomic<uint64_t> rxReplayEntries{0};
@@ -722,6 +728,7 @@ struct AudioTransportControlBlock final {
         // Reset RX members
         rxSytCadence.Reset();
         rxSequenceReplay.Reset();
+        motuEventOffsets.Reset();
         rxReplayEntries.store(0, std::memory_order_relaxed);
         rxReplayEpochResets.store(0, std::memory_order_relaxed);
         rxPacketsSeen.store(0, std::memory_order_relaxed);

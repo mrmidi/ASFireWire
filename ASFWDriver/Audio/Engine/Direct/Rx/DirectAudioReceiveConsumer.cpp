@@ -306,17 +306,17 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     // cannot represent what this device timed per block.
     const bool isMotu =
         configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kMotuV2;
-    if (isMotu) {
-        const uint32_t cached = motuOffsetCache_.Capture(
+    // Master stream only: the cache is a single shared FIFO, so a secondary slice
+    // capturing into it too would interleave two streams' offsets.
+    if (isMotu && !configuration_.isSecondary && inputView_.control) {
+        const uint32_t cached = inputView_.control->motuEventOffsets.Capture(
             std::span<const uint8_t>(packet.payload.data(), packet.payload.size()),
-            result.dbs, result.framesDecoded, kMotuCipPrefixBytes);
+            result.dbs, result.framesDecoded, cycleFields.cycle, kMotuCipPrefixBytes);
         if (cached > 0) {
             // Readable SPH offsets are this device's equivalent of an established SYT
             // cadence: they are the timing evidence the transmit side replays.
             motuTimingEstablished_ = true;
-            if (inputView_.control) {
-                inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
-            }
+            inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
