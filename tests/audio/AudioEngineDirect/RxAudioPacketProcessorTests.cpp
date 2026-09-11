@@ -297,16 +297,52 @@ TEST(RxAudioPacketProcessorTests, MotuDecodesChunkValuesIntoHostFrames) {
     }
 }
 
-TEST(RxAudioPacketProcessorTests, MotuRejectsAChunkCountTheBlockCannotHold) {
+TEST(RxAudioPacketProcessorTests, MotuNeverReadsPastAPayloadTooShortForOneBlock) {
     Fixture fixture;
     RxAudioPacketProcessor processor(fixture.writer);
 
-    // Packet built for 4 chunks, but the caller claims 14: the block is too small, and
-    // decoding anyway would read past every block into the next one.
+    // Packet built for 4 chunks (one 24-byte block), processed as a 14-chunk stream whose
+    // blocks are 52 bytes. MOTU blocks are sized from the configured geometry now, not
+    // the header, so the hazard this guarded -- reading past a block into the next -- is
+    // closed by construction: only whole configured blocks inside the payload decode.
     const auto packet = MakeMotuPacket(/*chunks=*/4, /*dataBlocks=*/1);
     const auto result = ProcessMotu(processor, packet, /*channels=*/4, /*motuPcmChunks=*/14);
 
-    EXPECT_EQ(result.status, DirectRxWriteStatus::kGeometryMismatch);
+    EXPECT_EQ(result.framesDecoded, 0u);
+    EXPECT_EQ(result.dbs, MotuDbs(14));
+}
+
+TEST(RxAudioPacketProcessorTests, MotuIgnoresTheWrongDbsInTheUltraLiteHeader) {
+    // The regression this pins. The UltraLite puts a wrong DBS in its CIP header; Linux
+    // sets CIP_WRONG_DBS for it (amdtp-motu.c:458-463) and divides the payload by the
+    // configured block size. Trusting the header turned each 8-block packet into 5 read
+    // at the wrong stride, so capture ran at 5/8 speed and the device crackled.
+    Fixture fixture;
+    RxAudioPacketProcessor processor(fixture.writer);
+
+    constexpr uint32_t kChunks = 14;
+    constexpr uint32_t kBlocks = 8;
+    const int32_t sample = static_cast<int32_t>(static_cast<uint32_t>(4194304) << 8); // 0.5
+    auto packet = MakeMotuPacket(kChunks, kBlocks, sample);
+
+    // Replace the header's DBS with a wrong value of the kind that yields 5 blocks.
+    constexpr uint8_t kWrongDbs = 19;
+    ASSERT_EQ((kBlocks * MotuDbs(kChunks)) / kWrongDbs, 5u) << "fixture must reproduce 5";
+    StoreBigEndian(packet.data() + kIsochHeaderBytes, MakeQuadlet0(kWrongDbs));
+
+    const auto result = ProcessMotu(processor, packet, /*channels=*/4, kChunks);
+    ASSERT_EQ(result.status, DirectRxWriteStatus::kAvailable);
+    EXPECT_EQ(result.framesDecoded, kBlocks);
+    EXPECT_EQ(result.dbs, MotuDbs(kChunks));
+
+    // Every block decodes at the configured stride -- a wrong stride reads the SPH and
+    // message bytes of later blocks as samples, so the last frame would be garbage.
+    for (uint32_t frame = 0; frame < kBlocks; ++frame) {
+        for (uint32_t ch = 0; ch < 4; ++ch) {
+            EXPECT_NEAR(fixture.inputBuffer[frame * kSlots + ch], 0.5f, 1e-6f)
+                << "frame " << frame << " channel " << ch;
+        }
+    }
 }
 
 TEST(RxAudioPacketProcessorTests, MotuRejectsZeroChunkCount) {

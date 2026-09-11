@@ -45,11 +45,27 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     result.hasValidCip = true;
     result.syt = cip->syt;
     result.fdf = cip->fdf;
-    result.dbs = cip->dataBlockSize;
     result.dbc = cip->dataBlockCounter;
 
+    const bool isMotu = (format == ASFW::Encoding::AudioWireFormat::kMotuV2);
+
+    // The UltraLite and 8pre put a wrong DBS in their CIP header; Linux sets
+    // CIP_WRONG_DBS for exactly those two models (amdtp-motu.c:458-463) and divides the
+    // payload by the configured data_block_quadlets instead (amdtp-stream.c:1475-1476).
+    // Trusting the header here split each 8-block packet into 5 at the wrong stride:
+    // capture ran at 5/8 of the real rate (127680 frames consumed over 4.08 s, ~31.3 kHz
+    // against 48 kHz), samples and SPH timestamps were read from misaligned offsets, and
+    // transmit replayed 5-block packets to a device expecting 8 -- audible as crackling.
+    // For well-behaved models the configured value equals the header's, so use it for
+    // every MOTU stream rather than keying on the model.
+    const uint32_t dataBlockQuadlets =
+        (isMotu && motuPcmChunks != 0)
+            ? ASFW::Encoding::Motu::DataBlockQuadlets(motuPcmChunks)
+            : cip->dataBlockSize;
+    result.dbs = dataBlockQuadlets;
+
     const size_t payloadBytes = length - kIsochHeaderSize - 8;
-    const size_t dbsBytes = static_cast<size_t>(cip->dataBlockSize) * 4u;
+    const size_t dbsBytes = static_cast<size_t>(dataBlockQuadlets) * 4u;
     if (dbsBytes == 0) {
         result.status = DirectRxWriteStatus::kZeroDataBlockSize;
         return result;
@@ -68,8 +84,6 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
         result.status = DirectRxWriteStatus::kInvalidBinding;
         return result;
     }
-
-    const bool isMotu = (format == ASFW::Encoding::AudioWireFormat::kMotuV2);
 
     // Geometry validation.
     //

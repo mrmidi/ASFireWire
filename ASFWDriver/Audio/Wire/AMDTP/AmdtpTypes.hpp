@@ -62,6 +62,11 @@ struct AmdtpTxPolicy final {
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
+    /// Write the DBC of the block *after* this packet's last one rather than of its
+    /// first, i.e. advance before writing. IEC 61883-1 counts from the first block; MOTU
+    /// devices count the end, and Linux sets CIP_DBC_IS_END_EVENT on every MOTU transmit
+    /// stream for it (amdtp-motu.c:465, applied at amdtp-stream.c:1040-1046).
+    bool dbcIsEndEvent{false};
 };
 
 struct HostAudioBufferView final {
