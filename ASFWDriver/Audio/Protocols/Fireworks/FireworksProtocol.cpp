@@ -272,10 +272,13 @@ void FireworksProtocol::CompleteClockApply(const std::shared_ptr<ClockApplyEpoch
 void FireworksProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
                                          ClockApplyCallback callback) {
     if (!IsRateSupported(desiredClock.sampleRateHz)) {
+        ASFW_LOG_ERROR(Audio, "[Fireworks] refusing clock apply: rate %u Hz not in the offered set (%u Hz)",
+                       desiredClock.sampleRateHz, geometry_.sampleRateHz);
         callback(kIOReturnUnsupported, {});
         return;
     }
     if (geometryCheck_ == GeometryCheck::kMismatch) {
+        ASFW_LOG_ERROR(Audio, "[Fireworks] refusing clock apply: geometry mismatch");
         callback(kIOReturnUnsupported, {});
         return;
     }

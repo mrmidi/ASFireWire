@@ -39,6 +39,12 @@ constexpr uint32_t kDuetFixedSampleRateHz = 48000U;
 // the Duet's fixed-rate pin, this is only a default — explicit user rate
 // selections arrive via the session clocks and take precedence.
 constexpr uint32_t kOnyxIDefaultStartRateHz = 44100U;
+// Onyx 400F (Fireworks): the sole rate the static profile offers until the ADK
+// reconfig path supports rate changes (see FireworksProtocol::SupportedRates).
+// Field-verified 2026-09-13: without this pin a first-ever start asked for the
+// coordinator's 48 kHz fallback and the protocol refused it (kIOReturnUnsupported
+// at Prepare) before any EFC traffic.
+constexpr uint32_t kOnyx400FDefaultStartRateHz = 44100U;
 
 // The Duet format-control path is deliberately start-time only for now.  Do
 // not resurrect a rate retained in a restart session: the host geometry and
@@ -62,6 +68,11 @@ constexpr uint32_t kOnyxIDefaultStartRateHz = 44100U;
         record.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId) {
         return AudioClockConfig{.sampleRateHz = kOnyxIDefaultStartRateHz};
     }
+    // Onyx 400F: same single-rate policy as the Onyx-i for the same reason.
+    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+        record.modelId == DeviceProfiles::Audio::kOnyx400FModelId) {
+        return AudioClockConfig{.sampleRateHz = kOnyx400FDefaultStartRateHz};
+    }
     return requestedClock;
 }
 
@@ -74,6 +85,10 @@ constexpr uint32_t kOnyxIDefaultStartRateHz = 44100U;
     if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
         record.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId) {
         return kOnyxIDefaultStartRateHz;
+    }
+    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+        record.modelId == DeviceProfiles::Audio::kOnyx400FModelId) {
+        return kOnyx400FDefaultStartRateHz;
     }
     return 48000U;
 }
