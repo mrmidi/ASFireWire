@@ -38,7 +38,10 @@ TEST_F(CyclePolicyCoordinatorTests, ClientOnlySuppressesCyclePolicy) {
     EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::SuppressedByRoleMode);
 }
 
-TEST_F(CyclePolicyCoordinatorTests, ElectionOnlySuppressesLocalCycleMaster) {
+// Root duty: a local root enables its own cycle master regardless of the BM
+// activity ladder (Linux ohci.c:1907-1910, Apple IOFireWireController.cpp
+// 3366-3367). The ladder still gates elections and remote CMSTR writes.
+TEST_F(CyclePolicyCoordinatorTests, LocalRootEnablesCycleMasterEvenAtElectionOnly) {
     CyclePolicyInputs in{};
     in.topologyValid = true;
     in.roleMode = RoleMode::FullBusManager;
@@ -47,8 +50,48 @@ TEST_F(CyclePolicyCoordinatorTests, ElectionOnlySuppressesLocalCycleMaster) {
     in.localIsRoot = true;
     in.localCmcKnown = true;
     in.localCmcCapable = true;
+    MarkLocalSelfIdRoot(in);
     
-    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::SuppressedByActivityLevel);
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::LocalRootEnableCycleMaster);
+}
+
+// Field-verified 2026-09-13 (Mackie Onyx 400F): the IRM-capable device won IRM,
+// the ClientOnly/ObserveOnly host was root, no BM existed, and no cycle starts
+// were ever generated. The host must run the cycle master here.
+TEST_F(CyclePolicyCoordinatorTests, ClientOnlyLocalRootWithRemoteIrmStillEnablesCycleMaster) {
+    CyclePolicyInputs in{};
+    in.topologyValid = true;
+    in.roleMode = RoleMode::ClientOnly;
+    in.activityLevel = FullBMActivityLevel::ObserveOnly;
+    in.localNodeId = 1;
+    in.rootNodeId = 1;
+    in.irmNodeId = 0;
+    in.bmNodeId = 0x3F;
+    in.localIsRoot = true;
+    in.localIsIRM = false;
+    in.localIsBM = false;
+    in.localSelfIdKnown = true;
+    in.localSelfIdLinkActive = true;
+    in.localSelfIdContender = false;
+    in.cycleStartObserved = false;
+    
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::LocalRootEnableCycleMaster);
+
+    in.localCycleMasterEnabled = true;
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::AlreadySatisfiedLocalCycleMasterEnabled);
+}
+
+TEST_F(CyclePolicyCoordinatorTests, ClientOnlyNonRootStaysSuppressed) {
+    CyclePolicyInputs in{};
+    in.topologyValid = true;
+    in.roleMode = RoleMode::ClientOnly;
+    in.activityLevel = FullBMActivityLevel::ObserveOnly;
+    in.localIsRoot = false;
+    in.localIsIRM = false;
+    in.localIsBM = false;
+    MarkRemoteRootSelfIdContender(in);
+    
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::SuppressedNotBMOrFallbackIRM);
 }
 
 TEST_F(CyclePolicyCoordinatorTests, LocalBMAndLocalRootPlansLocalCycleMaster) {
