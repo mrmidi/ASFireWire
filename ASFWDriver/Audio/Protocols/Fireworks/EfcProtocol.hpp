@@ -35,9 +35,16 @@ inline constexpr uint16_t kCommandAddressHi = 0xECC0;
 inline constexpr uint32_t kCommandAddressLo = 0x00000000;
 inline constexpr uint64_t kCommandOffset = 0xECC000000000ULL;
 // Device -> host: response frame (block write into the local node's space).
+// Linux fireworks_transaction.c documents 0xECC0'8000'0000 as the default
+// response address. A real Mackie Onyx 400F (2026-09-13 capture, GUID
+// 0x000FF203B2EE7318) answers at 0xFCC0'8000'0000 instead — the firmware's
+// stored response address (HWINFO flag bit 0 says it is changeable) — so the
+// host claims both windows.
 inline constexpr uint16_t kResponseAddressHi = 0xECC0;
 inline constexpr uint32_t kResponseAddressLo = 0x80000000;
 inline constexpr uint64_t kResponseOffset = 0xECC080000000ULL;
+inline constexpr uint16_t kAltResponseAddressHi = 0xFCC0;
+inline constexpr uint64_t kAltResponseOffset = 0xFCC080000000ULL;
 // Largest response frame a Fireworks device emits (Linux SND_EFW_RESPONSE_MAXIMUM_BYTES).
 inline constexpr uint32_t kResponseWindowBytes = 0x200;
 

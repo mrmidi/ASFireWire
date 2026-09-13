@@ -185,6 +185,9 @@ public:
         }
         const bool claimed =
             ASFW::Audio::Fireworks::EfcResponseMailbox::Publish(ctx.sourceID, ctx.writePayload);
+        ASFW_LOG_V2(Audio, "[EFC] response from node=0x%04x at 0x%012llx bytes=%zu claimed=%u",
+                    ctx.sourceID, static_cast<unsigned long long>(ctx.destOffset),
+                    ctx.writePayload.size(), claimed ? 1U : 0U);
         if (!claimed) {
             ASFW_LOG(Audio, "[EFC] unclaimed response from node=0x%04x bytes=%zu",
                      ctx.sourceID, ctx.writePayload.size());

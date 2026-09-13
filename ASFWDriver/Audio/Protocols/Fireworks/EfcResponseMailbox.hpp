@@ -30,6 +30,7 @@
 namespace ASFW::Audio::Fireworks::EfcResponseMailbox {
 
 inline constexpr uint64_t kWindowOffset = Efc::kResponseOffset;
+inline constexpr uint64_t kAltWindowOffset = Efc::kAltResponseOffset;
 inline constexpr uint64_t kWindowBytes = Efc::kResponseWindowBytes;
 inline constexpr size_t kMaxObservers = 4;
 
@@ -52,7 +53,10 @@ inline std::array<Slot, kMaxObservers>& Slots() noexcept {
 }
 
 [[nodiscard]] inline bool MatchesDestOffset(uint64_t destOffset) noexcept {
-    return destOffset >= kWindowOffset && destOffset < kWindowOffset + kWindowBytes;
+    // Both the Linux-documented default window and the one a real Onyx 400F
+    // uses (see EfcProtocol.hpp, kAltResponseOffset).
+    return (destOffset >= kWindowOffset && destOffset < kWindowOffset + kWindowBytes) ||
+           (destOffset >= kAltWindowOffset && destOffset < kAltWindowOffset + kWindowBytes);
 }
 
 [[nodiscard]] inline bool AddObserver(void* context, ObserverFn fn) noexcept {

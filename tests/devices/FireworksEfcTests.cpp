@@ -617,6 +617,11 @@ TEST(EfcMailbox, WindowCoversTheWholeResponseRegion) {
     EXPECT_TRUE(Mailbox::MatchesDestOffset(0xECC080000000ULL));
     EXPECT_TRUE(Mailbox::MatchesDestOffset(0xECC0800001FFULL));
     EXPECT_FALSE(Mailbox::MatchesDestOffset(0xECC080000200ULL));
+    // Observed on a real Onyx 400F (2026-09-13): HWINFO answers land here.
+    EXPECT_TRUE(Mailbox::MatchesDestOffset(0xFCC080000000ULL));
+    EXPECT_TRUE(Mailbox::MatchesDestOffset(0xFCC0800001FFULL));
+    EXPECT_FALSE(Mailbox::MatchesDestOffset(0xFCC080000200ULL));
+    EXPECT_FALSE(Mailbox::MatchesDestOffset(0xFCC000000000ULL));
     EXPECT_FALSE(Mailbox::MatchesDestOffset(0xECC000000000ULL));  // the command register is the device's
     EXPECT_FALSE(Mailbox::Publish(2, {}));  // nobody registered / nothing to claim
 }
