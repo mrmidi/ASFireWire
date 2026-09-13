@@ -13,6 +13,7 @@
 #include "ASFWDriver/Bus/IRM/IRMClient.hpp"
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Protocols/AVC/CMP/CMPClient.hpp"
+#include "ASFWDriver/Protocols/AVC/CMP/PCRCodec.hpp"
 
 #include "FakeTimerScheduler.hpp"
 
@@ -89,15 +90,19 @@ std::vector<uint32_t> MakeHwInfoQuadlets(uint32_t capture, uint32_t playback,
     return q;
 }
 
-// CMP/IRM/bus-info side (PCR registers), same shape as BeBoBProtocolTests.
+// CMP/IRM/bus-info side: the device's plug register file, keyed by address so
+// the master plug registers (one plug each way, S400) and the two plug-0 PCRs
+// (online, unconnected) answer like a real 400F. Lock is a genuine
+// compare-swap on that file, as in CMPConnectionTests.
 class FakeBus final : public IFireWireBus {
 public:
-    AsyncHandle ReadBlock(Generation, NodeId node, FWAddress, uint32_t, FwSpeed,
+    static constexpr uint32_t kMprOnePlugS400 = (2U << 30) | 1U;
+    static constexpr uint32_t kPcrOnlineIdle = 0x80000000U;
+
+    AsyncHandle ReadBlock(Generation, NodeId, FWAddress address, uint32_t, FwSpeed,
                           InterfaceCompletionCallback callback) override {
-        const uint32_t value = pcrByNode_[node.value];
-        std::array<uint8_t, 4> payload{static_cast<uint8_t>(value >> 24), static_cast<uint8_t>(value >> 16),
-                                       static_cast<uint8_t>(value >> 8), static_cast<uint8_t>(value)};
-        callback(AsyncStatus::kSuccess, payload);
+        ++reads;
+        callback(AsyncStatus::kSuccess, ToWire(RegisterAt(address.addressLo)));
         return Next();
     }
     AsyncHandle WriteBlock(Generation, NodeId, FWAddress, std::span<const uint8_t>, FwSpeed,
@@ -105,11 +110,19 @@ public:
         callback(AsyncStatus::kSuccess, {});
         return Next();
     }
-    AsyncHandle Lock(Generation, NodeId, FWAddress, ASFW::FW::LockOp, std::span<const uint8_t> operand,
-                     uint32_t, FwSpeed, InterfaceCompletionCallback callback) override {
-        std::array<uint8_t, 4> payload{};
-        if (operand.size() >= 4) std::memcpy(payload.data(), operand.data(), 4);
-        callback(AsyncStatus::kSuccess, payload);
+    AsyncHandle Lock(Generation, NodeId, FWAddress address, ASFW::FW::LockOp,
+                     std::span<const uint8_t> operand, uint32_t, FwSpeed,
+                     InterfaceCompletionCallback callback) override {
+        ++locks;
+        if (operand.size() < 8) {
+            callback(AsyncStatus::kSuccess, {});
+            return Next();
+        }
+        const uint32_t expected = GetBE(std::vector<uint8_t>(operand.begin(), operand.end()), 0);
+        const uint32_t desired = GetBE(std::vector<uint8_t>(operand.begin(), operand.end()), 1);
+        const uint32_t observed = RegisterAt(address.addressLo);
+        if (observed == expected) registers_[address.addressLo] = desired;
+        callback(AsyncStatus::kSuccess, ToWire(observed));
         return Next();
     }
     bool Cancel(AsyncHandle) override { return false; }
@@ -119,10 +132,29 @@ public:
     Generation GetGeneration() const override { return Generation{1}; }
     NodeId GetLocalNodeID() const override { return NodeId{0}; }
 
-    std::unordered_map<uint8_t, uint32_t> pcrByNode_{{2, 0x80000000U}};
+    [[nodiscard]] uint32_t RegisterAt(uint32_t addressLo) const {
+        const auto it = registers_.find(addressLo);
+        return it == registers_.end() ? 0U : it->second;
+    }
+    [[nodiscard]] uint32_t IPCR0() const { return RegisterAt(ASFW::CMP::PCRRegisters::kIPCRBase); }
+    [[nodiscard]] uint32_t OPCR0() const { return RegisterAt(ASFW::CMP::PCRRegisters::kOPCRBase); }
+
+    size_t reads{0};
+    size_t locks{0};
 
 private:
+    static std::array<uint8_t, 4> ToWire(uint32_t value) {
+        return {static_cast<uint8_t>(value >> 24), static_cast<uint8_t>(value >> 16),
+                static_cast<uint8_t>(value >> 8), static_cast<uint8_t>(value)};
+    }
     AsyncHandle Next() { return AsyncHandle{++next_}; }
+
+    std::unordered_map<uint32_t, uint32_t> registers_{
+        {ASFW::CMP::PCRRegisters::kOMPR, kMprOnePlugS400},
+        {ASFW::CMP::PCRRegisters::kIMPR, kMprOnePlugS400},
+        {ASFW::CMP::PCRRegisters::kOPCRBase, kPcrOnlineIdle},
+        {ASFW::CMP::PCRRegisters::kIPCRBase, kPcrOnlineIdle},
+    };
     uint32_t next_{0};
 };
 
@@ -433,6 +465,65 @@ TEST_F(FireworksProtocolTest, HealthReadsTheClockAndReportsLock) {
     EXPECT_TRUE(health.clockReferenceHealthy);
     EXPECT_FALSE(health.sourceLocked);  // no CMP connections yet
     EXPECT_EQ(health.runtimeCaps.hostInputPcmChannels, 10U);
+}
+
+TEST_F(FireworksProtocolTest, ConfirmDuplexStartRefusesUntilBothPlugsAreConnected) {
+    FireworksProtocol proto(efcBus_, bus_, route_, &irm_, &cmp_, &timer_, kOnyx400FGeometry);
+    IOReturn status = kIOReturnSuccess;
+    proto.ConfirmDuplexStart([&](IOReturn s, auto) { status = s; });
+    EXPECT_EQ(status, kIOReturnNotReady);
+    EXPECT_EQ(bus_.reads, 0U);
+    EXPECT_EQ(efcBus_.writes.size(), 0U);
+}
+
+// Linux snd-fireworks never re-reads the plug registers after starting the
+// streams, and the 400F drops the oPCR read the BeBoB base issues at the IT-start
+// instant (field-found 2026-09-13). Confirm must therefore complete from the
+// state proven by the connect-time compare-swaps, touching neither bus.
+TEST_F(FireworksProtocolTest, ConfirmDuplexStartSkipsThePcrReadBackOnceConnected) {
+    FireworksProtocol proto(efcBus_, bus_, route_, &irm_, &cmp_, &timer_, kOnyx400FGeometry);
+    ASSERT_EQ(proto.Initialize(), kIOReturnSuccess);
+    RespondHwInfo(proto, 10, 10);
+
+    IOReturn clockStatus = kIOReturnNotReady;
+    proto.ApplyClockConfig({.sampleRateHz = 44100}, [&](IOReturn s, auto) { clockStatus = s; });
+    RespondTxMode(proto);
+    RespondGetClock(proto, /*source=*/0, /*rate=*/44100);  // already at rate: no SET_CLOCK
+    ASSERT_EQ(clockStatus, kIOReturnSuccess);
+
+    const ASFW::Audio::AudioDuplexChannels channels{.deviceToHostIsoChannel = 3,
+                                                     .hostToDeviceIsoChannel = 4};
+    proto.SetAssignedChannels(channels);
+    IOReturn rxStatus = kIOReturnNotReady;
+    proto.ProgramRx([&](IOReturn s, auto) { rxStatus = s; });
+    ASSERT_EQ(rxStatus, kIOReturnSuccess);
+    IOReturn txStatus = kIOReturnNotReady;
+    proto.ProgramTxAndEnableDuplex([&](IOReturn s, auto) { txStatus = s; });
+    ASSERT_EQ(txStatus, kIOReturnSuccess);
+    EXPECT_EQ(bus_.locks, 2U);  // one compare-swap per plug proved both connections
+    EXPECT_EQ(ASFW::CMP::PCRBits::GetChannel(bus_.IPCR0()), 4U);  // host->device channel
+    EXPECT_EQ(ASFW::CMP::PCRBits::GetP2P(bus_.IPCR0()), 1U);
+    EXPECT_EQ(ASFW::CMP::PCRBits::GetChannel(bus_.OPCR0()), 3U);  // device->host channel
+    EXPECT_EQ(ASFW::CMP::PCRBits::GetP2P(bus_.OPCR0()), 1U);
+
+    const size_t readsBefore = bus_.reads;
+    const size_t efcWritesBefore = efcBus_.writes.size();
+    IOReturn status = kIOReturnNotReady;
+    ASFW::Audio::DuplexConfirmResult confirm{};
+    proto.ConfirmDuplexStart([&](IOReturn s, ASFW::Audio::DuplexConfirmResult r) {
+        status = s;
+        confirm = r;
+    });
+    EXPECT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(bus_.reads, readsBefore);            // no iPCR/oPCR read-back
+    EXPECT_EQ(bus_.locks, 2U);                      // and no further compare-swap
+    EXPECT_EQ(efcBus_.writes.size(), efcWritesBefore);  // no EFC traffic either
+    EXPECT_EQ(confirm.generation.value, 1U);
+    EXPECT_EQ(confirm.channels.deviceToHostIsoChannel, 3U);
+    EXPECT_EQ(confirm.channels.hostToDeviceIsoChannel, 4U);
+    EXPECT_EQ(confirm.appliedClock.sampleRateHz, 44100U);
+    EXPECT_EQ(confirm.runtimeCaps.hostInputPcmChannels, 10U);
+    EXPECT_EQ(confirm.runtimeCaps.hostOutputPcmChannels, 10U);
 }
 
 } // namespace

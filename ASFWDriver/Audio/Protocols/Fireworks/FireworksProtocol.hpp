@@ -91,6 +91,7 @@ public:
                        PrepareCallback callback) override;
     void ApplyClockConfig(const AudioClockConfig& desiredClock,
                           ClockApplyCallback callback) override;
+    void ConfirmDuplexStart(ConfirmCallback callback) override;
 
     [[nodiscard]] const std::optional<Efc::HwInfo>& HardwareInfo() const noexcept { return hwInfo_; }
     [[nodiscard]] GeometryCheck GeometryStatus() const noexcept { return geometryCheck_; }

@@ -367,6 +367,24 @@ void FireworksProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
     });
 }
 
+void FireworksProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
+    // No PCR read-back. Linux snd-fireworks never re-reads the plug registers
+    // after amdtp_domain_start (fireworks_stream.c), and the compare-swap at
+    // connect time already proved both plug states. Field-found 2026-09-13: the
+    // base class's oPCR read, issued in the same millisecond the host IT
+    // context starts, is never answered by the 400F, and the confirm stage then
+    // waits out the 12 s sync bridge while the stream is already running.
+    if (!cmpClient_ || !inputConnected_ || !outputConnected_) {
+        callback(kIOReturnNotReady, {});
+        return;
+    }
+    callback(kIOReturnSuccess,
+             DuplexConfirmResult{.generation = busInfo_.GetGeneration(),
+                                 .channels = duplexChannels_,
+                                 .appliedClock = appliedClock_,
+                                 .runtimeCaps = caps_});
+}
+
 void FireworksProtocol::ReadClockHealth(HealthCallback callback) {
     ReadClock([this, callback = std::move(callback)](IOReturn status, Efc::Clock clock) mutable {
         if (status != kIOReturnSuccess) {
