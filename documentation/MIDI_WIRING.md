@@ -1505,6 +1505,11 @@ flags before trusting it on any new device.
 
 ## 12. Staged plan
 
+> The build order, dependency graph, per-package contracts and the verified
+> starting state live in
+> [plans/MIDI_IMPLEMENTATION_PLAN.md](plans/MIDI_IMPLEMENTATION_PLAN.md).
+> This section is the roadmap it expands.
+
 Each stage should be a reviewable change with its evidence recorded before the
 next hardware milestone. This plan targets the DICE Saffire first; no BridgeCo
 commands or Phase 88 normalization are required to start.
