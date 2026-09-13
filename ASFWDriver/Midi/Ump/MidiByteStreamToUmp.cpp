@@ -185,9 +185,13 @@ MidiByteStreamToUmp::PushResult MidiByteStreamToUmp::Push(
     uint32_t written = 0;
 
     for (const uint8_t byte : bytes) {
-        // Stop before a byte that could need two words but only has room for
-        // one, so no message is ever split across calls.
-        if (out.size() - written < kMaxWordsPerByte) break;
+        // Stop before a byte that could need more words than remain free, so
+        // no message is ever split across calls and bounds are never exceeded.
+        // An 0xF6 (Tune Request) byte during an active System Exclusive flushes
+        // the SysEx (2 words) and emits the Tune Request (1 word), needing 3 words.
+        // Every other byte needs at most 2 words.
+        const uint32_t neededWords = (sysExActive_ && byte == 0xF6) ? 3 : 2;
+        if (out.size() - written < neededWords) break;
 
         if (IsStatusByte(byte)) {
             HandleStatusByte(byte, out, written);

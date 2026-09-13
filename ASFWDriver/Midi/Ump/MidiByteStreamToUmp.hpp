@@ -32,10 +32,12 @@ class MidiByteStreamToUmp final {
 public:
     /// Upper bound on UMP words a single input byte can produce.
     ///
-    /// Only a SysEx packet flush emits two words; every other completion emits
-    /// one. A caller sizing its output span at kMaxWordsPerByte * bytes can
-    /// never be asked to call again.
-    static constexpr uint32_t kMaxWordsPerByte = 2;
+    /// A single byte can produce at most three words: an 0xF6 (Tune Request)
+    /// byte during an active System Exclusive first calls TerminateSysEx (two
+    /// words) and then immediately emits the Tune Request (one word). A caller
+    /// sizing its output span at kMaxWordsPerByte * bytes can never overflow
+    /// or be asked to call again.
+    static constexpr uint32_t kMaxWordsPerByte = 3;
 
     struct Counters final {
         uint64_t bytesConsumed{0};

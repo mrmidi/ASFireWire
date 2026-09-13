@@ -24,13 +24,48 @@ struct ASFWMidiNub_IVars {
 bool ASFWMidiNub::init() {
     if (!super::init()) return false;
     ivars = IONewZero(ASFWMidiNub_IVars, 1);
-    return ivars != nullptr;
+    if (ivars == nullptr) return false;
+
+    // Allocate the byte seam during init so that transport memory is valid
+    // and can be armed before the service is registered.
+    IOBufferMemoryDescriptor* rawBuffer = nullptr;
+    kern_return_t ret = IOBufferMemoryDescriptor::Create(
+        kIOMemoryDirectionInOut, sizeof(ASFW::Midi::MidiTransportBlock),
+        alignof(ASFW::Midi::MidiTransportBlock), &rawBuffer);
+    if (ret != kIOReturnSuccess || rawBuffer == nullptr) {
+        ASFW_LOG_ERROR(Midi, "ASFWMidiNub: transport alloc failed 0x%x", ret);
+        return false;
+    }
+    ivars->transportBuffer = OSSharedPtr(rawBuffer, OSNoRetain);
+
+    IOMemoryMap* rawMap = nullptr;
+    ret = ivars->transportBuffer->CreateMapping(0, 0, 0, 0, 0, &rawMap);
+    if (ret != kIOReturnSuccess || rawMap == nullptr) {
+        ASFW_LOG_ERROR(Midi, "ASFWMidiNub: transport map failed 0x%x", ret);
+        ivars->transportBuffer.reset();
+        return false;
+    }
+    ivars->transportMap = OSSharedPtr(rawMap, OSNoRetain);
+
+    // Placement-new is deliberate: the block holds atomics whose constructors
+    // must run, and the descriptor's memory is raw.
+    auto* block = reinterpret_cast<ASFW::Midi::MidiTransportBlock*>(
+        static_cast<uintptr_t>(ivars->transportMap->GetAddress()));
+#ifndef __clang_analyzer__
+    new (block) ASFW::Midi::MidiTransportBlock();
+#endif
+    ivars->block = block;
+
+    return true;
 }
 
 void ASFWMidiNub::free() {
     if (ivars != nullptr) {
         ivars->midiReceiveAction.reset();
-        ivars->block = nullptr;
+        if (ivars->block != nullptr) {
+            ivars->block->~MidiTransportBlock();
+            ivars->block = nullptr;
+        }
         ivars->transportMap.reset();
         ivars->transportBuffer.reset();
     }
@@ -44,32 +79,6 @@ kern_return_t IMPL(ASFWMidiNub, Start) {
         ASFW_LOG_ERROR(Midi, "ASFWMidiNub: super::Start failed 0x%x", ret);
         return ret;
     }
-
-    // Allocate the byte seam before publishing, so a MIDI service that matches
-    // immediately never sees a nub whose rings do not exist yet.
-    IOBufferMemoryDescriptor* rawBuffer = nullptr;
-    ret = IOBufferMemoryDescriptor::Create(
-        kIOMemoryDirectionInOut, sizeof(ASFW::Midi::MidiTransportBlock),
-        alignof(ASFW::Midi::MidiTransportBlock), &rawBuffer);
-    if (ret != kIOReturnSuccess || rawBuffer == nullptr) {
-        ASFW_LOG_ERROR(Midi, "ASFWMidiNub: transport alloc failed 0x%x", ret);
-        return ret != kIOReturnSuccess ? ret : kIOReturnNoMemory;
-    }
-    ivars->transportBuffer = OSSharedPtr(rawBuffer, OSNoRetain);
-
-    IOMemoryMap* rawMap = nullptr;
-    ret = ivars->transportBuffer->CreateMapping(0, 0, 0, 0, 0, &rawMap);
-    if (ret != kIOReturnSuccess || rawMap == nullptr) {
-        ASFW_LOG_ERROR(Midi, "ASFWMidiNub: transport map failed 0x%x", ret);
-        ivars->transportBuffer.reset();
-        return ret != kIOReturnSuccess ? ret : kIOReturnNoMemory;
-    }
-    ivars->transportMap = OSSharedPtr(rawMap, OSNoRetain);
-
-    // Placement-new is deliberate: the block holds atomics whose constructors
-    // must run, and the descriptor's memory is raw.
-    auto* address = reinterpret_cast<void*>(ivars->transportMap->GetAddress());
-    ivars->block = new (address) ASFW::Midi::MidiTransportBlock();
 
     ret = RegisterService();
     if (ret != kIOReturnSuccess) {

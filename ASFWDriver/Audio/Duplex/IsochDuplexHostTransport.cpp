@@ -85,11 +85,6 @@ void IsochDuplexHostTransport::SetMidiReceiveTransport(
 }
 
 void IsochDuplexHostTransport::DetachReceiveConsumers() noexcept {
-    // Unbind before the consumers go away. A consumer mid-callback holds a
-    // pointer to midiSink_, and the sink holds one into the nub's rings; the
-    // order here is what keeps neither outliving the other.
-    midiSink_.Unbind();
-    midiWake_ = {};
     for (uint32_t streamIndex = 0;
          streamIndex < Driver::IsochService::kMaxStreamsPerDirection; ++streamIndex) {
         isoch_.SetReceiveConsumer(streamIndex, nullptr);

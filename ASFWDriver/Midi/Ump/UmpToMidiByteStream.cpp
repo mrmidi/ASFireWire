@@ -26,6 +26,12 @@ namespace {
 
 void UmpToMidiByteStream::Reset() noexcept {
     sysExActive_ = false;
+    sysExAborted_ = false;
+}
+
+void UmpToMidiByteStream::AbortSysEx() noexcept {
+    sysExActive_ = false;
+    sysExAborted_ = true;
 }
 
 void UmpToMidiByteStream::TranslateSysEx7(UmpWord word0, UmpWord word1,
@@ -58,10 +64,18 @@ void UmpToMidiByteStream::TranslateSysEx7(UmpWord word0, UmpWord word1,
             // device reading 0xF0 mid-System-Exclusive restarts too, so
             // emitting is the recovery; the counter records that it happened.
             if (sysExActive_) ++counters_.sysExInterrupted;
+            sysExAborted_ = false;
             out[written++] = kSysExStart;
             break;
         case SysExStatus::kContinue:
         case SysExStatus::kEnd:
+            if (sysExAborted_) {
+                if (status == SysExStatus::kEnd) {
+                    sysExAborted_ = false;
+                }
+                ++counters_.sysExOutOfSequence;
+                return;
+            }
             if (!sysExActive_) {
                 // Bare payload with no 0xF0 would be read as data bytes under
                 // whatever running status the device last saw. Drop it.

@@ -84,6 +84,13 @@ public:
     /// trailing 0xF7 would claim a message completed that did not.
     void Reset() noexcept;
 
+    /// Abort an in-progress System Exclusive after a rejected wire write.
+    ///
+    /// Subsequent Continue and End packets are discarded until a new Start or
+    /// Complete arrives, preventing bare payload and naked 0xF7 from reaching
+    /// the wire without their 0xF0.
+    void AbortSysEx() noexcept;
+
     [[nodiscard]] const Counters& GetCounters() const noexcept { return counters_; }
     [[nodiscard]] uint8_t Group() const noexcept { return group_; }
 
@@ -104,6 +111,7 @@ private:
 
     uint8_t group_{0};
     bool sysExActive_{false};
+    bool sysExAborted_{false};
     Counters counters_{};
 };
 

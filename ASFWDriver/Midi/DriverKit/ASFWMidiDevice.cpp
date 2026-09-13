@@ -26,9 +26,10 @@ struct ASFWMidiDevice_IVars {
     // The seam. `block` points into memory the nub owns and the driver keeps
     // mapped; `bound` is what the I/O blocks check, because an entity's block
     // can still be invoked after Stop begins.
-    ASFW::Midi::MidiTransportBlock* block{nullptr};
+    std::atomic<ASFW::Midi::MidiTransportBlock*> block{nullptr};
     uint64_t streamEpoch{0};
     std::atomic<bool> bound{false};
+    std::atomic<int32_t> activeWriters{0};
 
     // One converter per port per direction: both are stateful (running status,
     // SysEx accumulation) and must not be shared between ports.
@@ -51,18 +52,58 @@ struct ASFWMidiDevice_IVars {
     kern_return_t WriteToWire(uint32_t port, const uint32_t* umpWords,
                               size_t numWords) noexcept {
         if (!bound.load(std::memory_order_acquire)) return kIOReturnNotReady;
-        if (block == nullptr || port >= ASFW::Midi::kMidiPortsPerDirection) {
+        activeWriters.fetch_add(1, std::memory_order_acquire);
+        if (!bound.load(std::memory_order_acquire)) {
+            activeWriters.fetch_sub(1, std::memory_order_release);
+            return kIOReturnNotReady;
+        }
+
+        struct WriterGuard {
+            std::atomic<int32_t>& count;
+            ~WriterGuard() { count.fetch_sub(1, std::memory_order_release); }
+        } guard{activeWriters};
+
+        auto* localBlock = block.load(std::memory_order_acquire);
+        if (localBlock == nullptr || port >= ASFW::Midi::kMidiPortsPerDirection) {
             return kIOReturnBadArgument;
         }
-        if (!block->Usable(streamEpoch)) return kIOReturnNotReady;
+        const uint64_t currentEpoch = localBlock->streamEpoch.load(std::memory_order_acquire);
+        if (!localBlock->Usable(currentEpoch)) return kIOReturnNotReady;
 
-        const auto pulled = toWire[port].Pull({umpWords, numWords}, txBytes);
-        if (pulled.bytesWritten == 0) return kIOReturnSuccess;
-        // All-or-nothing: a rejected message is better than a truncated one,
-        // which would leave the device desynchronised until the next status
-        // byte.
-        if (!block->hostToDevice[port].TryWrite({txBytes, pulled.bytesWritten})) {
-            return kIOReturnNoSpace;
+        if (currentEpoch != streamEpoch) {
+            streamEpoch = currentEpoch;
+            for (uint32_t p = 0; p < ASFW::Midi::kMidiPortsPerDirection; ++p) {
+                toWire[p].Reset();
+                fromWire[p].Reset();
+                seenGaps[p] = 0;
+            }
+        }
+
+        size_t wordsConsumedTotal = 0;
+        while (wordsConsumedTotal < numWords) {
+            const auto remainingWords = std::span<const uint32_t>(
+                umpWords + wordsConsumedTotal, numWords - wordsConsumedTotal);
+            const auto pulled = toWire[port].Pull(remainingWords, txBytes);
+            if (pulled.wordsConsumed == 0) {
+                if (pulled.needsMoreWords) {
+                    // Truncated multi-word UMP packet in input buffer.
+                    toWire[port].AbortSysEx();
+                    return kIOReturnBadArgument;
+                }
+                break;
+            }
+            if (pulled.bytesWritten > 0) {
+                // All-or-nothing: a rejected message is better than a truncated one,
+                // which would leave the device desynchronised until the next status
+                // byte.
+                if (!localBlock->hostToDevice[port].TryWrite({txBytes, pulled.bytesWritten})) {
+                    // Ring is full. Abort the SysEx state machine so subsequent
+                    // continuations or end packet are not emitted as bare payload / naked 0xF7.
+                    toWire[port].AbortSysEx();
+                    return kIOReturnNoSpace;
+                }
+            }
+            wordsConsumedTotal += pulled.wordsConsumed;
         }
         return kIOReturnSuccess;
     }
@@ -160,7 +201,8 @@ uint32_t ASFWMidiDevice::DestinationPortCount() const {
 
 void ASFWMidiDevice::BindTransport(void* block, uint64_t streamEpoch) {
     if (ivars == nullptr || block == nullptr) return;
-    ivars->block = static_cast<ASFW::Midi::MidiTransportBlock*>(block);
+    ivars->block.store(static_cast<ASFW::Midi::MidiTransportBlock*>(block),
+                       std::memory_order_release);
     ivars->streamEpoch = streamEpoch;
     ivars->bound.store(true, std::memory_order_release);
 
@@ -189,20 +231,74 @@ void ASFWMidiDevice::BindTransport(void* block, uint64_t streamEpoch) {
     ASFW_LOG(Midi, "ASFWMidiDevice: transport bound epoch=%llu", streamEpoch);
 }
 
-void ASFWMidiDevice::UnbindTransport() {
-    if (ivars == nullptr) return;
-    // Clear the flag first: an I/O block already running will see it and return
-    // without touching the rings, and one that starts afterwards does nothing.
+bool ASFWMidiDevice::UnbindTransport() {
+    if (ivars == nullptr) return true;
+
+    // 1. Mark unbound so new calls to WriteToWire exit immediately.
     ivars->bound.store(false, std::memory_order_release);
-    ivars->block = nullptr;
-    ASFW_LOG(Midi, "ASFWMidiDevice: transport unbound");
+
+    // 2. Detach destination IOBlocks so CoreMIDI stops dispatching to them.
+    auto entities = GetEntities();
+    if (entities) {
+        entities->iterateObjects(^bool(OSObject* object) {
+            auto* entity = OSDynamicCast(IOUserMIDIEntity, object);
+            if (entity != nullptr) {
+                auto destination = entity->GetDestination(0);
+                if (destination) {
+                    const kern_return_t ret = destination->SetIOBlock(nullptr);
+                    if (ret != kIOReturnSuccess) {
+                        ASFW_LOG_ERROR(Midi, "ASFWMidiDevice: SetIOBlock(nullptr) failed 0x%x", ret);
+                    }
+                }
+            }
+            return false;
+        });
+    }
+
+    // 3. Wait for any in-flight RT reader callback to complete before dropping pointers.
+    bool quiesced = false;
+    for (uint32_t i = 0; i < 5000; ++i) {
+        if (ivars->activeWriters.load(std::memory_order_acquire) == 0) {
+            quiesced = true;
+            break;
+        }
+        IODelay(100);
+    }
+
+    if (!quiesced) {
+        ASFW_LOG_ERROR(Midi,
+                       "ASFWMidiDevice: unbind timed out with %d active writer(s); "
+                       "retaining state and aborting destructive teardown",
+                       ivars->activeWriters.load(std::memory_order_acquire));
+        return false;
+    }
+
+    // 4. Clear the transport pointer and reset converters now that callers are truly quiesced.
+    ivars->block.store(nullptr, std::memory_order_release);
+    for (uint32_t port = 0; port < ASFW::Midi::kMidiPortsPerDirection; ++port) {
+        ivars->toWire[port].Reset();
+        ivars->fromWire[port].Reset();
+    }
+    ASFW_LOG(Midi, "ASFWMidiDevice: transport unbound and quiesced");
+    return true;
 }
 
 void ASFWMidiDevice::DrainReceiveRings() {
     if (ivars == nullptr) return;
     if (!ivars->bound.load(std::memory_order_acquire)) return;
-    auto* block = ivars->block;
-    if (block == nullptr || !block->Usable(ivars->streamEpoch)) return;
+    auto* block = ivars->block.load(std::memory_order_acquire);
+    if (block == nullptr) return;
+    const uint64_t currentEpoch = block->streamEpoch.load(std::memory_order_acquire);
+    if (!block->Usable(currentEpoch)) return;
+
+    if (currentEpoch != ivars->streamEpoch) {
+        ivars->streamEpoch = currentEpoch;
+        for (uint32_t port = 0; port < ASFW::Midi::kMidiPortsPerDirection; ++port) {
+            ivars->toWire[port].Reset();
+            ivars->fromWire[port].Reset();
+            ivars->seenGaps[port] = 0;
+        }
+    }
 
     auto entities = GetEntities();
     if (!entities) return;
@@ -218,22 +314,48 @@ void ASFWMidiDevice::DrainReceiveRings() {
         if (!source) return false;
         auto& ring = block->deviceToHost[port];
 
-        // A discontinuity means bytes were lost between what is queued and what
-        // came before. Reset the parser at that point so the two sides cannot
-        // join into a message nobody sent.
-        const uint64_t gaps = ring.discontinuities.load(std::memory_order_relaxed);
-        if (gaps != ivars->seenGaps[port]) {
-            ivars->seenGaps[port] = gaps;
-            ivars->fromWire[port].Reset();
-        }
+        while (true) {
+            // A discontinuity means bytes were lost between what is queued and what
+            // came before. Discard unconsumed pre-gap bytes in the ring before resetting
+            // the parser so pre-gap fragments cannot re-arm the parser and merge with post-gap bytes.
+            const uint64_t gaps = ring.discontinuities.load(std::memory_order_acquire);
+            if (gaps != ivars->seenGaps[port]) {
+                ivars->seenGaps[port] = gaps;
+                const uint32_t d = ring.discontinuityIndex.load(std::memory_order_acquire);
+                const uint32_t r = ring.readIndex.load(std::memory_order_relaxed);
+                const uint32_t toDisc = d - r;
+                const uint32_t avail = ring.Available();
+                if (toDisc > 0 && toDisc <= avail) {
+                    ring.Consume(toDisc);
+                }
+                ivars->fromWire[port].Reset();
+            }
 
-        const uint32_t count = ring.Peek(ivars->rxBytes);
-        if (count == 0) return false;
-        const auto pushed = ivars->fromWire[port].Push(
-            {ivars->rxBytes, count}, ivars->rxWords);
-        ring.Consume(pushed.bytesConsumed);
-        if (pushed.wordsWritten > 0) {
-            (void)source->Send(ivars->rxWords, pushed.wordsWritten);
+            const uint32_t count = ring.Peek(ivars->rxBytes);
+            if (count == 0) break;
+            const auto pushed = ivars->fromWire[port].Push(
+                {ivars->rxBytes, count}, ivars->rxWords);
+
+            // Re-check for concurrent discontinuity before publishing decoded messages.
+            const uint64_t gapsAfter = ring.discontinuities.load(std::memory_order_acquire);
+            if (gapsAfter != gaps) {
+                ivars->seenGaps[port] = gapsAfter;
+                const uint32_t d = ring.discontinuityIndex.load(std::memory_order_acquire);
+                const uint32_t r = ring.readIndex.load(std::memory_order_relaxed);
+                const uint32_t toDisc = d - r;
+                const uint32_t avail = ring.Available();
+                if (toDisc > 0 && toDisc <= avail) {
+                    ring.Consume(toDisc);
+                }
+                ivars->fromWire[port].Reset();
+                continue;
+            }
+
+            ring.Consume(pushed.bytesConsumed);
+            if (pushed.wordsWritten > 0) {
+                (void)source->Send(ivars->rxWords, pushed.wordsWritten);
+            }
+            if (pushed.bytesConsumed == 0) break;
         }
         return false;
     });

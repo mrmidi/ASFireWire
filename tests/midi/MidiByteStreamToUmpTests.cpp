@@ -380,3 +380,30 @@ TEST(MidiByteStreamToUmp, BytesAcrossALossGapCannotFormAMessage) {
     const auto words = Convert(parser, {0x40, 0x3E});
     EXPECT_TRUE(words.empty());
 }
+
+TEST(MidiByteStreamToUmp, TuneRequestInterruptingSysExRequiresThreeWords) {
+    MidiByteStreamToUmp parser;
+    uint32_t setup[8]{};
+    uint8_t start[]{0xF0, 0x01};
+    const auto r1 = parser.Push(start, setup);
+    EXPECT_EQ(r1.bytesConsumed, 2u);
+    EXPECT_TRUE(parser.InSysEx());
+
+    // Span with only 2 words remaining: must not consume F6 because it requires 3 words.
+    uint32_t twoWordSpan[2]{};
+    uint8_t tune[]{0xF6};
+    const auto r2 = parser.Push(tune, twoWordSpan);
+    EXPECT_EQ(r2.bytesConsumed, 0u);
+    EXPECT_EQ(r2.wordsWritten, 0u);
+    EXPECT_TRUE(parser.InSysEx());
+
+    // Span with 3 words: consumes F6 and produces 3 words (SysEx flush + Tune Request).
+    uint32_t threeWordSpan[3]{};
+    const auto r3 = parser.Push(tune, threeWordSpan);
+    EXPECT_EQ(r3.bytesConsumed, 1u);
+    EXPECT_EQ(r3.wordsWritten, 3u);
+    EXPECT_FALSE(parser.InSysEx());
+    // First two words: SysEx7 Complete with 1 payload byte
+    EXPECT_EQ((threeWordSpan[0] >> 28) & 0xF, 0x3u); // MT 0x3 SysEx7
+    // Third word: System Common Tune Request (0xF6)
+}

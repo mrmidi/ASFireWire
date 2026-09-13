@@ -342,3 +342,29 @@ TEST(UmpToMidiByteStream, ResetDropsAnOpenSysExWithoutEmittingF7) {
     EXPECT_TRUE(Convert(writer, {0x3021'4200u, 0x0000'0000u}).empty());
     EXPECT_EQ(writer.GetCounters().sysExOutOfSequence, 1u);
 }
+
+TEST(UmpToMidiByteStream, AbortSysExDiscardsContinuationsAndEndUntilNewStart) {
+    UmpToMidiByteStream writer;
+    // SysEx Start: emits F0 41
+    const auto b1 = Convert(writer, {0x3011'4100u, 0x0000'0000u});
+    EXPECT_EQ(b1, (std::vector<uint8_t>{0xF0, 0x41}));
+    EXPECT_TRUE(writer.InSysEx());
+
+    // Abort after write failure
+    writer.AbortSysEx();
+    EXPECT_FALSE(writer.InSysEx());
+
+    // SysEx Continue: must be discarded
+    const auto b2 = Convert(writer, {0x3021'4200u, 0x0000'0000u});
+    EXPECT_TRUE(b2.empty());
+    EXPECT_EQ(writer.GetCounters().sysExOutOfSequence, 1u);
+
+    // SysEx End: must also be discarded, not emit bare payload + 0xF7
+    const auto b3 = Convert(writer, {0x3031'4300u, 0x0000'0000u});
+    EXPECT_TRUE(b3.empty());
+    EXPECT_EQ(writer.GetCounters().sysExOutOfSequence, 2u);
+
+    // New SysEx Start: must succeed normally
+    const auto b4 = Convert(writer, {0x3011'4400u, 0x0000'0000u});
+    EXPECT_EQ(b4, (std::vector<uint8_t>{0xF0, 0x44}));
+}

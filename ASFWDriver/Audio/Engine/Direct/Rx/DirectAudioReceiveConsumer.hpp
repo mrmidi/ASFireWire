@@ -69,6 +69,7 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     void OnReceiveActivated() noexcept override;
     void OnReceiveQuiesced() noexcept override;
     void BeginReceiveBatch(const ::ASFW::Isoch::IsochReceiveBatch& batch) noexcept override;
+    void EndReceiveBatch(const ::ASFW::Isoch::IsochReceiveBatch& batch) noexcept override;
     void ConsumePacket(const ::ASFW::Isoch::IsochReceiveBatch& batch,
                        const ::ASFW::Isoch::IsochReceivePacket& packet) noexcept override;
 

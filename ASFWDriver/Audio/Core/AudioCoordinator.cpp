@@ -125,7 +125,7 @@ void AudioCoordinator::EndpointReady(
                        "[AudioSession] endpoint=%llu MIDI nub publication failed; "
                        "audio endpoint stays up",
                        profile->endpointId.value);
-    } else if (midiCaps.deviceToHost.Usable()) {
+    } else if (midiCaps.AnyUsable()) {
         // Point receive extraction at this endpoint's rings. Arm publishes the
         // epoch and clears the rings before anything can read them, so a
         // restart cannot deliver the previous stream's bytes.
@@ -133,24 +133,26 @@ void AudioCoordinator::EndpointReady(
             midiPublisher_.GetNub(profile->endpointId.value));
         if (nub != nullptr) {
             nub->ArmTransport(midiCaps.streamEpoch);
-            auto* block = static_cast<ASFW::Midi::MidiTransportBlock*>(
-                nub->GetTransportBlock());
-            if (block != nullptr) {
-                const auto& source = midiCaps.deviceToHost;
-                hostTransport_.SetMidiReceiveTransport(
-                    block, midiCaps.streamEpoch,
-                    ASFW::Encoding::MpxMidiGeometry{
-                        .dbs = source.dbs,
-                        .midiSlotIndex = source.midiSlotIndex,
-                        .portCount = source.portCount,
-                        .dbcAligned = source.dbcAligned,
-                    },
-                    [nub] { (void)nub->NotifyMidiReceived(); });
-                ASFW_LOG(Midi,
-                         "[AudioSession] endpoint=%llu MIDI receive armed "
-                         "epoch=%llu ports=%u slot=%u dbs=%u",
-                         profile->endpointId.value, midiCaps.streamEpoch,
-                         source.portCount, source.midiSlotIndex, source.dbs);
+            if (midiCaps.deviceToHost.Usable()) {
+                auto* block = static_cast<ASFW::Midi::MidiTransportBlock*>(
+                    nub->GetTransportBlock());
+                if (block != nullptr) {
+                    const auto& source = midiCaps.deviceToHost;
+                    hostTransport_.SetMidiReceiveTransport(
+                        block, midiCaps.streamEpoch,
+                        ASFW::Encoding::MpxMidiGeometry{
+                            .dbs = source.dbs,
+                            .midiSlotIndex = source.midiSlotIndex,
+                            .portCount = source.portCount,
+                            .dbcAligned = source.dbcAligned,
+                        },
+                        [nub] { (void)nub->NotifyMidiReceived(); });
+                    ASFW_LOG(Midi,
+                             "[AudioSession] endpoint=%llu MIDI receive armed "
+                             "epoch=%llu ports=%u slot=%u dbs=%u",
+                             profile->endpointId.value, midiCaps.streamEpoch,
+                             source.portCount, source.midiSlotIndex, source.dbs);
+                }
             }
 
             // Transmit: relay the same seam through the audio nub, because the

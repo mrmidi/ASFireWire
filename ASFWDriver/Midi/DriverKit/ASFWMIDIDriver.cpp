@@ -48,7 +48,7 @@ uint64_t NumberProperty(OSDictionary* properties, const char* key,
                         uint64_t fallback) {
     if (properties == nullptr) return fallback;
     auto* number = OSDynamicCast(OSNumber, properties->getObject(key));
-    return number ? number->unsigned64BitValue() : fallback;
+    return (number != nullptr) ? number->unsigned64BitValue() : fallback;
 }
 
 OSSharedPtr<OSString> StringProperty(OSDictionary* properties, const char* key,
@@ -205,16 +205,24 @@ kern_return_t IMPL(ASFWMIDIDriver, Stop) {
     // Order matters: stop using the rings, then stop the service, then drop
     // the mapping. Releasing the mapping first would leave a callback that is
     // already running dereferencing unmapped memory.
+    bool quiesced = true;
     if (ivars != nullptr && ivars->device) {
-        ivars->device->UnbindTransport();
+        (void)ivars->device->StopIO();
+        quiesced = ivars->device->UnbindTransport();
     }
     const kern_return_t ret = Stop(provider, SUPERDISPATCH);
     if (ivars != nullptr) {
         ivars->device.reset();
         ivars->receiveAction.reset();
-        ivars->transportMap.reset();
-        ivars->transportBuffer.reset();
         ivars->workQueue.reset();
+        if (quiesced) {
+            ivars->transportMap.reset();
+            ivars->transportBuffer.reset();
+        } else {
+            ASFW_LOG_ERROR(Midi,
+                           "ASFWMIDIDriver: unbind timed out with active writers; "
+                           "retaining transport mapping to avoid crash/UAF");
+        }
     }
     return ret;
 }

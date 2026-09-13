@@ -48,7 +48,8 @@ public:
     void BindTransport(void* block, uint64_t streamEpoch) LOCALONLY;
 
     /// Stop using the rings. Must run before the mapping is dropped.
-    void UnbindTransport() LOCALONLY;
+    /// Returns true if all in-flight writers quiesced; false if timed out.
+    bool UnbindTransport() LOCALONLY;
 
     /// Convert everything queued device -> host into UMP and Send it.
     ///

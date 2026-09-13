@@ -53,6 +53,7 @@ class IIsochReceiveConsumer {
     virtual void OnReceiveQuiesced() noexcept {}
 
     virtual void BeginReceiveBatch(const IsochReceiveBatch& batch) noexcept = 0;
+    virtual void EndReceiveBatch(const IsochReceiveBatch& batch) noexcept {}
     virtual void ConsumePacket(const IsochReceiveBatch& batch,
                                const IsochReceivePacket& packet) noexcept = 0;
 

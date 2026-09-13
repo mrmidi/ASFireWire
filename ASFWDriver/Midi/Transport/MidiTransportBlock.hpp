@@ -69,6 +69,8 @@ struct MidiByteRing final {
     /// reset, an epoch change. The consumer resets its parser here so bytes
     /// from either side of the gap cannot join into a message nobody sent.
     std::atomic<uint64_t> discontinuities{0};
+    /// Producer write index at the most recent discontinuity.
+    std::atomic<uint32_t> discontinuityIndex{0};
 
     uint8_t bytes[kMidiRingCapacityBytes]{};
 
@@ -120,10 +122,24 @@ struct MidiByteRing final {
     /// Peek and Consume are separate so a consumer that may have to abandon
     /// the attempt -- the TX packet path, which can lose its publication race
     /// -- can put the bytes back by simply not consuming.
+    /// Clamped to the discontinuity boundary so bytes across a gap are never
+    /// returned in the same span.
     [[nodiscard]] uint32_t Peek(std::span<uint8_t> out) const noexcept {
         const uint32_t w = writeIndex.load(std::memory_order_acquire);
         const uint32_t r = readIndex.load(std::memory_order_relaxed);
-        uint32_t count = w - r;
+        uint32_t available = w - r;
+        if (available == 0) return 0;
+
+        const uint64_t disc = discontinuities.load(std::memory_order_acquire);
+        if (disc != 0) {
+            const uint32_t d = discontinuityIndex.load(std::memory_order_acquire);
+            const uint32_t toDisc = d - r;
+            if (toDisc > 0 && toDisc <= available) {
+                available = toDisc;
+            }
+        }
+
+        uint32_t count = available;
         if (count > out.size()) count = static_cast<uint32_t>(out.size());
         for (uint32_t i = 0; i < count; ++i) {
             out[i] = bytes[(r + i) & (kMidiRingCapacityBytes - 1)];
@@ -146,7 +162,9 @@ struct MidiByteRing final {
 
     /// Record that the byte stream is broken at the current position.
     void MarkDiscontinuity() noexcept {
-        discontinuities.fetch_add(1, std::memory_order_relaxed);
+        const uint32_t w = writeIndex.load(std::memory_order_relaxed);
+        discontinuityIndex.store(w, std::memory_order_release);
+        discontinuities.fetch_add(1, std::memory_order_release);
     }
 
     /// Owner-only: return the ring to its initial state.
@@ -160,6 +178,7 @@ struct MidiByteRing final {
         readIndex.store(0, std::memory_order_relaxed);
         droppedBytes.store(0, std::memory_order_relaxed);
         discontinuities.store(0, std::memory_order_relaxed);
+        discontinuityIndex.store(0, std::memory_order_relaxed);
     }
 
     /// Drop everything buffered. Called on epoch change and teardown by the
@@ -179,7 +198,8 @@ struct MidiByteRing final {
 struct MidiTransportBlock final {
     /// Bumped when the layout changes, so a stale mapping is detected rather
     /// than silently misread.
-    static constexpr uint32_t kLayoutVersion = 1;
+    static constexpr uint32_t kMagic = 0x4D494449; // "MIDI"
+    static constexpr uint32_t kLayoutVersion = 2;
 
     std::atomic<uint32_t> layoutVersion{kLayoutVersion};
     /// Stream epoch this content belongs to. A consumer that sees a different

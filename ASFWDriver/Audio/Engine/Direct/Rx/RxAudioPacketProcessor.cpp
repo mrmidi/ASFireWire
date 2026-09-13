@@ -25,6 +25,11 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
 
     if (length < kIsochHeaderSize + 8) {
         result.status = DirectRxWriteStatus::kShortPacket;
+        if (midi.Enabled() && midi.sink) {
+            for (uint8_t p = 0; p < midi.geometry.portCount; ++p) {
+                midi.sink->MarkMidiDiscontinuity(p);
+            }
+        }
         return result;
     }
 
@@ -39,6 +44,11 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     const auto cip = ASFW::Isoch::CIPHeader::Decode(quadlets[0], quadlets[1]);
     if (!cip) {
         result.status = DirectRxWriteStatus::kInvalidCipHeader;
+        if (midi.Enabled() && midi.sink) {
+            for (uint8_t p = 0; p < midi.geometry.portCount; ++p) {
+                midi.sink->MarkMidiDiscontinuity(p);
+            }
+        }
         return result;
     }
 
@@ -55,13 +65,18 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
         return result;
     }
 
-    const size_t eventCount = payloadBytes / dbsBytes;
-    result.ragged = (payloadBytes % dbsBytes) != 0;
+    // IEC 61883-6 §5.2 / §5.3: An AM824 packet with FDF=0xFF is NO-DATA (data-block count = 0),
+    // even if trailing payload bytes are present.
+    // Cross-validated with Linux amdtp-stream.c:768-770:
+    // payload_length == 0 || (fmt == CIP_FMT_AM && fdf == AMDTP_FDF_NO_DATA) => data_blocks = 0
+    const bool isNoData = cip->IsNoData() || payloadBytes == 0;
+    const size_t eventCount = isNoData ? 0 : (payloadBytes / dbsBytes);
+    result.ragged = !isNoData && ((payloadBytes % dbsBytes) != 0);
     result.framesDecoded = static_cast<uint32_t>(eventCount);
 
     if (eventCount == 0) {
-        // Header-only NO-DATA carries no data blocks at all. Deriving MIDI from
-        // whatever follows the header would be reading leftover buffer.
+        // NO-DATA (header-only or payload-bearing with FDF=0xFF) carries no data blocks at all.
+        // Deriving MIDI from whatever follows the header would be reading leftover buffer.
         result.status = DirectRxWriteStatus::kAvailable;
         return result;
     }
@@ -71,10 +86,12 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     // unbound and that path returns early -- extracting after it would mean
     // MIDI worked only while audio happened to be running.
     //
-    // hasValidCip above only means CIPHeader::Decode accepted the EOH markers.
-    // It validates neither the AM824 format nor the geometry, so the MIDI slot
-    // is bounds-checked against this packet's own DBS rather than trusted.
+    // Validate CIP format is AM824 (0x10) and not NO-DATA before demuxing: a packet
+    // with another format or NO-DATA disposition could otherwise deliver coincidental
+    // 0x81 labels as spurious MIDI.
     if (midi.Enabled() && !result.ragged &&
+        cip->format == ASFW::Isoch::CIPHeader::kFormatAM824 &&
+        !cip->IsNoData() &&
         midi.geometry.dbs == cip->dataBlockSize &&
         midi.geometry.midiSlotIndex < cip->dataBlockSize) {
         ASFW::Encoding::MpxMidiDemuxCounters discard{};

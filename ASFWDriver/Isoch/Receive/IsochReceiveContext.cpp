@@ -280,6 +280,10 @@ uint32_t IsochReceiveContext::Poll() {
         }
     });
 
+    if (receiveConsumer_) {
+        receiveConsumer_->EndReceiveBatch(receiveBatch);
+    }
+
     if (processed != 0) {
         packetsProcessed_.fetch_add(processed, std::memory_order_relaxed);
         lastProgressHostTicks_.store(drainHostTicks,

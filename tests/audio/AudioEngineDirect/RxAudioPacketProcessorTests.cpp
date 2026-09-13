@@ -201,4 +201,41 @@ TEST(RxAudioPacketProcessorTests, EveryRejectStatusIsDistinct) {
     }
 }
 
+TEST(RxAudioPacketProcessorTests, PayloadBearingNoDataWithFdf0xFFIsTreatedAsZeroDataBlocks) {
+    Fixture fixture;
+    RxAudioPacketProcessor processor(fixture.writer);
+
+    // FMT 0x10, FDF 0xFF, SYT 0xFFFF. Even if trailing payload bytes are present,
+    // AM824 FDF 0xFF means NO-DATA (IEC 61883-6 §5.2 / §5.3).
+    // framesDecoded must be 0 and no MIDI must be extracted.
+    const auto packet = MakePacket(MakeQuadlet0(kSlots), MakeQuadlet1(0xFFFF, 0xFF), kSlots, 2);
+
+    struct TestSink : ASFW::Audio::Ports::IMidiByteSink {
+        uint32_t delivered{0};
+        void DeliverMidiBytes(uint8_t, const uint8_t*, uint8_t n) noexcept override { delivered += n; }
+        void MarkMidiDiscontinuity(uint8_t) noexcept override {}
+    } sink;
+
+    ASFW::AudioEngine::Direct::Rx::RxMidiExtraction extraction{
+        .sink = &sink,
+        .geometry = {
+            .dbs = kSlots,
+            .midiSlotIndex = 1,
+            .portCount = 1,
+            .dbcAligned = true,
+        },
+    };
+
+    const auto result = processor.ProcessPacket(
+        packet.data(), packet.size(), 0, 1, kSlots,
+        ASFW::Encoding::AudioWireFormat::kAM824, 0, false, {}, false, extraction);
+
+    EXPECT_EQ(result.status, DirectRxWriteStatus::kAvailable);
+    EXPECT_TRUE(result.hasValidCip);
+    EXPECT_EQ(result.fdf, 0xFF);
+    EXPECT_EQ(result.framesDecoded, 0u);
+    EXPECT_EQ(result.midiBytesDelivered, 0u);
+    EXPECT_EQ(sink.delivered, 0u);
+}
+
 } // namespace ASFW::Tests::AudioEngineDirect

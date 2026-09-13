@@ -189,6 +189,13 @@ void DirectAudioReceiveConsumer::BeginReceiveBatch(
     lastBindingGeneration_ = snapshot.generation;
 }
 
+void DirectAudioReceiveConsumer::EndReceiveBatch(
+    const ::ASFW::Isoch::IsochReceiveBatch&) noexcept {
+    if (midiBytesThisBatch_ > 0 && midiReceivedCallback_) {
+        midiReceivedCallback_();
+    }
+}
+
 void DirectAudioReceiveConsumer::ConsumePacket(
     const ::ASFW::Isoch::IsochReceiveBatch& batch,
     const ::ASFW::Isoch::IsochReceivePacket& packet) noexcept {

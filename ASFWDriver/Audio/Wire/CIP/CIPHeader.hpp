@@ -66,15 +66,23 @@ struct CIPHeader {
      * 0x10 (10_16) explicitly designates Audio and Music Data (AM824).
      * Reference: IEC 61883-1 §6.2.1 Table 5 / IEC 61883-6 §6.3 Table 2
      */
-    uint8_t format{0x10}; 
+    static constexpr uint8_t kFormatAM824 = 0x10;
+    static constexpr uint8_t kFormatNoData = 0x3F;
+    static constexpr uint8_t kFdfNoData = 0xFF;
+
+    uint8_t format{kFormatAM824};
 
     /** 
      * Format Dependent Field (FDF).
      * For AM824 (FMT = 0x10), this field contains the Sampling Frequency Code (SFC)
-     * and rate control flags.
-     * Reference: IEC 61883-6 §9.1 and §10
+     * and rate control flags. 0xFF indicates NO-DATA.
+     * Reference: IEC 61883-6 §5.2, §5.3, §9.1 and §10
      */
     uint8_t fdf{0};
+
+    [[nodiscard]] bool IsNoData() const noexcept {
+        return format == kFormatNoData || (format == kFormatAM824 && fdf == kFdfNoData);
+    }
 
     /** 
      * Synchronization Time-stamp (SYT).
