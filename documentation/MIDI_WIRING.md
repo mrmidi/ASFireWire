@@ -7,9 +7,9 @@ together in ASFW.
 Four sources inform this design. API facts, observed reference behaviour and
 proposed ASFW behaviour have different levels of certainty:
 
-- **Linux** — `references/linux-sound-firewire-stack/` (ALSA `snd-firewire`).
+- **Linux** — `references/linux-sound-firewire-stack/firewire/` (ALSA `snd-firewire`).
   Authoritative for wire behaviour. Cited as `file:line`.
-- **Apple SDK** — `DriverKit27.0.sdk/…/MIDIDriverKit.framework/Headers/` and
+- **Apple SDK (original investigation)** — `DriverKit27.0.sdk/…/MIDIDriverKit.framework/Headers/` and
   `MacOSX27.0.sdk/…/CoreMIDI.framework/Headers/`. Authoritative for the API
   surface. `ctx7` returned no MIDIDriverKit entry during this review; the local
   headers and Apple's online documentation are available.
@@ -21,7 +21,8 @@ proposed ASFW behaviour have different levels of certainty:
   sample: a virtual driver publishing one device with one source and one
   destination. Authoritative for *idiom* — how the classes are actually
   subclassed, dispatched and reconfigured — and for the shipping personality and
-  entitlement set. Cited as `sample:<file>`.
+  entitlement set. Cited as `sample:<file>`, relative to
+  `references/CreatingAMIDIDeviceDriver/CreatingMIDIDriverSampleAppExtension/`.
 
 > **Why this document exists.** The wire framing is small and was settled twice
 > over — Linux and Focusrite agree byte for byte. The parts that are *not*
@@ -33,14 +34,32 @@ proposed ASFW behaviour have different levels of certainty:
 **Status:** design, not yet implemented. Nothing in `ASFWDriver/` writes or
 reads a MIDI byte today.
 
-**Review checkpoint (2026-09-13, ASFW `3b96c7a5`):** cross-checked against the
-local Linux stack, SDK headers and the Apple sample in
-`/Users/mrmidi/Downloads/CreatingAMIDIDeviceDriver/`. The Focusrite addresses
-below retain the original reverse-engineering findings; they were **not
-independently re-decompiled in this review**. Before implementation, settle the
-bounded TX fill window and MIDI-only pump (§10), packet-local byte reservations
-(§9.2), RX validation (§11), and the MIDIServer scheduling probe (§13.1).
-The timing figures in §14 are a model to test, not measured guarantees.
+**Review checkpoint (2026-09-13, ASFW `dce2fec4`):** cross-checked the
+current ASFW integration points, local Linux AM824/DICE sources, installed
+`DriverKit25.5.sdk` headers, and the Apple sample now supplied in
+`references/CreatingAMIDIDeviceDriver/`. The original SDK 27 citations remain
+historical provenance; the installed headers confirm `Send`, `MIDIIOBlock`,
+lifecycle signatures and the property enum. Context7 again returned no
+MIDIDriverKit library. The sample confirms the virtual provider, object setup,
+loopback and stopped/running configuration branch; it does not settle hardware
+nub matching or host scheduling. The Focusrite addresses were **not
+independently re-decompiled in this review**.
+
+**Verdict:** the AM824 framing and separate MIDI-service direction make sense.
+This is an implementable design direction, **not yet a settled lifecycle or
+latency contract**. The main work is shared stream ownership, safe bounded
+content publication, and the host scheduling probe.
+
+**Initial scope: DICE-based Focusrite Saffire.** Use Saffire Pro 24 DSP as the
+provisional first test model because this tree has its dedicated protocol and
+profile; record the actual unit/model/GUID before hardware validation. “Saffire”
+also names older BeBoB devices, which are outside this first milestone. Begin
+with the device's verified 48 kHz blocking formation, stream 0 in each
+direction, and its discovered physical port counts (expect one jack pair;
+do not hardcode it from the Pro 40 reference). Add 44.1/96 kHz only where the
+model and current engine support them. BeBoB, Oxford, secondary-stream MIDI,
+and unsupported rate formations are follow-up work, not stage-0 dependencies.
+The timing figures in §14 remain a model to test, not measured guarantees.
 
 ---
 
@@ -84,6 +103,16 @@ The last two matter. `WriteDataPacketDefaults` already fills every non-PCM slot
 with `0x80000000`, which is a byte-exact IEC 61883-6 "MIDI conformant data, zero
 valid bytes" quadlet — identical to Linux's `b[0] = 0x80; b[1..3] = 0`. **ASFW
 already transmits well-formed empty MIDI.** The work is to put bytes in it.
+
+The DICE path also already copies `StreamFormatEntry::midiPorts` into
+`AudioStreamRuntimeCaps::{deviceToHostStreams,hostToDeviceStreams}` in
+`Audio/Protocols/DICE/Core/DICEDuplexBringupController.cpp:71-95`.
+`Audio/Families/Common/CommonProfileBuilder.cpp` retains these caps in
+`ResolvedAudioEndpointProfile::runtimeCaps`. Start from that per-stream data;
+adding a second register-discovery path would duplicate existing work.
+`ResolvedAudioStreamProfile::MakeStreamConfig` reduces the wire geometry to
+`dbs`, `pcmChannels`, and `midiSlots`; that slot count is not an endpoint count.
+A MIDI-specific capability projection/publication is still needed.
 
 Missing:
 
@@ -384,8 +413,8 @@ for (s = 0; s < txStreamCount; s++)  txPorts += txStream[s].numMidi;
 for (s = 0; s < rxStreamCount; s++)  rxPorts += rxStream[s].numMidi;
 ```
 
-Linux takes the max rather than the sum (`dice/dice-midi.c:104-111`) and only
-ever drives MIDI on stream 0 (`dice/dice-midi.c:54,68`). For a single-stream
+Linux takes the max rather than the sum (`dice/dice-midi.c:114-119`) and only
+ever drives MIDI on stream 0 (`dice/dice-midi.c:59-63,76-80`). For a single-stream
 device the two agree; for multi-stream, prefer Linux's "stream 0 only" rule
 until hardware says otherwise.
 
@@ -398,6 +427,14 @@ No new register command is needed, but publication is not done:
 `DICE::StreamConfig::TotalMidiPorts` / `ActiveMidiPorts` sum counts
 (`DICETypes.hpp:719-734`), so do not reuse those totals for Linux-style endpoint
 enumeration without adapting the aggregation and stream routing together.
+
+For the first Saffire milestone, validate stream 0's count and slot geometry
+against the complete reported stream table. Linux uses the maximum count, not
+a sum; if a nonzero count cannot be represented on stream 0, report the
+formation as unsupported for MIDI rather than silently publishing unreachable
+ports. Keep audio capability publication independent of this MIDI rejection.
+DICE `tx` means device→host (CoreMIDI source), while ASFW's TX packetizer means
+host→device (CoreMIDI destination). Use explicit direction names at the seam.
 
 ### 4.2 BeBoB — port and position discovery
 
@@ -468,7 +505,9 @@ merely because one MPX slot can multiplex eight ports.
 
 ## 5. The host API: MIDIDriverKit
 
-Read from `DriverKit27.0.sdk/System/DriverKit/System/Library/Frameworks/MIDIDriverKit.framework/Headers/`.
+Originally read from `DriverKit27.0.sdk/System/DriverKit/System/Library/Frameworks/MIDIDriverKit.framework/Headers/`.
+The current local verification uses the corresponding headers in
+`/Applications/Xcode.app/Contents/Developer/Platforms/DriverKit.platform/Developer/SDKs/DriverKit25.5.sdk/`.
 `ctx7` returned no entry for this framework during review. Apple's
 [framework documentation](https://developer.apple.com/documentation/mididriverkit)
 and [sample guide](https://developer.apple.com/documentation/mididriverkit/creating-a-midi-device-driver)
@@ -476,7 +515,9 @@ are additional API and sample sources; neither replaces a lifecycle probe.
 
 ### 5.1 Object graph
 
-All classes are `LOCALONLY`, so this is in-process C++, not IIG RPC.
+The MIDI device/entity/endpoint classes are `LOCALONLY`; the driver itself
+is an `IOService` with service RPCs and local MIDI methods. The object graph
+uses in-process C++ calls; this does not prove where separate services run.
 
 ```
 IOUserMIDIDriver : IOService          your subclass, one per personality
@@ -542,9 +583,10 @@ MIDIDriverKit is available on macOS and on iPadOS 18+ with an M-series chip.
 | `RequestDeviceConfigurationChange(action, info)` → `PerformDeviceConfigurationChange` / `AbortDeviceConfigurationChange` | `IOUserMIDIDevice.iig` |
 | `GetWorkQueue()` → `OSSharedPtr<IODispatchQueue>` | `IOUserMIDIDriver.iig`, `IOUserMIDIObject.iig` |
 
-Any structural change after publication — adding or removing entities, sources
-or destinations — must go through `RequestDeviceConfigurationChange`. IO is
-stopped before `PerformDeviceConfigurationChange` runs.
+While I/O is running, structural changes use
+`RequestDeviceConfigurationChange`; the framework stops I/O before the perform
+callback. The sample directly calls its perform method when stopped (§5.6).
+Do not infer a universal request requirement for the stopped case.
 
 ### 5.4 Properties
 
@@ -589,9 +631,13 @@ subclass it.
 **Entities are built in `init`, long before IO starts.** The sample creates its
 entity, installs the IO blocks and sets `Offline` inside `Device::init`.
 
-**Everything that mutates state runs on the work queue.** `GetWorkQueue()` is
-available on both the driver and the device; the sample wraps `super::StartIO()`,
-`super::StopIO()` and every user-client-initiated action in `DispatchSync`.
+**The sample dispatches device I/O transitions and control actions to its work
+queue.** `GetWorkQueue()` is available on both driver and device. Device
+`StartIO`/`StopIO` wrap their super calls in `DispatchSync`, and driver control
+handlers dispatch add/remove/offline actions. This is not proof that every
+mutation or MIDI callback runs there: `StartIO` sets `Offline` outside that
+block and the MIDI I/O block runs on the framework's RT thread. Avoid a nested
+`DispatchSync` onto the same queue; verify ASFW's actual call contexts.
 
 **`Driver::StartIO(OSArray* deviceList)` is the fan-out point.** Call
 `super::StartIO(deviceList)` first, then each device's `StartIO()`. `StopIO()`
@@ -613,9 +659,13 @@ This is the sample's stopped/running branch. The claim that `Request…` while
 stopped necessarily hangs is not established by the headers or sample; verify
 that behaviour if ASFW needs to rely on it.
 
-**Re-install IO blocks after every configuration change.** The sample's
-`SetupEntities()` iterates *all* entities and re-installs every block, and is
-called again from `PerformDeviceConfigurationChange`. Written to be idempotent.
+**Install I/O blocks for new entities.** `SetupEntities()` iterates all entities
+and installs their loopback blocks. The sample calls it during `init` and after
+**adding** an entity in `PerformDeviceConfigurationChange`; the removal branch
+only removes the entity. It does not demonstrate universal reinstallation after
+every change or safe lifetime for ASFW's cross-service callbacks. ASFW must
+handle allocation/API failures and explicit callback teardown; the sample leaves
+some return values unchecked.
 
 **The loopback is Apple's own pattern**, and is exactly the stage-1 bring-up:
 
@@ -951,8 +1001,10 @@ plugin's handler drains every device × port ring
 `kMIDIPropertyName`, `kMIDIPropertyOffline`, and
 **`kMIDIPropertyAdvanceScheduleTimeMuSec`**.
 
-So Focusrite takes the non-zero branch of §7.3: MIDIServer hands it outgoing
-messages immediately, timestamps intact, and the driver schedules.
+The import is consistent with the non-zero branch of §7.3, but does not by
+itself prove the property value. The recorded decompilation below demonstrates
+driver-side timestamp scheduling; recheck the property setter/value before
+claiming a particular MIDIServer delivery policy for the legacy plugin.
 
 `SaffireMIDIDriver!0x3a7c DiceMIDIDriver::Send` stores a deadline per byte:
 
@@ -1041,7 +1093,7 @@ IOKit publish/terminate notifications, using `MIDISetupAddDevice`,
 | Per-byte TX deadlines, 4 ms window | requires non-zero advance schedule time | **no** (§7.3) |
 | Per-byte RX timestamps | 125 µs cycle grid | compute, but nowhere to send (§7.4) |
 | Enable = consumer-side only | no call into the kext | only once a shared stream lease is held (§9.4) |
-| Port count from `number_midi` | sum per direction | yes — ASFW already parses |
+| Port count from `number_midi` | sum per direction | parsing yes; summing no — use the scoped routing policy in §4.1 |
 
 ---
 
@@ -1056,7 +1108,7 @@ itself proof that a MIDI driver cannot use a hardware provider: Apple's guide
 explicitly discusses USB/PCI hardware. Separation here follows ASFW's existing
 service responsibilities; the custom-nub match still needs a probe.
 
-Mirror the audio nub exactly:
+Use the audio nub as a candidate publication shape, subject to the probe below:
 
 ```
 ASFWDriver (IOPCIDevice)  ── owns OHCI, isoch, discovery, shared buffers
@@ -1093,8 +1145,11 @@ intended server configuration into the new personality and verify all three
 services' process placement at stage 1. A proposed personality is not evidence
 that they already share a process. Use retained descriptors/mappings regardless.
 
-Nub properties: `{ txMidiPorts, rxMidiPorts, txMidiSlot, rxMidiSlot,
-dbcAligned, deviceName, endpointId }`.
+Proposed nub capability record: `{ deviceToHostMidiPorts,
+hostToDeviceMidiPorts, deviceToHostStreamIndex, hostToDeviceStreamIndex,
+deviceToHostMidiSlot, hostToDeviceMidiSlot, dbcAligned, deviceName,
+stableDeviceIdentity, endpointId, streamEpoch }`. Keep persistent identity
+separate from runtime endpoint IDs and reset epochs.
 
 ### 9.2 Layering
 
@@ -1115,7 +1170,7 @@ CoreMIDI (MIDIServer)
       │
   Audio/Wire/AMDTP/ AmdtpTxPacketizer (writes slot) / RxAudioPacketProcessor (reads slot)
       │
-  Isoch/            unchanged, and must stay unchanged
+  Isoch/            payload-opaque; no MIDI parsing, queues or endpoint knowledge
 ```
 
 The byte seam carries port-indexed data and an explicit reservation contract.
@@ -1127,8 +1182,10 @@ neither call says which queue positions were selected for the packet. Specify:
   limiter decision. No producer-visible queue position advances yet.
 - Write only those reserved bytes into the candidate packet.
 - After successful payload publication, retire exactly that reservation once.
-  On rejection, sibling failure or a missed frontier, cancel it and retain the
-  bytes for a later packet. A later commit must not retire canceled bytes.
+  Before a successful offer, rejection, sibling unreadiness or a missed
+  frontier cancels it and retains bytes for a later packet. After a successful
+  offer, never requeue automatically; count any later discard as loss (§10.3).
+  A later commit must not retire canceled bytes.
 - Reset/invalidate outstanding reservations at a stream epoch change; packet
   indices are reused on restart and eventually wrap.
 
@@ -1142,7 +1199,7 @@ The TX write point and the RX read point are in **different IOServices**:
 
 | Direction | Runs in | Queue |
 |---|---|---|
-| TX write (`RefillPcm`) | `ASFWAudioDriver` — `Audio/DriverKit/ASFWAudioDriverZts.cpp:1241` | audio ZTS/IO thread |
+| TX write (`RefillPcm`) | `ASFWAudioDriver` — `Audio/DriverKit/ASFWAudioDriverZts.cpp:1294-1314` | audio ZTS/IO thread |
 | RX read (`ConsumePacket`) | `ASFWDriver` — via `Audio/Duplex/IsochDuplexHostTransport`, `Audio/Core/AudioCoordinator` | core driver receive queue |
 
 Plus `ASFWMIDIDriver` as a third. Raw pointers between three services on three
@@ -1188,8 +1245,8 @@ remove these lifetime obligations.
 The one thing the MIDI service must reach across for is stream start/stop.
 `IOUserMIDIDevice::StartIO` must ask `ASFWDriver` to bring the isoch streams up
 (and bind the silence PCM source, §10.3); `StopIO` releases. Refcount against
-the audio side's own start/stop — the `substreams_counter` pattern from
-`bebob/bebob_midi.c:10-31`.
+the audio side's own start/stop — the DICE `substreams_counter` pattern from
+`dice/dice-midi.c:9-48` (reserve/start, rollback on failure, release on close).
 
 This is a **prerequisite for hardware RX/TX**, not a final-stage enhancement.
 The current content pump is `ASFWAudioDriver::TxPreparationReady`, gated on
@@ -1197,6 +1254,22 @@ The current content pump is `ASFWAudioDriver::TxPreparationReady`, gated on
 start that pump. Define the owner of the content engine, timing state and
 completion action while CoreAudio is closed, and keep it alive under a MIDI
 lease. Do not fabricate HAL activity just to keep the pump running.
+
+**Target ownership:** one endpoint stream-session owner, coordinated through
+`Audio/Core/AudioEndpointRuntime.hpp` and `AudioCoordinator`, holds the shared
+runtime and content pump for both audio and MIDI leases. Extract the necessary
+arming, timing-observation and fill work from `ASFWAudioDriverZts.cpp` into an
+`Audio/Engine/` session component; keep it out of `Isoch/`. The audio service
+supplies or removes a PCM source as its lease changes; the MIDI service supplies
+bytes through owned storage. There must remain exactly one TX consumer/pump,
+not competing audio-active and MIDI-only engines. The ownership change also
+needs a retained slot-provider/timeline contract; merely relocating a function
+that still dereferences audio ivars does not solve lifetime.
+
+The diagrams in §9.3 show today's TX owner and a possible intermediate memory
+handoff, not a requirement to keep the final pump in the audio service. Do not
+add `CopyMidiTransportMemory` to the audio nub if the extracted session is the
+sole TX consumer and the audio service no longer needs that mapping.
 
 Acquire/release leases on a serialized owner queue, roll back failed starts,
 and stop hardware only when the last lease is released. Specify audio-open,
@@ -1223,7 +1296,7 @@ pipeline is two-phase and neither Linux nor Focusrite has that shape.
    │ PrepareDataPacket │ ······ 1008 packets ····│  RefillPcm       │───▶│
    │ arms from SILENCE │                          │ real PCM content │    │
    └───────────────────┘                          └──────────────────┘
-   DiceTxStreamEngine.cpp:143-169                 DiceTxStreamEngine.cpp:300
+   DiceTxStreamEngine.cpp:143-169                 DiceTxStreamEngine.cpp:320-338
 ```
 
 From `Audio/Shared/AudioTimingGeometry.hpp:266-267,286`:
@@ -1246,9 +1319,9 @@ Therefore:
 
 | Gate | Code | Effect on MIDI |
 |---|---|---|
-| No PCM source bound (MIDI-only, no CoreAudio client) | `DiceTxStreamEngine.cpp:220` → `NotFillable` | no fills ever happen; MIDI never transmits |
-| `ContentUnavailable` | `ASFWAudioDriverZts.cpp:1242` — `break` | packet retried later; MIDI stalls behind PCM |
-| `Filled` but sibling stream not ready | `ASFWAudioDriverZts.cpp:1248-1257` — `CommitFill` skipped | `RefillPcm`'s writes discarded; popped MIDI bytes vanish |
+| No PCM source bound (MIDI-only, no CoreAudio client) | `DiceTxStreamEngine.cpp:243-247` → `NotFillable` | no fills ever happen; MIDI never transmits |
+| `ContentUnavailable` | `ASFWAudioDriverZts.cpp:1299` — `break` | packet retried later; MIDI stalls behind PCM |
+| `Filled` but sibling stream not ready | `ASFWAudioDriverZts.cpp:1304-1314` — `CommitFill` skipped | `RefillPcm`'s writes discarded; popped MIDI bytes vanish |
 
 Linux's `process_it_ctx_payloads` writes PCM **or silence**, then MIDI
 unconditionally (`amdtp-am824.c:353-368`). That is the reference for content
@@ -1273,15 +1346,59 @@ if (siblingReady && PublishLatePayload(packetIndex)) {
 ```
 
 Cancellation retains bytes and does not spend their emission credit. Elapsed
-wire time still advances. Successful publication is the software retirement
-point, not proof of physical delivery if a bus reset occurs afterward; define
-an explicit reset/drop policy rather than replaying bytes of uncertain delivery.
+wire time still advances. A successful offer is a software queue-retirement
+point under the initial **at-most-once submission policy**, not physical
+delivery. This distinction matters even without a reset.
+
+The current `CommitFill` calls `PublishLatePayload` and marks `armedFilled_`
+only if it succeeds (`DiceTxStreamEngine.cpp:345-357`). The provider uses
+`OfferLateTxPayload` arbitration (`ASFWAudioDriverPrivate.hpp:232-255`), not
+just a check of `finalizedEnd`. Retire on that successful offer; do not retire
+at acquire, encode, or arm time. Once offered, do not modify that packet image.
+`RefillPcm` resets non-PCM slots to defaults before writing PCM
+(`AmdtpTxPacketizer.cpp:139-146`), so MIDI must be composed **after** this reset
+in the same candidate-image pass; a second PCM fill would erase it.
+
+**An accepted offer can still be lost.**
+`Isoch/Core/IsochTxQueue.hpp:201-230` permits `kLateImageReady` to become
+`kFinalOnArmedImage`; `Isoch/Transmit/IsochTxDmaRing.cpp:263-272` records this as
+`SealedDiscardingAlternative` / `latePayloadLostPublicationCount`. Therefore
+`CommitFill == true` is not a guarantee that MIDI reaches the bus. The initial
+policy must count these as losses and never replay an already-offered byte
+behind later bytes. Track packet/epoch/port/byte counts in bounded content-side
+bookkeeping and expose generic terminal payload outcomes through the seam;
+the existing aggregate transport counter alone cannot identify lost MIDI bytes.
+A stronger retry policy needs an ordered terminal-outcome protocol before later
+bytes are allowed through; reserve/commit pseudocode alone does not provide it.
+Normal-load qualification requires zero offered-MIDI discards, not merely zero
+failed offers. A reset after binding still makes delivery uncertain.
+
+**Offer notification is only partially wired in this snapshot.**
+`IsochTxQueueControl::PublishOfferBatch` and
+`IsochTransmitContext::ServiceLatePayloadOffers` exist, including generation
+coalescing and a bounded service sweep, but there are no producer call sites
+for `PublishOfferBatch` or callers of `ServiceLatePayloadOffers` in
+`ASFWDriver/`. Do not assume that a content offer already causes a prompt
+transport wake. Complete/verify the generic notification route as a prerequisite
+of the bounded MIDI fill policy: one notification per successful batch, on the
+transport owner queue, with reset/stop cancellation. Keep it payload-opaque.
+Completion-time servicing remains available, but is not the missing explicit
+notification route. Any change to OHCI servicing must be separately validated
+against the local Linux/Apple transport references and audio tests.
+
+The sibling code checks readiness and then commits sequentially; it is **not
+an atomic two-stream transaction**. Primary publication may succeed before
+secondary publication fails. For stage 3, MIDI is carried only on stream 0:
+retire its reservation exactly when that stream publishes, regardless of a
+later sibling failure. Never roll back/requeue already-published bytes. Keep
+this limitation visible in audio regression tests; do not claim all-or-nothing
+publication from the current comment in `TxPreparationReady`.
 
 **(b) Bound the fill horizon before supplying always-ready silence.**
-`ASFWAudioDriverZts.cpp:1236-1261` fills until `committedAfter`, which may be
+`ASFWAudioDriverZts.cpp:1294-1317` fills until `committedAfter`, which may be
 about 126 ms ahead. With an always-ready silence source it can fill that whole
 horizon; `armedFilled_` then prevents later MIDI from entering those packets
-(`DiceTxStreamEngine.cpp:231-238`). A byte arriving afterward waits for the
+(`DiceTxStreamEngine.cpp:254-262`). A byte arriving afterward waits for the
 cursor far ahead. This recreates arm-time latency despite writing in `RefillPcm`.
 
 The proposed common content pass therefore needs an explicit bounded window
@@ -1388,18 +1505,78 @@ flags before trusting it on any new device.
 
 ## 12. Staged plan
 
-| Stage | Work | Done when |
-|---|---|---|
-| **0** | BridgeCo plug-type / plug-ch-count / channel-position AV/C commands (§4.2); publish `{ports, slot}` on the nub for BeBoB; wire existing DICE counts through | `asfw_log_query` shows `midiPorts` / `midiSlot` per device: 1814 = 1 per direction; resolve Phase 88's recorded count/mapping discrepancy. |
-| **1** | `ASFWMidiNub` + `ASFWMIDIDriver` skeleton, entitlement, personality, framework link; internal sample-style loopback | Ports appear in Audio MIDI Setup. Settle provider/process placement (§9.1), scheduling (§13.1), callback serialization and safe removal. |
-| **1a** | Shared stream leases, MIDI-only content-pump ownership, retained mappings and quiescent teardown (§9.3–9.4) | Streams start with CoreAudio closed, survive audio open/close, and stop on the last lease; failed starts roll back. |
-| **2** | **RX first**: validated packet view + `ExtractMpxMidi` + bytes→UMP + `Source::Send` | Keyboard notes and SysEx land with CoreAudio closed and open; malformed packet and parser vectors pass. |
-| **3** | TX: bounded fill window, PCM-unavailable handling, UMP→bytes, limiter and packet-local reservations | Synth receives MIDI in MIDI-only/audio/underrun regimes; canceled fills neither drop nor duplicate bytes; PCM regression checks pass. |
-| **4** | Multi-port/rate coverage, overflow, repeated restart, reset and hot-unplug stress; timing measurement | 1814 with input and output active; multi-port hardware or host vectors cover all eight mux positions, DBC wrap and rate limits; unplug under load without a UAF; latency distribution recorded. |
+Each stage should be a reviewable change with its evidence recorded before the
+next hardware milestone. This plan targets the DICE Saffire first; no BridgeCo
+commands or Phase 88 normalization are required to start.
 
-Stage 2 precedes stage 3 to avoid changing TX payload composition initially.
-RX still adds work and lifetime dependencies to the shared path; verify it
-does not regress audio rather than treating observation as risk-free.
+| Stage | Concrete change | Acceptance gate |
+|---|---|---|
+| **0 — Capability contract** | Project a `MidiEndpointCapabilities` record from DICE per-stream runtime caps. Include explicit host directions, stream index 0, port count, trailing slot, DBC alignment, stable identity and epoch. Validate counts ≤8 and exactly one MPX slot when MIDI exists; reject overlaps/unsupported formations. | Host fixtures cover zero/asymmetric counts, duplicate counts across streams, bad DBS/slot and reset identity. Record the actual Saffire model and 48 kHz stream table; prove which jack each direction represents. No guessed 1/1 publication. |
+| **1 — Host feasibility** | Add the separate MIDIDriverKit service and candidate nub, framework link, MIDI entitlement and user-client personality; initially exercise internal UMP loopback without hardware MIDI. Update `project.yml`, never the generated project. | Signed build/install works; source/destination appear once; reconfiguration/removal is safe. Record process placement, callback serialization, StartIO/StopIO ordering and the scheduling probe in §13.1. Resolve custom-nub placement or select one proven alternative before proceeding. |
+| **1a — Shared session** | Extract one content pump/timing owner from audio ivars; introduce serialized audio/MIDI leases, retained storage and epoch invalidation. Wire both audio and MIDI start/stop to it. | MIDI lease alone starts the existing DICE duplex path with valid silence; audio open/close does not stop it or create a second pump; last release stops; start failure rolls back; teardown quiesces callbacks before freeing mappings. Existing audio-only behaviour passes regression checks. |
+| **2 — RX and conversion** | Add bounded per-port storage, validated AM824 packet view and extraction before the PCM-bound early return. Implement MIDI-byte→UMP parsing and deliver on the MIDI work queue. | Physical Saffire input works with CoreAudio closed/open. Host vectors cover labels 0x80–0x83, invalid labels, all mux positions, DBC wrap, short/remainder payloads, NO-DATA, running status, System Common, interleaved Real Time, SysEx boundaries and stream-loss recovery. |
+| **3 — TX composition** | Add UMP→bytes validation, per-port limiter and packet/epoch reservations. Bound the content horizon; select PCM or deadline silence; write MIDI after defaults/PCM and retire only on successful stream-0 publication with explicit later-discard accounting. | Simulations and host tests prove no byte is retired on rejected/canceled fills, no retry duplicates published bytes, later transport discards are counted as loss, and limiter aging remains correct across skipped opportunities. Physical Saffire output works MIDI-only, audio-active and during PCM starvation; PCM frame assignments and small-buffer operation remain correct. |
+| **4 — Saffire qualification** | Exercise discovered supported rates, sustained duplex MIDI, long SysEx, overflow, repeated open/close, resets, TX recovery and unplug under load; collect bounded timing telemetry through MCP. | Record loss/duplicates, backlog, publication rejection, parser resets and latency distribution for MIDI-only and audio-active runs. No stale epoch replay, stuck leases or cross-service UAF. Qualify each additional rate/model explicitly. |
+
+### 12.1 Proposed file ownership
+
+- `Audio/Protocols/DICE/Core/DICEDuplexBringupController.cpp` and
+  `Audio/Devices/`: consume the existing raw capabilities and create the MIDI
+  projection without changing DICE register semantics or the audio-only profile.
+- `Midi/DriverKit/`: new MIDI driver/nub and CoreMIDI object lifecycle;
+  `Midi/Ump/`: pure bounded parser/serializer, independently host-testable.
+- `Audio/Ports/`: lifetime-owned byte storage and reservation/session contracts;
+  `Audio/Core/` + `Audio/Engine/`: shared stream-session ownership and pumping.
+- `Audio/Wire/AM824/`: pure MPX MIDI mux/demux and limiter;
+  `Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp`: final candidate-image composition;
+  `Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp`: validated RX integration.
+- `Audio/DriverKit/ASFWAudioDevice.cpp`, `ASFWAudioDriverLifecycle.cpp`,
+  `ASFWAudioDriverZts.cpp`, and `ASFWAudioNub.cpp`: switch current start/stop,
+  recovery and completion ownership to the shared session; remove superseded
+  paths once validated.
+- `tests/`: pure framing/conversion/reservation/session tests; `tools/`: a
+  hardware-independent fill-window simulator and a host MIDI scheduling probe.
+  Add source/build registration in `project.yml` and the relevant test CMake
+  list when files are introduced. `Isoch/` remains payload-opaque.
+
+### 12.2 Decisions to make concrete before hardware TX
+
+1. **Fill window:** express bounds in packet/cycle coordinates and the stream
+   epoch. Simulate 48 kHz blocking cadence, dispatch stalls, skipped packets and
+   PCM retention with today's 3-cycle finality configuration. Choose the upper
+   bound and silence deadline from evidence; do not bake 375 µs into a promise.
+2. **Offer service and outcomes:** finish the existing generic batch-notification
+   route and verify offer→service latency. Carry bounded MIDI reservation
+   provenance through terminal payload selection for loss attribution; do not
+   infer delivery from `CommitFill`. Preserve at-most-once ordering on loss.
+3. **PCM availability:** `NotYetPublished` can wait until the selected deadline;
+   expired content can become silence; wrong epoch invalidates the operation;
+   a concurrent rewrite gets a bounded retry/deadline policy. Invalid geometry
+   is an error. Do not flatten all failures into successful silence.
+4. **Queue loss:** TX validates and reserves capacity before publishing any
+   message's bytes. RX overflow marks a discontinuity at the correct queue
+   position and resets parser state there. Define bounded streaming SysEx
+   recovery so an overflow cannot join fragments into a fabricated message.
+5. **Reset:** cancel unpublished reservations, drop/count bytes whose delivery
+   is uncertain, reset parser/limiter state and reject stale callbacks by epoch.
+   Never replay previously published bytes automatically. Rate changes use the
+   same explicit quiesce/reconfigure boundary while retaining logical identity.
+6. **Reference limiter:** age once per eligible port opportunity, independently
+   of callback batching; rollback emitted-byte debit without undoing elapsed
+   time. NO-DATA and canceled packets must not accidentally double-age state.
+
+Run targeted host suites first (`./build.sh --test-only --test-filter ...` with
+the actual introduced suite names), then the full C++ suite for shared-session
+or TX changes and `./build.sh --no-bump` for IIG/signing integration. Host stubs
+cannot validate service matching, dispatch or hardware publication. Batch
+physical checks at each milestone and read the driver through the ASFW MCP
+control plane; the current documentation review did not start streams or alter
+hardware state.
+
+**Deferred:** BeBoB plug discovery and channel-position commands (§4.2), Oxford
+port policy, secondary-stream MIDI routing, other Saffire variants, MIDI 2.0
+translation and driver-side future scheduling. RX precedes TX to isolate the
+first wire change, but still requires audio regression and lifetime checks.
 
 ---
 
@@ -1442,8 +1619,8 @@ not semantics, and are moot if Linux's accumulator is used instead.
 
 ### 13.4 Apple's MIDI-plug policy
 
-`references/IOFireWireAVC/` and `references/IOFireWireFamily.kmodproj/` are not
-present in this checkout. Linux covers the AM824 MIDI framing described here;
+`references/IOFireWireAVC/` and `references/IOFireWireFamily.kmodproj/` are
+present in this checkout; the previous absence claim was stale. Linux covers the AM824 MIDI framing described here;
 that does not settle host scheduling, parser edge cases or ASFW lifecycle. Apple's view on MIDI plug
 *policy* (which external plugs to expose, naming) remains unexamined; the
 Focusrite decompilation partially substitutes.
@@ -1452,8 +1629,8 @@ Focusrite decompilation partially substitutes.
 
 `com.apple.developer.driverkit.family.midi` must be on the provisioning profile.
 The dext currently carries `family.audio` and `family.scsicontroller`
-(`ASFWDriver/ASFWDriver.entitlements`). Apple's sample confirms the exact set
-required (§5.2); what is unconfirmed is whether the MIDI family is grantable on
+(`ASFWDriver/ASFWDriver.entitlements`). The local sample confirms its set (§5.2), and the installed
+`IOUserMIDIDriver.iig` confirms the MIDI-family entitlement; what is unconfirmed is whether the MIDI family is grantable on
 this account. Check **before** stage 1, not during it.
 
 ---
@@ -1470,7 +1647,7 @@ see [CoreAudio HAL timing domains](COREAUDIO_HAL_TIMING_DOMAINS.md).
 | Term | Value | Interpretation |
 |---|---|---|
 | Completion group | 8 cycles = **1.0 ms** | `Shared/Isoch/IsochQueueGeometry.hpp:23`; nominal cadence, not a dispatch guarantee |
-| Freeze frontier lead | 10 cycles = **1.25 ms** | `IsochQueueGeometry.hpp:54-56`; relative to observed transport progress, not a measured wall-clock delay |
+| Freeze frontier lead | 3 cycles = **375 µs** | `IsochQueueGeometry::kPayloadFinalityLeadPackets` = repoint guard (2) + 1; configured boundary, not a measured wall-clock delay |
 | Port opportunity gap, blocking 48 kHz | **125 or 250 µs** | `AmdtpCadence.cpp:8-13`: three DATA packets and one NO-DATA per four cycles; mean is 166.7 µs |
 | Rate-limiter average | about **323 µs/byte** at saturation | 3093 B/s; discrete eligibility and FIFO credit make actual spacing nonuniform |
 | Content fill lead | **to be selected and measured** | Must be bounded as in §10.3(b) |
@@ -1555,8 +1732,8 @@ path is demonstrated.
 | Constant | Value | Source |
 |---|---|---|
 | Completion group | 8 packets / 1.0 ms | `IsochQueueGeometry.hpp:23` |
-| Payload repoint guard | 2 packets | `IsochQueueGeometry.hpp:54` |
-| Freeze frontier | 10 packets / 1.25 ms | `IsochQueueGeometry.hpp:55-56` |
+| Payload repoint guard | 2 packets | `IsochQueueGeometry::kPayloadRepointGuardPackets` |
+| Freeze frontier | 3 packets / 375 µs | `IsochQueueGeometry::kPayloadFinalityLeadPackets` |
 | TX preparation lead | 1008 packets / 126 ms | `AudioTimingGeometry.hpp:266-267` |
 | Isoch cycle | 125 µs | IEEE 1394 |
 | MIDI TX path | unmeasured; bounded fill policy required | §14.1 |
@@ -1614,7 +1791,7 @@ Device stride `0x24680` (149120) = 16 × 9320. Region stride `0xB6080` (745600)
 
 ### Linux reference index
 
-All paths relative to `references/linux-sound-firewire-stack/`.
+All paths relative to `references/linux-sound-firewire-stack/firewire/`.
 
 | Topic | Location |
 |---|---|
@@ -1636,6 +1813,26 @@ All paths relative to `references/linux-sound-firewire-stack/`.
 | Substream naming | `bebob/bebob_midi.c:75-82` |
 | M-Audio formation `midi = 1` | `bebob/bebob_maudio.c:249-252` |
 | M-Audio port counts | `bebob/bebob_maudio.c:290-294` |
-| DICE port count | `dice/dice-midi.c:104-111` |
-| DICE stream 0 only | `dice/dice-midi.c:54,68` |
+| DICE port count | `dice/dice-midi.c:114-119` |
+| DICE stream 0 only | `dice/dice-midi.c:59-63,76-80` |
 | DICE/Focusrite port counts | `dice/dice-focusrite.c:13-20` |
+
+### Apple sample reference index
+
+Paths relative to
+`references/CreatingAMIDIDeviceDriver/CreatingMIDIDriverSampleAppExtension/`.
+These source checks establish what the example does, not measured ASFW lifecycle.
+
+| Topic | Location |
+|---|---|
+| Subclass allocation and graph insertion | `CreatingMIDIDriverSampleAppDriver.cpp:81-97` |
+| MIDI user-client forwarding | `CreatingMIDIDriverSampleAppDriver.cpp:123-150` |
+| Driver I/O fan-out | `CreatingMIDIDriverSampleAppDriver.cpp:163-181` |
+| Control handlers dispatch synchronously | `CreatingMIDIDriverSampleAppDriver.cpp:185-210` |
+| Entity protocol and initial setup | `CreatingMIDIDriverSampleAppDevice.cpp:57-65` |
+| Device I/O dispatch and offline property | `CreatingMIDIDriverSampleAppDevice.cpp:81-118` |
+| UMP loopback callback | `CreatingMIDIDriverSampleAppDevice.cpp:122-140` |
+| Reinstall after entity addition | `CreatingMIDIDriverSampleAppDevice.cpp:147-164` |
+| Running/stopped configuration branch | `CreatingMIDIDriverSampleAppDevice.cpp:205-224` |
+| Provider and CoreMIDI user-client dictionary | `Info.plist` |
+| MIDI family entitlement | `CreatingMIDIDriverSampleAppDriver.entitlements` |
