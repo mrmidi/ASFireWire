@@ -256,17 +256,24 @@ struct ResourceAllocation {
  *            Apple IOFireWireController.cpp:6391 - Uses 2 retries for channel allocation
  */
 struct RetryPolicy {
-    uint8_t maxRetries{2};       ///< Max retry attempts (Apple default: 2)
+    uint8_t maxRetries{2};       ///< Max retry attempts on lock contention (Apple default: 2)
     uint64_t retryDelayUsec{0};  ///< Delay between retries (0 = immediate)
 
-    /// Default policy: 2 retries, no delay (Apple standard)
+    /// Re-issues of a read or lock the IRM never answered (async timeout).
+    /// Apple retries every timed-out async command this many times
+    /// (IOFWCommand.h:37 kFWCmdDefaultRetries, IOFWAsyncCommand.cpp:425-461);
+    /// Linux loops its IRM compare-swap up to 5 times on any non-generation
+    /// failure (core-iso.c:296-320).
+    uint8_t maxTimeoutRetries{3};
+
+    /// Default policy: 2 contention retries, 3 timeout re-issues, no delay
     static RetryPolicy Default() { return {2, 0}; }
 
-    /// Aggressive policy: 8 retries (for broadcast channel allocation)
+    /// Aggressive policy: 8 contention retries (for broadcast channel allocation)
     static RetryPolicy Aggressive() { return {8, 0}; }
 
-    /// No retries (single attempt)
-    static RetryPolicy None() { return {0, 0}; }
+    /// No retries of any kind (single attempt)
+    static RetryPolicy None() { return {0, 0, 0}; }
 };
 
 } // namespace ASFW::IRM

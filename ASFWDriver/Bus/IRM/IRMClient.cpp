@@ -62,6 +62,24 @@ namespace {
     return "unknown";
 }
 
+// A timed-out request is one the IRM never answered, so its outcome is
+// unknown and the read+lock step is re-issued while the budget lasts. Apple
+// does this for every async command (IOFWAsyncCommand.cpp:425-461,
+// kFWCmdDefaultRetries) and Linux loops its IRM compare-swap on any
+// non-generation failure (core-iso.c:296-320). Field-found on the Mackie
+// Onyx 400F (2026-09-13): it drops async requests issued in the same
+// millisecond an isoch context starts or stops, which is exactly when the
+// stop path releases its reservation.
+[[nodiscard]] bool ConsumeTimeoutRetry(uint8_t& retriesLeft, const char* step) noexcept {
+    if (retriesLeft == 0) {
+        ASFW_LOG_ERROR(IRM, "IRM %{public}s timed out, re-issue budget exhausted", step);
+        return false;
+    }
+    --retriesLeft;
+    ASFW_LOG(IRM, "IRM %{public}s timed out, re-issuing (re-issues left=%u)", step, retriesLeft);
+    return true;
+}
+
 } // namespace
 
 struct IRMClient::ChannelLockState {
@@ -71,6 +89,7 @@ struct IRMClient::ChannelLockState {
     uint32_t bitMask{0};
     bool allocate{false};
     uint8_t retriesLeft{0};
+    uint8_t timeoutRetriesLeft{0};
 };
 
 struct IRMClient::BandwidthLockState {
@@ -78,6 +97,10 @@ struct IRMClient::BandwidthLockState {
     uint32_t units{0};
     bool allocate{false};
     uint8_t retriesLeft{0};
+    uint8_t timeoutRetriesLeft{0};
+    /// Value the most recent unanswered release lock tried to write. Set only
+    /// when that lock timed out; cleared before every fresh lock.
+    std::optional<uint32_t> unansweredDesired;
 };
 
 // ============================================================================
@@ -547,14 +570,26 @@ void IRMClient::ReleaseResources(uint8_t channel,
 {
     ReleaseBandwidth(bandwidthUnits,
         [this, channel, callback = std::move(callback), retryPolicy](AllocationStatus bandwidthStatus) mutable {
-            if (bandwidthStatus != AllocationStatus::Success) {
+            // A bus reset already freed everything, so stop there. Any other
+            // bandwidth failure must not strand the channel as well: Apple's
+            // releaseChannelComplete carries on to the channel "error or not"
+            // (IOFWIsochChannel.cpp:1312-1320). The caller hears the first
+            // failure, so a leaked reservation stays visible.
+            if (bandwidthStatus == AllocationStatus::GenerationMismatch) {
                 callback(bandwidthStatus);
                 return;
             }
+            if (bandwidthStatus != AllocationStatus::Success) {
+                ASFW_LOG_ERROR(IRM,
+                               "ReleaseResources: bandwidth release failed status=%{public}s, "
+                               "releasing channel %u anyway",
+                               ToString(bandwidthStatus), channel);
+            }
 
             ReleaseChannel(channel,
-                [callback = std::move(callback)](AllocationStatus channelStatus) mutable {
-                    callback(channelStatus);
+                [callback = std::move(callback), bandwidthStatus](AllocationStatus channelStatus) mutable {
+                    callback(bandwidthStatus == AllocationStatus::Success ? channelStatus
+                                                                          : bandwidthStatus);
                 },
                 retryPolicy);
         },
@@ -578,7 +613,8 @@ void IRMClient::PerformChannelLock(uint8_t channel, bool allocate,
         addressLo,
         bitMask,
         allocate,
-        retryPolicy.maxRetries
+        retryPolicy.maxRetries,
+        retryPolicy.maxTimeoutRetries
     });
 
     StartChannelLock(ctx);
@@ -595,7 +631,8 @@ void IRMClient::PerformBandwidthLock(uint32_t units, bool allocate,
         std::move(callback),
         units,
         allocate,
-        retryPolicy.maxRetries
+        retryPolicy.maxRetries,
+        retryPolicy.maxTimeoutRetries
     });
 
     StartBandwidthLock(ctx);
@@ -603,6 +640,11 @@ void IRMClient::PerformBandwidthLock(uint32_t units, bool allocate,
 
 void IRMClient::StartChannelLock(const std::shared_ptr<ChannelLockState>& ctx) {
     ReadIRMQuadlet(ctx->addressLo, [this, ctx](AllocationStatus status, uint32_t currentValue) {
+        if (status == AllocationStatus::Timeout &&
+            ConsumeTimeoutRetry(ctx->timeoutRetriesLeft, "channel read")) {
+            StartChannelLock(ctx);
+            return;
+        }
         if (status != AllocationStatus::Success) {
             ctx->userCallback(status);
             return;
@@ -634,6 +676,16 @@ void IRMClient::OnChannelRead(const std::shared_ptr<ChannelLockState>& ctx,
 
     CompareSwapIRMQuadlet(ctx->addressLo, currentValue, newValue,
                           [this, ctx, currentValue](AllocationStatus status, uint32_t oldValue) {
+                              // An unanswered lock may or may not have been applied, so
+                              // start over from a fresh read. A release re-applies as a
+                              // harmless no-op (the bit is already set); an allocation whose
+                              // lock was applied then reads as taken and reports
+                              // NoResources, the conservative outcome.
+                              if (status == AllocationStatus::Timeout &&
+                                  ConsumeTimeoutRetry(ctx->timeoutRetriesLeft, "channel lock")) {
+                                  StartChannelLock(ctx);
+                                  return;
+                              }
                               if (status != AllocationStatus::Success) {
                                   ctx->userCallback(status);
                                   return;
@@ -675,6 +727,11 @@ void IRMClient::OnChannelCompareSwap(const std::shared_ptr<ChannelLockState>& ct
 void IRMClient::StartBandwidthLock(const std::shared_ptr<BandwidthLockState>& ctx) {
     ReadIRMQuadlet(IRMRegisters::kBandwidthAvailable,
                    [this, ctx](AllocationStatus status, uint32_t currentBandwidth) {
+                       if (status == AllocationStatus::Timeout &&
+                           ConsumeTimeoutRetry(ctx->timeoutRetriesLeft, "bandwidth read")) {
+                           StartBandwidthLock(ctx);
+                           return;
+                       }
                        if (status != AllocationStatus::Success) {
                            ctx->userCallback(status);
                            return;
@@ -691,6 +748,21 @@ void IRMClient::OnBandwidthRead(const std::shared_ptr<BandwidthLockState>& ctx,
         ctx->userCallback(AllocationStatus::Failed);
         return;
     }
+
+    // A release lock whose response was lost may already have been applied;
+    // re-issuing it blindly would credit the IRM twice and let the bus
+    // oversubscribe. The fresh read settles it. (Allocations get no such
+    // shortcut: a coincidental match there would claim resources we may not
+    // hold, and a duplicate allocation only under-subscribes until the next
+    // bus reset.)
+    if (!ctx->allocate && ctx->unansweredDesired.has_value() &&
+        currentBandwidth == *ctx->unansweredDesired) {
+        ASFW_LOG(IRM, "Bandwidth release already applied (available=%u); only the response was lost",
+                 currentBandwidth);
+        ctx->userCallback(AllocationStatus::Success);
+        return;
+    }
+    ctx->unansweredDesired.reset();
 
     uint32_t newBandwidth = currentBandwidth + ctx->units;
     if (ctx->allocate) {
@@ -712,7 +784,14 @@ void IRMClient::OnBandwidthRead(const std::shared_ptr<BandwidthLockState>& ctx,
     }
 
     CompareSwapIRMQuadlet(IRMRegisters::kBandwidthAvailable, currentBandwidth, newBandwidth,
-                          [this, ctx, currentBandwidth](AllocationStatus status, uint32_t oldValue) {
+                          [this, ctx, currentBandwidth, newBandwidth](AllocationStatus status,
+                                                                      uint32_t oldValue) {
+                              if (status == AllocationStatus::Timeout &&
+                                  ConsumeTimeoutRetry(ctx->timeoutRetriesLeft, "bandwidth lock")) {
+                                  ctx->unansweredDesired = newBandwidth;
+                                  StartBandwidthLock(ctx);
+                                  return;
+                              }
                               if (status != AllocationStatus::Success) {
                                   ctx->userCallback(status);
                                   return;

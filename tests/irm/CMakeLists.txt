@@ -36,3 +36,10 @@ add_irm_test(IRMFallbackCoordinatorTests
     "${ASFW_DRIVER_DIR}/Scheduling/Scheduler.cpp"
     "../support/BusResetCoordinatorStub.cpp"
 )
+
+# IRMClient against a remote IRM: timeout re-issue, lost-response handling,
+# release ordering
+add_irm_test(IRMClientRemoteRetryTests
+    IRMClientRemoteRetryTests.cpp
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+)
