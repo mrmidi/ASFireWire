@@ -217,7 +217,7 @@ synthetic: the real Saffire model, GUID and 48 kHz stream table are still
 unrecorded, and which physical jack each direction drives is still unproven.
 That is the remaining half of this package's acceptance and it needs hardware.
 
-### WP-2 — MIDI service skeleton and host feasibility
+### WP-2 — MIDI service skeleton and host feasibility — **landed, runtime-unverified**
 
 **Goal.** A loadable `ASFWMIDIDriver` publishing one device with one source and
 one destination wired in UMP loopback, plus the two probes from G0.
@@ -246,6 +246,37 @@ and stopped branches.
 three services and the actual callback serialization observed — `MIDIIOBlock`
 runs on the framework's RT thread and that must be confirmed, not assumed from
 the class comment.
+
+**What landed.** `Midi/DriverKit/` holds `ASFWMidiNub`, `ASFWMidiDevice`
+(an `IOUserMIDIDevice` subclass) and `ASFWMIDIDriver` (an `IOUserMIDIDriver`
+subclass); `Midi/Core/` holds the nub property contract and the publisher.
+`ASFWMIDIDriverService` matches `ASFWNubType == "MIDI"`, the exact mirror of
+`ASFWAudioDriverService` matching `"Audio"` — which is the §3.2 answer in
+design, still pending in runtime. `family.midi` is on the entitlements file,
+`-framework MIDIDriverKit` on `project.yml:144`, and the dext links it.
+
+Capability crosses to the MIDI service as registry properties set before the nub
+starts, the way `AudioNubPublisher` already populates `ASFWAudioNub`. The service
+therefore reads its own shape from its provider in `Start()` and never calls back
+across the seam to discover it. `AudioCoordinator` publishes both nubs from the
+same resolved profile; a MIDI publication failure deliberately does **not** unwind
+the audio endpoint.
+
+Two deliberate divergences from Apple's sample: `MIDIProtocol_1_0`, because the
+wire carries a MIDI 1.0 byte stream and claiming 2.0 would promise resolution the
+hardware cannot carry; and an endpoint reporting no usable MIDI publishes no nub
+at all rather than an empty CoreMIDI device.
+
+A `Midi` log category was added (ID 24), including the positional name array in
+`ASFW/DriverConnector+LogRing.swift` — that array is indexed by the C++ enum
+value, so adding the name there is half the wire contract, not cosmetic.
+
+**Still open, and it is most of the acceptance.** Nothing here has run. The nub
+publishes on endpoint resolution, so the loopback, the nub match (§3.2), the
+scheduling probe (§3.3), process placement and callback serialization all need
+hardware. `InstallLoopbackForBringUp` is scaffolding and must be deleted in
+WP-4 — a loopback left in place makes a broken wire path look like a working
+one.
 
 ### WP-3 — UMP ↔ MIDI 1.0 byte converter
 

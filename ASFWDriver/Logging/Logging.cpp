@@ -36,5 +36,6 @@ os_log_t Zts()        { static os_log_t log = MakeCategory("zts");        return
 os_log_t TxSyt()      { static os_log_t log = MakeCategory("txsyt");      return log; }
 os_log_t Oxfw()       { static os_log_t log = MakeCategory("oxfw");       return log; }
 os_log_t Firmware()   { static os_log_t log = MakeCategory("firmware");   return log; }
+os_log_t Midi()       { static os_log_t log = MakeCategory("midi");       return log; }
 
 } // namespace ASFW::Driver::Logging

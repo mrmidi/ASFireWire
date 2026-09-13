@@ -71,7 +71,11 @@ enum class LogCategory : uint8_t {
     // Device preparation that runs before a device can be anything else: the
     // BeBoB bootloader cue. Cold path, so every state transition is logged.
     Firmware = 23,
-    Count = 24,
+    // MIDI: capability projection, endpoint publication, UMP conversion and the
+    // byte seam. Separate from Audio because a MIDI-only stream lease has to be
+    // readable without the audio traffic that normally surrounds it.
+    Midi = 24,
+    Count = 25,
 };
 
 /// Severity scale (smaller = more severe), used for filtering.
@@ -128,6 +132,7 @@ inline constexpr LogCategoryDefinition kLogCategoryDefinitions[] = {
     {LogCategory::Reserved21, "Reserved21"},
     {LogCategory::Oxfw, "Oxfw"},
     {LogCategory::Firmware, "Firmware"},
+    {LogCategory::Midi, "Midi"},
 };
 
 [[nodiscard]] constexpr uint32_t CategoryBit(LogCategory category) noexcept {

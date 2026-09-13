@@ -23,6 +23,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                                    Driver::IsochService& isoch,
                                    Driver::HardwareInterface& hardware) noexcept
     : publisher_(driver)
+    , midiPublisher_(driver)
     , runtime_(runtime)
     , hostTransport_(isoch)
     , duplexCoordinator_(
@@ -105,6 +106,26 @@ void AudioCoordinator::EndpointReady(
                        profile->endpointId.value);
         return;
     }
+    // MIDI is projected from the same wire geometry the audio profile already
+    // carries, and published as its own nub. A failure here is not allowed to
+    // unwind the audio endpoint: an interface whose MIDI cannot be published is
+    // still a working audio device, and tearing down the audio nub over it
+    // would turn a missing DIN socket into silence.
+    const auto midiCaps = ASFW::Midi::ProjectMidiCapabilities(
+        profile->runtimeCaps, profile->observedGuid,
+        runtime->CopyTopologyRevision());
+    if (!midiPublisher_.EnsureNub(midiCaps, profile->endpointId.value,
+                                  profile->deviceName.c_str(),
+                                  profile->deviceName.c_str(),
+                                  profile->vendorName.empty()
+                                      ? "ASFireWire"
+                                      : profile->vendorName.c_str())) {
+        ASFW_LOG_ERROR(Midi,
+                       "[AudioSession] endpoint=%llu MIDI nub publication failed; "
+                       "audio endpoint stays up",
+                       profile->endpointId.value);
+    }
+
     ASFW_LOG(Audio,
              "[AudioSession] endpoint=%llu provider=%u published instance=%llu observedGUID=%llx",
              profile->endpointId.value,
@@ -150,6 +171,10 @@ void AudioCoordinator::InvalidateEndpointBindings(EndpointId endpointId) noexcep
 }
 
 void AudioCoordinator::TerminateEndpoint(EndpointId endpointId) noexcept {
+    // MIDI first: its service holds no hardware, so dropping it before the
+    // audio nub keeps the teardown order monotonic from the outside in. Both
+    // are idempotent for an endpoint that never published one.
+    midiPublisher_.TerminateNub(endpointId.value);
     publisher_.TerminateNub(endpointId, "session-retired");
     duplexCoordinator_.ClearSession(endpointId);
 }

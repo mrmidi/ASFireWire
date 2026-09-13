@@ -1,0 +1,28 @@
+//
+// ASFWMidiNub.iig
+// ASFWDriver
+//
+// Nub published by ASFWDriver for a discovered endpoint that can carry MIDI.
+// ASFWMIDIDriver matches it on ASFWNubType == "MIDI", mirroring how
+// ASFWAudioDriver matches ASFWAudioNub on ASFWNubType == "Audio".
+//
+// It carries no methods. Everything the MIDI service needs is set as registry
+// properties before the nub starts (see Midi/Core/MidiNubProperties.hpp), so
+// the service reads its own shape from its provider and never calls back across
+// the seam to discover it. Byte transport arrives later as shared memory, not
+// as nub calls.
+//
+
+#ifndef ASFWMidiNub_h
+#define ASFWMidiNub_h
+
+#include <DriverKit/IOService.iig>
+
+class ASFWMidiNub: public IOService
+{
+public:
+    virtual kern_return_t Start(IOService* provider) override;
+    virtual kern_return_t Stop(IOService* provider) override;
+};
+
+#endif /* ASFWMidiNub_h */

@@ -1,0 +1,55 @@
+//
+// ASFWMidiDevice.iig
+// ASFWDriver
+//
+// One CoreMIDI device for one FireWire endpoint.
+//
+// Subclassed rather than created through IOUserMIDIDevice::Create, which the
+// header reserves for the un-subclassed case: the device owns the entity
+// layout, the I/O blocks and the Offline property, and all three follow
+// FireWire presence rather than driver load.
+//
+
+#ifndef ASFWMidiDevice_h
+#define ASFWMidiDevice_h
+
+#include <MIDIDriverKit/IOUserMIDIDevice.iig>
+
+using namespace MIDIDriverKit;
+
+class ASFWMidiDevice: public IOUserMIDIDevice
+{
+public:
+    /// Build the device and its entities.
+    ///
+    /// `sourcePorts` is device -> host (CoreMIDI sources) and
+    /// `destinationPorts` host -> device (CoreMIDI destinations). One entity
+    /// per physical jack pair; asymmetric counts create the side that exists
+    /// and omit the one that does not, rather than publishing a phantom
+    /// endpoint that would accept bytes with nowhere to send them.
+    virtual bool init(IOUserMIDIDriver* driver,
+                      OSString* deviceUID,
+                      OSString* modelUID,
+                      OSString* manufacturerUID,
+                      uint32_t sourcePorts,
+                      uint32_t destinationPorts) LOCALONLY;
+
+    virtual void free() override;
+
+    virtual kern_return_t StartIO() override;
+    virtual kern_return_t StopIO() override;
+
+    /// Install the bring-up loopback on every entity that has both ends.
+    ///
+    /// Stage-1 scaffolding: it proves the object graph and the CoreMIDI
+    /// connection without any FireWire traffic. WP-4 replaces it with the
+    /// shared byte rings, and it must be gone by then -- a loopback left in
+    /// place would make a broken wire path look like a working one.
+    void InstallLoopbackForBringUp() LOCALONLY;
+
+private:
+    uint32_t SourcePortCount() const LOCALONLY;
+    uint32_t DestinationPortCount() const LOCALONLY;
+};
+
+#endif /* ASFWMidiDevice_h */

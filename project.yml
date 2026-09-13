@@ -141,7 +141,7 @@ targets:
           - "$(inherited)"
           - "$(SDKROOT)/System/DriverKit/System/Library/Frameworks"
         LIBRARY_SEARCH_PATHS: "$(inherited)"
-        OTHER_LDFLAGS: "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit"
+        OTHER_LDFLAGS: "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework MIDIDriverKit -framework SCSIControllerDriverKit"
         ARCHS: "x86_64 arm64e"
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_USER_SCRIPT_SANDBOXING: NO

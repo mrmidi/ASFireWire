@@ -6,6 +6,7 @@
 #include "../Shared/AudioRuntimeTuning.hpp"
 #include "../../UserClient/WireFormats/AudioTuningWireFormats.hpp"
 #include "AudioNubPublisher.hpp"
+#include "../../Midi/Core/MidiNubPublisher.hpp"
 #include "../Devices/AudioDeviceSessionManager.hpp"
 #include "../Duplex/AudioDuplexCoordinator.hpp"
 #include "../Duplex/IsochDuplexHostTransport.hpp"
@@ -157,6 +158,10 @@ private:
                                               bool streaming) noexcept;
 
     AudioNubPublisher publisher_;
+    // MIDI rides the same endpoint discovery but publishes its own nub,
+    // because IOUserAudioDriver and IOUserMIDIDriver are both direct
+    // IOService subclasses and one class cannot be both.
+    ASFW::Midi::MidiNubPublisher midiPublisher_;
     AudioRuntimeRegistry& runtime_;
     IsochDuplexHostTransport hostTransport_;
     std::atomic<bool> teardownRequested_{false};

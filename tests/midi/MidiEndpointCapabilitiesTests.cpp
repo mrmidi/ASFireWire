@@ -230,3 +230,61 @@ TEST(MidiPortKeyTest, DifferentDevicesDifferentKeys) {
     EXPECT_NE(MidiPortKey(kGuid, MidiDirection::kDeviceToHost, 0),
               MidiPortKey(kGuid ^ 0x1ULL, MidiDirection::kDeviceToHost, 0));
 }
+
+//==============================================================================
+// Entity layout published to CoreMIDI
+//==============================================================================
+
+#include "Midi/Core/MidiNubProperties.hpp"
+
+namespace {
+
+MidiEndpointCapabilities Caps(uint32_t sources, uint32_t destinations) {
+    return ProjectMidiCapabilities(MakeCaps(8, sources, 6, destinations),
+                                   kGuid, 1);
+}
+
+} // namespace
+
+TEST(MidiEntityLayout, SymmetricPortsGiveOneEntityPerJackPair) {
+    const auto caps = Caps(2, 2);
+    ASSERT_EQ(ASFW::Midi::NubKeys::EntityCount(caps), 2u);
+    for (uint32_t i = 0; i < 2; ++i) {
+        EXPECT_TRUE(ASFW::Midi::NubKeys::EntityHasSource(caps, i));
+        EXPECT_TRUE(ASFW::Midi::NubKeys::EntityHasDestination(caps, i));
+    }
+}
+
+TEST(MidiEntityLayout, AsymmetricPortsOmitTheSideThatDoesNotExist) {
+    // Two in, one out. The second entity must have a source and no
+    // destination, not a phantom destination whose bytes go nowhere.
+    const auto caps = Caps(2, 1);
+    ASSERT_EQ(ASFW::Midi::NubKeys::EntityCount(caps), 2u);
+    EXPECT_TRUE(ASFW::Midi::NubKeys::EntityHasSource(caps, 0));
+    EXPECT_TRUE(ASFW::Midi::NubKeys::EntityHasDestination(caps, 0));
+    EXPECT_TRUE(ASFW::Midi::NubKeys::EntityHasSource(caps, 1));
+    EXPECT_FALSE(ASFW::Midi::NubKeys::EntityHasDestination(caps, 1));
+}
+
+TEST(MidiEntityLayout, OutputOnlyPublishesDestinationsOnly) {
+    const auto caps = Caps(0, 2);
+    ASSERT_EQ(ASFW::Midi::NubKeys::EntityCount(caps), 2u);
+    EXPECT_FALSE(ASFW::Midi::NubKeys::EntityHasSource(caps, 0));
+    EXPECT_TRUE(ASFW::Midi::NubKeys::EntityHasDestination(caps, 0));
+}
+
+TEST(MidiEntityLayout, NoMidiPublishesNoEntities) {
+    EXPECT_EQ(ASFW::Midi::NubKeys::EntityCount(Caps(0, 0)), 0u);
+}
+
+TEST(MidiEntityLayout, ARejectedDirectionContributesNoEntities) {
+    // 9 ports exceeds one MPX slot, so that direction is rejected and must not
+    // be counted even though the raw port count is nonzero.
+    auto raw = MakeCaps(8, 9, 6, 1);
+    raw.deviceToHostStreams[0].am824Slots = 10;
+    const auto caps = ProjectMidiCapabilities(raw, kGuid, 1);
+    ASSERT_FALSE(caps.deviceToHost.Usable());
+    EXPECT_EQ(ASFW::Midi::NubKeys::EntityCount(caps), 1u) << "only the usable destination remains";
+    EXPECT_FALSE(ASFW::Midi::NubKeys::EntityHasSource(caps, 0));
+    EXPECT_TRUE(ASFW::Midi::NubKeys::EntityHasDestination(caps, 0));
+}
