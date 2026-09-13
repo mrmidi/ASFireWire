@@ -18,3 +18,9 @@ add_midi_test(MidiUmpConversionTests
     "${ASFW_DRIVER_DIR}/Midi/Ump/MidiByteStreamToUmp.cpp"
     "${ASFW_DRIVER_DIR}/Midi/Ump/UmpToMidiByteStream.cpp"
 )
+
+# MIDI capability projection from discovered wire geometry (WP-1).
+add_midi_test(MidiEndpointCapabilitiesTests
+    MidiEndpointCapabilitiesTests.cpp
+    "${ASFW_DRIVER_DIR}/Midi/Capabilities/MidiEndpointCapabilities.cpp"
+)

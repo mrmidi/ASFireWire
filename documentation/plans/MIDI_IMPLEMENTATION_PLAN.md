@@ -108,13 +108,22 @@ MIDIDriverKit header line numbers. Recheck those before relying on them.
 These are cheap, they are independent of each other, and each one's outcome
 changes what gets built. None of them blocks WP-3.
 
-### 3.1 Entitlement grantability
+### 3.1 Entitlement grantability — **not a development blocker (checked 2026-09-13)**
 
-`com.apple.developer.driverkit.family.midi` must be grantable on this developer
-account and present on the provisioning profile. Check the account's entitlement
-set before anything else; this is the only blocker that no amount of local work
-can route around. If it is not grantable, the entire host-side half of the
-project stops and only WP-3 and the wire-side research remain useful.
+Checked on this machine, and the original framing was wrong. `ASFWDriver` is
+**ad-hoc signed**: the built dext reports `Signature=adhoc`, `flags=0x2(adhoc)`,
+`TeamIdentifier=not set`, and its entitlements are embedded straight from
+`ASFWDriver.entitlements` with no provisioning profile involved. There is no
+profile for `net.mrmidi.ASFW.ASFWDriver` on disk at all, and none of the 18
+installed profiles mentions DriverKit. SIP is disabled, and the ad-hoc dext is
+installed and `[activated enabled]` with team ID `-`.
+
+So adding `com.apple.developer.driverkit.family.midi` to the entitlements file
+will simply work locally. **Apple's grant gates a distributable, notarized build
+— not development, and not WP-2.** Nothing in this plan is blocked on it.
+
+Confirm grantability before promising a shipping build, and re-check if the
+machine ever re-enables SIP: the ad-hoc path depends on it.
 
 ### 3.2 Provider class for the MIDI service
 
@@ -147,7 +156,7 @@ of independently timestamped events preserves its spacing.
 Each package states its goal, the files it owns, the contract it must satisfy,
 its tests, and what "done" means. Dependencies are in §5.
 
-### WP-1 — Capability projection
+### WP-1 — Capability projection — **landed for DICE, hardware-unverified**
 
 **Goal.** A `MidiEndpointCapabilities` record projected from the DICE per-stream
 runtime caps that are already parsed, published on whichever nub §3.2 selects.
@@ -176,6 +185,37 @@ reset. No guessed 1/1 publication anywhere.
 **Done when** the projection is exercised by host tests and the real Saffire
 model, GUID and 48 kHz stream table are recorded in a report, including which
 physical jack each direction represents.
+
+**What landed.** `Midi/Capabilities/MidiEndpointCapabilities.{hpp,cpp}`, a pure
+projection from `AudioStreamRuntimeCaps` -- which already carries per-stream
+`midiPorts`, `pcmChannels` and `am824Slots` per direction, populated by
+`DICEDuplexBringupController`. No DICE register semantics were touched. Every
+name is host-facing (`deviceToHost` / `hostToDevice`); tx/rx appears nowhere,
+because it inverts across the seam.
+
+Rejections are per-direction and never normalise: over 8 ports, more than one
+MPX slot, MIDI on a stream this milestone does not route, and inconsistent DBS.
+A rejected direction leaves the other usable and leaves audio publication
+untouched.
+
+One simplification worth recording. With a trailing MIDI slot the PCM-overlap
+check *is* the DBS check: the slot index is `pcmChannels`, so overlap means
+`dbs <= pcmChannels` and out-of-range means `dbs < pcmChannels + midiSlots`, and
+both are `dbs != pcmChannels + midiSlots`. A device reporting 8 PCM, 1 MIDI port
+and DBS 8 is saying MIDI shares a PCM slot. `kSlotOutOfRange` and
+`kSlotOverlapsPcm` remain in the enum but are unreachable today; whoever adds
+BridgeCo position discovery must make them live again rather than assume they
+already guard anything.
+
+`MidiPortKey(guid, direction, portIndex)` mixes the GUID before folding in
+direction and port so two units from one production run cannot alias; it
+deliberately excludes the stream epoch, since anything that changes across a
+restart would defeat the point.
+
+**Still open.** 17 host tests, all four mutations caught. But every fixture is
+synthetic: the real Saffire model, GUID and 48 kHz stream table are still
+unrecorded, and which physical jack each direction drives is still unproven.
+That is the remaining half of this package's acceptance and it needs hardware.
 
 ### WP-2 — MIDI service skeleton and host feasibility
 
@@ -532,8 +572,9 @@ control plane rather than the unified log.
 
 ## 8. What would invalidate this plan
 
-- `family.midi` not grantable on the account (§3.1) — everything except WP-3 and
-  WP-5 stops.
+- ~~`family.midi` not grantable on the account~~ — resolved: ad-hoc signing with
+  SIP disabled accepts the entitlement locally (§3.1). Only a distributable
+  build depends on the grant.
 - The scheduling probe showing early or coalesced delivery (§3.3) — WP-8's
   contract is rewritten and the latency model in `MIDI_WIRING.md` §14 is void.
 - WP-6 turning out to require changing completion geometry — that needs separate
