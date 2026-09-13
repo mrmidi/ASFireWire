@@ -23,6 +23,7 @@
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
 #include "../Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
 #include "../Audio/Protocols/DICE/Core/DICETypes.hpp"
+#include "../Audio/Protocols/Fireworks/EfcResponseMailbox.hpp"
 #include "../Protocols/Ports/FireWireRxPort.hpp"
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
 
@@ -163,6 +164,36 @@ public:
     }
 };
 
+// --- Fireworks: EFC response window (device -> host block writes) --------------
+// A Fireworks unit answers every EFC command by block-writing the response frame
+// to 0xECC0'8000'0000 in the host's address space (Linux fireworks_transaction.c
+// MEMORY_SPACE_EFW_RESPONSE). Hand the frame to the live transports; like Linux,
+// answer TYPE_ERROR when no pending transaction owns the sequence number.
+class FireworksEfcLocalHandler final : public ILocalAddressHandler {
+public:
+    [[nodiscard]] const char* Name() const noexcept override { return "FireworksEFC"; }
+
+    [[nodiscard]] LocalRequestResult HandleLocalRequest(const LocalRequestContext& ctx) override {
+        if (!ASFW::Audio::Fireworks::EfcResponseMailbox::MatchesDestOffset(ctx.destOffset)) {
+            return LocalRequestResult::NotMine();
+        }
+        if (ctx.tCode != AReq::kTcodeWriteBlock && ctx.tCode != AReq::kTcodeWriteQuad) {
+            return LocalRequestResult::NotMine();
+        }
+        if (ctx.writePayload.size() < ASFW::Audio::Fireworks::Efc::kHeaderBytes) {
+            return LocalRequestResult::Write(ResponseCode::DataError);
+        }
+        const bool claimed =
+            ASFW::Audio::Fireworks::EfcResponseMailbox::Publish(ctx.sourceID, ctx.writePayload);
+        if (!claimed) {
+            ASFW_LOG(Audio, "[EFC] unclaimed response from node=0x%04x bytes=%zu",
+                     ctx.sourceID, ctx.writePayload.size());
+            return LocalRequestResult::Write(ResponseCode::TypeError);
+        }
+        return LocalRequestResult::Write(ResponseCode::Complete);
+    }
+};
+
 // --- SBP-2: dynamically allocated device address ranges ------------------------
 class Sbp2LocalHandler final : public ILocalAddressHandler {
 public:
@@ -274,6 +305,7 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
         dispatch->AddHandler(std::make_unique<FcpLocalHandler>(d.fcpResponseRouter.get()));
     }
     dispatch->AddHandler(std::make_unique<DiceLocalHandler>());
+    dispatch->AddHandler(std::make_unique<FireworksEfcLocalHandler>());
     if (d.sbp2AddressSpaceManager) {
         dispatch->AddHandler(std::make_unique<Sbp2LocalHandler>(d.sbp2AddressSpaceManager.get()));
     }

@@ -220,3 +220,25 @@ add_device_test(ApogeeDuetClockTransitionTests
 add_device_test(AVCStartReadinessTests
     AVCStartReadinessTests.cpp
 )
+
+# Echo Fireworks (Mackie Onyx 400F): EFC codec + transaction runner.
+add_device_test(FireworksEfcTests
+    FireworksEfcTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Fireworks/EfcProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Fireworks/EfcTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+
+# FireworksProtocol on the BeBoB base: geometry gate + EFC clock apply.
+add_device_test(FireworksProtocolTests
+    FireworksProtocolTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Fireworks/EfcProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Fireworks/EfcTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Fireworks/FireworksProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
+)

@@ -97,6 +97,13 @@ inline constexpr uint32_t kOnyx1640iOxfwModelId        = 0x001640;
 inline constexpr uint32_t kOnyx1640iDiceModelId        = 0x000006;
 inline constexpr uint32_t kOnyxBlackbirdModelId        = 0x000007;
 inline constexpr uint32_t kOnyx820iModelId             = kMackieModelIdPendingCapture;  // TODO(capture): from real 820i
+// Echo Fireworks production run (not Oxford, not DICE): Linux snd-fireworks
+// fireworks.c VENDOR_LOUD 0x000ff2, MODEL_MACKIE_400F 0x00400f, MODEL_MACKIE_1200F
+// 0x01200f; matched there on unit specifier 0x00a02d / version 0x010000 (AV/C).
+// Control is EFC (Audio/Protocols/Fireworks), streaming is CMP + AM824 blocking.
+// 400F: static 10x10 geometry pending HWINFO capture; 1200F: recognition only.
+inline constexpr uint32_t kOnyx400FModelId             = 0x00400f;
+inline constexpr uint32_t kOnyx1200FModelId            = 0x01200f;
 
 // ---- PreSonus (DICE / TCAT family) ----
 // The OUI is shared with PreSonus BeBoB-era devices (FireBox/FP10/Inspire) and the
@@ -142,6 +149,8 @@ inline constexpr const char* kOnyxIOxfwModelName      = "Onyx-i (Oxford)";
 inline constexpr const char* kOnyx1640iModelName      = "Onyx 1640i";
 inline constexpr const char* kOnyxBlackbirdModelName  = "Onyx Blackbird";
 inline constexpr const char* kOnyx820iModelName       = "Onyx 820i";
+inline constexpr const char* kOnyx400FModelName       = "Onyx 400F";
+inline constexpr const char* kOnyx1200FModelName      = "Onyx 1200F";
 inline constexpr const char* kPreSonusVendorName      = "PreSonus";
 inline constexpr const char* kStudioLive1602ModelName = "StudioLive 16.0.2";
 inline constexpr const char* kStudioLive1642ModelName = "StudioLive 16.4.2";

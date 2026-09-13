@@ -80,6 +80,8 @@ LookupIdentity(const DeviceProfileQuery& query) noexcept {
     case kOnyx1640iOxfwModelId:
     case kOnyx1640iDiceModelId: modelName = kOnyx1640iModelName; break;
     case kOnyxBlackbirdModelId: modelName = kOnyxBlackbirdModelName; break;
+    case kOnyx400FModelId:      modelName = kOnyx400FModelName; break;
+    case kOnyx1200FModelId:     modelName = kOnyx1200FModelName; break;
     default: break;
     }
     if (modelName != nullptr) {
@@ -117,6 +119,15 @@ LookupAudioProfile(const DeviceProfileQuery& query) noexcept {
     // cleanly while CoreAudio can already publish the device.
     if (query.modelId == kOnyxIOxfwModelId) {
         return AudioProfileHint{.family = AudioProtocolFamily::Oxford,
+                                .mode = AudioIntegrationMode::kAVCDriven,
+                                .source = MatchSource::VendorModel};
+    }
+    // Onyx 400F (Echo Fireworks): AV/C unit directory, so AVCDiscovery owns the
+    // route; audio geometry is profile-owned (published by the Fireworks bypass)
+    // and rate/clock control goes through EFC in FireworksProtocol. The 1200F
+    // stays recognition-only until its channel layout is captured.
+    if (query.modelId == kOnyx400FModelId) {
+        return AudioProfileHint{.family = AudioProtocolFamily::Fireworks,
                                 .mode = AudioIntegrationMode::kAVCDriven,
                                 .source = MatchSource::VendorModel};
     }

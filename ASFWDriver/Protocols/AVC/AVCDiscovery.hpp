@@ -112,6 +112,7 @@ private:
     bool IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const;
     bool IsApogeeDuet(const Discovery::FWDevice& device) const noexcept;
     bool IsMackieOnyxIOxford(const Discovery::FWDevice& device) const noexcept;
+    bool IsMackieOnyxFireworks(const Discovery::FWDevice& device) const noexcept;
 
     uint64_t GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const;
 
@@ -125,6 +126,8 @@ private:
                                   const ::ASFW::Audio::BeBoB::DeviceModel& inventory);
     void PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
                                               const Discovery::FWDevice& device);
+    void PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,
+                                                      const Discovery::FWDevice& device);
     [[nodiscard]] Music::MusicSubunit* FindAudioMusicSubunit(const AVCUnit& avcUnit) const;
     void PopulateMusicSubunitCapabilities(uint64_t guid,
                                           const Discovery::FWDevice& device,
