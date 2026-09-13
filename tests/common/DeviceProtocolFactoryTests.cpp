@@ -33,7 +33,7 @@ TEST(DeviceProtocolFactoryTests, SelectsIntegrationModeForKnownDevices) {
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
                   DeviceProtocolFactory::kFocusriteVendorId,
                   DeviceProtocolFactory::kSPro40ModelId),
-              DeviceIntegrationMode::kNone);
+              DeviceIntegrationMode::kHardcodedNub);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
                   DeviceProtocolFactory::kFocusriteVendorId,
@@ -146,13 +146,7 @@ TEST(DeviceProtocolFactoryTests, MapsFocusritePro40Tcd3070GuidQuirk) {
     EXPECT_STREQ(known->modelName, DeviceProtocolFactory::kSPro40Tcd3070ModelName);
 }
 
-TEST(DeviceProtocolFactoryTests, KeepsDeferredMultistreamFocusriteModelsRecognizedButDisabled) {
-    const auto spro40 = DeviceProtocolFactory::LookupKnownIdentity(
-        DeviceProtocolFactory::kFocusriteVendorId, DeviceProtocolFactory::kSPro40ModelId);
-    ASSERT_TRUE(spro40.has_value());
-    EXPECT_EQ(spro40->integrationMode, DeviceIntegrationMode::kNone);
-    EXPECT_STREQ(spro40->modelName, DeviceProtocolFactory::kSPro40ModelName);
-
+TEST(DeviceProtocolFactoryTests, KeepsOtherMultistreamFocusriteModelsRecognizedButDisabled) {
     const auto liquid56 = DeviceProtocolFactory::LookupKnownIdentity(
         DeviceProtocolFactory::kFocusriteVendorId, DeviceProtocolFactory::kLiquidS56ModelId);
     ASSERT_TRUE(liquid56.has_value());

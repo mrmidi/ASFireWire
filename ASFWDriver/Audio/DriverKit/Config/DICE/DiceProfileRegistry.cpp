@@ -17,6 +17,7 @@ namespace ASFW::Isoch::Audio::DICE {
 namespace {
 Profiles::GenericDiceProfile gGenericProfile{};
 Profiles::FocusriteSaffireProfile gFocusriteProfile{};
+Profiles::FocusriteSaffirePro40Profile gFocusritePro40Profile{};
 Profiles::MidasVeniceProfile gMidasVeniceProfile{};
 Profiles::PreSonusStudioLiveProfile gPreSonusStudioLiveProfile{};
 Profiles::AlesisMultiMixProfile gAlesisMultiMixProfile{};
@@ -24,6 +25,7 @@ Profiles::WeissIntProfile gWeissIntProfile{};
 } // namespace
 
 DiceProfileRegistry::DiceProfileRegistry() noexcept {
+    (void)RegisterProfile(&gFocusritePro40Profile);
     (void)RegisterProfile(&gFocusriteProfile);
     (void)RegisterProfile(&gMidasVeniceProfile);
     (void)RegisterProfile(&gPreSonusStudioLiveProfile);

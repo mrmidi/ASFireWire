@@ -11,6 +11,7 @@ namespace ASFW::Isoch::Audio::DICE::Profiles {
 namespace {
 
 constexpr uint32_t kFocusriteVendorId = 0x00130E;
+constexpr uint32_t kSPro40ModelId = 0x000005;
 
 void FillDefaultStreamConfig(DiceStreamConfig& outConfig,
                              DiceStreamDirection direction) noexcept {
@@ -62,6 +63,50 @@ bool FocusriteSaffireProfile::BuildDefaultTxStreamConfig(DiceStreamConfig& outCo
 
 bool FocusriteSaffireProfile::BuildDefaultRxStreamConfig(DiceStreamConfig& outConfig) const noexcept {
     FillDefaultStreamConfig(outConfig, DiceStreamDirection::DeviceToHost);
+    return true;
+}
+
+// Captured from Focusrite GUID 0x00130E0401405B54 (TCD2220) at 48 kHz:
+// playback 12 PCM + MIDI, then 8 PCM; capture 10 PCM + MIDI, then 10 PCM.
+// Cross-checked with FFADO src/dice/focusrite/saffire_pro40.cpp:50-97.
+const char* FocusriteSaffirePro40Profile::Name() const noexcept {
+    return "Focusrite Saffire Pro 40";
+}
+
+bool FocusriteSaffirePro40Profile::Matches(const DiceDeviceIdentity& identity) const noexcept {
+    return identity.vendorId == kFocusriteVendorId && identity.modelId == kSPro40ModelId;
+}
+
+DiceDeviceQuirks FocusriteSaffirePro40Profile::Quirks() const noexcept {
+    auto quirks = FocusriteSaffireProfile::Quirks();
+    quirks.tx.hostToDevicePcmEncoding = Encoding::AudioWireFormat::kAM824;
+    return quirks;
+}
+
+bool FocusriteSaffirePro40Profile::BuildDefaultTxStreamConfig(
+    DiceStreamConfig& outConfig) const noexcept {
+    return BuildTxStreamConfig(0, outConfig);
+}
+
+bool FocusriteSaffirePro40Profile::BuildTxStreamConfig(
+    uint32_t streamIndex, AudioStreamConfig& outConfig) const noexcept {
+    if (streamIndex >= TxStreamCount()) {
+        return false;
+    }
+    FillDefaultStreamConfig(outConfig, DiceStreamDirection::HostToDevice);
+    outConfig.pcmChannels = streamIndex == 0 ? 12 : 8;
+    outConfig.midiSlots = streamIndex == 0 ? 1 : 0;
+    outConfig.dbs = outConfig.pcmChannels + outConfig.midiSlots;
+    outConfig.sourceChannelOffset = streamIndex == 0 ? 0 : 12;
+    return true;
+}
+
+bool FocusriteSaffirePro40Profile::BuildDefaultRxStreamConfig(
+    DiceStreamConfig& outConfig) const noexcept {
+    FillDefaultStreamConfig(outConfig, DiceStreamDirection::DeviceToHost);
+    outConfig.pcmChannels = 10;
+    outConfig.midiSlots = 1;
+    outConfig.dbs = 11;
     return true;
 }
 

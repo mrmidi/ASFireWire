@@ -164,7 +164,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             initialClockAnchorTimeoutMs = profile->InitialClockAnchorTimeoutMs();
 
             ASFW::Isoch::Audio::AudioStreamConfig txConfig{};
-            if (!profile->BuildDefaultTxStreamConfig(txConfig)) {
+            if (!profile->BuildTxStreamConfig(0, txConfig)) {
                 ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - BuildDefaultTxStreamConfig failed");
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig");
                 return;
@@ -264,15 +264,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                      control->txTransferDelayTicks.load(std::memory_order_relaxed),
                      timingRateHz);
 
-        // --- Secondary playback stream (multi-stream DICE, e.g. Venice F32 = 2×16) ---
-        // Allocate/map/configure the second host IT pipeline. It shadows the
-        // master's per-packet timing in lockstep and encodes host output channels
-        // [pcmChannels, 2×pcmChannels). The matching secondary IT hardware context
-        // is created + wired to this slab by the duplex bringup
-        // (PrepareTransmitStream), which runs after this allocation.
+        // Secondary playback uses its own wire shape and source-channel slice.
+        // It shadows the master's packet timing; the duplex bring-up wires its
+        // shared slab to the matching IT context.
         if (profile->TxStreamCount() > 1) {
             ASFW::Isoch::Audio::AudioStreamConfig txConfig2{};
-            if (!profile->BuildDefaultTxStreamConfig(txConfig2)) {
+            if (!profile->BuildTxStreamConfig(1, txConfig2)) {
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig2");
                 return;
             }
@@ -280,7 +277,6 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 txConfig2.sampleRate =
                     static_cast<uint32_t>(ivars.device.currentSampleRate);
             }
-            txConfig2.sourceChannelOffset = txConfig2.pcmChannels;
 
             const uint32_t numSlots2 =
                 ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets;

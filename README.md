@@ -47,24 +47,25 @@ What is real today:
 - Async FireWire transactions are in place and used by discovery and protocol code.
 - AV/C FCP and CMP plumbing exists and is working on the main test rig.
 - Audio publication and experimental streaming paths exist in-tree.
-- Audio hardware tested by the maintainer: the Apogee Duet FireWire path, Terratec PHASE 88 Rack, and Focusrite Saffire Pro 24 DSP. Contributors have additionally verified the PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out streaming) and the Midas Venice F32 (full duplex 32-in/32-out streaming).
-- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, PreSonus StudioLive 16.0.2, and the Midas Venice F32.
-- **Multi-stream DICE now works.** The Midas Venice F32 runs two isochronous streams per direction (2×16 channels = 32×32 total duplex).
+- Audio hardware tested by the maintainer: the Apogee Duet FireWire path, Terratec PHASE 88 Rack, and Focusrite Saffire Pro 24 DSP. Contributors have additionally verified the Focusrite Saffire Pro 40 (full duplex 20-in/20-out), PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out), and Midas Venice F32 (full duplex 32-in/32-out).
+- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, Saffire Pro 40, PreSonus StudioLive 16.0.2, and the Midas Venice F32.
+- **Multi-stream DICE now works.** The Midas Venice F32 runs two 16-channel streams per direction; the original Saffire Pro 40 runs asymmetric 12+8 playback and 10+10 capture streams.
 - **Host-controlled sample-rate switching is implemented**, including 44.1 kHz alongside 48 kHz. The driver decodes the device's advertised clock capabilities and drives DICE `CLOCK_SELECT`, so a rate change in the host (e.g. Logic) reprograms the device live without a reconnect. Switching rates on a CoreAudio aggregate device whose clock master is the FireWire interface is supported.
 - **Per-channel names** (device nickname plus per-channel TX/RX labels) are read from DICE devices and surfaced to CoreAudio.
-- Focusrite Saffire Pro 26, Saffire Pro 40, Saffire Pro 40 TCD3070, and Liquid Saffire 56 are recognized but intentionally not enabled yet — their stream layouts still need to be captured from real hardware.
+- Focusrite Saffire Pro 26, Saffire Pro 40 TCD3070, and Liquid Saffire 56 are recognized but intentionally not enabled yet — their stream layouts still need to be captured from real hardware.
 - PreSonus StudioLive 16.4.2, 24.4.2, and 32.4.2 are recognized by name but not audio-enabled yet: their FireWire channel counts differ from the 16.0.2 and must be captured from real hardware first (a wrong channel count means the device never locks to the stream). If you own one, see the call for testing below.
 - The project is still not stable enough to recommend as a drop-in replacement for Apple's old FireWire stack.
 
 ## Call for testing
 
-If you own a supported Focusrite Saffire card, testing would help a lot right now. Saffire Pro 24 DSP is already personally tested here, but broader validation is still welcome.
+If you own a supported Focusrite Saffire card, testing would help a lot right now. Saffire Pro 24 DSP is personally tested by the maintainer, and the original Saffire Pro 40 is contributor-verified, but broader validation is still welcome.
 
 Please test these currently enabled DICE devices:
 
 - Focusrite Saffire Pro 14
 - Focusrite Saffire Pro 24
 - Focusrite Saffire Pro 24 DSP
+- Focusrite Saffire Pro 40 (original TCD2220 revision; contributor-verified)
 - PreSonus StudioLive 16.0.2 (contributor-verified on one unit; broader validation welcome)
 - Midas Venice F32 (contributor-verified; broader validation welcome)
 
@@ -113,6 +114,7 @@ Audio-device support in tree today:
 - Focusrite Saffire Pro 14
 - Focusrite Saffire Pro 24
 - Focusrite Saffire Pro 24 DSP
+- Focusrite Saffire Pro 40 (original TCD2220 revision; multi-stream DICE, 20-in/20-out)
 - PreSonus StudioLive 16.0.2
 - Midas Venice F32 (multi-stream DICE, 32-in/32-out)
 - Terratec PHASE 88 Rack
@@ -128,6 +130,7 @@ Verified working by contributors on their own hardware:
 
 - PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out) — [@klochowicz](https://github.com/klochowicz)
 - Midas Venice F32 (32×32 full duplex, 44.1 kHz and 48 kHz, live host-driven rate switching) — [@alicankaralar](https://github.com/alicankaralar)
+- Focusrite Saffire Pro 40 (20×20 full duplex at 48 kHz on a MacBook Pro and iMac) — [@evan-luther](https://github.com/evan-luther)
 - Nikon Coolscan 9000 and Coolscan 4000 — SBP-2/SCSI film scanners, plug and play — [@mhellevang](https://github.com/mhellevang)
 - Panasonic MiniDV camcorder — DV capture and tape transport — [@hoffmabc](https://github.com/hoffmabc)
 
@@ -138,7 +141,6 @@ own results, lives on the
 Recognized but not enabled yet:
 
 - Focusrite Saffire Pro 26
-- Focusrite Saffire Pro 40
 - Focusrite Saffire Pro 40 TCD3070
 - Focusrite Liquid Saffire 56
 - PreSonus StudioLive 16.4.2 / 24.4.2 / 32.4.2 (stream layout not yet captured from hardware)
