@@ -13,12 +13,61 @@
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWMidiDevice.h>
 
 #include "../../Logging/Logging.hpp"
+#include "../Transport/MidiTransportBlock.hpp"
+#include "../Ump/MidiByteStreamToUmp.hpp"
+#include "../Ump/UmpToMidiByteStream.hpp"
 
 struct ASFWMidiDevice_IVars {
     OSSharedPtr<IOUserMIDIDriver> driver;
     OSSharedPtr<IODispatchQueue> workQueue;
     uint32_t sourcePorts{0};
     uint32_t destinationPorts{0};
+
+    // The seam. `block` points into memory the nub owns and the driver keeps
+    // mapped; `bound` is what the I/O blocks check, because an entity's block
+    // can still be invoked after Stop begins.
+    ASFW::Midi::MidiTransportBlock* block{nullptr};
+    uint64_t streamEpoch{0};
+    std::atomic<bool> bound{false};
+
+    // One converter per port per direction: both are stateful (running status,
+    // SysEx accumulation) and must not be shared between ports.
+    ASFW::Midi::Ump::UmpToMidiByteStream toWire[ASFW::Midi::kMidiPortsPerDirection]{};
+    ASFW::Midi::Ump::MidiByteStreamToUmp fromWire[ASFW::Midi::kMidiPortsPerDirection]{};
+
+    // Bounded scratch, reused on the work queue only. Sized so one drain pass
+    // can carry a full ring without allocating on a path that must not.
+    // Last observed discontinuity count per port, so a loss is acted on once.
+    uint64_t seenGaps[ASFW::Midi::kMidiPortsPerDirection]{};
+
+    uint8_t rxBytes[ASFW::Midi::kMidiRingCapacityBytes]{};
+    ASFW::Midi::Ump::UmpWord rxWords[
+        ASFW::Midi::kMidiRingCapacityBytes *
+        ASFW::Midi::Ump::MidiByteStreamToUmp::kMaxWordsPerByte]{};
+
+    /// Real-time thread. Converts one destination's UMP to MIDI 1.0 bytes and
+    /// enqueues them for the wire. Allocation-free and lock-free by
+    /// construction; every buffer it touches is a fixed member.
+    kern_return_t WriteToWire(uint32_t port, const uint32_t* umpWords,
+                              size_t numWords) noexcept {
+        if (!bound.load(std::memory_order_acquire)) return kIOReturnNotReady;
+        if (block == nullptr || port >= ASFW::Midi::kMidiPortsPerDirection) {
+            return kIOReturnBadArgument;
+        }
+        if (!block->Usable(streamEpoch)) return kIOReturnNotReady;
+
+        const auto pulled = toWire[port].Pull({umpWords, numWords}, txBytes);
+        if (pulled.bytesWritten == 0) return kIOReturnSuccess;
+        // All-or-nothing: a rejected message is better than a truncated one,
+        // which would leave the device desynchronised until the next status
+        // byte.
+        if (!block->hostToDevice[port].TryWrite({txBytes, pulled.bytesWritten})) {
+            return kIOReturnNoSpace;
+        }
+        return kIOReturnSuccess;
+    }
+
+    uint8_t txBytes[ASFW::Midi::Ump::UmpToMidiByteStream::kMaxBytesPerPacket * 64]{};
 };
 
 namespace {
@@ -109,25 +158,82 @@ uint32_t ASFWMidiDevice::DestinationPortCount() const {
     return ivars ? ivars->destinationPorts : 0;
 }
 
-void ASFWMidiDevice::InstallLoopbackForBringUp() {
+void ASFWMidiDevice::BindTransport(void* block, uint64_t streamEpoch) {
+    if (ivars == nullptr || block == nullptr) return;
+    ivars->block = static_cast<ASFW::Midi::MidiTransportBlock*>(block);
+    ivars->streamEpoch = streamEpoch;
+    ivars->bound.store(true, std::memory_order_release);
+
+    // Each destination gets its own port index, captured by value. The block
+    // runs on MIDIDriverKit's real-time thread: no allocation, no logging, no
+    // locks below this point.
+    __block uint32_t portIndex = 0;
     auto entities = GetEntities();
     if (!entities) return;
     entities->iterateObjects(^bool(OSObject* object) {
         auto* entity = OSDynamicCast(IOUserMIDIEntity, object);
         if (entity == nullptr) return false;
-        auto source = entity->GetSource(0);
         auto destination = entity->GetDestination(0);
-        // Only an entity with both ends can loop back. One-directional
-        // entities are left without a block rather than given one that
-        // dereferences a null source on the real-time thread.
-        if (!source || !destination) return false;
-        auto block = ^kern_return_t(IOUserMIDIUMPWord const* umpWords,
-                                    size_t numWords) {
-            return source->Send(umpWords, numWords);
-        };
-        const kern_return_t ret = destination->SetIOBlock(block);
-        if (ret != kIOReturnSuccess) {
-            ASFW_LOG_ERROR(Midi, "ASFWMidiDevice: SetIOBlock failed 0x%x", ret);
+        if (destination) {
+            const uint32_t port = portIndex;
+            auto* ivarsCopy = ivars;
+            auto ioBlock = ^kern_return_t(IOUserMIDIUMPWord const* umpWords,
+                                          size_t numWords) {
+                return ivarsCopy->WriteToWire(port, umpWords, numWords);
+            };
+            (void)destination->SetIOBlock(ioBlock);
+        }
+        ++portIndex;
+        return false;
+    });
+    ASFW_LOG(Midi, "ASFWMidiDevice: transport bound epoch=%llu", streamEpoch);
+}
+
+void ASFWMidiDevice::UnbindTransport() {
+    if (ivars == nullptr) return;
+    // Clear the flag first: an I/O block already running will see it and return
+    // without touching the rings, and one that starts afterwards does nothing.
+    ivars->bound.store(false, std::memory_order_release);
+    ivars->block = nullptr;
+    ASFW_LOG(Midi, "ASFWMidiDevice: transport unbound");
+}
+
+void ASFWMidiDevice::DrainReceiveRings() {
+    if (ivars == nullptr) return;
+    if (!ivars->bound.load(std::memory_order_acquire)) return;
+    auto* block = ivars->block;
+    if (block == nullptr || !block->Usable(ivars->streamEpoch)) return;
+
+    auto entities = GetEntities();
+    if (!entities) return;
+
+    __block uint32_t portIndex = 0;
+    entities->iterateObjects(^bool(OSObject* object) {
+        auto* entity = OSDynamicCast(IOUserMIDIEntity, object);
+        if (entity == nullptr) return false;
+        const uint32_t port = portIndex++;
+        if (port >= ASFW::Midi::kMidiPortsPerDirection) return true;
+
+        auto source = entity->GetSource(0);
+        if (!source) return false;
+        auto& ring = block->deviceToHost[port];
+
+        // A discontinuity means bytes were lost between what is queued and what
+        // came before. Reset the parser at that point so the two sides cannot
+        // join into a message nobody sent.
+        const uint64_t gaps = ring.discontinuities.load(std::memory_order_relaxed);
+        if (gaps != ivars->seenGaps[port]) {
+            ivars->seenGaps[port] = gaps;
+            ivars->fromWire[port].Reset();
+        }
+
+        const uint32_t count = ring.Peek(ivars->rxBytes);
+        if (count == 0) return false;
+        const auto pushed = ivars->fromWire[port].Push(
+            {ivars->rxBytes, count}, ivars->rxWords);
+        ring.Consume(pushed.bytesConsumed);
+        if (pushed.wordsWritten > 0) {
+            (void)source->Send(ivars->rxWords, pushed.wordsWritten);
         }
         return false;
     });

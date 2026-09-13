@@ -39,13 +39,23 @@ public:
     virtual kern_return_t StartIO() override;
     virtual kern_return_t StopIO() override;
 
-    /// Install the bring-up loopback on every entity that has both ends.
+    /// Bind the device's entities to the shared byte rings.
     ///
-    /// Stage-1 scaffolding: it proves the object graph and the CoreMIDI
-    /// connection without any FireWire traffic. WP-4 replaces it with the
-    /// shared byte rings, and it must be gone by then -- a loopback left in
-    /// place would make a broken wire path look like a working one.
-    void InstallLoopbackForBringUp() LOCALONLY;
+    /// `block` is the mapped MidiTransportBlock, owned by the nub and valid
+    /// until this service's queue is quiescent. Each destination's I/O block
+    /// converts UMP to MIDI 1.0 bytes and enqueues them; DrainReceiveRings
+    /// goes the other way.
+    void BindTransport(void* block, uint64_t streamEpoch) LOCALONLY;
+
+    /// Stop using the rings. Must run before the mapping is dropped.
+    void UnbindTransport() LOCALONLY;
+
+    /// Convert everything queued device -> host into UMP and Send it.
+    ///
+    /// Runs on this service's work queue, never on the core driver's receive
+    /// queue: a CoreMIDI client must not be served while the receive path is
+    /// held.
+    void DrainReceiveRings() LOCALONLY;
 
 private:
     uint32_t SourcePortCount() const LOCALONLY;

@@ -17,12 +17,44 @@
 #define ASFWMidiNub_h
 
 #include <DriverKit/IOService.iig>
+#include <DriverKit/IOMemoryDescriptor.iig>
 
 class ASFWMidiNub: public IOService
 {
 public:
     virtual kern_return_t Start(IOService* provider) override;
     virtual kern_return_t Stop(IOService* provider) override;
+    virtual bool init() override;
+    virtual void free() override;
+
+    /// Hand the MIDI byte seam to the matching MIDI service.
+    ///
+    /// The nub allocates and owns the descriptor; the MIDI service maps it and
+    /// keeps that mapping until its own queue is quiescent. Nothing but this
+    /// descriptor crosses the seam -- raw pointers between services on
+    /// different queues is the FW-60 shape.
+    virtual kern_return_t CopyMidiTransportMemory(IOMemoryDescriptor** outMemory,
+                                                  uint64_t* outStreamEpoch);
+
+    /// Ask the MIDI service to drain the device -> host rings.
+    ///
+    /// Raised by the core driver's receive path after it writes bytes. The MIDI
+    /// service does the UMP conversion and Send on its own queue, because the
+    /// receive queue must not be held while a CoreMIDI client is served.
+    virtual kern_return_t NotifyMidiReceived();
+
+    /// Core-driver-side access to the mapped rings.
+    ///
+    /// LOCALONLY: a direct C++ call, valid only for code holding this exact
+    /// object -- which is the core driver, the process that allocated it.
+    /// Returns nullptr until Start has mapped the buffer.
+    void* GetTransportBlock() LOCALONLY;
+
+    /// Owner-side lifecycle for the rings. Arm publishes a new stream epoch
+    /// and clears every ring; Quiesce stops use without unmapping, so a
+    /// consumer mid-callback cannot fault.
+    void ArmTransport(uint64_t streamEpoch) LOCALONLY;
+    void QuiesceTransport() LOCALONLY;
 };
 
 #endif /* ASFWMidiNub_h */

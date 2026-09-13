@@ -24,3 +24,8 @@ add_midi_test(MidiEndpointCapabilitiesTests
     MidiEndpointCapabilitiesTests.cpp
     "${ASFW_DRIVER_DIR}/Midi/Capabilities/MidiEndpointCapabilities.cpp"
 )
+
+# MIDI byte seam: SPSC rings and the packet reservation protocol (WP-4).
+add_midi_test(MidiTransportBlockTests
+    MidiTransportBlockTests.cpp
+)

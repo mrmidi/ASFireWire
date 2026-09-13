@@ -10,6 +10,7 @@
 
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWMIDIDriver.h>
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWMidiDevice.h>
+#include <net.mrmidi.ASFW.ASFWDriver/ASFWMidiNub.h>
 
 #include "../../Logging/Logging.hpp"
 #include "../Core/MidiNubProperties.hpp"
@@ -17,6 +18,11 @@
 struct ASFWMIDIDriver_IVars {
     OSSharedPtr<IODispatchQueue> workQueue;
     OSSharedPtr<ASFWMidiDevice> device;
+    // Retained for this service's whole lifetime. The descriptor belongs to the
+    // nub; dropping either of these while a callback is in flight is exactly
+    // the FW-60 failure, so they outlive the device deliberately.
+    OSSharedPtr<IOMemoryDescriptor> transportBuffer;
+    OSSharedPtr<IOMemoryMap> transportMap;
     uint64_t guid{0};
 };
 
@@ -133,10 +139,32 @@ kern_return_t IMPL(ASFWMIDIDriver, Start) {
         return error;
     }
 
-    // Stage-1 only. WP-4 replaces this with the shared byte rings; until then
-    // a loopback is how the object graph and the CoreMIDI connection get
-    // proven without any FireWire traffic.
-    ivars->device->InstallLoopbackForBringUp();
+    // Map the byte seam the nub allocated and bind the entities to it. If this
+    // fails the device is published anyway: its endpoints appear and stay
+    // offline, which is honest, rather than a loopback that would make a dead
+    // wire path look alive.
+    // The personality matches only ASFWMidiNub, so the provider is one; the
+    // audio side casts the same way (ASFWAudioDriverGraph.cpp:128).
+    auto* nub = reinterpret_cast<ASFWMidiNub*>(provider);
+    IOMemoryDescriptor* rawTransport = nullptr;
+    uint64_t transportEpoch = 0;
+    if (nub->CopyMidiTransportMemory(&rawTransport, &transportEpoch) ==
+            kIOReturnSuccess && rawTransport != nullptr) {
+        ivars->transportBuffer = OSSharedPtr(rawTransport, OSNoRetain);
+        IOMemoryMap* rawMap = nullptr;
+        if (ivars->transportBuffer->CreateMapping(0, 0, 0, 0, 0, &rawMap) ==
+                kIOReturnSuccess && rawMap != nullptr) {
+            ivars->transportMap = OSSharedPtr(rawMap, OSNoRetain);
+            ivars->device->BindTransport(
+                reinterpret_cast<void*>(ivars->transportMap->GetAddress()),
+                transportEpoch);
+        } else {
+            ASFW_LOG_ERROR(Midi, "ASFWMIDIDriver: transport mapping failed");
+            ivars->transportBuffer.reset();
+        }
+    } else {
+        ASFW_LOG_ERROR(Midi, "ASFWMIDIDriver: no transport memory from nub");
+    }
 
     error = RegisterService();
     if (error != kIOReturnSuccess) {
@@ -155,9 +183,17 @@ kern_return_t IMPL(ASFWMIDIDriver, Stop) {
     ASFW_LOG(Midi, "ASFWMIDIDriver: stopping guid=0x%llx", ivars ? ivars->guid : 0);
     // Drop the device before the superclass tears the object graph down, so
     // nothing is left holding a reference into a half-stopped service.
+    // Order matters: stop using the rings, then stop the service, then drop
+    // the mapping. Releasing the mapping first would leave a callback that is
+    // already running dereferencing unmapped memory.
+    if (ivars != nullptr && ivars->device) {
+        ivars->device->UnbindTransport();
+    }
     const kern_return_t ret = Stop(provider, SUPERDISPATCH);
     if (ivars != nullptr) {
         ivars->device.reset();
+        ivars->transportMap.reset();
+        ivars->transportBuffer.reset();
         ivars->workQueue.reset();
     }
     return ret;

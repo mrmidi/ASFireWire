@@ -60,7 +60,8 @@ public:
         uint32_t wordsWritten{0};
     };
 
-    explicit constexpr MidiByteStreamToUmp(uint8_t group = 0) noexcept
+    constexpr MidiByteStreamToUmp() noexcept = default;
+    explicit constexpr MidiByteStreamToUmp(uint8_t group) noexcept
         : group_(group & kMaxGroup) {}
 
     /// Feed a run of MIDI 1.0 bytes, appending complete UMP messages to `out`.

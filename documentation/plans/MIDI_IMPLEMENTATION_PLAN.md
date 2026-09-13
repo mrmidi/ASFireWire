@@ -308,7 +308,7 @@ and take no lock on any path.
 
 **This package has no dependencies and no blockers. It is where work starts.**
 
-### WP-4 — Transport block and byte seam
+### WP-4 — Transport block and byte seam — **landed, runtime-unverified**
 
 **Goal.** A `MidiTransportBlock` — 8 SPSC byte rings per direction — in an
 `IOBufferMemoryDescriptor` owned by the core driver, handed across the nub(s)
@@ -342,6 +342,43 @@ the nub method, not after.
 
 **Tests.** Host tests for cursor protocol, overflow, wrap, epoch invalidation,
 and the reservation state machine including cancel-then-later-commit rejection.
+
+**What landed.** `Midi/Transport/MidiTransportBlock.hpp` — eight SPSC byte rings
+per direction, 1024 bytes each (about 328 ms of MIDI 1.0 backlog against a worst
+recorded dispatch stall of 5.25 ms), plus `MidiTxReservation.hpp` for the
+packet-local reserve/commit/cancel protocol. Both pure and host-tested.
+
+Ring indices are free-running and only the byte access is masked, so "full" and
+"empty" stay distinguishable. `TryWrite` is all-or-nothing: a truncated MIDI
+message leaves the device desynchronised until the next status byte, so a
+rejected message is strictly better. Overflow counts `droppedBytes` and marks a
+discontinuity; the receive converter resets its parser at that mark so bytes
+either side of a gap cannot form a message nobody sent.
+
+The nub allocates and owns the `IOBufferMemoryDescriptor`; the MIDI service maps
+it and retains both descriptor and mapping for its whole lifetime. `Stop` unbinds
+the rings *before* the mapping is released, and `Quiesce` refuses further use
+without unmapping, so a callback already running sees a quiesced block rather
+than unmapped memory.
+
+**The decision this package owed:** the transport accessor went on the MIDI nub
+only, **not** the audio nub. RX extraction runs in the core driver, which reaches
+the rings through the nub's LOCALONLY accessor, so nothing about WP-7 needs the
+audio service to map anything. Whether the TX consumer maps it directly or
+inherits it from the extracted session is now WP-6's to settle, which is where it
+belongs.
+
+**The loopback is gone**, replaced by the real path: each destination's I/O block
+converts UMP to bytes on the RT thread and enqueues them; `DrainReceiveRings`
+goes the other way on the service's work queue. Nothing feeds the wire ends yet
+(WP-7/WP-8), so a device published today shows endpoints that stay silent — which
+is honest, where a loopback would have made a dead wire path look alive.
+
+**Still open.** 25 host tests and five mutations caught, but only the pure layer
+has executed. The allocation, mapping, RT-thread callback and teardown ordering
+are verified by inspection and an Xcode build only. SPSC remains a claim about
+callers: it holds while each ring has exactly one producer and one consumer, and
+the callback serialization that guarantees it is still unconfirmed (§WP-2).
 
 ### WP-5 — Offer notification producer wiring — **landed, hardware-unverified**
 

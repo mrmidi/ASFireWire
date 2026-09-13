@@ -67,7 +67,8 @@ public:
         bool needsMoreWords{false};
     };
 
-    explicit constexpr UmpToMidiByteStream(uint8_t group = 0) noexcept
+    constexpr UmpToMidiByteStream() noexcept = default;
+    explicit constexpr UmpToMidiByteStream(uint8_t group) noexcept
         : group_(group & kMaxGroup) {}
 
     /// Translate whole UMP packets from `words`, appending bytes to `out`.
