@@ -18,9 +18,15 @@
 #define ASFWMIDIDriver_h
 
 #include <DriverKit/IOService.iig>
+#include <DriverKit/OSAction.iig>
 #include <MIDIDriverKit/IOUserMIDIDriver.iig>
 
 using namespace MIDIDriverKit;
+
+// The TYPE() annotation below names a method on the nub, so its declaration
+// must be visible here. ASFWAudioDriver.iig includes ASFWAudioNub.iig the same
+// way.
+#include "ASFWMidiNub.iig"
 
 class ASFWMIDIDriver: public IOUserMIDIDriver
 {
@@ -36,6 +42,15 @@ public:
 
     virtual kern_return_t StartIO(OSArray* deviceList) override;
     virtual kern_return_t StopIO() override;
+
+    /// Drain the device -> host rings on this service's queue.
+    ///
+    /// Raised by ASFWMidiNub after the core driver's receive path wrote bytes.
+    /// Conversion and Send happen here, never on the receive queue. The action
+    /// is created from this declaration and handed to the nub, so the target is
+    /// this service; the nub's own declaration exists only to name the type.
+    virtual void MidiReceiveReady(OSAction* action)
+        TYPE(ASFWMidiNub::MidiReceiveReady);
 };
 
 #endif /* ASFWMIDIDriver_h */

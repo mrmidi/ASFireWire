@@ -41,6 +41,10 @@ public:
     /// Terminate the nub for `endpointId` if one is published.
     void TerminateNub(uint64_t endpointId) noexcept;
 
+    /// The published nub for `endpointId`, or nullptr. Not retained: valid only
+    /// while the nub is published.
+    [[nodiscard]] IOService* GetNub(uint64_t endpointId) const noexcept;
+
 private:
     static constexpr uint32_t kMaxNubs = 8;
 

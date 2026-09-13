@@ -38,10 +38,17 @@ public:
 
     /// Ask the MIDI service to drain the device -> host rings.
     ///
-    /// Raised by the core driver's receive path after it writes bytes. The MIDI
-    /// service does the UMP conversion and Send on its own queue, because the
-    /// receive queue must not be held while a CoreMIDI client is served.
+    /// Raised by the core driver's receive path after a batch wrote bytes. The
+    /// MIDI service does the UMP conversion and Send on its own queue, because
+    /// the receive queue must not be held while a CoreMIDI client is served.
     virtual kern_return_t NotifyMidiReceived();
+
+    /// Delivered on the MIDI service's queue once NotifyMidiReceived fires.
+    virtual void MidiReceiveReady(OSAction* action TARGET);
+
+    /// The MIDI service registers its handler here during Start.
+    virtual kern_return_t RegisterMidiReceiveAction(
+        OSAction* action TYPE(MidiReceiveReady));
 
     /// Core-driver-side access to the mapped rings.
     ///

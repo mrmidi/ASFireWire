@@ -23,6 +23,7 @@ struct ASFWMIDIDriver_IVars {
     // the FW-60 failure, so they outlive the device deliberately.
     OSSharedPtr<IOMemoryDescriptor> transportBuffer;
     OSSharedPtr<IOMemoryMap> transportMap;
+    OSSharedPtr<OSAction> receiveAction;
     uint64_t guid{0};
 };
 
@@ -166,6 +167,24 @@ kern_return_t IMPL(ASFWMIDIDriver, Start) {
         ASFW_LOG_ERROR(Midi, "ASFWMIDIDriver: no transport memory from nub");
     }
 
+    // Register the receive wake. Without it the rings still fill, but nothing
+    // drains them until the next wake from another source -- so a failure here
+    // is reported rather than ignored.
+    OSAction* rawAction = nullptr;
+    error = CreateActionMidiReceiveReady(0, &rawAction);
+    if (error == kIOReturnSuccess && rawAction != nullptr) {
+        ivars->receiveAction = OSSharedPtr(rawAction, OSNoRetain);
+        error = nub->RegisterMidiReceiveAction(ivars->receiveAction.get());
+        if (error != kIOReturnSuccess) {
+            ASFW_LOG_ERROR(Midi,
+                           "ASFWMIDIDriver: receive action registration failed 0x%x",
+                           error);
+        }
+    } else {
+        ASFW_LOG_ERROR(Midi, "ASFWMIDIDriver: receive action create failed 0x%x",
+                       error);
+    }
+
     error = RegisterService();
     if (error != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Midi, "ASFWMIDIDriver: RegisterService failed 0x%x", error);
@@ -192,6 +211,7 @@ kern_return_t IMPL(ASFWMIDIDriver, Stop) {
     const kern_return_t ret = Stop(provider, SUPERDISPATCH);
     if (ivars != nullptr) {
         ivars->device.reset();
+        ivars->receiveAction.reset();
         ivars->transportMap.reset();
         ivars->transportBuffer.reset();
         ivars->workQueue.reset();
@@ -228,6 +248,14 @@ kern_return_t ASFWMIDIDriver::StartIO(OSArray* deviceList) {
     }
     if (ivars == nullptr || !ivars->device) return kIOReturnSuccess;
     return ivars->device->StartIO();
+}
+
+void IMPL(ASFWMIDIDriver, MidiReceiveReady) {
+    (void)action;
+    if (ivars == nullptr || !ivars->device) return;
+    // Already on this service's queue: the action is what moved us off the
+    // core driver's receive queue.
+    ivars->device->DrainReceiveRings();
 }
 
 kern_return_t ASFWMIDIDriver::StopIO() {

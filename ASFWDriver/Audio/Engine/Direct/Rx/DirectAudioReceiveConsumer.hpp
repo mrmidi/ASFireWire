@@ -43,9 +43,16 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         // any per-channel skew to undo. Identity for every device that reports
         // an honest channel order; chosen by the family that knows otherwise.
         RxCaptureChannelMap captureChannelMap{};
+        // MPX-MIDI lifted from the same packets. Disabled unless the endpoint
+        // published usable MIDI capability, and only ever on stream 0.
+        RxMidiExtraction midi{};
     };
 
     using TimingLossCallback = std::function<void()>;
+    /// Raised after a batch delivered MIDI bytes, so the MIDI service can be
+    /// woken to drain them. Never called from inside the per-packet loop: one
+    /// wake per batch, on the receive queue, doing nothing but signalling.
+    using MidiReceivedCallback = std::function<void()>;
     using ZtsAnchorReadyCallback = std::function<void(uint64_t)>;
 
     DirectAudioReceiveConsumer(
@@ -56,6 +63,7 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept;
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
     void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
+    void SetMidiReceivedCallback(MidiReceivedCallback callback) noexcept;
     [[nodiscard]] bool IsReplayEstablished() const noexcept;
 
     void OnReceiveActivated() noexcept override;
@@ -153,6 +161,9 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     ::ASFW::Audio::Runtime::ZtsTelemetryRing ztsTelemetry_{};
     TimingLossCallback timingLossCallback_{};
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{};
+    MidiReceivedCallback midiReceivedCallback_{};
+    /// MIDI bytes seen during the batch currently being drained.
+    uint32_t midiBytesThisBatch_{0};
     bool replayResetForStart_{false};
     // Bounded [RxReplayReset] records for a stream that has not established yet.
     // Re-armed at each bring-up; without a budget a permanently-rejected stream

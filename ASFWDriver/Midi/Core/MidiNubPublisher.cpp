@@ -144,6 +144,13 @@ bool MidiNubPublisher::EnsureNub(const MidiEndpointCapabilities& caps,
     return true;
 }
 
+IOService* MidiNubPublisher::GetNub(const uint64_t endpointId) const noexcept {
+    for (const auto& entry : entries_) {
+        if (entry.used && entry.endpointId == endpointId) return entry.nub;
+    }
+    return nullptr;
+}
+
 void MidiNubPublisher::TerminateNub(const uint64_t endpointId) noexcept {
     for (auto& entry : entries_) {
         if (!entry.used || entry.endpointId != endpointId) continue;

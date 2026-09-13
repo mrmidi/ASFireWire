@@ -33,6 +33,15 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
         .useTxDerivedPlaybackClock = useTxDerivedPlaybackClock,
         .captureChannelMap = captureChannelMap,
     };
+    // MIDI rides stream 0 only, matching Linux's dice-midi. A secondary slice
+    // shares the packet stream but not the MIDI slot, and giving it the same
+    // extraction would deliver every byte twice.
+    if (streamIndex == 0 && !isSecondary && midiSink_.Bound() &&
+        midiGeometry_.Valid()) {
+        configuration.midi.sink = &midiSink_;
+        configuration.midi.geometry = midiGeometry_;
+        configuration.midi.counters = &midiCounters_;
+    }
     // This is a DriverKit `noexcept` boundary: report allocation failure instead
     // of allowing std::make_unique to terminate the driver process.
     auto consumer = std::unique_ptr<Consumer>(new (std::nothrow) Consumer(bindingSource, configuration));
@@ -50,12 +59,37 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
                 clockAnchorReadyCallback_(generation);
             }
         });
+    if (configuration.midi.Enabled()) {
+        consumer->SetMidiReceivedCallback([this] {
+            if (midiWake_) midiWake_();
+        });
+    }
     receiveConsumers_[streamIndex] = std::move(consumer);
     isoch_.SetReceiveConsumer(streamIndex, receiveConsumers_[streamIndex].get());
     return kIOReturnSuccess;
 }
 
+void IsochDuplexHostTransport::SetMidiReceiveTransport(
+    ASFW::Midi::MidiTransportBlock* block, uint64_t streamEpoch,
+    const ASFW::Encoding::MpxMidiGeometry& geometry,
+    std::function<void()> wake) noexcept {
+    if (block == nullptr) {
+        midiSink_.Unbind();
+        midiGeometry_ = {};
+        midiWake_ = {};
+        return;
+    }
+    midiSink_.Bind(block, streamEpoch);
+    midiGeometry_ = geometry;
+    midiWake_ = std::move(wake);
+}
+
 void IsochDuplexHostTransport::DetachReceiveConsumers() noexcept {
+    // Unbind before the consumers go away. A consumer mid-callback holds a
+    // pointer to midiSink_, and the sink holds one into the nub's rings; the
+    // order here is what keeps neither outliving the other.
+    midiSink_.Unbind();
+    midiWake_ = {};
     for (uint32_t streamIndex = 0;
          streamIndex < Driver::IsochService::kMaxStreamsPerDirection; ++streamIndex) {
         isoch_.SetReceiveConsumer(streamIndex, nullptr);

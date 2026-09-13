@@ -470,7 +470,7 @@ valid silence, audio open/close neither stops it nor creates a second pump, the
 last release stops hardware, a failed start rolls back, and existing audio-only
 behaviour passes regression unchanged.
 
-### WP-7 — RX extraction and delivery — **extraction landed, delivery unrouted**
+### WP-7 — RX extraction and delivery — **landed end to end, hardware-unverified**
 
 **Goal.** MIDI bytes off the wire into the RX rings and out as UMP, working with
 CoreAudio closed.
@@ -525,12 +525,26 @@ data block. Labels are range-checked to 0x80–0x83 rather than masked: Focusrit
 `label & 3` agrees for valid input but would also accept an audio label as MIDI.
 Event count comes from the wire payload, never from PCM samples written.
 
-**Still open.** Nothing routes the sink yet. The demux and the ring adapter are
-tested, but the core driver's receive path does not yet construct an
-`RxMidiExtraction` from the published capability or bind the sink to the nub's
-block, and nothing calls `DrainReceiveRings` on the MIDI service. That wiring is
-small and deliberate to do once the capability→runtime plumbing exists; until it
-lands, a device publishes MIDI endpoints that stay silent.
+**Routing.** `AudioCoordinator` arms the nub's transport for the endpoint's
+stream epoch, then hands the block plus the device→host geometry to
+`IsochDuplexHostTransport`, which owns the `MidiRingByteSink` and gives the
+extraction to stream 0's receive consumer only — a secondary slice shares the
+packet stream but not the MIDI slot, so giving it the same extraction would
+deliver every byte twice.
+
+The wake is an `OSAction`: the consumer raises one callback per receive batch
+that carried bytes (on the first such packet, not at the end — the MIDI service
+reads on its own queue, so telling it early costs nothing), the coordinator's
+lambda calls `NotifyMidiReceived` on the nub, and the action lands on the MIDI
+service's queue where `DrainReceiveRings` converts and Sends. Conversion never
+happens on the receive queue.
+
+Teardown detaches the extraction before the nub is terminated, because the sink
+borrows the nub's rings.
+
+**Still open.** None of it has executed. Hardware has to confirm that bytes
+actually arrive, that they arrive with CoreAudio closed, and that the wake lands
+on the MIDI service's queue rather than the receive queue.
 
 ### WP-8 — TX composition
 

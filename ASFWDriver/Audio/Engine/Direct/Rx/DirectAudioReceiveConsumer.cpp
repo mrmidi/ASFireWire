@@ -74,6 +74,11 @@ void DirectAudioReceiveConsumer::SetZtsAnchorReadyCallback(
     ztsAnchorReadyCallback_ = std::move(callback);
 }
 
+void DirectAudioReceiveConsumer::SetMidiReceivedCallback(
+    MidiReceivedCallback callback) noexcept {
+    midiReceivedCallback_ = std::move(callback);
+}
+
 void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     secondaryAnchored_ = false;
     secondaryAnchorEpoch_ = 0;
@@ -125,6 +130,9 @@ void DirectAudioReceiveConsumer::OnReceiveQuiesced() noexcept {
 
 void DirectAudioReceiveConsumer::BeginReceiveBatch(
     const ::ASFW::Isoch::IsochReceiveBatch&) noexcept {
+    // One MIDI wake per batch: the counter resets here and the callback fires
+    // on the first packet of the batch that carries bytes.
+    midiBytesThisBatch_ = 0;
     if (!bindingSource_) {
         return;
     }
@@ -240,7 +248,19 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         packet.payload.data(), packet.payload.size(), absoluteFrameCursor_, channels,
         inputView_.deviceToHostAm824Slots, configuration_.wireFormat,
         configuration_.channelOffset, !configuration_.isSecondary,
-        configuration_.captureChannelMap, primeDelayLine);
+        configuration_.captureChannelMap, primeDelayLine, configuration_.midi);
+    if (result.midiBytesDelivered != 0) {
+        // Wake once per batch, on the first packet that carries bytes rather
+        // than at the end of the drain: the MIDI service reads the rings on its
+        // own queue, so telling it early costs nothing and saves a batch
+        // interval of latency. Further packets in this batch accumulate into
+        // the same wake.
+        const bool firstThisBatch = midiBytesThisBatch_ == 0;
+        midiBytesThisBatch_ += result.midiBytesDelivered;
+        if (firstThisBatch && midiReceivedCallback_) {
+            midiReceivedCallback_();
+        }
+    }
     if (primeDelayLine && result.framesDecoded != 0) {
         primeCaptureDelayLine_ = false;
     }

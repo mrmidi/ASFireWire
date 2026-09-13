@@ -14,6 +14,7 @@
 #include "../Transport/MidiTransportBlock.hpp"
 
 struct ASFWMidiNub_IVars {
+    OSSharedPtr<OSAction> midiReceiveAction;
     OSSharedPtr<IOBufferMemoryDescriptor> transportBuffer;
     OSSharedPtr<IOMemoryMap> transportMap;
     ASFW::Midi::MidiTransportBlock* block{nullptr};
@@ -28,6 +29,7 @@ bool ASFWMidiNub::init() {
 
 void ASFWMidiNub::free() {
     if (ivars != nullptr) {
+        ivars->midiReceiveAction.reset();
         ivars->block = nullptr;
         ivars->transportMap.reset();
         ivars->transportBuffer.reset();
@@ -100,9 +102,25 @@ kern_return_t IMPL(ASFWMidiNub, CopyMidiTransportMemory) {
 }
 
 kern_return_t IMPL(ASFWMidiNub, NotifyMidiReceived) {
-    // Overridden by nothing today; the MIDI service installs its own handling
-    // by polling the rings from its work queue. Kept as the explicit wake
-    // point so WP-7 has somewhere to call that is not the receive queue.
+    if (ivars == nullptr || !ivars->midiReceiveAction) {
+        // No MIDI service attached. Bytes stay queued; they are not lost, and
+        // a service that attaches later drains whatever accumulated.
+        return kIOReturnNotReady;
+    }
+    // Hands off to the MIDI service's queue and returns. This runs on the
+    // receive queue, which must not be held while a CoreMIDI client is served.
+    MidiReceiveReady(ivars->midiReceiveAction.get());
+    return kIOReturnSuccess;
+}
+
+void IMPL(ASFWMidiNub, MidiReceiveReady) {
+    // Originated here, handled by ASFWMIDIDriver's override.
+    (void)action;
+}
+
+kern_return_t IMPL(ASFWMidiNub, RegisterMidiReceiveAction) {
+    if (ivars == nullptr) return kIOReturnNotReady;
+    ivars->midiReceiveAction = OSSharedPtr(action, OSRetain);
     return kIOReturnSuccess;
 }
 

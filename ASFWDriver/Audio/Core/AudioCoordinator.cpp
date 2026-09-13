@@ -11,6 +11,7 @@
 #include "../Duplex/SyncAsyncBridge.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
+#include <net.mrmidi.ASFW.ASFWDriver/ASFWMidiNub.h>
 #include "../../Logging/Logging.hpp"
 
 #include <utility>
@@ -124,6 +125,34 @@ void AudioCoordinator::EndpointReady(
                        "[AudioSession] endpoint=%llu MIDI nub publication failed; "
                        "audio endpoint stays up",
                        profile->endpointId.value);
+    } else if (midiCaps.deviceToHost.Usable()) {
+        // Point receive extraction at this endpoint's rings. Arm publishes the
+        // epoch and clears the rings before anything can read them, so a
+        // restart cannot deliver the previous stream's bytes.
+        auto* nub = reinterpret_cast<ASFWMidiNub*>(
+            midiPublisher_.GetNub(profile->endpointId.value));
+        if (nub != nullptr) {
+            nub->ArmTransport(midiCaps.streamEpoch);
+            auto* block = static_cast<ASFW::Midi::MidiTransportBlock*>(
+                nub->GetTransportBlock());
+            if (block != nullptr) {
+                const auto& source = midiCaps.deviceToHost;
+                hostTransport_.SetMidiReceiveTransport(
+                    block, midiCaps.streamEpoch,
+                    ASFW::Encoding::MpxMidiGeometry{
+                        .dbs = source.dbs,
+                        .midiSlotIndex = source.midiSlotIndex,
+                        .portCount = source.portCount,
+                        .dbcAligned = source.dbcAligned,
+                    },
+                    [nub] { (void)nub->NotifyMidiReceived(); });
+                ASFW_LOG(Midi,
+                         "[AudioSession] endpoint=%llu MIDI receive armed "
+                         "epoch=%llu ports=%u slot=%u dbs=%u",
+                         profile->endpointId.value, midiCaps.streamEpoch,
+                         source.portCount, source.midiSlotIndex, source.dbs);
+            }
+        }
     }
 
     ASFW_LOG(Audio,
@@ -174,6 +203,10 @@ void AudioCoordinator::TerminateEndpoint(EndpointId endpointId) noexcept {
     // MIDI first: its service holds no hardware, so dropping it before the
     // audio nub keeps the teardown order monotonic from the outside in. Both
     // are idempotent for an endpoint that never published one.
+    //
+    // Detach receive extraction before the nub goes away: the sink borrows the
+    // nub's rings, so the borrow has to end first.
+    hostTransport_.SetMidiReceiveTransport(nullptr, 0, {}, {});
     midiPublisher_.TerminateNub(endpointId.value);
     publisher_.TerminateNub(endpointId, "session-retired");
     duplexCoordinator_.ClearSession(endpointId);

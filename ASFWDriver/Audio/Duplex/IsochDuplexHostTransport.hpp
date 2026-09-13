@@ -19,6 +19,8 @@
 #include <DriverKit/OSSharedPtr.h>
 #include <functional>
 #include <memory>
+#include "../../Midi/Transport/MidiRingByteSink.hpp"
+#include "../Wire/AM824/MpxMidiDemux.hpp"
 
 
 namespace ASFW::IRM {
@@ -150,6 +152,17 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     [[nodiscard]] kern_return_t StopAllAfterBusReset() noexcept override;
     [[nodiscard]] bool IsReceiveReplayEstablished() const noexcept override;
 
+    /// Point receive-side MIDI extraction at an endpoint's byte rings.
+    ///
+    /// `block` is the mapped MidiTransportBlock the MIDI nub owns; passing
+    /// nullptr detaches. Only stream 0 carries MIDI in this milestone, matching
+    /// Linux's dice-midi, so only that consumer is given the extraction.
+    /// `wake` is invoked once per receive batch that produced bytes.
+    void SetMidiReceiveTransport(
+        ASFW::Midi::MidiTransportBlock* block, uint64_t streamEpoch,
+        const ASFW::Encoding::MpxMidiGeometry& geometry,
+        std::function<void()> wake) noexcept;
+
   private:
     [[nodiscard]] kern_return_t AttachReceiveConsumer(
         uint32_t streamIndex,
@@ -162,6 +175,13 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     void DetachReceiveConsumers() noexcept;
 
     Driver::IsochService& isoch_;
+    // Receive-side MIDI. The sink writes into rings the MIDI nub owns; this
+    // object only borrows them, and DetachReceiveConsumers unbinds before any
+    // consumer that could still call into it is destroyed.
+    ASFW::Midi::MidiRingByteSink midiSink_{};
+    ASFW::Encoding::MpxMidiGeometry midiGeometry_{};
+    ASFW::Encoding::MpxMidiDemuxCounters midiCounters_{};
+    std::function<void()> midiWake_{};
     std::unique_ptr<ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer>
         receiveConsumers_[Driver::IsochService::kMaxStreamsPerDirection]{};
     Duplex::DuplexIRMReservationPair reservations_{};
