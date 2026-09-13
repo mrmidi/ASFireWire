@@ -655,6 +655,7 @@ struct IsochTxQueueControl final {
     std::atomic<uint32_t> offerNotifyPending{0};
     std::atomic<uint64_t> offerServiceCount{0};
     std::atomic<uint64_t> offerNotifyCoalescedCount{0};
+    std::atomic<uint64_t> offerNotifyDroppedCount{0};
 
     /// Producer side, called once after a batch of offers -- never per packet.
     /// Returns true when the caller owns the obligation to notify transport;
@@ -704,6 +705,19 @@ struct IsochTxQueueControl final {
         }
     }
 
+    /// The owner of a notification could not deliver it.
+    ///
+    /// Clears the pending flag WITHOUT marking the generation handled, so the
+    /// offers stay outstanding for the next completion interrupt and a later
+    /// batch can raise a fresh notification. Marking them handled here would
+    /// claim a service pass that never ran; leaving the flag set would make
+    /// every later batch coalesce into a notification nobody is delivering,
+    /// which is the doorbell failing silently rather than degrading.
+    void AbandonOfferNotification() noexcept {
+        offerNotifyDroppedCount.fetch_add(1, std::memory_order_relaxed);
+        offerNotifyPending.store(0, std::memory_order_release);
+    }
+
     /// True when a producer has published offers transport has not serviced.
     [[nodiscard]] bool HasUnservicedOffers() const noexcept {
         return offerRequestGeneration.load(std::memory_order_acquire) !=
@@ -718,6 +732,7 @@ struct IsochTxQueueControl final {
         offerNotifyPending.store(0, std::memory_order_relaxed);
         offerServiceCount.store(0, std::memory_order_relaxed);
         offerNotifyCoalescedCount.store(0, std::memory_order_relaxed);
+        offerNotifyDroppedCount.store(0, std::memory_order_relaxed);
     }
 
     // ---- Decision-diagnostic lanes -------------------------------------

@@ -272,7 +272,7 @@ the nub method, not after.
 **Tests.** Host tests for cursor protocol, overflow, wrap, epoch invalidation,
 and the reservation state machine including cancel-then-later-commit rejection.
 
-### WP-5 — Offer notification producer wiring
+### WP-5 — Offer notification producer wiring — **landed, hardware-unverified**
 
 **Goal.** Close the remaining half of the offer/service gap: give
 `PublishOfferBatch` a producer call site and `ServiceLatePayloadOffers` a
@@ -298,6 +298,33 @@ because it is independently valuable.
 **Done when** offered payloads demonstrably cause a prompt transport wake, the
 existing coalescing and lost-wakeup tests still pass, and audio regression is
 clean.
+
+**What landed.** The producer batch call sits at the end of the single fill loop
+in `ASFWAudioDriverZts.cpp`'s `TxPreparationReady` -- the only `CommitFill` call
+site in the tree -- tracking per-stream whether anything was actually offered,
+and notifying each stream's own control block separately (primary is stream 0,
+secondary stream 1, matching `AllocateTxIsochResources` and
+`IsochService::TransmitContext`). Delivery is a new synchronous nub method,
+`ASFWAudioNub::ServiceLatePayloadOffers(streamIndex)`, which resolves the core
+`ServiceContext` and calls the transmit context on the core's own queue.
+
+One addition beyond the "no change expected" note above: `IsochTxQueueControl`
+gained `AbandonOfferNotification()` and an `offerNotifyDroppedCount`. Without
+it, a failed cross-service hop leaves `offerNotifyPending` set forever, every
+later batch coalesces into a notification nobody will deliver, and the doorbell
+dies silently instead of degrading. Abandoning clears the flag *without* marking
+the generation handled, so the offers stay outstanding for the next completion
+interrupt -- exactly the pre-doorbell behaviour.
+
+**Still open.** Host stubs cannot compile `ASFWAudioDriverZts.cpp` or
+`ASFWAudioNub.cpp`, so the three new tests cover only the control-block
+protocol; the cross-service path itself is verified by inspection and an Xcode
+build, not by execution. Hardware must still confirm (a) that the wake actually
+arrives before the frontier passes, and (b) what one synchronous cross-service
+call per fill batch costs the audio preparation queue. Measure
+`offerServiceCount`, `offerNotifyCoalescedCount`, `offerNotifyDroppedCount` and
+`latePayloadLostPublicationCount` together: the qualification bar is that
+offered payloads stop being discarded, not merely that the call happens.
 
 ### WP-6 — Shared stream session and leases
 

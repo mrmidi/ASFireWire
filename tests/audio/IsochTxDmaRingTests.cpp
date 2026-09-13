@@ -2238,6 +2238,45 @@ TEST(TxOfferDoorbellTests, ServiceWithNothingNewClearsTheObligation) {
     EXPECT_EQ(ctrl.offerNotifyPending.load(), 0U);
 }
 
+TEST(TxOfferDoorbellTests, AbandonedNotificationLeavesTheOffersOutstanding) {
+    // The notification owner could not deliver it -- the cross-service hop
+    // failed. The offers must stay outstanding so the next completion
+    // interrupt still services them, which is the pre-doorbell behaviour.
+    IsochTxQueueControl ctrl{};
+    ASSERT_TRUE(ctrl.PublishOfferBatch());
+
+    ctrl.AbandonOfferNotification();
+
+    EXPECT_TRUE(ctrl.HasUnservicedOffers())
+        << "abandoning must not claim a service pass that never ran";
+    EXPECT_EQ(ctrl.offerNotifyPending.load(), 0U);
+    EXPECT_EQ(ctrl.offerNotifyDroppedCount.load(), 1U);
+}
+
+TEST(TxOfferDoorbellTests, ABatchAfterAnAbandonedNotificationNotifiesAgain) {
+    // The failure mode this prevents: leaving the pending flag set makes every
+    // later batch coalesce into a notification nobody is delivering, so the
+    // doorbell dies silently instead of degrading to the interrupt path.
+    IsochTxQueueControl ctrl{};
+    ASSERT_TRUE(ctrl.PublishOfferBatch());
+    ctrl.AbandonOfferNotification();
+
+    EXPECT_TRUE(ctrl.PublishOfferBatch());
+}
+
+TEST(TxOfferDoorbellTests, ServiceAfterAnAbandonedNotificationStillClears) {
+    // An abandoned notification does not poison the generation bookkeeping: a
+    // later real service pass answers for everything published so far.
+    IsochTxQueueControl ctrl{};
+    ASSERT_TRUE(ctrl.PublishOfferBatch());
+    ctrl.AbandonOfferNotification();
+    ASSERT_TRUE(ctrl.PublishOfferBatch());
+
+    const uint64_t serviced = ctrl.BeginOfferService();
+    EXPECT_FALSE(ctrl.FinishOfferService(serviced));
+    EXPECT_FALSE(ctrl.HasUnservicedOffers());
+}
+
 TEST(TxOfferDoorbellTests, ArmForNewStreamDiscardsAPriorStreamsNotification) {
     // Teardown: a notification raised just before the stream stopped must not
     // make the replacement stream service a generation that was not its own.
@@ -2250,6 +2289,7 @@ TEST(TxOfferDoorbellTests, ArmForNewStreamDiscardsAPriorStreamsNotification) {
     EXPECT_FALSE(ctrl.HasUnservicedOffers());
     EXPECT_EQ(ctrl.offerNotifyPending.load(), 0U);
     EXPECT_EQ(ctrl.offerRequestGeneration.load(), 0U);
+    EXPECT_EQ(ctrl.offerNotifyDroppedCount.load(), 0U);
     // ...and the new stream's first batch notifies normally.
     EXPECT_TRUE(ctrl.PublishOfferBatch());
 }

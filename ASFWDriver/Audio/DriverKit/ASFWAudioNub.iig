@@ -79,6 +79,26 @@ public:
     virtual kern_return_t FreeTxIsochResources();
 
     /**
+     * @brief Producer-to-transport doorbell for published late payload offers.
+     *
+     * The content side writes a replacement payload image into shared memory
+     * and offers it; only transport may bind it to a descriptor. Without this
+     * call the offer waits for the next completion interrupt, and by then the
+     * hardware has moved on by a whole completion group while the offer window
+     * is only kPayloadFinalityLeadPackets wide -- so replacements published in
+     * between are accepted and then discarded.
+     *
+     * Call once per batch of offers, never per packet; IsochTxQueueControl
+     * coalesces, so a caller that finds a notification outstanding skips this.
+     *
+     * Payload-opaque: transport learns that replacements exist, never what
+     * they contain.
+     *
+     * @param streamIndex Transmit stream, matching AllocateTxIsochResources.
+     */
+    virtual kern_return_t ServiceLatePayloadOffers(uint32_t streamIndex);
+
+    /**
      * @brief Query the current host time and FireWire cycle timer snapshot.
      * Captures a synchronized pair from the hardware for clock seeding.
      * @param outHostTimeMid Monotonic host system time in ticks.

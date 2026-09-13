@@ -1206,6 +1206,36 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
              ASFW::Audio::Shared::PreparedLeadFrames(ivars.runtime.activeTuning, static_cast<uint32_t>(ivars.device.currentSampleRate)));
 }
 
+/// Raise the producer doorbell for one transmit stream, once per fill batch.
+///
+/// Only transport may bind a replacement to a live descriptor, and it can only
+/// do so while the hardware has not yet reached the packet. The producer offers
+/// from the finality frontier (hw + kPayloadFinalityLeadPackets, 3 packets),
+/// but the completion interrupt that would otherwise service the offer arrives
+/// one completion group later (8 packets) -- so without this call every offer
+/// made inside that window is accepted and then discarded, and the engine
+/// counts silence as content.
+///
+/// PublishOfferBatch coalesces: false means a notification is already
+/// outstanding, and transport re-reads the request generation before it
+/// finishes, so this batch is covered without a second cross-service call.
+void NotifyLatePayloadOffers(ASFWAudioDriver_IVars& ivars,
+                             ASFW::Isoch::IsochTxQueueControl* queue,
+                             uint32_t streamIndex,
+                             bool offered) noexcept {
+    if (!offered || !queue || !ivars.device.audioNub) return;
+    if (!queue->PublishOfferBatch()) return;
+
+    if (ivars.device.audioNub->ServiceLatePayloadOffers(streamIndex) !=
+        kIOReturnSuccess) {
+        // The obligation was ours and the hop failed. Hand it back without
+        // claiming the offers were serviced: they stay outstanding for the
+        // next completion interrupt, which is exactly the pre-doorbell
+        // behaviour, and a later batch can notify again.
+        queue->AbandonOfferNotification();
+    }
+}
+
 } // namespace ASFW::Audio::DriverKit
 
 void IMPL(ASFWAudioDriver, ZtsAnchorReady) {
@@ -1291,6 +1321,11 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
             }
             ++ivars->runtime.txFillCursor;
         }
+        // Which streams actually published a replacement this pass. One
+        // doorbell per batch, never per packet: the notification costs a
+        // cross-service call, and IsochTxQueueControl coalesces anyway.
+        bool offeredPrimary = false;
+        bool offeredSecondary = false;
         while (ivars->runtime.txFillCursor < committedAfter) {
             const auto packet =
                 static_cast<uint32_t>(ivars->runtime.txFillCursor);
@@ -1307,15 +1342,29 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                         packet) ==
                         ASFW::Audio::DriverKit::FillResult::Filled;
                 if (secondaryReady) {
-                    if (ivars->runtime.txStreamEngine.CommitFill(packet) &&
-                        ivars->runtime.txSecondaryActive) {
-                        (void)ivars->runtime.txStreamEngineSecondary.CommitFill(
-                            packet);
+                    if (ivars->runtime.txStreamEngine.CommitFill(packet)) {
+                        offeredPrimary = true;
+                        if (ivars->runtime.txSecondaryActive &&
+                            ivars->runtime.txStreamEngineSecondary.CommitFill(
+                                packet)) {
+                            offeredSecondary = true;
+                        }
                     }
                 }
             }
             ++ivars->runtime.txFillCursor;
         }
+
+        // Tell transport the replacements exist. An offer is only reachable
+        // until the hardware passes its packet: the producer may offer from
+        // hw + kPayloadFinalityLeadPackets, but the completion interrupt that
+        // would otherwise service it arrives a whole completion group later,
+        // by which time the packet is sealed and the content is discarded.
+        ASFW::Audio::DriverKit::NotifyLatePayloadOffers(
+            *ivars, queue, 0, offeredPrimary);
+        ASFW::Audio::DriverKit::NotifyLatePayloadOffers(
+            *ivars, ivars->runtime.txSlotProviderSecondary.queueControl, 1,
+            offeredSecondary);
     }
     const uint64_t margin = committedAfter > completion
         ? committedAfter - completion : 0;

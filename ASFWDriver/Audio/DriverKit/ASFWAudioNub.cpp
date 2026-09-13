@@ -800,6 +800,45 @@ kern_return_t IMPL(ASFWAudioNub, AllocateTxIsochResources)
         outPayloadSlab, outMetadataRing, outControlBlock);
 }
 
+// Producer-to-transport doorbell. The content side has published one or more
+// replacement payload images; bind what is still reachable now rather than at
+// the next completion interrupt, which arrives after the hardware has passed
+// the packets the offers were made for.
+//
+// Servicing deliberately does not advance the finality frontier: finality is
+// paced by descriptor recycling, and sealing here would freeze packets sooner
+// than the cadence implies and lose more content, not less.
+//
+// Synchronous rather than an async OSAction hop. Every core-to-audio callback
+// (TxPreparationReady, TxTransportFaultReady, ZtsAnchorReady) is already an
+// async action, so there is no synchronous back-edge to invert against and no
+// deadlock order to establish. It also keeps the sweep inside the caller's
+// stream lifetime instead of handing a queued block state that can outlive
+// teardown -- the FW-60 shape. The cost is that the audio preparation queue
+// waits out one cross-service call per fill batch; measure that on hardware
+// before assuming it is free.
+kern_return_t IMPL(ASFWAudioNub, ServiceLatePayloadOffers)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+    ASFWDriver* parent = GetParentASFWDriver(ivars);
+    auto* ctx = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    if (!ctx) {
+        return kIOReturnNotReady;
+    }
+
+    auto* transmit = ctx->isoch.TransmitContext(streamIndex);
+    if (!transmit) {
+        return kIOReturnNoDevice;
+    }
+
+    // Re-checks its own running state and takes the refill gate; a stream that
+    // stopped between the offer and this call services nothing.
+    transmit->ServiceLatePayloadOffers();
+    return kIOReturnSuccess;
+}
+
 // Releases all allocated shared transmit resources.
 kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
 {
