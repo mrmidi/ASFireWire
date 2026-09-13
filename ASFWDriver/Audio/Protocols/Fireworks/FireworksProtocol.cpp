@@ -16,23 +16,34 @@ namespace {
 constexpr uint64_t kMillisecond = 1000ULL * 1000ULL;
 
 [[nodiscard]] AudioStreamRuntimeCaps BuildCaps(const FireworksStaticGeometry& geometry) noexcept {
-    // MBLA-only streams: AM824 slots equal PCM channels in each direction.
+    // MBLA PCM slots plus the AM824 MIDI conformant slot(s): the data block is
+    // pcm + ceil(midi ports / 8) per direction (Linux amdtp-am824), so the wire
+    // slot count exceeds the CoreAudio channel count — same as the PHASE 88.
     AudioStreamRuntimeCaps caps{};
     caps.hostInputPcmChannels = geometry.captureChannels;
     caps.hostOutputPcmChannels = geometry.playbackChannels;
-    caps.deviceToHostAm824Slots = geometry.captureChannels;
-    caps.hostToDeviceAm824Slots = geometry.playbackChannels;
+    caps.deviceToHostAm824Slots = geometry.CaptureAm824Slots();
+    caps.hostToDeviceAm824Slots = geometry.PlaybackAm824Slots();
     caps.sampleRateHz = geometry.sampleRateHz;
     caps.deviceToHostIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel;
     caps.hostToDeviceIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel;
     caps.deviceToHostStreamCount = 1;
     caps.hostToDeviceStreamCount = 1;
     caps.deviceToHostStreams[0] = {.pcmChannels = geometry.captureChannels,
-                                   .am824Slots = geometry.captureChannels};
+                                   .am824Slots = geometry.CaptureAm824Slots()};
     caps.hostToDeviceStreams[0] = {.pcmChannels = geometry.playbackChannels,
-                                   .am824Slots = geometry.playbackChannels};
+                                   .am824Slots = geometry.PlaybackAm824Slots()};
     return caps;
 }
+
+[[nodiscard]] constexpr uint32_t MidiSlotsForPorts(uint32_t ports) noexcept {
+    return (ports + 7U) / 8U;  // Linux amdtp-am824: DIV_ROUND_UP(midi_ports, 8)
+}
+
+// Linux fireworks_stream.c:53-56 — firmware 4.6.0 (the last Onyx 1200F release)
+// reports a wrong DBS at 88.2 kHz and above; irrelevant at 1x rates but must be
+// honoured (trust the configured stride) before any 2x rate is offered.
+constexpr uint32_t kWrongDbsAt2xArmVersion = 0x04060000;
 
 } // namespace
 
@@ -51,7 +62,12 @@ FireworksProtocol::FireworksProtocol(Protocols::Ports::FireWireBusOps& busOps,
 }
 
 FireworksProtocol::~FireworksProtocol() {
+    // Production teardown drops the shared_ptr without Shutdown(): fail the
+    // clock apply (cancels its timer), abort EFC traffic (cancels the bus write
+    // and response timeout), then expire the token the timer lambdas hold.
+    CancelClockApply();
     efc_.CancelAll(kIOReturnAborted);
+    alive_.reset();
 }
 
 IOReturn FireworksProtocol::Initialize() {
@@ -100,19 +116,34 @@ std::vector<uint32_t> FireworksProtocol::SupportedRates() const {
 }
 
 void FireworksProtocol::EvaluateGeometry(const Efc::HwInfo& info) {
-    const uint32_t deviceCapture = info.txPcmChannels[0];   // device -> host
-    const uint32_t devicePlayback = info.rxPcmChannels[0];  // host -> device
+    // Data-block layout per direction, as Linux keep_resources() derives it:
+    // capture (device -> host) = tx PCM + midi_out_ports slots,
+    // playback (host -> device) = rx PCM + midi_in_ports slots.
+    const uint32_t deviceCapture = info.txPcmChannels[0];
+    const uint32_t devicePlayback = info.rxPcmChannels[0];
+    const uint32_t deviceCaptureMidi = MidiSlotsForPorts(info.midiOutPorts);
+    const uint32_t devicePlaybackMidi = MidiSlotsForPorts(info.midiInPorts);
     const bool matches = deviceCapture == geometry_.captureChannels &&
-                         devicePlayback == geometry_.playbackChannels;
+                         devicePlayback == geometry_.playbackChannels &&
+                         deviceCaptureMidi == geometry_.captureMidiSlots &&
+                         devicePlaybackMidi == geometry_.playbackMidiSlots;
     geometryCheck_ = matches ? GeometryCheck::kMatched : GeometryCheck::kMismatch;
     if (!matches) {
         ASFW_LOG_ERROR(Audio,
-                       "[Fireworks] %{public}s geometry mismatch: device reports capture=%u playback=%u "
-                       "(1x) but the static profile publishes capture=%u playback=%u — streaming "
-                       "disabled; update the profile/nub geometry from this capture",
-                       geometry_.name, deviceCapture, devicePlayback,
+                       "[Fireworks] %{public}s geometry mismatch: device reports capture=%u+%u midi "
+                       "playback=%u+%u midi (1x, pcm+slots) but the static profile publishes "
+                       "capture=%u+%u playback=%u+%u — streaming disabled; update "
+                       "kOnyx400FGeometry / MackieOnyx400FProfile / the nub publisher from this capture",
+                       geometry_.name, deviceCapture, deviceCaptureMidi, devicePlayback,
+                       devicePlaybackMidi,
                        static_cast<unsigned>(geometry_.captureChannels),
-                       static_cast<unsigned>(geometry_.playbackChannels));
+                       static_cast<unsigned>(geometry_.captureMidiSlots),
+                       static_cast<unsigned>(geometry_.playbackChannels),
+                       static_cast<unsigned>(geometry_.playbackMidiSlots));
+    }
+    if (info.armVersion == kWrongDbsAt2xArmVersion) {
+        ASFW_LOG(Audio, "[Fireworks] firmware 4.6.0: DBS untrustworthy at >= 88.2 kHz "
+                        "(Linux CIP_WRONG_DBS) — keep 1x rates until the RX stride is pinned");
     }
 }
 
@@ -262,14 +293,21 @@ void FireworksProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
 
     // Watchdog for the whole EFC sequence; also guarantees the base's
     // CancelClockApply() always has a live timer token to cancel.
+    std::weak_ptr<LifetimeToken> alive = alive_;
     epoch->settleTimer = timerScheduler_->ScheduleAfter(
-        static_cast<uint64_t>(kClockApplyWatchdogMs) * kMillisecond, [this, epoch]() {
+        static_cast<uint64_t>(kClockApplyWatchdogMs) * kMillisecond, [this, alive, epoch]() {
+            if (alive.expired()) return;  // protocol destroyed before the timer fired
             if (activeClockApply_ != epoch.get()) return;
             ASFW_LOG_ERROR(Audio, "[Fireworks] clock apply watchdog fired (rate=%u)",
                            epoch->appliedClock.sampleRateHz);
             epoch->settleTimer = Scheduling::kInvalidTimerToken;
             FinishClockApply(epoch.get(), kIOReturnTimeout);
         });
+    if (epoch->settleTimer == Scheduling::kInvalidTimerToken) {
+        ASFW_LOG_ERROR(Audio, "[Fireworks] could not arm the clock-apply watchdog");
+        FinishClockApply(epoch.get(), kIOReturnNotReady);
+        return;
+    }
 
     // Linux snd-fireworks order: transport mode once per session, then read the
     // clock and only write it when the rate actually differs (command_set_clock).
@@ -308,14 +346,19 @@ void FireworksProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
                 // The firmware reports the old rate for ~100 ms after SET_CLOCK
                 // (Linux command_set_clock: 150 ms). Settle before CMP.
                 timerScheduler_->Cancel(epoch->settleTimer);
+                std::weak_ptr<LifetimeToken> settleAlive = alive_;
                 epoch->settleTimer = timerScheduler_->ScheduleAfter(
                     static_cast<uint64_t>(Efc::kClockSettleMs) * kMillisecond,
-                    [this, epoch, wanted]() {
+                    [this, settleAlive, epoch, wanted]() {
+                        if (settleAlive.expired()) return;
                         if (activeClockApply_ != epoch.get()) return;
                         epoch->settleTimer = Scheduling::kInvalidTimerToken;
                         lastClock_ = wanted;
                         CompleteClockApply(epoch, kIOReturnSuccess);
                     });
+                if (epoch->settleTimer == Scheduling::kInvalidTimerToken) {
+                    CompleteClockApply(epoch, kIOReturnNotReady);
+                }
             });
         });
     });

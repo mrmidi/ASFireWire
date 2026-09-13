@@ -73,13 +73,17 @@ std::vector<uint8_t> MakeResponse(uint32_t seqnum, uint32_t category, uint32_t c
     return frame;
 }
 
-// Minimal HWINFO block (40 mandatory quadlets) with the given 1x channel counts.
-std::vector<uint32_t> MakeHwInfoQuadlets(uint32_t capture, uint32_t playback) {
+// Minimal HWINFO block (40 mandatory quadlets) with the given 1x channel counts
+// and MIDI port counts (the 400F has one MIDI in and one MIDI out).
+std::vector<uint32_t> MakeHwInfoQuadlets(uint32_t capture, uint32_t playback,
+                                         uint32_t midiOut = 1, uint32_t midiIn = 1) {
     std::vector<uint32_t> q(40, 0);
     q[3] = 0x00400F;
     q[21] = 1U;        // internal clock only
     q[22] = playback;  // amdtp_rx_pcm_channels (host -> device)
     q[23] = capture;   // amdtp_tx_pcm_channels (device -> host)
+    q[36] = midiOut;   // midi_out_ports -> capture (tx) MIDI slot
+    q[37] = midiIn;    // midi_in_ports  -> playback (rx) MIDI slot
     q[38] = 96000;
     q[39] = 44100;
     return q;
@@ -178,10 +182,12 @@ protected:
         return Mailbox::Publish(kNode, MakeResponse(seq, category, command, status, params));
     }
 
-    void RespondHwInfo(FireworksProtocol& proto, uint32_t capture, uint32_t playback) {
+    void RespondHwInfo(FireworksProtocol& proto, uint32_t capture, uint32_t playback,
+                       uint32_t midiOut = 1, uint32_t midiIn = 1) {
         ASSERT_EQ(LastWrite().Category(), kCatHwInfo);
         ASSERT_EQ(LastWrite().Command(), kCmdGetCaps);
-        EXPECT_TRUE(Respond(proto, kCatHwInfo, kCmdGetCaps, 0, MakeHwInfoQuadlets(capture, playback)));
+        EXPECT_TRUE(Respond(proto, kCatHwInfo, kCmdGetCaps, 0,
+                            MakeHwInfoQuadlets(capture, playback, midiOut, midiIn)));
     }
 
     void RespondTxMode(FireworksProtocol& proto) {
@@ -215,7 +221,10 @@ TEST_F(FireworksProtocolTest, PublishesStaticGeometryAsRuntimeCaps) {
     ASSERT_TRUE(proto.GetRuntimeAudioStreamCaps(caps));
     EXPECT_EQ(caps.hostInputPcmChannels, 10U);
     EXPECT_EQ(caps.hostOutputPcmChannels, 10U);
-    EXPECT_EQ(caps.deviceToHostAm824Slots, 10U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 11U);   // 10 PCM + 1 MIDI slot (DBS 11)
+    EXPECT_EQ(caps.hostToDeviceAm824Slots, 11U);
+    EXPECT_EQ(caps.deviceToHostStreams[0].pcmChannels, 10U);
+    EXPECT_EQ(caps.deviceToHostStreams[0].am824Slots, 11U);
     EXPECT_EQ(caps.sampleRateHz, 44100U);
     EXPECT_EQ(caps.deviceToHostStreamCount, 1U);
     EXPECT_STREQ(proto.GetName(), "Mackie Onyx 400F");
@@ -246,6 +255,38 @@ TEST_F(FireworksProtocolTest, GeometryMismatchRefusesToPrepareDuplex) {
 
     proto.ApplyClockConfig({.sampleRateHz = 44100}, [&](IOReturn s, auto) { status = s; });
     EXPECT_EQ(status, kIOReturnUnsupported);
+}
+
+TEST_F(FireworksProtocolTest, MidiPortCountMismatchAlsoRefusesToStream) {
+    // PCM counts agree but the device reports no MIDI ports: the data block
+    // would be 10 wide, not 11, so the static DBS is wrong and we must not stream.
+    FireworksProtocol proto(efcBus_, bus_, route_, &irm_, &cmp_, &timer_, kOnyx400FGeometry);
+    ASSERT_EQ(proto.Initialize(), kIOReturnSuccess);
+    RespondHwInfo(proto, 10, 10, /*midiOut=*/0, /*midiIn=*/0);
+    EXPECT_EQ(proto.GeometryStatus(), GeometryCheck::kMismatch);
+}
+
+TEST_F(FireworksProtocolTest, EightMidiPortsStillFitOneSlot) {
+    FireworksProtocol proto(efcBus_, bus_, route_, &irm_, &cmp_, &timer_, kOnyx400FGeometry);
+    ASSERT_EQ(proto.Initialize(), kIOReturnSuccess);
+    RespondHwInfo(proto, 10, 10, /*midiOut=*/8, /*midiIn=*/8);  // DIV_ROUND_UP(8, 8) == 1
+    EXPECT_EQ(proto.GeometryStatus(), GeometryCheck::kMatched);
+}
+
+TEST_F(FireworksProtocolTest, DestructionMidApplyAbortsAndLeavesNoTimers) {
+    IOReturn status = kIOReturnNotReady;
+    {
+        FireworksProtocol proto(efcBus_, bus_, route_, &irm_, &cmp_, &timer_, kOnyx400FGeometry);
+        ASSERT_EQ(proto.Initialize(), kIOReturnSuccess);
+        RespondHwInfo(proto, 10, 10);
+        proto.ApplyClockConfig({.sampleRateHz = 44100}, [&](IOReturn s, auto) { status = s; });
+        RespondTxMode(proto);
+        EXPECT_GE(timer_.PendingCount(), 1U);  // watchdog + EFC timeout armed
+        // No Shutdown(): production drops the shared_ptr and lets the destructor run.
+    }
+    EXPECT_EQ(status, kIOReturnAborted);
+    EXPECT_EQ(timer_.PendingCount(), 0U);
+    timer_.Advance(5000 * kMs);  // nothing left to fire into freed memory
 }
 
 TEST_F(FireworksProtocolTest, PrepareDuplexProbesHwInfoFirstWhenInitializeDidNotRun) {

@@ -32,18 +32,35 @@ namespace ASFW::Audio::Fireworks {
 
 struct FireworksStaticGeometry {
     const char* name{"Fireworks"};
-    uint16_t captureChannels{0};   // device -> host AMDTP PCM channels (1x)
-    uint16_t playbackChannels{0};  // host -> device AMDTP PCM channels (1x)
+    uint16_t captureChannels{0};    // device -> host AMDTP PCM channels (1x)
+    uint16_t playbackChannels{0};   // host -> device AMDTP PCM channels (1x)
+    // AM824 MIDI conformant slots per direction: DIV_ROUND_UP(midi ports, 8),
+    // Linux fireworks_stream.c keep_resources — capture uses midi_out_ports,
+    // playback uses midi_in_ports. Part of DBS, invisible to CoreAudio.
+    uint8_t captureMidiSlots{0};
+    uint8_t playbackMidiSlots{0};
     uint32_t sampleRateHz{44100};
+
+    // uint16_t: AudioStreamWireInfo::am824Slots is 16-bit; DBS is 8-bit on the wire.
+    [[nodiscard]] constexpr uint16_t CaptureAm824Slots() const noexcept {
+        return static_cast<uint16_t>(captureChannels + captureMidiSlots);
+    }
+    [[nodiscard]] constexpr uint16_t PlaybackAm824Slots() const noexcept {
+        return static_cast<uint16_t>(playbackChannels + playbackMidiSlots);
+    }
 };
 
-// Mackie Onyx 400F: 8 analog + S/PDIF stereo per direction = 10 x 10 at 1x
-// (product spec). Pending hardware capture: HWINFO amdtp_tx/rx_pcm_channels
-// must agree or streaming stays off (see GeometryCheck).
+// Mackie Onyx 400F: 8 analog + S/PDIF stereo per direction = 10 x 10 PCM at 1x,
+// plus one MIDI in and one MIDI out port => one AM824 MIDI slot per direction
+// (DBS 11). Product-spec values, pending hardware capture: HWINFO
+// amdtp_tx/rx_pcm_channels and midi_in/out_ports must agree or streaming stays
+// off (see GeometryCheck).
 inline constexpr FireworksStaticGeometry kOnyx400FGeometry{
     .name = "Mackie Onyx 400F",
     .captureChannels = 10,
     .playbackChannels = 10,
+    .captureMidiSlots = 1,
+    .playbackMidiSlots = 1,
     .sampleRateHz = 44100,
 };
 
@@ -100,6 +117,8 @@ private:
 
     static constexpr uint32_t kClockApplyWatchdogMs = 2000;
 
+    struct LifetimeToken {};
+
     FireworksStaticGeometry geometry_{};
     EfcTransport efc_;
     AudioStreamRuntimeCaps caps_{};
@@ -107,6 +126,10 @@ private:
     std::optional<Efc::Clock> lastClock_{};
     GeometryCheck geometryCheck_{GeometryCheck::kPending};
     bool transportModeSet_{false};
+    // Weakly captured by the clock-apply timers: production teardown drops the
+    // protocol's shared_ptr without calling Shutdown(), so a timer that fires
+    // after destruction must find an expired token, not a dangling `this`.
+    std::shared_ptr<LifetimeToken> alive_{std::make_shared<LifetimeToken>()};
 };
 
 } // namespace ASFW::Audio::Fireworks

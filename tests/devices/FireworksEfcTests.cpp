@@ -288,15 +288,28 @@ public:
         cb(AsyncStatus::kSuccess, {});
         return AsyncHandle{++next_};
     }
-    bool Cancel(AsyncHandle) override { return false; }
+    bool Cancel(AsyncHandle handle) override {
+        cancelled.push_back(static_cast<uint32_t>(handle.value));
+        return true;
+    }
 
     std::vector<Write> writes;
+    std::vector<uint32_t> cancelled;
     AsyncStatus nextStatus{AsyncStatus::kSuccess};
     bool deferCompletions{false};
     std::vector<InterfaceCompletionCallback> deferred;
 
 private:
     uint32_t next_{0};
+};
+
+// A scheduler that cannot arm timers (DriverKit's can return kInvalidTimerToken).
+class BrokenTimerScheduler final : public ASFW::Scheduling::ITimerScheduler {
+public:
+    ASFW::Scheduling::TimerToken ScheduleAfter(uint64_t, std::function<void()>) override {
+        return ASFW::Scheduling::kInvalidTimerToken;
+    }
+    void Cancel(ASFW::Scheduling::TimerToken) override {}
 };
 
 class StubBusInfo final : public ASFW::Async::IFireWireBusInfo {
@@ -526,6 +539,78 @@ TEST_F(EfcTransportTest, WithoutARouteCommandsFailNotReady) {
     t.Submit(Efc::Category::kHwInfo, kCmdGetCaps, {}, [&](IOReturn s, const Efc::Response&) { status = s; });
     EXPECT_EQ(status, kIOReturnNotReady);
     EXPECT_TRUE(bus_.writes.empty());
+}
+
+TEST_F(EfcTransportTest, CancelAllCancelsTheOutstandingBusWrite) {
+    EfcTransport t(bus_, info_, &timer_);
+    t.SetRoute(route_);
+    bus_.deferCompletions = true;  // the AT engine has not acked the write yet
+    IOReturn status = kIOReturnSuccess;
+    t.Submit(Efc::Category::kHwInfo, kCmdGetCaps, {}, [&](IOReturn s, const Efc::Response&) { status = s; });
+    ASSERT_EQ(bus_.writes.size(), 1U);
+    EXPECT_EQ(timer_.PendingCount(), 0U);  // timeout is armed only once the write completes
+
+    t.CancelAll(kIOReturnAborted);
+    EXPECT_EQ(status, kIOReturnAborted);
+    ASSERT_EQ(bus_.cancelled.size(), 1U);
+
+    // The engine still delivers the (aborted) completion afterwards: ignored.
+    ASSERT_EQ(bus_.deferred.size(), 1U);
+    bus_.deferred[0](AsyncStatus::kAborted, {});
+    EXPECT_FALSE(t.HasInflight());
+    EXPECT_EQ(timer_.PendingCount(), 0U);
+}
+
+TEST_F(EfcTransportTest, LateBusCompletionAfterDestructionIsIgnored) {
+    bus_.deferCompletions = true;
+    IOReturn status = kIOReturnSuccess;
+    {
+        EfcTransport t(bus_, info_, &timer_);
+        t.SetRoute(route_);
+        t.Submit(Efc::Category::kHwInfo, kCmdGetCaps, {}, [&](IOReturn s, const Efc::Response&) { status = s; });
+        ASSERT_EQ(bus_.deferred.size(), 1U);
+    }
+    EXPECT_EQ(status, kIOReturnAborted);
+    bus_.deferred[0](AsyncStatus::kSuccess, {});  // must not touch the dead transport
+    EXPECT_EQ(timer_.PendingCount(), 0U);
+}
+
+TEST_F(EfcTransportTest, LateTimerAfterDestructionIsIgnored) {
+    {
+        EfcTransport t(bus_, info_, &timer_);
+        t.SetRoute(route_);
+        t.Submit(Efc::Category::kHwInfo, kCmdGetCaps, {}, [](IOReturn, const Efc::Response&) {});
+        EXPECT_EQ(timer_.PendingCount(), 1U);
+    }
+    EXPECT_EQ(timer_.PendingCount(), 0U);  // cancelled on teardown
+    timer_.Advance(1000 * kMs);           // and nothing fires into freed memory
+}
+
+TEST_F(EfcTransportTest, UnarmableTimeoutFailsTheCommandInsteadOfHangingTheQueue) {
+    BrokenTimerScheduler broken;
+    EfcTransport t(bus_, info_, &broken);
+    t.SetRoute(route_);
+    IOReturn first = kIOReturnSuccess;
+    IOReturn second = kIOReturnSuccess;
+    t.Submit(Efc::Category::kHwInfo, kCmdGetCaps, {}, [&](IOReturn s, const Efc::Response&) { first = s; });
+    t.Submit(Efc::Category::kHwCtl, kCmdGetClock, {}, [&](IOReturn s, const Efc::Response&) { second = s; });
+    EXPECT_EQ(first, kIOReturnNotReady);
+    EXPECT_EQ(second, kIOReturnNotReady);  // the queue drained instead of wedging
+    EXPECT_FALSE(t.HasInflight());
+}
+
+TEST_F(EfcTransportTest, ResponseArrivingWhileWriteIsUnackedStillCompletes) {
+    EfcTransport t(bus_, info_, &timer_);
+    t.SetRoute(route_);
+    bus_.deferCompletions = true;
+    IOReturn status = kIOReturnNotReady;
+    t.Submit(Efc::Category::kHwCtl, kCmdGetClock, {}, [&](IOReturn s, const Efc::Response&) { status = s; });
+    const uint32_t clock[] = {0U, 44100U, 0U};
+    EXPECT_TRUE(Respond(t, kCatHwCtl, kCmdGetClock, 0, clock));
+    EXPECT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(bus_.cancelled.size(), 1U);  // the now-pointless write ack is cancelled
+    bus_.deferred[0](AsyncStatus::kAborted, {});
+    EXPECT_FALSE(t.HasInflight());
 }
 
 TEST(EfcMailbox, WindowCoversTheWholeResponseRegion) {

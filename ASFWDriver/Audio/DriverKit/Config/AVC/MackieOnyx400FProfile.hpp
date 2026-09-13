@@ -4,7 +4,8 @@
 // MackieOnyx400FProfile.hpp - ADK isoch geometry for the Mackie Onyx 400F
 // (Echo Fireworks platform; Linux snd-fireworks VENDOR_LOUD/MODEL_MACKIE_400F).
 //
-// Static 10-in/10-out at 44.1 kHz from the product spec — NOT yet captured
+// Static 10-in/10-out (+1 MIDI slot per direction, DBS 11) at 44.1 kHz from the
+// product spec — NOT yet captured
 // from hardware. The runtime protocol (Audio/Protocols/Fireworks) reads the
 // device's HWINFO on first contact and refuses to stream if the counts differ;
 // update this profile, the nub publisher in AVCDiscovery and kOnyx400FGeometry

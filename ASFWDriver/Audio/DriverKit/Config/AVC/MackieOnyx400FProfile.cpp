@@ -11,11 +11,17 @@ namespace ASFW::Isoch::Audio::AVC::Profiles {
 
 namespace {
 
-// Symmetric 10 x 10 MBLA at 1x (dbs == pcm channels, no MIDI slots). Blocking
-// mode is what Linux snd-fireworks uses unconditionally (fireworks_stream.c:
-// CIP_BLOCKING | CIP_UNAWARE_SYT), so framesPerDataPacket is SYT_INTERVAL: 8 at
-// 44.1 kHz. fdf 0x01 is the AM824 SFC code for 44.1 kHz; fmt 0x10 is AM824.
+// Symmetric 10 x 10 MBLA at 1x plus one AM824 MIDI conformant slot per
+// direction: the 400F has a MIDI in and a MIDI out port, and Linux sizes the
+// Fireworks data block as pcm + DIV_ROUND_UP(midi_ports, 8) (fireworks_stream.c
+// keep_resources -> amdtp_am824_set_parameters), so DBS is 11, not 10 — same
+// shape as the PHASE 88 profile. Blocking mode is unconditional in Linux
+// snd-fireworks (CIP_BLOCKING | CIP_UNAWARE_SYT), so framesPerDataPacket is
+// SYT_INTERVAL: 8 at 44.1 kHz. fdf 0x01 is the AM824 SFC code for 44.1 kHz;
+// fmt 0x10 is AM824.
 constexpr uint32_t kPcmChannels = 10;
+constexpr uint32_t kMidiSlots = 1;
+constexpr uint32_t kDbs = kPcmChannels + kMidiSlots;
 constexpr uint32_t kSampleRateHz = 44100;
 
 void FillStreamConfig(DICE::DiceStreamConfig& outConfig,
@@ -26,8 +32,8 @@ void FillStreamConfig(DICE::DiceStreamConfig& outConfig,
     outConfig.streamMode = Encoding::StreamMode::kBlocking;
     outConfig.sid = 0;
     outConfig.pcmChannels = kPcmChannels;
-    outConfig.dbs = kPcmChannels;
-    outConfig.midiSlots = 0;
+    outConfig.dbs = kDbs;
+    outConfig.midiSlots = kMidiSlots;
     outConfig.framesPerDataPacket = 8;
     outConfig.fdf = 0x01;
     outConfig.fmt = 0x10;
