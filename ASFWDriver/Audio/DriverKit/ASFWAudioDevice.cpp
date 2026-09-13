@@ -168,6 +168,13 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txExecutionTimeline.queueControl = nullptr;
             ivars.runtime.txStreamEngine.BindPcmSource(nullptr);
 
+            // MIDI transmit: detach the engine before releasing the mapping it
+            // points into. Reversing these two is the FW-60 shape -- the engine
+            // would hold a pointer into memory that has just been unmapped.
+            ivars.runtime.txStreamEngine.SetMidiTransport(nullptr, 0, {}, 0, 0);
+            ivars.txMidiTransportMap = nullptr;
+            ivars.txMidiTransportBuffer = nullptr;
+
             // Secondary playback stream resources.
             ivars.txPayloadMapSecondary = nullptr;
             ivars.txMetadataMapSecondary = nullptr;
@@ -463,6 +470,43 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 &ivars.runtime.pcmPublicationCache);
             ivars.runtime.txStreamEngine.ResetForStart(0);
             ivars.runtime.txReplayReader.Reset();
+
+            // Arm MIDI transmit if this endpoint publishes any. The seam is the
+            // MIDI nub's descriptor, relayed through the audio nub because the
+            // TX content pump still lives here; the mapping is retained for the
+            // stream's lifetime and dropped in the stop path below.
+            if (ivars.device.audioNub) {
+                IOMemoryDescriptor* midiMemory = nullptr;
+                uint64_t midiEpoch = 0;
+                uint32_t midiSlot = 0, midiDbs = 0, midiPorts = 0, midiAligned = 1;
+                if (ivars.device.audioNub->CopyMidiTransportMemory(
+                        &midiMemory, &midiEpoch, &midiSlot, &midiDbs, &midiPorts,
+                        &midiAligned) == kIOReturnSuccess && midiMemory != nullptr) {
+                    ivars.txMidiTransportBuffer =
+                        ASFW::Common::AdoptRetained(midiMemory);
+                    if (ASFW::Common::CreateSharedMapping(
+                            ivars.txMidiTransportBuffer,
+                            ivars.txMidiTransportMap) == kIOReturnSuccess &&
+                        ivars.txMidiTransportMap) {
+                        auto* block =
+                            reinterpret_cast<ASFW::Midi::MidiTransportBlock*>(
+                                ivars.txMidiTransportMap->GetAddress());
+                        const auto geometry = ASFW::Encoding::MpxMidiGeometry{
+                            .dbs = static_cast<uint8_t>(midiDbs),
+                            .midiSlotIndex = static_cast<uint8_t>(midiSlot),
+                            .portCount = static_cast<uint8_t>(midiPorts),
+                            .dbcAligned = midiAligned != 0,
+                        };
+                        ivars.runtime.txStreamEngine.SetMidiTransport(
+                            block, midiEpoch, geometry, txConfig.sampleRate,
+                            txConfig.framesPerDataPacket);
+                        ASFW_LOG(Midi,
+                                 "[TxMidi] armed ports=%u slot=%u dbs=%u rate=%u",
+                                 midiPorts, midiSlot, midiDbs,
+                                 txConfig.sampleRate);
+                    }
+                }
+            }
 
             const uint32_t timingRateHz =
                 ivars.device.currentSampleRate > 0

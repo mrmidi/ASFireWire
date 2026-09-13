@@ -25,6 +25,7 @@
 
 #include <cstdint>
 
+#include "../../Audio/Wire/AM824/MpxMidiRateLimiter.hpp"
 #include "MidiTransportBlock.hpp"
 
 namespace ASFW::Midi {
@@ -91,13 +92,17 @@ public:
         if (!block.Usable(epoch)) return false;
 
         for (uint32_t port = 0; port < kMidiPortsPerDirection; ++port) {
-            uint8_t byte = 0;
+            // Age the UART model for every port on every packet, whether or not
+            // a byte is available: the packet took the wire time regardless, and
+            // ageing only ports that happen to have traffic would let an idle
+            // port burst the moment it wakes up.
+            const bool mayEmit = limiter_.AgeAndMayEmit(port);
             uint8_t scratch[1];
-            if (block.hostToDevice[port].Peek(scratch) == 1) {
-                byte = scratch[0];
-                out.byteForPort[port] = byte;
-                out.hasByteForPort[port] = true;
-            }
+            if (!mayEmit || block.hostToDevice[port].Peek(scratch) != 1) continue;
+            out.byteForPort[port] = scratch[0];
+            out.hasByteForPort[port] = true;
+            // Staged, not spent: Cancel returns it.
+            limiter_.Debit(port);
         }
         out.epoch = epoch;
         out.packetIndex = packetIndex;
@@ -153,11 +158,27 @@ public:
     /// still advanced, which the limiter accounts for separately.
     void Cancel(const MidiPacketReservation& reservation) noexcept {
         if (!outstanding_) return;
-        for (const bool has : reservation.hasByteForPort) {
-            if (has) ++counters_.bytesReturned;
+        for (uint32_t port = 0; port < kMidiPortsPerDirection; ++port) {
+            if (!reservation.hasByteForPort[port]) continue;
+            ++counters_.bytesReturned;
+            // Return the emission credit but not the elapsed wire time: the
+            // packet still went out, and the device still clocked for it.
+            limiter_.RollbackDebit(port);
         }
         ++counters_.cancels;
         outstanding_ = false;
+    }
+
+    /// Configure the UART model. Must be called before the first Begin, and
+    /// again whenever the stream's rate changes.
+    void ConfigureLimiter(uint32_t sampleRateHz,
+                          uint32_t sytIntervalFrames) noexcept {
+        limiter_.Configure(sampleRateHz, sytIntervalFrames);
+    }
+
+    [[nodiscard]] const ASFW::Encoding::MpxMidiRateLimiter& Limiter()
+        const noexcept {
+        return limiter_;
     }
 
     /// Drop any outstanding reservation without retiring anything.
@@ -169,6 +190,9 @@ public:
         outstanding_ = false;
         epoch_ = 0;
         packetIndex_ = 0;
+        // The UART model belongs to a stream. Carrying its debt across a
+        // restart would throttle the new stream for the old one's traffic.
+        limiter_.Reset();
     }
 
     [[nodiscard]] bool HasOutstanding() const noexcept { return outstanding_; }
@@ -180,6 +204,7 @@ private:
     bool outstanding_{false};
     uint64_t epoch_{0};
     uint32_t packetIndex_{0};
+    ASFW::Encoding::MpxMidiRateLimiter limiter_{};
     MidiReservationCounters counters_{};
 };
 

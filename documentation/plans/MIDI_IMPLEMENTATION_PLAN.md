@@ -546,7 +546,7 @@ borrows the nub's rings.
 actually arrive, that they arrive with CoreAudio closed, and that the wake lands
 on the MIDI service's queue rather than the receive queue.
 
-### WP-8 — TX composition
+### WP-8 — TX composition — **landed for audio-active; MIDI-only needs WP-6**
 
 **Goal.** Host MIDI onto the wire, once, with correct accounting for the bytes
 that do not make it.
@@ -604,6 +604,37 @@ aging correct across skipped opportunities.
 
 **Done when** physical Saffire output works MIDI-only, audio-active and during
 PCM starvation, with PCM frame assignment and small-buffer operation unchanged.
+
+**What landed.** `Audio/Wire/AM824/MpxMidiMux.hpp` composes the slot (rotation,
+eight-block cap, label 0x81) and `MpxMidiRateLimiter.hpp` models the device UART
+as Linux's fractional accumulator does. The limiter is staged inside
+`MidiTxReservationScope`, so a cancelled fill returns the emission credit while
+the elapsed wire time stands.
+
+`AmdtpTxPacketizer::ComposeMidi` runs after `RefillPcm`, never before: defaults
+are laid into every slot and PCM then overwrites its own, so MIDI written earlier
+would be erased. `DiceTxStreamEngine` reserves at fill, composes, and commits
+only when `PublishLatePayload` succeeds; a lost race cancels.
+
+The seam reaches the audio service through a relay on the audio nub. That
+reverses WP-4's note, correctly: the note was conditional on the extracted
+session being the sole TX consumer, and **WP-6 has not landed**, so
+`ASFWAudioDriver` *is* the host→device consumer today. The relay and the audio
+service's mapping both disappear when WP-6 moves the pump.
+
+**Two bugs found and fixed while wiring, both mine.** `CommitFill` dereferenced
+the transport block unconditionally, and every filled packet reaches it including
+on streams with no MIDI — a null dereference on the audio hot path. And a fill
+abandoned before `CommitFill` (the ZTS loop skips it when a sibling stream is not
+ready) left the reservation outstanding, so every later `Begin` was refused and
+MIDI would have stopped for good at the first unready sibling.
+
+**Not done, and it is §10.2's first gate.** MIDI-only transmit still cannot work:
+`FillTransmitSlot` returns `NotFillable` with no PCM source bound, so with no
+CoreAudio client open no packet is ever filled and no MIDI is composed. That is
+WP-6's stream lease. The bounded fill horizon and silence substitution of
+§10.3(b) are also untouched, and belong with it — they only bite once an
+always-ready silence source exists.
 
 ### WP-9 — Saffire qualification
 

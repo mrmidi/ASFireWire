@@ -34,3 +34,8 @@ add_midi_test(MidiTransportBlockTests
 add_midi_test(MpxMidiDemuxTests
     MpxMidiDemuxTests.cpp
 )
+
+# MPX-MIDI transmit composition and the UART rate model (WP-8).
+add_midi_test(MpxMidiTxTests
+    MpxMidiTxTests.cpp
+)

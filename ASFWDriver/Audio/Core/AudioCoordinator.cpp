@@ -152,6 +152,33 @@ void AudioCoordinator::EndpointReady(
                          profile->endpointId.value, midiCaps.streamEpoch,
                          source.portCount, source.midiSlotIndex, source.dbs);
             }
+
+            // Transmit: relay the same seam through the audio nub, because the
+            // TX content pump still lives in ASFWAudioDriver. Geometry travels
+            // with it so the consumer cannot pair the block with a slot index
+            // from a different formation. WP-6 moves this to the shared
+            // session and the relay goes away.
+            const auto& destination = midiCaps.hostToDevice;
+            if (destination.Usable()) {
+                IOMemoryDescriptor* transportMemory = nullptr;
+                uint64_t relayEpoch = 0;
+                if (nub->CopyMidiTransportMemory(&transportMemory, &relayEpoch) ==
+                        kIOReturnSuccess && transportMemory != nullptr) {
+                    if (auto* audioNub = publisher_.GetNub(profile->endpointId)) {
+                        audioNub->SetMidiTransportSource(
+                            transportMemory, midiCaps.streamEpoch,
+                            destination.midiSlotIndex, destination.dbs,
+                            destination.portCount,
+                            destination.dbcAligned ? 1u : 0u);
+                        ASFW_LOG(Midi,
+                                 "[AudioSession] endpoint=%llu MIDI transmit relayed "
+                                 "ports=%u slot=%u dbs=%u",
+                                 profile->endpointId.value, destination.portCount,
+                                 destination.midiSlotIndex, destination.dbs);
+                    }
+                    transportMemory->release();
+                }
+            }
         }
     }
 
@@ -207,6 +234,12 @@ void AudioCoordinator::TerminateEndpoint(EndpointId endpointId) noexcept {
     // Detach receive extraction before the nub goes away: the sink borrows the
     // nub's rings, so the borrow has to end first.
     hostTransport_.SetMidiReceiveTransport(nullptr, 0, {}, {});
+    // Drop the transmit relay too: the audio nub holds a retained reference to
+    // the MIDI nub's descriptor, and that reference must not outlive the nub
+    // that owns it.
+    if (auto* audioNub = publisher_.GetNub(endpointId)) {
+        audioNub->SetMidiTransportSource(nullptr, 0, 0, 0, 0, 1);
+    }
     midiPublisher_.TerminateNub(endpointId.value);
     publisher_.TerminateNub(endpointId, "session-retired");
     duplexCoordinator_.ClearSession(endpointId);

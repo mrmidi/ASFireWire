@@ -12,6 +12,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include "../../../../Midi/Transport/MidiTxReservation.hpp"
 
 namespace ASFW::Protocols::Audio::DICE {
 
@@ -142,6 +143,20 @@ public:
     /// if it maps the slot afterwards; losing that race is normal.
     [[nodiscard]] bool CommitFill(uint32_t packetIndex) noexcept;
 
+    /// Carry MIDI on this stream's packets.
+    ///
+    /// `block` is the endpoint's byte seam, owned by the MIDI nub; nullptr
+    /// detaches. Only the stream that actually carries the MIDI slot gets this,
+    /// so a sibling cannot emit the same bytes a second time.
+    void SetMidiTransport(ASFW::Midi::MidiTransportBlock* block,
+                          uint64_t streamEpoch,
+                          const ASFW::Encoding::MpxMidiGeometry& geometry,
+                          uint32_t sampleRateHz,
+                          uint32_t sytIntervalFrames) noexcept;
+
+    [[nodiscard]] const ASFW::Midi::MidiReservationCounters&
+    MidiCounters() const noexcept { return midiScope_.Counters(); }
+
     /// Lowest packet index that may still be worth filling.
     [[nodiscard]] uint64_t FreezeFrontier() const noexcept;
 
@@ -172,7 +187,16 @@ private:
     AMDTP::IAmdtpCadence* cadence_{nullptr};
     AMDTP::PacketTimelineSlot timelineSlots_[
         ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots]{};
-    AMDTP::AmdtpPacketTimeline timeline_{};
+    AMDTP::AmdtpPacketTimeline timeline_;
+
+    // MIDI carried on this stream's packets. The reservation is packet-local:
+    // bytes are selected before the image is composed and retired only once the
+    // packet is known to have been published.
+    ASFW::Midi::MidiTransportBlock* midiBlock_{nullptr};
+    uint64_t midiEpoch_{0};
+    ASFW::Encoding::MpxMidiGeometry midiGeometry_{};
+    ASFW::Midi::MidiTxReservationScope midiScope_{};
+    ASFW::Midi::MidiPacketReservation midiReservation_{};
     AMDTP::IAmdtpTxSlotProvider* slotProvider_{nullptr};
     ASFW::Audio::Ports::ITxPcmSource* pcmSource_{nullptr};
     std::array<float, kMaxPcmSnapshotSamples> pcmScratch_{};

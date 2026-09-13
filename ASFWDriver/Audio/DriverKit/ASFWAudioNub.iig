@@ -79,6 +79,33 @@ public:
     virtual kern_return_t FreeTxIsochResources();
 
     /**
+     * @brief Hand the MIDI byte seam to the audio service for TX composition.
+     *
+     * The descriptor belongs to ASFWMidiNub; this nub only relays it, because
+     * the TX content pump currently lives in ASFWAudioDriver. When WP-6 extracts
+     * that pump into a shared session owned by the core driver, this relay and
+     * the audio service's mapping go away -- the session will hold the mapping
+     * directly. Until then the audio service is the host -> device consumer and
+     * needs it.
+     *
+     * Geometry travels with the memory so the caller cannot pair a block with a
+     * slot index from a different formation.
+     */
+    virtual kern_return_t CopyMidiTransportMemory(IOMemoryDescriptor** outMemory,
+                                                  uint64_t* outStreamEpoch,
+                                                  uint32_t* outSlotIndex,
+                                                  uint32_t* outDbs,
+                                                  uint32_t* outPortCount,
+                                                  uint32_t* outDbcAligned);
+
+    /// Core-driver side: publish the seam this endpoint's MIDI rides.
+    /// Passing nullptr clears it.
+    void SetMidiTransportSource(IOMemoryDescriptor* memory,
+                                uint64_t streamEpoch, uint32_t slotIndex,
+                                uint32_t dbs, uint32_t portCount,
+                                uint32_t dbcAligned) LOCALONLY;
+
+    /**
      * @brief Producer-to-transport doorbell for published late payload offers.
      *
      * The content side writes a replacement payload image into shared memory
@@ -265,6 +292,15 @@ struct ASFWAudioNub_IVars {
 
     ASFW::Audio::Shared::RuntimeTuningStore* tuningStore{nullptr};
 
+    // MIDI byte seam relayed from ASFWMidiNub, which owns the descriptor. Held
+    // retained here so the audio service can map it; cleared on teardown before
+    // the MIDI nub goes away. Relocated to the shared session by WP-6.
+    IOMemoryDescriptor* midiTransportMemory{nullptr};  // retained
+    uint64_t midiStreamEpoch{0};
+    uint32_t midiSlotIndex{0};
+    uint32_t midiDbs{0};
+    uint32_t midiPortCount{0};
+    uint32_t midiDbcAligned{1};
 };
 
 #endif /* ASFWAudioNub_h */

@@ -485,6 +485,13 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IOMemoryDescriptor> txMetadataBufferSecondary;
     OSSharedPtr<IOMemoryDescriptor> txControlBufferSecondary;
     OSSharedPtr<IOMemoryMap> txPayloadMapSecondary;
+
+    // MIDI byte seam for transmit. The descriptor belongs to ASFWMidiNub and is
+    // relayed through ASFWAudioNub; both are retained for the stream's lifetime
+    // because the TX engine holds a pointer into the mapping. WP-6 moves this
+    // to the shared session.
+    OSSharedPtr<IOMemoryDescriptor> txMidiTransportBuffer;
+    OSSharedPtr<IOMemoryMap> txMidiTransportMap;
     OSSharedPtr<IOMemoryMap> txMetadataMapSecondary;
     OSSharedPtr<IOMemoryMap> txControlMapSecondary;
     OSSharedPtr<OSAction> txPreparationAction;

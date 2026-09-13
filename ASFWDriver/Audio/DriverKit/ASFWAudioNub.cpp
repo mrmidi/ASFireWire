@@ -839,6 +839,43 @@ kern_return_t IMPL(ASFWAudioNub, ServiceLatePayloadOffers)
     return kIOReturnSuccess;
 }
 
+kern_return_t IMPL(ASFWAudioNub, CopyMidiTransportMemory)
+{
+    if (!ivars || ivars->midiTransportMemory == nullptr) return kIOReturnNotReady;
+    if (outMemory == nullptr) return kIOReturnBadArgument;
+    ivars->midiTransportMemory->retain();
+    *outMemory = ivars->midiTransportMemory;
+    if (outStreamEpoch) *outStreamEpoch = ivars->midiStreamEpoch;
+    if (outSlotIndex) *outSlotIndex = ivars->midiSlotIndex;
+    if (outDbs) *outDbs = ivars->midiDbs;
+    if (outPortCount) *outPortCount = ivars->midiPortCount;
+    if (outDbcAligned) *outDbcAligned = ivars->midiDbcAligned;
+    return kIOReturnSuccess;
+}
+
+void ASFWAudioNub::SetMidiTransportSource(IOMemoryDescriptor* memory,
+                                          uint64_t streamEpoch,
+                                          uint32_t slotIndex, uint32_t dbs,
+                                          uint32_t portCount,
+                                          uint32_t dbcAligned) {
+    if (!ivars) return;
+    // Raw retained pointer: the ivars struct is declared in the .iig, which has
+    // no OSSharedPtr. Release the previous one before taking the new reference.
+    if (ivars->midiTransportMemory != nullptr) {
+        ivars->midiTransportMemory->release();
+        ivars->midiTransportMemory = nullptr;
+    }
+    if (memory != nullptr) {
+        memory->retain();
+        ivars->midiTransportMemory = memory;
+    }
+    ivars->midiStreamEpoch = streamEpoch;
+    ivars->midiSlotIndex = slotIndex;
+    ivars->midiDbs = dbs;
+    ivars->midiPortCount = portCount;
+    ivars->midiDbcAligned = dbcAligned;
+}
+
 // Releases all allocated shared transmit resources.
 kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
 {

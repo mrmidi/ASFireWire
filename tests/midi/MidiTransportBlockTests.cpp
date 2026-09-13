@@ -177,6 +177,7 @@ TEST(MidiTxReservation, SelectsOneBytePerPortWithoutConsuming) {
     ASSERT_TRUE(block.hostToDevice[5].TryWrite(std::vector<uint8_t>{0xF8}));
 
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation reservation;
     ASSERT_TRUE(scope.Begin(block, 1, 100, reservation));
 
@@ -197,6 +198,7 @@ TEST(MidiTxReservation, CommitRetiresExactlyTheSelectedBytes) {
     ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90, 0x3C, 0x40}));
 
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation reservation;
     ASSERT_TRUE(scope.Begin(block, 1, 100, reservation));
     EXPECT_TRUE(scope.Commit(block, reservation));
@@ -212,6 +214,7 @@ TEST(MidiTxReservation, CancelReturnsTheBytesForALaterPacket) {
     ASSERT_TRUE(block.hostToDevice[2].TryWrite(std::vector<uint8_t>{0xB0}));
 
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation reservation;
     ASSERT_TRUE(scope.Begin(block, 1, 100, reservation));
     scope.Cancel(reservation);
@@ -234,6 +237,7 @@ TEST(MidiTxReservation, CommittingACancelledReservationRetiresNothing) {
     ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
 
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation reservation;
     ASSERT_TRUE(scope.Begin(block, 1, 100, reservation));
     scope.Cancel(reservation);
@@ -247,6 +251,7 @@ TEST(MidiTxReservation, ASecondBeginWhileOneIsOutstandingIsRefused) {
     MidiTransportBlock block;
     block.Arm(1);
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation first, second;
     ASSERT_TRUE(scope.Begin(block, 1, 100, first));
     EXPECT_FALSE(scope.Begin(block, 1, 101, second))
@@ -259,6 +264,7 @@ TEST(MidiTxReservation, CommitForADifferentPacketIsRefused) {
     ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
 
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation reservation;
     ASSERT_TRUE(scope.Begin(block, 1, 100, reservation));
 
@@ -277,6 +283,7 @@ TEST(MidiTxReservation, CommitAcrossAnEpochChangeRetiresNothing) {
     ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
 
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation reservation;
     ASSERT_TRUE(scope.Begin(block, 1, 100, reservation));
 
@@ -292,6 +299,7 @@ TEST(MidiTxReservation, BeginAgainstTheWrongEpochSelectsNothing) {
     ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
 
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation reservation;
     EXPECT_FALSE(scope.Begin(block, 4, 100, reservation));
     EXPECT_FALSE(reservation.active);
@@ -305,6 +313,7 @@ TEST(MidiTxReservation, BeginOnAQuiescedBlockSelectsNothing) {
     block.Quiesce();
 
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation reservation;
     EXPECT_FALSE(scope.Begin(block, 1, 100, reservation));
     EXPECT_FALSE(scope.HasOutstanding());
@@ -316,6 +325,7 @@ TEST(MidiTxReservation, ResetDropsTheOutstandingReservation) {
     ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
 
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation reservation;
     ASSERT_TRUE(scope.Begin(block, 1, 100, reservation));
     scope.Reset();
@@ -329,6 +339,7 @@ TEST(MidiTxReservation, EmptyRingsProduceAnEmptyButValidReservation) {
     MidiTransportBlock block;
     block.Arm(1);
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation reservation;
     ASSERT_TRUE(scope.Begin(block, 1, 100, reservation));
     EXPECT_FALSE(reservation.Any());
@@ -346,6 +357,7 @@ TEST(MidiTxReservation, EachPortRetiresIndependently) {
     }
 
     MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
     MidiPacketReservation reservation;
     ASSERT_TRUE(scope.Begin(block, 1, 1, reservation));
     ASSERT_TRUE(scope.Commit(block, reservation));
@@ -357,4 +369,60 @@ TEST(MidiTxReservation, EachPortRetiresIndependently) {
         EXPECT_EQ(remaining[0], 0x20 + port);
     }
     EXPECT_EQ(scope.Counters().bytesCommitted, kMidiPortsPerDirection);
+}
+
+TEST(MidiTxReservation, AnUnconfiguredLimiterSelectsNothing) {
+    // The UART model gates every selection. A scope whose limiter was never
+    // configured must emit nothing rather than bypass the model -- silence is
+    // recoverable, flooding a 31.25 kbaud UART is not.
+    MidiTransportBlock block;
+    block.Arm(1);
+    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
+
+    MidiTxReservationScope scope;   // deliberately not configured
+    MidiPacketReservation reservation;
+    ASSERT_TRUE(scope.Begin(block, 1, 100, reservation));
+    EXPECT_FALSE(reservation.Any());
+    EXPECT_EQ(block.hostToDevice[0].Available(), 1u);
+}
+
+TEST(MidiTxReservation, TheLimiterThrottlesAcrossSuccessivePackets) {
+    MidiTransportBlock block;
+    block.Arm(1);
+    MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
+
+    // Keep one port permanently supplied and run a second of packets.
+    uint32_t committed = 0;
+    for (uint32_t packet = 0; packet < 6000; ++packet) {
+        if (block.hostToDevice[0].Available() == 0) {
+            ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x7F}));
+        }
+        MidiPacketReservation reservation;
+        ASSERT_TRUE(scope.Begin(block, 1, packet, reservation));
+        ASSERT_TRUE(scope.Commit(block, reservation));
+        if (reservation.Any()) ++committed;
+    }
+    EXPECT_GT(committed, 2900u);
+    EXPECT_LT(committed, 3300u)
+        << "one opportunity per packet is 6000/s; the UART takes about 3093";
+}
+
+TEST(MidiTxReservation, CancelReturnsTheEmissionCreditToTheLimiter) {
+    MidiTransportBlock block;
+    block.Arm(1);
+    MidiTxReservationScope scope;
+    scope.ConfigureLimiter(48000, 8);
+    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
+
+    MidiPacketReservation first;
+    ASSERT_TRUE(scope.Begin(block, 1, 1, first));
+    ASSERT_TRUE(first.Any());
+    scope.Cancel(first);
+
+    // The credit came back, so the very next packet may carry the byte -- a
+    // cancelled fill must not cost the port its turn.
+    MidiPacketReservation second;
+    ASSERT_TRUE(scope.Begin(block, 1, 2, second));
+    EXPECT_TRUE(second.Any());
 }

@@ -338,7 +338,51 @@ TxSlotFillResult DiceTxStreamEngine::FillTransmitSlot(
         slotProvider_->RecordEncodingCompleted(packetIndex,
                                                mach_absolute_time());
     }
+
+    // MIDI is composed last, after the PCM snapshot: RefillPcm lays the default
+    // word into every slot and then overwrites the PCM ones, so anything
+    // written earlier would be erased. Nothing is retired here -- the bytes are
+    // only selected, and CommitFill decides whether they were actually
+    // published.
+    if (midiBlock_ != nullptr && midiGeometry_.Valid()) {
+        if (midiScope_.HasOutstanding()) {
+            // The previous packet was filled but never reached CommitFill --
+            // the ZTS loop skips it when a sibling stream is not ready. Return
+            // those bytes before selecting new ones; leaving the reservation
+            // outstanding would refuse every later Begin and stop MIDI for good
+            // at the first unready sibling.
+            midiScope_.Cancel(midiReservation_);
+        }
+        if (midiScope_.Begin(*midiBlock_, midiEpoch_, packetIndex,
+                             midiReservation_)) {
+            ASFW::Encoding::MpxMidiPacketBytes bytes{};
+            for (uint32_t port = 0; port < ASFW::Encoding::kMpxMidiPorts; ++port) {
+                uint8_t byte = 0;
+                if (midiReservation_.Get(static_cast<uint8_t>(port), byte)) {
+                    bytes.byteForPort[port] = byte;
+                    bytes.hasByteForPort[port] = true;
+                }
+            }
+            packetizer_.ComposeMidi(slot, armed, midiGeometry_, bytes);
+        }
+    }
+
     return TxSlotFillResult::Filled;
+}
+
+void DiceTxStreamEngine::SetMidiTransport(
+    ASFW::Midi::MidiTransportBlock* block, uint64_t streamEpoch,
+    const ASFW::Encoding::MpxMidiGeometry& geometry, uint32_t sampleRateHz,
+    uint32_t sytIntervalFrames) noexcept {
+    midiBlock_ = block;
+    midiEpoch_ = streamEpoch;
+    midiGeometry_ = geometry;
+    // Reset first: a reservation left over from the previous stream must not be
+    // retired by a packet of the new one that happens to share its index.
+    midiScope_.Reset();
+    if (block != nullptr) {
+        midiScope_.ConfigureLimiter(sampleRateHz, sytIntervalFrames);
+    }
 }
 
 bool DiceTxStreamEngine::CommitFill(uint32_t packetIndex) noexcept {
@@ -351,9 +395,21 @@ bool DiceTxStreamEngine::CommitFill(uint32_t packetIndex) noexcept {
     if (armedFilled_[index] || armedPackets_[index].packetIndex != packetIndex) {
         return false;
     }
-    if (!slotProvider_->PublishLatePayload(packetIndex)) return false;
+    if (!slotProvider_->PublishLatePayload(packetIndex)) {
+        // Lost the publication race. The bytes stay queued for a later packet
+        // and keep their emission credit; only the elapsed wire time stands.
+        midiScope_.Cancel(midiReservation_);
+        return false;
+    }
     armedFilled_[index] = true;
     counters_.lateFillsPublished.fetch_add(1, std::memory_order_relaxed);
+    // Retire on the successful offer, not at encode or arm time. This is a
+    // software retirement point under an at-most-once policy: transport can
+    // still discard an accepted offer, which is counted as loss rather than
+    // replayed, because replaying would put a byte behind bytes already sent.
+    if (midiBlock_ != nullptr) {
+        (void)midiScope_.Commit(*midiBlock_, midiReservation_);
+    }
     return true;
 }
 

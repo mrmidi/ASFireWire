@@ -147,6 +147,27 @@ bool AmdtpTxPacketizer::RefillPcm(
     return true;
 }
 
+void AmdtpTxPacketizer::ComposeMidi(
+    TxPacketSlotView slot,
+    const PreparedTxPacket& armed,
+    const ASFW::Encoding::MpxMidiGeometry& geometry,
+    const ASFW::Encoding::MpxMidiPacketBytes& bytes) noexcept {
+    if (!slot.bytes || !armed.isData || armed.byteCount == 0) return;
+    if (slot.packetIndex != armed.packetIndex) return;
+    if (slot.capacityBytes < armed.byteCount) return;
+    // The slot index and DBS come from discovered capability, but the packet in
+    // hand is what bounds the write. A geometry that disagrees with this
+    // packet's own DBS would place the slot somewhere else entirely.
+    if (geometry.dbs != streamConfig_.dbs) return;
+
+    const uint32_t payloadBytes = armed.byteCount - kCipHeaderBytes;
+    const uint32_t blocks = payloadBytes / (streamConfig_.dbs * kBytesPerSlot);
+    if (blocks == 0) return;
+
+    ASFW::Encoding::WriteMpxMidiSlot(slot.bytes + kCipHeaderBytes, blocks,
+                                     armed.dbc, geometry, bytes);
+}
+
 bool AmdtpTxPacketizer::CommitPreparedPacket(
     const PreparedTxPacket& packet,
     uint8_t wireDataBlocks) noexcept {

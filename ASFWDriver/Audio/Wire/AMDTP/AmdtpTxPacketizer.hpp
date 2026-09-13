@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../AM824/MpxMidiMux.hpp"
+
 #include "AmdtpPacketTimeline.hpp"
 #include "AmdtpTypes.hpp"
 #include "../IEC61883/CipHeader.hpp"
@@ -44,6 +46,19 @@ public:
     /// packet, so the DBC and SYT are taken from the armed packet rather than
     /// re-derived. Cadence, DBC and disposition were decided at arm time and
     /// must not be committed twice.
+    /// Compose the MPX-MIDI slot into an already-refilled packet image.
+    ///
+    /// MUST run after RefillPcm: WriteDataPacketDefaults lays the default word
+    /// into every slot including the PCM ones, and WritePcmSnapshot then
+    /// overwrites PCM. MIDI composed before either would be erased.
+    ///
+    /// `bytes` is already rate-limited and bound to this packet. Blocks past
+    /// the eight-block cap, and ports with nothing to send, keep the empty
+    /// quadlet the packet was armed with, which is correct on the wire.
+    void ComposeMidi(TxPacketSlotView slot, const PreparedTxPacket& armed,
+                     const ASFW::Encoding::MpxMidiGeometry& geometry,
+                     const ASFW::Encoding::MpxMidiPacketBytes& bytes) noexcept;
+
     [[nodiscard]] bool RefillPcm(TxPacketSlotView slot,
                                  const PreparedTxPacket& armed,
                                  const TxPcmSnapshotView& pcm) noexcept;
