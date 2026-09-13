@@ -4,6 +4,7 @@
 #include "DirectRxTypes.hpp"
 #include "RxCaptureChannelMap.hpp"
 #include "../../../Wire/AMDTP/AmdtpTypes.hpp"
+#include "../../../Wire/AM824/MpxMidiDemux.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -24,6 +25,27 @@ struct RxAudioPacketProcessorResult final {
     /// order was used instead. A silent permutation failure would look exactly
     /// like a correct decode, so it is reported rather than inferred.
     bool mapRejected{false};
+    /// MIDI bytes lifted from this packet. Zero is the normal case.
+    uint32_t midiBytesDelivered{0};
+    /// The packet's payload was not a whole number of data blocks, so the
+    /// geometry we believe is not the geometry on the wire. PCM decode has
+    /// always truncated silently here; MIDI refuses instead, because a MIDI
+    /// slot index derived from the wrong DBS reads a different slot entirely.
+    bool ragged{false};
+};
+
+/// Optional MIDI extraction for one received packet.
+///
+/// Passing a null sink disables it entirely, which is what every audio-only
+/// caller does.
+struct RxMidiExtraction final {
+    ASFW::Audio::Ports::IMidiByteSink* sink{nullptr};
+    ASFW::Encoding::MpxMidiGeometry geometry{};
+    ASFW::Encoding::MpxMidiDemuxCounters* counters{nullptr};
+
+    [[nodiscard]] bool Enabled() const noexcept {
+        return sink != nullptr && geometry.Valid();
+    }
 };
 
 class RxAudioPacketProcessor final {
@@ -51,7 +73,8 @@ public:
                                                              uint32_t channelOffset = 0,
                                                              bool publishTimeline = true,
                                                              const RxCaptureChannelMap& captureMap = {},
-                                                             bool primeDelayLine = false) noexcept;
+                                                             bool primeDelayLine = false,
+                                                             const RxMidiExtraction& midi = {}) noexcept;
 
 private:
     DirectInputWriter& writer_;

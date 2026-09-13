@@ -29,3 +29,8 @@ add_midi_test(MidiEndpointCapabilitiesTests
 add_midi_test(MidiTransportBlockTests
     MidiTransportBlockTests.cpp
 )
+
+# MPX-MIDI receive extraction and the ring sink (WP-7).
+add_midi_test(MpxMidiDemuxTests
+    MpxMidiDemuxTests.cpp
+)

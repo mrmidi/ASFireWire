@@ -19,7 +19,8 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
                                                                    uint32_t channelOffset,
                                                                    bool publishTimeline,
                                                                    const RxCaptureChannelMap& captureMap,
-                                                                   bool primeDelayLine) noexcept {
+                                                                   bool primeDelayLine,
+                                                                   const RxMidiExtraction& midi) noexcept {
     RxAudioPacketProcessorResult result{};
 
     if (length < kIsochHeaderSize + 8) {
@@ -55,11 +56,37 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     }
 
     const size_t eventCount = payloadBytes / dbsBytes;
+    result.ragged = (payloadBytes % dbsBytes) != 0;
     result.framesDecoded = static_cast<uint32_t>(eventCount);
 
     if (eventCount == 0) {
+        // Header-only NO-DATA carries no data blocks at all. Deriving MIDI from
+        // whatever follows the header would be reading leftover buffer.
         result.status = DirectRxWriteStatus::kAvailable;
         return result;
+    }
+
+    // MIDI comes off the wire BEFORE the PCM binding check below. In MIDI-only
+    // operation no CoreAudio client is open, so the writer is legitimately
+    // unbound and that path returns early -- extracting after it would mean
+    // MIDI worked only while audio happened to be running.
+    //
+    // hasValidCip above only means CIPHeader::Decode accepted the EOH markers.
+    // It validates neither the AM824 format nor the geometry, so the MIDI slot
+    // is bounds-checked against this packet's own DBS rather than trusted.
+    if (midi.Enabled() && !result.ragged &&
+        midi.geometry.dbs == cip->dataBlockSize &&
+        midi.geometry.midiSlotIndex < cip->dataBlockSize) {
+        ASFW::Encoding::MpxMidiDemuxCounters discard{};
+        ASFW::Encoding::MpxMidiDemuxCounters& counters =
+            midi.counters ? *midi.counters : discard;
+        const uint64_t before = counters.bytesDelivered;
+        ASFW::Encoding::DemuxMpxMidi(
+            reinterpret_cast<const uint8_t*>(&quadlets[2]),
+            static_cast<uint32_t>(eventCount), cip->dataBlockCounter,
+            midi.geometry, *midi.sink, counters);
+        result.midiBytesDelivered =
+            static_cast<uint32_t>(counters.bytesDelivered - before);
     }
 
     // If unarmed: parse timing/counters, and drop PCM

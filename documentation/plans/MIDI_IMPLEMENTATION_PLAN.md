@@ -470,7 +470,7 @@ valid silence, audio open/close neither stops it nor creates a second pump, the
 last release stops hardware, a failed start rolls back, and existing audio-only
 behaviour passes regression unchanged.
 
-### WP-7 — RX extraction and delivery
+### WP-7 — RX extraction and delivery — **extraction landed, delivery unrouted**
 
 **Goal.** MIDI bytes off the wire into the RX rings and out as UMP, working with
 CoreAudio closed.
@@ -504,6 +504,33 @@ vectors driven through the extraction path.
 
 **Done when** physical Saffire MIDI input works with CoreAudio both closed and
 open.
+
+**What landed.** `Audio/Ports/IMidiByteSink.hpp` is the seam — port-indexed
+bytes and a discontinuity mark, nothing else. `Audio/Wire/AM824/MpxMidiDemux.hpp`
+does the demultiplexing as content-layer logic, and
+`Midi/Transport/MidiRingByteSink.hpp` adapts it onto the device→host rings.
+
+Extraction runs in `RxAudioPacketProcessor::ProcessPacket` **before** the
+`writer_.IsBound()` early return, which is the whole point: in MIDI-only
+operation no CoreAudio client is open, the writer is legitimately unbound, and
+extracting after that check would make MIDI work only while audio happened to be
+running. It is an opt-in parameter defaulted off, so every existing audio-only
+caller is byte-for-byte unchanged.
+
+Validation before extraction: the payload must be a whole number of data blocks
+(a new `ragged` result field — PCM decode has always truncated silently here, but
+a MIDI slot index derived from the wrong DBS reads a different slot entirely), the
+geometry's DBS must match the packet's own, and the slot index must be inside the
+data block. Labels are range-checked to 0x80–0x83 rather than masked: Focusrite's
+`label & 3` agrees for valid input but would also accept an audio label as MIDI.
+Event count comes from the wire payload, never from PCM samples written.
+
+**Still open.** Nothing routes the sink yet. The demux and the ring adapter are
+tested, but the core driver's receive path does not yet construct an
+`RxMidiExtraction` from the published capability or bind the sink to the nub's
+block, and nothing calls `DrainReceiveRings` on the MIDI service. That wiring is
+small and deliberate to do once the capability→runtime plumbing exists; until it
+lands, a device publishes MIDI endpoints that stay silent.
 
 ### WP-8 — TX composition
 
