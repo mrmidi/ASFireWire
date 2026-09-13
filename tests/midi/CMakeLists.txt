@@ -1,0 +1,20 @@
+# tests/midi/CMakeLists.txt
+
+macro(add_midi_test TARGET_NAME)
+    add_executable(${TARGET_NAME} ${ARGN})
+    target_link_libraries(${TARGET_NAME} PRIVATE
+        asfw_test_support
+        GTest::gtest_main
+    )
+    gtest_discover_tests(${TARGET_NAME})
+endmacro()
+
+# MIDI 1.0 byte stream <-> UMP conversion (WP-3).
+# Pure logic: no DriverKit, no hardware, no transport.
+add_midi_test(MidiUmpConversionTests
+    MidiByteStreamToUmpTests.cpp
+    UmpToMidiByteStreamTests.cpp
+    UmpRoundTripTests.cpp
+    "${ASFW_DRIVER_DIR}/Midi/Ump/MidiByteStreamToUmp.cpp"
+    "${ASFW_DRIVER_DIR}/Midi/Ump/UmpToMidiByteStream.cpp"
+)
