@@ -106,6 +106,13 @@ public:
     
     void Poll() noexcept;
     void HandleInterrupt() noexcept;
+    /// Service replacement payloads a producer has just published.
+    ///
+    /// Called once per prepared batch, not once per packet. Shares
+    /// refillInProgress_ with the interrupt path, so a notification that lands
+    /// while a refill is running does not run concurrently with it -- it is
+    /// covered by the recheck at the end of that refill instead.
+    void ServiceLatePayloadOffers() noexcept;
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
     void SetTxTransportFaultCallback(TxTransportFaultCallback callback) noexcept;
 

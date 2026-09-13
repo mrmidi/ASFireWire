@@ -2192,3 +2192,115 @@ TEST_F(IsochTxPayloadArbitrationTest,
         << "content offered above the gap reaches the wire";
     EXPECT_EQ(outcome.latePayloadLostPublications, 0U);
 }
+
+// --- Producer notification: replacement ready -> service now -------------
+//
+// The band above exists because a published replacement waits for a completion
+// interrupt that has nothing to do with it. These tests cover the doorbell that
+// removes the wait, and the three ways a doorbell goes wrong: a lost wakeup, an
+// un-coalesced storm, and a notification outliving its stream.
+
+TEST(TxOfferDoorbellTests, FirstBatchNotifiesAndSecondCoalesces) {
+    IsochTxQueueControl ctrl{};
+    // One request per batch. The second finds one outstanding and declines,
+    // because transport re-reads the generation before it finishes.
+    EXPECT_TRUE(ctrl.PublishOfferBatch());
+    EXPECT_FALSE(ctrl.PublishOfferBatch());
+    EXPECT_FALSE(ctrl.PublishOfferBatch());
+    EXPECT_EQ(ctrl.offerNotifyCoalescedCount.load(), 2U);
+    EXPECT_TRUE(ctrl.HasUnservicedOffers());
+}
+
+TEST(TxOfferDoorbellTests, BatchPublishedDuringServiceIsNotLost) {
+    IsochTxQueueControl ctrl{};
+    ASSERT_TRUE(ctrl.PublishOfferBatch());
+
+    // Transport snapshots what it is answering for, then a producer publishes
+    // while the sweep is running. This is the lost-wakeup case: the second
+    // batch must not be swallowed by the first one's completion.
+    const uint64_t serviced = ctrl.BeginOfferService();
+    EXPECT_FALSE(ctrl.PublishOfferBatch()) << "still coalesced into the pass";
+    EXPECT_TRUE(ctrl.FinishOfferService(serviced))
+        << "transport must be told another pass is owed";
+
+    // And the flag is clear, so the next producer batch can raise a fresh
+    // notification rather than assuming one is already outstanding.
+    EXPECT_EQ(ctrl.offerNotifyPending.load(), 0U);
+    EXPECT_TRUE(ctrl.PublishOfferBatch());
+}
+
+TEST(TxOfferDoorbellTests, ServiceWithNothingNewClearsTheObligation) {
+    IsochTxQueueControl ctrl{};
+    ASSERT_TRUE(ctrl.PublishOfferBatch());
+    const uint64_t serviced = ctrl.BeginOfferService();
+    EXPECT_FALSE(ctrl.FinishOfferService(serviced));
+    EXPECT_FALSE(ctrl.HasUnservicedOffers());
+    EXPECT_EQ(ctrl.offerNotifyPending.load(), 0U);
+}
+
+TEST(TxOfferDoorbellTests, ArmForNewStreamDiscardsAPriorStreamsNotification) {
+    // Teardown: a notification raised just before the stream stopped must not
+    // make the replacement stream service a generation that was not its own.
+    IsochTxQueueControl ctrl{};
+    ASSERT_TRUE(ctrl.PublishOfferBatch());
+    ASSERT_TRUE(ctrl.HasUnservicedOffers());
+
+    ctrl.ResetConsumerForArm();
+
+    EXPECT_FALSE(ctrl.HasUnservicedOffers());
+    EXPECT_EQ(ctrl.offerNotifyPending.load(), 0U);
+    EXPECT_EQ(ctrl.offerRequestGeneration.load(), 0U);
+    // ...and the new stream's first batch notifies normally.
+    EXPECT_TRUE(ctrl.PublishOfferBatch());
+}
+
+// The reproduction from OfferInsideTheServiceGapIsAcceptedThenDiscarded, with
+// the notification delivered. Same offer, same position, same guard -- the only
+// difference is that transport is told, instead of waiting for an interrupt
+// that arrives after the packet is out of reach.
+TEST_F(IsochTxPayloadArbitrationTest, NotifiedOfferInsideTheGapIsBound) {
+    using Geometry = ASFW::Shared::Isoch::IsochQueueGeometry;
+    auto metadataRing = MakeMetadataRing();
+    PrimeRebindable(metadataRing);
+    PointAt(0);
+    ASSERT_TRUE(Refill(metadataRing).ok);
+
+    constexpr uint32_t kOffered = kSeal;
+    ASSERT_TRUE(OfferLateImage(metadataRing, kOffered));
+    ASSERT_TRUE(primeControl_.PublishOfferBatch());
+
+    // Serviced where the producer published it, not a completion group later.
+    // The hardware has not moved: this is the whole point.
+    const uint64_t serviced = primeControl_.BeginOfferService();
+    const auto outcome = ring_.ServiceOfferedPayloads(
+        hardware_, 0, metadataRing.data(), &primeControl_, kSharedPayloadSlots,
+        sharedPayload_.data(), payloadDmaMap_);
+    ASSERT_TRUE(outcome.ok);
+    EXPECT_FALSE(primeControl_.FinishOfferService(serviced));
+
+    EXPECT_EQ(metadataRing[kOffered].selectedPayloadImage, 1U)
+        << "content offered at the finality frontier now reaches the wire";
+    EXPECT_EQ(outcome.latePayloadLostPublications, 0U);
+}
+
+// Servicing must not advance the finality frontier. Finality is paced by
+// descriptor recycling; sealing on a producer notification would freeze packets
+// sooner than the cadence implies and lose more content, not less.
+TEST_F(IsochTxPayloadArbitrationTest, ServicingOffersDoesNotAdvanceFinality) {
+    auto metadataRing = MakeMetadataRing();
+    PrimeRebindable(metadataRing);
+    PointAt(0);
+    ASSERT_TRUE(Refill(metadataRing).ok);
+
+    const uint64_t finalizedBefore =
+        primeControl_.finalizedEnd.load(std::memory_order_acquire);
+
+    ASSERT_TRUE(OfferLateImage(metadataRing, kSeal));
+    const auto outcome = ring_.ServiceOfferedPayloads(
+        hardware_, 0, metadataRing.data(), &primeControl_, kSharedPayloadSlots,
+        sharedPayload_.data(), payloadDmaMap_);
+    ASSERT_TRUE(outcome.ok);
+
+    EXPECT_EQ(primeControl_.finalizedEnd.load(std::memory_order_acquire),
+              finalizedBefore);
+}

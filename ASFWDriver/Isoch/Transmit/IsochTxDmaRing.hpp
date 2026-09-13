@@ -151,6 +151,22 @@ public:
                                        const TxPayloadDmaMap& payloadDmaMap,
                                        uint64_t eventTicks = 0, uint32_t source = 0) noexcept;
 
+    /// Service replacement payloads a producer has just published, without
+    /// recycling descriptors or advancing the finality frontier.
+    ///
+    /// This is the whole point of the producer notification: a published
+    /// replacement is bindable immediately, and waiting for the next completion
+    /// interrupt is what loses it. Reads the live controller position itself,
+    /// so it does not depend on a refill pass having sampled one.
+    [[nodiscard]] RefillOutcome ServiceOfferedPayloads(
+        Driver::HardwareInterface& hw,
+        uint8_t contextIndex,
+        IsochTxPacketMeta* metadataRing,
+        IsochTxQueueControl* controlBlock,
+        uint32_t numSlots,
+        uint8_t* payloadBase,
+        const TxPayloadDmaMap& payloadDmaMap) noexcept;
+
     void ExportFrozenRefills(uint8_t context) const noexcept;
 #ifdef ASFW_HOST_TEST
     const TxRefillFlightRecorder& FlightRecorderForTest() const noexcept {
@@ -216,6 +232,24 @@ private:
         uint64_t passId = 0,
         uint64_t passStartHostTicks = 0,
         uint64_t passStartHwPos = 0) noexcept;
+    /// The binding sweep alone, with no descriptor recycling and no finality
+    /// advance. Shared by the interrupt path and the producer notification so
+    /// a notification does not pay for a full refill.
+    void BindReadyLatePayloads(
+        Driver::HardwareInterface& hw,
+        uint8_t contextIndex,
+        uint64_t hardwareAbsIdx,
+        IsochTxPacketMeta* metadataRing,
+        IsochTxQueueControl* controlBlock,
+        uint32_t numSlots,
+        uint8_t* payloadBase,
+        const TxPayloadDmaMap& payloadDmaMap,
+        RefillOutcome& out,
+        uint64_t captureToken = 0,
+        uint64_t passId = 0,
+        uint64_t passStartHostTicks = 0,
+        uint64_t passStartHwPos = 0) noexcept;
+
     /// Decide one packet: bind image 1 if the producer offered a usable one,
     /// otherwise leave the armed image standing. Never seals a packet that is
     /// still open, so it is safe to call more than once for the same packet.

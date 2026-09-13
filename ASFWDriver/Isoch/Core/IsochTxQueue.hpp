@@ -638,6 +638,88 @@ struct IsochTxQueueControl final {
     std::atomic<uint64_t> finalitySealFrontier{0};
     std::atomic<uint32_t> finalitySealCycleTimer{0};
 
+    // ---- Producer -> transport service doorbell -------------------------
+    //
+    // A published replacement creates a servicing obligation NOW. Without this
+    // the offer waits for the next completion interrupt, and since the producer
+    // may offer from hw + kPayloadFinalityLeadPackets while transport can only
+    // act at or above hw + guard + one completion group, everything offered in
+    // between is accepted and then discarded.
+    //
+    // Coalesced: a producer that finds a request already pending does not raise
+    // another. Transport re-reads the requested generation after servicing, so
+    // a batch published while it was working is not lost -- it is serviced by
+    // the following pass rather than dropped.
+    std::atomic<uint64_t> offerRequestGeneration{0};
+    std::atomic<uint64_t> offerHandledGeneration{0};
+    std::atomic<uint32_t> offerNotifyPending{0};
+    std::atomic<uint64_t> offerServiceCount{0};
+    std::atomic<uint64_t> offerNotifyCoalescedCount{0};
+
+    /// Producer side, called once after a batch of offers -- never per packet.
+    /// Returns true when the caller owns the obligation to notify transport;
+    /// false means a notification is already outstanding and will cover this
+    /// batch, because transport re-reads the generation before it finishes.
+    [[nodiscard]] bool PublishOfferBatch() noexcept {
+        offerRequestGeneration.fetch_add(1, std::memory_order_release);
+        uint32_t expected = 0;
+        if (offerNotifyPending.compare_exchange_strong(
+                expected, 1, std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            return true;
+        }
+        offerNotifyCoalescedCount.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    /// Transport side. The generation this service pass is answering for.
+    /// Read BEFORE the sweep, so a batch published during it is newer and is
+    /// detected by FinishOfferService.
+    [[nodiscard]] uint64_t BeginOfferService() const noexcept {
+        return offerRequestGeneration.load(std::memory_order_acquire);
+    }
+
+    /// Transport side, after the sweep. Publishes what was serviced, drops the
+    /// pending flag, then rechecks. Returns true when another batch arrived
+    /// while this one was being serviced and a further pass is owed.
+    ///
+    /// Order matters: clearing the flag before the recheck is what lets a
+    /// producer that lost the coalescing race raise a fresh notification. The
+    /// reverse order leaves a window in which the producer sees "pending" and
+    /// declines, while transport has already decided it is done.
+    [[nodiscard]] bool FinishOfferService(uint64_t servicedGeneration) noexcept {
+        offerServiceCount.fetch_add(1, std::memory_order_relaxed);
+        MarkOfferHandled(servicedGeneration);
+        offerNotifyPending.store(0, std::memory_order_release);
+        return offerRequestGeneration.load(std::memory_order_acquire) !=
+               servicedGeneration;
+    }
+
+    void MarkOfferHandled(uint64_t generation) noexcept {
+        uint64_t handled = offerHandledGeneration.load(std::memory_order_relaxed);
+        while (handled < generation &&
+               !offerHandledGeneration.compare_exchange_weak(
+                   handled, generation, std::memory_order_release,
+                   std::memory_order_relaxed)) {
+        }
+    }
+
+    /// True when a producer has published offers transport has not serviced.
+    [[nodiscard]] bool HasUnservicedOffers() const noexcept {
+        return offerRequestGeneration.load(std::memory_order_acquire) !=
+               offerHandledGeneration.load(std::memory_order_acquire);
+    }
+
+    /// Teardown. A notification raised before the stream stopped must not make
+    /// the next stream service a generation that belonged to the last one.
+    void ResetOfferDoorbell() noexcept {
+        offerRequestGeneration.store(0, std::memory_order_relaxed);
+        offerHandledGeneration.store(0, std::memory_order_relaxed);
+        offerNotifyPending.store(0, std::memory_order_relaxed);
+        offerServiceCount.store(0, std::memory_order_relaxed);
+        offerNotifyCoalescedCount.store(0, std::memory_order_relaxed);
+    }
+
     // ---- Decision-diagnostic lanes -------------------------------------
     //
     // Capture identity is ONE word. Generation and epoch published as two
@@ -1095,6 +1177,7 @@ struct IsochTxQueueControl final {
         refillCoalescedCount.store(0, std::memory_order_relaxed);
         maxCompletionDelta.store(0, std::memory_order_relaxed);
         maxCompletionDeltaEvents.store(0, std::memory_order_relaxed);
+        ResetOfferDoorbell();
         // Deliberately NOT touching captureToken or the decision lanes here.
         // This runs on the transport arm path, which knows nothing about
         // whether a diagnostic capture is in progress; clearing the token here

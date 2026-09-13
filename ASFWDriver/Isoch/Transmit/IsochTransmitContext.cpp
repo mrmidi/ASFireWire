@@ -506,6 +506,14 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
 
     const uint32_t numSlots = controlBlock_->numSlots;
 
+    // Claim any outstanding producer notification for this pass. A refill's
+    // own binding sweep services offers, so a notification that lost the gate
+    // to this pass is answered by it -- reading the generation BEFORE the
+    // sweep is what makes that true rather than merely likely.
+    const bool hadOffers = controlBlock_->HasUnservicedOffers();
+    const uint64_t servicedOffers =
+        hadOffers ? controlBlock_->BeginOfferService() : 0;
+
     auto outcome = ring_.Refill(
         *hardware_,
         contextIndex_,
@@ -514,6 +522,13 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         numSlots,
         payloadBase_,
         payloadDmaMap_, eventHostTicks, publishTimingEvent ? 1U : 2U);
+
+    if (hadOffers) {
+        // Anything published while this pass ran is a newer generation and
+        // stays outstanding for the next notification or interrupt.
+        (void)controlBlock_->FinishOfferService(servicedOffers);
+    }
+
     if (!outcome.ok) {
         const auto& counters = ring_.RTCounters();
         ASFW_LOG(
@@ -866,6 +881,49 @@ void IsochTransmitContext::Poll() noexcept {
         lastInterruptCountSeen_ = currentInterrupts;
         irqStallTicks_ = 0;
         irqSilentKickStreak_ = 0;
+    }
+}
+
+void IsochTransmitContext::ServiceLatePayloadOffers() noexcept {
+    // Teardown: a notification raised just before the stream stopped must not
+    // reach the descriptors of the stream that replaces it. State is checked
+    // here and again under the gate, because Stop() can land between the two.
+    if (!hardware_ || state_ != State::Running) return;
+    if (!metadataRing_ || !controlBlock_ || !payloadBase_) return;
+
+    // Bounded: at most one extra pass for work that arrived while servicing.
+    // Without a bound a producer publishing steadily could keep this loop
+    // resident on the queue and starve the interrupt path that recycles
+    // descriptors -- trading lost content for a holed ring.
+    constexpr uint32_t kMaxPasses = 2;
+    for (uint32_t pass = 0; pass < kMaxPasses; ++pass) {
+        if (!controlBlock_->HasUnservicedOffers()) return;
+
+        if (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+            // A refill owns the ring. It re-reads the requested generation
+            // before it finishes, so these offers are its responsibility now;
+            // running concurrently would race it for descriptor ownership.
+            return;
+        }
+
+        // Stop() may have taken the gate between the check above and here.
+        if (state_ != State::Running) {
+            refillInProgress_.clear(std::memory_order_release);
+            return;
+        }
+
+        // Snapshot BEFORE the sweep: a batch published during it is a newer
+        // generation, which FinishOfferService then reports as still owed.
+        const uint64_t serviced = controlBlock_->BeginOfferService();
+        const auto outcome = ring_.ServiceOfferedPayloads(
+            *hardware_, contextIndex_, metadataRing_, controlBlock_,
+            controlBlock_->numSlots, payloadBase_, payloadDmaMap_);
+        (void)outcome;
+        const bool moreArrived = controlBlock_->FinishOfferService(serviced);
+
+        refillInProgress_.clear(std::memory_order_release);
+
+        if (!moreArrived) return;
     }
 }
 

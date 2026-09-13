@@ -548,6 +548,85 @@ void IsochTxDmaRing::TryBindLatePayload(
         1, std::memory_order_relaxed);
 }
 
+IsochTxDmaRing::RefillOutcome IsochTxDmaRing::ServiceOfferedPayloads(
+    Driver::HardwareInterface& hw,
+    const uint8_t contextIndex,
+    IsochTxPacketMeta* metadataRing,
+    IsochTxQueueControl* controlBlock,
+    const uint32_t numSlots,
+    uint8_t* payloadBase,
+    const TxPayloadDmaMap& payloadDmaMap) noexcept {
+    RefillOutcome out{};
+    if (!metadataRing || !controlBlock || !payloadBase || numSlots == 0) {
+        out.failureReason = RefillFailureReason::InvalidSharedContract;
+        return out;
+    }
+
+    // The completion cursor is the last position transport established. Lift
+    // the live controller index onto the absolute timeline relative to it, the
+    // same way a refill pass does, so a lap boundary cannot make a packet look
+    // reachable when it is behind.
+    const uint64_t referenceAbsIdx =
+        controlBlock->completionCursor.load(std::memory_order_acquire);
+    uint64_t liveAbsIdx = referenceAbsIdx;
+    if (!ReadLiveHardwareAbsIndex(hw, contextIndex, referenceAbsIdx,
+                                  liveAbsIdx)) {
+        // No authority to decide where the controller is, so bind nothing. The
+        // offers stay pending and the next completion interrupt services them.
+        out.failureReason = RefillFailureReason::InvalidSharedContract;
+        return out;
+    }
+
+    const uint64_t captureToken = controlBlock->ActiveCaptureToken();
+    BindReadyLatePayloads(hw, contextIndex, liveAbsIdx, metadataRing,
+                          controlBlock, numSlots, payloadBase, payloadDmaMap,
+                          out, captureToken, /*passId=*/0,
+                          /*passStartHostTicks=*/0, /*passStartHwPos=*/liveAbsIdx);
+    out.ok = true;
+    return out;
+}
+
+/// The binding sweep, shared by both things that can service an offer.
+///
+/// A completion interrupt reaches it through RefreshLatePayloadBindings, which
+/// also recycles descriptors and advances the finality frontier. A producer
+/// notification reaches it directly: binding a ready replacement needs neither
+/// of those, and running a full refill per notification would cost far more
+/// than the servicing it is trying to buy.
+///
+/// Deliberately does NOT advance finalizedEnd. Finality is paced by descriptor
+/// recycling; moving the frontier on a producer notification would seal
+/// packets sooner than the cadence implies and lose more content, not less.
+void IsochTxDmaRing::BindReadyLatePayloads(
+    Driver::HardwareInterface& hw,
+    const uint8_t contextIndex,
+    const uint64_t hardwareAbsIdx,
+    IsochTxPacketMeta* metadataRing,
+    IsochTxQueueControl* controlBlock,
+    const uint32_t numSlots,
+    uint8_t* payloadBase,
+    const TxPayloadDmaMap& payloadDmaMap,
+    RefillOutcome& out,
+    const uint64_t captureToken,
+    const uint64_t passId,
+    const uint64_t passStartHostTicks,
+    const uint64_t passStartHwPos) noexcept {
+    using Geometry = ASFW::Shared::Isoch::IsochQueueGeometry;
+
+    const uint64_t mappedEnd =
+        controlBlock->mappedEnd.load(std::memory_order_acquire);
+    const uint64_t firstRepointable =
+        hardwareAbsIdx + Geometry::kPayloadRepointGuardPackets;
+
+    for (uint64_t packetAbs = firstRepointable; packetAbs < mappedEnd;
+         ++packetAbs) {
+        TryBindLatePayload(hw, contextIndex, packetAbs, hardwareAbsIdx,
+                           metadataRing, controlBlock, numSlots, payloadBase,
+                           payloadDmaMap, out, captureToken, passId,
+                           passStartHostTicks, passStartHwPos);
+    }
+}
+
 void IsochTxDmaRing::RefreshLatePayloadBindings(
     Driver::HardwareInterface& hw,
     const uint8_t contextIndex,
@@ -576,14 +655,10 @@ void IsochTxDmaRing::RefreshLatePayloadBindings(
     // the invariant-prefix split. This is the ASFW equivalent of keeping
     // content position separate from descriptor/DMA position; it does not
     // depend on Apple's high-level DCL representation.
-    for (uint64_t packetAbs = firstRepointable;
-         packetAbs < mappedEnd;
-         ++packetAbs) {
-        TryBindLatePayload(hw, contextIndex, packetAbs, hardwareAbsIdx,
-                           metadataRing, controlBlock, numSlots, payloadBase,
-                           payloadDmaMap, out, captureToken, passId,
-                           passStartHostTicks, passStartHwPos);
-    }
+    BindReadyLatePayloads(hw, contextIndex, hardwareAbsIdx, metadataRing,
+                          controlBlock, numSlots, payloadBase, payloadDmaMap,
+                          out, captureToken, passId, passStartHostTicks,
+                          passStartHwPos);
 
     // The finality frontier reflects the physical hardware prefetch horizon
     // (kPayloadRepointGuardPackets = 2) plus dispatch slack, decoupled from
