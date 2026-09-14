@@ -202,31 +202,6 @@ public:
                                               startTicks, endTicks, won,
                                               observedPhase);
         }
-
-        // Content inspection: image 1, and only once the offer has won, so the
-        // bytes examined are the bytes the producer wrote and transport
-        // accepted. Content knowledge stays on the audio side of the seam --
-        // transport still receives only opaque bytes and metadata.
-        if (won && audioControl != nullptr) {
-            const uint8_t* const content = payloadBase +
-                ASFW::Isoch::TxPayloadImageOffset(slotIdx, 1, slotStrideBytes);
-            const auto observation = audioControl->txWirePayloadTelemetry.Observe(
-                packetIndex, content, meta.payloadLength);
-            if (observation.firstInfo || observation.dropout) {
-                ASFW_LOG_RING_ONLY_RL(
-                    DirectAudio,
-                    "tx-wire-payload",
-                    observation.firstInfo ? 0u : 1000u,
-                    ::ASFW::Logging::LogLevel::Warning,
-                    "[TxWire] packet=%u first=%d dropout=%d infoQuads=%u maxAbs24=%u lastQuad=0x%08x",
-                    packetIndex,
-                    observation.firstInfo ? 1 : 0,
-                    observation.dropout ? 1 : 0,
-                    observation.infoQuads,
-                    observation.maxAbs24,
-                    observation.lastInfoQuad);
-            }
-        }
         return won;
     }
 
@@ -280,6 +255,8 @@ public:
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
             static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
 
+        const uint8_t* const payload = payloadBase +
+            ASFW::Isoch::TxPayloadImageOffset(slotIdx, 0, slotStrideBytes);
         // Arm this lap's arbitration before the commit that republishes the
         // slot. A previous lap's terminal phase must not survive into this
         // packet: the generation tag would reject it anyway, but leaving it
@@ -293,12 +270,28 @@ public:
                 ASFW::Isoch::TxPayloadArbitration::kNoAlternative),
             std::memory_order_relaxed);
 
-        // Content inspection used to run here, against image 0. That is the
-        // armed NO-DATA image; the producer writes PCM into image 1, so this
-        // site reported maxAbs24=0 for every packet whether or not audio was on
-        // the wire. It now runs in PublishLatePayload, where image 1 has been
-        // written and the offer accepted. Do not reinstate it here: a content
-        // check that cannot observe content reads as proof of silence.
+        // Content inspection belongs to Audio and runs immediately before the
+        // release commit. Transport receives only opaque bytes and metadata.
+        if (audioControl) {
+            const auto observation = audioControl->txWirePayloadTelemetry.Observe(
+                packet.packetIndex,
+                payload,
+                packet.byteCount);
+            if (observation.firstInfo || observation.dropout) {
+                ASFW_LOG_RING_ONLY_RL(
+                    DirectAudio,
+                    "tx-wire-payload",
+                    observation.firstInfo ? 0u : 1000u,
+                    ::ASFW::Logging::LogLevel::Warning,
+                    "[TxWire] packet=%u first=%d dropout=%d infoQuads=%u maxAbs24=%u lastQuad=0x%08x",
+                    packet.packetIndex,
+                    observation.firstInfo ? 1 : 0,
+                    observation.dropout ? 1 : 0,
+                    observation.infoQuads,
+                    observation.maxAbs24,
+                    observation.lastInfoQuad);
+            }
+        }
 
         // Compute expected generation and release-store it last.
         const uint64_t generation =
