@@ -429,8 +429,19 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
 
         state_ = State::Stopped;
         refillInProgress_.clear(std::memory_order_release);
-        ASFW_LOG(Isoch, "IT: Stopped. Stats: %llu pkts IRQs=%llu",
-                 packetsAssembled_, interruptCount_.load(std::memory_order_relaxed));
+        const auto& ringCounters = ring_.RTCounters();
+        ASFW_LOG(Isoch,
+                 "IT: Stopped. Stats: %llu pkts IRQs=%llu ringLaps=%llu skipped=%llu lostCycles=%llu "
+                 "refusedStamps=%llu/%llu/%llu unrealignable=%llu inFlightFallbacks=%llu",
+                 packetsAssembled_, interruptCount_.load(std::memory_order_relaxed),
+                 ringCounters.ringLaps.load(std::memory_order_relaxed),
+                 ringCounters.ringLapPacketsSkipped.load(std::memory_order_relaxed),
+                 ringCounters.lostCycles.load(std::memory_order_relaxed),
+                 ringCounters.staleStampReads.load(std::memory_order_relaxed),
+                 ringCounters.inconsistentStampReads.load(std::memory_order_relaxed),
+                 ringCounters.implausibleLapReads.load(std::memory_order_relaxed),
+                 ringCounters.unrealignableLaps.load(std::memory_order_relaxed),
+                 ringCounters.inFlightFallbacks.load(std::memory_order_relaxed));
         return kIOReturnSuccess;
     }
 

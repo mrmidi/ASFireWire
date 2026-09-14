@@ -1092,6 +1092,437 @@ TEST_F(IsochTxDmaRingTest,
         0);
 }
 
+
+// ---------------------------------------------------------------------------
+// Hardware-ring lap detection. The command pointer measures packets modulo
+// Layout::kNumPackets; the completed descriptors' timeStamps measure cycles.
+// A refill that arrives a full ring late must realign by skipping the packets
+// the lap should have carried, not slip the whole stream a ring later, and a
+// single odd stamp must never move anything.
+// ---------------------------------------------------------------------------
+class IsochTxDmaRingLapTest : public IsochTxDmaRingTest {
+protected:
+    static constexpr uint32_t kHw = Layout::kNumPackets;  // 48
+
+    std::vector<IsochTxPacketMeta> metadataRing_ = MakeMetadataRing();
+    IsochTxQueueControl controlBlock_{};
+
+    void SetUp() override {
+        IsochTxDmaRingTest::SetUp();
+        for (uint32_t packetIndex = 0; packetIndex < 8 * kHw; ++packetIndex) {
+            auto& meta = metadataRing_[packetIndex];
+            meta.packetIndex = packetIndex;
+            meta.immediateHeader[0] = 0x11000000u + packetIndex;
+            meta.immediateHeader[1] = 0x22000000u + packetIndex;
+            meta.payloadLength = 64;
+            meta.commitGeneration.store(
+                ExpectedTxCommitGeneration(packetIndex, kSharedPayloadSlots),
+                std::memory_order_release);
+        }
+        // Production order (IsochTransmitContext::Start): reset, seed, prime,
+        // so the primed ring counts as 48 packets ahead and the first refill
+        // continues at packet 48. The producer has committed 8 rings ahead.
+        ring_.ResetForStart();
+        ring_.SeedCycleTracking(hardware_);
+        (void)ring_.Prime(payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+                          metadataRing_.data(), kHw);
+        controlBlock_.numSlots = kSharedPayloadSlots;
+        controlBlock_.slotStrideBytes = kSharedPayloadStride;
+        controlBlock_.maxPacketBytes = kSharedPayloadStride;
+        controlBlock_.committedEnd.store(8 * kHw, std::memory_order_release);
+        hardware_.SetTestRegister(
+            static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)), 0);
+    }
+
+    // The hardware finished `slot` in bus cycle `cycle`: OUTPUT_LAST status
+    // word = xferStatus:timeStamp, timeStamp = sec[2:0]:cycle[12:0].
+    void StampCompleted(uint32_t slot, uint32_t cycle) {
+        auto* desc3 = ring_.Slab().GetDescriptorPtr(
+            slot * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        const uint16_t stamp = static_cast<uint16_t>(
+            (((cycle / 8000u) & 0x7u) << 13) | (cycle % 8000u));
+        desc3->statusWord = (0x8000u << 16) | stamp;
+    }
+    // Hardware is now at `slot`, and the cycle timer reads `nowCycle`
+    // (seconds in bits 31:25, cycle in 24:12).
+    void HardwareAt(uint32_t slot, uint32_t nowCycle) {
+        hardware_.SetTestRegister(
+            static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)),
+            ring_.Slab().GetDescriptorIOVA(slot * Layout::kBlocksPerPacket) |
+                Layout::kBlocksPerPacket);
+        hardware_.SetTestRegister(
+            Register32::kCycleTimer,
+            (((nowCycle / 8000u) & 0x7Fu) << 25) | ((nowCycle % 8000u) << 12));
+    }
+    IsochTxDmaRing::RefillOutcome Refill() {
+        return ring_.Refill(hardware_, 0, metadataRing_.data(), &controlBlock_,
+                            kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
+    }
+    // First refill: slots 0..7 went out in cycles 3000..3007, hardware is at
+    // slot 8 in cycle 3008. Establishes the stamp baseline (3007) and fills
+    // packets 48..55 into slots 0..7.
+    void FirstRefillAtSlot8() {
+        for (uint32_t slot = 0; slot < 8; ++slot) StampCompleted(slot, 3000 + slot);
+        HardwareAt(8, 3008);
+        const auto first = Refill();
+        ASSERT_TRUE(first.ok);
+        ASSERT_EQ(first.packetsFilled, 8u);
+        ASSERT_EQ(controlBlock_.completionCursor.load(), 8u);
+        ASSERT_EQ(first.ringLaps, 0u);
+    }
+    // Then a normal advance: slots 8..13 in cycles 3008..3013, hardware at 14.
+    void NormalAdvanceToSlot14() {
+        for (uint32_t slot = 8; slot < 14; ++slot) StampCompleted(slot, 3000 + slot);
+        HardwareAt(14, 3014);
+    }
+    // A lap: the refill missed 54 cycles. Slots 8..47 went out in 3008..3047,
+    // the ring wrapped, slots 0..7 were RE-SENT (stale) in 3048..3055 and
+    // slots 8..13 again in 3056..3061; the pointer is back at slot 14.
+    void LapToSlot14() {
+        for (uint32_t slot = 14; slot < kHw; ++slot) StampCompleted(slot, 3000 + slot);
+        for (uint32_t slot = 0; slot < 14; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+        HardwareAt(14, 3000 + kHw + 14);
+    }
+    uint32_t HeaderInSlot(uint32_t slot) const {
+        auto* immediate = reinterpret_cast<const OHCIDescriptorImmediate*>(
+            ring_.Slab().GetDescriptorPtr(slot * Layout::kBlocksPerPacket));
+        return immediate->immediateData[0];
+    }
+    uint32_t PacketHeader(uint32_t packetIndex) const {
+        return WithIsochChannel(0x11000000u + packetIndex, 1);
+    }
+};
+
+TEST_F(IsochTxDmaRingLapTest, ConsecutiveRefillsWithOnePacketPerCycleSeeNoLap) {
+    FirstRefillAtSlot8();
+    NormalAdvanceToSlot14();
+    const auto second = Refill();
+    ASSERT_TRUE(second.ok);
+    EXPECT_EQ(second.packetsFilled, 6u);
+    EXPECT_EQ(second.ringLaps, 0u);
+    EXPECT_EQ(second.lostCycles, 0u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 14u);
+    EXPECT_EQ(HeaderInSlot(8), PacketHeader(56));  // packet 56 -> slot 8
+    EXPECT_EQ(ring_.RTCounters().ringLaps.load(), 0u);
+    EXPECT_EQ(controlBlock_.ringLaps.load(), 0u);
+}
+
+TEST_F(IsochTxDmaRingLapTest, LapIsActedOnOnlyWhenASecondReadingAgrees) {
+    FirstRefillAtSlot8();
+    LapToSlot14();
+    // First sighting: nothing moves yet, the six packets behind the pointer
+    // are refilled as usual.
+    const auto sighting = Refill();
+    ASSERT_TRUE(sighting.ok);
+    EXPECT_EQ(sighting.ringLaps, 0u);
+    EXPECT_EQ(sighting.packetsFilled, 6u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 14u);
+    EXPECT_EQ(HeaderInSlot(8), PacketHeader(56));
+    // Four more packets, still one ring late: confirmed.
+    for (uint32_t slot = 14; slot < 18; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    HardwareAt(18, 3000 + kHw + 18);
+    const auto confirmed = Refill();
+    ASSERT_TRUE(confirmed.ok);
+    EXPECT_EQ(confirmed.ringLaps, 1u);
+    EXPECT_EQ(confirmed.lapPacketsSkipped, kHw);
+    EXPECT_EQ(confirmed.lostCycles, 0u);
+    EXPECT_EQ(confirmed.packetsFilled, 4u);
+    // Cursor: 8 + 6 (sighting) + 4 + one skipped ring = the truth, 8 + 58.
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 8u + 6u + 4u + kHw);
+    // Packets 62..109 are skipped; slot 14 holds packet 110, whose nominal
+    // cycle (3000 + 110) is exactly when slot 14 next goes out
+    // (3000 + 48 + 18 + 44).
+    EXPECT_EQ(HeaderInSlot(14), PacketHeader(62 + kHw));
+    EXPECT_EQ(HeaderInSlot(17), PacketHeader(65 + kHw));
+    // Stamps cover only the four packets that really went out this refill.
+    EXPECT_EQ(controlBlock_.completionStampCount.load(), 8u + 6u + 4u);
+    uint64_t pktIdx = 0; uint32_t ts = 0;
+    ASSERT_TRUE(controlBlock_.ReadCompletionStamp(14, pktIdx, ts));
+    EXPECT_EQ(pktIdx, 14u + kHw);
+    EXPECT_EQ(ts, static_cast<uint32_t>((3000u + kHw + 14u) << 12));
+    EXPECT_EQ(ring_.RTCounters().ringLaps.load(), 1u);
+    EXPECT_EQ(ring_.RTCounters().ringLapPacketsSkipped.load(), kHw);
+    EXPECT_EQ(controlBlock_.ringLaps.load(), 1u);
+    EXPECT_EQ(controlBlock_.ringLapPacketsSkipped.load(), kHw);
+    EXPECT_EQ(controlBlock_.maxCompletionDelta.load(), kHw + 4u);
+    // Afterwards the ring is in step again.
+    for (uint32_t slot = 18; slot < 24; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    HardwareAt(24, 3000 + kHw + 24);
+    const auto later = Refill();
+    ASSERT_TRUE(later.ok);
+    EXPECT_EQ(later.ringLaps, 0u);
+    EXPECT_EQ(later.lostCycles, 0u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 8u + 6u + 4u + kHw + 6u);
+    EXPECT_EQ(HeaderInSlot(18), PacketHeader(66 + kHw));
+    // The reading after a realignment must be accepted, not refused because
+    // the skipped packets were counted as expected cycles (field-found on
+    // v25: one refusal after the first confirmed lap).
+    EXPECT_EQ(ring_.RTCounters().inconsistentStampReads.load(), 0u);
+    EXPECT_EQ(ring_.RTCounters().staleStampReads.load(), 0u);
+    // And a second lap later on is still caught from a consistent baseline.
+    for (uint32_t slot = 24; slot < kHw; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    for (uint32_t slot = 0; slot < 30; ++slot) StampCompleted(slot, 3000 + 2 * kHw + slot);
+    HardwareAt(30, 3000 + 2 * kHw + 30);
+    ASSERT_TRUE(Refill().ok);  // sighting
+    for (uint32_t slot = 30; slot < 36; ++slot) StampCompleted(slot, 3000 + 2 * kHw + slot);
+    HardwareAt(36, 3000 + 2 * kHw + 36);
+    const auto secondLap = Refill();
+    ASSERT_TRUE(secondLap.ok);
+    EXPECT_EQ(secondLap.ringLaps, 1u);
+    EXPECT_EQ(ring_.RTCounters().ringLaps.load(), 2u);
+    EXPECT_EQ(ring_.RTCounters().inconsistentStampReads.load(), 0u);
+}
+
+TEST_F(IsochTxDmaRingLapTest, ExactLapWithUnchangedPointerIsStillDetected) {
+    FirstRefillAtSlot8();
+    // Exactly one ring of cycles passed: every slot was re-sent once and the
+    // pointer is back where it was. The raw delta is zero.
+    for (uint32_t slot = 8; slot < kHw; ++slot) StampCompleted(slot, 3000 + slot);
+    for (uint32_t slot = 0; slot < 8; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    HardwareAt(8, 3000 + kHw + 8);
+    const auto sighting = Refill();
+    ASSERT_TRUE(sighting.ok);
+    EXPECT_EQ(sighting.ringLaps, 0u);
+    EXPECT_EQ(sighting.packetsFilled, 0u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 8u);
+    for (uint32_t slot = 8; slot < 14; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    HardwareAt(14, 3000 + kHw + 14);
+    const auto confirmed = Refill();
+    ASSERT_TRUE(confirmed.ok);
+    EXPECT_EQ(confirmed.ringLaps, 1u);
+    EXPECT_EQ(confirmed.packetsFilled, 6u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 8u + 6u + kHw);
+    EXPECT_EQ(HeaderInSlot(8), PacketHeader(56 + kHw));
+    for (uint32_t slot = 14; slot < 20; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    HardwareAt(20, 3000 + kHw + 20);
+    const auto later = Refill();
+    ASSERT_TRUE(later.ok);
+    EXPECT_EQ(later.ringLaps, 0u);
+    EXPECT_EQ(ring_.RTCounters().inconsistentStampReads.load(), 0u);
+}
+
+TEST_F(IsochTxDmaRingLapTest, LostCyclesShortOfARingAreCountedNotRealigned) {
+    FirstRefillAtSlot8();
+    // Six packets went out but they took eight cycles (two lost cycles, each
+    // re-sent through the OMI skip address).
+    for (uint32_t slot = 8; slot < 14; ++slot) StampCompleted(slot, 3002 + slot);
+    HardwareAt(14, 3016);
+    const auto second = Refill();
+    ASSERT_TRUE(second.ok);
+    EXPECT_EQ(second.ringLaps, 0u);
+    EXPECT_EQ(second.lostCycles, 2u);
+    EXPECT_EQ(second.packetsFilled, 6u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 14u);
+    EXPECT_EQ(HeaderInSlot(8), PacketHeader(56));
+    EXPECT_EQ(ring_.RTCounters().lostCycles.load(), 2u);
+    EXPECT_EQ(controlBlock_.lostCycles.load(), 2u);
+}
+
+TEST_F(IsochTxDmaRingLapTest, StampSecondsFieldWrapsWithoutAFalseLap) {
+    // Baseline just below the 3-bit seconds wrap: cycle 7*8000+7999 = 63999.
+    for (uint32_t slot = 0; slot < 8; ++slot) StampCompleted(slot, 63992 + slot);
+    HardwareAt(8, 0);
+    ASSERT_TRUE(Refill().ok);
+    for (uint32_t slot = 8; slot < 14; ++slot) StampCompleted(slot, slot - 8);  // 0..5 after wrap
+    HardwareAt(14, 6);
+    const auto second = Refill();
+    ASSERT_TRUE(second.ok);
+    EXPECT_EQ(second.ringLaps, 0u);
+    EXPECT_EQ(second.lostCycles, 0u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 14u);
+}
+
+TEST_F(IsochTxDmaRingLapTest, StaleStampIsRefusedAndLeavesTheBaselineAlone) {
+    FirstRefillAtSlot8();
+    // The words in slots 13 and 12 are 1.6 s old: not this transmission's
+    // stamps (the fallback descriptor is stale too).
+    for (uint32_t slot = 8; slot < 12; ++slot) StampCompleted(slot, 3000 + slot);
+    StampCompleted(12, 3012 + 64000 - 12823);
+    StampCompleted(13, 3013 + 64000 - 12823);
+    HardwareAt(14, 3014);
+    const auto refused = Refill();
+    ASSERT_TRUE(refused.ok);
+    EXPECT_EQ(refused.ringLaps, 0u);
+    EXPECT_EQ(refused.packetsFilled, 6u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 14u);
+    EXPECT_EQ(ring_.RTCounters().staleStampReads.load(), 1u);
+    // The next honest reading compares against the original baseline with
+    // all ten packets counted: no lap, nothing lost.
+    for (uint32_t slot = 14; slot < 18; ++slot) StampCompleted(slot, 3000 + slot);
+    HardwareAt(18, 3018);
+    const auto honest = Refill();
+    ASSERT_TRUE(honest.ok);
+    EXPECT_EQ(honest.ringLaps, 0u);
+    EXPECT_EQ(honest.lostCycles, 0u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 18u);
+    EXPECT_EQ(ring_.RTCounters().ringLaps.load(), 0u);
+}
+
+TEST_F(IsochTxDmaRingLapTest, StampOlderThanThePacketsSinceBaselineIsRefused) {
+    FirstRefillAtSlot8();
+    // Slots 13 and 12 carry words newer than the baseline but older than the
+    // packets counted since it (torn words): refused.
+    for (uint32_t slot = 8; slot < 12; ++slot) StampCompleted(slot, 3000 + slot);
+    StampCompleted(12, 3009);
+    StampCompleted(13, 3010);
+    HardwareAt(14, 3014);
+    const auto refused = Refill();
+    ASSERT_TRUE(refused.ok);
+    EXPECT_EQ(refused.ringLaps, 0u);
+    EXPECT_EQ(ring_.RTCounters().inconsistentStampReads.load(), 1u);
+    // A fresh reading afterwards must not turn into a lap.
+    for (uint32_t slot = 14; slot < 18; ++slot) StampCompleted(slot, 3000 + slot);
+    HardwareAt(18, 3018);
+    const auto honest = Refill();
+    ASSERT_TRUE(honest.ok);
+    EXPECT_EQ(honest.ringLaps, 0u);
+    EXPECT_EQ(honest.lostCycles, 0u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 18u);
+}
+
+TEST_F(IsochTxDmaRingLapTest, LapSeenOnceThenContradictedIsDropped) {
+    FirstRefillAtSlot8();
+    // One reading claims a ring of extra cycles...
+    for (uint32_t slot = 8; slot < 14; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    HardwareAt(14, 3000 + kHw + 14);
+    const auto sighting = Refill();
+    ASSERT_TRUE(sighting.ok);
+    EXPECT_EQ(sighting.ringLaps, 0u);
+    // ...and the next one is consistent with the packets counted: forget it.
+    for (uint32_t slot = 14; slot < 18; ++slot) StampCompleted(slot, 3000 + slot);
+    HardwareAt(18, 3018);
+    const auto contradiction = Refill();
+    ASSERT_TRUE(contradiction.ok);
+    EXPECT_EQ(contradiction.ringLaps, 0u);
+    EXPECT_EQ(contradiction.lostCycles, 0u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 18u);
+    EXPECT_EQ(ring_.RTCounters().ringLaps.load(), 0u);
+    EXPECT_EQ(HeaderInSlot(14), PacketHeader(62));
+}
+
+TEST_F(IsochTxDmaRingLapTest, ImplausiblyManyLapsAreRefused) {
+    FirstRefillAtSlot8();
+    // A word from a previous session: 1066 rings "ago", but fresh-looking
+    // against a cycle timer that happens to sit just past it.
+    for (uint32_t slot = 8; slot < 12; ++slot) StampCompleted(slot, 3000 + slot);
+    StampCompleted(12, 3012 + 1066 * kHw);
+    StampCompleted(13, 3013 + 1066 * kHw);
+    HardwareAt(14, 3014 + 1066 * kHw);
+    const auto refused = Refill();
+    ASSERT_TRUE(refused.ok);
+    EXPECT_EQ(refused.ringLaps, 0u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 14u);
+    EXPECT_EQ(ring_.RTCounters().implausibleLapReads.load(), 1u);
+    EXPECT_EQ(ring_.RTCounters().unrealignableLaps.load(), 0u);
+}
+
+TEST_F(IsochTxDmaRingLapTest, UpperStampBitsAreIgnored) {
+    // Whatever a controller puts in bits 15:13 must not skew the reading:
+    // baseline with them clear, next stamps with them set.
+    FirstRefillAtSlot8();
+    for (uint32_t slot = 8; slot < 14; ++slot) StampCompleted(slot, 5 * 8000 + 3000 + slot);
+    HardwareAt(14, 3014);
+    const auto second = Refill();
+    ASSERT_TRUE(second.ok);
+    EXPECT_EQ(second.ringLaps, 0u);
+    EXPECT_EQ(second.lostCycles, 0u);
+    EXPECT_EQ(ring_.RTCounters().staleStampReads.load(), 0u);
+    EXPECT_EQ(ring_.RTCounters().inconsistentStampReads.load(), 0u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 14u);
+}
+
+TEST_F(IsochTxDmaRingLapTest, InFlightLastDescriptorFallsBackToThePreviousOne) {
+    FirstRefillAtSlot8();
+    // Slot 13 is still in flight: its word is from its previous transmission
+    // one ring ago. Slot 12 is complete and fresh.
+    for (uint32_t slot = 8; slot < 13; ++slot) StampCompleted(slot, 3000 + slot);
+    StampCompleted(13, 3013 + 8000 - kHw);
+    HardwareAt(14, 3014);
+    const auto second = Refill();
+    ASSERT_TRUE(second.ok);
+    EXPECT_EQ(second.ringLaps, 0u);
+    EXPECT_EQ(second.lostCycles, 0u);
+    EXPECT_EQ(ring_.RTCounters().inFlightFallbacks.load(), 1u);
+    EXPECT_EQ(ring_.RTCounters().staleStampReads.load(), 0u);
+    EXPECT_EQ(ring_.RTCounters().inconsistentStampReads.load(), 0u);
+    // A lap is still measured correctly through the fallback: 54 cycles for
+    // six packets, with slot 17 in flight.
+    for (uint32_t slot = 14; slot < 17; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    StampCompleted(17, 3017);  // previous transmission's word
+    HardwareAt(18, 3000 + kHw + 18);
+    const auto sighting = Refill();
+    ASSERT_TRUE(sighting.ok);
+    EXPECT_EQ(sighting.ringLaps, 0u);  // seen once
+    for (uint32_t slot = 17; slot < 22; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    HardwareAt(22, 3000 + kHw + 22);
+    const auto confirmed = Refill();
+    ASSERT_TRUE(confirmed.ok);
+    EXPECT_EQ(confirmed.ringLaps, 1u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 8u + 6u + 4u + 4u + kHw);
+}
+
+TEST_F(IsochTxDmaRingLapTest, StampLeadingTheCycleTimerByTwoIsFresh) {
+    // The Apple Thunderbolt adapter stamps two cycles ahead of the register
+    // read: every reading must still be accepted, and a lap still found.
+    for (uint32_t slot = 0; slot < 8; ++slot) StampCompleted(slot, 3000 + slot);
+    HardwareAt(8, 3005);  // register reads two behind the last stamp
+    ASSERT_TRUE(Refill().ok);
+    for (uint32_t slot = 8; slot < 14; ++slot) StampCompleted(slot, 3000 + slot);
+    HardwareAt(14, 3011);
+    const auto second = Refill();
+    ASSERT_TRUE(second.ok);
+    EXPECT_EQ(second.ringLaps, 0u);
+    EXPECT_EQ(second.lostCycles, 0u);
+    EXPECT_EQ(ring_.RTCounters().staleStampReads.load(), 0u);
+    EXPECT_EQ(ring_.RTCounters().inFlightFallbacks.load(), 0u);
+    // A lap with the same lead: sighted, then confirmed.
+    for (uint32_t slot = 14; slot < kHw; ++slot) StampCompleted(slot, 3000 + slot);
+    for (uint32_t slot = 0; slot < 18; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    HardwareAt(18, 3000 + kHw + 15);
+    ASSERT_TRUE(Refill().ok);
+    for (uint32_t slot = 18; slot < 22; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    HardwareAt(22, 3000 + kHw + 19);
+    const auto confirmed = Refill();
+    ASSERT_TRUE(confirmed.ok);
+    EXPECT_EQ(confirmed.ringLaps, 1u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 8u + 6u + 4u + 4u + kHw);
+}
+
+TEST_F(IsochTxDmaRingLapTest, PreviousRingWordIsNotFreshEvenWithTheLead) {
+    // A word one ring old reads as 46 behind a register that trails by two:
+    // outside the freshness window, so the previous descriptor is used.
+    FirstRefillAtSlot8();
+    for (uint32_t slot = 8; slot < 13; ++slot) StampCompleted(slot, 3000 + slot);
+    StampCompleted(13, 3013 + 8000 - kHw);
+    HardwareAt(14, 3011);
+    const auto second = Refill();
+    ASSERT_TRUE(second.ok);
+    EXPECT_EQ(second.ringLaps, 0u);
+    EXPECT_EQ(second.lostCycles, 0u);
+    EXPECT_EQ(ring_.RTCounters().inFlightFallbacks.load(), 1u);
+    EXPECT_EQ(ring_.RTCounters().staleStampReads.load(), 0u);
+}
+
+TEST_F(IsochTxDmaRingLapTest, LapBeyondTheCommittedCursorIsNotRealigned) {
+    // The producer is only 66 packets ahead: a one-ring skip would run the
+    // fill past it, so the lap is counted but the stream keeps its slip.
+    controlBlock_.committedEnd.store(66, std::memory_order_release);
+    FirstRefillAtSlot8();
+    LapToSlot14();
+    ASSERT_TRUE(Refill().ok);
+    for (uint32_t slot = 14; slot < 18; ++slot) StampCompleted(slot, 3000 + kHw + slot);
+    HardwareAt(18, 3000 + kHw + 18);
+    const auto confirmed = Refill();
+    ASSERT_TRUE(confirmed.ok);
+    EXPECT_EQ(confirmed.ringLaps, 0u);
+    EXPECT_EQ(confirmed.lapPacketsSkipped, 0u);
+    EXPECT_EQ(confirmed.packetsFilled, 4u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 18u);
+    EXPECT_EQ(HeaderInSlot(14), PacketHeader(62));
+    EXPECT_EQ(ring_.RTCounters().unrealignableLaps.load(), 1u);
+    EXPECT_EQ(ring_.RTCounters().ringLaps.load(), 0u);
+}
+
 TEST(IsochTxQueueControlTests, ProducerAndConsumerResetsHaveDisjointOwnership) {
     IsochTxQueueControl queue{};
     queue.abiVersion = ASFW::Isoch::kTxQueueAbiVersion;

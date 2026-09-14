@@ -53,6 +53,27 @@ public:
         std::atomic<uint32_t> lastDmaGapPackets{Layout::kNumPackets};
         std::atomic<uint32_t> minDmaGapPackets{Layout::kNumPackets};
         std::atomic<uint64_t> criticalGapEvents{0};
+        // Hardware-ring laps: the refill ran a full descriptor ring (or more)
+        // late, the command-pointer delta aliased modulo the ring size, and
+        // the ring re-sent stale descriptors. Each lap is realigned by
+        // skipping kNumPackets producer packets so packet index and bus cycle
+        // stay in step instead of the whole stream slipping a ring later.
+        std::atomic<uint64_t> ringLaps{0};
+        std::atomic<uint64_t> ringLapPacketsSkipped{0};
+        // Cycles the hardware spent without advancing a packet (the OMI skip
+        // address re-sending a packet after a lost cycle). Counted only.
+        std::atomic<uint64_t> lostCycles{0};
+        // Stamp readings the lap detector refused (see DetectRingLaps): not
+        // fresh against the cycle timer, older than the packets counted since
+        // the baseline, an implausible lap count, or a lap the producer had
+        // not committed far enough to realign.
+        std::atomic<uint64_t> staleStampReads{0};
+        std::atomic<uint64_t> inconsistentStampReads{0};
+        std::atomic<uint64_t> implausibleLapReads{0};
+        std::atomic<uint64_t> unrealignableLaps{0};
+        // The last completed descriptor's word was not fresh (still in
+        // flight) and the reading came from the one before it instead.
+        std::atomic<uint64_t> inFlightFallbacks{0};
 
     };
 
@@ -95,6 +116,9 @@ public:
         uint32_t refillPacketCount{0};
         uint64_t packetsFilled{0};
         uint64_t refillRequestGeneration{0};
+        uint32_t ringLaps{0};
+        uint32_t lapPacketsSkipped{0};
+        uint32_t lostCycles{0};
     };
 
     IsochTxDmaRing() noexcept = default;
@@ -149,6 +173,13 @@ private:
                              uint32_t deltaConsumed,
                              RefillOutcome& out) noexcept;
     void CommitRefill(uint32_t toFill) noexcept;
+    [[nodiscard]] uint32_t DetectRingLaps(uint32_t hwPacketIndex,
+                                          uint64_t completedAbsBefore,
+                                          uint32_t rawDeltaConsumed,
+                                          uint32_t cycleTimer32,
+                                          uint32_t maxRealignLaps,
+                                          uint32_t& outLostCycles) noexcept;
+    [[nodiscard]] bool ReadCompletionCycle(uint32_t slot, uint32_t& outCycle13) noexcept;
     [[nodiscard]] bool DecodeHardwarePacketIndex(uint32_t cmdPtr,
                                                  uint32_t& outPacketIndex) noexcept;
 
@@ -165,6 +196,15 @@ private:
     uint32_t nextTransmitCycle_{0};
     bool cycleTrackingValid_{false};
     uint32_t lastHwTimestamp_{0};
+    // Lap-detection baseline: the 13-bit cycle in which a completed
+    // descriptor went out, and that descriptor's absolute packet index as the
+    // (aliased) completion cursor counts it. Invalid until the first
+    // completed descriptor is seen.
+    uint32_t lastCompletionCycle_{0};
+    uint64_t lastCompletionAbs_{0};
+    bool haveLastCompletionCycle_{false};
+    // A lap seen once; acted on only when the next reading agrees.
+    uint32_t pendingLaps_{0};
 
     Counters counters_{};
 };
