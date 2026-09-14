@@ -1325,6 +1325,23 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
                          std::memory_order_relaxed),
                      txFillCursor_, completion, committedAfter, margin,
                      pcmSource_ != nullptr ? 1u : 0u);
+
+            // What actually went onto the wire, as opposed to what the producer
+            // believed it published. `dataPackets` counts payloads the content
+            // inspector examined; `zeroPcm` counts those whose every quad was
+            // zero or the idle-slot word. zeroPcm == dataPackets is silence on
+            // the wire regardless of how healthy `filled` looks, and
+            // dataPackets == 0 means the inspector never ran at all (a null
+            // audioControl), which is a different fault with the same symptom.
+            const auto& wire = control->txWirePayloadTelemetry;
+            ASFW_LOG(DirectAudio,
+                     "[TxWireSum] dataPackets=%llu zeroPcm=%llu dropouts=%llu "
+                     "infoQuads=%llu maxAbs24=%u",
+                     wire.dataPackets.load(std::memory_order_relaxed),
+                     wire.zeroPcmPackets.load(std::memory_order_relaxed),
+                     wire.pcmDropouts.load(std::memory_order_relaxed),
+                     wire.infoQuads.load(std::memory_order_relaxed),
+                     wire.maxAbs24.load(std::memory_order_relaxed));
         }
     }
 
