@@ -2,6 +2,7 @@
 
 #include "ASFWAudioDriver.h"
 #include "ASFWProtocolBooleanControl.h"
+#include "ASFWEmulatedMuteControl.h"
 #include "ASFWProtocolLevelControl.h"
 #include "../Config/AudioDriverConfig.hpp"
 
@@ -31,6 +32,15 @@ void ResetBoolControlSlots(BoolControlSlot* slots, uint32_t count);
     ASFWAudioDriver& driver,
     IOUserAudioDevice& audioDevice,
     OSSharedPtr<ASFWProtocolLevelControl>& outControl,
-    float& outInitialDecibels);
+    float& outInitialDecibels,
+    float& outMinDecibels);
+
+/// Publish an output mute standing in for hardware that has none: it writes the minimum
+/// level and restores the volume control's level on unmute (Runtime/OutputMutePolicy.hpp).
+/// Only meaningful for a device that already has the output volume control.
+[[nodiscard]] kern_return_t AddEmulatedOutputMuteToDevice(
+    ASFWAudioDriver& driver,
+    IOUserAudioDevice& audioDevice,
+    OSSharedPtr<ASFWEmulatedMuteControl>& outControl);
 
 } // namespace ASFW::Isoch::Audio

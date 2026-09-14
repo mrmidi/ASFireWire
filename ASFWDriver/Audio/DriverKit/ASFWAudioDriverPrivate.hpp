@@ -50,6 +50,8 @@ struct AudioDriverDeviceState {
     ASFW::Isoch::Audio::BoolControlSlot boolControls[ASFW::Isoch::Audio::kMaxBoolControls]{};
     // Hardware master output volume, when the protocol backs one.
     OSSharedPtr<ASFWProtocolLevelControl> outputVolumeControl{};
+    // Output mute, standing in for hardware that has none.
+    OSSharedPtr<ASFWEmulatedMuteControl> outputMuteControl{};
 
     char inputPlugName[64]{};
     char outputPlugName[64]{};
@@ -236,6 +238,9 @@ struct AudioDriverRuntimeState {
     std::atomic<uint32_t> outputVolumeControlDbBits{0};
     /// Last deviceReportedOutputLevel acted on; timer-queue only.
     uint32_t lastAppliedReportedLevel{0};
+    /// Minimum of the volume control's range, as float bits: the level mute writes.
+    std::atomic<uint32_t> outputVolumeMinDbBits{0};
+    std::atomic<bool> outputMuted{false};
 };
 
 struct ASFWAudioDriver_IVars {

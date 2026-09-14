@@ -1,0 +1,41 @@
+//
+// ASFWEmulatedMuteControl.iig
+// ASFWDriver
+//
+// Output mute for a device whose hardware has none: muting writes the minimum output
+// level, unmuting writes the level the volume control still holds. See
+// Runtime/OutputMutePolicy.hpp for why this exists and what it costs.
+//
+
+#ifndef ASFWEmulatedMuteControl_h
+#define ASFWEmulatedMuteControl_h
+
+#include <AudioDriverKit/IOUserAudioBooleanControl.iig>
+
+class ASFWAudioDriver;
+
+class ASFWEmulatedMuteControl : public IOUserAudioBooleanControl
+{
+public:
+    static OSSharedPtr<ASFWEmulatedMuteControl> Create(
+        ASFWAudioDriver* ownerDriver,
+        bool initialMuted,
+        IOUserAudioObjectPropertyElement controlElement,
+        IOUserAudioObjectPropertyScope controlScope) LOCALONLY;
+
+    bool init(
+        ASFWAudioDriver* ownerDriver,
+        bool initialMuted,
+        IOUserAudioObjectPropertyElement controlElement,
+        IOUserAudioObjectPropertyScope controlScope) LOCALONLY;
+
+    void free() override;
+
+    kern_return_t HandleChangeControlValue(bool in_control_value) override;
+};
+
+struct ASFWEmulatedMuteControl_IVars {
+    ASFWAudioDriver* ownerDriver;
+};
+
+#endif /* ASFWEmulatedMuteControl_h */

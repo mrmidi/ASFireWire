@@ -84,6 +84,10 @@ public:
         TYPE(IOTimerDispatchSource::TimerOccurred);
 
     void ArmControlSyncTimer() LOCALONLY;
+
+    // Output mute standing in for hardware that has none: writes the minimum level, and
+    // on unmute the level the volume control holds (Runtime/OutputMutePolicy.hpp).
+    kern_return_t ApplyOutputMute(bool muted) LOCALONLY;
 };
 
 #endif /* ASFWAudioDriver_h */

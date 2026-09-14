@@ -234,6 +234,11 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
             (void)ivars->device.audioNub->RegisterDeviceClockChangedAction(nullptr);
         }
+        // A driver that stops while muted would leave the device at its minimum level
+        // with no control left to raise it. Best effort: the device may already be gone.
+        if (ivars->runtime.outputMuted.load(std::memory_order_relaxed)) {
+            (void)ApplyOutputMute(false);
+        }
         CancelControlSyncTimer(*ivars);
         ivars->txPreparationAction.reset();
         ivars->txPreparationQueue.reset();

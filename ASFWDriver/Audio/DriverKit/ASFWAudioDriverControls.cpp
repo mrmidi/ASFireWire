@@ -6,6 +6,7 @@
 //
 
 #include "ASFWAudioDriverPrivate.hpp"
+#include "Runtime/OutputMutePolicy.hpp"
 
 kern_return_t ASFWAudioDriver::ApplyProtocolBooleanControl(uint32_t classIdFourCC,
                                                            uint32_t element,
@@ -50,6 +51,31 @@ constexpr uint64_t kHostChangeHoldoffNs = 400'000'000;
     return classIdFourCC == ASFW::Audio::kControlClassVolume &&
            scopeFourCC == ASFW::Audio::kControlScopeOutput &&
            element == ASFW::Audio::kControlElementMain;
+}
+
+/// Send a level to the device without disturbing the volume control's own value, which is
+/// what unmute comes back to. Stamps the host-change time so the knob reconciler holds off
+/// while the write is in flight.
+[[nodiscard]] kern_return_t WriteOutputLevelToDevice(ASFWAudioDriver_IVars& ivars,
+                                                     float decibels) {
+    if (!ivars.device.audioNub) {
+        return kIOReturnNotReady;
+    }
+    ivars.runtime.lastHostLevelChangeTicks.store(mach_absolute_time(),
+                                                 std::memory_order_relaxed);
+    return ivars.device.audioNub->WriteProtocolControl(
+        kLevelKind, ASFW::Audio::kControlClassVolume, ASFW::Audio::kControlScopeOutput,
+        ASFW::Audio::kControlElementMain, ASFW::Audio::DecibelBits(decibels));
+}
+
+/// Drop a mute that no longer reflects the device, and tell the HAL.
+void ClearOutputMuteControl(ASFWAudioDriver_IVars& ivars) {
+    if (!ivars.runtime.outputMuted.exchange(false, std::memory_order_relaxed)) {
+        return;
+    }
+    if (ivars.device.outputMuteControl) {
+        (void)ivars.device.outputMuteControl->SetControlValue(false);
+    }
 }
 
 } // namespace
@@ -108,15 +134,34 @@ kern_return_t ASFWAudioDriver::ApplyProtocolLevelControl(uint32_t classIdFourCC,
     if (!ivars || !ivars->device.audioNub) {
         return kIOReturnNotReady;
     }
-    if (IsMasterOutputVolume(classIdFourCC, scopeFourCC, element)) {
-        ivars->runtime.outputVolumeControlDbBits.store(ASFW::Audio::DecibelBits(decibels),
-                                                       std::memory_order_relaxed);
-        ivars->runtime.lastHostLevelChangeTicks.store(mach_absolute_time(),
-                                                      std::memory_order_relaxed);
+    if (!IsMasterOutputVolume(classIdFourCC, scopeFourCC, element)) {
+        return ivars->device.audioNub->WriteProtocolControl(
+            kLevelKind, classIdFourCC, scopeFourCC, element,
+            ASFW::Audio::DecibelBits(decibels));
     }
-    return ivars->device.audioNub->WriteProtocolControl(
-        kLevelKind, classIdFourCC, scopeFourCC, element,
-        ASFW::Audio::DecibelBits(decibels));
+
+    // Moving the slider while muted unmutes, as it does everywhere else in macOS.
+    ClearOutputMuteControl(*ivars);
+    ivars->runtime.outputVolumeControlDbBits.store(ASFW::Audio::DecibelBits(decibels),
+                                                   std::memory_order_relaxed);
+    return WriteOutputLevelToDevice(*ivars, decibels);
+}
+
+kern_return_t ASFWAudioDriver::ApplyOutputMute(bool muted)
+{
+    if (!ivars || !ivars->device.audioNub) {
+        return kIOReturnNotReady;
+    }
+    if (!ivars->device.outputVolumeControl) {
+        return kIOReturnUnsupported; // nothing to attenuate
+    }
+    ivars->runtime.outputMuted.store(muted, std::memory_order_relaxed);
+    const float controlDb = ASFW::Audio::DecibelsFromBits(
+        ivars->runtime.outputVolumeControlDbBits.load(std::memory_order_relaxed));
+    const float minDb = ASFW::Audio::DecibelsFromBits(
+        ivars->runtime.outputVolumeMinDbBits.load(std::memory_order_relaxed));
+    return WriteOutputLevelToDevice(
+        *ivars, ASFW::Audio::DriverKit::LevelForMute(muted, controlDb, minDb));
 }
 
 void ASFWAudioDriver::ArmControlSyncTimer()
@@ -172,9 +217,16 @@ void ReconcileReportedOutputLevel(ASFWAudioDriver_IVars& ivars) noexcept {
 
     const float controlDb = ASFW::Audio::DecibelsFromBits(
         ivars.runtime.outputVolumeControlDbBits.load(std::memory_order_relaxed));
-    const float delta = reportedDb > controlDb ? reportedDb - controlDb : controlDb - reportedDb;
-    if (delta < 0.25f) {
-        return; // the device confirmed the level the host set
+    const float minDb = ASFW::Audio::DecibelsFromBits(
+        ivars.runtime.outputVolumeMinDbBits.load(std::memory_order_relaxed));
+    const DeviceReportDecision decision =
+        DecideDeviceReport(ivars.runtime.outputMuted.load(std::memory_order_relaxed),
+                           reportedDb, controlDb, minDb);
+    if (decision.clearMute) {
+        ClearOutputMuteControl(ivars);
+    }
+    if (!decision.applyToControl) {
+        return; // our own mute echoed back, or the level the host already set
     }
     // SetDecibelValue notifies the HAL without re-entering HandleChange*, so this does not
     // write the value back to the device.

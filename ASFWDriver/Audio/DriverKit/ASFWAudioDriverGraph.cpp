@@ -60,6 +60,7 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     ASFW::Isoch::Audio::ResetBoolControlSlots(device.boolControls,
                                               ASFW::Isoch::Audio::kMaxBoolControls);
     device.outputVolumeControl.reset();
+    device.outputMuteControl.reset();
     for (uint32_t index = 0; index < device.boolControlCount; ++index) {
         device.boolControls[index].descriptor = parsedConfig.boolControls[index];
         device.boolControls[index].valid = true;
@@ -663,11 +664,21 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // Non-fatal like the other optional controls: a device without it is still a device.
     if (ivars.outputStream) {
         float initialDb = 0.0f;
+        float minDb = 0.0f;
         const kern_return_t volumeStatus = ASFW::Isoch::Audio::AddProtocolOutputVolumeToDevice(
-            driver, *ivars.audioDevice, ivars.device.outputVolumeControl, initialDb);
+            driver, *ivars.audioDevice, ivars.device.outputVolumeControl, initialDb, minDb);
         if (volumeStatus == kIOReturnSuccess) {
             ivars.runtime.outputVolumeControlDbBits.store(ASFW::Audio::DecibelBits(initialDb),
                                                           std::memory_order_relaxed);
+            ivars.runtime.outputVolumeMinDbBits.store(ASFW::Audio::DecibelBits(minDb),
+                                                      std::memory_order_relaxed);
+            ivars.runtime.outputMuted.store(false, std::memory_order_relaxed);
+
+            // The volume keys carry a mute key; this device has no mute register, so the
+            // control writes the minimum level instead (Runtime/OutputMutePolicy.hpp).
+            const kern_return_t muteStatus = ASFW::Isoch::Audio::AddEmulatedOutputMuteToDevice(
+                driver, *ivars.audioDevice, ivars.device.outputMuteControl);
+            ASFW_LOG(Audio, "ADK GRAPH op=device.AddOutputMute kr=0x%x", muteStatus);
         }
         ASFW_LOG(Audio, "ADK GRAPH op=device.AddProtocolOutputVolume kr=0x%x", volumeStatus);
     }

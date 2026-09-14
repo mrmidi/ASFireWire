@@ -144,7 +144,8 @@ kern_return_t AddProtocolOutputVolumeToDevice(
     ASFWAudioDriver& driver,
     IOUserAudioDevice& audioDevice,
     OSSharedPtr<ASFWProtocolLevelControl>& outControl,
-    float& outInitialDecibels) {
+    float& outInitialDecibels,
+    float& outMinDecibels) {
     using ASFW::Audio::kControlClassVolume;
     using ASFW::Audio::kControlElementMain;
     using ASFW::Audio::kControlScopeOutput;
@@ -194,10 +195,31 @@ kern_return_t AddProtocolOutputVolumeToDevice(
 
     outControl = control;
     outInitialDecibels = initialDb;
+    outMinDecibels = minDb;
     ASFW_LOG(Audio,
              "ASFWAudioDriver: Added hardware output volume range=[%d, %d] dB initialCentiDb=%d",
              static_cast<int>(minDb), static_cast<int>(maxDb),
              static_cast<int>(initialDb * 100.0f));
+    return kIOReturnSuccess;
+}
+
+kern_return_t AddEmulatedOutputMuteToDevice(
+    ASFWAudioDriver& driver,
+    IOUserAudioDevice& audioDevice,
+    OSSharedPtr<ASFWEmulatedMuteControl>& outControl) {
+    auto control = ASFWEmulatedMuteControl::Create(&driver,
+                                                   /*initialMuted=*/false,
+                                                   IOUserAudioObjectPropertyElementMain,
+                                                   IOUserAudioObjectPropertyScope::Output);
+    if (!control) {
+        return kIOReturnNoMemory;
+    }
+    const kern_return_t status = audioDevice.AddControl(control.get());
+    if (status != kIOReturnSuccess) {
+        return status;
+    }
+    outControl = control;
+    ASFW_LOG(Audio, "ASFWAudioDriver: Added output mute (level-backed)");
     return kIOReturnSuccess;
 }
 
