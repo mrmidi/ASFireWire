@@ -207,7 +207,24 @@ public:
         // bytes examined are the bytes the producer wrote and transport
         // accepted. Content knowledge stays on the audio side of the seam --
         // transport still receives only opaque bytes and metadata.
-        if (won && audioControl != nullptr) {
+        //
+        // SAMPLED, and that is load-bearing. Observe() walks every quad of the
+        // payload; running it on all ~8000 packets/s measurably slowed this
+        // path and pushed offers out of the selection pass into the finality
+        // pass, taking latePayloadRebindCount from 366 to 145389 at equal fill
+        // and doubling lateFillsUnavailable. A telemetry patch that alters the
+        // behaviour it measures cannot be used to explain it (see the same
+        // warning on staleSlotSeen above). Every packet is still inspected
+        // until the first audio quad is seen, so firstInfo is never missed;
+        // after that one packet in 64 is sampled, which is ample for maxAbs24
+        // and infoQuads. `dropouts` is consequently a sampled figure, not a
+        // per-packet one.
+        constexpr uint32_t kContentInspectSampleMask = 0x3F;
+        const bool inspect =
+            audioControl != nullptr &&
+            (!audioControl->txWirePayloadTelemetry.HasSeenInfo() ||
+             (packetIndex & kContentInspectSampleMask) == 0);
+        if (won && inspect) {
             const uint8_t* const content = payloadBase +
                 ASFW::Isoch::TxPayloadImageOffset(slotIdx, 1, slotStrideBytes);
             const auto observation = audioControl->txWirePayloadTelemetry.Observe(

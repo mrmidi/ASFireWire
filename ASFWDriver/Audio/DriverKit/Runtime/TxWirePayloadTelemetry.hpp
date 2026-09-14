@@ -38,6 +38,11 @@ struct TxWirePayloadTelemetry final {
         firstInfoSeen_ = false;
     }
 
+    /// Whether any audio quad has been observed yet. Callers sample this path
+    /// to keep inspection off the per-packet hot path; until the first info
+    /// quad is seen they must inspect every packet so firstInfo is not missed.
+    [[nodiscard]] bool HasSeenInfo() const noexcept { return firstInfoSeen_; }
+
     [[nodiscard]] TxWirePayloadObservation Observe(
         uint64_t packetIndex, const uint8_t* packetBytes,
         uint32_t payloadLength) noexcept {
