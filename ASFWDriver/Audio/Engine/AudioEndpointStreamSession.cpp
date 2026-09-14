@@ -1182,8 +1182,8 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
     if (target <= committedBefore) {
         const uint64_t idle = ++txPumpHorizonBehindEvents_;
         if (IsPowerOfTwo(idle)) {
-            ASFW_LOG_ERROR(
-                DirectAudio,
+            ASFW_LOG_LEVELED(
+                DirectAudio, ::ASFW::Logging::LogLevel::Debug,
                 "[TxHorizon] idle=%llu completion=%llu committed=%llu "
                 "target=%llu depth=%u slots=%u",
                 idle, completion, committedBefore, target,
@@ -1276,6 +1276,40 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
     control->RecordCommittedMargin(margin);
     control->counters.txPreparationWakeDispatches.fetch_add(1, std::memory_order_relaxed);
     control->counters.txPreparationDrainPasses.fetch_add(1, std::memory_order_relaxed);
+
+    // TX liveness heartbeat. The five-second block that used to carry this
+    // ([TxV3], [TxLead], [TxFill], [TxPrep], [Ledger]) still sits in
+    // ASFWAudioDriverZts.cpp's TxPreparationReady, which WP-6 replaced -- so
+    // since that move the driver has emitted no TX heartbeat at all and every
+    // one of these counters was computed and discarded. CLAUDE.md requires one
+    // coarse liveness/margin record to survive; this is it.
+    //
+    // `filled` is the load-bearing field. A stream can transmit a full packet
+    // count with healthy transport telemetry and still put pure silence on the
+    // wire -- that is c6803886's failure shape -- and `filled` is the only
+    // figure that separates the two. Do not remove it.
+    {
+        const uint64_t nowTicks = mach_absolute_time();
+        const uint64_t lastBeat =
+            control->txHeartbeatLastHostTicks.load(std::memory_order_relaxed);
+        if (lastBeat == 0 || nowTicks <= lastBeat ||
+            ASFW::Timing::hostTicksToNanos(nowTicks - lastBeat) >=
+                5'000'000'000ULL) {
+            control->txHeartbeatLastHostTicks.store(nowTicks,
+                                                    std::memory_order_relaxed);
+            const auto& fill = txStreamEngine_.Counters();
+            ASFW_LOG(DirectAudio,
+                     "[TxPrep] filled=%llu silent=%llu tooLate=%llu "
+                     "unavailable=%llu cursor=%llu completion=%llu "
+                     "committed=%llu margin=%llu bound=%u",
+                     fill.lateFillsPublished.load(std::memory_order_relaxed),
+                     fill.pcmSilenceSubstitutions.load(std::memory_order_relaxed),
+                     fill.lateFillsTooLate.load(std::memory_order_relaxed),
+                     fill.lateFillsUnavailable.load(std::memory_order_relaxed),
+                     txFillCursor_, completion, committedAfter, margin,
+                     pcmSource_ != nullptr ? 1u : 0u);
+        }
+    }
 
     // Acknowledge the request that woke us. Transport raises a new refill
     // request only while requested == handled (IsochTxDmaRing.cpp:1258); an
