@@ -158,10 +158,8 @@ kern_return_t ASFWAudioDriver::ApplyOutputMute(bool muted)
     ivars->runtime.outputMuted.store(muted, std::memory_order_relaxed);
     const float controlDb = ASFW::Audio::DecibelsFromBits(
         ivars->runtime.outputVolumeControlDbBits.load(std::memory_order_relaxed));
-    const float minDb = ASFW::Audio::DecibelsFromBits(
-        ivars->runtime.outputVolumeMinDbBits.load(std::memory_order_relaxed));
-    return WriteOutputLevelToDevice(
-        *ivars, ASFW::Audio::DriverKit::LevelForMute(muted, controlDb, minDb));
+    return WriteOutputLevelToDevice(*ivars,
+                                    ASFW::Audio::DriverKit::LevelForMute(muted, controlDb));
 }
 
 void ASFWAudioDriver::ArmControlSyncTimer()

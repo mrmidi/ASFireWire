@@ -19,13 +19,19 @@
 
 namespace ASFW::Audio::DriverKit {
 
-/// Half a step of the MOTU's 0.5 dB level: close enough to call two levels equal.
+/// Closer than this and two levels are the same as far as the control is concerned;
+/// it is well under one step of the device's level register at any usable volume.
 inline constexpr float kLevelEpsilonDb = 0.25f;
+
+/// Far below any real control range: the device clamps it to "off". The control's own
+/// minimum is not silence -- on a register that is linear in amplitude the bottom step is
+/// merely the quietest audible one.
+inline constexpr float kSilenceDecibels = -144.0f;
 
 /// The level to send the device for a mute state. Unmuting returns to the level the volume
 /// control holds, which mute never changed.
-[[nodiscard]] constexpr float LevelForMute(bool muted, float controlDb, float minDb) noexcept {
-    return muted ? minDb : controlDb;
+[[nodiscard]] constexpr float LevelForMute(bool muted, float controlDb) noexcept {
+    return muted ? kSilenceDecibels : controlDb;
 }
 
 /// What to do when the device reports the level of its own knob.

@@ -11,14 +11,18 @@ namespace {
 
 using ASFW::Audio::DriverKit::DecideDeviceReport;
 using ASFW::Audio::DriverKit::DeviceReportDecision;
+using ASFW::Audio::DriverKit::kSilenceDecibels;
 using ASFW::Audio::DriverKit::LevelForMute;
 
-constexpr float kMinDb = -64.0f;
+/// The quietest step of an amplitude-linear register, not silence.
+constexpr float kMinDb = -42.1442f;
 
 TEST(OutputMutePolicyTests, MuteWritesSilenceAndUnmuteReturnsToTheControlLevel) {
-    EXPECT_FLOAT_EQ(LevelForMute(/*muted=*/true, -12.0f, kMinDb), kMinDb);
+    // Not the control's minimum: that is still audible on this device.
+    EXPECT_FLOAT_EQ(LevelForMute(/*muted=*/true, -12.0f), kSilenceDecibels);
+    EXPECT_LT(kSilenceDecibels, kMinDb);
     // The control keeps its value through the mute, so it is the level to come back to.
-    EXPECT_FLOAT_EQ(LevelForMute(/*muted=*/false, -12.0f, kMinDb), -12.0f);
+    EXPECT_FLOAT_EQ(LevelForMute(/*muted=*/false, -12.0f), -12.0f);
 }
 
 TEST(OutputMutePolicyTests, OurOwnMuteEchoIsIgnored) {

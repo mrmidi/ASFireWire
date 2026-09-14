@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// MotuRegisterDsp tests: the output-volume encoding (0..0x80 <-> -64..0 dB, ctl-services
-// register_dsp_ctls.rs:841-846) and the DSP message scan over capture data blocks (Linux
-// motu-register-dsp-message-parser.c:160-170).
+// MotuRegisterDsp tests: the output-volume encoding and the DSP message scan over capture
+// data blocks (Linux motu-register-dsp-message-parser.c:160-170).
+//
+// The register is linear in AMPLITUDE (ALSA DB_LINEAR, alsa-ctl-tlv-codec items.rs:123-128),
+// so the conversion is checked against std::log10/std::pow rather than a dB-per-step rule.
+// Reading it as 0.5 dB per step is what made every level far too loud on hardware.
 
 #include "Audio/Wire/MOTU/MotuRegisterDsp.hpp"
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -37,27 +41,45 @@ struct Payload {
     }
 };
 
-TEST(MotuRegisterDspTests, OutputVolumeSpansMinus64To0DbInHalfDbSteps) {
-    EXPECT_FLOAT_EQ(OutputVolumeToDb(kOutputVolumeMaxRaw), 0.0f);
-    EXPECT_FLOAT_EQ(OutputVolumeToDb(0), -64.0f);
-    EXPECT_FLOAT_EQ(OutputVolumeToDb(0x40), -32.0f);
-    EXPECT_FLOAT_EQ(OutputVolumeToDb(0x7F), -0.5f);
+TEST(MotuRegisterDspTests, OutputVolumeIsLinearInAmplitude) {
+    EXPECT_NEAR(OutputVolumeToDb(kOutputVolumeMaxRaw), 0.0f, 0.001f);   // unity
+    EXPECT_NEAR(OutputVolumeToDb(0x40), -6.0206f, 0.01f);               // half amplitude
+    EXPECT_NEAR(OutputVolumeToDb(0x20), -12.041f, 0.01f);
+    EXPECT_NEAR(OutputVolumeToDb(0x08), -24.082f, 0.01f);               // NOT -60 dB
+    EXPECT_NEAR(OutputVolumeToDb(1), ASFW::Encoding::Motu::kOutputVolumeMinDb, 0.01f);
+    // Raw 0 is off; the published floor stands in for -inf.
+    EXPECT_FLOAT_EQ(OutputVolumeToDb(0), ASFW::Encoding::Motu::kOutputVolumeMinDb);
     // Out-of-range raw values clamp rather than reading as a positive gain.
-    EXPECT_FLOAT_EQ(OutputVolumeToDb(0xFF), 0.0f);
+    EXPECT_NEAR(OutputVolumeToDb(0xFF), 0.0f, 0.001f);
 }
 
-TEST(MotuRegisterDspTests, OutputVolumeRoundTripsEveryStep) {
-    for (uint32_t raw = 0; raw <= kOutputVolumeMaxRaw; ++raw) {
+TEST(MotuRegisterDspTests, ConversionsMatchTheReferenceFormulaWithoutLibm) {
+    // dB = 20 * log10(raw / 128), the DB_LINEAR definition.
+    for (uint32_t raw = 1; raw <= kOutputVolumeMaxRaw; ++raw) {
+        const float expected =
+            20.0f * std::log10(static_cast<float>(raw) / static_cast<float>(kOutputVolumeMaxRaw));
+        EXPECT_NEAR(OutputVolumeToDb(static_cast<uint8_t>(raw)), expected, 0.01f) << raw;
+    }
+    for (float db = -42.0f; db <= 0.0f; db += 0.25f) {
+        const auto expected =
+            static_cast<uint32_t>(std::lround(128.0 * std::pow(10.0, db / 20.0)));
+        EXPECT_NEAR(OutputVolumeFromDb(db), expected, 1) << db;
+    }
+}
+
+TEST(MotuRegisterDspTests, OutputVolumeRoundTripsEveryAudibleStep) {
+    for (uint32_t raw = 1; raw <= kOutputVolumeMaxRaw; ++raw) {
         EXPECT_EQ(OutputVolumeFromDb(OutputVolumeToDb(static_cast<uint8_t>(raw))), raw) << raw;
     }
 }
 
-TEST(MotuRegisterDspTests, OutputVolumeFromDbRoundsAndClamps) {
-    EXPECT_EQ(OutputVolumeFromDb(-12.0f), 0x68);
-    EXPECT_EQ(OutputVolumeFromDb(-12.2f), 0x68);  // nearest half-dB step
-    EXPECT_EQ(OutputVolumeFromDb(-12.3f), 0x67);
+TEST(MotuRegisterDspTests, OutputVolumeFromDbClampsAndSilences) {
+    EXPECT_EQ(OutputVolumeFromDb(0.0f), kOutputVolumeMaxRaw);
     EXPECT_EQ(OutputVolumeFromDb(6.0f), kOutputVolumeMaxRaw);
-    EXPECT_EQ(OutputVolumeFromDb(-100.0f), 0);
+    EXPECT_EQ(OutputVolumeFromDb(-6.0206f), 0x40);
+    // Below the last step the register goes off, which is how mute reaches true silence.
+    EXPECT_EQ(OutputVolumeFromDb(-60.0f), 0);
+    EXPECT_EQ(OutputVolumeFromDb(-144.0f), 0);
     EXPECT_EQ(OutputVolumeFromDb(std::numeric_limits<float>::quiet_NaN()), 0);
 }
 

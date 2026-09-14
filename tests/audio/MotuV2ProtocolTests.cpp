@@ -857,7 +857,8 @@ TEST(MotuV2ProtocolVolumeTests, UltraLiteBacksTheMasterOutputVolume) {
     ASFW::Audio::ControlInfo info{};
     ASSERT_TRUE(protocol.DescribeControl(ASFW::Audio::kMasterOutputVolumeKey, info));
     EXPECT_TRUE(info.isSettable);
-    EXPECT_FLOAT_EQ(info.minDecibels, -64.0f);
+    // The register is linear in amplitude, so raw 1 (the quietest step) is about -42 dB.
+    EXPECT_NEAR(info.minDecibels, -42.1442f, 0.01f);
     EXPECT_FLOAT_EQ(info.maxDecibels, 0.0f);
 
     // Input volume on the same element is a different key and is not backed.
@@ -889,11 +890,11 @@ TEST(MotuV2ProtocolVolumeTests, WritingTheControlWritesTheMainVolumeRegister) {
               kIOReturnSuccess);
     ASSERT_EQ(bus.writes.size(), 1U);
     EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::MainOutputVolume));
-    EXPECT_EQ(bus.writes[0].value, 0x68U); // (-12 + 64) * 2, bare as ctl-services writes it
+    EXPECT_EQ(bus.writes[0].value, 0x20U); // 128 * 10^(-12/20), bare as ctl-services writes it
 
     ASFW::Audio::ControlValue read{};
     ASSERT_EQ(protocol.ReadControl(ASFW::Audio::kMasterOutputVolumeKey, read), kIOReturnSuccess);
-    EXPECT_FLOAT_EQ(read.decibels, -12.0f);
+    EXPECT_NEAR(read.decibels, -12.0f, 0.05f);
 }
 
 TEST(MotuV2ProtocolVolumeTests, ReadsWaitForTheDeviceUntilSeeded) {
@@ -907,5 +908,5 @@ TEST(MotuV2ProtocolVolumeTests, ReadsWaitForTheDeviceUntilSeeded) {
     bus.readValues[LowOf(Reg::MainOutputVolume)] = 0x50;
     ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
     ASSERT_EQ(protocol.ReadControl(ASFW::Audio::kMasterOutputVolumeKey, read), kIOReturnSuccess);
-    EXPECT_FLOAT_EQ(read.decibels, -24.0f);
+    EXPECT_NEAR(read.decibels, -4.08f, 0.05f); // 20 * log10(0x50 / 0x80)
 }

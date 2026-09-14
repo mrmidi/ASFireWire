@@ -42,6 +42,8 @@ MotuV2Protocol::MotuV2Protocol(Protocols::Ports::FireWireBusOps& busOps,
     , unitSwVersion_(unitSwVersion)
     , mainVolumeWriter_(
           [this](uint8_t value, MotuLevelWriter::DoneFn done) {
+              ASFW_LOG(Audio, "MotuV2Protocol: main volume -> raw=0x%02x centiDb=%d", value,
+                       static_cast<int>(Encoding::Motu::OutputVolumeToDb(value) * 100.0f));
               (void)io_.WriteQuadBE(
                   AddressOf(Reg::MainOutputVolume),
                   value,
