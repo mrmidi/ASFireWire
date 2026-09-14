@@ -85,8 +85,8 @@ bool MidiNubPublisher::EnsureNub(const MidiEndpointCapabilities& caps,
         return false;
     }
 
-    // Populate before the nub starts, so a matching ASFWMIDIDriver never sees
-    // a half-described endpoint.
+    // Create has already started the nub. Publish the endpoint properties now;
+    // the nub resolves its endpoint identity when the first MIDI lease starts.
     OSDictionary* rawProperties = nullptr;
     kr = nub->CopyProperties(&rawProperties);
     auto properties = OSSharedPtr(rawProperties, OSNoRetain);

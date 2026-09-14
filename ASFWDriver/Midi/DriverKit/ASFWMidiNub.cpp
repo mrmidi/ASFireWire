@@ -124,7 +124,24 @@ kern_return_t IMPL(ASFWMidiNub, Stop) {
 }
 
 kern_return_t IMPL(ASFWMidiNub, StartMidiStreaming) {
-    if (ivars == nullptr || ivars->endpointId == 0) return kIOReturnNotReady;
+    if (ivars == nullptr) return kIOReturnNotReady;
+    // IOService::Create has already run Start before MidiNubPublisher adds
+    // endpoint properties. Resolve the published identity on the first lease,
+    // then retain it for the matching stop even if properties are withdrawn.
+    if (ivars->endpointId == 0) {
+        OSDictionary* rawProps = nullptr;
+        const kern_return_t propsKr = CopyProperties(&rawProps);
+        auto props = OSSharedPtr(rawProps, OSNoRetain);
+        if (propsKr != kIOReturnSuccess) return propsKr;
+        auto* endpoint = props
+            ? OSDynamicCast(OSNumber, props->getObject(ASFW::Midi::NubKeys::kEndpointId))
+            : nullptr;
+        if (endpoint != nullptr) ivars->endpointId = endpoint->unsigned64BitValue();
+        if (ivars->endpointId == 0) {
+            ASFW_LOG_ERROR(Midi, "ASFWMidiNub: cannot start MIDI without published endpoint identity");
+            return kIOReturnNotReady;
+        }
+    }
     auto* parent = OSDynamicCast(ASFWDriver, ivars->parentDriver);
     if (!parent) return kIOReturnNotReady;
     auto* ctx = static_cast<ServiceContext*>(parent->GetServiceContext());
