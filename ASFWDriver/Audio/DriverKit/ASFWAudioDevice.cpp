@@ -436,14 +436,44 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             return !requireRxReplay || control->rxSequenceReplay.IsEstablished();
         };
 
+        // Record which of the two conditions gated the start, separately. The
+        // whole point of this gate is the claim that a cold start is held up by
+        // the replay and a restart is not; one combined duration cannot show
+        // that, and the claim stays unverified.
+        constexpr uint32_t kNeverReady = ~uint32_t{0};
         uint32_t ztsWaitMs = 0;
-        while (ztsWaitMs < initialClockAnchorTimeoutMs &&
-               (ivars.runtime.lastHalZeroTimestampHostTicks.load(
-                    std::memory_order_acquire) == 0 ||
-                !replayEstablished())) {
+        uint32_t anchorReadyMs = kNeverReady;
+        uint32_t replayReadyMs = kNeverReady;
+        for (;;) {
+            const bool haveAnchor =
+                ivars.runtime.lastHalZeroTimestampHostTicks.load(
+                    std::memory_order_acquire) != 0;
+            const bool haveReplay = replayEstablished();
+            if (haveAnchor && anchorReadyMs == kNeverReady) {
+                anchorReadyMs = ztsWaitMs;
+            }
+            if (haveReplay && replayReadyMs == kNeverReady) {
+                replayReadyMs = ztsWaitMs;
+            }
+            if ((haveAnchor && haveReplay) ||
+                ztsWaitMs >= initialClockAnchorTimeoutMs) {
+                break;
+            }
             IOSleep(1);
             ++ztsWaitMs;
         }
+
+        // -1 means that condition never became true within the timeout.
+        ASFW_LOG(Audio,
+                 "[StartGate] requireReplay=%u anchorMs=%d replayMs=%d "
+                 "totalMs=%u timeoutMs=%u source=%{public}s",
+                 requireRxReplay ? 1u : 0u,
+                 anchorReadyMs == kNeverReady
+                     ? -1 : static_cast<int>(anchorReadyMs),
+                 replayReadyMs == kNeverReady
+                     ? -1 : static_cast<int>(replayReadyMs),
+                 ztsWaitMs, initialClockAnchorTimeoutMs,
+                 requireRxReplay ? "rx-clocked" : "tx-clocked");
         const uint64_t initialZtsHostTicks =
             ivars.runtime.lastHalZeroTimestampHostTicks.load(
                 std::memory_order_acquire);
