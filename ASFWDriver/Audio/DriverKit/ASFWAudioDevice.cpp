@@ -408,10 +408,39 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         // That period, not this loop, is what sets the cost -- shortening it is
         // the cheap lever if start latency ever needs attacking, at the price of
         // the HAL's maximum buffer size, which ADK derives from the same period.
+        // A clock anchor alone is not readiness. Linux's DICE start waits after
+        // GLOBAL_ENABLE for every stream to reach ready_processing and aborts
+        // the start if it does not (dice-stream.c:457,
+        // amdtp_domain_wait_ready, READY_TIMEOUT_MS = 200), and it derives the
+        // host->device presentation-time sequence by replaying the device's own
+        // rather than synthesising one -- amdtp_domain_start(d, 0,
+        // replay_seq=true, replay_on_the_fly=false), whose MEMO notes that some
+        // devices are strict about an invalid sequence of presentation time in
+        // the CIP header.
+        //
+        // We had the anchor half of that and not the replay half: StartIO
+        // returned as soon as any ZTS existed, which can be published while the
+        // replay is still bootstrapping. The stream then runs with no
+        // device-derived presentation time, which is consistent with an
+        // observed Saffire cold start that transmitted correct audio the device
+        // never presented, while a restart -- inheriting an established replay
+        // -- played normally.
+        //
+        // RX-clocked endpoints only. A TX-clock-master profile (M-Audio,
+        // Weiss) never establishes an RX replay by design, so requiring one
+        // would hang its start.
+        const bool requireRxReplay =
+            control->hardwareTimeline.Source() ==
+            ASFW::Audio::Runtime::HardwareTimelineSource::Receive;
+        const auto replayEstablished = [&]() noexcept {
+            return !requireRxReplay || control->rxSequenceReplay.IsEstablished();
+        };
+
         uint32_t ztsWaitMs = 0;
-        while (ivars.runtime.lastHalZeroTimestampHostTicks.load(
-                   std::memory_order_acquire) == 0 &&
-               ztsWaitMs < initialClockAnchorTimeoutMs) {
+        while (ztsWaitMs < initialClockAnchorTimeoutMs &&
+               (ivars.runtime.lastHalZeroTimestampHostTicks.load(
+                    std::memory_order_acquire) == 0 ||
+                !replayEstablished())) {
             IOSleep(1);
             ++ztsWaitMs;
         }
@@ -424,6 +453,19 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 "ASFWAudioDevice: initial hardware ZTS timed out after %u ms",
                 ztsWaitMs);
             kr = failStart(kIOReturnTimeout, "WaitForInitialHardwareZts");
+            return;
+        }
+        // Separate branch on purpose: "no clock at all" and "clock but no
+        // device-derived sequence" need different fixes and must not collapse
+        // into one timeout status.
+        if (!replayEstablished()) {
+            ASFW_LOG(
+                Audio,
+                "ASFWAudioDevice: RX sequence replay not established after %u ms "
+                "(clock anchor present); refusing to start with a synthesised "
+                "presentation-time sequence",
+                ztsWaitMs);
+            kr = failStart(kIOReturnTimeout, "WaitForRxSequenceReplay");
             return;
         }
         ASFW_LOG(
