@@ -1098,7 +1098,16 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
         // Expected briefly at start: the transmit context begins completing
         // inside StartStreaming(), before StartSessionLocked sets streaming_.
         // A count that keeps climbing after start is not that.
+        //
+        // Acknowledge anyway. Declining is fine; leaving the request
+        // outstanding is not, because transport would then coalesce every
+        // later completion and never call back again -- a transient decline
+        // during start would silence the pump permanently.
         ++txPumpDeclinedNotStreaming_;
+        if (auto* pending = txSlotProvider_.queueControl) {
+            pending->MarkRefillHandled(
+                pending->refillRequestGeneration.load(std::memory_order_acquire));
+        }
         return;
     }
 
@@ -1267,6 +1276,16 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
     control->RecordCommittedMargin(margin);
     control->counters.txPreparationWakeDispatches.fetch_add(1, std::memory_order_relaxed);
     control->counters.txPreparationDrainPasses.fetch_add(1, std::memory_order_relaxed);
+
+    // Acknowledge the request that woke us. Transport raises a new refill
+    // request only while requested == handled (IsochTxDmaRing.cpp:1258); an
+    // unacknowledged request makes every later completion take the coalesce
+    // branch, leave out.refillRequestGeneration at zero, and never call this
+    // back. One missed acknowledgement therefore silences the pump for the rest
+    // of the stream, which is exactly what happened: one pump call at
+    // completion=7, committedEnd frozen at the prefill, then the hardware
+    // lapped the ring into an uncommitted slot and fatally stopped.
+    queue->MarkRefillHandled(requested);
 }
 
 } // namespace ASFW::Audio
