@@ -893,12 +893,26 @@ struct AudioTransportControlBlock final {
             sampleFrame, hostTicks, hostNanosPerSampleQ8);
     }
 
-    void ResetForStart() noexcept {
-        isSessionStreaming.store(false, std::memory_order_relaxed);
+    /// Reset the per-start state of this control block.
+    ///
+    /// `joiningLiveSession` is set when another lease already holds the shared
+    /// transport running -- in practice a MIDI lease on the WP-6
+    /// AudioEndpointStreamSession. The shared timing then belongs to that
+    /// session, not to the audio client now opening, and clearing it re-anchors
+    /// the host clock and drops the RX replay sequence underneath a stream that
+    /// is still on the wire.
+    ///
+    /// Client-side IO statistics, counters and telemetry are reset either way:
+    /// those describe the client that is starting, so a fresh start and a join
+    /// both want them zeroed.
+    void ResetForStart(bool joiningLiveSession = false) noexcept {
+        if (!joiningLiveSession) {
+            isSessionStreaming.store(false, std::memory_order_relaxed);
+            hostClockAnchor.Reset();
+        }
         client.Reset();
         device.Reset();
         counters.Reset();
-        hostClockAnchor.Reset();
 
         ioCallbackGeneration.store(0, std::memory_order_relaxed);
         ioLastOperation.store(0, std::memory_order_relaxed);
@@ -1032,7 +1046,13 @@ struct AudioTransportControlBlock final {
 
         // Reset RX members
         rxSytCadence.Reset();
-        rxSequenceReplay.Reset();
+        if (!joiningLiveSession) {
+            // The replay sequence is derived from the device's own transmit
+            // stream and is what gives host->device packets a device-derived
+            // presentation time. Dropping it mid-stream forces a bootstrap
+            // while the wire is still running.
+            rxSequenceReplay.Reset();
+        }
         rxReplayEntries.store(0, std::memory_order_relaxed);
         rxReplayEpochResets.store(0, std::memory_order_relaxed);
         rxCursorCorrections.store(0, std::memory_order_relaxed);

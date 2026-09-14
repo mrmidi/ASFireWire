@@ -262,7 +262,22 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             return;
         }
 
-        control->ResetForStart();
+        // Decide this BEFORE the reset. ResetForStart clears isSessionStreaming,
+        // so reading it afterwards always returns false -- which made the
+        // "adopt existing epoch" branch below unreachable and forced a new
+        // timeline epoch on every audio open, including opens that join a
+        // session another lease is already streaming.
+        const bool joiningLiveSession =
+            control->isSessionStreaming.load(std::memory_order_acquire) &&
+            control->hardwareTimeline.Epoch() != 0;
+        if (joiningLiveSession) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDevice: StartIO joining a live session epoch=%llu "
+                     "rate=%u; preserving clock anchor and RX replay",
+                     control->hardwareTimeline.Epoch(),
+                     control->hardwareTimeline.SampleRateHz());
+        }
+        control->ResetForStart(joiningLiveSession);
         ivars.runtime.txPlanBusTicksValid = false;
         ivars.runtime.lastTxPlanBusTicks = 0;
         ivars.runtime.txCorrelationUnwrap = {};
@@ -327,9 +342,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             // Distinguish joining an actively running session from starting a fresh one.
             // Adopt existing epoch only if the session is currently streaming, its epoch is valid,
             // and its active sample rate matches the requested rate.
+            // Uses the pre-reset observation above, not a re-read: the flag it
+            // used to test has been cleared by the time control reaches here.
             const bool isRunningSession =
-                control->isSessionStreaming.load(std::memory_order_acquire) &&
-                control->hardwareTimeline.Epoch() != 0 &&
+                joiningLiveSession &&
                 control->hardwareTimeline.SampleRateHz() == txConfig.sampleRate;
             uint64_t timelineEpoch = 0;
             if (isRunningSession) {
