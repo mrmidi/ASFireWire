@@ -364,6 +364,31 @@ IOReturn AudioCoordinator::StopAudioStreaming(EndpointId endpointId) noexcept {
     return status;
 }
 
+void AudioCoordinator::SetRuntimeTuning(
+    EndpointId endpointId,
+    const Shared::AudioRuntimeTuning& tuning) noexcept {
+    if (!endpointId || teardownRequested_.load(std::memory_order_acquire)) return;
+
+    AudioEndpointStreamSession* session = nullptr;
+    if (lock_) {
+        IOLockLock(lock_);
+        auto it = sessions_.find(endpointId);
+        if (it != sessions_.end()) session = it->second.get();
+        IOLockUnlock(lock_);
+    } else {
+        auto it = sessions_.find(endpointId);
+        if (it != sessions_.end()) session = it->second.get();
+    }
+    if (!session) return;
+
+    session->SetRuntimeTuning(tuning);
+    ASFW_LOG(Audio,
+             "[AudioSession] endpoint=%llu transmit depth published guard=%u "
+             "slack=%u prepared=%u",
+             endpointId.value, tuning.txOwnershipGuardPackets,
+             tuning.txDispatchSlackPackets, tuning.PreparedTargetPackets());
+}
+
 IOReturn AudioCoordinator::StartMidiStreaming(EndpointId endpointId) noexcept {
     if (!endpointId || teardownRequested_.load(std::memory_order_acquire)) {
         return kIOReturnNotReady;

@@ -596,6 +596,17 @@ void ASFWAudioNub::PublishRuntimeTuningGraph(
     uint32_t rate, uint32_t inputs, uint32_t outputs) {
     if (ivars && ivars->tuningStore) ivars->tuningStore->WithLock(
         [&](auto& state) { state.PublishGraph(active, rate, inputs, outputs); });
+
+    // The store above only feeds telemetry. The TX content pump lives in the
+    // core driver's stream session, so the committed depth has to be handed
+    // over explicitly -- otherwise the session runs on a default-constructed
+    // tuning and the transmit-depth control does nothing.
+    if (ivars && ivars->endpointId != 0) {
+        if (auto* coordinator = GetAudioCoordinator(ivars)) {
+            coordinator->SetRuntimeTuning(
+                ASFW::Audio::Devices::AudioEndpointId{ivars->endpointId}, active);
+        }
+    }
 }
 
 bool ASFWAudioNub::CopyRuntimeTuningSnapshot(

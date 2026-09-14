@@ -18,6 +18,7 @@
 #include "../Families/BeBoB/MAudio/MAudioDuplexPolicy.hpp"
 #include "../Ports/ITxPcmSource.hpp"
 #include "../Wire/AMDTP/RxSequenceReplay.hpp"
+#include "../Shared/AudioRuntimeTuning.hpp"
 #include "../Shared/TxCycleAnchor.hpp"
 
 #include <DriverKit/IOLib.h>
@@ -75,6 +76,14 @@ public:
     // Pump callback from IsochService / IsochTransmitContext
     void OnTxPreparation(uint64_t generation) noexcept;
 
+    /// Adopt the transmit depth the audio driver has committed.
+    ///
+    /// The pump lives in the core driver but the configured tuning lives in
+    /// ASFWAudioDriver_IVars, on the far side of the seam. Without this the
+    /// session falls back to a default-constructed AudioRuntimeTuning and the
+    /// transmit-depth control silently does nothing.
+    void SetRuntimeTuning(const Shared::AudioRuntimeTuning& tuning) noexcept;
+
     // Direct access to the stream engines for diagnostics/testing
     [[nodiscard]] Protocols::Audio::DICE::DiceTxStreamEngine& TxStreamEngine() noexcept {
         return txStreamEngine_;
@@ -123,6 +132,16 @@ private:
     DriverKit::ResolvedAudioStreamProfile resolvedProfile_{};
 
     IOLock* lock_{nullptr};
+
+    // Configured transmit depth, pushed across the seam by SetRuntimeTuning.
+    // Only PreparedTargetPackets() is consumed on the preparation path, so that
+    // one scalar is mirrored atomically rather than reading a multi-field
+    // struct that the Default queue may be rewriting. Defaults reproduce the
+    // previous behaviour when no tuning has been published yet.
+    Shared::AudioRuntimeTuning tuning_{};
+    std::atomic<uint32_t> preparedTargetPackets_{
+        Shared::AudioRuntimeTuning{}.PreparedTargetPackets()};
+
     bool audioLease_{false};
     bool midiLease_{false};
     bool streaming_{false};
@@ -154,6 +173,17 @@ private:
     uint64_t txFillCursor_{0};
     uint64_t txFillCursorAheadEvents_{0};
     uint64_t txNoCycleAnchorEvents_{0};
+
+    // Why the pump declined, attributed rather than collapsed. All four present
+    // as the same silence on the wire but need different fixes, so they are
+    // never summed into one figure.
+    uint64_t txPumpDeclinedDestroyed_{0};
+    uint64_t txPumpDeclinedNotStreaming_{0};
+    uint64_t txPumpDeclinedRaced_{0};
+    uint64_t txPumpDeclinedNoBinding_{0};
+    uint64_t txPumpDeclinedNoQueue_{0};
+    uint64_t txOwnershipShortEvents_{0};
+    uint64_t txPumpHorizonBehindEvents_{0};
     uint64_t txNoPresentationOriginEvents_{0};
     uint64_t txReplayResyncs_{0};
     uint64_t txCompletionStampCursor_{0};

@@ -880,7 +880,7 @@ uint32_t AudioEndpointStreamSession::PrepareTransmitSlots(
     const uint64_t epoch = control->hardwareTimeline.Epoch();
     uint64_t packetIndex = startPacketIndex;
     uint32_t prepared = 0;
-    const uint32_t preparedTarget = Shared::AudioRuntimeTuning{}.PreparedTargetPackets();
+    const uint32_t preparedTarget = preparedTargetPackets_.load(std::memory_order_acquire);
 
     while (packetIndex < requiredPacketIndex && prepared < preparedTarget) {
         int64_t normalizedTransmitTicks = 0;
@@ -1077,13 +1077,35 @@ void AudioEndpointStreamSession::NotifyLatePayloadOffers(
     }
 }
 
+void AudioEndpointStreamSession::SetRuntimeTuning(
+    const Shared::AudioRuntimeTuning& tuning) noexcept {
+    tuning_ = tuning;
+    preparedTargetPackets_.store(tuning.PreparedTargetPackets(),
+                                 std::memory_order_release);
+}
+
 void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
     (void)generation;
-    if (destroyed_.load(std::memory_order_acquire) || !streaming_) return;
+    // Every refusal below is counted separately. A single collapsed "the pump
+    // did not run" is what left an earlier TX stall with no evidence at all:
+    // the callback can decline for four unrelated reasons and they need
+    // different fixes. Counters only -- this is the completion path.
+    if (destroyed_.load(std::memory_order_acquire)) {
+        ++txPumpDeclinedDestroyed_;
+        return;
+    }
+    if (!streaming_) {
+        // Expected briefly at start: the transmit context begins completing
+        // inside StartStreaming(), before StartSessionLocked sets streaming_.
+        // A count that keeps climbing after start is not that.
+        ++txPumpDeclinedNotStreaming_;
+        return;
+    }
 
     inFlightCallbacks_.fetch_add(1, std::memory_order_acq_rel);
     if (destroyed_.load(std::memory_order_acquire) || !streaming_) {
         inFlightCallbacks_.fetch_sub(1, std::memory_order_release);
+        ++txPumpDeclinedRaced_;
         return;
     }
 
@@ -1095,10 +1117,14 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
     auto* queue = txSlotProvider_.queueControl;
     Runtime::DirectAudioBindingSnapshot bindingSnapshot{};
     if (!endpointRuntime_.CopyDirectAudioBinding(bindingSnapshot)) {
+        ++txPumpDeclinedNoBinding_;
         return;
     }
     auto* control = bindingSnapshot.control;
-    if (!queue || !control) return;
+    if (!queue || !control) {
+        ++txPumpDeclinedNoQueue_;
+        return;
+    }
 
     txSlotProvider_.audioControl = control;
     if (txSecondaryActive_) {
@@ -1110,7 +1136,8 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
     const bool hardwareWake = requested != handled;
     const uint64_t completion = queue->completionCursor.load(std::memory_order_acquire);
     const uint64_t committedBefore = queue->committedEnd.load(std::memory_order_acquire);
-    const uint64_t target = completion + Shared::AudioRuntimeTuning{}.PreparedTargetPackets();
+    const uint64_t target =
+        completion + preparedTargetPackets_.load(std::memory_order_acquire);
     const bool useMAudio = Families::BeBoB::MAudio::UsesSpecialDuplexPolicy(
         resolvedProfile_.Value().profileBuilder);
 
@@ -1123,8 +1150,51 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
     const uint32_t prepared = PrepareTransmitSlots(
         queue, control, committedBefore, target,
         useMAudio && mAudioInternalTxTiming_.IsArmed());
-    (void)prepared;
     const uint64_t committedAfter = queue->committedEnd.load(std::memory_order_acquire);
+
+    // Restored from the pre-WP-6 pump (ASFWAudioDriverZts.cpp:1569). This fires
+    // exactly when the producer failed to reach the horizon transport asked
+    // for, which is the condition that precedes every content-starvation fatal
+    // stop -- and it was the one diagnostic the move across the seam dropped,
+    // leaving committedEnd frozen at the prefill with nothing recorded.
+    //
+    // Note this is silent by construction whenever target <= committedBefore:
+    // the prefill commits numSlots packets while the horizon is only
+    // completion + PreparedTargetPackets(), so the pump legitimately has no
+    // work until completion climbs. Both figures are printed so that window is
+    // readable rather than inferred.
+    // The dead zone: the prefill commits numSlots packets while the horizon is
+    // only completion + PreparedTargetPackets(), so until completion climbs
+    // past (numSlots - depth) the loop in PrepareTransmitSlots cannot run at
+    // all and [TxOwnership] below stays silent by construction. That window is
+    // exactly where an observed TX stall died, with committedEnd frozen at the
+    // prefill and nothing recorded anywhere. Count it and print the three
+    // figures that decide it, so the window is measured rather than inferred.
+    if (target <= committedBefore) {
+        const uint64_t idle = ++txPumpHorizonBehindEvents_;
+        if (IsPowerOfTwo(idle)) {
+            ASFW_LOG_ERROR(
+                DirectAudio,
+                "[TxHorizon] idle=%llu completion=%llu committed=%llu "
+                "target=%llu depth=%u slots=%u",
+                idle, completion, committedBefore, target,
+                preparedTargetPackets_.load(std::memory_order_relaxed),
+                txSlotProvider_.numSlots);
+        }
+    }
+
+    if (committedAfter < target) {
+        const uint64_t events = ++txOwnershipShortEvents_;
+        if (IsPowerOfTwo(events)) {
+            ASFW_LOG_ERROR(
+                DirectAudio,
+                "[TxOwnership] short=%llu completion=%llu committedBefore=%llu "
+                "committed=%llu target=%llu prepared=%u depth=%u wake=%u",
+                events, completion, committedBefore, committedAfter, target,
+                prepared, preparedTargetPackets_.load(std::memory_order_relaxed),
+                hardwareWake ? 1u : 0u);
+        }
+    }
 
     // Content fill pass
     {

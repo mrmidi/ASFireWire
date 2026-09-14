@@ -84,6 +84,13 @@ public:
     [[nodiscard]] IOReturn StartAudioStreaming(
         EndpointId endpointId, Ports::ITxPcmSource* pcmSource) noexcept;
     [[nodiscard]] IOReturn StopAudioStreaming(EndpointId endpointId) noexcept;
+    /// Forward the audio driver's committed transmit depth to the endpoint's
+    /// stream session. The pump lives here in the core driver while the tuning
+    /// is configured in ASFWAudioDriver_IVars, so without this hop the session
+    /// silently runs on defaults.
+    void SetRuntimeTuning(EndpointId endpointId,
+                          const Shared::AudioRuntimeTuning& tuning) noexcept;
+
     [[nodiscard]] IOReturn StartMidiStreaming(EndpointId endpointId) noexcept;
     [[nodiscard]] IOReturn StopMidiStreaming(EndpointId endpointId) noexcept;
     [[nodiscard]] AudioEndpointStreamSession* GetStreamSession(
