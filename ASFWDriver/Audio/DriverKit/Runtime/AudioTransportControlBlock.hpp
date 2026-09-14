@@ -883,6 +883,7 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> captureRingOverruns{0};
     std::atomic<uint64_t> captureRingStarvations{0};
     RxCaptureBufferTelemetry rxCaptureBufferTelemetry{};
+    std::atomic<bool> isSessionStreaming{false};
 
     [[nodiscard]] HostClockAnchorPublishResult PublishHostClockAnchor(
         uint64_t sampleFrame,
@@ -893,6 +894,7 @@ struct AudioTransportControlBlock final {
     }
 
     void ResetForStart() noexcept {
+        isSessionStreaming.store(false, std::memory_order_relaxed);
         client.Reset();
         device.Reset();
         counters.Reset();

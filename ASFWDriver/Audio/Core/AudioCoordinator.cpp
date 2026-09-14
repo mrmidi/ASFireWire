@@ -27,6 +27,8 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
     , midiPublisher_(driver)
     , runtime_(runtime)
     , hostTransport_(isoch)
+    , isoch_(isoch)
+    , hardware_(hardware)
     , duplexCoordinator_(
           registry, runtime_, hostTransport_, hardware, &teardownRequested_,
           [this](EndpointId endpointId)
@@ -93,20 +95,7 @@ void AudioCoordinator::EndpointReady(
         AudioClockConfig{.sampleRateHz = profile->currentSampleRateHz},
         profile->runtimeCaps,
         runtime->CopyTopologyRevision());
-    if (lock_) {
-        IOLockLock(lock_);
-        invalidatedEndpoints_.erase(profile->endpointId);
-        IOLockUnlock(lock_);
-    }
 
-    if (!publisher_.EnsureNub(*profile, "resolved-endpoint")) {
-        runtime_.Remove(profile->endpointId);
-        duplexCoordinator_.CancelRemoteDevice(profile->endpointId);
-        ASFW_LOG_ERROR(Audio,
-                       "[AudioSession] endpoint=%llu nub publication failed",
-                       profile->endpointId.value);
-        return;
-    }
     // MIDI is projected from the same wire geometry the audio profile already
     // carries, and published as its own nub. A failure here is not allowed to
     // unwind the audio endpoint: an interface whose MIDI cannot be published is
@@ -115,6 +104,41 @@ void AudioCoordinator::EndpointReady(
     const auto midiCaps = ASFW::Midi::ProjectMidiCapabilities(
         profile->runtimeCaps, profile->observedGuid,
         runtime->CopyTopologyRevision());
+
+    if (lock_) {
+        IOLockLock(lock_);
+        invalidatedEndpoints_.erase(profile->endpointId);
+        sessions_[profile->endpointId] =
+            std::make_unique<AudioEndpointStreamSession>(
+                profile->endpointId, *runtime, isoch_, hardware_,
+                hostTransport_, duplexCoordinator_, *profile);
+        endpointMidiCaps_[profile->endpointId] = midiCaps;
+        IOLockUnlock(lock_);
+    } else {
+        sessions_[profile->endpointId] =
+            std::make_unique<AudioEndpointStreamSession>(
+                profile->endpointId, *runtime, isoch_, hardware_,
+                hostTransport_, duplexCoordinator_, *profile);
+        endpointMidiCaps_[profile->endpointId] = midiCaps;
+    }
+
+    if (!publisher_.EnsureNub(*profile, "resolved-endpoint")) {
+        runtime_.Remove(profile->endpointId);
+        duplexCoordinator_.CancelRemoteDevice(profile->endpointId);
+        if (lock_) {
+            IOLockLock(lock_);
+            sessions_.erase(profile->endpointId);
+            endpointMidiCaps_.erase(profile->endpointId);
+            IOLockUnlock(lock_);
+        } else {
+            sessions_.erase(profile->endpointId);
+            endpointMidiCaps_.erase(profile->endpointId);
+        }
+        ASFW_LOG_ERROR(Audio,
+                       "[AudioSession] endpoint=%llu nub publication failed",
+                       profile->endpointId.value);
+        return;
+    }
     if (!midiPublisher_.EnsureNub(midiCaps, profile->endpointId.value,
                                   profile->deviceName.c_str(),
                                   profile->deviceName.c_str(),
@@ -154,33 +178,6 @@ void AudioCoordinator::EndpointReady(
                              source.portCount, source.midiSlotIndex, source.dbs);
                 }
             }
-
-            // Transmit: relay the same seam through the audio nub, because the
-            // TX content pump still lives in ASFWAudioDriver. Geometry travels
-            // with it so the consumer cannot pair the block with a slot index
-            // from a different formation. WP-6 moves this to the shared
-            // session and the relay goes away.
-            const auto& destination = midiCaps.hostToDevice;
-            if (destination.Usable()) {
-                IOMemoryDescriptor* transportMemory = nullptr;
-                uint64_t relayEpoch = 0;
-                if (nub->CopyMidiTransportMemory(&transportMemory, &relayEpoch) ==
-                        kIOReturnSuccess && transportMemory != nullptr) {
-                    if (auto* audioNub = publisher_.GetNub(profile->endpointId)) {
-                        audioNub->SetMidiTransportSource(
-                            transportMemory, midiCaps.streamEpoch,
-                            destination.midiSlotIndex, destination.dbs,
-                            destination.portCount,
-                            destination.dbcAligned ? 1u : 0u);
-                        ASFW_LOG(Midi,
-                                 "[AudioSession] endpoint=%llu MIDI transmit relayed "
-                                 "ports=%u slot=%u dbs=%u",
-                                 profile->endpointId.value, destination.portCount,
-                                 destination.midiSlotIndex, destination.dbs);
-                    }
-                    transportMemory->release();
-                }
-            }
         }
     }
 
@@ -197,6 +194,11 @@ void AudioCoordinator::QuiesceEndpoint(EndpointId endpointId) noexcept {
     bool wasActive = false;
     if (lock_) {
         IOLockLock(lock_);
+        auto it = sessions_.find(endpointId);
+        if (it != sessions_.end() && it->second) {
+            (void)it->second->ReleaseAudioLease();
+            (void)it->second->ReleaseMidiLease();
+        }
         wasActive = activeEndpoint_ == endpointId;
         if (wasActive) activeEndpoint_ = {};
         IOLockUnlock(lock_);
@@ -236,101 +238,298 @@ void AudioCoordinator::TerminateEndpoint(EndpointId endpointId) noexcept {
     // Detach receive extraction before the nub goes away: the sink borrows the
     // nub's rings, so the borrow has to end first.
     hostTransport_.SetMidiReceiveTransport(nullptr, 0, {}, {});
-    // Drop the transmit relay too: the audio nub holds a retained reference to
-    // the MIDI nub's descriptor, and that reference must not outlive the nub
-    // that owns it.
-    if (auto* audioNub = publisher_.GetNub(endpointId)) {
-        audioNub->SetMidiTransportSource(nullptr, 0, 0, 0, 0, 1);
+    if (lock_) {
+        IOLockLock(lock_);
+        sessions_.erase(endpointId);
+        endpointMidiCaps_.erase(endpointId);
+        IOLockUnlock(lock_);
+    } else {
+        sessions_.erase(endpointId);
+        endpointMidiCaps_.erase(endpointId);
     }
     midiPublisher_.TerminateNub(endpointId.value);
     publisher_.TerminateNub(endpointId, "session-retired");
     duplexCoordinator_.ClearSession(endpointId);
 }
 
-IOReturn AudioCoordinator::StartStreaming(EndpointId endpointId) noexcept {
+IOReturn AudioCoordinator::StartAudioStreaming(
+    EndpointId endpointId, Ports::ITxPcmSource* pcmSource) noexcept {
     if (!endpointId || teardownRequested_.load(std::memory_order_acquire)) {
         return kIOReturnNotReady;
     }
     if (!runtime_.FindProfile(endpointId)) return kIOReturnNoDevice;
 
-    bool alreadyActive = false;
+    bool newlyClaimed = false;
+    AudioEndpointStreamSession* session = nullptr;
     if (lock_) {
         IOLockLock(lock_);
         if (invalidatedEndpoints_.contains(endpointId)) {
             IOLockUnlock(lock_);
             return kIOReturnNoDevice;
         }
-        if (!activeEndpoint_) {
-            activeEndpoint_ = endpointId;
-        } else if (activeEndpoint_ == endpointId) {
-            alreadyActive = true;
-        } else {
+        if (activeEndpoint_ && activeEndpoint_ != endpointId) {
             IOLockUnlock(lock_);
+            ASFW_LOG_WARNING(Audio,
+                             "[AudioSession] StartAudioStreaming rejected: "
+                             "endpoint=%llu conflicts with active=%llu",
+                             endpointId.value, activeEndpoint_.value);
             return kIOReturnBusy;
         }
+        auto it = sessions_.find(endpointId);
+        if (it != sessions_.end()) {
+            session = it->second.get();
+        }
+        if (session && !activeEndpoint_) {
+            activeEndpoint_ = endpointId;
+            newlyClaimed = true;
+        }
         IOLockUnlock(lock_);
+    } else {
+        auto it = sessions_.find(endpointId);
+        if (it != sessions_.end()) {
+            session = it->second.get();
+        }
     }
 
-    if (alreadyActive) {
-        return NotifySessionStreaming(endpointId, true)
-            ? kIOReturnSuccess
-            : kIOReturnNoDevice;
-    }
-
-    const IOReturn status = duplexCoordinator_.StartStreaming(endpointId);
-    if (status != kIOReturnSuccess) {
-        if (lock_) {
+    if (!session) {
+        if (newlyClaimed && lock_) {
             IOLockLock(lock_);
-            if (activeEndpoint_ == endpointId) activeEndpoint_ = {};
-            IOLockUnlock(lock_);
-        }
-        return status;
-    }
-    if (auto endpoint = runtime_.FindEndpointRuntime(endpointId)) {
-        endpoint->MarkStreaming(true);
-    }
-    if (!NotifySessionStreaming(endpointId, true)) {
-        (void)duplexCoordinator_.StopStreaming(endpointId);
-        if (auto endpoint = runtime_.FindEndpointRuntime(endpointId)) {
-            endpoint->MarkStreaming(false);
-        }
-        if (lock_) {
-            IOLockLock(lock_);
-            if (activeEndpoint_ == endpointId) activeEndpoint_ = {};
+            if (activeEndpoint_ == endpointId) {
+                activeEndpoint_ = {};
+            }
             IOLockUnlock(lock_);
         }
         return kIOReturnNoDevice;
     }
+
+    const IOReturn status = session->AcquireAudioLease(pcmSource);
+    if (status != kIOReturnSuccess) {
+        if (newlyClaimed && lock_) {
+            IOLockLock(lock_);
+            if (activeEndpoint_ == endpointId && !session->IsStreaming()) {
+                activeEndpoint_ = {};
+            }
+            IOLockUnlock(lock_);
+        }
+        return status;
+    }
+
+    if (auto endpoint = runtime_.FindEndpointRuntime(endpointId)) {
+        endpoint->MarkStreaming(true);
+    }
+    (void)NotifySessionStreaming(endpointId, true);
     return kIOReturnSuccess;
 }
 
-IOReturn AudioCoordinator::StopStreaming(EndpointId endpointId) noexcept {
+IOReturn AudioCoordinator::StopAudioStreaming(EndpointId endpointId) noexcept {
     if (!endpointId) return kIOReturnBadArgument;
+
+    AudioEndpointStreamSession* session = nullptr;
     if (lock_) {
         IOLockLock(lock_);
         if (invalidatedEndpoints_.contains(endpointId)) {
             IOLockUnlock(lock_);
             return kIOReturnSuccess;
         }
-        if (activeEndpoint_ && activeEndpoint_ != endpointId) {
-            IOLockUnlock(lock_);
-            return kIOReturnBusy;
+        auto it = sessions_.find(endpointId);
+        if (it != sessions_.end()) {
+            session = it->second.get();
         }
         IOLockUnlock(lock_);
+    } else {
+        auto it = sessions_.find(endpointId);
+        if (it != sessions_.end()) {
+            session = it->second.get();
+        }
     }
-    const IOReturn status = duplexCoordinator_.StopStreaming(endpointId);
-    if (status == kIOReturnSuccess && lock_) {
-        IOLockLock(lock_);
-        if (activeEndpoint_ == endpointId) activeEndpoint_ = {};
-        IOLockUnlock(lock_);
+
+    if (!session) {
+        return kIOReturnNoDevice;
     }
-    if (status == kIOReturnSuccess) {
+
+    const IOReturn status = session->ReleaseAudioLease();
+    if (status == kIOReturnSuccess && !session->IsStreaming()) {
+        if (lock_) {
+            IOLockLock(lock_);
+            if (activeEndpoint_ == endpointId) {
+                activeEndpoint_ = {};
+            }
+            IOLockUnlock(lock_);
+        }
         if (auto endpoint = runtime_.FindEndpointRuntime(endpointId)) {
             endpoint->MarkStreaming(false);
         }
         (void)NotifySessionStreaming(endpointId, false);
     }
     return status;
+}
+
+IOReturn AudioCoordinator::StartMidiStreaming(EndpointId endpointId) noexcept {
+    if (!endpointId || teardownRequested_.load(std::memory_order_acquire)) {
+        return kIOReturnNotReady;
+    }
+
+    bool newlyClaimed = false;
+    AudioEndpointStreamSession* session = nullptr;
+    Midi::MidiEndpointCapabilities caps{};
+    bool haveCaps = false;
+
+    if (lock_) {
+        IOLockLock(lock_);
+        if (invalidatedEndpoints_.contains(endpointId)) {
+            IOLockUnlock(lock_);
+            return kIOReturnNoDevice;
+        }
+        if (activeEndpoint_ && activeEndpoint_ != endpointId) {
+            IOLockUnlock(lock_);
+            ASFW_LOG_WARNING(Audio,
+                             "[AudioSession] StartMidiStreaming rejected: "
+                             "endpoint=%llu conflicts with active=%llu",
+                             endpointId.value, activeEndpoint_.value);
+            return kIOReturnBusy;
+        }
+        auto it = sessions_.find(endpointId);
+        if (it != sessions_.end()) {
+            session = it->second.get();
+        }
+        auto capsIt = endpointMidiCaps_.find(endpointId);
+        if (capsIt != endpointMidiCaps_.end()) {
+            caps = capsIt->second;
+            haveCaps = true;
+        }
+        if (session && haveCaps && caps.hostToDevice.Usable() && !activeEndpoint_) {
+            activeEndpoint_ = endpointId;
+            newlyClaimed = true;
+        }
+        IOLockUnlock(lock_);
+    } else {
+        auto it = sessions_.find(endpointId);
+        if (it != sessions_.end()) {
+            session = it->second.get();
+        }
+        auto capsIt = endpointMidiCaps_.find(endpointId);
+        if (capsIt != endpointMidiCaps_.end()) {
+            caps = capsIt->second;
+            haveCaps = true;
+        }
+    }
+
+    const auto rollbackClaim = [&]() {
+        if (newlyClaimed && lock_) {
+            IOLockLock(lock_);
+            if (activeEndpoint_ == endpointId && (!session || !session->IsStreaming())) {
+                activeEndpoint_ = {};
+            }
+            IOLockUnlock(lock_);
+        }
+    };
+
+    if (!session || !haveCaps || !caps.hostToDevice.Usable()) {
+        rollbackClaim();
+        return kIOReturnUnsupported;
+    }
+
+    auto* nub = reinterpret_cast<ASFWMidiNub*>(
+        midiPublisher_.GetNub(endpointId.value));
+    if (!nub) {
+        rollbackClaim();
+        return kIOReturnNoDevice;
+    }
+    auto* block = static_cast<ASFW::Midi::MidiTransportBlock*>(
+        nub->GetTransportBlock());
+    if (!block) {
+        rollbackClaim();
+        return kIOReturnNotReady;
+    }
+
+    const auto& dest = caps.hostToDevice;
+    auto profile = runtime_.FindProfile(endpointId);
+    const uint32_t sampleRate = profile ? profile->currentSampleRateHz : 48000;
+    const uint32_t sytInterval = (sampleRate <= 64000) ? 8u : 16u;
+
+    const IOReturn status = session->AcquireMidiLease(
+        block, caps.streamEpoch,
+        Encoding::MpxMidiGeometry{
+            .dbs = dest.dbs,
+            .midiSlotIndex = dest.midiSlotIndex,
+            .portCount = dest.portCount,
+            .dbcAligned = dest.dbcAligned,
+        },
+        sampleRate, sytInterval);
+
+    if (status == kIOReturnSuccess) {
+        if (auto endpoint = runtime_.FindEndpointRuntime(endpointId)) {
+            endpoint->MarkStreaming(true);
+        }
+        (void)NotifySessionStreaming(endpointId, true);
+        ASFW_LOG(Midi,
+                 "[AudioSession] endpoint=%llu MIDI streaming started epoch=%llu",
+                 endpointId.value, caps.streamEpoch);
+    } else {
+        rollbackClaim();
+    }
+    return status;
+}
+
+IOReturn AudioCoordinator::StopMidiStreaming(EndpointId endpointId) noexcept {
+    if (!endpointId) return kIOReturnBadArgument;
+
+    AudioEndpointStreamSession* session = nullptr;
+    if (lock_) {
+        IOLockLock(lock_);
+        auto it = sessions_.find(endpointId);
+        if (it != sessions_.end()) {
+            session = it->second.get();
+        }
+        IOLockUnlock(lock_);
+    } else {
+        auto it = sessions_.find(endpointId);
+        if (it != sessions_.end()) {
+            session = it->second.get();
+        }
+    }
+
+    if (!session) {
+        return kIOReturnNoDevice;
+    }
+
+    const IOReturn status = session->ReleaseMidiLease();
+    if (status == kIOReturnSuccess && !session->IsStreaming()) {
+        if (lock_) {
+            IOLockLock(lock_);
+            if (activeEndpoint_ == endpointId) {
+                activeEndpoint_ = {};
+            }
+            IOLockUnlock(lock_);
+        }
+        if (auto endpoint = runtime_.FindEndpointRuntime(endpointId)) {
+            endpoint->MarkStreaming(false);
+        }
+        (void)NotifySessionStreaming(endpointId, false);
+    }
+    return status;
+}
+
+AudioEndpointStreamSession* AudioCoordinator::GetStreamSession(
+    EndpointId endpointId) noexcept {
+    if (!endpointId) return nullptr;
+    if (lock_) {
+        IOLockLock(lock_);
+        auto it = sessions_.find(endpointId);
+        auto* ptr = (it != sessions_.end()) ? it->second.get() : nullptr;
+        IOLockUnlock(lock_);
+        return ptr;
+    }
+    auto it = sessions_.find(endpointId);
+    return (it != sessions_.end()) ? it->second.get() : nullptr;
+}
+
+IOReturn AudioCoordinator::StartStreaming(EndpointId endpointId) noexcept {
+    return StartAudioStreaming(endpointId, nullptr);
+}
+
+IOReturn AudioCoordinator::StopStreaming(EndpointId endpointId) noexcept {
+    return StopAudioStreaming(endpointId);
 }
 
 IOReturn AudioCoordinator::RequestClockConfig(
@@ -882,6 +1081,14 @@ void AudioCoordinator::BeginTeardown() noexcept {
     (void)StopHostTransport("service-teardown", false);
     if (lock_) {
         IOLockLock(lock_);
+        for (auto& [id, session] : sessions_) {
+            if (session) {
+                (void)session->ReleaseAudioLease();
+                (void)session->ReleaseMidiLease();
+            }
+        }
+        sessions_.clear();
+        endpointMidiCaps_.clear();
         activeEndpoint_ = {};
         IOLockUnlock(lock_);
     }

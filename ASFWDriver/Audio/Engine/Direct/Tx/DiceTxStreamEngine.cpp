@@ -237,7 +237,7 @@ uint64_t DiceTxStreamEngine::FreezeFrontier() const noexcept {
 
 TxSlotFillResult DiceTxStreamEngine::FillTransmitSlot(
     uint32_t packetIndex) noexcept {
-    if (!slotProvider_ || !pcmSource_) {
+    if (!slotProvider_ || (!pcmSource_ && midiBlock_ == nullptr)) {
         return TxSlotFillResult::NotFillable;
     }
     const uint32_t retention = std::min<uint32_t>(
@@ -262,15 +262,22 @@ TxSlotFillResult DiceTxStreamEngine::FillTransmitSlot(
         return TxSlotFillResult::Rejected;
     }
 
-    const auto result = pcmSource_->CopyExact(
-        {
-            .epoch = armed.epoch,
-            .firstFrame = armed.firstAudioFrame,
-            .frameCount = armed.framesInPacket,
-            .sourceChannelOffset = packetizer_.StreamConfig().sourceChannelOffset,
-            .channelCount = packetizer_.StreamConfig().pcmChannels,
-        },
-        pcmScratch_.data(), static_cast<uint32_t>(pcmScratch_.size()));
+    using CopyResult = ASFW::Audio::Ports::PcmCopyResult;
+    CopyResult result = CopyResult::Ready;
+    if (pcmSource_ != nullptr) {
+        result = pcmSource_->CopyExact(
+            {
+                .epoch = armed.epoch,
+                .firstFrame = armed.firstAudioFrame,
+                .frameCount = armed.framesInPacket,
+                .sourceChannelOffset = packetizer_.StreamConfig().sourceChannelOffset,
+                .channelCount = packetizer_.StreamConfig().pcmChannels,
+            },
+            pcmScratch_.data(), static_cast<uint32_t>(pcmScratch_.size()));
+    } else {
+        std::memset(pcmScratch_.data(), 0, sampleCount * sizeof(float));
+    }
+
     if (slotProvider_->SlotCount() != 0) {
         const uint64_t expectedGen = ASFW::Isoch::ExpectedTxCommitGeneration(
             packetIndex, slotProvider_->SlotCount());
@@ -282,8 +289,6 @@ TxSlotFillResult DiceTxStreamEngine::FillTransmitSlot(
             armed.framesInPacket,
             static_cast<uint8_t>(result));
     }
-
-    using CopyResult = ASFW::Audio::Ports::PcmCopyResult;
     switch (result) {
         case CopyResult::Ready:
             counters_.pcmCopiesReady.fetch_add(1, std::memory_order_relaxed);

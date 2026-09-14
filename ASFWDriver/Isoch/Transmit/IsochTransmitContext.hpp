@@ -114,6 +114,7 @@ public:
     /// covered by the recheck at the end of that refill instead.
     void ServiceLatePayloadOffers() noexcept;
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
+    void QuiesceTxPreparation() noexcept;
     void SetTxTransportFaultCallback(TxTransportFaultCallback callback) noexcept;
 
     State GetState() const noexcept { return state_; }

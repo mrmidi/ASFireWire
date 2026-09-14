@@ -11,6 +11,7 @@
 #include <MIDIDriverKit/MIDIDriverKit.h>
 
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWMidiDevice.h>
+#include <net.mrmidi.ASFW.ASFWDriver/ASFWMidiNub.h>
 
 #include "../../Logging/Logging.hpp"
 #include "../Transport/MidiTransportBlock.hpp"
@@ -19,6 +20,7 @@
 
 struct ASFWMidiDevice_IVars {
     OSSharedPtr<IOUserMIDIDriver> driver;
+    OSSharedPtr<ASFWMidiNub> midiNub;
     OSSharedPtr<IODispatchQueue> workQueue;
     uint32_t sourcePorts{0};
     uint32_t destinationPorts{0};
@@ -185,10 +187,16 @@ bool ASFWMidiDevice::init(IOUserMIDIDriver* driver,
 void ASFWMidiDevice::free() {
     if (ivars != nullptr) {
         ivars->driver.reset();
+        ivars->midiNub.reset();
         ivars->workQueue.reset();
     }
     IOSafeDeleteNULL(ivars, ASFWMidiDevice_IVars, 1);
     super::free();
+}
+
+void ASFWMidiDevice::SetMidiNub(IOService* nub) {
+    if (ivars == nullptr) return;
+    ivars->midiNub = OSSharedPtr(OSDynamicCast(ASFWMidiNub, nub), OSRetain);
 }
 
 uint32_t ASFWMidiDevice::SourcePortCount() const {
@@ -365,6 +373,14 @@ kern_return_t ASFWMidiDevice::StartIO() {
     __block kern_return_t error = kIOReturnSuccess;
     if (!ivars || !ivars->workQueue) return kIOReturnNotReady;
 
+    if (ivars->midiNub) {
+        const kern_return_t streamKr = ivars->midiNub->StartMidiStreaming();
+        if (streamKr != kIOReturnSuccess) {
+            ASFW_LOG_ERROR(Midi, "ASFWMidiDevice: StartMidiStreaming failed 0x%x", streamKr);
+            return streamKr;
+        }
+    }
+
     ivars->workQueue->DispatchSync(^{
         error = super::StartIO();
         if (error != kIOReturnSuccess) {
@@ -380,6 +396,10 @@ kern_return_t ASFWMidiDevice::StartIO() {
         auto online = OSSharedPtr(OSNumber::withNumber(uint64_t{0}, 32), OSNoRetain);
         if (online) SetProperty(IOUserMIDIProperty::Offline, online.get());
         ASFW_LOG(Midi, "ASFWMidiDevice: IO started");
+    } else {
+        if (ivars->midiNub) {
+            (void)ivars->midiNub->StopMidiStreaming();
+        }
     }
     return error;
 }
@@ -394,6 +414,9 @@ kern_return_t ASFWMidiDevice::StopIO() {
     ivars->workQueue->DispatchSync(^{
         error = super::StopIO();
     });
+    if (ivars->midiNub) {
+        (void)ivars->midiNub->StopMidiStreaming();
+    }
     if (error != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Midi, "ASFWMidiDevice: StopIO failed 0x%x", error);
     } else {

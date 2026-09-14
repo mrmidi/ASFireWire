@@ -54,6 +54,7 @@ protected:
             });
 
         hardware_.Attach(&owner_, mockDevice_);
+        mockDevice_->release();
     }
 
     IOService owner_;

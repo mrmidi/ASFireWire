@@ -256,7 +256,7 @@ void HandlePendingTimelineEpoch(ASFWAudioDriver_IVars& ivars) noexcept {
     return false;
 }
 
-bool ExpandCompletionStamp(
+[[maybe_unused]] bool ExpandCompletionStamp(
     ASFWAudioDriver_IVars& ivars,
     ASFW::Isoch::IsochTxQueueControl* queue,
     ASFW::Audio::Runtime::AudioTransportControlBlock* control,

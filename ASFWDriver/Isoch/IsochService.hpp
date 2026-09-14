@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -82,6 +83,18 @@ class IsochService {
     void SetReceiveConsumer(uint32_t streamIndex,
                             ASFW::Isoch::IIsochReceiveConsumer* consumer) noexcept;
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
+    void QuiesceTxPreparation() noexcept;
+#ifdef ASFW_HOST_TEST
+    [[nodiscard]] bool HasTxPreparationCallback() const noexcept {
+        return static_cast<bool>(txPreparationCallback_);
+    }
+    [[nodiscard]] bool HasTxIsochResources(uint32_t streamIndex = 0) const noexcept {
+        return streamIndex < kMaxStreamsPerDirection && static_cast<bool>(txPayloadSlab_[streamIndex]);
+    }
+    void SetStopTransmitResultForTesting(std::optional<kern_return_t> result) noexcept {
+        testStopTransmitResult_ = result;
+    }
+#endif
     // Fires on the isoch watchdog/poll thread; the callee must not block.
     void SetTxTransportFaultCallback(TxTransportFaultCallback callback) noexcept;
 
@@ -163,6 +176,9 @@ class IsochService {
 
     HardwareInterface* hardware_{nullptr};
     void UpdateStreamingActiveState() noexcept;
+#ifdef ASFW_HOST_TEST
+    std::optional<kern_return_t> testStopTransmitResult_{};
+#endif
 };
 
 } // namespace ASFW::Driver

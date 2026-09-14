@@ -688,7 +688,19 @@ void IsochTransmitContext::ObserveTransportProgress(
 
 void IsochTransmitContext::SetTxPreparationCallback(
     TxPreparationCallback callback) noexcept {
+    while (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+        IODelay(5);
+    }
     txPreparationCallback_ = std::move(callback);
+    refillInProgress_.clear(std::memory_order_release);
+}
+
+void IsochTransmitContext::QuiesceTxPreparation() noexcept {
+    while (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+        IODelay(5);
+    }
+    txPreparationCallback_ = {};
+    refillInProgress_.clear(std::memory_order_release);
 }
 
 void IsochTransmitContext::SetTxTransportFaultCallback(

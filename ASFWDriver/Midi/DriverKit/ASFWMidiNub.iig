@@ -50,6 +50,10 @@ public:
     virtual kern_return_t RegisterMidiReceiveAction(
         OSAction* action TYPE(MidiReceiveReady));
 
+    /// Streaming lifecycle for MIDI leases on the shared endpoint stream session.
+    virtual kern_return_t StartMidiStreaming();
+    virtual kern_return_t StopMidiStreaming();
+
     /// Core-driver-side access to the mapped rings.
     ///
     /// LOCALONLY: a direct C++ call, valid only for code holding this exact

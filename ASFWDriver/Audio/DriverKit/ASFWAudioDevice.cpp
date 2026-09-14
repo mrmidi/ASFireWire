@@ -151,49 +151,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
 
     ivars.workQueue->DispatchSync(^{
         bool streamingStarted = false;
-        bool txResourcesAllocated = false;
 
         const auto releaseTxResources = [&]() noexcept {
-            ivars.txPayloadMap = nullptr;
-            ivars.txMetadataMap = nullptr;
-            ivars.txControlMap = nullptr;
-            ivars.txPayloadBuffer = nullptr;
-            ivars.txMetadataBuffer = nullptr;
-            ivars.txControlBuffer = nullptr;
-            ivars.runtime.txSlotProvider.payloadBase = nullptr;
-            ivars.runtime.txSlotProvider.metadataRing = nullptr;
-            ivars.runtime.txSlotProvider.queueControl = nullptr;
-            ivars.runtime.txSlotProvider.audioControl = nullptr;
-            ivars.runtime.txSlotProvider.numSlots = 0;
-            ivars.runtime.txExecutionTimeline.queueControl = nullptr;
-            ivars.runtime.txStreamEngine.BindPcmSource(nullptr);
-
-            // MIDI transmit: detach the engine before releasing the mapping it
-            // points into. Reversing these two is the FW-60 shape -- the engine
-            // would hold a pointer into memory that has just been unmapped.
-            ivars.runtime.txStreamEngine.SetMidiTransport(nullptr, 0, {}, 0, 0);
-            ivars.txMidiTransportMap = nullptr;
-            ivars.txMidiTransportBuffer = nullptr;
-
-            // Secondary playback stream resources.
-            ivars.txPayloadMapSecondary = nullptr;
-            ivars.txMetadataMapSecondary = nullptr;
-            ivars.txControlMapSecondary = nullptr;
-            ivars.txPayloadBufferSecondary = nullptr;
-            ivars.txMetadataBufferSecondary = nullptr;
-            ivars.txControlBufferSecondary = nullptr;
-            ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
-            ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
-            ivars.runtime.txSlotProviderSecondary.queueControl = nullptr;
-            ivars.runtime.txSlotProviderSecondary.audioControl = nullptr;
-            ivars.runtime.txSlotProviderSecondary.numSlots = 0;
-            ivars.runtime.txStreamEngineSecondary.BindPcmSource(nullptr);
-            ivars.runtime.txSecondaryActive = false;
-
-            if (txResourcesAllocated && ivars.device.audioNub) {
-                ivars.device.audioNub->FreeTxIsochResources();
+            if (ivars.device.audioNub) {
+                ivars.device.audioNub->SetTxPcmSource(nullptr);
             }
-            txResourcesAllocated = false;
+            ivars.runtime.pcmPublicationCache.BeginEpoch(0);
         };
 
         const auto failStart =
@@ -206,8 +169,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             if (ivars.txPreparationQueue) {
                 ivars.txPreparationQueue->DispatchSync(^{ });
             }
-            ivars.runtime.mAudioPresentationObserver.Disarm();
-            ivars.runtime.mAudioInternalTxTiming.Disarm();
+            if (ivars.device.audioNub) {
+                ivars.device.audioNub->SetTxPcmSource(nullptr);
+            }
             if (streamingStarted && ivars.device.audioNub) {
                 const kern_return_t stopKr =
                     ivars.device.audioNub->StopAudioStreaming();
@@ -313,7 +277,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
         ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
 
-        // --- Allocate and map shared TX isoch resources ---
+        // --- Configure PCM publication cache and bind to session ---
         uint32_t initialClockAnchorTimeoutMs = 500;
         bool useMAudioTxClock = false;
         {
@@ -334,97 +298,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig");
                 return;
             }
-            const uint32_t numSlots =
-                ASFW::Audio::Shared::AudioTimingGeometry::kTxSharedSlotPackets;
-            const uint32_t maxPacketBytes =
-                8u + static_cast<uint32_t>(txConfig.framesPerDataPacket) * txConfig.dbs * 4u;
-            const uint32_t interruptInterval =
-                ASFW::Audio::Shared::AudioTimingGeometry::kTimingGroupPackets;
 
-            IOMemoryDescriptor* rawPayload = nullptr;
-            IOMemoryDescriptor* rawMetadata = nullptr;
-            IOMemoryDescriptor* rawControl = nullptr;
-
-            kern_return_t allocKr = ivars.device.audioNub->AllocateTxIsochResources(
-                0, numSlots, maxPacketBytes, interruptInterval,
-                &rawPayload, &rawMetadata, &rawControl
-            );
-            if (allocKr != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: AllocateTxIsochResources failed: 0x%x", allocKr);
-                kr = failStart(allocKr, "AllocateTxIsochResources");
-                return;
-            }
-            txResourcesAllocated = true;
-
-            ivars.txPayloadBuffer = ASFW::Common::AdoptRetained(rawPayload);
-            ivars.txMetadataBuffer = ASFW::Common::AdoptRetained(rawMetadata);
-            ivars.txControlBuffer = ASFW::Common::AdoptRetained(rawControl);
-
-            allocKr = ASFW::Common::CreateSharedMapping(ivars.txPayloadBuffer, ivars.txPayloadMap);
-            if (allocKr != kIOReturnSuccess) {
-                kr = failStart(allocKr, "MapTxPayload");
-                return;
-            }
-            allocKr = ASFW::Common::CreateSharedMapping(ivars.txMetadataBuffer, ivars.txMetadataMap);
-            if (allocKr != kIOReturnSuccess) {
-                kr = failStart(allocKr, "MapTxMetadata");
-                return;
-            }
-            allocKr = ASFW::Common::CreateSharedMapping(ivars.txControlBuffer, ivars.txControlMap);
-            if (allocKr != kIOReturnSuccess) {
-                kr = failStart(allocKr, "MapTxControl");
-                return;
-            }
-
-            uint8_t* payloadBase = reinterpret_cast<uint8_t*>(ivars.txPayloadMap->GetAddress());
-            // The slab must hold every payload image, not just one per slot.
-            // Both sides derive this from the same constant, so a mismatch is a
-            // build-time inconsistency -- but it would present as an
-            // out-of-bounds write into whatever follows the mapping, so it is
-            // checked rather than assumed.
-            const uint64_t requiredPayloadBytes =
-                static_cast<uint64_t>(numSlots) *
-                ASFW::Isoch::kTxPayloadImagesPerSlot * maxPacketBytes;
-            if (ivars.txPayloadMap->GetLength() < requiredPayloadBytes) {
-                ASFW_LOG(Audio,
-                         "ASFWAudioDevice: TX payload slab too small mapped=%llu required=%llu slots=%u images=%u stride=%u",
-                         ivars.txPayloadMap->GetLength(), requiredPayloadBytes,
-                         numSlots, ASFW::Isoch::kTxPayloadImagesPerSlot,
-                         maxPacketBytes);
-                kr = failStart(kIOReturnNoSpace, "ValidateTxPayloadSlab");
-                return;
-            }
-            auto* metadataRing = reinterpret_cast<ASFW::Isoch::IsochTxPacketMeta*>(ivars.txMetadataMap->GetAddress());
-            auto* queueControl = reinterpret_cast<ASFW::Isoch::IsochTxQueueControl*>(ivars.txControlMap->GetAddress());
-
-            // Clear stale runtime cursors before prefill: the shared slab can be
-            // reused across StartIO/StopIO probes (CoreAudio re-probes on a
-            // sample-rate change), and a carried-over committed cursor fails the IT
-            // prime ("committed prefill > slots").
-            queueControl->ResetProducerForStart();
-
-            ivars.runtime.txSlotProvider.payloadBase = payloadBase;
-            ivars.runtime.txSlotProvider.metadataRing = metadataRing;
-            ivars.runtime.txSlotProvider.queueControl = queueControl;
-            ivars.runtime.txSlotProvider.audioControl = control;
-            ivars.runtime.txSlotProvider.numSlots = numSlots;
-            ivars.runtime.txSlotProvider.slotStrideBytes = maxPacketBytes;
-
-            ivars.runtime.txExecutionTimeline.queueControl = queueControl;
-            if (ivars.runtime.txLatencySession) {
-                ivars.runtime.txLatencySession->SetQueueControl(queueControl);
-            }
-
-            if (!ivars.runtime.txStreamEngine.Configure(*profile, txConfig)) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: txStreamEngine Configure failed");
-                kr = failStart(kIOReturnError, "ConfigureTxStreamEngine");
-                return;
-            }
-            ASFW_LOG(Audio,
-                     "[AudioConfig] packetizer prepared endpoint=%llu rate=%u pcm=%u dbs=%u fdf=0x%02x syt=%u bytes=%u",
-                     ivars.device.endpointId, txConfig.sampleRate, txConfig.pcmChannels,
-                     txConfig.dbs, txConfig.fdf, txConfig.framesPerDataPacket,
-                     maxPacketBytes);
             ivars.runtime.pcmPublicationCache.BindTelemetry(
                 &control->pcmPublicationTelemetry);
             const uint32_t committedChannels =
@@ -450,68 +324,39 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 (useMAudioTxClock || ivars.device.inputChannelCount == 0)
                     ? ASFW::Audio::Runtime::HardwareTimelineSource::Transmit
                     : ASFW::Audio::Runtime::HardwareTimelineSource::Receive;
-            const uint64_t timelineEpoch = control->hardwareTimeline.BeginEpoch(
-                timelineSource,
-                ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO,
-                txConfig.sampleRate,
-                0);
-            if (timelineEpoch == 0) {
-                kr = failStart(kIOReturnUnsupported, "BeginHardwareTimeline");
-                return;
-            }
-            ASFW_LOG(
-                DirectAudio,
-                "[TimelineEpoch] epoch=%llu reason=start-io source=%u base=0 rate=%u",
-                timelineEpoch, static_cast<uint32_t>(timelineSource),
-                txConfig.sampleRate);
-            ivars.runtime.pcmPublicationCache.BeginEpoch(timelineEpoch);
-            ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);
-            ivars.runtime.txStreamEngine.BindPcmSource(
-                &ivars.runtime.pcmPublicationCache);
-            ivars.runtime.txStreamEngine.ResetForStart(0);
-            ivars.runtime.txReplayReader.Reset();
-
-            // Arm MIDI transmit if this endpoint publishes any. The seam is the
-            // MIDI nub's descriptor, relayed through the audio nub because the
-            // TX content pump still lives here; the mapping is retained for the
-            // stream's lifetime and dropped in the stop path below.
-            if (ivars.device.audioNub) {
-                IOMemoryDescriptor* midiMemory = nullptr;
-                uint64_t midiEpoch = 0;
-                uint32_t midiSlot = 0, midiDbs = 0, midiPorts = 0, midiAligned = 1;
-                if (ivars.device.audioNub->CopyMidiTransportMemory(
-                        &midiMemory, &midiEpoch, &midiSlot, &midiDbs, &midiPorts,
-                        &midiAligned) == kIOReturnSuccess && midiMemory != nullptr) {
-                    ivars.txMidiTransportBuffer =
-                        ASFW::Common::AdoptRetained(midiMemory);
-                    if (ASFW::Common::CreateSharedMapping(
-                            ivars.txMidiTransportBuffer,
-                            ivars.txMidiTransportMap) == kIOReturnSuccess &&
-                        ivars.txMidiTransportMap) {
-                        auto* block =
-                            reinterpret_cast<ASFW::Midi::MidiTransportBlock*>(
-                                ivars.txMidiTransportMap->GetAddress());
-                        const auto geometry = ASFW::Encoding::MpxMidiGeometry{
-                            .dbs = static_cast<uint8_t>(midiDbs),
-                            .midiSlotIndex = static_cast<uint8_t>(midiSlot),
-                            .portCount = static_cast<uint8_t>(midiPorts),
-                            .dbcAligned = midiAligned != 0,
-                        };
-                        ivars.runtime.txStreamEngine.SetMidiTransport(
-                            block, midiEpoch, geometry, txConfig.sampleRate,
-                            txConfig.framesPerDataPacket);
-                        ASFW_LOG(Midi,
-                                 "[TxMidi] armed ports=%u slot=%u dbs=%u rate=%u",
-                                 midiPorts, midiSlot, midiDbs,
-                                 txConfig.sampleRate);
-                    }
+            // Distinguish joining an actively running session from starting a fresh one.
+            // Adopt existing epoch only if the session is currently streaming, its epoch is valid,
+            // and its active sample rate matches the requested rate.
+            const bool isRunningSession =
+                control->isSessionStreaming.load(std::memory_order_acquire) &&
+                control->hardwareTimeline.Epoch() != 0 &&
+                control->hardwareTimeline.SampleRateHz() == txConfig.sampleRate;
+            uint64_t timelineEpoch = 0;
+            if (isRunningSession) {
+                timelineEpoch = control->hardwareTimeline.Epoch();
+                ASFW_LOG(
+                    DirectAudio,
+                    "[TimelineEpoch] epoch=%llu reason=start-io-adopt source=%u rate=%u",
+                    timelineEpoch, static_cast<uint32_t>(timelineSource),
+                    txConfig.sampleRate);
+            } else {
+                timelineEpoch = control->hardwareTimeline.BeginEpoch(
+                    timelineSource,
+                    ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO,
+                    txConfig.sampleRate,
+                    0);
+                if (timelineEpoch == 0) {
+                    kr = failStart(kIOReturnUnsupported, "BeginHardwareTimeline");
+                    return;
                 }
+                ASFW_LOG(
+                    DirectAudio,
+                    "[TimelineEpoch] epoch=%llu reason=start-io source=%u base=0 rate=%u",
+                    timelineEpoch, static_cast<uint32_t>(timelineSource),
+                    txConfig.sampleRate);
             }
+            ivars.runtime.pcmPublicationCache.BeginEpoch(timelineEpoch);
 
-            const uint32_t timingRateHz =
-                ivars.device.currentSampleRate > 0
-                    ? static_cast<uint32_t>(ivars.device.currentSampleRate)
-                    : 48000u;
             control->rxTransferDelayTicks.store(
                 profile->RxTransferDelayTicks(ivars.device.currentSampleRate),
                 std::memory_order_relaxed);
@@ -519,191 +364,26 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 profile->TxTransferDelayTicks(ivars.device.currentSampleRate),
                 std::memory_order_relaxed);
 
-            ASFW_LOG(Audio,
-                     "ASFWAudioDevice: Allocated & configured TX isoch resources channel=%u rxTransferDelay=%u txTransferDelay=%u (rate=%u)",
-                     txConfig.sid,
-                     control->rxTransferDelayTicks.load(std::memory_order_relaxed),
-                     control->txTransferDelayTicks.load(std::memory_order_relaxed),
-                     timingRateHz);
-
-        // --- Secondary playback stream (multi-stream DICE, e.g. Venice F32 = 2×16) ---
-        // Allocate/map/configure the second host IT pipeline. It shadows the
-        // master's per-packet timing in lockstep and encodes host output channels
-        // [pcmChannels, 2×pcmChannels). The matching secondary IT hardware context
-        // is created + wired to this slab by the duplex bringup
-        // (PrepareTransmitStream), which runs after this allocation.
-        if (profile->TxStreamCount() > 1) {
-            ASFW::Isoch::Audio::AudioStreamConfig txConfig2{};
-            if (!profile->BuildDefaultTxStreamConfig(txConfig2)) {
-                kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig2");
-                return;
+            if (ivars.device.audioNub) {
+                ivars.device.audioNub->SetTxPcmSource(&ivars.runtime.pcmPublicationCache);
             }
-            txConfig2.sourceChannelOffset = txConfig2.pcmChannels;
-
-            const uint32_t numSlots2 =
-                ASFW::Audio::Shared::AudioTimingGeometry::kTxSharedSlotPackets;
-            const uint32_t maxPacketBytes2 =
-                8u + static_cast<uint32_t>(txConfig2.framesPerDataPacket) * txConfig2.dbs * 4u;
-            const uint32_t interruptInterval2 =
-                ASFW::Audio::Shared::AudioTimingGeometry::kTimingGroupPackets;
-
-            IOMemoryDescriptor* rawPayload2 = nullptr;
-            IOMemoryDescriptor* rawMetadata2 = nullptr;
-            IOMemoryDescriptor* rawControl2 = nullptr;
-            kern_return_t allocKr2 = ivars.device.audioNub->AllocateTxIsochResources(
-                1, numSlots2, maxPacketBytes2, interruptInterval2,
-                &rawPayload2, &rawMetadata2, &rawControl2);
-            if (allocKr2 != kIOReturnSuccess) {
-                kr = failStart(allocKr2, "AllocateTxIsochResources2");
-                return;
-            }
-            ivars.txPayloadBufferSecondary = ASFW::Common::AdoptRetained(rawPayload2);
-            ivars.txMetadataBufferSecondary = ASFW::Common::AdoptRetained(rawMetadata2);
-            ivars.txControlBufferSecondary = ASFW::Common::AdoptRetained(rawControl2);
-
-            allocKr2 = ASFW::Common::CreateSharedMapping(ivars.txPayloadBufferSecondary, ivars.txPayloadMapSecondary);
-            if (allocKr2 != kIOReturnSuccess) { kr = failStart(allocKr2, "MapTxPayload2"); return; }
-            allocKr2 = ASFW::Common::CreateSharedMapping(ivars.txMetadataBufferSecondary, ivars.txMetadataMapSecondary);
-            if (allocKr2 != kIOReturnSuccess) { kr = failStart(allocKr2, "MapTxMetadata2"); return; }
-            allocKr2 = ASFW::Common::CreateSharedMapping(ivars.txControlBufferSecondary, ivars.txControlMapSecondary);
-            if (allocKr2 != kIOReturnSuccess) { kr = failStart(allocKr2, "MapTxControl2"); return; }
-
-            uint8_t* payloadBase2 = reinterpret_cast<uint8_t*>(ivars.txPayloadMapSecondary->GetAddress());
-            auto* metadataRing2 = reinterpret_cast<ASFW::Isoch::IsochTxPacketMeta*>(ivars.txMetadataMapSecondary->GetAddress());
-            auto* queueControl2 = reinterpret_cast<ASFW::Isoch::IsochTxQueueControl*>(ivars.txControlMapSecondary->GetAddress());
-
-            queueControl2->ResetProducerForStart();
-
-            ivars.runtime.txSlotProviderSecondary.payloadBase = payloadBase2;
-            ivars.runtime.txSlotProviderSecondary.metadataRing = metadataRing2;
-            ivars.runtime.txSlotProviderSecondary.queueControl = queueControl2;
-            ivars.runtime.txSlotProviderSecondary.audioControl = control;
-            ivars.runtime.txSlotProviderSecondary.numSlots = numSlots2;
-            ivars.runtime.txSlotProviderSecondary.slotStrideBytes = maxPacketBytes2;
-
-            if (!ivars.runtime.txStreamEngineSecondary.Configure(*profile, txConfig2)) {
-                kr = failStart(kIOReturnError, "ConfigureTxStreamEngine2");
-                return;
-            }
-            ivars.runtime.txStreamEngineSecondary.BindSlotProvider(&ivars.runtime.txSlotProviderSecondary);
-            ivars.runtime.txStreamEngineSecondary.BindPcmSource(
-                &ivars.runtime.pcmPublicationCache);
-            ivars.runtime.txStreamEngineSecondary.ResetForStart(0);
-            ivars.runtime.txSecondaryActive = true;
-
-            ASFW_LOG(Audio,
-                     "ASFWAudioDevice: Allocated & configured SECONDARY TX stream offset=%u dbs=%u slots=%u slotSize=%u rate=%u",
-                     txConfig2.sourceChannelOffset, txConfig2.dbs, numSlots2, maxPacketBytes2,
-                     txConfig2.sampleRate);
-        }
-        }
-
-        // --- Prefill TX ring ---
-        ASFW::Audio::DriverKit::PrefillTxRingBeforeStart(ivars);
-
-        auto* prefillControl = ivars.runtime.txSlotProvider.queueControl;
-        const uint64_t prefillExpose =
-            prefillControl
-                ? prefillControl->committedEnd.load(std::memory_order_acquire)
-                : 0;
-        const uint32_t expectedPrefill =
-            ivars.runtime.txSlotProvider.numSlots;
-        if (!prefillControl || prefillExpose != expectedPrefill) {
-            ASFW_LOG(
-                Audio,
-                "ASFWAudioDevice: StartIO failed - ValidateTxPrefill control=%u expose=%llu expected=%u",
-                prefillControl != nullptr,
-                prefillExpose,
-                expectedPrefill);
-            kr = failStart(kIOReturnNotReady, "ValidateTxPrefill");
-            return;
         }
 
         // --- Start hardware streaming ---
-        if (useMAudioTxClock) {
-            const auto startEpoch =
-                ASFW::Audio::Families::BeBoB::MAudio::StartEpoch{
-                    .value = ++ivars.runtime.mAudioTxClockEpoch};
-            const auto& txStreamConfig =
-                ivars.runtime.txStreamEngine.StreamConfig();
-            if (!ivars.runtime.mAudioPresentationObserver.Arm(
-                    startEpoch,
-                    control->hardwareTimeline.Epoch(),
-                    txStreamConfig.sampleRate,
-                    ASFW::Audio::Families::BeBoB::MAudio::
-                        InternalTxTransferDelayTicks(
-                            txStreamConfig.sampleRate,
-                            txStreamConfig.framesPerDataPacket))) {
-                ASFW_LOG(Audio,
-                         "ASFWAudioDevice: StartIO failed - M-Audio presentation observer arm failed rate=%u sytInterval=%u",
-                         txStreamConfig.sampleRate,
-                         txStreamConfig.framesPerDataPacket);
-                kr = failStart(kIOReturnNotReady, "ArmMAudioTxClock");
-                return;
-            }
-            // The M-Audio adapter retains completion-cycle anchoring, while
-            // the cadence itself is the shared rational IEC 61883-6 engine.
-            // Arm it from the freshly projected rate/geometry rather than
-            // retaining any previous-rate packet schedule.
-            if (!ivars.runtime.mAudioInternalTxTiming.Arm(
-                    startEpoch,
-                    txStreamConfig.sampleRate,
-                    txStreamConfig.framesPerDataPacket)) {
-                ASFW_LOG(Audio,
-                         "ASFWAudioDevice: StartIO failed - M-Audio TX timing rejected rate=%u frames=%u",
-                         txStreamConfig.sampleRate,
-                         txStreamConfig.framesPerDataPacket);
-                kr = failStart(kIOReturnUnsupported,
-                               "ArmMAudioInternalTxTiming");
-                return;
-            }
-            ASFW_LOG(Audio,
-                     "[AudioConfig] M-Audio TX cadence armed endpoint=%llu rate=%u syt=%u "
-                     "delay=%u source=rational-blocking",
-                     ivars.device.endpointId, txStreamConfig.sampleRate,
-                     txStreamConfig.framesPerDataPacket,
-                     ivars.runtime.mAudioInternalTxTiming.TransferDelayTicks());
-            // Arm the one-shot SYT seed trace for this stream. It prints the
-            // seed and the next few increments once the transmit anchor lands,
-            // then goes quiet; see AudioDriverRuntimeState.
-            ivars.runtime.sytSeedTraceRemaining =
-                ivars.runtime.kSytSeedTracePackets;
-            ivars.runtime.sytSeedTraceHavePrev = false;
-        }
         ivars.runtime.txActive.store(true, std::memory_order_release);
-        // A failed start can still leave a partially-started backend. Mark the
-        // attempt before the call so every non-success result is unwound with
-        // StopAudioStreaming rather than trusting failure to be side-effect free.
         streamingStarted = true;
         const kern_return_t startKr =
-            ivars.device.audioNub->StartAudioStreaming();
+            ivars.device.audioNub
+                ? ivars.device.audioNub->StartAudioStreaming()
+                : kIOReturnNotReady;
         if (startKr != kIOReturnSuccess) {
+            if (ivars.device.audioNub) {
+                ivars.device.audioNub->SetTxPcmSource(nullptr);
+            }
             ASFW_LOG(Audio,
                      "ASFWAudioDevice: StartAudioStreaming failed: 0x%x",
                      startKr);
             kr = failStart(startKr, "StartAudioStreaming");
-            return;
-        }
-
-        // StartAudioStreaming initializes the shared transport control block.
-        // Validate it immediately afterward; failStart stops the partially
-        // started stream before returning any mismatch to AudioDriverKit.
-        auto* txControl = ivars.runtime.txSlotProvider.queueControl;
-        if (!txControl ||
-            txControl->abiVersion != ASFW::Isoch::kTxQueueAbiVersion ||
-            txControl->numSlots != ASFW::Audio::Shared::AudioTimingGeometry::kTxSharedSlotPackets ||
-            txControl->slotStrideBytes != ivars.runtime.txSlotProvider.slotStrideBytes ||
-            txControl->maxPacketBytes != ivars.runtime.txSlotProvider.slotStrideBytes ||
-            txControl->interruptInterval != ASFW::Audio::Shared::AudioTimingGeometry::kTxPacketsPerGroup) {
-            ASFW_LOG(Audio,
-                     "ASFWAudioDevice: TX queue ABI/geometry mismatch abi=%u slots=%u stride=%u max=%u group=%u",
-                     txControl ? txControl->abiVersion : 0,
-                     txControl ? txControl->numSlots : 0,
-                     txControl ? txControl->slotStrideBytes : 0,
-                     txControl ? txControl->maxPacketBytes : 0,
-                     txControl ? txControl->interruptInterval : 0);
-            kr = failStart(
-                kIOReturnUnsupported, "ValidateTxTransportGeometry");
             return;
         }
 
@@ -921,50 +601,13 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         }
 
         if (ivars.device.audioNub) {
+            ivars.device.audioNub->SetTxPcmSource(nullptr);
             const kern_return_t stopKr = ivars.device.audioNub->StopAudioStreaming();
             if (stopKr != kIOReturnSuccess) {
                 ASFW_LOG(Audio, "ASFWAudioDevice: StopAudioStreaming failed: 0x%x", stopKr);
             }
         }
-
-        ivars.txPayloadMap = nullptr;
-        ivars.txMetadataMap = nullptr;
-        ivars.txControlMap = nullptr;
-        ivars.txPayloadBuffer = nullptr;
-        ivars.txMetadataBuffer = nullptr;
-        ivars.txControlBuffer = nullptr;
-        ivars.runtime.txSlotProvider.payloadBase = nullptr;
-        ivars.runtime.txSlotProvider.metadataRing = nullptr;
-        ivars.runtime.txSlotProvider.queueControl = nullptr;
-        ivars.runtime.txSlotProvider.audioControl = nullptr;
-        ivars.runtime.txSlotProvider.numSlots = 0;
-        ivars.runtime.txExecutionTimeline.queueControl = nullptr;
-        if (ivars.runtime.txLatencySession) {
-            ivars.runtime.txLatencySession->SetQueueControl(nullptr);
-        }
-        ivars.runtime.txStreamEngine.BindPcmSource(nullptr);
-
-        // Secondary playback stream teardown. Drop txSecondaryActive first so the
-        // RT pump/IO paths stop touching the secondary engine before its mapped
-        // slab is released.
-        ivars.runtime.txSecondaryActive = false;
-        ivars.txPayloadMapSecondary = nullptr;
-        ivars.txMetadataMapSecondary = nullptr;
-        ivars.txControlMapSecondary = nullptr;
-        ivars.txPayloadBufferSecondary = nullptr;
-        ivars.txMetadataBufferSecondary = nullptr;
-        ivars.txControlBufferSecondary = nullptr;
-        ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
-        ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
-        ivars.runtime.txSlotProviderSecondary.queueControl = nullptr;
-        ivars.runtime.txSlotProviderSecondary.audioControl = nullptr;
-        ivars.runtime.txSlotProviderSecondary.numSlots = 0;
-        ivars.runtime.txStreamEngineSecondary.BindPcmSource(nullptr);
         ivars.runtime.pcmPublicationCache.BeginEpoch(0);
-
-        if (ivars.device.audioNub) {
-            ivars.device.audioNub->FreeTxIsochResources();
-        }
 
         kr = super::StopIO(in_flags);
         if (inFlightToken != 0) {
@@ -1499,7 +1142,7 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
     }
     const auto apply = std::get<ASFW::Configuration::ApplyHardwareEffect>(transition.effects[0]);
     const auto* candidateCap = driverIvars.resolvedProfile.Value().ConfigurationFor(apply.transition.candidate);
-    if (!candidateCap ||
+    if (!driverIvars.device.audioNub || !candidateCap ||
         !ASFW::Audio::Shared::AudioTimingGeometry::IsV3SampleRate(apply.transition.candidate.sampleRate) ||
         !ASFW::Encoding::AmdtpRateGeometryForSampleRate(apply.transition.candidate.sampleRate).has_value()) {
         (void)dispatch(ASFW::Configuration::HardwareCompleted{

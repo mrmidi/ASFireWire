@@ -45,12 +45,29 @@ struct IOAddressSegment {
 class IOBufferMemoryDescriptor;
 
 class OSObject {
+private:
+    mutable std::atomic<uint32_t> refCount_{1};
 public:
+    OSObject() = default;
     virtual ~OSObject() = default;
+    OSObject(const OSObject&) = delete;
+    OSObject& operator=(const OSObject&) = delete;
+    OSObject(OSObject&&) = delete;
+    OSObject& operator=(OSObject&&) = delete;
+
     virtual bool init() { return true; }
     virtual void free() { delete this; }
-    void retain() {}
-    void release() {}
+    void retain() const {
+        refCount_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void release() const {
+        if (refCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            const_cast<OSObject*>(this)->free();
+        }
+    }
+    uint32_t getRetainCount() const {
+        return refCount_.load(std::memory_order_relaxed);
+    }
 };
 
 class OSAction : public OSObject {};
@@ -310,8 +327,14 @@ class IOBufferMemoryDescriptor : public IOMemoryDescriptor {
     void* buffer_{nullptr};
     uint64_t length_{0};
 public:
+    virtual ~IOBufferMemoryDescriptor() override {
+        if (buffer_) {
+            ::free(buffer_);
+            buffer_ = nullptr;
+        }
+    }
+
     virtual void free() override {
-        if (buffer_) ::free(buffer_);
         OSObject::free();
     }
 
@@ -325,6 +348,7 @@ public:
             delete desc;
             return kIOReturnNoMemory;
         }
+        std::memset(ptr, 0, length);
         desc->buffer_ = ptr;
         desc->length_ = length;
         *descriptor = desc;
@@ -425,34 +449,140 @@ static constexpr uint64_t kIOMemoryMapCacheModeInhibit = 0;
 template <typename T>
 class OSSharedPtr {
 public:
-    OSSharedPtr() = default;
-    OSSharedPtr(T* ptr, OSNoRetainTag) : ptr_(ptr) {}
-    OSSharedPtr(T* ptr, OSRetainTag) : ptr_(ptr) {}
-    OSSharedPtr(std::nullptr_t) : ptr_(nullptr) {}
+    OSSharedPtr() noexcept : ptr_(nullptr) {}
+    OSSharedPtr(std::nullptr_t) noexcept : ptr_(nullptr) {}
 
-    T* get() const { return ptr_.get(); }
-    T* operator->() const { return ptr_.get(); }
-    T& operator*() const { return *ptr_; }
-    explicit operator bool() const { return ptr_ != nullptr; }
+    OSSharedPtr(T* ptr, OSNoRetainTag) noexcept : ptr_(ptr) {}
+    OSSharedPtr(T* ptr, OSRetainTag) noexcept : ptr_(ptr) {
+        if (ptr_) ptr_->retain();
+    }
 
-    void reset() { ptr_.reset(); }
-    void reset(T* ptr, OSNoRetainTag) { ptr_.reset(ptr); }
-    void reset(T* ptr, OSRetainTag) { ptr_.reset(ptr); }
+    OSSharedPtr(const OSSharedPtr& other) noexcept : ptr_(other.ptr_) {
+        if (ptr_) ptr_->retain();
+    }
 
-    // Ownership transfer to the caller. Stub OSObject::release() is a no-op,
-    // so keep one strong ref alive (intentional leak) instead of letting the
-    // shared_ptr destroy an object the caller still holds.
-    T* detach() {
-        T* raw = ptr_.get();
-        if (raw) {
-            new std::shared_ptr<T>(ptr_);
+    template <typename U, typename = std::enable_if_t<std::is_convertible_v<U*, T*>>>
+    OSSharedPtr(const OSSharedPtr<U>& other) noexcept : ptr_(other.get()) {
+        if (ptr_) ptr_->retain();
+    }
+
+    OSSharedPtr(OSSharedPtr&& other) noexcept : ptr_(other.ptr_) {
+        other.ptr_ = nullptr;
+    }
+
+    template <typename U, typename = std::enable_if_t<std::is_convertible_v<U*, T*>>>
+    OSSharedPtr(OSSharedPtr<U>&& other) noexcept : ptr_(other.detach()) {}
+
+    ~OSSharedPtr() {
+        if (ptr_) {
+            ptr_->release();
+            ptr_ = nullptr;
         }
-        ptr_.reset();
+    }
+
+    OSSharedPtr& operator=(const OSSharedPtr& other) noexcept {
+        if (this != &other) {
+            T* old = ptr_;
+            ptr_ = other.ptr_;
+            if (ptr_) ptr_->retain();
+            if (old) old->release();
+        }
+        return *this;
+    }
+
+    template <typename U, typename = std::enable_if_t<std::is_convertible_v<U*, T*>>>
+    OSSharedPtr& operator=(const OSSharedPtr<U>& other) noexcept {
+        if (ptr_ != other.get()) {
+            T* old = ptr_;
+            ptr_ = other.get();
+            if (ptr_) ptr_->retain();
+            if (old) old->release();
+        }
+        return *this;
+    }
+
+    OSSharedPtr& operator=(OSSharedPtr&& other) noexcept {
+        if (this != &other) {
+            T* old = ptr_;
+            ptr_ = other.ptr_;
+            other.ptr_ = nullptr;
+            if (old) old->release();
+        }
+        return *this;
+    }
+
+    template <typename U, typename = std::enable_if_t<std::is_convertible_v<U*, T*>>>
+    OSSharedPtr& operator=(OSSharedPtr<U>&& other) noexcept {
+        if (ptr_ != other.get()) {
+            T* old = ptr_;
+            ptr_ = other.detach();
+            if (old) old->release();
+        }
+        return *this;
+    }
+
+    OSSharedPtr& operator=(std::nullptr_t) noexcept {
+        reset();
+        return *this;
+    }
+
+    T* get() const noexcept { return ptr_; }
+    T* operator->() const noexcept { return ptr_; }
+    T& operator*() const noexcept { return *ptr_; }
+    explicit operator bool() const noexcept { return ptr_ != nullptr; }
+
+    void reset() noexcept {
+        if (ptr_) {
+            T* old = ptr_;
+            ptr_ = nullptr;
+            old->release();
+        }
+    }
+
+    void reset(T* ptr, OSNoRetainTag) noexcept {
+        if (ptr_ != ptr) {
+            T* old = ptr_;
+            ptr_ = ptr;
+            if (old) old->release();
+        }
+    }
+
+    void reset(T* ptr, OSRetainTag) noexcept {
+        if (ptr) ptr->retain();
+        if (ptr_ != ptr) {
+            T* old = ptr_;
+            ptr_ = ptr;
+            if (old) old->release();
+        } else if (ptr) {
+            ptr->release();
+        }
+    }
+
+    T* detach() noexcept {
+        T* raw = ptr_;
+        ptr_ = nullptr;
         return raw;
     }
 
+    template <typename U>
+    bool operator==(const OSSharedPtr<U>& other) const noexcept { return ptr_ == other.get(); }
+    template <typename U>
+    bool operator!=(const OSSharedPtr<U>& other) const noexcept { return ptr_ != other.get(); }
+    bool operator==(std::nullptr_t) const noexcept { return ptr_ == nullptr; }
+    bool operator!=(std::nullptr_t) const noexcept { return ptr_ != nullptr; }
+
 private:
-    std::shared_ptr<T> ptr_;
+    T* ptr_{nullptr};
 };
+
+template <typename T>
+inline bool operator==(std::nullptr_t, const OSSharedPtr<T>& p) noexcept { return p.get() == nullptr; }
+template <typename T>
+inline bool operator!=(std::nullptr_t, const OSSharedPtr<T>& p) noexcept { return p.get() != nullptr; }
+
+template <typename T>
+OSSharedPtr(T*, OSNoRetainTag) -> OSSharedPtr<T>;
+template <typename T>
+OSSharedPtr(T*, OSRetainTag) -> OSSharedPtr<T>;
 
 #endif // ASFW_HOST_TEST

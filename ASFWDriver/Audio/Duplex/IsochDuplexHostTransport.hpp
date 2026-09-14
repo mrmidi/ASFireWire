@@ -90,6 +90,7 @@ class IIsochDuplexHostTransport {
     // AV/C stream-health signal: is the master RX replay cadence established?
     // Default false for mocks that don't model the RX layer.
     [[nodiscard]] virtual bool IsReceiveReplayEstablished() const noexcept { return false; }
+    virtual void NotifyClockAnchorReady(uint64_t generation) noexcept { (void)generation; }
 };
 
 class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
@@ -108,6 +109,7 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     void SetTxPreparationCallback(
         Driver::IsochService::TxPreparationCallback callback) noexcept;
     void SetClockAnchorReadyCallback(ClockAnchorReadyCallback callback) noexcept;
+    void NotifyClockAnchorReady(uint64_t generation) noexcept override;
     void SetTxTransportFaultCallback(TxTransportFaultCallback callback) noexcept;
 
     [[nodiscard]] kern_return_t BeginSplitDuplex(EndpointId endpointId) noexcept override;

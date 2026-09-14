@@ -2,6 +2,8 @@
 #include "Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "Audio/Ports/IAmdtpTxSlotProvider.hpp"
 #include "Audio/Runtime/PcmPublicationCache.hpp"
+#include "Audio/Wire/AM824/MpxMidiDemux.hpp"
+#include "Midi/Transport/MidiTransportBlock.hpp"
 
 #include <gtest/gtest.h>
 
@@ -98,7 +100,7 @@ public:
     }
 };
 
-bool Configure(DiceTxStreamEngine& engine, const TestProfile& profile) {
+bool Configure(DiceTxStreamEngine& engine, const IAudioStreamProfile& profile) {
     AudioStreamConfig config{};
     return profile.BuildDefaultTxStreamConfig(config) &&
            engine.Configure(profile, config);
@@ -626,4 +628,84 @@ TEST(AmdtpDirectTxTests, ArmedDataPacketCarriesTheExactAm824SilenceWord) {
                 << "frame " << frame << " channel " << channel;
         }
     }
+}
+
+TEST(AmdtpDirectTxTests, MidiOnlyFillComposesMidiIntoSilenceWithoutPcmSource) {
+    class MidiTestProfile final : public IAudioStreamProfile {
+    public:
+        ASFW::Isoch::Audio::AudioStreamTxPolicy TxStreamPolicy() const noexcept override {
+            return {};
+        }
+        const char* Name() const noexcept override { return "midi-test"; }
+        AudioWireFormat TxWireFormat() const noexcept override { return AudioWireFormat::kAM824; }
+        AudioWireFormat RxWireFormat() const noexcept override { return AudioWireFormat::kAM824; }
+        bool BuildDefaultTxStreamConfig(AudioStreamConfig& out) const noexcept override {
+            out = {};
+            out.direction = AudioStreamDirection::HostToDevice;
+            out.sampleRate = 48'000;
+            out.streamMode = ASFW::Encoding::StreamMode::kBlocking;
+            out.pcmChannels = 2;
+            out.dbs = 3; // 2 audio + 1 MIDI
+            out.framesPerDataPacket = 8;
+            return true;
+        }
+        bool BuildDefaultRxStreamConfig(AudioStreamConfig& out) const noexcept override {
+            out = {};
+            out.direction = AudioStreamDirection::DeviceToHost;
+            return true;
+        }
+        uint32_t TxSafetyOffsetFrames(double) const noexcept override { return 0; }
+        uint32_t RxSafetyOffsetFrames(double) const noexcept override { return 0; }
+        uint32_t TxReportedLatencyFrames(double) const noexcept override { return 0; }
+        uint32_t RxReportedLatencyFrames(double) const noexcept override { return 0; }
+    } profile;
+
+    DiceTxStreamEngine engine{};
+    SlotProvider slots{};
+    ASSERT_TRUE(Configure(engine, profile));
+    engine.BindSlotProvider(&slots);
+
+    // No PCM source bound!
+    engine.BindPcmSource(nullptr);
+
+    // Set up MIDI transport block with 1 byte on port 0
+    ASFW::Midi::MidiTransportBlock midiBlock{};
+    midiBlock.Arm(1);
+    const uint8_t byteToSend[] = {0x90};
+    ASSERT_TRUE(midiBlock.hostToDevice[0].TryWrite(byteToSend));
+
+    const ASFW::Encoding::MpxMidiGeometry midiGeometry{
+        .dbs = 3,
+        .midiSlotIndex = 2,
+        .portCount = 1,
+        .dbcAligned = true,
+    };
+    engine.SetMidiTransport(&midiBlock, 1, midiGeometry, 48000, 8);
+    engine.ResetForStart(0);
+
+    // Arm slot 0
+    EXPECT_EQ(engine.PrepareTransmitSlot(0, DataPlan(100), 8, 0x4567),
+              TxSlotPrepareResult::Prepared);
+
+    // Fill slot 0 in MIDI-only mode
+    EXPECT_EQ(engine.FillTransmitSlot(0), TxSlotFillResult::Filled);
+
+    // Commit fill
+    EXPECT_TRUE(engine.CommitFill(0));
+    EXPECT_EQ(slots.latePublished, 1U);
+
+    // Verify MIDI byte was committed from ring (ring is now empty)
+    uint8_t peekByte = 0;
+    EXPECT_EQ(midiBlock.hostToDevice[0].Peek(std::span<uint8_t, 1>(&peekByte, 1)), 0U);
+
+    // Verify lateBytes carries AM824 silence for PCM slots and MIDI byte for slot 2
+    // CIP header is 8 bytes, each slot is 4 bytes.
+    // Frame 0: slot 0 (offset 8) = 0x40000000, slot 1 (offset 12) = 0x40000000, slot 2 (offset 16) = MIDI (0x81900000)
+    const size_t midiOffset = 8 + (0 * 3 + 2) * 4;
+    const uint32_t midiWord =
+        (static_cast<uint32_t>(slots.lateBytes[midiOffset]) << 24) |
+        (static_cast<uint32_t>(slots.lateBytes[midiOffset + 1]) << 16) |
+        (static_cast<uint32_t>(slots.lateBytes[midiOffset + 2]) << 8) |
+        static_cast<uint32_t>(slots.lateBytes[midiOffset + 3]);
+    EXPECT_EQ(midiWord, 0x81900000U);
 }

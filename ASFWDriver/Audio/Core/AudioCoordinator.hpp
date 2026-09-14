@@ -10,6 +10,7 @@
 #include "../Devices/AudioDeviceSessionManager.hpp"
 #include "../Duplex/AudioDuplexCoordinator.hpp"
 #include "../Duplex/IsochDuplexHostTransport.hpp"
+#include "../Engine/AudioEndpointStreamSession.hpp"
 #include "../Protocols/Configuration/IAudioConfigurationControl.hpp"
 #include "../Shared/Controls/IAudioControlSurface.hpp"
 #include "../Shared/Topology/IAudioSemanticTopology.hpp"
@@ -23,7 +24,9 @@
 #include <atomic>
 #include <array>
 #include <functional>
+#include <memory>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 
 class IOService;
@@ -78,6 +81,13 @@ public:
     void HandleCycleInconsistent() noexcept;
     [[nodiscard]] IOReturn StartStreaming(EndpointId endpointId) noexcept;
     [[nodiscard]] IOReturn StopStreaming(EndpointId endpointId) noexcept;
+    [[nodiscard]] IOReturn StartAudioStreaming(
+        EndpointId endpointId, Ports::ITxPcmSource* pcmSource) noexcept;
+    [[nodiscard]] IOReturn StopAudioStreaming(EndpointId endpointId) noexcept;
+    [[nodiscard]] IOReturn StartMidiStreaming(EndpointId endpointId) noexcept;
+    [[nodiscard]] IOReturn StopMidiStreaming(EndpointId endpointId) noexcept;
+    [[nodiscard]] AudioEndpointStreamSession* GetStreamSession(
+        EndpointId endpointId) noexcept;
     [[nodiscard]] IOReturn RequestClockConfig(
         EndpointId endpointId,
         const AudioClockConfig& desiredClock,
@@ -164,11 +174,17 @@ private:
     ASFW::Midi::MidiNubPublisher midiPublisher_;
     AudioRuntimeRegistry& runtime_;
     IsochDuplexHostTransport hostTransport_;
+    Driver::IsochService& isoch_;
+    Driver::HardwareInterface& hardware_;
     std::atomic<bool> teardownRequested_{false};
     AudioDuplexCoordinator duplexCoordinator_;
 
     IOLock* lock_{nullptr};
     EndpointId activeEndpoint_{};
+    std::unordered_map<EndpointId, std::unique_ptr<AudioEndpointStreamSession>,
+                       Devices::AudioEndpointIdHash> sessions_{};
+    std::unordered_map<EndpointId, Midi::MidiEndpointCapabilities,
+                       Devices::AudioEndpointIdHash> endpointMidiCaps_{};
     SessionStreamingCallback sessionStreamingCallback_{};
     TxTransportFaultDispatch txTransportFaultDispatch_{};
     std::unordered_set<EndpointId, Devices::AudioEndpointIdHash>

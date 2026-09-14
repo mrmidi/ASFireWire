@@ -28,7 +28,7 @@ template <typename T>
 template <typename T>
 [[nodiscard]] kern_return_t CreateSharedMapping(const OSSharedPtr<T>& memory,
                                                 OSSharedPtr<IOMemoryMap>& outMap,
-                                                uint64_t options = kIOMemoryMapCacheModeDefault) noexcept
+                                                uint64_t options = 0) noexcept
 {
     outMap.reset();
     if (!memory) {

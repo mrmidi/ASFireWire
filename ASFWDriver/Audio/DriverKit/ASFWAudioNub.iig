@@ -195,6 +195,7 @@ public:
         uint32_t sampleRateHz, uint32_t opticalInput, uint32_t opticalOutput) LOCALONLY;
     void RegisterTxLatencySession(void* session) LOCALONLY;
     void UnregisterTxLatencySession(void* session) LOCALONLY;
+    void SetTxPcmSource(void* source) LOCALONLY;
 
     // Request IDs bind each callback to one locked transaction.
     virtual void RuntimeTuningRequested(OSAction* action TARGET, uint32_t requestId);
@@ -291,6 +292,7 @@ struct ASFWAudioNub_IVars {
     OSAction* runtimeTuningRequestedAction{nullptr};
 
     ASFW::Audio::Shared::RuntimeTuningStore* tuningStore{nullptr};
+    void* txPcmSource{nullptr};
 
     // MIDI byte seam relayed from ASFWMidiNub, which owns the descriptor. Held
     // retained here so the audio service can map it; cleared on teardown before

@@ -39,6 +39,8 @@ public:
     virtual kern_return_t StartIO() override;
     virtual kern_return_t StopIO() override;
 
+    void SetMidiNub(IOService* nub) LOCALONLY;
+
     /// Bind the device's entities to the shared byte rings.
     ///
     /// `block` is the mapped MidiTransportBlock, owned by the nub and valid

@@ -15,6 +15,7 @@
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
 
+#include "IAudioDuplexStreamControl.hpp"
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -29,7 +30,7 @@ class IDirectAudioBindingSource;
 class AudioRuntimeRegistry;
 class IDeviceProtocol;
 
-class AudioDuplexCoordinator final {
+class AudioDuplexCoordinator final : public IAudioDuplexStreamControl {
 public:
     using EndpointId = Devices::AudioEndpointId;
     using DirectAudioBindingSourceProvider =

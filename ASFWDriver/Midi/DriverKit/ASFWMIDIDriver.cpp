@@ -147,6 +147,7 @@ kern_return_t IMPL(ASFWMIDIDriver, Start) {
     // The personality matches only ASFWMidiNub, so the provider is one; the
     // audio side casts the same way (ASFWAudioDriverGraph.cpp:128).
     auto* nub = reinterpret_cast<ASFWMidiNub*>(provider);
+    ivars->device->SetMidiNub(provider);
     IOMemoryDescriptor* rawTransport = nullptr;
     uint64_t transportEpoch = 0;
     if (nub->CopyMidiTransportMemory(&rawTransport, &transportEpoch) ==

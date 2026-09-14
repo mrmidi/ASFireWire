@@ -3,17 +3,24 @@
 // ASFWDriver
 //
 
+#define _LIBCPP_NO_ABI_TAG 1
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSSharedPtr.h>
 
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWMidiNub.h>
+#include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h>
 
 #include "../../Logging/Logging.hpp"
+#include "../../Service/DriverContext.hpp"
+#include "../../Audio/Core/AudioCoordinator.hpp"
+#include "../Core/MidiNubProperties.hpp"
 #include "../Transport/MidiTransportBlock.hpp"
 
 struct ASFWMidiNub_IVars {
+    IOService* parentDriver{nullptr};
+    uint64_t endpointId{0};
     OSSharedPtr<OSAction> midiReceiveAction;
     OSSharedPtr<IOBufferMemoryDescriptor> transportBuffer;
     OSSharedPtr<IOMemoryMap> transportMap;
@@ -80,13 +87,26 @@ kern_return_t IMPL(ASFWMidiNub, Start) {
         return ret;
     }
 
+    if (ivars != nullptr) {
+        ivars->parentDriver = provider;
+        OSDictionary* rawProps = nullptr;
+        if (CopyProperties(&rawProps) == kIOReturnSuccess && rawProps != nullptr) {
+            auto props = OSSharedPtr(rawProps, OSNoRetain);
+            auto* epNum = OSDynamicCast(OSNumber, props->getObject(ASFW::Midi::NubKeys::kEndpointId));
+            if (epNum != nullptr) {
+                ivars->endpointId = epNum->unsigned64BitValue();
+            }
+        }
+    }
+
     ret = RegisterService();
     if (ret != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Midi, "ASFWMidiNub: RegisterService failed 0x%x", ret);
         return ret;
     }
 
-    ASFW_LOG(Midi, "ASFWMidiNub: started, transport=%zu bytes",
+    ASFW_LOG(Midi, "ASFWMidiNub: started, endpoint=%llu transport=%zu bytes",
+             ivars ? ivars->endpointId : 0ULL,
              sizeof(ASFW::Midi::MidiTransportBlock));
     return kIOReturnSuccess;
 }
@@ -97,7 +117,32 @@ kern_return_t IMPL(ASFWMidiNub, Stop) {
     // stays alive until free(), so a consumer already inside a callback sees a
     // quiesced block rather than unmapped memory.
     QuiesceTransport();
+    if (ivars != nullptr) {
+        ivars->parentDriver = nullptr;
+    }
     return Stop(provider, SUPERDISPATCH);
+}
+
+kern_return_t IMPL(ASFWMidiNub, StartMidiStreaming) {
+    if (ivars == nullptr || ivars->endpointId == 0) return kIOReturnNotReady;
+    auto* parent = OSDynamicCast(ASFWDriver, ivars->parentDriver);
+    if (!parent) return kIOReturnNotReady;
+    auto* ctx = static_cast<ServiceContext*>(parent->GetServiceContext());
+    if (!ctx || !ctx->audioCoordinator) return kIOReturnNotReady;
+
+    return ctx->audioCoordinator->StartMidiStreaming(
+        ASFW::Audio::Devices::AudioEndpointId{ivars->endpointId});
+}
+
+kern_return_t IMPL(ASFWMidiNub, StopMidiStreaming) {
+    if (ivars == nullptr || ivars->endpointId == 0) return kIOReturnNotReady;
+    auto* parent = OSDynamicCast(ASFWDriver, ivars->parentDriver);
+    if (!parent) return kIOReturnNotReady;
+    auto* ctx = static_cast<ServiceContext*>(parent->GetServiceContext());
+    if (!ctx || !ctx->audioCoordinator) return kIOReturnNotReady;
+
+    return ctx->audioCoordinator->StopMidiStreaming(
+        ASFW::Audio::Devices::AudioEndpointId{ivars->endpointId});
 }
 
 kern_return_t IMPL(ASFWMidiNub, CopyMidiTransportMemory) {

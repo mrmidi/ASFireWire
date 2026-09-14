@@ -386,6 +386,11 @@ kern_return_t IsochService::StartPreparedTransmit() {
 }
 
 kern_return_t IsochService::StopTransmit() {
+#ifdef ASFW_HOST_TEST
+    if (testStopTransmitResult_.has_value()) {
+        return *testStopTransmitResult_;
+    }
+#endif
     kern_return_t result = kIOReturnSuccess;
     if (isochTransmitContext_) {
         result = isochTransmitContext_->Stop();
@@ -449,6 +454,18 @@ void IsochService::SetTxPreparationCallback(TxPreparationCallback callback) noex
     txPreparationCallback_ = std::move(callback);
     if (isochTransmitContext_) {
         isochTransmitContext_->SetTxPreparationCallback(txPreparationCallback_);
+    }
+}
+
+void IsochService::QuiesceTxPreparation() noexcept {
+    txPreparationCallback_ = {};
+    if (isochTransmitContext_) {
+        isochTransmitContext_->QuiesceTxPreparation();
+    }
+    for (auto& ctx : secondaryTransmitContexts_) {
+        if (ctx) {
+            ctx->QuiesceTxPreparation();
+        }
     }
 }
 

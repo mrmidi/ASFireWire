@@ -123,6 +123,13 @@ void IsochDuplexHostTransport::SetClockAnchorReadyCallback(
     clockAnchorReadyCallback_ = std::move(callback);
 }
 
+void IsochDuplexHostTransport::NotifyClockAnchorReady(
+    uint64_t generation) noexcept {
+    if (clockAnchorReadyCallback_) {
+        clockAnchorReadyCallback_(generation);
+    }
+}
+
 kern_return_t IsochDuplexHostTransport::BeginSplitDuplex(EndpointId endpointId) noexcept {
     if (activeEndpoint_ && activeEndpoint_ != endpointId) {
         return kIOReturnBusy;

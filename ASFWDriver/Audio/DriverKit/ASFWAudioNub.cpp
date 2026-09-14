@@ -16,6 +16,7 @@
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../Core/AudioCoordinator.hpp"
+#include "../Ports/ITxPcmSource.hpp"
 #include "../../Service/DriverContext.hpp"
 #include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../Shared/AudioRuntimeTuningStore.hpp"
@@ -329,28 +330,11 @@ kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
         return kIOReturnNotReady;
     }
 
-    auto* coordinator = GetAudioCoordinator(ivars);
-    if (!coordinator) {
-        return kIOReturnNotReady;
-    }
-
     if (action) {
         action->retain();
     }
     OSAction* oldAction = ivars->txPreparationAction;
     ivars->txPreparationAction = action;
-
-    if (action) {
-        coordinator->SetTxPreparationCallback(
-            [this](uint64_t generation) {
-                if (ivars && ivars->txPreparationAction) {
-                    TxPreparationReady(
-                        ivars->txPreparationAction, generation);
-                }
-            });
-    } else {
-        coordinator->SetTxPreparationCallback({});
-    }
 
     if (oldAction) {
         oldAction->release();
@@ -706,8 +690,9 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
         return kIOReturnNotReady;
     }
 
-    const IOReturn kr = coordinator->StartStreaming(
-        ASFW::Audio::Devices::AudioEndpointId{ivars->endpointId});
+    const IOReturn kr = coordinator->StartAudioStreaming(
+        ASFW::Audio::Devices::AudioEndpointId{ivars->endpointId},
+        static_cast<ASFW::Audio::Ports::ITxPcmSource*>(ivars->txPcmSource));
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Audio,
                  "ASFWAudioNub: StartAudioStreaming failed endpoint=%llu kr=0x%x",
@@ -729,7 +714,7 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
         return kIOReturnNotReady;
     }
 
-    const IOReturn kr = coordinator->StopStreaming(
+    const IOReturn kr = coordinator->StopAudioStreaming(
         ASFW::Audio::Devices::AudioEndpointId{ivars->endpointId});
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Audio,
@@ -740,6 +725,12 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
         endpoint->MarkStreaming(false);
     }
     return kr;
+}
+
+void ASFWAudioNub::SetTxPcmSource(void* source) {
+    if (ivars) {
+        ivars->txPcmSource = source;
+    }
 }
 
 

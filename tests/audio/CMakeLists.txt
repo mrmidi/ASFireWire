@@ -159,6 +159,38 @@ add_audio_test(AmdtpDirectTxTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
 )
 
+add_audio_test(AudioEndpointStreamSessionTests
+    AudioEndpointStreamSessionTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Engine/AudioEndpointStreamSession.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Runtime/PcmPublicationCache.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/Syt.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioPresentationObserver.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioInternalTxTiming.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/ResolvedAudioStreamProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/IsochService.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTransmitContext.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochReceiveContext.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/BufferRing.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/DirectInputWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+)
+
 
 
 add_audio_test(AmdtpRateGeometryTests
