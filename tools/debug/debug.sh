@@ -123,12 +123,26 @@ fi
 
 LLDB_BIN=""
 if command -v brew >/dev/null 2>&1; then
-  homebrew_lldb="$(brew --prefix llvm)/bin/lldb"
+  homebrew_lldb="$(brew --prefix llvm 2>/dev/null || true)/bin/lldb"
   if [[ -x "$homebrew_lldb" ]]; then
-    LLDB_BIN="$homebrew_lldb"
+    if ("$homebrew_lldb" --version >/dev/null 2>&1) 2>/dev/null; then
+      LLDB_BIN="$homebrew_lldb"
+    else
+      echo "Homebrew LLDB cannot launch; falling back to Xcode LLDB." >&2
+    fi
   fi
 fi
-LLDB_BIN="${LLDB_BIN:-/usr/bin/lldb}"
+if [[ -z "$LLDB_BIN" ]]; then
+  LLDB_BIN="$(/usr/bin/xcrun --find lldb)"
+  if ! "$LLDB_BIN" --version >/dev/null 2>&1; then
+    echo "Xcode LLDB cannot launch: $LLDB_BIN" >&2
+    exit 1
+  fi
+  if [[ "$use_mcp" == true ]]; then
+    echo "Disabling LLDB MCP for the Xcode fallback; interactive debugging remains available." >&2
+    use_mcp=false
+  fi
+fi
 echo "Using LLDB: $LLDB_BIN"
 
 if [[ -z "$driver_pid" ]]; then
