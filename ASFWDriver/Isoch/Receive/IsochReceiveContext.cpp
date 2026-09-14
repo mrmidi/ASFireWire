@@ -332,9 +332,11 @@ void IsochReceiveContext::LogProgressStatistics() {
     const uint64_t ageUsec = now >= lastProgress
         ? ASFW::Timing::hostTicksToNanos(now - lastProgress) / 1000
         : 0;
+    // Debug, for the same reason as the transmit watchdog: a periodic liveness
+    // line on a healthy stream, not an event.
     ASFW_LOG_RING_ONLY(
         Isoch,
-        ::ASFW::Logging::LogLevel::Notice,
+        ::ASFW::Logging::LogLevel::Debug,
         "[IsochWatchdog] direction=rx context=%u poll=%llu busy=%llu packets=%llu progressAgeUs=%llu cmd=0x%08x ctrl=0x%08x intEvent=0x%08x txEvent=0x%08x rxEvent=0x%08x cycle=0x%08x",
         contextIndex_,
         pollCount_.load(std::memory_order_relaxed),

@@ -326,7 +326,10 @@ void LogLedgerInterval(const char* name,
     // `inv` is the reversed-endpoint count: both ends were recovered and the
     // span still did not order, which means one of them is stamped at the wrong
     // event. n+pend+unres+inv is every candidate the site considered.
-    ASFW_LOG(DirectAudio,
+    // Four of these per heartbeat, one per ledger stage. Debug: the stage
+    // latency distributions matter when chasing a timing fault, not in the
+    // steady-state view.
+    ASFW_LOG_LEVELED(DirectAudio, ::ASFW::Logging::LogLevel::Debug,
              "[Ledger] %{public}s n=%llu pend=%llu unres=%llu inv=%llu min=%llu mean=%llu max=%llu us hist=[%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu]",
              name, samples, stats.pending.load(std::memory_order_relaxed),
              unresolved, invalid,
@@ -1396,6 +1399,13 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
     if (lastHeartbeat == 0 || now <= lastHeartbeat ||
         ASFW::Timing::hostTicksToNanos(now - lastHeartbeat) >=
             5'000'000'000ULL) {
+        // Level split inside this block: [TxPrep] is the one coarse
+        // liveness/margin heartbeat and stays at notice, so a notice-level view
+        // still proves the transmit path is alive and shows its headroom. The
+        // detail lines ([TxV3], [TxLead], [TxFill]) are the same five-second
+        // snapshot decomposed, and drop to debug -- they are what you raise the
+        // filter for once the heartbeat says something is wrong. Nothing is
+        // removed: every counter is still emitted every interval.
         control->txHeartbeatLastHostTicks.store(now,
                                                 std::memory_order_relaxed);
         // The engine owns the per-packet count; mirror it into the shared
@@ -1405,7 +1415,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
             ivars->runtime.txStreamEngine.Counters()
                 .pcmSilenceSubstitutions.load(std::memory_order_relaxed),
             std::memory_order_relaxed);
-        ASFW_LOG(DirectAudio,
+        ASFW_LOG_LEVELED(DirectAudio, ::ASFW::Logging::LogLevel::Debug,
                  "[TxV3] epoch=%llu source=%u completion=%llu committed=%llu margin=%llu prepared=%u nextFrame=%llu cache=[%llu,%llu) noCycle=%llu noOrigin=%llu resync=%llu",
                  control->hardwareTimeline.Epoch(),
                  static_cast<uint32_t>(control->hardwareTimeline.Source()),
@@ -1427,7 +1437,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
             const uint32_t rate = control->hardwareTimeline.SampleRateHz();
             const int64_t ticksPerFrame = rate != 0
                 ? static_cast<int64_t>(24'576'000U / rate) : 512;
-            ASFW_LOG(DirectAudio,
+            ASFW_LOG_LEVELED(DirectAudio, ::ASFW::Logging::LogLevel::Debug,
                      "[TxLead] ticks=%lld min=%lld max=%lld frames=%lld rate=%u",
                      leadTicks, minLead == INT64_MAX ? 0 : minLead,
                      maxLead == INT64_MIN ? 0 : maxLead,
@@ -1439,7 +1449,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
             const uint32_t minRebindDistance =
                 queue->minimumLatePayloadRebindDistance.load(
                     std::memory_order_relaxed);
-            ASFW_LOG(DirectAudio,
+            ASFW_LOG_LEVELED(DirectAudio, ::ASFW::Logging::LogLevel::Debug,
                      // `filled` is the producer's optimistic count: it rises
                      // when a publication is accepted, which is not the same as
                      // the wire carrying it. `lost` is transport's count of

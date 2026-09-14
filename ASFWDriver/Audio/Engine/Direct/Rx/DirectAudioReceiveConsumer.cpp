@@ -949,12 +949,20 @@ void DirectAudioReceiveConsumer::DrainReceiveTelemetry(uint32_t maxRecords) {
             if (!ztsTelemetryLogGate_.ShouldEmit(record, rate)) {
                 return;
             }
-            ASFW_LOG(Zts,
+            // SEED is a once-per-epoch lifecycle event and stays at notice.
+            // UPD is the periodic snapshot: it is the single largest source of
+            // steady-state Zts traffic, so it drops to debug and a notice-level
+            // view shows only the anchors that actually re-seeded the clock.
+            const bool isSeed =
+                record.kind ==
+                static_cast<uint8_t>(::ASFW::Audio::Runtime::ZtsEventKind::kSeed);
+            ASFW_LOG_LEVELED(Zts,
+                     isSeed ? ::ASFW::Logging::LogLevel::Notice
+                            : ::ASFW::Logging::LogLevel::Debug,
                      "%{public}s count=%llu frame=%llu host=%llu drainHost=%llu "
                      "drainCycle=0x%08x rxCycle=0x%08x age=%lld rawRxTs=0x%04x "
                      "syt=0x%04x desc=%u dec=%u rate=%u rateQ8=%u",
-                     record.kind == static_cast<uint8_t>(::ASFW::Audio::Runtime::ZtsEventKind::kSeed)
-                         ? "SEED" : "UPD",
+                     isSeed ? "SEED" : "UPD",
                      record.publishCount, record.sampleFrame, record.hostTicks,
                      record.drainHostTicks, record.drainCycleTimer, record.rxCycleTimer,
                      record.ageTicks, record.rawRxTs, record.syt, record.descriptorIndex,

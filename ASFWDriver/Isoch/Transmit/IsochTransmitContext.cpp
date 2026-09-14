@@ -1010,9 +1010,13 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     // carriedPerMille: per mille of ticks that refilled with no new interrupt.
     //   Interrupts arrive at ~1333/s against a 1000/s tick, so an occasional
     //   tick legitimately sees none. During an outage this approaches 1000.
+    // Debug: this fires every watchdog tick on a perfectly healthy stream, so
+    // at notice it drowns every event that actually means something. The fields
+    // that flag a real fault (irqSilence, carriedPerMille, progressAgeUs) are
+    // still recorded every tick -- raise the level filter to read them.
     ASFW_LOG_RING_ONLY(
         Isoch,
-        ::ASFW::Logging::LogLevel::Notice,
+        ::ASFW::Logging::LogLevel::Debug,
         "[IsochWatchdog] direction=tx context=%u poll=%llu irq=%llu ret=%llu committed=%llu progressAgeUs=%llu snapshots=%llu wakes=%llu/%llu fatals=%llu irqSilence=%llu carriedPerMille=%llu",
         contextIndex_,
         tickCount_,
@@ -1039,7 +1043,7 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     // anchor. Both reset with the stream.
     ASFW_LOG_RING_ONLY(
         Isoch,
-        ::ASFW::Logging::LogLevel::Notice,
+        ::ASFW::Logging::LogLevel::Debug,
         "[IsochTxDelta] context=%u lapUnresolvable=%llu maxDelta=%u",
         contextIndex_,
         ring_.RTCounters().lapUnresolvable.load(std::memory_order_relaxed),
