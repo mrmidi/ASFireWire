@@ -14,12 +14,33 @@ struct TxWirePayloadObservation final {
     bool dropout{false};
     uint32_t infoQuads{0};
     uint32_t maxAbs24{0};
+    uint32_t slotMask{0};
     uint32_t lastInfoQuad{0};
 };
 
 struct TxWirePayloadTelemetry final {
     std::atomic<uint64_t> dataPackets{0};
     std::atomic<uint64_t> zeroPcmPackets{0};
+
+    // Late-payload outcomes, attributed rather than collapsed. The content
+    // inspector only runs for a won offer whose packet carries payload, so a
+    // silent inspector has three possible causes that present identically:
+    // the offer never won, it won on a header-only packet, or it won on a data
+    // packet that was genuinely zero. Counting the first two separates them.
+    std::atomic<uint64_t> lateOffersWon{0};
+    std::atomic<uint64_t> lateWonHeaderOnly{0};
+
+    /// AM824 slots per data block, published once when the stream is
+    /// configured. Observe() needs it to turn a flat quadlet index into a slot
+    /// index; zero means "not published", and the slot mask is then left alone
+    /// rather than filled with a guess.
+    std::atomic<uint32_t> dataBlockQuadlets{0};
+
+    /// Bit per slot index that has ever carried a non-zero, non-idle quadlet.
+    /// This is what says WHICH channels the stream is actually filling, as
+    /// opposed to how many -- the difference between "stereo is present" and
+    /// "stereo is present on the pair the device routes to the outputs".
+    std::atomic<uint32_t> slotMask{0};
     std::atomic<uint64_t> infoQuads{0};
     std::atomic<uint64_t> pcmDropouts{0};
     std::atomic<uint32_t> maxAbs24{0};
@@ -29,6 +50,9 @@ struct TxWirePayloadTelemetry final {
     void Reset() noexcept {
         dataPackets.store(0, std::memory_order_relaxed);
         zeroPcmPackets.store(0, std::memory_order_relaxed);
+        lateOffersWon.store(0, std::memory_order_relaxed);
+        lateWonHeaderOnly.store(0, std::memory_order_relaxed);
+        slotMask.store(0, std::memory_order_relaxed);
         infoQuads.store(0, std::memory_order_relaxed);
         pcmDropouts.store(0, std::memory_order_relaxed);
         maxAbs24.store(0, std::memory_order_relaxed);
@@ -51,6 +75,9 @@ struct TxWirePayloadTelemetry final {
         dataPackets.fetch_add(1, std::memory_order_relaxed);
         const uint8_t* quadBytes = packetBytes + kCipHeaderBytes;
         const uint32_t quadCount = (payloadLength - kCipHeaderBytes) / 4;
+        const uint32_t blockQuads =
+            dataBlockQuadlets.load(std::memory_order_relaxed);
+        uint32_t observedSlots = 0;
         for (uint32_t index = 0; index < quadCount; ++index, quadBytes += 4) {
             const uint32_t quad =
                 (static_cast<uint32_t>(quadBytes[0]) << 24) |
@@ -58,6 +85,10 @@ struct TxWirePayloadTelemetry final {
                 (static_cast<uint32_t>(quadBytes[2]) << 8) |
                 static_cast<uint32_t>(quadBytes[3]);
             if (quad == 0 || quad == kIdleSlotWord) continue;
+            if (blockQuads != 0) {
+                const uint32_t slot = index % blockQuads;
+                if (slot < 32) observedSlots |= (1u << slot);
+            }
             ++observation.infoQuads;
             observation.lastInfoQuad = quad;
             const int32_t sample24 = static_cast<int32_t>(quad << 8) >> 8;
@@ -77,6 +108,10 @@ struct TxWirePayloadTelemetry final {
             return observation;
         }
 
+        if (observedSlots != 0) {
+            slotMask.fetch_or(observedSlots, std::memory_order_relaxed);
+        }
+        observation.slotMask = observedSlots;
         infoQuads.fetch_add(observation.infoQuads, std::memory_order_relaxed);
         lastInfoQuad.store(observation.lastInfoQuad, std::memory_order_relaxed);
         uint32_t previous = maxAbs24.load(std::memory_order_relaxed);

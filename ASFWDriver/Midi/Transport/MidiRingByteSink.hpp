@@ -37,14 +37,14 @@ public:
     [[nodiscard]] bool Bound() const noexcept { return block_ != nullptr; }
 
     void DeliverMidiBytes(uint8_t port, const uint8_t* bytes,
-                          uint8_t count) noexcept override {
+                          uint8_t count, uint64_t hostTicks) noexcept override {
         if (block_ == nullptr || bytes == nullptr || count == 0) return;
         if (port >= kMidiPortsPerDirection) return;
         // A stream that restarted under us must not have its predecessor's
         // bytes appended to the new epoch's ring.
         if (!block_->Usable(streamEpoch_)) return;
 
-        if (!block_->deviceToHost[port].TryWrite({bytes, count})) {
+        if (!block_->deviceToHost[port].TryWrite({bytes, count}, hostTicks)) {
             // TryWrite already counted the drop and marked the gap. Nothing to
             // do here but not pretend it succeeded.
             ++overflowRuns_;

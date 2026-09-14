@@ -186,6 +186,18 @@ private:
     uint64_t txPumpHorizonBehindEvents_{0};
     uint64_t txNoPresentationOriginEvents_{0};
     uint64_t txReplayResyncs_{0};
+    uint64_t txSytWithoutRxEvents_{0};
+
+    // Emitted presentation-time telemetry. `lead` is how far ahead of our own
+    // transmit cycle a packet asks to be presented; the device's acceptance
+    // window for that is the last untested thing about these packets.
+    uint64_t txSytLeadMinTicks_{UINT64_MAX};
+    uint64_t txSytLeadMaxTicks_{0};
+    uint64_t txSytLeadLastTicks_{0};
+    uint64_t txSytDataPlans_{0};
+    uint64_t txSytNoDataPlans_{0};
+    uint16_t txSytLastEmitted_{0xFFFF};
+    uint32_t txSytLastOffset_{0};
     uint64_t txCompletionStampCursor_{0};
     bool txPlanBusTicksValid_{false};
     uint64_t lastTxPlanBusTicks_{0};

@@ -310,6 +310,16 @@ IOReturn AudioEndpointStreamSession::StartSessionLocked() noexcept {
 
     // Prefill TX ring with NO-DATA packets
     txFillCursor_ = 0;
+    txSytLeadMinTicks_ = UINT64_MAX;
+    txSytLeadMaxTicks_ = 0;
+    txSytLeadLastTicks_ = 0;
+    txSytLastEmitted_ = 0xFFFF;
+    txSytLastOffset_ = 0;
+    txSytDataPlans_ = 0;
+    txSytNoDataPlans_ = 0;
+    // Per-start, so each cold start gets its own log ladder rather than
+    // inheriting a previous session's event count and printing nothing.
+    txSytWithoutRxEvents_ = 0;
     const uint32_t slots = txSlotProvider_.numSlots;
     Runtime::DirectAudioBindingSnapshot bindingSnapshot{};
     (void)endpointRuntime_.CopyDirectAudioBinding(bindingSnapshot);
@@ -342,6 +352,14 @@ IOReturn AudioEndpointStreamSession::StartSessionLocked() noexcept {
         control->txTransferDelayTicks.store(
             resolvedProfile_.TxTransferDelayTicks(sampleRate),
             std::memory_order_relaxed);
+    }
+
+    if (control) {
+        // The content inspector turns a flat quadlet index into a slot index
+        // with this, so it must be published before the first packet is
+        // offered. Zero leaves the slot mask empty rather than wrong.
+        control->txWirePayloadTelemetry.dataBlockQuadlets.store(
+            txStreamEngine_.StreamConfig().dbs, std::memory_order_relaxed);
     }
 
     if (useMAudio) {
@@ -970,6 +988,21 @@ uint32_t AudioEndpointStreamSession::PrepareTransmitSlots(
                             control->txTransferDelayTicks.load(std::memory_order_relaxed));
                     timing.txClockValid = true;
                     timing.nextDataSyt = SytForPresentation(presentationBusTicks);
+                    // The one quantity MIDI does not depend on and audio does.
+                    // Everything else about the packet has now been measured
+                    // identical between a silent and an audible run, and the
+                    // device demonstrably parses these packets -- it clocks
+                    // their MIDI out -- so the presentation time is what is
+                    // left to differ.
+                    const uint64_t lead = presentationBusTicks - transmitBusTicks;
+                    if (lead < txSytLeadMinTicks_) txSytLeadMinTicks_ = lead;
+                    if (lead > txSytLeadMaxTicks_) txSytLeadMaxTicks_ = lead;
+                    txSytLeadLastTicks_ = lead;
+                    txSytLastEmitted_ = timing.nextDataSyt;
+                    txSytLastOffset_ = replayEntry.sytOffset;
+                    ++txSytDataPlans_;
+                } else {
+                    ++txSytNoDataPlans_;
                 }
             } else if (control->hardwareTimeline.Source() ==
                            Runtime::HardwareTimelineSource::Transmit && haveCycle) {
@@ -980,6 +1013,58 @@ uint32_t AudioEndpointStreamSession::PrepareTransmitSlots(
                 timing.nextDataSyt = SytForPresentation(presentationBusTicks);
             } else if (control->rxSequenceReplay.IsEstablished()) {
                 control->txReplayUnderflows.fetch_add(1, std::memory_order_relaxed);
+            } else if (control->hardwareTimeline.Source() ==
+                       Runtime::HardwareTimelineSource::Receive) {
+                // This profile recovers SYT from the device's own transmit
+                // stream, so there is no clock to sync this packet to: RX has
+                // published no established replay. NO-DATA here is correct and
+                // is what the reference does -- Saffire.kext prefills its TX
+                // ring with pure NO-DATA (SYT=0xFFFF) and starts the IT ports
+                // before any clock exists, so passing through this state at
+                // start is normal, not a fault.
+                //
+                // What is not normal is never leaving it, and nothing else
+                // counts that: the branch above only fires once the replay is
+                // already established, so an endpoint whose RX never
+                // establishes is silent with every counter reading zero. That
+                // is the whole reason this branch exists.
+                //
+                // Linux additionally refuses to start at all until the replay
+                // cache is more than half full (amdtp-stream.c:1618, gating
+                // amdtp_domain_wait_ready at dice-stream.c:457). We do not, by
+                // design -- our start order follows the vendor driver, which
+                // carries timing in SYT rather than gating on it. Recorded as
+                // a measured difference, not a defect.
+                const uint64_t events = ++txSytWithoutRxEvents_;
+                if (IsPowerOfTwo(events)) {
+                    ::ASFW::Driver::RxSytCadence::Snapshot cadenceSnapshot{};
+                    const bool cadenceRead =
+                        control->rxSytCadence.TrySnapshot(cadenceSnapshot);
+                    // validUpdates is the term that decides this. Observe()
+                    // counts every call, seed path included, so it advances
+                    // once per packet that carried a usable SYT and stalls
+                    // exactly when the device stops sending them. Printing it
+                    // beside the packet classification says which of the two
+                    // it is without a second query.
+                    ASFW_LOG_ERROR(
+                        DirectAudio,
+                        "[TxSytNoRx] events=%llu packet=%llu seen=%llu "
+                        "noData=%llu invalidCip=%llu geomMismatch=%llu "
+                        "replayEntries=%llu validUpdates=%u/%u seeds=%llu "
+                        "established=%u cadenceRead=%u haveCycle=%u",
+                        events, packetIndex,
+                        control->rxPacketsSeen.load(std::memory_order_relaxed),
+                        control->rxNoDataPackets.load(std::memory_order_relaxed),
+                        control->rxInvalidCipHeaders.load(std::memory_order_relaxed),
+                        control->rxGeometryMismatch.load(std::memory_order_relaxed),
+                        control->rxReplayEntries.load(std::memory_order_relaxed),
+                        cadenceRead ? cadenceSnapshot.validUpdates : 0u,
+                        ::ASFW::Driver::RxSytCadence::kWarmupUpdates,
+                        control->rxCadenceSeeds.load(std::memory_order_relaxed),
+                        (cadenceRead && cadenceSnapshot.established) ? 1u : 0u,
+                        cadenceRead ? 1u : 0u,
+                        haveCycle ? 1u : 0u);
+                }
             }
         }
 
@@ -1333,15 +1418,29 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
             // the wire regardless of how healthy `filled` looks, and
             // dataPackets == 0 means the inspector never ran at all (a null
             // audioControl), which is a different fault with the same symptom.
+            ASFW_LOG(DirectAudio,
+                     "[TxSyt] plans=%llu/%llu leadTicks=%llu..%llu last=%llu "
+                     "syt=0x%04x rxOffset=%u xferDelay=%u",
+                     txSytDataPlans_, txSytNoDataPlans_,
+                     txSytLeadMinTicks_ == UINT64_MAX ? 0 : txSytLeadMinTicks_,
+                     txSytLeadMaxTicks_, txSytLeadLastTicks_,
+                     txSytLastEmitted_, txSytLastOffset_,
+                     control->txTransferDelayTicks.load(std::memory_order_relaxed));
+
             const auto& wire = control->txWirePayloadTelemetry;
             ASFW_LOG(DirectAudio,
                      "[TxWireSum] dataPackets=%llu zeroPcm=%llu dropouts=%llu "
-                     "infoQuads=%llu maxAbs24=%u",
+                     "infoQuads=%llu maxAbs24=%u slots=0x%04x dbs=%u "
+                     "lateWon=%llu lateHdrOnly=%llu",
                      wire.dataPackets.load(std::memory_order_relaxed),
                      wire.zeroPcmPackets.load(std::memory_order_relaxed),
                      wire.pcmDropouts.load(std::memory_order_relaxed),
                      wire.infoQuads.load(std::memory_order_relaxed),
-                     wire.maxAbs24.load(std::memory_order_relaxed));
+                     wire.maxAbs24.load(std::memory_order_relaxed),
+                     wire.slotMask.load(std::memory_order_relaxed),
+                     wire.dataBlockQuadlets.load(std::memory_order_relaxed),
+                     wire.lateOffersWon.load(std::memory_order_relaxed),
+                     wire.lateWonHeaderOnly.load(std::memory_order_relaxed));
         }
     }
 

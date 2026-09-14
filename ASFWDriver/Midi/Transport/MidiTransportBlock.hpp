@@ -74,6 +74,23 @@ struct MidiByteRing final {
 
     uint8_t bytes[kMidiRingCapacityBytes]{};
 
+    /// Host time for each byte, in the same index space as `bytes`.
+    ///
+    /// One timestamp per BYTE, not per run. That is what Focusrite's own
+    /// driver does in both directions (its shared ring carries a parallel
+    /// 64-bit array and copies a packet's timestamp onto every byte of it),
+    /// and the reason is that the two ends of a MIDI message can be separated
+    /// by an arbitrary gap: the wire delivers at most one byte per port per
+    /// packet, so a three-byte Note On spans at least three packets and its
+    /// bytes genuinely have different arrival times. Dating the run by its
+    /// last byte would report every message as having arrived late by the
+    /// width of its own transmission.
+    ///
+    /// On receive this is the controller-observed packet instant. On transmit
+    /// it is the host's requested time, so the value means "when", not "when
+    /// it was enqueued", in both directions.
+    uint64_t timestamps[kMidiRingCapacityBytes]{};
+
     [[nodiscard]] uint32_t Available() const noexcept {
         const uint32_t w = writeIndex.load(std::memory_order_acquire);
         const uint32_t r = readIndex.load(std::memory_order_relaxed);
@@ -92,7 +109,12 @@ struct MidiByteRing final {
     /// message on the wire, and a device that receives a status byte with only
     /// one of its two data bytes stays desynchronised until the next status
     /// byte -- so a rejected message is strictly better than a truncated one.
-    [[nodiscard]] bool TryWrite(std::span<const uint8_t> run) noexcept {
+    /// `hostTicks` dates every byte of the run. Required rather than
+    /// defaulted: a silently-zero timestamp is indistinguishable from a real
+    /// one at the consumer, and the whole point of the array is that the
+    /// consumer can trust it.
+    [[nodiscard]] bool TryWrite(std::span<const uint8_t> run,
+                                uint64_t hostTicks) noexcept {
         if (run.empty()) return true;
         if (run.size() > kMidiRingCapacityBytes) {
             droppedBytes.fetch_add(run.size(), std::memory_order_relaxed);
@@ -107,8 +129,10 @@ struct MidiByteRing final {
             return false;
         }
         for (std::size_t i = 0; i < run.size(); ++i) {
-            bytes[(w + static_cast<uint32_t>(i)) & (kMidiRingCapacityBytes - 1)] =
-                run[i];
+            const uint32_t slot =
+                (w + static_cast<uint32_t>(i)) & (kMidiRingCapacityBytes - 1);
+            bytes[slot] = run[i];
+            timestamps[slot] = hostTicks;
         }
         // Release: the byte stores above must be visible before the consumer
         // can see the index that exposes them.
@@ -124,7 +148,10 @@ struct MidiByteRing final {
     /// -- can put the bytes back by simply not consuming.
     /// Clamped to the discontinuity boundary so bytes across a gap are never
     /// returned in the same span.
-    [[nodiscard]] uint32_t Peek(std::span<uint8_t> out) const noexcept {
+    /// `outTimestamps`, when non-empty, receives the host time of each byte
+    /// returned. It may be shorter than `out`; only the overlap is filled.
+    [[nodiscard]] uint32_t Peek(std::span<uint8_t> out,
+                                std::span<uint64_t> outTimestamps = {}) const noexcept {
         const uint32_t w = writeIndex.load(std::memory_order_acquire);
         const uint32_t r = readIndex.load(std::memory_order_relaxed);
         uint32_t available = w - r;
@@ -142,7 +169,9 @@ struct MidiByteRing final {
         uint32_t count = available;
         if (count > out.size()) count = static_cast<uint32_t>(out.size());
         for (uint32_t i = 0; i < count; ++i) {
-            out[i] = bytes[(r + i) & (kMidiRingCapacityBytes - 1)];
+            const uint32_t slot = (r + i) & (kMidiRingCapacityBytes - 1);
+            out[i] = bytes[slot];
+            if (i < outTimestamps.size()) outTimestamps[i] = timestamps[slot];
         }
         return count;
     }

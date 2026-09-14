@@ -65,6 +65,14 @@ struct MpxMidiDemuxCounters final {
     uint64_t invalidLabels{0};
     /// Bytes addressed to a port beyond portCount.
     uint64_t droppedForUnknownPort{0};
+
+    /// Where the most recent delivered run sat in the packet. Recorded rather
+    /// than passed to the sink because the sink's seam is port-indexed bytes
+    /// and nothing else -- a tracer that wants the wire position reads it from
+    /// the counters it already owns, and nothing on the data path changes.
+    uint8_t lastDeliveredDbc{0};
+    uint32_t lastDeliveredBlockIndex{0};
+    uint8_t lastDeliveredPort{0};
 };
 
 /// Lift MIDI bytes out of one packet's data blocks.
@@ -79,6 +87,7 @@ struct MpxMidiDemuxCounters final {
 /// no PCM writer bound at all, and the MIDI must still come through.
 inline void DemuxMpxMidi(const uint8_t* dataBlocks, uint32_t eventCount,
                          uint8_t dbc, const MpxMidiGeometry& geometry,
+                         uint64_t packetHostTicks,
                          ASFW::Audio::Ports::IMidiByteSink& sink,
                          MpxMidiDemuxCounters& counters) noexcept {
     if (dataBlocks == nullptr || eventCount == 0 || !geometry.Valid()) return;
@@ -118,7 +127,10 @@ inline void DemuxMpxMidi(const uint8_t* dataBlocks, uint32_t eventCount,
         // A single quadlet can carry a whole three-byte Note On. Both
         // references only ever *send* one byte per quadlet, which is not a
         // reason to assume that on receive.
-        sink.DeliverMidiBytes(port, quadlet + 1, count);
+        counters.lastDeliveredDbc = dbc;
+        counters.lastDeliveredBlockIndex = f;
+        counters.lastDeliveredPort = port;
+        sink.DeliverMidiBytes(port, quadlet + 1, count, packetHostTicks);
         counters.bytesDelivered += count;
     }
 }

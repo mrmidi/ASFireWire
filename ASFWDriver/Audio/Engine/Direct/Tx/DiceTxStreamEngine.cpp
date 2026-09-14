@@ -10,6 +10,8 @@
 #include <algorithm>
 
 #include <iterator>
+#include "../../../../Midi/Trace/MidiMessageTrace.hpp"
+#include "../../../../Midi/Trace/MidiTraceLog.hpp"
 
 namespace ASFW::Protocols::Audio::DICE {
 
@@ -385,6 +387,11 @@ void DiceTxStreamEngine::SetMidiTransport(
     // Reset first: a reservation left over from the previous stream must not be
     // retired by a packet of the new one that happens to share its index.
     midiScope_.Reset();
+    for (auto& parser : midiTxTrace_) {
+        // A new stream must not have the previous one's trailing bytes joined
+        // onto its first message.
+        parser.Reset();
+    }
     if (block != nullptr) {
         midiScope_.ConfigureLimiter(sampleRateHz, sytIntervalFrames);
     }
@@ -413,6 +420,13 @@ bool DiceTxStreamEngine::CommitFill(uint32_t packetIndex) noexcept {
     // still discard an accepted offer, which is counted as loss rather than
     // replayed, because replaying would put a byte behind bytes already sent.
     if (midiBlock_ != nullptr) {
+        // Trace before Commit, which consumes the reservation -- and only here,
+        // never at selection. A selected byte can still be returned to its ring
+        // by Cancel above and chosen again for a later packet; tracing at
+        // selection would feed the decoder that byte twice and desynchronise
+        // every message after it. These are the bytes that actually went out.
+        TraceMidiTxReservation(armedPackets_[index].packetIndex,
+                               armedPackets_[index].dbc);
         (void)midiScope_.Commit(*midiBlock_, midiReservation_);
     }
     return true;
@@ -451,6 +465,51 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
         streamPolicy.substituteSilenceOnPcmUnavailable;
     policy.playbackChannelMap = streamPolicy.playbackChannelMap;
     return policy;
+}
+
+
+void DiceTxStreamEngine::TraceMidiTxReservation(uint32_t packetIndex,
+                                               uint8_t dbc) noexcept {
+    for (uint32_t port = 0; port < ASFW::Encoding::kMpxMidiPorts; ++port) {
+        uint8_t byte = 0;
+        if (midiReservation_.Get(static_cast<uint8_t>(port), byte)) {
+            TraceMidiTxByte(static_cast<uint8_t>(port), byte, packetIndex, dbc);
+        }
+    }
+}
+
+void DiceTxStreamEngine::TraceMidiTxByte(uint8_t port, uint8_t byte,
+                                         uint32_t packetIndex,
+                                         uint8_t dbc) noexcept {
+    if (port >= ASFW::Encoding::kMpxMidiPorts) return;
+    // The block this byte will land in is decided by the same rotation the mux
+    // applies, so derive it rather than guessing: block f carries port
+    // (dbc + f) mod 8 when the rotation is DBC-aligned.
+    const uint8_t block = midiGeometry_.dbcAligned
+        ? static_cast<uint8_t>((port - dbc) & (ASFW::Encoding::kMpxMidiPorts - 1))
+        : port;
+    // Packets this byte will sit in the ring before the hardware transmits it.
+    // At 125 us per packet this is the dominant term in MIDI latency and it is
+    // entirely ours: MIDI is composed at the audio fill cursor, so it inherits
+    // the whole of the audio buffering lead whether or not it needs it.
+    const uint64_t completion =
+        slotProvider_ ? slotProvider_->CompletionCursor() : 0;
+    const uint32_t leadPackets = (completion != 0 && packetIndex > completion)
+        ? static_cast<uint32_t>(packetIndex - completion)
+        : 0;
+    ASFW::Midi::Trace::DecodedMidiMessage message{};
+    if (midiTxTrace_[port].Feed(byte, message)) {
+        ASFW::Midi::Trace::LogDecodedMidi(
+            ASFW::Midi::Trace::MidiTraceDirection::kOut, port, message,
+            "pkt", packetIndex, block, mach_absolute_time(), leadPackets);
+    }
+    ASFW::Midi::Trace::DecodedMidiMessage deferred{};
+    if (midiTxTrace_[port].HasDeferred() &&
+        midiTxTrace_[port].TakeDeferred(deferred)) {
+        ASFW::Midi::Trace::LogDecodedMidi(
+            ASFW::Midi::Trace::MidiTraceDirection::kOut, port, deferred,
+            "pkt", packetIndex, block, mach_absolute_time(), leadPackets);
+    }
 }
 
 } // namespace ASFW::Protocols::Audio::DICE

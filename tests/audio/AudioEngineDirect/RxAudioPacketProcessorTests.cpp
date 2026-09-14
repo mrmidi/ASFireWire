@@ -212,7 +212,7 @@ TEST(RxAudioPacketProcessorTests, PayloadBearingNoDataWithFdf0xFFIsTreatedAsZero
 
     struct TestSink : ASFW::Audio::Ports::IMidiByteSink {
         uint32_t delivered{0};
-        void DeliverMidiBytes(uint8_t, const uint8_t*, uint8_t n) noexcept override { delivered += n; }
+        void DeliverMidiBytes(uint8_t, const uint8_t*, uint8_t n, uint64_t) noexcept override { delivered += n; }
         void MarkMidiDiscontinuity(uint8_t) noexcept override {}
     } sink;
 

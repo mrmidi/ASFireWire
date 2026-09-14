@@ -107,6 +107,20 @@ struct ExpandedReceiveTimestamp final {
     return true;
 }
 
+/// Host time of the packet carrying `timestamp`, back-dated from the drain.
+///
+/// `drainHostTicks` is read once before a completed batch is walked, so it is
+/// later than every packet in that batch; the descriptor timestamp says by how
+/// much. Returns `drainHostTicks` unchanged when the timestamp cannot be
+/// correlated, which is the drain instant -- late, but never in the future.
+///
+/// Declared here rather than in the audio consumer because two callers need
+/// the same answer: the clock anchor, and dating extracted MIDI bytes. Two
+/// copies of this arithmetic would drift apart.
+[[nodiscard]] inline uint64_t PacketHostTicks(uint16_t timestamp,
+                                              uint32_t drainCycleTimer,
+                                              uint64_t drainHostTicks) noexcept;
+
 [[nodiscard]] inline uint64_t FireWireTicksToNanos(
     uint64_t ticks) noexcept {
     const __uint128_t scaled =
@@ -114,6 +128,24 @@ struct ExpandedReceiveTimestamp final {
         ASFW::Timing::kNanosPerSecond;
     return static_cast<uint64_t>(
         scaled / ASFW::Timing::kTicksPerSecond);
+}
+
+
+inline uint64_t PacketHostTicks(uint16_t timestamp, uint32_t drainCycleTimer,
+                                uint64_t drainHostTicks) noexcept {
+    ExpandedReceiveTimestamp expanded{};
+    if (!ExpandReceiveTimestamp(timestamp, drainCycleTimer, expanded)) {
+        return drainHostTicks;
+    }
+    if (expanded.ageTicks >= 0) {
+        const uint64_t age = ASFW::Timing::nanosToHostTicks(
+            FireWireTicksToNanos(static_cast<uint64_t>(expanded.ageTicks)));
+        return drainHostTicks > age ? drainHostTicks - age : drainHostTicks;
+    }
+    // Negative age: hardware completed the packet after the reference was
+    // sampled, so the packet instant is later than the drain read.
+    return drainHostTicks + ASFW::Timing::nanosToHostTicks(
+        FireWireTicksToNanos(static_cast<uint64_t>(-expanded.ageTicks)));
 }
 
 } // namespace ASFW::Isoch::Rx

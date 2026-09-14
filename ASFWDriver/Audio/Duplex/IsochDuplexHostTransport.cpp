@@ -38,7 +38,11 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
     // extraction would deliver every byte twice.
     if (streamIndex == 0 && !isSecondary && midiSink_.Bound() &&
         midiGeometry_.Valid()) {
-        configuration.midi.sink = &midiSink_;
+        configuration.midi.sink = midiTraceSink_.Bound()
+                                      ? static_cast<ASFW::Audio::Ports::IMidiByteSink*>(
+                                            &midiTraceSink_)
+                                      : static_cast<ASFW::Audio::Ports::IMidiByteSink*>(
+                                            &midiSink_);
         configuration.midi.geometry = midiGeometry_;
         configuration.midi.counters = &midiCounters_;
     }
@@ -74,12 +78,14 @@ void IsochDuplexHostTransport::SetMidiReceiveTransport(
     const ASFW::Encoding::MpxMidiGeometry& geometry,
     std::function<void()> wake) noexcept {
     if (block == nullptr) {
+        midiTraceSink_.Unbind();
         midiSink_.Unbind();
         midiGeometry_ = {};
         midiWake_ = {};
         return;
     }
     midiSink_.Bind(block, streamEpoch);
+    midiTraceSink_.Bind(&midiSink_, &midiCounters_);
     midiGeometry_ = geometry;
     midiWake_ = std::move(wake);
 }

@@ -42,6 +42,12 @@ struct RxMidiExtraction final {
     ASFW::Audio::Ports::IMidiByteSink* sink{nullptr};
     ASFW::Encoding::MpxMidiGeometry geometry{};
     ASFW::Encoding::MpxMidiDemuxCounters* counters{nullptr};
+    /// Reference for dating extracted bytes: the cycle timer and host clock
+    /// read once before this completed batch was walked. The processor
+    /// back-dates each packet from these, so a byte's timestamp is the
+    /// controller's receive instant rather than the drain instant.
+    uint32_t drainCycleTimer{0};
+    uint64_t drainHostTicks{0};
 
     [[nodiscard]] bool Enabled() const noexcept {
         return sink != nullptr && geometry.Valid();

@@ -59,6 +59,12 @@ public:
 /// same packet: the CIP header.
 inline constexpr uint16_t kAmdtpCipHeaderBytes = 8;
 
+/// Inspect one transmit packet in this many. Power of two so the test is a
+/// mask. At 8000 packets/s this samples ~125 Hz, which is far finer than the
+/// timescale on which programme material goes quiet, while keeping the scan out
+/// of 63 of every 64 trips through the transmit hot path.
+inline constexpr uint32_t kWirePayloadInspectStride = 64;
+
 class DextTxSlotProvider final : public ASFW::Protocols::Audio::AMDTP::IAmdtpTxSlotProvider {
 public:
     uint8_t* payloadBase{nullptr};
@@ -168,6 +174,11 @@ public:
         return true;
     }
 
+    [[nodiscard]] uint64_t CompletionCursor() const noexcept override {
+        if (!queueControl) return 0;
+        return queueControl->completionCursor.load(std::memory_order_acquire);
+    }
+
     [[nodiscard]] bool CaptureActive() const noexcept override {
         return queueControl != nullptr &&
                queueControl->ActiveCaptureToken() != 0;
@@ -201,6 +212,51 @@ public:
             queueControl->RecordProducerOffer(token, packetIndex, expectedGen,
                                               startTicks, endTicks, won,
                                               observedPhase);
+        }
+
+        // Attribute the outcome before the inspection's own filter hides it.
+        // Two relaxed increments on a path that already does several.
+        if (won && audioControl != nullptr) {
+            audioControl->txWirePayloadTelemetry.lateOffersWon.fetch_add(
+                1, std::memory_order_relaxed);
+            if (meta.payloadLength <= kAmdtpCipHeaderBytes) {
+                audioControl->txWirePayloadTelemetry.lateWonHeaderOnly.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+
+        // `won` is the only point at which image 1 is known to be the bytes the
+        // wire will carry, so it is the only honest place to measure content.
+        //
+        // Sampled, not per-packet. A scan on every packet is a scan inside the
+        // transmit hot path, which is instrumentation that changes the thing it
+        // measures -- the previous attempt at this took `rebound` from 366 to
+        // 145,389. One packet in 64 is ~125 Hz, far above the rate at which
+        // programme material goes quiet, and `maxAbs24` is a running maximum so
+        // sampling can only understate it.
+        if (won && audioControl != nullptr && payloadBase != nullptr &&
+            slotStrideBytes != 0 && meta.payloadLength > kAmdtpCipHeaderBytes &&
+            (packetIndex & (kWirePayloadInspectStride - 1u)) == 0u) {
+            const uint8_t* const latePayload = payloadBase +
+                ASFW::Isoch::TxPayloadImageOffset(slotIdx, 1, slotStrideBytes);
+            const auto observation =
+                audioControl->txWirePayloadTelemetry.Observe(
+                    packetIndex, latePayload, meta.payloadLength);
+            if (observation.firstInfo || observation.dropout) {
+                ASFW_LOG_RING_ONLY_RL(
+                    DirectAudio,
+                    "tx-wire-payload",
+                    observation.firstInfo ? 0u : 1000u,
+                    ::ASFW::Logging::LogLevel::Warning,
+                    "[TxWire] packet=%u first=%d dropout=%d infoQuads=%u "
+                    "maxAbs24=%u lastQuad=0x%08x",
+                    packetIndex,
+                    observation.firstInfo ? 1 : 0,
+                    observation.dropout ? 1 : 0,
+                    observation.infoQuads,
+                    observation.maxAbs24,
+                    observation.lastInfoQuad);
+            }
         }
         return won;
     }
@@ -255,8 +311,6 @@ public:
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
             static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
 
-        const uint8_t* const payload = payloadBase +
-            ASFW::Isoch::TxPayloadImageOffset(slotIdx, 0, slotStrideBytes);
         // Arm this lap's arbitration before the commit that republishes the
         // slot. A previous lap's terminal phase must not survive into this
         // packet: the generation tag would reject it anyway, but leaving it
@@ -270,28 +324,14 @@ public:
                 ASFW::Isoch::TxPayloadArbitration::kNoAlternative),
             std::memory_order_relaxed);
 
-        // Content inspection belongs to Audio and runs immediately before the
-        // release commit. Transport receives only opaque bytes and metadata.
-        if (audioControl) {
-            const auto observation = audioControl->txWirePayloadTelemetry.Observe(
-                packet.packetIndex,
-                payload,
-                packet.byteCount);
-            if (observation.firstInfo || observation.dropout) {
-                ASFW_LOG_RING_ONLY_RL(
-                    DirectAudio,
-                    "tx-wire-payload",
-                    observation.firstInfo ? 0u : 1000u,
-                    ::ASFW::Logging::LogLevel::Warning,
-                    "[TxWire] packet=%u first=%d dropout=%d infoQuads=%u maxAbs24=%u lastQuad=0x%08x",
-                    packet.packetIndex,
-                    observation.firstInfo ? 1 : 0,
-                    observation.dropout ? 1 : 0,
-                    observation.infoQuads,
-                    observation.maxAbs24,
-                    observation.lastInfoQuad);
-            }
-        }
+        // Content is NOT inspected here. This point holds the armed image
+        // (image 0), which carries the CIP header and default slots before any
+        // PCM refill -- silence by construction. Measuring it reported
+        // zeroPcm == dataPackets with maxAbs24 = 0 through an audibly playing
+        // stream, which is how the inspector came to be trusted for a silence
+        // diagnosis it could not make. What actually reaches the wire for a
+        // content packet is the late image, so the inspection lives where that
+        // image wins arbitration: see PublishLatePayload.
 
         // Compute expected generation and release-store it last.
         const uint64_t generation =

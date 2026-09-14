@@ -672,7 +672,7 @@ TEST(AmdtpDirectTxTests, MidiOnlyFillComposesMidiIntoSilenceWithoutPcmSource) {
     ASFW::Midi::MidiTransportBlock midiBlock{};
     midiBlock.Arm(1);
     const uint8_t byteToSend[] = {0x90};
-    ASSERT_TRUE(midiBlock.hostToDevice[0].TryWrite(byteToSend));
+    ASSERT_TRUE((midiBlock.hostToDevice[0].TryWrite(byteToSend, 0u)));
 
     const ASFW::Encoding::MpxMidiGeometry midiGeometry{
         .dbs = 3,

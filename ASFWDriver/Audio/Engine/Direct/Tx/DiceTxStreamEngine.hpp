@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstdint>
 #include "../../../../Midi/Transport/MidiTxReservation.hpp"
+#include "../../../../Midi/Trace/MidiMessageTrace.hpp"
 
 namespace ASFW::Protocols::Audio::DICE {
 
@@ -143,6 +144,14 @@ public:
     /// if it maps the slot afterwards; losing that race is normal.
     [[nodiscard]] bool CommitFill(uint32_t packetIndex) noexcept;
 
+    /// Decode and log the bytes of the committed reservation. Trace only.
+    void TraceMidiTxReservation(uint32_t packetIndex, uint8_t dbc) noexcept;
+
+    /// Decode and log one host -> device MIDI byte. Trace only; the byte is
+    /// inserted by the mux either way.
+    void TraceMidiTxByte(uint8_t port, uint8_t byte, uint32_t packetIndex,
+                         uint8_t dbc) noexcept;
+
     /// Carry MIDI on this stream's packets.
     ///
     /// `block` is the endpoint's byte seam, owned by the MIDI nub; nullptr
@@ -206,6 +215,11 @@ private:
     /// The armed packet for each producer slot, so a later fill can reproduce
     /// its exact wire geometry -- DBC and SYT above all, which the live counter
     /// can no longer supply by the time content arrives.
+    /// Per-port host -> device message assembler, for the [MidiOut] trace only.
+    /// Off the data path: it reads the same byte the mux is about to insert.
+    ASFW::Midi::Trace::MidiMessageTrace
+        midiTxTrace_[ASFW::Encoding::kMpxMidiPorts]{};
+
     AMDTP::PreparedTxPacket armedPackets_[
         ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots]{};
     bool armedFilled_[

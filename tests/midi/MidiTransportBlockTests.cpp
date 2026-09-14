@@ -34,7 +34,7 @@ std::vector<uint8_t> Drain(MidiByteRing& ring) {
 TEST(MidiByteRing, RoundTripsAShortRun) {
     MidiByteRing ring;
     const std::vector<uint8_t> in{0x90, 0x3C, 0x40};
-    EXPECT_TRUE(ring.TryWrite(in));
+    EXPECT_TRUE((ring.TryWrite(in, 0u)));
     EXPECT_EQ(ring.Available(), 3u);
     EXPECT_EQ(Drain(ring), in);
     EXPECT_TRUE(ring.Empty());
@@ -42,7 +42,7 @@ TEST(MidiByteRing, RoundTripsAShortRun) {
 
 TEST(MidiByteRing, PeekDoesNotConsume) {
     MidiByteRing ring;
-    ASSERT_TRUE(ring.TryWrite(std::vector<uint8_t>{1, 2, 3}));
+    ASSERT_TRUE((ring.TryWrite(std::vector<uint8_t>{1, 2, 3}, 0u)));
     uint8_t scratch[3]{};
     EXPECT_EQ(ring.Peek(scratch), 3u);
     EXPECT_EQ(ring.Available(), 3u) << "peek must leave the bytes queued";
@@ -53,11 +53,11 @@ TEST(MidiByteRing, WrapsCorrectlyAroundTheCapacityBoundary) {
     MidiByteRing ring;
     // Push the cursors most of the way round, then straddle the wrap.
     std::vector<uint8_t> filler(kMidiRingCapacityBytes - 2, 0x7F);
-    ASSERT_TRUE(ring.TryWrite(filler));
+    ASSERT_TRUE((ring.TryWrite(filler, 0u)));
     ASSERT_EQ(Drain(ring).size(), filler.size());
 
     const std::vector<uint8_t> straddling{0x11, 0x22, 0x33, 0x44};
-    ASSERT_TRUE(ring.TryWrite(straddling));
+    ASSERT_TRUE((ring.TryWrite(straddling, 0u)));
     EXPECT_EQ(Drain(ring), straddling);
 }
 
@@ -65,7 +65,7 @@ TEST(MidiByteRing, FillsToExactlyCapacity) {
     MidiByteRing ring;
     std::vector<uint8_t> full(kMidiRingCapacityBytes);
     std::iota(full.begin(), full.end(), uint8_t{0});
-    EXPECT_TRUE(ring.TryWrite(full));
+    EXPECT_TRUE((ring.TryWrite(full, 0u)));
     EXPECT_EQ(ring.Available(), kMidiRingCapacityBytes);
     EXPECT_EQ(ring.FreeSpace(), 0u);
     EXPECT_EQ(Drain(ring), full);
@@ -78,12 +78,12 @@ TEST(MidiByteRing, FillsToExactlyCapacity) {
 TEST(MidiByteRing, RejectsAWholeRunRatherThanTruncatingIt) {
     MidiByteRing ring;
     std::vector<uint8_t> nearlyFull(kMidiRingCapacityBytes - 2, 0x01);
-    ASSERT_TRUE(ring.TryWrite(nearlyFull));
+    ASSERT_TRUE((ring.TryWrite(nearlyFull, 0u)));
 
     // Three bytes into two bytes of space: a truncated MIDI message would
     // leave the device desynchronised until the next status byte.
     const std::vector<uint8_t> message{0x90, 0x3C, 0x40};
-    EXPECT_FALSE(ring.TryWrite(message));
+    EXPECT_FALSE((ring.TryWrite(message, 0u)));
     EXPECT_EQ(ring.Available(), nearlyFull.size()) << "nothing partial written";
     EXPECT_EQ(ring.droppedBytes.load(), 3u);
     EXPECT_EQ(ring.discontinuities.load(), 1u);
@@ -92,7 +92,7 @@ TEST(MidiByteRing, RejectsAWholeRunRatherThanTruncatingIt) {
 TEST(MidiByteRing, ARunLargerThanTheRingCanNeverBeAccepted) {
     MidiByteRing ring;
     const std::vector<uint8_t> huge(kMidiRingCapacityBytes + 1, 0x00);
-    EXPECT_FALSE(ring.TryWrite(huge));
+    EXPECT_FALSE((ring.TryWrite(huge, 0u)));
     EXPECT_TRUE(ring.Empty());
     EXPECT_EQ(ring.droppedBytes.load(), huge.size());
 }
@@ -100,16 +100,16 @@ TEST(MidiByteRing, ARunLargerThanTheRingCanNeverBeAccepted) {
 TEST(MidiByteRing, RecoversAfterTheConsumerCatchesUp) {
     MidiByteRing ring;
     std::vector<uint8_t> full(kMidiRingCapacityBytes, 0x01);
-    ASSERT_TRUE(ring.TryWrite(full));
-    ASSERT_FALSE(ring.TryWrite(std::vector<uint8_t>{0xF8}));
+    ASSERT_TRUE((ring.TryWrite(full, 0u)));
+    ASSERT_FALSE((ring.TryWrite(std::vector<uint8_t>{0xF8}, 0u)));
 
     ASSERT_EQ(Drain(ring).size(), full.size());
-    EXPECT_TRUE(ring.TryWrite(std::vector<uint8_t>{0xF8}));
+    EXPECT_TRUE((ring.TryWrite(std::vector<uint8_t>{0xF8}, 0u)));
 }
 
 TEST(MidiByteRing, ConsumingMoreThanAvailableIsClamped) {
     MidiByteRing ring;
-    ASSERT_TRUE(ring.TryWrite(std::vector<uint8_t>{1, 2}));
+    ASSERT_TRUE((ring.TryWrite(std::vector<uint8_t>{1, 2}, 0u)));
     ring.Consume(100);
     EXPECT_TRUE(ring.Empty());
     EXPECT_EQ(ring.Available(), 0u) << "the read index must not pass the write index";
@@ -118,7 +118,7 @@ TEST(MidiByteRing, ConsumingMoreThanAvailableIsClamped) {
 
 TEST(MidiByteRing, ResetConsumerDropsBacklogAndMarksTheGap) {
     MidiByteRing ring;
-    ASSERT_TRUE(ring.TryWrite(std::vector<uint8_t>{0x90, 0x3C}));
+    ASSERT_TRUE((ring.TryWrite(std::vector<uint8_t>{0x90, 0x3C}, 0u)));
     ring.ResetConsumer();
     EXPECT_TRUE(ring.Empty());
     EXPECT_EQ(ring.discontinuities.load(), 1u)
@@ -146,8 +146,8 @@ TEST(MidiTransportBlockTest, ArmMakesItUsableForThatEpochOnly) {
 TEST(MidiTransportBlockTest, ArmClearsThePreviousStreamsBytes) {
     MidiTransportBlock block;
     block.Arm(1);
-    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90, 0x3C}));
-    ASSERT_TRUE(block.deviceToHost[3].TryWrite(std::vector<uint8_t>{0xF8}));
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90, 0x3C}, 0u)));
+    ASSERT_TRUE((block.deviceToHost[3].TryWrite(std::vector<uint8_t>{0xF8}, 0u)));
 
     block.Arm(2);
     EXPECT_TRUE(block.hostToDevice[0].Empty());
@@ -173,8 +173,8 @@ TEST(MidiTransportBlockTest, QuiesceStopsUseWithoutDestroyingTheMapping) {
 TEST(MidiTxReservation, SelectsOneBytePerPortWithoutConsuming) {
     MidiTransportBlock block;
     block.Arm(1);
-    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90, 0x3C}));
-    ASSERT_TRUE(block.hostToDevice[5].TryWrite(std::vector<uint8_t>{0xF8}));
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90, 0x3C}, 0u)));
+    ASSERT_TRUE((block.hostToDevice[5].TryWrite(std::vector<uint8_t>{0xF8}, 0u)));
 
     MidiTxReservationScope scope;
     scope.ConfigureLimiter(48000, 8);
@@ -195,7 +195,7 @@ TEST(MidiTxReservation, SelectsOneBytePerPortWithoutConsuming) {
 TEST(MidiTxReservation, CommitRetiresExactlyTheSelectedBytes) {
     MidiTransportBlock block;
     block.Arm(1);
-    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90, 0x3C, 0x40}));
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90, 0x3C, 0x40}, 0u)));
 
     MidiTxReservationScope scope;
     scope.ConfigureLimiter(48000, 8);
@@ -211,7 +211,7 @@ TEST(MidiTxReservation, CommitRetiresExactlyTheSelectedBytes) {
 TEST(MidiTxReservation, CancelReturnsTheBytesForALaterPacket) {
     MidiTransportBlock block;
     block.Arm(1);
-    ASSERT_TRUE(block.hostToDevice[2].TryWrite(std::vector<uint8_t>{0xB0}));
+    ASSERT_TRUE((block.hostToDevice[2].TryWrite(std::vector<uint8_t>{0xB0}, 0u)));
 
     MidiTxReservationScope scope;
     scope.ConfigureLimiter(48000, 8);
@@ -234,7 +234,7 @@ TEST(MidiTxReservation, CancelReturnsTheBytesForALaterPacket) {
 TEST(MidiTxReservation, CommittingACancelledReservationRetiresNothing) {
     MidiTransportBlock block;
     block.Arm(1);
-    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}, 0u)));
 
     MidiTxReservationScope scope;
     scope.ConfigureLimiter(48000, 8);
@@ -261,7 +261,7 @@ TEST(MidiTxReservation, ASecondBeginWhileOneIsOutstandingIsRefused) {
 TEST(MidiTxReservation, CommitForADifferentPacketIsRefused) {
     MidiTransportBlock block;
     block.Arm(1);
-    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}, 0u)));
 
     MidiTxReservationScope scope;
     scope.ConfigureLimiter(48000, 8);
@@ -280,7 +280,7 @@ TEST(MidiTxReservation, CommitAcrossAnEpochChangeRetiresNothing) {
     // epoch change must not be retired by a packet that merely shares its index.
     MidiTransportBlock block;
     block.Arm(1);
-    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}, 0u)));
 
     MidiTxReservationScope scope;
     scope.ConfigureLimiter(48000, 8);
@@ -296,7 +296,7 @@ TEST(MidiTxReservation, CommitAcrossAnEpochChangeRetiresNothing) {
 TEST(MidiTxReservation, BeginAgainstTheWrongEpochSelectsNothing) {
     MidiTransportBlock block;
     block.Arm(5);
-    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}, 0u)));
 
     MidiTxReservationScope scope;
     scope.ConfigureLimiter(48000, 8);
@@ -309,7 +309,7 @@ TEST(MidiTxReservation, BeginAgainstTheWrongEpochSelectsNothing) {
 TEST(MidiTxReservation, BeginOnAQuiescedBlockSelectsNothing) {
     MidiTransportBlock block;
     block.Arm(1);
-    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}, 0u)));
     block.Quiesce();
 
     MidiTxReservationScope scope;
@@ -322,7 +322,7 @@ TEST(MidiTxReservation, BeginOnAQuiescedBlockSelectsNothing) {
 TEST(MidiTxReservation, ResetDropsTheOutstandingReservation) {
     MidiTransportBlock block;
     block.Arm(1);
-    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}, 0u)));
 
     MidiTxReservationScope scope;
     scope.ConfigureLimiter(48000, 8);
@@ -353,7 +353,7 @@ TEST(MidiTxReservation, EachPortRetiresIndependently) {
     for (uint32_t port = 0; port < kMidiPortsPerDirection; ++port) {
         ASSERT_TRUE(block.hostToDevice[port].TryWrite(
             std::vector<uint8_t>{static_cast<uint8_t>(0x10 + port),
-                                 static_cast<uint8_t>(0x20 + port)}));
+                                 static_cast<uint8_t>(0x20 + port)}, 0u));
     }
 
     MidiTxReservationScope scope;
@@ -377,7 +377,7 @@ TEST(MidiTxReservation, AnUnconfiguredLimiterSelectsNothing) {
     // recoverable, flooding a 31.25 kbaud UART is not.
     MidiTransportBlock block;
     block.Arm(1);
-    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}, 0u)));
 
     MidiTxReservationScope scope;   // deliberately not configured
     MidiPacketReservation reservation;
@@ -396,7 +396,7 @@ TEST(MidiTxReservation, TheLimiterThrottlesAcrossSuccessivePackets) {
     uint32_t committed = 0;
     for (uint32_t packet = 0; packet < 6000; ++packet) {
         if (block.hostToDevice[0].Available() == 0) {
-            ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x7F}));
+            ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x7F}, 0u)));
         }
         MidiPacketReservation reservation;
         ASSERT_TRUE(scope.Begin(block, 1, packet, reservation));
@@ -413,7 +413,7 @@ TEST(MidiTxReservation, CancelReturnsTheEmissionCreditToTheLimiter) {
     block.Arm(1);
     MidiTxReservationScope scope;
     scope.ConfigureLimiter(48000, 8);
-    ASSERT_TRUE(block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}));
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90}, 0u)));
 
     MidiPacketReservation first;
     ASSERT_TRUE(scope.Begin(block, 1, 1, first));

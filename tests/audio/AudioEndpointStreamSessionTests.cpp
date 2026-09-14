@@ -193,7 +193,7 @@ TEST_F(AudioEndpointStreamSessionTest, MidiOnlyFillComposesMidiIntoSilenceWithou
 
     // Push MIDI byte 0x90 into port 0
     const uint8_t byteRun[] = {0x90};
-    EXPECT_TRUE(midiBlock_.hostToDevice[0].TryWrite(byteRun));
+    EXPECT_TRUE((midiBlock_.hostToDevice[0].TryWrite(byteRun, 0u)));
 
     // Prefill filled numSlots (1512) with NO-DATA packets.
     // Advance completionCursor to 1512 so packet 1512 (which maps to ring slot 0) can be acquired.

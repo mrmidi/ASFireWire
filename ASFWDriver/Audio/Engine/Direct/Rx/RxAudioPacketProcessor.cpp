@@ -98,10 +98,19 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
         ASFW::Encoding::MpxMidiDemuxCounters& counters =
             midi.counters ? *midi.counters : discard;
         const uint64_t before = counters.bytesDelivered;
+        // Dated from this packet's own descriptor timestamp. Doing it here,
+        // before the PCM path, is what keeps MIDI time independent of the
+        // audio drain cadence.
+        const uint64_t packetHostTicks =
+            result.hasReceiveCycleTimestamp
+                ? ASFW::Isoch::Rx::PacketHostTicks(result.receiveCycleTimestamp,
+                                                   midi.drainCycleTimer,
+                                                   midi.drainHostTicks)
+                : midi.drainHostTicks;
         ASFW::Encoding::DemuxMpxMidi(
             reinterpret_cast<const uint8_t*>(&quadlets[2]),
             static_cast<uint32_t>(eventCount), cip->dataBlockCounter,
-            midi.geometry, *midi.sink, counters);
+            midi.geometry, packetHostTicks, *midi.sink, counters);
         result.midiBytesDelivered =
             static_cast<uint32_t>(counters.bytesDelivered - before);
     }

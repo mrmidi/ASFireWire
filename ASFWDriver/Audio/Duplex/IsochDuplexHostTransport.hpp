@@ -20,6 +20,7 @@
 #include <functional>
 #include <memory>
 #include "../../Midi/Transport/MidiRingByteSink.hpp"
+#include "../../Midi/Trace/MidiTracingByteSink.hpp"
 #include "../Wire/AM824/MpxMidiDemux.hpp"
 
 
@@ -181,6 +182,10 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     // object only borrows them, and DetachReceiveConsumers unbinds before any
     // consumer that could still call into it is destroyed.
     ASFW::Midi::MidiRingByteSink midiSink_{};
+    // Sits in front of midiSink_ purely to log completed messages. It forwards
+    // every byte before it parses anything, so a tracing fault cannot change
+    // what CoreMIDI receives.
+    ASFW::Midi::Trace::MidiTracingByteSink midiTraceSink_{};
     ASFW::Encoding::MpxMidiGeometry midiGeometry_{};
     ASFW::Encoding::MpxMidiDemuxCounters midiCounters_{};
     std::function<void()> midiWake_{};

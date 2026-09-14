@@ -40,6 +40,14 @@ public:
     /// measuring.
     [[nodiscard]] virtual bool CaptureActive() const noexcept { return false; }
 
+    /// Packet index the hardware has completed, or 0 when unknown.
+    ///
+    /// Diagnostic only. `packetIndex - CompletionCursor()` is how many packets
+    /// a byte written now will wait before it is transmitted -- the term that
+    /// dominates MIDI latency, because MIDI is composed at the audio fill
+    /// cursor and inherits the whole of its buffering lead.
+    [[nodiscard]] virtual uint64_t CompletionCursor() const noexcept { return 0; }
+
     /// Record the host timestamp at which image 1 finished encoding. Only
     /// meaningful while CaptureActive(); a no-op otherwise.
     virtual void RecordEncodingCompleted(uint32_t /*packetIndex*/,

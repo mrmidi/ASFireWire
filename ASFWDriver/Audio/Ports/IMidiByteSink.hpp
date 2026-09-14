@@ -27,8 +27,10 @@ public:
     /// Deliver 1..3 bytes for one port, copied out before returning.
     ///
     /// `port` is already reduced modulo the 8 ports one MPX slot multiplexes.
+    /// `hostTicks` is the controller-observed instant of the packet these
+    /// bytes came out of, in mach absolute time.
     virtual void DeliverMidiBytes(uint8_t port, const uint8_t* bytes,
-                                  uint8_t count) noexcept = 0;
+                                  uint8_t count, uint64_t hostTicks) noexcept = 0;
 
     /// The byte stream for `port` is broken here.
     ///

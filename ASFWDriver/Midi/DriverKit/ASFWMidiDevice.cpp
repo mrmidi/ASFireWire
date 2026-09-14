@@ -98,7 +98,12 @@ struct ASFWMidiDevice_IVars {
                 // All-or-nothing: a rejected message is better than a truncated one,
                 // which would leave the device desynchronised until the next status
                 // byte.
-                if (!localBlock->hostToDevice[port].TryWrite({txBytes, pulled.bytesWritten})) {
+                // Enqueue time, not the host's requested time: the
+                // IOUserMIDIDestination write path does not carry one. The
+                // field exists so the transmit side can honour a schedule once
+                // there is a schedule to honour; today it dates the byte.
+                if (!localBlock->hostToDevice[port].TryWrite(
+                        {txBytes, pulled.bytesWritten}, mach_absolute_time())) {
                     // Ring is full. Abort the SysEx state machine so subsequent
                     // continuations or end packet are not emitted as bare payload / naked 0xF7.
                     toWire[port].AbortSysEx();
