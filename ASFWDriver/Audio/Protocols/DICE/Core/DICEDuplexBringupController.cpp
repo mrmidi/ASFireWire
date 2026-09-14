@@ -1352,8 +1352,50 @@ void DICEDuplexBringupController::DoEnableGlobal(
                              DoRollback(enableStatus, std::move(cb));
                              return;
                          }
-                         TransitionTo<TxArmedState>();
-                         cb(kIOReturnSuccess);
+                         // Read the two isochronous channel registers back after
+                         // GLOBAL_ENABLE. On a cold device the bringup crosses a
+                         // clock reconfiguration -- the device signals
+                         // RxCfgChg|TxCfgChg, drops to UNLOCKED and resets both
+                         // stream configs to iso=-1 before re-locking -- and we
+                         // have never verified that what we programmed survives
+                         // the enable. A warm device skips that window entirely,
+                         // which is the one structural difference between a
+                         // silent cold start and a working restart.
+                         //
+                         // Observation only: nothing is re-programmed here. A
+                         // repair on a path this poorly understood risks more
+                         // than it fixes, and one cold boot settles whether a
+                         // repair is even the right shape.
+                         const uint32_t txIsoAddr =
+                             sections_.txStreamFormat.offset + TxOffset::kIsochronous;
+                         const uint32_t rxIsoAddr =
+                             sections_.rxStreamFormat.offset + RxOffset::kIsochronous;
+                         (void)io_.ReadQuadBE(MakeDICEAddress(txIsoAddr),
+                             [this, rxIsoAddr, cb = std::move(cb)](
+                                 Async::AsyncStatus txStatus, uint32_t txIso) mutable {
+                                 const IOReturn txKr = MapTransportStatus(txStatus);
+                                 (void)io_.ReadQuadBE(MakeDICEAddress(rxIsoAddr),
+                                     [this, txKr, txIso, cb = std::move(cb)](
+                                         Async::AsyncStatus rxStatus, uint32_t rxIso) mutable {
+                                         const IOReturn rxKr = MapTransportStatus(rxStatus);
+                                         ASFW_LOG(DICE,
+                                                  "DoEnableGlobal: post-enable readback "
+                                                  "txIso=%d(kr=0x%x) rxIso=%d(kr=0x%x)",
+                                                  txKr == kIOReturnSuccess
+                                                      ? static_cast<int>(
+                                                            static_cast<int32_t>(txIso)) : -999,
+                                                  txKr,
+                                                  rxKr == kIOReturnSuccess
+                                                      ? static_cast<int>(
+                                                            static_cast<int32_t>(rxIso)) : -999,
+                                                  rxKr);
+                                         // The enable itself succeeded; a failed
+                                         // readback is a lost observation, not a
+                                         // reason to fail the bringup.
+                                         TransitionTo<TxArmedState>();
+                                         cb(kIOReturnSuccess);
+                                     });
+                             });
                      });
 }
 
