@@ -40,12 +40,34 @@ void SetBool(OSDictionary* properties, const char* key, bool value) {
 
 } // namespace
 
+// Bisection switch, 2026-09-14. Audio on a Saffire Pro 24 DSP went silent on
+// the same day MIDI first published a live device, and the transmit path shows
+// producer starvation rather than a transmit fault: identical producer code
+// measured rebound=366/missedDeadline=0 before, and rebound~29000/
+// missedDeadline=806 after, at equal fill. Publishing no MIDI nub stops the
+// MIDI service starting, arming, and draining rings, which is the only way to
+// tell whether it is taking time from the TX producer.
+//
+// Set back to false to restore MIDI. Nothing else is disabled: capability
+// projection still runs, so the decision this gate makes is still logged.
+static constexpr bool kSuppressMidiPublicationForAudioBisect = true;
+
 bool MidiNubPublisher::EnsureNub(const MidiEndpointCapabilities& caps,
                                  const uint64_t endpointId,
                                  const char* deviceName,
                                  const char* model,
                                  const char* manufacturer) noexcept {
     if (driver_ == nullptr) return false;
+
+    if (kSuppressMidiPublicationForAudioBisect) {
+        ASFW_LOG(Midi,
+                 "MidiNubPublisher: publication suppressed for audio bisect "
+                 "(endpoint=%llu would publish sources=%u destinations=%u)",
+                 endpointId,
+                 caps.deviceToHost.Usable() ? caps.deviceToHost.portCount : 0,
+                 caps.hostToDevice.Usable() ? caps.hostToDevice.portCount : 0);
+        return true;
+    }
 
     if (!caps.AnyUsable()) {
         // Normal for most FireWire audio interfaces. Say why once, at notice
