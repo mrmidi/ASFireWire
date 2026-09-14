@@ -1298,14 +1298,31 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
             control->txHeartbeatLastHostTicks.store(nowTicks,
                                                     std::memory_order_relaxed);
             const auto& fill = txStreamEngine_.Counters();
+            // `filled` is the producer's OPTIMISTIC count: it rises when a
+            // publication is accepted, which is not the same as the wire
+            // carrying it. `lost` is transport's count of publications it then
+            // sealed on the armed image -- IsochTxQueue.hpp:615 calls it "the
+            // authoritative count of content the producer believed it placed
+            // and the wire never carried". filled-minus-lost is the truthful
+            // content figure, so the two must always be read as a pair. A
+            // heartbeat carrying `filled` alone reports a healthy encoder
+            // during total silence.
             ASFW_LOG(DirectAudio,
-                     "[TxPrep] filled=%llu silent=%llu tooLate=%llu "
-                     "unavailable=%llu cursor=%llu completion=%llu "
+                     "[TxPrep] filled=%llu lost=%llu silent=%llu tooLate=%llu "
+                     "unavailable=%llu rebound=%llu rejected=%llu "
+                     "missedDeadline=%llu cursor=%llu completion=%llu "
                      "committed=%llu margin=%llu bound=%u",
                      fill.lateFillsPublished.load(std::memory_order_relaxed),
+                     queue->latePayloadLostPublicationCount.load(
+                         std::memory_order_relaxed),
                      fill.pcmSilenceSubstitutions.load(std::memory_order_relaxed),
                      fill.lateFillsTooLate.load(std::memory_order_relaxed),
                      fill.lateFillsUnavailable.load(std::memory_order_relaxed),
+                     queue->latePayloadRebindCount.load(std::memory_order_relaxed),
+                     queue->latePayloadRebindRejectedCount.load(
+                         std::memory_order_relaxed),
+                     queue->latePayloadRebindMissedDeadlineCount.load(
+                         std::memory_order_relaxed),
                      txFillCursor_, completion, committedAfter, margin,
                      pcmSource_ != nullptr ? 1u : 0u);
         }
