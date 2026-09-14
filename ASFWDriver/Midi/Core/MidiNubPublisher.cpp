@@ -50,7 +50,7 @@ void SetBool(OSDictionary* properties, const char* key, bool value) {
 //
 // Set back to false to restore MIDI. Nothing else is disabled: capability
 // projection still runs, so the decision this gate makes is still logged.
-static constexpr bool kSuppressMidiPublicationForAudioBisect = true;
+static constexpr bool kSuppressMidiPublicationForAudioBisect = false;
 
 bool MidiNubPublisher::EnsureNub(const MidiEndpointCapabilities& caps,
                                  const uint64_t endpointId,
