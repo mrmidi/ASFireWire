@@ -128,6 +128,11 @@ struct IsochTxQueueControl final {
     std::atomic<uint64_t> refillCoalescedCount{0};
     std::atomic<uint32_t> maxCompletionDelta{0};
     std::atomic<uint64_t> maxCompletionDeltaEvents{0};
+    // Hardware-ring laps realigned by the consumer (see IsochTxDmaRing) and
+    // the producer packets it skipped to do so; lost cycles are counted only.
+    std::atomic<uint64_t> ringLaps{0};
+    std::atomic<uint64_t> ringLapPacketsSkipped{0};
+    std::atomic<uint64_t> lostCycles{0};
 
     // Producer → consumer: end-exclusive committed packet cursor.
     std::atomic<uint64_t> committedEnd{0};
@@ -152,6 +157,9 @@ struct IsochTxQueueControl final {
         refillCoalescedCount.store(0, std::memory_order_relaxed);
         maxCompletionDelta.store(0, std::memory_order_relaxed);
         maxCompletionDeltaEvents.store(0, std::memory_order_relaxed);
+        ringLaps.store(0, std::memory_order_relaxed);
+        ringLapPacketsSkipped.store(0, std::memory_order_relaxed);
+        lostCycles.store(0, std::memory_order_relaxed);
     }
 
     void MarkRefillHandled(uint64_t generation) noexcept {

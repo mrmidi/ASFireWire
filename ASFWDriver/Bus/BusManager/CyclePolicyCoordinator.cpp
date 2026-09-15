@@ -101,6 +101,35 @@ CyclePolicyDecision CyclePolicyCoordinator::Plan(const CyclePolicyInputs& inputs
         return CyclePolicyDecision::LocalCycleMasterClearNotRoot;
     }
 
+    // Root duty precedes the BM/IRM ladder: an OHCI host that is root runs the
+    // cycle master itself. Both references do this on the local-root transition
+    // with no bus-management precondition — Linux ohci.c:1907-1910 (bus_reset_work
+    // sets LinkControl.cycleMaster whenever the node became root) and Apple
+    // IOFireWireController.cpp:3366-3367 (enables its own cycle master once it is
+    // root; AssignCycleMaster only decides *who* should be root). It is a local
+    // LinkControl bit, not a bus transaction, so the activity ladder (which
+    // guards elections, gap/force-root PHY packets and remote STATE_SET writes)
+    // does not apply. Field-verified 2026-09-13 on a Mackie Onyx 400F: the
+    // IRM-capable unit won IRM, the ClientOnly/ObserveOnly host was root and
+    // nobody generated cycle starts — LinkControlSet read 0x00100600
+    // (cycleTimerEnable set, cycleMaster clear) and every isochronous start
+    // timed out with the IT context stuck at its primed 48 packets.
+    if (inputs.localIsRoot) {
+        if (inputs.cycleStartObserved) {
+            return CyclePolicyDecision::AlreadySatisfiedCycleStartObserved;
+        }
+        if (!inputs.localSelfIdKnown) {
+            return CyclePolicyDecision::DeferLocalSelfIDUnknown;
+        }
+        if (!inputs.localSelfIdLinkActive) {
+            return CyclePolicyDecision::RootSelectionRequired;
+        }
+        if (inputs.localCycleMasterEnabled) {
+            return CyclePolicyDecision::AlreadySatisfiedLocalCycleMasterEnabled;
+        }
+        return CyclePolicyDecision::LocalRootEnableCycleMaster;
+    }
+
     // Two paths to cycle repair: 
     // A. We are the elected Bus Manager.
     // B. We are the IRM and the fallback gate is open without a detected BM.
@@ -126,20 +155,8 @@ CyclePolicyDecision CyclePolicyCoordinator::Plan(const CyclePolicyInputs& inputs
         return CyclePolicyDecision::AlreadySatisfiedCycleStartObserved;
     }
 
-    // If local is root, always use local enable path. The active decision is
-    // based on Self-ID link state, not BIB CMC.
-    if (inputs.localIsRoot) {
-        if (!inputs.localSelfIdKnown) {
-            return CyclePolicyDecision::DeferLocalSelfIDUnknown;
-        }
-        if (!inputs.localSelfIdLinkActive) {
-            return CyclePolicyDecision::RootSelectionRequired;
-        }
-        if (inputs.localCycleMasterEnabled) {
-            return CyclePolicyDecision::AlreadySatisfiedLocalCycleMasterEnabled;
-        }
-        return CyclePolicyDecision::LocalRootEnableCycleMaster;
-    }
+    // Local root was fully handled above (root duty); only remote roots reach
+    // the BM / IRM-fallback machinery below.
 
     // Remote root path: root suitability is based on Self-ID contender+link bits.
     // The remote STATE_SET.cmstr write is separately gated by BIB CMC below.
