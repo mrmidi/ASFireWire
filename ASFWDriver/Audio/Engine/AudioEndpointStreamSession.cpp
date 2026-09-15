@@ -310,6 +310,7 @@ IOReturn AudioEndpointStreamSession::StartSessionLocked() noexcept {
 
     // Prefill TX ring with NO-DATA packets
     txFillCursor_ = 0;
+    txCommitCursor_ = 0;
     txSytLeadMinTicks_ = UINT64_MAX;
     txSytLeadMaxTicks_ = 0;
     txSytLeadLastTicks_ = 0;
@@ -602,6 +603,8 @@ void AudioEndpointStreamSession::FreeTxMemoryLocked() noexcept {
     txSlotProvider_ = {};
     txSlotProviderSecondary_ = {};
     txExecutionTimeline_ = {};
+    txFillCursor_ = 0;
+    txCommitCursor_ = 0;
     (void)isoch_.FreeTxIsochResources();
 }
 
@@ -1220,6 +1223,15 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
         return;
     }
 
+    const auto txStatus = queue->statusWord.load(std::memory_order_acquire);
+    control->txTransportStatus.store(
+        static_cast<uint32_t>(txStatus),
+        std::memory_order_relaxed);
+    if (txStatus != Isoch::IsochTxQueueStatus::kRunning &&
+        txStatus != Isoch::IsochTxQueueStatus::kStopped) {
+        return;
+    }
+
     txSlotProvider_.audioControl = control;
     if (txSecondaryActive_) {
         txSlotProviderSecondary_.audioControl = control;
@@ -1320,27 +1332,69 @@ void AudioEndpointStreamSession::OnTxPreparation(uint64_t generation) noexcept {
             ? committedAfter
             : std::min(committedAfter, frozen + kMidiOnlyContentFillLeadPackets);
 
-        bool offeredPrimary = false;
-        bool offeredSecondary = false;
+        // Phase 1: Content fill pass.
+        // Refills PCM into Image 1 at txFillCursor_, which with a bound PCM
+        // source runs to committedEnd -- the whole committed DMA runway named
+        // above, not a short lead. It does NOT commit or publish: Image 1 stays
+        // open so MIDI can be composed into it at the late pass below, and the
+        // fill lead stops being MIDI's lead.
         while (txFillCursor_ < fillLimit) {
             const auto packet = static_cast<uint32_t>(txFillCursor_);
             const auto primary = txStreamEngine_.FillTransmitSlot(packet);
             if (primary == FillResult::ContentUnavailable) break;
-            if (primary == FillResult::Filled) {
-                const bool secondaryReady =
-                    !txSecondaryActive_ ||
-                    txStreamEngineSecondary_.FillTransmitSlot(packet) == FillResult::Filled;
-                if (secondaryReady) {
-                    if (txStreamEngine_.CommitFill(packet)) {
-                        offeredPrimary = true;
-                        if (txSecondaryActive_ && txStreamEngineSecondary_.CommitFill(packet)) {
-                            offeredSecondary = true;
-                        }
-                    }
-                }
+            if (primary == FillResult::Filled && txSecondaryActive_) {
+                const auto secondary = txStreamEngineSecondary_.FillTransmitSlot(packet);
+                if (secondary == FillResult::ContentUnavailable) break;
             }
             ++txFillCursor_;
         }
+
+        // Phase 2: Late commit and publication pass.
+        // Composes MIDI and offers Image 1 near the finalization frontier.
+        // finalizedEnd is the hardware position plus kPayloadFinalityLeadPackets
+        // (3), so this window sits 3..31 packets (0.375..3.9 ms) ahead of the
+        // wire; measured MIDI insertion on Saffire lands at 27 packets/3.375 ms,
+        // the window's far edge, because the cursor below is monotonic.
+        //
+        // Ordering is load-bearing: transport seals the payload when it binds
+        // the offer, so every byte -- PCM and MIDI alike -- must be written
+        // BEFORE PublishLatePayload. Writing Image 1 after publication is what
+        // produced [TxPayloadSeal] FATAL and killed the stream.
+        //
+        // The window width trades MIDI/PCM latency against tolerance for a late
+        // interrupt: this pass runs once per completion group (8 packets, 1 ms)
+        // straight out of the IT completion handler, so a window narrower than
+        // the worst interrupt delay leaves packets uncommitted at the frontier
+        // and they transmit armed silence instead. Do not narrow it until
+        // CommitFill's refusals are counted -- today they increment nothing.
+        constexpr uint64_t kCommitLeadPackets = 4;   // ~0.5 ms past finalized
+        constexpr uint64_t kCommitWindowPackets = 24;
+        const uint64_t finalized = txSlotProvider_.FinalizedEnd();
+        uint64_t at = std::max(txCommitCursor_, finalized);
+        const uint64_t windowEnd = finalized + kCommitLeadPackets + kCommitWindowPackets;
+        const uint64_t limit = windowEnd < txFillCursor_ ? windowEnd : txFillCursor_;
+
+        bool offeredPrimary = false;
+        bool offeredSecondary = false;
+        while (at < limit) {
+            const auto packet = static_cast<uint32_t>(at);
+            const bool primaryHasPcm = txStreamEngine_.IsPcmFilled(packet);
+            const bool secondaryHasPcm =
+                !txSecondaryActive_ ||
+                txStreamEngineSecondary_.IsPcmFilled(packet);
+
+            if (primaryHasPcm && secondaryHasPcm) {
+                if (txStreamEngine_.CommitFill(packet)) {
+                    offeredPrimary = true;
+                    if (txSecondaryActive_ &&
+                        txStreamEngineSecondary_.CommitFill(packet)) {
+                        offeredSecondary = true;
+                    }
+                }
+            }
+            ++at;
+        }
+        txCommitCursor_ = at;
 
         NotifyLatePayloadOffers(queue, 0, offeredPrimary);
         if (txSecondaryActive_) {

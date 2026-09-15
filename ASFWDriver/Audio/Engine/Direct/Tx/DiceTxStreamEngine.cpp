@@ -96,6 +96,7 @@ void DiceTxStreamEngine::ResetForStart(uint8_t initialDbc) noexcept {
     // fill must never be attempted against an arm this run did not make.
     for (auto& armed : armedPackets_) armed = {};
     for (auto& filled : armedFilled_) filled = false;
+    for (auto& filled : pcmFilled_) filled = false;
     // Same boundary as the queue's own consumer reset, so the producer and
     // transport counters the [TxFill] line subtracts share one run. See
     // DiceTxEngineCounters::Reset.
@@ -191,6 +192,7 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareTransmitSlot(
         const uint32_t index = packetIndex % retention;
         armedPackets_[index] = packet;
         armedFilled_[index] = false;
+        pcmFilled_[index] = false;
     }
 
     if (packet.isData && slotProvider_->SlotCount() != 0) {
@@ -338,6 +340,7 @@ TxSlotFillResult DiceTxStreamEngine::FillTransmitSlot(
     if (!packetizer_.RefillPcm(slot, armed, pcm)) {
         return TxSlotFillResult::Rejected;
     }
+    pcmFilled_[index] = true;
     // Gated on the capture, not merely stored conditionally: this runs once per
     // packet on the encode path, so an unconditional clock read would tax every
     // stream whether or not a session is measuring one.
@@ -346,35 +349,23 @@ TxSlotFillResult DiceTxStreamEngine::FillTransmitSlot(
                                                mach_absolute_time());
     }
 
-    // MIDI is composed last, after the PCM snapshot: RefillPcm lays the default
-    // word into every slot and then overwrites the PCM ones, so anything
-    // written earlier would be erased. Nothing is retired here -- the bytes are
-    // only selected, and CommitFill decides whether they were actually
-    // published.
-    if (midiBlock_ != nullptr && midiGeometry_.Valid()) {
-        if (midiScope_.HasOutstanding()) {
-            // The previous packet was filled but never reached CommitFill --
-            // the ZTS loop skips it when a sibling stream is not ready. Return
-            // those bytes before selecting new ones; leaving the reservation
-            // outstanding would refuse every later Begin and stop MIDI for good
-            // at the first unready sibling.
-            midiScope_.Cancel(midiReservation_);
-        }
-        if (midiScope_.Begin(*midiBlock_, midiEpoch_, packetIndex,
-                             midiReservation_)) {
-            ASFW::Encoding::MpxMidiPacketBytes bytes{};
-            for (uint32_t port = 0; port < ASFW::Encoding::kMpxMidiPorts; ++port) {
-                uint8_t byte = 0;
-                if (midiReservation_.Get(static_cast<uint8_t>(port), byte)) {
-                    bytes.byteForPort[port] = byte;
-                    bytes.hasByteForPort[port] = true;
-                }
-            }
-            packetizer_.ComposeMidi(slot, armed, midiGeometry_, bytes);
-        }
-    }
+    // MIDI is NOT composed here. This runs at the audio fill cursor, which with
+    // a bound PCM source chases committedEnd across the whole committed DMA
+    // runway -- headroom audio wants and MIDI does not. Composing here would
+    // charge every byte that entire lead. CommitFill composes it instead, in
+    // the same breath as publishing the late payload near finalizedEnd.
 
     return TxSlotFillResult::Filled;
+}
+
+bool DiceTxStreamEngine::IsPcmFilled(uint32_t packetIndex) const noexcept {
+    if (!slotProvider_) return false;
+    const uint32_t retention = std::min<uint32_t>(
+        slotProvider_->SlotCount(),
+        ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots);
+    if (retention == 0) return false;
+    const uint32_t index = packetIndex % retention;
+    return pcmFilled_[index] && armedPackets_[index].packetIndex == packetIndex && !armedFilled_[index];
 }
 
 void DiceTxStreamEngine::SetMidiTransport(
@@ -404,31 +395,61 @@ bool DiceTxStreamEngine::CommitFill(uint32_t packetIndex) noexcept {
         ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots);
     if (retention == 0) return false;
     const uint32_t index = packetIndex % retention;
-    if (armedFilled_[index] || armedPackets_[index].packetIndex != packetIndex) {
+    if (armedFilled_[index] || !pcmFilled_[index] ||
+        armedPackets_[index].packetIndex != packetIndex) {
         return false;
     }
+    const AMDTP::PreparedTxPacket& armed = armedPackets_[index];
+    if (!armed.isData) return false;
+
+    // Compose MIDI before publishing the late payload, so transport seals the
+    // complete, final image (PCM + MIDI). Modifying the payload after publication
+    // corrupts the transport checksum seal.
+    bool midiSelected = false;
+    if (midiBlock_ != nullptr && midiGeometry_.Valid()) {
+        AMDTP::TxPacketSlotView slot{};
+        if (!slotProvider_->AcquireLatePayloadSlot(packetIndex, slot)) {
+            return false;
+        }
+
+        if (midiScope_.HasOutstanding()) {
+            midiScope_.Cancel(midiReservation_);
+        }
+        if (midiScope_.Begin(*midiBlock_, midiEpoch_, packetIndex,
+                              midiReservation_)) {
+            midiSelected = true;
+            if (midiReservation_.Any()) {
+                ASFW::Encoding::MpxMidiPacketBytes bytes{};
+                for (uint32_t port = 0; port < ASFW::Encoding::kMpxMidiPorts; ++port) {
+                    uint8_t byte = 0;
+                    if (midiReservation_.Get(static_cast<uint8_t>(port), byte)) {
+                        bytes.byteForPort[port] = byte;
+                        bytes.hasByteForPort[port] = true;
+                    }
+                }
+                packetizer_.ComposeMidi(slot, armed, midiGeometry_, bytes);
+                TraceMidiTxReservation(packetIndex, armed.dbc);
+            }
+        }
+    }
+
     if (!slotProvider_->PublishLatePayload(packetIndex)) {
-        // Lost the publication race. The bytes stay queued for a later packet
-        // and keep their emission credit; only the elapsed wire time stands.
-        midiScope_.Cancel(midiReservation_);
+        if (midiSelected) {
+            midiScope_.Cancel(midiReservation_);
+        }
         return false;
     }
+
+    if (midiSelected) {
+        (void)midiScope_.Commit(*midiBlock_, midiReservation_);
+    }
+
     armedFilled_[index] = true;
     counters_.lateFillsPublished.fetch_add(1, std::memory_order_relaxed);
     // Retire on the successful offer, not at encode or arm time. This is a
     // software retirement point under an at-most-once policy: transport can
     // still discard an accepted offer, which is counted as loss rather than
     // replayed, because replaying would put a byte behind bytes already sent.
-    if (midiBlock_ != nullptr) {
-        // Trace before Commit, which consumes the reservation -- and only here,
-        // never at selection. A selected byte can still be returned to its ring
-        // by Cancel above and chosen again for a later packet; tracing at
-        // selection would feed the decoder that byte twice and desynchronise
-        // every message after it. These are the bytes that actually went out.
-        TraceMidiTxReservation(armedPackets_[index].packetIndex,
-                               armedPackets_[index].dbc);
-        (void)midiScope_.Commit(*midiBlock_, midiReservation_);
-    }
     return true;
 }
 
@@ -490,8 +511,12 @@ void DiceTxStreamEngine::TraceMidiTxByte(uint8_t port, uint8_t byte,
         : port;
     // Packets this byte will sit in the ring before the hardware transmits it.
     // At 125 us per packet this is the dominant term in MIDI latency and it is
-    // entirely ours: MIDI is composed at the audio fill cursor, so it inherits
-    // the whole of the audio buffering lead whether or not it needs it.
+    // entirely ours: it is the distance from the late commit pass to the wire.
+    //
+    // An upper bound, not an exact figure. completionCursor is only written by
+    // the refill pass on the IT completion interrupt, one completion group
+    // apart, so between interrupts it understates the true hardware position by
+    // 0..8 packets. Read the printed lead as (true lead + up to 1 ms).
     const uint64_t completion =
         slotProvider_ ? slotProvider_->CompletionCursor() : 0;
     const uint32_t leadPackets = (completion != 0 && packetIndex > completion)

@@ -144,6 +144,10 @@ public:
     /// if it maps the slot afterwards; losing that race is normal.
     [[nodiscard]] bool CommitFill(uint32_t packetIndex) noexcept;
 
+    /// Returns true if PCM content has been filled into Image 1 for this packet
+    /// and has not yet been committed to transport.
+    [[nodiscard]] bool IsPcmFilled(uint32_t packetIndex) const noexcept;
+
     /// Decode and log the bytes of the committed reservation. Trace only.
     void TraceMidiTxReservation(uint32_t packetIndex, uint8_t dbc) noexcept;
 
@@ -223,6 +227,10 @@ private:
     AMDTP::PreparedTxPacket armedPackets_[
         ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots]{};
     bool armedFilled_[
+        ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots]{};
+    /// Packets whose PCM content has been refilled into Image 1 by FillTransmitSlot
+    /// and is ready to be committed by CommitFill.
+    bool pcmFilled_[
         ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots]{};
     DiceTxEngineCounters counters_{};
 };

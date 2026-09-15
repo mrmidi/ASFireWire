@@ -690,7 +690,7 @@ TEST(AmdtpDirectTxTests, MidiOnlyFillComposesMidiIntoSilenceWithoutPcmSource) {
     // Fill slot 0 in MIDI-only mode
     EXPECT_EQ(engine.FillTransmitSlot(0), TxSlotFillResult::Filled);
 
-    // Commit fill
+    // Commit fill (composes MIDI and publishes)
     EXPECT_TRUE(engine.CommitFill(0));
     EXPECT_EQ(slots.latePublished, 1U);
 

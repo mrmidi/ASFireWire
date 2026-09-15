@@ -441,6 +441,7 @@ TEST_F(AudioEndpointStreamSessionTest, MidiOnlyContentFillBounding) {
     // But content fill was bounded to frozen + 16 packets (2 completion groups = 2 ms)
     // rather than running all the way to committedEnd
     EXPECT_EQ(session.TxFillCursor(), 16U);
+    EXPECT_EQ(session.TxCommitCursor(), 16U);
 }
 
 TEST_F(AudioEndpointStreamSessionTest, DestructorClearsCallbackOnStopFailure) {
@@ -580,6 +581,37 @@ TEST_F(AudioEndpointStreamSessionTest, SessionStopResetsTimelineAndStreamingFlag
     EXPECT_FALSE(session.IsStreaming());
     EXPECT_FALSE(bindingSource_.controlBlock.isSessionStreaming.load());
     EXPECT_EQ(bindingSource_.controlBlock.hardwareTimeline.Epoch(), 0U);
+}
+
+TEST_F(AudioEndpointStreamSessionTest, TxTransportFaultUpdatesStatusAndHaltsPump) {
+    AudioEndpointStreamSession session(
+        AudioEndpointId{1}, bindingSource_, isoch_, hardware_,
+        hostTransport_, streamControl_, profile_);
+
+    MpxMidiGeometry geom{
+        .dbs = 7,
+        .midiSlotIndex = 6,
+        .portCount = 1,
+        .dbcAligned = true,
+    };
+    ASSERT_EQ(session.AcquireMidiLease(&midiBlock_, 1, geom, 48000, 8), kIOReturnSuccess);
+    EXPECT_TRUE(session.IsStreaming());
+
+    auto* queue = session.TxSlotProvider().queueControl;
+    ASSERT_NE(queue, nullptr);
+
+    // Simulate transport entering producer fault (e.g. payload seal mismatch)
+    queue->statusWord.store(ASFW::Isoch::IsochTxQueueStatus::kProducerFault, std::memory_order_release);
+
+    // Preparation callback arrives on fault path
+    session.OnTxPreparation(1);
+
+    // Audio transport control block must reflect the fault
+    EXPECT_EQ(bindingSource_.controlBlock.txTransportStatus.load(),
+              static_cast<uint32_t>(ASFW::Isoch::IsochTxQueueStatus::kProducerFault));
+    // Pump must not have advanced fill or commit cursors
+    EXPECT_EQ(session.TxFillCursor(), 0U);
+    EXPECT_EQ(session.TxCommitCursor(), 0U);
 }
 
 } // namespace

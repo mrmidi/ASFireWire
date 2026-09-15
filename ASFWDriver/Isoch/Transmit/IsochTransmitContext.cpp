@@ -559,6 +559,9 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
                 std::memory_order_relaxed),
             counters.txUnderruns.load(std::memory_order_relaxed));
         StopImmediatelyForTxFault();
+        if (txPreparationCallback_) {
+            txPreparationCallback_(outcome.refillRequestGeneration);
+        }
     } else {
         ObserveTransportProgress(outcome, eventHostTicks);
         if (state_ != State::Running) {
@@ -683,6 +686,9 @@ void IsochTransmitContext::ObserveTransportProgress(
         progressFatalStops_.fetch_add(1, std::memory_order_relaxed);
         StopImmediatelyForTxFault(
             IsochTxQueueStatus::kTransportProgressStall);
+        if (txPreparationCallback_) {
+            txPreparationCallback_(outcome.refillRequestGeneration);
+        }
     }
 }
 

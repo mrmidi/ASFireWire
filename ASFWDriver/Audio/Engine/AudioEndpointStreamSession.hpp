@@ -100,6 +100,10 @@ public:
         return txFillCursor_;
     }
 
+    [[nodiscard]] uint64_t TxCommitCursor() const noexcept {
+        return txCommitCursor_;
+    }
+
     [[nodiscard]] bool MAudioInternalTimingArmed() const noexcept {
         return mAudioInternalTxTiming_.IsArmed();
     }
@@ -171,6 +175,10 @@ private:
     Shared::TxCorrelationUnwrapState txCorrelationUnwrap_{};
 
     uint64_t txFillCursor_{0};
+    /// How far the late commit pass has advanced. Independent of
+    /// txFillCursor_ on purpose: MIDI is composed and Image 1 is published
+    /// near the finalization frontier, not at the audio fill cursor.
+    uint64_t txCommitCursor_{0};
     uint64_t txFillCursorAheadEvents_{0};
     uint64_t txNoCycleAnchorEvents_{0};
 
