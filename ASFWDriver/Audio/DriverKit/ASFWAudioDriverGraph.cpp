@@ -1,3 +1,4 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 //
 // ASFWAudioDriverGraph.cpp
 // ASFWDriver
@@ -142,12 +143,14 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // Set once a resolved profile supplies its advertised sample-rate set, so the
     // bring-up single-format policy below is skipped for profiled devices.
     bool profileProvidedSampleRates = false;
+    ASFW::Isoch::Audio::PreferredStereoChannels preferredOutputStereo{};
 
     // Resolve audio profile registry on startup
     if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
             parsedConfig.vendorId, parsedConfig.modelId, parsedConfig.guid)) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Resolved profile '%{public}s'", profile->Name());
         strlcpy(parsedConfig.deviceName, profile->Name(), sizeof(parsedConfig.deviceName));
+        preferredOutputStereo = profile->PreferredOutputStereoChannels();
 
         const uint32_t rxChannels = profile->RxChannelCount();
         const uint32_t txChannels = profile->TxChannelCount();
@@ -588,6 +591,32 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             return error;
         }
         state.outputStreamAdded = true;
+    }
+
+    if (preferredOutputStereo.left != 0 || preferredOutputStereo.right != 0) {
+        if (preferredOutputStereo.left == 0 ||
+            preferredOutputStereo.right == 0 ||
+            preferredOutputStereo.left == preferredOutputStereo.right ||
+            preferredOutputStereo.left > ivars.device.outputChannelCount ||
+            preferredOutputStereo.right > ivars.device.outputChannelCount) {
+            ASFW_LOG(Audio,
+                     "ADK FATAL GRAPH invalid preferred stereo pair left=%u right=%u outputChannels=%u",
+                     preferredOutputStereo.left,
+                     preferredOutputStereo.right,
+                     ivars.device.outputChannelCount);
+            return kIOReturnBadArgument;
+        }
+        if (!requireAdkSuccess(
+                "device.SetPreferredChannelsForStereo",
+                ivars.audioDevice->SetPreferredChannelsForStereo(
+                    preferredOutputStereo.left,
+                    preferredOutputStereo.right))) {
+            return error;
+        }
+        ASFW_LOG(Audio,
+                 "ASFWAudioDriver: Preferred stereo output channels left=%u right=%u",
+                 preferredOutputStereo.left,
+                 preferredOutputStereo.right);
     }
 
     // Install the RT handler only after every exposed stream is fully

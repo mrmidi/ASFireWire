@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 //
 // DiceProfileTests.cpp
@@ -103,6 +104,30 @@ TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
     const auto* diceProfile =
         static_cast<const IDiceDeviceProfile*>(profile);
     EXPECT_FALSE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
+}
+
+TEST(DiceProfileTests, MotuUltraLitePresentsMainOutAsLogicalStereoOneAndTwo) {
+    constexpr uint32_t kMotuVendorId = 0x0001F2;
+    constexpr uint32_t kMotuUltraLiteModelId = 0x00000D;
+    const auto* profile =
+        AudioProfileRegistry::FindProfile(kMotuVendorId, kMotuUltraLiteModelId, 0);
+
+    ASSERT_NE(profile, nullptr);
+    EXPECT_STREQ(profile->Name(), "MOTU UltraLite");
+    EXPECT_EQ(profile->TxChannelCount(), 14U);
+    const auto preferred = profile->PreferredOutputStereoChannels();
+    EXPECT_EQ(preferred.left, 1U);
+    EXPECT_EQ(preferred.right, 2U);
+
+    const auto* streamProfile = static_cast<const IAudioStreamProfile*>(profile);
+    const auto policy = streamProfile->TxStreamPolicy();
+    ASSERT_TRUE(policy.sourceChannelMapEnabled);
+    EXPECT_EQ(policy.sourceChannelForWireSlot[0], 12U);
+    EXPECT_EQ(policy.sourceChannelForWireSlot[1], 13U);
+    EXPECT_EQ(policy.sourceChannelForWireSlot[10], 0U);
+    EXPECT_EQ(policy.sourceChannelForWireSlot[11], 1U);
+    EXPECT_EQ(policy.sourceChannelForWireSlot[12], 10U);
+    EXPECT_EQ(policy.sourceChannelForWireSlot[13], 11U);
 }
 
 TEST(DiceProfileTests, WeissIntProfileKeepsDuplexWireShapeButHidesCaptureFromCoreAudio) {

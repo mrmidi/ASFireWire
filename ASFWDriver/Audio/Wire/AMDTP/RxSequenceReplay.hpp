@@ -1,4 +1,5 @@
 #pragma once
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 
 #include "AmdtpTiming.hpp"
 
@@ -9,18 +10,22 @@
 namespace ASFW::Audio::Runtime {
 
 struct RxSequenceEntry final {
+    static constexpr uint32_t kMaxSphPerPacket = 8;
     uint64_t firstAudioFrame{0};
     uint32_t sourceCycleTimer{0};
     uint32_t sytOffset{UINT32_MAX};
     uint16_t dataBlocks{0};
     uint8_t dbc{0};
     uint8_t flags{0};
+    std::array<uint32_t, kMaxSphPerPacket> motuSphOffsets{};
+    uint8_t motuSphCount{0};
 };
 
 namespace RxSequenceFlags {
 inline constexpr uint8_t kValidCip = 1u << 0;
 inline constexpr uint8_t kValidSyt = 1u << 1;
 inline constexpr uint8_t kDiscontinuity = 1u << 2;
+inline constexpr uint8_t kValidMotuSph = 1u << 3;
 } // namespace RxSequenceFlags
 
 // A false replay read is recoverable, but its cause is not interchangeable:
@@ -148,6 +153,9 @@ public:
         std::atomic<uint16_t> dataBlocks{0};
         std::atomic<uint8_t> dbc{0};
         std::atomic<uint8_t> flags{0};
+        std::array<std::atomic<uint32_t>, RxSequenceEntry::kMaxSphPerPacket>
+            motuSphOffsets{};
+        std::atomic<uint8_t> motuSphCount{0};
     };
 
     void Reset() noexcept {
@@ -172,6 +180,12 @@ public:
         slot.dataBlocks.store(entry.dataBlocks, std::memory_order_relaxed);
         slot.dbc.store(entry.dbc, std::memory_order_relaxed);
         slot.flags.store(entry.flags, std::memory_order_relaxed);
+        for (uint32_t i = 0; i < RxSequenceEntry::kMaxSphPerPacket; ++i) {
+            slot.motuSphOffsets[i].store(entry.motuSphOffsets[i],
+                                         std::memory_order_relaxed);
+        }
+        slot.motuSphCount.store(entry.motuSphCount,
+                                std::memory_order_relaxed);
         slot.sequence.store(cursor + 1, std::memory_order_release);
         producerCursor_.store(cursor + 1, std::memory_order_release);
     }
@@ -238,6 +252,12 @@ public:
             slot.dataBlocks.load(std::memory_order_relaxed);
         entry.dbc = slot.dbc.load(std::memory_order_relaxed);
         entry.flags = slot.flags.load(std::memory_order_relaxed);
+        for (uint32_t i = 0; i < RxSequenceEntry::kMaxSphPerPacket; ++i) {
+            entry.motuSphOffsets[i] =
+                slot.motuSphOffsets[i].load(std::memory_order_relaxed);
+        }
+        entry.motuSphCount =
+            slot.motuSphCount.load(std::memory_order_relaxed);
         std::atomic_thread_fence(std::memory_order_acquire);
         const uint64_t finalSequence =
             slot.sequence.load(std::memory_order_relaxed);

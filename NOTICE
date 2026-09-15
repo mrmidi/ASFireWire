@@ -18,3 +18,13 @@ following works, used strictly as behavioral references (no code copied):
   - Apple IOFireWireFamily, IOFireWireAVC, IOFireWireSBP2 (APSL-2.0)
   - libffado (GPL-2.0/GPL-3.0)
   - snd-firewire-ctl-services (GPL-3.0)
+
+---
+
+Original MOTU UltraLite support modifications
+Copyright 2026 Rafal Zalech
+
+These modifications add MOTU FireWire protocol-v2 audio support. Public
+documentation and independently observed wire behavior were used as behavioral
+references. No implementation code from GPL- or APSL-licensed projects is
+included in these modifications.

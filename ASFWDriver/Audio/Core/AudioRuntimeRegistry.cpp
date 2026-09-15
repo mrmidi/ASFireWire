@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 
 #include "AudioRuntimeRegistry.hpp"
@@ -148,9 +149,9 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     // mode). No protocol is created, and nothing is logged, for unknown devices.
     auto created = DeviceProtocolFactory::Create(
         record.vendorId, record.modelId, *busOps, *busInfo, routeRegistry,
-        *route,
-        irmClient,
-        cmpClient_, timerScheduler_);
+        *route, irmClient, cmpClient_, timerScheduler_,
+        DeviceProtocolFactory::UnitIdentity{.specId = record.unitSpecId.value_or(0U),
+                                            .swVersion = record.unitSwVersion.value_or(0U)});
     if (!created) {
         return nullptr;
     }

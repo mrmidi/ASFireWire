@@ -1,7 +1,11 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 #include "AmdtpTxPacketizer.hpp"
 
 #include "AmdtpRateGeometry.hpp"
+#include "AmdtpTiming.hpp"
 #include "../IEC61883/Syt.hpp"
+#include "../MOTU/MotuBlockCodec.hpp"
+#include "../MOTU/MotuSph.hpp"
 
 namespace ASFW::Protocols::Audio::AMDTP {
 
@@ -58,7 +62,9 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     AmdtpStreamConfig config = streamConfig;
     // FDF (AM824 SFC) must match the actual rate, not whatever the profile
     // defaulted (profiles hardcode the 48 kHz SFC 0x02).
-    config.fdf = geometry->fdf;
+    if (!config.sph) {
+        config.fdf = geometry->fdf;
+    }
     if (config.dbs == 0) {
         config.dbs = static_cast<uint8_t>(config.pcmChannels + config.midiSlots);
     }
@@ -81,7 +87,7 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     cipConfig.dbs = config.dbs;
     cipConfig.fn = 0;
     cipConfig.qpc = 0;
-    cipConfig.sph = false;
+    cipConfig.sph = config.sph;
     cipConfig.fmt = config.fmt;
     cipConfig.fdf = config.fdf;
     cipConfig.noDataFdf =
@@ -166,6 +172,11 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     if (frames > streamConfig_.framesPerDataPacket) {
         return false;
     }
+    if (isData && streamConfig_.sph &&
+        (timing.motuSphCount != frames ||
+         timing.motuSphCount > timing.motuSphOffsets.size())) {
+        return false;
+    }
     const uint32_t payloadBytes =
         static_cast<uint32_t>(frames) * streamConfig_.dbs * kBytesPerSlot;
 
@@ -179,23 +190,43 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     }
 
     const uint8_t dbc = dbcCounter_.ValueForNextPacket();
+    // MOTU host-to-device packets label DBC with the end event rather than
+    // the first event.
+    const uint8_t wireDbc =
+        streamConfig_.sph ? static_cast<uint8_t>(dbc + frames) : dbc;
 
     outPacket = PreparedTxPacket{};
     outPacket.packetIndex = slot.packetIndex;
     outPacket.byteCount = byteCount;
     outPacket.isData = isData;
-    outPacket.dbc = dbc;
+    outPacket.dbc = wireDbc;
     outPacket.dbs = streamConfig_.dbs;
     outPacket.firstAudioFrame = nextAudioFrame_;
     outPacket.framesInPacket = isData ? frames : 0;
 
     if (isData) {
-        outPacket.syt = timing.txClockValid
+        outPacket.syt = streamConfig_.sph
+                            ? IEC61883::SytFormatter::kNoInfo
+                            : (timing.txClockValid
                             ? timing.nextDataSyt
-                            : IEC61883::SytFormatter::kNoInfo;
+                            : IEC61883::SytFormatter::kNoInfo);
 
-        WriteCipHeader(slot.bytes, cipBuilder_.BuildData(dbc, outPacket.syt));
+        WriteCipHeader(slot.bytes, cipBuilder_.BuildData(wireDbc, outPacket.syt));
         WriteDataPacketDefaults(slot.bytes, slot.capacityBytes, payloadBytes);
+        if (streamConfig_.sph) {
+            const uint32_t baseTick = static_cast<uint32_t>(
+                ASFW::Timing::normalizeOffsetDomain(timing.packetCycleTicks) %
+                ASFW::Encoding::Motu::kTicksPerSecond);
+            uint8_t* payload = slot.bytes + kCipHeaderBytes;
+            const uint32_t blockBytes =
+                static_cast<uint32_t>(streamConfig_.dbs) * kBytesPerSlot;
+            for (uint32_t i = 0; i < frames; ++i) {
+                ASFW::Encoding::Motu::WriteSph(
+                    std::span<uint8_t>(payload + i * blockBytes, blockBytes),
+                    ASFW::Encoding::Motu::ReplaySph(
+                        timing.motuSphOffsets[i], baseTick));
+            }
+        }
 
         if (!timeline_->ExposeDataPacket(outPacket, slot.bytes,
                                          slot.capacityBytes)) {

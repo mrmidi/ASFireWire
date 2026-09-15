@@ -1,4 +1,5 @@
 #pragma once
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 
 #include "AudioStreamMemory.hpp"
 #include "AudioTransportControlBlock.hpp"
@@ -19,6 +20,7 @@ enum class AudioWireFormat : uint32_t {
     kUnknown = 0,
     kAM824 = 1,
     kRawPcm24In32 = 2,
+    kMotuV2 = 3,
 };
 
 struct AudioGraphBinding final {

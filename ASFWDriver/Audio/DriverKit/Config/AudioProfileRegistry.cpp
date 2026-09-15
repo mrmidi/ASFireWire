@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 //
 // AudioProfileRegistry.cpp
@@ -9,6 +10,7 @@
 #include "AVC/BeBoBProfile.hpp"
 #include "AVC/Phase88Profile.hpp"
 #include "DICE/DiceProfileRegistry.hpp"
+#include "MOTU/MotuUltraLiteProfile.hpp"
 #include "../../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
@@ -23,6 +25,12 @@ std::unordered_map<uint64_t, std::unique_ptr<IAudioDeviceProfile>>& AudioProfile
 const IAudioDeviceProfile* AudioProfileRegistry::FindProfile(uint32_t vendorId,
                                                              uint32_t modelId,
                                                              uint64_t guid) noexcept {
+    static MOTU::MotuUltraLiteProfile motuUltraLiteProfile{};
+    if (vendorId == DeviceProfiles::Audio::kMotuVendorId &&
+        modelId == DeviceProfiles::Audio::kMotuUltraliteSwVersion) {
+        return &motuUltraLiteProfile;
+    }
+
     // Curated static profiles win over everything else: a discovery-derived
     // per-GUID profile must never shadow a hand-validated device profile
     // (curated name, warm-up/idle-packet policy, rate set). Shadowing Phase88

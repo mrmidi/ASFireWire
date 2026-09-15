@@ -1,3 +1,4 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 //
 // ASFWAudioDriverDirect.cpp
 // ASFWDriver
@@ -299,6 +300,8 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
             ivars.device.vendorId, ivars.device.modelId, ivars.device.guid)) {
         if (profile->TxWireFormat() == ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
             wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kRawPcm24In32;
+        } else if (profile->TxWireFormat() == ASFW::Encoding::AudioWireFormat::kMotuV2) {
+            wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kMotuV2;
         }
     }
 

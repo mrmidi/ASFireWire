@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 //
 // AudioStreamProfile.hpp - Protocol-neutral ADK stream geometry contract.
@@ -7,6 +8,7 @@
 
 #include "IAudioDeviceProfile.hpp"
 
+#include <array>
 #include <cstdint>
 
 namespace ASFW::Isoch::Audio {
@@ -28,6 +30,7 @@ struct AudioStreamConfig final {
     uint8_t fdf{0x02};
     uint8_t fmt{0x10};
     uint8_t sourceChannelOffset{0};
+    bool sph{false};
 };
 
 struct AudioStreamTxPolicy final {
@@ -37,6 +40,10 @@ struct AudioStreamTxPolicy final {
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
+    // Optional per-stream map from each wire PCM slot to a zero-based host
+    // channel. Values are relative to sourceChannelOffset.
+    std::array<uint8_t, 32> sourceChannelForWireSlot{};
+    bool sourceChannelMapEnabled{false};
 };
 
 // ADK packet allocation and AMDTP encoding are shared by multiple protocol

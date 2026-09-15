@@ -1,9 +1,12 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 #include "Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "Audio/Ports/IAmdtpTxSlotProvider.hpp"
 #include "Audio/Wire/AMDTP/AmdtpPacketTimeline.hpp"
 #include "Audio/Wire/AMDTP/AmdtpPayloadWriter.hpp"
 #include "Audio/Wire/AMDTP/AmdtpTxPacketizer.hpp"
 #include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
+#include "Audio/Wire/MOTU/MotuBlockCodec.hpp"
+#include "Audio/Wire/MOTU/MotuSph.hpp"
 
 #include <gtest/gtest.h>
 
@@ -55,6 +58,20 @@ AmdtpStreamConfig BlockingStereoConfig() {
     config.pcmChannels = 2;
     config.framesPerDataPacket = 8;
     config.maxPacketBytes = 128;
+    return config;
+}
+
+AmdtpStreamConfig MotuUltraLiteConfig() {
+    AmdtpStreamConfig config{};
+    config.sampleRate = 48000;
+    config.streamMode = StreamMode::Blocking;
+    config.dbs = 13;
+    config.pcmChannels = 14;
+    config.fmt = 0x02;
+    config.fdf = 0x22;
+    config.sph = true;
+    config.framesPerDataPacket = 8;
+    config.maxPacketBytes = 424;
     return config;
 }
 
@@ -180,6 +197,99 @@ TEST(AmdtpDirectTxTests, ReplayOverridesLocalCadencePerPhysicalCycle) {
     EXPECT_EQ(packet.dbc, 8U);
 }
 
+TEST(AmdtpDirectTxTests, MotuPacketUsesEndDbcNoInfoSytAndReplayedSph) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(MotuUltraLiteConfig(), AmdtpTxPolicy{}));
+
+    std::array<uint8_t, 320> bytes{};
+    AmdtpTimingState timing{};
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.replayValid = true;
+    timing.replayDataBlocks = 6;
+    timing.packetCycleTicks = 100 * ASFW::Encoding::Motu::kTicksPerCycle;
+    timing.motuSphCount = 6;
+    timing.motuSphOffsets = {10, 567, 1124, 1681, 2238, 2795, 0, 0};
+
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {0, bytes.data(), bytes.size()}, timing, packet));
+    EXPECT_TRUE(packet.isData);
+    EXPECT_EQ(packet.byteCount, 320U);
+    EXPECT_EQ(packet.framesInPacket, 6U);
+    EXPECT_EQ(packet.dbc, 6U);
+    EXPECT_EQ(packet.syt, 0xFFFFU);
+
+    // DBS=13, SPH=1 and end-event DBC=6 in CIP Q0; MOTU fmt/fdf and
+    // SYT_NO_INFO in Q1.
+    EXPECT_EQ(bytes[1], 13U);
+    EXPECT_EQ(bytes[2] & 0x04U, 0x04U);
+    EXPECT_EQ(bytes[3], 6U);
+    EXPECT_EQ(bytes[4], 0x82U);
+    EXPECT_EQ(bytes[5], 0x22U);
+    EXPECT_EQ(bytes[6], 0xFFU);
+    EXPECT_EQ(bytes[7], 0xFFU);
+
+    constexpr uint32_t kBlockBytes = 13U * 4U;
+    for (uint32_t i = 0; i < 6; ++i) {
+        const std::span<const uint8_t> block(
+            bytes.data() + 8 + i * kBlockBytes, kBlockBytes);
+        const uint32_t expected = ASFW::Encoding::Motu::ReplaySph(
+            timing.motuSphOffsets[i],
+            static_cast<uint32_t>(timing.packetCycleTicks));
+        EXPECT_EQ(ASFW::Encoding::Motu::ReadSph(block), expected);
+    }
+}
+
+TEST(AmdtpDirectTxTests, MotuPacketRejectsMissingSphReplayData) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(MotuUltraLiteConfig(), AmdtpTxPolicy{}));
+
+    std::array<uint8_t, 320> bytes{};
+    AmdtpTimingState timing{};
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.replayValid = true;
+    timing.replayDataBlocks = 6;
+    timing.motuSphCount = 5;
+    PreparedTxPacket packet{};
+    EXPECT_FALSE(packetizer.PrepareNextPacket(
+        {0, bytes.data(), bytes.size()}, timing, packet));
+}
+
+TEST(AmdtpDirectTxTests, MotuPacketAcceptsLargestReplayedCadencePacket) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(MotuUltraLiteConfig(), AmdtpTxPolicy{}));
+
+    std::array<uint8_t, 424> bytes{};
+    AmdtpTimingState timing{};
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.replayValid = true;
+    timing.replayDataBlocks = 8;
+    timing.packetCycleTicks = 200 * ASFW::Encoding::Motu::kTicksPerCycle;
+    timing.motuSphCount = 8;
+    timing.motuSphOffsets = {10, 567, 1124, 1681, 2238, 2795, 3352, 3909};
+
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {0, bytes.data(), bytes.size()}, timing, packet));
+    EXPECT_TRUE(packet.isData);
+    EXPECT_EQ(packet.byteCount, 424U);
+    EXPECT_EQ(packet.framesInPacket, 8U);
+    EXPECT_EQ(packet.dbc, 8U);
+}
+
 TEST(AmdtpDirectTxTests, PayloadWriterReadsMappedInt32RingDirectly) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 8> timelineSlots{};
@@ -223,6 +333,53 @@ TEST(AmdtpDirectTxTests, PayloadWriterReadsMappedInt32RingDirectly) {
     EXPECT_EQ(dataBytes[13], 0x80);
     EXPECT_EQ(dataBytes[14], 0x00);
     EXPECT_EQ(dataBytes[15], 0x01);
+}
+
+TEST(AmdtpDirectTxTests, MotuPayloadWriterMapsLogicalMainOutToWireSlotsElevenAndTwelve) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+
+    auto config = MotuUltraLiteConfig();
+    AmdtpTxPolicy policy{};
+    policy.hostToDevicePcmEncoding = PcmSlotEncoding::MotuV2Packed24;
+    policy.sourceChannelMapEnabled = true;
+    policy.sourceChannelForWireSlot = {
+        12, 13, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 10, 11,
+    };
+
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(config, policy));
+
+    std::array<uint8_t, 320> packetBytes{};
+    AmdtpTimingState timing{};
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.replayValid = true;
+    timing.replayDataBlocks = 6;
+    timing.motuSphCount = 6;
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {0, packetBytes.data(), packetBytes.size()}, timing, packet));
+    ASSERT_TRUE(packet.isData);
+
+    AmdtpPayloadWriter writer{};
+    writer.Configure(config, policy);
+    writer.BindTimeline(&timeline);
+    std::array<float, 6 * 14> hostRing{};
+    for (uint32_t frame = 0; frame < 6; ++frame) {
+        hostRing[frame * 14] = 1.0f;       // logical Main Out left
+        hostRing[frame * 14 + 10] = -1.0f; // logical channel 11
+    }
+    writer.WriteFloat32Interleaved(
+        {hostRing.data(), 0, 6, 6, 14}, 0);
+
+    const std::span<const uint8_t> firstBlock(
+        packetBytes.data() + 8, ASFW::Encoding::Motu::DataBlockBytes(14));
+    EXPECT_EQ(ASFW::Encoding::Motu::ReadPcmChannel(firstBlock, 12),
+              static_cast<int32_t>(0x80000100));
+    EXPECT_EQ(ASFW::Encoding::Motu::ReadPcmChannel(firstBlock, 10),
+              0x7FFFFF00);
 }
 
 TEST(AmdtpDirectTxTests, PayloadWriterCountsUnderExposureAtCallBoundary) {

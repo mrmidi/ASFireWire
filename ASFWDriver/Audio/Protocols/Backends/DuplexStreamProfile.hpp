@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 //
 // DuplexStreamProfile.hpp - Resolved stream geometry and host-start recipe for duplex audio
@@ -202,6 +203,12 @@ class DuplexStreamProfileResolver final {
         return DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(record.vendorId, record.modelId);
     }
 
+    [[nodiscard]] static constexpr bool
+    IsMotuUltraLite(const Discovery::DeviceRecord& record) noexcept {
+        return record.vendorId == DeviceProfiles::Audio::kMotuVendorId &&
+               record.modelId == DeviceProfiles::Audio::kMotuUltraliteSwVersion;
+    }
+
     [[nodiscard]] static AudioDuplexChannels
     ResolveChannels(const Discovery::DeviceRecord& record,
                     const AudioStreamRuntimeCaps& caps) noexcept {
@@ -279,7 +286,8 @@ class DuplexStreamProfileResolver final {
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
             // CMP (including BridgeCo/BeBoB) does not own a fixed channel;
             // IRM selects one, which is then committed back to its PCR.
-            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsBeBoB(record))
+            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsBeBoB(record) ||
+                                            IsMotuUltraLite(record))
                                               ? kAllIsoChannels
                                               : FixedChannelMask(geometry.isoChannel);
             captureChannelOffset += geometry.pcmChannels;
@@ -297,7 +305,8 @@ class DuplexStreamProfileResolver final {
                                       : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
             geometry.bandwidthUnits = AmdtpBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
-            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsBeBoB(record))
+            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsBeBoB(record) ||
+                                            IsMotuUltraLite(record))
                                               ? kAllIsoChannels
                                               : FixedChannelMask(geometry.isoChannel);
         }
@@ -320,6 +329,17 @@ class DuplexStreamProfileResolver final {
             profile.startOrder.postDeviceEnableDelayMs = 0;
             profile.stopOrder
                 .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive = true;
+        }
+        if (IsMotuUltraLite(record)) {
+            profile.captureWireFormat = Encoding::AudioWireFormat::kMotuV2;
+            profile.playbackWireFormat = Encoding::AudioWireFormat::kMotuV2;
+            profile.startOrder.startReceiveBeforeDeviceRx = true;
+            profile.startOrder.requiresPreStreamClockLock = false;
+            profile.startOrder.startOrder = {
+                DuplexHostDirection::kReceive,
+                DuplexHostDirection::kTransmit,
+            };
+            profile.startOrder.postDeviceEnableDelayMs = 0;
         }
         if (IsBeBoB(record)) {
             // Linux BeBoB reserves both CMP resources, establishes remote

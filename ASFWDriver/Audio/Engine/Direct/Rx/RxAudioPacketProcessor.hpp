@@ -1,4 +1,5 @@
 #pragma once
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 
 #include "../DirectInputWriter.hpp"
 #include "DirectRxTypes.hpp"
@@ -6,6 +7,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <array>
 
 namespace ASFW::AudioEngine::Direct::Rx {
 
@@ -19,6 +21,8 @@ struct RxAudioPacketProcessorResult final {
     uint8_t fdf{0};
     uint8_t dbs{0};
     uint8_t dbc{0};
+    std::array<uint32_t, 8> motuSph{};
+    uint8_t motuSphCount{0};
 };
 
 class RxAudioPacketProcessor final {
@@ -39,7 +43,9 @@ public:
                                                              uint32_t am824Slots,
                                                              ASFW::Encoding::AudioWireFormat format,
                                                              uint32_t channelOffset = 0,
-                                                             bool publishTimeline = true) noexcept;
+                                                             bool publishTimeline = true,
+                                                             const std::array<uint8_t, 32>*
+                                                                 wireChannelForHostChannel = nullptr) noexcept;
 
 private:
     DirectInputWriter& writer_;

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 //
 // DeviceProfileTypes.hpp - Neutral, metadata-only inputs for device profile matching.
@@ -28,6 +29,13 @@ struct DeviceProfileQuery {
     uint64_t guid{0};
     uint32_t vendorId{0};
     uint32_t modelId{0};
+
+    // Unit directory identity. Some families are not discriminated by model_id at all:
+    // MOTU publishes model_id 0 in the root directory and identifies the model solely by
+    // Unit_Sw_Version (cross-validated with Linux sound/firewire/motu/motu.c:151-181,
+    // which matches on VENDOR_ID | SPECIFIER_ID | VERSION). Zero means "not supplied".
+    uint32_t unitSpecId{0};
+    uint32_t unitSwVersion{0};
 };
 
 } // namespace ASFW::DeviceProfiles

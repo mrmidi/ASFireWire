@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 //
 // AudioProfileRegistry.hpp - Aggregates the per-vendor audio profile providers into one
@@ -19,6 +20,7 @@
 #include "Vendors/BeBoBDeviceProfiles.hpp"
 #include "Vendors/FocusriteAudioProfiles.hpp"
 #include "Vendors/MidasAudioProfiles.hpp"
+#include "Vendors/MotuAudioProfiles.hpp"
 #include "Vendors/PreSonusAudioProfiles.hpp"
 #include "Vendors/TerraTecAudioProfiles.hpp"
 #include "Vendors/WeissAudioProfiles.hpp"
@@ -38,6 +40,7 @@ public:
         if (auto hint = Apogee::LookupIdentity(query)) { return hint; }
         if (auto hint = Alesis::LookupIdentity(query)) { return hint; }
         if (auto hint = Midas::LookupIdentity(query)) { return hint; }
+        if (auto hint = Motu::LookupIdentity(query)) { return hint; }
         if (auto hint = PreSonus::LookupIdentity(query)) { return hint; }
         if (auto hint = TerraTec::LookupIdentity(query)) { return hint; }
         if (auto hint = BeBoB::LookupIdentity(query)) { return hint; }
@@ -55,6 +58,7 @@ public:
         if (auto hint = Apogee::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Alesis::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Midas::LookupAudioProfile(query)) { return hint; }
+        if (auto hint = Motu::LookupAudioProfile(query)) { return hint; }
         if (auto hint = PreSonus::LookupAudioProfile(query)) { return hint; }
         if (auto hint = TerraTec::LookupAudioProfile(query)) { return hint; }
         if (auto hint = BeBoB::LookupAudioProfile(query)) { return hint; }

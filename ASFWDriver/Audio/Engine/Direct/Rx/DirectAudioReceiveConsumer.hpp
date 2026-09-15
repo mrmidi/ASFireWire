@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 
 #pragma once
@@ -27,6 +28,8 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         uint32_t am824Slots{0};
         uint32_t channelOffset{0};
         uint32_t streamChannels{0};
+        std::array<uint8_t, 32> wireChannelForHostChannel{};
+        bool hostChannelMapEnabled{false};
         bool isSecondary{false};
     };
 

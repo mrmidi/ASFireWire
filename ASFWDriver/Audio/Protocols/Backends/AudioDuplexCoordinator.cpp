@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 
 #include "AudioDuplexCoordinator.hpp"
@@ -34,6 +35,24 @@ using ASFW::Audio::DICE::HasRestartIntent;
 
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 constexpr uint32_t kDuetFixedSampleRateHz = 48000U;
+
+[[nodiscard]] constexpr bool IsMotuUltraLite(
+    const Discovery::DeviceRecord& record) noexcept {
+    return record.vendorId == DeviceProfiles::Audio::kMotuVendorId &&
+           record.modelId == DeviceProfiles::Audio::kMotuUltraliteSwVersion;
+}
+
+[[nodiscard]] bool IsDirectMotuUltraLiteBus(
+    const Discovery::DeviceRecord& record,
+    Driver::HardwareInterface& hardware) noexcept {
+    // On a two-node 1394 bus the root receives physical ID 1 and the only
+    // remote node receives ID 0.  This exact check keeps the no-IRM channel and
+    // cycle-master fallback scoped to the directly attached UltraLite setup it
+    // was designed for; it must never enable cycle-master while another node
+    // is root.
+    return IsMotuUltraLite(record) && record.nodeId == 0 &&
+           (hardware.ReadNodeID() & 0x3fu) == 1;
+}
 
 // The Duet format-control path is deliberately start-time only for now.  Do
 // not resurrect a rate retained in a restart session: the host geometry and
@@ -1036,6 +1055,9 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     session.runtimeCaps = prepare.value.runtimeCaps;
     DuplexStreamProfile streamProfile =
         DuplexStreamProfileResolver::Resolve(record, session.runtimeCaps, channels);
+    const bool directMotuUltraLiteBus =
+        IsDirectMotuUltraLiteBus(record, hardware_);
+    bool usedDirectMotuNoIrmFallback = false;
     SetSessionPhase(session, DuplexRestartPhase::kPrepared);
     StoreSession(session);
 
@@ -1055,9 +1077,26 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             guid, *irmClient, geometry.allowedIsoChannels, geometry.bandwidthUnits,
             assignedChannel);
         if (reservePlaybackStatus != kIOReturnSuccess) {
-            return rollbackToFailure(reservePlaybackStatus,
-                                     DuplexRestartPhase::kReservingPlaybackResources,
-                                     DuplexRestartFailureCause::kReservePlayback);
+            // A direct Mac <-> UltraLite bus can have no contender-capable node,
+            // hence no IRM. There is no competing initiator on that two-node
+            // topology, and MOTU protocol v2 already defines the provisional
+            // point-to-point channels (playback 0, capture 1). Preserve those
+            // channels only for the exact UltraLite profile and only for the
+            // explicit "IRM not found" result. Bandwidth exhaustion, timeouts,
+            // and every other device profile retain strict IRM failure handling.
+            if (reservePlaybackStatus == kIOReturnNoDevice &&
+                directMotuUltraLiteBus && geometry.isoChannel <= 0x3f) {
+                assignedChannel = geometry.isoChannel;
+                usedDirectMotuNoIrmFallback = true;
+                ASFW_LOG(Audio,
+                         "AudioDuplexCoordinator: no IRM on direct UltraLite bus; "
+                         "using fixed playback channel %u GUID=%llx",
+                         assignedChannel, guid);
+            } else {
+                return rollbackToFailure(reservePlaybackStatus,
+                                         DuplexRestartPhase::kReservingPlaybackResources,
+                                         DuplexRestartFailureCause::kReservePlayback);
+            }
         }
         channels.playbackIsoChannels[i] = assignedChannel;
         if (i == 0) {
@@ -1084,9 +1123,19 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             guid, *irmClient, geometry.allowedIsoChannels, geometry.bandwidthUnits,
             assignedChannel);
         if (reserveCaptureStatus != kIOReturnSuccess) {
-            return rollbackToFailure(reserveCaptureStatus,
-                                     DuplexRestartPhase::kReservingCaptureResources,
-                                     DuplexRestartFailureCause::kReserveCapture);
+            if (reserveCaptureStatus == kIOReturnNoDevice &&
+                directMotuUltraLiteBus && geometry.isoChannel <= 0x3f) {
+                assignedChannel = geometry.isoChannel;
+                usedDirectMotuNoIrmFallback = true;
+                ASFW_LOG(Audio,
+                         "AudioDuplexCoordinator: no IRM on direct UltraLite bus; "
+                         "using fixed capture channel %u GUID=%llx",
+                         assignedChannel, guid);
+            } else {
+                return rollbackToFailure(reserveCaptureStatus,
+                                         DuplexRestartPhase::kReservingCaptureResources,
+                                         DuplexRestartFailureCause::kReserveCapture);
+            }
         }
         channels.captureIsoChannels[i] = assignedChannel;
         if (i == 0) {
@@ -1110,6 +1159,27 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     deviceControl.SetAssignedChannels(channels);
     streamProfile = DuplexStreamProfileResolver::Resolve(record, session.runtimeCaps, channels);
     StoreSession(session);
+
+    // A direct UltraLite bus has no contender-capable IRM and therefore no bus
+    // manager to start cycle packets.  The Mac is already the verified root in
+    // this exact two-node topology, so enable its OHCI cycle master before
+    // starting either isochronous DMA context.  Without cycle-start packets the
+    // contexts remain ACTIVE at their first descriptor and never interrupt.
+    if (usedDirectMotuNoIrmFallback &&
+        !hardware_.IsLocalCycleMasterEnabled()) {
+        if (!hardware_.SetLocalCycleMasterEnabled(true)) {
+            ASFW_LOG_ERROR(
+                Audio,
+                "AudioDuplexCoordinator: failed to enable cycle master for direct UltraLite GUID=%llx",
+                guid);
+            return rollbackToFailure(kIOReturnNotReady,
+                                     DuplexRestartPhase::kStartingHostReceive,
+                                     DuplexRestartFailureCause::kStartReceive);
+        }
+        ASFW_LOG(Audio,
+                 "AudioDuplexCoordinator: enabled local cycle master for direct UltraLite GUID=%llx",
+                 guid);
+    }
 
     ASFW_LOG(Audio,
              "AUDIO DUPLEX START guid=0x%016llx ir=%u it=%u inCh=%u outCh=%u inSlots=%u outSlots=%u "

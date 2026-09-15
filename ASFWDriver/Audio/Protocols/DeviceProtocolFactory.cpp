@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2024 ASFireWire Project
 //
 // DeviceProtocolFactory.cpp - Factory for creating device-specific protocol handlers
@@ -6,6 +7,7 @@
 #include "DeviceProtocolFactory.hpp"
 #include "DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "DICE/TCAT/DICETcatProtocol.hpp"
+#include "MOTU/MotuV2Protocol.hpp"
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "BeBoB/Phase88Protocol.hpp"
 #include "BeBoB/GenericBeBoBProtocol.hpp"
@@ -23,12 +25,29 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
     const Discovery::DeviceRouteToken& route,
     IRM::IRMClient* irmClient,
     CMP::CMPClient* cmpClient,
-    Scheduling::ITimerScheduler* timerScheduler
+    Scheduling::ITimerScheduler* timerScheduler,
+    UnitIdentity unit
 ) {
     if (!route) {
         return nullptr;
     }
     const uint16_t nodeId = route.nodeId;
+
+    // MOTU first: it is the one family that model_id cannot discriminate (the root
+    // directory publishes model_id 0), so it is matched on the unit directory instead.
+    if (DeviceProfiles::Audio::Motu::LookupAudioProfile(
+            DeviceProfiles::DeviceProfileQuery{.vendorId = vendorId,
+                                               .modelId = modelId,
+                                               .unitSpecId = unit.specId,
+                                               .unitSwVersion = unit.swVersion})
+            .has_value()) {
+        ASFW_LOG(Audio,
+                 "Creating MotuV2Protocol vendor=0x%06x version=0x%06x node=0x%04x",
+                 vendorId, unit.swVersion, nodeId);
+        return std::make_unique<Motu::MotuV2Protocol>(
+            busOps, busInfo, routeRegistry, route, irmClient, unit.swVersion);
+    }
+
     if (vendorId == kFocusriteVendorId) {
         if (modelId == kSPro24DspModelId) {
             ASFW_LOG(DICE, "Creating SPro24DspProtocol for vendor=0x%06x model=0x%06x node=0x%04x",

@@ -1,6 +1,9 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 #include "RxAudioPacketProcessor.hpp"
 #include "DirectRxPacketDecoder.hpp"
 #include "../../../Wire/CIP/CIPHeader.hpp"
+#include "../../../Wire/MOTU/MotuBlockCodec.hpp"
+#include "../../../Wire/MOTU/MotuBlockLayout.hpp"
 #include "../../../../Isoch/Receive/IsochRxTiming.hpp"
 
 #include <algorithm>
@@ -17,7 +20,9 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
                                                                    uint32_t am824Slots,
                                                                    ASFW::Encoding::AudioWireFormat format,
                                                                    uint32_t channelOffset,
-                                                                   bool publishTimeline) noexcept {
+                                                                   bool publishTimeline,
+                                                                   const std::array<uint8_t, 32>*
+                                                                       wireChannelForHostChannel) noexcept {
     RxAudioPacketProcessorResult result{};
 
     if (length < kIsochHeaderSize + 8) {
@@ -46,7 +51,13 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     result.dbc = cip->dataBlockCounter;
 
     const size_t payloadBytes = length - kIsochHeaderSize - 8;
-    const size_t dbsBytes = static_cast<size_t>(cip->dataBlockSize) * 4u;
+    const bool isMotu =
+        format == ASFW::Encoding::AudioWireFormat::kMotuV2;
+    // Original UltraLite capture packets report an unreliable CIP DBS.  The
+    // configured MOTU block geometry is authoritative for this wire format.
+    const size_t dbsBytes = isMotu
+        ? static_cast<size_t>(am824Slots) * 4u
+        : static_cast<size_t>(cip->dataBlockSize) * 4u;
     if (dbsBytes == 0) {
         result.status = DirectRxWriteStatus::kZeroDataBlockSize;
         return result;
@@ -68,10 +79,22 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
 
     // Geometry validation
     if (channels == 0 ||
-        cip->dataBlockSize < channels ||
-        am824Slots != cip->dataBlockSize) {
+        (!isMotu &&
+         (cip->dataBlockSize < channels ||
+          am824Slots != cip->dataBlockSize)) ||
+        (isMotu &&
+         (am824Slots != ASFW::Encoding::Motu::DataBlockQuadlets(channels) ||
+          channels != 14))) {
         result.status = DirectRxWriteStatus::kGeometryMismatch;
         return result;
+    }
+    if (wireChannelForHostChannel) {
+        for (uint32_t hostChannel = 0; hostChannel < channels; ++hostChannel) {
+            if ((*wireChannelForHostChannel)[hostChannel] >= channels) {
+                result.status = DirectRxWriteStatus::kGeometryMismatch;
+                return result;
+            }
+        }
     }
 
     // If armed: decode quadlets directly to ADK input memory
@@ -83,11 +106,30 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
             return result;
         }
 
-        const uint32_t* frameIn = dataBlocks + (i * cip->dataBlockSize);
-        // Write this stream's slice at its channel offset into the interleaved
-        // frame; the writer stride covers the buffer's full channel width.
-        DecodeDirectRxFrame(frameIn, channels, cip->dataBlockSize, format,
-                            frameOut + channelOffset);
+        if (isMotu) {
+            const auto* blockBytes =
+                reinterpret_cast<const uint8_t*>(dataBlocks) + i * dbsBytes;
+            const std::span<const uint8_t> block(blockBytes, dbsBytes);
+            if (i < result.motuSph.size()) {
+                result.motuSph[i] = ASFW::Encoding::Motu::ReadSph(block);
+                ++result.motuSphCount;
+            }
+            for (uint32_t hostChannel = 0; hostChannel < channels; ++hostChannel) {
+                const uint32_t wireChannel = wireChannelForHostChannel
+                    ? (*wireChannelForHostChannel)[hostChannel]
+                    : hostChannel;
+                const int32_t sample =
+                    ASFW::Encoding::Motu::ReadPcmChannel(block, wireChannel) >> 8;
+                frameOut[channelOffset + hostChannel] =
+                    Detail::Signed24ToFloat32(sample);
+            }
+        } else {
+            const uint32_t* frameIn = dataBlocks + (i * cip->dataBlockSize);
+            // Write this stream's slice at its channel offset into the interleaved
+            // frame; the writer stride covers the buffer's full channel width.
+            DecodeDirectRxFrame(frameIn, channels, cip->dataBlockSize, format,
+                                frameOut + channelOffset);
+        }
     }
 
     // Only the master stream advances the producer cursor/frame counters; a

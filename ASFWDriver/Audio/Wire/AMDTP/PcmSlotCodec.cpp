@@ -1,3 +1,4 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 #include "PcmSlotCodec.hpp"
 
 namespace ASFW::Protocols::Audio::AMDTP {
@@ -57,6 +58,8 @@ uint32_t PcmSlotCodec::EncodeFloat32(float sample, PcmSlotEncoding encoding) noe
         return EncodeRawSigned24In32BE(sample);
     case PcmSlotEncoding::RawSigned24In32LE:
         return EncodeRawSigned24In32LE(sample);
+    case PcmSlotEncoding::MotuV2Packed24:
+        return EncodeRawSigned24In32BE(sample);
     case PcmSlotEncoding::Am824MBLA:
         break;
     }
@@ -77,6 +80,8 @@ uint32_t PcmSlotCodec::EncodeInt32(
         return static_cast<uint32_t>(signed24);
     case PcmSlotEncoding::RawSigned24In32LE:
         return ByteSwap32(static_cast<uint32_t>(signed24));
+    case PcmSlotEncoding::MotuV2Packed24:
+        return static_cast<uint32_t>(signed24);
     case PcmSlotEncoding::Am824MBLA:
         break;
     }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 //
 // AudioProfileTypes.hpp - Metadata hints describing which audio family/profile a
@@ -19,6 +20,7 @@ namespace ASFW::DeviceProfiles::Audio {
 /// a using-alias of this type so existing audio-internal call sites are unaffected.
 enum class AudioIntegrationMode : uint8_t {
     kNone = 0,      // Recognized but not driven (deferred multistream models).
+    kProbeOnly,     // Create the control protocol for diagnostics; publish no audio nub.
     kHardcodedNub,  // Vendor-specific audio backend (DICE/TCAT), no AV/C.
     kAVCDriven,     // AV/C discovery drives topology; vendor protocol adds extra controls.
 };
