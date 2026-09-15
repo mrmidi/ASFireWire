@@ -53,7 +53,11 @@ TEST(AudioGeometryResolverTests, Resolves48kHzActiveGeometry) {
     EXPECT_EQ(geom.pcmCacheCapacityFrames, 12'288U);
     EXPECT_EQ(geom.outputLatencyFrames, 128U);
     EXPECT_EQ(geom.inputLatencyFrames, 64U);
-    EXPECT_EQ(geom.outputSafetyOffsetFrames, 60U); // max(60, 48)
+    // max(content-freeze lead, device policy floor). The freeze lead is
+    // kTxContentFreezeCycleSlots (= kPayloadFinalityLeadPackets, 3 since
+    // 75e706c0) scaled to frames: ceil(48000 * 3 / 8000) = 18, so the policy
+    // floor of 48 wins. It was 60 while that lead was 10 packets.
+    EXPECT_EQ(geom.outputSafetyOffsetFrames, 48U);
     EXPECT_EQ(geom.inputSafetyOffsetFrames, 32U);
     EXPECT_EQ(geom.fdf, 0x00);
     EXPECT_EQ(geom.sytIntervalFrames, 8U);
@@ -102,7 +106,8 @@ TEST(AudioGeometryResolverTests, Resolves96kHzActiveGeometry) {
     EXPECT_EQ(geom.pcmCacheCapacityFrames, 24'576U);
     EXPECT_EQ(geom.outputLatencyFrames, 256U);
     EXPECT_EQ(geom.inputLatencyFrames, 128U);
-    EXPECT_EQ(geom.outputSafetyOffsetFrames, 120U); // max(120, 96)
+    // As at 48 kHz: ceil(96000 * 3 / 8000) = 36, below the policy floor of 96.
+    EXPECT_EQ(geom.outputSafetyOffsetFrames, 96U);
     EXPECT_EQ(geom.inputSafetyOffsetFrames, 64U);
     EXPECT_EQ(geom.fdf, 0x01);
     EXPECT_EQ(geom.sytIntervalFrames, 16U);

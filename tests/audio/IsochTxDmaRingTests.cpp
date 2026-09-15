@@ -1697,49 +1697,43 @@ TEST_F(IsochTxPayloadArbitrationTest,
     EXPECT_EQ(outcome.latePayloadLostPublications, 0U);
 }
 
-// The same interleaving against a packet transport has already sealed. The
-// producer must be refused. Under the old frontier comparison this returned
-// success -- the frontier still read 8 while packet 8's fate was already
-// decided -- and the engine counted silence as content.
+// The intra-pass version of that race -- an offer arriving for a packet the
+// finality pass sealed EARLIER IN THE SAME PASS, while a later packet in that
+// same pass is still bindable -- is unreachable under the current constants.
 //
-// Reaching that state takes two interleavings: an offer must land after the
-// selection pass has gone past its packet, so that the packet is only bound
-// during the finality pass, which is the one that runs after packet 8 is
-// sealed.
-TEST_F(IsochTxPayloadArbitrationTest,
-       OfferForAnAlreadySealedPacketIsRefused) {
-    auto metadataRing = MakeMetadataRing();
-    PrimeRebindable(metadataRing);
-    PointAt(kSeal - 2);
-
-    ASSERT_TRUE(OfferLateImage(metadataRing, kSeal + 12));
-
-    bool lateOfferPlaced = false;
-    bool interleaved = false;
-    bool producerAccepted = true;
-    interposed_->onPublish = [&](const std::byte* published) {
-        if (published == reinterpret_cast<const std::byte*>(ImageBytes(kSeal + 12, 1))) {
-            // The selection pass is past packet 13 by now, so this offer can
-            // only be taken up by the finality pass.
-            lateOfferPlaced = OfferLateImage(metadataRing, kSeal + 5);
-            return;
-        }
-        if (published == reinterpret_cast<const std::byte*>(ImageBytes(kSeal + 5, 1))) {
-            // Packet 8 was sealed at the top of that same finality pass.
-            interleaved = true;
-            producerAccepted = OfferLateImage(metadataRing, kSeal);
-        }
-    };
-
-    const auto outcome = Refill(metadataRing);
-    ASSERT_TRUE(outcome.ok);
-    ASSERT_TRUE(lateOfferPlaced);
-    ASSERT_TRUE(interleaved);
-    ASSERT_EQ(outcome.finalizedEnd, 2 * kSeal - 2);
-
-    EXPECT_FALSE(producerAccepted);
-    EXPECT_EQ(metadataRing[kSeal].selectedPayloadImage, 0U);
-    EXPECT_EQ(metadataRing[kSeal + 5].selectedPayloadImage, 1U);
+// Per pass the finality loop walks [previousFinalizedEnd, hw + lead) and binds
+// only packets at or above hw + guard (IsochTxDmaRing.cpp:649, :688). The
+// number of REPOINTABLE packets it seals in one pass is therefore at most
+// lead - guard, whatever previousFinalizedEnd is and however far the hardware
+// jumped. The race needs two: one sealed, one still open behind it.
+//
+// It was reachable when the lead was 10 and the guard 2 (eight per pass). Since
+// 75e706c0 the lead is guard + 1, so exactly one repointable packet is sealed
+// per pass and the scenario cannot be constructed. The original test built it
+// with PointAt(kSeal - 2) and offers at kSeal + 12 / kSeal + 5 / kSeal; with a
+// one-wide window those offsets simply fall outside the delta and the setup
+// never reaches the assertion it exists for.
+//
+// The refusal itself is NOT untested: RefillRepointsOnlyTheMutableTailOutside-
+// TheLiveCommandGuard already proves OfferLateImage is refused below the
+// finality frontier. What is lost is only the intra-pass interleaving, and the
+// transport code that refuses it stays in place. This test pins the reason, so
+// a lead that grows back fails here and the scenario above gets restored
+// rather than quietly staying deleted.
+TEST(IsochTxPayloadArbitration, IntraPassSealRaceNeedsTwoRepointableSealsPerPass) {
+    using Geometry = ASFW::Shared::Isoch::IsochQueueGeometry;
+    static_assert(Geometry::kPayloadFinalityLeadPackets >
+                      Geometry::kPayloadRepointGuardPackets,
+                  "a finality lead inside the repoint guard would seal packets "
+                  "no producer could ever have bound");
+    constexpr uint32_t repointableSealsPerPass =
+        Geometry::kPayloadFinalityLeadPackets -
+        Geometry::kPayloadRepointGuardPackets;
+    EXPECT_EQ(repointableSealsPerPass, 1U)
+        << "The payload finality lead grew past guard + 1, so a pass can now "
+           "seal one repointable packet while a later one is still bindable. "
+           "Restore OfferForAnAlreadySealedPacketIsRefused (see git history at "
+           "this line) -- the intra-pass seal race is reachable again.";
 }
 
 // A packet inside the live-command guard cannot be repointed, so an image

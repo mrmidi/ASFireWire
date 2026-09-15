@@ -22,7 +22,56 @@ namespace {
     return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path();
 }
 
+/// Blank out comments, keeping length and line structure.
+///
+/// The boundary these tests guard is a CODE dependency: transport must not
+/// include audio headers, name audio types, or reason about content. Prose
+/// about *why* a transport constant holds its value is the opposite of a
+/// violation -- CLAUDE.md requires citing the reference a wire-observable
+/// constant came from, and those citations name devices and reference stacks.
+/// Matching raw file text put the two rules in conflict and the citations
+/// lost: it flagged kPayloadFinalityLeadPackets's provenance (Saffire.kext,
+/// reversed at two named addresses) and one sentence naming which wakeups can
+/// still bind a payload. It would equally flag a commented-out memset below.
+[[nodiscard]] std::string StripComments(const std::string& source) {
+    std::string out = source;
+    const size_t n = out.size();
+    for (size_t i = 0; i < n;) {
+        if (out[i] == '"' || out[i] == '\'') {
+            const char quote = out[i];
+            ++i;
+            while (i < n && out[i] != quote) {
+                i += (out[i] == '\\') ? 2 : 1;
+            }
+            ++i;
+            continue;
+        }
+        if (out[i] == '/' && i + 1 < n && out[i + 1] == '/') {
+            while (i < n && out[i] != '\n') out[i++] = ' ';
+            continue;
+        }
+        if (out[i] == '/' && i + 1 < n && out[i + 1] == '*') {
+            out[i] = ' ';
+            out[i + 1] = ' ';
+            i += 2;
+            while (i + 1 < n && !(out[i] == '*' && out[i + 1] == '/')) {
+                if (out[i] != '\n') out[i] = ' ';
+                ++i;
+            }
+            if (i + 1 < n) {
+                out[i] = ' ';
+                out[i + 1] = ' ';
+                i += 2;
+            }
+            continue;
+        }
+        ++i;
+    }
+    return out;
+}
+
 TEST(TransmitBoundaryTests, CoreSourcesDoNotDependOnAudioPacketSemantics) {
+    // Comments stripped for the same reason as the tree scans below.
     const std::string headers =
         ReadSource("ASFWDriver/Isoch/Transmit/IsochTransmitContext.hpp") +
         ReadSource("ASFWDriver/Isoch/Transmit/IsochTxDmaRing.hpp") +
@@ -30,13 +79,15 @@ TEST(TransmitBoundaryTests, CoreSourcesDoNotDependOnAudioPacketSemantics) {
     const std::string sources =
         ReadSource("ASFWDriver/Isoch/Transmit/IsochTransmitContext.cpp") +
         ReadSource("ASFWDriver/Isoch/Transmit/IsochTxDmaRing.cpp");
+    const std::string headerCode = StripComments(headers);
+    const std::string sourceCode = StripComments(sources);
 
     for (const char* forbidden : {
              "Audio/", "AudioTimingGeometry", "IsochAudioTransport",
              "AM824", "CipHeader", "SYT", "Replay", "ZTS", "sampleFrame",
          }) {
-        EXPECT_EQ(headers.find(forbidden), std::string::npos) << forbidden;
-        EXPECT_EQ(sources.find(forbidden), std::string::npos) << forbidden;
+        EXPECT_EQ(headerCode.find(forbidden), std::string::npos) << forbidden;
+        EXPECT_EQ(sourceCode.find(forbidden), std::string::npos) << forbidden;
     }
 }
 
@@ -62,7 +113,7 @@ TEST(TransmitBoundaryTests, TransportTreesContainOnlyContentNeutralCode) {
             std::ifstream source(entry.path());
             std::ostringstream buffer;
             buffer << source.rdbuf();
-            const std::string contents = buffer.str();
+            const std::string contents = StripComments(buffer.str());
             EXPECT_EQ(contents.find("ASFW::Audio"), std::string::npos)
                 << entry.path();
             EXPECT_EQ(contents.find("/Audio/"), std::string::npos)
@@ -133,7 +184,7 @@ TEST(TransmitBoundaryTests, NoMemsetOverDmaRegionBases) {
             std::ifstream source(entry.path());
             std::ostringstream buffer;
             buffer << source.rdbuf();
-            const std::string contents = buffer.str();
+            const std::string contents = StripComments(buffer.str());
             EXPECT_FALSE(std::regex_search(contents, memsetOverDmaBase))
                 << entry.path()
                 << ": fill DMA regions with ASFW::Shared::FillUncachedDma";
