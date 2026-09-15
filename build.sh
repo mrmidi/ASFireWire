@@ -14,7 +14,15 @@ cd "${SCRIPT_DIR}"
 PROJECT_NAME="ASFW"
 SCHEME_NAME="ASFW"
 CONFIGURATION="${CONFIGURATION:-Debug}"
-ARCH_NAME="${ARCH_NAME:-arm64}"
+# Empty by default so each target's own ARCHS (project.yml) governs.
+#
+# Pinning the destination to arm64 silently overrides the DriverKit target's
+# required "x86_64 arm64e": a plain-arm64 dext has no LC_MAIN entry point and
+# kernelmanagerd rejects it on hardware attach with OS_REASON_EXEC / ENOEXEC.
+# See CLAUDE.md, "DriverKit Architecture on Apple Silicon". Note arm64e is not a
+# valid -destination arch, so this cannot be fixed by changing the default --
+# the constraint has to be absent.
+ARCH_NAME="${ARCH_NAME:-}"
 BUILD_DIR="${BUILD_DIR:-./build}"
 DERIVED="${BUILD_DIR}/DerivedData"
 LOG_DIR="${BUILD_DIR}/logs"
@@ -66,7 +74,9 @@ Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH
   --analyze          Run PVS-Studio static analyzer after build
   --scheme NAME      Override scheme (default: ${SCHEME_NAME})
   --config CONFIG    Override configuration (default: ${CONFIGURATION})
-  --arch ARCH        Override architecture passed to xcodebuild (default: ${ARCH_NAME})
+  --arch ARCH        Pin the xcodebuild destination arch (default: unset, so each
+                     target's ARCHS from project.yml applies -- the DriverKit
+                     target needs arm64e, which is not a valid destination arch)
   --set KEY=VALUE    Append an xcodebuild build setting (repeatable)
   --derived PATH     Set DerivedData path (default: ${DERIVED})
 EOF
@@ -92,6 +102,13 @@ while [[ $# -gt 0 ]]; do
     *) echo "${RED}[ERROR]${NC} Unknown arg: $1"; usage; exit 1;;
   esac
 done
+
+# Computed after arg parsing so --arch can still pin one deliberately.
+if [[ -n "${ARCH_NAME}" ]]; then
+  DESTINATION="platform=macOS,arch=${ARCH_NAME}"
+else
+  DESTINATION="platform=macOS"
+fi
 
 log() { echo "${BLUE}[INFO]${NC} $*"; }
 ok()  { echo "${GREEN}[OK]${NC} $*"; }
@@ -138,7 +155,7 @@ generate_compile_commands() {
     -scheme "${SCHEME_NAME}"
     -configuration "${CONFIGURATION}"
     -derivedDataPath "${DERIVED}"
-    -destination "platform=macOS,arch=${ARCH_NAME}"
+    -destination "${DESTINATION}"
     clean
     build
   )
@@ -216,7 +233,7 @@ run_swift_tests() {
     -scheme "${SCHEME_NAME}"
     -configuration "${CONFIGURATION}"
     -derivedDataPath "${DERIVED}"
-    -destination "platform=macOS,arch=${ARCH_NAME}"
+    -destination "${DESTINATION}"
     -only-testing:ASFWTests
     CODE_SIGNING_ALLOWED=NO
     CODE_SIGNING_REQUIRED=NO
@@ -332,7 +349,7 @@ run_build() {
 	    -scheme "${SCHEME_NAME}" \
 	    -configuration "${CONFIGURATION}" \
 	    -derivedDataPath "${DERIVED}" \
-	    -destination "platform=macOS,arch=${ARCH_NAME}" \
+	    -destination "${DESTINATION}" \
 	    -resultBundlePath "${RESULT_BUNDLE}" \
 	    CODE_SIGNING_ALLOWED=NO \
 	    CODE_SIGNING_REQUIRED=NO \
