@@ -42,7 +42,8 @@ TEST(AudioProfileRegistryTests, SelectsIntegrationModeForKnownDevices) {
               AudioIntegrationMode::kHardcodedNub);
     EXPECT_EQ(ModeFor(ids::kFocusriteVendorId, ids::kSPro24DspModelId),
               AudioIntegrationMode::kHardcodedNub);
-    EXPECT_EQ(ModeFor(ids::kFocusriteVendorId, ids::kSPro40ModelId), AudioIntegrationMode::kNone);
+    EXPECT_EQ(ModeFor(ids::kFocusriteVendorId, ids::kSPro40ModelId),
+              AudioIntegrationMode::kHardcodedNub);
     EXPECT_EQ(ModeFor(ids::kFocusriteVendorId, ids::kLiquidS56ModelId), AudioIntegrationMode::kNone);
     EXPECT_EQ(ModeFor(ids::kFocusriteVendorId, ids::kSPro26ModelId), AudioIntegrationMode::kNone);
     EXPECT_EQ(ModeFor(ids::kFocusriteVendorId, ids::kSPro40Tcd3070ModelId),
@@ -129,9 +130,8 @@ TEST(AudioProfileRegistryTests, MapsFocusritePro40Tcd3070GuidQuirk) {
     EXPECT_EQ(ModeFor(identity->vendorId, identity->modelId), AudioIntegrationMode::kNone);
 }
 
-TEST(AudioProfileRegistryTests, KeepsDeferredMultistreamFocusriteModelsRecognizedButDisabled) {
-    for (const uint32_t modelId :
-         {ids::kSPro40ModelId, ids::kLiquidS56ModelId, ids::kSPro26ModelId}) {
+TEST(AudioProfileRegistryTests, KeepsOtherMultistreamFocusriteModelsRecognizedButDisabled) {
+    for (const uint32_t modelId : {ids::kLiquidS56ModelId, ids::kSPro26ModelId}) {
         const auto identity =
             AudioProfileRegistry::LookupIdentity(ByVendorModel(ids::kFocusriteVendorId, modelId));
         ASSERT_TRUE(identity.has_value());

@@ -81,11 +81,11 @@ LookupAudioProfile(const DeviceProfileQuery& query) noexcept {
         case kSPro14ModelId:
         case kSPro24ModelId:
         case kSPro24DspModelId:
+        case kSPro40ModelId:
             return AudioProfileHint{.family = AudioProtocolFamily::DICE,
                                     .mode = AudioIntegrationMode::kHardcodedNub,
                                     .source = MatchSource::VendorModel};
         // Recognized DICE models whose multistream bring-up is deferred (mode kNone).
-        case kSPro40ModelId:
         case kLiquidS56ModelId:
         case kSPro26ModelId:
         case kSPro40Tcd3070ModelId:

@@ -52,6 +52,17 @@ public:
     [[nodiscard]] virtual uint32_t RxStreamCount() const noexcept { return 1; }
     [[nodiscard]] virtual AudioStreamTxPolicy TxStreamPolicy() const noexcept { return {}; }
 
+    // Profiles with unequal playback streams override this geometry. Uniform
+    // streams retain their default shape at successive channel offsets.
+    [[nodiscard]] virtual bool BuildTxStreamConfig(
+        uint32_t streamIndex, AudioStreamConfig& outConfig) const noexcept {
+        if (streamIndex >= TxStreamCount() || !BuildDefaultTxStreamConfig(outConfig)) {
+            return false;
+        }
+        outConfig.sourceChannelOffset = streamIndex * outConfig.pcmChannels;
+        return true;
+    }
+
     // Budget StartIO grants the device-to-host stream to deliver the first
     // data-bearing packet (which seeds the HAL zero-timestamp anchor) before
     // the start attempt is failed. DICE devices stream data within a few

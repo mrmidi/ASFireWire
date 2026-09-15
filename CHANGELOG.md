@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing recorded yet._
+### Added
+
+- Experimental Focusrite Saffire Pro 40 model `0x05` support with asymmetric 12+8 playback and 10+10 capture streams at 44.1/48 kHz. Full-duplex 20-channel playback and capture at 48 kHz were verified on a MacBook Pro and iMac.
 
 <!--
 Use these headings, omitting any that are empty:

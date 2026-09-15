@@ -37,7 +37,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                                                                          route, irmClient);
         }
 
-        if (modelId == kSPro14ModelId || modelId == kSPro24ModelId) {
+        if (modelId == kSPro14ModelId || modelId == kSPro24ModelId ||
+            modelId == kSPro40ModelId) {
             const auto known = LookupKnownIdentity(vendorId, modelId);
             ASFW_LOG(DICE,
                      "Creating generic DICETcatProtocol for %{public}s vendor=0x%06x model=0x%06x node=0x%04x",

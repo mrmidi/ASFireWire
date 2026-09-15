@@ -46,6 +46,47 @@ TEST(DiceProfileTests, ResolvesFocusriteSaffireProfileByVendor) {
     EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
 }
 
+TEST(DiceProfileTests, ResolvesOriginalPro40LowRateGeometry) {
+    constexpr uint32_t kFocusriteVendorId = 0x00130E;
+    const auto* profile = AudioProfileRegistry::FindProfile(kFocusriteVendorId, 0x000005U, 0);
+
+    ASSERT_NE(profile, nullptr);
+    EXPECT_STREQ(profile->Name(), "Focusrite Saffire Pro 40");
+    EXPECT_EQ(profile->TxChannelCount(), 20U);
+    EXPECT_EQ(profile->RxChannelCount(), 20U);
+    const auto* streamProfile = static_cast<const IAudioStreamProfile*>(profile);
+    EXPECT_EQ(streamProfile->TxStreamCount(), 2U);
+    EXPECT_EQ(streamProfile->RxStreamCount(), 2U);
+    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+
+    AudioStreamConfig primary{}, secondary{};
+    ASSERT_TRUE(streamProfile->BuildTxStreamConfig(0, primary));
+    ASSERT_TRUE(streamProfile->BuildTxStreamConfig(1, secondary));
+    EXPECT_EQ(primary.pcmChannels, 12U);
+    EXPECT_EQ(primary.dbs, 13U);
+    EXPECT_EQ(primary.midiSlots, 1U);
+    EXPECT_EQ(primary.sourceChannelOffset, 0U);
+    EXPECT_EQ(secondary.pcmChannels, 8U);
+    EXPECT_EQ(secondary.dbs, 8U);
+    EXPECT_EQ(secondary.midiSlots, 0U);
+    EXPECT_EQ(secondary.sourceChannelOffset, 12U);
+    AudioStreamConfig capture{};
+    ASSERT_TRUE(streamProfile->BuildDefaultRxStreamConfig(capture));
+    EXPECT_EQ(capture.pcmChannels, 10U);
+    EXPECT_EQ(capture.dbs, 11U);
+    EXPECT_EQ(capture.midiSlots, 1U);
+    EXPECT_FALSE(streamProfile->BuildTxStreamConfig(2, secondary));
+}
+
+TEST(DiceProfileTests, UniformPlaybackStreamsKeepDisjointChannelSlices) {
+    Profiles::MidasVeniceProfile profile;
+    AudioStreamConfig primary{}, secondary{};
+    ASSERT_TRUE(profile.BuildTxStreamConfig(0, primary));
+    ASSERT_TRUE(profile.BuildTxStreamConfig(1, secondary));
+    EXPECT_EQ(primary.sourceChannelOffset, 0U);
+    EXPECT_EQ(secondary.sourceChannelOffset, 16U);
+}
+
 TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
     const auto* profile = AudioProfileRegistry::FindProfile(0x999999, 0x000001, 0x123456789ULL);
 
