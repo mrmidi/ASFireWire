@@ -573,6 +573,14 @@ void IsochTransmitContext::Poll() noexcept {
                          irqSilentKickStreak_,
                          ctrl,
                          latchedIntEvents);
+                // Close the scope before the fault stop: HardwareAccessGate is a plain
+                // os_unfair_lock, and StopImmediatelyForTxFault opens its own scope to
+                // clear RUN. Holding this one across the call re-enters the lock on the
+                // same thread, which traps in _os_unfair_lock_recursive_abort and takes
+                // the dext down -- then the watchdog re-arms on restart and the crash
+                // repeats, so the device flaps in and out of the sound panel. Same idiom
+                // as the RUN-clear path above.
+                access = {};
                 StopImmediatelyForTxFault();
                 return;
             }
