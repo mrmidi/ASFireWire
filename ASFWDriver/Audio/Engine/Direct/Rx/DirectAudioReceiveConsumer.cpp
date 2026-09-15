@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 
 #include "DirectAudioReceiveConsumer.hpp"
@@ -6,6 +7,7 @@
 #include "../../../../Common/TimingUtils.hpp"
 #include "../../../../Logging/Logging.hpp"
 #include "../../../../Shared/Isoch/AudioTimingGeometry.hpp"
+#include "../../../Wire/MOTU/MotuSph.hpp"
 
 #include <utility>
 
@@ -175,7 +177,10 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     const auto result = processor_.ProcessPacket(
         packet.payload.data(), packet.payload.size(), absoluteFrameCursor_, channels,
         inputView_.deviceToHostAm824Slots, configuration_.wireFormat,
-        configuration_.channelOffset, !configuration_.isSecondary);
+        configuration_.channelOffset, !configuration_.isSecondary,
+        configuration_.hostChannelMapEnabled
+            ? &configuration_.wireChannelForHostChannel
+            : nullptr);
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {
@@ -310,11 +315,35 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             inputView_.control->rxTransferDelayTicks.load(std::memory_order_relaxed));
         replayEntry.flags |= ::ASFW::Audio::Runtime::RxSequenceFlags::kValidSyt;
     }
+    const bool isMotu =
+        configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kMotuV2;
+    if (isMotu && result.motuSphCount == result.framesDecoded &&
+        result.motuSphCount <=
+            ::ASFW::Audio::Runtime::RxSequenceEntry::kMaxSphPerPacket) {
+        const uint32_t baseTick =
+            cycleFields.cycle * ::ASFW::Encoding::Motu::kTicksPerCycle;
+        replayEntry.motuSphCount = result.motuSphCount;
+        for (uint32_t i = 0; i < result.motuSphCount; ++i) {
+            replayEntry.motuSphOffsets[i] =
+                ::ASFW::Encoding::Motu::TickOffsetFromBase(
+                    result.motuSph[i], baseTick);
+        }
+        replayEntry.flags |=
+            ::ASFW::Audio::Runtime::RxSequenceFlags::kValidMotuSph;
+    }
     inputView_.control->rxSequenceReplay.Publish(replayEntry);
     inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
 
     ::ASFW::Driver::RxSytCadence::Snapshot cadence{};
-    if (inputView_.control->rxSytCadence.TrySnapshot(cadence) && cadence.established) {
+    const bool standardCadenceEstablished =
+        inputView_.control->rxSytCadence.TrySnapshot(cadence) &&
+        cadence.established;
+    const bool timingEstablished =
+        isMotu
+            ? inputView_.control->rxSequenceReplay.ProducerCursor() >=
+                  ::ASFW::Audio::Runtime::RxSequenceReplayState::kReadDelay
+            : standardCadenceEstablished;
+    if (timingEstablished) {
         if (!inputView_.control->rxSequenceReplay.IsEstablished()) {
             (void)inputView_.control->rxSequenceReplay.MarkEstablished();
         }
@@ -350,7 +379,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         static_cast<uint32_t>((1'000'000'000ULL << 8) / inputView_.sampleRateHz);
     if (kZtsPeriodFrames != 0 && result.framesDecoded != 0 &&
         (packetFirstFrame % kZtsPeriodFrames) == 0 && packetHostTicks != 0 &&
-        nanosPerSampleQ8 != 0 && clockPublisher_.IsBound() && cadence.established) {
+        nanosPerSampleQ8 != 0 && clockPublisher_.IsBound() && timingEstablished) {
         const auto publish = clockPublisher_.Publish(packetFirstFrame, packetHostTicks,
                                                      nanosPerSampleQ8);
         if (!publish.accepted) {

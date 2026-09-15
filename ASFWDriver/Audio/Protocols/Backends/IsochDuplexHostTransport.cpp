@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 
 #include "IsochDuplexHostTransport.hpp"
 
 #include "../../../Common/DriverKitOwnership.hpp"
 #include "../../../Logging/Logging.hpp"
+#include "../../Wire/MOTU/MotuBlockLayout.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 #include <new>
 #include <utility>
@@ -27,6 +29,11 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
         .streamChannels = streamChannels,
         .isSecondary = isSecondary,
     };
+    if (wireFormat == Encoding::AudioWireFormat::kMotuV2) {
+        configuration.wireChannelForHostChannel =
+            Encoding::Motu::kUltraLiteInputWireChannelForHostChannel;
+        configuration.hostChannelMapEnabled = true;
+    }
     // This is a DriverKit `noexcept` boundary: report allocation failure instead
     // of allowing std::make_unique to terminate the driver process.
     auto consumer = std::unique_ptr<Consumer>(new (std::nothrow) Consumer(bindingSource, configuration));

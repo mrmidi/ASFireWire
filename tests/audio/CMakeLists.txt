@@ -1,3 +1,4 @@
+# Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 # tests/audio/CMakeLists.txt
 
 macro(add_audio_test TARGET_NAME)
@@ -53,6 +54,28 @@ add_audio_test(RawPcm24In32Tests
 # CIP Header Builder Tests
 add_audio_test(CIPHeaderBuilderTests
     CIPHeaderBuilderTests.cpp
+)
+
+# MOTU Block Codec Tests
+add_audio_test(MotuBlockCodecTests
+    MotuBlockCodecTests.cpp
+)
+
+# MOTU v2 Register Plane Tests
+add_audio_test(MotuV2RegisterTests
+    MotuV2RegisterTests.cpp
+)
+
+# MOTU Device Profile / Factory Identity Tests
+add_audio_test(MotuV2ProfileTests
+    MotuV2ProfileTests.cpp
+)
+
+# MOTU v2 Protocol Adapter Tests
+add_audio_test(MotuV2ProtocolTests
+    MotuV2ProtocolTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MotuV2Protocol.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
 # Blocking Cadence Tests

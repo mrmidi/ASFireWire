@@ -1,3 +1,4 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 #include "DeviceRegistry.hpp"
 #include <algorithm>
 #include <limits>
@@ -46,7 +47,11 @@ void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
 
 void MaybeInferKnownIdentityFromGuid(DeviceRecord& device, Guid64 guid) {
     const DeviceProfiles::DeviceProfileQuery query{
-        .guid = guid, .vendorId = device.vendorId, .modelId = device.modelId};
+        .guid = guid,
+        .vendorId = device.vendorId,
+        .modelId = device.modelId,
+        .unitSpecId = device.unitSpecId.value_or(0U),
+        .unitSwVersion = device.unitSwVersion.value_or(0U)};
 
     const auto identity = DeviceProfiles::Audio::AudioProfileRegistry::LookupIdentity(query);
     if (!identity.has_value()) {
@@ -140,10 +145,15 @@ DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolic
     MaybeInferKnownIdentityFromGuid(device, guid);
 
     // Known device profiles can choose their integration mode:
+    // - kProbeOnly: construct a control protocol for diagnostics, no audio nub.
     // - kHardcodedNub: vendor-specific audio backend (DICE/TCAT, no AV/C).
     // - kAVCDriven: AV/C discovery drives audio topology; vendor protocol is for extra controls only.
     const auto audioProfile = DeviceProfiles::Audio::AudioProfileRegistry::LookupBestAudioProfile(
-        DeviceProfiles::DeviceProfileQuery{.vendorId = device.vendorId, .modelId = device.modelId});
+        DeviceProfiles::DeviceProfileQuery{
+            .vendorId = device.vendorId,
+            .modelId = device.modelId,
+            .unitSpecId = device.unitSpecId.value_or(0U),
+            .unitSwVersion = device.unitSwVersion.value_or(0U)});
     const auto integrationMode = audioProfile.has_value()
                                      ? audioProfile->mode
                                      : DeviceProfiles::Audio::AudioIntegrationMode::kNone;

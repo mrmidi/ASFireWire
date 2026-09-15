@@ -1,3 +1,4 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 //
 // ASFWAudioDevice.cpp
 // ASFWDriver
@@ -595,6 +596,15 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
                      control->counters.txPackets.load(std::memory_order_relaxed),
                      control->counters.txSilenceSubstitutions.load(std::memory_order_relaxed),
                      control->counters.txUnderruns.load(std::memory_order_relaxed));
+            const auto& payload =
+                ivars.runtime.txStreamEngine.PayloadWriterCounters();
+            ASFW_LOG(DirectAudio,
+                     "ADK DBG STOPPAYLOAD visited=%llu written=%llu nonZeroFrames=%llu nonZeroSlots=%llu maxAbsBits=0x%08x",
+                     payload.framesVisited.load(std::memory_order_relaxed),
+                     payload.framesWritten.load(std::memory_order_relaxed),
+                     payload.framesNonZero.load(std::memory_order_relaxed),
+                     payload.slotsNonZero.load(std::memory_order_relaxed),
+                     payload.maxAbsSampleBits.load(std::memory_order_relaxed));
         }
 
         if (ivars.device.audioNub) {

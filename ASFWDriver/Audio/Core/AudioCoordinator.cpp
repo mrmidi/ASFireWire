@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 
 #include "AudioCoordinator.hpp"
@@ -60,7 +61,28 @@ void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device
         remoteLostGuids_.erase(guid);
         IOLockUnlock(lock_);
     }
-    if (BackendForGuid(guid) == &dice_) {
+    const auto record = registry_.SnapshotByGuid(guid);
+    if (record.has_value() &&
+        record->vendorId == DeviceProfiles::Audio::kMotuVendorId &&
+        record->modelId == DeviceProfiles::Audio::kMotuUltraliteSwVersion) {
+        Model::ASFWAudioDevice config{};
+        config.guid = record->guid;
+        config.vendorId = record->vendorId;
+        config.modelId = record->modelId;
+        config.deviceName = "MOTU UltraLite";
+        config.channelCount = 14;
+        config.inputChannelCount = 14;
+        config.outputChannelCount = 14;
+        config.sampleRates = {48000};
+        config.currentSampleRate = 48000;
+        config.inputPlugName = "UltraLite Input";
+        config.outputPlugName = "UltraLite Output";
+        config.streamMode = Model::StreamMode::kBlocking;
+        if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
+            endpoint->UpdateConfig(config);
+        }
+        avc_.OnAudioConfigurationReady(guid, config);
+    } else if (BackendForGuid(guid) == &dice_) {
         dice_.OnDeviceRecordUpdated(guid);
     }
 }
@@ -230,6 +252,9 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
 
     const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
     if (integration == DeviceIntegrationMode::kHardcodedNub) {
+        if (record->vendorId == DeviceProfiles::Audio::kMotuVendorId) {
+            return &avc_;
+        }
         return &dice_;
     }
 

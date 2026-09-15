@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 // Copyright (c) 2026 ASFireWire Project
 //
 // IAudioDeviceProfile.hpp
@@ -11,6 +12,13 @@
 #include <vector>
 
 namespace ASFW::Isoch::Audio {
+
+/// One-based Core Audio channel numbers for a device's default stereo route.
+/// A zero value means the profile has no hardware-specific preference.
+struct PreferredStereoChannels {
+    uint32_t left{0};
+    uint32_t right{0};
+};
 
 /// Protocol-agnostic device profile interface for ADK Dext configuration.
 /// Since the driver is compiled with -fno-rtti, all polymorphism is statically
@@ -64,6 +72,12 @@ public:
     /// override to expose the device's supported set (DICE decodes CLOCKCAPABILITIES).
     [[nodiscard]] virtual std::vector<uint32_t> SupportedSampleRates() const {
         return {48000u};
+    }
+
+    /// Preferred output pair for ordinary stereo clients. Multichannel clients
+    /// still retain direct access to every advertised output channel.
+    [[nodiscard]] virtual PreferredStereoChannels PreferredOutputStereoChannels() const noexcept {
+        return {};
     }
 
     /// IEC 61883-6 presentation delay removed from received SYT before replay.

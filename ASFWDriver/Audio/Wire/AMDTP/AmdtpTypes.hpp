@@ -1,6 +1,8 @@
 #pragma once
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 
 #include <cstdint>
+#include <array>
 
 namespace ASFW::Protocols::Audio::AMDTP {
 
@@ -24,6 +26,7 @@ enum class PcmSlotEncoding : uint8_t {
     Am824MBLA = 0,
     RawSigned24In32BE = 1,
     RawSigned24In32LE = 2,
+    MotuV2Packed24 = 3,
 };
 
 enum class DbsPolicy : uint8_t {
@@ -42,6 +45,7 @@ struct AmdtpStreamConfig final {
 
     uint8_t fmt{0x10};
     uint8_t fdf{0x02};
+    bool sph{false};
 
     uint8_t framesPerDataPacket{8};
     uint32_t maxPacketBytes{512};
@@ -62,6 +66,8 @@ struct AmdtpTxPolicy final {
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
+    std::array<uint8_t, 32> sourceChannelForWireSlot{};
+    bool sourceChannelMapEnabled{false};
 };
 
 struct HostAudioBufferView final {
@@ -108,6 +114,9 @@ struct AmdtpTimingState final {
     uint16_t replayDataBlocks{0};
     bool replayValid{false};
     uint64_t nextAudioFrame{0};
+    int64_t packetCycleTicks{0};
+    std::array<uint32_t, 8> motuSphOffsets{};
+    uint8_t motuSphCount{0};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP
@@ -122,6 +131,7 @@ enum class StreamMode : uint8_t {
 enum class AudioWireFormat : uint8_t {
     kAM824 = 0,
     kRawPcm24In32 = 1,
+    kMotuV2 = 2,
 };
 
 } // namespace ASFW::Encoding

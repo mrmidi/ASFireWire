@@ -1,6 +1,8 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 #include "AmdtpPayloadWriter.hpp"
 
 #include "PcmSlotCodec.hpp"
+#include "../MOTU/MotuBlockCodec.hpp"
 
 #include <atomic>
 #include <cstring>
@@ -126,22 +128,44 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         uint8_t* dest = snap.packetBytes + kCipHeaderBytes +
                         frameInPacket * snap.dbs * kBytesPerSlot;
 
-        const uint32_t pcmSlots = (streamConfig_.pcmChannels < snap.dbs)
+        const bool isMotu =
+            txPolicy_.hostToDevicePcmEncoding ==
+                PcmSlotEncoding::MotuV2Packed24;
+        const uint32_t pcmSlots = isMotu
+                                      ? streamConfig_.pcmChannels
+                                      : (streamConfig_.pcmChannels < snap.dbs)
                                       ? streamConfig_.pcmChannels
                                       : snap.dbs;
-        // This stream encodes the host channels [sourceChannelOffset,
-        // sourceChannelOffset + pcmChannels) of the shared interleaved buffer —
-        // the de-interleave that mirrors the RX side's channelOffset. Host
-        // channels outside the buffer encode PCM zero.
+        // This stream normally encodes the host channels
+        // [sourceChannelOffset, sourceChannelOffset + pcmChannels). A device
+        // profile may instead map each wire PCM slot to a host channel, such
+        // as presenting the UltraLite's Main Out pair first. Host channels
+        // outside the buffer encode PCM zero.
         const uint32_t srcOffset = streamConfig_.sourceChannelOffset;
         bool frameNonZero = false;
         for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
-            const uint32_t srcCh = srcOffset + ch;
+            const uint32_t relativeSrcCh =
+                txPolicy_.sourceChannelMapEnabled
+                    ? txPolicy_.sourceChannelForWireSlot[ch]
+                    : ch;
+            const uint32_t srcCh = srcOffset + relativeSrcCh;
             const float sample =
                 (srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
-            WriteBE32(dest + ch * kBytesPerSlot,
-                      PcmSlotCodec::EncodeFloat32(
-                          sample, txPolicy_.hostToDevicePcmEncoding));
+            if (isMotu) {
+                const int32_t signed24 =
+                    PcmSlotCodec::Float32ToSigned24(sample);
+                ASFW::Encoding::Motu::WritePcmSample(
+                    std::span<uint8_t>(
+                        dest + ASFW::Encoding::Motu::kPcmByteOffset +
+                            ch * ASFW::Encoding::Motu::kBytesPerChunk,
+                        ASFW::Encoding::Motu::kBytesPerChunk),
+                    static_cast<int32_t>(
+                        static_cast<uint32_t>(signed24) << 8));
+            } else {
+                WriteBE32(dest + ch * kBytesPerSlot,
+                          PcmSlotCodec::EncodeFloat32(
+                              sample, txPolicy_.hostToDevicePcmEncoding));
+            }
             if (sample != 0.0f) {
                 frameNonZero = true;
                 ++nonZeroSlots;

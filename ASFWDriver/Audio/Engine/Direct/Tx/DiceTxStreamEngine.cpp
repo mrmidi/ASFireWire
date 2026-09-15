@@ -1,3 +1,4 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 #include "DiceTxStreamEngine.hpp"
 
 namespace ASFW::Protocols::Audio::DICE {
@@ -15,6 +16,7 @@ AMDTP::AmdtpStreamConfig DiceStreamConfigMapper::ToAmdtpConfig(
     config.midiSlots = streamConfig.midiSlots;
     config.fmt = streamConfig.fmt;
     config.fdf = streamConfig.fdf;
+    config.sph = streamConfig.sph;
     config.framesPerDataPacket = streamConfig.framesPerDataPacket;
     config.sourceChannelOffset = streamConfig.sourceChannelOffset;
     // Compute the true max packet size: CIP headers (8 bytes) + frames × DBS × 4 bytes/slot.
@@ -32,6 +34,13 @@ bool DiceTxStreamEngine::Configure(const ASFW::Isoch::Audio::IAudioStreamProfile
     }
 
     const ASFW::Isoch::Audio::AudioStreamTxPolicy txPolicy = profile.TxStreamPolicy();
+    if (txPolicy.sourceChannelMapEnabled) {
+        for (uint32_t wireSlot = 0; wireSlot < txConfig.pcmChannels; ++wireSlot) {
+            if (txPolicy.sourceChannelForWireSlot[wireSlot] >= txConfig.pcmChannels) {
+                return false;
+            }
+        }
+    }
     const AMDTP::AmdtpStreamConfig amdtpConfig =
         DiceStreamConfigMapper::ToAmdtpConfig(txConfig);
     const AMDTP::AmdtpTxPolicy policy = BuildTxPolicy(txPolicy);
@@ -147,9 +156,14 @@ DiceTxStreamEngine::PayloadWriterCounters() const noexcept {
 AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     const ASFW::Isoch::Audio::AudioStreamTxPolicy& streamPolicy) const noexcept {
     AMDTP::AmdtpTxPolicy policy{};
-    policy.hostToDevicePcmEncoding = (streamPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kRawPcm24In32)
-                                     ? AMDTP::PcmSlotEncoding::RawSigned24In32BE
-                                     : AMDTP::PcmSlotEncoding::Am824MBLA;
+    if (streamPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV2) {
+        policy.hostToDevicePcmEncoding = AMDTP::PcmSlotEncoding::MotuV2Packed24;
+    } else if (streamPolicy.hostToDevicePcmEncoding ==
+               ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
+        policy.hostToDevicePcmEncoding = AMDTP::PcmSlotEncoding::RawSigned24In32BE;
+    } else {
+        policy.hostToDevicePcmEncoding = AMDTP::PcmSlotEncoding::Am824MBLA;
+    }
     policy.dbsPolicy = streamPolicy.variableDbs
                        ? AMDTP::DbsPolicy::VariablePerPacket
                        : AMDTP::DbsPolicy::Constant;
@@ -157,6 +171,8 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     policy.initializeNonAudioSlots = streamPolicy.initializeNonAudioSlots;
     policy.preserveFdfInNoDataPackets = streamPolicy.preserveFdfInNoDataPackets;
     policy.emptyPacketsDuringIdle = streamPolicy.emptyPacketsDuringIdle;
+    policy.sourceChannelForWireSlot = streamPolicy.sourceChannelForWireSlot;
+    policy.sourceChannelMapEnabled = streamPolicy.sourceChannelMapEnabled;
     policy.clearPayloadBeforeExposure = true;
     return policy;
 }

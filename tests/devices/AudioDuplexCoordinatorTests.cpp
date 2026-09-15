@@ -1,3 +1,4 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 #include <gtest/gtest.h>
 
 #include "Async/Interfaces/IFireWireBus.hpp"
@@ -9,6 +10,7 @@
 #include "Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "Audio/Protocols/IDeviceProtocol.hpp"
 #include "Bus/IRM/IRMClient.hpp"
+#include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
@@ -67,11 +69,14 @@ using ASFW::FW::NodeId;
 using ASFW::IRM::IRMClient;
 
 constexpr uint64_t kTestGuid = 0x00130E0402004713ULL;
+constexpr uint64_t kMotuTestGuid = 0x0001F20000085F25ULL;
 constexpr uint32_t kQueueBytes = 4096;
 constexpr uint32_t kFocusriteVendorId = ASFW::Audio::DeviceProtocolFactory::kFocusriteVendorId;
 constexpr uint32_t kSPro24DspModelId = ASFW::Audio::DeviceProtocolFactory::kSPro24DspModelId;
 constexpr uint32_t kApogeeVendorId = ASFW::Audio::DeviceProtocolFactory::kApogeeVendorId;
 constexpr uint32_t kApogeeDuetModelId = ASFW::Audio::DeviceProtocolFactory::kApogeeDuetModelId;
+constexpr uint32_t kMotuVendorId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+constexpr uint32_t kMotuUltraLiteModelId = ASFW::DeviceProfiles::Audio::kMotuUltraliteSwVersion;
 constexpr AudioClockConfig kSupportedClock{
     .sampleRateHz = 48000U,
 };
@@ -794,6 +799,62 @@ TEST_F(AudioDuplexCoordinatorTests,
                                  "host.stop",
                              }));
     EXPECT_EQ(protocol_->stopCalls, 0);
+}
+
+TEST_F(AudioDuplexCoordinatorTests,
+       MotuUltraLiteUsesFixedChannelsWhenDirectBusHasNoIrm) {
+    registry_.Clear();
+    auto rom = MakeConfigRom(kMotuTestGuid, kMotuVendorId, kMotuUltraLiteModelId);
+    rom.nodeId = 0;
+    (void)registry_.UpsertFromROM(rom, LinkPolicy{});
+    hardware_.SetTestRegister(Register32::kNodeID, 1);
+    runtime_.Insert(kMotuTestGuid, protocol_);
+    const auto record = registry_.SnapshotByGuid(kMotuTestGuid);
+    ASSERT_TRUE(record.has_value());
+    ASSERT_EQ(record->vendorId, kMotuVendorId);
+    ASSERT_EQ(record->modelId, kMotuUltraLiteModelId);
+    hostTransport_.reservePlaybackStatus = kIOReturnNoDevice;
+    hostTransport_.reserveCaptureStatus = kIOReturnNoDevice;
+
+    ASSERT_EQ(coordinator_.StartStreaming(kMotuTestGuid), kIOReturnSuccess);
+
+    EXPECT_EQ(hostTransport_.reservePlaybackCalls, 1);
+    EXPECT_EQ(hostTransport_.reserveCaptureCalls, 1);
+    EXPECT_EQ(protocol_->LastChannels().hostToDeviceIsoChannel, 0U);
+    EXPECT_EQ(protocol_->LastChannels().deviceToHostIsoChannel, 1U);
+    EXPECT_EQ(hostTransport_.lastTransmitChannel, 0U);
+    EXPECT_EQ(hostTransport_.lastReceiveChannel, 1U);
+    EXPECT_NE(hardware_.ReadLinkControl() & ASFW::Driver::LinkControlBits::kCycleMaster, 0U);
+}
+
+TEST_F(AudioDuplexCoordinatorTests,
+       MotuUltraLiteDoesNotUseNoIrmFallbackUnlessBusIsDirect) {
+    registry_.Clear();
+    (void)registry_.UpsertFromROM(
+        MakeConfigRom(kMotuTestGuid, kMotuVendorId, kMotuUltraLiteModelId), LinkPolicy{});
+    runtime_.Insert(kMotuTestGuid, protocol_);
+    hostTransport_.reservePlaybackStatus = kIOReturnNoDevice;
+    hostTransport_.reserveCaptureStatus = kIOReturnNoDevice;
+
+    EXPECT_EQ(coordinator_.StartStreaming(kMotuTestGuid), kIOReturnNoDevice);
+    EXPECT_EQ(hostTransport_.reservePlaybackCalls, 1);
+    EXPECT_EQ(hostTransport_.reserveCaptureCalls, 0);
+    EXPECT_EQ(hardware_.ReadLinkControl() & ASFW::Driver::LinkControlBits::kCycleMaster, 0U);
+}
+
+TEST_F(AudioDuplexCoordinatorTests,
+       MotuUltraLiteDoesNotBypassAnIrmBandwidthFailure) {
+    registry_.Clear();
+    (void)registry_.UpsertFromROM(
+        MakeConfigRom(kMotuTestGuid, kMotuVendorId, kMotuUltraLiteModelId), LinkPolicy{});
+    runtime_.Insert(kMotuTestGuid, protocol_);
+    hostTransport_.reservePlaybackStatus = kIOReturnNoResources;
+
+    EXPECT_EQ(coordinator_.StartStreaming(kMotuTestGuid), kIOReturnNoResources);
+    EXPECT_EQ(hostTransport_.reservePlaybackCalls, 1);
+    EXPECT_EQ(hostTransport_.reserveCaptureCalls, 0);
+    EXPECT_EQ(hostTransport_.prepareReceiveCalls, 0);
+    EXPECT_EQ(hostTransport_.prepareTransmitCalls, 0);
 }
 
 TEST_F(AudioDuplexCoordinatorTests,

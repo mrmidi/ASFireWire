@@ -1,3 +1,4 @@
+// Modified in 2026 by Rafal Zalech to add original MOTU UltraLite support.
 //
 // ASFWAudioDriverZts.cpp
 // ASFWDriver
@@ -97,6 +98,9 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
     if (directControl == nullptr) {
         return 0;
     }
+    const bool isMotu =
+        ivars.runtime.directAudioGraph.hostToDeviceWireFormat ==
+        ASFW::Audio::Runtime::AudioWireFormat::kMotuV2;
 
     uint64_t nextPacketToPrepare = startPacketIndex;
     uint32_t preparedCount = 0;
@@ -298,6 +302,11 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 directControl->txReplayEntries.fetch_add(
                     1, std::memory_order_relaxed);
                 timing.replayDataBlocks = replay.dataBlocks;
+                timing.packetCycleTicks = packetAnchorTicks;
+                if (isMotu) {
+                    timing.motuSphCount = replay.motuSphCount;
+                    timing.motuSphOffsets = replay.motuSphOffsets;
+                }
             } else {
                 const int64_t replayDistance =
                     replayDiagnostic.readerCursor >= replayDiagnostic.producerCursor
@@ -378,6 +387,46 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             }
 
             if (replay.dataBlocks != 0) {
+                if (isMotu) {
+                    if ((replay.flags &
+                         ASFW::Audio::Runtime::RxSequenceFlags::
+                             kValidMotuSph) == 0 ||
+                        replay.motuSphCount != replay.dataBlocks) {
+                        failProducer(
+                            ASFW::Audio::Runtime::TxProducerFaultStage::
+                                kReplaySytValidation,
+                            ASFW::Audio::Runtime::TxProducerFaultReason::
+                                kInvalidReplaySyt,
+                            ASFW::Audio::Runtime::FatalStreamReason::
+                                TxReplayInvalidSyt,
+                            nextPacketToPrepare);
+                        break;
+                    }
+                    timing.txClockValid = true;
+                    timing.disposition =
+                        ASFW::Protocols::Audio::AMDTP::
+                            AmdtpPacketDisposition::Data;
+
+                    const int64_t sourceTicks =
+                        ASFW::Timing::encodedTstampToOffsets(
+                            replay.sourceCycleTimer);
+                    const int64_t deltaTicks =
+                        ASFW::Timing::extOffsetDiff(
+                            ASFW::Timing::normalizeOffsetDomain(
+                                packetAnchorTicks),
+                            ASFW::Timing::normalizeOffsetDomain(sourceTicks));
+                    if (deltaTicks >= 0) {
+                        const auto& txConfig =
+                            ivars.runtime.txStreamEngine.StreamConfig();
+                        const uint64_t projectedFrame =
+                            replay.firstAudioFrame +
+                            (static_cast<uint64_t>(deltaTicks) *
+                             txConfig.sampleRate) /
+                                ASFW::Timing::kTicksPerSecond;
+                        (void)ivars.runtime.txStreamEngine
+                            .AlignFrameCursorOnce(projectedFrame);
+                    }
+                } else {
                 if (replay.sytOffset ==
                         ASFW::Audio::Runtime::
                             RxSequenceReplayState::kNoInfo ||
@@ -496,6 +545,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                                  static_cast<long long>(presentationDeltaTicks),
                                  txConfig.sampleRate);
                     }
+                }
                 }
             }
         }
