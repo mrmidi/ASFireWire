@@ -107,21 +107,37 @@ TEST(CapabilityMode, HardwareValidationDefault_AdvertisesFullBMAndIRM) {
     EXPECT_TRUE(IsLegalCapabilityCombo(out));
 }
 
-TEST(CapabilityMode, LiveDefault_IsPassiveClient) {
-    const auto policy = ASFW::Driver::RolePolicy::MakeLiveDefault();
-    EXPECT_EQ(policy.roleMode, RoleMode::ClientOnly);
-    EXPECT_EQ(policy.fullBMActivityLevel, ASFW::FW::FullBMActivityLevel::ObserveOnly);
-    EXPECT_EQ(policy.powerPolicyLevel, ASFW::Driver::PowerPolicyLevel::ObserveOnly);
-
-    // A passive client must not advertise management ownership, but it still
-    // preserves genuine controller content capabilities.  This is the live
-    // controller value observed on the FW643, including CMC/ISC.
-    const auto decoded = DecodeBusOptions(
-        NormalizeLocalBusOptions(0xF000B003u, policy.roleMode, policy.fullBMActivityLevel));
+TEST(CapabilityMode, ClientOnly_AdvertisesNoManagement) {
+    // The mode itself stays fully passive; only the live *profile* moved up a rung.
+    const auto decoded =
+        DecodeBusOptions(NormalizeLocalBusOptions(0xF000B003u, RoleMode::ClientOnly));
     EXPECT_FALSE(decoded.bmc);
     EXPECT_FALSE(decoded.irmc);
     EXPECT_TRUE(decoded.cmc);
     EXPECT_TRUE(decoded.isc);
+}
+
+TEST(CapabilityMode, LiveDefault_AdvertisesIrmWithoutBusManagement) {
+    const auto policy = ASFW::Driver::RolePolicy::MakeLiveDefault();
+    EXPECT_EQ(policy.roleMode, RoleMode::IRMResourceHost);
+    EXPECT_EQ(policy.fullBMActivityLevel, ASFW::FW::FullBMActivityLevel::ObserveOnly);
+    EXPECT_EQ(policy.powerPolicyLevel, ASFW::Driver::PowerPolicyLevel::ObserveOnly);
+
+    // Isochronous streaming cannot start without an IRM on the bus: the IRM owns
+    // CHANNELS_AVAILABLE and BANDWIDTH_AVAILABLE, so IRM=none makes every channel and
+    // bandwidth allocation fail. A host that declines to contend leaves a two-node bus
+    // with no IRM at all whenever the peer is not a contender. Both reference stacks
+    // advertise IRM capability unconditionally (Linux ohci.c:2356-2358 sets
+    // PHY_LINK_ACTIVE | PHY_CONTENDER in ohci_enable()), so the live profile does too --
+    // while still declining bus management (bmc=0) and any topology mutation.
+    const auto decoded = DecodeBusOptions(
+        NormalizeLocalBusOptions(0xF000B003u, policy.roleMode, policy.fullBMActivityLevel));
+    EXPECT_FALSE(decoded.bmc);
+    EXPECT_TRUE(decoded.irmc);
+    EXPECT_TRUE(decoded.cmc);
+    EXPECT_TRUE(decoded.isc);
+    EXPECT_TRUE(IsLegalCapabilityCombo(
+        NormalizeLocalBusOptions(0xF000B003u, policy.roleMode, policy.fullBMActivityLevel)));
 }
 
 TEST(CapabilityMode, ReservedAndNumericBitsPreservedInEveryMode) {
