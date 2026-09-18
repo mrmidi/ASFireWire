@@ -10,6 +10,7 @@
 #include <mach/kern_return.h>
 #include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -53,12 +54,31 @@ public:
     // Real refcounting, so the ~160 retain/release/AdoptRetained sites in driver
     // code are actually exercised on the host. const like the DriverKit original
     // (OSObject.iig: `retain() const override`), hence the mutable counter.
+    //
+    // free() deletes, so instances must be heap-allocated exactly as they are in
+    // production. A stack-allocated stub released to zero deletes a stack
+    // address; that was harmless while release() did nothing, and is not now.
     void retain() const { refCount_.fetch_add(1, std::memory_order_relaxed); }
+
     void release() const {
-        if (refCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        const int previous = refCount_.fetch_sub(1, std::memory_order_acq_rel);
+        if (previous == 1) {
             const_cast<OSObject*>(this)->free();
+            return;
         }
+        // A cheap tripwire, NOT a detector -- do not rely on it. release()
+        // destroys on the 1->0 edge, so by the time a count could go negative the
+        // object is already freed and this fetch_sub has itself touched dangling
+        // memory. The check can therefore only fire *through* undefined
+        // behaviour, and assert() is compiled out under NDEBUG
+        // (`./build.sh --config Release` would do it; CI builds Debug).
+        //
+        // The real detector for this class is AddressSanitizer, which reports
+        // heap-use-after-free on the fetch_sub above with a stack trace. The
+        // project has no sanitizer build today; wiring one is the actual fix.
+        assert(previous > 0 && "OSObject::release() below zero (over-release)");
     }
+
     [[nodiscard]] int GetRetainCount() const {
         return refCount_.load(std::memory_order_relaxed);
     }
