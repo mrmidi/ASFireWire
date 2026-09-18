@@ -91,6 +91,11 @@ target_include_directories(asfw_test_common_interface INTERFACE ${ASFW_COMMON_IN
 target_compile_definitions(asfw_test_common_interface INTERFACE ASFW_HOST_TEST)
 target_compile_features(asfw_test_common_interface INTERFACE cxx_std_23)
 
+# Compiled into every test binary so the sanitizer settings do not depend on the
+# caller's environment -- see the file's header for why that matters.
+target_sources(asfw_test_common_interface INTERFACE
+    "${ASFW_TESTS_DIR}/support/SanitizerDefaults.cpp")
+
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
   target_compile_options(asfw_test_common_interface INTERFACE -Wno-character-conversion)
 endif()
