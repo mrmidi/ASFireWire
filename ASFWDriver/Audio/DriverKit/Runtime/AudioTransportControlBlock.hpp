@@ -454,6 +454,23 @@ struct TxFatalSnapshot final {
     }
 };
 
+/// deviceReportedOutputLevel encoding: bit 31 marks a report, the low 16 bits hold the
+/// level in signed hundredths of a dB. Zero therefore means "nothing reported yet".
+[[nodiscard]] constexpr uint32_t EncodeReportedLevel(float decibels) noexcept {
+    const float scaled = decibels * 100.0f;
+    int32_t centi = static_cast<int32_t>(scaled < 0.0f ? scaled - 0.5f : scaled + 0.5f);
+    centi = centi < -32768 ? -32768 : (centi > 32767 ? 32767 : centi);
+    return 0x8000'0000U | static_cast<uint16_t>(static_cast<int16_t>(centi));
+}
+
+[[nodiscard]] constexpr bool DecodeReportedLevel(uint32_t encoded, float& outDecibels) noexcept {
+    if ((encoded & 0x8000'0000U) == 0) {
+        return false;
+    }
+    outDecibels = static_cast<float>(static_cast<int16_t>(encoded & 0xFFFFU)) / 100.0f;
+    return true;
+}
+
 struct AudioTransportControlBlock final {
     std::atomic<uint64_t> generation{0};
 
@@ -588,6 +605,10 @@ struct AudioTransportControlBlock final {
     /// AM824 counterpart above, because this block is the lifetime-owned seam both
     /// services map; neither side may hold a pointer into the other's memory.
     ::ASFW::Encoding::Motu::MotuEventOffsetCache motuEventOffsets{};
+    /// The level the device reports for its own master output -- a front-panel knob --
+    /// written by the capture consumer, read by the audio driver to move the volume
+    /// control. See EncodeReportedLevel.
+    std::atomic<uint32_t> deviceReportedOutputLevel{0};
     std::atomic<uint32_t> rxTransferDelayTicks{12800};
     std::atomic<uint32_t> txTransferDelayTicks{12800};
     std::atomic<uint64_t> rxReplayEntries{0};
@@ -729,6 +750,7 @@ struct AudioTransportControlBlock final {
         rxSytCadence.Reset();
         rxSequenceReplay.Reset();
         motuEventOffsets.Reset();
+        deviceReportedOutputLevel.store(0, std::memory_order_relaxed);
         rxReplayEntries.store(0, std::memory_order_relaxed);
         rxReplayEpochResets.store(0, std::memory_order_relaxed);
         rxPacketsSeen.store(0, std::memory_order_relaxed);

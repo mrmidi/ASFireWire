@@ -118,6 +118,9 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     /// per-data-block SPH offsets start caching, which is the equivalent evidence that
     /// this device's timing is readable. Cleared wherever replayReadyNotified_ is.
     bool motuTimingEstablished_{false};
+    /// Last value published to control->deviceReportedOutputLevel, so an unchanged knob
+    /// costs no store per packet.
+    uint32_t lastReportedOutputLevel_{0};
     bool replayResetForStart_{false};
     // Bounded [RxReplayReset] records for a stream that has not established yet.
     // Re-armed at each bring-up; without a budget a permanently-rejected stream

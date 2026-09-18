@@ -1,0 +1,64 @@
+//
+// ASFWProtocolLevelControl.iig
+// ASFWDriver
+//
+// IOUserAudioLevelControl subclass that applies level changes through
+// ASFWAudioDriver -> ASFWAudioNub -> IDeviceProtocol::WriteControl, the level
+// counterpart of ASFWProtocolBooleanControl (documentation/AUDIO_BACKENDS_CONTROLS.md
+// §5, FW-135). The routing key carries the scope, so an input and an output volume on
+// the same element cannot collide.
+//
+
+#ifndef ASFWProtocolLevelControl_h
+#define ASFWProtocolLevelControl_h
+
+#include <AudioDriverKit/IOUserAudioLevelControl.iig>
+#include <cstdint>
+
+class ASFWAudioDriver;
+
+class ASFWProtocolLevelControl : public IOUserAudioLevelControl
+{
+public:
+    static OSSharedPtr<ASFWProtocolLevelControl> Create(
+        ASFWAudioDriver* ownerDriver,
+        bool isSettable,
+        float initialDecibels,
+        float minDecibels,
+        float maxDecibels,
+        IOUserAudioObjectPropertyElement controlElement,
+        IOUserAudioObjectPropertyScope controlScope,
+        IOUserAudioClassID controlClassID,
+        uint32_t classIdFourCC,
+        uint32_t scopeFourCC,
+        uint32_t routedElement) LOCALONLY;
+
+    bool init(
+        ASFWAudioDriver* ownerDriver,
+        bool isSettable,
+        float initialDecibels,
+        float minDecibels,
+        float maxDecibels,
+        IOUserAudioObjectPropertyElement controlElement,
+        IOUserAudioObjectPropertyScope controlScope,
+        IOUserAudioClassID controlClassID,
+        uint32_t classIdFourCC,
+        uint32_t scopeFourCC,
+        uint32_t routedElement) LOCALONLY;
+
+    void free() override;
+
+    kern_return_t HandleChangeDecibelValue(float in_decibel_value) override;
+    kern_return_t HandleChangeScalarValue(float in_scalar_value) override;
+};
+
+struct ASFWProtocolLevelControl_IVars {
+    ASFWAudioDriver* ownerDriver;
+    uint32_t classIdFourCC;
+    uint32_t scopeFourCC;
+    uint32_t routedElement;
+    float minDecibels;
+    float maxDecibels;
+};
+
+#endif /* ASFWProtocolLevelControl_h */

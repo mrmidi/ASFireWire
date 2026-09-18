@@ -7,6 +7,7 @@
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
+#include "../Protocols/DeviceControl.hpp"
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
 #include "../Config/AudioTxProfiles.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
@@ -47,6 +48,10 @@ struct AudioDriverDeviceState {
     uint32_t streamModeRaw{0};
     uint32_t boolControlCount{0};
     ASFW::Isoch::Audio::BoolControlSlot boolControls[ASFW::Isoch::Audio::kMaxBoolControls]{};
+    // Hardware master output volume, when the protocol backs one.
+    OSSharedPtr<ASFWProtocolLevelControl> outputVolumeControl{};
+    // Output mute, standing in for hardware that has none.
+    OSSharedPtr<ASFWEmulatedMuteControl> outputMuteControl{};
 
     char inputPlugName[64]{};
     char outputPlugName[64]{};
@@ -226,6 +231,16 @@ struct AudioDriverRuntimeState {
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngineSecondary;
     DextTxSlotProvider txSlotProviderSecondary;
     bool txSecondaryActive{false};
+
+    // Output volume control <-> device knob (ReconcileReportedOutputLevel).
+    std::atomic<uint64_t> lastHostLevelChangeTicks{0};
+    /// dB the output volume control last held, as float bits (DeviceControl.hpp).
+    std::atomic<uint32_t> outputVolumeControlDbBits{0};
+    /// Last deviceReportedOutputLevel acted on; timer-queue only.
+    uint32_t lastAppliedReportedLevel{0};
+    /// Minimum of the volume control's range, as float bits: the level mute writes.
+    std::atomic<uint32_t> outputVolumeMinDbBits{0};
+    std::atomic<bool> outputMuted{false};
 };
 
 struct ASFWAudioDriver_IVars {
@@ -260,6 +275,8 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<OSAction> ztsAnchorAction;
     OSSharedPtr<IODispatchQueue> ztsQueue;
     OSSharedPtr<OSAction> deviceClockChangedAction;
+    OSSharedPtr<IOTimerDispatchSource> controlSyncTimer;
+    OSSharedPtr<OSAction> controlSyncAction;
 
 
 
@@ -289,6 +306,10 @@ struct DirectAudioMemoryGeometry final {
     ASFWAudioDriver_IVars& ivars,
     DirectAudioMemoryGeometry physicalGeometry) noexcept;
 void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept;
+
+/// Move the output volume control to the level the device reports for its own knob,
+/// unless the host changed it moments ago. Runs on the control-sync timer.
+void ReconcileReportedOutputLevel(ASFWAudioDriver_IVars& ivars) noexcept;
 
 namespace DirectDiagnostics {
 void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept;

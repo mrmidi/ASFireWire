@@ -14,7 +14,9 @@
 
 #pragma once
 
+#include "MotuLevelWriter.hpp"
 #include "MotuV2Registers.hpp"
+#include "../DeviceControl.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
@@ -49,7 +51,8 @@ public:
                    Discovery::DeviceRegistry& routeRegistry,
                    const Discovery::DeviceRouteToken& route,
                    uint32_t unitSwVersion,
-                   ::ASFW::IRM::IRMClient* irmClient = nullptr);
+                   ::ASFW::IRM::IRMClient* irmClient = nullptr,
+                   ::ASFW::Scheduling::ITimerScheduler* timerScheduler = nullptr);
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
@@ -69,6 +72,13 @@ public:
     /// extras past the table are left unnamed for the caller to synthesize.
     bool GetChannelLabels(std::vector<std::string>& inNames,
                           std::vector<std::string>& outNames) const override;
+
+    /// The hardware main output volume (register 0x0c0c) backs the master output volume
+    /// control, so the volume keys move the same level as the front-panel knob. Writes are
+    /// coalesced by MotuLevelWriter; reads answer from the last value read or written.
+    bool DescribeControl(const ControlKey& key, ControlInfo& outInfo) const override;
+    IOReturn ReadControl(const ControlKey& key, ControlValue& outValue) override;
+    IOReturn WriteControl(const ControlKey& key, const ControlValue& value) override;
 
     //==========================================================================
     // Duplex bring-up (IDeviceProtocol hooks).
@@ -188,6 +198,15 @@ private:
 
     /// Fill the runtime capability block from the geometry resolved by PrepareDuplex.
     [[nodiscard]] AudioStreamRuntimeCaps MakeRuntimeCaps() const noexcept;
+
+    [[nodiscard]] bool HasMainOutputVolume() const noexcept;
+
+    /// Raw main output volume (0..0x80) last read from or confirmed by the device; -1
+    /// until the first read completes.
+    std::atomic<int32_t> mainVolumeRaw_{-1};
+    /// Declared last so it is destroyed first: its destructor cancels any further writes
+    /// before the register IO they would use goes away.
+    MotuLevelWriter mainVolumeWriter_;
 };
 
 } // namespace ASFW::Audio::Motu

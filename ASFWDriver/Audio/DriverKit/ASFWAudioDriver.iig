@@ -60,6 +60,34 @@ public:
     kern_return_t ReadProtocolBooleanControl(uint32_t classIdFourCC,
                                              uint32_t element,
                                              bool* outValue) LOCALONLY;
+
+    // Protocol-backed level control bridge (used by ASFWProtocolLevelControl). dB values.
+    kern_return_t DescribeProtocolLevelControl(uint32_t classIdFourCC,
+                                               uint32_t scopeFourCC,
+                                               uint32_t element,
+                                               bool* outSettable,
+                                               float* outMinDecibels,
+                                               float* outMaxDecibels) LOCALONLY;
+    kern_return_t ReadProtocolLevelControl(uint32_t classIdFourCC,
+                                           uint32_t scopeFourCC,
+                                           uint32_t element,
+                                           float* outDecibels) LOCALONLY;
+    kern_return_t ApplyProtocolLevelControl(uint32_t classIdFourCC,
+                                            uint32_t scopeFourCC,
+                                            uint32_t element,
+                                            float decibels) LOCALONLY;
+
+    // Moves the output volume control to follow the device's own knob while it streams
+    // (ASFWAudioDriverControls.cpp). Runs on the default queue.
+    virtual void ControlSyncTimerFired(OSAction* action,
+                                       uint64_t time)
+        TYPE(IOTimerDispatchSource::TimerOccurred);
+
+    void ArmControlSyncTimer() LOCALONLY;
+
+    // Output mute standing in for hardware that has none: writes the minimum level, and
+    // on unmute the level the volume control holds (Runtime/OutputMutePolicy.hpp).
+    kern_return_t ApplyOutputMute(bool muted) LOCALONLY;
 };
 
 #endif /* ASFWAudioDriver_h */

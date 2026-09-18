@@ -6,6 +6,7 @@
 #pragma once
 
 #include "AudioTypes.hpp"
+#include "DeviceControl.hpp"
 #include "../../Discovery/DeviceRouteToken.hpp"
 
 #include <DriverKit/IOReturn.h>
@@ -154,6 +155,31 @@ public:
                                             bool value) {
         (void)classIdFourCC;
         (void)element;
+        (void)value;
+        return kIOReturnUnsupported;
+    }
+
+    // Typed protocol-backed controls (documentation/AUDIO_BACKENDS_CONTROLS.md §5.2-5.3).
+
+    /// True when the device backs `key`; fills its settability and fixed range.
+    virtual bool DescribeControl(const ControlKey& key, ControlInfo& outInfo) const {
+        (void)key;
+        (void)outInfo;
+        return false;
+    }
+
+    /// Answer from the protocol's cache. HAL property reads land here, so this must never
+    /// wait on a wire round trip.
+    virtual IOReturn ReadControl(const ControlKey& key, ControlValue& outValue) {
+        (void)key;
+        (void)outValue;
+        return kIOReturnUnsupported;
+    }
+
+    /// Fire-and-forget: queue the value and return. Coalescing -- one write in flight,
+    /// latest value wins -- is the protocol's job, since only it knows the wire cost.
+    virtual IOReturn WriteControl(const ControlKey& key, const ControlValue& value) {
+        (void)key;
         (void)value;
         return kIOReturnUnsupported;
     }

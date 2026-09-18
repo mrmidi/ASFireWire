@@ -14,6 +14,34 @@
 using ASFW::Audio::DriverKit::BuildAudioGraph;
 using ASFW::Audio::DriverKit::TearDownAudioGraph;
 
+namespace {
+
+// Cancel is terminal. Keep the source and its action alive until DriverKit confirms every
+// queued callback has returned; the timer retains its handler until cancellation
+// (IOTimerDispatchSource.h, same discipline as WatchdogCoordinator::Reset).
+void CancelControlSyncTimer(ASFWAudioDriver_IVars& ivars) {
+    if (!ivars.controlSyncTimer) {
+        ivars.controlSyncAction.reset();
+        return;
+    }
+    IOTimerDispatchSource* timer = ivars.controlSyncTimer.detach();
+    OSAction* action = ivars.controlSyncAction.detach();
+    const kern_return_t kr = timer->Cancel(^{
+        if (action) {
+            action->release();
+        }
+        timer->release();
+    });
+    if (kr != kIOReturnSuccess) {
+        if (action) {
+            action->release();
+        }
+        timer->release();
+    }
+}
+
+} // namespace
+
 kern_return_t IMPL(ASFWAudioDriver, Start)
 {
     ASFW_LOG(Audio, "ASFWAudioDriver: Start() - provider is ASFWAudioNub");
@@ -45,6 +73,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
             (void)ivars->device.audioNub->RegisterDeviceClockChangedAction(nullptr);
         }
+        CancelControlSyncTimer(*ivars);
         ivars->deviceClockChangedAction.reset();
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();
@@ -145,6 +174,29 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         return failStart(error, "RegisterDeviceClockChangedAction");
     }
 
+    // The output volume control follows the device's own knob on a timer; only a device
+    // whose protocol backs a hardware level needs it. Non-fatal: without it the volume
+    // keys still work, the control just does not track the knob.
+    if (ivars->device.outputVolumeControl && ivars->workQueue) {
+        IOTimerDispatchSource* rawTimer = nullptr;
+        OSAction* rawAction = nullptr;
+        kern_return_t kr = IOTimerDispatchSource::Create(ivars->workQueue.get(), &rawTimer);
+        if (kr == kIOReturnSuccess && rawTimer) {
+            ivars->controlSyncTimer = ASFW::Common::AdoptRetained(rawTimer);
+            kr = CreateActionControlSyncTimerFired(0, &rawAction);
+        }
+        if (kr == kIOReturnSuccess && rawAction) {
+            ivars->controlSyncAction = ASFW::Common::AdoptRetained(rawAction);
+            kr = ivars->controlSyncTimer->SetHandler(ivars->controlSyncAction.get());
+        }
+        if (kr == kIOReturnSuccess && ivars->controlSyncAction) {
+            (void)ivars->controlSyncTimer->SetEnableWithCompletion(true, nullptr);
+        } else {
+            ASFW_LOG(Audio, "ASFWAudioDriver: knob tracking disabled, timer setup failed 0x%x", kr);
+            CancelControlSyncTimer(*ivars);
+        }
+    }
+
     return kIOReturnSuccess;
 }
 
@@ -166,6 +218,7 @@ void IMPL(ASFWAudioDriver, DeviceClockChanged)
     }
 }
 
+
 kern_return_t IMPL(ASFWAudioDriver, Stop)
 {
     ASFW_LOG(Audio, "ASFWAudioDriver: Stop()");
@@ -181,6 +234,12 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
             (void)ivars->device.audioNub->RegisterDeviceClockChangedAction(nullptr);
         }
+        // A driver that stops while muted would leave the device at its minimum level
+        // with no control left to raise it. Best effort: the device may already be gone.
+        if (ivars->runtime.outputMuted.load(std::memory_order_relaxed)) {
+            (void)ApplyOutputMute(false);
+        }
+        CancelControlSyncTimer(*ivars);
         ivars->txPreparationAction.reset();
         ivars->txPreparationQueue.reset();
         ivars->deviceClockChangedAction.reset();
@@ -248,6 +307,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         return superStartKr;
     }
     ASFW_LOG(DirectAudio, "ADK DBG IO super StartDevice ok id=%u", in_object_id);
+    ArmControlSyncTimer();
 
     ASFW_LOG(Audio, "ASFWAudioDriver: Device started (transport via StartIO)");
     return kIOReturnSuccess;

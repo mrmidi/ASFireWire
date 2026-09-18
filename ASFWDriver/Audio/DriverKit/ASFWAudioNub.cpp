@@ -831,3 +831,119 @@ kern_return_t IMPL(ASFWAudioNub, SetProtocolBooleanControl)
                                             .nodeId = binding.device->nodeId}, transport);
     return binding.protocol->SetBooleanControlValue(classIdFourCC, element, value);
 }
+
+namespace {
+
+[[nodiscard]] ASFW::Audio::ControlKey MakeControlKey(uint32_t kind,
+                                                     uint32_t classIdFourCC,
+                                                     uint32_t scopeFourCC,
+                                                     uint32_t element) noexcept {
+    return ASFW::Audio::ControlKey{.kind = static_cast<ASFW::Audio::ControlKind>(kind),
+                                   .classIdFourCC = classIdFourCC,
+                                   .scopeFourCC = scopeFourCC,
+                                   .element = element};
+}
+
+[[nodiscard]] uint64_t ControlValueBits(const ASFW::Audio::ControlValue& value) noexcept {
+    switch (value.kind) {
+    case ASFW::Audio::ControlKind::kBoolean:
+        return value.boolean ? 1U : 0U;
+    case ASFW::Audio::ControlKind::kLevel:
+        return ASFW::Audio::DecibelBits(value.decibels);
+    case ASFW::Audio::ControlKind::kSelector:
+        return value.selector;
+    }
+    return 0;
+}
+
+[[nodiscard]] ASFW::Audio::ControlValue ControlValueFromBits(ASFW::Audio::ControlKind kind,
+                                                             uint64_t bits) noexcept {
+    ASFW::Audio::ControlValue value{.kind = kind};
+    switch (kind) {
+    case ASFW::Audio::ControlKind::kBoolean:
+        value.boolean = bits != 0;
+        break;
+    case ASFW::Audio::ControlKind::kLevel:
+        value.decibels = ASFW::Audio::DecibelsFromBits(static_cast<uint32_t>(bits));
+        break;
+    case ASFW::Audio::ControlKind::kSelector:
+        value.selector = static_cast<uint32_t>(bits);
+        break;
+    }
+    return value;
+}
+
+// Resolve the protocol and refresh its route. The AV/C transport is optional here: a
+// register-based family has none and must still be reachable.
+[[nodiscard]] kern_return_t BindProtocolForControl(const ASFWAudioNub_IVars* iv,
+                                                   ProtocolRuntimeBinding& binding) {
+    if (const kern_return_t status = ResolveProtocolRuntimeBinding(iv, binding);
+        status != kIOReturnSuccess) {
+        return status;
+    }
+    auto* transport = binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId);
+    binding.protocol->UpdateRuntimeContext(ASFW::Discovery::DeviceRouteToken{
+                                               .guid = binding.device->guid,
+                                               .deviceIncarnation = binding.device->deviceIncarnation,
+                                               .routeEpoch = binding.device->routeEpoch,
+                                               .generation = binding.device->gen,
+                                               .nodeId = binding.device->nodeId},
+                                           transport);
+    return kIOReturnSuccess;
+}
+
+} // namespace
+
+kern_return_t IMPL(ASFWAudioNub, DescribeProtocolControl)
+{
+    if (!ivars || !outSettable || !outRangeBits) {
+        return kIOReturnBadArgument;
+    }
+    ProtocolRuntimeBinding binding{};
+    if (const kern_return_t status = BindProtocolForControl(ivars, binding);
+        status != kIOReturnSuccess) {
+        return status;
+    }
+    ASFW::Audio::ControlInfo info{};
+    if (!binding.protocol->DescribeControl(MakeControlKey(kind, classIdFourCC, scopeFourCC, element),
+                                           info)) {
+        return kIOReturnUnsupported;
+    }
+    *outSettable = info.isSettable;
+    *outRangeBits = (static_cast<uint64_t>(ASFW::Audio::DecibelBits(info.minDecibels)) << 32) |
+                    ASFW::Audio::DecibelBits(info.maxDecibels);
+    return kIOReturnSuccess;
+}
+
+kern_return_t IMPL(ASFWAudioNub, ReadProtocolControl)
+{
+    if (!ivars || !outValueBits) {
+        return kIOReturnBadArgument;
+    }
+    ProtocolRuntimeBinding binding{};
+    if (const kern_return_t status = BindProtocolForControl(ivars, binding);
+        status != kIOReturnSuccess) {
+        return status;
+    }
+    ASFW::Audio::ControlValue value{};
+    const kern_return_t status = binding.protocol->ReadControl(
+        MakeControlKey(kind, classIdFourCC, scopeFourCC, element), value);
+    if (status == kIOReturnSuccess) {
+        *outValueBits = ControlValueBits(value);
+    }
+    return status;
+}
+
+kern_return_t IMPL(ASFWAudioNub, WriteProtocolControl)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+    ProtocolRuntimeBinding binding{};
+    if (const kern_return_t status = BindProtocolForControl(ivars, binding);
+        status != kIOReturnSuccess) {
+        return status;
+    }
+    const ASFW::Audio::ControlKey key = MakeControlKey(kind, classIdFourCC, scopeFourCC, element);
+    return binding.protocol->WriteControl(key, ControlValueFromBits(key.kind, valueBits));
+}

@@ -14,6 +14,7 @@
 #include "../../../DeviceProfiles/Audio/Vendors/MotuAudioProfiles.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
+#include "../../Wire/MOTU/MotuRegisterDsp.hpp"
 
 namespace ASFW::Audio::Motu {
 
@@ -33,11 +34,32 @@ MotuV2Protocol::MotuV2Protocol(Protocols::Ports::FireWireBusOps& busOps,
                                Discovery::DeviceRegistry& routeRegistry,
                                const Discovery::DeviceRouteToken& route,
                                uint32_t unitSwVersion,
-                               ::ASFW::IRM::IRMClient* irmClient)
+                               ::ASFW::IRM::IRMClient* irmClient,
+                               ::ASFW::Scheduling::ITimerScheduler* timerScheduler)
     : io_(busOps, busInfo, routeRegistry, route)
     , busInfo_(busInfo)
     , irmClient_(irmClient)
-    , unitSwVersion_(unitSwVersion) {}
+    , unitSwVersion_(unitSwVersion)
+    , mainVolumeWriter_(
+          [this](uint8_t value, MotuLevelWriter::DoneFn done) {
+              ASFW_LOG(Audio, "MotuV2Protocol: main volume -> raw=0x%02x centiDb=%d", value,
+                       static_cast<int>(Encoding::Motu::OutputVolumeToDb(value) * 100.0f));
+              (void)io_.WriteQuadBE(
+                  AddressOf(Reg::MainOutputVolume),
+                  value,
+                  [this, value, done = std::move(done)](Async::AsyncStatus status) {
+                      const bool ok = status == Async::AsyncStatus::kSuccess;
+                      if (ok) {
+                          mainVolumeRaw_.store(value, std::memory_order_release);
+                      } else {
+                          ASFW_LOG(Audio,
+                                   "MotuV2Protocol: main volume write 0x%02x failed status=%u",
+                                   value, static_cast<unsigned>(status));
+                      }
+                      done(ok);
+                  });
+          },
+          timerScheduler) {}
 
 const char* MotuV2Protocol::GetName() const {
     const char* const model =
@@ -62,6 +84,25 @@ IOReturn MotuV2Protocol::Initialize() {
                  clock.sampleRateHz,
                  clock.source.has_value() ? static_cast<uint32_t>(*clock.source) : 0xFFFFFFFFu);
     });
+
+    // Seed the volume control's initial value. Best-effort like the clock read: without it
+    // the control starts from a default until the capture stream reports the knob.
+    if (HasMainOutputVolume()) {
+        (void)io_.ReadQuadBE(
+            AddressOf(Reg::MainOutputVolume),
+            [this](Async::AsyncStatus status, uint32_t value) {
+                if (status != Async::AsyncStatus::kSuccess) {
+                    ASFW_LOG(Audio, "MotuV2Protocol: initial main volume read failed status=%u",
+                             static_cast<unsigned>(status));
+                    return;
+                }
+                const auto raw = static_cast<uint8_t>(value & 0xFFU);
+                mainVolumeRaw_.store(raw > Encoding::Motu::kOutputVolumeMaxRaw
+                                         ? Encoding::Motu::kOutputVolumeMaxRaw
+                                         : raw,
+                                     std::memory_order_release);
+            });
+    }
 
     return kIOReturnSuccess;
 }
@@ -273,6 +314,48 @@ bool MotuV2Protocol::GetChannelLabels(std::vector<std::string>& inNames,
         outNames.emplace_back(port.name);
     }
     return true;
+}
+
+bool MotuV2Protocol::HasMainOutputVolume() const noexcept {
+    // Register-DSP v2 models with a 0x0c0c main volume (FFADO MixerCtrls_828Mk2 and
+    // MixerCtrls_Ultralite, motu_mixerdefs.cpp:121-127, :230-236). Others stay unmapped until
+    // their layouts are confirmed.
+    return unitSwVersion_ == DeviceProfiles::Audio::kMotu828mk2SwVersion ||
+           unitSwVersion_ == DeviceProfiles::Audio::kMotuUltraliteSwVersion;
+}
+
+bool MotuV2Protocol::DescribeControl(const ControlKey& key, ControlInfo& outInfo) const {
+    if (key != kMasterOutputVolumeKey || !HasMainOutputVolume()) {
+        return false;
+    }
+    outInfo = ControlInfo{.isSettable = true,
+                          .minDecibels = Encoding::Motu::kOutputVolumeMinDb,
+                          .maxDecibels = Encoding::Motu::kOutputVolumeMaxDb};
+    return true;
+}
+
+IOReturn MotuV2Protocol::ReadControl(const ControlKey& key, ControlValue& outValue) {
+    if (key != kMasterOutputVolumeKey || !HasMainOutputVolume()) {
+        return kIOReturnUnsupported;
+    }
+    const int32_t raw = mainVolumeRaw_.load(std::memory_order_acquire);
+    if (raw < 0) {
+        return kIOReturnNotReady;
+    }
+    outValue = ControlValue{.kind = ControlKind::kLevel,
+                            .decibels = Encoding::Motu::OutputVolumeToDb(static_cast<uint8_t>(raw))};
+    return kIOReturnSuccess;
+}
+
+IOReturn MotuV2Protocol::WriteControl(const ControlKey& key, const ControlValue& value) {
+    if (key != kMasterOutputVolumeKey || !HasMainOutputVolume()) {
+        return kIOReturnUnsupported;
+    }
+    if (value.kind != ControlKind::kLevel) {
+        return kIOReturnBadArgument;
+    }
+    mainVolumeWriter_.Set(Encoding::Motu::OutputVolumeFromDb(value.decibels));
+    return kIOReturnSuccess;
 }
 
 AudioStreamRuntimeCaps MotuV2Protocol::MakeRuntimeCaps() const noexcept {
