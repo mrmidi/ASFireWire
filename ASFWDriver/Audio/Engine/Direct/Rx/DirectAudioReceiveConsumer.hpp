@@ -20,8 +20,10 @@ namespace ASFW::AudioEngine::Direct::Rx {
 // Owns all content interpretation for one IR stream. Isoch supplies only an
 // opaque payload and its controller-time correlation; this class owns audio
 // decode, replay, ZTS and device-policy callbacks.
-// MOTU replays per-data-block SPH timing; the cache lives with the consumer that
-// fills it. See Audio/Wire/MOTU/MotuEventOffsetCache.hpp.
+// MOTU replays per-data-block SPH timing. The cache does NOT live here: it sits in
+// AudioTransportControlBlock, because the transmit side drains on the audio queue
+// what this consumer fills on the transport queue, and neither may hold a pointer
+// into the other's memory. See Audio/Wire/MOTU/MotuEventOffsetCache.hpp.
 class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveConsumer {
   public:
     struct Configuration final {
@@ -135,9 +137,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint64_t prevLoggedAnchorHostTicks_{0};
     uint32_t prevLoggedAnchorRate_{0};
     bool prevLoggedAnchorValid_{false};
-
-    /// Per-data-block presentation offsets captured from MOTU streams, drained by
-    /// the transmit side. Unused (and untouched) by the quadlet-slot families.
 
 };
 
