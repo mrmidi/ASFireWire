@@ -10,24 +10,28 @@
 namespace ASFW::Audio::Quirks {
 
 namespace {
-constexpr uint32_t kApogeeVendorId = 0x0003DB;
-constexpr uint32_t kApogeeDuetModelId = 0x01DDDD;
+// Identities come from the shared DeviceProfiles table. They were previously
+// respelled here, which meant every id in this file was a second copy free to
+// drift from the one the rest of the driver matches on. The local names are kept
+// so the rules below still read as rules.
+namespace ids = DeviceProfiles::Audio;
+
+constexpr uint32_t kApogeeVendorId    = ids::kApogeeVendorId;
+constexpr uint32_t kApogeeDuetModelId = ids::kApogeeDuetModelId;
 
 // Focusrite DICE devices — Linux kernel dice-stream.c unconditionally uses CIP_BLOCKING.
-constexpr uint32_t kFocusriteVendorId = 0x00130e;
-constexpr uint32_t kSPro14ModelId = 0x000009;
-constexpr uint32_t kSPro24ModelId  = 0x000007;
-constexpr uint32_t kSPro24DspModelId  = 0x000008;
-constexpr uint32_t kSPro40ModelId = 0x000005;
+constexpr uint32_t kFocusriteVendorId = ids::kFocusriteVendorId;
+constexpr uint32_t kSPro14ModelId     = ids::kSPro14ModelId;
+constexpr uint32_t kSPro24ModelId     = ids::kSPro24ModelId;
+constexpr uint32_t kSPro24DspModelId  = ids::kSPro24DspModelId;
+constexpr uint32_t kSPro40ModelId     = ids::kSPro40ModelId;
 
 // Midas DICE devices — same rationale as Focusrite above.
-constexpr uint32_t kMidasVendorId      = 0x10c73f;
-constexpr uint32_t kMidasVeniceModelId = 0x000001;
+constexpr uint32_t kMidasVendorId      = ids::kMidasVendorId;
+constexpr uint32_t kMidasVeniceModelId = ids::kMidasVeniceModelId;
 
-// LOUD Technologies (Mackie Onyx family). Taken from the shared table rather
-// than redeclared: the same commit that added this rule also added the constant
-// to AudioDeviceIds, and two spellings of one OUI can only drift apart.
-constexpr uint32_t kLoudMackieVendorId = DeviceProfiles::Audio::kMackieVendorId;
+// LOUD Technologies (Mackie Onyx family).
+constexpr uint32_t kLoudMackieVendorId = ids::kMackieVendorId;
 
 } // namespace
 
