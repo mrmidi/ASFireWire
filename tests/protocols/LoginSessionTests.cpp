@@ -104,6 +104,21 @@ public:
         session.Configure(info);
     }
 
+    // Mirror production's ORB deregistration protocol.
+    //
+    // FetchAgent tracks outstanding ORBs by RAW pointer and writes
+    // orb->SetAppended(false) into each one when cleared, so a cleared ORB must
+    // still be alive. Production satisfies that in
+    // CommandExecutor::CleanupCommandResources: it calls
+    // session_.ClearCommandTracking() FIRST, then drops commandORB_ -- and
+    // SessionRecord declares `executor` last so it tears down before `session`.
+    //
+    // Tests that build bare stack ORBs have no executor doing that for them, so
+    // they must do it themselves before the ORBs leave scope. Without it the
+    // session's destructor writes into dead ORBs, which ASan reports as
+    // stack-use-after-scope.
+    void ClearCommandTracking() { session.ClearCommandTracking(); }
+
     // Bus completions fire inline via CompleteNextWrite; timeouts/retries run on
     // the virtual-clock scheduler. There is no queue to drain.
     void DrainReady() {}
@@ -524,6 +539,8 @@ TEST(LoginSessionTests, ImmediateORBRetryStaysBoundToOriginalORBAndQueuesNextImm
     const uint32_t retryAddressLo = static_cast<uint32_t>(
         DecodeOrbAddressFromPayload(rig.bus.WriteAt(3).data));
     EXPECT_EQ(firstAddressLo, retryAddressLo);
+    // Deregister before the ORBs leave scope, as CommandExecutor does.
+    rig.ClearCommandTracking();
 }
 
 TEST(LoginSessionTests, SubmittedImmediateORBStartsTimeoutAfterFetchAgentWriteSucceeds) {
@@ -555,6 +572,8 @@ TEST(LoginSessionTests, SubmittedImmediateORBStartsTimeoutAfterFetchAgentWriteSu
     rig.AdvanceMs(1);
     EXPECT_EQ(1, callbackCount);
     EXPECT_EQ(-1, callbackStatus);
+    // Deregister before the ORBs leave scope, as CommandExecutor does.
+    rig.ClearCommandTracking();
 }
 
 TEST(LoginSessionTests, SolicitedStatusCompletesORBMatchingByORBAddress) {
@@ -592,6 +611,8 @@ TEST(LoginSessionTests, SolicitedStatusCompletesORBMatchingByORBAddress) {
 
     EXPECT_EQ(0, firstStatus);
     EXPECT_EQ(99, secondStatus);
+    // Deregister before the ORBs leave scope, as CommandExecutor does.
+    rig.ClearCommandTracking();
 }
 
 TEST(LoginSessionTests, ImmediateORBWriteRetryExhaustionFailsActiveCommandAndResetsFetchAgent) {
@@ -624,6 +645,8 @@ TEST(LoginSessionTests, ImmediateORBWriteRetryExhaustionFailsActiveCommandAndRes
               rig.bus.WriteAt(rig.bus.WriteCount() - 1).address.addressLo);
 
     EXPECT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    // Deregister before the ORBs leave scope, as CommandExecutor does.
+    rig.ClearCommandTracking();
 }
 
 TEST(LoginSessionTests,
@@ -669,6 +692,8 @@ TEST(LoginSessionTests,
     EXPECT_EQ(commandBlock.addressLo + CommandBlockAgentOffsets::kAgentReset,
               rig.bus.WriteAt(rig.bus.WriteCount() - 1).address.addressLo);
     EXPECT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    // Deregister before the ORBs leave scope, as CommandExecutor does.
+    rig.ClearCommandTracking();
 }
 
 } // namespace

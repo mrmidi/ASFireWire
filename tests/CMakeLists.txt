@@ -34,6 +34,40 @@ set(ASFW_COMMON_INCLUDES
     "${ASFW_ROOT_DIR}/AppleHeaders"
 )
 
+# ---------------------------------------------------------------------------
+# Sanitizers
+#
+# The recurring bug class in this driver is lifetime: cross-service
+# use-after-free on teardown, refcount imbalance, borrows that outlive what they
+# borrow from. The host stubs refcount for real, which surfaces imbalance as a
+# leaked object, but over-release cannot be caught from inside an object that has
+# already been freed -- the detector for that is ASan, which reports
+# heap-use-after-free at the exact access.
+#
+#   cmake -S tests -B build/tests_asan -DASFW_ENABLE_ASAN=ON
+#
+# Leak detection is off by default because LeakSanitizer is unsupported on
+# macOS/arm64; set ASFW_ENABLE_LSAN=ON where it is available.
+option(ASFW_ENABLE_ASAN "Build the host tests with AddressSanitizer + UBSan" OFF)
+option(ASFW_ENABLE_LSAN "Also enable LeakSanitizer (unsupported on macOS/arm64)" OFF)
+
+if(ASFW_ENABLE_ASAN)
+    set(ASFW_SANITIZER_FLAGS
+        -fsanitize=address
+        -fsanitize=undefined
+        -fno-omit-frame-pointer
+        -fno-optimize-sibling-calls
+        # A sanitizer report is worthless without the line it points at.
+        -g
+    )
+    if(ASFW_ENABLE_LSAN)
+        list(APPEND ASFW_SANITIZER_FLAGS -fsanitize=leak)
+    endif()
+    add_compile_options(${ASFW_SANITIZER_FLAGS})
+    add_link_options(${ASFW_SANITIZER_FLAGS})
+    message(STATUS "ASFW: AddressSanitizer + UBSan enabled for host tests")
+endif()
+
 enable_testing()
 
 # Find or fetch GoogleTest

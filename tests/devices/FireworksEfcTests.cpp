@@ -399,9 +399,11 @@ TEST_F(EfcTransportTest, MatchingResponseCompletesWithParamsAndDisarmsTimeout) {
 }
 
 TEST_F(EfcTransportTest, IgnoresResponsesFromOtherNodes) {
+    // Declared before the transport: ~EfcTransport cancels pending commands and
+    // runs their completions, so anything they capture has to outlive it.
+    bool called = false;
     EfcTransport t(bus_, info_, &timer_);
     t.SetRoute(route_);
-    bool called = false;
     t.Submit(Efc::Category::kHwCtl, kCmdGetClock, {}, [&](IOReturn, const Efc::Response&) { called = true; });
     const uint32_t clock[] = {0U, 44100U, 0U};
     EXPECT_FALSE(Respond(t, kCatHwCtl, kCmdGetClock, 0, clock, /*sourceID=*/kNode + 1));

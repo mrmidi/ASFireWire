@@ -188,9 +188,11 @@ TEST(CompletionRefactorPlan, ARResponseMatchesWhenOnlyBusBitsDiffer) {
 }
 
 TEST(CompletionRefactorPlan, ARResponseRejectsDifferentNodeNumber) {
+    // Declared before the harness: tearing the transaction manager down runs the
+    // response handlers, which capture this recorder by reference.
+    CallbackRecorder cb;
     Harness h;
     ASSERT_TRUE(h.initOk);
-    CallbackRecorder cb;
     auto* txn = h.AllocateTxn(/*label=*/7, /*gen=*/7, /*node=*/0xffc2,
                               /*tcode=*/0x9, CompletionStrategy::CompleteOnAR, cb);
     ASSERT_NE(txn, nullptr);
@@ -212,9 +214,11 @@ TEST(CompletionRefactorPlan, ARResponseRejectsDifferentNodeNumber) {
 }
 
 TEST(CompletionRefactorPlan, BusyAckExtendsDeadlineNoCompletion) {
+    // Declared before the harness: tearing the transaction manager down runs the
+    // response handlers, which capture this recorder by reference.
+    CallbackRecorder cb;
     Harness h;
     ASSERT_TRUE(h.initOk);
-    CallbackRecorder cb;
     auto* txn = h.AllocateTxn(/*label=*/5, /*gen=*/5, /*node=*/0x5555,
                               /*tcode=*/0x1, CompletionStrategy::CompleteOnAT, cb);
     ASSERT_NE(txn, nullptr);

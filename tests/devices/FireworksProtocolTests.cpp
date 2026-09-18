@@ -322,8 +322,10 @@ TEST_F(FireworksProtocolTest, DestructionMidApplyAbortsAndLeavesNoTimers) {
 }
 
 TEST_F(FireworksProtocolTest, PrepareDuplexProbesHwInfoFirstWhenInitializeDidNotRun) {
-    FireworksProtocol proto(efcBus_, bus_, route_, &irm_, &cmp_, &timer_, kOnyx400FGeometry);
+    // Declared before the protocol: its destructor fails pending work and runs
+    // the completions, so anything they capture has to outlive it.
     bool called = false;
+    FireworksProtocol proto(efcBus_, bus_, route_, &irm_, &cmp_, &timer_, kOnyx400FGeometry);
     proto.PrepareDuplex({}, {.sampleRateHz = 44100}, [&](IOReturn, auto) { called = true; });
     ASSERT_EQ(efcBus_.writes.size(), 1U);
     EXPECT_EQ(LastWrite().Category(), kCatHwInfo);
