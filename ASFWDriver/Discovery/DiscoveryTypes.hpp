@@ -2,6 +2,7 @@
 
 #include "../Common/FWCommon.hpp"
 #include "DiscoveryValues.hpp"  // FwSpeed enum and constants
+#include "RuntimeIdentity.hpp"  // DeviceInstanceId / UnitInstanceId
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -262,6 +263,13 @@ enum class AvcCommandFilterId : uint8_t {
 // where there is hardware to test against, SBP-2 and AV/C last — and the flat
 // fields are deleted when the last caller moves.
 struct DeviceRecord {
+    // ---- Runtime handle ----
+    // Unique within one driver lifetime and never derived from the GUID, which
+    // is an observation: shipping devices report zero and duplicate EUI-64
+    // values. Anything that needs to *address* a device or unit uses this;
+    // `guid` below only describes one.
+    DeviceInstanceId instanceId{};
+
     // ---- Config-ROM evidence (destination) ----
     DeviceIdentityEvidence identity{};
     QuarantineReason quarantineReason{QuarantineReason::None};

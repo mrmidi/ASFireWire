@@ -190,6 +190,7 @@ DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolic
     auto [it, inserted] = devicesByGuid_.try_emplace(guid);
     auto& device = it->second;
     if (inserted) {
+        device.instanceId = AllocateDeviceInstanceIdLocked();
         device.deviceIncarnation = ++lastDeviceIncarnationByGuid_[guid];
         device.routeEpoch = AllocateRouteEpochLocked();
     } else if (device.gen != rom.gen || device.nodeId != rom.nodeId ||
@@ -454,6 +455,15 @@ uint64_t DeviceRegistry::AllocateRouteEpochLocked() noexcept {
         ++nextRouteEpoch_;
     }
     return nextRouteEpoch_;
+}
+
+DeviceInstanceId DeviceRegistry::AllocateDeviceInstanceIdLocked() noexcept {
+    // Zero means "no instance", so it is never handed out.
+    ++nextDeviceInstanceId_;
+    if (nextDeviceInstanceId_ == 0) {
+        ++nextDeviceInstanceId_;
+    }
+    return DeviceInstanceId{nextDeviceInstanceId_};
 }
 
 bool DeviceRegistry::HasLiveRoute(const DeviceRecord& device) noexcept {

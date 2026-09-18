@@ -242,3 +242,10 @@ add_device_test(FireworksProtocolTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
 )
+
+# One device catalog: the table that replaces the five independent matchers.
+# The Supported-row assertion is the one that would have caught #115.
+add_device_test(AudioDeviceCatalogTests
+    AudioDeviceCatalogTests.cpp
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+)
