@@ -187,6 +187,24 @@ TEST(DeviceProtocolFactoryTests, RecognizesPreSonusStudioLive1602DiceProfile) {
     EXPECT_STREQ(studioLive->modelName, DeviceProtocolFactory::kStudioLive1602ModelName);
 }
 
+// Issue #115: the 24.4.2 had this recognition and a DiceProfileRegistry entry but no
+// DeviceProtocolFactory::Create clause, so it published a nub, allocated its isoch
+// geometry, and then failed every StartIO with kIOReturnNotReady. These assertions
+// cover the identity half only — nothing here executes Create's dispatch, which is
+// why the gap reached hardware. Proving the clause exists needs the dispatch split
+// out as a pure function (backlogged).
+TEST(DeviceProtocolFactoryTests, RecognizesPreSonusStudioLive2442DiceProfile) {
+    const auto studioLive = DeviceProtocolFactory::LookupKnownIdentity(
+        DeviceProtocolFactory::kPreSonusVendorId, DeviceProtocolFactory::kStudioLive2442ModelId);
+    ASSERT_TRUE(studioLive.has_value());
+    EXPECT_EQ(studioLive->integrationMode, DeviceIntegrationMode::kHardcodedNub);
+    EXPECT_STREQ(studioLive->vendorName, DeviceProtocolFactory::kPreSonusVendorName);
+    EXPECT_STREQ(studioLive->modelName, DeviceProtocolFactory::kStudioLive2442ModelName);
+    // The two StudioLives share the factory clause, so they must stay distinct ids.
+    EXPECT_NE(DeviceProtocolFactory::kStudioLive2442ModelId,
+              DeviceProtocolFactory::kStudioLive1602ModelId);
+}
+
 TEST(DeviceProtocolFactoryTests, RecognizesMackieOnyxIOxfordAsAvcDriven) {
     const auto onyxI = DeviceProtocolFactory::LookupKnownIdentity(
         DeviceProtocolFactory::kMackieVendorId, DeviceProtocolFactory::kOnyxIOxfwModelId);

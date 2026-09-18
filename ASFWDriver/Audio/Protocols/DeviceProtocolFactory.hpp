@@ -87,6 +87,8 @@ public:
     static constexpr uint32_t kPreSonusVendorId = DeviceProfiles::Audio::kPreSonusVendorId;
     static constexpr uint32_t kStudioLive1602ModelId =
         DeviceProfiles::Audio::kStudioLive1602ModelId;
+    static constexpr uint32_t kStudioLive2442ModelId =
+        DeviceProfiles::Audio::kStudioLive2442ModelId;
     static constexpr uint32_t kMackieVendorId = DeviceProfiles::Audio::kMackieVendorId;
     static constexpr uint32_t kOnyxIOxfwModelId = DeviceProfiles::Audio::kOnyxIOxfwModelId;
     static constexpr uint32_t kOnyx400FModelId = DeviceProfiles::Audio::kOnyx400FModelId;
@@ -121,6 +123,8 @@ public:
     static constexpr const char* kPreSonusVendorName = DeviceProfiles::Audio::kPreSonusVendorName;
     static constexpr const char* kStudioLive1602ModelName =
         DeviceProfiles::Audio::kStudioLive1602ModelName;
+    static constexpr const char* kStudioLive2442ModelName =
+        DeviceProfiles::Audio::kStudioLive2442ModelName;
 
     using UnitIdentity = DeviceUnitIdentity;
 

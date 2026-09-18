@@ -117,9 +117,18 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                                                                 route, irmClient, timerScheduler);
     }
 
-    if (vendorId == kPreSonusVendorId && modelId == kStudioLive1602ModelId) {
+    // Both StudioLives take the generic TCAT path: snd-dice quirks only model
+    // 0x000008 (dice-presonus.c) and libffado 2.5.0 records no quirk for either.
+    // The 24.4.2's asymmetric 16+10 playback side needs no clause of its own —
+    // DoProgramRx walks playbackStreamCount, which DuplexStreamProfile takes from
+    // the device's own RX_NUMBER registers rather than from a host-side constant.
+    if (vendorId == kPreSonusVendorId &&
+        (modelId == kStudioLive1602ModelId || modelId == kStudioLive2442ModelId)) {
+        const auto known = LookupKnownIdentity(vendorId, modelId);
         ASFW_LOG(DICE,
-                 "Creating generic DICETcatProtocol for PreSonus StudioLive 16.0.2 vendor=0x%06x model=0x%06x node=0x%04x",
+                 "Creating generic DICETcatProtocol for %{public}s vendor=0x%06x model=0x%06x node=0x%04x",
+                 (known.has_value() && known->modelName) ? known->modelName
+                                                         : "PreSonus StudioLive",
                  vendorId,
                  modelId,
                  nodeId);
