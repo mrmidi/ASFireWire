@@ -99,3 +99,10 @@ target_link_libraries(ROMReaderMockTests PRIVATE
     GTest::gmock
 )
 gtest_discover_tests(ROMReaderMockTests)
+
+# Config-ROM identity evidence on DeviceRecord: presence-vs-zero and
+# units-plural, neither of which the flat identity fields can express.
+add_discovery_test(DeviceIdentityEvidenceTests
+    DeviceIdentityEvidenceTests.cpp
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)

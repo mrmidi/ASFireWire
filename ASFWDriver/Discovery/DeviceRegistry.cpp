@@ -17,14 +17,71 @@ constexpr uint32_t kUnitSwVersion_SBP2 = 0x010483; // SBP-2 Unit_Sw_Version
 
 namespace {
 
-void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
+// Fill DeviceRecord::identity — the raw Config-ROM evidence — from the parsed
+// ROM. Presence is recorded as presence: an optional is engaged when the ROM
+// carried the key, whatever its value. A device that publishes model_id 0
+// (MOTU does) is therefore distinguishable from one that publishes no model_id
+// at all, which a uint32_t{0} cannot express.
+void PopulateIdentityEvidence(DeviceRecord& device, const ConfigROM& rom) {
+    DeviceIdentityEvidence evidence{};
+    evidence.observedGuid = rom.bib.guid;
+    evidence.nodeVendorOui = static_cast<uint32_t>((rom.bib.guid >> 40) & 0xFFFFFFULL);
+
+    // The bus info block is the leading quadlets of the ROM image, in wire order.
+    constexpr size_t kBusInfoQuadlets = 5;
+    const size_t busInfoCount = (rom.rawQuadlets.size() < kBusInfoQuadlets)
+                                    ? rom.rawQuadlets.size()
+                                    : kBusInfoQuadlets;
+    evidence.rawBusInfoQuadlets.assign(rom.rawQuadlets.begin(),
+                                       rom.rawQuadlets.begin() +
+                                           static_cast<std::ptrdiff_t>(busInfoCount));
+
     for (const auto& entry : rom.rootDirMinimal) {
         if (entry.key == CfgKey::VendorId) {
-            device.vendorId = entry.value;
+            evidence.rootVendorId = entry.value;
         } else if (entry.key == CfgKey::ModelId) {
-            device.modelId = entry.value;
+            evidence.rootModelId = entry.value;
         }
     }
+    evidence.rootVendorName = rom.vendorName;
+    evidence.rootModelName = rom.modelName;
+
+    // Every unit directory, kept separate. The flat unitSpecId/unitSwVersion
+    // pair below can only describe one unit, and worse, can take the two halves
+    // from different ones; TC Applied Technologies devices publish an audio unit
+    // and a MIDI unit.
+    evidence.units.reserve(rom.unitDirectories.size());
+    for (const auto& unit : rom.unitDirectories) {
+        UnitIdentityEvidence unitEvidence{};
+        unitEvidence.unitDirectoryOffset = unit.offsetQuadlets;
+        if (unit.unitSpecId != 0) {
+            unitEvidence.specifierId = unit.unitSpecId;
+        }
+        if (unit.unitSwVersion != 0) {
+            unitEvidence.version = unit.unitSwVersion;
+        }
+        unitEvidence.modelId = unit.modelId;
+        unitEvidence.modelName = unit.modelName;
+        unitEvidence.logicalUnitNumber = unit.logicalUnitNumber;
+        evidence.units.push_back(std::move(unitEvidence));
+    }
+
+    device.identity = std::move(evidence);
+}
+
+void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
+    PopulateIdentityEvidence(device, rom);
+
+    // ---- Flat compatibility shim, seeded from the evidence above ----
+    // These are the RESOLVED identity, not the evidence. UpsertFromROM calls
+    // MaybeInferKnownIdentityFromGuid immediately after this, which may rewrite
+    // vendorId/modelId from GUID bits when the ROM did not surface usable ids —
+    // so for a Focusrite Saffire Pro 40 TCD3070 the flat modelId ends up 0x0000de
+    // while identity.rootModelId still reports whatever the ROM actually said.
+    // That divergence is the point: `identity` is what the device claimed,
+    // vendorId/modelId are what we concluded. Do not "fix" them to agree.
+    device.vendorId = device.identity.rootVendorId.value_or(0);
+    device.modelId = device.identity.rootModelId.value_or(0);
 
     device.unitSpecId.reset();
     device.unitSwVersion.reset();
