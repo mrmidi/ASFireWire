@@ -80,6 +80,10 @@ struct DuplexStreamProfile {
     std::array<DuplexPlaybackStreamGeometry, kMaxAudioStreamsPerDirection> playbackStreams{};
     Encoding::AudioWireFormat captureWireFormat{Encoding::AudioWireFormat::kAM824};
     Encoding::AudioWireFormat playbackWireFormat{Encoding::AudioWireFormat::kAM824};
+    // Loud OXFW units stamp an unreliable dbs in device->host packets; when set,
+    // the RX decode takes its stride from the configured AM824 slot count instead
+    // of the CIP header (Linux snd-oxfw SND_OXFW_QUIRK_WRONG_DBS semantics).
+    bool captureTrustConfiguredStride{false};
     DuplexStartOrderRecipe startOrder{};
     DuplexStopOrderRecipe stopOrder{};
 };
@@ -202,6 +206,26 @@ class DuplexStreamProfileResolver final {
         return DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(record.vendorId, record.modelId);
     }
 
+    [[nodiscard]] static bool
+    IsMackieOnyxI(const Discovery::DeviceRecord& record) noexcept {
+        return record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+               record.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId;
+    }
+
+    // Echo Fireworks run (Onyx 400F): CMP + AM824 on the BeBoB base, EFC control.
+    [[nodiscard]] static bool
+    IsMackieOnyx400F(const Discovery::DeviceRecord& record) noexcept {
+        return record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+               record.modelId == DeviceProfiles::Audio::kOnyx400FModelId;
+    }
+
+    // Every CMP-driven family: IRM picks the iso channel, the PCR commits it.
+    [[nodiscard]] static bool
+    IsCmpDriven(const Discovery::DeviceRecord& record) noexcept {
+        return IsApogeeDuet(record) || IsBeBoB(record) || IsMackieOnyxI(record) ||
+               IsMackieOnyx400F(record);
+    }
+
     [[nodiscard]] static AudioDuplexChannels
     ResolveChannels(const Discovery::DeviceRecord& record,
                     const AudioStreamRuntimeCaps& caps) noexcept {
@@ -279,7 +303,7 @@ class DuplexStreamProfileResolver final {
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
             // CMP (including BridgeCo/BeBoB) does not own a fixed channel;
             // IRM selects one, which is then committed back to its PCR.
-            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsBeBoB(record))
+            geometry.allowedIsoChannels = IsCmpDriven(record)
                                               ? kAllIsoChannels
                                               : FixedChannelMask(geometry.isoChannel);
             captureChannelOffset += geometry.pcmChannels;
@@ -297,7 +321,7 @@ class DuplexStreamProfileResolver final {
                                       : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
             geometry.bandwidthUnits = AmdtpBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
-            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsBeBoB(record))
+            geometry.allowedIsoChannels = IsCmpDriven(record)
                                               ? kAllIsoChannels
                                               : FixedChannelMask(geometry.isoChannel);
         }
@@ -336,6 +360,46 @@ class DuplexStreamProfileResolver final {
                 DuplexHostDirection::kTransmit,
             };
             profile.startOrder.postDeviceEnableDelayMs = 0;
+        }
+        if (IsMackieOnyxI(record)) {
+            // The Onyx runtime control shares the BeBoB base's CMP choreography,
+            // so keep the same wire-visible ordering (reserve both, connect, then
+            // host RX before TX). The device is SYT-unaware (Linux snd-oxfw
+            // CIP_UNAWARE_SYT), so there is no pre-stream clock to lock against.
+            profile.startOrder.startReceiveBeforeDeviceRx = false;
+            profile.startOrder.startTransmitBeforeDeviceTx = false;
+            profile.startOrder.requiresPreStreamClockLock = false;
+            profile.startOrder.startOrder = {
+                DuplexHostDirection::kReceive,
+                DuplexHostDirection::kTransmit,
+            };
+            profile.startOrder.postDeviceEnableDelayMs = 0;
+            // Loud vendor rule: the capture-side CIP dbs field is untrusted
+            // (snd-oxfw oxfw.c:189-196; amdtp-stream.c:766-769 substitutes the
+            // configured data-block size). The profile's slot count is authority.
+            profile.captureTrustConfiguredStride = true;
+        }
+        if (IsMackieOnyx400F(record)) {
+            // Fireworks streams on the same CMP choreography as BeBoB (Linux
+            // snd-fireworks fireworks_stream.c: cmp_connection_establish for both
+            // plugs, then amdtp_domain_start) and is SYT-unaware with an internal
+            // clock the host cannot observe before the connection exists, so the
+            // DICE-style pre-stream lock gate must not run. Field-verified
+            // 2026-09-13: with the gate on, the coordinator polled HWCTL GET_CLOCK
+            // ~50 times and failed the start at GlobalClockLock.
+            profile.startOrder.startReceiveBeforeDeviceRx = false;
+            profile.startOrder.startTransmitBeforeDeviceTx = false;
+            profile.startOrder.requiresPreStreamClockLock = false;
+            profile.startOrder.startOrder = {
+                DuplexHostDirection::kReceive,
+                DuplexHostDirection::kTransmit,
+            };
+            profile.startOrder.postDeviceEnableDelayMs = 0;
+            // Fireworks gives dbc its own meaning and its NO-DATA packets carry
+            // tag 0 (fireworks_stream.c init_stream); firmware 4.6.0 also stamps
+            // a wrong dbs above 88.2 kHz. The profile's slot count (pcm + MIDI)
+            // is the authority for the capture stride.
+            profile.captureTrustConfiguredStride = true;
         }
         if (IsWeissInt(record)) {
             // INT202/203 are output-only in CoreAudio but retain both DICE

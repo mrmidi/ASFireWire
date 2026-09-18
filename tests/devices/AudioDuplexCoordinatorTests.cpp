@@ -203,13 +203,15 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         uint8_t channel, HardwareInterface&,
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0, uint32_t streamChannels = 0) noexcept override {
+        uint32_t am824Slots = 0, uint32_t streamChannels = 0,
+        bool trustConfiguredStride = false) noexcept override {
         log_.Add("host.prepare_receive");
         lastReceiveChannel = channel;
         lastReceiveBindingSource = bindingSource;
         lastReceiveWireFormat = wireFormat;
         lastReceiveAm824Slots = am824Slots;
         lastReceiveStreamChannels = streamChannels;
+        lastReceiveTrustConfiguredStride = trustConfiguredStride;
         ++prepareReceiveCalls;
         return prepareReceiveStatus;
     }
@@ -228,7 +230,9 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
         uint32_t streamChannels,
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0) noexcept override {
+        uint32_t am824Slots = 0,
+        bool trustConfiguredStride = false) noexcept override {
+        (void)trustConfiguredStride;
         log_.Add("host.prepare_receive_stream");
         lastSecondaryReceiveIndex = streamIndex;
         lastSecondaryReceiveChannel = channel;
@@ -304,6 +308,7 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     ASFW::Encoding::AudioWireFormat lastReceiveWireFormat{ASFW::Encoding::AudioWireFormat::kAM824};
     uint32_t lastReceiveAm824Slots{0};
     uint32_t lastReceiveStreamChannels{0};
+    bool lastReceiveTrustConfiguredStride{false};
     uint8_t lastTransmitChannel{0};
     uint8_t lastTransmitSourceId{0};
     uint32_t lastTransmitMode{0};

@@ -34,6 +34,17 @@ using ASFW::Audio::DICE::HasRestartIntent;
 
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 constexpr uint32_t kDuetFixedSampleRateHz = 48000U;
+// Onyx-i (Oxford run): the device's captured current rate, used as the START
+// DEFAULT when a session carries no clock (a naked first-ever start). Unlike
+// the Duet's fixed-rate pin, this is only a default — explicit user rate
+// selections arrive via the session clocks and take precedence.
+constexpr uint32_t kOnyxIDefaultStartRateHz = 44100U;
+// Onyx 400F (Fireworks): the sole rate the static profile offers until the ADK
+// reconfig path supports rate changes (see FireworksProtocol::SupportedRates).
+// Field-verified 2026-09-13: without this pin a first-ever start asked for the
+// coordinator's 48 kHz fallback and the protocol refused it (kIOReturnUnsupported
+// at Prepare) before any EFC traffic.
+constexpr uint32_t kOnyx400FDefaultStartRateHz = 44100U;
 
 // The Duet format-control path is deliberately start-time only for now.  Do
 // not resurrect a rate retained in a restart session: the host geometry and
@@ -46,7 +57,40 @@ constexpr uint32_t kDuetFixedSampleRateHz = 48000U;
         record.modelId == DeviceProfiles::Audio::kApogeeDuetModelId) {
         return AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz};
     }
+    // Onyx-i: pinned again (defense in depth). A failed idle rate change leaves
+    // session.pendingClock behind (RequestClockConfig persists it before
+    // execution; the failure path does not scrub it), and a later start would
+    // otherwise consume the stale value and program the device away from the
+    // rate the host graph runs at. Field-verified on an 820i 2026-08-17.
+    // Remove together with the rate-list widening once the ADK reconfig path
+    // supports AV/C rate changes and the pending-clock hygiene is fixed.
+    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+        record.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId) {
+        return AudioClockConfig{.sampleRateHz = kOnyxIDefaultStartRateHz};
+    }
+    // Onyx 400F: same single-rate policy as the Onyx-i for the same reason.
+    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+        record.modelId == DeviceProfiles::Audio::kOnyx400FModelId) {
+        return AudioClockConfig{.sampleRateHz = kOnyx400FDefaultStartRateHz};
+    }
     return requestedClock;
+}
+
+// The coordinator's historical fallback for a start with no session clock is
+// 48 kHz. For a device whose current rate differs, that default would program
+// the wire away from the rate CoreAudio is running at on a first-ever start.
+// Resolve the default from the device instead; explicit user selections still
+// arrive via the session clocks and win at the call sites.
+[[nodiscard]] uint32_t DefaultStartRateForRecord(const Discovery::DeviceRecord& record) noexcept {
+    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+        record.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId) {
+        return kOnyxIDefaultStartRateHz;
+    }
+    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+        record.modelId == DeviceProfiles::Audio::kOnyx400FModelId) {
+        return kOnyx400FDefaultStartRateHz;
+    }
+    return 48000U;
 }
 
 [[nodiscard]] uint64_t UptimeMilliseconds() noexcept {
@@ -474,7 +518,7 @@ IOReturn AudioDuplexCoordinator::RunStartStreaming(uint64_t guid) noexcept {
     // drops the selected rate and forces 48 kHz, leaving the device clocked at
     // 48k while the host runs at the picked rate.
     AudioClockConfig desiredClock{
-        .sampleRateHz = 48000U,
+        .sampleRateHz = DefaultStartRateForRecord(*record),
     };
     if (IsSupportedAudioClockConfig(session.pendingClock)) {
         desiredClock = session.pendingClock;
@@ -670,7 +714,7 @@ IOReturn AudioDuplexCoordinator::RunRecoveryStreaming(uint64_t guid,
             : ((session.appliedClock.sampleRateHz != 0)
                    ? session.appliedClock
                    : AudioClockConfig{
-                         .sampleRateHz = 48000U,
+                         .sampleRateHz = DefaultStartRateForRecord(*record),
                      });
 
     if (HasAnyRestartState(session) || session.phase == DuplexRestartPhase::kRunning) {
@@ -1137,7 +1181,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             const kern_return_t prepareReceiveStatus =
                 hostTransport_.PrepareReceive(channels.CaptureChannel(0), hardware_, bindingSource,
                                               streamProfile.captureWireFormat,
-                                              masterCapture.am824Slots, masterCapture.pcmChannels);
+                                              masterCapture.am824Slots, masterCapture.pcmChannels,
+                                              streamProfile.captureTrustConfiguredStride);
             if (prepareReceiveStatus != kIOReturnSuccess) {
                 return rollbackToFailure(prepareReceiveStatus,
                                          DuplexRestartPhase::kStartingHostReceive,
@@ -1159,7 +1204,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                 const kern_return_t status = hostTransport_.PrepareReceiveStream(
                     i, channels.CaptureChannel(i), hardware_, bindingSource,
                     captureStream.pcmChannelOffset, captureStream.pcmChannels,
-                    streamProfile.captureWireFormat, captureStream.am824Slots);
+                    streamProfile.captureWireFormat, captureStream.am824Slots,
+                    streamProfile.captureTrustConfiguredStride);
                 if (status != kIOReturnSuccess) {
                     return rollbackToFailure(status, DuplexRestartPhase::kStartingHostReceive,
                                              DuplexRestartFailureCause::kStartReceive);

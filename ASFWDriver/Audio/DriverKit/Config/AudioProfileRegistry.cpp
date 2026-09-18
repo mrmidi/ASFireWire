@@ -7,6 +7,8 @@
 #include "AudioProfileRegistry.hpp"
 #include "AVC/ApogeeDuetProfile.hpp"
 #include "AVC/BeBoBProfile.hpp"
+#include "AVC/MackieOnyx820iProfile.hpp"
+#include "AVC/MackieOnyx400FProfile.hpp"
 #include "AVC/Phase88Profile.hpp"
 #include "DICE/DiceProfileRegistry.hpp"
 #include "../../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
@@ -38,6 +40,25 @@ const IAudioDeviceProfile* AudioProfileRegistry::FindProfile(uint32_t vendorId,
     if (vendorId == DeviceProfiles::Audio::kTerraTecVendorId &&
         modelId == DeviceProfiles::Audio::kPhase88RackFwModelId) {
         return &phase88Profile;
+    }
+
+    // Mackie Onyx-i (Oxford run). Asymmetric 8-in/2-out geometry captured from a real
+    // 820i; must be dispatched here — falling through to the DICE GenericProfile would
+    // hand the device a symmetric 2x2/DBS-2 geometry that the RX path then rejects on
+    // every 8-channel packet. Sibling caveat in the profile header.
+    static AVC::Profiles::MackieOnyx820iProfile mackieOnyx820iProfile{};
+    if (vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+        modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId) {
+        return &mackieOnyx820iProfile;
+    }
+
+    // Mackie Onyx 400F (Echo Fireworks run). Static 10x10 geometry pending hardware
+    // capture; dispatched here for the same reason as the 820i — the DICE
+    // GenericProfile's 2x2 fallback would reject every 10-channel packet.
+    static AVC::Profiles::MackieOnyx400FProfile mackieOnyx400FProfile{};
+    if (vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+        modelId == DeviceProfiles::Audio::kOnyx400FModelId) {
+        return &mackieOnyx400FProfile;
     }
 
     // Map identity to the DICE family structures

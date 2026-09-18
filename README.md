@@ -119,6 +119,7 @@ Audio-device support in tree today:
 - Midas Venice F32 (multi-stream DICE, 32-in/32-out)
 - Terratec PHASE 88 Rack
 - Weiss INT202 and INT203 (DICE 2-channel layout; wired up but **never run against real hardware**)
+- Mackie Onyx 400F (Echo Fireworks: EFC clock/transport control on the AV/C+CMP base; static 10x10 geometry gated on the device's HWINFO — **never run against real hardware**)
 
 Personally tested with working audio (hardware owned by the maintainer):
 

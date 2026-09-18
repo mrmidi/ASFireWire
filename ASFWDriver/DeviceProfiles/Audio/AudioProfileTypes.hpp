@@ -33,6 +33,7 @@ enum class AudioProtocolFamily : uint8_t {
     DICE,
     Oxford,
     VendorSpecific,
+    Fireworks,   // Echo Fireworks (EFC control + AM824 streaming)
 };
 
 /// Identity enrichment for a recognized device (display names + canonical/inferred IDs).

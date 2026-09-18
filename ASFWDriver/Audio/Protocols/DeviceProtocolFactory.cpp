@@ -7,6 +7,8 @@
 #include "DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "DICE/TCAT/DICETcatProtocol.hpp"
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
+#include "Oxford/Mackie/MackieOnyxProtocol.hpp"
+#include "Fireworks/FireworksProtocol.hpp"
 #include "BeBoB/Phase88Protocol.hpp"
 #include "BeBoB/GenericBeBoBProtocol.hpp"
 #include "../../Logging/Logging.hpp"
@@ -115,6 +117,28 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(
             busOps, busInfo, route, &routeRegistry, nullptr, irmClient, cmpClient, 100U,
             timerScheduler);
+    }
+
+    // Mackie Onyx-i, Oxford run (shared id 0x081216; geometry verified on a real
+    // 820i). Plain AV/C + CMP duplex on the shared base — no vendor codec.
+    if (vendorId == kMackieVendorId && modelId == kOnyxIOxfwModelId) {
+        ASFW_LOG(Audio,
+                 "Creating MackieOnyxProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
+                 vendorId, modelId, nodeId);
+        return std::make_unique<Oxford::Mackie::MackieOnyxProtocol>(
+            busOps, busInfo, route, irmClient, cmpClient, timerScheduler);
+    }
+
+    // Mackie Onyx 400F, Echo Fireworks run: EFC-controlled clock on top of the
+    // shared AV/C+CMP duplex base. Static 10x10 geometry is verified against
+    // HWINFO before the first stream (Linux snd-fireworks is the reference).
+    if (vendorId == kMackieVendorId && modelId == kOnyx400FModelId) {
+        ASFW_LOG(Audio,
+                 "Creating FireworksProtocol for Mackie Onyx 400F vendor=0x%06x model=0x%06x node=0x%04x",
+                 vendorId, modelId, nodeId);
+        return std::make_unique<Fireworks::FireworksProtocol>(
+            busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
+            Fireworks::kOnyx400FGeometry);
     }
 
     if (vendorId == kTerraTecVendorId && modelId == kPhase88RackFwModelId) {

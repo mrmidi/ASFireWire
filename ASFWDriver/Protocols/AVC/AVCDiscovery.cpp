@@ -307,6 +307,21 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
         return;
     }
 
+    // Echo Fireworks units (Onyx 400F) advertise an AV/C unit directory but are
+    // driven by EFC, not by the Music subunit: Linux snd-fireworks never issues
+    // UNIT_INFO/SUBUNIT_INFO or descriptor reads, and Apple's old class driver
+    // is the only stack that ever spoke AV/C to them. Skip generic discovery
+    // and publish the profile-owned geometry, BeBoB-bypass style; the runtime
+    // protocol verifies that geometry against HWINFO before streaming.
+    if (IsMackieOnyxFireworks(*device)) {
+        ASFW_LOG(AVC,
+                 "AVCDiscovery: Fireworks device matched; bypassing generic AV/C discovery GUID=0x%016llx",
+                 guid);
+        PublishMackieOnyxFireworksProfileOwnedConfig(guid, *device);
+        RebuildNodeIDMap();
+        return;
+    }
+
     const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
 
     // Initialize (probe subunits, plugs)
@@ -347,6 +362,17 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
                 avcUnit->GetSubunits().size(),
                 avcUnit->IsInitialized() ? 2 : 0,  // Placeholder
                 avcUnit->IsInitialized() ? 2 : 0); // Placeholder
+
+    // The OXFW971's Music subunit implements no descriptor mechanism (standard
+    // descriptor access and the non-standard direct read both refuse on real
+    // hardware; Linux snd-oxfw never consults the Music subunit either), so the
+    // generic descriptor-driven path below can never publish this device.
+    // Publish the hardware-verified profile-owned configuration instead — same
+    // pattern as the BeBoB bypass in OnAVCUnitCreated.
+    if (IsMackieOnyxIOxford(*device)) {
+        PublishMackieOnyxIProfileOwnedConfig(guid, *device);
+        return;
+    }
 
     auto* musicSubunit = FindAudioMusicSubunit(*avcUnit);
     if (!musicSubunit) {
@@ -440,6 +466,79 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
              "[BeBoB] publishing BeBoB audio nub GUID=0x%016llx pcm=%u midiSlots=%u dbs=%u rate=%u mode=%{public}s",
              guid, static_cast<unsigned>(kPcmChannels), static_cast<unsigned>(kMidiSlots),
              static_cast<unsigned>(kPcmChannels + kMidiSlots), kSampleRateHz, "blocking");
+    PublishReadyAudioConfig(guid, config);
+}
+
+void AVCDiscovery::PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
+                                                        const Discovery::FWDevice& device) {
+    // Wire geometry captured live from an Onyx 820i (AV/C unit-level EXTENDED
+    // STREAM FORMAT INFORMATION, 2026-08-17): capture 8ch MBLA / playback 2ch
+    // MBLA, compound AM824, one isoch plug per direction, no MIDI. Only the
+    // captured current rate is offered until the AV/C rate transition is wired
+    // for this device (M4) — same policy as MackieOnyx820iProfile, which owns
+    // the matching isoch geometry.
+    constexpr uint32_t kCaptureChannels = 8;   // device -> host (CoreAudio input)
+    constexpr uint32_t kPlaybackChannels = 2;  // host -> device (CoreAudio output)
+    constexpr uint32_t kSampleRateHz = 44100;  // captured current rate; sole
+    // offered rate until the ADK reconfig path supports AV/C rate changes
+    // (see MackieOnyxProtocol::SupportedRates for the failure chain)
+
+    ::ASFW::Audio::Model::ASFWAudioDevice config{};
+    config.guid = guid;
+    config.vendorId = device.GetVendorID();
+    config.modelId = device.GetModelID();
+    config.deviceName =
+        std::string(::ASFW::Audio::DeviceProtocolFactory::kMackieVendorName) + " " +
+        ::ASFW::Audio::DeviceProtocolFactory::kOnyxIOxfwModelName;
+    config.channelCount = kCaptureChannels;
+    config.inputChannelCount = kCaptureChannels;
+    config.outputChannelCount = kPlaybackChannels;
+    config.sampleRates = {kSampleRateHz};
+    config.currentSampleRate = kSampleRateHz;
+    config.inputPlugName = "Onyx Capture";
+    config.outputPlugName = "Onyx Monitor Return";
+    // LOUD vendor-wide rule (Linux snd-oxfw oxfw.c:189-196); also forced in
+    // DeviceStreamModeQuirks so every downstream mode resolution agrees.
+    config.streamMode = ::ASFW::Audio::Model::StreamMode::kBlocking;
+
+    ASFW_LOG(Audio,
+             "[Onyx] publishing profile-owned audio nub GUID=0x%016llx in=%u out=%u rate=%u mode=blocking",
+             guid, kCaptureChannels, kPlaybackChannels, kSampleRateHz);
+    PublishReadyAudioConfig(guid, config);
+}
+
+void AVCDiscovery::PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,
+                                                                const Discovery::FWDevice& device) {
+    // Static geometry from the product spec (8 analog + S/PDIF stereo per
+    // direction at 1x). Must stay in lockstep with MackieOnyx400FProfile and
+    // Fireworks::kOnyx400FGeometry; FireworksProtocol logs the device's HWINFO
+    // counts and refuses to stream if they disagree, so a wrong guess here is
+    // loud, not silent.
+    constexpr uint32_t kCaptureChannels = 10;   // device -> host (CoreAudio input)
+    constexpr uint32_t kPlaybackChannels = 10;  // host -> device (CoreAudio output)
+    constexpr uint32_t kSampleRateHz = 44100;   // sole offered rate (ADK reconfig limit)
+
+    ::ASFW::Audio::Model::ASFWAudioDevice config{};
+    config.guid = guid;
+    config.vendorId = device.GetVendorID();
+    config.modelId = device.GetModelID();
+    config.deviceName =
+        std::string(::ASFW::Audio::DeviceProtocolFactory::kMackieVendorName) + " " +
+        ::ASFW::Audio::DeviceProtocolFactory::kOnyx400FModelName;
+    config.channelCount = kCaptureChannels;
+    config.inputChannelCount = kCaptureChannels;
+    config.outputChannelCount = kPlaybackChannels;
+    config.sampleRates = {kSampleRateHz};
+    config.currentSampleRate = kSampleRateHz;
+    config.inputPlugName = "Onyx 400F Inputs";
+    config.outputPlugName = "Onyx 400F Outputs";
+    // Linux snd-fireworks: CIP_BLOCKING for both directions; also forced
+    // vendor-wide for LOUD in DeviceStreamModeQuirks.
+    config.streamMode = ::ASFW::Audio::Model::StreamMode::kBlocking;
+
+    ASFW_LOG(Audio,
+             "[Fireworks] publishing profile-owned audio nub GUID=0x%016llx in=%u out=%u rate=%u mode=blocking",
+             guid, kCaptureChannels, kPlaybackChannels, kSampleRateHz);
     PublishReadyAudioConfig(guid, config);
 }
 
@@ -1401,6 +1500,16 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
 bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcept {
     return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeVendorId &&
            device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeDuetModelId;
+}
+
+bool AVCDiscovery::IsMackieOnyxIOxford(const Discovery::FWDevice& device) const noexcept {
+    return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kMackieVendorId &&
+           device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kOnyxIOxfwModelId;
+}
+
+bool AVCDiscovery::IsMackieOnyxFireworks(const Discovery::FWDevice& device) const noexcept {
+    return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kMackieVendorId &&
+           device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kOnyx400FModelId;
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {

@@ -15,6 +15,8 @@ using ASFW::DeviceProfiles::Audio::kFocusriteVendorId;
 using ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
 using ASFW::DeviceProfiles::Audio::kTerraTecVendorId;
 using ASFW::DeviceProfiles::Audio::kPhase88RackFwModelId;
+using ASFW::DeviceProfiles::Audio::kMackieVendorId;
+using ASFW::DeviceProfiles::Audio::kOnyx400FModelId;
 using ASFW::DeviceProfiles::Audio::kWeissInt202ModelId;
 using ASFW::DeviceProfiles::Audio::kWeissInt203ModelId;
 using ASFW::DeviceProfiles::Audio::kWeissVendorId;
@@ -135,6 +137,38 @@ TEST(DuplexStreamProfileTests, Phase88PreservesLinuxBeBoBCmpBeforeHostStartOrder
     EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kReceive);
     EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kTransmit);
     EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U);
+}
+
+TEST(DuplexStreamProfileTests, Onyx400FUsesBeBoBOrderingWithoutPreStreamClockLock) {
+    DeviceRecord record{
+        .vendorId = kMackieVendorId,
+        .modelId = kOnyx400FModelId,
+    };
+    record.link.localToNode = ASFW::FW::FwSpeed::S400;
+    AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 10,
+        .hostOutputPcmChannels = 10,
+        .deviceToHostAm824Slots = 11,
+        .hostToDeviceAm824Slots = 11,
+        .sampleRateHz = 44100,
+        .deviceToHostStreamCount = 1,
+        .hostToDeviceStreamCount = 1,
+    };
+
+    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+
+    // Field-verified 2026-09-13: the Fireworks unit never reports a pre-connection
+    // clock lock, so the DICE-style gate must be off, and CMP owns the channel.
+    EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, ~uint64_t{0});
+    EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, ~uint64_t{0});
+    EXPECT_EQ(profile.captureStreams[0].am824Slots, 11U);
+    EXPECT_EQ(profile.playbackStreams[0].am824Slots, 11U);
+    EXPECT_FALSE(profile.startOrder.startReceiveBeforeDeviceRx);
+    EXPECT_FALSE(profile.startOrder.startTransmitBeforeDeviceTx);
+    EXPECT_FALSE(profile.startOrder.requiresPreStreamClockLock);
+    EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kReceive);
+    EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kTransmit);
+    EXPECT_TRUE(profile.captureTrustConfiguredStride);
 }
 
 TEST(DuplexStreamProfileTests, WeissIntStartsHostTransmitFirstWithoutPreEnableSourceLock) {

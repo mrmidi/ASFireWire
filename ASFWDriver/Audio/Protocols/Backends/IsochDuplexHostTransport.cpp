@@ -14,7 +14,7 @@ namespace ASFW::Audio {
 kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
     uint32_t streamIndex, ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
     Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t channelOffset,
-    uint32_t streamChannels, bool isSecondary) noexcept {
+    uint32_t streamChannels, bool isSecondary, bool trustConfiguredStride) noexcept {
     if (streamIndex >= Driver::IsochService::kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
     }
@@ -26,6 +26,7 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
         .channelOffset = channelOffset,
         .streamChannels = streamChannels,
         .isSecondary = isSecondary,
+        .trustConfiguredStride = trustConfiguredStride,
     };
     // This is a DriverKit `noexcept` boundary: report allocation failure instead
     // of allowing std::make_unique to terminate the driver process.
@@ -104,10 +105,12 @@ kern_return_t IsochDuplexHostTransport::ReserveCaptureResources(uint64_t guid,
 kern_return_t IsochDuplexHostTransport::PrepareReceive(
     uint8_t channel, Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-    Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t streamChannels) noexcept {
+    Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t streamChannels,
+    bool trustConfiguredStride) noexcept {
     const kern_return_t attached =
         AttachReceiveConsumer(/*streamIndex=*/0, bindingSource, wireFormat, am824Slots,
-                              /*channelOffset=*/0, streamChannels, /*isSecondary=*/false);
+                              /*channelOffset=*/0, streamChannels, /*isSecondary=*/false,
+                              trustConfiguredStride);
     if (attached != kIOReturnSuccess) {
         return attached;
     }
@@ -127,10 +130,11 @@ kern_return_t IsochDuplexHostTransport::PrepareTransmit(uint8_t channel,
 kern_return_t IsochDuplexHostTransport::PrepareReceiveStream(
     uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
-    uint32_t streamChannels, Encoding::AudioWireFormat wireFormat, uint32_t am824Slots) noexcept {
+    uint32_t streamChannels, Encoding::AudioWireFormat wireFormat, uint32_t am824Slots,
+    bool trustConfiguredStride) noexcept {
     const kern_return_t attached =
         AttachReceiveConsumer(streamIndex, bindingSource, wireFormat, am824Slots, channelOffset,
-                              streamChannels, /*isSecondary=*/true);
+                              streamChannels, /*isSecondary=*/true, trustConfiguredStride);
     if (attached != kIOReturnSuccess) {
         return attached;
     }

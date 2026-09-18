@@ -23,6 +23,9 @@ constexpr uint32_t kSPro40ModelId = 0x000005;
 constexpr uint32_t kMidasVendorId      = 0x10c73f;
 constexpr uint32_t kMidasVeniceModelId = 0x000001;
 
+// LOUD Technologies (Mackie Onyx family).
+constexpr uint32_t kLoudMackieVendorId = 0x000ff2;
+
 } // namespace
 
 std::optional<Model::StreamMode> LookupForcedStreamMode(
@@ -48,6 +51,14 @@ std::optional<Model::StreamMode> LookupForcedStreamMode(
     }
 
     if (vendorId == kMidasVendorId && modelId == kMidasVeniceModelId) {
+        return Model::StreamMode::kBlocking;
+    }
+
+    // LOUD/Mackie, vendor-wide: Linux snd-oxfw forces blocking transmission for
+    // every Loud OXFW unit (oxfw.c:189-196, SND_OXFW_QUIRK_BLOCKING_TRANSMISSION),
+    // and Linux snd-dice is unconditionally CIP_BLOCKING — so blocking is correct
+    // for both production runs of the Onyx family.
+    if (vendorId == kLoudMackieVendorId) {
         return Model::StreamMode::kBlocking;
     }
 
