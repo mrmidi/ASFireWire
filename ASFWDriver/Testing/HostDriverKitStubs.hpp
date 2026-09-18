@@ -49,8 +49,22 @@ public:
     virtual ~OSObject() = default;
     virtual bool init() { return true; }
     virtual void free() { delete this; }
-    void retain() {}
-    void release() {}
+
+    // Real refcounting, so the ~160 retain/release/AdoptRetained sites in driver
+    // code are actually exercised on the host. const like the DriverKit original
+    // (OSObject.iig: `retain() const override`), hence the mutable counter.
+    void retain() const { refCount_.fetch_add(1, std::memory_order_relaxed); }
+    void release() const {
+        if (refCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            const_cast<OSObject*>(this)->free();
+        }
+    }
+    [[nodiscard]] int GetRetainCount() const {
+        return refCount_.load(std::memory_order_relaxed);
+    }
+
+private:
+    mutable std::atomic<int> refCount_{1};
 };
 
 class OSAction : public OSObject {};
@@ -427,32 +441,57 @@ class OSSharedPtr {
 public:
     OSSharedPtr() = default;
     OSSharedPtr(T* ptr, OSNoRetainTag) : ptr_(ptr) {}
-    OSSharedPtr(T* ptr, OSRetainTag) : ptr_(ptr) {}
+    OSSharedPtr(T* ptr, OSRetainTag) : ptr_(ptr) { if (ptr_) { ptr_->retain(); } }
     OSSharedPtr(std::nullptr_t) : ptr_(nullptr) {}
 
-    T* get() const { return ptr_.get(); }
-    T* operator->() const { return ptr_.get(); }
+    OSSharedPtr(const OSSharedPtr& other) : ptr_(other.ptr_) {
+        if (ptr_) { ptr_->retain(); }
+    }
+    OSSharedPtr(OSSharedPtr&& other) noexcept : ptr_(other.ptr_) { other.ptr_ = nullptr; }
+    OSSharedPtr& operator=(const OSSharedPtr& other) {
+        if (this != &other) {
+            if (other.ptr_) { other.ptr_->retain(); }
+            reset();
+            ptr_ = other.ptr_;
+        }
+        return *this;
+    }
+    OSSharedPtr& operator=(OSSharedPtr&& other) noexcept {
+        if (this != &other) {
+            reset();
+            ptr_ = other.ptr_;
+            other.ptr_ = nullptr;
+        }
+        return *this;
+    }
+    ~OSSharedPtr() { reset(); }
+
+    T* get() const { return ptr_; }
+    T* operator->() const { return ptr_; }
     T& operator*() const { return *ptr_; }
     explicit operator bool() const { return ptr_ != nullptr; }
 
-    void reset() { ptr_.reset(); }
-    void reset(T* ptr, OSNoRetainTag) { ptr_.reset(ptr); }
-    void reset(T* ptr, OSRetainTag) { ptr_.reset(ptr); }
+    void reset() {
+        if (ptr_) { ptr_->release(); }
+        ptr_ = nullptr;
+    }
+    void reset(T* ptr, OSNoRetainTag) { reset(); ptr_ = ptr; }
+    void reset(T* ptr, OSRetainTag) {
+        if (ptr) { ptr->retain(); }
+        reset();
+        ptr_ = ptr;
+    }
 
-    // Ownership transfer to the caller. Stub OSObject::release() is a no-op,
-    // so keep one strong ref alive (intentional leak) instead of letting the
-    // shared_ptr destroy an object the caller still holds.
+    // Ownership transfer: the caller takes our reference. No leak needed now
+    // that release() really decrements.
     T* detach() {
-        T* raw = ptr_.get();
-        if (raw) {
-            new std::shared_ptr<T>(ptr_);
-        }
-        ptr_.reset();
+        T* raw = ptr_;
+        ptr_ = nullptr;
         return raw;
     }
 
 private:
-    std::shared_ptr<T> ptr_;
+    T* ptr_{nullptr};
 };
 
 #endif // ASFW_HOST_TEST
