@@ -4,6 +4,7 @@
 // DeviceStreamModeQuirks.cpp - Vendor/model stream mode overrides
 
 #include "DeviceStreamModeQuirks.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "../../DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
 
 namespace ASFW::Audio::Quirks {
@@ -23,8 +24,10 @@ constexpr uint32_t kSPro40ModelId = 0x000005;
 constexpr uint32_t kMidasVendorId      = 0x10c73f;
 constexpr uint32_t kMidasVeniceModelId = 0x000001;
 
-// LOUD Technologies (Mackie Onyx family).
-constexpr uint32_t kLoudMackieVendorId = 0x000ff2;
+// LOUD Technologies (Mackie Onyx family). Taken from the shared table rather
+// than redeclared: the same commit that added this rule also added the constant
+// to AudioDeviceIds, and two spellings of one OUI can only drift apart.
+constexpr uint32_t kLoudMackieVendorId = DeviceProfiles::Audio::kMackieVendorId;
 
 } // namespace
 
