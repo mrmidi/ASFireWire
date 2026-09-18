@@ -23,8 +23,14 @@ namespace ASFW::Isoch::Audio::MOTU::Profiles {
 
 class MotuV2Profile final : public IAudioStreamProfile {
 public:
-    /// `unitSwVersion` selects the model name; geometry is shared across the v2
-    /// fixed-chunk models.
+    /// `unitSwVersion` selects the model name. The geometry below is the
+    /// {14,14,0} layout shared by the 828mk2 and UltraLite — it is NOT shared by
+    /// every v2 model, so this profile must not be handed a version it was not
+    /// written for. The 896HD and Traveler are {14,14,8}, which coincides only
+    /// below 176.4 kHz, and the 8pre is tx {10,10,0} / rx {6,6,0} — asymmetric
+    /// between directions, which a single chunk count cannot express
+    /// (Linux motu-protocol-v2.c:274-320). Enabling another model means giving it
+    /// its own geometry, not adding a case to the name switch.
     explicit MotuV2Profile(uint32_t unitSwVersion = 0) noexcept
         : unitSwVersion_(unitSwVersion) {}
 
