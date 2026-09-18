@@ -16,8 +16,11 @@
 
 #include "FakeTimerScheduler.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <span>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -626,6 +629,93 @@ TEST(EfcMailbox, WindowCoversTheWholeResponseRegion) {
     EXPECT_FALSE(Mailbox::MatchesDestOffset(0xFCC000000000ULL));
     EXPECT_FALSE(Mailbox::MatchesDestOffset(0xECC000000000ULL));  // the command register is the device's
     EXPECT_FALSE(Mailbox::Publish(2, {}));  // nobody registered / nothing to claim
+}
+
+// --- Teardown race -----------------------------------------------------------
+//
+// RemoveObserver exists to stop an observer being destroyed while Publish() is
+// still inside it. A false return is therefore a use-after-free condition, not a
+// diagnostic: EfcTransport's destructor logs it and frees its lock anyway. Both
+// outcomes are pinned here because the hazard is invisible at the call site.
+
+namespace {
+
+struct BlockingObserver {
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+
+    static bool Thunk(void* context, uint16_t, std::span<const uint8_t>) {
+        auto* self = static_cast<BlockingObserver*>(context);
+        self->entered.store(true, std::memory_order_release);
+        while (!self->release.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        return true;
+    }
+};
+
+// Bounded so a mis-wired mailbox fails the test instead of hanging the suite.
+[[nodiscard]] bool WaitUntilEntered(const BlockingObserver& observer) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (observer.entered.load(std::memory_order_acquire)) {
+            return true;
+        }
+        std::this_thread::yield();
+    }
+    return false;
+}
+
+} // namespace
+
+TEST(EfcMailbox, RemoveObserverWaitsForAPublishAlreadyInsideIt) {
+    BlockingObserver observer;
+    ASSERT_TRUE(Mailbox::AddObserver(&observer, &BlockingObserver::Thunk));
+
+    std::thread publisher([&] { (void)Mailbox::Publish(1, {}); });
+    ASSERT_TRUE(WaitUntilEntered(observer)) << "publish never reached the observer";
+
+    // Let it leave only after RemoveObserver has had to wait for it.
+    std::thread releaser([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        observer.release.store(true, std::memory_order_release);
+    });
+
+    const auto start = std::chrono::steady_clock::now();
+    const bool quiesced = Mailbox::RemoveObserver(&observer);
+    const auto waited = std::chrono::steady_clock::now() - start;
+
+    releaser.join();
+    publisher.join();
+
+    EXPECT_TRUE(quiesced);
+    EXPECT_GE(waited, std::chrono::milliseconds(10))
+        << "returned without waiting for the in-flight publish";
+}
+
+TEST(EfcMailbox, RemoveObserverReportsFailureWhenTheObserverNeverLeaves) {
+    BlockingObserver observer;
+    ASSERT_TRUE(Mailbox::AddObserver(&observer, &BlockingObserver::Thunk));
+
+    std::thread publisher([&] { (void)Mailbox::Publish(1, {}); });
+    ASSERT_TRUE(WaitUntilEntered(observer)) << "publish never reached the observer";
+
+    // The observer outlasts the bound, which is what a slow client completion
+    // callback looks like. The false return is the caller's only signal that its
+    // object is still referenced -- and EfcTransport proceeds to free it anyway.
+    EXPECT_FALSE(Mailbox::RemoveObserver(&observer));
+
+    observer.release.store(true, std::memory_order_release);
+    publisher.join();
+}
+
+TEST(EfcMailbox, PublishDoesNotReachAnObserverAlreadyRemoved) {
+    BlockingObserver observer;
+    ASSERT_TRUE(Mailbox::AddObserver(&observer, &BlockingObserver::Thunk));
+    EXPECT_TRUE(Mailbox::RemoveObserver(&observer));
+
+    EXPECT_FALSE(Mailbox::Publish(1, {}));
+    EXPECT_FALSE(observer.entered.load(std::memory_order_acquire));
 }
 
 } // namespace
