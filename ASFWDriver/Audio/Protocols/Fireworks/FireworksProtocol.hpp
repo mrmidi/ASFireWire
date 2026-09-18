@@ -97,7 +97,7 @@ public:
     [[nodiscard]] GeometryCheck GeometryStatus() const noexcept { return geometryCheck_; }
     [[nodiscard]] const std::optional<Efc::Clock>& LastClock() const noexcept { return lastClock_; }
     [[nodiscard]] bool TransportModeSet() const noexcept { return transportModeSet_; }
-    [[nodiscard]] EfcTransport& Transport() noexcept { return efc_; }
+    [[nodiscard]] EfcTransport& Transport() noexcept { return *efc_; }
 
 protected:
     const char* DeviceName() const override { return geometry_.name; }
@@ -121,7 +121,10 @@ private:
     struct LifetimeToken {};
 
     FireworksStaticGeometry geometry_{};
-    EfcTransport efc_;
+    // shared_ptr so the response mailbox can hold a weak reference: a response
+    // in flight keeps the transport alive for the callback, and teardown needs no
+    // wait. See EfcResponseMailbox.hpp.
+    std::shared_ptr<EfcTransport> efc_;
     AudioStreamRuntimeCaps caps_{};
     std::optional<Efc::HwInfo> hwInfo_{};
     std::optional<Efc::Clock> lastClock_{};

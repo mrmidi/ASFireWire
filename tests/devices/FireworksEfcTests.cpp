@@ -349,20 +349,29 @@ protected:
     ASFW::Testing::FakeTimerScheduler timer_;
     ASFW::Discovery::DeviceRegistry routes_;
     ASFW::Discovery::DeviceRouteToken route_{};
+
+    // Shorthand for this fixture's dependencies. Cases bind a reference off the
+    // returned owner (`EfcTransport& t = *owner;`) so their bodies read as they
+    // did before ownership moved to a shared_ptr.
+    [[nodiscard]] std::shared_ptr<EfcTransport> MakeTransport() {
+        return EfcTransport::Create(bus_, info_, &timer_);
+    }
 };
 
 TEST_F(EfcTransportTest, RegistersWithTheMailboxForItsLifetime) {
     const size_t before = Mailbox::ObserverCount();
     {
-        EfcTransport t(bus_, info_, &timer_);
-        EXPECT_TRUE(t.IsRegistered());
+        const auto owner = MakeTransport();
+        EXPECT_TRUE(owner->IsRegistered());
         EXPECT_EQ(Mailbox::ObserverCount(), before + 1);
     }
+    // No unregister step: the slot frees itself when the weak reference expires.
     EXPECT_EQ(Mailbox::ObserverCount(), before);
 }
 
 TEST_F(EfcTransportTest, SubmitWritesTheCommandFrameToTheDeviceCommandRegister) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     const uint32_t params[] = {1U};
     t.Submit(Efc::Category::kTransport, kCmdSetTxMode, params, [](IOReturn, const Efc::Response&) {});
@@ -379,7 +388,8 @@ TEST_F(EfcTransportTest, SubmitWritesTheCommandFrameToTheDeviceCommandRegister) 
 }
 
 TEST_F(EfcTransportTest, MatchingResponseCompletesWithParamsAndDisarmsTimeout) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     IOReturn status = kIOReturnNotReady;
     uint32_t rate = 0;
@@ -405,7 +415,8 @@ TEST_F(EfcTransportTest, IgnoresResponsesFromOtherNodes) {
     // Declared before the transport: ~EfcTransport cancels pending commands and
     // runs their completions, so anything they capture has to outlive it.
     bool called = false;
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     t.Submit(Efc::Category::kHwCtl, kCmdGetClock, {}, [&](IOReturn, const Efc::Response&) { called = true; });
     const uint32_t clock[] = {0U, 44100U, 0U};
@@ -415,7 +426,8 @@ TEST_F(EfcTransportTest, IgnoresResponsesFromOtherNodes) {
 }
 
 TEST_F(EfcTransportTest, DeviceErrorStatusSurfacesAsErrorWithTheResponse) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     IOReturn status = kIOReturnSuccess;
     uint32_t efcStatus = 0;
@@ -429,7 +441,8 @@ TEST_F(EfcTransportTest, DeviceErrorStatusSurfacesAsErrorWithTheResponse) {
 }
 
 TEST_F(EfcTransportTest, CommandMismatchInAnOtherwiseMatchingSeqnumIsRejected) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     IOReturn status = kIOReturnSuccess;
     t.Submit(Efc::Category::kHwCtl, kCmdGetClock, {}, [&](IOReturn s, const Efc::Response&) { status = s; });
@@ -438,7 +451,8 @@ TEST_F(EfcTransportTest, CommandMismatchInAnOtherwiseMatchingSeqnumIsRejected) {
 }
 
 TEST_F(EfcTransportTest, TimeoutResendsThreeTimesThenFails) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     IOReturn status = kIOReturnSuccess;
     t.Submit(Efc::Category::kHwInfo, kCmdGetCaps, {}, [&](IOReturn s, const Efc::Response&) { status = s; });
@@ -460,7 +474,8 @@ TEST_F(EfcTransportTest, TimeoutResendsThreeTimesThenFails) {
 }
 
 TEST_F(EfcTransportTest, LateResponseAfterRetryStillCompletes) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     IOReturn status = kIOReturnNotReady;
     t.Submit(Efc::Category::kHwInfo, kCmdGetCaps, {}, [&](IOReturn s, const Efc::Response&) { status = s; });
@@ -474,7 +489,8 @@ TEST_F(EfcTransportTest, LateResponseAfterRetryStillCompletes) {
 }
 
 TEST_F(EfcTransportTest, WriteTimeoutRetriesAndBusResetFailsFast) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     bus_.nextStatus = AsyncStatus::kTimeout;
     IOReturn status = kIOReturnSuccess;
@@ -490,7 +506,8 @@ TEST_F(EfcTransportTest, WriteTimeoutRetriesAndBusResetFailsFast) {
 }
 
 TEST_F(EfcTransportTest, QueueIsSerialAndPreservesOrder) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     std::vector<int> order;
     t.Submit(Efc::Category::kTransport, kCmdSetTxMode, {}, [&](IOReturn, const Efc::Response&) { order.push_back(1); });
@@ -509,7 +526,8 @@ TEST_F(EfcTransportTest, QueueIsSerialAndPreservesOrder) {
 }
 
 TEST_F(EfcTransportTest, CompletionMaySubmitTheNextCommand) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     IOReturn second = kIOReturnNotReady;
     t.Submit(Efc::Category::kTransport, kCmdSetTxMode, {}, [&](IOReturn, const Efc::Response&) {
@@ -524,7 +542,8 @@ TEST_F(EfcTransportTest, CompletionMaySubmitTheNextCommand) {
 }
 
 TEST_F(EfcTransportTest, CancelAllAbortsInflightAndQueued) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     std::vector<IOReturn> statuses;
     t.Submit(Efc::Category::kTransport, kCmdSetTxMode, {}, [&](IOReturn s, const Efc::Response&) { statuses.push_back(s); });
@@ -539,7 +558,8 @@ TEST_F(EfcTransportTest, CancelAllAbortsInflightAndQueued) {
 }
 
 TEST_F(EfcTransportTest, WithoutARouteCommandsFailNotReady) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     IOReturn status = kIOReturnSuccess;
     t.Submit(Efc::Category::kHwInfo, kCmdGetCaps, {}, [&](IOReturn s, const Efc::Response&) { status = s; });
     EXPECT_EQ(status, kIOReturnNotReady);
@@ -547,7 +567,8 @@ TEST_F(EfcTransportTest, WithoutARouteCommandsFailNotReady) {
 }
 
 TEST_F(EfcTransportTest, CancelAllCancelsTheOutstandingBusWrite) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     bus_.deferCompletions = true;  // the AT engine has not acked the write yet
     IOReturn status = kIOReturnSuccess;
@@ -570,7 +591,8 @@ TEST_F(EfcTransportTest, LateBusCompletionAfterDestructionIsIgnored) {
     bus_.deferCompletions = true;
     IOReturn status = kIOReturnSuccess;
     {
-        EfcTransport t(bus_, info_, &timer_);
+        const auto owner = MakeTransport();
+        EfcTransport& t = *owner;
         t.SetRoute(route_);
         t.Submit(Efc::Category::kHwInfo, kCmdGetCaps, {}, [&](IOReturn s, const Efc::Response&) { status = s; });
         ASSERT_EQ(bus_.deferred.size(), 1U);
@@ -582,7 +604,8 @@ TEST_F(EfcTransportTest, LateBusCompletionAfterDestructionIsIgnored) {
 
 TEST_F(EfcTransportTest, LateTimerAfterDestructionIsIgnored) {
     {
-        EfcTransport t(bus_, info_, &timer_);
+        const auto owner = MakeTransport();
+        EfcTransport& t = *owner;
         t.SetRoute(route_);
         t.Submit(Efc::Category::kHwInfo, kCmdGetCaps, {}, [](IOReturn, const Efc::Response&) {});
         EXPECT_EQ(timer_.PendingCount(), 1U);
@@ -593,7 +616,8 @@ TEST_F(EfcTransportTest, LateTimerAfterDestructionIsIgnored) {
 
 TEST_F(EfcTransportTest, UnarmableTimeoutFailsTheCommandInsteadOfHangingTheQueue) {
     BrokenTimerScheduler broken;
-    EfcTransport t(bus_, info_, &broken);
+    const auto owner = EfcTransport::Create(bus_, info_, &broken);
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     IOReturn first = kIOReturnSuccess;
     IOReturn second = kIOReturnSuccess;
@@ -605,7 +629,8 @@ TEST_F(EfcTransportTest, UnarmableTimeoutFailsTheCommandInsteadOfHangingTheQueue
 }
 
 TEST_F(EfcTransportTest, ResponseArrivingWhileWriteIsUnackedStillCompletes) {
-    EfcTransport t(bus_, info_, &timer_);
+    const auto owner = MakeTransport();
+    EfcTransport& t = *owner;
     t.SetRoute(route_);
     bus_.deferCompletions = true;
     IOReturn status = kIOReturnNotReady;
@@ -631,23 +656,29 @@ TEST(EfcMailbox, WindowCoversTheWholeResponseRegion) {
     EXPECT_FALSE(Mailbox::Publish(2, {}));  // nobody registered / nothing to claim
 }
 
-// --- Teardown race -----------------------------------------------------------
+// --- Teardown ----------------------------------------------------------------
 //
-// RemoveObserver exists to stop an observer being destroyed while Publish() is
-// still inside it. A false return is therefore a use-after-free condition, not a
-// diagnostic: EfcTransport's destructor logs it and frees its lock anyway. Both
-// outcomes are pinned here because the hazard is invisible at the call site.
+// The mailbox holds weak references and Publish() upgrades one for the duration
+// of the callback, so teardown is settled by ownership rather than by waiting.
+// These pin both halves of that: a delivery in flight defers destruction, and an
+// observer already gone is skipped.
 
 namespace {
 
-struct BlockingObserver {
+struct TestObserver final : ASFW::Audio::Fireworks::IEfcResponseObserver {
     std::atomic<bool> entered{false};
-    std::atomic<bool> release{false};
+    std::atomic<bool> release{true};
+    std::atomic<bool>* destroyed{nullptr};
 
-    static bool Thunk(void* context, uint16_t, std::span<const uint8_t>) {
-        auto* self = static_cast<BlockingObserver*>(context);
-        self->entered.store(true, std::memory_order_release);
-        while (!self->release.load(std::memory_order_acquire)) {
+    ~TestObserver() override {
+        if (destroyed != nullptr) {
+            destroyed->store(true, std::memory_order_release);
+        }
+    }
+
+    bool OnEfcResponse(uint16_t, std::span<const uint8_t>) override {
+        entered.store(true, std::memory_order_release);
+        while (!release.load(std::memory_order_acquire)) {
             std::this_thread::yield();
         }
         return true;
@@ -655,7 +686,7 @@ struct BlockingObserver {
 };
 
 // Bounded so a mis-wired mailbox fails the test instead of hanging the suite.
-[[nodiscard]] bool WaitUntilEntered(const BlockingObserver& observer) {
+[[nodiscard]] bool WaitUntilEntered(const TestObserver& observer) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (std::chrono::steady_clock::now() < deadline) {
         if (observer.entered.load(std::memory_order_acquire)) {
@@ -668,54 +699,50 @@ struct BlockingObserver {
 
 } // namespace
 
-TEST(EfcMailbox, RemoveObserverWaitsForAPublishAlreadyInsideIt) {
-    BlockingObserver observer;
-    ASSERT_TRUE(Mailbox::AddObserver(&observer, &BlockingObserver::Thunk));
+TEST(EfcMailbox, ADeliveryInFlightDefersDestruction) {
+    std::atomic<bool> destroyed{false};
+    auto observer = std::make_shared<TestObserver>();
+    observer->destroyed = &destroyed;
+    observer->release.store(false, std::memory_order_release);
+    TestObserver* raw = observer.get();  // safe: the publisher holds it alive
+    ASSERT_TRUE(Mailbox::Register(observer));
 
     std::thread publisher([&] { (void)Mailbox::Publish(1, {}); });
-    ASSERT_TRUE(WaitUntilEntered(observer)) << "publish never reached the observer";
+    ASSERT_TRUE(WaitUntilEntered(*observer)) << "publish never reached the observer";
 
-    // Let it leave only after RemoveObserver has had to wait for it.
-    std::thread releaser([&] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        observer.release.store(true, std::memory_order_release);
-    });
+    // The owner lets go while the callback is still running. Under the previous
+    // design this is the moment the object was freed from under Publish().
+    observer.reset();
+    EXPECT_FALSE(destroyed.load(std::memory_order_acquire))
+        << "destroyed while a delivery was inside it";
 
-    const auto start = std::chrono::steady_clock::now();
-    const bool quiesced = Mailbox::RemoveObserver(&observer);
-    const auto waited = std::chrono::steady_clock::now() - start;
-
-    releaser.join();
+    raw->release.store(true, std::memory_order_release);
     publisher.join();
-
-    EXPECT_TRUE(quiesced);
-    EXPECT_GE(waited, std::chrono::milliseconds(10))
-        << "returned without waiting for the in-flight publish";
+    EXPECT_TRUE(destroyed.load(std::memory_order_acquire))
+        << "not destroyed after the delivery let go";
 }
 
-TEST(EfcMailbox, RemoveObserverReportsFailureWhenTheObserverNeverLeaves) {
-    BlockingObserver observer;
-    ASSERT_TRUE(Mailbox::AddObserver(&observer, &BlockingObserver::Thunk));
-
-    std::thread publisher([&] { (void)Mailbox::Publish(1, {}); });
-    ASSERT_TRUE(WaitUntilEntered(observer)) << "publish never reached the observer";
-
-    // The observer outlasts the bound, which is what a slow client completion
-    // callback looks like. The false return is the caller's only signal that its
-    // object is still referenced -- and EfcTransport proceeds to free it anyway.
-    EXPECT_FALSE(Mailbox::RemoveObserver(&observer));
-
-    observer.release.store(true, std::memory_order_release);
-    publisher.join();
-}
-
-TEST(EfcMailbox, PublishDoesNotReachAnObserverAlreadyRemoved) {
-    BlockingObserver observer;
-    ASSERT_TRUE(Mailbox::AddObserver(&observer, &BlockingObserver::Thunk));
-    EXPECT_TRUE(Mailbox::RemoveObserver(&observer));
-
+TEST(EfcMailbox, AnObserverAlreadyGoneIsSkipped) {
+    std::atomic<bool> destroyed{false};
+    {
+        auto observer = std::make_shared<TestObserver>();
+        observer->destroyed = &destroyed;
+        ASSERT_TRUE(Mailbox::Register(observer));
+    }
+    ASSERT_TRUE(destroyed.load(std::memory_order_acquire))
+        << "the mailbox kept it alive; the slot must hold a weak reference";
     EXPECT_FALSE(Mailbox::Publish(1, {}));
-    EXPECT_FALSE(observer.entered.load(std::memory_order_acquire));
+}
+
+TEST(EfcMailbox, SlotsAreReclaimedWithoutAnUnregisterStep) {
+    const size_t before = Mailbox::ObserverCount();
+    {
+        auto observer = std::make_shared<TestObserver>();
+        ASSERT_TRUE(Mailbox::Register(observer));
+        EXPECT_EQ(Mailbox::ObserverCount(), before + 1);
+    }
+    // No destructor ran against the mailbox; the slot frees itself by expiring.
+    EXPECT_EQ(Mailbox::ObserverCount(), before);
 }
 
 } // namespace

@@ -9,23 +9,56 @@
 // payload here; every live EfcTransport registers itself as an observer and
 // claims the frames whose sequence number it is waiting for.
 //
-// Same shape as DICE::NotificationMailbox (header-only, atomics, a fixed number
-// of observer slots), plus a per-slot in-flight counter so RemoveObserver()
-// cannot return while Publish() is still inside that observer on another
-// queue — the AR dispatch path and the queue dropping a protocol are not the
-// same context (see FW-60 for what raw cross-queue pointers cost).
+// The AR dispatch path that calls Publish() and the queue that drops a protocol
+// are not the same context, so an observer can be torn down while a response is
+// being delivered to it (see FW-60 for what raw cross-queue pointers cost).
+//
+// That is handled by ownership rather than by waiting. A slot holds a weak_ptr;
+// Publish() upgrades it to a shared_ptr for exactly as long as the callback
+// runs, so an observer already being delivered to cannot be destroyed underneath
+// it — destruction simply happens when that reference drops. An observer torn
+// down before Publish() reaches it fails the upgrade and is skipped. There is no
+// window between those two states, which is why there is no unregister step, no
+// in-flight counter and no wait:
+//
+//   - A previous version cleared the slot and then spun on an in-flight counter
+//     with IODelay(50) up to 2000 times — 100 ms of busy-wait on whichever queue
+//     tore the transport down — and, on timeout, logged and freed the observer
+//     anyway. That was a use-after-free with a bounded delay in front of it.
+//   - Shrinking the bound could not fix it: the window spans the caller-supplied
+//     completion function, so a shorter timeout converts waits that currently
+//     succeed into use-after-frees.
+//
+// Slots are reclaimed automatically: a slot whose weak_ptr has expired is free,
+// so a transport's destructor does not touch the mailbox at all.
 
 #pragma once
 
 #include "EfcProtocol.hpp"
 
-#include <DriverKit/IOLib.h>
-
 #include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
+
+namespace ASFW::Audio::Fireworks {
+
+/// What the mailbox delivers to. Kept abstract so the mailbox does not depend on
+/// EfcTransport, and so Publish() can stay inline in this header.
+class IEfcResponseObserver {
+public:
+    virtual ~IEfcResponseObserver() = default;
+
+    /// Returns true when this observer consumed the frame (its sequence number
+    /// matched). Called on the AR dispatch path with the observer held alive for
+    /// the duration of the call.
+    [[nodiscard]] virtual bool OnEfcResponse(uint16_t sourceID,
+                                             std::span<const uint8_t> payload) = 0;
+};
+
+} // namespace ASFW::Audio::Fireworks
 
 namespace ASFW::Audio::Fireworks::EfcResponseMailbox {
 
@@ -34,23 +67,38 @@ inline constexpr uint64_t kAltWindowOffset = Efc::kAltResponseOffset;
 inline constexpr uint64_t kWindowBytes = Efc::kResponseWindowBytes;
 inline constexpr size_t kMaxObservers = 4;
 
-// Bounded wait for an in-flight Publish() to leave a slot being removed.
-inline constexpr uint32_t kRemoveWaitStepUs = 50;
-inline constexpr uint32_t kRemoveWaitMaxSteps = 2000;  // 100 ms
-
-// Returns true when the observer consumed the frame (its seqnum matched).
-using ObserverFn = bool (*)(void* context, uint16_t sourceID, std::span<const uint8_t> payload);
-
+// Slot access is guarded by a spin gate rather than an atomic weak_ptr, because
+// std::atomic<std::weak_ptr<T>> is not implemented in this libc++ (the primary
+// template demands a trivially copyable T). The gate is held only long enough to
+// copy the slots -- never across a callback -- so it is nanoseconds of
+// contention on a control-plane path, not the blocking wait this replaced.
 struct Slot {
-    std::atomic<void*> context{nullptr};
-    std::atomic<ObserverFn> fn{nullptr};
-    std::atomic<uint32_t> inflight{0};
+    std::weak_ptr<IEfcResponseObserver> observer{};  // guarded by Gate()
 };
 
 inline std::array<Slot, kMaxObservers>& Slots() noexcept {
     static std::array<Slot, kMaxObservers> slots{};
     return slots;
 }
+
+inline std::atomic_flag& Gate() noexcept {
+    static std::atomic_flag gate = ATOMIC_FLAG_INIT;
+    return gate;
+}
+
+class ScopedGate final {
+public:
+    ScopedGate() noexcept {
+        while (Gate().test_and_set(std::memory_order_acquire)) {
+            // Slots are only touched to copy or assign four weak_ptrs, so the
+            // holder is never descheduled here in practice.
+        }
+    }
+    ~ScopedGate() { Gate().clear(std::memory_order_release); }
+
+    ScopedGate(const ScopedGate&) = delete;
+    ScopedGate& operator=(const ScopedGate&) = delete;
+};
 
 [[nodiscard]] inline bool MatchesDestOffset(uint64_t destOffset) noexcept {
     // Both the Linux-documented default window and the one a real Onyx 400F
@@ -59,87 +107,62 @@ inline std::array<Slot, kMaxObservers>& Slots() noexcept {
            (destOffset >= kAltWindowOffset && destOffset < kAltWindowOffset + kWindowBytes);
 }
 
-[[nodiscard]] inline bool AddObserver(void* context, ObserverFn fn) noexcept {
-    if (context == nullptr || fn == nullptr) {
+/// Claim a slot for `observer`. Slots whose observer has expired are free, so a
+/// dead transport's slot is reused without anyone having to release it.
+[[nodiscard]] inline bool Register(
+    const std::shared_ptr<IEfcResponseObserver>& observer) noexcept {
+    if (!observer) {
         return false;
     }
+    const ScopedGate guard;
     for (auto& slot : Slots()) {
-        void* expected = nullptr;
-        if (slot.context.compare_exchange_strong(expected, context, std::memory_order_acq_rel)) {
-            slot.fn.store(fn, std::memory_order_release);
+        if (slot.observer.expired()) {
+            slot.observer = observer;
             return true;
         }
     }
     return false;
 }
 
-// Clears the slot and waits (bounded) until no Publish() is still executing
-// inside the observer. Returns false if the wait timed out.
-//
-// A false return is a USE-AFTER-FREE hazard, not a diagnostic: EfcTransport's
-// destructor logs it and then frees its lock and returns anyway, while a
-// Publish() may still be inside OnResponse. Nothing downstream can recover.
-//
-// The bound is large because the window it covers is large. OnResponse ends in
-// Complete(), which invokes the caller-supplied completion std::function, so the
-// inflight window spans arbitrary client work rather than a short critical
-// section. That also makes this an IODelay spin of up to 100 ms on whichever
-// queue tears the transport down -- IODelay busy-waits, it does not yield.
-//
-// Shrinking the timeout is therefore NOT the fix; it would turn waits that
-// currently succeed into use-after-frees. The fix is to shrink the window: run
-// Complete() outside the observer callback so the inflight region covers only
-// the decode and sequence match, after which a short bound is safe and the spin
-// stops mattering. Until then this is a known, deliberate trade.
-inline bool RemoveObserver(void* context) noexcept {
-    bool quiesced = true;
-    for (auto& slot : Slots()) {
-        if (slot.context.load(std::memory_order_acquire) != context) {
-            continue;
-        }
-        slot.fn.store(nullptr, std::memory_order_release);
-        slot.context.store(nullptr, std::memory_order_release);
-        uint32_t steps = 0;
-        while (slot.inflight.load(std::memory_order_acquire) != 0) {
-            if (++steps > kRemoveWaitMaxSteps) {
-                quiesced = false;
-                break;
-            }
-            IODelay(kRemoveWaitStepUs);
+/// Offer a response frame to every live observer; true when one claimed it.
+///
+/// The upgrade is the whole safety argument: while `held` is alive the observer
+/// cannot be destroyed, so the callback can never run against freed memory. An
+/// observer torn down before we reach it fails the upgrade and is skipped, and
+/// there is no window between those two states.
+[[nodiscard]] inline bool Publish(uint16_t sourceID,
+                                  std::span<const uint8_t> payload) noexcept {
+    std::array<std::weak_ptr<IEfcResponseObserver>, kMaxObservers> snapshot{};
+    {
+        const ScopedGate guard;
+        for (size_t i = 0; i < kMaxObservers; ++i) {
+            snapshot[i] = Slots()[i].observer;
         }
     }
-    return quiesced;
+    // Callbacks run outside the gate: they end in caller-supplied completions,
+    // which must never execute with a lock held.
+    for (auto& weak : snapshot) {
+        const std::shared_ptr<IEfcResponseObserver> held = weak.lock();
+        if (!held) {
+            continue;
+        }
+        if (held->OnEfcResponse(sourceID, payload)) {
+            return true;
+        }
+    }
+    return false;
 }
 
+/// Live observers, i.e. slots whose weak_ptr has not expired.
 [[nodiscard]] inline size_t ObserverCount() noexcept {
-    size_t n = 0;
+    const ScopedGate guard;
+    size_t live = 0;
     for (auto& slot : Slots()) {
-        if (slot.context.load(std::memory_order_acquire) != nullptr) {
-            ++n;
+        if (!slot.observer.expired()) {
+            ++live;
         }
     }
-    return n;
-}
-
-// Offer a response frame to every observer; true when one of them claimed it.
-[[nodiscard]] inline bool Publish(uint16_t sourceID, std::span<const uint8_t> payload) noexcept {
-    for (auto& slot : Slots()) {
-        void* context = slot.context.load(std::memory_order_acquire);
-        ObserverFn fn = slot.fn.load(std::memory_order_acquire);
-        if (context == nullptr || fn == nullptr) {
-            continue;
-        }
-        slot.inflight.fetch_add(1, std::memory_order_acq_rel);
-        // Re-validate after publishing our presence: a concurrent RemoveObserver
-        // that cleared the slot before the increment must not see us call in.
-        const bool stillOwned = slot.context.load(std::memory_order_acquire) == context;
-        const bool claimed = stillOwned && fn(context, sourceID, payload);
-        slot.inflight.fetch_sub(1, std::memory_order_acq_rel);
-        if (claimed) {
-            return true;
-        }
-    }
-    return false;
+    return live;
 }
 
 } // namespace ASFW::Audio::Fireworks::EfcResponseMailbox
