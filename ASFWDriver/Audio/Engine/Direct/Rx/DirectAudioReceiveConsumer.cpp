@@ -317,8 +317,10 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         if (cached > 0) {
             // Readable SPH offsets are this device's equivalent of an established SYT
             // cadence: they are the timing evidence the transmit side replays.
+            // rxReplayEntries is NOT bumped here -- the unconditional increment below
+            // already counts this packet, and counting it twice made the MOTU capture
+            // path report double the replay entries it had actually published.
             motuTimingEstablished_ = true;
-            inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
