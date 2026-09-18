@@ -56,14 +56,9 @@ FireworksProtocol::FireworksProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                      const FireworksStaticGeometry& geometry) noexcept
     : BeBoBProtocol(busOps, busInfo, route, irmClient, cmpClient, timerScheduler),
       geometry_(geometry),
-      efc_(std::make_shared<EfcTransport>(busOps, busInfo, timerScheduler)),
+      efc_(EfcTransport::Create(busOps, busInfo, timerScheduler)),
       caps_(BuildCaps(geometry)) {
     efc_->SetRoute(route);
-    // Must follow construction: RegisterForResponses uses shared_from_this(),
-    // which is only valid once efc_ owns the object.
-    if (!efc_->RegisterForResponses()) {
-        ASFW_LOG_ERROR(Audio, "[Fireworks] EFC transport could not register for responses");
-    }
 }
 
 FireworksProtocol::~FireworksProtocol() {

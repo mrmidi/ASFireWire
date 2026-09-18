@@ -48,6 +48,21 @@ EfcTransport::EfcTransport(Async::IFireWireBusOps& busOps,
     }
 }
 
+std::shared_ptr<EfcTransport> EfcTransport::Create(
+    Async::IFireWireBusOps& busOps,
+    Async::IFireWireBusInfo& busInfo,
+    Scheduling::ITimerScheduler* timerScheduler) {
+    // Not make_shared: the constructor is private so stack allocation cannot
+    // happen, and make_shared cannot reach it.
+    std::shared_ptr<EfcTransport> transport(
+        new EfcTransport(busOps, busInfo, timerScheduler));
+    // Strictly after construction -- shared_from_this() is unusable before the
+    // owning shared_ptr exists. A failure here is logged and leaves a transport
+    // that can still send but will never be handed a response.
+    (void)transport->RegisterForResponses();
+    return transport;
+}
+
 bool EfcTransport::RegisterForResponses() noexcept {
     // shared_from_this() is only valid once an owning shared_ptr exists, which is
     // why this is not done in the constructor.

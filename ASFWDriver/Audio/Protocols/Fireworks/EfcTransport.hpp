@@ -43,25 +43,39 @@
 
 namespace ASFW::Audio::Fireworks {
 
-// Owned through a shared_ptr so the response mailbox can hold a weak reference
-// to it. Constructing one on the stack compiles and then silently misbehaves:
-// weak_from_this() returns an EMPTY weak_ptr for an object no shared_ptr owns,
-// so every bus and timer callback fails its upgrade and quietly does nothing. That is what makes teardown safe without waiting: a response already
-// being delivered holds the transport alive for the duration of the callback,
-// and destruction happens when that reference drops. See EfcResponseMailbox.hpp.
+// Owned through a shared_ptr so the response mailbox can hold a weak reference to
+// it. That is what makes teardown safe without waiting: a response already being
+// delivered holds the transport alive for the duration of the callback, and
+// destruction happens when that reference drops. See EfcResponseMailbox.hpp.
+//
+// Only Create() can build one, because two things about this class are silently
+// wrong rather than loudly wrong when done by hand:
+//
+//   - A stack-allocated instance compiles and then does nothing. weak_from_this()
+//     yields an EMPTY weak_ptr for an object no shared_ptr owns, so every bus and
+//     timer callback fails its upgrade and quietly no-ops.
+//   - Registration cannot happen during construction, because shared_from_this()
+//     is unusable until an owning shared_ptr exists. Registering in the
+//     constructor also compiles, and also never delivers anything.
+//
+// A private constructor makes both of those impossible instead of documented.
 class EfcTransport final : public IEfcResponseObserver,
                            public std::enable_shared_from_this<EfcTransport> {
 public:
+    /// The only way to build one. Constructs, then registers for responses --
+    /// in that order, which is the whole reason this exists.
+    [[nodiscard]] static std::shared_ptr<EfcTransport> Create(
+        Async::IFireWireBusOps& busOps,
+        Async::IFireWireBusInfo& busInfo,
+        Scheduling::ITimerScheduler* timerScheduler);
+
     // status: kIOReturnSuccess with a validated response; kIOReturnError when the
     // device answered with a non-OK EFC status (response.header.status says
     // which); kIOReturnTimeout after all attempts; kIOReturnAborted on cancel;
     // kIOReturnNotResponding when the bus generation moved underneath the write.
     using Completion = std::function<void(IOReturn status, const Efc::Response& response)>;
 
-    EfcTransport(Async::IFireWireBusOps& busOps,
-                 Async::IFireWireBusInfo& busInfo,
-                 Scheduling::ITimerScheduler* timerScheduler) noexcept;
-    ~EfcTransport();
+    ~EfcTransport() override;
 
     EfcTransport(const EfcTransport&) = delete;
     EfcTransport& operator=(const EfcTransport&) = delete;
@@ -87,16 +101,19 @@ public:
     [[nodiscard]] uint32_t InflightAttempts() const noexcept;
     [[nodiscard]] bool IsRegistered() const noexcept { return registered_; }
 
-    /// Register with the response mailbox. Must be called by the owner AFTER the
-    /// shared_ptr exists -- shared_from_this() is unusable during construction,
-    /// and registering there would compile and then never deliver anything.
-    [[nodiscard]] bool RegisterForResponses() noexcept;
-
     /// Mailbox delivery. Held alive by the caller for the duration of this call.
     [[nodiscard]] bool OnEfcResponse(uint16_t sourceID,
                                      std::span<const uint8_t> payload) override;
 
 private:
+    EfcTransport(Async::IFireWireBusOps& busOps,
+                 Async::IFireWireBusInfo& busInfo,
+                 Scheduling::ITimerScheduler* timerScheduler) noexcept;
+
+    /// Only Create() may call this: shared_from_this() needs the owning
+    /// shared_ptr to already exist.
+    [[nodiscard]] bool RegisterForResponses() noexcept;
+
     struct Pending {
         Efc::Category category{Efc::Category::kHwInfo};
         uint32_t command{0};

@@ -355,9 +355,7 @@ protected:
     // therefore cannot run until an owning shared_ptr exists. Tests bind a
     // reference off the owner so the body of each case reads unchanged.
     [[nodiscard]] std::shared_ptr<EfcTransport> MakeTransport() {
-        auto transport = std::make_shared<EfcTransport>(bus_, info_, &timer_);
-        (void)transport->RegisterForResponses();
-        return transport;
+        return EfcTransport::Create(bus_, info_, &timer_);
     }
 };
 
@@ -619,8 +617,7 @@ TEST_F(EfcTransportTest, LateTimerAfterDestructionIsIgnored) {
 
 TEST_F(EfcTransportTest, UnarmableTimeoutFailsTheCommandInsteadOfHangingTheQueue) {
     BrokenTimerScheduler broken;
-    const auto owner = std::make_shared<EfcTransport>(bus_, info_, &broken);
-    (void)owner->RegisterForResponses();
+    const auto owner = EfcTransport::Create(bus_, info_, &broken);
     EfcTransport& t = *owner;
     t.SetRoute(route_);
     IOReturn first = kIOReturnSuccess;
