@@ -11,6 +11,7 @@
 #include "../DICE/Core/DICETypes.hpp"
 #include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../IDeviceProtocol.hpp"
+#include "../StreamGeometryResolver.hpp"
 #include "../DeviceProtocolFactory.hpp"
 #include "../../DriverKit/Config/DICE/DiceProfileRegistry.hpp"
 
@@ -36,6 +37,97 @@ namespace {
         static_cast<unsigned __int128>(mach_absolute_time()) *
         timebase.numer / timebase.denom;
     return static_cast<uint64_t>(nanos / 1'000'000U);
+}
+
+// Report how the device's own DICE registers compare with the profile's
+// compiled-in constants, for every playback (DICE RX) stream.
+//
+// These are the two descriptions of the same streams that used to be consumed
+// by different layers without ever meeting: DuplexStreamProfile reserves isoch
+// bandwidth from the caps, while ASFWAudioDevice::StartIO frames CIP from the
+// profile. A disagreement therefore shipped correctly-reserved bandwidth
+// carrying wrongly-framed packets, and the symptom was silence with nothing
+// logged. This is the first place both sides are in scope, so it is where they
+// get compared. See StreamGeometryResolver.hpp for the precedence rule and why
+// it is the device's.
+//
+// Reporting only: nothing here changes what gets programmed. The framing path
+// still uses the profile, so a disagreement is a loud warning rather than a
+// refusal until that path is switched over.
+
+[[nodiscard]] constexpr uint32_t ClampStreamCountToHost(uint32_t count) noexcept {
+    return (count < kMaxAudioStreamsPerDirection) ? count : kMaxAudioStreamsPerDirection;
+}
+
+[[nodiscard]] WireStreamGeometry PlaybackGeometryFromDevice(
+    const AudioStreamRuntimeCaps& caps, uint32_t index) noexcept {
+    if (index >= ClampStreamCountToHost(caps.hostToDeviceStreamCount)) {
+        return {};
+    }
+    const auto& wire = caps.hostToDeviceStreams[index];
+    return {.pcmChannels = wire.pcmChannels,
+            .am824Slots = wire.am824Slots,
+            .midiPorts = wire.midiPorts};
+}
+
+[[nodiscard]] WireStreamGeometry PlaybackGeometryFromProfile(
+    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
+    ASFW::Isoch::Audio::AudioStreamConfig config{};
+    if (index >= ClampStreamCountToHost(profile.TxStreamCount()) ||
+        !profile.BuildTxStreamConfig(index, config)) {
+        return {};
+    }
+    return {.pcmChannels = config.pcmChannels,
+            .am824Slots = config.dbs,
+            .midiPorts = config.midiSlots};
+}
+
+void ReportStreamGeometryAgreement(
+    uint64_t guid,
+    const AudioStreamRuntimeCaps& caps,
+    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) {
+
+    const auto count = ResolveStreamCount(caps.hostToDeviceStreamCount,
+                                          profile.TxStreamCount(),
+                                          kMaxAudioStreamsPerDirection);
+    if (count.disagrees) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceAudioBackend: ❌ playback stream COUNT disagrees device=%u profile=%u "
+                       "GUID=0x%016llx - the transport arms the device's count while StartIO arms "
+                       "the profile's, so one of them is wrong",
+                       count.deviceStated, count.profileStated, guid);
+    }
+
+    // Walk the union so a stream described by only one side is still reported.
+    const uint32_t deviceStreams = ClampStreamCountToHost(caps.hostToDeviceStreamCount);
+    const uint32_t profileStreams = ClampStreamCountToHost(profile.TxStreamCount());
+    const uint32_t walk = (deviceStreams > profileStreams) ? deviceStreams : profileStreams;
+
+    for (uint32_t i = 0; i < walk; ++i) {
+        const auto decision = ResolveStreamGeometry(PlaybackGeometryFromDevice(caps, i),
+                                                    PlaybackGeometryFromProfile(profile, i));
+        if (decision.disagrees) {
+            ASFW_LOG_ERROR(Audio,
+                           "DiceAudioBackend: ❌ playback stream %u geometry disagrees "
+                           "device=(pcm=%u dbs=%u midi=%u) profile=(pcm=%u dbs=%u midi=%u) "
+                           "GUID=0x%016llx - bandwidth is reserved from the device's shape while "
+                           "CIP is framed from the profile's; audio will be silent",
+                           i,
+                           decision.deviceStated.pcmChannels, decision.deviceStated.am824Slots,
+                           decision.deviceStated.midiPorts,
+                           decision.profileStated.pcmChannels, decision.profileStated.am824Slots,
+                           decision.profileStated.midiPorts,
+                           guid);
+            continue;
+        }
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: playback stream %u geometry pcm=%u dbs=%u midi=%u source=%{public}s",
+                 i,
+                 decision.geometry.pcmChannels,
+                 decision.geometry.am824Slots,
+                 decision.geometry.midiPorts,
+                 decision.source == StreamGeometrySource::kDevice ? "device" : "profile");
+    }
 }
 
 } // namespace
@@ -606,15 +698,21 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // loaded them), update the endpoint runtime, then publish the nub. Host
     // input == device TX, host output == device RX (see AudioTypes.hpp), which
     // is exactly how GetChannelLabels reports them.
-    auto finish = [this, guid](Model::ASFWAudioDevice dev,
+    auto finish = [this, guid, profile](Model::ASFWAudioDevice dev,
                                const std::shared_ptr<IDeviceProtocol>& protocol) {
         if (stopping_.load(std::memory_order_acquire)) {
             return;
         }
         if (protocol) {
             AudioStreamRuntimeCaps caps{};
-            if (protocol->GetRuntimeAudioStreamCaps(caps) &&
-                ApplyDiceRuntimeCapsToDeviceConfig(caps, dev)) {
+            const bool haveCaps = protocol->GetRuntimeAudioStreamCaps(caps);
+            if (haveCaps) {
+                // Compare the device's registers with the profile's constants
+                // before anything consumes either. Reporting only; see the
+                // helper's comment.
+                ReportStreamGeometryAgreement(guid, caps, *profile);
+            }
+            if (haveCaps && ApplyDiceRuntimeCapsToDeviceConfig(caps, dev)) {
                 ASFW_LOG(Audio,
                          "DiceAudioBackend::EnsureNubForGuid: applied runtime geometry rate=%u in=%u out=%u (GUID=0x%016llx)",
                          dev.currentSampleRate,
