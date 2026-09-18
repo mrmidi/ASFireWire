@@ -3,6 +3,8 @@
 
 #include "DirectAudioReceiveConsumer.hpp"
 
+#include <span>
+
 #include "../../../../Common/TimingUtils.hpp"
 #include "../../../../Logging/Logging.hpp"
 #include "../../../../Shared/Isoch/AudioTimingGeometry.hpp"
@@ -10,6 +12,13 @@
 #include <utility>
 
 namespace ASFW::AudioEngine::Direct::Rx {
+
+namespace {
+/// A received payload begins with the 8-byte isoch header (timestamp + 1394 header),
+/// then the two CIP quadlets. MOTU's first data block therefore starts 16 bytes in --
+/// not the 8 the pure wire helpers default to, which count from the CIP header.
+constexpr uint32_t kMotuCipPrefixBytes = 16;
+} // namespace
 
 const char* DirectAudioReceiveConsumer::ReplayResetReasonName(
     ReplayResetReason reason) noexcept {
@@ -68,6 +77,7 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     timestampInvalidCount_ = 0;
     cadenceEstablishedLogged_ = false;
     replayReadyNotified_ = false;
+    motuTimingEstablished_ = false;
     replayResetForStart_ = false;
     replayCycleInitialized_ = false;
     lastReplayCycleOrdinal_ = 0;
@@ -176,7 +186,8 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         packet.payload.data(), packet.payload.size(), absoluteFrameCursor_, channels,
         inputView_.deviceToHostAm824Slots, configuration_.wireFormat,
         configuration_.channelOffset, !configuration_.isSecondary,
-        configuration_.trustConfiguredStride);
+        configuration_.trustConfiguredStride, configuration_.motuPcmChunks,
+        configuration_.motuPorts);
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {
@@ -290,6 +301,27 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     if (result.hasValidCip) {
         replayEntry.flags |= ::ASFW::Audio::Runtime::RxSequenceFlags::kValidCip;
     }
+    // MOTU carries presentation time in a per-data-block SPH quadlet rather than the CIP
+    // SYT field (amdtp-motu.c:19-25). Cache one offset per block for the transmit side to
+    // replay; the packet-granular sytOffset below stays unset, since a single offset
+    // cannot represent what this device timed per block.
+    const bool isMotu =
+        configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kMotuV2;
+    // Master stream only: the cache is a single shared FIFO, so a secondary slice
+    // capturing into it too would interleave two streams' offsets.
+    if (isMotu && !configuration_.isSecondary && inputView_.control) {
+        const uint32_t cached = inputView_.control->motuEventOffsets.Capture(
+            std::span<const uint8_t>(packet.payload.data(), packet.payload.size()),
+            result.strideQuadlets, result.framesDecoded, cycleFields.cycle,
+            kMotuCipPrefixBytes);
+        if (cached > 0) {
+            // Readable SPH offsets are this device's equivalent of an established SYT
+            // cadence: they are the timing evidence the transmit side replays.
+            motuTimingEstablished_ = true;
+            inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
     if (result.hasValidCip && result.syt != 0xffff) {
         const bool cadenceAccepted = inputView_.control->rxSytCadence.Observe(
             result.syt, timestamp.cycleTimer);
@@ -315,7 +347,15 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
 
     ::ASFW::Driver::RxSytCadence::Snapshot cadence{};
-    if (inputView_.control->rxSytCadence.TrySnapshot(cadence) && cadence.established) {
+    (void)inputView_.control->rxSytCadence.TrySnapshot(cadence);
+    // RxSytCadence establishes by observing valid SYTs, but MOTU sets SYT to 0xFFFF on
+    // every packet -- Linux marks the family CIP_SYT_HAS_NO_MEANING and times it from the
+    // per-data-block SPH instead (amdtp-motu.c:19-25). Gating on the SYT cadence
+    // therefore blocks a MOTU stream forever: the capture path decoded 18185 packets with
+    // nothing rejected, yet the clock anchor was never published and StartIO failed at
+    // WaitForInitialHardwareZts. Use the SPH capture as the establishment signal instead.
+    const bool timingEstablished = isMotu ? motuTimingEstablished_ : cadence.established;
+    if (timingEstablished) {
         if (!inputView_.control->rxSequenceReplay.IsEstablished()) {
             (void)inputView_.control->rxSequenceReplay.MarkEstablished();
         }
@@ -351,7 +391,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         static_cast<uint32_t>((1'000'000'000ULL << 8) / inputView_.sampleRateHz);
     if (kZtsPeriodFrames != 0 && result.framesDecoded != 0 &&
         (packetFirstFrame % kZtsPeriodFrames) == 0 && packetHostTicks != 0 &&
-        nanosPerSampleQ8 != 0 && clockPublisher_.IsBound() && cadence.established) {
+        nanosPerSampleQ8 != 0 && clockPublisher_.IsBound() && timingEstablished) {
         const auto publish = clockPublisher_.Publish(packetFirstFrame, packetHostTicks,
                                                      nanosPerSampleQ8);
         if (!publish.accepted) {
@@ -407,6 +447,7 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
     const uint64_t resetEpoch =
         control->rxReplayEpochResets.fetch_add(1, std::memory_order_relaxed) + 1;
     replayReadyNotified_ = false;
+    motuTimingEstablished_ = false;
     cadenceEstablishedLogged_ = false;
     replayCycleInitialized_ = false;
     dbcInitialized_ = false;

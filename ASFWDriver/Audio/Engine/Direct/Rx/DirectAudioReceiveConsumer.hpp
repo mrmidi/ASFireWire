@@ -11,6 +11,7 @@
 #include "../AudioClockPublisher.hpp"
 #include "../DirectInputWriter.hpp"
 #include "RxAudioPacketProcessor.hpp"
+#include "../../../Wire/MOTU/MotuEventOffsetCache.hpp"
 
 #include <functional>
 
@@ -19,6 +20,8 @@ namespace ASFW::AudioEngine::Direct::Rx {
 // Owns all content interpretation for one IR stream. Isoch supplies only an
 // opaque payload and its controller-time correlation; this class owns audio
 // decode, replay, ZTS and device-policy callbacks.
+// MOTU replays per-data-block SPH timing; the cache lives with the consumer that
+// fills it. See Audio/Wire/MOTU/MotuEventOffsetCache.hpp.
 class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveConsumer {
   public:
     struct Configuration final {
@@ -31,6 +34,11 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         // Loud OXFW quirk: take the RX stride from the configured slot count,
         // not the packet's CIP dbs field (snd-oxfw SND_OXFW_QUIRK_WRONG_DBS).
         bool trustConfiguredStride{false};
+        /// MOTU only: PCM chunks this direction carries per data block. The
+        /// quadlet-slot families leave this zero and use am824Slots.
+        uint32_t motuPcmChunks{0};
+        /// MOTU only: chunk behind each host input channel; empty decodes in wire order.
+        ::ASFW::Encoding::Motu::MotuPortMap motuPorts{};
     };
 
     using TimingLossCallback = std::function<void()>;
@@ -106,6 +114,10 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{};
     ReplayReadyCallback replayReadyCallback_{};
     bool replayReadyNotified_{false};
+    /// MOTU has no SYT, so RxSytCadence can never establish for it. Latched once the
+    /// per-data-block SPH offsets start caching, which is the equivalent evidence that
+    /// this device's timing is readable. Cleared wherever replayReadyNotified_ is.
+    bool motuTimingEstablished_{false};
     bool replayResetForStart_{false};
     // Bounded [RxReplayReset] records for a stream that has not established yet.
     // Re-armed at each bring-up; without a budget a permanently-rejected stream
@@ -123,6 +135,10 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint64_t prevLoggedAnchorHostTicks_{0};
     uint32_t prevLoggedAnchorRate_{0};
     bool prevLoggedAnchorValid_{false};
+
+    /// Per-data-block presentation offsets captured from MOTU streams, drained by
+    /// the transmit side. Unused (and untouched) by the quadlet-slot families.
+
 };
 
 } // namespace ASFW::AudioEngine::Direct::Rx

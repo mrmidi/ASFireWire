@@ -46,7 +46,11 @@ void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
 
 void MaybeInferKnownIdentityFromGuid(DeviceRecord& device, Guid64 guid) {
     const DeviceProfiles::DeviceProfileQuery query{
-        .guid = guid, .vendorId = device.vendorId, .modelId = device.modelId};
+        .guid = guid,
+        .vendorId = device.vendorId,
+        .modelId = device.modelId,
+        .unitSpecId = device.unitSpecId.value_or(0U),
+        .unitSwVersion = device.unitSwVersion.value_or(0U)};
 
     const auto identity = DeviceProfiles::Audio::AudioProfileRegistry::LookupIdentity(query);
     if (!identity.has_value()) {

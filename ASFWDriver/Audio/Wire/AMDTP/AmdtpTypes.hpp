@@ -62,6 +62,11 @@ struct AmdtpTxPolicy final {
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
+    /// Write the DBC of the block *after* this packet's last one rather than of its
+    /// first, i.e. advance before writing. IEC 61883-1 counts from the first block; MOTU
+    /// devices count the end, and Linux sets CIP_DBC_IS_END_EVENT on every MOTU transmit
+    /// stream for it (amdtp-motu.c:465, applied at amdtp-stream.c:1040-1046).
+    bool dbcIsEndEvent{false};
 };
 
 struct HostAudioBufferView final {
@@ -108,6 +113,10 @@ struct AmdtpTimingState final {
     uint16_t replayDataBlocks{0};
     bool replayValid{false};
     uint64_t nextAudioFrame{0};
+    /// Bus cycle (0..7999) this packet is transmitted in. MOTU bases each block's SPH on
+    /// it (write_sph, amdtp-motu.c:373-393); families that time by SYT ignore it.
+    uint32_t transmitCycle{0};
+    bool transmitCycleValid{false};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP
@@ -122,6 +131,10 @@ enum class StreamMode : uint8_t {
 enum class AudioWireFormat : uint8_t {
     kAM824 = 0,
     kRawPcm24In32 = 1,
+    // MOTU protocol-v2: 3-byte PCM chunks from byte offset 10 of a data block, behind an
+    // SPH quadlet and two message chunks. Not a quadlet-slot format, so the slot-based
+    // encode/decode helpers do not apply -- see Audio/Wire/MOTU.
+    kMotuV2 = 2,
 };
 
 } // namespace ASFW::Encoding

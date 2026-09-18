@@ -14,7 +14,8 @@ namespace ASFW::Audio {
 kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
     uint32_t streamIndex, ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
     Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t channelOffset,
-    uint32_t streamChannels, bool isSecondary, bool trustConfiguredStride) noexcept {
+    uint32_t streamChannels, bool isSecondary, bool trustConfiguredStride,
+    uint32_t motuPcmChunks, Encoding::Motu::MotuPortMap motuPorts) noexcept {
     if (streamIndex >= Driver::IsochService::kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
     }
@@ -27,6 +28,8 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
         .streamChannels = streamChannels,
         .isSecondary = isSecondary,
         .trustConfiguredStride = trustConfiguredStride,
+        .motuPcmChunks = motuPcmChunks,
+        .motuPorts = motuPorts,
     };
     // This is a DriverKit `noexcept` boundary: report allocation failure instead
     // of allowing std::make_unique to terminate the driver process.
@@ -106,11 +109,12 @@ kern_return_t IsochDuplexHostTransport::PrepareReceive(
     uint8_t channel, Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
     Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t streamChannels,
-    bool trustConfiguredStride) noexcept {
+    bool trustConfiguredStride, uint32_t motuPcmChunks,
+    Encoding::Motu::MotuPortMap motuPorts) noexcept {
     const kern_return_t attached =
         AttachReceiveConsumer(/*streamIndex=*/0, bindingSource, wireFormat, am824Slots,
                               /*channelOffset=*/0, streamChannels, /*isSecondary=*/false,
-                              trustConfiguredStride);
+                              trustConfiguredStride, motuPcmChunks, motuPorts);
     if (attached != kIOReturnSuccess) {
         return attached;
     }
@@ -131,10 +135,12 @@ kern_return_t IsochDuplexHostTransport::PrepareReceiveStream(
     uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
     uint32_t streamChannels, Encoding::AudioWireFormat wireFormat, uint32_t am824Slots,
-    bool trustConfiguredStride) noexcept {
+    bool trustConfiguredStride, uint32_t motuPcmChunks,
+    Encoding::Motu::MotuPortMap motuPorts) noexcept {
     const kern_return_t attached =
         AttachReceiveConsumer(streamIndex, bindingSource, wireFormat, am824Slots, channelOffset,
-                              streamChannels, /*isSecondary=*/true, trustConfiguredStride);
+                              streamChannels, /*isSecondary=*/true, trustConfiguredStride,
+                              motuPcmChunks, motuPorts);
     if (attached != kIOReturnSuccess) {
         return attached;
     }

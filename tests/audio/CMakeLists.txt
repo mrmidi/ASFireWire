@@ -55,6 +55,65 @@ add_audio_test(CIPHeaderBuilderTests
     CIPHeaderBuilderTests.cpp
 )
 
+# MOTU Block Codec Tests
+add_audio_test(MotuBlockCodecTests
+    MotuBlockCodecTests.cpp
+)
+
+# MOTU v2 Register Plane Tests
+add_audio_test(MotuV2RegisterTests
+    MotuV2RegisterTests.cpp
+)
+
+# MOTU Device Profile / Factory Identity Tests
+add_audio_test(MotuV2ProfileTests
+    MotuV2ProfileTests.cpp
+)
+
+# MOTU host channel <-> physical port tables
+add_audio_test(MotuPortLayoutTests
+    MotuPortLayoutTests.cpp
+)
+
+# MOTU device->host payload extraction tests
+add_audio_test(MotuPayloadReaderTests
+    MotuPayloadReaderTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+)
+
+# MOTU per-data-block presentation offset cache
+add_audio_test(MotuEventOffsetCacheTests
+    MotuEventOffsetCacheTests.cpp
+)
+
+# MOTU transmit-side SPH replay
+add_audio_test(MotuTxTimingTests
+    MotuTxTimingTests.cpp
+)
+
+# MOTU capture-side presentation timing (SPH -> replay offset)
+add_audio_test(MotuRxTimingTests
+    MotuRxTimingTests.cpp
+)
+
+# MOTU host->device payload placement tests
+add_audio_test(MotuPayloadWriterTests
+    MotuPayloadWriterTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+)
+
+# MOTU v2 Protocol Adapter Tests
+# DeviceRegistry is linked because the protocol now takes a registry-issued route token
+# (ProtocolRegisterIO validates the route on every transaction), so the test fixture has
+# to build a real registry entry. Mirrors tests/devices/DICETcatProtocolTests.
+add_audio_test(MotuV2ProtocolTests
+    MotuV2ProtocolTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MotuV2Protocol.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+
 # Blocking Cadence Tests
 add_audio_test(BlockingCadenceTests
     BlockingCadenceTests.cpp
@@ -139,6 +198,7 @@ add_audio_test(IsochServiceTxPreparationTests
 add_audio_test(AmdtpDirectTxTests
     AmdtpDirectTxTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuPayloadWriter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
@@ -183,6 +243,7 @@ add_audio_test(AudioProfileRegistryTests
 add_audio_test(DiceProfileTests
     DiceProfileTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/BeBoBProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"

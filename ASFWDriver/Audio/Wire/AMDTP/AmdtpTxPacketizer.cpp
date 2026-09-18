@@ -178,7 +178,13 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
         return false; // no state advanced; caller may retry
     }
 
-    const uint8_t dbc = dbcCounter_.ValueForNextPacket();
+    // For an end-event family the header carries the count after this packet's blocks
+    // (amdtp-stream.c:1040-1046). A NO-DATA packet carries no blocks, so both
+    // conventions write the same value for it.
+    const uint8_t dbc = static_cast<uint8_t>(
+        (dbcCounter_.ValueForNextPacket() +
+         ((txPolicy_.dbcIsEndEvent && isData) ? frames : 0U)) &
+        0xFFU);
 
     outPacket = PreparedTxPacket{};
     outPacket.packetIndex = slot.packetIndex;

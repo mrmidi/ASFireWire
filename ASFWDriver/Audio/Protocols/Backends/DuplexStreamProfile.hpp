@@ -10,6 +10,7 @@
 #include "../../../Discovery/DiscoveryTypes.hpp"
 #include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
+#include "../../Wire/MOTU/MotuPortLayout.hpp"
 #include "../AudioTypes.hpp"
 #include "../IDeviceProtocol.hpp"
 
@@ -84,6 +85,15 @@ struct DuplexStreamProfile {
     // the RX decode takes its stride from the configured AM824 slot count instead
     // of the CIP header (Linux snd-oxfw SND_OXFW_QUIRK_WRONG_DBS semantics).
     bool captureTrustConfiguredStride{false};
+
+    // MOTU only: PCM chunks per data block, per direction. Its samples are 3-byte chunks
+    // rather than quadlet slots, so the am824Slots geometry above does not describe them
+    // and the receive path needs this instead. Zero for every other family.
+    uint32_t captureMotuPcmChunks{0};
+    uint32_t playbackMotuPcmChunks{0};
+    // MOTU only: which chunk each host input channel reads. The playback map rides the
+    // audio driver's TxStreamPolicy instead, since that side encodes playback.
+    Encoding::Motu::MotuPortMap captureMotuPorts{};
     DuplexStartOrderRecipe startOrder{};
     DuplexStopOrderRecipe stopOrder{};
 };
@@ -186,6 +196,14 @@ class DuplexStreamProfileResolver final {
     IsSPro24Dsp(const Discovery::DeviceRecord& record) noexcept {
         return record.vendorId == DeviceProfiles::Audio::kFocusriteVendorId &&
                record.modelId == DeviceProfiles::Audio::kSPro24DspModelId;
+    }
+
+    /// MOTU publishes model_id 0, so identity lives in the unit directory: vendor OUI in
+    /// both the vendor and specifier fields (motu.c:151-181).
+    [[nodiscard]] static bool
+    IsMotu(const Discovery::DeviceRecord& record) noexcept {
+        return record.vendorId == DeviceProfiles::Audio::kMotuVendorId &&
+               record.unitSpecId.value_or(0U) == DeviceProfiles::Audio::kMotuVendorId;
     }
 
     [[nodiscard]] static constexpr bool
@@ -324,6 +342,23 @@ class DuplexStreamProfileResolver final {
             geometry.allowedIsoChannels = IsCmpDriven(record)
                                               ? kAllIsoChannels
                                               : FixedChannelMask(geometry.isoChannel);
+        }
+
+        if (IsMotu(record)) {
+            // MOTU is chunk-framed in both directions. The chunk counts come from the
+            // device's own registers via PrepareDuplex, which MotuV2Protocol reports as
+            // runtime caps -- there is no profile table to read them from, since model_id
+            // is 0.
+            profile.captureWireFormat = Encoding::AudioWireFormat::kMotuV2;
+            profile.playbackWireFormat = Encoding::AudioWireFormat::kMotuV2;
+            profile.captureMotuPcmChunks = caps.deviceToHostPcmChunks != 0
+                                               ? caps.deviceToHostPcmChunks
+                                               : caps.hostInputPcmChannels;
+            profile.playbackMotuPcmChunks = caps.hostToDevicePcmChunks != 0
+                                                ? caps.hostToDevicePcmChunks
+                                                : caps.hostOutputPcmChannels;
+            profile.captureMotuPorts =
+                Encoding::Motu::CapturePortsForSwVersion(record.unitSwVersion.value_or(0U));
         }
 
         if (IsSPro24Dsp(record) && caps.hostInputPcmChannels == 8 &&
