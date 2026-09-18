@@ -41,29 +41,30 @@ EfcTransport::EfcTransport(Async::IFireWireBusOps& busOps,
                            Async::IFireWireBusInfo& busInfo,
                            Scheduling::ITimerScheduler* timerScheduler) noexcept
     : busOps_(busOps), busInfo_(busInfo), timerScheduler_(timerScheduler),
-      lock_(IOLockAlloc()), alive_(std::make_shared<LifetimeToken>()) {
+      lock_(IOLockAlloc()) {
     if (lock_ == nullptr) {
         ASFW_LOG_ERROR(Audio, "[EFC] IOLockAlloc failed; transport disabled");
         return;
     }
-    registered_ = EfcResponseMailbox::AddObserver(this, &EfcTransport::ObserverThunk);
+}
+
+bool EfcTransport::RegisterForResponses() noexcept {
+    // shared_from_this() is only valid once an owning shared_ptr exists, which is
+    // why this is not done in the constructor.
+    registered_ = EfcResponseMailbox::Register(shared_from_this());
     if (!registered_) {
         ASFW_LOG_ERROR(Audio, "[EFC] no free response-mailbox slot; responses will be dropped");
     }
+    return registered_;
 }
 
 EfcTransport::~EfcTransport() {
-    // Stop new responses first (and wait for one already inside us), then fail
-    // whatever is pending, then invalidate the token so a late bus/timer
-    // callback finds nothing to touch.
-    if (registered_) {
-        if (!EfcResponseMailbox::RemoveObserver(this)) {
-            ASFW_LOG_ERROR(Audio, "[EFC] mailbox observer still busy at teardown");
-        }
-        registered_ = false;
-    }
+    // Nothing to unregister and nothing to wait for. The mailbox holds only a
+    // weak reference, so reaching this destructor already proves no Publish() is
+    // inside us -- one that were would be holding a strong reference and this
+    // would not be running yet. The slot is reclaimed when it next expires.
+    registered_ = false;
     CancelAll(kIOReturnAborted);
-    alive_.reset();
     if (lock_ != nullptr) {
         IOLockFree(lock_);
         lock_ = nullptr;
@@ -106,8 +107,8 @@ uint32_t EfcTransport::InflightAttempts() const noexcept {
     return inflight_ ? inflight_->attempts : 0;
 }
 
-bool EfcTransport::ObserverThunk(void* context, uint16_t sourceID, std::span<const uint8_t> payload) {
-    return static_cast<EfcTransport*>(context)->OnResponse(sourceID, payload);
+bool EfcTransport::OnEfcResponse(uint16_t sourceID, std::span<const uint8_t> payload) {
+    return OnResponse(sourceID, payload);
 }
 
 void EfcTransport::Submit(Efc::Category category,
@@ -219,13 +220,16 @@ void EfcTransport::Send(const SendSnapshot& snapshot) {
              snapshot.command, snapshot.attempt, snapshot.frame.size());
 
     const uint64_t serial = snapshot.serial;
-    std::weak_ptr<LifetimeToken> alive = alive_;
+    std::weak_ptr<EfcTransport> alive = weak_from_this();
     const Async::AsyncHandle handle = busOps_.WriteBlock(
         busInfo_.GetGeneration(), node, target,
         std::span<const uint8_t>(snapshot.frame.data(), snapshot.frame.size()),
         busInfo_.GetSpeed(node),
         [this, alive, serial](Async::AsyncStatus status, std::span<const uint8_t>) {
-            if (alive.expired()) return;  // transport torn down; see ~EfcTransport
+            // lock(), not expired(): a hold, so the transport cannot be destroyed
+            // between the check and the call.
+            const auto held = alive.lock();
+            if (!held) return;  // transport torn down; see ~EfcTransport
             OnWriteCompleted(serial, status);
         });
 
@@ -299,11 +303,13 @@ void EfcTransport::OnWriteCompleted(uint64_t serial, Async::AsyncStatus status) 
 }
 
 void EfcTransport::ArmTimeout(uint64_t serial) {
-    std::weak_ptr<LifetimeToken> alive = alive_;
+    std::weak_ptr<EfcTransport> alive = weak_from_this();
     const uint64_t timeoutNs = static_cast<uint64_t>(Efc::kTimeoutMs) * kMillisecond;
     const Scheduling::TimerToken token = timerScheduler_->ScheduleAfter(
         timeoutNs, [this, alive, serial]() {
-            if (alive.expired()) return;
+            // lock(), not expired(): holds the transport for the callback.
+            const auto held = alive.lock();
+            if (!held) return;
             OnTimeout(serial);
         });
 

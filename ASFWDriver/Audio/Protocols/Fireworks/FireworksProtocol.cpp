@@ -56,9 +56,14 @@ FireworksProtocol::FireworksProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                      const FireworksStaticGeometry& geometry) noexcept
     : BeBoBProtocol(busOps, busInfo, route, irmClient, cmpClient, timerScheduler),
       geometry_(geometry),
-      efc_(busOps, busInfo, timerScheduler),
+      efc_(std::make_shared<EfcTransport>(busOps, busInfo, timerScheduler)),
       caps_(BuildCaps(geometry)) {
-    efc_.SetRoute(route);
+    efc_->SetRoute(route);
+    // Must follow construction: RegisterForResponses uses shared_from_this(),
+    // which is only valid once efc_ owns the object.
+    if (!efc_->RegisterForResponses()) {
+        ASFW_LOG_ERROR(Audio, "[Fireworks] EFC transport could not register for responses");
+    }
 }
 
 FireworksProtocol::~FireworksProtocol() {
@@ -66,7 +71,7 @@ FireworksProtocol::~FireworksProtocol() {
     // clock apply (cancels its timer), abort EFC traffic (cancels the bus write
     // and response timeout), then expire the token the timer lambdas hold.
     CancelClockApply();
-    efc_.CancelAll(kIOReturnAborted);
+    efc_->CancelAll(kIOReturnAborted);
     alive_.reset();
 }
 
@@ -90,14 +95,14 @@ void FireworksProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& 
                                              Protocols::AVC::FCPTransport* transport) {
     const bool routeChanged = (route_ != route);
     BeBoBProtocol::UpdateRuntimeContext(route, transport);
-    efc_.SetRoute(route);
+    efc_->SetRoute(route);
     if (routeChanged) {
         ResetDeviceSession();
     }
 }
 
 void FireworksProtocol::ResetDeviceSession() noexcept {
-    efc_.CancelAll(kIOReturnAborted);
+    efc_->CancelAll(kIOReturnAborted);
     transportModeSet_ = false;
 }
 
@@ -152,7 +157,7 @@ void FireworksProtocol::ProbeHardwareInfo(SimpleCallback callback) {
         callback(kIOReturnSuccess);
         return;
     }
-    efc_.Submit(Efc::Category::kHwInfo,
+    efc_->Submit(Efc::Category::kHwInfo,
                 static_cast<uint32_t>(Efc::HwInfoCommand::kGetCaps), {},
                 [this, callback = std::move(callback)](IOReturn status,
                                                        const Efc::Response& response) mutable {
@@ -203,7 +208,7 @@ void FireworksProtocol::EnsureTransportMode(SimpleCallback callback) {
         return;
     }
     const uint32_t params[] = {static_cast<uint32_t>(Efc::TransportMode::kIec61883)};
-    efc_.Submit(Efc::Category::kTransport,
+    efc_->Submit(Efc::Category::kTransport,
                 static_cast<uint32_t>(Efc::TransportCommand::kSetTxMode), params,
                 [this, callback = std::move(callback)](IOReturn status, const Efc::Response&) mutable {
         if (status == kIOReturnSuccess) {
@@ -217,7 +222,7 @@ void FireworksProtocol::EnsureTransportMode(SimpleCallback callback) {
 }
 
 void FireworksProtocol::ReadClock(ClockCallback callback) {
-    efc_.Submit(Efc::Category::kHwCtl,
+    efc_->Submit(Efc::Category::kHwCtl,
                 static_cast<uint32_t>(Efc::HwCtlCommand::kGetClock), {},
                 [this, callback = std::move(callback)](IOReturn status,
                                                        const Efc::Response& response) mutable {
@@ -338,7 +343,7 @@ void FireworksProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
             const auto params = Efc::EncodeClock(wanted);
             ASFW_LOG(Audio, "[Fireworks] HWCTL SET_CLOCK source=%u rate=%u -> %u",
                      current.source, current.sampleRateHz, desiredClock.sampleRateHz);
-            efc_.Submit(Efc::Category::kHwCtl,
+            efc_->Submit(Efc::Category::kHwCtl,
                         static_cast<uint32_t>(Efc::HwCtlCommand::kSetClock), params,
                         [this, epoch, wanted](IOReturn setStatus, const Efc::Response&) {
                 if (activeClockApply_ != epoch.get()) return;
