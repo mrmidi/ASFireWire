@@ -154,6 +154,28 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
         DeviceProtocolFactory::UnitIdentity{.specId = record.unitSpecId.value_or(0U),
                                             .swVersion = record.unitSwVersion.value_or(0U)});
     if (!created) {
+        // An unknown device legitimately gets no protocol and stays quiet. A device
+        // whose own audio profile claims an integration mode is different: we say we
+        // support it, so a missing factory clause is a driver bug and must be loud.
+        // It is otherwise invisible — the device still publishes a nub and allocates
+        // isoch from its DiceProfileRegistry entry, then every StartIO fails
+        // kIOReturnNotReady inside AudioDuplexCoordinator::RequireDuplexRecord with
+        // nothing logged anywhere (issue #115, PreSonus StudioLive 24.4.2).
+        const auto integration = DeviceProtocolFactory::LookupIntegrationMode(
+            record.vendorId, record.modelId,
+            DeviceProtocolFactory::UnitIdentity{.specId = record.unitSpecId.value_or(0U),
+                                                .swVersion = record.unitSwVersion.value_or(0U)});
+        if (integration != DeviceIntegrationMode::kNone) {
+            ASFW_LOG_ERROR(Audio,
+                           "AudioRuntimeRegistry: ❌ no protocol for a SUPPORTED device "
+                           "GUID=0x%016llx vendor=0x%06x model=0x%06x mode=%u - its audio "
+                           "profile claims support but DeviceProtocolFactory::Create has no "
+                           "clause for it; audio will never start",
+                           guid,
+                           record.vendorId,
+                           record.modelId,
+                           static_cast<unsigned>(integration));
+        }
         return nullptr;
     }
 
