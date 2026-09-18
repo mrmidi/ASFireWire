@@ -350,10 +350,9 @@ protected:
     ASFW::Discovery::DeviceRegistry routes_;
     ASFW::Discovery::DeviceRouteToken route_{};
 
-    // EfcTransport is shared_ptr-owned in production so the mailbox can hold a
-    // weak reference to it; RegisterForResponses() uses shared_from_this() and
-    // therefore cannot run until an owning shared_ptr exists. Tests bind a
-    // reference off the owner so the body of each case reads unchanged.
+    // Shorthand for this fixture's dependencies. Cases bind a reference off the
+    // returned owner (`EfcTransport& t = *owner;`) so their bodies read as they
+    // did before ownership moved to a shared_ptr.
     [[nodiscard]] std::shared_ptr<EfcTransport> MakeTransport() {
         return EfcTransport::Create(bus_, info_, &timer_);
     }
