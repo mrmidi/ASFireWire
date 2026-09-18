@@ -107,8 +107,8 @@ struct AVCMusicCapabilitiesWire {
     
     // Global Rates (from first valid plug)
     uint8_t currentRate;          ///< Current sample rate code (0x03=44.1k, 0x04=48k)
+    uint8_t _padding[2];          ///< Pads supportedRatesMask to a 4-byte boundary
     uint32_t supportedRatesMask;  ///< Bitmask: Bit 3=44.1k, 4=48k, 5=96k, 0xA=88.2k
-    uint8_t _padding[2];          ///< Alignment to 8 bytes
 
     // Port Counts (from descriptor)
     uint8_t audioInputPorts;
@@ -128,6 +128,18 @@ struct AVCMusicCapabilitiesWire {
     //     Each PlugInfoWire followed by SignalBlockWire[numSignalBlocks]
     //       Each SignalBlockWire followed by ChannelDetailWire[numChannelDetails]
 } __attribute__((packed));
+
+// The padding above used to sit AFTER supportedRatesMask, which left the only
+// 32-bit field in this struct at offset 2 -- permanently misaligned, on a struct
+// both the driver and the Swift app cast raw buffers to. UBSan caught it as
+// "reference binding to misaligned address" the first time the test suite ran
+// sanitized. Pinned here so it cannot drift back, and so the total size (which
+// the Swift parser hard-codes as its header stride) cannot change unnoticed.
+static_assert(offsetof(AVCMusicCapabilitiesWire, supportedRatesMask) % alignof(uint32_t) == 0,
+              "supportedRatesMask must be naturally aligned within the wire struct");
+static_assert(sizeof(AVCMusicCapabilitiesWire) == 18,
+              "AVCMusicCapabilitiesWire is parsed by fixed offsets in "
+              "ASFW/Models/DriverConnectorModels.swift; update both together");
 
 } // namespace Shared
 

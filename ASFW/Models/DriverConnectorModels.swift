@@ -349,10 +349,10 @@ struct DriverConnectorAVCMusicCapabilities {
         // Byte 1: currentRate
         self.currentRate = data[1]
 
-        // Bytes 2-5: supportedRatesMask (little-endian)
-        self.supportedRatesMask = data.subdata(in: 2..<6).withUnsafeBytes { $0.load(as: UInt32.self) }
+        // Bytes 2-3: padding (pads the mask to a 4-byte boundary)
 
-        // Bytes 6-7: padding
+        // Bytes 4-7: supportedRatesMask (little-endian)
+        self.supportedRatesMask = data.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: UInt32.self) }
 
         // Bytes 8-13: port counts
         self.audioInputPorts = data[8]

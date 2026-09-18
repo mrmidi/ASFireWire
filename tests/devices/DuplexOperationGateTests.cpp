@@ -76,13 +76,13 @@ TEST_F(DuplexOperationGateTest, RemoteLossPersistsPastStopCallbackUntilRediscove
 // The two sets are orthogonal: claiming a GUID does not set stop-intent, stop-intent does not
 // release the claim, and intent on one GUID does not affect another.
 TEST_F(DuplexOperationGateTest, ActiveAndStopIntentAreIndependent) {
-    gate_.Acquire(0x11);
+    ASSERT_TRUE(gate_.Acquire(0x11));
     EXPECT_FALSE(gate_.IsStopRequested(0x11));  // acquiring does not set stop
     gate_.RequestStop(0x11);
     EXPECT_TRUE(gate_.IsStopRequested(0x11));   // stop is set
     EXPECT_TRUE(gate_.IsActiveLocked(0x11));    // and the claim still stands
 
-    gate_.Acquire(0x22);
+    ASSERT_TRUE(gate_.Acquire(0x22));
     gate_.RequestStop(0x22);
     EXPECT_TRUE(gate_.IsActiveLocked(0x11));    // 0x22's activity/intent leaves 0x11 alone
     EXPECT_TRUE(gate_.IsStopRequested(0x11));
@@ -137,7 +137,7 @@ TEST_F(DuplexOperationGateTest, LockedVariantsMutateWithoutLocking) {
 
 // The self-locking public API and the lock-held variants operate on the same underlying sets.
 TEST_F(DuplexOperationGateTest, SelfLockingAndLockedVariantsShareState) {
-    gate_.Acquire(0x33);                       // self-locking claim
+    ASSERT_TRUE(gate_.Acquire(0x33));                       // self-locking claim
     EXPECT_TRUE(gate_.IsActiveLocked(0x33));   // visible to the locked read
     gate_.ReleaseLocked(0x33);                 // locked release
     EXPECT_TRUE(gate_.Acquire(0x33));          // claimable again via self-locking path
@@ -146,7 +146,7 @@ TEST_F(DuplexOperationGateTest, SelfLockingAndLockedVariantsShareState) {
 // The read-only methods are const and callable on a const gate (matches the former const
 // IsStopRequested member; the const IsStopRequested still locks the borrowed lock_).
 TEST_F(DuplexOperationGateTest, ConstReadMethodsCallableOnConstInstance) {
-    gate_.Acquire(0x11);
+    ASSERT_TRUE(gate_.Acquire(0x11));
     gate_.RequestStop(0x22);
     const DuplexOperationGate& c = gate_;
     EXPECT_TRUE(c.IsStopRequested(0x22));
