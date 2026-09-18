@@ -249,3 +249,10 @@ add_device_test(AudioDeviceCatalogTests
     AudioDeviceCatalogTests.cpp
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
 )
+
+# The catalog must be shown to agree with the matchers it replaces BEFORE it
+# replaces them, or the collapse is a behaviour change wearing a refactor's name.
+add_device_test(CatalogMatcherAgreementTests
+    CatalogMatcherAgreementTests.cpp
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+)
