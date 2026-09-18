@@ -239,6 +239,11 @@ add_audio_test(AudioProfileRegistryTests
     AudioProfileRegistryTests.cpp
 )
 
+# Device-vs-profile stream geometry resolution (header-only, pure).
+add_audio_test(StreamGeometryResolverTests
+    StreamGeometryResolverTests.cpp
+)
+
 # DICE Profile Registry and Quirks Tests
 add_audio_test(DiceProfileTests
     DiceProfileTests.cpp
