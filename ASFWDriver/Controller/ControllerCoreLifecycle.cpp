@@ -124,9 +124,11 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
                                       const ASFW::Driver::RolePolicy& policy) {
     // ClientOnly is intentionally absent here: a pure client that advertises no
     // BM/IRM capability also does NOT set the Self-ID/PHY contender bit, so it can
-    // never win an IRM/BM election. ServiceContext now seeds the live driver with
-    // FullBusManager/ForceRootAllowed for hardware validation, matching the
-    // reference stacks' contender posture and exercising root/gap BM duties.
+    // never win an IRM/BM election -- the bit is actively cleared for it below.
+    // The live default is IRMResourceHost (ControllerConfig::MakeLiveDefault), the
+    // lowest rung that contends: an audio host must be able to become the IRM, because
+    // a bus with no IRM can allocate no isochronous channel at all. FullBusManager
+    // stays the hardware-validation opt-in that also exercises root/gap BM duties.
     // cross-validated with Linux: ohci.c:2510-2511
     const bool shouldAdvertiseContender =
         (policy.roleMode == ASFW::FW::RoleMode::FullBusManager &&

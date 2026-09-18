@@ -46,9 +46,29 @@ enum class PowerPolicyLevel : uint8_t {
 };
 
 // FW-22: roleMode selects which capabilities the local Config ROM advertises.
-// The normal live profile is deliberately passive.  Becoming a contender/BM is
-// wire-visible and can reset a bus, so it is a hardware-validation opt-in rather
-// than the default for an attached audio device.
+// The live profile stays below BM duties, but it must be a contender.
+//
+// The isochronous resource manager owns CHANNELS_AVAILABLE and BANDWIDTH_AVAILABLE.
+// A bus with no IRM cannot allocate an isochronous channel at all, and a host that
+// never contends cannot become one: ConfigurePhyOperationalRegisters gates the PHY
+// register 4 contender bit on the role (ControllerCoreLifecycle.cpp:131-149), and
+// ClientOnly explicitly *clears* it. The IRM is elected from Self-ID contender +
+// link-active, not from the BIB irmc bit, so a passive host can never win.
+//
+// On a two-node bus whose peer does not contend -- a MOTU UltraLite, for one -- that
+// leaves IRM=none, and every StartIO failed in ReservePlayback with
+// AllocationStatus::NotFound -> kIOReturnNoDevice. With the bit asserted the host wins
+// the election unopposed, LocalIRMResourceController sees localNodeId == irmNodeId,
+// and the OHCI CSR engine hosts the resource registers.
+//
+// This does not make the host act like a bus manager on a bus that already has an IRM.
+// IRMFallbackCoordinator returns early unless localIsIRM, and both
+// GapPolicyCoordinator::IsAllowedActor and RootSelectionCoordinator::IsAllowedActor
+// additionally require irmFallbackGateOpen && irmFallbackNoBMDetected. Where another
+// node is the IRM, the only change is our own Self-ID posture.
+//
+// cross-validated with Linux: ohci.c:2510-2511 sets PHY_LINK_ACTIVE | PHY_CONTENDER in
+// ohci_enable() and core-card.c:794 clears it only on card removal.
 struct RolePolicy {
     ASFW::FW::RoleMode roleMode{ASFW::FW::RoleMode::ClientOnly};
     ASFW::FW::FullBMActivityLevel fullBMActivityLevel{ASFW::FW::FullBMActivityLevel::ObserveOnly};
@@ -59,8 +79,12 @@ struct RolePolicy {
     // activity ladder is also at ForceRootAllowed or higher and local == IRM.
     bool linuxStyleCmcForceRoot{false};
 
+    /// Live service profile: contender-capable, so an isochronous host can be elected
+    /// IRM and allocate channels. Still no BM election, root forcing or gap mutation.
     [[nodiscard]] static constexpr RolePolicy MakeLiveDefault() noexcept {
-        return RolePolicy{};
+        RolePolicy policy{};
+        policy.roleMode = ASFW::FW::RoleMode::IRMResourceHost;
+        return policy;
     }
 
     /// Explicit test-only profile for controlled BM/IRM validation. Do not use as
