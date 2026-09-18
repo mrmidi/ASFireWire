@@ -47,6 +47,11 @@ add_common_test(CapabilityModeTests
     CapabilityModeTests.cpp
 )
 
+# Host DriverKit stub ownership semantics — every other test depends on these.
+add_common_test(HostDriverKitStubTests
+    HostDriverKitStubTests.cpp
+)
+
 # Local Request Dispatch Tests
 add_executable(LocalRequestDispatchTests
     LocalRequestDispatchTests.cpp

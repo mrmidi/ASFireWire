@@ -56,8 +56,20 @@ protected:
         hardware_.Attach(nullptr, mockDevice_);
     }
 
+    void TearDown() override {
+        // This fixture stands in for IOKit, which owns the provider in
+        // production. Attach() takes its OWN reference (OSRetain), so the
+        // reference created by `new` here is ours to drop -- otherwise the mock
+        // outlives the test and gmock never verifies its expectations.
+        if (mockDevice_ != nullptr) {
+            mockDevice_->release();
+            mockDevice_ = nullptr;
+        }
+    }
+
     HardwareInterface hardware_;
-    MockPCIDevice* mockDevice_{nullptr}; // Owned by hardware_ after Attach
+    // Held by BOTH this fixture and hardware_: Attach() retains. Released above.
+    MockPCIDevice* mockDevice_{nullptr};
 };
 
 namespace {
