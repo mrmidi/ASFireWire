@@ -187,16 +187,17 @@ TEST(AudioProfileRegistryTests, RejectsOtherPreSonusModels) {
 }
 
 TEST(AudioProfileRegistryTests, KeepsStudioLiveSiblingsRecognizedButDisabled) {
-    // 16.4.2 / 24.4.2 / 32.4.2 share the StudioLive series but their stream
-    // geometry (channel counts) has not been captured from hardware, so they are
+    // 16.4.2 / 32.4.2 share the StudioLive series but their stream geometry
+    // (channel counts) has not been captured from hardware, so they are
     // recognized by name only — same pattern as the multistream Focusrite models.
+    // The 24.4.2 left this list once issue #115 supplied its geometry; see
+    // EnablesStudioLive2442FromCapturedGeometry below.
     struct Sibling {
         uint32_t modelId;
         const char* modelName;
     };
     const Sibling siblings[] = {
         {ids::kStudioLive1642ModelId, ids::kStudioLive1642ModelName},
-        {ids::kStudioLive2442ModelId, ids::kStudioLive2442ModelName},
         {ids::kStudioLive3242ModelId, ids::kStudioLive3242ModelName},
     };
     for (const auto& sibling : siblings) {
@@ -208,6 +209,20 @@ TEST(AudioProfileRegistryTests, KeepsStudioLiveSiblingsRecognizedButDisabled) {
         EXPECT_EQ(ModeFor(ids::kPreSonusVendorId, sibling.modelId),
                   AudioIntegrationMode::kNone);
     }
+}
+
+TEST(AudioProfileRegistryTests, EnablesStudioLive2442FromCapturedGeometry) {
+    // Geometry captured from hardware in issue #115 (2026-09-14), so unlike its
+    // siblings this model resolves a real profile. It is the first device with an
+    // asymmetric playback side (16 + 10), which PreSonusStudioLive2442Profile
+    // expresses by overriding BuildTxStreamConfig.
+    const auto identity = AudioProfileRegistry::LookupIdentity(
+        ByVendorModel(ids::kPreSonusVendorId, ids::kStudioLive2442ModelId));
+    ASSERT_TRUE(identity.has_value());
+    EXPECT_STREQ(identity->vendorName, ids::kPreSonusVendorName);
+    EXPECT_STREQ(identity->modelName, ids::kStudioLive2442ModelName);
+    EXPECT_EQ(ModeFor(ids::kPreSonusVendorId, ids::kStudioLive2442ModelId),
+              AudioIntegrationMode::kHardcodedNub);
 }
 
 TEST(AudioProfileRegistryTests, RecognizesMidasVeniceDiceProfile) {
