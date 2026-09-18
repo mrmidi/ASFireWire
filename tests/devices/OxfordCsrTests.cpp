@@ -201,7 +201,9 @@ TEST_F(OxfordCsrReadTests, RouteReboundBeforeTheReadIsResolvedFreshNotFromASnaps
     rom.gen = snapshot.generation;
     rom.nodeId = static_cast<uint8_t>(snapshot.nodeId);
     rig.Routes().InvalidateLiveMappingsForBusReset();
-    rig.Routes().UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+    // Returns the resulting record; this test wants only the side effect of
+    // registering the device.
+    (void)rig.Routes().UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
 
     const auto rebound = rig.Route();
     ASSERT_NE(rebound.routeEpoch, snapshot.routeEpoch) << "test must actually rebind the route";

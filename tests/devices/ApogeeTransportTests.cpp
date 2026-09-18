@@ -146,7 +146,9 @@ TEST(ApogeeMeterRegisters, RouteReboundBeforeTheReadIsResolvedFreshNotFromASnaps
     rom.gen = snapshot.generation;
     rom.nodeId = static_cast<uint8_t>(snapshot.nodeId);
     rig.Routes().InvalidateLiveMappingsForBusReset();
-    rig.Routes().UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+    // Returns the resulting record; this test wants only the side effect of
+    // registering the device.
+    (void)rig.Routes().UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
 
     ASSERT_NE(rig.Route().routeEpoch, snapshot.routeEpoch);
     EXPECT_FALSE(rig.Routes().IsCurrent(snapshot));

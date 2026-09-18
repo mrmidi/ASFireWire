@@ -6,6 +6,8 @@
 //
 
 #include <gtest/gtest.h>
+
+#include <cstring>
 #include <gmock/gmock.h>
 #include "UserClient/Handlers/AVCHandler.hpp"
 #include "Shared/SharedDataModels.hpp"
@@ -179,8 +181,13 @@ TEST_F(AVCCapabilitiesSerializerTests, Serialization_AggregatesGlobalRates) {
     // Supported Mask should include 44.1, 48, 96
     // 44.1=3, 48=4, 96=5
     // Mask vals: 1<<3=8, 1<<4=16, 1<<5=32. Sum: 56 (0x38)
-    uint32_t expectedMask = (1 << 0x03) | (1 << 0x04) | (1 << 0x05); 
-    EXPECT_EQ(wire->supportedRatesMask, expectedMask);
+    uint32_t expectedMask = (1 << 0x03) | (1 << 0x04) | (1 << 0x05);
+    // Copy out rather than compare in place: EXPECT_EQ binds a const uint32_t&,
+    // and binding a reference to a member of a packed struct is undefined even
+    // when the address happens to be aligned.
+    uint32_t actualMask = 0;
+    std::memcpy(&actualMask, &wire->supportedRatesMask, sizeof(actualMask));
+    EXPECT_EQ(actualMask, expectedMask);
 }
 
 // Test 3: Compound Format - Should serialize defined blocks
