@@ -74,8 +74,23 @@ inline std::array<Slot, kMaxObservers>& Slots() noexcept {
 }
 
 // Clears the slot and waits (bounded) until no Publish() is still executing
-// inside the observer. Returns false if the wait timed out; the caller should
-// then treat its object as possibly still referenced and log it.
+// inside the observer. Returns false if the wait timed out.
+//
+// A false return is a USE-AFTER-FREE hazard, not a diagnostic: EfcTransport's
+// destructor logs it and then frees its lock and returns anyway, while a
+// Publish() may still be inside OnResponse. Nothing downstream can recover.
+//
+// The bound is large because the window it covers is large. OnResponse ends in
+// Complete(), which invokes the caller-supplied completion std::function, so the
+// inflight window spans arbitrary client work rather than a short critical
+// section. That also makes this an IODelay spin of up to 100 ms on whichever
+// queue tears the transport down -- IODelay busy-waits, it does not yield.
+//
+// Shrinking the timeout is therefore NOT the fix; it would turn waits that
+// currently succeed into use-after-frees. The fix is to shrink the window: run
+// Complete() outside the observer callback so the inflight region covers only
+// the decode and sequence match, after which a short bound is safe and the spin
+// stops mattering. Until then this is a known, deliberate trade.
 inline bool RemoveObserver(void* context) noexcept {
     bool quiesced = true;
     for (auto& slot : Slots()) {

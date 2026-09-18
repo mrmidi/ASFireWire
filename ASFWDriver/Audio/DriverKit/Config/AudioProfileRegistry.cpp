@@ -78,10 +78,29 @@ const IAudioDeviceProfile* AudioProfileRegistry::FindProfile(uint32_t vendorId,
     if (vendorId == DeviceProfiles::Audio::kMotuVendorId) {
         // modelId carries the unit software version for MOTU (DeviceProfiles reports it
         // that way, since it is the only stable model discriminator the device offers).
+        //
+        // Enumerate the models whose chunk geometry is known rather than defaulting to
+        // the UltraLite's. Protocol v2 covers five models and their fixed chunk counts
+        // are NOT interchangeable (Linux motu-protocol-v2.c:274-320):
+        //
+        //   828mk2   0x03  tx {14,14,0}  rx {14,14,0}
+        //   896HD    0x05  tx {14,14,8}  rx {14,14,8}
+        //   Traveler 0x09  tx {14,14,8}  rx {14,14,8}
+        //   UltraLite 0x0d tx {14,14,0}  rx {14,14,0}
+        //   8pre     0x0f  tx {10,10,0}  rx { 6, 6,0}   <-- and ASYMMETRIC
+        //
+        // The 8pre is the one this default would have broken: 10/6 against 14/14, a
+        // difference between directions that a single chunk count cannot express at all.
+        // It is unreachable today only because DeviceProfiles resolves kNone outside the
+        // two models below, so it never gets a nub — a guard in a different layer than
+        // this function, which matches on the vendor OUI alone.
         if (modelId == DeviceProfiles::Audio::kMotu828mk2SwVersion) {
             return &motu828mk2Profile;
         }
-        return &motuUltraliteProfile;
+        if (modelId == DeviceProfiles::Audio::kMotuUltraliteSwVersion) {
+            return &motuUltraliteProfile;
+        }
+        return nullptr;
     }
 
     // Map identity to the DICE family structures

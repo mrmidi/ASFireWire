@@ -34,10 +34,14 @@ using ASFW::Audio::DICE::HasRestartIntent;
 
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 constexpr uint32_t kDuetFixedSampleRateHz = 48000U;
-// Onyx-i (Oxford run): the device's captured current rate, used as the START
-// DEFAULT when a session carries no clock (a naked first-ever start). Unlike
-// the Duet's fixed-rate pin, this is only a default — explicit user rate
-// selections arrive via the session clocks and take precedence.
+// Onyx-i (Oxford run): the device's captured current rate, and the only rate the
+// host will ever ask this device for. EffectiveStartClockForProfile returns it
+// unconditionally, discarding the requested clock exactly as the Duet pin does,
+// and AVCDiscovery publishes sampleRates = {44100} so CoreAudio has nothing else
+// to select. It is a hard pin, not a default.
+//
+// (The 48 kHz support that made it a default was reverted in c0e5da6b, together
+// with the rate-list widening. Restoring either means undoing this pin as well.)
 constexpr uint32_t kOnyxIDefaultStartRateHz = 44100U;
 // Onyx 400F (Fireworks): the sole rate the static profile offers until the ADK
 // reconfig path supports rate changes (see FireworksProtocol::SupportedRates).
