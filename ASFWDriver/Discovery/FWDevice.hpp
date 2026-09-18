@@ -48,6 +48,10 @@ public:
     bool IsAudioCandidate() const { return isAudioCandidate_; }
     bool SupportsAMDTP() const { return supportsAMDTP_; }
 
+    /// Which AV/C command shapes this device may be sent. Decided from Config
+    /// ROM alone, before any transaction; see Protocols/AVC/AVCCommandFilter.hpp.
+    AvcCommandFilterId GetAvcCommandFilter() const { return avcCommandFilter_; }
+
     State GetState() const { return state_; }
     bool IsReady() const { return state_ == State::Ready; }
     bool IsSuspended() const { return state_ == State::Suspended; }
@@ -78,6 +82,7 @@ private:
 
     bool isAudioCandidate_{false};
     bool supportsAMDTP_{false};
+    AvcCommandFilterId avcCommandFilter_{AvcCommandFilterId::Unrestricted};
 
     Generation generation_{0};
     uint16_t nodeId_{0xFFFF};

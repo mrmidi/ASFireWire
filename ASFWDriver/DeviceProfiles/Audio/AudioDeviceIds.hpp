@@ -117,6 +117,18 @@ inline constexpr uint32_t kStudioLive1642ModelId = 0x000010;
 inline constexpr uint32_t kStudioLive2442ModelId = 0x000012;
 inline constexpr uint32_t kStudioLive3242ModelId = 0x000014;
 
+// ---- M-Audio / Avid (BridgeCo BeBoB family, "special" firmware) ----
+// Recognised for their probe bound, not for audio: this branch has no
+// MAudioSpecialProtocol. Their firmware hangs on AV/C it does not implement
+// (Protocols/AVC/AVC_DEVICE_HAZARDS.md H1), so being unrecognised is the unsafe
+// state -- an unmatched AV/C unit is opened with generic UNIT_INFO/SUBUNIT_INFO.
+// Model ids from Linux sound/firewire/bebob/bebob.c (MODEL_MAUDIO_FW1814,
+// MODEL_MAUDIO_PROJECTMIX and the 0x00010070 bootloader persona).
+inline constexpr uint32_t kMAudioVendorId                      = 0x000d6c;
+inline constexpr uint32_t kMAudioFireWire1814BootloaderModelId = 0x00010070;
+inline constexpr uint32_t kMAudioFireWire1814ModelId           = 0x00010071;
+inline constexpr uint32_t kMAudioProjectMixModelId             = 0x00010091;
+
 // ---- MOTU (vendor-specific register protocol) ----
 // MOTU does not use model_id: the root directory publishes model_id 0 and the model is
 // identified by Unit_Sw_Version, with Unit_Spec_Id equal to the OUI. Version values from
@@ -170,6 +182,10 @@ inline constexpr const char* kStudioLive1602ModelName = "StudioLive 16.0.2";
 inline constexpr const char* kStudioLive1642ModelName = "StudioLive 16.4.2";
 inline constexpr const char* kStudioLive2442ModelName = "StudioLive 24.4.2";
 inline constexpr const char* kStudioLive3242ModelName = "StudioLive 32.4.2";
+inline constexpr const char* kMAudioVendorName        = "M-Audio";
+inline constexpr const char* kMAudioFireWire1814BootloaderModelName = "FireWire 1814 (bootloader)";
+inline constexpr const char* kMAudioFireWire1814ModelName = "FireWire 1814";
+inline constexpr const char* kMAudioProjectMixModelName   = "ProjectMix I/O";
 inline constexpr const char* kMotuVendorName          = "MOTU";
 inline constexpr const char* kMotu828mk2ModelName     = "828mkII";
 inline constexpr const char* kMotu896hdModelName      = "896HD";

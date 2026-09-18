@@ -53,6 +53,10 @@ kern_return_t FCPStatusToIOReturn(ASFW::Protocols::AVC::FCPStatus status) {
             return kIOReturnInvalid;
         case FCPStatus::kBusy:
             return kIOReturnBusy;
+        case FCPStatus::kRefusedByFilter:
+            // Distinct from kInvalidPayload: the frame was well formed, the
+            // device simply may not be sent it. See AVCCommandFilter.hpp.
+            return kIOReturnNotPermitted;
     }
 
     return kIOReturnError;

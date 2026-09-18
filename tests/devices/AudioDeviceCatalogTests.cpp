@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <ios>
 #include <set>
 
 namespace {
@@ -352,6 +353,72 @@ TEST(AudioDeviceCatalog, NoRowIsBuiltFromAPendingCaptureSentinel) {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The AV/C command bound
+// ---------------------------------------------------------------------------
+
+// M-Audio's special firmware hangs on AV/C it does not implement
+// (AVC_DEVICE_HAZARDS.md H1). Being *unrecognised* is the unsafe state: an
+// unmatched AV/C unit is opened with generic UNIT_INFO/SUBUNIT_INFO, two of the
+// four shapes on record as freeze-capable. Recognising it is what bounds it.
+TEST(AudioDeviceCatalog, TheMAudioSpecialFirmwareCarriesAFilteredCommandSet) {
+    for (const uint32_t model : {kMAudioFireWire1814ModelId, kMAudioProjectMixModelId}) {
+        const auto device = MakeDevice(0x000D6C'0400000000ULL, kMAudioVendorId, model,
+                                       {{.offset = 5,
+                                         .specifierId = kTa1394AvcSpecifier,
+                                         .version = kTa1394AvcVersion}});
+        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(device.identity),
+                  Discovery::AvcCommandFilterId::MAudioSpecialBeBoB)
+            << "model 0x" << std::hex << model;
+
+        // Recognised, but not playable here: this branch has no
+        // MAudioSpecialProtocol, so no builder may be named.
+        const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+        ASSERT_TRUE(plan.has_value());
+        EXPECT_EQ(plan->probePolicy, ProbePolicyId::BeBoBFilteredCommandSet);
+        EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
+        EXPECT_NE(plan->support, SupportDisposition::GenericFallback)
+            << "model 0x" << std::hex << model
+            << " fell through to generic AV/C, which is the freeze path";
+    }
+}
+
+// The bootloader persona is not an audio endpoint and never becomes one. It
+// exists to carry its cue policy and to keep the identity off the generic path.
+TEST(AudioDeviceCatalog, TheMAudioBootloaderPersonaIsNeverAnAudioEndpoint) {
+    const auto device = MakeDevice(0x000D6C'0400000000ULL, kMAudioVendorId,
+                                   kMAudioFireWire1814BootloaderModelId,
+                                   {{.offset = 5,
+                                     .specifierId = kTa1394AvcSpecifier,
+                                     .version = kTa1394AvcVersion}});
+    const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(plan->family, AudioFamilyProviderId::None);
+    EXPECT_EQ(plan->probePolicy, ProbePolicyId::NoAutomaticTraffic);
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
+    EXPECT_EQ(plan->bootloaderCue, BootloaderCuePolicy::BeBoBStartFirmware);
+}
+
+// Every ordinary device stays unrestricted. A non-empty allowlist is a bound on
+// what the driver may send, so applying one by accident would silently break a
+// working device.
+TEST(AudioDeviceCatalog, AnOrdinaryDeviceIsNotCommandFiltered) {
+    const auto duet = MakeDevice(0x0003DB'0400000000ULL, kApogeeVendorId,
+                                 kApogeeDuetModelId,
+                                 {{.offset = 5,
+                                   .specifierId = kTa1394AvcSpecifier,
+                                   .version = kTa1394AvcVersion}});
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(duet.identity),
+              Discovery::AvcCommandFilterId::Unrestricted);
+
+    const auto unknown = MakeDevice(0x00AABB'0400000000ULL, 0x00AABB, 0x000042,
+                                    {{.offset = 5,
+                                      .specifierId = kTa1394AvcSpecifier,
+                                      .version = kTa1394AvcVersion}});
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(unknown.identity),
+              Discovery::AvcCommandFilterId::Unrestricted);
 }
 
 // No safety rule is defined on this branch, and nothing must be quarantined by
