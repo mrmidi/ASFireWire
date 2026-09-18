@@ -40,6 +40,16 @@ namespace ASFW::Audio {
 /// DeviceProfiles owns the data.
 using DeviceIntegrationMode = DeviceProfiles::Audio::AudioIntegrationMode;
 
+/// Unit directory identity, for families that model_id cannot discriminate.
+/// Defaulted at every call site so existing (vendorId, modelId) callers are unaffected;
+/// MOTU is the first family that requires it (model_id is 0, the version carries the
+/// model). Namespace-scope rather than nested in DeviceProtocolFactory so it can be used
+/// as a defaulted argument in that class's own member declarations.
+struct DeviceUnitIdentity {
+    uint32_t specId{0};
+    uint32_t swVersion{0};
+};
+
 /// Factory for creating device-specific protocol handlers
 ///
 /// Call Create() during device discovery to instantiate the appropriate
@@ -112,6 +122,8 @@ public:
     static constexpr const char* kStudioLive1602ModelName =
         DeviceProfiles::Audio::kStudioLive1602ModelName;
 
+    using UnitIdentity = DeviceUnitIdentity;
+
     struct KnownIdentity {
         uint32_t vendorId{0};
         uint32_t modelId{0};
@@ -131,9 +143,13 @@ public:
     /// Resolve a known device identity by vendor/model. Delegates to DeviceProfiles.
     static constexpr std::optional<KnownIdentity> LookupKnownIdentity(
         uint32_t vendorId,
-        uint32_t modelId
+        uint32_t modelId,
+        UnitIdentity unit = {}
     ) noexcept {
-        return Combine(DeviceProfiles::DeviceProfileQuery{.vendorId = vendorId, .modelId = modelId});
+        return Combine(DeviceProfiles::DeviceProfileQuery{.vendorId = vendorId,
+                                                          .modelId = modelId,
+                                                          .unitSpecId = unit.specId,
+                                                          .unitSwVersion = unit.swVersion});
     }
 
     // Focusrite DICE devices encode the board model in GUID bits [27:22]. The legacy
@@ -153,16 +169,22 @@ public:
     /// Resolve integration mode for a known vendor/model pair. Delegates to DeviceProfiles.
     static constexpr DeviceIntegrationMode LookupIntegrationMode(
         uint32_t vendorId,
-        uint32_t modelId
+        uint32_t modelId,
+        UnitIdentity unit = {}
     ) noexcept {
         const auto profile = DeviceProfiles::Audio::AudioProfileRegistry{}.LookupBestAudioProfile(
-            DeviceProfiles::DeviceProfileQuery{.vendorId = vendorId, .modelId = modelId});
+            DeviceProfiles::DeviceProfileQuery{.vendorId = vendorId,
+                                               .modelId = modelId,
+                                               .unitSpecId = unit.specId,
+                                               .unitSwVersion = unit.swVersion});
         return profile.has_value() ? profile->mode : DeviceIntegrationMode::kNone;
     }
 
     /// Check if a device identity is recognized.
-    static constexpr bool IsKnownDevice(uint32_t vendorId, uint32_t modelId) noexcept {
-        return LookupKnownIdentity(vendorId, modelId).has_value();
+    static constexpr bool IsKnownDevice(uint32_t vendorId,
+                                        uint32_t modelId,
+                                        UnitIdentity unit = {}) noexcept {
+        return LookupKnownIdentity(vendorId, modelId, unit).has_value();
     }
 
     /// Create a protocol handler for the given vendor/model
@@ -171,6 +193,7 @@ public:
     /// @param busOps     FireWire bus operations port
     /// @param busInfo    FireWire bus info port
     /// @param route      Current, registry-issued route token
+    /// @param unit       Unit directory identity, for families model_id cannot match
     /// @return Protocol handler, or nullptr if device is not recognized
     static std::unique_ptr<IDeviceProtocol> Create(
         uint32_t vendorId,
@@ -181,7 +204,8 @@ public:
         const Discovery::DeviceRouteToken& route,
         ::ASFW::IRM::IRMClient* irmClient = nullptr,
         ::ASFW::CMP::CMPClient* cmpClient = nullptr,
-        Scheduling::ITimerScheduler* timerScheduler = nullptr
+        Scheduling::ITimerScheduler* timerScheduler = nullptr,
+        UnitIdentity unit = {}
     );
 
 private:

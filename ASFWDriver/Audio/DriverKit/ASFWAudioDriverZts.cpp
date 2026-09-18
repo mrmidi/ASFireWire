@@ -14,6 +14,7 @@
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../Wire/IEC61883/Syt.hpp"
 
 #include <DriverKit/DriverKit.h>
 
@@ -95,8 +96,17 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
     auto* metadataRing = ivars.runtime.txSlotProvider.metadataRing;
     auto* directControl = ivars.runtime.directAudioGraph.control;
     if (directControl == nullptr) {
+        ivars.runtime.txStreamEngine.BindMotuOffsetCache(nullptr);
         return 0;
     }
+    // MOTU's per-block SPH offsets are captured on the transport side and replayed here.
+    // They live in the shared control block -- the seam both services map -- rather than
+    // in the capture consumer, which IsochDuplexHostTransport owns and destroys on stop
+    // while this service may still be preparing packets (the FW-60 cross-service class).
+    // Rebind on every pass so the engine's pointer is never older than directControl.
+    // This binding was missing entirely: StampMotuSph returned at its first line on every
+    // packet, so no data block ever carried an SPH and the device played nothing.
+    ivars.runtime.txStreamEngine.BindMotuOffsetCache(&directControl->motuEventOffsets);
 
     uint64_t nextPacketToPrepare = startPacketIndex;
     uint32_t preparedCount = 0;
@@ -223,6 +233,13 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     nextPacketToPrepare);
                 break;
             }
+            // The cycle this packet goes out in, derived exactly as the SYT trace below
+            // derives outCycle. MOTU stamps each block's SPH relative to it.
+            timing.transmitCycle = static_cast<uint32_t>(
+                (ASFW::Timing::normalizeOffsetDomain(packetAnchorTicks) /
+                 ASFW::Timing::kTicksPerCycle) %
+                ASFW::Timing::kCyclesPerSecond);
+            timing.transmitCycleValid = true;
 
             // A replay stall is transient, not fatal. RX bumps its replay epoch
             // on every rebind/discontinuity (aggregate StartIO/StopIO churn, a
@@ -378,12 +395,27 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             }
 
             if (replay.dataBlocks != 0) {
-                if (replay.sytOffset ==
-                        ASFW::Audio::Runtime::
-                            RxSequenceReplayState::kNoInfo ||
+                // A replayed entry with data blocks but no SYT offset is corruption for
+                // an SYT-aware family -- but it is the normal case for MOTU, whose capture
+                // side correctly never sets kValidSyt. Linux treats it as an ordinary DATA
+                // packet: the SYT goes out as CIP_SYT_NO_INFO and data_blocks is replayed
+                // regardless (amdtp-stream.c:1033-1037; the capture cache stores
+                // CIP_SYT_NO_INFO for these at :518-521). Faulting here killed transmit
+                // 22 ms after StartIO succeeded, so the device started but stayed silent.
+                const bool hasReplaySyt =
+                    replay.sytOffset !=
+                        ASFW::Audio::Runtime::RxSequenceReplayState::kNoInfo &&
                     (replay.flags &
-                     ASFW::Audio::Runtime::RxSequenceFlags::
-                         kValidSyt) == 0) {
+                     ASFW::Audio::Runtime::RxSequenceFlags::kValidSyt) != 0;
+                const bool sytUnaware =
+                    ivars.runtime.txStreamEngine.IsSytUnaware();
+                // kNoInfo is UINT32_MAX; the presentation arithmetic below must never see
+                // it. For an SYT-unaware family the packet's cycle timer is the best
+                // anchor available, so contribute no sub-cycle offset -- at most one cycle
+                // of error, which the framesPerDataPacket alignment absorbs, while the
+                // per-block SPH carries the exact timing.
+                const uint32_t replaySytOffset = hasReplaySyt ? replay.sytOffset : 0U;
+                if (!hasReplaySyt && !sytUnaware) {
                     directControl->txReplayInvalidSyt.fetch_add(
                         1, std::memory_order_relaxed);
                     failProducer(
@@ -405,11 +437,10 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     directControl->txTransferDelayTicks.load(
                         std::memory_order_relaxed);
                 timing.nextDataSyt =
-                    ASFW::Audio::Runtime::
-                        ComputeReplaySytFromTicks(
-                            replay.sytOffset,
-                            packetAnchorTicks,
-                            txDelay);
+                    hasReplaySyt
+                        ? ASFW::Audio::Runtime::ComputeReplaySytFromTicks(
+                              replay.sytOffset, packetAnchorTicks, txDelay)
+                        : ASFW::Protocols::Audio::IEC61883::SytFormatter::kNoInfo;
 
                 // Publish the live SYT decision to a lock-free latest-value
                 // trace. The watchdog logs it off the hot path (~1 s) so the
@@ -417,6 +448,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 // re-anchored transmit SYT are visible without logging here.
                 // `observedRxSyt` is the device's original SYT, reconstructed
                 // from the replayed delay-free offset against its source cycle.
+                if (hasReplaySyt) {
                 ASFW::Audio::Runtime::TxSytTraceSample trace{};
                 trace.packetIndex = nextPacketToPrepare;
                 trace.sourceCycle =
@@ -438,19 +470,20 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                             std::memory_order_relaxed));
                 trace.txSyt = timing.nextDataSyt;
                 directControl->txSytTrace.Publish(trace);
+                }
 
                 const int64_t sourcePresentationTicks =
                     ASFW::Timing::normalizeOffsetDomain(
                         ASFW::Timing::encodedTstampToOffsets(
                             replay.sourceCycleTimer) +
-                        replay.sytOffset +
+                        replaySytOffset +
                         directControl
                             ->rxTransferDelayTicks.load(
                                 std::memory_order_relaxed));
                 const int64_t outputPresentationTicks =
                     ASFW::Timing::normalizeOffsetDomain(
                         packetAnchorTicks +
-                        replay.sytOffset +
+                        replaySytOffset +
                         directControl
                             ->txTransferDelayTicks.load(
                                 std::memory_order_relaxed));

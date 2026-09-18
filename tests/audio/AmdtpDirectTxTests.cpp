@@ -117,6 +117,52 @@ TEST(AmdtpDirectTxTests, ForcedNoDataHoldsDbcAndAudioFrame) {
     EXPECT_EQ(data.syt, 0x1234U);
 }
 
+TEST(AmdtpDirectTxTests, DbcIsEndEventWritesTheCountAfterEachDataPacket) {
+    // MOTU counts the DBC at the end of a packet's blocks; Linux sets CIP_DBC_IS_END_EVENT
+    // on every MOTU transmit stream (amdtp-motu.c:465, amdtp-stream.c:1040-1046). Run the
+    // default and end-event packetizers through the same sequence: each DATA packet must
+    // differ by exactly its block count, and a NO-DATA packet -- no blocks -- not at all.
+    AmdtpPacketTimeline timelineStart{};
+    AmdtpPacketTimeline timelineEnd{};
+    std::array<PacketTimelineSlot, 8> slotsStart{};
+    std::array<PacketTimelineSlot, 8> slotsEnd{};
+    ASSERT_TRUE(timelineStart.AttachSlots(slotsStart.data(), slotsStart.size()));
+    ASSERT_TRUE(timelineEnd.AttachSlots(slotsEnd.data(), slotsEnd.size()));
+
+    AmdtpTxPacketizer start{};
+    AmdtpTxPacketizer end{};
+    start.BindTimeline(&timelineStart);
+    end.BindTimeline(&timelineEnd);
+    ASSERT_TRUE(start.Configure(BlockingStereoConfig(), AmdtpTxPolicy{}));
+    ASSERT_TRUE(end.Configure(BlockingStereoConfig(), AmdtpTxPolicy{.dbcIsEndEvent = true}));
+
+    AmdtpTimingState allowData{};
+    allowData.txClockValid = true;
+    allowData.disposition = AmdtpPacketDisposition::Data;
+    allowData.nextDataSyt = 0x1234;
+
+    uint32_t dataPackets = 0;
+    for (uint32_t i = 0; i < 8; ++i) {
+        std::array<uint8_t, 128> bytesStart{};
+        std::array<uint8_t, 128> bytesEnd{};
+        PreparedTxPacket a{};
+        PreparedTxPacket b{};
+        ASSERT_TRUE(start.PrepareNextPacket({i, bytesStart.data(), bytesStart.size()},
+                                            allowData, a));
+        ASSERT_TRUE(end.PrepareNextPacket({i, bytesEnd.data(), bytesEnd.size()},
+                                          allowData, b));
+        ASSERT_EQ(a.isData, b.isData) << "packet " << i;
+        const uint8_t expected = a.isData
+            ? static_cast<uint8_t>((a.dbc + a.framesInPacket) & 0xFFU)
+            : a.dbc;
+        EXPECT_EQ(b.dbc, expected) << "packet " << i;
+        // The CIP header must carry it too (DBC is the last byte of quadlet 0).
+        EXPECT_EQ(bytesEnd[3], expected) << "packet " << i;
+        dataPackets += a.isData ? 1U : 0U;
+    }
+    EXPECT_GT(dataPackets, 1U) << "fixture must exercise consecutive data packets";
+}
+
 TEST(AmdtpDirectTxTests, NoDataFdfCanUseSaffireCompatibilityQuirk) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 4> timelineSlots{};

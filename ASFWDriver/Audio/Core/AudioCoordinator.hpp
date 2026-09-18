@@ -3,7 +3,7 @@
 //
 // AudioCoordinator.hpp
 // Central audio control-plane entry point. Owns audio nubs and routes
-// start/stop to explicit DICE vs AV/C backends.
+// start/stop to the explicit DICE, MOTU and AV/C backends.
 
 #pragma once
 
@@ -11,6 +11,7 @@
 #include "AudioNubPublisher.hpp"
 #include "../Protocols/Backends/AVCAudioBackend.hpp"
 #include "../Protocols/Backends/DiceAudioBackend.hpp"
+#include "../Protocols/Backends/MotuAudioBackend.hpp"
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 
 #include "../../Logging/Logging.hpp"
@@ -86,6 +87,7 @@ private:
     std::atomic<bool> teardownRequested_{false};
     AudioDuplexCoordinator duplexCoordinator_;
     DiceAudioBackend dice_;
+    MotuAudioBackend motu_;
     AVCAudioBackend avc_;
 
     IOLock* lock_{nullptr};

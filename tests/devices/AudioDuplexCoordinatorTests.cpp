@@ -204,8 +204,11 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
         uint32_t am824Slots = 0, uint32_t streamChannels = 0,
-        bool trustConfiguredStride = false) noexcept override {
+        bool trustConfiguredStride = false, uint32_t motuPcmChunks = 0,
+        ASFW::Encoding::Motu::MotuPortMap motuPorts = {}) noexcept override {
         log_.Add("host.prepare_receive");
+        lastReceiveMotuPcmChunks = motuPcmChunks;
+        lastReceiveMotuPorts = motuPorts;
         lastReceiveChannel = channel;
         lastReceiveBindingSource = bindingSource;
         lastReceiveWireFormat = wireFormat;
@@ -230,10 +233,13 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
         uint32_t streamChannels,
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0,
-        bool trustConfiguredStride = false) noexcept override {
+        uint32_t am824Slots = 0, bool trustConfiguredStride = false,
+        uint32_t motuPcmChunks = 0,
+        ASFW::Encoding::Motu::MotuPortMap motuPorts = {}) noexcept override {
         (void)trustConfiguredStride;
+        (void)motuPorts;
         log_.Add("host.prepare_receive_stream");
+        lastSecondaryReceiveMotuPcmChunks = motuPcmChunks;
         lastSecondaryReceiveIndex = streamIndex;
         lastSecondaryReceiveChannel = channel;
         lastSecondaryReceiveOffset = channelOffset;
@@ -309,6 +315,8 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     uint32_t lastReceiveAm824Slots{0};
     uint32_t lastReceiveStreamChannels{0};
     bool lastReceiveTrustConfiguredStride{false};
+    uint32_t lastReceiveMotuPcmChunks{0};
+    ASFW::Encoding::Motu::MotuPortMap lastReceiveMotuPorts{};
     uint8_t lastTransmitChannel{0};
     uint8_t lastTransmitSourceId{0};
     uint32_t lastTransmitMode{0};
@@ -328,6 +336,7 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     uint8_t lastSecondaryReceiveChannel{0};
     uint32_t lastSecondaryReceiveOffset{0};
     uint32_t lastSecondaryReceiveChannels{0};
+    uint32_t lastSecondaryReceiveMotuPcmChunks{0};
     ASFW::Audio::Runtime::IDirectAudioBindingSource* lastSecondaryReceiveBindingSource{nullptr};
     uint32_t lastSecondaryTransmitIndex{0};
     uint8_t lastSecondaryTransmitChannel{0};

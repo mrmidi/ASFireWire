@@ -11,6 +11,7 @@
 #include "Fireworks/FireworksProtocol.hpp"
 #include "BeBoB/Phase88Protocol.hpp"
 #include "BeBoB/GenericBeBoBProtocol.hpp"
+#include "MOTU/MotuV2Protocol.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Scheduling/ITimerScheduler.hpp"
 
@@ -25,12 +26,31 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
     const Discovery::DeviceRouteToken& route,
     IRM::IRMClient* irmClient,
     CMP::CMPClient* cmpClient,
-    Scheduling::ITimerScheduler* timerScheduler
+    Scheduling::ITimerScheduler* timerScheduler,
+    UnitIdentity unit
 ) {
     if (!route) {
         return nullptr;
     }
     const uint16_t nodeId = route.nodeId;
+
+    // MOTU first: it is the one family that model_id cannot discriminate (the root
+    // directory publishes model_id 0), so it is matched on the unit directory instead.
+    if (DeviceProfiles::Audio::Motu::LookupAudioProfile(
+            DeviceProfiles::DeviceProfileQuery{.vendorId = vendorId,
+                                               .modelId = modelId,
+                                               .unitSpecId = unit.specId,
+                                               .unitSwVersion = unit.swVersion})
+            .has_value()) {
+        ASFW_LOG(Audio,
+                 "Creating MotuV2Protocol vendor=0x%06x version=0x%06x node=0x%04x",
+                 vendorId, unit.swVersion, nodeId);
+        // The IRM client must reach the protocol: the coordinator allocates iso channels
+        // through IDuplexDeviceControl::GetIRMClient() before programming the device.
+        return std::make_unique<Motu::MotuV2Protocol>(busOps, busInfo, routeRegistry, route,
+                                                      unit.swVersion, irmClient);
+    }
+
     if (vendorId == kFocusriteVendorId) {
         if (modelId == kSPro24DspModelId) {
             ASFW_LOG(DICE, "Creating SPro24DspProtocol for vendor=0x%06x model=0x%06x node=0x%04x",

@@ -3,6 +3,7 @@
 #include "../DirectInputWriter.hpp"
 #include "DirectRxTypes.hpp"
 #include "../../../Wire/AMDTP/AmdtpTypes.hpp"
+#include "../../../Wire/MOTU/MotuPortLayout.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -17,7 +18,12 @@ struct RxAudioPacketProcessorResult final {
     uint16_t receiveCycleTimestamp{0};
     uint16_t syt{0xFFFF};
     uint8_t fdf{0};
+    /// What the CIP header claimed, always — some devices lie here, which is exactly
+    /// what makes it worth reporting separately from the stride we trusted.
     uint8_t dbs{0};
+    /// The block stride the decode actually used, in quadlets. Equals `dbs` unless a
+    /// wrong-DBS quirk or a non-quadlet block layout overrode it.
+    uint32_t strideQuadlets{0};
     uint8_t dbc{0};
 };
 
@@ -44,7 +50,14 @@ public:
                                                              ASFW::Encoding::AudioWireFormat format,
                                                              uint32_t channelOffset = 0,
                                                              bool publishTimeline = true,
-                                                             bool trustConfiguredStride = false) noexcept;
+                                                             bool trustConfiguredStride = false,
+                                                             // MOTU only: PCM chunks this
+                                                             // direction carries per data
+                                                             // block. Ignored by the
+                                                             // quadlet-slot formats, whose
+                                                             // unit count is am824Slots.
+                                                             uint32_t motuPcmChunks = 0,
+                                                             ::ASFW::Encoding::Motu::MotuPortMap motuPorts = {}) noexcept;
 
 private:
     DirectInputWriter& writer_;

@@ -117,6 +117,20 @@ inline constexpr uint32_t kStudioLive1642ModelId = 0x000010;
 inline constexpr uint32_t kStudioLive2442ModelId = 0x000012;
 inline constexpr uint32_t kStudioLive3242ModelId = 0x000014;
 
+// ---- MOTU (vendor-specific register protocol) ----
+// MOTU does not use model_id: the root directory publishes model_id 0 and the model is
+// identified by Unit_Sw_Version, with Unit_Spec_Id equal to the OUI. Version values from
+// Linux sound/firewire/motu/motu.c:162-181. Only the 828mk2 is hardware-verified here
+// (config ROM captured 2026-07-26: vendor 0x0001f2, spec 0x0001f2, version 0x000003);
+// the protocol-v2 siblings are recognized by name but not audio-enabled until their
+// chunk layouts are confirmed against real hardware.
+inline constexpr uint32_t kMotuVendorId          = 0x0001f2;
+inline constexpr uint32_t kMotu828mk2SwVersion   = 0x000003;
+inline constexpr uint32_t kMotu896hdSwVersion    = 0x000005;
+inline constexpr uint32_t kMotuTravelerSwVersion = 0x000009;
+inline constexpr uint32_t kMotuUltraliteSwVersion = 0x00000d;
+inline constexpr uint32_t kMotu8preSwVersion     = 0x00000f;
+
 // ---- Display names ----
 inline constexpr const char* kFocusriteVendorName     = "Focusrite";
 inline constexpr const char* kSPro40ModelName         = "Saffire Pro 40";
@@ -156,5 +170,11 @@ inline constexpr const char* kStudioLive1602ModelName = "StudioLive 16.0.2";
 inline constexpr const char* kStudioLive1642ModelName = "StudioLive 16.4.2";
 inline constexpr const char* kStudioLive2442ModelName = "StudioLive 24.4.2";
 inline constexpr const char* kStudioLive3242ModelName = "StudioLive 32.4.2";
+inline constexpr const char* kMotuVendorName          = "MOTU";
+inline constexpr const char* kMotu828mk2ModelName     = "828mkII";
+inline constexpr const char* kMotu896hdModelName      = "896HD";
+inline constexpr const char* kMotuTravelerModelName   = "Traveler";
+inline constexpr const char* kMotuUltraliteModelName  = "UltraLite";
+inline constexpr const char* kMotu8preModelName       = "8pre";
 
 } // namespace ASFW::DeviceProfiles::Audio
