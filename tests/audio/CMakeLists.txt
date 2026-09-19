@@ -234,11 +234,6 @@ add_audio_test(AudioEndpointRuntimeTests
 
 
 
-# Audio Profile Registry Tests
-add_audio_test(AudioProfileRegistryTests
-    AudioProfileRegistryTests.cpp
-)
-
 # Device-vs-profile stream geometry resolution (header-only, pure).
 add_audio_test(StreamGeometryResolverTests
     StreamGeometryResolverTests.cpp

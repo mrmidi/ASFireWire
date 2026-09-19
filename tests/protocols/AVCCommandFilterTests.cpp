@@ -224,3 +224,18 @@ TEST(AVCCommandFilterTests, CareMaskSupportsPartialBytes) {
     }
     EXPECT_FALSE(FrameIsPermitted(table, Frame({0x00, 0x10, 0xB8})));
 }
+
+TEST(AVCCommandFilterTests, BlockAllRefusesEveryFrame) {
+    const auto table = PermittedFramesFor(AvcCommandFilterId::BlockAll);
+    EXPECT_FALSE(table.empty());
+    // Refuses probe frames
+    for (const auto direction : {SignalFormatPlugDirection::Input,
+                                 SignalFormatPlugDirection::Output}) {
+        const auto built = BuildSignalFormatProbe(direction, 0);
+        EXPECT_FALSE(FrameIsPermitted(table, built));
+    }
+    // Refuses arbitrary command frames
+    EXPECT_FALSE(FrameIsPermitted(table, Frame({0x01, 0xFF, 0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF})));
+    EXPECT_FALSE(FrameIsPermitted(table, Frame({0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00,
+                                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})));
+}

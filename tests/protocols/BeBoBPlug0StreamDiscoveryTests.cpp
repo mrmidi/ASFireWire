@@ -3,14 +3,11 @@
 #include <gtest/gtest.h>
 
 #include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
-
-#include <optional>
-#include <utility>
-#include <vector>
+#include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
+#include "Discovery/DiscoveryTypes.hpp"
 
 namespace {
 
-using ASFW::DeviceProfiles::Audio::BeBoB::IsBeBoBDevice;
 using ASFW::Audio::BeBoB::ParseStreamFormation;
 using ASFW::Audio::BeBoB::ParseExtendedStreamFormatListResponse;
 using ASFW::Audio::BeBoB::ParseExtendedStreamFormatSingleResponse;
@@ -63,9 +60,21 @@ private:
 };
 
 TEST(BridgeCoReadOnlyProbeTests, MatchesOnlyExactPhase88Identity) {
-    EXPECT_TRUE(IsBeBoBDevice(0x000aac, 0x000003));
-    EXPECT_FALSE(IsBeBoBDevice(0x000aac, 0x000004));
-    EXPECT_FALSE(IsBeBoBDevice(0x000a92, 0x000003));
+    auto isBeBoB = [](uint32_t vendor, uint32_t model) {
+        ASFW::Discovery::DeviceIdentityEvidence evidence{};
+        evidence.rootVendorId = vendor;
+        evidence.rootModelId = model;
+        evidence.units.push_back(ASFW::Discovery::UnitIdentityEvidence{
+            .unitDirectoryOffset = 0x400,
+            .specifierId = 0x00A02D,
+            .version = 0x010001,
+        });
+        const auto res = ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(evidence);
+        return res.has_value() && res->family == ASFW::DeviceProfiles::Audio::AudioFamilyProviderId::BeBoB;
+    };
+    EXPECT_TRUE(isBeBoB(0x000aac, 0x000003));
+    EXPECT_FALSE(isBeBoB(0x000aac, 0x000004));
+    EXPECT_FALSE(isBeBoB(0x000a92, 0x000003));
 }
 
 TEST(BridgeCoReadOnlyProbeTests, BuildsLinuxGenericUnitPlugInfoBeforeBridgeCoExtensions) {

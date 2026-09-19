@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <limits>
 #include "../Logging/Logging.hpp"
-#include "../DeviceProfiles/Audio/AudioProfileRegistry.hpp"
+#include "../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 namespace ASFW::Discovery {
 
@@ -73,13 +73,10 @@ void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
     PopulateIdentityEvidence(device, rom);
 
     // ---- Flat compatibility shim, seeded from the evidence above ----
-    // These are the RESOLVED identity, not the evidence. UpsertFromROM calls
-    // MaybeInferKnownIdentityFromGuid immediately after this, which may rewrite
-    // vendorId/modelId from GUID bits when the ROM did not surface usable ids —
-    // so for a Focusrite Saffire Pro 40 TCD3070 the flat modelId ends up 0x0000de
-    // while identity.rootModelId still reports whatever the ROM actually said.
-    // That divergence is the point: `identity` is what the device claimed,
-    // vendorId/modelId are what we concluded. Do not "fix" them to agree.
+    // These flat fields are legacy convenience mirrors of the raw ROM evidence
+    // kept for non-catalog consumers and logging. Identity resolution and variant
+    // determination (including GUID quirks such as Focusrite Saffire Pro 40 TCD3070)
+    // are owned exclusively by AudioDeviceCatalog::Resolve() using device.identity.
     device.vendorId = device.identity.rootVendorId.value_or(0);
     device.modelId = device.identity.rootModelId.value_or(0);
 
@@ -99,41 +96,6 @@ void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
 
     device.vendorName = rom.vendorName;
     device.modelName = rom.modelName;
-}
-
-void MaybeInferKnownIdentityFromGuid(DeviceRecord& device, Guid64 guid) {
-    const DeviceProfiles::DeviceProfileQuery query{
-        .guid = guid,
-        .vendorId = device.vendorId,
-        .modelId = device.modelId,
-        .unitSpecId = device.unitSpecId.value_or(0U),
-        .unitSwVersion = device.unitSwVersion.value_or(0U)};
-
-    const auto identity = DeviceProfiles::Audio::AudioProfileRegistry::LookupIdentity(query);
-    if (!identity.has_value()) {
-        return;
-    }
-
-    // A GUID-based match refines the vendor/model identity when the Config ROM did not
-    // surface usable IDs (e.g. Focusrite DICE boards encode the model in the GUID). A
-    // direct vendor/model match leaves the IDs unchanged.
-    if (identity->vendorId != device.vendorId || identity->modelId != device.modelId) {
-        const uint32_t prevVendorId = device.vendorId;
-        const uint32_t prevModelId = device.modelId;
-        device.vendorId = identity->vendorId;
-        device.modelId = identity->modelId;
-        ASFW_LOG(Discovery,
-                 "Inferred known device identity from GUID=0x%016llx: vendor 0x%06x->0x%06x model "
-                 "0x%06x->0x%06x",
-                 guid, prevVendorId, device.vendorId, prevModelId, device.modelId);
-    }
-
-    if (identity->vendorName) {
-        device.vendorName = identity->vendorName;
-    }
-    if (identity->modelName) {
-        device.modelName = identity->modelName;
-    }
 }
 
 const char* DeviceKindString(DeviceKind kind) noexcept {
@@ -199,33 +161,49 @@ DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolic
     }
     device.guid = guid;
     PopulateDeviceIdentity(device, rom);
-    MaybeInferKnownIdentityFromGuid(device, guid);
 
-    // Known device profiles can choose their integration mode:
-    // - kHardcodedNub: vendor-specific audio backend (DICE/TCAT, no AV/C).
-    // - kAVCDriven: AV/C discovery drives audio topology; vendor protocol is for extra controls only.
-    const auto audioProfile = DeviceProfiles::Audio::AudioProfileRegistry::LookupBestAudioProfile(
-        DeviceProfiles::DeviceProfileQuery{.vendorId = device.vendorId, .modelId = device.modelId});
-    const auto integrationMode = audioProfile.has_value()
-                                     ? audioProfile->mode
-                                     : DeviceProfiles::Audio::AudioIntegrationMode::kNone;
-
-    if (integrationMode != DeviceProfiles::Audio::AudioIntegrationMode::kNone) {
-        ASFW_LOG(Discovery,
-                 "Known device profile available for vendor=0x%06x model=0x%06x integration=%u",
-                 device.vendorId,
-                 device.modelId,
-                 static_cast<unsigned>(integrationMode));
-        if (integrationMode == DeviceProfiles::Audio::AudioIntegrationMode::kHardcodedNub) {
+    // Ask the unified AudioDeviceCatalog for resolution (identity enrichment and candidacy).
+    const auto endpointPlan =
+        DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(device.identity);
+    if (endpointPlan.has_value()) {
+        device.quarantineReason = QuarantineReason::None;
+        if (device.vendorName.empty() && !endpointPlan->vendorName.empty()) {
+            device.vendorName = endpointPlan->vendorName;
+        }
+        if (!endpointPlan->modelName.empty()) {
+            device.modelName = endpointPlan->modelName;
+        }
+        if (endpointPlan->family == DeviceProfiles::Audio::AudioFamilyProviderId::DICE ||
+            endpointPlan->family == DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister) {
             device.kind = DeviceKind::VendorSpecificAudio;
             device.isAudioCandidate = true;
         } else {
             device.kind = ClassifyDevice(rom);
             device.isAudioCandidate = IsAudioCandidate(rom);
         }
+        ASFW_LOG(Discovery,
+                 "Catalog resolved plan for GUID=0x%016llx: family=%u support=%u builder=%u candidate=%d",
+                 guid,
+                 static_cast<unsigned>(endpointPlan->family),
+                 static_cast<unsigned>(endpointPlan->support),
+                 static_cast<unsigned>(endpointPlan->profileBuilder),
+                 device.isAudioCandidate);
     } else {
         device.kind = ClassifyDevice(rom);
-        device.isAudioCandidate = IsAudioCandidate(rom);
+        if (endpointPlan.error() ==
+            DeviceProfiles::Audio::CatalogResolutionError::HazardousIdentity) {
+            device.isAudioCandidate = false;
+            device.quarantineReason = QuarantineReason::HazardousNoProbe;
+            ASFW_LOG(Discovery, "Device GUID=0x%016llx quarantined by catalog safety rule", guid);
+        } else if (endpointPlan.error() ==
+                   DeviceProfiles::Audio::CatalogResolutionError::AmbiguousIdentity) {
+            device.isAudioCandidate = false;
+            device.quarantineReason = QuarantineReason::AmbiguousIdentity;
+            ASFW_LOG(Discovery, "Device GUID=0x%016llx rejected due to ambiguous catalog identity", guid);
+        } else {
+            device.quarantineReason = QuarantineReason::None;
+            device.isAudioCandidate = IsAudioCandidate(rom);
+        }
     }
 
     // TODO: Generic AV/C devices should work purely via MusicSubunit discovery; vendor protocols are only for extra controls.
@@ -243,7 +221,11 @@ DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolic
     if (device.link.maxPayloadBytes > maxFromRec) {
         device.link.maxPayloadBytes = maxFromRec;
     }
-    device.state = LifeState::Identified;
+    if (device.quarantineReason != QuarantineReason::None) {
+        device.state = LifeState::Quarantined;
+    } else {
+        device.state = LifeState::Identified;
+    }
 
     if (operationalNodeId.has_value()) {
         GenNodeKey key = MakeKey(rom.gen, *operationalNodeId);
@@ -396,7 +378,7 @@ std::vector<DeviceRecord> DeviceRegistry::LiveDevices(Generation gen) const {
     
     for (const auto& entry : devicesByGuid_) {
         const auto& device = entry.second;
-        if (device.gen == gen && TryOperationalNodeId(device.nodeId).has_value()) {
+        if (device.gen == gen && HasLiveRoute(device)) {
             result.push_back(device);
         }
     }
@@ -468,6 +450,7 @@ DeviceInstanceId DeviceRegistry::AllocateDeviceInstanceIdLocked() noexcept {
 
 bool DeviceRegistry::HasLiveRoute(const DeviceRecord& device) noexcept {
     return device.state != LifeState::Lost && device.state != LifeState::Quarantined &&
+           device.quarantineReason == QuarantineReason::None &&
            TryOperationalNodeId(device.nodeId).has_value();
 }
 

@@ -306,7 +306,8 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     // wire ordering instead of letting generic AV/C discovery consume or race
     // its FCP route. Cross-validated: firewire/bebob/bebob.c:184-260 and
     // firewire/bebob/bebob_stream.c:908-940.
-    if (DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(device->GetVendorID(), device->GetModelID())) {
+    if (ProfileBuilderIdFor(device->GetIdentity()) ==
+        static_cast<uint32_t>(ASFW::DeviceProfiles::Audio::ProfileBuilderId::TerraTecPhase88)) {
         ASFW_LOG(AVC,
                  "AVCDiscovery: BeBoB device matched; bypassing generic UNIT_INFO/SUBUNIT_INFO GUID=0x%016llx",
                  guid);
@@ -1536,18 +1537,18 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
 }
 
 bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcept {
-    return device.GetVendorID() == ::ASFW::DeviceProfiles::Audio::kApogeeVendorId &&
-           device.GetModelID() == ::ASFW::DeviceProfiles::Audio::kApogeeDuetModelId;
+    return DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(device.GetIdentity()) ==
+           DeviceProfiles::Audio::ProfileBuilderId::ApogeeDuet;
 }
 
 bool AVCDiscovery::IsMackieOnyxIOxford(const Discovery::FWDevice& device) const noexcept {
-    return device.GetVendorID() == ::ASFW::DeviceProfiles::Audio::kMackieVendorId &&
-           device.GetModelID() == ::ASFW::DeviceProfiles::Audio::kOnyxIOxfwModelId;
+    return DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(device.GetIdentity()) ==
+           DeviceProfiles::Audio::ProfileBuilderId::MackieOnyxIOxfw;
 }
 
 bool AVCDiscovery::IsMackieOnyxFireworks(const Discovery::FWDevice& device) const noexcept {
-    return device.GetVendorID() == ::ASFW::DeviceProfiles::Audio::kMackieVendorId &&
-           device.GetModelID() == ::ASFW::DeviceProfiles::Audio::kOnyx400FModelId;
+    return DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(device.GetIdentity()) ==
+           DeviceProfiles::Audio::ProfileBuilderId::MackieOnyx400F;
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {

@@ -193,12 +193,18 @@ inline constexpr std::array kMAudioSpecialPermittedFrames{
                 {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0xFF}),
 };
 
+/// Dummy frame table for BlockAll: one row with length = 0.
+/// FrameMatches returns false when length == 0, so FrameIsPermitted evaluates to false for all frames.
+inline constexpr std::array<FCPPermittedFrame, 1> kBlockAllPermittedFrames{FCPPermittedFrame{}};
+
 /// Resolves a filter id to its table. `Unrestricted` yields an empty span.
 [[nodiscard]] constexpr std::span<const FCPPermittedFrame>
 PermittedFramesFor(Discovery::AvcCommandFilterId id) noexcept {
     switch (id) {
         case Discovery::AvcCommandFilterId::MAudioSpecialBeBoB:
             return kMAudioSpecialPermittedFrames;
+        case Discovery::AvcCommandFilterId::BlockAll:
+            return kBlockAllPermittedFrames;
         case Discovery::AvcCommandFilterId::Unrestricted:
             break;
     }

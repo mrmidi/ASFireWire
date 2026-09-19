@@ -53,6 +53,8 @@ Plugins/VersionGeneratorPlugin
 # LLM Tools
 
 .claude/
+.agents/
+skills-lock.json
 opencode.json
 
 # Xcode per-user state

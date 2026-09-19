@@ -252,6 +252,8 @@ enum class AvcCommandFilterId : uint8_t {
     /// M-Audio special firmware (FireWire 1814, ProjectMix I/O), which hangs on
     /// AV/C it does not implement.
     MAudioSpecialBeBoB,
+    /// Quarantined or hazardous device: block all AV/C commands.
+    BlockAll,
 };
 
 // Device record anchored to GUID (stable across bus resets)

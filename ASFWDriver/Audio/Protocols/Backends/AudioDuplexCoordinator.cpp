@@ -33,49 +33,12 @@ using ASFW::Audio::DICE::HasHostRestartState;
 using ASFW::Audio::DICE::HasRestartIntent;
 
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
-constexpr uint32_t kDuetFixedSampleRateHz = 48000U;
-// Onyx-i (Oxford run): the device's captured current rate, and the only rate the
-// host will ever ask this device for. EffectiveStartClockForProfile returns it
-// unconditionally, discarding the requested clock exactly as the Duet pin does,
-// and AVCDiscovery publishes sampleRates = {44100} so CoreAudio has nothing else
-// to select. It is a hard pin, not a default.
-//
-// (The 48 kHz support that made it a default was reverted in c0e5da6b, together
-// with the rate-list widening. Restoring either means undoing this pin as well.)
-constexpr uint32_t kOnyxIDefaultStartRateHz = 44100U;
-// Onyx 400F (Fireworks): the sole rate the static profile offers until the ADK
-// reconfig path supports rate changes (see FireworksProtocol::SupportedRates).
-// Field-verified 2026-09-13: without this pin a first-ever start asked for the
-// coordinator's 48 kHz fallback and the protocol refused it (kIOReturnUnsupported
-// at Prepare) before any EFC traffic.
-constexpr uint32_t kOnyx400FDefaultStartRateHz = 44100U;
-
-// The Duet format-control path is deliberately start-time only for now.  Do
-// not resurrect a rate retained in a restart session: the host geometry and
-// the device's unit-plug formation must enter the start transaction together
-// at the supported fixed rate.
 [[nodiscard]] AudioClockConfig EffectiveStartClockForProfile(
     const Discovery::DeviceRecord& record,
     const AudioClockConfig& requestedClock) noexcept {
-    if (record.vendorId == DeviceProfiles::Audio::kApogeeVendorId &&
-        record.modelId == DeviceProfiles::Audio::kApogeeDuetModelId) {
-        return AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz};
-    }
-    // Onyx-i: pinned again (defense in depth). A failed idle rate change leaves
-    // session.pendingClock behind (RequestClockConfig persists it before
-    // execution; the failure path does not scrub it), and a later start would
-    // otherwise consume the stale value and program the device away from the
-    // rate the host graph runs at. Field-verified on an 820i 2026-08-17.
-    // Remove together with the rate-list widening once the ADK reconfig path
-    // supports AV/C rate changes and the pending-clock hygiene is fixed.
-    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
-        record.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId) {
-        return AudioClockConfig{.sampleRateHz = kOnyxIDefaultStartRateHz};
-    }
-    // Onyx 400F: same single-rate policy as the Onyx-i for the same reason.
-    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
-        record.modelId == DeviceProfiles::Audio::kOnyx400FModelId) {
-        return AudioClockConfig{.sampleRateHz = kOnyx400FDefaultStartRateHz};
+    const auto traits = DeviceProfiles::Audio::AudioDeviceCatalog::StreamTraitsFor(record.identity);
+    if (traits.startRatePinHz != 0) {
+        return AudioClockConfig{.sampleRateHz = traits.startRatePinHz};
     }
     return requestedClock;
 }
@@ -83,16 +46,12 @@ constexpr uint32_t kOnyx400FDefaultStartRateHz = 44100U;
 // The coordinator's historical fallback for a start with no session clock is
 // 48 kHz. For a device whose current rate differs, that default would program
 // the wire away from the rate CoreAudio is running at on a first-ever start.
-// Resolve the default from the device instead; explicit user selections still
-// arrive via the session clocks and win at the call sites.
+// Resolve the default from the device traits instead; explicit user selections
+// still arrive via the session clocks and win at the call sites.
 [[nodiscard]] uint32_t DefaultStartRateForRecord(const Discovery::DeviceRecord& record) noexcept {
-    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
-        record.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId) {
-        return kOnyxIDefaultStartRateHz;
-    }
-    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
-        record.modelId == DeviceProfiles::Audio::kOnyx400FModelId) {
-        return kOnyx400FDefaultStartRateHz;
+    const auto traits = DeviceProfiles::Audio::AudioDeviceCatalog::StreamTraitsFor(record.identity);
+    if (traits.startRatePinHz != 0) {
+        return traits.startRatePinHz;
     }
     return 48000U;
 }

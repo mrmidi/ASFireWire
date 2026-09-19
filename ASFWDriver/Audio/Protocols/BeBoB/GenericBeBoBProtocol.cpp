@@ -8,7 +8,6 @@
 
 #include "GenericBeBoBProtocol.hpp"
 
-#include "../../../DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
 #include "../../../Logging/Logging.hpp"
 
 namespace ASFW::Audio::BeBoB {

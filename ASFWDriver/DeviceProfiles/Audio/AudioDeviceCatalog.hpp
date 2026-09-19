@@ -212,6 +212,10 @@ struct DeviceStreamTraits final {
     /// the Saffire Pro 24 DSP switches wire format with its configuration, so
     /// this cannot be a static property of the identity.
     bool rawPcm24In32WhenEightInNineSlots{false};
+
+    /// Fixed or default start sample rate in Hz (e.g. 48000 for Duet, 44100 for Onyx-i / Onyx 400F).
+    /// 0 means no pin (use standard 48 kHz default or requested session clock).
+    uint32_t startRatePinHz{0};
 };
 
 enum class SupportDisposition : uint8_t {
@@ -296,6 +300,7 @@ struct CandidateEndpointPlan final {
 
 struct StaticAudioEndpointPlan final {
     Discovery::UnitInstanceId unit{};
+    uint32_t unitVersion{0};
     std::optional<uint32_t> exactVariantId;
     AudioFamilyProviderId family{AudioFamilyProviderId::None};
     ProbePolicyId probePolicy{ProbePolicyId::None};
@@ -322,9 +327,31 @@ struct CatalogValidationIssue final {
 
 class AudioDeviceCatalog final {
 public:
+    /// Device-level resolution: checks safety rules, evaluates every unit directory in the
+    /// device's evidence, and applies deterministic multi-unit aggregation (curated wins over
+    /// generic fallback; conflicting curated definitions return AmbiguousIdentity).
+    [[nodiscard]] static std::expected<StaticAudioEndpointPlan, CatalogResolutionError>
+    Resolve(const Discovery::DeviceIdentityEvidence& device) noexcept;
+
+    [[nodiscard]] static std::expected<StaticAudioEndpointPlan, CatalogResolutionError>
+    Resolve(const Discovery::DeviceRecord& device) noexcept;
+
+    [[nodiscard]] static std::expected<StaticAudioEndpointPlan, CatalogResolutionError>
+    Resolve(const Discovery::DeviceIdentityEvidence& device,
+            const Discovery::UnitIdentityEvidence& unit,
+            Discovery::DeviceInstanceId instanceId = {}) noexcept;
+
     [[nodiscard]] static std::expected<StaticAudioEndpointPlan, CatalogResolutionError>
     Resolve(const Discovery::DeviceRecord& device,
             const Discovery::UnitIdentityEvidence& unit) noexcept;
+
+    [[nodiscard]] static std::expected<StaticAudioEndpointPlan, CatalogResolutionError>
+    ResolveWithDefinitions(const Discovery::DeviceIdentityEvidence& device,
+                           const Discovery::UnitIdentityEvidence& unit,
+                           std::span<const AudioDeviceDefinition> definitions,
+                           std::span<const AudioSafetyRule> safetyRules,
+                           bool allowGenericAvcFallback,
+                           Discovery::DeviceInstanceId instanceId = {}) noexcept;
 
     // Pure injection point used by host fixtures and future family-local
     // catalogs. Production callers use Resolve().
@@ -363,6 +390,8 @@ public:
     /// the device is at publication time.
     [[nodiscard]] static ProfileBuilderId
     ProfileBuilderFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
+
+    [[nodiscard]] static const char* MotuModelNameForSwVersion(uint32_t swVersion) noexcept;
 
     [[nodiscard]] static std::span<const AudioDeviceDefinition> Definitions() noexcept;
     [[nodiscard]] static std::span<const AudioSafetyRule> SafetyRules() noexcept;

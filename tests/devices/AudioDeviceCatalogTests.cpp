@@ -436,4 +436,157 @@ TEST(AudioDeviceCatalog, NothingIsQuarantinedOnThisBranch) {
               Discovery::AvcCommandFilterId::Unrestricted);
 }
 
+// ---------------------------------------------------------------------------
+// Stage 1: Resolution Invariants and Multi-Unit Aggregation
+// ---------------------------------------------------------------------------
+
+TEST(AudioDeviceCatalog, DeviceLevelResolvePrefersCuratedOverGenericFallback) {
+    // Device with two units: unit 0 is generic 1394TA AV/C, unit 1 is SPro24Dsp DICE
+    const auto device = MakeDevice(0x00130E'0400000000ULL, kFocusriteVendorId,
+                                   kSPro24DspModelId,
+                                   {{.offset = 4,
+                                     .specifierId = kTa1394AvcSpecifier,
+                                     .version = kTa1394AvcVersion},
+                                    {.offset = 8,
+                                     .specifierId = kFocusriteVendorId,
+                                     .version = kDiceInterfaceVersion}});
+
+    const auto plan = AudioDeviceCatalog::Resolve(device.identity);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(plan->family, AudioFamilyProviderId::DICE);
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::FocusriteSPro24Dsp);
+    EXPECT_EQ(plan->support, SupportDisposition::Supported);
+}
+
+TEST(AudioDeviceCatalog, DeviceLevelResolveFailsOnConflictingCuratedUnits) {
+    // Hypothetical device with two conflicting curated units
+    const auto device = MakeDevice(0x00130E'0400000000ULL, kFocusriteVendorId,
+                                   kSPro24DspModelId,
+                                   {{.offset = 4,
+                                     .specifierId = kFocusriteVendorId,
+                                     .version = kDiceInterfaceVersion},
+                                    {.offset = 8,
+                                     .specifierId = kTa1394AvcSpecifier,
+                                     .version = kTa1394AvcVersion}});
+
+    // Device with two conflicting curated units: unit 0 is 828mk2, unit 1 is UltraLite
+    Discovery::DeviceIdentityEvidence devEvidence{};
+    devEvidence.observedGuid = 0x0001F2'0400000000ULL;
+    devEvidence.nodeVendorOui = kMotuVendorId;
+    devEvidence.rootVendorId = kMotuVendorId;
+    devEvidence.rootModelId = 0U;
+    devEvidence.units.push_back(Discovery::UnitIdentityEvidence{
+        .unitDirectoryOffset = 4,
+        .specifierId = kMotuVendorId,
+        .version = kMotu828mk2SwVersion,
+    });
+    devEvidence.units.push_back(Discovery::UnitIdentityEvidence{
+        .unitDirectoryOffset = 8,
+        .specifierId = kMotuVendorId,
+        .version = kMotuUltraliteSwVersion,
+    });
+
+    const auto res = AudioDeviceCatalog::Resolve(devEvidence);
+    ASSERT_FALSE(res.has_value());
+    EXPECT_EQ(res.error(), CatalogResolutionError::AmbiguousIdentity);
+}
+
+TEST(AudioDeviceCatalog, ResolutionInvariantsDeriveFromUnifiedResolve) {
+    // Invariant: ProfileBuilderFor, StreamTraitsFor, and CommandFilterFor derive from Resolve(device)
+    const auto duet = MakeDevice(0x0003DB'0400000000ULL, kApogeeVendorId,
+                                 kApogeeDuetModelId,
+                                 {{.offset = 5,
+                                   .specifierId = kTa1394AvcSpecifier,
+                                   .version = kTa1394AvcVersion}});
+
+    const auto plan = AudioDeviceCatalog::Resolve(duet.identity);
+    ASSERT_TRUE(plan.has_value());
+
+    EXPECT_EQ(AudioDeviceCatalog::ProfileBuilderFor(duet.identity), plan->profileBuilder);
+    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(duet.identity).startRatePinHz,
+              plan->streamTraits.startRatePinHz);
+    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(duet.identity).startShape,
+              plan->streamTraits.startShape);
+
+    EXPECT_EQ(plan->streamTraits.startRatePinHz, 48000U);
+}
+
+TEST(AudioDeviceCatalog, StartRatePinHzIsAccurateForOnyxAndDuet) {
+    const auto onyx = MakeDevice(0x000FF2'0400000000ULL, kMackieVendorId,
+                                 kOnyxIOxfwModelId,
+                                 {{.offset = 5,
+                                   .specifierId = kTa1394AvcSpecifier,
+                                   .version = kTa1394AvcVersion}});
+    const auto onyxPlan = AudioDeviceCatalog::Resolve(onyx.identity);
+    ASSERT_TRUE(onyxPlan.has_value());
+    EXPECT_EQ(onyxPlan->streamTraits.startRatePinHz, 44100U);
+
+    const auto spro = MakeDevice(0x00130E'0400000000ULL, kFocusriteVendorId,
+                                 kSPro24DspModelId,
+                                 {{.offset = 5,
+                                   .specifierId = kFocusriteVendorId,
+                                   .version = kDiceInterfaceVersion}});
+    const auto sproPlan = AudioDeviceCatalog::Resolve(spro.identity);
+    ASSERT_TRUE(sproPlan.has_value());
+    EXPECT_EQ(sproPlan->streamTraits.startRatePinHz, 0U);
+}
+
+TEST(AudioDeviceCatalog, CommandFilterForNeverFallsBackToUnrestrictedOnHazardOrAmbiguity) {
+    // Ambiguous identity between two MOTU units -> BlockAll
+    Discovery::DeviceIdentityEvidence ambiguousMotu{};
+    ambiguousMotu.rootVendorId = kMotuVendorId;
+    ambiguousMotu.rootModelId = 0U;
+    ambiguousMotu.units.push_back(Discovery::UnitIdentityEvidence{
+        .unitDirectoryOffset = 4,
+        .specifierId = kMotuVendorId,
+        .version = kMotu828mk2SwVersion,
+    });
+    ambiguousMotu.units.push_back(Discovery::UnitIdentityEvidence{
+        .unitDirectoryOffset = 8,
+        .specifierId = kMotuVendorId,
+        .version = kMotuUltraliteSwVersion,
+    });
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(ambiguousMotu),
+              Discovery::AvcCommandFilterId::BlockAll);
+}
+
+TEST(AudioDeviceCatalog, StaticAudioEndpointPlanCarriesUnitVersion) {
+    const auto device = MakeDevice(0x00130E'0400000000ULL, kFocusriteVendorId,
+                                   kSPro24DspModelId,
+                                   {{.offset = 5,
+                                     .specifierId = kFocusriteVendorId,
+                                     .version = kDiceInterfaceVersion}});
+    const auto plan = AudioDeviceCatalog::Resolve(device.identity);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(plan->unitVersion, kDiceInterfaceVersion);
+}
+
+TEST(AudioDeviceCatalog, Preserves64BitDeviceInstanceIdAboveUint32Max) {
+    constexpr uint64_t kLargeInstanceId = 0x1'0000'0005ULL;
+    static_assert(kLargeInstanceId > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()));
+
+    auto device = MakeDevice(0x00130E'0400000000ULL, kFocusriteVendorId,
+                             kSPro24DspModelId,
+                             {{.offset = 5,
+                               .specifierId = kFocusriteVendorId,
+                               .version = kDiceInterfaceVersion}});
+    device.instanceId = Discovery::DeviceInstanceId{kLargeInstanceId};
+
+    // 1. DeviceRecord resolution
+    const auto planFromRecord = AudioDeviceCatalog::Resolve(device);
+    ASSERT_TRUE(planFromRecord.has_value());
+    EXPECT_EQ(planFromRecord->unit.device.value, kLargeInstanceId);
+
+    // 2. Per-unit resolution with DeviceRecord
+    const auto planPerUnitRecord = AudioDeviceCatalog::Resolve(device, device.identity.units.front());
+    ASSERT_TRUE(planPerUnitRecord.has_value());
+    EXPECT_EQ(planPerUnitRecord->unit.device.value, kLargeInstanceId);
+
+    // 3. Per-unit resolution with DeviceIdentityEvidence and explicit DeviceInstanceId
+    const auto planPerUnitEvidence = AudioDeviceCatalog::Resolve(
+        device.identity, device.identity.units.front(), Discovery::DeviceInstanceId{kLargeInstanceId});
+    ASSERT_TRUE(planPerUnitEvidence.has_value());
+    EXPECT_EQ(planPerUnitEvidence->unit.device.value, kLargeInstanceId);
+}
+
 } // namespace

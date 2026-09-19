@@ -3,189 +3,315 @@
 //
 // CatalogMatcherAgreementTests.cpp
 //
-// Before the catalog replaces the existing matchers, it has to be shown to
-// agree with them. Otherwise the collapse changes behaviour while claiming to
-// be a refactor, and the difference only shows up on hardware nobody has.
-//
-// This pins the catalog against AudioProfileRegistry -- the matcher that
-// decides, today, whether a device gets an audio nub at all. Both are pure, so
-// the whole cross-product of catalog rows is checkable here.
-//
-// The comparison is deliberately in one direction per property:
-//   * every catalog row the registry calls playable must be Supported
-//   * every Supported catalog row must be playable per the registry
-// A disagreement in either direction is a real defect in one of the two, and
-// which one it is depends on the device -- so the test names both values rather
-// than asserting a winner.
+// Concrete regression test tables verifying discovery, catalog resolution,
+// protocol choice, backend selection, and command filters across real-world
+// devices against explicit, expected historical decisions (non-tautological).
 
+#include "Audio/Protocols/DeviceProtocolChoice.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
-#include "DeviceProfiles/Audio/AudioProfileRegistry.hpp"
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
-#include <ios>
-#include <optional>
+#include <string>
+#include <vector>
 
 namespace {
 
+using namespace ASFW;
 using namespace ASFW::DeviceProfiles::Audio;
-using ASFW::DeviceProfiles::DeviceProfileQuery;
 
-// Reconstructs the scalar query the old matchers take from a catalog row's
-// clause. This is the flattening the catalog exists to end, so it is only valid
-// as a bridge for this comparison -- note what it cannot carry: a model id that
-// was published as 0 versus one never published at all.
-struct FlatQuery {
-    bool usable{false};
-    DeviceProfileQuery query{};
+constexpr uint64_t MakeFocusriteGuid(uint32_t modelField) {
+    return (static_cast<uint64_t>(kFocusriteVendorId) << 40U) |
+           (static_cast<uint64_t>(modelField & 0x3FU) << 22U);
+}
+
+struct DeviceTestCase {
+    const char* description{nullptr};
+    Discovery::DeviceIdentityEvidence evidence{};
+    SupportDisposition expectedSupport{SupportDisposition::Supported};
+    AudioFamilyProviderId expectedFamily{AudioFamilyProviderId::None};
+    ProfileBuilderId expectedProfileBuilder{ProfileBuilderId::None};
+    const char* expectedModelName{nullptr};
+    std::optional<Audio::AudioBackendKind> expectedBackend{Audio::AudioBackendKind::Avc};
+    Discovery::AvcCommandFilterId expectedFilter{Discovery::AvcCommandFilterId::Unrestricted};
+    uint32_t expectedStartRatePinHz{0};
+    ForcedStreamMode expectedForcedStreamMode{ForcedStreamMode::Unspecified};
+    StreamStartShape expectedStartShape{StreamStartShape::Default};
+    bool expectedCmpChoosesIsoChannel{false};
 };
 
-[[nodiscard]] FlatQuery FlattenFirstClause(const AudioDeviceDefinition& definition) {
-    if (definition.clauseCount == 0) {
-        return {};
+Discovery::DeviceIdentityEvidence MakeEvidence(
+    uint32_t rootVendorId,
+    uint32_t rootModelId,
+    std::optional<uint64_t> guid = std::nullopt,
+    std::optional<uint32_t> unitSpecId = std::nullopt,
+    std::optional<uint32_t> unitVersion = std::nullopt) {
+    Discovery::DeviceIdentityEvidence ev{};
+    ev.rootVendorId = rootVendorId;
+    ev.rootModelId = rootModelId;
+    if (guid.has_value()) {
+        ev.observedGuid = *guid;
     }
-    const auto& clause = definition.clauses[0];
-    if (!clause.rootVendorId.has_value() || !clause.rootModelId.has_value()) {
-        return {};
-    }
-    FlatQuery flat{};
-    flat.usable = true;
-    flat.query.vendorId = clause.rootVendorId->value;
-    flat.query.modelId = clause.rootModelId->value;
-    if (clause.unitSpecifierId.has_value()) {
-        flat.query.unitSpecId = clause.unitSpecifierId->value;
-    }
-    if (clause.unitVersion.has_value()) {
-        flat.query.unitSwVersion = clause.unitVersion->value;
-    }
-    // MOTU is matched from the unit directory: the old query carries the
-    // OUI in unitSpecId and the model in unitSwVersion, and the registry reads
-    // those rather than modelId.
-    if (definition.family == AudioFamilyProviderId::MotuRegister) {
-        flat.query.unitSpecId = kMotuVendorId;
-    }
-    return flat;
+    Discovery::UnitIdentityEvidence unit{};
+    unit.unitDirectoryOffset = 0x400;
+    unit.specifierId = unitSpecId;
+    unit.version = unitVersion;
+    ev.units.push_back(unit);
+    return ev;
 }
 
-[[nodiscard]] bool RegistrySaysPlayable(const DeviceProfileQuery& query) {
-    const auto hint = AudioProfileRegistry::LookupBestAudioProfile(query);
-    return hint.has_value() && hint->mode != AudioIntegrationMode::kNone;
+const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
+    static const std::vector<DeviceTestCase> kTable = {
+        // 1. Focusrite Saffire Pro 24 DSP
+        {
+            .description = "Focusrite Saffire Pro 24 DSP (DICE, supported)",
+            .evidence = MakeEvidence(kFocusriteVendorId, kSPro24DspModelId, std::nullopt,
+                                     std::nullopt, 0x000001),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::DICE,
+            .expectedProfileBuilder = ProfileBuilderId::FocusriteSPro24Dsp,
+            .expectedModelName = kSPro24DspModelName,
+            .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+        },
+        // 2. Focusrite Saffire Pro 40
+        {
+            .description = "Focusrite Saffire Pro 40 (DICE, supported)",
+            .evidence = MakeEvidence(kFocusriteVendorId, kSPro40ModelId, std::nullopt,
+                                     std::nullopt, 0x000001),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::DICE,
+            .expectedProfileBuilder = ProfileBuilderId::FocusriteSPro40,
+            .expectedModelName = kSPro40ModelName,
+            .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+        },
+        // 3. Focusrite Saffire Pro 40 (TCD3070 GUID quirk)
+        {
+            .description = "Focusrite Saffire Pro 40 TCD3070 (GUID quirk, recognized unsupported)",
+            .evidence = MakeEvidence(kFocusriteVendorId, 0,
+                                     MakeFocusriteGuid(kFocusriteGuidModelSPro40Tcd3070),
+                                     std::nullopt, 0x000001),
+            .expectedSupport = SupportDisposition::RecognizedUnsupported,
+            .expectedFamily = AudioFamilyProviderId::DICE,
+            .expectedProfileBuilder = ProfileBuilderId::None,
+            .expectedModelName = kSPro40Tcd3070ModelName,
+            .expectedBackend = std::nullopt, // unsupported DICE devices do not route to any backend
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+        },
+        // 4. Apogee Duet
+        {
+            .description = "Apogee Duet (OXFW, supported)",
+            .evidence = MakeEvidence(kApogeeVendorId, kApogeeDuetModelId, std::nullopt,
+                                     0x00A02D, 0x010001),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::OXFW,
+            .expectedProfileBuilder = ProfileBuilderId::ApogeeDuet,
+            .expectedModelName = kApogeeDuetModelName,
+            .expectedBackend = Audio::AudioBackendKind::Avc,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedStartRatePinHz = 48000U,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::ApogeeInterleaved,
+            .expectedCmpChoosesIsoChannel = true,
+        },
+        // 5. Mackie Onyx-i (Oxford run)
+        {
+            .description = "Mackie Onyx-i Oxford (OXFW, supported)",
+            .evidence = MakeEvidence(kMackieVendorId, kOnyxIOxfwModelId, std::nullopt,
+                                     0x00A02D, 0x010001),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::OXFW,
+            .expectedProfileBuilder = ProfileBuilderId::MackieOnyxIOxfw,
+            .expectedModelName = kOnyxIOxfwModelName,
+            .expectedBackend = Audio::AudioBackendKind::Avc,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedStartRatePinHz = 44100U,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::CmpReceiveThenTransmit,
+            .expectedCmpChoosesIsoChannel = true,
+        },
+        // 6. Mackie Onyx 400F (Echo Fireworks)
+        {
+            .description = "Mackie Onyx 400F (Fireworks, supported)",
+            .evidence = MakeEvidence(kMackieVendorId, kOnyx400FModelId, std::nullopt,
+                                     0x00A02D, 0x010000),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::Fireworks,
+            .expectedProfileBuilder = ProfileBuilderId::MackieOnyx400F,
+            .expectedModelName = kOnyx400FModelName,
+            .expectedBackend = Audio::AudioBackendKind::Avc,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedStartRatePinHz = 44100U,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::CmpReceiveThenTransmit,
+            .expectedCmpChoosesIsoChannel = true,
+        },
+        // 7. PreSonus StudioLive 16.0.2
+        {
+            .description = "PreSonus StudioLive 16.0.2 (DICE, supported)",
+            .evidence = MakeEvidence(kPreSonusVendorId, kStudioLive1602ModelId, std::nullopt,
+                                     std::nullopt, 0x000001),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::DICE,
+            .expectedProfileBuilder = ProfileBuilderId::PreSonusStudioLive1602,
+            .expectedModelName = kStudioLive1602ModelName,
+            .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+        },
+        // 8. PreSonus StudioLive 24.4.2
+        {
+            .description = "PreSonus StudioLive 24.4.2 (DICE, supported)",
+            .evidence = MakeEvidence(kPreSonusVendorId, kStudioLive2442ModelId, std::nullopt,
+                                     std::nullopt, 0x000001),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::DICE,
+            .expectedProfileBuilder = ProfileBuilderId::PreSonusStudioLive2442,
+            .expectedModelName = kStudioLive2442ModelName,
+            .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+        },
+        // 9. MOTU 828mk2
+        {
+            .description = "MOTU 828mk2 (MotuRegister, supported)",
+            .evidence = MakeEvidence(kMotuVendorId, 0, std::nullopt,
+                                     kMotuVendorId, kMotu828mk2SwVersion),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::MotuRegister,
+            .expectedProfileBuilder = ProfileBuilderId::Motu828mk2,
+            .expectedModelName = kMotu828mk2ModelName,
+            .expectedBackend = Audio::AudioBackendKind::MotuRegister,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+        },
+        // 10. MOTU UltraLite
+        {
+            .description = "MOTU UltraLite (MotuRegister, supported)",
+            .evidence = MakeEvidence(kMotuVendorId, 0, std::nullopt,
+                                     kMotuVendorId, kMotuUltraliteSwVersion),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::MotuRegister,
+            .expectedProfileBuilder = ProfileBuilderId::MotuUltralite,
+            .expectedModelName = kMotuUltraliteModelName,
+            .expectedBackend = Audio::AudioBackendKind::MotuRegister,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+        },
+        // 11. M-Audio FireWire 1814
+        {
+            .description = "M-Audio FireWire 1814 (BeBoB, filtered command set)",
+            .evidence = MakeEvidence(kMAudioVendorId, kMAudioFireWire1814ModelId, std::nullopt,
+                                     0x00A02D, std::nullopt),
+            .expectedSupport = SupportDisposition::RecognizedUnsupported,
+            .expectedFamily = AudioFamilyProviderId::BeBoB,
+            .expectedProfileBuilder = ProfileBuilderId::None,
+            .expectedModelName = kMAudioFireWire1814ModelName,
+            .expectedBackend = std::nullopt,
+            .expectedFilter = Discovery::AvcCommandFilterId::MAudioSpecialBeBoB,
+        },
+        // 12. M-Audio FireWire 1814 Bootloader
+        {
+            .description = "M-Audio FireWire 1814 Bootloader (persona)",
+            .evidence = MakeEvidence(kMAudioVendorId, kMAudioFireWire1814BootloaderModelId,
+                                     std::nullopt, std::nullopt, std::nullopt),
+            .expectedSupport = SupportDisposition::RecognizedUnsupported,
+            .expectedFamily = AudioFamilyProviderId::None,
+            .expectedProfileBuilder = ProfileBuilderId::None,
+            .expectedModelName = kMAudioFireWire1814BootloaderModelName,
+            .expectedBackend = std::nullopt,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+        },
+        // 13. Alesis MultiMix
+        {
+            .description = "Alesis MultiMix (DICE, supported)",
+            .evidence = MakeEvidence(kAlesisVendorId, kAlesisMultiMixModelId, std::nullopt,
+                                     std::nullopt, 0x000001),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::DICE,
+            .expectedProfileBuilder = ProfileBuilderId::AlesisMultiMix,
+            .expectedModelName = kAlesisMultiMixModelName,
+            .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+        },
+        // 14. Weiss INT202
+        {
+            .description = "Weiss INT202 (DICE, supported)",
+            .evidence = MakeEvidence(kWeissVendorId, kWeissInt202ModelId, std::nullopt,
+                                     std::nullopt, 0x000001),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::DICE,
+            .expectedProfileBuilder = ProfileBuilderId::WeissInt202,
+            .expectedModelName = kWeissInt202ModelName,
+            .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::TransmitFirst,
+        },
+        // 15. Generic 1394TA AV/C soundcard
+        {
+            .description = "Generic 1394TA AV/C audio unit (general fallback)",
+            .evidence = MakeEvidence(0x001234, 0x005678, std::nullopt,
+                                     0x00A02D, 0x010001),
+            .expectedSupport = SupportDisposition::GenericFallback,
+            .expectedFamily = AudioFamilyProviderId::GenericAvc,
+            .expectedProfileBuilder = ProfileBuilderId::GenericAvc,
+            .expectedModelName = "Generic AV/C Audio",
+            .expectedBackend = Audio::AudioBackendKind::Avc,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+        },
+    };
+    return kTable;
 }
 
-// ---------------------------------------------------------------------------
+TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
+    for (const auto& testCase : GetHistoricalRegressionTable()) {
+        SCOPED_TRACE(testCase.description);
 
-TEST(CatalogMatcherAgreement, TheCatalogAndTheProfileRegistryAgreeOnEveryRow) {
-    for (const auto& definition : AudioDeviceCatalog::Definitions()) {
-        const auto flat = FlattenFirstClause(definition);
-        if (!flat.usable) {
-            continue;  // no root vendor/model clause to flatten
+        // 1. Catalog Resolution
+        const auto plan = AudioDeviceCatalog::Resolve(testCase.evidence);
+        ASSERT_TRUE(plan.has_value()) << "Failed to resolve: " << testCase.description;
+        EXPECT_EQ(plan->support, testCase.expectedSupport);
+        EXPECT_EQ(plan->family, testCase.expectedFamily);
+        EXPECT_EQ(plan->profileBuilder, testCase.expectedProfileBuilder);
+        if (testCase.expectedModelName != nullptr) {
+            EXPECT_EQ(plan->modelName, testCase.expectedModelName);
         }
-        // The M-Audio rows exist for their probe bound, not for audio, and the
-        // old registry has no M-Audio provider at all. Nothing to compare.
-        if (flat.query.vendorId == kMAudioVendorId) {
-            continue;
+        EXPECT_EQ(plan->streamTraits.startRatePinHz, testCase.expectedStartRatePinHz);
+        EXPECT_EQ(plan->streamTraits.forcedStreamMode, testCase.expectedForcedStreamMode);
+        EXPECT_EQ(plan->streamTraits.startShape, testCase.expectedStartShape);
+        EXPECT_EQ(plan->streamTraits.cmpChoosesIsoChannel, testCase.expectedCmpChoosesIsoChannel);
+
+        // Build DeviceRecord to check protocol/backend choice
+        Discovery::DeviceRecord record{};
+        record.instanceId = Discovery::DeviceInstanceId{1};
+        record.guid = testCase.evidence.observedGuid != 0
+                          ? testCase.evidence.observedGuid
+                          : 0x0011223344556677ULL;
+        record.identity = testCase.evidence;
+
+        // 2. Protocol Choice
+        const auto protocolChoice = Audio::ChooseDeviceProtocol(record);
+        if (testCase.expectedProfileBuilder != ProfileBuilderId::None) {
+            ASSERT_TRUE(protocolChoice.has_value());
+            EXPECT_EQ(protocolChoice->builder, testCase.expectedProfileBuilder);
+            EXPECT_EQ(protocolChoice->unitDirectoryOffset, 0x400U);
+        } else {
+            EXPECT_FALSE(protocolChoice.has_value());
         }
 
-        const bool catalogSaysPlayable =
-            definition.support == SupportDisposition::Supported;
-        const bool registrySaysPlayable = RegistrySaysPlayable(flat.query);
+        // 3. Audio Backend Choice
+        const auto backend = Audio::ChooseAudioBackend(record);
+        EXPECT_EQ(backend, testCase.expectedBackend);
 
-        EXPECT_EQ(catalogSaysPlayable, registrySaysPlayable)
-            << "definition " << static_cast<uint32_t>(definition.id)
-            << " (vendor 0x" << std::hex << flat.query.vendorId
-            << " model 0x" << flat.query.modelId << std::dec << "): catalog says "
-            << (catalogSaysPlayable ? "Supported" : "not Supported")
-            << ", AudioProfileRegistry says "
-            << (registrySaysPlayable ? "playable" : "not playable");
+        // 4. Command Filter Choice
+        const auto filter = AudioDeviceCatalog::CommandFilterFor(testCase.evidence);
+        EXPECT_EQ(filter, testCase.expectedFilter);
     }
-}
-
-// AudioCoordinator picks a backend from AudioIntegrationMode: kHardcodedNub
-// means "a vendor protocol drives the nub" and routes to the DICE or MOTU
-// backend, anything else routes to AV/C. The catalog expresses the same thing
-// as AudioFamilyProviderId, so the two vocabularies have to line up exactly
-// before the gates can be rewritten in terms of the family.
-//
-// This asserts the mapping rather than assuming it, because the failure mode of
-// guessing wrong is a device silently routed to a backend that cannot drive it.
-TEST(CatalogMatcherAgreement, HardcodedNubIsExactlyTheDiceAndMotuFamilies) {
-    for (const auto& definition : AudioDeviceCatalog::Definitions()) {
-        if (definition.support != SupportDisposition::Supported) {
-            continue;
-        }
-        const auto flat = FlattenFirstClause(definition);
-        if (!flat.usable || flat.query.vendorId == kMAudioVendorId) {
-            continue;
-        }
-        const auto hint = AudioProfileRegistry::LookupBestAudioProfile(flat.query);
-        ASSERT_TRUE(hint.has_value())
-            << "definition " << static_cast<uint32_t>(definition.id);
-
-        const bool familyDrivesItsOwnNub =
-            definition.family == AudioFamilyProviderId::DICE ||
-            definition.family == AudioFamilyProviderId::MotuRegister;
-        const bool modeDrivesItsOwnNub =
-            hint->mode == AudioIntegrationMode::kHardcodedNub;
-
-        EXPECT_EQ(familyDrivesItsOwnNub, modeDrivesItsOwnNub)
-            << "definition " << static_cast<uint32_t>(definition.id)
-            << ": family says " << (familyDrivesItsOwnNub ? "own nub" : "AV/C driven")
-            << ", AudioIntegrationMode says "
-            << (modeDrivesItsOwnNub ? "kHardcodedNub" : "not kHardcodedNub");
-    }
-}
-
-// The registry resolves a display name for devices it will not play. Those are
-// exactly the rows the catalog carries as RecognizedUnsupported, and losing one
-// means a device that used to be named in diagnostics becomes an unknown.
-TEST(CatalogMatcherAgreement, EveryIdentityTheRegistryNamesHasACatalogRow) {
-    for (const auto& definition : AudioDeviceCatalog::Definitions()) {
-        const auto flat = FlattenFirstClause(definition);
-        if (!flat.usable || flat.query.vendorId == kMAudioVendorId) {
-            continue;
-        }
-        const auto identity = AudioProfileRegistry::LookupIdentity(flat.query);
-        if (!identity.has_value()) {
-            continue;
-        }
-        EXPECT_NE(definition.modelName, nullptr)
-            << "definition " << static_cast<uint32_t>(definition.id)
-            << " has no model name but the registry names it";
-    }
-}
-
-// Spot checks with the identities written out, so a reader can see what the
-// agreement actually covers rather than trusting the loop.
-TEST(CatalogMatcherAgreement, TheBenchDeviceAgreesOnBothSides) {
-    const DeviceProfileQuery pro24Dsp{.vendorId = kFocusriteVendorId,
-                                      .modelId = kSPro24DspModelId};
-    EXPECT_TRUE(RegistrySaysPlayable(pro24Dsp));
-
-    const auto definitions = AudioDeviceCatalog::Definitions();
-    const auto it = std::ranges::find_if(
-        definitions, [](const AudioDeviceDefinition& d) {
-            return d.id == DeviceDefinitionId::FocusriteSPro24Dsp;
-        });
-    ASSERT_NE(it, definitions.end());
-    EXPECT_EQ(it->support, SupportDisposition::Supported);
-}
-
-TEST(CatalogMatcherAgreement, TheTcd3070Pro40IsUnplayableOnBothSides) {
-    const DeviceProfileQuery tcd3070{.vendorId = kFocusriteVendorId,
-                                     .modelId = kSPro40Tcd3070ModelId};
-    EXPECT_FALSE(RegistrySaysPlayable(tcd3070))
-        << "the TCD3070 Pro 40 has no readable TCAT extension; playing it with a "
-           "sibling's geometry is the vendor-wide matching defect";
-
-    const auto definitions = AudioDeviceCatalog::Definitions();
-    const auto it = std::ranges::find_if(
-        definitions, [](const AudioDeviceDefinition& d) {
-            return d.id == DeviceDefinitionId::FocusriteSPro40Tcd3070;
-        });
-    ASSERT_NE(it, definitions.end());
-    EXPECT_NE(it->support, SupportDisposition::Supported);
 }
 
 } // namespace

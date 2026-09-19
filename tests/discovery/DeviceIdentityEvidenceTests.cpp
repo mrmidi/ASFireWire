@@ -8,6 +8,7 @@
 // These are not hypothetical shapes: MOTU publishes root model_id 0, and the TC
 // Applied Technologies devices publish more than one unit directory.
 
+#include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Discovery/DiscoveryTypes.hpp"
 
@@ -176,6 +177,123 @@ TEST(DeviceIdentityEvidence, ObservedGuidAndOuiComeFromTheBusInfoBlock) {
     EXPECT_EQ(record.ObservedGuid(), kGuid);
     // Top 24 bits of the GUID are the node vendor OUI.
     EXPECT_EQ(record.identity.nodeVendorOui, 0x0001F2U);
+}
+
+// ---------------------------------------------------------------------------
+// Quarantine and route liveliness lifecycle tests
+// ---------------------------------------------------------------------------
+
+TEST(DeviceIdentityEvidence, QuarantinedDeviceDoesNotExposeLiveRoute) {
+    DeviceRegistry registry{};
+    ConfigROM rom = MakeRom();
+    rom.nodeId = 2;
+    // Ambiguous curated units: one MOTU 828mk2, one MOTU UltraLite
+    rom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::VendorId, .value = ASFW::DeviceProfiles::Audio::kMotuVendorId});
+    rom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::ModelId, .value = 0});
+
+    UnitDirectory motu828{};
+    motu828.offsetQuadlets = 4;
+    motu828.unitSpecId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+    motu828.unitSwVersion = ASFW::DeviceProfiles::Audio::kMotu828mk2SwVersion;
+    rom.unitDirectories.push_back(motu828);
+
+    UnitDirectory motuUltralite{};
+    motuUltralite.offsetQuadlets = 8;
+    motuUltralite.unitSpecId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+    motuUltralite.unitSwVersion = ASFW::DeviceProfiles::Audio::kMotuUltraliteSwVersion;
+    rom.unitDirectories.push_back(motuUltralite);
+
+    const auto record = registry.UpsertFromROM(rom, LinkPolicy{});
+    EXPECT_EQ(record.state, ASFW::Discovery::LifeState::Quarantined);
+    EXPECT_EQ(record.quarantineReason, ASFW::Discovery::QuarantineReason::AmbiguousIdentity);
+    EXPECT_FALSE(record.isAudioCandidate);
+    EXPECT_FALSE(registry.CurrentRoute(record.guid).has_value());
+    EXPECT_TRUE(registry.LiveDevices(record.gen).empty());
+}
+
+TEST(DeviceIdentityEvidence, ReResolutionClearsQuarantineAndRestoresLiveRoute) {
+    DeviceRegistry registry{};
+    ConfigROM rejectedRom = MakeRom();
+    rejectedRom.nodeId = 2;
+    rejectedRom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::VendorId, .value = ASFW::DeviceProfiles::Audio::kMotuVendorId});
+    rejectedRom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::ModelId, .value = 0});
+
+    UnitDirectory u1{};
+    u1.offsetQuadlets = 4;
+    u1.unitSpecId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+    u1.unitSwVersion = ASFW::DeviceProfiles::Audio::kMotu828mk2SwVersion;
+    rejectedRom.unitDirectories.push_back(u1);
+
+    UnitDirectory u2{};
+    u2.offsetQuadlets = 8;
+    u2.unitSpecId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+    u2.unitSwVersion = ASFW::DeviceProfiles::Audio::kMotuUltraliteSwVersion;
+    rejectedRom.unitDirectories.push_back(u2);
+
+    const auto rejected = registry.UpsertFromROM(rejectedRom, LinkPolicy{});
+    ASSERT_EQ(rejected.state, ASFW::Discovery::LifeState::Quarantined);
+    ASSERT_EQ(rejected.quarantineReason, ASFW::Discovery::QuarantineReason::AmbiguousIdentity);
+    ASSERT_FALSE(registry.CurrentRoute(rejected.guid).has_value());
+
+    // Re-upsert with clean, single valid unit (same GUID)
+    ConfigROM validRom = MakeRom();
+    validRom.nodeId = 2;
+    validRom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::VendorId, .value = ASFW::DeviceProfiles::Audio::kMotuVendorId});
+    validRom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::ModelId, .value = 0});
+    UnitDirectory validUnit{};
+    validUnit.offsetQuadlets = 4;
+    validUnit.unitSpecId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+    validUnit.unitSwVersion = ASFW::DeviceProfiles::Audio::kMotu828mk2SwVersion;
+    validRom.unitDirectories.push_back(validUnit);
+
+    const auto valid = registry.UpsertFromROM(validRom, LinkPolicy{});
+    EXPECT_EQ(valid.state, ASFW::Discovery::LifeState::Identified);
+    EXPECT_EQ(valid.quarantineReason, ASFW::Discovery::QuarantineReason::None);
+    EXPECT_TRUE(valid.isAudioCandidate);
+    EXPECT_TRUE(registry.CurrentRoute(valid.guid).has_value());
+    EXPECT_EQ(registry.LiveDevices(valid.gen).size(), 1U);
+}
+
+TEST(DeviceIdentityEvidence, ValidToQuarantinedReResolutionDropsLiveRoute) {
+    DeviceRegistry registry{};
+    ConfigROM validRom = MakeRom();
+    validRom.nodeId = 2;
+    validRom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::VendorId, .value = ASFW::DeviceProfiles::Audio::kMotuVendorId});
+    validRom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::ModelId, .value = 0});
+    UnitDirectory validUnit{};
+    validUnit.offsetQuadlets = 4;
+    validUnit.unitSpecId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+    validUnit.unitSwVersion = ASFW::DeviceProfiles::Audio::kMotu828mk2SwVersion;
+    validRom.unitDirectories.push_back(validUnit);
+
+    const auto valid = registry.UpsertFromROM(validRom, LinkPolicy{});
+    ASSERT_EQ(valid.state, ASFW::Discovery::LifeState::Identified);
+    ASSERT_EQ(valid.quarantineReason, ASFW::Discovery::QuarantineReason::None);
+    ASSERT_TRUE(registry.CurrentRoute(valid.guid).has_value());
+
+    // Now subsequent scan returns conflicting/ambiguous evidence
+    ConfigROM rejectedRom = MakeRom();
+    rejectedRom.nodeId = 2;
+    rejectedRom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::VendorId, .value = ASFW::DeviceProfiles::Audio::kMotuVendorId});
+    rejectedRom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::ModelId, .value = 0});
+    UnitDirectory u1{};
+    u1.offsetQuadlets = 4;
+    u1.unitSpecId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+    u1.unitSwVersion = ASFW::DeviceProfiles::Audio::kMotu828mk2SwVersion;
+    rejectedRom.unitDirectories.push_back(u1);
+
+    UnitDirectory u2{};
+    u2.offsetQuadlets = 8;
+    u2.unitSpecId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+    u2.unitSwVersion = ASFW::DeviceProfiles::Audio::kMotuUltraliteSwVersion;
+    rejectedRom.unitDirectories.push_back(u2);
+
+    const auto rejected = registry.UpsertFromROM(rejectedRom, LinkPolicy{});
+    EXPECT_EQ(rejected.state, ASFW::Discovery::LifeState::Quarantined);
+    EXPECT_EQ(rejected.quarantineReason, ASFW::Discovery::QuarantineReason::AmbiguousIdentity);
+    EXPECT_FALSE(rejected.isAudioCandidate);
+    EXPECT_FALSE(registry.CurrentRoute(rejected.guid).has_value());
+    EXPECT_TRUE(registry.LiveDevices(rejected.gen).empty());
 }
 
 } // namespace

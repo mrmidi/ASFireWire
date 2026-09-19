@@ -258,7 +258,7 @@ add_device_test(AudioDeviceCatalogTests
 # replaces them, or the collapse is a behaviour change wearing a refactor's name.
 add_device_test(CatalogMatcherAgreementTests
     CatalogMatcherAgreementTests.cpp
-    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
 )
 
 # The pure half of DeviceProtocolFactory: which protocol an identity selects.
@@ -267,7 +267,6 @@ add_device_test(CatalogMatcherAgreementTests
 add_device_test(DeviceProtocolChoiceTests
     DeviceProtocolChoiceTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
-    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
 )
 
 # The catalog's stream traits. Proven against the matchers they replace in

@@ -232,7 +232,7 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
 
     const auto record = registry_.SnapshotByGuid(guid);
     if (!record.has_value()) {
-        return &avc_;
+        return nullptr;
     }
 
     // MOTU is the one family (vendor_id, model_id) cannot discriminate: the root
@@ -240,15 +240,19 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
     // Unit_Sw_Version. The catalog matches it from the unit directory, so this
     // no longer needs a MOTU special case of its own -- the family it resolves
     // to carries it.
-    switch (ChooseAudioBackend(*record)) {
+    const auto backendKind = ChooseAudioBackend(*record);
+    if (!backendKind.has_value()) {
+        return nullptr;
+    }
+    switch (*backendKind) {
         case AudioBackendKind::MotuRegister:
             return &motu_;
         case AudioBackendKind::Dice:
             return &dice_;
         case AudioBackendKind::Avc:
-            break;
+            return &avc_;
     }
-    return &avc_;
+    return nullptr;
 }
 
 IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {

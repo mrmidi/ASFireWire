@@ -50,17 +50,15 @@ ChooseDeviceProtocol(const Discovery::DeviceRecord& record) noexcept;
 /// a vendor protocol owns the nub (DICE or MOTU), or the AV/C stack does.
 /// Expressed here in terms of the catalog so there is one table behind it.
 ///
-/// Note that a *recognised but unplayable* device is Avc, not its family's
-/// backend — the old lookup returned kNone for those and they landed on AV/C,
-/// and routing them to a vendor backend that has no profile for them would be
-/// a change, not a cleanup.
+/// Rejection is represented explicitly: nullopt is returned when resolution
+/// fails, the device is quarantined, or the device is recognized unsupported.
 enum class AudioBackendKind : uint8_t {
     Avc = 0,
     Dice,
     MotuRegister,
 };
 
-[[nodiscard]] AudioBackendKind
+[[nodiscard]] std::optional<AudioBackendKind>
 ChooseAudioBackend(const Discovery::DeviceRecord& record) noexcept;
 
 } // namespace ASFW::Audio

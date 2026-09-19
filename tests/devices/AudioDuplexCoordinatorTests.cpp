@@ -6,7 +6,6 @@
 #include "Audio/Protocols/Backends/AudioDuplexCoordinator.hpp"
 #include "Audio/Protocols/DICE/Core/DICETypes.hpp"
 #include "Audio/Protocols/Duplex/IDuplexDeviceControl.hpp"
-#include "Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "Audio/Protocols/IDeviceProtocol.hpp"
 #include "Bus/IRM/IRMClient.hpp"
 #include "Discovery/DeviceRegistry.hpp"

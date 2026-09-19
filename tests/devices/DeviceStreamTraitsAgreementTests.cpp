@@ -16,7 +16,6 @@
 
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
-#include "DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
 #include "Discovery/DiscoveryTypes.hpp"
 
 #include <gtest/gtest.h>
@@ -193,13 +192,13 @@ TEST(DeviceStreamTraitsAgreement, CmpDrivenFamiliesCarryTheCmpStartShape) {
               StreamStartShape::ApogeeInterleaved);
 }
 
-// IsBeBoB is BeBoB::IsBeBoBDevice, which today contains only the PHASE 88. The
-// catalog must agree on that, or the BeBoB start ordering silently moves.
+// The PHASE 88 is the only supported BeBoB device with start shape today.
 TEST(DeviceStreamTraitsAgreement, TheOnlyBeBoBDeviceIsStillThePhase88) {
-    EXPECT_TRUE(BeBoB::IsBeBoBDevice(kTerraTecVendorId, kPhase88RackFwModelId));
+    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
+                  AvcIdentity(kTerraTecVendorId, kPhase88RackFwModelId)).startShape,
+              StreamStartShape::CmpReceiveThenTransmit);
     // The M-Audio personas are BeBoB by family but are not in the old list, so
     // they must not pick up a start shape either -- nothing starts them.
-    EXPECT_FALSE(BeBoB::IsBeBoBDevice(kMAudioVendorId, kMAudioFireWire1814ModelId));
     EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
                   AvcIdentity(kMAudioVendorId, kMAudioFireWire1814ModelId)).startShape,
               StreamStartShape::Default);

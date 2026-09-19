@@ -334,11 +334,9 @@ TEST(DeviceProtocolChoice, BackendRoutingMatchesWhatTheProfileRegistrySays) {
     }
 }
 
-// A recognised-but-unplayable DICE device routed to the DICE backend would be a
-// change, not a cleanup: the old lookup returned kNone for it and it landed on
-// AV/C, where it harmlessly does nothing. The DICE backend has no profile for
-// it and would have to invent one.
-TEST(DeviceProtocolChoice, ARecognisedButUnplayableDeviceStaysOnTheAvcBackend) {
+// A recognised-but-unplayable DICE device is rejected by ChooseAudioBackend
+// (returning nullopt), matching ChooseDeviceProtocol().
+TEST(DeviceProtocolChoice, ARecognisedButUnplayableDeviceReturnsNullopt) {
     using ASFW::Audio::AudioBackendKind;
     using ASFW::Audio::ChooseAudioBackend;
 
@@ -350,7 +348,7 @@ TEST(DeviceProtocolChoice, ARecognisedButUnplayableDeviceStaysOnTheAvcBackend) {
     };
     for (const auto& [vendorId, modelId] : unplayableDice) {
         EXPECT_EQ(ChooseAudioBackend(DiceDevice(vendorId, modelId)),
-                  AudioBackendKind::Avc)
+                  std::nullopt)
             << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
     }
 
@@ -360,18 +358,20 @@ TEST(DeviceProtocolChoice, ARecognisedButUnplayableDeviceStaysOnTheAvcBackend) {
                                        {{.offset = 5,
                                          .specifierId = kMotuVendorId,
                                          .version = version}});
-        EXPECT_EQ(ChooseAudioBackend(device), AudioBackendKind::Avc)
+        EXPECT_EQ(ChooseAudioBackend(device), std::nullopt)
             << "MOTU version 0x" << std::hex << version;
     }
 }
 
-TEST(DeviceProtocolChoice, AnUnknownDeviceRoutesToAvc) {
+TEST(DeviceProtocolChoice, AnUnknownDeviceRoutesToAvcOnlyIfGenericAvcUnitPresent) {
     using ASFW::Audio::AudioBackendKind;
     using ASFW::Audio::ChooseAudioBackend;
+    // An unknown device with 1394TA AV/C unit matches GenericAvc fallback
     EXPECT_EQ(ChooseAudioBackend(AvcDevice(0x00AABB, 0x000042)),
               AudioBackendKind::Avc);
+    // An unknown device without units returns nullopt (rejected)
     EXPECT_EQ(ChooseAudioBackend(MakeDevice(0x00AABB, 0x000042, {})),
-              AudioBackendKind::Avc);
+              std::nullopt);
 }
 
 // The #115 shape, asserted impossible: a row the catalog calls Supported that
