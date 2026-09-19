@@ -159,4 +159,79 @@ ResolveStreamGeometry(WireStreamGeometry deviceStated,
     return decision;
 }
 
+// ---------------------------------------------------------------------------
+// The resolved object (Stage 4): one per-direction, per-stream answer that
+// every consumer reads, instead of bandwidth reservation reading the device
+// and CIP framing reading the profile.
+//
+// NOT a forward port. The `midi` branch has no counterpart: its
+// AudioGeometry{Policy,Resolver,Report} trio resolves *timing* geometry --
+// frames-per-packet, safety offsets and reported latency as functions of
+// sample rate -- not the per-stream wire shape, and it predates the
+// device-vs-profile conflict settled here (which arrived with #129 on main).
+// Recorded so nobody goes looking for a midi reference that does not exist.
+//
+// Directions are named for the HOST, not the device, because DICE register
+// names invert: DICE TX is what the device transmits, i.e. host capture, and
+// DICE RX is host playback. Mixing those up is the standing trap in this area.
+// ---------------------------------------------------------------------------
+
+/// Must equal kMaxAudioStreamsPerDirection (Audio/Protocols/AudioTypes.hpp).
+/// Duplicated rather than included so this header stays a pure, plain-scalar
+/// unit the host suite can compile on its own; the backend static_asserts the
+/// two agree.
+inline constexpr uint32_t kMaxResolvedStreams = 4;
+
+struct ResolvedDirectionGeometry {
+    StreamCountDecision count{};
+    StreamGeometryDecision streams[kMaxResolvedStreams]{};
+
+    /// Sum of PCM channels across the streams this direction actually carries.
+    /// This is the number the HAL presents, and it is NOT streams[0] times the
+    /// stream count: the recorded Venice F24 carries 16 + 8, so a consumer that
+    /// reads stream 0 and multiplies gets 32 where the device means 24.
+    [[nodiscard]] constexpr uint32_t TotalPcmChannels() const noexcept {
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < count.count && i < kMaxResolvedStreams; ++i) {
+            total += streams[i].geometry.pcmChannels;
+        }
+        return total;
+    }
+
+    /// Index of the first stream whose two descriptions disagree, or
+    /// kMaxResolvedStreams when none do. Named so the refusal can say which.
+    [[nodiscard]] constexpr uint32_t FirstDisagreeingStream() const noexcept {
+        for (uint32_t i = 0; i < count.count && i < kMaxResolvedStreams; ++i) {
+            if (streams[i].disagrees) {
+                return i;
+            }
+        }
+        return kMaxResolvedStreams;
+    }
+
+    /// Every stream this direction carries is described and agreed. A direction
+    /// carrying zero streams is usable: half-duplex devices exist (Weiss is
+    /// TX-only), and refusing them here would be a regression.
+    [[nodiscard]] constexpr bool Usable() const noexcept {
+        if (count.disagrees) {
+            return false;
+        }
+        for (uint32_t i = 0; i < count.count && i < kMaxResolvedStreams; ++i) {
+            if (!streams[i].Usable()) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+struct ResolvedDeviceGeometry {
+    ResolvedDirectionGeometry capture{};   ///< device -> host (DICE TX)
+    ResolvedDirectionGeometry playback{};  ///< host -> device (DICE RX)
+
+    [[nodiscard]] constexpr bool Usable() const noexcept {
+        return capture.Usable() && playback.Usable();
+    }
+};
+
 } // namespace ASFW::Audio

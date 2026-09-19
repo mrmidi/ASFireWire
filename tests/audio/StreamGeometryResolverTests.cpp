@@ -12,6 +12,8 @@
 
 #include <gtest/gtest.h>
 
+#include <initializer_list>
+
 namespace {
 
 using ASFW::Audio::ResolveStreamCount;
@@ -169,3 +171,108 @@ TEST(StreamCountResolver, AProfileOverTheBoundIsClamped) {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// Resolved per-direction geometry (Stage 4)
+//
+// Built from the recorded register dumps in documentation/fixtures/DICE/, not
+// from any profile constant: asserting a profile against itself proves
+// nothing. Both devices are asymmetric per stream, which is what makes them
+// discriminating -- an F32 (16+16 both ways) would let a stream-0 reader pass.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using ASFW::Audio::ResolvedDirectionGeometry;
+using ASFW::Audio::ResolvedDeviceGeometry;
+using ASFW::Audio::kMaxResolvedStreams;
+
+// Build a direction from per-stream PCM counts, device-stated with no profile
+// opinion -- the shape the dumps describe.
+ResolvedDirectionGeometry DeviceStated(std::initializer_list<uint16_t> pcmPerStream) {
+    ResolvedDirectionGeometry dir{};
+    dir.count = ASFW::Audio::ResolveStreamCount(
+        static_cast<uint32_t>(pcmPerStream.size()), 0, kMaxResolvedStreams);
+    uint32_t i = 0;
+    for (const uint16_t pcm : pcmPerStream) {
+        dir.streams[i] = ASFW::Audio::ResolveStreamGeometry(
+            WireStreamGeometry{.pcmChannels = pcm, .am824Slots = pcm}, kNothing);
+        ++i;
+    }
+    return dir;
+}
+
+} // namespace
+
+// documentation/fixtures/DICE/midasF24.txt: TX [0]=16 [1]=8, RX [0]=16 [1]=8.
+TEST(ResolvedStreamGeometry, VeniceF24AggregateIsNotStreamZeroTimesCount) {
+    const auto capture = DeviceStated({16, 8});
+
+    EXPECT_EQ(capture.StreamCount(), 2u);
+    EXPECT_TRUE(capture.Usable());
+
+    // What the device means.
+    EXPECT_EQ(capture.TotalPcmChannels(), 24u);
+
+    // What AudioStreamProfile::TxChannelCount() computes today: stream 0 times
+    // the stream count. This is the Stage 4 defect, stated as an inequality so
+    // the test fails if the aggregate is ever derived that way again.
+    const uint32_t streamZeroTimesCount =
+        capture.streams[0].geometry.pcmChannels * capture.StreamCount();
+    EXPECT_EQ(streamZeroTimesCount, 32u);
+    EXPECT_NE(capture.TotalPcmChannels(), streamZeroTimesCount);
+}
+
+// documentation/fixtures/DICE/presonus2442.txt: TX 16+16 = 32, RX 16+10 = 26.
+TEST(ResolvedStreamGeometry, StudioLive2442DirectionsDoNotShareAShape) {
+    ResolvedDeviceGeometry resolved{};
+    resolved.capture = DeviceStated({16, 16});
+    resolved.playback = DeviceStated({16, 10});
+
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.capture.TotalPcmChannels(), 32u);
+    EXPECT_EQ(resolved.playback.TotalPcmChannels(), 26u);
+
+    // A consumer that resolves one direction and reuses it for the other is
+    // wrong by six channels on this device.
+    EXPECT_NE(resolved.capture.TotalPcmChannels(),
+              resolved.playback.TotalPcmChannels());
+}
+
+// An F32 is 16+16 both ways, so it cannot catch either defect above. Recorded
+// so the fixture choice is not mistaken for arbitrary.
+TEST(ResolvedStreamGeometry, VeniceF32WouldNotDiscriminate) {
+    const auto capture = DeviceStated({16, 16});
+    EXPECT_EQ(capture.TotalPcmChannels(),
+              capture.streams[0].geometry.pcmChannels * capture.StreamCount());
+}
+
+TEST(ResolvedStreamGeometry, DisagreementMakesTheDirectionUnusableAndNamesTheStream) {
+    ResolvedDirectionGeometry dir{};
+    dir.count = ASFW::Audio::ResolveStreamCount(2, 0, kMaxResolvedStreams);
+    dir.streams[0] = ASFW::Audio::ResolveStreamGeometry(
+        WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16},
+        WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16});
+    // Stream 1: the device says 8, the profile insists on 16.
+    dir.streams[1] = ASFW::Audio::ResolveStreamGeometry(
+        WireStreamGeometry{.pcmChannels = 8, .am824Slots = 8},
+        WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16});
+
+    EXPECT_FALSE(dir.Usable());
+    EXPECT_EQ(dir.FirstDisagreeingStream(), 1u);
+
+    ResolvedDeviceGeometry resolved{};
+    resolved.capture = dir;
+    EXPECT_FALSE(resolved.Usable());
+}
+
+// Weiss is TX-only: a direction carrying no streams must stay usable, or
+// half-duplex devices regress.
+TEST(ResolvedStreamGeometry, EmptyDirectionIsUsable) {
+    ResolvedDeviceGeometry resolved{};
+    resolved.capture = DeviceStated({16});
+    EXPECT_EQ(resolved.playback.StreamCount(), 0u);
+    EXPECT_TRUE(resolved.playback.Usable());
+    EXPECT_EQ(resolved.playback.TotalPcmChannels(), 0u);
+    EXPECT_TRUE(resolved.Usable());
+}
