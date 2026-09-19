@@ -309,3 +309,14 @@ add_device_test(BackendLifecycleRaceTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/WeissIntProfile.cpp"
 )
 
+# SelectProbeBootstrap mapping tests
+add_device_test(SelectProbeBootstrapTests
+    SelectProbeBootstrapTests.cpp
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+)
+
+# BeBoB capture channel map tests
+add_device_test(BeBoBCaptureChannelMapTests
+    BeBoBCaptureChannelMapTests.cpp
+)
+

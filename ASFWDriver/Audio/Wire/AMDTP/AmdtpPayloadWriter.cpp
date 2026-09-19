@@ -139,7 +139,8 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
             const uint32_t srcCh = srcOffset + ch;
             const float sample =
                 (srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
-            WriteBE32(dest + ch * kBytesPerSlot,
+            const uint32_t slot = txPolicy_.playbackChannelMap.SlotFor(ch);
+            WriteBE32(dest + slot * kBytesPerSlot,
                       PcmSlotCodec::EncodeFloat32(
                           sample, txPolicy_.hostToDevicePcmEncoding));
             if (sample != 0.0f) {

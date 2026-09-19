@@ -6,6 +6,7 @@
 #pragma once
 
 #include "IAudioDeviceProfile.hpp"
+#include "../../Wire/AMDTP/PcmSlotMap.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
 
 #include <cstdint>
@@ -40,6 +41,7 @@ struct AudioStreamTxPolicy final {
     bool emptyPacketsDuringIdle{false};
     /// MOTU only: chunk behind each host output channel. Empty encodes in wire order.
     Encoding::Motu::MotuPortMap motuPlaybackPorts{};
+    ::ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};
 };
 
 // ADK packet allocation and AMDTP encoding are shared by multiple protocol

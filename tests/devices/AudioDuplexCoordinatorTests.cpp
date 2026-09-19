@@ -204,7 +204,8 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
         uint32_t am824Slots = 0, uint32_t streamChannels = 0,
         bool trustConfiguredStride = false, uint32_t motuPcmChunks = 0,
-        ASFW::Encoding::Motu::MotuPortMap motuPorts = {}) noexcept override {
+        ASFW::Encoding::Motu::MotuPortMap motuPorts = {},
+        const ASFW::AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap = {}) noexcept override {
         log_.Add("host.prepare_receive");
         lastReceiveMotuPcmChunks = motuPcmChunks;
         lastReceiveMotuPorts = motuPorts;
@@ -214,6 +215,7 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         lastReceiveAm824Slots = am824Slots;
         lastReceiveStreamChannels = streamChannels;
         lastReceiveTrustConfiguredStride = trustConfiguredStride;
+        lastReceiveCaptureChannelMap = captureChannelMap;
         ++prepareReceiveCalls;
         return prepareReceiveStatus;
     }
@@ -234,7 +236,8 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
         uint32_t am824Slots = 0, bool trustConfiguredStride = false,
         uint32_t motuPcmChunks = 0,
-        ASFW::Encoding::Motu::MotuPortMap motuPorts = {}) noexcept override {
+        ASFW::Encoding::Motu::MotuPortMap motuPorts = {},
+        const ASFW::AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap = {}) noexcept override {
         (void)trustConfiguredStride;
         (void)motuPorts;
         log_.Add("host.prepare_receive_stream");
@@ -244,6 +247,7 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         lastSecondaryReceiveOffset = channelOffset;
         lastSecondaryReceiveChannels = streamChannels;
         lastSecondaryReceiveBindingSource = bindingSource;
+        lastSecondaryReceiveCaptureChannelMap = captureChannelMap;
         (void)wireFormat;
         (void)am824Slots;
         ++prepareReceiveStreamCalls;
@@ -314,8 +318,10 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     uint32_t lastReceiveAm824Slots{0};
     uint32_t lastReceiveStreamChannels{0};
     bool lastReceiveTrustConfiguredStride{false};
+    ASFW::AudioEngine::Direct::Rx::RxCaptureChannelMap lastReceiveCaptureChannelMap{};
     uint32_t lastReceiveMotuPcmChunks{0};
     ASFW::Encoding::Motu::MotuPortMap lastReceiveMotuPorts{};
+    ASFW::AudioEngine::Direct::Rx::RxCaptureChannelMap lastSecondaryReceiveCaptureChannelMap{};
     uint8_t lastTransmitChannel{0};
     uint8_t lastTransmitSourceId{0};
     uint32_t lastTransmitMode{0};

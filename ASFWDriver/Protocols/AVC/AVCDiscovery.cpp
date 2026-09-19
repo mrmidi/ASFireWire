@@ -9,7 +9,6 @@
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Audio/Model/ASFWAudioDevice.hpp"
-#include "../../Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "../../Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "../../Audio/Protocols/Oxford/OxfwStreamFormats.hpp"

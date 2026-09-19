@@ -11,7 +11,9 @@
 #include "../DeviceProtocolChoice.hpp"
 #include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
+#include "../../Wire/AMDTP/PcmSlotMap.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
+#include "../../Engine/Direct/Rx/RxCaptureChannelMap.hpp"
 #include "../AudioTypes.hpp"
 #include "../IDeviceProtocol.hpp"
 
@@ -97,6 +99,8 @@ struct DuplexStreamProfile {
     Encoding::Motu::MotuPortMap captureMotuPorts{};
     DuplexStartOrderRecipe startOrder{};
     DuplexStopOrderRecipe stopOrder{};
+    AudioEngine::Direct::Rx::RxCaptureChannelMap captureChannelMap{};
+    Wire::PcmSlotMap playbackChannelMap{};
 };
 
 // The coordinator deliberately delegates all device identity checks and stream

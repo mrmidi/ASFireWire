@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PcmSlotMap.hpp"
+
 #include <cstdint>
 
 namespace ASFW::Protocols::Audio::AMDTP {
@@ -67,6 +69,9 @@ struct AmdtpTxPolicy final {
     /// devices count the end, and Linux sets CIP_DBC_IS_END_EVENT on every MOTU transmit
     /// stream for it (amdtp-motu.c:465, applied at amdtp-stream.c:1040-1046).
     bool dbcIsEndEvent{false};
+
+    /// Logical host PCM channel -> AM824 slot mapping.
+    ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};
 };
 
 struct HostAudioBufferView final {

@@ -265,21 +265,10 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
         IOLockUnlock(lock_);
     }
 
-    auto* backend = BackendForGuid(guid);
-    if (!backend) {
-        if (setActive && lock_) {
-            IOLockLock(lock_);
-            if (activeGuid_ == guid) activeGuid_ = 0;
-            IOLockUnlock(lock_);
-        }
-        return kIOReturnNotReady;
-    }
-
-    const IOReturn kr = backend->StartStreaming(guid);
+    const IOReturn kr = duplexCoordinator_.StartStreaming(guid);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: StartStreaming failed backend=%{public}s GUID=0x%016llx kr=0x%x",
-                       backend->Name(),
+                       "AudioCoordinator: StartStreaming failed GUID=0x%016llx kr=0x%x",
                        guid,
                        kr);
         if (setActive && lock_) {
@@ -291,8 +280,7 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
     }
 
     ASFW_LOG(Audio,
-             "AudioCoordinator: StartStreaming ok backend=%{public}s GUID=0x%016llx",
-             backend->Name(),
+             "AudioCoordinator: StartStreaming ok GUID=0x%016llx",
              guid);
     return kIOReturnSuccess;
 }
@@ -318,14 +306,10 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
         IOLockUnlock(lock_);
     }
 
-    auto* backend = BackendForGuid(guid);
-    if (!backend) return kIOReturnNotReady;
-
-    const IOReturn kr = backend->StopStreaming(guid);
+    const IOReturn kr = duplexCoordinator_.StopStreaming(guid);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: StopStreaming failed backend=%{public}s GUID=0x%016llx kr=0x%x",
-                       backend->Name(),
+                       "AudioCoordinator: StopStreaming failed GUID=0x%016llx kr=0x%x",
                        guid,
                        kr);
         return kr;
@@ -338,8 +322,7 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
     }
 
     ASFW_LOG(Audio,
-             "AudioCoordinator: StopStreaming ok backend=%{public}s GUID=0x%016llx",
-             backend->Name(),
+             "AudioCoordinator: StopStreaming ok GUID=0x%016llx",
              guid);
     return kIOReturnSuccess;
 }
@@ -369,16 +352,12 @@ IOReturn AudioCoordinator::RequestClockConfig(
     const auto record = registry_.SnapshotByGuid(guid);
     if (!record.has_value()) {
         ASFW_LOG_WARNING(Audio,
-                         "AudioCoordinator: RequestDiceClockConfig no registry record for GUID=0x%016llx (device not registered yet?)",
+                         "AudioCoordinator: RequestClockConfig no registry record for GUID=0x%016llx (device not registered yet?)",
                          guid);
         return kIOReturnNotReady;
     }
 
-    if (ChooseAudioBackend(*record) != AudioBackendKind::Dice) {
-        return kIOReturnUnsupported;
-    }
-
-    const IOReturn kr = dice_.RequestClockConfig(guid, desiredClock, reason);
+    const IOReturn kr = duplexCoordinator_.RequestClockConfig(guid, desiredClock, reason);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
                        "AudioCoordinator: RequestClockConfig failed GUID=0x%016llx kr=0x%x",

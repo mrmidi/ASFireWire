@@ -13,7 +13,9 @@
 #include <vector>
 
 #if !defined(ASFW_HOST_TEST)
-#include "../Protocols/DeviceProtocolFactory.hpp"
+#include "../Protocols/FamilyProtocolConstruction.hpp"
+#include "../Protocols/DeviceProtocolChoice.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Protocols/Ports/FireWireBusPort.hpp"
 #endif
 
@@ -155,7 +157,7 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     // clause" check below is therefore about a state that is now a compile
     // error -- kept only as a runtime witness for a device whose catalog row
     // says Supported while its units resolve to nothing at all.
-    auto created = DeviceProtocolFactory::Create(
+    auto created = CreateFamilyDeviceProtocol(
         record, *busOps, *busInfo, routeRegistry, *route,
         irmClient, cmpClient_, timerScheduler_);
     if (!created) {

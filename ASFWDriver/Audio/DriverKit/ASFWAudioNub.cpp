@@ -18,7 +18,6 @@
 #include "../Core/AudioCoordinator.hpp"
 #include "../Protocols/AVCStartReadiness.hpp"
 #include "../Protocols/DeviceProtocolChoice.hpp"
-#include "../Protocols/DeviceProtocolFactory.hpp"
 #include "../Protocols/DICE/Core/DICETypes.hpp"
 #include "../Protocols/Duplex/DuplexControlTypes.hpp"
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"

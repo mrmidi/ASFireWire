@@ -15,7 +15,6 @@
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 
 #include "../../Logging/Logging.hpp"
-#include "../Protocols/DeviceProtocolFactory.hpp"
 
 #include "../../Discovery/IDeviceManager.hpp"
 
@@ -26,6 +25,10 @@
 #include <unordered_set>
 
 class IOService;
+
+namespace ASFW::CMP {
+class CMPClient;
+}
 
 namespace ASFW::Audio {
 

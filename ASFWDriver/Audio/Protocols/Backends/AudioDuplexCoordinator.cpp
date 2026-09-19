@@ -1162,7 +1162,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                                               masterCapture.am824Slots, masterCapture.pcmChannels,
                                               streamProfile.captureTrustConfiguredStride,
                                               streamProfile.captureMotuPcmChunks,
-                                              streamProfile.captureMotuPorts);
+                                              streamProfile.captureMotuPorts,
+                                              streamProfile.captureChannelMap);
             if (prepareReceiveStatus != kIOReturnSuccess) {
                 return rollbackToFailure(prepareReceiveStatus,
                                          DuplexRestartPhase::kStartingHostReceive,
@@ -1186,7 +1187,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                     captureStream.pcmChannelOffset, captureStream.pcmChannels,
                     streamProfile.captureWireFormat, captureStream.am824Slots,
                     streamProfile.captureTrustConfiguredStride,
-                    streamProfile.captureMotuPcmChunks, streamProfile.captureMotuPorts);
+                    streamProfile.captureMotuPcmChunks, streamProfile.captureMotuPorts,
+                    streamProfile.captureChannelMap);
                 if (status != kIOReturnSuccess) {
                     return rollbackToFailure(status, DuplexRestartPhase::kStartingHostReceive,
                                              DuplexRestartFailureCause::kStartReceive);

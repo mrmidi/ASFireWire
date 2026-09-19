@@ -41,6 +41,7 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         uint32_t motuPcmChunks{0};
         /// MOTU only: chunk behind each host input channel; empty decodes in wire order.
         ::ASFW::Encoding::Motu::MotuPortMap motuPorts{};
+        RxCaptureChannelMap captureChannelMap{};
     };
 
     using TimingLossCallback = std::function<void()>;

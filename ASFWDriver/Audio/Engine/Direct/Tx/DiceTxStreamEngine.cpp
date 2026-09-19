@@ -219,6 +219,7 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     policy.dbcIsEndEvent =
         streamPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV2;
     policy.clearPayloadBeforeExposure = true;
+    policy.playbackChannelMap = streamPolicy.playbackChannelMap;
     return policy;
 }
 
