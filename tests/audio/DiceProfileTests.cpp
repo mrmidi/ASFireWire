@@ -26,7 +26,45 @@ namespace {
 using namespace ASFW::Isoch::Audio;
 using namespace ASFW::Isoch::Audio::DICE;
 
-TEST(DiceProfileTests, ResolvesFocusriteSaffireProfileByVendor) {
+// The base Saffire profile used to match the Focusrite OUI alone, so every
+// other Focusrite DICE part inherited its 8-in/16-out geometry. Three devices
+// were affected, and the TCD3070 Pro 40 is the one that proves the rule cannot
+// be relaxed again: it is a different chip with no TCAT protocol extension, so
+// its geometry is not readable from the device at all (Linux hardcodes it,
+// dice-focusrite.c:8-22, and Focusrite's own kext has no entry for it).
+TEST(DiceProfileTests, FocusriteSiblingsDoNotInheritTheSaffireProfile) {
+    constexpr uint32_t kFocusriteVendorId = 0x00130E;
+    constexpr uint32_t kSPro40Tcd3070ModelId = 0x0000de;
+    constexpr uint32_t kLiquidS56ModelId = 0x000006;
+    constexpr uint32_t kSPro26ModelId = 0x000012;
+
+    for (const uint32_t modelId :
+         {kSPro40Tcd3070ModelId, kLiquidS56ModelId, kSPro26ModelId}) {
+        const auto* profile =
+            AudioProfileRegistry::FindProfile(kFocusriteVendorId, modelId, 0);
+        ASSERT_NE(profile, nullptr) << "model 0x" << std::hex << modelId;
+        EXPECT_STRNE(profile->Name(), "Focusrite Saffire (DICE)")
+            << "model 0x" << std::hex << modelId
+            << " inherited a sibling's geometry through vendor-wide matching";
+        EXPECT_STRNE(profile->Name(), "Focusrite Saffire Pro 40")
+            << "model 0x" << std::hex << modelId;
+    }
+}
+
+// The three models the base profile does serve.
+TEST(DiceProfileTests, TheSaffireProfileStillServesItsOwnModels) {
+    constexpr uint32_t kFocusriteVendorId = 0x00130E;
+    for (const uint32_t modelId : {0x000009U /*Pro 14*/, 0x000007U /*Pro 24*/,
+                                   0x000008U /*Pro 24 DSP*/}) {
+        const auto* profile =
+            AudioProfileRegistry::FindProfile(kFocusriteVendorId, modelId, 0);
+        ASSERT_NE(profile, nullptr) << "model 0x" << std::hex << modelId;
+        EXPECT_STREQ(profile->Name(), "Focusrite Saffire (DICE)")
+            << "model 0x" << std::hex << modelId;
+    }
+}
+
+TEST(DiceProfileTests, ResolvesFocusriteSaffireProfileByVendorAndModel) {
     const uint32_t kFocusriteVendorId = 0x00130E;
     const auto* profile = AudioProfileRegistry::FindProfile(kFocusriteVendorId, 0x000007, 0x123456789ULL);
 
