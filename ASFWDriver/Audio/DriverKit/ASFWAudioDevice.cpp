@@ -197,6 +197,18 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 return;
             }
             if (resolvedPlaybackStreams == 0) {
+                if (ivars.device.resolvedGeometryRequired) {
+                    // The publisher resolved geometry and said so, but none
+                    // arrived. Falling back to the profile here would silently
+                    // reinstate the exact mismatch the resolution removed -- a
+                    // Venice F24 framed as an F32 -- so this is a transport
+                    // fault, not a device without geometry.
+                    ASFW_LOG(Audio,
+                             "ASFWAudioDevice: StartIO failed - device requires resolved "
+                             "playback geometry but none crossed the nub");
+                    kr = failStart(kIOReturnNotFound, "MissingResolvedGeometry");
+                    return;
+                }
                 ASFW_LOG(Audio,
                          "ASFWAudioDevice: StartIO has no resolved playback geometry; framing "
                          "from profile constants (streams=%u) - correct only if every stream "

@@ -36,6 +36,20 @@ public:
     /// Return the nub pointer if present (not retained). Valid only while published.
     [[nodiscard]] ASFWAudioNub* GetNub(uint64_t guid) const noexcept;
 
+    /// Re-publish properties onto a nub that already exists.
+    ///
+    /// EnsureNub is create-once, so a device re-resolved after recovery or a
+    /// configuration change would otherwise keep serving whatever geometry it
+    /// was first published with. That is safe only while the geometry cannot
+    /// change underneath a live nub; this is what makes it safe when it can.
+    ///
+    /// Returns false when there is no nub for the GUID, or when the properties
+    /// could not be built -- in which case the nub keeps its previous ones,
+    /// because a half-applied description is worse than a stale one.
+    [[nodiscard]] bool RefreshNubProperties(uint64_t guid,
+                                            const Model::ASFWAudioDevice& config,
+                                            const char* sourceTag) noexcept;
+
     /// Return the GUID if exactly one nub is published (debug/bring-up helper).
     [[nodiscard]] std::optional<uint64_t> GetSingleGuid() const noexcept;
 

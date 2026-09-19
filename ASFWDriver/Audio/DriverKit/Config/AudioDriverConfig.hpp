@@ -79,6 +79,11 @@ struct ParsedAudioDriverConfig {
     uint32_t playbackStreamCount{0};
     ParsedWireStream captureStreams[kMaxConfiguredStreams]{};
     uint32_t captureStreamCount{0};
+    /// The publisher resolved geometry and the profile's constants must NOT be
+    /// used instead. With this set and a zero stream count, the arrays were
+    /// lost in transit and starting would silently reinstate the mismatch the
+    /// resolution removed -- so it must fail instead.
+    bool resolvedGeometryRequired{false};
 
     uint32_t boolControlCount{0};
     BoolControlDescriptor boolControls[kMaxBoolControls]{};

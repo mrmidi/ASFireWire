@@ -68,6 +68,11 @@ struct ASFWAudioDevice {
     std::vector<ASFWAudioWireStream> playbackStreams{};  // host -> device (DICE RX)
     std::vector<ASFWAudioWireStream> captureStreams{};   // device -> host (DICE TX)
 
+    /// The audio side must use the resolved geometry above and must NOT fall
+    /// back to profile constants. Set by families that always resolve before
+    /// publishing (DICE); see PropertyKeys::kResolvedGeometryRequired.
+    bool resolvedGeometryRequired{false};
+
     // Populate properties consumed by ASFWAudioDriver.
     // Returns false only if required objects could not be created.
     bool PopulateNubProperties(OSDictionary* properties) const {
@@ -149,24 +154,35 @@ struct ASFWAudioDevice {
         // Resolved per-stream geometry. This is what lets the audio side frame
         // packets from what the device reported instead of from a compiled-in
         // constant, so it is the one property an asymmetric device cannot work
-        // without.
-        PublishWireStreams(properties, PropertyKeys::kPlaybackStreams, playbackStreams);
-        PublishWireStreams(properties, PropertyKeys::kCaptureStreams, captureStreams);
+        // without -- hence a serialization failure fails the whole publication
+        // rather than quietly producing a device missing its geometry.
+        if (!PublishWireStreams(properties, PropertyKeys::kPlaybackStreams, playbackStreams) ||
+            !PublishWireStreams(properties, PropertyKeys::kCaptureStreams, captureStreams)) {
+            return false;
+        }
+        if (resolvedGeometryRequired) {
+            auto required = OSSharedPtr(OSNumber::withNumber(uint64_t{1}, 32), OSNoRetain);
+            if (!required) {
+                return false;
+            }
+            properties->setObject(PropertyKeys::kResolvedGeometryRequired, required.get());
+        }
 
         return true;
     }
 
 private:
-    static void PublishWireStreams(OSDictionary* properties,
-                                   const char* key,
-                                   const std::vector<ASFWAudioWireStream>& streams) {
+    [[nodiscard]] static bool PublishWireStreams(
+        OSDictionary* properties,
+        const char* key,
+        const std::vector<ASFWAudioWireStream>& streams) {
         if (streams.empty()) {
-            return;
+            return true;
         }
         auto array = OSSharedPtr(
             OSArray::withCapacity(static_cast<uint32_t>(streams.size())), OSNoRetain);
         if (!array) {
-            return;
+            return false;
         }
         for (const auto& stream : streams) {
             auto entry = OSSharedPtr(OSDictionary::withCapacity(4), OSNoRetain);
@@ -175,10 +191,10 @@ private:
             auto midi = OSSharedPtr(OSNumber::withNumber(stream.midiPorts, 32), OSNoRetain);
             auto offset = OSSharedPtr(OSNumber::withNumber(stream.channelOffset, 32), OSNoRetain);
             if (!entry || !pcm || !slots || !midi || !offset) {
-                // Publishing a partial array would describe a device that does
-                // not exist, which is worse than publishing none: the audio
-                // side falls back to its profile and says so.
-                return;
+                // A partial array describes a device that does not exist. The
+                // caller turns this into a failed publication rather than a
+                // published device with the wrong shape.
+                return false;
             }
             entry->setObject(PropertyKeys::kStreamPcmChannels, pcm.get());
             entry->setObject(PropertyKeys::kStreamAm824Slots, slots.get());
@@ -187,6 +203,7 @@ private:
             array->setObject(entry.get());
         }
         properties->setObject(key, array.get());
+        return true;
     }
 
     static void PublishChannelNames(OSDictionary* properties,

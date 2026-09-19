@@ -66,6 +66,8 @@ struct AudioDriverDeviceState {
     ASFW::Isoch::Audio::ParsedWireStream
         captureStreams[ASFW::Isoch::Audio::kMaxConfiguredStreams]{};
     uint32_t captureStreamCount{0};
+    /// Falling back to profile constants is forbidden for this device.
+    bool resolvedGeometryRequired{false};
 };
 
 class DextTxExecutionTimeline final {

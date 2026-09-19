@@ -349,13 +349,22 @@ stream. A device carrying more is refused — at publication in
 `EnsureNubForGuid` and again at `StartIO`, so it never appears as an endpoint
 that fails every start. Nothing in the fixtures exceeds two.
 
-**Refresh is not implemented.** `AudioNubPublisher::EnsureNub` is create-once,
-so a later resolution does not reach a live nub. That is safe only because
-`DICETcatProtocol::ResetRuntimeCaps` is reachable only from `Shutdown`, so the
-geometry cannot change while a nub exists. **The two are coupled:** whichever
-change makes caps re-readable (step D) must also make the nub refreshable, or
-the audio side keeps framing from a description the device has stopped
-honouring. Recorded at both sites in code.
+**Refresh.** `EnsureNub` is create-once, so `AudioNubPublisher::RefreshNubProperties`
+re-publishes onto a live nub and `EnsureNubForGuid` calls it whenever one
+already exists — after recovery, or any re-resolution. Properties are built as a
+unit and applied only on success, so a failed refresh leaves the previous
+description rather than a half-updated one. This no longer depends on the
+geometry being unable to change underneath a live nub.
+
+**Loss across the boundary cannot be silent.** `ASFWResolvedGeometryRequired`
+says the audio side must not substitute profile constants. Serialization failure
+fails the whole publication (`PopulateNubProperties` returns false, and
+`AudioNubPublisher` discards the nub); an array arriving malformed or
+over-length is rejected whole rather than truncated; and `StartIO` fails with
+`MissingResolvedGeometry` if the flag is set but no streams arrived. Without
+that flag, losing the arrays would be indistinguishable from a family that never
+had geometry to publish, and the fallback would quietly reinstate the F24
+mismatch.
 
 ### 3.5 The `sourceChannelOffset` landmine
 

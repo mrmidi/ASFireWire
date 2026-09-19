@@ -252,6 +252,11 @@ add_audio_test(ResolvedStreamConfigTests
     ResolvedStreamConfigTests.cpp
 )
 
+add_audio_test(NubGeometryRoundTripTests
+    NubGeometryRoundTripTests.cpp
+    ${CMAKE_SOURCE_DIR}/../ASFWDriver/Audio/DriverKit/Config/AudioDriverConfig.cpp
+)
+
 # DICE Profile Registry and Quirks Tests
 add_audio_test(DiceProfileTests
     DiceProfileTests.cpp

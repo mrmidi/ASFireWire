@@ -56,6 +56,17 @@ inline constexpr const char* kStreamMidiPorts = "MIDI";
 /// stream's own count).
 inline constexpr const char* kStreamChannelOffset = "Offset";
 
+/// Set when the publisher resolved per-stream geometry from the device and the
+/// audio side must NOT fall back to its profile's constants.
+///
+/// Without this, losing the stream arrays — a failed allocation, a property the
+/// nub rejected — is indistinguishable from a family that never had geometry to
+/// publish, and the fallback silently reinstates exactly the mismatch the
+/// resolution removed. A DICE device that reaches publication has always
+/// resolved its geometry, so absence of the arrays alongside this flag is a
+/// transport fault and must fail rather than degrade.
+inline constexpr const char* kResolvedGeometryRequired = "ASFWResolvedGeometryRequired";
+
 inline constexpr const char* kBoolClassId = "ClassID";
 inline constexpr const char* kBoolScope = "Scope";
 inline constexpr const char* kBoolElement = "Element";

@@ -1018,6 +1018,11 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                 };
             publishStreams(resolvedGeometry.playback, dev.playbackStreams);
             publishStreams(resolvedGeometry.capture, dev.captureStreams);
+            // A DICE device only reaches here with a usable verdict, so the
+            // audio side must never substitute profile constants for what the
+            // device reported. If the arrays go missing in transit, starting
+            // fails rather than degrading.
+            dev.resolvedGeometryRequired = !dev.playbackStreams.empty();
 
             // Refuse a device this build cannot actually arm, at publication
             // rather than at the first StartIO. ASFWAudioDevice allocates one
@@ -1096,6 +1101,21 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         }
         if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
             endpoint->UpdateConfig(dev);
+        }
+        // EnsureNub is create-once, so a device re-resolved after recovery or a
+        // configuration change would keep serving the geometry it was first
+        // published with. Refresh an existing nub explicitly rather than
+        // relying on the geometry never changing underneath it -- that
+        // invariant holds today only because runtime caps are re-read solely on
+        // Shutdown, and it should not be load-bearing for correctness.
+        if (publisher_.GetNub(guid) != nullptr) {
+            if (!publisher_.RefreshNubProperties(guid, dev, "DICE")) {
+                ASFW_LOG_ERROR(Audio,
+                               "DiceAudioBackend::EnsureNubForGuid: could not refresh the live "
+                               "nub for GUID=0x%016llx; it keeps its previous geometry",
+                               guid);
+            }
+            return;
         }
         (void)publisher_.EnsureNub(guid, dev, "DICE");
     };

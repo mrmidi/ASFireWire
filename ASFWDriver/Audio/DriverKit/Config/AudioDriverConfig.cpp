@@ -222,6 +222,10 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
                      inOutConfig.playbackStreams, inOutConfig.playbackStreamCount);
     ParseWireStreams(properties, Keys::kCaptureStreams,
                      inOutConfig.captureStreams, inOutConfig.captureStreamCount);
+    if (auto* required =
+            OSDynamicCast(OSNumber, properties->getObject(Keys::kResolvedGeometryRequired))) {
+        inOutConfig.resolvedGeometryRequired = required->unsigned32BitValue() != 0;
+    }
     BuildChannelNamesFromPlugs(inOutConfig);
 }
 

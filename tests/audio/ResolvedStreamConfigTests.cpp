@@ -84,7 +84,59 @@ constexpr ParsedWireStream kVeniceF24Playback[] = {
     {.pcmChannels = 8, .am824Slots = 8, .midiPorts = 0, .channelOffset = 16},
 };
 
+// A Venice F32 as the device reports it: two streams of 16, which happens to
+// match the profile's seed. Kept explicit so "the F32 still works" is an
+// assertion rather than an inference from the F24 case.
+constexpr ParsedWireStream kVeniceF32Playback[] = {
+    {.pcmChannels = 16, .am824Slots = 16, .midiPorts = 0, .channelOffset = 0},
+    {.pcmChannels = 16, .am824Slots = 16, .midiPorts = 0, .channelOffset = 16},
+};
+
 } // namespace
+
+// The variant that already worked must keep working, driven through the same
+// path rather than assumed. Measured 16 + 16 has to produce what the profile
+// used to: equal widths, offsets 0 and 16, equal packet sizes.
+TEST(ResolvedStreamConfig, VeniceF32KeepsSixteenPlusSixteenThroughTheResolvedPath) {
+    const F32ShapedProfile profile;
+
+    EXPECT_EQ(ResolvedPlaybackStreamCount(profile.TxStreamCount(), 2), 2u);
+
+    AudioStreamConfig first{};
+    AudioStreamConfig second{};
+    ASSERT_TRUE(BuildResolvedTxStreamConfig(profile, kVeniceF32Playback, 2, 0, first));
+    ASSERT_TRUE(BuildResolvedTxStreamConfig(profile, kVeniceF32Playback, 2, 1, second));
+
+    EXPECT_EQ(first.pcmChannels, 16);
+    EXPECT_EQ(first.dbs, 16);
+    EXPECT_EQ(first.sourceChannelOffset, 0);
+    EXPECT_EQ(second.pcmChannels, 16);
+    EXPECT_EQ(second.dbs, 16);
+    EXPECT_EQ(second.sourceChannelOffset, 16);
+
+    EXPECT_EQ(TxPacketBytesForStreamConfig(first), TxPacketBytesForStreamConfig(second));
+    EXPECT_EQ(second.sourceChannelOffset + second.pcmChannels, 32);
+}
+
+// And the resolved path must agree with the profile-only path for the device
+// whose profile was always right. If these ever diverge, the F32 regressed.
+TEST(ResolvedStreamConfig, F32ResolvedMatchesWhatTheProfileAloneWouldHaveBuilt) {
+    const F32ShapedProfile profile;
+
+    for (uint32_t index = 0; index < 2; ++index) {
+        AudioStreamConfig resolved{};
+        AudioStreamConfig profileOnly{};
+        ASSERT_TRUE(BuildResolvedTxStreamConfig(profile, kVeniceF32Playback, 2, index, resolved));
+        ASSERT_TRUE(BuildResolvedTxStreamConfig(profile, nullptr, 0, index, profileOnly));
+
+        EXPECT_EQ(resolved.pcmChannels, profileOnly.pcmChannels) << "stream " << index;
+        EXPECT_EQ(resolved.dbs, profileOnly.dbs) << "stream " << index;
+        EXPECT_EQ(resolved.sourceChannelOffset, profileOnly.sourceChannelOffset)
+            << "stream " << index;
+        EXPECT_EQ(TxPacketBytesForStreamConfig(resolved),
+                  TxPacketBytesForStreamConfig(profileOnly)) << "stream " << index;
+    }
+}
 
 // The headline case. Two engines, 16 at offset 0 and 8 at offset 16, with the
 // DBS each stream actually frames with -- not the profile's 16 / 16.
