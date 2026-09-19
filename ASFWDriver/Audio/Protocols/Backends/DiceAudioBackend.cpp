@@ -13,6 +13,8 @@
 #include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../StreamGeometryResolver.hpp"
+
+#include <functional>
 #include "../DeviceProtocolChoice.hpp"
 #include "../../DriverKit/Config/AudioProfileRegistry.hpp"
 #include "../../DriverKit/Config/DICE/DiceDeviceProfile.hpp"
@@ -53,9 +55,16 @@ namespace {
 // get compared. See StreamGeometryResolver.hpp for the precedence rule and why
 // it is the device's.
 //
-// Reporting only: nothing here changes what gets programmed. The framing path
-// still uses the profile, so a disagreement is a loud warning rather than a
-// refusal until that path is switched over.
+// Stage 4: this now RESOLVES rather than reports. It answers both directions
+// -- capture was previously never compared at all -- and returns a
+// ResolvedDeviceGeometry whose Usable() is the refusal the resolver's contract
+// always required.
+//
+// The verdict is not yet enforced at the start path: the consumers
+// (AudioStreamProfile::Tx/RxChannelCount and ASFWAudioDevice::StartIO's
+// BuildTxStreamConfig call) still read the profile, and switching them is the
+// next step. Until then a disagreement is a loud, named refusal in the log
+// rather than a silent mis-framing.
 
 [[nodiscard]] constexpr uint32_t ClampStreamCountToHost(uint32_t count) noexcept {
     return (count < kMaxAudioStreamsPerDirection) ? count : kMaxAudioStreamsPerDirection;
@@ -84,37 +93,70 @@ namespace {
             .midiPorts = config.midiSlots};
 }
 
-void ReportStreamGeometryAgreement(
-    uint64_t guid,
-    const AudioStreamRuntimeCaps& caps,
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) {
+[[nodiscard]] WireStreamGeometry CaptureGeometryFromDevice(
+    const AudioStreamRuntimeCaps& caps, uint32_t index) noexcept {
+    if (index >= ClampStreamCountToHost(caps.deviceToHostStreamCount)) {
+        return {};
+    }
+    const auto& wire = caps.deviceToHostStreams[index];
+    return {.pcmChannels = wire.pcmChannels,
+            .am824Slots = wire.am824Slots,
+            .midiPorts = wire.midiPorts};
+}
 
-    const auto count = ResolveStreamCount(caps.hostToDeviceStreamCount,
-                                          profile.TxStreamCount(),
-                                          kMaxAudioStreamsPerDirection);
-    if (count.disagrees) {
+// The profile exposes no indexed capture accessor -- only a default config and
+// a stream count -- so every capture stream is compared against the same
+// profile shape. That is exactly the uniform-streams assumption this stage is
+// here to stop trusting: where a device states per-stream capture geometry that
+// the default does not match, the disagreement is now visible instead of
+// nobody having looked. ASFW's profile naming inverts: Rx* is host capture.
+[[nodiscard]] WireStreamGeometry CaptureGeometryFromProfile(
+    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
+    ASFW::Isoch::Audio::AudioStreamConfig config{};
+    if (index >= ClampStreamCountToHost(profile.RxStreamCount()) ||
+        !profile.BuildDefaultRxStreamConfig(config)) {
+        return {};
+    }
+    return {.pcmChannels = config.pcmChannels,
+            .am824Slots = config.dbs,
+            .midiPorts = config.midiSlots};
+}
+
+// Resolve one direction: the stream count, then every stream in the union of
+// what each side describes, so a stream only one side knows about is still
+// carried into the decision rather than skipped.
+[[nodiscard]] ResolvedDirectionGeometry ResolveDirection(
+    const char* directionName,
+    uint64_t guid,
+    uint32_t deviceStreamCount,
+    uint32_t profileStreamCount,
+    const std::function<WireStreamGeometry(uint32_t)>& fromDevice,
+    const std::function<WireStreamGeometry(uint32_t)>& fromProfile) {
+    ResolvedDirectionGeometry resolved{};
+    resolved.count = ResolveStreamCount(deviceStreamCount, profileStreamCount,
+                                        kMaxAudioStreamsPerDirection);
+    if (resolved.count.disagrees) {
         ASFW_LOG_ERROR(Audio,
-                       "DiceAudioBackend: ❌ playback stream COUNT disagrees device=%u profile=%u "
+                       "DiceAudioBackend: %{public}s stream COUNT disagrees device=%u profile=%u "
                        "GUID=0x%016llx - the transport arms the device's count while StartIO arms "
                        "the profile's, so one of them is wrong",
-                       count.deviceStated, count.profileStated, guid);
+                       directionName, resolved.count.deviceStated,
+                       resolved.count.profileStated, guid);
     }
 
-    // Walk the union so a stream described by only one side is still reported.
-    const uint32_t deviceStreams = ClampStreamCountToHost(caps.hostToDeviceStreamCount);
-    const uint32_t profileStreams = ClampStreamCountToHost(profile.TxStreamCount());
+    const uint32_t deviceStreams = ClampStreamCountToHost(deviceStreamCount);
+    const uint32_t profileStreams = ClampStreamCountToHost(profileStreamCount);
     const uint32_t walk = (deviceStreams > profileStreams) ? deviceStreams : profileStreams;
 
-    for (uint32_t i = 0; i < walk; ++i) {
-        const auto decision = ResolveStreamGeometry(PlaybackGeometryFromDevice(caps, i),
-                                                    PlaybackGeometryFromProfile(profile, i));
+    for (uint32_t i = 0; i < walk && i < kMaxResolvedStreams; ++i) {
+        const auto decision = ResolveStreamGeometry(fromDevice(i), fromProfile(i));
+        resolved.streams[i] = decision;
         if (decision.disagrees) {
             ASFW_LOG_ERROR(Audio,
-                           "DiceAudioBackend: ❌ playback stream %u geometry disagrees "
+                           "DiceAudioBackend: %{public}s stream %u geometry disagrees "
                            "device=(pcm=%u dbs=%u midi=%u) profile=(pcm=%u dbs=%u midi=%u) "
-                           "GUID=0x%016llx - bandwidth is reserved from the device's shape while "
-                           "CIP is framed from the profile's; audio will be silent",
-                           i,
+                           "GUID=0x%016llx",
+                           directionName, i,
                            decision.deviceStated.pcmChannels, decision.deviceStated.am824Slots,
                            decision.deviceStated.midiPorts,
                            decision.profileStated.pcmChannels, decision.profileStated.am824Slots,
@@ -123,13 +165,60 @@ void ReportStreamGeometryAgreement(
             continue;
         }
         ASFW_LOG(Audio,
-                 "DiceAudioBackend: playback stream %u geometry pcm=%u dbs=%u midi=%u source=%{public}s",
-                 i,
+                 "DiceAudioBackend: %{public}s stream %u geometry pcm=%u dbs=%u midi=%u source=%{public}s",
+                 directionName, i,
                  decision.geometry.pcmChannels,
                  decision.geometry.am824Slots,
                  decision.geometry.midiPorts,
                  decision.source == StreamGeometrySource::kDevice ? "device" : "profile");
     }
+    return resolved;
+}
+
+// Both directions, resolved once. Capture was previously never compared at
+// all -- only playback was -- so half the geometry crossed into the transport
+// unchecked.
+[[nodiscard]] ResolvedDeviceGeometry ResolveDeviceStreamGeometry(
+    uint64_t guid,
+    const AudioStreamRuntimeCaps& caps,
+    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) {
+    static_assert(kMaxResolvedStreams == kMaxAudioStreamsPerDirection,
+                  "resolver bound drifted from the host array bound");
+
+    ResolvedDeviceGeometry resolved{};
+    resolved.capture = ResolveDirection(
+        "capture", guid, caps.deviceToHostStreamCount, profile.RxStreamCount(),
+        [&caps](uint32_t i) { return CaptureGeometryFromDevice(caps, i); },
+        [&profile](uint32_t i) { return CaptureGeometryFromProfile(profile, i); });
+    resolved.playback = ResolveDirection(
+        "playback", guid, caps.hostToDeviceStreamCount, profile.TxStreamCount(),
+        [&caps](uint32_t i) { return PlaybackGeometryFromDevice(caps, i); },
+        [&profile](uint32_t i) { return PlaybackGeometryFromProfile(profile, i); });
+
+    if (!resolved.Usable()) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceAudioBackend: resolved geometry UNUSABLE GUID=0x%016llx "
+                       "capture(usable=%u streams=%u pcm=%u firstBad=%u) "
+                       "playback(usable=%u streams=%u pcm=%u firstBad=%u) - bandwidth would be "
+                       "reserved from one description while CIP is framed from the other",
+                       guid,
+                       resolved.capture.Usable() ? 1U : 0U,
+                       resolved.capture.StreamCount(),
+                       resolved.capture.TotalPcmChannels(),
+                       resolved.capture.FirstDisagreeingStream(),
+                       resolved.playback.Usable() ? 1U : 0U,
+                       resolved.playback.StreamCount(),
+                       resolved.playback.TotalPcmChannels(),
+                       resolved.playback.FirstDisagreeingStream());
+    } else {
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: resolved geometry GUID=0x%016llx capture=%uch/%ustreams "
+                 "playback=%uch/%ustreams",
+                 guid,
+                 resolved.capture.TotalPcmChannels(), resolved.capture.StreamCount(),
+                 resolved.playback.TotalPcmChannels(), resolved.playback.StreamCount());
+    }
+    return resolved;
 }
 
 } // namespace
@@ -778,7 +867,9 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                 // Compare the device's registers with the profile's constants
                 // before anything consumes either. Reporting only; see the
                 // helper's comment.
-                ReportStreamGeometryAgreement(guid, caps, *profile);
+                const auto resolvedGeometry =
+                    ResolveDeviceStreamGeometry(guid, caps, *profile);
+                (void)resolvedGeometry;  // consumers switch over in the next step
             }
             if (haveCaps && ApplyDiceRuntimeCapsToDeviceConfig(caps, dev)) {
                 ASFW_LOG(Audio,
