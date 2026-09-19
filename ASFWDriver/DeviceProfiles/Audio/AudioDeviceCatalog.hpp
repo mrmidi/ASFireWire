@@ -357,6 +357,13 @@ public:
     [[nodiscard]] static DeviceStreamTraits
     StreamTraitsFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
 
+    /// The profile builder this identity resolves to, or None. Device-level
+    /// like the two above, for callers that hold Config-ROM evidence but not a
+    /// registry record -- the AV/C discovery path, which must tell the nub what
+    /// the device is at publication time.
+    [[nodiscard]] static ProfileBuilderId
+    ProfileBuilderFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
+
     [[nodiscard]] static std::span<const AudioDeviceDefinition> Definitions() noexcept;
     [[nodiscard]] static std::span<const AudioSafetyRule> SafetyRules() noexcept;
     [[nodiscard]] static std::vector<CatalogValidationIssue> Validate() noexcept;

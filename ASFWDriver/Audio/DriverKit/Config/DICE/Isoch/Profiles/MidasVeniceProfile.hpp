@@ -14,7 +14,6 @@ class MidasVeniceProfile final : public IDiceDeviceProfile {
 public:
     [[nodiscard]] const char* Name() const noexcept override;
 
-    [[nodiscard]] bool Matches(const DiceDeviceIdentity& identity) const noexcept override;
 
     [[nodiscard]] DiceDeviceQuirks Quirks() const noexcept override;
 

@@ -6,17 +6,9 @@
 
 #include "FocusriteSaffireProfile.hpp"
 
-#include "../../../../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
-
 namespace ASFW::Isoch::Audio::DICE::Profiles {
 
 namespace {
-
-using ASFW::DeviceProfiles::Audio::kFocusriteVendorId;
-using ASFW::DeviceProfiles::Audio::kSPro14ModelId;
-using ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
-using ASFW::DeviceProfiles::Audio::kSPro24ModelId;
-using ASFW::DeviceProfiles::Audio::kSPro40ModelId;
 
 void FillDefaultStreamConfig(DiceStreamConfig& outConfig,
                              DiceStreamDirection direction) noexcept {
@@ -43,26 +35,6 @@ void FillDefaultStreamConfig(DiceStreamConfig& outConfig,
 
 const char* FocusriteSaffireProfile::Name() const noexcept {
     return "Focusrite Saffire (DICE)";
-}
-
-bool FocusriteSaffireProfile::Matches(const DiceDeviceIdentity& identity) const noexcept {
-    // Exact models only. This used to match the Focusrite OUI alone, which
-    // silently claimed every other Focusrite DICE part and would have handed it
-    // this profile's 8-in/16-out geometry:
-    //
-    //   - Saffire Pro 40 with TCD3070-CH (model 0x0000de). A different chip with
-    //     no TCAT protocol extension, which is why Linux hardcodes its formats
-    //     rather than reading them (dice-focusrite.c:8-22) and why Focusrite's
-    //     own kext has no entry for it at all.
-    //   - Liquid Saffire 56 (0x000006) and Saffire Pro 26 (0x000012), neither of
-    //     which has a verified profile here.
-    //
-    // Inert until now only because none of them is given a protocol, which is
-    // not a property this file controls.
-    return identity.vendorId == kFocusriteVendorId &&
-           (identity.modelId == kSPro14ModelId ||
-            identity.modelId == kSPro24ModelId ||
-            identity.modelId == kSPro24DspModelId);
 }
 
 DiceDeviceQuirks FocusriteSaffireProfile::Quirks() const noexcept {
@@ -92,10 +64,6 @@ bool FocusriteSaffireProfile::BuildDefaultRxStreamConfig(DiceStreamConfig& outCo
 // Cross-checked with FFADO src/dice/focusrite/saffire_pro40.cpp:50-97.
 const char* FocusriteSaffirePro40Profile::Name() const noexcept {
     return "Focusrite Saffire Pro 40";
-}
-
-bool FocusriteSaffirePro40Profile::Matches(const DiceDeviceIdentity& identity) const noexcept {
-    return identity.vendorId == kFocusriteVendorId && identity.modelId == kSPro40ModelId;
 }
 
 DiceDeviceQuirks FocusriteSaffirePro40Profile::Quirks() const noexcept {

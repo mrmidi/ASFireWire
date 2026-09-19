@@ -15,18 +15,11 @@
 
 namespace ASFW::Isoch::Audio::DICE {
 
-struct DiceDeviceIdentity final {
-    uint64_t guid{0};
-    uint32_t vendorId{0};
-    uint32_t modelId{0};
-};
-
 class IDiceDeviceProfile : public IAudioStreamProfile {
 public:
     virtual ~IDiceDeviceProfile() override = default;
 
-    /// Returns true if this profile matches the given hardware vendor, model, or GUID.
-    [[nodiscard]] virtual bool Matches(const DiceDeviceIdentity& identity) const noexcept = 0;
+
 
     /// Returns the DICE specific hardware/software quirks (e.g. PCM format, DBS policy).
     [[nodiscard]] virtual DiceDeviceQuirks Quirks() const noexcept = 0;

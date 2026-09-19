@@ -14,7 +14,8 @@
 #include "../StreamGeometryResolver.hpp"
 #include "../DeviceProtocolChoice.hpp"
 #include "../DeviceProtocolFactory.hpp"
-#include "../../DriverKit/Config/DICE/DiceProfileRegistry.hpp"
+#include "../../DriverKit/Config/AudioProfileRegistry.hpp"
+#include "../../DriverKit/Config/DICE/DiceDeviceProfile.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSSharedPtr.h>
@@ -658,18 +659,18 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         return;
     }
 
-    // Check modelid/vendor id first to find a known profile.
-    ASFW::Isoch::Audio::DICE::DiceDeviceIdentity identity{
-        .guid = record->guid,
-        .vendorId = record->vendorId,
-        .modelId = record->modelId
-    };
-    static ASFW::Isoch::Audio::DICE::DiceProfileRegistry diceRegistry{};
-    const auto* profile = diceRegistry.FindProfile(identity);
+    // The device catalog already decided what this device is; ask it which
+    // profile owns the geometry rather than matching on vendor/model again.
+    const auto choice = ChooseDeviceProtocol(*record);
+    const uint32_t profileBuilderId =
+        choice.has_value() ? static_cast<uint32_t>(choice->builder) : 0U;
+    const auto* profile =
+        ASFW::Isoch::Audio::AudioProfileRegistry::DiceProfileForBuilderId(profileBuilderId);
     if (!profile) {
         ASFW_LOG(Audio,
-                 "DiceAudioBackend::EnsureNubForGuid: no isoch profile for GUID=0x%016llx vendor=0x%06x model=0x%06x (profileCount=%u)",
-                 guid, record->vendorId, record->modelId, diceRegistry.ProfileCount());
+                 "DiceAudioBackend::EnsureNubForGuid: no isoch profile for GUID=0x%016llx "
+                 "vendor=0x%06x model=0x%06x builder=%u",
+                 guid, record->vendorId, record->modelId, profileBuilderId);
         return;
     }
 
@@ -683,6 +684,9 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.guid = record->guid;
     dev.vendorId = record->vendorId;
     dev.modelId = record->modelId;
+    // Carry the catalog's answer to the audio side, which only ever sees
+    // scalars and must not have to re-derive it.
+    dev.profileBuilderId = profileBuilderId;
     dev.deviceName = profile->Name();
     dev.inputChannelCount = profile->RxChannelCount();
     dev.outputChannelCount = profile->TxChannelCount();

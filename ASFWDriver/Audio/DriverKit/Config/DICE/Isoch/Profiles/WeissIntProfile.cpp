@@ -35,12 +35,6 @@ const char* WeissIntProfile::Name() const noexcept {
     return "Weiss INT (DICE)";
 }
 
-bool WeissIntProfile::Matches(const DiceDeviceIdentity& identity) const noexcept {
-    using namespace ASFW::DeviceProfiles::Audio;
-    return identity.vendorId == kWeissVendorId &&
-           (identity.modelId == kWeissInt202ModelId || identity.modelId == kWeissInt203ModelId);
-}
-
 DiceDeviceQuirks WeissIntProfile::Quirks() const noexcept {
     // The Linux Weiss DICE driver uses the normal DICE AMDTP PCM path. Keep
     // ASFW's standards-conformant AM824 default; no Weiss-specific framing

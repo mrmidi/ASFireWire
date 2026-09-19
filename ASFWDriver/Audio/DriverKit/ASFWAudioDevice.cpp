@@ -153,7 +153,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             const auto* baseProfile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
                 ivars.device.vendorId,
                 ivars.device.modelId,
-                ivars.device.guid
+                ivars.device.guid,
+                ivars.device.profileBuilderId
             );
             const auto* profile = static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(baseProfile);
             if (!profile) {

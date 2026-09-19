@@ -45,11 +45,6 @@ const char* MackieOnyx400FProfile::Name() const noexcept {
     return DeviceProfiles::Audio::kOnyx400FModelName;
 }
 
-bool MackieOnyx400FProfile::Matches(const DICE::DiceDeviceIdentity& identity) const noexcept {
-    return identity.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
-           identity.modelId == DeviceProfiles::Audio::kOnyx400FModelId;
-}
-
 DICE::DiceDeviceQuirks MackieOnyx400FProfile::Quirks() const noexcept {
     return DICE::DiceDeviceQuirks{};
 }

@@ -34,6 +34,9 @@ struct AudioDriverDeviceState {
     uint64_t guid{0};
     uint32_t vendorId{0};
     uint32_t modelId{0};
+    /// The device catalog's resolved ProfileBuilderId, carried across the nub.
+    /// This side never sees Config-ROM evidence, so it cannot re-derive it.
+    uint32_t profileBuilderId{0};
     char deviceName[128]{};
     uint32_t channelCount{0};
     uint32_t inputChannelCount{0};

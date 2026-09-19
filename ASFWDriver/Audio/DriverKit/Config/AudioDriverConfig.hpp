@@ -41,6 +41,9 @@ struct ParsedAudioDriverConfig {
     uint64_t guid{0};
     uint32_t vendorId{0};
     uint32_t modelId{0};
+    /// The device catalog's resolved ProfileBuilderId, carried across the nub.
+    /// Zero means the publishing side did not resolve one.
+    uint32_t profileBuilderId{0};
 
     char deviceName[128]{};
     uint32_t channelCount{kDefaultChannelCount};

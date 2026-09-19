@@ -35,6 +35,7 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     device.guid = parsedConfig.guid;
     device.vendorId = parsedConfig.vendorId;
     device.modelId = parsedConfig.modelId;
+    device.profileBuilderId = parsedConfig.profileBuilderId;
     device.channelCount = parsedConfig.channelCount;
     device.inputChannelCount = parsedConfig.inputChannelCount;
     device.outputChannelCount = parsedConfig.outputChannelCount;
@@ -145,16 +146,18 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
     // Resolve audio profile registry on startup
     if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
-            parsedConfig.vendorId, parsedConfig.modelId, parsedConfig.guid)) {
+            parsedConfig.vendorId, parsedConfig.modelId, parsedConfig.guid,
+            parsedConfig.profileBuilderId)) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Resolved profile '%{public}s'", profile->Name());
 
         // Only name the device from the profile when the nub did not supply one.
         //
-        // FindProfile matches on (vendorId, modelId), which cannot identify every family:
-        // MOTU publishes model_id 0, so it resolves the generic DICE profile and this
-        // copy used to rename a MOTU UltraLite to "Generic DICE" in CoreAudio. The nub's
-        // name comes from the protocol that actually claimed the device, so it is the
-        // more specific answer whenever it exists.
+        // The nub's name comes from the protocol that actually claimed the
+        // device, so it is the more specific answer whenever it exists. This
+        // used to matter more: FindProfile matched on (vendorId, modelId),
+        // which cannot identify a MOTU device at all (model_id 0), so a MOTU
+        // UltraLite resolved the generic DICE profile and got renamed to
+        // "Generic DICE" in CoreAudio. The builder id now travels with the nub.
         if (parsedConfig.deviceName[0] == '\0') {
             strlcpy(parsedConfig.deviceName, profile->Name(), sizeof(parsedConfig.deviceName));
         } else if (strcmp(parsedConfig.deviceName, profile->Name()) != 0) {
@@ -706,7 +709,8 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
         static_cast<uint32_t>(currentSampleRate));
     const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
-        ivars.device.vendorId, ivars.device.modelId, ivars.device.guid);
+        ivars.device.vendorId, ivars.device.modelId, ivars.device.guid,
+        ivars.device.profileBuilderId);
 
     uint32_t outLatency = 0;
     uint32_t inLatency = 0;

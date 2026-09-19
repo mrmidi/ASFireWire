@@ -14,8 +14,6 @@ namespace ASFW::Isoch::Audio::DICE::Profiles {
 
 namespace {
 
-constexpr uint32_t kMidasVendorId      = 0x10c73f;
-constexpr uint32_t kMidasVeniceModelId = 0x000001;
 
 // Venice F32 stream geometry verified at runtime from the TCAT TX/RX STREAM
 // FORMAT registers at 48 kHz: TWO isochronous streams per direction, each
@@ -59,10 +57,6 @@ void FillStreamConfig(DiceStreamConfig& out, DiceStreamDirection direction) noex
 
 const char* MidasVeniceProfile::Name() const noexcept {
     return "Midas Venice F32 (DICE)";
-}
-
-bool MidasVeniceProfile::Matches(const DiceDeviceIdentity& identity) const noexcept {
-    return identity.vendorId == kMidasVendorId && identity.modelId == kMidasVeniceModelId;
 }
 
 DiceDeviceQuirks MidasVeniceProfile::Quirks() const noexcept {

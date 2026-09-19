@@ -16,8 +16,6 @@ namespace ASFW::Isoch::Audio::DICE::Profiles {
 
 namespace {
 
-constexpr uint32_t kPreSonusVendorId      = 0x000a92;
-constexpr uint32_t kStudioLive1602ModelId = 0x000013;
 
 constexpr uint32_t kPcmChannels = 16;
 constexpr uint32_t kMidiSlots   = 1;
@@ -41,12 +39,6 @@ void FillStreamConfig(DiceStreamConfig& out, DiceStreamDirection direction) noex
 
 const char* PreSonusStudioLiveProfile::Name() const noexcept {
     return "PreSonus StudioLive 16.0.2 (DICE)";
-}
-
-bool PreSonusStudioLiveProfile::Matches(const DiceDeviceIdentity& identity) const noexcept {
-    // Exact vendor+model only: the PreSonus OUI also covers BeBoB-era devices
-    // (FireBox/FP10/Inspire) and the DICE FireStudio, which need different handling.
-    return identity.vendorId == kPreSonusVendorId && identity.modelId == kStudioLive1602ModelId;
 }
 
 DiceDeviceQuirks PreSonusStudioLiveProfile::Quirks() const noexcept {

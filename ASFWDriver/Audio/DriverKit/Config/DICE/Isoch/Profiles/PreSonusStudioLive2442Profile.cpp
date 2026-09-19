@@ -50,8 +50,6 @@ namespace ASFW::Isoch::Audio::DICE::Profiles {
 
 namespace {
 
-constexpr uint32_t kPreSonusVendorId      = 0x000a92;
-constexpr uint32_t kStudioLive2442ModelId = 0x000012;
 
 // Per wire stream. MIDI is 0 in every stream, so DBS == PCM channels.
 constexpr uint8_t kCapturePcmChannels     = 16;  // both capture streams
@@ -79,12 +77,6 @@ void FillStreamConfig(DiceStreamConfig& out,
 
 const char* PreSonusStudioLive2442Profile::Name() const noexcept {
     return "PreSonus StudioLive 24.4.2 (DICE)";
-}
-
-bool PreSonusStudioLive2442Profile::Matches(const DiceDeviceIdentity& identity) const noexcept {
-    // Exact vendor+model only: the PreSonus OUI also covers BeBoB-era devices
-    // (FireBox/FP10/Inspire) and the DICE FireStudio, which need different handling.
-    return identity.vendorId == kPreSonusVendorId && identity.modelId == kStudioLive2442ModelId;
 }
 
 DiceDeviceQuirks PreSonusStudioLive2442Profile::Quirks() const noexcept {

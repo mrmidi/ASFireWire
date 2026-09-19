@@ -12,7 +12,6 @@ namespace ASFW::Isoch::Audio::DICE::Profiles {
 class WeissIntProfile final : public IDiceDeviceProfile {
 public:
     [[nodiscard]] const char* Name() const noexcept override;
-    [[nodiscard]] bool Matches(const DiceDeviceIdentity& identity) const noexcept override;
     [[nodiscard]] DiceDeviceQuirks Quirks() const noexcept override;
 
     [[nodiscard]] bool BuildDefaultTxStreamConfig(DiceStreamConfig& outConfig) const noexcept override;

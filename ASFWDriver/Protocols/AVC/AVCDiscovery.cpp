@@ -34,6 +34,15 @@ using namespace ASFW::Protocols::AVC;
 
 namespace {
 
+// The device catalog's answer, carried to the nub so the audio side does not
+// repeat the match from (vendorId, modelId) -- a pair that cannot identify
+// every family.
+[[nodiscard]] uint32_t ProfileBuilderIdFor(
+    const ASFW::Discovery::DeviceIdentityEvidence& identity) noexcept {
+    return static_cast<uint32_t>(
+        ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(identity));
+}
+
 [[nodiscard]] constexpr const char* StreamModeToString(
     ASFW::Audio::Model::StreamMode mode) noexcept {
     return (mode == ASFW::Audio::Model::StreamMode::kBlocking) ? "blocking"
@@ -310,15 +319,20 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
         const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
         const uint32_t vendorId = device->GetVendorID();
         const uint32_t modelId = device->GetModelID();
+        // Resolved here, while the FWDevice and its Config-ROM evidence are in
+        // scope: the callback below runs after discovery and only has scalars.
+        const uint32_t profileBuilderId = ProfileBuilderIdFor(device->GetIdentity());
         const std::string deviceName{device->GetModelName()};
         ::ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery(
             *avcUnit, guid,
-            [weakSelf, guid, vendorId, modelId, deviceName](const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
+            [weakSelf, guid, vendorId, modelId, profileBuilderId,
+             deviceName](const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
                 const auto self = weakSelf.lock();
                 if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
                     return;
                 }
-                self->PublishBeBoBAudioConfig(guid, vendorId, modelId, deviceName, inventory);
+                self->PublishBeBoBAudioConfig(guid, vendorId, modelId, profileBuilderId,
+                                              deviceName, inventory);
             });
         RebuildNodeIDMap();
         return;
@@ -442,6 +456,7 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
 void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
                                              uint32_t vendorId,
                                              uint32_t modelId,
+                                             uint32_t profileBuilderId,
                                              const std::string& deviceName,
                                              const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
     // Register a per-GUID BeBoB profile from discovery data. For Phase88 this
@@ -469,6 +484,7 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
     config.guid = guid;
     config.vendorId = vendorId;
     config.modelId = modelId;
+    config.profileBuilderId = profileBuilderId;
     config.deviceName = deviceName.empty() ? "PHASE 88 Rack FW" : deviceName;
     config.channelCount = kPcmChannels;
     config.inputChannelCount = kPcmChannels;
@@ -504,6 +520,7 @@ void AVCDiscovery::PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
     config.guid = guid;
     config.vendorId = device.GetVendorID();
     config.modelId = device.GetModelID();
+    config.profileBuilderId = ProfileBuilderIdFor(device.GetIdentity());
     config.deviceName =
         std::string(::ASFW::DeviceProfiles::Audio::kMackieVendorName) + " " +
         ::ASFW::DeviceProfiles::Audio::kOnyxIOxfwModelName;
@@ -539,6 +556,7 @@ void AVCDiscovery::PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,
     config.guid = guid;
     config.vendorId = device.GetVendorID();
     config.modelId = device.GetModelID();
+    config.profileBuilderId = ProfileBuilderIdFor(device.GetIdentity());
     config.deviceName =
         std::string(::ASFW::DeviceProfiles::Audio::kMackieVendorName) + " " +
         ::ASFW::DeviceProfiles::Audio::kOnyx400FModelName;
@@ -704,6 +722,7 @@ ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
     config.guid = guid;
     config.vendorId = vendorId;
     config.modelId = modelId;
+    config.profileBuilderId = ProfileBuilderIdFor(device.GetIdentity());
     config.deviceName = deviceName;
     config.channelCount = channelCount;
     config.inputChannelCount =

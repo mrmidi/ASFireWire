@@ -790,6 +790,20 @@ Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
     return Discovery::AvcCommandFilterId::Unrestricted;
 }
 
+ProfileBuilderId AudioDeviceCatalog::ProfileBuilderFor(
+    const Discovery::DeviceIdentityEvidence& device) noexcept {
+    for (const auto& unit : device.units) {
+        for (const auto& definition : kDefinitions) {
+            for (uint8_t i = 0; i < definition.clauseCount; ++i) {
+                if (definition.clauses[i].Matches(device, unit)) {
+                    return definition.profileBuilder;
+                }
+            }
+        }
+    }
+    return ProfileBuilderId::None;
+}
+
 DeviceStreamTraits AudioDeviceCatalog::StreamTraitsFor(
     const Discovery::DeviceIdentityEvidence& device) noexcept {
     const auto matchAgainst =
