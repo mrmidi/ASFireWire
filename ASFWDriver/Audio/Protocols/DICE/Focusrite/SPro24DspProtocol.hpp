@@ -76,11 +76,6 @@ public:
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
     
-    /// Configure device for 48kHz duplex streaming (TX ch0 / RX ch1).
-    void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) override;
-    void ProgramRxForDuplex48k(VoidCallback callback) override;
-    void ProgramTxAndEnableDuplex48k(VoidCallback callback) override;
-    void ConfirmDuplex48kStart(VoidCallback callback) override;
     IOReturn StopDuplex() override;
     ::ASFW::IRM::IRMClient* GetIRMClient() const override { return tcat_.GetIRMClient(); }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
@@ -133,14 +128,6 @@ public:
     
     /// Set output group state
     void SetOutputGroupState(const OutputGroupState& state, VoidCallback callback);
-
-    // ========================================================================
-    // TODO: Test only - Stream Control
-    // ========================================================================
-    
-    /// Start isochronous TX stream for testing (48kHz, channel 0)
-    /// This is a simplified test - real implementation would handle IRM allocation
-    void StartStreamTest(VoidCallback callback);
 
 private:
     TCAT::DICETcatProtocol tcat_;

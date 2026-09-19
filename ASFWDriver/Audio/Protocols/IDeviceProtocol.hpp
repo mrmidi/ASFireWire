@@ -76,29 +76,6 @@ public:
 
     using VoidCallback = std::function<void(IOReturn)>;
 
-    /// Optional bring-up hook to prepare device-side duplex state at 48kHz.
-    /// Drivers can call this before any IRM reservation or host IR/IT startup.
-    /// Implementations should be idempotent.
-    virtual void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) {
-        (void)channels;
-        callback(kIOReturnUnsupported);
-    }
-
-    /// Optional hook to program the device-side RX leg after playback IRM allocation.
-    virtual void ProgramRxForDuplex48k(VoidCallback callback) {
-        callback(kIOReturnUnsupported);
-    }
-
-    /// Optional hook to program the device-side TX leg and enable duplex streaming.
-    virtual void ProgramTxAndEnableDuplex48k(VoidCallback callback) {
-        callback(kIOReturnUnsupported);
-    }
-
-    /// Optional completion hook after host IR/IT contexts are running.
-    /// DICE devices can use this to verify stream lock/state.
-    virtual void ConfirmDuplex48kStart(VoidCallback callback) {
-        callback(kIOReturnUnsupported);
-    }
 
     /// Optional teardown hook to stop device-side duplex state.
     virtual IOReturn StopDuplex() {

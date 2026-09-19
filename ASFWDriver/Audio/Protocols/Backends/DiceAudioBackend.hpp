@@ -41,10 +41,13 @@ public:
 
     [[nodiscard]] const char* Name() const noexcept override { return "DICE"; }
 
-    void OnDeviceRecordUpdated(uint64_t guid) noexcept;
+    void OnDeviceRecordUpdated(uint64_t guid) noexcept override;
     // The coordinator owns remote-device teardown. DICE only cancels its
     // per-device notification/recovery work so it cannot revive a dead GUID.
-    void CancelRemoteDeviceWork(uint64_t guid) noexcept;
+    void CancelRemoteDeviceWork(uint64_t guid) noexcept override;
+    void OnDeviceResumed(uint64_t guid) noexcept override;
+    void HandleHostTimingLoss(uint64_t guid) noexcept override;
+    void HandleCycleInconsistent(uint64_t guid) noexcept override;
     void HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReason reason) noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
@@ -57,7 +60,7 @@ public:
     // cancels in-flight recovery (coordinator), then drains the work queue (synchronous
     // barrier) so no recovery/probe block issues MMIO after ASFWDriver::Stop's Detach.
     // Idempotent; must be called before HardwareInterface::Detach().
-    void BeginTeardown() noexcept;
+    void BeginTeardown() noexcept override;
 
 private:
     void EnsureNubForGuid(uint64_t guid) noexcept;

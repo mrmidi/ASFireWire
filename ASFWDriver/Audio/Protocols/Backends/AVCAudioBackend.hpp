@@ -46,9 +46,10 @@ public:
     void OnAudioConfigurationReady(uint64_t guid, const Model::ASFWAudioDevice& config) noexcept;
     // The coordinator owns remote-device teardown. AV/C only drops queued
     // recovery/configuration work for the retired GUID.
-    void CancelRemoteDeviceWork(uint64_t guid) noexcept;
-    void OnDeviceResumed(uint64_t guid) noexcept;
-    void BeginTeardown() noexcept;
+    void CancelRemoteDeviceWork(uint64_t guid) noexcept override;
+    void OnDeviceResumed(uint64_t guid) noexcept override;
+    void HandleHostTimingLoss(uint64_t guid) noexcept override { HandleTimingLoss(guid); }
+    void BeginTeardown() noexcept override;
 
     // Called by the backend-neutral AudioCoordinator transport callback.
     void HandleTimingLoss(uint64_t guid) noexcept;

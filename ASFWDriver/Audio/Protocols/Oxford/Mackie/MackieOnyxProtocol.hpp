@@ -43,7 +43,6 @@ protected:
     const char* DeviceName() const override { return "Mackie Onyx-i (Oxford)"; }
     [[nodiscard]] AudioStreamRuntimeCaps DeviceCaps() const override { return caps_; }
     [[nodiscard]] std::vector<uint32_t> SupportedRates() const override;
-    void ReadClockHealth(HealthCallback callback) override;
 
 private:
     AudioStreamRuntimeCaps caps_{};

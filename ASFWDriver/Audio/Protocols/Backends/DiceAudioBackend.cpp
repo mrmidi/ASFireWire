@@ -234,6 +234,24 @@ void DiceAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
              guid);
 }
 
+void DiceAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
+    ASFW_LOG(Audio,
+             "AudioCoordinator: Device resumed while active; scheduling DICE recovery GUID=0x%016llx",
+             guid);
+    HandleRecoveryEvent(guid, DICE::DiceRestartReason::kBusResetRebind);
+}
+
+void DiceAudioBackend::HandleHostTimingLoss(uint64_t guid) noexcept {
+    HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterTimingLoss);
+}
+
+void DiceAudioBackend::HandleCycleInconsistent(uint64_t guid) noexcept {
+    ASFW_LOG_WARNING(Audio,
+                     "AudioCoordinator: cycleInconsistent observed; scheduling DICE recovery GUID=0x%016llx",
+                     guid);
+    HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterCycleInconsistent);
+}
+
 void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReason reason) noexcept {
     if (guid == 0) {
         return;

@@ -80,10 +80,6 @@ public:
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
     ::ASFW::IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
 
-    void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) override;
-    void ProgramRxForDuplex48k(VoidCallback callback) override;
-    void ProgramTxAndEnableDuplex48k(VoidCallback callback) override;
-    void ConfirmDuplex48kStart(VoidCallback callback) override;
     IOReturn StopDuplex() override;
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;

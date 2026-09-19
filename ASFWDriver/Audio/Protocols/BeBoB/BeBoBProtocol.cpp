@@ -433,6 +433,17 @@ void BeBoBProtocol::ReadDuplexHealth(HealthCallback callback) {
     ReadClockHealth(std::move(callback));
 }
 
+void BeBoBProtocol::ReadClockHealth(HealthCallback callback) {
+    const auto caps = DeviceCaps();
+    callback(kIOReturnSuccess,
+             DuplexHealthResult{.generation = busInfo_.GetGeneration(),
+                                .appliedClock = appliedClock_,
+                                .runtimeCaps = caps,
+                                .sourceLocked = inputConnected_ && outputConnected_,
+                                .clockReferenceHealthy = true,
+                                .nominalRateHz = caps.sampleRateHz});
+}
+
 void BeBoBProtocol::DisconnectPlayback(VoidCallback callback) {
     if (!cmpClient_ || !inputConnected_) {
         inputConnected_ = false;

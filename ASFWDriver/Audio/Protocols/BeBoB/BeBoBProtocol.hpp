@@ -80,7 +80,7 @@ protected:
     [[nodiscard]] virtual const char* DeviceName() const = 0;
     [[nodiscard]] virtual AudioStreamRuntimeCaps DeviceCaps() const = 0;
     [[nodiscard]] virtual std::vector<uint32_t> SupportedRates() const = 0;
-    virtual void ReadClockHealth(HealthCallback callback) = 0;
+    virtual void ReadClockHealth(HealthCallback callback);
 
     // Async mixer configuration. Override in devices that need FB mixer programming
     // at stream start (e.g. Phase88 ships muted). Default: no-op (matches Linux

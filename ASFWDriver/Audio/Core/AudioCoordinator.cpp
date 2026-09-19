@@ -62,11 +62,8 @@ void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device
         remoteLostGuids_.erase(guid);
         IOLockUnlock(lock_);
     }
-    auto* addedBackend = BackendForGuid(guid);
-    if (addedBackend == &dice_) {
-        dice_.OnDeviceRecordUpdated(guid);
-    } else if (addedBackend == &motu_) {
-        motu_.OnDeviceRecordUpdated(guid);
+    if (auto* backend = BackendForGuid(guid)) {
+        backend->OnDeviceRecordUpdated(guid);
     }
 }
 
@@ -80,10 +77,8 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
         IOLockUnlock(lock_);
     }
     auto* backend = BackendForGuid(guid);
-    if (backend == &dice_) {
-        dice_.OnDeviceRecordUpdated(guid);
-    } else if (backend == &motu_) {
-        motu_.OnDeviceRecordUpdated(guid);
+    if (backend) {
+        backend->OnDeviceRecordUpdated(guid);
     }
 
     bool recoverActiveStream = false;
@@ -93,18 +88,11 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
         IOLockUnlock(lock_);
     }
 
-    if (!recoverActiveStream) {
+    if (!recoverActiveStream || !backend) {
         return;
     }
 
-    if (backend == &dice_) {
-        ASFW_LOG(Audio,
-                 "AudioCoordinator: Device resumed while active; scheduling DICE recovery GUID=0x%016llx",
-                 guid);
-        dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kBusResetRebind);
-    } else if (backend == &avc_) {
-        avc_.OnDeviceResumed(guid);
-    }
+    backend->OnDeviceResumed(guid);
 }
 
 void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
@@ -153,11 +141,8 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     // absent. Latch before touching backend work: delayed recovery and StopIO
     // callbacks must not recreate a session for the old route.
     duplexCoordinator_.CancelRemoteDevice(guid);
-    auto* backend = BackendForGuid(guid);
-    if (backend == &dice_) {
-        dice_.CancelRemoteDeviceWork(guid);
-    } else if (backend == &avc_) {
-        avc_.CancelRemoteDeviceWork(guid);
+    if (auto* backend = BackendForGuid(guid)) {
+        backend->CancelRemoteDeviceWork(guid);
     } else {
         ASFW_LOG_WARNING(Audio,
                          "AudioCoordinator: remote-device-lost has no backend GUID=0x%016llx",
@@ -212,19 +197,9 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
         return;
     }
 
-    if (BackendForGuid(guid) != &dice_) {
-        if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
-            ASFW_LOG(Audio,
-                     "AudioCoordinator: Ignoring cycleInconsistent for non-DICE active GUID=0x%016llx",
-                     guid);
-        }
-        return;
+    if (auto* backend = BackendForGuid(guid)) {
+        backend->HandleCycleInconsistent(guid);
     }
-
-    ASFW_LOG_WARNING(Audio,
-                     "AudioCoordinator: cycleInconsistent observed; scheduling DICE recovery GUID=0x%016llx",
-                     guid);
-    dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterCycleInconsistent);
 }
 
 IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
@@ -472,10 +447,8 @@ void AudioCoordinator::HandleHostTimingLoss(uint64_t guid) noexcept {
             return;
         }
     }
-    if (auto* backend = BackendForGuid(guid); backend == &dice_) {
-        dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterTimingLoss);
-    } else if (backend == &avc_) {
-        avc_.HandleTimingLoss(guid);
+    if (auto* backend = BackendForGuid(guid)) {
+        backend->HandleHostTimingLoss(guid);
     }
 }
 

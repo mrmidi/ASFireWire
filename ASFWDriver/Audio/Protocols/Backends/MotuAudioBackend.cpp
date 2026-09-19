@@ -67,6 +67,14 @@ void MotuAudioBackend::OnDeviceRecordUpdated(uint64_t guid) noexcept {
     EnsureNubForGuid(guid);
 }
 
+void MotuAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
+    if (lock_) {
+        IOLockLock(lock_);
+        activeStreamingGuids_.erase(guid);
+        IOLockUnlock(lock_);
+    }
+}
+
 void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     if (guid == 0) {
         return;

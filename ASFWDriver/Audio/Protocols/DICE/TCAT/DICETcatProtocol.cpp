@@ -307,41 +307,6 @@ void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {
     });
 }
 
-void DICETcatProtocol::PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) {
-    // This per-StartIO bring-up must honor the user's selected clock. Using a
-    // hardcoded 48 kHz here rewrites CLOCK_SELECT on every StartIO and fights an
-    // idle 44.1 kHz change (the device PLL flaps 44.1k<->48k and audio starves).
-    // Fall back to 48 kHz only before any rate has been selected.
-    AudioClockConfig clock = selectedClock_;
-    if (clock.sampleRateHz == 0) {
-        clock = AudioClockConfig{
-            .sampleRateHz = 48000U,
-        };
-    }
-    PrepareDuplex(channels,
-                  clock,
-                  [callback = std::move(callback)](IOReturn status, DiceDuplexPrepareResult) mutable {
-                      callback(status);
-                  });
-}
-
-void DICETcatProtocol::ProgramRxForDuplex48k(VoidCallback callback) {
-    ProgramRx([callback = std::move(callback)](IOReturn status, DiceDuplexStageResult) mutable {
-        callback(status);
-    });
-}
-
-void DICETcatProtocol::ProgramTxAndEnableDuplex48k(VoidCallback callback) {
-    ProgramTxAndEnableDuplex([callback = std::move(callback)](IOReturn status, DiceDuplexStageResult) mutable {
-        callback(status);
-    });
-}
-
-void DICETcatProtocol::ConfirmDuplex48kStart(VoidCallback callback) {
-    ConfirmDuplexStart([callback = std::move(callback)](IOReturn status, DiceDuplexConfirmResult) mutable {
-        callback(status);
-    });
-}
 
 IOReturn DICETcatProtocol::StopDuplex() {
     if (!duplexCtrl_) {

@@ -26,7 +26,6 @@ protected:
     const char* DeviceName() const override { return "TerraTec PHASE 88 Rack FW"; }
     [[nodiscard]] AudioStreamRuntimeCaps DeviceCaps() const override;
     [[nodiscard]] std::vector<uint32_t> SupportedRates() const override;
-    void ReadClockHealth(HealthCallback callback) override;
 
     // Async mixer configuration — Phase88 ships muted; unmute + max-vol on start.
     void ConfigureMixer(MixerFailurePolicy policy, MixerCompletion completion) override;

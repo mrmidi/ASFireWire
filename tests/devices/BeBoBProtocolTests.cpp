@@ -123,11 +123,12 @@ public:
 
     ASFW::Audio::AudioStreamRuntimeCaps DeviceCaps() const override { return caps_; }
     std::vector<uint32_t> SupportedRates() const override { return {48000}; }
-    void ReadClockHealth(HealthCallback callback) override {
-        callback(kIOReturnSuccess, DuplexHealthResult{});
-    }
 
     void SetCaps(const ASFW::Audio::AudioStreamRuntimeCaps& caps) { caps_ = caps; }
+    void SetConnected(bool input, bool output) {
+        inputConnected_ = input;
+        outputConnected_ = output;
+    }
 
 private:
     ASFW::Audio::AudioStreamRuntimeCaps caps_{};
@@ -196,4 +197,48 @@ TEST_F(BeBoBProtocolTest, ShutdownAfterTimerStarts) {
     EXPECT_TRUE(called);
     EXPECT_EQ(status, kIOReturnNotReady);
     EXPECT_EQ(timer_.PendingCount(), 0);
+}
+
+TEST_F(BeBoBProtocolTest, ReadClockHealthReportsNominalRateAndDisconnectedState) {
+    TestBeBoBProtocol proto(busOps_, bus_, route_, nullptr, &cmp_, &timer_);
+    proto.UpdateRuntimeContext(route_, nullptr);
+    proto.SetCaps({.hostInputPcmChannels = 8, .hostOutputPcmChannels = 8, .sampleRateHz = 48000});
+
+    bool called = false;
+    DuplexHealthResult healthResult{};
+    proto.ReadDuplexHealth([&](IOReturn status, DuplexHealthResult result) {
+        called = true;
+        EXPECT_EQ(status, kIOReturnSuccess);
+        healthResult = result;
+    });
+
+    EXPECT_TRUE(called);
+    EXPECT_EQ(healthResult.generation, Generation{1});
+    EXPECT_EQ(healthResult.nominalRateHz, 48000U);
+    EXPECT_TRUE(healthResult.clockReferenceHealthy);
+    EXPECT_FALSE(healthResult.sourceLocked);
+    EXPECT_EQ(healthResult.runtimeCaps.hostInputPcmChannels, 8U);
+    EXPECT_EQ(healthResult.runtimeCaps.hostOutputPcmChannels, 8U);
+}
+
+TEST_F(BeBoBProtocolTest, ReadClockHealthReportsSourceLockedWhenBothConnected) {
+    TestBeBoBProtocol proto(busOps_, bus_, route_, nullptr, &cmp_, &timer_);
+    proto.UpdateRuntimeContext(route_, nullptr);
+    proto.SetCaps({.hostInputPcmChannels = 4, .hostOutputPcmChannels = 4, .sampleRateHz = 96000});
+    proto.SetConnected(true, true);
+
+    bool called = false;
+    DuplexHealthResult healthResult{};
+    proto.ReadDuplexHealth([&](IOReturn status, DuplexHealthResult result) {
+        called = true;
+        EXPECT_EQ(status, kIOReturnSuccess);
+        healthResult = result;
+    });
+
+    EXPECT_TRUE(called);
+    EXPECT_EQ(healthResult.nominalRateHz, 96000U);
+    EXPECT_TRUE(healthResult.clockReferenceHealthy);
+    EXPECT_TRUE(healthResult.sourceLocked);
+    EXPECT_EQ(healthResult.runtimeCaps.hostInputPcmChannels, 4U);
+    EXPECT_EQ(healthResult.runtimeCaps.hostOutputPcmChannels, 4U);
 }
