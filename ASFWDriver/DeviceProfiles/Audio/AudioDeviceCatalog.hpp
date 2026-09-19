@@ -151,6 +151,62 @@ enum class ProfileBuilderId : uint16_t {
     kLastValid = GenericBeBoB,
 };
 
+/// AMDTP cadence a device must be driven at regardless of what it reports.
+/// Unspecified means "believe the probe", which is what an unlisted device gets.
+enum class ForcedStreamMode : uint8_t {
+    Unspecified = 0,
+    Blocking,
+    NonBlocking,
+};
+
+/// The shape of a device's stream start/stop choreography. These are wire-
+/// visible orderings cross-validated against the reference stacks, not
+/// preferences -- getting one wrong is a stream that never establishes.
+enum class StreamStartShape : uint8_t {
+    /// DICE and anything else with no stated opinion: the coordinator's
+    /// default, including its pre-stream clock-lock gate.
+    Default = 0,
+    /// Apogee Duet: host IR -> CMP oPCR -> host IT -> CMP iPCR, and the
+    /// mirrored teardown. Preserves the ordering AVCAudioBackend had.
+    ApogeeInterleaved,
+    /// Linux's CMP choreography: reserve both resources, establish remote iPCR
+    /// then oPCR, then start the domain receive-before-transmit. Shared by
+    /// BeBoB, the Oxford-run Onyx-i and the Fireworks-run Onyx 400F, all of
+    /// which are SYT-unaware and so must not run the pre-stream lock gate.
+    /// bebob_stream.c:525-590,593-674; fireworks_stream.c.
+    CmpReceiveThenTransmit,
+    /// Weiss INT202/203: host transmit first after GLOBAL_ENABLE so its AM824
+    /// packets can establish the device receive-clock path. Source lock is
+    /// inspected post-start, not used as an admission gate.
+    TransmitFirst,
+};
+
+/// Wire-level facts about a device that no probe reports, so the driver has to
+/// be told them. Every field defaults to "nothing special", which is exactly
+/// how an unlisted device behaves -- a definition that states none of these is
+/// indistinguishable from having no definition at all, for these purposes.
+struct DeviceStreamTraits final {
+    ForcedStreamMode forcedStreamMode{ForcedStreamMode::Unspecified};
+    StreamStartShape startShape{StreamStartShape::Default};
+
+    /// The device advertises more capture streams than it has. FFADO clamps
+    /// the affected Alesis models for the same reason:
+    /// libffado-2.5.0/src/dice/dice_avdevice.cpp:1682-1695.
+    bool clampCaptureStreamsToOne{false};
+
+    /// The capture-side CIP dbs field is untrusted and the configured slot
+    /// count is the authority. Loud/Mackie (snd-oxfw oxfw.c:189-196,
+    /// amdtp-stream.c:766-769) and Fireworks, which gives dbc its own meaning
+    /// and whose firmware 4.6.0 stamps a wrong dbs above 88.2 kHz.
+    bool captureTrustConfiguredStride{false};
+
+    /// Host<->device PCM is raw 24-in-32 rather than AM824 *when the runtime
+    /// geometry matches* (8 PCM channels in 9 slots). Conditional on purpose:
+    /// the Saffire Pro 24 DSP switches wire format with its configuration, so
+    /// this cannot be a static property of the identity.
+    bool rawPcm24In32WhenEightInNineSlots{false};
+};
+
 enum class SupportDisposition : uint8_t {
     Supported = 0,
     GenericFallback,
@@ -204,6 +260,7 @@ struct AudioDeviceDefinition final {
     PersistentKeyRecipeId persistentKeyRecipe{
         PersistentKeyRecipeId::ReliableObservedEui64};
     SafeProbeConstraint probeConstraint{};
+    DeviceStreamTraits streamTraits{};
     BootloaderCuePolicy bootloaderCue{BootloaderCuePolicy::None};
     const char* vendorName{nullptr};
     const char* modelName{nullptr};
@@ -244,6 +301,7 @@ struct StaticAudioEndpointPlan final {
     std::vector<MatchProvenance> provenance;
     ProfileBuilderId profileBuilder{ProfileBuilderId::None};
     ProfileBuilderId commonEquivalenceProfileBuilder{ProfileBuilderId::None};
+    DeviceStreamTraits streamTraits{};
     BootloaderCuePolicy bootloaderCue{BootloaderCuePolicy::None};
     std::string vendorName;
     std::string modelName;
@@ -284,6 +342,13 @@ public:
     /// preserves today's behaviour for every device without a definition.
     [[nodiscard]] static Discovery::AvcCommandFilterId
     CommandFilterFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
+
+    /// The stream traits this identity carries, decided from Config ROM alone.
+    /// Device-level like CommandFilterFor: it tries every unit and returns the
+    /// first definition that matches. An unmatched identity gets the defaults,
+    /// which is today's behaviour for every device without a definition.
+    [[nodiscard]] static DeviceStreamTraits
+    StreamTraitsFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
 
     [[nodiscard]] static std::span<const AudioDeviceDefinition> Definitions() noexcept;
     [[nodiscard]] static std::span<const AudioSafetyRule> SafetyRules() noexcept;

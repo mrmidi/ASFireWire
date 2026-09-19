@@ -35,7 +35,8 @@ constexpr AudioDeviceDefinition Definition(
     AudioFamilyProviderId family, ProbePolicyId probe, ProfileBuilderId builder,
     SupportDisposition support, const char* vendorName, const char* modelName,
     std::optional<uint32_t> guidModel = std::nullopt,
-    BootloaderCuePolicy bootloaderCue = BootloaderCuePolicy::None) {
+    BootloaderCuePolicy bootloaderCue = BootloaderCuePolicy::None,
+    DeviceStreamTraits streamTraits = {}) {
     auto rootClause = Root(vendor, model);
     auto guidClause = IdentityMatchClause{};
 
@@ -95,6 +96,7 @@ constexpr AudioDeviceDefinition Definition(
         .profileBuilder = builder,
         .support = support,
         .guidReliability = GuidReliability::ReliableWhenUnique,
+        .streamTraits = streamTraits,
         .bootloaderCue = bootloaderCue,
         .vendorName = vendorName,
         .modelName = modelName,
@@ -145,24 +147,66 @@ constexpr AudioDeviceDefinition MotuDefinition(DeviceDefinitionId id,
     };
 }
 
+// Trait shapes shared by more than one device, named once so the rows read as
+// rules rather than as repeated literals.
+
+// Every DICE part. Linux's snd-dice is unconditionally CIP_BLOCKING
+// (dice-stream.c:508): 8 samples per packet plus NO-DATA packets.
+constexpr DeviceStreamTraits kDiceTraits{
+    .forcedStreamMode = ForcedStreamMode::Blocking,
+};
+
+// The CMP families. Linux initialises BeBoB's AMDTP with CIP_BLOCKING
+// (bebob_stream.c:400-465), forces blocking transmission for every Loud OXFW
+// unit (oxfw.c:189-196, SND_OXFW_QUIRK_BLOCKING_TRANSMISSION), and Fireworks
+// rides the same choreography.
+constexpr DeviceStreamTraits kCmpBlockingTraits{
+    .forcedStreamMode = ForcedStreamMode::Blocking,
+    .startShape = StreamStartShape::CmpReceiveThenTransmit,
+};
+
+// As above, plus: the capture-side CIP dbs field is untrusted, so the
+// configured slot count is the authority for the stride.
+// The Mackie/Loud models this driver does not stream. Blocking still applies:
+// snd-oxfw forces it for every Loud OXFW unit and snd-dice is unconditionally
+// blocking, so it is right for both production runs. No start shape, because
+// nothing starts them.
+constexpr DeviceStreamTraits kMackieBlockingTraits{
+    .forcedStreamMode = ForcedStreamMode::Blocking,
+};
+
+constexpr DeviceStreamTraits kCmpBlockingUntrustedStrideTraits{
+    .forcedStreamMode = ForcedStreamMode::Blocking,
+    .startShape = StreamStartShape::CmpReceiveThenTransmit,
+    .captureTrustConfiguredStride = true,
+};
+
 constexpr std::array kDefinitions{
     Definition(DeviceDefinitionId::FocusriteSPro14, kFocusriteVendorId, kSPro14ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::DiceTcat,
                ProfileBuilderId::FocusriteSPro14, SupportDisposition::Supported,
-               kFocusriteVendorName, kSPro14ModelName, kSPro14ModelId),
+               kFocusriteVendorName, kSPro14ModelName, kSPro14ModelId,
+               BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::FocusriteSPro24, kFocusriteVendorId, kSPro24ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::DiceTcat,
                ProfileBuilderId::FocusriteSPro24, SupportDisposition::Supported,
-               kFocusriteVendorName, kSPro24ModelName, kSPro24ModelId),
+               kFocusriteVendorName, kSPro24ModelName, kSPro24ModelId,
+               BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::FocusriteSPro24Dsp, kFocusriteVendorId,
                kSPro24DspModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::DiceTcat, ProfileBuilderId::FocusriteSPro24Dsp,
                SupportDisposition::Supported, kFocusriteVendorName,
-               kSPro24DspModelName, kSPro24DspModelId),
+               kSPro24DspModelName, kSPro24DspModelId, BootloaderCuePolicy::None,
+               // The DSP model is the one device whose wire format depends on its
+               // runtime configuration rather than its identity: 8 PCM in 9 slots
+               // is raw 24-in-32, anything else is AM824.
+               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
+                                  .rawPcm24In32WhenEightInNineSlots = true}),
     Definition(DeviceDefinitionId::FocusriteSPro40, kFocusriteVendorId, kSPro40ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::DiceTcat,
                ProfileBuilderId::FocusriteSPro40, SupportDisposition::Supported,
-               kFocusriteVendorName, kSPro40ModelName, kSPro40ModelId),
+               kFocusriteVendorName, kSPro40ModelName, kSPro40ModelId,
+               BootloaderCuePolicy::None, kDiceTraits),
     // `midi` marks the Liquid Saffire 56 Supported because it carries a
     // FocusriteLiquidS56 builder. This branch does not: the LS56 bring-up work
     // is uncommitted, so a Supported row here would resolve to a builder that
@@ -172,83 +216,106 @@ constexpr std::array kDefinitions{
                kLiquidS56ModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kFocusriteVendorName,
-               kLiquidS56ModelName, kLiquidS56ModelId),
+               kLiquidS56ModelName, kLiquidS56ModelId, BootloaderCuePolicy::None,
+               kDiceTraits),
     Definition(DeviceDefinitionId::FocusriteSPro26, kFocusriteVendorId, kSPro26ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kFocusriteVendorName,
-               kSPro26ModelName, kSPro26ModelId),
+               kSPro26ModelName, kSPro26ModelId, BootloaderCuePolicy::None,
+               kDiceTraits),
     Definition(DeviceDefinitionId::FocusriteSPro40Tcd3070, kFocusriteVendorId,
                kSPro40Tcd3070ModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kFocusriteVendorName,
-               kSPro40Tcd3070ModelName, kFocusriteGuidModelSPro40Tcd3070),
+               kSPro40Tcd3070ModelName, kFocusriteGuidModelSPro40Tcd3070,
+               BootloaderCuePolicy::None, kDiceTraits),
 
     Definition(DeviceDefinitionId::WeissAdc2, kWeissVendorId, kWeissAdc2ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kWeissVendorName,
-               kWeissAdc2ModelName),
+               kWeissAdc2ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::WeissVesta, kWeissVendorId, kWeissVestaModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kWeissVendorName,
-               kWeissVestaModelName),
+               kWeissVestaModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::WeissDac2, kWeissVendorId, kWeissDac2ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kWeissVendorName,
-               kWeissDac2ModelName),
+               kWeissDac2ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::WeissAfi1, kWeissVendorId, kWeissAfi1ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kWeissVendorName,
-               kWeissAfi1ModelName),
+               kWeissAfi1ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::WeissInt202, kWeissVendorId, kWeissInt202ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::DiceTcat,
                ProfileBuilderId::WeissInt202, SupportDisposition::Supported,
-               kWeissVendorName, kWeissInt202ModelName),
+               kWeissVendorName, kWeissInt202ModelName, std::nullopt, BootloaderCuePolicy::None,
+               // Output-only in CoreAudio but duplex on the wire: host transmit
+               // goes first after GLOBAL_ENABLE so its AM824 packets establish
+               // the device receive-clock path. dice-weiss.c:10-35.
+               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
+                                  .startShape = StreamStartShape::TransmitFirst}),
     Definition(DeviceDefinitionId::WeissDac202, kWeissVendorId, kWeissDac202ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kWeissVendorName,
-               kWeissDac202ModelName),
+               kWeissDac202ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::WeissMaya, kWeissVendorId, kWeissMayaModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kWeissVendorName,
-               kWeissMayaModelName),
+               kWeissMayaModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::WeissInt203, kWeissVendorId, kWeissInt203ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::DiceTcat,
                ProfileBuilderId::WeissInt203, SupportDisposition::Supported,
-               kWeissVendorName, kWeissInt203ModelName),
+               kWeissVendorName, kWeissInt203ModelName, std::nullopt, BootloaderCuePolicy::None,
+               // Output-only in CoreAudio but duplex on the wire: host transmit
+               // goes first after GLOBAL_ENABLE so its AM824 packets establish
+               // the device receive-clock path. dice-weiss.c:10-35.
+               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
+                                  .startShape = StreamStartShape::TransmitFirst}),
     Definition(DeviceDefinitionId::WeissMan301, kWeissVendorId, kWeissMan301ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kWeissVendorName,
-               kWeissMan301ModelName),
+               kWeissMan301ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
 
     Definition(DeviceDefinitionId::ApogeeDuet, kApogeeVendorId, kApogeeDuetModelId,
                AudioFamilyProviderId::OXFW, ProbePolicyId::OxfwAvc,
                ProfileBuilderId::ApogeeDuet, SupportDisposition::Supported,
-               kApogeeVendorName, kApogeeDuetModelName),
+               kApogeeVendorName, kApogeeDuetModelName, std::nullopt,
+               BootloaderCuePolicy::None,
+               // Discovery reports and supports non-blocking, and host playback
+               // works that way, but the observed device output cadence is
+               // blocking -- forcing it keeps host and device aligned.
+               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
+                                  .startShape = StreamStartShape::ApogeeInterleaved}),
     Definition(DeviceDefinitionId::TerraTecPhase88, kTerraTecVendorId,
                kPhase88RackFwModelId, AudioFamilyProviderId::BeBoB,
                ProbePolicyId::BeBoBPlug0, ProfileBuilderId::TerraTecPhase88,
                SupportDisposition::Supported, kTerraTecVendorName,
-               kPhase88RackFwModelName),
+               kPhase88RackFwModelName, std::nullopt, BootloaderCuePolicy::None,
+               kCmpBlockingTraits),
     Definition(DeviceDefinitionId::AlesisMultiMix, kAlesisVendorId,
                kAlesisMultiMixModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::DiceTcat, ProfileBuilderId::AlesisMultiMix,
                SupportDisposition::Supported, kAlesisVendorName,
-               kAlesisMultiMixModelName),
+               kAlesisMultiMixModelName, std::nullopt, BootloaderCuePolicy::None,
+               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
+                                  .clampCaptureStreamsToOne = true}),
     Definition(DeviceDefinitionId::MidasVeniceF32, kMidasVendorId,
                kMidasVeniceModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::DiceTcat, ProfileBuilderId::MidasVeniceF32,
                SupportDisposition::Supported, kMidasVendorName,
-               kMidasVeniceModelName),
+               kMidasVeniceModelName, std::nullopt, BootloaderCuePolicy::None,
+               kDiceTraits),
     Definition(DeviceDefinitionId::PreSonusStudioLive1602, kPreSonusVendorId,
                kStudioLive1602ModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::DiceTcat, ProfileBuilderId::PreSonusStudioLive1602,
                SupportDisposition::Supported, kPreSonusVendorName,
-               kStudioLive1602ModelName),
+               kStudioLive1602ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::PreSonusStudioLive1642, kPreSonusVendorId,
                kStudioLive1642ModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kPreSonusVendorName,
-               kStudioLive1642ModelName),
+               kStudioLive1642ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     // Anna's 24.4.2 (GUID 0x000A9204049204CB): profile landed in #122, the
     // DeviceProtocolFactory clause it was missing in #124. Its playback side is
     // asymmetric (16 + 10), which is what Stage 3 has to frame per stream.
@@ -256,12 +323,12 @@ constexpr std::array kDefinitions{
                kStudioLive2442ModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::DiceTcat, ProfileBuilderId::PreSonusStudioLive2442,
                SupportDisposition::Supported, kPreSonusVendorName,
-               kStudioLive2442ModelName),
+               kStudioLive2442ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::PreSonusStudioLive3242, kPreSonusVendorId,
                kStudioLive3242ModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kPreSonusVendorName,
-               kStudioLive3242ModelName),
+               kStudioLive3242ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     // ---- M-Audio "special firmware" ----
     // These three exist here for their probe policy, not for audio: this branch
     // has no MAudioSpecialProtocol, so none of them names a builder and none
@@ -334,32 +401,38 @@ constexpr std::array kDefinitions{
                kOnyxIOxfwModelId, AudioFamilyProviderId::OXFW,
                ProbePolicyId::OxfwAvc, ProfileBuilderId::MackieOnyxIOxfw,
                SupportDisposition::Supported, kMackieVendorName,
-               kOnyxIOxfwModelName),
+               kOnyxIOxfwModelName, std::nullopt, BootloaderCuePolicy::None,
+               kCmpBlockingUntrustedStrideTraits),
     Definition(DeviceDefinitionId::MackieOnyx400F, kMackieVendorId,
                kOnyx400FModelId, AudioFamilyProviderId::Fireworks,
                ProbePolicyId::FireworksEfc, ProfileBuilderId::MackieOnyx400F,
                SupportDisposition::Supported, kMackieVendorName,
-               kOnyx400FModelName),
+               kOnyx400FModelName, std::nullopt, BootloaderCuePolicy::None,
+               kCmpBlockingUntrustedStrideTraits),
     Definition(DeviceDefinitionId::MackieOnyx1640iOxfw, kMackieVendorId,
                kOnyx1640iOxfwModelId, AudioFamilyProviderId::OXFW,
                ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kMackieVendorName,
-               kOnyx1640iModelName),
+               kOnyx1640iModelName, std::nullopt, BootloaderCuePolicy::None,
+               kMackieBlockingTraits),
     Definition(DeviceDefinitionId::MackieOnyx1640iDice, kMackieVendorId,
                kOnyx1640iDiceModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kMackieVendorName,
-               kOnyx1640iModelName),
+               kOnyx1640iModelName, std::nullopt, BootloaderCuePolicy::None,
+               kMackieBlockingTraits),
     Definition(DeviceDefinitionId::MackieOnyxBlackbird, kMackieVendorId,
                kOnyxBlackbirdModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kMackieVendorName,
-               kOnyxBlackbirdModelName),
+               kOnyxBlackbirdModelName, std::nullopt, BootloaderCuePolicy::None,
+               kMackieBlockingTraits),
     Definition(DeviceDefinitionId::MackieOnyx1200F, kMackieVendorId,
                kOnyx1200FModelId, AudioFamilyProviderId::Fireworks,
                ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kMackieVendorName,
-               kOnyx1200FModelName),
+               kOnyx1200FModelName, std::nullopt, BootloaderCuePolicy::None,
+               kMackieBlockingTraits),
 };
 
 // No safety rule is currently defined.
@@ -633,6 +706,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
                               ? first.commonEquivalenceProfileBuilder
                               : first.profileBuilder,
         .commonEquivalenceProfileBuilder = first.commonEquivalenceProfileBuilder,
+        .streamTraits = first.streamTraits,
         .bootloaderCue = first.bootloaderCue,
         .vendorName = first.vendorName != nullptr ? first.vendorName : "",
         .modelName = first.modelName != nullptr ? first.modelName : "",
@@ -699,6 +773,35 @@ Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
         }
     }
     return Discovery::AvcCommandFilterId::Unrestricted;
+}
+
+DeviceStreamTraits AudioDeviceCatalog::StreamTraitsFor(
+    const Discovery::DeviceIdentityEvidence& device) noexcept {
+    const auto matchAgainst =
+        [&](const Discovery::UnitIdentityEvidence& unit) -> const AudioDeviceDefinition* {
+        for (const auto& definition : kDefinitions) {
+            for (uint8_t i = 0; i < definition.clauseCount; ++i) {
+                if (definition.clauses[i].Matches(device, unit)) {
+                    return &definition;
+                }
+            }
+        }
+        return nullptr;
+    };
+
+    if (device.units.empty()) {
+        const Discovery::UnitIdentityEvidence emptyUnit{};
+        if (const auto* definition = matchAgainst(emptyUnit)) {
+            return definition->streamTraits;
+        }
+        return DeviceStreamTraits{};
+    }
+    for (const auto& unit : device.units) {
+        if (const auto* definition = matchAgainst(unit)) {
+            return definition->streamTraits;
+        }
+    }
+    return DeviceStreamTraits{};
 }
 
 std::optional<const AudioSafetyRule*>

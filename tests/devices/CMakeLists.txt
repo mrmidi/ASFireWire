@@ -265,3 +265,11 @@ add_device_test(DeviceProtocolChoiceTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
 )
+
+# The catalog's stream traits against the two matchers they replace, while both
+# are still present so the old answers are the oracle.
+add_device_test(DeviceStreamTraitsAgreementTests
+    DeviceStreamTraitsAgreementTests.cpp
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceStreamModeQuirks.cpp"
+)
