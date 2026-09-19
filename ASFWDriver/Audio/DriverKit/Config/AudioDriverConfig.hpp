@@ -19,6 +19,10 @@ constexpr uint32_t kMaxSampleRates = 8;
 // first 8. Each name is at most 64 bytes (see ParsedAudioDriverConfig).
 constexpr uint32_t kMaxNamedChannels = 32;
 constexpr uint32_t kMaxBoolControls = 16;
+/// Must equal kMaxAudioStreamsPerDirection (Audio/Protocols/AudioTypes.hpp).
+/// Duplicated rather than included so this header stays on the AudioDriverKit
+/// side of the nub; DiceAudioBackend static_asserts the two agree.
+constexpr uint32_t kMaxConfiguredStreams = 4;
 
 constexpr uint32_t kClassIdPhantomPower = static_cast<uint32_t>('phan');
 constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
@@ -35,6 +39,16 @@ struct BoolControlDescriptor {
     uint32_t element{0};
     bool isSettable{false};
     bool initialValue{false};
+};
+
+/// One isochronous stream's resolved wire shape, parsed from the nub.
+/// `channelOffset` is the running sum of preceding stream widths, not
+/// index * width -- see AudioPropertyKeys.hpp.
+struct ParsedWireStream {
+    uint32_t pcmChannels{0};
+    uint32_t am824Slots{0};
+    uint32_t midiPorts{0};
+    uint32_t channelOffset{0};
 };
 
 struct ParsedAudioDriverConfig {
@@ -57,6 +71,14 @@ struct ParsedAudioDriverConfig {
     double currentSampleRate{kDefaultSampleRate};
 
     StreamMode streamMode{StreamMode::kNonBlocking};
+
+    // Resolved per-stream geometry from the publisher. A count of zero means
+    // none was published and the profile's constants are the only description
+    // available -- correct for a uniform device, wrong for an asymmetric one.
+    ParsedWireStream playbackStreams[kMaxConfiguredStreams]{};
+    uint32_t playbackStreamCount{0};
+    ParsedWireStream captureStreams[kMaxConfiguredStreams]{};
+    uint32_t captureStreamCount{0};
 
     uint32_t boolControlCount{0};
     BoolControlDescriptor boolControls[kMaxBoolControls]{};

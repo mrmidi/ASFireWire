@@ -248,6 +248,10 @@ add_audio_test(DiceFixtureGeometryTests
     DiceFixtureGeometryTests.cpp
 )
 
+add_audio_test(ResolvedStreamConfigTests
+    ResolvedStreamConfigTests.cpp
+)
+
 # DICE Profile Registry and Quirks Tests
 add_audio_test(DiceProfileTests
     DiceProfileTests.cpp

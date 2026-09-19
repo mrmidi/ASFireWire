@@ -1,6 +1,7 @@
 #include "AudioDriverConfig.hpp"
 
 #include "../../Model/AudioPropertyKeys.hpp"
+#include "../../../Logging/Logging.hpp"
 
 #include <DriverKit/OSArray.h>
 #include <DriverKit/OSBoolean.h>
@@ -146,6 +147,66 @@ void BuildChannelNamesFromPlugs(ParsedAudioDriverConfig& inOutConfig) {
     }
 }
 
+// Parse one direction's per-stream geometry. An entry missing its PCM count is
+// not describable, so the whole array is rejected rather than partially
+// accepted: a half-read geometry would silently mis-frame the streams it did
+// read, which is the failure this property exists to prevent.
+void ParseWireStreams(OSDictionary* properties,
+                      const char* key,
+                      ParsedWireStream (&outStreams)[kMaxConfiguredStreams],
+                      uint32_t& outCount) {
+    outCount = 0;
+    auto* array = OSDynamicCast(OSArray, properties->getObject(key));
+    if (array == nullptr) {
+        return;
+    }
+
+    const uint32_t published = array->getCount();
+    if (published > kMaxConfiguredStreams) {
+        ASFW_LOG(Audio,
+                 "AudioDriverConfig: %{public}s publishes %u streams, more than this build "
+                 "can configure (%u) - ignoring the whole array rather than truncating it",
+                 key, published, kMaxConfiguredStreams);
+        return;
+    }
+
+    ParsedWireStream parsed[kMaxConfiguredStreams]{};
+    for (uint32_t i = 0; i < published; ++i) {
+        auto* entry = OSDynamicCast(OSDictionary, array->getObject(i));
+        if (entry == nullptr) {
+            ASFW_LOG(Audio, "AudioDriverConfig: %{public}s entry %u is not a dictionary", key, i);
+            return;
+        }
+        auto* pcm = OSDynamicCast(OSNumber, entry->getObject(Keys::kStreamPcmChannels));
+        if (pcm == nullptr || pcm->unsigned32BitValue() == 0) {
+            ASFW_LOG(Audio, "AudioDriverConfig: %{public}s entry %u states no PCM channels", key, i);
+            return;
+        }
+        parsed[i].pcmChannels = pcm->unsigned32BitValue();
+        if (auto* slots =
+                OSDynamicCast(OSNumber, entry->getObject(Keys::kStreamAm824Slots))) {
+            parsed[i].am824Slots = slots->unsigned32BitValue();
+        }
+        if (auto* midi =
+                OSDynamicCast(OSNumber, entry->getObject(Keys::kStreamMidiPorts))) {
+            parsed[i].midiPorts = midi->unsigned32BitValue();
+        }
+        if (auto* offset =
+                OSDynamicCast(OSNumber, entry->getObject(Keys::kStreamChannelOffset))) {
+            parsed[i].channelOffset = offset->unsigned32BitValue();
+        }
+        // A data block has to be at least as wide as the PCM it carries.
+        if (parsed[i].am824Slots == 0) {
+            parsed[i].am824Slots = parsed[i].pcmChannels + parsed[i].midiPorts;
+        }
+    }
+
+    for (uint32_t i = 0; i < published; ++i) {
+        outStreams[i] = parsed[i];
+    }
+    outCount = published;
+}
+
 void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
                                           ParsedAudioDriverConfig& inOutConfig) {
     if (!properties) {
@@ -157,6 +218,10 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
     ParseSampleRates(properties, inOutConfig);
     ParsePlugNames(properties, inOutConfig);
     ParseChannelNames(properties, inOutConfig);
+    ParseWireStreams(properties, Keys::kPlaybackStreams,
+                     inOutConfig.playbackStreams, inOutConfig.playbackStreamCount);
+    ParseWireStreams(properties, Keys::kCaptureStreams,
+                     inOutConfig.captureStreams, inOutConfig.captureStreamCount);
     BuildChannelNamesFromPlugs(inOutConfig);
 }
 

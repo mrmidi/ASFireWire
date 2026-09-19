@@ -55,6 +55,17 @@ struct AudioDriverDeviceState {
     char outputPlugName[64]{};
     char inputChannelNames[ASFW::Isoch::Audio::kMaxNamedChannels][64]{};
     char outputChannelNames[ASFW::Isoch::Audio::kMaxNamedChannels][64]{};
+
+    // Resolved per-stream wire geometry, carried across the nub. StartIO frames
+    // playback from this rather than from the profile's compiled-in constants,
+    // which is the only way an asymmetric device (Venice F24: 16 + 8) can be
+    // packetized correctly. A count of zero means the publisher offered none.
+    ASFW::Isoch::Audio::ParsedWireStream
+        playbackStreams[ASFW::Isoch::Audio::kMaxConfiguredStreams]{};
+    uint32_t playbackStreamCount{0};
+    ASFW::Isoch::Audio::ParsedWireStream
+        captureStreams[ASFW::Isoch::Audio::kMaxConfiguredStreams]{};
+    uint32_t captureStreamCount{0};
 };
 
 class DextTxExecutionTimeline final {

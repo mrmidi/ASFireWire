@@ -29,6 +29,33 @@ inline constexpr const char* kOutputChannelNames = "ASFWOutputChannelNames";
 inline constexpr const char* kCurrentSampleRate = "ASFWCurrentSampleRate";
 inline constexpr const char* kStreamMode = "ASFWStreamMode";
 
+// Per-stream wire geometry, resolved from the device's own registers and
+// validated against the profile before publication. OSArray of OSDictionary,
+// one entry per isochronous stream, in stream order.
+//
+// This exists because the aggregate channel counts above cannot describe an
+// asymmetric device. The recorded Midas Venice F24 carries 16 + 8 playback
+// channels; an aggregate of 24 is true but unusable for framing, and the
+// profile's own constants describe an F32 (16 + 16). Without this the audio
+// side had no way to learn the real per-stream shape, so it built packets from
+// compiled-in constants while the transport reserved bandwidth from the device.
+//
+// Directions are named for the HOST: playback is host -> device (DICE RX),
+// capture is device -> host (DICE TX).
+inline constexpr const char* kPlaybackStreams = "ASFWPlaybackStreams";
+inline constexpr const char* kCaptureStreams = "ASFWCaptureStreams";
+
+// Keys within one stream entry.
+inline constexpr const char* kStreamPcmChannels = "PCM";
+inline constexpr const char* kStreamAm824Slots = "Slots";
+inline constexpr const char* kStreamMidiPorts = "MIDI";
+/// First host channel this stream carries: the running sum of the PCM channel
+/// counts of the streams before it, NOT index * width. Those coincide only
+/// while every stream is the same width. The vendor drivers carry the same
+/// running base (AlesisFirewireAudioEngine::CreateStreams advances it by each
+/// stream's own count).
+inline constexpr const char* kStreamChannelOffset = "Offset";
+
 inline constexpr const char* kBoolClassId = "ClassID";
 inline constexpr const char* kBoolScope = "Scope";
 inline constexpr const char* kBoolElement = "Element";

@@ -1,8 +1,9 @@
 # DICE / TCAT: evidence, current state, and direction
 
 **Status:** evidence base + accepted direction (2026-09-20). The direction in §4
-is agreed; **implementation is backlogged** apart from the geometry resolver that
-already landed (§3.1). No code is implied by §4.
+is agreed. **Stage 4 / step A has landed** — the geometry resolver (§3.1) and
+per-stream geometry reaching playback framing (§3.4). Steps B, C and D remain
+backlogged; no code is implied by them.
 
 **Relationship to other docs.** [`DEVICE_BACKEND_UNIFICATION.md`](DEVICE_BACKEND_UNIFICATION.md)
 is the protocol-neutral-interface direction, of which this is the DICE-family
@@ -311,32 +312,50 @@ deltas, Weiss's capture-visibility policy, Generic's flat offsets, and names.**
 | **`clampCaptureStreamsToOne`** | **Disabled 2026-09-20.** Clamped host **capture** on both Alesis rows while citing libffado, which clamps host **playback** (§2.9); on the recorded MultiMix that discarded the `MAIN_IN L/R` stream, 12 channels where the device carries 14. Its consumer in `DuplexStreamProfile::ResolveChannels` is now `#if 0`-ed with the full reasoning; the trait field and the two catalog rows are kept so re-enabling is one block plus a direction fix. See the TODO below. |
 | **Extended channel-name block** | `DICEDuplexBringupController.cpp:982` reads the standard names offset unconditionally; a device with stream `SIZE >= 326` uses `+0x120` (§2.2). Cosmetic — wrong or empty labels, not a streaming fault. |
 
-### 3.4 Seeding is direction-scoped, because the encoding paths are
+### 3.4 Every geometry consumer now reads the device
 
-The three consumers of geometry have been migrated unevenly:
+Step A has landed. All three consumers read the same resolved geometry:
 
 | path | source |
 |---|---|
-| bandwidth / transport, **both** directions | device (`DuplexStreamProfile::Build` reads `caps`) |
+| bandwidth / transport, both directions | device (`DuplexStreamProfile::Build` reads `caps`) |
 | **capture** encoding | device (`IsochDuplexHostTransport` → `DirectAudioReceiveConsumer`) |
-| **playback** encoding + packet allocation | **profile** (`ASFWAudioDevice::StartIO` → `BuildTxStreamConfig`) |
+| **playback** encoding + packet allocation | **device** (nub per-stream properties → `BuildResolvedTxStreamConfig`) |
 
-Seeding a direction means letting the device win unopposed, which is safe only
-where the device's answer reaches the code that frames packets. So **capture may
-be seeded today and playback may not**: a seeded playback disagreement would be
-waved through at publication and then mis-framed on the wire. The recorded Venice
-F24 is the live case — device 16 + 8, F32 seed 16 + 16, and `StartIO` would build
-the second stream at 16 channels / DBS 16 into an 8-slot stream.
+The nub carries `ASFWPlaybackStreams` / `ASFWCaptureStreams` — an array per
+direction of `{PCM, Slots, MIDI, Offset}`, where `Offset` is the running sum of
+preceding stream widths (§3.5). `ASFWAudioDevice::StartIO` builds each stream
+from it, keeping only the constants the DICE registers do not hold: `fdf`,
+`fmt`, frames per data packet, stream mode, `sid`. Packet allocation shares the
+same derivation (`TxPacketBytesForStreamConfig`), so the buffer allocated and
+the geometry framed from cannot disagree.
+
+The recorded Venice F24 now resolves end to end: published as 24 in / 24 out,
+and framed as **16 at offset 0 then 8 at offset 16**, with DBS 16 and 8 and
+packet sizes to match — where the F32 profile would have said 16 + 16.
 
 `TreatProfileAsAsserted(profileAsserts, encodingIsDeviceSourced)` in
-`StreamGeometryResolver.hpp` is the rule; `DiceAudioBackend` supplies
-`kCaptureEncodingIsDeviceSourced = true` and
-`kPlaybackEncodingIsDeviceSourced = false`. Both are properties of the **driver**,
-not of any device, and must not become per-device policy. Step A flips the
-playback constant and the override disappears with it.
+`StreamGeometryResolver.hpp` is the rule, and `DiceAudioBackend` now supplies
+`true` for both directions. The constants are kept rather than deleted: they
+state *which* directions have been migrated, and the next family to move off
+profile constants needs the same question asked of it. Both are properties of
+the **driver**, not of any device, and must not become per-device policy.
 
 A profile's own declaration is left untouched by this: it states what its
 constants *mean*; the gate decides what the driver can safely act on.
+
+**Capacity.** This build allocates one primary and one secondary playback
+stream. A device carrying more is refused — at publication in
+`EnsureNubForGuid` and again at `StartIO`, so it never appears as an endpoint
+that fails every start. Nothing in the fixtures exceeds two.
+
+**Refresh is not implemented.** `AudioNubPublisher::EnsureNub` is create-once,
+so a later resolution does not reach a live nub. That is safe only because
+`DICETcatProtocol::ResetRuntimeCaps` is reachable only from `Shutdown`, so the
+geometry cannot change while a nub exists. **The two are coupled:** whichever
+change makes caps re-readable (step D) must also make the nub refreshable, or
+the audio side keeps framing from a description the device has stopped
+honouring. Recorded at both sites in code.
 
 ### 3.5 The `sourceChannelOffset` landmine
 
@@ -411,6 +430,7 @@ can be deleted.
   Flips `kPlaybackEncodingIsDeviceSourced` to true in the same change, which
   retires the seeding gate in §3.4. Afterwards `Tx/RxStreamCount` and the
   per-stream channel constants have no consumer.
+  **Landed 2026-09-20** — see §3.4.
 - **B — rates from the device.** `clockCaps` onto `AudioStreamRuntimeCaps`;
   intersect with the ceiling; firmware fallback. Independent of A.
   Afterwards `SupportedSampleRates()` has no DICE consumer.

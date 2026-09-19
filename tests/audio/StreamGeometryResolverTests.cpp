@@ -476,18 +476,18 @@ TEST(TreatProfileAsAssertedRule, SeedIsHonouredOnlyWhenEncodingReadsTheDevice) {
 }
 
 // The live case, with the recorded numbers. The Midas profile seeds the F32's
-// 16 + 16 playback; the recorded F24 carries 16 + 8. While playback framing
-// reads the profile, ASFWAudioDevice::StartIO would build the second stream at
-// 16 channels / DBS 16 into an 8-slot stream -- so this must refuse, not
-// publish. It flips to usable in the same change that moves StartIO onto the
-// resolved geometry.
-TEST(TreatProfileAsAssertedRule, VeniceF24PlaybackRefusesWhileFramingReadsTheProfile) {
+// 16 + 16 playback; the recorded F24 carries 16 + 8. Now that StartIO frames
+// playback from the resolved geometry, the device's answer is taken and the
+// endpoint publishes 24 -- where it previously had to refuse, because accepting
+// it would have meant building stream 1 at 16 channels / DBS 16 into an 8-slot
+// stream.
+TEST(TreatProfileAsAssertedRule, VeniceF24PlaybackResolvesOnceFramingReadsTheDevice) {
     constexpr uint16_t kDevice[] = {16, 8};   // recorded F24
     constexpr uint16_t kProfile = 16;         // F32 seed, both streams
 
     const bool asserted = ASFW::Audio::TreatProfileAsAsserted(
-        /*profileAsserts=*/false, /*encodingIsDeviceSourced=*/false);
-    ASSERT_TRUE(asserted);
+        /*profileAsserts=*/false, /*encodingIsDeviceSourced=*/true);
+    ASSERT_FALSE(asserted);
 
     const auto resolved = ASFW::Audio::ResolveDirectionGeometry(
         2, ASFW::Audio::ProfileStatedStreamCount(asserted, 2),
@@ -499,24 +499,27 @@ TEST(TreatProfileAsAssertedRule, VeniceF24PlaybackRefusesWhileFramingReadsThePro
                 asserted, WireStreamGeometry{.pcmChannels = kProfile, .am824Slots = kProfile});
         });
 
-    EXPECT_FALSE(resolved.Usable());
-    EXPECT_EQ(resolved.FirstDisagreeingStream(), 1u);
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.TotalPcmChannels(), 24u);
+    EXPECT_EQ(resolved.streams[1].geometry.pcmChannels, 8u);
 
-    // And the counterfactual: had playback framing already been device-sourced,
-    // the same inputs would resolve cleanly to the device's 24 channels. This is
-    // the assertion that should start passing when step A lands.
-    const bool afterStepA = ASFW::Audio::TreatProfileAsAsserted(false, true);
-    const auto migrated = ASFW::Audio::ResolveDirectionGeometry(
-        2, ASFW::Audio::ProfileStatedStreamCount(afterStepA, 2),
+    // And the converse still holds: a direction whose framing has NOT been
+    // migrated must still refuse rather than publish a shape it cannot build.
+    // This is what guards the next family to move off profile constants.
+    const bool beforeMigration = ASFW::Audio::TreatProfileAsAsserted(false, false);
+    ASSERT_TRUE(beforeMigration);
+    const auto unmigrated = ASFW::Audio::ResolveDirectionGeometry(
+        2, ASFW::Audio::ProfileStatedStreamCount(beforeMigration, 2),
         [&](uint32_t i) {
             return WireStreamGeometry{.pcmChannels = kDevice[i], .am824Slots = kDevice[i]};
         },
         [&](uint32_t) {
             return ASFW::Audio::ProfileStatedGeometry(
-                afterStepA, WireStreamGeometry{.pcmChannels = kProfile, .am824Slots = kProfile});
+                beforeMigration,
+                WireStreamGeometry{.pcmChannels = kProfile, .am824Slots = kProfile});
         });
-    EXPECT_TRUE(migrated.Usable());
-    EXPECT_EQ(migrated.TotalPcmChannels(), 24u);
+    EXPECT_FALSE(unmigrated.Usable());
+    EXPECT_EQ(unmigrated.FirstDisagreeingStream(), 1u);
 }
 
 // Capture must NOT be caught by the same gate: the Alesis MultiMix seeds one
