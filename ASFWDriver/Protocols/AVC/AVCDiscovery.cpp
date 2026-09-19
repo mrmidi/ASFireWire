@@ -13,7 +13,7 @@
 #include "../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "../../Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "../../Audio/Protocols/Oxford/OxfwStreamFormats.hpp"
-#include "../../Audio/Protocols/DeviceStreamModeQuirks.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
 #include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
@@ -34,18 +34,34 @@ using namespace ASFW::Protocols::AVC;
 
 namespace {
 
+[[nodiscard]] constexpr const char* StreamModeToString(
+    ASFW::Audio::Model::StreamMode mode) noexcept {
+    return (mode == ASFW::Audio::Model::StreamMode::kBlocking) ? "blocking"
+                                                               : "non-blocking";
+}
+
 ASFW::Audio::Model::StreamMode ResolveStreamMode(
     const ASFW::Protocols::AVC::Music::MusicSubunitCapabilities& caps,
+    const ASFW::Discovery::DeviceIdentityEvidence& identity,
     uint32_t vendorId,
     uint32_t modelId,
     const char*& reason) noexcept {
-    if (auto forced = ASFW::Audio::Quirks::LookupForcedStreamMode(vendorId, modelId); forced.has_value()) {
-        reason = "quirk";
+    // Cadence a device must be driven at whatever it reports, from the one
+    // device catalog. Unspecified means "believe the probe", which is what an
+    // unlisted device gets.
+    using ASFW::DeviceProfiles::Audio::AudioDeviceCatalog;
+    using ASFW::DeviceProfiles::Audio::ForcedStreamMode;
+    const auto forced = AudioDeviceCatalog::StreamTraitsFor(identity).forcedStreamMode;
+    if (forced != ForcedStreamMode::Unspecified) {
+        const auto mode = (forced == ForcedStreamMode::Blocking)
+                              ? ASFW::Audio::Model::StreamMode::kBlocking
+                              : ASFW::Audio::Model::StreamMode::kNonBlocking;
+        reason = "catalog";
         ASFW_LOG_WARNING(Audio,
-                         "AVCDiscovery: QUIRK OVERRIDE stream mode vendor=0x%06x model=0x%06x forced=%{public}s",
-                         vendorId, modelId,
-                         ASFW::Audio::Quirks::StreamModeToString(*forced));
-        return *forced;
+                         "AVCDiscovery: catalog forces stream mode vendor=0x%06x "
+                         "model=0x%06x forced=%{public}s",
+                         vendorId, modelId, StreamModeToString(mode));
+        return mode;
     }
 
     // Use transmit capability as mode selection signal. This mode is currently
@@ -498,8 +514,8 @@ void AVCDiscovery::PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
     config.currentSampleRate = kSampleRateHz;
     config.inputPlugName = "Onyx Capture";
     config.outputPlugName = "Onyx Monitor Return";
-    // LOUD vendor-wide rule (Linux snd-oxfw oxfw.c:189-196); also forced in
-    // DeviceStreamModeQuirks so every downstream mode resolution agrees.
+    // LOUD vendor-wide rule (Linux snd-oxfw oxfw.c:189-196); the catalog states
+    // the same for this row, so every downstream mode resolution agrees.
     config.streamMode = ::ASFW::Audio::Model::StreamMode::kBlocking;
 
     ASFW_LOG(Audio,
@@ -533,8 +549,8 @@ void AVCDiscovery::PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,
     config.currentSampleRate = kSampleRateHz;
     config.inputPlugName = "Onyx 400F Inputs";
     config.outputPlugName = "Onyx 400F Outputs";
-    // Linux snd-fireworks: CIP_BLOCKING for both directions; also forced
-    // vendor-wide for LOUD in DeviceStreamModeQuirks.
+    // Linux snd-fireworks: CIP_BLOCKING for both directions; the catalog states
+    // the same for this row.
     config.streamMode = ::ASFW::Audio::Model::StreamMode::kBlocking;
 
     ASFW_LOG(Audio,
@@ -671,12 +687,14 @@ ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
     const uint32_t vendorId = device.GetVendorID();
     const uint32_t modelId = device.GetModelID();
     const char* streamModeReason = "default-nonblocking";
-    const auto streamMode = ResolveStreamMode(mutableCaps, vendorId, modelId, streamModeReason);
+    const auto streamMode =
+        ResolveStreamMode(mutableCaps, device.GetIdentity(), vendorId, modelId,
+                          streamModeReason);
 
     ASFW_LOG(Audio,
              "AVCDiscovery: stream mode selected vendor=0x%06x model=0x%06x mode=%{public}s reason=%{public}s",
              vendorId, modelId,
-             ASFW::Audio::Quirks::StreamModeToString(streamMode),
+             StreamModeToString(streamMode),
              streamModeReason);
     ASFW_LOG(Audio,
              "AVCDiscovery: Publishing audio configuration for GUID=%llx: %{public}s, %u channels, %zu sample rates",

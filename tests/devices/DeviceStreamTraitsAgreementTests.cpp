@@ -5,13 +5,15 @@
 //
 // The catalog's DeviceStreamTraits replace two hand-written matchers: the
 // vendor/model table in DeviceStreamModeQuirks and the nine Is*() predicates in
-// DuplexStreamProfile. Both are still present while this runs, so the old
-// answers are the oracle rather than something transcribed by hand.
+// DuplexStreamProfile.
 //
-// Every difference is deliberate and named below. There are only two shapes of
-// them, and neither is reachable.
+// These ran first against the live old table, in fa6c48f4, so the answers below
+// were an observed oracle before they became written-down expectations. The
+// table is deleted now; the expectations remain.
+//
+// Every difference from it is deliberate and named below. There are two, and
+// neither is reachable.
 
-#include "Audio/Protocols/DeviceStreamModeQuirks.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
@@ -26,8 +28,6 @@ namespace {
 
 using namespace ASFW::DeviceProfiles::Audio;
 namespace Discovery = ASFW::Discovery;
-namespace Quirks = ASFW::Audio::Quirks;
-using StreamMode = ASFW::Audio::Model::StreamMode;
 
 constexpr uint32_t kDiceInterfaceVersion = 0x000001;
 constexpr uint32_t kTa1394AvcSpecifier = 0x00A02D;
@@ -69,18 +69,6 @@ Identity(uint32_t vendorId, uint32_t modelId, uint32_t unitSpecifier,
     return Identity(vendorId, modelId, vendorId, kDiceInterfaceVersion);
 }
 
-[[nodiscard]] std::optional<StreamMode> AsOldAnswer(ForcedStreamMode mode) {
-    switch (mode) {
-        case ForcedStreamMode::Blocking:
-            return StreamMode::kBlocking;
-        case ForcedStreamMode::NonBlocking:
-            return StreamMode::kNonBlocking;
-        case ForcedStreamMode::Unspecified:
-            break;
-    }
-    return std::nullopt;
-}
-
 // ---------------------------------------------------------------------------
 // Forced stream mode
 // ---------------------------------------------------------------------------
@@ -92,31 +80,35 @@ TEST(DeviceStreamTraitsAgreement, ForcedModeMatchesTheOldTableForEveryAvcDevice)
         uint32_t vendorId;
         uint32_t modelId;
         uint32_t unitVersion;
+        ForcedStreamMode expected;
     };
     const Case avcDevices[] = {
-        {kApogeeVendorId, kApogeeDuetModelId, kTa1394AvcVersion},
-        {kTerraTecVendorId, kPhase88RackFwModelId, kTa1394AvcVersion},
-        {kMackieVendorId, kOnyxIOxfwModelId, kTa1394AvcVersion},
-        {kMackieVendorId, kOnyx1640iOxfwModelId, kTa1394AvcVersion},
-        {kMackieVendorId, kOnyx400FModelId, kFireworksVersion},
-        {kMackieVendorId, kOnyx1200FModelId, kFireworksVersion},
-        {kMAudioVendorId, kMAudioFireWire1814ModelId, kTa1394AvcVersion},
-        {kMAudioVendorId, kMAudioProjectMixModelId, kTa1394AvcVersion},
+        {kApogeeVendorId, kApogeeDuetModelId, kTa1394AvcVersion,
+         ForcedStreamMode::Blocking},
+        {kTerraTecVendorId, kPhase88RackFwModelId, kTa1394AvcVersion,
+         ForcedStreamMode::Blocking},
+        {kMackieVendorId, kOnyxIOxfwModelId, kTa1394AvcVersion,
+         ForcedStreamMode::Blocking},
+        {kMackieVendorId, kOnyx1640iOxfwModelId, kTa1394AvcVersion,
+         ForcedStreamMode::Blocking},
+        {kMackieVendorId, kOnyx400FModelId, kFireworksVersion,
+         ForcedStreamMode::Blocking},
+        {kMackieVendorId, kOnyx1200FModelId, kFireworksVersion,
+         ForcedStreamMode::Blocking},
+        // M-Audio was never in the old BeBoB list, so it must stay unforced.
+        {kMAudioVendorId, kMAudioFireWire1814ModelId, kTa1394AvcVersion,
+         ForcedStreamMode::Unspecified},
+        {kMAudioVendorId, kMAudioProjectMixModelId, kTa1394AvcVersion,
+         ForcedStreamMode::Unspecified},
         // Not a device we know at all.
-        {0x00AABB, 0x000042, kTa1394AvcVersion},
+        {0x00AABB, 0x000042, kTa1394AvcVersion, ForcedStreamMode::Unspecified},
     };
-    for (const auto& [vendorId, modelId, unitVersion] : avcDevices) {
-        const auto oldAnswer = Quirks::LookupForcedStreamMode(vendorId, modelId);
-        const auto newAnswer = AsOldAnswer(
-            AudioDeviceCatalog::StreamTraitsFor(
-                Identity(vendorId, modelId, kTa1394AvcSpecifier, unitVersion))
-                .forcedStreamMode);
-        EXPECT_EQ(oldAnswer.has_value(), newAnswer.has_value())
+    for (const auto& [vendorId, modelId, unitVersion, expected] : avcDevices) {
+        EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
+                      Identity(vendorId, modelId, kTa1394AvcSpecifier, unitVersion))
+                      .forcedStreamMode,
+                  expected)
             << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
-        if (oldAnswer.has_value() && newAnswer.has_value()) {
-            EXPECT_EQ(*oldAnswer, *newAnswer)
-                << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
-        }
     }
 }
 
@@ -150,9 +142,8 @@ TEST(DeviceStreamTraitsAgreement, EveryDicePartStatesBlockingEvenWhereTheOldTabl
 // units publish the vendor OUI as their specifier and so never reach
 // AVCDiscovery -- the sole consumer of this value.
 TEST(DeviceStreamTraitsAgreement, AnUnlistedMackieNoLongerGetsVendorWideBlocking) {
+    // The old table returned Blocking here on the vendor alone.
     constexpr uint32_t kUnlistedMackieModel = 0x00AAAA;
-    EXPECT_EQ(Quirks::LookupForcedStreamMode(kMackieVendorId, kUnlistedMackieModel),
-              StreamMode::kBlocking);
     EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
                   AvcIdentity(kMackieVendorId, kUnlistedMackieModel)).forcedStreamMode,
               ForcedStreamMode::Unspecified);
@@ -168,7 +159,6 @@ TEST(DeviceStreamTraitsAgreement, AnUnknownDeviceGetsNoForcedMode) {
     EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(AvcIdentity(0x00AABB, 0x000042))
                   .forcedStreamMode,
               ForcedStreamMode::Unspecified);
-    EXPECT_FALSE(Quirks::LookupForcedStreamMode(0x00AABB, 0x000042).has_value());
 }
 
 // ---------------------------------------------------------------------------
@@ -293,7 +283,6 @@ TEST(DeviceStreamTraitsAgreement, MotuStatesNoStreamTraits) {
     EXPECT_FALSE(traits.clampCaptureStreamsToOne);
     EXPECT_FALSE(traits.captureTrustConfiguredStride);
     EXPECT_FALSE(traits.rawPcm24In32WhenEightInNineSlots);
-    EXPECT_FALSE(Quirks::LookupForcedStreamMode(kMotuVendorId, 0U).has_value());
 }
 
 } // namespace

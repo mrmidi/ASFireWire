@@ -13,7 +13,7 @@
 //
 // Loud behavioral notes (Linux snd-oxfw, references/linux-sound-firewire-stack):
 //   - blocking transmission vendor-wide (oxfw.c:189-196) — enforced here via streamMode
-//     and in DeviceStreamModeQuirks;
+//     and by the catalog row for this identity;
 //   - the device's capture-side CIP DBS field is untrusted (SND_OXFW_QUIRK_WRONG_DBS);
 //     this profile's rx dbs (8) is the source of truth once the RX stride quirk lands;
 //   - CIP_UNAWARE_SYT: no SYT-based sync (oxfw-stream.c:164-169).
