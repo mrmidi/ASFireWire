@@ -6,6 +6,7 @@
 #include "DICEDuplexBringupController.hpp"
 
 #include "DICENotificationMailbox.hpp"
+#include "../../Backends/SyncAsyncBridge.hpp"
 #include "../../../../Common/WireFormat.hpp"
 #include "../../../../Logging/Logging.hpp"
 
@@ -1450,33 +1451,22 @@ IOReturn DICEDuplexBringupController::StopDuplex() {
         return kIOReturnAborted;
     }
 
-    struct WaitState {
-        std::atomic<bool> done{false};
-        std::atomic<IOReturn> status{kIOReturnTimeout};
-    };
-
-    auto waitState = std::make_shared<WaitState>();
-    DoStopSequence(true, [waitState](IOReturn status) {
-        waitState->status.store(status, std::memory_order_relaxed);
-        waitState->done.store(true, std::memory_order_release);
-    });
-
-    for (uint32_t waited = 0; waited < kStopSyncTimeoutMs; waited += kStopSyncPollMs) {
-        if (waitState->done.load(std::memory_order_acquire)) {
-            return waitState->status.load(std::memory_order_relaxed);
-        }
-        if (TeardownRequested()) {
-            RecordStopTeardownAbort("Wait");
-            ResetRestartSession(restartSession_);
-            flowMode_ = FlowMode::kNone;
-            return kIOReturnAborted;
-        }
-        IOSleep(kStopSyncPollMs);
-    }
-
-    return waitState->done.load(std::memory_order_acquire)
-        ? waitState->status.load(std::memory_order_relaxed)
-        : kIOReturnTimeout;
+    return WaitForAsyncStatus(
+        [&](auto callback) {
+            DoStopSequence(true, std::move(callback));
+        },
+        kStopSyncTimeoutMs,
+        kIOReturnTimeout,
+        [&]() noexcept {
+            if (TeardownRequested()) {
+                RecordStopTeardownAbort("Wait");
+                ResetRestartSession(restartSession_);
+                flowMode_ = FlowMode::kNone;
+                return true;
+            }
+            return false;
+        },
+        kStopSyncPollMs);
 }
 
 void DICEDuplexBringupController::ReleaseOwner(VoidCallback callback) {

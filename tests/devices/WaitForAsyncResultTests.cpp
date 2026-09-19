@@ -133,4 +133,122 @@ TEST(WaitForAsyncResultTests, ZeroTimeoutWithoutCompletionReturnsTimeout) {
     EXPECT_EQ(r.value, 0);
 }
 
+// ---- Predicate-based cancel tests ----
+
+// A callable predicate that returns true aborts with kIOReturnAborted, just like the
+// atomic-bool overload.
+TEST(WaitForAsyncResultTests, PredicateCancelReturnsAborted) {
+    bool shouldCancel = false;
+    const auto start = std::chrono::steady_clock::now();
+    std::thread setter([&shouldCancel] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        shouldCancel = true;
+    });
+
+    const auto r = WaitForAsyncResult<int>(
+        [](auto) { /* never completes */ },
+        5000,
+        kIOReturnTimeout,
+        [&shouldCancel]() noexcept { return shouldCancel; });
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    setter.join();
+
+    EXPECT_EQ(r.status, kIOReturnAborted);
+    EXPECT_EQ(r.value, 0);
+    EXPECT_LT(elapsed, std::chrono::milliseconds(2000));
+}
+
+// A custom poll interval is honoured: with a 50 ms interval and 30 ms timeout the loop
+// body never executes (30 < 50 is false after zero iterations). An inline completion
+// should still be caught by the final load.
+TEST(WaitForAsyncResultTests, CustomPollIntervalIsHonored) {
+    const auto r = WaitForAsyncResult<int>(
+        [](auto cb) { cb(kIOReturnSuccess, 11); },
+        30,
+        kIOReturnTimeout,
+        nullptr,
+        50);
+    EXPECT_EQ(r.status, kIOReturnSuccess);
+    EXPECT_EQ(r.value, 11);
+}
+
+// ---- WaitForAsyncStatus tests ----
+
+using ASFW::Audio::WaitForAsyncStatus;
+
+// Synchronous success via WaitForAsyncStatus.
+TEST(WaitForAsyncStatusTests, SuccessBeforeTimeout) {
+    const auto s = WaitForAsyncStatus(
+        [](auto cb) { cb(kIOReturnSuccess); }, 60, kIOReturnTimeout);
+    EXPECT_EQ(s, kIOReturnSuccess);
+}
+
+// Non-success forwarded verbatim via WaitForAsyncStatus.
+TEST(WaitForAsyncStatusTests, ErrorStatusForwardedVerbatim) {
+    const auto s = WaitForAsyncStatus(
+        [](auto cb) { cb(kIOReturnNoDevice); }, 60, kIOReturnTimeout);
+    EXPECT_EQ(s, kIOReturnNoDevice);
+}
+
+// No completion → timeout.
+TEST(WaitForAsyncStatusTests, TimeoutReturnsSuppliedStatus) {
+    const auto s = WaitForAsyncStatus(
+        [](auto) { /* never completes */ }, 30, kIOReturnTimeout);
+    EXPECT_EQ(s, kIOReturnTimeout);
+}
+
+// Atomic cancel token aborts with kIOReturnAborted.
+TEST(WaitForAsyncStatusTests, CancelReturnsAborted) {
+    std::atomic<bool> cancel{false};
+    std::thread setter([&cancel] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        cancel.store(true, std::memory_order_release);
+    });
+
+    const auto start = std::chrono::steady_clock::now();
+    const auto s = WaitForAsyncStatus(
+        [](auto) { /* never completes */ }, 5000, kIOReturnTimeout, &cancel);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    setter.join();
+
+    EXPECT_EQ(s, kIOReturnAborted);
+    EXPECT_LT(elapsed, std::chrono::milliseconds(2000));
+}
+
+// Predicate cancel via WaitForAsyncStatus.
+TEST(WaitForAsyncStatusTests, PredicateCancelReturnsAborted) {
+    bool shouldCancel = false;
+    std::thread setter([&shouldCancel] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        shouldCancel = true;
+    });
+
+    const auto start = std::chrono::steady_clock::now();
+    const auto s = WaitForAsyncStatus(
+        [](auto) {},
+        5000,
+        kIOReturnTimeout,
+        [&shouldCancel]() noexcept { return shouldCancel; });
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    setter.join();
+
+    EXPECT_EQ(s, kIOReturnAborted);
+    EXPECT_LT(elapsed, std::chrono::milliseconds(2000));
+}
+
+// Async completion during wait via WaitForAsyncStatus.
+TEST(WaitForAsyncStatusTests, CompletionDuringWaitIsDelivered) {
+    std::thread worker;
+    const auto s = WaitForAsyncStatus(
+        [&worker](auto cb) {
+            worker = std::thread([cb = std::move(cb)]() mutable {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                cb(kIOReturnSuccess);
+            });
+        },
+        200, kIOReturnTimeout);
+    worker.join();
+    EXPECT_EQ(s, kIOReturnSuccess);
+}
+
 } // namespace

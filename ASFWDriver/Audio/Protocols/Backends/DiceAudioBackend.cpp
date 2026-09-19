@@ -3,6 +3,7 @@
 
 #include "DiceAudioBackend.hpp"
 #include "DiceRuntimeDeviceConfig.hpp"
+#include "SyncAsyncBridge.hpp"
 
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
@@ -471,38 +472,30 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    struct WaitState {
-        std::atomic<bool> done{false};
-        IOReturn status{kIOReturnTimeout};
-        DICE::DiceDuplexHealthResult result{};
-    };
+    const auto probe = WaitForAsyncResult<DICE::DiceDuplexHealthResult>(
+        [&](auto callback) {
+            diceProtocol->ReadDuplexHealth(std::move(callback));
+        },
+        kHealthBridgeTimeoutMs,
+        kIOReturnTimeout,
+        [&]() noexcept {
+            return stopping_.load(std::memory_order_acquire) ||
+                   restartCoordinator_.IsDeviceOperationCancelled(guid);
+        },
+        kHealthBridgePollMs);
 
-    auto waitState = std::make_shared<WaitState>();
-    diceProtocol->ReadDuplexHealth([waitState](IOReturn status, DICE::DiceDuplexHealthResult result) {
-        waitState->status = status;
-        waitState->result = std::move(result);
-        waitState->done.store(true, std::memory_order_release);
-    });
-
-    for (uint32_t waited = 0; waited < kHealthBridgeTimeoutMs; waited += kHealthBridgePollMs) {
-        if (waitState->done.load(std::memory_order_acquire)) {
-            break;
-        }
-        if (stopping_.load(std::memory_order_acquire) ||
-            restartCoordinator_.IsDeviceOperationCancelled(guid)) {
-            probeAbortCount_.fetch_add(1, std::memory_order_acq_rel);
-            ASFW_LOG(Audio,
-                     "DiceAudioBackend: health probe aborted by lifecycle cancellation "
-                     "GUID=%llx bits=0x%08x kr=0x%x",
-                     guid,
-                     notificationBits,
-                     kIOReturnAborted);
-            return;
-        }
-        IOSleep(kHealthBridgePollMs);
+    if (probe.status == kIOReturnAborted) {
+        probeAbortCount_.fetch_add(1, std::memory_order_acq_rel);
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: health probe aborted by lifecycle cancellation "
+                 "GUID=%llx bits=0x%08x kr=0x%x",
+                 guid,
+                 notificationBits,
+                 kIOReturnAborted);
+        return;
     }
 
-    if (!waitState->done.load(std::memory_order_acquire)) {
+    if (probe.status == kIOReturnTimeout) {
         ASFW_LOG_WARNING(Audio,
                          "DiceAudioBackend: health probe timed out GUID=%llx bits=0x%08x",
                          guid,
@@ -510,24 +503,24 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    if (waitState->status != kIOReturnSuccess) {
+    if (probe.status != kIOReturnSuccess) {
         ASFW_LOG_WARNING(Audio,
                          "DiceAudioBackend: health probe failed GUID=%llx bits=0x%08x kr=0x%x",
                          guid,
                          notificationBits,
-                         waitState->status);
+                         probe.status);
         return;
     }
 
-    const bool sourceLocked = waitState->result.sourceLocked;
-    const bool extClockHealthy = waitState->result.clockReferenceHealthy;
+    const bool sourceLocked = probe.value.sourceLocked;
+    const bool extClockHealthy = probe.value.clockReferenceHealthy;
 
     char notifyStr[96];
     char clockStr[40];
     char extStr[128];
     DICE::FormatNotification(notificationBits, notifyStr, sizeof(notifyStr));
-    DICE::FormatGlobalStatus(waitState->result.status, clockStr, sizeof(clockStr));
-    DICE::FormatExtStatus(waitState->result.extStatus, extStr, sizeof(extStr));
+    DICE::FormatGlobalStatus(probe.value.status, clockStr, sizeof(clockStr));
+    DICE::FormatExtStatus(probe.value.extStatus, extStr, sizeof(extStr));
 
     if (sourceLocked && extClockHealthy) {
         // Healthy — but the device may have moved to a different rate on its
@@ -535,7 +528,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         // PLL's locked nominal rate against the host's current belief and, on
         // a mismatch, tell the audio driver to re-sync the HAL (forced format
         // change; AppleUSBAudio's device-driven rate-move analog).
-        const uint32_t deviceRateHz = waitState->result.nominalRateHz;
+        const uint32_t deviceRateHz = probe.value.nominalRateHz;
         auto* nub = publisher_.GetNub(guid);
         const uint32_t hostRateHz = nub ? nub->GetCurrentSampleRateHz() : 0;
         if (nub && deviceRateHz != 0 && hostRateHz != 0 &&
@@ -601,34 +594,22 @@ bool DiceAudioBackend::DeviceReportsHealthyClock(uint64_t guid) noexcept {
         return false;
     }
 
-    struct WaitState {
-        std::atomic<bool> done{false};
-        IOReturn status{kIOReturnTimeout};
-        DICE::DiceDuplexHealthResult result{};
-    };
-    auto waitState = std::make_shared<WaitState>();
-    diceProtocol->ReadDuplexHealth([waitState](IOReturn status, DICE::DiceDuplexHealthResult result) {
-        waitState->status = status;
-        waitState->result = std::move(result);
-        waitState->done.store(true, std::memory_order_release);
-    });
+    const auto probe = WaitForAsyncResult<DICE::DiceDuplexHealthResult>(
+        [&](auto callback) {
+            diceProtocol->ReadDuplexHealth(std::move(callback));
+        },
+        kHealthBridgeTimeoutMs,
+        kIOReturnTimeout,
+        [&]() noexcept {
+            return stopping_.load(std::memory_order_acquire) ||
+                   restartCoordinator_.IsDeviceOperationCancelled(guid);
+        },
+        kHealthBridgePollMs);
 
-    for (uint32_t waited = 0; waited < kHealthBridgeTimeoutMs; waited += kHealthBridgePollMs) {
-        if (waitState->done.load(std::memory_order_acquire)) {
-            break;
-        }
-        if (stopping_.load(std::memory_order_acquire) ||
-            restartCoordinator_.IsDeviceOperationCancelled(guid)) {
-            return false;
-        }
-        IOSleep(kHealthBridgePollMs);
-    }
-
-    if (!waitState->done.load(std::memory_order_acquire) ||
-        waitState->status != kIOReturnSuccess) {
+    if (probe.status != kIOReturnSuccess) {
         return false;
     }
-    return waitState->result.sourceLocked && waitState->result.clockReferenceHealthy;
+    return probe.value.sourceLocked && probe.value.clockReferenceHealthy;
 }
 
 bool DiceAudioBackend::TryBeginRecovery(uint64_t guid) noexcept {

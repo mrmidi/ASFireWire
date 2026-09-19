@@ -873,17 +873,16 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     // and PrepareDuplex will surface any genuine device error. A multi-stream
     // device needs this to allocate a channel per stream. The DICE implementation is
     // cross-validated with FFADO dice_avdevice.cpp prepare() (m_nb_rx/m_nb_tx).
-    const auto geometryLoad = WaitForAsyncResult<bool>(
+    const IOReturn geometryLoadStatus = WaitForAsyncStatus(
         [&](auto callback) {
-            deviceControl.EnsureRuntimeStreamGeometry(
-                [callback = std::move(callback)](IOReturn st) mutable { callback(st, true); });
+            deviceControl.EnsureRuntimeStreamGeometry(std::move(callback));
         },
         kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
-    if (geometryLoad.status != kIOReturnSuccess) {
+    if (geometryLoadStatus != kIOReturnSuccess) {
         ASFW_LOG(DICE,
                  "RunDuplexStart: stream-geometry pre-read failed (0x%x); "
                  "resolving channels with existing caps",
-                 geometryLoad.status);
+                 geometryLoadStatus);
     }
 
     const DuplexStreamProfile initialProfile =
@@ -918,10 +917,9 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         if (failureStatus == kIOReturnAborted && TeardownRequested()) {
             return failureStatus;
         }
-        (void)WaitForAsyncResult<bool>(
+        (void)WaitForAsyncStatus(
             [&](auto callback) {
-                deviceControl.BreakBothConnections(
-                    [callback = std::move(callback)](IOReturn st) mutable { callback(st, true); });
+                deviceControl.BreakBothConnections(std::move(callback));
             },
             kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
         const IOReturn rollbackStatus = RunDuplexStop(guid, record, deviceControl, session);
@@ -935,10 +933,9 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         if (invalidationStatus == kIOReturnAborted && TeardownRequested()) {
             return invalidationStatus;
         }
-        (void)WaitForAsyncResult<bool>(
+        (void)WaitForAsyncStatus(
             [&](auto callback) {
-                deviceControl.BreakBothConnections(
-                    [callback = std::move(callback)](IOReturn st) mutable { callback(st, true); });
+                deviceControl.BreakBothConnections(std::move(callback));
             },
             kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
         const IOReturn rollbackStatus = RunDuplexStop(guid, record, deviceControl, session);
@@ -1529,26 +1526,14 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
         DuplexStreamProfileResolver::Resolve(record, session.runtimeCaps, session.channels);
     if (profile.stopOrder
             .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive) {
-        const auto disconnectPlayback = WaitForAsyncResult<bool>(
-            [&](auto callback) {
-                deviceControl.DisconnectPlayback(
-                    [callback = std::move(callback)](IOReturn status) mutable {
-                        callback(status, true);
-                    });
-            },
+        (void)WaitForAsyncStatus(
+            [&](auto callback) { deviceControl.DisconnectPlayback(std::move(callback)); },
             dependencies_.syncBridgeTimeoutMs, kIOReturnTimeout, dependencies_.cancel);
-        (void)disconnectPlayback;
         const kern_return_t transmitStopStatus = hostTransport_.StopPreparedTransmit();
 
-        const auto disconnectCapture = WaitForAsyncResult<bool>(
-            [&](auto callback) {
-                deviceControl.DisconnectCapture(
-                    [callback = std::move(callback)](IOReturn status) mutable {
-                        callback(status, true);
-                    });
-            },
+        (void)WaitForAsyncStatus(
+            [&](auto callback) { deviceControl.DisconnectCapture(std::move(callback)); },
             dependencies_.syncBridgeTimeoutMs, kIOReturnTimeout, dependencies_.cancel);
-        (void)disconnectCapture;
         const kern_return_t receiveStopStatus = hostTransport_.StopPreparedReceive();
 
         // Contexts are already stopped. StopAll performs the neutral ownership

@@ -18,6 +18,7 @@
 #include <DriverKit/IOLib.h>
 
 #include <atomic>
+#include <concepts>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -39,11 +40,15 @@ struct SyncResult {
     T value{};
 };
 
-template <typename T, typename StartFn>
+/// Starts an async operation taking a `void(IOReturn, T)` callback and polls until
+/// completion, predicate cancellation, or timeout.
+template <typename T, typename StartFn, typename CancelFn>
+requires std::invocable<CancelFn>
 SyncResult<T> WaitForAsyncResult(StartFn&& fn,
                                  uint32_t timeoutMs,
                                  IOReturn timeoutStatus,
-                                 const std::atomic<bool>* cancel = nullptr) noexcept {
+                                 CancelFn&& isCancelled,
+                                 uint32_t pollIntervalMs = kWaitPollMs) noexcept {
     struct WaitState {
         std::atomic<bool> done{false};
         SyncResult<T> result{};
@@ -56,20 +61,19 @@ SyncResult<T> WaitForAsyncResult(StartFn&& fn,
         state->done.store(true, std::memory_order_release);
     });
 
-    for (uint32_t waited = 0; waited < timeoutMs; waited += kWaitPollMs) {
+    const uint32_t pollMs = (pollIntervalMs == 0) ? kWaitPollMs : pollIntervalMs;
+    for (uint32_t waited = 0; waited < timeoutMs; waited += pollMs) {
         if (state->done.load(std::memory_order_acquire)) {
             return state->result;
         }
-        // FW-61: abort the blocking bridge promptly on teardown so the dice queue drains
-        // fast (instead of running to timeout) and the in-flight op issues no more MMIO.
-        // The completion that would set `done` is delivered on the core queue, which is
-        // blocked in DispatchSync during teardown, so cancel, not done, is what unblocks us.
-        if (cancel != nullptr && cancel->load(std::memory_order_acquire)) {
+        // FW-61: abort promptly when the cancellation predicate fires so threads drain
+        // quickly instead of running to timeout while hardware/queues are quiescing.
+        if (isCancelled()) {
             SyncResult<T> aborted{};
             aborted.status = kIOReturnAborted;
             return aborted;
         }
-        IOSleep(kWaitPollMs);
+        IOSleep(pollMs);
     }
 
     if (state->done.load(std::memory_order_acquire)) {
@@ -79,6 +83,78 @@ SyncResult<T> WaitForAsyncResult(StartFn&& fn,
     SyncResult<T> timeout{};
     timeout.status = timeoutStatus;
     return timeout;
+}
+
+/// Pointer-based overload of WaitForAsyncResult for atomic cancel tokens.
+template <typename T, typename StartFn>
+SyncResult<T> WaitForAsyncResult(StartFn&& fn,
+                                 uint32_t timeoutMs,
+                                 IOReturn timeoutStatus,
+                                 const std::atomic<bool>* cancel = nullptr,
+                                 uint32_t pollIntervalMs = kWaitPollMs) noexcept {
+    return WaitForAsyncResult<T>(
+        std::forward<StartFn>(fn),
+        timeoutMs,
+        timeoutStatus,
+        [cancel]() noexcept {
+            return cancel != nullptr && cancel->load(std::memory_order_acquire);
+        },
+        pollIntervalMs);
+}
+
+/// Starts an async operation taking a `void(IOReturn)` callback and polls until
+/// completion, predicate cancellation, or timeout.
+template <typename StartFn, typename CancelFn>
+requires std::invocable<CancelFn>
+IOReturn WaitForAsyncStatus(StartFn&& fn,
+                            uint32_t timeoutMs,
+                            IOReturn timeoutStatus,
+                            CancelFn&& isCancelled,
+                            uint32_t pollIntervalMs = kWaitPollMs) noexcept {
+    struct WaitState {
+        std::atomic<bool> done{false};
+        std::atomic<IOReturn> status{kIOReturnTimeout};
+    };
+
+    auto state = std::make_shared<WaitState>();
+    fn([state](IOReturn status) {
+        state->status.store(status, std::memory_order_release);
+        state->done.store(true, std::memory_order_release);
+    });
+
+    const uint32_t pollMs = (pollIntervalMs == 0) ? kWaitPollMs : pollIntervalMs;
+    for (uint32_t waited = 0; waited < timeoutMs; waited += pollMs) {
+        if (state->done.load(std::memory_order_acquire)) {
+            return state->status.load(std::memory_order_acquire);
+        }
+        if (isCancelled()) {
+            return kIOReturnAborted;
+        }
+        IOSleep(pollMs);
+    }
+
+    if (state->done.load(std::memory_order_acquire)) {
+        return state->status.load(std::memory_order_acquire);
+    }
+
+    return timeoutStatus;
+}
+
+/// Pointer-based overload of WaitForAsyncStatus for atomic cancel tokens.
+template <typename StartFn>
+IOReturn WaitForAsyncStatus(StartFn&& fn,
+                            uint32_t timeoutMs,
+                            IOReturn timeoutStatus,
+                            const std::atomic<bool>* cancel = nullptr,
+                            uint32_t pollIntervalMs = kWaitPollMs) noexcept {
+    return WaitForAsyncStatus(
+        std::forward<StartFn>(fn),
+        timeoutMs,
+        timeoutStatus,
+        [cancel]() noexcept {
+            return cancel != nullptr && cancel->load(std::memory_order_acquire);
+        },
+        pollIntervalMs);
 }
 
 } // namespace ASFW::Audio
