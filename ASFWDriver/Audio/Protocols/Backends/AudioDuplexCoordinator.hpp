@@ -61,6 +61,8 @@ public:
     [[nodiscard]] bool IsDeviceOperationCancelled(uint64_t guid) const noexcept;
     void ClearSession(uint64_t guid) noexcept;
     [[nodiscard]] std::optional<DuplexRestartSession> GetSession(uint64_t guid) const noexcept;
+    [[nodiscard]] bool IsStreaming(uint64_t guid) const noexcept;
+    [[nodiscard]] std::vector<uint64_t> GetStreamingGuids() const noexcept;
     // True while a host-initiated duplex operation (start/stop/clock change/recovery) holds the
     // per-GUID gate or a clock request is queued behind it. Health probes use this to tell a
     // genuine device-initiated clock move from the echo of the host's own in-flight change.

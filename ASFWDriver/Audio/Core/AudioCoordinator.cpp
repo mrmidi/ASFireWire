@@ -81,13 +81,7 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
         backend->OnDeviceRecordUpdated(guid);
     }
 
-    bool recoverActiveStream = false;
-    if (lock_) {
-        IOLockLock(lock_);
-        recoverActiveStream = (activeGuid_ == guid);
-        IOLockUnlock(lock_);
-    }
-
+    const bool recoverActiveStream = duplexCoordinator_.IsStreaming(guid);
     if (!recoverActiveStream || !backend) {
         return;
     }
@@ -101,13 +95,7 @@ void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> de
     }
 
     const uint64_t guid = device->GetGUID();
-    bool suspendedActiveStream = false;
-    if (lock_) {
-        IOLockLock(lock_);
-        suspendedActiveStream = (activeGuid_ == guid);
-        IOLockUnlock(lock_);
-    }
-
+    const bool suspendedActiveStream = duplexCoordinator_.IsStreaming(guid);
     if (!suspendedActiveStream) {
         return;
     }

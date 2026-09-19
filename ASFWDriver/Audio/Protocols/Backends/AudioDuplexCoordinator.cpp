@@ -464,6 +464,14 @@ AudioDuplexCoordinator::GetSession(uint64_t guid) const noexcept {
     return store_.GetSession(guid);
 }
 
+bool AudioDuplexCoordinator::IsStreaming(uint64_t guid) const noexcept {
+    return store_.IsStreaming(guid);
+}
+
+std::vector<uint64_t> AudioDuplexCoordinator::GetStreamingGuids() const noexcept {
+    return store_.GetStreamingGuids();
+}
+
 bool AudioDuplexCoordinator::IsOperationInFlight(uint64_t guid) const noexcept {
     if (!lock_ || guid == 0) {
         return false;

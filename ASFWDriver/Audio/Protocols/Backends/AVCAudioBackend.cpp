@@ -103,13 +103,7 @@ void AVCAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
 }
 
 bool AVCAudioBackend::IsActiveDevice(uint64_t guid) noexcept {
-    if (!lock_) {
-        return true;
-    }
-    IOLockLock(lock_);
-    const bool active = (activeGuid_ == guid);
-    IOLockUnlock(lock_);
-    return active;
+    return duplexCoordinator_.IsStreaming(guid);
 }
 
 void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
@@ -120,7 +114,7 @@ void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
     bool queueRecovery = false;
     if (lock_) {
         IOLockLock(lock_);
-        queueRecovery = (activeGuid_ == guid) && recoveringGuids_.insert(guid).second;
+        queueRecovery = duplexCoordinator_.IsStreaming(guid) && recoveringGuids_.insert(guid).second;
         IOLockUnlock(lock_);
     }
     if (!queueRecovery) {
@@ -192,7 +186,7 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
     bool armed = false;
     if (lock_) {
         IOLockLock(lock_);
-        if (activeGuid_ == guid) {
+        if (duplexCoordinator_.IsStreaming(guid)) {
             armed = recoveringGuids_.insert(guid).second;
         }
         IOLockUnlock(lock_);

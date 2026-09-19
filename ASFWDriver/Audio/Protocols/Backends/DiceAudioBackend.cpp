@@ -442,12 +442,7 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
         return;
     }
 
-    std::vector<uint64_t> guids;
-    if (lock_) {
-        IOLockLock(lock_);
-        guids.assign(activeStreamingGuids_.begin(), activeStreamingGuids_.end());
-        IOLockUnlock(lock_);
-    }
+    const std::vector<uint64_t> guids = restartCoordinator_.GetStreamingGuids();
 
     for (const uint64_t guid : guids) {
         auto probe = ^{
