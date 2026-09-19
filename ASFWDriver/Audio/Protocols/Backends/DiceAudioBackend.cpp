@@ -849,28 +849,26 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         if (protocol) {
             AudioStreamRuntimeCaps caps{};
             const bool haveCaps = protocol->GetRuntimeAudioStreamCaps(caps);
+
+            if (!haveCaps) {
+                // Without runtime caps the resolver cannot run, so the
+                // publication would carry unvalidated profile-only geometry.
+                // That is the class of silent mismatch this path exists to
+                // prevent. Refuse and let the geometry-load callback retry.
+                ASFW_LOG_ERROR(Audio,
+                               "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
+                               "GUID=0x%016llx - runtime caps unavailable, cannot validate geometry",
+                               guid);
+                return;
+            }
+
             // Compare the device's registers with the profile's constants
             // before anything consumes either, and make the aggregate the HAL
             // is told match the streams the device actually carries.
-            bool geometryUsable = true;
-            if (haveCaps) {
-                const auto resolvedGeometry =
-                    ResolveDeviceStreamGeometry(guid, caps, *profile);
-                geometryUsable = resolvedGeometry.Usable();
+            const auto resolvedGeometry =
+                ResolveDeviceStreamGeometry(guid, caps, *profile);
 
-                if (geometryUsable) {
-                    // The resolved totals are the authority for what CoreAudio
-                    // is shown. caps' aggregate fields are the device's own
-                    // summary; where a direction carries unequal streams the
-                    // resolved sum is the one that matches the wire.
-                    caps.hostInputPcmChannels = resolvedGeometry.capture.TotalPcmChannels();
-                    caps.hostOutputPcmChannels = resolvedGeometry.playback.TotalPcmChannels();
-                    caps.deviceToHostStreamCount = resolvedGeometry.capture.StreamCount();
-                    caps.hostToDeviceStreamCount = resolvedGeometry.playback.StreamCount();
-                }
-            }
-
-            if (haveCaps && !geometryUsable) {
+            if (!resolvedGeometry.Usable()) {
                 // Publishing anyway is what used to happen, and the symptom was
                 // silence with nothing attributable: bandwidth reserved from one
                 // description, CIP framed from the other. Refuse the endpoint
@@ -882,7 +880,24 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                 return;
             }
 
-            if (haveCaps && ApplyDiceRuntimeCapsToDeviceConfig(caps, dev)) {
+            // The resolved totals are the authority for per-stream wire
+            // geometry (stream counts, slot counts). The HAL-facing channel
+            // counts, however, must respect the protocol's visibility policy:
+            // TCAT deliberately sets hostInputPcmChannels to zero for devices
+            // like Weiss INT202 whose capture streams should remain hidden from
+            // CoreAudio, even though the physical wire carries them. When the
+            // protocol reported zero, preserve that decision; otherwise adopt
+            // the resolved sum, which accounts for asymmetric multi-stream
+            // devices (e.g. Venice F24 with 16+8).
+            const uint32_t resolvedCapturePcm = resolvedGeometry.capture.TotalPcmChannels();
+            caps.hostInputPcmChannels = (caps.hostInputPcmChannels == 0)
+                                            ? 0
+                                            : resolvedCapturePcm;
+            caps.hostOutputPcmChannels = resolvedGeometry.playback.TotalPcmChannels();
+            caps.deviceToHostStreamCount = resolvedGeometry.capture.StreamCount();
+            caps.hostToDeviceStreamCount = resolvedGeometry.playback.StreamCount();
+
+            if (ApplyDiceRuntimeCapsToDeviceConfig(caps, dev)) {
                 ASFW_LOG(Audio,
                          "DiceAudioBackend::EnsureNubForGuid: applied runtime geometry rate=%u in=%u out=%u (GUID=0x%016llx)",
                          dev.currentSampleRate,
@@ -914,11 +929,18 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // Channel labels live in the TCAT stream-format name sections, cached only
     // once runtime caps load (during the first stream discovery). Load them
     // once before the first publish so CoreAudio shows the real names from the
-    // start. The load early-returns if caps are already cached; publish happens
-    // regardless of outcome (names fall back to synthesized "<plug> N").
+    // start. The load early-returns if caps are already cached; on failure the
+    // finish lambda refuses publication (it gates on haveCaps), so a failed
+    // load does not silently publish unvalidated geometry.
     if (auto* dice = protocol ? protocol->AsDuplexDeviceControl() : nullptr) {
         dice->EnsureRuntimeStreamGeometry(
-            [finish, dev, protocol](IOReturn /*status*/) mutable {
+            [finish, dev, protocol, guid](IOReturn status) mutable {
+                if (status != kIOReturnSuccess) {
+                    ASFW_LOG_ERROR(Audio,
+                                   "DiceAudioBackend::EnsureNubForGuid: geometry load failed "
+                                   "status=0x%08x GUID=0x%016llx - publication will be refused",
+                                   status, guid);
+                }
                 finish(std::move(dev), protocol);
             });
         return;
