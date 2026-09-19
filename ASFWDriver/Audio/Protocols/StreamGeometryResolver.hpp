@@ -228,6 +228,34 @@ struct ResolvedDirectionGeometry {
     }
 };
 
+/// Resolve one direction end to end: the stream count, then every stream in
+/// the union of what each side describes, so a stream only one side knows
+/// about still reaches the decision instead of being skipped.
+///
+/// Pure and templated on the accessors so the host suite can drive it with
+/// plain lambdas; the caller does the logging.
+template <typename DeviceAccessor, typename ProfileAccessor>
+[[nodiscard]] constexpr ResolvedDirectionGeometry ResolveDirectionGeometry(
+    uint32_t deviceStreamCount,
+    uint32_t profileStreamCount,
+    DeviceAccessor&& fromDevice,
+    ProfileAccessor&& fromProfile) noexcept {
+    ResolvedDirectionGeometry resolved{};
+    resolved.count = ResolveStreamCount(deviceStreamCount, profileStreamCount,
+                                        kMaxResolvedStreams);
+
+    const uint32_t deviceStreams =
+        (deviceStreamCount > kMaxResolvedStreams) ? kMaxResolvedStreams : deviceStreamCount;
+    const uint32_t profileStreams =
+        (profileStreamCount > kMaxResolvedStreams) ? kMaxResolvedStreams : profileStreamCount;
+    const uint32_t walk = (deviceStreams > profileStreams) ? deviceStreams : profileStreams;
+
+    for (uint32_t i = 0; i < walk && i < kMaxResolvedStreams; ++i) {
+        resolved.streams[i] = ResolveStreamGeometry(fromDevice(i), fromProfile(i));
+    }
+    return resolved;
+}
+
 struct ResolvedDeviceGeometry {
     ResolvedDirectionGeometry capture{};   ///< device -> host (DICE TX)
     ResolvedDirectionGeometry playback{};  ///< host -> device (DICE RX)

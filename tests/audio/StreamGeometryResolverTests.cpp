@@ -276,3 +276,66 @@ TEST(ResolvedStreamGeometry, EmptyDirectionIsUsable) {
     EXPECT_EQ(resolved.playback.TotalPcmChannels(), 0u);
     EXPECT_TRUE(resolved.Usable());
 }
+
+// ---------------------------------------------------------------------------
+// ResolveDirectionGeometry: the routine the backend actually calls. These feed
+// it caps-shaped and profile-shaped accessors, so a change that resolves one
+// direction from the other's inputs, or that stops walking the union of the
+// two descriptions, fails here.
+// ---------------------------------------------------------------------------
+
+TEST(ResolveDirectionGeometryFn, DeviceStatedAsymmetricStreamsSurviveResolution) {
+    // Venice F24 capture: device says 16 + 8, profile says nothing.
+    const uint16_t devicePcm[] = {16, 8};
+    const auto resolved = ASFW::Audio::ResolveDirectionGeometry(
+        2, 0,
+        [&](uint32_t i) {
+            return WireStreamGeometry{.pcmChannels = devicePcm[i], .am824Slots = devicePcm[i]};
+        },
+        [](uint32_t) { return kNothing; });
+
+    EXPECT_EQ(resolved.StreamCount(), 2u);
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.TotalPcmChannels(), 24u);
+    EXPECT_EQ(resolved.streams[1].geometry.pcmChannels, 8u);
+    EXPECT_EQ(resolved.streams[1].source, StreamGeometrySource::kDevice);
+}
+
+TEST(ResolveDirectionGeometryFn, ProfileDisagreementOnASecondStreamIsCaught) {
+    // The profile replicates stream 0 (16) while the device states 16 + 8:
+    // exactly what a non-indexed profile accessor produces.
+    const uint16_t devicePcm[] = {16, 8};
+    const auto resolved = ASFW::Audio::ResolveDirectionGeometry(
+        2, 2,
+        [&](uint32_t i) {
+            return WireStreamGeometry{.pcmChannels = devicePcm[i], .am824Slots = devicePcm[i]};
+        },
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16}; });
+
+    EXPECT_FALSE(resolved.Usable());
+    EXPECT_EQ(resolved.FirstDisagreeingStream(), 1u);
+}
+
+TEST(ResolveDirectionGeometryFn, WalksTheUnionWhenOnlyTheProfileDescribesAStream) {
+    // Device states one stream, profile describes two. The second must still be
+    // resolved (from the profile) rather than dropped.
+    const auto resolved = ASFW::Audio::ResolveDirectionGeometry(
+        1, 2,
+        [](uint32_t i) {
+            return i == 0 ? WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16} : kNothing;
+        },
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 10, .am824Slots = 10}; });
+
+    EXPECT_EQ(resolved.streams[1].geometry.pcmChannels, 10u);
+    EXPECT_EQ(resolved.streams[1].source, StreamGeometrySource::kProfile);
+    EXPECT_EQ(resolved.count.deviceStated, 1u);
+}
+
+TEST(ResolveDirectionGeometryFn, StreamCountBeyondTheHostBoundIsRefusedNotTruncated) {
+    const auto resolved = ASFW::Audio::ResolveDirectionGeometry(
+        kMaxResolvedStreams + 3, 0,
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 8, .am824Slots = 8}; },
+        [](uint32_t) { return kNothing; });
+    EXPECT_TRUE(resolved.count.disagrees);
+    EXPECT_FALSE(resolved.Usable());
+}
