@@ -62,6 +62,7 @@ void MotuAudioBackend::BeginTeardown() noexcept {
 
 void MotuAudioBackend::OnDeviceRecordUpdated(uint64_t guid) noexcept {
     if (stopping_.load(std::memory_order_acquire)) {
+        publicationRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         return;
     }
     EnsureNubForGuid(guid);

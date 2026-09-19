@@ -20,7 +20,7 @@
 #include "../Protocols/DeviceProtocolChoice.hpp"
 #include "../Protocols/DeviceProtocolFactory.hpp"
 #include "../Protocols/DICE/Core/DICETypes.hpp"
-#include "../Protocols/DICE/Core/DICERestartSession.hpp"
+#include "../Protocols/Duplex/DuplexControlTypes.hpp"
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
 #include "../../Service/DriverContext.hpp"

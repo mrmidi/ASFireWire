@@ -75,6 +75,9 @@ private:
     AudioDuplexCoordinator& coordinator_;
 
     std::atomic<bool> stopping_{false};
+    // Publication attempts refused because teardown already latched (I3: late
+    // work counts, never acts).
+    std::atomic<uint64_t> publicationRejectCount_{0};
     IOLock* lock_{nullptr};
     std::unordered_set<uint64_t> activeStreamingGuids_{};
 };

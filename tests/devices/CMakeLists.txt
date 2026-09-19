@@ -44,8 +44,13 @@ add_device_test(DICETcatProtocolTests
 )
 
 # DICE restart-session tests
-add_device_test(DICERestartSessionTests
-    DICERestartSessionTests.cpp
+add_device_test(DuplexRestartSessionTests
+    DuplexRestartSessionTests.cpp
+)
+
+# Stage 2b Phase A: duplex restart FSM characterization tests (header-only)
+add_device_test(DuplexRestartFsmTests
+    DuplexRestartFsmTests.cpp
 )
 
 # DICE duplex restart coordinator FSM tests
@@ -86,8 +91,8 @@ add_device_test(WaitForAsyncResultTests
 )
 
 # DICE recovery-policy classification kernel tests (FW-66, header-only policy)
-add_device_test(DiceRecoveryPolicyTests
-    DiceRecoveryPolicyTests.cpp
+add_device_test(DuplexRecoveryPolicyTests
+    DuplexRecoveryPolicyTests.cpp
 )
 
 # DICE duplex operation gate (active/stop-intent) tests (FW-68, header-only gate)
@@ -275,3 +280,32 @@ add_device_test(DeviceStreamTraitsAgreementTests
     DeviceStreamTraitsAgreementTests.cpp
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
 )
+
+# Audio backend lifecycle and publication race tests (controlled interleavings)
+add_device_test(BackendLifecycleRaceTests
+    BackendLifecycleRaceTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AVCAudioBackend.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/DiceAudioBackend.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Core/AudioNubPublisher.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/BeBoBProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLive2442Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/AlesisMultiMixProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/WeissIntProfile.cpp"
+)
+

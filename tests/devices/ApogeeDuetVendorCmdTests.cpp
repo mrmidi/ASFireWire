@@ -468,7 +468,7 @@ TEST(ApogeeDuetDuplexAdapter, Applies48kToInputThenOutputUnitPlugsOnlyOnce) {
     IOReturn completionStatus = kIOReturnNotReady;
     protocol.ApplyClockConfig(
         ASFW::Audio::AudioClockConfig{.sampleRateHz = 48000U},
-        [&completionStatus](IOReturn status, ASFW::Audio::ClockApplyResult) {
+        [&completionStatus](IOReturn status, ASFW::Audio::DuplexClockApplyResult) {
             completionStatus = status;
         });
     rig.Drain();
@@ -497,7 +497,7 @@ TEST(ApogeeDuetDuplexAdapter, Applies48kToInputThenOutputUnitPlugsOnlyOnce) {
     // perturbing the OXFW device with another pair of AV/C controls.
     protocol.ApplyClockConfig(
         ASFW::Audio::AudioClockConfig{.sampleRateHz = 48000U},
-        [&completionStatus](IOReturn status, ASFW::Audio::ClockApplyResult) {
+        [&completionStatus](IOReturn status, ASFW::Audio::DuplexClockApplyResult) {
             completionStatus = status;
         });
     rig.Drain();
@@ -555,7 +555,7 @@ TEST(ApogeeDuetDuplexAdapter, MapsRequested44100RateIntoUnitPlugSignalFormat) {
     IOReturn completionStatus = kIOReturnNotReady;
     protocol.ApplyClockConfig(
         ASFW::Audio::AudioClockConfig{.sampleRateHz = 44100U},
-        [&completionStatus](IOReturn status, ASFW::Audio::ClockApplyResult) {
+        [&completionStatus](IOReturn status, ASFW::Audio::DuplexClockApplyResult) {
             completionStatus = status;
         });
     rig.Drain();
@@ -579,7 +579,7 @@ TEST(ApogeeDuetDuplexAdapter, RestoresInputFormationWhenOutputFormatControlFails
     IOReturn completionStatus = kIOReturnSuccess;
     protocol.ApplyClockConfig(
         ASFW::Audio::AudioClockConfig{.sampleRateHz = 48000U},
-        [&completionStatus](IOReturn status, ASFW::Audio::ClockApplyResult) {
+        [&completionStatus](IOReturn status, ASFW::Audio::DuplexClockApplyResult) {
             completionStatus = status;
         });
     rig.Drain();

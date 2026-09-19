@@ -146,7 +146,7 @@ void BeBoBProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
     duplexChannels_ = channels;
     ApplyClockConfig(desiredClock,
                      [this, channels, callback = std::move(callback)](IOReturn status,
-                                                                        ClockApplyResult clock) mutable {
+                                                                        DuplexClockApplyResult clock) mutable {
         callback(status, DuplexPrepareResult{.generation = clock.generation,
                                              .channels = channels,
                                              .appliedClock = clock.appliedClock,
@@ -313,7 +313,7 @@ void BeBoBProtocol::FinishClockApply(ClockApplyEpoch* epoch, IOReturn status) {
     if (!epoch->completed.exchange(true)) {
         activeClockApply_ = nullptr;
         ClockApplyCallback cb = std::move(epoch->completion);
-        cb(status, ClockApplyResult{.generation = busInfo_.GetGeneration(),
+        cb(status, DuplexClockApplyResult{.generation = busInfo_.GetGeneration(),
                                      .appliedClock = epoch->appliedClock,
                                      .runtimeCaps = DeviceCaps()});
     }

@@ -17,10 +17,13 @@
 
 #pragma once
 
-#include "DiceRecoveryPolicy.hpp"
+#include "DuplexRecoveryPolicy.hpp"
 
 #include "../Duplex/DuplexControlTypes.hpp"
 #include "../../../Logging/Logging.hpp"
+
+#include <cassert>
+#include <cstdio>
 
 #include <cstdint>
 
@@ -28,12 +31,13 @@ namespace ASFW::Audio::Backends {
 
 using ASFW::Audio::ClearRestartProgress;
 using ASFW::Audio::DuplexClockRequestOutcome;
+using ASFW::Audio::DuplexLifecycle;
+using ASFW::Audio::DuplexLifecycleKind;
 using ASFW::Audio::DuplexRestartErrorClass;
 using ASFW::Audio::DuplexRestartFailureCause;
 using ASFW::Audio::DuplexRestartIssueInfo;
 using ASFW::Audio::DuplexRestartPhase;
 using ASFW::Audio::DuplexRestartReason;
-using ASFW::Audio::DuplexRestartState;
 using ASFW::Audio::DuplexRestartSession;
 
 [[nodiscard]] constexpr const char* ToString(DuplexRestartReason reason) noexcept {
@@ -69,19 +73,6 @@ using ASFW::Audio::DuplexRestartSession;
         case DuplexRestartPhase::kRunning: return "Running";
         case DuplexRestartPhase::kStopping: return "Stopping";
         case DuplexRestartPhase::kFailed: return "Failed";
-    }
-    return "Unknown";
-}
-
-[[nodiscard]] constexpr const char* ToString(DuplexRestartState state) noexcept {
-    switch (state) {
-        case DuplexRestartState::kIdle: return "Idle";
-        case DuplexRestartState::kApplyingIdleClock: return "ApplyingIdleClock";
-        case DuplexRestartState::kStarting: return "Starting";
-        case DuplexRestartState::kRunning: return "Running";
-        case DuplexRestartState::kStopping: return "Stopping";
-        case DuplexRestartState::kRecovering: return "Recovering";
-        case DuplexRestartState::kFailed: return "Failed";
     }
     return "Unknown";
 }
@@ -138,7 +129,7 @@ inline void LogFsmEvent(const char* eventName,
                  uint64_t guid,
                  uint64_t restartId,
                  FW::Generation generation,
-                 DuplexRestartState state,
+                 DuplexLifecycleKind lifecycleKind,
                  DuplexRestartPhase phase,
                  DuplexRestartReason reason,
                  uint64_t token = 0) noexcept {
@@ -148,7 +139,7 @@ inline void LogFsmEvent(const char* eventName,
                     eventName,
                     guid,
                     restartId,
-                    ToString(state),
+                    ToString(lifecycleKind),
                     ToString(phase),
                     GenerationValue(generation),
                     token,
@@ -161,24 +152,24 @@ inline void LogFsmEvent(const char* eventName,
                 eventName,
                 guid,
                 restartId,
-                ToString(state),
+                ToString(lifecycleKind),
                 ToString(phase),
                 GenerationValue(generation),
                 ToString(reason));
 }
 
 inline void LogStateTransition(const DuplexRestartSession& session,
-                        DuplexRestartState oldState,
-                        DuplexRestartState newState,
+                        DuplexLifecycleKind oldKind,
+                        DuplexLifecycleKind newKind,
                         const char* why) noexcept {
-    if (oldState == newState) {
+    if (oldKind == newKind) {
         return;
     }
 
     ASFW_LOG_V2(Audio,
                 "[FSM] state %{public}s -> %{public}s guid=0x%llx restartId=%llu phase=%{public}s gen=%u why=%{public}s",
-                ToString(oldState),
-                ToString(newState),
+                ToString(oldKind),
+                ToString(newKind),
                 session.guid,
                 session.restartId,
                 ToString(session.phase),
@@ -199,16 +190,48 @@ inline void LogPhaseTransition(const DuplexRestartSession& session,
                 ToString(newPhase),
                 session.guid,
                 session.restartId,
-                ToString(session.state),
+                ToString(KindOf(session.lifecycle)),
                 GenerationValue(session.topologyGeneration));
 }
 
-inline void SetSessionState(DuplexRestartSession& session,
-                     DuplexRestartState newState,
-                     const char* why) noexcept {
-    const auto oldState = session.state;
-    session.state = newState;
-    LogStateTransition(session, oldState, newState, why);
+#ifdef ASFW_HOST_TEST
+inline std::atomic<bool> gDisableLifecycleAssertForTesting{false};
+#endif
+
+// The single lifecycle transition choke point (Phase C). The transition table
+// (CanTransitionLifecycle) enforces validity: an illegal transition is rejected,
+// logged, asserted in debug builds, and leaves the session lifecycle untouched.
+[[nodiscard]] inline bool SetLifecycle(DuplexRestartSession& session,
+                                       DuplexLifecycle&& next,
+                                       const char* why) noexcept {
+    const auto oldKind = KindOf(session.lifecycle);
+    const auto newKind = KindOf(next);
+    if (oldKind == newKind) {
+        session.lifecycle = std::move(next);
+        return true;
+    }
+    if (!CanTransitionLifecycle(oldKind, newKind)) {
+        ASFW_LOG_ERROR(Audio,
+                       "[FSM] illegal lifecycle transition %{public}s -> %{public}s why=%{public}s",
+                       ToString(oldKind), ToString(newKind), why);
+#ifdef ASFW_HOST_TEST
+        if (!gDisableLifecycleAssertForTesting.load(std::memory_order_relaxed)) {
+            assert(!"illegal lifecycle transition - see CanTransitionLifecycle table");
+        }
+#else
+        assert(!"illegal lifecycle transition - see CanTransitionLifecycle table");
+#endif
+        return false;
+    }
+    session.lifecycle = std::move(next);
+    LogStateTransition(session, oldKind, newKind, why);
+    return true;
+}
+
+[[nodiscard]] inline bool SetSessionState(DuplexRestartSession& session,
+                                          DuplexLifecycle&& next,
+                                          const char* why) noexcept {
+    return SetLifecycle(session, std::move(next), why);
 }
 
 inline void SetSessionPhase(DuplexRestartSession& session, DuplexRestartPhase newPhase) noexcept {
@@ -217,14 +240,57 @@ inline void SetSessionPhase(DuplexRestartSession& session, DuplexRestartPhase ne
     LogPhaseTransition(session, oldPhase, newPhase);
 }
 
-inline void ApplyTerminalPhase(DuplexRestartSession& session,
-                        DuplexRestartPhase terminalPhase,
-                        const char* why) noexcept {
-    const auto oldState = session.state;
+// Terminal transitions (Stage 2b Phase C, payload-based): the ONLY writers of
+// the lifecycle at terminal points. EnterFailed arms the Failed alternative
+// with the terminal error — that payload is the single authority for the
+// terminal status (no session-level field). EnterIdle lands the machine back
+// in Idle carrying no error by construction. Both delegate the ledger reset to
+// ClearRestartProgress (flags + phase only) and the legality check to
+// SetLifecycle (transition table), keeping one authority per decision.
+inline bool EnterIdle(DuplexRestartSession& session, const char* why) noexcept {
+    const auto currentKind = KindOf(session.lifecycle);
+    if (currentKind != DuplexLifecycleKind::Idle &&
+        !CanTransitionLifecycle(currentKind, DuplexLifecycleKind::Idle)) {
+        ASFW_LOG_ERROR(Audio,
+                       "[FSM] illegal EnterIdle transition from %{public}s why=%{public}s",
+                       ToString(currentKind), why);
+#ifdef ASFW_HOST_TEST
+        if (!gDisableLifecycleAssertForTesting.load(std::memory_order_relaxed)) {
+            assert(!"illegal EnterIdle transition - see CanTransitionLifecycle table");
+        }
+#else
+        assert(!"illegal EnterIdle transition - see CanTransitionLifecycle table");
+#endif
+        return false;
+    }
     const auto oldPhase = session.phase;
-    ClearRestartProgress(session, terminalPhase);
+    ClearRestartProgress(session, DuplexRestartPhase::kIdle);
+    (void)SetLifecycle(session, LifecycleIdle{}, why);
     LogPhaseTransition(session, oldPhase, session.phase);
-    LogStateTransition(session, oldState, session.state, why);
+    return true;
+}
+
+inline bool EnterFailed(DuplexRestartSession& session,
+                        IOReturn terminalError,
+                        const char* why) noexcept {
+    if (!CanTransitionLifecycle(KindOf(session.lifecycle), DuplexLifecycleKind::Failed)) {
+        ASFW_LOG_ERROR(Audio,
+                       "[FSM] illegal EnterFailed transition from %{public}s why=%{public}s",
+                       ToString(KindOf(session.lifecycle)), why);
+#ifdef ASFW_HOST_TEST
+        if (!gDisableLifecycleAssertForTesting.load(std::memory_order_relaxed)) {
+            assert(!"illegal EnterFailed transition - see CanTransitionLifecycle table");
+        }
+#else
+        assert(!"illegal EnterFailed transition - see CanTransitionLifecycle table");
+#endif
+        return false;
+    }
+    const auto oldPhase = session.phase;
+    ClearRestartProgress(session, DuplexRestartPhase::kFailed);
+    (void)SetLifecycle(session, LifecycleFailed{.terminalError = terminalError}, why);
+    LogPhaseTransition(session, oldPhase, session.phase);
+    return true;
 }
 
 inline void ClearFailureSnapshot(DuplexRestartSession& session) noexcept {
@@ -271,14 +337,14 @@ inline void LogInvalidation(const DuplexRestartSession& session) noexcept {
                 static_cast<unsigned>(invalidation.status),
                 session.guid,
                 session.restartId,
-                ToString(session.state),
+                ToString(KindOf(session.lifecycle)),
                 ToString(session.phase),
                 GenerationValue(session.topologyGeneration));
 }
 
 inline void LogRecoveryPolicy(const DuplexRestartSession& session,
                        DuplexRestartReason triggerReason,
-                       const DiceRecoveryDecision& decision) noexcept {
+                       const DuplexRecoveryDecision& decision) noexcept {
     ASFW_LOG_V3(Audio,
                 "[FSM] policy disposition=%{public}s cause=%{public}s why=%{public}s guid=0x%llx restartId=%llu state=%{public}s phase=%{public}s gen=%u",
                 ToString(decision.disposition),
@@ -286,17 +352,19 @@ inline void LogRecoveryPolicy(const DuplexRestartSession& session,
                 ToString(decision.reason),
                 session.guid,
                 session.restartId,
-                ToString(session.state),
+                ToString(KindOf(session.lifecycle)),
                 ToString(session.phase),
                 GenerationValue(session.topologyGeneration));
 }
 
 inline void LogTerminal(const DuplexRestartSession& session) noexcept {
-    if (session.state == DuplexRestartState::kFailed && session.lastFailure.has_value()) {
+    // Single authority: the terminal error is the Failed alternative's payload.
+    const auto* failed = std::get_if<LifecycleFailed>(&session.lifecycle);
+    if (failed != nullptr && session.lastFailure.has_value()) {
         const auto& failure = *session.lastFailure;
         ASFW_LOG_V1(Audio,
                     "[FSM] terminal state=%{public}s phase=%{public}s class=%{public}s cause=%{public}s retryable=%d rollback=0x%08x status=0x%08x guid=0x%llx restartId=%llu gen=%u",
-                    ToString(session.state),
+                    ToString(KindOf(session.lifecycle)),
                     ToString(session.phase),
                     ToString(failure.errorClass),
                     ToString(failure.cause),
@@ -309,11 +377,13 @@ inline void LogTerminal(const DuplexRestartSession& session) noexcept {
         return;
     }
 
+    const IOReturn terminalStatus =
+        failed != nullptr ? failed->terminalError : kIOReturnSuccess;
     ASFW_LOG_V1(Audio,
                 "[FSM] terminal state=%{public}s phase=%{public}s status=0x%08x guid=0x%llx restartId=%llu gen=%u",
-                ToString(session.state),
+                ToString(KindOf(session.lifecycle)),
                 ToString(session.phase),
-                static_cast<unsigned>(session.terminalError),
+                static_cast<unsigned>(terminalStatus),
                 session.guid,
                 session.restartId,
                 GenerationValue(session.topologyGeneration));

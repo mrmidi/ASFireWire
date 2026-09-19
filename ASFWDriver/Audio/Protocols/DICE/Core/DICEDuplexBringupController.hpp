@@ -6,7 +6,7 @@
 #pragma once
 
 #include "../../Duplex/IDuplexDeviceControl.hpp"
-#include "DICERestartSession.hpp"
+#include "../../Duplex/DuplexControlTypes.hpp"
 #include "DICETypes.hpp"
 #include "DICETransaction.hpp"
 #include "../../../../Protocols/Ports/ProtocolRegisterIO.hpp"
@@ -167,7 +167,7 @@ private:
     std::atomic<Scheduling::TimerToken> scheduledRetry_{Scheduling::kInvalidTimerToken};
     std::atomic<uint64_t> scheduledRetryEpoch_{0};
 
-    DiceRestartSession restartSession_{};
+    DuplexRestartSession restartSession_{};
     DiceClockConfiguration diceClock_{};
     FlowMode flowMode_{FlowMode::kNone};
     AudioStreamRuntimeCaps runtimeCaps_{};

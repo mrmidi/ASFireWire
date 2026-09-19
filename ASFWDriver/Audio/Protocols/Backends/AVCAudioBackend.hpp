@@ -70,7 +70,31 @@ private:
     Driver::HardwareInterface& hardware_;
     IIsochDuplexHostTransport& hostTransport_;
     std::atomic<bool> stopping_{false};
+    std::atomic<bool> teardownStarted_{false};
+    std::atomic<bool> teardownComplete_{false};
+    std::atomic<int32_t> inflightPublications_{0};
+    // Publication attempts refused because teardown already latched (I3: late
+    // work counts, never acts). Reported in the BeginTeardown summary.
+    std::atomic<uint64_t> publicationRejectCount_{0};
     AudioDuplexCoordinator& duplexCoordinator_;
+
+#ifdef ASFW_HOST_TEST
+public:
+    void SetBeforePublishHookForTesting(std::function<void()> hook) noexcept {
+        beforePublishHookForTesting_ = std::move(hook);
+    }
+    [[nodiscard]] IODispatchQueue* WorkQueueForTesting() const noexcept {
+        return workQueue_.get();
+    }
+    [[nodiscard]] uint64_t PublicationRejectCountForTesting() const noexcept {
+        return publicationRejectCount_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool IsTeardownCompleteForTesting() const noexcept {
+        return teardownComplete_.load(std::memory_order_acquire);
+    }
+private:
+    std::function<void()> beforePublishHookForTesting_{};
+#endif
 
     IOLock* lock_{nullptr};
     OSSharedPtr<IODispatchQueue> workQueue_{};

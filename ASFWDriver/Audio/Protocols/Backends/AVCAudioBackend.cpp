@@ -8,7 +8,6 @@
 #include "../../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 
 namespace ASFW::Audio {
 
@@ -42,6 +41,9 @@ AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
 }
 
 AVCAudioBackend::~AVCAudioBackend() noexcept {
+    // Stage 2b D1: defensive teardown in the destructor, matching MotuAudioBackend's
+    // shape (BeginTeardown is idempotent; this only covers a destructor-only path).
+    BeginTeardown();
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
@@ -51,6 +53,35 @@ AVCAudioBackend::~AVCAudioBackend() noexcept {
 void AVCAudioBackend::OnAudioConfigurationReady(uint64_t guid, const Model::ASFWAudioDevice& config) noexcept {
     if (guid == 0) return;
 
+    inflightPublications_.fetch_add(1, std::memory_order_acq_rel);
+
+    // Stage 2b D2 (I3): once teardown latches, late publication must count and
+    // never act — a nub published after BeginTeardown would outlive the core's
+    // detach window (contract I3 + FW-60 ordering).
+    if (stopping_.load(std::memory_order_acquire)) {
+        inflightPublications_.fetch_sub(1, std::memory_order_acq_rel);
+        publicationRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+        ASFW_LOG(Audio,
+                 "AVCAudioBackend: publication refused by teardown GUID=0x%016llx",
+                 guid);
+        return;
+    }
+
+#ifdef ASFW_HOST_TEST
+    if (beforePublishHookForTesting_) {
+        beforePublishHookForTesting_();
+    }
+#endif
+
+    if (stopping_.load(std::memory_order_acquire)) {
+        inflightPublications_.fetch_sub(1, std::memory_order_acq_rel);
+        publicationRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+        ASFW_LOG(Audio,
+                 "AVCAudioBackend: publication cancelled by concurrent teardown GUID=0x%016llx",
+                 guid);
+        return;
+    }
+
     if (lock_) {
         IOLockLock(lock_);
         configByGuid_[guid] = config;
@@ -58,6 +89,7 @@ void AVCAudioBackend::OnAudioConfigurationReady(uint64_t guid, const Model::ASFW
     }
 
     (void)publisher_.EnsureNub(guid, config, "AVC");
+    inflightPublications_.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 void AVCAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
@@ -262,7 +294,7 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
                          "attempt=%u GUID=0x%016llx",
                          attempt, guid);
         const IOReturn status = duplexCoordinator_.RecoverStreaming(
-            guid, DICE::DiceRestartReason::kRecoverAfterTimingLoss);
+            guid, DuplexRestartReason::kRecoverAfterTimingLoss);
         if (status == kIOReturnSuccess) {
             if (lock_) {
                 IOLockLock(lock_);
@@ -296,23 +328,35 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
 }
 
 void AVCAudioBackend::BeginTeardown() noexcept {
-    if (stopping_.load(std::memory_order_acquire)) {
+    stopping_.store(true, std::memory_order_release);
+
+    if (!teardownStarted_.exchange(true, std::memory_order_acq_rel)) {
+        // Wait for any admitted in-flight publication to finish or cancel before draining.
+        while (inflightPublications_.load(std::memory_order_acquire) > 0) {
+            IOSleep(1);
+        }
+
+        // Drain queued recovery before hardware detaches. Each queued block checks
+        // stopping_ before it can re-establish PCRs in the teardown window.
+        if (workQueue_) {
+#ifdef ASFW_HOST_TEST
+            workQueue_->DispatchSync([] {});
+#else
+            workQueue_->DispatchSync(^{ });
+#endif
+        }
+
+        teardownComplete_.store(true, std::memory_order_release);
+        ASFW_LOG(Audio,
+                 "AVCAudioBackend: BeginTeardown draining publicationRejected=%llu",
+                 publicationRejectCount_.load(std::memory_order_acquire));
         return;
     }
 
-    const bool wasStopping = stopping_.exchange(true, std::memory_order_acq_rel);
-    // Drain queued recovery before hardware detaches. Each queued block checks
-    // stopping_ before it can re-establish PCRs in the teardown window.
-    if (workQueue_) {
-#ifdef ASFW_HOST_TEST
-        workQueue_->DispatchSync([] {});
-#else
-        workQueue_->DispatchSync(^{ });
-#endif
+    // Secondary / concurrent callers wait safely until the primary drain is finished.
+    while (!teardownComplete_.load(std::memory_order_acquire)) {
+        IOSleep(1);
     }
-    ASFW_LOG(Audio,
-             "AVCAudioBackend: BeginTeardown stopping=true already=%u",
-             wasStopping ? 1U : 0U);
 }
 
 IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {

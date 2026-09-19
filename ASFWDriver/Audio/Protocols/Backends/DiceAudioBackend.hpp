@@ -48,7 +48,7 @@ public:
     void OnDeviceResumed(uint64_t guid) noexcept override;
     void HandleHostTimingLoss(uint64_t guid) noexcept override;
     void HandleCycleInconsistent(uint64_t guid) noexcept override;
-    void HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReason reason) noexcept;
+    void HandleRecoveryEvent(uint64_t guid, DuplexRestartReason reason) noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;
@@ -81,7 +81,34 @@ private:
     AudioRuntimeRegistry& runtime_;
     Driver::HardwareInterface& hardware_;
     std::atomic<bool> stopping_{false}; // FW-61 teardown latch
+    std::atomic<bool> teardownStarted_{false};
+    std::atomic<bool> teardownComplete_{false};
+    std::atomic<int32_t> inflightPublications_{0};
     AudioDuplexCoordinator& restartCoordinator_;
+
+#ifdef ASFW_HOST_TEST
+public:
+    void SetBeforePublishHookForTesting(std::function<void()> hook) noexcept {
+        beforePublishHookForTesting_ = std::move(hook);
+    }
+    void EnsureNubForGuidForTesting(uint64_t guid) noexcept {
+        EnsureNubForGuid(guid);
+    }
+    [[nodiscard]] IODispatchQueue* WorkQueueForTesting() const noexcept {
+        return workQueue_.get();
+    }
+    [[nodiscard]] uint64_t PublicationRejectCountForTesting() const noexcept {
+        return publicationRejectCount_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] uint64_t ProbeAbortCountForTesting() const noexcept {
+        return probeAbortCount_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool IsTeardownCompleteForTesting() const noexcept {
+        return teardownComplete_.load(std::memory_order_acquire);
+    }
+private:
+    std::function<void()> beforePublishHookForTesting_{};
+#endif
 
     IOLock* lock_{nullptr};
     OSSharedPtr<IODispatchQueue> workQueue_{};
@@ -92,6 +119,9 @@ private:
     std::atomic<uint64_t> recoveryRejectCount_{0};
     std::atomic<uint64_t> probeRejectCount_{0};
     std::atomic<uint64_t> probeAbortCount_{0};
+    // Publication attempts refused because teardown already latched (I3: late
+    // work counts, never acts). Reported in the BeginTeardown drain summary.
+    std::atomic<uint64_t> publicationRejectCount_{0};
 
     static constexpr uint32_t kCapsRetryDelayMs = 50;
     static constexpr uint8_t kCapsRetryMaxAttempts = 40; // 2s @ 50ms

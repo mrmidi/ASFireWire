@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 
 #include "AudioDuplexCoordinator.hpp"
-#include "DiceRecoveryPolicy.hpp"
+#include "DuplexRecoveryPolicy.hpp"
 #include "DuplexStreamProfile.hpp"
 #include "RestartJournal.hpp"
 #include "SyncAsyncBridge.hpp"
@@ -20,17 +20,17 @@
 
 namespace ASFW::Audio {
 
-// FW-66: the recovery-policy classification vocabulary now lives in DiceRecoveryPolicy.hpp.
+// FW-66: the recovery-policy classification vocabulary now lives in DuplexRecoveryPolicy.hpp.
 using namespace ASFW::Audio::Backends;
 
 namespace {
 
-using ASFW::Audio::DICE::ClearRestartProgress;
+using ASFW::Audio::ClearRestartProgress;
 using ASFW::Audio::AudioClockConfig;
-using ASFW::Audio::DICE::HasAnyRestartState;
-using ASFW::Audio::DICE::HasDeviceRestartState;
-using ASFW::Audio::DICE::HasHostRestartState;
-using ASFW::Audio::DICE::HasRestartIntent;
+using ASFW::Audio::HasAnyRestartState;
+using ASFW::Audio::HasDeviceRestartState;
+using ASFW::Audio::HasHostRestartState;
+using ASFW::Audio::HasRestartIntent;
 
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 [[nodiscard]] AudioClockConfig EffectiveStartClockForProfile(
@@ -217,7 +217,7 @@ IOReturn AudioDuplexCoordinator::StartStreaming(uint64_t guid) noexcept {
     }
 
     const DuplexRestartSession session = LoadSession(guid);
-    LogFsmEvent("start", guid, session.restartId, session.topologyGeneration, session.state,
+    LogFsmEvent("start", guid, session.restartId, session.topologyGeneration, KindOf(session.lifecycle),
                 session.phase, session.reason);
 
     bool acquired = false;
@@ -255,7 +255,7 @@ IOReturn AudioDuplexCoordinator::StopStreaming(uint64_t guid) noexcept {
     }
 
     const DuplexRestartSession session = LoadSession(guid);
-    LogFsmEvent("stop", guid, session.restartId, session.topologyGeneration, session.state,
+    LogFsmEvent("stop", guid, session.restartId, session.topologyGeneration, KindOf(session.lifecycle),
                 session.phase, session.reason);
 
     RequestStopIntent(guid);
@@ -333,7 +333,7 @@ IOReturn AudioDuplexCoordinator::RequestClockConfig(
 
     session.pendingClock = request.desiredClock;
     session.pendingReason = request.reason;
-    LogFsmEvent("clock", guid, session.restartId, session.topologyGeneration, session.state,
+    LogFsmEvent("clock", guid, session.restartId, session.topologyGeneration, KindOf(session.lifecycle),
                 session.phase, reason, request.token);
 
     if (supersededRequest.has_value()) {
@@ -386,7 +386,7 @@ IOReturn AudioDuplexCoordinator::RecoverStreaming(uint64_t guid,
     }
 
     const DuplexRestartSession session = LoadSession(guid);
-    LogFsmEvent("recover", guid, session.restartId, session.topologyGeneration, session.state,
+    LogFsmEvent("recover", guid, session.restartId, session.topologyGeneration, KindOf(session.lifecycle),
                 session.phase, reason);
 
     FailPendingClockRequest(guid, DuplexClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
@@ -421,6 +421,21 @@ void AudioDuplexCoordinator::ClearSession(uint64_t guid) noexcept {
     }
 
     IOLockLock(lock_);
+    // Retirement provenance: this is the one production site where a session
+    // incarnation ends without a choreographed stop (confirmed remote removal,
+    // service teardown). The LifecycleRemoved alternative records the decision
+    // in the trace here; a resident Removed state has no reader until the
+    // Stage 3 session owner owns the registry (see DuplexControlTypes.hpp).
+    if (const auto* retiring = store_.FindSessionLocked(guid);
+        retiring != nullptr) {
+        ASFW_LOG_V1(Audio,
+                    "[FSM] session retired guid=0x%016llx restartId=%llu state=%{public}s phase=%{public}s gen=%u",
+                    guid,
+                    retiring->restartId,
+                    ToString(KindOf(retiring->lifecycle)),
+                    ToString(retiring->phase),
+                    GenerationValue(retiring->topologyGeneration));
+    }
     store_.EraseSessionLocked(guid);
     clockRequests_.ClearLocked(guid);
     gate_.ReleaseLocked(guid);
@@ -491,7 +506,7 @@ IOReturn AudioDuplexCoordinator::RunStartStreaming(uint64_t guid) noexcept {
         desiredClock = session.appliedClock;
     }
     const DuplexRestartReason reason = HasRestartIntent(session)
-                                         ? DICE::ClassifyRestartReason(&session, desiredClock)
+                                         ? ClassifyRestartReason(&session, desiredClock)
                                          : DuplexRestartReason::kInitialStart;
 
     const IOReturn status =
@@ -574,7 +589,7 @@ IOReturn AudioDuplexCoordinator::RunStopStreaming(uint64_t guid) noexcept {
     const std::optional<DuplexRestartSession> existingSession = GetSession(guid);
     if (existingSession && !HasAnyRestartState(*existingSession) &&
         existingSession->phase == DuplexRestartPhase::kIdle &&
-        existingSession->state == DuplexRestartState::kIdle) {
+        KindOf(existingSession->lifecycle) == DuplexLifecycleKind::Idle) {
         return kIOReturnSuccess;
     }
 
@@ -621,9 +636,9 @@ IOReturn AudioDuplexCoordinator::RunRecoveryStreaming(uint64_t guid,
         LogInvalidation(session);
     }
 
-    const DiceRecoveryContext context{
+    const DuplexRecoveryContext context{
         .triggerReason = reason,
-        .state = session.state,
+        .state = KindOf(session.lifecycle),
         .phase = session.phase,
         .stopRequested = IsStopRequested(guid),
         .hasRestartIntent = HasRestartIntent(session),
@@ -633,10 +648,10 @@ IOReturn AudioDuplexCoordinator::RunRecoveryStreaming(uint64_t guid,
         .hasProtocol = (deviceControl != nullptr),
         .lastFailureRetryable = session.lastFailure.has_value() && session.lastFailure->retryable,
     };
-    const DiceRecoveryDecision decision = EvaluateRecoveryPolicy(context);
+    const DuplexRecoveryDecision decision = EvaluateRecoveryPolicy(context);
     LogRecoveryPolicy(session, reason, decision);
 
-    if (decision.disposition == DiceRecoveryDisposition::kIgnore) {
+    if (decision.disposition == DuplexRecoveryDisposition::kIgnore) {
         // kIOReturnUnsupported, not kIOReturnSuccess: the policy declined to
         // run a recovery, which is not the same as running one that worked.
         // Callers act on the difference — AVCAudioBackend used to log
@@ -644,27 +659,27 @@ IOReturn AudioDuplexCoordinator::RunRecoveryStreaming(uint64_t guid,
         // what kTimingLossMaxAttempts exists to accumulate (FW-146). The
         // codebase already treats Unsupported as a benign no-op rather than a
         // failure (see the device-stop status check below).
-        return (decision.reason == DiceRecoveryPolicyReason::kSuppressedByStop ||
-                decision.reason == DiceRecoveryPolicyReason::kIdleApplyInvalidated)
+        return (decision.reason == DuplexRecoveryPolicyReason::kSuppressedByStop ||
+                decision.reason == DuplexRecoveryPolicyReason::kIdleApplyInvalidated)
                    ? kIOReturnAborted
                    : kIOReturnUnsupported;
     }
 
-    if (decision.disposition == DiceRecoveryDisposition::kFailSession) {
+    if (decision.disposition == DuplexRecoveryDisposition::kFailSession) {
         const bool missingDependency = (!record || !deviceControl);
-        session.terminalError = missingDependency
+        const IOReturn terminalStatus = missingDependency
                                     ? kIOReturnNotReady
                                     : (session.lastFailure.has_value() ? session.lastFailure->status
                                                                        : kIOReturnUnsupported);
         if (missingDependency) {
             RecordIssue(session, session.lastFailure, session.phase,
                         DuplexRestartErrorClass::kMissingDependency, FailureCauseForReason(reason),
-                        session.terminalError, false, false, kIOReturnSuccess, false, false);
+                        terminalStatus, false, false, kIOReturnSuccess, false, false);
         }
-        ApplyTerminalPhase(session, DuplexRestartPhase::kFailed, ToString(decision.reason));
+        EnterFailed(session, terminalStatus, ToString(decision.reason));
         StoreSession(session);
         LogTerminal(session);
-        return session.terminalError;
+        return terminalStatus;
     }
 
     if (!record || !deviceControl) {
@@ -785,9 +800,9 @@ AudioDuplexCoordinator::ApplyClockRequest(uint64_t guid,
 
     DuplexRestartSession session = LoadSession(guid);
     if (HasAnyRestartState(session) || session.phase == DuplexRestartPhase::kRunning ||
-        session.state == DuplexRestartState::kRunning ||
-        session.state == DuplexRestartState::kRecovering ||
-        session.state == DuplexRestartState::kFailed) {
+        KindOf(session.lifecycle) == DuplexLifecycleKind::Running ||
+        KindOf(session.lifecycle) == DuplexLifecycleKind::Recovering ||
+        KindOf(session.lifecycle) == DuplexLifecycleKind::Failed) {
         if (TeardownRequested()) {
             return kIOReturnAborted;
         }
@@ -902,11 +917,10 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         session.channels = channels;
         session.reason = reason;
         session.desiredClock = desiredClock;
-        session.terminalError = failureStatus;
         RecordIssue(session, session.lastFailure, failedPhase, errorClass, cause, failureStatus,
                     IsRetryableStatus(failureStatus), rollbackAttempted, rollbackStatus,
                     hostStateKnown, deviceStateKnown);
-        ApplyTerminalPhase(session, DuplexRestartPhase::kFailed, ToString(errorClass));
+        EnterFailed(session, failureStatus, ToString(errorClass));
         StoreSession(session);
         LogTerminal(session);
         return failureStatus;
@@ -953,13 +967,12 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         session.channels = channels;
         session.reason = reason;
         session.desiredClock = desiredClock;
-        session.terminalError = kIOReturnSuccess;
         RecordIssue(session, session.lastInvalidation, failedPhase,
                     IsStopRequested(guid) ? DuplexRestartErrorClass::kStopIntent
                                           : DuplexRestartErrorClass::kEpochInvalidated,
                     cause, invalidationStatus, true, true, rollbackStatus, true, true);
         ClearFailureSnapshot(session);
-        ApplyTerminalPhase(session, DuplexRestartPhase::kIdle,
+        EnterIdle(session,
                            ToString(session.lastInvalidation->errorClass));
         StoreSession(session);
         LogInvalidation(session);
@@ -993,12 +1006,11 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     session.channels = channels;
     session.reason = reason;
     session.desiredClock = desiredClock;
-    session.terminalError = kIOReturnSuccess;
-    ApplyTerminalPhase(session, DuplexRestartPhase::kIdle, "reset_before_start");
-    SetSessionState(session, RestartStateForStartReason(reason), ToString(reason));
+    EnterIdle(session, "reset_before_start");
+    (void)SetSessionState(session, LifecycleForStart(RestartStateForStartReason(reason), reason), ToString(reason));
     SetSessionPhase(session, DuplexRestartPhase::kPreparingDevice);
     StoreSession(session);
-    LogFsmEvent("start", guid, restartId, topologyGeneration, session.state, session.phase, reason);
+    LogFsmEvent("start", guid, restartId, topologyGeneration, KindOf(session.lifecycle), session.phase, reason);
     ASFW_LOG(Audio, "AudioDuplexCoordinator: using isoch channels d2h=%u h2d=%u GUID=%llx",
              channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, guid);
 
@@ -1412,12 +1424,11 @@ if (!IsRestartEpochCurrent(guid, restartId, *route)) {
 
 SetSessionPhase(session, DuplexRestartPhase::kConfirmingDeviceStart);
 SetSessionPhase(session, DuplexRestartPhase::kRunning);
-SetSessionState(session, DuplexRestartState::kRunning, "confirmed_running");
+(void)SetSessionState(session, LifecycleRunning{}, "confirmed_running");
 session.generation = confirm.value.generation;
 session.deviceRunning = true;
 session.appliedClock = confirm.value.appliedClock;
 session.runtimeCaps = confirm.value.runtimeCaps;
-session.terminalError = kIOReturnSuccess;
 ClearFailureSnapshot(session);
 StoreSession(session);
 LogTerminal(session);
@@ -1519,7 +1530,7 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
 
     IOReturn result = kIOReturnSuccess;
     SetSessionPhase(session, DuplexRestartPhase::kStopping);
-    SetSessionState(session, DuplexRestartState::kStopping, "stop_requested");
+    (void)SetSessionState(session, LifecycleStopping{}, "stop_requested");
     StoreSession(session);
 
     const DuplexStreamProfile profile =
@@ -1574,15 +1585,13 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
     }
 
     if (result == kIOReturnSuccess) {
-        session.terminalError = kIOReturnSuccess;
         ClearFailureSnapshot(session);
-        ApplyTerminalPhase(session, DuplexRestartPhase::kIdle, "stop_complete");
+        EnterIdle(session, "stop_complete");
     } else {
-        session.terminalError = result;
         RecordIssue(session, session.lastFailure, DuplexRestartPhase::kStopping,
                     DuplexRestartErrorClass::kStageFailure, DuplexRestartFailureCause::kStop, result,
                     IsRetryableStatus(result), false, kIOReturnSuccess, true, true);
-        ApplyTerminalPhase(session, DuplexRestartPhase::kFailed, "stop_failed");
+        EnterFailed(session, result, "stop_failed");
     }
     StoreSession(session);
     LogTerminal(session);
@@ -1632,38 +1641,35 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
     session.topologyGeneration = topologyGeneration;
     session.reason = reason;
     session.desiredClock = desiredClock;
-    session.terminalError = kIOReturnSuccess;
-    ApplyTerminalPhase(session, DuplexRestartPhase::kIdle, "reset_before_idle_apply");
-    SetSessionState(session, DuplexRestartState::kApplyingIdleClock, ToString(reason));
+    EnterIdle(session, "reset_before_idle_apply");
+    (void)SetSessionState(session, LifecycleApplyingIdleClock{}, ToString(reason));
     SetSessionPhase(session, DuplexRestartPhase::kPreparingDevice);
     StoreSession(session);
 
-    const auto apply = WaitForAsyncResult<ClockApplyResult>(
+    const auto apply = WaitForAsyncResult<DuplexClockApplyResult>(
         [&](auto callback) { deviceControl.ApplyClockConfig(desiredClock, std::move(callback)); },
         kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
     if (apply.status != kIOReturnSuccess) {
         if (apply.status == kIOReturnAborted && TeardownRequested()) {
             RecordTeardownAbort("IdleClockApply", guid);
         }
-        session.terminalError = apply.status;
         RecordIssue(session, session.lastFailure, DuplexRestartPhase::kPreparingDevice,
                     DuplexRestartErrorClass::kStageFailure, DuplexRestartFailureCause::kIdleClockApply,
                     apply.status, IsRetryableStatus(apply.status), false, kIOReturnSuccess, true,
                     true);
-        ApplyTerminalPhase(session, DuplexRestartPhase::kFailed, "idle_apply_failed");
+        EnterFailed(session, apply.status, "idle_apply_failed");
         StoreSession(session);
         LogTerminal(session);
         return apply.status;
     }
     if (!IsRestartEpochCurrent(guid, restartId, *route)) {
-        session.terminalError = kIOReturnSuccess;
         RecordIssue(session, session.lastInvalidation, DuplexRestartPhase::kPreparingDevice,
                     IsStopRequested(guid) ? DuplexRestartErrorClass::kStopIntent
                                           : DuplexRestartErrorClass::kEpochInvalidated,
                     DuplexRestartFailureCause::kIdleClockApply, kIOReturnAborted, true, false,
                     kIOReturnSuccess, true, true);
         ClearFailureSnapshot(session);
-        ApplyTerminalPhase(session, DuplexRestartPhase::kIdle, "idle_apply_invalidated");
+        EnterIdle(session, "idle_apply_invalidated");
         StoreSession(session);
         LogInvalidation(session);
         LogTerminal(session);
@@ -1673,9 +1679,8 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
     session.generation = apply.value.generation;
     session.appliedClock = apply.value.appliedClock;
     session.runtimeCaps = apply.value.runtimeCaps;
-    session.terminalError = kIOReturnSuccess;
     ClearFailureSnapshot(session);
-    ApplyTerminalPhase(session, DuplexRestartPhase::kIdle, "idle_apply_complete");
+    EnterIdle(session, "idle_apply_complete");
     StoreSession(session);
     LogTerminal(session);
     return kIOReturnSuccess;

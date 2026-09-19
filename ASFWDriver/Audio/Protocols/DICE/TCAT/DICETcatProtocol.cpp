@@ -189,7 +189,7 @@ void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
     duplexCtrl_->PrepareDuplex(
         channels,
         diceClock,
-        [this, callback = std::move(callback)](IOReturn status, DiceDuplexPrepareResult result) mutable {
+        [this, callback = std::move(callback)](IOReturn status, DuplexPrepareResult result) mutable {
             if (status == kIOReturnSuccess) {
                 CacheRuntimeCaps(result.runtimeCaps);
             }
@@ -222,7 +222,7 @@ void DICETcatProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
     }
 
     duplexCtrl_->ConfirmDuplexStart(
-        [this, callback = std::move(callback)](IOReturn status, DiceDuplexConfirmResult result) mutable {
+        [this, callback = std::move(callback)](IOReturn status, DuplexConfirmResult result) mutable {
             if (status == kIOReturnSuccess) {
                 CacheRuntimeCaps(result.runtimeCaps);
             }
@@ -252,7 +252,7 @@ void DICETcatProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
 
     duplexCtrl_->ApplyClockConfig(
         diceClock,
-        [this, callback = std::move(callback)](IOReturn status, DiceClockApplyResult result) mutable {
+        [this, callback = std::move(callback)](IOReturn status, DuplexClockApplyResult result) mutable {
             if (status == kIOReturnSuccess) {
                 CacheRuntimeCaps(result.runtimeCaps);
             }
@@ -289,7 +289,7 @@ void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {
                     (IsArx1Locked(global.extStatus) && !HasArx1Slip(global.extStatus));
 
                 callback(status,
-                         DiceDuplexHealthResult{
+                         DuplexHealthResult{
                              .generation = busInfo_.GetGeneration(),
                              .appliedClock =
                                  AudioClockConfig{

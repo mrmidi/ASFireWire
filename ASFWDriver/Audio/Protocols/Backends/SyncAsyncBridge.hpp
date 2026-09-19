@@ -38,6 +38,8 @@ template <typename T>
 struct SyncResult {
     IOReturn status{kIOReturnTimeout};
     T value{};
+    bool wasCancelled{false};
+    bool timedOut{false};
 };
 
 /// Starts an async operation taking a `void(IOReturn, T)` callback and polls until
@@ -71,6 +73,7 @@ SyncResult<T> WaitForAsyncResult(StartFn&& fn,
         if (isCancelled()) {
             SyncResult<T> aborted{};
             aborted.status = kIOReturnAborted;
+            aborted.wasCancelled = true;
             return aborted;
         }
         IOSleep(pollMs);
@@ -82,6 +85,7 @@ SyncResult<T> WaitForAsyncResult(StartFn&& fn,
 
     SyncResult<T> timeout{};
     timeout.status = timeoutStatus;
+    timeout.timedOut = true;
     return timeout;
 }
 

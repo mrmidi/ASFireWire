@@ -568,7 +568,7 @@ void MotuV2Protocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
         if (status == kIOReturnSuccess) {
             preparedRateHz_.store(rateHz, std::memory_order_release);
         }
-        ClockApplyResult result{};
+        DuplexClockApplyResult result{};
         result.generation = busInfo_.GetGeneration();
         result.appliedClock = AudioClockConfig{.sampleRateHz = CachedSampleRateHz()};
         result.runtimeCaps = MakeRuntimeCaps();

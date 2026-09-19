@@ -15,10 +15,10 @@ namespace {
 
 using ASFW::Audio::Backends::ClockRequestBroker;
 using ASFW::Audio::Backends::RestartSessionStore;
-using ASFW::Audio::DICE::DiceClockRequestCompletion;
-using ASFW::Audio::DICE::DiceClockRequestOutcome;
-using ASFW::Audio::DICE::DiceRestartReason;
-using ASFW::Audio::DICE::DiceRestartSession;
+using ASFW::Audio::DuplexClockRequestCompletion;
+using ASFW::Audio::DuplexClockRequestOutcome;
+using ASFW::Audio::DuplexRestartReason;
+using ASFW::Audio::DuplexRestartSession;
 
 constexpr uint64_t kGuid = 0x0011223344556677ULL;
 
@@ -33,7 +33,7 @@ protected:
 
     ClockRequestBroker::PendingClockRequest QueueLocked(
         uint32_t sampleRateHz,
-        DiceRestartReason reason = DiceRestartReason::kManualReconfigure) {
+        DuplexRestartReason reason = DuplexRestartReason::kManualReconfigure) {
         IOLockLock(lock_);
         ClockRequestBroker::PendingClockRequest request{
             .desiredClock = {.sampleRateHz = sampleRateHz},
@@ -61,21 +61,21 @@ TEST_F(ClockRequestBrokerTest, TokenAllocationStartsAtOneAndIsMonotonic) {
 // RequestClockConfig holds the coordinator lock across queue insertion and session mutation.
 // The broker must preserve that atomic latest-wins update, including its session mirror.
 TEST_F(ClockRequestBrokerTest, QueuePendingLatestWinsAndMirrorsRestartSession) {
-    DiceRestartSession session{};
+    DuplexRestartSession session{};
     session.guid = kGuid;
     store_.StoreSession(session);
 
     IOLockLock(lock_);
     const ClockRequestBroker::PendingClockRequest first{
         .desiredClock = {.sampleRateHz = 44100},
-        .reason = DiceRestartReason::kSampleRateChange,
+        .reason = DuplexRestartReason::kSampleRateChange,
         .token = broker_.AllocateTokenLocked(),
     };
     EXPECT_FALSE(broker_.QueuePendingLocked(kGuid, first).has_value());
 
     const ClockRequestBroker::PendingClockRequest replacement{
         .desiredClock = {.sampleRateHz = 48000},
-        .reason = DiceRestartReason::kClockSourceChange,
+        .reason = DuplexRestartReason::kClockSourceChange,
         .token = broker_.AllocateTokenLocked(),
     };
     const auto superseded = broker_.QueuePendingLocked(kGuid, replacement);
@@ -88,7 +88,7 @@ TEST_F(ClockRequestBrokerTest, QueuePendingLatestWinsAndMirrorsRestartSession) {
     ASSERT_TRUE(mirrored.has_value());
     EXPECT_TRUE(mirrored->hasPendingClockRequest);
     EXPECT_EQ(mirrored->pendingClock.sampleRateHz, 48000u);
-    EXPECT_EQ(mirrored->pendingReason, DiceRestartReason::kClockSourceChange);
+    EXPECT_EQ(mirrored->pendingReason, DuplexRestartReason::kClockSourceChange);
 
     ClockRequestBroker::PendingClockRequest consumed{};
     ASSERT_TRUE(broker_.TryConsumePending(kGuid, consumed));
@@ -97,7 +97,7 @@ TEST_F(ClockRequestBrokerTest, QueuePendingLatestWinsAndMirrorsRestartSession) {
 }
 
 TEST_F(ClockRequestBrokerTest, ConsumeClearsPendingMirrorAndOnlyConsumesOnce) {
-    DiceRestartSession session{};
+    DuplexRestartSession session{};
     session.guid = kGuid;
     store_.StoreSession(session);
     const auto request = QueueLocked(48000);
@@ -112,19 +112,19 @@ TEST_F(ClockRequestBrokerTest, ConsumeClearsPendingMirrorAndOnlyConsumesOnce) {
     ASSERT_TRUE(mirrored.has_value());
     EXPECT_FALSE(mirrored->hasPendingClockRequest);
     EXPECT_EQ(mirrored->pendingClock.sampleRateHz, 0u);
-    EXPECT_EQ(mirrored->pendingReason, DiceRestartReason::kInitialStart);
+    EXPECT_EQ(mirrored->pendingReason, DuplexRestartReason::kInitialStart);
 }
 
 TEST_F(ClockRequestBrokerTest, CompleteDeliversOnceAndUpdatesLastClockCompletion) {
-    DiceRestartSession session{};
+    DuplexRestartSession session{};
     session.guid = kGuid;
     store_.StoreSession(session);
 
-    const DiceClockRequestCompletion completion{
+    const DuplexClockRequestCompletion completion{
         .token = 17,
         .desiredClock = {.sampleRateHz = 96000},
-        .reason = DiceRestartReason::kManualReconfigure,
-        .outcome = DiceClockRequestOutcome::kApplied,
+        .reason = DuplexRestartReason::kManualReconfigure,
+        .outcome = DuplexClockRequestOutcome::kApplied,
         .status = kIOReturnSuccess,
         .restartId = 9,
         .generation = ASFW::FW::Generation{3},
@@ -135,9 +135,9 @@ TEST_F(ClockRequestBrokerTest, CompleteDeliversOnceAndUpdatesLastClockCompletion
     ASSERT_TRUE(afterComplete.has_value());
     ASSERT_TRUE(afterComplete->lastClockCompletion.has_value());
     EXPECT_EQ(afterComplete->lastClockCompletion->token, completion.token);
-    EXPECT_EQ(afterComplete->lastClockCompletion->outcome, DiceClockRequestOutcome::kApplied);
+    EXPECT_EQ(afterComplete->lastClockCompletion->outcome, DuplexClockRequestOutcome::kApplied);
 
-    DiceClockRequestCompletion taken{};
+    DuplexClockRequestCompletion taken{};
     ASSERT_TRUE(broker_.TryTakeCompleted(kGuid, completion.token, taken));
     EXPECT_EQ(taken.token, completion.token);
     EXPECT_EQ(taken.status, kIOReturnSuccess);
@@ -145,20 +145,20 @@ TEST_F(ClockRequestBrokerTest, CompleteDeliversOnceAndUpdatesLastClockCompletion
 }
 
 TEST_F(ClockRequestBrokerTest, FailPendingPublishesFailureWithCurrentSessionEpoch) {
-    DiceRestartSession session{};
+    DuplexRestartSession session{};
     session.guid = kGuid;
     session.restartId = 11;
     session.topologyGeneration = ASFW::FW::Generation{7};
     store_.StoreSession(session);
-    const auto request = QueueLocked(88200, DiceRestartReason::kClockSourceChange);
+    const auto request = QueueLocked(88200, DuplexRestartReason::kClockSourceChange);
 
-    broker_.FailPending(kGuid, DiceClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
+    broker_.FailPending(kGuid, DuplexClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
 
-    DiceClockRequestCompletion completion{};
+    DuplexClockRequestCompletion completion{};
     ASSERT_TRUE(broker_.TryTakeCompleted(kGuid, request.token, completion));
     EXPECT_EQ(completion.desiredClock.sampleRateHz, 88200u);
-    EXPECT_EQ(completion.reason, DiceRestartReason::kClockSourceChange);
-    EXPECT_EQ(completion.outcome, DiceClockRequestOutcome::kAbortedByStop);
+    EXPECT_EQ(completion.reason, DuplexRestartReason::kClockSourceChange);
+    EXPECT_EQ(completion.outcome, DuplexClockRequestOutcome::kAbortedByStop);
     EXPECT_EQ(completion.status, kIOReturnAborted);
     EXPECT_EQ(completion.restartId, 11u);
     EXPECT_EQ(completion.generation.value, 7u);
@@ -168,10 +168,10 @@ TEST_F(ClockRequestBrokerTest, FailPendingPublishesFailureWithCurrentSessionEpoc
 // waiter that never returns allowing an unbounded per-device accumulation.
 TEST_F(ClockRequestBrokerTest, CompletionMailboxEvictsOldestAfterThirtyTwoTokens) {
     for (uint64_t token = 1; token <= 33; ++token) {
-        broker_.Complete(DiceClockRequestCompletion{.token = token}, kGuid);
+        broker_.Complete(DuplexClockRequestCompletion{.token = token}, kGuid);
     }
 
-    DiceClockRequestCompletion completion{};
+    DuplexClockRequestCompletion completion{};
     EXPECT_FALSE(broker_.TryTakeCompleted(kGuid, 1, completion));
     ASSERT_TRUE(broker_.TryTakeCompleted(kGuid, 2, completion));
     EXPECT_EQ(completion.token, 2u);
@@ -181,14 +181,14 @@ TEST_F(ClockRequestBrokerTest, CompletionMailboxEvictsOldestAfterThirtyTwoTokens
 
 TEST_F(ClockRequestBrokerTest, ClearLockedDropsPendingAndCompletedRequests) {
     const auto request = QueueLocked(48000);
-    broker_.Complete(DiceClockRequestCompletion{.token = 44}, kGuid);
+    broker_.Complete(DuplexClockRequestCompletion{.token = 44}, kGuid);
 
     IOLockLock(lock_);
     broker_.ClearLocked(kGuid);
     IOLockUnlock(lock_);
 
     ClockRequestBroker::PendingClockRequest pending{};
-    DiceClockRequestCompletion completion{};
+    DuplexClockRequestCompletion completion{};
     EXPECT_FALSE(broker_.TryConsumePending(kGuid, pending));
     EXPECT_FALSE(broker_.TryTakeCompleted(kGuid, 44, completion));
     EXPECT_NE(request.token, 0u);
@@ -201,12 +201,12 @@ TEST(ClockRequestBrokerNullLock, SelfLockingOperationsShortCircuitWithoutBorrowe
     RestartSessionStore store{&lock};
     ClockRequestBroker broker{&lock, store};
     ClockRequestBroker::PendingClockRequest pending{};
-    DiceClockRequestCompletion completion{};
+    DuplexClockRequestCompletion completion{};
 
     EXPECT_FALSE(broker.TryConsumePending(kGuid, pending));
     EXPECT_FALSE(broker.TryTakeCompleted(kGuid, 1, completion));
-    broker.Complete(DiceClockRequestCompletion{.token = 1}, kGuid);
-    broker.FailPending(kGuid, DiceClockRequestOutcome::kFailed, kIOReturnError);
+    broker.Complete(DuplexClockRequestCompletion{.token = 1}, kGuid);
+    broker.FailPending(kGuid, DuplexClockRequestOutcome::kFailed, kIOReturnError);
     EXPECT_FALSE(broker.TryTakeCompleted(kGuid, 1, completion));
 }
 

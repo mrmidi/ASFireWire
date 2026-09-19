@@ -1114,7 +1114,7 @@ void AVCDiscovery::ContinueDuetPrefetchClock(
     protocol->ApplyClockConfig(
         ::ASFW::Audio::AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz},
         [this, guid, protocol, operation, config](IOReturn clockStatus,
-                                                   const ::ASFW::Audio::ClockApplyResult& result) {
+                                                   const ::ASFW::Audio::DuplexClockApplyResult& result) {
             (void)guid;
             if (!IsDuetPrefetchCurrent(operation)) {
                 return;
