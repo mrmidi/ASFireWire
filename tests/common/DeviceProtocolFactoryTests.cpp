@@ -10,64 +10,64 @@ using ASFW::Audio::DeviceIntegrationMode;
 using ASFW::Audio::DeviceProtocolFactory;
 
 constexpr uint64_t MakeFocusriteGuidWithModelField(uint32_t modelField) {
-    return (static_cast<uint64_t>(DeviceProtocolFactory::kFocusriteVendorId) << 40U) |
+    return (static_cast<uint64_t>(ASFW::DeviceProfiles::Audio::kFocusriteVendorId) << 40U) |
            (static_cast<uint64_t>(modelField & 0x3FU) << 22U);
 }
 
 TEST(DeviceProtocolFactoryTests, SelectsIntegrationModeForKnownDevices) {
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kFocusriteVendorId,
-                  DeviceProtocolFactory::kSPro14ModelId),
+                  ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+                  ASFW::DeviceProfiles::Audio::kSPro14ModelId),
               DeviceIntegrationMode::kHardcodedNub);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kFocusriteVendorId,
-                  DeviceProtocolFactory::kSPro24ModelId),
+                  ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+                  ASFW::DeviceProfiles::Audio::kSPro24ModelId),
               DeviceIntegrationMode::kHardcodedNub);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kFocusriteVendorId,
-                  DeviceProtocolFactory::kSPro24DspModelId),
+                  ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+                  ASFW::DeviceProfiles::Audio::kSPro24DspModelId),
               DeviceIntegrationMode::kHardcodedNub);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kFocusriteVendorId,
-                  DeviceProtocolFactory::kSPro40ModelId),
+                  ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+                  ASFW::DeviceProfiles::Audio::kSPro40ModelId),
               DeviceIntegrationMode::kHardcodedNub);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kFocusriteVendorId,
-                  DeviceProtocolFactory::kLiquidS56ModelId),
+                  ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+                  ASFW::DeviceProfiles::Audio::kLiquidS56ModelId),
               DeviceIntegrationMode::kNone);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kFocusriteVendorId,
-                  DeviceProtocolFactory::kSPro26ModelId),
+                  ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+                  ASFW::DeviceProfiles::Audio::kSPro26ModelId),
               DeviceIntegrationMode::kNone);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kFocusriteVendorId,
-                  DeviceProtocolFactory::kSPro40Tcd3070ModelId),
+                  ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+                  ASFW::DeviceProfiles::Audio::kSPro40Tcd3070ModelId),
               DeviceIntegrationMode::kNone);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kApogeeVendorId,
-                  DeviceProtocolFactory::kApogeeDuetModelId),
+                  ASFW::DeviceProfiles::Audio::kApogeeVendorId,
+                  ASFW::DeviceProfiles::Audio::kApogeeDuetModelId),
               DeviceIntegrationMode::kAVCDriven);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kAlesisVendorId,
-                  DeviceProtocolFactory::kAlesisMultiMixModelId),
+                  ASFW::DeviceProfiles::Audio::kAlesisVendorId,
+                  ASFW::DeviceProfiles::Audio::kAlesisMultiMixModelId),
               DeviceIntegrationMode::kHardcodedNub);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kMidasVendorId,
-                  DeviceProtocolFactory::kMidasVeniceModelId),
+                  ASFW::DeviceProfiles::Audio::kMidasVendorId,
+                  ASFW::DeviceProfiles::Audio::kMidasVeniceModelId),
               DeviceIntegrationMode::kHardcodedNub);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kPreSonusVendorId,
-                  DeviceProtocolFactory::kStudioLive1602ModelId),
+                  ASFW::DeviceProfiles::Audio::kPreSonusVendorId,
+                  ASFW::DeviceProfiles::Audio::kStudioLive1602ModelId),
               DeviceIntegrationMode::kHardcodedNub);
 }
 
@@ -79,112 +79,112 @@ TEST(DeviceProtocolFactoryTests, RejectsUnknownDevices) {
 
 TEST(DeviceProtocolFactoryTests, RecognizesKnownVendorModelPairs) {
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
-        DeviceProtocolFactory::kFocusriteVendorId,
-        DeviceProtocolFactory::kSPro14ModelId));
+        ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+        ASFW::DeviceProfiles::Audio::kSPro14ModelId));
 
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
-        DeviceProtocolFactory::kFocusriteVendorId,
-        DeviceProtocolFactory::kSPro24ModelId));
+        ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+        ASFW::DeviceProfiles::Audio::kSPro24ModelId));
 
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
-        DeviceProtocolFactory::kFocusriteVendorId,
-        DeviceProtocolFactory::kSPro24DspModelId));
+        ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+        ASFW::DeviceProfiles::Audio::kSPro24DspModelId));
 
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
-        DeviceProtocolFactory::kFocusriteVendorId,
-        DeviceProtocolFactory::kSPro40ModelId));
+        ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+        ASFW::DeviceProfiles::Audio::kSPro40ModelId));
 
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
-        DeviceProtocolFactory::kFocusriteVendorId,
-        DeviceProtocolFactory::kLiquidS56ModelId));
+        ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+        ASFW::DeviceProfiles::Audio::kLiquidS56ModelId));
 
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
-        DeviceProtocolFactory::kFocusriteVendorId,
-        DeviceProtocolFactory::kSPro26ModelId));
+        ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+        ASFW::DeviceProfiles::Audio::kSPro26ModelId));
 
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
-        DeviceProtocolFactory::kFocusriteVendorId,
-        DeviceProtocolFactory::kSPro40Tcd3070ModelId));
+        ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
+        ASFW::DeviceProfiles::Audio::kSPro40Tcd3070ModelId));
 
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
-        DeviceProtocolFactory::kApogeeVendorId,
-        DeviceProtocolFactory::kApogeeDuetModelId));
+        ASFW::DeviceProfiles::Audio::kApogeeVendorId,
+        ASFW::DeviceProfiles::Audio::kApogeeDuetModelId));
 
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
-        DeviceProtocolFactory::kAlesisVendorId,
-        DeviceProtocolFactory::kAlesisMultiMixModelId));
+        ASFW::DeviceProfiles::Audio::kAlesisVendorId,
+        ASFW::DeviceProfiles::Audio::kAlesisMultiMixModelId));
 
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
-        DeviceProtocolFactory::kMidasVendorId,
-        DeviceProtocolFactory::kMidasVeniceModelId));
+        ASFW::DeviceProfiles::Audio::kMidasVendorId,
+        ASFW::DeviceProfiles::Audio::kMidasVeniceModelId));
 
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
-        DeviceProtocolFactory::kPreSonusVendorId,
-        DeviceProtocolFactory::kStudioLive1602ModelId));
+        ASFW::DeviceProfiles::Audio::kPreSonusVendorId,
+        ASFW::DeviceProfiles::Audio::kStudioLive1602ModelId));
 }
 
 TEST(DeviceProtocolFactoryTests, InfersFocusriteIdentityFromGuid) {
     constexpr uint64_t guid =
-        MakeFocusriteGuidWithModelField(DeviceProtocolFactory::kSPro24DspModelId);
+        MakeFocusriteGuidWithModelField(ASFW::DeviceProfiles::Audio::kSPro24DspModelId);
 
     const auto known = DeviceProtocolFactory::LookupKnownIdentityByGuid(guid);
     ASSERT_TRUE(known.has_value());
-    EXPECT_EQ(known->vendorId, DeviceProtocolFactory::kFocusriteVendorId);
-    EXPECT_EQ(known->modelId, DeviceProtocolFactory::kSPro24DspModelId);
+    EXPECT_EQ(known->vendorId, ASFW::DeviceProfiles::Audio::kFocusriteVendorId);
+    EXPECT_EQ(known->modelId, ASFW::DeviceProfiles::Audio::kSPro24DspModelId);
     EXPECT_EQ(known->integrationMode, DeviceIntegrationMode::kHardcodedNub);
 }
 
 TEST(DeviceProtocolFactoryTests, MapsFocusritePro40Tcd3070GuidQuirk) {
     constexpr uint64_t guid = MakeFocusriteGuidWithModelField(
-        DeviceProtocolFactory::kFocusriteGuidModelSPro40Tcd3070);
+        ASFW::DeviceProfiles::Audio::kFocusriteGuidModelSPro40Tcd3070);
 
     const auto known = DeviceProtocolFactory::LookupKnownIdentityByGuid(guid);
     ASSERT_TRUE(known.has_value());
-    EXPECT_EQ(known->vendorId, DeviceProtocolFactory::kFocusriteVendorId);
-    EXPECT_EQ(known->modelId, DeviceProtocolFactory::kSPro40Tcd3070ModelId);
+    EXPECT_EQ(known->vendorId, ASFW::DeviceProfiles::Audio::kFocusriteVendorId);
+    EXPECT_EQ(known->modelId, ASFW::DeviceProfiles::Audio::kSPro40Tcd3070ModelId);
     EXPECT_EQ(known->integrationMode, DeviceIntegrationMode::kNone);
-    EXPECT_STREQ(known->modelName, DeviceProtocolFactory::kSPro40Tcd3070ModelName);
+    EXPECT_STREQ(known->modelName, ASFW::DeviceProfiles::Audio::kSPro40Tcd3070ModelName);
 }
 
 TEST(DeviceProtocolFactoryTests, KeepsOtherMultistreamFocusriteModelsRecognizedButDisabled) {
     const auto liquid56 = DeviceProtocolFactory::LookupKnownIdentity(
-        DeviceProtocolFactory::kFocusriteVendorId, DeviceProtocolFactory::kLiquidS56ModelId);
+        ASFW::DeviceProfiles::Audio::kFocusriteVendorId, ASFW::DeviceProfiles::Audio::kLiquidS56ModelId);
     ASSERT_TRUE(liquid56.has_value());
     EXPECT_EQ(liquid56->integrationMode, DeviceIntegrationMode::kNone);
-    EXPECT_STREQ(liquid56->modelName, DeviceProtocolFactory::kLiquidS56ModelName);
+    EXPECT_STREQ(liquid56->modelName, ASFW::DeviceProfiles::Audio::kLiquidS56ModelName);
 
     const auto spro26 = DeviceProtocolFactory::LookupKnownIdentity(
-        DeviceProtocolFactory::kFocusriteVendorId, DeviceProtocolFactory::kSPro26ModelId);
+        ASFW::DeviceProfiles::Audio::kFocusriteVendorId, ASFW::DeviceProfiles::Audio::kSPro26ModelId);
     ASSERT_TRUE(spro26.has_value());
     EXPECT_EQ(spro26->integrationMode, DeviceIntegrationMode::kNone);
-    EXPECT_STREQ(spro26->modelName, DeviceProtocolFactory::kSPro26ModelName);
+    EXPECT_STREQ(spro26->modelName, ASFW::DeviceProfiles::Audio::kSPro26ModelName);
 }
 
 TEST(DeviceProtocolFactoryTests, RecognizesAlesisMultiMixDiceProfile) {
     const auto multiMix = DeviceProtocolFactory::LookupKnownIdentity(
-        DeviceProtocolFactory::kAlesisVendorId, DeviceProtocolFactory::kAlesisMultiMixModelId);
+        ASFW::DeviceProfiles::Audio::kAlesisVendorId, ASFW::DeviceProfiles::Audio::kAlesisMultiMixModelId);
     ASSERT_TRUE(multiMix.has_value());
     EXPECT_EQ(multiMix->integrationMode, DeviceIntegrationMode::kHardcodedNub);
-    EXPECT_STREQ(multiMix->vendorName, DeviceProtocolFactory::kAlesisVendorName);
-    EXPECT_STREQ(multiMix->modelName, DeviceProtocolFactory::kAlesisMultiMixModelName);
+    EXPECT_STREQ(multiMix->vendorName, ASFW::DeviceProfiles::Audio::kAlesisVendorName);
+    EXPECT_STREQ(multiMix->modelName, ASFW::DeviceProfiles::Audio::kAlesisMultiMixModelName);
 }
 
 TEST(DeviceProtocolFactoryTests, RecognizesMidasVeniceDiceProfile) {
     const auto venice = DeviceProtocolFactory::LookupKnownIdentity(
-        DeviceProtocolFactory::kMidasVendorId, DeviceProtocolFactory::kMidasVeniceModelId);
+        ASFW::DeviceProfiles::Audio::kMidasVendorId, ASFW::DeviceProfiles::Audio::kMidasVeniceModelId);
     ASSERT_TRUE(venice.has_value());
     EXPECT_EQ(venice->integrationMode, DeviceIntegrationMode::kHardcodedNub);
-    EXPECT_STREQ(venice->vendorName, DeviceProtocolFactory::kMidasVendorName);
-    EXPECT_STREQ(venice->modelName, DeviceProtocolFactory::kMidasVeniceModelName);
+    EXPECT_STREQ(venice->vendorName, ASFW::DeviceProfiles::Audio::kMidasVendorName);
+    EXPECT_STREQ(venice->modelName, ASFW::DeviceProfiles::Audio::kMidasVeniceModelName);
 }
 
 TEST(DeviceProtocolFactoryTests, RecognizesPreSonusStudioLive1602DiceProfile) {
     const auto studioLive = DeviceProtocolFactory::LookupKnownIdentity(
-        DeviceProtocolFactory::kPreSonusVendorId, DeviceProtocolFactory::kStudioLive1602ModelId);
+        ASFW::DeviceProfiles::Audio::kPreSonusVendorId, ASFW::DeviceProfiles::Audio::kStudioLive1602ModelId);
     ASSERT_TRUE(studioLive.has_value());
     EXPECT_EQ(studioLive->integrationMode, DeviceIntegrationMode::kHardcodedNub);
-    EXPECT_STREQ(studioLive->vendorName, DeviceProtocolFactory::kPreSonusVendorName);
-    EXPECT_STREQ(studioLive->modelName, DeviceProtocolFactory::kStudioLive1602ModelName);
+    EXPECT_STREQ(studioLive->vendorName, ASFW::DeviceProfiles::Audio::kPreSonusVendorName);
+    EXPECT_STREQ(studioLive->modelName, ASFW::DeviceProfiles::Audio::kStudioLive1602ModelName);
 }
 
 // Issue #115: the 24.4.2 had this recognition and a DiceProfileRegistry entry but no
@@ -195,26 +195,26 @@ TEST(DeviceProtocolFactoryTests, RecognizesPreSonusStudioLive1602DiceProfile) {
 // out as a pure function (backlogged).
 TEST(DeviceProtocolFactoryTests, RecognizesPreSonusStudioLive2442DiceProfile) {
     const auto studioLive = DeviceProtocolFactory::LookupKnownIdentity(
-        DeviceProtocolFactory::kPreSonusVendorId, DeviceProtocolFactory::kStudioLive2442ModelId);
+        ASFW::DeviceProfiles::Audio::kPreSonusVendorId, ASFW::DeviceProfiles::Audio::kStudioLive2442ModelId);
     ASSERT_TRUE(studioLive.has_value());
     EXPECT_EQ(studioLive->integrationMode, DeviceIntegrationMode::kHardcodedNub);
-    EXPECT_STREQ(studioLive->vendorName, DeviceProtocolFactory::kPreSonusVendorName);
-    EXPECT_STREQ(studioLive->modelName, DeviceProtocolFactory::kStudioLive2442ModelName);
+    EXPECT_STREQ(studioLive->vendorName, ASFW::DeviceProfiles::Audio::kPreSonusVendorName);
+    EXPECT_STREQ(studioLive->modelName, ASFW::DeviceProfiles::Audio::kStudioLive2442ModelName);
     // The two StudioLives share the factory clause, so they must stay distinct ids.
-    EXPECT_NE(DeviceProtocolFactory::kStudioLive2442ModelId,
-              DeviceProtocolFactory::kStudioLive1602ModelId);
+    EXPECT_NE(ASFW::DeviceProfiles::Audio::kStudioLive2442ModelId,
+              ASFW::DeviceProfiles::Audio::kStudioLive1602ModelId);
 }
 
 TEST(DeviceProtocolFactoryTests, RecognizesMackieOnyxIOxfordAsAvcDriven) {
     const auto onyxI = DeviceProtocolFactory::LookupKnownIdentity(
-        DeviceProtocolFactory::kMackieVendorId, DeviceProtocolFactory::kOnyxIOxfwModelId);
+        ASFW::DeviceProfiles::Audio::kMackieVendorId, ASFW::DeviceProfiles::Audio::kOnyxIOxfwModelId);
     ASSERT_TRUE(onyxI.has_value());
     EXPECT_EQ(onyxI->integrationMode, DeviceIntegrationMode::kAVCDriven);
-    EXPECT_STREQ(onyxI->vendorName, DeviceProtocolFactory::kMackieVendorName);
-    EXPECT_STREQ(onyxI->modelName, DeviceProtocolFactory::kOnyxIOxfwModelName);
+    EXPECT_STREQ(onyxI->vendorName, ASFW::DeviceProfiles::Audio::kMackieVendorName);
+    EXPECT_STREQ(onyxI->modelName, ASFW::DeviceProfiles::Audio::kOnyxIOxfwModelName);
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kMackieVendorId,
-                  DeviceProtocolFactory::kOnyxIOxfwModelId),
+                  ASFW::DeviceProfiles::Audio::kMackieVendorId,
+                  ASFW::DeviceProfiles::Audio::kOnyxIOxfwModelId),
               DeviceIntegrationMode::kAVCDriven);
 }
 

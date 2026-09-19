@@ -108,8 +108,8 @@ TEST(MotuFactoryTests, UnitIdentityDefaultsLeaveExistingLookupsUnchanged) {
     // The defaulted UnitIdentity parameter must not change the answer for any
     // model_id-matched family.
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
-                  DeviceProtocolFactory::kAlesisVendorId,
-                  DeviceProtocolFactory::kAlesisMultiMixModelId),
+                  ASFW::DeviceProfiles::Audio::kAlesisVendorId,
+                  ASFW::DeviceProfiles::Audio::kAlesisMultiMixModelId),
               DeviceIntegrationMode::kHardcodedNub);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(kMotuVendorId, 0x000000U),

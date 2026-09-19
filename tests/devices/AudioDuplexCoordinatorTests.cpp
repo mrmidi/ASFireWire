@@ -68,10 +68,10 @@ using ASFW::IRM::IRMClient;
 
 constexpr uint64_t kTestGuid = 0x00130E0402004713ULL;
 constexpr uint32_t kQueueBytes = 4096;
-constexpr uint32_t kFocusriteVendorId = ASFW::Audio::DeviceProtocolFactory::kFocusriteVendorId;
-constexpr uint32_t kSPro24DspModelId = ASFW::Audio::DeviceProtocolFactory::kSPro24DspModelId;
-constexpr uint32_t kApogeeVendorId = ASFW::Audio::DeviceProtocolFactory::kApogeeVendorId;
-constexpr uint32_t kApogeeDuetModelId = ASFW::Audio::DeviceProtocolFactory::kApogeeDuetModelId;
+constexpr uint32_t kFocusriteVendorId = ASFW::DeviceProfiles::Audio::kFocusriteVendorId;
+constexpr uint32_t kSPro24DspModelId = ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
+constexpr uint32_t kApogeeVendorId = ASFW::DeviceProfiles::Audio::kApogeeVendorId;
+constexpr uint32_t kApogeeDuetModelId = ASFW::DeviceProfiles::Audio::kApogeeDuetModelId;
 constexpr AudioClockConfig kSupportedClock{
     .sampleRateHz = 48000U,
 };

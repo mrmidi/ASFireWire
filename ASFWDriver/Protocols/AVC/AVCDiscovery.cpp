@@ -10,6 +10,7 @@
 #include "../../Logging/Logging.hpp"
 #include "../../Audio/Model/ASFWAudioDevice.hpp"
 #include "../../Audio/Protocols/DeviceProtocolFactory.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "../../Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "../../Audio/Protocols/Oxford/OxfwStreamFormats.hpp"
 #include "../../Audio/Protocols/DeviceStreamModeQuirks.hpp"
@@ -488,8 +489,8 @@ void AVCDiscovery::PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
     config.vendorId = device.GetVendorID();
     config.modelId = device.GetModelID();
     config.deviceName =
-        std::string(::ASFW::Audio::DeviceProtocolFactory::kMackieVendorName) + " " +
-        ::ASFW::Audio::DeviceProtocolFactory::kOnyxIOxfwModelName;
+        std::string(::ASFW::DeviceProfiles::Audio::kMackieVendorName) + " " +
+        ::ASFW::DeviceProfiles::Audio::kOnyxIOxfwModelName;
     config.channelCount = kCaptureChannels;
     config.inputChannelCount = kCaptureChannels;
     config.outputChannelCount = kPlaybackChannels;
@@ -523,8 +524,8 @@ void AVCDiscovery::PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,
     config.vendorId = device.GetVendorID();
     config.modelId = device.GetModelID();
     config.deviceName =
-        std::string(::ASFW::Audio::DeviceProtocolFactory::kMackieVendorName) + " " +
-        ::ASFW::Audio::DeviceProtocolFactory::kOnyx400FModelName;
+        std::string(::ASFW::DeviceProfiles::Audio::kMackieVendorName) + " " +
+        ::ASFW::DeviceProfiles::Audio::kOnyx400FModelName;
     config.channelCount = kCaptureChannels;
     config.inputChannelCount = kCaptureChannels;
     config.outputChannelCount = kPlaybackChannels;
@@ -1498,18 +1499,18 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
 }
 
 bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcept {
-    return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeVendorId &&
-           device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeDuetModelId;
+    return device.GetVendorID() == ::ASFW::DeviceProfiles::Audio::kApogeeVendorId &&
+           device.GetModelID() == ::ASFW::DeviceProfiles::Audio::kApogeeDuetModelId;
 }
 
 bool AVCDiscovery::IsMackieOnyxIOxford(const Discovery::FWDevice& device) const noexcept {
-    return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kMackieVendorId &&
-           device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kOnyxIOxfwModelId;
+    return device.GetVendorID() == ::ASFW::DeviceProfiles::Audio::kMackieVendorId &&
+           device.GetModelID() == ::ASFW::DeviceProfiles::Audio::kOnyxIOxfwModelId;
 }
 
 bool AVCDiscovery::IsMackieOnyxFireworks(const Discovery::FWDevice& device) const noexcept {
-    return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kMackieVendorId &&
-           device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kOnyx400FModelId;
+    return device.GetVendorID() == ::ASFW::DeviceProfiles::Audio::kMackieVendorId &&
+           device.GetModelID() == ::ASFW::DeviceProfiles::Audio::kOnyx400FModelId;
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {
