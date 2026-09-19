@@ -251,6 +251,25 @@ ProfileStatedGeometry(bool asserted, WireStreamGeometry geometry) noexcept {
     return asserted ? geometry : WireStreamGeometry{};
 }
 
+/// Whether a profile's constants must be fed in as STATED, even when the
+/// profile itself calls them a seed.
+///
+/// Seeding means "let the device win unopposed". That is only safe where the
+/// device's answer actually reaches the code that frames packets. Where the
+/// ENCODING path still reads the profile, accepting a disagreement publishes an
+/// endpoint and then mis-frames it -- bandwidth reserved from one description
+/// while CIP is built from the other, which is the failure this header exists
+/// to end. In that case the seed has to be treated as an assertion, so the
+/// disagreement refuses instead.
+///
+/// `encodingIsDeviceSourced` is a property of the DRIVER, not of the device:
+/// it says whether that direction's framing has been migrated off the profile
+/// yet. It is not a per-device policy and must not become one.
+[[nodiscard]] constexpr bool
+TreatProfileAsAsserted(bool profileAsserts, bool encodingIsDeviceSourced) noexcept {
+    return profileAsserts || !encodingIsDeviceSourced;
+}
+
 /// Resolve one direction end to end: the stream count, then every stream in
 /// the union of what each side describes, so a stream only one side knows
 /// about still reaches the decision instead of being skipped.

@@ -79,6 +79,36 @@ namespace {
             .midiPorts = wire.midiPorts};
 }
 
+// Seeding a direction means "let the device's answer win without argument".
+// That is only SAFE where the device's answer actually reaches the code that
+// frames packets. Today the two directions differ:
+//
+//   - Bandwidth and transport geometry come from the device in BOTH directions
+//     (DuplexStreamProfile::Build reads caps.{deviceToHost,hostToDevice}Streams).
+//   - CAPTURE encoding comes from the device too: IsochDuplexHostTransport
+//     hands caps-derived per-stream geometry to DirectAudioReceiveConsumer.
+//   - PLAYBACK encoding and packet allocation still come from the PROFILE:
+//     ASFWAudioDevice::StartIO calls profile->BuildTxStreamConfig(i, ...).
+//
+// So a seeded playback geometry that disagrees with the device would be waved
+// through at publication and then mis-framed on the wire -- bandwidth reserved
+// from one description while CIP is built from the other, which is the exact
+// failure this resolver exists to end. A recorded Venice F24 is the live case:
+// the device carries 16 + 8 playback, the F32 seed says 16 + 16, and StartIO
+// would build its second stream at 16 channels / DBS 16 into an 8-slot stream.
+//
+// Until per-stream resolved geometry crosses the nub and drives StartIO
+// (documentation/DICE_TCAT_ARCHITECTURE.md sec 4.2 step A), playback cannot be
+// seeded no matter what a profile declares. Flip this to true in the same
+// change that lands step A, and the override below disappears with it.
+inline constexpr bool kPlaybackEncodingIsDeviceSourced = false;
+
+// Capture's counterpart, and the reason the two are separate constants rather
+// than one flag: capture framing already reads the device, so a capture seed is
+// safe today. The Alesis MultiMix depends on that -- its profile seeds one
+// capture stream of 16 where the device reports two of 12 + 2.
+inline constexpr bool kCaptureEncodingIsDeviceSourced = true;
+
 // Does this profile ASSERT the direction's geometry, or only seed it? The
 // resolver takes a bool (it is deliberately free of profile headers), so this
 // is the one place the profile's enum is read.
@@ -87,9 +117,27 @@ namespace {
     return authority == ASFW::Isoch::Audio::StreamGeometryAuthority::kAsserted;
 }
 
+// Capture: honour what the profile declares -- the device already drives
+// capture framing, so accepting its answer costs nothing.
+[[nodiscard]] bool CaptureGeometryIsAsserted(
+    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) noexcept {
+    return TreatProfileAsAsserted(AssertsGeometry(profile.CaptureGeometryAuthority()),
+                                  kCaptureEncodingIsDeviceSourced);
+}
+
+// Playback: a declared seed is treated as an ASSERTION while framing still
+// reads the profile, so a disagreement refuses publication instead of shipping
+// a mis-framed stream. The profile's own declaration is left untouched -- it
+// describes what its constants MEAN; this decides what we can safely act on.
+[[nodiscard]] bool PlaybackGeometryIsAsserted(
+    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) noexcept {
+    return TreatProfileAsAsserted(AssertsGeometry(profile.PlaybackGeometryAuthority()),
+                                  kPlaybackEncodingIsDeviceSourced);
+}
+
 [[nodiscard]] WireStreamGeometry PlaybackGeometryFromProfile(
     const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
-    if (!AssertsGeometry(profile.PlaybackGeometryAuthority())) {
+    if (!PlaybackGeometryIsAsserted(profile)) {
         return {};
     }
     ASFW::Isoch::Audio::AudioStreamConfig config{};
@@ -120,7 +168,7 @@ namespace {
 // ASFW's profile naming inverts: Rx* is host capture.
 [[nodiscard]] WireStreamGeometry CaptureGeometryFromProfile(
     const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
-    if (!AssertsGeometry(profile.CaptureGeometryAuthority())) {
+    if (!CaptureGeometryIsAsserted(profile)) {
         return {};
     }
     ASFW::Isoch::Audio::AudioStreamConfig config{};
@@ -185,14 +233,12 @@ void LogDirection(const char* directionName,
     ResolvedDeviceGeometry resolved{};
     resolved.capture = ResolveDirectionGeometry(
         caps.deviceToHostStreamCount,
-        ProfileStatedStreamCount(AssertsGeometry(profile.CaptureGeometryAuthority()),
-                                 profile.RxStreamCount()),
+        ProfileStatedStreamCount(CaptureGeometryIsAsserted(profile), profile.RxStreamCount()),
         [&caps](uint32_t i) { return CaptureGeometryFromDevice(caps, i); },
         [&profile](uint32_t i) { return CaptureGeometryFromProfile(profile, i); });
     resolved.playback = ResolveDirectionGeometry(
         caps.hostToDeviceStreamCount,
-        ProfileStatedStreamCount(AssertsGeometry(profile.PlaybackGeometryAuthority()),
-                                 profile.TxStreamCount()),
+        ProfileStatedStreamCount(PlaybackGeometryIsAsserted(profile), profile.TxStreamCount()),
         [&caps](uint32_t i) { return PlaybackGeometryFromDevice(caps, i); },
         [&profile](uint32_t i) { return PlaybackGeometryFromProfile(profile, i); });
 
@@ -864,7 +910,20 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                      guid);
             return;
         }
-        if (protocol) {
+        if (!protocol) {
+            // No protocol means nothing can answer for the device's geometry,
+            // so publishing here would ship exactly the unvalidated endpoint
+            // the caps check below exists to prevent -- it just reached the
+            // nub by a different door. Refuse; the device is not lost, because
+            // StartStreaming and OnDeviceRecordUpdated both call back into
+            // EnsureNubForGuid once a protocol exists.
+            ASFW_LOG_ERROR(Audio,
+                           "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
+                           "GUID=0x%016llx - no protocol, geometry cannot be validated",
+                           guid);
+            return;
+        }
+        {
             AudioStreamRuntimeCaps caps{};
             const bool haveCaps = protocol->GetRuntimeAudioStreamCaps(caps);
 
@@ -964,17 +1023,24 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // Channel labels live in the TCAT stream-format name sections, cached only
     // once runtime caps load (during the first stream discovery). Load them
     // once before the first publish so CoreAudio shows the real names from the
-    // start. The load early-returns if caps are already cached; on failure the
-    // finish lambda refuses publication (it gates on haveCaps), so a failed
-    // load does not silently publish unvalidated geometry.
+    // start. The load early-returns if caps are already cached; a failed load
+    // refuses publication in the callback below, and a missing protocol refuses
+    // inside finish(). Both are explicit: there is no path to EnsureNub that
+    // has not compared the device against the profile.
     if (auto* dice = protocol ? protocol->AsDuplexDeviceControl() : nullptr) {
         dice->EnsureRuntimeStreamGeometry(
             [finish, dev, protocol, guid](IOReturn status) mutable {
                 if (status != kIOReturnSuccess) {
+                    // Refuse here rather than handing off to finish(). finish()
+                    // only rejects when GetRuntimeAudioStreamCaps returns
+                    // nothing, and caps cached by an EARLIER successful load
+                    // survive a later failure -- so it could publish against a
+                    // stale description while this line claimed otherwise.
                     ASFW_LOG_ERROR(Audio,
-                                   "DiceAudioBackend::EnsureNubForGuid: geometry load failed "
-                                   "status=0x%08x GUID=0x%016llx - publication will be refused",
-                                   status, guid);
+                                   "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
+                                   "GUID=0x%016llx - geometry load failed status=0x%08x",
+                                   guid, status);
+                    return;
                 }
                 finish(std::move(dev), protocol);
             });

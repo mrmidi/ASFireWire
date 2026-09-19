@@ -181,7 +181,7 @@ ASFW publishes **one** `IOUserAudioStream` per direction and slices it with
 HAL-side choice and we are keeping it — the totals agree either way. But it
 means `sourceChannelOffset` **is** the vendor's channel base, and the rule it
 must obey is *running sum of preceding stream widths*, never
-`index × width-of-stream-0`. See §3.4.
+`index × width-of-stream-0`. See §3.5.
 
 ### 2.8 The recorded devices
 
@@ -305,13 +305,40 @@ deltas, Weiss's capture-visibility policy, Generic's flat offsets, and names.**
 | gap | detail |
 |---|---|
 | **Resolved object has one consumer** | only `DiceAudioBackend::EnsureNubForGuid`. Bandwidth reservation reads `caps` directly (`DuplexStreamProfile::ResolveChannels`); CIP framing reads the profile (`ASFWAudioDevice::StartIO`). |
-| **StartIO is host-sourced and 2-stream** | builds streams 0 and 1 from `profile->BuildTxStreamConfig`, hardcoded. `Model::ASFWAudioDevice` carries only aggregate channel counts, so per-stream geometry cannot cross the nub. |
+| **StartIO is host-sourced and 2-stream** | builds streams 0 and 1 from `profile->BuildTxStreamConfig`, hardcoded. `Model::ASFWAudioDevice` carries only aggregate channel counts, so per-stream geometry cannot cross the nub. **Consequence:** playback geometry may not be seeded — see below. |
 | **Rates are a host constant** | `DiceDeviceProfile::SupportedSampleRates()` returns a flat `{44100, 48000}`. `clockCaps` is read into `state.clockCaps` and decoded by `DiceClockCapsSupportRate()`, but never reaches `AudioStreamRuntimeCaps` or `dev.sampleRates`. |
 | **Caps never invalidate** | `DICETcatProtocol::ResetRuntimeCaps()` is reachable only from `Shutdown()`. A rate change does not re-read. Not currently observable: `kDiceMaxSupportedRateHz = 48000` and 32/44.1/48 are all rate mode *low*, so no mode change can occur. It becomes live the moment the ceiling rises. |
 | **`clampCaptureStreamsToOne`** | **Disabled 2026-09-20.** Clamped host **capture** on both Alesis rows while citing libffado, which clamps host **playback** (§2.9); on the recorded MultiMix that discarded the `MAIN_IN L/R` stream, 12 channels where the device carries 14. Its consumer in `DuplexStreamProfile::ResolveChannels` is now `#if 0`-ed with the full reasoning; the trait field and the two catalog rows are kept so re-enabling is one block plus a direction fix. See the TODO below. |
 | **Extended channel-name block** | `DICEDuplexBringupController.cpp:982` reads the standard names offset unconditionally; a device with stream `SIZE >= 326` uses `+0x120` (§2.2). Cosmetic — wrong or empty labels, not a streaming fault. |
 
-### 3.4 The `sourceChannelOffset` landmine
+### 3.4 Seeding is direction-scoped, because the encoding paths are
+
+The three consumers of geometry have been migrated unevenly:
+
+| path | source |
+|---|---|
+| bandwidth / transport, **both** directions | device (`DuplexStreamProfile::Build` reads `caps`) |
+| **capture** encoding | device (`IsochDuplexHostTransport` → `DirectAudioReceiveConsumer`) |
+| **playback** encoding + packet allocation | **profile** (`ASFWAudioDevice::StartIO` → `BuildTxStreamConfig`) |
+
+Seeding a direction means letting the device win unopposed, which is safe only
+where the device's answer reaches the code that frames packets. So **capture may
+be seeded today and playback may not**: a seeded playback disagreement would be
+waved through at publication and then mis-framed on the wire. The recorded Venice
+F24 is the live case — device 16 + 8, F32 seed 16 + 16, and `StartIO` would build
+the second stream at 16 channels / DBS 16 into an 8-slot stream.
+
+`TreatProfileAsAsserted(profileAsserts, encodingIsDeviceSourced)` in
+`StreamGeometryResolver.hpp` is the rule; `DiceAudioBackend` supplies
+`kCaptureEncodingIsDeviceSourced = true` and
+`kPlaybackEncodingIsDeviceSourced = false`. Both are properties of the **driver**,
+not of any device, and must not become per-device policy. Step A flips the
+playback constant and the override disappears with it.
+
+A profile's own declaration is left untouched by this: it states what its
+constants *mean*; the gate decides what the driver can safely act on.
+
+### 3.5 The `sourceChannelOffset` landmine
 
 `AudioStreamProfile.hpp:113` computes:
 
@@ -328,6 +355,14 @@ that expression puts the MultiMix's second capture stream at offset 2 instead of
 12, on top of the first. **The correct rule is the vendor's running sum (§2.7),
 and it must be adopted in the same change that makes widths device-derived.**
 Pinned by `ChannelBaseIsARunningSum` in the fixture tests.
+
+### 3.6 Publication has no unvalidated path
+
+`EnsureNubForGuid` reaches `EnsureNub` only after the device has been compared
+against the profile. Three refusals guard it: a missing protocol, a failed
+geometry load (refused in the callback, because caps cached by an earlier
+successful load survive a later failure and would otherwise publish against a
+stale description), and an unusable verdict.
 
 ---
 
@@ -371,10 +406,11 @@ can be deleted.
 
 - **A — per-stream geometry crosses the nub.** Extend the nub snapshot beyond
   aggregate counts; `StartIO` loops `StreamCount()` instead of hardcoding 0/1;
-  `sourceChannelOffset` becomes a running sum (§3.4). *Touches the serialized
+  `sourceChannelOffset` becomes a running sum (§3.5). *Touches the serialized
   nub contract between two IOService objects — sequence it, do not just edit it.*
-  Afterwards `Tx/RxStreamCount` and the per-stream channel constants have no
-  consumer.
+  Flips `kPlaybackEncodingIsDeviceSourced` to true in the same change, which
+  retires the seeding gate in §3.4. Afterwards `Tx/RxStreamCount` and the
+  per-stream channel constants have no consumer.
 - **B — rates from the device.** `clockCaps` onto `AudioStreamRuntimeCaps`;
   intersect with the ceiling; firmware fallback. Independent of A.
   Afterwards `SupportedSampleRates()` has no DICE consumer.
