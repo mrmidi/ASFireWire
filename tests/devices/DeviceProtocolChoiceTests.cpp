@@ -239,6 +239,86 @@ TEST(DeviceProtocolChoice, ASiblingUnitBeforeTheAudioOneIsSkipped) {
     EXPECT_EQ(choice->unitDirectoryOffset, 9U);
 }
 
+// ---------------------------------------------------------------------------
+// Backend routing
+// ---------------------------------------------------------------------------
+
+// The question AudioIntegrationMode::kHardcodedNub used to answer. Preserving
+// it exactly matters more than tidying it: routing a device to a backend that
+// has no profile for it is silence with no error.
+TEST(DeviceProtocolChoice, BackendRoutingMatchesWhatTheProfileRegistrySays) {
+    using ASFW::Audio::AudioBackendKind;
+    using ASFW::Audio::ChooseAudioBackend;
+
+    for (const auto& expected : AllStreamedDevices()) {
+        const auto backend = ChooseAudioBackend(expected.device);
+        const auto choice = ChooseDeviceProtocol(expected.device);
+        ASSERT_TRUE(choice.has_value()) << expected.what;
+
+        switch (choice->builder) {
+            case ProfileBuilderId::Motu828mk2:
+            case ProfileBuilderId::MotuUltralite:
+                EXPECT_EQ(backend, AudioBackendKind::MotuRegister) << expected.what;
+                break;
+            case ProfileBuilderId::FocusriteSPro14:
+            case ProfileBuilderId::FocusriteSPro24:
+            case ProfileBuilderId::FocusriteSPro24Dsp:
+            case ProfileBuilderId::FocusriteSPro40:
+            case ProfileBuilderId::WeissInt202:
+            case ProfileBuilderId::WeissInt203:
+            case ProfileBuilderId::AlesisMultiMix:
+            case ProfileBuilderId::MidasVeniceF32:
+            case ProfileBuilderId::PreSonusStudioLive1602:
+            case ProfileBuilderId::PreSonusStudioLive2442:
+                EXPECT_EQ(backend, AudioBackendKind::Dice) << expected.what;
+                break;
+            default:
+                EXPECT_EQ(backend, AudioBackendKind::Avc) << expected.what;
+                break;
+        }
+    }
+}
+
+// A recognised-but-unplayable DICE device routed to the DICE backend would be a
+// change, not a cleanup: the old lookup returned kNone for it and it landed on
+// AV/C, where it harmlessly does nothing. The DICE backend has no profile for
+// it and would have to invent one.
+TEST(DeviceProtocolChoice, ARecognisedButUnplayableDeviceStaysOnTheAvcBackend) {
+    using ASFW::Audio::AudioBackendKind;
+    using ASFW::Audio::ChooseAudioBackend;
+
+    const std::pair<uint32_t, uint32_t> unplayableDice[] = {
+        {kFocusriteVendorId, kSPro40Tcd3070ModelId},
+        {kFocusriteVendorId, kLiquidS56ModelId},
+        {kPreSonusVendorId, kStudioLive3242ModelId},
+        {kWeissVendorId, kWeissMan301ModelId},
+    };
+    for (const auto& [vendorId, modelId] : unplayableDice) {
+        EXPECT_EQ(ChooseAudioBackend(DiceDevice(vendorId, modelId)),
+                  AudioBackendKind::Avc)
+            << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
+    }
+
+    for (const uint32_t version :
+         {kMotu896hdSwVersion, kMotuTravelerSwVersion, kMotu8preSwVersion}) {
+        const auto device = MakeDevice(kMotuVendorId, 0U,
+                                       {{.offset = 5,
+                                         .specifierId = kMotuVendorId,
+                                         .version = version}});
+        EXPECT_EQ(ChooseAudioBackend(device), AudioBackendKind::Avc)
+            << "MOTU version 0x" << std::hex << version;
+    }
+}
+
+TEST(DeviceProtocolChoice, AnUnknownDeviceRoutesToAvc) {
+    using ASFW::Audio::AudioBackendKind;
+    using ASFW::Audio::ChooseAudioBackend;
+    EXPECT_EQ(ChooseAudioBackend(AvcDevice(0x00AABB, 0x000042)),
+              AudioBackendKind::Avc);
+    EXPECT_EQ(ChooseAudioBackend(MakeDevice(0x00AABB, 0x000042, {})),
+              AudioBackendKind::Avc);
+}
+
 // The #115 shape, asserted impossible: a row the catalog calls Supported that
 // resolves to no protocol.
 TEST(DeviceProtocolChoice, NoSupportedCatalogRowResolvesToNothing) {

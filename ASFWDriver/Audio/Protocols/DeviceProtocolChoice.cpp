@@ -31,4 +31,30 @@ ChooseDeviceProtocol(const Discovery::DeviceRecord& record) noexcept {
     return std::nullopt;
 }
 
+AudioBackendKind ChooseAudioBackend(const Discovery::DeviceRecord& record) noexcept {
+    using DeviceProfiles::Audio::AudioDeviceCatalog;
+    using DeviceProfiles::Audio::AudioFamilyProviderId;
+    using DeviceProfiles::Audio::SupportDisposition;
+
+    for (const auto& unit : record.identity.units) {
+        const auto plan = AudioDeviceCatalog::Resolve(record, unit);
+        if (!plan.has_value() || plan->support != SupportDisposition::Supported) {
+            continue;
+        }
+        switch (plan->family) {
+            case AudioFamilyProviderId::DICE:
+                return AudioBackendKind::Dice;
+            case AudioFamilyProviderId::MotuRegister:
+                return AudioBackendKind::MotuRegister;
+            case AudioFamilyProviderId::GenericAvc:
+            case AudioFamilyProviderId::BeBoB:
+            case AudioFamilyProviderId::OXFW:
+            case AudioFamilyProviderId::Fireworks:
+            case AudioFamilyProviderId::None:
+                break;
+        }
+    }
+    return AudioBackendKind::Avc;
+}
+
 } // namespace ASFW::Audio

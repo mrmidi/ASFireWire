@@ -6,6 +6,7 @@
 #include "AudioEndpointRuntime.hpp"
 #include "AudioRuntimeRegistry.hpp"
 #include "../../Discovery/FWDevice.hpp"
+#include "../Protocols/DeviceProtocolChoice.hpp"
 
 namespace ASFW::Audio {
 
@@ -236,23 +237,17 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
 
     // MOTU is the one family (vendor_id, model_id) cannot discriminate: the root
     // directory publishes model_id 0 and the model lives in the unit directory's
-    // Unit_Sw_Version. Passing the unit identity is what makes the lookup resolve at all
-    // -- without it every MOTU device falls through to the AV/C backend, which cannot
-    // drive it.
-    const DeviceProtocolFactory::UnitIdentity unit{
-        .specId = record->unitSpecId.value_or(0U),
-        .swVersion = record->unitSwVersion.value_or(0U)};
-
-    const auto integration =
-        DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId, unit);
-    if (integration == DeviceIntegrationMode::kHardcodedNub) {
-        if (record->vendorId == DeviceProfiles::Audio::kMotuVendorId &&
-            unit.specId == DeviceProfiles::Audio::kMotuVendorId) {
+    // Unit_Sw_Version. The catalog matches it from the unit directory, so this
+    // no longer needs a MOTU special case of its own -- the family it resolves
+    // to carries it.
+    switch (ChooseAudioBackend(*record)) {
+        case AudioBackendKind::MotuRegister:
             return &motu_;
-        }
-        return &dice_;
+        case AudioBackendKind::Dice:
+            return &dice_;
+        case AudioBackendKind::Avc:
+            break;
     }
-
     return &avc_;
 }
 
@@ -400,8 +395,7 @@ IOReturn AudioCoordinator::RequestClockConfig(
         return kIOReturnNotReady;
     }
 
-    const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
-    if (integration != DeviceIntegrationMode::kHardcodedNub) {
+    if (ChooseAudioBackend(*record) != AudioBackendKind::Dice) {
         return kIOReturnUnsupported;
     }
 

@@ -12,6 +12,7 @@
 #include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../StreamGeometryResolver.hpp"
+#include "../DeviceProtocolChoice.hpp"
 #include "../DeviceProtocolFactory.hpp"
 #include "../../DriverKit/Config/DICE/DiceProfileRegistry.hpp"
 
@@ -649,11 +650,11 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         return;
     }
 
-    const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
-    if (integration != DeviceIntegrationMode::kHardcodedNub) {
+    if (ChooseAudioBackend(*record) != AudioBackendKind::Dice) {
         ASFW_LOG(Audio,
-                 "DiceAudioBackend::EnsureNubForGuid: skipping GUID=0x%016llx vendor=0x%06x model=0x%06x integration=%u (not hardcodedNub)",
-                 guid, record->vendorId, record->modelId, static_cast<unsigned>(integration));
+                 "DiceAudioBackend::EnsureNubForGuid: skipping GUID=0x%016llx vendor=0x%06x "
+                 "model=0x%06x (the catalog does not route it to the DICE backend)",
+                 guid, record->vendorId, record->modelId);
         return;
     }
 

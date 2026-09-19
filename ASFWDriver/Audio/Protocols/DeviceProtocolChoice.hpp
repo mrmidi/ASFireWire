@@ -44,4 +44,23 @@ struct DeviceProtocolChoice final {
 [[nodiscard]] std::optional<DeviceProtocolChoice>
 ChooseDeviceProtocol(const Discovery::DeviceRecord& record) noexcept;
 
+/// Which audio backend drives this device's nub.
+///
+/// This is the question AudioIntegrationMode::kHardcodedNub used to answer:
+/// a vendor protocol owns the nub (DICE or MOTU), or the AV/C stack does.
+/// Expressed here in terms of the catalog so there is one table behind it.
+///
+/// Note that a *recognised but unplayable* device is Avc, not its family's
+/// backend — the old lookup returned kNone for those and they landed on AV/C,
+/// and routing them to a vendor backend that has no profile for them would be
+/// a change, not a cleanup.
+enum class AudioBackendKind : uint8_t {
+    Avc = 0,
+    Dice,
+    MotuRegister,
+};
+
+[[nodiscard]] AudioBackendKind
+ChooseAudioBackend(const Discovery::DeviceRecord& record) noexcept;
+
 } // namespace ASFW::Audio

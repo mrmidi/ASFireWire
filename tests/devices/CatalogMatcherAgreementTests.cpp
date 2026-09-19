@@ -102,6 +102,41 @@ TEST(CatalogMatcherAgreement, TheCatalogAndTheProfileRegistryAgreeOnEveryRow) {
     }
 }
 
+// AudioCoordinator picks a backend from AudioIntegrationMode: kHardcodedNub
+// means "a vendor protocol drives the nub" and routes to the DICE or MOTU
+// backend, anything else routes to AV/C. The catalog expresses the same thing
+// as AudioFamilyProviderId, so the two vocabularies have to line up exactly
+// before the gates can be rewritten in terms of the family.
+//
+// This asserts the mapping rather than assuming it, because the failure mode of
+// guessing wrong is a device silently routed to a backend that cannot drive it.
+TEST(CatalogMatcherAgreement, HardcodedNubIsExactlyTheDiceAndMotuFamilies) {
+    for (const auto& definition : AudioDeviceCatalog::Definitions()) {
+        if (definition.support != SupportDisposition::Supported) {
+            continue;
+        }
+        const auto flat = FlattenFirstClause(definition);
+        if (!flat.usable || flat.query.vendorId == kMAudioVendorId) {
+            continue;
+        }
+        const auto hint = AudioProfileRegistry::LookupBestAudioProfile(flat.query);
+        ASSERT_TRUE(hint.has_value())
+            << "definition " << static_cast<uint32_t>(definition.id);
+
+        const bool familyDrivesItsOwnNub =
+            definition.family == AudioFamilyProviderId::DICE ||
+            definition.family == AudioFamilyProviderId::MotuRegister;
+        const bool modeDrivesItsOwnNub =
+            hint->mode == AudioIntegrationMode::kHardcodedNub;
+
+        EXPECT_EQ(familyDrivesItsOwnNub, modeDrivesItsOwnNub)
+            << "definition " << static_cast<uint32_t>(definition.id)
+            << ": family says " << (familyDrivesItsOwnNub ? "own nub" : "AV/C driven")
+            << ", AudioIntegrationMode says "
+            << (modeDrivesItsOwnNub ? "kHardcodedNub" : "not kHardcodedNub");
+    }
+}
+
 // The registry resolves a display name for devices it will not play. Those are
 // exactly the rows the catalog carries as RecognizedUnsupported, and losing one
 // means a device that used to be named in diagnostics becomes an unknown.
