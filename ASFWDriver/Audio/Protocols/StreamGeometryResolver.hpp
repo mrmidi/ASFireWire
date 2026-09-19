@@ -186,6 +186,9 @@ struct ResolvedDirectionGeometry {
     StreamCountDecision count{};
     StreamGeometryDecision streams[kMaxResolvedStreams]{};
 
+    /// How many streams this direction carries, after resolution.
+    [[nodiscard]] constexpr uint32_t StreamCount() const noexcept { return count.count; }
+
     /// Sum of PCM channels across the streams this direction actually carries.
     /// This is the number the HAL presents, and it is NOT streams[0] times the
     /// stream count: the recorded Venice F24 carries 16 + 8, so a consumer that
