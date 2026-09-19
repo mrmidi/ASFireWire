@@ -256,3 +256,12 @@ add_device_test(CatalogMatcherAgreementTests
     CatalogMatcherAgreementTests.cpp
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
 )
+
+# The pure half of DeviceProtocolFactory: which protocol an identity selects.
+# Create() itself constructs DriverKit objects and only runs on hardware, which
+# is why #115 could hide in the decision for as long as it did.
+add_device_test(DeviceProtocolChoiceTests
+    DeviceProtocolChoiceTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+)

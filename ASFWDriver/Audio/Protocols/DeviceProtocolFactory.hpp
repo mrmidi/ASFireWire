@@ -10,7 +10,9 @@
 #include "../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "../../DeviceProfiles/Audio/AudioProfileRegistry.hpp"
 #include "../../DeviceProfiles/Audio/AudioProfileTypes.hpp"
+#include "DeviceProtocolChoice.hpp"
 #include "../../DeviceProfiles/Common/DeviceProfileTypes.hpp"
+#include "../../Discovery/DiscoveryTypes.hpp"
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -191,25 +193,23 @@ public:
         return LookupKnownIdentity(vendorId, modelId, unit).has_value();
     }
 
-    /// Create a protocol handler for the given vendor/model
-    /// @param vendorId   IEEE OUI vendor ID from Config ROM
-    /// @param modelId    Model ID from Config ROM
-    /// @param busOps     FireWire bus operations port
-    /// @param busInfo    FireWire bus info port
-    /// @param route      Current, registry-issued route token
-    /// @param unit       Unit directory identity, for families model_id cannot match
-    /// @return Protocol handler, or nullptr if device is not recognized
+    /// Create a protocol handler for a discovered device.
+    /// @param record   The device's registry record, carrying its Config-ROM
+    ///                 identity evidence -- the catalog decides from it which
+    ///                 protocol, if any, this device gets.
+    /// @param busOps   FireWire bus operations port
+    /// @param busInfo  FireWire bus info port
+    /// @param route    Current, registry-issued route token
+    /// @return Protocol handler, or nullptr if this driver does not stream it
     static std::unique_ptr<IDeviceProtocol> Create(
-        uint32_t vendorId,
-        uint32_t modelId,
+        const Discovery::DeviceRecord& record,
         Protocols::Ports::FireWireBusOps& busOps,
         Protocols::Ports::FireWireBusInfo& busInfo,
         Discovery::DeviceRegistry& routeRegistry,
         const Discovery::DeviceRouteToken& route,
         ::ASFW::IRM::IRMClient* irmClient = nullptr,
         ::ASFW::CMP::CMPClient* cmpClient = nullptr,
-        Scheduling::ITimerScheduler* timerScheduler = nullptr,
-        UnitIdentity unit = {}
+        Scheduling::ITimerScheduler* timerScheduler = nullptr
     );
 
 private:
