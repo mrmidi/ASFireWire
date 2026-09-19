@@ -207,12 +207,113 @@ class DuplexStreamProfileResolver final {
 
         channels.captureStreamCount = ClampStreamCount(caps.deviceToHostStreamCount);
         channels.playbackStreamCount = ClampStreamCount(caps.hostToDeviceStreamCount);
+#if 0
+        // DISABLED 2026-09-20 — clamps the WRONG DIRECTION. Kept, not deleted,
+        // because the hazard it was written for may well be real; only our
+        // transcription of it was wrong. TODO below says what would settle it.
+        //
+        // WHY IT EXISTS. libffado forces its playback stream count to 1 for
+        // Alesis model 0x000000/0x000001 and Focusrite Saffire PRO 26
+        // (dice_avdevice.cpp:1686-1700):
+        //
+        //     /* special case for Alesis io14, which announces two receive
+        //      * transmitters, but only has one. Same is true for Alesis
+        //      * Multimix16 and Focusrite Saffire PRO 26. */
+        //     if (FW_VENDORID_ALESIS == ...) { case 0x1: case 0x0: m_nb_rx = 1; }
+        //
+        // The guarded hazard is real in principle: arming an iso channel and
+        // reserving bandwidth for a stream the device will never consume.
+        //
+        // WHY IT IS DISABLED. Two reasons, in increasing order of weight.
+        //
+        // 1. It is applied to the wrong direction. libffado clamps m_nb_rx and
+        //    never touches m_nb_tx, and dice_avdevice.cpp:1057-1062 says which
+        //    is which:
+        //
+        //        for (i=0; i<m_nb_tx; i++) prepareSP(i, Port::E_Capture);
+        //        for (i=0; i<m_nb_rx; i++) prepareSP(i, Port::E_Playback);
+        //
+        //    So m_nb_rx is host PLAYBACK. captureStreamCount here comes from
+        //    caps.deviceToHostStreamCount, which DICETcatProtocol fills from the
+        //    device's DICE TX section — host CAPTURE. This clamps the one
+        //    direction libffado deliberately leaves alone.
+        //
+        //    The trap is that "rx" names opposite things in the two codebases:
+        //    libffado follows the device (rx = what the device receives =
+        //    playback), ASFW's profile fields follow the host (Rx* = capture).
+        //
+        // 2. The vendor's own driver clamps NOTHING. AlesisFirewire.kext's
+        //    PopulateDeviceStruct (0xd920) loops the full TX_NUMBER and the full
+        //    RX_NUMBER with no bound in either direction — not even the sanity
+        //    rejects MidasFW and PaeFireStudio carry (TX >= 3 / RX > 4 → error).
+        //    Alesis ships no clamp for Alesis hardware.
+        //
+        // WHAT IT COST. Two things, the second worse than the first.
+        //
+        // The recorded MultiMix dump
+        // (documentation/fixtures/alesismultimix.txt) reports DICE TX NUMBER = 2:
+        // 12 PCM (MIC_LINE_1..4, LINE_5..12) plus 2 PCM (MAIN_IN L/R) = 14
+        // capture channels. This clamp armed only stream 0, silently dropping
+        // MAIN_IN L/R — 12 channels where the device carries 14.
+        //
+        // And because Build() below selects per-stream geometry only when
+        // captureStreamCount > 1 (`multiCapture`, :346), forcing the count to 1
+        // ALSO made stream 0 report caps.deviceToHostAm824Slots — the device's
+        // AGGREGATE slot count — instead of its own. On a 2x16+1 device that is
+        // 34 slots attributed to a stream physically carrying 17, and since
+        // bandwidthUnits is computed from am824Slots, the IRM reservation was
+        // sized from the aggregate as well.
+        //
+        // Meanwhile that unit's DICE RX NUMBER is already 1, so libffado's
+        // actual clamp would have been a no-op on it. We paid two real inputs
+        // and a mis-sized reservation, and bought none of the protection the
+        // workaround was for.
+        //
+        // It had also become a second authority on a fact the profile already
+        // owns: AlesisMultiMixProfile declares capture geometry a SEED (device
+        // wins) while asserting its single PLAYBACK stream on libffado's
+        // authority. With this enabled the two disagreed, and they are consumed
+        // by different paths — this one feeds iso allocation and bandwidth, the
+        // profile feeds publication — so a MultiMix could publish 14 channels
+        // while one capture stream was armed.
+        //
+        // WHAT HARDWARE ALREADY SAYS. A contributor dumped a MultiMix
+        // (documentation/fixtures/alesismultimix.txt): DICE TX NUMBER = 2
+        // (12 + 2), DICE RX NUMBER = 1 (2 PCM). **That unit does not
+        // over-report playback at all** — libffado's clamp would be a no-op on
+        // it, and ours actively removed a capture stream it really has.
+        //
+        // TODO(FW-DICE-ALESIS): one variant is still untested, and it is
+        // precisely the accused one. libffado names the MultiMix **16**:
+        // "Same is true for Alesis Multimix16 and Focusrite Saffire PRO 26."
+        // The dump we hold is a 12-input unit (MIC_LINE_1..4, LINE_5..12, plus
+        // MAIN_IN L/R), and all of 8/12/16 publish vendor 0x000595 model
+        // 0x000000, so one dump cannot speak for the range.
+        //
+        //   a) Get a MultiMix **16** dump — DICE TX_NUMBER, RX_NUMBER and each
+        //      stream's NUMBER_AUDIO. The Saffire PRO 26 would corroborate.
+        //   b) If it reports RX_NUMBER > 1 with only one real playback stream,
+        //      re-enable against PLAYBACK — channels.playbackStreamCount —
+        //      never capture, and scope it so the 12 is unaffected.
+        //   c) Prefer libffado's own suggestion over a per-model rule. The
+        //      FIXME immediately above its clamp proposes the general form:
+        //      "Maybe check the number of channels and ignore receivers with
+        //      zero channels?" That needs no vendor/model table and has no
+        //      direction to get wrong. No recorded device shows a zero-channel
+        //      stream yet, which is why it is not implemented on spec alone.
+        //
+        // If the 16 also reports RX_NUMBER = 1, delete this block and the trait
+        // outright: libffado's workaround would then have no basis on any
+        // hardware we have seen, and Alesis's own driver already clamps nothing.
+        //
+        // The trait field and the two catalog rows that set it are deliberately
+        // left in place, so re-enabling is this block plus a direction fix
+        // rather than an archaeology exercise. See
+        // documentation/DICE_TCAT_ARCHITECTURE.md §2.9 and §3.3.
         if (TraitsFor(record).clampCaptureStreamsToOne) {
-            // The device advertises more capture streams than it has. FFADO
-            // clamps the same models for the same reason:
-            // libffado-2.5.0/src/dice/dice_avdevice.cpp:1682-1695.
             channels.captureStreamCount = 1;
         }
+#endif
 
         // Stream zero retains the legacy scalar channel. Remaining streams are
         // assigned the lowest channel not already used by either direction.

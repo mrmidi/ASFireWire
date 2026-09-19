@@ -190,9 +190,18 @@ struct DeviceStreamTraits final {
     ForcedStreamMode forcedStreamMode{ForcedStreamMode::Unspecified};
     StreamStartShape startShape{StreamStartShape::Default};
 
-    /// The device advertises more capture streams than it has. FFADO clamps
-    /// the affected Alesis models for the same reason:
-    /// libffado-2.5.0/src/dice/dice_avdevice.cpp:1682-1695.
+    /// INERT since 2026-09-20 — its only consumer is `#if 0`-ed out in
+    /// DuplexStreamProfile::ResolveChannels, which carries the full reasoning.
+    ///
+    /// Short version: it was transcribed from libffado's Alesis workaround into
+    /// the opposite direction. libffado clamps host PLAYBACK (`m_nb_rx`,
+    /// dice_avdevice.cpp:1686-1700) and never touches capture; this clamped
+    /// capture, dropping the recorded MultiMix's MAIN_IN L/R pair. Alesis's own
+    /// driver clamps neither direction.
+    ///
+    /// The field and the catalog rows that set it are kept so re-enabling is a
+    /// one-block change once hardware settles whether the hazard is real.
+    /// TODO(FW-DICE-ALESIS).
     bool clampCaptureStreamsToOne{false};
 
     /// CMP owns the isochronous channel: the device has no fixed one, IRM

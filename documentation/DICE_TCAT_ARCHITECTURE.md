@@ -229,6 +229,35 @@ So the clamp is libffado's own workaround, with no vendor basis, and libffado's
 adjacent `FIXME` proposes the general rule instead: *ignore a stream announced
 with zero channels*.
 
+**Our copy of it is disabled** (§3.3). The hazard libffado guards — arming an
+iso channel and reserving bandwidth for a stream the device never consumes — is
+real in principle, so the code is retained under `#if 0` rather than deleted.
+
+**What hardware already says.** The contributed dump
+(`fixtures/alesismultimix.txt`) reports DICE `TX_NUMBER = 2` (12 + 2) and DICE
+`RX_NUMBER = 1` (2 PCM). **That unit does not over-report playback at all** — so
+libffado's clamp would be a no-op on it, while ours removed a capture stream it
+genuinely has.
+
+**TODO(FW-DICE-ALESIS): one variant remains, and it is the accused one.**
+libffado names the MultiMix **16** specifically — *"Same is true for Alesis
+Multimix16 and Focusrite Saffire PRO 26."* The dump we hold is a 12-input unit
+(`MIC_LINE_1..4`, `LINE_5..12`, `MAIN_IN L/R`), and 8/12/16 all publish vendor
+`0x000595` model `0x000000`, so it cannot speak for the range.
+
+1. Obtain a MultiMix **16** dump — `TX_NUMBER`, `RX_NUMBER`, per-stream
+   `NUMBER_AUDIO`. A Saffire PRO 26 would corroborate independently.
+2. If it reports `RX_NUMBER > 1` with only one real playback stream, re-enable
+   against **playback** (`playbackStreamCount`), never capture, scoped so the 12
+   is unaffected.
+3. Prefer libffado's own suggested general form over a per-model rule: ignore a
+   stream announced with zero channels. No vendor/model table, no direction to
+   get wrong. Not implemented yet because no recorded device shows such a
+   stream, and implementing it on spec alone would be inventing wire behaviour.
+4. If the 16 also reports `RX_NUMBER = 1`, **delete the block and the trait**.
+   libffado's workaround would then have no basis on any hardware we have seen,
+   and Alesis's own driver clamps nothing in either direction (§2.9).
+
 ---
 
 ## 3. What we have
@@ -279,7 +308,7 @@ deltas, Weiss's capture-visibility policy, Generic's flat offsets, and names.**
 | **StartIO is host-sourced and 2-stream** | builds streams 0 and 1 from `profile->BuildTxStreamConfig`, hardcoded. `Model::ASFWAudioDevice` carries only aggregate channel counts, so per-stream geometry cannot cross the nub. |
 | **Rates are a host constant** | `DiceDeviceProfile::SupportedSampleRates()` returns a flat `{44100, 48000}`. `clockCaps` is read into `state.clockCaps` and decoded by `DiceClockCapsSupportRate()`, but never reaches `AudioStreamRuntimeCaps` or `dev.sampleRates`. |
 | **Caps never invalidate** | `DICETcatProtocol::ResetRuntimeCaps()` is reachable only from `Shutdown()`. A rate change does not re-read. Not currently observable: `kDiceMaxSupportedRateHz = 48000` and 32/44.1/48 are all rate mode *low*, so no mode change can occur. It becomes live the moment the ceiling rises. |
-| **`clampCaptureStreamsToOne`** | clamps host **capture** on both Alesis rows while citing libffado, which clamps host **playback** (§2.9). On the recorded MultiMix this discards the `MAIN_IN L/R` capture stream. Pre-existing; now also contradicts the profile's own authority declaration. |
+| **`clampCaptureStreamsToOne`** | **Disabled 2026-09-20.** Clamped host **capture** on both Alesis rows while citing libffado, which clamps host **playback** (§2.9); on the recorded MultiMix that discarded the `MAIN_IN L/R` stream, 12 channels where the device carries 14. Its consumer in `DuplexStreamProfile::ResolveChannels` is now `#if 0`-ed with the full reasoning; the trait field and the two catalog rows are kept so re-enabling is one block plus a direction fix. See the TODO below. |
 | **Extended channel-name block** | `DICEDuplexBringupController.cpp:982` reads the standard names offset unconditionally; a device with stream `SIZE >= 326` uses `+0x120` (§2.2). Cosmetic — wrong or empty labels, not a streaming fault. |
 
 ### 3.4 The `sourceChannelOffset` landmine
