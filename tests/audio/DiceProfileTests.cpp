@@ -158,6 +158,63 @@ TEST(DiceProfileTests, ResolvesOriginalPro40LowRateGeometry) {
     EXPECT_FALSE(streamProfile->BuildTxStreamConfig(2, secondary));
 }
 
+// The recorded dump is capture 10 PCM + MIDI, then 10 PCM alone. Both streams
+// are the same width, so the PCM total is right either way -- what the base's
+// repeat-stream-0 default got wrong is the DATA BLOCK SIZE, by putting a MIDI
+// slot on a stream that does not carry one.
+TEST(DiceProfileTests, Pro40CaptureStreamsDifferOnlyInTheirMidiSlot) {
+    const auto* profile = FindDiceProfile(0x00130E, 0x000005U);
+    ASSERT_NE(profile, nullptr);
+    const auto* streamProfile = static_cast<const IAudioStreamProfile*>(profile);
+
+    AudioStreamConfig first{}, second{};
+    ASSERT_TRUE(streamProfile->BuildRxStreamConfig(0, first));
+    ASSERT_TRUE(streamProfile->BuildRxStreamConfig(1, second));
+
+    EXPECT_EQ(first.pcmChannels, 10U);
+    EXPECT_EQ(first.midiSlots, 1U);
+    EXPECT_EQ(first.dbs, 11U);
+    EXPECT_EQ(first.sourceChannelOffset, 0U);
+
+    EXPECT_EQ(second.pcmChannels, 10U);
+    EXPECT_EQ(second.midiSlots, 0U);
+    EXPECT_EQ(second.dbs, 10U);  // 11 would be stream 0's shape repeated.
+    EXPECT_EQ(second.sourceChannelOffset, 10U);
+
+    EXPECT_FALSE(streamProfile->BuildRxStreamConfig(2, second));
+
+    // And the aggregate is the sum of those two, not a separately stated total:
+    // the hand-written TxChannelCount() override that used to say 20 is gone,
+    // so 12 + 8 has to produce it.
+    EXPECT_EQ(profile->TxChannelCount(), 20U);
+    EXPECT_EQ(profile->RxChannelCount(), 20U);
+}
+
+// The Pro 40 knows its geometry -- a register dump plus FFADO
+// saffire_pro40.cpp:50-97 -- so it asserts it, and a device contradicting it is
+// a real conflict rather than a seed being replaced.
+TEST(DiceProfileTests, Pro40AssertsItsGeometryInBothDirections) {
+    const auto* profile = FindDiceProfile(0x00130E, 0x000005U);
+    ASSERT_NE(profile, nullptr);
+    const auto* streamProfile = static_cast<const IAudioStreamProfile*>(profile);
+    EXPECT_EQ(streamProfile->CaptureGeometryAuthority(),
+              ASFW::Isoch::Audio::StreamGeometryAuthority::kAsserted);
+    EXPECT_EQ(streamProfile->PlaybackGeometryAuthority(),
+              ASFW::Isoch::Audio::StreamGeometryAuthority::kAsserted);
+}
+
+// Alesis: the two directions carry different authority, which is why it is a
+// per-direction question. Playback is libffado's forced nb_rx = 1
+// (dice_avdevice.cpp:1686-1700); capture never had a reference behind it.
+TEST(DiceProfileTests, AlesisMultiMixAssertsPlaybackButSeedsCapture) {
+    Profiles::AlesisMultiMixProfile profile;
+    EXPECT_EQ(profile.PlaybackGeometryAuthority(),
+              ASFW::Isoch::Audio::StreamGeometryAuthority::kAsserted);
+    EXPECT_EQ(profile.CaptureGeometryAuthority(),
+              ASFW::Isoch::Audio::StreamGeometryAuthority::kSeed);
+    EXPECT_EQ(profile.TxStreamCount(), 1U);
+}
+
 TEST(DiceProfileTests, UniformPlaybackStreamsKeepDisjointChannelSlices) {
     Profiles::MidasVeniceProfile profile;
     AudioStreamConfig primary{}, secondary{};
@@ -266,13 +323,16 @@ TEST(DiceProfileTests, ResolvesMidasVeniceProfileByVendorAndModel) {
     const auto* profile = FindDiceProfile(0x10c73f, 0x000001, 0x10c73f04004011dfULL);
 
     ASSERT_NE(profile, nullptr);
-    EXPECT_STREQ(profile->Name(), "Midas Venice F32 (DICE)");
+    // One row serves the whole F range, so identity alone cannot name a
+    // variant -- the recorded F24 even reports its model string as "Venice
+    // F32". Name() therefore names the range; NameForGeometry names the device.
+    EXPECT_STREQ(profile->Name(), "Midas Venice F (DICE)");
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
-    // Venice F32 at 48 kHz: 2 streams/direction × 16ch. Both wire configs are
-    // per-stream (DBS=16) with Tx/RxStreamCount()==2, so the HAL aggregate is
-    // 32 per side.
+    // The seeded F32 geometry at 48 kHz: 2 streams/direction × 16ch. Both wire
+    // configs are per-stream (DBS=16) with Tx/RxStreamCount()==2, so the seeded
+    // aggregate is 32 per side.
     EXPECT_EQ(profile->TxChannelCount(), 32); // 16 × 2 streams
     EXPECT_EQ(profile->RxChannelCount(), 32); // 16 × 2 streams
     EXPECT_EQ(profile->TxMidiSlots(), 0);
@@ -286,6 +346,41 @@ TEST(DiceProfileTests, ResolvesMidasVeniceProfileByVendorAndModel) {
     EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
     EXPECT_EQ(diceProfile->Quirks().tx.hostToDevicePcmEncoding,
               ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+
+    // Those counts are a seed in BOTH directions. If either were asserted, the
+    // resolver would treat the recorded F24's 16 + 8 as a conflict and refuse
+    // to publish it.
+    EXPECT_EQ(diceProfile->CaptureGeometryAuthority(),
+              ASFW::Isoch::Audio::StreamGeometryAuthority::kSeed);
+    EXPECT_EQ(diceProfile->PlaybackGeometryAuthority(),
+              ASFW::Isoch::Audio::StreamGeometryAuthority::kSeed);
+}
+
+// The Stage 4 exit criterion: one catalog row, three devices, told apart by
+// what the device turned out to carry rather than by what it calls itself.
+TEST(DiceProfileTests, MidasVeniceNamesTheVariantFromMeasuredCaptureChannels) {
+    const auto* profile = FindDiceProfile(0x10c73f, 0x000001, 0x10c73f04004011dfULL);
+    ASSERT_NE(profile, nullptr);
+
+    // 16 + 8 is the recorded F24 (documentation/fixtures/DICE/midasF24.txt),
+    // whose own model string says F32 -- so this is exactly the case the
+    // identity path gets wrong.
+    EXPECT_STREQ(profile->NameForGeometry(24, 24), "Midas Venice F24");
+    EXPECT_STREQ(profile->NameForGeometry(32, 32), "Midas Venice F32");
+    EXPECT_STREQ(profile->NameForGeometry(16, 16), "Midas Venice F16");
+
+    // An unrecognised width stays at the range name rather than being rounded
+    // to the nearest variant.
+    EXPECT_STREQ(profile->NameForGeometry(20, 20), "Midas Venice F (DICE)");
+    EXPECT_STREQ(profile->NameForGeometry(0, 0), "Midas Venice F (DICE)");
+}
+
+// Everything else is one model per row, so naming must not move.
+TEST(DiceProfileTests, SingleModelProfilesIgnoreMeasuredGeometryWhenNaming) {
+    const auto* saffire = FindDiceProfile(0x00130e, 0x000005, 0x00130E0401405B54ULL);
+    ASSERT_NE(saffire, nullptr);
+    EXPECT_STREQ(saffire->NameForGeometry(20, 20), saffire->Name());
+    EXPECT_STREQ(saffire->NameForGeometry(2, 2), saffire->Name());
 }
 
 TEST(DiceProfileTests, MidasVeniceSafetyOffsetsAndLatencies) {
@@ -310,7 +405,7 @@ TEST(DiceProfileTests, MidasVendorWithWrongModelDoesNotMatchVeniceProfile) {
     const auto* profile = FindDiceProfile(0x10c73f, 0x999999);
     // Should fall through to generic profile, not Venice.
     if (profile != nullptr) {
-        EXPECT_STRNE(profile->Name(), "Midas Venice F32 (DICE)");
+        EXPECT_STRNE(profile->Name(), "Midas Venice F (DICE)");
     }
 }
 

@@ -22,6 +22,24 @@ public:
     /// Returns the human-readable product name for the device.
     [[nodiscard]] virtual const char* Name() const noexcept = 0;
 
+    /// Names the device once its real geometry is known.
+    ///
+    /// Name() has to answer before the device has been read, so for a range
+    /// whose members share one identity it can only name the range. The Midas
+    /// Venice F16, F24 and F32 are one vendor/model/TCAT-product triple and
+    /// differ only in how many channels they carry, so the variant is not
+    /// knowable until the device's TX section has been read -- at which point
+    /// it is just the capture channel count.
+    ///
+    /// Counts are the HOST's: capture is what the device transmits (DICE TX).
+    /// The default ignores them, which is right for every profile whose
+    /// identity already names exactly one model.
+    [[nodiscard]] virtual const char* NameForGeometry(
+        uint32_t /*hostInputPcmChannels*/,
+        uint32_t /*hostOutputPcmChannels*/) const noexcept {
+        return Name();
+    }
+
     /// Returns the host-to-device (transmit) wire format encoding (e.g. kAM824 vs kRawPcm24In32).
     [[nodiscard]] virtual Encoding::AudioWireFormat TxWireFormat() const noexcept = 0;
 

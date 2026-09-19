@@ -90,14 +90,6 @@ std::vector<uint32_t> MotuV2Profile::SupportedSampleRates() const {
     return {44100u, 48000u};
 }
 
-uint32_t MotuV2Profile::RxChannelCount() const noexcept {
-    return kPcmChunks;
-}
-
-uint32_t MotuV2Profile::TxChannelCount() const noexcept {
-    return kPcmChunks;
-}
-
 uint32_t MotuV2Profile::TxMidiSlots() const noexcept {
     // MIDI rides the data block's message slot, not a dedicated AM824 block.
     return 0;

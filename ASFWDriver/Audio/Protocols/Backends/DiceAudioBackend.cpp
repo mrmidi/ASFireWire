@@ -79,8 +79,19 @@ namespace {
             .midiPorts = wire.midiPorts};
 }
 
+// Does this profile ASSERT the direction's geometry, or only seed it? The
+// resolver takes a bool (it is deliberately free of profile headers), so this
+// is the one place the profile's enum is read.
+[[nodiscard]] bool AssertsGeometry(
+    ASFW::Isoch::Audio::StreamGeometryAuthority authority) noexcept {
+    return authority == ASFW::Isoch::Audio::StreamGeometryAuthority::kAsserted;
+}
+
 [[nodiscard]] WireStreamGeometry PlaybackGeometryFromProfile(
     const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
+    if (!AssertsGeometry(profile.PlaybackGeometryAuthority())) {
+        return {};
+    }
     ASFW::Isoch::Audio::AudioStreamConfig config{};
     if (index >= ClampStreamCountToHost(profile.TxStreamCount()) ||
         !profile.BuildTxStreamConfig(index, config)) {
@@ -109,6 +120,9 @@ namespace {
 // ASFW's profile naming inverts: Rx* is host capture.
 [[nodiscard]] WireStreamGeometry CaptureGeometryFromProfile(
     const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
+    if (!AssertsGeometry(profile.CaptureGeometryAuthority())) {
+        return {};
+    }
     ASFW::Isoch::Audio::AudioStreamConfig config{};
     if (index >= ClampStreamCountToHost(profile.RxStreamCount()) ||
         !profile.BuildRxStreamConfig(index, config)) {
@@ -170,11 +184,15 @@ void LogDirection(const char* directionName,
 
     ResolvedDeviceGeometry resolved{};
     resolved.capture = ResolveDirectionGeometry(
-        caps.deviceToHostStreamCount, profile.RxStreamCount(),
+        caps.deviceToHostStreamCount,
+        ProfileStatedStreamCount(AssertsGeometry(profile.CaptureGeometryAuthority()),
+                                 profile.RxStreamCount()),
         [&caps](uint32_t i) { return CaptureGeometryFromDevice(caps, i); },
         [&profile](uint32_t i) { return CaptureGeometryFromProfile(profile, i); });
     resolved.playback = ResolveDirectionGeometry(
-        caps.hostToDeviceStreamCount, profile.TxStreamCount(),
+        caps.hostToDeviceStreamCount,
+        ProfileStatedStreamCount(AssertsGeometry(profile.PlaybackGeometryAuthority()),
+                                 profile.TxStreamCount()),
         [&caps](uint32_t i) { return PlaybackGeometryFromDevice(caps, i); },
         [&profile](uint32_t i) { return PlaybackGeometryFromProfile(profile, i); });
 
@@ -904,6 +922,23 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                          dev.inputChannelCount,
                          dev.outputChannelCount,
                          guid);
+            }
+
+            // Name the device now that its geometry is known. For a profile
+            // serving one model this returns Name() unchanged; for a range
+            // sharing one identity -- Midas Venice F16/F24/F32 -- the measured
+            // capture width is the only thing that tells the variants apart,
+            // and it is not available until here.
+            if (const char* resolvedName =
+                    profile->NameForGeometry(dev.inputChannelCount, dev.outputChannelCount)) {
+                if (dev.deviceName != resolvedName) {
+                    ASFW_LOG(Audio,
+                             "DiceAudioBackend::EnsureNubForGuid: named from geometry "
+                             "'%{public}s' -> '%{public}s' in=%u out=%u (GUID=0x%016llx)",
+                             dev.deviceName.c_str(), resolvedName,
+                             dev.inputChannelCount, dev.outputChannelCount, guid);
+                    dev.deviceName = resolvedName;
+                }
             }
 
             std::vector<std::string> inNames;

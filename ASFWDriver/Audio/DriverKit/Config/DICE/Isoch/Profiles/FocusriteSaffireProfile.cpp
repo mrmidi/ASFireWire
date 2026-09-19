@@ -92,10 +92,22 @@ bool FocusriteSaffirePro40Profile::BuildTxStreamConfig(
 
 bool FocusriteSaffirePro40Profile::BuildDefaultRxStreamConfig(
     DiceStreamConfig& outConfig) const noexcept {
+    return BuildRxStreamConfig(0, outConfig);
+}
+
+// Capture is 10 PCM + 1 MIDI, then 10 PCM with no MIDI (see the dump note
+// above). Both streams are the same width, so only the MIDI slot -- and
+// therefore the data-block size -- distinguishes them.
+bool FocusriteSaffirePro40Profile::BuildRxStreamConfig(
+    uint32_t streamIndex, AudioStreamConfig& outConfig) const noexcept {
+    if (streamIndex >= RxStreamCount()) {
+        return false;
+    }
     FillDefaultStreamConfig(outConfig, DiceStreamDirection::DeviceToHost);
     outConfig.pcmChannels = 10;
-    outConfig.midiSlots = 1;
-    outConfig.dbs = 11;
+    outConfig.midiSlots = streamIndex == 0 ? 1 : 0;
+    outConfig.dbs = outConfig.pcmChannels + outConfig.midiSlots;
+    outConfig.sourceChannelOffset = streamIndex * 10;
     return true;
 }
 

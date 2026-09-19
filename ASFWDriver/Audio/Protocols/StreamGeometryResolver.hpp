@@ -228,6 +228,29 @@ struct ResolvedDirectionGeometry {
     }
 };
 
+// A profile constant is only an input to resolution when the profile is
+// ASSERTING it. A seeded constant -- one invented so the endpoint has plausible
+// numbers before the device is read -- states nothing, and these two turn that
+// into the "unstated" the functions above already handle.
+//
+// Without this, every unverified constant became a conflict with the device
+// that actually knows, and the endpoint was refused. That is not hypothetical:
+// a contributed Alesis MultiMix dump reports two capture streams of 12 + 2
+// where the profile seeds one of 16, and the MultiMix 8/12/16 all publish the
+// same vendor/model so no constant could have been right for all three.
+//
+// Taken as a bool rather than the profile's enum so this header stays a plain
+// scalar unit; the caller maps its own authority type onto it.
+[[nodiscard]] constexpr uint32_t
+ProfileStatedStreamCount(bool asserted, uint32_t count) noexcept {
+    return asserted ? count : 0U;
+}
+
+[[nodiscard]] constexpr WireStreamGeometry
+ProfileStatedGeometry(bool asserted, WireStreamGeometry geometry) noexcept {
+    return asserted ? geometry : WireStreamGeometry{};
+}
+
 /// Resolve one direction end to end: the stream count, then every stream in
 /// the union of what each side describes, so a stream only one side knows
 /// about still reaches the decision instead of being skipped.

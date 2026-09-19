@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <initializer_list>
+#include <utility>
 
 namespace {
 
@@ -338,4 +339,114 @@ TEST(ResolveDirectionGeometryFn, StreamCountBeyondTheHostBoundIsRefusedNotTrunca
         [](uint32_t) { return kNothing; });
     EXPECT_TRUE(resolved.count.disagrees);
     EXPECT_FALSE(resolved.Usable());
+}
+
+// ---------------------------------------------------------------------------
+// Seed vs assertion. The profile constants that reach the resolver are only the
+// ones the profile CLAIMS to know; a seed states nothing and the device answers
+// unopposed. These drive ProfileStatedStreamCount/ProfileStatedGeometry -- the
+// same functions DiceAudioBackend composes -- so the distinction cannot be
+// deleted without turning one of these red.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// One direction resolved exactly as the backend does it: the profile's
+// constants pass through the authority filter before the resolver sees them.
+template <typename DeviceAccessor, typename ProfileAccessor>
+ASFW::Audio::ResolvedDirectionGeometry ResolveAsBackendDoes(
+    bool profileAsserts,
+    uint32_t deviceStreamCount,
+    uint32_t profileStreamCount,
+    DeviceAccessor&& fromDevice,
+    ProfileAccessor&& fromProfile) {
+    return ASFW::Audio::ResolveDirectionGeometry(
+        deviceStreamCount,
+        ASFW::Audio::ProfileStatedStreamCount(profileAsserts, profileStreamCount),
+        std::forward<DeviceAccessor>(fromDevice),
+        [&](uint32_t i) {
+            return ASFW::Audio::ProfileStatedGeometry(profileAsserts, fromProfile(i));
+        });
+}
+
+// The contributed Alesis MultiMix shape: two capture streams of 12 + 2 where
+// the profile seeds a single stream of 16.
+constexpr uint16_t kMultiMixCapturePcm[] = {12, 2};
+
+WireStreamGeometry MultiMixCaptureFromDevice(uint32_t i) {
+    return WireStreamGeometry{.pcmChannels = kMultiMixCapturePcm[i],
+                              .am824Slots = kMultiMixCapturePcm[i]};
+}
+
+WireStreamGeometry MultiMixCaptureSeed(uint32_t) {
+    return WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16};
+}
+
+} // namespace
+
+TEST(GeometryAuthority, SeededCaptureLetsTheDeviceAnswerUnopposed) {
+    const auto resolved = ResolveAsBackendDoes(
+        /*profileAsserts=*/false, 2, 1, MultiMixCaptureFromDevice, MultiMixCaptureSeed);
+
+    // The endpoint publishes, and it publishes what the device carries.
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.StreamCount(), 2u);
+    EXPECT_EQ(resolved.TotalPcmChannels(), 14u);
+    EXPECT_EQ(resolved.count.source, StreamGeometrySource::kDevice);
+    EXPECT_FALSE(resolved.count.disagrees);
+}
+
+// The same inputs with the seed treated as evidence. This is the state the
+// driver was in before the distinction existed: a device that reports its own
+// geometry accurately gets no endpoint at all.
+TEST(GeometryAuthority, AssertingTheSameSeedWouldRefuseTheEndpoint) {
+    const auto resolved = ResolveAsBackendDoes(
+        /*profileAsserts=*/true, 2, 1, MultiMixCaptureFromDevice, MultiMixCaptureSeed);
+
+    EXPECT_FALSE(resolved.Usable());
+    EXPECT_TRUE(resolved.count.disagrees);
+    EXPECT_EQ(resolved.count.deviceStated, 2u);
+    EXPECT_EQ(resolved.count.profileStated, 1u);
+}
+
+// Venice: one row, three geometries. The seeded F32 constants must not refuse
+// an F24, and the resolved total is what names it.
+TEST(GeometryAuthority, SeededVeniceResolvesTheF24RatherThanRefusingIt) {
+    constexpr uint16_t kF24[] = {16, 8};
+    const auto resolved = ResolveAsBackendDoes(
+        /*profileAsserts=*/false, 2, 2,
+        [](uint32_t i) {
+            return WireStreamGeometry{.pcmChannels = kF24[i], .am824Slots = kF24[i]};
+        },
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16}; });
+
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.TotalPcmChannels(), 24u);
+}
+
+// Seeding must not become "ignore the profile everywhere". A direction the
+// device says nothing about still falls back to the profile's shape, because
+// families whose protocols publish only aggregate caps depend on it.
+TEST(GeometryAuthority, AssertedProfileStillAnswersWhenTheDeviceIsSilent) {
+    const auto resolved = ResolveAsBackendDoes(
+        /*profileAsserts=*/true, 0, 2,
+        [](uint32_t) { return kNothing; },
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 10, .am824Slots = 11}; });
+
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.StreamCount(), 2u);
+    EXPECT_EQ(resolved.TotalPcmChannels(), 20u);
+    EXPECT_EQ(resolved.count.source, StreamGeometrySource::kProfile);
+}
+
+// A seeded direction with a silent device has nothing to go on. It must resolve
+// to zero streams rather than quietly reinstating the seed.
+TEST(GeometryAuthority, SeededProfileWithASilentDeviceStatesNothing) {
+    const auto resolved = ResolveAsBackendDoes(
+        /*profileAsserts=*/false, 0, 2,
+        [](uint32_t) { return kNothing; },
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16}; });
+
+    EXPECT_EQ(resolved.StreamCount(), 0u);
+    EXPECT_EQ(resolved.TotalPcmChannels(), 0u);
 }
