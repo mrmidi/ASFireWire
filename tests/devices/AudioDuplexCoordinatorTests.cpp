@@ -615,8 +615,18 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
     PrepareCallback deferredPrepareCallback_{};
 };
 
+// A DICE unit publishes the vendor OUI as its specifier with interface version
+// 1; a TA 1394 AV/C unit publishes 0x00A02D / 0x010001. The device catalog
+// constrains the unit it selects, so a ROM with no unit directory at all
+// resolves to nothing -- which is correct, and is what a real bus never shows.
+constexpr uint32_t kDiceInterfaceVersion = 0x000001;
+constexpr uint32_t kTa1394AvcSpecifier = 0x00A02D;
+constexpr uint32_t kTa1394AvcVersion = 0x010001;
+
 ConfigROM MakeConfigRom(uint64_t guid, uint32_t vendorId = kFocusriteVendorId,
-                        uint32_t modelId = kSPro24DspModelId, Generation gen = Generation{1}) {
+                        uint32_t modelId = kSPro24DspModelId, Generation gen = Generation{1},
+                        std::optional<uint32_t> unitSpecifier = std::nullopt,
+                        uint32_t unitVersion = kDiceInterfaceVersion) {
     ConfigROM rom{};
     rom.gen = gen;
     rom.firstSeen = gen;
@@ -628,7 +638,18 @@ ConfigROM MakeConfigRom(uint64_t guid, uint32_t vendorId = kFocusriteVendorId,
         RomEntry{.key = CfgKey::VendorId, .value = vendorId},
         RomEntry{.key = CfgKey::ModelId, .value = modelId},
     };
+    ASFW::Discovery::UnitDirectory unit{};
+    unit.offsetQuadlets = 5;
+    unit.unitSpecId = unitSpecifier.value_or(vendorId);
+    unit.unitSwVersion = unitVersion;
+    rom.unitDirectories.push_back(unit);
     return rom;
+}
+
+ConfigROM MakeAvcConfigRom(uint64_t guid, uint32_t vendorId, uint32_t modelId,
+                           Generation gen = Generation{1}) {
+    return MakeConfigRom(guid, vendorId, modelId, gen, kTa1394AvcSpecifier,
+                         kTa1394AvcVersion);
 }
 
 class AudioDuplexCoordinatorTests : public ::testing::Test {
@@ -757,7 +778,7 @@ TEST_F(AudioDuplexCoordinatorTests, RemoteDeviceLossRejectsRestartUntilRediscove
 TEST_F(AudioDuplexCoordinatorTests,
        AvcProfileReservesBothDirectionsAndInterleavesHostStartsWithDeviceStages) {
     (void)registry_.UpsertFromROM(
-        MakeConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
+        MakeAvcConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
     ClearLog();
 
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
@@ -813,7 +834,7 @@ TEST_F(AudioDuplexCoordinatorTests,
 TEST_F(AudioDuplexCoordinatorTests,
        ApogeeDuetStartForces48kBeforeDevicePreparationEvenAfterPersistedRate) {
     (void)registry_.UpsertFromROM(
-        MakeConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
+        MakeAvcConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
 
     // A developer-only/manual rate request can leave an old value in the
     // session. Until dynamic Duet rate changes exist, a subsequent normal

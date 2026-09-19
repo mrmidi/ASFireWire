@@ -38,6 +38,7 @@ enum class DeviceDefinitionId : uint32_t {
     ApogeeDuet,
     TerraTecPhase88,
     AlesisMultiMix,
+    AlesisIo,
     MidasVeniceF32,
     PreSonusStudioLive1602,
     PreSonusStudioLive1642,
@@ -193,6 +194,12 @@ struct DeviceStreamTraits final {
     /// the affected Alesis models for the same reason:
     /// libffado-2.5.0/src/dice/dice_avdevice.cpp:1682-1695.
     bool clampCaptureStreamsToOne{false};
+
+    /// CMP owns the isochronous channel: the device has no fixed one, IRM
+    /// picks it and the PCR commits it back. True for every CMP-driven family
+    /// (BeBoB, Oxford, Fireworks); false for DICE, which programs a channel
+    /// into its own registers, and for MOTU.
+    bool cmpChoosesIsoChannel{false};
 
     /// The capture-side CIP dbs field is untrusted and the configured slot
     /// count is the authority. Loud/Mackie (snd-oxfw oxfw.c:189-196,

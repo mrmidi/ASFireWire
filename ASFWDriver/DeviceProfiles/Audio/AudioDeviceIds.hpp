@@ -55,6 +55,12 @@ inline constexpr uint32_t kPhase88RackFwModelId = 0x000003;
 // ---- Alesis (DICE / TCAT family) ----
 inline constexpr uint32_t kAlesisVendorId        = 0x000595;
 inline constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
+// The iO14/iO26. Named in no vendor id table -- the Alesis kext's three entries
+// are MultiMix (id 0), iO (id != 0) and MasterControl -- but it shares the
+// MultiMix's habit of advertising two capture streams when it has one
+// (libffado-2.5.0/src/dice/dice_avdevice.cpp:1682-1695), which is why it has a
+// row in the catalog. Recognition only; its geometry has never been captured.
+inline constexpr uint32_t kAlesisIoModelId = 0x000001;
 
 // ---- Midas (DICE / TCAT family) ----
 inline constexpr uint32_t kMidasVendorId       = 0x10c73f;
@@ -168,6 +174,7 @@ inline constexpr const char* kTerraTecVendorName      = "TerraTec Electronic Gmb
 inline constexpr const char* kPhase88RackFwModelName  = "PHASE 88 Rack FW";
 inline constexpr const char* kAlesisVendorName        = "Alesis";
 inline constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
+inline constexpr const char* kAlesisIoModelName       = "iO14 / iO26";
 inline constexpr const char* kMidasVendorName         = "Midas";
 inline constexpr const char* kMidasVeniceModelName    = "Venice F32";
 inline constexpr const char* kMackieVendorName        = "Mackie";

@@ -52,6 +52,8 @@ add_device_test(DICERestartSessionTests
 add_device_test(AudioDuplexCoordinatorTests
     AudioDuplexCoordinatorTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
@@ -60,6 +62,8 @@ add_device_test(AudioDuplexCoordinatorTests
 # FW-74: resolver-owned duplex stream geometry, wire-format quirks, and host recipe.
 add_device_test(DuplexStreamProfileTests
     DuplexStreamProfileTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
 )
 
 # BeBoBProtocol base-class: async ApplyClockConfig chain, timer settle, epoch cancel.

@@ -163,6 +163,7 @@ constexpr DeviceStreamTraits kDiceTraits{
 constexpr DeviceStreamTraits kCmpBlockingTraits{
     .forcedStreamMode = ForcedStreamMode::Blocking,
     .startShape = StreamStartShape::CmpReceiveThenTransmit,
+    .cmpChoosesIsoChannel = true,
 };
 
 // As above, plus: the capture-side CIP dbs field is untrusted, so the
@@ -178,6 +179,7 @@ constexpr DeviceStreamTraits kMackieBlockingTraits{
 constexpr DeviceStreamTraits kCmpBlockingUntrustedStrideTraits{
     .forcedStreamMode = ForcedStreamMode::Blocking,
     .startShape = StreamStartShape::CmpReceiveThenTransmit,
+    .cmpChoosesIsoChannel = true,
     .captureTrustConfiguredStride = true,
 };
 
@@ -286,7 +288,8 @@ constexpr std::array kDefinitions{
                // works that way, but the observed device output cadence is
                // blocking -- forcing it keeps host and device aligned.
                DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
-                                  .startShape = StreamStartShape::ApogeeInterleaved}),
+                                  .startShape = StreamStartShape::ApogeeInterleaved,
+                                  .cmpChoosesIsoChannel = true}),
     Definition(DeviceDefinitionId::TerraTecPhase88, kTerraTecVendorId,
                kPhase88RackFwModelId, AudioFamilyProviderId::BeBoB,
                ProbePolicyId::BeBoBPlug0, ProfileBuilderId::TerraTecPhase88,
@@ -298,6 +301,18 @@ constexpr std::array kDefinitions{
                ProbePolicyId::DiceTcat, ProfileBuilderId::AlesisMultiMix,
                SupportDisposition::Supported, kAlesisVendorName,
                kAlesisMultiMixModelName, std::nullopt, BootloaderCuePolicy::None,
+               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
+                                  .clampCaptureStreamsToOne = true}),
+    // Recognition only -- its geometry has never been captured, so it names no
+    // builder and nothing streams it. The row exists to hold the capture-stream
+    // clamp, which FFADO applies to this model as well as the MultiMix; losing
+    // that when the predicate went would have been losing evidence, not
+    // deleting dead code.
+    Definition(DeviceDefinitionId::AlesisIo, kAlesisVendorId, kAlesisIoModelId,
+               AudioFamilyProviderId::DICE, ProbePolicyId::None,
+               ProfileBuilderId::None, SupportDisposition::RecognizedUnsupported,
+               kAlesisVendorName, kAlesisIoModelName, std::nullopt,
+               BootloaderCuePolicy::None,
                DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
                                   .clampCaptureStreamsToOne = true}),
     Definition(DeviceDefinitionId::MidasVeniceF32, kMidasVendorId,
