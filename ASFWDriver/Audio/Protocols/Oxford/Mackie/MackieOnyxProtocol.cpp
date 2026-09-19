@@ -58,17 +58,4 @@ std::vector<uint32_t> MackieOnyxProtocol::SupportedRates() const {
     return {44100U};
 }
 
-void MackieOnyxProtocol::ReadClockHealth(HealthCallback callback) {
-    // The OXFW971 exposes no readable clock-status register and is SYT-unaware
-    // (Linux snd-oxfw: CIP_UNAWARE_SYT), so PCR connectivity is the health
-    // authority — same policy as the generic BeBoB adapter.
-    callback(kIOReturnSuccess,
-             DuplexHealthResult{.generation = busInfo_.GetGeneration(),
-                                .appliedClock = appliedClock_,
-                                .runtimeCaps = caps_,
-                                .sourceLocked = inputConnected_ && outputConnected_,
-                                .clockReferenceHealthy = true,
-                                .nominalRateHz = caps_.sampleRateHz});
-}
-
 } // namespace ASFW::Audio::Oxford::Mackie

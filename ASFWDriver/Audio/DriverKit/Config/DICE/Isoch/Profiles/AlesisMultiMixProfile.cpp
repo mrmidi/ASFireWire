@@ -33,8 +33,6 @@ namespace ASFW::Isoch::Audio::DICE::Profiles {
 
 namespace {
 
-constexpr uint32_t kAlesisVendorId        = 0x000595;
-constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
 
 // Seed geometry only — see the UNVERIFIED note above.
 //
@@ -74,15 +72,6 @@ void FillStreamConfig(DiceStreamConfig& out, DiceStreamDirection direction) noex
 
 const char* AlesisMultiMixProfile::Name() const noexcept {
     return "Alesis MultiMix FireWire (DICE)";
-}
-
-bool AlesisMultiMixProfile::Matches(const DiceDeviceIdentity& identity) const noexcept {
-    // Exact vendor+model. The Alesis OUI also covers the iO14/iO26 (0x000001)
-    // and MasterControl (0x000002), which have different stream geometry and
-    // their own format detection in Linux (dice-alesis.c) — they must not fall
-    // into this profile.
-    return identity.vendorId == kAlesisVendorId &&
-           identity.modelId == kAlesisMultiMixModelId;
 }
 
 DiceDeviceQuirks AlesisMultiMixProfile::Quirks() const noexcept {

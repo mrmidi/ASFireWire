@@ -9,14 +9,15 @@
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioNubPublisher.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
+#include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
-#include "../../../DeviceProfiles/Audio/Vendors/MotuAudioProfiles.hpp"
 #include "../../../Discovery/DeviceRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../DeviceProtocolFactory.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../MOTU/MotuV2Protocol.hpp"
 #include "../../Wire/MOTU/MotuBlockLayout.hpp"
+#include "../../Wire/MOTU/MotuPortLayout.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -61,9 +62,18 @@ void MotuAudioBackend::BeginTeardown() noexcept {
 
 void MotuAudioBackend::OnDeviceRecordUpdated(uint64_t guid) noexcept {
     if (stopping_.load(std::memory_order_acquire)) {
+        publicationRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         return;
     }
     EnsureNubForGuid(guid);
+}
+
+void MotuAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
+    if (lock_) {
+        IOLockLock(lock_);
+        activeStreamingGuids_.erase(guid);
+        IOLockUnlock(lock_);
+    }
 }
 
 void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
@@ -98,8 +108,9 @@ void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // CoreAudio shows this in the Sound panel, where MOTU's own driver named the device
     // "MOTU UltraLite". The model constants stay bare because DeviceIdentityHint keeps
     // vendor and model in separate fields; only the display name is qualified here.
-    const char* const modelName = DeviceProfiles::Audio::Motu::ModelNameForSwVersion(
-        record->unitSwVersion.value_or(0U));
+    const char* const modelName =
+        DeviceProfiles::Audio::AudioDeviceCatalog::MotuModelNameForSwVersion(
+            record->unitSwVersion.value_or(0U));
     dev.deviceName = modelName != nullptr
                          ? std::string(DeviceProfiles::Audio::kMotuVendorName) + " " + modelName
                          : protocol->GetName();

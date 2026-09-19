@@ -6,7 +6,6 @@
 #include "Audio/Protocols/Backends/AudioDuplexCoordinator.hpp"
 #include "Audio/Protocols/DICE/Core/DICETypes.hpp"
 #include "Audio/Protocols/Duplex/IDuplexDeviceControl.hpp"
-#include "Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "Audio/Protocols/IDeviceProtocol.hpp"
 #include "Bus/IRM/IRMClient.hpp"
 #include "Discovery/DeviceRegistry.hpp"
@@ -41,18 +40,18 @@ using ASFW::Audio::IDeviceProtocol;
 using ASFW::Audio::IDuplexDeviceControl;
 using ASFW::Audio::IIsochDuplexHostTransport;
 using ASFW::Audio::AudioClockConfig;
-using ASFW::Audio::DICE::DiceClockApplyResult;
-using ASFW::Audio::DICE::DiceClockRequestOutcome;
-using ASFW::Audio::DICE::DiceDuplexConfirmResult;
-using ASFW::Audio::DICE::DiceDuplexHealthResult;
-using ASFW::Audio::DICE::DiceDuplexPrepareResult;
-using ASFW::Audio::DICE::DiceDuplexStageResult;
-using ASFW::Audio::DICE::DiceRestartErrorClass;
-using ASFW::Audio::DICE::DiceRestartFailureCause;
-using ASFW::Audio::DICE::DiceRestartPhase;
-using ASFW::Audio::DICE::DiceRestartReason;
-using ASFW::Audio::DICE::DiceRestartSession;
-using ASFW::Audio::DICE::DiceRestartState;
+using ASFW::Audio::DuplexClockApplyResult;
+using ASFW::Audio::DuplexClockRequestOutcome;
+using ASFW::Audio::DuplexConfirmResult;
+using ASFW::Audio::DuplexHealthResult;
+using ASFW::Audio::DuplexPrepareResult;
+using ASFW::Audio::DuplexStageResult;
+using ASFW::Audio::DuplexRestartErrorClass;
+using ASFW::Audio::DuplexRestartFailureCause;
+using ASFW::Audio::DuplexRestartPhase;
+using ASFW::Audio::DuplexRestartReason;
+using ASFW::Audio::DuplexRestartSession;
+using ASFW::Audio::DuplexLifecycleKind;
 using ASFW::Discovery::CfgKey;
 using ASFW::Discovery::ConfigROM;
 using ASFW::Discovery::DeviceRegistry;
@@ -68,10 +67,10 @@ using ASFW::IRM::IRMClient;
 
 constexpr uint64_t kTestGuid = 0x00130E0402004713ULL;
 constexpr uint32_t kQueueBytes = 4096;
-constexpr uint32_t kFocusriteVendorId = ASFW::Audio::DeviceProtocolFactory::kFocusriteVendorId;
-constexpr uint32_t kSPro24DspModelId = ASFW::Audio::DeviceProtocolFactory::kSPro24DspModelId;
-constexpr uint32_t kApogeeVendorId = ASFW::Audio::DeviceProtocolFactory::kApogeeVendorId;
-constexpr uint32_t kApogeeDuetModelId = ASFW::Audio::DeviceProtocolFactory::kApogeeDuetModelId;
+constexpr uint32_t kFocusriteVendorId = ASFW::DeviceProfiles::Audio::kFocusriteVendorId;
+constexpr uint32_t kSPro24DspModelId = ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
+constexpr uint32_t kApogeeVendorId = ASFW::DeviceProfiles::Audio::kApogeeVendorId;
+constexpr uint32_t kApogeeDuetModelId = ASFW::DeviceProfiles::Audio::kApogeeDuetModelId;
 constexpr AudioClockConfig kSupportedClock{
     .sampleRateHz = 48000U,
 };
@@ -409,7 +408,7 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
             currentCaps_ = prepareCaps_;
         }
 
-        callback(prepareStatus, DiceDuplexPrepareResult{
+        callback(prepareStatus, DuplexPrepareResult{
                                     .generation = Generation{1},
                                     .channels = channels,
                                     .appliedClock = currentClock_,
@@ -436,10 +435,10 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
     void ProgramRx(StageCallback callback) override {
         log_.Add("device.program_rx");
         ++programRxCalls;
-        callback(programRxStatus, DiceDuplexStageResult{
+        callback(programRxStatus, DuplexStageResult{
                                       .generation = Generation{1},
                                       .channels = lastChannels_,
-                                      .phase = DiceRestartPhase::kDeviceRxProgrammed,
+                                      .phase = DuplexRestartPhase::kDeviceRxProgrammed,
                                       .runtimeCaps = currentCaps_,
                                   });
     }
@@ -447,10 +446,10 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
     void ProgramTxAndEnableDuplex(StageCallback callback) override {
         log_.Add("device.program_tx");
         ++programTxCalls;
-        callback(programTxStatus, DiceDuplexStageResult{
+        callback(programTxStatus, DuplexStageResult{
                                       .generation = Generation{1},
                                       .channels = lastChannels_,
-                                      .phase = DiceRestartPhase::kDeviceTxArmed,
+                                      .phase = DuplexRestartPhase::kDeviceTxArmed,
                                       .runtimeCaps = currentCaps_,
                                   });
     }
@@ -461,7 +460,7 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
         if (confirmStatus == kIOReturnSuccess) {
             currentCaps_ = confirmCaps_;
         }
-        callback(confirmStatus, DiceDuplexConfirmResult{
+        callback(confirmStatus, DuplexConfirmResult{
                                     .generation = Generation{1},
                                     .channels = lastChannels_,
                                     .appliedClock = currentClock_,
@@ -492,7 +491,7 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
             currentCaps_ = applyCaps_;
         }
 
-        callback(applyClockStatus, DiceClockApplyResult{
+        callback(applyClockStatus, DuplexClockApplyResult{
                                        .generation = Generation{1},
                                        .appliedClock = currentClock_,
                                        .runtimeCaps = currentCaps_,
@@ -506,7 +505,7 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
             healthStatusSequence.empty()
                 ? healthStatusValue
                 : healthStatusSequence[std::min(readIndex, healthStatusSequence.size() - 1)];
-        callback(healthStatus, DiceDuplexHealthResult{
+        callback(healthStatus, DuplexHealthResult{
                                    .generation = healthGeneration,
                                    .appliedClock = currentClock_,
                                    .runtimeCaps = currentCaps_,
@@ -552,6 +551,12 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
             prepareBlocked_ = false;
         }
         cv_.notify_all();
+    }
+
+    PrepareCallback TakeDeferredPrepareCallback() {
+        std::scoped_lock lock(mutex_);
+        prepareBlocked_ = false;
+        return std::move(deferredPrepareCallback_);
     }
 
     void SetHoldApply(bool hold) {
@@ -615,8 +620,18 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
     PrepareCallback deferredPrepareCallback_{};
 };
 
+// A DICE unit publishes the vendor OUI as its specifier with interface version
+// 1; a TA 1394 AV/C unit publishes 0x00A02D / 0x010001. The device catalog
+// constrains the unit it selects, so a ROM with no unit directory at all
+// resolves to nothing -- which is correct, and is what a real bus never shows.
+constexpr uint32_t kDiceInterfaceVersion = 0x000001;
+constexpr uint32_t kTa1394AvcSpecifier = 0x00A02D;
+constexpr uint32_t kTa1394AvcVersion = 0x010001;
+
 ConfigROM MakeConfigRom(uint64_t guid, uint32_t vendorId = kFocusriteVendorId,
-                        uint32_t modelId = kSPro24DspModelId, Generation gen = Generation{1}) {
+                        uint32_t modelId = kSPro24DspModelId, Generation gen = Generation{1},
+                        std::optional<uint32_t> unitSpecifier = std::nullopt,
+                        uint32_t unitVersion = kDiceInterfaceVersion) {
     ConfigROM rom{};
     rom.gen = gen;
     rom.firstSeen = gen;
@@ -628,7 +643,18 @@ ConfigROM MakeConfigRom(uint64_t guid, uint32_t vendorId = kFocusriteVendorId,
         RomEntry{.key = CfgKey::VendorId, .value = vendorId},
         RomEntry{.key = CfgKey::ModelId, .value = modelId},
     };
+    ASFW::Discovery::UnitDirectory unit{};
+    unit.offsetQuadlets = 5;
+    unit.unitSpecId = unitSpecifier.value_or(vendorId);
+    unit.unitSwVersion = unitVersion;
+    rom.unitDirectories.push_back(unit);
     return rom;
+}
+
+ConfigROM MakeAvcConfigRom(uint64_t guid, uint32_t vendorId, uint32_t modelId,
+                           Generation gen = Generation{1}) {
+    return MakeConfigRom(guid, vendorId, modelId, gen, kTa1394AvcSpecifier,
+                         kTa1394AvcVersion);
 }
 
 class AudioDuplexCoordinatorTests : public ::testing::Test {
@@ -657,7 +683,7 @@ class AudioDuplexCoordinatorTests : public ::testing::Test {
         protocol_->healthGeneration = gen;
     }
 
-    [[nodiscard]] std::optional<DiceRestartSession> GetSession() const {
+    [[nodiscard]] std::optional<DuplexRestartSession> GetSession() const {
         return coordinator_.GetSession(kTestGuid);
     }
 
@@ -669,7 +695,7 @@ class AudioDuplexCoordinatorTests : public ::testing::Test {
     // request. RequestClockConfig keeps a single pending slot per GUID written under the
     // coordinator lock, so this lets a test serialize concurrent submissions: wait until one
     // request is observably enqueued before launching the next, instead of racing for the lock.
-    [[nodiscard]] bool WaitForPendingClockReason(DiceRestartReason reason) const {
+    [[nodiscard]] bool WaitForPendingClockReason(DuplexRestartReason reason) const {
         using namespace std::chrono_literals;
         const auto deadline = std::chrono::steady_clock::now() + 2s;
         while (std::chrono::steady_clock::now() < deadline) {
@@ -701,9 +727,9 @@ TEST_F(AudioDuplexCoordinatorTests, ColdStartTransitionsIdleToRunning) {
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
-    EXPECT_EQ(session->state, DiceRestartState::kRunning);
-    EXPECT_EQ(session->reason, DiceRestartReason::kInitialStart);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kRunning);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Running);
+    EXPECT_EQ(session->reason, DuplexRestartReason::kInitialStart);
     EXPECT_TRUE(session->deviceRunning);
     EXPECT_TRUE(session->hostTransmitStarted);
     EXPECT_TRUE(session->hostReceiveStarted);
@@ -744,7 +770,7 @@ TEST_F(AudioDuplexCoordinatorTests, RemoteDeviceLossRejectsRestartUntilRediscove
     EXPECT_TRUE(coordinator_.IsDeviceOperationCancelled(kTestGuid));
 
     EXPECT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnNoDevice);
-    EXPECT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterTimingLoss),
+    EXPECT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterTimingLoss),
               kIOReturnAborted);
     EXPECT_EQ(hostTransport_.beginCalls, 0);
     EXPECT_EQ(protocol_->prepareCalls, 0);
@@ -757,7 +783,7 @@ TEST_F(AudioDuplexCoordinatorTests, RemoteDeviceLossRejectsRestartUntilRediscove
 TEST_F(AudioDuplexCoordinatorTests,
        AvcProfileReservesBothDirectionsAndInterleavesHostStartsWithDeviceStages) {
     (void)registry_.UpsertFromROM(
-        MakeConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
+        MakeAvcConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
     ClearLog();
 
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
@@ -813,14 +839,14 @@ TEST_F(AudioDuplexCoordinatorTests,
 TEST_F(AudioDuplexCoordinatorTests,
        ApogeeDuetStartForces48kBeforeDevicePreparationEvenAfterPersistedRate) {
     (void)registry_.UpsertFromROM(
-        MakeConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
+        MakeAvcConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
 
     // A developer-only/manual rate request can leave an old value in the
     // session. Until dynamic Duet rate changes exist, a subsequent normal
     // start must not reuse it.
     ASSERT_EQ(coordinator_.RequestClockConfig(
                   kTestGuid, AudioClockConfig{.sampleRateHz = 44100U},
-                  DiceRestartReason::kManualReconfigure),
+                  DuplexRestartReason::kManualReconfigure),
               kIOReturnSuccess);
     EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 44100U);
 
@@ -859,6 +885,27 @@ TEST_F(AudioDuplexCoordinatorTests, TeardownCancelAbortsInFlightPrepare) {
     EXPECT_EQ(coordinator_.TeardownAbortCount(), 1U);
 }
 
+// Abort provenance: when the device completes with kIOReturnAborted on its own,
+// latching cancellation before the caller handles the result must NOT increment
+// the lifecycle-abort counter (TeardownAbortCount). Only predicate-triggered aborts
+// count toward lifecycle aborts.
+TEST_F(AudioDuplexCoordinatorTests,
+       DeviceAbortWithLatchingTeardownDoesNotIncrementTeardownAbortCount) {
+    protocol_->SetDeferPrepareCallback(true);
+
+    auto start =
+        std::async(std::launch::async, [this] { return coordinator_.StartStreaming(kTestGuid); });
+
+    ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(1));
+    auto cb = protocol_->TakeDeferredPrepareCallback();
+    cb(kIOReturnAborted, DuplexPrepareResult{});
+    cancel_.store(true, std::memory_order_release);
+
+    ASSERT_EQ(start.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(start.get(), kIOReturnAborted);
+    EXPECT_EQ(coordinator_.TeardownAbortCount(), 0U);
+}
+
 TEST_F(AudioDuplexCoordinatorTests,
        GlobalClockRequiresConsecutiveStableReadsBeforeHostIsochStarts) {
     protocol_->healthStatusSequence = {
@@ -879,10 +926,10 @@ TEST_F(AudioDuplexCoordinatorTests, GlobalClockHealthFailureRollsBackBeforeHostI
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kFailed);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kFailed);
     ASSERT_TRUE(session->lastFailure.has_value());
-    EXPECT_EQ(session->lastFailure->failedPhase, DiceRestartPhase::kWaitingGlobalClock);
-    EXPECT_EQ(session->lastFailure->cause, DiceRestartFailureCause::kGlobalClockLock);
+    EXPECT_EQ(session->lastFailure->failedPhase, DuplexRestartPhase::kWaitingGlobalClock);
+    EXPECT_EQ(session->lastFailure->cause, DuplexRestartFailureCause::kGlobalClockLock);
     EXPECT_EQ(hostTransport_.startReceiveCalls, 0);
     EXPECT_EQ(hostTransport_.startTransmitCalls, 0);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
@@ -897,8 +944,8 @@ TEST_F(AudioDuplexCoordinatorTests, StopStreamingClearsRestartProgressAndStopsHo
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kIdle);
-    EXPECT_EQ(session->state, DiceRestartState::kIdle);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kIdle);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Idle);
     EXPECT_FALSE(session->deviceRunning);
     EXPECT_FALSE(session->hostTransmitStarted);
     EXPECT_FALSE(session->hostReceiveStarted);
@@ -928,14 +975,14 @@ TEST_F(AudioDuplexCoordinatorTests, IdleClockApplyUsesDeviceOnlyPathAndReturnsTo
     };
 
     ASSERT_EQ(coordinator_.RequestClockConfig(kTestGuid, kSupportedClock,
-                                              DiceRestartReason::kManualReconfigure),
+                                              DuplexRestartReason::kManualReconfigure),
               kIOReturnSuccess);
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kIdle);
-    EXPECT_EQ(session->state, DiceRestartState::kIdle);
-    EXPECT_EQ(session->reason, DiceRestartReason::kManualReconfigure);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kIdle);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Idle);
+    EXPECT_EQ(session->reason, DuplexRestartReason::kManualReconfigure);
     EXPECT_EQ(session->runtimeCaps.hostInputPcmChannels, 10U);
     EXPECT_EQ(session->runtimeCaps.hostOutputPcmChannels, 10U);
     EXPECT_EQ(protocol_->applyClockCalls, 1);
@@ -950,14 +997,14 @@ TEST_F(AudioDuplexCoordinatorTests, RunningClockRequestPerformsFullStopAndRestar
     const int prepareBefore = protocol_->prepareCalls;
 
     ASSERT_EQ(coordinator_.RequestClockConfig(kTestGuid, kSupportedClock,
-                                              DiceRestartReason::kManualReconfigure),
+                                              DuplexRestartReason::kManualReconfigure),
               kIOReturnSuccess);
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
-    EXPECT_EQ(session->state, DiceRestartState::kRunning);
-    EXPECT_EQ(session->reason, DiceRestartReason::kManualReconfigure);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kRunning);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Running);
+    EXPECT_EQ(session->reason, DuplexRestartReason::kManualReconfigure);
     EXPECT_EQ(protocol_->applyClockCalls, 0);
     EXPECT_EQ(protocol_->prepareCalls, prepareBefore + 1);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
@@ -976,14 +1023,14 @@ TEST_F(AudioDuplexCoordinatorTests, BusResetRecoveryRestartsRunningSessionOnNewG
     ClearLog();
     InstallDeviceAtGeneration(Generation{2}, protocol_);
 
-    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kBusResetRebind),
+    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kBusResetRebind),
               kIOReturnSuccess);
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
-    EXPECT_EQ(session->state, DiceRestartState::kRunning);
-    EXPECT_EQ(session->reason, DiceRestartReason::kBusResetRebind);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kRunning);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Running);
+    EXPECT_EQ(session->reason, DuplexRestartReason::kBusResetRebind);
     EXPECT_EQ(session->topologyGeneration, Generation{2});
     EXPECT_EQ(hostTransport_.stopCalls, 1);
     EXPECT_EQ(protocol_->stopCalls, 1);
@@ -1000,14 +1047,14 @@ TEST_F(AudioDuplexCoordinatorTests, TimingLossRecoveryRestartsRunningSession) {
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
     ClearLog();
 
-    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterTimingLoss),
+    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterTimingLoss),
               kIOReturnSuccess);
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
-    EXPECT_EQ(session->state, DiceRestartState::kRunning);
-    EXPECT_EQ(session->reason, DiceRestartReason::kRecoverAfterTimingLoss);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kRunning);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Running);
+    EXPECT_EQ(session->reason, DuplexRestartReason::kRecoverAfterTimingLoss);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
     EXPECT_EQ(protocol_->stopCalls, 1);
 
@@ -1024,14 +1071,14 @@ TEST_F(AudioDuplexCoordinatorTests, CycleInconsistentRecoveryRestartsRunningSess
     ClearLog();
 
     ASSERT_EQ(
-        coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterCycleInconsistent),
+        coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterCycleInconsistent),
         kIOReturnSuccess);
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
-    EXPECT_EQ(session->state, DiceRestartState::kRunning);
-    EXPECT_EQ(session->reason, DiceRestartReason::kRecoverAfterCycleInconsistent);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kRunning);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Running);
+    EXPECT_EQ(session->reason, DuplexRestartReason::kRecoverAfterCycleInconsistent);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
     EXPECT_EQ(protocol_->stopCalls, 1);
 
@@ -1047,14 +1094,14 @@ TEST_F(AudioDuplexCoordinatorTests, TxFaultRecoveryRestartsRunningSession) {
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
     ClearLog();
 
-    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterTxFault),
+    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterTxFault),
               kIOReturnSuccess);
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
-    EXPECT_EQ(session->state, DiceRestartState::kRunning);
-    EXPECT_EQ(session->reason, DiceRestartReason::kRecoverAfterTxFault);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kRunning);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Running);
+    EXPECT_EQ(session->reason, DuplexRestartReason::kRecoverAfterTxFault);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
     EXPECT_EQ(protocol_->stopCalls, 1);
 
@@ -1070,14 +1117,14 @@ TEST_F(AudioDuplexCoordinatorTests, LockLossRecoveryRestartsRunningSession) {
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
     ClearLog();
 
-    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterLockLoss),
+    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterLockLoss),
               kIOReturnSuccess);
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
-    EXPECT_EQ(session->state, DiceRestartState::kRunning);
-    EXPECT_EQ(session->reason, DiceRestartReason::kRecoverAfterLockLoss);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kRunning);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Running);
+    EXPECT_EQ(session->reason, DuplexRestartReason::kRecoverAfterLockLoss);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
     EXPECT_EQ(protocol_->stopCalls, 1);
 
@@ -1103,7 +1150,7 @@ TEST_F(AudioDuplexCoordinatorTests, ClockOperationInFlightTracksHostInitiatedCha
     std::future<IOReturn> requestFuture = requestPromise.get_future();
     std::thread requestThread([&] {
         requestPromise.set_value(coordinator_.RequestClockConfig(
-            kTestGuid, kSupportedClock, DiceRestartReason::kSampleRateChange));
+            kTestGuid, kSupportedClock, DuplexRestartReason::kSampleRateChange));
     });
 
     ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(2));
@@ -1124,7 +1171,7 @@ TEST_F(AudioDuplexCoordinatorTests, LatestPendingClockRequestWinsDuringRestart) 
     std::future<IOReturn> firstFuture = firstPromise.get_future();
     std::thread firstThread([&] {
         firstPromise.set_value(coordinator_.RequestClockConfig(
-            kTestGuid, kSupportedClock, DiceRestartReason::kManualReconfigure));
+            kTestGuid, kSupportedClock, DuplexRestartReason::kManualReconfigure));
     });
 
     ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(2));
@@ -1136,22 +1183,22 @@ TEST_F(AudioDuplexCoordinatorTests, LatestPendingClockRequestWinsDuringRestart) 
 
     std::thread secondThread([&] {
         secondPromise.set_value(coordinator_.RequestClockConfig(
-            kTestGuid, kSupportedClock, DiceRestartReason::kRecoverAfterTimingLoss));
+            kTestGuid, kSupportedClock, DuplexRestartReason::kRecoverAfterTimingLoss));
     });
 
     // The pending slot's winner is decided by lock-acquisition order, so the second request
     // must be observably enqueued before the third is launched; otherwise the two threads
     // race for the lock and which one "wins" is nondeterministic (the source of CI flake).
-    ASSERT_TRUE(WaitForPendingClockReason(DiceRestartReason::kRecoverAfterTimingLoss));
+    ASSERT_TRUE(WaitForPendingClockReason(DuplexRestartReason::kRecoverAfterTimingLoss));
 
     std::thread thirdThread([&] {
         thirdPromise.set_value(coordinator_.RequestClockConfig(kTestGuid, kSupportedClock,
-                                                               DiceRestartReason::kBusResetRebind));
+                                                               DuplexRestartReason::kBusResetRebind));
     });
 
     // The third request must supersede the second before prepare is released so the drain
     // order is deterministic: second -> kSuperseded/kIOReturnAborted, third -> kApplied.
-    ASSERT_TRUE(WaitForPendingClockReason(DiceRestartReason::kBusResetRebind));
+    ASSERT_TRUE(WaitForPendingClockReason(DuplexRestartReason::kBusResetRebind));
 
     protocol_->SetHoldPrepare(false);
 
@@ -1165,12 +1212,12 @@ TEST_F(AudioDuplexCoordinatorTests, LatestPendingClockRequestWinsDuringRestart) 
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
-    EXPECT_EQ(session->state, DiceRestartState::kRunning);
-    EXPECT_EQ(session->reason, DiceRestartReason::kBusResetRebind);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kRunning);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Running);
+    EXPECT_EQ(session->reason, DuplexRestartReason::kBusResetRebind);
     ASSERT_TRUE(session->lastClockCompletion.has_value());
-    EXPECT_EQ(session->lastClockCompletion->outcome, DiceClockRequestOutcome::kApplied);
-    EXPECT_EQ(session->lastClockCompletion->reason, DiceRestartReason::kBusResetRebind);
+    EXPECT_EQ(session->lastClockCompletion->outcome, DuplexClockRequestOutcome::kApplied);
+    EXPECT_EQ(session->lastClockCompletion->reason, DuplexRestartReason::kBusResetRebind);
     EXPECT_EQ(protocol_->prepareCalls, 3);
     EXPECT_EQ(hostTransport_.stopCalls, 2);
     EXPECT_EQ(protocol_->stopCalls, 2);
@@ -1184,7 +1231,7 @@ TEST_F(AudioDuplexCoordinatorTests, StopStreamingAbortsClockRequestsDuringRestar
     std::future<IOReturn> firstFuture = firstPromise.get_future();
     std::thread firstThread([&] {
         firstPromise.set_value(coordinator_.RequestClockConfig(
-            kTestGuid, kSupportedClock, DiceRestartReason::kManualReconfigure));
+            kTestGuid, kSupportedClock, DuplexRestartReason::kManualReconfigure));
     });
 
     ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(2));
@@ -1193,7 +1240,7 @@ TEST_F(AudioDuplexCoordinatorTests, StopStreamingAbortsClockRequestsDuringRestar
     std::future<IOReturn> secondFuture = secondPromise.get_future();
     std::thread secondThread([&] {
         secondPromise.set_value(coordinator_.RequestClockConfig(
-            kTestGuid, kSupportedClock, DiceRestartReason::kBusResetRebind));
+            kTestGuid, kSupportedClock, DuplexRestartReason::kBusResetRebind));
     });
 
     std::promise<IOReturn> stopPromise;
@@ -1213,10 +1260,10 @@ TEST_F(AudioDuplexCoordinatorTests, StopStreamingAbortsClockRequestsDuringRestar
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kIdle);
-    EXPECT_EQ(session->state, DiceRestartState::kIdle);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kIdle);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Idle);
     ASSERT_TRUE(session->lastClockCompletion.has_value());
-    EXPECT_EQ(session->lastClockCompletion->outcome, DiceClockRequestOutcome::kAbortedByStop);
+    EXPECT_EQ(session->lastClockCompletion->outcome, DuplexClockRequestOutcome::kAbortedByStop);
     EXPECT_EQ(protocol_->prepareCalls, 2);
     // The in-flight clock operation already stopped the session. The explicit
     // stop acknowledges that terminal state without duplicating global host
@@ -1243,12 +1290,13 @@ TEST_F(AudioDuplexCoordinatorTests, RouteRebindDuringPrepareInvalidatesRestartEp
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kIdle);
-    EXPECT_EQ(session->state, DiceRestartState::kIdle);
-    EXPECT_EQ(session->terminalError, kIOReturnSuccess);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kIdle);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Idle);
+    // Idle carries no terminal error by construction; assert that structurally.
+    EXPECT_TRUE(std::holds_alternative<ASFW::Audio::LifecycleIdle>(session->lifecycle));
     ASSERT_TRUE(session->lastInvalidation.has_value());
-    EXPECT_EQ(session->lastInvalidation->errorClass, DiceRestartErrorClass::kEpochInvalidated);
-    EXPECT_EQ(session->lastInvalidation->cause, DiceRestartFailureCause::kPrepare);
+    EXPECT_EQ(session->lastInvalidation->errorClass, DuplexRestartErrorClass::kEpochInvalidated);
+    EXPECT_EQ(session->lastInvalidation->cause, DuplexRestartFailureCause::kPrepare);
     EXPECT_TRUE(session->lastInvalidation->retryable);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
     EXPECT_EQ(protocol_->stopCalls, 1);
@@ -1261,12 +1309,15 @@ TEST_F(AudioDuplexCoordinatorTests, ProgramRxFailureRollsBackHostAndDeviceInOrde
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kFailed);
-    EXPECT_EQ(session->state, DiceRestartState::kFailed);
-    EXPECT_EQ(session->terminalError, kIOReturnNoDevice);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kFailed);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Failed);
+    // Terminal error is the Failed alternative's payload (single authority).
+    ASSERT_TRUE(std::holds_alternative<ASFW::Audio::LifecycleFailed>(session->lifecycle));
+    EXPECT_EQ(std::get<ASFW::Audio::LifecycleFailed>(session->lifecycle).terminalError,
+              kIOReturnNoDevice);
     ASSERT_TRUE(session->lastFailure.has_value());
-    EXPECT_EQ(session->lastFailure->errorClass, DiceRestartErrorClass::kStageFailure);
-    EXPECT_EQ(session->lastFailure->cause, DiceRestartFailureCause::kProgramRx);
+    EXPECT_EQ(session->lastFailure->errorClass, DuplexRestartErrorClass::kStageFailure);
+    EXPECT_EQ(session->lastFailure->cause, DuplexRestartFailureCause::kProgramRx);
     EXPECT_TRUE(session->lastFailure->rollbackAttempted);
     EXPECT_FALSE(session->hostReceiveStarted);
     EXPECT_FALSE(session->deviceRunning);
@@ -1295,7 +1346,7 @@ TEST_F(AudioDuplexCoordinatorTests, UnsupportedClockConfigFailsBeforeHostAllocat
     };
 
     EXPECT_EQ(coordinator_.RequestClockConfig(kTestGuid, unsupportedClock,
-                                              DiceRestartReason::kSampleRateChange),
+                                              DuplexRestartReason::kSampleRateChange),
               kIOReturnUnsupported);
     EXPECT_EQ(hostTransport_.beginCalls, 0);
     EXPECT_EQ(hostTransport_.stopCalls, 0);
@@ -1312,16 +1363,16 @@ TEST_F(AudioDuplexCoordinatorTests,
     // attempts. The rest of this test already asserts that nothing ran —
     // beginCalls == 0 and the session stays Idle — which is precisely why
     // reporting success here was wrong.
-    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterTimingLoss),
+    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterTimingLoss),
               kIOReturnUnsupported);
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kIdle);
-    EXPECT_EQ(session->state, DiceRestartState::kIdle);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kIdle);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Idle);
     ASSERT_TRUE(session->lastInvalidation.has_value());
-    EXPECT_EQ(session->lastInvalidation->errorClass, DiceRestartErrorClass::kEpochInvalidated);
-    EXPECT_EQ(session->lastInvalidation->cause, DiceRestartFailureCause::kTimingLoss);
+    EXPECT_EQ(session->lastInvalidation->errorClass, DuplexRestartErrorClass::kEpochInvalidated);
+    EXPECT_EQ(session->lastInvalidation->cause, DuplexRestartFailureCause::kTimingLoss);
     EXPECT_EQ(hostTransport_.beginCalls, 0);
     EXPECT_EQ(hostTransport_.stopCalls, 0);
     EXPECT_EQ(protocol_->prepareCalls, 0);
@@ -1339,16 +1390,16 @@ TEST_F(AudioDuplexCoordinatorTests, RetryableFailedSessionRestartsAndClearsLastF
     protocol_->programRxStatus = kIOReturnSuccess;
     ClearLog();
 
-    EXPECT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterTimingLoss),
+    EXPECT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterTimingLoss),
               kIOReturnSuccess);
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
-    EXPECT_EQ(session->state, DiceRestartState::kRunning);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kRunning);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Running);
     EXPECT_FALSE(session->lastFailure.has_value());
     ASSERT_TRUE(session->lastInvalidation.has_value());
-    EXPECT_EQ(session->lastInvalidation->cause, DiceRestartFailureCause::kTimingLoss);
+    EXPECT_EQ(session->lastInvalidation->cause, DuplexRestartFailureCause::kTimingLoss);
 }
 
 TEST_F(AudioDuplexCoordinatorTests, NonRetryableFailedSessionDoesNotRestartOnRecovery) {
@@ -1363,13 +1414,13 @@ TEST_F(AudioDuplexCoordinatorTests, NonRetryableFailedSessionDoesNotRestartOnRec
     ClearLog();
     protocol_->programRxStatus = kIOReturnSuccess;
 
-    EXPECT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterTimingLoss),
+    EXPECT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterTimingLoss),
               kIOReturnUnsupported);
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->phase, DiceRestartPhase::kFailed);
-    EXPECT_EQ(session->state, DiceRestartState::kFailed);
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kFailed);
+    EXPECT_EQ(KindOf(session->lifecycle), DuplexLifecycleKind::Failed);
     EXPECT_EQ(protocol_->prepareCalls, 1);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
 }

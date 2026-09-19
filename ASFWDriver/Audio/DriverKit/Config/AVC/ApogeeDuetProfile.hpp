@@ -15,7 +15,6 @@ class ApogeeDuetProfile final : public DICE::IDiceDeviceProfile {
 public:
     [[nodiscard]] const char* Name() const noexcept override;
 
-    [[nodiscard]] bool Matches(const DICE::DiceDeviceIdentity& identity) const noexcept override;
 
     [[nodiscard]] DICE::DiceDeviceQuirks Quirks() const noexcept override;
 

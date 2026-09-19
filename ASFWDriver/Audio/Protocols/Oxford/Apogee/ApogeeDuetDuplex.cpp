@@ -204,7 +204,7 @@ void ApogeeDuetDuplex::PrepareDuplex(const AudioDuplexChannels& channels,
     ApplyClockConfig(
         desiredClock,
         [this, channels, callback = std::move(callback)](IOReturn status,
-                                                         ClockApplyResult result) mutable {
+                                                         DuplexClockApplyResult result) mutable {
             callback(status,
                      DuplexPrepareResult{
                          .generation = result.generation,
@@ -242,7 +242,7 @@ void ApogeeDuetDuplex::ApplyClockConfig(const AudioClockConfig& desiredClock,
         AudioStreamRuntimeCaps caps{};
         (void)GetRuntimeAudioStreamCaps(caps);
         callback(kIOReturnSuccess,
-                 ClockApplyResult{
+                 DuplexClockApplyResult{
                      .generation = runtime_.busInfo.GetGeneration(),
                      .appliedClock = appliedClock_,
                      .runtimeCaps = caps,
@@ -542,7 +542,7 @@ void ApogeeDuetDuplex::FinishClockTransition(
     AudioStreamRuntimeCaps caps{};
     (void)GetRuntimeAudioStreamCaps(caps);
     completion(kIOReturnSuccess,
-               ClockApplyResult{
+               DuplexClockApplyResult{
                    .generation = runtime_.busInfo.GetGeneration(),
                    .appliedClock = appliedClock_,
                    .runtimeCaps = caps,

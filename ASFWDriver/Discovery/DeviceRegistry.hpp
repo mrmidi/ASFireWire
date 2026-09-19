@@ -76,12 +76,17 @@ private:
     std::map<Guid64, uint64_t> lastDeviceIncarnationByGuid_;
     uint64_t nextRouteEpoch_{0};
 
+    // Device instance ids are globally monotonic, unlike deviceIncarnation
+    // which restarts at 1 per GUID and so cannot identify a device on its own.
+    uint64_t nextDeviceInstanceId_{0};
+
     // Secondary index: (generation, nodeId) → GUID for fast per-generation lookup
     using GenNodeKey = uint32_t;
     static GenNodeKey MakeKey(Generation gen, uint8_t nodeId);
     std::map<GenNodeKey, Guid64> genNodeToGuid_;
 
     [[nodiscard]] uint64_t AllocateRouteEpochLocked() noexcept;
+    [[nodiscard]] DeviceInstanceId AllocateDeviceInstanceIdLocked() noexcept;
     [[nodiscard]] static bool HasLiveRoute(const DeviceRecord& device) noexcept;
     [[nodiscard]] static DeviceRouteToken MakeRouteToken(const DeviceRecord& device) noexcept;
 };

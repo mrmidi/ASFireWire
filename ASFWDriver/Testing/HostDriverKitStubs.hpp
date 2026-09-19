@@ -89,10 +89,16 @@ private:
 
 class OSAction : public OSObject {};
 
+class OSDictionary;
+
 class IOService : public OSObject {
 public:
     virtual kern_return_t Start(IOService*) { return kIOReturnSuccess; }
     virtual void Stop(IOService*) {}
+    virtual kern_return_t Create(IOService*, const char*, IOService**) { return kIOReturnUnsupported; }
+    virtual kern_return_t CopyProperties(OSDictionary**) { return kIOReturnUnsupported; }
+    virtual kern_return_t SetProperties(OSDictionary*) { return kIOReturnSuccess; }
+    virtual kern_return_t Terminate(uint64_t) { return kIOReturnSuccess; }
 };
 
 using IODispatchQueueName = const char*;
@@ -147,8 +153,12 @@ public:
         std::function<void()> work;
     };
 
-    static kern_return_t Create(const char*, uint64_t, uint64_t, IODispatchQueue**) {
-        return kIOReturnUnsupported;
+    static kern_return_t Create(const char*, uint64_t, uint64_t, IODispatchQueue** queue) {
+        if (!queue) {
+            return kIOReturnBadArgument;
+        }
+        *queue = new IODispatchQueue();
+        return kIOReturnSuccess;
     }
 
     void DispatchAsync(const std::function<void()>& work) {
@@ -181,9 +191,14 @@ public:
     }
 
     void DispatchSync(const std::function<void()>& work) {
+        std::scoped_lock lock(executionMutex_);
         if (work) {
             work();
         }
+    }
+
+    [[nodiscard]] std::mutex& ExecutionMutexForTesting() noexcept {
+        return executionMutex_;
     }
 
     void SetManualDispatchForTesting(bool manual) {
@@ -263,6 +278,7 @@ private:
 
     bool manualDispatchForTesting_{false};
     mutable std::mutex pendingLock_;
+    mutable std::mutex executionMutex_;
     std::deque<PendingWorkItem> pending_;
 };
 

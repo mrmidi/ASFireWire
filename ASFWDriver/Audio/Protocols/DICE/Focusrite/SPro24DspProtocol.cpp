@@ -111,21 +111,6 @@ IOReturn SPro24DspProtocol::Shutdown() {
     return tcat_.Shutdown();
 }
 
-void SPro24DspProtocol::PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) {
-    tcat_.PrepareDuplex48k(channels, std::move(callback));
-}
-
-void SPro24DspProtocol::ProgramRxForDuplex48k(VoidCallback callback) {
-    tcat_.ProgramRxForDuplex48k(std::move(callback));
-}
-
-void SPro24DspProtocol::ProgramTxAndEnableDuplex48k(VoidCallback callback) {
-    tcat_.ProgramTxAndEnableDuplex48k(std::move(callback));
-}
-
-void SPro24DspProtocol::ConfirmDuplex48kStart(VoidCallback callback) {
-    tcat_.ConfirmDuplex48kStart(std::move(callback));
-}
 
 IOReturn SPro24DspProtocol::StopDuplex() {
     return tcat_.StopDuplex();
@@ -367,14 +352,5 @@ void SPro24DspProtocol::SetOutputGroupState(const OutputGroupState& state, VoidC
         });
     });
 }
-
-// ============================================================================
-// TODO: Test only - Stream Control
-// ============================================================================
-
-void SPro24DspProtocol::StartStreamTest(VoidCallback callback) {
-    const AudioDuplexChannels channels{};
-    PrepareDuplex48k(channels, std::move(callback));
-}
-
 } // namespace ASFW::Audio::DICE::Focusrite
+

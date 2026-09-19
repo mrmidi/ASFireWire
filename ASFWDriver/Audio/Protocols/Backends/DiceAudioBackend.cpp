@@ -3,6 +3,7 @@
 
 #include "DiceAudioBackend.hpp"
 #include "DiceRuntimeDeviceConfig.hpp"
+#include "SyncAsyncBridge.hpp"
 
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
@@ -12,8 +13,9 @@
 #include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../StreamGeometryResolver.hpp"
-#include "../DeviceProtocolFactory.hpp"
-#include "../../DriverKit/Config/DICE/DiceProfileRegistry.hpp"
+#include "../DeviceProtocolChoice.hpp"
+#include "../../DriverKit/Config/AudioProfileRegistry.hpp"
+#include "../../DriverKit/Config/DICE/DiceDeviceProfile.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSSharedPtr.h>
@@ -159,6 +161,10 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
 }
 
 DiceAudioBackend::~DiceAudioBackend() noexcept {
+    // Stage 2b D1: defensive teardown in the destructor, matching MotuAudioBackend's
+    // shape. Normal lifecycle calls BeginTeardown() explicitly before destruction;
+    // this only covers a destructor-only path. Idempotent by exchange latch.
+    BeginTeardown();
     DICE::NotificationMailbox::ClearObserver(this);
     if (lock_) {
         IOLockFree(lock_);
@@ -167,48 +173,75 @@ DiceAudioBackend::~DiceAudioBackend() noexcept {
 }
 
 void DiceAudioBackend::BeginTeardown() noexcept {
-    const bool wasStopping = stopping_.exchange(true, std::memory_order_acq_rel);
+    stopping_.store(true, std::memory_order_release);
     DICE::NotificationMailbox::ClearObserver(this);
 
-    const uint64_t recoveryRejectBefore =
-        recoveryRejectCount_.load(std::memory_order_acquire);
-    const uint64_t probeRejectBefore =
-        probeRejectCount_.load(std::memory_order_acquire);
-    const uint64_t probeAbortBefore =
-        probeAbortCount_.load(std::memory_order_acquire);
-    const uint64_t coordinatorAbortBefore =
-        restartCoordinator_.TeardownAbortCount();
-    const uint64_t startMs = UptimeMilliseconds();
-
-    ASFW_LOG(Audio,
-             "DiceAudioBackend: BeginTeardown stopping=true draining dice queue already=%u",
-             wasStopping ? 1 : 0);
-
-    if (workQueue_) {
-#ifdef ASFW_HOST_TEST
-        workQueue_->DispatchSync([] {});
-#else
-        workQueue_->DispatchSync(^{});
-#endif
+    if (teardownComplete_.load(std::memory_order_acquire)) {
+        return;
     }
 
-    const uint64_t endMs = UptimeMilliseconds();
-    const uint64_t drainMs = endMs >= startMs ? endMs - startMs : 0;
-    const uint64_t coordinatorAborted =
-        restartCoordinator_.TeardownAbortCount() - coordinatorAbortBefore;
-    const uint64_t probeAborted =
-        probeAbortCount_.load(std::memory_order_acquire) - probeAbortBefore;
-    const uint64_t recoveryRejected =
-        recoveryRejectCount_.load(std::memory_order_acquire) - recoveryRejectBefore;
-    const uint64_t probeRejected =
-        probeRejectCount_.load(std::memory_order_acquire) - probeRejectBefore;
+    if (!teardownStarted_.exchange(true, std::memory_order_acq_rel)) {
+        // Atomically close admission and wait for any admitted in-flight publication to finish.
+        publicationGate_.CloseAndWait();
 
-    ASFW_LOG(Audio,
-             "DiceAudioBackend: dice queue drained aborted=%llu recoveryRejected=%llu probeRejected=%llu drain=%llums",
-             coordinatorAborted + probeAborted,
-             recoveryRejected,
-             probeRejected,
-             drainMs);
+        const uint64_t recoveryRejectBefore =
+            recoveryRejectCount_.load(std::memory_order_acquire);
+        const uint64_t probeRejectBefore =
+            probeRejectCount_.load(std::memory_order_acquire);
+        const uint64_t probeAbortBefore =
+            probeAbortCount_.load(std::memory_order_acquire);
+        const uint64_t coordinatorAbortBefore =
+            restartCoordinator_.TeardownAbortCount();
+        const uint64_t publicationRejectBefore =
+            publicationGate_.RejectCount();
+        const uint64_t startMs = UptimeMilliseconds();
+
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: BeginTeardown stopping=true draining dice queue");
+
+        if (workQueue_) {
+#ifdef ASFW_HOST_TEST
+            if (onTeardownDrainStartedHookForTesting_) {
+                onTeardownDrainStartedHookForTesting_();
+            }
+            workQueue_->DispatchSync([] {});
+#else
+            workQueue_->DispatchSync(^{});
+#endif
+        }
+
+        const uint64_t endMs = UptimeMilliseconds();
+        const uint64_t drainMs = endMs >= startMs ? endMs - startMs : 0;
+        const uint64_t coordinatorAborted =
+            restartCoordinator_.TeardownAbortCount() - coordinatorAbortBefore;
+        const uint64_t probeAborted =
+            probeAbortCount_.load(std::memory_order_acquire) - probeAbortBefore;
+        const uint64_t recoveryRejected =
+            recoveryRejectCount_.load(std::memory_order_acquire) - recoveryRejectBefore;
+        const uint64_t probeRejected =
+            probeRejectCount_.load(std::memory_order_acquire) - probeRejectBefore;
+
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: dice queue drained aborted=%llu recoveryRejected=%llu probeRejected=%llu publicationRejected=%llu drain=%llums",
+                 coordinatorAborted + probeAborted,
+                 recoveryRejected,
+                 probeRejected,
+                 publicationGate_.RejectCount() - publicationRejectBefore,
+                 drainMs);
+
+        teardownComplete_.store(true, std::memory_order_release);
+        return;
+    }
+
+    // Secondary / concurrent callers wait safely until the primary drain is finished.
+#ifdef ASFW_HOST_TEST
+    if (onSecondaryTeardownWaitingHookForTesting_) {
+        onSecondaryTeardownWaitingHookForTesting_();
+    }
+#endif
+    while (!teardownComplete_.load(std::memory_order_acquire)) {
+        IOSleep(1);
+    }
 }
 
 void DiceAudioBackend::OnDeviceRecordUpdated(uint64_t guid) noexcept {
@@ -232,7 +265,25 @@ void DiceAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
              guid);
 }
 
-void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReason reason) noexcept {
+void DiceAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
+    ASFW_LOG(Audio,
+             "AudioCoordinator: Device resumed while active; scheduling DICE recovery GUID=0x%016llx",
+             guid);
+    HandleRecoveryEvent(guid, DuplexRestartReason::kBusResetRebind);
+}
+
+void DiceAudioBackend::HandleHostTimingLoss(uint64_t guid) noexcept {
+    HandleRecoveryEvent(guid, DuplexRestartReason::kRecoverAfterTimingLoss);
+}
+
+void DiceAudioBackend::HandleCycleInconsistent(uint64_t guid) noexcept {
+    ASFW_LOG_WARNING(Audio,
+                     "AudioCoordinator: cycleInconsistent observed; scheduling DICE recovery GUID=0x%016llx",
+                     guid);
+    HandleRecoveryEvent(guid, DuplexRestartReason::kRecoverAfterCycleInconsistent);
+}
+
+void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason reason) noexcept {
     if (guid == 0) {
         return;
     }
@@ -260,10 +311,10 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReaso
     // block finally runs. Bus-reset rebinds stay unguarded: they are external
     // topology events that must always rebind.
     const bool isRuntimeFault =
-        reason == DICE::DiceRestartReason::kRecoverAfterTimingLoss ||
-        reason == DICE::DiceRestartReason::kRecoverAfterCycleInconsistent ||
-        reason == DICE::DiceRestartReason::kRecoverAfterLockLoss ||
-        reason == DICE::DiceRestartReason::kRecoverAfterTxFault;
+        reason == DuplexRestartReason::kRecoverAfterTimingLoss ||
+        reason == DuplexRestartReason::kRecoverAfterCycleInconsistent ||
+        reason == DuplexRestartReason::kRecoverAfterLockLoss ||
+        reason == DuplexRestartReason::kRecoverAfterTxFault;
     uint64_t faultRestartId = 0;
     if (isRuntimeFault) {
         if (restartCoordinator_.IsOperationInFlight(guid)) {
@@ -451,38 +502,34 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    struct WaitState {
-        std::atomic<bool> done{false};
-        IOReturn status{kIOReturnTimeout};
-        DICE::DiceDuplexHealthResult result{};
-    };
+    const auto probe = WaitForAsyncResult<DuplexHealthResult>(
+        [&](auto callback) {
+            diceProtocol->ReadDuplexHealth(std::move(callback));
+        },
+        kHealthBridgeTimeoutMs,
+        kIOReturnTimeout,
+        [&]() noexcept {
+            return stopping_.load(std::memory_order_acquire) ||
+                   restartCoordinator_.IsDeviceOperationCancelled(guid);
+        },
+        kHealthBridgePollMs);
 
-    auto waitState = std::make_shared<WaitState>();
-    diceProtocol->ReadDuplexHealth([waitState](IOReturn status, DICE::DiceDuplexHealthResult result) {
-        waitState->status = status;
-        waitState->result = std::move(result);
-        waitState->done.store(true, std::memory_order_release);
-    });
-
-    for (uint32_t waited = 0; waited < kHealthBridgeTimeoutMs; waited += kHealthBridgePollMs) {
-        if (waitState->done.load(std::memory_order_acquire)) {
-            break;
-        }
-        if (stopping_.load(std::memory_order_acquire) ||
-            restartCoordinator_.IsDeviceOperationCancelled(guid)) {
-            probeAbortCount_.fetch_add(1, std::memory_order_acq_rel);
-            ASFW_LOG(Audio,
-                     "DiceAudioBackend: health probe aborted by lifecycle cancellation "
-                     "GUID=%llx bits=0x%08x kr=0x%x",
-                     guid,
-                     notificationBits,
-                     kIOReturnAborted);
-            return;
-        }
-        IOSleep(kHealthBridgePollMs);
+    if (probe.wasCancelled) {
+        // Lifecycle abort: the bridge's cancellation predicate fired (stopping_ or
+        // device operation cancelled), which is what probeAbortCount_ measures and
+        // what the BeginTeardown drain summary reports. Authoritatively tracked by the
+        // bridge so ordinary device aborts (kIOReturnAborted from callback) never inflate it.
+        probeAbortCount_.fetch_add(1, std::memory_order_acq_rel);
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: health probe aborted by lifecycle cancellation "
+                 "GUID=%llx bits=0x%08x kr=0x%x",
+                 guid,
+                 notificationBits,
+                 kIOReturnAborted);
+        return;
     }
 
-    if (!waitState->done.load(std::memory_order_acquire)) {
+    if (probe.status == kIOReturnTimeout) {
         ASFW_LOG_WARNING(Audio,
                          "DiceAudioBackend: health probe timed out GUID=%llx bits=0x%08x",
                          guid,
@@ -490,24 +537,24 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    if (waitState->status != kIOReturnSuccess) {
+    if (probe.status != kIOReturnSuccess) {
         ASFW_LOG_WARNING(Audio,
                          "DiceAudioBackend: health probe failed GUID=%llx bits=0x%08x kr=0x%x",
                          guid,
                          notificationBits,
-                         waitState->status);
+                         probe.status);
         return;
     }
 
-    const bool sourceLocked = waitState->result.sourceLocked;
-    const bool extClockHealthy = waitState->result.clockReferenceHealthy;
+    const bool sourceLocked = probe.value.sourceLocked;
+    const bool extClockHealthy = probe.value.clockReferenceHealthy;
 
     char notifyStr[96];
     char clockStr[40];
     char extStr[128];
     DICE::FormatNotification(notificationBits, notifyStr, sizeof(notifyStr));
-    DICE::FormatGlobalStatus(waitState->result.status, clockStr, sizeof(clockStr));
-    DICE::FormatExtStatus(waitState->result.extStatus, extStr, sizeof(extStr));
+    DICE::FormatGlobalStatus(probe.value.status, clockStr, sizeof(clockStr));
+    DICE::FormatExtStatus(probe.value.extStatus, extStr, sizeof(extStr));
 
     if (sourceLocked && extClockHealthy) {
         // Healthy — but the device may have moved to a different rate on its
@@ -515,7 +562,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         // PLL's locked nominal rate against the host's current belief and, on
         // a mismatch, tell the audio driver to re-sync the HAL (forced format
         // change; AppleUSBAudio's device-driven rate-move analog).
-        const uint32_t deviceRateHz = waitState->result.nominalRateHz;
+        const uint32_t deviceRateHz = probe.value.nominalRateHz;
         auto* nub = publisher_.GetNub(guid);
         const uint32_t hostRateHz = nub ? nub->GetCurrentSampleRateHz() : 0;
         if (nub && deviceRateHz != 0 && hostRateHz != 0 &&
@@ -581,34 +628,22 @@ bool DiceAudioBackend::DeviceReportsHealthyClock(uint64_t guid) noexcept {
         return false;
     }
 
-    struct WaitState {
-        std::atomic<bool> done{false};
-        IOReturn status{kIOReturnTimeout};
-        DICE::DiceDuplexHealthResult result{};
-    };
-    auto waitState = std::make_shared<WaitState>();
-    diceProtocol->ReadDuplexHealth([waitState](IOReturn status, DICE::DiceDuplexHealthResult result) {
-        waitState->status = status;
-        waitState->result = std::move(result);
-        waitState->done.store(true, std::memory_order_release);
-    });
+    const auto probe = WaitForAsyncResult<DuplexHealthResult>(
+        [&](auto callback) {
+            diceProtocol->ReadDuplexHealth(std::move(callback));
+        },
+        kHealthBridgeTimeoutMs,
+        kIOReturnTimeout,
+        [&]() noexcept {
+            return stopping_.load(std::memory_order_acquire) ||
+                   restartCoordinator_.IsDeviceOperationCancelled(guid);
+        },
+        kHealthBridgePollMs);
 
-    for (uint32_t waited = 0; waited < kHealthBridgeTimeoutMs; waited += kHealthBridgePollMs) {
-        if (waitState->done.load(std::memory_order_acquire)) {
-            break;
-        }
-        if (stopping_.load(std::memory_order_acquire) ||
-            restartCoordinator_.IsDeviceOperationCancelled(guid)) {
-            return false;
-        }
-        IOSleep(kHealthBridgePollMs);
-    }
-
-    if (!waitState->done.load(std::memory_order_acquire) ||
-        waitState->status != kIOReturnSuccess) {
+    if (probe.status != kIOReturnSuccess) {
         return false;
     }
-    return waitState->result.sourceLocked && waitState->result.clockReferenceHealthy;
+    return probe.value.sourceLocked && probe.value.clockReferenceHealthy;
 }
 
 bool DiceAudioBackend::TryBeginRecovery(uint64_t guid) noexcept {
@@ -643,32 +678,53 @@ void DiceAudioBackend::NotificationObserverThunk(void* context, uint32_t bits) n
 void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     if (guid == 0) return;
 
+    auto admission = std::make_shared<PublicationGate::AdmissionScope>(publicationGate_);
+    if (!admission->IsAdmitted()) {
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: publication refused by teardown GUID=0x%016llx",
+                 guid);
+        return;
+    }
+
+#ifdef ASFW_HOST_TEST
+    if (beforePublishHookForTesting_) {
+        beforePublishHookForTesting_();
+    }
+#endif
+
+    if (admission->AbortIfStopping()) {
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: publication cancelled by concurrent teardown GUID=0x%016llx",
+                 guid);
+        return;
+    }
+
     const auto record = registry_.SnapshotByGuid(guid);
     if (!record.has_value()) {
         ASFW_LOG(Audio, "DiceAudioBackend::EnsureNubForGuid: no registry record for GUID=0x%016llx", guid);
         return;
     }
 
-    const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
-    if (integration != DeviceIntegrationMode::kHardcodedNub) {
+    if (ChooseAudioBackend(*record) != AudioBackendKind::Dice) {
         ASFW_LOG(Audio,
-                 "DiceAudioBackend::EnsureNubForGuid: skipping GUID=0x%016llx vendor=0x%06x model=0x%06x integration=%u (not hardcodedNub)",
-                 guid, record->vendorId, record->modelId, static_cast<unsigned>(integration));
+                 "DiceAudioBackend::EnsureNubForGuid: skipping GUID=0x%016llx vendor=0x%06x "
+                 "model=0x%06x (the catalog does not route it to the DICE backend)",
+                 guid, record->vendorId, record->modelId);
         return;
     }
 
-    // Check modelid/vendor id first to find a known profile.
-    ASFW::Isoch::Audio::DICE::DiceDeviceIdentity identity{
-        .guid = record->guid,
-        .vendorId = record->vendorId,
-        .modelId = record->modelId
-    };
-    static ASFW::Isoch::Audio::DICE::DiceProfileRegistry diceRegistry{};
-    const auto* profile = diceRegistry.FindProfile(identity);
+    // The device catalog already decided what this device is; ask it which
+    // profile owns the geometry rather than matching on vendor/model again.
+    const auto choice = ChooseDeviceProtocol(*record);
+    const uint32_t profileBuilderId =
+        choice.has_value() ? static_cast<uint32_t>(choice->builder) : 0U;
+    const auto* profile =
+        ASFW::Isoch::Audio::AudioProfileRegistry::DiceProfileForBuilderId(profileBuilderId);
     if (!profile) {
         ASFW_LOG(Audio,
-                 "DiceAudioBackend::EnsureNubForGuid: no isoch profile for GUID=0x%016llx vendor=0x%06x model=0x%06x (profileCount=%u)",
-                 guid, record->vendorId, record->modelId, diceRegistry.ProfileCount());
+                 "DiceAudioBackend::EnsureNubForGuid: no isoch profile for GUID=0x%016llx "
+                 "vendor=0x%06x model=0x%06x builder=%u",
+                 guid, record->vendorId, record->modelId, profileBuilderId);
         return;
     }
 
@@ -682,6 +738,9 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.guid = record->guid;
     dev.vendorId = record->vendorId;
     dev.modelId = record->modelId;
+    // Carry the catalog's answer to the audio side, which only ever sees
+    // scalars and must not have to re-derive it.
+    dev.profileBuilderId = profileBuilderId;
     dev.deviceName = profile->Name();
     dev.inputChannelCount = profile->RxChannelCount();
     dev.outputChannelCount = profile->TxChannelCount();
@@ -698,9 +757,23 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // loaded them), update the endpoint runtime, then publish the nub. Host
     // input == device TX, host output == device RX (see AudioTypes.hpp), which
     // is exactly how GetChannelLabels reports them.
-    auto finish = [this, guid, profile](Model::ASFWAudioDevice dev,
-                               const std::shared_ptr<IDeviceProtocol>& protocol) {
-        if (stopping_.load(std::memory_order_acquire)) {
+    auto finish = [this, guid, profile, admission](Model::ASFWAudioDevice dev,
+                                                   const std::shared_ptr<IDeviceProtocol>& protocol) {
+        if (admission->AbortIfStopping()) {
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: publication cancelled by concurrent teardown GUID=0x%016llx",
+                     guid);
+            return;
+        }
+#ifdef ASFW_HOST_TEST
+        if (beforePublishHookForTesting_) {
+            beforePublishHookForTesting_();
+        }
+#endif
+        if (admission->AbortIfStopping()) {
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: publication cancelled by concurrent teardown GUID=0x%016llx",
+                     guid);
             return;
         }
         if (protocol) {

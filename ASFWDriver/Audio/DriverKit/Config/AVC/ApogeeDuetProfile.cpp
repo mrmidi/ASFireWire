@@ -32,11 +32,6 @@ const char* ApogeeDuetProfile::Name() const noexcept {
     return DeviceProfiles::Audio::kApogeeDuetModelName;
 }
 
-bool ApogeeDuetProfile::Matches(const DICE::DiceDeviceIdentity& identity) const noexcept {
-    return identity.vendorId == DeviceProfiles::Audio::kApogeeVendorId &&
-           identity.modelId == DeviceProfiles::Audio::kApogeeDuetModelId;
-}
-
 DICE::DiceDeviceQuirks ApogeeDuetProfile::Quirks() const noexcept {
     return DICE::DiceDeviceQuirks{};
 }

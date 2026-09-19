@@ -2,10 +2,10 @@
 // Copyright (c) 2024 ASFireWire Project
 //
 // DICEDuplexBringupController.cpp - Raw-reference duplex startup for generic DICE devices
-
 #include "DICEDuplexBringupController.hpp"
-
 #include "DICENotificationMailbox.hpp"
+#include "../../Backends/RestartJournal.hpp"
+#include "../../Backends/SyncAsyncBridge.hpp"
 #include "../../../../Common/WireFormat.hpp"
 #include "../../../../Logging/Logging.hpp"
 
@@ -49,8 +49,8 @@ uint64_t DecodeOwnerOctlet(const uint8_t* data, size_t size) noexcept {
     return ASFW::FW::ReadBE64(data);
 }
 
-void ResetRestartSession(DiceRestartSession& session) noexcept {
-    session = DiceRestartSession{};
+void ResetRestartSession(DuplexRestartSession& session) noexcept {
+    session = DuplexRestartSession{};
 }
 
 void CacheRuntimeCaps(AudioStreamRuntimeCaps& caps,
@@ -124,7 +124,7 @@ DICEDuplexBringupController::~DICEDuplexBringupController() {
 void DICEDuplexBringupController::ProgramRx(StageCallback callback) {
     ProgramRxForDuplex48k(
         [this, callback = std::move(callback)](IOReturn status) mutable {
-            DiceDuplexStageResult result{};
+            DuplexStageResult result{};
             if (status == kIOReturnSuccess) {
                 result.generation = restartSession_.generation;
                 result.channels = restartSession_.channels;
@@ -138,7 +138,7 @@ void DICEDuplexBringupController::ProgramRx(StageCallback callback) {
 void DICEDuplexBringupController::ProgramTxAndEnableDuplex(StageCallback callback) {
     ProgramTxAndEnableDuplex48k(
         [this, callback = std::move(callback)](IOReturn status) mutable {
-            DiceDuplexStageResult result{};
+            DuplexStageResult result{};
             if (status == kIOReturnSuccess) {
                 result.generation = restartSession_.generation;
                 result.channels = restartSession_.channels;
@@ -152,7 +152,7 @@ void DICEDuplexBringupController::ProgramTxAndEnableDuplex(StageCallback callbac
 void DICEDuplexBringupController::ConfirmDuplexStart(ConfirmCallback callback) {
     ConfirmDuplex48kStart(
         [this, callback = std::move(callback)](IOReturn status) mutable {
-            DiceDuplexConfirmResult result{};
+            DuplexConfirmResult result{};
             if (status == kIOReturnSuccess) {
                 result.generation = restartSession_.generation;
                 result.channels = restartSession_.channels;
@@ -188,11 +188,11 @@ void DICEDuplexBringupController::ApplyClockConfig(
     NotificationMailbox::Reset();
     stopSequenceError_ = kIOReturnSuccess;
     diceClock_ = desiredClock;
-    restartSession_ = DiceRestartSession{
+    restartSession_ = DuplexRestartSession{
         .generation = busInfo_.GetGeneration(),
-        .reason = DiceRestartReason::kManualReconfigure,
+        .reason = DuplexRestartReason::kManualReconfigure,
         .desiredClock = AudioClockConfig{.sampleRateHz = desiredClock.sampleRateHz},
-        .phase = DiceRestartPhase::kPreparingDevice,
+        .phase = DuplexRestartPhase::kPreparingDevice,
     };
     runtimeCaps_ = {};
     confirmNotification_ = 0;
@@ -202,7 +202,7 @@ void DICEDuplexBringupController::ApplyClockConfig(
     const AudioDuplexChannels channels{};
     DoReadGlobalStatus(channels,
                        [this, callback = std::move(callback)](IOReturn status) mutable {
-                           DiceClockApplyResult result{};
+                           DuplexClockApplyResult result{};
                            if (status == kIOReturnSuccess) {
                                result.generation = restartSession_.generation;
                                result.appliedClock = restartSession_.appliedClock;
@@ -245,7 +245,7 @@ void DICEDuplexBringupController::CancelScheduledRetry() noexcept {
 }
 
 bool DICEDuplexBringupController::EnsureRouteCurrent() const noexcept {
-    if (restartSession_.phase == DiceRestartPhase::kIdle) {
+    if (restartSession_.phase == DuplexRestartPhase::kIdle) {
         return true;
     }
     return io_.IsRouteCurrent();
@@ -309,14 +309,14 @@ void DICEDuplexBringupController::PrepareDuplex48k(
         .sampleRateHz = 48000U,
         .clockSelect = kDiceClockSelect48kInternal,
     };
-    restartSession_ = DiceRestartSession{
+    restartSession_ = DuplexRestartSession{
         .generation = busInfo_.GetGeneration(),
         .channels = channels,
-        .reason = DiceRestartReason::kInitialStart,
+        .reason = DuplexRestartReason::kInitialStart,
         .desiredClock = AudioClockConfig{
             .sampleRateHz = 48000U,
         },
-        .phase = DiceRestartPhase::kPreparingDevice,
+        .phase = DuplexRestartPhase::kPreparingDevice,
     };
     runtimeCaps_ = {};
     confirmNotification_ = 0;
@@ -363,12 +363,12 @@ void DICEDuplexBringupController::PrepareDuplex(
     NotificationMailbox::Reset();
     stopSequenceError_ = kIOReturnSuccess;
     diceClock_ = desiredClock;
-    restartSession_ = DiceRestartSession{
+    restartSession_ = DuplexRestartSession{
         .generation = busInfo_.GetGeneration(),
         .channels = channels,
-        .reason = DiceRestartReason::kInitialStart,
+        .reason = DuplexRestartReason::kInitialStart,
         .desiredClock = AudioClockConfig{.sampleRateHz = desiredClock.sampleRateHz},
-        .phase = DiceRestartPhase::kPreparingDevice,
+        .phase = DuplexRestartPhase::kPreparingDevice,
     };
     runtimeCaps_ = {};
     confirmNotification_ = 0;
@@ -384,7 +384,7 @@ void DICEDuplexBringupController::PrepareDuplex(
 
     DoReadGlobalStatus(channels,
                        [this, channels, callback = std::move(callback)](IOReturn status) mutable {
-                           DiceDuplexPrepareResult result{};
+                           DuplexPrepareResult result{};
                            if (status == kIOReturnSuccess) {
                                result.generation = restartSession_.generation;
                                result.channels = channels;
@@ -1006,7 +1006,7 @@ void DICEDuplexBringupController::DoProgramRx(
         return;
     }
 
-    restartSession_.phase = DiceRestartPhase::kProgrammingDeviceRx;
+    restartSession_.phase = DuplexRestartPhase::kProgrammingDeviceRx;
 
     // At stream 0, read RX_SIZE first to learn the per-stream register stride,
     // then re-enter this function with the resolved entry size for every stream.
@@ -1032,7 +1032,7 @@ void DICEDuplexBringupController::DoProgramRx(
     if (streamIndex >= channels.playbackStreamCount) {
         // All RX streams programmed.
         restartSession_.deviceRxProgrammed = true;
-        restartSession_.phase = DiceRestartPhase::kDeviceRxProgrammed;
+        restartSession_.phase = DuplexRestartPhase::kDeviceRxProgrammed;
         cb(kIOReturnSuccess);
         return;
     }
@@ -1077,7 +1077,7 @@ void DICEDuplexBringupController::DoProgramTx(
         return;
     }
 
-    restartSession_.phase = DiceRestartPhase::kProgrammingDeviceTx;
+    restartSession_.phase = DuplexRestartPhase::kProgrammingDeviceTx;
 
     // At stream 0, read TX_SIZE first to learn the per-stream register stride.
     if (streamIndex == 0 && entrySizeBytes == 0) {
@@ -1148,7 +1148,7 @@ void DICEDuplexBringupController::DoEnableGlobal(
                              return;
                          }
                          restartSession_.deviceTxArmed = true;
-                         restartSession_.phase = DiceRestartPhase::kDeviceTxArmed;
+                         restartSession_.phase = DuplexRestartPhase::kDeviceTxArmed;
                          cb(kIOReturnSuccess);
                      });
 }
@@ -1159,7 +1159,7 @@ void DICEDuplexBringupController::DoFinishPrepare(VoidCallback cb) {
         restartSession_.deviceTxArmed = false;
         restartSession_.deviceRunning = false;
         restartSession_.deviceRxProgrammed = false;
-        restartSession_.phase = DiceRestartPhase::kPrepared;
+        restartSession_.phase = DuplexRestartPhase::kPrepared;
         restartSession_.appliedClock = restartSession_.desiredClock;
         cb(kIOReturnSuccess);
         return;
@@ -1175,7 +1175,7 @@ void DICEDuplexBringupController::DoFinishPrepare(VoidCallback cb) {
         restartSession_.deviceTxArmed = false;
         restartSession_.deviceRunning = false;
         restartSession_.deviceRxProgrammed = false;
-        restartSession_.phase = DiceRestartPhase::kPrepared;
+        restartSession_.phase = DuplexRestartPhase::kPrepared;
         restartSession_.appliedClock = restartSession_.desiredClock;
         cb(kIOReturnSuccess);
     });
@@ -1191,8 +1191,7 @@ void DICEDuplexBringupController::DoCompleteClockApply(VoidCallback cb) {
         restartSession_.appliedClock = restartSession_.desiredClock;
         ReleaseOwner([this, cb = std::move(cb)](IOReturn releaseStatus) mutable {
             if (releaseStatus != kIOReturnSuccess) {
-                restartSession_.terminalError = releaseStatus;
-                ClearRestartProgress(restartSession_, DiceRestartPhase::kFailed);
+                Backends::EnterFailed(restartSession_, releaseStatus, "release_failed");
                 flowMode_ = FlowMode::kNone;
                 cb(releaseStatus);
                 return;
@@ -1253,8 +1252,13 @@ void DICEDuplexBringupController::RefreshRuntimeCaps(VoidCallback cb) {
 
 void DICEDuplexBringupController::DoRollback(IOReturn error, VoidCallback cb) {
     CancelScheduledRetry();
-    restartSession_.phase = DiceRestartPhase::kFailed;
-    restartSession_.terminalError = error;
+    restartSession_.phase = DuplexRestartPhase::kFailed;
+    // NOTE: no terminal-error write here. The terminal error is armed only when
+    // the machine actually ENTERS Failed — after rollback cleanup completes —
+    // via the journal's EnterFailed. The rollback flow itself must run with the
+    // ledger intact (ClearRestartProgress clears it; lifecycle untouched).
+    // DoRollback's error parameter flows to the completion callback, where the
+    // caller enters the terminal state with it.
 
     if (!restartSession_.ownerClaimed) {
         ResetRestartSession(restartSession_);
@@ -1378,7 +1382,7 @@ void DICEDuplexBringupController::DoCompleteConfirm(
         }
 
         restartSession_.deviceRunning = true;
-        restartSession_.phase = DiceRestartPhase::kRunning;
+        restartSession_.phase = DuplexRestartPhase::kRunning;
         restartSession_.appliedClock = restartSession_.desiredClock;
         ASFW_LOG(DICE,
                  "ConfirmDuplex48kStart: sourceLock=%u notify=0x%08x status=0x%08x ext=0x%08x",
@@ -1433,7 +1437,7 @@ void DICEDuplexBringupController::ConfirmDuplex48kStart(VoidCallback callback) {
     }
 
     CancelScheduledRetry();
-    restartSession_.phase = DiceRestartPhase::kConfirmingDeviceStart;
+    restartSession_.phase = DuplexRestartPhase::kConfirmingDeviceStart;
     NotificationMailbox::Reset();
     DoPollSourceLock(0, 0, std::move(callback));
 }
@@ -1450,33 +1454,22 @@ IOReturn DICEDuplexBringupController::StopDuplex() {
         return kIOReturnAborted;
     }
 
-    struct WaitState {
-        std::atomic<bool> done{false};
-        std::atomic<IOReturn> status{kIOReturnTimeout};
-    };
-
-    auto waitState = std::make_shared<WaitState>();
-    DoStopSequence(true, [waitState](IOReturn status) {
-        waitState->status.store(status, std::memory_order_relaxed);
-        waitState->done.store(true, std::memory_order_release);
-    });
-
-    for (uint32_t waited = 0; waited < kStopSyncTimeoutMs; waited += kStopSyncPollMs) {
-        if (waitState->done.load(std::memory_order_acquire)) {
-            return waitState->status.load(std::memory_order_relaxed);
-        }
-        if (TeardownRequested()) {
-            RecordStopTeardownAbort("Wait");
-            ResetRestartSession(restartSession_);
-            flowMode_ = FlowMode::kNone;
-            return kIOReturnAborted;
-        }
-        IOSleep(kStopSyncPollMs);
-    }
-
-    return waitState->done.load(std::memory_order_acquire)
-        ? waitState->status.load(std::memory_order_relaxed)
-        : kIOReturnTimeout;
+    return WaitForAsyncStatus(
+        [&](auto callback) {
+            DoStopSequence(true, std::move(callback));
+        },
+        kStopSyncTimeoutMs,
+        kIOReturnTimeout,
+        [&]() noexcept {
+            if (TeardownRequested()) {
+                RecordStopTeardownAbort("Wait");
+                ResetRestartSession(restartSession_);
+                flowMode_ = FlowMode::kNone;
+                return true;
+            }
+            return false;
+        },
+        kStopSyncPollMs);
 }
 
 void DICEDuplexBringupController::ReleaseOwner(VoidCallback callback) {
@@ -1520,7 +1513,7 @@ void DICEDuplexBringupController::DoStopSequence(
     bool releaseOwner,
     VoidCallback cb) {
     stopSequenceError_ = kIOReturnSuccess;
-    restartSession_.phase = DiceRestartPhase::kStopping;
+    restartSession_.phase = DuplexRestartPhase::kStopping;
     if (AbortStopIfTeardown("SequenceEntry", cb)) {
         return;
     }
@@ -1720,7 +1713,7 @@ void DICEDuplexBringupController::DoStopReleaseRx(
     restartSession_.deviceTxArmed = false;
     restartSession_.deviceRunning = false;
     restartSession_.deviceRxProgrammed = false;
-    restartSession_.phase = DiceRestartPhase::kIdle;
+    restartSession_.phase = DuplexRestartPhase::kIdle;
     flowMode_ = FlowMode::kNone;
     cb(stopSequenceError_);
 }

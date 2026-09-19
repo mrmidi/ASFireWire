@@ -84,6 +84,19 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
         return {};
     }
 
+    // Every AV/C frame this driver sends passes through here, including the
+    // user-client raw path whose payload comes from user space. Devices whose
+    // firmware hangs on unimplemented AV/C carry a non-empty allowlist; refuse
+    // anything it does not admit. See AVCCommandFilter.hpp.
+    if (!FrameIsPermitted(config_.permittedFrames, command.Payload())) {
+        ASFW_LOG_ERROR(FCP,
+                       "FCPTransport: refused ctype=0x%02x opcode=0x%02x — not in "
+                       "this device's permitted command set",
+                       command.data[0], command.length > 2 ? command.data[2] : 0xFFU);
+        completion(FCPStatus::kRefusedByFilter, {});
+        return {};
+    }
+
     if (!lock_) {
         completion(FCPStatus::kTransportError, {});
         return {};
@@ -198,8 +211,23 @@ bool FCPTransport::StartPendingWrite() {
     }
 
     IOLockLock(lock_);
-    if (shuttingDown_ || !pending_ || !routeRegistry_) {
+    if (!pending_) {
         IOLockUnlock(lock_);
+        return false;  // nothing was admitted, so no completion is owed
+    }
+
+    const bool shuttingDown = shuttingDown_;
+    const bool hasRouteRegistry = routeRegistry_ != nullptr;
+    if (shuttingDown || !hasRouteRegistry) {
+        IOLockUnlock(lock_);
+        // A command that reached pending_ must always reach its completion.
+        // Returning silently here strands it: the response deadline is armed
+        // from write completion, so an unstarted write leaves no timer at all
+        // and the single command slot never frees.
+        ASFW_LOG_V1(FCP,
+                    "FCPTransport: Cannot start write (shuttingDown=%d hasRouteRegistry=%d)",
+                    shuttingDown ? 1 : 0, hasRouteRegistry ? 1 : 0);
+        CompleteCommand(FCPStatus::kTransportError, {});
         return false;
     }
 

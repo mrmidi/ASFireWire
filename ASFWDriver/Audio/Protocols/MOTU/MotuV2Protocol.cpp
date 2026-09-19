@@ -10,8 +10,7 @@
 
 #include "MotuV2Protocol.hpp"
 
-#include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
-#include "../../../DeviceProfiles/Audio/Vendors/MotuAudioProfiles.hpp"
+#include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
 
@@ -41,7 +40,7 @@ MotuV2Protocol::MotuV2Protocol(Protocols::Ports::FireWireBusOps& busOps,
 
 const char* MotuV2Protocol::GetName() const {
     const char* const model =
-        DeviceProfiles::Audio::Motu::ModelNameForSwVersion(unitSwVersion_);
+        DeviceProfiles::Audio::AudioDeviceCatalog::MotuModelNameForSwVersion(unitSwVersion_);
     return model != nullptr ? model : "MOTU (protocol v2)";
 }
 
@@ -569,7 +568,7 @@ void MotuV2Protocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
         if (status == kIOReturnSuccess) {
             preparedRateHz_.store(rateHz, std::memory_order_release);
         }
-        ClockApplyResult result{};
+        DuplexClockApplyResult result{};
         result.generation = busInfo_.GetGeneration();
         result.appliedClock = AudioClockConfig{.sampleRateHz = CachedSampleRateHz()};
         result.runtimeCaps = MakeRuntimeCaps();

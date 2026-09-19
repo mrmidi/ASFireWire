@@ -30,6 +30,11 @@ struct ASFWAudioDevice {
     uint64_t guid{0};
     uint32_t vendorId{0};
     uint32_t modelId{0};
+    /// The device catalog's resolved ProfileBuilderId, as a raw uint32 so this
+    /// struct stays free of the DeviceProfiles headers. Zero means unresolved,
+    /// and the audio side then falls back to matching on (vendorId, modelId) --
+    /// loudly, because that pair cannot identify every family.
+    uint32_t profileBuilderId{0};
     std::string deviceName{"FireWire Audio"};
     uint32_t channelCount{2};
     uint32_t inputChannelCount{2};
@@ -86,6 +91,10 @@ struct ASFWAudioDevice {
         properties->setObject(PropertyKeys::kGuid, guidNum.get());
         properties->setObject(PropertyKeys::kVendorId, vendorIdNum.get());
         properties->setObject(PropertyKeys::kModelId, modelIdNum.get());
+        if (auto builderNum =
+                OSSharedPtr(OSNumber::withNumber(profileBuilderId, 32), OSNoRetain)) {
+            properties->setObject(PropertyKeys::kProfileBuilderId, builderNum.get());
+        }
         properties->setObject(PropertyKeys::kInputChannelCount, inputChannelCountNum.get());
         properties->setObject(PropertyKeys::kOutputChannelCount, outputChannelCountNum.get());
         properties->setObject(PropertyKeys::kInputPlugName, inputPlugNameStr.get());

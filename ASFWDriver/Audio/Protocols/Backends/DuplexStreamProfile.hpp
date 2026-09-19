@@ -5,9 +5,10 @@
 
 #pragma once
 
+#include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
-#include "../../../DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
 #include "../../../Discovery/DiscoveryTypes.hpp"
+#include "../DeviceProtocolChoice.hpp"
 #include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
@@ -183,65 +184,13 @@ class DuplexStreamProfileResolver final {
         return count > kMaxAudioStreamsPerDirection ? kMaxAudioStreamsPerDirection : count;
     }
 
-    [[nodiscard]] static constexpr bool
-    HasAlesisCaptureStreamQuirk(const Discovery::DeviceRecord& record) noexcept {
-        // FFADO's DICE discovery clamps these Alesis model IDs because they
-        // advertise two RX streams although only one exists. Behavioral
-        // cross-validation: libffado-2.5.0/src/dice/dice_avdevice.cpp:1682-1695.
-        return record.vendorId == DeviceProfiles::Audio::kAlesisVendorId &&
-               (record.modelId == 0x000000 || record.modelId == 0x000001);
-    }
-
-    [[nodiscard]] static constexpr bool
-    IsSPro24Dsp(const Discovery::DeviceRecord& record) noexcept {
-        return record.vendorId == DeviceProfiles::Audio::kFocusriteVendorId &&
-               record.modelId == DeviceProfiles::Audio::kSPro24DspModelId;
-    }
-
-    /// MOTU publishes model_id 0, so identity lives in the unit directory: vendor OUI in
-    /// both the vendor and specifier fields (motu.c:151-181).
-    [[nodiscard]] static bool
-    IsMotu(const Discovery::DeviceRecord& record) noexcept {
-        return record.vendorId == DeviceProfiles::Audio::kMotuVendorId &&
-               record.unitSpecId.value_or(0U) == DeviceProfiles::Audio::kMotuVendorId;
-    }
-
-    [[nodiscard]] static constexpr bool
-    IsApogeeDuet(const Discovery::DeviceRecord& record) noexcept {
-        return record.vendorId == DeviceProfiles::Audio::kApogeeVendorId &&
-               record.modelId == DeviceProfiles::Audio::kApogeeDuetModelId;
-    }
-
-    [[nodiscard]] static constexpr bool
-    IsWeissInt(const Discovery::DeviceRecord& record) noexcept {
-        return record.vendorId == DeviceProfiles::Audio::kWeissVendorId &&
-               (record.modelId == DeviceProfiles::Audio::kWeissInt202ModelId ||
-                record.modelId == DeviceProfiles::Audio::kWeissInt203ModelId);
-    }
-
-    [[nodiscard]] static constexpr bool
-    IsBeBoB(const Discovery::DeviceRecord& record) noexcept {
-        return DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(record.vendorId, record.modelId);
-    }
-
-    [[nodiscard]] static bool
-    IsMackieOnyxI(const Discovery::DeviceRecord& record) noexcept {
-        return record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
-               record.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId;
-    }
-
-    // Echo Fireworks run (Onyx 400F): CMP + AM824 on the BeBoB base, EFC control.
-    [[nodiscard]] static bool
-    IsMackieOnyx400F(const Discovery::DeviceRecord& record) noexcept {
-        return record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
-               record.modelId == DeviceProfiles::Audio::kOnyx400FModelId;
-    }
-
-    // Every CMP-driven family: IRM picks the iso channel, the PCR commits it.
-    [[nodiscard]] static bool
-    IsCmpDriven(const Discovery::DeviceRecord& record) noexcept {
-        return IsApogeeDuet(record) || IsBeBoB(record) || IsMackieOnyxI(record) ||
-               IsMackieOnyx400F(record);
+    /// Everything below used to be nine hand-written identity predicates
+    /// sitting next to the geometry they gate. They are catalog rows now: the
+    /// facts are the same, but they live with the rest of what is known about
+    /// the device instead of being rediscovered here.
+    [[nodiscard]] static DeviceProfiles::Audio::DeviceStreamTraits
+    TraitsFor(const Discovery::DeviceRecord& record) noexcept {
+        return DeviceProfiles::Audio::AudioDeviceCatalog::StreamTraitsFor(record.identity);
     }
 
     [[nodiscard]] static AudioDuplexChannels
@@ -254,7 +203,10 @@ class DuplexStreamProfileResolver final {
 
         channels.captureStreamCount = ClampStreamCount(caps.deviceToHostStreamCount);
         channels.playbackStreamCount = ClampStreamCount(caps.hostToDeviceStreamCount);
-        if (HasAlesisCaptureStreamQuirk(record)) {
+        if (TraitsFor(record).clampCaptureStreamsToOne) {
+            // The device advertises more capture streams than it has. FFADO
+            // clamps the same models for the same reason:
+            // libffado-2.5.0/src/dice/dice_avdevice.cpp:1682-1695.
             channels.captureStreamCount = 1;
         }
 
@@ -304,6 +256,9 @@ class DuplexStreamProfileResolver final {
             .channels = channels,
             .runtimeCaps = caps,
         };
+        const auto traits = TraitsFor(record);
+        const uint64_t allowedChannels =
+            traits.cmpChoosesIsoChannel ? kAllIsoChannels : 0;
 
         // AM824 uses one data-block slot per PCM channel plus any MIDI slots;
         // the controller consumes the already-discovered DBS values unchanged.
@@ -321,8 +276,8 @@ class DuplexStreamProfileResolver final {
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
             // CMP (including BridgeCo/BeBoB) does not own a fixed channel;
             // IRM selects one, which is then committed back to its PCR.
-            geometry.allowedIsoChannels = IsCmpDriven(record)
-                                              ? kAllIsoChannels
+            geometry.allowedIsoChannels = traits.cmpChoosesIsoChannel
+                                              ? allowedChannels
                                               : FixedChannelMask(geometry.isoChannel);
             captureChannelOffset += geometry.pcmChannels;
         }
@@ -339,12 +294,12 @@ class DuplexStreamProfileResolver final {
                                       : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
             geometry.bandwidthUnits = AmdtpBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
-            geometry.allowedIsoChannels = IsCmpDriven(record)
-                                              ? kAllIsoChannels
+            geometry.allowedIsoChannels = traits.cmpChoosesIsoChannel
+                                              ? allowedChannels
                                               : FixedChannelMask(geometry.isoChannel);
         }
 
-        if (IsMotu(record)) {
+        if (ChooseAudioBackend(record) == AudioBackendKind::MotuRegister) {
             // MOTU is chunk-framed in both directions. The chunk counts come from the
             // device's own registers via PrepareDuplex, which MotuV2Protocol reports as
             // runtime caps -- there is no profile table to read them from, since model_id
@@ -357,19 +312,40 @@ class DuplexStreamProfileResolver final {
             profile.playbackMotuPcmChunks = caps.hostToDevicePcmChunks != 0
                                                 ? caps.hostToDevicePcmChunks
                                                 : caps.hostOutputPcmChannels;
-            profile.captureMotuPorts =
-                Encoding::Motu::CapturePortsForSwVersion(record.unitSwVersion.value_or(0U));
+            // The version of the unit the catalog actually matched, not the
+            // flat shim, which takes the first non-zero value across every unit
+            // directory and so can name a version no single unit published.
+            const auto choice = ChooseDeviceProtocol(record);
+            profile.captureMotuPorts = Encoding::Motu::CapturePortsForSwVersion(
+                choice.has_value() ? choice->unitVersion
+                                   : record.unitSwVersion.value_or(0U));
         }
 
-        if (IsSPro24Dsp(record) && caps.hostInputPcmChannels == 8 &&
+        // Runtime-conditional on purpose: this device switches wire format with
+        // its configuration, so the identity grants the permission and the
+        // measured geometry decides whether it applies.
+        if (traits.rawPcm24In32WhenEightInNineSlots && caps.hostInputPcmChannels == 8 &&
             caps.deviceToHostAm824Slots == 9) {
             profile.captureWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
         }
-        if (IsSPro24Dsp(record) && caps.hostOutputPcmChannels == 8 &&
+        if (traits.rawPcm24In32WhenEightInNineSlots && caps.hostOutputPcmChannels == 8 &&
             caps.hostToDeviceAm824Slots == 9) {
             profile.playbackWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
         }
-        if (IsApogeeDuet(record)) {
+
+        if (traits.captureTrustConfiguredStride) {
+            // The capture-side CIP dbs field is untrusted and the configured
+            // slot count is the authority. Loud/Mackie (snd-oxfw oxfw.c:189-196;
+            // amdtp-stream.c:766-769 substitutes the configured data-block
+            // size), and Fireworks, which gives dbc its own meaning, whose
+            // NO-DATA packets carry tag 0, and whose firmware 4.6.0 stamps a
+            // wrong dbs above 88.2 kHz.
+            profile.captureTrustConfiguredStride = true;
+        }
+
+        using DeviceProfiles::Audio::StreamStartShape;
+        switch (traits.startShape) {
+        case StreamStartShape::ApogeeInterleaved:
             // Preserve the prior AVCAudioBackend ordering:
             // host IR -> CMP oPCR -> host IT -> CMP iPCR. The runner uses these
             // profile flags to interleave host starts with the neutral device
@@ -379,14 +355,29 @@ class DuplexStreamProfileResolver final {
             profile.startOrder.postDeviceEnableDelayMs = 0;
             profile.stopOrder
                 .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive = true;
-        }
-        if (IsBeBoB(record)) {
-            // Linux BeBoB reserves both CMP resources, establishes remote
-            // iPCR then oPCR, and only then starts the AMDTP domain (RX before
-            // TX). Keep that wire-visible ordering explicit rather than
-            // inheriting an incidental generic/DICE default. Cross-validated:
-            // linux-sound-firewire-stack/firewire/bebob/bebob_stream.c:525-590,
-            // 593-674. No reference implementation is copied.
+            break;
+
+        case StreamStartShape::CmpReceiveThenTransmit:
+            // Linux's CMP choreography: reserve both resources, establish the
+            // remote iPCR then oPCR, and only then start the AMDTP domain,
+            // receive before transmit. Shared by three families that used to
+            // state it three times over, identically:
+            //
+            //  - BeBoB. Keep the wire-visible ordering explicit rather than
+            //    inheriting an incidental generic/DICE default.
+            //    bebob_stream.c:525-590, 593-674.
+            //  - The Oxford-run Onyx-i, which shares the BeBoB base's
+            //    choreography and is SYT-unaware (snd-oxfw CIP_UNAWARE_SYT), so
+            //    there is no pre-stream clock to lock against.
+            //  - The Fireworks-run Onyx 400F (fireworks_stream.c:
+            //    cmp_connection_establish for both plugs, then
+            //    amdtp_domain_start), SYT-unaware with an internal clock the
+            //    host cannot observe before the connection exists.
+            //
+            // The pre-stream lock gate must not run for any of them.
+            // Field-verified on the 400F 2026-09-13: with the gate on, the
+            // coordinator polled HWCTL GET_CLOCK ~50 times and failed the start
+            // at GlobalClockLock.
             profile.startOrder.startReceiveBeforeDeviceRx = false;
             profile.startOrder.startTransmitBeforeDeviceTx = false;
             profile.startOrder.requiresPreStreamClockLock = false;
@@ -395,48 +386,9 @@ class DuplexStreamProfileResolver final {
                 DuplexHostDirection::kTransmit,
             };
             profile.startOrder.postDeviceEnableDelayMs = 0;
-        }
-        if (IsMackieOnyxI(record)) {
-            // The Onyx runtime control shares the BeBoB base's CMP choreography,
-            // so keep the same wire-visible ordering (reserve both, connect, then
-            // host RX before TX). The device is SYT-unaware (Linux snd-oxfw
-            // CIP_UNAWARE_SYT), so there is no pre-stream clock to lock against.
-            profile.startOrder.startReceiveBeforeDeviceRx = false;
-            profile.startOrder.startTransmitBeforeDeviceTx = false;
-            profile.startOrder.requiresPreStreamClockLock = false;
-            profile.startOrder.startOrder = {
-                DuplexHostDirection::kReceive,
-                DuplexHostDirection::kTransmit,
-            };
-            profile.startOrder.postDeviceEnableDelayMs = 0;
-            // Loud vendor rule: the capture-side CIP dbs field is untrusted
-            // (snd-oxfw oxfw.c:189-196; amdtp-stream.c:766-769 substitutes the
-            // configured data-block size). The profile's slot count is authority.
-            profile.captureTrustConfiguredStride = true;
-        }
-        if (IsMackieOnyx400F(record)) {
-            // Fireworks streams on the same CMP choreography as BeBoB (Linux
-            // snd-fireworks fireworks_stream.c: cmp_connection_establish for both
-            // plugs, then amdtp_domain_start) and is SYT-unaware with an internal
-            // clock the host cannot observe before the connection exists, so the
-            // DICE-style pre-stream lock gate must not run. Field-verified
-            // 2026-09-13: with the gate on, the coordinator polled HWCTL GET_CLOCK
-            // ~50 times and failed the start at GlobalClockLock.
-            profile.startOrder.startReceiveBeforeDeviceRx = false;
-            profile.startOrder.startTransmitBeforeDeviceTx = false;
-            profile.startOrder.requiresPreStreamClockLock = false;
-            profile.startOrder.startOrder = {
-                DuplexHostDirection::kReceive,
-                DuplexHostDirection::kTransmit,
-            };
-            profile.startOrder.postDeviceEnableDelayMs = 0;
-            // Fireworks gives dbc its own meaning and its NO-DATA packets carry
-            // tag 0 (fireworks_stream.c init_stream); firmware 4.6.0 also stamps
-            // a wrong dbs above 88.2 kHz. The profile's slot count (pcm + MIDI)
-            // is the authority for the capture stride.
-            profile.captureTrustConfiguredStride = true;
-        }
-        if (IsWeissInt(record)) {
+            break;
+
+        case StreamStartShape::TransmitFirst:
             // INT202/203 are output-only in CoreAudio but retain both DICE
             // directions on the wire. Start host IT first after GLOBAL_ENABLE
             // so its AM824 packets can establish the device receive-clock path;
@@ -448,6 +400,10 @@ class DuplexStreamProfileResolver final {
                 DuplexHostDirection::kTransmit,
                 DuplexHostDirection::kReceive,
             };
+            break;
+
+        case StreamStartShape::Default:
+            break;
         }
         return profile;
     }

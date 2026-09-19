@@ -100,15 +100,6 @@ std::vector<uint32_t> Phase88Protocol::SupportedRates() const {
     return {kPhase88SampleRateHz};
 }
 
-void Phase88Protocol::ReadClockHealth(HealthCallback callback) {
-    callback(kIOReturnSuccess, DuplexHealthResult{.generation = busInfo_.GetGeneration(),
-                                                   .appliedClock = appliedClock_,
-                                                   .runtimeCaps = Phase88Caps(),
-                                                   .sourceLocked = inputConnected_ && outputConnected_,
-                                                   .clockReferenceHealthy = true,
-                                                   .nominalRateHz = kPhase88SampleRateHz});
-}
-
 void Phase88Protocol::ConfigureMixer(MixerFailurePolicy policy, MixerCompletion completion) {
     ASFW_LOG(Audio, "[BeBoB] Phase88: configuring hardware mixer (unmute + max volume)");
     RunMixerSteps(kPhase88MixerMap, policy, std::move(completion));

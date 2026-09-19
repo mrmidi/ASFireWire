@@ -10,9 +10,10 @@
 #include "../../Logging/Logging.hpp"
 #include "../../Audio/Model/ASFWAudioDevice.hpp"
 #include "../../Audio/Protocols/DeviceProtocolFactory.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "../../Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "../../Audio/Protocols/Oxford/OxfwStreamFormats.hpp"
-#include "../../Audio/Protocols/DeviceStreamModeQuirks.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
 #include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
@@ -33,18 +34,43 @@ using namespace ASFW::Protocols::AVC;
 
 namespace {
 
+// The device catalog's answer, carried to the nub so the audio side does not
+// repeat the match from (vendorId, modelId) -- a pair that cannot identify
+// every family.
+[[nodiscard]] uint32_t ProfileBuilderIdFor(
+    const ASFW::Discovery::DeviceIdentityEvidence& identity) noexcept {
+    return static_cast<uint32_t>(
+        ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(identity));
+}
+
+[[nodiscard]] constexpr const char* StreamModeToString(
+    ASFW::Audio::Model::StreamMode mode) noexcept {
+    return (mode == ASFW::Audio::Model::StreamMode::kBlocking) ? "blocking"
+                                                               : "non-blocking";
+}
+
 ASFW::Audio::Model::StreamMode ResolveStreamMode(
     const ASFW::Protocols::AVC::Music::MusicSubunitCapabilities& caps,
+    const ASFW::Discovery::DeviceIdentityEvidence& identity,
     uint32_t vendorId,
     uint32_t modelId,
     const char*& reason) noexcept {
-    if (auto forced = ASFW::Audio::Quirks::LookupForcedStreamMode(vendorId, modelId); forced.has_value()) {
-        reason = "quirk";
+    // Cadence a device must be driven at whatever it reports, from the one
+    // device catalog. Unspecified means "believe the probe", which is what an
+    // unlisted device gets.
+    using ASFW::DeviceProfiles::Audio::AudioDeviceCatalog;
+    using ASFW::DeviceProfiles::Audio::ForcedStreamMode;
+    const auto forced = AudioDeviceCatalog::StreamTraitsFor(identity).forcedStreamMode;
+    if (forced != ForcedStreamMode::Unspecified) {
+        const auto mode = (forced == ForcedStreamMode::Blocking)
+                              ? ASFW::Audio::Model::StreamMode::kBlocking
+                              : ASFW::Audio::Model::StreamMode::kNonBlocking;
+        reason = "catalog";
         ASFW_LOG_WARNING(Audio,
-                         "AVCDiscovery: QUIRK OVERRIDE stream mode vendor=0x%06x model=0x%06x forced=%{public}s",
-                         vendorId, modelId,
-                         ASFW::Audio::Quirks::StreamModeToString(*forced));
-        return *forced;
+                         "AVCDiscovery: catalog forces stream mode vendor=0x%06x "
+                         "model=0x%06x forced=%{public}s",
+                         vendorId, modelId, StreamModeToString(mode));
+        return mode;
     }
 
     // Use transmit capability as mode selection signal. This mode is currently
@@ -280,7 +306,8 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     // wire ordering instead of letting generic AV/C discovery consume or race
     // its FCP route. Cross-validated: firewire/bebob/bebob.c:184-260 and
     // firewire/bebob/bebob_stream.c:908-940.
-    if (DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(device->GetVendorID(), device->GetModelID())) {
+    if (ProfileBuilderIdFor(device->GetIdentity()) ==
+        static_cast<uint32_t>(ASFW::DeviceProfiles::Audio::ProfileBuilderId::TerraTecPhase88)) {
         ASFW_LOG(AVC,
                  "AVCDiscovery: BeBoB device matched; bypassing generic UNIT_INFO/SUBUNIT_INFO GUID=0x%016llx",
                  guid);
@@ -293,15 +320,20 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
         const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
         const uint32_t vendorId = device->GetVendorID();
         const uint32_t modelId = device->GetModelID();
+        // Resolved here, while the FWDevice and its Config-ROM evidence are in
+        // scope: the callback below runs after discovery and only has scalars.
+        const uint32_t profileBuilderId = ProfileBuilderIdFor(device->GetIdentity());
         const std::string deviceName{device->GetModelName()};
         ::ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery(
             *avcUnit, guid,
-            [weakSelf, guid, vendorId, modelId, deviceName](const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
+            [weakSelf, guid, vendorId, modelId, profileBuilderId,
+             deviceName](const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
                 const auto self = weakSelf.lock();
                 if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
                     return;
                 }
-                self->PublishBeBoBAudioConfig(guid, vendorId, modelId, deviceName, inventory);
+                self->PublishBeBoBAudioConfig(guid, vendorId, modelId, profileBuilderId,
+                                              deviceName, inventory);
             });
         RebuildNodeIDMap();
         return;
@@ -425,6 +457,7 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
 void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
                                              uint32_t vendorId,
                                              uint32_t modelId,
+                                             uint32_t profileBuilderId,
                                              const std::string& deviceName,
                                              const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
     // Register a per-GUID BeBoB profile from discovery data. For Phase88 this
@@ -452,6 +485,7 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
     config.guid = guid;
     config.vendorId = vendorId;
     config.modelId = modelId;
+    config.profileBuilderId = profileBuilderId;
     config.deviceName = deviceName.empty() ? "PHASE 88 Rack FW" : deviceName;
     config.channelCount = kPcmChannels;
     config.inputChannelCount = kPcmChannels;
@@ -487,9 +521,10 @@ void AVCDiscovery::PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
     config.guid = guid;
     config.vendorId = device.GetVendorID();
     config.modelId = device.GetModelID();
+    config.profileBuilderId = ProfileBuilderIdFor(device.GetIdentity());
     config.deviceName =
-        std::string(::ASFW::Audio::DeviceProtocolFactory::kMackieVendorName) + " " +
-        ::ASFW::Audio::DeviceProtocolFactory::kOnyxIOxfwModelName;
+        std::string(::ASFW::DeviceProfiles::Audio::kMackieVendorName) + " " +
+        ::ASFW::DeviceProfiles::Audio::kOnyxIOxfwModelName;
     config.channelCount = kCaptureChannels;
     config.inputChannelCount = kCaptureChannels;
     config.outputChannelCount = kPlaybackChannels;
@@ -497,8 +532,8 @@ void AVCDiscovery::PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
     config.currentSampleRate = kSampleRateHz;
     config.inputPlugName = "Onyx Capture";
     config.outputPlugName = "Onyx Monitor Return";
-    // LOUD vendor-wide rule (Linux snd-oxfw oxfw.c:189-196); also forced in
-    // DeviceStreamModeQuirks so every downstream mode resolution agrees.
+    // LOUD vendor-wide rule (Linux snd-oxfw oxfw.c:189-196); the catalog states
+    // the same for this row, so every downstream mode resolution agrees.
     config.streamMode = ::ASFW::Audio::Model::StreamMode::kBlocking;
 
     ASFW_LOG(Audio,
@@ -522,9 +557,10 @@ void AVCDiscovery::PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,
     config.guid = guid;
     config.vendorId = device.GetVendorID();
     config.modelId = device.GetModelID();
+    config.profileBuilderId = ProfileBuilderIdFor(device.GetIdentity());
     config.deviceName =
-        std::string(::ASFW::Audio::DeviceProtocolFactory::kMackieVendorName) + " " +
-        ::ASFW::Audio::DeviceProtocolFactory::kOnyx400FModelName;
+        std::string(::ASFW::DeviceProfiles::Audio::kMackieVendorName) + " " +
+        ::ASFW::DeviceProfiles::Audio::kOnyx400FModelName;
     config.channelCount = kCaptureChannels;
     config.inputChannelCount = kCaptureChannels;
     config.outputChannelCount = kPlaybackChannels;
@@ -532,8 +568,8 @@ void AVCDiscovery::PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,
     config.currentSampleRate = kSampleRateHz;
     config.inputPlugName = "Onyx 400F Inputs";
     config.outputPlugName = "Onyx 400F Outputs";
-    // Linux snd-fireworks: CIP_BLOCKING for both directions; also forced
-    // vendor-wide for LOUD in DeviceStreamModeQuirks.
+    // Linux snd-fireworks: CIP_BLOCKING for both directions; the catalog states
+    // the same for this row.
     config.streamMode = ::ASFW::Audio::Model::StreamMode::kBlocking;
 
     ASFW_LOG(Audio,
@@ -670,12 +706,14 @@ ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
     const uint32_t vendorId = device.GetVendorID();
     const uint32_t modelId = device.GetModelID();
     const char* streamModeReason = "default-nonblocking";
-    const auto streamMode = ResolveStreamMode(mutableCaps, vendorId, modelId, streamModeReason);
+    const auto streamMode =
+        ResolveStreamMode(mutableCaps, device.GetIdentity(), vendorId, modelId,
+                          streamModeReason);
 
     ASFW_LOG(Audio,
              "AVCDiscovery: stream mode selected vendor=0x%06x model=0x%06x mode=%{public}s reason=%{public}s",
              vendorId, modelId,
-             ASFW::Audio::Quirks::StreamModeToString(streamMode),
+             StreamModeToString(streamMode),
              streamModeReason);
     ASFW_LOG(Audio,
              "AVCDiscovery: Publishing audio configuration for GUID=%llx: %{public}s, %u channels, %zu sample rates",
@@ -685,6 +723,7 @@ ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
     config.guid = guid;
     config.vendorId = vendorId;
     config.modelId = modelId;
+    config.profileBuilderId = ProfileBuilderIdFor(device.GetIdentity());
     config.deviceName = deviceName;
     config.channelCount = channelCount;
     config.inputChannelCount =
@@ -1075,7 +1114,7 @@ void AVCDiscovery::ContinueDuetPrefetchClock(
     protocol->ApplyClockConfig(
         ::ASFW::Audio::AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz},
         [this, guid, protocol, operation, config](IOReturn clockStatus,
-                                                   const ::ASFW::Audio::ClockApplyResult& result) {
+                                                   const ::ASFW::Audio::DuplexClockApplyResult& result) {
             (void)guid;
             if (!IsDuetPrefetchCurrent(operation)) {
                 return;
@@ -1498,18 +1537,18 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
 }
 
 bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcept {
-    return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeVendorId &&
-           device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeDuetModelId;
+    return DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(device.GetIdentity()) ==
+           DeviceProfiles::Audio::ProfileBuilderId::ApogeeDuet;
 }
 
 bool AVCDiscovery::IsMackieOnyxIOxford(const Discovery::FWDevice& device) const noexcept {
-    return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kMackieVendorId &&
-           device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kOnyxIOxfwModelId;
+    return DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(device.GetIdentity()) ==
+           DeviceProfiles::Audio::ProfileBuilderId::MackieOnyxIOxfw;
 }
 
 bool AVCDiscovery::IsMackieOnyxFireworks(const Discovery::FWDevice& device) const noexcept {
-    return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kMackieVendorId &&
-           device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kOnyx400FModelId;
+    return DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(device.GetIdentity()) ==
+           DeviceProfiles::Audio::ProfileBuilderId::MackieOnyx400F;
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {

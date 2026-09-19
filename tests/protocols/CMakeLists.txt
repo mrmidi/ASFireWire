@@ -280,3 +280,16 @@ add_protocols_test(SBP2HandlerTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
 )
+
+# The per-device allowlist that bounds what may reach firmware which hangs on
+# AV/C it does not implement. Header-only match rule plus the tables;
+# enforcement lives in FCPTransport::SubmitCommand.
+add_protocols_test(AVCCommandFilterTests
+    AVCCommandFilterTests.cpp
+)
+
+# The one AV/C exchange that is safe on freeze-prone firmware. Closed by
+# construction: no opcode or operand parameter anywhere in the interface.
+add_protocols_test(AVCSignalFormatProbeTests
+    AVCSignalFormatProbeTests.cpp
+)

@@ -17,179 +17,146 @@
 
 namespace ASFW::Audio {
 
+namespace {
+
+using DeviceProfiles::Audio::ProfileBuilderId;
+
+} // namespace
+
 std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
-    uint32_t vendorId,
-    uint32_t modelId,
+    const Discovery::DeviceRecord& record,
     Protocols::Ports::FireWireBusOps& busOps,
     Protocols::Ports::FireWireBusInfo& busInfo,
     Discovery::DeviceRegistry& routeRegistry,
     const Discovery::DeviceRouteToken& route,
     IRM::IRMClient* irmClient,
     CMP::CMPClient* cmpClient,
-    Scheduling::ITimerScheduler* timerScheduler,
-    UnitIdentity unit
+    Scheduling::ITimerScheduler* timerScheduler
 ) {
     if (!route) {
         return nullptr;
     }
     const uint16_t nodeId = route.nodeId;
 
-    // MOTU first: it is the one family that model_id cannot discriminate (the root
-    // directory publishes model_id 0), so it is matched on the unit directory instead.
-    if (DeviceProfiles::Audio::Motu::LookupAudioProfile(
-            DeviceProfiles::DeviceProfileQuery{.vendorId = vendorId,
-                                               .modelId = modelId,
-                                               .unitSpecId = unit.specId,
-                                               .unitSwVersion = unit.swVersion})
-            .has_value()) {
-        ASFW_LOG(Audio,
-                 "Creating MotuV2Protocol vendor=0x%06x version=0x%06x node=0x%04x",
-                 vendorId, unit.swVersion, nodeId);
-        // The IRM client must reach the protocol: the coordinator allocates iso channels
-        // through IDuplexDeviceControl::GetIRMClient() before programming the device.
-        return std::make_unique<Motu::MotuV2Protocol>(busOps, busInfo, routeRegistry, route,
-                                                      unit.swVersion, irmClient);
+    const auto choice = ChooseDeviceProtocol(record);
+    if (!choice.has_value()) {
+        // Not a device this driver streams. Silent by design: an unknown device
+        // on the bus is not a fault. A device the catalog calls Supported can no
+        // longer land here -- a Supported row must name a builder (asserted in
+        // AudioDeviceCatalogTests) and every builder is handled below, with no
+        // default arm, so omitting one is a compile error rather than issue
+        // #115's silent nub-without-a-protocol.
+        return nullptr;
     }
 
-    if (vendorId == kFocusriteVendorId) {
-        if (modelId == kSPro24DspModelId) {
-            ASFW_LOG(DICE, "Creating SPro24DspProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
-                     vendorId, modelId, nodeId);
-            return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(busOps, busInfo, routeRegistry,
-                                                                         route, irmClient);
-        }
-
-        if (modelId == kSPro14ModelId || modelId == kSPro24ModelId ||
-            modelId == kSPro40ModelId) {
-            const auto known = LookupKnownIdentity(vendorId, modelId);
+    // No `default:`. Adding a ProfileBuilderId without teaching this switch what
+    // to construct must not compile.
+    switch (choice->builder) {
+        case ProfileBuilderId::FocusriteSPro24Dsp:
             ASFW_LOG(DICE,
-                     "Creating generic DICETcatProtocol for %{public}s vendor=0x%06x model=0x%06x node=0x%04x",
-                     (known.has_value() && known->modelName) ? known->modelName : "Focusrite DICE",
-                     vendorId,
-                     modelId,
-                     nodeId);
-            return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
-                                                                    route, irmClient, timerScheduler);
-        }
-    }
+                     "Creating SPro24DspProtocol node=0x%04x unitOffset=%u",
+                     nodeId, choice->unitDirectoryOffset);
+            return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(
+                busOps, busInfo, routeRegistry, route, irmClient);
 
-    if (vendorId == kWeissVendorId &&
-        (modelId == kWeissInt202ModelId || modelId == kWeissInt203ModelId)) {
-        const auto known = LookupKnownIdentity(vendorId, modelId);
-        ASFW_LOG(DICE,
-                 "Creating Weiss DICETcatProtocol for %{public}s vendor=0x%06x model=0x%06x node=0x%04x; "
-                 "DICE remains duplex while CoreAudio hides device->host channels",
-                 (known.has_value() && known->modelName) ? known->modelName : "Weiss INT",
-                 vendorId,
-                 modelId,
-                 nodeId);
-        return std::make_unique<DICE::TCAT::DICETcatProtocol>(
-            busOps,
-            busInfo,
-            routeRegistry,
-            route,
-            irmClient,
-            timerScheduler,
-            DICE::TCAT::DICETcatRuntimePolicy{
-                .exposeDeviceToHostToCoreAudio = false,
-                .requireSourceLockBeforeStreamEnable = false,
-                .requireSourceLockAtConfirm = false,
-            });
-    }
+        // The plain TCAT devices differ in their profile, not their protocol:
+        // geometry comes from the device's own registers either way.
+        case ProfileBuilderId::FocusriteSPro14:
+        case ProfileBuilderId::FocusriteSPro24:
+        case ProfileBuilderId::FocusriteSPro40:
+        case ProfileBuilderId::FocusriteLiquidS56:
+        case ProfileBuilderId::AlesisMultiMix:
+        case ProfileBuilderId::MidasVeniceF32:
+        case ProfileBuilderId::PreSonusStudioLive1602:
+        case ProfileBuilderId::PreSonusStudioLive2442:
+            ASFW_LOG(DICE,
+                     "Creating generic DICETcatProtocol node=0x%04x unitOffset=%u",
+                     nodeId, choice->unitDirectoryOffset);
+            return std::make_unique<DICE::TCAT::DICETcatProtocol>(
+                busOps, busInfo, routeRegistry, route, irmClient, timerScheduler);
 
-    if (vendorId == kAlesisVendorId && modelId == kAlesisMultiMixModelId) {
-        ASFW_LOG(DICE,
-                 "Creating generic DICETcatProtocol for Alesis MultiMix vendor=0x%06x model=0x%06x node=0x%04x",
-                 vendorId,
-                 modelId,
-                 nodeId);
-        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
-                                                                route, irmClient, timerScheduler);
-    }
+        // Weiss is the one DICE device with a non-default runtime policy: it is
+        // a one-way interface, so CoreAudio must not be shown the device->host
+        // side and source lock is not a precondition for enabling a stream.
+        case ProfileBuilderId::WeissInt202:
+        case ProfileBuilderId::WeissInt203:
+            ASFW_LOG(DICE,
+                     "Creating Weiss DICETcatProtocol node=0x%04x unitOffset=%u; DICE "
+                     "remains duplex while CoreAudio hides device->host channels",
+                     nodeId, choice->unitDirectoryOffset);
+            return std::make_unique<DICE::TCAT::DICETcatProtocol>(
+                busOps, busInfo, routeRegistry, route, irmClient, timerScheduler,
+                DICE::TCAT::DICETcatRuntimePolicy{
+                    .exposeDeviceToHostToCoreAudio = false,
+                    .requireSourceLockBeforeStreamEnable = false,
+                    .requireSourceLockAtConfirm = false,
+                });
 
-    if (vendorId == kMidasVendorId && modelId == kMidasVeniceModelId) {
-        ASFW_LOG(DICE,
-                 "Creating generic DICETcatProtocol for Midas Venice vendor=0x%06x model=0x%06x node=0x%04x",
-                 vendorId,
-                 modelId,
-                 nodeId);
-        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
-                                                                route, irmClient, timerScheduler);
-    }
+        case ProfileBuilderId::ApogeeDuet:
+            ASFW_LOG(Audio, "Creating ApogeeDuetProtocol node=0x%04x", nodeId);
+            // Factory path intentionally does not bind FCP transport yet.
+            // AVCDiscovery wires transport for live command execution.
+            return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(
+                busOps, busInfo, route, &routeRegistry, nullptr, irmClient, cmpClient,
+                100U, timerScheduler);
 
-    // Both StudioLives take the generic TCAT path: snd-dice quirks only model
-    // 0x000008 (dice-presonus.c) and libffado 2.5.0 records no quirk for either.
-    // The 24.4.2's asymmetric 16+10 playback side needs no clause of its own —
-    // DoProgramRx walks playbackStreamCount, which DuplexStreamProfile takes from
-    // the device's own RX_NUMBER registers rather than from a host-side constant.
-    if (vendorId == kPreSonusVendorId &&
-        (modelId == kStudioLive1602ModelId || modelId == kStudioLive2442ModelId)) {
-        const auto known = LookupKnownIdentity(vendorId, modelId);
-        ASFW_LOG(DICE,
-                 "Creating generic DICETcatProtocol for %{public}s vendor=0x%06x model=0x%06x node=0x%04x",
-                 (known.has_value() && known->modelName) ? known->modelName
-                                                         : "PreSonus StudioLive",
-                 vendorId,
-                 modelId,
-                 nodeId);
-        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
-                                                                route, irmClient, timerScheduler);
-    }
+        // Mackie Onyx-i, Oxford run (shared id 0x081216; geometry verified on a
+        // real 820i). Plain AV/C + CMP duplex on the shared base -- no vendor codec.
+        case ProfileBuilderId::MackieOnyxIOxfw:
+            ASFW_LOG(Audio, "Creating MackieOnyxProtocol node=0x%04x", nodeId);
+            return std::make_unique<Oxford::Mackie::MackieOnyxProtocol>(
+                busOps, busInfo, route, irmClient, cmpClient, timerScheduler);
 
-    // Check for Apogee Duet FireWire (AV/C + vendor-dependent commands).
-    if (vendorId == kApogeeVendorId && modelId == kApogeeDuetModelId) {
-        ASFW_LOG(Audio,
-                 "Creating ApogeeDuetProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
-                 vendorId, modelId, nodeId);
-        // Factory path intentionally does not bind FCP transport yet.
-        // AVCDiscovery wires transport for live command execution.
-        return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(
-            busOps, busInfo, route, &routeRegistry, nullptr, irmClient, cmpClient, 100U,
-            timerScheduler);
-    }
+        // Mackie Onyx 400F, Echo Fireworks run: EFC-controlled clock on top of
+        // the shared AV/C+CMP duplex base. Static 10x10 geometry is verified
+        // against HWINFO before the first stream (Linux snd-fireworks is the
+        // reference).
+        case ProfileBuilderId::MackieOnyx400F:
+            ASFW_LOG(Audio, "Creating FireworksProtocol for Onyx 400F node=0x%04x", nodeId);
+            return std::make_unique<Fireworks::FireworksProtocol>(
+                busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
+                Fireworks::kOnyx400FGeometry);
 
-    // Mackie Onyx-i, Oxford run (shared id 0x081216; geometry verified on a real
-    // 820i). Plain AV/C + CMP duplex on the shared base — no vendor codec.
-    if (vendorId == kMackieVendorId && modelId == kOnyxIOxfwModelId) {
-        ASFW_LOG(Audio,
-                 "Creating MackieOnyxProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
-                 vendorId, modelId, nodeId);
-        return std::make_unique<Oxford::Mackie::MackieOnyxProtocol>(
-            busOps, busInfo, route, irmClient, cmpClient, timerScheduler);
-    }
+        case ProfileBuilderId::TerraTecPhase88:
+            ASFW_LOG(Audio, "Creating Phase88Protocol BeBoB/CMP backend node=0x%04x", nodeId);
+            return std::make_unique<BeBoB::Phase88Protocol>(
+                busOps, busInfo, route, irmClient, cmpClient, timerScheduler);
 
-    // Mackie Onyx 400F, Echo Fireworks run: EFC-controlled clock on top of the
-    // shared AV/C+CMP duplex base. Static 10x10 geometry is verified against
-    // HWINFO before the first stream (Linux snd-fireworks is the reference).
-    if (vendorId == kMackieVendorId && modelId == kOnyx400FModelId) {
-        ASFW_LOG(Audio,
-                 "Creating FireworksProtocol for Mackie Onyx 400F vendor=0x%06x model=0x%06x node=0x%04x",
-                 vendorId, modelId, nodeId);
-        return std::make_unique<Fireworks::FireworksProtocol>(
-            busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
-            Fireworks::kOnyx400FGeometry);
-    }
+        // Conservative defaults -- plug-0, CMP, no mixer programming. No catalog
+        // row selects this today (the one BeBoB device on this branch, the
+        // PHASE 88, has its own builder), so it is reachable only when a future
+        // row names it.
+        case ProfileBuilderId::GenericBeBoB:
+            ASFW_LOG(Audio, "Creating GenericBeBoBProtocol node=0x%04x", nodeId);
+            return std::make_unique<BeBoB::GenericBeBoBProtocol>(
+                busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
+                BeBoB::DeviceModel{});
 
-    if (vendorId == kTerraTecVendorId && modelId == kPhase88RackFwModelId) {
-        ASFW_LOG(Audio,
-                 "Creating Phase88Protocol BeBoB/CMP backend vendor=0x%06x model=0x%06x node=0x%04x",
-                 vendorId, modelId, nodeId);
-        return std::make_unique<BeBoB::Phase88Protocol>(busOps, busInfo, route, irmClient,
-                                                        cmpClient, timerScheduler);
-    }
-    // Known BeBoB device without a verified custom protocol: generic fallback.
-    // Conservative defaults — plug-0, CMP, no mixer programming. Discovery model
-    // wiring (for derived geometry) lands with the per-GUID profile work.
-    if (DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(vendorId, modelId)) {
-        ASFW_LOG(Audio,
-                 "Creating GenericBeBoBProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
-                 vendorId, modelId, nodeId);
-        return std::make_unique<BeBoB::GenericBeBoBProtocol>(
-            busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
-            BeBoB::DeviceModel{});
-    }
+        // MOTU publishes model_id 0; the model is the unit's Unit_Sw_Version,
+        // which the protocol needs in order to pick its chunk layout.
+        // The IRM client must reach the protocol: the coordinator allocates iso
+        // channels through IDuplexDeviceControl::GetIRMClient() before
+        // programming the device.
+        case ProfileBuilderId::Motu828mk2:
+        case ProfileBuilderId::MotuUltralite:
+            ASFW_LOG(Audio,
+                     "Creating MotuV2Protocol version=0x%06x node=0x%04x",
+                     choice->unitVersion, nodeId);
+            return std::make_unique<Motu::MotuV2Protocol>(
+                busOps, busInfo, routeRegistry, route, choice->unitVersion, irmClient);
 
-    // Unknown device
+        // An unknown AV/C unit resolves to the generic fallback in the catalog,
+        // which is a *classification*, not a decision to stream it. This branch
+        // has no generic AV/C backend, and inventing one here would start
+        // talking to every AV/C device on the bus.
+        case ProfileBuilderId::GenericAvc:
+        // M-Audio's special firmware is recognised for its command bound only;
+        // this branch has no MAudioSpecialProtocol. See AVCCommandFilter.hpp.
+        case ProfileBuilderId::MAudioFireWire1814:
+        case ProfileBuilderId::MAudioProjectMix:
+        case ProfileBuilderId::None:
+            return nullptr;
+    }
     return nullptr;
 }
 

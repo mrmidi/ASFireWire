@@ -10,6 +10,7 @@
 #include "../Async/FireWireBusImpl.hpp"
 #include "../Async/Interfaces/IFireWireBusOps.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
+#include "../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
 #include "../Bus/CSR/TopologyMapService.hpp"
@@ -568,8 +569,22 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
         auto policy = deps_.speedPolicy->ForNode(*nodeId);
 
         auto& bus = this->Bus();
-        const auto deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy);
+        auto deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy);
         discoveredGuids.insert(deviceRecord.guid);
+
+        // Decided from Config-ROM identity alone, before anything can be sent.
+        // Carried on the record so FCPTransport can bound what this device is
+        // ever asked; see Protocols/AVC/AVCCommandFilter.hpp.
+        deviceRecord.avcCommandFilter =
+            DeviceProfiles::Audio::AudioDeviceCatalog::CommandFilterFor(
+                deviceRecord.identity);
+        if (deviceRecord.avcCommandFilter !=
+            Discovery::AvcCommandFilterId::Unrestricted) {
+            ASFW_LOG(Discovery,
+                     "[DeviceIdentity] instance=%llu carries a filtered AV/C command "
+                     "set; unlisted frames will be refused at submit",
+                     deviceRecord.instanceId.value);
+        }
 
         // Create the device-specific runtime protocol here, at the orchestrator layer,
         // where the bus + IRM are already in scope. No-op for unknown devices. This is the

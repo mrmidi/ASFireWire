@@ -61,13 +61,9 @@ public:
     /// makes subsequent Start/Stop refuse -- but it must still exist, because the
     /// coordinator can otherwise be asked to start a stream while the bus is going away.
     /// Idempotent.
-    void BeginTeardown() noexcept;
-
-    /// Publish (or refresh) the nub for a discovered device. Called when discovery adds
-    /// or resumes a MOTU, which is the only chance to publish: the nub must exist before
-    /// CoreAudio will ever ask to stream, and streaming is what produces live runtime
-    /// caps -- so waiting for caps first deadlocks the two against each other.
-    void OnDeviceRecordUpdated(uint64_t guid) noexcept;
+    void BeginTeardown() noexcept override;
+    void OnDeviceRecordUpdated(uint64_t guid) noexcept override;
+    void CancelRemoteDeviceWork(uint64_t guid) noexcept override;
 
 private:
     void EnsureNubForGuid(uint64_t guid) noexcept;
@@ -79,6 +75,9 @@ private:
     AudioDuplexCoordinator& coordinator_;
 
     std::atomic<bool> stopping_{false};
+    // Publication attempts refused because teardown already latched (I3: late
+    // work counts, never acts).
+    std::atomic<uint64_t> publicationRejectCount_{0};
     IOLock* lock_{nullptr};
     std::unordered_set<uint64_t> activeStreamingGuids_{};
 };

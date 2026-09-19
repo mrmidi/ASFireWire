@@ -15,7 +15,7 @@
 namespace {
 
 using ASFW::Audio::AudioClockConfig;
-using ASFW::Audio::ClockApplyResult;
+using ASFW::Audio::DuplexClockApplyResult;
 using ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol;
 using ASFW::Testing::AvcTestRig;
 
@@ -28,7 +28,7 @@ TEST(ApogeeDuetClockTransitionTests, ConcurrentApplyClockConfigReturnsBusy) {
     // Initial ApplyClockConfig without transport returns kIOReturnNotReady
     bool callbackFired = false;
     protocol.ApplyClockConfig(AudioClockConfig{.sampleRateHz = 48000U},
-                              [&callbackFired](IOReturn status, const ClockApplyResult&) {
+                              [&callbackFired](IOReturn status, const DuplexClockApplyResult&) {
                                   callbackFired = true;
                                   EXPECT_EQ(status, kIOReturnNotReady);
                               });

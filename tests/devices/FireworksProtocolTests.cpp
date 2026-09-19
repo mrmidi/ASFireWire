@@ -352,7 +352,7 @@ TEST_F(FireworksProtocolTest, ClockApplySkipsSetClockWhenDeviceAlreadyAtRate) {
 
     IOReturn status = kIOReturnNotReady;
     uint32_t appliedRate = 0;
-    proto.ApplyClockConfig({.sampleRateHz = 44100}, [&](IOReturn s, ASFW::Audio::ClockApplyResult r) {
+    proto.ApplyClockConfig({.sampleRateHz = 44100}, [&](IOReturn s, ASFW::Audio::DuplexClockApplyResult r) {
         status = s;
         appliedRate = r.appliedClock.sampleRateHz;
     });

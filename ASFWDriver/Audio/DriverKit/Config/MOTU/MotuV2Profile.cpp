@@ -5,8 +5,7 @@
 
 #include "MotuV2Profile.hpp"
 
-#include "../../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
-#include "../../../../DeviceProfiles/Audio/Vendors/MotuAudioProfiles.hpp"
+#include "../../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../Wire/MOTU/MotuBlockLayout.hpp"
 #include "../../../Wire/MOTU/MotuPortLayout.hpp"
 
@@ -47,7 +46,7 @@ void FillStreamConfig(AudioStreamConfig& outConfig, AudioStreamDirection directi
 
 const char* MotuV2Profile::Name() const noexcept {
     const char* const model =
-        DeviceProfiles::Audio::Motu::ModelNameForSwVersion(unitSwVersion_);
+        DeviceProfiles::Audio::AudioDeviceCatalog::MotuModelNameForSwVersion(unitSwVersion_);
     return model != nullptr ? model : "MOTU (protocol v2)";
 }
 

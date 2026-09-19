@@ -144,6 +144,15 @@ add_library(asfw_discovery_host STATIC
 )
 target_link_libraries(asfw_discovery_host PUBLIC asfw_test_support)
 
+# 5. Audio device catalog host library
+add_library(asfw_catalog_host STATIC
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceResolver.cpp"
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceValidation.cpp"
+)
+target_link_libraries(asfw_catalog_host PUBLIC asfw_test_common_interface)
+target_link_libraries(asfw_test_support PUBLIC asfw_catalog_host)
+
 # Include modular test subdirectories
 add_subdirectory(support)
 add_subdirectory(core)

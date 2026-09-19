@@ -122,6 +122,7 @@ private:
     void PublishBeBoBAudioConfig(uint64_t guid,
                                   uint32_t vendorId,
                                   uint32_t modelId,
+                                  uint32_t profileBuilderId,
                                   const std::string& deviceName,
                                   const ::ASFW::Audio::BeBoB::DeviceModel& inventory);
     void PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,

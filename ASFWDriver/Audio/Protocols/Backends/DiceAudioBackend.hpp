@@ -9,6 +9,7 @@
 #include "IAudioBackend.hpp"
 #include "AudioDuplexCoordinator.hpp"
 #include "IsochDuplexHostTransport.hpp"
+#include "PublicationGate.hpp"
 
 #include "../../../Audio/Core/AudioNubPublisher.hpp"
 
@@ -41,11 +42,14 @@ public:
 
     [[nodiscard]] const char* Name() const noexcept override { return "DICE"; }
 
-    void OnDeviceRecordUpdated(uint64_t guid) noexcept;
+    void OnDeviceRecordUpdated(uint64_t guid) noexcept override;
     // The coordinator owns remote-device teardown. DICE only cancels its
     // per-device notification/recovery work so it cannot revive a dead GUID.
-    void CancelRemoteDeviceWork(uint64_t guid) noexcept;
-    void HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReason reason) noexcept;
+    void CancelRemoteDeviceWork(uint64_t guid) noexcept override;
+    void OnDeviceResumed(uint64_t guid) noexcept override;
+    void HandleHostTimingLoss(uint64_t guid) noexcept override;
+    void HandleCycleInconsistent(uint64_t guid) noexcept override;
+    void HandleRecoveryEvent(uint64_t guid, DuplexRestartReason reason) noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;
@@ -57,7 +61,7 @@ public:
     // cancels in-flight recovery (coordinator), then drains the work queue (synchronous
     // barrier) so no recovery/probe block issues MMIO after ASFWDriver::Stop's Detach.
     // Idempotent; must be called before HardwareInterface::Detach().
-    void BeginTeardown() noexcept;
+    void BeginTeardown() noexcept override;
 
 private:
     void EnsureNubForGuid(uint64_t guid) noexcept;
@@ -78,7 +82,45 @@ private:
     AudioRuntimeRegistry& runtime_;
     Driver::HardwareInterface& hardware_;
     std::atomic<bool> stopping_{false}; // FW-61 teardown latch
+    std::atomic<bool> teardownStarted_{false};
+    std::atomic<bool> teardownComplete_{false};
+    PublicationGate publicationGate_{};
     AudioDuplexCoordinator& restartCoordinator_;
+
+#ifdef ASFW_HOST_TEST
+public:
+    void SetBeforePublishHookForTesting(std::function<void()> hook) noexcept {
+        beforePublishHookForTesting_ = std::move(hook);
+    }
+    void SetOnTeardownDrainStartedHookForTesting(std::function<void()> hook) noexcept {
+        onTeardownDrainStartedHookForTesting_ = std::move(hook);
+    }
+    void SetOnTeardownGateClosedHookForTesting(std::function<void()> hook) noexcept {
+        publicationGate_.SetOnGateClosedForTesting(std::move(hook));
+    }
+    void SetOnSecondaryTeardownWaitingHookForTesting(std::function<void()> hook) noexcept {
+        onSecondaryTeardownWaitingHookForTesting_ = std::move(hook);
+    }
+    void EnsureNubForGuidForTesting(uint64_t guid) noexcept {
+        EnsureNubForGuid(guid);
+    }
+    [[nodiscard]] IODispatchQueue* WorkQueueForTesting() const noexcept {
+        return workQueue_.get();
+    }
+    [[nodiscard]] uint64_t PublicationRejectCountForTesting() const noexcept {
+        return publicationGate_.RejectCount();
+    }
+    [[nodiscard]] uint64_t ProbeAbortCountForTesting() const noexcept {
+        return probeAbortCount_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool IsTeardownCompleteForTesting() const noexcept {
+        return teardownComplete_.load(std::memory_order_acquire);
+    }
+private:
+    std::function<void()> beforePublishHookForTesting_{};
+    std::function<void()> onTeardownDrainStartedHookForTesting_{};
+    std::function<void()> onSecondaryTeardownWaitingHookForTesting_{};
+#endif
 
     IOLock* lock_{nullptr};
     OSSharedPtr<IODispatchQueue> workQueue_{};
@@ -89,6 +131,9 @@ private:
     std::atomic<uint64_t> recoveryRejectCount_{0};
     std::atomic<uint64_t> probeRejectCount_{0};
     std::atomic<uint64_t> probeAbortCount_{0};
+    // Publication attempts refused because teardown already latched (I3: late
+    // work counts, never acts). Reported in the BeginTeardown drain summary.
+    std::atomic<uint64_t> publicationRejectCount_{0};
 
     static constexpr uint32_t kCapsRetryDelayMs = 50;
     static constexpr uint8_t kCapsRetryMaxAttempts = 40; // 2s @ 50ms

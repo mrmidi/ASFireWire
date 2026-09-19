@@ -31,11 +31,6 @@ const char* GenericDiceProfile::Name() const noexcept {
     return "Generic DICE";
 }
 
-bool GenericDiceProfile::Matches(const DiceDeviceIdentity& identity) const noexcept {
-    (void)identity;
-    return true; // Catch-all fallback
-}
-
 DiceDeviceQuirks GenericDiceProfile::Quirks() const noexcept {
     return DiceDeviceQuirks{};
 }

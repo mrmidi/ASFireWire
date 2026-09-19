@@ -48,6 +48,17 @@ public:
     bool IsAudioCandidate() const { return isAudioCandidate_; }
     bool SupportsAMDTP() const { return supportsAMDTP_; }
 
+    /// Which AV/C command shapes this device may be sent. Decided from Config
+    /// ROM alone, before any transaction; see Protocols/AVC/AVCCommandFilter.hpp.
+    AvcCommandFilterId GetAvcCommandFilter() const { return avcCommandFilter_; }
+
+    /// What the device's Config ROM actually said, as opposed to what we
+    /// concluded from it. Carried so anything holding an FWDevice can ask the
+    /// audio device catalog a question without first finding the registry
+    /// record -- the flat vendorId/modelId pair above cannot express a
+    /// published model_id of 0, nor which unit a specifier came from.
+    const DeviceIdentityEvidence& GetIdentity() const { return identity_; }
+
     State GetState() const { return state_; }
     bool IsReady() const { return state_ == State::Ready; }
     bool IsSuspended() const { return state_ == State::Suspended; }
@@ -78,6 +89,8 @@ private:
 
     bool isAudioCandidate_{false};
     bool supportsAMDTP_{false};
+    AvcCommandFilterId avcCommandFilter_{AvcCommandFilterId::Unrestricted};
+    DeviceIdentityEvidence identity_{};
 
     Generation generation_{0};
     uint16_t nodeId_{0xFFFF};

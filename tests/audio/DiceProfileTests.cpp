@@ -9,7 +9,11 @@
 #include "Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/DiceDeviceProfile.hpp"
-#include "Audio/DriverKit/Config/DICE/DiceProfileRegistry.hpp"
+#include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
+#include "Discovery/DiscoveryTypes.hpp"
+#include "Audio/DriverKit/Config/DICE/DiceDeviceProfile.hpp"
+#include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
+#include "Discovery/DiscoveryTypes.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/AlesisMultiMixProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.hpp"
@@ -26,9 +30,84 @@ namespace {
 using namespace ASFW::Isoch::Audio;
 using namespace ASFW::Isoch::Audio::DICE;
 
-TEST(DiceProfileTests, ResolvesFocusriteSaffireProfileByVendor) {
+// The profile registry no longer matches on identity: the device catalog does
+// that once, and its answer travels to the audio side as a ProfileBuilderId on
+// the nub. These tests resolve it the same way production does, from
+// Config-ROM evidence, rather than re-stating a mapping that would then be free
+// to drift from the catalog.
+[[nodiscard]] uint32_t BuilderIdFor(uint32_t vendorId, uint32_t modelId,
+                                    uint32_t unitSpecifier, uint32_t unitVersion) {
+    ASFW::Discovery::DeviceIdentityEvidence identity{};
+    identity.observedGuid = (static_cast<uint64_t>(vendorId) << 40U) | 0x04'0000'0000ULL;
+    identity.nodeVendorOui = vendorId;
+    identity.rootVendorId = vendorId;
+    identity.rootModelId = modelId;
+    ASFW::Discovery::UnitIdentityEvidence unit{};
+    unit.unitDirectoryOffset = 5;
+    unit.specifierId = unitSpecifier;
+    unit.version = unitVersion;
+    identity.units.push_back(unit);
+    return static_cast<uint32_t>(
+        ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(identity));
+}
+
+// A DICE unit publishes the vendor OUI as its specifier with interface
+// version 1 (Linux dice.c); a TA 1394 AV/C unit publishes 0x00A02D / 0x010001.
+[[nodiscard]] const IAudioDeviceProfile* FindDiceProfile(uint32_t vendorId,
+                                                         uint32_t modelId,
+                                                         uint64_t guid = 0) {
+    return AudioProfileRegistry::FindProfile(
+        vendorId, modelId, guid, BuilderIdFor(vendorId, modelId, vendorId, 0x000001));
+}
+
+[[nodiscard]] const IAudioDeviceProfile* FindAvcProfile(uint32_t vendorId,
+                                                        uint32_t modelId,
+                                                        uint64_t guid = 0) {
+    return AudioProfileRegistry::FindProfile(
+        vendorId, modelId, guid, BuilderIdFor(vendorId, modelId, 0x00A02D, 0x010001));
+}
+
+// The base Saffire profile used to match the Focusrite OUI alone, so every
+// other Focusrite DICE part inherited its 8-in/16-out geometry. Three devices
+// were affected, and the TCD3070 Pro 40 is the one that proves the rule cannot
+// be relaxed again: it is a different chip with no TCAT protocol extension, so
+// its geometry is not readable from the device at all (Linux hardcodes it,
+// dice-focusrite.c:8-22, and Focusrite's own kext has no entry for it).
+TEST(DiceProfileTests, FocusriteSiblingsDoNotInheritTheSaffireProfile) {
+    constexpr uint32_t kFocusriteVendorId = 0x00130E;
+    constexpr uint32_t kSPro40Tcd3070ModelId = 0x0000de;
+    constexpr uint32_t kLiquidS56ModelId = 0x000006;
+    constexpr uint32_t kSPro26ModelId = 0x000012;
+
+    for (const uint32_t modelId :
+         {kSPro40Tcd3070ModelId, kLiquidS56ModelId, kSPro26ModelId}) {
+        const auto* profile =
+            FindDiceProfile(kFocusriteVendorId, modelId);
+        ASSERT_NE(profile, nullptr) << "model 0x" << std::hex << modelId;
+        EXPECT_STRNE(profile->Name(), "Focusrite Saffire (DICE)")
+            << "model 0x" << std::hex << modelId
+            << " inherited a sibling's geometry through vendor-wide matching";
+        EXPECT_STRNE(profile->Name(), "Focusrite Saffire Pro 40")
+            << "model 0x" << std::hex << modelId;
+    }
+}
+
+// The three models the base profile does serve.
+TEST(DiceProfileTests, TheSaffireProfileStillServesItsOwnModels) {
+    constexpr uint32_t kFocusriteVendorId = 0x00130E;
+    for (const uint32_t modelId : {0x000009U /*Pro 14*/, 0x000007U /*Pro 24*/,
+                                   0x000008U /*Pro 24 DSP*/}) {
+        const auto* profile =
+            FindDiceProfile(kFocusriteVendorId, modelId);
+        ASSERT_NE(profile, nullptr) << "model 0x" << std::hex << modelId;
+        EXPECT_STREQ(profile->Name(), "Focusrite Saffire (DICE)")
+            << "model 0x" << std::hex << modelId;
+    }
+}
+
+TEST(DiceProfileTests, ResolvesFocusriteSaffireProfileByVendorAndModel) {
     const uint32_t kFocusriteVendorId = 0x00130E;
-    const auto* profile = AudioProfileRegistry::FindProfile(kFocusriteVendorId, 0x000007, 0x123456789ULL);
+    const auto* profile = FindDiceProfile(kFocusriteVendorId, 0x000007, 0x123456789ULL);
 
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "Focusrite Saffire (DICE)");
@@ -49,7 +128,7 @@ TEST(DiceProfileTests, ResolvesFocusriteSaffireProfileByVendor) {
 
 TEST(DiceProfileTests, ResolvesOriginalPro40LowRateGeometry) {
     constexpr uint32_t kFocusriteVendorId = 0x00130E;
-    const auto* profile = AudioProfileRegistry::FindProfile(kFocusriteVendorId, 0x000005U, 0);
+    const auto* profile = FindDiceProfile(kFocusriteVendorId, 0x000005U);
 
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "Focusrite Saffire Pro 40");
@@ -89,7 +168,7 @@ TEST(DiceProfileTests, UniformPlaybackStreamsKeepDisjointChannelSlices) {
 }
 
 TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
-    const auto* profile = AudioProfileRegistry::FindProfile(0x999999, 0x000001, 0x123456789ULL);
+    const auto* profile = FindDiceProfile(0x999999, 0x000001, 0x123456789ULL);
 
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "Generic DICE");
@@ -112,7 +191,7 @@ TEST(DiceProfileTests, WeissIntProfileKeepsDuplexWireShapeButHidesCaptureFromCor
     constexpr uint32_t kInt203ModelId = 0x00000a;
 
     for (const uint32_t modelId : {kInt202ModelId, kInt203ModelId}) {
-        const auto* profile = AudioProfileRegistry::FindProfile(kWeissVendorId, modelId, 0);
+        const auto* profile = FindDiceProfile(kWeissVendorId, modelId);
         ASSERT_NE(profile, nullptr);
         EXPECT_STREQ(profile->Name(), "Weiss INT (DICE)");
         EXPECT_EQ(profile->TxChannelCount(), 2U);
@@ -128,8 +207,7 @@ TEST(DiceProfileTests, WeissIntProfileKeepsDuplexWireShapeButHidesCaptureFromCor
 }
 
 TEST(DiceProfileTests, ResolvesApogeeDuetProfileWithoutDICEName) {
-    const auto* profile = AudioProfileRegistry::FindProfile(
-        0x0003DB, 0x01DDDD, 0x0003DB0A0000D112ULL);
+    const auto* profile = FindAvcProfile(0x0003DB, 0x01DDDD, 0x0003DB0A0000D112ULL);
 
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "Duet");
@@ -141,8 +219,7 @@ TEST(DiceProfileTests, ResolvesApogeeDuetProfileWithoutDICEName) {
 }
 
 TEST(DiceProfileTests, ResolvesPhase88AsAvcWireProfileNotGenericDice) {
-    const auto* profile = AudioProfileRegistry::FindProfile(
-        0x000AAC, 0x000003, 0x000AAC0300B1D1F7ULL);
+    const auto* profile = FindAvcProfile(0x000AAC, 0x000003, 0x000AAC0300B1D1F7ULL);
 
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "PHASE 88 Rack FW");
@@ -165,7 +242,7 @@ TEST(DiceProfileTests, ResolvesPhase88AsAvcWireProfileNotGenericDice) {
 
 TEST(DiceProfileTests, FocusriteAsymmetricSafetyOffsetsAndLatencies) {
     const uint32_t kFocusriteVendorId = 0x00130E;
-    const auto* profile = AudioProfileRegistry::FindProfile(kFocusriteVendorId, 0x000007, 0x123456789ULL);
+    const auto* profile = FindDiceProfile(kFocusriteVendorId, 0x000007, 0x123456789ULL);
     ASSERT_NE(profile, nullptr);
 
     // 48 kHz
@@ -186,7 +263,7 @@ TEST(DiceProfileTests, FocusriteAsymmetricSafetyOffsetsAndLatencies) {
 }
 
 TEST(DiceProfileTests, ResolvesMidasVeniceProfileByVendorAndModel) {
-    const auto* profile = AudioProfileRegistry::FindProfile(0x10c73f, 0x000001, 0x10c73f04004011dfULL);
+    const auto* profile = FindDiceProfile(0x10c73f, 0x000001, 0x10c73f04004011dfULL);
 
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "Midas Venice F32 (DICE)");
@@ -212,7 +289,7 @@ TEST(DiceProfileTests, ResolvesMidasVeniceProfileByVendorAndModel) {
 }
 
 TEST(DiceProfileTests, MidasVeniceSafetyOffsetsAndLatencies) {
-    const auto* profile = AudioProfileRegistry::FindProfile(0x10c73f, 0x000001, 0x10c73f04004011dfULL);
+    const auto* profile = FindDiceProfile(0x10c73f, 0x000001, 0x10c73f04004011dfULL);
     ASSERT_NE(profile, nullptr);
 
     // 48 kHz: Tx = 6 * 8 = 48, Rx = 16 * 8 = 128
@@ -230,7 +307,7 @@ TEST(DiceProfileTests, MidasVeniceSafetyOffsetsAndLatencies) {
 
 TEST(DiceProfileTests, MidasVendorWithWrongModelDoesNotMatchVeniceProfile) {
     // Only vendor+model together should match — no vendor-only fallback for Midas.
-    const auto* profile = AudioProfileRegistry::FindProfile(0x10c73f, 0x999999, 0x0ULL);
+    const auto* profile = FindDiceProfile(0x10c73f, 0x999999);
     // Should fall through to generic profile, not Venice.
     if (profile != nullptr) {
         EXPECT_STRNE(profile->Name(), "Midas Venice F32 (DICE)");
@@ -240,7 +317,7 @@ TEST(DiceProfileTests, MidasVendorWithWrongModelDoesNotMatchVeniceProfile) {
 TEST(DiceProfileTests, ResolvesPreSonusStudioLive1602ProfileByVendorAndModel) {
     // Identity captured live from the hardware (2026-07-08): GUID 0x000A920404FE2011,
     // vendor 0x000A92, model 0x000013.
-    const auto* profile = AudioProfileRegistry::FindProfile(0x000A92, 0x000013, 0x000A920404FE2011ULL);
+    const auto* profile = FindDiceProfile(0x000A92, 0x000013, 0x000A920404FE2011ULL);
 
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "PreSonus StudioLive 16.0.2 (DICE)");
@@ -263,7 +340,7 @@ TEST(DiceProfileTests, ResolvesPreSonusStudioLive1602ProfileByVendorAndModel) {
 }
 
 TEST(DiceProfileTests, PreSonusStudioLiveSafetyOffsetsAndLatencies) {
-    const auto* profile = AudioProfileRegistry::FindProfile(0x000A92, 0x000013, 0x000A920404FE2011ULL);
+    const auto* profile = FindDiceProfile(0x000A92, 0x000013, 0x000A920404FE2011ULL);
     ASSERT_NE(profile, nullptr);
 
     // Device clock caps are 44.1/48 kHz only; both rates sit in the DICE low rate
@@ -282,7 +359,7 @@ TEST(DiceProfileTests, PreSonusVendorWithWrongModelDoesNotMatchStudioLiveProfile
     // (0x000010/0x000012/0x000014) whose channel counts are uncaptured; none of
     // them may inherit the 16.0.2 stream geometry.
     for (const uint32_t modelId : {0x000008u, 0x000010u, 0x000012u, 0x000014u}) {
-        const auto* profile = AudioProfileRegistry::FindProfile(0x000A92, modelId, 0x0ULL);
+        const auto* profile = FindDiceProfile(0x000A92, modelId);
         if (profile != nullptr) {
             EXPECT_STRNE(profile->Name(), "PreSonus StudioLive 16.0.2 (DICE)");
         }
@@ -292,7 +369,7 @@ TEST(DiceProfileTests, PreSonusVendorWithWrongModelDoesNotMatchStudioLiveProfile
 TEST(DiceProfileTests, ResolvesAlesisMultiMixProfileByVendorAndModel) {
     // Alesis MultiMix 8/12/16 FireWire all share vendor 0x000595 / model 0x000000
     // (libffado configuration:622-628; snd-firewire-ctl-services model.rs:140).
-    const auto* profile = AudioProfileRegistry::FindProfile(0x000595, 0x000000, 0x000595040000ABCDULL);
+    const auto* profile = FindDiceProfile(0x000595, 0x000000, 0x000595040000ABCDULL);
 
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "Alesis MultiMix FireWire (DICE)");
@@ -328,7 +405,7 @@ TEST(DiceProfileTests, ResolvesAlesisMultiMixProfileByVendorAndModel) {
 }
 
 TEST(DiceProfileTests, AlesisMultiMixSafetyOffsetsAndLatencies) {
-    const auto* profile = AudioProfileRegistry::FindProfile(0x000595, 0x000000, 0x000595040000ABCDULL);
+    const auto* profile = FindDiceProfile(0x000595, 0x000000, 0x000595040000ABCDULL);
     ASSERT_NE(profile, nullptr);
 
     // Focusrite Saffire baseline ladder: Tx = 6 * 8 = 48, Rx = 16 * 8 = 128.
@@ -349,15 +426,72 @@ TEST(DiceProfileTests, AlesisVendorWithWrongModelDoesNotMatchMultiMixProfile) {
     // (0x000002), which have different stream geometry and their own format
     // detection in Linux (dice-alesis.c). Neither may inherit MultiMix geometry.
     for (const uint32_t modelId : {0x000001u, 0x000002u}) {
-        const auto* profile = AudioProfileRegistry::FindProfile(0x000595, modelId, 0x0ULL);
+        const auto* profile = FindDiceProfile(0x000595, modelId);
         if (profile != nullptr) {
             EXPECT_STRNE(profile->Name(), "Alesis MultiMix FireWire (DICE)");
         }
     }
 }
 
+// The assertion that keeps the two halves in step. Every builder the catalog
+// calls Supported must resolve to a profile object here, or the device
+// publishes a nub and then gets the generic DICE geometry, which rejects every
+// packet it receives. That is issue #115's failure shape moved one layer down.
+TEST(DiceProfileTests, EverySupportedBuilderResolvesToAProfile) {
+    using ASFW::DeviceProfiles::Audio::AudioDeviceCatalog;
+    using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
+    using ASFW::DeviceProfiles::Audio::SupportDisposition;
+
+    for (const auto& definition : AudioDeviceCatalog::Definitions()) {
+        if (definition.support != SupportDisposition::Supported) {
+            continue;
+        }
+        const auto builderId = static_cast<uint32_t>(definition.profileBuilder);
+        const auto* profile = AudioProfileRegistry::ProfileForBuilderId(builderId);
+        EXPECT_NE(profile, nullptr)
+            << "definition " << static_cast<uint32_t>(definition.id)
+            << " is Supported with builder " << builderId
+            << " but no profile object resolves it";
+        if (profile != nullptr) {
+            EXPECT_STRNE(profile->Name(), "Generic DICE")
+                << "definition " << static_cast<uint32_t>(definition.id)
+                << " resolved the generic fallback";
+        }
+    }
+}
+
+// A builder that is not a DICE one must not come back through the DICE-typed
+// accessor: the caller would use the richer interface on an object that does
+// not implement it.
+TEST(DiceProfileTests, TheDiceAccessorReturnsOnlyDiceProfiles) {
+    using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
+    for (const auto builder : {ProfileBuilderId::ApogeeDuet,
+                               ProfileBuilderId::TerraTecPhase88,
+                               ProfileBuilderId::MackieOnyxIOxfw,
+                               ProfileBuilderId::MackieOnyx400F,
+                               ProfileBuilderId::Motu828mk2,
+                               ProfileBuilderId::MotuUltralite,
+                               ProfileBuilderId::None}) {
+        EXPECT_EQ(AudioProfileRegistry::DiceProfileForBuilderId(
+                      static_cast<uint32_t>(builder)),
+                  nullptr)
+            << "builder " << static_cast<uint32_t>(builder);
+    }
+    EXPECT_NE(AudioProfileRegistry::DiceProfileForBuilderId(
+                  static_cast<uint32_t>(ProfileBuilderId::FocusriteSPro24Dsp)),
+              nullptr);
+}
+
+// An out-of-range builder id -- a nub from an older driver, or a corrupt
+// property -- must be refused rather than indexed.
+TEST(DiceProfileTests, AnOutOfRangeBuilderIdResolvesToNothing) {
+    EXPECT_EQ(AudioProfileRegistry::ProfileForBuilderId(0xFFFFFFFFU), nullptr);
+    EXPECT_EQ(AudioProfileRegistry::ProfileForBuilderId(0U), nullptr);
+    EXPECT_EQ(AudioProfileRegistry::DiceProfileForBuilderId(0xFFFFFFFFU), nullptr);
+}
+
 TEST(DiceProfileTests, GenericDiceDefaultOffsetsAndLatencies) {
-    const auto* profile = AudioProfileRegistry::FindProfile(0x999999, 0x000001, 0x123456789ULL);
+    const auto* profile = FindDiceProfile(0x999999, 0x000001, 0x123456789ULL);
     ASSERT_NE(profile, nullptr);
 
     EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 64);
@@ -387,7 +521,7 @@ TEST(DiceProfileTests, DynamicBeBoBProfileNeverShadowsCuratedPhase88) {
     const auto model = MakeStereoBeBoBDiscoveryModel();
     ASSERT_NE(AudioProfileRegistry::RegisterBeBoBProfile(kPhase88Guid, &model), nullptr);
 
-    const auto* profile = AudioProfileRegistry::FindProfile(0x000AAC, 0x000003, kPhase88Guid);
+    const auto* profile = FindAvcProfile(0x000AAC, 0x000003, kPhase88Guid);
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "PHASE 88 Rack FW");
     const auto* wireProfile = static_cast<const IAudioStreamProfile*>(profile);
@@ -424,7 +558,7 @@ TEST(DiceProfileTests, ResolvesMackieOnyx820iAsymmetricProfileNotGenericDice) {
     const uint32_t kMackieVendorId = 0x000FF2;
     const uint32_t kOnyxIOxfwModelId = 0x081216;
     const auto* profile =
-        AudioProfileRegistry::FindProfile(kMackieVendorId, kOnyxIOxfwModelId, 0);
+        FindAvcProfile(kMackieVendorId, kOnyxIOxfwModelId);
 
     ASSERT_NE(profile, nullptr);
     // Falling through to "Generic DICE" would hand the device a symmetric 2x2

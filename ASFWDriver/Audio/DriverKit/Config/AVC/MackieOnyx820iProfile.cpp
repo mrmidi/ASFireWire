@@ -38,11 +38,6 @@ const char* MackieOnyx820iProfile::Name() const noexcept {
     return DeviceProfiles::Audio::kOnyxIOxfwModelName;
 }
 
-bool MackieOnyx820iProfile::Matches(const DICE::DiceDeviceIdentity& identity) const noexcept {
-    return identity.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
-           identity.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId;
-}
-
 DICE::DiceDeviceQuirks MackieOnyx820iProfile::Quirks() const noexcept {
     return DICE::DiceDeviceQuirks{};
 }

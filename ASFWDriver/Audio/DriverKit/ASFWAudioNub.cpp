@@ -17,9 +17,10 @@
 #include "../../Logging/LogConfig.hpp"
 #include "../Core/AudioCoordinator.hpp"
 #include "../Protocols/AVCStartReadiness.hpp"
+#include "../Protocols/DeviceProtocolChoice.hpp"
 #include "../Protocols/DeviceProtocolFactory.hpp"
 #include "../Protocols/DICE/Core/DICETypes.hpp"
-#include "../Protocols/DICE/Core/DICERestartSession.hpp"
+#include "../Protocols/Duplex/DuplexControlTypes.hpp"
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
 #include "../../Service/DriverContext.hpp"
@@ -526,20 +527,16 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
     ProtocolRuntimeBinding binding{};
     const kern_return_t bindingStatus = ResolveProtocolRuntimeBinding(ivars, binding);
     if (bindingStatus == kIOReturnSuccess && binding.device.has_value()) {
-        // MOTU is the one family (vendor_id, model_id) cannot discriminate: the root
-        // directory publishes model_id 0 and the model lives in the unit directory's
-        // Unit_Sw_Version. The two-argument lookup defaults unit to {}, so the MOTU
-        // profile -- which gates on Unit_Sw_Version -- never matches and the device
-        // reports kNone. That drops it into the AV/C rebind gate below, which protocol v2
-        // can never pass: it is register-based and has no FCP transport, so
-        // StartAudioStreaming returned kIOReturnNotReady on every StartIO. Pass the unit
-        // identity, exactly as AudioCoordinator::BackendForGuid does.
-        const ASFW::Audio::DeviceProtocolFactory::UnitIdentity unit{
-            .specId = binding.device->unitSpecId.value_or(0U),
-            .swVersion = binding.device->unitSwVersion.value_or(0U)};
-        const auto integration = ASFW::Audio::DeviceProtocolFactory::LookupIntegrationMode(
-            binding.device->vendorId, binding.device->modelId, unit);
-        if (integration != ASFW::Audio::DeviceIntegrationMode::kHardcodedNub) {
+        // Only an AV/C-driven device goes through the rebind gate below. MOTU is
+        // the reason this has to be asked from the unit directory rather than
+        // from (vendor, model): its root model_id is 0, so a flattened lookup
+        // never matched it, it fell into the AV/C gate, and protocol v2 can
+        // never pass that gate -- it is register-based and has no FCP
+        // transport, so StartAudioStreaming returned kIOReturnNotReady on every
+        // StartIO. The catalog matches MOTU from the unit directory, so asking
+        // it is enough.
+        if (ASFW::Audio::ChooseAudioBackend(*binding.device) ==
+            ASFW::Audio::AudioBackendKind::Avc) {
             auto* transport = binding.avcDiscovery
                 ? binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId)
                 : nullptr;

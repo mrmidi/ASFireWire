@@ -18,7 +18,7 @@
 // MackieOnyx820iProfile for the matching ADK isoch geometry and the sibling
 // caveat on the shared 0x081216 model id). The Loud wire quirks (blocking
 // transmission, untrusted capture DBS, SYT-unaware) are applied via
-// DeviceStreamModeQuirks and the DuplexStreamProfile policy, not here.
+// the device catalog and the DuplexStreamProfile policy, not here.
 
 #pragma once
 
@@ -43,7 +43,6 @@ protected:
     const char* DeviceName() const override { return "Mackie Onyx-i (Oxford)"; }
     [[nodiscard]] AudioStreamRuntimeCaps DeviceCaps() const override { return caps_; }
     [[nodiscard]] std::vector<uint32_t> SupportedRates() const override;
-    void ReadClockHealth(HealthCallback callback) override;
 
 private:
     AudioStreamRuntimeCaps caps_{};

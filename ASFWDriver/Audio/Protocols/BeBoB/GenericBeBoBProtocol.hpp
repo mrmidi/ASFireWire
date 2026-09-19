@@ -36,7 +36,6 @@ protected:
     const char* DeviceName() const override { return deviceName_; }
     [[nodiscard]] AudioStreamRuntimeCaps DeviceCaps() const override { return caps_; }
     [[nodiscard]] std::vector<uint32_t> SupportedRates() const override { return supportedRates_; }
-    void ReadClockHealth(HealthCallback callback) override;
 
 private:
     // Derive supported rates (Hz) from the discovery formation list.

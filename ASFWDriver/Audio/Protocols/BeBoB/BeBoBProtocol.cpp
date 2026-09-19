@@ -146,7 +146,7 @@ void BeBoBProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
     duplexChannels_ = channels;
     ApplyClockConfig(desiredClock,
                      [this, channels, callback = std::move(callback)](IOReturn status,
-                                                                        ClockApplyResult clock) mutable {
+                                                                        DuplexClockApplyResult clock) mutable {
         callback(status, DuplexPrepareResult{.generation = clock.generation,
                                              .channels = channels,
                                              .appliedClock = clock.appliedClock,
@@ -313,7 +313,7 @@ void BeBoBProtocol::FinishClockApply(ClockApplyEpoch* epoch, IOReturn status) {
     if (!epoch->completed.exchange(true)) {
         activeClockApply_ = nullptr;
         ClockApplyCallback cb = std::move(epoch->completion);
-        cb(status, ClockApplyResult{.generation = busInfo_.GetGeneration(),
+        cb(status, DuplexClockApplyResult{.generation = busInfo_.GetGeneration(),
                                      .appliedClock = epoch->appliedClock,
                                      .runtimeCaps = DeviceCaps()});
     }
@@ -431,6 +431,17 @@ void BeBoBProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
 
 void BeBoBProtocol::ReadDuplexHealth(HealthCallback callback) {
     ReadClockHealth(std::move(callback));
+}
+
+void BeBoBProtocol::ReadClockHealth(HealthCallback callback) {
+    const auto caps = DeviceCaps();
+    callback(kIOReturnSuccess,
+             DuplexHealthResult{.generation = busInfo_.GetGeneration(),
+                                .appliedClock = appliedClock_,
+                                .runtimeCaps = caps,
+                                .sourceLocked = inputConnected_ && outputConnected_,
+                                .clockReferenceHealthy = true,
+                                .nominalRateHz = caps.sampleRateHz});
 }
 
 void BeBoBProtocol::DisconnectPlayback(VoidCallback callback) {

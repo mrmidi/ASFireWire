@@ -23,7 +23,7 @@ public:
     using PrepareCallback = std::function<void(IOReturn, DuplexPrepareResult)>;
     using StageCallback = std::function<void(IOReturn, DuplexStageResult)>;
     using ConfirmCallback = std::function<void(IOReturn, DuplexConfirmResult)>;
-    using ClockApplyCallback = std::function<void(IOReturn, ClockApplyResult)>;
+    using ClockApplyCallback = std::function<void(IOReturn, DuplexClockApplyResult)>;
     using HealthCallback = std::function<void(IOReturn, DuplexHealthResult)>;
     using VoidCallback = std::function<void(IOReturn)>;
 

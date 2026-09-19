@@ -40,6 +40,13 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
     config.maxRetries = kFCPMaxRetries;
     config.allowBusResetRetry = false;  // Default: generation-locked
 
+    // The allowlist for firmware that hangs on unimplemented AV/C. Empty for
+    // every ordinary device, which is unrestricted. Decided from Config ROM
+    // before this transport exists, so the very first frame is already bounded.
+    config.permittedFrames =
+        PermittedFramesFor(device ? device->GetAvcCommandFilter()
+                                  : Discovery::AvcCommandFilterId::Unrestricted);
+
     // Create FCP transport
     fcpTransport_ = std::make_shared<FCPTransport>();
     if (fcpTransport_) {

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <optional>
+
 #include "Audio/Protocols/Backends/DuplexStreamProfile.hpp"
 
 namespace {
@@ -22,6 +24,46 @@ using ASFW::DeviceProfiles::Audio::kWeissInt203ModelId;
 using ASFW::DeviceProfiles::Audio::kWeissVendorId;
 using ASFW::Discovery::DeviceRecord;
 using ASFW::Encoding::AudioWireFormat;
+
+// The profile now asks the device catalog what this identity is, and the
+// catalog reads Config-ROM evidence. Building a record with only the flat
+// vendorId/modelId pair -- which is what these fixtures used to do -- describes
+// a conclusion rather than a device, and resolves to nothing.
+constexpr uint32_t kDiceInterfaceVersion = 0x000001;
+constexpr uint32_t kTa1394AvcSpecifier = 0x00A02D;
+constexpr uint32_t kTa1394AvcVersion = 0x010001;
+constexpr uint32_t kFireworksVersion = 0x010000;
+
+[[nodiscard]] DeviceRecord MakeRecord(uint32_t vendorId,
+                                      std::optional<uint32_t> modelId,
+                                      uint32_t unitSpecifier,
+                                      uint32_t unitVersion) {
+    DeviceRecord record{};
+    record.instanceId = ASFW::Discovery::DeviceInstanceId{1};
+    record.guid = (static_cast<uint64_t>(vendorId) << 40U) | 0x04'0000'0000ULL;
+    record.vendorId = vendorId;
+    record.modelId = modelId.value_or(0U);
+    record.unitSpecId = unitSpecifier;
+    record.unitSwVersion = unitVersion;
+    record.identity.observedGuid = record.guid;
+    record.identity.nodeVendorOui = vendorId;
+    record.identity.rootVendorId = vendorId;
+    record.identity.rootModelId = modelId;
+    ASFW::Discovery::UnitIdentityEvidence unit{};
+    unit.unitDirectoryOffset = 5;
+    unit.specifierId = unitSpecifier;
+    unit.version = unitVersion;
+    record.identity.units.push_back(unit);
+    return record;
+}
+
+[[nodiscard]] DeviceRecord DiceRecord(uint32_t vendorId, uint32_t modelId) {
+    return MakeRecord(vendorId, modelId, vendorId, kDiceInterfaceVersion);
+}
+
+[[nodiscard]] DeviceRecord AvcRecord(uint32_t vendorId, uint32_t modelId) {
+    return MakeRecord(vendorId, modelId, kTa1394AvcSpecifier, kTa1394AvcVersion);
+}
 
 TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe) {
     DeviceRecord record{};
@@ -62,10 +104,7 @@ TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe)
 }
 
 TEST(DuplexStreamProfileTests, SPro24DspResolvesRawPcmOnBothDirectionsWhenGeometryMatches) {
-    DeviceRecord record{
-        .vendorId = kFocusriteVendorId,
-        .modelId = kSPro24DspModelId,
-    };
+    DeviceRecord record = DiceRecord(kFocusriteVendorId, kSPro24DspModelId);
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = 8,
         .hostOutputPcmChannels = 8,
@@ -81,10 +120,7 @@ TEST(DuplexStreamProfileTests, SPro24DspResolvesRawPcmOnBothDirectionsWhenGeomet
 }
 
 TEST(DuplexStreamProfileTests, ApogeeDuetAllowsDynamicChannelsAndPreservesCmpInterleave) {
-    DeviceRecord record{
-        .vendorId = kApogeeVendorId,
-        .modelId = kApogeeDuetModelId,
-    };
+    DeviceRecord record = AvcRecord(kApogeeVendorId, kApogeeDuetModelId);
     record.link.localToNode = ASFW::FW::FwSpeed::S400;
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = 2,
@@ -108,10 +144,7 @@ TEST(DuplexStreamProfileTests, ApogeeDuetAllowsDynamicChannelsAndPreservesCmpInt
 }
 
 TEST(DuplexStreamProfileTests, Phase88PreservesLinuxBeBoBCmpBeforeHostStartOrdering) {
-    DeviceRecord record{
-        .vendorId = kTerraTecVendorId,
-        .modelId = kPhase88RackFwModelId,
-    };
+    DeviceRecord record = AvcRecord(kTerraTecVendorId, kPhase88RackFwModelId);
     record.link.localToNode = ASFW::FW::FwSpeed::S400;
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = 10,
@@ -140,10 +173,8 @@ TEST(DuplexStreamProfileTests, Phase88PreservesLinuxBeBoBCmpBeforeHostStartOrder
 }
 
 TEST(DuplexStreamProfileTests, Onyx400FUsesBeBoBOrderingWithoutPreStreamClockLock) {
-    DeviceRecord record{
-        .vendorId = kMackieVendorId,
-        .modelId = kOnyx400FModelId,
-    };
+    DeviceRecord record = MakeRecord(kMackieVendorId, kOnyx400FModelId,
+                                     kTa1394AvcSpecifier, kFireworksVersion);
     record.link.localToNode = ASFW::FW::FwSpeed::S400;
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = 10,
@@ -185,10 +216,7 @@ TEST(DuplexStreamProfileTests, WeissIntStartsHostTransmitFirstWithoutPreEnableSo
     };
 
     for (const uint32_t modelId : {kWeissInt202ModelId, kWeissInt203ModelId}) {
-        DeviceRecord record{
-            .vendorId = kWeissVendorId,
-            .modelId = modelId,
-        };
+        DeviceRecord record = DiceRecord(kWeissVendorId, modelId);
         const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
 
         EXPECT_FALSE(profile.startOrder.requiresPreStreamClockLock) << modelId;
@@ -214,10 +242,7 @@ TEST(DuplexStreamProfileTests, AlesisModelsClampAdvertisedCaptureStreamsToOne) {
     caps.deviceToHostStreams[1] = {.isoChannel = 6, .pcmChannels = 16, .am824Slots = 17};
 
     for (const uint32_t modelId : {0x000000U, 0x000001U}) {
-        DeviceRecord record{
-            .vendorId = kAlesisVendorId,
-            .modelId = modelId,
-        };
+        DeviceRecord record = DiceRecord(kAlesisVendorId, modelId);
         const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
 
         EXPECT_EQ(profile.channels.captureStreamCount, 1U) << modelId;
@@ -239,10 +264,12 @@ TEST(DuplexStreamProfileTests, MotuCaptureCarriesTheModelPortMap) {
         .deviceToHostStreamCount = 1,
         .hostToDeviceStreamCount = 1,
     };
-    DeviceRecord record{};
-    record.vendorId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
-    record.unitSpecId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
-    record.unitSwVersion = ASFW::DeviceProfiles::Audio::kMotuUltraliteSwVersion;
+    // MOTU publishes root model_id 0 -- not "no model_id", which is a
+    // different thing the catalog can tell apart.
+    DeviceRecord record = MakeRecord(
+        ASFW::DeviceProfiles::Audio::kMotuVendorId, 0U,
+        ASFW::DeviceProfiles::Audio::kMotuVendorId,
+        ASFW::DeviceProfiles::Audio::kMotuUltraliteSwVersion);
 
     const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
 

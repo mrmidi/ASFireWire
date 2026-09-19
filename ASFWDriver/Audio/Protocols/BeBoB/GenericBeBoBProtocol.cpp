@@ -8,7 +8,6 @@
 
 #include "GenericBeBoBProtocol.hpp"
 
-#include "../../../DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
 #include "../../../Logging/Logging.hpp"
 
 namespace ASFW::Audio::BeBoB {
@@ -89,15 +88,6 @@ GenericBeBoBProtocol::MakeSupportedRates(const DeviceModel& model) noexcept {
         }
     });
     return rates;
-}
-
-void GenericBeBoBProtocol::ReadClockHealth(HealthCallback callback) {
-    callback(kIOReturnSuccess, DuplexHealthResult{.generation = busInfo_.GetGeneration(),
-                                                   .appliedClock = appliedClock_,
-                                                   .runtimeCaps = caps_,
-                                                   .sourceLocked = inputConnected_ && outputConnected_,
-                                                   .clockReferenceHealthy = true,
-                                                   .nominalRateHz = caps_.sampleRateHz});
 }
 
 } // namespace ASFW::Audio::BeBoB

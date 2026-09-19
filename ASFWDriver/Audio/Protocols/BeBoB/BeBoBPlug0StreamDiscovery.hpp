@@ -18,7 +18,6 @@
 #pragma once
 
 #include "../../../Protocols/AVC/IAVCCommandSubmitter.hpp"
-#include "../../../DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
 
 using ::ASFW::Protocols::AVC::IAVCCommandSubmitter;
 using ::ASFW::Protocols::AVC::AVCCdb;

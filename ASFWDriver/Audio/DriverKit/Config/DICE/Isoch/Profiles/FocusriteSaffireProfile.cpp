@@ -10,9 +10,6 @@ namespace ASFW::Isoch::Audio::DICE::Profiles {
 
 namespace {
 
-constexpr uint32_t kFocusriteVendorId = 0x00130E;
-constexpr uint32_t kSPro40ModelId = 0x000005;
-
 void FillDefaultStreamConfig(DiceStreamConfig& outConfig,
                              DiceStreamDirection direction) noexcept {
     outConfig = DiceStreamConfig{};
@@ -38,10 +35,6 @@ void FillDefaultStreamConfig(DiceStreamConfig& outConfig,
 
 const char* FocusriteSaffireProfile::Name() const noexcept {
     return "Focusrite Saffire (DICE)";
-}
-
-bool FocusriteSaffireProfile::Matches(const DiceDeviceIdentity& identity) const noexcept {
-    return identity.vendorId == kFocusriteVendorId;
 }
 
 DiceDeviceQuirks FocusriteSaffireProfile::Quirks() const noexcept {
@@ -71,10 +64,6 @@ bool FocusriteSaffireProfile::BuildDefaultRxStreamConfig(DiceStreamConfig& outCo
 // Cross-checked with FFADO src/dice/focusrite/saffire_pro40.cpp:50-97.
 const char* FocusriteSaffirePro40Profile::Name() const noexcept {
     return "Focusrite Saffire Pro 40";
-}
-
-bool FocusriteSaffirePro40Profile::Matches(const DiceDeviceIdentity& identity) const noexcept {
-    return identity.vendorId == kFocusriteVendorId && identity.modelId == kSPro40ModelId;
 }
 
 DiceDeviceQuirks FocusriteSaffirePro40Profile::Quirks() const noexcept {

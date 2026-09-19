@@ -14,7 +14,6 @@ class FocusriteSaffireProfile : public IDiceDeviceProfile {
 public:
     [[nodiscard]] const char* Name() const noexcept override;
 
-    [[nodiscard]] bool Matches(const DiceDeviceIdentity& identity) const noexcept override;
 
     [[nodiscard]] DiceDeviceQuirks Quirks() const noexcept override;
 
@@ -31,7 +30,6 @@ public:
 class FocusriteSaffirePro40Profile final : public FocusriteSaffireProfile {
 public:
     [[nodiscard]] const char* Name() const noexcept override;
-    [[nodiscard]] bool Matches(const DiceDeviceIdentity& identity) const noexcept override;
     [[nodiscard]] DiceDeviceQuirks Quirks() const noexcept override;
     [[nodiscard]] bool BuildDefaultTxStreamConfig(DiceStreamConfig& outConfig) const noexcept override;
     [[nodiscard]] bool BuildDefaultRxStreamConfig(DiceStreamConfig& outConfig) const noexcept override;

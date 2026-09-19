@@ -142,39 +142,43 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
         return nullptr;
     }
 
-    // Create() returns nullptr for everything but a recognized vendor/model, which
-    // is exactly the gate the former DeviceRegistry::MaybeCreateKnownProtocol path
-    // applied (recognized devices are precisely those with a non-None integration
-    // mode). No protocol is created, and nothing is logged, for unknown devices.
+    // Create() returns nullptr for everything the catalog does not name a
+    // profile builder for. That gate used to be a vendor/model if-chain that
+    // could disagree with the profile layer in silence -- issue #115, where the
+    // StudioLive 24.4.2 had a profile and a DiceProfileRegistry entry but no
+    // factory clause, published a nub, allocated isoch, and then failed every
+    // StartIO with nothing logged.
+    //
+    // It cannot disagree any more: one table decides both, a Supported row must
+    // name a builder (asserted in AudioDeviceCatalogTests), and Create()'s
+    // switch over builders has no default arm. The loud "supported but no
+    // clause" check below is therefore about a state that is now a compile
+    // error -- kept only as a runtime witness for a device whose catalog row
+    // says Supported while its units resolve to nothing at all.
     auto created = DeviceProtocolFactory::Create(
-        record.vendorId, record.modelId, *busOps, *busInfo, routeRegistry,
-        *route,
-        irmClient,
-        cmpClient_, timerScheduler_,
-        DeviceProtocolFactory::UnitIdentity{.specId = record.unitSpecId.value_or(0U),
-                                            .swVersion = record.unitSwVersion.value_or(0U)});
+        record, *busOps, *busInfo, routeRegistry, *route,
+        irmClient, cmpClient_, timerScheduler_);
     if (!created) {
-        // An unknown device legitimately gets no protocol and stays quiet. A device
-        // whose own audio profile claims an integration mode is different: we say we
-        // support it, so a missing factory clause is a driver bug and must be loud.
-        // It is otherwise invisible — the device still publishes a nub and allocates
-        // isoch from its DiceProfileRegistry entry, then every StartIO fails
-        // kIOReturnNotReady inside AudioDuplexCoordinator::RequireDuplexRecord with
-        // nothing logged anywhere (issue #115, PreSonus StudioLive 24.4.2).
-        const auto integration = DeviceProtocolFactory::LookupIntegrationMode(
-            record.vendorId, record.modelId,
-            DeviceProtocolFactory::UnitIdentity{.specId = record.unitSpecId.value_or(0U),
-                                                .swVersion = record.unitSwVersion.value_or(0U)});
-        if (integration != DeviceIntegrationMode::kNone) {
-            ASFW_LOG_ERROR(Audio,
-                           "AudioRuntimeRegistry: ❌ no protocol for a SUPPORTED device "
-                           "GUID=0x%016llx vendor=0x%06x model=0x%06x mode=%u - its audio "
-                           "profile claims support but DeviceProtocolFactory::Create has no "
-                           "clause for it; audio will never start",
-                           guid,
-                           record.vendorId,
-                           record.modelId,
-                           static_cast<unsigned>(integration));
+        const auto choice = ChooseDeviceProtocol(record);
+        if (!choice.has_value()) {
+            for (const auto& unit : record.identity.units) {
+                const auto plan =
+                    DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(record, unit);
+                if (plan.has_value() &&
+                    plan->support ==
+                        DeviceProfiles::Audio::SupportDisposition::Supported) {
+                    ASFW_LOG_ERROR(Audio,
+                                   "AudioRuntimeRegistry: ❌ no protocol for a SUPPORTED "
+                                   "device GUID=0x%016llx vendor=0x%06x model=0x%06x "
+                                   "unitOffset=%u - the catalog calls it Supported but it "
+                                   "resolves to no profile builder; audio will never start",
+                                   guid,
+                                   record.RootVendorIdOrZero(),
+                                   record.RootModelIdOrZero(),
+                                   unit.unitDirectoryOffset);
+                    break;
+                }
+            }
         }
         return nullptr;
     }

@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../AudioTypes.hpp"
+#include "SyncAsyncBridge.hpp"
 #include "../../../Bus/IRM/IRMClient.hpp"
 
 #include <DriverKit/IOLib.h>
@@ -47,22 +48,30 @@ class DuplexIRMReservations final {
 
         uint64_t candidates = allowedChannels;
         while (candidates != 0) {
-            auto snapshotState = std::make_shared<SnapshotWaitState>();
-            client.ReadResourcesSnapshot(
-                [snapshotState](IRM::AllocationStatus status, IRM::ResourceSnapshot snapshot) {
-                    snapshotState->snapshot = snapshot;
-                    snapshotState->status.store(status, std::memory_order_release);
-                    snapshotState->done.store(true, std::memory_order_release);
-                });
-            const IRM::AllocationStatus snapshotStatus = WaitSnapshot(snapshotState);
+            const auto snapshotRes = WaitForAsyncResult<std::pair<IRM::AllocationStatus, IRM::ResourceSnapshot>>(
+                [&client](auto callback) {
+                    client.ReadResourcesSnapshot(
+                        [cb = std::move(callback)](IRM::AllocationStatus status, IRM::ResourceSnapshot snapshot) mutable {
+                            cb(kIOReturnSuccess, std::make_pair(status, snapshot));
+                        });
+                },
+                kWaitTimeoutMs,
+                kIOReturnTimeout,
+                nullptr,
+                kWaitPollMs);
+
+            const auto [snapshotStatus, snapshot] = (snapshotRes.status == kIOReturnTimeout)
+                ? std::make_pair(IRM::AllocationStatus::Timeout, IRM::ResourceSnapshot{})
+                : snapshotRes.value;
+
             if (snapshotStatus != IRM::AllocationStatus::Success) {
                 return {.status = MapStatus(snapshotStatus)};
             }
-            if (snapshotState->snapshot.bandwidthAvailable < bandwidthUnits) {
+            if (snapshot.bandwidthAvailable < bandwidthUnits) {
                 return {.status = kIOReturnNoResources};
             }
 
-            const uint8_t channel = FirstAvailableChannel(snapshotState->snapshot, candidates);
+            const uint8_t channel = FirstAvailableChannel(snapshot, candidates);
             if (channel == AudioStreamWireInfo::kInvalidIsoChannel) {
                 return {.status = kIOReturnNoResources};
             }
@@ -92,13 +101,18 @@ class DuplexIRMReservations final {
                 continue;
             }
 
-            auto state = std::make_shared<WaitState>();
-            entry.client->ReleaseResources(
-                entry.channel, entry.bandwidthUnits, [state](IRM::AllocationStatus status) {
-                    state->status.store(status, std::memory_order_release);
-                    state->done.store(true, std::memory_order_release);
-                });
-            (void)Wait(state); // teardown release is best effort, but bounded
+            (void)WaitForAsyncResult<IRM::AllocationStatus>(
+                [&entry](auto callback) {
+                    entry.client->ReleaseResources(
+                        entry.channel, entry.bandwidthUnits,
+                        [cb = std::move(callback)](IRM::AllocationStatus status) mutable {
+                            cb(kIOReturnSuccess, status);
+                        });
+                },
+                kWaitTimeoutMs,
+                kIOReturnTimeout,
+                nullptr,
+                kWaitPollMs);
             entry = {};
         }
     }
@@ -125,12 +139,22 @@ class DuplexIRMReservations final {
 
         // Linux cmp.c:188-209 and iso-resources.c:91-147 reserve channel and
         // bandwidth as one lifecycle-owned resource before establishing a PCR.
-        auto state = std::make_shared<WaitState>();
-        client.AllocateResources(channel, bandwidthUnits, [state](IRM::AllocationStatus status) {
-            state->status.store(status, std::memory_order_release);
-            state->done.store(true, std::memory_order_release);
-        });
-        const IRM::AllocationStatus status = Wait(state);
+        const auto res = WaitForAsyncResult<IRM::AllocationStatus>(
+            [&client, channel, bandwidthUnits](auto callback) {
+                client.AllocateResources(
+                    channel, bandwidthUnits,
+                    [cb = std::move(callback)](IRM::AllocationStatus status) mutable {
+                        cb(kIOReturnSuccess, status);
+                    });
+            },
+            kWaitTimeoutMs,
+            kIOReturnTimeout,
+            nullptr,
+            kWaitPollMs);
+
+        const IRM::AllocationStatus status = (res.status == kIOReturnTimeout)
+            ? IRM::AllocationStatus::Timeout
+            : res.value;
         if (status != IRM::AllocationStatus::Success) {
             return MapStatus(status);
         }
@@ -150,39 +174,6 @@ class DuplexIRMReservations final {
         uint8_t channel{0};
         uint32_t bandwidthUnits{0};
     };
-
-    struct WaitState {
-        std::atomic<bool> done{false};
-        std::atomic<IRM::AllocationStatus> status{IRM::AllocationStatus::Failed};
-    };
-
-    struct SnapshotWaitState {
-        std::atomic<bool> done{false};
-        std::atomic<IRM::AllocationStatus> status{IRM::AllocationStatus::Failed};
-        IRM::ResourceSnapshot snapshot{};
-    };
-
-    [[nodiscard]] static IRM::AllocationStatus
-    Wait(const std::shared_ptr<WaitState>& state) noexcept {
-        for (uint32_t waited = 0; waited < kWaitTimeoutMs; waited += kWaitPollMs) {
-            if (state->done.load(std::memory_order_acquire)) {
-                return state->status.load(std::memory_order_acquire);
-            }
-            IOSleep(kWaitPollMs);
-        }
-        return IRM::AllocationStatus::Timeout;
-    }
-
-    [[nodiscard]] static IRM::AllocationStatus
-    WaitSnapshot(const std::shared_ptr<SnapshotWaitState>& state) noexcept {
-        for (uint32_t waited = 0; waited < kWaitTimeoutMs; waited += kWaitPollMs) {
-            if (state->done.load(std::memory_order_acquire)) {
-                return state->status.load(std::memory_order_acquire);
-            }
-            IOSleep(kWaitPollMs);
-        }
-        return IRM::AllocationStatus::Timeout;
-    }
 
     [[nodiscard]] static bool IsAvailable(const IRM::ResourceSnapshot& snapshot,
                                           uint8_t channel) noexcept {
