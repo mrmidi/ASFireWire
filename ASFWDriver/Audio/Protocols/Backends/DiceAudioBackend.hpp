@@ -9,6 +9,7 @@
 #include "IAudioBackend.hpp"
 #include "AudioDuplexCoordinator.hpp"
 #include "IsochDuplexHostTransport.hpp"
+#include "PublicationGate.hpp"
 
 #include "../../../Audio/Core/AudioNubPublisher.hpp"
 
@@ -83,13 +84,22 @@ private:
     std::atomic<bool> stopping_{false}; // FW-61 teardown latch
     std::atomic<bool> teardownStarted_{false};
     std::atomic<bool> teardownComplete_{false};
-    std::atomic<int32_t> inflightPublications_{0};
+    PublicationGate publicationGate_{};
     AudioDuplexCoordinator& restartCoordinator_;
 
 #ifdef ASFW_HOST_TEST
 public:
     void SetBeforePublishHookForTesting(std::function<void()> hook) noexcept {
         beforePublishHookForTesting_ = std::move(hook);
+    }
+    void SetOnTeardownDrainStartedHookForTesting(std::function<void()> hook) noexcept {
+        onTeardownDrainStartedHookForTesting_ = std::move(hook);
+    }
+    void SetOnTeardownGateClosedHookForTesting(std::function<void()> hook) noexcept {
+        publicationGate_.SetOnGateClosedForTesting(std::move(hook));
+    }
+    void SetOnSecondaryTeardownWaitingHookForTesting(std::function<void()> hook) noexcept {
+        onSecondaryTeardownWaitingHookForTesting_ = std::move(hook);
     }
     void EnsureNubForGuidForTesting(uint64_t guid) noexcept {
         EnsureNubForGuid(guid);
@@ -98,7 +108,7 @@ public:
         return workQueue_.get();
     }
     [[nodiscard]] uint64_t PublicationRejectCountForTesting() const noexcept {
-        return publicationRejectCount_.load(std::memory_order_relaxed);
+        return publicationGate_.RejectCount();
     }
     [[nodiscard]] uint64_t ProbeAbortCountForTesting() const noexcept {
         return probeAbortCount_.load(std::memory_order_relaxed);
@@ -108,6 +118,8 @@ public:
     }
 private:
     std::function<void()> beforePublishHookForTesting_{};
+    std::function<void()> onTeardownDrainStartedHookForTesting_{};
+    std::function<void()> onSecondaryTeardownWaitingHookForTesting_{};
 #endif
 
     IOLock* lock_{nullptr};

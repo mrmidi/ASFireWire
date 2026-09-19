@@ -1006,8 +1006,14 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     session.channels = channels;
     session.reason = reason;
     session.desiredClock = desiredClock;
-    EnterIdle(session, "reset_before_start");
-    (void)SetSessionState(session, LifecycleForStart(RestartStateForStartReason(reason), reason), ToString(reason));
+    if (!EnterIdle(session, "reset_before_start")) {
+        return rollbackToFailure(kIOReturnInternalError, DuplexRestartPhase::kPreparingDevice,
+                                 DuplexRestartFailureCause::kPrepare);
+    }
+    if (!SetSessionState(session, LifecycleForStart(RestartStateForStartReason(reason), reason), ToString(reason))) {
+        return rollbackToFailure(kIOReturnInternalError, DuplexRestartPhase::kPreparingDevice,
+                                 DuplexRestartFailureCause::kPrepare);
+    }
     SetSessionPhase(session, DuplexRestartPhase::kPreparingDevice);
     StoreSession(session);
     LogFsmEvent("start", guid, restartId, topologyGeneration, KindOf(session.lifecycle), session.phase, reason);
@@ -1035,7 +1041,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         },
         kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
     if (prepare.status != kIOReturnSuccess) {
-        if (prepare.status == kIOReturnAborted && TeardownRequested()) {
+        if (prepare.wasCancelled) {
             RecordTeardownAbort("PreparingDevice", guid);
         }
         return rollbackToFailure(prepare.status, DuplexRestartPhase::kPreparingDevice,
@@ -1286,7 +1292,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         [&](auto callback) { deviceControl.ProgramRx(std::move(callback)); }, kSyncBridgeTimeoutMs,
         kIOReturnTimeout, cancel_);
     if (programRx.status != kIOReturnSuccess) {
-        if (programRx.status == kIOReturnAborted && TeardownRequested()) {
+        if (programRx.wasCancelled) {
             RecordTeardownAbort("ProgrammingDeviceRx", guid);
         }
         return rollbackToFailure(programRx.status, DuplexRestartPhase::kProgrammingDeviceRx,
@@ -1331,7 +1337,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         [&](auto callback) { deviceControl.ProgramTxAndEnableDuplex(std::move(callback)); },
         kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
     if (programTx.status != kIOReturnSuccess) {
-        if (programTx.status == kIOReturnAborted && TeardownRequested()) {
+        if (programTx.wasCancelled) {
             RecordTeardownAbort("ProgrammingDeviceTx", guid);
         }
         return rollbackToFailure(programTx.status, DuplexRestartPhase::kProgrammingDeviceTx,
@@ -1411,7 +1417,7 @@ const auto confirm = WaitForAsyncResult<DuplexConfirmResult>(
     [&](auto callback) { deviceControl.ConfirmDuplexStart(std::move(callback)); },
     kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
 if (confirm.status != kIOReturnSuccess) {
-    if (confirm.status == kIOReturnAborted && TeardownRequested()) {
+    if (confirm.wasCancelled) {
         RecordTeardownAbort("ConfirmingDeviceStart", guid);
     }
     return rollbackToFailure(confirm.status, DuplexRestartPhase::kConfirmingDeviceStart,
@@ -1423,8 +1429,11 @@ if (!IsRestartEpochCurrent(guid, restartId, *route)) {
 }
 
 SetSessionPhase(session, DuplexRestartPhase::kConfirmingDeviceStart);
+if (!SetSessionState(session, LifecycleRunning{}, "confirmed_running")) {
+    return rollbackToFailure(kIOReturnInternalError, DuplexRestartPhase::kConfirmingDeviceStart,
+                             DuplexRestartFailureCause::kConfirmStart);
+}
 SetSessionPhase(session, DuplexRestartPhase::kRunning);
-(void)SetSessionState(session, LifecycleRunning{}, "confirmed_running");
 session.generation = confirm.value.generation;
 session.deviceRunning = true;
 session.appliedClock = confirm.value.appliedClock;
@@ -1463,9 +1472,8 @@ IOReturn DuplexStartTransaction::WaitForStableGlobalClock(
             [&](auto callback) { deviceControl.ReadDuplexHealth(std::move(callback)); },
             std::max(remainingMs, 1U), kIOReturnTimeout, cancel_);
         if (health.status != kIOReturnSuccess) {
-            if (health.status == kIOReturnAborted && TeardownRequested()) {
+            if (health.wasCancelled) {
                 RecordTeardownAbort("WaitingGlobalClock", guid);
-                return health.status;
             }
             ASFW_LOG_ERROR(Audio, "Device clock health read failed before isoch start kr=0x%x",
                            health.status);
@@ -1530,7 +1538,12 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
 
     IOReturn result = kIOReturnSuccess;
     SetSessionPhase(session, DuplexRestartPhase::kStopping);
-    (void)SetSessionState(session, LifecycleStopping{}, "stop_requested");
+    if (!SetSessionState(session, LifecycleStopping{}, "stop_requested")) {
+        ASFW_LOG_ERROR(Audio,
+                       "RunDuplexStop: transition to Stopping rejected for GUID=0x%016llx",
+                       guid);
+        return kIOReturnInternalError;
+    }
     StoreSession(session);
 
     const DuplexStreamProfile profile =
@@ -1640,9 +1653,12 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
     session.generation = topologyGeneration;
     session.topologyGeneration = topologyGeneration;
     session.reason = reason;
-    session.desiredClock = desiredClock;
-    EnterIdle(session, "reset_before_idle_apply");
-    (void)SetSessionState(session, LifecycleApplyingIdleClock{}, ToString(reason));
+    if (!EnterIdle(session, "reset_before_idle_apply")) {
+        return kIOReturnInternalError;
+    }
+    if (!SetSessionState(session, LifecycleApplyingIdleClock{}, ToString(reason))) {
+        return kIOReturnInternalError;
+    }
     SetSessionPhase(session, DuplexRestartPhase::kPreparingDevice);
     StoreSession(session);
 
@@ -1650,7 +1666,7 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
         [&](auto callback) { deviceControl.ApplyClockConfig(desiredClock, std::move(callback)); },
         kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
     if (apply.status != kIOReturnSuccess) {
-        if (apply.status == kIOReturnAborted && TeardownRequested()) {
+        if (apply.wasCancelled) {
             RecordTeardownAbort("IdleClockApply", guid);
         }
         RecordIssue(session, session.lastFailure, DuplexRestartPhase::kPreparingDevice,

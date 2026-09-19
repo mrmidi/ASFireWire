@@ -176,11 +176,13 @@ void DiceAudioBackend::BeginTeardown() noexcept {
     stopping_.store(true, std::memory_order_release);
     DICE::NotificationMailbox::ClearObserver(this);
 
+    if (teardownComplete_.load(std::memory_order_acquire)) {
+        return;
+    }
+
     if (!teardownStarted_.exchange(true, std::memory_order_acq_rel)) {
-        // Wait for any admitted in-flight publication to finish or cancel before draining.
-        while (inflightPublications_.load(std::memory_order_acquire) > 0) {
-            IOSleep(1);
-        }
+        // Atomically close admission and wait for any admitted in-flight publication to finish.
+        publicationGate_.CloseAndWait();
 
         const uint64_t recoveryRejectBefore =
             recoveryRejectCount_.load(std::memory_order_acquire);
@@ -191,7 +193,7 @@ void DiceAudioBackend::BeginTeardown() noexcept {
         const uint64_t coordinatorAbortBefore =
             restartCoordinator_.TeardownAbortCount();
         const uint64_t publicationRejectBefore =
-            publicationRejectCount_.load(std::memory_order_acquire);
+            publicationGate_.RejectCount();
         const uint64_t startMs = UptimeMilliseconds();
 
         ASFW_LOG(Audio,
@@ -199,6 +201,9 @@ void DiceAudioBackend::BeginTeardown() noexcept {
 
         if (workQueue_) {
 #ifdef ASFW_HOST_TEST
+            if (onTeardownDrainStartedHookForTesting_) {
+                onTeardownDrainStartedHookForTesting_();
+            }
             workQueue_->DispatchSync([] {});
 #else
             workQueue_->DispatchSync(^{});
@@ -221,7 +226,7 @@ void DiceAudioBackend::BeginTeardown() noexcept {
                  coordinatorAborted + probeAborted,
                  recoveryRejected,
                  probeRejected,
-                 publicationRejectCount_.load(std::memory_order_acquire) - publicationRejectBefore,
+                 publicationGate_.RejectCount() - publicationRejectBefore,
                  drainMs);
 
         teardownComplete_.store(true, std::memory_order_release);
@@ -229,6 +234,11 @@ void DiceAudioBackend::BeginTeardown() noexcept {
     }
 
     // Secondary / concurrent callers wait safely until the primary drain is finished.
+#ifdef ASFW_HOST_TEST
+    if (onSecondaryTeardownWaitingHookForTesting_) {
+        onSecondaryTeardownWaitingHookForTesting_();
+    }
+#endif
     while (!teardownComplete_.load(std::memory_order_acquire)) {
         IOSleep(1);
     }
@@ -668,31 +678,8 @@ void DiceAudioBackend::NotificationObserverThunk(void* context, uint32_t bits) n
 void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     if (guid == 0) return;
 
-    struct InflightPublicationScope {
-        std::atomic<int32_t>& counter;
-        bool active{true};
-        explicit InflightPublicationScope(std::atomic<int32_t>& c) noexcept : counter(c) {
-            counter.fetch_add(1, std::memory_order_acq_rel);
-        }
-        ~InflightPublicationScope() noexcept {
-            Release();
-        }
-        void Release() noexcept {
-            if (active) {
-                active = false;
-                counter.fetch_sub(1, std::memory_order_acq_rel);
-            }
-        }
-    };
-
-    auto scope = std::make_shared<InflightPublicationScope>(inflightPublications_);
-
-    // Stage 2b D2 (I3): once teardown latches, late publication must count and
-    // never act — a nub published after BeginTeardown would outlive the core's
-    // detach window (contract I3 + FW-60 ordering).
-    if (stopping_.load(std::memory_order_acquire)) {
-        scope->Release();
-        publicationRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+    auto admission = std::make_shared<PublicationGate::AdmissionScope>(publicationGate_);
+    if (!admission->IsAdmitted()) {
         ASFW_LOG(Audio,
                  "DiceAudioBackend: publication refused by teardown GUID=0x%016llx",
                  guid);
@@ -705,9 +692,10 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     }
 #endif
 
-    if (stopping_.load(std::memory_order_acquire)) {
-        scope->Release();
-        publicationRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+    if (admission->AbortIfStopping()) {
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: publication cancelled by concurrent teardown GUID=0x%016llx",
+                 guid);
         return;
     }
 
@@ -769,11 +757,12 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // loaded them), update the endpoint runtime, then publish the nub. Host
     // input == device TX, host output == device RX (see AudioTypes.hpp), which
     // is exactly how GetChannelLabels reports them.
-    auto finish = [this, guid, profile, scope](Model::ASFWAudioDevice dev,
-                                               const std::shared_ptr<IDeviceProtocol>& protocol) {
-        if (stopping_.load(std::memory_order_acquire)) {
-            scope->Release();
-            publicationRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+    auto finish = [this, guid, profile, admission](Model::ASFWAudioDevice dev,
+                                                   const std::shared_ptr<IDeviceProtocol>& protocol) {
+        if (admission->AbortIfStopping()) {
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: publication cancelled by concurrent teardown GUID=0x%016llx",
+                     guid);
             return;
         }
 #ifdef ASFW_HOST_TEST
@@ -781,9 +770,10 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             beforePublishHookForTesting_();
         }
 #endif
-        if (stopping_.load(std::memory_order_acquire)) {
-            scope->Release();
-            publicationRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+        if (admission->AbortIfStopping()) {
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: publication cancelled by concurrent teardown GUID=0x%016llx",
+                     guid);
             return;
         }
         if (protocol) {
@@ -822,7 +812,6 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             endpoint->UpdateConfig(dev);
         }
         (void)publisher_.EnsureNub(guid, dev, "DICE");
-        scope->Release();
     };
 
     // Channel labels live in the TCAT stream-format name sections, cached only

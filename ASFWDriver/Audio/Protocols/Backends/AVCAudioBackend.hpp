@@ -9,6 +9,7 @@
 #include "IAudioBackend.hpp"
 #include "AudioDuplexCoordinator.hpp"
 #include "IsochDuplexHostTransport.hpp"
+#include "PublicationGate.hpp"
 
 #include "../../../Audio/Core/AudioNubPublisher.hpp"
 
@@ -72,10 +73,7 @@ private:
     std::atomic<bool> stopping_{false};
     std::atomic<bool> teardownStarted_{false};
     std::atomic<bool> teardownComplete_{false};
-    std::atomic<int32_t> inflightPublications_{0};
-    // Publication attempts refused because teardown already latched (I3: late
-    // work counts, never acts). Reported in the BeginTeardown summary.
-    std::atomic<uint64_t> publicationRejectCount_{0};
+    PublicationGate publicationGate_{};
     AudioDuplexCoordinator& duplexCoordinator_;
 
 #ifdef ASFW_HOST_TEST
@@ -83,17 +81,28 @@ public:
     void SetBeforePublishHookForTesting(std::function<void()> hook) noexcept {
         beforePublishHookForTesting_ = std::move(hook);
     }
+    void SetOnTeardownDrainStartedHookForTesting(std::function<void()> hook) noexcept {
+        onTeardownDrainStartedHookForTesting_ = std::move(hook);
+    }
+    void SetOnTeardownGateClosedHookForTesting(std::function<void()> hook) noexcept {
+        publicationGate_.SetOnGateClosedForTesting(std::move(hook));
+    }
+    void SetOnSecondaryTeardownWaitingHookForTesting(std::function<void()> hook) noexcept {
+        onSecondaryTeardownWaitingHookForTesting_ = std::move(hook);
+    }
     [[nodiscard]] IODispatchQueue* WorkQueueForTesting() const noexcept {
         return workQueue_.get();
     }
     [[nodiscard]] uint64_t PublicationRejectCountForTesting() const noexcept {
-        return publicationRejectCount_.load(std::memory_order_relaxed);
+        return publicationGate_.RejectCount();
     }
     [[nodiscard]] bool IsTeardownCompleteForTesting() const noexcept {
         return teardownComplete_.load(std::memory_order_acquire);
     }
 private:
     std::function<void()> beforePublishHookForTesting_{};
+    std::function<void()> onTeardownDrainStartedHookForTesting_{};
+    std::function<void()> onSecondaryTeardownWaitingHookForTesting_{};
 #endif
 
     IOLock* lock_{nullptr};

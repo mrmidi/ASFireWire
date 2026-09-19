@@ -553,6 +553,12 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
         cv_.notify_all();
     }
 
+    PrepareCallback TakeDeferredPrepareCallback() {
+        std::scoped_lock lock(mutex_);
+        prepareBlocked_ = false;
+        return std::move(deferredPrepareCallback_);
+    }
+
     void SetHoldApply(bool hold) {
         std::scoped_lock lock(mutex_);
         holdApply_ = hold;
@@ -877,6 +883,27 @@ TEST_F(AudioDuplexCoordinatorTests, TeardownCancelAbortsInFlightPrepare) {
     EXPECT_EQ(protocol_->confirmCalls, 0);
     EXPECT_EQ(hostTransport_.stopCalls, 0);
     EXPECT_EQ(coordinator_.TeardownAbortCount(), 1U);
+}
+
+// Abort provenance: when the device completes with kIOReturnAborted on its own,
+// latching cancellation before the caller handles the result must NOT increment
+// the lifecycle-abort counter (TeardownAbortCount). Only predicate-triggered aborts
+// count toward lifecycle aborts.
+TEST_F(AudioDuplexCoordinatorTests,
+       DeviceAbortWithLatchingTeardownDoesNotIncrementTeardownAbortCount) {
+    protocol_->SetDeferPrepareCallback(true);
+
+    auto start =
+        std::async(std::launch::async, [this] { return coordinator_.StartStreaming(kTestGuid); });
+
+    ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(1));
+    auto cb = protocol_->TakeDeferredPrepareCallback();
+    cb(kIOReturnAborted, DuplexPrepareResult{});
+    cancel_.store(true, std::memory_order_release);
+
+    ASSERT_EQ(start.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(start.get(), kIOReturnAborted);
+    EXPECT_EQ(coordinator_.TeardownAbortCount(), 0U);
 }
 
 TEST_F(AudioDuplexCoordinatorTests,

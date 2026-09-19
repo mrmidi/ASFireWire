@@ -153,24 +153,29 @@ TEST(BackendLifecycleRaceTests, AVCAudioBackendConcurrentTeardownWaitsForDrain) 
 
     std::unique_lock<std::mutex> queueLock(queue->ExecutionMutexForTesting());
 
-    std::promise<void> startedA;
-    std::promise<void> startedB;
+    std::promise<void> drainStartedA;
+    std::promise<void> waitingB;
+
+    f.avc.SetOnTeardownDrainStartedHookForTesting([&] {
+        drainStartedA.set_value();
+    });
+    f.avc.SetOnSecondaryTeardownWaitingHookForTesting([&] {
+        waitingB.set_value();
+    });
 
     auto futA = std::async(std::launch::async, [&] {
-        startedA.set_value();
         f.avc.BeginTeardown();
     });
 
-    startedA.get_future().wait();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // Wait until teardown A has reached the work queue drain (and is blocked on queueLock)
+    drainStartedA.get_future().wait();
 
     auto futB = std::async(std::launch::async, [&] {
-        startedB.set_value();
         f.avc.BeginTeardown();
     });
 
-    startedB.get_future().wait();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // Wait until teardown B has entered the secondary wait loop
+    waitingB.get_future().wait();
 
     // While queued work is held open, neither caller must have completed teardown
     EXPECT_EQ(futA.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
@@ -184,6 +189,9 @@ TEST(BackendLifecycleRaceTests, AVCAudioBackendConcurrentTeardownWaitsForDrain) 
     EXPECT_EQ(futA.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_EQ(futB.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_TRUE(f.avc.IsTeardownCompleteForTesting());
+
+    f.avc.SetOnTeardownDrainStartedHookForTesting({});
+    f.avc.SetOnSecondaryTeardownWaitingHookForTesting({});
 }
 
 // Case 1 (DICE): Concurrent teardown on DiceAudioBackend
@@ -194,24 +202,27 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendConcurrentTeardownWaitsForDrain)
 
     std::unique_lock<std::mutex> queueLock(queue->ExecutionMutexForTesting());
 
-    std::promise<void> startedA;
-    std::promise<void> startedB;
+    std::promise<void> drainStartedA;
+    std::promise<void> waitingB;
+
+    f.dice.SetOnTeardownDrainStartedHookForTesting([&] {
+        drainStartedA.set_value();
+    });
+    f.dice.SetOnSecondaryTeardownWaitingHookForTesting([&] {
+        waitingB.set_value();
+    });
 
     auto futA = std::async(std::launch::async, [&] {
-        startedA.set_value();
         f.dice.BeginTeardown();
     });
 
-    startedA.get_future().wait();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    drainStartedA.get_future().wait();
 
     auto futB = std::async(std::launch::async, [&] {
-        startedB.set_value();
         f.dice.BeginTeardown();
     });
 
-    startedB.get_future().wait();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    waitingB.get_future().wait();
 
     EXPECT_EQ(futA.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
     EXPECT_EQ(futB.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
@@ -222,6 +233,9 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendConcurrentTeardownWaitsForDrain)
     EXPECT_EQ(futA.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_EQ(futB.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_TRUE(f.dice.IsTeardownCompleteForTesting());
+
+    f.dice.SetOnTeardownDrainStartedHookForTesting({});
+    f.dice.SetOnSecondaryTeardownWaitingHookForTesting({});
 }
 
 // Case 4: Publication versus Teardown on AVCAudioBackend
@@ -235,10 +249,15 @@ TEST(BackendLifecycleRaceTests, AVCAudioBackendPublicationPausedAfterAdmissionAb
 
     std::promise<void> admitted;
     std::promise<void> allowResume;
+    std::promise<void> teardownGateClosed;
 
     f.avc.SetBeforePublishHookForTesting([&] {
         admitted.set_value();
         allowResume.get_future().wait();
+    });
+
+    f.avc.SetOnTeardownGateClosedHookForTesting([&] {
+        teardownGateClosed.set_value();
     });
 
     auto pubFut = std::async(std::launch::async, [&] {
@@ -251,8 +270,8 @@ TEST(BackendLifecycleRaceTests, AVCAudioBackendPublicationPausedAfterAdmissionAb
         f.avc.BeginTeardown();
     });
 
-    // While publication is paused in flight, teardown must wait
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // Wait until teardown has reached CloseAndWait, atomically closed the gate, and is waiting
+    teardownGateClosed.get_future().wait();
     EXPECT_EQ(teardownFut.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
 
     // Resume publication: it observes stopping_ is now true and aborts
@@ -264,6 +283,9 @@ TEST(BackendLifecycleRaceTests, AVCAudioBackendPublicationPausedAfterAdmissionAb
     // Verification: no nub was published after teardown finished
     EXPECT_EQ(f.publisher.GetNub(guid), nullptr);
     EXPECT_EQ(f.avc.PublicationRejectCountForTesting(), 1u);
+
+    f.avc.SetBeforePublishHookForTesting({});
+    f.avc.SetOnTeardownGateClosedHookForTesting({});
 }
 
 // Case 4 (DICE): Publication versus Teardown on DiceAudioBackend
@@ -274,10 +296,15 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionA
 
     std::promise<void> admitted;
     std::promise<void> allowResume;
+    std::promise<void> teardownGateClosed;
 
     f.dice.SetBeforePublishHookForTesting([&] {
         admitted.set_value();
         allowResume.get_future().wait();
+    });
+
+    f.dice.SetOnTeardownGateClosedHookForTesting([&] {
+        teardownGateClosed.set_value();
     });
 
     auto pubFut = std::async(std::launch::async, [&] {
@@ -290,7 +317,7 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionA
         f.dice.BeginTeardown();
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    teardownGateClosed.get_future().wait();
     EXPECT_EQ(teardownFut.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
 
     allowResume.set_value();
@@ -300,6 +327,9 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionA
 
     EXPECT_EQ(f.publisher.GetNub(guid), nullptr);
     EXPECT_GE(f.dice.PublicationRejectCountForTesting(), 1u);
+
+    f.dice.SetBeforePublishHookForTesting({});
+    f.dice.SetOnTeardownGateClosedHookForTesting({});
 }
 
 } // namespace
