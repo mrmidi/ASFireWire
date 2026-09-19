@@ -1,0 +1,189 @@
+ASFW DICE DEVICE REPORT
+=======================
+Generated: 2026-09-19T14:56:13Z
+Report app: 0.3.0 (build 55)
+Driver:     0.3.0 (6d08a01 on main) built 2026-09-18T20:13:34Z
+Rate mode: low (32-48k)
+
+This is a read-only dump of the device's DICE register spaces.
+Paste it whole into the issue; do not trim sections.
+
+IDENTITY
+--------
+GUID:          0x10C73F040040C7B6
+Vendor:        Midas
+Model:         Venice F32
+Node / gen:    0 / 1
+TCAT vendor:   0x10C73F
+TCAT category: 0x04  (standard DICE)
+TCAT product:  0x001
+TCAT serial:   51126
+
+SECTION TABLES  (offsets and sizes in quadlets)
+-----------------------------------------------
+general space @ 0xFFFFE0000000
+  global         offset=0x0000A (0x000028 B)  size=0x0005A (360 B)
+  tx             offset=0x00064 (0x000190 B)  size=0x0008E (568 B)
+  rx             offset=0x000F2 (0x0003C8 B)  size=0x0011A (1128 B)
+  ext_sync       offset=0x0020C (0x000830 B)  size=0x00004 (16 B)
+  unused2        offset=0x00000 (0x000000 B)  size=0x00000 (0 B)
+
+extension space @ 0xFFFFE0200000
+  <absent>
+
+GLOBAL
+--------
+OWNER              = 0xFFFF000000000000  (no owner)
+NOTIFICATION       = 0x00000000   -
+NICK_NAME          = 'Venice'
+CLOCK_SELECT       = 0x0000020C   source=12 (internal)  rate=2 (48000)
+ENABLE             = 0x00000000   streaming=no
+STATUS             = 0x00000201   locked=yes  nominal=48000
+EXTENDED_STATUS    = 0x00000000
+    locked  : -
+    slipped : -
+    NOTE: slip bits are read-to-clear and fluctuate without notification;
+          this is an instantaneous sample, not a stable value.
+SAMPLE_RATE        = 48000 Hz  (measured)
+VERSION            = 0x01000400   (1.0.4.0)
+CLOCK_CAPABILITIES = 0x13000006
+    rates   : 44100 48000
+    sources : arx1 arx2 internal
+CLOCK_SOURCE_NAMES:
+    0   aes1      'Unused'
+    1   aes2      'Unused'
+    2   aes3      'Unused'
+    3   aes4      'Unused'
+    4   aes_any   'Unused'
+    5   adat      'Unused'
+    6   tdif      'Unused'
+    7   wc        'Unused'
+    8   arx1      'Unused'
+    9   arx2      'Unused'
+    10  arx3      'Unused'
+    11  arx4      'Unused'
+    12  internal  'Internal'
+
+TX STREAMS  (device transmits -> host capture)
+----------------------------------------------
+NUMBER = 2   SIZE = 70 quadlets (280 bytes)
+
+  [stream 0]
+    ISOCHRONOUS  = -1  (disabled)
+    PCM channels = 16
+    MIDI ports   = 0
+    SPEED        = S400
+    AC3_CAPS     = <not implemented: stream block too short>
+    NAMES:
+      0   'OUTPUT CH1'
+      1   'OUTPUT CH2'
+      2   'OUTPUT CH3'
+      3   'OUTPUT CH4'
+      4   'OUTPUT CH5'
+      5   'OUTPUT CH6'
+      6   'OUTPUT CH7'
+      7   'OUTPUT CH8'
+      8   'OUTPUT CH9'
+      9   'OUTPUT CH10'
+      10  'OUTPUT CH11'
+      11  'OUTPUT CH12'
+      12  'OUTPUT CH13'
+      13  'OUTPUT CH14'
+      14  'OUTPUT CH15'
+      15  'OUTPUT CH16'
+
+  [stream 1]
+    ISOCHRONOUS  = -1  (disabled)
+    PCM channels = 8
+    MIDI ports   = 0
+    SPEED        = S400
+    AC3_CAPS     = <not implemented: stream block too short>
+    NAMES:
+      0   'OUTPUT ST CH1L'
+      1   'OUTPUT ST CH1R'
+      2   'OUTPUT ST CH2L'
+      3   'OUTPUT ST CH2R'
+      4   'OUTPUT ST CH3L'
+      5   'OUTPUT ST CH3R'
+      6   'OUTPUT ST CH4L'
+      7   'OUTPUT ST CH4R'
+
+RX STREAMS  (device receives <- host playback)
+----------------------------------------------
+NUMBER = 2   SIZE = 70 quadlets (280 bytes)
+
+  [stream 0]
+    ISOCHRONOUS  = -1  (disabled)
+    SEQ_START    = 0
+    PCM channels = 16
+    MIDI ports   = 0
+    AC3_CAPS     = <not implemented: stream block too short>
+    NAMES:
+      0   'INPUT CH1'
+      1   'INPUT CH2'
+      2   'INPUT CH3'
+      3   'INPUT CH4'
+      4   'INPUT CH5'
+      5   'INPUT CH6'
+      6   'INPUT CH7'
+      7   'INPUT CH8'
+      8   'INPUT CH9'
+      9   'INPUT CH10'
+      10  'INPUT CH11'
+      11  'INPUT CH12'
+      12  'INPUT CH13'
+      13  'INPUT CH14'
+      14  'INPUT CH15'
+      15  'INPUT CH16'
+
+  [stream 1]
+    ISOCHRONOUS  = -1  (disabled)
+    SEQ_START    = 0
+    PCM channels = 8
+    MIDI ports   = 0
+    AC3_CAPS     = <not implemented: stream block too short>
+    NAMES:
+      0   'INPUT ST CH1L'
+      1   'INPUT ST CH1R'
+      2   'INPUT ST CH2L'
+      3   'INPUT ST CH2R'
+      4   'INPUT ST CH3L'
+      5   'INPUT ST CH3R'
+      6   'INPUT ST CH4L'
+      7   'INPUT ST CH4R'
+
+EXT_SYNC
+--------
+CLOCK_SOURCE   = 12 (internal)
+LOCKED         = yes
+RATE           = 2 (48000)
+ADAT_USER_DATA = no-data
+
+EAP CAPABILITIES
+----------------
+<absent>
+
+EAP STREAM FORMAT STAGING AREA  (written, then LOADed — not the live config)
+----------------------------------------------------------------------------
+  <empty — nothing staged>
+
+EAP ROUTER STAGING AREA  (written, then LOADed — not the live config)
+---------------------------------------------------------------------
+  <empty — nothing staged>
+
+EAP CURRENT ROUTER — low (32-48k)  (0 entries)  [ACTIVE]
+--------------------------------------------------------
+  <not read>
+
+EAP CURRENT ROUTER — middle (88.2-96k)  (0 entries)
+---------------------------------------------------
+  <not read>
+
+EAP CURRENT ROUTER — high (176.4-192k)  (0 entries)
+---------------------------------------------------
+  <not read>
+
+NOTES
+--------
+- RX section is allocated for 4 stream block(s) but NUMBER reports 2.
+- No extended application (EAP) space at 0xFFFFE0200000.
