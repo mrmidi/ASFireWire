@@ -68,6 +68,19 @@ public:
         return true;
     }
 
+    // Capture's counterpart. It existed only as a default, so every capture
+    // stream was assumed to share stream 0's shape with nothing able to say
+    // otherwise -- the recorded StudioLive 24.4.2 carries 16 + 10 on playback,
+    // so unequal streams are real, not hypothetical.
+    [[nodiscard]] virtual bool BuildRxStreamConfig(
+        uint32_t streamIndex, AudioStreamConfig& outConfig) const noexcept {
+        if (streamIndex >= RxStreamCount() || !BuildDefaultRxStreamConfig(outConfig)) {
+            return false;
+        }
+        outConfig.sourceChannelOffset = streamIndex * outConfig.pcmChannels;
+        return true;
+    }
+
     // Budget StartIO grants the device-to-host stream to deliver the first
     // data-bearing packet (which seeds the HAL zero-timestamp anchor) before
     // the start attempt is failed. DICE devices stream data within a few
@@ -77,14 +90,33 @@ public:
     // (Linux waits 4 s; cross-validated with Linux bebob_stream.c:10,636-666).
     [[nodiscard]] virtual uint32_t InitialClockAnchorTimeoutMs() const noexcept { return 500; }
 
+    // Sum the streams the device actually carries. The previous form was
+    // pcmChannels * StreamCount(), which silently assumes every stream has
+    // stream 0's width: the recorded Venice F24 carries 16 + 8, so that form
+    // reports 32 where the device means 24, and the StudioLive 24.4.2's
+    // 16 + 10 playback reports 32 where the device means 26. Profiles with
+    // unequal streams had to override these to be correct; summing means they
+    // no longer have to, and a profile that forgets is no longer wrong.
     [[nodiscard]] uint32_t TxChannelCount() const noexcept override {
-        AudioStreamConfig config{};
-        return BuildDefaultTxStreamConfig(config) ? config.pcmChannels * TxStreamCount() : 0;
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < TxStreamCount(); ++i) {
+            AudioStreamConfig config{};
+            if (BuildTxStreamConfig(i, config)) {
+                total += config.pcmChannels;
+            }
+        }
+        return total;
     }
 
     [[nodiscard]] uint32_t RxChannelCount() const noexcept override {
-        AudioStreamConfig config{};
-        return BuildDefaultRxStreamConfig(config) ? config.pcmChannels * RxStreamCount() : 0;
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < RxStreamCount(); ++i) {
+            AudioStreamConfig config{};
+            if (BuildRxStreamConfig(i, config)) {
+                total += config.pcmChannels;
+            }
+        }
+        return total;
     }
 
     [[nodiscard]] uint32_t TxMidiSlots() const noexcept override {

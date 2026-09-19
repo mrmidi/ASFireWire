@@ -24,8 +24,8 @@
 // MIDI ports are 0 in every stream, so DBS equals the PCM channel count. That
 // differs from the 16.0.2, which muxes one MIDI slot and therefore runs DBS 17.
 //
-// The asymmetry is why this profile overrides BuildTxStreamConfig and
-// TxChannelCount: the uniform defaults would describe playback as 16+16 and emit
+// The asymmetry is why this profile overrides BuildTxStreamConfig: the uniform
+// default would describe playback as 16+16 and emit
 // 16-slot CIP into a device RX stream that only has 10 slots, which the device
 // rejects — the failure mode is silence with no error, since the transport
 // reserves bandwidth from the device-reported caps while the packetizer frames
@@ -118,11 +118,6 @@ bool PreSonusStudioLive2442Profile::BuildTxStreamConfig(
     outConfig.sourceChannelOffset =
         (streamIndex == 0) ? 0 : kPlaybackPcmChannels0;
     return true;
-}
-
-uint32_t PreSonusStudioLive2442Profile::TxChannelCount() const noexcept {
-    return static_cast<uint32_t>(kPlaybackPcmChannels0) +
-           static_cast<uint32_t>(kPlaybackPcmChannels1);
 }
 
 // Safety offsets follow the Focusrite Saffire baseline (the tested TCAT ladder),
