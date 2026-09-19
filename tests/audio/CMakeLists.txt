@@ -239,6 +239,11 @@ add_audio_test(StreamGeometryResolverTests
     StreamGeometryResolverTests.cpp
 )
 
+# Profile aggregation through the production TxChannelCount()/RxChannelCount().
+add_audio_test(StreamProfileAggregationTests
+    StreamProfileAggregationTests.cpp
+)
+
 # DICE Profile Registry and Quirks Tests
 add_audio_test(DiceProfileTests
     DiceProfileTests.cpp

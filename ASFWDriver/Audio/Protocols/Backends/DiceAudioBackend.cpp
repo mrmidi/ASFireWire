@@ -104,17 +104,16 @@ namespace {
             .midiPorts = wire.midiPorts};
 }
 
-// The profile exposes no indexed capture accessor -- only a default config and
-// a stream count -- so every capture stream is compared against the same
-// profile shape. That is exactly the uniform-streams assumption this stage is
-// here to stop trusting: where a device states per-stream capture geometry that
-// the default does not match, the disagreement is now visible instead of
-// nobody having looked. ASFW's profile naming inverts: Rx* is host capture.
+// Indexed, like the playback side: a profile describing unequal capture streams
+// is compared stream by stream rather than every stream against stream 0.
+// Using the default config here would have made an asymmetric profile report a
+// correct aggregate while the resolver silently compared the wrong shapes.
+// ASFW's profile naming inverts: Rx* is host capture.
 [[nodiscard]] WireStreamGeometry CaptureGeometryFromProfile(
     const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
     ASFW::Isoch::Audio::AudioStreamConfig config{};
     if (index >= ClampStreamCountToHost(profile.RxStreamCount()) ||
-        !profile.BuildDefaultRxStreamConfig(config)) {
+        !profile.BuildRxStreamConfig(index, config)) {
         return {};
     }
     return {.pcmChannels = config.pcmChannels,
