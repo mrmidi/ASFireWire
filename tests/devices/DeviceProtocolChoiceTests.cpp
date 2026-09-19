@@ -240,6 +240,61 @@ TEST(DeviceProtocolChoice, ASiblingUnitBeforeTheAudioOneIsSkipped) {
 }
 
 // ---------------------------------------------------------------------------
+// Identity the ROM does not state
+// ---------------------------------------------------------------------------
+
+// Focusrite DICE boards encode the model in GUID bits [27:22], and the old path
+// leaned on that: DeviceRegistry::MaybeInferKnownIdentityFromGuid rewrote the
+// flat modelId when the ROM did not surface one, so Create() matched on a value
+// no ROM had published.
+//
+// The catalog matches raw evidence, so it must carry that second route
+// explicitly or a device whose ROM omits the model silently stops resolving.
+// The GUID here is the bench unit's, 0x00130E0402004713 -> field 8 -> Pro 24 DSP.
+TEST(DeviceProtocolChoice, AFocusriteBoardResolvesFromItsGuidWhenTheRomOmitsTheModel) {
+    Discovery::DeviceRecord device{};
+    device.instanceId = Discovery::DeviceInstanceId{3};
+    device.identity.observedGuid = 0x00130E0402004713ULL;
+    device.identity.nodeVendorOui = kFocusriteVendorId;
+    device.identity.rootVendorId = kFocusriteVendorId;
+    device.identity.rootModelId = std::nullopt;  // the ROM said nothing
+    Discovery::UnitIdentityEvidence unit{};
+    unit.unitDirectoryOffset = 5;
+    unit.specifierId = kFocusriteVendorId;
+    unit.version = kDiceInterfaceVersion;
+    device.identity.units.push_back(unit);
+
+    const auto choice = ChooseDeviceProtocol(device);
+    ASSERT_TRUE(choice.has_value())
+        << "the bench Saffire Pro 24 DSP stopped resolving when its model id is "
+           "GUID-encoded rather than ROM-stated";
+    EXPECT_EQ(choice->builder, ProfileBuilderId::FocusriteSPro24Dsp);
+}
+
+// The TCD3070 Pro 40's GUID model field is 0x13 while its ROM model is 0x0000de
+// -- Linux documents the mismatch verbatim (dice.c:385-393). Both routes must
+// land on the same definition, and that definition must stay unplayable.
+TEST(DeviceProtocolChoice, TheTcd3070IsTheSameDeviceByEitherRoute) {
+    Discovery::DeviceRecord byGuid{};
+    byGuid.instanceId = Discovery::DeviceInstanceId{4};
+    byGuid.identity.observedGuid =
+        (static_cast<uint64_t>(kFocusriteVendorId) << 40U) |
+        (static_cast<uint64_t>(kFocusriteGuidModelSPro40Tcd3070) << 22U);
+    byGuid.identity.nodeVendorOui = kFocusriteVendorId;
+    byGuid.identity.rootVendorId = kFocusriteVendorId;
+    Discovery::UnitIdentityEvidence unit{};
+    unit.unitDirectoryOffset = 5;
+    unit.specifierId = kFocusriteVendorId;
+    unit.version = kDiceInterfaceVersion;
+    byGuid.identity.units.push_back(unit);
+
+    EXPECT_FALSE(ChooseDeviceProtocol(byGuid).has_value());
+    EXPECT_FALSE(
+        ChooseDeviceProtocol(DiceDevice(kFocusriteVendorId, kSPro40Tcd3070ModelId))
+            .has_value());
+}
+
+// ---------------------------------------------------------------------------
 // Backend routing
 // ---------------------------------------------------------------------------
 
