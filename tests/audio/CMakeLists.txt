@@ -244,6 +244,10 @@ add_audio_test(StreamProfileAggregationTests
     StreamProfileAggregationTests.cpp
 )
 
+add_audio_test(DiceFixtureGeometryTests
+    DiceFixtureGeometryTests.cpp
+)
+
 # DICE Profile Registry and Quirks Tests
 add_audio_test(DiceProfileTests
     DiceProfileTests.cpp
