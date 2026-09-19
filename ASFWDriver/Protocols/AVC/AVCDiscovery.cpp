@@ -13,6 +13,7 @@
 #include "../../Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "../../Audio/Protocols/Oxford/OxfwStreamFormats.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
+#include "../../Audio/Protocols/SelectProbeBootstrap.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
 #include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
@@ -40,6 +41,20 @@ namespace {
     const ASFW::Discovery::DeviceIdentityEvidence& identity) noexcept {
     return static_cast<uint32_t>(
         ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(identity));
+}
+
+// Which bring-up a unit gets is a *policy* decision the catalog already
+// records, not a model identity. Asking SelectProbeBootstrap keeps discovery
+// out of the matching business: a new device that needs an existing bootstrap
+// is a catalog row, and a device whose family/policy pair has no bootstrap
+// resolves to Unsupported rather than silently taking the generic path.
+[[nodiscard]] ASFW::Audio::ProbeBootstrap ProbeBootstrapFor(
+    const ASFW::Discovery::DeviceIdentityEvidence& identity) noexcept {
+    const auto plan = ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(identity);
+    if (!plan.has_value()) {
+        return ASFW::Audio::ProbeBootstrap::Unsupported;
+    }
+    return ASFW::Audio::SelectProbeBootstrap(plan->family, plan->probePolicy);
 }
 
 [[nodiscard]] constexpr const char* StreamModeToString(
@@ -299,14 +314,17 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     units_[guid] = avcUnit;
     IOLockUnlock(lock_);
 
+    // One policy decision, resolved once and honoured by every arm below.
+    const ASFW::Audio::ProbeBootstrap bootstrap =
+        ProbeBootstrapFor(device->GetIdentity());
+
     // The PHASE 88 is a BeBoB unit matched by stable Config ROM identity.
     // Linux BeBoB starts directly with unit PLUG_INFO and BridgeCo commands;
     // it does not require generic UNIT_INFO or SUBUNIT_INFO first. Keep that
     // wire ordering instead of letting generic AV/C discovery consume or race
     // its FCP route. Cross-validated: firewire/bebob/bebob.c:184-260 and
     // firewire/bebob/bebob_stream.c:908-940.
-    if (ProfileBuilderIdFor(device->GetIdentity()) ==
-        static_cast<uint32_t>(ASFW::DeviceProfiles::Audio::ProfileBuilderId::TerraTecPhase88)) {
+    if (bootstrap == ASFW::Audio::ProbeBootstrap::BeBoBPlug0Only) {
         ASFW_LOG(AVC,
                  "AVCDiscovery: BeBoB device matched; bypassing generic UNIT_INFO/SUBUNIT_INFO GUID=0x%016llx",
                  guid);
@@ -344,13 +362,61 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     // is the only stack that ever spoke AV/C to them. Skip generic discovery
     // and publish the profile-owned geometry, BeBoB-bypass style; the runtime
     // protocol verifies that geometry against HWINFO before streaming.
-    if (IsMackieOnyxFireworks(*device)) {
+    if (bootstrap == ASFW::Audio::ProbeBootstrap::FireworksEfc) {
         ASFW_LOG(AVC,
                  "AVCDiscovery: Fireworks device matched; bypassing generic AV/C discovery GUID=0x%016llx",
                  guid);
         PublishMackieOnyxFireworksProfileOwnedConfig(guid, *device);
         RebuildNodeIDMap();
         return;
+    }
+
+    // Everything past this point issues generic AV/C: UNIT_INFO, SUBUNIT_INFO
+    // and descriptor reads. Only AvcInitializeThenPlug0 asks for that. Falling
+    // through with any other bootstrap would speak generic AV/C to a device
+    // whose policy forbids it -- which is what wedges M-Audio BeBoB firmware --
+    // so each outcome is named here and no default: arm is allowed to swallow
+    // a new one.
+    switch (bootstrap) {
+        case ASFW::Audio::ProbeBootstrap::AvcInitializeThenPlug0:
+            break;
+
+        // Handled above; both arms return before reaching this switch.
+        case ASFW::Audio::ProbeBootstrap::BeBoBPlug0Only:
+        case ASFW::Audio::ProbeBootstrap::FireworksEfc:
+            break;
+
+        case ASFW::Audio::ProbeBootstrap::BeBoBUnprobed:
+            // ProbePolicyId::BeBoBFilteredCommandSet: the unit is BeBoB but its
+            // firmware must not receive generic AV/C before its own bring-up.
+            ASFW_LOG(AVC,
+                     "AVCDiscovery: BeBoB device is unprobed by policy; no automatic AV/C "
+                     "traffic GUID=0x%016llx",
+                     guid);
+            RebuildNodeIDMap();
+            return;
+
+        case ASFW::Audio::ProbeBootstrap::DiceProtocol:
+        case ASFW::Audio::ProbeBootstrap::MotuRegister:
+            // Register-driven families. An AV/C unit directory here is
+            // incidental; their bring-up does not go through this path.
+            ASFW_LOG(AVC,
+                     "AVCDiscovery: register-driven family; skipping generic AV/C discovery "
+                     "GUID=0x%016llx",
+                     guid);
+            RebuildNodeIDMap();
+            return;
+
+        case ASFW::Audio::ProbeBootstrap::Unsupported:
+            // No family/policy pair resolved: a hazardous or ambiguous identity,
+            // or a device with no units. Unrecognised is the unsafe state for
+            // AV/C, so stay off the wire rather than probing generically.
+            ASFW_LOG(AVC,
+                     "AVCDiscovery: no probe bootstrap for this identity; skipping generic "
+                     "AV/C discovery GUID=0x%016llx",
+                     guid);
+            RebuildNodeIDMap();
+            return;
     }
 
     const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
@@ -1543,11 +1609,6 @@ bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcep
 bool AVCDiscovery::IsMackieOnyxIOxford(const Discovery::FWDevice& device) const noexcept {
     return DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(device.GetIdentity()) ==
            DeviceProfiles::Audio::ProfileBuilderId::MackieOnyxIOxfw;
-}
-
-bool AVCDiscovery::IsMackieOnyxFireworks(const Discovery::FWDevice& device) const noexcept {
-    return DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(device.GetIdentity()) ==
-           DeviceProfiles::Audio::ProfileBuilderId::MackieOnyx400F;
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {
