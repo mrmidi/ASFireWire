@@ -83,6 +83,21 @@ enum class DuplexRestartPhase : uint8_t {
 // lifecycle state: they are the rollback ledger (which resources were
 // acquired), needed while Stopping to know what to unwind. They survive
 // transitions into Stopping; only cleanup completion clears them.
+//
+// Verified on hardware 2026-09-19, Saffire Pro 24 DSP (DICE) and Apogee Duet
+// (OXFW), read from the driver ring with droppedRecords=0:
+//   - state == phase at all six observed terminals, across a cold start, a
+//     mid-stream unplug, a normal stop and a restart. That pair is what the
+//     previous two-enum shape could contradict and this one cannot.
+//   - The mid-stream unplug terminated Failed/Failed with
+//     rollback=kIOReturnSuccess and retryable=0: the ledger unwound what
+//     Starting had acquired, and no recovery was attempted for a device that
+//     was already gone.
+//   - Both Stopping destinations were exercised - Removed for the vanished
+//     device, Idle for a normal stop - and the normal stop preserved its
+//     restartId, so stopping does not burn the epoch.
+//   - The restart allocated a fresh restartId (2 -> 3), so a late completion
+//     from the previous run cannot be accepted into the new one.
 // ---------------------------------------------------------------------------
 
 struct LifecycleIdle {};
@@ -98,6 +113,8 @@ struct LifecycleRunning {};
 /// Cleanup in progress. The destination (stop-for-restart vs
 /// stop-for-retirement) is a session-owner decision taken at cleanup
 /// completion, not lifecycle data; the machine re-enters at Idle or Removed.
+/// Both destinations observed on hardware 2026-09-19: Removed on a mid-stream
+/// unplug, Idle on a normal stop.
 struct LifecycleStopping {};
 
 struct LifecycleRecovering {};
@@ -112,7 +129,10 @@ struct LifecycleFailed {
 /// for the retired incarnation is rejected" stays with the operation gate and
 /// the route-epoch check (single authority). Today retirement is logged at
 /// ClearSession and the session record is erased - a resident Removed state
-/// has no reader until the Stage 3 session owner owns the registry.
+/// has no reader until the Stage 3 session owner owns the registry. The
+/// transition itself is exercised: a mid-stream unplug on 2026-09-19 logged
+/// the retirement, nothing referenced the retired session afterwards, and its
+/// endpoint left the audio-health projection.
 struct LifecycleRemoved {};
 
 using DuplexLifecycle = std::variant<LifecycleIdle, LifecycleApplyingIdleClock,
