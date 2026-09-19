@@ -7,7 +7,7 @@
 // This is the neutral shape only: which slot feeds which channel, and how far
 // a channel must be delayed to undo a capture skew inside the device. It
 // carries no device identity — the tables live with the family that needs them
-// (see Audio/Families/BeBoB/BeBoBCaptureChannelMap.hpp) and arrive here
+// (see Audio/Protocols/BeBoB/BeBoBCaptureChannelMap.hpp) and arrive here
 // already chosen.
 //
 // A default-constructed map is the identity: slot N feeds channel N with no
