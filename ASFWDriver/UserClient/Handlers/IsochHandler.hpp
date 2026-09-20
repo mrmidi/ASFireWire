@@ -34,6 +34,8 @@ public:
     kern_return_t TestCMPConnectIPCR(IOUserClientMethodArguments* args);
     kern_return_t TestCMPDisconnectIPCR(IOUserClientMethodArguments* args);
 
+    kern_return_t MotuCapture(IOUserClientMethodArguments* args);
+
     // Isoch Streaming Control
     kern_return_t StartIsochReceive(IOUserClientMethodArguments* args);
     kern_return_t StopIsochReceive(IOUserClientMethodArguments* args);

@@ -4,6 +4,7 @@
 #include "Audio/Wire/AMDTP/AmdtpPayloadWriter.hpp"
 #include "Audio/Wire/AMDTP/AmdtpTxPacketizer.hpp"
 #include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
+#include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 
 #include <gtest/gtest.h>
 
@@ -22,6 +23,7 @@ public:
     bool allowAcquire{false};
     bool allowPublish{false};
     std::array<uint8_t, 128> bytes{};
+    PreparedTxPacket publishedPacket{};
 
     bool AcquireWritableSlot(
         uint32_t packetIndex,
@@ -39,7 +41,8 @@ public:
     }
 
     bool PublishSlot(
-        const PreparedTxPacket&) noexcept override {
+        const PreparedTxPacket& packet) noexcept override {
+        publishedPacket = packet;
         return allowPublish;
     }
 
@@ -527,4 +530,134 @@ TEST(AmdtpDirectTxTests, TxEngineReportsPreparationFailureStage) {
         TxSlotPrepareResult::kPacketizerRejected);
 }
 
+TEST(AmdtpDirectTxTests, DiceTxStreamEngineSuppliesPresentationPlanAndControlsPacketFraming) {
+    class TestAudioProfile final : public ASFW::Isoch::Audio::IAudioStreamProfile {
+    public:
+        const char* Name() const noexcept override { return "TestAudioProfile"; }
+        ASFW::Encoding::AudioWireFormat TxWireFormat() const noexcept override { return {}; }
+        ASFW::Encoding::AudioWireFormat RxWireFormat() const noexcept override { return {}; }
+        uint32_t TxSafetyOffsetFrames(double) const noexcept override { return 0; }
+        uint32_t RxSafetyOffsetFrames(double) const noexcept override { return 0; }
+        uint32_t TxReportedLatencyFrames(double) const noexcept override { return 0; }
+        uint32_t RxReportedLatencyFrames(double) const noexcept override { return 0; }
+
+        bool BuildDefaultTxStreamConfig(ASFW::Isoch::Audio::AudioStreamConfig& c) const noexcept override {
+            c = {};
+            c.direction = ASFW::Isoch::Audio::AudioStreamDirection::HostToDevice;
+            c.sampleRate = 48000;
+            c.streamMode = ASFW::Encoding::StreamMode::kBlocking;
+            c.pcmChannels = 2;
+            c.dbs = 2;
+            c.midiSlots = 0;
+            c.framesPerDataPacket = 8;
+            c.fdf = 0x02;
+            c.fmt = 0x10;
+            c.sid = 0;
+            return true;
+        }
+        bool BuildDefaultRxStreamConfig(ASFW::Isoch::Audio::AudioStreamConfig& c) const noexcept override {
+            return BuildDefaultTxStreamConfig(c);
+        }
+    };
+
+    DiceTxStreamEngine engine{};
+    TestAudioProfile profile{};
+    ASFW::Isoch::Audio::AudioStreamConfig config{};
+    ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(config));
+    ASSERT_TRUE(engine.Configure(profile, config));
+
+    TestTxSlotProvider provider{};
+    provider.allowAcquire = true;
+    provider.allowPublish = true;
+    engine.BindSlotProvider(&provider);
+
+    // Initial state: not aligned, frame 0
+    EXPECT_FALSE(engine.IsFrameCursorAligned());
+    EXPECT_EQ(engine.NextAudioFrame(), 0U);
+
+    // 1. One-shot cursor alignment
+    EXPECT_TRUE(engine.AlignFrameCursorOnce(48000U));
+    EXPECT_TRUE(engine.IsFrameCursorAligned());
+    EXPECT_EQ(engine.NextAudioFrame(), 48000U);
+
+    // Subsequent alignment rejected
+    EXPECT_FALSE(engine.AlignFrameCursorOnce(96000U));
+    EXPECT_EQ(engine.NextAudioFrame(), 48000U);
+
+    // 2. Prepare next transmit slot with presentation plan
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.nextDataSyt = 0x3456;
+    timing.replayValid = true;
+    timing.replayDataBlocks = 8;
+
+    EXPECT_EQ(
+        engine.PrepareNextTransmitSlot(0, timing),
+        TxSlotPrepareResult::kPrepared);
+
+    EXPECT_TRUE(provider.publishedPacket.isData);
+    EXPECT_EQ(provider.publishedPacket.firstAudioFrame, 48000U);
+    EXPECT_EQ(provider.publishedPacket.framesInPacket, 8U);
+    EXPECT_EQ(provider.publishedPacket.syt, 0x3456U);
+    // Cursor advanced by 8 frames
+    EXPECT_EQ(engine.NextAudioFrame(), 48008U);
+
+    // 3. Re-arm cursor alignment after replay interruption
+    engine.ReArmFrameCursorAlignment();
+    EXPECT_FALSE(engine.IsFrameCursorAligned());
+
+    // Can re-align after re-arm
+    EXPECT_TRUE(engine.AlignFrameCursorOnce(100000U));
+    EXPECT_TRUE(engine.IsFrameCursorAligned());
+    EXPECT_EQ(engine.NextAudioFrame(), 100000U);
+
+    // Next prepared slot uses new cursor position from the plan
+    EXPECT_EQ(
+        engine.PrepareNextTransmitSlot(1, timing),
+        TxSlotPrepareResult::kPrepared);
+
+    EXPECT_TRUE(provider.publishedPacket.isData);
+    EXPECT_EQ(provider.publishedPacket.firstAudioFrame, 100000U);
+    EXPECT_EQ(provider.publishedPacket.framesInPacket, 8U);
+    EXPECT_EQ(engine.NextAudioFrame(), 100008U);
+}
+
 } // namespace
+
+TEST(AmdtpDirectTxTests, RevertedEndEventPacketRestoresDbcAndFrameTelemetry) {
+    AmdtpTxPacketizer packetizer;
+    AmdtpPacketTimeline timeline;
+    std::array<PacketTimelineSlot, 8> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
+    packetizer.BindTimeline(&timeline);
+    AmdtpStreamConfig config{};
+    config.sampleRate = 48000;
+    config.dbs = 2;
+    config.pcmChannels = 2;
+    config.framesPerDataPacket = 8;
+    AmdtpTxPolicy policy{};
+    policy.dbcIsEndEvent = true;
+    ASSERT_TRUE(packetizer.Configure(config, policy));
+    packetizer.Reset(250, 100);
+    std::array<uint8_t, 128> bytes{};
+    TxPacketSlotView slot{.packetIndex = 0, .bytes = bytes.data(), .capacityBytes = bytes.size()};
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    TxPresentationPlan plan{};
+    plan.firstAudioFrame = 100;
+    plan.frameCount = 8;
+    plan.disposition = AmdtpPacketDisposition::Data;
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(slot, timing, plan, packet));
+    EXPECT_EQ(packet.dbc, 2U);
+    packetizer.RevertToNoData(slot, packet);
+    EXPECT_EQ(packet.dbc, 250U);
+    EXPECT_EQ(bytes[3], 250U);
+    EXPECT_EQ(packetizer.TelemetrySnapshot().nextAudioFrame, 100U);
+    EXPECT_FALSE(packetizer.TelemetrySnapshot().hasLastDataPacket);
+    slot.packetIndex = 1;
+    ASSERT_TRUE(packetizer.PrepareNextPacket(slot, timing, plan, packet));
+    EXPECT_EQ(packet.dbc, 2U);
+    EXPECT_EQ(packet.firstAudioFrame, 100U);
+}

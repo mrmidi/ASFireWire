@@ -11,6 +11,7 @@
 #include "../../Engine/Direct/Rx/DirectAudioReceiveConsumer.hpp"
 #include "../../Wire/MOTU/MotuPayloadCodec.hpp"
 #include "../../Wire/MOTU/MotuDeviceTiming.hpp"
+#include "../../Wire/MOTU/MotuRxDiagnosticCapture.hpp"
 #include "DirectRxFormatDescriptor.hpp"
 #include "DuplexIRMReservations.hpp"
 
@@ -83,6 +84,10 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
   public:
     explicit IsochDuplexHostTransport(Driver::IsochService& isoch) noexcept : isoch_(isoch) {}
 
+    [[nodiscard]] Wire::MotuRxDiagnosticCapture* DiagnosticCapture(uint32_t stream) noexcept {
+        return stream < Driver::IsochService::kMaxStreamsPerDirection
+                   ? &motuRxDiagnosticCaptures_[stream] : nullptr;
+    }
     void SetTimingLossCallback(Driver::IsochService::TimingLossCallback callback) noexcept;
 
     [[nodiscard]] kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override;
@@ -132,8 +137,11 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         receiveConsumers_[Driver::IsochService::kMaxStreamsPerDirection]{};
     std::unique_ptr<ASFW::Audio::Wire::MotuRxPayloadCodec>
         motuRxCodecs_[Driver::IsochService::kMaxStreamsPerDirection]{};
+    ASFW::Audio::Wire::MotuRxDiagnosticCapture
+        motuRxDiagnosticCaptures_[Driver::IsochService::kMaxStreamsPerDirection]{};
     std::unique_ptr<ASFW::Audio::Wire::MotuRxTimingObserver>
         motuRxTimingObservers_[Driver::IsochService::kMaxStreamsPerDirection]{};
+    uint64_t diagnosticGuid_{0};
     Backends::DuplexIRMReservationPair reservations_{};
 };
 

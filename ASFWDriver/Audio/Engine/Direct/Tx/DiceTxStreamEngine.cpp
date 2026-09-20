@@ -65,19 +65,37 @@ void DiceTxStreamEngine::BindSlotProvider(
 void DiceTxStreamEngine::ResetForStart(uint8_t initialDbc,
                                        uint64_t initialAudioFrame) noexcept {
     timeline_.Reset();
+    nextAudioFrame_ = initialAudioFrame;
+    frameCursorAligned_ = false;
+    consecutiveTimingReverts_ = 0;
+    timingLossReported_ = false;
+    ++cursorEpoch_;
     packetizer_.Reset(initialDbc, initialAudioFrame);
+    packetizer_.SetPresentationCursor(cursorEpoch_, nextAudioFrame_, frameCursorAligned_);
 }
 
 bool DiceTxStreamEngine::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
-    return packetizer_.AlignFrameCursorOnce(frameIndex);
+    if (frameCursorAligned_) {
+        return false;
+    }
+    nextAudioFrame_ = frameIndex;
+    frameCursorAligned_ = true;
+    ++cursorEpoch_;
+    packetizer_.SetPresentationCursor(cursorEpoch_, nextAudioFrame_, frameCursorAligned_);
+    return true;
 }
 
 void DiceTxStreamEngine::ReArmFrameCursorAlignment() noexcept {
-    packetizer_.ReArmFrameCursorAlignment();
+    if (!frameCursorAligned_) {
+        return;
+    }
+    frameCursorAligned_ = false;
+    ++cursorEpoch_;
+    packetizer_.SetPresentationCursor(cursorEpoch_, nextAudioFrame_, frameCursorAligned_);
 }
 
 bool DiceTxStreamEngine::IsFrameCursorAligned() const noexcept {
-    return packetizer_.IsFrameCursorAligned();
+    return frameCursorAligned_;
 }
 
 TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
@@ -92,13 +110,42 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
         return TxSlotPrepareResult::kSlotAcquireFailed;
     }
 
+    const bool cadenceData = packetizer_.NextPacketWouldCarryData();
+    const bool isData = (timing.disposition == AMDTP::AmdtpPacketDisposition::Data) &&
+                        (timing.replayValid ? timing.replayDataBlocks != 0 : cadenceData);
+    const uint8_t frames = isData
+        ? static_cast<uint8_t>(timing.replayValid ? timing.replayDataBlocks : packetizer_.CurrentCycleDataFrames())
+        : 0;
+
+    AMDTP::TxPresentationPlan plan{};
+    plan.epoch = cursorEpoch_;
+    plan.cycleOrdinal = packetIndex;
+    plan.firstAudioFrame = nextAudioFrame_;
+    plan.frameCount = frames;
+    // No absolute presentation timestamp is available here. A transmit cycle
+    // index is neither a tick count nor the device presentation time.
+    plan.presentationBusTicks = 0;
+    plan.disposition = isData ? AMDTP::AmdtpPacketDisposition::Data : AMDTP::AmdtpPacketDisposition::NoData;
+
     AMDTP::PreparedTxPacket packet{};
-    if (!packetizer_.PrepareNextPacket(slot, timing, packet)) {
+    if (!packetizer_.PrepareNextPacket(slot, timing, plan, packet)) {
         return TxSlotPrepareResult::kPacketizerRejected;
     }
 
     if (timingStamper_ != nullptr && packet.isData && packet.framesInPacket > 0) {
-        timingStamper_->StampPacket(slot, packet, timing);
+        const auto result = timingStamper_->StampPacket(slot, packet, timing);
+        if (result == ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable) {
+            packetizer_.RevertToNoData(slot, packet);
+            counters_.timingUnavailableReverts.fetch_add(1, std::memory_order_relaxed);
+            if (consecutiveTimingReverts_ < kMaxConsecutiveTimingReverts) ++consecutiveTimingReverts_;
+            if (consecutiveTimingReverts_ >= kMaxConsecutiveTimingReverts && !timingLossReported_ && timingLossCallback_) {
+                timingLossReported_ = timingLossCallback_();
+                if (!timingLossReported_) consecutiveTimingReverts_ = 0;
+            }
+        } else {
+            consecutiveTimingReverts_ = 0;
+            timingLossReported_ = false;
+        }
     }
 
     if (!slotProvider_->PublishSlot(packet)) {
@@ -107,6 +154,7 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
 
     counters_.packetsPrepared.fetch_add(1, std::memory_order_relaxed);
     if (packet.isData) {
+        nextAudioFrame_ += packet.framesInPacket;
         counters_.dataPacketsPrepared.fetch_add(1, std::memory_order_relaxed);
     } else {
         counters_.noDataPacketsPrepared.fetch_add(1, std::memory_order_relaxed);

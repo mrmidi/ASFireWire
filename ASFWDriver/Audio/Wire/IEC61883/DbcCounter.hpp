@@ -14,6 +14,7 @@ public:
     [[nodiscard]] uint8_t ValueForNextPacket() const noexcept;
 
     void AdvanceDataBlocks(uint8_t dataBlocks) noexcept;
+    void RewindDataBlocks(uint8_t dataBlocks) noexcept;
 
 private:
     uint8_t dbc_{0};

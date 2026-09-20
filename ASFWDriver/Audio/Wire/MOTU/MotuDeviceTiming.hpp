@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <span>
 
+#include "MotuRxDiagnosticCapture.hpp"
+
 namespace ASFW::Audio::Wire {
 
 class MotuRxTimingObserver final : public IRxDeviceTimingObserver {
@@ -35,6 +37,12 @@ public:
         activeCache_ = cache;
     }
 
+    void BindDiagnosticCapture(MotuRxDiagnosticCapture* capture, uint32_t strideQuadlets = 0, uint64_t sourceGuid = 0) noexcept {
+        diagnosticCapture_ = capture;
+        diagnosticStride_ = strideQuadlets;
+        diagnosticGuid_ = sourceGuid;
+    }
+
     void OnBatchBegin(::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept override {
         if (bindingSource != nullptr) {
             bindingSource_ = bindingSource;
@@ -47,9 +55,21 @@ public:
             ::ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
             if (bindingSource_->CopyDirectAudioBinding(snapshot) && snapshot.control != nullptr) {
                 activeCache_ = &snapshot.control->motuEventOffsets;
+                diagnosticSampleRate_ = snapshot.sampleRateHz;
             } else {
                 activeCache_ = nullptr;
+                diagnosticSampleRate_ = 0;
             }
+        }
+    }
+
+    void ObserveRawPacket(
+        uint64_t epoch,
+        uint16_t rxTimestamp,
+        std::span<const uint8_t> rawPayload) noexcept override {
+        if (diagnosticCapture_ != nullptr) {
+            constexpr uint32_t kMotuCipPrefixBytes = 16;
+            diagnosticCapture_->RecordPacket(epoch, rxTimestamp, rawPayload, diagnosticStride_, kMotuCipPrefixBytes, diagnosticGuid_, diagnosticSampleRate_);
         }
     }
 
@@ -84,6 +104,10 @@ private:
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
     ::ASFW::Encoding::Motu::MotuEventOffsetCache* explicitCache_{nullptr};
     ::ASFW::Encoding::Motu::MotuEventOffsetCache* activeCache_{nullptr};
+    MotuRxDiagnosticCapture* diagnosticCapture_{nullptr};
+    uint32_t diagnosticSampleRate_{0};
+    uint64_t diagnosticGuid_{0};
+    uint32_t diagnosticStride_{0};
     bool timingEstablished_{false};
 };
 
@@ -104,13 +128,13 @@ public:
         dbs_ = dbs;
     }
 
-    void StampPacket(
+    ::ASFW::Audio::TxTimingStampResult StampPacket(
         const Protocols::Audio::AMDTP::TxPacketSlotView& slot,
         const Protocols::Audio::AMDTP::PreparedTxPacket& packet,
         const Protocols::Audio::AMDTP::AmdtpTimingState& timing) noexcept override {
         const uint32_t blocks = packet.framesInPacket;
         if (slot.bytes == nullptr || dbs_ == 0 || blocks == 0) {
-            return;
+            return ::ASFW::Audio::TxTimingStampResult::kNotApplicable;
         }
 
         auto payload = std::span<uint8_t>(slot.bytes, packet.byteCount);
@@ -118,7 +142,7 @@ public:
         if (cache_ == nullptr || !timing.transmitCycleValid) {
             (void)::ASFW::Encoding::Motu::WritePacketSphZero(
                 payload, dbs_, blocks, /*cipHeaderBytes=*/8U);
-            return;
+            return ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable;
         }
 
         constexpr uint32_t kMaxBlocksPerPacket = 256;
@@ -128,9 +152,11 @@ public:
             (void)::ASFW::Encoding::Motu::WritePacketSph(
                 payload, dbs_, boundedBlocks, timing.transmitCycle,
                 std::span<const uint32_t>(offsets, boundedBlocks), /*cipHeaderBytes=*/8U);
+            return ::ASFW::Audio::TxTimingStampResult::kOk;
         } else {
             (void)::ASFW::Encoding::Motu::WritePacketSphZero(
                 payload, dbs_, boundedBlocks, /*cipHeaderBytes=*/8U);
+            return ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable;
         }
     }
 

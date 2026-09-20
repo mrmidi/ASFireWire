@@ -303,6 +303,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 kr = failStart(kIOReturnError, "ConfigureTxStreamEngine");
                 return;
             }
+            ivars.runtime.txStreamEngine.SetTimingLossCallback({});
             const auto txPolicy = profile->TxStreamPolicy();
             if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV2) {
                 ivars.runtime.motuPayloadWriter.Configure(
@@ -313,6 +314,15 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 ivars.runtime.motuPayloadWriter.BindTimeline(&ivars.runtime.txStreamEngine.Timeline());
                 ivars.runtime.txStreamEngine.SetPayloadWriter(&ivars.runtime.motuPayloadWriter);
 
+                ivars.runtime.txStreamEngine.SetTimingLossCallback([state = &ivars] {
+                    if (!state->runtime.isRunning.load(std::memory_order_acquire)) return false;
+                    auto* currentControl = state->runtime.directAudioGraph.control;
+                    auto* nub = state->device.audioNub;
+                    if (!nub || !currentControl) return false;
+                    nub->RequestTimingRecovery(
+                        currentControl->rxReplayEpochResets.load(std::memory_order_acquire));
+                    return true;
+                });
                 ivars.runtime.motuTxTimingStamper.Configure(txConfig.dbs);
                 ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
             }

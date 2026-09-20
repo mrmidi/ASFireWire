@@ -49,12 +49,19 @@ public:
         uint64_t completionCursor) noexcept = 0;
 };
 
+/// Outcome of physical timing stamping.
+enum class TxTimingStampResult : uint8_t {
+    kOk = 0,
+    kTimingUnavailable,
+    kNotApplicable,
+};
+
 /// Physical transmit timing stamper (e.g. SPH quadlets).
 class ITxDeviceTimingStamper {
 public:
     virtual ~ITxDeviceTimingStamper() = default;
 
-    virtual void StampPacket(
+    virtual TxTimingStampResult StampPacket(
         const Protocols::Audio::AMDTP::TxPacketSlotView& slot,
         const Protocols::Audio::AMDTP::PreparedTxPacket& packet,
         const Protocols::Audio::AMDTP::AmdtpTimingState& timing) noexcept = 0;
@@ -69,6 +76,15 @@ public:
 
     virtual void OnBatchBegin(Runtime::IDirectAudioBindingSource* bindingSource) noexcept {
         (void)bindingSource;
+    }
+
+    virtual void ObserveRawPacket(
+        uint64_t epoch,
+        uint16_t rxTimestamp,
+        std::span<const uint8_t> rawPayload) noexcept {
+        (void)epoch;
+        (void)rxTimestamp;
+        (void)rawPayload;
     }
 
     virtual void ObservePacket(

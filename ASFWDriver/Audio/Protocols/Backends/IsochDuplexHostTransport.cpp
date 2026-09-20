@@ -42,6 +42,11 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
 
         motuRxTimingObservers_[streamIndex] = std::make_unique<::ASFW::Audio::Wire::MotuRxTimingObserver>(
             bindingSource);
+
+        motuRxTimingObservers_[streamIndex]->BindDiagnosticCapture(
+            &motuRxDiagnosticCaptures_[streamIndex],
+            motuRxCodecs_[streamIndex]->StrideQuadlets(0), diagnosticGuid_);
+
         consumer->SetTimingObserver(motuRxTimingObservers_[streamIndex].get());
     }
     consumer->SetTimingLossCallback([this] { isoch_.NotifyReceiveTimingLoss(); });
@@ -70,6 +75,7 @@ void IsochDuplexHostTransport::SetTimingLossCallback(
 
 kern_return_t IsochDuplexHostTransport::BeginSplitDuplex(uint64_t guid) noexcept {
     reservations_.ReleaseAll();
+    diagnosticGuid_ = guid;
     return isoch_.BeginSplitDuplex(guid);
 }
 

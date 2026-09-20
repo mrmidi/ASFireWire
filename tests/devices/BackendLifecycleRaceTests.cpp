@@ -11,6 +11,7 @@
 #include "Audio/Core/AudioNubPublisher.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Audio/Protocols/Backends/AVCAudioBackend.hpp"
+#include "Audio/Protocols/Backends/MotuAudioBackend.hpp"
 #include "Audio/Protocols/Backends/DiceAudioBackend.hpp"
 #include "Audio/Protocols/Backends/AudioDuplexCoordinator.hpp"
 #include "Bus/IRM/IRMClient.hpp"
@@ -332,3 +333,25 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionA
 }
 
 } // namespace
+
+TEST(BackendLifecycleRaceTests, MotuConcurrentTeardownWaitsForQueueAndRejectsRecovery) {
+    TestFixture f;
+    ASFW::Audio::MotuAudioBackend motu(f.publisher, f.registry, f.runtime, f.coordinator, f.hardware);
+    auto* queue = motu.WorkQueueForTesting();
+    ASSERT_NE(queue, nullptr);
+    std::unique_lock<std::mutex> queueLock(queue->ExecutionMutexForTesting());
+    std::promise<void> draining;
+    std::promise<void> secondary;
+    motu.SetTeardownHooksForTesting([&] { draining.set_value(); }, [&] { secondary.set_value(); });
+    auto first = std::async(std::launch::async, [&] { motu.BeginTeardown(); });
+    draining.get_future().wait();
+    auto second = std::async(std::launch::async, [&] { motu.BeginTeardown(); });
+    secondary.get_future().wait();
+    EXPECT_EQ(first.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
+    EXPECT_EQ(second.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
+    EXPECT_FALSE(motu.QueueTimingRecovery(0x1234567800000001ULL));
+    queueLock.unlock();
+    EXPECT_EQ(first.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(second.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    motu.SetTeardownHooksForTesting({}, {});
+}

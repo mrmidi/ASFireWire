@@ -59,7 +59,14 @@ add_audio_test(Am824PayloadCodecTests
 # MOTU Payload Codec and Device Timing Tests
 add_audio_test(MotuPayloadCodecTests
     MotuPayloadCodecTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
 )
 
 # CIP Header Builder Tests

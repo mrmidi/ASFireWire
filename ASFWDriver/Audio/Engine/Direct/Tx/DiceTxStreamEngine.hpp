@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 
 namespace ASFW::Protocols::Audio::DICE {
 
@@ -17,6 +18,7 @@ struct DiceTxEngineCounters final {
     std::atomic<uint64_t> dataPacketsPrepared{0};
     std::atomic<uint64_t> noDataPacketsPrepared{0};
     std::atomic<uint64_t> slotAcquireFailures{0};
+    std::atomic<uint64_t> timingUnavailableReverts{0};
 };
 
 enum class TxSlotPrepareResult : uint8_t {
@@ -35,6 +37,10 @@ public:
 
 class DiceTxStreamEngine final {
 public:
+    using TimingLossCallback = std::function<bool()>; // true when notification was sent; false allows retry
+
+    static constexpr uint32_t kMaxConsecutiveTimingReverts = 16;
+
     DiceTxStreamEngine() noexcept = default;
 
     bool Configure(const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
@@ -50,17 +56,22 @@ public:
         timingStamper_ = stamper;
     }
 
+    void SetTimingLossCallback(TimingLossCallback callback) noexcept {
+        timingLossCallback_ = std::move(callback);
+    }
+
     void ResetForStart(uint8_t initialDbc,
                        uint64_t initialAudioFrame) noexcept;
 
     [[nodiscard]] bool AlignFrameCursorOnce(uint64_t frameIndex) noexcept;
 
     // Re-arm the one-shot frame-cursor alignment after an RX replay stall so the
-    // next DATA packet re-projects the cursor to the live frame (see
-    // AmdtpTxPacketizer::ReArmFrameCursorAlignment).
+    // next DATA packet re-projects the cursor to the live frame.
     void ReArmFrameCursorAlignment() noexcept;
 
     [[nodiscard]] bool IsFrameCursorAligned() const noexcept;
+    [[nodiscard]] uint64_t NextAudioFrame() const noexcept { return nextAudioFrame_; }
+    [[nodiscard]] uint64_t CursorEpoch() const noexcept { return cursorEpoch_; }
 
     /// True for families that carry no presentation time in the CIP SYT field -- Linux's
     /// CIP_UNAWARE_SYT (e.g. SPH-based timing).
@@ -102,6 +113,10 @@ public:
     ::ASFW::Audio::ITxPayloadWriter* activePayloadWriter_{&payloadWriter_};
     ::ASFW::Audio::ITxDeviceTimingStamper* timingStamper_{nullptr};
 
+    uint64_t nextAudioFrame_{0};
+    uint64_t cursorEpoch_{1};
+    bool frameCursorAligned_{false};
+
     AMDTP::PacketTimelineSlot
         timelineSlots_[ASFW::IsochTransport::AudioTimingGeometry::kTimelineSlots]{};
     AMDTP::AmdtpPacketTimeline timeline_{};
@@ -109,6 +124,10 @@ public:
     AMDTP::IAmdtpTxSlotProvider* slotProvider_{nullptr};
 
     DiceTxEngineCounters counters_{};
+
+    uint32_t consecutiveTimingReverts_{0};
+    TimingLossCallback timingLossCallback_{};
+    bool timingLossReported_{false};
 };
 
 } // namespace ASFW::Protocols::Audio::DICE

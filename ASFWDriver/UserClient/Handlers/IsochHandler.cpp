@@ -6,6 +6,8 @@
 //
 
 #include "IsochHandler.hpp"
+#include "../../Service/DriverContext.hpp"
+#include "../../Audio/Core/AudioCoordinator.hpp"
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Bus/IRM/IRMClient.hpp"
 #include "../../Isoch/IsochReceiveContext.hpp"
@@ -25,6 +27,24 @@ namespace ASFW::UserClient {
 
 IsochHandler::IsochHandler(::ASFWDriver* driver, uint64_t ownerToken)
     : driver_(driver), ownerToken_(ownerToken) {}
+
+kern_return_t IsochHandler::MotuCapture(IOUserClientMethodArguments* args) {
+    if (!args || !args->scalarInput || args->scalarInputCount != 3 ||
+        args->scalarInput[1] >= Driver::IsochService::kMaxStreamsPerDirection ||
+        args->scalarInput[2] > 2) return kIOReturnBadArgument;
+    auto* context = driver_ ? static_cast<ServiceContext*>(driver_->GetServiceContext()) : nullptr;
+    if (!context || !context->audioCoordinator) return kIOReturnNotReady;
+    std::string output;
+    const auto result = context->audioCoordinator->MotuCaptureCommand(
+        args->scalarInput[0], static_cast<uint32_t>(args->scalarInput[1]),
+        static_cast<uint32_t>(args->scalarInput[2]), output);
+    if (result != kIOReturnSuccess) return result;
+    if (args->scalarInput[2] == 2) {
+        args->structureOutput = OSData::withBytes(output.data(), output.size());
+        if (!args->structureOutput) return kIOReturnNoMemory;
+    }
+    return kIOReturnSuccess;
+}
 
 void IsochHandler::ReleaseOwner() noexcept {
     if (driver_ && ownsDVCapture_) {

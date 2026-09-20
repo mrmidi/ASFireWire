@@ -1434,3 +1434,15 @@ TEST_F(AudioDuplexCoordinatorTests, ChangedEndpointGeometryRejectsStartRecoveryA
     coordinator_.AcknowledgeDevicePresent(kTestGuid);
     EXPECT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnNotReady);
 }
+
+TEST_F(AudioDuplexCoordinatorTests, StaleTimingFaultCannotRecoverNewerSession) {
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+    const auto original = GetSession();
+    ASSERT_TRUE(original.has_value());
+    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterTimingLoss,
+                                          original->restartId), kIOReturnSuccess);
+    ClearLog();
+    EXPECT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterTimingLoss,
+                                          original->restartId), kIOReturnAborted);
+    EXPECT_TRUE(LogSnapshot().empty());
+}

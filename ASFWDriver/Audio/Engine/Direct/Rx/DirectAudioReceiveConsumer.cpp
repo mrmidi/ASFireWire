@@ -167,9 +167,25 @@ void DirectAudioReceiveConsumer::BeginReceiveBatch(
 void DirectAudioReceiveConsumer::ConsumePacket(
     const ::ASFW::Isoch::IsochReceiveBatch& batch,
     const ::ASFW::Isoch::IsochReceivePacket& packet) noexcept {
-    if (packet.payload.empty()) {
-        return;
+    if (timingObserver_ != nullptr) {
+        const uint64_t currentEpoch = inputView_.control
+            ? inputView_.control->rxReplayEpochResets.load(std::memory_order_relaxed)
+            : 0ULL;
+        uint16_t rawTimestamp = 0;
+        const bool timestampValid = ::ASFW::Isoch::Rx::DecodeReceiveTimestamp(
+            packet.payload.data(), packet.payload.size(), rawTimestamp);
+        if (!timestampValid && packet.payload.size() >= 2) {
+            // Preserve malformed timestamp bits for diagnostics too.
+            rawTimestamp = static_cast<uint16_t>(packet.payload[0]) |
+                           (static_cast<uint16_t>(packet.payload[1]) << 8);
+        }
+        timingObserver_->ObserveRawPacket(
+            currentEpoch,
+            rawTimestamp,
+            std::span<const uint8_t>(packet.payload.data(), packet.payload.size()));
     }
+
+    if (packet.payload.empty()) return;
 
     // This is deliberately content-side work: the transport neither chooses a
     // decoder nor advances an audio frame cursor.

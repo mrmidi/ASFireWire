@@ -373,7 +373,8 @@ IOReturn AudioDuplexCoordinator::RequestClockConfig(
 }
 
 IOReturn AudioDuplexCoordinator::RecoverStreaming(uint64_t guid,
-                                                        DuplexRestartReason reason) noexcept {
+                                                        DuplexRestartReason reason,
+                                                        uint64_t expectedRestartId) noexcept {
     if (endpointStartGuard_ && !endpointStartGuard_(guid)) return kIOReturnNotReady;
     if (guid == 0) {
         return kIOReturnBadArgument;
@@ -391,8 +392,6 @@ IOReturn AudioDuplexCoordinator::RecoverStreaming(uint64_t guid,
     const DuplexRestartSession session = LoadSession(guid);
     LogFsmEvent("recover", guid, session.restartId, session.topologyGeneration, KindOf(session.lifecycle),
                 session.phase, reason);
-
-    FailPendingClockRequest(guid, DuplexClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
 
     bool acquired = false;
     for (uint32_t waited = 0; waited < kSyncBridgeTimeoutMs; waited += kSyncBridgePollMs) {
@@ -413,6 +412,15 @@ IOReturn AudioDuplexCoordinator::RecoverStreaming(uint64_t guid,
         return kIOReturnTimeout;
     }
 
+    // Recheck after acquiring the GUID: a queued fault must not restart a newer
+    // session that won the operation gate while this recovery was waiting.
+    const auto current = GetSession(guid);
+    if (IsStopRequested(guid) || (expectedRestartId != 0 &&
+        (!current || current->restartId != expectedRestartId || !IsStreaming(guid)))) {
+        ReleaseGuid(guid);
+        return kIOReturnAborted;
+    }
+    FailPendingClockRequest(guid, DuplexClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
     const IOReturn status = RunRecoveryStreaming(guid, reason);
     ReleaseGuid(guid);
     return status;
