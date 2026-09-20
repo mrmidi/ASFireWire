@@ -27,8 +27,6 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
         .streamChannels = format.streamChannels,
         .isSecondary = isSecondary,
         .trustConfiguredStride = format.trustConfiguredStride,
-        .motuPcmChunks = format.motuPcmChunks,
-        .motuPorts = format.motuPorts,
         .captureChannelMap = format.captureChannelMap,
     };
     // This is a DriverKit `noexcept` boundary: report allocation failure instead
@@ -36,6 +34,15 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
     auto consumer = std::unique_ptr<Consumer>(new (std::nothrow) Consumer(bindingSource, configuration));
     if (!consumer) {
         return kIOReturnNoMemory;
+    }
+    if (format.wireFormat == ::ASFW::Encoding::AudioWireFormat::kMotuV2) {
+        motuRxCodecs_[streamIndex] = std::make_unique<::ASFW::Audio::Wire::MotuRxPayloadCodec>(
+            format.motuPcmChunks, format.motuPorts);
+        consumer->SetPayloadCodec(motuRxCodecs_[streamIndex].get());
+
+        motuRxTimingObservers_[streamIndex] = std::make_unique<::ASFW::Audio::Wire::MotuRxTimingObserver>(
+            bindingSource);
+        consumer->SetTimingObserver(motuRxTimingObservers_[streamIndex].get());
     }
     consumer->SetTimingLossCallback([this] { isoch_.NotifyReceiveTimingLoss(); });
     consumer->SetReplayReadyCallback([this] { isoch_.NotifyReceiveReplayEstablished(); });
@@ -51,6 +58,8 @@ void IsochDuplexHostTransport::DetachReceiveConsumers() noexcept {
          streamIndex < Driver::IsochService::kMaxStreamsPerDirection; ++streamIndex) {
         isoch_.SetReceiveConsumer(streamIndex, nullptr);
         receiveConsumers_[streamIndex].reset();
+        motuRxCodecs_[streamIndex].reset();
+        motuRxTimingObservers_[streamIndex].reset();
     }
 }
 

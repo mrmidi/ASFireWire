@@ -303,6 +303,19 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 kr = failStart(kIOReturnError, "ConfigureTxStreamEngine");
                 return;
             }
+            const auto txPolicy = profile->TxStreamPolicy();
+            if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV2) {
+                ivars.runtime.motuPayloadWriter.Configure(
+                    ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
+                        .pcmChunks = txConfig.pcmChannels,
+                        .sourceChannelOffset = txConfig.sourceChannelOffset,
+                        .ports = txPolicy.motuPlaybackPorts});
+                ivars.runtime.motuPayloadWriter.BindTimeline(&ivars.runtime.txStreamEngine.Timeline());
+                ivars.runtime.txStreamEngine.SetPayloadWriter(&ivars.runtime.motuPayloadWriter);
+
+                ivars.runtime.motuTxTimingStamper.Configure(txConfig.dbs);
+                ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
+            }
             ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);
             ivars.runtime.txStreamEngine.ResetForStart(0, 0);
             ivars.runtime.txReplayReader.Reset();

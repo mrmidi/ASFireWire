@@ -5,6 +5,8 @@
 #include "Audio/Engine/Direct/DirectInputWriter.hpp"
 #include "Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.hpp"
 #include "Audio/Engine/Direct/Rx/RxAudioPacketProcessor.hpp"
+#include "Audio/Wire/AM824/Am824PayloadCodec.hpp"
+#include "Audio/Wire/RawPcm24In32/RawPcm24In32PayloadCodec.hpp"
 #include "Isoch/Receive/IsochRxTiming.hpp"
 
 #include <array>
@@ -147,13 +149,13 @@ TEST(IsochRxTimingTests, PacketProcessorReturnsReceiveTimestamp) {
     ASFW::AudioEngine::Direct::DirectInputWriter writer;
     ASFW::AudioEngine::Direct::Rx::RxAudioPacketProcessor processor(
         writer);
+    ASFW::Audio::Wire::Am824RxPayloadCodec codec(kDbs);
     const auto result = processor.ProcessPacket(
         packet.data(),
         packet.size(),
         0,
         2,
-        kDbs,
-        ASFW::Encoding::AudioWireFormat::kAM824);
+        codec);
 
     EXPECT_TRUE(result.hasValidCip);
     EXPECT_TRUE(result.hasReceiveCycleTimestamp);
@@ -186,13 +188,13 @@ TEST(IsochRxTimingTests, PacketProcessorWritesAM824CaptureAsFloat32) {
     ASFW::AudioEngine::Direct::Rx::RxAudioPacketProcessor processor(
         writer);
 
+    ASFW::Audio::Wire::Am824RxPayloadCodec codec(kDbs);
     const auto result = processor.ProcessPacket(
         packet.data(),
         packet.size(),
         0,
         2,
-        kDbs,
-        ASFW::Encoding::AudioWireFormat::kAM824);
+        codec);
 
     EXPECT_EQ(result.status,
               ASFW::AudioEngine::Direct::Rx::DirectRxWriteStatus::kAvailable);
@@ -306,13 +308,13 @@ TEST(IsochRxTimingTests, PacketProcessorAddsAM824LabelForRawSaffireCapture) {
     ASFW::AudioEngine::Direct::Rx::RxAudioPacketProcessor processor(
         writer);
 
+    ASFW::Audio::Wire::RawPcm24In32RxPayloadCodec codec(kDbs);
     const auto result = processor.ProcessPacket(
         packet.data(),
         packet.size(),
         0,
         2,
-        kDbs,
-        ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+        codec);
 
     EXPECT_EQ(result.status,
               ASFW::AudioEngine::Direct::Rx::DirectRxWriteStatus::kAvailable);

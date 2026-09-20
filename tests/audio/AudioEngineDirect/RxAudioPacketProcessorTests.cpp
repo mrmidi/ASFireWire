@@ -13,6 +13,8 @@
 #include "Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
 #include "Audio/Engine/Direct/DirectInputWriter.hpp"
 #include "Audio/Engine/Direct/Rx/RxAudioPacketProcessor.hpp"
+#include "Audio/Wire/AM824/Am824PayloadCodec.hpp"
+#include "Audio/Wire/MOTU/MotuPayloadCodec.hpp"
 
 #include <gtest/gtest.h>
 
@@ -92,9 +94,9 @@ Process(RxAudioPacketProcessor& processor,
         const std::vector<uint8_t>& packet,
         uint32_t channels = kSlots,
         uint32_t am824Slots = kSlots) {
+    ASFW::Audio::Wire::Am824RxPayloadCodec codec(am824Slots);
     return processor.ProcessPacket(packet.data(), packet.size(), /*absoluteFrame=*/0,
-                                   channels, am824Slots,
-                                   ASFW::Encoding::AudioWireFormat::kAM824,
+                                   channels, codec,
                                    /*channelOffset=*/0, /*publishTimeline=*/true);
 }
 
@@ -147,11 +149,10 @@ ProcessMotu(RxAudioPacketProcessor& processor,
             uint32_t channels,
             uint32_t motuPcmChunks,
             uint32_t channelOffset = 0) {
+    ASFW::Audio::Wire::MotuRxPayloadCodec codec(motuPcmChunks);
     return processor.ProcessPacket(packet.data(), packet.size(), /*absoluteFrame=*/0,
-                                   channels, /*am824Slots=*/0,
-                                   ASFW::Encoding::AudioWireFormat::kMotuV2,
-                                   channelOffset, /*publishTimeline=*/true,
-                                   /*trustConfiguredStride=*/false, motuPcmChunks);
+                                   channels, codec,
+                                   channelOffset, /*publishTimeline=*/true);
 }
 
 } // namespace
@@ -207,10 +208,10 @@ TEST(RxAudioPacketProcessorTests, WrongDbsQuirkTakesStrideFromConfiguration) {
     const auto packet = MakePacket(MakeQuadlet0(kLyingHeaderDbs), MakeQuadlet1(0x1000),
                                    kSlots, kDataBlocks);
 
+    ASFW::Audio::Wire::Am824RxPayloadCodec trustedCodec(kSlots, /*trustConfiguredStride=*/true);
     const auto trusted = processor.ProcessPacket(
-        packet.data(), packet.size(), /*absoluteFrame=*/0, kSlots, kSlots,
-        ASFW::Encoding::AudioWireFormat::kAM824,
-        /*channelOffset=*/0, /*publishTimeline=*/true, /*trustConfiguredStride=*/true);
+        packet.data(), packet.size(), /*absoluteFrame=*/0, kSlots, trustedCodec,
+        /*channelOffset=*/0, /*publishTimeline=*/true);
     EXPECT_EQ(trusted.status, DirectRxWriteStatus::kAvailable);
     EXPECT_EQ(trusted.framesDecoded, kDataBlocks);
     EXPECT_EQ(trusted.dbs, kLyingHeaderDbs);
@@ -219,10 +220,10 @@ TEST(RxAudioPacketProcessorTests, WrongDbsQuirkTakesStrideFromConfiguration) {
     // quirk exists to fix: the oversized header stride swallows the payload and
     // the packet decodes as zero events — indistinguishable from a device that
     // went quiet. Pin that symptom so the quirk's value stays visible.
+    ASFW::Audio::Wire::Am824RxPayloadCodec untrustedCodec(kSlots, /*trustConfiguredStride=*/false);
     const auto untrusted = processor.ProcessPacket(
-        packet.data(), packet.size(), /*absoluteFrame=*/0, kSlots, kSlots,
-        ASFW::Encoding::AudioWireFormat::kAM824,
-        /*channelOffset=*/0, /*publishTimeline=*/true, /*trustConfiguredStride=*/false);
+        packet.data(), packet.size(), /*absoluteFrame=*/0, kSlots, untrustedCodec,
+        /*channelOffset=*/0, /*publishTimeline=*/true);
     EXPECT_EQ(untrusted.status, DirectRxWriteStatus::kAvailable);
     EXPECT_EQ(untrusted.framesDecoded, 0U);
 }

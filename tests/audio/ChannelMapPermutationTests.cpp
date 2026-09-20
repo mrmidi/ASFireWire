@@ -18,6 +18,7 @@
 #include "Audio/Wire/AMDTP/AmdtpTxPacketizer.hpp"
 #include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
 #include "Audio/Wire/AMDTP/PcmSlotMap.hpp"
+#include "Audio/Wire/AM824/Am824PayloadCodec.hpp"
 
 #include <gtest/gtest.h>
 
@@ -113,11 +114,11 @@ TEST(ChannelMapPermutationTests, RxInjectedMapDemonstrablyChangesSamplePlacement
     // 1. Identity Map: Ch 0 -> Slot 0, Ch 1 -> Slot 1, Ch 2 -> Slot 2, Ch 3 -> Slot 3
     RxTestFixture identityFixture;
     RxCaptureChannelMap identityMap{};
+    ASFW::Audio::Wire::Am824RxPayloadCodec codec(kDataBlockSize);
     auto resIdentity = identityFixture.processor.ProcessPacket(
         packet.data(), packet.size(), /*absoluteFrame=*/0,
-        kChannels, kDataBlockSize, ASFW::Encoding::AudioWireFormat::kAM824,
-        /*channelOffset=*/0, /*publishTimeline=*/false, /*trustConfiguredStride=*/false,
-        /*motuPcmChunks=*/0, /*motuPorts=*/{}, identityMap);
+        kChannels, codec,
+        /*channelOffset=*/0, /*publishTimeline=*/false, identityMap);
 
     EXPECT_EQ(resIdentity.status, DirectRxWriteStatus::kAvailable);
     EXPECT_GT(resIdentity.framesDecoded, 0u);
@@ -135,9 +136,8 @@ TEST(ChannelMapPermutationTests, RxInjectedMapDemonstrablyChangesSamplePlacement
 
     auto resPermuted = permutedFixture.processor.ProcessPacket(
         packet.data(), packet.size(), /*absoluteFrame=*/0,
-        kChannels, kDataBlockSize, ASFW::Encoding::AudioWireFormat::kAM824,
-        /*channelOffset=*/0, /*publishTimeline=*/false, /*trustConfiguredStride=*/false,
-        /*motuPcmChunks=*/0, /*motuPorts=*/{}, permutedMap);
+        kChannels, codec,
+        /*channelOffset=*/0, /*publishTimeline=*/false, permutedMap);
 
     EXPECT_EQ(resPermuted.status, DirectRxWriteStatus::kAvailable);
     EXPECT_GT(resPermuted.framesDecoded, 0u);
@@ -178,11 +178,11 @@ TEST(ChannelMapPermutationTests, RxOutOfBoundsMapFailsClosedToIdentity) {
     ASSERT_TRUE(invalidMap.SetSlots(badSlots));
     EXPECT_FALSE(invalidMap.FitsWithin(kChannels, kDataBlockSize));
 
+    ASFW::Audio::Wire::Am824RxPayloadCodec codec(kDataBlockSize);
     auto res = fixture.processor.ProcessPacket(
         packet.data(), packet.size(), /*absoluteFrame=*/0,
-        kChannels, kDataBlockSize, ASFW::Encoding::AudioWireFormat::kAM824,
-        /*channelOffset=*/0, /*publishTimeline=*/false, /*trustConfiguredStride=*/false,
-        /*motuPcmChunks=*/0, /*motuPorts=*/{}, invalidMap);
+        kChannels, codec,
+        /*channelOffset=*/0, /*publishTimeline=*/false, invalidMap);
 
     EXPECT_EQ(res.status, DirectRxWriteStatus::kAvailable);
     EXPECT_GT(res.framesDecoded, 0u);

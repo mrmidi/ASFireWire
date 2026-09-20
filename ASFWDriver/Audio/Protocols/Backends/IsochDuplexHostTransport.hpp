@@ -9,6 +9,8 @@
 #include "../../../Hardware/HardwareInterface.hpp"
 #include "../../../Isoch/IsochService.hpp"
 #include "../../Engine/Direct/Rx/DirectAudioReceiveConsumer.hpp"
+#include "../../Wire/MOTU/MotuPayloadCodec.hpp"
+#include "../../Wire/MOTU/MotuDeviceTiming.hpp"
 #include "DirectRxFormatDescriptor.hpp"
 #include "DuplexIRMReservations.hpp"
 
@@ -128,6 +130,10 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     Driver::IsochService& isoch_;
     std::unique_ptr<ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer>
         receiveConsumers_[Driver::IsochService::kMaxStreamsPerDirection]{};
+    std::unique_ptr<ASFW::Audio::Wire::MotuRxPayloadCodec>
+        motuRxCodecs_[Driver::IsochService::kMaxStreamsPerDirection]{};
+    std::unique_ptr<ASFW::Audio::Wire::MotuRxTimingObserver>
+        motuRxTimingObservers_[Driver::IsochService::kMaxStreamsPerDirection]{};
     Backends::DuplexIRMReservationPair reservations_{};
 };
 

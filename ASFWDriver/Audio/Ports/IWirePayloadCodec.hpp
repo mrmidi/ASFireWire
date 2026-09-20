@@ -8,6 +8,10 @@
 #include <span>
 #include <cstdint>
 
+namespace ASFW::Audio::Runtime {
+class IDirectAudioBindingSource;
+}
+
 namespace ASFW::Audio {
 
 /// Decoding seam for receive (device -> host) packet audio blocks.
@@ -62,6 +66,10 @@ public:
 class IRxDeviceTimingObserver {
 public:
     virtual ~IRxDeviceTimingObserver() = default;
+
+    virtual void OnBatchBegin(Runtime::IDirectAudioBindingSource* bindingSource) noexcept {
+        (void)bindingSource;
+    }
 
     virtual void ObservePacket(
         std::span<const uint8_t> payload,

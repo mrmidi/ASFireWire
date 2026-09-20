@@ -10,6 +10,8 @@
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
 #include "../Config/AudioTxProfiles.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
+#include "../Wire/MOTU/MotuPayloadWriter.hpp"
+#include "../Wire/MOTU/MotuDeviceTiming.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Common/TimingUtils.hpp"
@@ -242,6 +244,9 @@ struct AudioDriverRuntimeState {
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngineSecondary;
     DextTxSlotProvider txSlotProviderSecondary;
     bool txSecondaryActive{false};
+
+    ASFW::Encoding::Motu::MotuPayloadWriter motuPayloadWriter;
+    ASFW::Audio::Wire::MotuTxTimingStamper motuTxTimingStamper;
 };
 
 struct ASFWAudioDriver_IVars {
