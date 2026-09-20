@@ -13,7 +13,9 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -22,10 +24,12 @@ using ASFW::Encoding::Motu::BaseTickForCycle;
 using ASFW::Encoding::Motu::kTicksPerCycle;
 using ASFW::Encoding::Motu::kTicksPerSecond;
 using ASFW::Encoding::Motu::MotuEventOffsetCache;
+using ASFW::Encoding::Motu::OffsetCacheTakeResult;
 using ASFW::Encoding::Motu::ReadSph;
 using ASFW::Encoding::Motu::SphFromTick;
 using ASFW::Encoding::Motu::TickFromSph;
 using ASFW::Encoding::Motu::WritePacketSph;
+using ASFW::Encoding::Motu::WritePacketSphZero;
 
 constexpr uint32_t kCipHeaderBytes = 8;
 constexpr uint32_t kDbs = 4;
@@ -219,6 +223,156 @@ TEST(MotuEventOffsetCacheTests, FeedsWritePacketSphEndToEnd) {
     }
     // Blocks 1 and 2 are one tick apart, as the device timed them.
     EXPECT_EQ(deviceOffsets[2] - deviceOffsets[1], 1u);
+}
+
+TEST(MotuEventOffsetCacheTests, ResyncsToTheNewestRunOnUnderrunWhenHistoryExists) {
+    MotuEventOffsetCache cache{};
+    const auto packet = MakeRxPacket(BaseTickForCycle(0), {10u, 20u, 30u, 40u});
+    EXPECT_EQ(cache.Capture(packet, kDbs, 4, 0u), 4u);
+
+    std::array<uint32_t, 4> first{};
+    OffsetCacheTakeResult result{};
+    ASSERT_TRUE(cache.Take(first, &result));
+    EXPECT_EQ(result, OffsetCacheTakeResult::Success);
+    EXPECT_EQ(cache.Available(), 0u);
+
+    // Playback has caught up with capture (underrun).
+    // Instead of failing and leaving the packet unstamped, it resyncs to the newest
+    // complete run (marked unverified on MOTU hardware).
+    std::array<uint32_t, 4> underrunTaken{};
+    ASSERT_TRUE(cache.Take(underrunTaken, &result));
+    EXPECT_EQ(result, OffsetCacheTakeResult::SuccessUnderrunResync);
+    for (size_t i = 0; i < 4; ++i) {
+        EXPECT_EQ(underrunTaken[i], first[i]);
+    }
+}
+
+TEST(MotuEventOffsetCacheTests, AbsenceCasesExplicitContract) {
+    MotuEventOffsetCache cache{};
+    std::array<uint32_t, 4> out{};
+    OffsetCacheTakeResult result{};
+
+    // 1. Startup: not established
+    EXPECT_FALSE(cache.Take(out, &result));
+    EXPECT_EQ(result, OffsetCacheTakeResult::NotEstablished);
+
+    // 2. Insufficient history: capture 2 blocks, but 4 requested
+    const auto shortPacket = MakeRxPacket(BaseTickForCycle(0), {100u, 200u});
+    EXPECT_EQ(cache.Capture(shortPacket, kDbs, 2, 0u), 2u);
+    EXPECT_TRUE(cache.IsEstablished());
+    EXPECT_FALSE(cache.Take(out, &result));
+    EXPECT_EQ(result, OffsetCacheTakeResult::NotEnoughHistory);
+
+    // 3. Invalid request: empty span or exceeds capacity
+    EXPECT_FALSE(cache.Take(std::span<uint32_t>{}, &result));
+    EXPECT_EQ(result, OffsetCacheTakeResult::InvalidRequest);
+
+    std::vector<uint32_t> tooLarge(MotuEventOffsetCache::kCapacity + 1, 0u);
+    EXPECT_FALSE(cache.Take(tooLarge, &result));
+    EXPECT_EQ(result, OffsetCacheTakeResult::InvalidRequest);
+}
+
+TEST(MotuEventOffsetCacheTests, WritePacketSphZeroClearsAllBlocks) {
+    std::vector<uint8_t> txPacket(kCipHeaderBytes + 4u * kBlockBytes, 0xFFu);
+    const uint32_t zeroed = WritePacketSphZero(txPacket, kDbs, 4);
+    EXPECT_EQ(zeroed, 4u);
+
+    for (uint32_t i = 0; i < 4; ++i) {
+        const uint32_t sph = ReadSph(std::span<const uint8_t>(
+            txPacket.data() + kCipHeaderBytes + i * kBlockBytes, 4));
+        EXPECT_EQ(sph, 0u) << "block " << i;
+    }
+}
+
+TEST(MotuEventOffsetCacheTests, ConcurrentCaptureAndTakeNoTornReads) {
+    MotuEventOffsetCache cache{};
+    std::atomic<bool> running{true};
+    std::atomic<uint64_t> packetsCaptured{0};
+    std::atomic<uint64_t> packetsTaken{0};
+    std::atomic<uint64_t> tornReads{0};
+
+    // Pre-seed cache with 1 packet
+    const auto seed = MakeRxPacket(BaseTickForCycle(0), {1000u, 1001u, 1002u, 1003u});
+    EXPECT_EQ(cache.Capture(seed, kDbs, 4, 0u), 4u);
+
+    // Thread 1: continuous Capture
+    std::thread captureThread([&]() {
+        uint32_t cycle = 0;
+        while (running.load(std::memory_order_relaxed)) {
+            const uint32_t baseVal = (cycle * 10) % 2000;
+            const auto pkt = MakeRxPacket(BaseTickForCycle(cycle),
+                                          {baseVal, baseVal + 1, baseVal + 2, baseVal + 3});
+            cache.Capture(pkt, kDbs, 4, cycle);
+            cycle = (cycle + 1) % 8000;
+            packetsCaptured.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+
+    // Thread 2: continuous Take
+    std::thread takeThread([&]() {
+        std::array<uint32_t, 4> run{};
+        while (running.load(std::memory_order_relaxed)) {
+            OffsetCacheTakeResult res{};
+            if (cache.Take(run, &res)) {
+                packetsTaken.fetch_add(1, std::memory_order_relaxed);
+                // Verify coherent run: each block must be sequential delta +1
+                if (run[1] != run[0] + 1 || run[2] != run[1] + 1 || run[3] != run[2] + 1) {
+                    tornReads.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    running.store(false, std::memory_order_release);
+    captureThread.join();
+    takeThread.join();
+
+    EXPECT_GT(packetsCaptured.load(), 0u);
+    EXPECT_GT(packetsTaken.load(), 0u);
+    EXPECT_EQ(tornReads.load(), 0u);
+}
+
+TEST(MotuEventOffsetCacheTests, ConcurrentResetPreventsTornViews) {
+    MotuEventOffsetCache cache{};
+    std::atomic<bool> running{true};
+    std::atomic<uint64_t> resetsPerformed{0};
+    std::atomic<uint64_t> clobberedResets{0};
+
+    // Thread 1: continuous Capture & Take
+    std::thread workerThread([&]() {
+        uint32_t cycle = 0;
+        std::array<uint32_t, 4> run{};
+        while (running.load(std::memory_order_relaxed)) {
+            const auto pkt = MakeRxPacket(BaseTickForCycle(cycle), {10u, 20u, 30u, 40u});
+            cache.Capture(pkt, kDbs, 4, cycle);
+            (void)cache.Take(run);
+            cycle = (cycle + 1) % 8000;
+        }
+    });
+
+    // Thread 2: random Reset
+    std::thread resetThread([&]() {
+        while (running.load(std::memory_order_relaxed)) {
+            cache.Reset();
+            resetsPerformed.fetch_add(1, std::memory_order_relaxed);
+            // Verify playback cursor never clobbers 0 to a huge stale value right after reset
+            const uint64_t playCursor = cache.PlaybackCursor();
+            const uint64_t capCursor = cache.CaptureCursor();
+            if (playCursor > capCursor + MotuEventOffsetCache::kCapacity) {
+                clobberedResets.fetch_add(1, std::memory_order_relaxed);
+            }
+            std::this_thread::yield();
+        }
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    running.store(false, std::memory_order_release);
+    workerThread.join();
+    resetThread.join();
+
+    EXPECT_GT(resetsPerformed.load(), 0u);
+    EXPECT_EQ(clobberedResets.load(), 0u);
 }
 
 } // namespace
