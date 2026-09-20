@@ -48,12 +48,15 @@ What is real today:
 - AV/C FCP and CMP plumbing exists and is working on the main test rig.
 - Audio publication and experimental streaming paths exist in-tree.
 - Audio hardware tested by the maintainer: the Apogee Duet FireWire path, Terratec PHASE 88 Rack, and Focusrite Saffire Pro 24 DSP. Contributors have additionally verified the Focusrite Saffire Pro 40 (full duplex 20-in/20-out), PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out), and Midas Venice F32 (full duplex 32-in/32-out).
-- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, Saffire Pro 40, PreSonus StudioLive 16.0.2, and the Midas Venice F32.
+- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, Saffire Pro 40, PreSonus StudioLive 16.0.2 and 24.4.2, the Midas Venice range (F16/F24/F32 from one catalog row, told apart by reported geometry), the Alesis MultiMix 8/12/16, and Weiss INT202/INT203.
+- **MOTU protocol-v2 support is in-tree** for the 828mkII and UltraLite — a vendor register protocol rather than AV/C or DICE, with 3-byte PCM chunks behind a per-block source packet header. Contributed by [@deweydb](https://github.com/deweydb), built on Jonathan Woodward's ([@Dreambrother7](https://github.com/Dreambrother7)) wire/codec layer.
+- **Mackie support is in-tree** for the Onyx 400F (Echo Fireworks) and the Onyx-i series on the Oxford run, contributed by [@ottendorfcipher](https://github.com/ottendorfcipher). Neither has an audio-verified report yet.
 - **Multi-stream DICE now works.** The Midas Venice F32 runs two 16-channel streams per direction; the original Saffire Pro 40 runs asymmetric 12+8 playback and 10+10 capture streams.
 - **Host-controlled sample-rate switching is implemented**, including 44.1 kHz alongside 48 kHz. The driver decodes the device's advertised clock capabilities and drives DICE `CLOCK_SELECT`, so a rate change in the host (e.g. Logic) reprograms the device live without a reconnect. Switching rates on a CoreAudio aggregate device whose clock master is the FireWire interface is supported.
 - **Per-channel names** (device nickname plus per-channel TX/RX labels) are read from DICE devices and surfaced to CoreAudio.
-- Focusrite Saffire Pro 26, Saffire Pro 40 TCD3070, and Liquid Saffire 56 are recognized but intentionally not enabled yet — their stream layouts still need to be captured from real hardware.
-- PreSonus StudioLive 16.4.2, 24.4.2, and 32.4.2 are recognized by name but not audio-enabled yet: their FireWire channel counts differ from the 16.0.2 and must be captured from real hardware first (a wrong channel count means the device never locks to the stream). If you own one, see the call for testing below.
+- Focusrite Saffire Pro 26, Saffire Pro 40 TCD3070, and Liquid Saffire 56 are recognized but intentionally not enabled yet — their stream layouts still need to be captured from real hardware. The TCD3070 is a different chip from the original Pro 40 and has no TCAT extension, so it needs a supplied rate-mode table rather than a register read.
+- PreSonus StudioLive 16.4.2 and 32.4.2 are recognized by name but not audio-enabled yet: their FireWire channel counts differ from the 16.0.2 and must be captured from real hardware first (a wrong channel count means the device never locks to the stream). The **24.4.2 is now enabled** from a contributed capture — its playback side is asymmetric, 16 + 10.
+- MOTU 896HD, Traveler and 8pre, and the Mackie Onyx 1640i, Blackbird and 1200F, are recognized by name only — their layouts have not been captured.
 - The project is still not stable enough to recommend as a drop-in replacement for Apple's old FireWire stack.
 
 ## Call for testing
@@ -68,8 +71,24 @@ Please test these currently enabled DICE devices:
 - Focusrite Saffire Pro 40 (original TCD2220 revision; contributor-verified)
 - PreSonus StudioLive 16.0.2 (contributor-verified on one unit; broader validation welcome)
 - Midas Venice F32 (contributor-verified; broader validation welcome)
+- Midas Venice F16 and F24 (enabled, never confirmed working — see the note below)
+- PreSonus StudioLive 24.4.2 (enabled from a capture; no streaming result on record)
+- Alesis MultiMix 8 / 12 / 16
+- MOTU 828mkII and UltraLite
+- Mackie Onyx 400F and Onyx-i
 
-StudioLive 16.4.2 / 24.4.2 / 32.4.2 owners can help too: the driver recognizes these mixers but does not enable audio yet because their stream layout has not been captured from hardware. If you own one, open an issue — a short register capture using the ASFW app is all that is needed to add support.
+> **MOTU and Mackie need re-validation.** The audio engine's payload-encoding and
+> presentation-timing paths are being refactored behind new interfaces, and MOTU is being
+> migrated onto them. Mackie shares the same receive decode path, so it is exposed to the
+> same changes. Neither family is maintainer-owned hardware, so a regression in either
+> would not be caught locally.
+
+> **Midas Venice F24 is known not to work right now.** On a two-node Thunderbolt bus the
+> device advertises S400 in its Self-ID and then acknowledges nothing at that speed, so the
+> DICE section read times out and it never reaches CoreAudio. A fix that clamps the
+> advertised link speed with observed evidence is written and tested but not yet released.
+
+StudioLive 16.4.2 / 32.4.2 owners can help too: the driver recognizes these mixers but does not enable audio yet because their stream layout has not been captured from hardware. If you own one, open an issue — a short register capture using the ASFW app is all that is needed to add support.
 
 If you try ASFireWire on one of them, please open a GitHub issue or reach out with:
 
@@ -118,8 +137,13 @@ Audio-device support in tree today:
 - PreSonus StudioLive 16.0.2
 - Midas Venice F32 (multi-stream DICE, 32-in/32-out)
 - Terratec PHASE 88 Rack
+- PreSonus StudioLive 24.4.2 (asymmetric multi-stream DICE, 16+10 playback / 16+16 capture; enabled from a contributed register capture)
+- Midas Venice F16 and F24 (same catalog row as the F32; the variant is named from reported geometry)
+- Alesis MultiMix 8 / 12 / 16 (one row for the range — all three publish the same vendor/model; enabled from a contributed dump of a 12-input unit)
 - Weiss INT202 and INT203 (DICE 2-channel layout; wired up but **never run against real hardware**)
+- MOTU 828mkII and UltraLite (protocol v2; the 828mkII's Config ROM was captured from a real unit, but **no audio-verified report is on record**)
 - Mackie Onyx 400F (Echo Fireworks: EFC clock/transport control on the AV/C+CMP base; static 10x10 geometry gated on the device's HWINFO — **never run against real hardware**)
+- Mackie Onyx-i series, Oxford run (built on a live **Onyx 820i** identity and stream-format capture; that capture is not an audio-verified result)
 
 Personally tested with working audio (hardware owned by the maintainer):
 
@@ -144,7 +168,10 @@ Recognized but not enabled yet:
 - Focusrite Saffire Pro 26
 - Focusrite Saffire Pro 40 TCD3070
 - Focusrite Liquid Saffire 56
-- PreSonus StudioLive 16.4.2 / 24.4.2 / 32.4.2 (stream layout not yet captured from hardware)
+- PreSonus StudioLive 16.4.2 / 32.4.2 (stream layout not yet captured from hardware)
+- MOTU 896HD, Traveler, 8pre (chunk layout not confirmed against hardware)
+- Mackie Onyx 1640i (both runs), Onyx Blackbird, Onyx 1200F
+- Alesis iO14 / iO26 (geometry never captured)
 - Weiss ADC2, Vesta, DAC2/Minerva, AFI1, DAC202, Maya, MAN301 (identified by name; audio enablement needs a verified stream/clock trace per model)
 
 In theory the driver can be extended to other OHCI controllers and many more FireWire devices, but hardware access is still the limiting factor. Host-controller matching and audio-device enablement are intentionally conservative until more real machines are tested.
