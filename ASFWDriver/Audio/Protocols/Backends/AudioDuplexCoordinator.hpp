@@ -43,6 +43,10 @@ public:
     AudioDuplexCoordinator(const AudioDuplexCoordinator&) = delete;
     AudioDuplexCoordinator& operator=(const AudioDuplexCoordinator&) = delete;
 
+    // Installed by composition before device callbacks begin.
+    void SetEndpointStartGuard(std::function<bool(uint64_t)> guard) {
+        endpointStartGuard_ = std::move(guard);
+    }
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn RequestClockConfig(
@@ -73,6 +77,7 @@ public:
     }
 
 private:
+    std::function<bool(uint64_t)> endpointStartGuard_{};
     using PendingClockRequest = Backends::ClockRequestBroker::PendingClockRequest;
 
     [[nodiscard]] IOReturn RunStartStreaming(uint64_t guid) noexcept;

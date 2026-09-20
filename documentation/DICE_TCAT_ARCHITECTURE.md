@@ -349,12 +349,14 @@ stream. A device carrying more is refused — at publication in
 `EnsureNubForGuid` and again at `StartIO`, so it never appears as an endpoint
 that fails every start. Nothing in the fixtures exceeds two.
 
-**Refresh.** `EnsureNub` is create-once, so `AudioNubPublisher::RefreshNubProperties`
-re-publishes onto a live nub and `EnsureNubForGuid` calls it whenever one
-already exists — after recovery, or any re-resolution. Properties are built as a
-unit and applied only on success, so a failed refresh leaves the previous
-description rather than a half-updated one. This no longer depends on the
-geometry being unable to change underneath a live nub.
+**Refresh.** The audio driver caches geometry during graph creation; changing
+nub properties alone does not reconfigure it. The publisher retains the original
+configuration and compares both stream directions, offsets, HAL channel counts,
+visibility, supported rates and stream mode. An unchanged observation is a no-op.
+A mismatch latches start/recovery/clock rejection until the nub is terminated
+and recreated, even if a later observation matches again. The rejected snapshot
+does not replace the endpoint runtime configuration. Ordinary stop remains
+available. Live geometry reconfiguration is deliberately not implemented.
 
 **Loss across the boundary cannot be silent.** `ASFWResolvedGeometryRequired`
 says the audio side must not substitute profile constants. Serialization failure

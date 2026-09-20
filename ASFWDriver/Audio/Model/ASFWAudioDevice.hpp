@@ -37,6 +37,9 @@ struct ASFWAudioWireStream {
     uint32_t am824Slots{0};
     uint32_t midiPorts{0};
     uint32_t channelOffset{0};
+
+    friend bool operator==(const ASFWAudioWireStream&,
+                           const ASFWAudioWireStream&) noexcept = default;
 };
 
 struct ASFWAudioDevice {

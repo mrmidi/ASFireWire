@@ -138,6 +138,7 @@ bool AudioNubPublisher::EnsureNub(uint64_t guid,
 
     IOLockLock(lock_);
     nubsByGuid_[guid] = audioNub;
+    publishedGeometry_.insert_or_assign(guid, Model::NubGeometryRefreshState{config});
     IOLockUnlock(lock_);
 
     // Release our creation reference - IOKit retains it.
@@ -153,42 +154,33 @@ bool AudioNubPublisher::EnsureNub(uint64_t guid,
 bool AudioNubPublisher::RefreshNubProperties(uint64_t guid,
                                              const Model::ASFWAudioDevice& config,
                                              const char* sourceTag) noexcept {
-    ASFWAudioNub* nub = GetNub(guid);
-    if (nub == nullptr) {
+    if (!lock_) return false;
+    IOLockLock(lock_);
+    const auto it = publishedGeometry_.find(guid);
+    if (it == publishedGeometry_.end()) {
+        IOLockUnlock(lock_);
         return false;
     }
-
-    OSDictionary* propertiesRaw = nullptr;
-    const kern_return_t kr = nub->CopyProperties(&propertiesRaw);
-    OSSharedPtr<OSDictionary> properties = OSSharedPtr(propertiesRaw, OSNoRetain);
-    if (kr != kIOReturnSuccess || !properties) {
+    const bool blocked = !it->second.Accept(config);
+    IOLockUnlock(lock_);
+    if (blocked) {
         ASFW_LOG_ERROR(Audio,
-                       "AudioNubPublisher[%{public}s]: refresh could not copy properties "
-                       "(GUID=%llx kr=0x%x)",
-                       sourceTag ? sourceTag : "unknown", guid, kr);
-        return false;
-    }
-
-    // Build the whole set before applying any of it. PopulateNubProperties
-    // fails as a unit -- a stream array that could not be serialized aborts it
-    // -- so a failure here leaves the nub on its previous description rather
-    // than a half-updated one.
-    if (!config.PopulateNubProperties(properties.get())) {
-        ASFW_LOG_ERROR(Audio,
-                       "AudioNubPublisher[%{public}s]: refresh could not populate properties, "
-                       "keeping the previous ones (GUID=%llx)",
+                       "AudioNubPublisher[%{public}s]: geometry changed GUID=%llx; "
+                       "restart refused until endpoint recreation",
                        sourceTag ? sourceTag : "unknown", guid);
-        return false;
     }
+    // SetProperties cannot update the audio driver's cached graph. Keep the
+    // original snapshot, including clock-owned properties, on an unchanged refresh.
+    return !blocked;
+}
 
-    nub->SetProperties(properties.get());
-    ASFW_LOG(Audio,
-             "AudioNubPublisher[%{public}s]: refreshed nub properties (GUID=%llx rate=%u "
-             "in=%u out=%u playbackStreams=%zu)",
-             sourceTag ? sourceTag : "unknown", guid, config.currentSampleRate,
-             config.inputChannelCount, config.outputChannelCount,
-             config.playbackStreams.size());
-    return true;
+bool AudioNubPublisher::IsGeometryChangeBlocked(uint64_t guid) const noexcept {
+    if (!lock_) return true;
+    IOLockLock(lock_);
+    const auto it = publishedGeometry_.find(guid);
+    const bool blocked = it != publishedGeometry_.end() && it->second.IsBlocked();
+    IOLockUnlock(lock_);
+    return blocked;
 }
 
 ASFWAudioNub* AudioNubPublisher::GetNub(uint64_t guid) const noexcept {
@@ -218,6 +210,7 @@ void AudioNubPublisher::TerminateNub(uint64_t guid, const char* reasonTag) noexc
 
     ASFWAudioNub* nub = nullptr;
     IOLockLock(lock_);
+    publishedGeometry_.erase(guid);
     auto it = nubsByGuid_.find(guid);
     if (it != nubsByGuid_.end()) {
         nub = it->second;

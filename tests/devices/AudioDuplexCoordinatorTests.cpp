@@ -1432,3 +1432,17 @@ TEST_F(AudioDuplexCoordinatorTests, NonRetryableFailedSessionDoesNotRestartOnRec
 }
 
 } // namespace
+
+
+TEST_F(AudioDuplexCoordinatorTests, ChangedEndpointGeometryRejectsStartRecoveryAndClock) {
+    coordinator_.SetEndpointStartGuard([](uint64_t) { return false; });
+    EXPECT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnNotReady);
+    EXPECT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterTimingLoss),
+              kIOReturnNotReady);
+    EXPECT_EQ(coordinator_.RequestClockConfig(kTestGuid, {},
+                                             DuplexRestartReason::kRecoverAfterTimingLoss),
+              kIOReturnNotReady);
+    // Rediscovery must not reopen a geometry latch; recreation owns that.
+    coordinator_.AcknowledgeDevicePresent(kTestGuid);
+    EXPECT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnNotReady);
+}

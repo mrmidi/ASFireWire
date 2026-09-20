@@ -34,6 +34,9 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
         ASFW_LOG_ERROR(Audio, "AudioCoordinator: Failed to allocate lock");
     }
 
+    duplexCoordinator_.SetEndpointStartGuard([this](uint64_t guid) {
+        return !publisher_.IsGeometryChangeBlocked(guid);
+    });
     deviceManager_.RegisterDeviceObserver(this);
     hostTransport_.SetTimingLossCallback([this](uint64_t guid) { HandleHostTimingLoss(guid); });
     ASFW_LOG(Audio, "AudioCoordinator: Registered device observer");
@@ -219,6 +222,7 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
 }
 
 IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
+    if (publisher_.IsGeometryChangeBlocked(guid)) return kIOReturnNotReady;
     if (guid == 0) return kIOReturnBadArgument;
 
     bool setActive = false;

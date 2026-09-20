@@ -180,3 +180,58 @@ TEST(NubGeometryRoundTrip, RejectsMoreStreamsThanTheArrayBoundRatherThanTruncati
     EXPECT_EQ(parsed.playbackStreamCount, 0u)
         << "a truncated array would describe a device that does not exist";
 }
+
+
+#include "Audio/Model/NubGeometryRefresh.hpp"
+
+TEST(NubGeometryRefresh, UnchangedF24AndF32RetainTheirContract) {
+    using namespace ASFW::Audio::Model;
+    for (uint32_t secondWidth : {8U, 16U}) {
+        ASFWAudioDevice config{};
+        config.playbackStreams = {{16, 16, 0, 0}, {secondWidth, secondWidth, 0, 16}};
+        config.captureStreams = config.playbackStreams;
+        config.inputChannelCount = config.outputChannelCount = config.channelCount = 16 + secondWidth;
+        config.resolvedGeometryRequired = true;
+        NubGeometryRefreshState state(config);
+        EXPECT_TRUE(state.Accept(config));
+        EXPECT_FALSE(state.IsBlocked());
+    }
+}
+
+TEST(NubGeometryRefresh, ChangedGeometryStaysBlockedUntilRecreation) {
+    using namespace ASFW::Audio::Model;
+    ASFWAudioDevice original{};
+    original.playbackStreams = {{16, 16, 0, 0}, {8, 8, 0, 16}};
+    auto changed = original;
+    changed.playbackStreams[1] = {16, 16, 0, 16};
+    NubGeometryRefreshState state(original);
+    EXPECT_FALSE(state.Accept(changed));
+    EXPECT_FALSE(state.Accept(original));
+    NubGeometryRefreshState recreated(changed);
+    EXPECT_TRUE(recreated.Accept(changed));
+}
+
+TEST(NubGeometryRefresh, CaptureVisibilityRatesAndOffsetsArePartOfContract) {
+    using namespace ASFW::Audio::Model;
+    ASFWAudioDevice original{};
+    original.captureStreams = {{2, 2, 0, 0}};
+    original.playbackStreams = {{2, 2, 0, 0}};
+    original.sampleRates = {44100, 48000};
+    original.inputChannelCount = 0;
+    auto check = [&](const ASFWAudioDevice& changed) {
+        EXPECT_EQ(ClassifyGeometryRefresh(original, changed),
+                  GeometryRefreshDecision::kGeometryChanged);
+    };
+    auto changed = original;
+    changed.inputChannelCount = 2; // Weiss must stay hidden.
+    check(changed);
+    changed = original;
+    changed.playbackStreams[0].channelOffset = 1;
+    check(changed);
+    changed = original;
+    changed.captureStreams[0].am824Slots = 3;
+    check(changed);
+    changed = original;
+    changed.sampleRates = {48000};
+    check(changed);
+}

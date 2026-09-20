@@ -203,6 +203,7 @@ AudioDuplexCoordinator::~AudioDuplexCoordinator() noexcept {
 }
 
 IOReturn AudioDuplexCoordinator::StartStreaming(uint64_t guid) noexcept {
+    if (endpointStartGuard_ && !endpointStartGuard_(guid)) return kIOReturnNotReady;
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
@@ -291,6 +292,7 @@ IOReturn AudioDuplexCoordinator::StopStreaming(uint64_t guid) noexcept {
 
 IOReturn AudioDuplexCoordinator::RequestClockConfig(
     uint64_t guid, const AudioClockConfig& desiredClock, DuplexRestartReason reason) noexcept {
+    if (endpointStartGuard_ && !endpointStartGuard_(guid)) return kIOReturnNotReady;
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
@@ -372,6 +374,7 @@ IOReturn AudioDuplexCoordinator::RequestClockConfig(
 
 IOReturn AudioDuplexCoordinator::RecoverStreaming(uint64_t guid,
                                                         DuplexRestartReason reason) noexcept {
+    if (endpointStartGuard_ && !endpointStartGuard_(guid)) return kIOReturnNotReady;
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
@@ -792,6 +795,7 @@ AudioDuplexCoordinator::RunClockRequestLoop(uint64_t guid,
 IOReturn
 AudioDuplexCoordinator::ApplyClockRequest(uint64_t guid,
                                                 const PendingClockRequest& request) noexcept {
+    if (endpointStartGuard_ && !endpointStartGuard_(guid)) return kIOReturnNotReady;
     if (IsStopRequested(guid) || TeardownRequested()) {
         return kIOReturnAborted;
     }
@@ -1716,6 +1720,7 @@ IOReturn AudioDuplexCoordinator::RunDuplexStart(
     uint64_t guid, Discovery::DeviceRecord& record, IDuplexDeviceControl& deviceControl,
     DuplexRestartSession& session, const AudioClockConfig& desiredClock,
     DuplexRestartReason reason) noexcept {
+    if (endpointStartGuard_ && !endpointStartGuard_(guid)) return kIOReturnNotReady;
     DuplexStartTransaction transaction{DuplexStartTransaction::Dependencies{
         registry_, runtime_, hostTransport_, hardware_, cancel_, bindingSourceProvider_, gate_, store_,
         teardownAbortCount_, kSyncBridgeTimeoutMs, kGlobalClockLockTimeoutMs,

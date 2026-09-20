@@ -1099,23 +1099,14 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                          dev.inputChannelNames.size(), dev.outputChannelNames.size(), guid);
             }
         }
+        // Validate before replacing the runtime snapshot. A rejected geometry
+        // must not reach transport while the audio graph retains the old one.
+        if (publisher_.GetNub(guid) != nullptr) {
+            (void)publisher_.RefreshNubProperties(guid, dev, "DICE");
+            return;
+        }
         if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
             endpoint->UpdateConfig(dev);
-        }
-        // EnsureNub is create-once, so a device re-resolved after recovery or a
-        // configuration change would keep serving the geometry it was first
-        // published with. Refresh an existing nub explicitly rather than
-        // relying on the geometry never changing underneath it -- that
-        // invariant holds today only because runtime caps are re-read solely on
-        // Shutdown, and it should not be load-bearing for correctness.
-        if (publisher_.GetNub(guid) != nullptr) {
-            if (!publisher_.RefreshNubProperties(guid, dev, "DICE")) {
-                ASFW_LOG_ERROR(Audio,
-                               "DiceAudioBackend::EnsureNubForGuid: could not refresh the live "
-                               "nub for GUID=0x%016llx; it keeps its previous geometry",
-                               guid);
-            }
-            return;
         }
         (void)publisher_.EnsureNub(guid, dev, "DICE");
     };
