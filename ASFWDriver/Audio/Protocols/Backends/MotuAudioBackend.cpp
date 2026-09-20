@@ -36,6 +36,12 @@ MotuAudioBackend::MotuAudioBackend(AudioNubPublisher& publisher,
     , hardware_(hardware)
     , coordinator_(duplexCoordinator) {
     lock_ = IOLockAlloc();
+
+    IODispatchQueue* queue = nullptr;
+    const kern_return_t queueStatus = IODispatchQueue::Create("com.asfw.audio.motu", 0, 0, &queue);
+    if (queueStatus == kIOReturnSuccess && queue) {
+        workQueue_ = OSSharedPtr(queue, OSNoRetain);
+    }
 }
 
 MotuAudioBackend::~MotuAudioBackend() noexcept {
@@ -49,14 +55,29 @@ MotuAudioBackend::~MotuAudioBackend() noexcept {
 void MotuAudioBackend::BeginTeardown() noexcept {
     // Latch first so an in-flight StartStreaming refuses rather than handing the
     // coordinator a device whose bus is going away.
-    if (stopping_.exchange(true, std::memory_order_acq_rel)) {
+    stopping_.store(true, std::memory_order_release);
+    if (teardownStarted_.exchange(true, std::memory_order_acq_rel)) {
+#ifdef ASFW_HOST_TEST
+        if (onSecondaryTeardown_) onSecondaryTeardown_();
+#endif
+        while (!teardownComplete_.load(std::memory_order_acquire)) IOSleep(1);
         return;
+    }
+    recoveryAdmission_.CloseAndWait();
+    if (workQueue_) {
+#ifdef ASFW_HOST_TEST
+        if (onTeardownDrain_) onTeardownDrain_();
+        workQueue_->DispatchSync([] {});
+#else
+        workQueue_->DispatchSync(^{});
+#endif
     }
     if (lock_) {
         IOLockLock(lock_);
         activeStreamingGuids_.clear();
         IOLockUnlock(lock_);
     }
+    teardownComplete_.store(true, std::memory_order_release);
 }
 
 void MotuAudioBackend::OnDeviceRecordUpdated(uint64_t guid) noexcept {
@@ -220,6 +241,64 @@ IOReturn MotuAudioBackend::StopStreaming(uint64_t guid) noexcept {
         IOLockUnlock(lock_);
     }
     return status;
+}
+
+bool MotuAudioBackend::QueueTimingRecovery(uint64_t guid) noexcept {
+    PublicationGate::AdmissionScope admission(recoveryAdmission_);
+    if (!admission.IsAdmitted()) return false;
+    if (guid == 0 || stopping_.load(std::memory_order_acquire)) {
+        return false;
+    }
+
+    const auto session = coordinator_.GetSession(guid);
+    if (!session || !coordinator_.IsStreaming(guid)) return false;
+    const uint64_t restartId = session->restartId;
+
+    if (recoveryInFlight_.exchange(true, std::memory_order_acq_rel)) {
+        recoveryRejectCount_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+#ifdef ASFW_HOST_TEST
+    auto recover = [this, guid, restartId] {
+#else
+    auto recover = ^{
+#endif
+        const auto current = coordinator_.GetSession(guid);
+        if (!current || current->restartId != restartId || !coordinator_.IsStreaming(guid) ||
+            stopping_.load(std::memory_order_acquire) ||
+            coordinator_.IsDeviceOperationCancelled(guid)) {
+            recoveryInFlight_.store(false, std::memory_order_release);
+            return;
+        }
+
+        ASFW_LOG(Audio,
+                 "MotuAudioBackend: scheduling async recovery for timing loss GUID=0x%016llx",
+                 guid);
+        const IOReturn status = coordinator_.RecoverStreaming(
+            guid, DuplexRestartReason::kRecoverAfterTimingLoss, restartId);
+        if (status == kIOReturnSuccess) {
+            EnsureNubForGuid(guid);
+            ASFW_LOG(Audio,
+                     "MotuAudioBackend: timing-loss recovery succeeded GUID=0x%016llx",
+                     guid);
+        } else {
+            ASFW_LOG_ERROR(Audio,
+                           "MotuAudioBackend: timing-loss recovery failed GUID=0x%016llx kr=0x%x",
+                           guid, status);
+        }
+        recoveryInFlight_.store(false, std::memory_order_release);
+    };
+
+    if (workQueue_) {
+        workQueue_->DispatchAsync(recover);
+        return true;
+    }
+    // No work queue available — cannot recover synchronously from the packet
+    // thread. This backend cannot recover until it is recreated with a queue.
+    recoveryRejectCount_.fetch_add(1, std::memory_order_relaxed);
+    recoveryInFlight_.store(false, std::memory_order_release);
+    return false;
 }
 
 } // namespace ASFW::Audio

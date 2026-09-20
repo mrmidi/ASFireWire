@@ -27,4 +27,8 @@ void DbcCounter::AdvanceDataBlocks(uint8_t dataBlocks) noexcept {
     dbc_ = static_cast<uint8_t>(dbc_ + dataBlocks);
 }
 
+void DbcCounter::RewindDataBlocks(uint8_t dataBlocks) noexcept {
+    dbc_ = static_cast<uint8_t>(dbc_ - dataBlocks);
+}
+
 } // namespace ASFW::Protocols::Audio::IEC61883

@@ -96,17 +96,15 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
     auto* metadataRing = ivars.runtime.txSlotProvider.metadataRing;
     auto* directControl = ivars.runtime.directAudioGraph.control;
     if (directControl == nullptr) {
-        ivars.runtime.txStreamEngine.BindMotuOffsetCache(nullptr);
+        ivars.runtime.motuTxTimingStamper.BindCache(nullptr);
         return 0;
     }
     // MOTU's per-block SPH offsets are captured on the transport side and replayed here.
     // They live in the shared control block -- the seam both services map -- rather than
     // in the capture consumer, which IsochDuplexHostTransport owns and destroys on stop
     // while this service may still be preparing packets (the FW-60 cross-service class).
-    // Rebind on every pass so the engine's pointer is never older than directControl.
-    // This binding was missing entirely: StampMotuSph returned at its first line on every
-    // packet, so no data block ever carried an SPH and the device played nothing.
-    ivars.runtime.txStreamEngine.BindMotuOffsetCache(&directControl->motuEventOffsets);
+    // Rebind on every pass so the stamper's pointer is never older than directControl.
+    ivars.runtime.motuTxTimingStamper.BindCache(&directControl->motuEventOffsets);
 
     uint64_t nextPacketToPrepare = startPacketIndex;
     uint32_t preparedCount = 0;

@@ -92,6 +92,8 @@ public:
     // packet preparation is dispatched on ASFWAudioDriver's TxPreparation
     // queue rather than on the CoreAudio real-time callback.
     virtual kern_return_t RequestTxPreparation(uint64_t generation);
+    // Void RPC is one-way: TX preparation must never wait on the nub queue.
+    virtual void RequestTimingRecovery(uint64_t rxEpoch);
 
     virtual void ZtsAnchorReady(OSAction* action TARGET,
                                 uint64_t generation);

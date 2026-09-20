@@ -13,6 +13,7 @@
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
 #include "../../Wire/AMDTP/PcmSlotMap.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
+#include "../../DriverKit/Config/MOTU/MotuV2Profile.hpp"
 #include "../../Engine/Direct/Rx/RxCaptureChannelMap.hpp"
 #include "../AudioTypes.hpp"
 #include "../IDeviceProtocol.hpp"
@@ -421,7 +422,7 @@ class DuplexStreamProfileResolver final {
             // flat shim, which takes the first non-zero value across every unit
             // directory and so can name a version no single unit published.
             const auto choice = ChooseDeviceProtocol(record);
-            profile.captureMotuPorts = Encoding::Motu::CapturePortsForSwVersion(
+            profile.captureMotuPorts = Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(
                 choice.has_value() ? choice->unitVersion
                                    : record.unitSwVersion.value_or(0U));
         }

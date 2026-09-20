@@ -10,6 +10,7 @@
 //
 //   Saffire Pro 24 DSP    capture 16+1MIDI     playback 8+1MIDI   (ONE stream each)
 //   Midas Venice F24      capture 16+8  = 24   playback 16+8  = 24
+//   Midas Venice F32      capture 16+16 = 32   playback 16+16 = 32
 //   PreSonus StudioLive   capture 16+16 = 32   playback 16+10 = 26
 //   Alesis MultiMix       capture 12+2  = 14   playback 2         (ONE stream)
 //
@@ -23,6 +24,13 @@
 //   - asymmetric totals between directions         (StudioLive, MultiMix)
 //   - different STREAM COUNTS per direction        (MultiMix, 2 vs 1)
 //   - a second stream far smaller than the first   (MultiMix 12+2)
+//   - two variants behind ONE identity             (Venice F24 vs F32)
+//
+// That last pair is the evidence for one catalog row serving a range: the two
+// Venice units agree on every identifying register -- TCAT product 0x001,
+// VERSION 1.0.4.0, CLOCK_CAPABILITIES 0x13000006, NICK_NAME 'Venice' -- and
+// differ only in GUID, serial and geometry. Nothing but the measured channel
+// count can tell them apart.
 //
 // documentation/DICE_TCAT_ARCHITECTURE.md sec 2.8 is the prose version.
 //
@@ -59,6 +67,8 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <set>
+#include <string_view>
 
 namespace {
 
@@ -156,6 +166,42 @@ constexpr DiceFixture kFixtures[] = {
         .playbackStreamCount = 2,
         .playback = {{16, 0}, {8, 0}},
         .expectedPlaybackPcm = 24,
+        .captureChannelBase = {0, 16},
+        .playbackChannelBase = {0, 16},
+    },
+    {
+        // The F24's sibling, and the reason one catalog row can serve the
+        // range. Every identifying register on these two units is IDENTICAL --
+        // TCAT vendor 0x10C73F, category 0x04, product 0x001, VERSION 1.0.4.0,
+        // NICK_NAME 'Venice', CLOCK_CAPABILITIES 0x13000006, and an ext_sync
+        // section at the same offset and size. They differ in GUID, TCAT serial
+        // and NOTHING ELSE except the stream geometry below. Measured channel
+        // count is therefore the only discriminator that exists, which is what
+        // IAudioDeviceProfile::NameForGeometry uses.
+        //
+        // (Both dumps print "Model: Venice F32" because that is OUR catalog
+        // string echoed back -- kMidasVeniceModelName -- not a device report.
+        // Recorded before NameForGeometry landed.)
+        //
+        // Uniform 16+16, so it does NOT discriminate summing from
+        // stream0 x count; the F24 is the row that does. Its job here is to
+        // prove the uniform sibling still resolves once the asymmetric one
+        // drives the code.
+        .name = "Midas Venice F32",
+        .dump = "documentation/fixtures/DICE/midasF32.txt",
+        .guid = 0x10C73F04004011DFULL,
+        .clockCaps = 0x13000006,
+        .role = {.discriminatesAggregation = false,
+                 .exercisesMidiSlots = false,
+                 .unequalStreamCounts = false,
+                 .singleStream = false,
+                 .hardwareVerified = false},
+        .captureStreamCount = 2,
+        .capture = {{16, 0}, {16, 0}},
+        .expectedCapturePcm = 32,
+        .playbackStreamCount = 2,
+        .playback = {{16, 0}, {16, 0}},
+        .expectedPlaybackPcm = 32,
         .captureChannelBase = {0, 16},
         .playbackChannelBase = {0, 16},
     },
@@ -369,7 +415,8 @@ INSTANTIATE_TEST_SUITE_P(
         switch (info.index) {
             case 0: return "FocusriteSaffirePro24Dsp";
             case 1: return "MidasVeniceF24";
-            case 2: return "PreSonusStudioLive2442";
+            case 2: return "MidasVeniceF32";
+            case 3: return "PreSonusStudioLive2442";
             default: return "AlesisMultiMix";
         }
     });
@@ -460,19 +507,28 @@ TEST(DiceFixtureSet, CoversEveryPropertyItClaimsTo) {
         << "nobody has confirmed against a running device";
 }
 
-// Four vendors, not four rows from one. Geometry conventions are a vendor trait,
-// so a set drawn from a single vendor would agree for reasons that do not
-// generalise.
+// At least four distinct vendors, not four rows from one. Geometry conventions are a
+// vendor trait, so a set drawn from a single vendor would agree for reasons that do not
+// generalise. Sibling variants behind one identity (Venice F24 vs F32) share a vendor
+// to prove one catalog row serves the range.
 TEST(DiceFixtureSet, DrawsFromDistinctVendors) {
     constexpr size_t kCount = sizeof(kFixtures) / sizeof(kFixtures[0]);
+    std::set<uint32_t> vendors;
     for (size_t i = 0; i < kCount; ++i) {
+        vendors.insert(static_cast<uint32_t>((kFixtures[i].guid >> 40) & 0xFFFFFF));
         for (size_t j = i + 1; j < kCount; ++j) {
+            if (std::string_view(kFixtures[i].name).starts_with("Midas Venice") &&
+                std::string_view(kFixtures[j].name).starts_with("Midas Venice")) {
+                continue;
+            }
             EXPECT_NE((kFixtures[i].guid >> 40) & 0xFFFFFF,
                       (kFixtures[j].guid >> 40) & 0xFFFFFF)
                 << kFixtures[i].name << " and " << kFixtures[j].name
                 << " share a vendor id";
         }
     }
+    EXPECT_GE(vendors.size(), 4u)
+        << "fixture set must draw from at least four distinct vendors";
 }
 
 } // namespace

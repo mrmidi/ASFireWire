@@ -68,6 +68,10 @@ public:
         const AudioClockConfig& desiredClock,
         DuplexRestartReason reason) noexcept;
     void BeginTeardown() noexcept;
+    void HandleHostTimingLoss(uint64_t guid) noexcept;
+    [[nodiscard]] bool RequestMotuTimingRecovery(uint64_t guid) noexcept;
+    [[nodiscard]] IOReturn MotuCaptureCommand(uint64_t guid, uint32_t stream,
+                                            uint32_t command, std::string& output) noexcept;
 
     [[nodiscard]] ASFWAudioNub* GetNub(uint64_t guid) const noexcept { return publisher_.GetNub(guid); }
 
@@ -78,7 +82,7 @@ private:
     [[nodiscard]] IAudioBackend* BackendForGuid(uint64_t guid) noexcept;
     [[nodiscard]] kern_return_t StopHostTransport(const char* reason,
                                                    bool generationInvalidated = false) noexcept;
-    void HandleHostTimingLoss(uint64_t guid) noexcept;
+
 
     AudioNubPublisher publisher_;
     Discovery::IDeviceManager& deviceManager_;
@@ -87,6 +91,7 @@ private:
     // The one controller-global isoch transport session. Backends borrow this
     // neutral interface; none owns a second wrapper around IsochService.
     IsochDuplexHostTransport hostTransport_;
+    std::atomic_flag captureCommandBusy_ = ATOMIC_FLAG_INIT;
     std::atomic<bool> teardownRequested_{false};
     AudioDuplexCoordinator duplexCoordinator_;
     DiceAudioBackend dice_;

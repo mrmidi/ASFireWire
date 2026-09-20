@@ -394,6 +394,16 @@ kern_return_t IMPL(ASFWAudioNub, RequestTxPreparation)
     return kIOReturnSuccess;
 }
 
+void IMPL(ASFWAudioNub, RequestTimingRecovery)
+{
+    const auto endpoint = FindEndpointRuntime(ivars);
+    auto* coordinator = GetAudioCoordinator(ivars);
+    if (!endpoint || !coordinator || !endpoint->IsCurrentStreamingRxEpoch(rxEpoch))
+        return;
+    // Only enqueue here: never wait for recovery on the packet preparation queue.
+    (void)coordinator->RequestMotuTimingRecovery(ivars->guid);
+}
+
 void IMPL(ASFWAudioNub, TxPreparationReady)
 {
     (void)action;

@@ -18,8 +18,33 @@
 #pragma once
 
 #include "../AudioStreamProfile.hpp"
+#include "../../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include "../../../Wire/MOTU/MotuPortLayout.hpp"
 
 namespace ASFW::Isoch::Audio::MOTU::Profiles {
+
+/// Host-to-device port map for a model, by its unit directory software version.
+[[nodiscard]] constexpr ::ASFW::Encoding::Motu::MotuPortMap PlaybackPortsForSwVersion(uint32_t swVersion) noexcept {
+    switch (swVersion) {
+    case DeviceProfiles::Audio::kMotu828mk2SwVersion:
+    case DeviceProfiles::Audio::kMotuUltraliteSwVersion:
+        return ::ASFW::Encoding::Motu::kV2Playback;
+    default:
+        return {};
+    }
+}
+
+/// Device-to-host port map for a model, by its unit directory software version.
+[[nodiscard]] constexpr ::ASFW::Encoding::Motu::MotuPortMap CapturePortsForSwVersion(uint32_t swVersion) noexcept {
+    switch (swVersion) {
+    case DeviceProfiles::Audio::kMotu828mk2SwVersion:
+        return ::ASFW::Encoding::Motu::k828mk2Capture;
+    case DeviceProfiles::Audio::kMotuUltraliteSwVersion:
+        return ::ASFW::Encoding::Motu::kUltraLiteCapture;
+    default:
+        return {};
+    }
+}
 
 class MotuV2Profile final : public IAudioStreamProfile {
 public:

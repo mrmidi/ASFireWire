@@ -11,7 +11,9 @@
 #include "../AudioClockPublisher.hpp"
 #include "../DirectInputWriter.hpp"
 #include "RxAudioPacketProcessor.hpp"
-#include "../../../Wire/MOTU/MotuEventOffsetCache.hpp"
+#include "../../../Wire/AM824/Am824PayloadCodec.hpp"
+#include "../../../Wire/RawPcm24In32/RawPcm24In32PayloadCodec.hpp"
+#include "../../../Ports/IWirePayloadCodec.hpp"
 
 #include <functional>
 
@@ -20,10 +22,8 @@ namespace ASFW::AudioEngine::Direct::Rx {
 // Owns all content interpretation for one IR stream. Isoch supplies only an
 // opaque payload and its controller-time correlation; this class owns audio
 // decode, replay, ZTS and device-policy callbacks.
-// MOTU replays per-data-block SPH timing. The cache does NOT live here: it sits in
-// AudioTransportControlBlock, because the transmit side drains on the audio queue
-// what this consumer fills on the transport queue, and neither may hold a pointer
-// into the other's memory. See Audio/Wire/MOTU/MotuEventOffsetCache.hpp.
+// Device-specific presentation timing (e.g. per-block SPH) is observed via
+// IRxDeviceTimingObserver.
 class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveConsumer {
   public:
     struct Configuration final {
@@ -36,11 +36,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         // Loud OXFW quirk: take the RX stride from the configured slot count,
         // not the packet's CIP dbs field (snd-oxfw SND_OXFW_QUIRK_WRONG_DBS).
         bool trustConfiguredStride{false};
-        /// MOTU only: PCM chunks this direction carries per data block. The
-        /// quadlet-slot families leave this zero and use am824Slots.
-        uint32_t motuPcmChunks{0};
-        /// MOTU only: chunk behind each host input channel; empty decodes in wire order.
-        ::ASFW::Encoding::Motu::MotuPortMap motuPorts{};
         RxCaptureChannelMap captureChannelMap{};
     };
 
@@ -57,6 +52,12 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
     void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
     void SetReplayReadyCallback(ReplayReadyCallback callback) noexcept;
+    void SetPayloadCodec(const ::ASFW::Audio::IRxPayloadCodec* codec) noexcept {
+        payloadCodec_ = codec;
+    }
+    void SetTimingObserver(::ASFW::Audio::IRxDeviceTimingObserver* observer) noexcept {
+        timingObserver_ = observer;
+    }
     [[nodiscard]] bool IsReplayEstablished() const noexcept;
 
     void OnReceiveActivated() noexcept override;
@@ -117,10 +118,7 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{};
     ReplayReadyCallback replayReadyCallback_{};
     bool replayReadyNotified_{false};
-    /// MOTU has no SYT, so RxSytCadence can never establish for it. Latched once the
-    /// per-data-block SPH offsets start caching, which is the equivalent evidence that
-    /// this device's timing is readable. Cleared wherever replayReadyNotified_ is.
-    bool motuTimingEstablished_{false};
+    ::ASFW::Audio::IRxDeviceTimingObserver* timingObserver_{nullptr};
     bool replayResetForStart_{false};
     // Bounded [RxReplayReset] records for a stream that has not established yet.
     // Re-armed at each bring-up; without a budget a permanently-rejected stream
@@ -138,6 +136,9 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint64_t prevLoggedAnchorHostTicks_{0};
     uint32_t prevLoggedAnchorRate_{0};
     bool prevLoggedAnchorValid_{false};
+    ::ASFW::Audio::Wire::Am824RxPayloadCodec am824Codec_{};
+    ::ASFW::Audio::Wire::RawPcm24In32RxPayloadCodec rawPcmCodec_{};
+    const ::ASFW::Audio::IRxPayloadCodec* payloadCodec_{nullptr};
 
 };
 

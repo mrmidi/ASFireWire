@@ -110,13 +110,13 @@ void AmdtpTxPacketizer::BindTimeline(AmdtpPacketTimeline* timeline) noexcept {
 void AmdtpTxPacketizer::Reset(uint8_t initialDbc,
                               uint64_t initialAudioFrame) noexcept {
     dbcCounter_.Reset(initialDbc);
-    nextAudioFrame_ = initialAudioFrame;
     frameCursorAligned_ = false;
     ++cursorEpoch_;
     lastDataFirstAudioFrame_ = 0;
     lastDataEndAudioFrame_ = 0;
     lastDataPacketIndex_ = 0;
     hasLastDataPacket_ = false;
+    telemetryNextAudioFrame_.store(initialAudioFrame, std::memory_order_relaxed);
     if (cadence_ != nullptr) {
         cadence_->Reset();
     }
@@ -127,9 +127,9 @@ bool AmdtpTxPacketizer::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
     if (frameCursorAligned_) {
         return false;
     }
-    nextAudioFrame_ = frameIndex;
     frameCursorAligned_ = true;
     ++cursorEpoch_;
+    telemetryNextAudioFrame_.store(frameIndex, std::memory_order_relaxed);
     PublishTelemetrySnapshot();
     return true;
 }
@@ -143,29 +143,31 @@ void AmdtpTxPacketizer::ReArmFrameCursorAlignment() noexcept {
     PublishTelemetrySnapshot();
 }
 
+void AmdtpTxPacketizer::SetPresentationCursor(uint64_t epoch, uint64_t frame, bool aligned) noexcept {
+    cursorEpoch_ = epoch;
+    frameCursorAligned_ = aligned;
+    telemetryNextAudioFrame_.store(frame, std::memory_order_relaxed);
+    PublishTelemetrySnapshot();
+}
+
 bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
                                           const AmdtpTimingState& timing,
+                                          const TxPresentationPlan& plan,
                                           PreparedTxPacket& outPacket) noexcept {
     if (cadence_ == nullptr || timeline_ == nullptr || slot.bytes == nullptr) {
         return false;
     }
 
-    const bool cadenceData = cadence_->CurrentCycleIsData();
+    if (plan.epoch != 0 && plan.epoch != cursorEpoch_) {
+        return false; // Stale or rejected epoch cannot publish
+    }
+
     const bool isData =
-        timing.disposition == AmdtpPacketDisposition::Data &&
-        (timing.replayValid
-             ? timing.replayDataBlocks != 0
-             : cadenceData);
-    const uint8_t frames =
-        isData
-            ? static_cast<uint8_t>(
-                  timing.replayValid
-                      ? timing.replayDataBlocks
-                      : cadence_->CurrentCycleDataFrames())
-            : 0;
-    if (frames > streamConfig_.framesPerDataPacket) {
+        plan.disposition == AmdtpPacketDisposition::Data && plan.frameCount > 0;
+    if (isData && plan.frameCount > streamConfig_.framesPerDataPacket) {
         return false;
     }
+    const uint8_t frames = isData ? static_cast<uint8_t>(plan.frameCount) : 0;
     const uint32_t payloadBytes =
         static_cast<uint32_t>(frames) * streamConfig_.dbs * kBytesPerSlot;
 
@@ -192,7 +194,7 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     outPacket.isData = isData;
     outPacket.dbc = dbc;
     outPacket.dbs = streamConfig_.dbs;
-    outPacket.firstAudioFrame = nextAudioFrame_;
+    outPacket.firstAudioFrame = plan.firstAudioFrame;
     outPacket.framesInPacket = isData ? frames : 0;
 
     if (isData) {
@@ -209,11 +211,11 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
         }
 
         dbcCounter_.AdvanceDataBlocks(frames);
-        nextAudioFrame_ += frames;
         lastDataFirstAudioFrame_ = outPacket.firstAudioFrame;
-        lastDataEndAudioFrame_ = nextAudioFrame_;
+        lastDataEndAudioFrame_ = plan.firstAudioFrame + frames;
         lastDataPacketIndex_ = outPacket.packetIndex;
         hasLastDataPacket_ = true;
+        telemetryNextAudioFrame_.store(lastDataEndAudioFrame_, std::memory_order_release);
         PublishTelemetrySnapshot();
     } else {
         outPacket.syt = IEC61883::SytFormatter::kNoInfo;
@@ -233,6 +235,63 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     return true;
 }
 
+bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
+                                          const AmdtpTimingState& timing,
+                                          PreparedTxPacket& outPacket) noexcept {
+    if (cadence_ == nullptr) {
+        return false;
+    }
+
+    const bool cadenceData = cadence_->CurrentCycleIsData();
+    const bool isData =
+        timing.disposition == AmdtpPacketDisposition::Data &&
+        (timing.replayValid
+             ? timing.replayDataBlocks != 0
+             : cadenceData);
+    const uint8_t frames =
+        isData
+            ? static_cast<uint8_t>(
+                  timing.replayValid
+                      ? timing.replayDataBlocks
+                      : cadence_->CurrentCycleDataFrames())
+            : 0;
+
+    TxPresentationPlan plan{};
+    plan.epoch = cursorEpoch_;
+    plan.cycleOrdinal = slot.packetIndex;
+    plan.firstAudioFrame = telemetryNextAudioFrame_.load(std::memory_order_relaxed);
+    plan.frameCount = frames;
+    plan.disposition =
+        isData ? AmdtpPacketDisposition::Data : AmdtpPacketDisposition::NoData;
+
+    return PrepareNextPacket(slot, timing, plan, outPacket);
+}
+
+void AmdtpTxPacketizer::RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& packet) noexcept {
+    if (!packet.isData) {
+        return;
+    }
+    const uint8_t frames = packet.framesInPacket;
+    dbcCounter_.RewindDataBlocks(frames);
+    const uint8_t dbc = dbcCounter_.ValueForNextPacket();
+    const bool isEmptyPacket = txPolicy_.emptyPacketsDuringIdle;
+    if (isEmptyPacket) {
+        packet.byteCount = 0;
+        timeline_->MarkNoDataPacket(packet.packetIndex);
+    } else {
+        packet.byteCount = kCipHeaderBytes;
+        WriteCipHeader(slot.bytes, cipBuilder_.BuildNoData(dbc));
+        timeline_->MarkNoDataPacket(packet.packetIndex);
+    }
+    packet.isData = false;
+    packet.dbc = dbc;
+    telemetryNextAudioFrame_.store(packet.firstAudioFrame, std::memory_order_relaxed);
+    packet.framesInPacket = 0;
+    packet.syt = IEC61883::SytFormatter::kNoInfo;
+    hasLastDataPacket_ = false;
+    PublishTelemetrySnapshot();
+}
+
 const AmdtpStreamConfig& AmdtpTxPacketizer::StreamConfig() const noexcept {
     return streamConfig_;
 }
@@ -243,6 +302,10 @@ const AmdtpTxPolicy& AmdtpTxPacketizer::TxPolicy() const noexcept {
 
 bool AmdtpTxPacketizer::NextPacketWouldCarryData() const noexcept {
     return cadence_ != nullptr && cadence_->CurrentCycleIsData();
+}
+
+uint8_t AmdtpTxPacketizer::CurrentCycleDataFrames() const noexcept {
+    return cadence_ != nullptr ? cadence_->CurrentCycleDataFrames() : 0;
 }
 
 AmdtpTxPacketizerTelemetrySnapshot
@@ -279,7 +342,6 @@ void AmdtpTxPacketizer::PublishTelemetrySnapshot() noexcept {
                                        std::memory_order_relaxed);
     telemetryHasLastDataPacket_.store(hasLastDataPacket_,
                                       std::memory_order_relaxed);
-    telemetryNextAudioFrame_.store(nextAudioFrame_, std::memory_order_release);
 }
 
 void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,

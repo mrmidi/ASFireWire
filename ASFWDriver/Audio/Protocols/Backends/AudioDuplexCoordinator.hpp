@@ -53,7 +53,8 @@ public:
         uint64_t guid,
         const AudioClockConfig& desiredClock,
         DuplexRestartReason reason) noexcept;
-    [[nodiscard]] IOReturn RecoverStreaming(uint64_t guid, DuplexRestartReason reason) noexcept;
+    [[nodiscard]] IOReturn RecoverStreaming(uint64_t guid, DuplexRestartReason reason,
+                                           uint64_t expectedRestartId = 0) noexcept;
 
     // Called once discovery has conclusively retired a GUID after a bus reset.
     // It cancels this GUID's queued work without treating the whole controller

@@ -9,6 +9,10 @@
 #include "../../../Hardware/HardwareInterface.hpp"
 #include "../../../Isoch/IsochService.hpp"
 #include "../../Engine/Direct/Rx/DirectAudioReceiveConsumer.hpp"
+#include "../../Wire/MOTU/MotuPayloadCodec.hpp"
+#include "../../Wire/MOTU/MotuDeviceTiming.hpp"
+#include "../../Wire/MOTU/MotuRxDiagnosticCapture.hpp"
+#include "DirectRxFormatDescriptor.hpp"
 #include "DuplexIRMReservations.hpp"
 
 #include <DriverKit/IOBufferMemoryDescriptor.h>
@@ -41,11 +45,7 @@ class IIsochDuplexHostTransport {
     [[nodiscard]] virtual kern_return_t
     PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
                    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-                   Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
-                   uint32_t am824Slots = 0, uint32_t streamChannels = 0,
-                   bool trustConfiguredStride = false, uint32_t motuPcmChunks = 0,
-                   Encoding::Motu::MotuPortMap motuPorts = {},
-                   const AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap = {}) noexcept = 0;
+                   const DirectRxFormatDescriptor& format = {}) noexcept = 0;
     [[nodiscard]] virtual kern_return_t PrepareTransmit(uint8_t channel,
                                                         Driver::HardwareInterface& hardware,
                                                         uint8_t sourceId) noexcept = 0;
@@ -54,12 +54,8 @@ class IIsochDuplexHostTransport {
     [[nodiscard]] virtual kern_return_t
     PrepareReceiveStream(uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
                          ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-                         uint32_t channelOffset, uint32_t streamChannels,
-                         Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
-                         uint32_t am824Slots = 0,
-                         bool trustConfiguredStride = false, uint32_t motuPcmChunks = 0,
-                         Encoding::Motu::MotuPortMap motuPorts = {},
-                         const AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap = {}) noexcept = 0;
+                         uint32_t channelOffset,
+                         const DirectRxFormatDescriptor& format = {}) noexcept = 0;
     [[nodiscard]] virtual kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
                                                               Driver::HardwareInterface& hardware,
                                                               uint8_t sourceId) noexcept = 0;
@@ -88,6 +84,10 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
   public:
     explicit IsochDuplexHostTransport(Driver::IsochService& isoch) noexcept : isoch_(isoch) {}
 
+    [[nodiscard]] Wire::MotuRxDiagnosticCapture* DiagnosticCapture(uint32_t stream) noexcept {
+        return stream < Driver::IsochService::kMaxStreamsPerDirection
+                   ? &motuRxDiagnosticCaptures_[stream] : nullptr;
+    }
     void SetTimingLossCallback(Driver::IsochService::TimingLossCallback callback) noexcept;
 
     [[nodiscard]] kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override;
@@ -104,23 +104,15 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     [[nodiscard]] kern_return_t
     PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
                    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-                   Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
-                   uint32_t am824Slots = 0, uint32_t streamChannels = 0,
-                   bool trustConfiguredStride = false, uint32_t motuPcmChunks = 0,
-                   Encoding::Motu::MotuPortMap motuPorts = {},
-                   const AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap = {}) noexcept override;
+                   const DirectRxFormatDescriptor& format = {}) noexcept override;
     [[nodiscard]] kern_return_t PrepareTransmit(uint8_t channel,
                                                 Driver::HardwareInterface& hardware,
                                                 uint8_t sourceId) noexcept override;
     [[nodiscard]] kern_return_t
     PrepareReceiveStream(uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
                          ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-                         uint32_t channelOffset, uint32_t streamChannels,
-                         Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
-                         uint32_t am824Slots = 0,
-                         bool trustConfiguredStride = false, uint32_t motuPcmChunks = 0,
-                         Encoding::Motu::MotuPortMap motuPorts = {},
-                         const AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap = {}) noexcept override;
+                         uint32_t channelOffset,
+                         const DirectRxFormatDescriptor& format = {}) noexcept override;
     [[nodiscard]] kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
                                                       Driver::HardwareInterface& hardware,
                                                       uint8_t sourceId) noexcept override;
@@ -136,16 +128,20 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     [[nodiscard]] kern_return_t AttachReceiveConsumer(
         uint32_t streamIndex,
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-        Encoding::AudioWireFormat wireFormat, uint32_t am824Slots,
-        uint32_t channelOffset, uint32_t streamChannels, bool isSecondary,
-        bool trustConfiguredStride, uint32_t motuPcmChunks = 0,
-        Encoding::Motu::MotuPortMap motuPorts = {},
-        const AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap = {}) noexcept;
+        uint32_t channelOffset, bool isSecondary,
+        const DirectRxFormatDescriptor& format) noexcept;
     void DetachReceiveConsumers() noexcept;
 
     Driver::IsochService& isoch_;
     std::unique_ptr<ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer>
         receiveConsumers_[Driver::IsochService::kMaxStreamsPerDirection]{};
+    std::unique_ptr<ASFW::Audio::Wire::MotuRxPayloadCodec>
+        motuRxCodecs_[Driver::IsochService::kMaxStreamsPerDirection]{};
+    ASFW::Audio::Wire::MotuRxDiagnosticCapture
+        motuRxDiagnosticCaptures_[Driver::IsochService::kMaxStreamsPerDirection]{};
+    std::unique_ptr<ASFW::Audio::Wire::MotuRxTimingObserver>
+        motuRxTimingObservers_[Driver::IsochService::kMaxStreamsPerDirection]{};
+    uint64_t diagnosticGuid_{0};
     Backends::DuplexIRMReservationPair reservations_{};
 };
 

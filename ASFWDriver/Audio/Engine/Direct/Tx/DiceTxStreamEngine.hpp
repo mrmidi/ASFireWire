@@ -3,14 +3,13 @@
 #include "../../../DriverKit/Config/AudioStreamProfile.hpp"
 #include "../../../Wire/AMDTP/AmdtpPayloadWriter.hpp"
 #include "../../../Wire/AMDTP/AmdtpTxPacketizer.hpp"
-#include "../../../Wire/MOTU/MotuEventOffsetCache.hpp"
-#include "../../../Wire/MOTU/MotuPayloadWriter.hpp"
-#include "../../../Wire/MOTU/MotuTxTiming.hpp"
 #include "../../../Ports/IAmdtpTxSlotProvider.hpp"
+#include "../../../Ports/IWirePayloadCodec.hpp"
 #include "../../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 
 namespace ASFW::Protocols::Audio::DICE {
 
@@ -19,6 +18,7 @@ struct DiceTxEngineCounters final {
     std::atomic<uint64_t> dataPacketsPrepared{0};
     std::atomic<uint64_t> noDataPacketsPrepared{0};
     std::atomic<uint64_t> slotAcquireFailures{0};
+    std::atomic<uint64_t> timingUnavailableReverts{0};
 };
 
 enum class TxSlotPrepareResult : uint8_t {
@@ -37,6 +37,10 @@ public:
 
 class DiceTxStreamEngine final {
 public:
+    using TimingLossCallback = std::function<bool()>; // true when notification was sent; false allows retry
+
+    static constexpr uint32_t kMaxConsecutiveTimingReverts = 16;
+
     DiceTxStreamEngine() noexcept = default;
 
     bool Configure(const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
@@ -44,10 +48,17 @@ public:
 
     void BindSlotProvider(AMDTP::IAmdtpTxSlotProvider* slotProvider) noexcept;
 
-    /// MOTU only: the receive side's per-data-block SPH offsets, drained one run per
-    /// transmitted data packet. Without it a MOTU stream cannot be stamped and its
-    /// packets are published unstamped rather than with invented timing.
-    void BindMotuOffsetCache(::ASFW::Encoding::Motu::MotuEventOffsetCache* cache) noexcept;
+    void SetPayloadWriter(::ASFW::Audio::ITxPayloadWriter* writer) noexcept {
+        activePayloadWriter_ = writer ? writer : &payloadWriter_;
+    }
+
+    void BindTimingStamper(::ASFW::Audio::ITxDeviceTimingStamper* stamper) noexcept {
+        timingStamper_ = stamper;
+    }
+
+    void SetTimingLossCallback(TimingLossCallback callback) noexcept {
+        timingLossCallback_ = std::move(callback);
+    }
 
     void ResetForStart(uint8_t initialDbc,
                        uint64_t initialAudioFrame) noexcept;
@@ -55,16 +66,18 @@ public:
     [[nodiscard]] bool AlignFrameCursorOnce(uint64_t frameIndex) noexcept;
 
     // Re-arm the one-shot frame-cursor alignment after an RX replay stall so the
-    // next DATA packet re-projects the cursor to the live frame (see
-    // AmdtpTxPacketizer::ReArmFrameCursorAlignment).
+    // next DATA packet re-projects the cursor to the live frame.
     void ReArmFrameCursorAlignment() noexcept;
 
     [[nodiscard]] bool IsFrameCursorAligned() const noexcept;
+    [[nodiscard]] uint64_t NextAudioFrame() const noexcept { return nextAudioFrame_; }
+    [[nodiscard]] uint64_t CursorEpoch() const noexcept { return cursorEpoch_; }
 
     /// True for families that carry no presentation time in the CIP SYT field -- Linux's
-    /// CIP_UNAWARE_SYT. MOTU is the only one: it times each data block with an SPH quadlet
-    /// (StampMotuSph) instead, so its replayed capture entries legitimately have no SYT.
-    [[nodiscard]] bool IsSytUnaware() const noexcept { return isMotu_; }
+    /// CIP_UNAWARE_SYT (e.g. SPH-based timing).
+    [[nodiscard]] bool IsSytUnaware() const noexcept {
+        return timingStamper_ != nullptr && timingStamper_->IsSytUnaware();
+    }
 
     [[nodiscard]] TxSlotPrepareResult PrepareNextTransmitSlot(
         uint32_t packetIndex,
@@ -87,12 +100,6 @@ public:
     [[nodiscard]] const AMDTP::AmdtpPayloadWriterCounters&
     PayloadWriterCounters() const noexcept;
 
-private:
-    /// Replay one cached SPH offset onto each data block of a prepared MOTU packet.
-    void StampMotuSph(const AMDTP::TxPacketSlotView& slot,
-                      const AMDTP::PreparedTxPacket& packet,
-                      const AMDTP::AmdtpTimingState& timing) noexcept;
-
     AMDTP::AmdtpTxPolicy BuildTxPolicy(
         const ASFW::Isoch::Audio::AudioStreamTxPolicy& policy) const noexcept;
 
@@ -103,15 +110,12 @@ private:
 
     AMDTP::AmdtpTxPacketizer packetizer_{};
     AMDTP::AmdtpPayloadWriter payloadWriter_{};
+    ::ASFW::Audio::ITxPayloadWriter* activePayloadWriter_{&payloadWriter_};
+    ::ASFW::Audio::ITxDeviceTimingStamper* timingStamper_{nullptr};
 
-    // MOTU's samples are 3-byte chunks behind a per-block SPH quadlet, so it needs its
-    // own payload writer rather than a PcmSlotEncoding variant. Selected by
-    // isMotu_ at Configure time; the AMDTP writer is left untouched for every other
-    // family.
-    ::ASFW::Encoding::Motu::MotuPayloadWriter motuPayloadWriter_{};
-    ::ASFW::Encoding::Motu::MotuEventOffsetCache* motuOffsetCache_{nullptr};
-    bool isMotu_{false};
-    uint32_t motuPcmChunks_{0};
+    uint64_t nextAudioFrame_{0};
+    uint64_t cursorEpoch_{1};
+    bool frameCursorAligned_{false};
 
     AMDTP::PacketTimelineSlot
         timelineSlots_[ASFW::IsochTransport::AudioTimingGeometry::kTimelineSlots]{};
@@ -120,6 +124,10 @@ private:
     AMDTP::IAmdtpTxSlotProvider* slotProvider_{nullptr};
 
     DiceTxEngineCounters counters_{};
+
+    uint32_t consecutiveTimingReverts_{0};
+    TimingLossCallback timingLossCallback_{};
+    bool timingLossReported_{false};
 };
 
 } // namespace ASFW::Protocols::Audio::DICE

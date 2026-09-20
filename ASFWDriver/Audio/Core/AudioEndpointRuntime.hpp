@@ -278,6 +278,15 @@ public:
         return true;
     }
 
+    [[nodiscard]] bool IsCurrentStreamingRxEpoch(uint64_t epoch) noexcept {
+        if (!lock_) return false;
+        IOLockLock(lock_);
+        const bool current = streaming_.load(std::memory_order_acquire) && directControl_ &&
+            directControl_->rxReplayEpochResets.load(std::memory_order_acquire) == epoch;
+        IOLockUnlock(lock_);
+        return current;
+    }
+
     void MarkStreaming(bool streaming) noexcept {
         streaming_.store(streaming, std::memory_order_release);
     }

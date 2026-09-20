@@ -51,21 +51,6 @@ bool DiceTxStreamEngine::Configure(const ASFW::Isoch::Audio::IAudioStreamProfile
     payloadWriter_.Configure(packetizer_.StreamConfig(), policy);
     payloadWriter_.BindTimeline(&timeline_);
 
-    // MOTU is not a quadlet-slot format: its chunk layout needs a different writer, and
-    // the AMDTP one must not also run or it would overwrite the block with slot-shaped
-    // samples.
-    isMotu_ = (txPolicy.hostToDevicePcmEncoding ==
-               ASFW::Encoding::AudioWireFormat::kMotuV2);
-    motuPcmChunks_ = isMotu_ ? txConfig.pcmChannels : 0U;
-    if (isMotu_) {
-        motuPayloadWriter_.Configure(
-            ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
-                .pcmChunks = motuPcmChunks_,
-                .sourceChannelOffset = packetizer_.StreamConfig().sourceChannelOffset,
-                .ports = txPolicy.motuPlaybackPorts});
-        motuPayloadWriter_.BindTimeline(&timeline_);
-    }
-
     profile_ = &profile;
     streamConfig_ = txConfig;
     txPolicy_ = txPolicy;
@@ -80,19 +65,37 @@ void DiceTxStreamEngine::BindSlotProvider(
 void DiceTxStreamEngine::ResetForStart(uint8_t initialDbc,
                                        uint64_t initialAudioFrame) noexcept {
     timeline_.Reset();
+    nextAudioFrame_ = initialAudioFrame;
+    frameCursorAligned_ = false;
+    consecutiveTimingReverts_ = 0;
+    timingLossReported_ = false;
+    ++cursorEpoch_;
     packetizer_.Reset(initialDbc, initialAudioFrame);
+    packetizer_.SetPresentationCursor(cursorEpoch_, nextAudioFrame_, frameCursorAligned_);
 }
 
 bool DiceTxStreamEngine::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
-    return packetizer_.AlignFrameCursorOnce(frameIndex);
+    if (frameCursorAligned_) {
+        return false;
+    }
+    nextAudioFrame_ = frameIndex;
+    frameCursorAligned_ = true;
+    ++cursorEpoch_;
+    packetizer_.SetPresentationCursor(cursorEpoch_, nextAudioFrame_, frameCursorAligned_);
+    return true;
 }
 
 void DiceTxStreamEngine::ReArmFrameCursorAlignment() noexcept {
-    packetizer_.ReArmFrameCursorAlignment();
+    if (!frameCursorAligned_) {
+        return;
+    }
+    frameCursorAligned_ = false;
+    ++cursorEpoch_;
+    packetizer_.SetPresentationCursor(cursorEpoch_, nextAudioFrame_, frameCursorAligned_);
 }
 
 bool DiceTxStreamEngine::IsFrameCursorAligned() const noexcept {
-    return packetizer_.IsFrameCursorAligned();
+    return frameCursorAligned_;
 }
 
 TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
@@ -107,16 +110,42 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
         return TxSlotPrepareResult::kSlotAcquireFailed;
     }
 
+    const bool cadenceData = packetizer_.NextPacketWouldCarryData();
+    const bool isData = (timing.disposition == AMDTP::AmdtpPacketDisposition::Data) &&
+                        (timing.replayValid ? timing.replayDataBlocks != 0 : cadenceData);
+    const uint8_t frames = isData
+        ? static_cast<uint8_t>(timing.replayValid ? timing.replayDataBlocks : packetizer_.CurrentCycleDataFrames())
+        : 0;
+
+    AMDTP::TxPresentationPlan plan{};
+    plan.epoch = cursorEpoch_;
+    plan.cycleOrdinal = packetIndex;
+    plan.firstAudioFrame = nextAudioFrame_;
+    plan.frameCount = frames;
+    // No absolute presentation timestamp is available here. A transmit cycle
+    // index is neither a tick count nor the device presentation time.
+    plan.presentationBusTicks = 0;
+    plan.disposition = isData ? AMDTP::AmdtpPacketDisposition::Data : AMDTP::AmdtpPacketDisposition::NoData;
+
     AMDTP::PreparedTxPacket packet{};
-    if (!packetizer_.PrepareNextPacket(slot, timing, packet)) {
+    if (!packetizer_.PrepareNextPacket(slot, timing, plan, packet)) {
         return TxSlotPrepareResult::kPacketizerRejected;
     }
 
-    // MOTU needs a source packet header on every data block, replayed from the timing the
-    // device itself sent (motu-stream.c:205-207). Stamp before publishing: an unstamped
-    // block reaches the device carrying whatever the slot held before.
-    if (isMotu_ && packet.isData && packet.framesInPacket > 0) {
-        StampMotuSph(slot, packet, timing);
+    if (timingStamper_ != nullptr && packet.isData && packet.framesInPacket > 0) {
+        const auto result = timingStamper_->StampPacket(slot, packet, timing);
+        if (result == ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable) {
+            packetizer_.RevertToNoData(slot, packet);
+            counters_.timingUnavailableReverts.fetch_add(1, std::memory_order_relaxed);
+            if (consecutiveTimingReverts_ < kMaxConsecutiveTimingReverts) ++consecutiveTimingReverts_;
+            if (consecutiveTimingReverts_ >= kMaxConsecutiveTimingReverts && !timingLossReported_ && timingLossCallback_) {
+                timingLossReported_ = timingLossCallback_();
+                if (!timingLossReported_) consecutiveTimingReverts_ = 0;
+            }
+        } else {
+            consecutiveTimingReverts_ = 0;
+            timingLossReported_ = false;
+        }
     }
 
     if (!slotProvider_->PublishSlot(packet)) {
@@ -125,37 +154,12 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
 
     counters_.packetsPrepared.fetch_add(1, std::memory_order_relaxed);
     if (packet.isData) {
+        nextAudioFrame_ += packet.framesInPacket;
         counters_.dataPacketsPrepared.fetch_add(1, std::memory_order_relaxed);
     } else {
         counters_.noDataPacketsPrepared.fetch_add(1, std::memory_order_relaxed);
     }
     return TxSlotPrepareResult::kPrepared;
-}
-
-void DiceTxStreamEngine::StampMotuSph(const AMDTP::TxPacketSlotView& slot,
-                                      const AMDTP::PreparedTxPacket& packet,
-                                      const AMDTP::AmdtpTimingState& timing) noexcept {
-    // The base must be the cycle this packet actually goes out in: write_sph adds each
-    // captured offset to it (amdtp-motu.c:379). Without an anchored cycle there is no
-    // correct SPH to write, so leave the block alone rather than invent one.
-    if (motuOffsetCache_ == nullptr || slot.bytes == nullptr || !timing.transmitCycleValid) {
-        return;
-    }
-    // Drain exactly one offset per data block. Take() is all-or-nothing, so a cache that
-    // has not caught up leaves the packet unstamped rather than half-timed.
-    // AmdtpStreamConfig::framesPerDataPacket is a uint8_t, so 256 bounds every value a
-    // packet can carry; the stack array avoids an allocation on the transmit path.
-    constexpr uint32_t kMaxBlocksPerPacket = 256;
-    uint32_t offsets[kMaxBlocksPerPacket]{};
-    const uint32_t blocks = (packet.framesInPacket < kMaxBlocksPerPacket)
-                                ? packet.framesInPacket
-                                : kMaxBlocksPerPacket;
-    if (motuOffsetCache_->Take(std::span<uint32_t>(offsets, blocks))) {
-        (void)::ASFW::Encoding::Motu::WritePacketSph(
-            std::span<uint8_t>(slot.bytes, packet.byteCount), packet.dbs, blocks,
-            timing.transmitCycle,
-            std::span<const uint32_t>(offsets, blocks));
-    }
 }
 
 bool DiceTxStreamEngine::NextPacketWouldCarryData() const noexcept {
@@ -165,16 +169,9 @@ bool DiceTxStreamEngine::NextPacketWouldCarryData() const noexcept {
 void DiceTxStreamEngine::WriteHostOutputFloat32(
     const AMDTP::HostAudioBufferView& hostBuffer,
     uint64_t completionCursor) noexcept {
-    if (isMotu_) {
-        motuPayloadWriter_.WriteFloat32Interleaved(hostBuffer, completionCursor);
-        return;
+    if (activePayloadWriter_ != nullptr) {
+        activePayloadWriter_->WriteFloat32Interleaved(hostBuffer, completionCursor);
     }
-    payloadWriter_.WriteFloat32Interleaved(hostBuffer, completionCursor);
-}
-
-void DiceTxStreamEngine::BindMotuOffsetCache(
-    ::ASFW::Encoding::Motu::MotuEventOffsetCache* cache) noexcept {
-    motuOffsetCache_ = cache;
 }
 
 AMDTP::AmdtpPacketTimeline& DiceTxStreamEngine::Timeline() noexcept {
@@ -216,8 +213,7 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     policy.initializeNonAudioSlots = streamPolicy.initializeNonAudioSlots;
     policy.preserveFdfInNoDataPackets = streamPolicy.preserveFdfInNoDataPackets;
     policy.emptyPacketsDuringIdle = streamPolicy.emptyPacketsDuringIdle;
-    policy.dbcIsEndEvent =
-        streamPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV2;
+    policy.dbcIsEndEvent = streamPolicy.dbcIsEndEvent;
     policy.clearPayloadBeforeExposure = true;
     policy.playbackChannelMap = streamPolicy.playbackChannelMap;
     return policy;

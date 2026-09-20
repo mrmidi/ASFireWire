@@ -1,6 +1,7 @@
 #include "FireWireBusImpl.hpp"
 #include "../Bus/TopologyManager.hpp"
 #include "../Logging/Logging.hpp"
+#include "Interfaces/ILinkSpeedSource.hpp"
 #include <algorithm>
 #include <atomic>
 #include <map>
@@ -57,8 +58,9 @@ void CompleteStaleGenerationAsync(IAsyncControllerPort& async,
 
 } // namespace
 
-FireWireBusImpl::FireWireBusImpl(IAsyncControllerPort& async, Driver::TopologyManager& topo)
-    : async_(async), topo_(topo) {}
+FireWireBusImpl::FireWireBusImpl(IAsyncControllerPort& async, Driver::TopologyManager& topo,
+                                 const ILinkSpeedSource* observedSpeeds)
+    : async_(async), topo_(topo), observedSpeeds_(observedSpeeds) {}
 
 AsyncHandle FireWireBusImpl::ReadBlock(FW::Generation gen, FW::NodeId node, FWAddress addr,
                                        uint32_t length, FW::FwSpeed speed,
@@ -119,6 +121,35 @@ AsyncHandle FireWireBusImpl::Lock(FW::Generation gen, FW::NodeId node, FWAddress
 bool FireWireBusImpl::Cancel(AsyncHandle handle) { return async_.Cancel(handle); }
 
 FW::FwSpeed FireWireBusImpl::GetSpeed(FW::NodeId nodeId) const {
+    // Self-ID reports what the node CLAIMS. It is the ceiling, not the answer:
+    // a node can advertise S400 and acknowledge nothing at that speed. Clamp the
+    // claim with whatever discovery has actually proven on this link.
+    //
+    // Linux keeps one speed per device and does exactly this clamping
+    // (references/linux-ohci-firewire-low-level-stack/core-device.c:615-640):
+    // fw_device::max_speed is seeded from Self-ID, probed downwards with test
+    // reads until one completes, and then used for EVERY transaction to that
+    // device (:557, :958, :977, :1132). We previously kept the probe result
+    // private to the Config-ROM scan, so DICE/SBP-2/AV/C re-hit a link already
+    // known to be dead — a Midas Venice F24 advertised S400, answered only at
+    // S200, and its DICE section read timed out for exactly this reason.
+    const FW::FwSpeed advertised = AdvertisedSpeed(nodeId);
+    if (observedSpeeds_ == nullptr) {
+        return advertised;
+    }
+    const auto observed = observedSpeeds_->ObservedSpeed(nodeId);
+    if (!observed) {
+        // No evidence yet is not evidence of a slow link.
+        return advertised;
+    }
+    // Lower of the two. An observation may only ever slow us down: node IDs are
+    // reassigned across bus resets, so a stale entry must not be able to raise a
+    // node above what the current topology says it supports.
+    return static_cast<uint8_t>(*observed) < static_cast<uint8_t>(advertised) ? *observed
+                                                                              : advertised;
+}
+
+FW::FwSpeed FireWireBusImpl::AdvertisedSpeed(FW::NodeId nodeId) const {
     // Get the latest topology snapshot
     auto snapshot = topo_.LatestSnapshot();
     if (!snapshot) {

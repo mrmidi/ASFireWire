@@ -20,10 +20,13 @@
 // Both walk one ring slot per data block and advance their own whole-cycle counter by
 // one cycle per packet.
 //
-// Naming: Linux names the counters from the *device's* point of view (tx_cycle_count
-// fills from the device's transmit stream). These are named from the host's, because
-// every other cursor in this driver is: Capture* is device->host, Playback* is
-// host->device.
+// Concurrency contract:
+// - Capture and playback operate on separate queues.
+// - Cursors and epochs are packed into 64-bit atomic positions: bits [63:32] hold epoch,
+//   bits [31:0] hold the monotonic 32-bit slot cursor.
+// - An atomic commit protocol via CAS eliminates TOCTOU races on Reset().
+// - Each slot atomically publishes its logical position and offset together,
+//   so a reader cannot pair a new offset with an old position.
 
 #pragma once
 
@@ -35,7 +38,23 @@
 #include <cstdint>
 #include <span>
 
+#if defined(ASFW_HOST_TEST)
+#include <functional>
+#include <utility>
+#endif
+
 namespace ASFW::Encoding::Motu {
+
+enum class OffsetCacheTakeResult : uint8_t {
+    Success = 0,
+    SuccessUnderrunResync,
+    SuccessOverrunResync,
+    NotEstablished,
+    NotEnoughHistory,
+    ConcurrentReset,
+    ConcurrentRewrite,
+    InvalidRequest,
+};
 
 class MotuEventOffsetCache final {
 public:
@@ -47,10 +66,36 @@ public:
     /// Offsets are ticks on the 24.576 MHz timeline, always < kTicksPerSecond.
     static constexpr uint32_t kNoOffset = UINT32_MAX;
 
-    void Reset() noexcept {
-        captureCursor_.store(0, std::memory_order_relaxed);
-        playbackCursor_.store(0, std::memory_order_relaxed);
-        established_.store(false, std::memory_order_release);
+    MotuEventOffsetCache() noexcept {
+        for (size_t i = 0; i < kCapacity; ++i) {
+            slots_[i].store(Pack(UINT32_MAX, kNoOffset), std::memory_order_relaxed);
+        }
+    }
+
+    static constexpr uint64_t Pack(uint32_t epoch, uint32_t cursor) noexcept {
+        return (static_cast<uint64_t>(epoch) << 32) | static_cast<uint64_t>(cursor);
+    }
+    static constexpr uint32_t UnpackEpoch(uint64_t packed) noexcept {
+        return static_cast<uint32_t>(packed >> 32);
+    }
+    static constexpr uint32_t UnpackCursor(uint64_t packed) noexcept {
+        return static_cast<uint32_t>(packed & 0xFFFFFFFFU);
+    }
+
+    /// Reset cursors and increment the epoch to invalidate any in-flight capture or take.
+    void Reset(uint32_t explicitEpoch = 0) noexcept {
+        epochTransitionSequence_.fetch_add(1, std::memory_order_acq_rel);
+        uint32_t nextEpoch = explicitEpoch;
+        if (nextEpoch == 0) {
+            nextEpoch = UnpackEpoch(capturePosition_.load(std::memory_order_relaxed)) + 1U;
+            if (nextEpoch == 0) {
+                nextEpoch = 1U;
+            }
+        }
+        capturePosition_.store(Pack(nextEpoch, 0U), std::memory_order_release);
+        playbackPosition_.store(Pack(nextEpoch, 0U), std::memory_order_release);
+        establishedEpoch_.store(0U, std::memory_order_release);
+        epochTransitionSequence_.fetch_add(1, std::memory_order_release);
     }
 
     /// Cache one offset per data block from a received packet.
@@ -63,13 +108,6 @@ public:
     /// SPH tick minus the whole-cycle base of the cycle the packet was received in.
     ///
     /// `receiveCycle` is that cycle, taken from the packet's own receive timestamp.
-    /// Linux gets the same value from a counter seeded with the stream's real start
-    /// cycle (processing_cycle.tx_start, :340-341) and advanced once per packet, empty
-    /// or not. The previous port started its counter at 0 and advanced it only for
-    /// packets that carried blocks, so every offset came out as the device's absolute
-    /// bus time -- thousands of cycles -- instead of the small in-cycle presentation
-    /// offset the transmit side needs, and it drifted further on every empty packet.
-    /// Passing the real cycle removes both failure modes rather than re-seeding them.
     uint32_t Capture(std::span<const uint8_t> payload,
                      uint32_t dbs,
                      uint32_t dataBlocks,
@@ -78,12 +116,20 @@ public:
         if (dbs == 0 || dataBlocks == 0) {
             return 0;
         }
+
+        const uint64_t transBefore = epochTransitionSequence_.load(std::memory_order_acquire);
+        if ((transBefore & 1U) != 0U) {
+            return 0; // Transition in progress
+        }
+
+        uint64_t capPos = capturePosition_.load(std::memory_order_acquire);
+        const uint32_t epoch = UnpackEpoch(capPos);
+        const uint32_t cursor = UnpackCursor(capPos);
+
         const uint32_t baseTick = BaseTickForCycle(receiveCycle);
         const uint64_t blockBytes = static_cast<uint64_t>(dbs) * 4ULL;
 
         uint32_t cached = 0;
-        uint64_t cursor = captureCursor_.load(std::memory_order_relaxed);
-
         for (uint32_t block = 0; block < dataBlocks; ++block) {
             const uint64_t blockStart =
                 static_cast<uint64_t>(cipHeaderBytes) + static_cast<uint64_t>(block) * blockBytes;
@@ -91,16 +137,38 @@ public:
                 break;
             }
             const uint32_t sph = ReadSph(payload.subspan(static_cast<size_t>(blockStart), 4));
-            slots_[(cursor + block) & (kCapacity - 1)].store(TickOffsetFromBase(sph, baseTick),
-                                                             std::memory_order_relaxed);
+            const uint32_t logicalPos = cursor + block;
+            const uint32_t slotIdx = logicalPos & (kCapacity - 1);
+
+            slots_[slotIdx].store(Pack(logicalPos, TickOffsetFromBase(sph, baseTick)),
+                                  std::memory_order_release);
             ++cached;
         }
 
-        // Publish the new cursor last: a reader that sees it is guaranteed to see the
-        // slot writes above (release pairs with the acquire in Take).
-        captureCursor_.store(cursor + cached, std::memory_order_release);
-        if (cached > 0) {
-            established_.store(true, std::memory_order_release);
+        if (cached == 0) {
+            return 0;
+        }
+
+        if (epochTransitionSequence_.load(std::memory_order_acquire) != transBefore) {
+            return 0; // Reset occurred while capturing
+        }
+
+        const uint64_t desiredPos = Pack(epoch, cursor + cached);
+        if (!capturePosition_.compare_exchange_strong(capPos, desiredPos,
+                                                      std::memory_order_release,
+                                                      std::memory_order_relaxed)) {
+            // Concurrent reset clobbered our epoch; discard pre-reset work.
+            return 0;
+        }
+
+#if defined(ASFW_HOST_TEST)
+        if (postCasHook_) {
+            postCasHook_(epoch);
+        }
+#endif
+
+        if (UnpackEpoch(capturePosition_.load(std::memory_order_relaxed)) == epoch) {
+            establishedEpoch_.store(epoch, std::memory_order_release);
         }
         return cached;
     }
@@ -108,66 +176,175 @@ public:
     /// Fill `out` with the next `out.size()` cached offsets and advance the playback
     /// cursor past them.
     ///
-    /// Returns false without consuming anything when fewer are available or when the
-    /// requested run would read history already overwritten by the capture side. A
-    /// partial fill is never returned: an unstamped block would go out carrying a stale
-    /// SPH, so the caller must be able to treat this as all-or-nothing.
-    [[nodiscard]] bool Take(std::span<uint32_t> out) noexcept {
-        if (out.empty()) {
+    /// Returns false without consuming anything when fewer are available or when timing
+    /// has not been established. A partial fill is never returned.
+    ///
+    /// On overrun (playback fell behind ring capacity) or underrun (playback caught up
+    /// with capture), resyncs to the newest complete run.
+    [[nodiscard]] bool Take(std::span<uint32_t> out,
+                            OffsetCacheTakeResult* outResult = nullptr) noexcept {
+        auto setResult = [outResult](OffsetCacheTakeResult r) {
+            if (outResult) {
+                *outResult = r;
+            }
+        };
+
+        if (out.empty() || out.size() > kCapacity) {
+            setResult(OffsetCacheTakeResult::InvalidRequest);
             return false;
         }
-        const uint64_t producer = captureCursor_.load(std::memory_order_acquire);
-        const uint64_t cursor = playbackCursor_.load(std::memory_order_relaxed);
-
-        if (cursor + out.size() > producer) {
-            return false; // playback has caught up with capture
-        }
-        uint64_t start = cursor;
-        if (producer - cursor > kCapacity) {
-            // The run we wanted has been overwritten: playback fell a whole ring behind,
-            // which a replay reclamp on the transmit side can cause in one step. Failing
-            // here fails every later call too, so the stream would go permanently
-            // unstamped -- silent -- with nothing to recover it. Linux never fails at
-            // all: write_sph (amdtp-motu.c:373-393) reads whatever is at its head, which
-            // after an overrun is newer capture history. Resync to the newest complete
-            // run instead; recent offsets are the right magnitude, a zero SPH is not.
-            start = producer - out.size();
+        if (!IsEstablished()) {
+            setResult(OffsetCacheTakeResult::NotEstablished);
+            return false;
         }
 
-        for (size_t i = 0; i < out.size(); ++i) {
-            out[i] = slots_[(start + i) & (kCapacity - 1)].load(std::memory_order_relaxed);
+        constexpr uint32_t kMaxAttempts = 3;
+        for (uint32_t attempt = 0; attempt < kMaxAttempts; ++attempt) {
+            const uint64_t transBefore = epochTransitionSequence_.load(std::memory_order_acquire);
+            if ((transBefore & 1U) != 0U) {
+                continue;
+            }
+
+            const uint64_t capPos = capturePosition_.load(std::memory_order_acquire);
+            uint64_t playPos = playbackPosition_.load(std::memory_order_acquire);
+
+            const uint32_t capEpoch = UnpackEpoch(capPos);
+            const uint32_t playEpoch = UnpackEpoch(playPos);
+            if (capEpoch != playEpoch) {
+                setResult(OffsetCacheTakeResult::ConcurrentReset);
+                return false;
+            }
+
+            const uint32_t producer = UnpackCursor(capPos);
+            const uint32_t cursor = UnpackCursor(playPos);
+            const uint32_t requested = static_cast<uint32_t>(out.size());
+
+            // Check if capture has ever received enough blocks to fill one run.
+            if (producer < requested) {
+                setResult(OffsetCacheTakeResult::NotEnoughHistory);
+                return false;
+            }
+
+            uint32_t start = cursor;
+            OffsetCacheTakeResult result = OffsetCacheTakeResult::Success;
+
+            const int32_t diff = static_cast<int32_t>(producer - cursor);
+            if (diff < static_cast<int32_t>(requested)) {
+                // Underrun: playback caught up with capture.
+                // Resync to newest complete run (marked unverified on MOTU hardware).
+                start = producer - requested;
+                result = OffsetCacheTakeResult::SuccessUnderrunResync;
+            } else if (diff > static_cast<int32_t>(kCapacity)) {
+                // Overrun: playback fell behind the ring window.
+                // Resync to newest complete run.
+                start = producer - requested;
+                result = OffsetCacheTakeResult::SuccessOverrunResync;
+            }
+
+            // Copy atomic position/offset pairs and verify the requested logical run.
+            bool stable = true;
+            for (uint32_t i = 0; i < requested; ++i) {
+                const uint32_t expectedLogicalPos = start + i;
+                const uint32_t slotIdx = expectedLogicalPos & (kCapacity - 1);
+                const uint64_t slot = slots_[slotIdx].load(std::memory_order_acquire);
+                const uint32_t pos = UnpackEpoch(slot);
+                const uint32_t val = UnpackCursor(slot);
+                if (pos != expectedLogicalPos) {
+                    stable = false;
+                    break;
+                }
+                out[i] = val;
+
+#if defined(ASFW_HOST_TEST)
+                if (onSlotCopiedHook_) {
+                    onSlotCopiedHook_(i);
+                }
+#endif
+            }
+
+            if (!stable) {
+                continue; // Retry copy
+            }
+
+            if (epochTransitionSequence_.load(std::memory_order_acquire) != transBefore) {
+                continue; // Reset intervened
+            }
+
+            const uint64_t capPosAfter = capturePosition_.load(std::memory_order_acquire);
+            if (UnpackEpoch(capPosAfter) != playEpoch) {
+                continue; // Reset intervened
+            }
+            const uint32_t prodAfter = UnpackCursor(capPosAfter);
+            if (prodAfter < start + requested || (prodAfter - start) > kCapacity) {
+                continue; // Producer wrapped or moved past our read window while copying
+            }
+
+            const uint64_t desiredPlayPos = Pack(playEpoch, start + requested);
+            if (!playbackPosition_.compare_exchange_strong(playPos, desiredPlayPos,
+                                                           std::memory_order_release,
+                                                           std::memory_order_relaxed)) {
+                // Concurrent reset or take intervened; retry
+                continue;
+            }
+
+            setResult(result);
+            return true;
         }
-        playbackCursor_.store(start + out.size(), std::memory_order_release);
-        return true;
+
+        setResult(OffsetCacheTakeResult::ConcurrentRewrite);
+        return false;
     }
 
-    /// True once at least one block has been captured, so the transmit side knows the
-    /// device's timing has actually been observed rather than assumed.
+    /// True once at least one block has been captured in the current epoch,
+    /// so the transmit side knows the device's timing has actually been observed.
     [[nodiscard]] bool IsEstablished() const noexcept {
-        return established_.load(std::memory_order_acquire);
+        const uint32_t currentEpoch = UnpackEpoch(capturePosition_.load(std::memory_order_acquire));
+        return currentEpoch != 0 && establishedEpoch_.load(std::memory_order_acquire) == currentEpoch;
     }
 
     [[nodiscard]] uint64_t Available() const noexcept {
-        const uint64_t producer = captureCursor_.load(std::memory_order_acquire);
-        const uint64_t cursor = playbackCursor_.load(std::memory_order_relaxed);
-        return (producer > cursor) ? (producer - cursor) : 0ULL;
+        const uint64_t capPos = capturePosition_.load(std::memory_order_acquire);
+        const uint64_t playPos = playbackPosition_.load(std::memory_order_relaxed);
+        if (UnpackEpoch(capPos) != UnpackEpoch(playPos)) {
+            return 0ULL;
+        }
+        const uint32_t producer = UnpackCursor(capPos);
+        const uint32_t cursor = UnpackCursor(playPos);
+        const int32_t diff = static_cast<int32_t>(producer - cursor);
+        return (diff > 0) ? static_cast<uint64_t>(diff) : 0ULL;
     }
 
     [[nodiscard]] uint64_t CaptureCursor() const noexcept {
-        return captureCursor_.load(std::memory_order_acquire);
+        return UnpackCursor(capturePosition_.load(std::memory_order_acquire));
     }
     [[nodiscard]] uint64_t PlaybackCursor() const noexcept {
-        return playbackCursor_.load(std::memory_order_relaxed);
+        return UnpackCursor(playbackPosition_.load(std::memory_order_relaxed));
+    }
+    [[nodiscard]] uint32_t Epoch() const noexcept {
+        return UnpackEpoch(capturePosition_.load(std::memory_order_acquire));
     }
 
+#if defined(ASFW_HOST_TEST)
+    void SetOnSlotCopiedHookForTesting(std::function<void(uint32_t)> hook) noexcept {
+        onSlotCopiedHook_ = std::move(hook);
+    }
+    void SetPostCasHookForTesting(std::function<void(uint32_t)> hook) noexcept {
+        postCasHook_ = std::move(hook);
+    }
+#endif
+
 private:
-    // Capture and playback run on separate queues, so the ring is atomic like
-    // RxSequenceReplayState's. Cursors are monotonic 64-bit counts folded to an index,
-    // which keeps "how far behind am I" answerable without wrap ambiguity.
-    std::atomic<uint32_t> slots_[kCapacity]{};
-    std::atomic<uint64_t> captureCursor_{0};
-    std::atomic<uint64_t> playbackCursor_{0};
-    std::atomic<bool> established_{false};
+    static_assert(std::atomic<uint64_t>::is_always_lock_free);
+    std::atomic<uint64_t> slots_[kCapacity]{};
+    std::atomic<uint64_t> capturePosition_{Pack(1U, 0U)};
+    std::atomic<uint64_t> playbackPosition_{Pack(1U, 0U)};
+    std::atomic<uint64_t> epochTransitionSequence_{0U};
+    std::atomic<uint32_t> establishedEpoch_{0U};
+
+#if defined(ASFW_HOST_TEST)
+    std::function<void(uint32_t)> onSlotCopiedHook_{};
+    std::function<void(uint32_t)> postCasHook_{};
+#endif
 };
 
 } // namespace ASFW::Encoding::Motu

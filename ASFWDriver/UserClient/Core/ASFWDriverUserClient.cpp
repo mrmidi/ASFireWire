@@ -73,6 +73,7 @@ enum {
     kMethodRequestUserBusReset = 61,
     kMethodStartAudioStreaming = 62,
     kMethodStopAudioStreaming = 63,
+        kMethodMotuCapture = 64,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -377,6 +378,8 @@ MethodDispatchResult DispatchIsochMethods(ASFW::UserClient::UserClientRuntimeSta
         return runtimeState.Isoch().StartIsochTransmit(arguments);
     case kMethodStopIsochTransmit:
         return runtimeState.Isoch().StopIsochTransmit(arguments);
+    case kMethodMotuCapture:
+        return runtimeState.Isoch().MotuCapture(arguments);
     case kMethodStartDVCapture:
         return runtimeState.Isoch().StartDVCapture(arguments);
     case kMethodStopDVCapture:

@@ -75,6 +75,13 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
         if (deps_.deviceRegistry) {
             deps_.deviceRegistry->InvalidateLiveMappingsForBusReset();
         }
+        // Observed link speeds are keyed by node ID, and the reset reassigns
+        // them. Carrying an entry across would apply one device's proven ceiling
+        // to whatever lands on that number next. Discovery re-probes before any
+        // protocol transacts, so clearing here costs nothing.
+        if (deps_.speedPolicy) {
+            deps_.speedPolicy->Reset();
+        }
         if (deps_.cmpClient) {
             deps_.cmpClient->InvalidateAllLeasesForBusReset();
         }

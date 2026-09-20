@@ -284,6 +284,7 @@ add_device_test(DeviceStreamTraitsAgreementTests
 # Audio backend lifecycle and publication race tests (controlled interleavings)
 add_device_test(BackendLifecycleRaceTests
     BackendLifecycleRaceTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/MotuAudioBackend.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AVCAudioBackend.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/DiceAudioBackend.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp"

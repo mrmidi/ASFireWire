@@ -7,6 +7,9 @@
 #include "AudioRuntimeRegistry.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../Protocols/DeviceProtocolChoice.hpp"
+#include "../Protocols/IDeviceProtocol.hpp"
+#include <cstdio>
+#include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 namespace ASFW::Audio {
 
@@ -407,6 +410,51 @@ kern_return_t AudioCoordinator::StopHostTransport(const char* reason,
              "generation-invalidated=%u kr=0x%08x",
              reason, generationInvalidated ? 1U : 0U, status);
     return status;
+}
+
+IOReturn AudioCoordinator::MotuCaptureCommand(uint64_t guid, uint32_t stream,
+                                             uint32_t command, std::string& output) noexcept {
+    if (captureCommandBusy_.test_and_set(std::memory_order_acquire)) return kIOReturnBusy;
+    struct Release final {
+        std::atomic_flag& gate;
+        ~Release() { gate.clear(std::memory_order_release); }
+    } release{captureCommandBusy_};
+    auto* capture = hostTransport_.DiagnosticCapture(stream);
+    if (!capture || guid == 0 || command > 2) return kIOReturnBadArgument;
+    if (teardownRequested_.load(std::memory_order_acquire)) return kIOReturnNotReady;
+    if (command == 0) {
+        // Only arm a known MOTU endpoint; never label another family's packets as MOTU.
+        if (BackendForGuid(guid) != &motu_) return kIOReturnUnsupported;
+        const auto protocol = runtime_.FindShared(guid);
+        if (!protocol) return kIOReturnNotReady;
+        Wire::MotuRxStreamMetadata metadata{};
+        metadata.guid = guid;
+        metadata.streamIndex = stream;
+        const auto record = registry_.SnapshotByGuid(guid);
+        const char* model = record ? DeviceProfiles::Audio::AudioDeviceCatalog::
+            MotuModelNameForSwVersion(record->unitSwVersion.value_or(0)) : nullptr;
+        snprintf(metadata.model, sizeof(metadata.model), "%s", model ? model : protocol->GetName());
+        const auto endpoint = runtime_.FindEndpointRuntime(guid);
+        Runtime::DirectAudioBindingSnapshot binding{};
+        if (endpoint && endpoint->CopyDirectAudioBinding(binding))
+            metadata.sampleRateHz = binding.sampleRateHz;
+        return capture->Arm(metadata) ? kIOReturnSuccess : kIOReturnBusy;
+    }
+    Wire::MotuRxDiagnosticCapture::Snapshot snapshot{};
+    if (!capture->CopySnapshot(snapshot)) return kIOReturnBusy;
+    if (snapshot.metadata.guid != guid) return kIOReturnNotFound;
+    if (!capture->Disarm()) return kIOReturnBusy;
+    if (command == 2) {
+        output = capture->FormatCaptureSummary();
+        if (output.empty()) return kIOReturnBusy;
+    }
+    return kIOReturnSuccess;
+}
+
+bool AudioCoordinator::RequestMotuTimingRecovery(uint64_t guid) noexcept {
+    if (teardownRequested_.load(std::memory_order_acquire) || BackendForGuid(guid) != &motu_)
+        return false;
+    return motu_.QueueTimingRecovery(guid);
 }
 
 void AudioCoordinator::HandleHostTimingLoss(uint64_t guid) noexcept {

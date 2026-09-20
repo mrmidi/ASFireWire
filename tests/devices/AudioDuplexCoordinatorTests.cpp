@@ -10,6 +10,7 @@
 #include "Bus/IRM/IRMClient.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Hardware/HardwareInterface.hpp"
+#include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
 
 #include <atomic>
@@ -201,21 +202,17 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     kern_return_t PrepareReceive(
         uint8_t channel, HardwareInterface&,
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-        ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0, uint32_t streamChannels = 0,
-        bool trustConfiguredStride = false, uint32_t motuPcmChunks = 0,
-        ASFW::Encoding::Motu::MotuPortMap motuPorts = {},
-        const ASFW::AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap = {}) noexcept override {
+        const ASFW::Audio::DirectRxFormatDescriptor& format = {}) noexcept override {
         log_.Add("host.prepare_receive");
-        lastReceiveMotuPcmChunks = motuPcmChunks;
-        lastReceiveMotuPorts = motuPorts;
+        lastReceiveMotuPcmChunks = format.motuPcmChunks;
+        lastReceiveMotuPorts = format.motuPorts;
         lastReceiveChannel = channel;
         lastReceiveBindingSource = bindingSource;
-        lastReceiveWireFormat = wireFormat;
-        lastReceiveAm824Slots = am824Slots;
-        lastReceiveStreamChannels = streamChannels;
-        lastReceiveTrustConfiguredStride = trustConfiguredStride;
-        lastReceiveCaptureChannelMap = captureChannelMap;
+        lastReceiveWireFormat = format.wireFormat;
+        lastReceiveAm824Slots = format.am824Slots;
+        lastReceiveStreamChannels = format.streamChannels;
+        lastReceiveTrustConfiguredStride = format.trustConfiguredStride;
+        lastReceiveCaptureChannelMap = format.captureChannelMap;
         ++prepareReceiveCalls;
         return prepareReceiveStatus;
     }
@@ -232,24 +229,15 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     kern_return_t PrepareReceiveStream(
         uint32_t streamIndex, uint8_t channel, HardwareInterface&,
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
-        uint32_t streamChannels,
-        ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0, bool trustConfiguredStride = false,
-        uint32_t motuPcmChunks = 0,
-        ASFW::Encoding::Motu::MotuPortMap motuPorts = {},
-        const ASFW::AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap = {}) noexcept override {
-        (void)trustConfiguredStride;
-        (void)motuPorts;
+        const ASFW::Audio::DirectRxFormatDescriptor& format = {}) noexcept override {
         log_.Add("host.prepare_receive_stream");
-        lastSecondaryReceiveMotuPcmChunks = motuPcmChunks;
+        lastSecondaryReceiveMotuPcmChunks = format.motuPcmChunks;
         lastSecondaryReceiveIndex = streamIndex;
         lastSecondaryReceiveChannel = channel;
         lastSecondaryReceiveOffset = channelOffset;
-        lastSecondaryReceiveChannels = streamChannels;
+        lastSecondaryReceiveChannels = format.streamChannels;
         lastSecondaryReceiveBindingSource = bindingSource;
-        lastSecondaryReceiveCaptureChannelMap = captureChannelMap;
-        (void)wireFormat;
-        (void)am824Slots;
+        lastSecondaryReceiveCaptureChannelMap = format.captureChannelMap;
         ++prepareReceiveStreamCalls;
         return prepareReceiveStatus;
     }
@@ -1445,4 +1433,16 @@ TEST_F(AudioDuplexCoordinatorTests, ChangedEndpointGeometryRejectsStartRecoveryA
     // Rediscovery must not reopen a geometry latch; recreation owns that.
     coordinator_.AcknowledgeDevicePresent(kTestGuid);
     EXPECT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnNotReady);
+}
+
+TEST_F(AudioDuplexCoordinatorTests, StaleTimingFaultCannotRecoverNewerSession) {
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+    const auto original = GetSession();
+    ASSERT_TRUE(original.has_value());
+    ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterTimingLoss,
+                                          original->restartId), kIOReturnSuccess);
+    ClearLog();
+    EXPECT_EQ(coordinator_.RecoverStreaming(kTestGuid, DuplexRestartReason::kRecoverAfterTimingLoss,
+                                          original->restartId), kIOReturnAborted);
+    EXPECT_TRUE(LogSnapshot().empty());
 }

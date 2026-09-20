@@ -30,6 +30,7 @@
 #include "MotuPortLayout.hpp"
 #include "../AMDTP/AmdtpPacketTimeline.hpp"
 #include "../AMDTP/AmdtpTypes.hpp"
+#include "../../Ports/IWirePayloadCodec.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -61,7 +62,7 @@ struct MotuPayloadStreamConfig final {
     MotuPortMap ports{};
 };
 
-class MotuPayloadWriter final {
+class MotuPayloadWriter final : public ::ASFW::Audio::ITxPayloadWriter {
 public:
     MotuPayloadWriter() noexcept = default;
 
@@ -73,7 +74,7 @@ public:
     /// against a live DMA ring, exactly as the AMDTP writer is.
     void WriteFloat32Interleaved(
         const Protocols::Audio::AMDTP::HostAudioBufferView& hostBuffer,
-        uint64_t completionCursor) noexcept;
+        uint64_t completionCursor) noexcept override;
 
     [[nodiscard]] const MotuPayloadWriterCounters& Counters() const noexcept;
 

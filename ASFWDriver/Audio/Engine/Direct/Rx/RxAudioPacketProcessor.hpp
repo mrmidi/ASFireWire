@@ -4,10 +4,13 @@
 #include "DirectRxTypes.hpp"
 #include "RxCaptureChannelMap.hpp"
 #include "../../../Wire/AMDTP/AmdtpTypes.hpp"
-#include "../../../Wire/MOTU/MotuPortLayout.hpp"
 
 #include <cstdint>
 #include <cstddef>
+
+namespace ASFW::Audio {
+class IRxPayloadCodec;
+}
 
 namespace ASFW::AudioEngine::Direct::Rx {
 
@@ -34,39 +37,16 @@ public:
     explicit RxAudioPacketProcessor(DirectInputWriter& writer) noexcept
         : writer_(writer) {}
 
-    // `channels` is the number of PCM channels THIS stream decodes (its slice),
-    // written into the shared interleaved input buffer starting at `channelOffset`
-    // (e.g. 0 for the master/first 16-ch slice, 16 for the second). The buffer's
-    // full interleave width (stride) is owned by the writer's binding.
-    // `publishTimeline` advances the producer cursor/frame counters — only the
-    // master stream does this; secondary slices write PCM only.
-    // `trustConfiguredStride`: Loud OXFW units stamp an unreliable dbs in
-    // device->host packets; when set, `am824Slots` is the stride authority and
-    // the header dbs is surfaced in the result for telemetry only (Linux
-    // snd-oxfw SND_OXFW_QUIRK_WRONG_DBS; amdtp-stream.c:766-769).
-    // `captureMap` reorders wire slots onto channels and may delay a subset of
-    // them; the identity map costs nothing and is the default. `primeDelayLine`
-    // silences the delayed channels of the frames ahead of `absoluteFrame`, and
-    // must be set on the first packet of an epoch so the head of the delay line
-    // cannot expose stale buffer content.
-    [[nodiscard]] RxAudioPacketProcessorResult ProcessPacket(const uint8_t* payload,
-                                                             size_t length,
-                                                             uint64_t absoluteFrame,
-                                                             uint32_t channels,
-                                                             uint32_t am824Slots,
-                                                             ASFW::Encoding::AudioWireFormat format,
-                                                             uint32_t channelOffset = 0,
-                                                             bool publishTimeline = true,
-                                                             bool trustConfiguredStride = false,
-                                                             // MOTU only: PCM chunks this
-                                                             // direction carries per data
-                                                             // block. Ignored by the
-                                                             // quadlet-slot formats, whose
-                                                             // unit count is am824Slots.
-                                                             uint32_t motuPcmChunks = 0,
-                                                             ::ASFW::Encoding::Motu::MotuPortMap motuPorts = {},
-                                                             const RxCaptureChannelMap& captureMap = {},
-                                                             bool primeDelayLine = false) noexcept;
+    [[nodiscard]] RxAudioPacketProcessorResult ProcessPacket(
+        const uint8_t* payload,
+        size_t length,
+        uint64_t absoluteFrame,
+        uint32_t channels,
+        const ::ASFW::Audio::IRxPayloadCodec& codec,
+        uint32_t channelOffset = 0,
+        bool publishTimeline = true,
+        const RxCaptureChannelMap& captureMap = {},
+        bool primeDelayLine = false) noexcept;
 
 private:
     DirectInputWriter& writer_;

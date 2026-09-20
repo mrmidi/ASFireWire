@@ -3,6 +3,7 @@
 #include "AmdtpCadence.hpp"
 #include "AmdtpPacketTimeline.hpp"
 #include "AmdtpTypes.hpp"
+#include "../../Ports/TxPresentationPlan.hpp"
 #include "../IEC61883/CipHeader.hpp"
 #include "../IEC61883/DbcCounter.hpp"
 
@@ -53,15 +54,29 @@ public:
     // never stalls is unaffected.
     void ReArmFrameCursorAlignment() noexcept;
 
+    void SetPresentationCursor(uint64_t epoch, uint64_t frame, bool aligned) noexcept;
+
     [[nodiscard]] bool IsFrameCursorAligned() const noexcept { return frameCursorAligned_; }
+    [[nodiscard]] uint64_t NextAudioFrame() const noexcept {
+        return telemetryNextAudioFrame_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] uint64_t CursorEpoch() const noexcept { return cursorEpoch_; }
+
+    bool PrepareNextPacket(TxPacketSlotView slot,
+                           const AmdtpTimingState& timing,
+                           const TxPresentationPlan& plan,
+                           PreparedTxPacket& outPacket) noexcept;
 
     bool PrepareNextPacket(TxPacketSlotView slot,
                            const AmdtpTimingState& timing,
                            PreparedTxPacket& outPacket) noexcept;
 
+    void RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& packet) noexcept;
+
     [[nodiscard]] const AmdtpStreamConfig& StreamConfig() const noexcept;
     [[nodiscard]] const AmdtpTxPolicy& TxPolicy() const noexcept;
     [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
+    [[nodiscard]] uint8_t CurrentCycleDataFrames() const noexcept;
 
     [[nodiscard]] AmdtpTxPacketizerTelemetrySnapshot
     TelemetrySnapshot() const noexcept;
@@ -91,7 +106,6 @@ private:
 
     AmdtpPacketTimeline* timeline_{nullptr};
 
-    uint64_t nextAudioFrame_{0};
     bool frameCursorAligned_{false};
     uint64_t cursorEpoch_{0};
     uint64_t lastDataFirstAudioFrame_{0};
