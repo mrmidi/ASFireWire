@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace ASFW::Audio::Backends {
 
@@ -80,6 +81,27 @@ public:
             : std::nullopt;
         IOLockUnlock(lock);
         return session;
+    }
+
+    [[nodiscard]] bool IsStreaming(uint64_t guid) const noexcept {
+        const auto session = GetSession(guid);
+        return session.has_value() && session->deviceRunning;
+    }
+
+    [[nodiscard]] std::vector<uint64_t> GetStreamingGuids() const noexcept {
+        std::vector<uint64_t> guids;
+        IOLock* const lock = *lockRef_;
+        if (!lock) {
+            return guids;
+        }
+        IOLockLock(lock);
+        for (const auto& [guid, session] : sessions_) {
+            if (session.deviceRunning) {
+                guids.push_back(guid);
+            }
+        }
+        IOLockUnlock(lock);
+        return guids;
     }
 
     [[nodiscard]] uint64_t AllocateRestartId() noexcept {

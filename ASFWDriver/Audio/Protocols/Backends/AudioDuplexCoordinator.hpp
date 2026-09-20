@@ -43,6 +43,10 @@ public:
     AudioDuplexCoordinator(const AudioDuplexCoordinator&) = delete;
     AudioDuplexCoordinator& operator=(const AudioDuplexCoordinator&) = delete;
 
+    // Installed by composition before device callbacks begin.
+    void SetEndpointStartGuard(std::function<bool(uint64_t)> guard) {
+        endpointStartGuard_ = std::move(guard);
+    }
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn RequestClockConfig(
@@ -61,6 +65,8 @@ public:
     [[nodiscard]] bool IsDeviceOperationCancelled(uint64_t guid) const noexcept;
     void ClearSession(uint64_t guid) noexcept;
     [[nodiscard]] std::optional<DuplexRestartSession> GetSession(uint64_t guid) const noexcept;
+    [[nodiscard]] bool IsStreaming(uint64_t guid) const noexcept;
+    [[nodiscard]] std::vector<uint64_t> GetStreamingGuids() const noexcept;
     // True while a host-initiated duplex operation (start/stop/clock change/recovery) holds the
     // per-GUID gate or a clock request is queued behind it. Health probes use this to tell a
     // genuine device-initiated clock move from the echo of the host's own in-flight change.
@@ -71,6 +77,7 @@ public:
     }
 
 private:
+    std::function<bool(uint64_t)> endpointStartGuard_{};
     using PendingClockRequest = Backends::ClockRequestBroker::PendingClockRequest;
 
     [[nodiscard]] IOReturn RunStartStreaming(uint64_t guid) noexcept;

@@ -22,7 +22,9 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
                                                                    bool publishTimeline,
                                                                    bool trustConfiguredStride,
                                                                    uint32_t motuPcmChunks,
-                                                                   ::ASFW::Encoding::Motu::MotuPortMap motuPorts) noexcept {
+                                                                   ::ASFW::Encoding::Motu::MotuPortMap motuPorts,
+                                                                   const RxCaptureChannelMap& captureMap,
+                                                                   bool primeDelayLine) noexcept {
     RxAudioPacketProcessorResult result{};
 
     if (length < kIsochHeaderSize + 8) {
@@ -123,6 +125,27 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
         return result;
     }
 
+    // A map sized for a different formation than the packet actually carries
+    // would read past the data blocks. Fall back to the wire order instead:
+    // presenting the device's own channel order is recoverable, reading out of
+    // bounds is not.
+    const bool mapUsable = captureMap.FitsWithin(channels, strideQuadlets);
+    const RxCaptureChannelMap& effectiveMap =
+        mapUsable ? captureMap : RxCaptureChannelMap{};
+    if (!mapUsable) {
+        result.mapRejected = true;
+    }
+    const uint32_t delayFrames = effectiveMap.HasDelay() ? effectiveMap.delayFrames : 0;
+
+    if (primeDelayLine && delayFrames != 0) {
+        for (uint32_t i = 0; i < delayFrames; ++i) {
+            float* frameOut = writer_.Frame(absoluteFrame + i);
+            if (frameOut) {
+                SilenceDelayedChannels(channels, effectiveMap, frameOut + channelOffset);
+            }
+        }
+    }
+
     // If armed: decode directly to ADK input memory.
     const uint32_t* dataBlocks = &quadlets[2];
     const auto* blockBytes = reinterpret_cast<const uint8_t*>(dataBlocks);
@@ -144,8 +167,20 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
                 motuPcmChunks, channelOffset, frameOut + channelOffset, channels, motuPorts);
         } else {
             const uint32_t* frameIn = dataBlocks + (i * strideQuadlets);
-            DecodeDirectRxFrame(frameIn, channels, strideQuadlets, format,
-                                frameOut + channelOffset);
+            if (effectiveMap.IsIdentity()) {
+                DecodeDirectRxFrame(frameIn, channels, strideQuadlets, format,
+                                    frameOut + channelOffset);
+            } else {
+                float* delayedOut = nullptr;
+                if (delayFrames != 0) {
+                    delayedOut = writer_.Frame(absoluteFrame + i + delayFrames);
+                    if (delayedOut) {
+                        delayedOut += channelOffset;
+                    }
+                }
+                DecodeDirectRxFrameMapped(frameIn, channels, format, effectiveMap,
+                                          frameOut + channelOffset, delayedOut);
+            }
         }
     }
 

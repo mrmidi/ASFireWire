@@ -32,9 +32,9 @@ public:
     [[nodiscard]] bool BuildTxStreamConfig(uint32_t streamIndex,
                                            AudioStreamConfig& outConfig) const noexcept override;
 
-    // Likewise, the base computes pcmChannels * TxStreamCount(), which is 32 for
-    // this device rather than the 26 it actually accepts.
-    [[nodiscard]] uint32_t TxChannelCount() const noexcept override;
+    // TxChannelCount() is deliberately NOT overridden any more: the base now
+    // sums BuildTxStreamConfig() across the streams, which gives this device's
+    // 16 + 10 = 26 without a per-model override.
 
     [[nodiscard]] uint32_t TxSafetyOffsetFrames(double sampleRate) const noexcept override;
     [[nodiscard]] uint32_t RxSafetyOffsetFrames(double sampleRate) const noexcept override;

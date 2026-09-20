@@ -58,6 +58,14 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
                 parsedConfig.outputChannelNames[index],
                 sizeof(device.outputChannelNames[index]));
     }
+    device.playbackStreamCount = parsedConfig.playbackStreamCount;
+    device.captureStreamCount = parsedConfig.captureStreamCount;
+    device.resolvedGeometryRequired = parsedConfig.resolvedGeometryRequired;
+    for (uint32_t index = 0; index < ASFW::Isoch::Audio::kMaxConfiguredStreams; ++index) {
+        device.playbackStreams[index] = parsedConfig.playbackStreams[index];
+        device.captureStreams[index] = parsedConfig.captureStreams[index];
+    }
+
     ASFW::Isoch::Audio::ResetBoolControlSlots(device.boolControls,
                                               ASFW::Isoch::Audio::kMaxBoolControls);
     for (uint32_t index = 0; index < device.boolControlCount; ++index) {

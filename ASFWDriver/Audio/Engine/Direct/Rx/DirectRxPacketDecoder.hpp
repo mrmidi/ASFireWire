@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DirectRxTypes.hpp"
+#include "RxCaptureChannelMap.hpp"
 #include "../../../Wire/AM824/AM824Decoder.hpp"
 #include <cstdint>
 
@@ -36,15 +37,49 @@ inline void DecodeDirectRxFrame(const uint32_t* inWireQuadlets,
                                 uint32_t pcmChannels,
                                 uint32_t am824Slots,
                                 ASFW::Encoding::AudioWireFormat format,
-                                float* outPcmFrame) noexcept {
+                                float* outPcmFrame,
+                                const RxCaptureChannelMap& map = {}) noexcept {
     (void)am824Slots;
     for (uint32_t ch = 0; ch < pcmChannels; ++ch) {
+        const uint32_t quadlet = inWireQuadlets[map.SlotFor(ch)];
         if (format == ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
             outPcmFrame[ch] =
-                Detail::DecodeRawSlotAsLabeledMBLAToFloat32(inWireQuadlets[ch]);
+                Detail::DecodeRawSlotAsLabeledMBLAToFloat32(quadlet);
         } else {
             outPcmFrame[ch] =
-                Detail::DecodeAm824SlotToFloat32(inWireQuadlets[ch]);
+                Detail::DecodeAm824SlotToFloat32(quadlet);
+        }
+    }
+}
+
+inline void DecodeDirectRxFrameMapped(const uint32_t* inWireQuadlets,
+                                      uint32_t pcmChannels,
+                                      ASFW::Encoding::AudioWireFormat format,
+                                      const RxCaptureChannelMap& map,
+                                      float* outPcmFrame,
+                                      float* outDelayedFrame) noexcept {
+    for (uint32_t ch = 0; ch < pcmChannels; ++ch) {
+        float* destination = outPcmFrame;
+        if (map.IsDelayed(ch)) {
+            if (outDelayedFrame == nullptr) {
+                continue;
+            }
+            destination = outDelayedFrame;
+        }
+        const uint32_t quadlet = inWireQuadlets[map.SlotFor(ch)];
+        destination[ch] =
+            format == ASFW::Encoding::AudioWireFormat::kRawPcm24In32
+                ? Detail::DecodeRawSlotAsLabeledMBLAToFloat32(quadlet)
+                : Detail::DecodeAm824SlotToFloat32(quadlet);
+    }
+}
+
+inline void SilenceDelayedChannels(uint32_t pcmChannels,
+                                   const RxCaptureChannelMap& map,
+                                   float* outPcmFrame) noexcept {
+    for (uint32_t ch = 0; ch < pcmChannels; ++ch) {
+        if (map.IsDelayed(ch)) {
+            outPcmFrame[ch] = 0.0f;
         }
     }
 }

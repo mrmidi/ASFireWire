@@ -47,8 +47,10 @@ public:
 
     [[nodiscard]] std::vector<uint32_t> SupportedSampleRates() const override;
 
-    [[nodiscard]] uint32_t RxChannelCount() const noexcept override;
-    [[nodiscard]] uint32_t TxChannelCount() const noexcept override;
+    // Tx/RxChannelCount() are deliberately NOT overridden: one stream per
+    // direction carrying kPcmChunks channels is exactly what the base computes
+    // by summing BuildTx/RxStreamConfig, so the overrides restated their own
+    // stream config and could only ever drift from it.
     [[nodiscard]] uint32_t TxMidiSlots() const noexcept override;
     [[nodiscard]] uint32_t RxMidiSlots() const noexcept override;
     [[nodiscard]] uint32_t TxDbs() const noexcept override;

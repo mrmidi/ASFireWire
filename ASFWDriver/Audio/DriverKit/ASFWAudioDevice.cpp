@@ -11,6 +11,7 @@
 #include "../../Logging/Logging.hpp"
 #include "../Config/TimingCursorPolicy.hpp"
 #include "Config/AudioProfileRegistry.hpp"
+#include "Config/ResolvedStreamConfig.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
 
@@ -164,8 +165,67 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             }
             initialClockAnchorTimeoutMs = profile->InitialClockAnchorTimeoutMs();
 
+            // How many playback streams to arm, and what shape each one is.
+            //
+            // Both come from the device when the publishing side resolved them
+            // and carried them across the nub. The profile supplies only the
+            // framing constants the DICE registers do not hold -- fdf, fmt,
+            // frames per data packet, stream mode -- and no longer decides how
+            // many channels a stream carries.
+            //
+            // That distinction is the whole point: the recorded Midas Venice
+            // F24 carries 16 + 8 on playback while its profile describes an F32
+            // at 16 + 16, so building stream 1 from the profile put 16 channels
+            // and DBS 16 into a stream the device frames with 8 slots. The
+            // device is authoritative and now actually reaches the packetizer.
+            const uint32_t resolvedPlaybackStreams = ivars.device.playbackStreamCount;
+            const uint32_t playbackStreamCount =
+                ASFW::Isoch::Audio::ResolvedPlaybackStreamCount(profile->TxStreamCount(),
+                                                                resolvedPlaybackStreams);
+
+            // This build allocates one primary and one secondary TX stream, so
+            // it cannot honour a device carrying more. Refuse rather than arm a
+            // subset: silently dropping a stream the device transmits on is the
+            // failure mode the geometry work exists to end.
+            constexpr uint32_t kMaxPlaybackStreamsThisBuild = 2;
+            if (playbackStreamCount > kMaxPlaybackStreamsThisBuild) {
+                ASFW_LOG(Audio,
+                         "ASFWAudioDevice: StartIO failed - device carries %u playback streams, "
+                         "this build configures at most %u",
+                         playbackStreamCount, kMaxPlaybackStreamsThisBuild);
+                kr = failStart(kIOReturnUnsupported, "PlaybackStreamCount");
+                return;
+            }
+            if (resolvedPlaybackStreams == 0) {
+                if (ivars.device.resolvedGeometryRequired) {
+                    // The publisher resolved geometry and said so, but none
+                    // arrived. Falling back to the profile here would silently
+                    // reinstate the exact mismatch the resolution removed -- a
+                    // Venice F24 framed as an F32 -- so this is a transport
+                    // fault, not a device without geometry.
+                    ASFW_LOG(Audio,
+                             "ASFWAudioDevice: StartIO failed - device requires resolved "
+                             "playback geometry but none crossed the nub");
+                    kr = failStart(kIOReturnNotFound, "MissingResolvedGeometry");
+                    return;
+                }
+                ASFW_LOG(Audio,
+                         "ASFWAudioDevice: StartIO has no resolved playback geometry; framing "
+                         "from profile constants (streams=%u) - correct only if every stream "
+                         "is the same width",
+                         playbackStreamCount);
+            }
+
+            const auto buildTxConfig =
+                [&profile, &ivars](uint32_t index,
+                                   ASFW::Isoch::Audio::AudioStreamConfig& out) -> bool {
+                return ASFW::Isoch::Audio::BuildResolvedTxStreamConfig(
+                    *profile, ivars.device.playbackStreams,
+                    ivars.device.playbackStreamCount, index, out);
+            };
+
             ASFW::Isoch::Audio::AudioStreamConfig txConfig{};
-            if (!profile->BuildTxStreamConfig(0, txConfig)) {
+            if (!buildTxConfig(0, txConfig)) {
                 ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - BuildDefaultTxStreamConfig failed");
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig");
                 return;
@@ -180,7 +240,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             const uint32_t numSlots =
                 ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets;
             const uint32_t maxPacketBytes =
-                8u + static_cast<uint32_t>(txConfig.framesPerDataPacket) * txConfig.dbs * 4u;
+                ASFW::Isoch::Audio::TxPacketBytesForStreamConfig(txConfig);
             const uint32_t interruptInterval =
                 ASFW::IsochTransport::AudioTimingGeometry::kTimingGroupPackets;
 
@@ -268,9 +328,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         // Secondary playback uses its own wire shape and source-channel slice.
         // It shadows the master's packet timing; the duplex bring-up wires its
         // shared slab to the matching IT context.
-        if (profile->TxStreamCount() > 1) {
+        if (playbackStreamCount > 1) {
             ASFW::Isoch::Audio::AudioStreamConfig txConfig2{};
-            if (!profile->BuildTxStreamConfig(1, txConfig2)) {
+            if (!buildTxConfig(1, txConfig2)) {
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig2");
                 return;
             }
@@ -282,7 +342,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             const uint32_t numSlots2 =
                 ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets;
             const uint32_t maxPacketBytes2 =
-                8u + static_cast<uint32_t>(txConfig2.framesPerDataPacket) * txConfig2.dbs * 4u;
+                ASFW::Isoch::Audio::TxPacketBytesForStreamConfig(txConfig2);
             const uint32_t interruptInterval2 =
                 ASFW::IsochTransport::AudioTimingGeometry::kTimingGroupPackets;
 

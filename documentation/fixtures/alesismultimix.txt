@@ -1,0 +1,146 @@
+ASFW DICE DEVICE REPORT
+=======================
+Generated: 2026-09-19T21:56:10Z
+Report app: 0.3.0 (build 6)
+Driver:     0.3.0 (bcbdfb4 on chore/remove-adhoc-install-scripts, dirty) built 2026-09-19T21:16:40Z
+Rate mode: low (32-48k)
+
+This is a read-only dump of the device's DICE register spaces.
+Paste it whole into the issue; do not trim sections.
+
+IDENTITY
+--------
+GUID:          0x00059504000005FE
+Vendor:        Alesis
+Model:         MultiMix FireWire
+Node / gen:    1 / 4
+TCAT vendor:   0x000595
+TCAT category: 0x04  (standard DICE)
+TCAT product:  0x000
+TCAT serial:   1534
+
+SECTION TABLES  (offsets and sizes in quadlets)
+-----------------------------------------------
+general space @ 0xFFFFE0000000
+  global         offset=0x0000A (0x000028 B)  size=0x0005A (360 B)
+  tx             offset=0x00064 (0x000190 B)  size=0x0008E (568 B)
+  rx             offset=0x000F2 (0x0003C8 B)  size=0x0011A (1128 B)
+  ext_sync       offset=0x00000 (0x000000 B)  size=0x00000 (0 B)
+  unused2        offset=0x00000 (0x000000 B)  size=0x00000 (0 B)
+
+extension space @ 0xFFFFE0200000
+  <absent>
+
+GLOBAL
+--------
+OWNER              = 0xFFFF000000000000  (no owner)
+NOTIFICATION       = 0x00000000   -
+NICK_NAME          = 'Alesis MultiMix'
+CLOCK_SELECT       = 0x0000020C   source=12 (internal)  rate=2 (48000)
+ENABLE             = 0x00000000   streaming=no
+STATUS             = 0x00000101   locked=yes  nominal=44100
+EXTENDED_STATUS    = 0x00000000
+    locked  : -
+    slipped : -
+    NOTE: slip bits are read-to-clear and fluctuate without notification;
+          this is an instantaneous sample, not a stable value.
+SAMPLE_RATE        = 44100 Hz  (measured)
+VERSION            = 0x01000400   (1.0.4.0)
+CLOCK_CAPABILITIES = 0x11000006
+    rates   : 44100 48000
+    sources : arx1 internal
+CLOCK_SOURCE_NAMES:
+    0   aes1      'unused'
+    1   aes2      'unused'
+    2   aes3      'unused'
+    3   aes4      'unused'
+    4   aes_any   'unused'
+    5   adat      'unused'
+    6   tdif      'unused'
+    7   wc        'unused'
+    8   arx1      'Firewire'
+    9   arx2      'unused'
+    10  arx3      'unused'
+    11  arx4      'unused'
+    12  internal  'Internal'
+
+TX STREAMS  (device transmits -> host capture)
+----------------------------------------------
+NUMBER = 2   SIZE = 70 quadlets (280 bytes)
+
+  [stream 0]
+    ISOCHRONOUS  = -1  (disabled)
+    PCM channels = 12
+    MIDI ports   = 0
+    SPEED        = S400
+    AC3_CAPS     = <not implemented: stream block too short>
+    NAMES:
+      0   'MIC_LINE_1'
+      1   'MIC_LINE_2'
+      2   'MIC_LINE_3'
+      3   'MIC_LINE_4'
+      4   'LINE_5'
+      5   'LINE_6'
+      6   'LINE_7'
+      7   'LINE_8'
+      8   'LINE_9'
+      9   'LINE_10'
+      10  'LINE_11'
+      11  'LINE_12'
+
+  [stream 1]
+    ISOCHRONOUS  = -1  (disabled)
+    PCM channels = 2
+    MIDI ports   = 0
+    SPEED        = S400
+    AC3_CAPS     = <not implemented: stream block too short>
+    NAMES:
+      0   'MAIN_IN L'
+      1   'MAIN_IN R'
+
+RX STREAMS  (device receives <- host playback)
+----------------------------------------------
+NUMBER = 1   SIZE = 70 quadlets (280 bytes)
+
+  [stream 0]
+    ISOCHRONOUS  = -1  (disabled)
+    SEQ_START    = 0
+    PCM channels = 2
+    MIDI ports   = 0
+    AC3_CAPS     = <not implemented: stream block too short>
+    NAMES:
+      0   'MAIN_OUT L'
+      1   'MAIN_OUT R'
+
+EXT_SYNC
+--------
+<absent>
+
+EAP CAPABILITIES
+----------------
+<absent>
+
+EAP STREAM FORMAT STAGING AREA  (written, then LOADed — not the live config)
+----------------------------------------------------------------------------
+  <empty — nothing staged>
+
+EAP ROUTER STAGING AREA  (written, then LOADed — not the live config)
+---------------------------------------------------------------------
+  <empty — nothing staged>
+
+EAP CURRENT ROUTER — low (32-48k)  (0 entries)  [ACTIVE]
+--------------------------------------------------------
+  <not read>
+
+EAP CURRENT ROUTER — middle (88.2-96k)  (0 entries)
+---------------------------------------------------
+  <not read>
+
+EAP CURRENT ROUTER — high (176.4-192k)  (0 entries)
+---------------------------------------------------
+  <not read>
+
+NOTES
+--------
+- RX section is allocated for 4 stream block(s) but NUMBER reports 1.
+- No extended application (EAP) space at 0xFFFFE0200000.

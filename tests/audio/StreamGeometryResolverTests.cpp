@@ -12,6 +12,9 @@
 
 #include <gtest/gtest.h>
 
+#include <initializer_list>
+#include <utility>
+
 namespace {
 
 using ASFW::Audio::ResolveStreamCount;
@@ -169,3 +172,376 @@ TEST(StreamCountResolver, AProfileOverTheBoundIsClamped) {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// Resolved per-direction geometry (Stage 4)
+//
+// Built from the recorded register dumps in documentation/fixtures/DICE/, not
+// from any profile constant: asserting a profile against itself proves
+// nothing. Both devices are asymmetric per stream, which is what makes them
+// discriminating -- an F32 (16+16 both ways) would let a stream-0 reader pass.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using ASFW::Audio::ResolvedDirectionGeometry;
+using ASFW::Audio::ResolvedDeviceGeometry;
+using ASFW::Audio::kMaxResolvedStreams;
+
+// Build a direction from per-stream PCM counts, device-stated with no profile
+// opinion -- the shape the dumps describe.
+ResolvedDirectionGeometry DeviceStated(std::initializer_list<uint16_t> pcmPerStream) {
+    ResolvedDirectionGeometry dir{};
+    dir.count = ASFW::Audio::ResolveStreamCount(
+        static_cast<uint32_t>(pcmPerStream.size()), 0, kMaxResolvedStreams);
+    uint32_t i = 0;
+    for (const uint16_t pcm : pcmPerStream) {
+        dir.streams[i] = ASFW::Audio::ResolveStreamGeometry(
+            WireStreamGeometry{.pcmChannels = pcm, .am824Slots = pcm}, kNothing);
+        ++i;
+    }
+    return dir;
+}
+
+} // namespace
+
+// documentation/fixtures/DICE/midasF24.txt: TX [0]=16 [1]=8, RX [0]=16 [1]=8.
+TEST(ResolvedStreamGeometry, VeniceF24AggregateIsNotStreamZeroTimesCount) {
+    const auto capture = DeviceStated({16, 8});
+
+    EXPECT_EQ(capture.StreamCount(), 2u);
+    EXPECT_TRUE(capture.Usable());
+
+    // What the device means.
+    EXPECT_EQ(capture.TotalPcmChannels(), 24u);
+
+    // What AudioStreamProfile::TxChannelCount() computes today: stream 0 times
+    // the stream count. This is the Stage 4 defect, stated as an inequality so
+    // the test fails if the aggregate is ever derived that way again.
+    const uint32_t streamZeroTimesCount =
+        capture.streams[0].geometry.pcmChannels * capture.StreamCount();
+    EXPECT_EQ(streamZeroTimesCount, 32u);
+    EXPECT_NE(capture.TotalPcmChannels(), streamZeroTimesCount);
+}
+
+// documentation/fixtures/DICE/presonus2442.txt: TX 16+16 = 32, RX 16+10 = 26.
+TEST(ResolvedStreamGeometry, StudioLive2442DirectionsDoNotShareAShape) {
+    ResolvedDeviceGeometry resolved{};
+    resolved.capture = DeviceStated({16, 16});
+    resolved.playback = DeviceStated({16, 10});
+
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.capture.TotalPcmChannels(), 32u);
+    EXPECT_EQ(resolved.playback.TotalPcmChannels(), 26u);
+
+    // A consumer that resolves one direction and reuses it for the other is
+    // wrong by six channels on this device.
+    EXPECT_NE(resolved.capture.TotalPcmChannels(),
+              resolved.playback.TotalPcmChannels());
+}
+
+// An F32 is 16+16 both ways, so it cannot catch either defect above. Recorded
+// so the fixture choice is not mistaken for arbitrary.
+TEST(ResolvedStreamGeometry, VeniceF32WouldNotDiscriminate) {
+    const auto capture = DeviceStated({16, 16});
+    EXPECT_EQ(capture.TotalPcmChannels(),
+              capture.streams[0].geometry.pcmChannels * capture.StreamCount());
+}
+
+TEST(ResolvedStreamGeometry, DisagreementMakesTheDirectionUnusableAndNamesTheStream) {
+    ResolvedDirectionGeometry dir{};
+    dir.count = ASFW::Audio::ResolveStreamCount(2, 0, kMaxResolvedStreams);
+    dir.streams[0] = ASFW::Audio::ResolveStreamGeometry(
+        WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16},
+        WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16});
+    // Stream 1: the device says 8, the profile insists on 16.
+    dir.streams[1] = ASFW::Audio::ResolveStreamGeometry(
+        WireStreamGeometry{.pcmChannels = 8, .am824Slots = 8},
+        WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16});
+
+    EXPECT_FALSE(dir.Usable());
+    EXPECT_EQ(dir.FirstDisagreeingStream(), 1u);
+
+    ResolvedDeviceGeometry resolved{};
+    resolved.capture = dir;
+    EXPECT_FALSE(resolved.Usable());
+}
+
+// Weiss is TX-only: a direction carrying no streams must stay usable, or
+// half-duplex devices regress.
+TEST(ResolvedStreamGeometry, EmptyDirectionIsUsable) {
+    ResolvedDeviceGeometry resolved{};
+    resolved.capture = DeviceStated({16});
+    EXPECT_EQ(resolved.playback.StreamCount(), 0u);
+    EXPECT_TRUE(resolved.playback.Usable());
+    EXPECT_EQ(resolved.playback.TotalPcmChannels(), 0u);
+    EXPECT_TRUE(resolved.Usable());
+}
+
+// ---------------------------------------------------------------------------
+// ResolveDirectionGeometry: the routine the backend actually calls. These feed
+// it caps-shaped and profile-shaped accessors, so a change that resolves one
+// direction from the other's inputs, or that stops walking the union of the
+// two descriptions, fails here.
+// ---------------------------------------------------------------------------
+
+TEST(ResolveDirectionGeometryFn, DeviceStatedAsymmetricStreamsSurviveResolution) {
+    // Venice F24 capture: device says 16 + 8, profile says nothing.
+    const uint16_t devicePcm[] = {16, 8};
+    const auto resolved = ASFW::Audio::ResolveDirectionGeometry(
+        2, 0,
+        [&](uint32_t i) {
+            return WireStreamGeometry{.pcmChannels = devicePcm[i], .am824Slots = devicePcm[i]};
+        },
+        [](uint32_t) { return kNothing; });
+
+    EXPECT_EQ(resolved.StreamCount(), 2u);
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.TotalPcmChannels(), 24u);
+    EXPECT_EQ(resolved.streams[1].geometry.pcmChannels, 8u);
+    EXPECT_EQ(resolved.streams[1].source, StreamGeometrySource::kDevice);
+}
+
+TEST(ResolveDirectionGeometryFn, ProfileDisagreementOnASecondStreamIsCaught) {
+    // The profile replicates stream 0 (16) while the device states 16 + 8:
+    // exactly what a non-indexed profile accessor produces.
+    const uint16_t devicePcm[] = {16, 8};
+    const auto resolved = ASFW::Audio::ResolveDirectionGeometry(
+        2, 2,
+        [&](uint32_t i) {
+            return WireStreamGeometry{.pcmChannels = devicePcm[i], .am824Slots = devicePcm[i]};
+        },
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16}; });
+
+    EXPECT_FALSE(resolved.Usable());
+    EXPECT_EQ(resolved.FirstDisagreeingStream(), 1u);
+}
+
+TEST(ResolveDirectionGeometryFn, WalksTheUnionWhenOnlyTheProfileDescribesAStream) {
+    // Device states one stream, profile describes two. The second must still be
+    // resolved (from the profile) rather than dropped.
+    const auto resolved = ASFW::Audio::ResolveDirectionGeometry(
+        1, 2,
+        [](uint32_t i) {
+            return i == 0 ? WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16} : kNothing;
+        },
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 10, .am824Slots = 10}; });
+
+    EXPECT_EQ(resolved.streams[1].geometry.pcmChannels, 10u);
+    EXPECT_EQ(resolved.streams[1].source, StreamGeometrySource::kProfile);
+    EXPECT_EQ(resolved.count.deviceStated, 1u);
+}
+
+TEST(ResolveDirectionGeometryFn, StreamCountBeyondTheHostBoundIsRefusedNotTruncated) {
+    const auto resolved = ASFW::Audio::ResolveDirectionGeometry(
+        kMaxResolvedStreams + 3, 0,
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 8, .am824Slots = 8}; },
+        [](uint32_t) { return kNothing; });
+    EXPECT_TRUE(resolved.count.disagrees);
+    EXPECT_FALSE(resolved.Usable());
+}
+
+// ---------------------------------------------------------------------------
+// Seed vs assertion. The profile constants that reach the resolver are only the
+// ones the profile CLAIMS to know; a seed states nothing and the device answers
+// unopposed. These drive ProfileStatedStreamCount/ProfileStatedGeometry -- the
+// same functions DiceAudioBackend composes -- so the distinction cannot be
+// deleted without turning one of these red.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// One direction resolved exactly as the backend does it: the profile's
+// constants pass through the authority filter before the resolver sees them.
+template <typename DeviceAccessor, typename ProfileAccessor>
+ASFW::Audio::ResolvedDirectionGeometry ResolveAsBackendDoes(
+    bool profileAsserts,
+    uint32_t deviceStreamCount,
+    uint32_t profileStreamCount,
+    DeviceAccessor&& fromDevice,
+    ProfileAccessor&& fromProfile) {
+    return ASFW::Audio::ResolveDirectionGeometry(
+        deviceStreamCount,
+        ASFW::Audio::ProfileStatedStreamCount(profileAsserts, profileStreamCount),
+        std::forward<DeviceAccessor>(fromDevice),
+        [&](uint32_t i) {
+            return ASFW::Audio::ProfileStatedGeometry(profileAsserts, fromProfile(i));
+        });
+}
+
+// The contributed Alesis MultiMix shape: two capture streams of 12 + 2 where
+// the profile seeds a single stream of 16.
+constexpr uint16_t kMultiMixCapturePcm[] = {12, 2};
+
+WireStreamGeometry MultiMixCaptureFromDevice(uint32_t i) {
+    return WireStreamGeometry{.pcmChannels = kMultiMixCapturePcm[i],
+                              .am824Slots = kMultiMixCapturePcm[i]};
+}
+
+WireStreamGeometry MultiMixCaptureSeed(uint32_t) {
+    return WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16};
+}
+
+} // namespace
+
+TEST(GeometryAuthority, SeededCaptureLetsTheDeviceAnswerUnopposed) {
+    const auto resolved = ResolveAsBackendDoes(
+        /*profileAsserts=*/false, 2, 1, MultiMixCaptureFromDevice, MultiMixCaptureSeed);
+
+    // The endpoint publishes, and it publishes what the device carries.
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.StreamCount(), 2u);
+    EXPECT_EQ(resolved.TotalPcmChannels(), 14u);
+    EXPECT_EQ(resolved.count.source, StreamGeometrySource::kDevice);
+    EXPECT_FALSE(resolved.count.disagrees);
+}
+
+// The same inputs with the seed treated as evidence. This is the state the
+// driver was in before the distinction existed: a device that reports its own
+// geometry accurately gets no endpoint at all.
+TEST(GeometryAuthority, AssertingTheSameSeedWouldRefuseTheEndpoint) {
+    const auto resolved = ResolveAsBackendDoes(
+        /*profileAsserts=*/true, 2, 1, MultiMixCaptureFromDevice, MultiMixCaptureSeed);
+
+    EXPECT_FALSE(resolved.Usable());
+    EXPECT_TRUE(resolved.count.disagrees);
+    EXPECT_EQ(resolved.count.deviceStated, 2u);
+    EXPECT_EQ(resolved.count.profileStated, 1u);
+}
+
+// Venice: one row, three geometries. The seeded F32 constants must not refuse
+// an F24, and the resolved total is what names it.
+TEST(GeometryAuthority, SeededVeniceResolvesTheF24RatherThanRefusingIt) {
+    constexpr uint16_t kF24[] = {16, 8};
+    const auto resolved = ResolveAsBackendDoes(
+        /*profileAsserts=*/false, 2, 2,
+        [](uint32_t i) {
+            return WireStreamGeometry{.pcmChannels = kF24[i], .am824Slots = kF24[i]};
+        },
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16}; });
+
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.TotalPcmChannels(), 24u);
+}
+
+// Seeding must not become "ignore the profile everywhere". A direction the
+// device says nothing about still falls back to the profile's shape, because
+// families whose protocols publish only aggregate caps depend on it.
+TEST(GeometryAuthority, AssertedProfileStillAnswersWhenTheDeviceIsSilent) {
+    const auto resolved = ResolveAsBackendDoes(
+        /*profileAsserts=*/true, 0, 2,
+        [](uint32_t) { return kNothing; },
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 10, .am824Slots = 11}; });
+
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.StreamCount(), 2u);
+    EXPECT_EQ(resolved.TotalPcmChannels(), 20u);
+    EXPECT_EQ(resolved.count.source, StreamGeometrySource::kProfile);
+}
+
+// A seeded direction with a silent device has nothing to go on. It must resolve
+// to zero streams rather than quietly reinstating the seed.
+TEST(GeometryAuthority, SeededProfileWithASilentDeviceStatesNothing) {
+    const auto resolved = ResolveAsBackendDoes(
+        /*profileAsserts=*/false, 0, 2,
+        [](uint32_t) { return kNothing; },
+        [](uint32_t) { return WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16}; });
+
+    EXPECT_EQ(resolved.StreamCount(), 0u);
+    EXPECT_EQ(resolved.TotalPcmChannels(), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// Seeding is only safe where the ENCODING path already reads the device.
+// TreatProfileAsAsserted is the rule; DiceAudioBackend supplies the two
+// constants that say which directions have been migrated.
+// ---------------------------------------------------------------------------
+
+TEST(TreatProfileAsAssertedRule, SeedIsHonouredOnlyWhenEncodingReadsTheDevice) {
+    using ASFW::Audio::TreatProfileAsAsserted;
+
+    // Capture today: framing reads the device, so a seed may be honoured and
+    // the device answers unopposed.
+    EXPECT_FALSE(TreatProfileAsAsserted(/*profileAsserts=*/false,
+                                        /*encodingIsDeviceSourced=*/true));
+
+    // Playback today: StartIO still frames from the profile, so a seed must be
+    // treated as an assertion and a disagreement must refuse.
+    EXPECT_TRUE(TreatProfileAsAsserted(false, false));
+
+    // An assertion is an assertion either way -- migrating the encoding path
+    // must not start ignoring a profile that claims to know its geometry.
+    EXPECT_TRUE(TreatProfileAsAsserted(true, true));
+    EXPECT_TRUE(TreatProfileAsAsserted(true, false));
+}
+
+// The live case, with the recorded numbers. The Midas profile seeds the F32's
+// 16 + 16 playback; the recorded F24 carries 16 + 8. Now that StartIO frames
+// playback from the resolved geometry, the device's answer is taken and the
+// endpoint publishes 24 -- where it previously had to refuse, because accepting
+// it would have meant building stream 1 at 16 channels / DBS 16 into an 8-slot
+// stream.
+TEST(TreatProfileAsAssertedRule, VeniceF24PlaybackResolvesOnceFramingReadsTheDevice) {
+    constexpr uint16_t kDevice[] = {16, 8};   // recorded F24
+    constexpr uint16_t kProfile = 16;         // F32 seed, both streams
+
+    const bool asserted = ASFW::Audio::TreatProfileAsAsserted(
+        /*profileAsserts=*/false, /*encodingIsDeviceSourced=*/true);
+    ASSERT_FALSE(asserted);
+
+    const auto resolved = ASFW::Audio::ResolveDirectionGeometry(
+        2, ASFW::Audio::ProfileStatedStreamCount(asserted, 2),
+        [&](uint32_t i) {
+            return WireStreamGeometry{.pcmChannels = kDevice[i], .am824Slots = kDevice[i]};
+        },
+        [&](uint32_t) {
+            return ASFW::Audio::ProfileStatedGeometry(
+                asserted, WireStreamGeometry{.pcmChannels = kProfile, .am824Slots = kProfile});
+        });
+
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.TotalPcmChannels(), 24u);
+    EXPECT_EQ(resolved.streams[1].geometry.pcmChannels, 8u);
+
+    // And the converse still holds: a direction whose framing has NOT been
+    // migrated must still refuse rather than publish a shape it cannot build.
+    // This is what guards the next family to move off profile constants.
+    const bool beforeMigration = ASFW::Audio::TreatProfileAsAsserted(false, false);
+    ASSERT_TRUE(beforeMigration);
+    const auto unmigrated = ASFW::Audio::ResolveDirectionGeometry(
+        2, ASFW::Audio::ProfileStatedStreamCount(beforeMigration, 2),
+        [&](uint32_t i) {
+            return WireStreamGeometry{.pcmChannels = kDevice[i], .am824Slots = kDevice[i]};
+        },
+        [&](uint32_t) {
+            return ASFW::Audio::ProfileStatedGeometry(
+                beforeMigration,
+                WireStreamGeometry{.pcmChannels = kProfile, .am824Slots = kProfile});
+        });
+    EXPECT_FALSE(unmigrated.Usable());
+    EXPECT_EQ(unmigrated.FirstDisagreeingStream(), 1u);
+}
+
+// Capture must NOT be caught by the same gate: the Alesis MultiMix seeds one
+// capture stream of 16 against a device reporting two of 12 + 2, and capture
+// framing already reads the device, so it resolves rather than refusing.
+TEST(TreatProfileAsAssertedRule, MultiMixCaptureStillResolvesUnderTheRule) {
+    constexpr uint16_t kDevice[] = {12, 2};
+
+    const bool asserted = ASFW::Audio::TreatProfileAsAsserted(
+        /*profileAsserts=*/false, /*encodingIsDeviceSourced=*/true);
+    ASSERT_FALSE(asserted);
+
+    const auto resolved = ASFW::Audio::ResolveDirectionGeometry(
+        2, ASFW::Audio::ProfileStatedStreamCount(asserted, 1),
+        [&](uint32_t i) {
+            return WireStreamGeometry{.pcmChannels = kDevice[i], .am824Slots = kDevice[i]};
+        },
+        [&](uint32_t) {
+            return ASFW::Audio::ProfileStatedGeometry(
+                asserted, WireStreamGeometry{.pcmChannels = 16, .am824Slots = 16});
+        });
+
+    EXPECT_TRUE(resolved.Usable());
+    EXPECT_EQ(resolved.TotalPcmChannels(), 14u);
+}

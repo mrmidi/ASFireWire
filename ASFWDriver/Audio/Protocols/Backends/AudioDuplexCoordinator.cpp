@@ -203,6 +203,7 @@ AudioDuplexCoordinator::~AudioDuplexCoordinator() noexcept {
 }
 
 IOReturn AudioDuplexCoordinator::StartStreaming(uint64_t guid) noexcept {
+    if (endpointStartGuard_ && !endpointStartGuard_(guid)) return kIOReturnNotReady;
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
@@ -291,6 +292,7 @@ IOReturn AudioDuplexCoordinator::StopStreaming(uint64_t guid) noexcept {
 
 IOReturn AudioDuplexCoordinator::RequestClockConfig(
     uint64_t guid, const AudioClockConfig& desiredClock, DuplexRestartReason reason) noexcept {
+    if (endpointStartGuard_ && !endpointStartGuard_(guid)) return kIOReturnNotReady;
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
@@ -372,6 +374,7 @@ IOReturn AudioDuplexCoordinator::RequestClockConfig(
 
 IOReturn AudioDuplexCoordinator::RecoverStreaming(uint64_t guid,
                                                         DuplexRestartReason reason) noexcept {
+    if (endpointStartGuard_ && !endpointStartGuard_(guid)) return kIOReturnNotReady;
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
@@ -462,6 +465,14 @@ bool AudioDuplexCoordinator::IsDeviceOperationCancelled(uint64_t guid) const noe
 std::optional<DuplexRestartSession>
 AudioDuplexCoordinator::GetSession(uint64_t guid) const noexcept {
     return store_.GetSession(guid);
+}
+
+bool AudioDuplexCoordinator::IsStreaming(uint64_t guid) const noexcept {
+    return store_.IsStreaming(guid);
+}
+
+std::vector<uint64_t> AudioDuplexCoordinator::GetStreamingGuids() const noexcept {
+    return store_.GetStreamingGuids();
 }
 
 bool AudioDuplexCoordinator::IsOperationInFlight(uint64_t guid) const noexcept {
@@ -784,6 +795,7 @@ AudioDuplexCoordinator::RunClockRequestLoop(uint64_t guid,
 IOReturn
 AudioDuplexCoordinator::ApplyClockRequest(uint64_t guid,
                                                 const PendingClockRequest& request) noexcept {
+    if (endpointStartGuard_ && !endpointStartGuard_(guid)) return kIOReturnNotReady;
     if (IsStopRequested(guid) || TeardownRequested()) {
         return kIOReturnAborted;
     }
@@ -1162,7 +1174,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                                               masterCapture.am824Slots, masterCapture.pcmChannels,
                                               streamProfile.captureTrustConfiguredStride,
                                               streamProfile.captureMotuPcmChunks,
-                                              streamProfile.captureMotuPorts);
+                                              streamProfile.captureMotuPorts,
+                                              streamProfile.captureChannelMap);
             if (prepareReceiveStatus != kIOReturnSuccess) {
                 return rollbackToFailure(prepareReceiveStatus,
                                          DuplexRestartPhase::kStartingHostReceive,
@@ -1186,7 +1199,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                     captureStream.pcmChannelOffset, captureStream.pcmChannels,
                     streamProfile.captureWireFormat, captureStream.am824Slots,
                     streamProfile.captureTrustConfiguredStride,
-                    streamProfile.captureMotuPcmChunks, streamProfile.captureMotuPorts);
+                    streamProfile.captureMotuPcmChunks, streamProfile.captureMotuPorts,
+                    streamProfile.captureChannelMap);
                 if (status != kIOReturnSuccess) {
                     return rollbackToFailure(status, DuplexRestartPhase::kStartingHostReceive,
                                              DuplexRestartFailureCause::kStartReceive);
@@ -1706,6 +1720,7 @@ IOReturn AudioDuplexCoordinator::RunDuplexStart(
     uint64_t guid, Discovery::DeviceRecord& record, IDuplexDeviceControl& deviceControl,
     DuplexRestartSession& session, const AudioClockConfig& desiredClock,
     DuplexRestartReason reason) noexcept {
+    if (endpointStartGuard_ && !endpointStartGuard_(guid)) return kIOReturnNotReady;
     DuplexStartTransaction transaction{DuplexStartTransaction::Dependencies{
         registry_, runtime_, hostTransport_, hardware_, cancel_, bindingSourceProvider_, gate_, store_,
         teardownAbortCount_, kSyncBridgeTimeoutMs, kGlobalClockLockTimeoutMs,

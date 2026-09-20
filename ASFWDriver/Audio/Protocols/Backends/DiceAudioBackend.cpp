@@ -14,6 +14,7 @@
 #include "../IDeviceProtocol.hpp"
 #include "../StreamGeometryResolver.hpp"
 #include "../DeviceProtocolChoice.hpp"
+#include "../../DriverKit/Config/AudioDriverConfig.hpp"
 #include "../../DriverKit/Config/AudioProfileRegistry.hpp"
 #include "../../DriverKit/Config/DICE/DiceDeviceProfile.hpp"
 
@@ -53,9 +54,16 @@ namespace {
 // get compared. See StreamGeometryResolver.hpp for the precedence rule and why
 // it is the device's.
 //
-// Reporting only: nothing here changes what gets programmed. The framing path
-// still uses the profile, so a disagreement is a loud warning rather than a
-// refusal until that path is switched over.
+// Stage 4: this now RESOLVES rather than reports. It answers both directions
+// -- capture was previously never compared at all -- and returns a
+// ResolvedDeviceGeometry whose Usable() is the refusal the resolver's contract
+// always required.
+//
+// The verdict is not yet enforced at the start path: the consumers
+// (AudioStreamProfile::Tx/RxChannelCount and ASFWAudioDevice::StartIO's
+// BuildTxStreamConfig call) still read the profile, and switching them is the
+// next step. Until then a disagreement is a loud, named refusal in the log
+// rather than a silent mis-framing.
 
 [[nodiscard]] constexpr uint32_t ClampStreamCountToHost(uint32_t count) noexcept {
     return (count < kMaxAudioStreamsPerDirection) ? count : kMaxAudioStreamsPerDirection;
@@ -72,8 +80,68 @@ namespace {
             .midiPorts = wire.midiPorts};
 }
 
+// Seeding a direction means "let the device's answer win without argument".
+// That is only SAFE where the device's answer actually reaches the code that
+// frames packets. Both directions now qualify:
+//
+//   - Bandwidth and transport geometry come from the device in both directions
+//     (DuplexStreamProfile::Build reads caps.{deviceToHost,hostToDevice}Streams).
+//   - CAPTURE encoding: IsochDuplexHostTransport hands caps-derived per-stream
+//     geometry to DirectAudioReceiveConsumer.
+//   - PLAYBACK encoding and packet allocation: the resolved per-stream geometry
+//     is published across the nub (Audio/Model/AudioPropertyKeys.hpp) and
+//     ASFWAudioDevice::StartIO builds each stream from it via
+//     BuildResolvedTxStreamConfig, keeping only the framing constants the DICE
+//     registers do not hold.
+//
+// Playback was false until that last line was true. While it was, a seeded
+// playback geometry disagreeing with the device would have been waved through
+// at publication and then mis-framed -- the recorded Venice F24 carries 16 + 8
+// while its F32 profile says 16 + 16, so stream 1 was built at 16 channels /
+// DBS 16 into an 8-slot stream. It now resolves to 16 + 8 end to end.
+//
+// These stay as named constants rather than being deleted: they are the
+// statement of WHICH directions have been migrated, and the next family to move
+// off profile constants needs the same question asked of it.
+inline constexpr bool kPlaybackEncodingIsDeviceSourced = true;
+inline constexpr bool kCaptureEncodingIsDeviceSourced = true;
+
+/// Playback streams ASFWAudioDevice::StartIO can allocate: one primary plus one
+/// secondary. Kept here as well so publication and start refuse the same
+/// devices; StartIO carries the matching bound.
+inline constexpr uint32_t kMaxPlaybackStreamsSupported = 2;
+
+// Does this profile ASSERT the direction's geometry, or only seed it? The
+// resolver takes a bool (it is deliberately free of profile headers), so this
+// is the one place the profile's enum is read.
+[[nodiscard]] bool AssertsGeometry(
+    ASFW::Isoch::Audio::StreamGeometryAuthority authority) noexcept {
+    return authority == ASFW::Isoch::Audio::StreamGeometryAuthority::kAsserted;
+}
+
+// Capture: honour what the profile declares -- the device already drives
+// capture framing, so accepting its answer costs nothing.
+[[nodiscard]] bool CaptureGeometryIsAsserted(
+    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) noexcept {
+    return TreatProfileAsAsserted(AssertsGeometry(profile.CaptureGeometryAuthority()),
+                                  kCaptureEncodingIsDeviceSourced);
+}
+
+// Playback: a declared seed is treated as an ASSERTION while framing still
+// reads the profile, so a disagreement refuses publication instead of shipping
+// a mis-framed stream. The profile's own declaration is left untouched -- it
+// describes what its constants MEAN; this decides what we can safely act on.
+[[nodiscard]] bool PlaybackGeometryIsAsserted(
+    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) noexcept {
+    return TreatProfileAsAsserted(AssertsGeometry(profile.PlaybackGeometryAuthority()),
+                                  kPlaybackEncodingIsDeviceSourced);
+}
+
 [[nodiscard]] WireStreamGeometry PlaybackGeometryFromProfile(
     const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
+    if (!PlaybackGeometryIsAsserted(profile)) {
+        return {};
+    }
     ASFW::Isoch::Audio::AudioStreamConfig config{};
     if (index >= ClampStreamCountToHost(profile.TxStreamCount()) ||
         !profile.BuildTxStreamConfig(index, config)) {
@@ -84,37 +152,59 @@ namespace {
             .midiPorts = config.midiSlots};
 }
 
-void ReportStreamGeometryAgreement(
-    uint64_t guid,
-    const AudioStreamRuntimeCaps& caps,
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) {
+[[nodiscard]] WireStreamGeometry CaptureGeometryFromDevice(
+    const AudioStreamRuntimeCaps& caps, uint32_t index) noexcept {
+    if (index >= ClampStreamCountToHost(caps.deviceToHostStreamCount)) {
+        return {};
+    }
+    const auto& wire = caps.deviceToHostStreams[index];
+    return {.pcmChannels = wire.pcmChannels,
+            .am824Slots = wire.am824Slots,
+            .midiPorts = wire.midiPorts};
+}
 
-    const auto count = ResolveStreamCount(caps.hostToDeviceStreamCount,
-                                          profile.TxStreamCount(),
-                                          kMaxAudioStreamsPerDirection);
-    if (count.disagrees) {
+// Indexed, like the playback side: a profile describing unequal capture streams
+// is compared stream by stream rather than every stream against stream 0.
+// Using the default config here would have made an asymmetric profile report a
+// correct aggregate while the resolver silently compared the wrong shapes.
+// ASFW's profile naming inverts: Rx* is host capture.
+[[nodiscard]] WireStreamGeometry CaptureGeometryFromProfile(
+    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
+    if (!CaptureGeometryIsAsserted(profile)) {
+        return {};
+    }
+    ASFW::Isoch::Audio::AudioStreamConfig config{};
+    if (index >= ClampStreamCountToHost(profile.RxStreamCount()) ||
+        !profile.BuildRxStreamConfig(index, config)) {
+        return {};
+    }
+    return {.pcmChannels = config.pcmChannels,
+            .am824Slots = config.dbs,
+            .midiPorts = config.midiSlots};
+}
+
+// Log one direction's resolution. The resolution itself is
+// ResolveDirectionGeometry in StreamGeometryResolver.hpp, which the host suite
+// drives directly; this only reports what it decided.
+void LogDirection(const char* directionName,
+                  uint64_t guid,
+                  const ResolvedDirectionGeometry& resolved) {
+    if (resolved.count.disagrees) {
         ASFW_LOG_ERROR(Audio,
-                       "DiceAudioBackend: ❌ playback stream COUNT disagrees device=%u profile=%u "
+                       "DiceAudioBackend: %{public}s stream COUNT disagrees device=%u profile=%u "
                        "GUID=0x%016llx - the transport arms the device's count while StartIO arms "
                        "the profile's, so one of them is wrong",
-                       count.deviceStated, count.profileStated, guid);
+                       directionName, resolved.count.deviceStated,
+                       resolved.count.profileStated, guid);
     }
-
-    // Walk the union so a stream described by only one side is still reported.
-    const uint32_t deviceStreams = ClampStreamCountToHost(caps.hostToDeviceStreamCount);
-    const uint32_t profileStreams = ClampStreamCountToHost(profile.TxStreamCount());
-    const uint32_t walk = (deviceStreams > profileStreams) ? deviceStreams : profileStreams;
-
-    for (uint32_t i = 0; i < walk; ++i) {
-        const auto decision = ResolveStreamGeometry(PlaybackGeometryFromDevice(caps, i),
-                                                    PlaybackGeometryFromProfile(profile, i));
+    for (uint32_t i = 0; i < resolved.StreamCount() && i < kMaxResolvedStreams; ++i) {
+        const auto& decision = resolved.streams[i];
         if (decision.disagrees) {
             ASFW_LOG_ERROR(Audio,
-                           "DiceAudioBackend: ❌ playback stream %u geometry disagrees "
+                           "DiceAudioBackend: %{public}s stream %u geometry disagrees "
                            "device=(pcm=%u dbs=%u midi=%u) profile=(pcm=%u dbs=%u midi=%u) "
-                           "GUID=0x%016llx - bandwidth is reserved from the device's shape while "
-                           "CIP is framed from the profile's; audio will be silent",
-                           i,
+                           "GUID=0x%016llx",
+                           directionName, i,
                            decision.deviceStated.pcmChannels, decision.deviceStated.am824Slots,
                            decision.deviceStated.midiPorts,
                            decision.profileStated.pcmChannels, decision.profileStated.am824Slots,
@@ -123,13 +213,66 @@ void ReportStreamGeometryAgreement(
             continue;
         }
         ASFW_LOG(Audio,
-                 "DiceAudioBackend: playback stream %u geometry pcm=%u dbs=%u midi=%u source=%{public}s",
-                 i,
+                 "DiceAudioBackend: %{public}s stream %u geometry pcm=%u dbs=%u midi=%u source=%{public}s",
+                 directionName, i,
                  decision.geometry.pcmChannels,
                  decision.geometry.am824Slots,
                  decision.geometry.midiPorts,
                  decision.source == StreamGeometrySource::kDevice ? "device" : "profile");
     }
+}
+
+// Both directions, resolved once. Capture was previously never compared at
+// all -- only playback was -- so half the geometry crossed into the transport
+// unchecked.
+[[nodiscard]] ResolvedDeviceGeometry ResolveDeviceStreamGeometry(
+    uint64_t guid,
+    const AudioStreamRuntimeCaps& caps,
+    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) {
+    static_assert(kMaxResolvedStreams == kMaxAudioStreamsPerDirection,
+                  "resolver bound drifted from the host array bound");
+    static_assert(kMaxResolvedStreams == ASFW::Isoch::Audio::kMaxConfiguredStreams,
+                  "resolver bound drifted from the nub's per-stream array bound");
+
+    ResolvedDeviceGeometry resolved{};
+    resolved.capture = ResolveDirectionGeometry(
+        caps.deviceToHostStreamCount,
+        ProfileStatedStreamCount(CaptureGeometryIsAsserted(profile), profile.RxStreamCount()),
+        [&caps](uint32_t i) { return CaptureGeometryFromDevice(caps, i); },
+        [&profile](uint32_t i) { return CaptureGeometryFromProfile(profile, i); });
+    resolved.playback = ResolveDirectionGeometry(
+        caps.hostToDeviceStreamCount,
+        ProfileStatedStreamCount(PlaybackGeometryIsAsserted(profile), profile.TxStreamCount()),
+        [&caps](uint32_t i) { return PlaybackGeometryFromDevice(caps, i); },
+        [&profile](uint32_t i) { return PlaybackGeometryFromProfile(profile, i); });
+
+    LogDirection("capture", guid, resolved.capture);
+    LogDirection("playback", guid, resolved.playback);
+
+    if (!resolved.Usable()) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceAudioBackend: resolved geometry UNUSABLE GUID=0x%016llx "
+                       "capture(usable=%u streams=%u pcm=%u firstBad=%u) "
+                       "playback(usable=%u streams=%u pcm=%u firstBad=%u) - bandwidth would be "
+                       "reserved from one description while CIP is framed from the other",
+                       guid,
+                       resolved.capture.Usable() ? 1U : 0U,
+                       resolved.capture.StreamCount(),
+                       resolved.capture.TotalPcmChannels(),
+                       resolved.capture.FirstDisagreeingStream(),
+                       resolved.playback.Usable() ? 1U : 0U,
+                       resolved.playback.StreamCount(),
+                       resolved.playback.TotalPcmChannels(),
+                       resolved.playback.FirstDisagreeingStream());
+    } else {
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: resolved geometry GUID=0x%016llx capture=%uch/%ustreams "
+                 "playback=%uch/%ustreams",
+                 guid,
+                 resolved.capture.TotalPcmChannels(), resolved.capture.StreamCount(),
+                 resolved.playback.TotalPcmChannels(), resolved.playback.StreamCount());
+    }
+    return resolved;
 }
 
 } // namespace
@@ -442,12 +585,7 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
         return;
     }
 
-    std::vector<uint64_t> guids;
-    if (lock_) {
-        IOLockLock(lock_);
-        guids.assign(activeStreamingGuids_.begin(), activeStreamingGuids_.end());
-        IOLockUnlock(lock_);
-    }
+    const std::vector<uint64_t> guids = restartCoordinator_.GetStreamingGuids();
 
     for (const uint64_t guid : guids) {
         auto probe = ^{
@@ -776,22 +914,175 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                      guid);
             return;
         }
-        if (protocol) {
+        if (!protocol) {
+            // No protocol means nothing can answer for the device's geometry,
+            // so publishing here would ship exactly the unvalidated endpoint
+            // the caps check below exists to prevent -- it just reached the
+            // nub by a different door. Refuse; the device is not lost, because
+            // StartStreaming and OnDeviceRecordUpdated both call back into
+            // EnsureNubForGuid once a protocol exists.
+            ASFW_LOG_ERROR(Audio,
+                           "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
+                           "GUID=0x%016llx - no protocol, geometry cannot be validated",
+                           guid);
+            return;
+        }
+        {
             AudioStreamRuntimeCaps caps{};
             const bool haveCaps = protocol->GetRuntimeAudioStreamCaps(caps);
-            if (haveCaps) {
-                // Compare the device's registers with the profile's constants
-                // before anything consumes either. Reporting only; see the
-                // helper's comment.
-                ReportStreamGeometryAgreement(guid, caps, *profile);
+
+            if (!haveCaps) {
+                // Without runtime caps the resolver cannot run, so the
+                // publication would carry unvalidated profile-only geometry.
+                // That is the class of silent mismatch this path exists to
+                // prevent. Refuse and let the geometry-load callback retry.
+                ASFW_LOG_ERROR(Audio,
+                               "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
+                               "GUID=0x%016llx - runtime caps unavailable, cannot validate geometry",
+                               guid);
+                return;
             }
-            if (haveCaps && ApplyDiceRuntimeCapsToDeviceConfig(caps, dev)) {
+
+            // Compare the device's registers with the profile's constants
+            // before anything consumes either, and make the aggregate the HAL
+            // is told match the streams the device actually carries.
+            const auto resolvedGeometry =
+                ResolveDeviceStreamGeometry(guid, caps, *profile);
+
+            if (!resolvedGeometry.Usable()) {
+                // Publishing anyway is what used to happen, and the symptom was
+                // silence with nothing attributable: bandwidth reserved from one
+                // description, CIP framed from the other. Refuse the endpoint
+                // instead, so the failure names itself at publication.
+                ASFW_LOG_ERROR(Audio,
+                               "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
+                               "GUID=0x%016llx - resolved stream geometry is unusable",
+                               guid);
+                return;
+            }
+
+            // The resolved totals are the authority for per-stream wire
+            // geometry (stream counts, slot counts). The HAL-facing channel
+            // counts, however, must respect the protocol's visibility policy:
+            // TCAT deliberately sets hostInputPcmChannels to zero for devices
+            // like Weiss INT202 whose capture streams should remain hidden from
+            // CoreAudio, even though the physical wire carries them. When the
+            // protocol reported zero, preserve that decision; otherwise adopt
+            // the resolved sum, which accounts for asymmetric multi-stream
+            // devices (e.g. Venice F24 with 16+8).
+            const uint32_t resolvedCapturePcm = resolvedGeometry.capture.TotalPcmChannels();
+            caps.hostInputPcmChannels = (caps.hostInputPcmChannels == 0)
+                                            ? 0
+                                            : resolvedCapturePcm;
+            caps.hostOutputPcmChannels = resolvedGeometry.playback.TotalPcmChannels();
+            caps.deviceToHostStreamCount = resolvedGeometry.capture.StreamCount();
+            caps.hostToDeviceStreamCount = resolvedGeometry.playback.StreamCount();
+
+            if (ApplyDiceRuntimeCapsToDeviceConfig(caps, dev)) {
                 ASFW_LOG(Audio,
                          "DiceAudioBackend::EnsureNubForGuid: applied runtime geometry rate=%u in=%u out=%u (GUID=0x%016llx)",
                          dev.currentSampleRate,
                          dev.inputChannelCount,
                          dev.outputChannelCount,
                          guid);
+            }
+
+            // Publish the resolved per-stream geometry so the audio side can
+            // frame packets from what the device reported. Without this it
+            // falls back to the profile's constants, which describe a
+            // DIFFERENT device whenever the streams are not all one width --
+            // the recorded Venice F24 carries 16 + 8 playback against an F32
+            // profile's 16 + 16.
+            //
+            // channelOffset is the RUNNING SUM of preceding stream widths, the
+            // same base the vendor drivers carry
+            // (AlesisFirewireAudioEngine::CreateStreams advances it by each
+            // stream's own count). It is deliberately not index * width: those
+            // coincide only while every stream is stream 0's width.
+            const auto publishStreams =
+                [](const ResolvedDirectionGeometry& direction,
+                   std::vector<Model::ASFWAudioWireStream>& out) {
+                    out.clear();
+                    uint32_t channelOffset = 0;
+                    for (uint32_t i = 0;
+                         i < direction.StreamCount() && i < kMaxResolvedStreams; ++i) {
+                        const auto& geometry = direction.streams[i].geometry;
+                        out.push_back(Model::ASFWAudioWireStream{
+                            .pcmChannels = geometry.pcmChannels,
+                            .am824Slots = geometry.am824Slots,
+                            .midiPorts = geometry.midiPorts,
+                            .channelOffset = channelOffset,
+                        });
+                        channelOffset += geometry.pcmChannels;
+                    }
+                };
+            publishStreams(resolvedGeometry.playback, dev.playbackStreams);
+            publishStreams(resolvedGeometry.capture, dev.captureStreams);
+            // A DICE device only reaches here with a usable verdict, so the
+            // audio side must never substitute profile constants for what the
+            // device reported. If the arrays go missing in transit, starting
+            // fails rather than degrading.
+            dev.resolvedGeometryRequired = !dev.playbackStreams.empty();
+
+            // Refuse a device this build cannot actually arm, at publication
+            // rather than at the first StartIO. ASFWAudioDevice allocates one
+            // primary and one secondary TX stream, so a device carrying more
+            // would publish an endpoint that fails every time CoreAudio tries
+            // to start it -- a worse failure than never appearing, because it
+            // looks like a broken device rather than an unsupported one.
+            // StartIO enforces the same bound independently; this is the early,
+            // attributable half.
+            if (dev.playbackStreams.size() > kMaxPlaybackStreamsSupported) {
+                ASFW_LOG_ERROR(Audio,
+                               "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
+                               "GUID=0x%016llx - device carries %zu playback streams, this "
+                               "build configures at most %u",
+                               guid, dev.playbackStreams.size(),
+                               kMaxPlaybackStreamsSupported);
+                return;
+            }
+
+            // Bandwidth reservation, capture layout and playback framing all
+            // derive from the SAME protocol caps: DuplexStreamProfile::Build
+            // reads them directly, and the geometry published here is those
+            // caps after validation against the profile. They therefore agree
+            // by construction rather than by coincidence.
+            //
+            // What is NOT implemented is refresh. AudioNubPublisher::EnsureNub
+            // is create-once, so a later resolution does not reach a live nub.
+            // That is safe only because DICETcatProtocol::ResetRuntimeCaps is
+            // reachable only from Shutdown, so the geometry cannot change while
+            // a nub exists. The two decisions are coupled: whichever change
+            // makes caps re-readable (a rate change crossing a rate mode --
+            // documentation/DICE_TCAT_ARCHITECTURE.md sec 4.2 step D) must also
+            // make the nub refreshable, or the audio side keeps framing from a
+            // description the device has stopped honouring.
+
+            for (size_t i = 0; i < dev.playbackStreams.size(); ++i) {
+                ASFW_LOG(Audio,
+                         "DiceAudioBackend::EnsureNubForGuid: playback stream %zu pcm=%u dbs=%u "
+                         "midi=%u offset=%u (GUID=0x%016llx)",
+                         i, dev.playbackStreams[i].pcmChannels,
+                         dev.playbackStreams[i].am824Slots,
+                         dev.playbackStreams[i].midiPorts,
+                         dev.playbackStreams[i].channelOffset, guid);
+            }
+
+            // Name the device now that its geometry is known. For a profile
+            // serving one model this returns Name() unchanged; for a range
+            // sharing one identity -- Midas Venice F16/F24/F32 -- the measured
+            // capture width is the only thing that tells the variants apart,
+            // and it is not available until here.
+            if (const char* resolvedName =
+                    profile->NameForGeometry(dev.inputChannelCount, dev.outputChannelCount)) {
+                if (dev.deviceName != resolvedName) {
+                    ASFW_LOG(Audio,
+                             "DiceAudioBackend::EnsureNubForGuid: named from geometry "
+                             "'%{public}s' -> '%{public}s' in=%u out=%u (GUID=0x%016llx)",
+                             dev.deviceName.c_str(), resolvedName,
+                             dev.inputChannelCount, dev.outputChannelCount, guid);
+                    dev.deviceName = resolvedName;
+                }
             }
 
             std::vector<std::string> inNames;
@@ -808,6 +1099,12 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                          dev.inputChannelNames.size(), dev.outputChannelNames.size(), guid);
             }
         }
+        // Validate before replacing the runtime snapshot. A rejected geometry
+        // must not reach transport while the audio graph retains the old one.
+        if (publisher_.GetNub(guid) != nullptr) {
+            (void)publisher_.RefreshNubProperties(guid, dev, "DICE");
+            return;
+        }
         if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
             endpoint->UpdateConfig(dev);
         }
@@ -817,11 +1114,25 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // Channel labels live in the TCAT stream-format name sections, cached only
     // once runtime caps load (during the first stream discovery). Load them
     // once before the first publish so CoreAudio shows the real names from the
-    // start. The load early-returns if caps are already cached; publish happens
-    // regardless of outcome (names fall back to synthesized "<plug> N").
+    // start. The load early-returns if caps are already cached; a failed load
+    // refuses publication in the callback below, and a missing protocol refuses
+    // inside finish(). Both are explicit: there is no path to EnsureNub that
+    // has not compared the device against the profile.
     if (auto* dice = protocol ? protocol->AsDuplexDeviceControl() : nullptr) {
         dice->EnsureRuntimeStreamGeometry(
-            [finish, dev, protocol](IOReturn /*status*/) mutable {
+            [finish, dev, protocol, guid](IOReturn status) mutable {
+                if (status != kIOReturnSuccess) {
+                    // Refuse here rather than handing off to finish(). finish()
+                    // only rejects when GetRuntimeAudioStreamCaps returns
+                    // nothing, and caps cached by an EARLIER successful load
+                    // survive a later failure -- so it could publish against a
+                    // stale description while this line claimed otherwise.
+                    ASFW_LOG_ERROR(Audio,
+                                   "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
+                                   "GUID=0x%016llx - geometry load failed status=0x%08x",
+                                   guid, status);
+                    return;
+                }
                 finish(std::move(dev), protocol);
             });
         return;

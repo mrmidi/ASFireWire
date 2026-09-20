@@ -187,7 +187,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         inputView_.deviceToHostAm824Slots, configuration_.wireFormat,
         configuration_.channelOffset, !configuration_.isSecondary,
         configuration_.trustConfiguredStride, configuration_.motuPcmChunks,
-        configuration_.motuPorts);
+        configuration_.motuPorts, configuration_.captureChannelMap);
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {

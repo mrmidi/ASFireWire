@@ -129,6 +129,13 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         const uint32_t pcmSlots = (streamConfig_.pcmChannels < snap.dbs)
                                       ? streamConfig_.pcmChannels
                                       : snap.dbs;
+        // A map sized for a different formation than the packet actually carries
+        // would write past the data blocks. Fall back to the wire order (identity) instead:
+        // writing in device order is recoverable, writing out of bounds into
+        // another frame or beyond the packet is not.
+        const bool mapUsable = txPolicy_.playbackChannelMap.FitsWithin(pcmSlots, snap.dbs);
+        const auto& playbackMap = txPolicy_.playbackChannelMap;
+
         // This stream encodes the host channels [sourceChannelOffset,
         // sourceChannelOffset + pcmChannels) of the shared interleaved buffer —
         // the de-interleave that mirrors the RX side's channelOffset. Host
@@ -139,7 +146,8 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
             const uint32_t srcCh = srcOffset + ch;
             const float sample =
                 (srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
-            WriteBE32(dest + ch * kBytesPerSlot,
+            const uint32_t slot = mapUsable ? playbackMap.SlotFor(ch) : ch;
+            WriteBE32(dest + slot * kBytesPerSlot,
                       PcmSlotCodec::EncodeFloat32(
                           sample, txPolicy_.hostToDevicePcmEncoding));
             if (sample != 0.0f) {

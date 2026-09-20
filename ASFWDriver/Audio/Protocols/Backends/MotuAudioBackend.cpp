@@ -13,7 +13,6 @@
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "../../../Discovery/DeviceRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
-#include "../DeviceProtocolFactory.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../MOTU/MotuV2Protocol.hpp"
 #include "../../Wire/MOTU/MotuBlockLayout.hpp"

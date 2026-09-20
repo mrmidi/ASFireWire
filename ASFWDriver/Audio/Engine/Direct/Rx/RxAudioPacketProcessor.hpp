@@ -2,6 +2,7 @@
 
 #include "../DirectInputWriter.hpp"
 #include "DirectRxTypes.hpp"
+#include "RxCaptureChannelMap.hpp"
 #include "../../../Wire/AMDTP/AmdtpTypes.hpp"
 #include "../../../Wire/MOTU/MotuPortLayout.hpp"
 
@@ -25,6 +26,7 @@ struct RxAudioPacketProcessorResult final {
     /// wrong-DBS quirk or a non-quadlet block layout overrode it.
     uint32_t strideQuadlets{0};
     uint8_t dbc{0};
+    bool mapRejected{false};
 };
 
 class RxAudioPacketProcessor final {
@@ -42,6 +44,11 @@ public:
     // device->host packets; when set, `am824Slots` is the stride authority and
     // the header dbs is surfaced in the result for telemetry only (Linux
     // snd-oxfw SND_OXFW_QUIRK_WRONG_DBS; amdtp-stream.c:766-769).
+    // `captureMap` reorders wire slots onto channels and may delay a subset of
+    // them; the identity map costs nothing and is the default. `primeDelayLine`
+    // silences the delayed channels of the frames ahead of `absoluteFrame`, and
+    // must be set on the first packet of an epoch so the head of the delay line
+    // cannot expose stale buffer content.
     [[nodiscard]] RxAudioPacketProcessorResult ProcessPacket(const uint8_t* payload,
                                                              size_t length,
                                                              uint64_t absoluteFrame,
@@ -57,7 +64,9 @@ public:
                                                              // quadlet-slot formats, whose
                                                              // unit count is am824Slots.
                                                              uint32_t motuPcmChunks = 0,
-                                                             ::ASFW::Encoding::Motu::MotuPortMap motuPorts = {}) noexcept;
+                                                             ::ASFW::Encoding::Motu::MotuPortMap motuPorts = {},
+                                                             const RxCaptureChannelMap& captureMap = {},
+                                                             bool primeDelayLine = false) noexcept;
 
 private:
     DirectInputWriter& writer_;

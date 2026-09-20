@@ -3,7 +3,7 @@
 //
 // DeviceProtocolChoice.hpp — which protocol a device's identity selects.
 //
-// Split from DeviceProtocolFactory deliberately. The factory constructs
+// Split from FamilyProtocolConstruction deliberately. The construction constructs
 // DriverKit objects, so linking it pulls in every protocol class and it can
 // only really run on hardware; this half is pure metadata and is checkable on
 // the host for every identity in the catalog.

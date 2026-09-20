@@ -26,6 +26,22 @@ enum class StreamMode : uint8_t {
     kBlocking = 1,
 };
 
+/// One isochronous stream's resolved wire shape, as published to the audio side.
+///
+/// `channelOffset` is the running sum of the PCM channel counts of the streams
+/// before this one. It is NOT index * width-of-stream-0: those coincide only
+/// while every stream is the same width, which is exactly the assumption the
+/// geometry resolver removed.
+struct ASFWAudioWireStream {
+    uint32_t pcmChannels{0};
+    uint32_t am824Slots{0};
+    uint32_t midiPorts{0};
+    uint32_t channelOffset{0};
+
+    friend bool operator==(const ASFWAudioWireStream&,
+                           const ASFWAudioWireStream&) noexcept = default;
+};
+
 struct ASFWAudioDevice {
     uint64_t guid{0};
     uint32_t vendorId{0};
@@ -47,6 +63,18 @@ struct ASFWAudioDevice {
     std::vector<std::string> inputChannelNames{};
     std::vector<std::string> outputChannelNames{};
     StreamMode streamMode{StreamMode::kNonBlocking};
+
+    // Resolved per-stream wire geometry, in stream order. Empty means the
+    // publisher had none to offer and the audio side must fall back to its
+    // profile constants -- which is what every device did before this existed,
+    // and is wrong for any device whose streams are not all the same width.
+    std::vector<ASFWAudioWireStream> playbackStreams{};  // host -> device (DICE RX)
+    std::vector<ASFWAudioWireStream> captureStreams{};   // device -> host (DICE TX)
+
+    /// The audio side must use the resolved geometry above and must NOT fall
+    /// back to profile constants. Set by families that always resolve before
+    /// publishing (DICE); see PropertyKeys::kResolvedGeometryRequired.
+    bool resolvedGeometryRequired{false};
 
     // Populate properties consumed by ASFWAudioDriver.
     // Returns false only if required objects could not be created.
@@ -126,10 +154,61 @@ struct ASFWAudioDevice {
         PublishChannelNames(properties, PropertyKeys::kInputChannelNames, inputChannelNames);
         PublishChannelNames(properties, PropertyKeys::kOutputChannelNames, outputChannelNames);
 
+        // Resolved per-stream geometry. This is what lets the audio side frame
+        // packets from what the device reported instead of from a compiled-in
+        // constant, so it is the one property an asymmetric device cannot work
+        // without -- hence a serialization failure fails the whole publication
+        // rather than quietly producing a device missing its geometry.
+        if (!PublishWireStreams(properties, PropertyKeys::kPlaybackStreams, playbackStreams) ||
+            !PublishWireStreams(properties, PropertyKeys::kCaptureStreams, captureStreams)) {
+            return false;
+        }
+        if (resolvedGeometryRequired) {
+            auto required = OSSharedPtr(OSNumber::withNumber(uint64_t{1}, 32), OSNoRetain);
+            if (!required) {
+                return false;
+            }
+            properties->setObject(PropertyKeys::kResolvedGeometryRequired, required.get());
+        }
+
         return true;
     }
 
 private:
+    [[nodiscard]] static bool PublishWireStreams(
+        OSDictionary* properties,
+        const char* key,
+        const std::vector<ASFWAudioWireStream>& streams) {
+        if (streams.empty()) {
+            return true;
+        }
+        auto array = OSSharedPtr(
+            OSArray::withCapacity(static_cast<uint32_t>(streams.size())), OSNoRetain);
+        if (!array) {
+            return false;
+        }
+        for (const auto& stream : streams) {
+            auto entry = OSSharedPtr(OSDictionary::withCapacity(4), OSNoRetain);
+            auto pcm = OSSharedPtr(OSNumber::withNumber(stream.pcmChannels, 32), OSNoRetain);
+            auto slots = OSSharedPtr(OSNumber::withNumber(stream.am824Slots, 32), OSNoRetain);
+            auto midi = OSSharedPtr(OSNumber::withNumber(stream.midiPorts, 32), OSNoRetain);
+            auto offset = OSSharedPtr(OSNumber::withNumber(stream.channelOffset, 32), OSNoRetain);
+            if (!entry || !pcm || !slots || !midi || !offset) {
+                // A partial array describes a device that does not exist. The
+                // caller turns this into a failed publication rather than a
+                // published device with the wrong shape.
+                return false;
+            }
+            entry->setObject(PropertyKeys::kStreamPcmChannels, pcm.get());
+            entry->setObject(PropertyKeys::kStreamAm824Slots, slots.get());
+            entry->setObject(PropertyKeys::kStreamMidiPorts, midi.get());
+            entry->setObject(PropertyKeys::kStreamChannelOffset, offset.get());
+            array->setObject(entry.get());
+        }
+        properties->setObject(key, array.get());
+        return true;
+    }
+
     static void PublishChannelNames(OSDictionary* properties,
                                     const char* key,
                                     const std::vector<std::string>& names) {
