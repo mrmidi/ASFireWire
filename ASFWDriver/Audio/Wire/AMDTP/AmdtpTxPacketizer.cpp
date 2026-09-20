@@ -145,24 +145,19 @@ void AmdtpTxPacketizer::ReArmFrameCursorAlignment() noexcept {
 
 bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
                                           const AmdtpTimingState& timing,
+                                          const TxPresentationPlan& plan,
                                           PreparedTxPacket& outPacket) noexcept {
     if (cadence_ == nullptr || timeline_ == nullptr || slot.bytes == nullptr) {
         return false;
     }
 
-    const bool cadenceData = cadence_->CurrentCycleIsData();
+    if (plan.epoch != 0 && plan.epoch != cursorEpoch_) {
+        return false; // Stale or rejected epoch cannot publish
+    }
+
     const bool isData =
-        timing.disposition == AmdtpPacketDisposition::Data &&
-        (timing.replayValid
-             ? timing.replayDataBlocks != 0
-             : cadenceData);
-    const uint8_t frames =
-        isData
-            ? static_cast<uint8_t>(
-                  timing.replayValid
-                      ? timing.replayDataBlocks
-                      : cadence_->CurrentCycleDataFrames())
-            : 0;
+        plan.disposition == AmdtpPacketDisposition::Data && plan.frameCount > 0;
+    const uint8_t frames = isData ? static_cast<uint8_t>(plan.frameCount) : 0;
     if (frames > streamConfig_.framesPerDataPacket) {
         return false;
     }
@@ -192,7 +187,7 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     outPacket.isData = isData;
     outPacket.dbc = dbc;
     outPacket.dbs = streamConfig_.dbs;
-    outPacket.firstAudioFrame = nextAudioFrame_;
+    outPacket.firstAudioFrame = plan.firstAudioFrame;
     outPacket.framesInPacket = isData ? frames : 0;
 
     if (isData) {
@@ -209,7 +204,7 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
         }
 
         dbcCounter_.AdvanceDataBlocks(frames);
-        nextAudioFrame_ += frames;
+        nextAudioFrame_ = plan.firstAudioFrame + frames;
         lastDataFirstAudioFrame_ = outPacket.firstAudioFrame;
         lastDataEndAudioFrame_ = nextAudioFrame_;
         lastDataPacketIndex_ = outPacket.packetIndex;
@@ -231,6 +226,38 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
 
     cadence_->AdvanceCycle();
     return true;
+}
+
+bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
+                                          const AmdtpTimingState& timing,
+                                          PreparedTxPacket& outPacket) noexcept {
+    if (cadence_ == nullptr) {
+        return false;
+    }
+
+    const bool cadenceData = cadence_->CurrentCycleIsData();
+    const bool isData =
+        timing.disposition == AmdtpPacketDisposition::Data &&
+        (timing.replayValid
+             ? timing.replayDataBlocks != 0
+             : cadenceData);
+    const uint8_t frames =
+        isData
+            ? static_cast<uint8_t>(
+                  timing.replayValid
+                      ? timing.replayDataBlocks
+                      : cadence_->CurrentCycleDataFrames())
+            : 0;
+
+    TxPresentationPlan plan{};
+    plan.epoch = cursorEpoch_;
+    plan.cycleOrdinal = slot.packetIndex;
+    plan.firstAudioFrame = nextAudioFrame_;
+    plan.frameCount = frames;
+    plan.disposition =
+        isData ? AmdtpPacketDisposition::Data : AmdtpPacketDisposition::NoData;
+
+    return PrepareNextPacket(slot, timing, plan, outPacket);
 }
 
 const AmdtpStreamConfig& AmdtpTxPacketizer::StreamConfig() const noexcept {

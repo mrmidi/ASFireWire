@@ -9,6 +9,10 @@
 #include <cstdint>
 #include <cstddef>
 
+namespace ASFW::Audio {
+class IRxPayloadCodec;
+}
+
 namespace ASFW::AudioEngine::Direct::Rx {
 
 struct RxAudioPacketProcessorResult final {
@@ -33,6 +37,17 @@ class RxAudioPacketProcessor final {
 public:
     explicit RxAudioPacketProcessor(DirectInputWriter& writer) noexcept
         : writer_(writer) {}
+
+    [[nodiscard]] RxAudioPacketProcessorResult ProcessPacket(
+        const uint8_t* payload,
+        size_t length,
+        uint64_t absoluteFrame,
+        uint32_t channels,
+        const ::ASFW::Audio::IRxPayloadCodec& codec,
+        uint32_t channelOffset = 0,
+        bool publishTimeline = true,
+        const RxCaptureChannelMap& captureMap = {},
+        bool primeDelayLine = false) noexcept;
 
     // `channels` is the number of PCM channels THIS stream decodes (its slice),
     // written into the shared interleaved input buffer starting at `channelOffset`

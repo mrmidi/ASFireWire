@@ -1168,14 +1168,18 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             if (abortIfTeardown("PreparingHostReceive")) {
                 return kIOReturnAborted;
             }
+            const DirectRxFormatDescriptor masterFormat{
+                .wireFormat = streamProfile.captureWireFormat,
+                .am824Slots = masterCapture.am824Slots,
+                .streamChannels = masterCapture.pcmChannels,
+                .trustConfiguredStride = streamProfile.captureTrustConfiguredStride,
+                .motuPcmChunks = streamProfile.captureMotuPcmChunks,
+                .motuPorts = streamProfile.captureMotuPorts,
+                .captureChannelMap = streamProfile.captureChannelMap,
+            };
             const kern_return_t prepareReceiveStatus =
                 hostTransport_.PrepareReceive(channels.CaptureChannel(0), hardware_, bindingSource,
-                                              streamProfile.captureWireFormat,
-                                              masterCapture.am824Slots, masterCapture.pcmChannels,
-                                              streamProfile.captureTrustConfiguredStride,
-                                              streamProfile.captureMotuPcmChunks,
-                                              streamProfile.captureMotuPorts,
-                                              streamProfile.captureChannelMap);
+                                              masterFormat);
             if (prepareReceiveStatus != kIOReturnSuccess) {
                 return rollbackToFailure(prepareReceiveStatus,
                                          DuplexRestartPhase::kStartingHostReceive,
@@ -1194,13 +1198,18 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                 if (abortIfTeardown("PreparingHostReceiveStream")) {
                     return kIOReturnAborted;
                 }
+                const DirectRxFormatDescriptor secondaryFormat{
+                    .wireFormat = streamProfile.captureWireFormat,
+                    .am824Slots = captureStream.am824Slots,
+                    .streamChannels = captureStream.pcmChannels,
+                    .trustConfiguredStride = streamProfile.captureTrustConfiguredStride,
+                    .motuPcmChunks = streamProfile.captureMotuPcmChunks,
+                    .motuPorts = streamProfile.captureMotuPorts,
+                    .captureChannelMap = streamProfile.captureChannelMap,
+                };
                 const kern_return_t status = hostTransport_.PrepareReceiveStream(
                     i, channels.CaptureChannel(i), hardware_, bindingSource,
-                    captureStream.pcmChannelOffset, captureStream.pcmChannels,
-                    streamProfile.captureWireFormat, captureStream.am824Slots,
-                    streamProfile.captureTrustConfiguredStride,
-                    streamProfile.captureMotuPcmChunks, streamProfile.captureMotuPorts,
-                    streamProfile.captureChannelMap);
+                    captureStream.pcmChannelOffset, secondaryFormat);
                 if (status != kIOReturnSuccess) {
                     return rollbackToFailure(status, DuplexRestartPhase::kStartingHostReceive,
                                              DuplexRestartFailureCause::kStartReceive);

@@ -11,6 +11,8 @@
 #include "../AudioClockPublisher.hpp"
 #include "../DirectInputWriter.hpp"
 #include "RxAudioPacketProcessor.hpp"
+#include "../../../Wire/AM824/Am824PayloadCodec.hpp"
+#include "../../../Wire/RawPcm24In32/RawPcm24In32PayloadCodec.hpp"
 #include "../../../Wire/MOTU/MotuEventOffsetCache.hpp"
 
 #include <functional>
@@ -138,6 +140,9 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint64_t prevLoggedAnchorHostTicks_{0};
     uint32_t prevLoggedAnchorRate_{0};
     bool prevLoggedAnchorValid_{false};
+    ::ASFW::Audio::Wire::Am824RxPayloadCodec am824Codec_{};
+    ::ASFW::Audio::Wire::RawPcm24In32RxPayloadCodec rawPcmCodec_{};
+    const ::ASFW::Audio::IRxPayloadCodec* payloadCodec_{nullptr};
 
 };
 

@@ -13,25 +13,23 @@ namespace ASFW::Audio {
 
 kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
     uint32_t streamIndex, ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-    Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t channelOffset,
-    uint32_t streamChannels, bool isSecondary, bool trustConfiguredStride,
-    uint32_t motuPcmChunks, Encoding::Motu::MotuPortMap motuPorts,
-    const AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap) noexcept {
+    uint32_t channelOffset, bool isSecondary,
+    const DirectRxFormatDescriptor& format) noexcept {
     if (streamIndex >= Driver::IsochService::kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
     }
 
     using Consumer = ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer;
     Consumer::Configuration configuration{
-        .wireFormat = wireFormat,
-        .am824Slots = am824Slots,
+        .wireFormat = format.wireFormat,
+        .am824Slots = format.am824Slots,
         .channelOffset = channelOffset,
-        .streamChannels = streamChannels,
+        .streamChannels = format.streamChannels,
         .isSecondary = isSecondary,
-        .trustConfiguredStride = trustConfiguredStride,
-        .motuPcmChunks = motuPcmChunks,
-        .motuPorts = motuPorts,
-        .captureChannelMap = captureChannelMap,
+        .trustConfiguredStride = format.trustConfiguredStride,
+        .motuPcmChunks = format.motuPcmChunks,
+        .motuPorts = format.motuPorts,
+        .captureChannelMap = format.captureChannelMap,
     };
     // This is a DriverKit `noexcept` boundary: report allocation failure instead
     // of allowing std::make_unique to terminate the driver process.
@@ -110,14 +108,10 @@ kern_return_t IsochDuplexHostTransport::ReserveCaptureResources(uint64_t guid,
 kern_return_t IsochDuplexHostTransport::PrepareReceive(
     uint8_t channel, Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-    Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t streamChannels,
-    bool trustConfiguredStride, uint32_t motuPcmChunks,
-    Encoding::Motu::MotuPortMap motuPorts,
-    const AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap) noexcept {
+    const DirectRxFormatDescriptor& format) noexcept {
     const kern_return_t attached =
-        AttachReceiveConsumer(/*streamIndex=*/0, bindingSource, wireFormat, am824Slots,
-                              /*channelOffset=*/0, streamChannels, /*isSecondary=*/false,
-                              trustConfiguredStride, motuPcmChunks, motuPorts, captureChannelMap);
+        AttachReceiveConsumer(/*streamIndex=*/0, bindingSource, /*channelOffset=*/0,
+                              /*isSecondary=*/false, format);
     if (attached != kIOReturnSuccess) {
         return attached;
     }
@@ -137,19 +131,15 @@ kern_return_t IsochDuplexHostTransport::PrepareTransmit(uint8_t channel,
 kern_return_t IsochDuplexHostTransport::PrepareReceiveStream(
     uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
-    uint32_t streamChannels, Encoding::AudioWireFormat wireFormat, uint32_t am824Slots,
-    bool trustConfiguredStride, uint32_t motuPcmChunks,
-    Encoding::Motu::MotuPortMap motuPorts,
-    const AudioEngine::Direct::Rx::RxCaptureChannelMap& captureChannelMap) noexcept {
+    const DirectRxFormatDescriptor& format) noexcept {
     const kern_return_t attached =
-        AttachReceiveConsumer(streamIndex, bindingSource, wireFormat, am824Slots, channelOffset,
-                              streamChannels, /*isSecondary=*/true, trustConfiguredStride,
-                              motuPcmChunks, motuPorts, captureChannelMap);
+        AttachReceiveConsumer(streamIndex, bindingSource, channelOffset,
+                              /*isSecondary=*/true, format);
     if (attached != kIOReturnSuccess) {
         return attached;
     }
     const kern_return_t status = isoch_.PrepareReceiveStream(
-        streamIndex, channel, hardware, channelOffset, streamChannels);
+        streamIndex, channel, hardware, channelOffset, format.streamChannels);
     if (status != kIOReturnSuccess) {
         isoch_.SetReceiveConsumer(streamIndex, nullptr);
         receiveConsumers_[streamIndex].reset();

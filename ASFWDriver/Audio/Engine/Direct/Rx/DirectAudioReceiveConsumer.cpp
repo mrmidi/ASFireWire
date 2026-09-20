@@ -41,7 +41,15 @@ DirectAudioReceiveConsumer::DirectAudioReceiveConsumer(
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
     Configuration configuration) noexcept
     : bindingSource_(bindingSource)
-    , configuration_(configuration) {}
+    , configuration_(configuration) {
+    if (configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kAM824) {
+        am824Codec_.Configure(configuration_.am824Slots, configuration_.trustConfiguredStride);
+        payloadCodec_ = &am824Codec_;
+    } else if (configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
+        rawPcmCodec_.Configure(configuration_.am824Slots, configuration_.trustConfiguredStride);
+        payloadCodec_ = &rawPcmCodec_;
+    }
+}
 
 void DirectAudioReceiveConsumer::SetBindingSource(
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept {
@@ -182,12 +190,30 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     const uint32_t channels = configuration_.streamChannels > 0
         ? configuration_.streamChannels
         : inputView_.memory.inputChannels;
-    const auto result = processor_.ProcessPacket(
-        packet.payload.data(), packet.payload.size(), absoluteFrameCursor_, channels,
-        inputView_.deviceToHostAm824Slots, configuration_.wireFormat,
-        configuration_.channelOffset, !configuration_.isSecondary,
-        configuration_.trustConfiguredStride, configuration_.motuPcmChunks,
-        configuration_.motuPorts, configuration_.captureChannelMap);
+
+    if (configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kAM824) {
+        am824Codec_.Configure(inputView_.deviceToHostAm824Slots, configuration_.trustConfiguredStride);
+        payloadCodec_ = &am824Codec_;
+    } else if (configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
+        rawPcmCodec_.Configure(inputView_.deviceToHostAm824Slots, configuration_.trustConfiguredStride);
+        payloadCodec_ = &rawPcmCodec_;
+    }
+
+    RxAudioPacketProcessorResult result{};
+    if (payloadCodec_ != nullptr) {
+        result = processor_.ProcessPacket(
+            packet.payload.data(), packet.payload.size(),
+            absoluteFrameCursor_, channels,
+            *payloadCodec_, configuration_.channelOffset,
+            !configuration_.isSecondary, configuration_.captureChannelMap);
+    } else {
+        result = processor_.ProcessPacket(
+            packet.payload.data(), packet.payload.size(), absoluteFrameCursor_, channels,
+            inputView_.deviceToHostAm824Slots, configuration_.wireFormat,
+            configuration_.channelOffset, !configuration_.isSecondary,
+            configuration_.trustConfiguredStride, configuration_.motuPcmChunks,
+            configuration_.motuPorts, configuration_.captureChannelMap);
+    }
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {
@@ -292,6 +318,10 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     }
     lastReplayCycleOrdinal_ = cycleOrdinal;
     replayCycleInitialized_ = true;
+
+    if (inputView_.control == nullptr) {
+        return;
+    }
 
     ::ASFW::Audio::Runtime::RxSequenceEntry replayEntry{};
     replayEntry.firstAudioFrame = absoluteFrameCursor_ - result.framesDecoded;

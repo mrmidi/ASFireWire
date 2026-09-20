@@ -50,6 +50,12 @@ add_audio_test(RawPcm24In32Tests
     RawPcm24In32Tests.cpp
 )
 
+# AM824 & RawPcm24In32 Payload Codec Tests
+add_audio_test(Am824PayloadCodecTests
+    Am824PayloadCodecTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+)
+
 # CIP Header Builder Tests
 add_audio_test(CIPHeaderBuilderTests
     CIPHeaderBuilderTests.cpp

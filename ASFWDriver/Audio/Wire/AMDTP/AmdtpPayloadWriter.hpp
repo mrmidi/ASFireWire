@@ -2,6 +2,7 @@
 
 #include "AmdtpPacketTimeline.hpp"
 #include "AmdtpTypes.hpp"
+#include "../../Ports/IWirePayloadCodec.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -28,7 +29,7 @@ struct AmdtpPayloadWriterCounters final {
     std::atomic<uint32_t> maxAbsSampleBits{0}; // Absolute int32 sample magnitude
 };
 
-class AmdtpPayloadWriter final {
+class AmdtpPayloadWriter final : public ::ASFW::Audio::ITxPayloadWriter {
 public:
     AmdtpPayloadWriter() noexcept = default;
 
@@ -38,7 +39,7 @@ public:
     void BindTimeline(AmdtpPacketTimeline* timeline) noexcept;
 
     void WriteFloat32Interleaved(const HostAudioBufferView& hostBuffer,
-                                 uint64_t completionCursor) noexcept;
+                                 uint64_t completionCursor) noexcept override;
 
     [[nodiscard]] const AmdtpPayloadWriterCounters& Counters() const noexcept;
 

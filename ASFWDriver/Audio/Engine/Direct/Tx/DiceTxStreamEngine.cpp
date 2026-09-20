@@ -135,26 +135,37 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
 void DiceTxStreamEngine::StampMotuSph(const AMDTP::TxPacketSlotView& slot,
                                       const AMDTP::PreparedTxPacket& packet,
                                       const AMDTP::AmdtpTimingState& timing) noexcept {
-    // The base must be the cycle this packet actually goes out in: write_sph adds each
-    // captured offset to it (amdtp-motu.c:379). Without an anchored cycle there is no
-    // correct SPH to write, so leave the block alone rather than invent one.
-    if (motuOffsetCache_ == nullptr || slot.bytes == nullptr || !timing.transmitCycleValid) {
+    if (slot.bytes == nullptr || packet.byteCount == 0) {
         return;
     }
-    // Drain exactly one offset per data block. Take() is all-or-nothing, so a cache that
-    // has not caught up leaves the packet unstamped rather than half-timed.
-    // AmdtpStreamConfig::framesPerDataPacket is a uint8_t, so 256 bounds every value a
-    // packet can carry; the stack array avoids an allocation on the transmit path.
+
     constexpr uint32_t kMaxBlocksPerPacket = 256;
-    uint32_t offsets[kMaxBlocksPerPacket]{};
     const uint32_t blocks = (packet.framesInPacket < kMaxBlocksPerPacket)
                                 ? packet.framesInPacket
                                 : kMaxBlocksPerPacket;
+    if (blocks == 0) {
+        return;
+    }
+
+    // The base must be the cycle this packet actually goes out in: write_sph adds each
+    // captured offset to it (amdtp-motu.c:379). Without an anchored cycle or without
+    // a valid cache run, zero the SPH quadlets so blocks never go out holding
+    // uninitialized or recycled DMA slot memory.
+    if (motuOffsetCache_ == nullptr || !timing.transmitCycleValid) {
+        (void)::ASFW::Encoding::Motu::WritePacketSphZero(
+            std::span<uint8_t>(slot.bytes, packet.byteCount), packet.dbs, blocks);
+        return;
+    }
+
+    uint32_t offsets[kMaxBlocksPerPacket]{};
     if (motuOffsetCache_->Take(std::span<uint32_t>(offsets, blocks))) {
         (void)::ASFW::Encoding::Motu::WritePacketSph(
             std::span<uint8_t>(slot.bytes, packet.byteCount), packet.dbs, blocks,
             timing.transmitCycle,
             std::span<const uint32_t>(offsets, blocks));
+    } else {
+        (void)::ASFW::Encoding::Motu::WritePacketSphZero(
+            std::span<uint8_t>(slot.bytes, packet.byteCount), packet.dbs, blocks);
     }
 }
 
@@ -169,7 +180,9 @@ void DiceTxStreamEngine::WriteHostOutputFloat32(
         motuPayloadWriter_.WriteFloat32Interleaved(hostBuffer, completionCursor);
         return;
     }
-    payloadWriter_.WriteFloat32Interleaved(hostBuffer, completionCursor);
+    if (activePayloadWriter_ != nullptr) {
+        activePayloadWriter_->WriteFloat32Interleaved(hostBuffer, completionCursor);
+    }
 }
 
 void DiceTxStreamEngine::BindMotuOffsetCache(

@@ -103,6 +103,7 @@ private:
 
     AMDTP::AmdtpTxPacketizer packetizer_{};
     AMDTP::AmdtpPayloadWriter payloadWriter_{};
+    ::ASFW::Audio::ITxPayloadWriter* activePayloadWriter_{&payloadWriter_};
 
     // MOTU's samples are 3-byte chunks behind a per-block SPH quadlet, so it needs its
     // own payload writer rather than a PcmSlotEncoding variant. Selected by

@@ -3,6 +3,7 @@
 #include "AmdtpCadence.hpp"
 #include "AmdtpPacketTimeline.hpp"
 #include "AmdtpTypes.hpp"
+#include "../../Ports/TxPresentationPlan.hpp"
 #include "../IEC61883/CipHeader.hpp"
 #include "../IEC61883/DbcCounter.hpp"
 
@@ -54,6 +55,13 @@ public:
     void ReArmFrameCursorAlignment() noexcept;
 
     [[nodiscard]] bool IsFrameCursorAligned() const noexcept { return frameCursorAligned_; }
+    [[nodiscard]] uint64_t NextAudioFrame() const noexcept { return nextAudioFrame_; }
+    [[nodiscard]] uint64_t CursorEpoch() const noexcept { return cursorEpoch_; }
+
+    bool PrepareNextPacket(TxPacketSlotView slot,
+                           const AmdtpTimingState& timing,
+                           const TxPresentationPlan& plan,
+                           PreparedTxPacket& outPacket) noexcept;
 
     bool PrepareNextPacket(TxPacketSlotView slot,
                            const AmdtpTimingState& timing,

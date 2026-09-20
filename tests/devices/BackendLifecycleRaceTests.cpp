@@ -90,14 +90,10 @@ public:
         return kIOReturnSuccess;
     }
     kern_return_t PrepareReceive(uint8_t, HardwareInterface&, ASFW::Audio::Runtime::IDirectAudioBindingSource*,
-                                 ASFW::Encoding::AudioWireFormat, uint32_t, uint32_t, bool, uint32_t,
-                                 ASFW::Encoding::Motu::MotuPortMap,
-                                 const ASFW::AudioEngine::Direct::Rx::RxCaptureChannelMap&) noexcept override { return kIOReturnSuccess; }
+                                 const ASFW::Audio::DirectRxFormatDescriptor& = {}) noexcept override { return kIOReturnSuccess; }
     kern_return_t PrepareTransmit(uint8_t, HardwareInterface&, uint8_t) noexcept override { return kIOReturnSuccess; }
     kern_return_t PrepareReceiveStream(uint32_t, uint8_t, HardwareInterface&, ASFW::Audio::Runtime::IDirectAudioBindingSource*,
-                                       uint32_t, uint32_t, ASFW::Encoding::AudioWireFormat, uint32_t, bool, uint32_t,
-                                       ASFW::Encoding::Motu::MotuPortMap,
-                                       const ASFW::AudioEngine::Direct::Rx::RxCaptureChannelMap&) noexcept override { return kIOReturnSuccess; }
+                                       uint32_t, const ASFW::Audio::DirectRxFormatDescriptor& = {}) noexcept override { return kIOReturnSuccess; }
     kern_return_t PrepareTransmitStream(uint32_t, uint8_t, HardwareInterface&, uint8_t) noexcept override { return kIOReturnSuccess; }
     kern_return_t StartPreparedReceive() noexcept override { return kIOReturnSuccess; }
     kern_return_t StartPreparedTransmit() noexcept override { return kIOReturnSuccess; }

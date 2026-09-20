@@ -370,6 +370,143 @@ TEST(AmdtpDirectTxTests, PacketizerTelemetryTracksCursorAlignmentAndLastDataRang
     EXPECT_GT(rearmed.cursorEpoch, snapshot.cursorEpoch);
 }
 
+TEST(AmdtpDirectTxTests, TxPresentationPlanSuppliedFrameRangeDeterminesPacketAndWriterSelection) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    const auto config = BlockingStereoConfig();
+    ASSERT_TRUE(packetizer.Configure(config, AmdtpTxPolicy{}));
+
+    std::array<uint8_t, 128> bytes{};
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.nextDataSyt = 0x5678;
+
+    TxPresentationPlan plan{};
+    plan.epoch = packetizer.CursorEpoch();
+    plan.cycleOrdinal = 0;
+    plan.firstAudioFrame = 12345;
+    plan.frameCount = 8;
+    plan.disposition = AmdtpPacketDisposition::Data;
+
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {0, bytes.data(), bytes.size()}, timing, plan, packet));
+
+    EXPECT_TRUE(packet.isData);
+    EXPECT_EQ(packet.firstAudioFrame, 12345U);
+    EXPECT_EQ(packet.framesInPacket, 8U);
+    EXPECT_EQ(packetizer.NextAudioFrame(), 12345U + 8U);
+
+    // Payload writer writes based on packetizer's timeline exposure
+    AmdtpPayloadWriter writer{};
+    writer.Configure(config, AmdtpTxPolicy{});
+    writer.BindTimeline(&timeline);
+
+    // Provide a host ring with known values
+    std::array<float, 64> hostRing{};
+    // Offset in ring corresponding to frame 12345 % 32:
+    const uint64_t ringOffset = (12345 % 32) * 2;
+    hostRing[ringOffset] = 0.5f;
+    hostRing[ringOffset + 1] = -0.5f;
+
+    writer.WriteFloat32Interleaved(
+        {hostRing.data(), 12345, 8, 32, 2}, 0);
+
+    // Verify PCM slot in packet received the sample from the specified frame
+    const uint32_t sample0 = (static_cast<uint32_t>(bytes[8]) << 24) |
+                             (static_cast<uint32_t>(bytes[9]) << 16) |
+                             (static_cast<uint32_t>(bytes[10]) << 8) |
+                             static_cast<uint32_t>(bytes[11]);
+    EXPECT_EQ(sample0, PcmSlotCodec::EncodeFloat32(0.5f, PcmSlotEncoding::Am824MBLA));
+}
+
+TEST(AmdtpDirectTxTests, TxPresentationPlanStaleEpochCannotPublish) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(BlockingStereoConfig(), AmdtpTxPolicy{}));
+
+    std::array<uint8_t, 128> bytes{};
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    timing.disposition = AmdtpPacketDisposition::Data;
+
+    TxPresentationPlan plan{};
+    plan.epoch = packetizer.CursorEpoch();
+    plan.cycleOrdinal = 0;
+    plan.firstAudioFrame = 100;
+    plan.frameCount = 8;
+    plan.disposition = AmdtpPacketDisposition::Data;
+
+    // Advance epoch via AlignFrameCursorOnce
+    ASSERT_TRUE(packetizer.AlignFrameCursorOnce(100));
+    EXPECT_NE(plan.epoch, packetizer.CursorEpoch());
+
+    PreparedTxPacket packet{};
+    // Stale epoch must be rejected
+    EXPECT_FALSE(packetizer.PrepareNextPacket(
+        {0, bytes.data(), bytes.size()}, timing, plan, packet));
+
+    // Update plan with current epoch -> succeeds
+    plan.epoch = packetizer.CursorEpoch();
+    EXPECT_TRUE(packetizer.PrepareNextPacket(
+        {0, bytes.data(), bytes.size()}, timing, plan, packet));
+    EXPECT_TRUE(packet.isData);
+    EXPECT_EQ(packet.firstAudioFrame, 100U);
+}
+
+TEST(AmdtpDirectTxTests, TxPresentationPlanFailureDoesNotAdvanceStateAndCanRetry) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(BlockingStereoConfig(), AmdtpTxPolicy{}));
+
+    std::array<uint8_t, 128> bytes{};
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    timing.disposition = AmdtpPacketDisposition::Data;
+
+    TxPresentationPlan plan{};
+    plan.epoch = 999; // Wrong epoch
+    plan.cycleOrdinal = 0;
+    plan.firstAudioFrame = 500;
+    plan.frameCount = 8;
+    plan.disposition = AmdtpPacketDisposition::Data;
+
+    PreparedTxPacket packet{};
+    // Fails due to wrong epoch
+    EXPECT_FALSE(packetizer.PrepareNextPacket(
+        {0, bytes.data(), bytes.size()}, timing, plan, packet));
+
+    // State not advanced
+    EXPECT_EQ(packetizer.NextAudioFrame(), 0U);
+
+    // Also fail due to insufficient capacity
+    plan.epoch = packetizer.CursorEpoch();
+    EXPECT_FALSE(packetizer.PrepareNextPacket(
+        {0, bytes.data(), 4}, timing, plan, packet));
+    EXPECT_EQ(packetizer.NextAudioFrame(), 0U);
+
+    // Retry with corrected slot & plan succeeds
+    EXPECT_TRUE(packetizer.PrepareNextPacket(
+        {0, bytes.data(), bytes.size()}, timing, plan, packet));
+    EXPECT_TRUE(packet.isData);
+    EXPECT_EQ(packet.firstAudioFrame, 500U);
+    EXPECT_EQ(packet.dbc, 0U);
+    EXPECT_EQ(packetizer.NextAudioFrame(), 508U);
+}
+
 TEST(AmdtpDirectTxTests, TxEngineReportsPreparationFailureStage) {
     DiceTxStreamEngine engine{};
     AmdtpTimingState timing{};
