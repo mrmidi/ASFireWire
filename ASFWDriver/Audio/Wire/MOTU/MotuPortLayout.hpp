@@ -22,8 +22,6 @@
 
 #pragma once
 
-#include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
-
 #include <cstdint>
 #include <span>
 
@@ -107,28 +105,5 @@ inline constexpr MotuPort k828mk2Capture[] = {
 static_assert(IsChunkPermutation(kV2Playback));
 static_assert(IsChunkPermutation(kUltraLiteCapture));
 static_assert(IsChunkPermutation(k828mk2Capture));
-
-/// Host-to-device port map for a model, by its unit directory software version.
-[[nodiscard]] constexpr MotuPortMap PlaybackPortsForSwVersion(uint32_t swVersion) noexcept {
-    switch (swVersion) {
-    case DeviceProfiles::Audio::kMotu828mk2SwVersion:
-    case DeviceProfiles::Audio::kMotuUltraliteSwVersion:
-        return kV2Playback;
-    default:
-        return {};
-    }
-}
-
-/// Device-to-host port map for a model, by its unit directory software version.
-[[nodiscard]] constexpr MotuPortMap CapturePortsForSwVersion(uint32_t swVersion) noexcept {
-    switch (swVersion) {
-    case DeviceProfiles::Audio::kMotu828mk2SwVersion:
-        return k828mk2Capture;
-    case DeviceProfiles::Audio::kMotuUltraliteSwVersion:
-        return kUltraLiteCapture;
-    default:
-        return {};
-    }
-}
 
 } // namespace ASFW::Encoding::Motu

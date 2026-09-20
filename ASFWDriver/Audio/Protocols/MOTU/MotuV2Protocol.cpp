@@ -12,6 +12,7 @@
 
 #include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../Logging/Logging.hpp"
+#include "../../DriverKit/Config/MOTU/MotuV2Profile.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
 
 namespace ASFW::Audio::Motu {
@@ -257,9 +258,9 @@ bool MotuV2Protocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) 
 bool MotuV2Protocol::GetChannelLabels(std::vector<std::string>& inNames,
                                       std::vector<std::string>& outNames) const {
     const Encoding::Motu::MotuPortMap capture =
-        Encoding::Motu::CapturePortsForSwVersion(unitSwVersion_);
+        Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(unitSwVersion_);
     const Encoding::Motu::MotuPortMap playback =
-        Encoding::Motu::PlaybackPortsForSwVersion(unitSwVersion_);
+        Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion(unitSwVersion_);
     if (capture.empty() && playback.empty()) {
         return false;
     }

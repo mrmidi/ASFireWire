@@ -16,6 +16,7 @@
 #include "Bus/IRM/IRMClient.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Hardware/HardwareInterface.hpp"
+#include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
 
 #include <chrono>

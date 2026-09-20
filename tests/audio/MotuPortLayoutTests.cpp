@@ -7,6 +7,7 @@
 // assigned in array order (motu_avdevice.cpp:1839-1862).
 
 #include "Audio/Wire/MOTU/MotuPortLayout.hpp"
+#include "Audio/DriverKit/Config/MOTU/MotuV2Profile.hpp"
 
 #include <gtest/gtest.h>
 
@@ -18,13 +19,13 @@ namespace {
 using ASFW::DeviceProfiles::Audio::kMotu828mk2SwVersion;
 using ASFW::DeviceProfiles::Audio::kMotu896hdSwVersion;
 using ASFW::DeviceProfiles::Audio::kMotuUltraliteSwVersion;
-using ASFW::Encoding::Motu::CapturePortsForSwVersion;
 using ASFW::Encoding::Motu::ChunkForHostChannel;
 using ASFW::Encoding::Motu::EffectivePortMap;
 using ASFW::Encoding::Motu::IsChunkPermutation;
 using ASFW::Encoding::Motu::MotuPort;
 using ASFW::Encoding::Motu::MotuPortMap;
-using ASFW::Encoding::Motu::PlaybackPortsForSwVersion;
+using ASFW::Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion;
+using ASFW::Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion;
 
 constexpr uint32_t kFixedChunks = 14;
 
