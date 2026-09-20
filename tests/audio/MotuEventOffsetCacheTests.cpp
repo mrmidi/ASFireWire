@@ -375,4 +375,66 @@ TEST(MotuEventOffsetCacheTests, ConcurrentResetPreventsTornViews) {
     EXPECT_EQ(clobberedResets.load(), 0u);
 }
 
+TEST(MotuEventOffsetCacheTests, TakeRejectsMixedRingGenerationsWhenProducerWrapsDuringCopy) {
+    MotuEventOffsetCache cache{};
+
+    // Populate ring with initial generation
+    for (uint32_t c = 0; c < 8; ++c) {
+        const auto pkt = MakeRxPacket(BaseTickForCycle(c), {100u, 200u, 300u, 400u});
+        ASSERT_EQ(cache.Capture(pkt, kDbs, 4, c), 4u);
+    }
+    ASSERT_TRUE(cache.IsEstablished());
+
+    // Pause Take after copying slot 0, wrap ring with 4096 blocks of 9999u
+    bool hookFired = false;
+    cache.SetOnSlotCopiedHookForTesting([&](uint32_t slotCopied) {
+        if (slotCopied == 0 && !hookFired) {
+            hookFired = true;
+            for (uint32_t c = 0; c < MotuEventOffsetCache::kCapacity / 4; ++c) {
+                const auto wrapPkt = MakeRxPacket(BaseTickForCycle(c), {9999u, 9999u, 9999u, 9999u});
+                cache.Capture(wrapPkt, kDbs, 4, c);
+            }
+        }
+    });
+
+    std::array<uint32_t, 8> out{};
+    OffsetCacheTakeResult takeResult = OffsetCacheTakeResult::Success;
+    const bool took = cache.Take(out, &takeResult);
+
+    // In no case may `out` have element 0 from generation 0 (100u) and element 1..7 from generation 1 (9999u)
+    if (took) {
+        for (size_t i = 0; i < out.size(); ++i) {
+            EXPECT_EQ(out[i], 9999u);
+        }
+    } else {
+        EXPECT_EQ(takeResult, OffsetCacheTakeResult::ConcurrentRewrite);
+    }
+    EXPECT_TRUE(hookFired);
+}
+
+TEST(MotuEventOffsetCacheTests, ResetDuringCaptureCannotLeaveNewEpochEstablished) {
+    MotuEventOffsetCache cache{};
+    EXPECT_FALSE(cache.IsEstablished());
+
+    // Pause Capture after CAS, call Reset to move to epoch 2
+    bool postCasFired = false;
+    cache.SetPostCasHookForTesting([&](uint32_t epoch) {
+        postCasFired = true;
+        cache.Reset(epoch + 1);
+    });
+
+    const auto pkt = MakeRxPacket(BaseTickForCycle(0), {100u, 200u, 300u, 400u});
+    const uint32_t cached = cache.Capture(pkt, kDbs, 4, 0);
+    EXPECT_EQ(cached, 4u);
+    EXPECT_TRUE(postCasFired);
+
+    EXPECT_EQ(cache.Epoch(), 2u);
+    EXPECT_FALSE(cache.IsEstablished());
+
+    std::array<uint32_t, 4> out{};
+    OffsetCacheTakeResult takeResult = OffsetCacheTakeResult::Success;
+    EXPECT_FALSE(cache.Take(out, &takeResult));
+    EXPECT_EQ(takeResult, OffsetCacheTakeResult::NotEstablished);
+}
+
 } // namespace

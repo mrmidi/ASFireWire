@@ -25,8 +25,8 @@
 // - Cursors and epochs are packed into 64-bit atomic positions: bits [63:32] hold epoch,
 //   bits [31:0] hold the monotonic 32-bit slot cursor.
 // - An atomic commit protocol via CAS eliminates TOCTOU races on Reset().
-// - Per-slot odd/even sequence counters validate that Take() copies coherent runs
-//   without concurrent write tears.
+// - Each slot atomically publishes its logical position and offset together,
+//   so a reader cannot pair a new offset with an old position.
 
 #pragma once
 
@@ -38,12 +38,17 @@
 #include <cstdint>
 #include <span>
 
+#if defined(ASFW_HOST_TEST)
+#include <functional>
+#include <utility>
+#endif
+
 namespace ASFW::Encoding::Motu {
 
 enum class OffsetCacheTakeResult : uint8_t {
     Success = 0,
-    SuccessOverrunResync,
     SuccessUnderrunResync,
+    SuccessOverrunResync,
     NotEstablished,
     NotEnoughHistory,
     ConcurrentReset,
@@ -60,6 +65,12 @@ public:
 
     /// Offsets are ticks on the 24.576 MHz timeline, always < kTicksPerSecond.
     static constexpr uint32_t kNoOffset = UINT32_MAX;
+
+    MotuEventOffsetCache() noexcept {
+        for (size_t i = 0; i < kCapacity; ++i) {
+            slots_[i].store(Pack(UINT32_MAX, kNoOffset), std::memory_order_relaxed);
+        }
+    }
 
     static constexpr uint64_t Pack(uint32_t epoch, uint32_t cursor) noexcept {
         return (static_cast<uint64_t>(epoch) << 32) | static_cast<uint64_t>(cursor);
@@ -83,7 +94,7 @@ public:
         }
         capturePosition_.store(Pack(nextEpoch, 0U), std::memory_order_release);
         playbackPosition_.store(Pack(nextEpoch, 0U), std::memory_order_release);
-        established_.store(false, std::memory_order_release);
+        establishedEpoch_.store(0U, std::memory_order_release);
         epochTransitionSequence_.fetch_add(1, std::memory_order_release);
     }
 
@@ -126,13 +137,11 @@ public:
                 break;
             }
             const uint32_t sph = ReadSph(payload.subspan(static_cast<size_t>(blockStart), 4));
-            const uint32_t slotIdx = (cursor + block) & (kCapacity - 1);
+            const uint32_t logicalPos = cursor + block;
+            const uint32_t slotIdx = logicalPos & (kCapacity - 1);
 
-            const uint32_t oldSeq = slotSequences_[slotIdx].load(std::memory_order_relaxed);
-            const uint32_t writingSeq = oldSeq | 1U;
-            slotSequences_[slotIdx].store(writingSeq, std::memory_order_release);
-            slots_[slotIdx].store(TickOffsetFromBase(sph, baseTick), std::memory_order_relaxed);
-            slotSequences_[slotIdx].store(writingSeq + 1U, std::memory_order_release);
+            slots_[slotIdx].store(Pack(logicalPos, TickOffsetFromBase(sph, baseTick)),
+                                  std::memory_order_release);
             ++cached;
         }
 
@@ -152,7 +161,15 @@ public:
             return 0;
         }
 
-        established_.store(true, std::memory_order_release);
+#if defined(ASFW_HOST_TEST)
+        if (postCasHook_) {
+            postCasHook_(epoch);
+        }
+#endif
+
+        if (UnpackEpoch(capturePosition_.load(std::memory_order_relaxed)) == epoch) {
+            establishedEpoch_.store(epoch, std::memory_order_release);
+        }
         return cached;
     }
 
@@ -224,21 +241,25 @@ public:
                 result = OffsetCacheTakeResult::SuccessOverrunResync;
             }
 
-            // Copy with coherent run sequence check.
+            // Copy atomic position/offset pairs and verify the requested logical run.
             bool stable = true;
             for (uint32_t i = 0; i < requested; ++i) {
-                const uint32_t slotIdx = (start + i) & (kCapacity - 1);
-                const uint32_t seqBefore = slotSequences_[slotIdx].load(std::memory_order_acquire);
-                if ((seqBefore & 1U) != 0U) {
+                const uint32_t expectedLogicalPos = start + i;
+                const uint32_t slotIdx = expectedLogicalPos & (kCapacity - 1);
+                const uint64_t slot = slots_[slotIdx].load(std::memory_order_acquire);
+                const uint32_t pos = UnpackEpoch(slot);
+                const uint32_t val = UnpackCursor(slot);
+                if (pos != expectedLogicalPos) {
                     stable = false;
                     break;
                 }
-                out[i] = slots_[slotIdx].load(std::memory_order_relaxed);
-                const uint32_t seqAfter = slotSequences_[slotIdx].load(std::memory_order_acquire);
-                if (seqBefore != seqAfter) {
-                    stable = false;
-                    break;
+                out[i] = val;
+
+#if defined(ASFW_HOST_TEST)
+                if (onSlotCopiedHook_) {
+                    onSlotCopiedHook_(i);
                 }
+#endif
             }
 
             if (!stable) {
@@ -247,6 +268,15 @@ public:
 
             if (epochTransitionSequence_.load(std::memory_order_acquire) != transBefore) {
                 continue; // Reset intervened
+            }
+
+            const uint64_t capPosAfter = capturePosition_.load(std::memory_order_acquire);
+            if (UnpackEpoch(capPosAfter) != playEpoch) {
+                continue; // Reset intervened
+            }
+            const uint32_t prodAfter = UnpackCursor(capPosAfter);
+            if (prodAfter < start + requested || (prodAfter - start) > kCapacity) {
+                continue; // Producer wrapped or moved past our read window while copying
             }
 
             const uint64_t desiredPlayPos = Pack(playEpoch, start + requested);
@@ -265,10 +295,11 @@ public:
         return false;
     }
 
-    /// True once at least one block has been captured, so the transmit side knows the
-    /// device's timing has actually been observed rather than assumed.
+    /// True once at least one block has been captured in the current epoch,
+    /// so the transmit side knows the device's timing has actually been observed.
     [[nodiscard]] bool IsEstablished() const noexcept {
-        return established_.load(std::memory_order_acquire);
+        const uint32_t currentEpoch = UnpackEpoch(capturePosition_.load(std::memory_order_acquire));
+        return currentEpoch != 0 && establishedEpoch_.load(std::memory_order_acquire) == currentEpoch;
     }
 
     [[nodiscard]] uint64_t Available() const noexcept {
@@ -293,13 +324,27 @@ public:
         return UnpackEpoch(capturePosition_.load(std::memory_order_acquire));
     }
 
+#if defined(ASFW_HOST_TEST)
+    void SetOnSlotCopiedHookForTesting(std::function<void(uint32_t)> hook) noexcept {
+        onSlotCopiedHook_ = std::move(hook);
+    }
+    void SetPostCasHookForTesting(std::function<void(uint32_t)> hook) noexcept {
+        postCasHook_ = std::move(hook);
+    }
+#endif
+
 private:
-    std::atomic<uint32_t> slots_[kCapacity]{};
-    std::atomic<uint32_t> slotSequences_[kCapacity]{};
+    static_assert(std::atomic<uint64_t>::is_always_lock_free);
+    std::atomic<uint64_t> slots_[kCapacity]{};
     std::atomic<uint64_t> capturePosition_{Pack(1U, 0U)};
     std::atomic<uint64_t> playbackPosition_{Pack(1U, 0U)};
     std::atomic<uint64_t> epochTransitionSequence_{0U};
-    std::atomic<bool> established_{false};
+    std::atomic<uint32_t> establishedEpoch_{0U};
+
+#if defined(ASFW_HOST_TEST)
+    std::function<void(uint32_t)> onSlotCopiedHook_{};
+    std::function<void(uint32_t)> postCasHook_{};
+#endif
 };
 
 } // namespace ASFW::Encoding::Motu
