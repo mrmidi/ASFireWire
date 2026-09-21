@@ -106,6 +106,10 @@ struct TopologyBuildError {
 };
 
 static constexpr uint8_t kInvalidPhysicalId = 0xFF;
+
+/// Physical IDs run 0..62; 63 (0x3F) is the broadcast/"no node" encoding, so a
+/// per-node table indexed by physical ID needs exactly 63 entries.
+static constexpr uint8_t kMaxPhysicalIds = 63;
 static constexpr uint8_t kMaxFireWireNodes = 63;
 static constexpr uint8_t kMaxPhyPorts = 16;
 

@@ -83,20 +83,24 @@ public:
 class FakeHostTransport final : public IIsochDuplexHostTransport {
 public:
     kern_return_t BeginSplitDuplex(uint64_t) noexcept override { return kIOReturnSuccess; }
-    kern_return_t ReservePlaybackResources(uint64_t, IRMClient&, uint64_t, uint32_t, uint8_t& outChannel) noexcept override {
-        outChannel = 1;
+    kern_return_t ReservePlaybackResources(uint64_t, IRMClient&, uint64_t, uint32_t,
+                                           ASFW::Audio::Backends::IRMReservationResult& outResult) noexcept override {
+        outResult.channel = 1;
+        outResult.status = kIOReturnSuccess;
         return kIOReturnSuccess;
     }
-    kern_return_t ReserveCaptureResources(uint64_t, IRMClient&, uint64_t, uint32_t, uint8_t& outChannel) noexcept override {
-        outChannel = 2;
+    kern_return_t ReserveCaptureResources(uint64_t, IRMClient&, uint64_t, uint32_t,
+                                          ASFW::Audio::Backends::IRMReservationResult& outResult) noexcept override {
+        outResult.channel = 2;
+        outResult.status = kIOReturnSuccess;
         return kIOReturnSuccess;
     }
     kern_return_t PrepareReceive(uint8_t, HardwareInterface&, ASFW::Audio::Runtime::IDirectAudioBindingSource*,
                                  const ASFW::Audio::DirectRxFormatDescriptor& = {}) noexcept override { return kIOReturnSuccess; }
-    kern_return_t PrepareTransmit(uint8_t, HardwareInterface&, uint8_t) noexcept override { return kIOReturnSuccess; }
+    kern_return_t PrepareTransmit(uint8_t, HardwareInterface&, uint8_t, ASFW::FW::FwSpeed) noexcept override { return kIOReturnSuccess; }
     kern_return_t PrepareReceiveStream(uint32_t, uint8_t, HardwareInterface&, ASFW::Audio::Runtime::IDirectAudioBindingSource*,
                                        uint32_t, const ASFW::Audio::DirectRxFormatDescriptor& = {}) noexcept override { return kIOReturnSuccess; }
-    kern_return_t PrepareTransmitStream(uint32_t, uint8_t, HardwareInterface&, uint8_t) noexcept override { return kIOReturnSuccess; }
+    kern_return_t PrepareTransmitStream(uint32_t, uint8_t, HardwareInterface&, uint8_t, ASFW::FW::FwSpeed) noexcept override { return kIOReturnSuccess; }
     kern_return_t StartPreparedReceive() noexcept override { return kIOReturnSuccess; }
     kern_return_t StartPreparedTransmit() noexcept override { return kIOReturnSuccess; }
     kern_return_t StopPreparedReceive() noexcept override { return kIOReturnSuccess; }

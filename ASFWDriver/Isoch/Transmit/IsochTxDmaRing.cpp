@@ -29,11 +29,15 @@ constexpr int32_t kMaxStampLeadCycles = 16;
 constexpr int32_t kMaxFreshStampAgeCycles = Layout::kNumPackets / 2;
 // Beyond half the cycle domain two readings can no longer be ordered.
 constexpr uint32_t kMaxComparableCycles = kCyclesPerSecond / 2;
-// Replace the channel field [13:8] of a little-endian OHCI isoch transmit header
-// quadlet with the channel owned by this ring. Linux queue_iso_transmit() likewise
-// takes the channel from the isoch context, never from content-layer metadata
-// (references/linux-ohci-firewire-low-level-stack/ohci.c:3373-3381).
-[[nodiscard]] inline uint32_t StampHeaderChannel(uint32_t leHeader, uint8_t channel) noexcept {
+// Replace the channel field [13:8] and the speed field [18:16] of a little-endian
+// OHCI isoch transmit header quadlet with the values owned by this ring. Linux
+// queue_iso_transmit() likewise takes both from the isoch context, never from
+// content-layer metadata: the channel at ohci.c:3373-3381 and the speed from
+// the context's own speed at ohci.c:3377. Speed is a property of the link to
+// the device, which only the transport knows; the audio producer writes a
+// placeholder it cannot resolve.
+[[nodiscard]] inline uint32_t StampHeaderChannelAndSpeed(uint32_t leHeader, uint8_t channel,
+                                                         FW::FwSpeed speed) noexcept {
     // An all-zero header is the "no packet" sentinel (e.g. underrun): leave it
     // untouched so the ring never invents packet state.
     if (leHeader == 0) {
@@ -42,6 +46,8 @@ constexpr uint32_t kMaxComparableCycles = kCyclesPerSecond / 2;
     uint32_t h = OSSwapLittleToHostInt32(leHeader);
     h = (h & ~(static_cast<uint32_t>(0x3F) << 8)) |
         (static_cast<uint32_t>(channel & 0x3F) << 8);
+    h = (h & ~(static_cast<uint32_t>(0x7) << 16)) |
+        ((static_cast<uint32_t>(speed) & 0x7U) << 16);
     return OSSwapHostToLittleInt32(h);
 }
 } // namespace
@@ -434,7 +440,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         // The transport context owns channel selection. Always override the
         // producer placeholder so master and secondary streams obey Configure().
         immDesc->immediateData[0] =
-            StampHeaderChannel(meta.immediateHeader[0], channel_);
+            StampHeaderChannelAndSpeed(meta.immediateHeader[0], channel_, speed_);
         immDesc->immediateData[1] = meta.immediateHeader[1];
 
         // Linux queue_iso_transmit() self-links the skip address so a lost
@@ -899,7 +905,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
             slab_.GetDescriptorPtr(descBase));
         immDesc->immediateData[0] =
-            StampHeaderChannel(meta.immediateHeader[0], channel_);
+            StampHeaderChannelAndSpeed(meta.immediateHeader[0], channel_, speed_);
         immDesc->immediateData[1] = meta.immediateHeader[1];
         immDesc->common.branchWord = MakeBranchWordAT(
             slab_.GetDescriptorIOVA(descBase),

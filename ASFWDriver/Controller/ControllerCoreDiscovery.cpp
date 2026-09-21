@@ -13,6 +13,7 @@
 #include "../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
+#include "../Bus/TopologySpeed.hpp"
 #include "../Bus/CSR/TopologyMapService.hpp"
 #include "../Bus/CSR/SpeedMapService.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
@@ -143,6 +144,36 @@ const char* CyclePolicyActionString(Bus::CyclePolicyAction action) {
     case CyclePolicyAction::ReportRootSelectionRequired: return "root-selection-required";
     }
     return "unknown";
+}
+
+// Isochronous speed for a node, from Self-ID evidence. Falls back to the async
+// speed only when the topology cannot answer, which keeps a degraded bus at
+// today's behaviour rather than silently dropping every stream to S100.
+ASFW::FW::FwSpeed ResolveIsochSpeed(const std::optional<TopologySnapshot>& topology,
+                                    uint8_t nodeId,
+                                    ASFW::FW::FwSpeed asyncFallback) {
+    if (!topology.has_value() || topology->localNodeId == kInvalidPhysicalId) {
+        ASFW_LOG(Discovery,
+                 "Node %u: no valid topology for isoch speed; falling back to the async speed S%u",
+                 nodeId, 100u << static_cast<uint8_t>(asyncFallback));
+        return asyncFallback;
+    }
+
+    const auto pathSpeed = PathSpeedCodeBetween(*topology, topology->localNodeId, nodeId);
+    if (!pathSpeed.has_value()) {
+        ASFW_LOG(Discovery,
+                 "Node %u: unreachable in Self-ID graph; falling back to the async speed S%u",
+                 nodeId, 100u << static_cast<uint8_t>(asyncFallback));
+        return asyncFallback;
+    }
+
+    const auto speed = static_cast<ASFW::FW::FwSpeed>(*pathSpeed);
+    if (speed != asyncFallback) {
+        ASFW_LOG(Discovery,
+                 "Node %u: isoch speed S%u from Self-ID (async speed is S%u)",
+                 nodeId, 100u << *pathSpeed, 100u << static_cast<uint8_t>(asyncFallback));
+    }
+    return speed;
 }
 
 const TopologyNodeRecord* FindTopologyNode(const TopologySnapshot& topology,
@@ -536,6 +567,13 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
         }
     }
 
+    // Isochronous speed comes from Self-ID geometry, not from async outcomes.
+    // SpeedPolicy demotes localToNode when a request times out, which is right
+    // for async and wrong for isoch: charging isoch at S200 costs twice the
+    // bandwidth units of S400 for a device whose PHY was never the problem.
+    const auto topologyForSpeed = deps_.topology ? deps_.topology->LatestSnapshot()
+                                                 : std::nullopt;
+
     for (const auto& rom : roms) {
         const auto nodeId = ASFW::Discovery::TryOperationalNodeId(rom.nodeId);
         if (!nodeId.has_value()) {
@@ -566,6 +604,7 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
         deps_.romStore->Insert(rom);
 
         auto policy = deps_.speedPolicy->ForNode(*nodeId);
+        policy.isochToNode = ResolveIsochSpeed(topologyForSpeed, *nodeId, policy.localToNode);
 
         auto& bus = this->Bus();
         auto deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy);

@@ -46,8 +46,23 @@ struct FwAddress {
 // FwSpeed enum is now defined in DiscoveryValues.hpp
 
 struct LinkPolicy {
+    // Async speed. Starts at the topology speed and is demoted by SpeedPolicy
+    // when a request times out, which is the right behaviour for asynchronous
+    // requests — some devices genuinely mishandle them above S200 — and is
+    // Apple's `fSpeedVector`, read by async transmit at
+    // IOFireWireController.cpp:7058 and demoted at :2755-2759.
+    //
     // TODO: S100 hardcoded for maximum hardware compatibility.
-    FwSpeed localToNode{FwSpeed::S100};      // Negotiated/observed speed
+    FwSpeed localToNode{FwSpeed::S100};
+
+    // Isochronous speed: the Self-ID path speed to this node, never demoted by
+    // async outcomes. Apple resolves isoch speed from the PHY rather than the
+    // speed vector (IOFWIsochChannel.cpp:653), because a device that refuses
+    // async requests at S400 has said nothing about its isochronous receiver.
+    // Conflating the two halves the isochronous bandwidth budget for free:
+    // the charge is `unitsAtS1600 >> speedCode`, so S200 costs twice S400.
+    FwSpeed isochToNode{FwSpeed::S100};
+
     uint16_t maxPayloadBytes{512};           // Clamp for Async TX (depends on MaxRec, speed, policy)
     bool halvePackets{false};                // Stability escape hatch
 };

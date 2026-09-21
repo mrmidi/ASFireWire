@@ -14,6 +14,7 @@
 #include "../../Hardware/RegisterMap.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Common/BarrierUtils.hpp"
+#include "../../Common/FWTypes.hpp"
 
 #include <atomic>
 #include <array>
@@ -125,6 +126,11 @@ public:
 
     void SetChannel(uint8_t channel) noexcept { channel_ = channel; }
 
+    /// Wire speed for every packet this ring transmits. It is the speed the
+    /// device link was charged for against BANDWIDTH_AVAILABLE, so the two must
+    /// come from the same source.
+    void SetSpeed(FW::FwSpeed speed) noexcept { speed_ = speed; }
+
     [[nodiscard]] bool HasRings() const noexcept { return slab_.IsValid(); }
 
     [[nodiscard]] kern_return_t SetupRings(Memory::IIsochDMAMemory& dmaMemory) noexcept {
@@ -184,6 +190,7 @@ private:
                                                  uint32_t& outPacketIndex) noexcept;
 
     uint8_t channel_{0};
+    FW::FwSpeed speed_{FW::FwSpeed::S400};
     IsochTxDescriptorSlab slab_{};
     Memory::IIsochDMAMemory* dmaMemory_{nullptr};
 

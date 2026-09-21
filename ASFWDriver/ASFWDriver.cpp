@@ -1253,7 +1253,11 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
 
     const uint8_t sid = static_cast<uint8_t>(ctx.deps.hardware->ReadNodeID() & 0x3Fu);
 
-    return ctx.isoch.StartTransmit(channel, *ctx.deps.hardware, sid);
+    // A user-client diagnostic path with no device behind it, so there is no
+    // per-device link speed to follow. S400 is the same speed this path has
+    // always transmitted at; the audio path derives its speed from the target
+    // device and passes it explicitly.
+    return ctx.isoch.StartTransmit(channel, *ctx.deps.hardware, sid, ASFW::FW::FwSpeed::S400);
 }
 
 kern_return_t ASFWDriver::StopIsochTransmit() {

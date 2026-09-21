@@ -48,6 +48,12 @@ LinkPolicy SpeedPolicy::ForNode(uint8_t nodeId) const {
         policy.localToNode = FwSpeed::S400;
     }
     
+    // SpeedPolicy has no topology, so it cannot answer the isochronous question.
+    // Seed it with the async speed so a caller that never learns the Self-ID
+    // path speed degrades to today's behaviour rather than to S100; discovery
+    // overwrites this with the real path speed (ControllerCoreDiscovery.cpp).
+    policy.isochToNode = policy.localToNode;
+
     policy.maxPayloadBytes = ComputeMaxPayload(policy.localToNode);
     policy.halvePackets = halfSizePackets_;
     

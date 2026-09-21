@@ -79,43 +79,39 @@ kern_return_t IsochDuplexHostTransport::BeginSplitDuplex(uint64_t guid) noexcept
     return isoch_.BeginSplitDuplex(guid);
 }
 
-kern_return_t IsochDuplexHostTransport::ReservePlaybackResources(uint64_t guid,
-                                                               ::ASFW::IRM::IRMClient& irmClient,
-                                                               uint64_t allowedChannels,
-                                                               uint32_t bandwidthUnits,
-                                                               uint8_t& outChannel) noexcept {
+kern_return_t IsochDuplexHostTransport::ReservePlaybackResources(
+    uint64_t guid, ::ASFW::IRM::IRMClient& irmClient, uint64_t allowedChannels,
+    uint32_t packetBandwidthUnits, Backends::IRMReservationResult& outResult) noexcept {
     // The IRM, not the device profile, chooses the live channel. A one-bit
     // mask preserves DICE's device-assigned channels; OXFW supplies all usable
     // channels and consumes the returned value for CMP + OHCI programming.
-    const Backends::IRMReservationResult reservation =
-        reservations_.ReserveAnyPlayback(irmClient, allowedChannels, bandwidthUnits);
-    if (reservation.status != kIOReturnSuccess) {
-        return reservation.status;
+    outResult = reservations_.ReserveAnyPlayback(irmClient, allowedChannels,
+                                                 packetBandwidthUnits);
+    if (outResult.status != kIOReturnSuccess) {
+        return outResult.status;
     }
-    outChannel = reservation.channel;
     const kern_return_t bookkeeping =
-        isoch_.ReservePlaybackResources(guid, irmClient, outChannel, bandwidthUnits);
+        isoch_.ReservePlaybackResources(guid, irmClient, outResult.channel, outResult.charge.Total());
     if (bookkeeping != kIOReturnSuccess) {
         reservations_.ReleaseAll();
+        outResult.status = bookkeeping;
     }
     return bookkeeping;
 }
 
-kern_return_t IsochDuplexHostTransport::ReserveCaptureResources(uint64_t guid,
-                                                              ::ASFW::IRM::IRMClient& irmClient,
-                                                              uint64_t allowedChannels,
-                                                              uint32_t bandwidthUnits,
-                                                              uint8_t& outChannel) noexcept {
-    const Backends::IRMReservationResult reservation =
-        reservations_.ReserveAnyCapture(irmClient, allowedChannels, bandwidthUnits);
-    if (reservation.status != kIOReturnSuccess) {
-        return reservation.status;
+kern_return_t IsochDuplexHostTransport::ReserveCaptureResources(
+    uint64_t guid, ::ASFW::IRM::IRMClient& irmClient, uint64_t allowedChannels,
+    uint32_t packetBandwidthUnits, Backends::IRMReservationResult& outResult) noexcept {
+    outResult = reservations_.ReserveAnyCapture(irmClient, allowedChannels,
+                                                packetBandwidthUnits);
+    if (outResult.status != kIOReturnSuccess) {
+        return outResult.status;
     }
-    outChannel = reservation.channel;
     const kern_return_t bookkeeping =
-        isoch_.ReserveCaptureResources(guid, irmClient, outChannel, bandwidthUnits);
+        isoch_.ReserveCaptureResources(guid, irmClient, outResult.channel, outResult.charge.Total());
     if (bookkeeping != kIOReturnSuccess) {
         reservations_.ReleaseAll();
+        outResult.status = bookkeeping;
     }
     return bookkeeping;
 }
@@ -139,8 +135,9 @@ kern_return_t IsochDuplexHostTransport::PrepareReceive(
 
 kern_return_t IsochDuplexHostTransport::PrepareTransmit(uint8_t channel,
                                                       Driver::HardwareInterface& hardware,
-                                                      uint8_t sourceId) noexcept {
-    return isoch_.PrepareTransmit(channel, hardware, sourceId);
+                                                      uint8_t sourceId,
+                                                      FW::FwSpeed speed) noexcept {
+    return isoch_.PrepareTransmit(channel, hardware, sourceId, speed);
 }
 
 kern_return_t IsochDuplexHostTransport::PrepareReceiveStream(
@@ -164,8 +161,9 @@ kern_return_t IsochDuplexHostTransport::PrepareReceiveStream(
 
 kern_return_t IsochDuplexHostTransport::PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
                                                             Driver::HardwareInterface& hardware,
-                                                            uint8_t sourceId) noexcept {
-    return isoch_.PrepareTransmitStream(streamIndex, channel, hardware, sourceId);
+                                                            uint8_t sourceId,
+                                                            FW::FwSpeed speed) noexcept {
+    return isoch_.PrepareTransmitStream(streamIndex, channel, hardware, sourceId, speed);
 }
 
 kern_return_t IsochDuplexHostTransport::StartPreparedReceive() noexcept {

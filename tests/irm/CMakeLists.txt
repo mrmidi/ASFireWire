@@ -43,3 +43,8 @@ add_irm_test(IRMClientRemoteRetryTests
     IRMClientRemoteRetryTests.cpp
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
 )
+
+# Bandwidth calculation cross-checked against Apple and Linux derivations
+add_irm_test(IsochBandwidthAllocationTests
+    IsochBandwidthAllocationTests.cpp
+)

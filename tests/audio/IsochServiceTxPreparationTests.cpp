@@ -80,7 +80,7 @@ TEST(IsochServiceTxPreparation, CallbackRegisteredBeforeContextCreationSurvivesS
                                 std::memory_order_release);
 
     ASSERT_EQ(service.StartTransmit(/*channel=*/3, hardware,
-                                    /*sid=*/0x3f),
+                                    /*sid=*/0x3f, ASFW::FW::FwSpeed::S400),
               kIOReturnSuccess);
     auto* context = service.TransmitContext();
     ASSERT_NE(context, nullptr);
@@ -135,7 +135,8 @@ TEST(IsochServiceTxPreparation, ActiveTransmitStopRetainsQueueUntilHardwareQuies
     queue->committedEnd.store(AudioTimingGeometry::kTxPreparationLeadPackets,
                               std::memory_order_release);
 
-    ASSERT_EQ(service.StartTransmit(3, hardware, 0x3f), kIOReturnSuccess);
+    ASSERT_EQ(service.StartTransmit(3, hardware, 0x3f, ASFW::FW::FwSpeed::S400),
+              kIOReturnSuccess);
     auto* context = service.TransmitContext();
     ASSERT_NE(context, nullptr);
     EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Running);
@@ -164,7 +165,8 @@ TEST(IsochServiceTxPreparation, SecondaryStreamRejectsIndexZeroAndOutOfRange) {
     EXPECT_EQ(service.PrepareReceiveStream(0, /*channel=*/1, hardware,
                                            /*offset=*/0, /*streamChannels=*/16),
               kIOReturnBadArgument);
-    EXPECT_EQ(service.PrepareTransmitStream(0, /*channel=*/0, hardware, /*sid=*/0x3f),
+    EXPECT_EQ(service.PrepareTransmitStream(0, /*channel=*/0, hardware, /*sid=*/0x3f,
+                                            ASFW::FW::FwSpeed::S400),
               kIOReturnBadArgument);
     // Out of range.
     EXPECT_EQ(service.PrepareReceiveStream(IsochService::kMaxStreamsPerDirection, 2, hardware,
@@ -270,7 +272,7 @@ TEST(IsochServiceTxPreparation, SecondaryTransmitStreamCreatesIndependentContext
               kIOReturnSuccess);
 
     ASSERT_EQ(service.PrepareTransmitStream(/*streamIndex=*/1, /*channel=*/4, hardware,
-                                            /*sid=*/0x3f),
+                                            /*sid=*/0x3f, ASFW::FW::FwSpeed::S400),
               kIOReturnSuccess);
 
     EXPECT_EQ(service.TransmitContext(0), nullptr); // master not created

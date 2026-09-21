@@ -8,6 +8,7 @@
 #include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "../../../Discovery/DiscoveryTypes.hpp"
+#include "../../../Bus/IRM/IRMTypes.hpp"
 #include "../DeviceProtocolChoice.hpp"
 #include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
@@ -64,7 +65,7 @@ struct DuplexCaptureStreamGeometry {
     uint32_t pcmChannelOffset{0};
     uint32_t pcmChannels{0};
     uint32_t am824Slots{0};
-    uint32_t bandwidthUnits{0};
+    uint32_t packetBandwidthUnits{0};
     uint64_t allowedIsoChannels{0};
 };
 
@@ -74,12 +75,18 @@ struct DuplexPlaybackStreamGeometry {
     uint8_t isoChannel{AudioStreamWireInfo::kInvalidIsoChannel};
     uint32_t pcmChannels{0};
     uint32_t am824Slots{0};
-    uint32_t bandwidthUnits{0};
+    uint32_t packetBandwidthUnits{0};
     uint64_t allowedIsoChannels{0};
 };
 
 struct DuplexStreamProfile {
     AudioDuplexChannels channels{};
+    // The one speed for this device's isochronous streams: what the packets are
+    // transmitted at and what the IRM was charged for. Apple and Linux both keep
+    // a single per-device value (IOFWIsochChannel.cpp:653-664, dice-stream.c
+    // allocate + amdtp_stream_start); two answers means charging for one bus and
+    // transmitting on another.
+    FW::FwSpeed linkSpeed{FW::FwSpeed::S400};
     AudioStreamRuntimeCaps runtimeCaps{};
     std::array<DuplexCaptureStreamGeometry, kMaxAudioStreamsPerDirection> captureStreams{};
     std::array<DuplexPlaybackStreamGeometry, kMaxAudioStreamsPerDirection> playbackStreams{};
@@ -136,42 +143,19 @@ class DuplexStreamProfileResolver final {
     static constexpr uint8_t kDefaultCaptureIsoChannel = 1;
     static constexpr uint8_t kDefaultPlaybackIsoChannel = 0;
 
-    // Linux sound/firewire/iso-resources.c:48-76 calculates bandwidth from the
-    // maximum CIP payload plus the three-quadlet isoch packet header, scaled to
-    // S400 allocation units. Its 512-unit fallback is used when optimized gap
-    // count information is unavailable; DeviceRecord currently carries link
-    // speed but not the live gap count, so use that conservative reference path.
+    // The packet term only. Per-allocation bus overhead depends on the live gap
+    // count, which can change between planning and reserving, so it is charged
+    // by the reservation itself (IRM::BandwidthOverheadForGapCount) exactly as
+    // Linux does in fw_iso_resources_allocate (iso-resources.c:113-128).
     [[nodiscard]] static constexpr uint32_t
-    PacketBandwidthUnits(uint32_t maxPayloadBytes, FW::FwSpeed speed) noexcept {
-        const uint32_t alignedPayloadBytes = (maxPayloadBytes + 3U) & ~3U;
-        const uint32_t packetBytesAtSpeed = 12U + alignedPayloadBytes;
-
-        uint32_t packetUnits = packetBytesAtSpeed;
-        switch (speed) {
-            case FW::FwSpeed::S100:
-                packetUnits *= 4U;
-                break;
-            case FW::FwSpeed::S200:
-                packetUnits *= 2U;
-                break;
-            case FW::FwSpeed::S400:
-                break;
-            case FW::FwSpeed::S800:
-                packetUnits = (packetUnits + 1U) / 2U;
-                break;
-        }
-        return packetUnits + 512U;
-    }
-
-    [[nodiscard]] static constexpr uint32_t
-    AmdtpBandwidthUnits(uint32_t am824Slots, uint32_t sampleRateHz,
-                        FW::FwSpeed speed) noexcept {
+    AmdtpPacketBandwidthUnits(uint32_t am824Slots, uint32_t sampleRateHz,
+                              FW::FwSpeed speed) noexcept {
         const auto rate = Encoding::AmdtpRateGeometryForSampleRate(
             sampleRateHz != 0 ? sampleRateHz : 48000U);
         const uint32_t blocksPerPacket = rate ? rate->sytIntervalFrames : 8U;
         const uint32_t slots = am824Slots != 0 ? am824Slots : 1U;
         const uint32_t maxPayloadBytes = 8U + blocksPerPacket * slots * 4U;
-        return PacketBandwidthUnits(maxPayloadBytes, speed);
+        return IRM::PacketBandwidthUnits(maxPayloadBytes, static_cast<uint8_t>(speed));
     }
 
     [[nodiscard]] static constexpr uint64_t FixedChannelMask(uint8_t channel) noexcept {
@@ -360,6 +344,7 @@ class DuplexStreamProfileResolver final {
                                                    const AudioDuplexChannels& channels) noexcept {
         DuplexStreamProfile profile{
             .channels = channels,
+            .linkSpeed = record.link.isochToNode,
             .runtimeCaps = caps,
         };
         const auto traits = TraitsFor(record);
@@ -378,8 +363,8 @@ class DuplexStreamProfileResolver final {
             geometry.pcmChannelOffset = captureChannelOffset;
             geometry.pcmChannels = multiCapture ? stream.pcmChannels : 0;
             geometry.am824Slots = multiCapture ? stream.am824Slots : caps.deviceToHostAm824Slots;
-            geometry.bandwidthUnits = AmdtpBandwidthUnits(
-                geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
+            geometry.packetBandwidthUnits = AmdtpPacketBandwidthUnits(
+                geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed);
             // CMP (including BridgeCo/BeBoB) does not own a fixed channel;
             // IRM selects one, which is then committed back to its PCR.
             geometry.allowedIsoChannels = traits.cmpChoosesIsoChannel
@@ -396,10 +381,10 @@ class DuplexStreamProfileResolver final {
                                        ? stream.pcmChannels
                                        : (i == 0 ? caps.hostOutputPcmChannels : 0U);
             geometry.am824Slots = stream.am824Slots != 0
-                                      ? stream.am824Slots
-                                      : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
-            geometry.bandwidthUnits = AmdtpBandwidthUnits(
-                geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
+                                       ? stream.am824Slots
+                                       : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
+            geometry.packetBandwidthUnits = AmdtpPacketBandwidthUnits(
+                geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed);
             geometry.allowedIsoChannels = traits.cmpChoosesIsoChannel
                                               ? allowedChannels
                                               : FixedChannelMask(geometry.isoChannel);
