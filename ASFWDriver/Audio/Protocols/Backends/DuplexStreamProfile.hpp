@@ -86,7 +86,13 @@ struct DuplexStreamProfile {
     // a single per-device value (IOFWIsochChannel.cpp:653-664, dice-stream.c
     // allocate + amdtp_stream_start); two answers means charging for one bus and
     // transmitting on another.
-    FW::FwSpeed linkSpeed{FW::FwSpeed::S400};
+    //
+    // Conservative initialization; discovery supplies the resolved path speed
+    // before stream planning. S100 is valid, never an "unset" sentinel -- and
+    // because this value is stamped into the transmit header as well as charged
+    // to the IRM, erring low only over-reserves, while erring high would
+    // transmit faster than the path supports.
+    FW::FwSpeed linkSpeed{FW::FwSpeed::S100};
     AudioStreamRuntimeCaps runtimeCaps{};
     std::array<DuplexCaptureStreamGeometry, kMaxAudioStreamsPerDirection> captureStreams{};
     std::array<DuplexPlaybackStreamGeometry, kMaxAudioStreamsPerDirection> playbackStreams{};
