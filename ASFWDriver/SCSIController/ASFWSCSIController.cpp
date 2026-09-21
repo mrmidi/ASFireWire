@@ -723,9 +723,16 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     // UserGetDataBuffer is called inside UserProcessParallelTask. The mapping
     // stays valid until the task completes, so the completion lambda may write
     // through the captured address for data-IN.
+    //
+    // Like every DriverKit `OSObject**` out-param, the descriptor comes back
+    // +1 retained and must be released by us. Leaking it cost one dext-side
+    // object (and its mach ports) per data-carrying task; a long VueScan
+    // session (~57k tasks) exhausted the port space and the kernel killed the
+    // dext with EXC_RESOURCE/PORTS. Hold it until the task completes (the
+    // mapping must outlive the data-IN copy) and release it there.
     IOAddressSegment dataSeg{};
+    IOBufferMemoryDescriptor* buffer = nullptr;
     if (request.transferLength > 0) {
-        IOBufferMemoryDescriptor* buffer = nullptr;
         kern_return_t kr = UserGetDataBuffer(parallelRequest.fTargetID,
                                              parallelRequest.fControllerTaskIdentifier,
                                              &buffer);
@@ -734,6 +741,7 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
             dataSeg.length < request.transferLength) {
             ASFW_LOG(Controller, "[SCSIHBA] task data buffer unavailable (kr=0x%x len=%llu/%u)",
                      kr, dataSeg.length, request.transferLength);
+            OSSafeReleaseNULL(buffer);
             resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
             ParallelTaskCompletion(completion, resp);
             if (response != nullptr) {
@@ -741,7 +749,6 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
             }
             return kIOReturnSuccess;
         }
-        // UserGetDataBuffer returns a borrowed reference — do not release.
         if (request.direction == SBP2::SCSI::DataDirection::ToTarget) {
             const auto* src = reinterpret_cast<const uint8_t*>(dataSeg.address);
             request.outgoingPayload.assign(src, src + request.transferLength);
@@ -749,7 +756,8 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     }
 
     // The completion fires later, from the FireWire driver's work queue — keep
-    // the OSAction and this service alive across the async gap.
+    // the OSAction and this service alive across the async gap. `buffer`
+    // (already +1) rides along and is released in the same place.
     completion->retain();
     this->retain();
 
@@ -761,7 +769,7 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     const uint64_t dataLength = dataSeg.length;
 
     bridge->SubmitTask(std::move(request),
-        [this, completion, targetID, taskID, dataIn, requestedLength, dataAddress,
+        [this, completion, buffer, targetID, taskID, dataIn, requestedLength, dataAddress,
          dataLength, opcode](const SBP2::SCSI::CommandResult& result) {
             SCSIUserParallelResponse asyncResp{};
             asyncResp.version = kScsiUserParallelTaskResponseCurrentVersion1;
@@ -799,6 +807,9 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
             }
 
             ParallelTaskCompletion(completion, asyncResp);
+            if (buffer != nullptr) {
+                buffer->release();
+            }
             completion->release();
             this->release();
         });
