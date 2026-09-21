@@ -36,19 +36,20 @@ class IIsochDuplexHostTransport {
     [[nodiscard]] virtual kern_return_t BeginSplitDuplex(uint64_t guid) noexcept = 0;
     [[nodiscard]] virtual kern_return_t
     ReservePlaybackResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient,
-                             uint64_t allowedChannels, uint32_t bandwidthUnits,
-                             uint8_t& outChannel) noexcept = 0;
+                             uint64_t allowedChannels, uint32_t packetBandwidthUnits,
+                             Backends::IRMReservationResult& outResult) noexcept = 0;
     [[nodiscard]] virtual kern_return_t
     ReserveCaptureResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient,
-                            uint64_t allowedChannels, uint32_t bandwidthUnits,
-                            uint8_t& outChannel) noexcept = 0;
+                            uint64_t allowedChannels, uint32_t packetBandwidthUnits,
+                            Backends::IRMReservationResult& outResult) noexcept = 0;
     [[nodiscard]] virtual kern_return_t
     PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
                    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
                    const DirectRxFormatDescriptor& format = {}) noexcept = 0;
     [[nodiscard]] virtual kern_return_t PrepareTransmit(uint8_t channel,
                                                         Driver::HardwareInterface& hardware,
-                                                        uint8_t sourceId) noexcept = 0;
+                                                        uint8_t sourceId,
+                                                        FW::FwSpeed speed) noexcept = 0;
     // Secondary streams (streamIndex >= 1) for multi-stream DICE devices; the
     // master stream uses PrepareReceive/PrepareTransmit above.
     [[nodiscard]] virtual kern_return_t
@@ -58,7 +59,8 @@ class IIsochDuplexHostTransport {
                          const DirectRxFormatDescriptor& format = {}) noexcept = 0;
     [[nodiscard]] virtual kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
                                                               Driver::HardwareInterface& hardware,
-                                                              uint8_t sourceId) noexcept = 0;
+                                                              uint8_t sourceId,
+                                                              FW::FwSpeed speed) noexcept = 0;
     [[nodiscard]] virtual kern_return_t StartPreparedReceive() noexcept = 0;
     [[nodiscard]] virtual kern_return_t StartPreparedTransmit() noexcept = 0;
     [[nodiscard]] virtual kern_return_t StopPreparedReceive() noexcept {
@@ -91,31 +93,31 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     void SetTimingLossCallback(Driver::IsochService::TimingLossCallback callback) noexcept;
 
     [[nodiscard]] kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override;
-    [[nodiscard]] kern_return_t ReservePlaybackResources(uint64_t guid,
-                                                         ::ASFW::IRM::IRMClient& irmClient,
-                                                         uint64_t allowedChannels,
-                                                         uint32_t bandwidthUnits,
-                                                         uint8_t& outChannel) noexcept override;
-    [[nodiscard]] kern_return_t ReserveCaptureResources(uint64_t guid,
-                                                        ::ASFW::IRM::IRMClient& irmClient,
-                                                        uint64_t allowedChannels,
-                                                        uint32_t bandwidthUnits,
-                                                        uint8_t& outChannel) noexcept override;
+    [[nodiscard]] kern_return_t
+    ReservePlaybackResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient,
+                             uint64_t allowedChannels, uint32_t packetBandwidthUnits,
+                             Backends::IRMReservationResult& outResult) noexcept override;
+    [[nodiscard]] kern_return_t
+    ReserveCaptureResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient,
+                            uint64_t allowedChannels, uint32_t packetBandwidthUnits,
+                            Backends::IRMReservationResult& outResult) noexcept override;
     [[nodiscard]] kern_return_t
     PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
                    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
                    const DirectRxFormatDescriptor& format = {}) noexcept override;
     [[nodiscard]] kern_return_t PrepareTransmit(uint8_t channel,
-                                                Driver::HardwareInterface& hardware,
-                                                uint8_t sourceId) noexcept override;
+                                                 Driver::HardwareInterface& hardware,
+                                                 uint8_t sourceId,
+                                                 FW::FwSpeed speed) noexcept override;
     [[nodiscard]] kern_return_t
     PrepareReceiveStream(uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
                          ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
                          uint32_t channelOffset,
                          const DirectRxFormatDescriptor& format = {}) noexcept override;
     [[nodiscard]] kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
-                                                      Driver::HardwareInterface& hardware,
-                                                      uint8_t sourceId) noexcept override;
+                                                       Driver::HardwareInterface& hardware,
+                                                       uint8_t sourceId,
+                                                       FW::FwSpeed speed) noexcept override;
     [[nodiscard]] kern_return_t StartPreparedReceive() noexcept override;
     [[nodiscard]] kern_return_t StartPreparedTransmit() noexcept override;
     [[nodiscard]] kern_return_t StopPreparedReceive() noexcept override;

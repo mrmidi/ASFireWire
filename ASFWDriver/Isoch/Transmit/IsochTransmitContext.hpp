@@ -63,7 +63,9 @@ public:
         Driver::HardwareInterface* hw,
         std::shared_ptr<Memory::IIsochDMAMemory> dmaMemory) noexcept;
 
-    kern_return_t Configure(uint8_t channel, uint8_t sid) noexcept;
+    /// @param speed Wire speed for transmitted packets. Required, and must be
+    /// the same speed the reservation charged the IRM for.
+    kern_return_t Configure(uint8_t channel, uint8_t sid, FW::FwSpeed speed) noexcept;
 
     // Select which OHCI IT hardware context backs this stream. Defaults to 0
     // (master); secondary streams must use their own context (== streamIndex) or
@@ -112,6 +114,7 @@ private:
 
     State state_{State::Unconfigured};
     uint8_t channel_{0};
+    FW::FwSpeed speed_{FW::FwSpeed::S400};
     uint8_t contextIndex_{0};
     
     Driver::HardwareInterface* hardware_{nullptr};

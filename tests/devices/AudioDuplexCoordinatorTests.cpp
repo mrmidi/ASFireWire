@@ -8,6 +8,7 @@
 #include "Audio/Protocols/Duplex/IDuplexDeviceControl.hpp"
 #include "Audio/Protocols/IDeviceProtocol.hpp"
 #include "Bus/IRM/IRMClient.hpp"
+#include "Bus/IRM/IRMTypes.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
@@ -163,38 +164,48 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         return beginStatus;
     }
 
-    kern_return_t ReservePlaybackResources(uint64_t guid, IRMClient&, uint64_t allowedChannels,
-                                           uint32_t bandwidthUnits,
-                                           uint8_t& outChannel) noexcept override {
+    kern_return_t
+    ReservePlaybackResources(uint64_t guid, IRMClient&, uint64_t allowedChannels,
+                             uint32_t packetBandwidthUnits,
+                             ASFW::Audio::Backends::IRMReservationResult& outResult) noexcept override {
         log_.Add("host.reserve_playback");
         lastGuid = guid;
         lastPlaybackAllowedChannels = allowedChannels;
-        lastPlaybackBandwidth = bandwidthUnits;
+        lastPlaybackBandwidth = packetBandwidthUnits;
         ++reservePlaybackCalls;
+        outResult = {};
+        outResult.status = reservePlaybackStatus;
         if (reservePlaybackStatus == kIOReturnSuccess) {
-            outChannel = SelectChannel(allowedChannels);
-            if (outChannel == ASFW::Audio::AudioStreamWireInfo::kInvalidIsoChannel) {
+            outResult.channel = SelectChannel(allowedChannels);
+            if (outResult.channel == ASFW::Audio::AudioStreamWireInfo::kInvalidIsoChannel) {
+                outResult.status = kIOReturnNoResources;
+                outResult.failure = ASFW::Audio::Backends::IsochReserveFailure::kChannelBusy;
                 return kIOReturnNoResources;
             }
-            lastPlaybackChannel = outChannel;
+            lastPlaybackChannel = outResult.channel;
         }
         return reservePlaybackStatus;
     }
 
-    kern_return_t ReserveCaptureResources(uint64_t guid, IRMClient&, uint64_t allowedChannels,
-                                          uint32_t bandwidthUnits,
-                                          uint8_t& outChannel) noexcept override {
+    kern_return_t
+    ReserveCaptureResources(uint64_t guid, IRMClient&, uint64_t allowedChannels,
+                            uint32_t packetBandwidthUnits,
+                            ASFW::Audio::Backends::IRMReservationResult& outResult) noexcept override {
         log_.Add("host.reserve_capture");
         lastGuid = guid;
         lastCaptureAllowedChannels = allowedChannels;
-        lastCaptureBandwidth = bandwidthUnits;
+        lastCaptureBandwidth = packetBandwidthUnits;
         ++reserveCaptureCalls;
+        outResult = {};
+        outResult.status = reserveCaptureStatus;
         if (reserveCaptureStatus == kIOReturnSuccess) {
-            outChannel = SelectChannel(allowedChannels);
-            if (outChannel == ASFW::Audio::AudioStreamWireInfo::kInvalidIsoChannel) {
+            outResult.channel = SelectChannel(allowedChannels);
+            if (outResult.channel == ASFW::Audio::AudioStreamWireInfo::kInvalidIsoChannel) {
+                outResult.status = kIOReturnNoResources;
+                outResult.failure = ASFW::Audio::Backends::IsochReserveFailure::kChannelBusy;
                 return kIOReturnNoResources;
             }
-            lastCaptureChannel = outChannel;
+            lastCaptureChannel = outResult.channel;
         }
         return reserveCaptureStatus;
     }
@@ -218,10 +229,12 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     }
 
     kern_return_t PrepareTransmit(uint8_t channel, HardwareInterface&,
-                                  uint8_t sourceId) noexcept override {
+                                  uint8_t sourceId,
+                                  ASFW::FW::FwSpeed speed) noexcept override {
         log_.Add("host.prepare_transmit");
         lastTransmitChannel = channel;
         lastTransmitSourceId = sourceId;
+        lastTransmitSpeed = speed;
         ++prepareTransmitCalls;
         return prepareTransmitStatus;
     }
@@ -243,11 +256,13 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     }
 
     kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel, HardwareInterface&,
-                                        uint8_t sourceId) noexcept override {
+                                        uint8_t sourceId,
+                                        ASFW::FW::FwSpeed speed) noexcept override {
         log_.Add("host.prepare_transmit_stream");
         lastSecondaryTransmitIndex = streamIndex;
         lastSecondaryTransmitChannel = channel;
         lastSecondaryTransmitSourceId = sourceId;
+        lastSecondaryTransmitSpeed = speed;
         ++prepareTransmitStreamCalls;
         return prepareTransmitStatus;
     }
@@ -312,6 +327,7 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     ASFW::AudioEngine::Direct::Rx::RxCaptureChannelMap lastSecondaryReceiveCaptureChannelMap{};
     uint8_t lastTransmitChannel{0};
     uint8_t lastTransmitSourceId{0};
+    ASFW::FW::FwSpeed lastTransmitSpeed{ASFW::FW::FwSpeed::S100};
     uint32_t lastTransmitMode{0};
     uint32_t lastTransmitPcmChannels{0};
     uint32_t lastTransmitDataBlockSize{0};
@@ -334,6 +350,7 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     uint32_t lastSecondaryTransmitIndex{0};
     uint8_t lastSecondaryTransmitChannel{0};
     uint8_t lastSecondaryTransmitSourceId{0};
+    ASFW::FW::FwSpeed lastSecondaryTransmitSpeed{ASFW::FW::FwSpeed::S100};
     int startReceiveCalls{0};
     int startTransmitCalls{0};
     int stopCalls{0};
@@ -669,6 +686,23 @@ class AudioDuplexCoordinatorTests : public ::testing::Test {
         runtime_.Insert(kTestGuid, protocol);
     }
 
+    // asyncSpeed is SpeedPolicy's demotable per-node speed; isochSpeed is the
+    // Self-ID path speed. They are deliberately separate, so tests must be able
+    // to drive them apart.
+    void InstallDeviceWithLinkSpeed(const std::shared_ptr<IDeviceProtocol>& protocol,
+                                    ASFW::FW::FwSpeed isochSpeed,
+                                    ASFW::FW::FwSpeed asyncSpeed) {
+        (void)registry_.UpsertFromROM(
+            MakeConfigRom(kTestGuid),
+            LinkPolicy{.localToNode = asyncSpeed, .isochToNode = isochSpeed});
+        runtime_.Insert(kTestGuid, protocol);
+    }
+
+    void InstallDeviceWithLinkSpeed(const std::shared_ptr<IDeviceProtocol>& protocol,
+                                    ASFW::FW::FwSpeed speed) {
+        InstallDeviceWithLinkSpeed(protocol, speed, speed);
+    }
+
     void InstallDeviceAtGeneration(Generation gen,
                                    const std::shared_ptr<IDeviceProtocol>& protocol) {
         (void)registry_.UpsertFromROM(
@@ -715,6 +749,63 @@ class AudioDuplexCoordinatorTests : public ::testing::Test {
     std::atomic<bool> cancel_{false};
     AudioDuplexCoordinator coordinator_;
 };
+
+// The value the IRM reservation is charged at is the same value the isochronous
+// transmit context runs at. Charging for one speed and transmitting at another
+// is how a reservation that fits turns into packets the bus was not paid for.
+TEST_F(AudioDuplexCoordinatorTests, TransmitSpeedIsTheSpeedTheReservationWasChargedAt) {
+    InstallDeviceWithLinkSpeed(protocol_, ASFW::FW::FwSpeed::S200);
+
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+
+    EXPECT_EQ(hostTransport_.lastTransmitSpeed, ASFW::FW::FwSpeed::S200);
+    // 9 host->device AM824 slots x 8 events x 4 bytes + 8 CIP bytes = 296 bytes
+    // of payload; 74 payload quadlets + 3 header quadlets, doubled for S200.
+    EXPECT_EQ(hostTransport_.lastPlaybackBandwidth,
+              ASFW::IRM::PacketBandwidthUnits(8 + 8 * 9 * 4,
+                                              static_cast<uint8_t>(ASFW::FW::FwSpeed::S200)));
+}
+
+// Isochronous speed comes from Self-ID, never from async outcomes. SpeedPolicy
+// demotes localToNode when a device times out a request — the Midas Venice F24
+// genuinely needs async at S200 — and isoch used to inherit that demotion,
+// which doubled the bandwidth charge (`unitsAtS1600 >> speedCode`) and put a
+// two-node S400 bus at the edge of the 4915-unit budget for no reason.
+//
+// Apple keeps these apart deliberately: isoch speed comes from the PHY
+// (IOFWIsochChannel.cpp:653) while the demotable per-node-pair fSpeedVector
+// (demoted at IOFireWireController.cpp:2755-2759) is read only by async
+// transmit (:7058).
+TEST_F(AudioDuplexCoordinatorTests, AsyncSpeedDemotionDoesNotLowerIsochronousSpeed) {
+    InstallDeviceWithLinkSpeed(protocol_,
+                               /*isochSpeed=*/ASFW::FW::FwSpeed::S400,
+                               /*asyncSpeed=*/ASFW::FW::FwSpeed::S200);
+
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+
+    EXPECT_EQ(hostTransport_.lastTransmitSpeed, ASFW::FW::FwSpeed::S400);
+    EXPECT_EQ(hostTransport_.lastPlaybackBandwidth,
+              ASFW::IRM::PacketBandwidthUnits(8 + 8 * 9 * 4,
+                                              static_cast<uint8_t>(ASFW::FW::FwSpeed::S400)));
+
+    // And the charge really is half what the demoted async speed would have cost.
+    EXPECT_EQ(hostTransport_.lastPlaybackBandwidth * 2,
+              ASFW::IRM::PacketBandwidthUnits(8 + 8 * 9 * 4,
+                                              static_cast<uint8_t>(ASFW::FW::FwSpeed::S200)));
+}
+
+TEST_F(AudioDuplexCoordinatorTests, S100IsochronousPathIsNotAnUnsetSpeed) {
+    InstallDeviceWithLinkSpeed(protocol_,
+                               /*isochSpeed=*/ASFW::FW::FwSpeed::S100,
+                               /*asyncSpeed=*/ASFW::FW::FwSpeed::S400);
+
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+
+    EXPECT_EQ(hostTransport_.lastTransmitSpeed, ASFW::FW::FwSpeed::S100);
+    // Nine slots, eight events and an eight-byte CIP header: 296 payload
+    // bytes plus 12 packet overhead bytes, scaled by four at S100.
+    EXPECT_EQ(hostTransport_.lastPlaybackBandwidth, 1232U);
+}
 
 TEST_F(AudioDuplexCoordinatorTests, ColdStartTransitionsIdleToRunning) {
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);

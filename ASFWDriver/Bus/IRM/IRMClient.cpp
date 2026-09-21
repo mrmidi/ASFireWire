@@ -668,7 +668,7 @@ void IRMClient::OnChannelRead(const std::shared_ptr<ChannelLockState>& ctx,
         if ((currentValue & ctx->bitMask) == 0) {
             ASFW_LOG(IRM, "Channel %u not available (current=0x%08x mask=0x%08x)",
                      ctx->channel, currentValue, ctx->bitMask);
-            ctx->userCallback(AllocationStatus::NoResources);
+            ctx->userCallback(AllocationStatus::ChannelBusy);
             return;
         }
         newValue = currentValue & ~ctx->bitMask;
@@ -769,7 +769,7 @@ void IRMClient::OnBandwidthRead(const std::shared_ptr<BandwidthLockState>& ctx,
         if (currentBandwidth < ctx->units) {
             ASFW_LOG(IRM, "Insufficient bandwidth (available=%u needed=%u)",
                      currentBandwidth, ctx->units);
-            ctx->userCallback(AllocationStatus::NoResources);
+            ctx->userCallback(AllocationStatus::BandwidthShort);
             return;
         }
         newBandwidth = currentBandwidth - ctx->units;

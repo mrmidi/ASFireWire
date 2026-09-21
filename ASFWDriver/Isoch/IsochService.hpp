@@ -67,14 +67,19 @@ class IsochService {
         return (streamIndex < kMaxStreamsPerDirection) ? captureChannelOffset_[streamIndex] : 0;
     }
 
-    kern_return_t StartTransmit(uint8_t channel, HardwareInterface& hardware, uint8_t sid);
-    kern_return_t PrepareTransmit(uint8_t channel, HardwareInterface& hardware, uint8_t sid);
+    kern_return_t StartTransmit(uint8_t channel, HardwareInterface& hardware, uint8_t sid,
+                                FW::FwSpeed speed);
+    /// @param speed Wire speed for transmitted packets; must match the speed the
+    /// isochronous reservation was charged at.
+    kern_return_t PrepareTransmit(uint8_t channel, HardwareInterface& hardware, uint8_t sid,
+                                  FW::FwSpeed speed);
     // Prepare a secondary playback stream (streamIndex >= 1) on its own OHCI IT
     // context. The shared payload slab for the secondary stream is wired by the
     // audio-engine pass via SetSecondaryTransmitSharedMemory(); this only
     // creates and configures the hardware context.
     kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
-                                        HardwareInterface& hardware, uint8_t sid);
+                                        HardwareInterface& hardware, uint8_t sid,
+                                        FW::FwSpeed speed);
     kern_return_t StartPreparedTransmit();
 
     kern_return_t StopTransmit();

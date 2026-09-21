@@ -85,6 +85,13 @@ public:
 
     [[nodiscard]] Generation GetGeneration() const { return generation_; }
 
+    /// Live gap count of the bus this client allocates on. Read at allocation
+    /// time, never cached: the bus manager optimises the gap count after a
+    /// reset, and the overhead charged for an allocation must reflect the bus
+    /// as it is when the allocation is made. Linux re-reads it per attempt and
+    /// again on every reallocation (sound/firewire/iso-resources.c:119,178).
+    [[nodiscard]] uint8_t CurrentGapCount() const noexcept { return bus_.GetGapCount(); }
+
 private:
     struct ChannelLockState;
     struct BandwidthLockState;

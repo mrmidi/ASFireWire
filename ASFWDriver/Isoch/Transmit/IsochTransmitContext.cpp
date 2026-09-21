@@ -51,14 +51,17 @@ std::unique_ptr<IsochTransmitContext> IsochTransmitContext::Create(
 
 IsochTransmitContext::~IsochTransmitContext() noexcept = default;
 
-kern_return_t IsochTransmitContext::Configure(uint8_t channel, uint8_t sid) noexcept {
+kern_return_t IsochTransmitContext::Configure(uint8_t channel, uint8_t sid,
+                                              FW::FwSpeed speed) noexcept {
     if (state_ != State::Unconfigured && state_ != State::Stopped) {
         ASFW_LOG(Isoch, "IT: Configure rejected - state=%{public}s", TxStateName(state_));
         return kIOReturnBusy;
     }
 
     channel_ = channel;
+    speed_ = speed;
     ring_.SetChannel(channel_);
+    ring_.SetSpeed(speed_);
 
     if (dmaMemory_) {
         // Allocate-once policy
@@ -72,7 +75,8 @@ kern_return_t IsochTransmitContext::Configure(uint8_t channel, uint8_t sid) noex
     }
 
     state_ = State::Configured;
-    ASFW_LOG(Isoch, "IT: Configured ch=%u sid=%u", channel, sid);
+    ASFW_LOG(Isoch, "IT: Configured ch=%u sid=%u speed=S%u", channel, sid,
+             100U << static_cast<uint8_t>(speed));
     return kIOReturnSuccess;
 }
 

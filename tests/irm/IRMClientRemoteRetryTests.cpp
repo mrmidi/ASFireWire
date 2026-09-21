@@ -255,7 +255,7 @@ TEST_F(IRMClientRemoteRetryTest, AllocateChannelReissuesAReadTheIrmNeverAnswered
 TEST_F(IRMClientRemoteRetryTest, AllocateChannelWhoseLockWasAppliedButUnansweredReportsNoResources) {
     bus_.applyLockBeforeFailure = true;
     bus_.lockFailures[Regs::kChannelsAvailable31_0] = Timeouts(1);
-    EXPECT_EQ(AllocateChannel(5), AllocationStatus::NoResources);  // conservative: reads as taken
+    EXPECT_EQ(AllocateChannel(5), AllocationStatus::ChannelBusy);  // conservative: reads as taken
     EXPECT_FALSE(ChannelFree(5));
 }
 

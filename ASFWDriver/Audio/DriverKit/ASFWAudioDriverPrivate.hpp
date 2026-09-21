@@ -149,13 +149,14 @@ public:
         meta.packetIndex = packet.packetIndex;
         meta.payloadLength = packet.byteCount;
 
-        // immediateData[0] = isoch packet header: spd=2 (S400) at [18:16],
-        // tag=1 (standard CIP) at [15:14], tcode=0xA (isoch data block
-        // transmit) at [7:4], sy=0. The channel at [13:8] is deliberately
-        // left as a placeholder: the owning transport ring always stamps its
-        // configured channel immediately before publishing the descriptor.
-        // The speed field is mandatory — omitting it transmits at S100 and
-        // produces a header the device/analyzer treats as malformed.
+        // immediateData[0] = isoch packet header: tag=1 (standard CIP) at
+        // [15:14], tcode=0xA (isoch data block transmit) at [7:4], sy=0.
+        // Both channel [13:8] and speed [18:16] are placeholders: the owning
+        // transport ring stamps its configured values immediately before
+        // publishing the descriptor, because only transport knows the channel
+        // the IRM granted and the speed the link was charged at. The values
+        // written here keep the quadlet well formed if it is ever inspected
+        // before that stamp; they are never what reaches the wire.
         // Cross-validated with Linux: firewire/ohci.h:277-286 and
         // firewire/ohci.c:3377-3381.
         const uint32_t isochHeaderQ0 = (static_cast<uint32_t>(2 & 0x7) << 16) |

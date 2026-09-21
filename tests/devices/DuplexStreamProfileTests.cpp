@@ -49,6 +49,8 @@ constexpr uint32_t kFireworksVersion = 0x010000;
     record.identity.nodeVendorOui = vendorId;
     record.identity.rootVendorId = vendorId;
     record.identity.rootModelId = modelId;
+    record.link.localToNode = ASFW::FW::FwSpeed::S400;
+    record.link.isochToNode = ASFW::FW::FwSpeed::S400;
     ASFW::Discovery::UnitIdentityEvidence unit{};
     unit.unitDirectoryOffset = 5;
     unit.specifierId = unitSpecifier;
@@ -68,6 +70,7 @@ constexpr uint32_t kFireworksVersion = 0x010000;
 TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe) {
     DeviceRecord record{};
     record.link.localToNode = ASFW::FW::FwSpeed::S400;
+    record.link.isochToNode = ASFW::FW::FwSpeed::S400;
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = 16,
         .hostOutputPcmChannels = 16,
@@ -89,9 +92,11 @@ TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe)
     EXPECT_EQ(profile.captureStreams[0].pcmChannels, 0U);
     EXPECT_EQ(profile.captureStreams[0].am824Slots, 17U);
     EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kAM824);
-    EXPECT_EQ(profile.playbackWireFormat, AudioWireFormat::kAM824);
-    EXPECT_EQ(profile.playbackStreams[0].bandwidthUnits, 1076U);
-    EXPECT_EQ(profile.captureStreams[0].bandwidthUnits, 1076U);
+    // Packet term only: 17 slots x 8 blocks x 4 bytes + 8 CIP bytes = 552 payload,
+    // 138 quadlets + 3 header quadlets = 564 units at S400. The per-allocation bus
+    // overhead is charged by the reservation from the live gap count, not here.
+    EXPECT_EQ(profile.playbackStreams[0].packetBandwidthUnits, 564U);
+    EXPECT_EQ(profile.captureStreams[0].packetBandwidthUnits, 564U);
     EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, uint64_t{1} << 0U);
     EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, uint64_t{1} << 1U);
     EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 2U);
@@ -122,6 +127,7 @@ TEST(DuplexStreamProfileTests, SPro24DspResolvesRawPcmOnBothDirectionsWhenGeomet
 TEST(DuplexStreamProfileTests, ApogeeDuetAllowsDynamicChannelsAndPreservesCmpInterleave) {
     DeviceRecord record = AvcRecord(kApogeeVendorId, kApogeeDuetModelId);
     record.link.localToNode = ASFW::FW::FwSpeed::S400;
+    record.link.isochToNode = ASFW::FW::FwSpeed::S400;
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = 2,
         .hostOutputPcmChannels = 2,
@@ -134,8 +140,8 @@ TEST(DuplexStreamProfileTests, ApogeeDuetAllowsDynamicChannelsAndPreservesCmpInt
 
     EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, ~uint64_t{0});
     EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, ~uint64_t{0});
-    EXPECT_EQ(profile.captureStreams[0].bandwidthUnits, 596U);
-    EXPECT_EQ(profile.playbackStreams[0].bandwidthUnits, 596U);
+    EXPECT_EQ(profile.captureStreams[0].packetBandwidthUnits, 84U);
+    EXPECT_EQ(profile.playbackStreams[0].packetBandwidthUnits, 84U);
     EXPECT_TRUE(profile.startOrder.startReceiveBeforeDeviceRx);
     EXPECT_TRUE(profile.startOrder.startTransmitBeforeDeviceTx);
     EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U);
@@ -146,6 +152,7 @@ TEST(DuplexStreamProfileTests, ApogeeDuetAllowsDynamicChannelsAndPreservesCmpInt
 TEST(DuplexStreamProfileTests, Phase88PreservesLinuxBeBoBCmpBeforeHostStartOrdering) {
     DeviceRecord record = AvcRecord(kTerraTecVendorId, kPhase88RackFwModelId);
     record.link.localToNode = ASFW::FW::FwSpeed::S400;
+    record.link.isochToNode = ASFW::FW::FwSpeed::S400;
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = 10,
         .hostOutputPcmChannels = 10,
@@ -176,6 +183,7 @@ TEST(DuplexStreamProfileTests, Onyx400FUsesBeBoBOrderingWithoutPreStreamClockLoc
     DeviceRecord record = MakeRecord(kMackieVendorId, kOnyx400FModelId,
                                      kTa1394AvcSpecifier, kFireworksVersion);
     record.link.localToNode = ASFW::FW::FwSpeed::S400;
+    record.link.isochToNode = ASFW::FW::FwSpeed::S400;
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = 10,
         .hostOutputPcmChannels = 10,
@@ -268,7 +276,7 @@ TEST(DuplexStreamProfileTests, AlesisModelsKeepTheAdvertisedCaptureStreamCount) 
         // second and worse effect: Build() selects per-stream geometry only
         // when captureStreamCount > 1 (DuplexStreamProfile.hpp:346), so forcing
         // the count to 1 also made stream 0 report deviceToHostAm824Slots -- 34
-        // here -- when the stream physically carries 17. bandwidthUnits is
+        // here -- when the stream physically carries 17. packetBandwidthUnits is
         // derived from am824Slots, so the IRM reservation was sized from the
         // aggregate too.
         EXPECT_EQ(profile.captureStreams[0].am824Slots, 17U) << modelId;

@@ -193,3 +193,8 @@ target_link_libraries(HardwareInterfaceOrderTests PRIVATE GTest::gmock)
 add_core_test(LogRingTests
     LogRingTests.cpp
 )
+
+# Self-ID derived path speed for isochronous traffic
+add_core_test(TopologySpeedTests
+    TopologySpeedTests.cpp
+)

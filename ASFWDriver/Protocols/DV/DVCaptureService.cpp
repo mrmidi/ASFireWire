@@ -103,7 +103,10 @@ AwaitResourceSnapshot(IRM::IRMClient& irm) {
 [[nodiscard]] kern_return_t ToIOReturn(IRM::AllocationStatus status) noexcept {
     switch (status) {
     case IRM::AllocationStatus::Success: return kIOReturnSuccess;
-    case IRM::AllocationStatus::NoResources: return kIOReturnNoResources;
+    case IRM::AllocationStatus::NoResources:
+    case IRM::AllocationStatus::ChannelBusy:
+    case IRM::AllocationStatus::BandwidthShort:
+        return kIOReturnNoResources;
     case IRM::AllocationStatus::GenerationMismatch: return kIOReturnAborted;
     case IRM::AllocationStatus::Timeout: return kIOReturnTimeout;
     case IRM::AllocationStatus::NotFound: return kIOReturnNotFound;
@@ -212,7 +215,7 @@ kern_return_t DVCaptureService::Start(
                     const uint8_t effectiveSpeed = static_cast<uint8_t>(
                         std::min({CMP::MPRBits::GetDataRate(*ompr),
                                   CMP::PCRBits::GetDataRate(selected->pcr),
-                                  static_cast<uint8_t>(record->link.localToNode),
+                                  static_cast<uint8_t>(record->link.isochToNode),
                                   uint8_t{2}}));
                     if (const auto units =
                             CalculateBandwidthUnits(selected->pcr,

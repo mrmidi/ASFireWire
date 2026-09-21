@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 
 #include "CMPClient.hpp"
+#include "../../../Bus/IRM/IRMTypes.hpp"
 
 #include "../../../Logging/Logging.hpp"
 
@@ -522,10 +523,10 @@ uint32_t CMPClient::MPRAddress(PCRDirection direction) noexcept {
 }
 
 uint8_t CMPClient::OverheadIdForGapCount(uint8_t gapCount) noexcept {
-    // Linux derives allocation overhead from the live gap count. The
+    // Same derivation the isochronous reservation charges against
+    // BANDWIDTH_AVAILABLE; the oPCR just reports it in 32-unit steps. The
     // unoptimised fallback (63) maps to 512 units and thus overhead ID 0.
-    const uint32_t overhead = gapCount < 63U ? (static_cast<uint32_t>(gapCount) * 97U) / 10U + 89U
-                                             : 512U;
+    const uint32_t overhead = IRM::BandwidthOverheadForGapCount(gapCount);
     for (uint8_t id = 1; id < 16U; ++id) {
         if (overhead < (static_cast<uint32_t>(id) << 5U)) {
             return id;

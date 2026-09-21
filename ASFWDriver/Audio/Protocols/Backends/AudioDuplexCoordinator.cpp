@@ -33,6 +33,28 @@ using ASFW::Audio::HasHostRestartState;
 using ASFW::Audio::HasRestartIntent;
 
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
+
+// A refused isochronous reservation is reported as one line carrying the whole
+// arithmetic, because kIOReturnNoResources by itself cannot distinguish a full
+// bus from a planner that asked for the wrong thing. On a small bus none of
+// these outcomes is normal: a two-node S400 link has room for every stream set
+// we publish, so any refusal here is a defect until proven otherwise.
+void LogReservationRefusal(const char* direction, uint32_t streamIndex,
+                           uint64_t guid,
+                           Discovery::Generation generation, uint32_t am824Slots,
+                           uint64_t allowedChannels,
+                           const Backends::IRMReservationResult& reservation) noexcept {
+    ASFW_LOG_ERROR(Audio,
+                   "IRM reserve REFUSED %{public}s[%u] cause=%{public}s status=0x%08x "
+                   "slots=%u packet=%u overhead=%u total=%u available=%u gap=%u "
+                   "allowed=0x%016llx refused=0x%016llx guid=0x%016llx gen=%u",
+                   direction, streamIndex, Backends::ToString(reservation.failure),
+                   reservation.status, am824Slots, reservation.charge.packetUnits,
+                   reservation.charge.overheadUnits, reservation.charge.Total(),
+                   reservation.availableUnits, reservation.charge.gapCount, allowedChannels,
+                   reservation.refusedChannels, guid, generation.value);
+}
+
 [[nodiscard]] AudioClockConfig EffectiveStartClockForProfile(
     const Discovery::DeviceRecord& record,
     const AudioClockConfig& requestedClock) noexcept {
@@ -1092,15 +1114,18 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     }
     for (uint32_t i = 0; i < channels.playbackStreamCount; ++i) {
         const DuplexPlaybackStreamGeometry& geometry = streamProfile.playbackStreams[i];
-        uint8_t assignedChannel = AudioStreamWireInfo::kInvalidIsoChannel;
+        Backends::IRMReservationResult reservation{};
         const kern_return_t reservePlaybackStatus = hostTransport_.ReservePlaybackResources(
-            guid, *irmClient, geometry.allowedIsoChannels, geometry.bandwidthUnits,
-            assignedChannel);
+            guid, *irmClient, geometry.allowedIsoChannels, geometry.packetBandwidthUnits,
+            reservation);
         if (reservePlaybackStatus != kIOReturnSuccess) {
+            LogReservationRefusal("playback", i, guid, topologyGeneration, geometry.am824Slots,
+                                  geometry.allowedIsoChannels, reservation);
             return rollbackToFailure(reservePlaybackStatus,
                                      DuplexRestartPhase::kReservingPlaybackResources,
                                      DuplexRestartFailureCause::kReservePlayback);
         }
+        const uint8_t assignedChannel = reservation.channel;
         channels.playbackIsoChannels[i] = assignedChannel;
         if (i == 0) {
             channels.hostToDeviceIsoChannel = assignedChannel;
@@ -1121,15 +1146,18 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     }
     for (uint32_t i = 0; i < channels.captureStreamCount; ++i) {
         const DuplexCaptureStreamGeometry& geometry = streamProfile.captureStreams[i];
-        uint8_t assignedChannel = AudioStreamWireInfo::kInvalidIsoChannel;
+        Backends::IRMReservationResult reservation{};
         const kern_return_t reserveCaptureStatus = hostTransport_.ReserveCaptureResources(
-            guid, *irmClient, geometry.allowedIsoChannels, geometry.bandwidthUnits,
-            assignedChannel);
+            guid, *irmClient, geometry.allowedIsoChannels, geometry.packetBandwidthUnits,
+            reservation);
         if (reserveCaptureStatus != kIOReturnSuccess) {
+            LogReservationRefusal("capture", i, guid, topologyGeneration, geometry.am824Slots,
+                                  geometry.allowedIsoChannels, reservation);
             return rollbackToFailure(reserveCaptureStatus,
                                      DuplexRestartPhase::kReservingCaptureResources,
                                      DuplexRestartFailureCause::kReserveCapture);
         }
+        const uint8_t assignedChannel = reservation.channel;
         channels.captureIsoChannels[i] = assignedChannel;
         if (i == 0) {
             channels.deviceToHostIsoChannel = assignedChannel;
@@ -1236,7 +1264,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             return kIOReturnAborted;
         }
         const kern_return_t prepareTransmitStatus = hostTransport_.PrepareTransmit(
-            channels.hostToDeviceIsoChannel, hardware_, ReadLocalSid(hardware_));
+            channels.hostToDeviceIsoChannel, hardware_, ReadLocalSid(hardware_),
+            streamProfile.linkSpeed);
         if (prepareTransmitStatus != kIOReturnSuccess) {
             return rollbackToFailure(prepareTransmitStatus, DuplexRestartPhase::kStartingHostTransmit,
                                      DuplexRestartFailureCause::kStartTransmit);
@@ -1256,7 +1285,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                 return kIOReturnAborted;
             }
             const kern_return_t status = hostTransport_.PrepareTransmitStream(
-                i, channels.PlaybackChannel(i), hardware_, ReadLocalSid(hardware_));
+                i, channels.PlaybackChannel(i), hardware_, ReadLocalSid(hardware_),
+                streamProfile.linkSpeed);
             if (status != kIOReturnSuccess) {
                 return rollbackToFailure(status, DuplexRestartPhase::kStartingHostTransmit,
                                          DuplexRestartFailureCause::kStartTransmit);

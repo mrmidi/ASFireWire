@@ -31,12 +31,18 @@ using ASFW::Driver::Register32;
 namespace {
 
 constexpr uint32_t kIsochChannelMask = 0x3fu << 8;
+constexpr uint32_t kIsochSpeedMask = 0x7u << 16;
 
-[[nodiscard]] uint32_t WithIsochChannel(uint32_t leHeader,
-                                        uint8_t channel) noexcept {
+// Transport owns both fields in the transmitted header: the channel the IRM
+// granted and the speed the link was charged at. The producer's placeholder
+// values for both are overwritten.
+[[nodiscard]] uint32_t WithIsochChannelAndSpeed(uint32_t leHeader, uint8_t channel,
+                                                ASFW::FW::FwSpeed speed) noexcept {
     uint32_t hostHeader = OSSwapLittleToHostInt32(leHeader);
     hostHeader = (hostHeader & ~kIsochChannelMask) |
                  (static_cast<uint32_t>(channel & 0x3fu) << 8);
+    hostHeader = (hostHeader & ~kIsochSpeedMask) |
+                 ((static_cast<uint32_t>(speed) & 0x7u) << 16);
     return OSSwapHostToLittleInt32(hostHeader);
 }
 
@@ -472,6 +478,102 @@ TEST_F(IsochTxDmaRingTest, RefillProgramsPayloadCrossingDmaSegment) {
     EXPECT_EQ(desc3->dataAddress, 0x78000000u);
 }
 
+// The wire speed is the transport's to decide, exactly like the channel. A
+// device whose link is only good for S200 must not be transmitted to at S400
+// just because the audio producer wrote that into its placeholder header.
+TEST_F(IsochTxDmaRingTest, RefillStampsTheConfiguredSpeedOverTheProducerPlaceholder) {
+    auto metadataRing = MakeMetadataRing();
+    (void)ring_.Prime(payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+                      metadataRing.data(), Layout::kNumPackets);
+    ring_.ResetForStart();
+    ring_.SeedCycleTracking(hardware_);
+    ring_.SetSpeed(ASFW::FW::FwSpeed::S200);
+
+    IsochTxQueueControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+    controlBlock.completionCursor.store(0, std::memory_order_relaxed);
+
+    // The producer writes S400 into the placeholder; transport must overwrite it.
+    constexpr uint32_t kProducerHeaderS400 = (2u << 16) | (1u << 14) | (0xAu << 4);
+    for (uint32_t i = 0; i < 8; ++i) {
+        metadataRing[i].packetIndex = i;
+        metadataRing[i].immediateHeader[0] = OSSwapHostToLittleInt32(kProducerHeaderS400);
+        metadataRing[i].immediateHeader[1] = 0x22220000 + i;
+        metadataRing[i].payloadLength = 100 + i * 4;
+        metadataRing[i].commitGeneration.store(1, std::memory_order_release);
+    }
+
+    const uint32_t nextPktDescIOVA = ring_.Slab().GetDescriptorIOVA(8 * Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)),
+                              nextPktDescIOVA | Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)), 0);
+    hardware_.SetTestRegister(Register32::kCycleTimer, (5u << 25) | (1234u << 12) | 0x06B0u);
+
+    const auto outcome = ring_.Refill(hardware_, 0, metadataRing.data(), &controlBlock,
+                                      kSharedPayloadSlots, sharedPayload_.data(),
+                                      payloadDmaMap_);
+    ASSERT_TRUE(outcome.ok);
+    ASSERT_EQ(outcome.packetsFilled, 8U);
+
+    for (uint32_t i = 0; i < 8; ++i) {
+        const auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
+            ring_.Slab().GetDescriptorPtr(i * Layout::kBlocksPerPacket));
+        const uint32_t header = OSSwapLittleToHostInt32(immDesc->immediateData[0]);
+        EXPECT_EQ((header >> 16) & 0x7u, static_cast<uint32_t>(ASFW::FW::FwSpeed::S200))
+            << "packet " << i;
+        // The ring's channel is still stamped, and nothing else moved.
+        EXPECT_EQ((header >> 8) & 0x3Fu, 1U) << "packet " << i;
+        EXPECT_EQ((header >> 14) & 0x3u, 1U) << "packet " << i;  // tag
+        EXPECT_EQ((header >> 4) & 0xFu, 0xAU) << "packet " << i; // tcode
+    }
+}
+
+// An all-zero header is the underrun sentinel: transport must not turn it into
+// a well-formed packet by stamping fields into it.
+TEST_F(IsochTxDmaRingTest, RefillLeavesTheNoPacketSentinelUnstamped) {
+    auto metadataRing = MakeMetadataRing();
+    (void)ring_.Prime(payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+                      metadataRing.data(), Layout::kNumPackets);
+    ring_.ResetForStart();
+    ring_.SeedCycleTracking(hardware_);
+    ring_.SetSpeed(ASFW::FW::FwSpeed::S200);
+
+    IsochTxQueueControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+    controlBlock.completionCursor.store(0, std::memory_order_relaxed);
+
+    for (uint32_t i = 0; i < 8; ++i) {
+        metadataRing[i].packetIndex = i;
+        metadataRing[i].immediateHeader[0] = 0;
+        metadataRing[i].immediateHeader[1] = 0;
+        metadataRing[i].payloadLength = 100 + i * 4;
+        metadataRing[i].commitGeneration.store(1, std::memory_order_release);
+    }
+
+    const uint32_t nextPktDescIOVA = ring_.Slab().GetDescriptorIOVA(8 * Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)),
+                              nextPktDescIOVA | Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)), 0);
+    hardware_.SetTestRegister(Register32::kCycleTimer, (5u << 25) | (1234u << 12) | 0x06B0u);
+
+    const auto outcome = ring_.Refill(hardware_, 0, metadataRing.data(), &controlBlock,
+                                      kSharedPayloadSlots, sharedPayload_.data(),
+                                      payloadDmaMap_);
+    ASSERT_TRUE(outcome.ok);
+
+    for (uint32_t i = 0; i < 8; ++i) {
+        const auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
+            ring_.Slab().GetDescriptorPtr(i * Layout::kBlocksPerPacket));
+        EXPECT_EQ(immDesc->immediateData[0], 0U) << "packet " << i;
+    }
+}
+
 TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
     auto metadataRing = MakeMetadataRing();
     (void)ring_.Prime(
@@ -558,7 +660,7 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
                       Layout::kBlocksPerPacket);
         EXPECT_EQ(desc0->statusWord, 0u);
         EXPECT_EQ(immDesc->immediateData[0],
-                  WithIsochChannel(0x11110000 + i, 1));
+                  WithIsochChannelAndSpeed(0x11110000 + i, 1, ASFW::FW::FwSpeed::S400));
         EXPECT_EQ(immDesc->immediateData[1], 0x22220000 + i);
 
         auto* desc2 = ring_.Slab().GetDescriptorPtr(
@@ -712,8 +814,8 @@ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots
     auto* wrappedImmediate = reinterpret_cast<OHCIDescriptorImmediate*>(
         ring_.Slab().GetDescriptorPtr(0));
     EXPECT_EQ(wrappedImmediate->immediateData[0],
-              WithIsochChannel(
-                  0x11000000u + Layout::kNumPackets, 1));
+              WithIsochChannelAndSpeed(
+                  0x11000000u + Layout::kNumPackets, 1, ASFW::FW::FwSpeed::S400));
     EXPECT_EQ(wrappedImmediate->immediateData[1],
               0x22000000u + Layout::kNumPackets);
 }
@@ -1189,7 +1291,7 @@ protected:
         return immediate->immediateData[0];
     }
     uint32_t PacketHeader(uint32_t packetIndex) const {
-        return WithIsochChannel(0x11000000u + packetIndex, 1);
+        return WithIsochChannelAndSpeed(0x11000000u + packetIndex, 1, ASFW::FW::FwSpeed::S400);
     }
 };
 

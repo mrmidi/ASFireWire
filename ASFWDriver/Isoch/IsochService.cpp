@@ -215,8 +215,8 @@ kern_return_t IsochService::StopReceive() {
 }
 
 kern_return_t IsochService::StartTransmit(uint8_t channel, HardwareInterface& hardware,
-                                          uint8_t sid) {
-    const kern_return_t prepareKr = PrepareTransmit(channel, hardware, sid);
+                                          uint8_t sid, FW::FwSpeed speed) {
+    const kern_return_t prepareKr = PrepareTransmit(channel, hardware, sid, speed);
     if (prepareKr != kIOReturnSuccess) {
         return prepareKr;
     }
@@ -224,7 +224,7 @@ kern_return_t IsochService::StartTransmit(uint8_t channel, HardwareInterface& ha
 }
 
 kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& hardware,
-                                            uint8_t sid) {
+                                            uint8_t sid, FW::FwSpeed speed) {
     hardware_ = &hardware;
     if (!isochTransmitContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
@@ -253,7 +253,7 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
         isochTransmitContext_->SetTxPreparationCallback(txPreparationCallback_);
     }
 
-    const kern_return_t kr = isochTransmitContext_->Configure(channel, sid);
+    const kern_return_t kr = isochTransmitContext_->Configure(channel, sid, speed);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: IT Configure failed: 0x%08x", kr);
         return kr;
@@ -274,7 +274,8 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
 }
 
 kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
-                                                  HardwareInterface& hardware, uint8_t sid) {
+                                                  HardwareInterface& hardware, uint8_t sid,
+                                                  FW::FwSpeed speed) {
     hardware_ = &hardware;
     // Stream 0 is the master; callers use PrepareTransmit() for it.
     if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
@@ -310,7 +311,7 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
     // it does not collide with the master (context 0) on the hardware registers.
     slot->SetContextIndex(static_cast<uint8_t>(streamIndex));
 
-    const kern_return_t kr = slot->Configure(channel, sid);
+    const kern_return_t kr = slot->Configure(channel, sid, speed);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: secondary IT Configure failed (stream %u): 0x%08x",
                  streamIndex, kr);

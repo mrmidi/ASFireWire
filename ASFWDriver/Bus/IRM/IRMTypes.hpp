@@ -58,46 +58,50 @@ constexpr uint32_t kMaxBandwidthUnitsS400 = 4915;
 constexpr uint32_t kChannelsAvailableInitial = 0xFFFFFFFF;  ///< All channels free
 
 /**
- * Inputs for CalculateBandwidthUnits().
+ * Isochronous packet cost, in IEEE 1394 bandwidth allocation units.
  *
- * Formula (from IEEE 1394-1995 Annex C):
- *   units = (bits_per_second * overhead_factor) / speed_mbps * max_units
+ * One unit is the time to transmit one quadlet at S1600. An isochronous packet
+ * costs its quadlet-aligned payload plus three overhead quadlets (isoch header,
+ * header CRC, data CRC), scaled by how much longer that takes at @p speedCode.
  *
- * bitsPerSecond: Required bandwidth in bits per second.
- * speedMbps: Bus speed in Mbps (100, 200, 400, 800).
- * overheadPercent: Overhead factor for CIP headers, retries, etc. Defaults to 10%.
+ * Apple and Linux compute this identically, and this is the whole of Apple's
+ * isochronous bandwidth request:
+ *   Apple IOFWIsochChannel.cpp:664  (fPacketSize/4 + 3) * 16 / (1 << inSpeed)
+ *   Linux sound/firewire/iso-resources.c:48-61  packet_bandwidth()
  *
- * Example:
- *   Audio: 48kHz * 24-bit * 2ch = 2.304 Mbps
- *   At S400 with 10% overhead:
- *   units = (2.304 * 1.10) / 400 * 4915 ≈ 31 units
- *
- * Reference: Apple IOFireWireController.cpp bandwidth allocation
- *            IEC 61883 overhead calculations
+ * @param payloadBytes Packet payload including CIP headers, excluding the
+ *                     1394 isochronous header.
+ * @param speedCode    0=S100, 1=S200, 2=S400, 3=S800.
  */
-struct BandwidthUnitsRequest {
-    uint32_t bitsPerSecond{0};
-    uint32_t speedMbps{0};
-    uint32_t overheadPercent{10};
-};
+[[nodiscard]] constexpr uint32_t PacketBandwidthUnits(uint32_t payloadBytes,
+                                                      uint8_t speedCode) noexcept {
+    const uint32_t quadlets = (payloadBytes + 3U) / 4U;
+    const uint32_t unitsAtS1600 = (quadlets + 3U) * 16U;
+    return speedCode >= 4U ? unitsAtS1600 : unitsAtS1600 >> speedCode;
+}
 
 /**
- * Calculate the number of bandwidth units to allocate for a stream request.
+ * Per-allocation bus overhead, in bandwidth allocation units.
+ *
+ * Isochronous packets do not tile the cycle back to back: each one is preceded
+ * by arbitration whose length follows the gap count. Linux derives the cost of
+ * that from the live gap count and charges it per allocation
+ * (sound/firewire/iso-resources.c:64-76, and again on every reallocation at
+ * :119 and :178). The unoptimised gap count of 63 is the pessimistic 512-unit
+ * fallback, which is the only value that applies before a bus manager has
+ * optimised the bus.
+ *
+ * Apple charges no overhead term at all (IOFWIsochChannel.cpp:664 is its
+ * complete request), so Apple will accept stream sets that do not physically
+ * fit on an unoptimised bus. We follow Linux: at 4915 units the budget is
+ * ~98.3us of a ~100us isochronous window, and arbitration gaps at gap count 63
+ * are large enough to overrun it.
+ *
+ * This is the same derivation CMP writes into an oPCR overhead ID
+ * (CMPClient::OverheadIdForGapCount).
  */
-inline uint32_t CalculateBandwidthUnits(const BandwidthUnitsRequest& request)
-{
-    // Convert bits/sec to Mbits/sec (round up)
-    uint32_t mbitsPerSec = (request.bitsPerSecond + 999999) / 1000000;
-
-    // Add overhead
-    mbitsPerSec = static_cast<uint32_t>(
-        (static_cast<uint64_t>(mbitsPerSec) * (100ULL + request.overheadPercent)) / 100ULL);
-
-    // Scale to S400 bandwidth units
-    uint32_t units = static_cast<uint32_t>(
-        (static_cast<uint64_t>(mbitsPerSec) * kMaxBandwidthUnitsS400) / request.speedMbps);
-
-    return units;
+[[nodiscard]] constexpr uint32_t BandwidthOverheadForGapCount(uint8_t gapCount) noexcept {
+    return gapCount < 63U ? (static_cast<uint32_t>(gapCount) * 97U) / 10U + 89U : 512U;
 }
 
 /**
@@ -152,10 +156,16 @@ enum class AllocationStatus : uint8_t {
     /// Allocation succeeded (CAS lock succeeded)
     Success,
 
-    /// Insufficient resources
-    /// - Channel: Bit already clear (channel allocated by another node)
-    /// - Bandwidth: Insufficient units available
+    /// A lock lost its race and ran out of retries. The ledger moved between
+    /// our read and our compare-swap, so ownership of the resource is unknown
+    /// rather than known-denied.
     NoResources,
+
+    /// The requested channel's bit was already clear: another node owns it.
+    ChannelBusy,
+
+    /// BANDWIDTH_AVAILABLE held fewer units than the request needed.
+    BandwidthShort,
 
     /// Generation mismatch
     /// - Caller's generation != IRMClient's internal generation, OR
@@ -177,7 +187,11 @@ enum class AllocationStatus : uint8_t {
         case AllocationStatus::Success:
             return "success";
         case AllocationStatus::NoResources:
-            return "no_resources";
+            return "lock_contention";
+        case AllocationStatus::ChannelBusy:
+            return "channel_busy";
+        case AllocationStatus::BandwidthShort:
+            return "bandwidth_short";
         case AllocationStatus::GenerationMismatch:
             return "generation_mismatch";
         case AllocationStatus::Timeout:
