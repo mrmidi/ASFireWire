@@ -146,35 +146,6 @@ const char* CyclePolicyActionString(Bus::CyclePolicyAction action) {
     return "unknown";
 }
 
-// Isochronous speed for a node, from Self-ID evidence. Falls back to the async
-// speed only when the topology cannot answer, which keeps a degraded bus at
-// today's behaviour rather than silently dropping every stream to S100.
-ASFW::FW::FwSpeed ResolveIsochSpeed(const std::optional<TopologySnapshot>& topology,
-                                    uint8_t nodeId,
-                                    ASFW::FW::FwSpeed asyncFallback) {
-    if (!topology.has_value() || topology->localNodeId == kInvalidPhysicalId) {
-        ASFW_LOG(Discovery,
-                 "Node %u: no valid topology for isoch speed; falling back to the async speed S%u",
-                 nodeId, 100u << static_cast<uint8_t>(asyncFallback));
-        return asyncFallback;
-    }
-
-    const auto pathSpeed = PathSpeedCodeBetween(*topology, topology->localNodeId, nodeId);
-    if (!pathSpeed.has_value()) {
-        ASFW_LOG(Discovery,
-                 "Node %u: unreachable in Self-ID graph; falling back to the async speed S%u",
-                 nodeId, 100u << static_cast<uint8_t>(asyncFallback));
-        return asyncFallback;
-    }
-
-    const auto speed = static_cast<ASFW::FW::FwSpeed>(*pathSpeed);
-    if (speed != asyncFallback) {
-        ASFW_LOG(Discovery,
-                 "Node %u: isoch speed S%u from Self-ID (async speed is S%u)",
-                 nodeId, 100u << *pathSpeed, 100u << static_cast<uint8_t>(asyncFallback));
-    }
-    return speed;
-}
 
 const TopologyNodeRecord* FindTopologyNode(const TopologySnapshot& topology,
                                            uint8_t physicalId) noexcept {
@@ -567,10 +538,34 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
         }
     }
 
-    // Isochronous speed comes from Self-ID geometry, not from async outcomes.
-    // SpeedPolicy demotes localToNode when a request times out, which is right
-    // for async and wrong for isoch: charging isoch at S200 costs twice the
-    // bandwidth units of S400 for a device whose PHY was never the problem.
+    // Resolve isochronous speed bounded by the verified operational link speed.
+    //
+    // History & Rationale:
+    // Commit 86324deef previously decoupled isoch speed from async speed, forcing
+    // isoch to the maximum PHY Self-ID speed (S400) under the assumption that
+    // "charging isoch at S200 costs twice the bandwidth units of S400 for a device
+    // whose PHY was never the problem."
+    //
+    // That assumption was flawed:
+    // 1. The IRM bandwidth blowout at S200 was actually caused by an erroneous 512-unit
+    //    per-stream gap overhead charge against BANDWIDTH_AVAILABLE on unoptimized buses.
+    //    With Apple IOFWIsochChannel wire parity restored (commit 84426354), 4 streams
+    //    at S200 take only 3,232 units out of 4,915, fitting comfortably on any bus.
+    // 2. Real-world links and device link layers may fail when driven faster than their
+    //    verified operational speed. Forcing S400 when the physical link or hardware
+    //    cannot reliably sustain S400 (e.g. Midas Venice F24, which runs stably at S200
+    //    under Apple's native IOFireWireFamily) causes packet loss, timestamp timeouts,
+    //    and bus reset loops.
+    //
+    // Reference Stack Alignment:
+    // - Linux (drivers/firewire/core-device.c:615-641, sound/firewire/amdtp-stream.c, dice-stream.c:194):
+    //   `device->max_speed` is stepped down if Config ROM `link_spd` is lower or if quadlet
+    //   reads fail, and sound drivers use `device->max_speed` for isochronous streams.
+    // - Apple IOFireWireFamily (IOFireWireDevice.cpp:2097-2102, IOFireWireController.cpp:2746-2760,
+    //   IOFWIsochChannel.cpp:653):
+    //   `setNodeSpeed()` is stepped down during discovery, and drivers can cap `fMaxSpeed`.
+    //
+    // Therefore, ResolveIsochSpeed() bounds the topology PHY path speed by policy.localToNode.
     const auto topologyForSpeed = deps_.topology ? deps_.topology->LatestSnapshot()
                                                  : std::nullopt;
 
@@ -605,6 +600,16 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
 
         auto policy = deps_.speedPolicy->ForNode(*nodeId);
         policy.isochToNode = ResolveIsochSpeed(topologyForSpeed, *nodeId, policy.localToNode);
+        if (topologyForSpeed.has_value() && topologyForSpeed->localNodeId != kInvalidPhysicalId) {
+            if (const auto pathSpeed = PathSpeedCodeBetween(*topologyForSpeed, topologyForSpeed->localNodeId, *nodeId)) {
+                if (*pathSpeed != static_cast<uint8_t>(policy.isochToNode)) {
+                    ASFW_LOG(Discovery,
+                             "Node %u: resolved isoch speed S%u (Self-ID PHY S%u clamped by operational limit S%u)",
+                             *nodeId, 100u << static_cast<uint8_t>(policy.isochToNode),
+                             100u << *pathSpeed, 100u << static_cast<uint8_t>(policy.localToNode));
+                }
+            }
+        }
 
         auto& bus = this->Bus();
         auto deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy);

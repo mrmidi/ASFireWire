@@ -30,7 +30,6 @@ constexpr uint32_t kStopSyncPollMs = 10;
 
 constexpr uint32_t kDisabledIsoChannel = std::numeric_limits<uint32_t>::max();
 constexpr uint32_t kRxSeqStartDefault = 0;
-constexpr uint32_t kTxSpeedS400 = 2;
 
 [[nodiscard]] IOReturn MapTransportStatus(Async::AsyncStatus status) noexcept {
     return Protocols::Ports::MapAsyncStatusToIOReturn(status);
@@ -279,6 +278,14 @@ uint64_t DICEDuplexBringupController::OwnerValue() const noexcept {
     const uint64_t localNodeId =
         0xFFC0ULL | static_cast<uint64_t>(busInfo_.GetLocalNodeID().value & 0x3FU);
     return (localNodeId << kOwnerNodeShift) | NotificationMailbox::kHandlerOffset;
+}
+
+uint32_t DICEDuplexBringupController::ResolvedTxSpeed() const noexcept {
+    // Program TX transmission speed according to the resolved operational speed of the link
+    // between local controller and DICE device (e.g. S200 for Midas Venice F24), clamped to
+    // DICE hardware maximum (S400 == 2). Cross-validated with Linux ALSA dice-stream.c:329-363.
+    const FW::FwSpeed speed = busInfo_.GetSpeed(io_.NodeId());
+    return std::min(static_cast<uint32_t>(speed), 2U);
 }
 
 void DICEDuplexBringupController::PrepareDuplex48k(
@@ -1103,13 +1110,14 @@ void DICEDuplexBringupController::DoProgramTx(
     const uint8_t isoChannel = channels.CaptureChannel(streamIndex);
     const uint32_t streamBase =
         sections_.txStreamFormat.offset + streamIndex * entrySizeBytes;
+    const uint32_t txSpeed = ResolvedTxSpeed();
     ASFW_LOG(DICE,
-             "DoProgramTx: stream %u writing TX isoch channel %u (stride=%u)",
-             streamIndex, isoChannel, entrySizeBytes);
+             "DoProgramTx: stream %u writing TX isoch channel %u speed %u (stride=%u)",
+             streamIndex, isoChannel, txSpeed, entrySizeBytes);
 
     (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + TxOffset::kIsochronous),
                     isoChannel,
-                    [this, channels, streamIndex, entrySizeBytes, streamBase, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
+                    [this, channels, streamIndex, entrySizeBytes, streamBase, txSpeed, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
                          const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
                          if (isoStatus != kIOReturnSuccess) {
                              DoRollback(isoStatus, std::move(cb));
@@ -1117,7 +1125,7 @@ void DICEDuplexBringupController::DoProgramTx(
                          }
 
                          (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + TxOffset::kSpeed),
-                                         kTxSpeedS400,
+                                         txSpeed,
                                          [this, channels, streamIndex, entrySizeBytes, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
                                               const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
                                               if (speedStatus != kIOReturnSuccess) {
@@ -1606,7 +1614,7 @@ void DICEDuplexBringupController::DoStopDisableTxStream(
                              return;
                          }
                          (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + TxOffset::kSpeed),
-                                         kTxSpeedS400,
+                                         ResolvedTxSpeed(),
                                          [this, streamIndex, entrySizeBytes, releaseOwner, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
                                               const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
                                               RecordFirstError(stopSequenceError_, speedStatus);

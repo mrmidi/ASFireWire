@@ -83,52 +83,40 @@ TEST(IsochBandwidthAllocation, OptimisedGapCountCostsLessThanTheUnoptimisedFallb
     EXPECT_LT(BandwidthOverheadForGapCount(5), BandwidthOverheadForGapCount(63));
 }
 
-TEST(IsochBandwidthAllocation, VeniceF24StreamSetFitsOnlyOnAnOptimisedBusAtS200) {
-    // The reported failing configuration: a Midas Venice F24 clamped to S200
-    // by its link, carrying two playback streams (16, 8 slots) and two capture
-    // streams (16, 8 slots). Charged against a full 4915-unit ledger.
+TEST(IsochBandwidthAllocation, VeniceF24StreamSetFitsWithinLedgerAtS200PerAppleIOFWIsochChannel) {
+    // Under Apple IOFWIsochChannel wire parity (IOFWIsochChannel.cpp:664),
+    // bandwidth reservations charge only the packet term against BANDWIDTH_AVAILABLE.
+    // The 1229-unit set-aside in the 125us cycle already accounts for async traffic
+    // and gap overhead.
+    //
+    // For Midas Venice F24 at S200 with 4 streams (16, 8, 16, 8 slots):
+    // Stream 0 (16 slots): 1064 units
+    // Stream 1 (8 slots):   552 units
+    // Stream 2 (16 slots): 1064 units
+    // Stream 3 (8 slots):   552 units
+    // Total: 3232 units <= 4915 units (kMaxBandwidthUnitsS400).
+    // All 4 streams fit comfortably with 1683 units of headroom on any bus.
     constexpr uint32_t kBudget = ASFW::IRM::kMaxBandwidthUnitsS400;
     const uint32_t slots[4] = {16, 8, 16, 8};
 
-    const auto total = [&](uint8_t speed, uint8_t gapCount) {
-        uint32_t sum = 0;
-        for (const uint32_t s : slots) {
-            sum += PacketBandwidthUnits(8 + 8 * s * 4, speed) +
-                   BandwidthOverheadForGapCount(gapCount);
-        }
-        return sum;
-    };
-
-    EXPECT_GT(total(1, 63), kBudget);  // S200, unoptimised: refused, and rightly so
-    EXPECT_LE(total(1, 5), kBudget);   // S200, optimised by the bus manager: fits
-    EXPECT_LE(total(2, 63), kBudget);  // S400 has room even unoptimised
-    EXPECT_LE(total(2, 5), kBudget);
-
-    // Totals match the review comment and reference calculation:
-    // S200 / gap 63: 5280 units
-    // S200 / gap 5:  3780 units
-    // S400 / gap 63: 3664 units
-    // S400 / gap 5:  2164 units
-    EXPECT_EQ(total(1, 63), 5280U);
-    EXPECT_EQ(total(1, 5), 3780U);
-    EXPECT_EQ(total(2, 63), 3664U);
-    EXPECT_EQ(total(2, 5), 2164U);
-}
-
-TEST(IsochBandwidthAllocation, AppleWouldAcceptWhatWeRefuseOnAnUnoptimisedBus) {
-    // Documented divergence: Apple charges no overhead term, so it accepts the
-    // same stream set on an unoptimised bus. At 4915 units the ledger is about
-    // 98.3us of a ~100us isochronous window, and gap-count-63 arbitration does
-    // not fit in what Apple leaves over. We follow Linux and refuse.
-    const uint32_t slots[4] = {16, 8, 16, 8};
-    uint32_t applePlan = 0;
-    uint32_t ourPlan = 0;
+    uint32_t totalAtS200 = 0;
     for (const uint32_t s : slots) {
-        applePlan += PacketBandwidthUnits(8 + 8 * s * 4, 1);
-        ourPlan += PacketBandwidthUnits(8 + 8 * s * 4, 1) + BandwidthOverheadForGapCount(63);
+        totalAtS200 += PacketBandwidthUnits(8 + 8 * s * 4, 1);
     }
-    EXPECT_LE(applePlan, ASFW::IRM::kMaxBandwidthUnitsS400);
-    EXPECT_GT(ourPlan, ASFW::IRM::kMaxBandwidthUnitsS400);
+    EXPECT_EQ(totalAtS200, 3232U);
+    EXPECT_LE(totalAtS200, kBudget);
+
+    // Individual stream charges at S200:
+    EXPECT_EQ(PacketBandwidthUnits(8 + 8 * 16 * 4, 1), 1064U);
+    EXPECT_EQ(PacketBandwidthUnits(8 + 8 * 8 * 4, 1), 552U);
+
+    // At S400 for comparison:
+    uint32_t totalAtS400 = 0;
+    for (const uint32_t s : slots) {
+        totalAtS400 += PacketBandwidthUnits(8 + 8 * s * 4, 2);
+    }
+    EXPECT_EQ(totalAtS400, 1616U);
+    EXPECT_LE(totalAtS400, kBudget);
 }
 
 } // namespace

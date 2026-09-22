@@ -61,6 +61,9 @@ struct LinkPolicy {
     // async requests at S400 has said nothing about its isochronous receiver.
     // Conflating the two halves the isochronous bandwidth budget for free:
     // the charge is `unitsAtS1600 >> speedCode`, so S200 costs twice S400.
+    //
+    // Conservative initialization; discovery supplies the resolved path speed
+    // before stream planning. S100 is valid, never an "unset" sentinel.
     FwSpeed isochToNode{FwSpeed::S100};
 
     uint16_t maxPayloadBytes{512};           // Clamp for Async TX (depends on MaxRec, speed, policy)

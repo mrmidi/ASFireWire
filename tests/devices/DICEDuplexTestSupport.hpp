@@ -1,0 +1,782 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024 ASFireWire Project
+//
+// DICEDuplexTestSupport.hpp - Shared test mocks and fixtures for DICE duplex and IRM tests
+
+#pragma once
+
+#include <gtest/gtest.h>
+
+#include "FakeTimerScheduler.hpp"
+#include "Testing/HostDriverKitStubs.hpp"
+#include "Async/Interfaces/IFireWireBus.hpp"
+#include "Common/WireFormat.hpp"
+#include "Discovery/DeviceRegistry.hpp"
+#include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
+#include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
+#include "Audio/Protocols/DICE/Core/DICEDuplexBringupController.hpp"
+#include "Protocols/Ports/ProtocolRegisterIO.hpp"
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <cstddef>
+#include <functional>
+#include <optional>
+#include <span>
+#include <utility>
+#include <vector>
+
+namespace ASFW::Testing::DICE {
+
+using ::ASFW::Async::AsyncHandle;
+using ::ASFW::Async::AsyncStatus;
+using ::ASFW::Async::FWAddress;
+using ::ASFW::Async::IFireWireBus;
+using ::ASFW::Audio::AudioDuplexChannels;
+using ::ASFW::Audio::DICE::ClockSource;
+using ::ASFW::Audio::DICE::DICETransaction;
+using ::ASFW::Audio::DICE::DICEBringupPolicy;
+using ::ASFW::Audio::DuplexConfirmResult;
+using ::ASFW::Audio::DuplexPrepareResult;
+using ::ASFW::Audio::DuplexStageResult;
+using ::ASFW::Audio::DICE::GeneralSections;
+using ::ASFW::Audio::DICE::kOwnerNoOwner;
+using ::ASFW::Audio::DICE::MakeDICEAddress;
+using ::ASFW::Audio::DuplexRestartPhase;
+using ::ASFW::Audio::DuplexRestartReason;
+namespace NotificationMailbox = ::ASFW::Audio::DICE::NotificationMailbox;
+using ::ASFW::Audio::DICE::Section;
+using ::ASFW::Audio::DICE::DICEDuplexBringupController;
+using ::ASFW::FW::FwSpeed;
+using ::ASFW::FW::Generation;
+using ::ASFW::FW::LockOp;
+using ::ASFW::FW::NodeId;
+using ::ASFW::Protocols::Ports::ProtocolRegisterIO;
+namespace ClockRateIndex = ::ASFW::Audio::DICE::ClockRateIndex;
+namespace ClockSelectBits = ::ASFW::Audio::DICE::ClockSelect;
+namespace GlobalOffset = ::ASFW::Audio::DICE::GlobalOffset;
+namespace NotifyBits = ::ASFW::Audio::DICE::Notify;
+namespace RxOffset = ::ASFW::Audio::DICE::RxOffset;
+namespace StatusBits = ::ASFW::Audio::DICE::StatusBits;
+namespace TxOffset = ::ASFW::Audio::DICE::TxOffset;
+
+struct RouteState {
+    ::ASFW::Discovery::DeviceRegistry registry;
+    ::ASFW::Discovery::DeviceRouteToken route{};
+
+    RouteState() {
+        ::ASFW::Discovery::ConfigROM rom{};
+        rom.bib.guid = 0xD1CE000000000002ULL;
+        rom.gen = Generation{1};
+        rom.nodeId = 0x02;
+        (void)registry.UpsertFromROM(rom, ::ASFW::Discovery::LinkPolicy{});
+        route = *registry.CurrentRoute(rom.bib.guid);
+    }
+};
+
+constexpr uint32_t kGeneralSectionBytes = 40;
+constexpr uint32_t kGlobalBytes = 380;
+constexpr uint32_t kTxSectionOffset = 0x01A4;
+constexpr uint32_t kRxSectionOffset = 0x03DC;
+constexpr uint32_t kTxEntryQuadlets = 70;
+constexpr uint32_t kRxEntryQuadlets = 70;
+constexpr uint32_t kClockSelect48kInternal =
+    (ClockRateIndex::k48000 << ClockSelectBits::kRateShift) |
+    static_cast<uint32_t>(ClockSource::Internal);
+constexpr uint32_t kLocked48kStatus =
+    StatusBits::kSourceLocked |
+    (ClockRateIndex::k48000 << StatusBits::kNominalRateShift);
+
+enum class OpKind {
+    Read,
+    Write,
+    Lock,
+};
+
+struct RecordedOp {
+    OpKind kind;
+    uint16_t addressHi;
+    uint32_t addressLo;
+    uint32_t length;
+    FwSpeed speed;
+    uint32_t responseLength{0};
+    std::vector<uint8_t> payload;
+};
+
+struct ByteView {
+    const uint8_t* data;
+    std::size_t size;
+};
+
+struct ExpectedOp {
+    OpKind kind;
+    uint32_t addressLo;
+    uint32_t length;
+    FwSpeed speed;
+};
+
+struct ExpectedRequest {
+    OpKind kind;
+    uint16_t addressHi;
+    uint32_t addressLo;
+    uint32_t length;
+    FwSpeed speed;
+    uint32_t responseLength;
+    ByteView payload;
+};
+
+struct ResponseStep {
+    OpKind kind;
+    uint16_t addressHi;
+    uint32_t addressLo;
+    uint32_t requestLength;
+    uint32_t responseLength;
+    FwSpeed speed;
+    AsyncStatus status;
+    ByteView payload;
+};
+
+#include "ReferencePhase0ParityFixture.inc"
+
+inline void PutBe32(uint8_t* dst, uint32_t value) {
+    ::ASFW::FW::WriteBE32(dst, value);
+}
+
+inline void PutBe64(uint8_t* dst, uint64_t value) {
+    ::ASFW::FW::WriteBE64(dst, value);
+}
+
+inline std::array<uint8_t, kGeneralSectionBytes> MakeGeneralSectionsWire() {
+    std::array<uint8_t, kGeneralSectionBytes> bytes{};
+
+    PutBe32(bytes.data() + 0x00, 0x0000000A);  // global offset 0x28
+    PutBe32(bytes.data() + 0x04, 0x0000005F);  // global size 380
+    PutBe32(bytes.data() + 0x08, 0x00000069);  // tx offset 0x1a4
+    PutBe32(bytes.data() + 0x0C, 0x00000046);  // tx size 280
+    PutBe32(bytes.data() + 0x10, 0x000000F7);  // rx offset 0x3dc
+    PutBe32(bytes.data() + 0x14, 0x00000046);  // rx size 280
+
+    return bytes;
+}
+
+inline GeneralSections MakeGeneralSections() {
+    return GeneralSections{
+        .global = Section{.offset = 0x0028, .size = kGlobalBytes},
+        .txStreamFormat = Section{.offset = kTxSectionOffset, .size = kTxEntryQuadlets * 4},
+        .rxStreamFormat = Section{.offset = kRxSectionOffset, .size = kRxEntryQuadlets * 4},
+        .extSync = Section{},
+        .reserved = Section{},
+    };
+}
+
+class RecordingFireWireBus final : public IFireWireBus {
+public:
+    RecordingFireWireBus() {
+        generation_ = Generation{1};
+        localNodeId_ = NodeId{0};
+        speeds_[0x02] = FwSpeed::S400;
+        owner_ = kOwnerNoOwner;
+        clockSelect_ = 0;
+        enable_ = 0;
+        notification_ = 0x00000010U;
+        status_ = kLocked48kStatus;
+        extStatus_ = 0;
+        sampleRate_ = 48000;
+        version_ = 0x01000C00;
+        clockCaps_ = 0x00001E06;
+        txNum_ = 1;
+        txSize_ = kTxEntryQuadlets;
+        txIso_ = 0xFFFFFFFFU;
+        txAudio_ = 16;
+        txMidi_ = 1;
+        txSpeed_ = 2;
+        rxNum_ = 1;
+        rxSize_ = kRxEntryQuadlets;
+        rxIso_ = 0xFFFFFFFFU;
+        rxSeq_ = 0;
+        rxAudio_ = 8;
+        rxMidi_ = 1;
+
+        txNames_.fill(0);
+        rxNames_.fill(0);
+        const char txName[] = "IP 1";
+        const char rxName[] = "Mon 1";
+        std::copy(txName, txName + sizeof(txName), txNames_.begin());
+        std::copy(rxName, rxName + sizeof(rxName), rxNames_.begin());
+    }
+
+    AsyncHandle ReadBlock(Generation generation,
+                          NodeId nodeId,
+                          FWAddress address,
+                          uint32_t length,
+                          FwSpeed speed,
+                          ::ASFW::Async::InterfaceCompletionCallback callback) override {
+        Record(OpKind::Read, address, length, speed, 0, {});
+        if (generation != generation_) {
+            callback(AsyncStatus::kStaleGeneration, {});
+            return NextHandle();
+        }
+
+        if (HasScript()) {
+            ExpectScriptedRequest(OpKind::Read, address, length, speed, 0, {});
+            const auto response = TakeScriptedResponse(OpKind::Read, address, length, 0, speed);
+            callback(response.status,
+                     std::span<const uint8_t>(response.payload.data(), response.payload.size()));
+            return NextHandle();
+        }
+
+        const auto payload = ReadPayload(address, length);
+        callback(AsyncStatus::kSuccess, std::span<const uint8_t>(payload.data(), payload.size()));
+        return NextHandle();
+    }
+
+    AsyncHandle WriteBlock(Generation generation,
+                           NodeId nodeId,
+                           FWAddress address,
+                           std::span<const uint8_t> data,
+                           FwSpeed speed,
+                           ::ASFW::Async::InterfaceCompletionCallback callback) override {
+        std::vector<uint8_t> payload(data.begin(), data.end());
+        Record(OpKind::Write, address, static_cast<uint32_t>(data.size()), speed, 0, payload);
+        if (generation != generation_) {
+            callback(AsyncStatus::kStaleGeneration, {});
+            return NextHandle();
+        }
+
+        if (HasScript()) {
+            ExpectScriptedRequest(OpKind::Write,
+                                  address,
+                                  static_cast<uint32_t>(data.size()),
+                                  speed,
+                                  0,
+                                  payload);
+        }
+
+        ApplyWrite(address, data);
+        callback(AsyncStatus::kSuccess, {});
+        return NextHandle();
+    }
+
+    AsyncHandle Lock(Generation generation,
+                     NodeId nodeId,
+                     FWAddress address,
+                     LockOp lockOp,
+                     std::span<const uint8_t> operand,
+                     uint32_t responseLength,
+                     FwSpeed speed,
+                     ::ASFW::Async::InterfaceCompletionCallback callback) override {
+        std::vector<uint8_t> payload(operand.begin(), operand.end());
+        Record(OpKind::Lock, address, static_cast<uint32_t>(operand.size()), speed, responseLength, payload);
+        if (generation != generation_) {
+            callback(AsyncStatus::kStaleGeneration, {});
+            return NextHandle();
+        }
+
+        if (HasScript()) {
+            ExpectScriptedRequest(OpKind::Lock,
+                                  address,
+                                  static_cast<uint32_t>(operand.size()),
+                                  speed,
+                                  responseLength,
+                                  payload);
+            (void)ApplyLock(address, operand, responseLength);
+            const auto response = TakeScriptedResponse(
+                OpKind::Lock, address, static_cast<uint32_t>(operand.size()), responseLength, speed);
+            callback(response.status,
+                     std::span<const uint8_t>(response.payload.data(), response.payload.size()));
+            return NextHandle();
+        }
+
+        const auto response = ApplyLock(address, operand, responseLength);
+        callback(AsyncStatus::kSuccess, std::span<const uint8_t>(response.data(), response.size()));
+        return NextHandle();
+    }
+
+    bool Cancel(AsyncHandle handle) override {
+        return false;
+    }
+
+    FwSpeed GetSpeed(NodeId nodeId) const override {
+        return speeds_[nodeId.value];
+    }
+
+    void SetSpeed(NodeId nodeId, FwSpeed speed) {
+        speeds_[nodeId.value] = speed;
+    }
+
+    [[nodiscard]] uint32_t TxSpeed() const {
+        return txSpeed_;
+    }
+
+    uint8_t GetGapCount() const override { return gapCount_; }
+
+    void SetGapCount(uint8_t gapCount) { gapCount_ = gapCount; }
+
+    uint32_t HopCount(NodeId nodeA, NodeId nodeB) const override {
+        return 1;
+    }
+
+    Generation GetGeneration() const override {
+        return generation_;
+    }
+
+    NodeId GetLocalNodeID() const override {
+        return localNodeId_;
+    }
+
+    void ClearOperations() {
+        operations_.clear();
+    }
+
+    void SetScript(std::span<const ExpectedRequest> requests,
+                   std::span<const ResponseStep> responses) {
+        scriptedRequests_ = requests;
+        scriptedResponses_ = responses;
+        scriptedRequestIndex_ = 0;
+        scriptedResponseIndex_ = 0;
+    }
+
+    void ClearScript() {
+        scriptedRequests_ = {};
+        scriptedResponses_ = {};
+        scriptedRequestIndex_ = 0;
+        scriptedResponseIndex_ = 0;
+    }
+
+    [[nodiscard]] bool ScriptConsumed() const {
+        return !HasScript() ||
+               (scriptedRequestIndex_ == scriptedRequests_.size() &&
+                scriptedResponseIndex_ == scriptedResponses_.size());
+    }
+
+    const std::vector<RecordedOp>& Operations() const {
+        return operations_;
+    }
+
+    uint64_t Owner() const {
+        return owner_;
+    }
+
+    uint32_t Enable() const {
+        return enable_;
+    }
+
+    void SetClockSelectWriteHandler(std::function<void()> handler) {
+        clockSelectWriteHandler_ = std::move(handler);
+    }
+
+    void SetGlobalClockState(uint32_t status, uint32_t sampleRate,
+                             uint32_t notification = 0) {
+        status_ = status;
+        sampleRate_ = sampleRate;
+        notification_ = notification;
+    }
+
+    void SetGeneration(Generation generation) {
+        generation_ = generation;
+    }
+
+    void SetLocalNodeID(NodeId nodeId) {
+        localNodeId_ = nodeId;
+    }
+
+    void SetStreamIsoChannels(uint32_t txIso, uint32_t rxIso) {
+        txIso_ = txIso;
+        rxIso_ = rxIso;
+    }
+
+    void PublishClockAccepted(uint32_t bits = NotifyBits::kClockAccepted) {
+        ApplyClockAcceptedState(bits, true);
+    }
+
+    void LatchClockAccepted(uint32_t bits = NotifyBits::kClockAccepted) {
+        ApplyClockAcceptedState(bits, false);
+    }
+
+private:
+    struct ScriptResponse {
+        AsyncStatus status;
+        std::vector<uint8_t> payload;
+    };
+
+    AsyncHandle NextHandle() {
+        return AsyncHandle{nextHandle_++};
+    }
+
+    void Record(OpKind kind,
+                FWAddress address,
+                uint32_t length,
+                FwSpeed speed,
+                uint32_t responseLength,
+                std::vector<uint8_t> payload) {
+        operations_.push_back(RecordedOp{
+            .kind = kind,
+            .addressHi = address.addressHi,
+            .addressLo = address.addressLo,
+            .length = length,
+            .speed = speed,
+            .responseLength = responseLength,
+            .payload = std::move(payload),
+        });
+    }
+
+    [[nodiscard]] bool HasScript() const {
+        return !scriptedRequests_.empty() || !scriptedResponses_.empty();
+    }
+
+    void ExpectScriptedRequest(OpKind kind,
+                               FWAddress address,
+                               uint32_t length,
+                               FwSpeed speed,
+                               uint32_t responseLength,
+                               std::span<const uint8_t> payload) {
+        if (scriptedRequestIndex_ >= scriptedRequests_.size()) {
+            ADD_FAILURE() << "unexpected scripted request past end of fixture";
+            return;
+        }
+        const auto& expected = scriptedRequests_[scriptedRequestIndex_++];
+        EXPECT_EQ(expected.kind, kind) << "script request " << (scriptedRequestIndex_ - 1);
+        EXPECT_EQ(expected.addressHi, address.addressHi) << "script request " << (scriptedRequestIndex_ - 1);
+        EXPECT_EQ(expected.addressLo, address.addressLo) << "script request " << (scriptedRequestIndex_ - 1);
+        EXPECT_EQ(expected.length, length) << "script request " << (scriptedRequestIndex_ - 1);
+        EXPECT_EQ(expected.speed, speed) << "script request " << (scriptedRequestIndex_ - 1);
+        EXPECT_EQ(expected.responseLength, responseLength) << "script request " << (scriptedRequestIndex_ - 1);
+        EXPECT_EQ(expected.payload.size, payload.size()) << "script request " << (scriptedRequestIndex_ - 1);
+        if (expected.payload.size == payload.size() && expected.payload.size > 0) {
+            EXPECT_TRUE(std::equal(expected.payload.data,
+                                   expected.payload.data + expected.payload.size,
+                                   payload.begin()))
+                << "script request " << (scriptedRequestIndex_ - 1);
+        }
+    }
+
+    ScriptResponse TakeScriptedResponse(OpKind kind,
+                                        FWAddress address,
+                                        uint32_t requestLength,
+                                        uint32_t responseLength,
+                                        FwSpeed speed) {
+        if (scriptedResponseIndex_ >= scriptedResponses_.size()) {
+            ADD_FAILURE() << "unexpected scripted response past end of fixture";
+            return ScriptResponse{.status = AsyncStatus::kTimeout, .payload = {}};
+        }
+        const auto& expected = scriptedResponses_[scriptedResponseIndex_++];
+        EXPECT_EQ(expected.kind, kind) << "script response " << (scriptedResponseIndex_ - 1);
+        EXPECT_EQ(expected.addressHi, address.addressHi) << "script response " << (scriptedResponseIndex_ - 1);
+        EXPECT_EQ(expected.addressLo, address.addressLo) << "script response " << (scriptedResponseIndex_ - 1);
+        EXPECT_EQ(expected.requestLength, requestLength) << "script response " << (scriptedResponseIndex_ - 1);
+        EXPECT_EQ(expected.responseLength, responseLength == 0 ? expected.responseLength : responseLength)
+            << "script response " << (scriptedResponseIndex_ - 1);
+        EXPECT_EQ(expected.speed, speed) << "script response " << (scriptedResponseIndex_ - 1);
+
+        std::vector<uint8_t> payload;
+        if (expected.payload.size > 0) {
+            payload.assign(expected.payload.data, expected.payload.data + expected.payload.size);
+        }
+        return ScriptResponse{
+            .status = expected.status,
+            .payload = std::move(payload),
+        };
+    }
+
+    std::vector<uint8_t> QuadletPayload(uint32_t value) const {
+        std::vector<uint8_t> bytes(4);
+        PutBe32(bytes.data(), value);
+        return bytes;
+    }
+
+    std::vector<uint8_t> ReadPayload(FWAddress address, uint32_t length) const {
+        if (address.addressHi == 0xFFFF && address.addressLo == 0xE0000000U &&
+            length == kGeneralSectionBytes) {
+            const auto bytes = MakeGeneralSectionsWire();
+            return std::vector<uint8_t>(bytes.begin(), bytes.end());
+        }
+
+        if (address.addressHi == 0xFFFF && address.addressLo == 0xE0000028U) {
+            auto bytes = BuildGlobalBlock();
+            bytes.resize(length);
+            return bytes;
+        }
+
+        if (address.addressHi == 0xFFFF && address.addressLo == 0xE00001A4U) {
+            auto bytes = BuildTxStreamBlock();
+            bytes.resize(length);
+            return bytes;
+        }
+        if (address.addressHi == 0xFFFF && address.addressLo == 0xE00003DCU) {
+            auto bytes = BuildRxStreamBlock();
+            bytes.resize(length);
+            return bytes;
+        }
+
+        if (address.addressHi == 0xFFFF && address.addressLo == 0xE00001BCU && length == 256) {
+            return std::vector<uint8_t>(txNames_.begin(), txNames_.end());
+        }
+        if (address.addressHi == 0xFFFF && address.addressLo == 0xE00003F4U && length == 256) {
+            return std::vector<uint8_t>(rxNames_.begin(), rxNames_.end());
+        }
+
+        if (address.addressHi == 0xFFFF && length == 4) {
+            switch (address.addressLo) {
+            case 0xE00001A4U:
+                return QuadletPayload(txNum_);
+            case 0xE00001A8U:
+                return QuadletPayload(txSize_);
+            case 0xE00001ACU:
+                return QuadletPayload(txIso_);
+            case 0xE00001B0U:
+                return QuadletPayload(txAudio_);
+            case 0xE00001B4U:
+                return QuadletPayload(txMidi_);
+            case 0xE00001B8U:
+                return QuadletPayload(txSpeed_);
+            case 0xE00003DCU:
+                return QuadletPayload(rxNum_);
+            case 0xE00003E0U:
+                return QuadletPayload(rxSize_);
+            case 0xE00003E4U:
+                return QuadletPayload(rxIso_);
+            case 0xE00003E8U:
+                return QuadletPayload(rxSeq_);
+            case 0xE00003ECU:
+                return QuadletPayload(rxAudio_);
+            case 0xE00003F0U:
+                return QuadletPayload(rxMidi_);
+            case 0xE000007CU:
+                return QuadletPayload(status_);
+            case 0xE0000030U:
+                return QuadletPayload(notification_);
+            case 0xE0000080U:
+                return QuadletPayload(extStatus_);
+            default:
+                break;
+            }
+        }
+
+        return std::vector<uint8_t>(length, 0);
+    }
+
+    std::vector<uint8_t> BuildGlobalBlock() const {
+        std::vector<uint8_t> bytes(kGlobalBytes, 0);
+        PutBe64(bytes.data() + GlobalOffset::kOwnerHi, owner_);
+        PutBe32(bytes.data() + GlobalOffset::kNotification, notification_);
+        PutBe32(bytes.data() + GlobalOffset::kClockSelect, clockSelect_);
+        PutBe32(bytes.data() + GlobalOffset::kEnable, enable_);
+        PutBe32(bytes.data() + GlobalOffset::kStatus, status_);
+        PutBe32(bytes.data() + GlobalOffset::kExtStatus, extStatus_);
+        PutBe32(bytes.data() + GlobalOffset::kSampleRate, sampleRate_);
+        PutBe32(bytes.data() + GlobalOffset::kVersion, version_);
+        PutBe32(bytes.data() + GlobalOffset::kClockCaps, clockCaps_);
+        return bytes;
+    }
+
+    std::vector<uint8_t> BuildTxStreamBlock() const {
+        std::vector<uint8_t> bytes(kTxEntryQuadlets * 4, 0);
+        PutBe32(bytes.data(), txNum_);
+        PutBe32(bytes.data() + 4, txSize_);
+        PutBe32(bytes.data() + 8, txIso_);
+        PutBe32(bytes.data() + 12, txAudio_);
+        PutBe32(bytes.data() + 16, txMidi_);
+        PutBe32(bytes.data() + 20, txSpeed_);
+        std::copy(txNames_.begin(), txNames_.end(), bytes.begin() + 24);
+        return bytes;
+    }
+
+    std::vector<uint8_t> BuildRxStreamBlock() const {
+        std::vector<uint8_t> bytes(kRxEntryQuadlets * 4, 0);
+        PutBe32(bytes.data(), rxNum_);
+        PutBe32(bytes.data() + 4, rxSize_);
+        PutBe32(bytes.data() + 8, rxIso_);
+        PutBe32(bytes.data() + 12, rxSeq_);
+        PutBe32(bytes.data() + 16, rxAudio_);
+        PutBe32(bytes.data() + 20, rxMidi_);
+        std::copy(rxNames_.begin(), rxNames_.end(), bytes.begin() + 24);
+        return bytes;
+    }
+
+    void ApplyClockAcceptedState(uint32_t bits, bool publishMailbox) {
+        notification_ = bits;
+        status_ = kLocked48kStatus;
+        sampleRate_ = 48000;
+        if (publishMailbox) {
+            NotificationMailbox::Publish(bits);
+        }
+    }
+
+    void ApplyWrite(FWAddress address, std::span<const uint8_t> data) {
+        if (address.addressHi != 0xFFFF || data.size() != 4) {
+            return;
+        }
+
+        const uint32_t value = ::ASFW::FW::ReadBE32(data.data());
+        switch (address.addressLo) {
+        case 0xE0000074U:
+            clockSelect_ = value;
+            if (clockSelectWriteHandler_) {
+                clockSelectWriteHandler_();
+            } else {
+                PublishClockAccepted();
+            }
+            break;
+        case 0xE0000078U:
+            enable_ = value;
+            break;
+        case 0xE00001ACU:
+            txIso_ = value;
+            break;
+        case 0xE00001B8U:
+            txSpeed_ = value;
+            break;
+        case 0xE00003E4U:
+            rxIso_ = value;
+            break;
+        case 0xE00003E8U:
+            rxSeq_ = value;
+            break;
+        default:
+            break;
+        }
+    }
+
+    std::vector<uint8_t> ApplyLock(FWAddress address,
+                                   std::span<const uint8_t> operand,
+                                   uint32_t responseLength) {
+        if (address.addressHi == 0xFFFF && address.addressLo == 0xE0000028U && operand.size() == 16 &&
+            responseLength == 8) {
+            const uint64_t expected = ::ASFW::FW::ReadBE64(operand.data());
+            const uint64_t desired = ::ASFW::FW::ReadBE64(operand.data() + 8);
+            const uint64_t previous = owner_;
+            if (owner_ == expected) {
+                owner_ = desired;
+            }
+            std::vector<uint8_t> response(8);
+            PutBe64(response.data(), previous);
+            return response;
+        }
+
+        return std::vector<uint8_t>(responseLength, 0);
+    }
+
+    std::vector<RecordedOp> operations_;
+    Generation generation_{0};
+    NodeId localNodeId_{0};
+    std::array<FwSpeed, 64> speeds_{[] {
+        std::array<FwSpeed, 64> speeds{};
+        speeds.fill(FwSpeed::S100);
+        return speeds;
+    }()};
+    uint32_t nextHandle_{1};
+
+    uint64_t owner_{0};
+    uint32_t clockSelect_{0};
+    uint32_t enable_{0};
+    uint32_t notification_{0};
+    uint32_t status_{0};
+    uint32_t extStatus_{0};
+    uint32_t sampleRate_{0};
+    uint32_t version_{0};
+    uint32_t clockCaps_{0};
+
+    uint32_t txNum_{0};
+    uint32_t txSize_{0};
+    uint32_t txIso_{0};
+    uint32_t txAudio_{0};
+    uint32_t txMidi_{0};
+    uint32_t txSpeed_{0};
+
+    uint32_t rxNum_{0};
+    uint32_t rxSize_{0};
+    uint32_t rxIso_{0};
+    uint32_t rxSeq_{0};
+    uint32_t rxAudio_{0};
+    uint32_t rxMidi_{0};
+
+    uint8_t gapCount_{63};
+
+    std::array<uint8_t, 256> txNames_{};
+    std::array<uint8_t, 256> rxNames_{};
+    std::function<void()> clockSelectWriteHandler_;
+    std::span<const ExpectedRequest> scriptedRequests_{};
+    std::span<const ResponseStep> scriptedResponses_{};
+    std::size_t scriptedRequestIndex_{0};
+    std::size_t scriptedResponseIndex_{0};
+};
+
+struct HostClockResetGuard {
+    ~HostClockResetGuard() {
+        ::ASFW::Testing::ResetHostMonotonicClockForTesting();
+    }
+};
+
+struct DuplexRig {
+    RecordingFireWireBus bus;
+    RouteState routeState;
+    ProtocolRegisterIO io;
+    DICETransaction tx;
+    ::ASFW::Testing::FakeTimerScheduler timer;
+    std::atomic<bool> cancel{false};
+    DICEDuplexBringupController controller;
+
+    explicit DuplexRig(DICEBringupPolicy bringupPolicy = {})
+        : io(bus, bus, routeState.registry, routeState.route)
+        , tx(io)
+        , controller(tx, io, bus, nullptr, MakeGeneralSections(), &timer, bringupPolicy) {
+        controller.SetTeardownCancelToken(&cancel);
+    }
+};
+
+inline std::vector<ExpectedOp> ExpectedStopOps() {
+    return {
+        {OpKind::Write, 0xE0000078U, 4, FwSpeed::S400},
+        {OpKind::Read,  0xE00001A8U, 4, FwSpeed::S400},
+        {OpKind::Write, 0xE00001ACU, 4, FwSpeed::S400},
+        {OpKind::Write, 0xE00001B8U, 4, FwSpeed::S400},
+        {OpKind::Read,  0xE00003E0U, 4, FwSpeed::S400},
+        {OpKind::Write, 0xE00003E4U, 4, FwSpeed::S400},
+        {OpKind::Write, 0xE00003E8U, 4, FwSpeed::S400},
+        {OpKind::Lock,  0xE0000028U, 16, FwSpeed::S400},
+    };
+}
+
+template <typename T>
+inline std::vector<T> Concat(std::span<const T> first, std::span<const T> second) {
+    std::vector<T> merged;
+    merged.reserve(first.size() + second.size());
+    merged.insert(merged.end(), first.begin(), first.end());
+    merged.insert(merged.end(), second.begin(), second.end());
+    return merged;
+}
+
+inline void ExpectRequests(const std::vector<RecordedOp>& actual,
+                           std::span<const ExpectedRequest> expected) {
+    ASSERT_EQ(actual.size(), expected.size());
+    for (size_t i = 0; i < expected.size(); ++i) {
+        EXPECT_EQ(actual[i].kind, expected[i].kind) << "op " << i;
+        EXPECT_EQ(actual[i].addressHi, expected[i].addressHi) << "op " << i;
+        EXPECT_EQ(actual[i].addressLo, expected[i].addressLo) << "op " << i;
+        EXPECT_EQ(actual[i].length, expected[i].length) << "op " << i;
+        EXPECT_EQ(actual[i].speed, expected[i].speed) << "op " << i;
+        EXPECT_EQ(actual[i].responseLength, expected[i].responseLength) << "op " << i;
+        EXPECT_EQ(actual[i].payload.size(), expected[i].payload.size) << "op " << i;
+        if (actual[i].payload.size() == expected[i].payload.size && expected[i].payload.size > 0) {
+            EXPECT_TRUE(std::equal(actual[i].payload.begin(),
+                                   actual[i].payload.end(),
+                                   expected[i].payload.data))
+                << "op " << i;
+        }
+    }
+}
+
+inline void ExpectOperations(const std::vector<RecordedOp>& actual,
+                             const std::vector<ExpectedOp>& expected) {
+    ASSERT_EQ(actual.size(), expected.size());
+    for (size_t i = 0; i < expected.size(); ++i) {
+        EXPECT_EQ(actual[i].kind, expected[i].kind) << "op " << i;
+        EXPECT_EQ(actual[i].addressLo, expected[i].addressLo) << "op " << i;
+        EXPECT_EQ(actual[i].length, expected[i].length) << "op " << i;
+        EXPECT_EQ(actual[i].speed, expected[i].speed) << "op " << i;
+    }
+}
+
+} // namespace ASFW::Testing::DICE

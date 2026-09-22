@@ -523,9 +523,13 @@ uint32_t CMPClient::MPRAddress(PCRDirection direction) noexcept {
 }
 
 uint8_t CMPClient::OverheadIdForGapCount(uint8_t gapCount) noexcept {
-    // Same derivation the isochronous reservation charges against
-    // BANDWIDTH_AVAILABLE; the oPCR just reports it in 32-unit steps. The
-    // unoptimised fallback (63) maps to 512 units and thus overhead ID 0.
+    // IEC 61883-1:2001 Clause 5.3.2 Table 5:
+    // The overhead_id field in oPCR bits [13:10] specifies the worst-case
+    // transmission and arbitration gap delay across hops, expressed in 32-unit
+    // allocation steps (where 1 unit = 1 quadlet at S1600 ≈ 20.35 ns).
+    // Note: This is an IEC 61883 plug parameter for receiver buffering, NOT a
+    // debit against the IEEE 1394 IRM BANDWIDTH_AVAILABLE ledger.
+    // The unoptimised fallback (gap_count = 63) yields 512 units (overhead ID 0).
     const uint32_t overhead = IRM::BandwidthOverheadForGapCount(gapCount);
     for (uint8_t id = 1; id < 16U; ++id) {
         if (overhead < (static_cast<uint32_t>(id) << 5U)) {

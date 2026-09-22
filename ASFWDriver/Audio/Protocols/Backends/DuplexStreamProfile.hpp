@@ -86,7 +86,13 @@ struct DuplexStreamProfile {
     // a single per-device value (IOFWIsochChannel.cpp:653-664, dice-stream.c
     // allocate + amdtp_stream_start); two answers means charging for one bus and
     // transmitting on another.
-    FW::FwSpeed linkSpeed{FW::FwSpeed::S400};
+    //
+    // Conservative initialization; discovery supplies the resolved path speed
+    // before stream planning. S100 is valid, never an "unset" sentinel -- and
+    // because this value is stamped into the transmit header as well as charged
+    // to the IRM, erring low only over-reserves, while erring high would
+    // transmit faster than the path supports.
+    FW::FwSpeed linkSpeed{FW::FwSpeed::S100};
     AudioStreamRuntimeCaps runtimeCaps{};
     std::array<DuplexCaptureStreamGeometry, kMaxAudioStreamsPerDirection> captureStreams{};
     std::array<DuplexPlaybackStreamGeometry, kMaxAudioStreamsPerDirection> playbackStreams{};
@@ -143,10 +149,10 @@ class DuplexStreamProfileResolver final {
     static constexpr uint8_t kDefaultCaptureIsoChannel = 1;
     static constexpr uint8_t kDefaultPlaybackIsoChannel = 0;
 
-    // The packet term only. Per-allocation bus overhead depends on the live gap
-    // count, which can change between planning and reserving, so it is charged
-    // by the reservation itself (IRM::BandwidthOverheadForGapCount) exactly as
-    // Linux does in fw_iso_resources_allocate (iso-resources.c:113-128).
+    // The packet term. Under Apple IOFWIsochChannel wire parity
+    // (IOFWIsochChannel.cpp:664), only the packet term is charged against
+    // BANDWIDTH_AVAILABLE; no gap arbitration overhead is subtracted from the
+    // IRM ledger.
     [[nodiscard]] static constexpr uint32_t
     AmdtpPacketBandwidthUnits(uint32_t am824Slots, uint32_t sampleRateHz,
                               FW::FwSpeed speed) noexcept {

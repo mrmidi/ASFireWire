@@ -44,7 +44,14 @@ add_irm_test(IRMClientRemoteRetryTests
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
 )
 
+# IRMClient allocation, Apple channel-then-bandwidth ordering, rollback, and local CSR
+add_irm_test(IRMClientAllocationTests
+    IRMClientAllocationTests.cpp
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+)
+
 # Bandwidth calculation cross-checked against Apple and Linux derivations
 add_irm_test(IsochBandwidthAllocationTests
     IsochBandwidthAllocationTests.cpp
 )
+

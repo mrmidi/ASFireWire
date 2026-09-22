@@ -7,9 +7,11 @@
 #include "gtest/gtest.h"
 
 using ASFW::Driver::PathSpeedCodeBetween;
+using ASFW::Driver::ResolveIsochSpeed;
 using ASFW::Driver::TopologyGraphStatus;
 using ASFW::Driver::TopologyNodeRecord;
 using ASFW::Driver::TopologySnapshot;
+using ASFW::FW::FwSpeed;
 
 namespace {
 
@@ -55,17 +57,32 @@ TEST(TopologySpeedTests, TwoNodeS400BusResolvesS400) {
     EXPECT_EQ(PathSpeedCodeBetween(topology, 1, 0), std::optional<uint8_t>{kS400});
 }
 
-// The defect this exists to prevent. SpeedPolicy demotes the *async* speed to
-// S200 when a device times out a request — some devices genuinely need that —
-// and the isochronous speed used to inherit it. Self-ID says S400 regardless of
-// how the device behaves on the async path, and the isoch charge is
-// `unitsAtS1600 >> speedCode`, so inheriting S200 doubled the bandwidth bill.
-TEST(TopologySpeedTests, AsyncDemotionCannotLowerTheSelfIdPathSpeed) {
+// PathSpeedCodeBetween inspects the raw Self-ID PHY silicon capability.
+TEST(TopologySpeedTests, SelfIdPathSpeedReflectsPhySiliconCapabilities) {
     const auto topology = TwoNodeBus(kS400, kS400);
-
-    // Whatever SpeedPolicy concluded from timed-out async requests, Self-ID is
-    // unchanged and this is what isochronous traffic must be charged at.
     EXPECT_EQ(PathSpeedCodeBetween(topology, 0, 1), std::optional<uint8_t>{kS400});
+}
+
+// ResolveIsochSpeed ensures that isochronous transmission speed never exceeds
+// the verified operational link speed (e.g. S200 for Midas Venice F24), preventing
+// PHY packet drops and bus resets caused by forcing S400.
+TEST(TopologySpeedTests, ResolveIsochSpeedCapsAtOperationalLimitWhenSelfIdIsFaster) {
+    const auto topology = TwoNodeBus(kS800, kS400);
+    EXPECT_EQ(ResolveIsochSpeed(topology, 1, FwSpeed::S200), FwSpeed::S200);
+}
+
+TEST(TopologySpeedTests, ResolveIsochSpeedUsesSelfIdWhenSlowerThanOperationalLimit) {
+    const auto topology = TwoNodeBus(kS800, kS100);
+    EXPECT_EQ(ResolveIsochSpeed(topology, 1, FwSpeed::S400), FwSpeed::S100);
+}
+
+TEST(TopologySpeedTests, ResolveIsochSpeedUsesAgreedSpeedWhenBothMatch) {
+    const auto topology = TwoNodeBus(kS400, kS400);
+    EXPECT_EQ(ResolveIsochSpeed(topology, 1, FwSpeed::S400), FwSpeed::S400);
+}
+
+TEST(TopologySpeedTests, ResolveIsochSpeedFallsBackToOperationalLimitWhenTopologyUnavailable) {
+    EXPECT_EQ(ResolveIsochSpeed(std::nullopt, 1, FwSpeed::S200), FwSpeed::S200);
 }
 
 TEST(TopologySpeedTests, SlowerEndpointCapsThePath) {

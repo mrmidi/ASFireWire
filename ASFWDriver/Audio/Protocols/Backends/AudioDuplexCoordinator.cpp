@@ -55,6 +55,24 @@ void LogReservationRefusal(const char* direction, uint32_t streamIndex,
                    reservation.refusedChannels, guid, generation.value);
 }
 
+// The counterpart on the success path. A refusal already explains itself; a
+// start that succeeds and then carries no audio explains nothing, and the first
+// question is always which speed the packets went out at. Isochronous transmit
+// is unacknowledged, so a device that cannot receive at the speed we resolved
+// fails silently -- indistinguishable in a log from one that never started.
+// One line per start, on the control path, not per packet.
+void LogReservationSummary(uint64_t guid, Discovery::Generation generation,
+                           FW::FwSpeed linkSpeed, uint8_t gapCount,
+                           uint32_t playbackStreams, uint32_t captureStreams,
+                           uint32_t reservedUnits) noexcept {
+    ASFW_LOG(Audio,
+             "IRM reserved speed=S%u gap=%u playback=%u capture=%u total=%u/%u units "
+             "guid=0x%016llx gen=%u",
+             100u << static_cast<uint8_t>(linkSpeed), gapCount, playbackStreams,
+             captureStreams, reservedUnits,
+             static_cast<uint32_t>(IRM::kMaxBandwidthUnitsS400), guid, generation.value);
+}
+
 [[nodiscard]] AudioClockConfig EffectiveStartClockForProfile(
     const Discovery::DeviceRecord& record,
     const AudioClockConfig& requestedClock) noexcept {
@@ -1112,6 +1130,9 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     if (abortIfTeardown("ReservingPlaybackResources")) {
         return kIOReturnAborted;
     }
+    // Charged totals across both directions, for the one summary line below.
+    uint32_t reservedUnits = 0;
+    uint8_t reservedGapCount = 63;
     for (uint32_t i = 0; i < channels.playbackStreamCount; ++i) {
         const DuplexPlaybackStreamGeometry& geometry = streamProfile.playbackStreams[i];
         Backends::IRMReservationResult reservation{};
@@ -1125,6 +1146,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                                      DuplexRestartPhase::kReservingPlaybackResources,
                                      DuplexRestartFailureCause::kReservePlayback);
         }
+        reservedUnits += reservation.charge.Total();
+        reservedGapCount = reservation.charge.gapCount;
         const uint8_t assignedChannel = reservation.channel;
         channels.playbackIsoChannels[i] = assignedChannel;
         if (i == 0) {
@@ -1157,6 +1180,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                                      DuplexRestartPhase::kReservingCaptureResources,
                                      DuplexRestartFailureCause::kReserveCapture);
         }
+        reservedUnits += reservation.charge.Total();
+        reservedGapCount = reservation.charge.gapCount;
         const uint8_t assignedChannel = reservation.channel;
         channels.captureIsoChannels[i] = assignedChannel;
         if (i == 0) {
@@ -1171,6 +1196,10 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     SetSessionPhase(session, DuplexRestartPhase::kReservingCaptureResources);
     session.hostCaptureReserved = true;
     session.channels = channels;
+
+    LogReservationSummary(guid, topologyGeneration, streamProfile.linkSpeed, reservedGapCount,
+                          channels.playbackStreamCount, channels.captureStreamCount,
+                          reservedUnits);
 
     // CMP ESTABLISH writes these allocated channels into the remote PCRs. Commit
     // them to the protocol adapter before either ProgramRx or ProgramTx runs,

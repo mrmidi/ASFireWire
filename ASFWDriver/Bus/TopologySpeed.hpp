@@ -6,6 +6,7 @@
 #pragma once
 
 #include "TopologyTypes.hpp"
+#include "../Common/FWTypes.hpp"
 
 #include <algorithm>
 #include <array>
@@ -24,15 +25,6 @@ namespace ASFW::Driver {
  * received). Returns nullopt when the topology is not valid or the nodes are
  * not connected, so callers decide their own conservative fallback rather than
  * silently receiving S100.
- *
- * This is deliberately the *only* speed source appropriate for isochronous
- * traffic. Apple resolves isoch speed from the PHY
- * (IOFWIsochChannel.cpp:653 — `fControl->getLink()->getPhySpeed()`), and keeps
- * its per-node-pair `fSpeedVector` — which async transmit reads at
- * IOFireWireController.cpp:7058, and which `setNodeSpeed(..., FWSpeed(...) - 1)`
- * demotes when a scan fails (:2755-2759) — out of the isoch path entirely. A
- * device that mishandles async requests at S400 has told us nothing about what
- * its isochronous receiver can do.
  *
  * @note Uncapped by design. SpeedMapService clamps to S400 because the legacy
  *       SPEED_MAP CSR image is a conservative diagnostic surface; a transmit
@@ -124,6 +116,63 @@ namespace ASFW::Driver {
     }
 
     return std::nullopt;
+}
+
+/**
+ * @brief Resolve the isochronous transmission speed for a node.
+ *
+ * Walks the Self-ID topology graph for the maximum PHY path speed between local
+ * node and target node, then bounds it by the validated operational link speed
+ * (@p operationalLimit, i.e. policy.localToNode).
+ *
+ * Rationale & Change History:
+ * Commit 86324deef previously decoupled isochronous speed from async operational speed,
+ * forcing isoch to the raw Self-ID PHY speed (S400) under the assumption that:
+ *   "SpeedPolicy demotes localToNode when a request times out, which is right
+ *    for async and wrong for isoch: charging isoch at S200 costs twice the
+ *    bandwidth units of S400 for a device whose PHY was never the problem."
+ *
+ * That assumption was flawed:
+ * 1. The IRM bandwidth exhaustion at S200 was actually caused by an erroneous 512-unit
+ *    per-stream gap overhead charge against BANDWIDTH_AVAILABLE on unoptimized buses.
+ *    With Apple IOFWIsochChannel wire parity restored (commit 84426354), zero gap overhead
+ *    is subtracted from the IRM ledger. All 4 streams of the Midas Venice F24 at S200
+ *    consume only 3,232 units out of 4,915, fitting comfortably on any bus.
+ * 2. Real-world links and device link layers may fail when driven faster than their
+ *    verified operational speed. Forcing S400 on devices whose physical link or hardware
+ *    cannot reliably sustain S400 (e.g. Midas Venice F24, which runs stably at S200 under
+ *    Apple's native IOFireWireFamily) causes packet corruption, timestamp timeouts, and
+ *    bus reset loops.
+ *
+ * Reference Stack Alignment:
+ * - Linux (drivers/firewire/core-device.c:615-641, sound/firewire/amdtp-stream.c, dice-stream.c:194):
+ *   Linux derives `device->max_speed` from PHY path speed, but actively checks Config ROM
+ *   `link_spd` and steps down `device->max_speed--` if trial quadlet reads fail. Linux sound
+ *   drivers then use `device->max_speed` for both IRM reservations and isochronous streaming.
+ * - Apple IOFireWireFamily (IOFireWireDevice.cpp:2097-2102, IOFireWireController.cpp:2746-2760,
+ *   IOFWIsochChannel.cpp:653):
+ *   Apple steps down `setNodeSpeed()` during discovery when speed verification fails, and
+ *   allows device property overrides via `fMaxSpeed`.
+ *
+ * While IEEE 1394 isochronous broadcast packets carry no destination node ID in the packet header
+ * and their only strict hardware PHY constraint is repeater port capability (IEEE Std 1394-2008),
+ * bounding isochronous transmission to the verified operational link speed is a safe, reference-aligned
+ * policy that avoids overdriving fragile hardware or cables.
+ */
+[[nodiscard]] inline FW::FwSpeed ResolveIsochSpeed(const std::optional<TopologySnapshot>& topology,
+                                                   uint8_t nodeId,
+                                                   FW::FwSpeed operationalLimit) noexcept {
+    if (!topology.has_value() || topology->localNodeId == kInvalidPhysicalId) {
+        return operationalLimit;
+    }
+
+    const auto pathSpeed = PathSpeedCodeBetween(*topology, topology->localNodeId, nodeId);
+    if (!pathSpeed.has_value()) {
+        return operationalLimit;
+    }
+
+    const auto phySpeed = static_cast<FW::FwSpeed>(*pathSpeed);
+    return std::min(phySpeed, operationalLimit);
 }
 
 } // namespace ASFW::Driver
