@@ -132,17 +132,32 @@ namespace ASFW::Driver {
  *    for async and wrong for isoch: charging isoch at S200 costs twice the
  *    bandwidth units of S400 for a device whose PHY was never the problem."
  *
- * That assumption proved fundamentally wrong:
+ * That assumption was flawed:
  * 1. The IRM bandwidth exhaustion at S200 was actually caused by an erroneous 512-unit
  *    per-stream gap overhead charge against BANDWIDTH_AVAILABLE on unoptimized buses.
  *    With Apple IOFWIsochChannel wire parity restored (commit 84426354), zero gap overhead
  *    is subtracted from the IRM ledger. All 4 streams of the Midas Venice F24 at S200
  *    consume only 3,232 units out of 4,915, fitting comfortably on any bus.
- * 2. Transmitting isochronous audio at S400 to a device whose link or physical connection
- *    cannot reliably sustain S400 (and which runs stably at S200 under Apple's native
- *    IOFireWireFamily) causes packet corruption, timestamp timeouts, and bus reset loops.
+ * 2. Real-world links and device link layers may fail when driven faster than their
+ *    verified operational speed. Forcing S400 on devices whose physical link or hardware
+ *    cannot reliably sustain S400 (e.g. Midas Venice F24, which runs stably at S200 under
+ *    Apple's native IOFireWireFamily) causes packet corruption, timestamp timeouts, and
+ *    bus reset loops.
  *
- * Isochronous speed must therefore NEVER exceed the verified operational link speed.
+ * Reference Stack Alignment:
+ * - Linux (drivers/firewire/core-device.c:615-641, sound/firewire/amdtp-stream.c, dice-stream.c:194):
+ *   Linux derives `device->max_speed` from PHY path speed, but actively checks Config ROM
+ *   `link_spd` and steps down `device->max_speed--` if trial quadlet reads fail. Linux sound
+ *   drivers then use `device->max_speed` for both IRM reservations and isochronous streaming.
+ * - Apple IOFireWireFamily (IOFireWireDevice.cpp:2097-2102, IOFireWireController.cpp:2746-2760,
+ *   IOFWIsochChannel.cpp:653):
+ *   Apple steps down `setNodeSpeed()` during discovery when speed verification fails, and
+ *   allows device property overrides via `fMaxSpeed`.
+ *
+ * While IEEE 1394 isochronous broadcast packets carry no destination node ID in the packet header
+ * and their only strict hardware PHY constraint is repeater port capability (IEEE 1394a §4.3.4.1),
+ * bounding isochronous transmission to the verified operational link speed is a safe, reference-aligned
+ * policy that avoids overdriving fragile hardware or cables.
  */
 [[nodiscard]] inline FW::FwSpeed ResolveIsochSpeed(const std::optional<TopologySnapshot>& topology,
                                                    uint8_t nodeId,

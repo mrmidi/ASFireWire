@@ -219,16 +219,21 @@ class DuplexIRMReservations final {
   private:
     /// One stream's charge against the live bus.
     ///
-    /// Under Apple IOFireWireFamily wire parity (IOFWIsochChannel.cpp:664),
-    /// the bandwidth requested from the IRM BANDWIDTH_AVAILABLE register is
-    /// strictly the packet term: (fPacketSize / 4 + 3) * 16 / (1 << inSpeed).
+    /// Under Apple IOFireWireFamily wire parity (IOFWIsochChannel.cpp:664) and
+    /// IEEE 1394-1995 §8.4.2.2, the bandwidth requested from the IRM
+    /// BANDWIDTH_AVAILABLE register (CSR 0xFFFFF0000220) is strictly the packet term:
+    ///   units = (payloadQuadlets + 3) * 16 / (1 << inSpeed).
     ///
     /// Apple charges zero gap overhead against BANDWIDTH_AVAILABLE because the
-    /// 1394 cycle ledger (initialized to 4915 units / 100us) already accounts
-    /// for arbitration gaps and async traffic in the mandatory 25us (1229 units)
-    /// cycle remainder. Subtracting per-stream gap overhead here double-counts
-    /// the arbitration cost and exhausts the ledger on multi-stream configurations
-    /// (such as Midas Venice F24 at S200 with 4 streams).
+    /// 1394 cycle ledger (initialized to 4915 units / 100 µs of 125 µs) already
+    /// accommodates bus arbitration gaps and async transactions within the mandatory
+    /// 25 µs (1229 units) cycle remainder. Subtracting per-stream gap overhead here
+    /// double-counts the arbitration cost and exhausts the ledger on multi-stream
+    /// configurations (such as Midas Venice F24 at S200 with 4 streams).
+    ///
+    /// Note: Gap overhead is an IEC 61883-1 CMP concept (Clause 5.3.2 Table 5,
+    /// oPCR bits [13:10] overhead_id) communicated to receiving nodes for buffer
+    /// dimensioning, NOT an IEEE 1394 IRM ledger deduction.
     ///
     /// The live gap count is preserved in IsochBandwidthCharge for diagnostics
     /// and IEC 61883 CMP oPCR overhead ID reporting, but overheadUnits is 0.

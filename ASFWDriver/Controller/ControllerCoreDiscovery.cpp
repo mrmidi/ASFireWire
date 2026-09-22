@@ -546,14 +546,24 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
     // "charging isoch at S200 costs twice the bandwidth units of S400 for a device
     // whose PHY was never the problem."
     //
-    // That assumption proved wrong:
+    // That assumption was flawed:
     // 1. The IRM bandwidth blowout at S200 was actually caused by an erroneous 512-unit
     //    per-stream gap overhead charge against BANDWIDTH_AVAILABLE on unoptimized buses.
     //    With Apple IOFWIsochChannel wire parity restored (commit 84426354), 4 streams
     //    at S200 take only 3,232 units out of 4,915, fitting comfortably on any bus.
-    // 2. Forcing S400 when the physical link/hardware cannot reliably sustain S400 (e.g.
-    //    Midas Venice F24, which runs stably at S200 under Apple's native IOFireWireFamily)
-    //    causes packet loss, timestamp timeouts, and bus reset loops.
+    // 2. Real-world links and device link layers may fail when driven faster than their
+    //    verified operational speed. Forcing S400 when the physical link or hardware
+    //    cannot reliably sustain S400 (e.g. Midas Venice F24, which runs stably at S200
+    //    under Apple's native IOFireWireFamily) causes packet loss, timestamp timeouts,
+    //    and bus reset loops.
+    //
+    // Reference Stack Alignment:
+    // - Linux (drivers/firewire/core-device.c:615-641, sound/firewire/amdtp-stream.c, dice-stream.c:194):
+    //   `device->max_speed` is stepped down if Config ROM `link_spd` is lower or if quadlet
+    //   reads fail, and sound drivers use `device->max_speed` for isochronous streams.
+    // - Apple IOFireWireFamily (IOFireWireDevice.cpp:2097-2102, IOFireWireController.cpp:2746-2760,
+    //   IOFWIsochChannel.cpp:653):
+    //   `setNodeSpeed()` is stepped down during discovery, and drivers can cap `fMaxSpeed`.
     //
     // Therefore, ResolveIsochSpeed() bounds the topology PHY path speed by policy.localToNode.
     const auto topologyForSpeed = deps_.topology ? deps_.topology->LatestSnapshot()

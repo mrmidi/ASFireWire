@@ -33,17 +33,31 @@ namespace IRMRegisters {
 }
 
 // ============================================================================
-// Bandwidth Calculation (IEEE 1394-1995 §8.3.2.3.5)
+// Bandwidth Calculation (IEEE 1394-1995 / IEEE 1394a-2000 §8.4.2.2)
 // ============================================================================
 
 /**
- * Maximum bandwidth units available at S400.
- * Per IEEE 1394, total bus bandwidth = 4915 allocation units at S400.
+ * Maximum bandwidth allocation units available per 125 µs cycle (IEEE 1394 §8.4.2.2).
  *
- * Calculation: 400 Mbps / 196 KB/s per unit ≈ 4915 units
+ * The IRM BANDWIDTH_AVAILABLE register (CSR offset 0x220) specifies the remaining
+ * isochronous bandwidth allocation units on the bus.
  *
- * Reference: Apple IOFireWireController.cpp:6302 - Initial bandwidth 0x1333
- *            Linux core.h:46 - BANDWIDTH_AVAILABLE_INITIAL 4915
+ * Specification & Timing Derivation:
+ * - 1 bandwidth allocation unit = time to transmit 1 quadlet (32 bits) at S1600
+ *   with base transmission clock 49.152 MHz:
+ *     t_unit = 1 / 49.152 MHz = 20.34505 ns.
+ * - Total allocation units in a nominal 8 kHz (125 µs) isochronous cycle:
+ *     125 µs × 49.152 MHz = 6,144 allocation units.
+ * - IEEE 1394 §8.4.2.2 strictly caps isochronous transmissions to at most 100 µs
+ *   (80% of the 125 µs cycle) to guarantee bus availability for asynchronous traffic:
+ *     100 µs × 49.152 MHz = 4,915.2 ≈ 4,915 allocation units (0x1333).
+ * - The remaining 25 µs (1,228.8 ≈ 1,229 units, or 20% of the cycle) is the mandatory
+ *   async cycle remainder, dedicated to cycle start packets, arbitration gaps,
+ *   and asynchronous transaction requests and responses.
+ *
+ * Reference:
+ *   Apple IOFireWireController.cpp:6302 - Initial bandwidth 0x1333 (4915)
+ *   Linux core.h:46 - BANDWIDTH_AVAILABLE_INITIAL 4915
  */
 constexpr uint32_t kMaxBandwidthUnitsS400 = 4915;
 
@@ -60,14 +74,32 @@ constexpr uint32_t kChannelsAvailableInitial = 0xFFFFFFFF;  ///< All channels fr
 /**
  * Isochronous packet cost, in IEEE 1394 bandwidth allocation units.
  *
- * One unit is the time to transmit one quadlet at S1600. An isochronous packet
- * costs its quadlet-aligned payload plus three overhead quadlets (isoch header,
- * header CRC, data CRC), scaled by how much longer that takes at @p speedCode.
+ * Specification: IEEE 1394-1995 / IEEE 1394a-2000 Clause 8.4.2.2.
  *
- * Apple and Linux compute this identically, and this is the whole of Apple's
- * isochronous bandwidth request:
- *   Apple IOFWIsochChannel.cpp:664  (fPacketSize/4 + 3) * 16 / (1 << inSpeed)
- *   Linux sound/firewire/iso-resources.c:48-61  packet_bandwidth()
+ * Formula:
+ *   units = (ceil(payloadBytes / 4) + 3) * 16 / (1 << speedCode)
+ *
+ * Component Breakdown:
+ * - payloadBytes: Isochronous data payload including IEC 61883 CIP header,
+ *   excluding the 1394 isochronous packet header.
+ * - quadlets = (payloadBytes + 3) / 4: Payload bytes rounded up to quadlets.
+ * - +3 quadlets: Mandatory 1394 isochronous packet framing overhead:
+ *     1 quadlet: Isochronous packet header (data_length:16, tag:2, channel:6, tcode:4, sy:4)
+ *     1 quadlet: Header CRC
+ *     1 quadlet: Data CRC
+ * - * 16: Scales transmission time at S100 to S1600 allocation units
+ *   (since S100 is 16× slower than S1600).
+ * - >> speedCode: Divides duration by 2^speedCode (1 for S100, 2 for S200, 4 for S400, 8 for S800).
+ *
+ * Apple and Linux Parity:
+ * - Apple IOFWIsochChannel.cpp:664:
+ *     bandwidth = (fPacketSize / 4 + 3) * 16 / (1 << inSpeed);
+ * - Linux sound/firewire/iso-resources.c:48-61:
+ *     packet_bandwidth(max_payload_bytes, speed);
+ *
+ * Apple charges strictly this packet term against BANDWIDTH_AVAILABLE. Zero gap
+ * overhead is subtracted from the IRM ledger because the 25 µs (1,229 units)
+ * cycle remainder already accommodates isochronous arbitration gaps.
  *
  * @param payloadBytes Packet payload including CIP headers, excluding the
  *                     1394 isochronous header.
@@ -81,15 +113,24 @@ constexpr uint32_t kChannelsAvailableInitial = 0xFFFFFFFF;  ///< All channels fr
 }
 
 /**
- * Bus arbitration overhead for a given gap count, in bandwidth allocation units.
+ * Bus arbitration gap overhead for IEC 61883-1 Connection Management Protocol (CMP).
  *
- * Used primarily for IEC 61883-1 Plug Control Register (CMP oPCR) overhead_id
- * calculation (CMPClient::OverheadIdForGapCount).
+ * Specification: IEC 61883-1:2001 Clause 5.3.2 Table 5 (Plug Control Registers: oPCR/iPCR).
  *
- * In IEEE 1394 IRM resource management, Apple IOFireWireFamily
- * (IOFWIsochChannel.cpp:664) does not charge gap overhead against
- * BANDWIDTH_AVAILABLE because the mandatory 25us (1229 units) cycle set-aside
- * already accommodates isochronous gap arbitration.
+ * Architecture Distinction (IEEE 1394 IRM vs. IEC 61883 CMP):
+ * - IEEE 1394 IRM (CSR 0xFFFFF0000220 BANDWIDTH_AVAILABLE):
+ *   A bus-wide shared allocation counter. Apple IOFWIsochChannel.cpp:664 does NOT
+ *   charge gap overhead against BANDWIDTH_AVAILABLE because arbitration gaps are
+ *   subsumed in the 25 µs (1,229 units) async cycle remainder.
+ *
+ * - IEC 61883-1 CMP (CSR 0xFFFFF0000900 oPCR[n] bits [13:10] overhead_id):
+ *   The overhead_id field in output plug control registers communicates the expected
+ *   arbitration and packet gap delay across hops (in quanta of 32 allocation units)
+ *   to receiving nodes for buffer dimensioning and media clock synchronization.
+ *
+ * Formula:
+ *   For gapCount < 63: overhead ≈ (gapCount * 9.7) + 89 units.
+ *   For unoptimized bus (gapCount = 63): worst-case 512 units (overhead_id = 0, or 16 * 32 units).
  */
 [[nodiscard]] constexpr uint32_t BandwidthOverheadForGapCount(uint8_t gapCount) noexcept {
     return gapCount < 63U ? (static_cast<uint32_t>(gapCount) * 97U) / 10U + 89U : 512U;
