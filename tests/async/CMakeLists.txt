@@ -84,6 +84,14 @@ add_async_test(ARStreamProcessorTests
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )
 
+# AR Stream fuzz (randomized OHCI bufferFill hardware model, long-run framing)
+add_async_test(ARStreamFuzzTests
+    ARStreamFuzzTests.cpp
+    "${ASFW_DRIVER_DIR}/Shared/Rings/BufferRing.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Rx/ARPacketParser.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+)
+
 # Synthetic bus-reset marker decoding (quadlet offset vs Linux/Apple)
 add_async_test(BusResetMarkerTests
     BusResetMarkerTests.cpp

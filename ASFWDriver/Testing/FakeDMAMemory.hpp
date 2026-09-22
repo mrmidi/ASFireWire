@@ -22,7 +22,7 @@ namespace ASFW::Testing {
  * - Alignment clamped to power-of-two, min 16
  * - Publish/Fetch modeled as full fences
  */
-class FakeDMAMemory final : public Shared::IDMAMemory {
+class FakeDMAMemory : public Shared::IDMAMemory {
 public:
     using Shared::IDMAMemory::FetchFromDevice;
     using Shared::IDMAMemory::PublishToDevice;
