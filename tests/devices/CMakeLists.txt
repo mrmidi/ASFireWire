@@ -21,7 +21,6 @@ add_executable(DICEDuplexBringupControllerTests
     DICEDuplexBringupControllerTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICEDuplexBringupController.cpp"
-    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 target_include_directories(DICEDuplexBringupControllerTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../support")
@@ -30,6 +29,12 @@ target_link_libraries(DICEDuplexBringupControllerTests PRIVATE
     GTest::gtest_main
 )
 gtest_discover_tests(DICEDuplexBringupControllerTests)
+
+# Generic audio duplex IRM stream reservations and channel geometry tests
+add_device_test(DuplexIRMReservationsTests
+    DuplexIRMReservationsTests.cpp
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+)
 
 # Generic DICE / TCAT protocol split tests
 add_device_test(DICETcatProtocolTests
