@@ -148,6 +148,7 @@ private:
     [[nodiscard]] bool EnsureRouteCurrent() const noexcept;
     [[nodiscard]] bool TeardownRequested() const noexcept;
     [[nodiscard]] uint64_t OwnerValue() const noexcept;
+    [[nodiscard]] uint32_t ResolvedTxSpeed() const noexcept;
     void RecordStopTeardownAbort(const char* stage) const noexcept;
     bool AbortStopIfTeardown(const char* stage, VoidCallback& cb);
 

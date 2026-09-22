@@ -302,6 +302,14 @@ public:
         return speeds_[nodeId.value];
     }
 
+    void SetSpeed(NodeId nodeId, FwSpeed speed) {
+        speeds_[nodeId.value] = speed;
+    }
+
+    [[nodiscard]] uint32_t TxSpeed() const {
+        return txSpeed_;
+    }
+
     uint8_t GetGapCount() const override { return gapCount_; }
 
     void SetGapCount(uint8_t gapCount) { gapCount_ = gapCount; }
@@ -2057,3 +2065,87 @@ TEST(DICEDuplexBringupControllerTests, DuplexChannelsAdditionalStreamsUseArrays)
     EXPECT_NE(ch.CaptureChannel(0), ch.PlaybackChannel(0));
     EXPECT_NE(ch.CaptureChannel(1), ch.PlaybackChannel(1));
 }
+
+TEST(DICEDuplexBringupControllerTests, ProgramTxWritesResolvedLinkSpeedToDiceTxSpeedRegister) {
+    // 1. Verify S200 operational link speed (e.g. Midas Venice F24 on Mac):
+    // In DICE architecture, TX is from device perspective (device -> Mac capture).
+    // The device transmitter must be programmed to transmit at S200 (value 1),
+    // never hardcoded/forced to S400 (value 2).
+    {
+        DuplexRig rig;
+        // NodeId 0x02 is the remote DICE device (as configured in RouteState).
+        rig.bus.SetSpeed(NodeId{0x02}, FwSpeed::S200);
+
+        const AudioDuplexChannels channels{
+            .deviceToHostIsoChannel = 1,
+            .hostToDeviceIsoChannel = 0,
+        };
+
+        std::optional<IOReturn> startStatus;
+        rig.controller.PrepareDuplex48k(channels, [&startStatus](IOReturn status) { startStatus = status; });
+        ASSERT_TRUE(startStatus.has_value());
+        ASSERT_EQ(*startStatus, kIOReturnSuccess);
+
+        std::optional<IOReturn> rxStatus;
+        rig.controller.ProgramRxForDuplex48k([&rxStatus](IOReturn status) { rxStatus = status; });
+        ASSERT_TRUE(rxStatus.has_value());
+        ASSERT_EQ(*rxStatus, kIOReturnSuccess);
+
+        rig.bus.ClearOperations();
+        std::optional<IOReturn> txEnableStatus;
+        rig.controller.ProgramTxAndEnableDuplex48k([&txEnableStatus](IOReturn status) { txEnableStatus = status; });
+        ASSERT_TRUE(txEnableStatus.has_value());
+        EXPECT_EQ(*txEnableStatus, kIOReturnSuccess);
+
+        // Find the write to TxOffset::kSpeed (0xE00001B8U)
+        const auto& ops = rig.bus.Operations();
+        auto it = std::find_if(ops.begin(), ops.end(), [](const RecordedOp& op) {
+            return op.kind == OpKind::Write && op.addressLo == 0xE00001B8U;
+        });
+        ASSERT_NE(it, ops.end()) << "Expected write to TX speed register 0xE00001B8U";
+        ASSERT_EQ(it->payload.size(), 4U);
+        const uint32_t writtenSpeed = ASFW::FW::ReadBE32(it->payload.data());
+        EXPECT_EQ(writtenSpeed, 1U) << "Expected TX speed 1 (S200), but found " << writtenSpeed;
+        EXPECT_EQ(rig.bus.TxSpeed(), 1U);
+        EXPECT_EQ(it->speed, FwSpeed::S200);
+    }
+
+    // 2. Verify S400 operational link speed:
+    {
+        DuplexRig rig;
+        rig.bus.SetSpeed(NodeId{0x02}, FwSpeed::S400);
+
+        const AudioDuplexChannels channels{
+            .deviceToHostIsoChannel = 1,
+            .hostToDeviceIsoChannel = 0,
+        };
+
+        std::optional<IOReturn> startStatus;
+        rig.controller.PrepareDuplex48k(channels, [&startStatus](IOReturn status) { startStatus = status; });
+        ASSERT_TRUE(startStatus.has_value());
+        ASSERT_EQ(*startStatus, kIOReturnSuccess);
+
+        std::optional<IOReturn> rxStatus;
+        rig.controller.ProgramRxForDuplex48k([&rxStatus](IOReturn status) { rxStatus = status; });
+        ASSERT_TRUE(rxStatus.has_value());
+        ASSERT_EQ(*rxStatus, kIOReturnSuccess);
+
+        rig.bus.ClearOperations();
+        std::optional<IOReturn> txEnableStatus;
+        rig.controller.ProgramTxAndEnableDuplex48k([&txEnableStatus](IOReturn status) { txEnableStatus = status; });
+        ASSERT_TRUE(txEnableStatus.has_value());
+        EXPECT_EQ(*txEnableStatus, kIOReturnSuccess);
+
+        const auto& ops = rig.bus.Operations();
+        auto it = std::find_if(ops.begin(), ops.end(), [](const RecordedOp& op) {
+            return op.kind == OpKind::Write && op.addressLo == 0xE00001B8U;
+        });
+        ASSERT_NE(it, ops.end()) << "Expected write to TX speed register 0xE00001B8U";
+        ASSERT_EQ(it->payload.size(), 4U);
+        const uint32_t writtenSpeed = ASFW::FW::ReadBE32(it->payload.data());
+        EXPECT_EQ(writtenSpeed, 2U) << "Expected TX speed 2 (S400), but found " << writtenSpeed;
+        EXPECT_EQ(rig.bus.TxSpeed(), 2U);
+        EXPECT_EQ(it->speed, FwSpeed::S400);
+    }
+}
+
