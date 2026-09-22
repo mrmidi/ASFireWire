@@ -6,6 +6,7 @@
 #pragma once
 
 #include "TopologyTypes.hpp"
+#include "../Common/FWTypes.hpp"
 
 #include <algorithm>
 #include <array>
@@ -24,15 +25,6 @@ namespace ASFW::Driver {
  * received). Returns nullopt when the topology is not valid or the nodes are
  * not connected, so callers decide their own conservative fallback rather than
  * silently receiving S100.
- *
- * This is deliberately the *only* speed source appropriate for isochronous
- * traffic. Apple resolves isoch speed from the PHY
- * (IOFWIsochChannel.cpp:653 — `fControl->getLink()->getPhySpeed()`), and keeps
- * its per-node-pair `fSpeedVector` — which async transmit reads at
- * IOFireWireController.cpp:7058, and which `setNodeSpeed(..., FWSpeed(...) - 1)`
- * demotes when a scan fails (:2755-2759) — out of the isoch path entirely. A
- * device that mishandles async requests at S400 has told us nothing about what
- * its isochronous receiver can do.
  *
  * @note Uncapped by design. SpeedMapService clamps to S400 because the legacy
  *       SPEED_MAP CSR image is a conservative diagnostic surface; a transmit
@@ -124,6 +116,48 @@ namespace ASFW::Driver {
     }
 
     return std::nullopt;
+}
+
+/**
+ * @brief Resolve the isochronous transmission speed for a node.
+ *
+ * Walks the Self-ID topology graph for the maximum PHY path speed between local
+ * node and target node, then bounds it by the validated operational link speed
+ * (@p operationalLimit, i.e. policy.localToNode).
+ *
+ * Rationale & Change History:
+ * Commit 86324deef previously decoupled isochronous speed from async operational speed,
+ * forcing isoch to the raw Self-ID PHY speed (S400) under the assumption that:
+ *   "SpeedPolicy demotes localToNode when a request times out, which is right
+ *    for async and wrong for isoch: charging isoch at S200 costs twice the
+ *    bandwidth units of S400 for a device whose PHY was never the problem."
+ *
+ * That assumption proved fundamentally wrong:
+ * 1. The IRM bandwidth exhaustion at S200 was actually caused by an erroneous 512-unit
+ *    per-stream gap overhead charge against BANDWIDTH_AVAILABLE on unoptimized buses.
+ *    With Apple IOFWIsochChannel wire parity restored (commit 84426354), zero gap overhead
+ *    is subtracted from the IRM ledger. All 4 streams of the Midas Venice F24 at S200
+ *    consume only 3,232 units out of 4,915, fitting comfortably on any bus.
+ * 2. Transmitting isochronous audio at S400 to a device whose link or physical connection
+ *    cannot reliably sustain S400 (and which runs stably at S200 under Apple's native
+ *    IOFireWireFamily) causes packet corruption, timestamp timeouts, and bus reset loops.
+ *
+ * Isochronous speed must therefore NEVER exceed the verified operational link speed.
+ */
+[[nodiscard]] inline FW::FwSpeed ResolveIsochSpeed(const std::optional<TopologySnapshot>& topology,
+                                                   uint8_t nodeId,
+                                                   FW::FwSpeed operationalLimit) noexcept {
+    if (!topology.has_value() || topology->localNodeId == kInvalidPhysicalId) {
+        return operationalLimit;
+    }
+
+    const auto pathSpeed = PathSpeedCodeBetween(*topology, topology->localNodeId, nodeId);
+    if (!pathSpeed.has_value()) {
+        return operationalLimit;
+    }
+
+    const auto phySpeed = static_cast<FW::FwSpeed>(*pathSpeed);
+    return std::min(phySpeed, operationalLimit);
 }
 
 } // namespace ASFW::Driver
