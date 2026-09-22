@@ -36,6 +36,12 @@ public:
     explicit SBP2PageTable(AddressSpaceManager& addrMgr, void* owner) noexcept
         : addrMgr_(addrMgr), owner_(owner) {}
 
+    // The page-table range is DMA-backed (descriptor + IODMACommand + mapping).
+    // CommandExecutor drops the object on retire without calling Clear(); without
+    // this destructor every multi-PTE task leaked that backing until the dext hit
+    // the mach-port limit (EXC_RESOURCE/PORTS).
+    ~SBP2PageTable() { Clear(); }
+
     SBP2PageTable(const SBP2PageTable&) = delete;
     SBP2PageTable& operator=(const SBP2PageTable&) = delete;
 

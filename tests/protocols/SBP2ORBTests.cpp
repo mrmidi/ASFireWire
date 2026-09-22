@@ -140,6 +140,37 @@ TEST(SBP2ORBTests, PageTableSplitsSegmentsIntoPublishedEntries) {
     EXPECT_EQ(0x0000'1000u, firstEntryLo);
 }
 
+TEST(SBP2ORBTests, PageTableDestructionReleasesItsAddressRange) {
+    ORBTimerRig rig;
+    void* owner = reinterpret_cast<void*>(0x42);
+    const std::array<SBP2PageTable::Segment, 1> segments{{
+        {.address = 0x0001'0000'1000ULL, .length = 0x30},
+    }};
+
+    uint64_t firstTable = 0;
+    {
+        SBP2PageTable pageTable(rig.addressManager, owner);
+        ASSERT_TRUE(pageTable.Build(segments, 0x21, 0x10));
+        const auto& r = pageTable.GetResult();
+        ASSERT_FALSE(r.isDirect);
+        firstTable = ComposeAddress(
+            static_cast<uint16_t>(OSSwapBigToHostInt32(r.dataDescriptorHi) & 0xFFFFu),
+            OSSwapBigToHostInt32(r.dataDescriptorLo));
+    }
+    // Destroyed without Clear(): the range must be gone so a reader misses it.
+    uint32_t value = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              rig.addressManager.ReadQuadlet(firstTable, &value));
+
+    // And a fresh table lands on the same (now free) address.
+    SBP2PageTable again(rig.addressManager, owner);
+    ASSERT_TRUE(again.Build(segments, 0x21, 0x10));
+    const auto& r2 = again.GetResult();
+    EXPECT_EQ(firstTable, ComposeAddress(
+        static_cast<uint16_t>(OSSwapBigToHostInt32(r2.dataDescriptorHi) & 0xFFFFu),
+        OSSwapBigToHostInt32(r2.dataDescriptorLo)));
+}
+
 TEST(SBP2ORBTests, ManagementORBStatusWriteCancelsTimeout) {
     ORBTimerRig rig;
 
