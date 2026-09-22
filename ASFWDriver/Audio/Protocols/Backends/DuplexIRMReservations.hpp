@@ -220,9 +220,9 @@ class DuplexIRMReservations final {
     /// One stream's charge against the live bus.
     ///
     /// Under Apple IOFireWireFamily wire parity (IOFWIsochChannel.cpp:664) and
-    /// IEEE 1394-1995 §8.4.2.2, the bandwidth requested from the IRM
-    /// BANDWIDTH_AVAILABLE register (CSR 0xFFFFF0000220) is strictly the packet term:
-    ///   units = (payloadQuadlets + 3) * 16 / (1 << inSpeed).
+    /// IEEE Std 1394-2008 Clause 8.4.3.1 & Clause 8.3.2.3.8, the bandwidth requested
+    /// from the IRM BANDWIDTH_AVAILABLE register (CSR 0xFFFFF0000220) is strictly the
+    /// packet term: units = (payloadQuadlets + 3) * 16 / (1 << inSpeed).
     ///
     /// Apple charges zero gap overhead against BANDWIDTH_AVAILABLE because the
     /// 1394 cycle ledger (initialized to 4915 units / 100 µs of 125 µs) already

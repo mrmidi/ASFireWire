@@ -155,7 +155,7 @@ namespace ASFW::Driver {
  *   allows device property overrides via `fMaxSpeed`.
  *
  * While IEEE 1394 isochronous broadcast packets carry no destination node ID in the packet header
- * and their only strict hardware PHY constraint is repeater port capability (IEEE 1394a §4.3.4.1),
+ * and their only strict hardware PHY constraint is repeater port capability (IEEE Std 1394-2008),
  * bounding isochronous transmission to the verified operational link speed is a safe, reference-aligned
  * policy that avoids overdriving fragile hardware or cables.
  */

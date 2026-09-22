@@ -13,7 +13,7 @@ using Generation = ::ASFW::Discovery::Generation;
 // ============================================================================
 
 /**
- * IRM Register Addresses (IEEE 1394-1995 §8.3.2.3.4)
+ * IRM Register Addresses (IEEE Std 1394-2008 Clause 8.3.2.3.8)
  *
  * All IRM registers are in CSR space (0xFFFFF0000000 base).
  * CRITICAL: All IRM register accesses MUST use S100 speed per specification.
@@ -33,22 +33,22 @@ namespace IRMRegisters {
 }
 
 // ============================================================================
-// Bandwidth Calculation (IEEE 1394-1995 / IEEE 1394a-2000 §8.4.2.2)
+// Bandwidth Calculation (IEEE Std 1394-2008 Clause 8.4.3.1 & Clause 8.3.2.3.8)
 // ============================================================================
 
 /**
- * Maximum bandwidth allocation units available per 125 µs cycle (IEEE 1394 §8.4.2.2).
+ * Maximum bandwidth allocation units available per 125 µs cycle (IEEE Std 1394-2008 Clause 8.3.2.3.8).
  *
  * The IRM BANDWIDTH_AVAILABLE register (CSR offset 0x220) specifies the remaining
  * isochronous bandwidth allocation units on the bus.
  *
  * Specification & Timing Derivation:
  * - 1 bandwidth allocation unit = time to transmit 1 quadlet (32 bits) at S1600
- *   with base transmission clock 49.152 MHz:
+ *   with base transmission clock 49.152 MHz (IEEE Std 1394-2008 Clause 5.2.4.1):
  *     t_unit = 1 / 49.152 MHz = 20.34505 ns.
  * - Total allocation units in a nominal 8 kHz (125 µs) isochronous cycle:
  *     125 µs × 49.152 MHz = 6,144 allocation units.
- * - IEEE 1394 §8.4.2.2 strictly caps isochronous transmissions to at most 100 µs
+ * - IEEE Std 1394-2008 Clause 8.3.2.3.8 strictly caps isochronous transmissions to at most 100 µs
  *   (80% of the 125 µs cycle) to guarantee bus availability for asynchronous traffic:
  *     100 µs × 49.152 MHz = 4,915.2 ≈ 4,915 allocation units (0x1333).
  * - The remaining 25 µs (1,228.8 ≈ 1,229 units, or 20% of the cycle) is the mandatory
@@ -74,7 +74,7 @@ constexpr uint32_t kChannelsAvailableInitial = 0xFFFFFFFF;  ///< All channels fr
 /**
  * Isochronous packet cost, in IEEE 1394 bandwidth allocation units.
  *
- * Specification: IEEE 1394-1995 / IEEE 1394a-2000 Clause 8.4.2.2.
+ * Specification: IEEE Std 1394-2008 Clause 8.4.3.1.
  *
  * Formula:
  *   units = (ceil(payloadBytes / 4) + 3) * 16 / (1 << speedCode)
@@ -121,7 +121,7 @@ constexpr uint32_t kChannelsAvailableInitial = 0xFFFFFFFF;  ///< All channels fr
  * - IEEE 1394 IRM (CSR 0xFFFFF0000220 BANDWIDTH_AVAILABLE):
  *   A bus-wide shared allocation counter. Apple IOFWIsochChannel.cpp:664 does NOT
  *   charge gap overhead against BANDWIDTH_AVAILABLE because arbitration gaps are
- *   subsumed in the 25 µs (1,229 units) async cycle remainder.
+ *   subsumed in the 25 µs (1,229 units) async cycle remainder (IEEE Std 1394-2008 Clause 8.3.2.3.8).
  *
  * - IEC 61883-1 CMP (CSR 0xFFFFF0000900 oPCR[n] bits [13:10] overhead_id):
  *   The overhead_id field in output plug control registers communicates the expected
@@ -139,7 +139,7 @@ constexpr uint32_t kChannelsAvailableInitial = 0xFFFFFFFF;  ///< All channels fr
 /**
  * Calculate bit position for channel in CHANNELS_AVAILABLE register.
  *
- * Bit mapping (IEEE 1394-1995):
+ * Bit mapping (IEEE Std 1394-2008 Clause 8.3.2.3.8):
  *   CHANNELS_AVAILABLE_31_0:  bit 31 = channel 0, bit 0 = channel 31
  *   CHANNELS_AVAILABLE_63_32: bit 31 = channel 32, bit 0 = channel 63
  *
