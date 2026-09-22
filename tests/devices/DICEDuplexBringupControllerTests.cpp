@@ -1727,12 +1727,12 @@ TEST(DICEDuplexBringupControllerTests,
     irm.SetIRMNode(0x03, Generation{1});
     ASFW::Audio::Backends::DuplexIRMReservations reservations;
 
-    // Reserve takes the packet term; each allocation also charges the bus
-    // overhead for the live gap count, 512 units at the unoptimised 63.
+    // Under Apple IOFWIsochChannel wire parity, reserve takes the packet term
+    // with zero gap overhead charged against BANDWIDTH_AVAILABLE.
     ASSERT_EQ(reservations.Reserve(irm, 0, 320U), kIOReturnSuccess);
     ASSERT_EQ(reservations.Reserve(irm, 1, 576U), kIOReturnSuccess);
     EXPECT_EQ(reservations.Count(), 2U);
-    EXPECT_EQ(bus.BandwidthAvailable(), 4915U - (320U + 512U) - (576U + 512U));
+    EXPECT_EQ(bus.BandwidthAvailable(), 4915U - 320U - 576U);
     EXPECT_EQ(bus.ChannelsAvailable31_0(), 0x3FFFFFFFU);
 
     reservations.ReleaseAll();
@@ -1783,8 +1783,8 @@ TEST(DICEDuplexBringupControllerTests,
     EXPECT_EQ(result.channel, 1U);
     EXPECT_EQ(reservations.Count(), 1U);
     EXPECT_EQ(result.charge.packetUnits, 596U);
-    EXPECT_EQ(result.charge.overheadUnits, 512U);
-    EXPECT_EQ(bus.BandwidthAvailable(), 4915U - (596U + 512U));
+    EXPECT_EQ(result.charge.overheadUnits, 0U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4915U - 596U);
     EXPECT_EQ(bus.ChannelsAvailable31_0(), 0x3FFFFFFFU);
 }
 
@@ -1801,7 +1801,7 @@ TEST(DICEDuplexBringupControllerTests,
     }
     EXPECT_EQ(reservations.Count(), 4U);
     EXPECT_EQ(reservations.Reserve(irm, 4, 100U), kIOReturnNoResources);
-    EXPECT_EQ(bus.BandwidthAvailable(), 4915U - 4U * (100U + 512U));
+    EXPECT_EQ(bus.BandwidthAvailable(), 4915U - 4U * 100U);
     EXPECT_EQ(bus.ChannelsAvailable31_0(), 0x0FFFFFFFU);
 
     reservations.ReleaseAll();
@@ -1812,9 +1812,9 @@ TEST(DICEDuplexBringupControllerTests,
 TEST(DICEDuplexBringupControllerTests,
      DuplexIRMReservationsRollsBackPriorSuccessAfterLaterFailure) {
     RecordingFireWireBus bus;
-    // 1500 units holds one 832-unit allocation (320 packet + 512 overhead) but
-    // not two, so the capture reservation is the one that is refused.
-    bus.SetIRMResourceState(1500U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    // 500 units holds one 320-unit packet allocation but not two (640 units),
+    // so the capture reservation is the one that is refused.
+    bus.SetIRMResourceState(500U, 0xFFFFFFFFU, 0xFFFFFFFFU);
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
     ASFW::Audio::Backends::DuplexIRMReservationPair reservations;
@@ -1825,16 +1825,16 @@ TEST(DICEDuplexBringupControllerTests,
     EXPECT_EQ(reservations.CaptureCount(), 0U);
 
     reservations.ReleaseAll();
-    EXPECT_EQ(bus.BandwidthAvailable(), 1500U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 500U);
     EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFFU);
 }
 
-// The per-allocation overhead belongs to the bus, not to the stream, so it is
-// read from the live gap count at the moment of the allocation. A bus manager
-// that optimises a two-node bus from gap count 63 to 5 makes every subsequent
-// allocation cheaper, and the reservation has to see that.
+// Per Apple IOFWIsochChannel wire parity (IOFWIsochChannel.cpp:664),
+// bandwidth reservations charge only the packet term against BANDWIDTH_AVAILABLE.
+// The live gap count is retained in the charge record for diagnostics/CMP,
+// but zero gap overhead is subtracted from the IRM ledger.
 TEST(DICEDuplexBringupControllerTests,
-     DuplexIRMReservationsChargesOverheadFromTheLiveGapCount) {
+     DuplexIRMReservationsChargesPacketUnitsWithoutGapOverhead) {
     RecordingFireWireBus bus;
     bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
     bus.SetGapCount(5);
@@ -1847,9 +1847,9 @@ TEST(DICEDuplexBringupControllerTests,
     ASSERT_EQ(result.status, kIOReturnSuccess);
     EXPECT_EQ(result.charge.gapCount, 5U);
     EXPECT_EQ(result.charge.packetUnits, 1064U);
-    EXPECT_EQ(result.charge.overheadUnits, 137U);
-    EXPECT_EQ(result.charge.Total(), 1201U);
-    EXPECT_EQ(bus.BandwidthAvailable(), 4915U - 1201U);
+    EXPECT_EQ(result.charge.overheadUnits, 0U);
+    EXPECT_EQ(result.charge.Total(), 1064U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4915U - 1064U);
 
     // The release hands back exactly what was taken.
     reservations.ReleaseAll();
@@ -1867,15 +1867,15 @@ TEST(DICEDuplexBringupControllerTests,
 
     const auto first = reservations.ReserveAny(irm, uint64_t{1} << 0U, 532U);
     ASSERT_EQ(first.status, kIOReturnSuccess);
-    EXPECT_EQ(first.charge.Total(), 1044U);
+    EXPECT_EQ(first.charge.Total(), 532U);
 
     // Change the reported gap without resetting the fake ledger. This isolates
     // charge lifetime: new allocations use the new gap, old ones retain theirs.
     bus.SetGapCount(5);
     const auto second = reservations.ReserveAny(irm, uint64_t{1} << 3U, 276U);
     ASSERT_EQ(second.status, kIOReturnSuccess);
-    EXPECT_EQ(second.charge.Total(), 413U);
-    EXPECT_EQ(bus.BandwidthAvailable(), 3458U);
+    EXPECT_EQ(second.charge.Total(), 276U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4915U - 532U - 276U);
 
     reservations.ReleaseAll();
     EXPECT_EQ(reservations.Count(), 0U);
@@ -1887,15 +1887,18 @@ TEST(DICEDuplexBringupControllerTests,
 }
 
 // The reported failing configuration: a Midas Venice F24 carrying two
-// playback streams (16, 8 slots) and two capture streams (16, 8 slots).
-// Charged at the unoptimised gap count the fourth allocation does not fit in the
-// 4915-unit ledger, which is what put the audio session into a terminal Failed state at
-// cause=ReserveCapture. It fits once the bus manager has optimised the gap.
+// playback streams (16, 8 slots) and two capture streams (16, 8 slots) at S200.
+// Under Apple IOFWIsochChannel wire parity, all 4 streams consume 3232 units
+// and fit within the 4915-unit ledger on both unoptimised (gap=63) and
+// optimised (gap=5) buses.
 TEST(DICEDuplexBringupControllerTests,
-     VeniceF24StreamSetIsRefusedOnAnUnoptimisedBusAndAcceptedOnAnOptimisedOne) {
+     VeniceF24StreamSetFitsOnBothUnoptimisedAndOptimisedBusesAtS200) {
     constexpr uint32_t kSixteenSlotsAtS200 = 1064U;
     constexpr uint32_t kEightSlotsAtS200 = 552U;
+    constexpr uint32_t kTotalVeniceF24Bandwidth =
+        2U * kSixteenSlotsAtS200 + 2U * kEightSlotsAtS200;  // 3232 units
 
+    // Unoptimised bus (gap_count = 63, standard 2-node topology default):
     {
         RecordingFireWireBus bus;
         bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
@@ -1910,39 +1913,40 @@ TEST(DICEDuplexBringupControllerTests,
                   kIOReturnSuccess);
         ASSERT_EQ(reservations.ReserveAnyCapture(irm, uint64_t{1} << 1U, kSixteenSlotsAtS200).status,
                   kIOReturnSuccess);
+        ASSERT_EQ(reservations.ReserveAnyCapture(irm, uint64_t{1} << 3U, kEightSlotsAtS200).status,
+                  kIOReturnSuccess);
 
-        const auto refused =
-            reservations.ReserveAnyCapture(irm, uint64_t{1} << 3U, kEightSlotsAtS200);
-        EXPECT_EQ(refused.status, kIOReturnNoResources);
-        EXPECT_EQ(refused.failure, ASFW::Audio::Backends::IsochReserveFailure::kBandwidthShort);
-        EXPECT_EQ(refused.charge.Total(), kEightSlotsAtS200 + 512U);
-        EXPECT_EQ(refused.availableUnits,
-                  4915U - 2U * (kSixteenSlotsAtS200 + 512U) - (kEightSlotsAtS200 + 512U));
+        EXPECT_EQ(reservations.PlaybackCount(), 2U);
+        EXPECT_EQ(reservations.CaptureCount(), 2U);
+        EXPECT_EQ(bus.BandwidthAvailable(), 4915U - kTotalVeniceF24Bandwidth);
 
-        // A refused reservation rolls the whole session back, so a retry starts
-        // from the same ledger rather than degrading it.
-        EXPECT_EQ(reservations.PlaybackCount(), 0U);
-        EXPECT_EQ(reservations.CaptureCount(), 0U);
+        reservations.ReleaseAll();
         EXPECT_EQ(bus.BandwidthAvailable(), 4915U);
         EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFFU);
     }
 
-    RecordingFireWireBus bus;
-    bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
-    bus.SetGapCount(5);
-    IRMClient irm(bus);
-    irm.SetIRMNode(0x03, Generation{1});
-    ASFW::Audio::Backends::DuplexIRMReservationPair reservations;
+    // Optimised bus (gap_count = 5):
+    {
+        RecordingFireWireBus bus;
+        bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+        bus.SetGapCount(5);
+        IRMClient irm(bus);
+        irm.SetIRMNode(0x03, Generation{1});
+        ASFW::Audio::Backends::DuplexIRMReservationPair reservations;
 
-    ASSERT_EQ(reservations.ReserveAnyPlayback(irm, uint64_t{1} << 0U, kSixteenSlotsAtS200).status,
-              kIOReturnSuccess);
-    ASSERT_EQ(reservations.ReserveAnyPlayback(irm, uint64_t{1} << 2U, kEightSlotsAtS200).status,
-              kIOReturnSuccess);
-    ASSERT_EQ(reservations.ReserveAnyCapture(irm, uint64_t{1} << 1U, kSixteenSlotsAtS200).status,
-              kIOReturnSuccess);
-    ASSERT_EQ(reservations.ReserveAnyCapture(irm, uint64_t{1} << 3U, kEightSlotsAtS200).status,
-              kIOReturnSuccess);
-    EXPECT_EQ(bus.BandwidthAvailable(), 4915U - 3780U);
+        ASSERT_EQ(reservations.ReserveAnyPlayback(irm, uint64_t{1} << 0U, kSixteenSlotsAtS200).status,
+                  kIOReturnSuccess);
+        ASSERT_EQ(reservations.ReserveAnyPlayback(irm, uint64_t{1} << 2U, kEightSlotsAtS200).status,
+                  kIOReturnSuccess);
+        ASSERT_EQ(reservations.ReserveAnyCapture(irm, uint64_t{1} << 1U, kSixteenSlotsAtS200).status,
+                  kIOReturnSuccess);
+        ASSERT_EQ(reservations.ReserveAnyCapture(irm, uint64_t{1} << 3U, kEightSlotsAtS200).status,
+                  kIOReturnSuccess);
+
+        EXPECT_EQ(reservations.PlaybackCount(), 2U);
+        EXPECT_EQ(reservations.CaptureCount(), 2U);
+        EXPECT_EQ(bus.BandwidthAvailable(), 4915U - kTotalVeniceF24Bandwidth);
+    }
 }
 
 // kIOReturnNoResources on its own cannot tell a full bus from a planner that
@@ -1979,7 +1983,7 @@ TEST(DICEDuplexBringupControllerTests, DuplexIRMReservationsAttributesAnAlreadyA
 
 TEST(DICEDuplexBringupControllerTests, DuplexIRMReservationsAttributesBandwidthExhaustion) {
     RecordingFireWireBus bus;
-    bus.SetIRMResourceState(600U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    bus.SetIRMResourceState(500U, 0xFFFFFFFFU, 0xFFFFFFFFU);
     bus.SetGapCount(5);
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
@@ -1989,9 +1993,9 @@ TEST(DICEDuplexBringupControllerTests, DuplexIRMReservationsAttributesBandwidthE
 
     EXPECT_EQ(result.status, kIOReturnNoResources);
     EXPECT_EQ(result.failure, ASFW::Audio::Backends::IsochReserveFailure::kBandwidthShort);
-    EXPECT_EQ(result.charge.Total(), 532U + 137U);
-    EXPECT_EQ(result.availableUnits, 600U);
-    EXPECT_EQ(bus.BandwidthAvailable(), 600U);
+    EXPECT_EQ(result.charge.Total(), 532U);
+    EXPECT_EQ(result.availableUnits, 500U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 500U);
 }
 
 TEST(DICEDuplexBringupControllerTests, DuplexIRMReservationsAttributesADirectionAtCapacity) {

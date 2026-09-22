@@ -49,7 +49,7 @@ void ExpectAllProgressCleared(const DuplexRestartSession& s) {
 TEST(RestartJournalTests, SetSessionStateSetsStateOnly) {
     DuplexRestartSession s{};
     s.phase = DuplexRestartPhase::kPreparingDevice;
-    SetSessionState(s, LifecycleStarting{}, "start_requested");
+    EXPECT_TRUE(SetSessionState(s, LifecycleStarting{}, "start_requested"));
     EXPECT_EQ(KindOf(s.lifecycle), DuplexLifecycleKind::Starting);
     EXPECT_EQ(s.phase, DuplexRestartPhase::kPreparingDevice);  // untouched
 }

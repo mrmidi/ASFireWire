@@ -149,10 +149,10 @@ class DuplexStreamProfileResolver final {
     static constexpr uint8_t kDefaultCaptureIsoChannel = 1;
     static constexpr uint8_t kDefaultPlaybackIsoChannel = 0;
 
-    // The packet term only. Per-allocation bus overhead depends on the live gap
-    // count, which can change between planning and reserving, so it is charged
-    // by the reservation itself (IRM::BandwidthOverheadForGapCount) exactly as
-    // Linux does in fw_iso_resources_allocate (iso-resources.c:113-128).
+    // The packet term. Under Apple IOFWIsochChannel wire parity
+    // (IOFWIsochChannel.cpp:664), only the packet term is charged against
+    // BANDWIDTH_AVAILABLE; no gap arbitration overhead is subtracted from the
+    // IRM ledger.
     [[nodiscard]] static constexpr uint32_t
     AmdtpPacketBandwidthUnits(uint32_t am824Slots, uint32_t sampleRateHz,
                               FW::FwSpeed speed) noexcept {

@@ -81,24 +81,15 @@ constexpr uint32_t kChannelsAvailableInitial = 0xFFFFFFFF;  ///< All channels fr
 }
 
 /**
- * Per-allocation bus overhead, in bandwidth allocation units.
+ * Bus arbitration overhead for a given gap count, in bandwidth allocation units.
  *
- * Isochronous packets do not tile the cycle back to back: each one is preceded
- * by arbitration whose length follows the gap count. Linux derives the cost of
- * that from the live gap count and charges it per allocation
- * (sound/firewire/iso-resources.c:64-76, and again on every reallocation at
- * :119 and :178). The unoptimised gap count of 63 is the pessimistic 512-unit
- * fallback, which is the only value that applies before a bus manager has
- * optimised the bus.
+ * Used primarily for IEC 61883-1 Plug Control Register (CMP oPCR) overhead_id
+ * calculation (CMPClient::OverheadIdForGapCount).
  *
- * Apple charges no overhead term at all (IOFWIsochChannel.cpp:664 is its
- * complete request), so Apple will accept stream sets that do not physically
- * fit on an unoptimised bus. We follow Linux: at 4915 units the budget is
- * ~98.3us of a ~100us isochronous window, and arbitration gaps at gap count 63
- * are large enough to overrun it.
- *
- * This is the same derivation CMP writes into an oPCR overhead ID
- * (CMPClient::OverheadIdForGapCount).
+ * In IEEE 1394 IRM resource management, Apple IOFireWireFamily
+ * (IOFWIsochChannel.cpp:664) does not charge gap overhead against
+ * BANDWIDTH_AVAILABLE because the mandatory 25us (1229 units) cycle set-aside
+ * already accommodates isochronous gap arbitration.
  */
 [[nodiscard]] constexpr uint32_t BandwidthOverheadForGapCount(uint8_t gapCount) noexcept {
     return gapCount < 63U ? (static_cast<uint32_t>(gapCount) * 97U) / 10U + 89U : 512U;

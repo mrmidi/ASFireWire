@@ -217,16 +217,27 @@ class DuplexIRMReservations final {
     [[nodiscard]] size_t Count() const noexcept { return count_; }
 
   private:
-    /// One stream's charge against the live bus. Linux re-reads the overhead on
-    /// every allocation and reallocation for the same reason
-    /// (sound/firewire/iso-resources.c:119,178): it belongs to the bus, and the
-    /// bus changes underneath a long-lived plan.
+    /// One stream's charge against the live bus.
+    ///
+    /// Under Apple IOFireWireFamily wire parity (IOFWIsochChannel.cpp:664),
+    /// the bandwidth requested from the IRM BANDWIDTH_AVAILABLE register is
+    /// strictly the packet term: (fPacketSize / 4 + 3) * 16 / (1 << inSpeed).
+    ///
+    /// Apple charges zero gap overhead against BANDWIDTH_AVAILABLE because the
+    /// 1394 cycle ledger (initialized to 4915 units / 100us) already accounts
+    /// for arbitration gaps and async traffic in the mandatory 25us (1229 units)
+    /// cycle remainder. Subtracting per-stream gap overhead here double-counts
+    /// the arbitration cost and exhausts the ledger on multi-stream configurations
+    /// (such as Midas Venice F24 at S200 with 4 streams).
+    ///
+    /// The live gap count is preserved in IsochBandwidthCharge for diagnostics
+    /// and IEC 61883 CMP oPCR overhead ID reporting, but overheadUnits is 0.
     [[nodiscard]] static IsochBandwidthCharge ChargeFor(const IRM::IRMClient& client,
                                                         uint32_t packetUnits) noexcept {
         const uint8_t gapCount = client.CurrentGapCount();
         return IsochBandwidthCharge{
             .packetUnits = packetUnits,
-            .overheadUnits = IRM::BandwidthOverheadForGapCount(gapCount),
+            .overheadUnits = 0U,
             .gapCount = gapCount,
         };
     }
