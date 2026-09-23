@@ -1694,18 +1694,6 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
     return specID == kAVCSpecID;
 }
 
-bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcept {
-    const auto plan = CurrentPolicyPlan(deviceRegistry_, device);
-    return plan.has_value() && plan->profileBuilder ==
-           DeviceProfiles::Audio::ProfileBuilderId::ApogeeDuet;
-}
-
-bool AVCDiscovery::IsMackieOnyxIOxford(const Discovery::FWDevice& device) const noexcept {
-    const auto plan = CurrentPolicyPlan(deviceRegistry_, device);
-    return plan.has_value() && plan->profileBuilder ==
-           DeviceProfiles::Audio::ProfileBuilderId::MackieOnyxIOxfw;
-}
-
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {
     if (!unit) {
         return 0;

@@ -110,8 +110,6 @@ private:
     };
 
     bool IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const;
-    bool IsApogeeDuet(const Discovery::FWDevice& device) const noexcept;
-    bool IsMackieOnyxIOxford(const Discovery::FWDevice& device) const noexcept;
 
     uint64_t GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const;
 
