@@ -37,6 +37,7 @@ public:
     // evidence. The seed is a starting point for probing, not an observation.
     [[nodiscard]] std::optional<FW::FwSpeed>
     ObservedSpeed(FW::NodeId nodeId) const noexcept override;
+    void RecordVerifiedCeiling(FW::NodeId nodeId, FW::FwSpeed speed) noexcept override;
 
     // Adapt policy based on transaction outcomes
     void RecordSuccess(uint8_t nodeId, FwSpeed speed);

@@ -151,8 +151,8 @@ namespace ASFW::Driver {
  *   drivers then use `device->max_speed` for both IRM reservations and isochronous streaming.
  * - Apple IOFireWireFamily (IOFireWireDevice.cpp:2097-2102, IOFireWireController.cpp:2746-2760,
  *   IOFWIsochChannel.cpp:653):
- *   Apple steps down `setNodeSpeed()` during discovery when speed verification fails, and
- *   allows device property overrides via `fMaxSpeed`.
+ *   Apple's special unknown-speed ROM scan can step down `setNodeSpeed()` after
+ *   a failed read, and a device driver can separately cap speed via `fMaxSpeed`.
  *
  * While IEEE 1394 isochronous broadcast packets carry no destination node ID in the packet header
  * and their only strict hardware PHY constraint is repeater port capability (IEEE Std 1394-2008),

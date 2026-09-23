@@ -41,11 +41,13 @@ uint32_t WithSpeed(uint32_t selfId, uint8_t speedCode) {
     return (selfId & ~(0x3u << 14)) | ((uint32_t(speedCode) & 0x3u) << 14);
 }
 
-ASFW::Driver::SelfIDCapture::Result TwoNodeBus(uint8_t deviceSpeedCode) {
+ASFW::Driver::SelfIDCapture::Result TwoNodeBus(uint8_t deviceSpeedCode,
+                                              uint8_t localSpeedCode = 3) {
     ASFW::Driver::SelfIDCapture::Result result;
     result.valid = true;
     result.generation = 1;
-    result.quads = {0x00010001, WithSpeed(kDeviceSelfID, deviceSpeedCode), kLocalSelfID};
+    result.quads = {0x00010001, WithSpeed(kDeviceSelfID, deviceSpeedCode),
+                    WithSpeed(kLocalSelfID, localSpeedCode)};
     result.sequences = {{1, 1}, {2, 1}};
     result.crcError = false;
     result.timedOut = false;
@@ -60,13 +62,19 @@ class StubSpeedSource final : public ASFW::Async::ILinkSpeedSource {
     [[nodiscard]] std::optional<FwSpeed> ObservedSpeed(NodeId) const noexcept override {
         return value;
     }
+    void RecordVerifiedCeiling(NodeId, FwSpeed speed) noexcept override {
+        if (!value || static_cast<uint8_t>(speed) < static_cast<uint8_t>(*value)) {
+            value = speed;
+        }
+    }
 };
 
 class LinkSpeedClamp : public ::testing::Test {
   protected:
-    void SeedTopology(uint8_t nodeZeroSpeedCode) {
+    void SeedTopology(uint8_t nodeZeroSpeedCode, uint8_t localSpeedCode = 3) {
         const auto snapshot =
-            topo.UpdateFromSelfID(TwoNodeBus(nodeZeroSpeedCode), 1000, kNodeIDRegister);
+            topo.UpdateFromSelfID(TwoNodeBus(nodeZeroSpeedCode, localSpeedCode),
+                                  1000, kNodeIDRegister);
         ASSERT_TRUE(snapshot.has_value())
             << "topology build failed: "
             << ASFW::Driver::TopologyManager::TopologyBuildErrorCodeString(snapshot.error().code);
@@ -84,6 +92,12 @@ TEST_F(LinkSpeedClamp, NoSpeedSourceReportsAdvertisedSpeed) {
     SeedTopology(2 /* S400 */);
     ASFW::Async::FireWireBusImpl bus(async, topo);
     EXPECT_EQ(FwSpeed::S400, bus.GetSpeed(NodeId{0}));
+}
+
+TEST_F(LinkSpeedClamp, SlowHostPHYBoundsFasterRemoteNode) {
+    SeedTopology(2 /* remote S400 */, 1 /* local S200 */);
+    ASFW::Async::FireWireBusImpl bus(async, topo);
+    EXPECT_EQ(FwSpeed::S200, bus.GetSpeed(NodeId{0}));
 }
 
 TEST_F(LinkSpeedClamp, UnobservedNodeKeepsAdvertisedSpeed) {
@@ -144,6 +158,17 @@ TEST(SpeedPolicyObservation, SuccessRecordsTheSpeedThatWorked) {
     const auto observed = policy.ObservedSpeed(NodeId{0});
     ASSERT_TRUE(observed.has_value());
     EXPECT_EQ(FwSpeed::S200, *observed);
+}
+
+TEST(SpeedPolicyObservation, LaterFasterResultCannotEraseLowerGenerationCeiling) {
+    ASFW::Discovery::SpeedPolicy policy;
+    policy.RecordTimeout(0, FwSpeed::S400);
+    policy.RecordSuccess(0, FwSpeed::S400);
+    ASSERT_TRUE(policy.ObservedSpeed(NodeId{0}).has_value());
+    EXPECT_EQ(FwSpeed::S200, *policy.ObservedSpeed(NodeId{0}));
+
+    policy.RecordTimeout(0, FwSpeed::S400);
+    EXPECT_EQ(FwSpeed::S200, *policy.ObservedSpeed(NodeId{0}));
 }
 
 TEST(SpeedPolicyObservation, ResetClearsObservationsAcrossBusReset) {

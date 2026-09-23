@@ -960,6 +960,15 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                  geometryLoadStatus);
     }
 
+    // The first DICE section read may have verified a lower link speed than
+    // ROM discovery. Refresh the caller's value snapshot before resolving IRM
+    // bandwidth and programming streams; the route must still be the same.
+    const auto refreshedRecord = dependencies_.registry.SnapshotByGuid(record.guid);
+    if (!refreshedRecord.has_value() || !dependencies_.registry.IsCurrent(*route)) {
+        return kIOReturnOffline;
+    }
+    record = *refreshedRecord;
+
     const DuplexStreamProfile initialProfile =
         DuplexStreamProfileResolver::Resolve(record, runtimeProtocol.get());
     AudioDuplexChannels channels = initialProfile.channels;

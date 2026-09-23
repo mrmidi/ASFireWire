@@ -372,6 +372,42 @@ bool DeviceRegistry::IsCurrent(const DeviceRouteToken& token) const noexcept {
     return current;
 }
 
+bool DeviceRegistry::LowerVerifiedLinkSpeed(const DeviceRouteToken& token,
+                                            FwSpeed speed) noexcept {
+    if (!token) {
+        return false;
+    }
+    IOLockLock(lock_);
+    const auto it = devicesByGuid_.find(token.guid);
+    const bool current = it != devicesByGuid_.end() && HasLiveRoute(it->second) &&
+                         it->second.deviceIncarnation == token.deviceIncarnation &&
+                         it->second.routeEpoch == token.routeEpoch &&
+                         it->second.gen == token.generation &&
+                         it->second.nodeId == token.nodeId;
+    if (current) {
+        auto& link = it->second.link;
+        if (static_cast<uint8_t>(speed) < static_cast<uint8_t>(link.localToNode)) {
+            link.localToNode = speed;
+        }
+        if (static_cast<uint8_t>(speed) < static_cast<uint8_t>(link.isochToNode)) {
+            link.isochToNode = speed;
+        }
+        uint16_t speedPayload = 0;
+        switch (speed) {
+        case FwSpeed::S100: speedPayload = FW::MaxPayload::kS100; break;
+        case FwSpeed::S200: speedPayload = FW::MaxPayload::kS200; break;
+        case FwSpeed::S400: speedPayload = FW::MaxPayload::kS400; break;
+        case FwSpeed::S800: speedPayload = FW::MaxPayload::kS800; break;
+        }
+        if (link.halvePackets) {
+            speedPayload /= 2;
+        }
+        link.maxPayloadBytes = std::min(link.maxPayloadBytes, speedPayload);
+    }
+    IOLockUnlock(lock_);
+    return current;
+}
+
 std::vector<DeviceRecord> DeviceRegistry::LiveDevices(Generation gen) const {
     IOLockLock(lock_);
     std::vector<DeviceRecord> result;

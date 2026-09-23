@@ -71,12 +71,24 @@ std::optional<FW::FwSpeed> SpeedPolicy::ObservedSpeed(FW::NodeId nodeId) const n
     return it->second.currentSpeed;
 }
 
+void SpeedPolicy::RecordVerifiedCeiling(FW::NodeId nodeId, FW::FwSpeed speed) noexcept {
+    LockGuard guard(lock_);
+    auto& state = nodeStates_[nodeId.value];
+    if (static_cast<uint8_t>(speed) < static_cast<uint8_t>(state.currentSpeed)) {
+        state.currentSpeed = speed;
+    }
+}
+
 void SpeedPolicy::RecordSuccess(uint8_t nodeId, FwSpeed speed) {
     uint8_t successCount = 0;
     {
         LockGuard guard(lock_);
         auto& state = nodeStates_[nodeId];
-        state.currentSpeed = speed;
+        // A later successful read at a faster speed does not erase a lower
+        // ceiling already learned in this bus generation.
+        if (static_cast<uint8_t>(speed) < static_cast<uint8_t>(state.currentSpeed)) {
+            state.currentSpeed = speed;
+        }
         state.successCount++;
         // Reset timeout counter on success
         state.timeoutCount = 0;
@@ -99,10 +111,9 @@ void SpeedPolicy::RecordTimeout(uint8_t nodeId, FwSpeed speed) {
     {
         LockGuard guard(lock_);
         auto& state = nodeStates_[nodeId];
-        state.currentSpeed = speed;
         state.timeoutCount++;
         timeoutCount = state.timeoutCount;
-        if (downgraded != speed) {
+        if (static_cast<uint8_t>(downgraded) < static_cast<uint8_t>(state.currentSpeed)) {
             state.currentSpeed = downgraded;
             state.timeoutCount = 0;
         }

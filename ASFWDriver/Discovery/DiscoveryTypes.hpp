@@ -55,12 +55,10 @@ struct LinkPolicy {
     // TODO: S100 hardcoded for maximum hardware compatibility.
     FwSpeed localToNode{FwSpeed::S100};
 
-    // Isochronous speed: the Self-ID path speed to this node, never demoted by
-    // async outcomes. Apple resolves isoch speed from the PHY rather than the
-    // speed vector (IOFWIsochChannel.cpp:653), because a device that refuses
-    // async requests at S400 has said nothing about its isochronous receiver.
-    // Conflating the two halves the isochronous bandwidth budget for free:
-    // the charge is `unitsAtS1600 >> speedCode`, so S200 costs twice S400.
+    // Isochronous speed starts with the Self-ID path speed. A successful
+    // lower-speed DICE read may tighten the device's operational ceiling
+    // before stream reservation and TX-speed programming. Linux DICE uses
+    // fw_device::max_speed for both TX_SPEED and stream resources.
     //
     // Conservative initialization; discovery supplies the resolved path speed
     // before stream planning. S100 is valid, never an "unset" sentinel.

@@ -54,6 +54,11 @@ public:
     [[nodiscard]] std::optional<DeviceRouteToken> CurrentRoute(Guid64 guid) const;
     [[nodiscard]] bool IsCurrent(const DeviceRouteToken& token) const noexcept;
 
+    // A successful lower-speed protocol read can tighten the link policy after
+    // ROM discovery. Reject callbacks from a retired route or old generation.
+    [[nodiscard]] bool LowerVerifiedLinkSpeed(const DeviceRouteToken& token,
+                                              FwSpeed speed) noexcept;
+
     // Export snapshot of all devices present in given generation
     std::vector<DeviceRecord> LiveDevices(Generation gen) const;
 

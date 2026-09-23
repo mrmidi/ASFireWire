@@ -302,6 +302,17 @@ public:
         return speeds_[nodeId.value];
     }
 
+    bool RecordVerifiedSpeed(Generation generation, NodeId nodeId, FwSpeed speed) override {
+        if (generation != generation_) {
+            return false;
+        }
+        auto& current = speeds_[nodeId.value];
+        if (static_cast<uint8_t>(speed) < static_cast<uint8_t>(current)) {
+            current = speed;
+        }
+        return true;
+    }
+
     void SetSpeed(NodeId nodeId, FwSpeed speed) {
         speeds_[nodeId.value] = speed;
     }
