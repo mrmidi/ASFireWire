@@ -7,6 +7,8 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBProtocol.hpp"
+#include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialProtocol.hpp"
+#include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialRouting.hpp"
 #include "ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Protocols/AVC/CMP/CMPClient.hpp"
@@ -254,6 +256,69 @@ TEST(BeBoBProtocolInterlockTests, RouteUpdateCancelsInterlockAndCompletesApply) 
     EXPECT_EQ(status, kIOReturnAborted);
     EXPECT_EQ(rig.Timers().PendingCount(), 0U);
     EXPECT_EQ(rig.Target().CommandCount(), 1U);
+}
+
+TEST(MAudioSpecialRoutingTests, BuildsOnlyTheThreeAudibleOutputRouteQuadlets) {
+    const auto write = ASFW::Audio::BeBoB::BuildMAudioSpecialRoutingWrite();
+    EXPECT_EQ(write.addressHi, 0xFFC7U);
+    EXPECT_EQ(write.addressLo, 0x00700094U);
+    EXPECT_EQ(write.bytes.size(), 12U);
+    constexpr std::array<uint8_t, 12> expected{
+        0x00, 0x00, 0x00, 0x09, // streams 1/2->mixer 1, 3/4->mixer 2
+        0x00, 0x02, 0x00, 0x01, // headphone pair 1/2 follow mixer pairs
+        0x00, 0x00, 0x00, 0x00, // analog outputs follow mixer
+    };
+    EXPECT_EQ(write.bytes, expected);
+}
+
+TEST(MAudioSpecialRoutingTests, AcceptedClockAndFormatsPrecedeRoutingWrite) {
+    ASFW::Testing::AvcTestRig rig;
+    ASSERT_TRUE(rig.IsReady());
+    const auto route = rig.Route();
+    ASSERT_TRUE(static_cast<bool>(route));
+
+    ASFW::Audio::BeBoB::MAudioSpecialProtocol protocol(
+        rig.Bus(), rig.Bus(), route, nullptr, nullptr, &rig.Timers(), true);
+    protocol.UpdateRuntimeContext(route, rig.Transport());
+
+    IOReturn result = kIOReturnBusy;
+    bool completed = false;
+    protocol.ApplyClockConfig({.sampleRateHz = 48000},
+        [&result, &completed](IOReturn status, auto) {
+            result = status;
+            completed = true;
+        });
+
+    // The initial vendor clock command is accepted, then both standard
+    // signal-format CONTROL commands complete with their 100 ms interlock.
+    ASSERT_EQ(rig.Drain(), 2U);
+    ASSERT_EQ(rig.Target().CommandCount(), 2U);
+    EXPECT_EQ(rig.Target().Commands()[0].data[2], 0x00); // vendor clock opcode
+    EXPECT_EQ(rig.Target().Commands()[1].data[2], 0x18); // output format
+    rig.Timers().Advance(100ULL * 1000ULL * 1000ULL);
+    ASSERT_EQ(rig.Drain(1), 1U);
+    ASSERT_EQ(rig.Target().CommandCount(), 3U);
+    EXPECT_EQ(rig.Target().Commands()[2].data[2], 0x19); // input format
+
+    // ConfigureMixer must run only after those accepted FCP exchanges, and it
+    // writes just the 12-byte route span at the generation-qualified node.
+    ASSERT_EQ(rig.Bus().PendingWriteCount(), 1U);
+    const auto& pending = rig.Bus().PendingWriteAt(0);
+    const auto expected = ASFW::Audio::BeBoB::BuildMAudioSpecialRoutingWrite();
+    EXPECT_EQ(pending.generation, route.generation);
+    EXPECT_EQ(pending.nodeId.value, route.nodeId);
+    EXPECT_EQ(pending.address.addressHi, expected.addressHi);
+    EXPECT_EQ(pending.address.addressLo, expected.addressLo);
+    EXPECT_EQ(pending.data,
+              std::vector<uint8_t>(expected.bytes.begin(), expected.bytes.end()));
+    EXPECT_FALSE(completed);
+
+    const auto handle = pending.handle;
+    ASSERT_TRUE(rig.Bus().CompleteWrite(
+        handle, ASFW::Async::AsyncStatus::kSuccess));
+    rig.Timers().Advance(300ULL * 1000ULL * 1000ULL);
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(result, kIOReturnSuccess);
 }
 
 TEST_F(BeBoBProtocolTest, ReadClockHealthReportsNominalRateAndDisconnectedState) {

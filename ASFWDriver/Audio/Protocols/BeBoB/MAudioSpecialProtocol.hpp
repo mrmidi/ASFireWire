@@ -12,8 +12,8 @@
 
 namespace ASFW::Audio::BeBoB {
 
-/// Special-firmware clock and start choreography. This protocol intentionally
-/// has no mixer, meter, LED, or control-surface operations.
+/// Special-firmware clock and start choreography with a narrow startup route
+/// assertion. It has no mixer controls, meter, LED, or control-surface API.
 class MAudioSpecialProtocol final : public BeBoBProtocol {
 public:
     MAudioSpecialProtocol(Protocols::Ports::FireWireBusOps& busOps,
@@ -39,6 +39,8 @@ protected:
     [[nodiscard]] AudioStreamRuntimeCaps DeviceCaps() const override;
     [[nodiscard]] std::vector<uint32_t> SupportedRates() const override;
     [[nodiscard]] uint32_t SignalFormatInterlockMs() const noexcept override { return 100; }
+    void ConfigureMixer(MixerFailurePolicy policy,
+                        MixerCompletion completion) override;
 
 private:
     struct PendingPostStart final {
@@ -59,8 +61,11 @@ private:
                            std::function<void(IOReturn)> completion);
 
     bool isFireWire1814_{false};
+    Protocols::Ports::FireWireBusOps& busOps_;
     uint32_t appliedRateHz_{48000};
     std::shared_ptr<std::atomic<bool>> alive_;
+    std::shared_ptr<std::atomic<uint64_t>> runtimeContextEpoch_;
+    std::shared_ptr<std::atomic<uint32_t>> routingAppliedGeneration_;
     Scheduling::TimerToken postStartTimer_{Scheduling::kInvalidTimerToken};
     std::shared_ptr<PendingPostStart> postStartCompletion_;
 };

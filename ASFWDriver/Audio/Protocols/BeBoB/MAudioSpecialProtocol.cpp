@@ -6,6 +6,7 @@
 #include "MAudioSpecialProtocol.hpp"
 
 #include "MAudioSpecialFormation.hpp"
+#include "MAudioSpecialRouting.hpp"
 #include "MAudioSpecialStartPolicy.hpp"
 #include "../../../Protocols/AVC/AVCCommand.hpp"
 #include "../../../Protocols/AVC/MAudioSpecialCommand.hpp"
@@ -97,15 +98,22 @@ MAudioSpecialProtocol::MAudioSpecialProtocol(
     bool isFireWire1814) noexcept
     : BeBoBProtocol(busOps, busInfo, route, irmClient, cmpClient, timerScheduler),
       isFireWire1814_(isFireWire1814),
-      alive_(std::make_shared<std::atomic<bool>>(true)) {}
+      busOps_(busOps),
+      alive_(std::make_shared<std::atomic<bool>>(true)),
+      runtimeContextEpoch_(std::make_shared<std::atomic<uint64_t>>(1)),
+      routingAppliedGeneration_(std::make_shared<std::atomic<uint32_t>>(0)) {}
 
 MAudioSpecialProtocol::~MAudioSpecialProtocol() {
     alive_->store(false);
+    runtimeContextEpoch_->fetch_add(1, std::memory_order_acq_rel);
+    routingAppliedGeneration_->store(0, std::memory_order_release);
     CancelPostStartTimer();
 }
 
 IOReturn MAudioSpecialProtocol::Shutdown() {
     alive_->store(false);
+    runtimeContextEpoch_->fetch_add(1, std::memory_order_acq_rel);
+    routingAppliedGeneration_->store(0, std::memory_order_release);
     CancelPostStartTimer();
     return BeBoBProtocol::Shutdown();
 }
@@ -114,9 +122,73 @@ void MAudioSpecialProtocol::UpdateRuntimeContext(
     const Discovery::DeviceRouteToken& route,
     Protocols::AVC::FCPTransport* transport) {
     if (route_ != route || fcpTransport_ != transport) {
+        runtimeContextEpoch_->fetch_add(1, std::memory_order_acq_rel);
+        routingAppliedGeneration_->store(0, std::memory_order_release);
         CancelPostStartTimer();
     }
     BeBoBProtocol::UpdateRuntimeContext(route, transport);
+}
+
+void MAudioSpecialProtocol::ConfigureMixer(MixerFailurePolicy,
+                                            MixerCompletion completion) {
+    const Discovery::DeviceRouteToken route = route_;
+    const uint32_t generation = route.generation.value;
+    if (generation == 0 || busInfo_.GetGeneration() != route.generation) {
+        completion(kIOReturnNotReady);
+        return;
+    }
+    if (routingAppliedGeneration_->load(std::memory_order_acquire) == generation) {
+        completion(kIOReturnSuccess);
+        return;
+    }
+
+    const auto operationalNode = Discovery::TryOperationalNodeId(route.nodeId);
+    if (!operationalNode) {
+        completion(kIOReturnNoDevice);
+        return;
+    }
+
+    const auto write = BuildMAudioSpecialRoutingWrite();
+    const Async::FWAddress address{Async::FWAddress::QualifiedAddressParts{
+        .addressHi = write.addressHi,
+        .addressLo = write.addressLo,
+        .nodeID = *operationalNode,
+    }};
+    const uint64_t contextEpoch =
+        runtimeContextEpoch_->load(std::memory_order_acquire);
+    const auto alive = alive_;
+    const auto contextState = runtimeContextEpoch_;
+    const auto appliedGeneration = routingAppliedGeneration_;
+    auto completed = std::make_shared<std::atomic<bool>>(false);
+    auto finish = [alive, contextState, contextEpoch, appliedGeneration,
+                   generation, completed,
+                   completion = std::move(completion)](IOReturn status) mutable {
+        if (completed->exchange(true, std::memory_order_acq_rel)) return;
+        // The base clock continuation captures this protocol. Once shutdown
+        // begins, it must not run from a late bus completion.
+        if (!alive->load(std::memory_order_acquire)) return;
+        if (contextState->load(std::memory_order_acquire) != contextEpoch) {
+            completion(kIOReturnAborted);
+            return;
+        }
+        if (status == kIOReturnSuccess) {
+            appliedGeneration->store(generation, std::memory_order_release);
+        }
+        completion(status);
+    };
+
+    const Async::AsyncHandle handle = busOps_.WriteBlock(
+        route.generation, FW::NodeId{*operationalNode}, address, write.bytes,
+        FW::FwSpeed::S100,
+        [finish](Async::AsyncStatus status,
+                 std::span<const uint8_t>) mutable {
+            finish(status == Async::AsyncStatus::kSuccess
+                       ? kIOReturnSuccess
+                       : kIOReturnIOError);
+        });
+    if (handle.value == 0) {
+        finish(kIOReturnNoResources);
+    }
 }
 
 void MAudioSpecialProtocol::CancelPostStartTimer() {
