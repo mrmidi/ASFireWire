@@ -168,6 +168,7 @@ add_audio_test(AudioDirectRuntimeTests
 
 
 
+
 # RX packet decode outcome split. NOTE: the other files under AudioEngineDirect/
 # (DirectTxProbeTests, TxAudioPacketProcessorTests, TxAudioPacketWriterTests) are
 # not registered in any CMakeLists and therefore never run.
@@ -315,4 +316,13 @@ add_audio_test(ChannelMapPermutationTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
+)
+
+add_audio_test(HardwareSampleTimelineTests
+    HardwareSampleTimelineTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+)
+
+add_audio_test(TxCycleAnchorTests
+    TxCycleAnchorTests.cpp
 )

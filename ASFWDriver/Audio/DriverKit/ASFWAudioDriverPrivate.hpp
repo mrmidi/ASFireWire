@@ -9,6 +9,10 @@
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
 #include "../Config/AudioTxProfiles.hpp"
+#include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
+#include "../Families/BeBoB/MAudio/MAudioTxClockBridge.hpp"
+#include "../Shared/TxCycleAnchor.hpp"
+#include "../Runtime/TxCompletionStampDrain.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "../Wire/MOTU/MotuPayloadWriter.hpp"
 #include "../Wire/MOTU/MotuDeviceTiming.hpp"
@@ -233,6 +237,15 @@ struct AudioDriverRuntimeState {
     std::atomic<bool> txActive{false};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
+    ASFW::Audio::BeBoB::MAudioInternalTxTiming mAudioInternalTxTiming;
+    std::atomic<bool> mAudioInternalTxActive{false};
+    std::atomic<bool> mAudioTxClockProfile{false};
+    ASFW::Audio::Families::BeBoB::MAudio::TxClockBridge mAudioTxClockBridge;
+    ASFW::Audio::Shared::TxCorrelationUnwrapState mAudioTxCorrelationUnwrap{};
+    uint64_t mAudioTxClockStartEpoch{0};
+    uint64_t txCompletionStampCursor{0};
+    std::atomic<uint64_t> mAudioTxClockNoDataWakes{0};
+    std::atomic<uint64_t> mAudioTxClockConversionFailures{0};
     ASFW::Audio::Runtime::RxSequenceReplayReader txReplayReader;
     DextTxSlotProvider txSlotProvider;
     DextTxExecutionTimeline txExecutionTimeline;

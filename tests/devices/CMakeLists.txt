@@ -334,3 +334,17 @@ add_device_test(BeBoBCaptureChannelMapTests
 add_device_test(MAudioCaptureChannelMapTests
     MAudioCaptureChannelMapTests.cpp
 )
+
+# M-Audio 48 kHz internal-clock TX cadence and commit policy.
+add_device_test(MAudioInternalTxTimingTests
+    MAudioInternalTxTimingTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/MAudioInternalTxTiming.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+)
+
+add_device_test(MAudioTxClockBridgeTests
+    MAudioTxClockBridgeTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioTxClockBridge.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioPresentationObserver.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
+)
