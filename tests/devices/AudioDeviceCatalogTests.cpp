@@ -409,14 +409,13 @@ TEST(AudioDeviceCatalog, TheMAudioSpecialFirmwareCarriesAFilteredCommandSet) {
                                        {{.offset = 5,
                                          .specifierId = kTa1394AvcSpecifier,
                                          .version = kTa1394AvcVersion}});
-        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(device.identity),
-                  Discovery::AvcCommandFilterId::MAudioSpecialBeBoB)
-            << "model 0x" << std::hex << model;
-
         // Recognised, but not playable here: this branch has no
         // MAudioSpecialProtocol, so no builder may be named.
-        const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+        const auto plan = AudioDeviceCatalog::Resolve(device.identity);
         ASSERT_TRUE(plan.has_value());
+        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
+                  Discovery::AvcCommandFilterId::MAudioSpecialBeBoB)
+            << "model 0x" << std::hex << model;
         EXPECT_EQ(plan->probePolicy, ProbePolicyId::BeBoBFilteredCommandSet);
         EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
         EXPECT_NE(plan->support, SupportDisposition::GenericFallback)
@@ -433,13 +432,13 @@ TEST(AudioDeviceCatalog, TheMAudioBootloaderPersonaIsNeverAnAudioEndpoint) {
                                    {{.offset = 5,
                                      .specifierId = kTa1394AvcSpecifier,
                                      .version = kTa1394AvcVersion}});
-    const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+    const auto plan = AudioDeviceCatalog::Resolve(device.identity);
     ASSERT_TRUE(plan.has_value());
     EXPECT_EQ(plan->family, AudioFamilyProviderId::None);
     EXPECT_EQ(plan->probePolicy, ProbePolicyId::NoAutomaticTraffic);
     EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
     EXPECT_EQ(plan->bootloaderCue, BootloaderCuePolicy::BeBoBStartFirmware);
-    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(device.identity),
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
               Discovery::AvcCommandFilterId::BlockAll);
 }
 
@@ -452,14 +451,18 @@ TEST(AudioDeviceCatalog, AnOrdinaryDeviceIsNotCommandFiltered) {
                                  {{.offset = 5,
                                    .specifierId = kTa1394AvcSpecifier,
                                    .version = kTa1394AvcVersion}});
-    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(duet.identity),
+    const auto duetPlan = AudioDeviceCatalog::Resolve(duet.identity);
+    ASSERT_TRUE(duetPlan.has_value());
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*duetPlan),
               Discovery::AvcCommandFilterId::Unrestricted);
 
     const auto unknown = MakeDevice(0x00AABB'0400000000ULL, 0x00AABB, 0x000042,
                                     {{.offset = 5,
                                       .specifierId = kTa1394AvcSpecifier,
                                       .version = kTa1394AvcVersion}});
-    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(unknown.identity),
+    const auto unknownPlan = AudioDeviceCatalog::Resolve(unknown.identity);
+    ASSERT_TRUE(unknownPlan.has_value());
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*unknownPlan),
               Discovery::AvcCommandFilterId::Unrestricted);
 }
 
@@ -474,7 +477,9 @@ TEST(AudioDeviceCatalog, NothingIsQuarantinedOnThisBranch) {
                                      .specifierId = kFocusriteVendorId,
                                      .version = kDiceInterfaceVersion}});
     EXPECT_FALSE(AudioDeviceCatalog::MatchAnySafetyRule(device.identity).has_value());
-    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(device.identity),
+    const auto plan = AudioDeviceCatalog::Resolve(device.identity);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
               Discovery::AvcCommandFilterId::Unrestricted);
 }
 
@@ -533,8 +538,7 @@ TEST(AudioDeviceCatalog, DeviceLevelResolveFailsOnConflictingCuratedUnits) {
     EXPECT_EQ(res.error(), CatalogResolutionError::AmbiguousIdentity);
 }
 
-TEST(AudioDeviceCatalog, ResolutionInvariantsDeriveFromUnifiedResolve) {
-    // Invariant: ProfileBuilderFor, StreamTraitsFor, and CommandFilterFor derive from Resolve(device)
+TEST(AudioDeviceCatalog, ResolutionCarriesBuilderAndStreamTraits) {
     const auto duet = MakeDevice(0x0003DB'0400000000ULL, kApogeeVendorId,
                                  kApogeeDuetModelId,
                                  {{.offset = 5,
@@ -544,13 +548,9 @@ TEST(AudioDeviceCatalog, ResolutionInvariantsDeriveFromUnifiedResolve) {
     const auto plan = AudioDeviceCatalog::Resolve(duet.identity);
     ASSERT_TRUE(plan.has_value());
 
-    EXPECT_EQ(AudioDeviceCatalog::ProfileBuilderFor(duet.identity), plan->profileBuilder);
-    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(duet.identity).startRatePinHz,
-              plan->streamTraits.startRatePinHz);
-    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(duet.identity).startShape,
-              plan->streamTraits.startShape);
-
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::ApogeeDuet);
     EXPECT_EQ(plan->streamTraits.startRatePinHz, 48000U);
+    EXPECT_EQ(plan->streamTraits.startShape, StreamStartShape::ApogeeInterleaved);
 }
 
 TEST(AudioDeviceCatalog, StartRatePinHzIsAccurateForOnyxAndDuet) {
@@ -588,7 +588,9 @@ TEST(AudioDeviceCatalog, CommandFilterForNeverFallsBackToUnrestrictedOnHazardOrA
         .specifierId = kMotuVendorId,
         .version = kMotuUltraliteSwVersion,
     });
-    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(ambiguousMotu),
+    const auto resolution = AudioDeviceCatalog::Resolve(ambiguousMotu);
+    ASSERT_FALSE(resolution.has_value());
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(resolution.error()),
               Discovery::AvcCommandFilterId::BlockAll);
 }
 

@@ -207,20 +207,6 @@ struct DeviceStreamTraits final {
     ForcedStreamMode forcedStreamMode{ForcedStreamMode::Unspecified};
     StreamStartShape startShape{StreamStartShape::Default};
 
-    /// INERT since 2026-09-20 — its only consumer is `#if 0`-ed out in
-    /// DuplexStreamProfile::ResolveChannels, which carries the full reasoning.
-    ///
-    /// Short version: it was transcribed from libffado's Alesis workaround into
-    /// the opposite direction. libffado clamps host PLAYBACK (`m_nb_rx`,
-    /// dice_avdevice.cpp:1686-1700) and never touches capture; this clamped
-    /// capture, dropping the recorded MultiMix's MAIN_IN L/R pair. Alesis's own
-    /// driver clamps neither direction.
-    ///
-    /// The field and the catalog rows that set it are kept so re-enabling is a
-    /// one-block change once hardware settles whether the hazard is real.
-    /// TODO(FW-DICE-ALESIS).
-    bool clampCaptureStreamsToOne{false};
-
     /// CMP owns the isochronous channel: the device has no fixed one, IRM
     /// picks it and the PCR commits it back. True for every CMP-driven family
     /// (BeBoB, Oxford, Fireworks); false for DICE, which programs a channel
@@ -262,19 +248,6 @@ enum class PersistentKeyRecipeId : uint8_t {
     ReliableObservedEui64,
 };
 
-// Safe, read-only family probe facts may disambiguate marketing variants that
-// Config ROM cannot distinguish. Every populated field is an AND constraint.
-// This deliberately describes stream evidence without depending on Audio
-// runtime types, keeping the catalog declarative.
-struct SafeProbeConstraint final {
-    std::optional<uint32_t> hostInputPcmChannels;
-    std::optional<uint32_t> hostOutputPcmChannels;
-    std::optional<uint32_t> deviceToHostSlots;
-    std::optional<uint32_t> hostToDeviceSlots;
-    std::optional<uint32_t> deviceToHostStreamCount;
-    std::optional<uint32_t> hostToDeviceStreamCount;
-};
-
 enum class CatalogResolutionError : uint8_t {
     NoMatch = 0,
     HazardousIdentity,
@@ -297,7 +270,6 @@ struct AudioDeviceDefinition final {
     GuidReliability guidReliability{GuidReliability::ReliableWhenUnique};
     PersistentKeyRecipeId persistentKeyRecipe{
         PersistentKeyRecipeId::ReliableObservedEui64};
-    SafeProbeConstraint probeConstraint{};
     DeviceStreamTraits streamTraits{};
     BootloaderCuePolicy bootloaderCue{BootloaderCuePolicy::None};
     const char* vendorName{nullptr};
@@ -316,16 +288,6 @@ struct MatchProvenance final {
     uint8_t clauseIndex{0};
 };
 
-struct CandidateEndpointPlan final {
-    DeviceDefinitionId definitionId{DeviceDefinitionId::Unknown};
-    uint32_t variantId{0};
-    ProfileBuilderId profileBuilder{ProfileBuilderId::None};
-    ProtocolImplementationId protocolImplementation{ProtocolImplementationId::None};
-    SafeProbeConstraint probeConstraint{};
-    std::string vendorName;
-    std::string modelName;
-};
-
 struct StaticAudioEndpointPlan final {
     Discovery::UnitInstanceId unit{};
     uint32_t unitVersion{0};
@@ -337,7 +299,6 @@ struct StaticAudioEndpointPlan final {
     PersistentKeyRecipeId persistentKeyRecipe{PersistentKeyRecipeId::None};
     uint32_t equivalenceClassId{0};
     std::vector<DeviceDefinitionId> candidates;
-    std::vector<CandidateEndpointPlan> candidatePlans;
     std::vector<MatchProvenance> provenance;
     ProfileBuilderId profileBuilder{ProfileBuilderId::None};
     ProfileBuilderId commonEquivalenceProfileBuilder{ProfileBuilderId::None};
@@ -398,14 +359,6 @@ public:
     [[nodiscard]] static std::optional<const AudioSafetyRule*>
     MatchAnySafetyRule(const Discovery::DeviceIdentityEvidence& device) noexcept;
 
-    /// Which AV/C command shapes this identity may be sent, decided from Config
-    /// ROM alone and before any transaction. Device-level like
-    /// MatchAnySafetyRule: it tries every unit and returns the first definition
-    /// that constrains the device. Unmatched identities are Unrestricted, which
-    /// preserves today's behaviour for every device without a definition.
-    [[nodiscard]] static Discovery::AvcCommandFilterId
-    CommandFilterFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
-
     /// Projection of an already resolved device-level decision. Runtime
     /// consumers use this overload after the decision is handed off, avoiding
     /// a second identity match before setting the FCP command gate.
@@ -414,20 +367,6 @@ public:
 
     [[nodiscard]] static Discovery::AvcCommandFilterId
     CommandFilterFor(CatalogResolutionError error) noexcept;
-
-    /// The stream traits this identity carries, decided from Config ROM alone.
-    /// Device-level like CommandFilterFor: it tries every unit and returns the
-    /// first definition that matches. An unmatched identity gets the defaults,
-    /// which is today's behaviour for every device without a definition.
-    [[nodiscard]] static DeviceStreamTraits
-    StreamTraitsFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
-
-    /// The profile builder this identity resolves to, or None. Device-level
-    /// like the two above, for callers that hold Config-ROM evidence but not a
-    /// registry record -- the AV/C discovery path, which must tell the nub what
-    /// the device is at publication time.
-    [[nodiscard]] static ProfileBuilderId
-    ProfileBuilderFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
 
     [[nodiscard]] static const char* MotuModelNameForSwVersion(uint32_t swVersion) noexcept;
 

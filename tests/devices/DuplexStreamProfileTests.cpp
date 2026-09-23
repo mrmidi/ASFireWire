@@ -257,15 +257,7 @@ TEST(DuplexStreamProfileTests, WeissIntStartsHostTransmitFirstWithoutPreEnableSo
 // rows had capture forced to one stream. That clamp is disabled: it was
 // libffado's PLAYBACK workaround (m_nb_rx, dice_avdevice.cpp:1686-1700)
 // transcribed onto capture, and the vendor's own driver clamps neither
-// direction. See the #if 0 block in DuplexStreamProfile::ResolveChannels.
-//
-// This now pins the opposite: the device's advertised capture count survives.
-// It is deliberately the same two model ids and the same caps, so the diff
-// against the old expectation is the behaviour change itself.
-//
-// TODO(FW-DICE-ALESIS): if hardware shows a MultiMix over-reporting PLAYBACK,
-// the clamp comes back against playbackStreamCount and this test grows a
-// playback case -- it does not revert.
+// The device's advertised stream counts and per-stream geometry are preserved.
 TEST(DuplexStreamProfileTests, AlesisModelsKeepTheAdvertisedCaptureStreamCount) {
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = 32,
@@ -284,19 +276,12 @@ TEST(DuplexStreamProfileTests, AlesisModelsKeepTheAdvertisedCaptureStreamCount) 
         DeviceRecord record = DiceRecord(kAlesisVendorId, modelId);
         const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
 
-        // Both streams the device advertised are armed. Under the clamp this
-        // was 1, which on the recorded MultiMix meant dropping MAIN_IN L/R.
+        // Both streams advertised by the device are armed.
         EXPECT_EQ(profile.channels.captureStreamCount, 2U) << modelId;
         EXPECT_EQ(profile.channels.playbackStreamCount, 2U) << modelId;
         EXPECT_EQ(profile.captureStreams[0].isoChannel, 5U) << modelId;
 
-        // Per-stream slots, not the device's aggregate. This is the clamp's
-        // second and worse effect: Build() selects per-stream geometry only
-        // when captureStreamCount > 1 (DuplexStreamProfile.hpp:346), so forcing
-        // the count to 1 also made stream 0 report deviceToHostAm824Slots -- 34
-        // here -- when the stream physically carries 17. packetBandwidthUnits is
-        // derived from am824Slots, so the IRM reservation was sized from the
-        // aggregate too.
+        // Per-stream slots are used instead of the device's aggregate.
         EXPECT_EQ(profile.captureStreams[0].am824Slots, 17U) << modelId;
         EXPECT_EQ(profile.captureStreams[1].am824Slots, 17U) << modelId;
         EXPECT_EQ(profile.captureStreams[0].pcmChannels, 16U) << modelId;

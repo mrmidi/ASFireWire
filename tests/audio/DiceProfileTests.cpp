@@ -47,8 +47,10 @@ using namespace ASFW::Isoch::Audio::DICE;
     unit.specifierId = unitSpecifier;
     unit.version = unitVersion;
     identity.units.push_back(unit);
-    return static_cast<uint32_t>(
-        ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(identity));
+    const auto plan = ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(identity);
+    return plan.has_value()
+               ? static_cast<uint32_t>(plan->profileBuilder)
+               : static_cast<uint32_t>(ASFW::DeviceProfiles::Audio::ProfileBuilderId::None);
 }
 
 // A DICE unit publishes the vendor OUI as its specifier with interface

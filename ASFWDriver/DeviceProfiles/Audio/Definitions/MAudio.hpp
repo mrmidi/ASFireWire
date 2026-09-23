@@ -25,8 +25,8 @@ inline constexpr std::array kMAudioDefinitions{
     // makes them safe to have on the bus at all.
     //
     // The bootloader persona is not an audio endpoint and never becomes one.
-    // Its BootloaderCuePolicy has no consumer on this branch; it is carried so
-    // the identity is complete and so the merge with `midi` stays textual.
+    // The cue is descriptive until a guarded preparation path has device
+    // evidence; today it also makes CommandFilterFor block all FCP traffic.
     Definition(DeviceDefinitionId::MAudioFireWire1814Bootloader, kMAudioVendorId,
                kMAudioFireWire1814BootloaderModelId, AudioFamilyProviderId::None,
                ProbePolicyId::NoAutomaticTraffic, ProfileBuilderId::None,

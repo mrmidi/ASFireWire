@@ -30,24 +30,6 @@ static_assert(
     "ProtocolImplementationId member added without updating family protocol construction");
 
 std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
-    const Discovery::DeviceRecord& record,
-    Protocols::Ports::FireWireBusOps& busOps,
-    Protocols::Ports::FireWireBusInfo& busInfo,
-    Discovery::DeviceRegistry& routeRegistry,
-    const Discovery::DeviceRouteToken& route,
-    IRM::IRMClient* irmClient,
-    CMP::CMPClient* cmpClient,
-    Scheduling::ITimerScheduler* timerScheduler
-) {
-    const auto plan = DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(record);
-    if (!plan.has_value()) {
-        return nullptr;
-    }
-    return CreateFamilyDeviceProtocol(*plan, busOps, busInfo, routeRegistry,
-                                      route, irmClient, cmpClient, timerScheduler);
-}
-
-std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
     const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
     Protocols::Ports::FireWireBusOps& busOps,
     Protocols::Ports::FireWireBusInfo& busInfo,

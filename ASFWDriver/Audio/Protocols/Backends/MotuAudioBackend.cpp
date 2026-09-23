@@ -126,8 +126,8 @@ void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.vendorId = record->vendorId;
     dev.modelId = record->modelId;
     // CoreAudio shows this in the Sound panel, where MOTU's own driver named the device
-    // "MOTU UltraLite". The model constants stay bare because DeviceIdentityHint keeps
-    // vendor and model in separate fields; only the display name is qualified here.
+    // "MOTU UltraLite". The model constants stay bare; only the display name
+    // is qualified here.
     const char* const modelName =
         DeviceProfiles::Audio::AudioDeviceCatalog::MotuModelNameForSwVersion(
             record->unitSwVersion.value_or(0U));

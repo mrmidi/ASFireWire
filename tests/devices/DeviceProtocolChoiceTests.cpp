@@ -25,8 +25,26 @@
 namespace {
 
 using ASFW::Audio::ChooseDeviceProtocol;
+using ASFW::Audio::ChooseAudioBackend;
 using namespace ASFW::DeviceProfiles::Audio;
 namespace Discovery = ASFW::Discovery;
+
+[[nodiscard]] std::expected<StaticAudioEndpointPlan, CatalogResolutionError> ResolvePlan(
+    const Discovery::DeviceRecord& device) {
+    return AudioDeviceCatalog::Resolve(device);
+}
+
+[[nodiscard]] std::optional<ASFW::Audio::DeviceProtocolChoice> ChoiceFor(
+    const Discovery::DeviceRecord& device) {
+    const auto plan = ResolvePlan(device);
+    return plan ? ChooseDeviceProtocol(*plan) : std::nullopt;
+}
+
+[[nodiscard]] std::optional<ASFW::Audio::AudioBackendKind> BackendFor(
+    const Discovery::DeviceRecord& device) {
+    const auto plan = ResolvePlan(device);
+    return plan ? ChooseAudioBackend(*plan) : std::nullopt;
+}
 
 constexpr uint32_t kDiceInterfaceVersion = 0x000001;
 constexpr uint32_t kTa1394AvcSpecifier = 0x00A02D;
@@ -140,7 +158,7 @@ struct Expectation {
 
 TEST(DeviceProtocolChoice, EveryStreamedDevicePicksItsProtocol) {
     for (const auto& expected : AllStreamedDevices()) {
-        const auto choice = ChooseDeviceProtocol(expected.device);
+        const auto choice = ChoiceFor(expected.device);
         ASSERT_TRUE(choice.has_value()) << expected.what << " resolves to no protocol";
         EXPECT_EQ(choice->builder, expected.builder) << expected.what;
     }
@@ -154,7 +172,7 @@ TEST(DeviceProtocolChoice, MotuCarriesItsUnitVersionToTheProtocol) {
                                    {{.offset = 5,
                                      .specifierId = kMotuVendorId,
                                      .version = kMotu828mk2SwVersion}});
-    const auto choice = ChooseDeviceProtocol(device);
+    const auto choice = ChoiceFor(device);
     ASSERT_TRUE(choice.has_value());
     EXPECT_EQ(choice->unitVersion, kMotu828mk2SwVersion);
 }
@@ -178,7 +196,7 @@ TEST(DeviceProtocolChoice, ARecognisedButUnplayableDeviceGetsNoProtocol) {
     };
     for (const auto& [vendorId, modelId] : unplayable) {
         const auto device = DiceDevice(vendorId, modelId);
-        EXPECT_FALSE(ChooseDeviceProtocol(device).has_value())
+        EXPECT_FALSE(ChoiceFor(device).has_value())
             << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
     }
 }
@@ -190,7 +208,7 @@ TEST(DeviceProtocolChoice, AnUnverifiedMotuSiblingGetsNoProtocol) {
                                        {{.offset = 5,
                                          .specifierId = kMotuVendorId,
                                          .version = version}});
-        EXPECT_FALSE(ChooseDeviceProtocol(device).has_value())
+        EXPECT_FALSE(ChoiceFor(device).has_value())
             << "version 0x" << std::hex << version;
     }
 }
@@ -200,7 +218,7 @@ TEST(DeviceProtocolChoice, AnUnverifiedMotuSiblingGetsNoProtocol) {
 // to every AV/C device on the bus.
 TEST(DeviceProtocolChoice, AnUnknownAvcDeviceGetsNoProtocol) {
     const auto device = AvcDevice(0x00AABB, 0x000042);
-    const auto choice = ChooseDeviceProtocol(device);
+    const auto choice = ChoiceFor(device);
     if (choice.has_value()) {
         EXPECT_EQ(choice->builder, ProfileBuilderId::GenericAvc)
             << "an unknown AV/C device resolved to a real builder";
@@ -212,7 +230,7 @@ TEST(DeviceProtocolChoice, TheMAudioSpecialFirmwareGetsNoProtocol) {
                                  kMAudioProjectMixModelId,
                                  kMAudioFireWire1814BootloaderModelId}) {
         const auto device = AvcDevice(kMAudioVendorId, model);
-        const auto choice = ChooseDeviceProtocol(device);
+        const auto choice = ChoiceFor(device);
         EXPECT_FALSE(choice.has_value())
             << "model 0x" << std::hex << model
             << " must be recognised for its command bound only";
@@ -223,7 +241,7 @@ TEST(DeviceProtocolChoice, TheMAudioSpecialFirmwareGetsNoProtocol) {
 // trying. Real ROMs on the bus do turn up unit-less.
 TEST(DeviceProtocolChoice, ADeviceWithNoUnitsGetsNoProtocol) {
     const auto device = MakeDevice(kFocusriteVendorId, kSPro24DspModelId, {});
-    EXPECT_FALSE(ChooseDeviceProtocol(device).has_value());
+    EXPECT_FALSE(ChoiceFor(device).has_value());
 }
 
 // A non-audio unit listed before the audio one must not stop the walk.
@@ -233,7 +251,7 @@ TEST(DeviceProtocolChoice, ASiblingUnitBeforeTheAudioOneIsSkipped) {
                               {.offset = 9,
                                .specifierId = kFocusriteVendorId,
                                .version = kDiceInterfaceVersion}});
-    const auto choice = ChooseDeviceProtocol(device);
+    const auto choice = ChoiceFor(device);
     ASSERT_TRUE(choice.has_value());
     EXPECT_EQ(choice->builder, ProfileBuilderId::FocusriteSPro24Dsp);
     EXPECT_EQ(choice->unitDirectoryOffset, 9U);
@@ -264,7 +282,7 @@ TEST(DeviceProtocolChoice, AFocusriteBoardResolvesFromItsGuidWhenTheRomOmitsTheM
     unit.version = kDiceInterfaceVersion;
     device.identity.units.push_back(unit);
 
-    const auto choice = ChooseDeviceProtocol(device);
+    const auto choice = ChoiceFor(device);
     ASSERT_TRUE(choice.has_value())
         << "the bench Saffire Pro 24 DSP stopped resolving when its model id is "
            "GUID-encoded rather than ROM-stated";
@@ -288,9 +306,9 @@ TEST(DeviceProtocolChoice, TheTcd3070IsTheSameDeviceByEitherRoute) {
     unit.version = kDiceInterfaceVersion;
     byGuid.identity.units.push_back(unit);
 
-    EXPECT_FALSE(ChooseDeviceProtocol(byGuid).has_value());
+    EXPECT_FALSE(ChoiceFor(byGuid).has_value());
     EXPECT_FALSE(
-        ChooseDeviceProtocol(DiceDevice(kFocusriteVendorId, kSPro40Tcd3070ModelId))
+        ChoiceFor(DiceDevice(kFocusriteVendorId, kSPro40Tcd3070ModelId))
             .has_value());
 }
 
@@ -306,8 +324,8 @@ TEST(DeviceProtocolChoice, BackendRoutingMatchesWhatTheProfileRegistrySays) {
     using ASFW::Audio::ChooseAudioBackend;
 
     for (const auto& expected : AllStreamedDevices()) {
-        const auto backend = ChooseAudioBackend(expected.device);
-        const auto choice = ChooseDeviceProtocol(expected.device);
+        const auto backend = BackendFor(expected.device);
+        const auto choice = ChoiceFor(expected.device);
         ASSERT_TRUE(choice.has_value()) << expected.what;
 
         switch (choice->builder) {
@@ -347,7 +365,7 @@ TEST(DeviceProtocolChoice, ARecognisedButUnplayableDeviceReturnsNullopt) {
         {kWeissVendorId, kWeissMan301ModelId},
     };
     for (const auto& [vendorId, modelId] : unplayableDice) {
-        EXPECT_EQ(ChooseAudioBackend(DiceDevice(vendorId, modelId)),
+        EXPECT_EQ(BackendFor(DiceDevice(vendorId, modelId)),
                   std::nullopt)
             << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
     }
@@ -358,7 +376,7 @@ TEST(DeviceProtocolChoice, ARecognisedButUnplayableDeviceReturnsNullopt) {
                                        {{.offset = 5,
                                          .specifierId = kMotuVendorId,
                                          .version = version}});
-        EXPECT_EQ(ChooseAudioBackend(device), std::nullopt)
+        EXPECT_EQ(BackendFor(device), std::nullopt)
             << "MOTU version 0x" << std::hex << version;
     }
 }
@@ -367,10 +385,10 @@ TEST(DeviceProtocolChoice, AnUnknownDeviceRoutesToAvcOnlyIfGenericAvcUnitPresent
     using ASFW::Audio::AudioBackendKind;
     using ASFW::Audio::ChooseAudioBackend;
     // An unknown device with 1394TA AV/C unit matches GenericAvc fallback
-    EXPECT_EQ(ChooseAudioBackend(AvcDevice(0x00AABB, 0x000042)),
+    EXPECT_EQ(BackendFor(AvcDevice(0x00AABB, 0x000042)),
               AudioBackendKind::Avc);
     // An unknown device without units returns nullopt (rejected)
-    EXPECT_EQ(ChooseAudioBackend(MakeDevice(0x00AABB, 0x000042, {})),
+    EXPECT_EQ(BackendFor(MakeDevice(0x00AABB, 0x000042, {})),
               std::nullopt);
 }
 

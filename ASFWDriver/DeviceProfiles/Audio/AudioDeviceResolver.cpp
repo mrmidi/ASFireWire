@@ -79,15 +79,6 @@ AudioDeviceCatalog::ResolveWithDefinitions(
             .guidReliability = GuidReliability::ReliableWhenUnique,
             .persistentKeyRecipe = PersistentKeyRecipeId::ReliableObservedEui64,
             .candidates = {DeviceDefinitionId::GenericAvc},
-            .candidatePlans = {{DeviceDefinitionId::GenericAvc,
-                                0,
-                                ProfileBuilderId::GenericAvc,
-                                ProtocolImplementationId::None,
-                                {},
-                                device.rootVendorName,
-                                device.rootModelName.empty()
-                                    ? "Generic AV/C Audio"
-                                    : device.rootModelName}},
             .provenance = {{DeviceDefinitionId::GenericAvc, 0}},
             .profileBuilder = ProfileBuilderId::GenericAvc,
             .protocolImplementation = ProtocolImplementationId::None,
@@ -142,19 +133,6 @@ AudioDeviceCatalog::ResolveWithDefinitions(
     };
     for (const auto& match : matches) {
         plan.candidates.push_back(match.definition->id);
-        plan.candidatePlans.push_back(CandidateEndpointPlan{
-            .definitionId = match.definition->id,
-            .variantId = match.definition->variantId,
-            .profileBuilder = match.definition->profileBuilder,
-            .protocolImplementation = match.definition->protocolImplementation,
-            .probeConstraint = match.definition->probeConstraint,
-            .vendorName = match.definition->vendorName != nullptr
-                              ? match.definition->vendorName
-                              : "",
-            .modelName = match.definition->modelName != nullptr
-                             ? match.definition->modelName
-                             : "",
-        });
         plan.provenance.push_back(MatchProvenance{match.definition->id,
                                                   match.clauseIndex});
     }
@@ -253,16 +231,6 @@ AudioDeviceCatalog::Resolve(const Discovery::DeviceRecord& device) noexcept {
 }
 
 Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
-    const Discovery::DeviceIdentityEvidence& device) noexcept {
-    const auto plan = Resolve(device);
-    if (!plan.has_value()) {
-        return CommandFilterFor(plan.error());
-    }
-
-    return CommandFilterFor(*plan);
-}
-
-Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
     const StaticAudioEndpointPlan& plan) noexcept {
     if (plan.probePolicy == ProbePolicyId::BeBoBFilteredCommandSet) {
         return Discovery::AvcCommandFilterId::MAudioSpecialBeBoB;
@@ -288,24 +256,6 @@ Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
             return Discovery::AvcCommandFilterId::Unrestricted;
     }
     return Discovery::AvcCommandFilterId::BlockAll;
-}
-
-ProfileBuilderId AudioDeviceCatalog::ProfileBuilderFor(
-    const Discovery::DeviceIdentityEvidence& device) noexcept {
-    const auto plan = Resolve(device);
-    if (!plan.has_value()) {
-        return ProfileBuilderId::None;
-    }
-    return plan->profileBuilder;
-}
-
-DeviceStreamTraits AudioDeviceCatalog::StreamTraitsFor(
-    const Discovery::DeviceIdentityEvidence& device) noexcept {
-    const auto plan = Resolve(device);
-    if (!plan.has_value()) {
-        return DeviceStreamTraits{};
-    }
-    return plan->streamTraits;
 }
 
 std::optional<const AudioSafetyRule*>

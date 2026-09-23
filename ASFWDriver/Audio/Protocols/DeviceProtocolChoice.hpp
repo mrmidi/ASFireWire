@@ -39,13 +39,6 @@ struct DeviceProtocolChoice final {
     uint32_t unitDirectoryOffset{0};
 };
 
-/// Walks the device's unit directories in ROM order and returns the first that
-/// resolves to a definition naming a profile builder. nullopt for a device this
-/// driver does not stream — including one it recognises but cannot play, which
-/// is a different and deliberate state from not recognising it at all.
-[[nodiscard]] std::optional<DeviceProtocolChoice>
-ChooseDeviceProtocol(const Discovery::DeviceRecord& record) noexcept;
-
 [[nodiscard]] std::optional<DeviceProtocolChoice>
 ChooseDeviceProtocol(const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) noexcept;
 
@@ -62,9 +55,6 @@ enum class AudioBackendKind : uint8_t {
     Dice,
     MotuRegister,
 };
-
-[[nodiscard]] std::optional<AudioBackendKind>
-ChooseAudioBackend(const Discovery::DeviceRecord& record) noexcept;
 
 [[nodiscard]] std::optional<AudioBackendKind>
 ChooseAudioBackend(const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) noexcept;

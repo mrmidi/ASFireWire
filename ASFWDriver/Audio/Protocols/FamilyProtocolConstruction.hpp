@@ -43,20 +43,4 @@ namespace ASFW::Audio {
     Scheduling::ITimerScheduler* timerScheduler = nullptr
 );
 
-/// Compatibility entrypoint until FW-164 carries the decision through the
-/// controller/runtime handoff. It resolves the record, then uses the overload
-/// above; it is not a second factory policy.
-///
-/// Returns nullptr for unsupported devices or devices that do not use a family protocol.
-[[nodiscard]] std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
-    const Discovery::DeviceRecord& record,
-    Protocols::Ports::FireWireBusOps& busOps,
-    Protocols::Ports::FireWireBusInfo& busInfo,
-    Discovery::DeviceRegistry& routeRegistry,
-    const Discovery::DeviceRouteToken& route,
-    ::ASFW::IRM::IRMClient* irmClient = nullptr,
-    ::ASFW::CMP::CMPClient* cmpClient = nullptr,
-    Scheduling::ITimerScheduler* timerScheduler = nullptr
-);
-
 } // namespace ASFW::Audio

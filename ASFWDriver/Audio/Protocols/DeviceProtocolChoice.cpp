@@ -6,17 +6,6 @@
 namespace ASFW::Audio {
 
 std::optional<DeviceProtocolChoice>
-ChooseDeviceProtocol(const Discovery::DeviceRecord& record) noexcept {
-    using DeviceProfiles::Audio::AudioDeviceCatalog;
-
-    const auto plan = AudioDeviceCatalog::Resolve(record);
-    if (!plan.has_value()) {
-        return std::nullopt;
-    }
-    return ChooseDeviceProtocol(*plan);
-}
-
-std::optional<DeviceProtocolChoice>
 ChooseDeviceProtocol(
     const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) noexcept {
     using DeviceProfiles::Audio::DeviceDefinitionId;
@@ -33,17 +22,6 @@ ChooseDeviceProtocol(
         .unitVersion = plan.unitVersion,
         .unitDirectoryOffset = plan.unit.unitDirectoryOffset,
     };
-}
-
-std::optional<AudioBackendKind>
-ChooseAudioBackend(const Discovery::DeviceRecord& record) noexcept {
-    using DeviceProfiles::Audio::AudioDeviceCatalog;
-
-    const auto plan = AudioDeviceCatalog::Resolve(record);
-    if (!plan.has_value()) {
-        return std::nullopt;
-    }
-    return ChooseAudioBackend(*plan);
 }
 
 std::optional<AudioBackendKind>

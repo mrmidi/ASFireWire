@@ -306,40 +306,24 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
         EXPECT_EQ(plan->streamTraits.startShape, testCase.expectedStartShape);
         EXPECT_EQ(plan->streamTraits.cmpChoosesIsoChannel, testCase.expectedCmpChoosesIsoChannel);
 
-        // Build DeviceRecord to check protocol/backend choice
-        Discovery::DeviceRecord record{};
-        record.instanceId = Discovery::DeviceInstanceId{1};
-        record.guid = testCase.evidence.observedGuid != 0
-                          ? testCase.evidence.observedGuid
-                          : 0x0011223344556677ULL;
-        record.identity = testCase.evidence;
-
-        // 2. Protocol Choice
-        const auto protocolChoice = Audio::ChooseDeviceProtocol(record);
+        // 2. Protocol Choice: consumers use the resolved policy plan directly.
         const auto protocolFromPlan = Audio::ChooseDeviceProtocol(*plan);
-        EXPECT_EQ(protocolChoice.has_value(), protocolFromPlan.has_value());
         if (testCase.expectedProfileBuilder != ProfileBuilderId::None) {
-            ASSERT_TRUE(protocolChoice.has_value());
             ASSERT_TRUE(protocolFromPlan.has_value());
-            EXPECT_EQ(protocolChoice->builder, testCase.expectedProfileBuilder);
-            EXPECT_EQ(protocolChoice->implementation, plan->protocolImplementation);
-            EXPECT_EQ(protocolFromPlan->builder, protocolChoice->builder);
-            EXPECT_EQ(protocolFromPlan->implementation, protocolChoice->implementation);
-            EXPECT_EQ(protocolChoice->unitDirectoryOffset, 0x400U);
+            EXPECT_EQ(protocolFromPlan->builder, testCase.expectedProfileBuilder);
+            EXPECT_EQ(protocolFromPlan->implementation, plan->protocolImplementation);
+            EXPECT_EQ(protocolFromPlan->unitDirectoryOffset, 0x400U);
         } else {
-            EXPECT_FALSE(protocolChoice.has_value());
+            EXPECT_FALSE(protocolFromPlan.has_value());
         }
 
         // 3. Audio Backend Choice
-        const auto backend = Audio::ChooseAudioBackend(record);
+        const auto backend = Audio::ChooseAudioBackend(*plan);
         EXPECT_EQ(backend, testCase.expectedBackend);
-        EXPECT_EQ(Audio::ChooseAudioBackend(*plan), backend);
         EXPECT_EQ(Audio::SelectProbeBootstrap(*plan), testCase.expectedBootstrap);
 
         // 4. Command Filter Choice
-        const auto filter = AudioDeviceCatalog::CommandFilterFor(testCase.evidence);
-        EXPECT_EQ(filter, testCase.expectedFilter);
-        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan), filter);
+        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan), testCase.expectedFilter);
     }
 }
 
