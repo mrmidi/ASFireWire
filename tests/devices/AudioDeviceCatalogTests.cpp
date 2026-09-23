@@ -439,6 +439,8 @@ TEST(AudioDeviceCatalog, TheMAudioBootloaderPersonaIsNeverAnAudioEndpoint) {
     EXPECT_EQ(plan->probePolicy, ProbePolicyId::NoAutomaticTraffic);
     EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
     EXPECT_EQ(plan->bootloaderCue, BootloaderCuePolicy::BeBoBStartFirmware);
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(device.identity),
+              Discovery::AvcCommandFilterId::BlockAll);
 }
 
 // Every ordinary device stays unrestricted. A non-empty allowlist is a bound on

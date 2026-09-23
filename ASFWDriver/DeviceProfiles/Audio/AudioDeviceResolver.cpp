@@ -274,7 +274,11 @@ Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
     if (plan.probePolicy == ProbePolicyId::BeBoBFilteredCommandSet) {
         return Discovery::AvcCommandFilterId::MAudioSpecialBeBoB;
     }
-    if (plan.support == SupportDisposition::Quarantined) {
+    // The bootloader cue, if later authorized, is a guarded BeBoB register
+    // operation. It does not grant permission for generic or user-client FCP.
+    if (plan.probePolicy == ProbePolicyId::NoAutomaticTraffic ||
+        plan.bootloaderCue != BootloaderCuePolicy::None ||
+        plan.support == SupportDisposition::Quarantined) {
         return Discovery::AvcCommandFilterId::BlockAll;
     }
     return Discovery::AvcCommandFilterId::Unrestricted;
