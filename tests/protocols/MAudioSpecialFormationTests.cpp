@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialFormation.hpp"
+#include "ASFWDriver/Audio/Protocols/Duplex/AudioClockConfig.hpp"
 
 using namespace ASFW::Audio::BeBoB;
 
@@ -96,6 +97,22 @@ TEST(MAudioSpecialFormationTests, ProjectMixStopsTwoRatesShortOfThe1814) {
     EXPECT_EQ(kMAudioProjectMixRateCount, 4U);
     EXPECT_EQ(kMAudioSpecialRatesHz[kMAudioProjectMixRateCount - 1], 96000U);
     EXPECT_EQ(kMAudioSpecialRatesHz[kMAudioFireWire1814RateCount - 1], 192000U);
+}
+
+TEST(MAudioSpecialFormationTests, DoubleRateClockPolicyIsExplicitlyM_AudioOnly) {
+    using ASFW::Audio::AudioClockConfig;
+    using ASFW::Audio::IsSupportedAudioClockConfig;
+    using ASFW::Audio::IsSupportedMAudioSpecialClockConfig;
+
+    for (const uint32_t rate : {88200U, 96000U}) {
+        const AudioClockConfig clock{.sampleRateHz = rate};
+        EXPECT_FALSE(IsSupportedAudioClockConfig(clock));
+        EXPECT_TRUE(IsSupportedMAudioSpecialClockConfig(clock));
+    }
+    for (const uint32_t rate : {32000U, 176400U, 192000U}) {
+        EXPECT_FALSE(IsSupportedMAudioSpecialClockConfig(
+            AudioClockConfig{.sampleRateHz = rate}));
+    }
 }
 
 TEST(MAudioSpecialFormationTests, HighRateBandCarriesMorePlaybackThanCapture) {

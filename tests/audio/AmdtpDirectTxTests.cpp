@@ -5,12 +5,14 @@
 #include "Audio/Wire/AMDTP/AmdtpTxPacketizer.hpp"
 #include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
+#include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
 
 #include <gtest/gtest.h>
 
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <utility>
 
 namespace {
 
@@ -118,6 +120,49 @@ TEST(AmdtpDirectTxTests, ForcedNoDataHoldsDbcAndAudioFrame) {
     EXPECT_EQ(data.firstAudioFrame, 0U);
     EXPECT_EQ(data.framesInPacket, 8U);
     EXPECT_EQ(data.syt, 0x1234U);
+}
+
+TEST(AmdtpDirectTxTests, MAudio2xRatesCarryTheFullSixteenFrameSytInterval) {
+    ASFW::Isoch::Audio::AVC::Profiles::MAudioSpecialProfile profile(false);
+    for (const auto [rate, expectedFdf] :
+         {std::pair<uint32_t, uint8_t>{88200U, 0x03U}, {96000U, 0x04U}}) {
+        ASFW::Isoch::Audio::AudioStreamConfig audioConfig{};
+        ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(audioConfig));
+        ASSERT_TRUE(profile.ConfigureStreamRate(audioConfig, rate));
+        ASSERT_EQ(audioConfig.pcmChannels, 6U);
+        ASSERT_EQ(audioConfig.dbs, 7U);
+        ASSERT_EQ(audioConfig.framesPerDataPacket, 16U);
+
+        const auto wireConfig =
+            ASFW::Protocols::Audio::DICE::DiceStreamConfigMapper::ToAmdtpConfig(audioConfig);
+        AmdtpPacketTimeline timeline{};
+        std::array<PacketTimelineSlot, 8> timelineSlots{};
+        ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+        AmdtpTxPacketizer packetizer{};
+        packetizer.BindTimeline(&timeline);
+        ASSERT_TRUE(packetizer.Configure(wireConfig, AmdtpTxPolicy{}));
+        packetizer.Reset();
+
+        AmdtpTimingState timing{};
+        timing.txClockValid = true;
+        timing.disposition = AmdtpPacketDisposition::Data;
+        timing.nextDataSyt = 0x1234;
+        std::array<uint8_t, 512> bytes{};
+        PreparedTxPacket packet{};
+        bool sawFullPacket = false;
+        for (uint32_t cycle = 0; cycle < 4 && !sawFullPacket; ++cycle) {
+            ASSERT_TRUE(packetizer.PrepareNextPacket(
+                {cycle, bytes.data(), bytes.size()}, timing, packet));
+            if (!packet.isData) {
+                continue;
+            }
+            sawFullPacket = true;
+            EXPECT_EQ(packet.framesInPacket, 16U);
+            EXPECT_EQ(packet.byteCount, 8U + 16U * 7U * 4U);
+            EXPECT_EQ(bytes[5], expectedFdf);
+        }
+        EXPECT_TRUE(sawFullPacket) << rate;
+    }
 }
 
 TEST(AmdtpDirectTxTests, DbcIsEndEventWritesTheCountAfterEachDataPacket) {

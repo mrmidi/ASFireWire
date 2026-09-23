@@ -716,7 +716,11 @@ kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
     const ASFW::Audio::AudioClockConfig desired{
         .sampleRateHz = sampleRateHz,
     };
-    if (!ASFW::Audio::IsSupportedAudioClockConfig(desired)) {
+    // The duplex coordinator applies the device-policy gate. This seam admits
+    // the M-Audio special profile's validated 88.2/96 kHz requests; unrelated
+    // profiles remain subject to the generic 1x-rate rule there.
+    if (!ASFW::Audio::IsSupportedAudioClockConfig(desired) &&
+        !ASFW::Audio::IsSupportedMAudioSpecialClockConfig(desired)) {
         ASFW_LOG(Audio, "ASFWAudioNub: RequestSampleRateChange unsupported rate %u Hz", sampleRateHz);
         return kIOReturnUnsupported;
     }

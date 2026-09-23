@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
 #include "ASFWDriver/Protocols/BeBoB/Bootloader/BeBoBBootloaderPreparation.hpp"
+#include "ASFWDriver/Protocols/BeBoB/Bootloader/BeBoBBootloaderPreparationCoordinator.hpp"
+#include "ASFWDriver/Discovery/DiscoveryTypes.hpp"
+#include "ASFWDriver/Discovery/DeviceRegistry.hpp"
+#include "tests/mocks/DeferredFireWireBus.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,6 +23,34 @@ BootRomInfo Info(uint32_t protocol, uint32_t loader, uint64_t date) {
     return info;
 }
 
+ASFW::Discovery::DeviceIdentityEvidence BootloaderIdentity() {
+    ASFW::Discovery::DeviceIdentityEvidence identity{};
+    identity.observedGuid = 0x0011223344556677ULL;
+    identity.rootVendorId = kMAudioVendorId;
+    identity.rootModelId = kFireWire1814BootloaderModelId;
+    identity.units.push_back(ASFW::Discovery::UnitIdentityEvidence{
+        .specifierId = 0x00A02D,
+        .version = 0x00010070,
+    });
+    return identity;
+}
+
+ASFW::Discovery::DeviceRouteToken BindRoute(ASFW::Discovery::DeviceRegistry& registry) {
+    ASFW::Discovery::ConfigROM rom{};
+    rom.bib.guid = 0x0011223344556677ULL;
+    rom.gen = ASFW::Discovery::Generation{1};
+    rom.nodeId = 0x21;
+    (void)registry.UpsertFromROM(rom, {});
+    return *registry.CurrentRoute(rom.bib.guid);
+}
+
+void MapInfo(ASFW::Async::Testing::DeferredFireWireBus& bus, uint32_t loader,
+             uint64_t date) {
+    const auto info = Info(1, loader, date);
+    const uint64_t address = (static_cast<uint64_t>(kAddressHi) << 32U) | kInfoAddressLo;
+    bus.MapRead(address, std::vector<uint8_t>(info.raw.begin(), info.raw.end()));
+}
+
 TEST(BeBoBBootloaderPreparation, EncodesTheSinglePermittedCueLittleEndian) {
     const BeBoBBootloaderCue cue{Info(0x01020304, 1, 0x3230303730343031ULL)};
     const std::array<uint8_t, 12> expected{
@@ -26,6 +58,99 @@ TEST(BeBoBBootloaderPreparation, EncodesTheSinglePermittedCueLittleEndian) {
     EXPECT_TRUE(std::equal(cue.Bytes().begin(), cue.Bytes().end(), expected.begin()));
     EXPECT_TRUE(IsPermittedBootloaderWrite(kAddressHi, kRequestAddressLo, cue.Bytes()));
     EXPECT_FALSE(IsPermittedBootloaderWrite(kAddressHi, kInfoAddressLo, cue.Bytes()));
+}
+
+TEST(BeBoBBootloaderPreparation, AutomaticCuePersonaIsOnlyThe1814Bootloader) {
+    EXPECT_TRUE(IsSupportedBootloaderPersona(kMAudioVendorId,
+                                             kFireWire1814BootloaderModelId));
+    EXPECT_FALSE(IsSupportedBootloaderPersona(kMAudioVendorId, 0x00010071));
+    EXPECT_FALSE(IsSupportedBootloaderPersona(kMAudioVendorId, 0x00010091));
+    EXPECT_FALSE(IsSupportedBootloaderPersona(0x00000FDB,
+                                              kFireWire1814BootloaderModelId));
+}
+
+TEST(BeBoBBootloaderPreparation, TriggerRequiresTheCatalogBootloaderCuePolicy) {
+    auto identity = BootloaderIdentity();
+    EXPECT_TRUE(ShouldPrepareBootloader(kMAudioVendorId,
+                                        kFireWire1814BootloaderModelId, identity));
+    EXPECT_FALSE(ShouldPrepareBootloader(kMAudioVendorId, 0x00010071, identity));
+
+    identity.rootModelId = 0x00010071;
+    EXPECT_FALSE(ShouldPrepareBootloader(kMAudioVendorId,
+                                         kFireWire1814BootloaderModelId, identity));
+}
+
+TEST(BeBoBBootloaderPreparation, CoordinatorChecksIdentityRouteDateAndWritesValidCueOnce) {
+    using namespace ASFW;
+    Discovery::DeviceRegistry registry{};
+    const auto route = BindRoute(registry);
+    Async::Testing::DeferredFireWireBus bus{};
+    MapInfo(bus, 1, 0x3230303730343031ULL);
+    Protocols::BeBoB::Bootloader::BeBoBBootloaderPreparationCoordinator coordinator{
+        bus, registry};
+    auto identity = BootloaderIdentity();
+    bool alive = true;
+
+    const auto shouldPrepare = [&] {
+        return coordinator.Prepare(kMAudioVendorId, kFireWire1814BootloaderModelId,
+                                   identity, route, FW::FwSpeed::S400,
+                                   [&alive] { return alive; });
+    };
+    EXPECT_TRUE(shouldPrepare());
+    EXPECT_FALSE(shouldPrepare());
+    ASSERT_EQ(bus.ReadCount(), 1U);
+    ASSERT_EQ(bus.WriteCount(), 1U);
+    EXPECT_EQ(bus.ReadAt(0).address.addressHi, kAddressHi);
+    EXPECT_EQ(bus.ReadAt(0).address.addressLo, kInfoAddressLo);
+    EXPECT_EQ(bus.WriteAt(0).address.addressHi, kAddressHi);
+    EXPECT_EQ(bus.WriteAt(0).address.addressLo, kRequestAddressLo);
+    const std::array<uint8_t, 12> expected{
+        1, 0, 0, 0, 0, 0, 0x11, 0x01, 0, 0, 0, 0};
+    EXPECT_EQ(bus.WriteAt(0).data,
+              std::vector<uint8_t>(expected.begin(), expected.end()));
+
+    alive = false;
+    EXPECT_TRUE(bus.CompleteNextWrite(Async::AsyncStatus::kSuccess));
+}
+
+TEST(BeBoBBootloaderPreparation, CoordinatorRejectsWrongPersonaAndStaleRouteBeforeReading) {
+    using namespace ASFW;
+    Discovery::DeviceRegistry registry{};
+    auto route = BindRoute(registry);
+    Async::Testing::DeferredFireWireBus bus{};
+    Protocols::BeBoB::Bootloader::BeBoBBootloaderPreparationCoordinator coordinator{
+        bus, registry};
+    auto identity = BootloaderIdentity();
+    const auto alive = [] { return true; };
+
+    EXPECT_FALSE(coordinator.Prepare(kMAudioVendorId, 0x00010071, identity, route,
+                                     FW::FwSpeed::S400, alive));
+    EXPECT_EQ(bus.ReadCount(), 0U);
+    registry.InvalidateLiveMappingsForBusReset();
+    EXPECT_FALSE(coordinator.Prepare(kMAudioVendorId, kFireWire1814BootloaderModelId,
+                                     identity, route, FW::FwSpeed::S400, alive));
+    EXPECT_EQ(bus.ReadCount(), 0U);
+    EXPECT_EQ(bus.WriteCount(), 0U);
+}
+
+TEST(BeBoBBootloaderPreparation, CoordinatorDoesNotWriteForUnsupportedDateOrInactiveLoader) {
+    using namespace ASFW;
+    const auto runWithoutCue = [](uint32_t loader, uint64_t date) {
+        Discovery::DeviceRegistry registry{};
+        const auto route = BindRoute(registry);
+        Async::Testing::DeferredFireWireBus bus{};
+        MapInfo(bus, loader, date);
+        Protocols::BeBoB::Bootloader::BeBoBBootloaderPreparationCoordinator coordinator{
+            bus, registry};
+        const auto identity = BootloaderIdentity();
+        EXPECT_TRUE(coordinator.Prepare(kMAudioVendorId, kFireWire1814BootloaderModelId,
+                                        identity, route, FW::FwSpeed::S400,
+                                        [] { return true; }));
+        EXPECT_EQ(bus.ReadCount(), 1U);
+        EXPECT_EQ(bus.WriteCount(), 0U);
+    };
+    runWithoutCue(1, 0x3230303730343030ULL);
+    runWithoutCue(0, 0x3230303730343031ULL);
 }
 
 TEST(BeBoBBootloaderPreparation, RequiresActiveBootloaderAndSupportedBuildDate) {

@@ -22,6 +22,10 @@ public:
     [[nodiscard]] bool BuildDefaultTxStreamConfig(AudioStreamConfig& out) const noexcept override;
     [[nodiscard]] bool BuildDefaultRxStreamConfig(AudioStreamConfig& out) const noexcept override;
     [[nodiscard]] std::vector<uint32_t> SupportedSampleRates() const override;
+    /// Apply one of the profile's fixed-geometry S/PDIF rates to a live stream
+    /// config, including the maximum AMDTP data packet frame count.
+    [[nodiscard]] static bool ConfigureStreamRate(
+        AudioStreamConfig& config, uint32_t sampleRateHz) noexcept;
     [[nodiscard]] uint32_t TxSafetyOffsetFrames(double rate) const noexcept override;
     [[nodiscard]] uint32_t RxSafetyOffsetFrames(double rate) const noexcept override;
     [[nodiscard]] uint32_t TxReportedLatencyFrames(double rate) const noexcept override;

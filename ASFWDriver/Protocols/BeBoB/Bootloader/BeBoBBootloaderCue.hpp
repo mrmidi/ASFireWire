@@ -10,6 +10,8 @@
 namespace ASFW::Protocols::BeBoB::Bootloader {
 
 inline constexpr uint16_t kAddressHi = 0xFFFF;
+inline constexpr uint32_t kMAudioVendorId = 0x00000D6C;
+inline constexpr uint32_t kFireWire1814BootloaderModelId = 0x00010070;
 inline constexpr uint32_t kInfoAddressLo = 0xC802'0000;
 inline constexpr uint32_t kRequestAddressLo = 0xC802'1000;
 inline constexpr uint32_t kResponseAddressLo = 0xC802'9000;
@@ -72,5 +74,11 @@ private:
 [[nodiscard]] bool IsPermittedBootloaderWrite(
     uint16_t addressHi, uint32_t addressLo,
     std::span<const uint8_t> payload) noexcept;
+
+[[nodiscard]] constexpr bool IsSupportedBootloaderPersona(
+    uint32_t vendorId, uint32_t modelId) noexcept {
+    return vendorId == kMAudioVendorId &&
+           modelId == kFireWire1814BootloaderModelId;
+}
 
 } // namespace ASFW::Protocols::BeBoB::Bootloader

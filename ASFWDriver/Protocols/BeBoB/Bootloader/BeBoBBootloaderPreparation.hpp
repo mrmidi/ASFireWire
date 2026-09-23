@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Pure state machine for the M-Audio bootloader preparation slice. It owns no
-// transport and is intentionally not connected to live discovery.
+// transport; AVCDiscovery runs its actions for the guarded 1814 bootloader persona.
 #pragma once
 
 #include "BeBoBBootloaderCue.hpp"
 #include <cstdint>
 #include <variant>
+
+namespace ASFW::Discovery { struct DeviceIdentityEvidence; }
 
 namespace ASFW::Protocols::BeBoB::Bootloader {
 inline constexpr uint8_t kMaxInfoReadAttempts = 3;
@@ -34,6 +36,9 @@ using PreparationAction = std::variant<ReadInfoBlock, WriteCue, Done>;
 struct PreparationStep final { PreparationState state; PreparationAction action; };
 
 [[nodiscard]] PreparationStep BeginPreparation() noexcept;
+[[nodiscard]] bool ShouldPrepareBootloader(
+    uint32_t vendorId, uint32_t modelId,
+    const ASFW::Discovery::DeviceIdentityEvidence& identity) noexcept;
 [[nodiscard]] PreparationStep AdvancePreparation(
     const PreparationState& state, const PreparationEvent& event) noexcept;
 [[nodiscard]] inline bool IsRetired(const PreparationState& state) noexcept {

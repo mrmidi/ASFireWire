@@ -101,6 +101,7 @@ TEST(DuplexStreamProfileTests, MAudioSpecialResolvesAsymmetricSlotsAndTransmitFi
         const DeviceRecord record = AvcRecord(kMAudioVendorId, modelId);
         const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
         ASSERT_TRUE(profile.policyResolved) << modelId;
+        EXPECT_TRUE(profile.captureEmptyPacketHasWrongDbc) << modelId;
         EXPECT_EQ(profile.captureStreams[0].am824Slots, 11U) << modelId;
         EXPECT_EQ(profile.playbackStreams[0].am824Slots, 7U) << modelId;
         EXPECT_EQ(profile.captureChannelMap.SlotFor(1), 4U) << modelId;
@@ -139,6 +140,7 @@ TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe)
     EXPECT_EQ(profile.captureStreams[0].pcmChannels, 0U);
     EXPECT_EQ(profile.captureStreams[0].am824Slots, 17U);
     EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kAM824);
+    EXPECT_FALSE(profile.captureEmptyPacketHasWrongDbc);
     // Packet term only: 17 slots x 8 blocks x 4 bytes + 8 CIP bytes = 552 payload,
     // 138 quadlets + 3 header quadlets = 564 units at S400. The per-allocation bus
     // overhead is charged by the reservation from the live gap count, not here.

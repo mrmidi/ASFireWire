@@ -41,7 +41,10 @@ add_protocols_test(BeBoBBootloaderPreparationTests
     BeBoBBootloaderPreparationTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/BeBoB/Bootloader/BeBoBBootloaderCue.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/BeBoB/Bootloader/BeBoBBootloaderPreparation.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/BeBoB/Bootloader/BeBoBBootloaderPreparationCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
+target_link_libraries(BeBoBBootloaderPreparationTests PRIVATE asfw_catalog_host)
 
 # FCP transport lifecycle tests (write completion, cancellable timeout, teardown)
 add_protocols_test(FCPTransportTests

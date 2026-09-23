@@ -27,7 +27,6 @@
 #include <DriverKit/OSNumber.h>
 #include <DriverKit/OSArray.h>
 #include <DriverKit/OSDictionary.h>
-#include <set>
 #include <algorithm>
 #include <atomic>
 #include <functional>
@@ -35,6 +34,8 @@
 using namespace ASFW::Protocols::AVC;
 
 namespace {
+
+namespace Bootloader = ASFW::Protocols::BeBoB::Bootloader;
 
 // The device catalog's answer, carried to the nub so the audio side does not
 // repeat the match from (vendorId, modelId) -- a pair that cannot identify
@@ -209,6 +210,7 @@ AVCDiscovery::AVCDiscovery(IOService* driver,
     , deviceRegistry_(deviceRegistry)
     , deviceManager_(deviceManager)
     , busOps_(busOps)
+    , bootloaderPreparation_(busOps, deviceRegistry)
     , busInfo_(busInfo)
     , timerScheduler_(timerScheduler)
     , audioConfigListener_(audioConfigListener) {
@@ -674,7 +676,7 @@ void AVCDiscovery::PublishMAudioSpecialConfig(uint64_t guid,
     config.channelCount = formation->capturePcmChannels;
     config.inputChannelCount = formation->capturePcmChannels;
     config.outputChannelCount = formation->playbackPcmChannels;
-    config.sampleRates = {44100U, 48000U};
+    config.sampleRates = {44100U, 48000U, 88200U, 96000U};
     config.currentSampleRate = 48000U;
     config.inputPlugName = projectMix ? "ProjectMix Inputs" : "1814 Inputs";
     config.outputPlugName = projectMix ? "ProjectMix Outputs" : "1814 Outputs";
@@ -1532,14 +1534,46 @@ void AVCDiscovery::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
     if (shuttingDown_.load(std::memory_order_acquire)) {
         return;
     }
-    (void)device;
+    PrepareMAudioBootloader(device);
 }
 
 void AVCDiscovery::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
     if (shuttingDown_.load(std::memory_order_acquire)) {
         return;
     }
-    (void)device;
+    PrepareMAudioBootloader(device);
+}
+
+void AVCDiscovery::PrepareMAudioBootloader(
+    const std::shared_ptr<Discovery::FWDevice>& device) {
+    if (!device || !Bootloader::ShouldPrepareBootloader(device->GetVendorID(),
+                                                        device->GetModelID(),
+                                                        device->GetIdentity())) {
+        return;
+    }
+    const auto route = deviceRegistry_.CurrentRoute(device->GetGUID());
+    if (!route.has_value() || route->generation != device->GetGeneration() ||
+        route->nodeId != device->GetNodeID() || !deviceRegistry_.IsCurrent(*route)) {
+        ASFW_LOG_WARNING(AVC,
+                         "MAudio boot cue skipped: no current device route GUID=0x%016llx",
+                         device->GetGUID());
+        return;
+    }
+
+    const bool started = bootloaderPreparation_.Prepare(
+        device->GetVendorID(), device->GetModelID(), device->GetIdentity(), *route,
+        busInfo_.GetSpeed(ASFW::FW::NodeId{static_cast<uint8_t>(route->nodeId)}),
+        [weakSelf = weak_from_this()] {
+            const auto self = weakSelf.lock();
+            return self && !self->shuttingDown_.load(std::memory_order_acquire);
+        });
+    if (!started) {
+        return;
+    }
+
+    ASFW_LOG(AVC,
+             "MAudio 1814 bootloader identified; reading BootROM before guarded cue GUID=0x%016llx",
+             route->guid);
 }
 
 void AVCDiscovery::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {

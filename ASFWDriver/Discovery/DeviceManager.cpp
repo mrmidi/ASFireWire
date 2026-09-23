@@ -23,6 +23,27 @@ bool HasSBP2Unit(const std::shared_ptr<FWDevice>& device)
     return false;
 }
 
+bool SameROMIdentity(const FWDevice& device, const DeviceRecord& record)
+{
+    const auto& old = device.GetIdentity();
+    const auto& next = record.identity;
+    if (device.GetVendorID() != record.vendorId || device.GetModelID() != record.modelId ||
+        device.GetKind() != record.kind || old.rootVendorId != next.rootVendorId ||
+        old.rootModelId != next.rootModelId || old.units.size() != next.units.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < old.units.size(); ++i) {
+        const auto& a = old.units[i];
+        const auto& b = next.units[i];
+        if (a.unitDirectoryOffset != b.unitDirectoryOffset || a.vendorId != b.vendorId ||
+            a.modelId != b.modelId || a.specifierId != b.specifierId ||
+            a.version != b.version || a.logicalUnitNumber != b.logicalUnitNumber) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 DeviceManager::DeviceManager() : mutex_(IOLockAlloc()) {
@@ -291,11 +312,51 @@ std::shared_ptr<FWDevice> DeviceManager::UpsertDevice(
     // Reset main's SBP2 missing-scan counter when a device is (re)upserted so a
     // device that reappears is not prematurely terminated (see MarkDeviceLost).
     missingScanCounts_.erase(guid);
+    std::shared_ptr<FWDevice> replacedDevice;
+    std::vector<std::shared_ptr<FWUnit>> replacedUnits;
 
     if (auto it = devicesByGuid_.find(guid); it != devicesByGuid_.end()) {
-        if (auto device = ResumeExistingDevice(it->second, record)) {
+        if (it->second && SameROMIdentity(*it->second, record)) {
+            if (auto device = ResumeExistingDevice(it->second, record)) {
+                IOLockUnlock(mutex_);
+                return device;
+            }
+        } else if (it->second) {
+            // A stable GUID can return with a different Config-ROM persona
+            // (for example, M-Audio 1814 bootloader -> operational firmware).
+            // FWDevice identity and its unit list are immutable, so resume
+            // would preserve the old persona. Retire it before publishing the
+            // newly scanned identity on the same GUID.
+            replacedDevice = it->second;
+            replacedUnits = replacedDevice->GetUnits();
+            for (auto index = genNodeToGuid_.begin(); index != genNodeToGuid_.end();) {
+                if (index->second == guid) index = genNodeToGuid_.erase(index);
+                else ++index;
+            }
+            devicesByGuid_.erase(it);
+            missingScanCounts_.erase(guid);
+        }
+    }
+
+    if (replacedDevice) {
+        IOLockUnlock(mutex_);
+        for (const auto& unit : replacedUnits) {
+            if (unit && !unit->IsTerminated()) NotifyUnitTerminated(unit);
+        }
+        replacedDevice->Terminate();
+        NotifyDeviceRemoved(guid);
+        IOLockLock(mutex_);
+
+        // Discovery is normally serialized on the scanner workloop. Keep the
+        // recheck for callers that race an identity replacement regardless.
+        if (auto it = devicesByGuid_.find(guid); it != devicesByGuid_.end()) {
+            if (it->second && SameROMIdentity(*it->second, record)) {
+                auto device = ResumeExistingDevice(it->second, record);
+                IOLockUnlock(mutex_);
+                return device;
+            }
             IOLockUnlock(mutex_);
-            return device;
+            return nullptr;
         }
     }
 

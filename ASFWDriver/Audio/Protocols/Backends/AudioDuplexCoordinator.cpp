@@ -33,6 +33,18 @@ using ASFW::Audio::HasDeviceRestartState;
 using ASFW::Audio::HasHostRestartState;
 using ASFW::Audio::HasRestartIntent;
 
+[[nodiscard]] bool IsSupportedClockConfigForRecord(
+    const Discovery::DeviceRecord& record,
+    const AudioClockConfig& desiredClock) noexcept {
+    const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
+    if (policy != nullptr &&
+        (policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
+         policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix)) {
+        return ASFW::Audio::IsSupportedMAudioSpecialClockConfig(desiredClock);
+    }
+    return ASFW::Audio::IsSupportedAudioClockConfig(desiredClock);
+}
+
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 
 // A refused isochronous reservation is reported as one line carrying the whole
@@ -351,7 +363,11 @@ IOReturn AudioDuplexCoordinator::RequestClockConfig(
                  guid);
         return kIOReturnAborted;
     }
-    if (!IsSupportedAudioClockConfig(desiredClock)) {
+    const auto record = registry_.SnapshotByGuid(guid);
+    if (!record) {
+        return kIOReturnNotReady;
+    }
+    if (!IsSupportedClockConfigForRecord(*record, desiredClock)) {
         return kIOReturnUnsupported;
     }
 
@@ -566,11 +582,11 @@ IOReturn AudioDuplexCoordinator::RunStartStreaming(uint64_t guid) noexcept {
     AudioClockConfig desiredClock{
         .sampleRateHz = DefaultStartRateForRecord(*record),
     };
-    if (IsSupportedAudioClockConfig(session.pendingClock)) {
+    if (IsSupportedClockConfigForRecord(*record, session.pendingClock)) {
         desiredClock = session.pendingClock;
-    } else if (IsSupportedAudioClockConfig(session.desiredClock)) {
+    } else if (IsSupportedClockConfigForRecord(*record, session.desiredClock)) {
         desiredClock = session.desiredClock;
-    } else if (IsSupportedAudioClockConfig(session.appliedClock)) {
+    } else if (IsSupportedClockConfigForRecord(*record, session.appliedClock)) {
         desiredClock = session.appliedClock;
     }
     const DuplexRestartReason reason = HasRestartIntent(session)
@@ -863,7 +879,7 @@ AudioDuplexCoordinator::ApplyClockRequest(uint64_t guid,
     if (!record || !deviceControl) {
         return kIOReturnNotReady;
     }
-    if (!IsSupportedAudioClockConfig(request.desiredClock)) {
+    if (!IsSupportedClockConfigForRecord(*record, request.desiredClock)) {
         return kIOReturnUnsupported;
     }
 
@@ -1280,6 +1296,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                 .am824Slots = masterCapture.am824Slots,
                 .streamChannels = masterCapture.pcmChannels,
                 .trustConfiguredStride = streamProfile.captureTrustConfiguredStride,
+                .emptyPacketHasWrongDbc = streamProfile.captureEmptyPacketHasWrongDbc,
                 .motuPcmChunks = streamProfile.captureMotuPcmChunks,
                 .motuPorts = streamProfile.captureMotuPorts,
                 .captureChannelMap = streamProfile.captureChannelMap,
@@ -1310,6 +1327,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                     .am824Slots = captureStream.am824Slots,
                     .streamChannels = captureStream.pcmChannels,
                     .trustConfiguredStride = streamProfile.captureTrustConfiguredStride,
+                    .emptyPacketHasWrongDbc = streamProfile.captureEmptyPacketHasWrongDbc,
                     .motuPcmChunks = streamProfile.captureMotuPcmChunks,
                     .motuPorts = streamProfile.captureMotuPorts,
                     .captureChannelMap = streamProfile.captureChannelMap,

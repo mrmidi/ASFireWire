@@ -21,7 +21,10 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     uint32_t channelOffset,
     bool publishTimeline,
     const RxCaptureChannelMap& captureMap,
-    bool primeDelayLine) noexcept {
+    bool primeDelayLine,
+    bool emptyPacketHasWrongDbc,
+    bool previousDbcValid,
+    uint8_t previousDbc) noexcept {
     RxAudioPacketProcessorResult result{};
 
     if (length < kIsochHeaderSize + 8) {
@@ -61,6 +64,15 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
 
     const size_t eventCount = payloadBytes / dbsBytes;
     result.framesDecoded = static_cast<uint32_t>(eventCount);
+
+    // M-Audio 1814 / ProjectMix special firmware advances DBC by eight on
+    // empty packets at high rates. Linux applies CIP_EMPTY_HAS_WRONG_DBC and
+    // substitutes the expected counter on its incoming BeBoB stream.
+    // Cross-validated with linux-sound-firewire-stack/firewire/bebob.c:170-174,
+    // bebob_stream.c:443-451, and amdtp-stream.c:789-791.
+    if (eventCount == 0 && emptyPacketHasWrongDbc && previousDbcValid) {
+        result.dbc = previousDbc;
+    }
 
     if (eventCount == 0) {
         result.status = DirectRxWriteStatus::kAvailable;

@@ -27,6 +27,7 @@
 #include "../../Audio/Core/IAVCAudioConfigListener.hpp"
 #include "../../Audio/Protocols/Oxford/Apogee/ApogeeTypes.hpp"
 #include "../../Scheduling/ITimerScheduler.hpp"
+#include "../BeBoB/Bootloader/BeBoBBootloaderPreparationCoordinator.hpp"
 
 // Forward declarations
 namespace ASFW::Discovery { class DeviceRegistry; struct DeviceRecord; }
@@ -114,6 +115,7 @@ private:
     uint64_t GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const;
 
     void RebuildNodeIDMap();
+    void PrepareMAudioBootloader(const std::shared_ptr<Discovery::FWDevice>& device);
 
     void HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit);
     void PublishBeBoBAudioConfig(uint64_t guid,
@@ -181,6 +183,8 @@ private:
     Discovery::DeviceRegistry& deviceRegistry_;
     Discovery::IDeviceManager& deviceManager_;
     Protocols::Ports::FireWireBusOps& busOps_;
+    ASFW::Protocols::BeBoB::Bootloader::BeBoBBootloaderPreparationCoordinator
+        bootloaderPreparation_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
     Scheduling::ITimerScheduler& timerScheduler_;
     ASFW::Audio::IAVCAudioConfigListener* audioConfigListener_{nullptr};

@@ -5,6 +5,7 @@
 // Unit tests for the Dext DICE audio profile registry and profiles.
 
 #include <gtest/gtest.h>
+#include <utility>
 
 #include "Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
@@ -22,6 +23,7 @@
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/WeissIntProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.hpp"
+#include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
 #include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
@@ -585,6 +587,7 @@ TEST(DiceProfileTests, MAudioSpecialProfilesKeepAsymmetricBaseFormation) {
     using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
     for (const auto builder : {ProfileBuilderId::MAudioFireWire1814,
                                ProfileBuilderId::MAudioProjectMix}) {
+        const bool projectMix = builder == ProfileBuilderId::MAudioProjectMix;
         const auto* profile = AudioProfileRegistry::ProfileForBuilderId(
             static_cast<uint32_t>(builder));
         ASSERT_NE(profile, nullptr);
@@ -601,7 +604,40 @@ TEST(DiceProfileTests, MAudioSpecialProfilesKeepAsymmetricBaseFormation) {
         EXPECT_EQ(tx.midiSlots, 1U);
         EXPECT_EQ(rx.midiSlots, 1U);
         EXPECT_EQ(stream->SupportedSampleRates(),
-                  (std::vector<uint32_t>{44100U, 48000U}));
+                  (std::vector<uint32_t>{44100U, 48000U, 88200U, 96000U}));
+        struct ExpectedLatency final {
+            uint32_t rate;
+            uint32_t tx;
+            uint32_t rx;
+            uint32_t safety;
+        };
+        const ExpectedLatency expected[] = {
+            {44100U, projectMix ? 98U : 105U, projectMix ? 98U : 105U, 44U},
+            {48000U, projectMix ? 104U : 112U, projectMix ? 104U : 113U, 48U},
+            {88200U, projectMix ? 171U : 179U, projectMix ? 171U : 179U, 88U},
+            {96000U, projectMix ? 183U : 189U, projectMix ? 183U : 189U, 96U},
+        };
+        for (const auto& row : expected) {
+            EXPECT_EQ(stream->TxReportedLatencyFrames(row.rate), row.tx) << row.rate;
+            EXPECT_EQ(stream->RxReportedLatencyFrames(row.rate), row.rx) << row.rate;
+            EXPECT_EQ(stream->TxSafetyOffsetFrames(row.rate), row.safety) << row.rate;
+            EXPECT_EQ(stream->RxSafetyOffsetFrames(row.rate), row.safety) << row.rate;
+        }
+        for (const auto [rate, expectedFrames] :
+             {std::pair<uint32_t, uint8_t>{44100U, 8U}, {48000U, 8U},
+              {88200U, 16U}, {96000U, 16U}}) {
+            auto rateConfig = tx;
+            ASSERT_TRUE(ASFW::Isoch::Audio::AVC::Profiles::MAudioSpecialProfile::
+                            ConfigureStreamRate(rateConfig, rate));
+            EXPECT_EQ(rateConfig.sampleRate, rate);
+            EXPECT_EQ(rateConfig.framesPerDataPacket, expectedFrames);
+        }
+        auto unsupportedRateConfig = tx;
+        EXPECT_FALSE(ASFW::Isoch::Audio::AVC::Profiles::MAudioSpecialProfile::
+                         ConfigureStreamRate(unsupportedRateConfig, 176400U));
+        // StartIO's receive-side anchor gate must allow BeBoB's startup
+        // NO-DATA period before it fails and unwinds StartAudioStreaming.
+        EXPECT_EQ(stream->InitialClockAnchorTimeoutMs(), 4000U);
     }
 }
 

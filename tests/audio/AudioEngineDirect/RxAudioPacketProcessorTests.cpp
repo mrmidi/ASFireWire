@@ -262,6 +262,35 @@ TEST(RxAudioPacketProcessorTests, NoDataPacketIsAcceptedAndCarriesSytNoInfo) {
     EXPECT_EQ(result.framesDecoded, 0u);
 }
 
+TEST(RxAudioPacketProcessorTests, MAudioEmptyPacketDbcQuirkReusesPreviousCounterOnlyWhenEnabled) {
+    Fixture fixture;
+    RxAudioPacketProcessor processor(fixture.writer);
+    const auto packet = MakePacket(MakeQuadlet0(kSlots, /*wrong empty DBC=*/0x38),
+                                   MakeQuadlet1(0xFFFF), kSlots, 0);
+    ASFW::Audio::Wire::Am824RxPayloadCodec codec(kSlots);
+
+    const auto corrected = processor.ProcessPacket(
+        packet.data(), packet.size(), 0, kSlots, codec, 0, true, {}, false,
+        /*emptyPacketHasWrongDbc=*/true, /*previousDbcValid=*/true,
+        /*previousDbc=*/0x30);
+    EXPECT_EQ(corrected.status, DirectRxWriteStatus::kAvailable);
+    EXPECT_EQ(corrected.framesDecoded, 0U);
+    EXPECT_EQ(corrected.dbc, 0x30U);
+
+    const auto generic = processor.ProcessPacket(
+        packet.data(), packet.size(), 0, kSlots, codec, 0, true, {}, false,
+        /*emptyPacketHasWrongDbc=*/false, /*previousDbcValid=*/true,
+        /*previousDbc=*/0x30);
+    EXPECT_EQ(generic.dbc, 0x38U);
+
+    // The first packet establishes the counter and has no prior value to reuse.
+    const auto first = processor.ProcessPacket(
+        packet.data(), packet.size(), 0, kSlots, codec, 0, true, {}, false,
+        /*emptyPacketHasWrongDbc=*/true, /*previousDbcValid=*/false,
+        /*previousDbc=*/0x30);
+    EXPECT_EQ(first.dbc, 0x38U);
+}
+
 TEST(RxAudioPacketProcessorTests, DataPacketDecodesAndReportsItsSyt) {
     Fixture fixture;
     RxAudioPacketProcessor processor(fixture.writer);

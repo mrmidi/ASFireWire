@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "BeBoBBootloaderPreparation.hpp"
+#include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 namespace ASFW::Protocols::BeBoB::Bootloader {
 namespace {
@@ -14,6 +15,16 @@ PreparationStep Evaluate(const BootRomInfo& info) noexcept {
 }
 
 PreparationStep BeginPreparation() noexcept { return {ReadingInfo{0}, ReadInfoBlock{}}; }
+
+bool ShouldPrepareBootloader(
+    uint32_t vendorId, uint32_t modelId,
+    const ASFW::Discovery::DeviceIdentityEvidence& identity) noexcept {
+    if (!IsSupportedBootloaderPersona(vendorId, modelId)) return false;
+    const auto policy = ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(identity);
+    return policy.has_value() &&
+           policy->bootloaderCue ==
+               ASFW::DeviceProfiles::Audio::BootloaderCuePolicy::BeBoBStartFirmware;
+}
 
 PreparationStep AdvancePreparation(const PreparationState& state,
                                    const PreparationEvent& event) noexcept {

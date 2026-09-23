@@ -224,7 +224,8 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         packet.payload.data(), packet.payload.size(),
         absoluteFrameCursor_, channels,
         *payloadCodec_, configuration_.channelOffset,
-        !configuration_.isSecondary, configuration_.captureChannelMap);
+        !configuration_.isSecondary, configuration_.captureChannelMap,
+        false, configuration_.emptyPacketHasWrongDbc, dbcInitialized_, lastDbc_);
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {

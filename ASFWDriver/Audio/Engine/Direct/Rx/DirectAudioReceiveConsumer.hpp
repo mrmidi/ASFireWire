@@ -36,6 +36,8 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         // Loud OXFW quirk: take the RX stride from the configured slot count,
         // not the packet's CIP dbs field (snd-oxfw SND_OXFW_QUIRK_WRONG_DBS).
         bool trustConfiguredStride{false};
+        // M-Audio 1814 / ProjectMix high-rate empty packets carry DBC + 8.
+        bool emptyPacketHasWrongDbc{false};
         RxCaptureChannelMap captureChannelMap{};
     };
 

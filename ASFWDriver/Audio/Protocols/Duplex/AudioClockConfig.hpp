@@ -26,4 +26,15 @@ struct AudioClockConfig {
            desiredClock.sampleRateHz == 48000U;
 }
 
+// The special M-Audio BeBoB profile has a separately validated S/PDIF path at
+// 88.2/96 kHz. Keep this opt-in helper distinct from the generic rule so DICE
+// and other protocol families remain restricted to validated 1x rates.
+[[nodiscard]] constexpr bool IsSupportedMAudioSpecialClockConfig(
+    const AudioClockConfig& desiredClock) noexcept {
+    return desiredClock.sampleRateHz == 44100U ||
+           desiredClock.sampleRateHz == 48000U ||
+           desiredClock.sampleRateHz == 88200U ||
+           desiredClock.sampleRateHz == 96000U;
+}
+
 } // namespace ASFW::Audio

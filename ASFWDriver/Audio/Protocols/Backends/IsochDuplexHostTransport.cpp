@@ -27,6 +27,7 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
         .streamChannels = format.streamChannels,
         .isSecondary = isSecondary,
         .trustConfiguredStride = format.trustConfiguredStride,
+        .emptyPacketHasWrongDbc = format.emptyPacketHasWrongDbc,
         .captureChannelMap = format.captureChannelMap,
     };
     // This is a DriverKit `noexcept` boundary: report allocation failure instead

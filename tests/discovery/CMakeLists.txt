@@ -106,3 +106,12 @@ add_discovery_test(DeviceIdentityEvidenceTests
     DeviceIdentityEvidenceTests.cpp
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
+
+# A same-GUID device can reappear with a different Config-ROM persona after a
+# firmware reset. FWDevice identity is immutable, so discovery must replace it.
+add_discovery_test(DeviceManagerIdentityReplacementTests
+    DeviceManagerIdentityReplacementTests.cpp
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceManager.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
