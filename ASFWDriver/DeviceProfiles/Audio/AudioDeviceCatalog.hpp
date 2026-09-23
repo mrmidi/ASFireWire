@@ -165,6 +165,7 @@ enum class ProtocolImplementationId : uint8_t {
     FireworksOnyx400F,
     BeBoBPhase88,
     BeBoBGeneric,
+    BeBoBMAudioSpecial,
     MotuV2,
     kLastValid = MotuV2,
 };
@@ -197,6 +198,10 @@ enum class StreamStartShape : uint8_t {
     /// packets can establish the device receive-clock path. Source lock is
     /// inspected post-start, not used as an admission gate.
     TransmitFirst,
+    /// M-Audio special BeBoB: establish both CMP plugs, start host IT before
+    /// host IR, then reassert signal format after both DMA contexts run.
+    /// Linux bebob_stream.c:411-438,623-659 (rx_stream is host IT).
+    MAudioSpecial,
 };
 
 /// Wire-level facts about a device that no probe reports, so the driver has to

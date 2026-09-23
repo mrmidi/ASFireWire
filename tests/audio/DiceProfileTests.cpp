@@ -568,6 +568,8 @@ TEST(DiceProfileTests, TheDiceAccessorReturnsOnlyDiceProfiles) {
                                ProfileBuilderId::MackieOnyx400F,
                                ProfileBuilderId::Motu828mk2,
                                ProfileBuilderId::MotuUltralite,
+                               ProfileBuilderId::MAudioFireWire1814,
+                               ProfileBuilderId::MAudioProjectMix,
                                ProfileBuilderId::None}) {
         EXPECT_EQ(AudioProfileRegistry::DiceProfileForBuilderId(
                       static_cast<uint32_t>(builder)),
@@ -577,6 +579,30 @@ TEST(DiceProfileTests, TheDiceAccessorReturnsOnlyDiceProfiles) {
     EXPECT_NE(AudioProfileRegistry::DiceProfileForBuilderId(
                   static_cast<uint32_t>(ProfileBuilderId::FocusriteSPro24Dsp)),
               nullptr);
+}
+
+TEST(DiceProfileTests, MAudioSpecialProfilesKeepAsymmetricBaseFormation) {
+    using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
+    for (const auto builder : {ProfileBuilderId::MAudioFireWire1814,
+                               ProfileBuilderId::MAudioProjectMix}) {
+        const auto* profile = AudioProfileRegistry::ProfileForBuilderId(
+            static_cast<uint32_t>(builder));
+        ASSERT_NE(profile, nullptr);
+        auto* stream = dynamic_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(profile);
+        ASSERT_NE(stream, nullptr);
+        ASFW::Isoch::Audio::AudioStreamConfig tx{};
+        ASFW::Isoch::Audio::AudioStreamConfig rx{};
+        ASSERT_TRUE(stream->BuildDefaultTxStreamConfig(tx));
+        ASSERT_TRUE(stream->BuildDefaultRxStreamConfig(rx));
+        EXPECT_EQ(tx.pcmChannels, 6U);
+        EXPECT_EQ(tx.dbs, 7U);
+        EXPECT_EQ(rx.pcmChannels, 10U);
+        EXPECT_EQ(rx.dbs, 11U);
+        EXPECT_EQ(tx.midiSlots, 1U);
+        EXPECT_EQ(rx.midiSlots, 1U);
+        EXPECT_EQ(stream->SupportedSampleRates(),
+                  (std::vector<uint32_t>{44100U, 48000U}));
+    }
 }
 
 // An out-of-range builder id -- a nub from an older driver, or a corrupt

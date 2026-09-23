@@ -225,16 +225,19 @@ TEST(DeviceProtocolChoice, AnUnknownAvcDeviceGetsNoProtocol) {
     }
 }
 
-TEST(DeviceProtocolChoice, TheMAudioSpecialFirmwareGetsNoProtocol) {
+TEST(DeviceProtocolChoice, TheMAudioSpecialFirmwareGetsOnlyItsOwnProtocol) {
     for (const uint32_t model : {kMAudioFireWire1814ModelId,
-                                 kMAudioProjectMixModelId,
-                                 kMAudioFireWire1814BootloaderModelId}) {
+                                 kMAudioProjectMixModelId}) {
         const auto device = AvcDevice(kMAudioVendorId, model);
         const auto choice = ChoiceFor(device);
-        EXPECT_FALSE(choice.has_value())
-            << "model 0x" << std::hex << model
-            << " must be recognised for its command bound only";
+        ASSERT_TRUE(choice.has_value());
+        EXPECT_EQ(choice->implementation, ProtocolImplementationId::BeBoBMAudioSpecial);
+        EXPECT_EQ(choice->builder, model == kMAudioFireWire1814ModelId
+                                       ? ProfileBuilderId::MAudioFireWire1814
+                                       : ProfileBuilderId::MAudioProjectMix);
     }
+    EXPECT_FALSE(ChoiceFor(AvcDevice(kMAudioVendorId,
+                                      kMAudioFireWire1814BootloaderModelId)).has_value());
 }
 
 // A device with no units at all cannot resolve to anything, and must not crash

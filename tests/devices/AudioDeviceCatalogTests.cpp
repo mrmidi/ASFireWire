@@ -409,18 +409,20 @@ TEST(AudioDeviceCatalog, TheMAudioSpecialFirmwareCarriesAFilteredCommandSet) {
                                        {{.offset = 5,
                                          .specifierId = kTa1394AvcSpecifier,
                                          .version = kTa1394AvcVersion}});
-        // Recognised, but not playable here: this branch has no
-        // MAudioSpecialProtocol, so no builder may be named.
         const auto plan = AudioDeviceCatalog::Resolve(device.identity);
         ASSERT_TRUE(plan.has_value());
         EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
                   Discovery::AvcCommandFilterId::MAudioSpecialBeBoB)
             << "model 0x" << std::hex << model;
         EXPECT_EQ(plan->probePolicy, ProbePolicyId::BeBoBFilteredCommandSet);
-        EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
-        EXPECT_NE(plan->support, SupportDisposition::GenericFallback)
-            << "model 0x" << std::hex << model
-            << " fell through to generic AV/C, which is the freeze path";
+        EXPECT_EQ(plan->profileBuilder,
+                  model == kMAudioFireWire1814ModelId
+                      ? ProfileBuilderId::MAudioFireWire1814
+                      : ProfileBuilderId::MAudioProjectMix);
+        EXPECT_EQ(plan->protocolImplementation,
+                  ProtocolImplementationId::BeBoBMAudioSpecial);
+        EXPECT_EQ(plan->support, SupportDisposition::Supported);
+        EXPECT_EQ(plan->streamTraits.startShape, StreamStartShape::MAudioSpecial);
     }
 }
 

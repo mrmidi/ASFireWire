@@ -82,6 +82,8 @@ add_device_test(BeBoBProtocolTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
 )
@@ -306,6 +308,7 @@ add_device_test(BackendLifecycleRaceTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.cpp"
@@ -326,3 +329,8 @@ add_device_test(BeBoBCaptureChannelMapTests
     BeBoBCaptureChannelMapTests.cpp
 )
 
+
+# M-Audio special firmware capture channel order and model-specific skew
+add_device_test(MAudioCaptureChannelMapTests
+    MAudioCaptureChannelMapTests.cpp
+)

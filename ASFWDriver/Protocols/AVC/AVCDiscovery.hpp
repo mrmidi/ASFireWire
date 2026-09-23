@@ -122,6 +122,8 @@ private:
                                   uint32_t profileBuilderId,
                                   const std::string& deviceName,
                                   const ::ASFW::Audio::BeBoB::DeviceModel& inventory);
+    void PublishMAudioSpecialConfig(uint64_t guid,
+                                    const Discovery::FWDevice& device);
     void PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
                                               const Discovery::FWDevice& device);
     void PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,

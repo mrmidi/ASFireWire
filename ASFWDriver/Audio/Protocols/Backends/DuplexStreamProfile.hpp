@@ -17,6 +17,7 @@
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
 #include "../../DriverKit/Config/MOTU/MotuV2Profile.hpp"
 #include "../../Engine/Direct/Rx/RxCaptureChannelMap.hpp"
+#include "../../Families/BeBoB/MAudio/MAudioCaptureChannelMap.hpp"
 #include "../AudioTypes.hpp"
 #include "../IDeviceProtocol.hpp"
 
@@ -342,6 +343,15 @@ class DuplexStreamProfileResolver final {
             profile.captureTrustConfiguredStride = true;
         }
 
+        // The special-firmware personas cannot answer the BridgeCo channel
+        // position query. Their model-specific AM824 slot order is resolved
+        // once from the catalog's profile choice and the current wire width.
+        if (policy != nullptr) {
+            profile.captureChannelMap =
+                Families::BeBoB::MAudio::CaptureChannelMapFor(
+                    policy->plan.profileBuilder, caps.hostInputPcmChannels);
+        }
+
         using DeviceProfiles::Audio::StreamStartShape;
         switch (traits.startShape) {
         case StreamStartShape::ApogeeInterleaved:
@@ -399,6 +409,15 @@ class DuplexStreamProfileResolver final {
                 DuplexHostDirection::kTransmit,
                 DuplexHostDirection::kReceive,
             };
+            break;
+
+        case StreamStartShape::MAudioSpecial:
+            profile.startOrder.requiresPreStreamClockLock = false;
+            profile.startOrder.startOrder = {
+                DuplexHostDirection::kTransmit,
+                DuplexHostDirection::kReceive,
+            };
+            profile.startOrder.postDeviceEnableDelayMs = 0;
             break;
 
         case StreamStartShape::Default:

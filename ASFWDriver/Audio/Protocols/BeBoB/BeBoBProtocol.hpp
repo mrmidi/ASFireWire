@@ -98,6 +98,11 @@ protected:
     // non-zero stream plugs.
     [[nodiscard]] virtual uint8_t StreamPlug(bool isInput) const { return 0; }
 
+    /// Optional delay between output and input CONTROL signal-format writes.
+    /// Special M-Audio firmware needs a 100 ms gap; ordinary BeBoB devices keep
+    /// the existing immediate sequence.
+    [[nodiscard]] virtual uint32_t SignalFormatInterlockMs() const noexcept { return 0; }
+
     // Rate validation. Default rejects anything not in SupportedRates(); override for
     // devices with format-set logic.
     [[nodiscard]] virtual bool IsRateSupported(uint32_t hz) const;
@@ -114,6 +119,7 @@ protected:
 
     void FinishClockApply(ClockApplyEpoch* epoch, IOReturn status);
     void CancelClockApply();
+    void CancelSignalFormatInterlock() noexcept;
 
     [[nodiscard]] CMP::CMPDevice CurrentCMPDevice() const noexcept;
     [[nodiscard]] IOReturn ResetEpochIfNeeded() noexcept;
@@ -132,6 +138,8 @@ protected:
 
     // In-flight clock-apply epoch. Non-nullptr while ApplyClockConfig is settling.
     ClockApplyEpoch* activeClockApply_{nullptr};
+    Scheduling::TimerToken signalFormatInterlockTimer_{Scheduling::kInvalidTimerToken};
+    std::shared_ptr<std::function<void(IOReturn)>> signalFormatInterlockCompletion_;
 
 private:
     void EnsurePlugFree(CMP::PCRDirection dir, uint8_t plug, std::function<void(IOReturn)> cb);

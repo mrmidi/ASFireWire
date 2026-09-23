@@ -286,6 +286,7 @@ add_audio_test(DiceProfileTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.cpp"

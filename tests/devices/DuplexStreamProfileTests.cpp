@@ -19,6 +19,9 @@ using ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
 using ASFW::DeviceProfiles::Audio::kTerraTecVendorId;
 using ASFW::DeviceProfiles::Audio::kPhase88RackFwModelId;
 using ASFW::DeviceProfiles::Audio::kMackieVendorId;
+using ASFW::DeviceProfiles::Audio::kMAudioVendorId;
+using ASFW::DeviceProfiles::Audio::kMAudioFireWire1814ModelId;
+using ASFW::DeviceProfiles::Audio::kMAudioProjectMixModelId;
 using ASFW::DeviceProfiles::Audio::kOnyx400FModelId;
 using ASFW::DeviceProfiles::Audio::kWeissInt202ModelId;
 using ASFW::DeviceProfiles::Audio::kWeissInt203ModelId;
@@ -83,6 +86,32 @@ constexpr uint32_t kFireworksVersion = 0x010000;
 
 [[nodiscard]] DeviceRecord AvcRecord(uint32_t vendorId, uint32_t modelId) {
     return MakeRecord(vendorId, modelId, kTa1394AvcSpecifier, kTa1394AvcVersion);
+}
+
+TEST(DuplexStreamProfileTests, MAudioSpecialResolvesAsymmetricSlotsAndTransmitFirst) {
+    const AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 10,
+        .hostOutputPcmChannels = 6,
+        .deviceToHostAm824Slots = 11,
+        .hostToDeviceAm824Slots = 7,
+        .sampleRateHz = 48000,
+    };
+
+    for (const uint32_t modelId : {kMAudioFireWire1814ModelId, kMAudioProjectMixModelId}) {
+        const DeviceRecord record = AvcRecord(kMAudioVendorId, modelId);
+        const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+        ASSERT_TRUE(profile.policyResolved) << modelId;
+        EXPECT_EQ(profile.captureStreams[0].am824Slots, 11U) << modelId;
+        EXPECT_EQ(profile.playbackStreams[0].am824Slots, 7U) << modelId;
+        EXPECT_EQ(profile.captureChannelMap.SlotFor(1), 4U) << modelId;
+        EXPECT_EQ(profile.captureChannelMap.SlotFor(2), 1U) << modelId;
+        EXPECT_EQ(profile.captureChannelMap.delayFrames,
+                  modelId == kMAudioFireWire1814ModelId ? 16U : 0U) << modelId;
+        EXPECT_FALSE(profile.startOrder.requiresPreStreamClockLock) << modelId;
+        EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kTransmit) << modelId;
+        EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kReceive) << modelId;
+        EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U) << modelId;
+    }
 }
 
 TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe) {

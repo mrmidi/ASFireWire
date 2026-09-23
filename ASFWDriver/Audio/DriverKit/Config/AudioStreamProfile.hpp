@@ -43,6 +43,7 @@ struct AudioStreamTxPolicy final {
     /// MOTU only: chunk behind each host output channel. Empty encodes in wire order.
     Encoding::Motu::MotuPortMap motuPlaybackPorts{};
     ::ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};
+
 };
 
 // What a profile's compiled-in stream geometry MEANS when the device's own

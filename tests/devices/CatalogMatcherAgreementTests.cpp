@@ -217,13 +217,33 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .description = "M-Audio FireWire 1814 (BeBoB, filtered command set)",
             .evidence = MakeEvidence(kMAudioVendorId, kMAudioFireWire1814ModelId, std::nullopt,
                                      0x00A02D, std::nullopt),
-            .expectedSupport = SupportDisposition::RecognizedUnsupported,
+            .expectedSupport = SupportDisposition::Supported,
             .expectedFamily = AudioFamilyProviderId::BeBoB,
-            .expectedProfileBuilder = ProfileBuilderId::None,
+            .expectedProfileBuilder = ProfileBuilderId::MAudioFireWire1814,
             .expectedModelName = kMAudioFireWire1814ModelName,
-            .expectedBackend = std::nullopt,
+            .expectedBackend = Audio::AudioBackendKind::Avc,
             .expectedBootstrap = Audio::ProbeBootstrap::BeBoBUnprobed,
             .expectedFilter = Discovery::AvcCommandFilterId::MAudioSpecialBeBoB,
+            .expectedStartRatePinHz = 48000U,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::MAudioSpecial,
+            .expectedCmpChoosesIsoChannel = true,
+        },
+        {
+            .description = "M-Audio ProjectMix I/O (BeBoB, filtered command set)",
+            .evidence = MakeEvidence(kMAudioVendorId, kMAudioProjectMixModelId, std::nullopt,
+                                     0x00A02D, std::nullopt),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::BeBoB,
+            .expectedProfileBuilder = ProfileBuilderId::MAudioProjectMix,
+            .expectedModelName = kMAudioProjectMixModelName,
+            .expectedBackend = Audio::AudioBackendKind::Avc,
+            .expectedBootstrap = Audio::ProbeBootstrap::BeBoBUnprobed,
+            .expectedFilter = Discovery::AvcCommandFilterId::MAudioSpecialBeBoB,
+            .expectedStartRatePinHz = 48000U,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::MAudioSpecial,
+            .expectedCmpChoosesIsoChannel = true,
         },
         // 12. M-Audio FireWire 1814 Bootloader
         {
@@ -356,11 +376,16 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
                     break;
                 case AudioFamilyProviderId::BeBoB:
                     EXPECT_EQ(*backend, Audio::AudioBackendKind::Avc);
-                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::BeBoBPlug0Only);
-                    EXPECT_TRUE(plan->protocolImplementation ==
-                                    ProtocolImplementationId::BeBoBPhase88 ||
-                                plan->protocolImplementation ==
-                                    ProtocolImplementationId::BeBoBGeneric);
+                    if (plan->protocolImplementation ==
+                        ProtocolImplementationId::BeBoBMAudioSpecial) {
+                        EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::BeBoBUnprobed);
+                    } else {
+                        EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::BeBoBPlug0Only);
+                        EXPECT_TRUE(plan->protocolImplementation ==
+                                        ProtocolImplementationId::BeBoBPhase88 ||
+                                    plan->protocolImplementation ==
+                                        ProtocolImplementationId::BeBoBGeneric);
+                    }
                     break;
                 case AudioFamilyProviderId::MotuRegister:
                     EXPECT_EQ(*backend, Audio::AudioBackendKind::MotuRegister);

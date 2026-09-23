@@ -10,6 +10,7 @@
 #include "ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Protocols/AVC/CMP/CMPClient.hpp"
+#include "AvcTestRig.hpp"
 
 #include <array>
 #include <cstring>
@@ -123,6 +124,7 @@ public:
 
     ASFW::Audio::AudioStreamRuntimeCaps DeviceCaps() const override { return caps_; }
     std::vector<uint32_t> SupportedRates() const override { return {48000}; }
+    uint32_t SignalFormatInterlockMs() const noexcept override { return 100; }
 
     void SetCaps(const ASFW::Audio::AudioStreamRuntimeCaps& caps) { caps_ = caps; }
     void SetConnected(bool input, bool output) {
@@ -197,6 +199,61 @@ TEST_F(BeBoBProtocolTest, ShutdownAfterTimerStarts) {
     EXPECT_TRUE(called);
     EXPECT_EQ(status, kIOReturnNotReady);
     EXPECT_EQ(timer_.PendingCount(), 0);
+}
+
+TEST(BeBoBProtocolInterlockTests, OutputAndInputFormatsAreSeparatedByTheConfiguredDelay) {
+    ASFW::Testing::AvcTestRig rig;
+    ASSERT_TRUE(rig.IsReady());
+    TestBeBoBProtocol proto(rig.Bus(), rig.Bus(), rig.Route(), nullptr, nullptr, &rig.Timers());
+    proto.UpdateRuntimeContext(rig.Route(), rig.Transport());
+
+    IOReturn status = kIOReturnBusy;
+    bool completed = false;
+    proto.ApplyClockConfig({.sampleRateHz = 48000},
+        [&status, &completed](IOReturn result, auto) {
+            status = result;
+            completed = true;
+        });
+
+    ASSERT_EQ(rig.Drain(), 1U);
+    ASSERT_EQ(rig.Target().CommandCount(), 1U);
+    EXPECT_EQ(rig.Target().Commands()[0].data[2], 0x18); // output first
+    EXPECT_EQ(rig.Timers().PendingCount(), 1U);
+
+    rig.Timers().Advance(99ULL * 1000ULL * 1000ULL);
+    EXPECT_EQ(rig.Target().CommandCount(), 1U);
+    rig.Timers().Advance(1ULL * 1000ULL * 1000ULL);
+    ASSERT_EQ(rig.Drain(), 1U);
+    ASSERT_EQ(rig.Target().CommandCount(), 2U);
+    EXPECT_EQ(rig.Target().Commands()[1].data[2], 0x19); // input after interlock
+    EXPECT_FALSE(completed);
+
+    rig.Timers().Advance(300ULL * 1000ULL * 1000ULL);
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(status, kIOReturnSuccess);
+}
+
+TEST(BeBoBProtocolInterlockTests, RouteUpdateCancelsInterlockAndCompletesApply) {
+    ASFW::Testing::AvcTestRig rig;
+    ASSERT_TRUE(rig.IsReady());
+    TestBeBoBProtocol proto(rig.Bus(), rig.Bus(), rig.Route(), nullptr, nullptr, &rig.Timers());
+    proto.UpdateRuntimeContext(rig.Route(), rig.Transport());
+
+    IOReturn status = kIOReturnSuccess;
+    bool completed = false;
+    proto.ApplyClockConfig({.sampleRateHz = 48000},
+        [&status, &completed](IOReturn result, auto) {
+            status = result;
+            completed = true;
+        });
+    ASSERT_EQ(rig.Drain(), 1U);
+    ASSERT_EQ(rig.Timers().PendingCount(), 1U);
+
+    proto.UpdateRuntimeContext(rig.Route(), nullptr);
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(status, kIOReturnAborted);
+    EXPECT_EQ(rig.Timers().PendingCount(), 0U);
+    EXPECT_EQ(rig.Target().CommandCount(), 1U);
 }
 
 TEST_F(BeBoBProtocolTest, ReadClockHealthReportsNominalRateAndDisconnectedState) {

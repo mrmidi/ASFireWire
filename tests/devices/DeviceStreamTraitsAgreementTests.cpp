@@ -11,8 +11,8 @@
 // were an observed oracle before they became written-down expectations. The
 // table is deleted now; the expectations remain.
 //
-// Every difference from it is deliberate and named below. There are two, and
-// neither is reachable.
+// The original equivalence cases remain below. M-Audio's newly enabled
+// special-firmware route adds explicit blocking and start-order expectations.
 
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
@@ -79,8 +79,7 @@ Identity(uint32_t vendorId, uint32_t modelId, uint32_t unitSpecifier,
 // Forced stream mode
 // ---------------------------------------------------------------------------
 
-// The equivalence that matters: every identity that can actually reach the
-// consumer must get the same answer it does today.
+// Every identity that can reach the consumer has an explicit expected cadence.
 TEST(DeviceStreamTraitsAgreement, ForcedModeMatchesTheOldTableForEveryAvcDevice) {
     struct Case {
         uint32_t vendorId;
@@ -101,11 +100,11 @@ TEST(DeviceStreamTraitsAgreement, ForcedModeMatchesTheOldTableForEveryAvcDevice)
          ForcedStreamMode::Blocking},
         {kMackieVendorId, kOnyx1200FModelId, kFireworksVersion,
          ForcedStreamMode::Blocking},
-        // M-Audio was never in the old BeBoB list, so it must stay unforced.
+        // Special-firmware M-Audio devices require blocking cadence when streamed.
         {kMAudioVendorId, kMAudioFireWire1814ModelId, kTa1394AvcVersion,
-         ForcedStreamMode::Unspecified},
+         ForcedStreamMode::Blocking},
         {kMAudioVendorId, kMAudioProjectMixModelId, kTa1394AvcVersion,
-         ForcedStreamMode::Unspecified},
+         ForcedStreamMode::Blocking},
         // Not a device we know at all.
         {0x00AABB, 0x000042, kTa1394AvcVersion, ForcedStreamMode::Unspecified},
     };
@@ -199,16 +198,15 @@ TEST(DeviceStreamTraitsAgreement, CmpDrivenFamiliesCarryTheCmpStartShape) {
               StreamStartShape::ApogeeInterleaved);
 }
 
-// The PHASE 88 is the only supported BeBoB device with start shape today.
-TEST(DeviceStreamTraitsAgreement, TheOnlyBeBoBDeviceIsStillThePhase88) {
+// The M-Audio special-firmware personas have their own transmit-first recipe.
+TEST(DeviceStreamTraitsAgreement, BeBoBStartShapesRemainModelSpecific) {
     EXPECT_EQ(ResolveTraits(
                   AvcIdentity(kTerraTecVendorId, kPhase88RackFwModelId)).startShape,
               StreamStartShape::CmpReceiveThenTransmit);
-    // The M-Audio personas are BeBoB by family but are not in the old list, so
-    // they must not pick up a start shape either -- nothing starts them.
-    EXPECT_EQ(ResolveTraits(
-                  AvcIdentity(kMAudioVendorId, kMAudioFireWire1814ModelId)).startShape,
-              StreamStartShape::Default);
+    for (const uint32_t modelId : {kMAudioFireWire1814ModelId, kMAudioProjectMixModelId}) {
+        EXPECT_EQ(ResolveTraits(AvcIdentity(kMAudioVendorId, modelId)).startShape,
+                  StreamStartShape::MAudioSpecial);
+    }
 }
 
 TEST(DeviceStreamTraitsAgreement, WeissIsTheOnlyTransmitFirstDevice) {

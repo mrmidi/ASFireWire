@@ -12,6 +12,7 @@
 #include "Fireworks/FireworksProtocol.hpp"
 #include "BeBoB/Phase88Protocol.hpp"
 #include "BeBoB/GenericBeBoBProtocol.hpp"
+#include "BeBoB/MAudioSpecialProtocol.hpp"
 #include "MOTU/MotuV2Protocol.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Logging/Logging.hpp"
@@ -146,6 +147,16 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
             return std::make_unique<BeBoB::GenericBeBoBProtocol>(
                 busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
                 BeBoB::DeviceModel{});
+
+        case ProtocolImplementationId::BeBoBMAudioSpecial:
+            if (plan.profileBuilder != DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 &&
+                plan.profileBuilder != DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix) {
+                return nullptr;
+            }
+            ASFW_LOG(Audio, "Creating M-Audio special BeBoB protocol node=0x%04x", nodeId);
+            return std::make_unique<BeBoB::MAudioSpecialProtocol>(
+                busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
+                plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814);
 
         // --- MotuRegister Family ---
         // MOTU publishes model_id 0; the model is the unit's Unit_Sw_Version,

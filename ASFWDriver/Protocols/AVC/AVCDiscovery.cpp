@@ -18,6 +18,7 @@
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
 #include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "../../Audio/Protocols/BeBoB/MAudioSpecialFormation.hpp"
 #include "../../Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "StreamFormats/AVCSignalFormatCommand.hpp"
 #include <DriverKit/IOService.h>
@@ -415,6 +416,16 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
         return;
     }
 
+    if (bootstrap == ASFW::Audio::ProbeBootstrap::BeBoBUnprobed) {
+        // The M-Audio special firmware freezes on the generic information and
+        // BridgeCo probes. Its catalog-selected fixed formation is enough to
+        // publish an endpoint; device commands are issued only by the selected
+        // protocol during start, through the per-frame FCP gate.
+        PublishMAudioSpecialConfig(guid, *device);
+        RebuildNodeIDMap();
+        return;
+    }
+
     // Echo Fireworks units (Onyx 400F) advertise an AV/C unit directory but are
     // driven by EFC, not by the Music subunit: Linux snd-fireworks never issues
     // UNIT_INFO/SUBUNIT_INFO or descriptor reads, and Apple's old class driver
@@ -442,18 +453,9 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
 
         // Handled above; both arms return before reaching this switch.
         case ASFW::Audio::ProbeBootstrap::BeBoBPlug0Only:
+        case ASFW::Audio::ProbeBootstrap::BeBoBUnprobed:
         case ASFW::Audio::ProbeBootstrap::FireworksEfc:
             break;
-
-        case ASFW::Audio::ProbeBootstrap::BeBoBUnprobed:
-            // ProbePolicyId::BeBoBFilteredCommandSet: the unit is BeBoB but its
-            // firmware must not receive generic AV/C before its own bring-up.
-            ASFW_LOG(AVC,
-                     "AVCDiscovery: BeBoB device is unprobed by policy; no automatic AV/C "
-                     "traffic GUID=0x%016llx",
-                     guid);
-            RebuildNodeIDMap();
-            return;
 
         case ASFW::Audio::ProbeBootstrap::DiceProtocol:
         case ASFW::Audio::ProbeBootstrap::MotuRegister:
@@ -631,6 +633,65 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
              "[BeBoB] publishing BeBoB audio nub GUID=0x%016llx pcm=%u midiSlots=%u dbs=%u rate=%u mode=%{public}s",
              guid, static_cast<unsigned>(kPcmChannels), static_cast<unsigned>(kMidiSlots),
              static_cast<unsigned>(kPcmChannels + kMidiSlots), kSampleRateHz, "blocking");
+    PublishReadyAudioConfig(guid, config);
+}
+
+void AVCDiscovery::PublishMAudioSpecialConfig(uint64_t guid,
+                                              const Discovery::FWDevice& device) {
+    using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
+    using ASFW::DeviceProfiles::Audio::SupportDisposition;
+    const auto plan = CurrentPolicyPlan(deviceRegistry_, device);
+    if (!plan || plan->support != SupportDisposition::Supported ||
+        (plan->profileBuilder != ProfileBuilderId::MAudioFireWire1814 &&
+         plan->profileBuilder != ProfileBuilderId::MAudioProjectMix)) {
+        return;
+    }
+
+    // Linux's special_stream_formation_set() gives fixed geometry precisely
+    // because this firmware cannot be probed for it. Begin with the common
+    // S/PDIF formation at 48 kHz; the protocol asserts that clock/format before
+    // starting a stream. The one MIDI block multiplexes one 1814 port or two
+    // ProjectMix ports without increasing DBS further.
+    const auto formation = ::ASFW::Audio::BeBoB::MAudioFormationFor(
+        ::ASFW::Audio::BeBoB::MAudioDigitalFormat::SPDIF,
+        ::ASFW::Audio::BeBoB::MAudioDigitalFormat::SPDIF, 48000U);
+    if (!formation || formation->capturePcmChannels == 0 ||
+        formation->playbackPcmChannels == 0 || formation->midiDataBlocks != 1) {
+        ASFW_LOG_ERROR(Audio,
+                       "[MAudio] refusing endpoint without fixed duplex formation GUID=0x%016llx",
+                       guid);
+        return;
+    }
+
+    const bool projectMix = plan->profileBuilder == ProfileBuilderId::MAudioProjectMix;
+    const uint32_t midiPorts = projectMix ? 2U : 1U;
+    ::ASFW::Audio::Model::ASFWAudioDevice config{};
+    config.guid = guid;
+    config.vendorId = device.GetVendorID();
+    config.modelId = device.GetModelID();
+    config.profileBuilderId = static_cast<uint32_t>(plan->profileBuilder);
+    config.deviceName = projectMix ? "M-Audio ProjectMix I/O" : "M-Audio FireWire 1814";
+    config.channelCount = formation->capturePcmChannels;
+    config.inputChannelCount = formation->capturePcmChannels;
+    config.outputChannelCount = formation->playbackPcmChannels;
+    config.sampleRates = {44100U, 48000U};
+    config.currentSampleRate = 48000U;
+    config.inputPlugName = projectMix ? "ProjectMix Inputs" : "1814 Inputs";
+    config.outputPlugName = projectMix ? "ProjectMix Outputs" : "1814 Outputs";
+    config.streamMode = ::ASFW::Audio::Model::StreamMode::kBlocking;
+    config.captureStreams.push_back({
+        .pcmChannels = formation->capturePcmChannels,
+        .am824Slots = formation->capturePcmChannels + formation->midiDataBlocks,
+        .midiPorts = midiPorts,
+        .channelOffset = 0,
+    });
+    config.playbackStreams.push_back({
+        .pcmChannels = formation->playbackPcmChannels,
+        .am824Slots = formation->playbackPcmChannels + formation->midiDataBlocks,
+        .midiPorts = midiPorts,
+        .channelOffset = 0,
+    });
+    config.resolvedGeometryRequired = true;
     PublishReadyAudioConfig(guid, config);
 }
 

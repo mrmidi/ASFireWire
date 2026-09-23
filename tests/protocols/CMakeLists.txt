@@ -36,6 +36,13 @@ add_protocols_test(BeBoBPlug0StreamDiscoveryTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
 )
 
+# M-Audio bootloader cue codec and preparation FSM (pure host logic only).
+add_protocols_test(BeBoBBootloaderPreparationTests
+    BeBoBBootloaderPreparationTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/BeBoB/Bootloader/BeBoBBootloaderCue.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/BeBoB/Bootloader/BeBoBBootloaderPreparation.cpp"
+)
+
 # FCP transport lifecycle tests (write completion, cancellable timeout, teardown)
 add_protocols_test(FCPTransportTests
     FCPTransportTests.cpp
@@ -52,6 +59,11 @@ add_protocols_test(FCPResponseRouterTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
+# Bounded M-Audio special-firmware clock command and allowlist compatibility
+add_protocols_test(MAudioSpecialCommandTests
+    MAudioSpecialCommandTests.cpp
 )
 
 # CMP device leases, MPR validation, and compare-swap contention tests
@@ -317,4 +329,14 @@ add_protocols_test(AVCCommandFilterTests
 # construction: no opcode or operand parameter anywhere in the interface.
 add_protocols_test(AVCSignalFormatProbeTests
     AVCSignalFormatProbeTests.cpp
+)
+
+# M-Audio special firmware stream formation geometry
+add_protocols_test(MAudioSpecialFormationTests
+    MAudioSpecialFormationTests.cpp
+)
+
+# Linux M-Audio post-start directional rate reassertion timing policy.
+add_protocols_test(MAudioSpecialStartPolicyTests
+    MAudioSpecialStartPolicyTests.cpp
 )
