@@ -46,6 +46,9 @@ struct DeviceProtocolChoice final {
 [[nodiscard]] std::optional<DeviceProtocolChoice>
 ChooseDeviceProtocol(const Discovery::DeviceRecord& record) noexcept;
 
+[[nodiscard]] std::optional<DeviceProtocolChoice>
+ChooseDeviceProtocol(const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) noexcept;
+
 /// Which audio backend drives this device's nub.
 ///
 /// This is the question AudioIntegrationMode::kHardcodedNub used to answer:
@@ -62,5 +65,8 @@ enum class AudioBackendKind : uint8_t {
 
 [[nodiscard]] std::optional<AudioBackendKind>
 ChooseAudioBackend(const Discovery::DeviceRecord& record) noexcept;
+
+[[nodiscard]] std::optional<AudioBackendKind>
+ChooseAudioBackend(const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) noexcept;
 
 } // namespace ASFW::Audio

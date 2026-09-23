@@ -39,15 +39,31 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
     CMP::CMPClient* cmpClient,
     Scheduling::ITimerScheduler* timerScheduler
 ) {
+    const auto plan = DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(record);
+    if (!plan.has_value()) {
+        return nullptr;
+    }
+    return CreateFamilyDeviceProtocol(*plan, busOps, busInfo, routeRegistry,
+                                      route, irmClient, cmpClient, timerScheduler);
+}
+
+std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
+    const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
+    Protocols::Ports::FireWireBusOps& busOps,
+    Protocols::Ports::FireWireBusInfo& busInfo,
+    Discovery::DeviceRegistry& routeRegistry,
+    const Discovery::DeviceRouteToken& route,
+    IRM::IRMClient* irmClient,
+    CMP::CMPClient* cmpClient,
+    Scheduling::ITimerScheduler* timerScheduler
+) {
     if (!route) {
         return nullptr;
     }
     const uint16_t nodeId = route.nodeId;
 
-    const auto plan = DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(record);
-    if (!plan.has_value() ||
-        plan->support != DeviceProfiles::Audio::SupportDisposition::Supported ||
-        plan->protocolImplementation ==
+    if (plan.support != DeviceProfiles::Audio::SupportDisposition::Supported ||
+        plan.protocolImplementation ==
             DeviceProfiles::Audio::ProtocolImplementationId::None) {
         return nullptr;
     }
@@ -57,7 +73,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
 
     // Family guard: exhaustive switch over all 7 families with no default: arm.
     // Adding an AudioFamilyProviderId without updating this switch must not compile.
-    switch (plan->family) {
+    switch (plan.family) {
         case AudioFamilyProviderId::DICE:
         case AudioFamilyProviderId::OXFW:
         case AudioFamilyProviderId::Fireworks:
@@ -72,12 +88,12 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
 
     // The catalog independently selects the concrete protocol. ProfileBuilderId
     // remains an endpoint/profile choice and is not a factory dispatch key.
-    switch (plan->protocolImplementation) {
+    switch (plan.protocolImplementation) {
         // --- DICE Family ---
         case ProtocolImplementationId::DiceSPro24Dsp:
             ASFW_LOG(DICE,
                      "Creating SPro24DspProtocol node=0x%04x unitOffset=%u",
-                     nodeId, plan->unit.unitDirectoryOffset);
+                     nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(
                 busOps, busInfo, routeRegistry, route, irmClient);
 
@@ -86,7 +102,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         case ProtocolImplementationId::DiceTcat:
             ASFW_LOG(DICE,
                      "Creating generic DICETcatProtocol node=0x%04x unitOffset=%u",
-                     nodeId, plan->unit.unitDirectoryOffset);
+                     nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::TCAT::DICETcatProtocol>(
                 busOps, busInfo, routeRegistry, route, irmClient, timerScheduler);
 
@@ -97,7 +113,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
             ASFW_LOG(DICE,
                      "Creating Weiss DICETcatProtocol node=0x%04x unitOffset=%u; DICE "
                      "remains duplex while CoreAudio hides device->host channels",
-                     nodeId, plan->unit.unitDirectoryOffset);
+                     nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::TCAT::DICETcatProtocol>(
                 busOps, busInfo, routeRegistry, route, irmClient, timerScheduler,
                 DICE::TCAT::DICETcatRuntimePolicy{
@@ -158,9 +174,9 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         case ProtocolImplementationId::MotuV2:
             ASFW_LOG(Audio,
                      "Creating MotuV2Protocol version=0x%06x node=0x%04x",
-                     plan->unitVersion, nodeId);
+                     plan.unitVersion, nodeId);
             return std::make_unique<Motu::MotuV2Protocol>(
-                busOps, busInfo, routeRegistry, route, plan->unitVersion, irmClient);
+                busOps, busInfo, routeRegistry, route, plan.unitVersion, irmClient);
 
         // --- Generic AV/C & None ---
         // An unknown AV/C unit resolves to the generic fallback in the catalog,

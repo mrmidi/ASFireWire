@@ -406,6 +406,12 @@ public:
     [[nodiscard]] static Discovery::AvcCommandFilterId
     CommandFilterFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
 
+    /// Projection of an already resolved device-level decision. Runtime
+    /// consumers use this overload after the decision is handed off, avoiding
+    /// a second identity match before setting the FCP command gate.
+    [[nodiscard]] static Discovery::AvcCommandFilterId
+    CommandFilterFor(const StaticAudioEndpointPlan& plan) noexcept;
+
     /// The stream traits this identity carries, decided from Config ROM alone.
     /// Device-level like CommandFilterFor: it tries every unit and returns the
     /// first definition that matches. An unmatched identity gets the defaults,

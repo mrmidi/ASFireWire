@@ -254,10 +254,6 @@ AudioDeviceCatalog::Resolve(const Discovery::DeviceRecord& device) noexcept {
 
 Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
     const Discovery::DeviceIdentityEvidence& device) noexcept {
-    if (MatchAnySafetyRule(device).has_value()) {
-        return Discovery::AvcCommandFilterId::BlockAll;
-    }
-
     const auto plan = Resolve(device);
     if (!plan.has_value()) {
         switch (plan.error()) {
@@ -270,10 +266,15 @@ Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
         }
     }
 
-    if (plan->probePolicy == ProbePolicyId::BeBoBFilteredCommandSet) {
+    return CommandFilterFor(*plan);
+}
+
+Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
+    const StaticAudioEndpointPlan& plan) noexcept {
+    if (plan.probePolicy == ProbePolicyId::BeBoBFilteredCommandSet) {
         return Discovery::AvcCommandFilterId::MAudioSpecialBeBoB;
     }
-    if (plan->support == SupportDisposition::Quarantined) {
+    if (plan.support == SupportDisposition::Quarantined) {
         return Discovery::AvcCommandFilterId::BlockAll;
     }
     return Discovery::AvcCommandFilterId::Unrestricted;
