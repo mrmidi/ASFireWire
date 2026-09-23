@@ -368,4 +368,27 @@ TEST(DeviceIdentityEvidence, DeviceLossClearsPolicyAndRejectsOldRoute) {
     EXPECT_FALSE(registry.IsCurrent(route));
 }
 
+TEST(DeviceIdentityEvidence, DuplicateGuidQuarantineInvalidatesResolvedPolicyRoute) {
+    DeviceRegistry registry{};
+    const auto published = registry.UpsertFromROM(MakeSupportedMotuRom(), LinkPolicy{});
+    const auto* policy = ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(published);
+    ASSERT_NE(policy, nullptr);
+    const auto oldRoute = policy->route;
+    ASSERT_TRUE(registry.IsCurrent(oldRoute));
+
+    // The duplicate may be observed at another node in the same generation.
+    registry.MarkDuplicateGuid(published.gen, published.guid,
+                               static_cast<uint8_t>(published.nodeId + 1));
+
+    const auto quarantined = registry.SnapshotByGuid(published.guid);
+    ASSERT_TRUE(quarantined.has_value());
+    EXPECT_EQ(quarantined->state, ASFW::Discovery::LifeState::Quarantined);
+    EXPECT_EQ(quarantined->audioPolicy, nullptr);
+    EXPECT_EQ(ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(*quarantined), nullptr);
+    EXPECT_EQ(quarantined->avcCommandFilter,
+              ASFW::Discovery::AvcCommandFilterId::BlockAll);
+    EXPECT_FALSE(registry.CurrentRoute(published.guid).has_value());
+    EXPECT_FALSE(registry.IsCurrent(oldRoute));
+}
+
 } // namespace

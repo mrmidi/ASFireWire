@@ -312,6 +312,7 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
             ASSERT_TRUE(protocolFromPlan.has_value());
             EXPECT_EQ(protocolFromPlan->builder, testCase.expectedProfileBuilder);
             EXPECT_EQ(protocolFromPlan->implementation, plan->protocolImplementation);
+            EXPECT_EQ(protocolFromPlan->builder, plan->profileBuilder);
             EXPECT_EQ(protocolFromPlan->unitDirectoryOffset, 0x400U);
         } else {
             EXPECT_FALSE(protocolFromPlan.has_value());
@@ -320,7 +321,71 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
         // 3. Audio Backend Choice
         const auto backend = Audio::ChooseAudioBackend(*plan);
         EXPECT_EQ(backend, testCase.expectedBackend);
-        EXPECT_EQ(Audio::SelectProbeBootstrap(*plan), testCase.expectedBootstrap);
+        const auto bootstrap = Audio::SelectProbeBootstrap(*plan);
+        EXPECT_EQ(bootstrap, testCase.expectedBootstrap);
+
+        // One plan must keep each supported family on its matching protocol
+        // implementation and probe path. These assertions bind the independent
+        // consumer projections together instead of only checking each expected
+        // value in isolation.
+        if (testCase.expectedSupport == SupportDisposition::Supported) {
+            ASSERT_TRUE(backend.has_value());
+            ASSERT_TRUE(protocolFromPlan.has_value());
+            EXPECT_NE(plan->protocolImplementation, ProtocolImplementationId::None);
+            EXPECT_NE(AudioDeviceCatalog::CommandFilterFor(*plan),
+                      Discovery::AvcCommandFilterId::BlockAll);
+            switch (plan->family) {
+                case AudioFamilyProviderId::DICE:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::Dice);
+                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::DiceProtocol);
+                    EXPECT_TRUE(plan->protocolImplementation == ProtocolImplementationId::DiceTcat ||
+                                plan->protocolImplementation == ProtocolImplementationId::DiceSPro24Dsp ||
+                                plan->protocolImplementation == ProtocolImplementationId::DiceWeissInt);
+                    break;
+                case AudioFamilyProviderId::OXFW:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::Avc);
+                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::AvcInitializeThenPlug0);
+                    EXPECT_TRUE(plan->protocolImplementation == ProtocolImplementationId::ApogeeDuet ||
+                                plan->protocolImplementation == ProtocolImplementationId::MackieOnyx);
+                    break;
+                case AudioFamilyProviderId::Fireworks:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::Avc);
+                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::FireworksEfc);
+                    EXPECT_EQ(plan->protocolImplementation,
+                              ProtocolImplementationId::FireworksOnyx400F);
+                    break;
+                case AudioFamilyProviderId::BeBoB:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::Avc);
+                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::BeBoBPlug0Only);
+                    EXPECT_TRUE(plan->protocolImplementation ==
+                                    ProtocolImplementationId::BeBoBPhase88 ||
+                                plan->protocolImplementation ==
+                                    ProtocolImplementationId::BeBoBGeneric);
+                    break;
+                case AudioFamilyProviderId::MotuRegister:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::MotuRegister);
+                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::MotuRegister);
+                    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::MotuV2);
+                    break;
+                case AudioFamilyProviderId::GenericAvc:
+                case AudioFamilyProviderId::None:
+                    ADD_FAILURE() << "supported case has no concrete protocol family";
+                    break;
+            }
+        } else if (testCase.expectedSupport == SupportDisposition::RecognizedUnsupported) {
+            EXPECT_FALSE(backend.has_value());
+            EXPECT_FALSE(protocolFromPlan.has_value());
+            EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
+            EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::None);
+            if (plan->family == AudioFamilyProviderId::BeBoB &&
+                plan->probePolicy == ProbePolicyId::BeBoBFilteredCommandSet) {
+                // The recognized M-Audio persona stays unplayable while its
+                // plan still carries the restrictive FCP command policy.
+                EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::BeBoBUnprobed);
+                EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
+                          Discovery::AvcCommandFilterId::MAudioSpecialBeBoB);
+            }
+        }
 
         // 4. Command Filter Choice
         EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan), testCase.expectedFilter);
