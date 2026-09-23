@@ -172,6 +172,43 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
             return std::nullopt;
         }
 
+        // The successor has data, but a packet straddling into it also appends
+        // its head fragment to THIS buffer (OHCI §8.4.2 bufferFill). Both
+        // descriptors are updated when that packet completes, and completion can
+        // land between our read of this descriptor and our read of the successor.
+        // Re-read this descriptor now (the successor read is DSB-ordered after the
+        // controller's update): if new bytes appeared, hand them to the walker
+        // instead of recycling the buffer with the fragment still inside — that
+        // silently drops it and leaves the stream parsed out of frame for good.
+        // Root cause of the 2026-09-22 CoolScan wedge (parser stuck one packet
+        // phase off; the target retried its request every ~164 ms forever).
+        if (dma_) {
+            dma_->FetchFromDevice(&desc, sizeof(desc));
+        }
+        const size_t rereadTotal = DescriptorBytesFilled(desc);
+        if (rereadTotal > last_dequeued_bytes_) {
+            ASFW_LOG(Async,
+                     "BufferRing::Dequeue: buffer[%zu] grew %zu→%zu bytes while its successor "
+                     "filled — straddle fragment kept, recycle deferred",
+                     index, total_bytes_in_buffer, rereadTotal);
+            uint8_t* fragAddr = GetBufferAddress(index);
+            if (!fragAddr) {
+                ASFW_LOG(Async, "BufferRing::Dequeue: invalid buffer address at index %zu", index);
+                return std::nullopt;
+            }
+            if (dma_) {
+                dma_->FetchFromDevice(fragAddr + last_dequeued_bytes_,
+                                      rereadTotal - last_dequeued_bytes_);
+            }
+            last_observed_total_bytes_ = rereadTotal;
+            return FilledBufferInfo{
+                .virtualAddress = fragAddr,
+                .startOffset = last_dequeued_bytes_,
+                .bytesFilled = rereadTotal,
+                .descriptorIndex = index
+            };
+        }
+
         ASFW_LOG_V4(Async,
                     "🔄 BufferRing::Dequeue: Current buffer[%zu] drained (%zu bytes); "
                     "hardware advanced to buffer[%zu] (resCount=%u/%u). Auto-recycling...",
