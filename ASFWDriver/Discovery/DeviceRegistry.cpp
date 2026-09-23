@@ -3,6 +3,7 @@
 #include <limits>
 #include "../Logging/Logging.hpp"
 #include "../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
+#include "../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 
 namespace ASFW::Discovery {
 
@@ -160,12 +161,20 @@ DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolic
         device.routeEpoch = AllocateRouteEpochLocked();
     }
     device.guid = guid;
+    device.gen = rom.gen;
+    device.nodeId = rom.nodeId;
     PopulateDeviceIdentity(device, rom);
 
     // Ask the unified AudioDeviceCatalog for resolution (identity enrichment and candidacy).
     const auto endpointPlan =
-        DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(device.identity);
+        DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(device);
     if (endpointPlan.has_value()) {
+        device.avcCommandFilter =
+            DeviceProfiles::Audio::AudioDeviceCatalog::CommandFilterFor(*endpointPlan);
+        device.audioPolicy =
+            std::make_shared<const DeviceProfiles::Audio::ResolvedDevicePolicy>(
+                DeviceProfiles::Audio::ResolvedDevicePolicy{*endpointPlan,
+                                                            MakeRouteToken(device)});
         device.quarantineReason = QuarantineReason::None;
         if (device.vendorName.empty() && !endpointPlan->vendorName.empty()) {
             device.vendorName = endpointPlan->vendorName;
@@ -189,6 +198,9 @@ DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolic
                  static_cast<unsigned>(endpointPlan->profileBuilder),
                  device.isAudioCandidate);
     } else {
+        device.audioPolicy.reset();
+        device.avcCommandFilter =
+            DeviceProfiles::Audio::AudioDeviceCatalog::CommandFilterFor(endpointPlan.error());
         device.kind = ClassifyDevice(rom);
         if (endpointPlan.error() ==
             DeviceProfiles::Audio::CatalogResolutionError::HazardousIdentity) {
@@ -209,8 +221,6 @@ DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolic
     // TODO: Generic AV/C devices should work purely via MusicSubunit discovery; vendor protocols are only for extra controls.
     // TODO: Generic DICE/TCAT discovery (non-hardcoded vendor/model) is not implemented yet.
     
-    device.gen = rom.gen;
-    device.nodeId = rom.nodeId;
     device.link = link;
 
     // Clamp max async payload by remote MaxRec code (BIB bus options).
@@ -266,6 +276,8 @@ void DeviceRegistry::MarkDuplicateGuid(Generation gen, Guid64 guid, uint8_t node
     auto it = devicesByGuid_.find(guid);
     if (it != devicesByGuid_.end()) {
         it->second.state = LifeState::Quarantined;
+        it->second.audioPolicy.reset();
+        it->second.avcCommandFilter = AvcCommandFilterId::BlockAll;
         ASFW_LOG(Discovery, "⚠️  Duplicate GUID detected: 0x%016llx node=%u gen=%u (quarantined)",
                  guid, nodeId, gen.value);
     }
@@ -284,6 +296,8 @@ void DeviceRegistry::MarkLost(Generation gen, uint8_t nodeId) {
             devIt->second.state = LifeState::Lost;
             devIt->second.nodeId = kInvalidNodeId;
             devIt->second.routeEpoch = AllocateRouteEpochLocked();
+            devIt->second.audioPolicy.reset();
+            devIt->second.avcCommandFilter = AvcCommandFilterId::BlockAll;
             ASFW_LOG(Discovery, "Device lost: GUID=0x%016llx node=%u gen=%u",
                      guid, nodeId, gen.value);
         }
@@ -317,6 +331,8 @@ void DeviceRegistry::InvalidateLiveMappingsForBusReset() {
 
         device.nodeId = kInvalidNodeId;
         device.routeEpoch = AllocateRouteEpochLocked();
+        device.audioPolicy.reset();
+        device.avcCommandFilter = AvcCommandFilterId::BlockAll;
         ++invalidatedCount;
     }
 

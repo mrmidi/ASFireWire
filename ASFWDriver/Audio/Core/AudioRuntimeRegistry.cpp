@@ -8,6 +8,7 @@
 #include "../Protocols/IDeviceProtocol.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
+#include "../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -123,6 +124,12 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     if (!route.has_value()) {
         return nullptr;
     }
+    const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
+    if (policy == nullptr || policy->route != *route ||
+        !routeRegistry.IsCurrent(*route) ||
+        policy->plan.support != DeviceProfiles::Audio::SupportDisposition::Supported) {
+        return nullptr;
+    }
 
     // Creation is orchestrator-serialized: EnsureForDevice runs only on the single Default
     // queue (the controller discovery path), so there is no concurrent create for the same
@@ -158,30 +165,15 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     // error -- kept only as a runtime witness for a device whose catalog row
     // says Supported while its units resolve to nothing at all.
     auto created = CreateFamilyDeviceProtocol(
-        record, *busOps, *busInfo, routeRegistry, *route,
+        policy->plan, *busOps, *busInfo, routeRegistry, *route,
         irmClient, cmpClient_, timerScheduler_);
     if (!created) {
-        const auto choice = ChooseDeviceProtocol(record);
-        if (!choice.has_value()) {
-            for (const auto& unit : record.identity.units) {
-                const auto plan =
-                    DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(record, unit);
-                if (plan.has_value() &&
-                    plan->support ==
-                        DeviceProfiles::Audio::SupportDisposition::Supported) {
-                    ASFW_LOG_ERROR(Audio,
-                                   "AudioRuntimeRegistry: ❌ no protocol for a SUPPORTED "
-                                   "device GUID=0x%016llx vendor=0x%06x model=0x%06x "
-                                   "unitOffset=%u - the catalog calls it Supported but it "
-                                   "resolves to no profile builder; audio will never start",
-                                   guid,
-                                   record.RootVendorIdOrZero(),
-                                   record.RootModelIdOrZero(),
-                                   unit.unitDirectoryOffset);
-                    break;
-                }
-            }
-        }
+        ASFW_LOG_ERROR(Audio,
+                       "AudioRuntimeRegistry: no protocol for SUPPORTED device "
+                       "GUID=0x%016llx unitOffset=%u builder=%u implementation=%u",
+                       guid, policy->plan.unit.unitDirectoryOffset,
+                       static_cast<unsigned>(policy->plan.profileBuilder),
+                       static_cast<unsigned>(policy->plan.protocolImplementation));
         return nullptr;
     }
 

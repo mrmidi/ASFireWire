@@ -9,6 +9,10 @@
 #include <string>
 #include <vector>
 
+namespace ASFW::DeviceProfiles::Audio {
+struct ResolvedDevicePolicy;
+}
+
 namespace ASFW::Discovery {
 
 // ============================================================================
@@ -292,6 +296,10 @@ struct DeviceRecord {
     DeviceIdentityEvidence identity{};
     QuarantineReason quarantineReason{QuarantineReason::None};
     AvcCommandFilterId avcCommandFilter{AvcCommandFilterId::Unrestricted};
+    /// Immutable audio decision bound to the route that produced it. The
+    /// registry clears it on reset/loss; audio consumers validate the binding
+    /// before using it. Discovery does not interpret its contents.
+    std::shared_ptr<const DeviceProfiles::Audio::ResolvedDevicePolicy> audioPolicy;
 
     // ---- Stable identity (persistent across resets) ---- [shim, see above]
     Guid64 guid{0};

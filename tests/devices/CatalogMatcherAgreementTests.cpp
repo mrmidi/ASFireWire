@@ -235,7 +235,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::None,
             .expectedModelName = kMAudioFireWire1814BootloaderModelName,
             .expectedBackend = std::nullopt,
-            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedFilter = Discovery::AvcCommandFilterId::BlockAll,
         },
         // 13. Alesis MultiMix
         {

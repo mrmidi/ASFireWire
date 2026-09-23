@@ -7,6 +7,7 @@
 
 #include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include "../../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../../../Discovery/DiscoveryTypes.hpp"
 #include "../../../Bus/IRM/IRMTypes.hpp"
 #include "../DeviceProtocolChoice.hpp"
@@ -80,6 +81,10 @@ struct DuplexPlaybackStreamGeometry {
 };
 
 struct DuplexStreamProfile {
+    // A profile without a current catalog decision is not safe to consume for
+    // stream setup. Keep this explicit so stale route policy cannot silently
+    // turn into generic DICE behavior.
+    bool policyResolved{false};
     AudioDuplexChannels channels{};
     // The one speed for this device's isochronous streams: what the packets are
     // transmitted at and what the IRM was charged for. Apple and Linux both keep
@@ -132,7 +137,8 @@ class DuplexStreamProfileResolver final {
 
     [[nodiscard]] static DuplexStreamProfile Resolve(const Discovery::DeviceRecord& record,
                                                      const AudioStreamRuntimeCaps& caps) noexcept {
-        return Build(record, caps, ResolveChannels(record, caps));
+        return Build(record, caps, ResolveChannels(record, caps),
+                     DeviceProfiles::Audio::CurrentAudioPolicy(record));
     }
 
     // Device prepare can refresh stream caps after channels have already been
@@ -141,7 +147,8 @@ class DuplexStreamProfileResolver final {
     [[nodiscard]] static DuplexStreamProfile
     Resolve(const Discovery::DeviceRecord& record, const AudioStreamRuntimeCaps& caps,
             const AudioDuplexChannels& assignedChannels) noexcept {
-        return Build(record, caps, assignedChannels);
+        return Build(record, caps, assignedChannels,
+                     DeviceProfiles::Audio::CurrentAudioPolicy(record));
     }
 
   private:
@@ -184,8 +191,9 @@ class DuplexStreamProfileResolver final {
     /// facts are the same, but they live with the rest of what is known about
     /// the device instead of being rediscovered here.
     [[nodiscard]] static DeviceProfiles::Audio::DeviceStreamTraits
-    TraitsFor(const Discovery::DeviceRecord& record) noexcept {
-        return DeviceProfiles::Audio::AudioDeviceCatalog::StreamTraitsFor(record.identity);
+    TraitsFor(const DeviceProfiles::Audio::ResolvedDevicePolicy* policy) noexcept {
+        return policy != nullptr ? policy->plan.streamTraits
+                                 : DeviceProfiles::Audio::DeviceStreamTraits{};
     }
 
     [[nodiscard]] static AudioDuplexChannels
@@ -347,13 +355,15 @@ class DuplexStreamProfileResolver final {
 
     [[nodiscard]] static DuplexStreamProfile Build(const Discovery::DeviceRecord& record,
                                                    const AudioStreamRuntimeCaps& caps,
-                                                   const AudioDuplexChannels& channels) noexcept {
+                                                   const AudioDuplexChannels& channels,
+                                                   const DeviceProfiles::Audio::ResolvedDevicePolicy* policy) noexcept {
         DuplexStreamProfile profile{
+            .policyResolved = policy != nullptr,
             .channels = channels,
             .linkSpeed = record.link.isochToNode,
             .runtimeCaps = caps,
         };
-        const auto traits = TraitsFor(record);
+        const auto traits = TraitsFor(policy);
         const uint64_t allowedChannels =
             traits.cmpChoosesIsoChannel ? kAllIsoChannels : 0;
 
@@ -396,7 +406,8 @@ class DuplexStreamProfileResolver final {
                                               : FixedChannelMask(geometry.isoChannel);
         }
 
-        if (ChooseAudioBackend(record) == AudioBackendKind::MotuRegister) {
+        if (policy != nullptr && policy->plan.family ==
+                                     DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister) {
             // MOTU is chunk-framed in both directions. The chunk counts come from the
             // device's own registers via PrepareDuplex, which MotuV2Protocol reports as
             // runtime caps -- there is no profile table to read them from, since model_id
@@ -412,10 +423,9 @@ class DuplexStreamProfileResolver final {
             // The version of the unit the catalog actually matched, not the
             // flat shim, which takes the first non-zero value across every unit
             // directory and so can name a version no single unit published.
-            const auto choice = ChooseDeviceProtocol(record);
+            const auto choice = policy->plan.unitVersion;
             profile.captureMotuPorts = Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(
-                choice.has_value() ? choice->unitVersion
-                                   : record.unitSwVersion.value_or(0U));
+                choice != 0 ? choice : record.unitSwVersion.value_or(0U));
         }
 
         // Runtime-conditional on purpose: this device switches wire format with

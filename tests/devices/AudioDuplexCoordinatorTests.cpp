@@ -1384,7 +1384,9 @@ TEST_F(AudioDuplexCoordinatorTests, RouteRebindDuringPrepareInvalidatesRestartEp
     EXPECT_EQ(session->lastInvalidation->cause, DuplexRestartFailureCause::kPrepare);
     EXPECT_TRUE(session->lastInvalidation->retryable);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
-    EXPECT_EQ(protocol_->stopCalls, 1);
+    // The old route has been invalidated. Host DMA must stop, while the driver
+    // must not send a device stop command to the newly rebound route.
+    EXPECT_EQ(protocol_->stopCalls, 0);
 }
 
 TEST_F(AudioDuplexCoordinatorTests, ProgramRxFailureRollsBackHostAndDeviceInOrder) {

@@ -639,12 +639,8 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
                  100u << static_cast<uint8_t>(deviceRecord.link.isochToNode),
                  deviceRecord.link.maxPayloadBytes);
 
-        // Decided from Config-ROM identity alone, before anything can be sent.
-        // Carried on the record so FCPTransport can bound what this device is
-        // ever asked; see Protocols/AVC/AVCCommandFilter.hpp.
-        deviceRecord.avcCommandFilter =
-            DeviceProfiles::Audio::AudioDeviceCatalog::CommandFilterFor(
-                deviceRecord.identity);
+        // DeviceRegistry stamped the command gate from the same catalog
+        // decision it used for classification, before any protocol traffic.
         if (deviceRecord.avcCommandFilter !=
             Discovery::AvcCommandFilterId::Unrestricted) {
             ASFW_LOG(Discovery,

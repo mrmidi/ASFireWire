@@ -412,6 +412,9 @@ public:
     [[nodiscard]] static Discovery::AvcCommandFilterId
     CommandFilterFor(const StaticAudioEndpointPlan& plan) noexcept;
 
+    [[nodiscard]] static Discovery::AvcCommandFilterId
+    CommandFilterFor(CatalogResolutionError error) noexcept;
+
     /// The stream traits this identity carries, decided from Config ROM alone.
     /// Device-level like CommandFilterFor: it tries every unit and returns the
     /// first definition that matches. An unmatched identity gets the defaults,

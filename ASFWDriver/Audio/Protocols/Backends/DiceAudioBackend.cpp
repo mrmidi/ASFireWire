@@ -8,6 +8,7 @@
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
+#include "../../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../DICE/Core/DICENotificationMailbox.hpp"
 #include "../DICE/Core/DICETypes.hpp"
 #include "../Duplex/IDuplexDeviceControl.hpp"
@@ -843,17 +844,22 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         return;
     }
 
-    if (ChooseAudioBackend(*record) != AudioBackendKind::Dice) {
+    const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(*record);
+    if (!policy || !registry_.IsCurrent(policy->route) ||
+        ChooseAudioBackend(policy->plan) != AudioBackendKind::Dice) {
         ASFW_LOG(Audio,
                  "DiceAudioBackend::EnsureNubForGuid: skipping GUID=0x%016llx vendor=0x%06x "
-                 "model=0x%06x (the catalog does not route it to the DICE backend)",
+                 "model=0x%06x (no current DICE policy for the route)",
                  guid, record->vendorId, record->modelId);
         return;
     }
 
-    // The device catalog already decided what this device is; ask it which
-    // profile owns the geometry rather than matching on vendor/model again.
-    const auto choice = ChooseDeviceProtocol(*record);
+    // Consume the immutable catalog decision installed by discovery. The route
+    // token is retained across asynchronous geometry loading and checked again
+    // before publication, so a stale callback cannot publish for a replaced
+    // route.
+    const auto route = policy->route;
+    const auto choice = ChooseDeviceProtocol(policy->plan);
     const uint32_t profileBuilderId =
         choice.has_value() ? static_cast<uint32_t>(choice->builder) : 0U;
     const auto* profile =
@@ -895,11 +901,17 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // loaded them), update the endpoint runtime, then publish the nub. Host
     // input == device TX, host output == device RX (see AudioTypes.hpp), which
     // is exactly how GetChannelLabels reports them.
-    auto finish = [this, guid, profile, admission](Model::ASFWAudioDevice dev,
+    auto finish = [this, guid, route, profile, admission](Model::ASFWAudioDevice dev,
                                                    const std::shared_ptr<IDeviceProtocol>& protocol) {
         if (admission->AbortIfStopping()) {
             ASFW_LOG(Audio,
                      "DiceAudioBackend: publication cancelled by concurrent teardown GUID=0x%016llx",
+                     guid);
+            return;
+        }
+        if (!registry_.IsCurrent(route)) {
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: suppressing publication for stale route GUID=0x%016llx",
                      guid);
             return;
         }
@@ -911,6 +923,12 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         if (admission->AbortIfStopping()) {
             ASFW_LOG(Audio,
                      "DiceAudioBackend: publication cancelled by concurrent teardown GUID=0x%016llx",
+                     guid);
+            return;
+        }
+        if (!registry_.IsCurrent(route)) {
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: suppressing publication for stale route GUID=0x%016llx",
                      guid);
             return;
         }

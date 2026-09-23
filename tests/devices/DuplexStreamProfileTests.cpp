@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "Audio/Protocols/Backends/DuplexStreamProfile.hpp"
+#include "DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 
 namespace {
 
@@ -25,10 +26,9 @@ using ASFW::DeviceProfiles::Audio::kWeissVendorId;
 using ASFW::Discovery::DeviceRecord;
 using ASFW::Encoding::AudioWireFormat;
 
-// The profile now asks the device catalog what this identity is, and the
-// catalog reads Config-ROM evidence. Building a record with only the flat
-// vendorId/modelId pair -- which is what these fixtures used to do -- describes
-// a conclusion rather than a device, and resolves to nothing.
+// Discovery resolves the catalog once and attaches that decision to the live
+// route. These fixtures construct the same record/policy pairing for profile
+// tests without involving a bus or DriverKit service.
 constexpr uint32_t kDiceInterfaceVersion = 0x000001;
 constexpr uint32_t kTa1394AvcSpecifier = 0x00A02D;
 constexpr uint32_t kTa1394AvcVersion = 0x010001;
@@ -40,6 +40,11 @@ constexpr uint32_t kFireworksVersion = 0x010000;
                                       uint32_t unitVersion) {
     DeviceRecord record{};
     record.instanceId = ASFW::Discovery::DeviceInstanceId{1};
+    record.deviceIncarnation = 1;
+    record.routeEpoch = 1;
+    record.gen = ASFW::Discovery::Generation{1};
+    record.nodeId = 2;
+    record.state = ASFW::Discovery::LifeState::Identified;
     record.guid = (static_cast<uint64_t>(vendorId) << 40U) | 0x04'0000'0000ULL;
     record.vendorId = vendorId;
     record.modelId = modelId.value_or(0U);
@@ -56,6 +61,19 @@ constexpr uint32_t kFireworksVersion = 0x010000;
     unit.specifierId = unitSpecifier;
     unit.version = unitVersion;
     record.identity.units.push_back(unit);
+    const auto plan = ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(record);
+    EXPECT_TRUE(plan.has_value());
+    if (plan.has_value()) {
+        record.audioPolicy = std::make_shared<const ASFW::DeviceProfiles::Audio::ResolvedDevicePolicy>(
+            ASFW::DeviceProfiles::Audio::ResolvedDevicePolicy{
+                *plan,
+                ASFW::Discovery::DeviceRouteToken{
+                    .guid = record.guid,
+                    .deviceIncarnation = record.deviceIncarnation,
+                    .routeEpoch = record.routeEpoch,
+                    .generation = record.gen,
+                    .nodeId = record.nodeId}});
+    }
     return record;
 }
 

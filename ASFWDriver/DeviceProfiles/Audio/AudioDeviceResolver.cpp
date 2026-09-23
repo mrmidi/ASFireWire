@@ -256,14 +256,7 @@ Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
     const Discovery::DeviceIdentityEvidence& device) noexcept {
     const auto plan = Resolve(device);
     if (!plan.has_value()) {
-        switch (plan.error()) {
-            case CatalogResolutionError::HazardousIdentity:
-            case CatalogResolutionError::InvalidUnit:
-            case CatalogResolutionError::AmbiguousIdentity:
-                return Discovery::AvcCommandFilterId::BlockAll;
-            case CatalogResolutionError::NoMatch:
-                return Discovery::AvcCommandFilterId::Unrestricted;
-        }
+        return CommandFilterFor(plan.error());
     }
 
     return CommandFilterFor(*plan);
@@ -282,6 +275,19 @@ Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
         return Discovery::AvcCommandFilterId::BlockAll;
     }
     return Discovery::AvcCommandFilterId::Unrestricted;
+}
+
+Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
+    CatalogResolutionError error) noexcept {
+    switch (error) {
+        case CatalogResolutionError::HazardousIdentity:
+        case CatalogResolutionError::InvalidUnit:
+        case CatalogResolutionError::AmbiguousIdentity:
+            return Discovery::AvcCommandFilterId::BlockAll;
+        case CatalogResolutionError::NoMatch:
+            return Discovery::AvcCommandFilterId::Unrestricted;
+    }
+    return Discovery::AvcCommandFilterId::BlockAll;
 }
 
 ProfileBuilderId AudioDeviceCatalog::ProfileBuilderFor(
