@@ -1,7 +1,7 @@
 # Resolved audio-device policy boundary (FW-161)
 
-**Status:** design contract for review. Implementation belongs to FW-162 and
-consumer migration to FW-164.
+**Status:** design decision. The implementation is recorded in local ticket
+branches FW-162 through FW-165; this note remains the FW-161 ownership contract.
 
 ## Producer and lifetime
 
@@ -13,12 +13,14 @@ implementation, profile builder, static stream traits, and descriptive names.
 The catalog remains pure and host-testable. It neither sends a frame nor owns a
 protocol object.
 
-The decision is valid for one device incarnation and observed bus generation.
-Rebind after a reset must resolve from the new ROM evidence. A selected unit
-offset alone cannot authorize traffic: the route token and generation still
-have to be current when an operation executes. A safe family probe may later
-refine an ambiguous candidate and produce a separate wire/configuration
-snapshot for that stream epoch.
+The pure catalog plan is bound to one device incarnation and observed route in
+`ResolvedDevicePolicy`; it holds a `DeviceRouteToken` but owns no route
+lifetime. Rebind after a reset resolves from new ROM evidence. A selected unit
+offset alone cannot authorize traffic: the registry must still accept the
+token when an operation executes. A safe family probe may later refine an
+ambiguous candidate and produce a separate wire/configuration snapshot, but
+this branch has no generic safe-probe executor or configured constraint. An
+ambiguity remains unadmitted until an evidenced, bounded probe exists.
 
 ## Distinct decisions
 
@@ -40,16 +42,19 @@ the DICE or MOTU wire sequence.
 
 ## Consumer migration sequence
 
-1. FW-162 completes the coherent static producer and safe refinement contract.
-2. FW-164 carries the value from the discovery/controller handoff to the
+1. FW-162 separates the protocol implementation selector from the profile
+   builder and adds projections from one catalog plan.
+2. FW-164 binds that plan to the observed route and carries it from the discovery/controller handoff to the
    protocol registry, AV/C bootstrap, coordinator, backends, duplex planning,
    and nub publication. Generic runtime paths then stop resolving identity.
-3. FW-165 removes superseded lookup helpers after agreement tests cover the
-   existing catalogue and hazardous identities.
+3. FW-165 removes superseded lookup helpers and the unused safe-probe
+   constraint scaffolding after agreement tests cover the existing catalogue
+   and hazardous identities. FW-166 adds route and family contract tests.
 
-Until step 2, `DeviceRegistry::UpsertFromROM` and downstream consumers still
-call `AudioDeviceCatalog::Resolve` independently. That duplication is tracked
-work, not a second authority in the target design.
+The implemented route-bound carrier is intentionally small: one immutable
+static plan and a token. It does not own the measured wire geometry, nub,
+protocol, or in-flight work. Discovery invalidates its binding on reset, loss,
+or duplicate-GUID quarantine.
 
 ## Rejected fields and publication exceptions
 
