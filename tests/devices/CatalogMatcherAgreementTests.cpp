@@ -278,6 +278,11 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
         EXPECT_EQ(plan->support, testCase.expectedSupport);
         EXPECT_EQ(plan->family, testCase.expectedFamily);
         EXPECT_EQ(plan->profileBuilder, testCase.expectedProfileBuilder);
+        if (testCase.expectedSupport == SupportDisposition::Supported) {
+            EXPECT_NE(plan->protocolImplementation, ProtocolImplementationId::None);
+        } else {
+            EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::None);
+        }
         if (testCase.expectedModelName != nullptr) {
             EXPECT_EQ(plan->modelName, testCase.expectedModelName);
         }
@@ -299,6 +304,7 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
         if (testCase.expectedProfileBuilder != ProfileBuilderId::None) {
             ASSERT_TRUE(protocolChoice.has_value());
             EXPECT_EQ(protocolChoice->builder, testCase.expectedProfileBuilder);
+            EXPECT_EQ(protocolChoice->implementation, plan->protocolImplementation);
             EXPECT_EQ(protocolChoice->unitDirectoryOffset, 0x400U);
         } else {
             EXPECT_FALSE(protocolChoice.has_value());

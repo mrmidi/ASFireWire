@@ -152,6 +152,23 @@ enum class ProfileBuilderId : uint16_t {
     kLastValid = GenericBeBoB,
 };
 
+/// Concrete protocol class chosen by the catalog. This is deliberately
+/// independent of ProfileBuilderId: several device profiles share one wire
+/// protocol, while the profile still determines endpoint geometry.
+enum class ProtocolImplementationId : uint8_t {
+    None = 0,
+    DiceTcat,
+    DiceSPro24Dsp,
+    DiceWeissInt,
+    ApogeeDuet,
+    MackieOnyx,
+    FireworksOnyx400F,
+    BeBoBPhase88,
+    BeBoBGeneric,
+    MotuV2,
+    kLastValid = MotuV2,
+};
+
 /// AMDTP cadence a device must be driven at regardless of what it reports.
 /// Unspecified means "believe the probe", which is what an unlisted device gets.
 enum class ForcedStreamMode : uint8_t {
@@ -275,6 +292,7 @@ struct AudioDeviceDefinition final {
     ProbePolicyId probePolicy{ProbePolicyId::None};
     ProfileBuilderId profileBuilder{ProfileBuilderId::None};
     ProfileBuilderId commonEquivalenceProfileBuilder{ProfileBuilderId::None};
+    ProtocolImplementationId protocolImplementation{ProtocolImplementationId::None};
     SupportDisposition support{SupportDisposition::RecognizedUnsupported};
     GuidReliability guidReliability{GuidReliability::ReliableWhenUnique};
     PersistentKeyRecipeId persistentKeyRecipe{
@@ -302,6 +320,7 @@ struct CandidateEndpointPlan final {
     DeviceDefinitionId definitionId{DeviceDefinitionId::Unknown};
     uint32_t variantId{0};
     ProfileBuilderId profileBuilder{ProfileBuilderId::None};
+    ProtocolImplementationId protocolImplementation{ProtocolImplementationId::None};
     SafeProbeConstraint probeConstraint{};
     std::string vendorName;
     std::string modelName;
@@ -322,6 +341,7 @@ struct StaticAudioEndpointPlan final {
     std::vector<MatchProvenance> provenance;
     ProfileBuilderId profileBuilder{ProfileBuilderId::None};
     ProfileBuilderId commonEquivalenceProfileBuilder{ProfileBuilderId::None};
+    ProtocolImplementationId protocolImplementation{ProtocolImplementationId::None};
     DeviceStreamTraits streamTraits{};
     BootloaderCuePolicy bootloaderCue{BootloaderCuePolicy::None};
     std::string vendorName;

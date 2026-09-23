@@ -82,6 +82,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
             .candidatePlans = {{DeviceDefinitionId::GenericAvc,
                                 0,
                                 ProfileBuilderId::GenericAvc,
+                                ProtocolImplementationId::None,
                                 {},
                                 device.rootVendorName,
                                 device.rootModelName.empty()
@@ -89,6 +90,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
                                     : device.rootModelName}},
             .provenance = {{DeviceDefinitionId::GenericAvc, 0}},
             .profileBuilder = ProfileBuilderId::GenericAvc,
+            .protocolImplementation = ProtocolImplementationId::None,
             .vendorName = device.rootVendorName,
             .modelName = device.rootModelName.empty()
                              ? "Generic AV/C Audio"
@@ -106,6 +108,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
                 match.definition->family != first.family ||
                 match.definition->probePolicy != first.probePolicy ||
                 match.definition->support != first.support ||
+                match.definition->protocolImplementation != first.protocolImplementation ||
                 first.commonEquivalenceProfileBuilder == ProfileBuilderId::None ||
                 match.definition->commonEquivalenceProfileBuilder !=
                     first.commonEquivalenceProfileBuilder) {
@@ -131,6 +134,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
                               ? first.commonEquivalenceProfileBuilder
                               : first.profileBuilder,
         .commonEquivalenceProfileBuilder = first.commonEquivalenceProfileBuilder,
+        .protocolImplementation = first.protocolImplementation,
         .streamTraits = first.streamTraits,
         .bootloaderCue = first.bootloaderCue,
         .vendorName = first.vendorName != nullptr ? first.vendorName : "",
@@ -142,6 +146,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
             .definitionId = match.definition->id,
             .variantId = match.definition->variantId,
             .profileBuilder = match.definition->profileBuilder,
+            .protocolImplementation = match.definition->protocolImplementation,
             .probeConstraint = match.definition->probeConstraint,
             .vendorName = match.definition->vendorName != nullptr
                               ? match.definition->vendorName
