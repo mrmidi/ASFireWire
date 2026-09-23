@@ -18,7 +18,6 @@ struct DirectRxFormatDescriptor final {
     uint32_t am824Slots{0};
     uint32_t streamChannels{0};
     bool trustConfiguredStride{false};
-    bool emptyPacketHasWrongDbc{false};
     uint32_t motuPcmChunks{0};
     ::ASFW::Encoding::Motu::MotuPortMap motuPorts{};
     AudioEngine::Direct::Rx::RxCaptureChannelMap captureChannelMap{};

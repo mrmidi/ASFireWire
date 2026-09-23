@@ -955,67 +955,28 @@ TEST_F(AudioDuplexCoordinatorTests,
     EXPECT_LT(prepare, reservePlayback);
 }
 
-TEST_F(AudioDuplexCoordinatorTests, MAudioStartHonorsPreviouslySelectedRate) {
+TEST_F(AudioDuplexCoordinatorTests, MAudioSpecialProfileIsRestrictedTo48k) {
     (void)registry_.UpsertFromROM(
         MakeAvcConfigRom(kTestGuid, kMAudioVendorId, kMAudioFireWire1814ModelId),
         LinkPolicy{});
 
-    ASSERT_EQ(coordinator_.RequestClockConfig(
+    EXPECT_EQ(coordinator_.RequestClockConfig(
                   kTestGuid, AudioClockConfig{.sampleRateHz = 44100U},
-                  DuplexRestartReason::kSampleRateChange),
-              kIOReturnSuccess);
-    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 44100U);
-
-    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
-    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 44100U);
-    const auto session = GetSession();
-    ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->desiredClock.sampleRateHz, 44100U);
-    EXPECT_EQ(session->appliedClock.sampleRateHz, 44100U);
-}
-
-TEST_F(AudioDuplexCoordinatorTests, MAudio1814StartRetainsValidatedDoubleRate) {
-    (void)registry_.UpsertFromROM(
-        MakeAvcConfigRom(kTestGuid, kMAudioVendorId, kMAudioFireWire1814ModelId),
-        LinkPolicy{});
-
-    constexpr AudioClockConfig k88k2{.sampleRateHz = 88200U};
-    ASSERT_EQ(coordinator_.RequestClockConfig(
-                  kTestGuid, k88k2, DuplexRestartReason::kSampleRateChange),
-              kIOReturnSuccess);
-    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 88200U);
-
-    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
-    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 88200U);
-    const auto session = GetSession();
-    ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->desiredClock.sampleRateHz, 88200U);
-    EXPECT_EQ(session->appliedClock.sampleRateHz, 88200U);
+                  DuplexRestartReason::kSampleRateChange), kIOReturnUnsupported);
     EXPECT_EQ(coordinator_.RequestClockConfig(
-                  kTestGuid, AudioClockConfig{.sampleRateHz = 176400U},
-                  DuplexRestartReason::kSampleRateChange),
-              kIOReturnUnsupported);
-}
-
-TEST_F(AudioDuplexCoordinatorTests, ProjectMixAccepts96kButGenericDevicesStillRejectIt) {
-    (void)registry_.UpsertFromROM(
-        MakeAvcConfigRom(kTestGuid, kMAudioVendorId,
-                         ASFW::DeviceProfiles::Audio::kMAudioProjectMixModelId),
-        LinkPolicy{});
-
-    constexpr AudioClockConfig k96k{.sampleRateHz = 96000U};
+                  kTestGuid, AudioClockConfig{.sampleRateHz = 88200U},
+                  DuplexRestartReason::kSampleRateChange), kIOReturnUnsupported);
     ASSERT_EQ(coordinator_.RequestClockConfig(
-                  kTestGuid, k96k, DuplexRestartReason::kSampleRateChange),
-              kIOReturnSuccess);
+                  kTestGuid, AudioClockConfig{.sampleRateHz = 48000U},
+                  DuplexRestartReason::kSampleRateChange), kIOReturnSuccess);
+    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 48000U);
+
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 48000U);
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());
-    EXPECT_EQ(session->desiredClock.sampleRateHz, 96000U);
-    EXPECT_EQ(session->appliedClock.sampleRateHz, 96000U);
-    EXPECT_EQ(coordinator_.RequestClockConfig(
-                  kTestGuid, AudioClockConfig{.sampleRateHz = 32000U},
-                  DuplexRestartReason::kSampleRateChange),
-              kIOReturnUnsupported);
+    EXPECT_EQ(session->desiredClock.sampleRateHz, 48000U);
+    EXPECT_EQ(session->appliedClock.sampleRateHz, 48000U);
 }
 
 TEST_F(AudioDuplexCoordinatorTests, TeardownCancelAbortsInFlightPrepare) {

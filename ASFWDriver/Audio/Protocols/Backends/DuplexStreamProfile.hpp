@@ -108,8 +108,6 @@ struct DuplexStreamProfile {
     // the RX decode takes its stride from the configured AM824 slot count instead
     // of the CIP header (Linux snd-oxfw SND_OXFW_QUIRK_WRONG_DBS semantics).
     bool captureTrustConfiguredStride{false};
-    // M-Audio special firmware advances DBC on high-rate NO-DATA packets.
-    bool captureEmptyPacketHasWrongDbc{false};
 
     // MOTU only: PCM chunks per data block, per direction. Its samples are 3-byte chunks
     // rather than quadlet slots, so the am824Slots geometry above does not describe them
@@ -343,12 +341,6 @@ class DuplexStreamProfileResolver final {
             // NO-DATA packets carry tag 0, and whose firmware 4.6.0 stamps a
             // wrong dbs above 88.2 kHz.
             profile.captureTrustConfiguredStride = true;
-        }
-
-        if (policy != nullptr &&
-            (policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
-             policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix)) {
-            profile.captureEmptyPacketHasWrongDbc = true;
         }
 
         // The special-firmware personas cannot answer the BridgeCo channel

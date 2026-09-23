@@ -227,6 +227,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
             .expectedStartShape = StreamStartShape::MAudioSpecial,
             .expectedCmpChoosesIsoChannel = true,
+            .expectedStartRatePinHz = 48000U,
         },
         {
             .description = "M-Audio ProjectMix I/O (BeBoB, filtered command set)",
@@ -242,6 +243,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
             .expectedStartShape = StreamStartShape::MAudioSpecial,
             .expectedCmpChoosesIsoChannel = true,
+            .expectedStartRatePinHz = 48000U,
         },
         // 12. M-Audio FireWire 1814 Bootloader
         {

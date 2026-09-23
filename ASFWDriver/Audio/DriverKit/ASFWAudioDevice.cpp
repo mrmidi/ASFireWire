@@ -12,10 +12,8 @@
 #include "../Config/TimingCursorPolicy.hpp"
 #include "Config/AudioProfileRegistry.hpp"
 #include "Config/ResolvedStreamConfig.hpp"
-#include "Config/AVC/MAudioSpecialProfile.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
-#include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
@@ -233,24 +231,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 return;
             }
             // The profile describes the wire geometry at its default (48 kHz);
-            // live cadence/FDF follow the device's current nominal rate. The
-            // special M-Audio profile also needs its maximum data packet size
-            // raised to the rate's SYT interval (16 frames at 88.2/96 kHz).
+            // live cadence/FDF follow the device's current nominal rate.
             if (ivars.device.currentSampleRate > 0) {
-                const uint32_t rateHz =
+                txConfig.sampleRate =
                     static_cast<uint32_t>(ivars.device.currentSampleRate);
-                const auto builder = static_cast<ASFW::DeviceProfiles::Audio::ProfileBuilderId>(
-                    ivars.device.profileBuilderId);
-                if (builder == ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
-                    builder == ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix) {
-                    if (!ASFW::Isoch::Audio::AVC::Profiles::MAudioSpecialProfile::ConfigureStreamRate(
-                            txConfig, rateHz)) {
-                        kr = failStart(kIOReturnUnsupported, "MAudioSpecialProfile::ConfigureStreamRate");
-                        return;
-                    }
-                } else {
-                    txConfig.sampleRate = rateHz;
-                }
             }
 
             const uint32_t numSlots =
@@ -374,20 +358,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 return;
             }
             if (ivars.device.currentSampleRate > 0) {
-                const uint32_t rateHz =
+                txConfig2.sampleRate =
                     static_cast<uint32_t>(ivars.device.currentSampleRate);
-                const auto builder = static_cast<ASFW::DeviceProfiles::Audio::ProfileBuilderId>(
-                    ivars.device.profileBuilderId);
-                if (builder == ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
-                    builder == ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix) {
-                    if (!ASFW::Isoch::Audio::AVC::Profiles::MAudioSpecialProfile::ConfigureStreamRate(
-                            txConfig2, rateHz)) {
-                        kr = failStart(kIOReturnUnsupported, "MAudioSpecialProfile::ConfigureStreamRate2");
-                        return;
-                    }
-                } else {
-                    txConfig2.sampleRate = rateHz;
-                }
             }
 
             const uint32_t numSlots2 =

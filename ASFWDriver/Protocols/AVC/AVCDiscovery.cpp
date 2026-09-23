@@ -676,7 +676,7 @@ void AVCDiscovery::PublishMAudioSpecialConfig(uint64_t guid,
     config.channelCount = formation->capturePcmChannels;
     config.inputChannelCount = formation->capturePcmChannels;
     config.outputChannelCount = formation->playbackPcmChannels;
-    config.sampleRates = {44100U, 48000U, 88200U, 96000U};
+    config.sampleRates = {48000U};
     config.currentSampleRate = 48000U;
     config.inputPlugName = projectMix ? "ProjectMix Inputs" : "1814 Inputs";
     config.outputPlugName = projectMix ? "ProjectMix Outputs" : "1814 Outputs";

@@ -46,10 +46,7 @@ public:
         uint32_t channelOffset = 0,
         bool publishTimeline = true,
         const RxCaptureChannelMap& captureMap = {},
-        bool primeDelayLine = false,
-        bool emptyPacketHasWrongDbc = false,
-        bool previousDbcValid = false,
-        uint8_t previousDbc = 0) noexcept;
+        bool primeDelayLine = false) noexcept;
 
 private:
     DirectInputWriter& writer_;

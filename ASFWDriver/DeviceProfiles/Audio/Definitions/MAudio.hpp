@@ -41,7 +41,8 @@ inline constexpr std::array kMAudioDefinitions{
                kMAudioFireWire1814ModelName, std::nullopt, BootloaderCuePolicy::None,
                DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
                                   .startShape = StreamStartShape::MAudioSpecial,
-                                  .cmpChoosesIsoChannel = true}),
+                                  .cmpChoosesIsoChannel = true,
+                                  .startRatePinHz = 48000U}),
     Definition(DeviceDefinitionId::MAudioProjectMix, kMAudioVendorId,
                kMAudioProjectMixModelId, AudioFamilyProviderId::BeBoB,
                ProbePolicyId::BeBoBFilteredCommandSet, ProfileBuilderId::MAudioProjectMix,
@@ -50,7 +51,8 @@ inline constexpr std::array kMAudioDefinitions{
                kMAudioProjectMixModelName, std::nullopt, BootloaderCuePolicy::None,
                DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
                                   .startShape = StreamStartShape::MAudioSpecial,
-                                  .cmpChoosesIsoChannel = true}),
+                                  .cmpChoosesIsoChannel = true,
+                                  .startRatePinHz = 48000U}),
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions

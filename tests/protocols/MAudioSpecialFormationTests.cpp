@@ -99,17 +99,12 @@ TEST(MAudioSpecialFormationTests, ProjectMixStopsTwoRatesShortOfThe1814) {
     EXPECT_EQ(kMAudioSpecialRatesHz[kMAudioFireWire1814RateCount - 1], 192000U);
 }
 
-TEST(MAudioSpecialFormationTests, DoubleRateClockPolicyIsExplicitlyM_AudioOnly) {
+TEST(MAudioSpecialFormationTests, FW255ClockPolicyPinsM_AudioSpecialTo48k) {
     using ASFW::Audio::AudioClockConfig;
-    using ASFW::Audio::IsSupportedAudioClockConfig;
     using ASFW::Audio::IsSupportedMAudioSpecialClockConfig;
 
-    for (const uint32_t rate : {88200U, 96000U}) {
-        const AudioClockConfig clock{.sampleRateHz = rate};
-        EXPECT_FALSE(IsSupportedAudioClockConfig(clock));
-        EXPECT_TRUE(IsSupportedMAudioSpecialClockConfig(clock));
-    }
-    for (const uint32_t rate : {32000U, 176400U, 192000U}) {
+    EXPECT_TRUE(IsSupportedMAudioSpecialClockConfig(AudioClockConfig{.sampleRateHz = 48000U}));
+    for (const uint32_t rate : {32000U, 44100U, 88200U, 96000U, 176400U, 192000U}) {
         EXPECT_FALSE(IsSupportedMAudioSpecialClockConfig(
             AudioClockConfig{.sampleRateHz = rate}));
     }
