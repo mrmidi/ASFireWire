@@ -19,6 +19,7 @@ ChooseDeviceProtocol(const Discovery::DeviceRecord& record) noexcept {
         .definition = plan->candidates.empty() ? DeviceDefinitionId::Unknown
                                                : plan->candidates.front(),
         .builder = plan->profileBuilder,
+        .implementation = plan->protocolImplementation,
         .unitVersion = plan->unitVersion,
         .unitDirectoryOffset = plan->unit.unitDirectoryOffset,
     };

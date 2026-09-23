@@ -11,7 +11,7 @@
 //
 // The catalog is the one table. These tests hold it to the properties that make
 // a half-add impossible: every Supported row resolves to a family, a probe and a
-// builder; no two rows can claim the same device; and a row with no builder is
+// builder and protocol; no two rows can claim the same device; and a row with no builder is
 // never reported as playable.
 
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <ios>
 #include <set>
+#include <string_view>
 
 namespace {
 
@@ -78,9 +79,9 @@ TEST(AudioDeviceCatalog, TheTableIsInternallyConsistent) {
 }
 
 // This is the #115 assertion. A row that claims to be Supported and does not
-// name all three of family, probe policy and profile builder is exactly the
+// name family, probe policy, profile builder and protocol implementation is the
 // half-add that published a nub and then could not stream.
-TEST(AudioDeviceCatalog, EverySupportedRowNamesAFamilyAProbeAndABuilder) {
+TEST(AudioDeviceCatalog, EverySupportedRowNamesAFamilyAProbeABuilderAndAProtocol) {
     for (const auto& definition : AudioDeviceCatalog::Definitions()) {
         if (definition.support != SupportDisposition::Supported) {
             continue;
@@ -92,7 +93,43 @@ TEST(AudioDeviceCatalog, EverySupportedRowNamesAFamilyAProbeAndABuilder) {
             << "definition " << id << " is Supported with no probe policy";
         EXPECT_NE(definition.profileBuilder, ProfileBuilderId::None)
             << "definition " << id << " is Supported with no profile builder";
+        EXPECT_NE(definition.protocolImplementation, ProtocolImplementationId::None)
+            << "definition " << id << " is Supported with no protocol implementation";
     }
+}
+
+TEST(AudioDeviceCatalog, DistinctDiceProfilesShareOneProtocolImplementation) {
+    const auto spro14 = MakeDevice(0x00130e0000000001ULL, kFocusriteVendorId,
+                                   kSPro14ModelId,
+                                   {{.offset = 5, .version = kDiceInterfaceVersion}});
+    const auto spro24 = MakeDevice(0x00130e0000000002ULL, kFocusriteVendorId,
+                                   kSPro24ModelId,
+                                   {{.offset = 5, .version = kDiceInterfaceVersion}});
+    const auto first = AudioDeviceCatalog::Resolve(spro14);
+    const auto second = AudioDeviceCatalog::Resolve(spro24);
+    ASSERT_TRUE(first.has_value());
+    ASSERT_TRUE(second.has_value());
+    EXPECT_NE(first->profileBuilder, second->profileBuilder);
+    EXPECT_EQ(first->protocolImplementation, ProtocolImplementationId::DiceTcat);
+    EXPECT_EQ(second->protocolImplementation, ProtocolImplementationId::DiceTcat);
+}
+
+TEST(AudioDeviceCatalog, RejectsProtocolThatDisagreesWithFamily) {
+    auto definitions = std::vector<AudioDeviceDefinition>(
+        AudioDeviceCatalog::Definitions().begin(),
+        AudioDeviceCatalog::Definitions().end());
+    const auto it = std::ranges::find_if(definitions, [](const auto& definition) {
+        return definition.id == DeviceDefinitionId::FocusriteSPro14;
+    });
+    ASSERT_NE(it, definitions.end());
+    it->protocolImplementation = ProtocolImplementationId::MotuV2;
+
+    const auto issues = AudioDeviceCatalog::ValidateDefinitions(definitions);
+    EXPECT_TRUE(std::ranges::any_of(issues, [](const auto& issue) {
+        return issue.reason != nullptr &&
+               std::string_view(issue.reason) ==
+                   "supported definition has incompatible family/probe/protocol";
+    }));
 }
 
 // The converse, and the reason vendor-wide matching had to end: a device we do
@@ -108,6 +145,9 @@ TEST(AudioDeviceCatalog, AnUnsupportedRowResolvesToNoBuilderAtAll) {
         EXPECT_EQ(definition.profileBuilder, ProfileBuilderId::None)
             << "definition " << static_cast<uint32_t>(definition.id)
             << " is not Supported but names a profile builder";
+        EXPECT_EQ(definition.protocolImplementation, ProtocolImplementationId::None)
+            << "definition " << static_cast<uint32_t>(definition.id)
+            << " is not Supported but names a protocol implementation";
     }
 }
 
