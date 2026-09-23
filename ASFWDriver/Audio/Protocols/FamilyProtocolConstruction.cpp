@@ -25,9 +25,9 @@ static_assert(
     "AudioFamilyProviderId member added without updating family protocol construction");
 
 static_assert(
-    static_cast<uint16_t>(DeviceProfiles::Audio::ProfileBuilderId::kLastValid) ==
-    static_cast<uint16_t>(DeviceProfiles::Audio::ProfileBuilderId::GenericBeBoB),
-    "ProfileBuilderId member added without updating family protocol construction");
+    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::kLastValid) ==
+    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::MotuV2),
+    "ProtocolImplementationId member added without updating family protocol construction");
 
 std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
     const Discovery::DeviceRecord& record,
@@ -46,12 +46,14 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
 
     const auto plan = DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(record);
     if (!plan.has_value() ||
-        plan->profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::None) {
+        plan->support != DeviceProfiles::Audio::SupportDisposition::Supported ||
+        plan->protocolImplementation ==
+            DeviceProfiles::Audio::ProtocolImplementationId::None) {
         return nullptr;
     }
 
     using DeviceProfiles::Audio::AudioFamilyProviderId;
-    using DeviceProfiles::Audio::ProfileBuilderId;
+    using DeviceProfiles::Audio::ProtocolImplementationId;
 
     // Family guard: exhaustive switch over all 7 families with no default: arm.
     // Adding an AudioFamilyProviderId without updating this switch must not compile.
@@ -68,12 +70,11 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
             return nullptr;
     }
 
-    // Builder guard: exhaustive switch over all 21 ProfileBuilderId members with no
-    // default: arm. Adding a ProfileBuilderId without teaching this constructor what
-    // to build must not compile.
-    switch (plan->profileBuilder) {
+    // The catalog independently selects the concrete protocol. ProfileBuilderId
+    // remains an endpoint/profile choice and is not a factory dispatch key.
+    switch (plan->protocolImplementation) {
         // --- DICE Family ---
-        case ProfileBuilderId::FocusriteSPro24Dsp:
+        case ProtocolImplementationId::DiceSPro24Dsp:
             ASFW_LOG(DICE,
                      "Creating SPro24DspProtocol node=0x%04x unitOffset=%u",
                      nodeId, plan->unit.unitDirectoryOffset);
@@ -82,14 +83,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
 
         // The plain TCAT devices differ in their profile, not their protocol:
         // geometry comes from the device's own registers either way.
-        case ProfileBuilderId::FocusriteSPro14:
-        case ProfileBuilderId::FocusriteSPro24:
-        case ProfileBuilderId::FocusriteSPro40:
-        case ProfileBuilderId::FocusriteLiquidS56:
-        case ProfileBuilderId::AlesisMultiMix:
-        case ProfileBuilderId::MidasVeniceF32:
-        case ProfileBuilderId::PreSonusStudioLive1602:
-        case ProfileBuilderId::PreSonusStudioLive2442:
+        case ProtocolImplementationId::DiceTcat:
             ASFW_LOG(DICE,
                      "Creating generic DICETcatProtocol node=0x%04x unitOffset=%u",
                      nodeId, plan->unit.unitDirectoryOffset);
@@ -99,8 +93,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // Weiss is the one DICE device with a non-default runtime policy: it is
         // a one-way interface, so CoreAudio must not be shown the device->host
         // side and source lock is not a precondition for enabling a stream.
-        case ProfileBuilderId::WeissInt202:
-        case ProfileBuilderId::WeissInt203:
+        case ProtocolImplementationId::DiceWeissInt:
             ASFW_LOG(DICE,
                      "Creating Weiss DICETcatProtocol node=0x%04x unitOffset=%u; DICE "
                      "remains duplex while CoreAudio hides device->host channels",
@@ -114,7 +107,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                 });
 
         // --- OXFW Family ---
-        case ProfileBuilderId::ApogeeDuet:
+        case ProtocolImplementationId::ApogeeDuet:
             ASFW_LOG(Audio, "Creating ApogeeDuetProtocol node=0x%04x", nodeId);
             // Factory path intentionally does not bind FCP transport yet.
             // AVCDiscovery wires transport for live command execution.
@@ -124,7 +117,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
 
         // Mackie Onyx-i, Oxford run (shared id 0x081216; geometry verified on a
         // real 820i). Plain AV/C + CMP duplex on the shared base -- no vendor codec.
-        case ProfileBuilderId::MackieOnyxIOxfw:
+        case ProtocolImplementationId::MackieOnyx:
             ASFW_LOG(Audio, "Creating MackieOnyxProtocol node=0x%04x", nodeId);
             return std::make_unique<Oxford::Mackie::MackieOnyxProtocol>(
                 busOps, busInfo, route, irmClient, cmpClient, timerScheduler);
@@ -134,14 +127,14 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // the shared AV/C+CMP duplex base. Static 10x10 geometry is verified
         // against HWINFO before the first stream (Linux snd-fireworks is the
         // reference).
-        case ProfileBuilderId::MackieOnyx400F:
+        case ProtocolImplementationId::FireworksOnyx400F:
             ASFW_LOG(Audio, "Creating FireworksProtocol for Onyx 400F node=0x%04x", nodeId);
             return std::make_unique<Fireworks::FireworksProtocol>(
                 busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
                 Fireworks::kOnyx400FGeometry);
 
         // --- BeBoB Family ---
-        case ProfileBuilderId::TerraTecPhase88:
+        case ProtocolImplementationId::BeBoBPhase88:
             ASFW_LOG(Audio, "Creating Phase88Protocol BeBoB/CMP backend node=0x%04x", nodeId);
             return std::make_unique<BeBoB::Phase88Protocol>(
                 busOps, busInfo, route, irmClient, cmpClient, timerScheduler);
@@ -150,17 +143,11 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // row selects this today (the one BeBoB device on this branch, the
         // PHASE 88, has its own builder), so it is reachable only when a future
         // row names it.
-        case ProfileBuilderId::GenericBeBoB:
+        case ProtocolImplementationId::BeBoBGeneric:
             ASFW_LOG(Audio, "Creating GenericBeBoBProtocol node=0x%04x", nodeId);
             return std::make_unique<BeBoB::GenericBeBoBProtocol>(
                 busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
                 BeBoB::DeviceModel{});
-
-        // M-Audio's special firmware is recognised for its command bound only;
-        // this branch has no MAudioSpecialProtocol. See AVCCommandFilter.hpp.
-        case ProfileBuilderId::MAudioFireWire1814:
-        case ProfileBuilderId::MAudioProjectMix:
-            return nullptr;
 
         // --- MotuRegister Family ---
         // MOTU publishes model_id 0; the model is the unit's Unit_Sw_Version,
@@ -168,8 +155,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // The IRM client must reach the protocol: the coordinator allocates iso
         // channels through IDuplexDeviceControl::GetIRMClient() before
         // programming the device.
-        case ProfileBuilderId::Motu828mk2:
-        case ProfileBuilderId::MotuUltralite:
+        case ProtocolImplementationId::MotuV2:
             ASFW_LOG(Audio,
                      "Creating MotuV2Protocol version=0x%06x node=0x%04x",
                      plan->unitVersion, nodeId);
@@ -181,8 +167,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // which is a *classification*, not a decision to stream it. This branch
         // has no generic AV/C backend, and inventing one here would start
         // talking to every AV/C device on the bus.
-        case ProfileBuilderId::GenericAvc:
-        case ProfileBuilderId::None:
+        case ProtocolImplementationId::None:
             return nullptr;
     }
 

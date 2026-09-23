@@ -134,6 +134,55 @@ enum ClauseConstraintBit : uint16_t {
     return id >= ProfileBuilderId::GenericAvc && id <= ProfileBuilderId::kLastValid;
 }
 
+[[nodiscard]] constexpr bool KnownProtocol(ProtocolImplementationId id) noexcept {
+    return id > ProtocolImplementationId::None &&
+           id <= ProtocolImplementationId::kLastValid;
+}
+
+[[nodiscard]] constexpr bool ProtocolMatchesFamily(
+    ProtocolImplementationId implementation, AudioFamilyProviderId family) noexcept {
+    switch (implementation) {
+        case ProtocolImplementationId::DiceTcat:
+        case ProtocolImplementationId::DiceSPro24Dsp:
+        case ProtocolImplementationId::DiceWeissInt:
+            return family == AudioFamilyProviderId::DICE;
+        case ProtocolImplementationId::ApogeeDuet:
+        case ProtocolImplementationId::MackieOnyx:
+            return family == AudioFamilyProviderId::OXFW;
+        case ProtocolImplementationId::FireworksOnyx400F:
+            return family == AudioFamilyProviderId::Fireworks;
+        case ProtocolImplementationId::BeBoBPhase88:
+        case ProtocolImplementationId::BeBoBGeneric:
+            return family == AudioFamilyProviderId::BeBoB;
+        case ProtocolImplementationId::MotuV2:
+            return family == AudioFamilyProviderId::MotuRegister;
+        case ProtocolImplementationId::None:
+            return false;
+    }
+    return false;
+}
+
+[[nodiscard]] constexpr bool ProbeMatchesFamily(
+    ProbePolicyId probe, AudioFamilyProviderId family) noexcept {
+    switch (family) {
+        case AudioFamilyProviderId::DICE:
+            return probe == ProbePolicyId::DiceTcat;
+        case AudioFamilyProviderId::OXFW:
+            return probe == ProbePolicyId::OxfwAvc;
+        case AudioFamilyProviderId::Fireworks:
+            return probe == ProbePolicyId::FireworksEfc;
+        case AudioFamilyProviderId::BeBoB:
+            return probe == ProbePolicyId::BeBoBPlug0;
+        case AudioFamilyProviderId::MotuRegister:
+            return probe == ProbePolicyId::MotuRegister;
+        case AudioFamilyProviderId::GenericAvc:
+            return probe == ProbePolicyId::GenericAvc;
+        case AudioFamilyProviderId::None:
+            return false;
+    }
+    return false;
+}
+
 [[nodiscard]] constexpr bool CompatibleOverlap(
     const AudioDeviceDefinition& first,
     const AudioDeviceDefinition& second) noexcept {
@@ -141,6 +190,7 @@ enum ClauseConstraintBit : uint16_t {
            first.equivalenceClassId == second.equivalenceClassId &&
            first.family == second.family &&
            first.probePolicy == second.probePolicy &&
+           first.protocolImplementation == second.protocolImplementation &&
            first.commonEquivalenceProfileBuilder != ProfileBuilderId::None &&
            first.commonEquivalenceProfileBuilder == second.commonEquivalenceProfileBuilder;
 }
@@ -175,9 +225,21 @@ std::vector<CatalogValidationIssue> AudioDeviceCatalog::ValidateDefinitions(
         if (definition.support == SupportDisposition::Supported &&
             (!KnownFamily(definition.family) ||
              !KnownBuilder(definition.profileBuilder) ||
-             !KnownProbe(definition.probePolicy))) {
+             !KnownProbe(definition.probePolicy) ||
+             !KnownProtocol(definition.protocolImplementation))) {
             issues.push_back({definition.id, definition.id,
-                              "supported definition lacks provider/probe/profile"});
+                              "supported definition lacks provider/probe/profile/protocol"});
+        }
+        if (definition.support == SupportDisposition::Supported &&
+            (!ProtocolMatchesFamily(definition.protocolImplementation, definition.family) ||
+             !ProbeMatchesFamily(definition.probePolicy, definition.family))) {
+            issues.push_back({definition.id, definition.id,
+                              "supported definition has incompatible family/probe/protocol"});
+        }
+        if (definition.support != SupportDisposition::Supported &&
+            definition.protocolImplementation != ProtocolImplementationId::None) {
+            issues.push_back({definition.id, definition.id,
+                              "unsupported definition names a protocol implementation"});
         }
         if (definition.equivalenceClassId != 0 &&
             !KnownBuilder(definition.commonEquivalenceProfileBuilder)) {

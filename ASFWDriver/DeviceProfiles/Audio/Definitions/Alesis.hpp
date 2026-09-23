@@ -13,6 +13,7 @@ inline constexpr std::array kAlesisDefinitions{
     Definition(DeviceDefinitionId::AlesisMultiMix, kAlesisVendorId,
                kAlesisMultiMixModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::DiceTcat, ProfileBuilderId::AlesisMultiMix,
+               ProtocolImplementationId::DiceTcat,
                SupportDisposition::Supported, kAlesisVendorName,
                kAlesisMultiMixModelName, std::nullopt, BootloaderCuePolicy::None,
                DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
@@ -24,7 +25,9 @@ inline constexpr std::array kAlesisDefinitions{
     // deleting dead code.
     Definition(DeviceDefinitionId::AlesisIo, kAlesisVendorId, kAlesisIoModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None,
-               ProfileBuilderId::None, SupportDisposition::RecognizedUnsupported,
+               ProfileBuilderId::None,
+               ProtocolImplementationId::None,
+               SupportDisposition::RecognizedUnsupported,
                kAlesisVendorName, kAlesisIoModelName, std::nullopt,
                BootloaderCuePolicy::None,
                DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,

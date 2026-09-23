@@ -12,7 +12,9 @@ namespace ASFW::DeviceProfiles::Audio::Definitions {
 inline constexpr std::array kApogeeDefinitions{
     Definition(DeviceDefinitionId::ApogeeDuet, kApogeeVendorId, kApogeeDuetModelId,
                AudioFamilyProviderId::OXFW, ProbePolicyId::OxfwAvc,
-               ProfileBuilderId::ApogeeDuet, SupportDisposition::Supported,
+               ProfileBuilderId::ApogeeDuet,
+               ProtocolImplementationId::ApogeeDuet,
+               SupportDisposition::Supported,
                kApogeeVendorName, kApogeeDuetModelName, std::nullopt,
                BootloaderCuePolicy::None,
                // Discovery reports and supports non-blocking, and host playback

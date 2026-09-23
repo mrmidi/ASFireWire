@@ -31,6 +31,8 @@ struct DeviceProtocolChoice final {
         DeviceProfiles::Audio::DeviceDefinitionId::Unknown};
     DeviceProfiles::Audio::ProfileBuilderId builder{
         DeviceProfiles::Audio::ProfileBuilderId::None};
+    DeviceProfiles::Audio::ProtocolImplementationId implementation{
+        DeviceProfiles::Audio::ProtocolImplementationId::None};
     /// The matched unit's Unit_Sw_Version. MOTU needs it: it is the only model
     /// discriminator that family publishes, since its root model_id is 0.
     uint32_t unitVersion{0};
