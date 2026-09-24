@@ -456,12 +456,16 @@ void DICEDuplexBringupController::DoReadGlobalBeforeClaim(
                                 }
 
                                 preClaimClockSelect_ = state.clockSelect;
+                                preClaimStatus_ = state.status;
+                                preClaimSampleRate_ = state.sampleRate;
                                 ASFW_LOG(DICE,
-                                         "PrepareDuplex48k: global pre-claim owner=0x%016llx enable=%u notify=0x%08x clockSelect=0x%08x",
+                                         "PrepareDuplex48k: global pre-claim owner=0x%016llx enable=%u notify=0x%08x clockSelect=0x%08x status=0x%08x rate=%u",
                                          state.owner,
                                          state.enabled ? 1U : 0U,
                                          state.notification,
-                                         state.clockSelect);
+                                         state.clockSelect,
+                                         state.status,
+                                         state.sampleRate);
                                 DoReadOwnerBeforeClaim(channels, std::move(cb));
                             });
 }
@@ -558,12 +562,29 @@ void DICEDuplexBringupController::DoWriteClockSelect(
     // re-triggers the PLL relock during the bring-up, right as streams are being
     // enabled, which wedges the device-side streams. The downstream stable-lock gate
     // (DoAwaitStreamingClockLock) still waits for the lock to settle before enabling.
-    if (preClaimClockSelect_ == diceClock_.clockSelect) {
+    //
+    // "At target" needs both halves. CLOCK_SELECT is the rate that was requested;
+    // STATUS and SAMPLE_RATE are the rate the device reached. They disagree after a
+    // rate change the device did not complete, and skipping then suppresses the one
+    // write that forces a relock (DICE_STABILITY_REGRESSION.md §3, hardware-validated
+    // on a Saffire Pro 24 DSP stuck at 44.1 kHz). Same double-check as the active
+    // clock check below.
+    const uint32_t targetHz = restartSession_.desiredClock.sampleRateHz;
+    const bool requestedAtTarget = preClaimClockSelect_ == diceClock_.clockSelect;
+    const bool achievedAtTarget =
+        NominalRateHz(preClaimStatus_) == targetHz && preClaimSampleRate_ == targetHz;
+    if (requestedAtTarget && achievedAtTarget) {
         ASFW_LOG(DICE,
-                 "PrepareDuplex48k: device already at target clockSelect=0x%08x; skipping redundant write",
-                 diceClock_.clockSelect);
+                 "PrepareDuplex48k: device already at target clockSelect=0x%08x rate=%u; skipping redundant write",
+                 diceClock_.clockSelect, targetHz);
         DoActiveClockCheck(channels, NotificationMailbox::Consume(), std::move(cb));
         return;
+    }
+    if (requestedAtTarget) {
+        ASFW_LOG(DICE,
+                 "PrepareDuplex48k: clockSelect=0x%08x already requests %u Hz but device reports %u Hz "
+                 "(status=0x%08x); rewriting",
+                 diceClock_.clockSelect, targetHz, preClaimSampleRate_, preClaimStatus_);
     }
 
     NotificationMailbox::Reset();
