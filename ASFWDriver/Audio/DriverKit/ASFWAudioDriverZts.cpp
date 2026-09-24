@@ -1518,8 +1518,18 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                     0, std::memory_order_relaxed);
             // Publish a stable copy for the read-only user-client snapshot.
             // No control-plane caller receives directControl itself.
-            directControl->txCompletedIntervalSequence.fetch_add(
-                1, std::memory_order_relaxed);
+            // The interval opened at the previous emission (0 = unknown:
+            // first emission after a reset).
+            const uint64_t intervalDurationTicks =
+                lastHeartbeatTicks != 0 && now > lastHeartbeatTicks
+                    ? now - lastHeartbeatTicks
+                    : 0;
+            ASFW::Audio::Runtime::SeqlockWriteBegin(
+                directControl->txCompletedIntervalSequence);
+            directControl->txCompletedIntervalDurationTicks.store(
+                intervalDurationTicks, std::memory_order_relaxed);
+            directControl->txCompletedIntervalEndHostTicks.store(
+                now, std::memory_order_relaxed);
             directControl->txCompletedIntervalMarginMinPackets.store(
                 intervalMarginMin, std::memory_order_relaxed);
             directControl->txCompletedIntervalMarginMaxPackets.store(
@@ -1543,9 +1553,12 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 directControl->txCompletedIntervalCommittedMarginHistogram[index].store(
                     marginBuckets[index], std::memory_order_relaxed);
             }
-            directControl->txCompletedIntervalSequence.fetch_add(
-                1, std::memory_order_release);
-            directControl->rxCaptureBufferTelemetry.CompleteInterval();
+            ASFW::Audio::Runtime::SeqlockWriteEnd(
+                directControl->txCompletedIntervalSequence);
+            // Close the RX interval on the same boundary. If the receive path
+            // is closing it concurrently this is skipped; it is retried at the
+            // next emission.
+            (void)directControl->rxCaptureBufferTelemetry.CompleteInterval(now);
             // Stamped on every emission, so an anomaly burst defers the next
             // heartbeat instead of interleaving with it. Anomalies are never
             // themselves suppressed.

@@ -6,6 +6,7 @@
 #include "TxSytTrace.hpp"
 #include "TxWirePayloadTelemetry.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
+#include "../../Runtime/Seqlock.hpp"
 #include "../../Wire/AMDTP/RxSequenceReplay.hpp"
 #include "../../Wire/AMDTP/RxSytCadence.hpp"
 #include "../../Wire/MOTU/MotuEventOffsetCache.hpp"
@@ -230,9 +231,19 @@ struct RxCaptureBufferTelemetry final {
     // latest-window mailbox state, not an input overrun.
     std::atomic<uint64_t> intervalReaderBeginReadCalls{0};
 
-    // Written by the heartbeat owner. Odd while copying, even when readers
-    // may snapshot the completed interval without locking the audio path.
+    // Host ticks at which the current interval opened (0 = not yet known).
+    std::atomic<uint64_t> intervalStartHostTicks{0};
+
+    // The completed interval, published under completedIntervalSequence with
+    // the Seqlock.hpp protocol (odd while copying). Two writers can close an
+    // interval -- the TX heartbeat and the RX watchdog path, so a capture-only
+    // stream still publishes -- and completeGate_ serialises them.
     std::atomic<uint64_t> completedIntervalSequence{0};
+    // Host ticks covered by the completed interval; 0 = start unknown (the
+    // first interval after a reset). Intervals close early on anomalies, so
+    // counts are only comparable per unit time.
+    std::atomic<uint64_t> completedIntervalDurationTicks{0};
+    std::atomic<uint64_t> completedIntervalEndHostTicks{0};
     std::atomic<uint64_t> completedMinimumAvailableFrames{UINT64_MAX};
     std::atomic<uint64_t> completedMaximumAvailableFrames{0};
     std::atomic<uint64_t> completedMinimumFreeHeadroomFrames{UINT64_MAX};
@@ -310,8 +321,84 @@ struct RxCaptureBufferTelemetry final {
         intervalReaderBeginReadCalls.fetch_add(1, std::memory_order_relaxed);
     }
 
-    void CompleteInterval() noexcept {
-        completedIntervalSequence.fetch_add(1, std::memory_order_relaxed);
+    /// Closes the current interval at `nowHostTicks` and publishes it.
+    /// Returns false if another writer is closing it right now.
+    bool CompleteInterval(uint64_t nowHostTicks) noexcept {
+        if (!completeGate_.TryEnter()) {
+            return false;
+        }
+        CompleteIntervalLocked(nowHostTicks);
+        completeGate_.Leave();
+        return true;
+    }
+
+    /// Closes the interval only if at least `periodHostTicks` have passed since
+    /// the last close (or since it opened). Used by the receive path so a
+    /// stream with no TX heartbeat still publishes capture occupancy.
+    bool CompleteIntervalIfDue(uint64_t nowHostTicks, uint64_t periodHostTicks) noexcept {
+        if (!completeGate_.TryEnter()) {
+            return false;
+        }
+        uint64_t since = completedIntervalEndHostTicks.load(std::memory_order_relaxed);
+        if (since == 0) {
+            since = intervalStartHostTicks.load(std::memory_order_relaxed);
+        }
+        if (since == 0) {
+            // Nothing observed yet: open the interval now, publish nothing.
+            intervalStartHostTicks.store(nowHostTicks, std::memory_order_relaxed);
+            completeGate_.Leave();
+            return false;
+        }
+        const bool due = nowHostTicks > since && nowHostTicks - since >= periodHostTicks;
+        if (due) {
+            CompleteIntervalLocked(nowHostTicks);
+        }
+        completeGate_.Leave();
+        return due;
+    }
+
+    void Reset() noexcept {
+        currentAvailableFrames.store(0, std::memory_order_relaxed);
+        intervalMinimumAvailableFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        intervalMaximumAvailableFrames.store(0, std::memory_order_relaxed);
+        intervalMinimumFreeHeadroomFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        for (auto& bucket : intervalOccupancyHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        intervalOverrunEvents.store(0, std::memory_order_relaxed);
+        intervalOverwrittenFrames.store(0, std::memory_order_relaxed);
+        intervalStarvationEvents.store(0, std::memory_order_relaxed);
+        intervalStarvedFrames.store(0, std::memory_order_relaxed);
+        intervalReaderBeginReadCalls.store(0, std::memory_order_relaxed);
+        intervalStartHostTicks.store(0, std::memory_order_relaxed);
+        completedIntervalSequence.store(0, std::memory_order_relaxed);
+        completedIntervalDurationTicks.store(0, std::memory_order_relaxed);
+        completedIntervalEndHostTicks.store(0, std::memory_order_relaxed);
+        completeGate_.Reset();
+        completedMinimumAvailableFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        completedMaximumAvailableFrames.store(0, std::memory_order_relaxed);
+        completedMinimumFreeHeadroomFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        for (auto& bucket : completedOccupancyHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        completedOverrunEvents.store(0, std::memory_order_relaxed);
+        completedOverwrittenFrames.store(0, std::memory_order_relaxed);
+        completedStarvationEvents.store(0, std::memory_order_relaxed);
+        completedStarvedFrames.store(0, std::memory_order_relaxed);
+        completedReaderBeginReadCalls.store(0, std::memory_order_relaxed);
+        totalOverwrittenFrames.store(0, std::memory_order_relaxed);
+        totalStarvedFrames.store(0, std::memory_order_relaxed);
+    }
+
+private:
+    void CompleteIntervalLocked(uint64_t nowHostTicks) noexcept {
+        const uint64_t start =
+            intervalStartHostTicks.exchange(nowHostTicks, std::memory_order_relaxed);
+        SeqlockWriteBegin(completedIntervalSequence);
+        completedIntervalDurationTicks.store(
+            start != 0 && nowHostTicks > start ? nowHostTicks - start : 0,
+            std::memory_order_relaxed);
+        completedIntervalEndHostTicks.store(nowHostTicks, std::memory_order_relaxed);
         completedMinimumAvailableFrames.store(
             intervalMinimumAvailableFrames.exchange(
                 UINT64_MAX, std::memory_order_relaxed),
@@ -340,37 +427,10 @@ struct RxCaptureBufferTelemetry final {
             0, std::memory_order_relaxed), std::memory_order_relaxed);
         completedReaderBeginReadCalls.store(intervalReaderBeginReadCalls.exchange(
             0, std::memory_order_relaxed), std::memory_order_relaxed);
-        completedIntervalSequence.fetch_add(1, std::memory_order_release);
+        SeqlockWriteEnd(completedIntervalSequence);
     }
 
-    void Reset() noexcept {
-        currentAvailableFrames.store(0, std::memory_order_relaxed);
-        intervalMinimumAvailableFrames.store(UINT64_MAX, std::memory_order_relaxed);
-        intervalMaximumAvailableFrames.store(0, std::memory_order_relaxed);
-        intervalMinimumFreeHeadroomFrames.store(UINT64_MAX, std::memory_order_relaxed);
-        for (auto& bucket : intervalOccupancyHistogram) {
-            bucket.store(0, std::memory_order_relaxed);
-        }
-        intervalOverrunEvents.store(0, std::memory_order_relaxed);
-        intervalOverwrittenFrames.store(0, std::memory_order_relaxed);
-        intervalStarvationEvents.store(0, std::memory_order_relaxed);
-        intervalStarvedFrames.store(0, std::memory_order_relaxed);
-        intervalReaderBeginReadCalls.store(0, std::memory_order_relaxed);
-        completedIntervalSequence.store(0, std::memory_order_relaxed);
-        completedMinimumAvailableFrames.store(UINT64_MAX, std::memory_order_relaxed);
-        completedMaximumAvailableFrames.store(0, std::memory_order_relaxed);
-        completedMinimumFreeHeadroomFrames.store(UINT64_MAX, std::memory_order_relaxed);
-        for (auto& bucket : completedOccupancyHistogram) {
-            bucket.store(0, std::memory_order_relaxed);
-        }
-        completedOverrunEvents.store(0, std::memory_order_relaxed);
-        completedOverwrittenFrames.store(0, std::memory_order_relaxed);
-        completedStarvationEvents.store(0, std::memory_order_relaxed);
-        completedStarvedFrames.store(0, std::memory_order_relaxed);
-        completedReaderBeginReadCalls.store(0, std::memory_order_relaxed);
-        totalOverwrittenFrames.store(0, std::memory_order_relaxed);
-        totalStarvedFrames.store(0, std::memory_order_relaxed);
-    }
+    SeqlockWriterGate completeGate_{};
 };
 
 struct TxPreparationRequestState final {
@@ -535,8 +595,14 @@ struct AudioTransportControlBlock final {
         txIntervalCommittedMarginHistogram{};
     // Last complete interval, copied by the control plane.  The audio thread
     // writes it under txCompletedIntervalSequence (odd while mutating, even
-    // when stable); readers only ever receive a value-owned snapshot.
+    // when stable, Seqlock.hpp protocol); readers only ever receive a
+    // value-owned snapshot.
     std::atomic<uint64_t> txCompletedIntervalSequence{0};
+    // Host ticks the completed interval covered (0 = start unknown: the first
+    // interval after a reset) and when it closed. Anomalies close intervals
+    // early, so interval counts are only comparable per unit time.
+    std::atomic<uint64_t> txCompletedIntervalDurationTicks{0};
+    std::atomic<uint64_t> txCompletedIntervalEndHostTicks{0};
     std::atomic<uint32_t> txCompletedIntervalMarginMinPackets{UINT32_MAX};
     std::atomic<uint32_t> txCompletedIntervalMarginMaxPackets{0};
     std::atomic<uint64_t> txCompletedIntervalPreparationLatencyMaxTicks{0};
@@ -709,6 +775,8 @@ struct AudioTransportControlBlock final {
             bucket.store(0, std::memory_order_relaxed);
         }
         txCompletedIntervalSequence.store(0, std::memory_order_relaxed);
+        txCompletedIntervalDurationTicks.store(0, std::memory_order_relaxed);
+        txCompletedIntervalEndHostTicks.store(0, std::memory_order_relaxed);
         txCompletedIntervalMarginMinPackets.store(
             UINT32_MAX, std::memory_order_relaxed);
         txCompletedIntervalMarginMaxPackets.store(0, std::memory_order_relaxed);

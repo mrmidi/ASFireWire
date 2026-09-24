@@ -107,7 +107,7 @@ TEST(AudioTransportControlBlockTests, RxCaptureTelemetryCapturesIntervalWatermar
     telemetry.RecordOverrun(32);
     telemetry.RecordStarvation(16);
     telemetry.RecordReaderBeginRead();
-    telemetry.CompleteInterval();
+    telemetry.CompleteInterval(1000);
 
     AudioTelemetryEndpointSnapshot snapshot{};
     ASFW::Audio::Runtime::CopyAudioTelemetrySnapshot(control, snapshot);
@@ -128,7 +128,7 @@ TEST(AudioTransportControlBlockTests, RxCaptureTelemetryCapturesIntervalWatermar
 
 TEST(AudioTransportControlBlockTests, RxCaptureReaderActivityIsScopedToTheCompletedInterval) {
     AudioTransportControlBlock control{};
-    control.rxCaptureBufferTelemetry.CompleteInterval();
+    control.rxCaptureBufferTelemetry.CompleteInterval(1000);
 
     AudioTelemetryEndpointSnapshot snapshot{};
     ASFW::Audio::Runtime::CopyAudioTelemetrySnapshot(control, snapshot);

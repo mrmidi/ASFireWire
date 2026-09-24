@@ -166,6 +166,14 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/PlaybackRingRangeTests.cpp
 )
 
+# Audio telemetry wire v4 contract (FW-175); the golden fixture is shared with
+# the Swift decoder tests.
+add_audio_test(AudioTelemetryWireTests
+    AudioRuntime/AudioTelemetryWireTests.cpp
+)
+target_compile_definitions(AudioTelemetryWireTests PRIVATE
+    ASFW_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures")
+
 
 
 

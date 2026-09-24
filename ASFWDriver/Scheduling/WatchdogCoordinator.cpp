@@ -184,14 +184,20 @@ void WatchdogCoordinator::TickIsochReceive(
                  isRunning, ::ASFW::LogConfig::Shared().GetDirectAudioVerbosity());
     }
 
+    // Consumer diagnostics maintain state the telemetry contract depends on
+    // (RX interval closing, FW-175) plus the [AudioIO] error report, so they
+    // run whenever RX runs -- not only when diagnostics logging is enabled.
+    if (isRunning) {
+        if (++consumerDiagnosticsDivider_ >= kConsumerDiagnosticsIntervalTicks) {
+            consumerDiagnosticsDivider_ = 0;
+            isochReceiveContext->ServiceConsumerDiagnostics();
+        }
+    }
+
     if (drainEligible) {
         if (++ztsLogDivider_ >= kZtsDrainIntervalTicks) {
             ztsLogDivider_ = 0;
             isochReceiveContext->DrainZtsTelemetry(kZtsRecordsPerDrain);
-        }
-        if (++consumerDiagnosticsDivider_ >= kConsumerDiagnosticsIntervalTicks) {
-            consumerDiagnosticsDivider_ = 0;
-            isochReceiveContext->ServiceConsumerDiagnostics();
         }
         if (++txSytTraceDivider_ >= kTxSytTraceIntervalTicks) {
             txSytTraceDivider_ = 0;

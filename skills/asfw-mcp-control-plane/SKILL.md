@@ -301,6 +301,24 @@ imply a host-side handshake obligation. Report the counters; do not infer intent
 only NO-DATA". A non-zero reject counter with `packetsSeen > 0` means the device
 did send us something we threw away.
 
+### Stream runs but sounds wrong: the stable telemetry summary
+
+Once a stream is up, `asfw_get_audio_telemetry` returns the full per-endpoint
+summary (wire v4, read-only, no transaction): TX preparation latency and
+committed-margin histograms, RX capture-ring occupancy/overrun/starvation, and
+for each completed interval **its duration and end time** — so counts can be
+turned into rates. `completedIntervalDurationNs: null` means the duration is
+unknown (first interval after a reset); do not divide by it. The `rxAttribution`
+member carries the same verdict as `asfw_get_audio_stream_health`.
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_get_audio_telemetry '{}'
+```
+
+This summary is deliberately small and stable. It is not a research trace: new
+experiments go to the log ring, never into this contract
+(`documentation/OBSERVABILITY_INVENTORY.md`).
+
 Pair it with the bring-up records, which are emitted for a stream that has **not**
 established yet (bounded per start, so a healthy stream stays silent):
 

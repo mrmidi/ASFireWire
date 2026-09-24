@@ -536,6 +536,15 @@ void DirectAudioReceiveConsumer::ServiceConsumerDiagnostics() {
     if (!control) {
         return;
     }
+    // FW-175: RX capture intervals must not depend on the TX heartbeat, which
+    // is absent for capture-only streams. The heartbeat closes intervals every
+    // 5 s; this fallback uses a longer period so it only fires when nobody else
+    // did. Only the primary consumer owns the capture telemetry.
+    if (!configuration_.isSecondary) {
+        constexpr uint64_t kRxIntervalFallbackNanos = 6'000'000'000ULL;
+        (void)control->rxCaptureBufferTelemetry.CompleteIntervalIfDue(
+            mach_absolute_time(), ::ASFW::Timing::nanosToHostTicks(kRxIntervalFallbackNanos));
+    }
     const uint64_t errorGeneration =
         control->ioCallbackErrorGeneration.load(std::memory_order_acquire);
     if (errorGeneration != control->ioCallbackErrorReportedGeneration.load(

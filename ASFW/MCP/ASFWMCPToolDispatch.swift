@@ -133,6 +133,8 @@ extension ASFWMCPCore {
             return await dispatchSbp2Orb(name, decoder: decoder)
         case "asfw_get_audio_stream_health":
             return await dispatchAudioStreamHealth(name)
+        case "asfw_get_audio_telemetry":
+            return await dispatchAudioTelemetry(name)
         case "asfw_dice_decode_status":
             return await dispatchDiceDecodeStatus(name, decoder: decoder)
         case "asfw_dice_write_register":
@@ -541,6 +543,14 @@ extension ASFWMCPCore {
             ]),
             errors: []
         )
+    }
+
+    private func dispatchAudioTelemetry(_ name: String) async -> ASFWMCPToolCallResult {
+        guard let telemetry = await driver.fetchAudioTelemetry() else {
+            return .failure(toolName: name, code: .driverNotConnected,
+                            reason: "Audio telemetry is unavailable (driver not connected, or an older wire version).")
+        }
+        return ASFWMCPToolCallResult(toolName: name, ok: true, data: telemetry, errors: [])
     }
 
     /// The user client returns metadata embedded in the running dext, not the
