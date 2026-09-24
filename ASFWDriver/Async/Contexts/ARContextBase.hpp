@@ -280,8 +280,7 @@ kern_return_t ARContextBase<Derived, Tag>::Arm(uint32_t commandPtr) noexcept {
 
     // Set ContextControl.run bit to start DMA
     // Per OHCI §8.2: run bit = bit 15 of ContextControl
-    constexpr uint32_t kRunBit = 1u << 15;
-    this->WriteControlSet(kRunBit);
+    this->WriteControlSet(Driver::kContextControlRunBit);
 
     // Verify context became active
     // Poll briefly to confirm hardware started processing
@@ -322,8 +321,7 @@ kern_return_t ARContextBase<Derived, Tag>::Stop(uint32_t timeoutMs) noexcept {
 
     // Clear ContextControl.run bit
     // Per OHCI §7.2.3 / §8.2: write 1 to ContextControl.Clear
-    constexpr uint32_t kRunBit = 1u << 15;
-    this->WriteControlClear(kRunBit);
+    this->WriteControlClear(Driver::kContextControlRunBit);
 
     // Poll ContextControl.active until it clears
     // Per OHCI §7.2.3: active=1 while hardware processes descriptors

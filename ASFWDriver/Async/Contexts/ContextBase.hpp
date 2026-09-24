@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "../../Hardware/HardwareInterface.hpp"
+#include "../../Hardware/OHCIConstants.hpp"
 #include "../../Hardware/RegisterMap.hpp"
 
 namespace ASFW::Async {
@@ -181,11 +182,11 @@ public:
      * \return Current ContextControl value
      *
      * **OHCI §7.2.3 / §8.2**
-     * ContextControl bits:
-     * - [15] run: Context active when 1
-     * - [13] active: Hardware processing descriptors
+     * ContextControl bits (masks in OHCIConstants.hpp):
+     * - [15] run: Software enables the context
      * - [12] wake: Write 1 to signal new descriptors available
-     * - [5] dead: Context encountered fatal error
+     * - [11] dead: Context encountered fatal error
+     * - [10] active: Hardware processing descriptors
      */
     [[nodiscard]] uint32_t ReadControl() const noexcept {
         auto access = hw_->TryBeginAccess();
@@ -254,10 +255,13 @@ public:
      * Used for polling during context stop sequence.
      */
     [[nodiscard]] bool IsActive() const noexcept {
-        constexpr uint32_t kActiveBit = 1u << 13;
+        // ContextControl.active is bit 10 (OHCI §3.1.1; kContextControlActiveBit).
+        // A local `1u << 13` (a reserved bit) used to live here, so this always
+        // answered false: every stop/quiesce wait returned instantly and
+        // reported success while hardware was still ACTIVE.
         const uint32_t ctl = ReadControl();
         if (ctl == 0xFFFFFFFFu) { return false; }
-        return (ctl & kActiveBit) != 0;
+        return (ctl & Driver::kContextControlActiveBit) != 0;
     }
 
     /**
@@ -266,10 +270,9 @@ public:
      * \return true if ContextControl.run bit is set
      */
     [[nodiscard]] bool IsRunning() const noexcept {
-        constexpr uint32_t kRunBit = 1u << 15;
         const uint32_t ctl = ReadControl();
         if (ctl == 0xFFFFFFFFu) { return false; }
-        return (ctl & kRunBit) != 0;
+        return (ctl & Driver::kContextControlRunBit) != 0;
     }
 
     /**

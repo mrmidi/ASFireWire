@@ -105,7 +105,9 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const Descriptor
 
     // If hardware still considers the context running (PATH-2 fallback case),
     // clear RUN before programming CommandPtr so the next RUN=1 transition is visible.
-    if (ctx().IsRunning()) {
+    // Also poll when RUN=0 but still ACTIVE — the state a bounded AT-quiesce
+    // timeout in the bus-reset FSM leaves behind.
+    if (ctx().IsRunning() || ctx().IsActive()) {
         clearRunAndPoll_();
         if (ctx().IsActive()) {
             // Programming CommandPtr on an ACTIVE context is illegal (OHCI
