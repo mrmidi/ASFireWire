@@ -103,7 +103,7 @@ ASFW::Audio::Model::StreamMode ResolveStreamMode(
     // device catalog. Unspecified means "believe the probe", which is what an
     // unlisted device gets.
     using ASFW::DeviceProfiles::Audio::ForcedStreamMode;
-    const auto forced = plan.streamTraits.forcedStreamMode;
+    const auto forced = plan.streamTraits.wire.forcedStreamMode;
     if (forced != ForcedStreamMode::Unspecified) {
         const auto mode = (forced == ForcedStreamMode::Blocking)
                               ? ASFW::Audio::Model::StreamMode::kBlocking

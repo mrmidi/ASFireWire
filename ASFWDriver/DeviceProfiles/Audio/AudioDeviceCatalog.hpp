@@ -204,19 +204,16 @@ enum class StreamStartShape : uint8_t {
     MAudioSpecial,
 };
 
-/// Wire-level facts about a device that no probe reports, so the driver has to
-/// be told them. Every field defaults to "nothing special", which is exactly
-/// how an unlisted device behaves -- a definition that states none of these is
-/// indistinguishable from having no definition at all, for these purposes.
-struct DeviceStreamTraits final {
-    ForcedStreamMode forcedStreamMode{ForcedStreamMode::Unspecified};
-    StreamStartShape startShape{StreamStartShape::Default};
+/// Static stream facts a probe does not report, grouped by the decision each
+/// one feeds so no single struct becomes a quirks bag (FW-168): how the wire
+/// is framed, who owns isochronous resources, and how a duplex start is
+/// choreographed. Every field defaults to "nothing special", which is exactly
+/// how an unlisted device behaves.
 
-    /// CMP owns the isochronous channel: the device has no fixed one, IRM
-    /// picks it and the PCR commits it back. True for every CMP-driven family
-    /// (BeBoB, Oxford, Fireworks); false for DICE, which programs a channel
-    /// into its own registers, and for MOTU.
-    bool cmpChoosesIsoChannel{false};
+/// Wire framing and codec -- consumed by stream-profile resolution and AV/C
+/// stream-mode selection.
+struct StreamWirePolicy final {
+    ForcedStreamMode forcedStreamMode{ForcedStreamMode::Unspecified};
 
     /// The capture-side CIP dbs field is untrusted and the configured slot
     /// count is the authority. Loud/Mackie (snd-oxfw oxfw.c:189-196,
@@ -229,10 +226,30 @@ struct DeviceStreamTraits final {
     /// the Saffire Pro 24 DSP switches wire format with its configuration, so
     /// this cannot be a static property of the identity.
     bool rawPcm24In32WhenEightInNineSlots{false};
+};
+
+/// Isochronous resource ownership -- consumed by duplex geometry planning.
+struct IsochResourcePolicy final {
+    /// CMP owns the isochronous channel: the device has no fixed one, IRM
+    /// picks it and the PCR commits it back. True for every CMP-driven family
+    /// (BeBoB, Oxford, Fireworks); false for DICE, which programs a channel
+    /// into its own registers, and for MOTU.
+    bool cmpChoosesIsoChannel{false};
+};
+
+/// Duplex start choreography -- consumed by the duplex coordinator.
+struct StreamStartPolicy final {
+    StreamStartShape startShape{StreamStartShape::Default};
 
     /// Fixed or default start sample rate in Hz (e.g. 48000 for Duet, 44100 for Onyx-i / Onyx 400F).
     /// 0 means no pin (use standard 48 kHz default or requested session clock).
     uint32_t startRatePinHz{0};
+};
+
+struct DeviceStreamTraits final {
+    StreamWirePolicy wire{};
+    IsochResourcePolicy resource{};
+    StreamStartPolicy start{};
 };
 
 enum class SupportDisposition : uint8_t {

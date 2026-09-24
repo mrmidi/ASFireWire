@@ -16,7 +16,7 @@ inline constexpr std::array kAlesisDefinitions{
                ProtocolImplementationId::DiceTcat,
                SupportDisposition::Supported, kAlesisVendorName,
                kAlesisMultiMixModelName, std::nullopt, BootloaderCuePolicy::None,
-               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking}),
+               DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking}}),
     // Recognition only -- its geometry has never been captured, so it names no
     // builder and nothing streams it.
     Definition(DeviceDefinitionId::AlesisIo, kAlesisVendorId, kAlesisIoModelId,
@@ -26,7 +26,7 @@ inline constexpr std::array kAlesisDefinitions{
                SupportDisposition::RecognizedUnsupported,
                kAlesisVendorName, kAlesisIoModelName, std::nullopt,
                BootloaderCuePolicy::None,
-               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking}),
+               DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking}}),
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions

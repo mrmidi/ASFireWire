@@ -258,7 +258,7 @@ class DuplexStreamProfileResolver final {
         };
         const auto traits = TraitsFor(policy);
         const uint64_t allowedChannels =
-            traits.cmpChoosesIsoChannel ? kAllIsoChannels : 0;
+            traits.resource.cmpChoosesIsoChannel ? kAllIsoChannels : 0;
 
         // AM824 uses one data-block slot per PCM channel plus any MIDI slots;
         // the controller consumes the already-discovered DBS values unchanged.
@@ -276,7 +276,7 @@ class DuplexStreamProfileResolver final {
                 geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed);
             // CMP (including BridgeCo/BeBoB) does not own a fixed channel;
             // IRM selects one, which is then committed back to its PCR.
-            geometry.allowedIsoChannels = traits.cmpChoosesIsoChannel
+            geometry.allowedIsoChannels = traits.resource.cmpChoosesIsoChannel
                                               ? allowedChannels
                                               : FixedChannelMask(geometry.isoChannel);
             captureChannelOffset += geometry.pcmChannels;
@@ -294,7 +294,7 @@ class DuplexStreamProfileResolver final {
                                        : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
             geometry.packetBandwidthUnits = AmdtpPacketBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed);
-            geometry.allowedIsoChannels = traits.cmpChoosesIsoChannel
+            geometry.allowedIsoChannels = traits.resource.cmpChoosesIsoChannel
                                               ? allowedChannels
                                               : FixedChannelMask(geometry.isoChannel);
         }
@@ -324,16 +324,16 @@ class DuplexStreamProfileResolver final {
         // Runtime-conditional on purpose: this device switches wire format with
         // its configuration, so the identity grants the permission and the
         // measured geometry decides whether it applies.
-        if (traits.rawPcm24In32WhenEightInNineSlots && caps.hostInputPcmChannels == 8 &&
+        if (traits.wire.rawPcm24In32WhenEightInNineSlots && caps.hostInputPcmChannels == 8 &&
             caps.deviceToHostAm824Slots == 9) {
             profile.captureWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
         }
-        if (traits.rawPcm24In32WhenEightInNineSlots && caps.hostOutputPcmChannels == 8 &&
+        if (traits.wire.rawPcm24In32WhenEightInNineSlots && caps.hostOutputPcmChannels == 8 &&
             caps.hostToDeviceAm824Slots == 9) {
             profile.playbackWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
         }
 
-        if (traits.captureTrustConfiguredStride) {
+        if (traits.wire.captureTrustConfiguredStride) {
             // The capture-side CIP dbs field is untrusted and the configured
             // slot count is the authority. Loud/Mackie (snd-oxfw oxfw.c:189-196;
             // amdtp-stream.c:766-769 substitutes the configured data-block
@@ -353,7 +353,7 @@ class DuplexStreamProfileResolver final {
         }
 
         using DeviceProfiles::Audio::StreamStartShape;
-        switch (traits.startShape) {
+        switch (traits.start.startShape) {
         case StreamStartShape::ApogeeInterleaved:
             // Preserve the prior AVCAudioBackend ordering:
             // host IR -> CMP oPCR -> host IT -> CMP iPCR. The runner uses these

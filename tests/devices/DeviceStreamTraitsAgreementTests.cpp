@@ -111,7 +111,7 @@ TEST(DeviceStreamTraitsAgreement, ForcedModeMatchesTheOldTableForEveryAvcDevice)
     for (const auto& [vendorId, modelId, unitVersion, expected] : avcDevices) {
         EXPECT_EQ(ResolveTraits(
                       Identity(vendorId, modelId, kTa1394AvcSpecifier, unitVersion))
-                      .forcedStreamMode,
+                      .wire.forcedStreamMode,
                   expected)
             << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
     }
@@ -133,7 +133,7 @@ TEST(DeviceStreamTraitsAgreement, EveryDicePartStatesBlockingEvenWhereTheOldTabl
     };
     for (const auto& [vendorId, modelId] : diceParts) {
         EXPECT_EQ(ResolveTraits(DiceIdentity(vendorId, modelId))
-                      .forcedStreamMode,
+                      .wire.forcedStreamMode,
                   ForcedStreamMode::Blocking)
             << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
     }
@@ -150,7 +150,7 @@ TEST(DeviceStreamTraitsAgreement, AnUnlistedMackieNoLongerGetsVendorWideBlocking
     // The old table returned Blocking here on the vendor alone.
     constexpr uint32_t kUnlistedMackieModel = 0x00AAAA;
     EXPECT_EQ(ResolveTraits(
-                  AvcIdentity(kMackieVendorId, kUnlistedMackieModel)).forcedStreamMode,
+                  AvcIdentity(kMackieVendorId, kUnlistedMackieModel)).wire.forcedStreamMode,
               ForcedStreamMode::Unspecified);
 
     // And the id that motivates the gap is still a sentinel, so no real device
@@ -162,7 +162,7 @@ TEST(DeviceStreamTraitsAgreement, AnUnlistedMackieNoLongerGetsVendorWideBlocking
 // have never seen is a guess, and the probe's answer is better than a guess.
 TEST(DeviceStreamTraitsAgreement, AnUnknownDeviceGetsNoForcedMode) {
     EXPECT_EQ(ResolveTraits(AvcIdentity(0x00AABB, 0x000042))
-                  .forcedStreamMode,
+                  .wire.forcedStreamMode,
               ForcedStreamMode::Unspecified);
 }
 
@@ -188,23 +188,23 @@ TEST(DeviceStreamTraitsAgreement, CmpDrivenFamiliesCarryTheCmpStartShape) {
     for (const auto& [vendorId, modelId, unitVersion] : cmpDriven) {
         EXPECT_EQ(ResolveTraits(
                       Identity(vendorId, modelId, kTa1394AvcSpecifier, unitVersion))
-                      .startShape,
+                      .start.startShape,
                   StreamStartShape::CmpReceiveThenTransmit)
             << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
     }
     // IsApogeeDuet is CMP-driven too but keeps its own interleaved ordering.
     EXPECT_EQ(ResolveTraits(
-                  AvcIdentity(kApogeeVendorId, kApogeeDuetModelId)).startShape,
+                  AvcIdentity(kApogeeVendorId, kApogeeDuetModelId)).start.startShape,
               StreamStartShape::ApogeeInterleaved);
 }
 
 // The M-Audio special-firmware personas have their own transmit-first recipe.
 TEST(DeviceStreamTraitsAgreement, BeBoBStartShapesRemainModelSpecific) {
     EXPECT_EQ(ResolveTraits(
-                  AvcIdentity(kTerraTecVendorId, kPhase88RackFwModelId)).startShape,
+                  AvcIdentity(kTerraTecVendorId, kPhase88RackFwModelId)).start.startShape,
               StreamStartShape::CmpReceiveThenTransmit);
     for (const uint32_t modelId : {kMAudioFireWire1814ModelId, kMAudioProjectMixModelId}) {
-        EXPECT_EQ(ResolveTraits(AvcIdentity(kMAudioVendorId, modelId)).startShape,
+        EXPECT_EQ(ResolveTraits(AvcIdentity(kMAudioVendorId, modelId)).start.startShape,
                   StreamStartShape::MAudioSpecial);
     }
 }
@@ -212,30 +212,30 @@ TEST(DeviceStreamTraitsAgreement, BeBoBStartShapesRemainModelSpecific) {
 TEST(DeviceStreamTraitsAgreement, WeissIsTheOnlyTransmitFirstDevice) {
     for (const uint32_t modelId : {kWeissInt202ModelId, kWeissInt203ModelId}) {
         EXPECT_EQ(ResolveTraits(
-                      DiceIdentity(kWeissVendorId, modelId)).startShape,
+                      DiceIdentity(kWeissVendorId, modelId)).start.startShape,
                   StreamStartShape::TransmitFirst);
     }
     // A Weiss part we do not stream keeps the default: the transmit-first order
     // is a property of the INT interfaces, not of the vendor.
     EXPECT_EQ(ResolveTraits(
-                  DiceIdentity(kWeissVendorId, kWeissDac202ModelId)).startShape,
+                  DiceIdentity(kWeissVendorId, kWeissDac202ModelId)).start.startShape,
               StreamStartShape::Default);
 }
 
 TEST(DeviceStreamTraitsAgreement, OnlyTheTwoLoudRunsDistrustTheCaptureStride) {
     EXPECT_TRUE(ResolveTraits(
                     AvcIdentity(kMackieVendorId, kOnyxIOxfwModelId))
-                    .captureTrustConfiguredStride);
+                    .wire.captureTrustConfiguredStride);
     EXPECT_TRUE(ResolveTraits(
                     Identity(kMackieVendorId, kOnyx400FModelId,
                              kTa1394AvcSpecifier, kFireworksVersion))
-                    .captureTrustConfiguredStride);
+                    .wire.captureTrustConfiguredStride);
     EXPECT_FALSE(ResolveTraits(
                      AvcIdentity(kApogeeVendorId, kApogeeDuetModelId))
-                     .captureTrustConfiguredStride);
+                     .wire.captureTrustConfiguredStride);
     EXPECT_FALSE(ResolveTraits(
                      DiceIdentity(kFocusriteVendorId, kSPro24DspModelId))
-                     .captureTrustConfiguredStride);
+                     .wire.captureTrustConfiguredStride);
 }
 
 // IsSPro24Dsp gated a runtime-conditional wire format: raw 24-in-32 only when
@@ -244,11 +244,11 @@ TEST(DeviceStreamTraitsAgreement, OnlyTheTwoLoudRunsDistrustTheCaptureStride) {
 TEST(DeviceStreamTraitsAgreement, OnlyTheSaffirePro24DspSwitchesWireFormat) {
     EXPECT_TRUE(ResolveTraits(
                     DiceIdentity(kFocusriteVendorId, kSPro24DspModelId))
-                    .rawPcm24In32WhenEightInNineSlots);
+                    .wire.rawPcm24In32WhenEightInNineSlots);
     for (const uint32_t modelId : {kSPro14ModelId, kSPro24ModelId, kSPro40ModelId}) {
         EXPECT_FALSE(ResolveTraits(
                          DiceIdentity(kFocusriteVendorId, modelId))
-                         .rawPcm24In32WhenEightInNineSlots)
+                         .wire.rawPcm24In32WhenEightInNineSlots)
             << "model 0x" << std::hex << modelId;
     }
 }
@@ -268,10 +268,10 @@ TEST(DeviceStreamTraitsAgreement, MotuStatesNoStreamTraits) {
     motu.units.push_back(unit);
 
     const auto traits = ResolveTraits(motu);
-    EXPECT_EQ(traits.forcedStreamMode, ForcedStreamMode::Unspecified);
-    EXPECT_EQ(traits.startShape, StreamStartShape::Default);
-    EXPECT_FALSE(traits.captureTrustConfiguredStride);
-    EXPECT_FALSE(traits.rawPcm24In32WhenEightInNineSlots);
+    EXPECT_EQ(traits.wire.forcedStreamMode, ForcedStreamMode::Unspecified);
+    EXPECT_EQ(traits.start.startShape, StreamStartShape::Default);
+    EXPECT_FALSE(traits.wire.captureTrustConfiguredStride);
+    EXPECT_FALSE(traits.wire.rawPcm24In32WhenEightInNineSlots);
 }
 
 } // namespace

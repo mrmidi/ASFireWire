@@ -33,8 +33,7 @@ inline constexpr std::array kFocusriteDefinitions{
                // The DSP model is the one device whose wire format depends on its
                // runtime configuration rather than its identity: 8 PCM in 9 slots
                // is raw 24-in-32, anything else is AM824.
-               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
-                                  .rawPcm24In32WhenEightInNineSlots = true}),
+               DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking, .rawPcm24In32WhenEightInNineSlots = true}}),
     Definition(DeviceDefinitionId::FocusriteSPro40, kFocusriteVendorId, kSPro40ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::DiceTcat,
                ProfileBuilderId::FocusriteSPro40,

@@ -39,8 +39,8 @@ inline constexpr std::array kWeissDefinitions{
                // Output-only in CoreAudio but duplex on the wire: host transmit
                // goes first after GLOBAL_ENABLE so its AM824 packets establish
                // the device receive-clock path. dice-weiss.c:10-35.
-               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
-                                  .startShape = StreamStartShape::TransmitFirst}),
+               DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
+                                  .start = {.startShape = StreamStartShape::TransmitFirst}}),
     Definition(DeviceDefinitionId::WeissDac202, kWeissVendorId, kWeissDac202ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None, ProfileBuilderId::None,
                ProtocolImplementationId::None,
@@ -60,8 +60,8 @@ inline constexpr std::array kWeissDefinitions{
                // Output-only in CoreAudio but duplex on the wire: host transmit
                // goes first after GLOBAL_ENABLE so its AM824 packets establish
                // the device receive-clock path. dice-weiss.c:10-35.
-               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
-                                  .startShape = StreamStartShape::TransmitFirst}),
+               DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
+                                  .start = {.startShape = StreamStartShape::TransmitFirst}}),
     Definition(DeviceDefinitionId::WeissMan301, kWeissVendorId, kWeissMan301ModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None, ProfileBuilderId::None,
                ProtocolImplementationId::None,

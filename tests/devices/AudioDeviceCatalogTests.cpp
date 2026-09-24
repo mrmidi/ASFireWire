@@ -459,7 +459,7 @@ TEST(AudioDeviceCatalog, TheMAudioSpecialFirmwareCarriesAFilteredCommandSet) {
         EXPECT_EQ(plan->protocolImplementation,
                   ProtocolImplementationId::BeBoBMAudioSpecial);
         EXPECT_EQ(plan->support, SupportDisposition::Supported);
-        EXPECT_EQ(plan->streamTraits.startShape, StreamStartShape::MAudioSpecial);
+        EXPECT_EQ(plan->streamTraits.start.startShape, StreamStartShape::MAudioSpecial);
     }
 }
 
@@ -588,8 +588,8 @@ TEST(AudioDeviceCatalog, ResolutionCarriesBuilderAndStreamTraits) {
     ASSERT_TRUE(plan.has_value());
 
     EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::ApogeeDuet);
-    EXPECT_EQ(plan->streamTraits.startRatePinHz, 48000U);
-    EXPECT_EQ(plan->streamTraits.startShape, StreamStartShape::ApogeeInterleaved);
+    EXPECT_EQ(plan->streamTraits.start.startRatePinHz, 48000U);
+    EXPECT_EQ(plan->streamTraits.start.startShape, StreamStartShape::ApogeeInterleaved);
 }
 
 TEST(AudioDeviceCatalog, StartRatePinHzIsAccurateForOnyxAndDuet) {
@@ -600,7 +600,7 @@ TEST(AudioDeviceCatalog, StartRatePinHzIsAccurateForOnyxAndDuet) {
                                    .version = kTa1394AvcVersion}});
     const auto onyxPlan = AudioDeviceCatalog::Resolve(onyx.identity);
     ASSERT_TRUE(onyxPlan.has_value());
-    EXPECT_EQ(onyxPlan->streamTraits.startRatePinHz, 44100U);
+    EXPECT_EQ(onyxPlan->streamTraits.start.startRatePinHz, 44100U);
 
     const auto spro = MakeDevice(0x00130E'0400000000ULL, kFocusriteVendorId,
                                  kSPro24DspModelId,
@@ -609,7 +609,7 @@ TEST(AudioDeviceCatalog, StartRatePinHzIsAccurateForOnyxAndDuet) {
                                    .version = kDiceInterfaceVersion}});
     const auto sproPlan = AudioDeviceCatalog::Resolve(spro.identity);
     ASSERT_TRUE(sproPlan.has_value());
-    EXPECT_EQ(sproPlan->streamTraits.startRatePinHz, 0U);
+    EXPECT_EQ(sproPlan->streamTraits.start.startRatePinHz, 0U);
 }
 
 TEST(AudioDeviceCatalog, CommandFilterForNeverFallsBackToUnrestrictedOnHazardOrAmbiguity) {

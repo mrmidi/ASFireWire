@@ -94,8 +94,8 @@ void LogReservationSummary(uint64_t guid, Discovery::Generation generation,
         return requestedClock;
     }
     const auto traits = policy->plan.streamTraits;
-    if (traits.startRatePinHz != 0) {
-        return AudioClockConfig{.sampleRateHz = traits.startRatePinHz};
+    if (traits.start.startRatePinHz != 0) {
+        return AudioClockConfig{.sampleRateHz = traits.start.startRatePinHz};
     }
     return requestedClock;
 }
@@ -111,8 +111,8 @@ void LogReservationSummary(uint64_t guid, Discovery::Generation generation,
         return 48000U;
     }
     const auto traits = policy->plan.streamTraits;
-    if (traits.startRatePinHz != 0) {
-        return traits.startRatePinHz;
+    if (traits.start.startRatePinHz != 0) {
+        return traits.start.startRatePinHz;
     }
     return 48000U;
 }

@@ -20,10 +20,10 @@ inline constexpr std::array kApogeeDefinitions{
                // Discovery reports and supports non-blocking, and host playback
                // works that way, but the observed device output cadence is
                // blocking -- forcing it keeps host and device aligned.
-               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
-                                  .startShape = StreamStartShape::ApogeeInterleaved,
-                                  .cmpChoosesIsoChannel = true,
-                                  .startRatePinHz = 48000U}),
+               DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
+                                  .resource = {.cmpChoosesIsoChannel = true},
+                                  .start = {.startShape = StreamStartShape::ApogeeInterleaved,
+                                            .startRatePinHz = 48000U}}),
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions

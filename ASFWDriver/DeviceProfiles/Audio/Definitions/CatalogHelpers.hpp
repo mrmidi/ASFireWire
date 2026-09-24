@@ -118,25 +118,23 @@ constexpr AudioDeviceDefinition MotuDefinition(DeviceDefinitionId id,
 }
 
 constexpr DeviceStreamTraits kDiceTraits{
-    .forcedStreamMode = ForcedStreamMode::Blocking,
+    .wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
 };
 
 constexpr DeviceStreamTraits kCmpBlockingTraits{
-    .forcedStreamMode = ForcedStreamMode::Blocking,
-    .startShape = StreamStartShape::CmpReceiveThenTransmit,
-    .cmpChoosesIsoChannel = true,
+    .wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
+    .resource = {.cmpChoosesIsoChannel = true},
+    .start = {.startShape = StreamStartShape::CmpReceiveThenTransmit},
 };
 
 constexpr DeviceStreamTraits kMackieBlockingTraits{
-    .forcedStreamMode = ForcedStreamMode::Blocking,
+    .wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
 };
 
 constexpr DeviceStreamTraits kCmpBlockingUntrustedStrideTraits{
-    .forcedStreamMode = ForcedStreamMode::Blocking,
-    .startShape = StreamStartShape::CmpReceiveThenTransmit,
-    .cmpChoosesIsoChannel = true,
-    .captureTrustConfiguredStride = true,
-    .startRatePinHz = 44100U,
+    .wire = {.forcedStreamMode = ForcedStreamMode::Blocking, .captureTrustConfiguredStride = true},
+    .resource = {.cmpChoosesIsoChannel = true},
+    .start = {.startShape = StreamStartShape::CmpReceiveThenTransmit, .startRatePinHz = 44100U},
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions

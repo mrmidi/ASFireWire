@@ -321,10 +321,10 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
         if (testCase.expectedModelName != nullptr) {
             EXPECT_EQ(plan->modelName, testCase.expectedModelName);
         }
-        EXPECT_EQ(plan->streamTraits.startRatePinHz, testCase.expectedStartRatePinHz);
-        EXPECT_EQ(plan->streamTraits.forcedStreamMode, testCase.expectedForcedStreamMode);
-        EXPECT_EQ(plan->streamTraits.startShape, testCase.expectedStartShape);
-        EXPECT_EQ(plan->streamTraits.cmpChoosesIsoChannel, testCase.expectedCmpChoosesIsoChannel);
+        EXPECT_EQ(plan->streamTraits.start.startRatePinHz, testCase.expectedStartRatePinHz);
+        EXPECT_EQ(plan->streamTraits.wire.forcedStreamMode, testCase.expectedForcedStreamMode);
+        EXPECT_EQ(plan->streamTraits.start.startShape, testCase.expectedStartShape);
+        EXPECT_EQ(plan->streamTraits.resource.cmpChoosesIsoChannel, testCase.expectedCmpChoosesIsoChannel);
 
         // 2. Protocol Choice: consumers use the resolved policy plan directly.
         const auto protocolFromPlan = Audio::ChooseDeviceProtocol(*plan);
