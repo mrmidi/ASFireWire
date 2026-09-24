@@ -68,6 +68,11 @@ add_async_test(ATDescriptorTests
     ATDescriptorTests.cpp
 )
 
+# ContextBase ContextControl bit decoding
+add_async_test(ContextBaseTests
+    ContextBaseTests.cpp
+)
+
 # Buffer Ring DMA Tests
 add_async_test(BufferRingDMATests
     BufferRingDMATests.cpp

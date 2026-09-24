@@ -22,7 +22,7 @@ constexpr uint32_t kSelfIDTimeoutMs = 1000;
 // cleared. Linux context_stop() gives up after ~10 ms (1000 × 10 µs), logs
 // "DMA context still active" and carries on with the reset
 // (references/linux-ohci-firewire-low-level-stack/ohci.c:1164-1182, called
-// from bus_reset_work ohci.c:2002). An unbounded wait here parked the whole
+// from handle_selfid_complete_event ohci.c:2002). An unbounded wait here parked the whole
 // reset FSM — and with it discovery and every SBP-2 session — forever on a
 // controller whose AT request context stayed ACTIVE after a wedged target
 // (2026-09-24, LS-9000). Generous multiple of the Linux bound; still short
