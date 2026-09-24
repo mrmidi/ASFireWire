@@ -321,6 +321,32 @@ TEST(LoginSessionTests, ReconnectAckStartsStatusTimeoutAndFallsBackToLogin) {
 // login, then the fresh login's up-edge. Observers (the SCSI HBA) key target
 // lifetime to these edges — without the down-edge the stale target survives the
 // device reboot (HW finding 2, 2026-07-29: data-out 5/26 after power-cycle).
+// A reconnect write that fails (target gone, or rejected at the link) must not
+// strand the session in Reconnecting: it falls back to session lost + login.
+TEST(LoginSessionTests, FailedReconnectWriteEmitsSessionLostThenFallbackLogin) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+
+    std::vector<int> statuses;
+    rig.session.SetLoginCallback(
+        [&statuses](const ASFW::Protocols::SBP2::LoginCompleteParams& params) {
+            statuses.push_back(params.status);
+        });
+
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    ASSERT_TRUE(rig.session.Reconnect());
+    const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
+    ASSERT_TRUE(rig.bus.CompleteWrite(rig.bus.WriteAt(reconnectWriteIndex).handle,
+                                      ASFW::Async::AsyncStatus::kTimeout));
+
+    rig.AdvanceMs(1'000);
+
+    ASSERT_EQ(1u, statuses.size());
+    EXPECT_LT(statuses[0], 0);
+    EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+}
+
 TEST(LoginSessionTests, ReconnectRejectionEmitsSessionLostThenFreshLoginUpEdge) {
     SessionRig rig;
     rig.LoginSuccessfully();

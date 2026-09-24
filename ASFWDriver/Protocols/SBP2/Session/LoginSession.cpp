@@ -632,9 +632,16 @@ void LoginSession::OnReconnectWriteComplete(uint16_t expectedGeneration,
     }
 
     if (status != Async::AsyncStatus::kSuccess) {
-        ASFW_LOG_SBP2( "LoginSession::OnReconnectWriteComplete: status=%{public}s, retrying",
+        // The old retry called Reconnect(), which ignores anything but
+        // Suspended/LoggedIn — so a failed write left the session Reconnecting
+        // with no timer, forever (e.g. device unplugged mid-reconnect). A failed
+        // reconnect write is a failed reconnect: Apple reports the session lost
+        // and its client logs in afresh (IOFireWireSBP2Login::doReconnect,
+        // IOFireWireSBP2Login.cpp:2285). Same fallback as a synchronous
+        // WriteBlock failure in Reconnect().
+        ASFW_LOG_SBP2( "LoginSession::OnReconnectWriteComplete: status=%{public}s, session lost",
                  Async::ToString(status));
-        ArmManagementTimer(100, [this]() { (void)Reconnect(); });
+        ArmManagementTimer(kLoginRetryDelayMs, [this]() { OnReconnectTimeout(); });
         return;
     }
 
