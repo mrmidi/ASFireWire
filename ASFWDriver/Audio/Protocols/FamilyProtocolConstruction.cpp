@@ -78,7 +78,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      "Creating SPro24DspProtocol node=0x%04x unitOffset=%u",
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(
-                busOps, busInfo, routeRegistry, route, irmClient);
+                busOps, busInfo, routeRegistry, route, irmClient, timerScheduler);
 
         // The plain TCAT devices differ in their profile, not their protocol:
         // geometry comes from the device's own registers either way.

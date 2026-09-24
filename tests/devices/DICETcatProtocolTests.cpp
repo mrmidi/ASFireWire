@@ -585,7 +585,8 @@ TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
 TEST(SPro24DspProtocolTests, VendorCallLoadsExtensionsLazily) {
     CountingFireWireBus bus;
     RouteState routeState;
-    SPro24DspProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    SPro24DspProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                               /*timerScheduler=*/nullptr);  // vendor call only, no waits
     ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
     EXPECT_EQ(bus.extensionReadCount, 0);
 

@@ -59,9 +59,8 @@ struct DiceRig {
         : bus(image, options) {
         bus.Device().ResetToIdle();
         if (std::string_view(image.key) == "saffire-pro24-dsp") {
-            // FamilyProtocolConstruction: SPro24DspProtocol takes no timer.
             protocol = std::make_unique<ASFW::Audio::DICE::Focusrite::SPro24DspProtocol>(
-                bus, bus, routeState.registry, routeState.route, nullptr);
+                bus, bus, routeState.registry, routeState.route, nullptr, &timer);
         } else {
             protocol = std::make_unique<ASFW::Audio::DICE::TCAT::DICETcatProtocol>(
                 bus, bus, routeState.registry, routeState.route, nullptr, &timer);
