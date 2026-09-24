@@ -63,9 +63,15 @@ bool SBP2ManagementORB::AllocateResources() noexcept {
     }
 
     // Register remote-write callback for the per-ORB status block
+    // AddressSpaceManager invokes a copy of this callback outside its lock, so
+    // it can run after DeallocateResources unregistered it: guard on lifetime.
     addrMgr_.SetRemoteWriteCallback(
         statusBlockHandle_,
-        [this](uint64_t /*handle*/, uint32_t offset, std::span<const uint8_t> payload) {
+        [this, weak = std::weak_ptr<int>(lifetimeToken_)](
+            uint64_t /*handle*/, uint32_t offset, std::span<const uint8_t> payload) {
+            if (weak.expired()) {
+                return;
+            }
             OnStatusBlockWrite(offset, payload);
         });
 

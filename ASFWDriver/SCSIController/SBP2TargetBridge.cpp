@@ -125,6 +125,19 @@ void SBP2TargetBridge::Shutdown() {
         drained.swap(pending_);
     }
 
+    // No new HBA reader can start now (stopping_ is set); wait out the ones
+    // in flight so none holds the last registry reference into Reset.
+    // GetSessionState is a short locked read, so this is microseconds.
+    for (int i = 0; i < 100; ++i) {
+        {
+            IOLockGuard g(lock_);
+            if (hbaReaders_ == 0) {
+                break;
+            }
+        }
+        IOSleep(1);
+    }
+
     // Invalidate the readiness gate BEFORE the abort/drain callbacks below can
     // reach it: a probe completion arriving with a stale epoch is a no-op
     // instead of scheduling a timer into teardown. The scheduler is still
@@ -176,25 +189,30 @@ void SBP2TargetBridge::Shutdown() {
 
 bool SBP2TargetBridge::IsReady() const {
     uint64_t handle = 0;
+    // Called from the HBA queue: hold the registry for the duration of the read
+    // so ServiceContext::Reset() on the teardown queue cannot free it mid-deref
+    // (the FW-60 cross-service UAF). Taken under lock_ and counted, so Shutdown
+    // can wait out every holder (see hbaReaders_). A null lock means the
+    // registry is gone → not ready.
+    std::shared_ptr<SessionRegistry> reg;
     {
         IOLockGuard g(lock_);
-        if (stopping_) {
+        if (stopping_ || sessionHandle_ == 0) {
             return false;
         }
         handle = sessionHandle_;
-    }
-    if (handle == 0) {
-        return false;
-    }
-    // Called from the HBA queue: lock the registry for the duration of the read
-    // so ServiceContext::Reset() on the teardown queue cannot free it mid-deref
-    // (the FW-60 cross-service UAF). A null lock means the registry is gone →
-    // not ready.
-    auto reg = registry_.lock();
-    if (!reg) {
-        return false;
+        reg = registry_.lock();
+        if (!reg) {
+            return false;
+        }
+        ++hbaReaders_;
     }
     auto state = reg->GetSessionState(const_cast<SBP2TargetBridge*>(this), handle);
+    reg.reset(); // release before signalling Shutdown
+    {
+        IOLockGuard g(lock_);
+        --hbaReaders_;
+    }
     return state.has_value() && state->loginState == LoginState::LoggedIn;
 }
 

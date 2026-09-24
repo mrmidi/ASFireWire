@@ -89,6 +89,16 @@ void ServiceContext::Reset(ResetMode mode) {
         controller->AttachROMScanner(nullptr);
     }
     deps.audioRuntimeRegistry.reset();
+    // Same hazard for SBP-2: SessionRegistry and every LoginSession borrow the
+    // controller-owned bus (EnsureSbp2Deps passes controller->Bus()).
+    // ~SessionRegistry logs out still-logged-in sessions and ~LoginSession
+    // cancels its outstanding writes (e.g. the logout the bridge's quiesce
+    // Shutdown just issued) through that bus. Drop the controller's co-owning
+    // copy and destroy the registry while busImpl_ is still alive.
+    if (controller) {
+        controller->SetSbp2SessionRegistry(nullptr);
+    }
+    deps.sbp2SessionRegistry.reset();
     // Drop the context's remaining scanner reference before destroying the
     // controller. EnsureRomScanner will bind a fresh scanner after rebuild.
     deps.romScanner.reset();
@@ -108,7 +118,6 @@ void ServiceContext::Reset(ResetMode mode) {
     deps.topologyMapService.reset();
     deps.busManagerElectionDriver.reset();
     deps.fcpResponseRouter.reset(); // Clean up FCP router
-    deps.sbp2SessionRegistry.reset();
     deps.sbp2SessionScheduler.reset();
     deps.sbp2AddressSpaceManager.reset();
     deps.avcDiscovery.reset();      // Clean up AV/C discovery

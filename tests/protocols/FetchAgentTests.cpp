@@ -68,7 +68,7 @@ TEST(FetchAgentTests, SubmitRejectedWhenUnbound) {
     EXPECT_FALSE(agent.Submit(&orb));
 }
 
-TEST(FetchAgentTests, ImmediateSubmitWritesToFetchAgentAndArmsTimeoutOnSuccess) {
+TEST(FetchAgentTests, ImmediateSubmitWritesToFetchAgentAndArmsTimeoutWithTheWrite) {
     Rig rig;
     FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
     agent.Bind(rig.Binding());
@@ -85,10 +85,10 @@ TEST(FetchAgentTests, ImmediateSubmitWritesToFetchAgentAndArmsTimeoutOnSuccess) 
 
     ASSERT_TRUE(agent.Submit(&orb));
     ASSERT_EQ(1u, rig.bus.PendingWriteCount());      // fetch-agent write issued
-    EXPECT_EQ(0u, rig.scheduler.PendingCount());     // timeout not armed until write ACKs
+    EXPECT_EQ(1u, rig.scheduler.PendingCount());     // timeout armed with the write (Apple)
 
     ASSERT_TRUE(rig.bus.CompleteNextWrite(AsyncStatus::kSuccess));
-    EXPECT_EQ(1u, rig.scheduler.PendingCount());     // timeout armed after success
+    EXPECT_EQ(1u, rig.scheduler.PendingCount());     // ack does not re-arm
     EXPECT_EQ(0, completions);
 
     // Solicited status completes the ORB and cancels the timeout.
@@ -96,6 +96,89 @@ TEST(FetchAgentTests, ImmediateSubmitWritesToFetchAgentAndArmsTimeoutOnSuccess) 
     EXPECT_EQ(1, completions);
     EXPECT_EQ(0x00, lastSbp);
     EXPECT_EQ(0u, rig.scheduler.PendingCount());     // timeout canceled on completion
+}
+
+TEST(FetchAgentTests, OrbTimesOutWhenFetchAgentWriteNeverCompletes) {
+    Rig rig;
+    FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
+    agent.Bind(rig.Binding());
+
+    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    orb.SetTimeout(500);
+    int completions = 0;
+    orb.SetCompletionCallback([&](int, uint8_t) { ++completions; });
+
+    ASSERT_TRUE(agent.Submit(&orb));
+    ASSERT_EQ(1u, rig.bus.PendingWriteCount()); // left pending forever
+
+    rig.scheduler.Advance(500'000'000ULL);
+    EXPECT_EQ(1, completions);
+
+    // The stuck write no longer blocks the fetch agent: the next ORB goes out.
+    SBP2CommandORB next(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
+    next.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    next.SetTimeout(500);
+    const size_t writesBefore = rig.bus.WriteCount();
+    ASSERT_TRUE(agent.Submit(&next));
+    EXPECT_GT(rig.bus.WriteCount(), writesBefore);
+    agent.Clear(true);
+}
+
+// #139 (Minolta Dimage Scan Elite II): the INQUIRY's ORB_POINTER write timed out
+// (no AT completion), then the driver went silent — no retry write, no ORB
+// timeout — and UserCreateTargetForID waited on that INQUIRY until unplug.
+// Whatever happens to the retry, the ORB's own deadline must still fire.
+TEST(FetchAgentTests, OrbTimesOutWhenWriteFailsAndRetryNeverCompletes) {
+    Rig rig;
+    FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
+    agent.Bind(rig.Binding());
+
+    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    orb.SetTimeout(10'000);
+    int completions = 0;
+    orb.SetCompletionCallback([&](int, uint8_t) { ++completions; });
+
+    ASSERT_TRUE(agent.Submit(&orb));
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(AsyncStatus::kTimeout));
+    rig.scheduler.Advance(1'000 * kMs);           // retry write issued, left pending
+    ASSERT_EQ(1u, rig.bus.PendingWriteCount());
+    EXPECT_EQ(0, completions);
+
+    rig.scheduler.Advance(9'000 * kMs);           // Submit + 10 s
+    EXPECT_EQ(1, completions);
+    agent.Clear(true);
+}
+
+// The stuck write's kAborted completion arrives late (posted to the workloop).
+// It must not be taken for the NEXT ORB's write: that would free its write
+// slot and schedule a duplicate ORB_POINTER retry.
+TEST(FetchAgentTests, LateAbortOfStuckWriteDoesNotHitTheNextWrite) {
+    Rig rig;
+    rig.bus.SetDeferCancels(true);
+    FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
+    agent.Bind(rig.Binding());
+
+    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    orb.SetTimeout(500);
+    orb.SetCompletionCallback([](int, uint8_t) {});
+    ASSERT_TRUE(agent.Submit(&orb));
+    rig.scheduler.Advance(500'000'000ULL); // times out, write cancelled (deferred)
+
+    SBP2CommandORB next(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
+    next.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    next.SetTimeout(5'000);
+    next.SetCompletionCallback([](int, uint8_t) {});
+    ASSERT_TRUE(agent.Submit(&next));
+    const size_t writesAfterNext = rig.bus.WriteCount();
+
+    ASSERT_EQ(1u, rig.bus.DrainCancels()); // the stale abort lands now
+    rig.scheduler.Advance(2'000'000'000ULL); // past the 1 s write-retry delay
+
+    EXPECT_EQ(writesAfterNext, rig.bus.WriteCount()); // no duplicate ORB_POINTER
+    agent.Clear(true);
 }
 
 TEST(FetchAgentTests, OrbTimeoutFailsCommandWhenNoStatusArrives) {

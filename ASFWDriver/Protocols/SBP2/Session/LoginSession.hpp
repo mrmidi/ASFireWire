@@ -33,6 +33,7 @@
 #include "../../../Logging/Logging.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -149,6 +150,10 @@ public:
     [[nodiscard]] bool Logout() noexcept;
     [[nodiscard]] bool Reconnect() noexcept;
     void HandleBusReset(uint16_t newGeneration) noexcept;
+    // The suspended login's device is gone for good (unit terminated, or back
+    // as a new incarnation that cannot hold the old login). No reconnect is
+    // possible: go Failed and report the session lost. No bus traffic.
+    void AbandonSuspended() noexcept;
 
     // -----------------------------------------------------------------------
     // Accessors
@@ -258,9 +263,13 @@ private:
     uint16_t maxPayloadSize_{4096};  // default, clipped by login response
 
     // Session state
-    LoginState state_{LoginState::Idle};
-    uint16_t loginID_{0};
-    uint16_t loginGeneration_{0};
+    // Written on the driver work queue; read cross-queue by the HBA
+    // (SBP2TargetBridge::IsReady → SessionRegistry::GetSessionState from the
+    // SCSI controller's queues). The registry lock does not cover the writers
+    // (RX, timer and write-completion paths), so these must be atomic.
+    std::atomic<LoginState> state_{LoginState::Idle};
+    std::atomic<uint16_t> loginID_{0};
+    std::atomic<uint16_t> loginGeneration_{0};
     uint16_t loginNodeID_{0xFFFF};
 
     // Login response data

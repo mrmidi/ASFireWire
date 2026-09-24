@@ -236,6 +236,44 @@ TEST(SBP2HandlerTests, HandlerRejectsMissingOrShortSessionStateOutput) {
     EXPECT_EQ(5u, args.scalarOutputCount);
 }
 
+// A wake rebuild destroys and re-creates the registry while the user client
+// stays open. The handler must reach whatever registry is current, never a
+// bind-time snapshot of the freed one.
+TEST(SBP2HandlerTests, HandlerFollowsTheCurrentRegistryAcrossRebuild) {
+    auto before = std::make_unique<HandlerRig>();
+    const uint64_t handle = before->CreateSession();
+    before->LoginSuccessfully(handle);
+
+    ASFW::UserClient::SBP2Handler::Targets current{nullptr, &before->registry};
+    ASFW::UserClient::SBP2Handler handler([&current] { return current; });
+
+    uint64_t scalarInput[] = {handle};
+    uint64_t output[5]{};
+    IOUserClientMethodArguments args{};
+    args.scalarInput = scalarInput;
+    args.scalarInputCount = 1;
+    args.scalarOutput = output;
+    args.scalarOutputCount = 5;
+    EXPECT_EQ(kIOReturnSuccess, handler.GetSBP2SessionState(&args, HandlerRig::Owner()));
+
+    // Quiesce: no core, nothing to reach.
+    current = {};
+    before.reset();
+    handler.ReleaseOwner(HandlerRig::Owner());
+    args.scalarOutputCount = 5;
+    EXPECT_NE(kIOReturnSuccess, handler.GetSBP2SessionState(&args, HandlerRig::Owner()));
+
+    // Rebuild: a fresh registry, where the old session handle is unknown.
+    HandlerRig after;
+    current = {nullptr, &after.registry};
+    args.scalarOutputCount = 5;
+    EXPECT_NE(kIOReturnSuccess, handler.GetSBP2SessionState(&args, HandlerRig::Owner()));
+    const uint64_t fresh = after.CreateSession();
+    scalarInput[0] = fresh;
+    args.scalarOutputCount = 5;
+    EXPECT_EQ(kIOReturnSuccess, handler.GetSBP2SessionState(&args, HandlerRig::Owner()));
+}
+
 TEST(SBP2HandlerTests, HandlerHardensCommandABIInputsBeforeSubmission) {
     HandlerRig rig;
     const uint64_t handle = rig.CreateSession();

@@ -68,6 +68,7 @@ void FetchAgent::Clear(bool cancelTimers) noexcept {
     activeFetchAgentORB_ = nullptr;
     fetchAgentWriteHandle_ = {};
     fetchAgentWriteInUse_ = false;
+    ++fetchAgentWriteSeq_; // any outstanding write is abandoned (see FetchAgent.hpp)
 
     if (cancelFetchWrite) {
         (void)bus_.Cancel(fetchWrite);
@@ -126,19 +127,33 @@ bool FetchAgent::AppendImmediate(SBP2CommandORB* orb) noexcept {
     activeFetchAgentORB_ = orb;
     fetchAgentWriteInUse_ = true;
 
+    // Arm the ORB timer as its ORB_POINTER write is issued, not on the write's
+    // ack, and keep a running timer across write retries — Apple's
+    // IOFireWireSBP2Login::executeORB / fetchAgentWriteComplete call
+    // startORBTimer before appendORBImmediate (IOFireWireSBP2Login.cpp:3115,
+    // 3276). Arming on the ack instead left a write whose completion never
+    // arrives holding the SCSI task with no deadline; the SAM create-probe
+    // INQUIRY blocks target creation uninterruptibly on it (#139).
+    if (const auto it = outstandingORBs_.find(MakeORBKey(orbAddr));
+        it != outstandingORBs_.end() && it->second.timeoutToken == kInvalidSchedulerToken) {
+        StartORBTimeout(orb);
+    }
+
     const std::weak_ptr<int> weak = lifetimeToken_;
     const uint16_t requestGeneration = binding_.generation;
+    const uint32_t writeSeq = ++fetchAgentWriteSeq_;
     fetchAgentWriteHandle_ = bus_.WriteBlock(
         FW::Generation{binding_.generation},
         FW::NodeId{static_cast<uint8_t>(binding_.nodeID & 0x3Fu)},
         binding_.fetchAgentAddress,
         std::span<const uint8_t>{fetchAgentWriteData_.data(), fetchAgentWriteData_.size()},
         TargetSpeed(),
-        [this, weak, requestGeneration](Async::AsyncStatus status, std::span<const uint8_t>) {
+        [this, weak, requestGeneration, writeSeq](Async::AsyncStatus status,
+                                                   std::span<const uint8_t>) {
             if (weak.expired()) {
                 return;
             }
-            OnFetchAgentWriteComplete(requestGeneration, status);
+            OnFetchAgentWriteComplete(requestGeneration, writeSeq, status);
         });
 
     if (!fetchAgentWriteHandle_) {
@@ -155,9 +170,10 @@ bool FetchAgent::AppendImmediate(SBP2CommandORB* orb) noexcept {
 // Completions
 // ---------------------------------------------------------------------------
 
-void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
+void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration, uint32_t writeSeq,
                                            Async::AsyncStatus status) noexcept {
-    if (!bound_ || expectedGeneration != binding_.generation) {
+    if (!bound_ || expectedGeneration != binding_.generation ||
+        writeSeq != fetchAgentWriteSeq_) {
         return;
     }
 
@@ -194,8 +210,8 @@ void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
         return;
     }
 
-    // Write succeeded — the target may now fetch the ORB. Arm its timeout.
-    StartORBTimeout(activeFetchAgentORB_);
+    // Write succeeded — the target may now fetch the ORB (its timeout has been
+    // running since Submit).
     activeFetchAgentORB_ = nullptr;
 
     if (!pendingImmediateORBs_.empty()) {
@@ -398,10 +414,23 @@ void FetchAgent::StartORBTimeout(SBP2CommandORB* orb) noexcept {
                 return;
             }
             SBP2CommandORB* timedOut = entryIt->second.orb;
+            const bool writeStuck = activeFetchAgentORB_ == timedOut && fetchAgentWriteInUse_;
             // The agent is likely wedged mid-fetch (or dead) — revive it so the
             // NEXT command's ORB_POINTER is honored. Linux aborts timed-out
             // commands the same way (sbp2_scsi_abort → agent reset).
-            ASFW_LOG(Async, "FetchAgent: ORB timeout — agent reset before failing");
+            ASFW_LOG(Async, "FetchAgent: ORB timeout%{public}s — agent reset before failing",
+                     writeStuck ? " (ORB_POINTER write never completed)" : "");
+            if (writeStuck) {
+                // Free the write slot so the next ORB can go out, and retire
+                // the stuck write's tag: its kAborted completion is posted
+                // asynchronously and could otherwise land on the next write.
+                const Async::AsyncHandle stuckWrite = fetchAgentWriteHandle_;
+                activeFetchAgentORB_ = nullptr;
+                fetchAgentWriteInUse_ = false;
+                fetchAgentWriteHandle_ = {};
+                ++fetchAgentWriteSeq_;
+                (void)bus_.Cancel(stuckWrite);
+            }
             ResetNoWait();
             FailORB(timedOut, -1, Wire::SBPStatus::kUnspecifiedError);
         });

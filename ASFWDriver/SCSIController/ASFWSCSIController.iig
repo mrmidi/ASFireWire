@@ -115,7 +115,7 @@ struct ASFWSCSIController_IVars {
     // the Default queue (which services the framework's target-init upcalls).
     IODispatchQueue* lifecycleQueue{nullptr};
     uint32_t nextUniqueTaskID{0};       // handed out in UserMapHBAData (must be unique per task)
-    void* pendingState{nullptr};        // PendingState* (target/stop flags), defined in .cpp
+    void* lifecycle{nullptr};           // ASFW::Protocols::SBP2::TargetLifecycle* (target/stop state)
 };
 
 #endif /* ASFWSCSIController_h */

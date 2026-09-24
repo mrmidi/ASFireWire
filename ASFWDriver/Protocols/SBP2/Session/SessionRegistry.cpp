@@ -402,6 +402,7 @@ void SessionRegistry::OnBusReset(uint16_t newGeneration) {
 
 void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
     std::vector<std::shared_ptr<LoginSession>> toReconnect;
+    std::vector<std::shared_ptr<LoginSession>> toAbandon;
     {
         IOLockGuard lock(lock_);
         for (auto& [handle, record] : sessions_) {
@@ -410,8 +411,24 @@ void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
             }
 
             const auto route = deviceRegistry_.CurrentRoute(record.guid);
-            if (!route.has_value() || route->generation != gen ||
-                route->deviceIncarnation != record.route.deviceIncarnation) {
+            // Device terminated (DeviceManager dropped it after repeated missed
+            // scans), or back as a new incarnation: the old login cannot be
+            // reconnected. End it so the HBA tears target 0 down and a replug
+            // logs in fresh — Apple drops the login and the SCSI stack on unit
+            // termination (IOFireWireSBP2LUN.cpp:328,
+            // IOFireWireSerialBusProtocolTransport.cpp:857). Without this the
+            // session stayed Suspended forever and a replug never re-logged in.
+            const bool terminated = !route.has_value() &&
+                                    deviceManager_.GetDeviceByGUID(record.guid) == nullptr;
+            const bool reincarnated =
+                route.has_value() && route->deviceIncarnation != record.route.deviceIncarnation;
+            if (terminated || reincarnated) {
+                ASFW_LOG(Async, "SessionRegistry: device %{public}s — ending session handle=%llu",
+                         terminated ? "terminated" : "re-incarnated", handle);
+                toAbandon.push_back(record.session);
+                continue;
+            }
+            if (!route.has_value() || route->generation != gen) {
                 continue;
             }
 
@@ -429,8 +446,12 @@ void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
             toReconnect.push_back(record.session);
         }
     }
-    // Outside lock_ — a synchronously failing reconnect write completes inline
-    // (same hazard class as Login/Logout, see ReleaseSession).
+    // Outside lock_ — a synchronously failing reconnect write completes inline,
+    // and the session-lost callback re-takes lock_ (same hazard class as
+    // Login/Logout, see ReleaseSession).
+    for (auto& session : toAbandon) {
+        session->AbandonSuspended();
+    }
     for (auto& session : toReconnect) {
         (void)session->Reconnect();
     }

@@ -115,7 +115,7 @@ bool LoginSession::Login() noexcept {
         gen, node, mgmtAddr,
         std::span<const uint8_t>{loginORBAddressBE_.data(), loginORBAddressBE_.size()},
         speed,
-        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+        [weakSelf, requestGeneration = loginGeneration_.load()](Async::AsyncStatus status,
                                                          std::span<const uint8_t>) {
             if (auto self = weakSelf.lock()) {
                 self->OnLoginWriteComplete(requestGeneration, status);
@@ -159,7 +159,7 @@ bool LoginSession::Logout() noexcept {
         gen, node, mgmtAddr,
         std::span<const uint8_t>{logoutORBAddressBE_.data(), logoutORBAddressBE_.size()},
         speed,
-        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+        [weakSelf, requestGeneration = loginGeneration_.load()](Async::AsyncStatus status,
                                                          std::span<const uint8_t>) {
             if (auto self = weakSelf.lock()) {
                 self->OnLogoutWriteComplete(requestGeneration, status);
@@ -211,7 +211,7 @@ bool LoginSession::Reconnect() noexcept {
         gen, node, mgmtAddr,
         std::span<const uint8_t>{reconnectORBAddressBE_.data(), reconnectORBAddressBE_.size()},
         speed,
-        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+        [weakSelf, requestGeneration = loginGeneration_.load()](Async::AsyncStatus status,
                                                          std::span<const uint8_t>) {
             if (auto self = weakSelf.lock()) {
                 self->OnReconnectWriteComplete(requestGeneration, status);
@@ -233,7 +233,7 @@ bool LoginSession::Reconnect() noexcept {
 
 void LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
     ASFW_LOG_SBP2( "LoginSession::HandleBusReset: state=%{public}s newGen=%u loginGen=%u",
-             ToString(state_), newGeneration, loginGeneration_);
+             ToString(state_), newGeneration, loginGeneration_.load());
 
     switch (state_) {
         case LoginState::LoggingIn:
@@ -277,6 +277,17 @@ void LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
         default:
             break;
     }
+}
+
+void LoginSession::AbandonSuspended() noexcept {
+    if (state_ != LoginState::Suspended) {
+        return;
+    }
+    ASFW_LOG_SBP2("LoginSession: device gone while suspended — session lost");
+    CancelManagementTimer();
+    loginID_ = 0;
+    SetState(LoginState::Failed);
+    NotifySessionLost();
 }
 
 // ---------------------------------------------------------------------------
@@ -621,9 +632,16 @@ void LoginSession::OnReconnectWriteComplete(uint16_t expectedGeneration,
     }
 
     if (status != Async::AsyncStatus::kSuccess) {
-        ASFW_LOG_SBP2( "LoginSession::OnReconnectWriteComplete: status=%{public}s, retrying",
+        // The old retry called Reconnect(), which ignores anything but
+        // Suspended/LoggedIn — so a failed write left the session Reconnecting
+        // with no timer, forever (e.g. device unplugged mid-reconnect). A failed
+        // reconnect write is a failed reconnect: Apple reports the session lost
+        // and its client logs in afresh (IOFireWireSBP2Login::doReconnect,
+        // IOFireWireSBP2Login.cpp:2285). Same fallback as a synchronous
+        // WriteBlock failure in Reconnect().
+        ASFW_LOG_SBP2( "LoginSession::OnReconnectWriteComplete: status=%{public}s, session lost",
                  Async::ToString(status));
-        ArmManagementTimer(100, [this]() { (void)Reconnect(); });
+        ArmManagementTimer(kLoginRetryDelayMs, [this]() { OnReconnectTimeout(); });
         return;
     }
 
@@ -822,7 +840,7 @@ void LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& block,
     }
 
     ASFW_LOG_SBP2( "LoginSession: login successful — loginID=%u CBA=%04x:%08x reconnectHold=2^%u",
-             loginID_, commandBlockAgent_.addressHi, commandBlockAgent_.addressLo, reconnectHold_);
+             loginID_.load(), commandBlockAgent_.addressHi, commandBlockAgent_.addressLo, reconnectHold_);
 
     WriteBusyTimeout();
 
@@ -850,7 +868,7 @@ void LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock& blo
 
     SetState(LoginState::LoggedIn);
     BindFetchAgent();
-    ASFW_LOG_SBP2( "LoginSession: reconnect successful — loginID=%u", loginID_);
+    ASFW_LOG_SBP2( "LoginSession: reconnect successful — loginID=%u", loginID_.load());
 
     WriteBusyTimeout();
 
@@ -934,7 +952,7 @@ void LoginSession::EnableUnsolicitedStatus() noexcept {
     const std::weak_ptr<LoginSession> weakSelf = weak_from_this();
     unsolicitedStatusWriteHandle_ = bus_.WriteQuad(
         gen, node, unsolicitedStatusAddress_, 0, speed,
-        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+        [weakSelf, requestGeneration = loginGeneration_.load()](Async::AsyncStatus status,
                                                          std::span<const uint8_t>) {
             if (auto self = weakSelf.lock()) {
                 self->OnUnsolicitedStatusEnableComplete(requestGeneration, status);
@@ -977,7 +995,7 @@ void LoginSession::WriteBusyTimeout() noexcept {
         gen, node, busyAddr,
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&busyTimeoutBuffer_), 4},
         speed,
-        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+        [weakSelf, requestGeneration = loginGeneration_.load()](Async::AsyncStatus status,
                                                          std::span<const uint8_t>) {
             if (auto self = weakSelf.lock()) {
                 self->OnBusyTimeoutComplete(requestGeneration, status);
