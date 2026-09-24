@@ -34,7 +34,7 @@ These are the structural problems the trace found. Details are in the rows refer
    `TimingCursorPolicy` and `AudioTimingGeometry`.
 3. **Timing is re-resolved downstream of the nub.** The nub carries wire geometry only (streams, rates,
    mode). The audio side calls `AudioProfileRegistry::FindProfile(vendor, model, guid, builderId)`
-   **three** separate times (graph, StartIO, direct binding) to recover timing policy (G-19). Nothing
+   **four** separate times (twice in the graph, StartIO, direct binding) to recover timing policy (G-19). Nothing
    guarantees that the three lookups, or the publisher's own resolution, agree.
 4. **HAL declarations are frozen at graph construction.** Latency and safety offsets are computed once,
    at the graph's `currentSampleRate`. `HandleChangeSampleRate` never re-publishes them (G-08…G-12), so
@@ -95,7 +95,7 @@ These are inputs to timing policy. The ownership rule (FW-180) keeps them as wir
 | G-16 | `AudioTxProfiles.hpp` (`TxBufferProfile` A/B/C, `gActiveTxProfile`, `SetActiveTxProfile`), `AudioRxProfiles.hpp` (`RxBufferProfile` A/B/C), `kReportedDeviceLatencyFrames`, `kReportedSafetyOffsetFrames`, `kTxQueueCapacityFrames`, `kRxQueueCapacityFrames`, `kTransferChunkFrames` | `Audio/Config/*`, `ASFWAudioDriverPrivate.hpp:35-37` | historical tuning profiles | — | **none** (only the umbrella include `AudioConfig.hpp` and each other) | — | — | dead; advertise safety/latency values that are never applied |
 | G-17 | `HardwareSampleTimeline::BusTicksToAudioFrames`, `AudioFramesToBusTicks`, `NominalBusTicksPerFrame`, `kZeroTimestampPeriodFrames` | `Audio/Runtime/HardwareSampleTimeline.hpp:77-122` | ticks ↔ frames conversion (rational) | P | ZTS / timeline | — | pure maths (rational, rate-general) | `NominalBusTicksPerFrame` table misses 44.1 kHz (returns 0); **DEFER → FW-186** (timeline/ZTS epic) |
 | G-18 | `ASFW::Timing` utilities (`gHostTimebaseInfo`, `hostTicksToNanos`, `nanosToHostTicks`, FW time maths) | `Common/TimingUtils.hpp` (20 includers) **and** `Audio/Wire/AMDTP/TimingUtils.hpp` (2 includers) | host-time conversion | P | many | — | either (same namespace; including both in one TU is a redefinition error) | whole-file duplicate |
-| G-19 | `AudioProfileRegistry::FindProfile(vendor, model, guid, builderId)` on the audio side | `ASFWAudioDriverGraph.cpp:719`, `ASFWAudioDevice.cpp:164` (StartIO), `ASFWAudioDriverDirect.cpp:131` | **re-resolution** of timing policy (and wire format) downstream of the nub | C | graph declarations, StartIO TX clock domain + transfer delay, direct binding wire format | — | three independent lookups per start | the publisher already resolved the device; nothing checks the lookups agree. StartIO fails hard if null, the graph silently falls back to `TimingCursorPolicy` |
+| G-19 | `AudioProfileRegistry::FindProfile(vendor, model, guid, builderId)` on the audio side | `ASFWAudioDriverGraph.cpp:155` (name/channels/rates) **and** `:719` (declarations), `ASFWAudioDevice.cpp:164` (StartIO), `ASFWAudioDriverDirect.cpp:131` — **four** lookups (the first pass listed three; corrected during FW-183) | **re-resolution** of timing policy (and wire format) downstream of the nub | C | graph declarations, StartIO TX clock domain + transfer delay, direct binding wire format | — | three independent lookups per start | the publisher already resolved the device; nothing checks the lookups agree. StartIO fails hard if null, the graph silently falls back to `TimingCursorPolicy` |
 
 ## 4. Rate-change path
 

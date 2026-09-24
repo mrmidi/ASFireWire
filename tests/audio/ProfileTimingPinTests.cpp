@@ -93,3 +93,46 @@ TEST(ProfileTimingPinTests, PinnedDeclarationsAtEveryRate) {
 }
 
 } // namespace
+
+// FW-183/184: the driver's only profile->timing bridge, exercised on every real
+// profile. Resolution must succeed at every AMDTP rate a profile can be asked
+// for, declarations must come through unchanged, and input safety must never
+// fall below the rate's completion-batch floor.
+#include "Audio/DriverKit/Config/ProfileTimingGeometry.hpp"
+
+namespace {
+
+TEST(ProfileTimingPinTests, EveryProfileResolvesThroughTheDriverBridge) {
+    using ASFW::Audio::DriverKit::ResolveProfileTimingGeometry;
+    const uint32_t blockingRaw = std::to_underlying(ASFW::Isoch::Audio::StreamMode::kBlocking);
+    for (uint32_t builder = 0; builder <= static_cast<uint32_t>(ProfileBuilderId::kLastValid);
+         ++builder) {
+        const auto* profile = builder == 0 ? AudioProfileRegistry::FindProfile(0, 0, 0, 0)
+                                           : AudioProfileRegistry::ProfileForBuilderId(builder);
+        if (profile == nullptr) {
+            continue;
+        }
+        for (const uint32_t rate : kRates) {
+            SCOPED_TRACE(std::string(profile->Name()) + " @" + std::to_string(rate));
+            const auto resolved = ResolveProfileTimingGeometry(*profile, rate, blockingRaw);
+            ASSERT_TRUE(resolved.has_value());
+            EXPECT_EQ(resolved->outputLatencyFrames, profile->TxReportedLatencyFrames(rate));
+            EXPECT_EQ(resolved->inputLatencyFrames, profile->RxReportedLatencyFrames(rate));
+            EXPECT_EQ(resolved->outputSafetyOffsetFrames, profile->TxSafetyOffsetFrames(rate));
+            EXPECT_GE(resolved->inputSafetyOffsetFrames, profile->RxSafetyOffsetFrames(rate));
+            EXPECT_GE(resolved->inputSafetyOffsetFrames, resolved->inputSafetyFloorFrames);
+            EXPECT_EQ(resolved->txTransferDelayTicks, 12800U);
+        }
+    }
+}
+
+TEST(ProfileTimingPinTests, StreamModeIsMappedByNameNotCast) {
+    using ASFW::Audio::DriverKit::WireStreamModeFromRaw;
+    EXPECT_EQ(WireStreamModeFromRaw(std::to_underlying(ASFW::Isoch::Audio::StreamMode::kBlocking)),
+              ASFW::Encoding::StreamMode::kBlocking);
+    EXPECT_EQ(
+        WireStreamModeFromRaw(std::to_underlying(ASFW::Isoch::Audio::StreamMode::kNonBlocking)),
+        ASFW::Encoding::StreamMode::kNonBlocking);
+}
+
+} // namespace

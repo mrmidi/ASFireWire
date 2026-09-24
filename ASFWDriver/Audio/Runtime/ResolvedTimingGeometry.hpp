@@ -117,7 +117,7 @@ inline constexpr uint32_t kShippedTransferDelayTicks = 12'800;
 /// Input safety: the data-visibility margin only (CoreAudio accounts for the
 /// IO buffer separately). The larger of the profile's value and one completion
 /// batch plus scheduling jitter, aligned up to the 32-frame grid -- the same
-/// rule as main's RequiredInputSafetyFrames, with the batch made rate-general.
+/// rule as the former RequiredInputSafetyFrames, with the batch made rate-general.
 [[nodiscard]] constexpr uint32_t ResolveInputSafetyFrames(
     uint32_t profileInputSafetyFrames, const Encoding::AmdtpRateGeometry& geometry) noexcept {
     using Geometry = IsochTransport::AudioTimingGeometry;

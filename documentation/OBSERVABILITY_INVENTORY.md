@@ -114,7 +114,7 @@ and they must not be reported as round-trip latency.
 | `[RxReplayReset]` | RX replay reset / bootstrap phase | `DirectAudioReceiveConsumer` | gated, bounded per start | **keep** |
 | `[AudioIO]` | the IO callback returned an error | `DirectAudioReceiveConsumer::ServiceConsumerDiagnostics` | gated (new error generation) | **keep** |
 | `TxSyt` trace (`TxSytTraceLatest`) | the latest TX SYT decision | TX SYT path | low latest-value slot + verbose drain | **keep**: consumed by `tools/zts_sim.py` |
-| `TimingCursorPolicy (fallback, not applied)` | fallback cursor policy values | `ASFWAudioDevice.cpp` | once per configuration | **keep, relabelled (FW-171)**. It never reports applied values; do not use it as evidence |
+| `[Timing]` | the resolved timing/HAL geometry actually applied (rate, SYT, ring, ZTS, IO budget, declarations, safety floor, transfer delay) | `LogResolvedTimingGeometry` (graph build, rate change) | once per resolution | **keep** (FW-183). It replaces the `TimingCursorPolicy (fallback, not applied)` line, which FW-177 deleted together with the policy |
 | `HAL buffer profile`, `Reported HAL latency`, `GetZeroTimestampPeriod`, `txTransferDelay` | declared geometry | `ASFWAudioDevice*` | once per configuration | **keep**; collected by `capture_baseline.sh` |
 | `[MAudioTxClock]`, `[Fireworks]`, `[EFC]`, `[BeBoB]`, `[Onyx]`, `[M8]`, `[MAudio]`, `[DV]`, `[BootloaderCue]`, `[DeviceIdentity]` | device-family control and bring-up | family backends | gated / per command | **keep**; they belong to their families, not to the stable summary |
 

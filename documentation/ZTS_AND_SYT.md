@@ -719,8 +719,9 @@ static_assert(kTxExposureLeadFrames >= kHalIoPeriodFrames + kSchedulingJitterFra
               "TX exposure lead must cover one full IO window plus scheduling jitter");
 ```
 
-The rate-dependent partner `RequiredOutputExposureFrames` lives beside
-`RequiredInputSafetyFrames` in `AudioGeometryPolicy.hpp`.
+(`AudioGeometryPolicy.hpp`, which held `RequiredOutputExposureFrames` and
+`RequiredInputSafetyFrames`, was removed by FW-177; input safety is now
+`ResolveInputSafetyFrames` in `Audio/Runtime/ResolvedTimingGeometry.hpp`.)
 
 #### Resolution (2026-06-16, hardware-validated)
 

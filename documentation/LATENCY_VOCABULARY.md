@@ -61,7 +61,7 @@ Follow one output frame. Events:
 |---|---|---|---|
 | `I1` | E0 → E1 | variable, ≥ 0: how far ahead of finality the HAL scheduled the write | **covered by the output safety offset (`A2`) — do not add `A2` on top** |
 | `I2` | E1 → E2 | nominal lead only (the finality-to-transmit frontier); per-packet distribution unmeasured | — |
-| `I3` | E2 → **E4** | the stamped SYT offset: SYT = transmit cycle + TX transfer delay (main: 12800 ticks = 25 frames, `IAudioDeviceProfile::TxTransferDelayTicks` default). One quantity: `E3` is never observed, so wire transit is **inside** it | never add a separate "wire transit" term |
+| `I3` | E2 → **E4** | the stamped SYT offset: SYT = transmit cycle + TX transfer delay (main: 12800 ticks = 25 frames at 48 kHz, `ResolvedTimingGeometry::txTransferDelayTicks`). One quantity: `E3` is never observed, so wire transit is **inside** it | never add a separate "wire transit" term |
 | `I4` | E4 → E5 | device DAC — **unknown**, not derivable from software | — |
 
 ## 4. The RX path: events and intervals
@@ -101,9 +101,10 @@ coreaudio-api 2004): `2×A5 + A2 + A4` (**declared scheduling**) plus
 `rtl_loopback` and `hal_geometry` compute exactly this, and withhold it when
 any term is unreadable.
 
-The log line `TimingCursorPolicy … outSafety=8 inSafety=8`
-(`ASFWAudioDevice.cpp`) prints fallback-policy values, **not** what was
-applied. The applied values are in the `Reported HAL latency` line.
+The applied values are in the `Reported HAL latency` line and in the `[Timing]`
+line, which prints the whole resolved geometry (FW-177). Drivers before FW-177
+also printed `TimingCursorPolicy … outSafety=8 inSafety=8`; those were
+fallback-policy values, **not** what was applied.
 
 ## 6. Depths that are not latency
 

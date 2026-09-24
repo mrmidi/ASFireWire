@@ -8,9 +8,7 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
-#include "../Config/InputSafetyPolicy.hpp"
 #include "Config/AudioProfileRegistry.hpp"
-#include "../Config/TimingCursorPolicy.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Shared/Isoch/AudioTimingGeometry.hpp"
@@ -93,6 +91,21 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
 
 } // namespace
 
+void LogResolvedTimingGeometry(const char* context,
+                               const ASFW::Audio::Runtime::ResolvedTimingGeometry& timing) noexcept {
+    ASFW_LOG(Audio,
+             "[Timing] %{public}s rate=%u fdf=0x%02x syt=%u ring=%u zts=%u io=%u "
+             "latency out=%u in=%u safety out=%u in=%u (profile in=%u floor=%u) "
+             "transferDelay rx=%u tx=%u",
+             context ? context : "resolve", timing.sampleRateHz, timing.fdf,
+             timing.sytIntervalFrames, timing.frameRingFrames,
+             timing.zeroTimestampPeriodFrames, timing.clientIoBudgetFrames,
+             timing.outputLatencyFrames, timing.inputLatencyFrames,
+             timing.outputSafetyOffsetFrames, timing.inputSafetyOffsetFrames,
+             timing.profileInputSafetyFrames, timing.inputSafetyFloorFrames,
+             timing.rxTransferDelayTicks, timing.txTransferDelayTicks);
+}
+
 void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
                        double sampleRate,
                        uint32_t channels) noexcept {
@@ -112,6 +125,8 @@ void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept {
     ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(defaultConfig);
     ivars.device.audioNub = nullptr;
     CopyParsedConfigToDeviceState(defaultConfig, ivars.device);
+    ivars.device.profile = nullptr;
+    ivars.device.timing = {};
 }
 
 kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
@@ -152,10 +167,14 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // bring-up single-format policy below is skipped for profiled devices.
     bool profileProvidedSampleRates = false;
 
-    // Resolve audio profile registry on startup
-    if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
-            parsedConfig.vendorId, parsedConfig.modelId, parsedConfig.guid,
-            parsedConfig.profileBuilderId)) {
+    // Resolve the device profile ONCE for this audio driver instance. Every
+    // later audio-side consumer (timing, StartIO, direct binding) reads
+    // ivars.device.profile. FindProfile never returns null -- an unidentified
+    // device gets the generic DICE profile -- so there is no fallback path.
+    const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
+        parsedConfig.vendorId, parsedConfig.modelId, parsedConfig.guid,
+        parsedConfig.profileBuilderId);
+    if (profile) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Resolved profile '%{public}s'", profile->Name());
 
         // Only name the device from the profile when the nub did not supply one.
@@ -219,10 +238,33 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
     ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, ASFW::Encoding::kMaxPcmChannels);
     CopyParsedConfigToDeviceState(parsedConfig, ivars.device);
+    ivars.device.profile = profile;
 
     kern_return_t error = ValidateDeviceStateForGraph(ivars.device);
     if (error != kIOReturnSuccess) {
         return error;
+    }
+    if (!profile) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: BuildAudioGraph failed - no device profile");
+        return kIOReturnNotFound;
+    }
+
+    // The single timing/HAL geometry authority for this device at its current
+    // rate (documentation/TIMING_GEOMETRY_OWNERSHIP.md). Everything below --
+    // the ZTS period, latency and safety declarations -- is read from it.
+    {
+        const auto resolved = ASFW::Audio::DriverKit::ResolveProfileTimingGeometry(
+            *profile, static_cast<uint32_t>(ivars.device.currentSampleRate),
+            ivars.device.streamModeRaw);
+        if (!resolved) {
+            ASFW_LOG(Audio,
+                     "[Timing] resolve failed rate=%.0f error=%{public}s",
+                     ivars.device.currentSampleRate,
+                     ASFW::Audio::Runtime::TimingGeometryErrorName(resolved.error()));
+            return kIOReturnUnsupported;
+        }
+        ivars.device.timing = *resolved;
+        ASFW::Audio::DriverKit::LogResolvedTimingGeometry("graph", ivars.device.timing);
     }
     const auto requireAdkSuccess =
         [&](const char* operation, kern_return_t status) noexcept -> bool {
@@ -300,7 +342,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // memory is sized separately by the selected HAL buffer profile.
     constexpr auto bufferProfile =
         ASFW::IsochTransport::kActiveAudioHalBufferProfile;
-    const uint32_t target_period = ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+    const uint32_t target_period = ivars.device.timing.zeroTimestampPeriodFrames;
     ASFW_LOG(
         Audio,
         "ASFWAudioDriver: HAL buffer profile=%{public}s ring=%u ioBudget=%u zts=%u",
@@ -713,83 +755,40 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             ivars.audioDevice->SetClockDomain(1))) {
         return error;
     }
-    const double currentSampleRate = ivars.device.currentSampleRate;
-    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
-        static_cast<uint32_t>(currentSampleRate));
-    const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
-        ivars.device.vendorId, ivars.device.modelId, ivars.device.guid,
-        ivars.device.profileBuilderId);
-
-    uint32_t outLatency = 0;
-    uint32_t inLatency = 0;
-    uint32_t outSafety = 0;
-    uint32_t inSafety = 0;
-
-    if (profile) {
-        outLatency = profile->TxReportedLatencyFrames(currentSampleRate);
-        inLatency = profile->RxReportedLatencyFrames(currentSampleRate);
-        outSafety = profile->TxSafetyOffsetFrames(currentSampleRate);
-        inSafety = profile->RxSafetyOffsetFrames(currentSampleRate);
-    } else {
-        outLatency = policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Output);
-        inLatency = policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Input);
-        outSafety = policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Output);
-        inSafety = policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Input);
-    }
-
-    constexpr uint32_t kSchedulingJitterFrames = 64;
-    // Data-visibility margin only; the IO buffer size is NOT folded in (see
-    // RequiredInputSafetyFrames). This floors the profile's per-rate value
-    // (RxSafetyOffsetFrames) at one interrupt batch + jitter, never inflates it.
-    const uint32_t requiredInputSafety =
-        ASFW::Audio::RequiredInputSafetyFrames(
-            inSafety,
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kMaximumNominalFramesPerInterrupt,
-            kSchedulingJitterFrames);
-    if (inSafety != requiredInputSafety) {
-        ASFW_LOG(
-            Audio,
-            "ASFWAudioDriver: input safety %u -> %u (maxIRQFrames=%u jitter=%u)",
-            inSafety,
-            requiredInputSafety,
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kMaximumNominalFramesPerInterrupt,
-            kSchedulingJitterFrames);
-        inSafety = requiredInputSafety;
-    }
-
+    const auto& timing = ivars.device.timing;
     if (!requireAdkSuccess(
             "device.SetOutputLatency",
-            ivars.audioDevice->SetOutputLatency(outLatency))) {
+            ivars.audioDevice->SetOutputLatency(timing.outputLatencyFrames))) {
         return error;
     }
     if (!requireAdkSuccess(
             "device.SetInputLatency",
-            ivars.audioDevice->SetInputLatency(inLatency))) {
+            ivars.audioDevice->SetInputLatency(timing.inputLatencyFrames))) {
         return error;
     }
     if (!requireAdkSuccess(
             "device.SetOutputSafetyOffset",
-            ivars.audioDevice->SetOutputSafetyOffset(outSafety))) {
+            ivars.audioDevice->SetOutputSafetyOffset(timing.outputSafetyOffsetFrames))) {
         return error;
     }
     if (!requireAdkSuccess(
             "device.SetInputSafetyOffset",
-            ivars.audioDevice->SetInputSafetyOffset(inSafety))) {
+            ivars.audioDevice->SetInputSafetyOffset(timing.inputSafetyOffsetFrames))) {
         return error;
     }
 
+    // Kept verbatim: tools/baseline/capture_baseline.sh collects this line.
     ASFW_LOG(Audio, "ASFWAudioDriver: Reported HAL latency out=%u/in=%u, safety out=%u/in=%u frames",
-             outLatency, inLatency, outSafety, inSafety);
+             timing.outputLatencyFrames, timing.inputLatencyFrames,
+             timing.outputSafetyOffsetFrames, timing.inputSafetyOffsetFrames);
 
     const uint32_t configuredZtsPeriod =
         ivars.audioDevice->GetZeroTimestampPeriod();
-    if (configuredZtsPeriod != policy.HalZeroTimestampPeriodFrames()) {
+    if (configuredZtsPeriod != timing.zeroTimestampPeriodFrames) {
         ASFW_LOG(
             Audio,
             "ADK FATAL graph op=device.GetZeroTimestampPeriod expected=%u actual=%u",
-            policy.HalZeroTimestampPeriodFrames(),
+            timing.zeroTimestampPeriodFrames,
             configuredZtsPeriod);
         return kIOReturnUnsupported;
     }

@@ -98,6 +98,15 @@ public:
                              uint32_t sampleRateHz) {
         ivars_.device.profileBuilderId = static_cast<uint32_t>(builder);
         ivars_.device.currentSampleRate = sampleRateHz;
+        // Mirrors BuildAudioGraph: the profile and the timing geometry are
+        // resolved once before StartIO ever runs (FW-183).
+        ivars_.device.profile = &profile;
+        const auto timing = ASFW::Audio::DriverKit::ResolveProfileTimingGeometry(
+            profile, sampleRateHz, ivars_.device.streamModeRaw);
+        if (!timing) {
+            return false;
+        }
+        ivars_.device.timing = *timing;
         control_->ResetForStart();
         if (!ASFW::Audio::DriverKit::SelectTxClockDomain(ivars_, profile)) {
             return false;

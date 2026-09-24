@@ -940,10 +940,10 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txStreamEngine.ResetForStart(0, 0);
     ivars.runtime.txReplayReader.Reset();
 
-    const uint32_t timingRateHz =
-        ivars.device.currentSampleRate > 0
-            ? static_cast<uint32_t>(ivars.device.currentSampleRate)
-            : 48000u;
+    // The resolved geometry is the only rate/timing source here; there is no
+    // 48 kHz fallback (a graph that failed to resolve never reaches StartIO).
+    const auto& timing = ivars.device.timing;
+    const uint32_t timingRateHz = timing.sampleRateHz;
     if (ivars.runtime.mAudioInternalTxActive.load(
             std::memory_order_acquire)) {
         ++ivars.runtime.mAudioTxClockStartEpoch;
@@ -955,19 +955,16 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         if (!ivars.runtime.mAudioTxClockBridge.Arm(
                 ivars.runtime.mAudioTxClockStartEpoch,
                 timingRateHz,
-                ASFW::IsochTransport::AudioTimingGeometry::
-                    kHalZeroTimestampPeriodFrames,
+                timing.zeroTimestampPeriodFrames,
                 ivars.runtime.mAudioInternalTxTiming.
                     TransferDelayTicks())) {
             return {kIOReturnUnsupported, "MAudioTxClockBridge"};
         }
     }
-    control->rxTransferDelayTicks.store(
-        profile.RxTransferDelayTicks(ivars.device.currentSampleRate),
-        std::memory_order_relaxed);
-    control->txTransferDelayTicks.store(
-        profile.TxTransferDelayTicks(ivars.device.currentSampleRate),
-        std::memory_order_relaxed);
+    control->rxTransferDelayTicks.store(timing.rxTransferDelayTicks,
+                                        std::memory_order_relaxed);
+    control->txTransferDelayTicks.store(timing.txTransferDelayTicks,
+                                        std::memory_order_relaxed);
     return {};
 }
 

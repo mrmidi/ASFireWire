@@ -128,9 +128,7 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
     // Standard DICE fallback profiles use AM824 sub-frame formatting, while
     // Focusrite Saffire playback uses sign-extended 24-in-32 big-endian formatting.
     ASFW::Audio::Runtime::AudioWireFormat wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824;
-    if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
-            ivars.device.vendorId, ivars.device.modelId, ivars.device.guid,
-            ivars.device.profileBuilderId)) {
+    if (const auto* profile = ivars.device.profile) {
         if (profile->TxWireFormat() == ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
             wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kRawPcm24In32;
         }

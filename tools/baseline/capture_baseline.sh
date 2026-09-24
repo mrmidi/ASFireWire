@@ -146,7 +146,7 @@ fi
 # info/debug. The dext logs as process "kernel", so filter on message text.
 ELAPSED=$(( $(date +%s) - START_EPOCH + 60 ))
 /usr/bin/log show --last "${ELAPSED}s" --info --debug --style compact --predicate \
-    'eventMessage CONTAINS "HAL buffer profile" OR eventMessage CONTAINS "Reported HAL latency" OR eventMessage CONTAINS "GetZeroTimestampPeriod" OR eventMessage CONTAINS "txTransferDelay" OR eventMessage CONTAINS "[TxPrep]" OR eventMessage CONTAINS "[Zts]" OR eventMessage CONTAINS "[TxWire]" OR eventMessage CONTAINS "[TxExposure]" OR eventMessage CONTAINS "[TxProducerFatal]"' \
+    'eventMessage CONTAINS "HAL buffer profile" OR eventMessage CONTAINS "[Timing]" OR eventMessage CONTAINS "Reported HAL latency" OR eventMessage CONTAINS "GetZeroTimestampPeriod" OR eventMessage CONTAINS "txTransferDelay" OR eventMessage CONTAINS "[TxPrep]" OR eventMessage CONTAINS "[Zts]" OR eventMessage CONTAINS "[TxWire]" OR eventMessage CONTAINS "[TxExposure]" OR eventMessage CONTAINS "[TxProducerFatal]"' \
     > "$OUT/driver_log.txt" 2>&1 || true
 
 # ---------------------------------------------------------------- summary

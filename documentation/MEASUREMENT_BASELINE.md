@@ -36,8 +36,10 @@ exposes plus the two host tools:
 | runtime heartbeats: `[TxPrep]`, `[Zts]`, anomaly lines | unified log | — |
 | commit, driver version, OS, machine, command | `provenance.json` | — |
 
-The `TimingCursorPolicy … outSafety=8` log line is deliberately not used: it
-prints fallback values, not what was applied.
+The applied timing geometry is the `[Timing]` line (one per graph build and
+per rate change) together with `Reported HAL latency`. Runs on a driver older
+than FW-177 also print a `TimingCursorPolicy … outSafety=8` line: ignore it —
+it printed fallback values, not what was applied.
 
 ## Prerequisites
 

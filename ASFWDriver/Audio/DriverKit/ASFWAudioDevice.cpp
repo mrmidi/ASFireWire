@@ -9,7 +9,6 @@
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../Config/TimingCursorPolicy.hpp"
 #include "Config/AudioProfileRegistry.hpp"
 #include "Config/ResolvedStreamConfig.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
@@ -161,16 +160,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         // --- Allocate and map shared TX isoch resources ---
         uint32_t initialClockAnchorTimeoutMs = 500;
         {
-            const auto* baseProfile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
-                ivars.device.vendorId,
-                ivars.device.modelId,
-                ivars.device.guid,
-                ivars.device.profileBuilderId
-            );
-            const auto* profile = static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(baseProfile);
+            // Resolved once at graph construction (G-19); never looked up here.
+            const auto* profile =
+                static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(ivars.device.profile);
             if (!profile) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - profile not found");
-                kr = failStart(kIOReturnError, "ResolveProfile");
+                ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - graph did not resolve a profile");
+                kr = failStart(kIOReturnNotReady, "ResolveProfile");
                 return;
             }
             initialClockAnchorTimeoutMs = profile->InitialClockAnchorTimeoutMs();
@@ -515,28 +510,6 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             initialZtsHostTicks,
             ztsWaitMs);
 
-        // --- Log timing policy ---
-        // This prints the DICE 1x fallback policy, NOT the latency and safety
-        // actually applied to the HAL (profiles override it). The applied
-        // values are in the "Reported HAL latency" line from the graph setup;
-        // measurement tooling must read that one (LATENCY_VOCABULARY.md §5).
-        const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
-            static_cast<uint32_t>(ivars.device.currentSampleRate));
-        const auto policySnap = policy.Snapshot();
-        ASFW_LOG(Audio,
-                 "TimingCursorPolicy (fallback, not applied) rate=%u mode=blocking framesPerPacket=%u outCursorOffset=%u inCursorOffset=%u reportedOutLatency=%u reportedInLatency=%u outSafety=%u inSafety=%u outLead=%u inLead=%u ztsPeriod=%u",
-                 policySnap.sampleRateHz,
-                 policySnap.framesPerPacketMax,
-                 policySnap.outputCursorOffsetFrames,
-                 policySnap.inputCursorOffsetFrames,
-                 policySnap.reportedOutputLatencyFrames,
-                 policySnap.reportedInputLatencyFrames,
-                 policySnap.outputSafetyOffsetFrames,
-                 policySnap.inputSafetyOffsetFrames,
-                 policySnap.outputPacketLeadFrames,
-                 policySnap.inputPacketLeadFrames,
-                 policySnap.ztsPeriodFrames);
-
         // Hardware-specific setup must finish before super::StartIO updates
         // ADK's IO state. Open the RT gate first so callbacks arriving as part
         // of that transition never observe a half-started transport.
@@ -774,6 +747,33 @@ kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
                  in_sample_rate);
         return kIOReturnNotReady;
     }
+    // Resolve the new rate's timing geometry BEFORE touching the transport:
+    // an unsupported rate, or one that would need a different shared ring or
+    // ZTS period than the live device was created with, is refused here rather
+    // than after the device clock has moved (TIMING_GEOMETRY_OWNERSHIP.md §4).
+    if (!ivars.device.profile) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz refused - no resolved profile",
+                 in_sample_rate);
+        return kIOReturnNotReady;
+    }
+    const auto nextTiming = ASFW::Audio::DriverKit::ResolveProfileTimingGeometry(
+        *ivars.device.profile, rateHz, ivars.device.streamModeRaw);
+    if (!nextTiming) {
+        ASFW_LOG(Audio,
+                 "[Timing] rate change to %u refused: %{public}s",
+                 rateHz, ASFW::Audio::Runtime::TimingGeometryErrorName(nextTiming.error()));
+        return kIOReturnUnsupported;
+    }
+    if (!ASFW::Audio::Runtime::IsLiveCompatible(ivars.device.timing, *nextTiming)) {
+        ASFW_LOG(Audio,
+                 "[Timing] rate change to %u refused: ring %u->%u / zts %u->%u cannot change on a live device",
+                 rateHz, ivars.device.timing.frameRingFrames, nextTiming->frameRingFrames,
+                 ivars.device.timing.zeroTimestampPeriodFrames,
+                 nextTiming->zeroTimestampPeriodFrames);
+        return kIOReturnUnsupported;
+    }
+
     const kern_return_t kr = ivars.device.audioNub->RequestSampleRateChange(rateHz);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Audio,
@@ -831,6 +831,29 @@ kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
             return outKr;
         }
     }
+
+    // Re-declare for the new rate. Before FW-183 the declarations were set once
+    // at graph time, so after 48 -> 96 kHz the HAL kept the 48 kHz values.
+    ivars.device.timing = *nextTiming;
+    const auto& timing = ivars.device.timing;
+    const kern_return_t declKr[] = {
+        SetOutputLatency(timing.outputLatencyFrames),
+        SetInputLatency(timing.inputLatencyFrames),
+        SetOutputSafetyOffset(timing.outputSafetyOffsetFrames),
+        SetInputSafetyOffset(timing.inputSafetyOffsetFrames),
+    };
+    for (const kern_return_t declared : declKr) {
+        if (declared != kIOReturnSuccess) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDevice: HandleChangeSampleRate re-declaration failed: 0x%x",
+                     declared);
+            return declared;
+        }
+    }
+    ASFW::Audio::DriverKit::LogResolvedTimingGeometry("rate-change", timing);
+    ASFW_LOG(Audio, "ASFWAudioDriver: Reported HAL latency out=%u/in=%u, safety out=%u/in=%u frames",
+             timing.outputLatencyFrames, timing.inputLatencyFrames,
+             timing.outputSafetyOffsetFrames, timing.inputSafetyOffsetFrames);
 
     ASFW_LOG(Audio,
              "ASFWAudioDevice: HandleChangeSampleRate committed %.0f Hz "

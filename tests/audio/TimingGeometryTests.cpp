@@ -12,7 +12,6 @@
 #include "Audio/Wire/AMDTP/AmdtpCadence.hpp"
 #include "Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "Audio/Wire/AMDTP/AmdtpTransferDelay.hpp"
-#include "Shared/Isoch/AudioGeometryPolicy.hpp"
 #include "Shared/Isoch/AudioTimingGeometry.hpp"
 
 #include <gtest/gtest.h>
@@ -101,14 +100,18 @@ TEST(TimingGeometryTests, InvalidSafetyIsRejected) {
 }
 
 // Agreement with the legacy input-safety rule at 48 kHz, for every profile
-// value a device could declare. Remove with RequiredInputSafetyFrames (FW-181).
+// value a device could declare. The lambda is the deleted
+// RequiredInputSafetyFrames body (graph floor: 40-frame IRQ batch + 64 jitter).
 TEST(TimingGeometryTests, InputSafetyMatchesLegacyRuleAt48k) {
+    const auto legacy = [](uint32_t profileInputSafety) {
+        const uint32_t interruptBatch = Geometry::kMaximumNominalFramesPerInterrupt + 64U;
+        const uint32_t raw =
+            profileInputSafety > interruptBatch ? profileInputSafety : interruptBatch;
+        return ((raw + 31U) / 32U) * 32U;
+    };
     const auto wire = *AmdtpRateGeometryForSampleRate(48000);
     for (uint32_t profileValue = 0; profileValue <= 1024; ++profileValue) {
-        EXPECT_EQ(ResolveInputSafetyFrames(profileValue, wire),
-                  ASFW::Audio::RequiredInputSafetyFrames(
-                      profileValue, Geometry::kMaximumNominalFramesPerInterrupt,
-                      Geometry::kSchedulingJitterFrames))
+        EXPECT_EQ(ResolveInputSafetyFrames(profileValue, wire), legacy(profileValue))
             << profileValue;
     }
 }

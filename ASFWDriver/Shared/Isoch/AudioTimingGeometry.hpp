@@ -28,8 +28,9 @@ namespace ASFW::IsochTransport {
 // kTxExposureLeadFrames below. See documentation/ZTS_AND_SYT.md and
 // tools/tx_payload_ownership_sim.py. Live evidence of W > E: [TxPrepFrame].
 //
-// Rate-DEPENDENT geometry (safety offsets, frames-per-packet at 96/192 kHz,
-// reported latency) lives in AudioGeometryPolicy.hpp, not here.
+// Rate-DEPENDENT geometry (frames-per-packet, safety floor, declarations,
+// transfer delay) is resolved per rate by Audio/Runtime/ResolvedTimingGeometry.hpp
+// (documentation/TIMING_GEOMETRY_OWNERSHIP.md), not here.
 // -----------------------------------------------------------------------------
 struct AudioTimingGeometry final {
     static constexpr uint32_t kSampleRateHz = 48000;
@@ -89,7 +90,7 @@ struct AudioTimingGeometry final {
     // === TX exposure lead (E - W) -- the audio-frame cushion ================
     // Minimum audio frames the producer's exposure frontier (E) must keep ahead
     // of CoreAudio's write-window end. TX analogue of RX's
-    // RequiredInputSafetyFrames cushion: RX had it, TX did not -- which is why
+    // input-safety cushion (ResolveInputSafetyFrames): RX had it, TX did not -- which is why
     // TX shipped silence when the writer ran beyond ExposedFrameEnd()
     // (Defect B = under-exposure, W > E). Conservative form = one full
     // AppleFWAudio's AM824NuDCLWrite keeps its CIP insertion target roughly
@@ -289,7 +290,7 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
 //
 // Shared by all three AND us: 8000 cycles/s, 3072 ticks/cycle, 24'576'000
 // ticks/s; blocking SYT interval (frames per DATA packet) = 8 @48k / 16 @96k /
-// 32 @192k  (== our kFramesPerDataPacket and AudioGeometryPolicy::FramesPerPacket).
+// 32 @192k  (== our kFramesPerDataPacket and AmdtpRateGeometry::sytIntervalFrames).
 //
 // --- Apple AppleFWAudio.kext  (AM824DCLWrite / AM824NuDCLWrite, x86 IDA) ------
 //   fNumBufferGroups          = 100        backing DCL ring depth (~100 ms)
@@ -297,7 +298,7 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
 //   48k cadence               = D,D,D,N    => 6 frames/cycle avg, 8-frame DATA
 //   CheckSYT target latency   = 2-3 cycles (~250-375 us) device presentation
 //                                          -- this is a SYT/presentation lead
-//                                          (cf. our TxTransferDelayTicks/SYT),
+//                                          (cf. our transfer delay/SYT),
 //                                          NOT the CoreAudio safety offset.
 //   servo update              = gated groupIndex==0 => ~100 ms / ring wrap
 //                                          (100 groups * 8 pkt * 125 us)
@@ -320,7 +321,7 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
 //   minimum period            = 250 us = 2 pkt (hard floor)
 //   transfer_delay base       = 0x2e00 ticks (11776); effective on-wire SYT lead
 //                               re-added at encode vs the transmit cycle works
-//                               out to ~12800 @48k (== our TxTransferDelayTicks).
+//                               out to ~12800 @48k (== our applied transfer delay).
 //   Period-derived IRQ, close to the wire; no fixed deep lead-ahead.
 //
 // --- libffado-2.5.0  (IsoHandlerManager.cpp, util/cip.h, libieee1394/cycletimer.h)
