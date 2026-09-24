@@ -110,6 +110,11 @@ private:
     bool commandInFlight_{false};
     bool pumpScheduled_{false};
     bool stopping_{false};
+    // HBA-queue IsReady() calls currently holding a strong registry reference.
+    // Shutdown waits for zero so the driver's ServiceContext::Reset drops the
+    // last reference itself, while the bus the registry borrows is alive —
+    // not an HBA queue, after controller.reset() freed it.
+    mutable uint32_t hbaReaders_{0};
     uint64_t sessionHandle_{0};
     uint64_t sessionGuid_{0};
 
