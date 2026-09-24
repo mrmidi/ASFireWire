@@ -1,4 +1,5 @@
 #pragma once
+#include <cstring>
 
 #include "ATManager.hpp"
 #include "ATTrace.hpp"
@@ -113,8 +114,17 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const Descriptor
             // Programming CommandPtr on an ACTIVE context is illegal (OHCI
             // §3.1.1) — the in-flight packet and/or this chain can be lost.
             // Anomaly log for the LS-9000 wedge investigation.
-            ASFW_LOG(Async, "ctx=%{public}s txid=%u gen=%u P1_ARM while ACTIVE after clearRun poll gave up",
-                     RoleTag::kContextName, txid, generation_);
+            const uint32_t ctrl = ctx().ReadControl();
+            const uint32_t cmdPtrReg = ctx().ReadCommandPtr();
+            const uint64_t sinceDrainNs = NowNs() - ctx().LastDrainStopNs();
+            ASFW_LOG(Async, "ctx=%{public}s txid=%u gen=%u P1_ARM while ACTIVE after clearRun poll gave up ctrl=0x%08x cmdPtr=0x%08x state=%{public}s head=%zu tail=%zu prevLast=%u drainStops=%u sinceDrainUs=%llu",
+                     RoleTag::kContextName, txid, generation_, ctrl, cmdPtrReg, ToString(this->state_),
+                     ring().Head(), ring().Tail(), ring().PrevLastBlocks(),
+                     ctx().DrainStopCount(), sinceDrainNs / 1000);
+            if (!wedgeDumped_) {
+                wedgeDumped_ = true;
+                logWedgeSnapshot_(txid, cmdPtrReg);
+            }
         }
     }
 
@@ -270,6 +280,34 @@ void ATManager<ContextT, RingT, RoleTag>::requestStop_(uint32_t txid, const char
     trace_.push({NowNs(), txid, generation_, ATEvent::STOP_IMM, static_cast<uint32_t>(elapsed), generation_});
 
     Base::Transition(State::IDLE, txid, "stopped");
+}
+
+template<typename ContextT, typename RingT, typename RoleTag>
+void ATManager<ContextT, RingT, RoleTag>::logWedgeSnapshot_(uint32_t txid, uint32_t cmdPtrReg) noexcept {
+    const size_t capacity = ring().Capacity();
+    auto dumpBlock = [&](const char* tag, size_t index) {
+        const auto* d = ring().At(index);
+        if (!d) return;
+        uint32_t q[4];
+        memcpy(q, d, sizeof(q));
+        ASFW_LOG(Async, "  [wedge] %{public}s idx=%zu q0=0x%08x q1=0x%08x q2=0x%08x q3=0x%08x",
+                 tag, index, q[0], q[1], q[2], q[3]);
+    };
+    ASFW_LOG_ERROR(Async, "=== ctx=%{public}s txid=%u WEDGE SNAPSHOT (cmdPtr=0x%08x head=%zu tail=%zu cap=%zu) ===",
+                   RoleTag::kContextName, txid, cmdPtrReg, ring().Head(), ring().Tail(), capacity);
+    if (capacity > 0) {
+        if (const auto idx = ring().IndexFromIOVA(cmdPtrReg)) {
+            for (size_t k = 0; k < 4; ++k) {
+                dumpBlock(k < 2 ? "cmdPtr-" : "cmdPtr+", (*idx + capacity - 2 + k) % capacity);
+            }
+        } else {
+            ASFW_LOG(Async, "  [wedge] cmdPtr not inside ring");
+        }
+        for (size_t k = 0; k < 3; ++k) {
+            dumpBlock("head-", (ring().Head() + capacity - 2 + k) % capacity);
+        }
+    }
+    trace_.dump();
 }
 
 template<typename ContextT, typename RingT, typename RoleTag>
