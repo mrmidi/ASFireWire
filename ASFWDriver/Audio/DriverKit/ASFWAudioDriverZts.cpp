@@ -18,6 +18,7 @@
 #include "../../Logging/Logging.hpp"
 #include "../Wire/IEC61883/Syt.hpp"
 #include "../Families/BeBoB/MAudio/MAudioClockSourcePolicy.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 #include <DriverKit/DriverKit.h>
 
@@ -869,6 +870,108 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
              numSlots,
              ASFW::IsochTransport::AudioTimingGeometry::
                  kTxPreparationLeadPackets);
+}
+
+bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars) noexcept {
+    const auto builder = static_cast<ASFW::DeviceProfiles::Audio::ProfileBuilderId>(
+        ivars.device.profileBuilderId);
+    ivars.runtime.mAudioInternalTxActive =
+        builder == ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
+        builder == ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix;
+    ivars.runtime.mAudioTxClockProfile.store(
+        ivars.runtime.mAudioInternalTxActive.load(
+            std::memory_order_acquire),
+        std::memory_order_release);
+    return !(ivars.runtime.mAudioInternalTxActive &&
+             (!ivars.runtime.mAudioInternalTxTiming.Arm() ||
+              static_cast<uint32_t>(ivars.device.currentSampleRate) != 48000U));
+}
+
+PrimaryTxArmResult ArmPrimaryTxProducer(
+    ASFWAudioDriver_IVars& ivars,
+    const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
+    const ASFW::Isoch::Audio::AudioStreamConfig& txConfig,
+    const PrimaryTxQueueMemory& memory) noexcept {
+    auto* control = ivars.runtime.directAudioGraph.control;
+    if (control == nullptr || memory.queueControl == nullptr) {
+        return {kIOReturnNotReady, "BindPrimaryTxQueue"};
+    }
+
+    // Clear stale runtime cursors before prefill: the shared slab can be
+    // reused across StartIO/StopIO probes (CoreAudio re-probes on a
+    // sample-rate change), and a carried-over committed cursor fails the IT
+    // prime ("committed prefill > slots").
+    memory.queueControl->ResetProducerForStart();
+
+    ivars.runtime.txSlotProvider.payloadBase = memory.payloadBase;
+    ivars.runtime.txSlotProvider.metadataRing = memory.metadataRing;
+    ivars.runtime.txSlotProvider.queueControl = memory.queueControl;
+    ivars.runtime.txSlotProvider.audioControl = control;
+    ivars.runtime.txSlotProvider.numSlots = memory.numSlots;
+    ivars.runtime.txSlotProvider.slotStrideBytes = memory.slotStrideBytes;
+
+    ivars.runtime.txExecutionTimeline.queueControl = memory.queueControl;
+
+    if (!ivars.runtime.txStreamEngine.Configure(profile, txConfig)) {
+        ASFW_LOG(Audio, "ASFWAudioDevice: txStreamEngine Configure failed");
+        return {kIOReturnError, "ConfigureTxStreamEngine"};
+    }
+    ivars.runtime.txStreamEngine.SetTimingLossCallback({});
+    const auto txPolicy = profile.TxStreamPolicy();
+    if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV2) {
+        ivars.runtime.motuPayloadWriter.Configure(
+            ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
+                .pcmChunks = txConfig.pcmChannels,
+                .sourceChannelOffset = txConfig.sourceChannelOffset,
+                .ports = txPolicy.motuPlaybackPorts});
+        ivars.runtime.motuPayloadWriter.BindTimeline(&ivars.runtime.txStreamEngine.Timeline());
+        ivars.runtime.txStreamEngine.SetPayloadWriter(&ivars.runtime.motuPayloadWriter);
+
+        ivars.runtime.txStreamEngine.SetTimingLossCallback([state = &ivars] {
+            if (!state->runtime.isRunning.load(std::memory_order_acquire)) return false;
+            auto* currentControl = state->runtime.directAudioGraph.control;
+            auto* nub = state->device.audioNub;
+            if (!nub || !currentControl) return false;
+            nub->RequestTimingRecovery(
+                currentControl->rxReplayEpochResets.load(std::memory_order_acquire));
+            return true;
+        });
+        ivars.runtime.motuTxTimingStamper.Configure(txConfig.dbs);
+        ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
+    }
+    ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);
+    ivars.runtime.txStreamEngine.ResetForStart(0, 0);
+    ivars.runtime.txReplayReader.Reset();
+
+    const uint32_t timingRateHz =
+        ivars.device.currentSampleRate > 0
+            ? static_cast<uint32_t>(ivars.device.currentSampleRate)
+            : 48000u;
+    if (ivars.runtime.mAudioInternalTxActive.load(
+            std::memory_order_acquire)) {
+        ++ivars.runtime.mAudioTxClockStartEpoch;
+        if (ivars.runtime.mAudioTxClockStartEpoch == 0) {
+            ++ivars.runtime.mAudioTxClockStartEpoch;
+        }
+        ivars.runtime.txCompletionStampCursor = 0;
+        ivars.runtime.mAudioTxCorrelationUnwrap = {};
+        if (!ivars.runtime.mAudioTxClockBridge.Arm(
+                ivars.runtime.mAudioTxClockStartEpoch,
+                timingRateHz,
+                ASFW::IsochTransport::AudioTimingGeometry::
+                    kHalZeroTimestampPeriodFrames,
+                ivars.runtime.mAudioInternalTxTiming.
+                    TransferDelayTicks())) {
+            return {kIOReturnUnsupported, "MAudioTxClockBridge"};
+        }
+    }
+    control->rxTransferDelayTicks.store(
+        profile.RxTransferDelayTicks(ivars.device.currentSampleRate),
+        std::memory_order_relaxed);
+    control->txTransferDelayTicks.store(
+        profile.TxTransferDelayTicks(ivars.device.currentSampleRate),
+        std::memory_order_relaxed);
+    return {};
 }
 
 } // namespace ASFW::Audio::DriverKit

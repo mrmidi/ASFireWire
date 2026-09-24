@@ -373,6 +373,34 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 // before the IT DMA context starts, so the first refill finds committed slots.
 void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept;
 
+// Chooses the TX clock domain from the resolved profile builder. M-Audio
+// special firmware runs its own 48 kHz cadence; everything else replays RX.
+// Returns false when the M-Audio cadence cannot be armed at the current rate.
+[[nodiscard]] bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars) noexcept;
+
+struct PrimaryTxQueueMemory final {
+    uint8_t* payloadBase{nullptr};
+    ASFW::Isoch::IsochTxPacketMeta* metadataRing{nullptr};
+    ASFW::Isoch::IsochTxQueueControl* queueControl{nullptr};
+    uint32_t numSlots{0};
+    uint32_t slotStrideBytes{0};
+};
+
+struct PrimaryTxArmResult final {
+    kern_return_t status{kIOReturnSuccess};
+    const char* failedStage{nullptr};
+};
+
+// Binds the primary playback producer to its mapped shared queue: slot
+// provider, execution timeline, stream engine, family payload writer, and the
+// M-Audio TX clock. StartIO calls this after mapping; the host tests call it
+// on the same IVars so the harness cannot drift from the driver's wiring.
+[[nodiscard]] PrimaryTxArmResult ArmPrimaryTxProducer(
+    ASFWAudioDriver_IVars& ivars,
+    const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
+    const ASFW::Isoch::Audio::AudioStreamConfig& txConfig,
+    const PrimaryTxQueueMemory& memory) noexcept;
+
 
 void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept;
 } // namespace ASFW::Audio::DriverKit
