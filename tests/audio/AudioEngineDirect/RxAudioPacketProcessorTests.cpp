@@ -194,6 +194,23 @@ TEST(RxAudioPacketProcessorTests, ZeroDataBlockSizeIsItsOwnStatus) {
     EXPECT_TRUE(result.hasValidCip);
 }
 
+TEST(RxAudioPacketProcessorTests, HeaderOnlyZeroDbsNoDataDoesNotRejectReplay) {
+    Fixture fixture;
+    RxAudioPacketProcessor processor(fixture.writer);
+
+    // BeBoB can send a valid header-only CIP packet with no useful DBS. There
+    // is no event stride to derive because there are no audio events.
+    const auto packet = MakePacket(MakeQuadlet0(0), MakeQuadlet1(0xFFFF, 0xFF), 0, 0);
+    const auto result = Process(processor, packet);
+
+    EXPECT_EQ(packet.size(), 16U);
+    EXPECT_EQ(result.status, DirectRxWriteStatus::kAvailable);
+    EXPECT_TRUE(result.hasValidCip);
+    EXPECT_EQ(result.dbs, 0U);
+    EXPECT_EQ(result.syt, 0xFFFFU);
+    EXPECT_EQ(result.framesDecoded, 0U);
+}
+
 TEST(RxAudioPacketProcessorTests, WrongDbsQuirkTakesStrideFromConfiguration) {
     Fixture fixture;
     RxAudioPacketProcessor processor(fixture.writer);
