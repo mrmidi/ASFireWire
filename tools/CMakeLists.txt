@@ -36,3 +36,4 @@ if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 add_subdirectory(rtl)
+add_subdirectory(halprobe)

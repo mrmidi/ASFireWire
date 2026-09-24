@@ -29,3 +29,17 @@ if (Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_analyze_rtl
         WORKING_DIRECTORY "${ASFW_TOOLS_DIR}/rtl")
 endif()
+
+add_library(asfw_hal_core_host STATIC "${ASFW_TOOLS_DIR}/halprobe/hal_core.c")
+set_target_properties(asfw_hal_core_host PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+target_include_directories(asfw_hal_core_host PUBLIC "${ASFW_TOOLS_DIR}/halprobe")
+target_compile_options(asfw_hal_core_host PRIVATE -Wall -Wextra)
+target_link_libraries(asfw_hal_core_host PUBLIC asfw_rtl_core_host)
+
+add_executable(HalCoreTests HalCoreTests.cpp)
+target_link_libraries(HalCoreTests PRIVATE
+    asfw_hal_core_host
+    asfw_test_common_interface
+    GTest::gtest_main
+)
+gtest_discover_tests(HalCoreTests)
