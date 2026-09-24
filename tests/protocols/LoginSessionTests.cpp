@@ -515,7 +515,8 @@ TEST(LoginSessionTests, ImmediateORBRetryStaysBoundToOriginalORBAndQueuesNextImm
 
     SBP2CommandORB first(rig.addressManager, &rig.session, 16);
     first.SetFlags(SBP2CommandORB::kNormalORB);
-    first.SetTimeout(50);
+    // Outlives the 1 s retry delay: the timer runs from the first write.
+    first.SetTimeout(5'000);
 
     SBP2CommandORB second(rig.addressManager, &rig.session, 16);
     second.SetFlags(SBP2CommandORB::kNormalORB);
@@ -543,7 +544,7 @@ TEST(LoginSessionTests, ImmediateORBRetryStaysBoundToOriginalORBAndQueuesNextImm
     rig.ClearCommandTracking();
 }
 
-TEST(LoginSessionTests, SubmittedImmediateORBStartsTimeoutAfterFetchAgentWriteSucceeds) {
+TEST(LoginSessionTests, SubmittedImmediateORBStartsTimeoutWhenFetchAgentWriteIsIssued) {
     SessionRig rig;
     rig.LoginSuccessfully();
 
@@ -561,7 +562,7 @@ TEST(LoginSessionTests, SubmittedImmediateORBStartsTimeoutAfterFetchAgentWriteSu
     const size_t pendingTimersBeforeSubmit = rig.scheduler.PendingCount();
 
     ASSERT_TRUE(rig.session.SubmitORB(&orb));
-    EXPECT_EQ(pendingTimersBeforeSubmit, rig.scheduler.PendingCount());
+    EXPECT_EQ(pendingTimersBeforeSubmit + 1U, rig.scheduler.PendingCount());
 
     ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
     EXPECT_EQ(pendingTimersBeforeSubmit + 1U, rig.scheduler.PendingCount());

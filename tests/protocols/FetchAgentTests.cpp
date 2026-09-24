@@ -68,7 +68,7 @@ TEST(FetchAgentTests, SubmitRejectedWhenUnbound) {
     EXPECT_FALSE(agent.Submit(&orb));
 }
 
-TEST(FetchAgentTests, ImmediateSubmitWritesToFetchAgentAndArmsTimeoutOnSuccess) {
+TEST(FetchAgentTests, ImmediateSubmitWritesToFetchAgentAndArmsTimeoutWithTheWrite) {
     Rig rig;
     FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
     agent.Bind(rig.Binding());
@@ -85,10 +85,10 @@ TEST(FetchAgentTests, ImmediateSubmitWritesToFetchAgentAndArmsTimeoutOnSuccess) 
 
     ASSERT_TRUE(agent.Submit(&orb));
     ASSERT_EQ(1u, rig.bus.PendingWriteCount());      // fetch-agent write issued
-    EXPECT_EQ(0u, rig.scheduler.PendingCount());     // timeout not armed until write ACKs
+    EXPECT_EQ(1u, rig.scheduler.PendingCount());     // timeout armed with the write (Apple)
 
     ASSERT_TRUE(rig.bus.CompleteNextWrite(AsyncStatus::kSuccess));
-    EXPECT_EQ(1u, rig.scheduler.PendingCount());     // timeout armed after success
+    EXPECT_EQ(1u, rig.scheduler.PendingCount());     // ack does not re-arm
     EXPECT_EQ(0, completions);
 
     // Solicited status completes the ORB and cancels the timeout.
@@ -96,6 +96,33 @@ TEST(FetchAgentTests, ImmediateSubmitWritesToFetchAgentAndArmsTimeoutOnSuccess) 
     EXPECT_EQ(1, completions);
     EXPECT_EQ(0x00, lastSbp);
     EXPECT_EQ(0u, rig.scheduler.PendingCount());     // timeout canceled on completion
+}
+
+TEST(FetchAgentTests, OrbTimesOutWhenFetchAgentWriteNeverCompletes) {
+    Rig rig;
+    FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
+    agent.Bind(rig.Binding());
+
+    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    orb.SetTimeout(500);
+    int completions = 0;
+    orb.SetCompletionCallback([&](int, uint8_t) { ++completions; });
+
+    ASSERT_TRUE(agent.Submit(&orb));
+    ASSERT_EQ(1u, rig.bus.PendingWriteCount()); // left pending forever
+
+    rig.scheduler.Advance(500'000'000ULL);
+    EXPECT_EQ(1, completions);
+
+    // The stuck write no longer blocks the fetch agent: the next ORB goes out.
+    SBP2CommandORB next(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
+    next.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    next.SetTimeout(500);
+    const size_t writesBefore = rig.bus.WriteCount();
+    ASSERT_TRUE(agent.Submit(&next));
+    EXPECT_GT(rig.bus.WriteCount(), writesBefore);
+    agent.Clear(true);
 }
 
 TEST(FetchAgentTests, OrbTimeoutFailsCommandWhenNoStatusArrives) {
