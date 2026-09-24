@@ -12,6 +12,7 @@
 #include "../Config/TimingCursorPolicy.hpp"
 #include "Config/AudioProfileRegistry.hpp"
 #include "Config/ResolvedStreamConfig.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
 
@@ -112,6 +113,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 status == kIOReturnSuccess ? kIOReturnError : status;
             ivars.runtime.isRunning.store(false, std::memory_order_release);
             ivars.runtime.txActive.store(false, std::memory_order_release);
+            if (ivars.runtime.mAudioInternalTxActive && ivars.txPreparationQueue) {
+                ivars.txPreparationQueue->DispatchSync(^{ });
+            }
+            ivars.runtime.mAudioInternalTxTiming.Disarm();
+            ivars.runtime.mAudioTxClockBridge.Disarm();
+            ivars.runtime.mAudioInternalTxActive = false;
             if (streamingStarted && ivars.device.audioNub) {
                 const kern_return_t stopKr =
                     ivars.device.audioNub->StopAudioStreaming();
@@ -144,6 +151,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             return;
         }
         control->ResetForStart();
+        ivars.runtime.mAudioInternalTxTiming.Disarm();
+        ivars.runtime.mAudioTxClockBridge.Disarm();
+        ivars.runtime.mAudioInternalTxActive = false;
         ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);
         ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
         ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
@@ -164,6 +174,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 return;
             }
             initialClockAnchorTimeoutMs = profile->InitialClockAnchorTimeoutMs();
+            if (!ASFW::Audio::DriverKit::SelectTxClockDomain(ivars, *profile)) {
+                kr = failStart(kIOReturnUnsupported, "MAudioInternalTxTiming");
+                return;
+            }
 
             // How many playback streams to arm, and what shape each one is.
             //
@@ -231,7 +245,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 return;
             }
             // The profile describes the wire geometry at its default (48 kHz);
-            // the live cadence/FDF follow the device's current nominal rate.
+            // live cadence/FDF follow the device's current nominal rate.
             if (ivars.device.currentSampleRate > 0) {
                 txConfig.sampleRate =
                     static_cast<uint32_t>(ivars.device.currentSampleRate);
@@ -283,63 +297,21 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             auto* metadataRing = reinterpret_cast<ASFW::Isoch::IsochTxPacketMeta*>(ivars.txMetadataMap->GetAddress());
             auto* queueControl = reinterpret_cast<ASFW::Isoch::IsochTxQueueControl*>(ivars.txControlMap->GetAddress());
 
-            // Clear stale runtime cursors before prefill: the shared slab can be
-            // reused across StartIO/StopIO probes (CoreAudio re-probes on a
-            // sample-rate change), and a carried-over committed cursor fails the IT
-            // prime ("committed prefill > slots").
-            queueControl->ResetProducerForStart();
-
-            ivars.runtime.txSlotProvider.payloadBase = payloadBase;
-            ivars.runtime.txSlotProvider.metadataRing = metadataRing;
-            ivars.runtime.txSlotProvider.queueControl = queueControl;
-            ivars.runtime.txSlotProvider.audioControl = control;
-            ivars.runtime.txSlotProvider.numSlots = numSlots;
-            ivars.runtime.txSlotProvider.slotStrideBytes = maxPacketBytes;
-
-            ivars.runtime.txExecutionTimeline.queueControl = queueControl;
-
-            if (!ivars.runtime.txStreamEngine.Configure(*profile, txConfig)) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: txStreamEngine Configure failed");
-                kr = failStart(kIOReturnError, "ConfigureTxStreamEngine");
+            const auto armed = ASFW::Audio::DriverKit::ArmPrimaryTxProducer(
+                ivars, *profile, txConfig,
+                {.payloadBase = payloadBase,
+                 .metadataRing = metadataRing,
+                 .queueControl = queueControl,
+                 .numSlots = numSlots,
+                 .slotStrideBytes = maxPacketBytes});
+            if (armed.failedStage != nullptr) {
+                kr = failStart(armed.status, armed.failedStage);
                 return;
             }
-            ivars.runtime.txStreamEngine.SetTimingLossCallback({});
-            const auto txPolicy = profile->TxStreamPolicy();
-            if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV2) {
-                ivars.runtime.motuPayloadWriter.Configure(
-                    ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
-                        .pcmChunks = txConfig.pcmChannels,
-                        .sourceChannelOffset = txConfig.sourceChannelOffset,
-                        .ports = txPolicy.motuPlaybackPorts});
-                ivars.runtime.motuPayloadWriter.BindTimeline(&ivars.runtime.txStreamEngine.Timeline());
-                ivars.runtime.txStreamEngine.SetPayloadWriter(&ivars.runtime.motuPayloadWriter);
-
-                ivars.runtime.txStreamEngine.SetTimingLossCallback([state = &ivars] {
-                    if (!state->runtime.isRunning.load(std::memory_order_acquire)) return false;
-                    auto* currentControl = state->runtime.directAudioGraph.control;
-                    auto* nub = state->device.audioNub;
-                    if (!nub || !currentControl) return false;
-                    nub->RequestTimingRecovery(
-                        currentControl->rxReplayEpochResets.load(std::memory_order_acquire));
-                    return true;
-                });
-                ivars.runtime.motuTxTimingStamper.Configure(txConfig.dbs);
-                ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
-            }
-            ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);
-            ivars.runtime.txStreamEngine.ResetForStart(0, 0);
-            ivars.runtime.txReplayReader.Reset();
-
             const uint32_t timingRateHz =
                 ivars.device.currentSampleRate > 0
                     ? static_cast<uint32_t>(ivars.device.currentSampleRate)
                     : 48000u;
-            control->rxTransferDelayTicks.store(
-                profile->RxTransferDelayTicks(ivars.device.currentSampleRate),
-                std::memory_order_relaxed);
-            control->txTransferDelayTicks.store(
-                profile->TxTransferDelayTicks(ivars.device.currentSampleRate),
-                std::memory_order_relaxed);
 
             ASFW_LOG(Audio,
                      "ASFWAudioDevice: Allocated & configured TX isoch resources channel=%u rxTransferDelay=%u txTransferDelay=%u (rate=%u)",
@@ -494,15 +466,24 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.lastHalZeroTimestampHostTicks.load(
                 std::memory_order_acquire);
         if (initialZtsHostTicks == 0) {
-            // The anchor is fed by the receive path, so a timeout means no usable
-            // capture packet was decoded. AudioTransportControlBlock keeps a split
-            // attribution for exactly this case (see its rxPacketsSeen comment):
-            // all zero means nothing arrived at all -- wrong channel, context never
-            // started, or the device was never enabled; seen == noData means the
-            // device is sending only CIP NO-DATA; a non-zero reject counter means we
-            // discarded its packets, with geometry pointing at a profile/device
-            // disagreement on channels or DBS. Report them here so the failure is
-            // classifiable without another capture.
+            if (ivars.runtime.mAudioInternalTxActive.load(
+                    std::memory_order_acquire)) {
+                ASFW_LOG_ERROR(
+                    DirectAudio,
+                    "[MAudioTxClock] initial TX ZTS timed out after %u ms wakes=%llu conversionFailures=%llu stamps=%llu",
+                    ztsWaitMs,
+                    ivars.runtime.mAudioTxClockNoDataWakes.load(
+                        std::memory_order_relaxed),
+                    ivars.runtime.mAudioTxClockConversionFailures.load(
+                        std::memory_order_relaxed),
+                    ivars.runtime.txSlotProvider.queueControl
+                        ? ivars.runtime.txSlotProvider.queueControl->
+                              completionStampCount.load(std::memory_order_relaxed)
+                        : 0);
+            }
+            // RX profiles attribute a missing anchor through capture counters;
+            // M-Audio uses qualified TX completion stamps and reports those
+            // independently above.
             if (const auto* control = ivars.runtime.directAudioGraph.control) {
                 ASFW_LOG(Audio,
                          "ASFWAudioDevice: initial hardware ZTS timed out after %u ms "
@@ -662,6 +643,12 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
     ivars.workQueue->DispatchSync(^{
         ivars.runtime.isRunning.store(false, std::memory_order_release);
         ivars.runtime.txActive.store(false, std::memory_order_release);
+        if (ivars.runtime.mAudioInternalTxActive && ivars.txPreparationQueue) {
+            ivars.txPreparationQueue->DispatchSync(^{ });
+        }
+        ivars.runtime.mAudioInternalTxTiming.Disarm();
+        ivars.runtime.mAudioTxClockBridge.Disarm();
+        ivars.runtime.mAudioInternalTxActive = false;
 
         if (ivars.runtime.directAudioGraph.control) {
             const auto* control = ivars.runtime.directAudioGraph.control;

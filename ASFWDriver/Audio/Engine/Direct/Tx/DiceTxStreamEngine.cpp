@@ -213,6 +213,9 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     policy.initializeNonAudioSlots = streamPolicy.initializeNonAudioSlots;
     policy.preserveFdfInNoDataPackets = streamPolicy.preserveFdfInNoDataPackets;
     policy.emptyPacketsDuringIdle = streamPolicy.emptyPacketsDuringIdle;
+    policy.cadencePacketsCarryDataBlocks =
+        streamPolicy.cadencePacketsCarryDataBlocks;
+    policy.cadenceSlotWord = streamPolicy.cadenceSlotWord;
     policy.dbcIsEndEvent = streamPolicy.dbcIsEndEvent;
     policy.clearPayloadBeforeExposure = true;
     policy.playbackChannelMap = streamPolicy.playbackChannelMap;

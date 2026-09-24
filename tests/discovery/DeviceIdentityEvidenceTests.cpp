@@ -9,6 +9,7 @@
 // Applied Technologies devices publish more than one unit directory.
 
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include "DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Discovery/DiscoveryTypes.hpp"
 
@@ -30,6 +31,20 @@ constexpr uint64_t kGuid = 0x0001F2'0400112233ULL;
     rom.bib.guid = kGuid;
     rom.gen = ASFW::Discovery::Generation{1};
     rom.nodeId = 1;
+    return rom;
+}
+
+[[nodiscard]] ConfigROM MakeSupportedMotuRom() {
+    ConfigROM rom = MakeRom();
+    rom.nodeId = 2;
+    rom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::VendorId,
+                                          .value = ASFW::DeviceProfiles::Audio::kMotuVendorId});
+    rom.rootDirMinimal.push_back(RomEntry{.key = CfgKey::ModelId, .value = 0});
+    UnitDirectory unit{};
+    unit.offsetQuadlets = 4;
+    unit.unitSpecId = ASFW::DeviceProfiles::Audio::kMotuVendorId;
+    unit.unitSwVersion = ASFW::DeviceProfiles::Audio::kMotu828mk2SwVersion;
+    rom.unitDirectories.push_back(unit);
     return rom;
 }
 
@@ -209,6 +224,7 @@ TEST(DeviceIdentityEvidence, QuarantinedDeviceDoesNotExposeLiveRoute) {
     EXPECT_FALSE(record.isAudioCandidate);
     EXPECT_FALSE(registry.CurrentRoute(record.guid).has_value());
     EXPECT_TRUE(registry.LiveDevices(record.gen).empty());
+    EXPECT_EQ(record.avcCommandFilter, ASFW::Discovery::AvcCommandFilterId::BlockAll);
 }
 
 TEST(DeviceIdentityEvidence, ReResolutionClearsQuarantineAndRestoresLiveRoute) {
@@ -294,6 +310,85 @@ TEST(DeviceIdentityEvidence, ValidToQuarantinedReResolutionDropsLiveRoute) {
     EXPECT_FALSE(rejected.isAudioCandidate);
     EXPECT_FALSE(registry.CurrentRoute(rejected.guid).has_value());
     EXPECT_TRUE(registry.LiveDevices(rejected.gen).empty());
+}
+
+TEST(DeviceIdentityEvidence, ResolvedPolicyIsBoundToTheCurrentRoute) {
+    DeviceRegistry registry{};
+    const auto record = registry.UpsertFromROM(MakeSupportedMotuRom(), LinkPolicy{});
+    const auto* policy = ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(record);
+    ASSERT_NE(policy, nullptr);
+    EXPECT_EQ(policy->plan.unit.device, record.instanceId);
+    EXPECT_EQ(policy->route.guid, record.guid);
+    EXPECT_EQ(policy->route.generation, record.gen);
+    EXPECT_EQ(policy->route.nodeId, record.nodeId);
+    EXPECT_TRUE(registry.IsCurrent(policy->route));
+
+    auto altered = record;
+    altered.nodeId = 3;
+    EXPECT_EQ(ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(altered), nullptr);
+}
+
+TEST(DeviceIdentityEvidence, BusResetInvalidatesPolicyUntilRomRebind) {
+    DeviceRegistry registry{};
+    const auto first = registry.UpsertFromROM(MakeSupportedMotuRom(), LinkPolicy{});
+    const auto* firstPolicy = ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(first);
+    ASSERT_NE(firstPolicy, nullptr);
+    const auto oldRoute = firstPolicy->route;
+
+    registry.InvalidateLiveMappingsForBusReset();
+    const auto invalidated = registry.SnapshotByGuid(first.guid);
+    ASSERT_TRUE(invalidated.has_value());
+    EXPECT_EQ(ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(*invalidated), nullptr);
+    EXPECT_EQ(invalidated->avcCommandFilter, ASFW::Discovery::AvcCommandFilterId::BlockAll);
+    EXPECT_FALSE(registry.IsCurrent(oldRoute));
+
+    auto nextRom = MakeSupportedMotuRom();
+    nextRom.gen = ASFW::Discovery::Generation{2};
+    nextRom.nodeId = 3;
+    const auto rebound = registry.UpsertFromROM(nextRom, LinkPolicy{});
+    const auto* reboundPolicy = ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(rebound);
+    ASSERT_NE(reboundPolicy, nullptr);
+    EXPECT_NE(reboundPolicy->route, oldRoute);
+    EXPECT_TRUE(registry.IsCurrent(reboundPolicy->route));
+    EXPECT_FALSE(registry.IsCurrent(oldRoute));
+}
+
+TEST(DeviceIdentityEvidence, DeviceLossClearsPolicyAndRejectsOldRoute) {
+    DeviceRegistry registry{};
+    const auto first = registry.UpsertFromROM(MakeSupportedMotuRom(), LinkPolicy{});
+    const auto* policy = ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(first);
+    ASSERT_NE(policy, nullptr);
+    const auto route = policy->route;
+
+    registry.MarkLost(first.gen, static_cast<uint8_t>(first.nodeId));
+    const auto lost = registry.SnapshotByGuid(first.guid);
+    ASSERT_TRUE(lost.has_value());
+    EXPECT_EQ(ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(*lost), nullptr);
+    EXPECT_EQ(lost->avcCommandFilter, ASFW::Discovery::AvcCommandFilterId::BlockAll);
+    EXPECT_FALSE(registry.IsCurrent(route));
+}
+
+TEST(DeviceIdentityEvidence, DuplicateGuidQuarantineInvalidatesResolvedPolicyRoute) {
+    DeviceRegistry registry{};
+    const auto published = registry.UpsertFromROM(MakeSupportedMotuRom(), LinkPolicy{});
+    const auto* policy = ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(published);
+    ASSERT_NE(policy, nullptr);
+    const auto oldRoute = policy->route;
+    ASSERT_TRUE(registry.IsCurrent(oldRoute));
+
+    // The duplicate may be observed at another node in the same generation.
+    registry.MarkDuplicateGuid(published.gen, published.guid,
+                               static_cast<uint8_t>(published.nodeId + 1));
+
+    const auto quarantined = registry.SnapshotByGuid(published.guid);
+    ASSERT_TRUE(quarantined.has_value());
+    EXPECT_EQ(quarantined->state, ASFW::Discovery::LifeState::Quarantined);
+    EXPECT_EQ(quarantined->audioPolicy, nullptr);
+    EXPECT_EQ(ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(*quarantined), nullptr);
+    EXPECT_EQ(quarantined->avcCommandFilter,
+              ASFW::Discovery::AvcCommandFilterId::BlockAll);
+    EXPECT_FALSE(registry.CurrentRoute(published.guid).has_value());
+    EXPECT_FALSE(registry.IsCurrent(oldRoute));
 }
 
 } // namespace

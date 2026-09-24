@@ -65,6 +65,11 @@ enum class ProbeBootstrap : uint8_t {
     }
 }
 
+[[nodiscard]] constexpr ProbeBootstrap SelectProbeBootstrap(
+    const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) noexcept {
+    return SelectProbeBootstrap(plan.family, plan.probePolicy);
+}
+
 static_assert(SelectProbeBootstrap(DeviceProfiles::Audio::AudioFamilyProviderId::BeBoB,
                                    DeviceProfiles::Audio::ProbePolicyId::BeBoBPlug0) ==
               ProbeBootstrap::BeBoBPlug0Only);

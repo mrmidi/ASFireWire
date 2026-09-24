@@ -13,22 +13,20 @@ inline constexpr std::array kAlesisDefinitions{
     Definition(DeviceDefinitionId::AlesisMultiMix, kAlesisVendorId,
                kAlesisMultiMixModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::DiceTcat, ProfileBuilderId::AlesisMultiMix,
+               ProtocolImplementationId::DiceTcat,
                SupportDisposition::Supported, kAlesisVendorName,
                kAlesisMultiMixModelName, std::nullopt, BootloaderCuePolicy::None,
-               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
-                                  .clampCaptureStreamsToOne = true}),
+               DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking}}),
     // Recognition only -- its geometry has never been captured, so it names no
-    // builder and nothing streams it. The row exists to hold the capture-stream
-    // clamp, which FFADO applies to this model as well as the MultiMix; losing
-    // that when the predicate went would have been losing evidence, not
-    // deleting dead code.
+    // builder and nothing streams it.
     Definition(DeviceDefinitionId::AlesisIo, kAlesisVendorId, kAlesisIoModelId,
                AudioFamilyProviderId::DICE, ProbePolicyId::None,
-               ProfileBuilderId::None, SupportDisposition::RecognizedUnsupported,
+               ProfileBuilderId::None,
+               ProtocolImplementationId::None,
+               SupportDisposition::RecognizedUnsupported,
                kAlesisVendorName, kAlesisIoModelName, std::nullopt,
                BootloaderCuePolicy::None,
-               DeviceStreamTraits{.forcedStreamMode = ForcedStreamMode::Blocking,
-                                  .clampCaptureStreamsToOne = true}),
+               DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking}}),
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions

@@ -13,6 +13,7 @@ inline constexpr std::array kMidasDefinitions{
     Definition(DeviceDefinitionId::MidasVeniceF32, kMidasVendorId,
                kMidasVeniceModelId, AudioFamilyProviderId::DICE,
                ProbePolicyId::DiceTcat, ProfileBuilderId::MidasVeniceF32,
+               ProtocolImplementationId::DiceTcat,
                SupportDisposition::Supported, kMidasVendorName,
                kMidasVeniceModelName, std::nullopt, BootloaderCuePolicy::None,
                kDiceTraits),

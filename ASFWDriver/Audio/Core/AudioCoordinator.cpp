@@ -10,6 +10,7 @@
 #include "../Protocols/IDeviceProtocol.hpp"
 #include <cstdio>
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
+#include "../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 
 namespace ASFW::Audio {
 
@@ -135,13 +136,12 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     // absent. Latch before touching backend work: delayed recovery and StopIO
     // callbacks must not recreate a session for the old route.
     duplexCoordinator_.CancelRemoteDevice(guid);
-    if (auto* backend = BackendForGuid(guid)) {
-        backend->CancelRemoteDeviceWork(guid);
-    } else {
-        ASFW_LOG_WARNING(Audio,
-                         "AudioCoordinator: remote-device-lost has no backend GUID=0x%016llx",
-                         guid);
-    }
+    // The registry has already invalidated the route policy by the time
+    // removal is reported. Cancel all backend work so cleanup does not depend
+    // on resolving a policy for a device that is known to be gone.
+    dice_.CancelRemoteDeviceWork(guid);
+    motu_.CancelRemoteDeviceWork(guid);
+    avc_.CancelRemoteDeviceWork(guid);
 
     kern_return_t hostStatus = kIOReturnSuccess;
     if (wasActive) {
@@ -204,12 +204,9 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
         return nullptr;
     }
 
-    // MOTU is the one family (vendor_id, model_id) cannot discriminate: the root
-    // directory publishes model_id 0 and the model lives in the unit directory's
-    // Unit_Sw_Version. The catalog matches it from the unit directory, so this
-    // no longer needs a MOTU special case of its own -- the family it resolves
-    // to carries it.
-    const auto backendKind = ChooseAudioBackend(*record);
+    const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(*record);
+    if (!policy || !registry_.IsCurrent(policy->route)) return nullptr;
+    const auto backendKind = ChooseAudioBackend(policy->plan);
     if (!backendKind.has_value()) {
         return nullptr;
     }

@@ -11,9 +11,9 @@ namespace ASFW::DeviceProfiles::Audio::Definitions {
 
 inline constexpr std::array kMAudioDefinitions{
     // ---- M-Audio "special firmware" ----
-    // These three exist here for their probe policy, not for audio: this branch
-    // has no MAudioSpecialProtocol, so none of them names a builder and none
-    // will be streamed. What they carry is the bound on what may be *sent*.
+    // The bootloader persona is never an audio endpoint. The two operational
+    // personas use a fixed formation and the narrow special-firmware FCP gate;
+    // no generic or BridgeCo AV/C discovery may run against them.
     //
     // Without a definition, an 1814 is an ordinary AV/C unit, and AVCDiscovery
     // opens on it with generic UNIT_INFO / SUBUNIT_INFO -- two of the four
@@ -24,25 +24,36 @@ inline constexpr std::array kMAudioDefinitions{
     // AVCCommandFilter.hpp does not name. So recognising these devices is what
     // makes them safe to have on the bus at all.
     //
-    // The bootloader persona is not an audio endpoint and never becomes one.
-    // Its BootloaderCuePolicy has no consumer on this branch; it is carried so
-    // the identity is complete and so the merge with `midi` stays textual.
+    // Never an audio endpoint: CommandFilterFor blocks all FCP traffic and the
+    // probe policy selects no bootstrap. The cue policy is consumed by the
+    // guarded BeBoB bootloader preparation (Protocols/BeBoB/Bootloader).
     Definition(DeviceDefinitionId::MAudioFireWire1814Bootloader, kMAudioVendorId,
                kMAudioFireWire1814BootloaderModelId, AudioFamilyProviderId::None,
                ProbePolicyId::NoAutomaticTraffic, ProfileBuilderId::None,
+               ProtocolImplementationId::None,
                SupportDisposition::RecognizedUnsupported, kMAudioVendorName,
                kMAudioFireWire1814BootloaderModelName, std::nullopt,
                BootloaderCuePolicy::BeBoBStartFirmware),
     Definition(DeviceDefinitionId::MAudioFireWire1814, kMAudioVendorId,
                kMAudioFireWire1814ModelId, AudioFamilyProviderId::BeBoB,
-               ProbePolicyId::BeBoBFilteredCommandSet, ProfileBuilderId::None,
-               SupportDisposition::RecognizedUnsupported, kMAudioVendorName,
-               kMAudioFireWire1814ModelName),
+               ProbePolicyId::BeBoBFilteredCommandSet, ProfileBuilderId::MAudioFireWire1814,
+               ProtocolImplementationId::BeBoBMAudioSpecial,
+               SupportDisposition::Supported, kMAudioVendorName,
+               kMAudioFireWire1814ModelName, std::nullopt, BootloaderCuePolicy::None,
+               DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
+                                  .resource = {.cmpChoosesIsoChannel = true},
+                                  .start = {.startShape = StreamStartShape::MAudioSpecial,
+                                            .startRatePinHz = 48000U}}),
     Definition(DeviceDefinitionId::MAudioProjectMix, kMAudioVendorId,
                kMAudioProjectMixModelId, AudioFamilyProviderId::BeBoB,
-               ProbePolicyId::BeBoBFilteredCommandSet, ProfileBuilderId::None,
-               SupportDisposition::RecognizedUnsupported, kMAudioVendorName,
-               kMAudioProjectMixModelName),
+               ProbePolicyId::BeBoBFilteredCommandSet, ProfileBuilderId::MAudioProjectMix,
+               ProtocolImplementationId::BeBoBMAudioSpecial,
+               SupportDisposition::Supported, kMAudioVendorName,
+               kMAudioProjectMixModelName, std::nullopt, BootloaderCuePolicy::None,
+               DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
+                                  .resource = {.cmpChoosesIsoChannel = true},
+                                  .start = {.startShape = StreamStartShape::MAudioSpecial,
+                                            .startRatePinHz = 48000U}}),
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions

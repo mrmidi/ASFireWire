@@ -2,6 +2,8 @@
 
 #include "Audio/Protocols/Backends/DiceRuntimeDeviceConfig.hpp"
 
+#include <array>
+
 namespace {
 
 using ASFW::Audio::ApplyDiceRuntimeCapsToDeviceConfig;
@@ -72,20 +74,35 @@ TEST(DiceRuntimeDeviceConfigTests, DeviceFoundAtNon48kKeepsTheAdvertisedRateSet)
 }
 
 TEST(DiceRuntimeDeviceConfigTests, RejectsPartialCapsWithoutChangingFallbackConfig) {
-    ASFWAudioDevice config{};
-    const ASFWAudioDevice before = config;
-    const AudioStreamRuntimeCaps partial{
-        .hostInputPcmChannels = 16,
-        .hostOutputPcmChannels = 0,
-        .sampleRateHz = 48000,
+    const std::array invalidCaps{
+        AudioStreamRuntimeCaps{
+            .hostInputPcmChannels = 16,
+            .hostOutputPcmChannels = 2,
+            .sampleRateHz = 0,
+        },
+        AudioStreamRuntimeCaps{
+            .hostInputPcmChannels = 16,
+            .hostOutputPcmChannels = 0,
+            .sampleRateHz = 48000,
+        },
     };
 
-    EXPECT_FALSE(ApplyDiceRuntimeCapsToDeviceConfig(partial, config));
-    EXPECT_EQ(config.inputChannelCount, before.inputChannelCount);
-    EXPECT_EQ(config.outputChannelCount, before.outputChannelCount);
-    EXPECT_EQ(config.channelCount, before.channelCount);
-    EXPECT_EQ(config.currentSampleRate, before.currentSampleRate);
-    EXPECT_EQ(config.sampleRates, before.sampleRates);
+    for (const auto& partial : invalidCaps) {
+        ASFWAudioDevice config{};
+        config.inputChannelCount = 2;
+        config.outputChannelCount = 2;
+        config.channelCount = 2;
+        config.currentSampleRate = 44100U;
+        config.sampleRates = {44100U, 48000U};
+        const ASFWAudioDevice before = config;
+
+        EXPECT_FALSE(ApplyDiceRuntimeCapsToDeviceConfig(partial, config));
+        EXPECT_EQ(config.inputChannelCount, before.inputChannelCount);
+        EXPECT_EQ(config.outputChannelCount, before.outputChannelCount);
+        EXPECT_EQ(config.channelCount, before.channelCount);
+        EXPECT_EQ(config.currentSampleRate, before.currentSampleRate);
+        EXPECT_EQ(config.sampleRates, before.sampleRates);
+    }
 }
 
 TEST(DiceRuntimeDeviceConfigTests, AppliesPlaybackOnlyCoreAudioGeometryWithDuplexWireCaps) {

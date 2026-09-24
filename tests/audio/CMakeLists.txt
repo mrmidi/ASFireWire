@@ -168,6 +168,7 @@ add_audio_test(AudioDirectRuntimeTests
 
 
 
+
 # RX packet decode outcome split. NOTE: the other files under AudioEngineDirect/
 # (DirectTxProbeTests, TxAudioPacketProcessorTests, TxAudioPacketWriterTests) are
 # not registered in any CMakeLists and therefore never run.
@@ -216,6 +217,7 @@ add_audio_test(IsochServiceTxPreparationTests
 
 add_audio_test(AmdtpDirectTxTests
     AmdtpDirectTxTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
@@ -227,6 +229,32 @@ add_audio_test(AmdtpDirectTxTests
 )
 
 
+
+# The driver's real TX producer (ASFWAudioDriverZts.cpp) against an emulated
+# IT transport. The IIG-generated headers resolve to the host shims beside
+# ASFWAudioNub.h.
+add_audio_test(AudioDriverTxProducerTests
+    AudioDriverTxProducerTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverZts.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/MAudioInternalTxTiming.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioTxClockBridge.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioPresentationObserver.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.cpp"
+)
+target_include_directories(AudioDriverTxProducerTests PRIVATE
+    "${ASFW_TESTS_DIR}/mocks/net.mrmidi.ASFW.ASFWDriver"
+)
 
 add_audio_test(AmdtpRateGeometryTests
     AmdtpRateGeometryTests.cpp
@@ -286,6 +314,7 @@ add_audio_test(DiceProfileTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.cpp"
@@ -313,4 +342,13 @@ add_audio_test(ChannelMapPermutationTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
+)
+
+add_audio_test(HardwareSampleTimelineTests
+    HardwareSampleTimelineTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+)
+
+add_audio_test(TxCycleAnchorTests
+    TxCycleAnchorTests.cpp
 )

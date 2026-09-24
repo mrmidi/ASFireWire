@@ -95,6 +95,7 @@ IOReturn BeBoBProtocol::Initialize() {
 
 IOReturn BeBoBProtocol::Shutdown() {
     CancelClockApply();
+    CancelSignalFormatInterlock();
     const IOReturn status = StopDuplex();
     if (cmpClient_ && route_) {
         cmpClient_->InvalidateRoute(route_);
@@ -105,9 +106,11 @@ IOReturn BeBoBProtocol::Shutdown() {
 
 void BeBoBProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                                          Protocols::AVC::FCPTransport* transport) {
-    if ((route_ != route || fcpTransport_ != transport) && cmpClient_ && route_) {
+    if (route_ != route || fcpTransport_ != transport) {
         CancelClockApply();
-        cmpClient_->InvalidateRoute(route_);
+        if (cmpClient_ && route_) {
+            cmpClient_->InvalidateRoute(route_);
+        }
         inputConnected_ = false;
         outputConnected_ = false;
         preparedRouteEpoch_ = 0;
@@ -231,12 +234,42 @@ void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
             return;
         }
         const uint8_t inPlug = StreamPlug(true);
-        auto input = std::make_shared<SignalFormatCommand>(*fcpTransport_, inPlug, true, rate);
-        input->Submit([completion = std::move(completion), input](
-                           Protocols::AVC::AVCResult inputResult,
-                           const SignalFormatCommand::SignalFormat& /*inputFormat*/) mutable {
-            completion(MapAVCResultToIOReturn(inputResult));
-        });
+        auto finalCompletion = std::make_shared<std::function<void(IOReturn)>>(std::move(completion));
+        auto submitInput = [this, inPlug, rate, finalCompletion]() mutable {
+            if (!fcpTransport_) {
+                (*finalCompletion)(kIOReturnNotReady);
+                return;
+            }
+            auto input = std::make_shared<SignalFormatCommand>(*fcpTransport_, inPlug, true, rate);
+            input->Submit([finalCompletion, input](
+                               Protocols::AVC::AVCResult inputResult,
+                               const SignalFormatCommand::SignalFormat& /*inputFormat*/) mutable {
+                (*finalCompletion)(MapAVCResultToIOReturn(inputResult));
+            });
+        };
+        const uint32_t interlockMs = SignalFormatInterlockMs();
+        if (interlockMs == 0) {
+            submitInput();
+            return;
+        }
+        if (!timerScheduler_) {
+            (*finalCompletion)(kIOReturnNotReady);
+            return;
+        }
+        signalFormatInterlockCompletion_ = finalCompletion;
+        signalFormatInterlockTimer_ = timerScheduler_->ScheduleAfter(
+            static_cast<uint64_t>(interlockMs) * 1000ULL * 1000ULL,
+            [this, finalCompletion, submitInput = std::move(submitInput)]() mutable {
+                signalFormatInterlockTimer_ = Scheduling::kInvalidTimerToken;
+                if (signalFormatInterlockCompletion_ == finalCompletion) {
+                    signalFormatInterlockCompletion_.reset();
+                }
+                submitInput();
+            });
+        if (signalFormatInterlockTimer_ == Scheduling::kInvalidTimerToken) {
+            signalFormatInterlockCompletion_.reset();
+            (*finalCompletion)(kIOReturnNoResources);
+        }
     });
 }
 
@@ -320,6 +353,7 @@ void BeBoBProtocol::FinishClockApply(ClockApplyEpoch* epoch, IOReturn status) {
 }
 
 void BeBoBProtocol::CancelClockApply() {
+    CancelSignalFormatInterlock();
     if (auto* epoch = activeClockApply_) {
         activeClockApply_ = nullptr;
         timerScheduler_->Cancel(epoch->settleTimer);
@@ -328,6 +362,18 @@ void BeBoBProtocol::CancelClockApply() {
             ClockApplyCallback cb = std::move(epoch->completion);
             cb(kIOReturnAborted, {});
         }
+    }
+}
+
+void BeBoBProtocol::CancelSignalFormatInterlock() noexcept {
+    if (timerScheduler_ &&
+        signalFormatInterlockTimer_ != Scheduling::kInvalidTimerToken) {
+        timerScheduler_->Cancel(signalFormatInterlockTimer_);
+        signalFormatInterlockTimer_ = Scheduling::kInvalidTimerToken;
+    }
+    if (signalFormatInterlockCompletion_) {
+        auto completion = std::move(signalFormatInterlockCompletion_);
+        (*completion)(kIOReturnAborted);
     }
 }
 

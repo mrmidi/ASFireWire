@@ -48,7 +48,42 @@ Run these commands from the ASFireWire repository root.
    python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_read_quadlet '{"nodeId":0,"generation":9,"addressHigh":65535,"addressLow":4026532864}'
    ```
 
+## Running driver build
+
+Before comparing live behavior with the checkout, read the commit embedded in
+the **running dext**. This uses the driver user client's version method and
+issues no FireWire transaction, so it is safe during active audio:
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_get_driver_version '{}'
+```
+
+Use `gitCommitFull`, `gitBranch`, `gitDirty`, and `buildTimestamp` from the
+response. The checkout's `DriverVersion.hpp` describes a build artifact and
+does not prove which dext is currently running.
+
 Pass `--endpoint` or set `ASFW_MCP_ENDPOINT` when the server uses a non-default loopback port.
+
+## M-Audio 1814 Virtual UART diagnostics
+
+The 1814 shell can report its own isochronous counters, sync state, routing,
+and peak meters. Use the current physical `nodeId` and `expectedGeneration`
+from `summary`. These tools send FireWire mailbox writes even though the shell
+commands only read diagnostic state. They are gated as `developerWrite`, so do
+not call them without authorization for live device control.
+
+```bash
+python3 tools/1814/bebob_shell.py --node <nodeId> --gen <expectedGeneration> \
+  'sys stat' 'sys avstat all' 'fw show' 'fw mix show' 'fw vol peak'
+```
+
+The MCP tool `asfw_bebob_shell_execute` accepts any single printable ASCII
+shell command and checks the 1814 identity and bus generation before each
+transaction. Commands may change device settings, so treat each call as a
+developer write. The five convenience tools `asfw_bebob_get_streaming_stats`,
+`asfw_bebob_get_silicon_status`, `asfw_bebob_get_sync_state`,
+`asfw_bebob_get_mixer_routing`, and `asfw_bebob_get_meter_peaks` use the same
+guarded path. `fw mix show` is routing readback; it does not change routing.
 
 ## Config-ROM explorer
 

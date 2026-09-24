@@ -9,6 +9,10 @@
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
 #include "../Config/AudioTxProfiles.hpp"
+#include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
+#include "../Families/BeBoB/MAudio/MAudioTxClockBridge.hpp"
+#include "../Shared/TxCycleAnchor.hpp"
+#include "../Runtime/TxCompletionStampDrain.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "../Wire/MOTU/MotuPayloadWriter.hpp"
 #include "../Wire/MOTU/MotuDeviceTiming.hpp"
@@ -233,6 +237,15 @@ struct AudioDriverRuntimeState {
     std::atomic<bool> txActive{false};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
+    ASFW::Audio::BeBoB::MAudioInternalTxTiming mAudioInternalTxTiming;
+    std::atomic<bool> mAudioInternalTxActive{false};
+    std::atomic<bool> mAudioTxClockProfile{false};
+    ASFW::Audio::Families::BeBoB::MAudio::TxClockBridge mAudioTxClockBridge;
+    ASFW::Audio::Shared::TxCorrelationUnwrapState mAudioTxCorrelationUnwrap{};
+    uint64_t mAudioTxClockStartEpoch{0};
+    uint64_t txCompletionStampCursor{0};
+    std::atomic<uint64_t> mAudioTxClockNoDataWakes{0};
+    std::atomic<uint64_t> mAudioTxClockConversionFailures{0};
     ASFW::Audio::Runtime::RxSequenceReplayReader txReplayReader;
     DextTxSlotProvider txSlotProvider;
     DextTxExecutionTimeline txExecutionTimeline;
@@ -359,6 +372,35 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 // Synchronously seeds the transmit ring with cadence-correct NO_INFO packets
 // before the IT DMA context starts, so the first refill finds committed slots.
 void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept;
+
+// Arms the transmit clock the profile asks for (TransmitClockSource). Returns
+// false when the internal cadence cannot be armed at the current rate.
+[[nodiscard]] bool SelectTxClockDomain(
+    ASFWAudioDriver_IVars& ivars,
+    const ASFW::Isoch::Audio::IAudioStreamProfile& profile) noexcept;
+
+struct PrimaryTxQueueMemory final {
+    uint8_t* payloadBase{nullptr};
+    ASFW::Isoch::IsochTxPacketMeta* metadataRing{nullptr};
+    ASFW::Isoch::IsochTxQueueControl* queueControl{nullptr};
+    uint32_t numSlots{0};
+    uint32_t slotStrideBytes{0};
+};
+
+struct PrimaryTxArmResult final {
+    kern_return_t status{kIOReturnSuccess};
+    const char* failedStage{nullptr};
+};
+
+// Binds the primary playback producer to its mapped shared queue: slot
+// provider, execution timeline, stream engine, family payload writer, and the
+// M-Audio TX clock. StartIO calls this after mapping; the host tests call it
+// on the same IVars so the harness cannot drift from the driver's wiring.
+[[nodiscard]] PrimaryTxArmResult ArmPrimaryTxProducer(
+    ASFWAudioDriver_IVars& ivars,
+    const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
+    const ASFW::Isoch::Audio::AudioStreamConfig& txConfig,
+    const PrimaryTxQueueMemory& memory) noexcept;
 
 
 void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept;

@@ -31,18 +31,16 @@ struct DeviceProtocolChoice final {
         DeviceProfiles::Audio::DeviceDefinitionId::Unknown};
     DeviceProfiles::Audio::ProfileBuilderId builder{
         DeviceProfiles::Audio::ProfileBuilderId::None};
+    DeviceProfiles::Audio::ProtocolImplementationId implementation{
+        DeviceProfiles::Audio::ProtocolImplementationId::None};
     /// The matched unit's Unit_Sw_Version. MOTU needs it: it is the only model
     /// discriminator that family publishes, since its root model_id is 0.
     uint32_t unitVersion{0};
     uint32_t unitDirectoryOffset{0};
 };
 
-/// Walks the device's unit directories in ROM order and returns the first that
-/// resolves to a definition naming a profile builder. nullopt for a device this
-/// driver does not stream — including one it recognises but cannot play, which
-/// is a different and deliberate state from not recognising it at all.
 [[nodiscard]] std::optional<DeviceProtocolChoice>
-ChooseDeviceProtocol(const Discovery::DeviceRecord& record) noexcept;
+ChooseDeviceProtocol(const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) noexcept;
 
 /// Which audio backend drives this device's nub.
 ///
@@ -59,6 +57,6 @@ enum class AudioBackendKind : uint8_t {
 };
 
 [[nodiscard]] std::optional<AudioBackendKind>
-ChooseAudioBackend(const Discovery::DeviceRecord& record) noexcept;
+ChooseAudioBackend(const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) noexcept;
 
 } // namespace ASFW::Audio

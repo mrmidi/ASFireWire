@@ -227,6 +227,17 @@ def _cmd_export_parity_cpp(
     print(f"Exported parity C++ fixture: {written}")
 
 
+def _cmd_export_maudio_special_cpp(log_path: str, out: str) -> None:
+    from pydice.protocol.maudio_special_fixture import load_and_export_maudio_special_fixture
+
+    try:
+        written = load_and_export_maudio_special_fixture(log_path, out)
+    except (OSError, ValueError) as exc:
+        print(f"Error exporting M-Audio special fixture: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Exported M-Audio special C++ fixture: {written}")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pydice",
@@ -311,6 +322,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to write the generated C++ fixture include",
     )
 
+    default_maudio_special_cpp = str(
+        Path(__file__).resolve().parents[2] / "tests" / "support" /
+        "MAudioSpecialHappyPathFixture.inc"
+    )
+    export_maudio_special = subparsers.add_parser(
+        "export-maudio-special-cpp",
+        help="Export the successful M-Audio 1814 FireBug run as a C++ fixture",
+    )
+    export_maudio_special.add_argument("log", metavar="LOG")
+    export_maudio_special.add_argument("--out", default=default_maudio_special_cpp,
+                                       help="Path to write the generated C++ fixture include")
+
     list_unknown = subparsers.add_parser(
         "list-unknown",
         help="List addresses not yet in the register map",
@@ -355,6 +378,10 @@ def main() -> None:
 
     if args.command == "export-parity-cpp":
         _cmd_export_parity_cpp(args.log, args.ignore_config_rom, args.out)
+        return
+
+    if args.command == "export-maudio-special-cpp":
+        _cmd_export_maudio_special_cpp(args.log, args.out)
         return
 
     if args.list_unknown:

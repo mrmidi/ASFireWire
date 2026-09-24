@@ -11,6 +11,7 @@
 #include "AVC/MackieOnyx820iProfile.hpp"
 #include "AVC/MackieOnyx400FProfile.hpp"
 #include "AVC/Phase88Profile.hpp"
+#include "AVC/MAudioSpecialProfile.hpp"
 
 #include "DICE/Isoch/Profiles/AlesisMultiMixProfile.hpp"
 #include "DICE/Isoch/Profiles/FocusriteSaffireProfile.hpp"
@@ -51,6 +52,8 @@ AVC::Profiles::ApogeeDuetProfile gApogeeDuetProfile{};
 AVC::Profiles::Phase88Profile gPhase88Profile{};
 AVC::Profiles::MackieOnyx820iProfile gMackieOnyx820iProfile{};
 AVC::Profiles::MackieOnyx400FProfile gMackieOnyx400FProfile{};
+AVC::Profiles::MAudioSpecialProfile gMAudio1814Profile{false};
+AVC::Profiles::MAudioSpecialProfile gMAudioProjectMixProfile{true};
 MOTU::Profiles::MotuV2Profile gMotuUltraliteProfile{
     DeviceProfiles::Audio::kMotuUltraliteSwVersion};
 MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
@@ -116,6 +119,10 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
             return &gApogeeDuetProfile;
         case Builder::TerraTecPhase88:
             return &gPhase88Profile;
+        case Builder::MAudioFireWire1814:
+            return &gMAudio1814Profile;
+        case Builder::MAudioProjectMix:
+            return &gMAudioProjectMixProfile;
         // Asymmetric 8-in/2-out, captured from a real 820i. Falling through to
         // the generic DICE profile would hand it a symmetric 2x2/DBS-2 geometry
         // that the RX path rejects on every 8-channel packet.
@@ -150,8 +157,6 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         case Builder::PreSonusStudioLive2442:
         case Builder::GenericAvc:
         case Builder::GenericBeBoB:
-        case Builder::MAudioFireWire1814:
-        case Builder::MAudioProjectMix:
         case Builder::None:
             break;
     }

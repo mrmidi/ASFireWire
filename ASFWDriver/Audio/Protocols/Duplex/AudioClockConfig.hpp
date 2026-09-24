@@ -26,4 +26,11 @@ struct AudioClockConfig {
            desiredClock.sampleRateHz == 48000U;
 }
 
+// FW-255 exposes the M-Audio special profile at 48 kHz only. Keep this gate
+// separate so its scope can expand with the dedicated multi-rate work.
+[[nodiscard]] constexpr bool IsSupportedMAudioSpecialClockConfig(
+    const AudioClockConfig& desiredClock) noexcept {
+    return desiredClock.sampleRateHz == 48000U;
+}
+
 } // namespace ASFW::Audio

@@ -17,9 +17,9 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    AmdtpTimingState.nextAudioFrame is reserved for rebase logic
 //    (Milestone 2) and ignored for now — the timeline stays gapless by
 //    construction.
-// 5. Golden rules (Linux amdtp + FFADO, see README): no-data packets are
-//    CIP-header-only (8 bytes) with DBC carried unchanged; data packets carry
-//    DBC of their first data block, advanced after emission.
+// 5. The default no-data packet is CIP-header-only (8 bytes) and leaves DBC
+//    unchanged. The M-Audio special profile sends full-size cadence packets
+//    with no-audio labels; those wire blocks advance DBC.
 //
 // Failure contract: PrepareNextPacket mutates no state (cadence, DBC, frame
 // counter) on any failure path, so a failed call can be retried with a
@@ -168,13 +168,22 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
         return false;
     }
     const uint8_t frames = isData ? static_cast<uint8_t>(plan.frameCount) : 0;
+    const uint8_t cadenceBlocks =
+        (!isData && txPolicy_.cadencePacketsCarryDataBlocks &&
+         !txPolicy_.emptyPacketsDuringIdle)
+            ? streamConfig_.framesPerDataPacket
+            : uint8_t{0};
+    const uint8_t wireBlocks = isData ? frames : cadenceBlocks;
     const uint32_t payloadBytes =
-        static_cast<uint32_t>(frames) * streamConfig_.dbs * kBytesPerSlot;
+        static_cast<uint32_t>(wireBlocks) * streamConfig_.dbs * kBytesPerSlot;
 
     const bool isEmptyPacket = !isData && txPolicy_.emptyPacketsDuringIdle;
 
-    const uint32_t byteCount =
-        isEmptyPacket ? 0 : (isData ? (kCipHeaderBytes + payloadBytes) : kCipHeaderBytes);
+    const uint32_t byteCount = isEmptyPacket
+                                   ? 0
+                                   : ((isData || cadenceBlocks != 0)
+                                          ? kCipHeaderBytes + payloadBytes
+                                          : kCipHeaderBytes);
 
     if (slot.capacityBytes < byteCount) {
         return false; // no state advanced; caller may retry
@@ -224,10 +233,15 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
             // Emitting genuine empty packets: byteCount = 0. No CIP header or payload is written.
             timeline_->MarkNoDataPacket(slot.packetIndex);
         } else {
-            // CIP-header-only: no payload, even as padding (DICE-II rejects it).
+            // Some endpoints require a full-size cadence packet whose audio
+            // slots carry the AM824 no-audio label. Other profiles retain the
+            // header-only packet form.
             WriteCipHeader(slot.bytes, cipBuilder_.BuildNoData(dbc));
+            if (cadenceBlocks != 0) {
+                WriteCadencePacketFill(slot.bytes, payloadBytes);
+                dbcCounter_.AdvanceDataBlocks(cadenceBlocks);
+            }
             timeline_->MarkNoDataPacket(slot.packetIndex);
-            // DBC deliberately not advanced.
         }
     }
 
@@ -279,8 +293,22 @@ void AmdtpTxPacketizer::RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& 
         packet.byteCount = 0;
         timeline_->MarkNoDataPacket(packet.packetIndex);
     } else {
-        packet.byteCount = kCipHeaderBytes;
+        const uint8_t cadenceBlocks =
+            (txPolicy_.cadencePacketsCarryDataBlocks &&
+             !txPolicy_.emptyPacketsDuringIdle)
+                ? streamConfig_.framesPerDataPacket
+                : uint8_t{0};
+        const uint32_t payloadBytes =
+            static_cast<uint32_t>(cadenceBlocks) * streamConfig_.dbs *
+            kBytesPerSlot;
+        packet.byteCount = cadenceBlocks == 0
+                               ? kCipHeaderBytes
+                               : kCipHeaderBytes + payloadBytes;
         WriteCipHeader(slot.bytes, cipBuilder_.BuildNoData(dbc));
+        if (cadenceBlocks != 0) {
+            WriteCadencePacketFill(slot.bytes, payloadBytes);
+            dbcCounter_.AdvanceDataBlocks(cadenceBlocks);
+        }
         timeline_->MarkNoDataPacket(packet.packetIndex);
     }
     packet.isData = false;
@@ -365,6 +393,27 @@ void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,
                  ++s) {
                 WriteBE32(payload + (frame * streamConfig_.dbs + s) * kBytesPerSlot,
                           txPolicy_.defaultNonAudioSlotWord);
+            }
+        }
+    }
+}
+
+void AmdtpTxPacketizer::WriteCadencePacketFill(uint8_t* packetBytes,
+                                               uint32_t payloadBytes) noexcept {
+    uint8_t* payload = packetBytes + kCipHeaderBytes;
+    const uint32_t blocks =
+        payloadBytes / (streamConfig_.dbs * kBytesPerSlot);
+
+    for (uint32_t block = 0; block < blocks; ++block) {
+        for (uint32_t slot = 0; slot < streamConfig_.dbs; ++slot) {
+            WriteBE32(payload + (block * streamConfig_.dbs + slot) * kBytesPerSlot,
+                      txPolicy_.defaultNonAudioSlotWord);
+        }
+        for (uint32_t channel = 0; channel < streamConfig_.pcmChannels; ++channel) {
+            const uint8_t slot = txPolicy_.playbackChannelMap.SlotFor(channel);
+            if (slot < streamConfig_.dbs) {
+                WriteBE32(payload + (block * streamConfig_.dbs + slot) * kBytesPerSlot,
+                          txPolicy_.cadenceSlotWord);
             }
         }
     }

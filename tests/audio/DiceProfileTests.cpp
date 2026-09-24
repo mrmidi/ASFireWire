@@ -5,6 +5,7 @@
 // Unit tests for the Dext DICE audio profile registry and profiles.
 
 #include <gtest/gtest.h>
+#include <utility>
 
 #include "Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
@@ -22,6 +23,7 @@
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/WeissIntProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.hpp"
+#include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
 #include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
@@ -47,8 +49,10 @@ using namespace ASFW::Isoch::Audio::DICE;
     unit.specifierId = unitSpecifier;
     unit.version = unitVersion;
     identity.units.push_back(unit);
-    return static_cast<uint32_t>(
-        ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(identity));
+    const auto plan = ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(identity);
+    return plan.has_value()
+               ? static_cast<uint32_t>(plan->profileBuilder)
+               : static_cast<uint32_t>(ASFW::DeviceProfiles::Audio::ProfileBuilderId::None);
 }
 
 // A DICE unit publishes the vendor OUI as its specifier with interface
@@ -566,6 +570,8 @@ TEST(DiceProfileTests, TheDiceAccessorReturnsOnlyDiceProfiles) {
                                ProfileBuilderId::MackieOnyx400F,
                                ProfileBuilderId::Motu828mk2,
                                ProfileBuilderId::MotuUltralite,
+                               ProfileBuilderId::MAudioFireWire1814,
+                               ProfileBuilderId::MAudioProjectMix,
                                ProfileBuilderId::None}) {
         EXPECT_EQ(AudioProfileRegistry::DiceProfileForBuilderId(
                       static_cast<uint32_t>(builder)),
@@ -575,6 +581,51 @@ TEST(DiceProfileTests, TheDiceAccessorReturnsOnlyDiceProfiles) {
     EXPECT_NE(AudioProfileRegistry::DiceProfileForBuilderId(
                   static_cast<uint32_t>(ProfileBuilderId::FocusriteSPro24Dsp)),
               nullptr);
+}
+
+TEST(DiceProfileTests, MAudioSpecialProfilesKeepAsymmetricBaseFormation) {
+    using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
+    for (const auto builder : {ProfileBuilderId::MAudioFireWire1814,
+                               ProfileBuilderId::MAudioProjectMix}) {
+        const bool projectMix = builder == ProfileBuilderId::MAudioProjectMix;
+        const auto* profile = AudioProfileRegistry::ProfileForBuilderId(
+            static_cast<uint32_t>(builder));
+        ASSERT_NE(profile, nullptr);
+        auto* stream = dynamic_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(profile);
+        ASSERT_NE(stream, nullptr);
+        ASFW::Isoch::Audio::AudioStreamConfig tx{};
+        ASFW::Isoch::Audio::AudioStreamConfig rx{};
+        ASSERT_TRUE(stream->BuildDefaultTxStreamConfig(tx));
+        ASSERT_TRUE(stream->BuildDefaultRxStreamConfig(rx));
+        EXPECT_EQ(tx.pcmChannels, 6U);
+        EXPECT_EQ(tx.dbs, 7U);
+        EXPECT_EQ(rx.pcmChannels, 10U);
+        EXPECT_EQ(rx.dbs, 11U);
+        EXPECT_EQ(tx.midiSlots, 1U);
+        EXPECT_EQ(rx.midiSlots, 1U);
+        const auto txPolicy = stream->TxStreamPolicy();
+        EXPECT_TRUE(txPolicy.cadencePacketsCarryDataBlocks);
+        EXPECT_EQ(txPolicy.cadenceSlotWord, 0xCF000000U);
+        EXPECT_EQ(stream->SupportedSampleRates(), (std::vector<uint32_t>{48000U}));
+        struct ExpectedLatency final {
+            uint32_t rate;
+            uint32_t tx;
+            uint32_t rx;
+            uint32_t safety;
+        };
+        const ExpectedLatency expected[] = {
+            {48000U, projectMix ? 104U : 112U, projectMix ? 104U : 113U, 48U},
+        };
+        for (const auto& row : expected) {
+            EXPECT_EQ(stream->TxReportedLatencyFrames(row.rate), row.tx) << row.rate;
+            EXPECT_EQ(stream->RxReportedLatencyFrames(row.rate), row.rx) << row.rate;
+            EXPECT_EQ(stream->TxSafetyOffsetFrames(row.rate), row.safety) << row.rate;
+            EXPECT_EQ(stream->RxSafetyOffsetFrames(row.rate), row.safety) << row.rate;
+        }
+        // StartIO's receive-side anchor gate must allow BeBoB's startup
+        // NO-DATA period before it fails and unwinds StartAudioStreaming.
+        EXPECT_EQ(stream->InitialClockAnchorTimeoutMs(), 4000U);
+    }
 }
 
 // An out-of-range builder id -- a nub from an older driver, or a corrupt

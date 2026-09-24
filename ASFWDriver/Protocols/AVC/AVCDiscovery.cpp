@@ -13,10 +13,12 @@
 #include "../../Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "../../Audio/Protocols/Oxford/OxfwStreamFormats.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
+#include "../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../../Audio/Protocols/SelectProbeBootstrap.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
 #include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "../../Audio/Protocols/BeBoB/MAudioSpecialFormation.hpp"
 #include "../../Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "StreamFormats/AVCSignalFormatCommand.hpp"
 #include <DriverKit/IOService.h>
@@ -25,7 +27,6 @@
 #include <DriverKit/OSNumber.h>
 #include <DriverKit/OSArray.h>
 #include <DriverKit/OSDictionary.h>
-#include <set>
 #include <algorithm>
 #include <atomic>
 #include <functional>
@@ -34,13 +35,45 @@ using namespace ASFW::Protocols::AVC;
 
 namespace {
 
+namespace Bootloader = ASFW::Protocols::BeBoB::Bootloader;
+
 // The device catalog's answer, carried to the nub so the audio side does not
 // repeat the match from (vendorId, modelId) -- a pair that cannot identify
 // every family.
-[[nodiscard]] uint32_t ProfileBuilderIdFor(
-    const ASFW::Discovery::DeviceIdentityEvidence& identity) noexcept {
-    return static_cast<uint32_t>(
-        ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(identity));
+[[nodiscard]] std::optional<ASFW::DeviceProfiles::Audio::StaticAudioEndpointPlan>
+CurrentPolicyPlan(ASFW::Discovery::DeviceRegistry& registry, uint64_t guid) {
+    const auto snapshot = registry.SnapshotByGuid(guid);
+    if (!snapshot.has_value()) {
+        return std::nullopt;
+    }
+    const auto* policy = ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(*snapshot);
+    if (policy == nullptr || !registry.IsCurrent(policy->route)) {
+        return std::nullopt;
+    }
+    return policy->plan;
+}
+
+[[nodiscard]] std::optional<ASFW::DeviceProfiles::Audio::StaticAudioEndpointPlan>
+CurrentPolicyPlan(ASFW::Discovery::DeviceRegistry& registry,
+                  const ASFW::Discovery::FWDevice& device) {
+    const auto snapshot = registry.SnapshotByGuid(device.GetGUID());
+    if (!snapshot.has_value()) {
+        return std::nullopt;
+    }
+    const auto* policy = ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(*snapshot);
+    if (policy == nullptr || policy->route.generation != device.GetGeneration() ||
+        policy->route.nodeId != device.GetNodeID() ||
+        !registry.IsCurrent(policy->route)) {
+        return std::nullopt;
+    }
+    return policy->plan;
+}
+
+[[nodiscard]] bool IsCurrentDeviceRoute(ASFW::Discovery::DeviceRegistry& registry,
+                                       const ASFW::Discovery::FWDevice& device) noexcept {
+    const auto route = registry.CurrentRoute(device.GetGUID());
+    return route.has_value() && route->generation == device.GetGeneration() &&
+           route->nodeId == device.GetNodeID();
 }
 
 // Which bring-up a unit gets is a *policy* decision the catalog already
@@ -49,12 +82,9 @@ namespace {
 // is a catalog row, and a device whose family/policy pair has no bootstrap
 // resolves to Unsupported rather than silently taking the generic path.
 [[nodiscard]] ASFW::Audio::ProbeBootstrap ProbeBootstrapFor(
-    const ASFW::Discovery::DeviceIdentityEvidence& identity) noexcept {
-    const auto plan = ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(identity);
-    if (!plan.has_value()) {
-        return ASFW::Audio::ProbeBootstrap::Unsupported;
-    }
-    return ASFW::Audio::SelectProbeBootstrap(plan->family, plan->probePolicy);
+    const std::optional<ASFW::DeviceProfiles::Audio::StaticAudioEndpointPlan>& plan) noexcept {
+    return plan.has_value() ? ASFW::Audio::SelectProbeBootstrap(*plan)
+                            : ASFW::Audio::ProbeBootstrap::Unsupported;
 }
 
 [[nodiscard]] constexpr const char* StreamModeToString(
@@ -65,16 +95,15 @@ namespace {
 
 ASFW::Audio::Model::StreamMode ResolveStreamMode(
     const ASFW::Protocols::AVC::Music::MusicSubunitCapabilities& caps,
-    const ASFW::Discovery::DeviceIdentityEvidence& identity,
+    const ASFW::DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
     uint32_t vendorId,
     uint32_t modelId,
     const char*& reason) noexcept {
     // Cadence a device must be driven at whatever it reports, from the one
     // device catalog. Unspecified means "believe the probe", which is what an
     // unlisted device gets.
-    using ASFW::DeviceProfiles::Audio::AudioDeviceCatalog;
     using ASFW::DeviceProfiles::Audio::ForcedStreamMode;
-    const auto forced = AudioDeviceCatalog::StreamTraitsFor(identity).forcedStreamMode;
+    const auto forced = plan.streamTraits.wire.forcedStreamMode;
     if (forced != ForcedStreamMode::Unspecified) {
         const auto mode = (forced == ForcedStreamMode::Blocking)
                               ? ASFW::Audio::Model::StreamMode::kBlocking
@@ -181,6 +210,7 @@ AVCDiscovery::AVCDiscovery(IOService* driver,
     , deviceRegistry_(deviceRegistry)
     , deviceManager_(deviceManager)
     , busOps_(busOps)
+    , bootloaderPreparation_(busOps, deviceRegistry)
     , busInfo_(busInfo)
     , timerScheduler_(timerScheduler)
     , audioConfigListener_(audioConfigListener) {
@@ -299,6 +329,17 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
         return;
     }
 
+    // Resolve the registry's immutable policy before constructing a protocol
+    // producer. This snapshot is bound to the current route and fails closed
+    // after reset, quarantine, loss, or removal.
+    const auto policyPlan = CurrentPolicyPlan(deviceRegistry_, *device);
+    if (!policyPlan.has_value()) {
+        ASFW_LOG_WARNING(AVC,
+                         "AVCDiscovery: refusing probe without current resolved policy GUID=0x%016llx",
+                         guid);
+        return;
+    }
+
     // Create AVCUnit
     auto avcUnit = std::make_shared<AVCUnit>(device, unit, deviceRegistry_, busOps_, busInfo_, timerScheduler_);
 
@@ -315,8 +356,21 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     IOLockUnlock(lock_);
 
     // One policy decision, resolved once and honoured by every arm below.
-    const ASFW::Audio::ProbeBootstrap bootstrap =
-        ProbeBootstrapFor(device->GetIdentity());
+    if (!IsCurrentDeviceRoute(deviceRegistry_, *device)) {
+        ASFW_LOG_WARNING(AVC,
+                         "AVCDiscovery: refusing probe without current resolved policy GUID=0x%016llx",
+                         guid);
+        avcUnit->Shutdown();
+        IOLockLock(lock_);
+        const auto it = units_.find(guid);
+        if (it != units_.end() && it->second == avcUnit) {
+            units_.erase(it);
+        }
+        IOLockUnlock(lock_);
+        RebuildNodeIDMap();
+        return;
+    }
+    const ASFW::Audio::ProbeBootstrap bootstrap = ProbeBootstrapFor(policyPlan);
 
     // The PHASE 88 is a BeBoB unit matched by stable Config ROM identity.
     // Linux BeBoB starts directly with unit PLUG_INFO and BridgeCo commands;
@@ -335,23 +389,41 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
         // cross-validated: linux-sound-firewire-stack/firewire/bebob/bebob.c:184-260,
         // bebob_stream.c:908-940.
         const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
+        const auto beBoBRoute = deviceRegistry_.CurrentRoute(guid);
+        if (!beBoBRoute.has_value() || !deviceRegistry_.IsCurrent(*beBoBRoute)) {
+            avcUnit->Shutdown();
+            return;
+        }
         const uint32_t vendorId = device->GetVendorID();
         const uint32_t modelId = device->GetModelID();
         // Resolved here, while the FWDevice and its Config-ROM evidence are in
         // scope: the callback below runs after discovery and only has scalars.
-        const uint32_t profileBuilderId = ProfileBuilderIdFor(device->GetIdentity());
+        const uint32_t profileBuilderId = static_cast<uint32_t>(policyPlan->profileBuilder);
         const std::string deviceName{device->GetModelName()};
         ::ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery(
             *avcUnit, guid,
-            [weakSelf, guid, vendorId, modelId, profileBuilderId,
+            [weakSelf, guid, beBoBRoute = *beBoBRoute, vendorId, modelId, profileBuilderId,
              deviceName](const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
                 const auto self = weakSelf.lock();
                 if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
                     return;
                 }
+                if (!self->deviceRegistry_.IsCurrent(beBoBRoute)) {
+                    return;
+                }
                 self->PublishBeBoBAudioConfig(guid, vendorId, modelId, profileBuilderId,
                                               deviceName, inventory);
             });
+        RebuildNodeIDMap();
+        return;
+    }
+
+    if (bootstrap == ASFW::Audio::ProbeBootstrap::BeBoBUnprobed) {
+        // The M-Audio special firmware freezes on the generic information and
+        // BridgeCo probes. Its catalog-selected fixed formation is enough to
+        // publish an endpoint; device commands are issued only by the selected
+        // protocol during start, through the per-frame FCP gate.
+        PublishMAudioSpecialConfig(guid, *device);
         RebuildNodeIDMap();
         return;
     }
@@ -383,18 +455,9 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
 
         // Handled above; both arms return before reaching this switch.
         case ASFW::Audio::ProbeBootstrap::BeBoBPlug0Only:
+        case ASFW::Audio::ProbeBootstrap::BeBoBUnprobed:
         case ASFW::Audio::ProbeBootstrap::FireworksEfc:
             break;
-
-        case ASFW::Audio::ProbeBootstrap::BeBoBUnprobed:
-            // ProbePolicyId::BeBoBFilteredCommandSet: the unit is BeBoB but its
-            // firmware must not receive generic AV/C before its own bring-up.
-            ASFW_LOG(AVC,
-                     "AVCDiscovery: BeBoB device is unprobed by policy; no automatic AV/C "
-                     "traffic GUID=0x%016llx",
-                     guid);
-            RebuildNodeIDMap();
-            return;
 
         case ASFW::Audio::ProbeBootstrap::DiceProtocol:
         case ASFW::Audio::ProbeBootstrap::MotuRegister:
@@ -466,7 +529,14 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
     // generic descriptor-driven path below can never publish this device.
     // Publish the hardware-verified profile-owned configuration instead — same
     // pattern as the BeBoB bypass in OnAVCUnitCreated.
-    if (IsMackieOnyxIOxford(*device)) {
+    const auto policyPlan = CurrentPolicyPlan(deviceRegistry_, *device);
+    if (!policyPlan.has_value()) {
+        ASFW_LOG_WARNING(AVC,
+                         "AVCDiscovery: refusing configuration without current resolved policy GUID=0x%016llx",
+                         guid);
+        return;
+    }
+    if (policyPlan->profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MackieOnyxIOxfw) {
         PublishMackieOnyxIProfileOwnedConfig(guid, *device);
         return;
     }
@@ -508,7 +578,7 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
                          audioDeviceConfig.sampleRates.empty() ? "sample rate" : "");
         return;
     }
-    if (IsApogeeDuet(*device)) {
+    if (policyPlan->profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::ApogeeDuet) {
         ASFW_LOG(Audio,
                  "AVCDiscovery: Apogee Duet detected (GUID=%llx) - prefetching vendor config before publishing config",
                  guid);
@@ -568,6 +638,65 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
     PublishReadyAudioConfig(guid, config);
 }
 
+void AVCDiscovery::PublishMAudioSpecialConfig(uint64_t guid,
+                                              const Discovery::FWDevice& device) {
+    using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
+    using ASFW::DeviceProfiles::Audio::SupportDisposition;
+    const auto plan = CurrentPolicyPlan(deviceRegistry_, device);
+    if (!plan || plan->support != SupportDisposition::Supported ||
+        (plan->profileBuilder != ProfileBuilderId::MAudioFireWire1814 &&
+         plan->profileBuilder != ProfileBuilderId::MAudioProjectMix)) {
+        return;
+    }
+
+    // Linux's special_stream_formation_set() gives fixed geometry precisely
+    // because this firmware cannot be probed for it. Begin with the common
+    // S/PDIF formation at 48 kHz; the protocol asserts that clock/format before
+    // starting a stream. The one MIDI block multiplexes one 1814 port or two
+    // ProjectMix ports without increasing DBS further.
+    const auto formation = ::ASFW::Audio::BeBoB::MAudioFormationFor(
+        ::ASFW::Audio::BeBoB::MAudioDigitalFormat::SPDIF,
+        ::ASFW::Audio::BeBoB::MAudioDigitalFormat::SPDIF, 48000U);
+    if (!formation || formation->capturePcmChannels == 0 ||
+        formation->playbackPcmChannels == 0 || formation->midiDataBlocks != 1) {
+        ASFW_LOG_ERROR(Audio,
+                       "[MAudio] refusing endpoint without fixed duplex formation GUID=0x%016llx",
+                       guid);
+        return;
+    }
+
+    const bool projectMix = plan->profileBuilder == ProfileBuilderId::MAudioProjectMix;
+    const uint32_t midiPorts = projectMix ? 2U : 1U;
+    ::ASFW::Audio::Model::ASFWAudioDevice config{};
+    config.guid = guid;
+    config.vendorId = device.GetVendorID();
+    config.modelId = device.GetModelID();
+    config.profileBuilderId = static_cast<uint32_t>(plan->profileBuilder);
+    config.deviceName = projectMix ? "M-Audio ProjectMix I/O" : "M-Audio FireWire 1814";
+    config.channelCount = formation->capturePcmChannels;
+    config.inputChannelCount = formation->capturePcmChannels;
+    config.outputChannelCount = formation->playbackPcmChannels;
+    config.sampleRates = {48000U};
+    config.currentSampleRate = 48000U;
+    config.inputPlugName = projectMix ? "ProjectMix Inputs" : "1814 Inputs";
+    config.outputPlugName = projectMix ? "ProjectMix Outputs" : "1814 Outputs";
+    config.streamMode = ::ASFW::Audio::Model::StreamMode::kBlocking;
+    config.captureStreams.push_back({
+        .pcmChannels = formation->capturePcmChannels,
+        .am824Slots = formation->capturePcmChannels + formation->midiDataBlocks,
+        .midiPorts = midiPorts,
+        .channelOffset = 0,
+    });
+    config.playbackStreams.push_back({
+        .pcmChannels = formation->playbackPcmChannels,
+        .am824Slots = formation->playbackPcmChannels + formation->midiDataBlocks,
+        .midiPorts = midiPorts,
+        .channelOffset = 0,
+    });
+    config.resolvedGeometryRequired = true;
+    PublishReadyAudioConfig(guid, config);
+}
+
 void AVCDiscovery::PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
                                                         const Discovery::FWDevice& device) {
     // Wire geometry captured live from an Onyx 820i (AV/C unit-level EXTENDED
@@ -586,7 +715,12 @@ void AVCDiscovery::PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
     config.guid = guid;
     config.vendorId = device.GetVendorID();
     config.modelId = device.GetModelID();
-    config.profileBuilderId = ProfileBuilderIdFor(device.GetIdentity());
+    const auto policyPlan = CurrentPolicyPlan(deviceRegistry_, device);
+    if (!policyPlan.has_value()) {
+        ASFW_LOG_WARNING(Audio, "[Onyx] refusing stale profile-owned config GUID=0x%016llx", guid);
+        return;
+    }
+    config.profileBuilderId = static_cast<uint32_t>(policyPlan->profileBuilder);
     config.deviceName =
         std::string(::ASFW::DeviceProfiles::Audio::kMackieVendorName) + " " +
         ::ASFW::DeviceProfiles::Audio::kOnyxIOxfwModelName;
@@ -622,7 +756,12 @@ void AVCDiscovery::PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,
     config.guid = guid;
     config.vendorId = device.GetVendorID();
     config.modelId = device.GetModelID();
-    config.profileBuilderId = ProfileBuilderIdFor(device.GetIdentity());
+    const auto policyPlan = CurrentPolicyPlan(deviceRegistry_, device);
+    if (!policyPlan.has_value()) {
+        ASFW_LOG_WARNING(Audio, "[Fireworks] refusing stale profile-owned config GUID=0x%016llx", guid);
+        return;
+    }
+    config.profileBuilderId = static_cast<uint32_t>(policyPlan->profileBuilder);
     config.deviceName =
         std::string(::ASFW::DeviceProfiles::Audio::kMackieVendorName) + " " +
         ::ASFW::DeviceProfiles::Audio::kOnyx400FModelName;
@@ -771,9 +910,20 @@ ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
     const uint32_t vendorId = device.GetVendorID();
     const uint32_t modelId = device.GetModelID();
     const char* streamModeReason = "default-nonblocking";
+    const auto policyPlan = CurrentPolicyPlan(deviceRegistry_, device);
+    if (!policyPlan.has_value()) {
+        ASFW_LOG_WARNING(Audio,
+                         "AVCDiscovery: refusing audio configuration without current resolved policy GUID=0x%016llx",
+                         guid);
+        ASFW::Audio::Model::ASFWAudioDevice invalid{};
+        invalid.guid = guid;
+        invalid.channelCount = 0;
+        invalid.sampleRates.clear();
+        invalid.currentSampleRate = 0;
+        return invalid;
+    }
     const auto streamMode =
-        ResolveStreamMode(mutableCaps, device.GetIdentity(), vendorId, modelId,
-                          streamModeReason);
+        ResolveStreamMode(mutableCaps, *policyPlan, vendorId, modelId, streamModeReason);
 
     ASFW_LOG(Audio,
              "AVCDiscovery: stream mode selected vendor=0x%06x model=0x%06x mode=%{public}s reason=%{public}s",
@@ -788,7 +938,7 @@ ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
     config.guid = guid;
     config.vendorId = vendorId;
     config.modelId = modelId;
-    config.profileBuilderId = ProfileBuilderIdFor(device.GetIdentity());
+    config.profileBuilderId = static_cast<uint32_t>(policyPlan->profileBuilder);
     config.deviceName = deviceName;
     config.channelCount = channelCount;
     config.inputChannelCount =
@@ -804,6 +954,12 @@ ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
 }
 
 void AVCDiscovery::PublishReadyAudioConfig(uint64_t guid, const ::ASFW::Audio::Model::ASFWAudioDevice& config) {
+    if (!CurrentPolicyPlan(deviceRegistry_, guid).has_value()) {
+        ASFW_LOG_WARNING(Audio,
+                         "AVCDiscovery: refusing audio config for stale or unresolved policy GUID=0x%016llx",
+                         guid);
+        return;
+    }
     if (!audioConfigListener_) {
         ASFW_LOG_ERROR(Audio,
                        "AVCDiscovery: no audio config listener; dropping config for GUID=%llx",
@@ -1378,14 +1534,52 @@ void AVCDiscovery::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
     if (shuttingDown_.load(std::memory_order_acquire)) {
         return;
     }
-    (void)device;
+    PrepareMAudioBootloader(device);
 }
 
 void AVCDiscovery::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
     if (shuttingDown_.load(std::memory_order_acquire)) {
         return;
     }
-    (void)device;
+    PrepareMAudioBootloader(device);
+}
+
+void AVCDiscovery::PrepareMAudioBootloader(
+    const std::shared_ptr<Discovery::FWDevice>& device) {
+    if (!device) {
+        return;
+    }
+    // The registry's resolved plan decides whether a cue applies; preparation
+    // does not re-run catalog matching.
+    const auto plan = CurrentPolicyPlan(deviceRegistry_, *device);
+    if (!plan.has_value() ||
+        !Bootloader::ShouldPrepareBootloader(*plan, device->GetVendorID(),
+                                             device->GetModelID())) {
+        return;
+    }
+    const auto route = deviceRegistry_.CurrentRoute(device->GetGUID());
+    if (!route.has_value() || route->generation != device->GetGeneration() ||
+        route->nodeId != device->GetNodeID() || !deviceRegistry_.IsCurrent(*route)) {
+        ASFW_LOG_WARNING(AVC,
+                         "MAudio boot cue skipped: no current device route GUID=0x%016llx",
+                         device->GetGUID());
+        return;
+    }
+
+    const bool started = bootloaderPreparation_.Prepare(
+        *plan, device->GetVendorID(), device->GetModelID(), *route,
+        busInfo_.GetSpeed(ASFW::FW::NodeId{static_cast<uint8_t>(route->nodeId)}),
+        [weakSelf = weak_from_this()] {
+            const auto self = weakSelf.lock();
+            return self && !self->shuttingDown_.load(std::memory_order_acquire);
+        });
+    if (!started) {
+        return;
+    }
+
+    ASFW_LOG(AVC,
+             "MAudio 1814 bootloader identified; reading BootROM before guarded cue GUID=0x%016llx",
+             route->guid);
 }
 
 void AVCDiscovery::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
@@ -1599,16 +1793,6 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
     uint32_t specID = unit->GetUnitSpecID() & 0xFFFFFF;
 
     return specID == kAVCSpecID;
-}
-
-bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcept {
-    return DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(device.GetIdentity()) ==
-           DeviceProfiles::Audio::ProfileBuilderId::ApogeeDuet;
-}
-
-bool AVCDiscovery::IsMackieOnyxIOxford(const Discovery::FWDevice& device) const noexcept {
-    return DeviceProfiles::Audio::AudioDeviceCatalog::ProfileBuilderFor(device.GetIdentity()) ==
-           DeviceProfiles::Audio::ProfileBuilderId::MackieOnyxIOxfw;
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {

@@ -365,6 +365,7 @@ struct MCPLiveDriverControlTests {
 private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var mcpIsConnected = true
     var mcpLastError: String?
+    var driverVersion: DriverVersionInfo?
     var generation: UInt32 = 17
     var devices: [FWDeviceInfo] = []
     var topologySnapshot: TopologySnapshot?
@@ -387,6 +388,8 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var localIrmResourceSnapshot: ASFWMCPLocalIrmResourceSnapshot?
     var logQueryResponse: ASFWLogRingQueryResponse?
     var logStats: ASFWLogRingStats?
+
+    func mcpDriverVersion() -> DriverVersionInfo? { driverVersion }
 
     func mcpCurrentGeneration() -> UInt32? { generation }
     func mcpControllerStatus() -> ControllerStatus? { nil }

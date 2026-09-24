@@ -8,6 +8,7 @@
 // devices against explicit, expected historical decisions (non-tautological).
 
 #include "Audio/Protocols/DeviceProtocolChoice.hpp"
+#include "Audio/Protocols/SelectProbeBootstrap.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
@@ -34,6 +35,7 @@ struct DeviceTestCase {
     ProfileBuilderId expectedProfileBuilder{ProfileBuilderId::None};
     const char* expectedModelName{nullptr};
     std::optional<Audio::AudioBackendKind> expectedBackend{Audio::AudioBackendKind::Avc};
+    Audio::ProbeBootstrap expectedBootstrap{Audio::ProbeBootstrap::Unsupported};
     Discovery::AvcCommandFilterId expectedFilter{Discovery::AvcCommandFilterId::Unrestricted};
     uint32_t expectedStartRatePinHz{0};
     ForcedStreamMode expectedForcedStreamMode{ForcedStreamMode::Unspecified};
@@ -73,6 +75,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::FocusriteSPro24Dsp,
             .expectedModelName = kSPro24DspModelName,
             .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedBootstrap = Audio::ProbeBootstrap::DiceProtocol,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
         },
@@ -86,6 +89,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::FocusriteSPro40,
             .expectedModelName = kSPro40ModelName,
             .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedBootstrap = Audio::ProbeBootstrap::DiceProtocol,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
         },
@@ -113,6 +117,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::ApogeeDuet,
             .expectedModelName = kApogeeDuetModelName,
             .expectedBackend = Audio::AudioBackendKind::Avc,
+            .expectedBootstrap = Audio::ProbeBootstrap::AvcInitializeThenPlug0,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedStartRatePinHz = 48000U,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
@@ -129,6 +134,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::MackieOnyxIOxfw,
             .expectedModelName = kOnyxIOxfwModelName,
             .expectedBackend = Audio::AudioBackendKind::Avc,
+            .expectedBootstrap = Audio::ProbeBootstrap::AvcInitializeThenPlug0,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedStartRatePinHz = 44100U,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
@@ -145,6 +151,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::MackieOnyx400F,
             .expectedModelName = kOnyx400FModelName,
             .expectedBackend = Audio::AudioBackendKind::Avc,
+            .expectedBootstrap = Audio::ProbeBootstrap::FireworksEfc,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedStartRatePinHz = 44100U,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
@@ -161,6 +168,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::PreSonusStudioLive1602,
             .expectedModelName = kStudioLive1602ModelName,
             .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedBootstrap = Audio::ProbeBootstrap::DiceProtocol,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
         },
@@ -174,6 +182,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::PreSonusStudioLive2442,
             .expectedModelName = kStudioLive2442ModelName,
             .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedBootstrap = Audio::ProbeBootstrap::DiceProtocol,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
         },
@@ -187,6 +196,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::Motu828mk2,
             .expectedModelName = kMotu828mk2ModelName,
             .expectedBackend = Audio::AudioBackendKind::MotuRegister,
+            .expectedBootstrap = Audio::ProbeBootstrap::MotuRegister,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
         },
         // 10. MOTU UltraLite
@@ -199,6 +209,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::MotuUltralite,
             .expectedModelName = kMotuUltraliteModelName,
             .expectedBackend = Audio::AudioBackendKind::MotuRegister,
+            .expectedBootstrap = Audio::ProbeBootstrap::MotuRegister,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
         },
         // 11. M-Audio FireWire 1814
@@ -206,12 +217,33 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .description = "M-Audio FireWire 1814 (BeBoB, filtered command set)",
             .evidence = MakeEvidence(kMAudioVendorId, kMAudioFireWire1814ModelId, std::nullopt,
                                      0x00A02D, std::nullopt),
-            .expectedSupport = SupportDisposition::RecognizedUnsupported,
+            .expectedSupport = SupportDisposition::Supported,
             .expectedFamily = AudioFamilyProviderId::BeBoB,
-            .expectedProfileBuilder = ProfileBuilderId::None,
+            .expectedProfileBuilder = ProfileBuilderId::MAudioFireWire1814,
             .expectedModelName = kMAudioFireWire1814ModelName,
-            .expectedBackend = std::nullopt,
+            .expectedBackend = Audio::AudioBackendKind::Avc,
+            .expectedBootstrap = Audio::ProbeBootstrap::BeBoBUnprobed,
             .expectedFilter = Discovery::AvcCommandFilterId::MAudioSpecialBeBoB,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::MAudioSpecial,
+            .expectedCmpChoosesIsoChannel = true,
+            .expectedStartRatePinHz = 48000U,
+        },
+        {
+            .description = "M-Audio ProjectMix I/O (BeBoB, filtered command set)",
+            .evidence = MakeEvidence(kMAudioVendorId, kMAudioProjectMixModelId, std::nullopt,
+                                     0x00A02D, std::nullopt),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::BeBoB,
+            .expectedProfileBuilder = ProfileBuilderId::MAudioProjectMix,
+            .expectedModelName = kMAudioProjectMixModelName,
+            .expectedBackend = Audio::AudioBackendKind::Avc,
+            .expectedBootstrap = Audio::ProbeBootstrap::BeBoBUnprobed,
+            .expectedFilter = Discovery::AvcCommandFilterId::MAudioSpecialBeBoB,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::MAudioSpecial,
+            .expectedCmpChoosesIsoChannel = true,
+            .expectedStartRatePinHz = 48000U,
         },
         // 12. M-Audio FireWire 1814 Bootloader
         {
@@ -223,7 +255,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::None,
             .expectedModelName = kMAudioFireWire1814BootloaderModelName,
             .expectedBackend = std::nullopt,
-            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedFilter = Discovery::AvcCommandFilterId::BlockAll,
         },
         // 13. Alesis MultiMix
         {
@@ -235,6 +267,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::AlesisMultiMix,
             .expectedModelName = kAlesisMultiMixModelName,
             .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedBootstrap = Audio::ProbeBootstrap::DiceProtocol,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
         },
@@ -248,6 +281,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::WeissInt202,
             .expectedModelName = kWeissInt202ModelName,
             .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedBootstrap = Audio::ProbeBootstrap::DiceProtocol,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
             .expectedStartShape = StreamStartShape::TransmitFirst,
@@ -262,6 +296,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedProfileBuilder = ProfileBuilderId::GenericAvc,
             .expectedModelName = "Generic AV/C Audio",
             .expectedBackend = Audio::AudioBackendKind::Avc,
+            .expectedBootstrap = Audio::ProbeBootstrap::AvcInitializeThenPlug0,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
         },
     };
@@ -278,39 +313,107 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
         EXPECT_EQ(plan->support, testCase.expectedSupport);
         EXPECT_EQ(plan->family, testCase.expectedFamily);
         EXPECT_EQ(plan->profileBuilder, testCase.expectedProfileBuilder);
+        if (testCase.expectedSupport == SupportDisposition::Supported) {
+            EXPECT_NE(plan->protocolImplementation, ProtocolImplementationId::None);
+        } else {
+            EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::None);
+        }
         if (testCase.expectedModelName != nullptr) {
             EXPECT_EQ(plan->modelName, testCase.expectedModelName);
         }
-        EXPECT_EQ(plan->streamTraits.startRatePinHz, testCase.expectedStartRatePinHz);
-        EXPECT_EQ(plan->streamTraits.forcedStreamMode, testCase.expectedForcedStreamMode);
-        EXPECT_EQ(plan->streamTraits.startShape, testCase.expectedStartShape);
-        EXPECT_EQ(plan->streamTraits.cmpChoosesIsoChannel, testCase.expectedCmpChoosesIsoChannel);
+        EXPECT_EQ(plan->streamTraits.start.startRatePinHz, testCase.expectedStartRatePinHz);
+        EXPECT_EQ(plan->streamTraits.wire.forcedStreamMode, testCase.expectedForcedStreamMode);
+        EXPECT_EQ(plan->streamTraits.start.startShape, testCase.expectedStartShape);
+        EXPECT_EQ(plan->streamTraits.resource.cmpChoosesIsoChannel, testCase.expectedCmpChoosesIsoChannel);
 
-        // Build DeviceRecord to check protocol/backend choice
-        Discovery::DeviceRecord record{};
-        record.instanceId = Discovery::DeviceInstanceId{1};
-        record.guid = testCase.evidence.observedGuid != 0
-                          ? testCase.evidence.observedGuid
-                          : 0x0011223344556677ULL;
-        record.identity = testCase.evidence;
-
-        // 2. Protocol Choice
-        const auto protocolChoice = Audio::ChooseDeviceProtocol(record);
+        // 2. Protocol Choice: consumers use the resolved policy plan directly.
+        const auto protocolFromPlan = Audio::ChooseDeviceProtocol(*plan);
         if (testCase.expectedProfileBuilder != ProfileBuilderId::None) {
-            ASSERT_TRUE(protocolChoice.has_value());
-            EXPECT_EQ(protocolChoice->builder, testCase.expectedProfileBuilder);
-            EXPECT_EQ(protocolChoice->unitDirectoryOffset, 0x400U);
+            ASSERT_TRUE(protocolFromPlan.has_value());
+            EXPECT_EQ(protocolFromPlan->builder, testCase.expectedProfileBuilder);
+            EXPECT_EQ(protocolFromPlan->implementation, plan->protocolImplementation);
+            EXPECT_EQ(protocolFromPlan->builder, plan->profileBuilder);
+            EXPECT_EQ(protocolFromPlan->unitDirectoryOffset, 0x400U);
         } else {
-            EXPECT_FALSE(protocolChoice.has_value());
+            EXPECT_FALSE(protocolFromPlan.has_value());
         }
 
         // 3. Audio Backend Choice
-        const auto backend = Audio::ChooseAudioBackend(record);
+        const auto backend = Audio::ChooseAudioBackend(*plan);
         EXPECT_EQ(backend, testCase.expectedBackend);
+        const auto bootstrap = Audio::SelectProbeBootstrap(*plan);
+        EXPECT_EQ(bootstrap, testCase.expectedBootstrap);
+
+        // One plan must keep each supported family on its matching protocol
+        // implementation and probe path. These assertions bind the independent
+        // consumer projections together instead of only checking each expected
+        // value in isolation.
+        if (testCase.expectedSupport == SupportDisposition::Supported) {
+            ASSERT_TRUE(backend.has_value());
+            ASSERT_TRUE(protocolFromPlan.has_value());
+            EXPECT_NE(plan->protocolImplementation, ProtocolImplementationId::None);
+            EXPECT_NE(AudioDeviceCatalog::CommandFilterFor(*plan),
+                      Discovery::AvcCommandFilterId::BlockAll);
+            switch (plan->family) {
+                case AudioFamilyProviderId::DICE:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::Dice);
+                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::DiceProtocol);
+                    EXPECT_TRUE(plan->protocolImplementation == ProtocolImplementationId::DiceTcat ||
+                                plan->protocolImplementation == ProtocolImplementationId::DiceSPro24Dsp ||
+                                plan->protocolImplementation == ProtocolImplementationId::DiceWeissInt);
+                    break;
+                case AudioFamilyProviderId::OXFW:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::Avc);
+                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::AvcInitializeThenPlug0);
+                    EXPECT_TRUE(plan->protocolImplementation == ProtocolImplementationId::ApogeeDuet ||
+                                plan->protocolImplementation == ProtocolImplementationId::MackieOnyx);
+                    break;
+                case AudioFamilyProviderId::Fireworks:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::Avc);
+                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::FireworksEfc);
+                    EXPECT_EQ(plan->protocolImplementation,
+                              ProtocolImplementationId::FireworksOnyx400F);
+                    break;
+                case AudioFamilyProviderId::BeBoB:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::Avc);
+                    if (plan->protocolImplementation ==
+                        ProtocolImplementationId::BeBoBMAudioSpecial) {
+                        EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::BeBoBUnprobed);
+                    } else {
+                        EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::BeBoBPlug0Only);
+                        EXPECT_TRUE(plan->protocolImplementation ==
+                                        ProtocolImplementationId::BeBoBPhase88 ||
+                                    plan->protocolImplementation ==
+                                        ProtocolImplementationId::BeBoBGeneric);
+                    }
+                    break;
+                case AudioFamilyProviderId::MotuRegister:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::MotuRegister);
+                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::MotuRegister);
+                    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::MotuV2);
+                    break;
+                case AudioFamilyProviderId::GenericAvc:
+                case AudioFamilyProviderId::None:
+                    ADD_FAILURE() << "supported case has no concrete protocol family";
+                    break;
+            }
+        } else if (testCase.expectedSupport == SupportDisposition::RecognizedUnsupported) {
+            EXPECT_FALSE(backend.has_value());
+            EXPECT_FALSE(protocolFromPlan.has_value());
+            EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
+            EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::None);
+            if (plan->family == AudioFamilyProviderId::BeBoB &&
+                plan->probePolicy == ProbePolicyId::BeBoBFilteredCommandSet) {
+                // The recognized M-Audio persona stays unplayable while its
+                // plan still carries the restrictive FCP command policy.
+                EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::BeBoBUnprobed);
+                EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
+                          Discovery::AvcCommandFilterId::MAudioSpecialBeBoB);
+            }
+        }
 
         // 4. Command Filter Choice
-        const auto filter = AudioDeviceCatalog::CommandFilterFor(testCase.evidence);
-        EXPECT_EQ(filter, testCase.expectedFilter);
+        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan), testCase.expectedFilter);
     }
 }
 

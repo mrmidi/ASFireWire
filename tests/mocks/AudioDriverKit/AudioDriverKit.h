@@ -2,6 +2,8 @@
 
 #ifdef ASFW_HOST_TEST
 
+#include <DriverKit/OSObject.h>
+
 #include <cstdint>
 
 using IOUserAudioObjectID = uint64_t;
@@ -22,6 +24,18 @@ enum IOUserAudioObjectPropertyScope : uint32_t {
     IOUserAudioObjectPropertyScopeGlobal = static_cast<uint32_t>('glob'),
 };
 
+struct IOUserAudioStreamBasicDescription {
+    double mSampleRate{0};
+    IOUserAudioFormatID mFormatID{0};
+    IOUserAudioFormatFlags mFormatFlags{0};
+    uint32_t mBytesPerPacket{0};
+    uint32_t mFramesPerPacket{0};
+    uint32_t mBytesPerFrame{0};
+    uint32_t mChannelsPerFrame{0};
+    uint32_t mBitsPerChannel{0};
+    uint32_t mReserved{0};
+};
+
 class IOUserAudioDevice {
 public:
     virtual ~IOUserAudioDevice() = default;
@@ -36,9 +50,13 @@ public:
     }
 
     virtual void UpdateCurrentZeroTimestamp(uint64_t, uint64_t) { /* no-op stub */ }
+
+    [[nodiscard]] virtual uint32_t GetZeroTimestampPeriod() const { return zeroTimestampPeriod; }
+
+    uint32_t zeroTimestampPeriod{0};
 };
 
-class IOUserAudioStream {
+class IOUserAudioStream : public OSObject {
 public:
     virtual ~IOUserAudioStream() = default;
 };

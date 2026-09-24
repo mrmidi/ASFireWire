@@ -18,6 +18,7 @@
 #include "../Core/AudioCoordinator.hpp"
 #include "../Protocols/AVCStartReadiness.hpp"
 #include "../Protocols/DeviceProtocolChoice.hpp"
+#include "../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../Protocols/DICE/Core/DICETypes.hpp"
 #include "../Protocols/Duplex/DuplexControlTypes.hpp"
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
@@ -79,6 +80,7 @@ static ASFW::Audio::AudioCoordinator* GetAudioCoordinator(const ASFWAudioNub_IVa
 
 struct ProtocolRuntimeBinding {
     std::optional<ASFW::Discovery::DeviceRecord> device{};
+    ASFW::Discovery::DeviceRegistry* registry{nullptr};
     // `protocolOwner` keeps the protocol alive for the lifetime of the binding (the
     // caller's stack frame); `protocol` is the borrowed view used by the call sites.
     std::shared_ptr<ASFW::Audio::IDeviceProtocol> protocolOwner{};
@@ -216,6 +218,7 @@ static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
     }
 
     outBinding.device = std::move(device);
+    outBinding.registry = registry;
     outBinding.protocolOwner = std::move(protocol);
     outBinding.protocol = outBinding.protocolOwner.get();
     outBinding.avcDiscovery = avcDiscovery;
@@ -544,8 +547,19 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
         // transport, so StartAudioStreaming returned kIOReturnNotReady on every
         // StartIO. The catalog matches MOTU from the unit directory, so asking
         // it is enough.
-        if (ASFW::Audio::ChooseAudioBackend(*binding.device) ==
-            ASFW::Audio::AudioBackendKind::Avc) {
+        const auto* audioPolicy =
+            ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(*binding.device);
+        const auto backend = audioPolicy && binding.registry &&
+                                     binding.registry->IsCurrent(audioPolicy->route)
+            ? ASFW::Audio::ChooseAudioBackend(audioPolicy->plan)
+            : std::nullopt;
+        if (!backend.has_value()) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioNub: refusing stream start without current resolved audio policy GUID=0x%016llx",
+                     ivars->guid);
+            return kIOReturnNotReady;
+        }
+        if (*backend == ASFW::Audio::AudioBackendKind::Avc) {
             auto* transport = binding.avcDiscovery
                 ? binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId)
                 : nullptr;
@@ -702,7 +716,10 @@ kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
     const ASFW::Audio::AudioClockConfig desired{
         .sampleRateHz = sampleRateHz,
     };
-    if (!ASFW::Audio::IsSupportedAudioClockConfig(desired)) {
+    // The duplex coordinator applies the device-policy gate, including the
+    // FW-255 48 kHz limit for special M-Audio profiles.
+    if (!ASFW::Audio::IsSupportedAudioClockConfig(desired) &&
+        !ASFW::Audio::IsSupportedMAudioSpecialClockConfig(desired)) {
         ASFW_LOG(Audio, "ASFWAudioNub: RequestSampleRateChange unsupported rate %u Hz", sampleRateHz);
         return kIOReturnUnsupported;
     }

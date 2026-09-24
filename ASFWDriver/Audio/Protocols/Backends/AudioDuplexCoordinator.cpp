@@ -11,6 +11,7 @@
 #include "../../Core/AudioRuntimeRegistry.hpp"
 #include "../../Model/ASFWAudioDevice.hpp"
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include "../../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -31,6 +32,18 @@ using ASFW::Audio::HasAnyRestartState;
 using ASFW::Audio::HasDeviceRestartState;
 using ASFW::Audio::HasHostRestartState;
 using ASFW::Audio::HasRestartIntent;
+
+[[nodiscard]] bool IsSupportedClockConfigForRecord(
+    const Discovery::DeviceRecord& record,
+    const AudioClockConfig& desiredClock) noexcept {
+    const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
+    if (policy != nullptr &&
+        (policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
+         policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix)) {
+        return ASFW::Audio::IsSupportedMAudioSpecialClockConfig(desiredClock);
+    }
+    return ASFW::Audio::IsSupportedAudioClockConfig(desiredClock);
+}
 
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 
@@ -76,9 +89,13 @@ void LogReservationSummary(uint64_t guid, Discovery::Generation generation,
 [[nodiscard]] AudioClockConfig EffectiveStartClockForProfile(
     const Discovery::DeviceRecord& record,
     const AudioClockConfig& requestedClock) noexcept {
-    const auto traits = DeviceProfiles::Audio::AudioDeviceCatalog::StreamTraitsFor(record.identity);
-    if (traits.startRatePinHz != 0) {
-        return AudioClockConfig{.sampleRateHz = traits.startRatePinHz};
+    const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
+    if (policy == nullptr) {
+        return requestedClock;
+    }
+    const auto traits = policy->plan.streamTraits;
+    if (traits.start.startRatePinHz != 0) {
+        return AudioClockConfig{.sampleRateHz = traits.start.startRatePinHz};
     }
     return requestedClock;
 }
@@ -89,9 +106,13 @@ void LogReservationSummary(uint64_t guid, Discovery::Generation generation,
 // Resolve the default from the device traits instead; explicit user selections
 // still arrive via the session clocks and win at the call sites.
 [[nodiscard]] uint32_t DefaultStartRateForRecord(const Discovery::DeviceRecord& record) noexcept {
-    const auto traits = DeviceProfiles::Audio::AudioDeviceCatalog::StreamTraitsFor(record.identity);
-    if (traits.startRatePinHz != 0) {
-        return traits.startRatePinHz;
+    const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
+    if (policy == nullptr) {
+        return 48000U;
+    }
+    const auto traits = policy->plan.streamTraits;
+    if (traits.start.startRatePinHz != 0) {
+        return traits.start.startRatePinHz;
     }
     return 48000U;
 }
@@ -342,7 +363,11 @@ IOReturn AudioDuplexCoordinator::RequestClockConfig(
                  guid);
         return kIOReturnAborted;
     }
-    if (!IsSupportedAudioClockConfig(desiredClock)) {
+    const auto record = registry_.SnapshotByGuid(guid);
+    if (!record) {
+        return kIOReturnNotReady;
+    }
+    if (!IsSupportedClockConfigForRecord(*record, desiredClock)) {
         return kIOReturnUnsupported;
     }
 
@@ -557,11 +582,11 @@ IOReturn AudioDuplexCoordinator::RunStartStreaming(uint64_t guid) noexcept {
     AudioClockConfig desiredClock{
         .sampleRateHz = DefaultStartRateForRecord(*record),
     };
-    if (IsSupportedAudioClockConfig(session.pendingClock)) {
+    if (IsSupportedClockConfigForRecord(*record, session.pendingClock)) {
         desiredClock = session.pendingClock;
-    } else if (IsSupportedAudioClockConfig(session.desiredClock)) {
+    } else if (IsSupportedClockConfigForRecord(*record, session.desiredClock)) {
         desiredClock = session.desiredClock;
-    } else if (IsSupportedAudioClockConfig(session.appliedClock)) {
+    } else if (IsSupportedClockConfigForRecord(*record, session.appliedClock)) {
         desiredClock = session.appliedClock;
     }
     const DuplexRestartReason reason = HasRestartIntent(session)
@@ -854,7 +879,7 @@ AudioDuplexCoordinator::ApplyClockRequest(uint64_t guid,
     if (!record || !deviceControl) {
         return kIOReturnNotReady;
     }
-    if (!IsSupportedAudioClockConfig(request.desiredClock)) {
+    if (!IsSupportedClockConfigForRecord(*record, request.desiredClock)) {
         return kIOReturnUnsupported;
     }
 
@@ -938,6 +963,14 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     if (!route.has_value() || !dependencies_.registry.IsCurrent(*route)) {
         return kIOReturnNotReady;
     }
+    const auto* resolvedPolicy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
+    if (resolvedPolicy == nullptr || resolvedPolicy->route != *route ||
+        resolvedPolicy->plan.support != DeviceProfiles::Audio::SupportDisposition::Supported) {
+        ASFW_LOG(Audio,
+                 "RunDuplexStart: current resolved audio policy unavailable; refusing stale or unsupported plan GUID=0x%016llx",
+                 guid);
+        return kIOReturnNotReady;
+    }
     const FW::Generation topologyGeneration = route->generation;
     auto runtimeProtocol = runtime_.FindShared(record.guid);
 
@@ -971,6 +1004,9 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
 
     const DuplexStreamProfile initialProfile =
         DuplexStreamProfileResolver::Resolve(record, runtimeProtocol.get());
+    if (!initialProfile.policyResolved) {
+        return kIOReturnNotReady;
+    }
     AudioDuplexChannels channels = initialProfile.channels;
     const uint64_t restartId = AllocateRestartId();
 
@@ -1000,11 +1036,13 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         if (failureStatus == kIOReturnAborted && TeardownRequested()) {
             return failureStatus;
         }
-        (void)WaitForAsyncStatus(
-            [&](auto callback) {
-                deviceControl.BreakBothConnections(std::move(callback));
-            },
-            kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
+        if (dependencies_.registry.IsCurrent(*route)) {
+            (void)WaitForAsyncStatus(
+                [&](auto callback) {
+                    deviceControl.BreakBothConnections(std::move(callback));
+                },
+                kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
+        }
         const IOReturn rollbackStatus = RunDuplexStop(guid, record, deviceControl, session);
         return finalizeFailure(failureStatus, failedPhase, cause,
                                DuplexRestartErrorClass::kStageFailure, true, rollbackStatus, true,
@@ -1016,11 +1054,13 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         if (invalidationStatus == kIOReturnAborted && TeardownRequested()) {
             return invalidationStatus;
         }
-        (void)WaitForAsyncStatus(
-            [&](auto callback) {
-                deviceControl.BreakBothConnections(std::move(callback));
-            },
-            kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
+        if (dependencies_.registry.IsCurrent(*route)) {
+            (void)WaitForAsyncStatus(
+                [&](auto callback) {
+                    deviceControl.BreakBothConnections(std::move(callback));
+                },
+                kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
+        }
         const IOReturn rollbackStatus = RunDuplexStop(guid, record, deviceControl, session);
         if (rollbackStatus != kIOReturnSuccess) {
             return finalizeFailure(
@@ -1127,6 +1167,10 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     session.runtimeCaps = prepare.value.runtimeCaps;
     DuplexStreamProfile streamProfile =
         DuplexStreamProfileResolver::Resolve(record, session.runtimeCaps, channels);
+    if (!streamProfile.policyResolved) {
+        return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kPrepared,
+                                      DuplexRestartFailureCause::kPrepare);
+    }
     SetSessionPhase(session, DuplexRestartPhase::kPrepared);
     StoreSession(session);
 
@@ -1217,6 +1261,11 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     // Linux OXFW/CMP and FFADO streaming lifecycles.
     deviceControl.SetAssignedChannels(channels);
     streamProfile = DuplexStreamProfileResolver::Resolve(record, session.runtimeCaps, channels);
+    if (!streamProfile.policyResolved) {
+        return rollbackToInvalidation(kIOReturnAborted,
+                                      DuplexRestartPhase::kReservingCaptureResources,
+                                      DuplexRestartFailureCause::kReserveCapture);
+    }
     StoreSession(session);
 
     ASFW_LOG(Audio,
@@ -1647,7 +1696,14 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
 
     const DuplexStreamProfile profile =
         DuplexStreamProfileResolver::Resolve(record, session.runtimeCaps, session.channels);
-    if (profile.stopOrder
+    const auto* stopPolicy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
+    if (!profile.policyResolved || stopPolicy == nullptr ||
+        !dependencies_.registry.IsCurrent(stopPolicy->route)) {
+        // The device route may have changed since this session started. Stop
+        // local DMA ownership, but do not infer a device-side stop recipe from
+        // stale identity data.
+        result = hostTransport_.StopAll();
+    } else if (profile.stopOrder
             .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive) {
         (void)WaitForAsyncStatus(
             [&](auto callback) { deviceControl.DisconnectPlayback(std::move(callback)); },

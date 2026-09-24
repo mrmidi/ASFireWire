@@ -29,6 +29,7 @@ constexpr IdentityMatchClause GuidEncoded(uint32_t vendor, uint32_t model) {
 constexpr AudioDeviceDefinition Definition(
     DeviceDefinitionId id, uint32_t vendor, uint32_t model,
     AudioFamilyProviderId family, ProbePolicyId probe, ProfileBuilderId builder,
+    ProtocolImplementationId implementation,
     SupportDisposition support, const char* vendorName, const char* modelName,
     std::optional<uint32_t> guidModel = std::nullopt,
     BootloaderCuePolicy bootloaderCue = BootloaderCuePolicy::None,
@@ -69,6 +70,7 @@ constexpr AudioDeviceDefinition Definition(
         .family = family,
         .probePolicy = probe,
         .profileBuilder = builder,
+        .protocolImplementation = implementation,
         .support = support,
         .guidReliability = GuidReliability::ReliableWhenUnique,
         .streamTraits = streamTraits,
@@ -88,6 +90,7 @@ constexpr AudioDeviceDefinition Definition(
 constexpr AudioDeviceDefinition MotuDefinition(DeviceDefinitionId id,
                                                uint32_t swVersion,
                                                ProfileBuilderId builder,
+                                               ProtocolImplementationId implementation,
                                                SupportDisposition support,
                                                const char* modelName) {
     return AudioDeviceDefinition{
@@ -106,6 +109,7 @@ constexpr AudioDeviceDefinition MotuDefinition(DeviceDefinitionId id,
                            ? ProbePolicyId::MotuRegister
                            : ProbePolicyId::None,
         .profileBuilder = builder,
+        .protocolImplementation = implementation,
         .support = support,
         .guidReliability = GuidReliability::ReliableWhenUnique,
         .vendorName = kMotuVendorName,
@@ -114,25 +118,23 @@ constexpr AudioDeviceDefinition MotuDefinition(DeviceDefinitionId id,
 }
 
 constexpr DeviceStreamTraits kDiceTraits{
-    .forcedStreamMode = ForcedStreamMode::Blocking,
+    .wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
 };
 
 constexpr DeviceStreamTraits kCmpBlockingTraits{
-    .forcedStreamMode = ForcedStreamMode::Blocking,
-    .startShape = StreamStartShape::CmpReceiveThenTransmit,
-    .cmpChoosesIsoChannel = true,
+    .wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
+    .resource = {.cmpChoosesIsoChannel = true},
+    .start = {.startShape = StreamStartShape::CmpReceiveThenTransmit},
 };
 
 constexpr DeviceStreamTraits kMackieBlockingTraits{
-    .forcedStreamMode = ForcedStreamMode::Blocking,
+    .wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
 };
 
 constexpr DeviceStreamTraits kCmpBlockingUntrustedStrideTraits{
-    .forcedStreamMode = ForcedStreamMode::Blocking,
-    .startShape = StreamStartShape::CmpReceiveThenTransmit,
-    .cmpChoosesIsoChannel = true,
-    .captureTrustConfiguredStride = true,
-    .startRatePinHz = 44100U,
+    .wire = {.forcedStreamMode = ForcedStreamMode::Blocking, .captureTrustConfiguredStride = true},
+    .resource = {.cmpChoosesIsoChannel = true},
+    .start = {.startShape = StreamStartShape::CmpReceiveThenTransmit, .startRatePinHz = 44100U},
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions

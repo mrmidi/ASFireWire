@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "Audio/Protocols/Backends/DuplexStreamProfile.hpp"
+#include "DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 
 namespace {
 
@@ -18,6 +19,9 @@ using ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
 using ASFW::DeviceProfiles::Audio::kTerraTecVendorId;
 using ASFW::DeviceProfiles::Audio::kPhase88RackFwModelId;
 using ASFW::DeviceProfiles::Audio::kMackieVendorId;
+using ASFW::DeviceProfiles::Audio::kMAudioVendorId;
+using ASFW::DeviceProfiles::Audio::kMAudioFireWire1814ModelId;
+using ASFW::DeviceProfiles::Audio::kMAudioProjectMixModelId;
 using ASFW::DeviceProfiles::Audio::kOnyx400FModelId;
 using ASFW::DeviceProfiles::Audio::kWeissInt202ModelId;
 using ASFW::DeviceProfiles::Audio::kWeissInt203ModelId;
@@ -25,10 +29,9 @@ using ASFW::DeviceProfiles::Audio::kWeissVendorId;
 using ASFW::Discovery::DeviceRecord;
 using ASFW::Encoding::AudioWireFormat;
 
-// The profile now asks the device catalog what this identity is, and the
-// catalog reads Config-ROM evidence. Building a record with only the flat
-// vendorId/modelId pair -- which is what these fixtures used to do -- describes
-// a conclusion rather than a device, and resolves to nothing.
+// Discovery resolves the catalog once and attaches that decision to the live
+// route. These fixtures construct the same record/policy pairing for profile
+// tests without involving a bus or DriverKit service.
 constexpr uint32_t kDiceInterfaceVersion = 0x000001;
 constexpr uint32_t kTa1394AvcSpecifier = 0x00A02D;
 constexpr uint32_t kTa1394AvcVersion = 0x010001;
@@ -40,6 +43,11 @@ constexpr uint32_t kFireworksVersion = 0x010000;
                                       uint32_t unitVersion) {
     DeviceRecord record{};
     record.instanceId = ASFW::Discovery::DeviceInstanceId{1};
+    record.deviceIncarnation = 1;
+    record.routeEpoch = 1;
+    record.gen = ASFW::Discovery::Generation{1};
+    record.nodeId = 2;
+    record.state = ASFW::Discovery::LifeState::Identified;
     record.guid = (static_cast<uint64_t>(vendorId) << 40U) | 0x04'0000'0000ULL;
     record.vendorId = vendorId;
     record.modelId = modelId.value_or(0U);
@@ -56,6 +64,19 @@ constexpr uint32_t kFireworksVersion = 0x010000;
     unit.specifierId = unitSpecifier;
     unit.version = unitVersion;
     record.identity.units.push_back(unit);
+    const auto plan = ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(record);
+    EXPECT_TRUE(plan.has_value());
+    if (plan.has_value()) {
+        record.audioPolicy = std::make_shared<const ASFW::DeviceProfiles::Audio::ResolvedDevicePolicy>(
+            ASFW::DeviceProfiles::Audio::ResolvedDevicePolicy{
+                *plan,
+                ASFW::Discovery::DeviceRouteToken{
+                    .guid = record.guid,
+                    .deviceIncarnation = record.deviceIncarnation,
+                    .routeEpoch = record.routeEpoch,
+                    .generation = record.gen,
+                    .nodeId = record.nodeId}});
+    }
     return record;
 }
 
@@ -65,6 +86,32 @@ constexpr uint32_t kFireworksVersion = 0x010000;
 
 [[nodiscard]] DeviceRecord AvcRecord(uint32_t vendorId, uint32_t modelId) {
     return MakeRecord(vendorId, modelId, kTa1394AvcSpecifier, kTa1394AvcVersion);
+}
+
+TEST(DuplexStreamProfileTests, MAudioSpecialResolvesAsymmetricSlotsAndTransmitFirst) {
+    const AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 10,
+        .hostOutputPcmChannels = 6,
+        .deviceToHostAm824Slots = 11,
+        .hostToDeviceAm824Slots = 7,
+        .sampleRateHz = 48000,
+    };
+
+    for (const uint32_t modelId : {kMAudioFireWire1814ModelId, kMAudioProjectMixModelId}) {
+        const DeviceRecord record = AvcRecord(kMAudioVendorId, modelId);
+        const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+        ASSERT_TRUE(profile.policyResolved) << modelId;
+        EXPECT_EQ(profile.captureStreams[0].am824Slots, 11U) << modelId;
+        EXPECT_EQ(profile.playbackStreams[0].am824Slots, 7U) << modelId;
+        EXPECT_EQ(profile.captureChannelMap.SlotFor(1), 4U) << modelId;
+        EXPECT_EQ(profile.captureChannelMap.SlotFor(2), 1U) << modelId;
+        EXPECT_EQ(profile.captureChannelMap.delayFrames,
+                  modelId == kMAudioFireWire1814ModelId ? 16U : 0U) << modelId;
+        EXPECT_FALSE(profile.startOrder.requiresPreStreamClockLock) << modelId;
+        EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kTransmit) << modelId;
+        EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kReceive) << modelId;
+        EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U) << modelId;
+    }
 }
 
 TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe) {
@@ -239,15 +286,7 @@ TEST(DuplexStreamProfileTests, WeissIntStartsHostTransmitFirstWithoutPreEnableSo
 // rows had capture forced to one stream. That clamp is disabled: it was
 // libffado's PLAYBACK workaround (m_nb_rx, dice_avdevice.cpp:1686-1700)
 // transcribed onto capture, and the vendor's own driver clamps neither
-// direction. See the #if 0 block in DuplexStreamProfile::ResolveChannels.
-//
-// This now pins the opposite: the device's advertised capture count survives.
-// It is deliberately the same two model ids and the same caps, so the diff
-// against the old expectation is the behaviour change itself.
-//
-// TODO(FW-DICE-ALESIS): if hardware shows a MultiMix over-reporting PLAYBACK,
-// the clamp comes back against playbackStreamCount and this test grows a
-// playback case -- it does not revert.
+// The device's advertised stream counts and per-stream geometry are preserved.
 TEST(DuplexStreamProfileTests, AlesisModelsKeepTheAdvertisedCaptureStreamCount) {
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = 32,
@@ -266,19 +305,12 @@ TEST(DuplexStreamProfileTests, AlesisModelsKeepTheAdvertisedCaptureStreamCount) 
         DeviceRecord record = DiceRecord(kAlesisVendorId, modelId);
         const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
 
-        // Both streams the device advertised are armed. Under the clamp this
-        // was 1, which on the recorded MultiMix meant dropping MAIN_IN L/R.
+        // Both streams advertised by the device are armed.
         EXPECT_EQ(profile.channels.captureStreamCount, 2U) << modelId;
         EXPECT_EQ(profile.channels.playbackStreamCount, 2U) << modelId;
         EXPECT_EQ(profile.captureStreams[0].isoChannel, 5U) << modelId;
 
-        // Per-stream slots, not the device's aggregate. This is the clamp's
-        // second and worse effect: Build() selects per-stream geometry only
-        // when captureStreamCount > 1 (DuplexStreamProfile.hpp:346), so forcing
-        // the count to 1 also made stream 0 report deviceToHostAm824Slots -- 34
-        // here -- when the stream physically carries 17. packetBandwidthUnits is
-        // derived from am824Slots, so the IRM reservation was sized from the
-        // aggregate too.
+        // Per-stream slots are used instead of the device's aggregate.
         EXPECT_EQ(profile.captureStreams[0].am824Slots, 17U) << modelId;
         EXPECT_EQ(profile.captureStreams[1].am824Slots, 17U) << modelId;
         EXPECT_EQ(profile.captureStreams[0].pcmChannels, 16U) << modelId;

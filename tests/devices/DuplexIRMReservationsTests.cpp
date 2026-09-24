@@ -12,6 +12,7 @@
 #include "Audio/Protocols/Backends/DuplexIRMReservations.hpp"
 #include "Bus/IRM/IRMClient.hpp"
 #include "Common/WireFormat.hpp"
+#include "../support/MAudioSpecialHappyPathFixture.inc"
 
 #include <algorithm>
 #include <cstdint>
@@ -112,6 +113,8 @@ public:
                      FwSpeed speed,
                      InterfaceCompletionCallback callback) override {
         Record(OpKind::Lock, address.addressLo, static_cast<uint32_t>(operand.size()), speed);
+        lockOperands_.emplace_back(address.addressLo,
+                                   std::vector<uint8_t>(operand.begin(), operand.end()));
         if (generation != generation_) {
             callback(AsyncStatus::kStaleGeneration, {});
             return NextHandle();
@@ -165,6 +168,7 @@ public:
     [[nodiscard]] uint32_t ChannelsAvailable31_0() const { return channelsAvailable31_0_; }
     [[nodiscard]] uint32_t ChannelsAvailable63_32() const { return channelsAvailable63_32_; }
     [[nodiscard]] const std::vector<RecordedOp>& Operations() const { return operations_; }
+    [[nodiscard]] const auto& LockOperands() const { return lockOperands_; }
 
 private:
     AsyncHandle NextHandle() { return AsyncHandle{nextHandle_++}; }
@@ -181,9 +185,50 @@ private:
     NodeId localNodeId_{NodeId{0}};
     uint32_t nextHandle_{1};
     std::vector<RecordedOp> operations_;
+    std::vector<std::pair<uint32_t, std::vector<uint8_t>>> lockOperands_;
 };
 
 // --- Tests ---
+
+TEST(DuplexIRMReservationsTests, Captured1814HappyPathAllocatesExactIrmResources) {
+    namespace Capture = MAudioSpecialHappyPathFixture;
+    std::vector<const Capture::Event*> capturedLocks;
+    uint32_t initialBandwidth = 0;
+    uint32_t initialChannels = 0;
+    for (const auto& event : Capture::kEvents) {
+        const auto address = static_cast<uint32_t>(event.address);
+        if (event.kind == Capture::EventKind::QRresp && address == 0xF0000220U &&
+            initialBandwidth == 0) initialBandwidth = event.value;
+        if (event.kind == Capture::EventKind::QRresp && address == 0xF0000224U &&
+            initialChannels == 0) initialChannels = event.value;
+        if (event.kind == Capture::EventKind::LockRq &&
+            (address == 0xF0000220U || address == 0xF0000224U)) {
+            capturedLocks.push_back(&event);
+        }
+    }
+    ASSERT_EQ(capturedLocks.size(), 4U);
+    ASSERT_EQ(initialBandwidth, 0x1333U);
+    ASSERT_EQ(initialChannels, 0xfffffffeU);
+    // Bit 0 is already clear in the captured map (channel 31). The successful
+    // run then reserves channels 0 and 1 using these exact CAS operands.
+    DuplexMockFireWireBus bus;
+    bus.SetIRMResourceState(initialBandwidth, initialChannels, 0xffffffffU);
+    IRMClient irm(bus);
+    irm.SetIRMNode(2, Generation{1});
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+    ASSERT_EQ(reservations.Reserve(irm, 0, 0x2f4U), kIOReturnSuccess);
+    ASSERT_EQ(reservations.Reserve(irm, 1, 0x374U), kIOReturnSuccess);
+    const auto& actualLocks = bus.LockOperands();
+    ASSERT_EQ(actualLocks.size(), capturedLocks.size());
+    for (size_t index = 0; index < capturedLocks.size(); ++index) {
+        EXPECT_EQ(actualLocks[index].first,
+                  static_cast<uint32_t>(capturedLocks[index]->address));
+        EXPECT_EQ(actualLocks[index].second,
+                  std::vector<uint8_t>(capturedLocks[index]->payload,
+                                       capturedLocks[index]->payload +
+                                           capturedLocks[index]->payloadSize));
+    }
+}
 
 TEST(DuplexIRMReservationsTests,
      DuplexIRMReservationsAllocatesAndReleasesBothDirections) {

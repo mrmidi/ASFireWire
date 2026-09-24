@@ -13,4 +13,13 @@ public:
     void SetGuid(uint64_t) {}
     [[nodiscard]] uint32_t GetCurrentSampleRateHz() const noexcept { return 48000; }
     void NotifyDeviceClockChanged(uint32_t) noexcept {}
+    kern_return_t RequestTxPreparation(uint64_t generation) {
+        ++txPreparationRequests;
+        lastTxPreparationGeneration = generation;
+        return kIOReturnSuccess;
+    }
+    void RequestTimingRecovery(uint64_t) {}
+
+    uint64_t txPreparationRequests{0};
+    uint64_t lastTxPreparationGeneration{0};
 };

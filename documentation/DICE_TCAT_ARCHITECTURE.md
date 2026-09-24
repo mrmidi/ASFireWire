@@ -309,7 +309,6 @@ deltas, Weiss's capture-visibility policy, Generic's flat offsets, and names.**
 | **StartIO is host-sourced and 2-stream** | builds streams 0 and 1 from `profile->BuildTxStreamConfig`, hardcoded. `Model::ASFWAudioDevice` carries only aggregate channel counts, so per-stream geometry cannot cross the nub. **Consequence:** playback geometry may not be seeded — see below. |
 | **Rates are a host constant** | `DiceDeviceProfile::SupportedSampleRates()` returns a flat `{44100, 48000}`. `clockCaps` is read into `state.clockCaps` and decoded by `DiceClockCapsSupportRate()`, but never reaches `AudioStreamRuntimeCaps` or `dev.sampleRates`. |
 | **Caps never invalidate** | `DICETcatProtocol::ResetRuntimeCaps()` is reachable only from `Shutdown()`. A rate change does not re-read. Not currently observable: `kDiceMaxSupportedRateHz = 48000` and 32/44.1/48 are all rate mode *low*, so no mode change can occur. It becomes live the moment the ceiling rises. |
-| **`clampCaptureStreamsToOne`** | **Disabled 2026-09-20.** Clamped host **capture** on both Alesis rows while citing libffado, which clamps host **playback** (§2.9); on the recorded MultiMix that discarded the `MAIN_IN L/R` stream, 12 channels where the device carries 14. Its consumer in `DuplexStreamProfile::ResolveChannels` is now `#if 0`-ed with the full reasoning; the trait field and the two catalog rows are kept so re-enabling is one block plus a direction fix. See the TODO below. |
 | **Extended channel-name block** | `DICEDuplexBringupController.cpp:982` reads the standard names offset unconditionally; a device with stream `SIZE >= 326` uses `+0x120` (§2.2). Cosmetic — wrong or empty labels, not a streaming fault. |
 
 ### 3.4 Every geometry consumer now reads the device
@@ -446,8 +445,7 @@ can be deleted.
   intersect with the ceiling; firmware fallback. Independent of A.
   Afterwards `SupportedSampleRates()` has no DICE consumer.
 - **C — collapse seven classes into one builder + the §4.1 scalars.** Only
-  possible once A and B have removed the consumers. `StreamGeometryAuthority`
-  and `clampCaptureStreamsToOne` both delete themselves here.
+  possible once A and B have removed their consumers.
 - **D — invalidate on rate change**, per discovery source (§2.5): EAP devices
   read all modes once; register-only devices re-read after the switch, as
   `RestartStreaming → PopulateDeviceStruct` does. Unblocks raising the ceiling.

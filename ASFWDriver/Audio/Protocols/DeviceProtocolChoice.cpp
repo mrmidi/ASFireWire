@@ -6,39 +6,35 @@
 namespace ASFW::Audio {
 
 std::optional<DeviceProtocolChoice>
-ChooseDeviceProtocol(const Discovery::DeviceRecord& record) noexcept {
-    using DeviceProfiles::Audio::AudioDeviceCatalog;
+ChooseDeviceProtocol(
+    const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) noexcept {
     using DeviceProfiles::Audio::DeviceDefinitionId;
     using DeviceProfiles::Audio::ProfileBuilderId;
 
-    const auto plan = AudioDeviceCatalog::Resolve(record);
-    if (!plan.has_value() || plan->profileBuilder == ProfileBuilderId::None) {
+    if (plan.profileBuilder == ProfileBuilderId::None) {
         return std::nullopt;
     }
     return DeviceProtocolChoice{
-        .definition = plan->candidates.empty() ? DeviceDefinitionId::Unknown
-                                               : plan->candidates.front(),
-        .builder = plan->profileBuilder,
-        .unitVersion = plan->unitVersion,
-        .unitDirectoryOffset = plan->unit.unitDirectoryOffset,
+        .definition = plan.candidates.empty() ? DeviceDefinitionId::Unknown
+                                              : plan.candidates.front(),
+        .builder = plan.profileBuilder,
+        .implementation = plan.protocolImplementation,
+        .unitVersion = plan.unitVersion,
+        .unitDirectoryOffset = plan.unit.unitDirectoryOffset,
     };
 }
 
 std::optional<AudioBackendKind>
-ChooseAudioBackend(const Discovery::DeviceRecord& record) noexcept {
-    using DeviceProfiles::Audio::AudioDeviceCatalog;
+ChooseAudioBackend(
+    const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) noexcept {
     using DeviceProfiles::Audio::AudioFamilyProviderId;
     using DeviceProfiles::Audio::SupportDisposition;
 
-    const auto plan = AudioDeviceCatalog::Resolve(record);
-    if (!plan.has_value()) {
+    if (plan.support != SupportDisposition::Supported &&
+        plan.support != SupportDisposition::GenericFallback) {
         return std::nullopt;
     }
-    if (plan->support != SupportDisposition::Supported &&
-        plan->support != SupportDisposition::GenericFallback) {
-        return std::nullopt;
-    }
-    switch (plan->family) {
+    switch (plan.family) {
         case AudioFamilyProviderId::DICE:
             return AudioBackendKind::Dice;
         case AudioFamilyProviderId::MotuRegister:

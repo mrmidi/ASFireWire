@@ -73,6 +73,9 @@ constexpr uint32_t kFocusriteVendorId = ASFW::DeviceProfiles::Audio::kFocusriteV
 constexpr uint32_t kSPro24DspModelId = ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
 constexpr uint32_t kApogeeVendorId = ASFW::DeviceProfiles::Audio::kApogeeVendorId;
 constexpr uint32_t kApogeeDuetModelId = ASFW::DeviceProfiles::Audio::kApogeeDuetModelId;
+constexpr uint32_t kMAudioVendorId = ASFW::DeviceProfiles::Audio::kMAudioVendorId;
+constexpr uint32_t kMAudioFireWire1814ModelId =
+    ASFW::DeviceProfiles::Audio::kMAudioFireWire1814ModelId;
 constexpr AudioClockConfig kSupportedClock{
     .sampleRateHz = 48000U,
 };
@@ -468,6 +471,16 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
     void ConfirmDuplexStart(ConfirmCallback callback) override {
         log_.Add("device.confirm");
         ++confirmCalls;
+        {
+            std::unique_lock lock(mutex_);
+            if (deferConfirmCallback_) {
+                log_.Add("device.confirm.interim");
+                deferredConfirmCallback_ = std::move(callback);
+                confirmBlocked_ = true;
+                cv_.notify_all();
+                return;
+            }
+        }
         if (confirmStatus == kIOReturnSuccess) {
             currentCaps_ = confirmCaps_;
         }
@@ -480,6 +493,46 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
                                     .status = 0x201,
                                     .extStatus = 0,
                                 });
+    }
+
+    void SetDeferConfirmCallback(bool defer) {
+        std::scoped_lock lock(mutex_);
+        deferConfirmCallback_ = defer;
+        if (!defer) {
+            deferredConfirmCallback_ = {};
+            confirmBlocked_ = false;
+        }
+        cv_.notify_all();
+    }
+
+    bool WaitUntilConfirmBlocked() {
+        std::unique_lock lock(mutex_);
+        return cv_.wait_for(lock, std::chrono::seconds(2), [this] {
+            return confirmBlocked_ && static_cast<bool>(deferredConfirmCallback_);
+        });
+    }
+
+    void CompleteDeferredConfirm(IOReturn status) {
+        ConfirmCallback callback;
+        {
+            std::scoped_lock lock(mutex_);
+            callback = std::move(deferredConfirmCallback_);
+            confirmBlocked_ = false;
+        }
+        if (status == kIOReturnSuccess) {
+            currentCaps_ = confirmCaps_;
+        }
+        log_.Add(status == kIOReturnSuccess ? "device.confirm.accepted"
+                                            : "device.confirm.rejected");
+        callback(status, DuplexConfirmResult{
+                            .generation = Generation{1},
+                            .channels = lastChannels_,
+                            .appliedClock = currentClock_,
+                            .runtimeCaps = currentCaps_,
+                            .notification = 0x20,
+                            .status = 0x201,
+                            .extStatus = 0,
+                        });
     }
 
     void ApplyClockConfig(const AudioClockConfig& desiredClock,
@@ -628,7 +681,10 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
     bool holdApply_{false};
     bool prepareBlocked_{false};
     bool applyBlocked_{false};
+    bool deferConfirmCallback_{false};
+    bool confirmBlocked_{false};
     PrepareCallback deferredPrepareCallback_{};
+    ConfirmCallback deferredConfirmCallback_{};
 };
 
 // A DICE unit publishes the vendor OUI as its specifier with interface version
@@ -850,6 +906,73 @@ TEST_F(AudioDuplexCoordinatorTests, ColdStartTransitionsIdleToRunning) {
                              }));
 }
 
+TEST_F(AudioDuplexCoordinatorTests,
+       MAudioDelayedStartConfirmationKeepsHostDuplexRunningUntilFinalAcceptance) {
+    (void)registry_.UpsertFromROM(
+        MakeAvcConfigRom(kTestGuid, kMAudioVendorId, kMAudioFireWire1814ModelId),
+        LinkPolicy{});
+    ClearLog();
+    protocol_->SetDeferConfirmCallback(true);
+
+    std::promise<IOReturn> startPromise;
+    auto startFuture = startPromise.get_future();
+    std::thread startThread(
+        [&] { startPromise.set_value(coordinator_.StartStreaming(kTestGuid)); });
+
+    const bool confirmBlocked = protocol_->WaitUntilConfirmBlocked();
+    if (!confirmBlocked) {
+        protocol_->SetDeferConfirmCallback(false);
+        startThread.join();
+        FAIL() << "start did not reach deferred duplex confirmation";
+        return;
+    }
+    auto session = GetSession();
+    if (!session.has_value()) {
+        protocol_->CompleteDeferredConfirm(kIOReturnSuccess);
+        startThread.join();
+        FAIL() << "deferred confirmation had no start session";
+        return;
+    }
+    EXPECT_TRUE(session->hostTransmitStarted);
+    EXPECT_TRUE(session->hostReceiveStarted);
+    EXPECT_FALSE(session->deviceRunning);
+    EXPECT_EQ(hostTransport_.startTransmitCalls, 1);
+    EXPECT_EQ(hostTransport_.startReceiveCalls, 1);
+    EXPECT_EQ(hostTransport_.stopTransmitCalls, 0);
+    EXPECT_EQ(hostTransport_.stopReceiveCalls, 0);
+    EXPECT_EQ(hostTransport_.stopCalls, 0);
+    EXPECT_EQ(protocol_->stopCalls, 0);
+    EXPECT_EQ(protocol_->disconnectPlaybackCalls, 0);
+    EXPECT_EQ(protocol_->disconnectCaptureCalls, 0);
+    EXPECT_EQ(LogSnapshot().back(), "device.confirm.interim");
+    const auto beforeFinal = LogSnapshot();
+    const auto txStart = std::find(beforeFinal.begin(), beforeFinal.end(), "host.start_transmit");
+    const auto rxStart = std::find(beforeFinal.begin(), beforeFinal.end(), "host.start_receive");
+    EXPECT_NE(txStart, beforeFinal.end());
+    EXPECT_NE(rxStart, beforeFinal.end());
+    if (txStart != beforeFinal.end() && rxStart != beforeFinal.end()) {
+        EXPECT_LT(txStart, rxStart);
+    }
+
+    // The adapter reports its final accepted response after the interim. The
+    // coordinator must then complete the same start instead of rolling it back.
+    protocol_->CompleteDeferredConfirm(kIOReturnSuccess);
+    EXPECT_EQ(startFuture.get(), kIOReturnSuccess);
+    startThread.join();
+
+    session = GetSession();
+    ASSERT_TRUE(session.has_value());
+    EXPECT_EQ(session->phase, DuplexRestartPhase::kRunning);
+    EXPECT_TRUE(session->hostTransmitStarted);
+    EXPECT_TRUE(session->hostReceiveStarted);
+    EXPECT_TRUE(session->deviceRunning);
+    EXPECT_EQ(hostTransport_.stopTransmitCalls, 0);
+    EXPECT_EQ(hostTransport_.stopReceiveCalls, 0);
+    EXPECT_EQ(hostTransport_.stopCalls, 0);
+    EXPECT_EQ(protocol_->stopCalls, 0);
+    EXPECT_EQ(LogSnapshot().back(), "device.confirm.accepted");
+}
+
 TEST_F(AudioDuplexCoordinatorTests, RemoteDeviceLossRejectsRestartUntilRediscovery) {
     coordinator_.CancelRemoteDevice(kTestGuid);
     EXPECT_TRUE(coordinator_.IsDeviceOperationCancelled(kTestGuid));
@@ -950,6 +1073,30 @@ TEST_F(AudioDuplexCoordinatorTests,
     ASSERT_NE(prepare, log.end());
     ASSERT_NE(reservePlayback, log.end());
     EXPECT_LT(prepare, reservePlayback);
+}
+
+TEST_F(AudioDuplexCoordinatorTests, MAudioSpecialProfileIsRestrictedTo48k) {
+    (void)registry_.UpsertFromROM(
+        MakeAvcConfigRom(kTestGuid, kMAudioVendorId, kMAudioFireWire1814ModelId),
+        LinkPolicy{});
+
+    EXPECT_EQ(coordinator_.RequestClockConfig(
+                  kTestGuid, AudioClockConfig{.sampleRateHz = 44100U},
+                  DuplexRestartReason::kSampleRateChange), kIOReturnUnsupported);
+    EXPECT_EQ(coordinator_.RequestClockConfig(
+                  kTestGuid, AudioClockConfig{.sampleRateHz = 88200U},
+                  DuplexRestartReason::kSampleRateChange), kIOReturnUnsupported);
+    ASSERT_EQ(coordinator_.RequestClockConfig(
+                  kTestGuid, AudioClockConfig{.sampleRateHz = 48000U},
+                  DuplexRestartReason::kSampleRateChange), kIOReturnSuccess);
+    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 48000U);
+
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 48000U);
+    const auto session = GetSession();
+    ASSERT_TRUE(session.has_value());
+    EXPECT_EQ(session->desiredClock.sampleRateHz, 48000U);
+    EXPECT_EQ(session->appliedClock.sampleRateHz, 48000U);
 }
 
 TEST_F(AudioDuplexCoordinatorTests, TeardownCancelAbortsInFlightPrepare) {
@@ -1384,7 +1531,9 @@ TEST_F(AudioDuplexCoordinatorTests, RouteRebindDuringPrepareInvalidatesRestartEp
     EXPECT_EQ(session->lastInvalidation->cause, DuplexRestartFailureCause::kPrepare);
     EXPECT_TRUE(session->lastInvalidation->retryable);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
-    EXPECT_EQ(protocol_->stopCalls, 1);
+    // The old route has been invalidated. Host DMA must stop, while the driver
+    // must not send a device stop command to the newly rebound route.
+    EXPECT_EQ(protocol_->stopCalls, 0);
 }
 
 TEST_F(AudioDuplexCoordinatorTests, ProgramRxFailureRollsBackHostAndDeviceInOrder) {

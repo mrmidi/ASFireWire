@@ -5,6 +5,8 @@ protocol ASFWLiveDriverBackend: AnyObject {
     var mcpIsConnected: Bool { get }
     var mcpLastError: String? { get }
 
+    func mcpDriverVersion() -> DriverVersionInfo?
+
     func mcpCurrentGeneration() -> UInt32?
     func mcpControllerStatus() -> ControllerStatus?
     func mcpFetchDiagnostics() throws -> ASFWDiagnosticsSnapshot
@@ -32,6 +34,10 @@ protocol ASFWLiveDriverBackend: AnyObject {
 extension ASFWDriverConnector: ASFWLiveDriverBackend {
     var mcpIsConnected: Bool { isConnected }
     var mcpLastError: String? { lastError }
+
+    func mcpDriverVersion() -> DriverVersionInfo? {
+        getDriverVersion()
+    }
 
     func mcpCurrentGeneration() -> UInt32? {
         getControllerStatus()?.generation
@@ -156,6 +162,11 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     /// is not captured here — see `ASFWMCPFcpRecord`.
     private var fcpRecords: [ASFWMCPFcpRecord] = []
     private static let fcpRecordCapacity = 64
+
+    func fetchDriverVersion() async -> DriverVersionInfo? {
+        guard backend.mcpIsConnected else { return nil }
+        return backend.mcpDriverVersion()
+    }
 
     private static func bigEndianQuadlets(from data: Data) -> [UInt32] {
         guard data.count >= 4 else { return [] }

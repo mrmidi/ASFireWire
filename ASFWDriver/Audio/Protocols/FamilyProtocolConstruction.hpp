@@ -6,6 +6,7 @@
 #pragma once
 
 #include "IDeviceProtocol.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Protocols/Ports/FireWireBusPort.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 
@@ -29,12 +30,10 @@ class ITimerScheduler;
 
 namespace ASFW::Audio {
 
-/// Constructs a device-specific protocol handler keyed on the family and profile builder
-/// resolved from the device record's Config ROM evidence.
-///
-/// Returns nullptr for unsupported devices or devices that do not use a family protocol.
+/// Constructs a device-specific protocol handler from an already resolved
+/// catalog decision. The concrete class is independent of endpoint profile.
 [[nodiscard]] std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
-    const Discovery::DeviceRecord& record,
+    const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
     Protocols::Ports::FireWireBusOps& busOps,
     Protocols::Ports::FireWireBusInfo& busInfo,
     Discovery::DeviceRegistry& routeRegistry,

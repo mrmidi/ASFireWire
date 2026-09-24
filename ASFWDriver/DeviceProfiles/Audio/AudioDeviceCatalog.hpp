@@ -152,6 +152,24 @@ enum class ProfileBuilderId : uint16_t {
     kLastValid = GenericBeBoB,
 };
 
+/// Concrete protocol class chosen by the catalog. This is deliberately
+/// independent of ProfileBuilderId: several device profiles share one wire
+/// protocol, while the profile still determines endpoint geometry.
+enum class ProtocolImplementationId : uint8_t {
+    None = 0,
+    DiceTcat,
+    DiceSPro24Dsp,
+    DiceWeissInt,
+    ApogeeDuet,
+    MackieOnyx,
+    FireworksOnyx400F,
+    BeBoBPhase88,
+    BeBoBGeneric,
+    BeBoBMAudioSpecial,
+    MotuV2,
+    kLastValid = MotuV2,
+};
+
 /// AMDTP cadence a device must be driven at regardless of what it reports.
 /// Unspecified means "believe the probe", which is what an unlisted device gets.
 enum class ForcedStreamMode : uint8_t {
@@ -180,35 +198,22 @@ enum class StreamStartShape : uint8_t {
     /// packets can establish the device receive-clock path. Source lock is
     /// inspected post-start, not used as an admission gate.
     TransmitFirst,
+    /// M-Audio special BeBoB: establish both CMP plugs, start host IT before
+    /// host IR, then reassert signal format after both DMA contexts run.
+    /// Linux bebob_stream.c:411-438,623-659 (rx_stream is host IT).
+    MAudioSpecial,
 };
 
-/// Wire-level facts about a device that no probe reports, so the driver has to
-/// be told them. Every field defaults to "nothing special", which is exactly
-/// how an unlisted device behaves -- a definition that states none of these is
-/// indistinguishable from having no definition at all, for these purposes.
-struct DeviceStreamTraits final {
+/// Static stream facts a probe does not report, grouped by the decision each
+/// one feeds so no single struct becomes a quirks bag (FW-168): how the wire
+/// is framed, who owns isochronous resources, and how a duplex start is
+/// choreographed. Every field defaults to "nothing special", which is exactly
+/// how an unlisted device behaves.
+
+/// Wire framing and codec -- consumed by stream-profile resolution and AV/C
+/// stream-mode selection.
+struct StreamWirePolicy final {
     ForcedStreamMode forcedStreamMode{ForcedStreamMode::Unspecified};
-    StreamStartShape startShape{StreamStartShape::Default};
-
-    /// INERT since 2026-09-20 — its only consumer is `#if 0`-ed out in
-    /// DuplexStreamProfile::ResolveChannels, which carries the full reasoning.
-    ///
-    /// Short version: it was transcribed from libffado's Alesis workaround into
-    /// the opposite direction. libffado clamps host PLAYBACK (`m_nb_rx`,
-    /// dice_avdevice.cpp:1686-1700) and never touches capture; this clamped
-    /// capture, dropping the recorded MultiMix's MAIN_IN L/R pair. Alesis's own
-    /// driver clamps neither direction.
-    ///
-    /// The field and the catalog rows that set it are kept so re-enabling is a
-    /// one-block change once hardware settles whether the hazard is real.
-    /// TODO(FW-DICE-ALESIS).
-    bool clampCaptureStreamsToOne{false};
-
-    /// CMP owns the isochronous channel: the device has no fixed one, IRM
-    /// picks it and the PCR commits it back. True for every CMP-driven family
-    /// (BeBoB, Oxford, Fireworks); false for DICE, which programs a channel
-    /// into its own registers, and for MOTU.
-    bool cmpChoosesIsoChannel{false};
 
     /// The capture-side CIP dbs field is untrusted and the configured slot
     /// count is the authority. Loud/Mackie (snd-oxfw oxfw.c:189-196,
@@ -221,10 +226,30 @@ struct DeviceStreamTraits final {
     /// the Saffire Pro 24 DSP switches wire format with its configuration, so
     /// this cannot be a static property of the identity.
     bool rawPcm24In32WhenEightInNineSlots{false};
+};
+
+/// Isochronous resource ownership -- consumed by duplex geometry planning.
+struct IsochResourcePolicy final {
+    /// CMP owns the isochronous channel: the device has no fixed one, IRM
+    /// picks it and the PCR commits it back. True for every CMP-driven family
+    /// (BeBoB, Oxford, Fireworks); false for DICE, which programs a channel
+    /// into its own registers, and for MOTU.
+    bool cmpChoosesIsoChannel{false};
+};
+
+/// Duplex start choreography -- consumed by the duplex coordinator.
+struct StreamStartPolicy final {
+    StreamStartShape startShape{StreamStartShape::Default};
 
     /// Fixed or default start sample rate in Hz (e.g. 48000 for Duet, 44100 for Onyx-i / Onyx 400F).
     /// 0 means no pin (use standard 48 kHz default or requested session clock).
     uint32_t startRatePinHz{0};
+};
+
+struct DeviceStreamTraits final {
+    StreamWirePolicy wire{};
+    IsochResourcePolicy resource{};
+    StreamStartPolicy start{};
 };
 
 enum class SupportDisposition : uint8_t {
@@ -245,19 +270,6 @@ enum class PersistentKeyRecipeId : uint8_t {
     ReliableObservedEui64,
 };
 
-// Safe, read-only family probe facts may disambiguate marketing variants that
-// Config ROM cannot distinguish. Every populated field is an AND constraint.
-// This deliberately describes stream evidence without depending on Audio
-// runtime types, keeping the catalog declarative.
-struct SafeProbeConstraint final {
-    std::optional<uint32_t> hostInputPcmChannels;
-    std::optional<uint32_t> hostOutputPcmChannels;
-    std::optional<uint32_t> deviceToHostSlots;
-    std::optional<uint32_t> hostToDeviceSlots;
-    std::optional<uint32_t> deviceToHostStreamCount;
-    std::optional<uint32_t> hostToDeviceStreamCount;
-};
-
 enum class CatalogResolutionError : uint8_t {
     NoMatch = 0,
     HazardousIdentity,
@@ -275,11 +287,11 @@ struct AudioDeviceDefinition final {
     ProbePolicyId probePolicy{ProbePolicyId::None};
     ProfileBuilderId profileBuilder{ProfileBuilderId::None};
     ProfileBuilderId commonEquivalenceProfileBuilder{ProfileBuilderId::None};
+    ProtocolImplementationId protocolImplementation{ProtocolImplementationId::None};
     SupportDisposition support{SupportDisposition::RecognizedUnsupported};
     GuidReliability guidReliability{GuidReliability::ReliableWhenUnique};
     PersistentKeyRecipeId persistentKeyRecipe{
         PersistentKeyRecipeId::ReliableObservedEui64};
-    SafeProbeConstraint probeConstraint{};
     DeviceStreamTraits streamTraits{};
     BootloaderCuePolicy bootloaderCue{BootloaderCuePolicy::None};
     const char* vendorName{nullptr};
@@ -298,15 +310,6 @@ struct MatchProvenance final {
     uint8_t clauseIndex{0};
 };
 
-struct CandidateEndpointPlan final {
-    DeviceDefinitionId definitionId{DeviceDefinitionId::Unknown};
-    uint32_t variantId{0};
-    ProfileBuilderId profileBuilder{ProfileBuilderId::None};
-    SafeProbeConstraint probeConstraint{};
-    std::string vendorName;
-    std::string modelName;
-};
-
 struct StaticAudioEndpointPlan final {
     Discovery::UnitInstanceId unit{};
     uint32_t unitVersion{0};
@@ -318,10 +321,10 @@ struct StaticAudioEndpointPlan final {
     PersistentKeyRecipeId persistentKeyRecipe{PersistentKeyRecipeId::None};
     uint32_t equivalenceClassId{0};
     std::vector<DeviceDefinitionId> candidates;
-    std::vector<CandidateEndpointPlan> candidatePlans;
     std::vector<MatchProvenance> provenance;
     ProfileBuilderId profileBuilder{ProfileBuilderId::None};
     ProfileBuilderId commonEquivalenceProfileBuilder{ProfileBuilderId::None};
+    ProtocolImplementationId protocolImplementation{ProtocolImplementationId::None};
     DeviceStreamTraits streamTraits{};
     BootloaderCuePolicy bootloaderCue{BootloaderCuePolicy::None};
     std::string vendorName;
@@ -378,27 +381,14 @@ public:
     [[nodiscard]] static std::optional<const AudioSafetyRule*>
     MatchAnySafetyRule(const Discovery::DeviceIdentityEvidence& device) noexcept;
 
-    /// Which AV/C command shapes this identity may be sent, decided from Config
-    /// ROM alone and before any transaction. Device-level like
-    /// MatchAnySafetyRule: it tries every unit and returns the first definition
-    /// that constrains the device. Unmatched identities are Unrestricted, which
-    /// preserves today's behaviour for every device without a definition.
+    /// Projection of an already resolved device-level decision. Runtime
+    /// consumers use this overload after the decision is handed off, avoiding
+    /// a second identity match before setting the FCP command gate.
     [[nodiscard]] static Discovery::AvcCommandFilterId
-    CommandFilterFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
+    CommandFilterFor(const StaticAudioEndpointPlan& plan) noexcept;
 
-    /// The stream traits this identity carries, decided from Config ROM alone.
-    /// Device-level like CommandFilterFor: it tries every unit and returns the
-    /// first definition that matches. An unmatched identity gets the defaults,
-    /// which is today's behaviour for every device without a definition.
-    [[nodiscard]] static DeviceStreamTraits
-    StreamTraitsFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
-
-    /// The profile builder this identity resolves to, or None. Device-level
-    /// like the two above, for callers that hold Config-ROM evidence but not a
-    /// registry record -- the AV/C discovery path, which must tell the nub what
-    /// the device is at publication time.
-    [[nodiscard]] static ProfileBuilderId
-    ProfileBuilderFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
+    [[nodiscard]] static Discovery::AvcCommandFilterId
+    CommandFilterFor(CatalogResolutionError error) noexcept;
 
     [[nodiscard]] static const char* MotuModelNameForSwVersion(uint32_t swVersion) noexcept;
 

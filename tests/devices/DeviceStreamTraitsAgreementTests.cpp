@@ -11,8 +11,8 @@
 // were an observed oracle before they became written-down expectations. The
 // table is deleted now; the expectations remain.
 //
-// Every difference from it is deliberate and named below. There are two, and
-// neither is reachable.
+// The original equivalence cases remain below. M-Audio's newly enabled
+// special-firmware route adds explicit blocking and start-order expectations.
 
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
@@ -68,12 +68,18 @@ Identity(uint32_t vendorId, uint32_t modelId, uint32_t unitSpecifier,
     return Identity(vendorId, modelId, vendorId, kDiceInterfaceVersion);
 }
 
+[[nodiscard]] DeviceStreamTraits ResolveTraits(
+    const Discovery::DeviceIdentityEvidence& identity) {
+    const auto plan = AudioDeviceCatalog::Resolve(identity);
+    EXPECT_TRUE(plan.has_value());
+    return plan.has_value() ? plan->streamTraits : DeviceStreamTraits{};
+}
+
 // ---------------------------------------------------------------------------
 // Forced stream mode
 // ---------------------------------------------------------------------------
 
-// The equivalence that matters: every identity that can actually reach the
-// consumer must get the same answer it does today.
+// Every identity that can reach the consumer has an explicit expected cadence.
 TEST(DeviceStreamTraitsAgreement, ForcedModeMatchesTheOldTableForEveryAvcDevice) {
     struct Case {
         uint32_t vendorId;
@@ -94,18 +100,18 @@ TEST(DeviceStreamTraitsAgreement, ForcedModeMatchesTheOldTableForEveryAvcDevice)
          ForcedStreamMode::Blocking},
         {kMackieVendorId, kOnyx1200FModelId, kFireworksVersion,
          ForcedStreamMode::Blocking},
-        // M-Audio was never in the old BeBoB list, so it must stay unforced.
+        // Special-firmware M-Audio devices require blocking cadence when streamed.
         {kMAudioVendorId, kMAudioFireWire1814ModelId, kTa1394AvcVersion,
-         ForcedStreamMode::Unspecified},
+         ForcedStreamMode::Blocking},
         {kMAudioVendorId, kMAudioProjectMixModelId, kTa1394AvcVersion,
-         ForcedStreamMode::Unspecified},
+         ForcedStreamMode::Blocking},
         // Not a device we know at all.
         {0x00AABB, 0x000042, kTa1394AvcVersion, ForcedStreamMode::Unspecified},
     };
     for (const auto& [vendorId, modelId, unitVersion, expected] : avcDevices) {
-        EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
+        EXPECT_EQ(ResolveTraits(
                       Identity(vendorId, modelId, kTa1394AvcSpecifier, unitVersion))
-                      .forcedStreamMode,
+                      .wire.forcedStreamMode,
                   expected)
             << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
     }
@@ -126,8 +132,8 @@ TEST(DeviceStreamTraitsAgreement, EveryDicePartStatesBlockingEvenWhereTheOldTabl
         {kFocusriteVendorId, kSPro40Tcd3070ModelId},  // old table: nothing
     };
     for (const auto& [vendorId, modelId] : diceParts) {
-        EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(DiceIdentity(vendorId, modelId))
-                      .forcedStreamMode,
+        EXPECT_EQ(ResolveTraits(DiceIdentity(vendorId, modelId))
+                      .wire.forcedStreamMode,
                   ForcedStreamMode::Blocking)
             << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
     }
@@ -143,8 +149,8 @@ TEST(DeviceStreamTraitsAgreement, EveryDicePartStatesBlockingEvenWhereTheOldTabl
 TEST(DeviceStreamTraitsAgreement, AnUnlistedMackieNoLongerGetsVendorWideBlocking) {
     // The old table returned Blocking here on the vendor alone.
     constexpr uint32_t kUnlistedMackieModel = 0x00AAAA;
-    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
-                  AvcIdentity(kMackieVendorId, kUnlistedMackieModel)).forcedStreamMode,
+    EXPECT_EQ(ResolveTraits(
+                  AvcIdentity(kMackieVendorId, kUnlistedMackieModel)).wire.forcedStreamMode,
               ForcedStreamMode::Unspecified);
 
     // And the id that motivates the gap is still a sentinel, so no real device
@@ -155,8 +161,8 @@ TEST(DeviceStreamTraitsAgreement, AnUnlistedMackieNoLongerGetsVendorWideBlocking
 // An unknown device must stay unspecified: forcing a cadence on a device we
 // have never seen is a guess, and the probe's answer is better than a guess.
 TEST(DeviceStreamTraitsAgreement, AnUnknownDeviceGetsNoForcedMode) {
-    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(AvcIdentity(0x00AABB, 0x000042))
-                  .forcedStreamMode,
+    EXPECT_EQ(ResolveTraits(AvcIdentity(0x00AABB, 0x000042))
+                  .wire.forcedStreamMode,
               ForcedStreamMode::Unspecified);
 }
 
@@ -180,84 +186,69 @@ TEST(DeviceStreamTraitsAgreement, CmpDrivenFamiliesCarryTheCmpStartShape) {
         {kMackieVendorId, kOnyx400FModelId, kFireworksVersion},   // IsMackieOnyx400F
     };
     for (const auto& [vendorId, modelId, unitVersion] : cmpDriven) {
-        EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
+        EXPECT_EQ(ResolveTraits(
                       Identity(vendorId, modelId, kTa1394AvcSpecifier, unitVersion))
-                      .startShape,
+                      .start.startShape,
                   StreamStartShape::CmpReceiveThenTransmit)
             << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
     }
     // IsApogeeDuet is CMP-driven too but keeps its own interleaved ordering.
-    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
-                  AvcIdentity(kApogeeVendorId, kApogeeDuetModelId)).startShape,
+    EXPECT_EQ(ResolveTraits(
+                  AvcIdentity(kApogeeVendorId, kApogeeDuetModelId)).start.startShape,
               StreamStartShape::ApogeeInterleaved);
 }
 
-// The PHASE 88 is the only supported BeBoB device with start shape today.
-TEST(DeviceStreamTraitsAgreement, TheOnlyBeBoBDeviceIsStillThePhase88) {
-    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
-                  AvcIdentity(kTerraTecVendorId, kPhase88RackFwModelId)).startShape,
+// The M-Audio special-firmware personas have their own transmit-first recipe.
+TEST(DeviceStreamTraitsAgreement, BeBoBStartShapesRemainModelSpecific) {
+    EXPECT_EQ(ResolveTraits(
+                  AvcIdentity(kTerraTecVendorId, kPhase88RackFwModelId)).start.startShape,
               StreamStartShape::CmpReceiveThenTransmit);
-    // The M-Audio personas are BeBoB by family but are not in the old list, so
-    // they must not pick up a start shape either -- nothing starts them.
-    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
-                  AvcIdentity(kMAudioVendorId, kMAudioFireWire1814ModelId)).startShape,
-              StreamStartShape::Default);
+    for (const uint32_t modelId : {kMAudioFireWire1814ModelId, kMAudioProjectMixModelId}) {
+        EXPECT_EQ(ResolveTraits(AvcIdentity(kMAudioVendorId, modelId)).start.startShape,
+                  StreamStartShape::MAudioSpecial);
+    }
 }
 
 TEST(DeviceStreamTraitsAgreement, WeissIsTheOnlyTransmitFirstDevice) {
     for (const uint32_t modelId : {kWeissInt202ModelId, kWeissInt203ModelId}) {
-        EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
-                      DiceIdentity(kWeissVendorId, modelId)).startShape,
+        EXPECT_EQ(ResolveTraits(
+                      DiceIdentity(kWeissVendorId, modelId)).start.startShape,
                   StreamStartShape::TransmitFirst);
     }
     // A Weiss part we do not stream keeps the default: the transmit-first order
     // is a property of the INT interfaces, not of the vendor.
-    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(
-                  DiceIdentity(kWeissVendorId, kWeissDac202ModelId)).startShape,
+    EXPECT_EQ(ResolveTraits(
+                  DiceIdentity(kWeissVendorId, kWeissDac202ModelId)).start.startShape,
               StreamStartShape::Default);
 }
 
 TEST(DeviceStreamTraitsAgreement, OnlyTheTwoLoudRunsDistrustTheCaptureStride) {
-    EXPECT_TRUE(AudioDeviceCatalog::StreamTraitsFor(
+    EXPECT_TRUE(ResolveTraits(
                     AvcIdentity(kMackieVendorId, kOnyxIOxfwModelId))
-                    .captureTrustConfiguredStride);
-    EXPECT_TRUE(AudioDeviceCatalog::StreamTraitsFor(
+                    .wire.captureTrustConfiguredStride);
+    EXPECT_TRUE(ResolveTraits(
                     Identity(kMackieVendorId, kOnyx400FModelId,
                              kTa1394AvcSpecifier, kFireworksVersion))
-                    .captureTrustConfiguredStride);
-    EXPECT_FALSE(AudioDeviceCatalog::StreamTraitsFor(
+                    .wire.captureTrustConfiguredStride);
+    EXPECT_FALSE(ResolveTraits(
                      AvcIdentity(kApogeeVendorId, kApogeeDuetModelId))
-                     .captureTrustConfiguredStride);
-    EXPECT_FALSE(AudioDeviceCatalog::StreamTraitsFor(
+                     .wire.captureTrustConfiguredStride);
+    EXPECT_FALSE(ResolveTraits(
                      DiceIdentity(kFocusriteVendorId, kSPro24DspModelId))
-                     .captureTrustConfiguredStride);
-}
-
-// HasAlesisCaptureStreamQuirk covered models 0x000000 (MultiMix) and 0x000001
-// (the iO). Only the MultiMix has a catalog row, and only the MultiMix is ever
-// streamed -- the iO gets no builder, so no protocol, so no nub, and the clamp
-// could never have run for it. The evidence is kept where it belongs rather
-// than in a predicate no code path reaches.
-TEST(DeviceStreamTraitsAgreement, OnlyTheAlesisMultiMixClampsItsCaptureStreams) {
-    EXPECT_TRUE(AudioDeviceCatalog::StreamTraitsFor(
-                    DiceIdentity(kAlesisVendorId, kAlesisMultiMixModelId))
-                    .clampCaptureStreamsToOne);
-    EXPECT_FALSE(AudioDeviceCatalog::StreamTraitsFor(
-                     DiceIdentity(kMidasVendorId, kMidasVeniceModelId))
-                     .clampCaptureStreamsToOne);
+                     .wire.captureTrustConfiguredStride);
 }
 
 // IsSPro24Dsp gated a runtime-conditional wire format: raw 24-in-32 only when
 // the geometry is 8 PCM in 9 slots, AM824 otherwise. The condition stays in the
 // profile builder; only the permission to apply it is catalog data.
 TEST(DeviceStreamTraitsAgreement, OnlyTheSaffirePro24DspSwitchesWireFormat) {
-    EXPECT_TRUE(AudioDeviceCatalog::StreamTraitsFor(
+    EXPECT_TRUE(ResolveTraits(
                     DiceIdentity(kFocusriteVendorId, kSPro24DspModelId))
-                    .rawPcm24In32WhenEightInNineSlots);
+                    .wire.rawPcm24In32WhenEightInNineSlots);
     for (const uint32_t modelId : {kSPro14ModelId, kSPro24ModelId, kSPro40ModelId}) {
-        EXPECT_FALSE(AudioDeviceCatalog::StreamTraitsFor(
+        EXPECT_FALSE(ResolveTraits(
                          DiceIdentity(kFocusriteVendorId, modelId))
-                         .rawPcm24In32WhenEightInNineSlots)
+                         .wire.rawPcm24In32WhenEightInNineSlots)
             << "model 0x" << std::hex << modelId;
     }
 }
@@ -276,12 +267,11 @@ TEST(DeviceStreamTraitsAgreement, MotuStatesNoStreamTraits) {
     unit.version = kMotu828mk2SwVersion;
     motu.units.push_back(unit);
 
-    const auto traits = AudioDeviceCatalog::StreamTraitsFor(motu);
-    EXPECT_EQ(traits.forcedStreamMode, ForcedStreamMode::Unspecified);
-    EXPECT_EQ(traits.startShape, StreamStartShape::Default);
-    EXPECT_FALSE(traits.clampCaptureStreamsToOne);
-    EXPECT_FALSE(traits.captureTrustConfiguredStride);
-    EXPECT_FALSE(traits.rawPcm24In32WhenEightInNineSlots);
+    const auto traits = ResolveTraits(motu);
+    EXPECT_EQ(traits.wire.forcedStreamMode, ForcedStreamMode::Unspecified);
+    EXPECT_EQ(traits.start.startShape, StreamStartShape::Default);
+    EXPECT_FALSE(traits.wire.captureTrustConfiguredStride);
+    EXPECT_FALSE(traits.wire.rawPcm24In32WhenEightInNineSlots);
 }
 
 } // namespace

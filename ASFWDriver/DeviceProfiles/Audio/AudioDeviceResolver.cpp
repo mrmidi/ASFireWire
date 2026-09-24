@@ -79,16 +79,9 @@ AudioDeviceCatalog::ResolveWithDefinitions(
             .guidReliability = GuidReliability::ReliableWhenUnique,
             .persistentKeyRecipe = PersistentKeyRecipeId::ReliableObservedEui64,
             .candidates = {DeviceDefinitionId::GenericAvc},
-            .candidatePlans = {{DeviceDefinitionId::GenericAvc,
-                                0,
-                                ProfileBuilderId::GenericAvc,
-                                {},
-                                device.rootVendorName,
-                                device.rootModelName.empty()
-                                    ? "Generic AV/C Audio"
-                                    : device.rootModelName}},
             .provenance = {{DeviceDefinitionId::GenericAvc, 0}},
             .profileBuilder = ProfileBuilderId::GenericAvc,
+            .protocolImplementation = ProtocolImplementationId::None,
             .vendorName = device.rootVendorName,
             .modelName = device.rootModelName.empty()
                              ? "Generic AV/C Audio"
@@ -106,6 +99,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
                 match.definition->family != first.family ||
                 match.definition->probePolicy != first.probePolicy ||
                 match.definition->support != first.support ||
+                match.definition->protocolImplementation != first.protocolImplementation ||
                 first.commonEquivalenceProfileBuilder == ProfileBuilderId::None ||
                 match.definition->commonEquivalenceProfileBuilder !=
                     first.commonEquivalenceProfileBuilder) {
@@ -131,6 +125,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
                               ? first.commonEquivalenceProfileBuilder
                               : first.profileBuilder,
         .commonEquivalenceProfileBuilder = first.commonEquivalenceProfileBuilder,
+        .protocolImplementation = first.protocolImplementation,
         .streamTraits = first.streamTraits,
         .bootloaderCue = first.bootloaderCue,
         .vendorName = first.vendorName != nullptr ? first.vendorName : "",
@@ -138,18 +133,6 @@ AudioDeviceCatalog::ResolveWithDefinitions(
     };
     for (const auto& match : matches) {
         plan.candidates.push_back(match.definition->id);
-        plan.candidatePlans.push_back(CandidateEndpointPlan{
-            .definitionId = match.definition->id,
-            .variantId = match.definition->variantId,
-            .profileBuilder = match.definition->profileBuilder,
-            .probeConstraint = match.definition->probeConstraint,
-            .vendorName = match.definition->vendorName != nullptr
-                              ? match.definition->vendorName
-                              : "",
-            .modelName = match.definition->modelName != nullptr
-                             ? match.definition->modelName
-                             : "",
-        });
         plan.provenance.push_back(MatchProvenance{match.definition->id,
                                                   match.clauseIndex});
     }
@@ -248,48 +231,31 @@ AudioDeviceCatalog::Resolve(const Discovery::DeviceRecord& device) noexcept {
 }
 
 Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
-    const Discovery::DeviceIdentityEvidence& device) noexcept {
-    if (MatchAnySafetyRule(device).has_value()) {
-        return Discovery::AvcCommandFilterId::BlockAll;
-    }
-
-    const auto plan = Resolve(device);
-    if (!plan.has_value()) {
-        switch (plan.error()) {
-            case CatalogResolutionError::HazardousIdentity:
-            case CatalogResolutionError::InvalidUnit:
-            case CatalogResolutionError::AmbiguousIdentity:
-                return Discovery::AvcCommandFilterId::BlockAll;
-            case CatalogResolutionError::NoMatch:
-                return Discovery::AvcCommandFilterId::Unrestricted;
-        }
-    }
-
-    if (plan->probePolicy == ProbePolicyId::BeBoBFilteredCommandSet) {
+    const StaticAudioEndpointPlan& plan) noexcept {
+    if (plan.probePolicy == ProbePolicyId::BeBoBFilteredCommandSet) {
         return Discovery::AvcCommandFilterId::MAudioSpecialBeBoB;
     }
-    if (plan->support == SupportDisposition::Quarantined) {
+    // The bootloader cue, if later authorized, is a guarded BeBoB register
+    // operation. It does not grant permission for generic or user-client FCP.
+    if (plan.probePolicy == ProbePolicyId::NoAutomaticTraffic ||
+        plan.bootloaderCue != BootloaderCuePolicy::None ||
+        plan.support == SupportDisposition::Quarantined) {
         return Discovery::AvcCommandFilterId::BlockAll;
     }
     return Discovery::AvcCommandFilterId::Unrestricted;
 }
 
-ProfileBuilderId AudioDeviceCatalog::ProfileBuilderFor(
-    const Discovery::DeviceIdentityEvidence& device) noexcept {
-    const auto plan = Resolve(device);
-    if (!plan.has_value()) {
-        return ProfileBuilderId::None;
+Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
+    CatalogResolutionError error) noexcept {
+    switch (error) {
+        case CatalogResolutionError::HazardousIdentity:
+        case CatalogResolutionError::InvalidUnit:
+        case CatalogResolutionError::AmbiguousIdentity:
+            return Discovery::AvcCommandFilterId::BlockAll;
+        case CatalogResolutionError::NoMatch:
+            return Discovery::AvcCommandFilterId::Unrestricted;
     }
-    return plan->profileBuilder;
-}
-
-DeviceStreamTraits AudioDeviceCatalog::StreamTraitsFor(
-    const Discovery::DeviceIdentityEvidence& device) noexcept {
-    const auto plan = Resolve(device);
-    if (!plan.has_value()) {
-        return DeviceStreamTraits{};
-    }
-    return plan->streamTraits;
+    return Discovery::AvcCommandFilterId::BlockAll;
 }
 
 std::optional<const AudioSafetyRule*>

@@ -44,6 +44,7 @@ enum class TxProducerFaultStage : uint32_t {
     kSlotAcquire,
     kPacketize,
     kSlotPublish,
+    kInternalCadence,
 };
 
 [[nodiscard]] inline const char* TxProducerFaultStageName(
@@ -58,6 +59,7 @@ enum class TxProducerFaultStage : uint32_t {
         case TxProducerFaultStage::kSlotAcquire: return "slot-acquire";
         case TxProducerFaultStage::kPacketize: return "packetize";
         case TxProducerFaultStage::kSlotPublish: return "slot-publish";
+        case TxProducerFaultStage::kInternalCadence: return "internal-cadence";
     }
     return "unknown";
 }
@@ -70,6 +72,8 @@ enum class TxProducerFaultReason : uint32_t {
     kSlotUnavailable,
     kPacketizerRejected,
     kSlotPublishFailed,
+    kCadencePlanMismatch,
+    kCadenceCommitRejected,
 };
 
 [[nodiscard]] inline const char* TxProducerFaultReasonName(
@@ -82,6 +86,8 @@ enum class TxProducerFaultReason : uint32_t {
         case TxProducerFaultReason::kSlotUnavailable: return "slot-unavailable";
         case TxProducerFaultReason::kPacketizerRejected: return "packetizer-rejected";
         case TxProducerFaultReason::kSlotPublishFailed: return "slot-publish-failed";
+        case TxProducerFaultReason::kCadencePlanMismatch: return "cadence-plan-mismatch";
+        case TxProducerFaultReason::kCadenceCommitRejected: return "cadence-commit-rejected";
     }
     return "unknown";
 }

@@ -134,6 +134,103 @@ enum ClauseConstraintBit : uint16_t {
     return id >= ProfileBuilderId::GenericAvc && id <= ProfileBuilderId::kLastValid;
 }
 
+[[nodiscard]] constexpr bool KnownProtocol(ProtocolImplementationId id) noexcept {
+    return id > ProtocolImplementationId::None &&
+           id <= ProtocolImplementationId::kLastValid;
+}
+
+[[nodiscard]] constexpr bool ProtocolMatchesFamily(
+    ProtocolImplementationId implementation, AudioFamilyProviderId family) noexcept {
+    switch (implementation) {
+        case ProtocolImplementationId::DiceTcat:
+        case ProtocolImplementationId::DiceSPro24Dsp:
+        case ProtocolImplementationId::DiceWeissInt:
+            return family == AudioFamilyProviderId::DICE;
+        case ProtocolImplementationId::ApogeeDuet:
+        case ProtocolImplementationId::MackieOnyx:
+            return family == AudioFamilyProviderId::OXFW;
+        case ProtocolImplementationId::FireworksOnyx400F:
+            return family == AudioFamilyProviderId::Fireworks;
+        case ProtocolImplementationId::BeBoBPhase88:
+        case ProtocolImplementationId::BeBoBGeneric:
+        case ProtocolImplementationId::BeBoBMAudioSpecial:
+            return family == AudioFamilyProviderId::BeBoB;
+        case ProtocolImplementationId::MotuV2:
+            return family == AudioFamilyProviderId::MotuRegister;
+        case ProtocolImplementationId::None:
+            return false;
+    }
+    return false;
+}
+
+[[nodiscard]] constexpr bool ProbeMatchesFamily(
+    ProbePolicyId probe, AudioFamilyProviderId family) noexcept {
+    switch (family) {
+        case AudioFamilyProviderId::DICE:
+            return probe == ProbePolicyId::DiceTcat;
+        case AudioFamilyProviderId::OXFW:
+            return probe == ProbePolicyId::OxfwAvc;
+        case AudioFamilyProviderId::Fireworks:
+            return probe == ProbePolicyId::FireworksEfc;
+        case AudioFamilyProviderId::BeBoB:
+            return probe == ProbePolicyId::BeBoBPlug0 ||
+                   probe == ProbePolicyId::BeBoBFilteredCommandSet;
+        case AudioFamilyProviderId::MotuRegister:
+            return probe == ProbePolicyId::MotuRegister;
+        case AudioFamilyProviderId::GenericAvc:
+            return probe == ProbePolicyId::GenericAvc;
+        case AudioFamilyProviderId::None:
+            return false;
+    }
+    return false;
+}
+
+// The protocol class each profile builder is written against. Family agreement
+// alone cannot catch a supported row that pairs a builder needing a dedicated
+// class with the family's generic one: a Saffire Pro 24 DSP row naming
+// DiceTcat validates by family but constructs DICETcatProtocol instead of
+// SPro24DspProtocol. Exhaustive on purpose -- a new builder must say which
+// class serves it before the switch compiles cleanly.
+[[nodiscard]] constexpr ProtocolImplementationId ExpectedProtocolFor(
+    ProfileBuilderId builder) noexcept {
+    switch (builder) {
+        case ProfileBuilderId::FocusriteSPro14:
+        case ProfileBuilderId::FocusriteSPro24:
+        case ProfileBuilderId::FocusriteSPro40:
+        case ProfileBuilderId::FocusriteLiquidS56:
+        case ProfileBuilderId::AlesisMultiMix:
+        case ProfileBuilderId::MidasVeniceF32:
+        case ProfileBuilderId::PreSonusStudioLive1602:
+        case ProfileBuilderId::PreSonusStudioLive2442:
+            return ProtocolImplementationId::DiceTcat;
+        case ProfileBuilderId::FocusriteSPro24Dsp:
+            return ProtocolImplementationId::DiceSPro24Dsp;
+        case ProfileBuilderId::WeissInt202:
+        case ProfileBuilderId::WeissInt203:
+            return ProtocolImplementationId::DiceWeissInt;
+        case ProfileBuilderId::ApogeeDuet:
+            return ProtocolImplementationId::ApogeeDuet;
+        case ProfileBuilderId::MackieOnyxIOxfw:
+            return ProtocolImplementationId::MackieOnyx;
+        case ProfileBuilderId::MackieOnyx400F:
+            return ProtocolImplementationId::FireworksOnyx400F;
+        case ProfileBuilderId::TerraTecPhase88:
+            return ProtocolImplementationId::BeBoBPhase88;
+        case ProfileBuilderId::GenericBeBoB:
+            return ProtocolImplementationId::BeBoBGeneric;
+        case ProfileBuilderId::MAudioFireWire1814:
+        case ProfileBuilderId::MAudioProjectMix:
+            return ProtocolImplementationId::BeBoBMAudioSpecial;
+        case ProfileBuilderId::Motu828mk2:
+        case ProfileBuilderId::MotuUltralite:
+            return ProtocolImplementationId::MotuV2;
+        case ProfileBuilderId::None:
+        case ProfileBuilderId::GenericAvc:
+            return ProtocolImplementationId::None;
+    }
+    return ProtocolImplementationId::None;
+}
+
 [[nodiscard]] constexpr bool CompatibleOverlap(
     const AudioDeviceDefinition& first,
     const AudioDeviceDefinition& second) noexcept {
@@ -141,6 +238,7 @@ enum ClauseConstraintBit : uint16_t {
            first.equivalenceClassId == second.equivalenceClassId &&
            first.family == second.family &&
            first.probePolicy == second.probePolicy &&
+           first.protocolImplementation == second.protocolImplementation &&
            first.commonEquivalenceProfileBuilder != ProfileBuilderId::None &&
            first.commonEquivalenceProfileBuilder == second.commonEquivalenceProfileBuilder;
 }
@@ -175,9 +273,28 @@ std::vector<CatalogValidationIssue> AudioDeviceCatalog::ValidateDefinitions(
         if (definition.support == SupportDisposition::Supported &&
             (!KnownFamily(definition.family) ||
              !KnownBuilder(definition.profileBuilder) ||
-             !KnownProbe(definition.probePolicy))) {
+             !KnownProbe(definition.probePolicy) ||
+             !KnownProtocol(definition.protocolImplementation))) {
             issues.push_back({definition.id, definition.id,
-                              "supported definition lacks provider/probe/profile"});
+                              "supported definition lacks provider/probe/profile/protocol"});
+        }
+        if (definition.support == SupportDisposition::Supported &&
+            (!ProtocolMatchesFamily(definition.protocolImplementation, definition.family) ||
+             !ProbeMatchesFamily(definition.probePolicy, definition.family))) {
+            issues.push_back({definition.id, definition.id,
+                              "supported definition has incompatible family/probe/protocol"});
+        }
+        if (definition.support == SupportDisposition::Supported &&
+            definition.protocolImplementation !=
+                ExpectedProtocolFor(definition.profileBuilder)) {
+            issues.push_back({definition.id, definition.id,
+                              "supported definition pairs its profile builder with "
+                              "the wrong protocol implementation"});
+        }
+        if (definition.support != SupportDisposition::Supported &&
+            definition.protocolImplementation != ProtocolImplementationId::None) {
+            issues.push_back({definition.id, definition.id,
+                              "unsupported definition names a protocol implementation"});
         }
         if (definition.equivalenceClassId != 0 &&
             !KnownBuilder(definition.commonEquivalenceProfileBuilder)) {

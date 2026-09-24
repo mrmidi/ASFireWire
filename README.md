@@ -537,6 +537,8 @@ For bug reports, see [Reporting Issues (wiki)](https://github.com/mrmidi/ASFireW
 
 Nice place to start with — [DeepWiki page for ASFW](https://deepwiki.com/mrmidi/ASFireWire).
 
+For a new FireWire audio device, see [Adding FireWire audio hardware](documentation/ADDING_AUDIO_HARDWARE.md).
+
 Contributions are VERY welcome! If you want to contribute to the project, please follow these steps:
 
 1. Fork the repository on GitHub

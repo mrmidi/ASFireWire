@@ -2,6 +2,27 @@ import Testing
 @testable import ASFW
 
 struct MCPToolDispatchTests {
+    @Test func bebobShellDiagnosticsNeverWriteWhenPolicyIsClosed() async {
+        let driver = MockASFWDriverControl()
+        let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver)
+        let result = await core.callTool(name: "asfw_bebob_get_streaming_stats", arguments: .object([
+            "nodeId": .int(1), "generation": .int(17)
+        ]))
+        #expect(!result.ok)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
+    @Test func bebobShellRejectsMultipleLinesBeforeAnyWrite() async {
+        let driver = MockASFWDriverControl()
+        let core = ASFWMCPCore(configuration: gateOpen, driver: driver)
+        let result = await core.callTool(name: "asfw_bebob_shell_execute", arguments: .object([
+            "nodeId": .int(1), "generation": .int(17),
+            "command": .string("fw show\nfw flash")
+        ]))
+        #expect(!result.ok)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
     private var gateOpen: ASFWMCPRuntimeConfiguration {
         ASFWMCPRuntimeConfiguration(
             mode: .developerWriteEnabled,

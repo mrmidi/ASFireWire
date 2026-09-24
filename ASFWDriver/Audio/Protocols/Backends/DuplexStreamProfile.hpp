@@ -7,6 +7,7 @@
 
 #include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include "../../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../../../Discovery/DiscoveryTypes.hpp"
 #include "../../../Bus/IRM/IRMTypes.hpp"
 #include "../DeviceProtocolChoice.hpp"
@@ -16,6 +17,7 @@
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
 #include "../../DriverKit/Config/MOTU/MotuV2Profile.hpp"
 #include "../../Engine/Direct/Rx/RxCaptureChannelMap.hpp"
+#include "../../Families/BeBoB/MAudio/MAudioCaptureChannelMap.hpp"
 #include "../AudioTypes.hpp"
 #include "../IDeviceProtocol.hpp"
 
@@ -80,6 +82,10 @@ struct DuplexPlaybackStreamGeometry {
 };
 
 struct DuplexStreamProfile {
+    // A profile without a current catalog decision is not safe to consume for
+    // stream setup. Keep this explicit so stale route policy cannot silently
+    // turn into generic DICE behavior.
+    bool policyResolved{false};
     AudioDuplexChannels channels{};
     // The one speed for this device's isochronous streams: what the packets are
     // transmitted at and what the IRM was charged for. Apple and Linux both keep
@@ -132,7 +138,8 @@ class DuplexStreamProfileResolver final {
 
     [[nodiscard]] static DuplexStreamProfile Resolve(const Discovery::DeviceRecord& record,
                                                      const AudioStreamRuntimeCaps& caps) noexcept {
-        return Build(record, caps, ResolveChannels(record, caps));
+        return Build(record, caps, ResolveChannels(caps),
+                     DeviceProfiles::Audio::CurrentAudioPolicy(record));
     }
 
     // Device prepare can refresh stream caps after channels have already been
@@ -141,7 +148,8 @@ class DuplexStreamProfileResolver final {
     [[nodiscard]] static DuplexStreamProfile
     Resolve(const Discovery::DeviceRecord& record, const AudioStreamRuntimeCaps& caps,
             const AudioDuplexChannels& assignedChannels) noexcept {
-        return Build(record, caps, assignedChannels);
+        return Build(record, caps, assignedChannels,
+                     DeviceProfiles::Audio::CurrentAudioPolicy(record));
     }
 
   private:
@@ -184,13 +192,13 @@ class DuplexStreamProfileResolver final {
     /// facts are the same, but they live with the rest of what is known about
     /// the device instead of being rediscovered here.
     [[nodiscard]] static DeviceProfiles::Audio::DeviceStreamTraits
-    TraitsFor(const Discovery::DeviceRecord& record) noexcept {
-        return DeviceProfiles::Audio::AudioDeviceCatalog::StreamTraitsFor(record.identity);
+    TraitsFor(const DeviceProfiles::Audio::ResolvedDevicePolicy* policy) noexcept {
+        return policy != nullptr ? policy->plan.streamTraits
+                                 : DeviceProfiles::Audio::DeviceStreamTraits{};
     }
 
     [[nodiscard]] static AudioDuplexChannels
-    ResolveChannels(const Discovery::DeviceRecord& record,
-                    const AudioStreamRuntimeCaps& caps) noexcept {
+    ResolveChannels(const AudioStreamRuntimeCaps& caps) noexcept {
         AudioDuplexChannels channels{
             .deviceToHostIsoChannel = kDefaultCaptureIsoChannel,
             .hostToDeviceIsoChannel = kDefaultPlaybackIsoChannel,
@@ -198,113 +206,6 @@ class DuplexStreamProfileResolver final {
 
         channels.captureStreamCount = ClampStreamCount(caps.deviceToHostStreamCount);
         channels.playbackStreamCount = ClampStreamCount(caps.hostToDeviceStreamCount);
-#if 0
-        // DISABLED 2026-09-20 — clamps the WRONG DIRECTION. Kept, not deleted,
-        // because the hazard it was written for may well be real; only our
-        // transcription of it was wrong. TODO below says what would settle it.
-        //
-        // WHY IT EXISTS. libffado forces its playback stream count to 1 for
-        // Alesis model 0x000000/0x000001 and Focusrite Saffire PRO 26
-        // (dice_avdevice.cpp:1686-1700):
-        //
-        //     /* special case for Alesis io14, which announces two receive
-        //      * transmitters, but only has one. Same is true for Alesis
-        //      * Multimix16 and Focusrite Saffire PRO 26. */
-        //     if (FW_VENDORID_ALESIS == ...) { case 0x1: case 0x0: m_nb_rx = 1; }
-        //
-        // The guarded hazard is real in principle: arming an iso channel and
-        // reserving bandwidth for a stream the device will never consume.
-        //
-        // WHY IT IS DISABLED. Two reasons, in increasing order of weight.
-        //
-        // 1. It is applied to the wrong direction. libffado clamps m_nb_rx and
-        //    never touches m_nb_tx, and dice_avdevice.cpp:1057-1062 says which
-        //    is which:
-        //
-        //        for (i=0; i<m_nb_tx; i++) prepareSP(i, Port::E_Capture);
-        //        for (i=0; i<m_nb_rx; i++) prepareSP(i, Port::E_Playback);
-        //
-        //    So m_nb_rx is host PLAYBACK. captureStreamCount here comes from
-        //    caps.deviceToHostStreamCount, which DICETcatProtocol fills from the
-        //    device's DICE TX section — host CAPTURE. This clamps the one
-        //    direction libffado deliberately leaves alone.
-        //
-        //    The trap is that "rx" names opposite things in the two codebases:
-        //    libffado follows the device (rx = what the device receives =
-        //    playback), ASFW's profile fields follow the host (Rx* = capture).
-        //
-        // 2. The vendor's own driver clamps NOTHING. AlesisFirewire.kext's
-        //    PopulateDeviceStruct (0xd920) loops the full TX_NUMBER and the full
-        //    RX_NUMBER with no bound in either direction — not even the sanity
-        //    rejects MidasFW and PaeFireStudio carry (TX >= 3 / RX > 4 → error).
-        //    Alesis ships no clamp for Alesis hardware.
-        //
-        // WHAT IT COST. Two things, the second worse than the first.
-        //
-        // The recorded MultiMix dump
-        // (documentation/fixtures/alesismultimix.txt) reports DICE TX NUMBER = 2:
-        // 12 PCM (MIC_LINE_1..4, LINE_5..12) plus 2 PCM (MAIN_IN L/R) = 14
-        // capture channels. This clamp armed only stream 0, silently dropping
-        // MAIN_IN L/R — 12 channels where the device carries 14.
-        //
-        // And because Build() below selects per-stream geometry only when
-        // captureStreamCount > 1 (`multiCapture`, :346), forcing the count to 1
-        // ALSO made stream 0 report caps.deviceToHostAm824Slots — the device's
-        // AGGREGATE slot count — instead of its own. On a 2x16+1 device that is
-        // 34 slots attributed to a stream physically carrying 17, and since
-        // bandwidthUnits is computed from am824Slots, the IRM reservation was
-        // sized from the aggregate as well.
-        //
-        // Meanwhile that unit's DICE RX NUMBER is already 1, so libffado's
-        // actual clamp would have been a no-op on it. We paid two real inputs
-        // and a mis-sized reservation, and bought none of the protection the
-        // workaround was for.
-        //
-        // It had also become a second authority on a fact the profile already
-        // owns: AlesisMultiMixProfile declares capture geometry a SEED (device
-        // wins) while asserting its single PLAYBACK stream on libffado's
-        // authority. With this enabled the two disagreed, and they are consumed
-        // by different paths — this one feeds iso allocation and bandwidth, the
-        // profile feeds publication — so a MultiMix could publish 14 channels
-        // while one capture stream was armed.
-        //
-        // WHAT HARDWARE ALREADY SAYS. A contributor dumped a MultiMix
-        // (documentation/fixtures/alesismultimix.txt): DICE TX NUMBER = 2
-        // (12 + 2), DICE RX NUMBER = 1 (2 PCM). **That unit does not
-        // over-report playback at all** — libffado's clamp would be a no-op on
-        // it, and ours actively removed a capture stream it really has.
-        //
-        // TODO(FW-DICE-ALESIS): one variant is still untested, and it is
-        // precisely the accused one. libffado names the MultiMix **16**:
-        // "Same is true for Alesis Multimix16 and Focusrite Saffire PRO 26."
-        // The dump we hold is a 12-input unit (MIC_LINE_1..4, LINE_5..12, plus
-        // MAIN_IN L/R), and all of 8/12/16 publish vendor 0x000595 model
-        // 0x000000, so one dump cannot speak for the range.
-        //
-        //   a) Get a MultiMix **16** dump — DICE TX_NUMBER, RX_NUMBER and each
-        //      stream's NUMBER_AUDIO. The Saffire PRO 26 would corroborate.
-        //   b) If it reports RX_NUMBER > 1 with only one real playback stream,
-        //      re-enable against PLAYBACK — channels.playbackStreamCount —
-        //      never capture, and scope it so the 12 is unaffected.
-        //   c) Prefer libffado's own suggestion over a per-model rule. The
-        //      FIXME immediately above its clamp proposes the general form:
-        //      "Maybe check the number of channels and ignore receivers with
-        //      zero channels?" That needs no vendor/model table and has no
-        //      direction to get wrong. No recorded device shows a zero-channel
-        //      stream yet, which is why it is not implemented on spec alone.
-        //
-        // If the 16 also reports RX_NUMBER = 1, delete this block and the trait
-        // outright: libffado's workaround would then have no basis on any
-        // hardware we have seen, and Alesis's own driver already clamps nothing.
-        //
-        // The trait field and the two catalog rows that set it are deliberately
-        // left in place, so re-enabling is this block plus a direction fix
-        // rather than an archaeology exercise. See
-        // documentation/DICE_TCAT_ARCHITECTURE.md §2.9 and §3.3.
-        if (TraitsFor(record).clampCaptureStreamsToOne) {
-            channels.captureStreamCount = 1;
-        }
-#endif
 
         // Stream zero retains the legacy scalar channel. Remaining streams are
         // assigned the lowest channel not already used by either direction.
@@ -347,15 +248,17 @@ class DuplexStreamProfileResolver final {
 
     [[nodiscard]] static DuplexStreamProfile Build(const Discovery::DeviceRecord& record,
                                                    const AudioStreamRuntimeCaps& caps,
-                                                   const AudioDuplexChannels& channels) noexcept {
+                                                   const AudioDuplexChannels& channels,
+                                                   const DeviceProfiles::Audio::ResolvedDevicePolicy* policy) noexcept {
         DuplexStreamProfile profile{
+            .policyResolved = policy != nullptr,
             .channels = channels,
             .linkSpeed = record.link.isochToNode,
             .runtimeCaps = caps,
         };
-        const auto traits = TraitsFor(record);
+        const auto traits = TraitsFor(policy);
         const uint64_t allowedChannels =
-            traits.cmpChoosesIsoChannel ? kAllIsoChannels : 0;
+            traits.resource.cmpChoosesIsoChannel ? kAllIsoChannels : 0;
 
         // AM824 uses one data-block slot per PCM channel plus any MIDI slots;
         // the controller consumes the already-discovered DBS values unchanged.
@@ -373,7 +276,7 @@ class DuplexStreamProfileResolver final {
                 geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed);
             // CMP (including BridgeCo/BeBoB) does not own a fixed channel;
             // IRM selects one, which is then committed back to its PCR.
-            geometry.allowedIsoChannels = traits.cmpChoosesIsoChannel
+            geometry.allowedIsoChannels = traits.resource.cmpChoosesIsoChannel
                                               ? allowedChannels
                                               : FixedChannelMask(geometry.isoChannel);
             captureChannelOffset += geometry.pcmChannels;
@@ -391,12 +294,13 @@ class DuplexStreamProfileResolver final {
                                        : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
             geometry.packetBandwidthUnits = AmdtpPacketBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed);
-            geometry.allowedIsoChannels = traits.cmpChoosesIsoChannel
+            geometry.allowedIsoChannels = traits.resource.cmpChoosesIsoChannel
                                               ? allowedChannels
                                               : FixedChannelMask(geometry.isoChannel);
         }
 
-        if (ChooseAudioBackend(record) == AudioBackendKind::MotuRegister) {
+        if (policy != nullptr && policy->plan.family ==
+                                     DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister) {
             // MOTU is chunk-framed in both directions. The chunk counts come from the
             // device's own registers via PrepareDuplex, which MotuV2Protocol reports as
             // runtime caps -- there is no profile table to read them from, since model_id
@@ -412,25 +316,24 @@ class DuplexStreamProfileResolver final {
             // The version of the unit the catalog actually matched, not the
             // flat shim, which takes the first non-zero value across every unit
             // directory and so can name a version no single unit published.
-            const auto choice = ChooseDeviceProtocol(record);
+            const auto choice = policy->plan.unitVersion;
             profile.captureMotuPorts = Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(
-                choice.has_value() ? choice->unitVersion
-                                   : record.unitSwVersion.value_or(0U));
+                choice != 0 ? choice : record.unitSwVersion.value_or(0U));
         }
 
         // Runtime-conditional on purpose: this device switches wire format with
         // its configuration, so the identity grants the permission and the
         // measured geometry decides whether it applies.
-        if (traits.rawPcm24In32WhenEightInNineSlots && caps.hostInputPcmChannels == 8 &&
+        if (traits.wire.rawPcm24In32WhenEightInNineSlots && caps.hostInputPcmChannels == 8 &&
             caps.deviceToHostAm824Slots == 9) {
             profile.captureWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
         }
-        if (traits.rawPcm24In32WhenEightInNineSlots && caps.hostOutputPcmChannels == 8 &&
+        if (traits.wire.rawPcm24In32WhenEightInNineSlots && caps.hostOutputPcmChannels == 8 &&
             caps.hostToDeviceAm824Slots == 9) {
             profile.playbackWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
         }
 
-        if (traits.captureTrustConfiguredStride) {
+        if (traits.wire.captureTrustConfiguredStride) {
             // The capture-side CIP dbs field is untrusted and the configured
             // slot count is the authority. Loud/Mackie (snd-oxfw oxfw.c:189-196;
             // amdtp-stream.c:766-769 substitutes the configured data-block
@@ -440,8 +343,17 @@ class DuplexStreamProfileResolver final {
             profile.captureTrustConfiguredStride = true;
         }
 
+        // The special-firmware personas cannot answer the BridgeCo channel
+        // position query. Their model-specific AM824 slot order is resolved
+        // once from the catalog's profile choice and the current wire width.
+        if (policy != nullptr) {
+            profile.captureChannelMap =
+                Families::BeBoB::MAudio::CaptureChannelMapFor(
+                    policy->plan.profileBuilder, caps.hostInputPcmChannels);
+        }
+
         using DeviceProfiles::Audio::StreamStartShape;
-        switch (traits.startShape) {
+        switch (traits.start.startShape) {
         case StreamStartShape::ApogeeInterleaved:
             // Preserve the prior AVCAudioBackend ordering:
             // host IR -> CMP oPCR -> host IT -> CMP iPCR. The runner uses these
@@ -497,6 +409,15 @@ class DuplexStreamProfileResolver final {
                 DuplexHostDirection::kTransmit,
                 DuplexHostDirection::kReceive,
             };
+            break;
+
+        case StreamStartShape::MAudioSpecial:
+            profile.startOrder.requiresPreStreamClockLock = false;
+            profile.startOrder.startOrder = {
+                DuplexHostDirection::kTransmit,
+                DuplexHostDirection::kReceive,
+            };
+            profile.startOrder.postDeviceEnableDelayMs = 0;
             break;
 
         case StreamStartShape::Default:

@@ -47,12 +47,21 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     result.syt = cip->syt;
     result.fdf = cip->fdf;
     result.dbc = cip->dataBlockCounter;
-
-    const uint32_t strideQuadlets = codec.StrideQuadlets(cip->dataBlockSize);
     result.dbs = cip->dataBlockSize;
-    result.strideQuadlets = strideQuadlets;
 
     const size_t payloadBytes = length - kIsochHeaderSize - 8;
+    // A CIP header without payload carries no audio events regardless of its
+    // DBS value. The M-Audio 1814 idles with header-only packets that say
+    // DBS=2 (captured `02020000 9002ffff`) while its stream is DBS=11. Linux
+    // AMDTP handles zero payload before checking DBS (amdtp-stream.c:769-780).
+    if (payloadBytes == 0) {
+        result.status = DirectRxWriteStatus::kAvailable;
+        return result;
+    }
+
+    const uint32_t strideQuadlets = codec.StrideQuadlets(cip->dataBlockSize);
+    result.strideQuadlets = strideQuadlets;
+
     const size_t dbsBytes = static_cast<size_t>(strideQuadlets) * 4u;
     if (dbsBytes == 0) {
         result.status = DirectRxWriteStatus::kZeroDataBlockSize;

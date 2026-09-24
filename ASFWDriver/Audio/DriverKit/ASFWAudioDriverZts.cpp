@@ -9,12 +9,15 @@
 #include <cstdint>
 #include <iterator>
 #include <new>
+#include <array>
+#include <span>
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Wire/IEC61883/Syt.hpp"
+#include "../Families/BeBoB/MAudio/MAudioClockSourcePolicy.hpp"
 
 #include <DriverKit/DriverKit.h>
 
@@ -84,6 +87,154 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
     }
     return ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published;
 }
+
+namespace {
+
+void ObserveMAudioTxClock(ASFWAudioDriver_IVars& ivars,
+                          const uint64_t transportGeneration) noexcept {
+    auto* queue = ivars.runtime.txSlotProvider.queueControl;
+    auto* control = ivars.runtime.directAudioGraph.control;
+    if (!queue || !control || !ivars.runtime.mAudioInternalTxActive.load(
+                                  std::memory_order_acquire) ||
+        transportGeneration == 0) {
+        return;
+    }
+
+    const uint64_t stampCount =
+        queue->completionStampCount.load(std::memory_order_acquire);
+    if (stampCount == 0) {
+        ivars.runtime.txCompletionStampCursor = 0;
+        return;
+    }
+
+    constexpr uint32_t kStampCapacity =
+        ASFW::Isoch::kIsochTxCompletionStampSlots;
+    const auto drain = ASFW::Audio::Runtime::PlanTxCompletionStampDrain(
+        ivars.runtime.txCompletionStampCursor, stampCount, kStampCapacity);
+    if (drain.queueRestarted) {
+        ivars.runtime.mAudioTxCorrelationUnwrap = {};
+        ivars.runtime.txCompletionStampCursor = stampCount;
+        return;
+    }
+    if (drain.missed != 0) {
+        const uint64_t failures =
+            ivars.runtime.mAudioTxClockConversionFailures.fetch_add(
+                drain.missed, std::memory_order_relaxed) + drain.missed;
+        if ((failures & (failures - 1)) == 0) {
+            ASFW_LOG_ERROR(
+                DirectAudio,
+                "[MAudioTxClock] completion stamps missed=%llu total=%llu",
+                drain.missed, failures);
+        }
+    }
+
+    ASFW::Isoch::IsochTxClockPairSample pair{};
+    if (!queue->clockPair.TryRead(pair) || pair.hostTimeMid == 0) {
+        ivars.runtime.txCompletionStampCursor = stampCount;
+        const uint64_t wakes =
+            ivars.runtime.mAudioTxClockNoDataWakes.fetch_add(
+                1, std::memory_order_relaxed) + 1;
+        if ((wakes & (wakes - 1)) == 0) {
+            ASFW_LOG_ERROR(DirectAudio,
+                           "[MAudioTxClock] no correlation pair wakes=%llu",
+                           wakes);
+        }
+        return;
+    }
+
+    std::array<ASFW::Audio::Families::BeBoB::MAudio::
+                   TxDataClockObservation,
+               ASFW::Isoch::kIsochTxCompletionStampSlots>
+        dataPackets{};
+    size_t dataPacketCount = 0;
+    uint64_t newestCompletionBusTicks = 0;
+    uint64_t correlationBusTicks = 0;
+    for (uint64_t stampIndex = drain.first;
+         stampIndex < drain.last;
+         ++stampIndex) {
+        uint64_t packetIndex = 0;
+        uint32_t completionCycleTimer = 0;
+        if (!queue->ReadCompletionStamp(stampIndex, packetIndex,
+                                        completionCycleTimer)) {
+            continue;
+        }
+        uint64_t completionTicks = 0;
+        uint64_t correlationTicks = 0;
+        if (!ASFW::Audio::Shared::ExpandCompletionAgainstCorrelation(
+                ivars.runtime.mAudioTxCorrelationUnwrap,
+                completionCycleTimer, pair.cycleTimer32,
+                completionTicks, correlationTicks)) {
+            const uint64_t failures =
+                ivars.runtime.mAudioTxClockConversionFailures.fetch_add(
+                    1, std::memory_order_relaxed) + 1;
+            if ((failures & (failures - 1)) == 0) {
+                ASFW_LOG_ERROR(
+                    DirectAudio,
+                    "[MAudioTxClock] stamp conversion failed total=%llu stamp=%llu cycle=0x%08x correlation=0x%08x",
+                    failures, stampIndex, completionCycleTimer,
+                    pair.cycleTimer32);
+            }
+            continue;
+        }
+        newestCompletionBusTicks = completionTicks;
+        correlationBusTicks = correlationTicks;
+
+        const auto* slot = ivars.runtime.txStreamEngine.Timeline().SlotByIndex(
+            static_cast<uint32_t>(packetIndex));
+        if (!slot || !slot->isData || slot->framesInPacket == 0 ||
+            dataPacketCount == dataPackets.size()) {
+            continue;
+        }
+        dataPackets[dataPacketCount++] = {
+            .completionBusTicks = completionTicks,
+            .correlationBusTicks = correlationTicks,
+            .sampleFrame = slot->firstAudioFrame,
+            .frameCount = slot->framesInPacket,
+            .sytOffsetTicks =
+                ASFW::Audio::Families::BeBoB::MAudio::
+                    SytOffsetTicksForPacketIndex(packetIndex),
+        };
+    }
+    ivars.runtime.txCompletionStampCursor = stampCount;
+    if (newestCompletionBusTicks == 0 || correlationBusTicks == 0) {
+        const uint64_t wakes =
+            ivars.runtime.mAudioTxClockNoDataWakes.fetch_add(
+                1, std::memory_order_relaxed) + 1;
+        if ((wakes & (wakes - 1)) == 0) {
+            ASFW_LOG_ERROR(
+                DirectAudio,
+                "[MAudioTxClock] no usable completion stamps wakes=%llu count=%llu",
+                wakes, stampCount);
+        }
+        return;
+    }
+
+    const auto boundary = ivars.runtime.mAudioTxClockBridge.ObserveWake(
+        transportGeneration, pair.cycleTimer32, correlationBusTicks,
+        pair.hostTimeMid, newestCompletionBusTicks,
+        std::span<const ASFW::Audio::Families::BeBoB::MAudio::
+                      TxDataClockObservation>(dataPackets.data(),
+                                              dataPacketCount));
+    if (!boundary.ready) {
+        return;
+    }
+
+    auto* audioDevice = ivars.audioDevice.get();
+    if (!audioDevice || boundary.boundary.hostTicks == 0) {
+        return;
+    }
+    audioDevice->UpdateCurrentZeroTimestamp(
+        boundary.boundary.sampleFrame, boundary.boundary.hostTicks);
+    ivars.runtime.lastHalZeroTimestampSampleFrame.store(
+        boundary.boundary.sampleFrame, std::memory_order_relaxed);
+    ivars.runtime.lastHalZeroTimestampHostTicks.store(
+        boundary.boundary.hostTicks, std::memory_order_relaxed);
+    ivars.runtime.lastHalZeroTimestampGeneration.fetch_add(
+        1, std::memory_order_release);
+    control->counters.CountZtsPublished();
+}
+
+} // namespace
 
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                              uint64_t startPacketIndex,
@@ -215,7 +366,34 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             ASFW::Protocols::Audio::AMDTP::
                 AmdtpPacketDisposition::NoData;
 
-        if (allowRecoveredClock) {
+        ASFW::Audio::BeBoB::MAudioInternalTxTiming::PacketPlan mAudioPlan{};
+        if (ivars.runtime.mAudioInternalTxActive.load(std::memory_order_acquire)) {
+            if (!ivars.runtime.mAudioInternalTxTiming.PreviewNextPacket(mAudioPlan) ||
+                mAudioPlan.sequence != nextPacketToPrepare) {
+                failProducer(
+                    ASFW::Audio::Runtime::TxProducerFaultStage::kInternalCadence,
+                    ASFW::Audio::Runtime::TxProducerFaultReason::kCadencePlanMismatch,
+                    ASFW::Audio::Runtime::FatalStreamReason::TxReplayInvalidSyt,
+                    nextPacketToPrepare);
+                break;
+            }
+            int64_t packetAnchorTicks = 0;
+            if (mAudioPlan.isData &&
+                ivars.runtime.txExecutionTimeline.AnchorForPacket(
+                    nextPacketToPrepare, packetAnchorTicks)) {
+                const uint32_t transmitCycle = static_cast<uint32_t>(
+                    (ASFW::Timing::normalizeOffsetDomain(packetAnchorTicks) /
+                     ASFW::Timing::kTicksPerCycle) %
+                    ASFW::Timing::kCyclesPerSecond);
+                timing.replayDataBlocks = mAudioPlan.dataBlocks;
+                timing.disposition =
+                    ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::Data;
+                timing.txClockValid = true;
+                timing.nextDataSyt = ASFW::Audio::BeBoB::MAudioInternalTxSyt(
+                    mAudioPlan.sytOffsetTicks, transmitCycle,
+                    ivars.runtime.mAudioInternalTxTiming.TransferDelayTicks());
+            }
+        } else if (allowRecoveredClock) {
             int64_t packetAnchorTicks = 0;
             if (!ivars.runtime.txExecutionTimeline.AnchorForPacket(
                     nextPacketToPrepare, packetAnchorTicks)) {
@@ -599,7 +777,23 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             static_cast<uint32_t>(
                 nextPacketToPrepare % numSlots);
         const auto& meta = metadataRing[slotIdx];
-        if (meta.payloadLength > 8) {
+        // Ask the packetizer what it emitted; packet size is not a DATA test.
+        // M-Audio cadence NO-DATA packets are full-size (CF-labelled blocks).
+        const auto* preparedSlot =
+            ivars.runtime.txStreamEngine.Timeline().SlotByIndex(
+                static_cast<uint32_t>(nextPacketToPrepare));
+        const bool emittedData = preparedSlot != nullptr && preparedSlot->isData;
+        if (ivars.runtime.mAudioInternalTxActive.load(std::memory_order_acquire) &&
+            !ivars.runtime.mAudioInternalTxTiming.CommitPacket(
+                mAudioPlan, emittedData)) {
+            failProducer(
+                ASFW::Audio::Runtime::TxProducerFaultStage::kInternalCadence,
+                ASFW::Audio::Runtime::TxProducerFaultReason::kCadenceCommitRejected,
+                ASFW::Audio::Runtime::FatalStreamReason::TxReplayInvalidSyt,
+                nextPacketToPrepare);
+            break;
+        }
+        if (emittedData) {
             directControl->counters.txDataPackets.fetch_add(
                 1, std::memory_order_relaxed);
             directControl->counters.txValidSytPackets.fetch_add(
@@ -645,6 +839,12 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     for (uint64_t packetIndex = 0;
          packetIndex < numSlots;
          ++packetIndex) {
+        ASFW::Audio::BeBoB::MAudioInternalTxTiming::PacketPlan mAudioPlan{};
+        if (ivars.runtime.mAudioInternalTxActive.load(std::memory_order_acquire) &&
+            (!ivars.runtime.mAudioInternalTxTiming.PreviewNextPacket(mAudioPlan) ||
+             mAudioPlan.sequence != packetIndex)) {
+            break;
+        }
         if (ivars.runtime.txStreamEngine.PrepareNextTransmitSlot(
                 static_cast<uint32_t>(packetIndex), timing) !=
             ASFW::Protocols::Audio::DICE::TxSlotPrepareResult::
@@ -655,6 +855,10 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
         if (ivars.runtime.txSecondaryActive) {
             (void)ivars.runtime.txStreamEngineSecondary.PrepareNextTransmitSlot(
                 static_cast<uint32_t>(packetIndex), timing);
+        }
+        if (ivars.runtime.mAudioInternalTxActive.load(std::memory_order_acquire) &&
+            !ivars.runtime.mAudioInternalTxTiming.CommitPacket(mAudioPlan, false)) {
+            break;
         }
         ++prepared;
     }
@@ -667,6 +871,106 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
                  kTxPreparationLeadPackets);
 }
 
+bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars,
+                         const ASFW::Isoch::Audio::IAudioStreamProfile& profile) noexcept {
+    ivars.runtime.mAudioInternalTxActive =
+        profile.TransmitClockSource() == ASFW::Isoch::Audio::TxClockSource::kInternalCadence;
+    ivars.runtime.mAudioTxClockProfile.store(
+        ivars.runtime.mAudioInternalTxActive.load(
+            std::memory_order_acquire),
+        std::memory_order_release);
+    return !(ivars.runtime.mAudioInternalTxActive &&
+             (!ivars.runtime.mAudioInternalTxTiming.Arm() ||
+              static_cast<uint32_t>(ivars.device.currentSampleRate) != 48000U));
+}
+
+PrimaryTxArmResult ArmPrimaryTxProducer(
+    ASFWAudioDriver_IVars& ivars,
+    const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
+    const ASFW::Isoch::Audio::AudioStreamConfig& txConfig,
+    const PrimaryTxQueueMemory& memory) noexcept {
+    auto* control = ivars.runtime.directAudioGraph.control;
+    if (control == nullptr || memory.queueControl == nullptr) {
+        return {kIOReturnNotReady, "BindPrimaryTxQueue"};
+    }
+
+    // Clear stale runtime cursors before prefill: the shared slab can be
+    // reused across StartIO/StopIO probes (CoreAudio re-probes on a
+    // sample-rate change), and a carried-over committed cursor fails the IT
+    // prime ("committed prefill > slots").
+    memory.queueControl->ResetProducerForStart();
+
+    ivars.runtime.txSlotProvider.payloadBase = memory.payloadBase;
+    ivars.runtime.txSlotProvider.metadataRing = memory.metadataRing;
+    ivars.runtime.txSlotProvider.queueControl = memory.queueControl;
+    ivars.runtime.txSlotProvider.audioControl = control;
+    ivars.runtime.txSlotProvider.numSlots = memory.numSlots;
+    ivars.runtime.txSlotProvider.slotStrideBytes = memory.slotStrideBytes;
+
+    ivars.runtime.txExecutionTimeline.queueControl = memory.queueControl;
+
+    if (!ivars.runtime.txStreamEngine.Configure(profile, txConfig)) {
+        ASFW_LOG(Audio, "ASFWAudioDevice: txStreamEngine Configure failed");
+        return {kIOReturnError, "ConfigureTxStreamEngine"};
+    }
+    ivars.runtime.txStreamEngine.SetTimingLossCallback({});
+    const auto txPolicy = profile.TxStreamPolicy();
+    if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV2) {
+        ivars.runtime.motuPayloadWriter.Configure(
+            ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
+                .pcmChunks = txConfig.pcmChannels,
+                .sourceChannelOffset = txConfig.sourceChannelOffset,
+                .ports = txPolicy.motuPlaybackPorts});
+        ivars.runtime.motuPayloadWriter.BindTimeline(&ivars.runtime.txStreamEngine.Timeline());
+        ivars.runtime.txStreamEngine.SetPayloadWriter(&ivars.runtime.motuPayloadWriter);
+
+        ivars.runtime.txStreamEngine.SetTimingLossCallback([state = &ivars] {
+            if (!state->runtime.isRunning.load(std::memory_order_acquire)) return false;
+            auto* currentControl = state->runtime.directAudioGraph.control;
+            auto* nub = state->device.audioNub;
+            if (!nub || !currentControl) return false;
+            nub->RequestTimingRecovery(
+                currentControl->rxReplayEpochResets.load(std::memory_order_acquire));
+            return true;
+        });
+        ivars.runtime.motuTxTimingStamper.Configure(txConfig.dbs);
+        ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
+    }
+    ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);
+    ivars.runtime.txStreamEngine.ResetForStart(0, 0);
+    ivars.runtime.txReplayReader.Reset();
+
+    const uint32_t timingRateHz =
+        ivars.device.currentSampleRate > 0
+            ? static_cast<uint32_t>(ivars.device.currentSampleRate)
+            : 48000u;
+    if (ivars.runtime.mAudioInternalTxActive.load(
+            std::memory_order_acquire)) {
+        ++ivars.runtime.mAudioTxClockStartEpoch;
+        if (ivars.runtime.mAudioTxClockStartEpoch == 0) {
+            ++ivars.runtime.mAudioTxClockStartEpoch;
+        }
+        ivars.runtime.txCompletionStampCursor = 0;
+        ivars.runtime.mAudioTxCorrelationUnwrap = {};
+        if (!ivars.runtime.mAudioTxClockBridge.Arm(
+                ivars.runtime.mAudioTxClockStartEpoch,
+                timingRateHz,
+                ASFW::IsochTransport::AudioTimingGeometry::
+                    kHalZeroTimestampPeriodFrames,
+                ivars.runtime.mAudioInternalTxTiming.
+                    TransferDelayTicks())) {
+            return {kIOReturnUnsupported, "MAudioTxClockBridge"};
+        }
+    }
+    control->rxTransferDelayTicks.store(
+        profile.RxTransferDelayTicks(ivars.device.currentSampleRate),
+        std::memory_order_relaxed);
+    control->txTransferDelayTicks.store(
+        profile.TxTransferDelayTicks(ivars.device.currentSampleRate),
+        std::memory_order_relaxed);
+    return {};
+}
+
 } // namespace ASFW::Audio::DriverKit
 
 void IMPL(ASFWAudioDriver, ZtsAnchorReady)
@@ -674,6 +978,14 @@ void IMPL(ASFWAudioDriver, ZtsAnchorReady)
     (void)action;
     (void)generation;
     if (!ivars || !ivars->audioDevice) {
+        return;
+    }
+
+    // M-Audio's clock is qualified from host TX completion stamps. An RX
+    // anchor must not race that source or release StartIO with the wrong clock.
+    if (!ASFW::Audio::Families::BeBoB::MAudio::ShouldMirrorRxClockAnchor(
+            ivars->runtime.mAudioTxClockProfile.load(
+                std::memory_order_acquire))) {
         return;
     }
 
@@ -704,6 +1016,11 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         txControl->refillHandledGeneration.load(
             std::memory_order_acquire);
     const bool hardwareWakePending = requested != refillHandled;
+
+    if (hardwareWakePending && ivars->runtime.mAudioInternalTxActive.load(
+                                   std::memory_order_acquire)) {
+        ASFW::Audio::DriverKit::ObserveMAudioTxClock(*ivars, requested);
+    }
 
     const uint64_t completionCursor =
         txControl->completionCursor.load(std::memory_order_acquire);

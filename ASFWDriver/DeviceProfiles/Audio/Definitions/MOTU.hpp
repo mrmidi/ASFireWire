@@ -17,19 +17,26 @@ inline constexpr std::array kMotuDefinitions{
     // so they are named in diagnostics, and stop there until their chunk
     // layouts are confirmed against real hardware.
     MotuDefinition(DeviceDefinitionId::Motu828mk2, kMotu828mk2SwVersion,
-                   ProfileBuilderId::Motu828mk2, SupportDisposition::Supported,
+                   ProfileBuilderId::Motu828mk2,
+                   ProtocolImplementationId::MotuV2,
+                   SupportDisposition::Supported,
                    kMotu828mk2ModelName),
     MotuDefinition(DeviceDefinitionId::MotuUltralite, kMotuUltraliteSwVersion,
-                   ProfileBuilderId::MotuUltralite, SupportDisposition::Supported,
+                   ProfileBuilderId::MotuUltralite,
+                   ProtocolImplementationId::MotuV2,
+                   SupportDisposition::Supported,
                    kMotuUltraliteModelName),
     MotuDefinition(DeviceDefinitionId::Motu896hd, kMotu896hdSwVersion,
                    ProfileBuilderId::None,
+                   ProtocolImplementationId::None,
                    SupportDisposition::RecognizedUnsupported, kMotu896hdModelName),
     MotuDefinition(DeviceDefinitionId::MotuTraveler, kMotuTravelerSwVersion,
                    ProfileBuilderId::None,
+                   ProtocolImplementationId::None,
                    SupportDisposition::RecognizedUnsupported, kMotuTravelerModelName),
     MotuDefinition(DeviceDefinitionId::Motu8pre, kMotu8preSwVersion,
                    ProfileBuilderId::None,
+                   ProtocolImplementationId::None,
                    SupportDisposition::RecognizedUnsupported, kMotu8preModelName),
 };
 

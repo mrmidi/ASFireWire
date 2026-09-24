@@ -39,10 +39,15 @@ struct AudioStreamTxPolicy final {
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
+    /// M-Audio special firmware: blocking cadence NO-DATA packets still carry
+    /// all scheduled blocks, with audio slots marked as CF and DBC advanced.
+    bool cadencePacketsCarryDataBlocks{false};
+    uint32_t cadenceSlotWord{0xCF000000};
     bool dbcIsEndEvent{false};
     /// MOTU only: chunk behind each host output channel. Empty encodes in wire order.
     Encoding::Motu::MotuPortMap motuPlaybackPorts{};
     ::ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};
+
 };
 
 // What a profile's compiled-in stream geometry MEANS when the device's own
@@ -75,6 +80,17 @@ enum class StreamGeometryAuthority : uint8_t {
     kAsserted,
 };
 
+/// Where the host transmit stream takes its timing from.
+enum class TxClockSource : uint8_t {
+    /// Replay the device's receive timing (SYT and cadence) onto transmit;
+    /// the HAL clock is anchored from RX. Every family except M-Audio special.
+    kRxReplay = 0,
+    /// Run the host's own fixed cadence and anchor the HAL clock from transmit
+    /// completions. M-Audio special firmware idles in NO-DATA until it has
+    /// received host DATA, so transmit cannot wait for RX timing.
+    kInternalCadence,
+};
+
 // ADK packet allocation and AMDTP encoding are shared by multiple protocol
 // families. Identity matching and control-plane quirks intentionally do not
 // belong here.
@@ -87,6 +103,9 @@ public:
     [[nodiscard]] virtual uint32_t TxStreamCount() const noexcept { return 1; }
     [[nodiscard]] virtual uint32_t RxStreamCount() const noexcept { return 1; }
     [[nodiscard]] virtual AudioStreamTxPolicy TxStreamPolicy() const noexcept { return {}; }
+    [[nodiscard]] virtual TxClockSource TransmitClockSource() const noexcept {
+        return TxClockSource::kRxReplay;
+    }
 
     // Per direction, because one profile can legitimately be both. The Alesis
     // MultiMix asserts its ONE playback stream -- libffado forces nb_rx to 1 for

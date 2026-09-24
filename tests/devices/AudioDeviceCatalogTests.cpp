@@ -11,7 +11,7 @@
 //
 // The catalog is the one table. These tests hold it to the properties that make
 // a half-add impossible: every Supported row resolves to a family, a probe and a
-// builder; no two rows can claim the same device; and a row with no builder is
+// builder and protocol; no two rows can claim the same device; and a row with no builder is
 // never reported as playable.
 
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <ios>
 #include <set>
+#include <string_view>
 
 namespace {
 
@@ -78,9 +79,9 @@ TEST(AudioDeviceCatalog, TheTableIsInternallyConsistent) {
 }
 
 // This is the #115 assertion. A row that claims to be Supported and does not
-// name all three of family, probe policy and profile builder is exactly the
+// name family, probe policy, profile builder and protocol implementation is the
 // half-add that published a nub and then could not stream.
-TEST(AudioDeviceCatalog, EverySupportedRowNamesAFamilyAProbeAndABuilder) {
+TEST(AudioDeviceCatalog, EverySupportedRowNamesAFamilyAProbeABuilderAndAProtocol) {
     for (const auto& definition : AudioDeviceCatalog::Definitions()) {
         if (definition.support != SupportDisposition::Supported) {
             continue;
@@ -92,7 +93,80 @@ TEST(AudioDeviceCatalog, EverySupportedRowNamesAFamilyAProbeAndABuilder) {
             << "definition " << id << " is Supported with no probe policy";
         EXPECT_NE(definition.profileBuilder, ProfileBuilderId::None)
             << "definition " << id << " is Supported with no profile builder";
+        EXPECT_NE(definition.protocolImplementation, ProtocolImplementationId::None)
+            << "definition " << id << " is Supported with no protocol implementation";
     }
+}
+
+TEST(AudioDeviceCatalog, DistinctDiceProfilesShareOneProtocolImplementation) {
+    const auto spro14 = MakeDevice(0x00130e0000000001ULL, kFocusriteVendorId,
+                                   kSPro14ModelId,
+                                   {{.offset = 5, .version = kDiceInterfaceVersion}});
+    const auto spro24 = MakeDevice(0x00130e0000000002ULL, kFocusriteVendorId,
+                                   kSPro24ModelId,
+                                   {{.offset = 5, .version = kDiceInterfaceVersion}});
+    const auto first = AudioDeviceCatalog::Resolve(spro14);
+    const auto second = AudioDeviceCatalog::Resolve(spro24);
+    ASSERT_TRUE(first.has_value());
+    ASSERT_TRUE(second.has_value());
+    EXPECT_NE(first->profileBuilder, second->profileBuilder);
+    EXPECT_EQ(first->protocolImplementation, ProtocolImplementationId::DiceTcat);
+    EXPECT_EQ(second->protocolImplementation, ProtocolImplementationId::DiceTcat);
+}
+
+TEST(AudioDeviceCatalog, RejectsProtocolThatDisagreesWithFamily) {
+    auto definitions = std::vector<AudioDeviceDefinition>(
+        AudioDeviceCatalog::Definitions().begin(),
+        AudioDeviceCatalog::Definitions().end());
+    const auto it = std::ranges::find_if(definitions, [](const auto& definition) {
+        return definition.id == DeviceDefinitionId::FocusriteSPro14;
+    });
+    ASSERT_NE(it, definitions.end());
+    it->protocolImplementation = ProtocolImplementationId::MotuV2;
+
+    const auto issues = AudioDeviceCatalog::ValidateDefinitions(definitions);
+    EXPECT_TRUE(std::ranges::any_of(issues, [](const auto& issue) {
+        return issue.reason != nullptr &&
+               std::string_view(issue.reason) ==
+                   "supported definition has incompatible family/probe/protocol";
+    }));
+}
+
+// Family agreement cannot catch this: DiceTcat is a DICE protocol, so the row
+// passes the family check while the factory would construct the generic TCAT
+// class for a device that needs SPro24DspProtocol. Only the protocol changes.
+TEST(AudioDeviceCatalog, RejectsDedicatedBuilderPairedWithTheGenericFamilyProtocol) {
+    auto definitions = std::vector<AudioDeviceDefinition>(
+        AudioDeviceCatalog::Definitions().begin(),
+        AudioDeviceCatalog::Definitions().end());
+    const auto it = std::ranges::find_if(definitions, [](const auto& definition) {
+        return definition.id == DeviceDefinitionId::FocusriteSPro24Dsp;
+    });
+    ASSERT_NE(it, definitions.end());
+    it->protocolImplementation = ProtocolImplementationId::DiceTcat;
+
+    const auto issues = AudioDeviceCatalog::ValidateDefinitions(definitions);
+    ASSERT_EQ(issues.size(), 1U);
+    EXPECT_EQ(issues.front().first, DeviceDefinitionId::FocusriteSPro24Dsp);
+    EXPECT_STREQ(issues.front().reason,
+                 "supported definition pairs its profile builder with "
+                 "the wrong protocol implementation");
+}
+
+// The reverse: a generic DICE builder must not borrow a dedicated class.
+TEST(AudioDeviceCatalog, RejectsGenericBuilderPairedWithADedicatedProtocol) {
+    auto definitions = std::vector<AudioDeviceDefinition>(
+        AudioDeviceCatalog::Definitions().begin(),
+        AudioDeviceCatalog::Definitions().end());
+    const auto it = std::ranges::find_if(definitions, [](const auto& definition) {
+        return definition.id == DeviceDefinitionId::FocusriteSPro14;
+    });
+    ASSERT_NE(it, definitions.end());
+    it->protocolImplementation = ProtocolImplementationId::DiceSPro24Dsp;
+
+    const auto issues = AudioDeviceCatalog::ValidateDefinitions(definitions);
+    ASSERT_EQ(issues.size(), 1U);
+    EXPECT_EQ(issues.front().first, DeviceDefinitionId::FocusriteSPro14);
 }
 
 // The converse, and the reason vendor-wide matching had to end: a device we do
@@ -108,6 +182,9 @@ TEST(AudioDeviceCatalog, AnUnsupportedRowResolvesToNoBuilderAtAll) {
         EXPECT_EQ(definition.profileBuilder, ProfileBuilderId::None)
             << "definition " << static_cast<uint32_t>(definition.id)
             << " is not Supported but names a profile builder";
+        EXPECT_EQ(definition.protocolImplementation, ProtocolImplementationId::None)
+            << "definition " << static_cast<uint32_t>(definition.id)
+            << " is not Supported but names a protocol implementation";
     }
 }
 
@@ -369,19 +446,20 @@ TEST(AudioDeviceCatalog, TheMAudioSpecialFirmwareCarriesAFilteredCommandSet) {
                                        {{.offset = 5,
                                          .specifierId = kTa1394AvcSpecifier,
                                          .version = kTa1394AvcVersion}});
-        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(device.identity),
+        const auto plan = AudioDeviceCatalog::Resolve(device.identity);
+        ASSERT_TRUE(plan.has_value());
+        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
                   Discovery::AvcCommandFilterId::MAudioSpecialBeBoB)
             << "model 0x" << std::hex << model;
-
-        // Recognised, but not playable here: this branch has no
-        // MAudioSpecialProtocol, so no builder may be named.
-        const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
-        ASSERT_TRUE(plan.has_value());
         EXPECT_EQ(plan->probePolicy, ProbePolicyId::BeBoBFilteredCommandSet);
-        EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
-        EXPECT_NE(plan->support, SupportDisposition::GenericFallback)
-            << "model 0x" << std::hex << model
-            << " fell through to generic AV/C, which is the freeze path";
+        EXPECT_EQ(plan->profileBuilder,
+                  model == kMAudioFireWire1814ModelId
+                      ? ProfileBuilderId::MAudioFireWire1814
+                      : ProfileBuilderId::MAudioProjectMix);
+        EXPECT_EQ(plan->protocolImplementation,
+                  ProtocolImplementationId::BeBoBMAudioSpecial);
+        EXPECT_EQ(plan->support, SupportDisposition::Supported);
+        EXPECT_EQ(plan->streamTraits.start.startShape, StreamStartShape::MAudioSpecial);
     }
 }
 
@@ -393,12 +471,14 @@ TEST(AudioDeviceCatalog, TheMAudioBootloaderPersonaIsNeverAnAudioEndpoint) {
                                    {{.offset = 5,
                                      .specifierId = kTa1394AvcSpecifier,
                                      .version = kTa1394AvcVersion}});
-    const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+    const auto plan = AudioDeviceCatalog::Resolve(device.identity);
     ASSERT_TRUE(plan.has_value());
     EXPECT_EQ(plan->family, AudioFamilyProviderId::None);
     EXPECT_EQ(plan->probePolicy, ProbePolicyId::NoAutomaticTraffic);
     EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
     EXPECT_EQ(plan->bootloaderCue, BootloaderCuePolicy::BeBoBStartFirmware);
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
+              Discovery::AvcCommandFilterId::BlockAll);
 }
 
 // Every ordinary device stays unrestricted. A non-empty allowlist is a bound on
@@ -410,14 +490,18 @@ TEST(AudioDeviceCatalog, AnOrdinaryDeviceIsNotCommandFiltered) {
                                  {{.offset = 5,
                                    .specifierId = kTa1394AvcSpecifier,
                                    .version = kTa1394AvcVersion}});
-    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(duet.identity),
+    const auto duetPlan = AudioDeviceCatalog::Resolve(duet.identity);
+    ASSERT_TRUE(duetPlan.has_value());
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*duetPlan),
               Discovery::AvcCommandFilterId::Unrestricted);
 
     const auto unknown = MakeDevice(0x00AABB'0400000000ULL, 0x00AABB, 0x000042,
                                     {{.offset = 5,
                                       .specifierId = kTa1394AvcSpecifier,
                                       .version = kTa1394AvcVersion}});
-    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(unknown.identity),
+    const auto unknownPlan = AudioDeviceCatalog::Resolve(unknown.identity);
+    ASSERT_TRUE(unknownPlan.has_value());
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*unknownPlan),
               Discovery::AvcCommandFilterId::Unrestricted);
 }
 
@@ -432,7 +516,9 @@ TEST(AudioDeviceCatalog, NothingIsQuarantinedOnThisBranch) {
                                      .specifierId = kFocusriteVendorId,
                                      .version = kDiceInterfaceVersion}});
     EXPECT_FALSE(AudioDeviceCatalog::MatchAnySafetyRule(device.identity).has_value());
-    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(device.identity),
+    const auto plan = AudioDeviceCatalog::Resolve(device.identity);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
               Discovery::AvcCommandFilterId::Unrestricted);
 }
 
@@ -491,8 +577,7 @@ TEST(AudioDeviceCatalog, DeviceLevelResolveFailsOnConflictingCuratedUnits) {
     EXPECT_EQ(res.error(), CatalogResolutionError::AmbiguousIdentity);
 }
 
-TEST(AudioDeviceCatalog, ResolutionInvariantsDeriveFromUnifiedResolve) {
-    // Invariant: ProfileBuilderFor, StreamTraitsFor, and CommandFilterFor derive from Resolve(device)
+TEST(AudioDeviceCatalog, ResolutionCarriesBuilderAndStreamTraits) {
     const auto duet = MakeDevice(0x0003DB'0400000000ULL, kApogeeVendorId,
                                  kApogeeDuetModelId,
                                  {{.offset = 5,
@@ -502,13 +587,9 @@ TEST(AudioDeviceCatalog, ResolutionInvariantsDeriveFromUnifiedResolve) {
     const auto plan = AudioDeviceCatalog::Resolve(duet.identity);
     ASSERT_TRUE(plan.has_value());
 
-    EXPECT_EQ(AudioDeviceCatalog::ProfileBuilderFor(duet.identity), plan->profileBuilder);
-    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(duet.identity).startRatePinHz,
-              plan->streamTraits.startRatePinHz);
-    EXPECT_EQ(AudioDeviceCatalog::StreamTraitsFor(duet.identity).startShape,
-              plan->streamTraits.startShape);
-
-    EXPECT_EQ(plan->streamTraits.startRatePinHz, 48000U);
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::ApogeeDuet);
+    EXPECT_EQ(plan->streamTraits.start.startRatePinHz, 48000U);
+    EXPECT_EQ(plan->streamTraits.start.startShape, StreamStartShape::ApogeeInterleaved);
 }
 
 TEST(AudioDeviceCatalog, StartRatePinHzIsAccurateForOnyxAndDuet) {
@@ -519,7 +600,7 @@ TEST(AudioDeviceCatalog, StartRatePinHzIsAccurateForOnyxAndDuet) {
                                    .version = kTa1394AvcVersion}});
     const auto onyxPlan = AudioDeviceCatalog::Resolve(onyx.identity);
     ASSERT_TRUE(onyxPlan.has_value());
-    EXPECT_EQ(onyxPlan->streamTraits.startRatePinHz, 44100U);
+    EXPECT_EQ(onyxPlan->streamTraits.start.startRatePinHz, 44100U);
 
     const auto spro = MakeDevice(0x00130E'0400000000ULL, kFocusriteVendorId,
                                  kSPro24DspModelId,
@@ -528,7 +609,7 @@ TEST(AudioDeviceCatalog, StartRatePinHzIsAccurateForOnyxAndDuet) {
                                    .version = kDiceInterfaceVersion}});
     const auto sproPlan = AudioDeviceCatalog::Resolve(spro.identity);
     ASSERT_TRUE(sproPlan.has_value());
-    EXPECT_EQ(sproPlan->streamTraits.startRatePinHz, 0U);
+    EXPECT_EQ(sproPlan->streamTraits.start.startRatePinHz, 0U);
 }
 
 TEST(AudioDeviceCatalog, CommandFilterForNeverFallsBackToUnrestrictedOnHazardOrAmbiguity) {
@@ -546,7 +627,9 @@ TEST(AudioDeviceCatalog, CommandFilterForNeverFallsBackToUnrestrictedOnHazardOrA
         .specifierId = kMotuVendorId,
         .version = kMotuUltraliteSwVersion,
     });
-    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(ambiguousMotu),
+    const auto resolution = AudioDeviceCatalog::Resolve(ambiguousMotu);
+    ASSERT_FALSE(resolution.has_value());
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(resolution.error()),
               Discovery::AvcCommandFilterId::BlockAll);
 }
 
