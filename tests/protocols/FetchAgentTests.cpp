@@ -125,6 +125,32 @@ TEST(FetchAgentTests, OrbTimesOutWhenFetchAgentWriteNeverCompletes) {
     agent.Clear(true);
 }
 
+// #139 (Minolta Dimage Scan Elite II): the INQUIRY's ORB_POINTER write timed out
+// (no AT completion), then the driver went silent — no retry write, no ORB
+// timeout — and UserCreateTargetForID waited on that INQUIRY until unplug.
+// Whatever happens to the retry, the ORB's own deadline must still fire.
+TEST(FetchAgentTests, OrbTimesOutWhenWriteFailsAndRetryNeverCompletes) {
+    Rig rig;
+    FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
+    agent.Bind(rig.Binding());
+
+    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    orb.SetTimeout(10'000);
+    int completions = 0;
+    orb.SetCompletionCallback([&](int, uint8_t) { ++completions; });
+
+    ASSERT_TRUE(agent.Submit(&orb));
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(AsyncStatus::kTimeout));
+    rig.scheduler.Advance(1'000 * kMs);           // retry write issued, left pending
+    ASSERT_EQ(1u, rig.bus.PendingWriteCount());
+    EXPECT_EQ(0, completions);
+
+    rig.scheduler.Advance(9'000 * kMs);           // Submit + 10 s
+    EXPECT_EQ(1, completions);
+    agent.Clear(true);
+}
+
 // The stuck write's kAborted completion arrives late (posted to the workloop).
 // It must not be taken for the NEXT ORB's write: that would free its write
 // slot and schedule a duplicate ORB_POINTER retry.
