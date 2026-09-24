@@ -221,6 +221,13 @@ const Scenario kScenarios[] = {
     {"cold-start", [](SessionRig& r) { r.Start(); }},
     {"stop", [](SessionRig& r) { r.Start(); r.Stop(); }},
     {"double-stop", [](SessionRig& r) { r.Start(); r.Stop(); r.Stop(); }},
+    {"double-start", [](SessionRig& r) { r.Start(); r.Start(); }},
+    // A runtime fault queued during StopIO's teardown and run after it.
+    {"fault-after-stop", [](SessionRig& r) {
+         r.Start();
+         r.Stop();
+         r.Recover("timing-loss", DuplexRestartReason::kRecoverAfterTimingLoss);
+     }},
     {"clock-change-running", [](SessionRig& r) { r.Start(); r.Clock(44100); }},
     {"idle-clock-then-start", [](SessionRig& r) { r.Clock(44100); r.Start(); }},
     {"recover-bus-reset", [](SessionRig& r) {
