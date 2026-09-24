@@ -141,6 +141,11 @@ std::array<uint8_t, kGlobalReadBytes> MakeGlobalStateWire(uint32_t clockSelect,
     return bytes;
 }
 
+// Deliberately not SimulatedDiceDevice (tests/support/SimulatedDiceDevice.hpp):
+// these tests exercise link-speed step-down (a general-section read that fails
+// at S400 and succeeds lower), route invalidation inside a failing read, the
+// TCAT extension space and per-region read counts. None of that is DICE device
+// behaviour the simulator models, so this counting fake stays.
 class CountingFireWireBus final : public IFireWireBus {
 public:
     AsyncHandle ReadBlock(Generation generation,

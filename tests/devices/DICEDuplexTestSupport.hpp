@@ -16,12 +16,15 @@
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Core/DICEDuplexBringupController.hpp"
 #include "Protocols/Ports/ProtocolRegisterIO.hpp"
+#include "SimulatedDiceDevice.hpp"
+#include "WireTrace.hpp"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
 #include <functional>
 #include <optional>
 #include <span>
@@ -171,41 +174,59 @@ inline GeneralSections MakeGeneralSections() {
     };
 }
 
+// The single-device layout the controller tests were written against: a
+// Saffire Pro 24 DSP-like section table and stream shape, with no clock-source
+// names. Those tests and the reference-parity scripts run on it unchanged.
+// (Channel names are now stored little-endian within each quadlet, as a real
+// DICE device stores them; the old fake stored them in reading order.)
+inline constexpr DiceDeviceImage kLegacyTestDeviceImage{
+    .key = "legacy-test-device",
+    .reportedModel = "DICEDuplexTestSupport legacy layout",
+    .source = "DICEDuplexTestSupport.hpp",
+    .guid = 0xD1CE000000000002ULL,
+    .globalSection = {.offsetQuadlets = 0x0A, .sizeQuadlets = 0x5F},
+    .txSection = {.offsetQuadlets = 0x69, .sizeQuadlets = 0x46},
+    .rxSection = {.offsetQuadlets = 0xF7, .sizeQuadlets = 0x46},
+    .extSyncSection = {},
+    .hasExtension = false,
+    .owner = kOwnerNoOwner,
+    .notification = 0x00000010U,
+    .nickname = "",
+    .clockSelect = 0,
+    .enable = 0,
+    .status = kLocked48kStatus,
+    .extStatus = 0,
+    .sampleRate = 48000,
+    .version = 0x01000C00,
+    .clockCaps = 0x00001E06,
+    .clockSourceNames = "",
+    .txEntryQuadlets = kTxEntryQuadlets,
+    .rxEntryQuadlets = kRxEntryQuadlets,
+    .txCount = 1,
+    .tx = {{{.iso = -1, .pcm = 16, .midi = 1, .speedOrSeqStart = 2, .names = "IP 1"}}},
+    .rxCount = 1,
+    .rx = {{{.iso = -1, .pcm = 8, .midi = 1, .speedOrSeqStart = 0, .names = "Mon 1"}}},
+};
+
+// IFireWireBus over one SimulatedDiceDevice. Records every request (as
+// RecordedOp for the existing parity checks, and as a WireTrace for golden
+// files), enforces the bus generation, and can inject one-shot faults.
+// Scripted mode replays recorded responses instead of asking the device;
+// writes and locks still reach the device so its state stays coherent.
 class RecordingFireWireBus final : public IFireWireBus {
 public:
-    RecordingFireWireBus() {
+    explicit RecordingFireWireBus(const DiceDeviceImage& image = kLegacyTestDeviceImage,
+                                  SimulatedDiceOptions options = {})
+        : device_(image, options), defaultClockResponse_(options.clockResponse) {
         generation_ = Generation{1};
         localNodeId_ = NodeId{0};
         speeds_[0x02] = FwSpeed::S400;
-        owner_ = kOwnerNoOwner;
-        clockSelect_ = 0;
-        enable_ = 0;
-        notification_ = 0x00000010U;
-        status_ = kLocked48kStatus;
-        extStatus_ = 0;
-        sampleRate_ = 48000;
-        version_ = 0x01000C00;
-        clockCaps_ = 0x00001E06;
-        txNum_ = 1;
-        txSize_ = kTxEntryQuadlets;
-        txIso_ = 0xFFFFFFFFU;
-        txAudio_ = 16;
-        txMidi_ = 1;
-        txSpeed_ = 2;
-        rxNum_ = 1;
-        rxSize_ = kRxEntryQuadlets;
-        rxIso_ = 0xFFFFFFFFU;
-        rxSeq_ = 0;
-        rxAudio_ = 8;
-        rxMidi_ = 1;
-
-        txNames_.fill(0);
-        rxNames_.fill(0);
-        const char txName[] = "IP 1";
-        const char rxName[] = "Mon 1";
-        std::copy(txName, txName + sizeof(txName), txNames_.begin());
-        std::copy(rxName, rxName + sizeof(rxName), rxNames_.begin());
+        device_.SetNotifySink([](uint32_t bits) { NotificationMailbox::Publish(bits); });
+        device_.SetTraceSink([this](std::string_view line) { trace_.Add(line); });
     }
+
+    RecordingFireWireBus(const RecordingFireWireBus&) = delete;
+    RecordingFireWireBus& operator=(const RecordingFireWireBus&) = delete;
 
     AsyncHandle ReadBlock(Generation generation,
                           NodeId nodeId,
@@ -213,21 +234,25 @@ public:
                           uint32_t length,
                           FwSpeed speed,
                           ::ASFW::Async::InterfaceCompletionCallback callback) override {
+        (void)nodeId;
         Record(OpKind::Read, address, length, speed, 0, {});
-        if (generation != generation_) {
-            callback(AsyncStatus::kStaleGeneration, {});
+        if (const auto failure = Failure(OpKind::Read, generation, address)) {
+            trace_.Read(address.addressHi, address.addressLo, length, speed, *failure);
+            callback(*failure, {});
             return NextHandle();
         }
 
         if (HasScript()) {
             ExpectScriptedRequest(OpKind::Read, address, length, speed, 0, {});
             const auto response = TakeScriptedResponse(OpKind::Read, address, length, 0, speed);
+            trace_.Read(address.addressHi, address.addressLo, length, speed, response.status);
             callback(response.status,
                      std::span<const uint8_t>(response.payload.data(), response.payload.size()));
             return NextHandle();
         }
 
         const auto payload = ReadPayload(address, length);
+        trace_.Read(address.addressHi, address.addressLo, length, speed, AsyncStatus::kSuccess);
         callback(AsyncStatus::kSuccess, std::span<const uint8_t>(payload.data(), payload.size()));
         return NextHandle();
     }
@@ -238,10 +263,12 @@ public:
                            std::span<const uint8_t> data,
                            FwSpeed speed,
                            ::ASFW::Async::InterfaceCompletionCallback callback) override {
+        (void)nodeId;
         std::vector<uint8_t> payload(data.begin(), data.end());
         Record(OpKind::Write, address, static_cast<uint32_t>(data.size()), speed, 0, payload);
-        if (generation != generation_) {
-            callback(AsyncStatus::kStaleGeneration, {});
+        if (const auto failure = Failure(OpKind::Write, generation, address)) {
+            trace_.Write(address.addressHi, address.addressLo, data, speed, *failure);
+            callback(*failure, {});
             return NextHandle();
         }
 
@@ -254,7 +281,13 @@ public:
                                   payload);
         }
 
-        ApplyWrite(address, data);
+        trace_.Write(address.addressHi, address.addressLo, data, speed, AsyncStatus::kSuccess);
+        if (address.addressHi == kDiceBaseAddressHi) {
+            (void)device_.Write(address.addressLo, data);
+        }
+        if (clockSelectWriteHandler_ && IsClockSelect(address)) {
+            clockSelectWriteHandler_();
+        }
         callback(AsyncStatus::kSuccess, {});
         return NextHandle();
     }
@@ -267,10 +300,17 @@ public:
                      uint32_t responseLength,
                      FwSpeed speed,
                      ::ASFW::Async::InterfaceCompletionCallback callback) override {
+        (void)nodeId;
+        (void)lockOp;
         std::vector<uint8_t> payload(operand.begin(), operand.end());
         Record(OpKind::Lock, address, static_cast<uint32_t>(operand.size()), speed, responseLength, payload);
-        if (generation != generation_) {
-            callback(AsyncStatus::kStaleGeneration, {});
+        const bool compareSwap64 = operand.size() == 16 && responseLength == 8;
+        const uint64_t expected = compareSwap64 ? ::ASFW::FW::ReadBE64(operand.data()) : 0;
+        const uint64_t desired = compareSwap64 ? ::ASFW::FW::ReadBE64(operand.data() + 8) : 0;
+        if (const auto failure = Failure(OpKind::Lock, generation, address)) {
+            trace_.CompareSwap(address.addressHi, address.addressLo, expected, desired,
+                               std::nullopt, speed, *failure);
+            callback(*failure, {});
             return NextHandle();
         }
 
@@ -281,20 +321,29 @@ public:
                                   speed,
                                   responseLength,
                                   payload);
-            (void)ApplyLock(address, operand, responseLength);
+            const auto previous = ApplyLock(address, compareSwap64, expected, desired);
             const auto response = TakeScriptedResponse(
                 OpKind::Lock, address, static_cast<uint32_t>(operand.size()), responseLength, speed);
+            trace_.CompareSwap(address.addressHi, address.addressLo, expected, desired, previous,
+                               speed, response.status);
             callback(response.status,
                      std::span<const uint8_t>(response.payload.data(), response.payload.size()));
             return NextHandle();
         }
 
-        const auto response = ApplyLock(address, operand, responseLength);
+        const auto previous = ApplyLock(address, compareSwap64, expected, desired);
+        std::vector<uint8_t> response(responseLength, 0);
+        if (previous && responseLength == 8) {
+            PutBe64(response.data(), *previous);
+        }
+        trace_.CompareSwap(address.addressHi, address.addressLo, expected, desired, previous,
+                           speed, AsyncStatus::kSuccess);
         callback(AsyncStatus::kSuccess, std::span<const uint8_t>(response.data(), response.size()));
         return NextHandle();
     }
 
     bool Cancel(AsyncHandle handle) override {
+        (void)handle;
         return false;
     }
 
@@ -318,7 +367,7 @@ public:
     }
 
     [[nodiscard]] uint32_t TxSpeed() const {
-        return txSpeed_;
+        return device_.TxSpeed(0);
     }
 
     uint8_t GetGapCount() const override { return gapCount_; }
@@ -326,6 +375,8 @@ public:
     void SetGapCount(uint8_t gapCount) { gapCount_ = gapCount; }
 
     uint32_t HopCount(NodeId nodeA, NodeId nodeB) const override {
+        (void)nodeA;
+        (void)nodeB;
         return 1;
     }
 
@@ -367,22 +418,28 @@ public:
     }
 
     uint64_t Owner() const {
-        return owner_;
+        return device_.Owner();
     }
 
     uint32_t Enable() const {
-        return enable_;
+        return device_.Enable();
     }
 
+    // Replace the device's own CLOCK_SELECT response with `handler`, which runs
+    // after the write lands and before its completion is delivered.
     void SetClockSelectWriteHandler(std::function<void()> handler) {
         clockSelectWriteHandler_ = std::move(handler);
+        auto options = device_.GetOptions();
+        options.clockResponse = clockSelectWriteHandler_ ? DiceClockResponse::kNeverAccept
+                                                         : defaultClockResponse_;
+        device_.SetOptions(options);
     }
 
     void SetGlobalClockState(uint32_t status, uint32_t sampleRate,
                              uint32_t notification = 0) {
-        status_ = status;
-        sampleRate_ = sampleRate;
-        notification_ = notification;
+        device_.SetGlobalQuad(GlobalOffset::kStatus, status);
+        device_.SetGlobalQuad(GlobalOffset::kSampleRate, sampleRate);
+        device_.SetGlobalQuad(GlobalOffset::kNotification, notification);
     }
 
     void SetGeneration(Generation generation) {
@@ -394,16 +451,38 @@ public:
     }
 
     void SetStreamIsoChannels(uint32_t txIso, uint32_t rxIso) {
-        txIso_ = txIso;
-        rxIso_ = rxIso;
+        device_.SetTxIso(0, txIso);
+        device_.SetRxIso(0, rxIso);
     }
 
     void PublishClockAccepted(uint32_t bits = NotifyBits::kClockAccepted) {
-        ApplyClockAcceptedState(bits, true);
+        device_.SetAchievedClock(ClockRateIndex::k48000, true);
+        device_.RaiseNotification(bits);
     }
 
     void LatchClockAccepted(uint32_t bits = NotifyBits::kClockAccepted) {
-        ApplyClockAcceptedState(bits, false);
+        device_.SetAchievedClock(ClockRateIndex::k48000, true);
+        device_.SetNotificationRegister(bits);
+    }
+
+    // ---- simulator access, faults and trace --------------------------------
+
+    [[nodiscard]] SimulatedDiceDevice& Device() noexcept { return device_; }
+    [[nodiscard]] const SimulatedDiceDevice& Device() const noexcept { return device_; }
+    [[nodiscard]] ::ASFW::Testing::WireTrace& Trace() noexcept { return trace_; }
+
+    // A bus reset: new generation, and the device's own reset behaviour.
+    void BusReset() {
+        generation_ = Generation{generation_.value + 1};
+        char line[48];
+        std::snprintf(line, sizeof(line), "# bus-reset gen=%u", generation_.value);
+        trace_.Add(line);
+        device_.BusReset();
+    }
+
+    // Fail the next request of `kind` at `addressLo` with `status`, once.
+    void FailNext(OpKind kind, uint32_t addressLo, AsyncStatus status) {
+        faults_.push_back(Fault{kind, addressLo, status});
     }
 
 private:
@@ -412,8 +491,43 @@ private:
         std::vector<uint8_t> payload;
     };
 
+    struct Fault {
+        OpKind kind;
+        uint32_t addressLo;
+        AsyncStatus status;
+    };
+
     AsyncHandle NextHandle() {
         return AsyncHandle{nextHandle_++};
+    }
+
+    [[nodiscard]] bool IsClockSelect(FWAddress address) const {
+        return address.addressHi == kDiceBaseAddressHi &&
+               address.addressLo == kDiceBaseAddressLo + device_.GlobalBase() + GlobalOffset::kClockSelect;
+    }
+
+    // Stale generation first (a real bus rejects it before the device sees it),
+    // then any injected one-shot fault.
+    std::optional<AsyncStatus> Failure(OpKind kind, Generation generation, FWAddress address) {
+        if (generation != generation_) {
+            return AsyncStatus::kStaleGeneration;
+        }
+        for (auto it = faults_.begin(); it != faults_.end(); ++it) {
+            if (it->kind == kind && it->addressLo == address.addressLo) {
+                const AsyncStatus status = it->status;
+                faults_.erase(it);
+                return status;
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::optional<uint64_t> ApplyLock(FWAddress address, bool compareSwap64,
+                                      uint64_t expected, uint64_t desired) {
+        if (!compareSwap64 || address.addressHi != kDiceBaseAddressHi) {
+            return std::nullopt;
+        }
+        return device_.CompareSwap64(address.addressLo, expected, desired);
     }
 
     void Record(OpKind kind,
@@ -491,184 +605,21 @@ private:
         };
     }
 
-    std::vector<uint8_t> QuadletPayload(uint32_t value) const {
-        std::vector<uint8_t> bytes(4);
-        PutBe32(bytes.data(), value);
-        return bytes;
-    }
-
+    // Addresses outside the modelled DICE space read as zeros, as they did in
+    // the legacy fake.
     std::vector<uint8_t> ReadPayload(FWAddress address, uint32_t length) const {
-        if (address.addressHi == 0xFFFF && address.addressLo == 0xE0000000U &&
-            length == kGeneralSectionBytes) {
-            const auto bytes = MakeGeneralSectionsWire();
-            return std::vector<uint8_t>(bytes.begin(), bytes.end());
-        }
-
-        if (address.addressHi == 0xFFFF && address.addressLo == 0xE0000028U) {
-            auto bytes = BuildGlobalBlock();
-            bytes.resize(length);
-            return bytes;
-        }
-
-        if (address.addressHi == 0xFFFF && address.addressLo == 0xE00001A4U) {
-            auto bytes = BuildTxStreamBlock();
-            bytes.resize(length);
-            return bytes;
-        }
-        if (address.addressHi == 0xFFFF && address.addressLo == 0xE00003DCU) {
-            auto bytes = BuildRxStreamBlock();
-            bytes.resize(length);
-            return bytes;
-        }
-
-        if (address.addressHi == 0xFFFF && address.addressLo == 0xE00001BCU && length == 256) {
-            return std::vector<uint8_t>(txNames_.begin(), txNames_.end());
-        }
-        if (address.addressHi == 0xFFFF && address.addressLo == 0xE00003F4U && length == 256) {
-            return std::vector<uint8_t>(rxNames_.begin(), rxNames_.end());
-        }
-
-        if (address.addressHi == 0xFFFF && length == 4) {
-            switch (address.addressLo) {
-            case 0xE00001A4U:
-                return QuadletPayload(txNum_);
-            case 0xE00001A8U:
-                return QuadletPayload(txSize_);
-            case 0xE00001ACU:
-                return QuadletPayload(txIso_);
-            case 0xE00001B0U:
-                return QuadletPayload(txAudio_);
-            case 0xE00001B4U:
-                return QuadletPayload(txMidi_);
-            case 0xE00001B8U:
-                return QuadletPayload(txSpeed_);
-            case 0xE00003DCU:
-                return QuadletPayload(rxNum_);
-            case 0xE00003E0U:
-                return QuadletPayload(rxSize_);
-            case 0xE00003E4U:
-                return QuadletPayload(rxIso_);
-            case 0xE00003E8U:
-                return QuadletPayload(rxSeq_);
-            case 0xE00003ECU:
-                return QuadletPayload(rxAudio_);
-            case 0xE00003F0U:
-                return QuadletPayload(rxMidi_);
-            case 0xE000007CU:
-                return QuadletPayload(status_);
-            case 0xE0000030U:
-                return QuadletPayload(notification_);
-            case 0xE0000080U:
-                return QuadletPayload(extStatus_);
-            default:
-                break;
+        if (address.addressHi == kDiceBaseAddressHi) {
+            if (auto bytes = device_.Read(address.addressLo, length)) {
+                return *bytes;
             }
         }
-
         return std::vector<uint8_t>(length, 0);
     }
 
-    std::vector<uint8_t> BuildGlobalBlock() const {
-        std::vector<uint8_t> bytes(kGlobalBytes, 0);
-        PutBe64(bytes.data() + GlobalOffset::kOwnerHi, owner_);
-        PutBe32(bytes.data() + GlobalOffset::kNotification, notification_);
-        PutBe32(bytes.data() + GlobalOffset::kClockSelect, clockSelect_);
-        PutBe32(bytes.data() + GlobalOffset::kEnable, enable_);
-        PutBe32(bytes.data() + GlobalOffset::kStatus, status_);
-        PutBe32(bytes.data() + GlobalOffset::kExtStatus, extStatus_);
-        PutBe32(bytes.data() + GlobalOffset::kSampleRate, sampleRate_);
-        PutBe32(bytes.data() + GlobalOffset::kVersion, version_);
-        PutBe32(bytes.data() + GlobalOffset::kClockCaps, clockCaps_);
-        return bytes;
-    }
-
-    std::vector<uint8_t> BuildTxStreamBlock() const {
-        std::vector<uint8_t> bytes(kTxEntryQuadlets * 4, 0);
-        PutBe32(bytes.data(), txNum_);
-        PutBe32(bytes.data() + 4, txSize_);
-        PutBe32(bytes.data() + 8, txIso_);
-        PutBe32(bytes.data() + 12, txAudio_);
-        PutBe32(bytes.data() + 16, txMidi_);
-        PutBe32(bytes.data() + 20, txSpeed_);
-        std::copy(txNames_.begin(), txNames_.end(), bytes.begin() + 24);
-        return bytes;
-    }
-
-    std::vector<uint8_t> BuildRxStreamBlock() const {
-        std::vector<uint8_t> bytes(kRxEntryQuadlets * 4, 0);
-        PutBe32(bytes.data(), rxNum_);
-        PutBe32(bytes.data() + 4, rxSize_);
-        PutBe32(bytes.data() + 8, rxIso_);
-        PutBe32(bytes.data() + 12, rxSeq_);
-        PutBe32(bytes.data() + 16, rxAudio_);
-        PutBe32(bytes.data() + 20, rxMidi_);
-        std::copy(rxNames_.begin(), rxNames_.end(), bytes.begin() + 24);
-        return bytes;
-    }
-
-    void ApplyClockAcceptedState(uint32_t bits, bool publishMailbox) {
-        notification_ = bits;
-        status_ = kLocked48kStatus;
-        sampleRate_ = 48000;
-        if (publishMailbox) {
-            NotificationMailbox::Publish(bits);
-        }
-    }
-
-    void ApplyWrite(FWAddress address, std::span<const uint8_t> data) {
-        if (address.addressHi != 0xFFFF || data.size() != 4) {
-            return;
-        }
-
-        const uint32_t value = ::ASFW::FW::ReadBE32(data.data());
-        switch (address.addressLo) {
-        case 0xE0000074U:
-            clockSelect_ = value;
-            if (clockSelectWriteHandler_) {
-                clockSelectWriteHandler_();
-            } else {
-                PublishClockAccepted();
-            }
-            break;
-        case 0xE0000078U:
-            enable_ = value;
-            break;
-        case 0xE00001ACU:
-            txIso_ = value;
-            break;
-        case 0xE00001B8U:
-            txSpeed_ = value;
-            break;
-        case 0xE00003E4U:
-            rxIso_ = value;
-            break;
-        case 0xE00003E8U:
-            rxSeq_ = value;
-            break;
-        default:
-            break;
-        }
-    }
-
-    std::vector<uint8_t> ApplyLock(FWAddress address,
-                                   std::span<const uint8_t> operand,
-                                   uint32_t responseLength) {
-        if (address.addressHi == 0xFFFF && address.addressLo == 0xE0000028U && operand.size() == 16 &&
-            responseLength == 8) {
-            const uint64_t expected = ::ASFW::FW::ReadBE64(operand.data());
-            const uint64_t desired = ::ASFW::FW::ReadBE64(operand.data() + 8);
-            const uint64_t previous = owner_;
-            if (owner_ == expected) {
-                owner_ = desired;
-            }
-            std::vector<uint8_t> response(8);
-            PutBe64(response.data(), previous);
-            return response;
-        }
-
-        return std::vector<uint8_t>(responseLength, 0);
-    }
-
+    SimulatedDiceDevice device_;
+    DiceClockResponse defaultClockResponse_;
+    ::ASFW::Testing::WireTrace trace_;
+    std::vector<Fault> faults_;
     std::vector<RecordedOp> operations_;
     Generation generation_{0};
     NodeId localNodeId_{0};
@@ -678,35 +629,8 @@ private:
         return speeds;
     }()};
     uint32_t nextHandle_{1};
-
-    uint64_t owner_{0};
-    uint32_t clockSelect_{0};
-    uint32_t enable_{0};
-    uint32_t notification_{0};
-    uint32_t status_{0};
-    uint32_t extStatus_{0};
-    uint32_t sampleRate_{0};
-    uint32_t version_{0};
-    uint32_t clockCaps_{0};
-
-    uint32_t txNum_{0};
-    uint32_t txSize_{0};
-    uint32_t txIso_{0};
-    uint32_t txAudio_{0};
-    uint32_t txMidi_{0};
-    uint32_t txSpeed_{0};
-
-    uint32_t rxNum_{0};
-    uint32_t rxSize_{0};
-    uint32_t rxIso_{0};
-    uint32_t rxSeq_{0};
-    uint32_t rxAudio_{0};
-    uint32_t rxMidi_{0};
-
     uint8_t gapCount_{63};
 
-    std::array<uint8_t, 256> txNames_{};
-    std::array<uint8_t, 256> rxNames_{};
     std::function<void()> clockSelectWriteHandler_;
     std::span<const ExpectedRequest> scriptedRequests_{};
     std::span<const ResponseStep> scriptedResponses_{};
