@@ -149,6 +149,10 @@ public:
     [[nodiscard]] bool Logout() noexcept;
     [[nodiscard]] bool Reconnect() noexcept;
     void HandleBusReset(uint16_t newGeneration) noexcept;
+    // The suspended login's device is gone for good (unit terminated, or back
+    // as a new incarnation that cannot hold the old login). No reconnect is
+    // possible: go Failed and report the session lost. No bus traffic.
+    void AbandonSuspended() noexcept;
 
     // -----------------------------------------------------------------------
     // Accessors

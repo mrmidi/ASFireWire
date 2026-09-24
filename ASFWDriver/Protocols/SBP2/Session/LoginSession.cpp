@@ -279,6 +279,17 @@ void LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
     }
 }
 
+void LoginSession::AbandonSuspended() noexcept {
+    if (state_ != LoginState::Suspended) {
+        return;
+    }
+    ASFW_LOG_SBP2("LoginSession: device gone while suspended — session lost");
+    CancelManagementTimer();
+    loginID_ = 0;
+    SetState(LoginState::Failed);
+    NotifySessionLost();
+}
+
 // ---------------------------------------------------------------------------
 // Accessors
 // ---------------------------------------------------------------------------

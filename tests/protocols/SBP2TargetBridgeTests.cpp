@@ -208,6 +208,8 @@ public:
         deviceManager.MarkDeviceLost(kGuid);
         registry->RefreshTargets(Generation{2});
         deviceManager.MarkDeviceLost(kGuid);
+        // Terminated: discovery retires the GUID (ControllerCoreDiscovery).
+        deviceRegistry.RetireDevice(kGuid);
         registry->RefreshTargets(Generation{2});
         Drain();
     }
@@ -349,6 +351,37 @@ TEST(SBP2TargetBridgeTests, RegistryTeardownCancelsPendingLogoutThroughTheBus) {
     rig.registry.reset();
 
     EXPECT_EQ(0u, rig.bus.PendingWriteCount());
+}
+
+// Hot-unplug must reach the HBA as a terminal down edge, or target 0 outlives
+// the device and a replug never re-creates it.
+TEST(SBP2TargetBridgeTests, UnplugEmitsTerminalDownEdge) {
+    BridgeRig rig;
+    rig.BringUp();
+
+    rig.Unplug();
+    rig.AdvanceMs(120'000);
+
+    ASSERT_FALSE(rig.edges.empty());
+    EXPECT_FALSE(rig.edges.back().second);
+}
+
+// Replug after termination: the bridge's Failed session is replaced by a fresh
+// login, and the HBA gets a new up edge to re-create target 0.
+TEST(SBP2TargetBridgeTests, ReplugAfterUnplugLogsInAgainAndReannounces) {
+    BridgeRig rig;
+    rig.BringUp();
+    rig.Unplug();
+    rig.AdvanceMs(1'000);
+    ASSERT_FALSE(rig.edges.back().second);
+
+    rig.UpsertDevice(Generation{2}, 0x00);
+    rig.Drain();
+    rig.CompleteLogin();
+    rig.PostStatus(rig.AckCommandFetch()); // readiness TUR → GOOD
+
+    EXPECT_TRUE(rig.edges.back().second);
+    EXPECT_TRUE(rig.bridge->IsReady());
 }
 
 } // namespace
