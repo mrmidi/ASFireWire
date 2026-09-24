@@ -90,6 +90,10 @@ struct DiceRig {
     IOReturn Run(const char* stage, Start&& start) {
         Mark(std::string("## ") + stage);
         std::optional<IOReturn> result;
+        // Measure the stage's wait on the virtual clock, not by counting pump
+        // ticks: a synchronous implementation advances the clock itself while
+        // it waits, and must produce the same trace.
+        const uint64_t startNs = timer.NowNs();
         start([&result](IOReturn status) { result = status; });
         uint32_t ticks = 0;
         for (; !result && ticks < kMaxTicks; ++ticks) {
@@ -99,8 +103,9 @@ struct DiceRig {
             }
             timer.Advance(uint64_t{kPollTickMs} * 1'000'000ULL);
         }
-        if (ticks > 0) {
-            Mark("# waited " + std::to_string(ticks * kPollTickMs) + "ms");
+        const uint64_t waitedMs = (timer.NowNs() - startNs) / 1'000'000ULL;
+        if (waitedMs > 0) {
+            Mark("# waited " + std::to_string(waitedMs) + "ms");
         }
         if (!result) {
             Mark("# gave up waiting");
