@@ -46,6 +46,7 @@
 
 #include "../Logging/Logging.hpp"
 #include "../Protocols/SBP2/SCSICommandSet.hpp"
+#include "HbaTaskPolicy.hpp"
 #include "SBP2BridgeHub.hpp"
 #include "SBP2TargetBridge.hpp"
 #include "TargetLifecycle.hpp"
@@ -55,14 +56,7 @@
 
 namespace SBP2 = ASFW::Protocols::SBP2;
 
-// Standard SCSI opcodes we special-case.
 namespace {
-constexpr uint8_t kOpTestUnitReady = 0x00;
-constexpr uint8_t kOpRequestSense  = 0x03;
-constexpr uint8_t kOpReserve6      = 0x16;
-constexpr uint8_t kOpRelease6      = 0x17;
-constexpr uint8_t kOpReserve10     = 0x56;
-constexpr uint8_t kOpRelease10     = 0x57;
 
 // Must match UserGetDMASpecification's maxTransferSize. Sized as a permissive
 // ceiling for any single-LUN SBP-2 scanner, not a per-model value: the LS-9000's
@@ -370,16 +364,8 @@ kern_return_t IMPL(ASFWSCSIController, UserReportInitiatorIdentifier)
 
 kern_return_t IMPL(ASFWSCSIController, UserReportHighestSupportedDeviceID)
 {
-    // Only target 0 is ever created, but report 1. The family's willTerminate
-    // flushes and destroys targets with `index < fHighestSupportedDeviceID`
-    // (strict <, unlike start's `<=`; OSS IOSCSIParallelInterfaceController.cpp
-    // willTerminate, same in the 26.x/27 kernelcache disassembly), so with 0 it
-    // skipped target 0 entirely: its outstanding tasks stayed live, stop()
-    // freed fWorkLoop, and our late ParallelTaskCompletion NULL-dereferenced
-    // it in CompleteParallelTask (#139, adapter unplug while INQUIRY held).
-    // The bring-up scan does instantiate ID 1 (presence false does not stop
-    // it); UserProcessParallelTask fails every task to it, so it never probes.
-    *id = 1;
+    // See kReportedHighestTargetID: 1, not 0, so willTerminate flushes target 0.
+    *id = SBP2::HbaTaskPolicy::kReportedHighestTargetID;
     return kIOReturnSuccess;
 }
 
@@ -517,56 +503,31 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     resp.fBytesTransferred = 0;
     resp.fSenseLength = 0;
 
-    // RESERVE/RELEASE never reach the wire. The justification is generic: this
-    // HBA owns the only initiator on the bus, so a reservation is uncontended
-    // and trivially GOOD for any single-initiator SBP-2 target. (Motivating
-    // observation: the working Sequoia stack — VueScan via IOFireWireSBP2Lib —
-    // never sent them, and LS-9000 firmware wedges on a RESERVE(6) retry after
-    // UNIT ATTENTION: no status block, target dead until power cycle.)
-    if (opcode == kOpReserve6 || opcode == kOpRelease6 ||
-        opcode == kOpReserve10 || opcode == kOpRelease10) {
-        ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x (RESERVE/RELEASE) → synthetic GOOD",
-                 opcode);
-        ParallelTaskCompletion(completion, resp);
-        if (response != nullptr) {
-            *response = kIOReturnSuccess;
-        }
-        return kIOReturnSuccess;
-    }
-
-    // Only target 0 maps to the SBP-2 login. The family's bring-up scan also
-    // instantiates ID 1 (we report highest ID 1 for willTerminate's sake), and
-    // forwarding its INQUIRY would publish the same scanner twice (HW-observed).
-    // Fail it like an absent device so the scan drops it.
-    if (parallelRequest.fTargetID != 0) {
-        resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
-        resp.fCompletionStatus = kSCSITaskStatus_DeviceNotPresent;
-        ParallelTaskCompletion(completion, resp);
-        if (response != nullptr) {
-            *response = kIOReturnSuccess;
-        }
-        return kIOReturnSuccess;
-    }
-
     auto bridge = SBP2::SBP2BridgeHub::Get();
     const bool ready = bridge && bridge->IsReady();
 
-    if (!ready) {
-        // Suspended window: the target exists (it was created at login) but the
-        // session dropped after a bus reset and reconnect is pending. Every
-        // data-carrying command — INQUIRY included — answers BUSY so the
-        // initiator's bounded retries either land after the reconnect or fail
-        // cleanly; nothing is held without a deadline (an indefinitely held
-        // INQUIRY was the issue-#54 strand: a device that vanishes while
-        // suspended emits no terminal edge, so a held completion would never
-        // fire and the task would pin the registry). TUR/REQUEST SENSE complete
-        // GOOD to keep probes moving.
-        if (opcode == kOpTestUnitReady || opcode == kOpRequestSense) {
-            // GOOD, no data.
-        } else {
+    using SBP2::HbaTaskPolicy::Disposition;
+    const Disposition disposition =
+        SBP2::HbaTaskPolicy::Classify(parallelRequest.fTargetID, opcode, ready);
+    if (disposition != Disposition::Forward) {
+        switch (disposition) {
+        case Disposition::NotPresent:
+            resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
+            resp.fCompletionStatus = kSCSITaskStatus_DeviceNotPresent;
+            break;
+        case Disposition::Busy:
             ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x → BUSY (SBP-2 session not ready)",
                      opcode);
             resp.fCompletionStatus = kSCSITaskStatus_BUSY;
+            break;
+        case Disposition::SyntheticGood:
+            if (SBP2::HbaTaskPolicy::IsReserveRelease(opcode)) {
+                ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x (RESERVE/RELEASE) → synthetic GOOD",
+                         opcode);
+            }
+            break;
+        case Disposition::Forward:
+            break;
         }
         ParallelTaskCompletion(completion, resp);
         if (response != nullptr) {

@@ -265,6 +265,11 @@ add_protocols_test(SessionRegistryTests
     "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
 )
 
+# SCSI HBA target-ID and per-task decisions (header-only)
+add_protocols_test(HbaTaskPolicyTests
+    HbaTaskPolicyTests.cpp
+)
+
 # SCSI HBA target-0 create/destroy edge handling
 add_protocols_test(TargetLifecycleTests
     TargetLifecycleTests.cpp
