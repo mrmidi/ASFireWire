@@ -1,0 +1,3 @@
+# Built locally from rtl_loopback.c -- never commit the binary.
+rtl_loopback
+build/
