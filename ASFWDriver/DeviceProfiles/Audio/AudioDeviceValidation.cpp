@@ -185,6 +185,52 @@ enum ClauseConstraintBit : uint16_t {
     return false;
 }
 
+// The protocol class each profile builder is written against. Family agreement
+// alone cannot catch a supported row that pairs a builder needing a dedicated
+// class with the family's generic one: a Saffire Pro 24 DSP row naming
+// DiceTcat validates by family but constructs DICETcatProtocol instead of
+// SPro24DspProtocol. Exhaustive on purpose -- a new builder must say which
+// class serves it before the switch compiles cleanly.
+[[nodiscard]] constexpr ProtocolImplementationId ExpectedProtocolFor(
+    ProfileBuilderId builder) noexcept {
+    switch (builder) {
+        case ProfileBuilderId::FocusriteSPro14:
+        case ProfileBuilderId::FocusriteSPro24:
+        case ProfileBuilderId::FocusriteSPro40:
+        case ProfileBuilderId::FocusriteLiquidS56:
+        case ProfileBuilderId::AlesisMultiMix:
+        case ProfileBuilderId::MidasVeniceF32:
+        case ProfileBuilderId::PreSonusStudioLive1602:
+        case ProfileBuilderId::PreSonusStudioLive2442:
+            return ProtocolImplementationId::DiceTcat;
+        case ProfileBuilderId::FocusriteSPro24Dsp:
+            return ProtocolImplementationId::DiceSPro24Dsp;
+        case ProfileBuilderId::WeissInt202:
+        case ProfileBuilderId::WeissInt203:
+            return ProtocolImplementationId::DiceWeissInt;
+        case ProfileBuilderId::ApogeeDuet:
+            return ProtocolImplementationId::ApogeeDuet;
+        case ProfileBuilderId::MackieOnyxIOxfw:
+            return ProtocolImplementationId::MackieOnyx;
+        case ProfileBuilderId::MackieOnyx400F:
+            return ProtocolImplementationId::FireworksOnyx400F;
+        case ProfileBuilderId::TerraTecPhase88:
+            return ProtocolImplementationId::BeBoBPhase88;
+        case ProfileBuilderId::GenericBeBoB:
+            return ProtocolImplementationId::BeBoBGeneric;
+        case ProfileBuilderId::MAudioFireWire1814:
+        case ProfileBuilderId::MAudioProjectMix:
+            return ProtocolImplementationId::BeBoBMAudioSpecial;
+        case ProfileBuilderId::Motu828mk2:
+        case ProfileBuilderId::MotuUltralite:
+            return ProtocolImplementationId::MotuV2;
+        case ProfileBuilderId::None:
+        case ProfileBuilderId::GenericAvc:
+            return ProtocolImplementationId::None;
+    }
+    return ProtocolImplementationId::None;
+}
+
 [[nodiscard]] constexpr bool CompatibleOverlap(
     const AudioDeviceDefinition& first,
     const AudioDeviceDefinition& second) noexcept {
@@ -237,6 +283,13 @@ std::vector<CatalogValidationIssue> AudioDeviceCatalog::ValidateDefinitions(
              !ProbeMatchesFamily(definition.probePolicy, definition.family))) {
             issues.push_back({definition.id, definition.id,
                               "supported definition has incompatible family/probe/protocol"});
+        }
+        if (definition.support == SupportDisposition::Supported &&
+            definition.protocolImplementation !=
+                ExpectedProtocolFor(definition.profileBuilder)) {
+            issues.push_back({definition.id, definition.id,
+                              "supported definition pairs its profile builder with "
+                              "the wrong protocol implementation"});
         }
         if (definition.support != SupportDisposition::Supported &&
             definition.protocolImplementation != ProtocolImplementationId::None) {

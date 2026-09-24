@@ -132,6 +132,43 @@ TEST(AudioDeviceCatalog, RejectsProtocolThatDisagreesWithFamily) {
     }));
 }
 
+// Family agreement cannot catch this: DiceTcat is a DICE protocol, so the row
+// passes the family check while the factory would construct the generic TCAT
+// class for a device that needs SPro24DspProtocol. Only the protocol changes.
+TEST(AudioDeviceCatalog, RejectsDedicatedBuilderPairedWithTheGenericFamilyProtocol) {
+    auto definitions = std::vector<AudioDeviceDefinition>(
+        AudioDeviceCatalog::Definitions().begin(),
+        AudioDeviceCatalog::Definitions().end());
+    const auto it = std::ranges::find_if(definitions, [](const auto& definition) {
+        return definition.id == DeviceDefinitionId::FocusriteSPro24Dsp;
+    });
+    ASSERT_NE(it, definitions.end());
+    it->protocolImplementation = ProtocolImplementationId::DiceTcat;
+
+    const auto issues = AudioDeviceCatalog::ValidateDefinitions(definitions);
+    ASSERT_EQ(issues.size(), 1U);
+    EXPECT_EQ(issues.front().first, DeviceDefinitionId::FocusriteSPro24Dsp);
+    EXPECT_STREQ(issues.front().reason,
+                 "supported definition pairs its profile builder with "
+                 "the wrong protocol implementation");
+}
+
+// The reverse: a generic DICE builder must not borrow a dedicated class.
+TEST(AudioDeviceCatalog, RejectsGenericBuilderPairedWithADedicatedProtocol) {
+    auto definitions = std::vector<AudioDeviceDefinition>(
+        AudioDeviceCatalog::Definitions().begin(),
+        AudioDeviceCatalog::Definitions().end());
+    const auto it = std::ranges::find_if(definitions, [](const auto& definition) {
+        return definition.id == DeviceDefinitionId::FocusriteSPro14;
+    });
+    ASSERT_NE(it, definitions.end());
+    it->protocolImplementation = ProtocolImplementationId::DiceSPro24Dsp;
+
+    const auto issues = AudioDeviceCatalog::ValidateDefinitions(definitions);
+    ASSERT_EQ(issues.size(), 1U);
+    EXPECT_EQ(issues.front().first, DeviceDefinitionId::FocusriteSPro14);
+}
+
 // The converse, and the reason vendor-wide matching had to end: a device we do
 // not support must not be able to reach a sibling's geometry. Before the
 // catalog, FocusriteSaffireProfile::Matches keyed on vendor alone, so the
