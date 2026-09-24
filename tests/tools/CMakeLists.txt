@@ -43,3 +43,9 @@ target_link_libraries(HalCoreTests PRIVATE
     GTest::gtest_main
 )
 gtest_discover_tests(HalCoreTests)
+
+if (Python3_Interpreter_FOUND)
+    add_test(NAME SummarizeBaselinePyTests
+        COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_summarize_baseline
+        WORKING_DIRECTORY "${ASFW_TOOLS_DIR}/baseline")
+endif()
