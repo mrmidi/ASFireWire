@@ -11,6 +11,7 @@
 // StudioLive quirks) and libffado 2.5.0 (vendor 0x000a92, model 0x000013).
 
 #include "PreSonusStudioLiveProfile.hpp"
+#include "../../../TimingLadder.hpp"
 
 namespace ASFW::Isoch::Audio::DICE::Profiles {
 
@@ -69,41 +70,21 @@ bool PreSonusStudioLiveProfile::BuildDefaultRxStreamConfig(DiceStreamConfig& out
 // device only advertises the low rate mode (8 frames per packet), so the higher
 // branches are defensive.
 uint32_t PreSonusStudioLiveProfile::TxSafetyOffsetFrames(double sampleRate) const noexcept {
-    uint32_t framesPerPacket = 8;
-    uint32_t rateAddend = 0;
-    if (sampleRate > 96000.0) {
-        framesPerPacket = 32;
-        rateAddend = 4;
-    } else if (sampleRate > 48000.0) {
-        framesPerPacket = 16;
-        rateAddend = 2;
-    }
-    return (6 + rateAddend) * framesPerPacket;
+    return TimingLadder::SafetyOffsetFrames(TimingLadder::kTxDelayPackets, sampleRate,
+                                            TimingLadder::RateAddend::kPerTier);
 }
 
 uint32_t PreSonusStudioLiveProfile::RxSafetyOffsetFrames(double sampleRate) const noexcept {
-    uint32_t framesPerPacket = 8;
-    uint32_t rateAddend = 0;
-    if (sampleRate > 96000.0) {
-        framesPerPacket = 32;
-        rateAddend = 4;
-    } else if (sampleRate > 48000.0) {
-        framesPerPacket = 16;
-        rateAddend = 2;
-    }
-    return (16 + rateAddend) * framesPerPacket;
+    return TimingLadder::SafetyOffsetFrames(TimingLadder::kRxDelayPackets, sampleRate,
+                                            TimingLadder::RateAddend::kPerTier);
 }
 
 uint32_t PreSonusStudioLiveProfile::TxReportedLatencyFrames(double sampleRate) const noexcept {
-    if (sampleRate > 96000.0) return 119;
-    if (sampleRate > 48000.0) return 59;
-    return 29;
+    return TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 
 uint32_t PreSonusStudioLiveProfile::RxReportedLatencyFrames(double sampleRate) const noexcept {
-    if (sampleRate > 96000.0) return 119;
-    if (sampleRate > 48000.0) return 59;
-    return 29;
+    return TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 
 } // namespace ASFW::Isoch::Audio::DICE::Profiles

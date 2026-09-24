@@ -8,7 +8,7 @@
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
-#include "../Config/AudioTxProfiles.hpp"
+#include "../Config/AudioConstants.hpp"
 #include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
 #include "../Families/BeBoB/MAudio/MAudioTxClockBridge.hpp"
 #include "../Shared/TxCycleAnchor.hpp"
@@ -32,9 +32,6 @@ class ASFWAudioDevice;
 #include <atomic>
 #include <cstdint>
 
-static constexpr uint32_t kReportedDeviceLatencyFrames = 24;
-static constexpr uint32_t kReportedSafetyOffsetFrames =
-    ASFW::Isoch::Config::kTxBufferProfile.safetyOffsetFrames;
 struct AudioDriverDeviceState {
     ASFWAudioNub* audioNub{nullptr};
     uint64_t guid{0};

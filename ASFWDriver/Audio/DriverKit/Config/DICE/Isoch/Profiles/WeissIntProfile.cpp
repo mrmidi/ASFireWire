@@ -4,6 +4,7 @@
 // WeissIntProfile.cpp - Weiss INT202/INT203 DICE stream profile.
 
 #include "WeissIntProfile.hpp"
+#include "../../../TimingLadder.hpp"
 
 #include "../../../../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
@@ -23,10 +24,6 @@ void FillStreamConfig(DiceStreamConfig& out, DiceStreamDirection direction) noex
     out.framesPerDataPacket = 8;
     out.fdf = 0x02;
     out.fmt = 0x10;
-}
-
-[[nodiscard]] uint32_t FramesPerPacket(double sampleRate) noexcept {
-    return sampleRate > 48000.0 ? (sampleRate > 96000.0 ? 32U : 16U) : 8U;
 }
 
 } // namespace
@@ -56,19 +53,21 @@ bool WeissIntProfile::BuildDefaultRxStreamConfig(DiceStreamConfig& outConfig) co
 }
 
 uint32_t WeissIntProfile::TxSafetyOffsetFrames(double sampleRate) const noexcept {
-    return 6U * FramesPerPacket(sampleRate);
+    return TimingLadder::SafetyOffsetFrames(TimingLadder::kTxDelayPackets, sampleRate,
+                                            TimingLadder::RateAddend::kNone);
 }
 
 uint32_t WeissIntProfile::RxSafetyOffsetFrames(double sampleRate) const noexcept {
-    return 16U * FramesPerPacket(sampleRate);
+    return TimingLadder::SafetyOffsetFrames(TimingLadder::kRxDelayPackets, sampleRate,
+                                            TimingLadder::RateAddend::kNone);
 }
 
 uint32_t WeissIntProfile::TxReportedLatencyFrames(double sampleRate) const noexcept {
-    return sampleRate > 48000.0 ? (sampleRate > 96000.0 ? 119U : 59U) : 29U;
+    return TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 
 uint32_t WeissIntProfile::RxReportedLatencyFrames(double sampleRate) const noexcept {
-    return sampleRate > 48000.0 ? (sampleRate > 96000.0 ? 119U : 59U) : 29U;
+    return TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 
 } // namespace ASFW::Isoch::Audio::DICE::Profiles

@@ -45,10 +45,6 @@ constexpr uint64_t kNanosPerCycle = 125'000ULL;   // 125 µs per cycle
 constexpr uint32_t kFWTimeWrapSeconds = 128;
 constexpr int64_t kFWTimeWrapNanos = int64_t(kFWTimeWrapSeconds) * int64_t(kNanosPerSecond);
 
-/// Transfer delay per IEC 61883-1 / IEC 61883-6 §7.3
-constexpr uint32_t kTransferDelayTicks = 0x2E00;  // ~479 µs
-constexpr uint64_t kTransferDelayNanos = 
-    (uint64_t(kTransferDelayTicks) * kNanosPerCycle) / kTicksPerCycle;
 
 struct CycleTimerFields {
     uint32_t seconds{0};

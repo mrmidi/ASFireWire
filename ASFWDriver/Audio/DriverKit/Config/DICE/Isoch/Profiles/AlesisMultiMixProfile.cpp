@@ -28,6 +28,7 @@
 // confirm against a TX/RX register dump when hardware is available.
 
 #include "AlesisMultiMixProfile.hpp"
+#include "../../../TimingLadder.hpp"
 
 namespace ASFW::Isoch::Audio::DICE::Profiles {
 
@@ -116,41 +117,21 @@ bool AlesisMultiMixProfile::BuildDefaultRxStreamConfig(DiceStreamConfig& outConf
 // Safety offsets follow the Focusrite Saffire baseline (the tested TCAT ladder):
 // Tx 6 packets, Rx 16 packets, scaled by frames-per-packet per rate mode.
 uint32_t AlesisMultiMixProfile::TxSafetyOffsetFrames(double sampleRate) const noexcept {
-    uint32_t framesPerPacket = 8;
-    uint32_t rateAddend = 0;
-    if (sampleRate > 96000.0) {
-        framesPerPacket = 32;
-        rateAddend = 4;
-    } else if (sampleRate > 48000.0) {
-        framesPerPacket = 16;
-        rateAddend = 2;
-    }
-    return (6 + rateAddend) * framesPerPacket;
+    return TimingLadder::SafetyOffsetFrames(TimingLadder::kTxDelayPackets, sampleRate,
+                                            TimingLadder::RateAddend::kPerTier);
 }
 
 uint32_t AlesisMultiMixProfile::RxSafetyOffsetFrames(double sampleRate) const noexcept {
-    uint32_t framesPerPacket = 8;
-    uint32_t rateAddend = 0;
-    if (sampleRate > 96000.0) {
-        framesPerPacket = 32;
-        rateAddend = 4;
-    } else if (sampleRate > 48000.0) {
-        framesPerPacket = 16;
-        rateAddend = 2;
-    }
-    return (16 + rateAddend) * framesPerPacket;
+    return TimingLadder::SafetyOffsetFrames(TimingLadder::kRxDelayPackets, sampleRate,
+                                            TimingLadder::RateAddend::kPerTier);
 }
 
 uint32_t AlesisMultiMixProfile::TxReportedLatencyFrames(double sampleRate) const noexcept {
-    if (sampleRate > 96000.0) return 119;
-    if (sampleRate > 48000.0) return 59;
-    return 29;
+    return TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 
 uint32_t AlesisMultiMixProfile::RxReportedLatencyFrames(double sampleRate) const noexcept {
-    if (sampleRate > 96000.0) return 119;
-    if (sampleRate > 48000.0) return 59;
-    return 29;
+    return TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 
 } // namespace ASFW::Isoch::Audio::DICE::Profiles

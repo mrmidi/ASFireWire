@@ -5,6 +5,7 @@
 // Focusrite Saffire specific profile.
 
 #include "FocusriteSaffireProfile.hpp"
+#include "../../../TimingLadder.hpp"
 
 namespace ASFW::Isoch::Audio::DICE::Profiles {
 
@@ -114,63 +115,24 @@ bool FocusriteSaffirePro40Profile::BuildRxStreamConfig(
 // Transmit (playback) safety offset is configured to be smaller (6 packets) to optimize
 // latency while preventing audio dropouts under normal CPU/thread scheduling.
 uint32_t FocusriteSaffireProfile::TxSafetyOffsetFrames(double sampleRate) const noexcept {
-    uint32_t framesPerPacket = 8;
-    uint32_t rateAddend = 0;
-    
-    // Safety offset scales with sample rate. Frames per packet is 8 for <= 48kHz,
-    // 16 for 96kHz, and 32 for 192kHz.
-    if (sampleRate > 96000.0) {
-        framesPerPacket = 32;
-        rateAddend = 4;
-    } else if (sampleRate > 48000.0) {
-        framesPerPacket = 16;
-        rateAddend = 2;
-    }
-
-    // Default to latencyMode = 1 (safe medium latency mode).
-    // Mode 1: Output delay is 6 packets + rate-based offset.
-    const uint32_t delayPackets = 6 + rateAddend;
-    return delayPackets * framesPerPacket;
+    return TimingLadder::SafetyOffsetFrames(TimingLadder::kTxDelayPackets, sampleRate,
+                                            TimingLadder::RateAddend::kPerTier);
 }
 
 // Receive (capture) safety offset is configured to be larger (16 packets) to handle
 // FireWire packet reception jitter and asynchronous processing overhead.
 uint32_t FocusriteSaffireProfile::RxSafetyOffsetFrames(double sampleRate) const noexcept {
-    uint32_t framesPerPacket = 8;
-    uint32_t rateAddend = 0;
-    
-    if (sampleRate > 96000.0) {
-        framesPerPacket = 32;
-        rateAddend = 4;
-    } else if (sampleRate > 48000.0) {
-        framesPerPacket = 16;
-        rateAddend = 2;
-    }
-
-    // Input (Rx) uses 16 packets + rate-based offset.
-    const uint32_t delayPackets = 16 + rateAddend;
-    return delayPackets * framesPerPacket;
+    return TimingLadder::SafetyOffsetFrames(TimingLadder::kRxDelayPackets, sampleRate,
+                                            TimingLadder::RateAddend::kPerTier);
 }
 
 // The reported latencies in frames matching the focusrite saffire kext model.
 uint32_t FocusriteSaffireProfile::TxReportedLatencyFrames(double sampleRate) const noexcept {
-    uint32_t ladder = 29;
-    if (sampleRate > 96000.0) {
-        ladder = 119;
-    } else if (sampleRate > 48000.0) {
-        ladder = 59;
-    }
-    return ladder;
+    return TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 
 uint32_t FocusriteSaffireProfile::RxReportedLatencyFrames(double sampleRate) const noexcept {
-    uint32_t ladder = 29;
-    if (sampleRate > 96000.0) {
-        ladder = 119;
-    } else if (sampleRate > 48000.0) {
-        ladder = 59;
-    }
-    return ladder;
+    return TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 
 } // namespace ASFW::Isoch::Audio::DICE::Profiles
