@@ -39,6 +39,10 @@ struct AudioStreamTxPolicy final {
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
+    /// M-Audio special firmware: blocking cadence NO-DATA packets still carry
+    /// all scheduled blocks, with audio slots marked as CF and DBC advanced.
+    bool cadencePacketsCarryDataBlocks{false};
+    uint32_t cadenceSlotWord{0xCF000000};
     bool dbcIsEndEvent{false};
     /// MOTU only: chunk behind each host output channel. Empty encodes in wire order.
     Encoding::Motu::MotuPortMap motuPlaybackPorts{};

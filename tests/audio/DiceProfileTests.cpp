@@ -603,6 +603,9 @@ TEST(DiceProfileTests, MAudioSpecialProfilesKeepAsymmetricBaseFormation) {
         EXPECT_EQ(rx.dbs, 11U);
         EXPECT_EQ(tx.midiSlots, 1U);
         EXPECT_EQ(rx.midiSlots, 1U);
+        const auto txPolicy = stream->TxStreamPolicy();
+        EXPECT_TRUE(txPolicy.cadencePacketsCarryDataBlocks);
+        EXPECT_EQ(txPolicy.cadenceSlotWord, 0xCF000000U);
         EXPECT_EQ(stream->SupportedSampleRates(), (std::vector<uint32_t>{48000U}));
         struct ExpectedLatency final {
             uint32_t rate;

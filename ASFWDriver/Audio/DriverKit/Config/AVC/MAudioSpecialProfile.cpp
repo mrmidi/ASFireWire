@@ -84,6 +84,8 @@ AudioStreamTxPolicy MAudioSpecialProfile::TxStreamPolicy() const noexcept {
         .initializeNonAudioSlots = true,
         .preserveFdfInNoDataPackets = false,
         .emptyPacketsDuringIdle = false,
+        .cadencePacketsCarryDataBlocks = true,
+        .cadenceSlotWord = 0xCF000000,
     };
 }
 

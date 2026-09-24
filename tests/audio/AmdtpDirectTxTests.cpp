@@ -122,6 +122,117 @@ TEST(AmdtpDirectTxTests, ForcedNoDataHoldsDbcAndAudioFrame) {
     EXPECT_EQ(data.syt, 0x1234U);
 }
 
+TEST(AmdtpDirectTxTests,
+     MAudioCadenceNoDataCarriesFullBlocksCFSlotsAndAdvancesDbc) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+
+    AmdtpStreamConfig config{};
+    config.streamMode = StreamMode::Blocking;
+    config.dbs = 7; // six PCM slots and one MIDI slot
+    config.pcmChannels = 6;
+    config.midiSlots = 1;
+    config.framesPerDataPacket = 8;
+    config.maxPacketBytes = 232;
+
+    AmdtpTxPolicy policy{};
+    policy.cadencePacketsCarryDataBlocks = true;
+    policy.cadenceSlotWord = 0xCF000000;
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(config, policy));
+
+    std::array<std::array<uint8_t, 232>, 3> bytes{};
+    TxPresentationPlan plan{};
+    plan.frameCount = 8;
+    plan.disposition = AmdtpPacketDisposition::Data;
+    PreparedTxPacket packet{};
+    for (uint32_t index = 0; index < 2; ++index) {
+        plan.cycleOrdinal = index;
+        ASSERT_TRUE(packetizer.PrepareNextPacket(
+            {index, bytes[index].data(),
+             static_cast<uint32_t>(bytes[index].size())}, {}, plan, packet));
+        ASSERT_TRUE(packet.isData);
+        EXPECT_EQ(packet.dbc, index * 8U);
+    }
+
+    plan.cycleOrdinal = 2;
+    plan.disposition = AmdtpPacketDisposition::NoData;
+    plan.frameCount = 0;
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {2, bytes[2].data(), bytes[2].size()}, {}, plan, packet));
+    EXPECT_FALSE(packet.isData);
+    EXPECT_EQ(packet.framesInPacket, 0U);
+    EXPECT_EQ(packet.byteCount, 232U);
+    EXPECT_EQ(packet.dbc, 16U);
+    EXPECT_EQ(bytes[2][3], 16U); // DBC for the first block in this packet.
+    EXPECT_EQ(bytes[2][7], 0xFFU); // NO-DATA SYT.
+
+    // Six audio slots are labelled CF; the seventh slot remains the MIDI
+    // non-audio word. This matches the working 1814 host-to-device capture.
+    for (uint32_t block = 0; block < 8; ++block) {
+        const uint8_t* base = bytes[2].data() + 8 + block * 7 * 4;
+        for (uint32_t slot = 0; slot < 6; ++slot) {
+            EXPECT_EQ(base[slot * 4], 0xCFU) << "block " << block;
+            EXPECT_EQ(base[slot * 4 + 1], 0U) << "block " << block;
+            EXPECT_EQ(base[slot * 4 + 2], 0U) << "block " << block;
+            EXPECT_EQ(base[slot * 4 + 3], 0U) << "block " << block;
+        }
+        EXPECT_EQ(base[6 * 4], 0x80U) << "block " << block;
+        EXPECT_EQ(base[6 * 4 + 1], 0U) << "block " << block;
+        EXPECT_EQ(base[6 * 4 + 2], 0U) << "block " << block;
+        EXPECT_EQ(base[6 * 4 + 3], 0U) << "block " << block;
+    }
+
+    plan.cycleOrdinal = 3;
+    plan.disposition = AmdtpPacketDisposition::Data;
+    plan.frameCount = 8;
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {3, bytes[1].data(), bytes[1].size()}, {}, plan, packet));
+    EXPECT_TRUE(packet.isData);
+    EXPECT_EQ(packet.dbc, 24U);
+}
+
+TEST(AmdtpDirectTxTests, MAudioRevertedDataKeepsFullSizeCadenceAndDbc) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+    AmdtpStreamConfig config{};
+    config.streamMode = StreamMode::Blocking;
+    config.dbs = 7;
+    config.pcmChannels = 6;
+    config.midiSlots = 1;
+    config.framesPerDataPacket = 8;
+    config.maxPacketBytes = 232;
+    AmdtpTxPolicy policy{};
+    policy.cadencePacketsCarryDataBlocks = true;
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(config, policy));
+
+    std::array<uint8_t, 232> bytes{};
+    const TxPacketSlotView slot{0, bytes.data(), bytes.size()};
+    TxPresentationPlan plan{};
+    plan.frameCount = 8;
+    plan.disposition = AmdtpPacketDisposition::Data;
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(slot, {}, plan, packet));
+    ASSERT_TRUE(packet.isData);
+    packetizer.RevertToNoData(slot, packet);
+    EXPECT_FALSE(packet.isData);
+    EXPECT_EQ(packet.byteCount, 232U);
+    EXPECT_EQ(packet.framesInPacket, 0U);
+    EXPECT_EQ(packet.dbc, 0U);
+    EXPECT_EQ(bytes[8], 0xCFU);
+    EXPECT_EQ(bytes[8 + 6 * 4], 0x80U);
+
+    plan.cycleOrdinal = 1;
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {1, bytes.data(), bytes.size()}, {}, plan, packet));
+    EXPECT_EQ(packet.dbc, 8U);
+}
+
 TEST(AmdtpDirectTxTests, DbcIsEndEventWritesTheCountAfterEachDataPacket) {
     // MOTU counts the DBC at the end of a packet's blocks; Linux sets CIP_DBC_IS_END_EVENT
     // on every MOTU transmit stream (amdtp-motu.c:465, amdtp-stream.c:1040-1046). Run the

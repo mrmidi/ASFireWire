@@ -64,6 +64,11 @@ struct AmdtpTxPolicy final {
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
+    /// Some device families require a full blocking packet at cadence NO-DATA
+    /// phases. Those packets carry the scheduled blocks but use this audio-slot
+    /// label instead of PCM; non-audio slots retain defaultNonAudioSlotWord.
+    bool cadencePacketsCarryDataBlocks{false};
+    uint32_t cadenceSlotWord{0xCF000000};
     /// Write the DBC of the block *after* this packet's last one rather than of its
     /// first, i.e. advance before writing. IEC 61883-1 counts from the first block; MOTU
     /// devices count the end, and Linux sets CIP_DBC_IS_END_EVENT on every MOTU transmit

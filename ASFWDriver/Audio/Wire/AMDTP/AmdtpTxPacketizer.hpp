@@ -88,6 +88,9 @@ private:
                                  uint32_t packetCapacityBytes,
                                  uint32_t payloadBytes) noexcept;
 
+    void WriteCadencePacketFill(uint8_t* packetBytes,
+                                uint32_t payloadBytes) noexcept;
+
     void WriteCipHeader(uint8_t* packetBytes,
                         const IEC61883::CipHeaderWords& header) noexcept;
 
