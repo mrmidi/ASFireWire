@@ -370,7 +370,16 @@ kern_return_t IMPL(ASFWSCSIController, UserReportInitiatorIdentifier)
 
 kern_return_t IMPL(ASFWSCSIController, UserReportHighestSupportedDeviceID)
 {
-    *id = 0; // single target
+    // Only target 0 is ever created, but report 1. The family's willTerminate
+    // flushes and destroys targets with `index < fHighestSupportedDeviceID`
+    // (strict <, unlike start's `<=`; OSS IOSCSIParallelInterfaceController.cpp
+    // willTerminate, same in the 26.x/27 kernelcache disassembly), so with 0 it
+    // skipped target 0 entirely: its outstanding tasks stayed live, stop()
+    // freed fWorkLoop, and our late ParallelTaskCompletion NULL-dereferenced
+    // it in CompleteParallelTask (#139, adapter unplug while INQUIRY held).
+    // The bring-up scan does instantiate ID 1 (presence false does not stop
+    // it); UserProcessParallelTask fails every task to it, so it never probes.
+    *id = 1;
     return kIOReturnSuccess;
 }
 
@@ -518,6 +527,20 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
         opcode == kOpReserve10 || opcode == kOpRelease10) {
         ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x (RESERVE/RELEASE) → synthetic GOOD",
                  opcode);
+        ParallelTaskCompletion(completion, resp);
+        if (response != nullptr) {
+            *response = kIOReturnSuccess;
+        }
+        return kIOReturnSuccess;
+    }
+
+    // Only target 0 maps to the SBP-2 login. The family's bring-up scan also
+    // instantiates ID 1 (we report highest ID 1 for willTerminate's sake), and
+    // forwarding its INQUIRY would publish the same scanner twice (HW-observed).
+    // Fail it like an absent device so the scan drops it.
+    if (parallelRequest.fTargetID != 0) {
+        resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
+        resp.fCompletionStatus = kSCSITaskStatus_DeviceNotPresent;
         ParallelTaskCompletion(completion, resp);
         if (response != nullptr) {
             *response = kIOReturnSuccess;
