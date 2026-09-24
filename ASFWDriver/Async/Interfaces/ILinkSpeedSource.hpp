@@ -40,6 +40,11 @@ class ILinkSpeedSource {
      */
     [[nodiscard]] virtual std::optional<FW::FwSpeed>
     ObservedSpeed(FW::NodeId nodeId) const noexcept = 0;
+
+    // A protocol read at a lower speed can verify a tighter ceiling than the
+    // Config ROM scan. Only lower an existing observation within this bus
+    // generation; a reset clears all node-id keyed evidence.
+    virtual void RecordVerifiedCeiling(FW::NodeId nodeId, FW::FwSpeed speed) noexcept = 0;
 };
 
 } // namespace ASFW::Async

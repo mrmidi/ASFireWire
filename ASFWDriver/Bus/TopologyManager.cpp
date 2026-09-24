@@ -79,6 +79,12 @@ void LogTopologySummary(const TopologySnapshot& snapshot) {
              snapshot.physical.busDiameterHops,
              static_cast<uint8_t>(snapshot.graphStatus),
              static_cast<uint8_t>(snapshot.errorCode));
+    for (const auto& node : snapshot.physical.nodes) {
+        ASFW_LOG(Topology,
+                 "[SelfIDSpeed] gen=%u node=%u phyCode=%u phyMbps=%u linkActive=%d local=%d baseRaw=0x%08x",
+                 snapshot.generation, node.physicalId, node.speedCode,
+                 node.maxSpeedMbps, node.linkActive, node.isLocal, node.baseRaw);
+    }
 }
 
 } // namespace

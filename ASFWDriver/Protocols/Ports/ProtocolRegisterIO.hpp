@@ -226,6 +226,22 @@ public:
         return FW::NodeId{static_cast<uint8_t>(route_.nodeId)};
     }
 
+    [[nodiscard]] FW::Generation Generation() const noexcept {
+        return route_.generation;
+    }
+
+    [[nodiscard]] FW::FwSpeed CurrentSpeed() const noexcept {
+        return busInfo_.GetSpeed(NodeId());
+    }
+
+    [[nodiscard]] bool RecordVerifiedSpeed(FW::FwSpeed speed) noexcept {
+        if (!IsRouteCurrent() ||
+            !busInfo_.RecordVerifiedSpeed(route_.generation, NodeId(), speed)) {
+            return false;
+        }
+        return routeRegistry_.LowerVerifiedLinkSpeed(route_, speed);
+    }
+
     void UpdateRoute(const Discovery::DeviceRouteToken& route) noexcept {
         route_ = route;
     }

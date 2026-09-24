@@ -150,7 +150,6 @@ public:
                           FwSpeed speed,
                           ASFW::Async::InterfaceCompletionCallback callback) override {
         (void)nodeId;
-        (void)speed;
         ++readCount;
         if (generation != generation_) {
             callback(AsyncStatus::kStaleGeneration, {});
@@ -161,6 +160,16 @@ public:
         if (address.addressHi == 0xFFFFU && address.addressLo == kDiceBaseLo &&
             length >= GeneralSections::kWireSize) {
             ++generalReadCount;
+            generalReadSpeeds.push_back(speed);
+            if ((speed == FwSpeed::S400 && failS400GeneralRead) ||
+                (speed == FwSpeed::S200 && failS200GeneralRead) ||
+                (speed == FwSpeed::S100 && failS100GeneralRead)) {
+                if (invalidateRouteOnReadFailure != nullptr) {
+                    invalidateRouteOnReadFailure->InvalidateLiveMappingsForBusReset();
+                }
+                callback(AsyncStatus::kTimeout, {});
+                return NextHandle();
+            }
             const auto bytes = MakeGeneralSectionsWire();
             payload.assign(bytes.begin(), bytes.end());
         } else if (address.addressHi == 0xFFFFU && address.addressLo == kGlobalBaseLo &&
@@ -228,7 +237,15 @@ public:
 
     FwSpeed GetSpeed(NodeId nodeId) const override {
         (void)nodeId;
-        return FwSpeed::S400;
+        return verifiedSpeed;
+    }
+
+    bool RecordVerifiedSpeed(Generation generation, NodeId, FwSpeed speed) override {
+        if (generation != generation_) {
+            return false;
+        }
+        verifiedSpeed = speed;
+        return true;
     }
 
     uint32_t HopCount(NodeId nodeA, NodeId nodeB) const override {
@@ -247,6 +264,12 @@ public:
     int globalReadCount{0};
     int extensionReadCount{0};
     int appQuadReadCount{0};
+    FwSpeed verifiedSpeed{FwSpeed::S400};
+    bool failS400GeneralRead{false};
+    bool failS200GeneralRead{false};
+    bool failS100GeneralRead{false};
+    ASFW::Discovery::DeviceRegistry* invalidateRouteOnReadFailure{nullptr};
+    std::vector<FwSpeed> generalReadSpeeds;
     uint32_t clockSelect_{kClockSelect48kInternal};
     uint32_t status_{kLocked48kStatus};
     uint32_t extStatus_{0};
@@ -262,6 +285,95 @@ private:
     NodeId localNodeId_{0};
     uint64_t nextHandle_{1};
 };
+
+TEST(DICETcatProtocolTests, FirstSectionReadProbesDownAndRetainsVerifiedSpeed) {
+    CountingFireWireBus bus;
+    bus.failS400GeneralRead = true;
+    RouteState routeState;
+    ASFW::Discovery::ConfigROM rom{};
+    rom.bib.guid = routeState.route.guid;
+    rom.bib.maxRec = 7;  // Allows 1024-byte async payloads at S200.
+    rom.gen = routeState.route.generation;
+    rom.nodeId = routeState.route.nodeId;
+    ASFW::Discovery::LinkPolicy link{};
+    link.localToNode = FwSpeed::S400;
+    link.isochToNode = FwSpeed::S400;
+    link.maxPayloadBytes = ASFW::FW::MaxPayload::kS400;
+    (void)routeState.registry.UpsertFromROM(rom, link);
+
+    ASFW::Protocols::Ports::ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
+    ASFW::Audio::DICE::DICETransaction transaction(io);
+    IOReturn result = kIOReturnError;
+    transaction.ReadGeneralSections([&](IOReturn status, GeneralSections) { result = status; });
+
+    EXPECT_EQ(result, kIOReturnSuccess);
+    EXPECT_EQ(bus.generalReadSpeeds, (std::vector<FwSpeed>{FwSpeed::S400, FwSpeed::S200}));
+    EXPECT_EQ(bus.GetSpeed(NodeId{2}), FwSpeed::S200);
+    const auto record = routeState.registry.SnapshotByGuid(routeState.route.guid);
+    ASSERT_TRUE(record.has_value());
+    EXPECT_EQ(record->link.localToNode, FwSpeed::S200);
+    EXPECT_EQ(record->link.isochToNode, FwSpeed::S200);
+    EXPECT_EQ(record->link.maxPayloadBytes, ASFW::FW::MaxPayload::kS200);
+}
+
+TEST(DICETcatProtocolTests, ExistingROMDemotionAlsoLowersStreamSpeed) {
+    CountingFireWireBus bus;
+    bus.verifiedSpeed = FwSpeed::S200;
+    RouteState routeState;
+    ASFW::Discovery::ConfigROM rom{};
+    rom.bib.guid = routeState.route.guid;
+    rom.bib.maxRec = 7;
+    rom.gen = routeState.route.generation;
+    rom.nodeId = routeState.route.nodeId;
+    ASFW::Discovery::LinkPolicy link{};
+    link.localToNode = FwSpeed::S200;
+    link.isochToNode = FwSpeed::S400;
+    (void)routeState.registry.UpsertFromROM(rom, link);
+
+    ASFW::Protocols::Ports::ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
+    ASFW::Audio::DICE::DICETransaction transaction(io);
+    IOReturn result = kIOReturnError;
+    transaction.ReadGeneralSections([&](IOReturn status, GeneralSections) { result = status; });
+
+    EXPECT_EQ(result, kIOReturnSuccess);
+    EXPECT_EQ(bus.generalReadSpeeds, (std::vector<FwSpeed>{FwSpeed::S200}));
+    const auto record = routeState.registry.SnapshotByGuid(routeState.route.guid);
+    ASSERT_TRUE(record.has_value());
+    EXPECT_EQ(record->link.localToNode, FwSpeed::S200);
+    EXPECT_EQ(record->link.isochToNode, FwSpeed::S200);
+}
+
+TEST(DICETcatProtocolTests, FailedSlowerProbesDoNotChangeSpeed) {
+    CountingFireWireBus bus;
+    bus.failS400GeneralRead = true;
+    bus.failS200GeneralRead = true;
+    bus.failS100GeneralRead = true;
+    RouteState routeState;
+    ASFW::Protocols::Ports::ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
+    ASFW::Audio::DICE::DICETransaction transaction(io);
+    IOReturn result = kIOReturnSuccess;
+    transaction.ReadGeneralSections([&](IOReturn status, GeneralSections) { result = status; });
+
+    EXPECT_EQ(result, kIOReturnTimeout);
+    EXPECT_EQ(bus.generalReadSpeeds,
+              (std::vector<FwSpeed>{FwSpeed::S400, FwSpeed::S200, FwSpeed::S100}));
+    EXPECT_EQ(bus.GetSpeed(NodeId{2}), FwSpeed::S400);
+}
+
+TEST(DICETcatProtocolTests, ResetDuringFailedReadStopsSpeedProbe) {
+    CountingFireWireBus bus;
+    bus.failS400GeneralRead = true;
+    RouteState routeState;
+    bus.invalidateRouteOnReadFailure = &routeState.registry;
+    ASFW::Protocols::Ports::ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
+    ASFW::Audio::DICE::DICETransaction transaction(io);
+    IOReturn result = kIOReturnSuccess;
+    transaction.ReadGeneralSections([&](IOReturn status, GeneralSections) { result = status; });
+
+    EXPECT_EQ(result, kIOReturnOffline);
+    EXPECT_EQ(bus.generalReadSpeeds, (std::vector<FwSpeed>{FwSpeed::S400}));
+    EXPECT_EQ(bus.GetSpeed(NodeId{2}), FwSpeed::S400);
+}
 
 TEST(DICETcatProtocolTests, InitializeIsSideEffectFree) {
     CountingFireWireBus bus;

@@ -39,6 +39,29 @@ constexpr uint8_t kAM824LabelMIDIConformantBase = 0x80;
 /// AM824 quadlet layout (big-endian on wire):
 ///   Byte 0: Label (0x40 for MBLA)
 ///   Byte 1-3: 24-bit audio sample (MSB first)
+/// Code-generation observation (Apple clang 21.0.0, arm64, -O3): a standalone
+/// expression equivalent to `encode()` used `__builtin_bswap32` after applying
+/// the 24-bit mask and MBLA label. Its scalar assembly was:
+///     mov   w8, #1073741824       // 0x40000000, MBLA label
+///     bfxil w8, w0, #0, #24       // insert the 24 sample bits
+///     rev   w0, w8                // convert quadlet to wire byte order
+///     ret
+/// A separate counted loop over uint32_t input/output arrays produced this
+/// representative vector body, followed by a scalar `rev` tail:
+///     ldp         q0, q1, [x10, #-32]
+///     bic.4s      v0, #255, lsl #24
+///     bic.4s      v1, #255, lsl #24
+///     orr.4s      v0, #64, lsl #24
+///     orr.4s      v1, #64, lsl #24
+///     rev32.16b   v0, v0
+///     rev32.16b   v1, v1
+///     stp         q0, q1, [x11, #-32]
+/// That loop is an isolated code-generation experiment, not a path in this
+/// type: `encode()` handles one sample and `encodeStereoFrame()` handles two.
+/// The compiler also emitted a pointer-separation check before the vector
+/// loop. Inlining, aliasing, loop shape, and build flags can change the result;
+/// these instructions establish neither a cycle cost nor a speedup in the
+/// actual packet writer.
 struct AM824Encoder {
     
     /// Encode a single PCM sample to AM824 format.

@@ -20,6 +20,8 @@ class MockAsyncSubsystem : public ASFW::Async::IFireWireBus {
 public:
     struct PendingRead {
         ASFW::Async::InterfaceCompletionCallback callback;
+        ASFW::FW::NodeId nodeId{0};
+        ASFW::FW::FwSpeed speed{ASFW::FW::FwSpeed::S100};
     };
 
     std::vector<PendingRead> pendingReads_;
@@ -27,13 +29,14 @@ public:
     mutable std::condition_variable readsCv_;
 
     ASFW::Async::AsyncHandle ReadBlock(ASFW::FW::Generation,
-                                       ASFW::FW::NodeId,
+                                       ASFW::FW::NodeId nodeId,
                                        ASFW::Async::FWAddress,
                                        uint32_t,
-                                       ASFW::FW::FwSpeed,
+                                       ASFW::FW::FwSpeed speed,
                                        ASFW::Async::InterfaceCompletionCallback callback) override {
         std::lock_guard lock(readsMtx_);
-        pendingReads_.push_back(PendingRead{.callback = std::move(callback)});
+        pendingReads_.push_back(PendingRead{.callback = std::move(callback),
+                                            .nodeId = nodeId, .speed = speed});
         readsCv_.notify_all();
         return ASFW::Async::AsyncHandle{static_cast<uint32_t>(pendingReads_.size())};
     }
@@ -118,6 +121,41 @@ std::vector<uint32_t> CreateBusyBIB() {
 }
 
 } // namespace
+
+TEST(ROMScannerMultiNodeFSM, InitialBIBReadHonorsSlowPhysicalPath) {
+    MockAsyncSubsystem mockAsync;
+    SpeedPolicy speedPolicy;
+    ROMScannerParams params{};
+    ROMScanner scanner(mockAsync, speedPolicy, params);
+
+    TopologySnapshot topology{};
+    topology.generation = 1;
+    topology.localNodeId = 0;
+    topology.graphStatus = TopologyGraphStatus::Valid;
+    topology.physical.nodes.push_back({.physicalId = 0, .linkActive = true,
+                                       .speedCode = 3, .portCount = 1});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true,
+                                       .speedCode = 1, .portCount = 1});
+    topology.physical.nodes[0].links[0].connected = true;
+    topology.physical.nodes[0].links[0].remoteNodeId = 1;
+    topology.physical.nodes[1].links[0].connected = true;
+    topology.physical.nodes[1].links[0].remoteNodeId = 0;
+
+    ROMScanRequest request{};
+    request.gen = Generation{1};
+    request.topology = topology;
+    request.localNodeId = 0;
+    ASSERT_TRUE(scanner.Start(request, [](Generation, std::vector<ConfigROM>, bool) {}));
+
+    mockAsync.WaitForPendingReads(1);
+    {
+        std::lock_guard lock(mockAsync.readsMtx_);
+        ASSERT_EQ(mockAsync.pendingReads_.size(), 1u);
+        EXPECT_EQ(mockAsync.pendingReads_[0].nodeId.value, 1);
+        EXPECT_EQ(mockAsync.pendingReads_[0].speed, ASFW::FW::FwSpeed::S200);
+    }
+    scanner.Abort(Generation{1});
+}
 
 TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {
     MockAsyncSubsystem mockAsync;

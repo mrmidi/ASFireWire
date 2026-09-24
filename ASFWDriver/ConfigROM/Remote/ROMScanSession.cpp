@@ -2,6 +2,7 @@
 
 #include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Bus/TopologySpeed.hpp"
 #include "../Common/ConfigROMConstants.hpp"
 #include "../Common/ConfigROMPolicies.hpp"
 #include "../ConfigROMParser.hpp"
@@ -101,6 +102,22 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
         session->rootProbeStarted_ = false;
         session->rootProbeTerminal_ = false;
 
+        const auto initialSpeedFor = [session](uint8_t nodeId) {
+            const auto pathSpeed = Driver::PathSpeedCodeBetween(
+                session->topology_, session->localNodeId_, nodeId);
+            const auto chosen = pathSpeed
+                                    ? std::min(session->params_.startSpeed,
+                                               static_cast<FwSpeed>(*pathSpeed))
+                                    : session->params_.startSpeed;
+            ASFW_LOG(ConfigROM,
+                     "[ROMScanSpeed] gen=%u local=%u node=%u pathCode=%d configuredStart=S%u selectedStart=S%u",
+                     session->gen_.value, session->localNodeId_, nodeId,
+                     pathSpeed ? static_cast<int>(*pathSpeed) : -1,
+                     100u << static_cast<uint8_t>(session->params_.startSpeed),
+                     100u << static_cast<uint8_t>(chosen));
+            return chosen;
+        };
+
         if (request.targetNodes.empty()) {
             for (const auto& node : session->topology_.physical.nodes) {
                 if (node.physicalId == session->localNodeId_) {
@@ -110,7 +127,7 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
                     continue;
                 }
                 session->nodeScans_.emplace_back(node.physicalId, session->gen_,
-                                                 session->params_.startSpeed,
+                                                 initialSpeedFor(node.physicalId),
                                                  session->params_.perStepRetries);
                 session->nodeScans_.back().SetConfigROMReadyRetriesLeft(
                     session->params_.configROMReadyRetries);
@@ -125,7 +142,7 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
                 if (nodeId == session->localNodeId_) {
                     continue;
                 }
-                session->nodeScans_.emplace_back(nodeId, session->gen_, session->params_.startSpeed,
+                session->nodeScans_.emplace_back(nodeId, session->gen_, initialSpeedFor(nodeId),
                                                  session->params_.perStepRetries);
                 session->nodeScans_.back().SetConfigROMReadyRetriesLeft(
                     session->params_.configROMReadyRetries);
@@ -518,6 +535,11 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
                                          result.quadletsBE.begin(), result.quadletsBE.end());
 
     node.MutableROM().bib = bibRes->bib;
+
+    ASFW_LOG(ConfigROM,
+             "Node %u BIB: link_spd=%u max_rec=%u readSpeed=S%u gen=%u",
+             nodeId, bibRes->bib.linkSpd, bibRes->bib.maxRec,
+             100u << static_cast<uint8_t>(node.CurrentSpeed()), gen_.value);
 
     speedPolicy_.RecordSuccess(nodeId, node.CurrentSpeed());
 

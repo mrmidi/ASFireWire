@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -119,15 +120,62 @@ void ReadSectionChunked(Protocols::Ports::ProtocolRegisterIO& io,
 DICETransaction::DICETransaction(Protocols::Ports::ProtocolRegisterIO& io)
     : io_(io) {}
 
-void DICETransaction::ReadGeneralSections(std::function<void(IOReturn, GeneralSections)> callback) {
-    auto callbackState = Common::ShareCallback(std::move(callback));
-    (void)io_.ReadBlock(MakeDICEAddress(0),
+namespace {
+
+using GeneralSectionsCallback = std::function<void(IOReturn, GeneralSections)>;
+
+void ReadGeneralSectionsAtSpeed(
+    Protocols::Ports::ProtocolRegisterIO& io,
+    FW::FwSpeed speed,
+    const std::shared_ptr<GeneralSectionsCallback>& callbackState) {
+    // Capture the chosen speed and route before this first DICE register request.
+    // A missing ACK can otherwise leave no DICE-side evidence of the attempt.
+    ASFW_LOG(DICE,
+             "[SectionReadSpeed] submit gen=%u node=%u addr=0x%04x%08x bytes=%u speed=S%u routeCurrent=%d",
+             io.Generation().value, io.NodeId().value, MakeDICEAddress(0).addressHi,
+             MakeDICEAddress(0).addressLo,
+             static_cast<unsigned>(GeneralSections::kWireSize),
+             100u << static_cast<uint8_t>(speed), io.IsRouteCurrent());
+    (void)io.ReadBlock(MakeDICEAddress(0),
                   static_cast<uint32_t>(GeneralSections::kWireSize),
-                  [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+                  [&io, speed, callbackState](Async::AsyncStatus status,
+                                                       std::span<const uint8_t> payload) {
         if (status != Async::AsyncStatus::kSuccess || payload.size() < GeneralSections::kWireSize) {
+            // A Config ROM quadlet can answer at S400 even when the first DICE
+            // block read cannot. Probe down only on a transport failure, on the
+            // same route, and only for this first read. Apple's special
+            // unknown-speed ROM scan steps down on read failure
+            // (IOFireWireController.cpp:2746-2768); Linux probes ROM speed
+            // (core-device.c:615-640). Joe's F24 exposed this later gap.
+            if ((status == Async::AsyncStatus::kTimeout ||
+                 status == Async::AsyncStatus::kHardwareError) &&
+                speed != FW::FwSpeed::S100 && io.IsRouteCurrent()) {
+                const auto slower = static_cast<FW::FwSpeed>(static_cast<uint8_t>(speed) - 1);
+                ASFW_LOG(DICE, "Section read failed at S%u (%{public}s); retrying at S%u",
+                         100u << static_cast<uint8_t>(speed), Async::ToString(status),
+                         100u << static_cast<uint8_t>(slower));
+                ReadGeneralSectionsAtSpeed(io, slower, callbackState);
+                return;
+            }
+            ASFW_LOG(DICE,
+                     "[SectionReadSpeed] terminal gen=%u node=%u speed=S%u status=%{public}s bytes=%zu",
+                     io.Generation().value, io.NodeId().value,
+                     100u << static_cast<uint8_t>(speed), Async::ToString(status),
+                     payload.size());
             Common::InvokeSharedCallback(callbackState, MapReadStatus(status), GeneralSections{});
             return;
         }
+
+        // ROM discovery may already have demoted async reads before this first
+        // DICE transaction. Publish that working speed for stream setup too.
+        if (!io.RecordVerifiedSpeed(speed)) {
+            Common::InvokeSharedCallback(callbackState, kIOReturnOffline, GeneralSections{});
+            return;
+        }
+
+        ASFW_LOG(DICE, "[SectionReadSpeed] verified gen=%u node=%u speed=S%u",
+                 io.Generation().value, io.NodeId().value,
+                 100u << static_cast<uint8_t>(speed));
 
         GeneralSections sections = GeneralSections::Deserialize(payload.data());
         LogSectionPreview("ReadGeneralSections", payload.data(), payload.size());
@@ -138,7 +186,14 @@ void DICETransaction::ReadGeneralSections(std::function<void(IOReturn, GeneralSe
                  sections.rxStreamFormat.offset, sections.rxStreamFormat.size);
         
         Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, sections);
-    });
+    }, speed);
+}
+
+} // namespace
+
+void DICETransaction::ReadGeneralSections(std::function<void(IOReturn, GeneralSections)> callback) {
+    ReadGeneralSectionsAtSpeed(io_, io_.CurrentSpeed(),
+                               Common::ShareCallback(std::move(callback)));
 }
 
 void DICETransaction::ReadExtensionSections(std::function<void(IOReturn, ExtensionSections)> callback) {
