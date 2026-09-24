@@ -102,7 +102,7 @@ extension ASFWMCPToolCatalog {
         ASFWMCPToolDefinition(
             name: "asfw_bebob_shell_execute",
             group: "bebob", visibility: .developerWrite, readOnly: false, idempotent: false,
-            summary: "Execute one of the explicitly supported read-only BeBoB diagnostics (sys stat, sys avstat all, fw show, fw mix show, fw vol peak).",
+            summary: "Execute one M-Audio 1814 BeBoB Virtual UART shell command and return stdout. Shell commands can change device settings; developer-write gate required.",
             requiredProtocolHints: ["bebob"]
         )
     ]

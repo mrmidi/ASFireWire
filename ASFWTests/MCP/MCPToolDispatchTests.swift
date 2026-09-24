@@ -12,12 +12,12 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 0)
     }
 
-    @Test func bebobShellRejectsUnlistedCommandBeforeAnyWrite() async {
+    @Test func bebobShellRejectsMultipleLinesBeforeAnyWrite() async {
         let driver = MockASFWDriverControl()
         let core = ASFWMCPCore(configuration: gateOpen, driver: driver)
         let result = await core.callTool(name: "asfw_bebob_shell_execute", arguments: .object([
             "nodeId": .int(1), "generation": .int(17),
-            "command": .string("fw mix connect i14s1 lineout1")
+            "command": .string("fw show\nfw flash")
         ]))
         #expect(!result.ok)
         #expect(await driver.unexpectedWriteAttemptCount() == 0)

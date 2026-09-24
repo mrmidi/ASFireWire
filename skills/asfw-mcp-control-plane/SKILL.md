@@ -77,9 +77,10 @@ python3 tools/1814/bebob_shell.py --node <nodeId> --gen <expectedGeneration> \
   'sys stat' 'sys avstat all' 'fw show' 'fw mix show' 'fw vol peak'
 ```
 
-The MCP tool `asfw_bebob_shell_execute` accepts only these five commands and
-checks the 1814 identity and bus generation before each transaction. The
-convenience tools `asfw_bebob_get_streaming_stats`,
+The MCP tool `asfw_bebob_shell_execute` accepts any single printable ASCII
+shell command and checks the 1814 identity and bus generation before each
+transaction. Commands may change device settings, so treat each call as a
+developer write. The five convenience tools `asfw_bebob_get_streaming_stats`,
 `asfw_bebob_get_silicon_status`, `asfw_bebob_get_sync_state`,
 `asfw_bebob_get_mixer_routing`, and `asfw_bebob_get_meter_peaks` use the same
 guarded path. `fw mix show` is routing readback; it does not change routing.

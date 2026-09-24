@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 ASFireWire Project
 #
-# Call the guarded BeBoB diagnostics MCP tool. The Swift tool enforces the same
-# command allowlist and validates the current generation and 1814 identity before
-# it sends any Virtual UART mailbox transactions.
+# Call the BeBoB shell MCP tool. It checks the current generation and 1814
+# identity before sending Virtual UART mailbox transactions. Shell commands can
+# change device settings; the MCP developer-write gate applies.
 
 import argparse
 import json
@@ -13,9 +13,6 @@ import urllib.error
 import urllib.request
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:8766/mcp"
-READ_ONLY_COMMANDS = frozenset({
-    "sys stat", "sys avstat all", "fw show", "fw mix show", "fw vol peak"
-})
 
 
 class BeBoBTools:
@@ -63,8 +60,10 @@ class BeBoBTools:
 
     def execute(self, command):
         command = command.strip()
-        if command not in READ_ONLY_COMMANDS:
-            raise ValueError(f"unsupported command (read-only diagnostics only): {command!r}")
+        if not command or len(command.encode("utf-8")) > 1024 or any(
+            ord(character) < 0x20 or ord(character) > 0x7e for character in command
+        ):
+            raise ValueError("command must be one printable ASCII line (1–1024 bytes)")
 
         _, body = self._post(
             {
@@ -108,7 +107,7 @@ class BeBoBTools:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run an allowlisted M-Audio 1814 diagnostic through ASFW MCP."
+        description="Run M-Audio 1814 Virtual UART shell commands through ASFW MCP."
     )
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
     parser.add_argument("--node", type=int, required=True,
@@ -116,7 +115,7 @@ def main():
     parser.add_argument("--gen", type=int, required=True,
                         help="current bus generation")
     parser.add_argument("commands", nargs="+",
-                        help="one or more of: sys stat, sys avstat all, fw show, fw mix show, fw vol peak")
+                        help="one or more shell command lines")
     args = parser.parse_args()
 
     client = BeBoBTools(args.endpoint, args.node, args.gen)

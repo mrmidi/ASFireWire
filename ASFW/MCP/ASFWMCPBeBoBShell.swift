@@ -34,9 +34,10 @@ actor ASFWMCPBeBoBMailboxGate {
 }
 
 enum ASFWMCPBeBoBShellClient {
-    static let supportedCommands: Set<String> = ["sys stat", "sys avstat all", "fw show", "fw mix show", "fw vol peak"]
     static func supports(_ command: String) -> Bool {
-        supportedCommands.contains(command.trimmingCharacters(in: .whitespacesAndNewlines))
+        let line = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !line.isEmpty && line.utf8.count <= 1024 &&
+            line.utf8.allSatisfy { $0 >= 0x20 && $0 <= 0x7e }
     }
     private static let hi: UInt16 = 0xffff
     private static let req: UInt32 = 0xc802_1000
@@ -51,9 +52,8 @@ enum ASFWMCPBeBoBShellClient {
 
     static func execute(driver: any ASFWDriverControlling, nodeId: UInt32,
                         generation: UInt32, command: String) async -> String? {
-        // The public MCP shell surface is intentionally diagnostic-only. Commands
-        // that can alter firmware, routing, or persistent configuration are not
-        // forwarded, even though the underlying shell protocol can carry text.
+        // The shell tool carries one printable ASCII command line. MCP exposes
+        // it as a developer write because the shell can alter device settings.
         let normalized = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard supports(normalized),
               await driver.listNodes().contains(where: {
