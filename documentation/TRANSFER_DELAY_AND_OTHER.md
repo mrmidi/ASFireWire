@@ -1,5 +1,7 @@
 # TRANSFER_DELAY_AND_OTHER.md — TX payload, SYT transfer delay, and the 85/15 silence
 
+> **Vocabulary:** latency-shaped numbers in this document (delays, offsets, leads, depths) are classified in [`LATENCY_VOCABULARY.md`](LATENCY_VOCABULARY.md). A configured frame count is not a measured duration, and a depth is never a latency.
+
 **Date:** 2026-06-12. **Bench:** Saffire Pro 24 DSP @ 48 kHz blocking, DICE branch.
 **Evidence sources:** the earlier FireBug wire captures (counter `088:46xx` "capture 1",
 `099:53xx`/"another capture" = "capture 2"), the current `032:3882..` FireBug excerpt, the

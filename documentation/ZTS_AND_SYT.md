@@ -1,5 +1,7 @@
 # Zero Timestamp (ZTS) and SYT Timing Architecture
 
+> **Vocabulary:** latency-shaped numbers in this document (delays, offsets, leads, depths) are classified in [`LATENCY_VOCABULARY.md`](LATENCY_VOCABULARY.md). A configured frame count is not a measured duration, and a depth is never a latency.
+
 This document provides a comprehensive guide to the clock recovery, synchronization, and presentation timing architectures in the ASFW Driver. It explains how the driver bridges the asynchronous Apple CoreAudio host domain with the synchronous, cycle-aligned IEEE 1394 (FireWire) bus domain.
 
 > [!IMPORTANT]
