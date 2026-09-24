@@ -3,6 +3,8 @@
 #include "ASFWDriver/Protocols/BeBoB/Bootloader/BeBoBBootloaderPreparationCoordinator.hpp"
 #include "ASFWDriver/Discovery/DiscoveryTypes.hpp"
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
+#include "ASFWDriver/DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
+#include "ASFWDriver/Audio/Protocols/SelectProbeBootstrap.hpp"
 #include "tests/mocks/DeferredFireWireBus.hpp"
 
 #include <algorithm>
@@ -33,6 +35,14 @@ ASFW::Discovery::DeviceIdentityEvidence BootloaderIdentity() {
         .version = 0x00010070,
     });
     return identity;
+}
+
+// Production hands preparation the registry's resolved plan; the tests resolve
+// the same identity once to stand in for it.
+ASFW::DeviceProfiles::Audio::StaticAudioEndpointPlan PlanFor(
+    const ASFW::Discovery::DeviceIdentityEvidence& identity) {
+    return ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(identity).value_or(
+        ASFW::DeviceProfiles::Audio::StaticAudioEndpointPlan{});
 }
 
 ASFW::Discovery::DeviceRouteToken BindRoute(ASFW::Discovery::DeviceRegistry& registry) {
@@ -71,13 +81,24 @@ TEST(BeBoBBootloaderPreparation, AutomaticCuePersonaIsOnlyThe1814Bootloader) {
 
 TEST(BeBoBBootloaderPreparation, TriggerRequiresTheCatalogBootloaderCuePolicy) {
     auto identity = BootloaderIdentity();
-    EXPECT_TRUE(ShouldPrepareBootloader(kMAudioVendorId,
-                                        kFireWire1814BootloaderModelId, identity));
-    EXPECT_FALSE(ShouldPrepareBootloader(kMAudioVendorId, 0x00010071, identity));
+    EXPECT_TRUE(ShouldPrepareBootloader(PlanFor(identity), kMAudioVendorId,
+                                        kFireWire1814BootloaderModelId));
+    EXPECT_FALSE(ShouldPrepareBootloader(PlanFor(identity), kMAudioVendorId, 0x00010071));
 
     identity.rootModelId = 0x00010071;
-    EXPECT_FALSE(ShouldPrepareBootloader(kMAudioVendorId,
-                                         kFireWire1814BootloaderModelId, identity));
+    EXPECT_FALSE(ShouldPrepareBootloader(PlanFor(identity), kMAudioVendorId,
+                                         kFireWire1814BootloaderModelId));
+}
+
+// FW-163: preparation cannot hand the bootloader persona to a probe. Its
+// bootstrap and FCP gate come from the static plan, which no preparation
+// outcome (read failure, rejected build, failed cue) can change.
+TEST(BeBoBBootloaderPreparation, FailedPreparationHasNoPathToAGenericProbe) {
+    const auto plan = PlanFor(BootloaderIdentity());
+    EXPECT_EQ(ASFW::Audio::SelectProbeBootstrap(plan), ASFW::Audio::ProbeBootstrap::Unsupported);
+    EXPECT_EQ(ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::CommandFilterFor(plan),
+              ASFW::Discovery::AvcCommandFilterId::BlockAll);
+    EXPECT_NE(plan.support, ASFW::DeviceProfiles::Audio::SupportDisposition::Supported);
 }
 
 TEST(BeBoBBootloaderPreparation, CoordinatorChecksIdentityRouteDateAndWritesValidCueOnce) {
@@ -92,8 +113,8 @@ TEST(BeBoBBootloaderPreparation, CoordinatorChecksIdentityRouteDateAndWritesVali
     bool alive = true;
 
     const auto shouldPrepare = [&] {
-        return coordinator.Prepare(kMAudioVendorId, kFireWire1814BootloaderModelId,
-                                   identity, route, FW::FwSpeed::S400,
+        return coordinator.Prepare(PlanFor(identity), kMAudioVendorId,
+                                   kFireWire1814BootloaderModelId, route, FW::FwSpeed::S400,
                                    [&alive] { return alive; });
     };
     EXPECT_TRUE(shouldPrepare());
@@ -123,12 +144,13 @@ TEST(BeBoBBootloaderPreparation, CoordinatorRejectsWrongPersonaAndStaleRouteBefo
     auto identity = BootloaderIdentity();
     const auto alive = [] { return true; };
 
-    EXPECT_FALSE(coordinator.Prepare(kMAudioVendorId, 0x00010071, identity, route,
+    EXPECT_FALSE(coordinator.Prepare(PlanFor(identity), kMAudioVendorId, 0x00010071, route,
                                      FW::FwSpeed::S400, alive));
     EXPECT_EQ(bus.ReadCount(), 0U);
     registry.InvalidateLiveMappingsForBusReset();
-    EXPECT_FALSE(coordinator.Prepare(kMAudioVendorId, kFireWire1814BootloaderModelId,
-                                     identity, route, FW::FwSpeed::S400, alive));
+    EXPECT_FALSE(coordinator.Prepare(PlanFor(identity), kMAudioVendorId,
+                                     kFireWire1814BootloaderModelId, route,
+                                     FW::FwSpeed::S400, alive));
     EXPECT_EQ(bus.ReadCount(), 0U);
     EXPECT_EQ(bus.WriteCount(), 0U);
 }
@@ -143,8 +165,8 @@ TEST(BeBoBBootloaderPreparation, CoordinatorDoesNotWriteForUnsupportedDateOrInac
         Protocols::BeBoB::Bootloader::BeBoBBootloaderPreparationCoordinator coordinator{
             bus, registry};
         const auto identity = BootloaderIdentity();
-        EXPECT_TRUE(coordinator.Prepare(kMAudioVendorId, kFireWire1814BootloaderModelId,
-                                        identity, route, FW::FwSpeed::S400,
+        EXPECT_TRUE(coordinator.Prepare(PlanFor(identity), kMAudioVendorId,
+                                        kFireWire1814BootloaderModelId, route, FW::FwSpeed::S400,
                                         [] { return true; }));
         EXPECT_EQ(bus.ReadCount(), 1U);
         EXPECT_EQ(bus.WriteCount(), 0U);

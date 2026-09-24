@@ -4,6 +4,7 @@
 #pragma once
 
 #include "BeBoBBootloaderCue.hpp"
+#include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include <cstdint>
 #include <variant>
 
@@ -36,9 +37,13 @@ using PreparationAction = std::variant<ReadInfoBlock, WriteCue, Done>;
 struct PreparationStep final { PreparationState state; PreparationAction action; };
 
 [[nodiscard]] PreparationStep BeginPreparation() noexcept;
+/// The catalog decides whether a cue applies (its resolved plan carries the
+/// cue policy); the persona check is a second, device-specific interlock in
+/// front of the only write this module can issue.
 [[nodiscard]] bool ShouldPrepareBootloader(
-    uint32_t vendorId, uint32_t modelId,
-    const ASFW::Discovery::DeviceIdentityEvidence& identity) noexcept;
+    const ASFW::DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
+    uint32_t vendorId, uint32_t modelId) noexcept;
+[[nodiscard]] const char* RetireReasonName(RetireReason reason) noexcept;
 [[nodiscard]] PreparationStep AdvancePreparation(
     const PreparationState& state, const PreparationEvent& event) noexcept;
 [[nodiscard]] inline bool IsRetired(const PreparationState& state) noexcept {

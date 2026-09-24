@@ -1546,9 +1546,15 @@ void AVCDiscovery::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) 
 
 void AVCDiscovery::PrepareMAudioBootloader(
     const std::shared_ptr<Discovery::FWDevice>& device) {
-    if (!device || !Bootloader::ShouldPrepareBootloader(device->GetVendorID(),
-                                                        device->GetModelID(),
-                                                        device->GetIdentity())) {
+    if (!device) {
+        return;
+    }
+    // The registry's resolved plan decides whether a cue applies; preparation
+    // does not re-run catalog matching.
+    const auto plan = CurrentPolicyPlan(deviceRegistry_, *device);
+    if (!plan.has_value() ||
+        !Bootloader::ShouldPrepareBootloader(*plan, device->GetVendorID(),
+                                             device->GetModelID())) {
         return;
     }
     const auto route = deviceRegistry_.CurrentRoute(device->GetGUID());
@@ -1561,7 +1567,7 @@ void AVCDiscovery::PrepareMAudioBootloader(
     }
 
     const bool started = bootloaderPreparation_.Prepare(
-        device->GetVendorID(), device->GetModelID(), device->GetIdentity(), *route,
+        *plan, device->GetVendorID(), device->GetModelID(), *route,
         busInfo_.GetSpeed(ASFW::FW::NodeId{static_cast<uint8_t>(route->nodeId)}),
         [weakSelf = weak_from_this()] {
             const auto self = weakSelf.lock();

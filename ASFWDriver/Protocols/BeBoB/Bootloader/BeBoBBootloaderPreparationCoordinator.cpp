@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "BeBoBBootloaderPreparationCoordinator.hpp"
+#include "../../../Logging/Logging.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -60,9 +61,19 @@ private:
     {
         auto step = AdvancePreparation(state_, event);
         state_ = std::move(step.state);
+        if (std::holds_alternative<CueWriteSucceeded>(event)) {
+            ASFW_LOG(AVC,
+                     "[BootloaderCue] cue written GUID=0x%016llx gen=%u; awaiting re-enumeration",
+                     route_.guid, route_.generation.value);
+        }
+        LogIfRetired();
         if (std::holds_alternative<ReadInfoBlock>(step.action)) {
             ReadInfo();
         } else if (const auto* cue = std::get_if<WriteCue>(&step.action)) {
+            ASFW_LOG(AVC,
+                     "[BootloaderCue] loader active; writing start-firmware cue "
+                     "GUID=0x%016llx gen=%u protocol=%u",
+                     route_.guid, route_.generation.value, cue->cue.ProtocolVersion());
             Write(*cue);
         }
     }
@@ -71,6 +82,18 @@ private:
     {
         auto step = AdvancePreparation(state_, event);
         state_ = std::move(step.state);
+        LogIfRetired();
+    }
+
+    // Bring-up path, at most a few records per device incarnation. Without
+    // them the ring cannot distinguish "cue ran" from "cue never started".
+    void LogIfRetired() noexcept
+    {
+        const auto* retired = std::get_if<Retired>(&state_);
+        if (retired == nullptr || retireLogged_) return;
+        retireLogged_ = true;
+        ASFW_LOG(AVC, "[BootloaderCue] retired GUID=0x%016llx gen=%u reason=%{public}s",
+                 route_.guid, route_.generation.value, RetireReasonName(retired->reason));
     }
 
     void Write(const WriteCue& action)
@@ -108,6 +131,7 @@ private:
     const FW::FwSpeed speed_;
     std::function<bool()> ownerAlive_;
     PreparationState state_{BeginPreparation().state};
+    bool retireLogged_{false};
 };
 
 } // namespace
@@ -124,11 +148,11 @@ BeBoBBootloaderPreparationCoordinator::~BeBoBBootloaderPreparationCoordinator() 
 }
 
 bool BeBoBBootloaderPreparationCoordinator::Prepare(
+    const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
     uint32_t vendorId, uint32_t modelId,
-    const Discovery::DeviceIdentityEvidence& identity,
     const Discovery::DeviceRouteToken& route, FW::FwSpeed speed,
     std::function<bool()> ownerAlive) {
-    if (!lock_ || !ShouldPrepareBootloader(vendorId, modelId, identity) || !ownerAlive ||
+    if (!lock_ || !ShouldPrepareBootloader(plan, vendorId, modelId) || !ownerAlive ||
         !registry_.IsCurrent(route)) {
         return false;
     }

@@ -17,13 +17,22 @@ PreparationStep Evaluate(const BootRomInfo& info) noexcept {
 PreparationStep BeginPreparation() noexcept { return {ReadingInfo{0}, ReadInfoBlock{}}; }
 
 bool ShouldPrepareBootloader(
-    uint32_t vendorId, uint32_t modelId,
-    const ASFW::Discovery::DeviceIdentityEvidence& identity) noexcept {
-    if (!IsSupportedBootloaderPersona(vendorId, modelId)) return false;
-    const auto policy = ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(identity);
-    return policy.has_value() &&
-           policy->bootloaderCue ==
+    const ASFW::DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
+    uint32_t vendorId, uint32_t modelId) noexcept {
+    return IsSupportedBootloaderPersona(vendorId, modelId) &&
+           plan.bootloaderCue ==
                ASFW::DeviceProfiles::Audio::BootloaderCuePolicy::BeBoBStartFirmware;
+}
+
+const char* RetireReasonName(RetireReason reason) noexcept {
+    switch (reason) {
+        case RetireReason::FirmwareAlreadyRunning: return "firmware-already-running";
+        case RetireReason::UnsupportedBuild: return "unsupported-build";
+        case RetireReason::InfoUnavailable: return "info-unavailable";
+        case RetireReason::CueWriteFailed: return "cue-write-failed";
+        case RetireReason::GenerationChanged: return "generation-changed";
+    }
+    return "unknown";
 }
 
 PreparationStep AdvancePreparation(const PreparationState& state,

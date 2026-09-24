@@ -24,8 +24,8 @@ public:
     BeBoBBootloaderPreparationCoordinator& operator=(
         const BeBoBBootloaderPreparationCoordinator&) = delete;
 
-    [[nodiscard]] bool Prepare(uint32_t vendorId, uint32_t modelId,
-                               const Discovery::DeviceIdentityEvidence& identity,
+    [[nodiscard]] bool Prepare(const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
+                               uint32_t vendorId, uint32_t modelId,
                                const Discovery::DeviceRouteToken& route,
                                FW::FwSpeed speed,
                                std::function<bool()> ownerAlive);

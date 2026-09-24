@@ -24,8 +24,9 @@ inline constexpr std::array kMAudioDefinitions{
     // AVCCommandFilter.hpp does not name. So recognising these devices is what
     // makes them safe to have on the bus at all.
     //
-    // The bootloader cue remains descriptive until a guarded preparation path
-    // has hardware evidence. CommandFilterFor blocks all FCP traffic here.
+    // Never an audio endpoint: CommandFilterFor blocks all FCP traffic and the
+    // probe policy selects no bootstrap. The cue policy is consumed by the
+    // guarded BeBoB bootloader preparation (Protocols/BeBoB/Bootloader).
     Definition(DeviceDefinitionId::MAudioFireWire1814Bootloader, kMAudioVendorId,
                kMAudioFireWire1814BootloaderModelId, AudioFamilyProviderId::None,
                ProbePolicyId::NoAutomaticTraffic, ProfileBuilderId::None,
