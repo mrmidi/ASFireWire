@@ -371,8 +371,8 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             if (!ivars.runtime.mAudioInternalTxTiming.PreviewNextPacket(mAudioPlan) ||
                 mAudioPlan.sequence != nextPacketToPrepare) {
                 failProducer(
-                    ASFW::Audio::Runtime::TxProducerFaultStage::kReplaySytValidation,
-                    ASFW::Audio::Runtime::TxProducerFaultReason::kInvalidReplaySyt,
+                    ASFW::Audio::Runtime::TxProducerFaultStage::kInternalCadence,
+                    ASFW::Audio::Runtime::TxProducerFaultReason::kCadencePlanMismatch,
                     ASFW::Audio::Runtime::FatalStreamReason::TxReplayInvalidSyt,
                     nextPacketToPrepare);
                 break;
@@ -777,17 +777,23 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             static_cast<uint32_t>(
                 nextPacketToPrepare % numSlots);
         const auto& meta = metadataRing[slotIdx];
+        // Ask the packetizer what it emitted; packet size is not a DATA test.
+        // M-Audio cadence NO-DATA packets are full-size (CF-labelled blocks).
+        const auto* preparedSlot =
+            ivars.runtime.txStreamEngine.Timeline().SlotByIndex(
+                static_cast<uint32_t>(nextPacketToPrepare));
+        const bool emittedData = preparedSlot != nullptr && preparedSlot->isData;
         if (ivars.runtime.mAudioInternalTxActive.load(std::memory_order_acquire) &&
             !ivars.runtime.mAudioInternalTxTiming.CommitPacket(
-                mAudioPlan, meta.payloadLength > 8)) {
+                mAudioPlan, emittedData)) {
             failProducer(
-                ASFW::Audio::Runtime::TxProducerFaultStage::kReplaySytValidation,
-                ASFW::Audio::Runtime::TxProducerFaultReason::kInvalidReplaySyt,
+                ASFW::Audio::Runtime::TxProducerFaultStage::kInternalCadence,
+                ASFW::Audio::Runtime::TxProducerFaultReason::kCadenceCommitRejected,
                 ASFW::Audio::Runtime::FatalStreamReason::TxReplayInvalidSyt,
                 nextPacketToPrepare);
             break;
         }
-        if (meta.payloadLength > 8) {
+        if (emittedData) {
             directControl->counters.txDataPackets.fetch_add(
                 1, std::memory_order_relaxed);
             directControl->counters.txValidSytPackets.fetch_add(

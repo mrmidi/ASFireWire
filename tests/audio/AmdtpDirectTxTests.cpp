@@ -212,6 +212,51 @@ TEST(AmdtpDirectTxTests,
     EXPECT_EQ(packet.dbc, 24U);
 }
 
+// The TX producer commits the M-Audio cadence with the timeline's DATA verdict.
+// Packet size cannot answer that question: cadence NO-DATA is full-size too.
+// Using `byteCount > 8` killed IT at the first steady-state NO-DATA slot.
+TEST(AmdtpDirectTxTests, MAudioCadenceNoDataIsFullSizeButTimelineSaysNoData) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+    AmdtpStreamConfig config{};
+    config.streamMode = StreamMode::Blocking;
+    config.dbs = 7;
+    config.pcmChannels = 6;
+    config.midiSlots = 1;
+    config.framesPerDataPacket = 8;
+    config.maxPacketBytes = 232;
+    AmdtpTxPolicy policy{};
+    policy.cadencePacketsCarryDataBlocks = true;
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(config, policy));
+
+    std::array<std::array<uint8_t, 232>, 2> bytes{};
+    TxPresentationPlan plan{};
+    plan.frameCount = 8;
+    plan.disposition = AmdtpPacketDisposition::Data;
+    PreparedTxPacket data{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {0, bytes[0].data(), bytes[0].size()}, {}, plan, data));
+
+    plan.cycleOrdinal = 1;
+    plan.frameCount = 0;
+    plan.disposition = AmdtpPacketDisposition::NoData;
+    PreparedTxPacket noData{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {1, bytes[1].data(), bytes[1].size()}, {}, plan, noData));
+
+    EXPECT_EQ(data.byteCount, 232U);
+    EXPECT_EQ(noData.byteCount, 232U);
+    const auto* dataSlot = timeline.SlotByIndex(0);
+    const auto* noDataSlot = timeline.SlotByIndex(1);
+    ASSERT_NE(dataSlot, nullptr);
+    ASSERT_NE(noDataSlot, nullptr);
+    EXPECT_TRUE(dataSlot->isData);
+    EXPECT_FALSE(noDataSlot->isData);
+}
+
 TEST(AmdtpDirectTxTests, MAudioRevertedDataKeepsFullSizeCadenceAndDbc) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 4> timelineSlots{};
