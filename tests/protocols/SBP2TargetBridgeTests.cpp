@@ -336,4 +336,19 @@ TEST(SBP2TargetBridgeTests, ShutdownCompletesInFlightAndQueuedTasksOnce) {
     EXPECT_FALSE(rig.edges.back().second); // terminal down edge for the HBA
 }
 
+// Quiesce (sleep, driver stop) shuts the bridge down, which issues a logout
+// the quiesced bus never answers. Destroying the registry then cancels that
+// write through the bus it borrowed — so ServiceContext::Reset must destroy the
+// registry before the controller (and its bus).
+TEST(SBP2TargetBridgeTests, RegistryTeardownCancelsPendingLogoutThroughTheBus) {
+    BridgeRig rig;
+    rig.BringUp();
+    rig.bridge->Shutdown();
+    ASSERT_EQ(1u, rig.bus.PendingWriteCount()); // logout ORB write, unanswered
+
+    rig.registry.reset();
+
+    EXPECT_EQ(0u, rig.bus.PendingWriteCount());
+}
+
 } // namespace
