@@ -4,58 +4,7 @@
 
 #include "../Logging/Logging.hpp"
 
-#include <utility>
-
 namespace ASFW::Protocols::SBP2 {
-
-TargetLifecycle::TargetLifecycle(Ops ops) : ops_(std::move(ops)) {
-    lock_ = IOLockAlloc();
-}
-
-TargetLifecycle::~TargetLifecycle() {
-    if (lock_ != nullptr) {
-        IOLockFree(lock_);
-        lock_ = nullptr;
-    }
-}
-
-bool TargetLifecycle::IsTargetAttached() const {
-    if (lock_ == nullptr) {
-        return false;
-    }
-    IOLockLock(lock_);
-    const bool attached = targetAttached_;
-    IOLockUnlock(lock_);
-    return attached;
-}
-
-void TargetLifecycle::SetTargetAttached(bool attached) {
-    if (lock_ == nullptr) {
-        return;
-    }
-    IOLockLock(lock_);
-    targetAttached_ = attached;
-    IOLockUnlock(lock_);
-}
-
-bool TargetLifecycle::IsStopping() const {
-    if (lock_ == nullptr) {
-        return true; // no lock → treat as tearing down, do nothing
-    }
-    IOLockLock(lock_);
-    const bool stopping = stopping_;
-    IOLockUnlock(lock_);
-    return stopping;
-}
-
-void TargetLifecycle::MarkStopping() {
-    if (lock_ == nullptr) {
-        return;
-    }
-    IOLockLock(lock_);
-    stopping_ = true;
-    IOLockUnlock(lock_);
-}
 
 // Known race, accepted: an edge that passed the stopping check can still be
 // inside a create/destroy kernel call when the framework begins terminating
@@ -103,7 +52,7 @@ void TargetLifecycle::OnEdge(uint64_t guid, bool loggedIn) {
         }
         const kern_return_t kr = ops_.createTarget();
         if (kr == kIOReturnSuccess) {
-            SetTargetAttached(true);
+            targetAttached_ = true;
             ASFW_LOG(Controller,
                      "[SCSIHBA] target 0 created (SBP-2 login, guid=0x%016llx)", guid);
         } else {
@@ -122,7 +71,7 @@ void TargetLifecycle::OnEdge(uint64_t guid, bool loggedIn) {
         const kern_return_t kr = ops_.destroyTarget();
         // Clear the flag even on failure: the kernel target is terminating (or
         // already gone) either way, and the next login edge recreates it.
-        SetTargetAttached(false);
+        targetAttached_ = false;
         if (kr == kIOReturnSuccess) {
             ASFW_LOG(Controller,
                      "[SCSIHBA] target 0 destroyed (SBP-2 logout, guid=0x%016llx)", guid);

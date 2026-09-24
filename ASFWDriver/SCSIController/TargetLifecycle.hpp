@@ -7,15 +7,17 @@
 //
 // Threading: OnEdge runs on the controller's lifecycle queue only (serial), so
 // edges never interleave. MarkStopping is called from Stop on the Default
-// queue; the flags are lock-guarded because of that one cross-queue writer.
+// queue; the flags are atomic because of that one cross-queue writer.
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
+#include <utility>
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
 #else
-#include <DriverKit/IOLib.h>
+#include <DriverKit/IOReturn.h>
 #endif
 
 namespace ASFW::Protocols::SBP2 {
@@ -30,8 +32,7 @@ public:
         std::function<kern_return_t()> createTarget;
     };
 
-    explicit TargetLifecycle(Ops ops);
-    ~TargetLifecycle();
+    explicit TargetLifecycle(Ops ops) : ops_(std::move(ops)) {}
 
     TargetLifecycle(const TargetLifecycle&) = delete;
     TargetLifecycle& operator=(const TargetLifecycle&) = delete;
@@ -43,20 +44,16 @@ public:
     // Set once at the top of Stop and never cleared: edges still queued skip
     // create/destroy so they cannot race the framework's own child-target
     // termination.
-    void MarkStopping();
-
-    [[nodiscard]] bool IsStopping() const;
-    [[nodiscard]] bool IsTargetAttached() const;
+    void MarkStopping() { stopping_ = true; }
+    [[nodiscard]] bool IsStopping() const { return stopping_; }
+    [[nodiscard]] bool IsTargetAttached() const { return targetAttached_; }
 
 private:
-    void SetTargetAttached(bool attached);
-
     Ops ops_;
-    IOLock* lock_{nullptr};
     // Target 0 exists kernel-side (created at login, destroyed at logout).
     // Written on the lifecycle queue only.
-    bool targetAttached_{false};
-    bool stopping_{false};
+    std::atomic<bool> targetAttached_{false};
+    std::atomic<bool> stopping_{false};
 };
 
 } // namespace ASFW::Protocols::SBP2
