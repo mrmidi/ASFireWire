@@ -329,7 +329,7 @@ deltas, Weiss's capture-visibility policy, Generic's flat offsets, and names.**
 | **StartIO is host-sourced and 2-stream** | builds streams 0 and 1 from `profile->BuildTxStreamConfig`, hardcoded. `Model::ASFWAudioDevice` carries only aggregate channel counts, so per-stream geometry cannot cross the nub. **Consequence:** playback geometry may not be seeded — see below. |
 | **Rates are a host constant** | `DiceDeviceProfile::SupportedSampleRates()` returns a flat `{44100, 48000}`. `clockCaps` is read into `state.clockCaps` and decoded by `DiceClockCapsSupportRate()`, but never reaches `AudioStreamRuntimeCaps` or `dev.sampleRates`. |
 | **Caps never invalidate** | `DICETcatProtocol::ResetRuntimeCaps()` is reachable only from `Shutdown()`. A rate change does not re-read. Not currently observable: `kDiceMaxSupportedRateHz = 48000` and 32/44.1/48 are all rate mode *low*, so no mode change can occur. It becomes live the moment the ceiling rises. |
-| **Extended channel-name block** | `DICEDuplexBringupController.cpp:982` reads the standard names offset unconditionally; a device with stream `SIZE >= 326` uses `+0x120` (§2.2). Cosmetic — wrong or empty labels, not a streaming fault. |
+| **Extended channel-name block** | `DiceFamilyDriver::DiscoverStreams` reads the standard names offset unconditionally; a device with stream `SIZE >= 326` uses `+0x120` (§2.2). Cosmetic — wrong or empty labels, not a streaming fault. |
 
 ### 3.4 Every geometry consumer now reads the device
 

@@ -32,6 +32,9 @@ from **MidasFW 4.2.1**. Linux citations refer to `references/linux-sound-firewir
 
 ### 1.1 The size of the thing
 
+File and line references in §1 are to the tree before S1. S1 (`c0550fd0`) deleted
+`DICEDuplexBringupController`; §6 records what replaced it.
+
 | Part | Lines | What it is |
 |---|---:|---|
 | `Backends/AudioDuplexCoordinator.{hpp,cpp}` | 2,194 | Start, stop, clock change, recovery, for all families. `DuplexStartTransaction::Run` alone is ~650 lines (`AudioDuplexCoordinator.cpp:913`). |
@@ -224,13 +227,13 @@ These were paid for on hardware and must survive any rewrite:
    §2: all known-good builds did; the regressed build seeded 144 packets.
 2. **`CLOCK_SELECT` may be skipped only if the requested *and* the achieved rate match.**
    `DICE_STABILITY_REGRESSION.md` §3, hardware-validated. Rewriting `CLOCK_SELECT` while
-   streams are being enabled wedged the device (`DICEDuplexBringupController.cpp:555-560`).
+   streams are being enabled wedged the device (`DiceFamilyDriver::WriteClockSelect`).
    TCAT and Linux always rewrite it, but only with every stream stopped.
 3. **Clear every stream's `ISOCHRONOUS` on stop, not just stream 0.** A stale duplicate
-   channel wedges the device until a power cycle (`DICEDuplexBringupController.hpp:111-116`).
+   channel wedges the device until a power cycle (`DiceFamilyDriver::StopSequence`).
    TCAT (`releasePort`) and Linux (`stop_streams`) both clear every stream.
 4. **Program every stream before the single `ENABLE`** (Venice F32, two streams per
-   direction; `DICEDuplexBringupController.hpp:119-123`).
+   direction; `DiceFamilyDriver::ProgramRxStreams`).
 5. **Host start order IR then IT, 2 ms after `ENABLE`** is the order attested on the
    Saffire Pro 24 DSP (`DuplexStreamProfile.hpp:33-58`; `DICE_STABILITY_REGRESSION.md` §2).
 6. **Weiss INT202/203 need host IT before they can report source lock**
@@ -379,16 +382,24 @@ value (host directions plus where each sits relative to `Arm`/`Enable`) rather t
 order. It stays data that every family must state, not an optional hook (rule 2 below).
 That is the only place where the neutral sequence bends.
 
-**`DiceDeviceIo`.** Blocking register access on the session queue: `Read(addr, n)`,
-`Write`, `CompareSwap64`, and `WaitNotification(mask, timeout)`, each returning
-`std::expected`. Built on today's async bus ports and on
+**`DiceDeviceIo`.** Blocking register access: `ReadQuad`, `ReadBlock`, `WriteQuad`,
+`CompareSwap64`, and the `DICETransaction` parsers wrapped as blocking reads, each returning
+`std::expected`. **As built in S1** it runs on the caller's queue (the nub's queue or
+`com.asfw.audio.dice`), never on the Default queue where the bus completions land, and waits
+for each completion through `DiceWaitClock::Backoff`: `IODelay` escalating 5 µs → 255 µs,
+then `IOSleep(1)`, with a 2 s safety deadline that turns a lost completion into a logged
+`kIOReturnTimeout` instead of a hang. `DiceWaitClock` is the only time source; tests pass a
+virtual-time clock.
+
+**Target (S2):** once the session owns a queue, replace the backoff with
 `IODispatchQueue::SleepWithTimeout(event, timeout)` / `Wakeup(event)` (DriverKit SDK 25.5,
 `IODispatchQueue.h`): a thread running on the session queue sleeps **and releases the
 queue**; the bus completion dispatches a block onto the same queue that records the result
-and calls `Wakeup`. So completions may land on the session queue, and no 10 ms polling is
-needed (today's `SyncAsyncBridge` polls). `Wakeup` must be called from a block running on
-that queue. The header does not state the timeout's unit, and ASFW does not use these calls
-yet, so S1 confirms the unit and the behaviour in a small spike before building on it.
+and calls `Wakeup`. Completions may then land on the session queue, and no polling is
+needed. `Wakeup` must be called from a block running on that queue. The header does not
+state the timeout's unit, and ASFW does not use these calls yet, so S2 confirms the unit and
+the behaviour in a small spike first. `WaitNotification(mask, timeout)` arrives with the
+per-device notification endpoint (S3); S1 keeps the 10 ms poll of the global mailbox.
 
 **`DiceNotifications`.** One endpoint per device, attributed by source node (or a
 per-device handler offset, as TCAT's per-device address space does), replacing the
@@ -533,16 +544,23 @@ rely on fixtures plus the vendors' identical code (§2.1).
 - **Fixes before S1: done.** `b1d80f39` (the `CLOCK_SELECT` skip also checks the achieved
   rate) and `a3212dd6` (Pro 24 DSP timer). Each regenerated only the goldens it declared,
   so S1 now preserves corrected behaviour. Both still need a check on the Pro 24 DSP.
-- **S1: DICE goes linear.** `DiceDeviceIo` + `DiceFamilyDriver` behind the existing
-  `IDuplexDeviceControl`. The simulated device must produce the **same wire trace** as S0,
-  except for deltas declared in the stage. Delete `DICEDuplexBringupController`.
+- **S1: DICE goes linear. Done (2026-09-24), branch `refactor/dice-linear-bringup`.**
+  `DiceWaitClock` + `DiceDeviceIo` (`ce6226f9`), `DiceFamilyDriver` (`92249322`), and the
+  swap (`c0550fd0`): `DICETcatProtocol` adapts each `IDuplexDeviceControl` stage onto one
+  synchronous driver call, the protocols take a required `DiceWaitClock&` in place of an
+  optional `ITimerScheduler*`, and `DICEDuplexBringupController` (1,957 lines) is deleted.
+  All 27 goldens pass unchanged, with no declared delta. The ported controller tests run as
+  `DiceFamilyDriverTests` (20). Not yet run on hardware; batched with the pending Pro 24 DSP
+  checks. The `SleepWithTimeout`/`Wakeup` spike moved to S2 (§4.2).
 - **S2: the scheduler replaces the coordinator.** `SessionScheduler` + `RestartRoutine` +
   `StopRoutine` for **all** families; non-DICE families run through an adapter over their
   current `IDuplexDeviceControl`. Delete the coordinator and its helpers. Hardware: Pro 24 DSP,
   M-Audio 1814, PHASE 88, Apogee Duet.
 - **S3: wire fixes, each declared.** IRM picks channels; config-change notifications
   restart; owner held while present and re-claimed per generation; per-device notification
-  endpoint.
+  endpoint. Also: the first `GLOBAL_STATUS` read of a bring-up uses an empty section layout,
+  so it lands at offset `0x54` of the section table instead of the GLOBAL section; read the
+  section table first.
 - **S4: DICE wire follows the device**, after a spike (§4.4).
 - **S5: native `FamilyDriver` for CMP families and MOTU.** Delete the adapter and
   `IDuplexDeviceControl`.
@@ -570,7 +588,7 @@ rely on fixtures plus the vendors' identical code (§2.1).
 2. **Debounce vs `StartIO` latency.** TCAT's ~400 ms quiet period suits device events. The first
    start after `StartIO` on a "follows CoreAudio" family should probably bypass it. How exactly?
 3. **Blocking primitive.** Answered: `IODispatchQueue::SleepWithTimeout`/`Wakeup` (§4.2).
-   Still open: the timeout's unit, confirmed by an S1 spike.
+   Still open: the timeout's unit, confirmed by a spike in S2. S1 ships a polling backoff.
 4. **Where `DesiredState` lives** relative to route tokens (`TOKEN_BASED_LIFECYCLE.md`): per
    GUID across generations, or per route?
 5. **Faulted exit policy.** Which events clear `Faulted`, and is a user-visible reset needed?
