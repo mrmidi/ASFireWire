@@ -78,6 +78,24 @@ pieces of state:
   (`AudioDuplexCoordinator.cpp:1278`) and disagrees with the encoder actually used
   (the audio-side profile's `TxWireFormat`).
 
+Found by the S0 golden traces (`tests/golden/dice/`), in today's code:
+
+- **The `CLOCK_SELECT` skip compares only the requested value.**
+  `DICEDuplexBringupController.cpp:555` skips the write when `CLOCK_SELECT` already
+  holds the target, even if the device runs at another rate. `DICE_STABILITY_REGRESSION.md`
+  §3 describes the fix (also check the achieved rate) as hardware-validated, but that fix is
+  in no commit on any branch. `*__requested-not-achieved.trace` fails on both devices, and
+  `multimix__start-stop-48k.trace` fails because the MultiMix dump is in exactly that state
+  (requests 48 kHz, runs 44.1 kHz).
+- **The Pro 24 DSP bring-up has no timer.** `FamilyProtocolConstruction` builds
+  `SPro24DspProtocol` without a timer scheduler (`SPro24DspProtocol.cpp:33`), and
+  `ScheduleRetry` returns false without one (`DICEDuplexBringupController.cpp:214-217`). Any
+  wait that needs a second poll (a `CLOCK_ACCEPTED` that is not immediate, a lock wait, the
+  source-lock confirm) fails at once with `kIOReturnNotReady`. The Venice path, which has a
+  timer, waits 150 ms and 2 s as intended.
+- **Teardown during a wait leaves our owner claim on the device**
+  (`venice-f24__teardown-during-clock-wait.trace`). TCAT and Linux release it on unbind.
+
 ### 1.4 Recovery fights churn instead of absorbing it
 
 `DiceAudioBackend::HandleRecoveryEvent` (`:430-470`) carries a long comment about
@@ -362,11 +380,14 @@ That is the only place where the neutral sequence bends.
 
 **`DiceDeviceIo`.** Blocking register access on the session queue: `Read(addr, n)`,
 `Write`, `CompareSwap64`, and `WaitNotification(mask, timeout)`, each returning
-`std::expected`. Built on today's async bus ports. **Invariant:** bus completions must
-never be delivered on the session queue, or a blocking wait deadlocks. This invariant is
-what makes the linear style legal under DriverKit. Today `SyncAsyncBridge` polls at 10 ms;
-whether a proper wait primitive is available in the DriverKit SDK must be checked against
-the SDK headers before S1, not assumed.
+`std::expected`. Built on today's async bus ports and on
+`IODispatchQueue::SleepWithTimeout(event, timeout)` / `Wakeup(event)` (DriverKit SDK 25.5,
+`IODispatchQueue.h`): a thread running on the session queue sleeps **and releases the
+queue**; the bus completion dispatches a block onto the same queue that records the result
+and calls `Wakeup`. So completions may land on the session queue, and no 10 ms polling is
+needed (today's `SyncAsyncBridge` polls). `Wakeup` must be called from a block running on
+that queue. The header does not state the timeout's unit, and ASFW does not use these calls
+yet, so S1 confirms the unit and the behaviour in a small spike before building on it.
 
 **`DiceNotifications`.** One endpoint per device, attributed by source node (or a
 per-device handler offset, as TCAT's per-device address space does), replacing the
@@ -501,10 +522,16 @@ Each stage deletes the path it replaces (no double paths), is hardware-checkable
 the Saffire Pro 24 DSP working. DICE hardware on hand: Pro 24 DSP only; the other DICE rows
 rely on fixtures plus the vendors' identical code (§2.1).
 
-- **S0: simulated DICE device and golden wire traces.** A host-test device built from the
-  five fixture dumps: register space, notification writes, bus-reset and timeout injection.
-  First, record today's controller's transaction sequence (address, op, value) per scenario as
-  golden traces. No production change.
+- **S0: simulated DICE device and golden wire traces. Done (2026-09-24).**
+  `tools/pydice` `export-dice-images-cpp` turns the fixture dumps into
+  `tests/support/DiceDeviceImages.inc`; `tests/support/SimulatedDiceDevice.hpp` answers the
+  bus from them (clock, owner, notifications, bus reset, fault knobs, and an invariant
+  observer); `tests/devices/DiceWireCharacterizationTests.cpp` records 27 goldens in
+  `tests/golden/dice/` (`ASFW_UPDATE_GOLDEN=1` rewrites them). No production change. The
+  goldens expose the three defects listed at the end of §1.3.
+- **Before S1, recommended:** fix the `CLOCK_SELECT` skip and the Pro 24 DSP timer as two
+  small production commits, each regenerating only the goldens it declares. Then S1
+  preserves corrected behaviour instead of porting known defects.
 - **S1: DICE goes linear.** `DiceDeviceIo` + `DiceFamilyDriver` behind the existing
   `IDuplexDeviceControl`. The simulated device must produce the **same wire trace** as S0,
   except for deltas declared in the stage. Delete `DICEDuplexBringupController`.
@@ -541,8 +568,8 @@ rely on fixtures plus the vendors' identical code (§2.1).
    needed before choosing.
 2. **Debounce vs `StartIO` latency.** TCAT's ~400 ms quiet period suits device events. The first
    start after `StartIO` on a "follows CoreAudio" family should probably bypass it. How exactly?
-3. **Blocking primitive.** Is there a DriverKit wait primitive better than 10 ms polling? Check
-   the SDK headers.
+3. **Blocking primitive.** Answered: `IODispatchQueue::SleepWithTimeout`/`Wakeup` (§4.2).
+   Still open: the timeout's unit, confirmed by an S1 spike.
 4. **Where `DesiredState` lives** relative to route tokens (`TOKEN_BASED_LIFECYCLE.md`): per
    GUID across generations, or per route?
 5. **Faulted exit policy.** Which events clear `Faulted`, and is a user-visible reset needed?

@@ -157,7 +157,15 @@ and `rate=` so the disagreement is visible directly.
 ```
 
 Do **not** re-exonerate this from a run where the device was already at 48 kHz — that path
-never executes. A companion defect in the same area, the nub adopting the device's momentary
+never executes.
+
+> **Correction 2026-09-24: this fix is not in the code.** The skip at
+> `DICEDuplexBringupController.cpp:555` still compares only `preClaimClockSelect_` with the
+> target `clockSelect`, and no commit on any branch contains the "already requests … but
+> device reports … rewriting" log line above. The S0 golden traces reproduce the failure:
+> `tests/golden/dice/*__requested-not-achieved.trace`, and
+> `multimix__start-stop-48k.trace`, since the recorded MultiMix is in exactly this state. See
+> `AUDIO_SESSION_REDESIGN.md` §1.3. A companion defect in the same area, the nub adopting the device's momentary
 rate (`EnsureNubForGuid: applied runtime geometry rate=44100`), is fixed separately by
 `7ba06722`.
 
