@@ -143,39 +143,4 @@ static_assert(sizeof(AVCMusicCapabilitiesWire) == 18,
 
 } // namespace Shared
 
-// -----------------------------------------------------------------------------
-// Metrics Snapshot (for UserClient export to Swift GUI)
-// -----------------------------------------------------------------------------
-namespace Metrics {
-
-/// Isoch Receive metrics snapshot for GUI display
-/// Wire format - must match Swift exactly
-struct IsochRxSnapshot {
-    // Counters
-    uint64_t totalPackets;
-    uint64_t dataPackets;     // 80-byte with samples
-    uint64_t emptyPackets;    // 16-byte empty
-    uint64_t drops;           // DBC discontinuities
-    uint64_t errors;          // CIP parse errors
-    
-    // Latency histogram [<100µs, 100-500µs, 500-1000µs, >1000µs]
-    uint64_t latencyHist[4];
-    
-    // Last poll cycle
-    uint32_t lastPollLatencyUs;
-    uint32_t lastPollPackets;
-    
-    // CIP header snapshot
-    uint8_t cipSID;
-    uint8_t cipDBS;
-    uint8_t cipFDF;
-    uint8_t _pad1;
-    uint16_t cipSYT;
-    uint8_t cipDBC;
-    uint8_t _pad2;
-} __attribute__((packed));
-
-static_assert(sizeof(IsochRxSnapshot) == 88, "IsochRxSnapshot must be 88 bytes");
-
-} // namespace Metrics
 } // namespace ASFW

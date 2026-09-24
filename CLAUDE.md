@@ -107,7 +107,7 @@ CoreAudio / HAL
 | `Audio/DriverKit/` | `ASFWAudioDriver.iig` + `ASFWAudioNub.iig` — CoreAudio HAL side |
 | `Audio/Wire/` | Content framing: `IEC61883`, `CIP`, `AMDTP`, `AM824`, `RawPcm24In32`. Builds the CIP-headered stream handed to transport. CIP spans DV/MPEG/audio — **provisional home, not transport** |
 | `Audio/Runtime/` | Timing/buffer geometry: `HostClockAnchor`, `PlaybackRingRange` |
-| `Audio/Ports/` | Seam interfaces: `IAmdtpTxSlotProvider`, `ICycleTimeline`, `IDiagSink` |
+| `Audio/Ports/` | Seam interfaces: `IAmdtpTxSlotProvider`, `ICycleTimeline` |
 | `Audio/Engine/`, `Audio/Core/`, `Audio/Model/`, `Audio/Config/`, `Audio/Protocols/` | Engine wiring, runtime model, config |
 
 **Composition / cross-cutting:**
@@ -116,7 +116,7 @@ CoreAudio / HAL
 | `Service/` | `DriverContext` (the `ServiceContext`/DI root), `LocalRequestWiring` |
 | `Scheduling/` | `Scheduler`, `WatchdogCoordinator` (timer/dispatch) |
 | `DeviceProfiles/` | Device capability profiles: `Audio`, `Common` |
-| `Diagnostics/` | `DiagnosticsService`, `ControllerMetrics`, metric sinks |
+| `Diagnostics/` | `DiagnosticsService`, metric sinks. Audio telemetry contract: `Audio/Runtime/AudioTelemetrySnapshot.hpp`; inventory: `documentation/OBSERVABILITY_INVENTORY.md` |
 | `Debug/` | `AsyncTraceCapture`, `BusResetPacketCapture` |
 | `Snapshot/` | State snapshot |
 | `UserClient/` | DriverKit user-client: `Core`, `Handlers`, `Storage`, `WireFormats` |
@@ -263,7 +263,7 @@ template the FireWire side.
 
 **Fallback and legacy support.** Avoid double paths when implementing or fixing behavior; they often lead to days of debugging. Prefer to validate the new approach, then remove the superseded path and any dead code. If the old code is obviously wrong, delete it. If the migration boundary is unclear, warn or ask before leaving both paths alive.
 
-**Instrumentation.** Features and fixes should be traceable, but do not add IO or noisy logging to hot paths. Design instrumentation alongside the feature, suggest the relevant `log stream` command or predicate, and ask the user for runtime state when needed (for example: driver running, audio playing, device connected). Otherwise the trace may prove nothing. Gate hot-path telemetry **anomaly-only once the happy path is confirmed**: keep draining any telemetry ring so it never overflows, but emit a log line only on a real fault (e.g. `[PayloadWriter]` logs only on deficit/withoutPkt/raced/`written != visited`; `[TxPrepRange]` only on `stoppedShort`/`frameShort`), leaving one coarse liveness/margin heartbeat (`[TxPrep]`). A clean run then prints only the heartbeat, and any other line means a regression.
+**Instrumentation.** Features and fixes should be traceable, but do not add IO or noisy logging to hot paths. Design instrumentation alongside the feature, suggest the relevant `log stream` command or predicate, and ask the user for runtime state when needed (for example: driver running, audio playing, device connected). Otherwise the trace may prove nothing. Gate hot-path telemetry **anomaly-only once the happy path is confirmed**: keep draining any telemetry ring so it never overflows, but emit a log line only on a real fault (e.g. `[TxPrepRange]` only on `stoppedShort`/`frameShort`, `[TxPrepFrame]` only on a W > E deficit, `[TxWire]` only on first audio or a dropout), leaving one coarse liveness/margin heartbeat (`[TxPrep]`). A clean run then prints only the heartbeat, and any other line means a regression.
 
 **Reading the unified log from the agent's Bash sandbox works — call `/usr/bin/log` by absolute path.** The long-standing claim that the sandbox returns "zero lines silently" was a misdiagnosis: **zsh has a `log` builtin that shadows `/usr/bin/log`**, so a bare `log show ...` is swallowed and every predicate looks empty. Spell the path and it behaves normally:
 ```bash

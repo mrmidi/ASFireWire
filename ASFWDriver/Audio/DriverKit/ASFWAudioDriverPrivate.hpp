@@ -230,7 +230,6 @@ struct AudioDriverRuntimeState {
     ASFW::Audio::Runtime::AudioTransportControlBlock directAudioControl;
     ASFW::Audio::Runtime::AudioGraphBinding directAudioGraph;
     ASFW::AudioEngine::Direct::FireWireAudioEngine directAudioEngine;
-    ASFW::Audio::Runtime::DirectAudioDebugLogState directAudioDebugLog;
     std::atomic<bool> directAudioSkeletonBound{false};
     std::atomic<uint64_t> ioDebugCallbacks{0};
     std::atomic<uint64_t> ioCallbacksOutsideRun{0};
@@ -326,7 +325,6 @@ struct DirectAudioMemoryGeometry final {
 void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept;
 
 namespace DirectDiagnostics {
-void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept;
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept;
 } // namespace DirectDiagnostics
 

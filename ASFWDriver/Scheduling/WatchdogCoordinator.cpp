@@ -19,10 +19,9 @@ namespace {
 // one per ~4 seconds while retaining the multi-second clock-drift measurement.
 constexpr uint32_t kZtsDrainIntervalTicks = 100;
 constexpr uint32_t kZtsRecordsPerDrain = 8;
-// Audio payload writer decisions arrive ~100/s. Drain every 100 ticks
-// (~100 ms) off the audio callback path; the receiver emits one aggregate
-// line only when counters advance anomalously.
-constexpr uint32_t kPayloadWriterDrainIntervalTicks = 100;
+// Consumer-owned diagnostics (IO-callback error reports recorded by the
+// real-time path) are serviced every 100 ticks (~100 ms), off that path.
+constexpr uint32_t kConsumerDiagnosticsIntervalTicks = 100;
 // TX SYT decisions arrive ~6000/s; the trace is a single latest-value mailbox,
 // so log the most recent decision once per ~1 s (1000 ticks). The line carries
 // the total decision count so collapsed updates are still visible.
@@ -112,10 +111,8 @@ void WatchdogCoordinator::Reset() {
     } else {
         action_.reset();
     }
-    isochLogDivider_ = 0;
-    itLogDivider_ = 0;
     ztsLogDivider_ = 0;
-    payloadWriterLogDivider_ = 0;
+    consumerDiagnosticsDivider_ = 0;
     txSytTraceDivider_ = 0;
     lastDrainEligible_ = true;
 }
@@ -172,12 +169,12 @@ void WatchdogCoordinator::TickIsochReceive(
     // cadence (tick = 1 ms). Gated by the DirectAudio verbosity so it shares
     // the direct-audio diagnostics kill switch (default on). Draining remains
     // frequent; the receive-side log gate controls the much lower print rate.
-    // 951abcc7 made all three drains conditional on IsochReceiveContext's
+    // 951abcc7 made these drains conditional on IsochReceiveContext's
     // receiveConsumer_ (they used to drain a context-owned ring
-    // unconditionally). Zts, TxSyt and [PayloadWriter] have been silent for a
-    // whole hardware session since - and LogTransmitTimingTrace has no anomaly
-    // gate, so its silence cannot be explained by a healthy stream. Report the
-    // two preconditions once per transition so the dead precondition is named
+    // unconditionally). Zts and TxSyt were silent for a whole hardware
+    // session after that - and LogTransmitTimingTrace has no anomaly gate, so
+    // its silence cannot be explained by a healthy stream. Report the two
+    // preconditions once per transition so the dead precondition is named
     // rather than inferred.
     const bool drainEligible =
         isRunning && ::ASFW::LogConfig::Shared().GetDirectAudioVerbosity() >= 1;
@@ -192,22 +189,14 @@ void WatchdogCoordinator::TickIsochReceive(
             ztsLogDivider_ = 0;
             isochReceiveContext->DrainZtsTelemetry(kZtsRecordsPerDrain);
         }
-        if (++payloadWriterLogDivider_ >= kPayloadWriterDrainIntervalTicks) {
-            payloadWriterLogDivider_ = 0;
-            isochReceiveContext->DrainPayloadWriterTelemetry();
+        if (++consumerDiagnosticsDivider_ >= kConsumerDiagnosticsIntervalTicks) {
+            consumerDiagnosticsDivider_ = 0;
+            isochReceiveContext->ServiceConsumerDiagnostics();
         }
         if (++txSytTraceDivider_ >= kTxSytTraceIntervalTicks) {
             txSytTraceDivider_ = 0;
             isochReceiveContext->LogTxSytTrace();
         }
-    }
-
-    if (++isochLogDivider_ < 500) {
-        return;
-    }
-    isochLogDivider_ = 0;
-    if (isRunning && (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3)) {
-        isochReceiveContext->LogHardwareState();
     }
 }
 
@@ -221,14 +210,6 @@ void WatchdogCoordinator::TickIsochTransmit(
         isochTransmitContext->GetState() == ASFW::Isoch::ITState::Running;
     if (isRunning) {
         isochTransmitContext->Poll();
-    }
-
-    if (++itLogDivider_ < 1000) {
-        return;
-    }
-    itLogDivider_ = 0;
-    if (isRunning) {
-        isochTransmitContext->LogStatistics();
     }
 }
 

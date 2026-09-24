@@ -26,7 +26,7 @@ namespace ASFW::IsochTransport {
 // A PCM frame survives iff  T <= W <= E. The only failure is W > E
 // (under-exposure = `withoutPkt` = Defect B). The cushion that prevents it is
 // kTxExposureLeadFrames below. See documentation/ZTS_AND_SYT.md and
-// tools/tx_payload_ownership_sim.py / tools/analyze_payloadwriter.py.
+// tools/tx_payload_ownership_sim.py. Live evidence of W > E: [TxPrepFrame].
 //
 // Rate-DEPENDENT geometry (safety offsets, frames-per-packet at 96/192 kHz,
 // reported latency) lives in AudioGeometryPolicy.hpp, not here.

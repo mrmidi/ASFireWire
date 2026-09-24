@@ -778,6 +778,13 @@ overflow, but `[PayloadWriter]` logs a record only on a fault
 The periodic `[TxPrep]` summary remains the lone liveness/margin heartbeat. A
 clean run prints only that heartbeat; any other line is a regression.
 
+> **Retired (FW-171).** The `[PayloadWriter]` record and its ring were removed
+> from the driver: it was written from the real-time IO callback into the
+> shared control block and drained behind receive-context liveness. The W > E
+> fault it detected is reported by `[TxPrepFrame]` (and `[TxExposure]`). The
+> measurements above remain valid history; `tools/analyze_payloadwriter.py`
+> still parses those historical dumps.
+
 > **Capturing the trace.** DriverKit dexts have no real os_log categories
 > (`os_log_create` is unavailable — every line is `OS_LOG_DEFAULT` from
 > `kernel`), so filter on the message-text prefix and pass `--info --debug`:

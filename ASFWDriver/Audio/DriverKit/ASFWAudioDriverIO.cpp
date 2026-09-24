@@ -232,19 +232,10 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     const uint64_t completionCursor = driverIvars->runtime.txSlotProvider.queueControl
                         ? driverIvars->runtime.txSlotProvider.queueControl->completionCursor.load(std::memory_order_acquire)
                         : 0;
-                    const uint64_t exposedFrameEnd =
-                        driverIvars->runtime.txStreamEngine.Timeline()
-                            .ExposedFrameEnd();
 
                     driverIvars->runtime.txStreamEngine.WriteHostOutputFloat32(
                         hostBuffer,
                         completionCursor);
-
-                    const auto packetizerSnapshot =
-                        driverIvars->runtime.txStreamEngine
-                            .PacketizerTelemetrySnapshot();
-                    const auto& txCounters =
-                        driverIvars->runtime.txStreamEngine.Counters();
 
                     // Fan out the same host buffer to the secondary stream; its
                     // payload writer reads channels [16, 32) via sourceChannelOffset.
@@ -258,85 +249,6 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                             hostBuffer,
                             secondaryCompletion);
                     }
-
-                    const auto& cw = driverIvars->runtime.txStreamEngine.PayloadWriterCounters();
-                    ASFW::Audio::Runtime::PayloadWriterTelemetryRecord rec{};
-                    rec.sampleTime = sampleTime;
-                    rec.writeEndFrame = writeEndFrame;
-                    rec.completionCursor = completionCursor;
-                    rec.exposedFrameEnd = exposedFrameEnd;
-                    rec.exposureDeficitFrames =
-                        writeEndFrame > exposedFrameEnd
-                            ? writeEndFrame - exposedFrameEnd
-                            : 0;
-                    rec.frameCount = ioBufferFrameSize;
-                    rec.frameCapacity = memory.outputFrameCapacity;
-                    rec.visited = cw.framesVisited.load(std::memory_order_relaxed);
-                    rec.written = cw.framesWritten.load(std::memory_order_relaxed);
-                    rec.withoutPacket = cw.framesWithoutPacket.load(std::memory_order_relaxed);
-                    rec.outsidePacket = cw.framesOutsidePacket.load(std::memory_order_relaxed);
-                    rec.racedReuse = cw.framesRacedReuse.load(std::memory_order_relaxed);
-                    rec.wroteIntoTransmitted = cw.framesWroteIntoTransmitted.load(std::memory_order_relaxed);
-                    rec.nonZeroFrames = cw.framesNonZero.load(std::memory_order_relaxed);
-                    rec.underExposureCalls =
-                        cw.underExposureCalls.load(std::memory_order_relaxed);
-                    rec.underExposureFrames =
-                        cw.underExposureFrames.load(std::memory_order_relaxed);
-                    rec.packetizerNextAudioFrame =
-                        packetizerSnapshot.nextAudioFrame;
-                    rec.packetizerLastDataFirstAudioFrame =
-                        packetizerSnapshot.lastDataFirstAudioFrame;
-                    rec.packetizerLastDataEndAudioFrame =
-                        packetizerSnapshot.lastDataEndAudioFrame;
-                    rec.packetizerLastDataPacketIndex =
-                        packetizerSnapshot.lastDataPacketIndex;
-                    rec.packetizerCursorEpoch =
-                        packetizerSnapshot.cursorEpoch;
-                    rec.packetizerFrameCursorAligned =
-                        packetizerSnapshot.frameCursorAligned;
-                    rec.packetizerHasLastDataPacket =
-                        packetizerSnapshot.hasLastDataPacket;
-                    rec.txPreparationTargetFrameEnd =
-                        control->txPreparationRequests.requestedTargetFrameEnd.load(
-                            std::memory_order_acquire);
-                    rec.txPreparationRequestedGeneration =
-                        control->txPreparationRequests.RequestedGeneration();
-                    rec.txPreparationHandledGeneration =
-                        control->txPreparationRequests.handledGeneration.load(
-                            std::memory_order_acquire);
-                    rec.txPreparationWakeScheduled =
-                        control->txPreparationRequests.wakeScheduled.load(
-                            std::memory_order_acquire);
-                    rec.packetsPrepared =
-                        txCounters.packetsPrepared.load(std::memory_order_relaxed);
-                    rec.dataPacketsPrepared =
-                        txCounters.dataPacketsPrepared.load(std::memory_order_relaxed);
-                    rec.noDataPacketsPrepared =
-                        txCounters.noDataPacketsPrepared.load(std::memory_order_relaxed);
-                    rec.slotAcquireFailures =
-                        txCounters.slotAcquireFailures.load(std::memory_order_relaxed);
-                    const uint32_t bits = cw.maxAbsSampleBits.load(std::memory_order_relaxed);
-                    std::memcpy(&rec.maxAbsSample, &bits, sizeof(bits));
-
-                    rec.playbackRingReadFrame = control->playbackRingReadFrame.load(std::memory_order_relaxed);
-                    rec.playbackRingWriteFrame = control->playbackRingWriteFrame.load(std::memory_order_relaxed);
-                    rec.outputBaseAddr = reinterpret_cast<uint64_t>(memory.outputBase);
-                    rec.captureRingReadFrame = control->captureRingReadFrame.load(std::memory_order_relaxed);
-                    rec.captureRingWriteFrame = control->captureRingWriteFrame.load(std::memory_order_relaxed);
-                    rec.inputBaseAddr = reinterpret_cast<uint64_t>(memory.inputBase);
-
-                    if (driverIvars->runtime.txSlotProvider.payloadBase &&
-                        driverIvars->runtime.txSlotProvider.numSlots > 0 &&
-                        completionCursor > 0) {
-                        const uint64_t packetIndex = completionCursor - 1;
-                        rec.lastReadPacketIndex = packetIndex;
-                        const uint32_t slotIdx = static_cast<uint32_t>(packetIndex % driverIvars->runtime.txSlotProvider.numSlots);
-                        const uint8_t* lastReadBytes = driverIvars->runtime.txSlotProvider.payloadBase +
-                                                       (slotIdx * driverIvars->runtime.txSlotProvider.slotStrideBytes);
-                        std::memcpy(rec.lastReadPacketBytes, lastReadBytes, 16);
-                    }
-
-                    control->payloadWriterTelemetry.Record(rec);
 
                     control->playbackRingReadFrame.store(sampleTime + ioBufferFrameSize, std::memory_order_release);
                 }

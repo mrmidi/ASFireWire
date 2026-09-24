@@ -17,11 +17,8 @@ using ASFW::Audio::Runtime::AudioStreamMode;
 using ASFW::Audio::Runtime::AudioTransportControlBlock;
 using ASFW::Audio::Runtime::AudioWireFormat;
 using ASFW::Audio::Runtime::CaptureDirectAudioDebugSnapshot;
-using ASFW::Audio::Runtime::DirectAudioDebugLogState;
 using ASFW::Audio::Runtime::DirectAudioDebugSnapshot;
 using ASFW::Audio::Runtime::FatalStreamReason;
-using ASFW::Audio::Runtime::kDirectAudioDebugLogIntervalNs;
-using ASFW::Audio::Runtime::ShouldLogDirectAudioDebugSnapshot;
 
 TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     AudioTransportControlBlock control{};
@@ -192,39 +189,6 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     EXPECT_EQ(snapshot.fatalOldestValidFrame, 480U);
     EXPECT_EQ(snapshot.fatalWrittenEndFrame, 504U);
     EXPECT_TRUE(snapshot.outputReaderAvailableAtWriteEnd);
-}
-
-TEST(DirectAudioDebugSnapshotTests, ThrottleLogsFirstBoundChangesAndBoundIntervals) {
-    DirectAudioDebugLogState state{};
-    DirectAudioDebugSnapshot snapshot{};
-    snapshot.bound = true;
-
-    EXPECT_TRUE(ShouldLogDirectAudioDebugSnapshot(state, snapshot, 100));
-    EXPECT_FALSE(ShouldLogDirectAudioDebugSnapshot(state, snapshot, 101));
-    EXPECT_FALSE(ShouldLogDirectAudioDebugSnapshot(
-        state,
-        snapshot,
-        100 + kDirectAudioDebugLogIntervalNs - 1));
-    EXPECT_TRUE(ShouldLogDirectAudioDebugSnapshot(
-        state,
-        snapshot,
-        100 + kDirectAudioDebugLogIntervalNs));
-
-    snapshot.bound = false;
-    EXPECT_TRUE(ShouldLogDirectAudioDebugSnapshot(
-        state,
-        snapshot,
-        100 + kDirectAudioDebugLogIntervalNs + 1));
-    EXPECT_FALSE(ShouldLogDirectAudioDebugSnapshot(
-        state,
-        snapshot,
-        100 + (2 * kDirectAudioDebugLogIntervalNs) + 1));
-
-    snapshot.bound = true;
-    EXPECT_TRUE(ShouldLogDirectAudioDebugSnapshot(
-        state,
-        snapshot,
-        100 + (2 * kDirectAudioDebugLogIntervalNs) + 2));
 }
 
 } // namespace ASFW::Tests::AudioRuntime

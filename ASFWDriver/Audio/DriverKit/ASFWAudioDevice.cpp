@@ -516,11 +516,15 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ztsWaitMs);
 
         // --- Log timing policy ---
+        // This prints the DICE 1x fallback policy, NOT the latency and safety
+        // actually applied to the HAL (profiles override it). The applied
+        // values are in the "Reported HAL latency" line from the graph setup;
+        // measurement tooling must read that one (LATENCY_VOCABULARY.md §5).
         const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
             static_cast<uint32_t>(ivars.device.currentSampleRate));
         const auto policySnap = policy.Snapshot();
         ASFW_LOG(Audio,
-                 "TimingCursorPolicy rate=%u mode=blocking framesPerPacket=%u outCursorOffset=%u inCursorOffset=%u reportedOutLatency=%u reportedInLatency=%u outSafety=%u inSafety=%u outLead=%u inLead=%u ztsPeriod=%u",
+                 "TimingCursorPolicy (fallback, not applied) rate=%u mode=blocking framesPerPacket=%u outCursorOffset=%u inCursorOffset=%u reportedOutLatency=%u reportedInLatency=%u outSafety=%u inSafety=%u outLead=%u inLead=%u ztsPeriod=%u",
                  policySnap.sampleRateHz,
                  policySnap.framesPerPacketMax,
                  policySnap.outputCursorOffsetFrames,

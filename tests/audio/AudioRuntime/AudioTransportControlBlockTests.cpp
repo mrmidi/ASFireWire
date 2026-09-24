@@ -205,9 +205,6 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     for (auto& bucket : control.txIntervalCommittedMarginHistogram) {
         bucket.store(11, std::memory_order_relaxed);
     }
-    control.txLastLeadTicks.store(40, std::memory_order_relaxed);
-    control.txMinimumLeadTicks.store(10, std::memory_order_relaxed);
-    control.txMaximumLeadTicks.store(70, std::memory_order_relaxed);
     control.counters.txPhaseRebases.store(1, std::memory_order_relaxed);
     control.counters.txSilenceFallback.store(2, std::memory_order_relaxed);
     control.counters.txStaleOverwrittenReads.store(3, std::memory_order_relaxed);
@@ -288,11 +285,6 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     for (const auto& bucket : control.txIntervalCommittedMarginHistogram) {
         EXPECT_EQ(bucket.load(std::memory_order_acquire), 0U);
     }
-    EXPECT_EQ(control.txLastLeadTicks.load(std::memory_order_acquire), 0);
-    EXPECT_EQ(control.txMinimumLeadTicks.load(std::memory_order_acquire),
-              INT64_MAX);
-    EXPECT_EQ(control.txMaximumLeadTicks.load(std::memory_order_acquire),
-              INT64_MIN);
     EXPECT_EQ(control.counters.txPhaseRebases.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.txSilenceFallback.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.txStaleOverwrittenReads.load(std::memory_order_relaxed), 0U);

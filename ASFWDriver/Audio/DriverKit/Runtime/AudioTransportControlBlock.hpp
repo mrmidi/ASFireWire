@@ -4,7 +4,6 @@
 #include "AudioRtCounters.hpp"
 #include "DeviceTimeline.hpp"
 #include "TxSytTrace.hpp"
-#include "PayloadWriterTelemetry.hpp"
 #include "TxWirePayloadTelemetry.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Wire/AMDTP/RxSequenceReplay.hpp"
@@ -493,7 +492,6 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> fatalGeneration{0};
 
     // TX control block members
-    PayloadWriterTelemetryRing payloadWriterTelemetry{};
     TxWirePayloadTelemetry txWirePayloadTelemetry{};
 
     // Latest-value trace of the live replay TX SYT decision (diagnostics).
@@ -555,9 +553,6 @@ struct AudioTransportControlBlock final {
     /// with sample rate (a %N-of-wakes trigger fires 2-4x faster at 96/192 kHz,
     /// flooding the log ring exactly when retention matters most).
     std::atomic<uint64_t> txHeartbeatLastHostTicks{0};
-    std::atomic<int64_t> txLastLeadTicks{0};
-    std::atomic<int64_t> txMinimumLeadTicks{INT64_MAX};
-    std::atomic<int64_t> txMaximumLeadTicks{INT64_MIN};
 
     // --- TX exposure attribution (W > E) -----------------------------------
     // W = CoreAudio write frontier, E = exposed frame end. A PCM frame survives
@@ -676,7 +671,6 @@ struct AudioTransportControlBlock final {
         discontinuities.store(0, std::memory_order_release);
 
         // Reset TX members
-        payloadWriterTelemetry.Reset();
         txWirePayloadTelemetry.Reset();
         txSytTrace.Reset();
         txPreparationRequests.Reset();
@@ -727,9 +721,6 @@ struct AudioTransportControlBlock final {
             bucket.store(0, std::memory_order_relaxed);
         }
         txHeartbeatLastHostTicks.store(0, std::memory_order_relaxed);
-        txLastLeadTicks.store(0, std::memory_order_relaxed);
-        txMinimumLeadTicks.store(INT64_MAX, std::memory_order_relaxed);
-        txMaximumLeadTicks.store(INT64_MIN, std::memory_order_relaxed);
 
         // Reset RX members
         rxSytCadence.Reset();
