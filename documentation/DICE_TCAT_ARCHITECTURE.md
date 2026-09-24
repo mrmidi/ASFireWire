@@ -5,6 +5,12 @@ is agreed. **Stage 4 / step A has landed** — the geometry resolver (§3.1) and
 per-stream geometry reaching playback framing (§3.4). Steps B, C and D remain
 backlogged; no code is implied by them.
 
+**Scope.** This doc owns DICE **geometry** (profiles, resolver, rates). The DICE
+**bring-up and session lifecycle** (owner, clock, stream start/stop, recovery),
+and the replacement of `AudioDuplexCoordinator`, are designed in
+[`AUDIO_SESSION_REDESIGN.md`](AUDIO_SESSION_REDESIGN.md) (2026-09-24), which also
+extends §2.1 below to all five vendor kexts.
+
 **Relationship to other docs.** [`DEVICE_BACKEND_UNIFICATION.md`](DEVICE_BACKEND_UNIFICATION.md)
 is the protocol-neutral-interface direction, of which this is the DICE-family
 instance. [`SAMPLE_RATE_EXPANSION.md`](SAMPLE_RATE_EXPANSION.md) owns rate
@@ -33,7 +39,10 @@ what makes the direction in §4 safe to commit to rather than merely plausible.
 `MidasFW.kext`, `AlesisFirewire.kext` and `PaeFireStudio.kext` are all rebranded
 TC Applied Technologies DICE reference drivers — same symbol tree
 (`tcat::dice::*`, `_DICE_STREAM_STRUCT`, `DICE_DEVICE_STRUCT`), same function
-names, same control flow.
+names, same control flow. **Update 2026-09-24:** `WeissFirewire.kext` (4.3.1) and
+Focusrite's `Saffire.kext` (4.1.4) are the same SDK too, and MidasFW and
+PaeFireStudio share 347 of 353 function bodies instruction-for-instruction. See
+[`AUDIO_SESSION_REDESIGN.md`](AUDIO_SESSION_REDESIGN.md) §2.1 for the method.
 
 **`probe` decides accept/reject and nothing else.** All three derive a model
 index from the GUID — bits 39:32 must be `0x04`, then `guid >> 22` indexes a
@@ -52,8 +61,9 @@ IOLog("AlesisFirewireAudio: %s guid:%llx connected.\n", v10, v7);
 ```
 
 `PaeFireStudioAudio::probe` (`0x1228`) is the same shape across **14** PreSonus
-models. **There is no per-model behavioural branch anywhere in any of the three
-drivers.**
+models. **There is no per-model behavioural branch anywhere in any of the five
+drivers.** `WeissFirewireAudio::probe` is the one variation: it accepts GUID
+category byte `0x00` where the others require `0x04`.
 
 ### 2.2 Geometry is read from the device, every time
 
@@ -186,13 +196,16 @@ must obey is *running sum of preceding stream widths*, never
 
 ### 2.8 The recorded devices
 
-Four dumps in [`fixtures/`](fixtures/), four vendors, four distinct shapes. These
-drive `tests/audio/DiceFixtureGeometryTests.cpp`.
+Five dumps in [`fixtures/`](fixtures/), four vendors, five distinct shapes. These
+drive `tests/audio/DiceFixtureGeometryTests.cpp`. (The Venice F32 dump was added
+after this section was first written; it and the F24 agree on every identifying
+register and differ only in GUID, serial and geometry.)
 
 | device | ASIC / EAP | capture (DICE TX) | playback (DICE RX) | clockCaps | rates |
 |---|---|---|---|---|---|
 | Focusrite Saffire Pro 24 DSP | TCD2210, **EAP** | 1: 16 PCM + 1 MIDI (dbs 17) | 1: 8 PCM + 1 MIDI (dbs 9) | `0x112C001E` | 44.1/48/88.2/96 |
 | Midas Venice F24 | no EAP | 2: 16+8 = **24** | 2: 16+8 = **24** | `0x13000006` | 44.1/48 |
+| Midas Venice F32 | no EAP | 2: 16+16 = **32** | 2: 16+16 = **32** | `0x13000006` | 44.1/48 |
 | PreSonus StudioLive 24.4.2 | no EAP | 2: 16+16 = **32** | 2: 16+10 = **26** | `0x13000006` | 44.1/48 |
 | Alesis MultiMix | no EAP | 2: 12+2 = **14** | **1**: 2 | `0x11000006` | 44.1/48 |
 
@@ -296,6 +309,13 @@ Weiss omits the rate addend — identical at every rate we publish, divergent at
 StudioLive and StudioLive 2442 are byte-identical. Alesis differs only in
 `initializeNonAudioSlots = false`; Saffire Pro 40 only in `tx = kAM824`. Weiss
 and Generic return a default-constructed `DiceDeviceQuirks{}`.
+
+**Update 2026-09-24:** the Pro 40 delta is removed. It now inherits the Saffire
+baseline (raw 24-in-32 TX), matching Focusrite's own `Saffire.kext`, which drives
+every model it supports through one `Float32ToSwapInt24_In_32` path. Weiss and
+Generic still default to AM824 TX, although `WeissFirewire.kext` uses the same
+raw path. Weiss has never run on hardware (README), so that flip is a declared,
+unverified delta for stage C, not a silent change.
 
 Everything else in those 1,284 lines is device-readable (geometry, rates) or an
 identical copy. The irreducible per-device content is: **two one-field quirk
@@ -415,7 +435,7 @@ small set of facts the device cannot report:
 
 | scalar | why it cannot be read | who needs it |
 |---|---|---|
-| `txEncoding` | wire format is not in any register | Pro 40 is the only `kAM824` |
+| `txEncoding` | wire format is not in any register | **Likely deletable:** all five TCAT kexts send raw 24-in-32 for every model. Weiss/Generic `kAM824` is the only remaining deviation, and it is unverified (§3.2 update) |
 | `initializeNonAudioSlots` | host framing policy | Alesis is the only `false` |
 | `preserveFdfInNoDataPackets` | host framing policy | the five DICE rows |
 | `hideCaptureFromCoreAudio` | product decision, not a device fact | Weiss (already a runtime policy; move its source) |
