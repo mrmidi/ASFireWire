@@ -52,12 +52,16 @@ class UserClientRuntimeState final {
 
         auto* controllerCore = GetControllerCorePtr(driver);
         auto* avcDiscovery = controllerCore ? controllerCore->GetAVCDiscovery() : nullptr;
-        auto* sbp2Manager = controllerCore ? controllerCore->GetSbp2AddressSpaceManager() : nullptr;
-        auto* sbp2Registry = controllerCore ? controllerCore->GetSbp2SessionRegistry() : nullptr;
         avcHandler_ = std::make_unique<AVCHandler>(avcDiscovery);
         isochHandler_ = std::make_unique<IsochHandler>(
             driver, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(owner)));
-        sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Manager, sbp2Registry);
+        sbp2Handler_ = std::make_unique<SBP2Handler>([driver]() -> SBP2Handler::Targets {
+            auto* core = GetControllerCorePtr(driver);
+            if (core == nullptr) {
+                return {};
+            }
+            return {core->GetSbp2AddressSpaceManager(), core->GetSbp2SessionRegistry()};
+        });
         diagnosticsHandler_ = std::make_unique<DiagnosticsHandler>(driver);
 
         return HandlersReady();
@@ -84,18 +88,12 @@ class UserClientRuntimeState final {
         if (isochHandler_ != nullptr) {
             isochHandler_->ReleaseOwner();
         }
-        // SBP2Handler snapshots raw AddressSpaceManager/SessionRegistry pointers at bind
-        // time -- unlike its sibling handlers, which re-resolve through
-        // GetControllerCorePtr() on every call. ServiceContext::Reset() destroys those
-        // objects during quiesce, and quiesce runs on the driver's work queue, so it can
-        // complete while this user client is still stopping on ASFWDriverUserClient-Default.
-        // Releasing sessions then walks a freed std::map: a zeroed __begin_node_ makes
-        // begin() null while end() still points inside the object, so the very first
-        // iteration dereferences null at SessionRecord::owner (node+0x30). This is the
-        // FW-60 cross-queue teardown class. Reset() drops `controller` alongside the
-        // registry, so a live core is the validity signal for both raw pointers.
-        if (owner != nullptr && sbp2Handler_ != nullptr &&
-            GetControllerCorePtr(driver_) != nullptr) {
+        // SBP2Handler resolves the registry through GetControllerCorePtr() per call:
+        // after ServiceContext::Reset() (quiesce on the driver's work queue, possibly
+        // while this user client is still stopping on ASFWDriverUserClient-Default)
+        // it finds no core and releases nothing, and after a wake rebuild it reaches
+        // the new registry instead of the freed one (FW-60 cross-queue teardown class).
+        if (owner != nullptr && sbp2Handler_ != nullptr) {
             sbp2Handler_->ReleaseOwner(owner);
         }
     }
