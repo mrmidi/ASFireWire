@@ -78,7 +78,7 @@ pieces of state:
   (`AudioDuplexCoordinator.cpp:1278`) and disagrees with the encoder actually used
   (the audio-side profile's `TxWireFormat`).
 
-Found by the S0 golden traces (`tests/golden/dice/`), in today's code:
+Found by the S0 golden traces (`tests/golden/dice/`). The first two are fixed (below):
 
 - **The `CLOCK_SELECT` skip compares only the requested value.**
   `DICEDuplexBringupController.cpp:555` skips the write when `CLOCK_SELECT` already
@@ -86,13 +86,14 @@ Found by the S0 golden traces (`tests/golden/dice/`), in today's code:
   §3 describes the fix (also check the achieved rate) as hardware-validated, but that fix is
   in no commit on any branch. `*__requested-not-achieved.trace` fails on both devices, and
   `multimix__start-stop-48k.trace` fails because the MultiMix dump is in exactly that state
-  (requests 48 kHz, runs 44.1 kHz).
+  (requests 48 kHz, runs 44.1 kHz). **Fixed in `b1d80f39`.**
 - **The Pro 24 DSP bring-up has no timer.** `FamilyProtocolConstruction` builds
   `SPro24DspProtocol` without a timer scheduler (`SPro24DspProtocol.cpp:33`), and
   `ScheduleRetry` returns false without one (`DICEDuplexBringupController.cpp:214-217`). Any
   wait that needs a second poll (a `CLOCK_ACCEPTED` that is not immediate, a lock wait, the
   source-lock confirm) fails at once with `kIOReturnNotReady`. The Venice path, which has a
-  timer, waits 150 ms and 2 s as intended.
+  timer, waits 150 ms and 2 s as intended. **Fixed in `a3212dd6`** (the timer is now a
+  required constructor parameter).
 - **Teardown during a wait leaves our owner claim on the device**
   (`venice-f24__teardown-during-clock-wait.trace`). TCAT and Linux release it on unbind.
 
@@ -529,9 +530,9 @@ rely on fixtures plus the vendors' identical code (§2.1).
   observer); `tests/devices/DiceWireCharacterizationTests.cpp` records 27 goldens in
   `tests/golden/dice/` (`ASFW_UPDATE_GOLDEN=1` rewrites them). No production change. The
   goldens expose the three defects listed at the end of §1.3.
-- **Before S1, recommended:** fix the `CLOCK_SELECT` skip and the Pro 24 DSP timer as two
-  small production commits, each regenerating only the goldens it declares. Then S1
-  preserves corrected behaviour instead of porting known defects.
+- **Fixes before S1: done.** `b1d80f39` (the `CLOCK_SELECT` skip also checks the achieved
+  rate) and `a3212dd6` (Pro 24 DSP timer). Each regenerated only the goldens it declared,
+  so S1 now preserves corrected behaviour. Both still need a check on the Pro 24 DSP.
 - **S1: DICE goes linear.** `DiceDeviceIo` + `DiceFamilyDriver` behind the existing
   `IDuplexDeviceControl`. The simulated device must produce the **same wire trace** as S0,
   except for deltas declared in the stage. Delete `DICEDuplexBringupController`.

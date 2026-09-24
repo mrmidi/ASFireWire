@@ -165,7 +165,9 @@ never executes.
 > device reports … rewriting" log line above. The S0 golden traces reproduce the failure:
 > `tests/golden/dice/*__requested-not-achieved.trace`, and
 > `multimix__start-stop-48k.trace`, since the recorded MultiMix is in exactly this state. See
-> `AUDIO_SESSION_REDESIGN.md` §1.3. A companion defect in the same area, the nub adopting the device's momentary
+> `AUDIO_SESSION_REDESIGN.md` §1.3. **Restored in `b1d80f39`** (2026-09-24), with the
+> "already requests … rewriting" log line; the goldens above now show the rewrite and a
+> successful start. Needs the hardware check again on the Pro 24 DSP. A companion defect in the same area, the nub adopting the device's momentary
 rate (`EnsureNubForGuid: applied runtime geometry rate=44100`), is fixed separately by
 `7ba06722`.
 
