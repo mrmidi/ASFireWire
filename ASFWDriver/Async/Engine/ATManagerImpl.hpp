@@ -112,8 +112,10 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const Descriptor
         clearRunAndPoll_();
         if (ctx().IsActive()) {
             // Programming CommandPtr on an ACTIVE context is illegal (OHCI
-            // §3.1.1) — the in-flight packet and/or this chain can be lost.
-            // Anomaly log for the LS-9000 wedge investigation.
+            // §3.1.1): the in-flight packet is lost and the FW643 was observed
+            // (2026-09-24, LS-9000) to stay ACTIVE=1 forever afterwards, across
+            // bus resets. Refuse instead; the requester's split-timeout retry
+            // covers a dropped response, the caller's retry a dropped request.
             const uint32_t ctrl = ctx().ReadControl();
             const uint32_t cmdPtrReg = ctx().ReadCommandPtr();
             const uint64_t sinceDrainNs = NowNs() - ctx().LastDrainStopNs();
@@ -125,6 +127,10 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const Descriptor
                 wedgeDumped_ = true;
                 logWedgeSnapshot_(txid, cmdPtrReg);
             }
+            IOLockWrapper lockWrapper(lock());
+            ScopedLock guard(lockWrapper);
+            Base::Transition(State::IDLE, txid, "arm_refused_active");
+            return kIOReturnBusy;
         }
     }
 
@@ -315,11 +321,9 @@ void ATManager<ContextT, RingT, RoleTag>::clearRunAndPoll_() noexcept {
     ctx().WriteControlClear(kContextControlRunBit);
     IODelay(1);
     this->IoReadFence();
-    
-    for (uint32_t i = 0; i < 250; ++i) {
-        if (!ctx().IsActive()) break;
-        IODelay(1);
-    }
+    // Escalating wait (Apple waitForDMA pattern, ~32 ms bound) — a 250 µs poll
+    // gave up while the previous packet was still on the wire.
+    (void)ctx().WaitForQuiesce();
 }
 
 template<typename ContextT, typename RingT, typename RoleTag>
@@ -341,9 +345,12 @@ template<typename ContextT, typename RingT, typename RoleTag>
 void ATManager<ContextT, RingT, RoleTag>::UpdateRingTail_(const DescriptorChain& chain) {
     const size_t newTail = (chain.lastRingIndex + 1) % ring().Capacity();
     ring().SetTail(newTail);
-    // PrevLastBlocks is intended to track the block count of the LAST descriptor
-    // in the previous chain. Use lastBlocks (1 or 2), not total packet blocks.
-    ring().SetPrevLastBlocks(static_cast<uint8_t>(chain.lastBlocks));
+    // DescriptorRing::LocatePreviousLast() walks back TotalBlocks() (2 = immediate
+    // only, 3 = immediate header + payload) from the tail to find the previous
+    // OUTPUT_LAST. Storing lastBlocks (1 for a payload packet) made every PATH2
+    // hot-append fail for Z=3 packets, forcing PATH1 re-arms that raced the
+    // in-flight packet (LS-9000 AT Response wedge, 2026-09-24).
+    ring().SetPrevLastBlocks(chain.TotalBlocks());
 }
 
 template<typename ContextT, typename RingT, typename RoleTag>

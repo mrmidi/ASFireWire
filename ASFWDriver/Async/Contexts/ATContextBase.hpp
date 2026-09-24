@@ -797,7 +797,7 @@ size_t ATContextBase<Derived, Tag>::CommitSubmittedChain(
     size_t capacity) noexcept {
     const size_t newTail = (chain.lastRingIndex + 1) % capacity;
     ring_->SetTail(newTail);
-    ring_->SetPrevLastBlocks(static_cast<uint8_t>(chain.lastBlocks));
+    ring_->SetPrevLastBlocks(chain.TotalBlocks());
     return newTail;
 }
 
