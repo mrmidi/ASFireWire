@@ -280,6 +280,28 @@ TEST(AmdtpDirectTxTests, Captured1814HostPacketMatchesProfileAndEngine) {
                            capturedPacket->payload));
 }
 
+TEST(AmdtpDirectTxTests, Captured1814Default48kGeometryMatchesProfile) {
+    // tools/pydice/1814-default-geom-48k.txt has six 232-byte host packets,
+    // four 360-byte device packets, and two 8-byte device CIP-only packets.
+    // tools/pydice/tests/test_1814_default_geometry.py verifies those facts
+    // against the raw FireBug capture.
+    ASFW::Isoch::Audio::AVC::Profiles::MAudioSpecialProfile profile(false);
+    ASFW::Isoch::Audio::AudioStreamConfig tx{};
+    ASFW::Isoch::Audio::AudioStreamConfig rx{};
+    ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(tx));
+    ASSERT_TRUE(profile.BuildDefaultRxStreamConfig(rx));
+    EXPECT_EQ(tx.sampleRate, 48000U);
+    EXPECT_EQ(rx.sampleRate, 48000U);
+    EXPECT_EQ(tx.dbs, 7U);
+    EXPECT_EQ(rx.dbs, 11U);
+    EXPECT_EQ(tx.pcmChannels + tx.midiSlots, tx.dbs);
+    EXPECT_EQ(rx.pcmChannels + rx.midiSlots, rx.dbs);
+    EXPECT_EQ(tx.framesPerDataPacket, 8U);
+    EXPECT_EQ(rx.framesPerDataPacket, 8U);
+    EXPECT_EQ(8U + tx.framesPerDataPacket * tx.dbs * 4U, 232U);
+    EXPECT_EQ(8U + rx.framesPerDataPacket * rx.dbs * 4U, 360U);
+}
+
 TEST(AmdtpDirectTxTests, DbcIsEndEventWritesTheCountAfterEachDataPacket) {
     // MOTU counts the DBC at the end of a packet's blocks; Linux sets CIP_DBC_IS_END_EVENT
     // on every MOTU transmit stream (amdtp-motu.c:465, amdtp-stream.c:1040-1046). Run the
