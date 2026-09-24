@@ -125,6 +125,36 @@ TEST(FetchAgentTests, OrbTimesOutWhenFetchAgentWriteNeverCompletes) {
     agent.Clear(true);
 }
 
+// The stuck write's kAborted completion arrives late (posted to the workloop).
+// It must not be taken for the NEXT ORB's write: that would free its write
+// slot and schedule a duplicate ORB_POINTER retry.
+TEST(FetchAgentTests, LateAbortOfStuckWriteDoesNotHitTheNextWrite) {
+    Rig rig;
+    rig.bus.SetDeferCancels(true);
+    FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
+    agent.Bind(rig.Binding());
+
+    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    orb.SetTimeout(500);
+    orb.SetCompletionCallback([](int, uint8_t) {});
+    ASSERT_TRUE(agent.Submit(&orb));
+    rig.scheduler.Advance(500'000'000ULL); // times out, write cancelled (deferred)
+
+    SBP2CommandORB next(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
+    next.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    next.SetTimeout(5'000);
+    next.SetCompletionCallback([](int, uint8_t) {});
+    ASSERT_TRUE(agent.Submit(&next));
+    const size_t writesAfterNext = rig.bus.WriteCount();
+
+    ASSERT_EQ(1u, rig.bus.DrainCancels()); // the stale abort lands now
+    rig.scheduler.Advance(2'000'000'000ULL); // past the 1 s write-retry delay
+
+    EXPECT_EQ(writesAfterNext, rig.bus.WriteCount()); // no duplicate ORB_POINTER
+    agent.Clear(true);
+}
+
 TEST(FetchAgentTests, OrbTimeoutFailsCommandWhenNoStatusArrives) {
     Rig rig;
     FetchAgent agent(rig.bus, rig.bus, rig.scheduler);

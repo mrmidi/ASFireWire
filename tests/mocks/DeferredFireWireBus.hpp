@@ -274,6 +274,24 @@ public:
         return handle;
     }
 
+    /// Hold Cancel's kAborted completions until DrainCancels, as the real
+    /// AsyncSubsystem does (it posts them to the workloop). Off by default:
+    /// cancels complete inline, which is what every existing test assumes.
+    void SetDeferCancels(bool defer) noexcept { deferCancels_ = defer; }
+
+    size_t DrainCancels() {
+        size_t delivered = 0;
+        while (!deferredCancels_.empty()) {
+            auto callback = std::move(deferredCancels_.front());
+            deferredCancels_.pop_front();
+            ++delivered;
+            if (callback) {
+                callback(AsyncStatus::kAborted, std::span<const uint8_t>{});
+            }
+        }
+        return delivered;
+    }
+
     bool Cancel(AsyncHandle handle) override {
         const auto it = std::find_if(
             pendingWrites_.begin(), pendingWrites_.end(),
@@ -286,7 +304,9 @@ public:
 
         auto callback = std::move(it->callback);
         pendingWrites_.erase(it);
-        if (callback) {
+        if (deferCancels_) {
+            deferredCancels_.push_back(std::move(callback));
+        } else if (callback) {
             callback(AsyncStatus::kAborted, std::span<const uint8_t>{});
         }
         return true;
@@ -347,6 +367,8 @@ private:
     bool failNextCompareSwap_{false};
     bool failCompareSwap_{false};
     bool deferLocks_{false};
+    bool deferCancels_{false};
+    std::deque<InterfaceCompletionCallback> deferredCancels_;
     std::deque<PendingLock> pendingLocks_;
     size_t lockCount_{0};
     std::vector<uint8_t> lastLockOperand_;

@@ -100,7 +100,7 @@ private:
 
     [[nodiscard]] bool AppendImmediate(SBP2CommandORB* orb) noexcept;
 
-    void OnFetchAgentWriteComplete(uint16_t expectedGeneration,
+    void OnFetchAgentWriteComplete(uint16_t expectedGeneration, uint32_t writeSeq,
                                    Async::AsyncStatus status) noexcept;
     void OnAgentResetComplete(uint16_t expectedGeneration,
                               Async::AsyncStatus status) noexcept;
@@ -129,6 +129,10 @@ private:
     std::array<uint8_t, 8> fetchAgentWriteData_{};
     Async::AsyncHandle fetchAgentWriteHandle_{};
     bool fetchAgentWriteInUse_{false};
+    // Tags each ORB_POINTER write. Cancel delivers its kAborted completion
+    // asynchronously (posted to the workloop), so a completion whose tag is no
+    // longer current belongs to an abandoned write and is ignored.
+    uint32_t fetchAgentWriteSeq_{0};
 
     Async::AsyncHandle agentResetWriteHandle_{};
     bool agentResetInProgress_{false};

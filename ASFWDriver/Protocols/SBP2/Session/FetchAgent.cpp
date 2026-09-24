@@ -68,6 +68,7 @@ void FetchAgent::Clear(bool cancelTimers) noexcept {
     activeFetchAgentORB_ = nullptr;
     fetchAgentWriteHandle_ = {};
     fetchAgentWriteInUse_ = false;
+    ++fetchAgentWriteSeq_; // any outstanding write is abandoned (see FetchAgent.hpp)
 
     if (cancelFetchWrite) {
         (void)bus_.Cancel(fetchWrite);
@@ -140,17 +141,19 @@ bool FetchAgent::AppendImmediate(SBP2CommandORB* orb) noexcept {
 
     const std::weak_ptr<int> weak = lifetimeToken_;
     const uint16_t requestGeneration = binding_.generation;
+    const uint32_t writeSeq = ++fetchAgentWriteSeq_;
     fetchAgentWriteHandle_ = bus_.WriteBlock(
         FW::Generation{binding_.generation},
         FW::NodeId{static_cast<uint8_t>(binding_.nodeID & 0x3Fu)},
         binding_.fetchAgentAddress,
         std::span<const uint8_t>{fetchAgentWriteData_.data(), fetchAgentWriteData_.size()},
         TargetSpeed(),
-        [this, weak, requestGeneration](Async::AsyncStatus status, std::span<const uint8_t>) {
+        [this, weak, requestGeneration, writeSeq](Async::AsyncStatus status,
+                                                   std::span<const uint8_t>) {
             if (weak.expired()) {
                 return;
             }
-            OnFetchAgentWriteComplete(requestGeneration, status);
+            OnFetchAgentWriteComplete(requestGeneration, writeSeq, status);
         });
 
     if (!fetchAgentWriteHandle_) {
@@ -167,9 +170,10 @@ bool FetchAgent::AppendImmediate(SBP2CommandORB* orb) noexcept {
 // Completions
 // ---------------------------------------------------------------------------
 
-void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
+void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration, uint32_t writeSeq,
                                            Async::AsyncStatus status) noexcept {
-    if (!bound_ || expectedGeneration != binding_.generation) {
+    if (!bound_ || expectedGeneration != binding_.generation ||
+        writeSeq != fetchAgentWriteSeq_) {
         return;
     }
 
@@ -417,12 +421,14 @@ void FetchAgent::StartORBTimeout(SBP2CommandORB* orb) noexcept {
             ASFW_LOG(Async, "FetchAgent: ORB timeout%{public}s — agent reset before failing",
                      writeStuck ? " (ORB_POINTER write never completed)" : "");
             if (writeStuck) {
-                // Free the write slot so the next ORB can go out. Flags first:
-                // a synchronous cancel callback then finds nothing to retry.
+                // Free the write slot so the next ORB can go out, and retire
+                // the stuck write's tag: its kAborted completion is posted
+                // asynchronously and could otherwise land on the next write.
                 const Async::AsyncHandle stuckWrite = fetchAgentWriteHandle_;
                 activeFetchAgentORB_ = nullptr;
                 fetchAgentWriteInUse_ = false;
                 fetchAgentWriteHandle_ = {};
+                ++fetchAgentWriteSeq_;
                 (void)bus_.Cancel(stuckWrite);
             }
             ResetNoWait();
