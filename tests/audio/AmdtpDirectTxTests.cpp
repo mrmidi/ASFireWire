@@ -6,6 +6,7 @@
 #include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
+#include "../support/MAudioSpecialHappyPathFixture.inc"
 
 #include <gtest/gtest.h>
 
@@ -51,6 +52,23 @@ public:
     uint32_t SlotCount() const noexcept override {
         return 1;
     }
+};
+
+class CaptureTxSlotProvider final : public IAmdtpTxSlotProvider {
+public:
+    std::array<uint8_t, 232> bytes{};
+    PreparedTxPacket published{};
+
+    bool AcquireWritableSlot(uint32_t packetIndex,
+                             TxPacketSlotView& outSlot) noexcept override {
+        outSlot = {packetIndex, bytes.data(), static_cast<uint32_t>(bytes.size())};
+        return true;
+    }
+    bool PublishSlot(const PreparedTxPacket& packet) noexcept override {
+        published = packet;
+        return true;
+    }
+    uint32_t SlotCount() const noexcept override { return 1; }
 };
 
 AmdtpStreamConfig BlockingStereoConfig() {
@@ -231,6 +249,35 @@ TEST(AmdtpDirectTxTests, MAudioRevertedDataKeepsFullSizeCadenceAndDbc) {
     ASSERT_TRUE(packetizer.PrepareNextPacket(
         {1, bytes.data(), bytes.size()}, {}, plan, packet));
     EXPECT_EQ(packet.dbc, 8U);
+}
+
+TEST(AmdtpDirectTxTests, Captured1814HostPacketMatchesProfileAndEngine) {
+    namespace Capture = MAudioSpecialHappyPathFixture;
+    const Capture::Event* capturedPacket = nullptr;
+    for (const auto& event : Capture::kEvents) {
+        if (event.kind == Capture::EventKind::IsochPacket && event.dst == 0 &&
+            event.size == 232 && event.payloadSize == 232) {
+            capturedPacket = &event;
+            break;
+        }
+    }
+    ASSERT_NE(capturedPacket, nullptr);
+
+    ASFW::Isoch::Audio::AVC::Profiles::MAudioSpecialProfile profile(false);
+    ASFW::Isoch::Audio::AudioStreamConfig config{};
+    ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(config));
+    DiceTxStreamEngine engine{};
+    ASSERT_TRUE(engine.Configure(profile, config));
+    CaptureTxSlotProvider provider{};
+    engine.BindSlotProvider(&provider);
+    engine.ResetForStart(0, 0);
+    AmdtpTimingState timing{};
+    timing.replayValid = true;
+    timing.disposition = AmdtpPacketDisposition::NoData;
+    ASSERT_EQ(engine.PrepareNextTransmitSlot(0, timing), TxSlotPrepareResult::kPrepared);
+    EXPECT_EQ(provider.published.byteCount, capturedPacket->size);
+    EXPECT_TRUE(std::equal(provider.bytes.begin(), provider.bytes.end(),
+                           capturedPacket->payload));
 }
 
 TEST(AmdtpDirectTxTests, DbcIsEndEventWritesTheCountAfterEachDataPacket) {
