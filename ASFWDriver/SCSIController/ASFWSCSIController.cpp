@@ -370,7 +370,15 @@ kern_return_t IMPL(ASFWSCSIController, UserReportInitiatorIdentifier)
 
 kern_return_t IMPL(ASFWSCSIController, UserReportHighestSupportedDeviceID)
 {
-    *id = 0; // single target
+    // Only target 0 is ever created, but report 1. The family's willTerminate
+    // flushes and destroys targets with `index < fHighestSupportedDeviceID`
+    // (strict <, unlike start's `<=`; OSS IOSCSIParallelInterfaceController.cpp
+    // willTerminate, same in the 26.x/27 kernelcache disassembly), so with 0 it
+    // skipped target 0 entirely: its outstanding tasks stayed live, stop()
+    // freed fWorkLoop, and our late ParallelTaskCompletion NULL-dereferenced
+    // it in CompleteParallelTask (#139, adapter unplug while INQUIRY held).
+    // ID 1 is harmless: UserTargetPresentForID is constant false.
+    *id = 1;
     return kIOReturnSuccess;
 }
 
