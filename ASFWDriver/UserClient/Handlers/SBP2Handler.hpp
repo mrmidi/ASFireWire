@@ -57,7 +57,8 @@ public:
     // -----------------------------------------------------------------------
 
     kern_return_t AllocateAddressRange(IOUserClientMethodArguments* args, void* owner) {
-        if (!Manager()) {
+        auto* const manager = Manager();
+        if (!manager) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 3 ||
@@ -70,7 +71,7 @@ public:
         const uint32_t length = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFF'FFFFu);
 
         uint64_t handle = 0;
-        const kern_return_t kr = Manager()->AllocateAddressRange(
+        const kern_return_t kr = manager->AllocateAddressRange(
             owner, addressHi, addressLo, length, &handle, nullptr);
         if (kr != kIOReturnSuccess) {
             return kr;
@@ -82,7 +83,8 @@ public:
     }
 
     kern_return_t DeallocateAddressRange(IOUserClientMethodArguments* args, void* owner) {
-        if (!Manager()) {
+        auto* const manager = Manager();
+        if (!manager) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 1) {
@@ -90,11 +92,12 @@ public:
         }
 
         const uint64_t handle = args->scalarInput[0];
-        return Manager()->DeallocateAddressRange(owner, handle);
+        return manager->DeallocateAddressRange(owner, handle);
     }
 
     kern_return_t ReadIncomingData(IOUserClientMethodArguments* args, void* owner) {
-        if (!Manager()) {
+        auto* const manager = Manager();
+        if (!manager) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 3) {
@@ -106,7 +109,7 @@ public:
         const uint32_t length = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFF'FFFFu);
 
         std::vector<uint8_t> data;
-        const kern_return_t kr = Manager()->ReadIncomingData(owner, handle, offset, length, &data);
+        const kern_return_t kr = manager->ReadIncomingData(owner, handle, offset, length, &data);
         if (kr != kIOReturnSuccess) {
             return kr;
         }
@@ -122,7 +125,8 @@ public:
     }
 
     kern_return_t WriteLocalData(IOUserClientMethodArguments* args, void* owner) {
-        if (!Manager()) {
+        auto* const manager = Manager();
+        if (!manager) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 3 || !args->structureInput) {
@@ -147,17 +151,18 @@ public:
             return kIOReturnBadArgument;
         }
 
-        return Manager()->WriteLocalData(
+        return manager->WriteLocalData(
             owner, handle, offset, std::span<const uint8_t>(bytes, length));
     }
 
     // Release every address range and session owned by this client.
     void ReleaseOwner(void* owner) {
-        if (Registry()) {
-            Registry()->ReleaseOwner(owner);  // sessions before address ranges (9ca0d8e)
+        const Targets targets = resolve_ ? resolve_() : Targets{};
+        if (targets.registry) {
+            targets.registry->ReleaseOwner(owner);  // sessions before address ranges (9ca0d8e)
         }
-        if (Manager()) {
-            Manager()->ReleaseOwner(owner);
+        if (targets.manager) {
+            targets.manager->ReleaseOwner(owner);
         }
     }
 
@@ -166,7 +171,8 @@ public:
     // -----------------------------------------------------------------------
 
     kern_return_t CreateSBP2Session(IOUserClientMethodArguments* args, void* owner) {
-        if (!Registry()) {
+        auto* const registry = Registry();
+        if (!registry) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 3 ||
@@ -179,7 +185,7 @@ public:
         const uint32_t romOffset = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFF'FFFFu);
         const uint64_t guid = (static_cast<uint64_t>(guidHi) << 32) | guidLo;
 
-        auto result = Registry()->CreateSession(owner, guid, romOffset);
+        auto result = registry->CreateSession(owner, guid, romOffset);
         if (!result.has_value()) {
             return result.error();
         }
@@ -190,7 +196,8 @@ public:
     }
 
     kern_return_t StartSBP2Login(IOUserClientMethodArguments* args, void* owner) {
-        if (!Registry()) {
+        auto* const registry = Registry();
+        if (!registry) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 1) {
@@ -198,11 +205,12 @@ public:
         }
 
         const uint64_t handle = args->scalarInput[0];
-        return Registry()->StartLogin(owner, handle) ? kIOReturnSuccess : kIOReturnError;
+        return registry->StartLogin(owner, handle) ? kIOReturnSuccess : kIOReturnError;
     }
 
     kern_return_t GetSBP2SessionState(IOUserClientMethodArguments* args, void* owner) {
-        if (!Registry()) {
+        auto* const registry = Registry();
+        if (!registry) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 1 ||
@@ -211,7 +219,7 @@ public:
         }
 
         const uint64_t handle = args->scalarInput[0];
-        auto state = Registry()->GetSessionState(owner, handle);
+        auto state = registry->GetSessionState(owner, handle);
         if (!state.has_value()) {
             return kIOReturnNotFound;
         }
@@ -227,7 +235,8 @@ public:
     }
 
     kern_return_t SubmitSBP2Inquiry(IOUserClientMethodArguments* args, void* owner) {
-        if (!Registry()) {
+        auto* const registry = Registry();
+        if (!registry) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 2) {
@@ -236,12 +245,13 @@ public:
 
         const uint64_t handle = args->scalarInput[0];
         const uint8_t allocationLength = static_cast<uint8_t>(args->scalarInput[1] & 0xFFu);
-        return Registry()->SubmitInquiry(owner, handle, allocationLength) ? kIOReturnSuccess
+        return registry->SubmitInquiry(owner, handle, allocationLength) ? kIOReturnSuccess
                                                                          : kIOReturnError;
     }
 
     kern_return_t GetSBP2InquiryResult(IOUserClientMethodArguments* args, void* owner) {
-        if (!Registry()) {
+        auto* const registry = Registry();
+        if (!registry) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 1) {
@@ -249,7 +259,7 @@ public:
         }
 
         const uint64_t handle = args->scalarInput[0];
-        auto result = Registry()->GetInquiryResult(owner, handle);
+        auto result = registry->GetInquiryResult(owner, handle);
         if (!result.has_value()) {
             return kIOReturnNotFound;
         }
@@ -274,7 +284,8 @@ public:
     }
 
     kern_return_t SubmitSBP2Command(IOUserClientMethodArguments* args, void* owner) {
-        if (!Registry()) {
+        auto* const registry = Registry();
+        if (!registry) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 1 ||
@@ -376,12 +387,13 @@ public:
         request.outgoingPayload.assign(cursor, cursor + header->outgoingLength);
 
         const uint64_t handle = args->scalarInput[0];
-        return Registry()->SubmitCommand(owner, handle, request) ? kIOReturnSuccess
+        return registry->SubmitCommand(owner, handle, request) ? kIOReturnSuccess
                                                                 : kIOReturnError;
     }
 
     kern_return_t GetSBP2CommandResult(IOUserClientMethodArguments* args, void* owner) {
-        if (!Registry()) {
+        auto* const registry = Registry();
+        if (!registry) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 1) {
@@ -389,7 +401,7 @@ public:
         }
 
         const uint64_t handle = args->scalarInput[0];
-        auto result = Registry()->GetCommandResult(owner, handle);
+        auto result = registry->GetCommandResult(owner, handle);
         if (!result.has_value()) {
             return kIOReturnNotFound;
         }
@@ -468,7 +480,8 @@ public:
     }
 
     kern_return_t SubmitSBP2TaskManagement(IOUserClientMethodArguments* args, void* owner) {
-        if (!Registry()) {
+        auto* const registry = Registry();
+        if (!registry) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 2) {
@@ -491,12 +504,13 @@ public:
         }
 
         const uint64_t handle = args->scalarInput[0];
-        return Registry()->SubmitTaskManagement(owner, handle, function) ? kIOReturnSuccess
+        return registry->SubmitTaskManagement(owner, handle, function) ? kIOReturnSuccess
                                                                         : kIOReturnError;
     }
 
     kern_return_t ReleaseSBP2Session(IOUserClientMethodArguments* args, void* owner) {
-        if (!Registry()) {
+        auto* const registry = Registry();
+        if (!registry) {
             return kIOReturnNotReady;
         }
         if (!args || !args->scalarInput || args->scalarInputCount < 1) {
@@ -504,7 +518,7 @@ public:
         }
 
         const uint64_t handle = args->scalarInput[0];
-        return Registry()->ReleaseSession(owner, handle) ? kIOReturnSuccess : kIOReturnNotFound;
+        return registry->ReleaseSession(owner, handle) ? kIOReturnSuccess : kIOReturnNotFound;
     }
 
 private:
