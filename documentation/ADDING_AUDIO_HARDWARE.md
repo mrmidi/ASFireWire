@@ -14,7 +14,8 @@ protocol, geometry, and startup behavior have evidence and tests.
 | Pre-traffic safety | Definition probe policy or [`AudioSafetyRule`](../ASFWDriver/DeviceProfiles/Audio/AudioDeviceCatalog.hpp), [`CommandFilterFor`](../ASFWDriver/DeviceProfiles/Audio/AudioDeviceResolver.cpp), [`FCPTransport`](../ASFWDriver/Protocols/AVC/FCPTransport.cpp) | A definition carries permitted traffic for a recognized persona; a safety rule can quarantine a hazardous identity. Audio support and command permission are separate decisions. |
 | Bootstrap and protocol class | [`SelectProbeBootstrap`](../ASFWDriver/Audio/Protocols/SelectProbeBootstrap.hpp), [`FamilyProtocolConstruction`](../ASFWDriver/Audio/Protocols/FamilyProtocolConstruction.cpp) | Reuse an existing family implementation when its wire behavior fits. Add a new protocol implementation only for a real protocol difference. |
 | Profile and wire geometry | [`AudioProfileRegistry`](../ASFWDriver/Audio/DriverKit/Config/AudioProfileRegistry.cpp), family profile, [`DiceAudioBackend`](../ASFWDriver/Audio/Protocols/Backends/DiceAudioBackend.cpp), [`MotuAudioBackend`](../ASFWDriver/Audio/Protocols/Backends/MotuAudioBackend.cpp) | Document the source of per-stream channels, slots, sample rates, and codec. DICE publication requires validated runtime stream geometry. The supported MOTU 828mkII and UltraLite use their known fixed chunk layout for publication before live caps exist; other named MOTU models remain unsupported. |
-| Stream lifecycle policy | [`DeviceStreamTraits`](../ASFWDriver/DeviceProfiles/Audio/AudioDeviceCatalog.hpp), [`DuplexStreamProfileResolver`](../ASFWDriver/Audio/Protocols/Backends/DuplexStreamProfile.hpp) | Only evidenced differences such as start order, CMP-owned channels, or conditional wire format. The family backend retains the actual prepare/start/stop sequence. |
+| Stream traits | [`DeviceStreamTraits`](../ASFWDriver/DeviceProfiles/Audio/AudioDeviceCatalog.hpp): `wire` (`StreamWirePolicy`), `resource` (`IsochResourcePolicy`), `start` (`StreamStartPolicy`); read by [`DuplexStreamProfileResolver`](../ASFWDriver/Audio/Protocols/Backends/DuplexStreamProfile.hpp) and the duplex coordinator | Only evidenced differences: forced cadence, capture-stride trust or conditional codec (wire); CMP-owned channels (resource); start order or start-rate pin (start). Put a new fact in the group whose consumer needs it. The family backend retains the actual prepare/start/stop sequence. |
+| Transmit clock source | [`IAudioStreamProfile::TransmitClockSource`](../ASFWDriver/Audio/DriverKit/Config/AudioStreamProfile.hpp) | Default replays device RX timing onto transmit. A profile returns `kInternalCadence` only when the device will not send timing until it receives host data (M-Audio special firmware). |
 | HAL and timing geometry | [`Audio/Runtime/`](../ASFWDriver/Audio/Runtime), [`Audio/DriverKit/`](../ASFWDriver/Audio/DriverKit) | Buffer timing, CoreAudio format, and service lifetime are later concerns. Do not encode them as Config ROM identity or wire geometry. |
 
 The selected catalog plan carries static facts. Live registers and probe replies
@@ -51,7 +52,10 @@ through `CommandFilterFor` and `FCPTransport`.
    when an existing ID cannot describe it.
 3. Supply a profile or geometry rule only where the device needs one. The
    profile builder is an endpoint/geometry selection, while
-   `ProtocolImplementationId` selects the concrete protocol class. Update
+   `ProtocolImplementationId` selects the concrete protocol class. Catalog
+   validation checks that the two agree (`ExpectedProtocolFor` in
+   [`AudioDeviceValidation.cpp`](../ASFWDriver/DeviceProfiles/Audio/AudioDeviceValidation.cpp));
+   a new builder must be added to that switch. Update
    [`AudioProfileRegistry`](../ASFWDriver/Audio/DriverKit/Config/AudioProfileRegistry.cpp)
    when adding a builder. A row may reuse both existing selectors. Do not add
    a vendor/model branch to discovery, the coordinator, a generic backend, or
@@ -72,16 +76,29 @@ through `CommandFilterFor` and `FCPTransport`.
 ### A device that needs special preparation
 
 The M-Audio rows in [`MAudio.hpp`](../ASFWDriver/DeviceProfiles/Audio/Definitions/MAudio.hpp)
-show why support, traffic permission, and preparation are independent. The
-1814 bootloader persona is `RecognizedUnsupported`, has
-`NoAutomaticTraffic`, and blocks every FCP command. `BootloaderCuePolicy` is
-descriptive and also enforces `BlockAll`; this branch does **not** execute a
-firmware cue. The special-firmware 1814 and ProjectMix personas remain
-unsupported as audio but carry a narrow FCP allowlist. A future preparation
-path must validate the required command and hardware response, bind the attempt
-to the route token, cancel on reset/removal, and keep failure from falling
-through to generic AV/C probing. Do not infer a cue sequence from a catalog
-field or mark these personas playable to make discovery advance.
+show why support, traffic permission, and preparation are independent
+decisions:
+
+- The **1814 bootloader persona** is `RecognizedUnsupported` with
+  `NoAutomaticTraffic`: it selects no probe bootstrap and every FCP command is
+  blocked. Its `BootloaderCuePolicy` is consumed by the guarded preparation in
+  [`Protocols/BeBoB/Bootloader/`](../ASFWDriver/Protocols/BeBoB/Bootloader).
+  That path takes the registry's resolved plan, reads the BootROM, writes the
+  single start-firmware cue only for an active loader with a supported build,
+  binds the attempt to the route token, stops on generation change, and runs
+  once per device incarnation. The device then re-enumerates as its
+  operational persona. A failed preparation cannot fall through to a probe,
+  because bootstrap and FCP gate come from the static plan.
+- The **special-firmware 1814 and ProjectMix** personas are `Supported` through
+  `BeBoBMAudioSpecial` with a narrow FCP allowlist (`BeBoBFilteredCommandSet`),
+  not generic BeBoB probing. Their stream starts only on the AV/C output-plug
+  signal-format command after CMP, not on CMP alone (Linux
+  `bebob_stream.c`, the `maudio_special_quirk` branch).
+
+A new device that needs preparation follows the same pattern: a catalog
+policy, a device-specific module that consumes the resolved plan, a
+route-bound and cancellable attempt, and tests that failure fails closed. Do
+not infer a command sequence from a catalog field alone.
 
 ## Tests and review
 
@@ -98,6 +115,12 @@ Use the existing tests as contracts, extending a fixture only for a new fact:
   [`DuplexStreamProfileTests.cpp`](../tests/devices/DuplexStreamProfileTests.cpp), and
   [`NubGeometryRoundTripTests.cpp`](../tests/audio/NubGeometryRoundTripTests.cpp)
   check stream geometry, wire traits, and nub geometry changes.
+- [`AudioDriverTxProducerTests.cpp`](../tests/audio/AudioDriverTxProducerTests.cpp)
+  runs the driver's real TX producer against an emulated IT transport, checked
+  against captured traces. Add a case when a device changes transmit framing
+  or clock source.
+- [`BeBoBBootloaderPreparationTests.cpp`](../tests/protocols/BeBoBBootloaderPreparationTests.cpp)
+  covers the guarded preparation path and its fail-closed behaviour.
 
 Run `./build.sh --test-only` for host tests and `./build.sh --no-bump` for the
 DriverKit build. Hardware validation remains a separate gate. For wire-visible

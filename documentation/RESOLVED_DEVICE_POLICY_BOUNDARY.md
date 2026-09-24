@@ -1,7 +1,8 @@
 # Resolved audio-device policy boundary (FW-161)
 
-**Status:** design decision. The implementation is recorded in local ticket
-branches FW-162 through FW-165; this note remains the FW-161 ownership contract.
+**Status:** implemented on `feat/fw-255-maudio-special-bringup` (FW-162 through
+FW-167). This note is the FW-161 ownership contract; the disposition table at
+the end records what happened to each FW-160 audit row.
 
 ## Producer and lifetime
 
@@ -38,7 +39,9 @@ The concrete protocol selector should be assigned by the catalog definition,
 not inferred from `ProfileBuilderId`. A supported definition must name both.
 The constructor should switch on the implementation choice; profile builders
 may vary while the protocol class stays the same. This requires no change to
-the DICE or MOTU wire sequence.
+the DICE or MOTU wire sequence. Validation enforces the pairing
+(`ExpectedProtocolFor` in `AudioDeviceValidation.cpp`), so a supported row
+cannot name a builder with the wrong protocol class.
 
 ## Consumer migration sequence
 
@@ -64,8 +67,37 @@ it must not copy `midi::ResolvedAudioEndpointProfile` wholesale. DICE retains
 its current live-capability comparison before nub publication. MOTU retains
 its evidence-backed fixed chunk geometry before streaming because its live
 caps are unavailable until the stream is prepared. Neither exception grants a
-generic probe permission. M-Audio special firmware remains unsupported as
-audio while the per-frame FCP allowlist remains active; bootloader cue execution
-requires its separate hardware evidence gate.
+generic probe permission. M-Audio special firmware is supported through its own
+protocol class and keeps the per-frame FCP allowlist. The 1814 bootloader
+persona stays unsupported and FCP-blocked; its cue runs only through the guarded
+preparation path, which consumes the resolved plan rather than re-matching.
 
 The ownership audit and hardware questions are in Linear FW-160 and FW-168.
+
+## Disposition of the FW-160 audit rows (FW-165)
+
+| FW-160 concern | Disposition | Owner now | Evidence |
+| --- | --- | --- | --- |
+| Physical identity, units, route lifetime | KEEP / ADAPT | `DeviceRegistry` (device-level aggregation, `DeviceRouteToken`, invalidation on reset, loss and duplicate GUID) | `358e8873`; `DeviceIdentityEvidenceTests` |
+| Static identity and support | ADAPT | One `AudioDeviceCatalog::Resolve` in `DeviceRegistry::UpsertFromROM`, bound in `ResolvedDevicePolicy`; no other production caller | `358e8873`, `1f209adc` (last re-resolve removed from bootloader preparation) |
+| Pre-traffic safety and preparation | KEEP / ADAPT | `CommandFilterFor(plan)` enforced at FCP submit; preparation in `Protocols/BeBoB/Bootloader` consuming the plan | `60cb5818`, `b4772a09`, `1f209adc`; `BeBoBBootloaderPreparationTests` |
+| Bootstrap and protocol class | REPLACE | `SelectProbeBootstrap(plan)`, `ChooseDeviceProtocol/ChooseAudioBackend(plan)`; `ProtocolImplementationId` separate from `ProfileBuilderId`, pairing validated | `ffc67b70`, `e5227f76`, `9d8d42e9` |
+| Safe probe and variant refinement | DEFER / DELETE | No generic safe-probe executor. `SafeProbeConstraint` deleted; ambiguity stays unadmitted | `467871bd` |
+| Wire geometry and nub admission | KEEP | DICE live-caps gate and MOTU fixed-chunk publication unchanged; nub geometry change still refused | unchanged; `NubGeometryRoundTripTests` |
+| Stream and lifecycle policy | SPLIT | `DeviceStreamTraits` split into `StreamWirePolicy`, `IsochResourcePolicy` and `StreamStartPolicy`; transmit clock moved to `IAudioStreamProfile::TransmitClockSource` | `ae119cec`, `e3a01258` |
+| Runtime and teardown ownership | KEEP | `AudioCoordinator`, family backends, `AudioDuplexCoordinator`; no session manager or provider graph imported | unchanged |
+
+Cleanup classifications from the same audit:
+
+- **Deleted:** repeated catalog lookups in `DeviceProtocolChoice` and
+  `FamilyProtocolConstruction`, AV/C identity predicates (`IsApogeeDuet`,
+  `IsMackieOnyxIOxford`, `ProfileBuilderIdFor`), the inert
+  `clampCaptureStreamsToOne`, and `SafeProbeConstraint` (`467871bd`,
+  `91610a39`).
+- **Kept although unused today:** the `AudioSafetyRule` mechanism (empty table)
+  and `SupportDisposition::Quarantined`. They are fail-closed capabilities, not
+  dead code.
+- **Evidence gates, not implemented:** replacing main's DICE cold-start order,
+  and any Alesis/Focusrite host-playback stream clamp. FFADO's clamp is on
+  `m_nb_rx` (host playback), and the owner has no hardware to settle it.
+
