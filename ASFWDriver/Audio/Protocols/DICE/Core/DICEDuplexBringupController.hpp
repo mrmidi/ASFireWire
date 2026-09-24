@@ -20,16 +20,6 @@
 
 namespace ASFW::Audio::DICE {
 
-// DICE devices normally require a stable GLOBAL source-lock indication before
-// stream enable and confirmation. Some playback-only products need host IT
-// packets before their selected receive-clock path can report that lock; those
-// products retain the target-rate check but treat source lock as post-start
-// telemetry instead of an admission gate.
-struct DICEBringupPolicy final {
-    bool requireSourceLockBeforeStreamEnable{true};
-    bool requireSourceLockAtConfirm{true};
-};
-
 /// Manages generic DICE duplex startup/teardown.
 ///
 /// All long-running methods (PrepareDuplex48k, ProgramRxForDuplex48k,

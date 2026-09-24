@@ -16,19 +16,15 @@ add_device_test(DiceFocusriteSerializationTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspTypes.cpp"
 )
 
-# DICE duplex parity tests (requires support dir in includes for ReferencePhase0ParityFixture.inc)
-add_executable(DICEDuplexBringupControllerTests
-    DICEDuplexBringupControllerTests.cpp
+# Linear DICE bring-up: parity and state tests (ReferencePhase0ParityFixture.inc
+# lives in the support dir).
+add_device_test(DiceFamilyDriverTests
+    DiceFamilyDriverTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICEDuplexBringupController.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
-target_include_directories(DICEDuplexBringupControllerTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../support")
-target_link_libraries(DICEDuplexBringupControllerTests PRIVATE
-    asfw_test_support
-    GTest::gtest_main
-)
-gtest_discover_tests(DICEDuplexBringupControllerTests)
 
 # Generic audio duplex IRM stream reservations and channel geometry tests
 add_device_test(DuplexIRMReservationsTests
@@ -53,6 +49,7 @@ add_device_test(DiceDeviceIoTests
     DiceDeviceIoTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 

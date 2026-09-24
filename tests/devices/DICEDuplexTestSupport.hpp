@@ -14,7 +14,9 @@
 #include "Discovery/DeviceRegistry.hpp"
 #include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
-#include "Audio/Protocols/DICE/Core/DICEDuplexBringupController.hpp"
+#include "Audio/Protocols/DICE/Core/DiceDeviceIo.hpp"
+#include "Audio/Protocols/DICE/Core/DiceFamilyDriver.hpp"
+#include "FakeDiceWaitClock.hpp"
 #include "Protocols/Ports/ProtocolRegisterIO.hpp"
 #include "SimulatedDiceDevice.hpp"
 #include "WireTrace.hpp"
@@ -25,6 +27,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
+#include <expected>
 #include <functional>
 #include <optional>
 #include <span>
@@ -51,7 +54,9 @@ using ::ASFW::Audio::DuplexRestartPhase;
 using ::ASFW::Audio::DuplexRestartReason;
 namespace NotificationMailbox = ::ASFW::Audio::DICE::NotificationMailbox;
 using ::ASFW::Audio::DICE::Section;
-using ::ASFW::Audio::DICE::DICEDuplexBringupController;
+using ::ASFW::Audio::DICE::DiceDeviceIo;
+using ::ASFW::Audio::DICE::DiceFamilyDriver;
+using ::ASFW::Audio::DICE::DiceClockConfiguration;
 using ::ASFW::FW::FwSpeed;
 using ::ASFW::FW::Generation;
 using ::ASFW::FW::LockOp;
@@ -671,20 +676,84 @@ struct HostClockResetGuard {
     }
 };
 
+// Callback-style view of DiceFamilyDriver. The bring-up tests were written
+// against the async DICEDuplexBringupController; running the same test bodies
+// against the linear driver is the equivalence check for stage S1. Each call
+// completes before it returns, so the callback fires synchronously.
+class CallbackDriver {
+public:
+    explicit CallbackDriver(DiceFamilyDriver& driver) noexcept : driver_(driver) {}
+
+    // Reference-parity window: fixed 48 kHz internal clock, no caps refresh.
+    void PrepareDuplex48k(const AudioDuplexChannels& channels, std::function<void(IOReturn)> callback) {
+        const auto result = driver_.Prepare(channels, k48k, /*refreshRuntimeCaps=*/false);
+        callback(result ? kIOReturnSuccess : result.error());
+    }
+    void PrepareDuplex(const AudioDuplexChannels& channels, const DiceClockConfiguration& clock,
+                       std::function<void(IOReturn, DuplexPrepareResult)> callback) {
+        Deliver(driver_.Prepare(channels, clock, /*refreshRuntimeCaps=*/true), callback);
+    }
+    void ProgramRxForDuplex48k(std::function<void(IOReturn)> callback) {
+        const auto result = driver_.ProgramRx();
+        callback(result ? kIOReturnSuccess : result.error());
+    }
+    void ProgramRx(std::function<void(IOReturn, DuplexStageResult)> callback) {
+        Deliver(driver_.ProgramRx(), callback);
+    }
+    void ProgramTxAndEnableDuplex48k(std::function<void(IOReturn)> callback) {
+        const auto result = driver_.ProgramTxAndEnable();
+        callback(result ? kIOReturnSuccess : result.error());
+    }
+    void ProgramTxAndEnableDuplex(std::function<void(IOReturn, DuplexStageResult)> callback) {
+        Deliver(driver_.ProgramTxAndEnable(), callback);
+    }
+    void ConfirmDuplex48kStart(std::function<void(IOReturn)> callback) {
+        const auto result = driver_.Confirm();
+        callback(result ? kIOReturnSuccess : result.error());
+    }
+    void ConfirmDuplexStart(std::function<void(IOReturn, DuplexConfirmResult)> callback) {
+        Deliver(driver_.Confirm(), callback);
+    }
+    [[nodiscard]] IOReturn StopDuplex() { return driver_.Stop(); }
+    void ReleaseOwner(std::function<void(IOReturn)> callback) { callback(driver_.ReleaseOwner()); }
+
+    [[nodiscard]] bool IsPrepared() const noexcept { return driver_.IsPrepared(); }
+    [[nodiscard]] bool IsArmed() const noexcept { return driver_.IsArmed(); }
+    [[nodiscard]] bool IsRunning() const noexcept { return driver_.IsRunning(); }
+    [[nodiscard]] bool IsOwnerClaimed() const noexcept { return driver_.IsOwnerClaimed(); }
+
+private:
+    static constexpr DiceClockConfiguration k48k{
+        .sampleRateHz = 48000U,
+        .clockSelect = ::ASFW::Audio::DICE::kDiceClockSelect48kInternal,
+    };
+
+    template <typename T, typename Callback>
+    static void Deliver(const std::expected<T, IOReturn>& result, Callback& callback) {
+        callback(result ? kIOReturnSuccess : result.error(), result ? *result : T{});
+    }
+
+    DiceFamilyDriver& driver_;
+};
+
 struct DuplexRig {
     RecordingFireWireBus bus;
     RouteState routeState;
     ProtocolRegisterIO io;
     DICETransaction tx;
     ::ASFW::Testing::FakeTimerScheduler timer;
+    ::ASFW::Testing::FakeDiceWaitClock clock{timer};
+    DiceDeviceIo deviceIo;
     std::atomic<bool> cancel{false};
-    DICEDuplexBringupController controller;
+    DiceFamilyDriver driver;
+    CallbackDriver controller{driver};
 
     explicit DuplexRig(DICEBringupPolicy bringupPolicy = {})
         : io(bus, bus, routeState.registry, routeState.route)
         , tx(io)
-        , controller(tx, io, bus, nullptr, MakeGeneralSections(), &timer, bringupPolicy) {
-        controller.SetTeardownCancelToken(&cancel);
+        , deviceIo(io, tx, clock)
+        , driver(deviceIo, bus, MakeGeneralSections(), bringupPolicy) {
+        driver.SetTeardownCancelToken(&cancel);
     }
 };
 

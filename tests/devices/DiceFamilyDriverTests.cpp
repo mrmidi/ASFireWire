@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
-// DICEDuplexBringupControllerTests.cpp - Parity and state-machine tests for DICEDuplexBringupController
+// DiceFamilyDriverTests.cpp - Parity and state tests for the linear DICE bring-up.
+//
+// Ported from the DICEDuplexBringupController tests (stage S1): the same
+// bodies run against DiceFamilyDriver through DuplexRig's CallbackDriver.
+// Tests that advanced time mid-wait now schedule their events on the fake
+// timer up front, because the driver waits synchronously.
 
 #include "DICEDuplexTestSupport.hpp"
 
@@ -9,13 +14,13 @@ namespace {
 
 using namespace ASFW::Testing::DICE;
 
-TEST(DICEDuplexBringupControllerTests, NotificationMailboxMatchesReferenceAndLegacyOffsets) {
+TEST(DiceFamilyDriverTests, NotificationMailboxMatchesReferenceAndLegacyOffsets) {
     EXPECT_TRUE(NotificationMailbox::MatchesDestOffset(NotificationMailbox::kHandlerOffset));
     EXPECT_TRUE(NotificationMailbox::MatchesDestOffset(NotificationMailbox::kLegacyHandlerOffset));
     EXPECT_FALSE(NotificationMailbox::MatchesDestOffset(0x000100000004ULL));
 }
 
-TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOUsesNegotiatedSpeedAndDiceReaderUsesFullGlobalReadSize) {
+TEST(DiceFamilyDriverTests, ProtocolRegisterIOUsesNegotiatedSpeedAndDiceReaderUsesFullGlobalReadSize) {
     RecordingFireWireBus bus;
     RouteState routeState;
     ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
@@ -47,7 +52,7 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOUsesNegotiatedSpeedAndD
     EXPECT_EQ(bus.Operations()[0].speed, FwSpeed::S400);
 }
 
-TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesTimeout) {
+TEST(DiceFamilyDriverTests, ProtocolRegisterIOReadQuadPropagatesTimeout) {
     RecordingFireWireBus bus;
     RouteState routeState;
     ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
@@ -72,7 +77,7 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesTimeo
     EXPECT_TRUE(bus.ScriptConsumed());
 }
 
-TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIORejectsInvalidatedRouteBeforeBusAccess) {
+TEST(DiceFamilyDriverTests, ProtocolRegisterIORejectsInvalidatedRouteBeforeBusAccess) {
     RecordingFireWireBus bus;
     RouteState routeState;
     ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
@@ -87,7 +92,7 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIORejectsInvalidatedRoute
     EXPECT_TRUE(bus.Operations().empty());
 }
 
-TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesShortRead) {
+TEST(DiceFamilyDriverTests, ProtocolRegisterIOReadQuadPropagatesShortRead) {
     RecordingFireWireBus bus;
     RouteState routeState;
     ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
@@ -114,7 +119,7 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesShort
     EXPECT_TRUE(bus.ScriptConsumed());
 }
 
-TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOWriteQuadUsesNegotiatedSpeedAndBigEndianPayload) {
+TEST(DiceFamilyDriverTests, ProtocolRegisterIOWriteQuadUsesNegotiatedSpeedAndBigEndianPayload) {
     RecordingFireWireBus bus;
     RouteState routeState;
     ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
@@ -134,7 +139,7 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOWriteQuadUsesNegotiated
     EXPECT_EQ(ASFW::FW::ReadBE32(bus.Operations()[0].payload.data()), 1U);
 }
 
-TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOCompareSwap64UsesLockAndDecodesBigEndianPayload) {
+TEST(DiceFamilyDriverTests, ProtocolRegisterIOCompareSwap64UsesLockAndDecodesBigEndianPayload) {
     RecordingFireWireBus bus;
     RouteState routeState;
     ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
@@ -161,13 +166,13 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOCompareSwap64UsesLockAn
     EXPECT_EQ(bus.Owner(), 0xFFC0000100000000ULL);
 }
 
-TEST(DICEDuplexBringupControllerTests, PrepareSequenceMatchesReferenceWindow) {
+TEST(DiceFamilyDriverTests, PrepareSequenceMatchesReferenceWindow) {
     DuplexRig rig;
     NotificationMailbox::Reset();
 
     // The reference trace always rewrites CLOCK_SELECT during prepare. ASFW
     // intentionally deviates in two HW-validated ways (see
-    // DICEDuplexBringupController):
+    // DiceFamilyDriver):
     //  1. The CLOCK_SELECT write is skipped when the pre-claim global read
     //     already reports the target clock (0x020C here) — rewriting it
     //     re-triggers a PLL relock mid-bring-up and fights an idle rate change.
@@ -212,7 +217,7 @@ TEST(DICEDuplexBringupControllerTests, PrepareSequenceMatchesReferenceWindow) {
     }
 }
 
-TEST(DICEDuplexBringupControllerTests, ProgramTxEnableWritesGlobalEnableOnce) {
+TEST(DiceFamilyDriverTests, ProgramTxEnableWritesGlobalEnableOnce) {
     DuplexRig rig;
     const AudioDuplexChannels channels{
         .deviceToHostIsoChannel = 1,
@@ -248,7 +253,7 @@ TEST(DICEDuplexBringupControllerTests, ProgramTxEnableWritesGlobalEnableOnce) {
     EXPECT_EQ(rig.bus.Enable(), 1U);
 }
 
-TEST(DICEDuplexBringupControllerTests, ProgramRxMatchesReferenceSegment) {
+TEST(DiceFamilyDriverTests, ProgramRxMatchesReferenceSegment) {
     DuplexRig rig;
     const AudioDuplexChannels channels{
         .deviceToHostIsoChannel = 1,
@@ -280,7 +285,7 @@ TEST(DICEDuplexBringupControllerTests, ProgramRxMatchesReferenceSegment) {
     EXPECT_EQ(rig.bus.Enable(), 0U);
 }
 
-TEST(DICEDuplexBringupControllerTests, StopSequenceReleasesOwnerLast) {
+TEST(DiceFamilyDriverTests, StopSequenceReleasesOwnerLast) {
     DuplexRig rig;
     const AudioDuplexChannels channels{
         .deviceToHostIsoChannel = 1,
@@ -301,7 +306,7 @@ TEST(DICEDuplexBringupControllerTests, StopSequenceReleasesOwnerLast) {
     ExpectOperations(rig.bus.Operations(), ExpectedStopOps());
 }
 
-TEST(DICEDuplexBringupControllerTests, StopDuplexTeardownCancelAbortsWithoutMoreDeviceIo) {
+TEST(DiceFamilyDriverTests, StopDuplexTeardownCancelAbortsWithoutMoreDeviceIo) {
     DuplexRig rig;
     const AudioDuplexChannels channels{
         .deviceToHostIsoChannel = 1,
@@ -324,7 +329,7 @@ TEST(DICEDuplexBringupControllerTests, StopDuplexTeardownCancelAbortsWithoutMore
     EXPECT_TRUE(rig.bus.Operations().empty());
 }
 
-TEST(DICEDuplexBringupControllerTests, RestartSessionTracksDevicePhasesAcrossBringupAndStop) {
+TEST(DiceFamilyDriverTests, RestartSessionTracksDevicePhasesAcrossBringupAndStop) {
     DuplexRig rig;
     const AudioDuplexChannels channels{
         .deviceToHostIsoChannel = 1,
@@ -408,7 +413,7 @@ TEST(DICEDuplexBringupControllerTests, RestartSessionTracksDevicePhasesAcrossBri
     EXPECT_FALSE(rig.controller.IsRunning());
 }
 
-TEST(DICEDuplexBringupControllerTests,
+TEST(DiceFamilyDriverTests,
      ConfirmRejectsDisabledStreamChannelReadback) {
     DuplexRig rig;
     const AudioDuplexChannels channels{
@@ -452,7 +457,7 @@ TEST(DICEDuplexBringupControllerTests,
     EXPECT_FALSE(rig.controller.IsRunning());
 }
 
-TEST(DICEDuplexBringupControllerTests,
+TEST(DiceFamilyDriverTests,
      AdvisorySourceLockPreservesTargetRateAndCompletesStart) {
     DuplexRig rig(DICEBringupPolicy{
         .requireSourceLockBeforeStreamEnable = false,
@@ -498,12 +503,15 @@ TEST(DICEDuplexBringupControllerTests,
     EXPECT_TRUE(rig.controller.IsRunning());
 }
 
-TEST(DICEDuplexBringupControllerTests,
+TEST(DiceFamilyDriverTests,
      ClockAcceptedRetryUsesVirtualTimerAndCompletesAfterDelayedNotification) {
     DuplexRig rig;
     NotificationMailbox::Reset();
     rig.bus.SetGlobalClockState(/*status=*/0, /*sampleRate=*/0);
     rig.bus.SetClockSelectWriteHandler([] {});
+    // The device's CLOCK_ACCEPTED arrives 15 ms into the wait: the 0 ms and 10 ms
+    // polls miss it, the 20 ms poll consumes it. No wall-clock time passes.
+    (void)rig.timer.ScheduleAfter(15'000'000ULL, [&rig] { rig.bus.PublishClockAccepted(); });
 
     std::optional<IOReturn> startStatus;
     const AudioDuplexChannels channels{
@@ -513,25 +521,14 @@ TEST(DICEDuplexBringupControllerTests,
     rig.controller.PrepareDuplex48k(
         channels, [&startStatus](IOReturn status) { startStatus = status; });
 
-    ASSERT_FALSE(startStatus.has_value());
-    EXPECT_EQ(rig.timer.PendingCount(), 1U);
-
-    // No wall-clock wait is involved: the first timer tick observes no notification,
-    // then the following tick consumes the asynchronously published CLOCK_ACCEPTED bit.
-    rig.timer.Advance(10'000'000ULL);
-    EXPECT_FALSE(startStatus.has_value());
-    EXPECT_EQ(rig.timer.PendingCount(), 1U);
-
-    rig.bus.PublishClockAccepted();
-    rig.timer.Advance(10'000'000ULL);
-
     ASSERT_TRUE(startStatus.has_value());
     EXPECT_EQ(*startStatus, kIOReturnSuccess);
     EXPECT_TRUE(rig.controller.IsPrepared());
+    EXPECT_EQ(rig.timer.NowNs(), 20'000'000ULL);
     EXPECT_EQ(rig.timer.PendingCount(), 0U);
 }
 
-TEST(DICEDuplexBringupControllerTests,
+TEST(DiceFamilyDriverTests,
      ClockAcceptedDeadlineTimesOutAfterVirtual150Milliseconds) {
     DuplexRig rig;
     NotificationMailbox::Reset();
@@ -546,102 +543,57 @@ TEST(DICEDuplexBringupControllerTests,
     rig.controller.PrepareDuplex48k(
         channels, [&startStatus](IOReturn status) { startStatus = status; });
 
-    ASSERT_FALSE(startStatus.has_value());
-    EXPECT_EQ(rig.timer.PendingCount(), 1U);
-
-    rig.timer.Advance(150'000'000ULL);
-
     ASSERT_TRUE(startStatus.has_value());
     EXPECT_EQ(*startStatus, kIOReturnTimeout);
     EXPECT_FALSE(rig.controller.IsPrepared());
     EXPECT_FALSE(rig.controller.IsOwnerClaimed());
+    EXPECT_EQ(rig.timer.NowNs(), 150'000'000ULL);
     EXPECT_EQ(rig.timer.PendingCount(), 0U);
 }
 
-TEST(DICEDuplexBringupControllerTests, LateClockAcceptedNotifyDoesNotTriggerRollback) {
-    // With active clock check, even when the mailbox notification is delayed,
-    // the controller reads global state immediately after clock select write
-    // and short-circuits if already locked at 48kHz.
+TEST(DiceFamilyDriverTests, LateClockAcceptedNotifyDoesNotTriggerRollback) {
+    // With the active clock check, even when the mailbox notification is delayed,
+    // the driver reads global state immediately after the clock-select write and
+    // short-circuits because the device is already locked at 48 kHz.
+    DuplexRig rig;
     NotificationMailbox::Reset();
-    HostClockResetGuard clockReset;
-
-    uint64_t nowNs = 0;
-    ::ASFW::Testing::SetHostMonotonicClockForTesting([&nowNs]() { return nowNs; });
-
-    RecordingFireWireBus bus;
-    IODispatchQueue queue;
-    queue.SetManualDispatchForTesting(true);
-    bus.SetClockSelectWriteHandler([&queue, &bus]() {
-        queue.DispatchAsyncAfter(3'250'000'000ULL, [&bus]() { bus.PublishClockAccepted(); });
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        (void)rig.timer.ScheduleAfter(3'250'000'000ULL, [&rig] { rig.bus.PublishClockAccepted(); });
     });
 
-    RouteState routeState;
-    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
-    DICETransaction tx(io);
-    DICEDuplexBringupController controller(tx, io, bus, &queue, MakeGeneralSections());
-
     std::optional<IOReturn> startStatus;
     const AudioDuplexChannels channels{
         .deviceToHostIsoChannel = 1,
         .hostToDeviceIsoChannel = 0,
     };
-
-    controller.PrepareDuplex48k(channels, [&startStatus](IOReturn status) { startStatus = status; });
-
-    // Active clock check reads global state immediately after write —
-    // bus is already locked at 48kHz, so it short-circuits without waiting for mailbox.
-    for (size_t i = 0; i < 600 && !startStatus.has_value(); ++i) {
-        nowNs += 10'000'000ULL;
-        while (queue.DrainReadyForTesting() > 0) {
-        }
-    }
+    rig.controller.PrepareDuplex48k(channels, [&startStatus](IOReturn status) { startStatus = status; });
 
     ASSERT_TRUE(startStatus.has_value());
     EXPECT_EQ(*startStatus, kIOReturnSuccess);
-    EXPECT_TRUE(controller.IsPrepared());
+    EXPECT_TRUE(rig.controller.IsPrepared());
+    EXPECT_LT(rig.timer.NowNs(), 3'250'000'000ULL) << "completed without waiting for the late notification";
 }
 
-TEST(DICEDuplexBringupControllerTests, GlobalStateConfirmationRecoversIfMailboxMissesClockAccepted) {
+TEST(DiceFamilyDriverTests, GlobalStateConfirmationRecoversIfMailboxMissesClockAccepted) {
     // When the mailbox notification never arrives but the device is already locked
-    // at 48kHz, the active clock check after the write short-circuits immediately.
+    // at 48 kHz, the active clock check after the write short-circuits immediately.
+    DuplexRig rig;
     NotificationMailbox::Reset();
-    HostClockResetGuard clockReset;
-
-    uint64_t nowNs = 0;
-    ::ASFW::Testing::SetHostMonotonicClockForTesting([&nowNs]() { return nowNs; });
-
-    RecordingFireWireBus bus;
-    IODispatchQueue queue;
-    queue.SetManualDispatchForTesting(true);
-    bus.SetClockSelectWriteHandler([&bus]() { bus.LatchClockAccepted(); });
-
-    RouteState routeState;
-    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
-    DICETransaction tx(io);
-    DICEDuplexBringupController controller(tx, io, bus, &queue, MakeGeneralSections());
+    rig.bus.SetClockSelectWriteHandler([&rig]() { rig.bus.LatchClockAccepted(); });
 
     std::optional<IOReturn> startStatus;
     const AudioDuplexChannels channels{
         .deviceToHostIsoChannel = 1,
         .hostToDeviceIsoChannel = 0,
     };
-
-    controller.PrepareDuplex48k(channels, [&startStatus](IOReturn status) { startStatus = status; });
-
-    // Active clock check reads global state and finds locked+48k —
-    // completes without waiting for mailbox notification at all.
-    for (size_t i = 0; i < 700 && !startStatus.has_value(); ++i) {
-        nowNs += 10'000'000ULL;
-        while (queue.DrainReadyForTesting() > 0) {
-        }
-    }
+    rig.controller.PrepareDuplex48k(channels, [&startStatus](IOReturn status) { startStatus = status; });
 
     ASSERT_TRUE(startStatus.has_value());
     EXPECT_EQ(*startStatus, kIOReturnSuccess);
-    EXPECT_TRUE(controller.IsPrepared());
+    EXPECT_TRUE(rig.controller.IsPrepared());
 }
 
-TEST(DICEDuplexBringupControllerTests, ProgramTxWritesResolvedLinkSpeedToDiceTxSpeedRegister) {
+TEST(DiceFamilyDriverTests, ProgramTxWritesResolvedLinkSpeedToDiceTxSpeedRegister) {
     // 1. Verify S200 operational link speed (e.g. Midas Venice F24 on Mac):
     // In DICE architecture, TX is from device perspective (device -> Mac capture).
     // The device transmitter must be programmed to transmit at S200 (value 1),

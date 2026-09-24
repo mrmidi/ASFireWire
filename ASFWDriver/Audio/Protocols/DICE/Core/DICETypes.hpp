@@ -541,6 +541,16 @@ inline constexpr uint32_t kDiceMaxSupportedRateHz = 48000;
 
 // DICE GLOBAL_CLOCK_SELECT encoding. This stays inside the DICE adapter; the
 // protocol-neutral duplex seam carries only AudioClockConfig::sampleRateHz.
+// DICE devices normally require a stable GLOBAL source-lock indication before
+// stream enable and confirmation. Some playback-only products need host IT
+// packets before their selected receive-clock path can report that lock; those
+// products retain the target-rate check but treat source lock as post-start
+// telemetry instead of an admission gate.
+struct DICEBringupPolicy final {
+    bool requireSourceLockBeforeStreamEnable{true};
+    bool requireSourceLockAtConfirm{true};
+};
+
 struct DiceClockConfiguration {
     uint32_t sampleRateHz{0};
     uint32_t clockSelect{0};
