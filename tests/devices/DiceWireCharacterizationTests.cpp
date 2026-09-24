@@ -14,13 +14,14 @@
 // except for differences it declares.
 //
 // Protocols are built exactly as FamilyProtocolConstruction builds them in
-// production (including which ones receive a timer scheduler).
+// production, with a virtual-time wait clock in place of DriverKitWaitClock.
 //
 // Regenerate after an intended change: ASFW_UPDATE_GOLDEN=1, then review the diff.
 
 #include <gtest/gtest.h>
 
 #include "DICEDuplexTestSupport.hpp"
+#include "FakeDiceWaitClock.hpp"
 #include "FakeTimerScheduler.hpp"
 #include "SimulatedDiceDevice.hpp"
 #include "WireTrace.hpp"
@@ -44,6 +45,7 @@ using ASFW::Audio::AudioStreamRuntimeCaps;
 using ASFW::Audio::IDeviceProtocol;
 using ASFW::Audio::IDuplexDeviceControl;
 using ASFW::Audio::kMaxAudioStreamsPerDirection;
+using ASFW::Testing::FakeDiceWaitClock;
 using ASFW::Testing::FakeTimerScheduler;
 
 constexpr uint32_t kPollTickMs = 10;
@@ -60,10 +62,10 @@ struct DiceRig {
         bus.Device().ResetToIdle();
         if (std::string_view(image.key) == "saffire-pro24-dsp") {
             protocol = std::make_unique<ASFW::Audio::DICE::Focusrite::SPro24DspProtocol>(
-                bus, bus, routeState.registry, routeState.route, nullptr, &timer);
+                bus, bus, routeState.registry, routeState.route, nullptr, waitClock);
         } else {
             protocol = std::make_unique<ASFW::Audio::DICE::TCAT::DICETcatProtocol>(
-                bus, bus, routeState.registry, routeState.route, nullptr, &timer);
+                bus, bus, routeState.registry, routeState.route, nullptr, waitClock);
         }
         EXPECT_EQ(protocol->Initialize(), kIOReturnSuccess);
         control = protocol->AsDuplexDeviceControl();
@@ -215,6 +217,7 @@ struct DiceRig {
     RecordingFireWireBus bus;
     RouteState routeState;
     FakeTimerScheduler timer;
+    FakeDiceWaitClock waitClock{timer};
     std::atomic<bool> cancel{false};
     std::unique_ptr<IDeviceProtocol> protocol;
     IDuplexDeviceControl* control{nullptr};

@@ -8,6 +8,8 @@
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "Audio/Protocols/DICE/TCAT/DICETcatProtocol.hpp"
+#include "FakeDiceWaitClock.hpp"
+#include "FakeTimerScheduler.hpp"
 
 #include <array>
 #include <cstdint>
@@ -58,6 +60,13 @@ using ASFW::Audio::DICE::TCAT::DICETcatRuntimePolicy;
 using ASFW::FW::FwSpeed;
 using ASFW::FW::Generation;
 using ASFW::FW::LockOp;
+
+// None of these tests reaches a bring-up wait, so one virtual clock serves them all.
+ASFW::Audio::DICE::DiceWaitClock& WaitClock() {
+    static ASFW::Testing::FakeTimerScheduler timer;
+    static ASFW::Testing::FakeDiceWaitClock clock{timer};
+    return clock;
+}
 using ASFW::FW::NodeId;
 
 struct RouteState {
@@ -383,7 +392,7 @@ TEST(DICETcatProtocolTests, ResetDuringFailedReadStopsSpeedProbe) {
 TEST(DICETcatProtocolTests, InitializeIsSideEffectFree) {
     CountingFireWireBus bus;
     RouteState routeState;
-    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock());
 
     EXPECT_EQ(protocol.Initialize(), kIOReturnSuccess);
 
@@ -419,7 +428,7 @@ TEST(DICETcatProtocolTests, NeutralClockRequestMapsToDiceClockSelectInsideAdapte
 TEST(DICETcatProtocolTests, RuntimeCapsAggregateTotalConfiguredStreams) {
     CountingFireWireBus bus;
     RouteState routeState;
-    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock());
 
     ASFW::Audio::DICE::GlobalState global{};
     global.sampleRate = 48000;
@@ -461,7 +470,7 @@ TEST(DICETcatProtocolTests, RuntimePolicyHidesCoreAudioInputWithoutChangingWireG
                               routeState.registry,
                               routeState.route,
                               nullptr,
-                              nullptr,
+                              WaitClock(),
                               DICETcatRuntimePolicy{.exposeDeviceToHostToCoreAudio = false});
 
     ASFW::Audio::DICE::GlobalState global{};
@@ -501,7 +510,7 @@ TEST(DICETcatProtocolTests, RuntimePolicyHidesCoreAudioInputWithoutChangingWireG
 TEST(DICETcatProtocolTests, ChannelLabelsFlattenAcrossStreamsInChannelOrder) {
     CountingFireWireBus bus;
     RouteState routeState;
-    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock());
 
     // No labels before caps are cached.
     std::vector<std::string> inNames;
@@ -538,7 +547,7 @@ TEST(DICETcatProtocolTests, ChannelLabelsFlattenAcrossStreamsInChannelOrder) {
 TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
     CountingFireWireBus bus;
     RouteState routeState;
-    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock());
     ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
 
     ASFW::Audio::DICE::GlobalState global{};
@@ -586,7 +595,7 @@ TEST(SPro24DspProtocolTests, VendorCallLoadsExtensionsLazily) {
     CountingFireWireBus bus;
     RouteState routeState;
     SPro24DspProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
-                               /*timerScheduler=*/nullptr);  // vendor call only, no waits
+                               WaitClock());  // vendor call only, no waits
     ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
     EXPECT_EQ(bus.extensionReadCount, 0);
 

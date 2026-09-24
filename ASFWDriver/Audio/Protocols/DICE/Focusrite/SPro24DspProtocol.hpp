@@ -50,17 +50,17 @@ public:
     /// @param busOps     FireWire bus operations port
     /// @param busInfo    FireWire bus info port
     /// @param route      Current registry-issued device route
-    /// @param timerScheduler Drives the bring-up's retry waits (CLOCK_ACCEPTED,
-    ///                   clock lock, source-lock confirm). Deliberately not
-    ///                   defaulted: without it every wait that needs a second
-    ///                   poll fails at once, which is how this protocol ran
-    ///                   until the S0 golden traces exposed it.
+    /// @param waitClock  Paces the bring-up's waits (CLOCK_ACCEPTED, clock
+    ///                   lock, source-lock confirm). Deliberately required: a
+    ///                   missing time source made every wait that needed a
+    ///                   second poll fail at once, which is how this protocol
+    ///                   ran until the S0 golden traces exposed it.
     SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
                       Protocols::Ports::FireWireBusInfo& busInfo,
                       Discovery::DeviceRegistry& routeRegistry,
                       const Discovery::DeviceRouteToken& route,
                       ::ASFW::IRM::IRMClient* irmClient,
-                      ::ASFW::Scheduling::ITimerScheduler* timerScheduler);
+                      DiceWaitClock& waitClock);
     
     /// Initialize protocol (generic DICE init is delegated to the TCAT core)
     IOReturn Initialize() override;

@@ -3,8 +3,8 @@
 //
 // DiceFamilyDriver.cpp - Linear DICE duplex bring-up and teardown.
 //
-// Each step below is the synchronous form of one DICEDuplexBringupController
-// step, in the same order, with the same transactions, route and teardown
+// Each step below is the synchronous form of one step of the callback-chained
+// DICEDuplexBringupController it replaced (removed in S1), in the same order, with the same transactions, route and teardown
 // checks, poll intervals and timeouts. Changing the choreography is stage S3's
 // job and must show up as a declared golden-trace delta.
 

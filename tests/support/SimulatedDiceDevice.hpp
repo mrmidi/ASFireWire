@@ -405,7 +405,7 @@ private:
         namespace G = ::ASFW::Audio::DICE::GlobalOffset;
         const bool enabled = Enable() != 0;
         if (offset == GlobalField(G::kClockSelect) && enabled) {
-            // DICEDuplexBringupController.cpp:555-560: rewriting CLOCK_SELECT
+            // DiceFamilyDriver::WriteClockSelect: rewriting CLOCK_SELECT
             // while streams are enabled wedged the device-side streams.
             Violation("clock-select-while-enabled");
         }
@@ -413,7 +413,7 @@ private:
             Violation("stream-register-write-while-enabled");
         }
         if (offset == GlobalField(G::kEnable) && value != 0 && !enabled) {
-            // DICEDuplexBringupController.hpp:111-116: a start over a stale
+            // DiceFamilyDriver::StopSequence: a start over a stale
             // duplicate channel wedges the device until a power cycle.
             std::vector<int32_t> armed;
             bool unarmed = false;
@@ -435,7 +435,7 @@ private:
                 Violation("enable-with-duplicate-channel");
             }
             if (unarmed) {
-                // DICEDuplexBringupController.hpp:119-123: every advertised
+                // DiceFamilyDriver::ProgramRxStreams: every advertised
                 // stream must be armed before the single GLOBAL_ENABLE.
                 Violation("enable-with-unarmed-stream");
             }

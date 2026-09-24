@@ -43,7 +43,7 @@ namespace ASFW::Audio {
     //     depending on how quickly caps loaded.
     //
     //   * adopting it as `currentSampleRate` disagreed with bring-up, which
-    //     programs 48 kHz internal (DICEDuplexBringupController). A device found
+    //     programs 48 kHz internal (DiceFamilyDriver). A device found
     //     at 44.1 kHz was published to CoreAudio as 44.1 kHz and then driven at
     //     48 kHz.
     //

@@ -78,7 +78,8 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      "Creating SPro24DspProtocol node=0x%04x unitOffset=%u",
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(
-                busOps, busInfo, routeRegistry, route, irmClient, timerScheduler);
+                busOps, busInfo, routeRegistry, route, irmClient,
+                DICE::DriverKitWaitClock::Shared());
 
         // The plain TCAT devices differ in their profile, not their protocol:
         // geometry comes from the device's own registers either way.
@@ -87,7 +88,8 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      "Creating generic DICETcatProtocol node=0x%04x unitOffset=%u",
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::TCAT::DICETcatProtocol>(
-                busOps, busInfo, routeRegistry, route, irmClient, timerScheduler);
+                busOps, busInfo, routeRegistry, route, irmClient,
+                DICE::DriverKitWaitClock::Shared());
 
         // Weiss is the one DICE device with a non-default runtime policy: it is
         // a one-way interface, so CoreAudio must not be shown the device->host
@@ -98,7 +100,8 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      "remains duplex while CoreAudio hides device->host channels",
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::TCAT::DICETcatProtocol>(
-                busOps, busInfo, routeRegistry, route, irmClient, timerScheduler,
+                busOps, busInfo, routeRegistry, route, irmClient,
+                DICE::DriverKitWaitClock::Shared(),
                 DICE::TCAT::DICETcatRuntimePolicy{
                     .exposeDeviceToHostToCoreAudio = false,
                     .requireSourceLockBeforeStreamEnable = false,

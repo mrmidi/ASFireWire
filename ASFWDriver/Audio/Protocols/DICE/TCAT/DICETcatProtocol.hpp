@@ -6,7 +6,9 @@
 #pragma once
 
 #include "../../Duplex/IDuplexDeviceControl.hpp"
-#include "../Core/DICEDuplexBringupController.hpp"
+#include "../Core/DiceDeviceIo.hpp"
+#include "../Core/DiceFamilyDriver.hpp"
+#include "../Core/DiceWaitClock.hpp"
 #include "../Core/DICETransaction.hpp"
 #include "../Core/DICETypes.hpp"
 #include "../../IDeviceProtocol.hpp"
@@ -18,10 +20,6 @@
 
 namespace ASFW::IRM {
 class IRMClient;
-}
-
-namespace ASFW::Scheduling {
-class ITimerScheduler;
 }
 
 namespace ASFW::Audio::DICE::TCAT {
@@ -53,8 +51,8 @@ public:
                      Protocols::Ports::FireWireBusInfo& busInfo,
                      Discovery::DeviceRegistry& routeRegistry,
                      const Discovery::DeviceRouteToken& route,
-                     ::ASFW::IRM::IRMClient* irmClient = nullptr,
-                     ::ASFW::Scheduling::ITimerScheduler* timerScheduler = nullptr,
+                     ::ASFW::IRM::IRMClient* irmClient,
+                     DiceWaitClock& waitClock,
                      DICETcatRuntimePolicy runtimePolicy = {});
 
     IOReturn Initialize() override;
@@ -105,9 +103,9 @@ private:
     ::ASFW::IRM::IRMClient* irmClient_{nullptr};
     Protocols::Ports::ProtocolRegisterIO io_;
     DICETransaction diceReader_;
-    std::optional<ASFW::Audio::DICE::DICEDuplexBringupController> duplexCtrl_;
+    DiceDeviceIo deviceIo_;
+    std::optional<DiceFamilyDriver> driver_;
     const std::atomic<bool>* teardownCancel_{nullptr};
-    ::ASFW::Scheduling::ITimerScheduler* timerScheduler_{nullptr};  // driver-owned
     DICETcatRuntimePolicy runtimePolicy_{};
     GeneralSections sections_{};
     bool initialized_{false};

@@ -677,8 +677,8 @@ struct HostClockResetGuard {
 };
 
 // Callback-style view of DiceFamilyDriver. The bring-up tests were written
-// against the async DICEDuplexBringupController; running the same test bodies
-// against the linear driver is the equivalence check for stage S1. Each call
+// against the async DICEDuplexBringupController (removed in S1); running the
+// same test bodies against the linear driver was the equivalence check. Each call
 // completes before it returns, so the callback fires synchronously.
 class CallbackDriver {
 public:

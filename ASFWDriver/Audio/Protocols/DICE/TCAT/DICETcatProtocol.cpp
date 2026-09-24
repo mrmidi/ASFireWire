@@ -77,27 +77,26 @@ DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                    Discovery::DeviceRegistry& routeRegistry,
                                    const Discovery::DeviceRouteToken& route,
                                    ::ASFW::IRM::IRMClient* irmClient,
-                                   ::ASFW::Scheduling::ITimerScheduler* timerScheduler,
+                                   DiceWaitClock& waitClock,
                                    DICETcatRuntimePolicy runtimePolicy)
     : busInfo_(busInfo)
     , irmClient_(irmClient)
     , io_(busOps, busInfo, routeRegistry, route)
     , diceReader_(io_)
-    , timerScheduler_(timerScheduler)
+    , deviceIo_(io_, diceReader_, waitClock)
     , runtimePolicy_(runtimePolicy) {
 }
 
 IOReturn DICETcatProtocol::Initialize() {
-    if (!duplexCtrl_) {
-        duplexCtrl_.emplace(diceReader_, io_, busInfo_, nullptr /*workQueue*/, GeneralSections{},
-                            timerScheduler_,
-                            DICEBringupPolicy{
-                                .requireSourceLockBeforeStreamEnable =
-                                    runtimePolicy_.requireSourceLockBeforeStreamEnable,
-                                .requireSourceLockAtConfirm =
-                                    runtimePolicy_.requireSourceLockAtConfirm,
-                            });
-        duplexCtrl_->SetTeardownCancelToken(teardownCancel_);
+    if (!driver_) {
+        driver_.emplace(deviceIo_, busInfo_, GeneralSections{},
+                        DICEBringupPolicy{
+                            .requireSourceLockBeforeStreamEnable =
+                                runtimePolicy_.requireSourceLockBeforeStreamEnable,
+                            .requireSourceLockAtConfirm =
+                                runtimePolicy_.requireSourceLockAtConfirm,
+                        });
+        driver_->SetTeardownCancelToken(teardownCancel_);
     }
 
     initialized_ = true;
@@ -106,19 +105,18 @@ IOReturn DICETcatProtocol::Initialize() {
 }
 
 IOReturn DICETcatProtocol::Shutdown() {
-    if (duplexCtrl_) {
-        if (duplexCtrl_->IsPrepared() || duplexCtrl_->IsRunning()) {
-            const IOReturn stopStatus = duplexCtrl_->StopDuplex();
+    if (driver_) {
+        if (driver_->IsPrepared() || driver_->IsRunning()) {
+            const IOReturn stopStatus = driver_->Stop();
             if (stopStatus != kIOReturnSuccess && stopStatus != kIOReturnUnsupported) {
                 ASFW_LOG(DICE, "DICETcatProtocol::Shutdown duplex stop failed: 0x%x", stopStatus);
             }
         }
 
-        duplexCtrl_->ReleaseOwner([](IOReturn status) {
-            if (status != kIOReturnSuccess) {
-                ASFW_LOG(DICE, "DICETcatProtocol::Shutdown ReleaseOwner failed: 0x%x", status);
-            }
-        });
+        const IOReturn releaseStatus = driver_->ReleaseOwner();
+        if (releaseStatus != kIOReturnSuccess) {
+            ASFW_LOG(DICE, "DICETcatProtocol::Shutdown ReleaseOwner failed: 0x%x", releaseStatus);
+        }
     }
 
     sections_ = {};
@@ -161,15 +159,15 @@ void DICETcatProtocol::EnsureRuntimeStreamGeometry(VoidCallback callback) {
 
 void DICETcatProtocol::SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
     teardownCancel_ = cancel;
-    if (duplexCtrl_) {
-        duplexCtrl_->SetTeardownCancelToken(cancel);
+    if (driver_) {
+        driver_->SetTeardownCancelToken(cancel);
     }
 }
 
 void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
                                      const AudioClockConfig& desiredClock,
                                      PrepareCallback callback) {
-    if (!initialized_ || !duplexCtrl_) {
+    if (!initialized_ || !driver_) {
         callback(kIOReturnNotReady, {});
         return;
     }
@@ -186,53 +184,53 @@ void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
         selectedClock_ = desiredClock;
     }
 
-    duplexCtrl_->PrepareDuplex(
-        channels,
-        diceClock,
-        [this, callback = std::move(callback)](IOReturn status, DuplexPrepareResult result) mutable {
-            if (status == kIOReturnSuccess) {
-                CacheRuntimeCaps(result.runtimeCaps);
-            }
-            callback(status, result);
-        });
+    const auto result = driver_->Prepare(channels, diceClock, /*refreshRuntimeCaps=*/true);
+    if (!result) {
+        callback(result.error(), {});
+        return;
+    }
+    CacheRuntimeCaps(result->runtimeCaps);
+    callback(kIOReturnSuccess, *result);
 }
 
 void DICETcatProtocol::ProgramRx(StageCallback callback) {
-    if (!initialized_ || !duplexCtrl_) {
+    if (!initialized_ || !driver_) {
         callback(kIOReturnNotReady, {});
         return;
     }
 
-    duplexCtrl_->ProgramRx(std::move(callback));
+    const auto result = driver_->ProgramRx();
+    callback(result ? kIOReturnSuccess : result.error(), result.value_or(DuplexStageResult{}));
 }
 
 void DICETcatProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
-    if (!initialized_ || !duplexCtrl_) {
+    if (!initialized_ || !driver_) {
         callback(kIOReturnNotReady, {});
         return;
     }
 
-    duplexCtrl_->ProgramTxAndEnableDuplex(std::move(callback));
+    const auto result = driver_->ProgramTxAndEnable();
+    callback(result ? kIOReturnSuccess : result.error(), result.value_or(DuplexStageResult{}));
 }
 
 void DICETcatProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
-    if (!initialized_ || !duplexCtrl_) {
+    if (!initialized_ || !driver_) {
         callback(kIOReturnNotReady, {});
         return;
     }
 
-    duplexCtrl_->ConfirmDuplexStart(
-        [this, callback = std::move(callback)](IOReturn status, DuplexConfirmResult result) mutable {
-            if (status == kIOReturnSuccess) {
-                CacheRuntimeCaps(result.runtimeCaps);
-            }
-            callback(status, result);
-        });
+    const auto result = driver_->Confirm();
+    if (!result) {
+        callback(result.error(), {});
+        return;
+    }
+    CacheRuntimeCaps(result->runtimeCaps);
+    callback(kIOReturnSuccess, *result);
 }
 
 void DICETcatProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
                                         ClockApplyCallback callback) {
-    if (!initialized_ || !duplexCtrl_) {
+    if (!initialized_ || !driver_) {
         callback(kIOReturnNotReady, {});
         return;
     }
@@ -250,14 +248,13 @@ void DICETcatProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
         selectedClock_ = desiredClock;
     }
 
-    duplexCtrl_->ApplyClockConfig(
-        diceClock,
-        [this, callback = std::move(callback)](IOReturn status, DuplexClockApplyResult result) mutable {
-            if (status == kIOReturnSuccess) {
-                CacheRuntimeCaps(result.runtimeCaps);
-            }
-            callback(status, result);
-        });
+    const auto result = driver_->ApplyClock(diceClock);
+    if (!result) {
+        callback(result.error(), {});
+        return;
+    }
+    CacheRuntimeCaps(result->runtimeCaps);
+    callback(kIOReturnSuccess, *result);
 }
 
 void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {
@@ -309,10 +306,10 @@ void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {
 
 
 IOReturn DICETcatProtocol::StopDuplex() {
-    if (!duplexCtrl_) {
+    if (!driver_) {
         return kIOReturnSuccess;
     }
-    return duplexCtrl_->StopDuplex();
+    return driver_->Stop();
 }
 
 void DICETcatProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
@@ -449,7 +446,7 @@ void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
     // Per-stream wire geometry from the DICE TX_NUMBER/RX_NUMBER headers. Stream
     // count includes streams the device reports with iso=-1 (disabled) that the
     // host must still arm for a multi-stream device such as the Venice F32
-    // (2×16). Mirrors DICEDuplexBringupController's per-stream fill.
+    // (2×16). Mirrors DiceFamilyDriver's per-stream fill.
     auto fillPerStream = [](const StreamConfig& sc,
                             uint32_t& outCount,
                             AudioStreamWireInfo* outStreams) noexcept {
