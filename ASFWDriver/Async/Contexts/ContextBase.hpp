@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "../../Hardware/HardwareInterface.hpp"
+#include "../../Hardware/OHCIConstants.hpp"
 #include "../../Hardware/RegisterMap.hpp"
 
 namespace ASFW::Async {
@@ -254,10 +255,13 @@ public:
      * Used for polling during context stop sequence.
      */
     [[nodiscard]] bool IsActive() const noexcept {
-        constexpr uint32_t kActiveBit = 1u << 13;
+        // ContextControl.active is bit 10 (OHCI §3.1.1; kContextControlActiveBit).
+        // A local `1u << 13` (a reserved bit) used to live here, so this always
+        // answered false: every stop/quiesce wait returned instantly and
+        // reported success while hardware was still ACTIVE.
         const uint32_t ctl = ReadControl();
         if (ctl == 0xFFFFFFFFu) { return false; }
-        return (ctl & kActiveBit) != 0;
+        return (ctl & Driver::kContextControlActiveBit) != 0;
     }
 
     /**
