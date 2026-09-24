@@ -65,6 +65,8 @@ the resolver is scaffolding for experiments.
 
 ## 3. Decisions that change observable behaviour
 
+**Decided 2026-09-24** — see [`TIMING_GEOMETRY_OWNERSHIP.md`](TIMING_GEOMETRY_OWNERSHIP.md) §0: D1 formula at every rate; D2 V3 geometry adopted (TX late binding stays in FW-209); D3 Saffire calibration adopted. The "proposed default" column below records the first migration.
+
 Each of these needs your decision, the Epic 2 baseline, or both. None is taken implicitly by the port.
 
 | # | Change | Where it changes behaviour | Proposed default for this epic |

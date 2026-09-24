@@ -306,21 +306,20 @@ TEST(DiceProfileTests, FocusriteAsymmetricSafetyOffsetsAndLatencies) {
     const auto* profile = FindDiceProfile(kFocusriteVendorId, 0x000007, 0x123456789ULL);
     ASSERT_NE(profile, nullptr);
 
+    // Hardware-calibrated Saffire declarations (decision D3): 6-packet playback
+    // safety, 10-packet capture safety, device latency 53 in / 52 out at 48 kHz
+    // doubling per rate tier.
     // 48 kHz
-    // Tx (Output): 6 packets * 8 frames = 48 frames
-    EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 48);
-    // Rx (Input): 16 packets * 8 frames = 128 frames
-    EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 128);
-    EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 29);
-    EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 29);
+    EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 48);   // 6 x 8
+    EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 80);   // 10 x 8
+    EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 52);
+    EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 53);
 
     // 96 kHz
-    // Tx (Output): (6 + 2) packets * 16 frames = 128 frames
-    EXPECT_EQ(profile->TxSafetyOffsetFrames(96000.0), 128);
-    // Rx (Input): (16 + 2) packets * 16 frames = 288 frames
-    EXPECT_EQ(profile->RxSafetyOffsetFrames(96000.0), 288);
-    EXPECT_EQ(profile->TxReportedLatencyFrames(96000.0), 59);
-    EXPECT_EQ(profile->RxReportedLatencyFrames(96000.0), 59);
+    EXPECT_EQ(profile->TxSafetyOffsetFrames(96000.0), 128);  // (6 + 2) x 16
+    EXPECT_EQ(profile->RxSafetyOffsetFrames(96000.0), 192);  // (10 + 2) x 16
+    EXPECT_EQ(profile->TxReportedLatencyFrames(96000.0), 104);
+    EXPECT_EQ(profile->RxReportedLatencyFrames(96000.0), 106);
 }
 
 TEST(DiceProfileTests, ResolvesMidasVeniceProfileByVendorAndModel) {

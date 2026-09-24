@@ -13,10 +13,9 @@
 // packets. Behaviour only; nothing is copied. Cross-check against
 // references/linux-sound-firewire-stack/amdtp-stream.c before changing it.
 //
-// At 48/96/192 kHz blocking this is 12800 ticks, the value main has always
-// sent. At 32 kHz and the 44.1 kHz family it is not; see
-// ResolvedTimingGeometry.hpp (AppliedTransferDelayTicks) for why main does
-// not apply it there yet.
+// At 48/96/192 kHz blocking this is 12800 ticks. At 32 kHz it is 14848 and
+// in the 44.1 kHz family 13162; ResolvedTimingGeometry.hpp applies it at every
+// rate (decision D1, as on the midi branch).
 
 #pragma once
 

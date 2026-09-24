@@ -41,6 +41,10 @@ public:
     // right by luck (both streams are 10 wide), the data-block size did not.
     [[nodiscard]] bool BuildRxStreamConfig(
         uint32_t streamIndex, AudioStreamConfig& outConfig) const noexcept override;
+    // Not part of the Saffire latency calibration: keeps the vendor ladder.
+    [[nodiscard]] uint32_t RxSafetyOffsetFrames(double sampleRate) const noexcept override;
+    [[nodiscard]] uint32_t TxReportedLatencyFrames(double sampleRate) const noexcept override;
+    [[nodiscard]] uint32_t RxReportedLatencyFrames(double sampleRate) const noexcept override;
     [[nodiscard]] uint32_t TxStreamCount() const noexcept override { return 2; }
     [[nodiscard]] uint32_t RxStreamCount() const noexcept override { return 2; }
     // TxChannelCount() is deliberately NOT overridden: the base sums

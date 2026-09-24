@@ -48,7 +48,7 @@ TEST(TimingGeometryTests, Shipped48kGeometryIsReproducedExactly) {
     EXPECT_EQ(resolved->inputLatencyFrames, 29U);
     EXPECT_EQ(resolved->outputSafetyOffsetFrames, 48U);
     EXPECT_EQ(resolved->inputSafetyOffsetFrames, 128U);
-    EXPECT_EQ(resolved->inputSafetyFloorFrames, 128U);
+    EXPECT_EQ(resolved->inputSafetyFloorFrames, CompletionBatchFrames(*AmdtpRateGeometryForSampleRate(48000)));
     EXPECT_EQ(resolved->rxTransferDelayTicks, 12800U);
     EXPECT_EQ(resolved->txTransferDelayTicks, 12800U);
 }
@@ -99,31 +99,31 @@ TEST(TimingGeometryTests, InvalidSafetyIsRejected) {
               TimingGeometryError::kInvalidSafetyOffset);
 }
 
-// Agreement with the legacy input-safety rule at 48 kHz, for every profile
-// value a device could declare. The lambda is the deleted
-// RequiredInputSafetyFrames body (graph floor: 40-frame IRQ batch + 64 jitter).
-TEST(TimingGeometryTests, InputSafetyMatchesLegacyRuleAt48k) {
-    const auto legacy = [](uint32_t profileInputSafety) {
-        const uint32_t interruptBatch = Geometry::kMaximumNominalFramesPerInterrupt + 64U;
-        const uint32_t raw =
-            profileInputSafety > interruptBatch ? profileInputSafety : interruptBatch;
-        return ((raw + 31U) / 32U) * 32U;
-    };
-    const auto wire = *AmdtpRateGeometryForSampleRate(48000);
-    for (uint32_t profileValue = 0; profileValue <= 1024; ++profileValue) {
-        EXPECT_EQ(ResolveInputSafetyFrames(profileValue, wire), legacy(profileValue))
-            << profileValue;
+// D3: input safety is the profile's value floored at one completion batch --
+// no jitter term, no grid alignment, so a calibrated value stands exactly.
+TEST(TimingGeometryTests, InputSafetyIsTheProfileValueFlooredAtOneBatch) {
+    for (const uint32_t rate : kAmdtpRates) {
+        SCOPED_TRACE(rate);
+        const auto wire = *AmdtpRateGeometryForSampleRate(rate);
+        const uint32_t batch = CompletionBatchFrames(wire);
+        EXPECT_EQ(ResolveInputSafetyFrames(0, wire), batch);
+        EXPECT_EQ(ResolveInputSafetyFrames(batch - 1, wire), batch);
+        EXPECT_EQ(ResolveInputSafetyFrames(batch + 1, wire), batch + 1);  // not aligned
     }
+    // The Saffire calibration (10 packets = 80 frames at 48 kHz) is not raised.
+    EXPECT_EQ(ResolveInputSafetyFrames(80, *AmdtpRateGeometryForSampleRate(48000)), 80U);
 }
 
-TEST(TimingGeometryTests, InputSafetyFloorFollowsTheRate) {
-    // One six-packet completion group holds at most 5 DATA packets in blocking
-    // mode, so the floor is align32(5 x SYT interval + 64 jitter).
-    EXPECT_EQ(ResolveInputSafetyFrames(0, *AmdtpRateGeometryForSampleRate(48000)), 128U);
-    EXPECT_EQ(ResolveInputSafetyFrames(0, *AmdtpRateGeometryForSampleRate(44100)), 128U);
-    EXPECT_EQ(ResolveInputSafetyFrames(0, *AmdtpRateGeometryForSampleRate(96000)), 160U);
-    EXPECT_EQ(ResolveInputSafetyFrames(0, *AmdtpRateGeometryForSampleRate(192000)), 224U);
-    EXPECT_EQ(ResolveInputSafetyFrames(0, *AmdtpRateGeometryForSampleRate(32000)), 96U);
+TEST(TimingGeometryTests, CompletionBatchFollowsTheRate) {
+    // Most DATA packets one completion group can carry, times the SYT interval.
+    const uint32_t group = Geometry::kTimingGroupPackets;
+    for (const uint32_t rate : kAmdtpRates) {
+        SCOPED_TRACE(rate);
+        const auto wire = *AmdtpRateGeometryForSampleRate(rate);
+        EXPECT_EQ(CompletionBatchFrames(wire),
+                  ASFW::Encoding::MaxBlockingDataPacketsInCycles(group, wire) *
+                      wire.sytIntervalFrames);
+    }
 }
 
 // The completion-batch bound is checked against the production cadence itself:
@@ -156,7 +156,7 @@ TEST(TimingGeometryTests, MaxDataPacketsBoundMatchesTheProductionCadence) {
     }
 }
 
-TEST(TimingGeometryTests, TransferDelayFormulaAndShippedCompatibility) {
+TEST(TimingGeometryTests, TransferDelayIsTheBlockingFormulaAtEveryRate) {
     struct Row {
         uint32_t rate;
         uint32_t blocking;
@@ -170,9 +170,13 @@ TEST(TimingGeometryTests, TransferDelayFormulaAndShippedCompatibility) {
                   row.blocking);
         EXPECT_EQ(ASFW::Encoding::AmdtpTransferDelayTicks(wire, StreamMode::kNonBlocking),
                   8704U);
-        // D1: only the shipped value is applied until FW-221 validates the rest.
-        EXPECT_EQ(AppliedTransferDelayTicks(wire, StreamMode::kBlocking), 12800U);
-        EXPECT_EQ(AppliedTransferDelayTicks(wire, StreamMode::kNonBlocking), 12800U);
+        // D1: the blocking formula is applied to every stream (as midi does),
+        // whatever the stream mode.
+        EXPECT_EQ(AppliedTransferDelayTicks(wire), row.blocking);
+        const auto resolved = ResolveTimingGeometry(row.rate, StreamMode::kNonBlocking, kSaffire48);
+        ASSERT_TRUE(resolved.has_value());
+        EXPECT_EQ(resolved->rxTransferDelayTicks, row.blocking);
+        EXPECT_EQ(resolved->txTransferDelayTicks, row.blocking);
     }
 }
 

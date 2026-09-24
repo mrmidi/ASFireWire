@@ -8,6 +8,20 @@ Epic FW-177, ticket FW-180. This document turns two inputs into the target owner
 It names **one final authority for every semantic quantity**. The implementation tickets (FW-181/182/183)
 and the regression tests (FW-184) follow it. FW-185 checks the final tree against it.
 
+## 0. Decisions taken (2026-09-24, after the first migration)
+
+The first migration (FW-181/182/183) kept main's shipped values. The owner then
+decided the open items of [`TIMING_GEOMETRY_MIDI_DISTILLATION.md`](TIMING_GEOMETRY_MIDI_DISTILLATION.md) §3:
+
+| # | Decision | Where |
+|---|---|---|
+| D1 | Transfer delay is the Linux-derived blocking formula at every rate, as on midi: 12800 ticks at 48/96/192 kHz, 13162 in the 44.1 kHz family, 14848 at 32 kHz. The compatibility path that pinned 12800 is gone. | `AppliedTransferDelayTicks` |
+| D2 | midi's V3 HAL geometry (12288 frames at 48 kHz, 24576 at 96 kHz, 1024 IO budget) is hardware-validated and is adopted, together with 8-packet completion groups. The 504-packet TX in-flight ring and the late-binding finality engine stay in FW-209: main's TX writes final content at prepare time. | follow-up commits |
+| D3 | The Saffire Pro 14/24/24 DSP calibration is hardware-validated and is adopted: latency 53 in / 52 out at 48 kHz (doubling per rate tier), capture safety 10 packets. The input-safety floor is one completion batch — no jitter term, no alignment — so calibrated values stand. The Pro 40 was not calibrated and keeps the vendor ladder. | `FocusriteSaffireProfile.cpp`, `ResolveInputSafetyFrames` |
+
+Rows in §2–§3 below that name 12800 at every rate, the 1536/512 geometry or the
+jitter-plus-alignment floor describe the first migration; the table above supersedes them.
+
 ## 1. The model
 
 ```

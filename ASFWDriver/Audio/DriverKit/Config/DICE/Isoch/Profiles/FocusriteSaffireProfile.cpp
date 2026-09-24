@@ -119,19 +119,58 @@ uint32_t FocusriteSaffireProfile::TxSafetyOffsetFrames(double sampleRate) const 
                                             TimingLadder::RateAddend::kPerTier);
 }
 
-// Receive (capture) safety offset is configured to be larger (16 packets) to handle
-// FireWire packet reception jitter and asynchronous processing overhead.
+// Saffire Pro 14 / 24 / 24 DSP declarations, calibrated on hardware (decision
+// D3; carried over from the midi branch's DICE profile builder):
+//
+// - Device latency 53 in / 52 out at 48 kHz, doubling per rate tier. Physical
+//   loopback (tools/rtl/rtl_loopback -d "Saffire") measured RTL_ts invariant at
+//   105.01 frames across buffer sizes 512/128/64; the vendor ladder (29/29)
+//   left a +47-frame uncompensated residual, the calibrated pair +0.01.
+// - Capture safety 10 packets (80 frames at 48 kHz): covers one completion
+//   batch with headroom and saves 48 frames (1 ms) of round trip over the old
+//   16-packet ladder. The resolver floors it at one completion batch only, so
+//   the calibrated value stands.
+// - Playback safety keeps the 6-packet ladder.
+namespace {
+constexpr uint32_t kCalibratedRxDelayPackets = 10;
+constexpr uint32_t kCalibratedInputLatency48k = 53;
+constexpr uint32_t kCalibratedOutputLatency48k = 52;
+
+[[nodiscard]] constexpr uint32_t PerTier(uint32_t at48k, double sampleRate) noexcept {
+    return TimingLadder::FramesPerPacket(sampleRate) == 0
+               ? 0U
+               : at48k << TimingLadder::RateTier(sampleRate);
+}
+static_assert(PerTier(kCalibratedInputLatency48k, 48000.0) == 53);
+static_assert(PerTier(kCalibratedInputLatency48k, 96000.0) == 106);
+static_assert(PerTier(kCalibratedOutputLatency48k, 192000.0) == 208);
+} // namespace
+
 uint32_t FocusriteSaffireProfile::RxSafetyOffsetFrames(double sampleRate) const noexcept {
+    return TimingLadder::SafetyOffsetFrames(kCalibratedRxDelayPackets, sampleRate,
+                                            TimingLadder::RateAddend::kPerTier);
+}
+
+uint32_t FocusriteSaffireProfile::TxReportedLatencyFrames(double sampleRate) const noexcept {
+    return PerTier(kCalibratedOutputLatency48k, sampleRate);
+}
+
+uint32_t FocusriteSaffireProfile::RxReportedLatencyFrames(double sampleRate) const noexcept {
+    return PerTier(kCalibratedInputLatency48k, sampleRate);
+}
+
+// The Pro 40 was not part of the calibration: it keeps the vendor ladder
+// (16-packet capture safety, 29/59/119 latency) until it is measured.
+uint32_t FocusriteSaffirePro40Profile::RxSafetyOffsetFrames(double sampleRate) const noexcept {
     return TimingLadder::SafetyOffsetFrames(TimingLadder::kRxDelayPackets, sampleRate,
                                             TimingLadder::RateAddend::kPerTier);
 }
 
-// The reported latencies in frames matching the focusrite saffire kext model.
-uint32_t FocusriteSaffireProfile::TxReportedLatencyFrames(double sampleRate) const noexcept {
+uint32_t FocusriteSaffirePro40Profile::TxReportedLatencyFrames(double sampleRate) const noexcept {
     return TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 
-uint32_t FocusriteSaffireProfile::RxReportedLatencyFrames(double sampleRate) const noexcept {
+uint32_t FocusriteSaffirePro40Profile::RxReportedLatencyFrames(double sampleRate) const noexcept {
     return TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 

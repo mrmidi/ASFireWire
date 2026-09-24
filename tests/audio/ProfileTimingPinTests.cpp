@@ -121,7 +121,9 @@ TEST(ProfileTimingPinTests, EveryProfileResolvesThroughTheDriverBridge) {
             EXPECT_EQ(resolved->outputSafetyOffsetFrames, profile->TxSafetyOffsetFrames(rate));
             EXPECT_GE(resolved->inputSafetyOffsetFrames, profile->RxSafetyOffsetFrames(rate));
             EXPECT_GE(resolved->inputSafetyOffsetFrames, resolved->inputSafetyFloorFrames);
-            EXPECT_EQ(resolved->txTransferDelayTicks, 12800U);
+            EXPECT_EQ(resolved->txTransferDelayTicks,
+                      ASFW::Audio::Runtime::AppliedTransferDelayTicks(
+                          *ASFW::Encoding::AmdtpRateGeometryForSampleRate(rate)));
         }
     }
 }

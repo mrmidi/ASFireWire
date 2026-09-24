@@ -84,23 +84,13 @@ struct ResolvedTimingGeometry final {
                                      const ResolvedTimingGeometry&) = default;
 };
 
-/// The transfer delay main has sent at every rate since before the formula was
-/// adopted. Named once so the compatibility exception below is the only place
-/// it appears.
-inline constexpr uint32_t kShippedTransferDelayTicks = 12'800;
-
-/// Transfer delay applied on the wire.
-///
-/// INTENTIONAL COMPATIBILITY PATH (TIMING_GEOMETRY_MIDI_DISTILLATION.md, D1):
-/// the formula is the authority where it agrees with shipped behaviour
-/// (48/96/192 kHz blocking). Where it does not -- 32 kHz, the 44.1 kHz family,
-/// non-blocking -- adopting it changes the SYT on the wire, which is only
-/// acceptable with hardware validation (FW-221). Until then those rates keep
-/// the shipped value. ResolvedTimingGeometryTests pins both halves.
+/// Transfer delay applied on the wire (decision D1, TIMING_GEOMETRY_MIDI_
+/// DISTILLATION.md): the Linux-derived formula in blocking mode for every
+/// stream, as the midi branch applies it. 12800 ticks at 48/96/192 kHz,
+/// 13162 in the 44.1 kHz family, 14848 at 32 kHz.
 [[nodiscard]] constexpr uint32_t AppliedTransferDelayTicks(
-    const Encoding::AmdtpRateGeometry& geometry, Encoding::StreamMode mode) noexcept {
-    const uint32_t derived = Encoding::AmdtpTransferDelayTicks(geometry, mode);
-    return derived == kShippedTransferDelayTicks ? derived : kShippedTransferDelayTicks;
+    const Encoding::AmdtpRateGeometry& geometry) noexcept {
+    return Encoding::AmdtpTransferDelayTicks(geometry, Encoding::StreamMode::kBlocking);
 }
 
 /// Frames carried by the largest possible completion group at this rate: the
@@ -116,15 +106,14 @@ inline constexpr uint32_t kShippedTransferDelayTicks = 12'800;
 
 /// Input safety: the data-visibility margin only (CoreAudio accounts for the
 /// IO buffer separately). The larger of the profile's value and one completion
-/// batch plus scheduling jitter, aligned up to the 32-frame grid -- the same
-/// rule as the former RequiredInputSafetyFrames, with the batch made rate-general.
+/// batch -- a reader can lag the writer by one whole group between
+/// completions, so no declaration may cover less (decision D3). No jitter term
+/// and no grid alignment: a hardware-calibrated profile value (Saffire RX
+/// safety, 80 frames at 48 kHz) must stand exactly as declared.
 [[nodiscard]] constexpr uint32_t ResolveInputSafetyFrames(
     uint32_t profileInputSafetyFrames, const Encoding::AmdtpRateGeometry& geometry) noexcept {
-    using Geometry = IsochTransport::AudioTimingGeometry;
-    const uint32_t batch = CompletionBatchFrames(geometry) + Geometry::kSchedulingJitterFrames;
-    const uint32_t raw = profileInputSafetyFrames > batch ? profileInputSafetyFrames : batch;
-    return ((raw + Geometry::kFrameAlignment - 1) / Geometry::kFrameAlignment) *
-           Geometry::kFrameAlignment;
+    const uint32_t batch = CompletionBatchFrames(geometry);
+    return profileInputSafetyFrames > batch ? profileInputSafetyFrames : batch;
 }
 
 [[nodiscard]] constexpr std::expected<ResolvedTimingGeometry, TimingGeometryError>
@@ -149,7 +138,10 @@ ResolveTimingGeometry(uint32_t sampleRateHz,
         return std::unexpected(TimingGeometryError::kInvalidSafetyOffset);
     }
 
-    const uint32_t transferDelay = AppliedTransferDelayTicks(*wire, streamMode);
+    // Stream mode does not change the applied delay (D1: blocking formula for
+    // every stream, as midi does); kept as an input for the multi-rate epic.
+    (void)streamMode;
+    const uint32_t transferDelay = AppliedTransferDelayTicks(*wire);
     return ResolvedTimingGeometry{
         .sampleRateHz = sampleRateHz,
         .fdf = wire->fdf,

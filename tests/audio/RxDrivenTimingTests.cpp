@@ -245,15 +245,13 @@ TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
 
 TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {
     // The IO buffer window must NOT inflate the safety offset (was 624). The
-    // margin is one completion batch + jitter (40+64=104 at 48 kHz), floored by
-    // the profile value and aligned up to the 32-frame grid.
+    // margin is the profile value floored at one completion batch (D3): no
+    // jitter term and no alignment, so calibrated values stand.
     const auto wire48k = *ASFW::Encoding::AmdtpRateGeometryForSampleRate(48000);
-    //   profile floor 128 wins over the 104 batch -> 128.
+    const uint32_t batch = ASFW::Audio::Runtime::CompletionBatchFrames(wire48k);
     EXPECT_EQ(ASFW::Audio::Runtime::ResolveInputSafetyFrames(128, wire48k), 128U);
-    //   no profile floor -> interrupt batch 104 aligned up to 128.
-    EXPECT_EQ(ASFW::Audio::Runtime::ResolveInputSafetyFrames(0, wire48k), 128U);
-    //   a larger profile floor is honored, aligned: 200 -> 224.
-    EXPECT_EQ(ASFW::Audio::Runtime::ResolveInputSafetyFrames(200, wire48k), 224U);
+    EXPECT_EQ(ASFW::Audio::Runtime::ResolveInputSafetyFrames(0, wire48k), batch);
+    EXPECT_EQ(ASFW::Audio::Runtime::ResolveInputSafetyFrames(200, wire48k), 200U);
 }
 
 } // namespace
