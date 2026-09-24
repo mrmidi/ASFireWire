@@ -350,11 +350,13 @@ kern_return_t ContextManager::stopAT() noexcept {
 
     ASFW_LOG(Async, "ContextManager::stopAT - stopping AT contexts");
 
-    kern_return_t kr = state_->atReqCtx.Stop();
-    if (kr != kIOReturnSuccess) return kr;
-
-    kr = state_->atRspCtx.Stop();
-    if (kr != kIOReturnSuccess) return kr;
+    // Stop both even if the first times out: a stuck request context must not
+    // leave the response context RUN through the reset (Linux stops both
+    // unconditionally, ohci.c:2002-2003). Report the first failure.
+    const kern_return_t reqKr = state_->atReqCtx.Stop();
+    const kern_return_t rspKr = state_->atRspCtx.Stop();
+    if (reqKr != kIOReturnSuccess) return reqKr;
+    if (rspKr != kIOReturnSuccess) return rspKr;
 
     ASFW_LOG(Async, "ContextManager::stopAT - SUCCESS");
     return kIOReturnSuccess;
@@ -368,11 +370,11 @@ kern_return_t ContextManager::stopAR() noexcept {
 
     ASFW_LOG(Async, "ContextManager::stopAR - stopping AR contexts");
 
-    kern_return_t kr = state_->arReqCtx.Stop();
-    if (kr != kIOReturnSuccess) return kr;
-
-    kr = state_->arRspCtx.Stop();
-    if (kr != kIOReturnSuccess) return kr;
+    // Same as stopAT: stop both, report the first failure.
+    const kern_return_t reqKr = state_->arReqCtx.Stop();
+    const kern_return_t rspKr = state_->arRspCtx.Stop();
+    if (reqKr != kIOReturnSuccess) return reqKr;
+    if (rspKr != kIOReturnSuccess) return rspKr;
 
     ASFW_LOG(Async, "ContextManager::stopAR - SUCCESS");
     return kIOReturnSuccess;
