@@ -48,6 +48,19 @@ add_device_test(DICETcatProtocolTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
+# DICE golden wire traces against the simulated device (AUDIO_SESSION_REDESIGN.md S0).
+# Goldens live in tests/golden/dice; ASFW_UPDATE_GOLDEN=1 rewrites them.
+add_device_test(DiceWireCharacterizationTests
+    DiceWireCharacterizationTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICEDuplexBringupController.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/TCAT/DICETcatProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspTypes.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SaffireproCommon.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+
 # DICE restart-session tests
 add_device_test(DuplexRestartSessionTests
     DuplexRestartSessionTests.cpp

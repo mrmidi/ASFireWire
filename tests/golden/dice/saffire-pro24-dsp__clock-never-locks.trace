@@ -1,0 +1,32 @@
+## EnsureRuntimeStreamGeometry
+R ffff.e0000000 40 @s400
+R ffff.e0000028 104 @s400
+R ffff.e00001a4 512 @s400
+R ffff.e00003a4 56 @s400
+R ffff.e00003dc 512 @s400
+R ffff.e00005dc 512 @s400
+R ffff.e00007dc 104 @s400
+## -> 0x00000000
+## PrepareDuplex
+R ffff.e0000054 4 @s400
+R ffff.e0000000 40 @s400
+R ffff.e0000028 380 @s400
+R ffff.e0000028 8 @s400
+L ffff.e0000028 ffff000000000000 -> ffc0000100000000 = ffff000000000000 @s400
+R ffff.e0000028 8 @s400
+W ffff.e0000074 0000020c @s400
+# notify 0x20
+R ffff.e0000028 380 @s400
+R ffff.e0000028 380 @s400
+W ffff.e0000078 00000000 @s400
+R ffff.e00001a8 4 @s400
+W ffff.e00001ac ffffffff @s400
+W ffff.e00001b8 00000002 @s400
+R ffff.e00003e0 4 @s400
+W ffff.e00003e4 ffffffff @s400
+W ffff.e00003e8 00000000 @s400
+L ffff.e0000028 ffc0000100000000 -> ffff000000000000 = ffc0000100000000 @s400
+## -> 0xe00002d8
+## StopDuplex
+## -> 0x00000000
+== owner=ffff000000000000 enable=0 tx=[-1] rx=[-1]
