@@ -265,6 +265,12 @@ add_protocols_test(SessionRegistryTests
     "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
 )
 
+# SCSI HBA target-0 create/destroy edge handling
+add_protocols_test(TargetLifecycleTests
+    TargetLifecycleTests.cpp
+    "${ASFW_DRIVER_DIR}/SCSIController/TargetLifecycle.cpp"
+)
+
 # SCSI HBA <-> SBP-2 bridge, end to end over the real session stack
 add_protocols_test(SBP2TargetBridgeTests
     SBP2TargetBridgeTests.cpp
