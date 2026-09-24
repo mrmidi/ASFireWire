@@ -68,6 +68,42 @@ extension ASFWMCPToolCatalog {
             idempotent: true,
             summary: "Stop and cleanly tear down the active PHASE 88 duplex lifecycle.",
             requiredProtocolHints: ["bebob", "cmp"]
+        ),
+        ASFWMCPToolDefinition(
+            name: "asfw_bebob_get_streaming_stats",
+            group: "bebob", visibility: .developerWrite, readOnly: false, idempotent: false,
+            summary: "Read BridgeCo isochronous stream counters with the 1394 streams identified by endpoint, not column order.",
+            requiredProtocolHints: ["bebob"]
+        ),
+        ASFWMCPToolDefinition(
+            name: "asfw_bebob_get_silicon_status",
+            group: "bebob", visibility: .developerWrite, readOnly: false, idempotent: false,
+            summary: "Read DM1000 framer and TGEN status latches using sys avstat all.",
+            requiredProtocolHints: ["bebob"]
+        ),
+        ASFWMCPToolDefinition(
+            name: "asfw_bebob_get_sync_state",
+            group: "bebob", visibility: .developerWrite, readOnly: false, idempotent: false,
+            summary: "Read audio state, sync source, sample rate, digital format, and iso channel assignments using fw show.",
+            requiredProtocolHints: ["bebob"]
+        ),
+        ASFWMCPToolDefinition(
+            name: "asfw_bebob_get_mixer_routing",
+            group: "bebob", visibility: .developerWrite, readOnly: false, idempotent: false,
+            summary: "Read the 1814 routing matrix and headphone/S/PDIF sources using fw mix show.",
+            requiredProtocolHints: ["bebob"]
+        ),
+        ASFWMCPToolDefinition(
+            name: "asfw_bebob_get_meter_peaks",
+            group: "bebob", visibility: .developerWrite, readOnly: false, idempotent: false,
+            summary: "Read BeBoB peak meter values using fw vol peak.",
+            requiredProtocolHints: ["bebob"]
+        ),
+        ASFWMCPToolDefinition(
+            name: "asfw_bebob_shell_execute",
+            group: "bebob", visibility: .developerWrite, readOnly: false, idempotent: false,
+            summary: "Execute one of the explicitly supported read-only BeBoB diagnostics (sys stat, sys avstat all, fw show, fw mix show, fw vol peak).",
+            requiredProtocolHints: ["bebob"]
         )
     ]
 }

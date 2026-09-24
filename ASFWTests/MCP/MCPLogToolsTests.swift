@@ -1,7 +1,28 @@
+import Foundation
 import Testing
 @testable import ASFW
 
 struct MCPLogToolsTests {
+    @Test func runningDriverVersionIsReadWithoutBusTraffic() async throws {
+        var bytes = Data(repeating: 0, count: 280)
+        bytes.replaceSubrange(0..<5, with: Data("0.3.0".utf8))
+        bytes.replaceSubrange(32..<39, with: Data("bc12d10".utf8))
+        bytes.replaceSubrange(40..<47, with: Data("bc12d10".utf8))
+        bytes.replaceSubrange(81..<85, with: Data("test".utf8))
+        let version = try #require(DriverVersionInfo(data: bytes))
+        let core = ASFWMCPCore(configuration: .readOnlyDeveloper,
+                               driver: MockASFWDriverControl(driverVersion: version))
+
+        let result = await core.callTool(name: "asfw_get_driver_version")
+        guard case .object(let data) = result.data else {
+            Issue.record("Expected running-driver metadata.")
+            return
+        }
+        #expect(result.ok)
+        #expect(data["gitCommitShort"] == .string("bc12d10"))
+        #expect(data["gitBranch"] == .string("test"))
+    }
+
     @Test func queryFiltersByCategorySeverityAndSubstring() async {
         let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: MockASFWDriverControl())
         let result = await core.callTool(

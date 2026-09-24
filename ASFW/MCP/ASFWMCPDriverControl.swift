@@ -1,6 +1,7 @@
 import Foundation
 
 protocol ASFWDriverControlling {
+    func fetchDriverVersion() async -> DriverVersionInfo?
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot
     func fetchTopology() async -> ASFWMCPTopologySnapshot?
     func fetchConfigROM(nodeId: UInt32, generation: UInt32) async -> ASFWMCPConfigRomSummary?
@@ -35,12 +36,18 @@ actor MockASFWDriverControl: ASFWDriverControlling {
     private let topologyValid: Bool
     private let droppedEventCount: UInt32
     private let timeoutCount: UInt32
+    private let driverVersion: DriverVersionInfo?
     private var attemptedWriteCount: Int = 0
     private var duetInputFdf: UInt8 = 0x02
     private var duetOutputFdf: UInt8 = 0x02
     private var phase88Streaming = false
 
+    func fetchDriverVersion() async -> DriverVersionInfo? {
+        driverVersion
+    }
+
     init(
+        driverVersion: DriverVersionInfo? = nil,
         generation: UInt32 = 17,
         nodes: [ASFWMCPNodeSummary] = MockASFWDriverControl.defaultNodes,
         transactions: [ASFWMCPTransactionEvent] = MockASFWDriverControl.defaultTransactions,
@@ -51,6 +58,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         droppedEventCount: UInt32 = 0,
         timeoutCount: UInt32 = 0
     ) {
+        self.driverVersion = driverVersion
         self.generation = generation
         self.nodes = nodes
         self.transactions = transactions

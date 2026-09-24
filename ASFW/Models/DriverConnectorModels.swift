@@ -115,7 +115,7 @@ struct DriverConnectorStatus {
     var linkActive: Bool { (flags & DriverConnectorSharedStatusFlags.linkActive) != 0 }
 }
 
-struct DriverConnectorVersionInfo {
+struct DriverConnectorVersionInfo: Sendable {
     let semanticVersion: String
     let gitCommitShort: String
     let gitCommitFull: String

@@ -27,6 +27,7 @@ enum ASFWMCPToolCatalog {
 
     static let coreTools: [ASFWMCPToolDefinition] = [
         ASFWMCPToolDefinition(name: "asfw_get_capabilities", group: "core", visibility: .always, readOnly: true, idempotent: true, summary: "Summarize MCP runtime mode and available dynamic groups."),
+        ASFWMCPToolDefinition(name: "asfw_get_driver_version", group: "core", visibility: .always, readOnly: true, idempotent: true, summary: "Read the running DriverKit extension's embedded git commit, branch, and build timestamp. No bus transaction."),
         ASFWMCPToolDefinition(name: "asfw_get_policy", group: "core", visibility: .always, readOnly: true, idempotent: true, summary: "Report current MCP policy and write-gate status."),
         ASFWMCPToolDefinition(name: "asfw_list_nodes", group: "core", visibility: .always, readOnly: true, idempotent: true, summary: "List current bus nodes and protocol hints."),
         ASFWMCPToolDefinition(name: "asfw_get_node_summary", group: "core", visibility: .always, readOnly: true, idempotent: true, summary: "Return one compact node summary."),

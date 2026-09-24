@@ -12,11 +12,23 @@
 #include "ASFWDriver.h"
 #include "ASFWDriverUserClient.h"
 #include "AsyncPortAccess.hpp"
+#include "../../Protocols/BeBoB/VirtualUart/BeBoBVirtualUartCommand.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSData.h>
+#include <span>
 
 namespace ASFW::UserClient {
+
+namespace {
+
+[[nodiscard]] bool IsPermittedVirtualUartWrite(uint16_t addressHi, uint32_t addressLo,
+                                                std::span<const uint8_t> payload) {
+    namespace VUart = ASFW::Protocols::BeBoB::VirtualUart;
+    return VUart::IsPermittedUserClientWrite(addressHi, addressLo, payload);
+}
+
+} // namespace
 
 TransactionHandler::TransactionHandler(ASFWDriver* driver, TransactionStorage* storage)
     : driver_(driver), storage_(storage) {}
@@ -156,6 +168,12 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
         return kIOReturnBadArgument;
     }
 
+    if (!IsPermittedVirtualUartWrite(addressHi, addressLo,
+                                     {static_cast<const uint8_t*>(payload), length})) {
+        ASFW_LOG_ERROR(UserClient, "AsyncWrite: refused non-shell BeBoB Virtual UART opcode");
+        return kIOReturnNotPermitted;
+    }
+
     // Build WriteParams
     WriteParams params{};
     params.destinationID = destinationID;
@@ -292,6 +310,12 @@ kern_return_t TransactionHandler::AsyncBlockWrite(IOUserClientMethodArguments* a
     if (!payload) {
         ASFW_LOG(UserClient, "AsyncBlockWrite: Failed to get payload bytes");
         return kIOReturnBadArgument;
+    }
+
+    if (!IsPermittedVirtualUartWrite(addressHi, addressLo,
+                                     {static_cast<const uint8_t*>(payload), length})) {
+        ASFW_LOG_ERROR(UserClient, "AsyncBlockWrite: refused non-shell BeBoB Virtual UART opcode");
+        return kIOReturnNotPermitted;
     }
 
     WriteParams params{};

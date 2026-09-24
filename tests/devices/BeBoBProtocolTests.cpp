@@ -9,6 +9,7 @@
 #include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialRouting.hpp"
+#include "ASFWDriver/Protocols/BeBoB/VirtualUart/BeBoBVirtualUartCommand.hpp"
 #include "ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Protocols/AVC/CMP/CMPClient.hpp"
@@ -23,6 +24,38 @@
 using ASFW::Audio::DuplexHealthResult;
 
 namespace {
+
+TEST(BeBoBVirtualUartCommandTests, AllowsOnlyTheThreeShellOpcodes) {
+    namespace VUart = ASFW::Protocols::BeBoB::VirtualUart;
+    std::array<uint8_t, 12> envelope{1, 0, 0, 0, 1, 0, 0x07, 0, 0, 0, 0, 0};
+    EXPECT_EQ(VUart::VirtualUartOpcodeOf(envelope), 0x07);
+    EXPECT_TRUE(VUart::IsPermittedVirtualUartOpcode(VUart::VirtualUartOpcodeOf(envelope)));
+    envelope[6] = 0x08;
+    EXPECT_TRUE(VUart::IsPermittedVirtualUartOpcode(VUart::VirtualUartOpcodeOf(envelope)));
+    envelope[6] = 0x09;
+    EXPECT_TRUE(VUart::IsPermittedVirtualUartOpcode(VUart::VirtualUartOpcodeOf(envelope)));
+    envelope[6] = 0x0a;
+    EXPECT_FALSE(VUart::IsPermittedVirtualUartOpcode(VUart::VirtualUartOpcodeOf(envelope)));
+    envelope[6] = 0x11;
+    EXPECT_FALSE(VUart::IsPermittedVirtualUartOpcode(VUart::VirtualUartOpcodeOf(envelope)));
+}
+
+TEST(BeBoBVirtualUartCommandTests, BlocksEveryOtherBootloaderWindowWrite) {
+    namespace VUart = ASFW::Protocols::BeBoB::VirtualUart;
+    std::array<uint8_t, 12> envelope{1, 0, 0, 0, 1, 0, 0x09, 0, 1, 0, 0, 0};
+    EXPECT_TRUE(VUart::IsPermittedUserClientWrite(0xffff, VUart::kRequestAddressLo, envelope));
+    EXPECT_FALSE(VUart::IsPermittedUserClientWrite(0xffff, VUart::kRequestAddressLo,
+                                                   std::span<const uint8_t>(envelope).first(8)));
+    envelope[6] = 0x0a;
+    EXPECT_FALSE(VUart::IsPermittedUserClientWrite(0xffff, VUart::kRequestAddressLo, envelope));
+    EXPECT_FALSE(VUart::IsPermittedUserClientWrite(0xffff, 0xc8022000, envelope));
+    EXPECT_FALSE(VUart::IsPermittedUserClientWrite(0xffff, VUart::kRequestBufferAddressLo,
+                                                   std::array<uint8_t, 1025>{}));
+    EXPECT_TRUE(VUart::IsPermittedUserClientWrite(0xffff, VUart::kRequestBufferAddressLo,
+                                                  std::array<uint8_t, 4>{1, 2, 3, 4}));
+    EXPECT_TRUE(VUart::IsPermittedUserClientWrite(0xffff, 0xffff'0000,
+                                                  std::array<uint8_t, 4>{1, 2, 3, 4}));
+}
 
 using ASFW::Async::AsyncHandle;
 using ASFW::Async::AsyncStatus;

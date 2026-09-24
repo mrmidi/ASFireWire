@@ -38,6 +38,8 @@ extension ASFWMCPCore {
         switch name {
         case "asfw_get_capabilities":
             return await capabilitiesResult(toolName: name)
+        case "asfw_get_driver_version":
+            return await driverVersionResult(toolName: name)
         case "asfw_get_policy":
             return await policyResult(toolName: name)
         case "asfw_list_nodes":
@@ -143,6 +145,18 @@ extension ASFWMCPCore {
             return await bebobUnitPlugInfoResult(toolName: name, decoder: decoder)
         case "asfw_bebob_get_clock_topology":
             return await bebobClockTopologyResult(toolName: name, decoder: decoder)
+        case "asfw_bebob_get_streaming_stats":
+            return await bebobShellDiagnosticResult(toolName: name, decoder: decoder, command: "sys stat")
+        case "asfw_bebob_get_silicon_status":
+            return await bebobShellDiagnosticResult(toolName: name, decoder: decoder, command: "sys avstat all")
+        case "asfw_bebob_get_sync_state":
+            return await bebobShellDiagnosticResult(toolName: name, decoder: decoder, command: "fw show")
+        case "asfw_bebob_get_mixer_routing":
+            return await bebobShellDiagnosticResult(toolName: name, decoder: decoder, command: "fw mix show")
+        case "asfw_bebob_get_meter_peaks":
+            return await bebobShellDiagnosticResult(toolName: name, decoder: decoder, command: "fw vol peak")
+        case "asfw_bebob_shell_execute":
+            return await bebobShellExecuteResult(toolName: name, decoder: decoder)
         case "asfw_phase88_get_clock":
             return await phase88GetClockResult(toolName: name, decoder: decoder)
         case "asfw_phase88_set_clock_internal":
@@ -527,6 +541,24 @@ extension ASFWMCPCore {
             ]),
             errors: []
         )
+    }
+
+    /// The user client returns metadata embedded in the running dext, not the
+    /// app's own version or the source tree currently checked out on disk.
+    private func driverVersionResult(toolName: String) async -> ASFWMCPToolCallResult {
+        guard let version = await driver.fetchDriverVersion() else {
+            return .failure(toolName: toolName, code: .driverNotConnected,
+                            reason: "Running driver version is unavailable.")
+        }
+        return ASFWMCPToolCallResult(toolName: toolName, ok: true, data: .object([
+            "semanticVersion": .string(version.semanticVersion),
+            "gitCommitShort": .string(version.gitCommitShort),
+            "gitCommitFull": .string(version.gitCommitFull),
+            "gitBranch": .string(version.gitBranch),
+            "gitDirty": .bool(version.gitDirty),
+            "buildTimestamp": .string(version.buildTimestamp),
+            "buildHost": .string(version.buildHost),
+        ]), errors: [])
     }
 
     private func dispatchIrmSnapshot(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
@@ -1380,6 +1412,84 @@ private extension ASFWMCPCore {
         } catch {
             return malformedToolResult(toolName, reason: error.localizedDescription)
         }
+    }
+
+    private func bebobShellExecuteResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let node = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let command = try decoder.string("command")
+            let refusal = await beBoBShellWriteRefusal(toolName: toolName, node: node, generation: generation)
+            if let refusal { return refusal }
+            guard let output = await ASFWMCPBeBoBShellClient.execute(driver: driver, nodeId: node,
+                                                                      generation: generation, command: command) else {
+                return .failure(toolName: toolName, code: .capabilityUnavailable,
+                                reason: "Command is unsupported or the BeBoB Virtual UART transaction failed.")
+            }
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("bebobShellExecute"), "command": .string(command),
+                "stdout": .string(output)
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    private func bebobShellDiagnosticResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder,
+        command: String
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let node = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let refusal = await beBoBShellWriteRefusal(toolName: toolName, node: node, generation: generation)
+            if let refusal { return refusal }
+            guard let output = await ASFWMCPBeBoBShellClient.execute(driver: driver, nodeId: node,
+                                                                      generation: generation, command: command) else {
+                return .failure(toolName: toolName, code: .capabilityUnavailable,
+                                reason: "BeBoB Virtual UART diagnostic failed.")
+            }
+            var fields: [String: ASFWMCPValue] = ["kind": .string("bebobShellDiagnostic"),
+                                                  "command": .string(command),
+                                                  "rawStdout": .string(output)]
+            if let value = BeBoBShellTelemetryParser.parseStreamingStats(output) {
+                fields["fireWireOutputChannel"] = value.fireWireOutput.map { .int($0.isoChannel) } ?? .null
+                fields["fireWireInputChannel"] = value.fireWireInput.map { .int($0.isoChannel) } ?? .null
+            }
+            if let value = BeBoBShellTelemetryParser.parseSyncState(output) {
+                fields["audioState"] = .string(value.audioState)
+                fields["syncSource"] = .string(value.syncSource)
+                fields["sampleRateHz"] = .int(Int(value.sampleRateHz))
+                fields["inputSource"] = .string(value.inputSource)
+                fields["outputSource"] = .string(value.outputSource)
+            }
+            if let value = BeBoBShellTelemetryParser.parseAvStat(output) {
+                fields["setLatches"] = .array(value.setLatches.map {
+                    .object(["block": .string($0.block), "label": .string($0.label), "value": .int(Int($0.value))])
+                })
+            }
+            return .success(toolName: toolName, data: .object(fields))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    private func beBoBShellWriteRefusal(toolName: String, node: UInt32,
+                                        generation: UInt32) async -> ASFWMCPToolCallResult? {
+        let address = ASFWMCPAddress(nodeId: node, generation: generation,
+                                     addressHigh: 0xffff, addressLow: 0xc802_1000)
+        let policy = evaluateWritePolicy(.forTransaction(
+            kind: .writeBlock, address: address, currentGeneration: await currentGeneration(),
+            protocolHint: "bebob", protocolSupported: await protocolSupported("bebob")))
+        guard policy.reachesDriverWritePath else {
+            return .failure(toolName: toolName, code: policy.errorCode ?? .policyDenied,
+                            reason: policy.reason)
+        }
+        return nil
     }
 
     func phase88GetClockResult(
