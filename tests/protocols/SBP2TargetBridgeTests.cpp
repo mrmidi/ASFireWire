@@ -318,6 +318,36 @@ TEST(SBP2TargetBridgeTests, TaskCompletesOnceWhenFetchWriteNeverCompletes) {
     EXPECT_EQ(1, inquiry.completions);
 }
 
+// The bridge queue has no deadline of its own: a task queued behind a silent
+// in-flight command relies on that command's ORB timeout. Both must complete.
+TEST(SBP2TargetBridgeTests, TaskQueuedBehindSilentCommandCompletesOnce) {
+    BridgeRig rig;
+    rig.BringUp();
+
+    TaskProbe first;
+    TaskProbe second;
+    auto request = SCSI::BuildInquiryRequest(36);
+    request.timeoutMs = 10'000;
+    rig.bridge->SubmitTask(std::move(request), first.Callback());
+    auto queued = SCSI::BuildTestUnitReadyRequest();
+    queued.timeoutMs = 10'000;
+    rig.bridge->SubmitTask(std::move(queued), second.Callback());
+    rig.Drain();
+    (void)rig.AckCommandFetch(); // first fetched, never answered
+
+    // First: ORB timeout + LUN reset; second then goes out and is also silent.
+    for (int i = 0; i < 12 && second.completions == 0; ++i) {
+        rig.AdvanceMs(5'000);
+        while (rig.bus.PendingWriteCount() > 0) {
+            (void)rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess);
+            rig.Drain();
+        }
+    }
+
+    EXPECT_EQ(1, first.completions);
+    EXPECT_EQ(1, second.completions);
+}
+
 TEST(SBP2TargetBridgeTests, ShutdownCompletesInFlightAndQueuedTasksOnce) {
     BridgeRig rig;
     rig.BringUp();
