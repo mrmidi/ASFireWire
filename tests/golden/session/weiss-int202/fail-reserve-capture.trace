@@ -1,0 +1,10 @@
+## StartStreaming
+D geometry
+H begin
+D prepare rate=48000 cap=1[1] play=1[0]
+H reserve playback allowed=0000000000000001 bw=308 -> ch=0
+H reserve capture allowed=0000000000000002 bw=308 !0xe00002be
+D break connections
+H stop all
+D stop
+## -> 0xe00002be streaming=0
