@@ -48,6 +48,14 @@ add_device_test(DICETcatProtocolTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
+# Blocking DICE register access used by the linear bring-up (AUDIO_SESSION_REDESIGN.md S1).
+add_device_test(DiceDeviceIoTests
+    DiceDeviceIoTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+
 # DICE golden wire traces against the simulated device (AUDIO_SESSION_REDESIGN.md S0).
 # Goldens live in tests/golden/dice; ASFW_UPDATE_GOLDEN=1 rewrites them.
 add_device_test(DiceWireCharacterizationTests

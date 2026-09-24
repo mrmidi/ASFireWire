@@ -236,6 +236,9 @@ public:
                           ::ASFW::Async::InterfaceCompletionCallback callback) override {
         (void)nodeId;
         Record(OpKind::Read, address, length, speed, 0, {});
+        if (TakeDrop(OpKind::Read, address)) {
+            return NextHandle();
+        }
         if (const auto failure = Failure(OpKind::Read, generation, address)) {
             trace_.Read(address.addressHi, address.addressLo, length, speed, *failure);
             callback(*failure, {});
@@ -266,6 +269,9 @@ public:
         (void)nodeId;
         std::vector<uint8_t> payload(data.begin(), data.end());
         Record(OpKind::Write, address, static_cast<uint32_t>(data.size()), speed, 0, payload);
+        if (TakeDrop(OpKind::Write, address)) {
+            return NextHandle();
+        }
         if (const auto failure = Failure(OpKind::Write, generation, address)) {
             trace_.Write(address.addressHi, address.addressLo, data, speed, *failure);
             callback(*failure, {});
@@ -304,6 +310,9 @@ public:
         (void)lockOp;
         std::vector<uint8_t> payload(operand.begin(), operand.end());
         Record(OpKind::Lock, address, static_cast<uint32_t>(operand.size()), speed, responseLength, payload);
+        if (TakeDrop(OpKind::Lock, address)) {
+            return NextHandle();
+        }
         const bool compareSwap64 = operand.size() == 16 && responseLength == 8;
         const uint64_t expected = compareSwap64 ? ::ASFW::FW::ReadBE64(operand.data()) : 0;
         const uint64_t desired = compareSwap64 ? ::ASFW::FW::ReadBE64(operand.data() + 8) : 0;
@@ -485,6 +494,12 @@ public:
         faults_.push_back(Fault{kind, addressLo, status});
     }
 
+    // Swallow the next request of `kind` at `addressLo`: it is recorded, but its
+    // completion never arrives (a wedged or unreachable completion path).
+    void DropNext(OpKind kind, uint32_t addressLo) {
+        drops_.push_back(Fault{kind, addressLo, AsyncStatus::kSuccess});
+    }
+
 private:
     struct ScriptResponse {
         AsyncStatus status;
@@ -520,6 +535,17 @@ private:
             }
         }
         return std::nullopt;
+    }
+
+    bool TakeDrop(OpKind kind, FWAddress address) {
+        for (auto it = drops_.begin(); it != drops_.end(); ++it) {
+            if (it->kind == kind && it->addressLo == address.addressLo) {
+                drops_.erase(it);
+                trace_.Add("# completion dropped");
+                return true;
+            }
+        }
+        return false;
     }
 
     std::optional<uint64_t> ApplyLock(FWAddress address, bool compareSwap64,
@@ -620,6 +646,7 @@ private:
     DiceClockResponse defaultClockResponse_;
     ::ASFW::Testing::WireTrace trace_;
     std::vector<Fault> faults_;
+    std::vector<Fault> drops_;
     std::vector<RecordedOp> operations_;
     Generation generation_{0};
     NodeId localNodeId_{0};
