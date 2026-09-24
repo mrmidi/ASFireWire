@@ -9,7 +9,7 @@ namespace ASFW::Isoch {
 // transport never takes a dependency on Audio's buffer, frame, or cadence
 // policy.
 struct IsochDmaGeometry final {
-    static constexpr uint32_t kPacketsPerInterrupt = 6;
+    static constexpr uint32_t kPacketsPerInterrupt = 8;
     static constexpr uint32_t kReceiveDescriptorPackets = 504;
     static constexpr uint32_t kTransmitDescriptorPackets = 48;
 };

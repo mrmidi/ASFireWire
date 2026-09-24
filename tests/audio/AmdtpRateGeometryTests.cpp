@@ -44,17 +44,14 @@ TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
         Geometry::kHalZeroTimestampPeriodFrames,
         profile.zeroTimestampPeriodFrames);
     EXPECT_EQ(Geometry::kFrameAlignment, 32U);
-    EXPECT_EQ(Geometry::kRxPacketsPerGroup, 6U);
-    EXPECT_EQ(Geometry::kTxPacketsPerGroup, 6U);
-    EXPECT_EQ(Geometry::kMinimumNominalFramesPerInterrupt, 32U);
-    EXPECT_EQ(Geometry::kMaximumNominalFramesPerInterrupt, 40U);
-    EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 36U);
-    EXPECT_EQ(Geometry::kInputSafetyFloorFrames, 104U);
+    EXPECT_EQ(Geometry::kRxPacketsPerGroup, 8U);
+    EXPECT_EQ(Geometry::kTxPacketsPerGroup, 8U);
+    EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 48U);
     EXPECT_EQ(Geometry::kRxDescriptorPackets, 504U);
     // TX budgets are sized for the worst-case (44.1k) average cadence of
     // 441 frames / 80 packets, exposure lead rounded to a whole interrupt
     // Apple-comparable 400-cycle content horizon: ceil(2400 / 5.5125) =
-    // 436 -> 438 packets, plus a full 512-frame write window.
+    // 436 -> 440 packets, plus a full 512-frame write window.
     EXPECT_EQ(Geometry::kTxDataHorizonPackets, 400U);
     EXPECT_EQ(Geometry::TxDataHorizonFrames(48000), 2400U);
     EXPECT_EQ(Geometry::TxDataHorizonFrames(44100), 2205U);
@@ -68,9 +65,9 @@ TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
     EXPECT_EQ(Geometry::kTxCommittedMargin16xFloorPackets, 768U);
     EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 96U);
     EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 144U);
-    EXPECT_EQ(Geometry::kTxExposureLeadPackets, 438U);
-    EXPECT_EQ(Geometry::kTxFrameExposureWindowPackets, 534U);
-    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 678U);
+    EXPECT_EQ(Geometry::kTxExposureLeadPackets, 440U);
+    EXPECT_EQ(Geometry::kTxFrameExposureWindowPackets, 536U);
+    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 680U);
 
     // DMA completion cadence and the ZTS grid are intentionally independent.
     EXPECT_NE(Geometry::kHalZeroTimestampPeriodFrames,

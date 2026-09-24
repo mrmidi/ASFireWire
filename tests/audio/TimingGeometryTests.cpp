@@ -127,7 +127,7 @@ TEST(TimingGeometryTests, CompletionBatchFollowsTheRate) {
 }
 
 // The completion-batch bound is checked against the production cadence itself:
-// for every rate, slide a six-cycle window over many cadence periods and count
+// for every rate, slide a completion-group window over many cadence periods and count
 // DATA decisions. The bound must be the true maximum (tight), not just safe.
 TEST(TimingGeometryTests, MaxDataPacketsBoundMatchesTheProductionCadence) {
     for (const uint32_t rate : kAmdtpRates) {

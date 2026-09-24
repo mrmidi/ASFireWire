@@ -49,11 +49,11 @@ from typing import List, Tuple
 CADENCE_BLOCK_PKTS = 4          # kCadenceBlockPackets
 CADENCE_BLOCK_FRAMES = 24       # kCadenceBlockFrames  (=> 6 frames/pkt average)
 FRAME_ALIGNMENT = 32            # kFrameAlignment
-PKTS_PER_GROUP = 6              # kTxPacketsPerGroup / kTimingGroupPackets
+PKTS_PER_GROUP = 8              # kTxPacketsPerGroup / kTimingGroupPackets
 HW_RING_PKTS = 48               # kTxHardwareRingPackets
 JITTER_FRAMES = 64              # kSchedulingJitterFrames
-MAX_FRAMES_PER_INTERRUPT = 40   # kMaximumNominalFramesPerInterrupt
-MIN_DISPATCH_GROUPS = 16        # coverage target: 16 six-packet groups (~12 ms)
+MAX_FRAMES_PER_INTERRUPT = 48   # kNominalFramesPerTimingGroup (fixed phase)
+MIN_DISPATCH_GROUPS = 16        # static_assert: 16 eight-packet groups (16 ms)
 MIN_CADENCE_PACKETS = 80         # 44.1 kHz average cadence numerator
 MIN_CADENCE_FRAMES = 441         # 44.1 kHz average cadence denominator
 CONTENT_HORIZON_PACKETS = 400    # kTxDataHorizonPackets
@@ -81,7 +81,7 @@ class Geometry:
     @property
     def exposure_lead_pkts(self) -> int:            # kTxExposureLeadPackets
         # Exact header derivation: worst supported cadence is 44.1 kHz,
-        # ceil(frames * 80 / 441), then round to a six-packet group.
+        # ceil(frames * 80 / 441), then round to a whole interrupt group.
         raw = (self.exposure_lead_frames * MIN_CADENCE_PACKETS +
                MIN_CADENCE_FRAMES - 1) // MIN_CADENCE_FRAMES
         return ((raw + PKTS_PER_GROUP - 1) // PKTS_PER_GROUP) * PKTS_PER_GROUP
@@ -133,7 +133,7 @@ INVARIANTS = [
     ("sharedSlot >= preparationLead",
      lambda g: g.shared_slot_pkts >= g.preparation_lead_pkts,
      lambda g: f"{g.shared_slot_pkts} >= {g.preparation_lead_pkts}"),
-    ("maxCoveredDelta >= 16 groups (~12 ms)",
+    ("maxCoveredDelta >= 16 groups (16 ms)",
      lambda g: g.max_covered_delta_pkts >= MIN_DISPATCH_GROUPS * PKTS_PER_GROUP,
      lambda g: f"{g.max_covered_delta_pkts} >= {MIN_DISPATCH_GROUPS * PKTS_PER_GROUP}"),
     ("coverageLead == hwRing + slack",
@@ -142,7 +142,7 @@ INVARIANTS = [
     ("preparationLead <= sharedSlot - hwRing",
      lambda g: g.preparation_lead_pkts <= g.shared_slot_pkts - HW_RING_PKTS,
      lambda g: f"{g.preparation_lead_pkts} <= {g.shared_slot_pkts - HW_RING_PKTS}"),
-    ("sharedSlot % packetsPerGroup(6) == 0",
+    ("sharedSlot % packetsPerGroup == 0",
      lambda g: g.shared_slot_pkts % PKTS_PER_GROUP == 0,
      lambda g: f"{g.shared_slot_pkts} % {PKTS_PER_GROUP} = {g.shared_slot_pkts % PKTS_PER_GROUP}"),
     ("sharedSlot % cadenceBlock(4) == 0",

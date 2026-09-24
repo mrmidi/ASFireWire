@@ -8,7 +8,7 @@ models the implementation introduced for Duet stability:
 * Each burst updates W, then publishes one coalesced preparation request.
 * The preparation queue advances E to W + the 400-cycle content horizon when
   it is allowed to run.  It also restores packet preparation to completion +
-  the 678-packet lead.
+  the 680-packet lead.
 * While the action is delayed, W can cross E (a PayloadWriter
   ``framesWithoutPacket`` loss) independently of descriptor margin.
 
@@ -33,7 +33,7 @@ CADENCE = (8, 8, 8, 0)
 
 # Keep these in lock-step with AudioTimingGeometry.hpp.
 HW_RING_PACKETS = 48
-PREPARATION_LEAD_PACKETS = 678
+PREPARATION_LEAD_PACKETS = 680
 SHARED_SLOT_PACKETS = 912
 CONTENT_HORIZON_PACKETS = 400
 DEFAULT_IO_FRAMES = 512

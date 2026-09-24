@@ -1277,10 +1277,11 @@ The research-stage replacement direction was:
 *   preserve captured ZTS anchors across the required cross-process
     notification path.
 
-The current implementation retained the clock-domain and ownership
-corrections while adopting a six-packet interrupt group. Because six is not a
-complete four-packet cadence multiple, a group advances by either 32 or 40
-frames depending on cadence phase.
+The implementation retained the clock-domain and ownership corrections and
+first adopted a six-packet interrupt group, which advanced by 32 or 40 frames
+depending on cadence phase. FW-183b (Epic 3) moved to eight-packet groups:
+two whole cadence blocks, so every group advances by exactly 48 frames at 1x
+and tiles the ZTS period (see §12, stage 4).
 
 ---
 
@@ -1296,10 +1297,15 @@ requirements is the source of several apparent contradictions:
     retained while the HAL IO size, frame ring, and ZTS period were made
     512 frames. ZTS grid points had to be reconstructed inside a sequence of
     48-frame nominal group advances.
-3.  **Current adopted state:** the transport uses six-packet timing groups,
-    a phase-dependent 32/40-frame group advance, and a 1536-frame ADK ZTS
-    period equal to the 1536-frame HAL ring. Packet-ring ownership and startup
-    prefill remain separate from the HAL frame-ring geometry.
+3.  **Six-packet state (superseded):** the transport used six-packet timing
+    groups, a phase-dependent 32/40-frame group advance, and a 1536-frame ADK
+    ZTS period equal to the 1536-frame HAL ring. Packet-ring ownership and
+    startup prefill remain separate from the HAL frame-ring geometry.
+4.  **Current adopted state (FW-183b):** eight-packet timing groups on IR and
+    IT (1.0 ms, Apple's `fNumPacketsPerBufferGroup`), a fixed 48/96/192-frame
+    group advance at 1x/2x/4x, and the same ZTS/ring as stage 3 until the V3
+    HAL geometry lands (FW-183c). The group tiles every V3 ZTS period
+    (12288 / 48 = 256), which a six-packet group (36-frame average) cannot.
 
 Reference-driver sections describe evidence, not configuration inheritance.
 Apple's eight-packet groups, Linux's period-derived queues, and FFADO's
@@ -1321,20 +1327,21 @@ live in `ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp`.
 | Blocking cadence block | 4 packets | D/D/D/N, phase may rotate |
 | Frames per DATA packet | 8 | AMDTP SYT interval at 48 kHz |
 | Frames per cadence block | 24 | Three DATA packets |
-| RX/TX timing group | 6 packets | 0.75 ms interrupt target |
-| Group advance | 32 or 40 frames | Depends on D/D/D/N starting phase; 36 average |
+| RX/TX timing group | 8 packets | 1.0 ms interrupt target |
+| Group advance | 48 frames | Two whole D/D/D/N blocks: fixed at every phase (96 at 2x, 192 at 4x) |
 | ADK ZTS period | 1536 frames | Equal to the mapped ADK stream-ring length |
 | Maximum HAL IO transfer | 512 frames | Client-transfer upper bound |
 | HAL frame ring | 1536 frames | One ZTS period, three max IO transfers |
 | Frame alignment | 32 frames | Shared alignment contract |
 | IR descriptor ring | 504 packets | Packet-domain receive storage |
 | TX hardware ring | 48 packets | OHCI-owned transmit program |
-| TX preparation slack | 96 packets | Sixteen groups / 12 ms of producer scheduling tolerance |
+| TX preparation slack | 96 packets | Twelve groups / 12 ms of producer scheduling tolerance |
 | TX coverage lead | 144 packets | Hardware ring plus scheduling slack; refill-safety sub-budget |
-| TX frame-exposure window | 192 packets | Packetized cushion for `WriteEnd + kTxExposureLeadFrames` |
-| TX preparation lead | 336 packets | Coverage lead plus frame-exposure window |
-| TX shared packet ring | 384 packets | Preparation lead plus one hardware-ring reuse guard |
-| Input safety floor | 104 frames | Maximum 40-frame group plus 64-frame jitter floor |
+| TX exposure lead | 440 packets | 400-cycle content horizon at the 44.1k cadence, rounded to a group |
+| TX frame-exposure window | 536 packets | Packetized cushion for `WriteEnd + kTxExposureLeadFrames` |
+| TX preparation lead | 680 packets | Coverage lead plus frame-exposure window |
+| TX shared packet ring | 912 packets | Holds the lead plus one hardware-ring reuse guard; ≥ 2 × exposure lead |
+| Input safety floor | one completion batch | `CompletionBatchFrames(rate)`: 48 frames at 1x (decision D3, no jitter term) |
 
 The HAL has one frame-domain sample ring per direction. Packet-domain IR
 descriptor buffers and TX payload/metadata slots also exist, but they do not
@@ -1359,23 +1366,26 @@ For the adopted values:
 
 ```text
 504 / 4    = 126 complete cadence blocks
-504 / 6    = 84 interrupt groups
+504 / 8    = 63 interrupt groups
 1536       = 1536-frame ZTS period
 1536 / 512 = 3 maximum IO transfers
 1536 / 32  = 48 alignment quanta
-384 / 6    = 64 shared-ring groups
-384 / 4    = 96 complete cadence blocks
-48 / 6     = 8 hardware-ring groups
+912 / 8    = 114 shared-ring groups
+912 / 4    = 228 complete cadence blocks
+48 / 8     = 6 hardware-ring groups
+8 / 4      = 2 cadence blocks per group (fixed 48-frame advance)
+1536 / 48  = 32 groups per ZTS period
 ```
 
 The frame ring equals the declared ZTS period because AudioDriverKit wraps the
-mapped stream buffer on that contract. The six-packet DMA cadence remains
-independent from the frame-domain ZTS grid.
+mapped stream buffer on that contract. The eight-packet DMA cadence tiles the
+frame-domain ZTS grid but does not define it: anchors still come from the
+DATA packet that starts on the grid.
 
 ### C. ZTS Publication
 
-Host anchors are RX-interrupt-derived ADK ZTS-grid anchors. A six-packet group
-advances by 32 or 40 decoded frames, so many receive drains occur between
+Host anchors are RX-interrupt-derived ADK ZTS-grid anchors. An eight-packet
+group advances by 48 decoded frames, so many receive drains occur between
 1536-frame anchors. The receive path advances the absolute frame cursor by the
 decoded data-block count. It publishes only when a real DATA packet begins
 exactly on the 1536-frame grid, using that packet's hardware-derived receive

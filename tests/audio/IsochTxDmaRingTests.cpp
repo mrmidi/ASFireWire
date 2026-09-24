@@ -1007,9 +1007,11 @@ TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
 TEST_F(IsochTxDmaRingTest,
        SixtyCommittedPacketsFailOnThirdUnservicedCompletionGroup) {
     using Geometry = ASFW::IsochTransport::AudioTimingGeometry;
+    // Pinned at the six-packet completion group that was live when this
+    // failure was captured; the ring mechanics are group-size independent.
+    constexpr uint32_t kHistoricalGroupPackets = 6;
     constexpr uint32_t kHistoricalCommittedPackets =
-        Geometry::kTxHardwareRingPackets +
-        2 * Geometry::kTxPacketsPerGroup;
+        Geometry::kTxHardwareRingPackets + 2 * kHistoricalGroupPackets;
     static_assert(kHistoricalCommittedPackets == 60);
 
     auto metadataRing = MakeMetadataRing();
@@ -1059,11 +1061,11 @@ TEST_F(IsochTxDmaRingTest,
             payloadDmaMap_);
     };
 
-    EXPECT_TRUE(refillTo(Geometry::kTxPacketsPerGroup).ok);
-    EXPECT_TRUE(refillTo(2 * Geometry::kTxPacketsPerGroup).ok);
+    EXPECT_TRUE(refillTo(kHistoricalGroupPackets).ok);
+    EXPECT_TRUE(refillTo(2 * kHistoricalGroupPackets).ok);
 
     const auto third =
-        refillTo(3 * Geometry::kTxPacketsPerGroup);
+        refillTo(3 * kHistoricalGroupPackets);
     EXPECT_FALSE(third.ok);
     EXPECT_EQ(controlBlock.statusWord.load(std::memory_order_acquire),
               IsochTxQueueStatus::kProducerFault);

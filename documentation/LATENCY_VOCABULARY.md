@@ -79,7 +79,7 @@ Follow one output frame. Events:
 |---|---|---|---|
 | `J1` | F0 → F1 | device ADC — **unknown** | — |
 | `J2` | F1 → **F3** | **not separately observed** (`F2` never is). `rxTransferDelayTicks` (12800) is a constant used to *construct* the receive timeline, **not** a measurement of device buffering | — |
-| `J3` | F3 → F4 | nominal batch content: one RX timing group = 6 packets = 32 or 40 frames (`AudioTimingGeometry::kRxPacketsPerGroup`). That is how many frames a batch *contains*, not a bound on elapsed time; dispatch delay is extra and unbounded by geometry | — |
+| `J3` | F3 → F4 | nominal batch content: one RX timing group = 8 packets = 48 frames at 48 kHz (two whole cadence blocks) (`AudioTimingGeometry::kRxPacketsPerGroup`). That is how many frames a batch *contains*, not a bound on elapsed time; dispatch delay is extra and unbounded by geometry | — |
 | `J4` | F4 → F5 | variable, ≥ 0: capture-ring wait while the reader lags the writer | **covered by the input safety offset (`A4`) — do not add `A4` on top** |
 
 ## 5. Accounting terms: what we declare to CoreAudio

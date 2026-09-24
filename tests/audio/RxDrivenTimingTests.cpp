@@ -223,10 +223,10 @@ TEST(RxDrivenTimingTests, ReplayCannotEstablishWithoutHalfRingHistory) {
     EXPECT_FALSE(replay.IsEstablished());
 }
 
-TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
-    EXPECT_EQ(AudioTimingGeometry::kRxPacketsPerGroup, 6U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPacketsPerGroup, 6U);
-    EXPECT_EQ(AudioTimingGeometry::kMaximumNominalFramesPerInterrupt, 40U);
+TEST(RxDrivenTimingTests, GeometryUsesEightCycleInterruptsAndCurrentTxDepths) {
+    EXPECT_EQ(AudioTimingGeometry::kRxPacketsPerGroup, 8U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPacketsPerGroup, 8U);
+    EXPECT_EQ(AudioTimingGeometry::kNominalFramesPerTimingGroup, 48U);
     EXPECT_EQ(
         AudioTimingGeometry::kHalZeroTimestampPeriodFrames,
         ASFW::IsochTransport::kActiveAudioHalBufferProfile
@@ -237,9 +237,9 @@ TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
     EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 144U);
     // 400-cycle content horizon at worst-case 44.1k cadence, plus one full
     // 512-frame client write window.
-    EXPECT_EQ(AudioTimingGeometry::kTxExposureLeadPackets, 438U);
-    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 534U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 678U);
+    EXPECT_EQ(AudioTimingGeometry::kTxExposureLeadPackets, 440U);
+    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 536U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 680U);
     EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 912U);
 }
 

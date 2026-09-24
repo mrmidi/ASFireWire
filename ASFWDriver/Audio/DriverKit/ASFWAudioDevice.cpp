@@ -14,9 +14,17 @@
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
+#include "../../Isoch/Core/IsochDmaGeometry.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
+
+// The audio completion group (frames per interrupt, input-safety floor, ZTS
+// tiling) and the transport's IOC cadence must be the same number of cycles.
+// Checked here, on the audio side of the seam: transport stays payload-opaque.
+static_assert(ASFW::IsochTransport::AudioTimingGeometry::kTimingGroupPackets ==
+                  ASFW::Isoch::IsochDmaGeometry::kPacketsPerInterrupt,
+              "audio completion group must equal the OHCI interrupt group");
 
 struct ASFWAudioDevice_IVars {
     ASFWAudioDriver_IVars* driverIvars{nullptr};

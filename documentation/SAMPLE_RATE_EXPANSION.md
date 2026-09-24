@@ -240,7 +240,9 @@ In rough dependency order:
    (`Shared/Isoch/AudioTimingGeometry.hpp:29-47`): `kSampleRateHz = 48000`,
    `kCadenceBlockPackets/Frames` (4/24) and every packet↔frame conversion
    assume 6 frames/cycle; 44.1 averages 5.5125 (441/80) and needs the rational
-   form. Convenient accident: a 6-packet interrupt group still carries 32 or
+   form. (Superseded by FW-183b: the group is now 8 packets, a fixed
+   6 DATA packets at 48k; the notes below describe the 6-packet era.)
+   Convenient accident: a 6-packet interrupt group still carries 32 or
    40 frames at 44.1 blocking (4–5 data events × 8 frames), so
    `kMin/MaxNominalFramesPerInterrupt` hold at 1x rates — and the sim proved
    the bounds are **tier-uniform across both families** ({32,40} at 44.1/48,
