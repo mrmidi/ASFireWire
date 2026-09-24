@@ -62,14 +62,13 @@ bool FocusriteSaffireProfile::BuildDefaultRxStreamConfig(DiceStreamConfig& outCo
 // Captured from Focusrite GUID 0x00130E0401405B54 (TCD2220) at 48 kHz:
 // playback 12 PCM + MIDI, then 8 PCM; capture 10 PCM + MIDI, then 10 PCM.
 // Cross-checked with FFADO src/dice/focusrite/saffire_pro40.cpp:50-97.
+//
+// Wire encoding is inherited from FocusriteSaffireProfile (raw 24-in-32 TX, no
+// AM824 label). Focusrite's Saffire.kext 4.1.4 drives the Pro 40 through the
+// same Float32ToSwapInt24_In_32 path as every other model it supports; no
+// TCAT DICE vendor kext carries a per-model TX format.
 const char* FocusriteSaffirePro40Profile::Name() const noexcept {
     return "Focusrite Saffire Pro 40";
-}
-
-DiceDeviceQuirks FocusriteSaffirePro40Profile::Quirks() const noexcept {
-    auto quirks = FocusriteSaffireProfile::Quirks();
-    quirks.tx.hostToDevicePcmEncoding = Encoding::AudioWireFormat::kAM824;
-    return quirks;
 }
 
 bool FocusriteSaffirePro40Profile::BuildDefaultTxStreamConfig(

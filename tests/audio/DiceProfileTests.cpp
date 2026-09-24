@@ -141,7 +141,10 @@ TEST(DiceProfileTests, ResolvesOriginalPro40LowRateGeometry) {
     const auto* streamProfile = static_cast<const IAudioStreamProfile*>(profile);
     EXPECT_EQ(streamProfile->TxStreamCount(), 2U);
     EXPECT_EQ(streamProfile->RxStreamCount(), 2U);
-    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    // Same TX encoding as every Saffire: Focusrite's own kext sends the Pro 40
+    // raw 24-in-32 PCM with no AM824 label.
+    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
     AudioStreamConfig primary{}, secondary{};
     ASSERT_TRUE(streamProfile->BuildTxStreamConfig(0, primary));
