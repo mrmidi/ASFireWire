@@ -1,4 +1,5 @@
 #pragma once
+#include <cstring>
 
 #include "ATManager.hpp"
 #include "ATTrace.hpp"
@@ -111,10 +112,25 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const Descriptor
         clearRunAndPoll_();
         if (ctx().IsActive()) {
             // Programming CommandPtr on an ACTIVE context is illegal (OHCI
-            // §3.1.1) — the in-flight packet and/or this chain can be lost.
-            // Anomaly log for the LS-9000 wedge investigation.
-            ASFW_LOG(Async, "ctx=%{public}s txid=%u gen=%u P1_ARM while ACTIVE after clearRun poll gave up",
-                     RoleTag::kContextName, txid, generation_);
+            // §3.1.1): the in-flight packet is lost and the FW643 was observed
+            // (2026-09-24, LS-9000) to stay ACTIVE=1 forever afterwards, across
+            // bus resets. Refuse instead; the requester's split-timeout retry
+            // covers a dropped response, the caller's retry a dropped request.
+            const uint32_t ctrl = ctx().ReadControl();
+            const uint32_t cmdPtrReg = ctx().ReadCommandPtr();
+            const uint64_t sinceDrainNs = NowNs() - ctx().LastDrainStopNs();
+            ASFW_LOG(Async, "ctx=%{public}s txid=%u gen=%u P1_ARM while ACTIVE after clearRun poll gave up ctrl=0x%08x cmdPtr=0x%08x state=%{public}s head=%zu tail=%zu prevLast=%u drainStops=%u sinceDrainUs=%llu",
+                     RoleTag::kContextName, txid, generation_, ctrl, cmdPtrReg, ToString(this->state_),
+                     ring().Head(), ring().Tail(), ring().PrevLastBlocks(),
+                     ctx().DrainStopCount(), sinceDrainNs / 1000);
+            if (!wedgeDumped_) {
+                wedgeDumped_ = true;
+                logWedgeSnapshot_(txid, cmdPtrReg);
+            }
+            IOLockWrapper lockWrapper(lock());
+            ScopedLock guard(lockWrapper);
+            Base::Transition(State::IDLE, txid, "arm_refused_active");
+            return kIOReturnBusy;
         }
     }
 
@@ -273,15 +289,41 @@ void ATManager<ContextT, RingT, RoleTag>::requestStop_(uint32_t txid, const char
 }
 
 template<typename ContextT, typename RingT, typename RoleTag>
+void ATManager<ContextT, RingT, RoleTag>::logWedgeSnapshot_(uint32_t txid, uint32_t cmdPtrReg) noexcept {
+    const size_t capacity = ring().Capacity();
+    auto dumpBlock = [&](const char* tag, size_t index) {
+        const auto* d = ring().At(index);
+        if (!d) return;
+        uint32_t q[4];
+        memcpy(q, d, sizeof(q));
+        ASFW_LOG(Async, "  [wedge] %{public}s idx=%zu q0=0x%08x q1=0x%08x q2=0x%08x q3=0x%08x",
+                 tag, index, q[0], q[1], q[2], q[3]);
+    };
+    ASFW_LOG_ERROR(Async, "=== ctx=%{public}s txid=%u WEDGE SNAPSHOT (cmdPtr=0x%08x head=%zu tail=%zu cap=%zu) ===",
+                   RoleTag::kContextName, txid, cmdPtrReg, ring().Head(), ring().Tail(), capacity);
+    if (capacity > 0) {
+        if (const auto idx = ring().IndexFromIOVA(cmdPtrReg)) {
+            for (size_t k = 0; k < 4; ++k) {
+                dumpBlock(k < 2 ? "cmdPtr-" : "cmdPtr+", (*idx + capacity - 2 + k) % capacity);
+            }
+        } else {
+            ASFW_LOG(Async, "  [wedge] cmdPtr not inside ring");
+        }
+        for (size_t k = 0; k < 3; ++k) {
+            dumpBlock("head-", (ring().Head() + capacity - 2 + k) % capacity);
+        }
+    }
+    trace_.dump();
+}
+
+template<typename ContextT, typename RingT, typename RoleTag>
 void ATManager<ContextT, RingT, RoleTag>::clearRunAndPoll_() noexcept {
     ctx().WriteControlClear(kContextControlRunBit);
     IODelay(1);
     this->IoReadFence();
-    
-    for (uint32_t i = 0; i < 250; ++i) {
-        if (!ctx().IsActive()) break;
-        IODelay(1);
-    }
+    // Escalating wait (Apple waitForDMA pattern, ~32 ms bound) — a 250 µs poll
+    // gave up while the previous packet was still on the wire.
+    (void)ctx().WaitForQuiesce();
 }
 
 template<typename ContextT, typename RingT, typename RoleTag>
@@ -303,9 +345,12 @@ template<typename ContextT, typename RingT, typename RoleTag>
 void ATManager<ContextT, RingT, RoleTag>::UpdateRingTail_(const DescriptorChain& chain) {
     const size_t newTail = (chain.lastRingIndex + 1) % ring().Capacity();
     ring().SetTail(newTail);
-    // PrevLastBlocks is intended to track the block count of the LAST descriptor
-    // in the previous chain. Use lastBlocks (1 or 2), not total packet blocks.
-    ring().SetPrevLastBlocks(static_cast<uint8_t>(chain.lastBlocks));
+    // DescriptorRing::LocatePreviousLast() walks back TotalBlocks() (2 = immediate
+    // only, 3 = immediate header + payload) from the tail to find the previous
+    // OUTPUT_LAST. Storing lastBlocks (1 for a payload packet) made every PATH2
+    // hot-append fail for Z=3 packets, forcing PATH1 re-arms that raced the
+    // in-flight packet (LS-9000 AT Response wedge, 2026-09-24).
+    ring().SetPrevLastBlocks(chain.TotalBlocks());
 }
 
 template<typename ContextT, typename RingT, typename RoleTag>

@@ -161,6 +161,10 @@ private:
     // Bus generation for correlation
     uint16_t generation_;
 
+    // One-shot: full wedge snapshot (trace ring + descriptors) logged once per wedge
+    bool wedgeDumped_{false};
+    void logWedgeSnapshot_(uint32_t txid, uint32_t cmdPtrReg) noexcept;
+
     // Accessor helpers (avoid repeating this->)
     ContextT& ctx() { return this->ctx_; }
     const ContextT& ctx() const { return this->ctx_; }
