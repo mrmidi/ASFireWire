@@ -66,6 +66,29 @@ AmdtpRateGeometryForSampleRate(uint32_t sampleRateHz) noexcept {
     }
 }
 
+/// Upper bound on DATA packets among `cycles` consecutive bus cycles in
+/// blocking mode. The blocking cadence spreads DATA packets evenly (one per
+/// SYT interval of frames, at most one per cycle), so any window holds at most
+/// ceil(cycles x frames-per-cycle / SYT interval) of them. At 48 kHz a six-cycle
+/// completion group holds 4 or 5 (D,D,D,N), never 6.
+[[nodiscard]] constexpr uint32_t MaxBlockingDataPacketsInCycles(
+    uint32_t cycles, const AmdtpRateGeometry& geometry) noexcept {
+    if (geometry.sytIntervalFrames == 0) {
+        return 0;
+    }
+    constexpr uint64_t kCyclesPerSecond = 8'000;
+    const uint64_t denominator = kCyclesPerSecond * geometry.sytIntervalFrames;
+    const uint64_t packets =
+        (static_cast<uint64_t>(cycles) * geometry.sampleRateHz + denominator - 1) /
+        denominator;
+    return static_cast<uint32_t>(packets < cycles ? packets : cycles);
+}
+
+static_assert(MaxBlockingDataPacketsInCycles(6, *AmdtpRateGeometryForSampleRate(48000)) == 5);
+static_assert(MaxBlockingDataPacketsInCycles(6, *AmdtpRateGeometryForSampleRate(96000)) == 5);
+static_assert(MaxBlockingDataPacketsInCycles(6, *AmdtpRateGeometryForSampleRate(44100)) == 5);
+static_assert(MaxBlockingDataPacketsInCycles(6, *AmdtpRateGeometryForSampleRate(32000)) == 3);
+
 /// Inverse mapping: AM824 FDF (SFC code, IEC 61883-6) -> rate geometry.
 /// Returns nullopt for NO_DATA (0xFF) and any non-SFC value.
 [[nodiscard]] constexpr std::optional<AmdtpRateGeometry>

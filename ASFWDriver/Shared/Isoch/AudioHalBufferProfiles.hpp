@@ -100,4 +100,18 @@ inline constexpr AudioHalBufferProfileId kActiveAudioHalBufferProfileId =
 inline constexpr AudioHalBufferProfile kActiveAudioHalBufferProfile =
     SelectAudioHalBufferProfile(kActiveAudioHalBufferProfileId);
 
+/// HAL buffer geometry for a stream rate. The one entry point the timing
+/// resolver uses (documentation/TIMING_GEOMETRY_OWNERSHIP.md).
+///
+/// It returns the same compile-time profile at every rate on purpose: the ring
+/// sizes cross-process shared memory allocated before the rate is known, and
+/// the zero-timestamp period is fixed at IOUserAudioDevice::init. A rate-
+/// dependent profile (midi's V3 geometry) is a measured multi-rate change
+/// (FW-221), not part of the ownership migration. Keeping it a function of the
+/// rate means that change touches this body only.
+[[nodiscard]] constexpr AudioHalBufferProfile HalBufferProfileForRate(
+    uint32_t /*sampleRateHz*/) noexcept {
+    return kActiveAudioHalBufferProfile;
+}
+
 } // namespace ASFW::IsochTransport
