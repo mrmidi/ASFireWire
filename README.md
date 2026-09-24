@@ -47,7 +47,8 @@ What is real today:
 - Async FireWire transactions are in place and used by discovery and protocol code.
 - AV/C FCP and CMP plumbing exists and is working on the main test rig.
 - Audio publication and experimental streaming paths exist in-tree.
-- Audio hardware tested by the maintainer: the Apogee Duet FireWire path, Terratec PHASE 88 Rack, and Focusrite Saffire Pro 24 DSP. Contributors have additionally verified the Focusrite Saffire Pro 40 (full duplex 20-in/20-out), PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out), and Midas Venice F32 (full duplex 32-in/32-out).
+- Audio hardware tested by the maintainer: the Apogee Duet FireWire path, Terratec PHASE 88 Rack, Focusrite Saffire Pro 24 DSP, and M-Audio FireWire 1814 at 48 kHz. Contributors have additionally verified the Focusrite Saffire Pro 40 (full duplex 20-in/20-out), PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out), and Midas Venice F32 (full duplex 32-in/32-out).
+- **M-Audio FireWire 1814 and ProjectMix I/O special-firmware support is in-tree at 48 kHz.** The 1814's playback, capture, and cold bootloader-to-firmware start were verified on hardware. ProjectMix I/O worked on an earlier development build but has not been independently retested against the merged implementation. Higher rates and optical modes are outside the validated path.
 - Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, Saffire Pro 40, PreSonus StudioLive 16.0.2 and 24.4.2, the Midas Venice range (F16/F24/F32 from one catalog row, told apart by reported geometry), the Alesis MultiMix 8/12/16, and Weiss INT202/INT203.
 - **MOTU protocol-v2 support is in-tree** for the 828mkII and UltraLite — a vendor register protocol rather than AV/C or DICE, with 3-byte PCM chunks behind a per-block source packet header. Contributed by [@deweydb](https://github.com/deweydb), built on Jonathan Woodward's ([@Dreambrother7](https://github.com/Dreambrother7)) wire/codec layer.
 - **Mackie support is in-tree** for the Onyx 400F (Echo Fireworks) and the Onyx-i series on the Oxford run, contributed by [@ottendorfcipher](https://github.com/ottendorfcipher). Neither has an audio-verified report yet.
@@ -83,10 +84,10 @@ Please test these currently enabled DICE devices:
 > same changes. Neither family is maintainer-owned hardware, so a regression in either
 > would not be caught locally.
 
-> **Midas Venice F24 is known not to work right now.** On a two-node Thunderbolt bus the
-> device advertises S400 in its Self-ID and then acknowledges nothing at that speed, so the
-> DICE section read times out and it never reaches CoreAudio. A fix that clamps the
-> advertised link speed with observed evidence is written and tested but not yet released.
+> **Midas Venice F24 needs a hardware recheck.** On a two-node Thunderbolt bus it
+> advertised S400 but did not acknowledge at that speed, so the DICE section read timed
+> out before CoreAudio publication. The observed-speed clamp is now in-tree and covered
+> by host tests; a successful F24 hardware run after that fix is not yet recorded.
 
 StudioLive 16.4.2 / 32.4.2 owners can help too: the driver recognizes these mixers but does not enable audio yet because their stream layout has not been captured from hardware. If you own one, open an issue — a short register capture using the ASFW app is all that is needed to add support.
 
