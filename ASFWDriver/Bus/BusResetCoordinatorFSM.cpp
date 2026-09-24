@@ -18,6 +18,16 @@ namespace {
 
 constexpr uint32_t kDeferredPollMs = 1;
 constexpr uint32_t kSelfIDTimeoutMs = 1000;
+// Upper bound on waiting for the AT contexts to drop ACTIVE after RUN is
+// cleared. Linux context_stop() gives up after ~10 ms (1000 × 10 µs), logs
+// "DMA context still active" and carries on with the reset
+// (references/linux-ohci-firewire-low-level-stack/ohci.c:1164-1182, called
+// from bus_reset_work ohci.c:2002). An unbounded wait here parked the whole
+// reset FSM — and with it discovery and every SBP-2 session — forever on a
+// controller whose AT request context stayed ACTIVE after a wedged target
+// (2026-09-24, LS-9000). Generous multiple of the Linux bound; still short
+// against the 1 s Self-ID budget.
+constexpr uint32_t kATQuiesceTimeoutMs = 100;
 constexpr uint32_t kAppleScanBusDelayMs = 100;
 
 } // namespace
@@ -121,13 +131,44 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepWaitingSelfID() {
     return StepResult::Yield;
 }
 
+bool BusResetCoordinator::ATQuiesceDoneOrTimedOut(const char* stage) {
+    if (G_ATInactive()) {
+        return true;
+    }
+    const uint64_t waitedNs = MonotonicNow() - stateEntryTime_;
+    if (waitedNs < static_cast<uint64_t>(kATQuiesceTimeoutMs) * 1'000'000ULL) {
+        return false;
+    }
+
+    uint32_t atReqControl = 0xFFFFFFFFu;
+    uint32_t atRspControl = 0xFFFFFFFFu;
+    if (hardware_ != nullptr) {
+        if (auto access = hardware_->TryBeginAccess()) {
+            atReqControl = access.Read(
+                Register32FromOffsetUnchecked(DMAContextHelpers::AsReqTrContextControlSet));
+            atRspControl = access.Read(
+                Register32FromOffsetUnchecked(DMAContextHelpers::AsRspTrContextControlSet));
+        }
+    }
+    // Same policy as Linux context_stop(): report and proceed. Nothing we do
+    // on the FSM can un-stick the context, and stalling here takes discovery
+    // and every session down with it.
+    ASFW_LOG_ERROR(BusReset,
+                   "[FSM] %{public}s: AT context still ACTIVE after %u ms (AsReqTr=0x%08x "
+                   "AsRspTr=0x%08x) — proceeding with reset handling",
+                   stage, kATQuiesceTimeoutMs, atReqControl, atRspControl);
+    RecordRecoveryReason(std::string{"AT quiesce timeout in "} + stage);
+    RecordRecoveryReasonCode(RecoveryReasonCode::ATQuiesceTimeout);
+    return true;
+}
+
 BusResetCoordinator::StepResult BusResetCoordinator::StepQuiescingAT() {
     if (!stopFlushIssued_) {
         StopFlushAT();
         stopFlushIssued_ = true;
     }
 
-    if (G_ATInactive()) {
+    if (ATQuiesceDoneOrTimedOut("QuiescingAT")) {
         TransitionTo(State::RestoringConfigROM, "AT contexts quiesced");
         return StepResult::Continue;
     }
@@ -176,7 +217,7 @@ void BusResetCoordinator::MaybeRequestTopologyDrivenReset() {
 }
 
 BusResetCoordinator::StepResult BusResetCoordinator::StepClearingBusReset() {
-    if (G_ATInactive()) {
+    if (ATQuiesceDoneOrTimedOut("ClearingBusReset")) {
         ClearBusReset();
         UnmaskBusReset();
         TransitionTo(State::Rearming, "busReset cleared");

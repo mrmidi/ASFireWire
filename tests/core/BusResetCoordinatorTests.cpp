@@ -399,6 +399,45 @@ TEST(BusResetCoordinatorTests, StableResetPublishesTopologyExactlyOnce) {
                 operations.end());
 }
 
+// Regression (2026-09-24, LS-9000): the AT request context kept ACTIVE after
+// RUN was cleared and the reset FSM polled G_ATInactive() forever — no
+// topology, no discovery, no log line. Linux context_stop() bounds that wait
+// and proceeds (ohci.c:1164-1182); so must both waits here.
+TEST(BusResetCoordinatorTests, StuckActiveATContextDoesNotStallResetForever) {
+    BusResetTestRig rig;
+    rig.Initialize();
+    rig.hardware.SetTestRegister(
+        Register32FromOffsetUnchecked(DMAContextHelpers::AsReqTrContextControlSet),
+        kContextControlActiveBit);
+
+    rig.StartResetCycle();
+    const auto rawCapture = MakeRawSelfIDCapture(
+        7U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
+    rig.PrimeCapture(rawCapture, 7U);
+    rig.TriggerStickyCompletion();
+
+    // Inside the bound: still waiting, nothing published.
+    rig.AdvanceMs(50U);
+    EXPECT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::QuiescingAT);
+    EXPECT_TRUE(rig.publishedTopologies.empty());
+
+    // Past the bound for QuiescingAT and again for ClearingBusReset, plus the
+    // Apple scan delay: the reset completes and topology is published once.
+    rig.AdvanceMs(100U);
+    rig.AdvanceMs(150U);
+    rig.AdvanceMs(150U);
+
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    EXPECT_EQ(rig.publishedTopologies.front().generation, 7U);
+    EXPECT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::Idle);
+    EXPECT_EQ(rig.coordinator.Diagnostics().lastRecoveryReasonCode,
+              BusResetCoordinator::RecoveryReasonCode::ATQuiesceTimeout);
+    ASSERT_TRUE(rig.coordinator.Metrics().lastFailureReason.has_value());
+    EXPECT_NE(rig.coordinator.Metrics().lastFailureReason->find("AT quiesce timeout"),
+              std::string::npos);
+    EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+}
+
 TEST(BusResetCoordinatorTests, StableResetDelaysDiscoveryByAppleScanDelay) {
     BusResetTestRig rig;
     rig.Initialize();

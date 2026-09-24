@@ -146,6 +146,7 @@ class BusResetCoordinator {
         SoftwareResetDispatchFailed = 4,
         ReadyForDiscoveryFailed = 5,
         ManualResetWatchdog = 6,
+        ATQuiesceTimeout = 7,
     };
 
     struct ResetDiagnostics {
@@ -338,6 +339,9 @@ class BusResetCoordinator {
     void MaybeRecoverMissingManualResetIrq(uint32_t manualEpoch, uint32_t resetEpoch);
 
     bool G_ATInactive();
+    // Bounded wait for G_ATInactive(): true = proceed (inactive, or timed out
+    // and logged). false = keep polling.
+    bool ATQuiesceDoneOrTimedOut(const char* stage);
     bool HasSelfIDCompletion() const;
     bool CanAttemptSelfIDDecode() const;
     bool G_NodeIDValid() const;
