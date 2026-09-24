@@ -117,7 +117,7 @@ behaviour.
 
 ### 2.4 Rate-mode geometry, from hardware
 
-The Saffire Pro 24 DSP dump (`fixtures/focusritespro24dsp.txt`) carries a TCAT
+The Saffire Pro 24 DSP dump (`fixtures/DICE/spro24dsp.txt`) carries a TCAT
 extension whose `current_config` enumerates **every** rate mode:
 
 | mode | capture (DICE TX) | playback (DICE RX) |

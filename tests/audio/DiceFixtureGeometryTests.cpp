@@ -133,7 +133,7 @@ constexpr DiceFixture kFixtures[] = {
         // from multiplication; its job is the slot comparison and the simple
         // path. FocusriteSaffireProfile's constants match it exactly.
         .name = "Focusrite Saffire Pro 24 DSP",
-        .dump = "documentation/fixtures/focusritespro24dsp.txt",
+        .dump = "documentation/fixtures/DICE/spro24dsp.txt",
         .guid = 0x00130E0402004713ULL,
         .clockCaps = 0x112C001E,
         .role = {.discriminatesAggregation = false,
