@@ -1848,6 +1848,11 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
     }
 
     session.generation = apply.value.generation;
+    // The idle pick is now what the user wants. RunStartStreaming resolves the
+    // start clock pending -> desired -> applied, so leaving desiredClock at an
+    // earlier run's rate made the next start relock the device back to it while
+    // CoreAudio rendered the new rate (a 44.1 kHz pick played ~9% sharp).
+    session.desiredClock = desiredClock;
     session.appliedClock = apply.value.appliedClock;
     session.runtimeCaps = apply.value.runtimeCaps;
     ClearFailureSnapshot(session);

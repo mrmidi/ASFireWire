@@ -1223,6 +1223,34 @@ TEST_F(AudioDuplexCoordinatorTests, IdleClockApplyUsesDeviceOnlyPathAndReturnsTo
     EXPECT_EQ(LogSnapshot(), (std::vector<std::string>{"device.apply_clock"}));
 }
 
+// Hardware repro (Saffire Pro 24 DSP, 2026-09-24): run at 48 kHz, stop, pick
+// 44.1 kHz in Audio MIDI Setup (the idle clock-apply path), start again. The
+// start used the earlier run's 48 kHz desiredClock over the idle apply's
+// 44.1 kHz appliedClock, relocked the device at 48 kHz while CoreAudio
+// rendered 44.1 kHz, and playback came out about 9% sharp.
+TEST_F(AudioDuplexCoordinatorTests, StartAfterIdleClockChangeUsesTheNewRate) {
+    constexpr AudioClockConfig k44100{.sampleRateHz = 44100U};
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+    ASSERT_EQ(protocol_->LastDesiredClock().sampleRateHz, 48000U);
+    ASSERT_EQ(coordinator_.StopStreaming(kTestGuid), kIOReturnSuccess);
+
+    // The device relocks at 44.1 kHz: STATUS locked, nominal rate index 1. The
+    // start waits for the device to report the requested rate before streaming.
+    protocol_->applyCaps_.sampleRateHz = 44100U;
+    protocol_->healthStatusValue = 0x101U;
+    ASSERT_EQ(coordinator_.RequestClockConfig(kTestGuid, k44100,
+                                              DuplexRestartReason::kSampleRateChange),
+              kIOReturnSuccess);
+    ASSERT_EQ(protocol_->applyClockCalls, 1);
+    const auto idle = GetSession();
+    ASSERT_TRUE(idle.has_value());
+    EXPECT_EQ(idle->desiredClock.sampleRateHz, 44100U);
+    EXPECT_EQ(idle->appliedClock.sampleRateHz, 44100U);
+
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 44100U);
+}
+
 TEST_F(AudioDuplexCoordinatorTests, RunningClockRequestPerformsFullStopAndRestart) {
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
     ClearLog();
