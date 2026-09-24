@@ -99,7 +99,7 @@ public:
         ivars_.device.profileBuilderId = static_cast<uint32_t>(builder);
         ivars_.device.currentSampleRate = sampleRateHz;
         control_->ResetForStart();
-        if (!ASFW::Audio::DriverKit::SelectTxClockDomain(ivars_)) {
+        if (!ASFW::Audio::DriverKit::SelectTxClockDomain(ivars_, profile)) {
             return false;
         }
 

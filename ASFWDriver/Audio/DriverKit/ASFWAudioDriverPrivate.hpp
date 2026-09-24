@@ -373,10 +373,11 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 // before the IT DMA context starts, so the first refill finds committed slots.
 void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept;
 
-// Chooses the TX clock domain from the resolved profile builder. M-Audio
-// special firmware runs its own 48 kHz cadence; everything else replays RX.
-// Returns false when the M-Audio cadence cannot be armed at the current rate.
-[[nodiscard]] bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars) noexcept;
+// Arms the transmit clock the profile asks for (TransmitClockSource). Returns
+// false when the internal cadence cannot be armed at the current rate.
+[[nodiscard]] bool SelectTxClockDomain(
+    ASFWAudioDriver_IVars& ivars,
+    const ASFW::Isoch::Audio::IAudioStreamProfile& profile) noexcept;
 
 struct PrimaryTxQueueMemory final {
     uint8_t* payloadBase{nullptr};

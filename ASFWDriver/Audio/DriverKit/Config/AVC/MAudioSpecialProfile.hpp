@@ -30,6 +30,9 @@ public:
         return ::ASFW::Audio::BeBoB::kMAudioStreamReadyTimeoutMs;
     }
     [[nodiscard]] AudioStreamTxPolicy TxStreamPolicy() const noexcept override;
+    [[nodiscard]] TxClockSource TransmitClockSource() const noexcept override {
+        return TxClockSource::kInternalCadence;
+    }
 
 private:
     bool projectMix_{false};

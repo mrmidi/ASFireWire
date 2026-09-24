@@ -174,7 +174,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 return;
             }
             initialClockAnchorTimeoutMs = profile->InitialClockAnchorTimeoutMs();
-            if (!ASFW::Audio::DriverKit::SelectTxClockDomain(ivars)) {
+            if (!ASFW::Audio::DriverKit::SelectTxClockDomain(ivars, *profile)) {
                 kr = failStart(kIOReturnUnsupported, "MAudioInternalTxTiming");
                 return;
             }

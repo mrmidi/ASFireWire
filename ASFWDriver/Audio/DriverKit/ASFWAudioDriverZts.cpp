@@ -18,7 +18,6 @@
 #include "../../Logging/Logging.hpp"
 #include "../Wire/IEC61883/Syt.hpp"
 #include "../Families/BeBoB/MAudio/MAudioClockSourcePolicy.hpp"
-#include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 #include <DriverKit/DriverKit.h>
 
@@ -872,12 +871,10 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
                  kTxPreparationLeadPackets);
 }
 
-bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars) noexcept {
-    const auto builder = static_cast<ASFW::DeviceProfiles::Audio::ProfileBuilderId>(
-        ivars.device.profileBuilderId);
+bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars,
+                         const ASFW::Isoch::Audio::IAudioStreamProfile& profile) noexcept {
     ivars.runtime.mAudioInternalTxActive =
-        builder == ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
-        builder == ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix;
+        profile.TransmitClockSource() == ASFW::Isoch::Audio::TxClockSource::kInternalCadence;
     ivars.runtime.mAudioTxClockProfile.store(
         ivars.runtime.mAudioInternalTxActive.load(
             std::memory_order_acquire),
