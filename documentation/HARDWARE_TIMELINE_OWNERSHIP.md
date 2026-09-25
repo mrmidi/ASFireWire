@@ -1,7 +1,7 @@
 # Hardware sample timeline: ownership (Epic 4)
 
-**Status:** implemented, 2026-09-26 (T0–T7 on `refactor/hardware-timeline`); hardware check
-pending (§6). Linear FW-186 (milestone 4), with FW-187/188/189
+**Status:** implemented, 2026-09-26 (T0–T7 on `refactor/hardware-timeline`). Hardware check
+passed on the Saffire Pro 24 DSP at 48 kHz (§6); 44.1 kHz switch and M-Audio still to run. Linear FW-186 (milestone 4), with FW-187/188/189
 condensed here. Stages T0–T7 in the milestone plan; this document is T0.
 
 **Goal.** One authority for `absolute audio frame ↔ bus time ↔ host time`. CoreAudio's zero
@@ -171,7 +171,25 @@ The final tree, searched:
 - **SYT-presentation basis instead of arrival** → needs a hardware comparison.
 - **HAL clock algorithm (Raw vs IIR)** → from the FW-176 baseline.
 
-**Hardware check (pending), against §1:**
-- Instruments ZTS on the Pro 24 DSP at 48 kHz: anchors one period apart, jitter within the baseline's 3.1–3.3 µs.
+**Hardware check, 2026-09-26: passed** (Saffire Pro 24 DSP, 48 kHz, cold start, build
+`79a0737`):
+
+| | before (`8fa472e`) | after (`79a0737`) |
+|---|---|---|
+| Instruments ZTS anchors | 17 | 12 |
+| spacing | 12,288 each | 135,168 / 11 = 12,288 each |
+| jitter min / max | 3.08 / 3.33 µs | 3.08 / 3.25 µs |
+| jitter σ | 79 ns | 50 ns |
+
+The MCP driver ring agrees:
+- one `epoch=1 source=receive reason=start-io`;
+- the first ZTS at frame 12288;
+- no `StaleEpoch`, no new warning types, 0 dropped records;
+- 17 logged anchors fit a straight line within −1.45…+2.12 µs (RMS 0.89 µs), a −12.1 ppm device clock.
+
+"Not worse" is the claim. The clean path is byte-identical by construction, and the σ
+difference is within the sample size.
+
+**Still to run:**
 - A 48 ↔ 44.1 kHz switch: each start logs `[Zts] epoch=… reason=start-io`.
 - M-Audio 1814, if available: its clock unchanged (it now goes through the mailbox).
