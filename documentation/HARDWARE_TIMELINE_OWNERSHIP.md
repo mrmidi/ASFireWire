@@ -84,33 +84,37 @@ stay **byte-identical** (T1 → T4), preserving the §1 jitter.
 Moving to SYT presentation, as `midi` does, would be a separate declared delta and needs
 hardware comparison. It is not part of this epic.
 
-### Decision (b): loss starts a new epoch that continues the ZTS grid
+### Decision (b): loss starts a new epoch at the current frame
 
 - **Today:** a receive-cycle gap resets cadence and replay and fires the timing-loss
   callback, which restarts the stream. The frame cursor keeps counting decoded frames
-  across the gap, so any anchor published before that restart has a frame number short by
-  the lost frames. The HAL sees this as a clock discontinuity (the
-  "rx-clock-anchor-discontinuity" note).
-- **New rule:** any RX discontinuity the consumer already detects (`kReceiveCycleGap`, a
-  rejected cadence or anchor) begins a `PresentationLoss` epoch. Its base frame is
-  `NextBoundary(lastPublishedBoundary)` (`midi`'s rule), so the next ZTS lands exactly one
-  period after the last. The HAL grid stays continuous, and the first observation after
-  the gap re-anchors frame↔time.
-- **No DBC-based gap bridging:** DBC is absent or quirky on some devices, and every
-  reference re-anchors instead:
+  across the gap, so any anchor published before that restart is short by the lost
+  frames. The goldens pin it: +125 µs after one lost packet, +1 ms after an 8-cycle gap.
+- **Rule (T4):** an established stream's discontinuity (`kReceiveCycleGap`, a rejected
+  cadence or anchor) begins a `PresentationLoss` Receive epoch **at the current frame**.
+  The old mapping is dropped, and an anchor projected before the gap is refused at the HAL
+  (`StaleEpoch`).
+- **Frames are not renumbered.** `midi`'s rule, a loss base at `NextBoundary(last)`, was
+  considered and rejected here:
+  - it would move the input-ring write position by up to one period;
+  - it would move the RX replay frames, which the TX cursor re-aligns from after a stall.
+    That is milestone 6's TX-ownership territory.
+  - It also buys nothing today: the timing-loss restart that follows (StopIO → StartIO
+    through CoreAudio, `557d4965`) begins a fresh StartIO epoch anyway.
+- **Deferred to FW-218:** accounting for the lost frames (by DBC where present, or by bus
+  time) so a stream can survive a loss *without* restarting. That goes with the
+  restart-versus-re-anchor decision. References that re-anchor instead of restarting:
   - Saffire.kext re-anchors every DCL group from the interrupt host time;
   - AppleFWAudio re-anchors at every ring wrap from a fresh cycle-timer read.
-- **Unchanged:** whether a timing loss also restarts the stream. That is recovery policy
-  (FW-218, milestone 6).
 
 ### Epoch triggers
 
 | Reason | Where it starts |
 |---|---|
 | `StartIO` | `ASFWAudioDevice::StartIO` (every start, including CoreAudio's handover restart) |
-| `SampleRate` | `CommitSampleRate` (inside the configuration-change window) |
+| `SampleRate` | covered by StartIO: a rate change commits inside a configuration-change window, and the host's StartIO that follows begins the new epoch |
 | `BusGeneration` | covered by StartIO: a restart while CoreAudio runs goes through StopIO → StartIO (`557d4965`) |
-| `PresentationLoss` | the RX consumer's discontinuity detection (decision b) |
+| `PresentationLoss` | the RX consumer's discontinuity detection, at the current frame (decision b) |
 | `ClockSource`, `HardwareRestart`, `SourceSwitch` | not used in milestone 4 (the source switch is deferred) |
 
 Consumers never carry a mapping across an epoch: `Observe` rejects stale-epoch

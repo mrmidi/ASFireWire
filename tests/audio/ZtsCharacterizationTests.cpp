@@ -80,6 +80,9 @@ struct StreamSpec {
     std::vector<uint64_t> dropped{};
     // Quiesce and re-activate the consumer just before this cycle (0: never).
     uint64_t restartAt{0};
+    // Begin a Receive epoch on the device timeline at each start, as StartIO
+    // does since Epic 4 T3; the RX path then publishes through the timeline.
+    bool timelineEpoch{false};
 };
 
 // Blocking AMDTP: a DATA packet of 8 frames whenever 8 frames have accrued by
@@ -146,6 +149,14 @@ ASFW::Testing::WireTrace RecordAnchors(const StreamSpec& spec) {
     });
     DirectAudioReceiveConsumer consumer(&binding, {.am824Slots = kChannels,
                                                    .streamChannels = kChannels});
+    auto beginEpoch = [&] {
+        if (spec.timelineEpoch) {
+            (void)control.hardwareTimeline.BeginEpoch(
+                ASFW::Audio::Runtime::HardwareTimelineSource::Receive,
+                ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO, spec.rateHz, 0);
+        }
+    };
+    beginEpoch();
     consumer.OnReceiveActivated();
 
     ASFW::Testing::WireTrace trace;
@@ -163,6 +174,7 @@ ASFW::Testing::WireTrace RecordAnchors(const StreamSpec& spec) {
             // new binding generation, re-activate.
             consumer.OnReceiveQuiesced();
             control.ResetForStart();
+            beginEpoch();
             binding.Rebind();
             consumer.OnReceiveActivated();
             lastGeneration = 0;
@@ -197,6 +209,12 @@ ASFW::Testing::WireTrace RecordAnchors(const StreamSpec& spec) {
             if (control.hostClockAnchor.TryReadLatest(lastGeneration, anchor) &&
                 anchor.generation != lastGeneration) {
                 lastGeneration = anchor.generation;
+                // Through the timeline, every anchor carries the live epoch.
+                if (spec.timelineEpoch) {
+                    EXPECT_EQ(anchor.timelineEpoch, control.hardwareTimeline.Epoch())
+                        << "cycle " << cycle;
+                    EXPECT_NE(anchor.timelineEpoch, 0U);
+                }
                 std::snprintf(line, sizeof(line),
                               "anchor cycle=%llu frame=%llu hostNs=%llu nsPerSampleQ8=%llu",
                               static_cast<unsigned long long>(cycle),
@@ -207,49 +225,62 @@ ASFW::Testing::WireTrace RecordAnchors(const StreamSpec& spec) {
             }
         }
     }
+    if (spec.timelineEpoch && spec.withSyt) {
+        // The timeline really carried the clock (not the grid-rule fallback),
+        // and an established loss began a new epoch.
+        EXPECT_GT(control.hardwareTimeline.observations_.load(), 0U);
+        EXPECT_EQ(control.hardwareTimeline.Source(),
+                  ASFW::Audio::Runtime::HardwareTimelineSource::Receive);
+        if (!spec.dropped.empty()) {
+            EXPECT_EQ(control.hardwareTimeline.DiscontinuityReason(),
+                      ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::PresentationLoss);
+        }
+    }
     std::snprintf(line, sizeof(line), "replayResets=%llu",
                   static_cast<unsigned long long>(control.rxReplayEpochResets.load()));
     trace.Add(line);
     return trace;
 }
 
+// The recorded anchors must come out of both paths: the previous grid rule and
+// the hardware timeline (a Receive epoch begun at StartIO). Epic 4 T4 moves the
+// RX clock onto the timeline without moving a single anchor.
+void ExpectBothPathsMatch(StreamSpec spec, const char* golden) {
+    ASFW::Testing::ExpectMatchesGolden(RecordAnchors(spec), golden);
+    spec.timelineEpoch = true;
+    ASFW::Testing::ExpectMatchesGolden(RecordAnchors(spec), golden);
+}
+
 // About five ZTS periods (12288 frames at 1x) of a clean 48 kHz stream.
 TEST(ZtsCharacterization, Clean48k) {
-    ASFW::Testing::ExpectMatchesGolden(RecordAnchors({.rateHz = 48000, .cycles = 11'000}),
-                                       "zts/clean-48k.txt");
+    ExpectBothPathsMatch({.rateHz = 48000, .cycles = 11'000}, "zts/clean-48k.txt");
 }
 
 TEST(ZtsCharacterization, Clean44k1) {
-    ASFW::Testing::ExpectMatchesGolden(RecordAnchors({.rateHz = 44100, .cycles = 12'000}),
-                                       "zts/clean-44k1.txt");
+    ExpectBothPathsMatch({.rateHz = 44100, .cycles = 12'000}, "zts/clean-44k1.txt");
 }
 
 // One DATA packet lost after the second anchor. Today the frame count carries
 // on across the gap, so later anchors are short by the lost frames.
 TEST(ZtsCharacterization, LostPacket48k) {
-    ASFW::Testing::ExpectMatchesGolden(
-        RecordAnchors({.rateHz = 48000, .cycles = 11'000, .dropped = {4'501}}), "zts/lost-packet-48k.txt");
+    ExpectBothPathsMatch({.rateHz = 48000, .cycles = 11'000, .dropped = {4'501}}, "zts/lost-packet-48k.txt");
 }
 
 // A run of lost cycles (a longer gap).
 TEST(ZtsCharacterization, CycleGap48k) {
-    ASFW::Testing::ExpectMatchesGolden(
-        RecordAnchors({.rateHz = 48000, .cycles = 11'000,
-             .dropped = {4'501, 4'502, 4'503, 4'504, 4'505, 4'506, 4'507, 4'508}}),
-        "zts/cycle-gap-48k.txt");
+    ExpectBothPathsMatch({.rateHz = 48000, .cycles = 11'000,
+             .dropped = {4'501, 4'502, 4'503, 4'504, 4'505, 4'506, 4'507, 4'508}}, "zts/cycle-gap-48k.txt");
 }
 
 // No SYT on the wire (as RME/MOTU): without a device timing observer the
 // cadence gate never opens, so today nothing is published.
 TEST(ZtsCharacterization, NoSyt48k) {
-    ASFW::Testing::ExpectMatchesGolden(RecordAnchors({.rateHz = 48000, .withSyt = false, .cycles = 6'000}),
-                                       "zts/no-syt-48k.txt");
+    ExpectBothPathsMatch({.rateHz = 48000, .withSyt = false, .cycles = 6'000}, "zts/no-syt-48k.txt");
 }
 
 // The consumer quiesced and re-activated mid-stream (a transport restart).
 TEST(ZtsCharacterization, Restart48k) {
-    ASFW::Testing::ExpectMatchesGolden(
-        RecordAnchors({.rateHz = 48000, .cycles = 11'000, .restartAt = 4'800}), "zts/restart-48k.txt");
+    ExpectBothPathsMatch({.rateHz = 48000, .cycles = 11'000, .restartAt = 4'800}, "zts/restart-48k.txt");
 }
 
 } // namespace
