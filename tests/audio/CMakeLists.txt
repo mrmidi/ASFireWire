@@ -324,6 +324,16 @@ add_audio_test(DiceProfileTests
 )
 
 # Every DICE profile's answers, recorded (DICE_TCAT_ARCHITECTURE.md §4.2 stage C).
+# Zero timestamps the RX path publishes, recorded (Epic 4, T1).
+add_audio_test(ZtsCharacterizationTests
+    ZtsCharacterizationTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/DirectInputWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+)
+
 add_audio_test(DiceProfileEquivalenceTests
     DiceProfileEquivalenceTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"

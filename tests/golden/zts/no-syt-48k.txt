@@ -1,0 +1,2 @@
+stream rate=48000 syt=0 cycles=6000
+replayResets=1
