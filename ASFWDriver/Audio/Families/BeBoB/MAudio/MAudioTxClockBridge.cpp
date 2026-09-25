@@ -6,7 +6,8 @@
 
 namespace ASFW::Audio::Families::BeBoB::MAudio {
 
-bool TxClockBridge::Arm(const uint64_t startEpoch,
+bool TxClockBridge::Arm(ASFW::Audio::Runtime::HardwareSampleTimeline& timeline,
+                        const uint64_t startEpoch,
                         const uint32_t sampleRateHz,
                         const uint32_t zeroTimestampPeriodFrames,
                         const uint32_t presentationOffsetTicks) noexcept {
@@ -19,7 +20,8 @@ bool TxClockBridge::Arm(const uint64_t startEpoch,
                 ZeroTimestampPeriodForRate(sampleRateHz)) {
         return false;
     }
-    epoch_ = timeline_.BeginEpoch(
+    timeline_ = &timeline;
+    epoch_ = timeline.BeginEpoch(
         ASFW::Audio::Runtime::HardwareTimelineSource::Transmit,
         ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO,
         sampleRateHz, 0);
@@ -35,7 +37,9 @@ bool TxClockBridge::Arm(const uint64_t startEpoch,
 void TxClockBridge::Disarm() noexcept {
     observer_.Disarm();
     epoch_ = 0;
-    timeline_.Reset();
+    // The timeline itself belongs to the control block, which resets it at
+    // StartIO; the bridge only lets go of it.
+    timeline_ = nullptr;
 }
 
 TxClockBoundaryResult TxClockBridge::ObserveWake(
@@ -46,7 +50,8 @@ TxClockBoundaryResult TxClockBridge::ObserveWake(
     const uint64_t newestCompletionBusTicks,
     const std::span<const TxDataClockObservation> dataPackets) noexcept {
     TxClockBoundaryResult result{};
-    if (epoch_ == 0 || correlationBusTicks == 0 || correlationHostTicks == 0 ||
+    if (epoch_ == 0 || timeline_ == nullptr || correlationBusTicks == 0 ||
+        correlationHostTicks == 0 ||
         newestCompletionBusTicks == 0) {
         return result;
     }
@@ -82,7 +87,7 @@ TxClockBoundaryResult TxClockBridge::ObserveWake(
             continue;
         }
         ASFW::Audio::Runtime::HardwareZeroTimestamp boundary{};
-        const auto observed = timeline_.Observe({
+        const auto observed = timeline_->Observe({
             .epoch = epoch_,
             .source = ASFW::Audio::Runtime::HardwareTimelineSource::Transmit,
             .sampleFrame = packet.sampleFrame,

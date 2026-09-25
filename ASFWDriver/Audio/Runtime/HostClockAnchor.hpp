@@ -9,6 +9,8 @@ enum class ZtsMirrorPublishResult : uint8_t {
     Published = 0,
     NoNewGeneration,
     NotReady,
+    // The anchor belongs to a timeline epoch that has ended.
+    StaleEpoch,
 };
 
 inline const char* ToString(ZtsMirrorPublishResult result) noexcept {
@@ -16,6 +18,7 @@ inline const char* ToString(ZtsMirrorPublishResult result) noexcept {
         case ZtsMirrorPublishResult::Published:       return "Published";
         case ZtsMirrorPublishResult::NoNewGeneration: return "NoNewGeneration";
         case ZtsMirrorPublishResult::NotReady:        return "NotReady";
+        case ZtsMirrorPublishResult::StaleEpoch:      return "StaleEpoch";
         default:                                      return "Unknown";
     }
 }
@@ -25,6 +28,8 @@ struct HostClockAnchorSample final {
     uint64_t sampleFrame{0};
     uint64_t hostTicks{0};
     uint32_t hostNanosPerSampleQ8{0};
+    // HardwareSampleTimeline epoch the anchor was projected in; 0 = none.
+    uint64_t timelineEpoch{0};
 };
 
 struct HostClockAnchorPublishResult final {
@@ -44,6 +49,7 @@ struct HostClockAnchorState {
     std::atomic<uint64_t> sampleFrame{0};
     std::atomic<uint64_t> hostTicks{0};
     std::atomic<uint32_t> hostNanosPerSampleQ8{0};
+    std::atomic<uint64_t> timelineEpoch{0};
 
     std::atomic<uint64_t> anchorUpdates{0};
     std::atomic<uint64_t> mirrorPublications{0};
@@ -55,6 +61,7 @@ struct HostClockAnchorState {
         sampleFrame.store(0, std::memory_order_relaxed);
         hostTicks.store(0, std::memory_order_relaxed);
         hostNanosPerSampleQ8.store(0, std::memory_order_relaxed);
+        timelineEpoch.store(0, std::memory_order_relaxed);
 
         anchorUpdates.store(0, std::memory_order_relaxed);
         mirrorPublications.store(0, std::memory_order_relaxed);
@@ -64,7 +71,8 @@ struct HostClockAnchorState {
     [[nodiscard]] HostClockAnchorPublishResult Publish(
         uint64_t nextSampleFrame,
         uint64_t nextHostTicks,
-        uint32_t nextHostNanosPerSampleQ8) noexcept {
+        uint32_t nextHostNanosPerSampleQ8,
+        uint64_t nextTimelineEpoch = 0) noexcept {
         if (nextHostTicks == 0 || nextHostNanosPerSampleQ8 == 0) {
             invalidUpdates.fetch_add(1, std::memory_order_relaxed);
             return {};
@@ -77,6 +85,7 @@ struct HostClockAnchorState {
         hostTicks.store(nextHostTicks, std::memory_order_relaxed);
         hostNanosPerSampleQ8.store(
             nextHostNanosPerSampleQ8, std::memory_order_relaxed);
+        timelineEpoch.store(nextTimelineEpoch, std::memory_order_relaxed);
         generation.store(nextGeneration, std::memory_order_relaxed);
         sequence.fetch_add(1, std::memory_order_release);
         anchorUpdates.fetch_add(1, std::memory_order_relaxed);
@@ -106,6 +115,8 @@ struct HostClockAnchorState {
                 hostTicks.load(std::memory_order_relaxed);
             snapshot.hostNanosPerSampleQ8 =
                 hostNanosPerSampleQ8.load(std::memory_order_relaxed);
+            snapshot.timelineEpoch =
+                timelineEpoch.load(std::memory_order_relaxed);
 
             const uint64_t sequenceAfter =
                 sequence.load(std::memory_order_acquire);

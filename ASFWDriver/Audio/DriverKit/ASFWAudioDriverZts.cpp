@@ -50,6 +50,18 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
         return ASFW::Audio::Runtime::ZtsMirrorPublishResult::
             NoNewGeneration;
     }
+    // An anchor projected in an epoch that has since ended (StartIO, loss)
+    // describes a mapping the timeline no longer holds; never hand it to the
+    // HAL. Untagged anchors (no epoch) predate the timeline and pass.
+    const uint64_t liveEpoch = control->hardwareTimeline.Epoch();
+    if (anchor.timelineEpoch != 0 && anchor.timelineEpoch != liveEpoch) {
+        ivars.runtime.lastHalZeroTimestampGeneration.store(
+            anchor.generation, std::memory_order_release);
+        ASFW_LOG_RL(DirectAudio, "zts/stale-epoch", 1000, OS_LOG_TYPE_DEFAULT,
+                    "[Zts] stale anchor refused epoch=%llu live=%llu frame=%llu",
+                    anchor.timelineEpoch, liveEpoch, anchor.sampleFrame);
+        return ASFW::Audio::Runtime::ZtsMirrorPublishResult::StaleEpoch;
+    }
 
     const bool firstPublication =
         ivars.runtime.lastHalZeroTimestampHostTicks.load(
@@ -219,19 +231,22 @@ void ObserveMAudioTxClock(ASFWAudioDriver_IVars& ivars,
         return;
     }
 
-    auto* audioDevice = ivars.audioDevice.get();
-    if (!audioDevice || boundary.boundary.hostTicks == 0) {
+    if (boundary.boundary.hostTicks == 0) {
         return;
     }
-    audioDevice->UpdateCurrentZeroTimestamp(
-        boundary.boundary.sampleFrame, boundary.boundary.hostTicks);
-    ivars.runtime.lastHalZeroTimestampSampleFrame.store(
-        boundary.boundary.sampleFrame, std::memory_order_relaxed);
-    ivars.runtime.lastHalZeroTimestampHostTicks.store(
-        boundary.boundary.hostTicks, std::memory_order_relaxed);
-    ivars.runtime.lastHalZeroTimestampGeneration.fetch_add(
-        1, std::memory_order_release);
-    control->counters.CountZtsPublished();
+    // Same path as the RX clock: the timeline's boundary goes into the anchor
+    // mailbox, and PublishSharedZeroTimestampToHAL is the one place that calls
+    // UpdateCurrentZeroTimestamp (documentation/HARDWARE_TIMELINE_OWNERSHIP.md).
+    const auto published = control->PublishHostClockAnchor(
+        boundary.boundary.sampleFrame, boundary.boundary.hostTicks,
+        boundary.boundary.hostNanosPerSampleQ8, boundary.boundary.epoch);
+    if (!published.accepted) {
+        return;
+    }
+    if (PublishSharedZeroTimestampToHAL(ivars, "maudio-tx", false) ==
+        ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published) {
+        control->counters.CountZtsPublished();
+    }
 }
 
 } // namespace
@@ -875,6 +890,20 @@ bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars,
                          const ASFW::Isoch::Audio::IAudioStreamProfile& profile) noexcept {
     ivars.runtime.mAudioInternalTxActive =
         profile.TransmitClockSource() == ASFW::Isoch::Audio::TxClockSource::kInternalCadence;
+    // The start's timeline epoch. A Transmit clock (M-Audio internal cadence)
+    // begins its own when the TX clock bridge arms; every other device takes
+    // its clock from RX. A rate the timeline does not model yet (32 kHz) gets
+    // no epoch, and RX anchors stay untagged as before.
+    if (!ivars.runtime.mAudioInternalTxActive) {
+        if (auto* control = ivars.runtime.directAudioGraph.control) {
+            const uint32_t rateHz = static_cast<uint32_t>(ivars.device.currentSampleRate);
+            const uint64_t epoch = control->hardwareTimeline.BeginEpoch(
+                ASFW::Audio::Runtime::HardwareTimelineSource::Receive,
+                ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO, rateHz, 0);
+            ASFW_LOG(DirectAudio, "[Zts] epoch=%llu source=receive reason=start-io rate=%u",
+                     epoch, rateHz);
+        }
+    }
     ivars.runtime.mAudioTxClockProfile.store(
         ivars.runtime.mAudioInternalTxActive.load(
             std::memory_order_acquire),
@@ -953,6 +982,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         ivars.runtime.txCompletionStampCursor = 0;
         ivars.runtime.mAudioTxCorrelationUnwrap = {};
         if (!ivars.runtime.mAudioTxClockBridge.Arm(
+                control->hardwareTimeline,
                 ivars.runtime.mAudioTxClockStartEpoch,
                 timingRateHz,
                 timing.zeroTimestampPeriodFrames,

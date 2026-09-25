@@ -164,6 +164,7 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/DirectAudioDebugSnapshotTests.cpp
     AudioRuntime/HostClockAnchorTests.cpp
     AudioRuntime/PlaybackRingRangeTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
 )
 
 # Audio telemetry wire v4 contract (FW-175); the golden fixture is shared with

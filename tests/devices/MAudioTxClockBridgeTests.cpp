@@ -16,7 +16,10 @@ TEST(MAudioTxClockBridgeTests,
         ASFW::IsochTransport::HalBufferProfileForRate(
             ASFW::Audio::BeBoB::kMAudioInternalTxSampleRateHz)
             .zeroTimestampPeriodFrames;
-    ASSERT_TRUE(bridge.Arm(1, rate, period, 12'800));
+    ASFW::Audio::Runtime::HardwareSampleTimeline timeline{};
+    ASSERT_TRUE(bridge.Arm(timeline, 1, rate, period, 12'800));
+    EXPECT_EQ(timeline.Source(), ASFW::Audio::Runtime::HardwareTimelineSource::Transmit);
+    EXPECT_EQ(timeline.Epoch(), bridge.Epoch());
 
     constexpr uint64_t hostTicks = 1'000'000'000'000ULL;
     const uint32_t cycleTimer = ASFW::Timing::encodeCycleTimer(0, 100, 0);
@@ -56,8 +59,9 @@ TEST(MAudioTxClockBridgeTests, RejectsGeometryOutsideTheValidated48KGrid) {
         ASFW::IsochTransport::HalBufferProfileForRate(
             ASFW::Audio::BeBoB::kMAudioInternalTxSampleRateHz)
             .zeroTimestampPeriodFrames;
-    EXPECT_FALSE(bridge.Arm(1, 96'000, period, 12'800));
-    EXPECT_FALSE(bridge.Arm(1, ASFW::Audio::BeBoB::kMAudioInternalTxSampleRateHz,
+    ASFW::Audio::Runtime::HardwareSampleTimeline timeline{};
+    EXPECT_FALSE(bridge.Arm(timeline, 1, 96'000, period, 12'800));
+    EXPECT_FALSE(bridge.Arm(timeline, 1, ASFW::Audio::BeBoB::kMAudioInternalTxSampleRateHz,
                             period + 1, 12'800));
 }
 

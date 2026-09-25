@@ -4,6 +4,7 @@
 #include "AudioRtCounters.hpp"
 #include "TxSytTrace.hpp"
 #include "TxWirePayloadTelemetry.hpp"
+#include "../../Runtime/HardwareSampleTimeline.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Runtime/Seqlock.hpp"
 #include "../../Wire/AMDTP/AmdtpTransferDelay.hpp"
@@ -525,6 +526,10 @@ struct AudioTransportControlBlock final {
     AudioClientCursor client{};
     AudioRtCounters counters{};
     HostClockAnchorState hostClockAnchor{};
+    // The device's one sample-time authority (frame <-> bus <-> host);
+    // documentation/HARDWARE_TIMELINE_OWNERSHIP.md. StartIO begins its epoch;
+    // CoreAudio ZTS is a projection of it through hostClockAnchor.
+    HardwareSampleTimeline hardwareTimeline{};
     std::atomic<uint64_t> discontinuities{0};
 
     // Latest ADK IO callback, successful or not. The real-time callback only
@@ -703,15 +708,17 @@ struct AudioTransportControlBlock final {
     [[nodiscard]] HostClockAnchorPublishResult PublishHostClockAnchor(
         uint64_t sampleFrame,
         uint64_t hostTicks,
-        uint32_t hostNanosPerSampleQ8) noexcept {
+        uint32_t hostNanosPerSampleQ8,
+        uint64_t timelineEpoch = 0) noexcept {
         return hostClockAnchor.Publish(
-            sampleFrame, hostTicks, hostNanosPerSampleQ8);
+            sampleFrame, hostTicks, hostNanosPerSampleQ8, timelineEpoch);
     }
 
     void ResetForStart() noexcept {
         client.Reset();
         counters.Reset();
         hostClockAnchor.Reset();
+        hardwareTimeline.Reset();
 
         ioCallbackGeneration.store(0, std::memory_order_relaxed);
         ioLastOperation.store(0, std::memory_order_relaxed);
