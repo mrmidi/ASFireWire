@@ -143,7 +143,30 @@ object must be keyed by rate mode.
 |---|---|---|
 | **EAP `current_config`** | Pro 24 DSP (`dynamicStreamFormat=true`, `maxTx/RxStreams=2`, TCD2210) | all three modes, read once, no rate switch needed |
 | **plain TX/RX registers** | Venice, StudioLive, MultiMix — all report `extension space <absent>` | the current mode only; must re-read after a switch |
-| **supplied table** | TCD3070 Pro 40 — no EAP *and* registers do not answer | `dice-focusrite.c:8-22`, keyed by rate mode |
+| **supplied table** | TCD3070 Pro 40 — no EAP, so registers give the current mode only | `dice-focusrite.c:8-22`, keyed by rate mode |
+
+**Correction (2026-09-25): the TCD3070 Pro 40's registers are not known to
+fail.** This table used to say they "do not answer"; nothing supports that.
+Focusrite's own driver supports the device from Saffire.kext 4.3.0 / MixControl
+3.9 (the 2019 installer; the 4.1.4 / 3.5 we first read has no entry):
+- `SaffireAudio::probe` accepts GUID product `19` (`0x13`) as a second
+  "Saffire Pro40". It is the same device as Linux's ROM model `0x0000de`
+  (`dice.c:385-387` documents the GUID/ROM mismatch).
+- The kext has no geometry table for it. `PopulateDeviceStruct` reads its
+  TX/RX registers like every other model; its only product check is for
+  another vendor (OUI `0x000166`).
+- MixControl 3.9 adds `Pro40DiceIIIDescriptor` (device type 7, firmware
+  `Pro40d3Firmware`) and `Pro40DiceIII_IpSigTab/OpSigTab`. Rates are 44.1, 48,
+  88.2 and 96 kHz: no 32 kHz and no high-rate table. The tables are identical
+  to the original Pro 40's except where the host-stream channels sit on router
+  blocks 11/12 at low rate. The original splits them 12 + 8 across the two
+  blocks, one per stream. The DICE III runs them 16 then 4, i.e. one 20-channel
+  stream addressed across both blocks, which agrees with Linux's one stream of
+  20 (low) / 16 (middle) plus MIDI.
+
+Linux's table is therefore best read as covering the missing extension: without
+it, registers describe only the current rate mode. Evidence tools live in
+`tmp/dicere/` (`probe_430.c`, `pro40_sigtabs.txt`).
 
 The earlier plan modelled two cases. It is three, and the EAP case is *better*
 than the base case, not a degradation. **No device is known to report

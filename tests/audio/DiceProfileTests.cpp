@@ -68,9 +68,10 @@ using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
 // The base Saffire profile used to match the Focusrite OUI alone, so every
 // other Focusrite DICE part inherited its 8-in/16-out geometry. Three devices
 // were affected, and the TCD3070 Pro 40 is the one that proves the rule cannot
-// be relaxed again: it is a different chip with no TCAT protocol extension, so
-// its geometry is not readable from the device at all (Linux hardcodes it,
-// dice-focusrite.c:8-22, and Focusrite's own kext has no entry for it).
+// be relaxed again: it is a different chip (DICE III) with no TCAT protocol
+// extension and a different stream layout -- one stream of 20 channels where the
+// original Pro 40 has 12 + 8 (Linux dice-focusrite.c:8-22). Focusrite supports it
+// only from Saffire.kext 4.3.0 / MixControl 3.9, as product 0x13.
 TEST(DiceProfileTests, FocusriteSiblingsDoNotInheritTheSaffireProfile) {
     constexpr uint32_t kFocusriteVendorId = 0x00130E;
     constexpr uint32_t kSPro40Tcd3070ModelId = 0x0000de;
