@@ -190,6 +190,19 @@ The MCP driver ring agrees:
 "Not worse" is the claim. The clean path is byte-identical by construction, and the σ
 difference is within the sample size.
 
+**Bus-reset burst while playing, 2026-09-26: recovered** (Pro 24 DSP, 48 kHz, build
+`6a74bbf`, three local resets about 0.5–2 s apart over MCP):
+1. The RX loss begins a `presentation-loss` epoch at the current frame.
+2. Each suspension cancels the pending quiet-period restart.
+3. After the last resume, the restart is handed to CoreAudio: StopIO (`0x0`), then StartIO.
+4. The new start begins a fresh Receive epoch, and the first ZTS lands at frame 12288.
+
+No `Prime failed`, no `IT FATAL`, no stale anchor, and audio came back without touching
+playback. This also verifies the FW-218 recovery fixes (`557d4965`, `3e31eab1`), which had
+failed twice before them.
+
 **Still to run:**
 - A 48 ↔ 44.1 kHz switch: each start logs `[Zts] epoch=… reason=start-io`.
-- M-Audio 1814, if available: its clock unchanged (it now goes through the mailbox).
+
+Done since: M-Audio 1814, cold start, clean after `6a74bbf6` (see that commit); Apogee Duet
+(Receive epoch) clean; hot swaps 1814 ↔ DICE clean.
