@@ -260,7 +260,8 @@ TEST(DiceProfileTests, WeissIntProfileKeepsDuplexWireShapeButHidesCaptureFromCor
         EXPECT_STREQ(profile->Name(), "Weiss INT (DICE)");
         EXPECT_EQ(profile->TxChannelCount(), 2U);
         EXPECT_EQ(profile->RxChannelCount(), 0U);
-        EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{44100U, 48000U}));
+        // Rates are not a profile fact any more: DICE publishes the device's
+        // own CLOCK_CAPABILITIES (DicePublishedRates).
 
         const auto* wireProfile = static_cast<const IAudioStreamProfile*>(profile);
         AudioStreamConfig capture{};

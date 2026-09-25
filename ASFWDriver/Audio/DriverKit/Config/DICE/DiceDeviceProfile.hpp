@@ -24,14 +24,6 @@ public:
     /// Returns the DICE specific hardware/software quirks (e.g. PCM format, DBS policy).
     [[nodiscard]] virtual DiceDeviceQuirks Quirks() const noexcept = 0;
 
-    /// Sample rates advertised to CoreAudio. Default is the universal DICE 1x
-    /// baseline (44.1/48 kHz); 2x/4x are omitted until their stream geometry is
-    /// verified end-to-end (see kDiceMaxSupportedRateHz). Profiles for devices
-    /// with a different 1x set may override.
-    [[nodiscard]] std::vector<uint32_t> SupportedSampleRates() const override {
-        return {44100u, 48000u};
-    }
-
     // DICE control profiles retain their wire-format and quirk policy here;
     // neutral stream geometry lives in IAudioStreamProfile.
     [[nodiscard]] Encoding::AudioWireFormat TxWireFormat() const noexcept override {

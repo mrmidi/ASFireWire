@@ -67,6 +67,11 @@ inline constexpr const char* kStreamChannelOffset = "Offset";
 /// transport fault and must fail rather than degrade.
 inline constexpr const char* kResolvedGeometryRequired = "ASFWResolvedGeometryRequired";
 
+/// The published sample rates are the device's own (DICE CLOCK_CAPABILITIES,
+/// capped at the validated ceiling). The audio side offers exactly these and
+/// does not replace them with a profile's list.
+inline constexpr const char* kDeviceSampleRates = "ASFWDeviceSampleRates";
+
 inline constexpr const char* kBoolClassId = "ClassID";
 inline constexpr const char* kBoolScope = "Scope";
 inline constexpr const char* kBoolElement = "Element";

@@ -181,12 +181,15 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                                                             rxChannels,
                                                             txChannels);
 
-        // Sample rates come from the profile (same authoritative source as the
-        // channel counts above), so CoreAudio advertises the full set even if the
-        // nub property dict did not carry kSampleRates. The HAL builds one stream
-        // format per rate (see SetAvailableSampleRates below).
-        const auto profileRates = profile->SupportedSampleRates();
-        if (!profileRates.empty()) {
+        // Sample rates the device reported (DICE CLOCK_CAPABILITIES) are kept
+        // exactly as published; the publisher also made the current rate one of
+        // them. Otherwise they come from the profile (same authoritative source
+        // as the channel counts above), so CoreAudio advertises the full set even
+        // if the nub property dict did not carry kSampleRates. The HAL builds one
+        // stream format per rate (see SetAvailableSampleRates below).
+        if (parsedConfig.deviceSampleRates && parsedConfig.sampleRateCount > 0) {
+            profileProvidedSampleRates = true;
+        } else if (const auto profileRates = profile->SupportedSampleRates(); !profileRates.empty()) {
             parsedConfig.sampleRateCount = 0;
             bool currentRateInSet = false;
             for (uint32_t hz : profileRates) {

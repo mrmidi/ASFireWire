@@ -67,6 +67,7 @@ ClassifyGeometryRefresh(const ASFWAudioDevice& published,
                       published.outputChannelCount == incoming.outputChannelCount &&
                       published.channelCount == incoming.channelCount &&
                       published.sampleRates == incoming.sampleRates &&
+                      published.deviceSampleRates == incoming.deviceSampleRates &&
                       published.streamMode == incoming.streamMode;
     return same ? GeometryRefreshDecision::kMayRefresh
                 : GeometryRefreshDecision::kGeometryChanged;

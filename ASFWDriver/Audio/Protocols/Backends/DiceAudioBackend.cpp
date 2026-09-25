@@ -10,6 +10,8 @@
 #include "../../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../DICE/Core/DiceNotificationRouter.hpp"
 #include "../DICE/Core/DICETypes.hpp"
+
+#include <algorithm>
 #include "../Duplex/FamilyDriver.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../StreamGeometryResolver.hpp"
@@ -839,10 +841,8 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
-    dev.sampleRates = profile->SupportedSampleRates();
-    if (dev.sampleRates.empty()) {
-        dev.sampleRates = {48000u};
-    }
+    // The rate set comes from the device once its caps are loaded (below);
+    // 48 kHz is the rate bring-up programs by default.
     dev.currentSampleRate = 48000u;
 
     // Enrich with the device's real per-channel labels (if the protocol has
@@ -989,6 +989,24 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             // device reported. If the arrays go missing in transit, starting
             // fails rather than degrading.
             dev.resolvedGeometryRequired = !dev.playbackStreams.empty();
+
+            // Offer exactly the rates the device supports, up to the validated
+            // ceiling, as TCAT's kexts do (CLOCK_CAPABILITIES & 0x7F). A device
+            // supporting none of them cannot stream in this build: refuse it
+            // rather than publish rates it would reject.
+            dev.sampleRates = DICE::DicePublishedRates(caps.deviceRateMask);
+            if (dev.sampleRates.empty()) {
+                ASFW_LOG_ERROR(Audio,
+                               "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
+                               "GUID=0x%016llx - device supports no rate up to %u Hz (rates=0x%02x)",
+                               guid, DICE::kDiceMaxSupportedRateHz, caps.deviceRateMask);
+                return;
+            }
+            dev.deviceSampleRates = true;
+            if (std::find(dev.sampleRates.begin(), dev.sampleRates.end(), dev.currentSampleRate) ==
+                dev.sampleRates.end()) {
+                dev.currentSampleRate = dev.sampleRates.back();
+            }
 
             // Refuse a device this build cannot actually arm, at publication
             // rather than at the first StartIO. ASFWAudioDevice allocates one

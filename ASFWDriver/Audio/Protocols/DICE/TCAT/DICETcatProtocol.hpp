@@ -111,6 +111,7 @@ private:
                           const StreamConfig& rx) noexcept;
     void CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept;
     void ResetRuntimeCaps() noexcept;
+    [[nodiscard]] bool DeviceSupportsRate(uint32_t rateHz) const noexcept;
 
     Protocols::Ports::FireWireBusInfo& busInfo_;
     ::ASFW::IRM::IRMClient* irmClient_{nullptr};
@@ -139,6 +140,7 @@ private:
     AudioClockConfig selectedClock_{};
 
     std::atomic<uint32_t> runtimeSampleRateHz_{0};
+    std::atomic<uint32_t> deviceRateMask_{0};
     std::atomic<uint32_t> hostInputPcmChannels_{0};
     std::atomic<uint32_t> hostOutputPcmChannels_{0};
     std::atomic<uint32_t> deviceToHostAm824Slots_{0};

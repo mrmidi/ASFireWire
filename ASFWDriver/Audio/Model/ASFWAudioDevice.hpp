@@ -76,6 +76,11 @@ struct ASFWAudioDevice {
     /// publishing (DICE); see PropertyKeys::kResolvedGeometryRequired.
     bool resolvedGeometryRequired{false};
 
+    /// `sampleRates` came from the device (DICE CLOCK_CAPABILITIES) and the
+    /// audio side must offer exactly them, not a profile's list; see
+    /// PropertyKeys::kDeviceSampleRates.
+    bool deviceSampleRates{false};
+
     // Populate properties consumed by ASFWAudioDriver.
     // Returns false only if required objects could not be created.
     bool PopulateNubProperties(OSDictionary* properties) const {
@@ -169,6 +174,13 @@ struct ASFWAudioDevice {
                 return false;
             }
             properties->setObject(PropertyKeys::kResolvedGeometryRequired, required.get());
+        }
+        if (deviceSampleRates) {
+            auto fromDevice = OSSharedPtr(OSNumber::withNumber(uint64_t{1}, 32), OSNoRetain);
+            if (!fromDevice) {
+                return false;
+            }
+            properties->setObject(PropertyKeys::kDeviceSampleRates, fromDevice.get());
         }
 
         return true;

@@ -141,6 +141,7 @@ bool DICETcatProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps
     }
 
     outCaps.sampleRateHz = runtimeSampleRateHz_.load(std::memory_order_relaxed);
+    outCaps.deviceRateMask = deviceRateMask_.load(std::memory_order_relaxed);
     outCaps.hostInputPcmChannels = hostInputPcmChannels_.load(std::memory_order_relaxed);
     outCaps.hostOutputPcmChannels = hostOutputPcmChannels_.load(std::memory_order_relaxed);
     outCaps.deviceToHostAm824Slots = deviceToHostAm824Slots_.load(std::memory_order_relaxed);
@@ -182,6 +183,22 @@ IOReturn DICETcatProtocol::LoadGeometry() {
                             teardownCancel_);
 }
 
+bool DICETcatProtocol::DeviceSupportsRate(uint32_t rateHz) const noexcept {
+    // TCAT refuses a rate outside CLOCK_CAPABILITIES before touching the device
+    // (MidasFW SetNewSamplingRate). Before the first geometry read the mask is
+    // unknown, and the request goes through as it always has.
+    const uint32_t mask = deviceRateMask_.load(std::memory_order_relaxed);
+    if (mask == 0 || !runtimeCapsValid_.load(std::memory_order_acquire)) {
+        return true;
+    }
+    if (DiceClockCapsSupportRate(mask, rateHz)) {
+        return true;
+    }
+    ASFW_LOG(DICE, "DICETcatProtocol: device does not support %u Hz (rates=0x%02x); refused",
+             rateHz, mask);
+    return false;
+}
+
 std::optional<AudioStreamRuntimeCaps> DICETcatProtocol::RuntimeCaps() const {
     AudioStreamRuntimeCaps caps{};
     if (!GetRuntimeAudioStreamCaps(caps)) {
@@ -197,7 +214,7 @@ std::expected<DuplexPrepareResult, IOReturn> DICETcatProtocol::Configure(
     }
 
     DiceClockConfiguration diceClock{};
-    if (!MakeDiceClockConfiguration(clock, diceClock)) {
+    if (!MakeDiceClockConfiguration(clock, diceClock) || !DeviceSupportsRate(clock.sampleRateHz)) {
         return std::unexpected(kIOReturnUnsupported);
     }
 
@@ -264,7 +281,7 @@ std::expected<DuplexClockApplyResult, IOReturn> DICETcatProtocol::ApplyClockIdle
     }
 
     DiceClockConfiguration diceClock{};
-    if (!MakeDiceClockConfiguration(clock, diceClock)) {
+    if (!MakeDiceClockConfiguration(clock, diceClock) || !DeviceSupportsRate(clock.sampleRateHz)) {
         return std::unexpected(kIOReturnUnsupported);
     }
 
@@ -485,6 +502,7 @@ void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
         .deviceToHostAm824Slots = tx.TotalAm824Slots(),
         .hostToDeviceAm824Slots = rx.TotalAm824Slots(),
         .sampleRateHz = global.sampleRate,
+        .deviceRateMask = DiceDeviceRateMask(global.hasClockCaps, global.clockCaps),
         .deviceToHostIsoChannel = tx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel),
         .hostToDeviceIsoChannel = rx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel),
     };
@@ -574,6 +592,7 @@ void DICETcatProtocol::CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noex
     hostOutputPcmChannels_.store(caps.hostOutputPcmChannels, std::memory_order_relaxed);
     hostToDeviceAm824Slots_.store(caps.hostToDeviceAm824Slots, std::memory_order_relaxed);
     runtimeSampleRateHz_.store(caps.sampleRateHz, std::memory_order_relaxed);
+    deviceRateMask_.store(caps.deviceRateMask, std::memory_order_relaxed);
     deviceToHostIsoChannel_.store(caps.deviceToHostIsoChannel, std::memory_order_relaxed);
     hostToDeviceIsoChannel_.store(caps.hostToDeviceIsoChannel, std::memory_order_relaxed);
 
@@ -594,6 +613,7 @@ void DICETcatProtocol::CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noex
 void DICETcatProtocol::ResetRuntimeCaps() noexcept {
     runtimeCapsValid_.store(false, std::memory_order_release);
     runtimeSampleRateHz_.store(0, std::memory_order_relaxed);
+    deviceRateMask_.store(0, std::memory_order_relaxed);
     hostInputPcmChannels_.store(0, std::memory_order_relaxed);
     hostOutputPcmChannels_.store(0, std::memory_order_relaxed);
     deviceToHostAm824Slots_.store(0, std::memory_order_relaxed);

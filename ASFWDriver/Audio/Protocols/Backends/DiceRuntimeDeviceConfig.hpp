@@ -47,9 +47,9 @@ namespace ASFW::Audio {
     //     at 44.1 kHz was published to CoreAudio as 44.1 kHz and then driven at
     //     48 kHz.
     //
-    // The caller seeds both fields before this runs: the profile's supported
-    // rate set, and 48 kHz as the DICE default that bring-up will actually
-    // program. Leave them alone. Rate changes go through the HAL path
+    // The caller sets both fields: the device's own rate set
+    // (DicePublishedRates over CLOCK_CAPABILITIES), and 48 kHz as the DICE
+    // default that bring-up will actually program. Leave them alone. Rate changes go through the HAL path
     // (HandleChangeSampleRate -> RequestSampleRateChange), which reprograms
     // CLOCK_SELECT and is the only place the device's clock should move.
     return true;

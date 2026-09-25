@@ -47,6 +47,10 @@ struct AudioStreamRuntimeCaps {
 
     uint32_t sampleRateHz{0};
 
+    // Rates the device says it supports, as DICE CLOCK_CAPABILITIES rate bits
+    // (bit 0 = 32 kHz ... bit 6 = 192 kHz). Zero: not reported by this family.
+    uint32_t deviceRateMask{0};
+
     // First active DICE isochronous channel per direction (stream[0]).
     uint8_t deviceToHostIsoChannel{kInvalidIsoChannel}; // DICE TX / host IR
     uint8_t hostToDeviceIsoChannel{kInvalidIsoChannel}; // DICE RX / host IT

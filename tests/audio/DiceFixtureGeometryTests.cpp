@@ -62,12 +62,14 @@
 // numbers still match the dumps" is the migration invariant, not a nicety.
 
 #include "Audio/Protocols/AudioTypes.hpp"
+#include "Audio/Protocols/DICE/Core/DICETypes.hpp"
 #include "Audio/Protocols/StreamGeometryResolver.hpp"
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <set>
+#include <vector>
 #include <string_view>
 
 namespace {
@@ -459,6 +461,36 @@ TEST_P(DiceFixtureGeometry, ChannelBaseIsARunningSum) {
 // the MultiMix is the recorded device that proves it: 1 * 12 = 12 is right only
 // because the base repeats stream 0's width. Feed it the REAL per-stream widths
 // -- what the resolver now produces -- and index * width gives 2.
+// The published rates are the device's own (CLOCK_CAPABILITIES), capped at the
+// validated ceiling. Every recorded device supports 44.1 and 48 kHz; the Pro 24
+// DSP's 88.2/96 kHz stay above the ceiling. So stage B changes no recorded
+// device's rate list.
+TEST_P(DiceFixtureGeometry, PublishesTheRatesTheDeviceSupports) {
+    const DiceFixture& fixture = GetParam();
+    const uint32_t mask = ASFW::Audio::DICE::DiceDeviceRateMask(true, fixture.clockCaps);
+    EXPECT_EQ(ASFW::Audio::DICE::DicePublishedRates(mask), (std::vector<uint32_t>{44100U, 48000U}))
+        << fixture.name;
+}
+
+TEST(DicePublishedRates, OffersOnlyTheRatesTheDeviceAdvertises) {
+    using namespace ASFW::Audio::DICE;
+    EXPECT_EQ(DicePublishedRates(RateCaps::k32000 | RateCaps::k48000),
+              (std::vector<uint32_t>{32000U, 48000U}));
+    // Above the ceiling only: nothing this build can stream.
+    EXPECT_TRUE(DicePublishedRates(RateCaps::k88200 | RateCaps::k96000).empty());
+    EXPECT_TRUE(DicePublishedRates(0).empty());
+}
+
+TEST(DicePublishedRates, OldFirmwareWithoutClockCapsGetsTheLinuxBaseline) {
+    using namespace ASFW::Audio::DICE;
+    // A GLOBAL section too short for CLOCK_CAPABILITIES (Linux dice.c
+    // check_clock_caps): 44.1 and 48 kHz, whatever the unread register holds.
+    EXPECT_EQ(DicePublishedRates(DiceDeviceRateMask(false, 0)),
+              (std::vector<uint32_t>{44100U, 48000U}));
+    EXPECT_EQ(DicePublishedRates(DiceDeviceRateMask(false, 0x7F)),
+              (std::vector<uint32_t>{44100U, 48000U}));
+}
+
 TEST(ChannelBaseRule, IndexTimesOwnWidthIsNotTheRunningSum) {
     // Alesis MultiMix capture, as the device reports it.
     constexpr uint32_t kWidths[] = {12, 2};

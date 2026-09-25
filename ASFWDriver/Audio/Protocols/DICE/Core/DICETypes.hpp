@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 namespace ASFW::Audio::DICE {
 
@@ -514,6 +515,29 @@ inline constexpr DiceRateMapEntry kDiceRateTable[] = {
 /// do not advertise them. Raise this once the 2x/4x pipeline is HW-verified.
 inline constexpr uint32_t kDiceMaxSupportedRateHz = 48000;
 
+/// The rates a device supports, as CLOCK_CAPABILITIES rate bits. TCAT's kexts
+/// take CLOCK_CAPABILITIES & 0x7F and refuse any other rate (MidasFW
+/// RestartStreaming, SetNewSamplingRate). A GLOBAL section too short to hold the
+/// register is old firmware: Linux assumes 44.1 and 48 kHz, "supported by any
+/// device" (dice.c check_clock_caps). Linux reads the register once the section
+/// exceeds 0x18 quadlets; we require the field itself to fit (0x68 bytes).
+inline constexpr uint32_t kDiceRateCapsMask = 0x7F;
+[[nodiscard]] constexpr uint32_t DiceDeviceRateMask(bool hasClockCaps, uint32_t clockCaps) noexcept {
+    return hasClockCaps ? (clockCaps & kDiceRateCapsMask) : (RateCaps::k44100 | RateCaps::k48000);
+}
+
+/// The rates to offer CoreAudio: those the device supports, up to the
+/// validated ceiling, in ascending order.
+[[nodiscard]] inline std::vector<uint32_t> DicePublishedRates(uint32_t deviceRateMask) {
+    std::vector<uint32_t> rates;
+    for (const auto& e : kDiceRateTable) {
+        if (e.hz <= kDiceMaxSupportedRateHz && (deviceRateMask & e.capsBit) != 0) {
+            rates.push_back(e.hz);
+        }
+    }
+    return rates;
+}
+
 /// True if CLOCKCAPABILITIES advertises `rateHz`.
 [[nodiscard]] inline bool DiceClockCapsSupportRate(uint32_t clockCaps, uint32_t rateHz) noexcept {
     for (const auto& e : kDiceRateTable) {
@@ -594,6 +618,7 @@ struct GlobalState {
     uint32_t sampleRate{0};      ///< Current sample rate (Hz)
     uint32_t version{0};         ///< DICE version
     uint32_t clockCaps{0};       ///< Clock capabilities bitmask
+    bool hasClockCaps{false};    ///< The GLOBAL section was long enough to hold clockCaps
     
     /// Get supported sample rates as a human-readable string
     const char* SupportedRatesDescription() const;

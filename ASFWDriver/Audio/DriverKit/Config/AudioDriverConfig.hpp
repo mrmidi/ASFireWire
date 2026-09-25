@@ -84,6 +84,8 @@ struct ParsedAudioDriverConfig {
     /// lost in transit and starting would silently reinstate the mismatch the
     /// resolution removed -- so it must fail instead.
     bool resolvedGeometryRequired{false};
+    /// The sample rates above came from the device; keep them over a profile's.
+    bool deviceSampleRates{false};
 
     uint32_t boolControlCount{0};
     BoolControlDescriptor boolControls[kMaxBoolControls]{};

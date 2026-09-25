@@ -59,6 +59,7 @@ void CacheRuntimeCaps(AudioStreamRuntimeCaps& caps,
     caps.hostOutputPcmChannels = rx.TotalPcmChannels();
     caps.hostToDeviceAm824Slots = rx.TotalAm824Slots();
     caps.sampleRateHz = global.sampleRate;
+    caps.deviceRateMask = DiceDeviceRateMask(global.hasClockCaps, global.clockCaps);
     caps.deviceToHostIsoChannel =
         tx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel);
     caps.hostToDeviceIsoChannel =
