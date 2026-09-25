@@ -132,6 +132,13 @@ const Scenario kScenarios[] = {
          r.hooks["host.begin"] = [&r] { r.BusReset(); };
          r.Start();
      }},
+    // Another node already holds channels 0 and 1. Every family takes the
+    // next free ones from the IRM; DICE used to ask for exactly 0 and 1 and
+    // was refused (S3).
+    {"channel-busy", [](SessionRig& r) {
+         r.host.SetChannelsTakenElsewhere(0b11);
+         r.Start();
+     }},
     // A bus reset during the geometry read refuses the start; the stop then has
     // nothing to stop. The coordinator used to ask for an illegal Idle ->
     // Stopping transition here, which asserted. Only a scripted device exposes

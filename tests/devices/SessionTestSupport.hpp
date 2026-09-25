@@ -143,8 +143,11 @@ public:
     TracingHostTransport(WireTrace& trace, Hooks& hooks, Failures& failures) noexcept
         : trace_(trace), hooks_(hooks), failures_(failures) {}
 
+    // Channels another node already holds on the bus.
+    void SetChannelsTakenElsewhere(uint64_t mask) noexcept { takenElsewhere_ = mask; }
+
     kern_return_t BeginSplitDuplex(uint64_t) noexcept override {
-        assigned_ = 0;
+        assigned_ = takenElsewhere_;
         return Finish("begin", "H begin");
     }
 
@@ -269,6 +272,7 @@ private:
     Hooks& hooks_;
     Failures& failures_;
     uint64_t assigned_{0};
+    uint64_t takenElsewhere_{0};
 };
 
 // A non-DICE family as the session layer sees it: every stage completes at

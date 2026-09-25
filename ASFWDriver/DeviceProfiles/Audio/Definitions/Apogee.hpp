@@ -21,7 +21,7 @@ inline constexpr std::array kApogeeDefinitions{
                // works that way, but the observed device output cadence is
                // blocking -- forcing it keeps host and device aligned.
                DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
-                                  .resource = {.cmpChoosesIsoChannel = true},
+                                  .resource = {.irmChannelMask = kAnyIsoChannel},
                                   .start = {.startShape = StreamStartShape::ApogeeInterleaved,
                                             .startRatePinHz = 48000U}}),
 };

@@ -193,6 +193,19 @@ void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
     callback(kIOReturnSuccess, *result);
 }
 
+void DICETcatProtocol::SetAssignedChannels(const AudioDuplexChannels& channels) noexcept {
+    // The IRM chose these channels; the device must be told the same ones the
+    // host DMA will use. ProgramRx refuses to run unprepared, so a refusal
+    // here cannot leave the two sides on different channels.
+    if (!driver_) {
+        return;
+    }
+    if (const IOReturn status = driver_->AssignChannels(channels); status != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(DICE, "SetAssignedChannels: refused d2h=%u h2d=%u kr=0x%x",
+                       channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, status);
+    }
+}
+
 void DICETcatProtocol::ProgramRx(StageCallback callback) {
     if (!initialized_ || !driver_) {
         callback(kIOReturnNotReady, {});

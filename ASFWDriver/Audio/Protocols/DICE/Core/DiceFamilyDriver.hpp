@@ -46,6 +46,9 @@ public:
         const AudioDuplexChannels& channels,
         const DiceClockConfiguration& clock,
         bool refreshRuntimeCaps);
+    // Replace the provisional channels with the ones the IRM assigned. Valid
+    // after Prepare and before any stream is armed.
+    [[nodiscard]] IOReturn AssignChannels(const AudioDuplexChannels& channels);
     // Arm every device-RX stream (host playback).
     [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ProgramRx();
     // Arm every device-TX stream (host capture), then the single GLOBAL_ENABLE.

@@ -68,6 +68,7 @@ public:
     void PrepareDuplex(const AudioDuplexChannels& channels,
                        const AudioClockConfig& desiredClock,
                        PrepareCallback callback) override;
+    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept override;
     void ProgramRx(StageCallback callback) override;
     void ProgramTxAndEnableDuplex(StageCallback callback) override;
     void ConfirmDuplexStart(ConfirmCallback callback) override;

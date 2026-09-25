@@ -228,13 +228,20 @@ struct StreamWirePolicy final {
     bool rawPcm24In32WhenEightInNineSlots{false};
 };
 
+/// Any of the 64 isochronous channels.
+inline constexpr uint64_t kAnyIsoChannel = ~uint64_t{0};
+/// DICE accepts channels 0-31 (Linux dice-stream.c:506). TCAT's kexts let the
+/// IRM pick any channel (V_IsocPort::getSupported returns -1); the narrower
+/// mask is the Linux one.
+inline constexpr uint64_t kDiceIrmChannelMask = 0x00000000FFFFFFFFULL;
+
 /// Isochronous resource ownership -- consumed by duplex geometry planning.
 struct IsochResourcePolicy final {
-    /// CMP owns the isochronous channel: the device has no fixed one, IRM
-    /// picks it and the PCR commits it back. True for every CMP-driven family
-    /// (BeBoB, Oxford, Fireworks); false for DICE, which programs a channel
-    /// into its own registers, and for MOTU.
-    bool cmpChoosesIsoChannel{false};
+    /// Channels the IRM may choose from for each stream (bit n = channel n).
+    /// CMP families accept any channel, which the PCR then commits; DICE
+    /// accepts 0-31, which it is told through its ISOCHRONOUS registers. Zero
+    /// means the channel is planned from the device's own registers (MOTU).
+    uint64_t irmChannelMask{0};
 };
 
 /// Duplex start choreography -- consumed by the duplex coordinator.

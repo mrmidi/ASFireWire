@@ -34,8 +34,8 @@ R ffff.e00003a4 56 @s400
 R ffff.e00003dc 512 @s400
 R ffff.e00005dc 512 @s400
 R ffff.e00007dc 104 @s400
-H reserve playback allowed=0000000000000001 bw=308 -> ch=0
-H reserve capture allowed=0000000000000002 bw=564 !0xe00002be
+H reserve playback allowed=00000000ffffffff bw=308 -> ch=0
+H reserve capture allowed=00000000ffffffff bw=564 !0xe00002be
 H stop all
 W ffff.e0000078 00000000 @s400
 R ffff.e00001a8 4 @s400

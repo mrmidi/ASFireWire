@@ -164,6 +164,17 @@ std::expected<DuplexPrepareResult, IOReturn> DiceFamilyDriver::Prepare(
     };
 }
 
+IOReturn DiceFamilyDriver::AssignChannels(const AudioDuplexChannels& channels) {
+    if (!session_.devicePrepared || session_.deviceRxProgrammed) {
+        return kIOReturnNotReady;
+    }
+    if (channels.deviceToHostIsoChannel > 63 || channels.hostToDeviceIsoChannel > 63) {
+        return kIOReturnBadArgument;
+    }
+    session_.channels = channels;
+    return kIOReturnSuccess;
+}
+
 std::expected<DuplexStageResult, IOReturn> DiceFamilyDriver::ProgramRx() {
     if (!session_.devicePrepared) {
         return std::unexpected(kIOReturnNotReady);
