@@ -28,6 +28,24 @@ struct TimebaseGuard final {
     return ticks * 1'000'000'000ULL / ASFW::Timing::kTicksPerSecond;
 }
 
+// V3: each epoch takes the ZTS period of its own rate tier, the same value the
+// HAL is given (HalBufferProfileForRate), so a 48 -> 96 kHz change moves the
+// anchor grid with the declared period.
+TEST(HardwareSampleTimelineTests, EpochTakesTheZtsPeriodOfItsRate) {
+    for (const uint32_t rate : {44'100U, 48'000U, 96'000U}) {  // 88.2 kHz: FW-186
+        HardwareSampleTimeline timeline{};
+        ASSERT_NE(timeline.BeginEpoch(HardwareTimelineSource::Receive,
+                                      HardwareTimelineDiscontinuity::StartIO, rate, 0),
+                  0U)
+            << rate;
+        EXPECT_EQ(timeline.ZeroTimestampPeriodFrames(),
+                  ASFW::IsochTransport::HalBufferProfileForRate(rate).zeroTimestampPeriodFrames)
+            << rate;
+    }
+    EXPECT_EQ(HardwareSampleTimeline::ZeroTimestampPeriodForRate(48'000), 12'288U);
+    EXPECT_EQ(HardwareSampleTimeline::ZeroTimestampPeriodForRate(96'000), 24'576U);
+}
+
 TEST(HardwareSampleTimelineTests, ProjectsBoundaryInsidePacketAtEveryV3Rate) {
     TimebaseGuard timebase{};
     for (const uint32_t rate : {44'100U, 48'000U, 96'000U, 192'000U}) {

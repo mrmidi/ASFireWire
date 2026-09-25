@@ -12,6 +12,7 @@
 #include "../WireFormats/DiagnosticsWireEnvelope.hpp"
 
 #include <DriverKit/OSData.h>
+#include <array>
 #include <cstddef>
 
 namespace ASFW::UserClient {
@@ -239,7 +240,13 @@ kern_return_t DiagnosticsHandler::GetAudioTelemetry(
 
     ASFW::Audio::Runtime::AudioTelemetrySnapshot snapshot{};
     (void)runtime->CopyAudioTelemetrySnapshots(snapshot);
-    OSData* data = OSData::withBytes(&snapshot, sizeof(snapshot));
+    // Wire v4: header + only the populated records (AudioTelemetrySnapshot.hpp).
+    std::array<uint8_t, sizeof(snapshot)> wire{};
+    const size_t bytes = ASFW::Audio::Runtime::SerializeAudioTelemetry(snapshot, wire);
+    if (bytes == 0) {
+        return kIOReturnInternalError;
+    }
+    OSData* data = OSData::withBytes(wire.data(), bytes);
     if (!data) {
         return kIOReturnNoMemory;
     }

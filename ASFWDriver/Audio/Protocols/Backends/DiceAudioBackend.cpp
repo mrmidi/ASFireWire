@@ -3,21 +3,22 @@
 
 #include "DiceAudioBackend.hpp"
 #include "DiceRuntimeDeviceConfig.hpp"
-#include "SyncAsyncBridge.hpp"
 
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
-#include "../DICE/Core/DICENotificationMailbox.hpp"
+#include "../DICE/Core/DiceNotificationRouter.hpp"
 #include "../DICE/Core/DICETypes.hpp"
-#include "../Duplex/IDuplexDeviceControl.hpp"
+
+#include <algorithm>
+#include "../Duplex/FamilyDriver.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../StreamGeometryResolver.hpp"
 #include "../DeviceProtocolChoice.hpp"
 #include "../../DriverKit/Config/AudioDriverConfig.hpp"
 #include "../../DriverKit/Config/AudioProfileRegistry.hpp"
-#include "../../DriverKit/Config/DICE/DiceDeviceProfile.hpp"
+#include "../../DriverKit/Config/DICE/DiceProfile.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSSharedPtr.h>
@@ -43,28 +44,13 @@ namespace {
     return static_cast<uint64_t>(nanos / 1'000'000U);
 }
 
-// Report how the device's own DICE registers compare with the profile's
-// compiled-in constants, for every playback (DICE RX) stream.
-//
-// These are the two descriptions of the same streams that used to be consumed
-// by different layers without ever meeting: DuplexStreamProfile reserves isoch
-// bandwidth from the caps, while ASFWAudioDevice::StartIO frames CIP from the
-// profile. A disagreement therefore shipped correctly-reserved bandwidth
-// carrying wrongly-framed packets, and the symptom was silence with nothing
-// logged. This is the first place both sides are in scope, so it is where they
-// get compared. See StreamGeometryResolver.hpp for the precedence rule and why
-// it is the device's.
-//
-// Stage 4: this now RESOLVES rather than reports. It answers both directions
-// -- capture was previously never compared at all -- and returns a
-// ResolvedDeviceGeometry whose Usable() is the refusal the resolver's contract
-// always required.
-//
-// The verdict is not yet enforced at the start path: the consumers
-// (AudioStreamProfile::Tx/RxChannelCount and ASFWAudioDevice::StartIO's
-// BuildTxStreamConfig call) still read the profile, and switching them is the
-// next step. Until then a disagreement is a loud, named refusal in the log
-// rather than a silent mis-framing.
+// The device's own DICE registers describe its streams, and every consumer
+// reads that one description: bandwidth (DuplexStreamProfile), capture framing
+// (IsochDuplexHostTransport) and playback framing (the nub's per-stream arrays,
+// BuildResolvedTxStreamConfig). The profile states no geometry
+// (DICE_TCAT_ARCHITECTURE.md §4.2 stage C). What is left to check here: the one
+// stream count a reference stack says a device overstates, and that the device
+// described something usable. See StreamGeometryResolver.hpp.
 
 [[nodiscard]] constexpr uint32_t ClampStreamCountToHost(uint32_t count) noexcept {
     return (count < kMaxAudioStreamsPerDirection) ? count : kMaxAudioStreamsPerDirection;
@@ -81,77 +67,10 @@ namespace {
             .midiPorts = wire.midiPorts};
 }
 
-// Seeding a direction means "let the device's answer win without argument".
-// That is only SAFE where the device's answer actually reaches the code that
-// frames packets. Both directions now qualify:
-//
-//   - Bandwidth and transport geometry come from the device in both directions
-//     (DuplexStreamProfile::Build reads caps.{deviceToHost,hostToDevice}Streams).
-//   - CAPTURE encoding: IsochDuplexHostTransport hands caps-derived per-stream
-//     geometry to DirectAudioReceiveConsumer.
-//   - PLAYBACK encoding and packet allocation: the resolved per-stream geometry
-//     is published across the nub (Audio/Model/AudioPropertyKeys.hpp) and
-//     ASFWAudioDevice::StartIO builds each stream from it via
-//     BuildResolvedTxStreamConfig, keeping only the framing constants the DICE
-//     registers do not hold.
-//
-// Playback was false until that last line was true. While it was, a seeded
-// playback geometry disagreeing with the device would have been waved through
-// at publication and then mis-framed -- the recorded Venice F24 carries 16 + 8
-// while its F32 profile says 16 + 16, so stream 1 was built at 16 channels /
-// DBS 16 into an 8-slot stream. It now resolves to 16 + 8 end to end.
-//
-// These stay as named constants rather than being deleted: they are the
-// statement of WHICH directions have been migrated, and the next family to move
-// off profile constants needs the same question asked of it.
-inline constexpr bool kPlaybackEncodingIsDeviceSourced = true;
-inline constexpr bool kCaptureEncodingIsDeviceSourced = true;
-
 /// Playback streams ASFWAudioDevice::StartIO can allocate: one primary plus one
 /// secondary. Kept here as well so publication and start refuse the same
 /// devices; StartIO carries the matching bound.
 inline constexpr uint32_t kMaxPlaybackStreamsSupported = 2;
-
-// Does this profile ASSERT the direction's geometry, or only seed it? The
-// resolver takes a bool (it is deliberately free of profile headers), so this
-// is the one place the profile's enum is read.
-[[nodiscard]] bool AssertsGeometry(
-    ASFW::Isoch::Audio::StreamGeometryAuthority authority) noexcept {
-    return authority == ASFW::Isoch::Audio::StreamGeometryAuthority::kAsserted;
-}
-
-// Capture: honour what the profile declares -- the device already drives
-// capture framing, so accepting its answer costs nothing.
-[[nodiscard]] bool CaptureGeometryIsAsserted(
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) noexcept {
-    return TreatProfileAsAsserted(AssertsGeometry(profile.CaptureGeometryAuthority()),
-                                  kCaptureEncodingIsDeviceSourced);
-}
-
-// Playback: a declared seed is treated as an ASSERTION while framing still
-// reads the profile, so a disagreement refuses publication instead of shipping
-// a mis-framed stream. The profile's own declaration is left untouched -- it
-// describes what its constants MEAN; this decides what we can safely act on.
-[[nodiscard]] bool PlaybackGeometryIsAsserted(
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) noexcept {
-    return TreatProfileAsAsserted(AssertsGeometry(profile.PlaybackGeometryAuthority()),
-                                  kPlaybackEncodingIsDeviceSourced);
-}
-
-[[nodiscard]] WireStreamGeometry PlaybackGeometryFromProfile(
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
-    if (!PlaybackGeometryIsAsserted(profile)) {
-        return {};
-    }
-    ASFW::Isoch::Audio::AudioStreamConfig config{};
-    if (index >= ClampStreamCountToHost(profile.TxStreamCount()) ||
-        !profile.BuildTxStreamConfig(index, config)) {
-        return {};
-    }
-    return {.pcmChannels = config.pcmChannels,
-            .am824Slots = config.dbs,
-            .midiPorts = config.midiSlots};
-}
 
 [[nodiscard]] WireStreamGeometry CaptureGeometryFromDevice(
     const AudioStreamRuntimeCaps& caps, uint32_t index) noexcept {
@@ -164,24 +83,9 @@ inline constexpr uint32_t kMaxPlaybackStreamsSupported = 2;
             .midiPorts = wire.midiPorts};
 }
 
-// Indexed, like the playback side: a profile describing unequal capture streams
-// is compared stream by stream rather than every stream against stream 0.
-// Using the default config here would have made an asymmetric profile report a
-// correct aggregate while the resolver silently compared the wrong shapes.
-// ASFW's profile naming inverts: Rx* is host capture.
-[[nodiscard]] WireStreamGeometry CaptureGeometryFromProfile(
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
-    if (!CaptureGeometryIsAsserted(profile)) {
-        return {};
-    }
-    ASFW::Isoch::Audio::AudioStreamConfig config{};
-    if (index >= ClampStreamCountToHost(profile.RxStreamCount()) ||
-        !profile.BuildRxStreamConfig(index, config)) {
-        return {};
-    }
-    return {.pcmChannels = config.pcmChannels,
-            .am824Slots = config.dbs,
-            .midiPorts = config.midiSlots};
+// The profile states no per-stream geometry.
+[[nodiscard]] constexpr WireStreamGeometry NoProfileGeometry(uint32_t) noexcept {
+    return {};
 }
 
 // Log one direction's resolution. The resolution itself is
@@ -229,7 +133,7 @@ void LogDirection(const char* directionName,
 [[nodiscard]] ResolvedDeviceGeometry ResolveDeviceStreamGeometry(
     uint64_t guid,
     const AudioStreamRuntimeCaps& caps,
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile& profile) {
     static_assert(kMaxResolvedStreams == kMaxAudioStreamsPerDirection,
                   "resolver bound drifted from the host array bound");
     static_assert(kMaxResolvedStreams == ASFW::Isoch::Audio::kMaxConfiguredStreams,
@@ -237,15 +141,13 @@ void LogDirection(const char* directionName,
 
     ResolvedDeviceGeometry resolved{};
     resolved.capture = ResolveDirectionGeometry(
-        caps.deviceToHostStreamCount,
-        ProfileStatedStreamCount(CaptureGeometryIsAsserted(profile), profile.RxStreamCount()),
-        [&caps](uint32_t i) { return CaptureGeometryFromDevice(caps, i); },
-        [&profile](uint32_t i) { return CaptureGeometryFromProfile(profile, i); });
+        caps.deviceToHostStreamCount, 0,
+        [&caps](uint32_t i) { return CaptureGeometryFromDevice(caps, i); }, NoProfileGeometry);
+    // A device whose register overstates its playback streams is refused
+    // rather than armed on a stream it does not have.
     resolved.playback = ResolveDirectionGeometry(
-        caps.hostToDeviceStreamCount,
-        ProfileStatedStreamCount(PlaybackGeometryIsAsserted(profile), profile.TxStreamCount()),
-        [&caps](uint32_t i) { return PlaybackGeometryFromDevice(caps, i); },
-        [&profile](uint32_t i) { return PlaybackGeometryFromProfile(profile, i); });
+        caps.hostToDeviceStreamCount, profile.AssertedPlaybackStreams(),
+        [&caps](uint32_t i) { return PlaybackGeometryFromDevice(caps, i); }, NoProfileGeometry);
 
     LogDirection("capture", guid, resolved.capture);
     LogDirection("playback", guid, resolved.playback);
@@ -281,13 +183,15 @@ void LogDirection(const char* directionName,
 DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
-                                   AudioDuplexCoordinator& duplexCoordinator,
-                                   Driver::HardwareInterface& hardware) noexcept
+                                   Session::AudioSessions& sessions,
+                                   Driver::HardwareInterface& hardware,
+                                   DICE::DiceNotificationRouter& notifications) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
     , hardware_(hardware)
-    , restartCoordinator_(duplexCoordinator) {
+    , sessions_(sessions)
+    , notifications_(notifications) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: Failed to allocate lock");
@@ -301,7 +205,7 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: Failed to create work queue (0x%x)", kr);
     }
 
-    DICE::NotificationMailbox::SetObserver(this, &DiceAudioBackend::NotificationObserverThunk);
+    notifications_.SetObserver(this, &DiceAudioBackend::NotificationObserverThunk);
 }
 
 DiceAudioBackend::~DiceAudioBackend() noexcept {
@@ -309,7 +213,7 @@ DiceAudioBackend::~DiceAudioBackend() noexcept {
     // shape. Normal lifecycle calls BeginTeardown() explicitly before destruction;
     // this only covers a destructor-only path. Idempotent by exchange latch.
     BeginTeardown();
-    DICE::NotificationMailbox::ClearObserver(this);
+    notifications_.ClearObserver(this);
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
@@ -318,7 +222,7 @@ DiceAudioBackend::~DiceAudioBackend() noexcept {
 
 void DiceAudioBackend::BeginTeardown() noexcept {
     stopping_.store(true, std::memory_order_release);
-    DICE::NotificationMailbox::ClearObserver(this);
+    notifications_.ClearObserver(this);
 
     if (teardownComplete_.load(std::memory_order_acquire)) {
         return;
@@ -335,7 +239,7 @@ void DiceAudioBackend::BeginTeardown() noexcept {
         const uint64_t probeAbortBefore =
             probeAbortCount_.load(std::memory_order_acquire);
         const uint64_t coordinatorAbortBefore =
-            restartCoordinator_.TeardownAbortCount();
+            sessions_.TeardownAbortCount();
         const uint64_t publicationRejectBefore =
             publicationGate_.RejectCount();
         const uint64_t startMs = UptimeMilliseconds();
@@ -357,7 +261,7 @@ void DiceAudioBackend::BeginTeardown() noexcept {
         const uint64_t endMs = UptimeMilliseconds();
         const uint64_t drainMs = endMs >= startMs ? endMs - startMs : 0;
         const uint64_t coordinatorAborted =
-            restartCoordinator_.TeardownAbortCount() - coordinatorAbortBefore;
+            sessions_.TeardownAbortCount() - coordinatorAbortBefore;
         const uint64_t probeAborted =
             probeAbortCount_.load(std::memory_order_acquire) - probeAbortBefore;
         const uint64_t recoveryRejected =
@@ -416,6 +320,79 @@ void DiceAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
     HandleRecoveryEvent(guid, DuplexRestartReason::kBusResetRebind);
 }
 
+// Rebuild the audio endpoint for a stream layout that changed under it.
+//
+// NOT IMPLEMENTED: high sample rates are parked. Returns false, so the endpoint
+// stays blocked (AudioNubPublisher refuses the changed geometry and the session
+// start guard refuses to start it) until it is recreated. Today this is reached
+// only when a device changes its layout on its own, or when a device found
+// running above kDiceMaxStreamingRateHz is moved to a streamable rate by the
+// first start (EnsureNubForGuid warns about that case at publication).
+//
+// TODO(high rates): implement this the way the TCAT kexts do. Reference:
+// Saffire.kext 4.3.0, FOCUSRITE/3.9/Saffire.i64 (decompiles in tmp/dicere).
+//
+//  What the kext does. One restart path serves a host rate change
+//  (performFormatChange @0x5028 / SetNewSamplingRate @0x93b8) and a device
+//  "config changed" notification alike: both call RequestStreamingRestart, and
+//  RestartStreaming @0xdb02 then
+//    1. writes the clock and re-reads GLOBAL/TX/RX (PopulateDeviceStruct
+//       @0xc5b4) -- the only source of the new layout; no per-model table, no
+//       probing of other rate modes at attach;
+//    2. re-arms isoch (AllocateStreams @0xe8ca, StartStreams @0xface);
+//    3. rebuilds the audio streams in place (CreateStreams @0x3b54): reuses up
+//       to 8 IOAudioStreams per direction, grows each buffer to the new channel
+//       count, resets formats and starting channel, disables streams the new
+//       mode lacks, republishes the channel names for the current mode.
+//  Rates are announced up front from CLOCK_CAPABILITIES, each labelled with the
+//  CURRENT mode's channel count (createNewAudioStream @0x47ee); the true count
+//  for another mode is only known after switching to it. We already do steps 1
+//  and 2 (FinishPrepare / CompleteClockApply -> RefreshRuntimeCaps) and the
+//  announcement (DicePublishedRates). This function is step 3.
+//
+//  The AudioDriverKit counterpart of step 3. A layout change "affects IO or its
+//  structure", so it must go through the host (IOUserAudioDriver.iig:63-68,
+//  IOUserAudioClockDevice.iig:218-226):
+//    a. carry the new geometry to the audio side. SetProperties on the live nub
+//       is NOT enough: the audio graph reads the nub once
+//       (Model/NubGeometryRefresh.hpp). Add a nub -> driver action, like
+//       RegisterDeviceClockChangedAction, carrying "geometry changed";
+//    b. the audio device calls RequestDeviceConfigurationChange with a new
+//       action, alongside kConfigChangeActionExternalRateResync in
+//       ASFWAudioDevice.cpp, which is the working template for the round trip;
+//    c. in PerformDeviceConfigurationChange (IO already stopped): new
+//       SetAvailableStreamFormats / SetCurrentStreamFormat per stream, new IO
+//       buffers via SetIOMemoryDescriptor (legal only there), channel names,
+//       safety offset and latency, and a rebuilt direct-binding view onto the
+//       shared control block. Drop every cross-service view before freeing the
+//       old mappings (FW-60);
+//    d. clear the publisher's blocked state and accept the new snapshot, then
+//       let the host restart IO.
+//  Prove (c) in ADKVirtualAudioLab first: a live channel-count change with a
+//  client attached has never been exercised.
+//
+//  Also required before raising kDiceMaxStreamingRateHz and the neutral gate
+//  (IsSupportedAudioClockConfig): the 2x/4x wire -- 16/32 frames per packet,
+//  SYT interval, DBC step, bandwidth (SAMPLE_RATE_EXPANSION.md Phase 3).
+//
+//  Hardware test when unparked: Saffire Pro 24 DSP announces 88.2/96 kHz and
+//  its capture drops from 16 to 12 channels there (fixtures/DICE/spro24dsp.txt
+//  current_config). 48 -> 96 -> 48 kHz with a client open, both directions.
+bool DiceAudioBackend::RebuildEndpointForNewGeometry(uint64_t guid,
+                                                     const Model::ASFWAudioDevice& newConfig) noexcept {
+    ASFW_LOG_WARNING(Audio,
+                     "DiceAudioBackend: GUID=0x%016llx stream layout changed (now in=%u out=%u "
+                     "at %u Hz); endpoint rebuild not implemented -- endpoint stays blocked "
+                     "until recreated",
+                     guid, newConfig.inputChannelCount, newConfig.outputChannelCount,
+                     newConfig.currentSampleRate);
+    return false;
+}
+
+void DiceAudioBackend::OnStreamsRestarted(uint64_t guid) noexcept {
+    EnsureNubForGuid(guid);
+}
+
 void DiceAudioBackend::HandleHostTimingLoss(uint64_t guid) noexcept {
     HandleRecoveryEvent(guid, DuplexRestartReason::kRecoverAfterTimingLoss);
 }
@@ -432,8 +409,7 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
         return;
     }
 
-    if (stopping_.load(std::memory_order_acquire) ||
-        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
+    if (stopping_.load(std::memory_order_acquire) || sessions_.IsCancelled(guid)) {
         recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
                  "DiceAudioBackend: recovery event ignored by lifecycle cancellation "
@@ -443,36 +419,23 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
         return;
     }
 
-    // Runtime-fault recoveries (timing loss, cycle-inconsistent, ...) are only valid
-    // for the session that raised them. CoreAudio re-probes a fresh rate with rapid
-    // StartIO/StopIO cycles, and each ordered teardown fires the same replay-
-    // discontinuity detectors as a genuine mid-run fault; a recovery queued from
-    // that churn executes after the next start goes live, tears down the healthy
-    // session, and its restart then fails TX prime (stale producer cursors -- the
-    // cursor reset only runs in ADK StartIO) leaving the HAL running silent IO.
-    // Drop the event when the coordinator is already running an operation (the
-    // "fault" is that transition), and re-check the restart epoch when the queued
-    // block finally runs. Bus-reset rebinds stay unguarded: they are external
-    // topology events that must always rebind.
+    // A runtime fault (timing loss, cycle-inconsistent, ...) belongs to the run
+    // that was streaming when it fired. CoreAudio re-probes a rate with rapid
+    // StartIO/StopIO cycles, and each ordered teardown trips the same replay
+    // detectors as a genuine mid-run fault; the session drops a fault whose run
+    // has ended, or that fired while no run was confirmed. A device config
+    // change is tied to its run the same way: the one our own CLOCK_SELECT
+    // causes arrives while the session reconciles, names no running run, and is
+    // dropped, as TCAT ignores it while a restart is running. Bus-reset rebinds
+    // are topology events and always restart.
     const bool isRuntimeFault =
         reason == DuplexRestartReason::kRecoverAfterTimingLoss ||
         reason == DuplexRestartReason::kRecoverAfterCycleInconsistent ||
         reason == DuplexRestartReason::kRecoverAfterLockLoss ||
         reason == DuplexRestartReason::kRecoverAfterTxFault;
-    uint64_t faultRestartId = 0;
-    if (isRuntimeFault) {
-        if (restartCoordinator_.IsOperationInFlight(guid)) {
-            recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
-            ASFW_LOG(Audio,
-                     "DiceAudioBackend: recovery event dropped (duplex operation in "
-                     "flight) GUID=%llx reason=%u",
-                     guid,
-                     static_cast<unsigned>(reason));
-            return;
-        }
-        const auto session = restartCoordinator_.GetSession(guid);
-        faultRestartId = session ? session->restartId : 0;
-    }
+    const bool tiedToRun =
+        isRuntimeFault || reason == DuplexRestartReason::kDeviceConfigChange;
+    const uint64_t observedRun = tiedToRun ? sessions_.RunningRun(guid) : 0;
 
     if (!TryBeginRecovery(guid)) {
         return;
@@ -481,8 +444,7 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
     auto recover = ^{
         // FW-61: a block enqueued just before BeginTeardown's drain bails here before any
         // MMIO, so it cannot run after ASFWDriver::Stop detaches hardware.
-        if (stopping_.load(std::memory_order_acquire) ||
-            restartCoordinator_.IsDeviceOperationCancelled(guid)) {
+        if (stopping_.load(std::memory_order_acquire) || sessions_.IsCancelled(guid)) {
             recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
             ASFW_LOG(Audio,
                      "DiceAudioBackend: queued recovery aborted by lifecycle cancellation "
@@ -492,76 +454,48 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
             FinishRecovery(guid);
             return;
         }
-        if (isRuntimeFault) {
-            // Re-validate at execution time: an operation may have started, or a
-            // restart may have completed, while this block sat on the queue. In
-            // either case the fault belongs to a superseded session -- recovering
-            // now would tear down healthy state.
-            const auto session = restartCoordinator_.GetSession(guid);
-            const uint64_t currentRestartId = session ? session->restartId : 0;
-            if (restartCoordinator_.IsOperationInFlight(guid) ||
-                currentRestartId != faultRestartId) {
-                recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
-                ASFW_LOG(Audio,
-                         "DiceAudioBackend: queued recovery dropped as stale GUID=%llx "
-                         "reason=%u faultRestartId=%llu currentRestartId=%llu",
-                         guid,
-                         static_cast<unsigned>(reason),
-                         faultRestartId,
-                         currentRestartId);
-                FinishRecovery(guid);
-                return;
-            }
 
-            // Health gate: a host-side replay discontinuity (aggregate-device
-            // StartIO/StopIO churn, an RX packet gap) fires the same timing-loss
-            // detector as a genuine device clock drop. When the device still
-            // reports a locked, healthy clock the discontinuity is host-side and
-            // the RX epoch reset (ResetReplayEpochForDiscontinuity) already
-            // re-establishes cadence and replay for both directions. A destructive
-            // coordinator restart here would only tear down a healthy running
-            // session -- and it cannot re-prime TX (the producer-cursor reset lives
-            // in ADK StartIO), so it lands Failed and leaves the HAL running silent
-            // IO. Only escalate to a restart when the device clock is genuinely
-            // unhealthy. (Read failure returns false -> recover, never suppress on
-            // missing evidence.)
-            if (DeviceReportsHealthyClock(guid)) {
-                recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
-                ASFW_LOG(Audio,
-                         "DiceAudioBackend: runtime-fault recovery dropped (device clock "
-                         "locked+healthy; RX self-heals) GUID=%llx reason=%u",
-                         guid,
-                         static_cast<unsigned>(reason));
-                FinishRecovery(guid);
-                return;
-            }
+        // Health gate: a host-side replay discontinuity (aggregate-device
+        // StartIO/StopIO churn, an RX packet gap) fires the same timing-loss
+        // detector as a genuine device clock drop. When the device still reports
+        // a locked, healthy clock, the RX epoch reset
+        // (ResetReplayEpochForDiscontinuity) already re-establishes cadence and
+        // replay; a restart would only tear down a healthy session. A read
+        // failure returns false: never suppress a recovery on missing evidence.
+        if (isRuntimeFault && DeviceReportsHealthyClock(guid)) {
+            recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: runtime-fault recovery dropped (device clock "
+                     "locked+healthy; RX self-heals) GUID=%llx reason=%u",
+                     guid,
+                     static_cast<unsigned>(reason));
+            FinishRecovery(guid);
+            return;
         }
-        const IOReturn status = restartCoordinator_.RecoverStreaming(guid, reason);
+
+        // DICE restarts after a quiet period: success means the restart is
+        // queued; OnStreamsRestarted runs once it has happened.
+        const IOReturn status = sessions_.RequestRestart(guid, reason, observedRun);
         if (status == kIOReturnSuccess) {
-            EnsureNubForGuid(guid);
             ASFW_LOG(Audio,
-                     "DiceAudioBackend: Recovery succeeded GUID=%llx reason=%u",
+                     "DiceAudioBackend: Recovery requested GUID=%llx reason=%u",
                      guid,
                      static_cast<unsigned>(reason));
-            FinishRecovery(guid);
-            return;
-        }
-        if (status == kIOReturnUnsupported) {
-            // The policy declined to recover; nothing ran, so this is neither a
-            // success to announce nor a failure to escalate (FW-146).
+        } else if (status == kIOReturnUnsupported || status == kIOReturnAborted) {
+            // The session declined: nothing should run, or the fault is stale.
+            // Neither a success to announce nor a failure to escalate (FW-146).
             ASFW_LOG(Audio,
-                     "DiceAudioBackend: Recovery not applicable GUID=%llx reason=%u",
+                     "DiceAudioBackend: Recovery not applicable GUID=%llx reason=%u kr=0x%x",
                      guid,
-                     static_cast<unsigned>(reason));
-            FinishRecovery(guid);
-            return;
+                     static_cast<unsigned>(reason),
+                     status);
+        } else {
+            ASFW_LOG_ERROR(Audio,
+                           "DiceAudioBackend: Recovery failed GUID=%llx reason=%u kr=0x%x",
+                           guid,
+                           static_cast<unsigned>(reason),
+                           status);
         }
-
-        ASFW_LOG_ERROR(Audio,
-                       "DiceAudioBackend: Recovery failed GUID=%llx reason=%u kr=0x%x",
-                       guid,
-                       static_cast<unsigned>(reason),
-                       status);
         FinishRecovery(guid);
     };
 
@@ -573,7 +507,13 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
     recover();
 }
 
-void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
+void DiceAudioBackend::HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept {
+    // The device changed its stream configuration: restart the running
+    // streams on the new one (TCAT NotificationWriteCallback, AUDIO_SESSION_REDESIGN.md §2.4).
+    if ((bits & (DICE::Notify::kRxConfigChange | DICE::Notify::kTxConfigChange)) != 0) {
+        HandleRecoveryEvent(guid, DuplexRestartReason::kDeviceConfigChange);
+    }
+
     if ((bits & (DICE::Notify::kLockChange | DICE::Notify::kExtStatus)) == 0) {
         return;
     }
@@ -581,39 +521,41 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
     if (stopping_.load(std::memory_order_acquire)) {
         probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
-                 "DiceAudioBackend: device notification ignored by teardown bits=0x%08x",
-                 bits);
+                 "DiceAudioBackend: device notification ignored by teardown GUID=%llx bits=0x%08x",
+                 guid, bits);
         return;
     }
 
-    const std::vector<uint64_t> guids = restartCoordinator_.GetStreamingGuids();
+    // Only a streaming device's clock health matters here; an idle device
+    // re-reads its clock at the next start.
+    if (!sessions_.IsStreaming(guid)) {
+        return;
+    }
 
-    for (const uint64_t guid : guids) {
-        auto probe = ^{
-            if (stopping_.load(std::memory_order_acquire) ||
-                restartCoordinator_.IsDeviceOperationCancelled(guid)) {
-                probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
-                ASFW_LOG(Audio,
-                         "DiceAudioBackend: queued health probe ignored by lifecycle cancellation "
-                         "GUID=%llx bits=0x%08x",
-                         guid,
-                         bits);
-                return;
-            }
-            ProbeDuplexHealth(guid, bits);
-        };
-
-        if (workQueue_) {
-            workQueue_->DispatchAsync(probe);
-        } else {
-            probe();
+    auto probe = ^{
+        if (stopping_.load(std::memory_order_acquire) ||
+            sessions_.IsCancelled(guid)) {
+            probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: queued health probe ignored by lifecycle cancellation "
+                     "GUID=%llx bits=0x%08x",
+                     guid,
+                     bits);
+            return;
         }
+        ProbeDuplexHealth(guid, bits);
+    };
+
+    if (workQueue_) {
+        workQueue_->DispatchAsync(probe);
+    } else {
+        probe();
     }
 }
 
 void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept {
     if (stopping_.load(std::memory_order_acquire) ||
-        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
+        sessions_.IsCancelled(guid)) {
         probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
                  "DiceAudioBackend: health probe refused by lifecycle cancellation "
@@ -626,12 +568,12 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
     // Hold a shared_ptr for the duration of the (blocking) health probe so the
     // protocol cannot be torn down underneath us by a concurrent device removal.
     auto protocol = runtime_.FindShared(guid);
-    auto* diceProtocol = protocol ? protocol->AsDuplexDeviceControl() : nullptr;
-    if (!diceProtocol) {
+    auto* family = protocol ? protocol->AsFamilyDriver() : nullptr;
+    if (!family) {
         return;
     }
     if (stopping_.load(std::memory_order_acquire) ||
-        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
+        sessions_.IsCancelled(guid)) {
         probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
                  "DiceAudioBackend: health probe refused by lifecycle cancellation before read "
@@ -641,23 +583,16 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    const auto probe = WaitForAsyncResult<DuplexHealthResult>(
-        [&](auto callback) {
-            diceProtocol->ReadDuplexHealth(std::move(callback));
-        },
-        kHealthBridgeTimeoutMs,
-        kIOReturnTimeout,
-        [&]() noexcept {
-            return stopping_.load(std::memory_order_acquire) ||
-                   restartCoordinator_.IsDeviceOperationCancelled(guid);
-        },
-        kHealthBridgePollMs);
+    // Blocks up to kHealthBridgeTimeoutMs; service teardown aborts it through
+    // the family's teardown token.
+    const auto health = family->ReadHealth(kHealthBridgeTimeoutMs);
+    const IOReturn probeStatus = health ? kIOReturnSuccess : health.error();
 
-    if (probe.wasCancelled) {
-        // Lifecycle abort: the bridge's cancellation predicate fired (stopping_ or
-        // device operation cancelled), which is what probeAbortCount_ measures and
-        // what the BeginTeardown drain summary reports. Authoritatively tracked by the
-        // bridge so ordinary device aborts (kIOReturnAborted from callback) never inflate it.
+    if (probeStatus == kIOReturnAborted &&
+        (stopping_.load(std::memory_order_acquire) || sessions_.IsCancelled(guid))) {
+        // Lifecycle abort, which is what probeAbortCount_ measures and what the
+        // BeginTeardown drain summary reports. A device-side abort while the
+        // backend runs normally is reported below as a failed probe instead.
         probeAbortCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
                  "DiceAudioBackend: health probe aborted by lifecycle cancellation "
@@ -668,7 +603,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    if (probe.status == kIOReturnTimeout) {
+    if (probeStatus == kIOReturnTimeout) {
         ASFW_LOG_WARNING(Audio,
                          "DiceAudioBackend: health probe timed out GUID=%llx bits=0x%08x",
                          guid,
@@ -676,24 +611,24 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    if (probe.status != kIOReturnSuccess) {
+    if (probeStatus != kIOReturnSuccess) {
         ASFW_LOG_WARNING(Audio,
                          "DiceAudioBackend: health probe failed GUID=%llx bits=0x%08x kr=0x%x",
                          guid,
                          notificationBits,
-                         probe.status);
+                         probeStatus);
         return;
     }
 
-    const bool sourceLocked = probe.value.sourceLocked;
-    const bool extClockHealthy = probe.value.clockReferenceHealthy;
+    const bool sourceLocked = health->sourceLocked;
+    const bool extClockHealthy = health->clockReferenceHealthy;
 
     char notifyStr[96];
     char clockStr[40];
     char extStr[128];
     DICE::FormatNotification(notificationBits, notifyStr, sizeof(notifyStr));
-    DICE::FormatGlobalStatus(probe.value.status, clockStr, sizeof(clockStr));
-    DICE::FormatExtStatus(probe.value.extStatus, extStr, sizeof(extStr));
+    DICE::FormatGlobalStatus(health->status, clockStr, sizeof(clockStr));
+    DICE::FormatExtStatus(health->extStatus, extStr, sizeof(extStr));
 
     if (sourceLocked && extClockHealthy) {
         // Healthy — but the device may have moved to a different rate on its
@@ -701,7 +636,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         // PLL's locked nominal rate against the host's current belief and, on
         // a mismatch, tell the audio driver to re-sync the HAL (forced format
         // change; AppleUSBAudio's device-driven rate-move analog).
-        const uint32_t deviceRateHz = probe.value.nominalRateHz;
+        const uint32_t deviceRateHz = health->nominalRateHz;
         auto* nub = publisher_.GetNub(guid);
         const uint32_t hostRateHz = nub ? nub->GetCurrentSampleRateHz() : 0;
         if (nub && deviceRateHz != 0 && hostRateHz != 0 &&
@@ -714,16 +649,15 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
             // window. Notifying then would inject a second, competing
             // config-change into the middle of the host's own change (HAL
             // rate switches wedge until the client reopens the device).
-            // Suppress while the coordinator holds the gate / has a queued
-            // clock request, and when the "new" device rate is just the echo
+            // Suppress while the session reconciles or holds an unapplied
+            // clock change, and when the "new" device rate is just the echo
             // of the clock the host itself asked for.
-            const auto session = restartCoordinator_.GetSession(guid);
+            const auto session = sessions_.Snapshot(guid);
             const bool echoesHostClock =
                 session.has_value() &&
-                (session->hasPendingClockRequest ||
-                 session->pendingClock.sampleRateHz == deviceRateHz ||
+                (session->clockChangePending ||
                  session->desiredClock.sampleRateHz == deviceRateHz);
-            if (echoesHostClock || restartCoordinator_.IsOperationInFlight(guid)) {
+            if (echoesHostClock || sessions_.IsReconciling(guid)) {
                 ASFW_LOG_RL(Audio, "dice/rate-echo", 1000, OS_LOG_TYPE_DEFAULT,
                             "DiceAudioBackend: rate mismatch is host-initiated "
                             "(in flight) GUID=%llx device=%u Hz host=%u Hz -> no resync",
@@ -756,33 +690,19 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
 
 bool DiceAudioBackend::DeviceReportsHealthyClock(uint64_t guid) noexcept {
     if (stopping_.load(std::memory_order_acquire) ||
-        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
+        sessions_.IsCancelled(guid)) {
         return false;
     }
     // Hold the protocol alive for the blocking read (same discipline as
     // ProbeDuplexHealth) so a concurrent device removal cannot free it underneath.
     auto protocol = runtime_.FindShared(guid);
-    auto* diceProtocol = protocol ? protocol->AsDuplexDeviceControl() : nullptr;
-    if (!diceProtocol) {
+    auto* family = protocol ? protocol->AsFamilyDriver() : nullptr;
+    if (!family) {
         return false;
     }
 
-    const auto probe = WaitForAsyncResult<DuplexHealthResult>(
-        [&](auto callback) {
-            diceProtocol->ReadDuplexHealth(std::move(callback));
-        },
-        kHealthBridgeTimeoutMs,
-        kIOReturnTimeout,
-        [&]() noexcept {
-            return stopping_.load(std::memory_order_acquire) ||
-                   restartCoordinator_.IsDeviceOperationCancelled(guid);
-        },
-        kHealthBridgePollMs);
-
-    if (probe.status != kIOReturnSuccess) {
-        return false;
-    }
-    return probe.value.sourceLocked && probe.value.clockReferenceHealthy;
+    const auto health = family->ReadHealth(kHealthBridgeTimeoutMs);
+    return health && health->sourceLocked && health->clockReferenceHealthy;
 }
 
 bool DiceAudioBackend::TryBeginRecovery(uint64_t guid) noexcept {
@@ -806,12 +726,12 @@ void DiceAudioBackend::FinishRecovery(uint64_t guid) noexcept {
     IOLockUnlock(lock_);
 }
 
-void DiceAudioBackend::NotificationObserverThunk(void* context, uint32_t bits) noexcept {
+void DiceAudioBackend::NotificationObserverThunk(void* context, uint64_t guid, uint32_t bits) noexcept {
     auto* self = static_cast<DiceAudioBackend*>(context);
     if (!self) {
         return;
     }
-    self->HandleDeviceNotification(bits);
+    self->HandleDeviceNotification(guid, bits);
 }
 
 void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
@@ -886,15 +806,11 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // scalars and must not have to re-derive it.
     dev.profileBuilderId = profileBuilderId;
     dev.deviceName = profile->Name();
-    dev.inputChannelCount = profile->RxChannelCount();
-    dev.outputChannelCount = profile->TxChannelCount();
-    dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
+    // Channel counts come from the device's caps below; the profile states none.
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
-    dev.sampleRates = profile->SupportedSampleRates();
-    if (dev.sampleRates.empty()) {
-        dev.sampleRates = {48000u};
-    }
+    // The rate set comes from the device once its caps are loaded (below);
+    // 48 kHz is the rate bring-up programs by default.
     dev.currentSampleRate = 48000u;
 
     // Enrich with the device's real per-channel labels (if the protocol has
@@ -1042,6 +958,35 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             // fails rather than degrading.
             dev.resolvedGeometryRequired = !dev.playbackStreams.empty();
 
+            // Announce every rate the device supports, as TCAT's kexts do
+            // (CLOCK_CAPABILITIES & 0x7F). Rates above kDiceMaxStreamingRateHz
+            // are listed but refused when picked. A device announcing no rate
+            // this build can stream cannot run at all: refuse it.
+            const uint32_t initialRate = DICE::DiceInitialRate(caps.deviceRateMask);
+            if (initialRate == 0) {
+                ASFW_LOG_ERROR(Audio,
+                               "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
+                               "GUID=0x%016llx - device supports no rate up to %u Hz (rates=0x%02x)",
+                               guid, DICE::kDiceMaxStreamingRateHz, caps.deviceRateMask);
+                return;
+            }
+            dev.sampleRates = DICE::DicePublishedRates(caps.deviceRateMask);
+            dev.deviceSampleRates = true;
+            dev.currentSampleRate = initialRate;
+            if (!DICE::DiceRateIsStreamable(caps.sampleRateHz)) {
+                // The geometry just read describes the device's current rate
+                // mode, which this build cannot stream. The first start moves
+                // the device to initialRate and its layout may change with the
+                // mode; until RebuildEndpointForNewGeometry exists, a changed
+                // layout leaves the endpoint blocked. Named here so that
+                // failure is attributable at publication.
+                ASFW_LOG_WARNING(Audio,
+                                 "DiceAudioBackend::EnsureNubForGuid: GUID=0x%016llx is running at "
+                                 "%u Hz, above the %u Hz streaming ceiling; published geometry is that "
+                                 "mode's and may not match %u Hz",
+                                 guid, caps.sampleRateHz, DICE::kDiceMaxStreamingRateHz, initialRate);
+            }
+
             // Refuse a device this build cannot actually arm, at publication
             // rather than at the first StartIO. ASFWAudioDevice allocates one
             // primary and one secondary TX stream, so a device carrying more
@@ -1120,7 +1065,9 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         // Validate before replacing the runtime snapshot. A rejected geometry
         // must not reach transport while the audio graph retains the old one.
         if (publisher_.GetNub(guid) != nullptr) {
-            (void)publisher_.RefreshNubProperties(guid, dev, "DICE");
+            if (!publisher_.RefreshNubProperties(guid, dev, "DICE")) {
+                (void)RebuildEndpointForNewGeometry(guid, dev);
+            }
             return;
         }
         if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
@@ -1136,8 +1083,8 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // refuses publication in the callback below, and a missing protocol refuses
     // inside finish(). Both are explicit: there is no path to EnsureNub that
     // has not compared the device against the profile.
-    if (auto* dice = protocol ? protocol->AsDuplexDeviceControl() : nullptr) {
-        dice->EnsureRuntimeStreamGeometry(
+    if (protocol) {
+        protocol->EnsureRuntimeStreamGeometry(
             [finish, dev, protocol, guid](IOReturn status) mutable {
                 if (status != kIOReturnSuccess) {
                     // Refuse here rather than handing off to finish(). finish()
@@ -1187,7 +1134,7 @@ IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
         return kIOReturnNotReady;
     }
 
-    const IOReturn status = restartCoordinator_.StartStreaming(guid);
+    const IOReturn status = sessions_.Attach(guid);
     if (status == kIOReturnSuccess) {
         EnsureNubForGuid(guid);
         if (lock_) {
@@ -1213,7 +1160,7 @@ IOReturn DiceAudioBackend::StopStreaming(uint64_t guid) noexcept {
         return kIOReturnAborted;
     }
 
-    const IOReturn status = restartCoordinator_.StopStreaming(guid);
+    const IOReturn status = sessions_.Detach(guid);
     if (status == kIOReturnSuccess && lock_) {
         IOLockLock(lock_);
         activeStreamingGuids_.erase(guid);
@@ -1233,7 +1180,7 @@ IOReturn DiceAudioBackend::RequestClockConfig(uint64_t guid,
         return kIOReturnAborted;
     }
 
-    const IOReturn status = restartCoordinator_.RequestClockConfig(guid, desiredClock, reason);
+    const IOReturn status = sessions_.ChangeClock(guid, desiredClock, reason);
     if (status == kIOReturnSuccess) {
         EnsureNubForGuid(guid);
     }

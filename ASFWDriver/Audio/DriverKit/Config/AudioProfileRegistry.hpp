@@ -10,7 +10,7 @@
 
 #pragma once
 
-#include "DICE/DiceDeviceProfile.hpp"
+#include "DICE/DiceProfile.hpp"
 #include "IAudioDeviceProfile.hpp"
 
 #include <cstdint>
@@ -46,9 +46,9 @@ public:
     [[nodiscard]] static const IAudioDeviceProfile* ProfileForBuilderId(
         uint32_t profileBuilderId) noexcept;
 
-    /// The DICE half of the above, typed so DICE callers keep the richer
-    /// interface without a downcast. nullptr for every non-DICE builder.
-    [[nodiscard]] static const DICE::IDiceDeviceProfile* DiceProfileForBuilderId(
+    /// The DICE half of the above, typed so DICE callers get the DICE profile
+    /// without a downcast. nullptr for every non-DICE builder.
+    [[nodiscard]] static const DICE::DiceProfile* DiceProfileForBuilderId(
         uint32_t profileBuilderId) noexcept;
 
     // Create and store a per-GUID BeBoB profile from discovery data. Returns

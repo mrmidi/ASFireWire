@@ -8,7 +8,6 @@
 #include "StatusHandler.hpp"
 #include "../../Controller/ControllerCore.hpp"         // ASFWDriver/Controller/ControllerCore.hpp
 #include "../../Controller/ControllerStateMachine.hpp" // ASFWDriver/Controller/ControllerStateMachine.hpp
-#include "../../Diagnostics/ControllerMetrics.hpp" // ASFWDriver/Diagnostics/ControllerMetrics.hpp
 #include "../../Diagnostics/MetricsSink.hpp"       // ASFWDriver/Diagnostics/MetricsSink.hpp
 #include "../../Logging/Logging.hpp"               // ASFWDriver/Logging/Logging.hpp
 #include "../WireFormats/StatusWireFormats.hpp" // ASFWDriver/UserClient/WireFormats/StatusWireFormats.hpp
@@ -131,11 +130,6 @@ kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* ar
     args->structureOutputDescriptor = nullptr;
 
     return kIOReturnSuccess;
-}
-
-kern_return_t StatusHandler::GetMetricsSnapshot(IOUserClientMethodArguments* args) {
-    // Future: Return IOReporter data
-    return kIOReturnUnsupported;
 }
 
 kern_return_t StatusHandler::Ping(IOUserClientMethodArguments* args) {

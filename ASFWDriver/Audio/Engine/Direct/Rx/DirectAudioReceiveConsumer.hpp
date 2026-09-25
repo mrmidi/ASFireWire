@@ -67,7 +67,8 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
                        const ::ASFW::Isoch::IsochReceivePacket& packet) noexcept override;
 
     void DrainReceiveTelemetry(uint32_t maxRecords) override;
-    void DrainPayloadTelemetry() override;
+    // Reports IO-callback errors recorded by the real-time path.
+    void ServiceConsumerDiagnostics() override;
     void LogTransmitTimingTrace() override;
 
   private:
@@ -127,8 +128,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint32_t bootstrapResetLogBudget_{kBootstrapResetLogBudget};
     bool replayCycleInitialized_{false};
     uint32_t lastReplayCycleOrdinal_{0};
-    ::ASFW::Audio::Runtime::PayloadWriterTelemetryAnomalyAggregator
-        payloadWriterTelemetryAggregator_{};
     uint8_t lastDbc_{0};
     bool dbcInitialized_{false};
     ::ASFW::Isoch::Rx::ZtsTelemetryLogGate ztsTelemetryLogGate_{};

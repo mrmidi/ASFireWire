@@ -3,12 +3,14 @@
 #include "ASFWAudioDriver.h"
 #include "ASFWAudioNub.h"
 #include "Config/AudioDriverConfig.hpp"
+#include "Config/IAudioDeviceProfile.hpp"
+#include "Config/ProfileTimingGeometry.hpp"
 #include "Controls/AudioControlBuilder.hpp"
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
-#include "../Config/AudioTxProfiles.hpp"
+#include "../Config/AudioConstants.hpp"
 #include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
 #include "../Families/BeBoB/MAudio/MAudioTxClockBridge.hpp"
 #include "../Shared/TxCycleAnchor.hpp"
@@ -32,9 +34,6 @@ class ASFWAudioDevice;
 #include <atomic>
 #include <cstdint>
 
-static constexpr uint32_t kReportedDeviceLatencyFrames = 24;
-static constexpr uint32_t kReportedSafetyOffsetFrames =
-    ASFW::Isoch::Config::kTxBufferProfile.safetyOffsetFrames;
 struct AudioDriverDeviceState {
     ASFWAudioNub* audioNub{nullptr};
     uint64_t guid{0};
@@ -50,9 +49,10 @@ struct AudioDriverDeviceState {
     double sampleRates[8]{};
     uint32_t sampleRateCount{0};
     double currentSampleRate{0};
-    // Rate reported by a device-initiated clock change (front panel/external
-    // sync), pending until PerformDeviceConfigurationChange commits it.
-    std::atomic<uint32_t> pendingExternalRateHz{0};
+    // Rate validated by HandleChangeSampleRate (HAL request) or reported by a
+    // device-initiated clock change (front panel/external sync), pending until
+    // PerformDeviceConfigurationChange commits it inside the host's window.
+    std::atomic<uint32_t> pendingSampleRateHz{0};
     uint32_t streamModeRaw{0};
     uint32_t boolControlCount{0};
     ASFW::Isoch::Audio::BoolControlSlot boolControls[ASFW::Isoch::Audio::kMaxBoolControls]{};
@@ -74,6 +74,15 @@ struct AudioDriverDeviceState {
     uint32_t captureStreamCount{0};
     /// Falling back to profile constants is forbidden for this device.
     bool resolvedGeometryRequired{false};
+
+    /// The device profile, resolved ONCE at graph construction. StartIO and the
+    /// direct binding read this; nothing on the audio side calls FindProfile
+    /// again (TIMING_GEOMETRY_OWNERSHIP.md, G-19).
+    const ASFW::Isoch::Audio::IAudioDeviceProfile* profile{nullptr};
+    /// The authoritative timing/HAL geometry at currentSampleRate: resolved at
+    /// graph construction and on every accepted rate change. Declarations, the
+    /// ZTS period and the transfer delay are read from here, never re-derived.
+    ASFW::Audio::Runtime::ResolvedTimingGeometry timing{};
 };
 
 class DextTxExecutionTimeline final {
@@ -230,7 +239,6 @@ struct AudioDriverRuntimeState {
     ASFW::Audio::Runtime::AudioTransportControlBlock directAudioControl;
     ASFW::Audio::Runtime::AudioGraphBinding directAudioGraph;
     ASFW::AudioEngine::Direct::FireWireAudioEngine directAudioEngine;
-    ASFW::Audio::Runtime::DirectAudioDebugLogState directAudioDebugLog;
     std::atomic<bool> directAudioSkeletonBound{false};
     std::atomic<uint64_t> ioDebugCallbacks{0};
     std::atomic<uint64_t> ioCallbacksOutsideRun{0};
@@ -295,6 +303,7 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<OSAction> ztsAnchorAction;
     OSSharedPtr<IODispatchQueue> ztsQueue;
     OSSharedPtr<OSAction> deviceClockChangedAction;
+    OSSharedPtr<OSAction> ioRestartRequiredAction;
 
 
 
@@ -323,10 +332,12 @@ struct DirectAudioMemoryGeometry final {
 [[nodiscard]] bool BindDirectAudioSkeleton(
     ASFWAudioDriver_IVars& ivars,
     DirectAudioMemoryGeometry physicalGeometry) noexcept;
+/// Moves a bound skeleton to the active ring and rate of ivars.device.timing
+/// (rate-change window only; IO is stopped). No-op when nothing is bound.
+[[nodiscard]] bool UpdateDirectAudioGeometry(ASFWAudioDriver_IVars& ivars) noexcept;
 void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept;
 
 namespace DirectDiagnostics {
-void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept;
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept;
 } // namespace DirectDiagnostics
 
@@ -341,6 +352,11 @@ void TearDownAudioGraph(ASFWAudioDriver& driver,
                         ASFWAudioDriver_IVars& ivars,
                         AudioGraphStartState* state) noexcept;
 void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
+/// One [Timing] line per resolution (graph build, rate change). This replaces
+/// the old "TimingCursorPolicy (fallback, not applied)" line: it prints what is
+/// actually applied.
+void LogResolvedTimingGeometry(const char* context,
+                               const ASFW::Audio::Runtime::ResolvedTimingGeometry& timing) noexcept;
 
 // Single construction point for the HAL-facing Float32 stream format. The
 // format set as a stream's current format on a rate change must be

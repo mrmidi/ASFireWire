@@ -1,0 +1,76 @@
+## EnsureRuntimeStreamGeometry
+R ffff.e0000000 40 @s400
+R ffff.e0000028 104 @s400
+R ffff.e0000190 512 @s400
+R ffff.e0000390 56 @s400
+R ffff.e00003c8 512 @s400
+R ffff.e00005c8 512 @s400
+R ffff.e00007c8 104 @s400
+## -> 0x00000000
+## PrepareDuplex
+R ffff.e0000000 40 @s400
+R ffff.e0000028 360 @s400
+R ffff.e0000028 8 @s400
+L ffff.e0000028 ffff000000000000 -> ffc0000100000000 = ffff000000000000 @s400
+R ffff.e0000028 8 @s400
+W ffff.e0000074 0000020c @s400
+# notify 0x23
+R ffff.e0000028 360 @s400
+R ffff.e0000028 360 @s400
+R ffff.e0000190 4 @s400
+R ffff.e00003c8 4 @s400
+R ffff.e0000194 4 @s400
+R ffff.e0000198 4 @s400
+R ffff.e000019c 4 @s400
+R ffff.e00001a0 4 @s400
+R ffff.e00001a4 4 @s400
+R ffff.e00001a8 256 @s400
+R ffff.e00003cc 4 @s400
+R ffff.e00003d0 4 @s400
+R ffff.e00003dc 4 @s400
+R ffff.e00003d4 4 @s400
+R ffff.e00003d8 4 @s400
+R ffff.e00003e0 256 @s400
+R ffff.e0000028 104 @s400
+R ffff.e0000190 512 @s400
+R ffff.e0000390 56 @s400
+R ffff.e00003c8 512 @s400
+R ffff.e00005c8 512 @s400
+R ffff.e00007c8 104 @s400
+## -> 0x00000000
+## ProgramRx
+R ffff.e00003cc 4 @s400
+W ffff.e00003d0 00000000 @s400
+W ffff.e00003d4 00000000 @s400
+## -> 0x00000000
+## ProgramTxAndEnableDuplex
+R ffff.e0000194 4 @s400
+W ffff.e0000198 00000001 @s400
+W ffff.e00001a4 00000002 @s400
+W ffff.e00002b0 00000002 @s400
+W ffff.e00002bc 00000002 @s400
+W ffff.e0000078 00000001 @s400
+## -> 0x00000000
+## ConfirmDuplexStart
+R ffff.e000007c 4 @s400
+R ffff.e0000030 4 @s400
+R ffff.e0000080 4 @s400
+R ffff.e0000028 104 @s400
+R ffff.e0000190 512 @s400
+R ffff.e0000390 56 @s400
+R ffff.e00003c8 512 @s400
+R ffff.e00005c8 512 @s400
+R ffff.e00007c8 104 @s400
+## -> 0x00000000
+## StopDuplex
+W ffff.e0000078 00000000 @s400
+R ffff.e0000194 4 @s400
+W ffff.e0000198 ffffffff @s400
+W ffff.e00001a4 00000002 @s400
+W ffff.e00002b0 ffffffff @s400
+W ffff.e00002bc 00000002 @s400
+R ffff.e00003cc 4 @s400
+W ffff.e00003d0 ffffffff @s400
+W ffff.e00003d4 00000000 @s400
+## -> 0x00000000
+== owner=ffc0000100000000 enable=0 tx=[-1,-1] rx=[-1]

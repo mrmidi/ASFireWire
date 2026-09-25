@@ -50,11 +50,18 @@ public:
     /// @param busOps     FireWire bus operations port
     /// @param busInfo    FireWire bus info port
     /// @param route      Current registry-issued device route
+    /// @param waitClock  Paces the bring-up's waits (CLOCK_ACCEPTED, clock
+    ///                   lock, source-lock confirm). Deliberately required: a
+    ///                   missing time source made every wait that needed a
+    ///                   second poll fail at once, which is how this protocol
+    ///                   ran until the S0 golden traces exposed it.
     SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
                       Protocols::Ports::FireWireBusInfo& busInfo,
                       Discovery::DeviceRegistry& routeRegistry,
                       const Discovery::DeviceRouteToken& route,
-                      ::ASFW::IRM::IRMClient* irmClient = nullptr);
+                      ::ASFW::IRM::IRMClient* irmClient,
+                      DiceWaitClock& waitClock,
+                      DiceNotificationRouter* notifications);
     
     /// Initialize protocol (generic DICE init is delegated to the TCAT core)
     IOReturn Initialize() override;
@@ -64,20 +71,17 @@ public:
     
     /// Get device name
     const char* GetName() const override { return "Focusrite Saffire Pro 24 DSP"; }
-    Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override {
-        return tcat_.AsDuplexDeviceControl();
-    }
-    const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override {
-        return tcat_.AsDuplexDeviceControl();
-    }
+    Audio::FamilyDriver* AsFamilyDriver() noexcept override { return tcat_.AsFamilyDriver(); }
     
     /// Device has DSP effects
     bool HasDsp() const override { return true; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) override {
+        tcat_.EnsureRuntimeStreamGeometry(std::move(callback));
+    }
     
     IOReturn StopDuplex() override;
-    ::ASFW::IRM::IRMClient* GetIRMClient() const override { return tcat_.GetIRMClient(); }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
     

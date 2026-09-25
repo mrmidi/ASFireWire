@@ -14,8 +14,8 @@
 // The transport reserved isoch bandwidth from the first while the packetizer
 // framed CIP from the second, and nothing compared them. A disagreement
 // therefore produced correctly-reserved bandwidth carrying wrongly-framed
-// packets — whose symptom is silence with no error logged anywhere. The hazard
-// is spelled out in PreSonusStudioLive2442Profile.cpp's header comment; this
+// packets — whose symptom is silence with no error logged anywhere (the
+// StudioLive 24.4.2's 16 + 10 playback against a profile's 16 + 16). This
 // header is what closes it.
 //
 // The precedence rule is the device's, for a reason that is not a preference:
@@ -227,48 +227,6 @@ struct ResolvedDirectionGeometry {
         return true;
     }
 };
-
-// A profile constant is only an input to resolution when the profile is
-// ASSERTING it. A seeded constant -- one invented so the endpoint has plausible
-// numbers before the device is read -- states nothing, and these two turn that
-// into the "unstated" the functions above already handle.
-//
-// Without this, every unverified constant became a conflict with the device
-// that actually knows, and the endpoint was refused. That is not hypothetical:
-// a contributed Alesis MultiMix dump reports two capture streams of 12 + 2
-// where the profile seeds one of 16, and the MultiMix 8/12/16 all publish the
-// same vendor/model so no constant could have been right for all three.
-//
-// Taken as a bool rather than the profile's enum so this header stays a plain
-// scalar unit; the caller maps its own authority type onto it.
-[[nodiscard]] constexpr uint32_t
-ProfileStatedStreamCount(bool asserted, uint32_t count) noexcept {
-    return asserted ? count : 0U;
-}
-
-[[nodiscard]] constexpr WireStreamGeometry
-ProfileStatedGeometry(bool asserted, WireStreamGeometry geometry) noexcept {
-    return asserted ? geometry : WireStreamGeometry{};
-}
-
-/// Whether a profile's constants must be fed in as STATED, even when the
-/// profile itself calls them a seed.
-///
-/// Seeding means "let the device win unopposed". That is only safe where the
-/// device's answer actually reaches the code that frames packets. Where the
-/// ENCODING path still reads the profile, accepting a disagreement publishes an
-/// endpoint and then mis-frames it -- bandwidth reserved from one description
-/// while CIP is built from the other, which is the failure this header exists
-/// to end. In that case the seed has to be treated as an assertion, so the
-/// disagreement refuses instead.
-///
-/// `encodingIsDeviceSourced` is a property of the DRIVER, not of the device:
-/// it says whether that direction's framing has been migrated off the profile
-/// yet. It is not a per-device policy and must not become one.
-[[nodiscard]] constexpr bool
-TreatProfileAsAsserted(bool profileAsserts, bool encodingIsDeviceSourced) noexcept {
-    return profileAsserts || !encodingIsDeviceSourced;
-}
 
 /// Resolve one direction end to end: the stream count, then every stream in
 /// the union of what each side describes, so a stream only one side knows

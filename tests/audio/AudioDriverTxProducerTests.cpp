@@ -21,7 +21,7 @@
 
 #include "Audio/DriverKit/ASFWAudioDriverPrivate.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
-#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.hpp"
+#include "Audio/DriverKit/Config/DICE/DiceProfile.hpp"
 #include "Audio/DriverKit/Config/ResolvedStreamConfig.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "Isoch/Core/IsochTxQueue.hpp"
@@ -79,7 +79,7 @@ class TxProducerRig final {
 public:
     TxProducerRig() {
         device_ = new ASFWAudioDevice();
-        device_->zeroTimestampPeriod = Geometry::kHalZeroTimestampPeriodFrames;
+        device_->zeroTimestampPeriod = ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames;
         ivars_.audioDevice = OSSharedPtr<ASFWAudioDevice>(device_, OSNoRetain);
         ivars_.device.audioNub = &nub_;
         ivars_.runtime.directAudioGraph.control = control_.get();
@@ -93,18 +93,37 @@ public:
 
     // Mirrors StartIO: select the clock domain, arm the producer on freshly
     // mapped memory, prefill one lap, then hand the queue to the transport.
+    // One playback stream as the nub publishes it after resolution.
+    void SetResolvedPlayback(const ASFW::Isoch::Audio::ParsedWireStream& stream) {
+        ivars_.device.playbackStreams[0] = stream;
+        ivars_.device.playbackStreamCount = 1;
+    }
+
     [[nodiscard]] bool Start(const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
                              ProfileBuilderId builder,
                              uint32_t sampleRateHz) {
         ivars_.device.profileBuilderId = static_cast<uint32_t>(builder);
         ivars_.device.currentSampleRate = sampleRateHz;
+        // Mirrors BuildAudioGraph: the profile and the timing geometry are
+        // resolved once before StartIO ever runs (FW-183).
+        ivars_.device.profile = &profile;
+        const auto timing = ASFW::Audio::DriverKit::ResolveProfileTimingGeometry(
+            profile, sampleRateHz, ivars_.device.streamModeRaw);
+        if (!timing) {
+            return false;
+        }
+        ivars_.device.timing = *timing;
         control_->ResetForStart();
         if (!ASFW::Audio::DriverKit::SelectTxClockDomain(ivars_, profile)) {
             return false;
         }
 
+        // As StartIO frames stream 0: the device's resolved geometry when the
+        // nub carried it, otherwise the profile's own.
         ASFW::Isoch::Audio::AudioStreamConfig txConfig{};
-        if (!profile.BuildDefaultTxStreamConfig(txConfig)) {
+        if (!ASFW::Isoch::Audio::BuildResolvedTxStreamConfig(
+                profile, ivars_.device.playbackStreams, ivars_.device.playbackStreamCount, 0,
+                txConfig)) {
             return false;
         }
         txConfig.sampleRate = sampleRateHz;
@@ -314,7 +333,7 @@ const Capture::Event* FirstCapturedHostPacket() {
     return nullptr;
 }
 
-// 0.5 s of bus time: several ring laps past the 912-packet prefill, and well
+// 0.5 s of bus time: two ring laps past the 1696-packet prefill, and well
 // past the ~780-cycle point where the FW-255 failure stopped IT.
 constexpr uint64_t kSteadyStatePackets = 4000;
 
@@ -383,7 +402,7 @@ TEST(AudioDriverTxProducerTests, MAudio1814PublishesTheHalClockFromTxCompletions
     ASSERT_FALSE(published.empty());
     for (size_t i = 1; i < published.size(); ++i) {
         EXPECT_EQ(published[i].sampleTime - published[i - 1].sampleTime,
-                  Geometry::kHalZeroTimestampPeriodFrames);
+                  ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames);
         EXPECT_GT(published[i].hostTime, published[i - 1].hostTime);
     }
 }
@@ -403,8 +422,12 @@ uint8_t BlocksIn(const WirePacket& packet, uint32_t dbs) {
 }
 
 TEST(AudioDriverTxProducerTests, SaffireReplaysRxTimingOnceReplayEstablishes) {
-    ASFW::Isoch::Audio::DICE::Profiles::FocusriteSaffireProfile profile;
+    // The registry's Saffire entry: the default spec, named.
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
     TxProducerRig rig;
+    // The DICE profile states no geometry; the device reports one playback
+    // stream of 8 PCM + 1 MIDI (DBS 9), and it crosses the nub resolved.
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
     ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
     rig.FeedBlockingRx(8);
     ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
@@ -428,9 +451,20 @@ TEST(AudioDriverTxProducerTests, SaffireReplaysRxTimingOnceReplayEstablishes) {
                 << "packet " << packet.index;
         }
     }
-    // Replay establishes a few hundred cycles in; after that TX carries the
+    // Packets prepared before replay establishes carry no DATA, so the first
+    // DATA packet follows the prefilled shared store (prepare-time content; late
+    // binding, FW-209, removes this start-up gap). After that TX carries the
     // device's 3-of-4 DATA cadence.
-    EXPECT_GT(dataPackets, kSteadyStatePackets / 2);
+    size_t firstData = wire.size();
+    for (size_t i = 0; i < wire.size(); ++i) {
+        if (wire[i].IsData()) {
+            firstData = i;
+            break;
+        }
+    }
+    ASSERT_LT(firstData, wire.size());
+    EXPECT_LE(firstData, Geometry::kTxSharedSlotPackets);
+    EXPECT_GE(dataPackets, (wire.size() - firstData) * 3 / 4 - 1);
 }
 
 } // namespace

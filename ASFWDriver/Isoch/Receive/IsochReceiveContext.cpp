@@ -251,15 +251,12 @@ void IsochReceiveContext::SetReceiveConsumer(
     receiveConsumer_ = consumer;
 }
 
-void IsochReceiveContext::LogHardwareState() {
-}
-
 void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
     if (receiveConsumer_) receiveConsumer_->DrainReceiveTelemetry(maxRecords);
 }
 
-void IsochReceiveContext::DrainPayloadWriterTelemetry() {
-    if (receiveConsumer_) receiveConsumer_->DrainPayloadTelemetry();
+void IsochReceiveContext::ServiceConsumerDiagnostics() {
+    if (receiveConsumer_) receiveConsumer_->ServiceConsumerDiagnostics();
 }
 
 void IsochReceiveContext::LogTxSytTrace() {

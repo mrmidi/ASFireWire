@@ -226,6 +226,10 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
             OSDynamicCast(OSNumber, properties->getObject(Keys::kResolvedGeometryRequired))) {
         inOutConfig.resolvedGeometryRequired = required->unsigned32BitValue() != 0;
     }
+    if (auto* fromDevice =
+            OSDynamicCast(OSNumber, properties->getObject(Keys::kDeviceSampleRates))) {
+        inOutConfig.deviceSampleRates = fromDevice->unsigned32BitValue() != 0;
+    }
     BuildChannelNamesFromPlugs(inOutConfig);
 }
 

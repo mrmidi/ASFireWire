@@ -1,0 +1,28 @@
+name=Alesis MultiMix FireWire (DICE)
+nameForGeometry in=16 out=16 -> Alesis MultiMix FireWire (DICE)
+nameForGeometry in=24 out=24 -> Alesis MultiMix FireWire (DICE)
+nameForGeometry in=32 out=32 -> Alesis MultiMix FireWire (DICE)
+nameForGeometry in=16 out=8 -> Alesis MultiMix FireWire (DICE)
+nameForGeometry in=8 out=16 -> Alesis MultiMix FireWire (DICE)
+nameForGeometry in=2 out=2 -> Alesis MultiMix FireWire (DICE)
+nameForGeometry in=0 out=2 -> Alesis MultiMix FireWire (DICE)
+nameForGeometry in=12 out=8 -> Alesis MultiMix FireWire (DICE)
+nameForGeometry in=20 out=20 -> Alesis MultiMix FireWire (DICE)
+wire tx=1 rx=0
+channels tx=0 rx=0 midi tx=0 rx=0 dbs tx=0 rx=0
+streams tx=1 rx=1
+assertedPlaybackStreams=1
+txPolicy enc=1 variableDbs=0 nonAudioWord=0x80000000 initNonAudio=0 preserveFdf=1 emptyIdle=0 cadenceData=0 cadenceWord=0xcf000000 dbcEnd=0
+txClock=rx-replay anchorTimeoutMs=500
+defaultTx dir=0 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+defaultRx dir=1 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+tx[0] dir=0 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+rx[0] dir=1 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+tx[1] none
+rx[1] none
+tx[2] none
+rx[2] none
+@32000 safety tx=48 rx=128 latency tx=29 rx=29
+@44100 safety tx=48 rx=128 latency tx=29 rx=29
+@48000 safety tx=48 rx=128 latency tx=29 rx=29
+rates 48000

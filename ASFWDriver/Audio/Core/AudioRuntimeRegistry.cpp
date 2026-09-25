@@ -9,6 +9,7 @@
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
+#include "../../Common/TimingUtils.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -84,7 +85,13 @@ std::shared_ptr<AudioEndpointRuntime> AudioRuntimeRegistry::EnsureEndpointRuntim
 uint32_t AudioRuntimeRegistry::CopyAudioTelemetrySnapshots(
     Runtime::AudioTelemetrySnapshot& out) noexcept {
     out = {};
-    out.version = Runtime::kAudioTelemetryWireVersion;
+    // Stamp capture time and the tick->ns ratio so a reader can turn the
+    // completed-interval tick fields into time without its own timebase.
+    out.header.captureHostTicks = mach_absolute_time();
+    if (ASFW::Timing::initializeHostTimebase()) {
+        out.header.hostTimebaseNumer = ASFW::Timing::gHostTimebaseInfo.numer;
+        out.header.hostTimebaseDenom = ASFW::Timing::gHostTimebaseInfo.denom;
+    }
     if (!lock_) {
         return 0;
     }
@@ -106,11 +113,11 @@ uint32_t AudioRuntimeRegistry::CopyAudioTelemetrySnapshots(
 
     for (const auto& endpoint : endpoints) {
         if (endpoint->CopyAudioTelemetrySnapshot(
-                out.endpoints[out.endpointCount])) {
-            ++out.endpointCount;
+                out.endpoints[out.header.endpointCount])) {
+            ++out.header.endpointCount;
         }
     }
-    return out.endpointCount;
+    return out.header.endpointCount;
 }
 
 std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
@@ -166,7 +173,7 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     // says Supported while its units resolve to nothing at all.
     auto created = CreateFamilyDeviceProtocol(
         policy->plan, *busOps, *busInfo, routeRegistry, *route,
-        irmClient, cmpClient_, timerScheduler_);
+        irmClient, cmpClient_, timerScheduler_, diceNotifications_);
     if (!created) {
         ASFW_LOG_ERROR(Audio,
                        "AudioRuntimeRegistry: no protocol for SUPPORTED device "

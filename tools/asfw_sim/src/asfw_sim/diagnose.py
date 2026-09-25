@@ -92,7 +92,7 @@ def fingerprints(geometry: Geometry | None = None) -> list[Fingerprint]:
         ),
         (
             "producer-stall",
-            {"stall_at_cycle": CYCLES_PER_SECOND * 5, "stall_cycles": 800},
+            {"stall_at_cycle": CYCLES_PER_SECOND * 5, "stall_cycles": 1600},  # 200 ms: past the V3 cliff
             "F2: deficit steps once, then FLAT",
         ),
         (

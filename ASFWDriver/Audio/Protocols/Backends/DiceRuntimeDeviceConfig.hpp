@@ -43,13 +43,13 @@ namespace ASFW::Audio {
     //     depending on how quickly caps loaded.
     //
     //   * adopting it as `currentSampleRate` disagreed with bring-up, which
-    //     programs 48 kHz internal (DICEDuplexBringupController). A device found
+    //     programs 48 kHz internal (DiceFamilyDriver). A device found
     //     at 44.1 kHz was published to CoreAudio as 44.1 kHz and then driven at
     //     48 kHz.
     //
-    // The caller seeds both fields before this runs: the profile's supported
-    // rate set, and 48 kHz as the DICE default that bring-up will actually
-    // program. Leave them alone. Rate changes go through the HAL path
+    // The caller sets both fields: the device's own rate set
+    // (DicePublishedRates over CLOCK_CAPABILITIES), and DiceInitialRate -- 48 kHz
+    // when announced -- as the rate bring-up will actually program. Leave them alone. Rate changes go through the HAL path
     // (HandleChangeSampleRate -> RequestSampleRateChange), which reprograms
     // CLOCK_SELECT and is the only place the device's clock should move.
     return true;

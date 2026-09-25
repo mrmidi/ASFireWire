@@ -16,6 +16,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- DICE: the bring-up skipped the clock-select write whenever the device had already been asked for the target rate, even if it was running at another rate, so the start timed out. It now also checks the rate the device actually reached and rewrites the setting when they differ. This restores a fix that was validated on a Saffire Pro 24 DSP but never committed.
+- Sample-rate changes made while no audio is playing were undone by the next start: the stream restarted at the previous rate while macOS rendered the new one, so playback came out at the wrong pitch (44.1 kHz played about 9% sharp on a 48 kHz device clock). The start now uses the rate you picked.
+- Focusrite Saffire Pro 24 DSP: waits during stream start (clock change accepted, clock lock, source lock) failed immediately instead of waiting, because this model's protocol was created without a timer. It now waits like every other DICE device.
+
+- Audio: stopping playback after a start that had been refused (for example by a bus reset during setup) could crash the driver, through an internal consistency check that is active in every build. The stop now succeeds.
+- Audio: a timing fault reported just after playback stopped could restart the streams although nothing was playing. It is now ignored.
+- Audio: a second start request for a device that was already streaming re-ran the whole start over the live streams. It is now recognised as already done.
+- DICE: a start was refused whenever another device on the bus held isochronous channel 0 or 1, because DICE devices asked for exactly those. The bus's isochronous resource manager now picks free channels from 0–31, as Linux does, and the device is told which ones.
+- DICE: when a device changed its stream configuration on its own and said so, the streams kept running with the old one. They now restart, as the vendor drivers do. The notification the device sends during our own start is ignored.
+- DICE: with two DICE devices connected, one device's notifications could complete the other's clock-change wait. Each device's notifications now reach only that device.
+- DICE: after a sample-rate change made while no audio was playing, the next start found the device still at the old rate and set it a second time. The rate change now waits (up to one second) until the device actually runs at the new rate.
+
+### Changed
+
+- DICE: the sample rates offered to macOS now come from the device's own list of supported rates, as Focusrite's and TC Applied Technologies' drivers do, instead of a fixed 44.1 and 48 kHz. A device that also supports 32 kHz now offers it, and a rate the device does not list is refused before anything is sent to it. Rates above 48 kHz (for example 88.2 and 96 kHz on the Saffire Pro 24 DSP) are listed but not yet supported: choosing one is refused, and the device stays at its current rate. Every device still starts at 48 kHz.
+- DICE (internal): the seven per-model profiles are replaced by one, with a short per-model description (name, playback encoding, two framing flags). Channel and stream counts always come from the device now, so a device whose counts differ from what the old profile expected is no longer refused. The Alesis MultiMix keeps its single playback stream, as in libffado. Hardware confirmation is pending.
+- Audio (internal): every device family now implements one streaming interface that the session scheduler calls directly. The old callback interface and its adapter are gone, and DICE devices no longer turn each step into a callback and back. FireWire traffic is unchanged, checked against the recorded traces of every family.
+- Audio: stream start, stop, rate changes and recovery for every device family now go through one per-device session scheduler that replaces the previous coordinator. Requests that overlap are combined into one restart. After three failed recoveries in a row the streams stay stopped until playback is started again; this limit now applies to DICE and MOTU devices too, which previously retried without limit (AV/C devices previously allowed four). The FireWire traffic is otherwise unchanged, checked against traces recorded from the previous code. Hardware confirmation is pending.
+- Focusrite Saffire Pro 40 (original revision) playback now uses the same raw 24-in-32 PCM encoding as the other Saffire models, without AM824 labels. This matches Focusrite's own driver; the earlier contributor verification used AM824 labels, so a retest on hardware is welcome.
+- DICE: bursts of device events (bus resets, configuration changes, timing faults) now cause one stream restart once the device has been quiet for 400 ms, as the vendor drivers do, instead of one restart per event. Starting, stopping and rate changes from macOS are not delayed. Other device families are unchanged. Hardware confirmation is pending.
+- DICE: the driver now keeps ownership of a DICE device while it is connected, claiming it once per bus reset, instead of claiming it at every start and releasing it at every stop. This matches the vendor and Linux drivers and removes a few transactions from every start and stop. The first register read of a start is now the section table; a meaningless read before it is gone. Hardware confirmation is pending.
+- DICE: stream start and stop now run as one straight sequence instead of a chain of callbacks. The FireWire traffic is unchanged: it matches, transaction for transaction, the recorded traces of the previous code on five DICE devices. Hardware confirmation is pending.
+
 ## [0.3.1] - 2026-09-24
 
 ### Added

@@ -248,25 +248,25 @@ timed.  A small, targeted driver-ring query is permitted only when requested;
 it is read-only and never changes stream state.  Do not run broad or parallel
 queries while audio is playing.
 
-For a live TX-content incident, use the retained `DirectAudio` anomaly record:
+For a live TX-content incident, query the retained `DirectAudio` anomaly lines.
+The under-exposure (W > E) and refill-hole evidence is `[TxPrepFrame]` /
+`[TxPrepRange]`; exposure attribution is `[TxExposure]`:
 
 ```bash
 python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query \
-  '{"categories":["DirectAudio"],"contains":"[PayloadWriter] anomaly","maxLevel":"debug","maxRecords":20}'
+  '{"categories":["DirectAudio"],"contains":"[TxPrep","maxLevel":"debug","maxRecords":20}'
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query \
+  '{"categories":["DirectAudio"],"contains":"[TxExposure]","maxLevel":"debug","maxRecords":20}'
 ```
 
-`[PayloadWriter] anomaly` is already MCP-visible because `ASFW_LOG` writes to
-the driver-owned ring.  The first-deficit and last-callback sections include:
+These lines are ring-only (`ASFW_LOG_RING_ONLY`), so read them through the
+driver log ring as above rather than `log show`. A healthy run shows only the
+periodic `[TxPrep]` heartbeat.
 
-- host range, exposed timeline end, and exposure deficit;
-- `firstPacketizer` / `lastPacketizer`: absolute `next` cursor, alignment bit,
-  cursor epoch, last DATA packet index, and its `[first,end)` audio range;
-- `prepared`: total, DATA, NODATA, and slot-acquisition-failure counters.
-
-The packetizer snapshot is intentionally best-effort and read-only across the
-audio callback/TX-preparation boundary.  Interpret a cursor mismatch or a
-cursor-epoch change as evidence for a timeline transition; do not treat the
-diagnostic snapshot as a synchronization primitive.
+The former `[PayloadWriter]` record was retired in FW-171: it was recorded
+from the real-time IO callback into the shared control block and drained on
+the receive path, and its query string (`[PayloadWriter] anomaly`) never
+matched an emitted line.
 
 ### Stream will not start: attribute it before theorising
 
@@ -300,6 +300,24 @@ imply a host-side handshake obligation. Report the counters; do not infer intent
 `packetsSeen == noDataPackets` is the only sound basis for "the device is sending
 only NO-DATA". A non-zero reject counter with `packetsSeen > 0` means the device
 did send us something we threw away.
+
+### Stream runs but sounds wrong: the stable telemetry summary
+
+Once a stream is up, `asfw_get_audio_telemetry` returns the full per-endpoint
+summary (wire v4, read-only, no transaction): TX preparation latency and
+committed-margin histograms, RX capture-ring occupancy/overrun/starvation, and
+for each completed interval **its duration and end time** — so counts can be
+turned into rates. `completedIntervalDurationNs: null` means the duration is
+unknown (first interval after a reset); do not divide by it. The `rxAttribution`
+member carries the same verdict as `asfw_get_audio_stream_health`.
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_get_audio_telemetry '{}'
+```
+
+This summary is deliberately small and stable. It is not a research trace: new
+experiments go to the log ring, never into this contract
+(`documentation/OBSERVABILITY_INVENTORY.md`).
 
 Pair it with the bring-up records, which are emitted for a stream that has **not**
 established yet (bounded per start, so a healthy stream stays silent):

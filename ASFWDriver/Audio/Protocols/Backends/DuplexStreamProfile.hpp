@@ -153,7 +153,6 @@ class DuplexStreamProfileResolver final {
     }
 
   private:
-    static constexpr uint64_t kAllIsoChannels = ~uint64_t{0};
     static constexpr uint8_t kDefaultCaptureIsoChannel = 1;
     static constexpr uint8_t kDefaultPlaybackIsoChannel = 0;
 
@@ -257,8 +256,10 @@ class DuplexStreamProfileResolver final {
             .runtimeCaps = caps,
         };
         const auto traits = TraitsFor(policy);
-        const uint64_t allowedChannels =
-            traits.resource.cmpChoosesIsoChannel ? kAllIsoChannels : 0;
+        // The IRM picks from the family's mask (CMP: any channel, committed to
+        // the PCR; DICE: 0-31, written to its ISOCHRONOUS registers). A zero
+        // mask pins the channel planned from the device's registers.
+        const uint64_t irmChannelMask = traits.resource.irmChannelMask;
 
         // AM824 uses one data-block slot per PCM channel plus any MIDI slots;
         // the controller consumes the already-discovered DBS values unchanged.
@@ -274,10 +275,8 @@ class DuplexStreamProfileResolver final {
             geometry.am824Slots = multiCapture ? stream.am824Slots : caps.deviceToHostAm824Slots;
             geometry.packetBandwidthUnits = AmdtpPacketBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed);
-            // CMP (including BridgeCo/BeBoB) does not own a fixed channel;
-            // IRM selects one, which is then committed back to its PCR.
-            geometry.allowedIsoChannels = traits.resource.cmpChoosesIsoChannel
-                                              ? allowedChannels
+            geometry.allowedIsoChannels = irmChannelMask != 0
+                                              ? irmChannelMask
                                               : FixedChannelMask(geometry.isoChannel);
             captureChannelOffset += geometry.pcmChannels;
         }
@@ -294,8 +293,8 @@ class DuplexStreamProfileResolver final {
                                        : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
             geometry.packetBandwidthUnits = AmdtpPacketBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed);
-            geometry.allowedIsoChannels = traits.resource.cmpChoosesIsoChannel
-                                              ? allowedChannels
+            geometry.allowedIsoChannels = irmChannelMask != 0
+                                              ? irmChannelMask
                                               : FixedChannelMask(geometry.isoChannel);
         }
 

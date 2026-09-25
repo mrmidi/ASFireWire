@@ -5,7 +5,7 @@
 
 #include "MotuAudioBackend.hpp"
 
-#include "AudioDuplexCoordinator.hpp"
+#include "../../Session/AudioSessions.hpp"
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioNubPublisher.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
@@ -28,13 +28,13 @@ namespace ASFW::Audio {
 MotuAudioBackend::MotuAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
-                                   AudioDuplexCoordinator& duplexCoordinator,
+                                   Session::AudioSessions& sessions,
                                    Driver::HardwareInterface& hardware) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
     , hardware_(hardware)
-    , coordinator_(duplexCoordinator) {
+    , sessions_(sessions) {
     lock_ = IOLockAlloc();
 
     IODispatchQueue* queue = nullptr;
@@ -212,7 +212,7 @@ IOReturn MotuAudioBackend::StartStreaming(uint64_t guid) noexcept {
         return kIOReturnNotReady;
     }
 
-    const IOReturn status = coordinator_.StartStreaming(guid);
+    const IOReturn status = sessions_.Attach(guid);
     if (status == kIOReturnSuccess) {
         EnsureNubForGuid(guid);
         if (lock_) {
@@ -234,7 +234,7 @@ IOReturn MotuAudioBackend::StopStreaming(uint64_t guid) noexcept {
         return kIOReturnAborted;
     }
 
-    const IOReturn status = coordinator_.StopStreaming(guid);
+    const IOReturn status = sessions_.Detach(guid);
     if (status == kIOReturnSuccess && lock_) {
         IOLockLock(lock_);
         activeStreamingGuids_.erase(guid);
@@ -250,9 +250,10 @@ bool MotuAudioBackend::QueueTimingRecovery(uint64_t guid) noexcept {
         return false;
     }
 
-    const auto session = coordinator_.GetSession(guid);
-    if (!session || !coordinator_.IsStreaming(guid)) return false;
-    const uint64_t restartId = session->restartId;
+    // The fault belongs to the run streaming now; the session drops it if
+    // that run has ended by the time the block below asks for the restart.
+    const uint64_t observedRun = sessions_.RunningRun(guid);
+    if (observedRun == Session::SessionScheduler::kNotRunning) return false;
 
     if (recoveryInFlight_.exchange(true, std::memory_order_acq_rel)) {
         recoveryRejectCount_.fetch_add(1, std::memory_order_relaxed);
@@ -260,14 +261,11 @@ bool MotuAudioBackend::QueueTimingRecovery(uint64_t guid) noexcept {
     }
 
 #ifdef ASFW_HOST_TEST
-    auto recover = [this, guid, restartId] {
+    auto recover = [this, guid, observedRun] {
 #else
     auto recover = ^{
 #endif
-        const auto current = coordinator_.GetSession(guid);
-        if (!current || current->restartId != restartId || !coordinator_.IsStreaming(guid) ||
-            stopping_.load(std::memory_order_acquire) ||
-            coordinator_.IsDeviceOperationCancelled(guid)) {
+        if (stopping_.load(std::memory_order_acquire) || sessions_.IsCancelled(guid)) {
             recoveryInFlight_.store(false, std::memory_order_release);
             return;
         }
@@ -275,13 +273,16 @@ bool MotuAudioBackend::QueueTimingRecovery(uint64_t guid) noexcept {
         ASFW_LOG(Audio,
                  "MotuAudioBackend: scheduling async recovery for timing loss GUID=0x%016llx",
                  guid);
-        const IOReturn status = coordinator_.RecoverStreaming(
-            guid, DuplexRestartReason::kRecoverAfterTimingLoss, restartId);
+        const IOReturn status = sessions_.RequestRestart(
+            guid, DuplexRestartReason::kRecoverAfterTimingLoss, observedRun);
         if (status == kIOReturnSuccess) {
-            EnsureNubForGuid(guid);
             ASFW_LOG(Audio,
                      "MotuAudioBackend: timing-loss recovery succeeded GUID=0x%016llx",
                      guid);
+        } else if (status == kIOReturnUnsupported || status == kIOReturnAborted) {
+            ASFW_LOG(Audio,
+                     "MotuAudioBackend: timing-loss recovery not applicable GUID=0x%016llx kr=0x%x",
+                     guid, status);
         } else {
             ASFW_LOG_ERROR(Audio,
                            "MotuAudioBackend: timing-loss recovery failed GUID=0x%016llx kr=0x%x",

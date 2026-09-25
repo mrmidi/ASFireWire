@@ -7,7 +7,7 @@
 #pragma once
 
 #include "IAudioBackend.hpp"
-#include "AudioDuplexCoordinator.hpp"
+#include "../../Session/AudioSessions.hpp"
 #include "IsochDuplexHostTransport.hpp"
 #include "PublicationGate.hpp"
 
@@ -28,13 +28,18 @@ namespace ASFW::Audio {
 
 class AudioRuntimeRegistry;
 
+namespace DICE {
+class DiceNotificationRouter;
+}
+
 class DiceAudioBackend final : public IAudioBackend {
 public:
     DiceAudioBackend(AudioNubPublisher& publisher,
                      Discovery::DeviceRegistry& registry,
                      AudioRuntimeRegistry& runtime,
-                     AudioDuplexCoordinator& duplexCoordinator,
-                     Driver::HardwareInterface& hardware) noexcept;
+                     Session::AudioSessions& sessions,
+                     Driver::HardwareInterface& hardware,
+                     DICE::DiceNotificationRouter& notifications) noexcept;
     ~DiceAudioBackend() noexcept override;
 
     DiceAudioBackend(const DiceAudioBackend&) = delete;
@@ -47,6 +52,7 @@ public:
     // per-device notification/recovery work so it cannot revive a dead GUID.
     void CancelRemoteDeviceWork(uint64_t guid) noexcept override;
     void OnDeviceResumed(uint64_t guid) noexcept override;
+    void OnStreamsRestarted(uint64_t guid) noexcept override;
     void HandleHostTimingLoss(uint64_t guid) noexcept override;
     void HandleCycleInconsistent(uint64_t guid) noexcept override;
     void HandleRecoveryEvent(uint64_t guid, DuplexRestartReason reason) noexcept;
@@ -58,14 +64,20 @@ public:
                                               DuplexRestartReason reason) noexcept;
 
     // FW-61: quiesce the dice queue before the core detaches hardware. Sets the stop flag,
-    // cancels in-flight recovery (coordinator), then drains the work queue (synchronous
+    // cancels in-flight recovery (sessions), then drains the work queue (synchronous
     // barrier) so no recovery/probe block issues MMIO after ASFWDriver::Stop's Detach.
     // Idempotent; must be called before HardwareInterface::Detach().
     void BeginTeardown() noexcept override;
 
 private:
     void EnsureNubForGuid(uint64_t guid) noexcept;
-    void HandleDeviceNotification(uint32_t bits) noexcept;
+    // The TCAT kexts' CreateStreams step: rebuild the audio endpoint when the
+    // device's re-read stream layout differs from the one it was published
+    // with. Not implemented (high rates parked); returns false and the endpoint
+    // stays blocked. The TODO at the definition is the design.
+    [[nodiscard]] bool RebuildEndpointForNewGeometry(uint64_t guid,
+                                                     const Model::ASFWAudioDevice& newConfig) noexcept;
+    void HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept;
     void ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept;
     // Blocking device-health read (dice queue only). Returns true ONLY when the device
     // confirms a locked, healthy clock reference (sourceLocked && clockReferenceHealthy).
@@ -74,7 +86,7 @@ private:
     [[nodiscard]] bool DeviceReportsHealthyClock(uint64_t guid) noexcept;
     [[nodiscard]] bool TryBeginRecovery(uint64_t guid) noexcept;
     void FinishRecovery(uint64_t guid) noexcept;
-    static void NotificationObserverThunk(void* context, uint32_t bits) noexcept;
+    static void NotificationObserverThunk(void* context, uint64_t guid, uint32_t bits) noexcept;
 
 
     AudioNubPublisher& publisher_;
@@ -85,7 +97,8 @@ private:
     std::atomic<bool> teardownStarted_{false};
     std::atomic<bool> teardownComplete_{false};
     PublicationGate publicationGate_{};
-    AudioDuplexCoordinator& restartCoordinator_;
+    Session::AudioSessions& sessions_;
+    DICE::DiceNotificationRouter& notifications_;
 
 #ifdef ASFW_HOST_TEST
 public:
@@ -138,7 +151,6 @@ private:
     static constexpr uint32_t kCapsRetryDelayMs = 50;
     static constexpr uint8_t kCapsRetryMaxAttempts = 40; // 2s @ 50ms
     static constexpr uint32_t kHealthBridgeTimeoutMs = 1000;
-    static constexpr uint32_t kHealthBridgePollMs = 10;
 };
 
 } // namespace ASFW::Audio

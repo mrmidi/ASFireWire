@@ -1,0 +1,41 @@
+## StartStreaming
+D geometry
+H begin
+D prepare rate=48000 cap=1[1] play=1[0]
+H reserve playback allowed=ffffffffffffffff bw=308 -> ch=0
+H reserve capture allowed=ffffffffffffffff bw=308 -> ch=1
+D assign cap=1[1] play=1[0]
+H prepare rx ch=1 fmt=0 slots=9 pcm=0
+H prepare tx ch=0 sid=0 @s400
+D health
+D health
+D health
+H start rx
+D program rx
+H start tx
+D program tx+enable
+D confirm
+## -> 0x00000000 streaming=1
+## RequestClockConfig 44100
+D disconnect playback
+H stop tx
+D disconnect capture
+H stop rx
+H stop all
+D geometry
+H begin
+D prepare rate=48000 cap=1[1] play=1[0]
+H reserve playback allowed=ffffffffffffffff bw=308 -> ch=0
+H reserve capture allowed=ffffffffffffffff bw=308 -> ch=1
+D assign cap=1[1] play=1[0]
+H prepare rx ch=1 fmt=0 slots=9 pcm=0
+H prepare tx ch=0 sid=0 @s400
+D health
+D health
+D health
+H start rx
+D program rx
+H start tx
+D program tx+enable
+D confirm
+## -> 0x00000000 streaming=1

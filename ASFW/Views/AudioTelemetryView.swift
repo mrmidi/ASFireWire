@@ -190,6 +190,7 @@ struct AudioTelemetryView: View {
             TelemetryMetricCard(title: "Lifetime max", value: endpoint.maxPreparationLatencyTicks.microsecondsText, detail: "preparation latency", tint: .orange)
             TelemetryMetricCard(title: "≤750 µs", value: endpoint.preparationAtMost750Us.formatted(), detail: "of \(endpoint.preparationWakeCount.formatted()) wakes", tint: .green)
             TelemetryMetricCard(title: "≥1.5 ms", value: endpoint.preparationAtLeast1500Us.formatted(), detail: "early-warning wakes", tint: endpoint.preparationAtLeast1500Us == 0 ? .green : .orange)
+            TelemetryMetricCard(title: "Interval", value: endpoint.txCompletedIntervalSeconds.map { String(format: "%.2f s", $0) } ?? "—", detail: "TX heartbeat coverage", tint: .secondary)
         }
     }
 

@@ -38,7 +38,8 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
     const Discovery::DeviceRouteToken& route,
     IRM::IRMClient* irmClient,
     CMP::CMPClient* cmpClient,
-    Scheduling::ITimerScheduler* timerScheduler
+    Scheduling::ITimerScheduler* timerScheduler,
+    DICE::DiceNotificationRouter* diceNotifications
 ) {
     if (!route) {
         return nullptr;
@@ -78,7 +79,8 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      "Creating SPro24DspProtocol node=0x%04x unitOffset=%u",
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(
-                busOps, busInfo, routeRegistry, route, irmClient);
+                busOps, busInfo, routeRegistry, route, irmClient,
+                DICE::DriverKitWaitClock::Shared(), diceNotifications);
 
         // The plain TCAT devices differ in their profile, not their protocol:
         // geometry comes from the device's own registers either way.
@@ -87,7 +89,8 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      "Creating generic DICETcatProtocol node=0x%04x unitOffset=%u",
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::TCAT::DICETcatProtocol>(
-                busOps, busInfo, routeRegistry, route, irmClient, timerScheduler);
+                busOps, busInfo, routeRegistry, route, irmClient,
+                DICE::DriverKitWaitClock::Shared(), diceNotifications);
 
         // Weiss is the one DICE device with a non-default runtime policy: it is
         // a one-way interface, so CoreAudio must not be shown the device->host
@@ -98,7 +101,8 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      "remains duplex while CoreAudio hides device->host channels",
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::TCAT::DICETcatProtocol>(
-                busOps, busInfo, routeRegistry, route, irmClient, timerScheduler,
+                busOps, busInfo, routeRegistry, route, irmClient,
+                DICE::DriverKitWaitClock::Shared(), diceNotifications,
                 DICE::TCAT::DICETcatRuntimePolicy{
                     .exposeDeviceToHostToCoreAudio = false,
                     .requireSourceLockBeforeStreamEnable = false,
@@ -161,9 +165,9 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // --- MotuRegister Family ---
         // MOTU publishes model_id 0; the model is the unit's Unit_Sw_Version,
         // which the protocol needs in order to pick its chunk layout.
-        // The IRM client must reach the protocol: the coordinator allocates iso
-        // channels through IDuplexDeviceControl::GetIRMClient() before
-        // programming the device.
+        // The protocol keeps the IRM client for its own use; the audio session
+        // reserves the iso channels with the same client before programming
+        // the device.
         case ProtocolImplementationId::MotuV2:
             ASFW_LOG(Audio,
                      "Creating MotuV2Protocol version=0x%06x node=0x%04x",

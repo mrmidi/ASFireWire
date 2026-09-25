@@ -8,6 +8,8 @@
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "Audio/Protocols/DICE/TCAT/DICETcatProtocol.hpp"
+#include "FakeDiceWaitClock.hpp"
+#include "FakeTimerScheduler.hpp"
 
 #include <array>
 #include <cstdint>
@@ -58,6 +60,13 @@ using ASFW::Audio::DICE::TCAT::DICETcatRuntimePolicy;
 using ASFW::FW::FwSpeed;
 using ASFW::FW::Generation;
 using ASFW::FW::LockOp;
+
+// None of these tests reaches a bring-up wait, so one virtual clock serves them all.
+ASFW::Audio::DICE::DiceWaitClock& WaitClock() {
+    static ASFW::Testing::FakeTimerScheduler timer;
+    static ASFW::Testing::FakeDiceWaitClock clock{timer};
+    return clock;
+}
 using ASFW::FW::NodeId;
 
 struct RouteState {
@@ -141,6 +150,11 @@ std::array<uint8_t, kGlobalReadBytes> MakeGlobalStateWire(uint32_t clockSelect,
     return bytes;
 }
 
+// Deliberately not SimulatedDiceDevice (tests/support/SimulatedDiceDevice.hpp):
+// these tests exercise link-speed step-down (a general-section read that fails
+// at S400 and succeeds lower), route invalidation inside a failing read, the
+// TCAT extension space and per-region read counts. None of that is DICE device
+// behaviour the simulator models, so this counting fake stays.
 class CountingFireWireBus final : public IFireWireBus {
 public:
     AsyncHandle ReadBlock(Generation generation,
@@ -378,7 +392,7 @@ TEST(DICETcatProtocolTests, ResetDuringFailedReadStopsSpeedProbe) {
 TEST(DICETcatProtocolTests, InitializeIsSideEffectFree) {
     CountingFireWireBus bus;
     RouteState routeState;
-    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(), nullptr);
 
     EXPECT_EQ(protocol.Initialize(), kIOReturnSuccess);
 
@@ -414,7 +428,7 @@ TEST(DICETcatProtocolTests, NeutralClockRequestMapsToDiceClockSelectInsideAdapte
 TEST(DICETcatProtocolTests, RuntimeCapsAggregateTotalConfiguredStreams) {
     CountingFireWireBus bus;
     RouteState routeState;
-    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(), nullptr);
 
     ASFW::Audio::DICE::GlobalState global{};
     global.sampleRate = 48000;
@@ -456,6 +470,7 @@ TEST(DICETcatProtocolTests, RuntimePolicyHidesCoreAudioInputWithoutChangingWireG
                               routeState.registry,
                               routeState.route,
                               nullptr,
+                              WaitClock(),
                               nullptr,
                               DICETcatRuntimePolicy{.exposeDeviceToHostToCoreAudio = false});
 
@@ -496,7 +511,7 @@ TEST(DICETcatProtocolTests, RuntimePolicyHidesCoreAudioInputWithoutChangingWireG
 TEST(DICETcatProtocolTests, ChannelLabelsFlattenAcrossStreamsInChannelOrder) {
     CountingFireWireBus bus;
     RouteState routeState;
-    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(), nullptr);
 
     // No labels before caps are cached.
     std::vector<std::string> inNames;
@@ -530,10 +545,93 @@ TEST(DICETcatProtocolTests, ChannelLabelsFlattenAcrossStreamsInChannelOrder) {
     EXPECT_EQ(outNames[1], "Main R");
 }
 
+// TCAT refuses a rate the device does not advertise before touching it
+// (MidasFW SetNewSamplingRate). This device supports 44.1 and 48 kHz only.
+TEST(DICETcatProtocolTests, RefusesARateTheDeviceDoesNotAdvertiseWithoutBusTraffic) {
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(),
+                              nullptr);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+
+    ASFW::Audio::DICE::GlobalState global{};
+    global.sampleRate = 48000;
+    global.clockCaps = 0x13000006;  // 44.1 + 48 kHz, as the Venice and StudioLive report
+    global.hasClockCaps = true;
+    ASFW::Audio::DICE::StreamConfig tx{};
+    tx.numStreams = 1;
+    tx.streams[0].pcmChannels = 2;
+    ASFW::Audio::DICE::StreamConfig rx{};
+    rx.numStreams = 1;
+    rx.streams[0].pcmChannels = 2;
+    ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::CacheRuntimeCaps(protocol, global, tx, rx);
+
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.deviceRateMask, 0x06U);
+
+    const int readsBefore = bus.readCount;
+    const int writesBefore = bus.writeCount;
+    const int locksBefore = bus.lockCount;
+    ASFW::Audio::FamilyDriver& family = *protocol.AsFamilyDriver();
+    const auto started = family.Configure(ASFW::Audio::AudioDuplexChannels{},
+                                          AudioClockConfig{.sampleRateHz = 32000});
+    ASSERT_FALSE(started.has_value());
+    EXPECT_EQ(started.error(), kIOReturnUnsupported);
+    const auto applied = family.ApplyClockIdle(AudioClockConfig{.sampleRateHz = 32000});
+    ASSERT_FALSE(applied.has_value());
+    EXPECT_EQ(applied.error(), kIOReturnUnsupported);
+    EXPECT_EQ(bus.readCount, readsBefore);
+    EXPECT_EQ(bus.writeCount, writesBefore);
+    EXPECT_EQ(bus.lockCount, locksBefore);
+}
+
+// A rate the device announces but this build cannot stream (88.2/96 kHz on a
+// Pro 24 DSP) is refused the same way: before any bus traffic, so the device
+// never leaves its current rate mode. ASFWAudioNub refuses it earlier still
+// (IsSupportedAudioClockConfig); this is the protocol's own gate.
+TEST(DICETcatProtocolTests, RefusesAnAnnouncedHighRateWithoutBusTraffic) {
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(),
+                              nullptr);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+
+    ASFW::Audio::DICE::GlobalState global{};
+    global.sampleRate = 48000;
+    global.clockCaps = 0x112C001E;  // 44.1/48/88.2/96 kHz, the recorded Pro 24 DSP
+    global.hasClockCaps = true;
+    ASFW::Audio::DICE::StreamConfig tx{};
+    tx.numStreams = 1;
+    tx.streams[0].pcmChannels = 16;
+    ASFW::Audio::DICE::StreamConfig rx{};
+    rx.numStreams = 1;
+    rx.streams[0].pcmChannels = 8;
+    ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::CacheRuntimeCaps(protocol, global, tx, rx);
+
+    const int readsBefore = bus.readCount;
+    const int writesBefore = bus.writeCount;
+    const int locksBefore = bus.lockCount;
+    ASFW::Audio::FamilyDriver& family = *protocol.AsFamilyDriver();
+    for (const uint32_t rate : {88200U, 96000U}) {
+        const auto started = family.Configure(ASFW::Audio::AudioDuplexChannels{},
+                                              AudioClockConfig{.sampleRateHz = rate});
+        ASSERT_FALSE(started.has_value()) << rate;
+        EXPECT_EQ(started.error(), kIOReturnUnsupported) << rate;
+        const auto applied = family.ApplyClockIdle(AudioClockConfig{.sampleRateHz = rate});
+        ASSERT_FALSE(applied.has_value()) << rate;
+        EXPECT_EQ(applied.error(), kIOReturnUnsupported) << rate;
+    }
+    EXPECT_EQ(bus.readCount, readsBefore);
+    EXPECT_EQ(bus.writeCount, writesBefore);
+    EXPECT_EQ(bus.lockCount, locksBefore);
+    EXPECT_FALSE(ASFW::Audio::IsSupportedAudioClockConfig(AudioClockConfig{.sampleRateHz = 96000}));
+}
+
 TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
     CountingFireWireBus bus;
     RouteState routeState;
-    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(), nullptr);
     ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
 
     ASFW::Audio::DICE::GlobalState global{};
@@ -580,7 +678,8 @@ TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
 TEST(SPro24DspProtocolTests, VendorCallLoadsExtensionsLazily) {
     CountingFireWireBus bus;
     RouteState routeState;
-    SPro24DspProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
+    SPro24DspProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr,
+                               WaitClock(), nullptr);  // vendor call only, no waits
     ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
     EXPECT_EQ(bus.extensionReadCount, 0);
 

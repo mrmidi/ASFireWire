@@ -24,6 +24,8 @@ protocol ASFWDriverControlling {
     func queryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse?
     func logRingStats() async -> ASFWLogRingStats?
     func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth]
+    /// Full stable audio telemetry summary (wire v4), or nil when unavailable.
+    func fetchAudioTelemetry() async -> ASFWMCPValue?
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
@@ -613,6 +615,18 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             replayEntries: 7_936,
             replayEpochResets: 1
         )]
+    }
+
+    func fetchAudioTelemetry() async -> ASFWMCPValue? {
+        // Shape only: the projection itself is covered with the decoder fixture.
+        .object([
+            "wireVersion": .int(4),
+            "captureHostTicks": .uint64(1_000_000),
+            "hostTimebaseNumer": .int(125),
+            "hostTimebaseDenom": .int(3),
+            "endpointCount": .int(0),
+            "endpoints": .array([])
+        ])
     }
 
     func recordUnexpectedWriteAttempt() {

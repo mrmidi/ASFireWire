@@ -26,6 +26,7 @@ struct RxTelemetrySection: View {
             HStack(spacing: 24) {
                 Label("\(endpoint.rxReplayEntries.formatted()) replay entries", systemImage: "arrow.triangle.2.circlepath")
                 Label("\(endpoint.rxReplayEpochResets.formatted()) epoch resets", systemImage: "arrow.counterclockwise")
+                Label(endpoint.rxCompletedIntervalSeconds.map { String(format: "interval %.2f s", $0) } ?? "interval —", systemImage: "clock")
             }
             .font(.caption)
             .foregroundStyle(.secondary)

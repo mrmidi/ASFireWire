@@ -29,7 +29,6 @@ public:
     kern_return_t GetControllerStatus(IOUserClientMethodArguments* args);
 
     // Method 3: Get metrics snapshot (currently unsupported)
-    kern_return_t GetMetricsSnapshot(IOUserClientMethodArguments* args);
 
     // Method 7: Simple health check ping
     kern_return_t Ping(IOUserClientMethodArguments* args);

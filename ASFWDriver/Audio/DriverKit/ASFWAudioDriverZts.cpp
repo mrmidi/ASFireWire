@@ -940,10 +940,10 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txStreamEngine.ResetForStart(0, 0);
     ivars.runtime.txReplayReader.Reset();
 
-    const uint32_t timingRateHz =
-        ivars.device.currentSampleRate > 0
-            ? static_cast<uint32_t>(ivars.device.currentSampleRate)
-            : 48000u;
+    // The resolved geometry is the only rate/timing source here; there is no
+    // 48 kHz fallback (a graph that failed to resolve never reaches StartIO).
+    const auto& timing = ivars.device.timing;
+    const uint32_t timingRateHz = timing.sampleRateHz;
     if (ivars.runtime.mAudioInternalTxActive.load(
             std::memory_order_acquire)) {
         ++ivars.runtime.mAudioTxClockStartEpoch;
@@ -955,19 +955,16 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         if (!ivars.runtime.mAudioTxClockBridge.Arm(
                 ivars.runtime.mAudioTxClockStartEpoch,
                 timingRateHz,
-                ASFW::IsochTransport::AudioTimingGeometry::
-                    kHalZeroTimestampPeriodFrames,
+                timing.zeroTimestampPeriodFrames,
                 ivars.runtime.mAudioInternalTxTiming.
                     TransferDelayTicks())) {
             return {kIOReturnUnsupported, "MAudioTxClockBridge"};
         }
     }
-    control->rxTransferDelayTicks.store(
-        profile.RxTransferDelayTicks(ivars.device.currentSampleRate),
-        std::memory_order_relaxed);
-    control->txTransferDelayTicks.store(
-        profile.TxTransferDelayTicks(ivars.device.currentSampleRate),
-        std::memory_order_relaxed);
+    control->rxTransferDelayTicks.store(timing.rxTransferDelayTicks,
+                                        std::memory_order_relaxed);
+    control->txTransferDelayTicks.store(timing.txTransferDelayTicks,
+                                        std::memory_order_relaxed);
     return {};
 }
 
@@ -1208,9 +1205,11 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                     : 0;
 
             // A step is a jump larger than one full IO window inside a single
-            // one-second sample; a ramp is a steady, smaller accumulation.
+            // one-second sample; a ramp is a steady, smaller accumulation. The
+            // window is the largest client write ADK permits (V3: 4096), not
+            // the nominal 1024 budget, or one large write would read as a step.
             const int64_t stepThreshold = static_cast<int64_t>(
-                ASFW::IsochTransport::AudioTimingGeometry::kHalIoPeriodFrames);
+                ASFW::IsochTransport::AudioTimingGeometry::kMaxClientIoFrames);
 
             ASFW::Audio::Runtime::TxExposureReason reason =
                 ASFW::Audio::Runtime::TxExposureReason::kHealthy;
@@ -1518,8 +1517,18 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                     0, std::memory_order_relaxed);
             // Publish a stable copy for the read-only user-client snapshot.
             // No control-plane caller receives directControl itself.
-            directControl->txCompletedIntervalSequence.fetch_add(
-                1, std::memory_order_relaxed);
+            // The interval opened at the previous emission (0 = unknown:
+            // first emission after a reset).
+            const uint64_t intervalDurationTicks =
+                lastHeartbeatTicks != 0 && now > lastHeartbeatTicks
+                    ? now - lastHeartbeatTicks
+                    : 0;
+            ASFW::Audio::Runtime::SeqlockWriteBegin(
+                directControl->txCompletedIntervalSequence);
+            directControl->txCompletedIntervalDurationTicks.store(
+                intervalDurationTicks, std::memory_order_relaxed);
+            directControl->txCompletedIntervalEndHostTicks.store(
+                now, std::memory_order_relaxed);
             directControl->txCompletedIntervalMarginMinPackets.store(
                 intervalMarginMin, std::memory_order_relaxed);
             directControl->txCompletedIntervalMarginMaxPackets.store(
@@ -1543,9 +1552,12 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 directControl->txCompletedIntervalCommittedMarginHistogram[index].store(
                     marginBuckets[index], std::memory_order_relaxed);
             }
-            directControl->txCompletedIntervalSequence.fetch_add(
-                1, std::memory_order_release);
-            directControl->rxCaptureBufferTelemetry.CompleteInterval();
+            ASFW::Audio::Runtime::SeqlockWriteEnd(
+                directControl->txCompletedIntervalSequence);
+            // Close the RX interval on the same boundary. If the receive path
+            // is closing it concurrently this is skipped; it is retried at the
+            // next emission.
+            (void)directControl->rxCaptureBufferTelemetry.CompleteInterval(now);
             // Stamped on every emission, so an anomaly burst defers the next
             // heartbeat instead of interleaving with it. Anomalies are never
             // themselves suppressed.

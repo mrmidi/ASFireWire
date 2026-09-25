@@ -45,8 +45,6 @@ public:
     kern_return_t StopDVCapture(IOUserClientMethodArguments* args);
     
     // Isoch Metrics
-    kern_return_t GetIsochRxMetrics(IOUserClientMethodArguments* args);
-    kern_return_t ResetIsochRxMetrics(IOUserClientMethodArguments* args);
     
     // IT Streaming Control (DMA allocation only - no CMP)
     kern_return_t StartIsochTransmit(IOUserClientMethodArguments* args);

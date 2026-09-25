@@ -1,4 +1,4 @@
-#include "Audio/Config/InputSafetyPolicy.hpp"
+#include "Audio/Runtime/ResolvedTimingGeometry.hpp"
 #include "Audio/Wire/AMDTP/RxSequenceReplay.hpp"
 #include "Shared/Isoch/AudioTimingGeometry.hpp"
 
@@ -69,7 +69,7 @@ TEST(RxDrivenTimingTests, RxRingWrapPreservesCadenceAndFramePhase) {
 TEST(RxDrivenTimingTests, ZtsGridIsObservedAtDataPacketStartWithoutProjection) {
     constexpr std::array<uint32_t, 4> cadence{8, 8, 8, 0};
     constexpr uint64_t period =
-        AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+        ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames;
     static_assert(period % AudioTimingGeometry::kCadenceBlockFrames == 0);
 
     uint64_t absoluteFrame = 0;
@@ -223,36 +223,34 @@ TEST(RxDrivenTimingTests, ReplayCannotEstablishWithoutHalfRingHistory) {
     EXPECT_FALSE(replay.IsEstablished());
 }
 
-TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
-    EXPECT_EQ(AudioTimingGeometry::kRxPacketsPerGroup, 6U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPacketsPerGroup, 6U);
-    EXPECT_EQ(AudioTimingGeometry::kMaximumNominalFramesPerInterrupt, 40U);
-    EXPECT_EQ(
-        AudioTimingGeometry::kHalZeroTimestampPeriodFrames,
-        ASFW::IsochTransport::kActiveAudioHalBufferProfile
-            .zeroTimestampPeriodFrames);
+TEST(RxDrivenTimingTests, GeometryUsesEightCycleInterruptsAndCurrentTxDepths) {
+    EXPECT_EQ(AudioTimingGeometry::kRxPacketsPerGroup, 8U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPacketsPerGroup, 8U);
+    EXPECT_EQ(AudioTimingGeometry::kNominalFramesPerTimingGroup, 48U);
+    EXPECT_EQ(ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames,
+              12288U);
     EXPECT_EQ(AudioTimingGeometry::kRxDescriptorPackets, 504U);
     EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 48U);
     EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 96U);
     EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 144U);
-    // 400-cycle content horizon at worst-case 44.1k cadence, plus one full
-    // 512-frame client write window.
-    EXPECT_EQ(AudioTimingGeometry::kTxExposureLeadPackets, 438U);
-    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 534U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 678U);
-    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 912U);
+    // Content horizon floored at the 4096-frame ADK client maximum plus
+    // jitter (4160 frames) at worst-case 44.1k cadence, plus one full
+    // 4096-frame client write window.
+    EXPECT_EQ(AudioTimingGeometry::kTxExposureLeadPackets, 760U);
+    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 1504U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 1648U);
+    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 1696U);
 }
 
 TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {
     // The IO buffer window must NOT inflate the safety offset (was 624). The
-    // margin is one interrupt batch + jitter (40+64=104), floored by the
-    // profile value and aligned up to the 32-frame grid.
-    //   profile floor 128 wins over the 104 batch -> 128.
-    EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(128, 40, 64), 128U);
-    //   no profile floor -> interrupt batch 104 aligned up to 128.
-    EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(0, 40, 64), 128U);
-    //   a larger profile floor is honored, aligned: 200 -> 224.
-    EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(200, 40, 64), 224U);
+    // margin is the profile value floored at one completion batch (D3): no
+    // jitter term and no alignment, so calibrated values stand.
+    const auto wire48k = *ASFW::Encoding::AmdtpRateGeometryForSampleRate(48000);
+    const uint32_t batch = ASFW::Audio::Runtime::CompletionBatchFrames(wire48k);
+    EXPECT_EQ(ASFW::Audio::Runtime::ResolveInputSafetyFrames(128, wire48k), 128U);
+    EXPECT_EQ(ASFW::Audio::Runtime::ResolveInputSafetyFrames(0, wire48k), batch);
+    EXPECT_EQ(ASFW::Audio::Runtime::ResolveInputSafetyFrames(200, wire48k), 200U);
 }
 
 } // namespace

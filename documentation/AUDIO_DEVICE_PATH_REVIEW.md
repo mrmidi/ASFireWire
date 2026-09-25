@@ -1,7 +1,9 @@
 # Audio device path: discovery to isochronous traffic
 
-This is a review map of the current Epic 1 branch after rebasing onto `main`.
-It follows the running path rather than listing classes by name. "Device TX"
+This is a review map of `refactor/dice-profile` (2026-09-25): convergence
+Epic 1, the audio-session redesign S0–S6 (`AUDIO_SESSION_REDESIGN.md`) and
+convergence Epics 2–3. It follows the running path rather than listing classes
+by name. "Device TX"
 means device to host (capture); "host TX" means host to device (playback).
 The static catalog decision, later wire geometry, CoreAudio graph, and live
 isochronous channel are different facts and are deliberately named separately.
@@ -18,8 +20,8 @@ flowchart TD
     NUB --> ADK[AudioDriverKit graph<br/>CoreAudio-visible streams]
     ADK --> START[StartIO + AudioCoordinator<br/>current route and clock selection]
     RUNTIME --> START
-    START --> DUPLEX[Duplex coordinator<br/>IRM, device stages, host IR/IT]
-    DUPLEX --> ISOCH[Isoch transport<br/>framed packets]
+    START --> SESSION[Session scheduler<br/>RestartRoutine + FamilyDriver steps<br/>IRM, device stages, host IR/IT]
+    SESSION --> ISOCH[Isoch transport<br/>framed packets]
 ```
 
 `AudioRuntimeRegistry` is an intentional **side path and shared owner**, not
@@ -31,8 +33,10 @@ policy. For a supported device, this constructs and initializes its concrete
 `IDeviceProtocol` and stores a `shared_ptr` by GUID; a rescan reuses it and
 refreshes its route. The same registry also holds `AudioEndpointRuntime`
 objects, which carry each published endpoint's mutable configuration and
-telemetry. `AudioCoordinator`, the family backends, the duplex coordinator,
+telemetry. `AudioCoordinator`, the family backends, the session scheduler,
 and `ASFWAudioNub` later take shared ownership copies for control operations.
+Every protocol that streams answers the session through one interface,
+`FamilyDriver` (`IDeviceProtocol::AsFamilyDriver()`).
 Removal drops both entries. `DeviceManager` separately owns the `FWDevice`
 and immutable unit objects that drive observer notifications and AV/C
 discovery. Keeping protocol construction outside `DeviceRegistry` lets
@@ -121,25 +125,31 @@ There are three related descriptions, each with a different owner:
 | Description | Owner | Used for |
 | --- | --- | --- |
 | Static plan and stream traits | Audio device catalog | Which protocol/profile/backend may run; fixed formation and quirks; start/stop policy |
-| `AudioStreamRuntimeCaps` | Family protocol after safe reads or prepare | Actual stream count, PCM channels, AM824 slots, MIDI slots, rate, and family-specific format facts |
+| `AudioStreamRuntimeCaps` | Family protocol after safe reads or prepare | Actual stream count, PCM channels, AM824 slots, MIDI slots, rate, supported-rate mask (DICE), and family-specific format facts |
 | `DuplexStreamProfile` | `DuplexStreamProfileResolver` from current policy + caps + assigned channels | IRM charge, channel masks, receive decode geometry, wire format, and ordered device/host start |
-| Nub geometry and `IAudioStreamProfile` | Backend publishes scalars/per-stream geometry; AudioDriverKit reads the selected profile | CoreAudio streams and TX packetizer framing |
+| Nub geometry and `IAudioStreamProfile` | Backend publishes scalars/per-stream geometry; AudioDriverKit reads the selected profile | CoreAudio streams and TX packetizer framing. A DICE profile carries framing constants only; its geometry is the device's |
+| `ResolvedTimingGeometry` | `ResolveProfileTimingGeometry` from the profile's declarations + the wire rate | ZTS period, active ring, IO budget, latency and safety declarations, transfer delay. Resolved once per rate; the graph, the rate change, `StartIO` and ZTS arming read that one value |
 
-`AudioDuplexCoordinator::RunDuplexStart` first calls
-`EnsureRuntimeStreamGeometry`, resolves an initial profile to choose channels,
-then calls `PrepareDuplex`. It resolves the profile again from the returned
-caps, reserves IRM bandwidth and a channel for every stream in both directions,
-and passes the chosen channels back to the protocol. CMP families let IRM
-select a free channel and commit it to PCR; DICE uses a device-selected fixed
-channel mask. The isoch speed used for packet headers and bandwidth accounting
-comes from the same resolved link policy.
-[AudioDuplexCoordinator.cpp](../ASFWDriver/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp),
+The session scheduler runs one linear `RestartRoutine` for every family. It
+calls `LoadGeometry` and `Configure`, resolves the duplex profile from the
+returned caps, reserves IRM bandwidth and a channel for every stream in both
+directions, and hands the channels to the family (`AssignChannels`). CMP
+families commit them to PCR; DICE writes them to the device, as Linux does, so
+any free channel 0–31 works. The isoch speed used for packet headers and
+bandwidth accounting comes from the same resolved link policy.
+[RestartRoutine.cpp](../ASFWDriver/Audio/Session/RestartRoutine.cpp),
+[FamilyDriver.hpp](../ASFWDriver/Audio/Protocols/Duplex/FamilyDriver.hpp),
 [DuplexStreamProfile.hpp](../ASFWDriver/Audio/Protocols/Backends/DuplexStreamProfile.hpp)
 
 DICE has the strongest publication check: `DiceAudioBackend::EnsureNubForGuid`
-requires a runtime protocol and caps, resolves device register geometry against
-the selected profile, refuses unusable results, and publishes the resolved
-per-stream geometry across the nub. `ASFWAudioDevice::StartIO` then builds its
+requires a runtime protocol and caps, resolves the device's register geometry,
+refuses unusable results, and publishes the resolved per-stream geometry across
+the nub. Every DICE model shares one `DiceProfile`, built from a small
+`DiceProfileSpec` (name, TX encoding, two framing flags, optional measured
+latency/safety). It states no channel or stream counts, as the TCAT kexts
+carry none; the one exception is the Alesis MultiMix's single playback stream
+(libffado). The published rates are the device's `CLOCK_CAPABILITIES`; rates
+above 48 kHz are listed but refused when picked (high rates are parked). `ASFWAudioDevice::StartIO` then builds its
 TX stream config from that resolved geometry plus profile framing constants,
 and refuses missing required geometry or more playback streams than it can
 allocate. That keeps IRM reservation and TX CIP width tied to the same device
@@ -178,15 +188,17 @@ and compared with `MAudioSpecialProfile` in
    [ASFWAudioDevice.cpp](../ASFWDriver/Audio/DriverKit/ASFWAudioDevice.cpp),
    [ASFWAudioNub.cpp](../ASFWDriver/Audio/DriverKit/ASFWAudioNub.cpp),
    [AudioCoordinator.cpp](../ASFWDriver/Audio/Core/AudioCoordinator.cpp)
-3. The duplex coordinator reserves IRM resources, prepares the host IR and IT
-   contexts and their payload codec, then calls the protocol's device stages
-   (`ProgramRx`, `ProgramTxAndEnableDuplex`, `ConfirmDuplexStart`), and starts
-   host contexts in the recipe's order. `MAudioSpecial` starts host transmit
+3. The session's `RestartRoutine` reserves IRM resources, prepares the host IR
+   and IT contexts and their payload codec, then calls the family's device steps
+   (`ArmDeviceRx`, `ArmDeviceTxAndEnable`, `Confirm`), and starts host contexts
+   in the recipe's order. Overlapping requests coalesce into one restart;
+   device events are debounced (a 400 ms quiet period for DICE); three failed
+   recoveries in a row stop the streams until the next start. `MAudioSpecial` starts host transmit
    before receive; CMP receive-then-transmit and Apogee interleaving use their
    own recipes. The host transport attaches a receive consumer for each
    capture stream and hands fully framed packets to the payload-opaque isoch
    transport. RX decoding and TX CIP/AM824 framing remain in Audio.
-   [AudioDuplexCoordinator.cpp](../ASFWDriver/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp),
+   [RestartRoutine.cpp](../ASFWDriver/Audio/Session/RestartRoutine.cpp),
    [DuplexStreamProfile.hpp](../ASFWDriver/Audio/Protocols/Backends/DuplexStreamProfile.hpp),
    [IsochDuplexHostTransport.cpp](../ASFWDriver/Audio/Protocols/Backends/IsochDuplexHostTransport.cpp)
 4. `StartIO` waits for the selected hardware zero timestamp before completing.
@@ -195,6 +207,13 @@ and compared with `MAudioSpecialProfile` in
    host transport before endpoint teardown.
    [ASFWAudioDevice.cpp](../ASFWDriver/Audio/DriverKit/ASFWAudioDevice.cpp),
    [AudioCoordinator.cpp](../ASFWDriver/Audio/Core/AudioCoordinator.cpp)
+5. A sample-rate change is an AudioDriverKit configuration-change transaction.
+   `HandleChangeSampleRate` validates the rate (advertised, streamable, timing
+   resolves) and requests a change window; the host stops IO and calls
+   `PerformDeviceConfigurationChange`, where `CommitSampleRate` programs the
+   device clock, then the ADK rate, ZTS period, stream formats and declarations.
+   An idle rate change waits until the device runs at the new rate.
+   [ASFWAudioDevice.cpp](../ASFWDriver/Audio/DriverKit/ASFWAudioDevice.cpp)
 
 ## Review observations
 
@@ -210,10 +229,12 @@ These are review proposals, not claims that the hardware run exposed a fault:
    protocols. Keep HAL-visible PCM count separate from wire slots.
 2. **Make geometry changes a named lifecycle transition.** The publisher
    correctly refuses a changed live graph, and `StartIO` checks missing or
-   unsupported geometry. The remaining design choice is how to retire and
-   recreate that endpoint for a later format change; this is outside the
-   validated fixed 48 kHz 1814 path. The refusal should stay explicit until
-   an AudioDriverKit recreation sequence is tested.
+   unsupported geometry. For DICE the transition now has a name:
+   `DiceAudioBackend::RebuildEndpointForNewGeometry`, the counterpart of the
+   TCAT kexts' `CreateStreams`. It is a documented no-op (the endpoint stays
+   blocked); its TODO is the design, through an AudioDriverKit configuration
+   change. It belongs to the convergence project's multi-rate milestone, and
+   the refusal stays explicit until that sequence is tested.
 3. **Pin the observed 1814 GUID transition.** The same-GUID replacement test
    covers one possible persona change. This hardware showed a different GUID
    after the cue, so a host test should assert old GUID retirement, new GUID

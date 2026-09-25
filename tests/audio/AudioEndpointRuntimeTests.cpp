@@ -88,8 +88,20 @@ TEST(AudioEndpointRuntime, CopyDirectAudioMemoryAllocatesCompleteDuplexBinding) 
     ASSERT_NE(outputMemory, nullptr);
     ASSERT_NE(inputMemory, nullptr);
     ASSERT_NE(controlMemory, nullptr);
-    EXPECT_EQ(outputFrames, ASFW::Isoch::Config::kAudioOutputRingFrames);
-    EXPECT_EQ(inputFrames, ASFW::Isoch::Config::kAudioRingBufferFrames);
+    // V3: the published frames are the ACTIVE ring of the rate (the ZTS
+    // period); the memory itself is allocated once at the maximum ring.
+    const uint32_t activeRing =
+        ASFW::IsochTransport::HalBufferProfileForRate(48000).frameRingFrames;
+    EXPECT_EQ(outputFrames, activeRing);
+    EXPECT_EQ(inputFrames, activeRing);
+    uint64_t outputBytes = 0;
+    uint64_t inputBytes = 0;
+    ASSERT_EQ(outputMemory->GetLength(&outputBytes), kIOReturnSuccess);
+    ASSERT_EQ(inputMemory->GetLength(&inputBytes), kIOReturnSuccess);
+    EXPECT_EQ(outputBytes,
+              uint64_t{ASFW::Isoch::Config::kAudioOutputRingFrames} * 4u * sizeof(float));
+    EXPECT_EQ(inputBytes,
+              uint64_t{ASFW::Isoch::Config::kAudioRingBufferFrames} * 6u * sizeof(int32_t));
     EXPECT_EQ(outputChannels, 4u);
     EXPECT_EQ(inputChannels, 6u);
     EXPECT_EQ(sampleRateHz, 48000u);
@@ -144,4 +156,60 @@ TEST(AudioEndpointRuntime, PlaybackOnlyPresentationKeepsPhysicalReturnRingForDup
     outputMemory->release();
     inputMemory->release();
     controlMemory->release();
+}
+
+// A rate change moves the active ring inside the unchanged allocation: the same
+// descriptors are republished with the new ring and a bumped generation, so no
+// memory is replaced under CoreAudio (V3, TIMING_GEOMETRY_OWNERSHIP.md).
+TEST(AudioEndpointRuntime, RateChangeMovesActiveRingAndReusesMemory) {
+    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
+    runtime.UpdateConfig(MakeDeviceConfig());
+
+    IOMemoryDescriptor* outputMemory = nullptr;
+    IOMemoryDescriptor* inputMemory = nullptr;
+    IOMemoryDescriptor* controlMemory = nullptr;
+    uint32_t outputFrames = 0;
+    uint32_t outputChannels = 0;
+    uint32_t inputFrames = 0;
+    uint32_t inputChannels = 0;
+    uint32_t sampleRateHz = 0;
+    uint64_t generation = 0;
+    ASSERT_EQ(runtime.CopyDirectAudioMemory(&outputMemory, &inputMemory, &controlMemory,
+                                            &outputFrames, &outputChannels, &inputFrames,
+                                            &inputChannels, &sampleRateHz, &generation),
+              kIOReturnSuccess);
+    EXPECT_EQ(outputFrames, 12288u);
+
+    runtime.SetCurrentSampleRate(96000);
+
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot at96{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(at96));
+    EXPECT_EQ(at96.sampleRateHz, 96000u);
+    EXPECT_EQ(at96.outputFrames, 24576u);
+    EXPECT_EQ(at96.inputFrames, 24576u);
+    EXPECT_GT(at96.generation, generation);
+
+    IOMemoryDescriptor* outputMemory2 = nullptr;
+    IOMemoryDescriptor* inputMemory2 = nullptr;
+    IOMemoryDescriptor* controlMemory2 = nullptr;
+    ASSERT_EQ(runtime.CopyDirectAudioMemory(&outputMemory2, &inputMemory2, &controlMemory2,
+                                            &outputFrames, &outputChannels, &inputFrames,
+                                            &inputChannels, &sampleRateHz, &generation),
+              kIOReturnSuccess);
+    EXPECT_EQ(outputMemory2, outputMemory);
+    EXPECT_EQ(inputMemory2, inputMemory);
+    EXPECT_EQ(outputFrames, 24576u);
+    EXPECT_EQ(sampleRateHz, 96000u);
+
+    // Back to 48 kHz: the ring shrinks again inside the same allocation.
+    runtime.SetCurrentSampleRate(48000);
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot at48{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(at48));
+    EXPECT_EQ(at48.outputFrames, 12288u);
+    EXPECT_GT(at48.generation, at96.generation);
+
+    for (IOMemoryDescriptor* memory : {outputMemory, inputMemory, controlMemory, outputMemory2,
+                                       inputMemory2, controlMemory2}) {
+        memory->release();
+    }
 }

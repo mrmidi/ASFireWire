@@ -21,173 +21,6 @@
 
 namespace ASFW::Audio::DriverKit::DirectDiagnostics {
 
-void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept {
-    if (!ASFW::LogConfig::Shared().IsStatisticsEnabled() ||
-        ASFW::LogConfig::Shared().GetDirectAudioVerbosity() < 1) {
-        return;
-    }
-
-    const bool bound = runtime.directAudioSkeletonBound.load(std::memory_order_acquire) &&
-                       runtime.directAudioEngine.IsBound();
-    const auto snapshot = ASFW::Audio::Runtime::CaptureDirectAudioDebugSnapshot(
-        runtime.directAudioGraph,
-        bound,
-        0,
-        ASFW::Isoch::Config::kAudioIoPeriodFrames,
-        0,
-        0,
-        0,
-        true);
-
-    if (!ASFW::Audio::Runtime::ShouldLogDirectAudioDebugSnapshot(
-            runtime.directAudioDebugLog,
-            snapshot,
-            ASFW::LogDetail::NowNs())) {
-        return;
-    }
-
-    // NOTE: this snapshot is split across three os_log lines on purpose. os_log
-    // truncates a single composed message (~1KB / limited arg count); the
-    // previous one-line form was cut off at "writeFrames=", dropping every
-    // decisive TX counter (pcmNZ/pcmZero/disc/pending/retired/...). Keep each
-    // line well under the limit. All three share the "ADK snapshot" prefix.
-    ASFW_LOG(DirectAudio,
-             "ADK snapshot/io bound=%d inBase=0x%llx outBase=0x%llx inCap=%u outCap=%u inCh=%u outCh=%u beginRead=%llu writeEnd=%llu beginSample=%llu readEndFrame=%llu writeSample=%llu writeEndFrame=%llu beginFrames=%u writeFrames=%u ioFrames=%u expectedIoFrames=%u outputAvailable=%d",
-             snapshot.bound,
-             snapshot.inputBufferAddress,
-             snapshot.outputBufferAddress,
-             snapshot.inputFrameCapacity,
-             snapshot.outputFrameCapacity,
-             snapshot.inputChannels,
-             snapshot.outputChannels,
-             snapshot.ioBeginReadCount,
-             snapshot.ioWriteEndCount,
-             snapshot.inputBeginReadSampleFrame,
-             snapshot.inputClientReadEndFrame,
-             snapshot.outputWriteEndSampleFrame,
-             snapshot.outputClientWriteEndFrame,
-             snapshot.inputBeginReadFrameCount,
-             snapshot.outputWriteEndFrameCount,
-             snapshot.ioBufferFrameSize,
-             snapshot.expectedIoBufferFrameSize,
-             snapshot.outputReaderAvailableAtWriteEnd);
-    ASFW_LOG(DirectAudio,
-             "ADK snapshot/ring playback(wr=%llu rd=%llu oldest=%llu avail=%llu underrun=%llu overrun=%llu) timeline(sched=%llu done=%llu rebase=%llu fallback=%llu stale=%llu ahead=%llu pcmNZ=%llu pcmZero=%llu prep=%llu startup=%llu)",
-             snapshot.playbackRingWriteFrame,
-             snapshot.playbackRingReadFrame,
-             snapshot.playbackRingOldestValidFrame,
-             snapshot.playbackRingAvailableFrames,
-             snapshot.playbackRingUnderruns,
-             snapshot.playbackRingOverruns,
-             snapshot.txScheduledSampleFrame,
-             snapshot.txCompletedSampleFrame,
-             snapshot.txPhaseRebases,
-             snapshot.txSilenceFallback,
-             snapshot.txStaleOverwrittenReads,
-             snapshot.txProducerAheadUnderruns,
-             snapshot.txPcmNonzeroPackets,
-             snapshot.txPcmAllZeroPackets,
-             snapshot.txPreparedPcmSlots,
-             snapshot.txStartupSilenceSlots);
-    ASFW_LOG(DirectAudio,
-             "ADK snapshot/tx faults(readAhead=%llu overwritten=%llu deadline=%llu ownership=%llu stops=%llu fatal=%u/%llu pkt=%u dist=%u audioFrame=%llu phase=%lld valid=[%llu,%llu)) capture(wr=%llu rd=%llu avail=%llu overrun=%llu starve=%llu rxFrames=%llu) txPackets=%llu txUnderruns=%llu txSilence=%llu txValidPcm=%llu txValidSilence=%llu txNoPhaseSilence=%llu txUnderrunSilence=%llu txStaleSync=%llu txInvalidGeom=%llu",
-             snapshot.txReadAheadFaults,
-             snapshot.txSourceOverwrittenFaults,
-             snapshot.txPreparationDeadlineFaults,
-             snapshot.txSlotOwnershipFaults,
-             snapshot.txImmediateStops,
-             static_cast<uint32_t>(snapshot.fatalReason),
-             snapshot.fatalGeneration,
-             snapshot.fatalPacketIndex,
-             snapshot.fatalDistanceToHardware,
-             snapshot.fatalAudioFrame,
-             snapshot.fatalOutputPhaseTicks,
-             snapshot.fatalOldestValidFrame,
-             snapshot.fatalWrittenEndFrame,
-             snapshot.captureRingWriteFrame,
-             snapshot.captureRingReadFrame,
-             snapshot.captureRingAvailableFrames,
-             snapshot.captureRingOverruns,
-             snapshot.captureRingStarvations,
-             snapshot.rxDecodedFrames,
-             snapshot.directTxPackets,
-             snapshot.directTxUnderruns,
-             snapshot.directTxSilenceSubstitutions,
-             snapshot.txValidPhasePcmPackets,
-             snapshot.txValidPhaseSilencePackets,
-             snapshot.txNoPhaseSilencePackets,
-             snapshot.txUnderrunSilencePackets,
-             snapshot.txStaleSyncPackets,
-             snapshot.txInvalidGeometryPackets);
-    ASFW_LOG(DirectAudio,
-             "ADK TX PREP WAKE requested=%llu handled=%llu pending=%llu requestTicks=%llu handledTicks=%llu requests=%llu dispatches=%llu coalesced=%llu drainPasses=%llu",
-             snapshot.txPreparationRequestedGeneration,
-             snapshot.txPreparationHandledGeneration,
-             snapshot.txPreparationRequestedGeneration >=
-                     snapshot.txPreparationHandledGeneration
-                 ? snapshot.txPreparationRequestedGeneration -
-                       snapshot.txPreparationHandledGeneration
-                 : 0,
-             snapshot.txPreparationRequestHostTicks,
-             snapshot.txPreparationHandledHostTicks,
-             snapshot.txPreparationWakeRequests,
-             snapshot.txPreparationWakeDispatches,
-             snapshot.txPreparationWakeCoalesced,
-             snapshot.txPreparationDrainPasses);
-    auto* directControl = runtime.directAudioGraph.control;
-    const int64_t transferDelayTicks =
-        directControl
-            ? static_cast<int64_t>(directControl->txTransferDelayTicks.load(
-                  std::memory_order_relaxed))
-            : 0;
-    const int64_t wireLeadMinimum =
-        snapshot.txMinimumLeadTicks == std::numeric_limits<int64_t>::max()
-            ? std::numeric_limits<int64_t>::max()
-            : snapshot.txMinimumLeadTicks + transferDelayTicks;
-    const int64_t wireLeadMaximum =
-        snapshot.txMaximumLeadTicks == std::numeric_limits<int64_t>::min()
-            ? std::numeric_limits<int64_t>::min()
-            : snapshot.txMaximumLeadTicks + transferDelayTicks;
-    ASFW_LOG(
-        DirectAudio,
-        "ADK timing anchor(generation=%llu frame=%llu updates=%llu mirrors=%llu invalid=%llu) txLead(last=%lld min=%lld max=%lld) wireLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu empty=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu samples=%llu le750us=%llu ge1500us=%llu) minCommittedMargin=%llu",
-        snapshot.hostAnchorGeneration,
-        snapshot.hostAnchorFrame,
-        snapshot.hostAnchorUpdates,
-        snapshot.hostAnchorMirrorPublications,
-        snapshot.hostAnchorInvalidUpdates,
-        snapshot.txLastLeadTicks,
-        snapshot.txMinimumLeadTicks,
-        snapshot.txMaximumLeadTicks,
-        snapshot.txLastLeadTicks + transferDelayTicks,
-        wireLeadMinimum,
-        wireLeadMaximum,
-        snapshot.txDataPackets,
-        snapshot.txNoDataPackets,
-        snapshot.txEmptyPackets,
-        snapshot.txPostLockNoDataPackets,
-        snapshot.txLastPreparationLatencyTicks,
-        snapshot.txMaxPreparationLatencyTicks,
-        snapshot.txPreparationLatencySamples,
-        snapshot.txPreparationAtMost750Us,
-        snapshot.txPreparationAtLeast1500Us,
-        snapshot.txMinimumCommittedMarginPackets);
-
-    const auto& pw = runtime.txStreamEngine.PayloadWriterCounters();
-    ASFW_LOG(
-        DirectAudio,
-        "ADK writer/visited=%llu written=%llu withoutPkt=%llu outsidePkt=%llu racedReuse=%llu wroteIntoTx=%llu nonZero=%llu slotsNZ=%llu maxAbs=%u",
-        pw.framesVisited.load(std::memory_order_relaxed),
-        pw.framesWritten.load(std::memory_order_relaxed),
-        pw.framesWithoutPacket.load(std::memory_order_relaxed),
-        pw.framesOutsidePacket.load(std::memory_order_relaxed),
-        pw.framesRacedReuse.load(std::memory_order_relaxed),
-        pw.framesWroteIntoTransmitted.load(std::memory_order_relaxed),
-        pw.framesNonZero.load(std::memory_order_relaxed),
-        pw.slotsNonZero.load(std::memory_order_relaxed),
-        pw.maxAbsSampleBits.load(std::memory_order_relaxed));
-}
-
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept {
     const bool bound = runtime.directAudioSkeletonBound.load(std::memory_order_acquire);
     const auto snapshot = ASFW::Audio::Runtime::CaptureDirectAudioDebugSnapshot(
@@ -286,18 +119,30 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
     outputSegment.address = ivars.outputMap->GetAddress();
     outputSegment.length = ivars.outputMap->GetLength();
 
-    const uint32_t inputFrameCapacity =
+    // The binding wraps on the ACTIVE ring of the current rate (V3: the ZTS
+    // period), not on the mapping length: the mapping is the fixed allocation,
+    // which holds the largest supported ring. Both must agree with what the HAL
+    // wraps on, or the IO handler and the transport address different frames.
+    const uint32_t activeFrames = ivars.device.timing.frameRingFrames;
+    const uint32_t inputMappedFrames =
         FrameCapacityFromSegment(inputSegment, physicalGeometry.inputChannels);
-    const uint32_t outputFrameCapacity =
+    const uint32_t outputMappedFrames =
         FrameCapacityFromSegment(outputSegment, physicalGeometry.outputChannels);
+    if (activeFrames == 0 || activeFrames > inputMappedFrames ||
+        activeFrames > outputMappedFrames) {
+        ASFW_LOG(DirectAudio,
+                 "ADK FATAL BIND skeleton ring exceeds mapping active=%u inMapped=%u outMapped=%u",
+                 activeFrames, inputMappedFrames, outputMappedFrames);
+        return false;
+    }
+    const uint32_t inputFrameCapacity = activeFrames;
+    const uint32_t outputFrameCapacity = activeFrames;
 
     // Resolve the device profile to determine the host-to-device wire format.
     // Standard DICE fallback profiles use AM824 sub-frame formatting, while
     // Focusrite Saffire playback uses sign-extended 24-in-32 big-endian formatting.
     ASFW::Audio::Runtime::AudioWireFormat wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824;
-    if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
-            ivars.device.vendorId, ivars.device.modelId, ivars.device.guid,
-            ivars.device.profileBuilderId)) {
+    if (const auto* profile = ivars.device.profile) {
         if (profile->TxWireFormat() == ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
             wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kRawPcm24In32;
         }
@@ -323,7 +168,6 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
         .audioDevice = ivars.audioDevice.get(),
     };
 
-    ivars.runtime.directAudioDebugLog.Reset();
     ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);
     ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
     ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
@@ -340,6 +184,40 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
              static_cast<void*>(ivars.runtime.directAudioGraph.control),
              static_cast<void*>(ivars.runtime.directAudioGraph.audioDevice),
              ivars.runtime.directAudioGraph.sampleRateHz);
+    return true;
+}
+
+bool UpdateDirectAudioGeometry(ASFWAudioDriver_IVars& ivars) noexcept {
+    auto& graph = ivars.runtime.directAudioGraph;
+    if (!ivars.runtime.directAudioSkeletonBound.load(std::memory_order_acquire) ||
+        !ivars.inputMap || !ivars.outputMap) {
+        // Nothing bound yet: the graph build binds at the resolved ring.
+        return true;
+    }
+    IOAddressSegment inputSegment{};
+    inputSegment.address = ivars.inputMap->GetAddress();
+    inputSegment.length = ivars.inputMap->GetLength();
+    IOAddressSegment outputSegment{};
+    outputSegment.address = ivars.outputMap->GetAddress();
+    outputSegment.length = ivars.outputMap->GetLength();
+
+    const uint32_t activeFrames = ivars.device.timing.frameRingFrames;
+    if (activeFrames == 0 ||
+        activeFrames > FrameCapacityFromSegment(inputSegment, graph.memory.inputChannels) ||
+        activeFrames > FrameCapacityFromSegment(outputSegment, graph.memory.outputChannels)) {
+        ASFW_LOG(DirectAudio,
+                 "ADK FATAL BIND geometry update ring=%u exceeds mapping rate=%u",
+                 activeFrames, ivars.device.timing.sampleRateHz);
+        return false;
+    }
+    // IO is stopped inside the configuration-change window, so no RT reader
+    // observes the capacity change mid-cycle.
+    graph.memory.inputFrameCapacity = activeFrames;
+    graph.memory.outputFrameCapacity = activeFrames;
+    graph.sampleRateHz = ivars.device.timing.sampleRateHz;
+    ASFW_LOG(DirectAudio,
+             "ADK BIND geometry updated ring=%u rate=%u",
+             activeFrames, graph.sampleRateHz);
     return true;
 }
 

@@ -23,7 +23,7 @@ namespace ASFW::IRM {
 }
 
 namespace ASFW::Audio {
-class IDuplexDeviceControl;
+class FamilyDriver;
 }
 
 namespace ASFW::Audio {
@@ -61,6 +61,13 @@ public:
         return false;
     }
 
+    /// Read the device's stream geometry into the cache GetRuntimeAudioStreamCaps
+    /// serves, then call back. Asynchronous, so it is safe on the Default queue
+    /// (nub publication). A protocol with nothing to read succeeds at once.
+    virtual void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) {
+        callback(kIOReturnSuccess);
+    }
+
     /// Query per-channel device labels discovered from the protocol's stream
     /// format (e.g. DICE TX/RX name sections). `inNames` is host input/capture,
     /// `outNames` is host output/playback, both in channel order; an empty entry
@@ -82,19 +89,11 @@ public:
         return kIOReturnUnsupported;
     }
 
-    /// Optional internal hook for backends that need the protocol's IRM client.
-    virtual ::ASFW::IRM::IRMClient* GetIRMClient() const {
-        return nullptr;
-    }
 
-    /// Optional protocol-neutral duplex control interface used by the audio lifecycle.
-    virtual IDuplexDeviceControl* AsDuplexDeviceControl() noexcept {
-        return nullptr;
-    }
+    /// The protocol's streaming driver, for the audio session. Null: the device
+    /// does not stream.
+    virtual FamilyDriver* AsFamilyDriver() noexcept { return nullptr; }
 
-    virtual const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept {
-        return nullptr;
-    }
 
     /// Update volatile runtime context that can change across bus resets.
     virtual void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,

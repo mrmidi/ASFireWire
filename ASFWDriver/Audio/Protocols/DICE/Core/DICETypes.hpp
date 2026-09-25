@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 namespace ASFW::Audio::DICE {
 
@@ -507,12 +508,65 @@ inline constexpr DiceRateMapEntry kDiceRateTable[] = {
     {192000, RateCaps::k192000, ClockRateIndex::k192000},
 };
 
-/// Highest rate whose isoch stream geometry is currently validated end-to-end.
-/// 1x rates (<=48k) keep the single-DBS, 8-frames-per-packet layout the rest of
-/// the stack assumes. 2x/4x change frames-per-packet and per-stream channel
-/// splits and are NOT yet validated on hardware (FFADO likewise gates 4x), so we
-/// do not advertise them. Raise this once the 2x/4x pipeline is HW-verified.
-inline constexpr uint32_t kDiceMaxSupportedRateHz = 48000;
+/// Highest rate this build can STREAM. Announcing and streaming are separate:
+/// every rate the device supports is announced (DicePublishedRates), but only
+/// rates up to this ceiling may be selected. 1x rates (<=48k) keep the
+/// 8-frames-per-packet layout the rest of the stack assumes; 2x/4x change
+/// frames-per-packet and the device's stream layout, and are parked. Raising
+/// this is the switch that enables them -- see the TODO on
+/// DiceAudioBackend::RebuildEndpointForNewGeometry for everything else it needs.
+inline constexpr uint32_t kDiceMaxStreamingRateHz = 48000;
+
+/// True if this build can stream `rateHz` (announced or not).
+[[nodiscard]] constexpr bool DiceRateIsStreamable(uint32_t rateHz) noexcept {
+    return rateHz != 0 && rateHz <= kDiceMaxStreamingRateHz;
+}
+
+/// The rates a device supports, as CLOCK_CAPABILITIES rate bits. TCAT's kexts
+/// take CLOCK_CAPABILITIES & 0x7F and refuse any other rate (MidasFW
+/// RestartStreaming, SetNewSamplingRate). A GLOBAL section too short to hold the
+/// register is old firmware: Linux assumes 44.1 and 48 kHz, "supported by any
+/// device" (dice.c check_clock_caps). Linux reads the register once the section
+/// exceeds 0x18 quadlets; we require the field itself to fit (0x68 bytes).
+inline constexpr uint32_t kDiceRateCapsMask = 0x7F;
+[[nodiscard]] constexpr uint32_t DiceDeviceRateMask(bool hasClockCaps, uint32_t clockCaps) noexcept {
+    return hasClockCaps ? (clockCaps & kDiceRateCapsMask) : (RateCaps::k44100 | RateCaps::k48000);
+}
+
+/// The rates to offer CoreAudio: every rate the device supports, in ascending
+/// order, whether or not this build can stream it. That is what the TCAT kexts
+/// announce: createNewAudioStream (Saffire.kext 4.3.0 @ 0x47ee) adds one format
+/// per CLOCK_CAPABILITIES rate bit, all carrying the current mode's channel
+/// count. Selecting a rate above kDiceMaxStreamingRateHz is refused before any
+/// bus traffic by IsSupportedAudioClockConfig: in ValidateSampleRate
+/// (ASFWAudioDevice.cpp), before a configuration-change window opens, and again
+/// in ASFWAudioNub::RequestSampleRateChange.
+[[nodiscard]] inline std::vector<uint32_t> DicePublishedRates(uint32_t deviceRateMask) {
+    std::vector<uint32_t> rates;
+    for (const auto& e : kDiceRateTable) {
+        if ((deviceRateMask & e.capsBit) != 0) {
+            rates.push_back(e.hz);
+        }
+    }
+    return rates;
+}
+
+/// The rate to publish as current: 48 kHz, the rate bring-up programs, when the
+/// device announces it; otherwise the highest announced rate this build can
+/// stream. Zero when the device announces no streamable rate.
+[[nodiscard]] inline uint32_t DiceInitialRate(uint32_t deviceRateMask) {
+    uint32_t best = 0;
+    for (const auto& e : kDiceRateTable) {
+        if ((deviceRateMask & e.capsBit) == 0 || !DiceRateIsStreamable(e.hz)) {
+            continue;
+        }
+        if (e.hz == 48000) {
+            return e.hz;
+        }
+        best = e.hz;
+    }
+    return best;
+}
 
 /// True if CLOCKCAPABILITIES advertises `rateHz`.
 [[nodiscard]] inline bool DiceClockCapsSupportRate(uint32_t clockCaps, uint32_t rateHz) noexcept {
@@ -541,6 +595,16 @@ inline constexpr uint32_t kDiceMaxSupportedRateHz = 48000;
 
 // DICE GLOBAL_CLOCK_SELECT encoding. This stays inside the DICE adapter; the
 // protocol-neutral duplex seam carries only AudioClockConfig::sampleRateHz.
+// DICE devices normally require a stable GLOBAL source-lock indication before
+// stream enable and confirmation. Some playback-only products need host IT
+// packets before their selected receive-clock path can report that lock; those
+// products retain the target-rate check but treat source lock as post-start
+// telemetry instead of an admission gate.
+struct DICEBringupPolicy final {
+    bool requireSourceLockBeforeStreamEnable{true};
+    bool requireSourceLockAtConfirm{true};
+};
+
 struct DiceClockConfiguration {
     uint32_t sampleRateHz{0};
     uint32_t clockSelect{0};
@@ -556,7 +620,7 @@ constexpr uint32_t kDiceClockSelect48kInternal =
 /// that same rate. Generalizes the former 48k-internal-only placeholder.
 [[nodiscard]] inline bool IsSupportedDiceClockConfiguration(
     const DiceClockConfiguration& clock) noexcept {
-    if (clock.sampleRateHz > kDiceMaxSupportedRateHz) {
+    if (!DiceRateIsStreamable(clock.sampleRateHz)) {
         return false;
     }
     if ((clock.clockSelect & ClockSelect::kSourceMask) !=
@@ -584,6 +648,7 @@ struct GlobalState {
     uint32_t sampleRate{0};      ///< Current sample rate (Hz)
     uint32_t version{0};         ///< DICE version
     uint32_t clockCaps{0};       ///< Clock capabilities bitmask
+    bool hasClockCaps{false};    ///< The GLOBAL section was long enough to hold clockCaps
     
     /// Get supported sample rates as a human-readable string
     const char* SupportedRatesDescription() const;

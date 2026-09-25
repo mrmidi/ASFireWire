@@ -41,7 +41,7 @@ inline constexpr std::array kMAudioDefinitions{
                SupportDisposition::Supported, kMAudioVendorName,
                kMAudioFireWire1814ModelName, std::nullopt, BootloaderCuePolicy::None,
                DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
-                                  .resource = {.cmpChoosesIsoChannel = true},
+                                  .resource = {.irmChannelMask = kAnyIsoChannel},
                                   .start = {.startShape = StreamStartShape::MAudioSpecial,
                                             .startRatePinHz = 48000U}}),
     Definition(DeviceDefinitionId::MAudioProjectMix, kMAudioVendorId,
@@ -51,7 +51,7 @@ inline constexpr std::array kMAudioDefinitions{
                SupportDisposition::Supported, kMAudioVendorName,
                kMAudioProjectMixModelName, std::nullopt, BootloaderCuePolicy::None,
                DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
-                                  .resource = {.cmpChoosesIsoChannel = true},
+                                  .resource = {.irmChannelMask = kAnyIsoChannel},
                                   .start = {.startShape = StreamStartShape::MAudioSpecial,
                                             .startRatePinHz = 48000U}}),
 };

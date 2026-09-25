@@ -714,6 +714,56 @@ URI: `asfw://protocols/tcat/application`
 Should summarize the TCAT application section if present. Raw application blocks
 are opt-in and bounded.
 
+## 14.5 Audio telemetry (tool `asfw_get_audio_telemetry`)
+
+Read-only projection of user-client selector 1013 (`kMethodDiagGetAudioTelemetry`),
+wire **v4** (FW-175). Source of truth: `ASFWDriver/Audio/Runtime/AudioTelemetrySnapshot.hpp`.
+
+Wire layout (little-endian):
+
+| Part | Bytes | Content |
+|---|---|---|
+| header | 32 | `u16 version=4`, `u16 headerBytes`, `u32 totalBytes`, `u32 endpointCount`, `u32 endpointRecordBytes`, `u64 captureHostTicks`, `u32 hostTimebaseNumer`, `u32 hostTimebaseDenom` |
+| records | `endpointCount × endpointRecordBytes` | v4 record: 464 bytes; v3 fields unchanged at their offsets, an explicit reserved `u32` at 372, then TX/RX completed-interval duration and end ticks at 432–463 |
+
+Contract rules:
+
+- Only `endpointCount` records are sent; the worst case (8 endpoints, 3744 B)
+  fits the 4 KiB inline reply, which a `static_assert` enforces.
+- Readers stride by `endpointRecordBytes` and must accept a larger value (a newer
+  driver appended fields). Versions below 4 are rejected: they have no header.
+- Completed-interval fields are copied under a seqlock. A copy that does not
+  stabilise is discarded — the fields keep their defaults and the
+  `HasCompleted…Interval` flag is clear — never returned torn.
+- Flags: bit 5/6 = TX/RX interval duration known. Durations are host ticks;
+  ns = ticks × numer / denom from the header.
+- RX intervals close on the TX heartbeat (every 5 s) or, for capture-only
+  streams, on the receive watchdog after 6 s without a close.
+- A golden fixture (`tests/fixtures/audio_telemetry_v4.bin`) is checked by the C++
+  host tests and decoded by `ASFWTests/AudioTelemetryWireTests.swift`.
+
+**Stable summary vs research traces.** This snapshot is a small, stable health
+summary for the app, MCP and field reports. Research instrumentation (per-packet
+or per-callback traces, new experimental counters) goes to the log ring or a
+sidecar file and never grows this ABI.
+
+MCP result shape (abridged):
+
+```json
+{
+  "wireVersion": 4,
+  "captureHostTicks": 123456789,
+  "hostTimebaseNumer": 125, "hostTimebaseDenom": 3,
+  "endpointCount": 1,
+  "endpoints": [{
+    "guid": 1234, "streaming": true, "sampleRateHz": 48000,
+    "tx": {"completedIntervalDurationNs": 5000012000, "completedLatencyHistogram": [0,0,0,0,0,0], "...": "..."},
+    "rx": {"completedIntervalDurationNs": null, "captureReaderActive": false, "...": "..."},
+    "rxAttribution": {"verdict": "receivingData", "...": "..."}
+  }]
+}
+```
+
 ## 15. Logs
 
 URI: `asfw://logs/recent`

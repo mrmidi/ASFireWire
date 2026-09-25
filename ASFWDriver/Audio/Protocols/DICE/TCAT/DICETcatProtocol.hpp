@@ -5,8 +5,12 @@
 
 #pragma once
 
-#include "../../Duplex/IDuplexDeviceControl.hpp"
-#include "../Core/DICEDuplexBringupController.hpp"
+#include "../../Duplex/FamilyDriver.hpp"
+#include "../Core/DiceDeviceIo.hpp"
+#include "../Core/DiceFamilyDriver.hpp"
+#include "../Core/DiceNotificationMailbox.hpp"
+#include "../Core/DiceNotificationRouter.hpp"
+#include "../Core/DiceWaitClock.hpp"
 #include "../Core/DICETransaction.hpp"
 #include "../Core/DICETypes.hpp"
 #include "../../IDeviceProtocol.hpp"
@@ -18,10 +22,6 @@
 
 namespace ASFW::IRM {
 class IRMClient;
-}
-
-namespace ASFW::Scheduling {
-class ITimerScheduler;
 }
 
 namespace ASFW::Audio::DICE::TCAT {
@@ -40,47 +40,58 @@ struct DICETcatRuntimePolicy final {
 };
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
-                               public Audio::IDuplexDeviceControl {
+                               public Audio::FamilyDriver {
 public:
     using VoidCallback = std::function<void(IOReturn)>;
-    using PrepareCallback = IDuplexDeviceControl::PrepareCallback;
-    using StageCallback = IDuplexDeviceControl::StageCallback;
-    using ConfirmCallback = IDuplexDeviceControl::ConfirmCallback;
-    using ClockApplyCallback = IDuplexDeviceControl::ClockApplyCallback;
-    using HealthCallback = IDuplexDeviceControl::HealthCallback;
 
     DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                      Protocols::Ports::FireWireBusInfo& busInfo,
                      Discovery::DeviceRegistry& routeRegistry,
                      const Discovery::DeviceRouteToken& route,
-                     ::ASFW::IRM::IRMClient* irmClient = nullptr,
-                     ::ASFW::Scheduling::ITimerScheduler* timerScheduler = nullptr,
+                     ::ASFW::IRM::IRMClient* irmClient,
+                     DiceWaitClock& waitClock,
+                     DiceNotificationRouter* notifications,
                      DICETcatRuntimePolicy runtimePolicy = {});
+    ~DICETcatProtocol() override;
+
+    DICETcatProtocol(const DICETcatProtocol&) = delete;
+    DICETcatProtocol& operator=(const DICETcatProtocol&) = delete;
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
     const char* GetName() const override { return "TCAT DICE"; }
-    Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
-    const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
+    Audio::FamilyDriver* AsFamilyDriver() noexcept override { return this; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
     bool GetChannelLabels(std::vector<std::string>& inNames,
                           std::vector<std::string>& outNames) const override;
 
-    void PrepareDuplex(const AudioDuplexChannels& channels,
-                       const AudioClockConfig& desiredClock,
-                       PrepareCallback callback) override;
-    void ProgramRx(StageCallback callback) override;
-    void ProgramTxAndEnableDuplex(StageCallback callback) override;
-    void ConfirmDuplexStart(ConfirmCallback callback) override;
-    void ApplyClockConfig(const AudioClockConfig& desiredClock,
-                          ClockApplyCallback callback) override;
-    void ReadDuplexHealth(HealthCallback callback) override;
+    // The GLOBAL clock and lock state, read asynchronously (safe on any queue).
+    void ReadDuplexHealth(HealthCallback callback);
     void EnsureRuntimeStreamGeometry(VoidCallback callback) override;
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
-    ::ASFW::IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
 
     IOReturn StopDuplex() override;
+
+    // FamilyDriver. The stages run DiceFamilyDriver synchronously; geometry and
+    // health await the same asynchronous reads the Default-queue publication
+    // path uses.
+    [[nodiscard]] IOReturn LoadGeometry() override;
+    [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;
+    [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
+        const AudioDuplexChannels& channels, const AudioClockConfig& clock) override;
+    void AssignChannels(const AudioDuplexChannels& channels) override;
+    [[nodiscard]] std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceRx() override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceTxAndEnable() override;
+    [[nodiscard]] std::expected<DuplexConfirmResult, IOReturn> Confirm() override;
+    [[nodiscard]] std::expected<DuplexClockApplyResult, IOReturn> ApplyClockIdle(
+        const AudioClockConfig& clock) override;
+    [[nodiscard]] IOReturn DisconnectPlayback() override;
+    [[nodiscard]] IOReturn DisconnectCapture() override;
+    [[nodiscard]] IOReturn BreakConnections() override;
+    [[nodiscard]] IOReturn Stop() override;
+
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
 
@@ -100,14 +111,20 @@ private:
                           const StreamConfig& rx) noexcept;
     void CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept;
     void ResetRuntimeCaps() noexcept;
+    [[nodiscard]] bool DeviceSupportsRate(uint32_t rateHz) const noexcept;
 
     Protocols::Ports::FireWireBusInfo& busInfo_;
     ::ASFW::IRM::IRMClient* irmClient_{nullptr};
     Protocols::Ports::ProtocolRegisterIO io_;
     DICETransaction diceReader_;
-    std::optional<ASFW::Audio::DICE::DICEDuplexBringupController> duplexCtrl_;
+    DiceDeviceIo deviceIo_;
+    // This device's notification bits. Registered with the router for the
+    // protocol's lifetime; null router: no notification reaches it (tests).
+    DiceNotificationMailbox notifications_;
+    DiceNotificationRouter* notificationRouter_{nullptr};
+    uint64_t guid_{0};
+    std::optional<DiceFamilyDriver> driver_;
     const std::atomic<bool>* teardownCancel_{nullptr};
-    ::ASFW::Scheduling::ITimerScheduler* timerScheduler_{nullptr};  // driver-owned
     DICETcatRuntimePolicy runtimePolicy_{};
     GeneralSections sections_{};
     bool initialized_{false};
@@ -123,6 +140,7 @@ private:
     AudioClockConfig selectedClock_{};
 
     std::atomic<uint32_t> runtimeSampleRateHz_{0};
+    std::atomic<uint32_t> deviceRateMask_{0};
     std::atomic<uint32_t> hostInputPcmChannels_{0};
     std::atomic<uint32_t> hostOutputPcmChannels_{0};
     std::atomic<uint32_t> deviceToHostAm824Slots_{0};

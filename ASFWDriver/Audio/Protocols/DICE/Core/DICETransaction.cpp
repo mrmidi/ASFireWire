@@ -277,6 +277,7 @@ void DICETransaction::ReadGlobalStateSized(const GeneralSections& sections,
         }
         if (size >= 0x68) {
             state.clockCaps = ReadBE32(data + GlobalOffset::kClockCaps);
+            state.hasClockCaps = true;
         }
         
         char clockStr[40];

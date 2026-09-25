@@ -112,6 +112,16 @@ jobs:
           fi
           echo "SCSI personality present."
 
+      # Host measurement tools (tools/rtl, tools/halprobe). Their analysis cores
+      # are unit-tested from tests/tools on any host; this step is what proves
+      # the CoreAudio front ends still compile, since nothing else builds them.
+      - name: Build host measurement tools
+        run: |
+          cmake -S tools -B build/tools -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-Werror"
+          cmake --build build/tools -j$(sysctl -n hw.ncpu)
+          ./build/tools/rtl/rtl_loopback --selftest
+
       - name: Configure Tests with Coverage
         run: |
           cmake -S tests -B build/tests \

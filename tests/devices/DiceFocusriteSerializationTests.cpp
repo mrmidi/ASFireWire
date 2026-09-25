@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
+#include "Audio/Protocols/DICE/Core/DiceNotificationMailbox.hpp"
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Core/DICETypes.hpp"
 #include "Audio/Protocols/DICE/Focusrite/SaffireproCommon.hpp"
@@ -19,7 +19,6 @@ using ASFW::Audio::DICE::ExtensionSections;
 using ASFW::Audio::DICE::Focusrite::InputParams;
 using ASFW::Audio::DICE::Focusrite::LineInputLevel;
 using ASFW::Audio::DICE::Focusrite::MicInputLevel;
-namespace NotificationMailbox = ASFW::Audio::DICE::NotificationMailbox;
 using ASFW::Audio::DICE::Focusrite::OutputGroupState;
 namespace Routing = ASFW::Audio::DICE::Focusrite::SPro24DspRouting;
 using ASFW::Audio::DICE::GeneralSections;
@@ -180,44 +179,20 @@ TEST(DiceFocusriteSerializationTests, RoutingCanMirrorPlaybackToAllAnalogPairs) 
 }
 
 TEST(DiceFocusriteSerializationTests, NotificationMailboxDecodesBigEndianWireQuadlets) {
+    using ASFW::Audio::DICE::DecodeNotificationQuadlet;
     const std::array<uint8_t, 4> clockAccepted = {0x00, 0x00, 0x00, 0x20};
     const std::array<uint8_t, 4> lockChanged = {0x00, 0x00, 0x00, 0x10};
 
-    NotificationMailbox::Reset();
-    EXPECT_EQ(NotificationMailbox::PublishWireQuadlet(clockAccepted.data()),
+    EXPECT_EQ(DecodeNotificationQuadlet(clockAccepted.data()),
               ASFW::Audio::DICE::Notify::kClockAccepted);
-    EXPECT_EQ(NotificationMailbox::Consume(), ASFW::Audio::DICE::Notify::kClockAccepted);
 
-    NotificationMailbox::Reset();
-    (void)NotificationMailbox::PublishWireQuadlet(clockAccepted.data());
-    (void)NotificationMailbox::PublishWireQuadlet(lockChanged.data());
-    EXPECT_EQ(NotificationMailbox::Consume(),
+    ASFW::Audio::DICE::DiceNotificationMailbox mailbox;
+    mailbox.Publish(DecodeNotificationQuadlet(clockAccepted.data()));
+    mailbox.Publish(DecodeNotificationQuadlet(lockChanged.data()));
+    EXPECT_EQ(mailbox.Consume(),
               ASFW::Audio::DICE::Notify::kClockAccepted |
                   ASFW::Audio::DICE::Notify::kLockChange);
-}
-
-TEST(DiceFocusriteSerializationTests, NotificationMailboxObserverReceivesPublishedBits) {
-    struct ObserverState {
-        uint32_t bits{0};
-        int calls{0};
-    } state;
-
-    auto observer = [](void* context, uint32_t bits) {
-        auto* state = static_cast<ObserverState*>(context);
-        state->bits |= bits;
-        ++state->calls;
-    };
-
-    NotificationMailbox::Reset();
-    NotificationMailbox::SetObserver(&state, observer);
-    NotificationMailbox::Publish(ASFW::Audio::DICE::Notify::kLockChange);
-    NotificationMailbox::Publish(ASFW::Audio::DICE::Notify::kExtStatus);
-    NotificationMailbox::ClearObserver(&state);
-
-    EXPECT_EQ(state.calls, 2);
-    EXPECT_EQ(state.bits,
-              ASFW::Audio::DICE::Notify::kLockChange |
-                  ASFW::Audio::DICE::Notify::kExtStatus);
+    EXPECT_EQ(mailbox.Consume(), 0U);
 }
 
 TEST(DiceFocusriteSerializationTests, DiceStatusHelpersDecodeSourceAndArx1LockState) {

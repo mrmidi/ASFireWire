@@ -50,36 +50,6 @@ struct AudioStreamTxPolicy final {
 
 };
 
-// What a profile's compiled-in stream geometry MEANS when the device's own
-// registers say something else.
-//
-// The resolver needs this because two very different things were being spelled
-// the same way. A geometry taken from a register dump or a reference stack is
-// EVIDENCE: a device contradicting it means one of the two is wrong, framing
-// and bandwidth would disagree, and refusing to publish is the right outcome.
-// A geometry invented so the nub has plausible numbers before the device has
-// been read is a SEED: being contradicted is not a defect, it is the seed doing
-// its job and then being replaced.
-//
-// Treating every constant as evidence made seeded profiles unpublishable.
-// AlesisMultiMixProfile.cpp says in its own header that its counts are
-// unverified and that no reference stack publishes MultiMix geometry because
-// they all read it from the device (Linux has no dice.c row for model 0x000000
-// at all; libffado reads NB_TX from the device, dice_avdevice.cpp:1661-1680).
-// A contributed register dump does report a different shape than the seed. Under
-// a single rule that is a conflict and the endpoint disappears; under this one
-// it is simply the device answering.
-//
-// Note this is about the CHANNEL and STREAM COUNTS only. Framing constants that
-// the DICE registers do not carry -- fdf, fmt, frames per data packet, the DBS
-// policy -- stay profile-owned in every case.
-enum class StreamGeometryAuthority : uint8_t {
-    /// A pre-caps placeholder. The device's answer replaces it silently.
-    kSeed,
-    /// Evidence from a dump or a reference stack. A contradiction is a defect.
-    kAsserted,
-};
-
 /// Where the host transmit stream takes its timing from.
 enum class TxClockSource : uint8_t {
     /// Replay the device's receive timing (SYT and cadence) onto transmit;
@@ -105,22 +75,6 @@ public:
     [[nodiscard]] virtual AudioStreamTxPolicy TxStreamPolicy() const noexcept { return {}; }
     [[nodiscard]] virtual TxClockSource TransmitClockSource() const noexcept {
         return TxClockSource::kRxReplay;
-    }
-
-    // Per direction, because one profile can legitimately be both. The Alesis
-    // MultiMix asserts its ONE playback stream -- libffado forces nb_rx to 1 for
-    // this exact vendor/model because the device announces two receive
-    // transmitters and has one (dice_avdevice.cpp:1686-1700) -- while its
-    // capture counts are an unverified seed. Collapsing the two into a single
-    // per-profile flag would have to throw away one of those facts.
-    //
-    // Asserted is the default: a profile that carries geometry is claiming to
-    // know it, and opting out is the exception that has to be written down.
-    [[nodiscard]] virtual StreamGeometryAuthority PlaybackGeometryAuthority() const noexcept {
-        return StreamGeometryAuthority::kAsserted;
-    }
-    [[nodiscard]] virtual StreamGeometryAuthority CaptureGeometryAuthority() const noexcept {
-        return StreamGeometryAuthority::kAsserted;
     }
 
     // Profiles with unequal playback streams override this geometry. Uniform

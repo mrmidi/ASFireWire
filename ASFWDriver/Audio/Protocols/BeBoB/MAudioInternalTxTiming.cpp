@@ -4,14 +4,21 @@
 #include "MAudioInternalTxTiming.hpp"
 
 #include "../../Wire/AMDTP/AmdtpTiming.hpp"
+#include "../../Wire/AMDTP/AmdtpTransferDelay.hpp"
 
 namespace ASFW::Audio::BeBoB {
 
 namespace {
-constexpr uint32_t kInternalTxTransferDelayTicks = 12'800;
+// The internal cadence runs at one fixed rate, so its transfer delay is the
+// wire derivation at that rate rather than a second literal (FW-181, G-04).
+constexpr auto kInternalTxRateGeometry =
+    *Encoding::AmdtpRateGeometryForSampleRate(kMAudioInternalTxSampleRateHz);
+constexpr uint32_t kInternalTxTransferDelayTicks =
+    Encoding::AmdtpTransferDelayTicks(kInternalTxRateGeometry, Encoding::StreamMode::kBlocking);
+static_assert(kInternalTxRateGeometry.sytIntervalFrames == kMAudioInternalTxSytInterval);
 static_assert(ASFW::Timing::kSytInterval48k == kMAudioInternalTxSytInterval);
 static_assert(ASFW::Timing::kSytPacketStepTicks48k == 4'096);
-static_assert(kInternalTxTransferDelayTicks == 8'704 + 4'096);
+static_assert(kInternalTxTransferDelayTicks == 12'800);
 } // namespace
 
 bool MAudioInternalTxTiming::Arm() noexcept {

@@ -19,6 +19,8 @@ using ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
 using ASFW::DeviceProfiles::Audio::kTerraTecVendorId;
 using ASFW::DeviceProfiles::Audio::kPhase88RackFwModelId;
 using ASFW::DeviceProfiles::Audio::kMackieVendorId;
+using ASFW::DeviceProfiles::Audio::kMidasVendorId;
+using ASFW::DeviceProfiles::Audio::kMidasVeniceModelId;
 using ASFW::DeviceProfiles::Audio::kMAudioVendorId;
 using ASFW::DeviceProfiles::Audio::kMAudioFireWire1814ModelId;
 using ASFW::DeviceProfiles::Audio::kMAudioProjectMixModelId;
@@ -153,6 +155,29 @@ TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe)
     EXPECT_EQ(profile.startOrder.prepareOrder[1], DuplexHostDirection::kTransmit);
     EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kReceive);
     EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kTransmit);
+}
+
+// Every DICE row, with or without named stream traits, lets the IRM pick from
+// channels 0-31 (Linux dice-stream.c:506); the planned 0/1 are only a seed.
+TEST(DuplexStreamProfileTests, DiceLetsTheIrmPickFromChannelsZeroToThirtyOne) {
+    const AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 8,
+        .hostOutputPcmChannels = 8,
+        .deviceToHostAm824Slots = 9,
+        .hostToDeviceAm824Slots = 9,
+        .sampleRateHz = 48000,
+        .deviceToHostStreamCount = 1,
+        .hostToDeviceStreamCount = 1,
+    };
+    for (const auto& [vendor, model] : {std::pair{kFocusriteVendorId, kSPro24DspModelId},
+                                        std::pair{kMidasVendorId, kMidasVeniceModelId},
+                                        std::pair{kWeissVendorId, kWeissInt202ModelId}}) {
+        const DuplexStreamProfile profile =
+            DuplexStreamProfileResolver::Resolve(DiceRecord(vendor, model), caps);
+        ASSERT_TRUE(profile.policyResolved) << model;
+        EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, 0x00000000FFFFFFFFULL) << model;
+        EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, 0x00000000FFFFFFFFULL) << model;
+    }
 }
 
 TEST(DuplexStreamProfileTests, SPro24DspResolvesRawPcmOnBothDirectionsWhenGeometryMatches) {

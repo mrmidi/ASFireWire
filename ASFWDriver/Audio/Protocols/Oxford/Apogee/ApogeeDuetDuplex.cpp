@@ -23,6 +23,8 @@
 
 #include "ApogeeDuetDuplex.hpp"
 
+#include "../../Duplex/FamilyStageWait.hpp"
+
 #include "ApogeeCaps.hpp"
 
 #include "../../../../Bus/IRM/IRMClient.hpp"
@@ -94,7 +96,7 @@ struct ApogeeDuetDuplex::ClockTransition {
     SignalFormatCommand::SignalFormat outputBefore{};
     SignalFormatCommand::SignalFormat inputAfter{};
     SignalFormatCommand::SignalFormat outputAfter{};
-    IDuplexDeviceControl::ClockApplyCallback completion{};
+    ClockApplyCallback completion{};
     Phase phase{Phase::kReadInputBefore};
     IOReturn failureStatus{kIOReturnSuccess};
     bool inputChanged{false};
@@ -723,6 +725,86 @@ IOReturn ApogeeDuetDuplex::StopDuplex() {
     DisconnectPlayback([](IOReturn) {});
     DisconnectCapture([](IOReturn) {});
     return kIOReturnSuccess;
+}
+
+// ---------------------------------------------------------------------------
+// FamilyDriver
+// ---------------------------------------------------------------------------
+
+void ApogeeDuetDuplex::SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
+    teardownCancel_ = cancel;
+}
+
+IOReturn ApogeeDuetDuplex::LoadGeometry() {
+    // Nothing to read at start: the Duet's stream geometry is fixed
+    // (ApogeeCaps) and does not depend on device registers.
+    return kIOReturnSuccess;
+}
+
+std::optional<AudioStreamRuntimeCaps> ApogeeDuetDuplex::RuntimeCaps() const {
+    AudioStreamRuntimeCaps caps{};
+    if (!GetRuntimeAudioStreamCaps(caps)) {
+        return std::nullopt;
+    }
+    return caps;
+}
+
+std::expected<DuplexPrepareResult, IOReturn> ApogeeDuetDuplex::Configure(
+    const AudioDuplexChannels& channels, const AudioClockConfig& clock) {
+    return AwaitStage<DuplexPrepareResult>(
+        [&](auto callback) { PrepareDuplex(channels, clock, std::move(callback)); },
+        teardownCancel_);
+}
+
+void ApogeeDuetDuplex::AssignChannels(const AudioDuplexChannels& channels) {
+    SetAssignedChannels(channels);
+}
+
+std::expected<DuplexHealthResult, IOReturn> ApogeeDuetDuplex::ReadHealth(uint32_t timeoutMs) {
+    return AwaitStage<DuplexHealthResult>(
+        [&](auto callback) { ReadDuplexHealth(std::move(callback)); }, teardownCancel_, timeoutMs);
+}
+
+std::expected<DuplexStageResult, IOReturn> ApogeeDuetDuplex::ArmDeviceRx() {
+    return AwaitStage<DuplexStageResult>(
+        [&](auto callback) { ProgramRx(std::move(callback)); }, teardownCancel_);
+}
+
+std::expected<DuplexStageResult, IOReturn> ApogeeDuetDuplex::ArmDeviceTxAndEnable() {
+    return AwaitStage<DuplexStageResult>(
+        [&](auto callback) { ProgramTxAndEnableDuplex(std::move(callback)); }, teardownCancel_);
+}
+
+std::expected<DuplexConfirmResult, IOReturn> ApogeeDuetDuplex::Confirm() {
+    return AwaitStage<DuplexConfirmResult>(
+        [&](auto callback) { ConfirmDuplexStart(std::move(callback)); }, teardownCancel_);
+}
+
+std::expected<DuplexClockApplyResult, IOReturn> ApogeeDuetDuplex::ApplyClockIdle(
+    const AudioClockConfig& clock) {
+    return AwaitStage<DuplexClockApplyResult>(
+        [&](auto callback) { ApplyClockConfig(clock, std::move(callback)); }, teardownCancel_);
+}
+
+IOReturn ApogeeDuetDuplex::DisconnectPlayback() {
+    return AwaitStageStatus([&](auto callback) { DisconnectPlayback(std::move(callback)); },
+                            teardownCancel_);
+}
+
+IOReturn ApogeeDuetDuplex::DisconnectCapture() {
+    return AwaitStageStatus([&](auto callback) { DisconnectCapture(std::move(callback)); },
+                            teardownCancel_);
+}
+
+IOReturn ApogeeDuetDuplex::BreakConnections() {
+    // Not offered: the Duet's staged stop disconnects each direction in turn
+    // (DisconnectPlayback, DisconnectCapture), and StopDuplex drops whatever
+    // is left.
+    return kIOReturnUnsupported;
+}
+
+IOReturn ApogeeDuetDuplex::Stop() {
+    return StopDuplex();
 }
 
 } // namespace ASFW::Audio::Oxford::Apogee

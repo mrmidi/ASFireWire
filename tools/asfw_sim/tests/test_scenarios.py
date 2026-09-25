@@ -111,12 +111,13 @@ def test_sweep_expands_to_the_cartesian_product(tmp_path):
 
 
 def test_require_valid_fails_an_uncompilable_geometry(tmp_path, headers):
-    """shared(912) < preparationLead for a 4096-frame IO budget."""
+    """shared(912) < preparationLead(1648): the pre-V3 store cannot hold the
+    V3 lead (a 4096-frame IO budget is valid now -- V3 sizes for it)."""
     scenario = load_scenario(
         _write(
             tmp_path,
             "name: x\nrequire_valid: true\n"
-            "geometry:\n  hal_io_period_frames: 4096\n"
+            "geometry:\n  tx_shared_slot_packets: 912\n"
             "scenario:\n  duration_s: 2\n",
         )
     )
@@ -129,7 +130,7 @@ def test_invalid_geometry_is_only_a_warning_without_require_valid(tmp_path, head
     scenario = load_scenario(
         _write(
             tmp_path,
-            "name: x\ngeometry:\n  hal_io_period_frames: 4096\n"
+            "name: x\ngeometry:\n  tx_shared_slot_packets: 912\n"
             "scenario:\n  duration_s: 2\n",
         )
     )

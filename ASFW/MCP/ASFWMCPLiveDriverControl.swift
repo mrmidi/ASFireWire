@@ -821,6 +821,11 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         return snapshot.endpoints.map { $0.mcpStreamHealth }
     }
 
+    func fetchAudioTelemetry() async -> ASFWMCPValue? {
+        guard backend.mcpIsConnected else { return nil }
+        return backend.mcpAudioTelemetry()?.mcpValue()
+    }
+
     private func executeTransaction(
         kind: ASFWMCPTransactionKind,
         address: ASFWMCPAddress,

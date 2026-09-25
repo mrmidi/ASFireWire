@@ -78,6 +78,15 @@ constexpr AudioDeviceDefinition Definition(
         .vendorName = vendorName,
         .modelName = modelName,
     };
+    // Every DICE device takes its channels from the IRM, whatever traits the
+    // row names: the channel range is a property of the family.
+    if (family == AudioFamilyProviderId::DICE && result.streamTraits.resource.irmChannelMask == 0) {
+        result.streamTraits.resource.irmChannelMask = kDiceIrmChannelMask;
+    }
+    // Likewise the restart quiet period (TCAT's debounce).
+    if (family == AudioFamilyProviderId::DICE && result.streamTraits.start.restartQuietPeriodMs == 0) {
+        result.streamTraits.start.restartQuietPeriodMs = kDiceRestartQuietPeriodMs;
+    }
     if (guidModel.has_value()) {
         guidClause = GuidEncoded(vendor, *guidModel);
         constrainSelectedUnit(guidClause);
@@ -123,7 +132,7 @@ constexpr DeviceStreamTraits kDiceTraits{
 
 constexpr DeviceStreamTraits kCmpBlockingTraits{
     .wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
-    .resource = {.cmpChoosesIsoChannel = true},
+    .resource = {.irmChannelMask = kAnyIsoChannel},
     .start = {.startShape = StreamStartShape::CmpReceiveThenTransmit},
 };
 
@@ -133,7 +142,7 @@ constexpr DeviceStreamTraits kMackieBlockingTraits{
 
 constexpr DeviceStreamTraits kCmpBlockingUntrustedStrideTraits{
     .wire = {.forcedStreamMode = ForcedStreamMode::Blocking, .captureTrustConfiguredStride = true},
-    .resource = {.cmpChoosesIsoChannel = true},
+    .resource = {.irmChannelMask = kAnyIsoChannel},
     .start = {.startShape = StreamStartShape::CmpReceiveThenTransmit, .startRatePinHz = 44100U},
 };
 

@@ -69,8 +69,15 @@ def derive(
     shared_slot_packets: int | None = None,
     timeline_slots: int | None = None,
     data_horizon_packets: int | None = None,
+    write_window_frames: int | None = None,
 ) -> DerivedGeometry:
-    """Recompute the TX chain for a candidate IO budget and check the asserts."""
+    """Recompute the TX chain for a candidate IO budget and check the asserts.
+
+    ``write_window_frames`` is the largest single client write the TX budgets
+    must hold (header: kMaxClientIoFrames, the ADK ceiling at the V3 period).
+    It defaults to max(io budget, kMaxClientIoFrames): the IO budget is not
+    enforced, so a client may always pick the ADK maximum.
+    """
     t = headers.timing
     sample_rate = t["kSampleRateHz"]
     cad_pkts = t["kMinAvgCadencePackets"]
@@ -85,15 +92,24 @@ def derive(
         else t["kTxDataHorizonPackets"]
     )
 
-    # AudioTimingGeometry.hpp:101-120
-    exposure_lead_frames = (horizon_packets * sample_rate) // 8000
+    window_frames = (
+        write_window_frames
+        if write_window_frames is not None
+        else max(io_budget_frames, t["kMaxClientIoFrames"])
+    )
+
+    # AudioTimingGeometry.hpp: TxDataHorizonFrames at the reference rate --
+    # 400 cycles, floored at one whole write window plus jitter (Defect B).
+    exposure_lead_frames = max(
+        (horizon_packets * sample_rate + 7999) // 8000, window_frames + jitter
+    )
     exposure_lead_raw = (exposure_lead_frames * cad_pkts + cad_frames - 1) // cad_frames
     exposure_lead_packets = _round_up(exposure_lead_raw, group)
 
     # :137-156
     coverage_lead = hw_ring + 2 * hw_ring
     window_raw = (
-        (io_budget_frames + exposure_lead_frames) * cad_pkts + cad_frames - 1
+        (window_frames + exposure_lead_frames) * cad_pkts + cad_frames - 1
     ) // cad_frames
     frame_exposure_window = _round_up(window_raw, group)
     preparation_lead = coverage_lead + frame_exposure_window
@@ -138,9 +154,9 @@ def derive(
             f"{shared} % {cadence_block}",
         ),
         ConstraintResult(
-            "exposureLeadFrames >= ioBudget + jitter",
-            exposure_lead_frames >= io_budget_frames + jitter,
-            f"{exposure_lead_frames} >= {io_budget_frames + jitter}",
+            "exposureLeadFrames >= writeWindow + jitter",
+            exposure_lead_frames >= window_frames + jitter,
+            f"{exposure_lead_frames} >= {window_frames + jitter}",
         ),
         ConstraintResult(
             "maxCoveredDelta >= 16 groups",
@@ -222,7 +238,7 @@ def solve_for_io_budget(
 
     ring = max(t["kFrameRingFrames"], io_budget_frames * ring_multiple)
     ring = _round_up(ring, io_budget_frames)
-    zts = io_budget_frames if io_budget_frames % 32 == 0 else 32
+    zts = ring  # V3: the HAL wraps the stream buffer on the ZTS period
 
     return derive(
         headers,

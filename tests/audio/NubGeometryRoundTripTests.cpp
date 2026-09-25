@@ -92,6 +92,21 @@ TEST(NubGeometryRoundTrip, ResolvedGeometryRequiredSurvives) {
     EXPECT_TRUE(parsed.resolvedGeometryRequired);
 }
 
+// The device's own rate list must reach the audio side marked as such, or the
+// audio side replaces it with a profile's.
+TEST(NubGeometryRoundTrip, DeviceSampleRatesSurvive) {
+    ASFWAudioDevice device = MakeVeniceF24();
+    device.sampleRates = {32000u, 48000u};
+    device.deviceSampleRates = true;
+    bool published = false;
+    const auto parsed = RoundTrip(device, published);
+    ASSERT_TRUE(published);
+    EXPECT_TRUE(parsed.deviceSampleRates);
+    ASSERT_EQ(parsed.sampleRateCount, 2u);
+    EXPECT_EQ(parsed.sampleRates[0], 32000.0);
+    EXPECT_EQ(parsed.sampleRates[1], 48000.0);
+}
+
 // A family that resolves nothing publishes nothing and forbids nothing, so the
 // profile remains its only description -- the pre-resolution behaviour, still
 // reachable and still correct for a uniform device.

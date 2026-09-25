@@ -1,0 +1,72 @@
+## StartStreaming
+R ffff.e0000000 40 @s400
+R ffff.e0000028 104 @s400
+R ffff.e0000190 512 @s400
+R ffff.e0000390 56 @s400
+R ffff.e00003c8 512 @s400
+R ffff.e00005c8 512 @s400
+R ffff.e00007c8 104 @s400
+H begin
+R ffff.e0000000 40 @s400
+R ffff.e0000028 360 @s400
+R ffff.e0000028 8 @s400
+L ffff.e0000028 ffff000000000000 -> ffc0000100000000 = ffff000000000000 @s400
+R ffff.e0000028 8 @s400
+R ffff.e0000028 360 @s400
+R ffff.e0000028 360 @s400
+R ffff.e0000190 4 @s400
+R ffff.e00003c8 4 @s400
+R ffff.e0000194 4 @s400
+R ffff.e0000198 4 @s400
+R ffff.e000019c 4 @s400
+R ffff.e00001a0 4 @s400
+R ffff.e00001a4 4 @s400
+R ffff.e00001a8 256 @s400
+R ffff.e00003cc 4 @s400
+R ffff.e00003d0 4 @s400
+R ffff.e00003dc 4 @s400
+R ffff.e00003d4 4 @s400
+R ffff.e00003d8 4 @s400
+R ffff.e00003e0 256 @s400
+R ffff.e0000028 104 @s400
+R ffff.e0000190 512 @s400
+R ffff.e0000390 56 @s400
+R ffff.e00003c8 512 @s400
+R ffff.e00005c8 512 @s400
+R ffff.e00007c8 104 @s400
+H reserve playback allowed=00000000ffffffff bw=532 -> ch=0
+H reserve playback allowed=00000000ffffffff bw=532 -> ch=1
+H reserve capture allowed=00000000ffffffff bw=532 -> ch=2
+H reserve capture allowed=00000000ffffffff bw=532 -> ch=3
+H prepare rx ch=2 fmt=0 slots=16 pcm=16
+H prepare rx[1] ch=3 off=16 fmt=0 slots=16 pcm=16
+H prepare tx ch=0 sid=0 @s400
+H prepare tx[1] ch=1 sid=0 @s400
+R ffff.e0000028 104 @s400
+R ffff.e0000028 104 @s400
+R ffff.e0000028 104 @s400
+R ffff.e00003cc 4 @s400
+W ffff.e00003d0 00000000 @s400
+W ffff.e00003d4 00000000 @s400
+W ffff.e00004e8 00000001 @s400
+W ffff.e00004ec 00000000 @s400
+R ffff.e0000194 4 @s400
+W ffff.e0000198 00000002 @s400
+W ffff.e00001a4 00000002 @s400
+W ffff.e00002b0 00000003 @s400
+W ffff.e00002bc 00000002 @s400
+W ffff.e0000078 00000001 @s400
+H start rx
+H start tx
+R ffff.e000007c 4 @s400
+R ffff.e0000030 4 @s400
+R ffff.e0000080 4 @s400
+R ffff.e0000028 104 @s400
+R ffff.e0000190 512 @s400
+R ffff.e0000390 56 @s400
+R ffff.e00003c8 512 @s400
+R ffff.e00005c8 512 @s400
+R ffff.e00007c8 104 @s400
+## -> 0x00000000 streaming=1
+## StartStreaming
+## -> 0x00000000 streaming=1

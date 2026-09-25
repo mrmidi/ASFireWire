@@ -14,7 +14,7 @@
 
 #pragma once
 
-#include "../Duplex/IDuplexDeviceControl.hpp"
+#include "../Duplex/FamilyDriver.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../../../Protocols/Ports/FireWireBusPort.hpp"
 #include "../../../Protocols/AVC/CMP/CMPClient.hpp"
@@ -38,7 +38,7 @@ class IRMClient;
 namespace ASFW::Audio::BeBoB {
 
 class BeBoBProtocol : public IDeviceProtocol,
-                      public IDuplexDeviceControl,
+                      public FamilyDriver,
                       public Protocols::AVC::IAVCCommandSubmitter {
 public:
     BeBoBProtocol(Protocols::Ports::FireWireBusOps& busOps,
@@ -50,30 +50,50 @@ public:
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
-    IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
-    const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
+    FamilyDriver* AsFamilyDriver() noexcept override { return this; }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
 
     // IAVCCommandSubmitter
     void SubmitCommand(const Protocols::AVC::AVCCdb& cdb, Protocols::AVC::AVCCompletion completion) override;
 
-    // IDuplexDeviceControl — general BeBoB lifecycle
-    void PrepareDuplex(const AudioDuplexChannels& channels,
-                       const AudioClockConfig& desiredClock,
-                       PrepareCallback callback) override;
-    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept override;
-    void ProgramRx(StageCallback callback) override;
-    void ProgramTxAndEnableDuplex(StageCallback callback) override;
-    void ConfirmDuplexStart(ConfirmCallback callback) override;
-    void ApplyClockConfig(const AudioClockConfig& desiredClock,
-                          ClockApplyCallback callback) override;
-    void ReadDuplexHealth(HealthCallback callback) override;
-    void DisconnectPlayback(VoidCallback callback) override;
-    void DisconnectCapture(VoidCallback callback) override;
-    void BreakBothConnections(VoidCallback callback) override;
+    // The general BeBoB lifecycle, as callback chains over CMP and AV/C. The
+    // FamilyDriver steps below start them and wait; tests drive them directly.
+    // Virtual where a subclass replaces a stage: Fireworks (prepare, clock,
+    // confirm) and M-Audio special firmware (clock, confirm).
+    virtual void PrepareDuplex(const AudioDuplexChannels& channels,
+                               const AudioClockConfig& desiredClock,
+                               PrepareCallback callback);
+    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept;
+    void ProgramRx(StageCallback callback);
+    void ProgramTxAndEnableDuplex(StageCallback callback);
+    virtual void ConfirmDuplexStart(ConfirmCallback callback);
+    virtual void ApplyClockConfig(const AudioClockConfig& desiredClock,
+                                  ClockApplyCallback callback);
+    void ReadDuplexHealth(HealthCallback callback);
+    void DisconnectPlayback(VoidCallback callback);
+    void DisconnectCapture(VoidCallback callback);
+    void BreakBothConnections(VoidCallback callback);
     [[nodiscard]] IOReturn StopDuplex() override;
-    [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
+
+    // FamilyDriver: each step starts the callback chain above and waits for it
+    // (FamilyStageWait.hpp), so the chains and their wire traffic are unchanged.
+    void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
+    [[nodiscard]] IOReturn LoadGeometry() override;
+    [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;
+    [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
+        const AudioDuplexChannels& channels, const AudioClockConfig& clock) override;
+    void AssignChannels(const AudioDuplexChannels& channels) override;
+    [[nodiscard]] std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceRx() override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceTxAndEnable() override;
+    [[nodiscard]] std::expected<DuplexConfirmResult, IOReturn> Confirm() override;
+    [[nodiscard]] std::expected<DuplexClockApplyResult, IOReturn> ApplyClockIdle(
+        const AudioClockConfig& clock) override;
+    [[nodiscard]] IOReturn DisconnectPlayback() override;
+    [[nodiscard]] IOReturn DisconnectCapture() override;
+    [[nodiscard]] IOReturn BreakConnections() override;
+    [[nodiscard]] IOReturn Stop() override;
 
 protected:
     // Device-specific overrides (pure virtual).
@@ -142,6 +162,9 @@ protected:
     std::shared_ptr<std::function<void(IOReturn)>> signalFormatInterlockCompletion_;
 
 private:
+    // Service teardown: the stage waits give up once it reads true.
+    const std::atomic<bool>* teardownCancel_{nullptr};
+
     void EnsurePlugFree(CMP::PCRDirection dir, uint8_t plug, std::function<void(IOReturn)> cb);
     void ProgramSignalFormat(const AudioClockConfig& desiredClock,
                              std::function<void(IOReturn)> completion);

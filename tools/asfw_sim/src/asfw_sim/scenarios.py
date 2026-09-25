@@ -195,6 +195,7 @@ def _geometry_from_scratch(rate: int, overrides: dict[str, Any]) -> Geometry:
         "profile_name",
         "rx_transfer_delay_ticks",
         "tx_transfer_delay_ticks",
+        "tx_exposure_floor_frames",
     }
     missing = required - set(overrides)
     if missing:

@@ -21,7 +21,7 @@
 #include "../Hardware/IEEE1394.hpp"
 #include "../Logging/Logging.hpp"
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
-#include "../Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
+#include "../Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
 #include "../Audio/Protocols/DICE/Core/DICETypes.hpp"
 #include "../Audio/Protocols/Fireworks/EfcResponseMailbox.hpp"
 #include "../Protocols/Ports/FireWireRxPort.hpp"
@@ -139,29 +139,46 @@ private:
     ASFW::Protocols::AVC::FCPResponseRouter* fcp_;
 };
 
-// --- DICE: notification mailbox quadlet writes ---------------------------------
+// --- DICE: notification quadlet writes -----------------------------------------
+// Every DICE device we own writes its notifications to one host address; the
+// router attributes each write to its device by source node. A write from a
+// node that is not a known device is still ours to answer (Linux
+// dice_notification answers COMPLETE for any quadlet write to its address).
 class DiceLocalHandler final : public ILocalAddressHandler {
 public:
+    explicit DiceLocalHandler(ASFW::Audio::DICE::DiceNotificationRouter* router) noexcept
+        : router_(router) {}
+
     [[nodiscard]] const char* Name() const noexcept override { return "DICE"; }
 
     [[nodiscard]] LocalRequestResult HandleLocalRequest(const LocalRequestContext& ctx) override {
         if (ctx.tCode != AReq::kTcodeWriteQuad) {
             return LocalRequestResult::NotMine();
         }
-        if (!ASFW::Audio::DICE::NotificationMailbox::MatchesDestOffset(ctx.destOffset)) {
+        if (!ASFW::Audio::DICE::IsNotificationAddress(ctx.destOffset)) {
             return LocalRequestResult::NotMine();
         }
         if (ctx.writePayload.size() < 4) {
             return LocalRequestResult::Write(ResponseCode::TypeError);
         }
-        const uint32_t bits =
-            ASFW::Audio::DICE::NotificationMailbox::PublishWireQuadlet(ctx.writePayload.data());
+        const uint32_t bits = ASFW::Audio::DICE::DecodeNotificationQuadlet(ctx.writePayload.data());
+        const uint64_t guid = router_ ? router_->Deliver(ctx.generation, ctx.sourceID, bits) : 0;
         char notifyStr[96];
-        ASFW_LOG(DICE, "DICE notification quadlet: dest=0x%010llx bits=0x%08x meaning=%{public}s",
-                 static_cast<unsigned long long>(ctx.destOffset), bits,
-                 ASFW::Audio::DICE::FormatNotification(bits, notifyStr, sizeof(notifyStr)));
+        ASFW::Audio::DICE::FormatNotification(bits, notifyStr, sizeof(notifyStr));
+        if (guid == 0) {
+            ASFW_LOG_RL(DICE, "dice/notify-unknown-source", 1000, OS_LOG_TYPE_DEFAULT,
+                        "DICE notification from unknown node 0x%04x gen=%u bits=0x%08x "
+                        "meaning=%{public}s: dropped",
+                        ctx.sourceID, ctx.generation, bits, notifyStr);
+            return LocalRequestResult::Write(ResponseCode::Complete);
+        }
+        ASFW_LOG(DICE, "DICE notification quadlet: GUID=0x%016llx node=0x%04x bits=0x%08x meaning=%{public}s",
+                 guid, ctx.sourceID, bits, notifyStr);
         return LocalRequestResult::Write(ResponseCode::Complete);
     }
+
+private:
+    ASFW::Audio::DICE::DiceNotificationRouter* router_;
 };
 
 // --- Fireworks: EFC response window (device -> host block writes) --------------
@@ -307,7 +324,7 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
     if (d.fcpResponseRouter) {
         dispatch->AddHandler(std::make_unique<FcpLocalHandler>(d.fcpResponseRouter.get()));
     }
-    dispatch->AddHandler(std::make_unique<DiceLocalHandler>());
+    dispatch->AddHandler(std::make_unique<DiceLocalHandler>(d.diceNotifications.get()));
     dispatch->AddHandler(std::make_unique<FireworksEfcLocalHandler>());
     if (d.sbp2AddressSpaceManager) {
         dispatch->AddHandler(std::make_unique<Sbp2LocalHandler>(d.sbp2AddressSpaceManager.get()));

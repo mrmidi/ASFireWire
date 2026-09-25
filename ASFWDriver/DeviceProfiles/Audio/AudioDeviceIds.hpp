@@ -24,8 +24,10 @@ inline constexpr uint32_t kSPro14ModelId        = 0x000009;
 inline constexpr uint32_t kSPro26ModelId        = 0x000012;
 inline constexpr uint32_t kSPro40Tcd3070ModelId = 0x0000de;
 
-// Focusrite DICE devices encode the board model in GUID bits [27:22]; the legacy
-// macOS driver uses the same field during probe.
+// Focusrite DICE devices encode the board model in the GUID's product field.
+// Saffire.kext 4.3.0 probe() reads it as GUID bits [31:22] (after requiring
+// category byte 0x04) and names 0x13 "Saffire Pro40"; 4.1.4 had no such entry.
+// The catalog's GuidEncoded clause masks only bits [27:22].
 inline constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 = 0x13;
 
 // ---- Weiss Engineering (DICE / TCAT family) ----

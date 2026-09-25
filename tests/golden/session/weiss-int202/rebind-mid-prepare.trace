@@ -1,0 +1,8 @@
+## StartStreaming
+D geometry
+# bus-reset gen=2
+# device: bus reset
+H begin
+D prepare rate=48000 cap=1[1] play=1[0]
+H stop all
+## -> 0xe00002eb streaming=0

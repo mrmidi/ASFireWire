@@ -53,6 +53,12 @@ public:
                                     uint32_t nominalRateHz)
         TYPE(ASFWAudioNub::DeviceClockChanged);
 
+    // The transport side needs the streams restarted while CoreAudio runs
+    // them: ask the host for a configuration change (StopIO -> StartIO).
+    virtual void IoRestartRequired(OSAction* action,
+                                   uint32_t reason)
+        TYPE(ASFWAudioNub::IoRestartRequired);
+
     // Protocol-backed boolean control bridge (used by custom control subclass).
     kern_return_t ApplyProtocolBooleanControl(uint32_t classIdFourCC,
                                               uint32_t element,

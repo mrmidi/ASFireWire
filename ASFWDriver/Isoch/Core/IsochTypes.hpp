@@ -52,7 +52,9 @@ class IIsochReceiveConsumer {
     // Off-hot-path observability hooks.  They are optional because content
     // formats decide which timing and payload facts are meaningful.
     virtual void DrainReceiveTelemetry(uint32_t) {}
-    virtual void DrainPayloadTelemetry() {}
+    // Periodic, off-hot-path service for consumer-owned diagnostics (e.g. a
+    // consumer reporting errors its own real-time path recorded).
+    virtual void ServiceConsumerDiagnostics() {}
     virtual void LogTransmitTimingTrace() {}
 };
 

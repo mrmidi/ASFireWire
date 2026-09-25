@@ -7,7 +7,7 @@
 #pragma once
 
 #include "IAudioBackend.hpp"
-#include "AudioDuplexCoordinator.hpp"
+#include "../../Session/AudioSessions.hpp"
 #include "IsochDuplexHostTransport.hpp"
 #include "PublicationGate.hpp"
 
@@ -35,7 +35,7 @@ public:
                     Discovery::DeviceRegistry& registry,
                     AudioRuntimeRegistry& runtime,
                     IIsochDuplexHostTransport& hostTransport,
-                    AudioDuplexCoordinator& duplexCoordinator,
+                    Session::AudioSessions& sessions,
                     Driver::HardwareInterface& hardware) noexcept;
     ~AVCAudioBackend() noexcept override;
 
@@ -74,7 +74,7 @@ private:
     std::atomic<bool> teardownStarted_{false};
     std::atomic<bool> teardownComplete_{false};
     PublicationGate publicationGate_{};
-    AudioDuplexCoordinator& duplexCoordinator_;
+    Session::AudioSessions& sessions_;
 
 #ifdef ASFW_HOST_TEST
 public:
@@ -108,11 +108,9 @@ private:
     IOLock* lock_{nullptr};
     OSSharedPtr<IODispatchQueue> workQueue_{};
     std::unordered_map<uint64_t, Model::ASFWAudioDevice> configByGuid_{};
+    // GUIDs with a recovery block queued or settling; a second event for the
+    // same GUID joins it instead of queueing another. Guarded by lock_.
     std::unordered_set<uint64_t> recoveringGuids_{};
-    // Consecutive timing-loss escalations without an observed recovery, per GUID.
-    // Reset on self-heal or a successful restart; bounds a restart-loop against a
-    // genuinely gone device. Guarded by lock_.
-    std::unordered_map<uint64_t, uint8_t> timingLossAttempts_{};
     uint64_t activeGuid_{0};
 
     // Debounce before escalating an RX timing-loss to a restart. AppleFWAudio
@@ -121,9 +119,9 @@ private:
     // self-heals is not mistaken for a device outage.
     static constexpr uint32_t kTimingLossSettleMs = 256;
     static constexpr uint32_t kTimingLossPollMs = 32;
-    // Cap consecutive failed escalations so a device that comes back only
-    // partially (re-establishes then dies) cannot restart-loop forever.
-    static constexpr uint8_t kTimingLossMaxAttempts = 4;
+    // A device that comes back only partially cannot restart-loop forever: the
+    // session stops recovering after repeated failures
+    // (SessionScheduler::kMaxFaultRestartFailures).
 };
 
 } // namespace ASFW::Audio

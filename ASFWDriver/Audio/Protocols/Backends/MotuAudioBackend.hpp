@@ -8,12 +8,11 @@
 // CLOCK_ACCEPTED handshake, clock-lock probing and the recovery state machine those
 // notifications drive. MOTU v2 publishes no notification register at all -- its clock
 // status word is the only health evidence it offers, which MotuV2Protocol already
-// exposes through IDuplexDeviceControl::ReadDuplexHealth().
+// exposes through FamilyDriver::ReadHealth().
 //
 // So this backend does the part that is genuinely shared: gate on teardown, make sure a
-// nub and a bound runtime endpoint exist, and hand streaming to AudioDuplexCoordinator,
-// which drives the device through the IDuplexDeviceControl seam MotuV2Protocol
-// implements.
+// nub and a bound runtime endpoint exist, and hand streaming to the audio session,
+// which drives the device through the FamilyDriver MotuV2Protocol implements.
 
 #pragma once
 
@@ -40,14 +39,16 @@ namespace ASFW::Audio {
 
 class AudioNubPublisher;
 class AudioRuntimeRegistry;
-class AudioDuplexCoordinator;
+namespace Session {
+class AudioSessions;
+}
 
 class MotuAudioBackend final : public IAudioBackend {
 public:
     MotuAudioBackend(AudioNubPublisher& publisher,
                      Discovery::DeviceRegistry& registry,
                      AudioRuntimeRegistry& runtime,
-                     AudioDuplexCoordinator& duplexCoordinator,
+                     Session::AudioSessions& sessions,
                      Driver::HardwareInterface& hardware) noexcept;
     ~MotuAudioBackend() noexcept override;
 
@@ -66,6 +67,7 @@ public:
     void OnDeviceRecordUpdated(uint64_t guid) noexcept override;
     void CancelRemoteDeviceWork(uint64_t guid) noexcept override;
     void HandleHostTimingLoss(uint64_t guid) noexcept override { (void)QueueTimingRecovery(guid); }
+    void OnStreamsRestarted(uint64_t guid) noexcept override { EnsureNubForGuid(guid); }
     [[nodiscard]] bool QueueTimingRecovery(uint64_t guid) noexcept;
 
 #ifdef ASFW_HOST_TEST
@@ -86,7 +88,7 @@ private:
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
     Driver::HardwareInterface& hardware_;
-    AudioDuplexCoordinator& coordinator_;
+    Session::AudioSessions& sessions_;
 
     OSSharedPtr<IODispatchQueue> workQueue_{};
     std::atomic<bool> recoveryInFlight_{false};

@@ -9,7 +9,6 @@
 #include "../../Bus/BusResetCoordinator.hpp"
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Debug/BusResetPacketCapture.hpp"
-#include "../../Diagnostics/ControllerMetrics.hpp"
 #include "../../Diagnostics/MetricsSink.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../WireFormats/BusResetWireFormats.hpp"

@@ -1,0 +1,735 @@
+# Audio session redesign: one restart routine, DICE first
+
+**Status:** design, for review (2026-09-24). No code is implied until the stages in §6
+are accepted one at a time.
+
+**What this replaces.** `AudioDuplexCoordinator` and its helpers, which today own start,
+stop, clock change and recovery for every audio family, and the DICE bring-up controller
+that plugs into them. DICE is the first family to move; the others follow onto the same
+model (§6).
+
+**Relationship to other docs.**
+
+| Doc | Owns |
+|---|---|
+| [`DICE_TCAT_ARCHITECTURE.md`](DICE_TCAT_ARCHITECTURE.md) | DICE **geometry**: profiles, the resolver, geometry stages B–D. This doc does not repeat it. |
+| [`DEVICE_BACKEND_UNIFICATION.md`](DEVICE_BACKEND_UNIFICATION.md) | The protocol-neutral query surface, and the idea of a simulated DICE backend (used here in S0). |
+| [`TOKEN_BASED_LIFECYCLE.md`](TOKEN_BASED_LIFECYCLE.md) | Route tokens and removal terminology. The session model here consumes route tokens unchanged. |
+| [`DICE_STABILITY_REGRESSION.md`](DICE_STABILITY_REGRESSION.md) | The hardware-attested DICE working path. Its lessons are constraints here (§2.6). |
+
+**Reference pinning.** Vendor kext addresses are from the IDA databases under
+`/Users/mrmidi/DEV/FirWireDriver/OTHER/KEXTs/` (local-only), decompiled 2026-09-24 with
+idalib; the scripts and dumps are in `tmp/dicere/`. Unless stated otherwise an address is
+from **MidasFW 4.2.1**. Linux citations refer to `references/linux-sound-firewire-stack/`
+(gitignored). Our code is cited at `main` = `9417cc2d`.
+
+**License rule.** The vendor kexts are proprietary; Linux is GPLv2. Both are used for
+**behaviour only**. Nothing here is, or may become, copied code.
+
+---
+
+## 1. Why
+
+### 1.1 The size of the thing
+
+File and line references in §1 are to the tree before S1. S1 (`c0550fd0`) deleted
+`DICEDuplexBringupController`; §6 records what replaced it.
+
+| Part | Lines | What it is |
+|---|---:|---|
+| `Backends/AudioDuplexCoordinator.{hpp,cpp}` | 2,194 | Start, stop, clock change, recovery, for all families. `DuplexStartTransaction::Run` alone is ~650 lines (`AudioDuplexCoordinator.cpp:913`). |
+| `RestartJournal`, `ClockRequestBroker`, `DuplexOperationGate`, `RestartSessionStore`, `DuplexRecoveryPolicy` | 1,134 | Machinery around the coordinator: per-GUID gate, session store, clock tokens, restart journal, recovery decisions. |
+| `Duplex/DuplexControlTypes.hpp` | 470 | An 8-alternative lifecycle variant plus a 16-value phase enum plus a rollback ledger (`:33-138`). |
+| `DICE/Core/DICEDuplexBringupController.{hpp,cpp}` | 1,957 | DICE bring-up as ~35 chained async steps (`Do*` methods). |
+| `Backends/DiceAudioBackend.{hpp,cpp}` | 1,387 | Publication, notification handling, health probes, recovery gating. |
+
+The TCAT vendor driver does the equivalent DICE job with **one** linear function plus a
+debounce timer (§2.2).
+
+### 1.2 Two concurrency models stacked
+
+The coordinator runs on a worker queue (`com.asfw.audio.dice`, `DiceAudioBackend.cpp:297`)
+and **blocks**: `SyncAsyncBridge` polls a completion flag every 10 ms, and
+`StartStreaming` spins on the GUID gate with `IOSleep` for up to 12 s
+(`AudioDuplexCoordinator.cpp:286-296`). Underneath it, the DICE controller is written as a
+chain of async callbacks (`DICEDuplexBringupController.hpp:95-146`), because it was built
+for a queue that must not block. Then `StopDuplex` blocks again for up to 5 s
+(`DICEDuplexBringupController.cpp:1453-1481`).
+
+We pay for both models and get the benefit of neither: the callback chain is hard to read,
+and the blocking outer layer already makes a linear style possible.
+
+### 1.3 Bugs live at the seams
+
+Found in review during this design session, all at boundaries between separately-owned
+pieces of state:
+
+- A same-GUID persona change creates the new protocol, then the `DeviceManager` removal
+  event deletes it (`ControllerCoreDiscovery.cpp:657` runs before `:666`;
+  `AudioCoordinator.cpp:162`).
+- Generic AV/C units get a CoreAudio nub but no protocol, so `StartIO` always fails
+  (`AVCDiscovery.cpp:957`, `AudioDuplexCoordinator.cpp:967`).
+- A changed AV/C geometry is never refused: `EnsureNub` returns early for an existing nub
+  (`AudioNubPublisher.cpp:55`); only DICE calls `RefreshNubProperties`.
+- DICE asks the IRM for exactly one fixed channel (`DuplexStreamProfile.hpp:175, 200-240`);
+  both references let the IRM choose (§2.7). **Fixed in S3 (`6091e308`).**
+- DICE config-change notifications are ignored (`DiceAudioBackend.cpp:577` returns unless
+  `LOCK_CHG` or `EXT_STATUS`); TCAT restarts on them (§2.4). **Fixed in S3 (`e87f1670`).**
+- The DICE notification mailbox is one process-wide global with no source attribution
+  (`DICENotificationMailbox.hpp`), so a second DICE device would share it. **Fixed in S3
+  (`fabd595e`).**
+- `DuplexStreamProfile::playbackWireFormat` (`:106`) is only ever logged
+  (`AudioDuplexCoordinator.cpp:1278`) and disagrees with the encoder actually used
+  (the audio-side profile's `TxWireFormat`).
+
+Found by the S0 golden traces (`tests/golden/dice/`). The first two are fixed (below):
+
+- **The `CLOCK_SELECT` skip compares only the requested value.**
+  `DICEDuplexBringupController.cpp:555` skips the write when `CLOCK_SELECT` already
+  holds the target, even if the device runs at another rate. `DICE_STABILITY_REGRESSION.md`
+  §3 describes the fix (also check the achieved rate) as hardware-validated, but that fix is
+  in no commit on any branch. `*__requested-not-achieved.trace` fails on both devices, and
+  `multimix__start-stop-48k.trace` fails because the MultiMix dump is in exactly that state
+  (requests 48 kHz, runs 44.1 kHz). **Fixed in `b1d80f39`.**
+- **The Pro 24 DSP bring-up has no timer.** `FamilyProtocolConstruction` builds
+  `SPro24DspProtocol` without a timer scheduler (`SPro24DspProtocol.cpp:33`), and
+  `ScheduleRetry` returns false without one (`DICEDuplexBringupController.cpp:214-217`). Any
+  wait that needs a second poll (a `CLOCK_ACCEPTED` that is not immediate, a lock wait, the
+  source-lock confirm) fails at once with `kIOReturnNotReady`. The Venice path, which has a
+  timer, waits 150 ms and 2 s as intended. **Fixed in `a3212dd6`** (the timer is now a
+  required constructor parameter).
+- **Teardown during a wait leaves our owner claim on the device**
+  (`venice-f24__teardown-during-clock-wait.trace`). TCAT and Linux release it on unbind.
+  Still open after S3, which holds the owner while the device is present: service teardown
+  quiesces the bus before audio teardown runs, so no release can reach the device (§8 Q7).
+
+### 1.4 Recovery fights churn instead of absorbing it
+
+`DiceAudioBackend::HandleRecoveryEvent` (`:430-470`) carries a long comment about
+CoreAudio's rapid `StartIO`/`StopIO` cycles producing false faults, and drops events by
+checking in-flight operations and restart epochs. TCAT has no such code because it has
+no such problem: requests are counted and coalesced, and HAL start/stop does not touch the
+wire at all (§2.2).
+
+---
+
+## 2. Evidence
+
+### 2.1 The TCAT SDK: five kexts, one codebase
+
+All five DICE vendor kexts on hand are the TC Applied Technologies reference driver with
+the class prefix renamed (`MidasFW::`, `PaeFireStudio::`, `Saffire::`, `WeissFirewire::`,
+`AlesisFirewire::` → normalised to `V_::` for comparison).
+
+| Kext | Build | Compared with Midas |
+|---|---|---|
+| PreSonus FireStudio | 4.2.1, 2016 | 353/353 same normalised symbols; **347/353 function bodies instruction-identical** |
+| Weiss | 4.3.1, 2016 | Same logic: most bring-up functions score 0.9+ on decompiled token similarity, and the low scorers (0.5–0.85) diff as compiler restructuring. Adds a DCP control-panel channel |
+| Focusrite Saffire | 4.1.4, 2014 | Older SDK revision of the same skeleton (similarity 0.57–0.98) |
+| Alesis | 3.5.6, 2011 | Oldest revision; bus-reset handler instead of suspend/resume |
+
+Midas and PreSonus differ in exactly two places: a build-number constant, and the
+`probe()` model table. The vendor-specific content of every kext is:
+
+- Info.plist match on `Unit_Spec_ID` = vendor OUI, `Unit_SW_Version` = 1, plus display strings.
+- `V_Audio::probe` (Midas `0x15c8`): model index = GUID bits 31:22, name used only in `IOLog`.
+- **No per-model geometry, wire format or quirk.** TX PCM goes through one
+  `Float32ToSwapInt24_In_32_X86` in all five, including Saffire.kext, which drives the
+  Pro 40. (Our Weiss and Generic DICE profiles still default to AM824 TX; see
+  `DICE_TCAT_ARCHITECTURE.md` §3.2.)
+
+### 2.2 The TCAT lifecycle
+
+```
+V_Audio::start (0x1724)                   per FireWire unit
+  └─ runOnGate(StartDevAction) → V_::StartDev (0xb8f6)
+        fill a free slot in a 5-entry device table
+        RequestStreamingRestart (0xbbaa)   ← atomic counter += 1
+
+bus reset   → SuspendDev (0xbc6c): mark suspended, StopStreaming(partial)
+rediscovery → ResumeDev  (0xbde4): clear flag, RequestStreamingRestart
+unplug      → RemoveDev  (0xbf06): RelinquishOwnership, StopStreaming, clear slot,
+                                    RequestStreamingRestart if devices remain
+rate change → SetNewSamplingRate (0x8ec8) → RequestStreamingRestart
+clock src   → SetNewClockSyncSource (0x8fd2) → RequestStreamingRestart
+RX/TX config-change notification → RequestStreamingRestart (§2.4)
+
+TimerFired (0xa6b6), every 200 ms (period set in initHardware 0xa1fe):
+  new requests since last tick?  → StopStreaming(full), countdown = 2
+  countdown reaches 0            → RestartStreaming (0xdb62)
+```
+
+Two properties matter more than any individual step:
+
+1. **One entry point.** Every event, whatever its source, becomes "request a restart".
+   Storms of events coalesce into one restart after ~400 ms of quiet.
+2. **The wire is independent of CoreAudio.** `V_AudioEngine::performAudioEngineStart`
+   (`0x4682`) and `performAudioEngineStop` (`0x4968`) reset buffers and counters; neither
+   starts or stops isochronous DMA. The only callers of `StopStreaming` and
+   `RequestStreamingRestart` are device lifecycle, settings, notifications, the timer, and
+   `performFormatChange`. Streams run whenever a device is present.
+
+### 2.3 `RestartStreaming`: the whole bring-up
+
+One function, top to bottom (`0xdb62`, with helpers):
+
+| # | Step | Register / mechanism | Timeout |
+|---|---|---|---|
+| 1 | Read section table + GLOBAL for each present device | 0x28 B @ `0xFFFFE0000000`, then GLOBAL (`PopulateGlobalDeviceStruct 0xc25e`) | — |
+| 2 | Claim owner **only if the bus generation changed** | CAS `OWNER` from `0xFFFF000000000000` (`GetOwnership 0xc624`); allocates a per-device notification address | — |
+| 3 | Choose clock master; drop devices on another bus | configured master GUID, else first device | — |
+| 4 | Validate rate and source against `CLOCK_CAPABILITIES` | fall back to first supported; mark "clock changed" | — |
+| 5 | Write `CLOCK_SELECT` to every device | master: chosen source; others: ARX1 | wait `CLOCK_ACCEPTED`, ≤150 ms (2 ms sleeps) |
+| 6 | Read TX/RX stream sections | `PopulateDeviceStruct 0xc89a`; `TX_NUMBER ≥ 3` or `RX_NUMBER > 4` = error | — |
+| 7 | **Only if the clock changed**, wait for lock | master `LOCK_CHG` notification, then `STATUS` bit 0 | ≤1 s (4 ms sleeps) |
+| 8 | Allocate isoch resources | `IOFWIsochChannel`, IRM picks **any** channel (`V_IsocPort::getSupported 0x1232c` returns mask `-1`); the port callback writes `ISOCHRONOUS` + TX `SPEED` / RX `SEQ_START=0` (`allocatePort 0x123bc` → `ReportChannelAndSpeedToHardware 0x11404`) | — |
+| 9 | Start | prefill TX, `ENABLE=1` on every device, sleep 2 ms, start IT, then IR (`StartStreams 0xfb2e`) | — |
+
+Any failure along the way calls `RequestStreamingRestart` and returns: the next timer tick
+retries. There is no rollback ledger. `StopStreaming(full)` (`0x116ca`) is total: stop
+host contexts, wait for callbacks to drain, `ENABLE=0` on every device, release channels
+(`releasePort 0x1248e` writes `ISOCHRONOUS = -1`).
+
+### 2.4 Notifications
+
+`NotificationWriteCallback` (`0xd780`), per device:
+
+| Bit | Meaning | TCAT reaction |
+|---|---|---|
+| `0x20` CLOCK_ACCEPTED | device took `CLOCK_SELECT` | decrements the step-5 wait counter |
+| `0x01`/`0x02` RX/TX_CFG_CHG | device changed its stream config | `RequestStreamingRestart` (unless one is running) |
+| `0x10` LOCK_CHG | lock state changed | step-7 counter; deferred `WriteNotificationReceived` (`0xb640`) reads `STATUS` and logs |
+
+There is no health-probe or recovery ladder. Lock loss is logged; a real config change
+restarts.
+
+### 2.5 Linux
+
+- **Owner** is claimed when the driver binds and re-claimed after every bus reset:
+  `register_notification_address` CAS from `OWNER_NO_OWNER`, accepting "already ours"
+  (`dice-transaction.c:163-215`), called again from `snd_dice_transaction_reinit` (`:254`).
+  Released only when the driver unbinds (`:217`).
+- **Clock:** `select_clock` always writes `CLOCK_SELECT`, waits `NOTIFICATION_TIMEOUT_MS`
+  = **100 ms**, and tolerates a timeout only if the value did not change
+  (`dice-stream.c:12, 60-98`).
+- **Reserve then start:** stop, `finish_session` (all `ISOCHRONOUS=-1`, `ENABLE=0`),
+  `select_clock`, re-read the stream counts, reserve resources (`:265-323`). Start writes
+  each stream's `ISOCHRONOUS`/`SPEED`, then `ENABLE`, then starts the AMDTP domain and
+  waits for it to be ready (`:382-470`; `ENABLE` at `:442`, domain start at `:453`). "Either no streams run or all streams run" (`:378-381`).
+- **Channels:** the IRM chooses from channels 0–31 (`dice-stream.c:506`).
+- **Bus reset:** the firmware disables streaming and is unresponsive for hundreds of ms,
+  so Linux stops its streams and lets the application restart (`:587-607`).
+- **Wire lifetime:** Linux streams while a PCM substream is open (`substreams_counter`),
+  i.e. per client. TCAT streams while the device is present.
+
+### 2.6 Our own hardware lessons (constraints on the redesign)
+
+These were paid for on hardware and must survive any rewrite:
+
+1. **Prefill the whole TX ring with NO-DATA before IT RUN.** `DICE_STABILITY_REGRESSION.md`
+   §2: all known-good builds did; the regressed build seeded 144 packets.
+2. **`CLOCK_SELECT` may be skipped only if the requested *and* the achieved rate match.**
+   `DICE_STABILITY_REGRESSION.md` §3, hardware-validated. Rewriting `CLOCK_SELECT` while
+   streams are being enabled wedged the device (`DiceFamilyDriver::WriteClockSelect`).
+   TCAT and Linux always rewrite it, but only with every stream stopped.
+3. **Clear every stream's `ISOCHRONOUS` on stop, not just stream 0.** A stale duplicate
+   channel wedges the device until a power cycle (`DiceFamilyDriver::StopSequence`).
+   TCAT (`releasePort`) and Linux (`stop_streams`) both clear every stream.
+4. **Program every stream before the single `ENABLE`** (Venice F32, two streams per
+   direction; `DiceFamilyDriver::ProgramRxStreams`).
+5. **Host start order IR then IT, 2 ms after `ENABLE`** is the order attested on the
+   Saffire Pro 24 DSP (`DuplexStreamProfile.hpp:33-58`; `DICE_STABILITY_REGRESSION.md` §2).
+6. **Weiss INT202/203 need host IT before they can report source lock**
+   (`FamilyProtocolConstruction.cpp:95`, `DiceWeissInt` policy).
+7. **CoreAudio issues rapid `StartIO`/`StopIO` cycles** when it probes rates
+   (`DiceAudioBackend.cpp:446-456`).
+
+### 2.7 Where the sources disagree
+
+| Question | TCAT | Linux | Ours today | Recommendation |
+|---|---|---|---|---|
+| Owner lifetime | claim on new generation, hold while present | claim at bind + after reset, hold until unbind | claim every prepare, release every stop (held since S3: claimed once per generation, never released) | **Hold while present, re-claim per generation.** Both references agree, and notifications keep flowing while idle (needed for §2.4). Done in S3, except the release at unbind (§8 Q7). |
+| Isoch channel | IRM picks any of 64 | IRM picks from 0–31 | fixed one-bit mask, defaults 1/0 (IRM picks 0–31 since S3) | **IRM picks**, mask 0–31 (the narrower, Linux mask). Write the result to the device. Done in S3. |
+| `CLOCK_SELECT` rewrite | always, streams stopped | always, streams stopped | skip if requested + achieved match | Keep our skip rule (lesson 2); it is a strict subset of safe behaviour. Always stop first. |
+| Clock-accepted wait | ~150 ms | 100 ms | 150 ms (comment wrongly cites Linux) | 150 ms, cite TCAT. |
+| Lock wait | only if the clock changed, ≤1 s | via domain ready, 200 ms | always; up to 2 s + a 200 ms confirm poll | Wait when the clock changed or the device is unlocked; single 1 s bound. |
+| Host start order | ENABLE → 2 ms → IT → IR | ENABLE → domain start | ENABLE → 2 ms → IR → IT | **Keep IR → IT** (lesson 5, hardware-attested). Record the TCAT difference. |
+| Config-change notification | restart | wakes userspace | ignored (restarts since S3) | **Restart** (via the request counter). Done in S3: a restart request tied to the running run, dropped while a reconcile runs or while idle. |
+| Wire lifetime | while device present | while a client is open | while CoreAudio runs | **Decision §4.4.** |
+
+---
+
+## 3. What we have
+
+### 3.1 Coordinator responsibilities
+
+`AudioDuplexCoordinator` today is several jobs in one class:
+
+| Job | Where |
+|---|---|
+| Admission: one operation per GUID, stop intents | `DuplexOperationGate`, `TryAcquireGuid` (`:1934`) |
+| Session persistence, restart ids, epochs | `RestartSessionStore`, `IsRestartEpochCurrent` (`:1956`) |
+| Clock-change requests as tokens with completions | `ClockRequestBroker`, `RunClockRequestLoop` (`:800`) |
+| Recovery decisions | `DuplexRecoveryPolicy`, `RunRecoveryStreaming` (`:704`) |
+| Phase journal / FSM logging | `RestartJournal` |
+| The start sequence | `DuplexStartTransaction::Run` (`:913-1594`) |
+| Global clock stability wait | `WaitForStableGlobalClock` (`:1595`) |
+| Stop | `DuplexStartTransaction::Stop` (`:1668`) |
+| Idle clock apply | `ApplyIdleClock` (`:1769`) |
+| IRM, host isoch | `DuplexIRMReservations`, `IsochDuplexHostTransport` (kept, §5) |
+
+### 3.2 Families behind it
+
+*(Before S5; `FamilyDriver` replaced this interface, §6.)*
+`IDuplexDeviceControl` (`Duplex/IDuplexDeviceControl.hpp`) is implemented by DICE TCAT,
+SPro24Dsp, BeBoB/PHASE 88/M-Audio special, Apogee Duet, Mackie Onyx / Fireworks (via the
+shared AV/C+CMP base), and MOTU. Its stages are `EnsureRuntimeStreamGeometry`,
+`PrepareDuplex`, `SetAssignedChannels`, `ProgramRx`, `ProgramTxAndEnableDuplex`,
+`ConfirmDuplexStart`, `ApplyClockConfig`, `ReadDuplexHealth`, `Disconnect*`, `StopDuplex`.
+
+### 3.3 Event entry points today
+
+`StartIO` → nub → `AudioCoordinator::StartStreaming` → `AudioDuplexCoordinator::StartStreaming`;
+`StopIO` → `StopStreaming`; rate or clock change → `RequestClockConfig`; timing loss, cycle
+inconsistent, lock loss, TX fault → backend `HandleRecoveryEvent` → `RecoverStreaming`;
+bus reset → rebind reason; removal → `CancelRemoteDevice` + `ClearSession`. Each has its
+own guard logic.
+
+---
+
+## 4. Target architecture
+
+### 4.1 Principles
+
+1. **One entry point.** Anything that should change what is on the wire becomes
+   `RequestRestart(reason)` on the device's session. Nothing else starts or stops streams.
+2. **One linear restart routine** per session, written top to bottom as a sequence of
+   `std::expected` steps. Reading it tells you the wire order.
+3. **Stop is total and idempotent.** It clears every stream register, `ENABLE=0`, stops
+   host contexts and releases every IRM allocation, whatever state it finds. No rollback
+   ledger.
+4. **Wire running is separate from HAL attached.** Whether the wire follows the device or
+   CoreAudio is a per-family policy (§4.4), not an accident of where `StartIO` calls in.
+5. **Geometry only from the device** (`DICE_TCAT_ARCHITECTURE.md`).
+6. **The IRM picks channels**; the family writes the result to the device.
+7. **Strong types for direction.** `DeviceTx`/`DeviceRx`, never "Tx" alone; the DICE
+   register names and the host names are inverses (`AlesisMultiMixProfile.cpp:39` warns
+   about this).
+8. **Everything testable on the host**, against a simulated device (§6, S0).
+
+### 4.2 Components
+
+Names are provisional. Each has one job.
+
+```
+Audio/Session/
+  SessionScheduler     per device: request counter, debounce, serial execution, backoff
+  DesiredState         value type: rate, clock source, hal-attached, wire policy
+  RestartRoutine       the neutral sequence (below)
+  StopRoutine          total, idempotent stop
+  FamilyDriver         interface each family implements
+  SessionState         Absent | Idle | Restarting | Running | Faulted
+Audio/Protocols/DICE/
+  DiceRegisterMap      parsed value types (reuses DICETypes / DICETransaction parsing)
+  DiceDeviceIo         blocking read / write / CAS / wait-for-notification
+  DiceNotifications    per-device notification endpoint (replaces the global mailbox)
+  DiceFamilyDriver     the TCAT sequence, linear
+kept: IsochDuplexHostTransport, DuplexIRMReservations, DuplexStreamProfile (host geometry)
+```
+
+**`SessionScheduler`.** Counts requests with their reasons. When requests arrive it runs
+`StopRoutine`, waits for a quiet period, then runs `RestartRoutine` once. A failed restart
+schedules a retry with bounded backoff; N consecutive failures enter `Faulted` (logged
+once, cleared by the next device event or explicit user action). It replaces
+`DuplexOperationGate`, `RestartSessionStore`, `ClockRequestBroker`, `RestartJournal` and the
+decision half of `DuplexRecoveryPolicy`. A clock change is "edit `DesiredState`, request a
+restart". Recovery events are requests with a reason. There are no restart epochs to
+compare, because a stale request is just another request.
+
+**`RestartRoutine`** (neutral):
+
+```cpp
+std::expected<RunningSession, SessionError> RestartRoutine::Run(const DesiredState& want) {
+    stop_.Run();                                               // always from a clean floor
+    auto layout = TRY(family_.Configure(want));                // clock + read stream layout
+    auto plan   = TRY(irm_.Reserve(layout, family_.Channels())); // IRM picks channels
+    TRY(family_.Arm(plan));                                    // DICE: ISOCHRONOUS/SPEED; CMP: PCRs
+    TRY(host_.Prepare(layout, plan));                          // DMA programs, whole-ring TX prefill
+    TRY(family_.Enable());                                     // DICE: ENABLE=1; CMP: no-op
+    TRY(host_.Start(family_.HostStartOrder()));                // e.g. IR then IT, 2 ms after enable
+    TRY(family_.Confirm(host_));                               // DICE: lock/ARX; CMP: PCR + liveness
+    return RunningSession{layout, plan};
+}
+```
+
+`TRY` here is illustrative of early return on an unexpected value, not a proposed macro.
+Every failure returns a `SessionError{step, status, detail}` and leaves recovery to the
+scheduler, which always runs `StopRoutine` first.
+
+**`FamilyDriver`** (interface; blocking; called only on the session queue):
+
+| Method | DICE | AV/C + CMP | MOTU |
+|---|---|---|---|
+| `Configure(want)` | owner (per generation), `CLOCK_SELECT` + accepted/lock waits, read TX/RX | plug formats, clock | vendor registers |
+| `Channels()` | IRM any (0–31) | IRM any | per protocol |
+| `Arm(plan)` | per-stream `ISOCHRONOUS`, TX `SPEED`, RX `SEQ_START` | PCR connect | registers |
+| `Enable()` | `ENABLE=1` | — | — |
+| `HostStartOrder()` | IR → IT, 2 ms | per recipe | per recipe |
+| `Confirm(host)` | lock / ARX policy (Weiss relaxed) | PCR leases, packet liveness | — |
+| `Stop()` | `ENABLE=0`, every stream `-1` | PCR disconnect | registers |
+| `OnDeviceEvent(e)` | map notification bits to requests | — | — |
+
+The existing recipes (`StreamStartShape`: `CmpReceiveThenTransmit`, `ApogeeInterleaved`,
+`MAudioSpecial`, `TransmitFirst`) become `HostStartOrder()` answers. `ApogeeInterleaved`
+interleaves host starts with device stages, so `HostStartOrder()` returns a small plan
+value (host directions plus where each sits relative to `Arm`/`Enable`) rather than a bare
+order. It stays data that every family must state, not an optional hook (rule 2 below).
+That is the only place where the neutral sequence bends.
+
+**`DiceDeviceIo`.** Blocking register access: `ReadQuad`, `ReadBlock`, `WriteQuad`,
+`CompareSwap64`, and the `DICETransaction` parsers wrapped as blocking reads, each returning
+`std::expected`. **As built in S1** it runs on the caller's queue (the nub's queue or
+`com.asfw.audio.dice`), never on the Default queue where the bus completions land, and waits
+for each completion through `DiceWaitClock::Backoff`: `IODelay` escalating 5 µs → 255 µs,
+then `IOSleep(1)`, with a 2 s safety deadline that turns a lost completion into a logged
+`kIOReturnTimeout` instead of a hang. `DiceWaitClock` is the only time source; tests pass a
+virtual-time clock.
+
+**Target (S2):** once the session owns a queue, replace the backoff with
+`IODispatchQueue::SleepWithTimeout(event, timeout)` / `Wakeup(event)` (DriverKit SDK 25.5,
+`IODispatchQueue.h`): a thread running on the session queue sleeps **and releases the
+queue**; the bus completion dispatches a block onto the same queue that records the result
+and calls `Wakeup`. Completions may then land on the session queue, and no polling is
+needed. `Wakeup` must be called from a block running on that queue. The header does not
+state the timeout's unit, and ASFW does not use these calls yet, so S2 confirms the unit and
+the behaviour in a small spike first. `WaitNotification(mask, timeout)` arrives with the
+per-device notification endpoint (S3); S1 keeps the 10 ms poll of the global mailbox. S3
+built the per-device mailbox and kept the poll: `WaitNotification` needs the session queue
+(S4).
+
+**`DiceNotifications`.** One endpoint per device, attributed by source node (or a
+per-device handler offset, as TCAT's per-device address space does), replacing the
+global `NotificationMailbox`. **As built in S3:** each `DICETcatProtocol` owns a
+`DiceNotificationMailbox` and registers it, by GUID, with the `DiceNotificationRouter` in
+the controller deps. The local request handler resolves the write's source node, at the
+generation it arrived in, through `DeviceRegistry::SnapshotByNode`, then publishes to that
+mailbox and tells the DICE backend `(guid, bits)`. Attribution by source keeps one host
+address, so the owner value and the wire are unchanged.
+
+**Where polymorphism lives.** The scheduler and the restart routine are **concrete
+`final` classes**. There is exactly one scheduling policy and one restart routine; that
+is the point of the design, and an interface over them would advertise a second
+implementation that must never exist. They are tested as the real thing, with fakes of
+what they depend on (`FamilyDriver`, host transport, IRM). If a caller such as
+`AudioCoordinator` or the nub later needs a test double, it gets a narrow consumer-side
+interface (request restart, set desired state, wait for `Running`), never one covering
+the scheduler's whole surface.
+
+The one polymorphic seam is `FamilyDriver`, and it is a **pure interface, not an abstract
+class**. Today's `IDuplexDeviceControl` shows why. It has defaulted virtuals
+(`IDuplexDeviceControl.hpp:32-71`): `EnsureRuntimeStreamGeometry` succeeds,
+`SetAssignedChannels` does nothing, `Disconnect*`/`BreakBothConnections` return
+unsupported, `SetTeardownCancelToken` is ignored. A family that forgets one compiles and
+misbehaves quietly; the `SetAssignedChannels` comment itself describes the failure
+(device and host on different channels). Rules:
+
+1. **Only pure virtuals, no data members, a virtual destructor.** Every family states its
+   answer to every step.
+2. **A no-op is written in the family, not inherited.** For example CMP's `Enable()` returns
+   success explicitly, with a one-line reason, so a reviewer sees the decision.
+3. **Shared sequencing lives in `RestartRoutine`, never in a base class.** No
+   template-method bases with overridable hooks. That pattern is how DICE-shaped steps
+   (`WaitForStableGlobalClock`) ended up inside the supposedly neutral coordinator.
+4. **Shared per-family helpers are free functions or small composed objects**
+   (`DiceDeviceIo`, a PCR helper), reached by composition, not inheritance.
+5. **Resources flow in, not out.** The session owns the IRM client, host transport and
+   cancellation token and passes them where needed. Today's
+   `IDuplexDeviceControl::GetIRMClient()` asks the device for a bus resource and is not
+   carried forward. *(Done in S5: `AudioSessions::SetIrmClient`.)*
+
+A closed `std::variant` of family drivers with an exhaustive `std::visit` (the shape
+`FamilyProtocolConstruction` already has) was considered. It is deferred, not rejected:
+stage S2 wraps each existing `IDuplexDeviceControl` in an adapter, which is natural as an
+interface implementation and awkward inside a variant, and the virtual interface matches
+`IDeviceProtocol`. Once S5 removes the adapter, moving to a variant is cheap if it is
+wanted.
+
+### 4.3 State
+
+Per device: `Absent`, `Idle`, `Restarting`, `Running`, `Faulted`. The current step name is
+carried for logging only. The 8-alternative lifecycle variant, the 16 phases and the
+rollback ledger (`DuplexControlTypes.hpp`) go away, because stop no longer needs to know
+what start acquired.
+
+### 4.4 Central decision: does the wire follow the device or CoreAudio?
+
+**TCAT:** the wire runs while the device is present; CoreAudio attaches to it (§2.2).
+**Today:** the wire starts on `StartIO` and stops on `StopIO`.
+
+Following TCAT for DICE would:
+
+- remove the whole `StartIO`/`StopIO` churn class (§1.4, lesson 7);
+- make `StartIO` fast: zero-timestamp anchors already exist, the clock is locked, and the
+  device already accepts our stream;
+- keep device notifications and lock state meaningful while idle.
+
+It costs:
+
+- isochronous bandwidth held while no app plays (fine for one device, relevant to
+  multi-device later);
+- a TX path that runs with no HAL client, sending NO-DATA or silence. The TX producer must
+  not depend on a live CoreAudio buffer (see the TX pull work, memory
+  `tx-pull-architecture-step4a`);
+- `StartIO` must reset the TX fill cursor and exposure counters against a running wire
+  (both were real bugs: memories `tx-fill-cursor-not-reset-on-startio`,
+  `tx-exposure-counters-not-reset-on-restart`).
+
+**Recommendation:** DICE follows TCAT, after a hardware spike on the Saffire Pro 24 DSP
+(S4). Every other family keeps "wire follows CoreAudio" until evidence says otherwise.
+Apple's own AV/C audio behaviour should be checked first; `IOFireWireAVC` in `references/`
+is protocol only, so the audio driver would have to be sourced. `DesiredState` carries the
+policy, so the scheduler does not care which one a family picks.
+
+### 4.5 Concurrency and teardown
+
+- **As built in S2:** no session queue yet. Reconciles are serialized per device, and the
+  caller whose request finds none running runs it on its own thread; requests arriving
+  meanwhile edit what is wanted and wait, and the running caller loops until one reconcile
+  has seen every edit. Every caller (the nub's queue, a backend queue) is off the Default
+  queue where bus completions land, so blocking there is safe, as it was under the
+  coordinator. Restart requests made during a reconcile are queued behind it and return at
+  once, so a request raised on the reconciling thread cannot wait on itself. A per-device
+  queue arrives with S4, when the wire stops following CoreAudio and the scheduler needs a
+  place of its own to run the debounce timer.
+- Target: one serial session queue per device. Only the scheduler runs on it.
+- Bus completions, notifications and timers arrive on other queues and only enqueue
+  requests or complete waits.
+- Teardown sets a cancellation token that every blocking wait checks, then runs
+  `StopRoutine` and drops cross-service views before freeing buffers, as the FW-60 rules in
+  `CLAUDE.md` require.
+- CoreAudio calls (`StartIO`, `StopIO`, rate change) only edit `DesiredState` and request;
+  `StartIO` then waits for `Running` (bounded), as it waits for zero-timestamp today.
+
+### 4.6 Multi-device
+
+**Non-goal**, but not precluded. The per-device session, per-device notification endpoint and
+table-shaped registry keep aggregation possible. Two candidate sync models are recorded:
+
+- **TCAT:** one engine, one clock master, others slaved to ARX1 (§2.3 step 5).
+- **CoreAudio aggregate devices**, which did not exist in the IOKit era, could provide
+  multi-device sync without a driver-side engine merge.
+
+No decision is taken here.
+
+---
+
+## 5. Fate of existing code
+
+| Today | Becomes |
+|---|---|
+| `AudioDuplexCoordinator` public API | `SessionScheduler` requests |
+| `DuplexStartTransaction::Run` | `RestartRoutine` |
+| `DuplexStartTransaction::Stop`, `DICEDuplexBringupController::DoStop*` | `StopRoutine` + `FamilyDriver::Stop` |
+| `ApplyIdleClock`, `ClockRequestBroker` | deleted: clock change = desired state + restart |
+| `DuplexOperationGate`, `RestartSessionStore`, `RestartJournal` | deleted: scheduler serialisation + `SessionState` |
+| `DuplexRecoveryPolicy` | deleted: retry/backoff in the scheduler |
+| `WaitForStableGlobalClock` | moves into `DiceFamilyDriver::Configure` (it is DICE-shaped) |
+| Lifecycle variant, 16 phases, rollback ledger | deleted |
+| `IDuplexDeviceControl` | `FamilyDriver`, implemented by every family (S5); its defaulted virtuals and `GetIRMClient()` are gone (§4.2) |
+| `AudioDuplexCoordinator` class shape | concrete `final` `SessionScheduler`; no interface over it (§4.2) |
+| `DICEDuplexBringupController` (async chain) | `DiceFamilyDriver` (linear) |
+| `DICETransaction`, `DICETypes` | kept for parsing; I/O moves to `DiceDeviceIo` |
+| `DICENotificationMailbox` (global) | `DiceNotificationMailbox` per device + `DiceNotificationRouter` (S3) |
+| `DiceAudioBackend` recovery / health probe / `TryBeginRecovery` | deleted: notifications become requests |
+| `DiceAudioBackend::EnsureNubForGuid` | kept (publication; later endpoint-lifecycle work) |
+| `DuplexStreamProfile` | kept for host geometry; `playbackWireFormat` and the fixed-channel defaults deleted |
+| `SyncAsyncBridge` | kept for the families still built on callback chains, reached through `FamilyStageWait.hpp` (S5); DICE waits in `DiceDeviceIo` |
+| `IsochDuplexHostTransport`, `DuplexIRMReservations` | kept; IRM gains the "any channel" policy |
+
+---
+
+## 6. Staging
+
+Each stage deletes the path it replaces (no double paths), is hardware-checkable, and keeps
+the Saffire Pro 24 DSP working. DICE hardware on hand: Pro 24 DSP only; the other DICE rows
+rely on fixtures plus the vendors' identical code (§2.1).
+
+- **S0: simulated DICE device and golden wire traces. Done (2026-09-24).**
+  `tools/pydice` `export-dice-images-cpp` turns the fixture dumps into
+  `tests/support/DiceDeviceImages.inc`; `tests/support/SimulatedDiceDevice.hpp` answers the
+  bus from them (clock, owner, notifications, bus reset, fault knobs, and an invariant
+  observer); `tests/devices/DiceWireCharacterizationTests.cpp` records 27 goldens in
+  `tests/golden/dice/` (`ASFW_UPDATE_GOLDEN=1` rewrites them). No production change. The
+  goldens expose the three defects listed at the end of §1.3.
+- **Fixes before S1: done.** `b1d80f39` (the `CLOCK_SELECT` skip also checks the achieved
+  rate) and `a3212dd6` (Pro 24 DSP timer). Each regenerated only the goldens it declared,
+  so S1 now preserves corrected behaviour. Both still need a check on the Pro 24 DSP.
+- **S1: DICE goes linear. Done (2026-09-24), branch `refactor/dice-linear-bringup`.**
+  `DiceWaitClock` + `DiceDeviceIo` (`ce6226f9`), `DiceFamilyDriver` (`92249322`), and the
+  swap (`c0550fd0`): `DICETcatProtocol` adapts each `IDuplexDeviceControl` stage onto one
+  synchronous driver call, the protocols take a required `DiceWaitClock&` in place of an
+  optional `ITimerScheduler*`, and `DICEDuplexBringupController` (1,957 lines) is deleted.
+  All 27 goldens pass unchanged, with no declared delta. The ported controller tests run as
+  `DiceFamilyDriverTests` (20). Not yet run on hardware; batched with the pending Pro 24 DSP
+  checks. The `SleepWithTimeout`/`Wakeup` spike moved to S2 (§4.2).
+- **S2: the scheduler replaces the coordinator. Done (2026-09-25), branch
+  `refactor/audio-session-scheduler`.** Session goldens first (`6e5815f7`, `a22f60c0`):
+  `tests/golden/session/`, 19 scenarios × 6 recipes, recorded against the coordinator.
+  Then `Audio/Session/` (`fd5d0f7c`): `FamilyDriver`, `DuplexControlAdapter` (every family,
+  one place for the callback bridge), `RestartRoutine`, `StopRoutine`, `SessionScheduler`,
+  `AudioSessions`; the goldens ran against both implementations. Backends switched
+  (`c875b45e`); coordinator, gate, store, broker, journal, recovery policy and the lifecycle
+  vocabulary deleted (`7801126d`). Coalesce only, no debounce (user decision; the TCAT
+  quiet period is S4). Declared deltas, each a golden:
+  - `double-start`: a second StartIO no longer re-runs the start over running streams.
+  - `fault-after-stop`: a fault after StopIO no longer restarts the streams.
+  - `stop-after-refused-start`: succeeds; the coordinator hit an illegal lifecycle
+    transition whose `assert` is live in the dext (no build defines `NDEBUG`).
+  Behaviour changes without a golden: three failed fault recoveries in a row leave the
+  streams stopped until the next attach, for every family (AV/C allowed four, DICE and MOTU
+  had no limit); a clock change that overlaps a stop is applied idle instead of dropped;
+  recovery no longer aborts a pending clock change, it applies it. Backends keep their
+  evidence filters (DICE health gate and rate echo, AV/C settle and self-heal) and their
+  one-queued-block flags; the scheduler owns staleness (`RunningRun`). The
+  `SleepWithTimeout`/`Wakeup` spike is deferred with the session queue (S4). Not yet run
+  on hardware: Pro 24 DSP, M-Audio 1814, PHASE 88, Apogee Duet.
+- **S3: wire fixes, each declared. Done (2026-09-25), branch `refactor/dice-wire-fixes`.**
+  One commit per fix, each regenerating only the goldens it declares:
+  - **Section table first** (`2e24d7fa`). The bring-up opened with a `GLOBAL_STATUS` read
+    at the layout held before the table was read: `0xFFFFE0000054` (past the table) on
+    the first bring-up, a discarded real read later. Deleted; 65 + 12 reads leave the
+    goldens. The Saffire.kext reference window also opens with a discarded read at
+    `0x7C`; the parity test records the deviation.
+  - **The IRM picks DICE channels from 0–31** (`6091e308`). The catalog's CMP bool became
+    `IsochResourcePolicy::irmChannelMask`, set for every DICE row in `Definition()`.
+    `DiceFamilyDriver::AssignChannels` writes the IRM's channels to the ISOCHRONOUS
+    registers. The Pro 24 DSP keeps 0/1 on an empty bus; the Venice F32 moves from
+    playback 0,3 and capture 1,2 to 0,1 and 2,3. New `channel-busy` goldens: with 0 and 1
+    held elsewhere, DICE streams on 2 and 3, where it used to be refused. MOTU keeps its
+    planned channel (Linux lets the IRM pick any of 64; no MOTU evidence here).
+  - **A notification mailbox per device** (`fabd595e`, §4.2). No wire change; every
+    golden unchanged. The legacy latch address `0x00FF0000D1CC` is no longer accepted.
+  - **Config-change notifications restart running streams** (`e87f1670`), with the new
+    reason `kDeviceConfigChange`. The session rig now runs the real `DiceAudioBackend`
+    for DICE shapes. Every existing golden is unchanged, so the config change our own
+    `CLOCK_SELECT` raises mid-start adds no restart. New goldens: `config-change-running`
+    (one restart), `config-change-idle` and `config-change-during-start` (none).
+  - **Owner held while present, re-claimed per generation** (`663b3d78`). `EnsureOwner`
+    skips the wire when it claimed in this generation and the GLOBAL read shows our value.
+    Stop, rollback and the idle clock apply no longer release. 51 goldens lose 47 releases
+    (plus 4 that went to a device without our owner) and 12 same-generation re-claims with
+    their 24 owner reads. `recover-bus-reset` still re-claims. Not released at service
+    teardown (§8 Q7).
+  Not yet run on hardware; batched with the S1 and S2 checks on the Pro 24 DSP. The one
+  real risk is a config-change notification the device sends *after* a restart finishes,
+  which would cost one extra restart. TCAT would restart on it too: its debounce only
+  merges events that arrive before the restart runs. Hardware (2026-09-25, Pro 24 DSP):
+  cold start, stop/start without a re-claim, and 48→44.1 kHz all passed; the device's own
+  config change during the idle rate change was dropped as stale. Replug not yet tested.
+- **S4: DICE wire follows the device.** Split into three parts; only S4a is done.
+  - **S4a, done (2026-09-25), branch `refactor/session-quiet-period`.**
+    - The idle clock apply waits up to 1 s for the device to reach the new rate
+      (`ab5782d6`). Before, the next start found the old rate and rewrote `CLOCK_SELECT`.
+    - Device and transport restart requests (bus reset, config change, runtime faults)
+      wait out a per-family quiet period. DICE uses 400 ms, TCAT's two 200 ms ticks; every
+      other family uses 0, which keeps its timing and goldens (`8723a407`, `f3156d26`).
+      - A pending restart is covered when another run has started since.
+      - HAL requests are never delayed and cancel a pending restart.
+      - Retirement and teardown cancel it.
+      - Each device session has its own queue, drained on erasure and teardown.
+      - Backends refresh the nub after the restart actually happens (`OnStreamsRestarted`).
+    - Not yet run on hardware: an idle rate change followed by a start, a replug while
+      playing, and StartIO/StopIO churn.
+  - **S4b, the hardware spike: stopped, did not pass.** A throwaway branch,
+    `spike/dice-wire-idle`, never merged. It kept the Pro 24 DSP's stream running after
+    StopIO. The results are in `S4B_PRO24DSP_SPIKE_2026-09-25.md` on that branch.
+    - **Idle is fine.** With CoreAudio detached, TX kept producing: 30,906 packets,
+      7,726 of them no-data, with no underrun or content fault.
+    - **Rejoining is not.** Three attempts failed:
+      1. A sustained ~2,300-frame exposure shortfall and suspected clicks.
+      2. Silence: every returning client frame fell beyond the exposed, writable packets,
+         so it was counted as `noPkt`.
+      3. An explicit client-to-wire frame map played its first start but found no safe
+         join packet after a long idle.
+    - **The root problem** is that nothing defines where a returning CoreAudio client's
+      frame range meets a live packet timeline.
+  - **S4b rejoin and S4c are parked** (user decision, 2026-09-25) until the audio stack's
+    hardening work defines that join contract (§8 Q8). DICE streams keep following
+    CoreAudio.
+- **S5: every family implements `FamilyDriver`. Done (2026-09-25), structural,
+  branch `refactor/family-driver`.** User decision: with hardware checks parked, no family
+  is rewritten as one straight sequence yet.
+  - **Where `FamilyDriver` lives now.** It moved to `Audio/Protocols/Duplex/` and gained
+    `SetTeardownCancelToken` (`c9bd9ced`).
+  - **DICE is native** (`8fc3e9dd`). `DICETcatProtocol` calls `DiceFamilyDriver`
+    synchronously; its callback wrappers are gone. Geometry and health await the
+    asynchronous reads that nub publication also uses on the Default queue.
+    `EnsureRuntimeStreamGeometry` moved up to `IDeviceProtocol` for that path.
+  - **BeBoB, Apogee Duet and MOTU** implement it over their unchanged callback chains
+    (`da5a0a18`). They wait through `FamilyStageWait.hpp`, with the adapter's 12 s stage
+    bound. BeBoB covers PHASE 88, generic BeBoB, M-Audio special, Mackie Onyx and
+    Fireworks. Steps they used to inherit are written out with the same results.
+  - **Deleted** (`8e09f506`): `DuplexControlAdapter`, `IDuplexDeviceControl`,
+    `AsDuplexDeviceControl`, and every `GetIRMClient`. The session takes the IRM client by
+    composition.
+  - **Proof.** Every session and S0 golden is byte-identical. New `FamilyDriver`
+    entry-point tests per family cover teardown aborting an Apogee step whose CMP lock is
+    still in flight.
+  - **Still to do, per family, once its hardware can be checked:** record the real
+    protocol's wire traces, then rewrite its chain as one straight sequence (S1's method).
+- **S6: geometry stages B and C. Done (2026-09-25), branch `refactor/dice-profile`; D
+  deferred.** Owned by `DICE_TCAT_ARCHITECTURE.md` §4.2, which has the details.
+  - **B, rates from the device** (`a4e5148d`). The nub publishes the rates in the device's
+    `CLOCK_CAPABILITIES`, up to 48 kHz, and DICE refuses any other rate before touching the
+    bus. Every recorded device still offers 44.1 and 48 kHz.
+  - **C, one DICE profile** (`3a856d9d` recorded every builder's answers first, `7b0585ba`
+    collapsed). The seven classes are gone and profiles state no stream geometry. The
+    seed/assert gate is deleted. Only the declared lines moved in the profile goldens.
+  - **D, re-reading geometry on a rate-mode change,** is deferred to the work that raises
+    the 48 kHz ceiling. It cannot trigger below 2x rates.
+  - **Proof.** Session and S0 goldens unchanged; `DiceFixtureGeometryTests` unchanged;
+    no hardware check (parked).
+
+## 7. Verification
+
+- **Host:** golden-trace equivalence against the simulated device (S0/S1); scenario tests for
+  request coalescing, stop idempotence, bus reset mid-restart, missing `CLOCK_ACCEPTED`, lost
+  owner, and teardown during a blocking wait; `DiceFixtureGeometryTests` unchanged.
+- **Full C++ suite** every stage; grep the log for `error:` yourself, because `build.sh` has
+  reported false passes.
+- **Hardware per stage:** Pro 24 DSP start, 20-minute soak (the `DICE_STABILITY_REGRESSION.md`
+  §2 health markers), rate change, cable pull and replug, CoreAudio rate probing. S2 and S5 also
+  need the 1814, PHASE 88 and Duet.
+- **Logging:** one `[Session]` line per restart (reasons coalesced, step reached, duration),
+  anomaly-only otherwise:
+  `/usr/bin/log show --last 10m --info --debug --predicate 'eventMessage CONTAINS "[Session]"'`.
+
+## 8. Open questions
+
+1. **Wire policy for non-DICE families.** What does Apple's AV/C audio driver do? The source is
+   needed before choosing.
+2. **Debounce vs `StartIO` latency.** Answered in S4a: only device and transport restart
+   requests wait out the quiet period; HAL requests (attach, detach, clock) run at once and
+   cancel a pending restart.
+3. **Blocking primitive.** Answered: `IODispatchQueue::SleepWithTimeout`/`Wakeup`
+   (§4.2). The DriverKit 25.5 header also has `SleepWithDeadline(event, options,
+   deadline)` with an explicit `kIOTimerClock*` timebase, which settles the unit question
+   without a spike. The polling backoff stays: replacing it needs every reconcile and
+   every bus completion's wake-up on one session queue, and polling works on hardware.
+4. **Where `DesiredState` lives** relative to route tokens (`TOKEN_BASED_LIFECYCLE.md`): per
+   GUID across generations, or per route?
+5. **Faulted exit policy.** Which events clear `Faulted`, and is a user-visible reset needed?
+6. **`ApogeeInterleaved`.** Does the Duet really need interleaved host/device starts, or would the
+   neutral order work? This needs Duet hardware and the reason behind the original ordering.
+7. **Releasing the DICE owner at teardown.** S3 holds the owner while the device is present,
+   as TCAT and Linux do, but both also release it on unbind. Our service teardown quiesces
+   the async subsystem before `AudioCoordinator::BeginTeardown`, and DICE I/O cannot block on
+   the Default queue, so no release reaches the device. A bus reset clears it, and our own
+   next claim accepts "already ours". A release needs teardown reordered so the bus is still
+   up for one bounded transaction per DICE device.
+8. **Rejoining a running wire.** For the wire to follow the device (S4c), a returning
+   CoreAudio client must join a TX timeline that kept running without it. The client's
+   ring position, the exposed packet frontier and the packetizer's audio-frame
+   coordinates need one explicit contract, with sustained exposure margin verified on
+   hardware. S4b's three failed attempts (§6) are the evidence. Parked for the audio-stack
+   hardening work.

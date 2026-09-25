@@ -15,10 +15,12 @@ struct AudioClockConfig {
     uint32_t sampleRateHz{0};
 };
 
-// Validated 1x rates (32/44.1/48 kHz). 2x/4x rates change frames-per-packet
-// and per-stream channel geometry and are not yet validated end-to-end, so
-// they are rejected here (protocol adapters additionally gate by device
-// capabilities, e.g. DICE CLOCKCAPABILITIES).
+// The rates this build can stream: 1x only (32/44.1/48 kHz). 2x/4x change
+// frames-per-packet and the device's stream layout and are parked. A device may
+// still ANNOUNCE them -- DICE lists every CLOCK_CAPABILITIES rate, as the TCAT
+// kexts do -- and this is the gate that refuses the pick before any bus
+// traffic (ASFWAudioNub::RequestSampleRateChange). Protocol adapters
+// additionally gate by device capabilities.
 [[nodiscard]] constexpr bool IsSupportedAudioClockConfig(
     const AudioClockConfig& desiredClock) noexcept {
     return desiredClock.sampleRateHz == 32000U ||

@@ -480,6 +480,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 
     if (ctx.audioCoordinator) {
         ctx.audioCoordinator->SetCMPClient(ctx.deps.cmpClient.get());
+        ctx.audioCoordinator->SetIRMClient(ctx.deps.irmClient.get());
     }
 
     // Allocate the queryable log ring before configuration so its
@@ -1164,13 +1165,13 @@ kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel, uint32_t wireFormat
         return kIOReturnSuccess;
     }
 
-    // Audio receive is owned by AudioDuplexCoordinator, which installs its
+    // Audio receive is owned by the audio session (Audio/Session), which installs its
     // content consumer before arming IR. This legacy driver entry point cannot
     // safely synthesize that owner from a raw wire-format value.
     (void)wireFormatRaw;
     (void)am824Slots;
     ASFW_LOG_ERROR(Controller,
-                   "[Isoch] StartIsochReceive is retired; use AudioDuplexCoordinator");
+                   "[Isoch] StartIsochReceive is retired; use the audio session");
     return kIOReturnUnsupported;
 }
 

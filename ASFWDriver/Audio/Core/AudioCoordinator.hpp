@@ -13,6 +13,7 @@
 #include "../Protocols/Backends/DiceAudioBackend.hpp"
 #include "../Protocols/Backends/MotuAudioBackend.hpp"
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
+#include "../Session/AudioSessions.hpp"
 
 #include "../../Logging/Logging.hpp"
 
@@ -42,13 +43,16 @@ public:
                      Discovery::DeviceRegistry& registry,
                      AudioRuntimeRegistry& runtime,
                      Driver::IsochService& isoch,
-                     Driver::HardwareInterface& hardware) noexcept;
+                     Driver::HardwareInterface& hardware,
+                     DICE::DiceNotificationRouter& diceNotifications) noexcept;
     ~AudioCoordinator() noexcept override;
 
     AudioCoordinator(const AudioCoordinator&) = delete;
     AudioCoordinator& operator=(const AudioCoordinator&) = delete;
 
     void SetCMPClient(ASFW::CMP::CMPClient* client) noexcept;
+    // The bus's IRM client; the audio session reserves stream resources with it.
+    void SetIRMClient(ASFW::IRM::IRMClient* client) noexcept { sessions_.SetIrmClient(client); }
 
     // IDeviceObserver
     void OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) override;
@@ -68,6 +72,9 @@ public:
         const AudioClockConfig& desiredClock,
         DuplexRestartReason reason) noexcept;
     void BeginTeardown() noexcept;
+    // The timer that keeps device-event quiet periods; installed by
+    // composition before device callbacks begin.
+    void SetSessionTimer(Scheduling::ITimerScheduler* timer) noexcept { sessions_.SetTimerScheduler(timer); }
     void HandleHostTimingLoss(uint64_t guid) noexcept;
     [[nodiscard]] bool RequestMotuTimingRecovery(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn MotuCaptureCommand(uint64_t guid, uint32_t stream,
@@ -93,7 +100,7 @@ private:
     IsochDuplexHostTransport hostTransport_;
     std::atomic_flag captureCommandBusy_ = ATOMIC_FLAG_INIT;
     std::atomic<bool> teardownRequested_{false};
-    AudioDuplexCoordinator duplexCoordinator_;
+    Session::AudioSessions sessions_;
     DiceAudioBackend dice_;
     MotuAudioBackend motu_;
     AVCAudioBackend avc_;

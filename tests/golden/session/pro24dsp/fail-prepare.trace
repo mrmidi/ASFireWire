@@ -1,0 +1,15 @@
+## StartStreaming
+R ffff.e0000000 40 @s400
+R ffff.e0000028 104 @s400
+R ffff.e00001a4 512 @s400
+R ffff.e00003a4 56 @s400
+R ffff.e00003dc 512 @s400
+R ffff.e00005dc 512 @s400
+R ffff.e00007dc 104 @s400
+H begin
+R ffff.e0000000 40 @s400
+R ffff.e0000028 380 @s400
+R ffff.e0000028 8 @s400
+L ffff.e0000028 ffff000000000000 -> ffc0000100000000 @s400 !timeout
+H stop all
+## -> 0xe00002d6 streaming=0

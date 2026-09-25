@@ -40,7 +40,7 @@ struct DeviceTestCase {
     uint32_t expectedStartRatePinHz{0};
     ForcedStreamMode expectedForcedStreamMode{ForcedStreamMode::Unspecified};
     StreamStartShape expectedStartShape{StreamStartShape::Default};
-    bool expectedCmpChoosesIsoChannel{false};
+    bool expectedIrmChoosesAnyChannel{false};
 };
 
 Discovery::DeviceIdentityEvidence MakeEvidence(
@@ -122,7 +122,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedStartRatePinHz = 48000U,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
             .expectedStartShape = StreamStartShape::ApogeeInterleaved,
-            .expectedCmpChoosesIsoChannel = true,
+            .expectedIrmChoosesAnyChannel = true,
         },
         // 5. Mackie Onyx-i (Oxford run)
         {
@@ -139,7 +139,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedStartRatePinHz = 44100U,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
             .expectedStartShape = StreamStartShape::CmpReceiveThenTransmit,
-            .expectedCmpChoosesIsoChannel = true,
+            .expectedIrmChoosesAnyChannel = true,
         },
         // 6. Mackie Onyx 400F (Echo Fireworks)
         {
@@ -156,7 +156,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedStartRatePinHz = 44100U,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
             .expectedStartShape = StreamStartShape::CmpReceiveThenTransmit,
-            .expectedCmpChoosesIsoChannel = true,
+            .expectedIrmChoosesAnyChannel = true,
         },
         // 7. PreSonus StudioLive 16.0.2
         {
@@ -226,7 +226,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedFilter = Discovery::AvcCommandFilterId::MAudioSpecialBeBoB,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
             .expectedStartShape = StreamStartShape::MAudioSpecial,
-            .expectedCmpChoosesIsoChannel = true,
+            .expectedIrmChoosesAnyChannel = true,
             .expectedStartRatePinHz = 48000U,
         },
         {
@@ -242,7 +242,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedFilter = Discovery::AvcCommandFilterId::MAudioSpecialBeBoB,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
             .expectedStartShape = StreamStartShape::MAudioSpecial,
-            .expectedCmpChoosesIsoChannel = true,
+            .expectedIrmChoosesAnyChannel = true,
             .expectedStartRatePinHz = 48000U,
         },
         // 12. M-Audio FireWire 1814 Bootloader
@@ -324,7 +324,12 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
         EXPECT_EQ(plan->streamTraits.start.startRatePinHz, testCase.expectedStartRatePinHz);
         EXPECT_EQ(plan->streamTraits.wire.forcedStreamMode, testCase.expectedForcedStreamMode);
         EXPECT_EQ(plan->streamTraits.start.startShape, testCase.expectedStartShape);
-        EXPECT_EQ(plan->streamTraits.resource.cmpChoosesIsoChannel, testCase.expectedCmpChoosesIsoChannel);
+        // CMP rows accept any channel; every DICE row takes 0-31 from the IRM.
+        const uint64_t expectedMask = testCase.expectedIrmChoosesAnyChannel ? kAnyIsoChannel
+                                      : testCase.expectedFamily == AudioFamilyProviderId::DICE
+                                          ? kDiceIrmChannelMask
+                                          : 0;
+        EXPECT_EQ(plan->streamTraits.resource.irmChannelMask, expectedMask);
 
         // 2. Protocol Choice: consumers use the resolved policy plan directly.
         const auto protocolFromPlan = Audio::ChooseDeviceProtocol(*plan);

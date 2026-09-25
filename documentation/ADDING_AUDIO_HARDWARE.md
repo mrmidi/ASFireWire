@@ -13,10 +13,11 @@ protocol, geometry, and startup behavior have evidence and tests.
 | Static decision | [`Definitions/`](../ASFWDriver/DeviceProfiles/Audio/Definitions), [`DeviceRegistry::UpsertFromROM`](../ASFWDriver/Discovery/DeviceRegistry.cpp) | Match clause, support state, family, probe policy, profile builder, protocol implementation, and any justified stream traits. Registry resolves once and binds the result to a route in [`ResolvedDevicePolicy`](../ASFWDriver/DeviceProfiles/Audio/ResolvedDevicePolicy.hpp). |
 | Pre-traffic safety | Definition probe policy or [`AudioSafetyRule`](../ASFWDriver/DeviceProfiles/Audio/AudioDeviceCatalog.hpp), [`CommandFilterFor`](../ASFWDriver/DeviceProfiles/Audio/AudioDeviceResolver.cpp), [`FCPTransport`](../ASFWDriver/Protocols/AVC/FCPTransport.cpp) | A definition carries permitted traffic for a recognized persona; a safety rule can quarantine a hazardous identity. Audio support and command permission are separate decisions. |
 | Bootstrap and protocol class | [`SelectProbeBootstrap`](../ASFWDriver/Audio/Protocols/SelectProbeBootstrap.hpp), [`FamilyProtocolConstruction`](../ASFWDriver/Audio/Protocols/FamilyProtocolConstruction.cpp) | Reuse an existing family implementation when its wire behavior fits. Add a new protocol implementation only for a real protocol difference. |
-| Profile and wire geometry | [`AudioProfileRegistry`](../ASFWDriver/Audio/DriverKit/Config/AudioProfileRegistry.cpp), family profile, [`DiceAudioBackend`](../ASFWDriver/Audio/Protocols/Backends/DiceAudioBackend.cpp), [`MotuAudioBackend`](../ASFWDriver/Audio/Protocols/Backends/MotuAudioBackend.cpp) | Document the source of per-stream channels, slots, sample rates, and codec. DICE publication requires validated runtime stream geometry. The supported MOTU 828mkII and UltraLite use their known fixed chunk layout for publication before live caps exist; other named MOTU models remain unsupported. |
-| Stream traits | [`DeviceStreamTraits`](../ASFWDriver/DeviceProfiles/Audio/AudioDeviceCatalog.hpp): `wire` (`StreamWirePolicy`), `resource` (`IsochResourcePolicy`), `start` (`StreamStartPolicy`); read by [`DuplexStreamProfileResolver`](../ASFWDriver/Audio/Protocols/Backends/DuplexStreamProfile.hpp) and the duplex coordinator | Only evidenced differences: forced cadence, capture-stride trust or conditional codec (wire); CMP-owned channels (resource); start order or start-rate pin (start). Put a new fact in the group whose consumer needs it. The family backend retains the actual prepare/start/stop sequence. |
+| Profile and wire geometry | [`AudioProfileRegistry`](../ASFWDriver/Audio/DriverKit/Config/AudioProfileRegistry.cpp), family profile, [`DiceAudioBackend`](../ASFWDriver/Audio/Protocols/Backends/DiceAudioBackend.cpp), [`MotuAudioBackend`](../ASFWDriver/Audio/Protocols/Backends/MotuAudioBackend.cpp) | Document the source of per-stream channels, slots, sample rates, and codec. **DICE:** add a [`DiceProfileSpec`](../ASFWDriver/Audio/DriverKit/Config/DICE/DiceProfile.hpp) entry, not a class: name (and range names by capture width), TX encoding, `preserveFdfInNoDataPackets`, `initializeNonAudioSlots`, and only with evidence an asserted playback stream count or measured latency/safety. It carries no channel counts and no rates: geometry comes from the device's TX/RX registers and rates from `CLOCK_CAPABILITIES`, as in every TCAT kext. The supported MOTU 828mkII and UltraLite use their known fixed chunk layout for publication before live caps exist; other named MOTU models remain unsupported. |
+| Streaming steps | [`FamilyDriver`](../ASFWDriver/Audio/Protocols/Duplex/FamilyDriver.hpp), driven by [`RestartRoutine`](../ASFWDriver/Audio/Session/RestartRoutine.cpp) | A new protocol implementation answers every step (`LoadGeometry`, `Configure`, `AssignChannels`, `ArmDeviceRx`, `ArmDeviceTxAndEnable`, `Confirm`, `ApplyClockIdle`, the disconnect/stop steps) and returns itself from `IDeviceProtocol::AsFamilyDriver()`. The session owns ordering, coalescing and recovery; the family never sequences a restart itself. |
+| Stream traits | [`DeviceStreamTraits`](../ASFWDriver/DeviceProfiles/Audio/AudioDeviceCatalog.hpp): `wire` (`StreamWirePolicy`), `resource` (`IsochResourcePolicy`), `start` (`StreamStartPolicy`); read by [`DuplexStreamProfileResolver`](../ASFWDriver/Audio/Protocols/Backends/DuplexStreamProfile.hpp) and the session's `RestartRoutine` | Only evidenced differences: forced cadence, capture-stride trust or conditional codec (wire); CMP-owned channels (resource); start order or start-rate pin (start). Put a new fact in the group whose consumer needs it. The family answers each step through `FamilyDriver`; the session owns the sequence. |
 | Transmit clock source | [`IAudioStreamProfile::TransmitClockSource`](../ASFWDriver/Audio/DriverKit/Config/AudioStreamProfile.hpp) | Default replays device RX timing onto transmit. A profile returns `kInternalCadence` only when the device will not send timing until it receives host data (M-Audio special firmware). |
-| HAL and timing geometry | [`Audio/Runtime/`](../ASFWDriver/Audio/Runtime), [`Audio/DriverKit/`](../ASFWDriver/Audio/DriverKit) | Buffer timing, CoreAudio format, and service lifetime are later concerns. Do not encode them as Config ROM identity or wire geometry. |
+| HAL and timing geometry | [`ResolvedTimingGeometry`](../ASFWDriver/Audio/Runtime/ResolvedTimingGeometry.hpp), [`ProfileTimingGeometry`](../ASFWDriver/Audio/DriverKit/Config/ProfileTimingGeometry.hpp), [`TimingLadder`](../ASFWDriver/Audio/DriverKit/Config/TimingLadder.hpp) | A profile declares only latency and safety offsets (the `TimingLadder` by default, measured values when a loopback exists). ZTS period, ring, IO budget and transfer delay are resolved from the wire rate, never set per device. Do not encode timing as Config ROM identity or wire geometry. |
 
 The selected catalog plan carries static facts. Live registers and probe replies
 carry runtime facts. `DeviceRouteToken` ties the plan to one generation and node;
@@ -57,7 +58,8 @@ through `CommandFilterFor` and `FCPTransport`.
    [`AudioDeviceValidation.cpp`](../ASFWDriver/DeviceProfiles/Audio/AudioDeviceValidation.cpp));
    a new builder must be added to that switch. Update
    [`AudioProfileRegistry`](../ASFWDriver/Audio/DriverKit/Config/AudioProfileRegistry.cpp)
-   when adding a builder. A row may reuse both existing selectors. Do not add
+   when adding a builder; for DICE that is one `DiceProfileSpec` line. A row
+   may reuse both existing selectors. Do not add
    a vendor/model branch to discovery, the coordinator, a generic backend, or
    the duplex resolver. A genuinely new protocol implementation requires an
    enum value and construction arm in
@@ -115,6 +117,19 @@ Use the existing tests as contracts, extending a fixture only for a new fact:
   [`DuplexStreamProfileTests.cpp`](../tests/devices/DuplexStreamProfileTests.cpp), and
   [`NubGeometryRoundTripTests.cpp`](../tests/audio/NubGeometryRoundTripTests.cpp)
   check stream geometry, wire traits, and nub geometry changes.
+- [`DiceProfileEquivalenceTests.cpp`](../tests/audio/DiceProfileEquivalenceTests.cpp)
+  and [`ProfileTimingPinTests.cpp`](../tests/audio/ProfileTimingPinTests.cpp)
+  record what every profile answers (`tests/golden/dice-profiles/`,
+  `ProfileTimingPinTable.inc`). A new builder adds rows; a change to an
+  existing profile must move only the lines it declares. Regenerate with
+  `ASFW_UPDATE_GOLDEN=1` / `ASFW_DUMP_PROFILE_TIMING=1` and review the diff.
+- [`DiceFixtureGeometryTests.cpp`](../tests/audio/DiceFixtureGeometryTests.cpp)
+  resolves recorded DICE register dumps; add the new device's dump if you have one.
+- [`SessionCharacterizationTests.cpp`](../tests/devices/SessionCharacterizationTests.cpp)
+  and [`DiceWireCharacterizationTests.cpp`](../tests/devices/DiceWireCharacterizationTests.cpp)
+  compare start/stop/rate-change wire traffic with golden traces
+  (`tests/golden/session/`, `tests/golden/dice/`). Adding a model must not
+  change them.
 - [`AudioDriverTxProducerTests.cpp`](../tests/audio/AudioDriverTxProducerTests.cpp)
   runs the driver's real TX producer against an emulated IT transport, checked
   against captured traces. Add a case when a device changes transmit framing
@@ -134,7 +149,10 @@ Review a contribution for these failure modes:
 - A hazardous or ambiguous identity reaching unrestricted AV/C traffic.
 - A second vendor/model decision in generic runtime code, or a cached policy
   surviving its route token.
-- Profile-only DICE geometry published as if it were validated live geometry,
-  or a changed nub geometry silently reused.
+- Channel counts or rates added to a DICE profile, or profile-only geometry
+  published as if it were validated live geometry, or a changed nub geometry
+  silently reused.
+- A vendor/model branch in `RestartRoutine` or the session scheduler instead of
+  an answer in the family's `FamilyDriver` steps.
 - A startup or stop sequence changed to accommodate a model without a device
   capture or reference-stack basis. Preserve known-good DICE ordering.

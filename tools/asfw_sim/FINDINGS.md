@@ -3,7 +3,18 @@
 Run against HEAD `e5e0c1f` (`audio/stabilize`), constants parsed live from
 `AudioTimingGeometry.hpp` / `AudioHalBufferProfiles.hpp` / `RxSequenceReplay.hpp`.
 
-## Constants, as the driver actually defines them
+> **V3 update (FW-183c, 2026-09).** The findings below were derived at the
+> pre-V3 geometry shown in the next table; `tests/test_stall_cliff.py` pins
+> F3/F4 to it (`g48_f3`). At V3 (12288-frame ring/ZTS at 48 kHz, horizon
+> floored at 4096 + 64 frames, lead 1648, store and timeline 1696) the
+> header scrape gives the values in `tests/test_constants_match_headers.py`,
+> and the dynamics move: the stall cliff is ~129 ms (was 78), a 100 ms stall
+> is survived, replay capacity up to 2048 no longer sets the cliff, and the
+> start-up prefill leaves ~0.24 s unwritten per run (was ~0.12 s). The F5
+> prediction for a 4096-frame IO (lead 1650, store 1704) matches V3's
+> 1648/1696 within rounding.
+
+## Constants, as the driver actually defined them (pre-V3)
 
 Profile `dice-working-1536`. Every derived value reproduced by `headers.py`:
 

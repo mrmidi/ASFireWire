@@ -1,9 +1,16 @@
 # DICE / TCAT: evidence, current state, and direction
 
 **Status:** evidence base + accepted direction (2026-09-20). The direction in §4
-is agreed. **Stage 4 / step A has landed** — the geometry resolver (§3.1) and
-per-stream geometry reaching playback framing (§3.4). Steps B, C and D remain
-backlogged; no code is implied by them.
+is agreed. **Steps A, B and C have landed** (A 2026-09-20; B and C 2026-09-25,
+audio-session stage S6): per-stream geometry crosses the nub, rates come from
+the device, and one `DiceProfile` replaces the seven classes. **D is deferred**
+to the work that raises the 48 kHz ceiling (§4.2).
+
+**Scope.** This doc owns DICE **geometry** (profiles, resolver, rates). The DICE
+**bring-up and session lifecycle** (owner, clock, stream start/stop, recovery),
+and the replacement of `AudioDuplexCoordinator`, are designed in
+[`AUDIO_SESSION_REDESIGN.md`](AUDIO_SESSION_REDESIGN.md) (2026-09-24), which also
+extends §2.1 below to all five vendor kexts.
 
 **Relationship to other docs.** [`DEVICE_BACKEND_UNIFICATION.md`](DEVICE_BACKEND_UNIFICATION.md)
 is the protocol-neutral-interface direction, of which this is the DICE-family
@@ -33,7 +40,10 @@ what makes the direction in §4 safe to commit to rather than merely plausible.
 `MidasFW.kext`, `AlesisFirewire.kext` and `PaeFireStudio.kext` are all rebranded
 TC Applied Technologies DICE reference drivers — same symbol tree
 (`tcat::dice::*`, `_DICE_STREAM_STRUCT`, `DICE_DEVICE_STRUCT`), same function
-names, same control flow.
+names, same control flow. **Update 2026-09-24:** `WeissFirewire.kext` (4.3.1) and
+Focusrite's `Saffire.kext` (4.1.4) are the same SDK too, and MidasFW and
+PaeFireStudio share 347 of 353 function bodies instruction-for-instruction. See
+[`AUDIO_SESSION_REDESIGN.md`](AUDIO_SESSION_REDESIGN.md) §2.1 for the method.
 
 **`probe` decides accept/reject and nothing else.** All three derive a model
 index from the GUID — bits 39:32 must be `0x04`, then `guid >> 22` indexes a
@@ -52,8 +62,9 @@ IOLog("AlesisFirewireAudio: %s guid:%llx connected.\n", v10, v7);
 ```
 
 `PaeFireStudioAudio::probe` (`0x1228`) is the same shape across **14** PreSonus
-models. **There is no per-model behavioural branch anywhere in any of the three
-drivers.**
+models. **There is no per-model behavioural branch anywhere in any of the five
+drivers.** `WeissFirewireAudio::probe` is the one variation: it accepts GUID
+category byte `0x00` where the others require `0x04`.
 
 ### 2.2 Geometry is read from the device, every time
 
@@ -107,7 +118,7 @@ behaviour.
 
 ### 2.4 Rate-mode geometry, from hardware
 
-The Saffire Pro 24 DSP dump (`fixtures/focusritespro24dsp.txt`) carries a TCAT
+The Saffire Pro 24 DSP dump (`fixtures/DICE/spro24dsp.txt`) carries a TCAT
 extension whose `current_config` enumerates **every** rate mode:
 
 | mode | capture (DICE TX) | playback (DICE RX) |
@@ -132,7 +143,37 @@ object must be keyed by rate mode.
 |---|---|---|
 | **EAP `current_config`** | Pro 24 DSP (`dynamicStreamFormat=true`, `maxTx/RxStreams=2`, TCD2210) | all three modes, read once, no rate switch needed |
 | **plain TX/RX registers** | Venice, StudioLive, MultiMix — all report `extension space <absent>` | the current mode only; must re-read after a switch |
-| **supplied table** | TCD3070 Pro 40 — no EAP *and* registers do not answer | `dice-focusrite.c:8-22`, keyed by rate mode |
+| **supplied table** | TCD3070 Pro 40 — no EAP, so registers give the current mode only | `dice-focusrite.c:8-22`, keyed by rate mode |
+
+**Correction (2026-09-25): the TCD3070 Pro 40's registers are not known to
+fail.** This table used to say they "do not answer"; nothing supports that.
+Focusrite's own driver supports the device from Saffire.kext 4.3.0 / MixControl
+3.9 (the 2019 installer; the 4.1.4 / 3.5 we first read has no entry):
+- `SaffireAudio::probe` accepts GUID product `19` (`0x13`) as a second
+  "Saffire Pro40". It is the same device as Linux's ROM model `0x0000de`
+  (`dice.c:385-387` documents the GUID/ROM mismatch).
+- The kext has no geometry table for it. `PopulateDeviceStruct` reads its
+  TX/RX registers like every other model; its only product check is for
+  another vendor (OUI `0x000166`).
+- MixControl 3.9 adds `Pro40DiceIIIDescriptor` (device type 7, firmware
+  `Pro40d3Firmware`) and `Pro40DiceIII_IpSigTab/OpSigTab`. Rates are 44.1, 48,
+  88.2 and 96 kHz: no 32 kHz and no high-rate table. The tables are identical
+  to the original Pro 40's except where the host-stream channels sit on router
+  blocks 11/12 at low rate. The original splits them 12 + 8 across the two
+  blocks, one per stream. The DICE III runs them 16 then 4, i.e. one 20-channel
+  stream addressed across both blocks, which agrees with Linux's one stream of
+  20 (low) / 16 (middle) plus MIDI.
+
+Why Linux needs the table: it fixes each mode's channel counts at probe time.
+Without the extension it can cache only the current mode. It still offers every
+rate in the caps (`dice-pcm.c:104-118`), but at stream start it re-reads the
+registers and refuses on a mismatch with the cache (`dice-stream.c:238-244`,
+`"cache mismatch"` → `-EPROTO`). An uncached mode is 0, so without a table this
+device would list 88.2/96 kHz on Linux and fail to start at them. The TCAT kext
+has no such cache: it re-reads and rebuilds the streams after every switch
+(`RestartStreaming → PopulateDeviceStruct → CreateStreams`), so it needs no
+table. Stage D should follow the kext. Evidence tools live in
+`tmp/dicere/` (`probe_430.c`, `pro40_sigtabs.txt`).
 
 The earlier plan modelled two cases. It is three, and the EAP case is *better*
 than the base case, not a degradation. **No device is known to report
@@ -148,16 +189,26 @@ straight into the device struct and validates every rate request against it:
 *(_DWORD *)(v2 + 12604) = ratesMask | (sourcesMask << 16);
 ```
 
-The **only** host-side constant in this area is a firmware-version fallback, not
-a per-model one:
+The **only** host-side constant for the caps is a fallback for a GLOBAL
+section too short to hold them, not a per-model one. `PopulateDeviceStruct`
+reads `min(GLOBAL size, 0x17C)` bytes; when that is `<= 0x64` it synthesizes the
+caps word from driver defaults before the read:
 
 ```c
-if (*(_DWORD *)(v2 + 12600) < 0x1000B00u) {   // GLOBAL_VERSION < 1.0.11.0
-    *(_QWORD *)(v2 + 12868) = 0x500000002LL;  // hardcoded clock capabilities
+if ( v3 <= 0x64 )                              // GLOBAL ends at or before CLOCK_CAPS
+    *(_DWORD *)(a2 + 12604) = defaultRates | (defaultSources << 16);
 ```
 
-PaeFireStudio carries the same gate. All four recorded devices are at or above
-1.0.4.0; the Pro 24 DSP is 1.0.12.0, so it passes the gate and its caps are read.
+Linux has the same rule: it reads `CLOCK_CAPABILITIES` only when GLOBAL is
+longer than `0x18` quadlets and otherwise assumes 44.1 + 48 kHz
+(`dice-transaction.c:318-326`, `dice.c:73-92`). ASFW follows Linux
+(`DiceDeviceRateMask`).
+
+**Correction (2026-09-25).** This section used to call the
+`GLOBAL_VERSION < 1.0.11.0` branch (`0xc89a`, `+12600 < 0x1000B00`) a caps
+fallback. It is not: it writes fields at GLOBAL `+0x168..+0x17B` (struct
+offsets 12864–12876), well past the caps at `+0x64`. The caps are never
+overridden by firmware version.
 
 ### 2.7 The vendors publish per-stream, and the only sum is the channel base
 
@@ -186,13 +237,16 @@ must obey is *running sum of preceding stream widths*, never
 
 ### 2.8 The recorded devices
 
-Four dumps in [`fixtures/`](fixtures/), four vendors, four distinct shapes. These
-drive `tests/audio/DiceFixtureGeometryTests.cpp`.
+Five dumps in [`fixtures/`](fixtures/), four vendors, five distinct shapes. These
+drive `tests/audio/DiceFixtureGeometryTests.cpp`. (The Venice F32 dump was added
+after this section was first written; it and the F24 agree on every identifying
+register and differ only in GUID, serial and geometry.)
 
 | device | ASIC / EAP | capture (DICE TX) | playback (DICE RX) | clockCaps | rates |
 |---|---|---|---|---|---|
 | Focusrite Saffire Pro 24 DSP | TCD2210, **EAP** | 1: 16 PCM + 1 MIDI (dbs 17) | 1: 8 PCM + 1 MIDI (dbs 9) | `0x112C001E` | 44.1/48/88.2/96 |
 | Midas Venice F24 | no EAP | 2: 16+8 = **24** | 2: 16+8 = **24** | `0x13000006` | 44.1/48 |
+| Midas Venice F32 | no EAP | 2: 16+16 = **32** | 2: 16+16 = **32** | `0x13000006` | 44.1/48 |
 | PreSonus StudioLive 24.4.2 | no EAP | 2: 16+16 = **32** | 2: 16+10 = **26** | `0x13000006` | 44.1/48 |
 | Alesis MultiMix | no EAP | 2: 12+2 = **14** | **1**: 2 | `0x11000006` | 44.1/48 |
 
@@ -278,8 +332,14 @@ MultiMix seeds one capture stream of 16 where the device reports two of 12+2.
 
 **This is scaffolding.** Once profiles carry no geometry (§4), there is nothing
 left to seed or assert and the whole distinction deletes itself.
+**Deleted 2026-09-25 (stage C):** the resolver now takes the device's geometry
+alone. The one profile input left is the Alesis MultiMix's single playback
+stream (§4.2 C).
 
 ### 3.2 The seven profile classes, measured
+
+> **Historical (collapsed 2026-09-25, stage C).** Kept as the evidence behind
+> `DiceProfileSpec`; the classes no longer exist.
 
 26 DICE catalog rows → 10 builders → 7 profile classes, 1,284 lines. What is
 actually in them:
@@ -297,6 +357,13 @@ StudioLive and StudioLive 2442 are byte-identical. Alesis differs only in
 `initializeNonAudioSlots = false`; Saffire Pro 40 only in `tx = kAM824`. Weiss
 and Generic return a default-constructed `DiceDeviceQuirks{}`.
 
+**Update 2026-09-24:** the Pro 40 delta is removed. It now inherits the Saffire
+baseline (raw 24-in-32 TX), matching Focusrite's own `Saffire.kext`, which drives
+every model it supports through one `Float32ToSwapInt24_In_32` path. Weiss and
+Generic still default to AM824 TX, although `WeissFirewire.kext` uses the same
+raw path. Weiss has never run on hardware (README), so that flip is a declared,
+unverified delta for stage C, not a silent change.
+
 Everything else in those 1,284 lines is device-readable (geometry, rates) or an
 identical copy. The irreducible per-device content is: **two one-field quirk
 deltas, Weiss's capture-visibility policy, Generic's flat offsets, and names.**
@@ -307,9 +374,9 @@ deltas, Weiss's capture-visibility policy, Generic's flat offsets, and names.**
 |---|---|
 | **Resolved object has one consumer** | only `DiceAudioBackend::EnsureNubForGuid`. Bandwidth reservation reads `caps` directly (`DuplexStreamProfile::ResolveChannels`); CIP framing reads the profile (`ASFWAudioDevice::StartIO`). |
 | **StartIO is host-sourced and 2-stream** | builds streams 0 and 1 from `profile->BuildTxStreamConfig`, hardcoded. `Model::ASFWAudioDevice` carries only aggregate channel counts, so per-stream geometry cannot cross the nub. **Consequence:** playback geometry may not be seeded — see below. |
-| **Rates are a host constant** | `DiceDeviceProfile::SupportedSampleRates()` returns a flat `{44100, 48000}`. `clockCaps` is read into `state.clockCaps` and decoded by `DiceClockCapsSupportRate()`, but never reaches `AudioStreamRuntimeCaps` or `dev.sampleRates`. |
-| **Caps never invalidate** | `DICETcatProtocol::ResetRuntimeCaps()` is reachable only from `Shutdown()`. A rate change does not re-read. Not currently observable: `kDiceMaxSupportedRateHz = 48000` and 32/44.1/48 are all rate mode *low*, so no mode change can occur. It becomes live the moment the ceiling rises. |
-| **Extended channel-name block** | `DICEDuplexBringupController.cpp:982` reads the standard names offset unconditionally; a device with stream `SIZE >= 326` uses `+0x120` (§2.2). Cosmetic — wrong or empty labels, not a streaming fault. |
+| ~~**Rates are a host constant**~~ | **Closed 2026-09-25 (stage B).** `CLOCK_CAPABILITIES` reaches `AudioStreamRuntimeCaps::deviceRateMask`; the nub publishes `DicePublishedRates(mask)` with `ASFWDeviceSampleRates`, and `Configure`/`ApplyClockIdle` refuse an unadvertised rate before any bus traffic. |
+| **Caps re-read, but the HAL device is not republished** | *Corrected 2026-09-25:* caps do re-read. `Prepare` (`FinishPrepare → RefreshRuntimeCaps`) and the idle clock apply (`CompleteClockApply → RefreshRuntimeCaps`) both refresh them. What is missing is stage D: a rate-mode change that alters geometry does not republish the CoreAudio device. Not observable while `kDiceMaxSupportedRateHz = 48000`, because 32/44.1/48 kHz are all rate mode *low*. |
+| **Extended channel-name block** | `DiceFamilyDriver::DiscoverStreams` reads the standard names offset unconditionally; a device with stream `SIZE >= 326` uses `+0x120` (§2.2). Cosmetic — wrong or empty labels, not a streaming fault. |
 
 ### 3.4 Every geometry consumer now reads the device
 
@@ -415,7 +482,7 @@ small set of facts the device cannot report:
 
 | scalar | why it cannot be read | who needs it |
 |---|---|---|
-| `txEncoding` | wire format is not in any register | Pro 40 is the only `kAM824` |
+| `txEncoding` | wire format is not in any register | **Likely deletable:** all five TCAT kexts send raw 24-in-32 for every model. Weiss/Generic `kAM824` is the only remaining deviation, and it is unverified (§3.2 update) |
 | `initializeNonAudioSlots` | host framing policy | Alesis is the only `false` |
 | `preserveFdfInNoDataPackets` | host framing policy | the five DICE rows |
 | `hideCaptureFromCoreAudio` | product decision, not a device fact | Weiss (already a runtime policy; move its source) |
@@ -425,7 +492,7 @@ one global ceiling with a stated reason (2x/4x changes frames-per-packet and
 per-stream splits and is unverified end to end), not a per-model quirk.
 
 Published rates become `deviceAdvertised(clockCaps) ∩ hostValidated(≤ ceiling)`,
-with the vendors' `GLOBAL_VERSION < 1.0.11.0` fallback.
+with the short-GLOBAL fallback (§2.6).
 
 ### 4.2 Staging
 
@@ -442,13 +509,38 @@ can be deleted.
   per-stream channel constants have no consumer.
   **Landed 2026-09-20** — see §3.4.
 - **B — rates from the device.** `clockCaps` onto `AudioStreamRuntimeCaps`;
-  intersect with the ceiling; firmware fallback. Independent of A.
+  intersect with the ceiling; short-GLOBAL fallback (§2.6). Independent of A.
   Afterwards `SupportedSampleRates()` has no DICE consumer.
+  **Landed 2026-09-25** (`a4e5148d`). Every recorded device still publishes
+  {44.1, 48} kHz. Declared delta: a device advertising 32 kHz now offers it,
+  and one lacking 44.1 or 48 kHz no longer offers that rate.
 - **C — collapse seven classes into one builder + the §4.1 scalars.** Only
   possible once A and B have removed their consumers.
+  **Landed 2026-09-25** (`3a856d9d` records every builder's answers in
+  `tests/golden/dice-profiles/`, `7b0585ba` collapses). One `DiceProfile`
+  built from a `DiceProfileSpec` (name, Venice range names, TX encoding,
+  `preserveFdfInNoDataPackets`, `initializeNonAudioSlots`,
+  `assertedPlaybackStreams`); latency from `AudioGeometryPolicy`. Capture
+  visibility needed no scalar: the Weiss protocol already publishes
+  `hostInputPcmChannels = 0`. Declared deltas are listed in §4.4.
 - **D — invalidate on rate change**, per discovery source (§2.5): EAP devices
   read all modes once; register-only devices re-read after the switch, as
   `RestartStreaming → PopulateDeviceStruct` does. Unblocks raising the ceiling.
+  **Deferred (2026-09-25)** to the ceiling raise. It cannot trigger below
+  2x rates, and verifying it needs 2x/4x hardware.
+  **Template landed (2026-09-25), following the TCAT kext, not Linux.**
+  Every `CLOCK_CAPABILITIES` rate is now announced (`DicePublishedRates`), as
+  `createNewAudioStream` does; picking one above `kDiceMaxStreamingRateHz`
+  (48 kHz) is refused before any bus traffic by `IsSupportedAudioClockConfig`:
+  in `ValidateSampleRate` (`ASFWAudioDevice.cpp`), before a configuration-change
+  window opens, and again in `ASFWAudioNub::RequestSampleRateChange`. CoreAudio
+  keeps its rate.
+  Devices start at `DiceInitialRate` (48 kHz when announced). The kext's
+  `CreateStreams` step is `DiceAudioBackend::RebuildEndpointForNewGeometry`, a
+  no-op called where a changed layout used to be refused silently; its TODO is
+  the design (kext call chain with addresses, the AudioDriverKit
+  configuration-change mapping, prerequisites, hardware test). Enabling high
+  rates = implement that function + the 2x wire, then raise the ceiling.
 
 Doing C first is the tempting error: without A, deleting profile geometry only
 moves the constants, because `StartIO` still needs numbers from the host side.
@@ -476,6 +568,20 @@ equivalence check across all 26 rows — eyeballing the table in §3.2 is not it
 Two deltas must be **declared, not absorbed**, when C lands: Weiss's missing rate
 addend, and `GenericDiceProfile`'s flat 64/128 offsets, which are a different
 model from the packet-scaled one and sit on the fallback path.
+
+**As landed (2026-09-25).** The equivalence check is
+`tests/audio/DiceProfileEquivalenceTests.cpp`, recorded from the classes before
+the collapse. Rows share builders, so the 10 builders plus the fallback cover
+all 26 rows. Its diff moved only these lines:
+- geometry (channels, stream counts, per-stream configs) is zero: profiles no
+  longer state it, and a device whose registers differ from an old constant is
+  no longer refused;
+- the Alesis MultiMix keeps one asserted playback stream;
+- the generic fallback now uses the ladder (48/128, latency 29 at 1x);
+- Weiss is unchanged at every published rate (the addend only matters at 2x/4x).
+
+Names, TX policy, framing constants and clock source did not move, and
+`DiceFixtureGeometryTests` still resolves every recorded device unchanged.
 
 ---
 

@@ -10,6 +10,8 @@
 
 #include "MotuV2Protocol.hpp"
 
+#include "../Duplex/FamilyStageWait.hpp"
+
 #include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../../DriverKit/Config/MOTU/MotuV2Profile.hpp"
@@ -339,7 +341,7 @@ void MotuV2Protocol::PrepareDuplex(const AudioDuplexChannels& channels,
     // iso resources.
     //
     // ASFW's start path never applied the clock at all -- ApplyClockConfig is only reached
-    // from DuplexStartTransaction::ApplyIdleClock, which RunDuplexStart does not call. The
+    // from the idle clock apply, which the start path does not call. The
     // UltraLite therefore stayed on whatever rate it powered up with (44.1 kHz, clock
     // status reading 0x00000000) while the host had negotiated 48 kHz. WaitForStableGlobalClock
     // requires nominalRateHz == desiredClock.sampleRateHz, so it could never succeed: it
@@ -630,6 +632,86 @@ IOReturn MotuV2Protocol::StopDuplex() {
         });
 
     return kIOReturnSuccess;
+}
+
+// ---------------------------------------------------------------------------
+// FamilyDriver
+// ---------------------------------------------------------------------------
+
+void MotuV2Protocol::SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
+    teardownCancel_ = cancel;
+}
+
+IOReturn MotuV2Protocol::LoadGeometry() {
+    // Nothing to read ahead of Configure: PrepareDuplex reads the chunk counts
+    // from the device's own registers and reports them as runtime caps.
+    return kIOReturnSuccess;
+}
+
+std::optional<AudioStreamRuntimeCaps> MotuV2Protocol::RuntimeCaps() const {
+    AudioStreamRuntimeCaps caps{};
+    if (!GetRuntimeAudioStreamCaps(caps)) {
+        return std::nullopt;
+    }
+    return caps;
+}
+
+std::expected<DuplexPrepareResult, IOReturn> MotuV2Protocol::Configure(
+    const AudioDuplexChannels& channels, const AudioClockConfig& clock) {
+    return AwaitStage<DuplexPrepareResult>(
+        [&](auto callback) { PrepareDuplex(channels, clock, std::move(callback)); },
+        teardownCancel_);
+}
+
+void MotuV2Protocol::AssignChannels(const AudioDuplexChannels& channels) {
+    SetAssignedChannels(channels);
+}
+
+std::expected<DuplexHealthResult, IOReturn> MotuV2Protocol::ReadHealth(uint32_t timeoutMs) {
+    return AwaitStage<DuplexHealthResult>(
+        [&](auto callback) { ReadDuplexHealth(std::move(callback)); }, teardownCancel_, timeoutMs);
+}
+
+std::expected<DuplexStageResult, IOReturn> MotuV2Protocol::ArmDeviceRx() {
+    return AwaitStage<DuplexStageResult>(
+        [&](auto callback) { ProgramRx(std::move(callback)); }, teardownCancel_);
+}
+
+std::expected<DuplexStageResult, IOReturn> MotuV2Protocol::ArmDeviceTxAndEnable() {
+    return AwaitStage<DuplexStageResult>(
+        [&](auto callback) { ProgramTxAndEnableDuplex(std::move(callback)); }, teardownCancel_);
+}
+
+std::expected<DuplexConfirmResult, IOReturn> MotuV2Protocol::Confirm() {
+    return AwaitStage<DuplexConfirmResult>(
+        [&](auto callback) { ConfirmDuplexStart(std::move(callback)); }, teardownCancel_);
+}
+
+std::expected<DuplexClockApplyResult, IOReturn> MotuV2Protocol::ApplyClockIdle(
+    const AudioClockConfig& clock) {
+    return AwaitStage<DuplexClockApplyResult>(
+        [&](auto callback) { ApplyClockConfig(clock, std::move(callback)); }, teardownCancel_);
+}
+
+IOReturn MotuV2Protocol::DisconnectPlayback() {
+    // MOTU has no per-direction connection: no CMP plug, and the streams are
+    // switched together through the IsocCommControl register. The staged-stop
+    // recipe that calls this is not MOTU's.
+    return kIOReturnUnsupported;
+}
+
+IOReturn MotuV2Protocol::DisconnectCapture() {
+    // As DisconnectPlayback.
+    return kIOReturnUnsupported;
+}
+
+IOReturn MotuV2Protocol::BreakConnections() {
+    // No CMP connections to break; StopDuplex switches both streams off.
+    return kIOReturnUnsupported;
+}
+
+IOReturn MotuV2Protocol::Stop() {
+    return StopDuplex();
 }
 
 } // namespace ASFW::Audio::Motu

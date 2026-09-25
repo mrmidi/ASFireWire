@@ -7,13 +7,15 @@
 
 #include <gtest/gtest.h>
 
+#include "Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
+
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Core/AudioNubPublisher.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Audio/Protocols/Backends/AVCAudioBackend.hpp"
 #include "Audio/Protocols/Backends/MotuAudioBackend.hpp"
 #include "Audio/Protocols/Backends/DiceAudioBackend.hpp"
-#include "Audio/Protocols/Backends/AudioDuplexCoordinator.hpp"
+#include "Audio/Session/AudioSessions.hpp"
 #include "Bus/IRM/IRMClient.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Hardware/HardwareInterface.hpp"
@@ -36,7 +38,6 @@ using ASFW::Async::FWAddress;
 using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioNubPublisher;
 using ASFW::Audio::AudioRuntimeRegistry;
-using ASFW::Audio::AudioDuplexCoordinator;
 using ASFW::Audio::AVCAudioBackend;
 using ASFW::Audio::DiceAudioBackend;
 using ASFW::Audio::IIsochDuplexHostTransport;
@@ -116,14 +117,15 @@ struct TestFixture {
     AudioRuntimeRegistry runtime{};
     FakeHostTransport hostTransport{};
     std::atomic<bool> cancel{false};
-    AudioDuplexCoordinator coordinator{
+    ASFW::Audio::Session::AudioSessions sessions{
         registry, runtime, hostTransport, hardware, &cancel,
         [](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
             return nullptr;
         }};
     AudioNubPublisher publisher{nullptr};
-    AVCAudioBackend avc{publisher, registry, runtime, hostTransport, coordinator, hardware};
-    DiceAudioBackend dice{publisher, registry, runtime, coordinator, hardware};
+    ASFW::Audio::DICE::DiceNotificationRouter diceNotifications{registry};
+    AVCAudioBackend avc{publisher, registry, runtime, hostTransport, sessions, hardware};
+    DiceAudioBackend dice{publisher, registry, runtime, sessions, hardware, diceNotifications};
 
     void SeedDiceDevice(uint64_t guid) {
         ConfigROM rom{};
@@ -340,7 +342,7 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionA
 
 TEST(BackendLifecycleRaceTests, MotuConcurrentTeardownWaitsForQueueAndRejectsRecovery) {
     TestFixture f;
-    ASFW::Audio::MotuAudioBackend motu(f.publisher, f.registry, f.runtime, f.coordinator, f.hardware);
+    ASFW::Audio::MotuAudioBackend motu(f.publisher, f.registry, f.runtime, f.sessions, f.hardware);
     auto* queue = motu.WorkQueueForTesting();
     ASSERT_NE(queue, nullptr);
     std::unique_lock<std::mutex> queueLock(queue->ExecutionMutexForTesting());

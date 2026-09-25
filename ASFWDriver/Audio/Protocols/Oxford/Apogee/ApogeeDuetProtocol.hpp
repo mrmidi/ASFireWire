@@ -13,10 +13,10 @@
 //   OxfordCsr             chip-common FW970/971 ID registers   (FW-137)
 //   ApogeeDuetDuplex      duplex lifecycle and clock FSM       (FW-127)
 //
-// The duplex controller is a member rather than a base class, so this type no
-// longer carries the IDuplexDeviceControl vtable; AsDuplexDeviceControl hands
-// out the member. The IDeviceProtocol methods that overlap the duplex surface
-// stay here as forwarders, because callers reach them through IDeviceProtocol.
+// The duplex controller is a member rather than a base class, so this type does
+// not carry the FamilyDriver vtable; AsFamilyDriver hands out the member. The
+// IDeviceProtocol methods that overlap the duplex surface stay here as
+// forwarders, because callers reach them through IDeviceProtocol.
 
 #pragma once
 
@@ -25,7 +25,6 @@
 #include "ApogeeVendorCodec.hpp"
 #include "../OxfordCsr.hpp"
 #include "../../IDeviceProtocol.hpp"
-#include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
 #include "../../../../Scheduling/ITimerScheduler.hpp"
 #include <DriverKit/IOReturn.h>
@@ -84,18 +83,16 @@ public:
     [[nodiscard]] const char* GetName() const override { return "Apogee Duet FireWire"; }
     [[nodiscard]] bool HasDsp() const override { return true; } // Has mixer/DSP features
     [[nodiscard]] bool HasMixer() const override { return true; }
-    IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return &duplex_; }
-    [[nodiscard]] const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override {
-        return &duplex_;
-    }
+    FamilyDriver* AsFamilyDriver() noexcept override { return &duplex_; }
+    // The stage chains behind that driver, for tests that pump their bus.
+    [[nodiscard]] ApogeeDuetDuplex& Duplex() noexcept { return duplex_; }
 
     // IDeviceProtocol members the duplex controller answers. Kept here because
-    // callers hold an IDeviceProtocol, not an IDuplexDeviceControl.
+    // callers hold an IDeviceProtocol, not a FamilyDriver.
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override {
         return duplex_.GetRuntimeAudioStreamCaps(outCaps);
     }
     [[nodiscard]] IOReturn StopDuplex() override { return duplex_.StopDuplex(); }
-    [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return runtime_.irmClient; }
 
     /// May be null before the runtime context is bound; callers must check.
     [[nodiscard]] Protocols::AVC::FCPTransport* GetFCPTransport() const noexcept {
@@ -109,7 +106,7 @@ public:
     /// Discovery applies the 48 kHz formation before publishing, holding the
     /// concrete type rather than the duplex seam.
     void ApplyClockConfig(const AudioClockConfig& desiredClock,
-                          IDuplexDeviceControl::ClockApplyCallback callback) {
+                          ClockApplyCallback callback) {
         duplex_.ApplyClockConfig(desiredClock, std::move(callback));
     }
 
