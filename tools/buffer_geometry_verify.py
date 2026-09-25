@@ -63,8 +63,11 @@ CONTENT_HORIZON_PACKETS = 400    # kTxDataHorizonPackets
 class Geometry:
     """One candidate HAL buffer profile + the derived TX packet geometry.
 
-    io_budget_frames == kHalIoPeriodFrames is the advertised CoreAudio max IO.
-    The content horizon is independent and remains packet-time based.
+    io_budget_frames == kHalIoPeriodFrames is the nominal CoreAudio IO. It is
+    not enforced: a client may pick up to the AudioDriverKit ceiling
+    min(zts * 3/8, 4096) (kMaxClientIoFrames), so the TX budgets hold that
+    write window. The content horizon stays packet-time based, floored at one
+    whole write window plus jitter (Defect B).
     """
     name: str
     ring_frames: int            # frameRingFrames  (shared IOMemoryDescriptor)
@@ -73,10 +76,16 @@ class Geometry:
     timeline_slots: int         # kTimelineSlots (AmdtpPacketTimeline length)
     shared_slots: int = 912     # kTxSharedSlotPackets
 
+    @property
+    def write_window_frames(self) -> int:           # kMaxClientIoFrames
+        adk_ceiling = min(self.zts_frames * 3 // 8, 4096)
+        return max(self.io_budget_frames, adk_ceiling)
+
     # --- derived: exposure cushion (frames) ---------------------------------
     @property
     def exposure_lead_frames(self) -> int:          # kTxExposureLeadFrames
-        return CONTENT_HORIZON_PACKETS * 48_000 // 8_000
+        return max(CONTENT_HORIZON_PACKETS * 48_000 // 8_000,
+                   self.write_window_frames + JITTER_FRAMES)
 
     @property
     def exposure_lead_pkts(self) -> int:            # kTxExposureLeadPackets
@@ -97,7 +106,7 @@ class Geometry:
 
     @property
     def frame_exposure_window_pkts(self) -> int:    # kTxFrameExposureWindowPackets
-        raw = ((self.io_budget_frames + self.exposure_lead_frames) *
+        raw = ((self.write_window_frames + self.exposure_lead_frames) *
                MIN_CADENCE_PACKETS + MIN_CADENCE_FRAMES - 1) // MIN_CADENCE_FRAMES
         return ((raw + PKTS_PER_GROUP - 1) // PKTS_PER_GROUP) * PKTS_PER_GROUP
 
@@ -148,9 +157,9 @@ INVARIANTS = [
     ("sharedSlot % cadenceBlock(4) == 0",
      lambda g: g.shared_slot_pkts % CADENCE_BLOCK_PKTS == 0,
      lambda g: f"{g.shared_slot_pkts} % {CADENCE_BLOCK_PKTS} = {g.shared_slot_pkts % CADENCE_BLOCK_PKTS}"),
-    ("exposureLead >= ioBudget + jitter",
-     lambda g: g.exposure_lead_frames >= g.io_budget_frames + JITTER_FRAMES,
-     lambda g: f"{g.exposure_lead_frames} >= {g.io_budget_frames + JITTER_FRAMES}"),
+    ("exposureLead >= maxClientIo + jitter",
+     lambda g: g.exposure_lead_frames >= g.write_window_frames + JITTER_FRAMES,
+     lambda g: f"{g.exposure_lead_frames} >= {g.write_window_frames + JITTER_FRAMES}"),
     ("exposureLeadPkts <= sharedSlot",
      lambda g: g.exposure_lead_pkts <= g.shared_slot_pkts,
      lambda g: f"{g.exposure_lead_pkts} <= {g.shared_slot_pkts}"),
@@ -159,9 +168,14 @@ INVARIANTS = [
      lambda g: f"{g.shared_slot_pkts} >= {2 * g.exposure_lead_pkts}"),
     ("frameExposureWindow covers WriteEnd + cushion",
      lambda g: g.frame_exposure_window_pkts * CADENCE_BLOCK_FRAMES >=
-               (g.io_budget_frames + g.exposure_lead_frames) * CADENCE_BLOCK_PKTS,
+               (g.write_window_frames + g.exposure_lead_frames) * CADENCE_BLOCK_PKTS,
      lambda g: f"{g.frame_exposure_window_pkts * CADENCE_BLOCK_FRAMES} >= "
-               f"{(g.io_budget_frames + g.exposure_lead_frames) * CADENCE_BLOCK_PKTS}"),
+               f"{(g.write_window_frames + g.exposure_lead_frames) * CADENCE_BLOCK_PKTS}"),
+    ("zts is a whole number of completion groups (V3: 256)",
+     lambda g: g.zts_frames % MAX_FRAMES_PER_INTERRUPT == 0,
+     lambda g: f"{g.zts_frames} % {MAX_FRAMES_PER_INTERRUPT} = "
+               f"{g.zts_frames % MAX_FRAMES_PER_INTERRUPT} "
+               f"({g.zts_frames // MAX_FRAMES_PER_INTERRUPT} groups)"),
     ("sharedSlot <= timelineSlots",
      lambda g: g.shared_slot_pkts <= g.timeline_slots,
      lambda g: f"{g.shared_slot_pkts} <= {g.timeline_slots}"),
@@ -175,7 +189,8 @@ def check(g: Geometry) -> List[Tuple[str, bool, str]]:
 def derived_table(g: Geometry) -> str:
     return (f"    ring={g.ring_frames}fr  ioBudget/maxIO={g.io_budget_frames}fr  "
             f"zts={g.zts_frames}fr  timeline={g.timeline_slots}slots\n"
-            f"    contentHorizon={CONTENT_HORIZON_PACKETS}pkt "
+            f"    maxClientIo={g.write_window_frames}fr  "
+            f"contentHorizon={CONTENT_HORIZON_PACKETS}pkt "
             f"exposureLead={g.exposure_lead_frames}fr ({g.exposure_lead_pkts}pkt)  "
             f"frameWindow={g.frame_exposure_window_pkts}pkt  "
             f"prepLead={g.preparation_lead_pkts}pkt  "
@@ -199,18 +214,20 @@ def report(g: Geometry) -> bool:
 # -----------------------------------------------------------------------------
 # Reference profiles
 # -----------------------------------------------------------------------------
-# Current shipping geometry (dice-working-1536 + AudioTimingGeometry.hpp).
+# Current shipping geometry at 48 kHz (V3: HalBufferProfileForRate(48000) +
+# AudioTimingGeometry.hpp). The ring equals the ZTS period and moves per rate
+# inside a 24576-frame allocation; the TX budgets hold a 4096-frame write.
 CURRENT = Geometry(
-    name="CURRENT (dice-working-1536)",
-    ring_frames=1536,
-    io_budget_frames=512,
-    zts_frames=1536,
-    timeline_slots=1024,
-    shared_slots=912,
+    name="CURRENT (audio-engine-v3-1x @48k)",
+    ring_frames=12288,
+    io_budget_frames=1024,
+    zts_frames=12288,
+    timeline_slots=1696,
+    shared_slots=1696,
 )
 
 
-def solve(max_io: int, zts: int = 1536) -> Geometry:
+def solve(max_io: int, zts: int = 12288) -> Geometry:
     """Smallest cadence-aligned profile that advertises `max_io` frames.
 
     Strategy: io_budget = max_io. Keep the 400-cycle content horizon, choose a
@@ -226,8 +243,9 @@ def solve(max_io: int, zts: int = 1536) -> Geometry:
     required_shared = max(
         g.preparation_lead_pkts + HW_RING_PKTS,
         2 * g.exposure_lead_pkts)
-    shared = max(912, ((required_shared + 11) // 12) * 12)
-    timeline = max(1024, ((shared + 11) // 12) * 12)
+    step = math.lcm(PKTS_PER_GROUP, CADENCE_BLOCK_PKTS)
+    shared = ((required_shared + step - 1) // step) * step
+    timeline = shared
     g = replace(g, shared_slots=shared, timeline_slots=timeline)
 
     # Frame ring: multiple of both IO and ZTS periods, and holds one max IO.
@@ -316,11 +334,11 @@ def main() -> None:
 
     sp_v = sub.add_parser("verify", help="check current + candidate")
     sp_v.add_argument("--max-io", type=int, default=1024)
-    sp_v.add_argument("--zts", type=int, default=1536)
+    sp_v.add_argument("--zts", type=int, default=12288)
 
     sp_s = sub.add_parser("solve", help="smallest aligned profile for a target IO")
     sp_s.add_argument("--max-io", type=int, default=1024)
-    sp_s.add_argument("--zts", type=int, default=1536)
+    sp_s.add_argument("--zts", type=int, default=12288)
 
     sub.add_parser("safety", help="old vs new safety offset table")
 

@@ -43,6 +43,7 @@ enum class TimingGeometryError : uint8_t {
     kUnsupportedSampleRate = 1,  ///< no AMDTP rate geometry for the rate
     kInvalidHalProfile,          ///< zero or inconsistent HAL buffer geometry
     kInvalidSafetyOffset,        ///< zero output safety, or safety >= ring
+    kExceedsAllocation,          ///< active ring larger than the shared allocation
 };
 
 [[nodiscard]] constexpr const char* TimingGeometryErrorName(TimingGeometryError e) noexcept {
@@ -50,6 +51,7 @@ enum class TimingGeometryError : uint8_t {
         case TimingGeometryError::kUnsupportedSampleRate: return "unsupported-sample-rate";
         case TimingGeometryError::kInvalidHalProfile: return "invalid-hal-profile";
         case TimingGeometryError::kInvalidSafetyOffset: return "invalid-safety-offset";
+        case TimingGeometryError::kExceedsAllocation: return "exceeds-allocation";
     }
     return "unknown";
 }
@@ -60,8 +62,11 @@ struct ResolvedTimingGeometry final {
     uint8_t fdf{0};
     uint32_t sytIntervalFrames{0};
 
-    // HAL buffer geometry.
+    // HAL buffer geometry. frameRingFrames is the ACTIVE ring at this rate (the
+    // HAL wraps on the ZTS period); allocatedFrameRingFrames is the fixed
+    // shared-memory size it lives in.
     uint32_t frameRingFrames{0};
+    uint32_t allocatedFrameRingFrames{0};
     uint32_t zeroTimestampPeriodFrames{0};
     uint32_t clientIoBudgetFrames{0};
 
@@ -96,7 +101,7 @@ struct ResolvedTimingGeometry final {
 /// Frames carried by the largest possible completion group at this rate: the
 /// most DATA packets a timing group can hold, times the SYT interval. A capture
 /// reader can lag the writer by one whole group between completions, so the
-/// input safety offset must cover it. 40 frames at 48 kHz, 80 at 96 kHz.
+/// input safety offset must cover it. 48 frames at 48 kHz, 96 at 96 kHz.
 [[nodiscard]] constexpr uint32_t CompletionBatchFrames(
     const Encoding::AmdtpRateGeometry& geometry) noexcept {
     return Encoding::MaxBlockingDataPacketsInCycles(
@@ -129,6 +134,9 @@ ResolveTimingGeometry(uint32_t sampleRateHz,
     if (!IsochTransport::IsValidAudioHalBufferProfile(hal)) {
         return std::unexpected(TimingGeometryError::kInvalidHalProfile);
     }
+    if (!IsochTransport::ProfileFitsAllocation(hal)) {
+        return std::unexpected(TimingGeometryError::kExceedsAllocation);
+    }
 
     const uint32_t floor = ResolveInputSafetyFrames(0, *wire);
     const uint32_t inputSafety = ResolveInputSafetyFrames(policy.inputSafetyOffsetFrames, *wire);
@@ -147,6 +155,7 @@ ResolveTimingGeometry(uint32_t sampleRateHz,
         .fdf = wire->fdf,
         .sytIntervalFrames = wire->sytIntervalFrames,
         .frameRingFrames = hal.frameRingFrames,
+        .allocatedFrameRingFrames = IsochTransport::kAllocatedFrameRingFrames,
         .zeroTimestampPeriodFrames = hal.zeroTimestampPeriodFrames,
         .clientIoBudgetFrames = hal.clientIoBudgetFrames,
         .outputLatencyFrames = policy.outputLatencyFrames,
@@ -158,15 +167,6 @@ ResolveTimingGeometry(uint32_t sampleRateHz,
         .rxTransferDelayTicks = transferDelay,
         .txTransferDelayTicks = transferDelay,
     };
-}
-
-/// A rate change may proceed on a live device only if it keeps the geometry
-/// that cannot change under it: the shared-memory ring and the ZTS period
-/// fixed at IOUserAudioDevice::init.
-[[nodiscard]] constexpr bool IsLiveCompatible(const ResolvedTimingGeometry& live,
-                                              const ResolvedTimingGeometry& next) noexcept {
-    return live.frameRingFrames == next.frameRingFrames &&
-           live.zeroTimestampPeriodFrames == next.zeroTimestampPeriodFrames;
 }
 
 } // namespace ASFW::Audio::Runtime

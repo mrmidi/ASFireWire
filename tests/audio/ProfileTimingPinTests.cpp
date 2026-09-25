@@ -95,9 +95,10 @@ TEST(ProfileTimingPinTests, PinnedDeclarationsAtEveryRate) {
 } // namespace
 
 // FW-183/184: the driver's only profile->timing bridge, exercised on every real
-// profile. Resolution must succeed at every AMDTP rate a profile can be asked
-// for, declarations must come through unchanged, and input safety must never
-// fall below the rate's completion-batch floor.
+// profile. Resolution must succeed at every AMDTP rate whose V3 ring fits the
+// shared allocation (4x rates are refused), declarations must come through
+// unchanged, and input safety must never fall below the rate's completion-batch
+// floor.
 #include "Audio/DriverKit/Config/ProfileTimingGeometry.hpp"
 
 namespace {
@@ -115,6 +116,13 @@ TEST(ProfileTimingPinTests, EveryProfileResolvesThroughTheDriverBridge) {
         for (const uint32_t rate : kRates) {
             SCOPED_TRACE(std::string(profile->Name()) + " @" + std::to_string(rate));
             const auto resolved = ResolveProfileTimingGeometry(*profile, rate, blockingRaw);
+            if (rate > 96000) {
+                // V3: a 4x ring (49152 frames) exceeds the shared allocation.
+                ASSERT_FALSE(resolved.has_value());
+                EXPECT_EQ(resolved.error(),
+                          ASFW::Audio::Runtime::TimingGeometryError::kExceedsAllocation);
+                continue;
+            }
             ASSERT_TRUE(resolved.has_value());
             EXPECT_EQ(resolved->outputLatencyFrames, profile->TxReportedLatencyFrames(rate));
             EXPECT_EQ(resolved->inputLatencyFrames, profile->RxReportedLatencyFrames(rate));

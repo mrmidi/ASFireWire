@@ -79,7 +79,7 @@ class TxProducerRig final {
 public:
     TxProducerRig() {
         device_ = new ASFWAudioDevice();
-        device_->zeroTimestampPeriod = Geometry::kHalZeroTimestampPeriodFrames;
+        device_->zeroTimestampPeriod = ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames;
         ivars_.audioDevice = OSSharedPtr<ASFWAudioDevice>(device_, OSNoRetain);
         ivars_.device.audioNub = &nub_;
         ivars_.runtime.directAudioGraph.control = control_.get();
@@ -323,7 +323,7 @@ const Capture::Event* FirstCapturedHostPacket() {
     return nullptr;
 }
 
-// 0.5 s of bus time: several ring laps past the 912-packet prefill, and well
+// 0.5 s of bus time: two ring laps past the 1696-packet prefill, and well
 // past the ~780-cycle point where the FW-255 failure stopped IT.
 constexpr uint64_t kSteadyStatePackets = 4000;
 
@@ -392,7 +392,7 @@ TEST(AudioDriverTxProducerTests, MAudio1814PublishesTheHalClockFromTxCompletions
     ASSERT_FALSE(published.empty());
     for (size_t i = 1; i < published.size(); ++i) {
         EXPECT_EQ(published[i].sampleTime - published[i - 1].sampleTime,
-                  Geometry::kHalZeroTimestampPeriodFrames);
+                  ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames);
         EXPECT_GT(published[i].hostTime, published[i - 1].hostTime);
     }
 }
@@ -437,9 +437,20 @@ TEST(AudioDriverTxProducerTests, SaffireReplaysRxTimingOnceReplayEstablishes) {
                 << "packet " << packet.index;
         }
     }
-    // Replay establishes a few hundred cycles in; after that TX carries the
+    // Packets prepared before replay establishes carry no DATA, so the first
+    // DATA packet follows the prefilled shared store (prepare-time content; late
+    // binding, FW-209, removes this start-up gap). After that TX carries the
     // device's 3-of-4 DATA cadence.
-    EXPECT_GT(dataPackets, kSteadyStatePackets / 2);
+    size_t firstData = wire.size();
+    for (size_t i = 0; i < wire.size(); ++i) {
+        if (wire[i].IsData()) {
+            firstData = i;
+            break;
+        }
+    }
+    ASSERT_LT(firstData, wire.size());
+    EXPECT_LE(firstData, Geometry::kTxSharedSlotPackets);
+    EXPECT_GE(dataPackets, (wire.size() - firstData) * 3 / 4 - 1);
 }
 
 } // namespace

@@ -15,8 +15,8 @@ bool TxClockBridge::Arm(const uint64_t startEpoch,
         sampleRateHz !=
             ASFW::Audio::BeBoB::kMAudioInternalTxSampleRateHz ||
         zeroTimestampPeriodFrames !=
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kHalZeroTimestampPeriodFrames) {
+            ASFW::Audio::Runtime::HardwareSampleTimeline::
+                ZeroTimestampPeriodForRate(sampleRateHz)) {
         return false;
     }
     epoch_ = timeline_.BeginEpoch(

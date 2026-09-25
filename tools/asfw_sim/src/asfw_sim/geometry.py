@@ -62,13 +62,19 @@ class Geometry:
 
     profile_name: str = "unknown"
 
+    # Floor of the content horizon: the largest client write AudioDriverKit
+    # permits plus jitter (kTxExposureFloorFrames). 0 = no floor (pre-V3).
+    tx_exposure_floor_frames: int = 0
+
     # --- derived ------------------------------------------------------------
     @property
     def data_horizon_frames(self) -> int:
         """``AudioTimingGeometry::TxDataHorizonFrames`` at this rate."""
-        return (
-            self.tx_data_horizon_packets * self.sample_rate + CYCLES_PER_SECOND - 1
-        ) // CYCLES_PER_SECOND
+        return max(
+            (self.tx_data_horizon_packets * self.sample_rate + CYCLES_PER_SECOND - 1)
+            // CYCLES_PER_SECOND,
+            self.tx_exposure_floor_frames,
+        )
 
     @property
     def ticks_per_frame(self) -> float:
@@ -122,6 +128,7 @@ class Geometry:
             replay_capacity=h.replay_capacity,
             replay_read_delay=h.replay_read_delay,
             profile_name=h.profile_name,
+            tx_exposure_floor_frames=h.tx_exposure_floor_frames,
         )
 
     def evolve(self, **changes: object) -> "Geometry":

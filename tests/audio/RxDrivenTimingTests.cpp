@@ -69,7 +69,7 @@ TEST(RxDrivenTimingTests, RxRingWrapPreservesCadenceAndFramePhase) {
 TEST(RxDrivenTimingTests, ZtsGridIsObservedAtDataPacketStartWithoutProjection) {
     constexpr std::array<uint32_t, 4> cadence{8, 8, 8, 0};
     constexpr uint64_t period =
-        AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+        ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames;
     static_assert(period % AudioTimingGeometry::kCadenceBlockFrames == 0);
 
     uint64_t absoluteFrame = 0;
@@ -227,20 +227,19 @@ TEST(RxDrivenTimingTests, GeometryUsesEightCycleInterruptsAndCurrentTxDepths) {
     EXPECT_EQ(AudioTimingGeometry::kRxPacketsPerGroup, 8U);
     EXPECT_EQ(AudioTimingGeometry::kTxPacketsPerGroup, 8U);
     EXPECT_EQ(AudioTimingGeometry::kNominalFramesPerTimingGroup, 48U);
-    EXPECT_EQ(
-        AudioTimingGeometry::kHalZeroTimestampPeriodFrames,
-        ASFW::IsochTransport::kActiveAudioHalBufferProfile
-            .zeroTimestampPeriodFrames);
+    EXPECT_EQ(ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames,
+              12288U);
     EXPECT_EQ(AudioTimingGeometry::kRxDescriptorPackets, 504U);
     EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 48U);
     EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 96U);
     EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 144U);
-    // 400-cycle content horizon at worst-case 44.1k cadence, plus one full
-    // 512-frame client write window.
-    EXPECT_EQ(AudioTimingGeometry::kTxExposureLeadPackets, 440U);
-    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 536U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 680U);
-    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 912U);
+    // Content horizon floored at the 4096-frame ADK client maximum plus
+    // jitter (4160 frames) at worst-case 44.1k cadence, plus one full
+    // 4096-frame client write window.
+    EXPECT_EQ(AudioTimingGeometry::kTxExposureLeadPackets, 760U);
+    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 1504U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 1648U);
+    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 1696U);
 }
 
 TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {

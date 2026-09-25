@@ -5,6 +5,8 @@ description: >
   true, a healthy duplex stream would starve the reader immediately. It does not:
   the reader advances once per PREPARED PACKET, not per packet index, so
   reader - producer stays pinned at -kReadDelay regardless of the lead.
+  The only unwritten content is the start-up prefill (packets prepared before
+  the first client write): 0.237 s of 20 s at the V3 1648-packet lead.
 base: driver
 rate: 48000
 
@@ -13,6 +15,6 @@ scenario:
 
 expect:
   collapsed: false
-  written_fraction_min: 0.99
+  written_fraction_min: 0.985
   max_replay_failures: 0
   max_align_count: 1

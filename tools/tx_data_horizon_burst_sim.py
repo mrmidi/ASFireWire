@@ -4,11 +4,13 @@
 This is deliberately narrower than ``tx_payload_ownership_sim.py``.  It
 models the implementation introduced for Duet stability:
 
-* CoreAudio emits discrete WriteEnd bursts (normally 512 frames).
+* CoreAudio emits discrete WriteEnd bursts (1024 frames nominal; up to the
+  4096-frame AudioDriverKit ceiling at the V3 ZTS period).
 * Each burst updates W, then publishes one coalesced preparation request.
-* The preparation queue advances E to W + the 400-cycle content horizon when
-  it is allowed to run.  It also restores packet preparation to completion +
-  the 680-packet lead.
+* The preparation queue advances E to W + the content horizon when it is
+  allowed to run: 400 cycles, floored at one 4096-frame write plus jitter
+  (4160 frames, TxDataHorizonFrames).  It also restores packet preparation to
+  completion + the 1648-packet lead.
 * While the action is delayed, W can cross E (a PayloadWriter
   ``framesWithoutPacket`` loss) independently of descriptor margin.
 
@@ -33,10 +35,14 @@ CADENCE = (8, 8, 8, 0)
 
 # Keep these in lock-step with AudioTimingGeometry.hpp.
 HW_RING_PACKETS = 48
-PREPARATION_LEAD_PACKETS = 680
-SHARED_SLOT_PACKETS = 912
+PREPARATION_LEAD_PACKETS = 1648
+SHARED_SLOT_PACKETS = 1696
 CONTENT_HORIZON_PACKETS = 400
-DEFAULT_IO_FRAMES = 512
+HORIZON_FLOOR_FRAMES = 4096 + 64    # kTxExposureFloorFrames = kMaxClientIoFrames + jitter
+DEFAULT_IO_FRAMES = 1024            # kHalIoPeriodFrames (nominal, not enforced)
+
+# Pre-V3 geometry, for the regression rows of the suite.
+PRE_V3 = dict(preparation_lead_packets=680, shared_slot_packets=912, horizon_floor_frames=0)
 
 
 def frames_at_cycle(cycle: int) -> int:
@@ -45,8 +51,9 @@ def frames_at_cycle(cycle: int) -> int:
     return blocks * sum(CADENCE) + sum(CADENCE[:remainder])
 
 
-def horizon_frames(sample_rate: int) -> int:
-    return (CONTENT_HORIZON_PACKETS * sample_rate + CYCLES_PER_SECOND - 1) // CYCLES_PER_SECOND
+def horizon_frames(sample_rate: int, packets: int = CONTENT_HORIZON_PACKETS,
+                   floor: int = HORIZON_FLOOR_FRAMES) -> int:
+    return max((packets * sample_rate + CYCLES_PER_SECOND - 1) // CYCLES_PER_SECOND, floor)
 
 
 @dataclass(frozen=True)
@@ -59,6 +66,7 @@ class Config:
     content_horizon_packets: int = CONTENT_HORIZON_PACKETS
     preparation_lead_packets: int = PREPARATION_LEAD_PACKETS
     shared_slot_packets: int = SHARED_SLOT_PACKETS
+    horizon_floor_frames: int = HORIZON_FLOOR_FRAMES
 
 
 @dataclass
@@ -100,7 +108,7 @@ def run(cfg: Config) -> Result:
     result = Result(min_descriptor_margin=cfg.preparation_lead_packets)
     writes = iter(write_cycles(cfg))
     next_write = next(writes, None)
-    horizon = (cfg.content_horizon_packets * SAMPLE_RATE + CYCLES_PER_SECOND - 1) // CYCLES_PER_SECOND
+    horizon = horizon_frames(SAMPLE_RATE, cfg.content_horizon_packets, cfg.horizon_floor_frames)
 
     write_end = 0
     exposed_end = horizon
@@ -157,11 +165,11 @@ def run(cfg: Config) -> Result:
 
 
 def print_result(label: str, cfg: Config, result: Result) -> None:
-    horizon = (cfg.content_horizon_packets * SAMPLE_RATE) / CYCLES_PER_SECOND
+    horizon = horizon_frames(SAMPLE_RATE, cfg.content_horizon_packets, cfg.horizon_floor_frames)
     print(label)
     print(
-        f"  geometry: horizon={cfg.content_horizon_packets}pkt/{horizon:.0f}fr "
-        f"({cfg.content_horizon_packets / 8:.1f}ms) prepLead={cfg.preparation_lead_packets}pkt "
+        f"  geometry: horizon={cfg.content_horizon_packets}pkt floor={cfg.horizon_floor_frames}fr "
+        f"-> {horizon}fr ({horizon / 6:.1f} cycles) prepLead={cfg.preparation_lead_packets}pkt "
         f"shared={cfg.shared_slot_packets}pkt io={cfg.io_frames}fr")
     print(
         f"  stall: at={cfg.stall_at_cycle} cycles for {cfg.stall_cycles} cycles "
@@ -184,6 +192,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         content_horizon_packets=args.horizon_packets,
         preparation_lead_packets=args.preparation_lead,
         shared_slot_packets=args.shared_slots,
+        horizon_floor_frames=args.horizon_floor,
     )
     result = run(cfg)
     print_result("TX data-horizon burst simulation", cfg, result)
@@ -191,19 +200,31 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_suite(_args: argparse.Namespace) -> int:
-    # The old 576-frame cushion equals 96 packet cycles at 48 kHz. A 22.5 ms
-    # queue stall crosses a second 512-frame WriteEnd and loses PCM. The new
-    # 400-cycle horizon absorbs a 50 ms queue stall, but correctly does not
-    # claim to survive an unbounded stall.
+    # Pre-V3 rows (no floor, 680/912): the old 576-frame cushion equals 96
+    # packet cycles at 48 kHz, so a 22.5 ms queue stall crosses a second
+    # 512-frame WriteEnd and loses PCM; the 400-cycle horizon absorbs 50 ms but
+    # not an unbounded stall; and a 4096-frame write (legal at the V3 ZTS
+    # period) outruns a 2400-frame horizon on every callback (Defect B).
+    # V3 rows: the 4160-frame floor covers 64..4096-frame writes through an
+    # 87.5 ms stall with no descriptor fatal, and still reports a longer one.
+    pre = replace(Config(io_frames=512), **PRE_V3)
     cases = (
-        ("old 96-cycle horizon, 180-cycle stall (must lose PCM)",
-         replace(Config(), content_horizon_packets=96, stall_cycles=180), False),
-        ("new 400-cycle horizon, 400-cycle stall (must survive)",
-         replace(Config(), stall_cycles=400), True),
-        ("new 400-cycle horizon, 450-cycle stall (bounded loss)",
-         replace(Config(), stall_cycles=450), False),
-        ("new horizon, 700-cycle stall (descriptor deadline still wins)",
-         replace(Config(), stall_cycles=700), False),
+        ("pre-V3: 96-cycle horizon, 180-cycle stall (must lose PCM)",
+         replace(pre, content_horizon_packets=96, stall_cycles=180), False),
+        ("pre-V3: 400-cycle horizon, 400-cycle stall (must survive)",
+         replace(pre, stall_cycles=400), True),
+        ("pre-V3: 400-cycle horizon, 450-cycle stall (bounded loss)",
+         replace(pre, stall_cycles=450), False),
+        ("pre-V3: 4096-frame writes, no stall (Defect B: must lose PCM)",
+         replace(pre, io_frames=4096), False),
+        ("V3: 64-frame writes, 700-cycle stall (must survive)",
+         replace(Config(), io_frames=64, stall_cycles=700), True),
+        ("V3: 1024-frame writes, 700-cycle stall (must survive)",
+         replace(Config(), stall_cycles=700), True),
+        ("V3: 4096-frame writes, 700-cycle stall (must survive)",
+         replace(Config(), io_frames=4096, stall_cycles=700), True),
+        ("V3: 64-frame writes, 900-cycle stall (bounded loss)",
+         replace(Config(), io_frames=64, stall_cycles=900), False),
     )
     failed = False
     for label, cfg, expected_ok in cases:
@@ -229,6 +250,8 @@ def main() -> int:
     run_parser.add_argument("--horizon-packets", type=int, default=CONTENT_HORIZON_PACKETS)
     run_parser.add_argument("--preparation-lead", type=int, default=PREPARATION_LEAD_PACKETS)
     run_parser.add_argument("--shared-slots", type=int, default=SHARED_SLOT_PACKETS)
+    run_parser.add_argument("--horizon-floor", type=int, default=HORIZON_FLOOR_FRAMES,
+                            help="frames; 0 disables the V3 floor (pre-V3 behaviour)")
     run_parser.set_defaults(func=cmd_run)
 
     suite_parser = sub.add_parser("suite", help="run old/new burst-boundary regression cases")

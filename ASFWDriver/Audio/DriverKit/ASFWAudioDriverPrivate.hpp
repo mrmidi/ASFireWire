@@ -49,9 +49,10 @@ struct AudioDriverDeviceState {
     double sampleRates[8]{};
     uint32_t sampleRateCount{0};
     double currentSampleRate{0};
-    // Rate reported by a device-initiated clock change (front panel/external
-    // sync), pending until PerformDeviceConfigurationChange commits it.
-    std::atomic<uint32_t> pendingExternalRateHz{0};
+    // Rate validated by HandleChangeSampleRate (HAL request) or reported by a
+    // device-initiated clock change (front panel/external sync), pending until
+    // PerformDeviceConfigurationChange commits it inside the host's window.
+    std::atomic<uint32_t> pendingSampleRateHz{0};
     uint32_t streamModeRaw{0};
     uint32_t boolControlCount{0};
     ASFW::Isoch::Audio::BoolControlSlot boolControls[ASFW::Isoch::Audio::kMaxBoolControls]{};
@@ -330,6 +331,9 @@ struct DirectAudioMemoryGeometry final {
 [[nodiscard]] bool BindDirectAudioSkeleton(
     ASFWAudioDriver_IVars& ivars,
     DirectAudioMemoryGeometry physicalGeometry) noexcept;
+/// Moves a bound skeleton to the active ring and rate of ivars.device.timing
+/// (rate-change window only; IO is stopped). No-op when nothing is bound.
+[[nodiscard]] bool UpdateDirectAudioGeometry(ASFWAudioDriver_IVars& ivars) noexcept;
 void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept;
 
 namespace DirectDiagnostics {

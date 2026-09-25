@@ -119,10 +119,24 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
     outputSegment.address = ivars.outputMap->GetAddress();
     outputSegment.length = ivars.outputMap->GetLength();
 
-    const uint32_t inputFrameCapacity =
+    // The binding wraps on the ACTIVE ring of the current rate (V3: the ZTS
+    // period), not on the mapping length: the mapping is the fixed allocation,
+    // which holds the largest supported ring. Both must agree with what the HAL
+    // wraps on, or the IO handler and the transport address different frames.
+    const uint32_t activeFrames = ivars.device.timing.frameRingFrames;
+    const uint32_t inputMappedFrames =
         FrameCapacityFromSegment(inputSegment, physicalGeometry.inputChannels);
-    const uint32_t outputFrameCapacity =
+    const uint32_t outputMappedFrames =
         FrameCapacityFromSegment(outputSegment, physicalGeometry.outputChannels);
+    if (activeFrames == 0 || activeFrames > inputMappedFrames ||
+        activeFrames > outputMappedFrames) {
+        ASFW_LOG(DirectAudio,
+                 "ADK FATAL BIND skeleton ring exceeds mapping active=%u inMapped=%u outMapped=%u",
+                 activeFrames, inputMappedFrames, outputMappedFrames);
+        return false;
+    }
+    const uint32_t inputFrameCapacity = activeFrames;
+    const uint32_t outputFrameCapacity = activeFrames;
 
     // Resolve the device profile to determine the host-to-device wire format.
     // Standard DICE fallback profiles use AM824 sub-frame formatting, while
@@ -170,6 +184,40 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
              static_cast<void*>(ivars.runtime.directAudioGraph.control),
              static_cast<void*>(ivars.runtime.directAudioGraph.audioDevice),
              ivars.runtime.directAudioGraph.sampleRateHz);
+    return true;
+}
+
+bool UpdateDirectAudioGeometry(ASFWAudioDriver_IVars& ivars) noexcept {
+    auto& graph = ivars.runtime.directAudioGraph;
+    if (!ivars.runtime.directAudioSkeletonBound.load(std::memory_order_acquire) ||
+        !ivars.inputMap || !ivars.outputMap) {
+        // Nothing bound yet: the graph build binds at the resolved ring.
+        return true;
+    }
+    IOAddressSegment inputSegment{};
+    inputSegment.address = ivars.inputMap->GetAddress();
+    inputSegment.length = ivars.inputMap->GetLength();
+    IOAddressSegment outputSegment{};
+    outputSegment.address = ivars.outputMap->GetAddress();
+    outputSegment.length = ivars.outputMap->GetLength();
+
+    const uint32_t activeFrames = ivars.device.timing.frameRingFrames;
+    if (activeFrames == 0 ||
+        activeFrames > FrameCapacityFromSegment(inputSegment, graph.memory.inputChannels) ||
+        activeFrames > FrameCapacityFromSegment(outputSegment, graph.memory.outputChannels)) {
+        ASFW_LOG(DirectAudio,
+                 "ADK FATAL BIND geometry update ring=%u exceeds mapping rate=%u",
+                 activeFrames, ivars.device.timing.sampleRateHz);
+        return false;
+    }
+    // IO is stopped inside the configuration-change window, so no RT reader
+    // observes the capacity change mid-cycle.
+    graph.memory.inputFrameCapacity = activeFrames;
+    graph.memory.outputFrameCapacity = activeFrames;
+    graph.sampleRateHz = ivars.device.timing.sampleRateHz;
+    ASFW_LOG(DirectAudio,
+             "ADK BIND geometry updated ring=%u rate=%u",
+             activeFrames, graph.sampleRateHz);
     return true;
 }
 

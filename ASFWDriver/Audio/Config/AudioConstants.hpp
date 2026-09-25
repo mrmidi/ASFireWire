@@ -13,17 +13,18 @@ namespace ASFW::Isoch::Config {
 inline constexpr uint32_t kMaxAmdtpDbs = ASFW::Encoding::kMaxAmdtpDbs;
 inline constexpr uint32_t kMaxPcmChannels = ASFW::Encoding::kMaxPcmChannels;
 
-// Frame ring: an exact integer number of ZTS periods and max HAL IO periods
-// (asserted in AudioTimingGeometry.hpp) so anchor grid, IO chunks, and ring
-// wrap can never drift out of phase.
+// Shared frame-ring ALLOCATION per direction (V3: the largest active ring of
+// any supported rate). The active ring at a rate is HalBufferProfileForRate(
+// rate).frameRingFrames and lives inside this allocation; a rate change moves
+// the active ring without replacing the memory descriptor.
 inline constexpr uint32_t kAudioRingBufferFrames =
-    ASFW::IsochTransport::AudioTimingGeometry::kFrameRingFrames;
+    ASFW::IsochTransport::AudioTimingGeometry::kAllocatedFrameRingFrames;
 inline constexpr uint32_t kAudioIoPeriodFrames =
     ASFW::IsochTransport::AudioTimingGeometry::kHalIoPeriodFrames;
 
-// Output (TX/playback) shared ring depth — same geometry as the input ring.
+// Output (TX/playback) shared ring allocation — same geometry as the input ring.
 inline constexpr uint32_t kAudioOutputRingFrames =
-    ASFW::IsochTransport::AudioTimingGeometry::kFrameRingFrames;
+    ASFW::IsochTransport::AudioTimingGeometry::kAllocatedFrameRingFrames;
 
 // Note: the frame rings are NOT required to be powers of two. The blocking
 // cadence advances 24 frames per 4-packet block, so any ring that is an
@@ -34,7 +35,7 @@ static_assert(kAudioOutputRingFrames != 0, "Output ring must be non-empty");
 static_assert(kAudioRingBufferFrames == kAudioOutputRingFrames,
               "Input and output must share one frame-ring geometry");
 static_assert((kAudioRingBufferFrames % kAudioIoPeriodFrames) == 0,
-              "Frame ring must be an integer number of IO periods");
+              "Frame ring allocation must be an integer number of IO periods");
 static_assert((kAudioRingBufferFrames %
                ASFW::IsochTransport::AudioTimingGeometry::kFrameAlignment) == 0,
               "Frame ring must be divisible by 32 frames");

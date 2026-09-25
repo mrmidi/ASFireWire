@@ -3,9 +3,9 @@
 //
 // FW-182/FW-184: the timing/HAL geometry resolver and the pure maths it is
 // built from. These test the architecture as well as the arithmetic: the
-// resolver must agree with the compile-time HAL geometry the driver allocates,
-// must reproduce main's shipped 48 kHz values, and must not hide a 48 kHz
-// assumption at other rates.
+// resolver must publish the V3 HAL geometry of each rate tier inside the fixed
+// shared allocation, must reproduce the applied 48 kHz values, and must not
+// hide a 48 kHz assumption at other rates.
 
 #include "Audio/DriverKit/Config/TimingLadder.hpp"
 #include "Audio/Runtime/ResolvedTimingGeometry.hpp"
@@ -31,6 +31,8 @@ namespace Ladder = ASFW::Isoch::Audio::TimingLadder;
 
 constexpr std::array<uint32_t, 7> kAmdtpRates = {32000, 44100, 48000, 88200,
                                                  96000, 176400, 192000};
+// Rates whose V3 ring fits the shared allocation (4x rates need 49152 frames).
+constexpr std::array<uint32_t, 5> kResolvableRates = {32000, 44100, 48000, 88200, 96000};
 
 // A profile shaped like the Saffire ladder at 48 kHz.
 constexpr DeviceTimingPolicy kSaffire48{29, 29, 48, 128};
@@ -41,9 +43,10 @@ TEST(TimingGeometryTests, Shipped48kGeometryIsReproducedExactly) {
     EXPECT_EQ(resolved->sampleRateHz, 48000U);
     EXPECT_EQ(resolved->fdf, 2U);
     EXPECT_EQ(resolved->sytIntervalFrames, 8U);
-    EXPECT_EQ(resolved->frameRingFrames, 1536U);
-    EXPECT_EQ(resolved->zeroTimestampPeriodFrames, 1536U);
-    EXPECT_EQ(resolved->clientIoBudgetFrames, 512U);
+    EXPECT_EQ(resolved->frameRingFrames, 12288U);
+    EXPECT_EQ(resolved->allocatedFrameRingFrames, 24576U);
+    EXPECT_EQ(resolved->zeroTimestampPeriodFrames, 12288U);
+    EXPECT_EQ(resolved->clientIoBudgetFrames, 1024U);
     EXPECT_EQ(resolved->outputLatencyFrames, 29U);
     EXPECT_EQ(resolved->inputLatencyFrames, 29U);
     EXPECT_EQ(resolved->outputSafetyOffsetFrames, 48U);
@@ -53,23 +56,41 @@ TEST(TimingGeometryTests, Shipped48kGeometryIsReproducedExactly) {
     EXPECT_EQ(resolved->txTransferDelayTicks, 12800U);
 }
 
-// COMPAT agreement (ownership G-05..G-07): consumers that still read the
-// compile-time constants must see the same numbers the resolver publishes. When
-// HalBufferProfileForRate becomes rate-dependent this test fails on purpose --
-// those consumers must then read the resolved value.
-TEST(TimingGeometryTests, ResolverAgreesWithCompileTimeHalGeometryAtEveryRate) {
-    for (const uint32_t rate : kAmdtpRates) {
+// V3 (decision D2): the active ring and ZTS period follow the rate tier, and
+// every consumer reads them from HalBufferProfileForRate / the resolved value.
+// 4x rates would need a 49152-frame ring, larger than the shared allocation,
+// and are refused rather than truncated.
+TEST(TimingGeometryTests, ResolvedHalGeometryFollowsTheRateTier) {
+    for (const uint32_t rate : kResolvableRates) {
         SCOPED_TRACE(rate);
         const auto resolved = ResolveTimingGeometry(rate, StreamMode::kBlocking, kSaffire48);
         ASSERT_TRUE(resolved.has_value());
-        EXPECT_EQ(resolved->frameRingFrames, Geometry::kFrameRingFrames);
-        EXPECT_EQ(resolved->zeroTimestampPeriodFrames, Geometry::kHalZeroTimestampPeriodFrames);
+        const auto hal = ASFW::IsochTransport::HalBufferProfileForRate(rate);
+        EXPECT_EQ(resolved->frameRingFrames, hal.frameRingFrames);
+        EXPECT_EQ(resolved->zeroTimestampPeriodFrames, hal.zeroTimestampPeriodFrames);
+        EXPECT_EQ(resolved->frameRingFrames, resolved->zeroTimestampPeriodFrames);
         EXPECT_EQ(resolved->clientIoBudgetFrames, Geometry::kHalIoPeriodFrames);
+        EXPECT_EQ(resolved->allocatedFrameRingFrames, Geometry::kAllocatedFrameRingFrames);
+        EXPECT_EQ(resolved->allocatedFrameRingFrames % resolved->frameRingFrames, 0U);
+        // 256 eight-packet completion groups per ZTS period at every tier.
+        EXPECT_EQ(resolved->zeroTimestampPeriodFrames /
+                      (Geometry::kTimingGroupPackets / Geometry::kCadenceBlockPackets *
+                       Geometry::kCadenceBlockFrames * (rate > 48000 ? 2U : 1U)),
+                  256U);
+    }
+    EXPECT_EQ(ResolveTimingGeometry(48000, StreamMode::kBlocking, kSaffire48)->frameRingFrames,
+              12288U);
+    EXPECT_EQ(ResolveTimingGeometry(96000, StreamMode::kBlocking, kSaffire48)->frameRingFrames,
+              24576U);
+    for (const uint32_t rate : {176400U, 192000U}) {
+        const auto resolved = ResolveTimingGeometry(rate, StreamMode::kBlocking, kSaffire48);
+        ASSERT_FALSE(resolved.has_value()) << rate;
+        EXPECT_EQ(resolved.error(), TimingGeometryError::kExceedsAllocation) << rate;
     }
 }
 
 TEST(TimingGeometryTests, WireFactsAreCopiedNotRederived) {
-    for (const uint32_t rate : kAmdtpRates) {
+    for (const uint32_t rate : kResolvableRates) {
         SCOPED_TRACE(rate);
         const auto wire = AmdtpRateGeometryForSampleRate(rate);
         const auto resolved = ResolveTimingGeometry(rate, StreamMode::kBlocking, kSaffire48);
@@ -94,7 +115,8 @@ TEST(TimingGeometryTests, InvalidSafetyIsRejected) {
               TimingGeometryError::kInvalidSafetyOffset);
 
     DeviceTimingPolicy hugeIn = kSaffire48;
-    hugeIn.inputSafetyOffsetFrames = Geometry::kFrameRingFrames;
+    hugeIn.inputSafetyOffsetFrames =
+        ASFW::IsochTransport::HalBufferProfileForRate(48000).frameRingFrames;
     EXPECT_EQ(ResolveTimingGeometry(48000, StreamMode::kBlocking, hugeIn).error(),
               TimingGeometryError::kInvalidSafetyOffset);
 }
@@ -173,6 +195,9 @@ TEST(TimingGeometryTests, TransferDelayIsTheBlockingFormulaAtEveryRate) {
         // D1: the blocking formula is applied to every stream (as midi does),
         // whatever the stream mode.
         EXPECT_EQ(AppliedTransferDelayTicks(wire), row.blocking);
+        if (row.rate > 96000) {
+            continue;  // 4x rates exceed the V3 allocation (see above)
+        }
         const auto resolved = ResolveTimingGeometry(row.rate, StreamMode::kNonBlocking, kSaffire48);
         ASSERT_TRUE(resolved.has_value());
         EXPECT_EQ(resolved->rxTransferDelayTicks, row.blocking);
@@ -221,13 +246,16 @@ TEST(TimingGeometryTests, LadderHelperReproducesLegacyProfileLadders) {
     EXPECT_EQ(Ladder::ReportedLatencyFrames(22050.0), 0U);
 }
 
-TEST(TimingGeometryTests, LiveCompatibilityRequiresUnchangedRingAndPeriod) {
+// A 48 -> 96 kHz change moves the active ring and the ZTS period (applied in
+// the configuration-change window) but never the allocation, so the shared
+// memory is reused and no descriptor is replaced under CoreAudio.
+TEST(TimingGeometryTests, RateChangeMovesActiveRingInsideTheAllocation) {
     const auto at48 = *ResolveTimingGeometry(48000, StreamMode::kBlocking, kSaffire48);
     const auto at96 = *ResolveTimingGeometry(96000, StreamMode::kBlocking, kSaffire48);
-    EXPECT_TRUE(IsLiveCompatible(at48, at96));
-    auto grown = at96;
-    grown.zeroTimestampPeriodFrames *= 2;
-    EXPECT_FALSE(IsLiveCompatible(at48, grown));
+    EXPECT_EQ(at48.allocatedFrameRingFrames, at96.allocatedFrameRingFrames);
+    EXPECT_NE(at48.zeroTimestampPeriodFrames, at96.zeroTimestampPeriodFrames);
+    EXPECT_EQ(at96.frameRingFrames, 2U * at48.frameRingFrames);
+    EXPECT_LE(at96.frameRingFrames, at96.allocatedFrameRingFrames);
 }
 
 } // namespace

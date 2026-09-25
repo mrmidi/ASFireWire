@@ -68,11 +68,20 @@ struct TxPresentationRange final {
 // single-writer on the serialized preparation queue.
 class HardwareSampleTimeline final {
 public:
-    // Use the period published to HAL by the active audio geometry. A separate
-    // literal period would drift from that contract when geometry changes.
+    // The ZTS period follows the epoch's rate through the same
+    // HalBufferProfileForRate value the driver declares with
+    // SetZeroTimeStampPeriod, so the timeline and the HAL change period in the
+    // same rate change (a stale period here clicked on the midi branch, ac5c53c).
+    // This constant is only the idle (Reset) value.
     static constexpr uint32_t kZeroTimestampPeriodFrames =
-        ASFW::IsochTransport::AudioTimingGeometry::
-            kHalZeroTimestampPeriodFrames;
+        ASFW::IsochTransport::HalBufferProfileForRate(48'000)
+            .zeroTimestampPeriodFrames;
+
+    [[nodiscard]] static constexpr uint32_t ZeroTimestampPeriodForRate(
+        uint32_t sampleRateHz) noexcept {
+        return ASFW::IsochTransport::HalBufferProfileForRate(sampleRateHz)
+            .zeroTimestampPeriodFrames;
+    }
 
     [[nodiscard]] static constexpr bool IsSupportedSampleRate(
         uint32_t sampleRateHz) noexcept {
@@ -141,10 +150,8 @@ public:
         discontinuity_.store(reason, std::memory_order_relaxed);
         sampleRateHz_.store(sampleRateHz, std::memory_order_relaxed);
         nominalBusTicksPerFrame_.store(nominalTicks, std::memory_order_relaxed);
-        zeroTimestampPeriodFrames_.store(
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kHalZeroTimestampPeriodFrames,
-            std::memory_order_relaxed);
+        zeroTimestampPeriodFrames_.store(ZeroTimestampPeriodForRate(sampleRateHz),
+                                         std::memory_order_relaxed);
         epochBaseFrame_.store(baseFrame, std::memory_order_relaxed);
         lastObservationFrame_.store(0, std::memory_order_relaxed);
         lastObservationFrameCount_.store(0, std::memory_order_relaxed);

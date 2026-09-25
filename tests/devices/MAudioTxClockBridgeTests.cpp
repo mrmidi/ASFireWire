@@ -13,8 +13,9 @@ TEST(MAudioTxClockBridgeTests,
     TxClockBridge bridge{};
     constexpr uint32_t rate = ASFW::Audio::BeBoB::kMAudioInternalTxSampleRateHz;
     constexpr uint32_t period =
-        ASFW::IsochTransport::AudioTimingGeometry::
-            kHalZeroTimestampPeriodFrames;
+        ASFW::IsochTransport::HalBufferProfileForRate(
+            ASFW::Audio::BeBoB::kMAudioInternalTxSampleRateHz)
+            .zeroTimestampPeriodFrames;
     ASSERT_TRUE(bridge.Arm(1, rate, period, 12'800));
 
     constexpr uint64_t hostTicks = 1'000'000'000'000ULL;
@@ -52,8 +53,9 @@ TEST(MAudioTxClockBridgeTests,
 TEST(MAudioTxClockBridgeTests, RejectsGeometryOutsideTheValidated48KGrid) {
     TxClockBridge bridge{};
     constexpr uint32_t period =
-        ASFW::IsochTransport::AudioTimingGeometry::
-            kHalZeroTimestampPeriodFrames;
+        ASFW::IsochTransport::HalBufferProfileForRate(
+            ASFW::Audio::BeBoB::kMAudioInternalTxSampleRateHz)
+            .zeroTimestampPeriodFrames;
     EXPECT_FALSE(bridge.Arm(1, 96'000, period, 12'800));
     EXPECT_FALSE(bridge.Arm(1, ASFW::Audio::BeBoB::kMAudioInternalTxSampleRateHz,
                             period + 1, 12'800));

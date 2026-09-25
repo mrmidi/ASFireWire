@@ -406,8 +406,12 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     }
 
     const uint64_t packetFirstFrame = absoluteFrameCursor_ - result.framesDecoded;
-    constexpr uint64_t kZtsPeriodFrames =
-        ::ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+    // The HAL's ZTS grid at the bound rate (V3: 12288 at 1x, 24576 at 2x). The
+    // same HalBufferProfileForRate value is the period the driver declares, so
+    // the anchor grid follows a rate change with the binding generation.
+    const uint64_t kZtsPeriodFrames =
+        ::ASFW::IsochTransport::HalBufferProfileForRate(inputView_.sampleRateHz)
+            .zeroTimestampPeriodFrames;
     const uint32_t nanosPerSampleQ8 = inputView_.sampleRateHz == 0 ? 0 :
         static_cast<uint32_t>((1'000'000'000ULL << 8) / inputView_.sampleRateHz);
     if (kZtsPeriodFrames != 0 && result.framesDecoded != 0 &&

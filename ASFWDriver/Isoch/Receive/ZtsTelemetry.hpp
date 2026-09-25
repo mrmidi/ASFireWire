@@ -50,8 +50,9 @@ struct ZtsTelemetryRecord final {
 };
 
 // Off-hot-path log gate. ZTS anchors must still be captured and drained at
-// full cadence, but printing every 1536-frame anchor creates ~62 log lines/s at
-// 48 kHz (one UPD plus one CLKDELTA). Always emit the seed, then one snapshot
+// full cadence, but printing every anchor (one UPD plus one CLKDELTA each; ~8
+// lines/s at the V3 12288-frame period, ~62/s at the old 1536-frame period, at
+// 48 kHz) is noise. Always emit the seed, then one snapshot
 // per four seconds of device frames. Rate changes and frame-grid resets re-arm
 // the gate and emit immediately so lifecycle transitions remain visible.
 class ZtsTelemetryLogGate final {

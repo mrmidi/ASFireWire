@@ -265,6 +265,26 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         }
         ivars.device.timing = *resolved;
         ASFW::Audio::DriverKit::LogResolvedTimingGeometry("graph", ivars.device.timing);
+
+        // Advertise only rates whose geometry resolves: a 4x rate needs a
+        // 49152-frame V3 ring, larger than the shared allocation, and would
+        // be offered to CoreAudio only to be refused on every change.
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < ivars.device.sampleRateCount; ++i) {
+            const double rate = ivars.device.sampleRates[i];
+            const auto candidate = ASFW::Audio::DriverKit::ResolveProfileTimingGeometry(
+                *profile, static_cast<uint32_t>(rate), ivars.device.streamModeRaw);
+            if (!candidate) {
+                ASFW_LOG(Audio, "[Timing] rate %.0f not advertised: %{public}s", rate,
+                         ASFW::Audio::Runtime::TimingGeometryErrorName(candidate.error()));
+                continue;
+            }
+            ivars.device.sampleRates[kept++] = rate;
+        }
+        for (uint32_t i = kept; i < ivars.device.sampleRateCount; ++i) {
+            ivars.device.sampleRates[i] = 0;
+        }
+        ivars.device.sampleRateCount = kept;
     }
     const auto requireAdkSuccess =
         [&](const char* operation, kern_return_t status) noexcept -> bool {
@@ -338,18 +358,19 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return kIOReturnNoMemory;
     }
 
-    // The init argument is the declared zero-timestamp period. Shared stream
-    // memory is sized separately by the selected HAL buffer profile.
-    constexpr auto bufferProfile =
-        ASFW::IsochTransport::kActiveAudioHalBufferProfile;
-    const uint32_t target_period = ivars.device.timing.zeroTimestampPeriodFrames;
+    // The init argument is the declared zero-timestamp period of the current
+    // rate (V3: 12288 frames at 1x, 24576 at 2x). Shared stream memory is
+    // allocated once at the maximum; the active ring equals the ZTS period and
+    // moves with the rate inside that allocation.
+    const auto& timing = ivars.device.timing;
+    const uint32_t target_period = timing.zeroTimestampPeriodFrames;
     ASFW_LOG(
         Audio,
-        "ASFWAudioDriver: HAL buffer profile=%{public}s ring=%u ioBudget=%u zts=%u",
-        bufferProfile.name,
-        bufferProfile.frameRingFrames,
-        bufferProfile.clientIoBudgetFrames,
-        bufferProfile.zeroTimestampPeriodFrames);
+        "ASFWAudioDriver: HAL buffer geometry ring=%u allocated=%u ioBudget=%u zts=%u",
+        timing.frameRingFrames,
+        timing.allocatedFrameRingFrames,
+        timing.clientIoBudgetFrames,
+        timing.zeroTimestampPeriodFrames);
     ASFW_LOG(Audio, "ASFWAudioDriver: Creating IOUserAudioDevice with ZTS period target: %u frames", target_period);
 
     ivars.audioDevice = OSSharedPtr(OSTypeAlloc(ASFWAudioDevice), OSNoRetain);
@@ -488,24 +509,27 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                  static_cast<uint32_t>(ivars.device.currentSampleRate));
         return kIOReturnBadArgument;
     }
-    if (directOutputFrames != bufferProfile.frameRingFrames ||
-        directInputFrames != bufferProfile.frameRingFrames) {
+    // The runtime publishes the ACTIVE ring for the current rate; it must be
+    // the ring the resolver chose, or the two sides of the seam would wrap on
+    // different frames. The stream itself keeps the whole allocated buffer.
+    if (directOutputFrames != timing.frameRingFrames ||
+        directInputFrames != timing.frameRingFrames) {
         ASFW_LOG(
             Audio,
-            "ADK FATAL MEM ring/profile mismatch profile=%{public}s outFrames=%u inFrames=%u expectedRing=%u ztsPeriod=%u",
-            bufferProfile.name,
+            "ADK FATAL MEM ring/geometry mismatch outFrames=%u inFrames=%u expectedRing=%u allocated=%u ztsPeriod=%u",
             directOutputFrames,
             directInputFrames,
-            bufferProfile.frameRingFrames,
+            timing.frameRingFrames,
+            timing.allocatedFrameRingFrames,
             target_period);
         return kIOReturnBadArgument;
     }
     ASFW_LOG(
         Audio,
-        "ADK GRAPH state=stream-ring/ZTS profile=%{public}s outFrames=%u inFrames=%u ztsPeriod=%u",
-        bufferProfile.name,
+        "ADK GRAPH state=stream-ring/ZTS outFrames=%u inFrames=%u allocated=%u ztsPeriod=%u",
         directOutputFrames,
         directInputFrames,
+        timing.allocatedFrameRingFrames,
         target_period);
 
     error = ASFW::Common::CreateSharedMapping(ivars.outputBuffer, ivars.outputMap);

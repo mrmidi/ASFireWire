@@ -29,6 +29,26 @@ def g48():
     return Geometry.from_headers(48_000)
 
 
+@pytest.fixture(scope="module")
+def g48_f3(g48):
+    """The geometry the F3/F4 study was run at (pre-V3: 680-packet preparation
+    lead, 912-slot store, 1536-frame ring and ZTS period, 512-frame IO budget).
+
+    The study's numbers are a record of that geometry. Under V3 the deeper
+    lead moves the cliff (see test_v3_head_cliff), so they are pinned here
+    rather than re-fitted to whatever the headers say today.
+    """
+    return g48.evolve(
+        tx_preparation_lead_packets=680,
+        tx_shared_slot_packets=912,
+        timeline_slots=1024,
+        hal_io_period_frames=512,
+        frame_ring_frames=1536,
+        hal_zero_timestamp_period_frames=1536,
+        tx_exposure_floor_frames=0,
+    )
+
+
 def _run(geometry, seconds=15, stall_cycles=0, stall_at_s=4):
     return run(
         SimConfig(
@@ -58,11 +78,18 @@ def _cliff_cycles(geometry, hi=6_000) -> int:
 @pytest.mark.parametrize("rate", SUPPORTED_RATES)
 def test_healthy_duplex_never_starves_the_replay_reader(rate):
     """The 678-packet lead does NOT outrun a 256/512 replay ring."""
-    result = _run(Geometry.from_headers(rate), seconds=20)
+    geometry = Geometry.from_headers(rate)
+    seconds = 20
+    result = _run(geometry, seconds=seconds)
     assert result.failure_count(ReplayFailure.AHEAD_OF_PRODUCER) == 0
     assert result.failure_count(ReplayFailure.HISTORY_OVERWRITTEN) == 0
     assert not result.collapsed
-    assert result.written_fraction > 0.99
+    # The only unwritten content is the start-up prefill: packets prepared
+    # before the first client write (prepare-time content; late binding,
+    # FW-209, removes it). 0.237 s at the V3 1648-packet lead, 0.116 s at the
+    # old 680. Steady state is fully written.
+    unwritten_s = (1 - result.written_fraction) * seconds
+    assert unwritten_s <= geometry.tx_preparation_lead_packets / CYCLES + 0.05
 
 
 def test_reader_stays_a_constant_read_delay_behind_the_producer(g48):
@@ -96,7 +123,7 @@ def test_short_producer_stall_is_survivable(g48):
 
 def test_long_producer_stall_kills_content_permanently(g48):
     """Transport keeps emitting a packet per cycle; audio never returns."""
-    result = _run(g48, stall_cycles=800, seconds=20)  # 100 ms
+    result = _run(g48, stall_cycles=1600, seconds=20)  # 200 ms, past the V3 cliff
     assert result.collapsed
     assert result.data_packet_fraction > 0.7, "transport must still look healthy"
     assert result.align_count == 1, "the frame cursor never re-arms"
@@ -106,58 +133,79 @@ def test_long_producer_stall_kills_content_permanently(g48):
 
 
 def test_post_collapse_deficit_is_small_and_does_not_grow(g48):
-    """A ~20 ms standing phase error produces 100% silence -- the zombie."""
-    short = _run(g48, stall_cycles=800, seconds=10)
-    long = _run(g48, stall_cycles=800, seconds=30)
+    """A bounded standing phase error produces 100% silence -- the zombie."""
+    short = _run(g48, stall_cycles=1600, seconds=10)
+    long = _run(g48, stall_cycles=1600, seconds=30)
     short_deficit = short.write_frontier - short.exposed_frame_end
     long_deficit = long.write_frontier - long.exposed_frame_end
-    assert 0 < short_deficit < 4_000
-    assert 0 < long_deficit < 4_000
+    # Bounded, not a ramp: W - E saws inside one horizon plus one client write
+    # (1168 frames at the pre-V3 geometry; 3440..4336 at V3 over 8..60 s).
+    bound = g48.data_horizon_frames + g48.hal_io_period_frames
+    assert 0 < short_deficit < bound
+    assert 0 < long_deficit < bound
+    assert abs(long_deficit - short_deficit) <= g48.hal_io_period_frames
 
 
 # --- F3 -----------------------------------------------------------------------
 
 
-def test_head_cliff_is_78ms(g48):
+def test_head_cliff_is_78ms(g48_f3):
     """The value every other row in the F3 table is compared against."""
-    assert _cliff_cycles(g48) / 8 == pytest.approx(78.0, abs=4)
+    assert _cliff_cycles(g48_f3) / 8 == pytest.approx(78.0, abs=4)
 
 
 @pytest.mark.parametrize(
     "capacity,expected_ms", [(512, 78.0), (2048, 179.1), (4096, 435.1)]
 )
-def test_capacity_is_the_stall_recovery_budget(g48, capacity, expected_ms):
+def test_capacity_is_the_stall_recovery_budget(g48_f3, capacity, expected_ms):
     """kCapacity dominates: kReadDelay held at HEAD's 256 throughout."""
-    geometry = g48.evolve(replay_capacity=capacity)
+    geometry = g48_f3.evolve(replay_capacity=capacity)
     assert _cliff_cycles(geometry, hi=8_000) / 8 == pytest.approx(
         expected_ms, rel=0.05
     )
 
 
 @pytest.mark.parametrize("read_delay,expected_ms", [(128, 195.4), (1024, 173.9)])
-def test_read_delay_effect_is_mildly_inverse(g48, read_delay, expected_ms):
+def test_read_delay_effect_is_mildly_inverse(g48_f3, read_delay, expected_ms):
     """At fixed capacity a LARGER read delay lowers tolerance -- the opposite of
     the original law, because the reader starts closer to the overwrite edge."""
-    geometry = g48.evolve(replay_read_delay=read_delay, replay_capacity=2048)
+    geometry = g48_f3.evolve(replay_read_delay=read_delay, replay_capacity=2048)
     assert _cliff_cycles(geometry, hi=8_000) / 8 == pytest.approx(
         expected_ms, rel=0.05
     )
 
 
-def test_capacity_alone_dominates_the_two_constant_proposal(g48):
+def test_capacity_alone_dominates_the_two_constant_proposal(g48_f3):
     """F4: the recommended one-constant fix beats the original proposal on
     tolerance AND avoids its 32 -> 128 ms bring-up regression."""
-    recommended = g48.evolve(replay_capacity=2048)                       # rd 256
-    superseded = g48.evolve(replay_read_delay=1024, replay_capacity=2048)
+    recommended = g48_f3.evolve(replay_capacity=2048)                       # rd 256
+    superseded = g48_f3.evolve(replay_read_delay=1024, replay_capacity=2048)
     assert _cliff_cycles(recommended, hi=8_000) > _cliff_cycles(superseded, hi=8_000)
     assert recommended.replay_read_delay < superseded.replay_read_delay
 
 
-def test_head_dies_at_the_watchdog_cadence_plus_an_excursion(g48):
+def test_head_dies_at_the_watchdog_cadence_plus_an_excursion(g48_f3):
     """68 ms alone is inside HEAD's 78 ms cliff; a 100 ms excursion is not."""
-    assert not _run(g48, stall_cycles=int(0.068 * CYCLES)).collapsed
-    assert _run(g48, stall_cycles=800).collapsed
-    assert not _run(g48.evolve(replay_capacity=2048), stall_cycles=800).collapsed
+    assert not _run(g48_f3, stall_cycles=int(0.068 * CYCLES)).collapsed
+    assert _run(g48_f3, stall_cycles=800).collapsed
+    assert not _run(g48_f3.evolve(replay_capacity=2048), stall_cycles=800).collapsed
+
+
+def test_v3_head_cliff(g48):
+    """V3 moves the cliff from 78 ms to ~129 ms.
+
+    The content horizon is floored at the 4096-frame ADK client maximum
+    (4160 frames, not 2400), so exposure covers a longer producer stall --
+    the effect FINDINGS.md F5 predicted for a 4096-frame IO budget. Replay
+    capacity up to 2048 no longer sets the cliff; a 100 ms stall is now
+    survived and a 200 ms one still collapses without self-heal.
+    """
+    assert _cliff_cycles(g48) / 8 == pytest.approx(129.25, abs=4)
+    assert _cliff_cycles(g48.evolve(replay_capacity=2048), hi=8_000) / 8 == pytest.approx(
+        129.25, abs=4
+    )
+    assert not _run(g48, stall_cycles=800).collapsed
+    assert _run(g48, stall_cycles=1600).collapsed
 
 
 def test_self_heal_recovers_from_long_producer_stall(g48):
@@ -167,7 +215,7 @@ def test_self_heal_recovers_from_long_producer_stall(g48):
             geometry=g48,
             duration_cycles=CYCLES * 20,
             stall_at_cycle=CYCLES * 5,
-            stall_cycles=800,  # 100 ms stall (kills baseline)
+            stall_cycles=1600,  # 200 ms stall (kills baseline)
             self_heal=True,
         )
     )
