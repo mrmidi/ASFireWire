@@ -24,8 +24,10 @@
 #include "FakeTimerScheduler.hpp"
 
 #include "Async/Interfaces/IFireWireBus.hpp"
+#include "Audio/Core/AudioNubPublisher.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
+#include "Audio/Protocols/Backends/DiceAudioBackend.hpp"
 #include "Audio/Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "Audio/Session/AudioSessions.hpp"
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
@@ -521,6 +523,11 @@ struct SessionRig {
         protocol->AsDuplexDeviceControl()->SetTeardownCancelToken(&cancel);
         runtime.Insert(guid, protocol);
         bus.RouteNotificationsTo(notifications);
+        if (IsDice()) {
+            // The real DICE backend listens, as in the driver: every DICE
+            // golden also shows which notifications it turns into restarts.
+            diceBackend.emplace(publisher, registry, runtime, sessions, hardware, notifications);
+        }
         bus.Trace().Clear();
     }
 
@@ -555,6 +562,15 @@ struct SessionRig {
         return Call("RequestClockConfig " + std::to_string(rateHz), [&] {
             return sessions.ChangeClock(guid, AudioClockConfig{.sampleRateHz = rateHz},
                                         DuplexRestartReason::kSampleRateChange);
+        });
+    }
+    // The device writes a notification to its owner, as the firmware does.
+    IOReturn DeviceNotifies(uint32_t bits) {
+        char what[48];
+        std::snprintf(what, sizeof(what), "DeviceNotification 0x%02x", bits);
+        return Call(what, [&] {
+            bus.Device().RaiseNotification(bits);
+            return kIOReturnSuccess;
         });
     }
     IOReturn Recover(const char* what, DuplexRestartReason reason, uint64_t observedRun = 0) {
@@ -624,6 +640,8 @@ struct SessionRig {
     std::atomic<bool> cancel{false};
     std::shared_ptr<IDeviceProtocol> protocol;
     ASFW::Audio::Session::AudioSessions sessions;
+    ASFW::Audio::AudioNubPublisher publisher{nullptr};
+    std::optional<ASFW::Audio::DiceAudioBackend> diceBackend;
 };
 
 } // namespace ASFW::Testing::Session

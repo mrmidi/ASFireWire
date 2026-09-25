@@ -31,6 +31,9 @@ enum class DuplexRestartReason : uint8_t {
     kRecoverAfterLockLoss,
     kRecoverAfterTxFault,
     kManualReconfigure,
+    // The device announced a stream-configuration change (DICE RX/TX_CFG_CHG).
+    // TCAT restarts streaming on it (NotificationWriteCallback).
+    kDeviceConfigChange,
 };
 
 // How far a device-side bring-up got. Reported in stage results and logs.

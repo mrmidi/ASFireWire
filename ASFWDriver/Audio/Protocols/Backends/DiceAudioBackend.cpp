@@ -448,14 +448,19 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
     // that was streaming when it fired. CoreAudio re-probes a rate with rapid
     // StartIO/StopIO cycles, and each ordered teardown trips the same replay
     // detectors as a genuine mid-run fault; the session drops a fault whose run
-    // has ended, or that fired while no run was confirmed. Bus-reset rebinds are
-    // topology events and always restart.
+    // has ended, or that fired while no run was confirmed. A device config
+    // change is tied to its run the same way: the one our own CLOCK_SELECT
+    // causes arrives while the session reconciles, names no running run, and is
+    // dropped, as TCAT ignores it while a restart is running. Bus-reset rebinds
+    // are topology events and always restart.
     const bool isRuntimeFault =
         reason == DuplexRestartReason::kRecoverAfterTimingLoss ||
         reason == DuplexRestartReason::kRecoverAfterCycleInconsistent ||
         reason == DuplexRestartReason::kRecoverAfterLockLoss ||
         reason == DuplexRestartReason::kRecoverAfterTxFault;
-    const uint64_t observedRun = isRuntimeFault ? sessions_.RunningRun(guid) : 0;
+    const bool tiedToRun =
+        isRuntimeFault || reason == DuplexRestartReason::kDeviceConfigChange;
+    const uint64_t observedRun = tiedToRun ? sessions_.RunningRun(guid) : 0;
 
     if (!TryBeginRecovery(guid)) {
         return;
@@ -527,6 +532,12 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
 }
 
 void DiceAudioBackend::HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept {
+    // The device changed its stream configuration: restart the running
+    // streams on the new one (TCAT NotificationWriteCallback, AUDIO_SESSION_REDESIGN.md §2.4).
+    if ((bits & (DICE::Notify::kRxConfigChange | DICE::Notify::kTxConfigChange)) != 0) {
+        HandleRecoveryEvent(guid, DuplexRestartReason::kDeviceConfigChange);
+    }
+
     if ((bits & (DICE::Notify::kLockChange | DICE::Notify::kExtStatus)) == 0) {
         return;
     }

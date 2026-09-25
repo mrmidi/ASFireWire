@@ -54,6 +54,7 @@ namespace {
     case DuplexRestartReason::kSampleRateChange:
     case DuplexRestartReason::kClockSourceChange:
     case DuplexRestartReason::kManualReconfigure:
+    case DuplexRestartReason::kDeviceConfigChange:
         return false;
     }
     return false;

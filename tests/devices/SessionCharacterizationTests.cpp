@@ -65,6 +65,9 @@ const ShapeCase kShapes[] = {
      StreamStartShape::MAudioSpecial},
 };
 
+constexpr uint32_t kConfigChangeBits =
+    ASFW::Audio::DICE::Notify::kRxConfigChange | ASFW::Audio::DICE::Notify::kTxConfigChange;
+
 struct Scenario {
     const char* key;
     void (*run)(SessionRig&);
@@ -130,6 +133,25 @@ const Scenario kScenarios[] = {
      }},
     {"rebind-mid-prepare", [](SessionRig& r) {
          r.hooks["host.begin"] = [&r] { r.BusReset(); };
+         r.Start();
+     }},
+    // The device announces a new stream configuration while streaming: the
+    // backend restarts the running streams on it, as TCAT does (S3). Families
+    // that do not listen for DICE notifications record nothing.
+    {"config-change-running", [](SessionRig& r) {
+         r.Start();
+         r.DeviceNotifies(kConfigChangeBits);
+     }},
+    // The same notification while idle: nothing runs, nothing restarts.
+    {"config-change-idle", [](SessionRig& r) {
+         r.Start();
+         r.Stop();
+         r.DeviceNotifies(kConfigChangeBits);
+     }},
+    // Arriving mid-start (our own CLOCK_SELECT raises one): the start is
+    // already applying the device's configuration, so it is not restarted.
+    {"config-change-during-start", [](SessionRig& r) {
+         r.hooks["host.start_transmit"] = [&r] { (void)r.DeviceNotifies(kConfigChangeBits); };
          r.Start();
      }},
     // Another node already holds channels 0 and 1. Every family takes the
