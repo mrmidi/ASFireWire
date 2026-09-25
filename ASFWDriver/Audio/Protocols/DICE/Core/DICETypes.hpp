@@ -538,7 +538,9 @@ inline constexpr uint32_t kDiceRateCapsMask = 0x7F;
 /// announce: createNewAudioStream (Saffire.kext 4.3.0 @ 0x47ee) adds one format
 /// per CLOCK_CAPABILITIES rate bit, all carrying the current mode's channel
 /// count. Selecting a rate above kDiceMaxStreamingRateHz is refused before any
-/// bus traffic (IsSupportedAudioClockConfig in ASFWAudioNub::RequestSampleRateChange).
+/// bus traffic by IsSupportedAudioClockConfig: in ValidateSampleRate
+/// (ASFWAudioDevice.cpp), before a configuration-change window opens, and again
+/// in ASFWAudioNub::RequestSampleRateChange.
 [[nodiscard]] inline std::vector<uint32_t> DicePublishedRates(uint32_t deviceRateMask) {
     std::vector<uint32_t> rates;
     for (const auto& e : kDiceRateTable) {

@@ -531,8 +531,10 @@ can be deleted.
   **Template landed (2026-09-25), following the TCAT kext, not Linux.**
   Every `CLOCK_CAPABILITIES` rate is now announced (`DicePublishedRates`), as
   `createNewAudioStream` does; picking one above `kDiceMaxStreamingRateHz`
-  (48 kHz) is refused before any bus traffic by `IsSupportedAudioClockConfig`
-  in `ASFWAudioNub::RequestSampleRateChange`, and CoreAudio keeps its rate.
+  (48 kHz) is refused before any bus traffic by `IsSupportedAudioClockConfig`:
+  in `ValidateSampleRate` (`ASFWAudioDevice.cpp`), before a configuration-change
+  window opens, and again in `ASFWAudioNub::RequestSampleRateChange`. CoreAudio
+  keeps its rate.
   Devices start at `DiceInitialRate` (48 kHz when announced). The kext's
   `CreateStreams` step is `DiceAudioBackend::RebuildEndpointForNewGeometry`, a
   no-op called where a changed layout used to be refused silently; its TODO is

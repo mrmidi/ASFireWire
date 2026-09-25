@@ -12,6 +12,7 @@
 #include "../../Logging/Logging.hpp"
 #include "Config/AudioProfileRegistry.hpp"
 #include "Config/ResolvedStreamConfig.hpp"
+#include "../Protocols/Duplex/AudioClockConfig.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
@@ -723,6 +724,21 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
     }
     if (!rateSupported) {
         ASFW_LOG(Audio, "[Timing] %{public}s rate %u refused - not advertised", origin, rateHz);
+        return std::unexpected(kIOReturnUnsupported);
+    }
+    // Advertised is not streamable: DICE announces every CLOCK_CAPABILITIES
+    // rate, as the TCAT kexts do, while this build streams 1x only. Refuse a
+    // parked rate here, before a configuration-change window is opened, rather
+    // than letting CommitSampleRate fail inside it (the nub applies the same
+    // gate in RequestSampleRateChange). See DiceAudioBackend::
+    // RebuildEndpointForNewGeometry for what enabling high rates needs.
+    const ASFW::Audio::AudioClockConfig requested{.sampleRateHz = rateHz};
+    if (!ASFW::Audio::IsSupportedAudioClockConfig(requested) &&
+        !ASFW::Audio::IsSupportedMAudioSpecialClockConfig(requested)) {
+        ASFW_LOG(Audio,
+                 "[Timing] %{public}s rate %u refused - announced by the device but not "
+                 "streamable in this build (high rates parked)",
+                 origin, rateHz);
         return std::unexpected(kIOReturnUnsupported);
     }
     // Without the nub the device clock can't be programmed; succeeding would
