@@ -746,6 +746,10 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
                     TransferDelayTicks())) {
             return {kIOReturnUnsupported, "MAudioTxClockBridge"};
         }
+        // Once per start, the counterpart of the Receive line in
+        // SelectTxClockDomain: which clock owns this start's timeline.
+        ASFW_LOG(DirectAudio, "[Zts] epoch=%llu source=transmit reason=start-io rate=%u",
+                 ivars.runtime.mAudioTxClockBridge.Epoch(), timingRateHz);
     }
     control->rxTransferDelayTicks.store(timing.rxTransferDelayTicks,
                                         std::memory_order_relaxed);
