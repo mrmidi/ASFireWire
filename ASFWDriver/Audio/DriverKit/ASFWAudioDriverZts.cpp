@@ -1205,9 +1205,11 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                     : 0;
 
             // A step is a jump larger than one full IO window inside a single
-            // one-second sample; a ramp is a steady, smaller accumulation.
+            // one-second sample; a ramp is a steady, smaller accumulation. The
+            // window is the largest client write ADK permits (V3: 4096), not
+            // the nominal 1024 budget, or one large write would read as a step.
             const int64_t stepThreshold = static_cast<int64_t>(
-                ASFW::IsochTransport::AudioTimingGeometry::kHalIoPeriodFrames);
+                ASFW::IsochTransport::AudioTimingGeometry::kMaxClientIoFrames);
 
             ASFW::Audio::Runtime::TxExposureReason reason =
                 ASFW::Audio::Runtime::TxExposureReason::kHealthy;

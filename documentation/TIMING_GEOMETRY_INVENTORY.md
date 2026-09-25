@@ -128,3 +128,102 @@ rg -n 'FindProfile\(' ASFWDriver/Audio/DriverKit
 rg -n 'TimingCursorPolicy|AudioGeometryPolicy|TxBufferProfile|RxBufferProfile' ASFWDriver tests
 rg -n 'SetOutputLatency|SetInputLatency|SetOutputSafetyOffset|SetInputSafetyOffset|SetLatency\(|GetZeroTimestampPeriod' ASFWDriver
 ```
+
+---
+
+## 7. Final state (FW-185 reconciliation)
+
+Reconciled against the tree at the end of Epic 3: FW-181/182/183, then D1/D3 (FW-182b), eight-packet
+groups (FW-183b), V3 geometry (FW-183c) and the tree guard (FW-184). Decisions D1–D3 are in
+[`TIMING_GEOMETRY_OWNERSHIP.md`](TIMING_GEOMETRY_OWNERSHIP.md) §0. The implementation record for V3 is in
+§7 of that document.
+
+Every row now has a single authority. The retired paths are held out by `tools/timing_geometry_guard.py`
+(ctest `TimingGeometryGuard`, plus `TimingGeometryGuardPyTests` for the scanner itself).
+
+### Final graph
+
+```
+AmdtpRateGeometryForSampleRate(rate) ──┐          IAudioDeviceProfile (ivars.device.profile,
+  fdf, sytIntervalFrames, cadence      │            resolved ONCE in BuildAudioGraph)
+AmdtpTransferDelayTicks (D1)  ─────────┤            latency / safety via TimingLadder
+HalBufferProfileForRate(rate) (V3) ────┤                       │
+  ring == ZTS: 12288 @1x, 24576 @2x    │                       │
+  kAllocatedFrameRingFrames = 24576    │                       │
+                                       ▼                       ▼
+                  ResolveTimingGeometry → ResolvedTimingGeometry (ivars.device.timing)
+                                       │
+   ┌───────────────┬───────────────────┼─────────────────────┬──────────────────────┐
+   ▼               ▼                   ▼                     ▼                      ▼
+ graph:          advertised         rate change            StartIO:               direct binding:
+ init(ZTS),      rates: only        (config-change         ATCB rx/tx             active ring
+ Set*Latency,    resolvable ones    window): nub →         transfer delay         (UpdateDirect-
+ Set*Safety,                        SetSampleRate →                               AudioGeometry)
+ ring check                         SetZeroTimeStampPeriod
+                                    → formats → re-declare
+Endpoint runtime (nub side): allocates 24576 once, publishes ActiveRingFramesForRate(rate).
+Timeline / RX consumer / M-Audio bridge: HalBufferProfileForRate(rate) per epoch (FW-186 threads
+the resolved value itself).
+```
+
+### Row dispositions
+
+| ID | Disposition | Replacement / final authority | Validation |
+|---|---|---|---|
+| G-01 | ADAPT | `ivars.device.currentSampleRate`; the resolver rejects 0 and unknown rates. The remaining 48 kHz defaults are publication/device defaults (nub parse, profile `BuildConfig`, DICE/MOTU/AV/C backends). There are three on the timing path, none of them silent. The endpoint allocation default is validated by the resolver. `ASFWAudioDevice.cpp:318` only feeds a log line. M-Audio internal TX (`ASFWAudioDriverZts.cpp:884`) is validated at 48 kHz only by design. | `TimingGeometryTests.UnknownRateIsAnErrorNotA48kFallback` |
+| G-02 | REPLACE → wire table + `TimingLadder` | `sytIntervalFrames` is copied into the resolved value; the profile ladders use `TimingLadder::FramesPerPacket` | `TimingGeometryTests.WireFactsAreCopiedNotRederived`, `LadderHelperReproducesLegacyProfileLadders` |
+| G-03 | KEEP | `AmdtpRateGeometry` / `AmdtpCadence`; `kMinAvgCadence*` are budget constants | `MaxDataPacketsBoundMatchesTheProductionCadence` |
+| G-04 | REPLACE → `AppliedTransferDelayTicks` (D1: blocking formula at every rate) | profile virtuals deleted; ATCB reset values read `Encoding::kAmdtpReferenceBlockingTransferDelayTicks`; StartIO copies `ivars.device.timing`; the 0x2E00 constants are deleted | `TransferDelayIsTheBlockingFormulaAtEveryRate`, `ProfileTimingPinTests`, guard |
+| G-05 | REPLACE → `HalBufferProfileForRate(rate).frameRingFrames` (active) in `kAllocatedFrameRingFrames` (V3) | the compile-time selector is deleted; `Isoch::Config::kAudioRingBufferFrames` is the allocation alias; endpoint runtime `ActiveRingFramesForRate`; graph ring check; binding `UpdateDirectAudioGeometry` | `V3HalBufferProfilePerRateTier`, `ResolvedHalGeometryFollowsTheRateTier`, `AudioEndpointRuntime.RateChangeMovesActiveRingAndReusesMemory`, guard |
+| G-06 | ADAPT | `ivars.device.timing.zeroTimestampPeriodFrames`: `init`, then `SetZeroTimeStampPeriod` in the rate-change window; the timeline, RX consumer and M-Audio bridge read `HalBufferProfileForRate(rate)` | `HardwareSampleTimelineTests.EpochTakesTheZtsPeriodOfItsRate`, `MAudioTxClockBridgeTests`, `RateChangeMovesActiveRingInsideTheAllocation` |
+| G-07 | ADAPT | `clientIoBudgetFrames` = 1024 (nominal); `kMaxClientIoFrames` = 4096 (the ADK ceiling) sizes the TX budgets and the Zts exposure step classifier; `kHalIoPeriodFrames` remains for logs | `SaffireGeometryIsUnified`, `tx_data_horizon_burst_sim.py suite` |
+| G-08/G-09 | REPLACE → profile via resolver | `TimingCursorPolicy` fallback and dead policies deleted; declared at graph time and on every rate change | `ProfileTimingPinTests` (every profile × 7 rates), guard |
+| G-10 | REPLACE → profile via resolver | as G-08 | as G-08 |
+| G-11 | REPLACE → `ResolveInputSafetyFrames` = max(profile, `CompletionBatchFrames(rate)`) (D3) | `RequiredInputSafetyFrames`, `InputSafetyPolicy.hpp` and the graph-local jitter constant are deleted | `InputSafetyIsTheProfileValueFlooredAtOneBatch`, `RxDrivenTimingTests.InputSafetyIsVisibilityMarginNotClientWindow` |
+| G-12 | KEEP | literal 0 per stream | — |
+| G-13 | ADAPT (depths stay in `AudioTimingGeometry`; late binding → FW-209) | horizon floor `max(400 cycles, 4096 + 64)`; lead 1648; store = timeline = 1696 | `AmdtpRateGeometryTests`, `TxRefillCoverageTests`, `AudioDriverTxProducerTests`, `asfw_sim` constants gate |
+| G-14 | ADAPT | eight-packet groups on IR and IT (FW-183b); the fixed-phase frame constants are deleted; `CompletionBatchFrames(rate)` | `RxDrivenTimingTests.GeometryUsesEightCycleInterruptsAndCurrentTxDepths`, cross-layer static_assert |
+| G-15 | DELETE | the one `[Timing]` line prints `ResolvedTimingGeometry` | guard |
+| G-16 | DELETE | — | guard |
+| G-17 | DEFER → FW-186 | `HardwareSampleTimeline` (the 44.1/88.2 `NominalBusTicksPerFrame` gap remains) | `EpochTakesTheZtsPeriodOfItsRate` (44.1/48/96) |
+| G-18 | DELETE (the duplicate) | `Common/TimingUtils.hpp` | build |
+| G-19 | REPLACE → one `FindProfile` in `BuildAudioGraph` → `ivars.device.profile` | StartIO and the direct binding read `ivars.device.profile` | guard (`second-profile-lookup`) |
+| G-20 | ADAPT (partly) | the graph advertises only resolvable rates (4x dropped: `ExceedsAllocation`); the profile/DICE gates → FW-221 | `ProfileTimingPinTests` (4x → `ExceedsAllocation`) |
+| G-21 | REPLACE → aliases of the `Encoding` values | — | build |
+| G-22 | ADAPT | `HandleChangeSampleRate` validates and requests the window; `PerformDeviceConfigurationChange` commits in midi's order; external resync shares it | macOS CI build; hardware 48 → 96 → 48 check (open) |
+| G-23 (new) | DELETE | `tools/calc_buffer_sizes.py` parsed the deleted `AudioTxProfiles.hpp` (G-16) and no longer ran | — |
+| G-24 (new) | ADD | V3: `kAllocatedFrameRingFrames`, `ProfileFitsAllocation`, `AdkMaxClientIoFrames`, `kMaxClientIoFrames`, `kTxExposureFloorFrames`, `TimingGeometryError::kExceedsAllocation`, `pendingSampleRateHz` | the static_asserts in `AudioHalBufferProfiles.hpp` / `AudioTimingGeometry.hpp` |
+
+### Search log, re-run (§6)
+
+| Search | Final hits | Accounted |
+|---|---|---|
+| `SafetyOffsetFrames\|ReportedLatencyFrames\|TransferDelayTicks\|FramesPerPacket(` | profile virtuals and overrides (policy input, G-08…G-11); `TimingLadder`; the resolver; `ProfileTimingGeometry`; ATCB fields and their StartIO store / Zts reads; `MAudioInternalTxTiming` (formula-pinned); declarations in the graph and rate change from `ivars.device.timing` | all |
+| `kFrameRingFrames\|kHalZeroTimestampPeriodFrames\|kHalIoPeriodFrames\|kAudioRingBufferFrames\|kAudioIoPeriodFrames` | the first two: none. `kHalIoPeriodFrames`: its definition plus two log/diagnostic uses. `kAudioRingBufferFrames`: allocation alias (endpoint runtime). `kAudioIoPeriodFrames`: the debug snapshot | all |
+| `48000\|48.000` | 119 lines: wire tables, device/protocol defaults, the reference rate of static_asserts, and the three timing-path uses in G-01 | G-01 |
+| `12800\|12.800\|0x2E00\|11776` | the wire formula and its static_asserts, the M-Audio static_assert, comments, and the unrelated `kSpeedToMbps` (S1600 = 12800 Mbit) | all |
+| `FindProfile(` | registry declaration/definition, and the one graph call | G-19 |
+| `TimingCursorPolicy\|AudioGeometryPolicy\|TxBufferProfile\|RxBufferProfile` | one historical comment | G-15/G-16 |
+| `Set*Latency\|Set*SafetyOffset\|SetLatency(\|GetZeroTimestampPeriod` (+ `SetZeroTimeStampPeriod`) | the graph (from `ivars.device.timing`), the rate-change commit, the Zts log/self-check | G-06, G-08…G-12, G-22 |
+
+### Reverse audit: who reads the resolved values
+
+- `ivars.device.profile`:
+  - written once in `BuildAudioGraph`;
+  - read by StartIO (`ASFWAudioDevice.cpp:174`: stream profile), the direct binding (wire format), and the rate-change validation.
+- `ivars.device.timing`:
+  - written by the graph and by `CommitSampleRate`;
+  - read by the graph (init, declarations, ring check), `ArmPrimaryTxProducer` (transfer delays into the ATCB), the direct binding (active ring and rate), and the rate-change no-op check.
+
+No other audio-side code derives these quantities; the guard enforces it.
+
+### Open after this epic
+
+- **Hardware checks (user):**
+  - 48 kHz at client buffers 64/512/1024/4096
+  - a 48 → 96 → 48 kHz switch
+  - the Saffire RTL residual
+  - a 44.1 kHz smoke test
+- **FW-186:** thread the resolved ZTS period through the timeline, and close the 44.1/88.2 tick gap.
+- **FW-209:** late binding. It removes the ~0.21 s start-up prefill that the 1696 store adds on prepare-time TX.
+- **FW-221:** the remaining supported-rate gates, and 4x rates (a larger allocation).
