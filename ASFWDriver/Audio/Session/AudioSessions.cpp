@@ -21,11 +21,6 @@ AudioSessions::AudioSessions(Discovery::DeviceRegistry& registry,
       teardown_(teardown),
       bindingSource_(std::move(bindingSource)) {
     lock_ = IOLockAlloc();
-    IODispatchQueue* queue = nullptr;
-    if (IODispatchQueue::Create("com.asfw.audio.sessions", 0, 0, &queue) == kIOReturnSuccess &&
-        queue != nullptr) {
-        queue_ = OSSharedPtr(queue, OSNoRetain);
-    }
 }
 
 AudioSessions::~AudioSessions() noexcept {
@@ -46,21 +41,25 @@ void AudioSessions::SetRestartObserver(SessionScheduler::RestartObserver observe
 
 void AudioSessions::BeginTeardown() noexcept {
     std::vector<std::shared_ptr<SessionScheduler>> sessions;
+    std::vector<OSSharedPtr<IODispatchQueue>> queues;
     if (lock_ != nullptr) {
         IOLockLock(lock_);
         for (const auto& [guid, session] : sessions_) {
             sessions.push_back(session);
+        }
+        for (const auto& [guid, queue] : queues_) {
+            queues.push_back(queue);
         }
         IOLockUnlock(lock_);
     }
     for (const auto& session : sessions) {
         session->CancelPendingRestart();
     }
-    if (queue_) {
+    for (const auto& queue : queues) {
 #ifdef ASFW_HOST_TEST
-        queue_->DispatchSync([] {});
+        queue->DispatchSync([] {});
 #else
-        queue_->DispatchSync(^{});
+        queue->DispatchSync(^{});
 #endif
     }
 }
@@ -76,6 +75,13 @@ std::shared_ptr<SessionScheduler> AudioSessions::Ensure(uint64_t guid) noexcept 
     IOLockLock(lock_);
     auto& slot = sessions_[guid];
     if (!slot) {
+        IODispatchQueue* rawQueue = nullptr;
+        if (IODispatchQueue::Create("com.asfw.audio.session", 0, 0, &rawQueue) == kIOReturnSuccess &&
+            rawQueue != nullptr) {
+            queues_[guid] = OSSharedPtr(rawQueue, OSNoRetain);
+        } else {
+            rawQueue = nullptr;
+        }
         slot = std::make_shared<SessionScheduler>(
             guid, SessionScheduler::Dependencies{
                       .registry = registry_,
@@ -87,7 +93,7 @@ std::shared_ptr<SessionScheduler> AudioSessions::Ensure(uint64_t guid) noexcept 
                       .bindingSource = bindingSource_,
                       .startGuard = &startGuard_,
                       .timer = &timer_,
-                      .queue = queue_.get(),
+                      .queue = rawQueue,
                       .restartObserver = &restartObserver_,
                   });
     }
@@ -112,14 +118,26 @@ void AudioSessions::Erase(uint64_t guid) noexcept {
         return;
     }
     std::shared_ptr<SessionScheduler> session;
+    OSSharedPtr<IODispatchQueue> queue;
     IOLockLock(lock_);
     if (const auto it = sessions_.find(guid); it != sessions_.end()) {
         session = std::move(it->second);
         sessions_.erase(it);
     }
+    if (const auto it = queues_.find(guid); it != queues_.end()) {
+        queue = std::move(it->second);
+        queues_.erase(it);
+    }
     IOLockUnlock(lock_);
     if (session) {
         session->CancelPendingRestart();
+    }
+    if (queue) {
+#ifdef ASFW_HOST_TEST
+        queue->DispatchSync([] {});
+#else
+        queue->DispatchSync(^{});
+#endif
     }
 }
 

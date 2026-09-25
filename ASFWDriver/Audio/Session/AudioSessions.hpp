@@ -85,13 +85,12 @@ private:
     SessionScheduler::StartGuard startGuard_;
     SessionScheduler::RestartObserver restartObserver_;
     Scheduling::ITimerScheduler* timer_{nullptr};
-    // Runs restarts that waited out a quiet period. Shared by every session and
-    // owned here, so a session is never destroyed by its own queue.
-    OSSharedPtr<IODispatchQueue> queue_{};
     std::atomic<uint64_t> teardownAborts_{0};
 
     IOLock* lock_{nullptr};
     std::unordered_map<uint64_t, std::shared_ptr<SessionScheduler>> sessions_;
+    // One queue per device; owned here so a session cannot destroy its own queue.
+    std::unordered_map<uint64_t, OSSharedPtr<IODispatchQueue>> queues_;
 };
 
 } // namespace ASFW::Audio::Session
