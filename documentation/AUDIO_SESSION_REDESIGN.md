@@ -677,8 +677,18 @@ rely on fixtures plus the vendors' identical code (§2.1).
     still in flight.
   - **Still to do, per family, once its hardware can be checked:** record the real
     protocol's wire traces, then rewrite its chain as one straight sequence (S1's method).
-- **S6: geometry stages B–D**, owned by `DICE_TCAT_ARCHITECTURE.md` §4.2. They are independent
-  of S1–S5 and can interleave.
+- **S6: geometry stages B and C. Done (2026-09-25), branch `refactor/dice-profile`; D
+  deferred.** Owned by `DICE_TCAT_ARCHITECTURE.md` §4.2, which has the details.
+  - **B, rates from the device** (`a4e5148d`). The nub publishes the rates in the device's
+    `CLOCK_CAPABILITIES`, up to 48 kHz, and DICE refuses any other rate before touching the
+    bus. Every recorded device still offers 44.1 and 48 kHz.
+  - **C, one DICE profile** (`3a856d9d` recorded every builder's answers first, `7b0585ba`
+    collapsed). The seven classes are gone and profiles state no stream geometry. The
+    seed/assert gate is deleted. Only the declared lines moved in the profile goldens.
+  - **D, re-reading geometry on a rate-mode change,** is deferred to the work that raises
+    the 48 kHz ceiling. It cannot trigger below 2x rates.
+  - **Proof.** Session and S0 goldens unchanged; `DiceFixtureGeometryTests` unchanged;
+    no hardware check (parked).
 
 ## 7. Verification
 

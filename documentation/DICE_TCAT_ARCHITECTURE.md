@@ -1,9 +1,10 @@
 # DICE / TCAT: evidence, current state, and direction
 
 **Status:** evidence base + accepted direction (2026-09-20). The direction in §4
-is agreed. **Stage 4 / step A has landed** — the geometry resolver (§3.1) and
-per-stream geometry reaching playback framing (§3.4). Steps B, C and D remain
-backlogged; no code is implied by them.
+is agreed. **Steps A, B and C have landed** (A 2026-09-20; B and C 2026-09-25,
+audio-session stage S6): per-stream geometry crosses the nub, rates come from
+the device, and one `DiceProfile` replaces the seven classes. **D is deferred**
+to the work that raises the 48 kHz ceiling (§4.2).
 
 **Scope.** This doc owns DICE **geometry** (profiles, resolver, rates). The DICE
 **bring-up and session lifecycle** (owner, clock, stream start/stop, recovery),
@@ -158,16 +159,26 @@ straight into the device struct and validates every rate request against it:
 *(_DWORD *)(v2 + 12604) = ratesMask | (sourcesMask << 16);
 ```
 
-The **only** host-side constant in this area is a firmware-version fallback, not
-a per-model one:
+The **only** host-side constant for the caps is a fallback for a GLOBAL
+section too short to hold them, not a per-model one. `PopulateDeviceStruct`
+reads `min(GLOBAL size, 0x17C)` bytes; when that is `<= 0x64` it synthesizes the
+caps word from driver defaults before the read:
 
 ```c
-if (*(_DWORD *)(v2 + 12600) < 0x1000B00u) {   // GLOBAL_VERSION < 1.0.11.0
-    *(_QWORD *)(v2 + 12868) = 0x500000002LL;  // hardcoded clock capabilities
+if ( v3 <= 0x64 )                              // GLOBAL ends at or before CLOCK_CAPS
+    *(_DWORD *)(a2 + 12604) = defaultRates | (defaultSources << 16);
 ```
 
-PaeFireStudio carries the same gate. All four recorded devices are at or above
-1.0.4.0; the Pro 24 DSP is 1.0.12.0, so it passes the gate and its caps are read.
+Linux has the same rule: it reads `CLOCK_CAPABILITIES` only when GLOBAL is
+longer than `0x18` quadlets and otherwise assumes 44.1 + 48 kHz
+(`dice-transaction.c:318-326`, `dice.c:73-92`). ASFW follows Linux
+(`DiceDeviceRateMask`).
+
+**Correction (2026-09-25).** This section used to call the
+`GLOBAL_VERSION < 1.0.11.0` branch (`0xc89a`, `+12600 < 0x1000B00`) a caps
+fallback. It is not: it writes fields at GLOBAL `+0x168..+0x17B` (struct
+offsets 12864–12876), well past the caps at `+0x64`. The caps are never
+overridden by firmware version.
 
 ### 2.7 The vendors publish per-stream, and the only sum is the channel base
 
@@ -291,8 +302,14 @@ MultiMix seeds one capture stream of 16 where the device reports two of 12+2.
 
 **This is scaffolding.** Once profiles carry no geometry (§4), there is nothing
 left to seed or assert and the whole distinction deletes itself.
+**Deleted 2026-09-25 (stage C):** the resolver now takes the device's geometry
+alone. The one profile input left is the Alesis MultiMix's single playback
+stream (§4.2 C).
 
 ### 3.2 The seven profile classes, measured
+
+> **Historical (collapsed 2026-09-25, stage C).** Kept as the evidence behind
+> `DiceProfileSpec`; the classes no longer exist.
 
 26 DICE catalog rows → 10 builders → 7 profile classes, 1,284 lines. What is
 actually in them:
@@ -327,8 +344,8 @@ deltas, Weiss's capture-visibility policy, Generic's flat offsets, and names.**
 |---|---|
 | **Resolved object has one consumer** | only `DiceAudioBackend::EnsureNubForGuid`. Bandwidth reservation reads `caps` directly (`DuplexStreamProfile::ResolveChannels`); CIP framing reads the profile (`ASFWAudioDevice::StartIO`). |
 | **StartIO is host-sourced and 2-stream** | builds streams 0 and 1 from `profile->BuildTxStreamConfig`, hardcoded. `Model::ASFWAudioDevice` carries only aggregate channel counts, so per-stream geometry cannot cross the nub. **Consequence:** playback geometry may not be seeded — see below. |
-| **Rates are a host constant** | `DiceDeviceProfile::SupportedSampleRates()` returns a flat `{44100, 48000}`. `clockCaps` is read into `state.clockCaps` and decoded by `DiceClockCapsSupportRate()`, but never reaches `AudioStreamRuntimeCaps` or `dev.sampleRates`. |
-| **Caps never invalidate** | `DICETcatProtocol::ResetRuntimeCaps()` is reachable only from `Shutdown()`. A rate change does not re-read. Not currently observable: `kDiceMaxSupportedRateHz = 48000` and 32/44.1/48 are all rate mode *low*, so no mode change can occur. It becomes live the moment the ceiling rises. |
+| ~~**Rates are a host constant**~~ | **Closed 2026-09-25 (stage B).** `CLOCK_CAPABILITIES` reaches `AudioStreamRuntimeCaps::deviceRateMask`; the nub publishes `DicePublishedRates(mask)` with `ASFWDeviceSampleRates`, and `Configure`/`ApplyClockIdle` refuse an unadvertised rate before any bus traffic. |
+| **Caps re-read, but the HAL device is not republished** | *Corrected 2026-09-25:* caps do re-read. `Prepare` (`FinishPrepare → RefreshRuntimeCaps`) and the idle clock apply (`CompleteClockApply → RefreshRuntimeCaps`) both refresh them. What is missing is stage D: a rate-mode change that alters geometry does not republish the CoreAudio device. Not observable while `kDiceMaxSupportedRateHz = 48000`, because 32/44.1/48 kHz are all rate mode *low*. |
 | **Extended channel-name block** | `DiceFamilyDriver::DiscoverStreams` reads the standard names offset unconditionally; a device with stream `SIZE >= 326` uses `+0x120` (§2.2). Cosmetic — wrong or empty labels, not a streaming fault. |
 
 ### 3.4 Every geometry consumer now reads the device
@@ -445,7 +462,7 @@ one global ceiling with a stated reason (2x/4x changes frames-per-packet and
 per-stream splits and is unverified end to end), not a per-model quirk.
 
 Published rates become `deviceAdvertised(clockCaps) ∩ hostValidated(≤ ceiling)`,
-with the vendors' `GLOBAL_VERSION < 1.0.11.0` fallback.
+with the short-GLOBAL fallback (§2.6).
 
 ### 4.2 Staging
 
@@ -462,13 +479,25 @@ can be deleted.
   per-stream channel constants have no consumer.
   **Landed 2026-09-20** — see §3.4.
 - **B — rates from the device.** `clockCaps` onto `AudioStreamRuntimeCaps`;
-  intersect with the ceiling; firmware fallback. Independent of A.
+  intersect with the ceiling; short-GLOBAL fallback (§2.6). Independent of A.
   Afterwards `SupportedSampleRates()` has no DICE consumer.
+  **Landed 2026-09-25** (`a4e5148d`). Every recorded device still publishes
+  {44.1, 48} kHz. Declared delta: a device advertising 32 kHz now offers it,
+  and one lacking 44.1 or 48 kHz no longer offers that rate.
 - **C — collapse seven classes into one builder + the §4.1 scalars.** Only
   possible once A and B have removed their consumers.
+  **Landed 2026-09-25** (`3a856d9d` records every builder's answers in
+  `tests/golden/dice-profiles/`, `7b0585ba` collapses). One `DiceProfile`
+  built from a `DiceProfileSpec` (name, Venice range names, TX encoding,
+  `preserveFdfInNoDataPackets`, `initializeNonAudioSlots`,
+  `assertedPlaybackStreams`); latency from `AudioGeometryPolicy`. Capture
+  visibility needed no scalar: the Weiss protocol already publishes
+  `hostInputPcmChannels = 0`. Declared deltas are listed in §4.4.
 - **D — invalidate on rate change**, per discovery source (§2.5): EAP devices
   read all modes once; register-only devices re-read after the switch, as
   `RestartStreaming → PopulateDeviceStruct` does. Unblocks raising the ceiling.
+  **Deferred (2026-09-25)** to the ceiling raise. It cannot trigger below
+  2x rates, and verifying it needs 2x/4x hardware.
 
 Doing C first is the tempting error: without A, deleting profile geometry only
 moves the constants, because `StartIO` still needs numbers from the host side.
@@ -496,6 +525,20 @@ equivalence check across all 26 rows — eyeballing the table in §3.2 is not it
 Two deltas must be **declared, not absorbed**, when C lands: Weiss's missing rate
 addend, and `GenericDiceProfile`'s flat 64/128 offsets, which are a different
 model from the packet-scaled one and sit on the fallback path.
+
+**As landed (2026-09-25).** The equivalence check is
+`tests/audio/DiceProfileEquivalenceTests.cpp`, recorded from the classes before
+the collapse. Rows share builders, so the 10 builders plus the fallback cover
+all 26 rows. Its diff moved only these lines:
+- geometry (channels, stream counts, per-stream configs) is zero: profiles no
+  longer state it, and a device whose registers differ from an old constant is
+  no longer refused;
+- the Alesis MultiMix keeps one asserted playback stream;
+- the generic fallback now uses the ladder (48/128, latency 29 at 1x);
+- Weiss is unchanged at every published rate (the addend only matters at 2x/4x).
+
+Names, TX policy, framing constants and clock source did not move, and
+`DiceFixtureGeometryTests` still resolves every recorded device unchanged.
 
 ---
 
