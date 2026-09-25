@@ -239,12 +239,13 @@ add_audio_test(AmdtpDirectTxTests
 
 
 
-# The driver's real TX producer (ASFWAudioDriverZts.cpp) against an emulated
+# The driver's real TX producer (ASFWAudioDriverTxProducer.cpp) against an emulated
 # IT transport. The IIG-generated headers resolve to the host shims beside
 # ASFWAudioNub.h.
 add_audio_test(AudioDriverTxProducerTests
     AudioDriverTxProducerTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverZts.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverTxProducer.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"

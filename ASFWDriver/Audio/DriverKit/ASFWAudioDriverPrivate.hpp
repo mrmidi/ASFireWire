@@ -369,6 +369,11 @@ void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
 [[nodiscard]] ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
                                                                                            const char* reason,
                                                                                            bool logSuccess) noexcept;
+
+// The M-Audio Transmit clock (ASFWAudioDriverZts.cpp): drains TX completion
+// stamps into the device timeline and publishes its boundaries. Called from the
+// TX preparation wake (ASFWAudioDriverTxProducer.cpp).
+void ObserveMAudioTxClock(ASFWAudioDriver_IVars& ivars, uint64_t transportGeneration) noexcept;
 // Prepares transmit slots from startPacketIndex until both producer invariants
 // are true or limitPacketIndex is reached:
 //   * requiredPacketIndex covers the core refill / commit-generation invariant.
