@@ -2,7 +2,6 @@
 
 #include "AudioClientCursor.hpp"
 #include "AudioRtCounters.hpp"
-#include "DeviceTimeline.hpp"
 #include "TxSytTrace.hpp"
 #include "TxWirePayloadTelemetry.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
@@ -524,7 +523,6 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> generation{0};
 
     AudioClientCursor client{};
-    DeviceTimeline device{};
     AudioRtCounters counters{};
     HostClockAnchorState hostClockAnchor{};
     std::atomic<uint64_t> discontinuities{0};
@@ -695,9 +693,6 @@ struct AudioTransportControlBlock final {
 
     std::atomic<uint64_t> inputProducedEndFrame{0};
     std::atomic<uint64_t> inputOverruns{0};
-    // Device-domain frame count from CIP DBC (Data Block Counter).
-    // Updated by RX interrupt path, read by TX preparation path.
-    std::atomic<uint64_t> rxDbcFrameCount{0};
 
     std::atomic<uint64_t> captureRingWriteFrame{0};
     std::atomic<uint64_t> captureRingReadFrame{0};
@@ -715,7 +710,6 @@ struct AudioTransportControlBlock final {
 
     void ResetForStart() noexcept {
         client.Reset();
-        device.Reset();
         counters.Reset();
         hostClockAnchor.Reset();
 
@@ -813,7 +807,6 @@ struct AudioTransportControlBlock final {
 
         inputProducedEndFrame.store(0, std::memory_order_relaxed);
         inputOverruns.store(0, std::memory_order_relaxed);
-        rxDbcFrameCount.store(0, std::memory_order_relaxed);
 
         captureRingWriteFrame.store(0, std::memory_order_relaxed);
         captureRingReadFrame.store(0, std::memory_order_relaxed);

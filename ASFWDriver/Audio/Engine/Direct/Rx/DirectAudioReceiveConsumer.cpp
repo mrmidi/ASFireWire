@@ -70,8 +70,6 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     secondaryAnchorEpoch_ = 0;
     absoluteFrameCursor_ = 0;
     cursorInitialized_ = false;
-    lastDbc_ = 0;
-    dbcInitialized_ = false;
     ztsPublishCount_ = 0;
     timestampValidCount_ = 0;
     timestampInvalidCount_ = 0;
@@ -275,16 +273,6 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         return;
     }
 
-    if (result.hasValidCip) {
-        if (dbcInitialized_) {
-            inputView_.control->rxDbcFrameCount.fetch_add(
-                static_cast<uint8_t>(result.dbc - lastDbc_),
-                std::memory_order_relaxed);
-        }
-        lastDbc_ = result.dbc;
-        dbcInitialized_ = true;
-    }
-
     ::ASFW::Isoch::Rx::ExpandedReceiveTimestamp timestamp{};
     const bool validTimestamp = result.hasReceiveCycleTimestamp &&
         ::ASFW::Isoch::Rx::ExpandReceiveTimestamp(
@@ -477,7 +465,6 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
     }
     cadenceEstablishedLogged_ = false;
     replayCycleInitialized_ = false;
-    dbcInitialized_ = false;
     // Before this was gated on `wasEstablished` alone, which made the one record
     // that explains a reset unreachable in the only case where nothing else
     // explains it: a stream that never established. A device that is rejected on
