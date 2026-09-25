@@ -720,7 +720,10 @@ kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
     // FW-255 48 kHz limit for special M-Audio profiles.
     if (!ASFW::Audio::IsSupportedAudioClockConfig(desired) &&
         !ASFW::Audio::IsSupportedMAudioSpecialClockConfig(desired)) {
-        ASFW_LOG(Audio, "ASFWAudioNub: RequestSampleRateChange unsupported rate %u Hz", sampleRateHz);
+        ASFW_LOG(Audio,
+                 "ASFWAudioNub: RequestSampleRateChange %u Hz refused - announced by the device "
+                 "but not streamable in this build (high rates parked)",
+                 sampleRateHz);
         return kIOReturnUnsupported;
     }
 

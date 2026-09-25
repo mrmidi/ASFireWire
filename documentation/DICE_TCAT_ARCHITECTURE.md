@@ -528,6 +528,17 @@ can be deleted.
   `RestartStreaming → PopulateDeviceStruct` does. Unblocks raising the ceiling.
   **Deferred (2026-09-25)** to the ceiling raise. It cannot trigger below
   2x rates, and verifying it needs 2x/4x hardware.
+  **Template landed (2026-09-25), following the TCAT kext, not Linux.**
+  Every `CLOCK_CAPABILITIES` rate is now announced (`DicePublishedRates`), as
+  `createNewAudioStream` does; picking one above `kDiceMaxStreamingRateHz`
+  (48 kHz) is refused before any bus traffic by `IsSupportedAudioClockConfig`
+  in `ASFWAudioNub::RequestSampleRateChange`, and CoreAudio keeps its rate.
+  Devices start at `DiceInitialRate` (48 kHz when announced). The kext's
+  `CreateStreams` step is `DiceAudioBackend::RebuildEndpointForNewGeometry`, a
+  no-op called where a changed layout used to be refused silently; its TODO is
+  the design (kext call chain with addresses, the AudioDriverKit
+  configuration-change mapping, prerequisites, hardware test). Enabling high
+  rates = implement that function + the 2x wire, then raise the ceiling.
 
 Doing C first is the tempting error: without A, deleting profile geometry only
 moves the constants, because `StartIO` still needs numbers from the host side.

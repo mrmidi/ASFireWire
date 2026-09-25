@@ -120,6 +120,10 @@ struct DiceFixture {
     // origin.
     uint32_t captureChannelBase[2];
     uint32_t playbackChannelBase[2];
+
+    // Rates announced to CoreAudio: every CLOCK_CAPABILITIES rate bit,
+    // transcribed from the dump, zero-terminated.
+    uint32_t announcedRates[5]{44100U, 48000U};
 };
 
 // am824Slots is pcmChannels + midiPorts, which is why the MIDI column matters:
@@ -151,6 +155,8 @@ constexpr DiceFixture kFixtures[] = {
         .expectedPlaybackPcm = 8,
         .captureChannelBase = {0, 0},
         .playbackChannelBase = {0, 0},
+        // Rate bits 0x1E: the only recorded device with 2x rates.
+        .announcedRates = {44100U, 48000U, 88200U, 96000U},
     },
     {
         .name = "Midas Venice F24",
@@ -461,24 +467,44 @@ TEST_P(DiceFixtureGeometry, ChannelBaseIsARunningSum) {
 // the MultiMix is the recorded device that proves it: 1 * 12 = 12 is right only
 // because the base repeats stream 0's width. Feed it the REAL per-stream widths
 // -- what the resolver now produces -- and index * width gives 2.
-// The published rates are the device's own (CLOCK_CAPABILITIES), capped at the
-// validated ceiling. Every recorded device supports 44.1 and 48 kHz; the Pro 24
-// DSP's 88.2/96 kHz stay above the ceiling. So stage B changes no recorded
-// device's rate list.
+// Every rate the device supports is announced, as the TCAT kexts do
+// (createNewAudioStream adds one format per CLOCK_CAPABILITIES bit). The Pro 24
+// DSP therefore lists 88.2/96 kHz; picking them is refused, and every device
+// still starts at 48 kHz.
 TEST_P(DiceFixtureGeometry, PublishesTheRatesTheDeviceSupports) {
     const DiceFixture& fixture = GetParam();
     const uint32_t mask = ASFW::Audio::DICE::DiceDeviceRateMask(true, fixture.clockCaps);
-    EXPECT_EQ(ASFW::Audio::DICE::DicePublishedRates(mask), (std::vector<uint32_t>{44100U, 48000U}))
-        << fixture.name;
+    std::vector<uint32_t> expected;
+    for (const uint32_t rate : fixture.announcedRates) {
+        if (rate != 0) {
+            expected.push_back(rate);
+        }
+    }
+    EXPECT_EQ(ASFW::Audio::DICE::DicePublishedRates(mask), expected) << fixture.name;
+    EXPECT_EQ(ASFW::Audio::DICE::DiceInitialRate(mask), 48000U) << fixture.name;
 }
 
-TEST(DicePublishedRates, OffersOnlyTheRatesTheDeviceAdvertises) {
+TEST(DicePublishedRates, AnnouncesEveryRateTheDeviceAdvertises) {
     using namespace ASFW::Audio::DICE;
     EXPECT_EQ(DicePublishedRates(RateCaps::k32000 | RateCaps::k48000),
               (std::vector<uint32_t>{32000U, 48000U}));
-    // Above the ceiling only: nothing this build can stream.
-    EXPECT_TRUE(DicePublishedRates(RateCaps::k88200 | RateCaps::k96000).empty());
+    EXPECT_EQ(DicePublishedRates(kDiceRateCapsMask),
+              (std::vector<uint32_t>{32000U, 44100U, 48000U, 88200U, 96000U, 176400U, 192000U}));
     EXPECT_TRUE(DicePublishedRates(0).empty());
+}
+
+// Announced is not streamable. The rate a device is published at must be one
+// this build can stream, and a device announcing none cannot be published.
+TEST(DicePublishedRates, InitialRateIsStreamable) {
+    using namespace ASFW::Audio::DICE;
+    EXPECT_EQ(DiceInitialRate(RateCaps::k44100 | RateCaps::k48000 | RateCaps::k96000), 48000U);
+    // No 48 kHz: the highest streamable rate, never a parked one.
+    EXPECT_EQ(DiceInitialRate(RateCaps::k32000 | RateCaps::k44100 | RateCaps::k96000), 44100U);
+    EXPECT_EQ(DiceInitialRate(RateCaps::k88200 | RateCaps::k96000), 0U);
+    EXPECT_EQ(DiceInitialRate(0), 0U);
+    EXPECT_TRUE(DiceRateIsStreamable(48000U));
+    EXPECT_FALSE(DiceRateIsStreamable(88200U));
+    EXPECT_FALSE(DiceRateIsStreamable(0U));
 }
 
 TEST(DicePublishedRates, OldFirmwareWithoutClockCapsGetsTheLinuxBaseline) {

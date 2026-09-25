@@ -586,6 +586,48 @@ TEST(DICETcatProtocolTests, RefusesARateTheDeviceDoesNotAdvertiseWithoutBusTraff
     EXPECT_EQ(bus.lockCount, locksBefore);
 }
 
+// A rate the device announces but this build cannot stream (88.2/96 kHz on a
+// Pro 24 DSP) is refused the same way: before any bus traffic, so the device
+// never leaves its current rate mode. ASFWAudioNub refuses it earlier still
+// (IsSupportedAudioClockConfig); this is the protocol's own gate.
+TEST(DICETcatProtocolTests, RefusesAnAnnouncedHighRateWithoutBusTraffic) {
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(),
+                              nullptr);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+
+    ASFW::Audio::DICE::GlobalState global{};
+    global.sampleRate = 48000;
+    global.clockCaps = 0x112C001E;  // 44.1/48/88.2/96 kHz, the recorded Pro 24 DSP
+    global.hasClockCaps = true;
+    ASFW::Audio::DICE::StreamConfig tx{};
+    tx.numStreams = 1;
+    tx.streams[0].pcmChannels = 16;
+    ASFW::Audio::DICE::StreamConfig rx{};
+    rx.numStreams = 1;
+    rx.streams[0].pcmChannels = 8;
+    ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::CacheRuntimeCaps(protocol, global, tx, rx);
+
+    const int readsBefore = bus.readCount;
+    const int writesBefore = bus.writeCount;
+    const int locksBefore = bus.lockCount;
+    ASFW::Audio::FamilyDriver& family = *protocol.AsFamilyDriver();
+    for (const uint32_t rate : {88200U, 96000U}) {
+        const auto started = family.Configure(ASFW::Audio::AudioDuplexChannels{},
+                                              AudioClockConfig{.sampleRateHz = rate});
+        ASSERT_FALSE(started.has_value()) << rate;
+        EXPECT_EQ(started.error(), kIOReturnUnsupported) << rate;
+        const auto applied = family.ApplyClockIdle(AudioClockConfig{.sampleRateHz = rate});
+        ASSERT_FALSE(applied.has_value()) << rate;
+        EXPECT_EQ(applied.error(), kIOReturnUnsupported) << rate;
+    }
+    EXPECT_EQ(bus.readCount, readsBefore);
+    EXPECT_EQ(bus.writeCount, writesBefore);
+    EXPECT_EQ(bus.lockCount, locksBefore);
+    EXPECT_FALSE(ASFW::Audio::IsSupportedAudioClockConfig(AudioClockConfig{.sampleRateHz = 96000}));
+}
+
 TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
     CountingFireWireBus bus;
     RouteState routeState;

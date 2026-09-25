@@ -71,6 +71,12 @@ public:
 
 private:
     void EnsureNubForGuid(uint64_t guid) noexcept;
+    // The TCAT kexts' CreateStreams step: rebuild the audio endpoint when the
+    // device's re-read stream layout differs from the one it was published
+    // with. Not implemented (high rates parked); returns false and the endpoint
+    // stays blocked. The TODO at the definition is the design.
+    [[nodiscard]] bool RebuildEndpointForNewGeometry(uint64_t guid,
+                                                     const Model::ASFWAudioDevice& newConfig) noexcept;
     void HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept;
     void ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept;
     // Blocking device-health read (dice queue only). Returns true ONLY when the device

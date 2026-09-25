@@ -320,6 +320,75 @@ void DiceAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
     HandleRecoveryEvent(guid, DuplexRestartReason::kBusResetRebind);
 }
 
+// Rebuild the audio endpoint for a stream layout that changed under it.
+//
+// NOT IMPLEMENTED: high sample rates are parked. Returns false, so the endpoint
+// stays blocked (AudioNubPublisher refuses the changed geometry and the session
+// start guard refuses to start it) until it is recreated. Today this is reached
+// only when a device changes its layout on its own, or when a device found
+// running above kDiceMaxStreamingRateHz is moved to a streamable rate by the
+// first start (EnsureNubForGuid warns about that case at publication).
+//
+// TODO(high rates): implement this the way the TCAT kexts do. Reference:
+// Saffire.kext 4.3.0, FOCUSRITE/3.9/Saffire.i64 (decompiles in tmp/dicere).
+//
+//  What the kext does. One restart path serves a host rate change
+//  (performFormatChange @0x5028 / SetNewSamplingRate @0x93b8) and a device
+//  "config changed" notification alike: both call RequestStreamingRestart, and
+//  RestartStreaming @0xdb02 then
+//    1. writes the clock and re-reads GLOBAL/TX/RX (PopulateDeviceStruct
+//       @0xc5b4) -- the only source of the new layout; no per-model table, no
+//       probing of other rate modes at attach;
+//    2. re-arms isoch (AllocateStreams @0xe8ca, StartStreams @0xface);
+//    3. rebuilds the audio streams in place (CreateStreams @0x3b54): reuses up
+//       to 8 IOAudioStreams per direction, grows each buffer to the new channel
+//       count, resets formats and starting channel, disables streams the new
+//       mode lacks, republishes the channel names for the current mode.
+//  Rates are announced up front from CLOCK_CAPABILITIES, each labelled with the
+//  CURRENT mode's channel count (createNewAudioStream @0x47ee); the true count
+//  for another mode is only known after switching to it. We already do steps 1
+//  and 2 (FinishPrepare / CompleteClockApply -> RefreshRuntimeCaps) and the
+//  announcement (DicePublishedRates). This function is step 3.
+//
+//  The AudioDriverKit counterpart of step 3. A layout change "affects IO or its
+//  structure", so it must go through the host (IOUserAudioDriver.iig:63-68,
+//  IOUserAudioClockDevice.iig:218-226):
+//    a. carry the new geometry to the audio side. SetProperties on the live nub
+//       is NOT enough: the audio graph reads the nub once
+//       (Model/NubGeometryRefresh.hpp). Add a nub -> driver action, like
+//       RegisterDeviceClockChangedAction, carrying "geometry changed";
+//    b. the audio device calls RequestDeviceConfigurationChange with a new
+//       action, alongside kConfigChangeActionExternalRateResync in
+//       ASFWAudioDevice.cpp, which is the working template for the round trip;
+//    c. in PerformDeviceConfigurationChange (IO already stopped): new
+//       SetAvailableStreamFormats / SetCurrentStreamFormat per stream, new IO
+//       buffers via SetIOMemoryDescriptor (legal only there), channel names,
+//       safety offset and latency, and a rebuilt direct-binding view onto the
+//       shared control block. Drop every cross-service view before freeing the
+//       old mappings (FW-60);
+//    d. clear the publisher's blocked state and accept the new snapshot, then
+//       let the host restart IO.
+//  Prove (c) in ADKVirtualAudioLab first: a live channel-count change with a
+//  client attached has never been exercised.
+//
+//  Also required before raising kDiceMaxStreamingRateHz and the neutral gate
+//  (IsSupportedAudioClockConfig): the 2x/4x wire -- 16/32 frames per packet,
+//  SYT interval, DBC step, bandwidth (SAMPLE_RATE_EXPANSION.md Phase 3).
+//
+//  Hardware test when unparked: Saffire Pro 24 DSP announces 88.2/96 kHz and
+//  its capture drops from 16 to 12 channels there (fixtures/DICE/spro24dsp.txt
+//  current_config). 48 -> 96 -> 48 kHz with a client open, both directions.
+bool DiceAudioBackend::RebuildEndpointForNewGeometry(uint64_t guid,
+                                                     const Model::ASFWAudioDevice& newConfig) noexcept {
+    ASFW_LOG_WARNING(Audio,
+                     "DiceAudioBackend: GUID=0x%016llx stream layout changed (now in=%u out=%u "
+                     "at %u Hz); endpoint rebuild not implemented -- endpoint stays blocked "
+                     "until recreated",
+                     guid, newConfig.inputChannelCount, newConfig.outputChannelCount,
+                     newConfig.currentSampleRate);
+    return false;
+}
+
 void DiceAudioBackend::OnStreamsRestarted(uint64_t guid) noexcept {
     EnsureNubForGuid(guid);
 }
@@ -889,22 +958,33 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             // fails rather than degrading.
             dev.resolvedGeometryRequired = !dev.playbackStreams.empty();
 
-            // Offer exactly the rates the device supports, up to the validated
-            // ceiling, as TCAT's kexts do (CLOCK_CAPABILITIES & 0x7F). A device
-            // supporting none of them cannot stream in this build: refuse it
-            // rather than publish rates it would reject.
-            dev.sampleRates = DICE::DicePublishedRates(caps.deviceRateMask);
-            if (dev.sampleRates.empty()) {
+            // Announce every rate the device supports, as TCAT's kexts do
+            // (CLOCK_CAPABILITIES & 0x7F). Rates above kDiceMaxStreamingRateHz
+            // are listed but refused when picked. A device announcing no rate
+            // this build can stream cannot run at all: refuse it.
+            const uint32_t initialRate = DICE::DiceInitialRate(caps.deviceRateMask);
+            if (initialRate == 0) {
                 ASFW_LOG_ERROR(Audio,
                                "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
                                "GUID=0x%016llx - device supports no rate up to %u Hz (rates=0x%02x)",
-                               guid, DICE::kDiceMaxSupportedRateHz, caps.deviceRateMask);
+                               guid, DICE::kDiceMaxStreamingRateHz, caps.deviceRateMask);
                 return;
             }
+            dev.sampleRates = DICE::DicePublishedRates(caps.deviceRateMask);
             dev.deviceSampleRates = true;
-            if (std::find(dev.sampleRates.begin(), dev.sampleRates.end(), dev.currentSampleRate) ==
-                dev.sampleRates.end()) {
-                dev.currentSampleRate = dev.sampleRates.back();
+            dev.currentSampleRate = initialRate;
+            if (!DICE::DiceRateIsStreamable(caps.sampleRateHz)) {
+                // The geometry just read describes the device's current rate
+                // mode, which this build cannot stream. The first start moves
+                // the device to initialRate and its layout may change with the
+                // mode; until RebuildEndpointForNewGeometry exists, a changed
+                // layout leaves the endpoint blocked. Named here so that
+                // failure is attributable at publication.
+                ASFW_LOG_WARNING(Audio,
+                                 "DiceAudioBackend::EnsureNubForGuid: GUID=0x%016llx is running at "
+                                 "%u Hz, above the %u Hz streaming ceiling; published geometry is that "
+                                 "mode's and may not match %u Hz",
+                                 guid, caps.sampleRateHz, DICE::kDiceMaxStreamingRateHz, initialRate);
             }
 
             // Refuse a device this build cannot actually arm, at publication
@@ -985,7 +1065,9 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         // Validate before replacing the runtime snapshot. A rejected geometry
         // must not reach transport while the audio graph retains the old one.
         if (publisher_.GetNub(guid) != nullptr) {
-            (void)publisher_.RefreshNubProperties(guid, dev, "DICE");
+            if (!publisher_.RefreshNubProperties(guid, dev, "DICE")) {
+                (void)RebuildEndpointForNewGeometry(guid, dev);
+            }
             return;
         }
         if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {

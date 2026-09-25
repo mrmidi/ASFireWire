@@ -48,8 +48,8 @@ namespace ASFW::Audio {
     //     48 kHz.
     //
     // The caller sets both fields: the device's own rate set
-    // (DicePublishedRates over CLOCK_CAPABILITIES), and 48 kHz as the DICE
-    // default that bring-up will actually program. Leave them alone. Rate changes go through the HAL path
+    // (DicePublishedRates over CLOCK_CAPABILITIES), and DiceInitialRate -- 48 kHz
+    // when announced -- as the rate bring-up will actually program. Leave them alone. Rate changes go through the HAL path
     // (HandleChangeSampleRate -> RequestSampleRateChange), which reprograms
     // CLOCK_SELECT and is the only place the device's clock should move.
     return true;
