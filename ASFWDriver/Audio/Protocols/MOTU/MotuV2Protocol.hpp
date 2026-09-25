@@ -16,6 +16,7 @@
 
 #include "MotuV2Registers.hpp"
 #include "../IDeviceProtocol.hpp"
+#include "../Duplex/FamilyDriver.hpp"
 #include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 
@@ -39,7 +40,9 @@ struct ClockStatus {
 /// protocol through IDeviceProtocol::AsDuplexDeviceControl(), so that -- not the
 /// DICE-internal *48k hooks on IDeviceProtocol -- is the seam a new family must
 /// implement to be driven at all.
-class MotuV2Protocol final : public IDeviceProtocol, public IDuplexDeviceControl {
+class MotuV2Protocol final : public IDeviceProtocol,
+                             public IDuplexDeviceControl,
+                             public FamilyDriver {
 public:
     using ClockStatusCallback = std::function<void(IOReturn, ClockStatus)>;
     using CompletionCallback = std::function<void(IOReturn)>;
@@ -88,6 +91,7 @@ public:
 
     // IDeviceProtocol -> IDuplexDeviceControl bridge. Returning `this` is what makes
     // the audio session able to drive this protocol at all.
+    Audio::FamilyDriver* AsFamilyDriver() noexcept override { return this; }
     Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
     const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override {
         return this;
@@ -106,6 +110,26 @@ public:
     void ReadDuplexHealth(HealthCallback callback) override;
     [[nodiscard]] IOReturn StopDuplex() override;
     [[nodiscard]] ::ASFW::IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
+
+    // ---- FamilyDriver ----
+    // Each step starts the callback chain above and waits for it
+    // (FamilyStageWait.hpp), so the chains and their wire traffic are unchanged.
+    void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
+    [[nodiscard]] IOReturn LoadGeometry() override;
+    [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;
+    [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
+        const AudioDuplexChannels& channels, const AudioClockConfig& clock) override;
+    void AssignChannels(const AudioDuplexChannels& channels) override;
+    [[nodiscard]] std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceRx() override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceTxAndEnable() override;
+    [[nodiscard]] std::expected<DuplexConfirmResult, IOReturn> Confirm() override;
+    [[nodiscard]] std::expected<DuplexClockApplyResult, IOReturn> ApplyClockIdle(
+        const AudioClockConfig& clock) override;
+    [[nodiscard]] IOReturn DisconnectPlayback() override;
+    [[nodiscard]] IOReturn DisconnectCapture() override;
+    [[nodiscard]] IOReturn BreakConnections() override;
+    [[nodiscard]] IOReturn Stop() override;
 
     /// Read and decode the clock status register.
     void ReadClockStatus(ClockStatusCallback callback);
@@ -140,6 +164,9 @@ public:
     [[nodiscard]] uint32_t UnitSwVersion() const noexcept { return unitSwVersion_; }
 
 private:
+    // Service teardown: the stage waits give up once it reads true.
+    const std::atomic<bool>* teardownCancel_{nullptr};
+
     [[nodiscard]] static Async::FWAddress AddressOf(Reg reg) noexcept;
 
     /// Write the address-hi/address-lo pair as one logical operation. Both halves must

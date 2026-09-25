@@ -22,6 +22,7 @@
 
 #include <DriverKit/IOReturn.h>
 
+#include "../../Duplex/FamilyDriver.hpp"
 #include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../../Discovery/DeviceRouteToken.hpp"
 
@@ -64,7 +65,7 @@ struct DuetRuntime {
     uint32_t formatSettleDelayMs{100U};
 };
 
-class ApogeeDuetDuplex final : public IDuplexDeviceControl {
+class ApogeeDuetDuplex final : public IDuplexDeviceControl, public FamilyDriver {
 public:
     explicit ApogeeDuetDuplex(DuetRuntime& runtime) noexcept : runtime_(runtime) {}
 
@@ -93,6 +94,25 @@ public:
     [[nodiscard]] IOReturn StopDuplex() override;
     [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return runtime_.irmClient; }
 
+    // FamilyDriver: each step starts the callback chain above and waits for it
+    // (FamilyStageWait.hpp), so the chains and their wire traffic are unchanged.
+    void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
+    [[nodiscard]] IOReturn LoadGeometry() override;
+    [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;
+    [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
+        const AudioDuplexChannels& channels, const AudioClockConfig& clock) override;
+    void AssignChannels(const AudioDuplexChannels& channels) override;
+    [[nodiscard]] std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceRx() override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceTxAndEnable() override;
+    [[nodiscard]] std::expected<DuplexConfirmResult, IOReturn> Confirm() override;
+    [[nodiscard]] std::expected<DuplexClockApplyResult, IOReturn> ApplyClockIdle(
+        const AudioClockConfig& clock) override;
+    [[nodiscard]] IOReturn DisconnectPlayback() override;
+    [[nodiscard]] IOReturn DisconnectCapture() override;
+    [[nodiscard]] IOReturn BreakConnections() override;
+    [[nodiscard]] IOReturn Stop() override;
+
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport);
 
@@ -110,6 +130,8 @@ private:
     void FinishClockTransition(const std::shared_ptr<ClockTransition>& transition, IOReturn status);
 
     DuetRuntime& runtime_;
+    // Service teardown: the stage waits give up once it reads true.
+    const std::atomic<bool>* teardownCancel_{nullptr};
 
     AudioDuplexChannels duplexChannels_{};
     AudioClockConfig appliedClock_{};

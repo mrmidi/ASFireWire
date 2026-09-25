@@ -8,6 +8,8 @@
 
 #include "BeBoBProtocol.hpp"
 
+#include "../Duplex/FamilyStageWait.hpp"
+
 #include "../../../Bus/IRM/IRMClient.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../../../Protocols/AVC/CMP/CMPClient.hpp"
@@ -569,6 +571,85 @@ void BeBoBProtocol::SubmitCommand(const Protocols::AVC::AVCCdb& cdb,
                     Protocols::AVC::AVCResult result, const Protocols::AVC::AVCCdb& responseCdb) {
         completion(result, responseCdb);
     });
+}
+
+// ---------------------------------------------------------------------------
+// FamilyDriver
+// ---------------------------------------------------------------------------
+
+void BeBoBProtocol::SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
+    teardownCancel_ = cancel;
+}
+
+IOReturn BeBoBProtocol::LoadGeometry() {
+    // Nothing to read at start: BeBoB stream geometry is fixed per device
+    // (DeviceCaps) or was resolved from the plugs at discovery.
+    return kIOReturnSuccess;
+}
+
+std::optional<AudioStreamRuntimeCaps> BeBoBProtocol::RuntimeCaps() const {
+    AudioStreamRuntimeCaps caps{};
+    if (!GetRuntimeAudioStreamCaps(caps)) {
+        return std::nullopt;
+    }
+    return caps;
+}
+
+std::expected<DuplexPrepareResult, IOReturn> BeBoBProtocol::Configure(
+    const AudioDuplexChannels& channels, const AudioClockConfig& clock) {
+    return AwaitStage<DuplexPrepareResult>(
+        [&](auto callback) { PrepareDuplex(channels, clock, std::move(callback)); },
+        teardownCancel_);
+}
+
+void BeBoBProtocol::AssignChannels(const AudioDuplexChannels& channels) {
+    SetAssignedChannels(channels);
+}
+
+std::expected<DuplexHealthResult, IOReturn> BeBoBProtocol::ReadHealth(uint32_t timeoutMs) {
+    return AwaitStage<DuplexHealthResult>(
+        [&](auto callback) { ReadDuplexHealth(std::move(callback)); }, teardownCancel_, timeoutMs);
+}
+
+std::expected<DuplexStageResult, IOReturn> BeBoBProtocol::ArmDeviceRx() {
+    return AwaitStage<DuplexStageResult>(
+        [&](auto callback) { ProgramRx(std::move(callback)); }, teardownCancel_);
+}
+
+std::expected<DuplexStageResult, IOReturn> BeBoBProtocol::ArmDeviceTxAndEnable() {
+    return AwaitStage<DuplexStageResult>(
+        [&](auto callback) { ProgramTxAndEnableDuplex(std::move(callback)); }, teardownCancel_);
+}
+
+std::expected<DuplexConfirmResult, IOReturn> BeBoBProtocol::Confirm() {
+    // ConfirmDuplexStart is virtual: M-Audio special firmware confirms differently.
+    return AwaitStage<DuplexConfirmResult>(
+        [&](auto callback) { ConfirmDuplexStart(std::move(callback)); }, teardownCancel_);
+}
+
+std::expected<DuplexClockApplyResult, IOReturn> BeBoBProtocol::ApplyClockIdle(
+    const AudioClockConfig& clock) {
+    return AwaitStage<DuplexClockApplyResult>(
+        [&](auto callback) { ApplyClockConfig(clock, std::move(callback)); }, teardownCancel_);
+}
+
+IOReturn BeBoBProtocol::DisconnectPlayback() {
+    return AwaitStageStatus([&](auto callback) { DisconnectPlayback(std::move(callback)); },
+                            teardownCancel_);
+}
+
+IOReturn BeBoBProtocol::DisconnectCapture() {
+    return AwaitStageStatus([&](auto callback) { DisconnectCapture(std::move(callback)); },
+                            teardownCancel_);
+}
+
+IOReturn BeBoBProtocol::BreakConnections() {
+    return AwaitStageStatus([&](auto callback) { BreakBothConnections(std::move(callback)); },
+                            teardownCancel_);
+}
+
+IOReturn BeBoBProtocol::Stop() {
+    return StopDuplex();
 }
 
 } // namespace ASFW::Audio::BeBoB

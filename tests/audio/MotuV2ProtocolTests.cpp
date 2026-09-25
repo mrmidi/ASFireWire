@@ -844,3 +844,21 @@ TEST(MotuV2ProtocolChannelLabelTests, UnmappedModelsReportNoLabels) {
     std::vector<std::string> outNames;
     EXPECT_FALSE(protocol.GetChannelLabels(inNames, outNames));
 }
+
+TEST(MotuV2DuplexTests, FamilyDriverReadsHealthAndStatesEveryStep) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    ASFW::Audio::FamilyDriver& family = *protocol.AsFamilyDriver();
+
+    EXPECT_EQ(family.LoadGeometry(), kIOReturnSuccess);
+    const auto health = family.ReadHealth(1000);
+    ASSERT_TRUE(health.has_value());
+    EXPECT_TRUE(health->sourceLocked);
+    EXPECT_EQ(health->nominalRateHz, 48000U);
+    // No per-direction connection to drop; StopDuplex switches both off.
+    EXPECT_EQ(family.DisconnectPlayback(), kIOReturnUnsupported);
+    EXPECT_EQ(family.DisconnectCapture(), kIOReturnUnsupported);
+    EXPECT_EQ(family.BreakConnections(), kIOReturnUnsupported);
+}

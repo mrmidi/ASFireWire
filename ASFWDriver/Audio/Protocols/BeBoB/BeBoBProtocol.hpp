@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include "../Duplex/FamilyDriver.hpp"
 #include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../../../Protocols/Ports/FireWireBusPort.hpp"
@@ -39,6 +40,7 @@ namespace ASFW::Audio::BeBoB {
 
 class BeBoBProtocol : public IDeviceProtocol,
                       public IDuplexDeviceControl,
+                      public FamilyDriver,
                       public Protocols::AVC::IAVCCommandSubmitter {
 public:
     BeBoBProtocol(Protocols::Ports::FireWireBusOps& busOps,
@@ -50,6 +52,7 @@ public:
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
+    FamilyDriver* AsFamilyDriver() noexcept override { return this; }
     IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
     const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
@@ -74,6 +77,25 @@ public:
     void BreakBothConnections(VoidCallback callback) override;
     [[nodiscard]] IOReturn StopDuplex() override;
     [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
+
+    // FamilyDriver: each step starts the callback chain above and waits for it
+    // (FamilyStageWait.hpp), so the chains and their wire traffic are unchanged.
+    void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
+    [[nodiscard]] IOReturn LoadGeometry() override;
+    [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;
+    [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
+        const AudioDuplexChannels& channels, const AudioClockConfig& clock) override;
+    void AssignChannels(const AudioDuplexChannels& channels) override;
+    [[nodiscard]] std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceRx() override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceTxAndEnable() override;
+    [[nodiscard]] std::expected<DuplexConfirmResult, IOReturn> Confirm() override;
+    [[nodiscard]] std::expected<DuplexClockApplyResult, IOReturn> ApplyClockIdle(
+        const AudioClockConfig& clock) override;
+    [[nodiscard]] IOReturn DisconnectPlayback() override;
+    [[nodiscard]] IOReturn DisconnectCapture() override;
+    [[nodiscard]] IOReturn BreakConnections() override;
+    [[nodiscard]] IOReturn Stop() override;
 
 protected:
     // Device-specific overrides (pure virtual).
@@ -142,6 +164,9 @@ protected:
     std::shared_ptr<std::function<void(IOReturn)>> signalFormatInterlockCompletion_;
 
 private:
+    // Service teardown: the stage waits give up once it reads true.
+    const std::atomic<bool>* teardownCancel_{nullptr};
+
     void EnsurePlugFree(CMP::PCRDirection dir, uint8_t plug, std::function<void(IOReturn)> cb);
     void ProgramSignalFormat(const AudioClockConfig& desiredClock,
                              std::function<void(IOReturn)> completion);

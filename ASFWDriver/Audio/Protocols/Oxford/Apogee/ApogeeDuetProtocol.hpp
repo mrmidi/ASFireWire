@@ -84,6 +84,7 @@ public:
     [[nodiscard]] const char* GetName() const override { return "Apogee Duet FireWire"; }
     [[nodiscard]] bool HasDsp() const override { return true; } // Has mixer/DSP features
     [[nodiscard]] bool HasMixer() const override { return true; }
+    FamilyDriver* AsFamilyDriver() noexcept override { return &duplex_; }
     IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return &duplex_; }
     [[nodiscard]] const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override {
         return &duplex_;

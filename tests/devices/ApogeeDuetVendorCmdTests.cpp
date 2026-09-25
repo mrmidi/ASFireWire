@@ -787,3 +787,41 @@ TEST(ApogeeDuetDuplexAdapter, MapsCompletedCmpFailureToErrorRatherThanTimeout) {
         [&txStatus](IOReturn status, ASFW::Audio::DuplexStageResult) { txStatus = status; });
     EXPECT_EQ(txStatus, kIOReturnError);
 }
+
+TEST(ApogeeDuetFamilyDriver, StepsRunTheSameCmpStages) {
+    AvcTestRig rig;
+    MapCmpRegisters(rig);
+    ASFW::IRM::IRMClient irm(rig.Bus());
+    ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
+    ASFW::Audio::FamilyDriver& family = *protocol.AsFamilyDriver();
+
+    EXPECT_EQ(family.LoadGeometry(), kIOReturnSuccess);
+    EXPECT_EQ(family.BreakConnections(), kIOReturnUnsupported);
+    ASFW::Audio::AudioDuplexChannels channels{};
+    channels.deviceToHostIsoChannel = 5;
+    family.AssignChannels(channels);
+    EXPECT_TRUE(family.ArmDeviceRx().has_value());
+    ASSERT_EQ(rig.Bus().LastLockOperand().size(), 8U);
+}
+
+TEST(ApogeeDuetFamilyDriver, TeardownAbortsAStepWaitingOnTheBus) {
+    AvcTestRig rig;
+    MapCmpRegisters(rig);
+    ASFW::IRM::IRMClient irm(rig.Bus());
+    ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
+    ASFW::Audio::FamilyDriver& family = *protocol.AsFamilyDriver();
+
+    // The connect stays in flight; teardown must not wait out the stage bound.
+    rig.Bus().SetDeferLocks(true);
+    std::atomic<bool> cancel{true};
+    family.SetTeardownCancelToken(&cancel);
+    const auto armed = family.ArmDeviceRx();
+    ASSERT_FALSE(armed.has_value());
+    EXPECT_EQ(armed.error(), kIOReturnAborted);
+
+    // The late completion lands in the abandoned wait harmlessly.
+    rig.Bus().DrainLocks();
+    family.SetTeardownCancelToken(nullptr);
+}

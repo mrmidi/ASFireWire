@@ -552,3 +552,25 @@ TEST_F(BeBoBProtocolTest, ReadClockHealthReportsSourceLockedWhenBothConnected) {
     EXPECT_EQ(healthResult.runtimeCaps.hostInputPcmChannels, 4U);
     EXPECT_EQ(healthResult.runtimeCaps.hostOutputPcmChannels, 4U);
 }
+
+// FamilyDriver steps start the same callback chains and wait for them.
+TEST_F(BeBoBProtocolTest, FamilyDriverStepsAnswerThroughTheSameChains) {
+    TestBeBoBProtocol proto(busOps_, bus_, route_, nullptr, &cmp_, &timer_);
+    proto.UpdateRuntimeContext(route_, nullptr);  // no FCP transport
+    proto.SetCaps({.hostInputPcmChannels = 8, .hostOutputPcmChannels = 8, .sampleRateHz = 48000});
+    ASFW::Audio::FamilyDriver& family = *proto.AsFamilyDriver();
+
+    EXPECT_EQ(family.LoadGeometry(), kIOReturnSuccess);
+    const auto health = family.ReadHealth(1000);
+    ASSERT_TRUE(health.has_value());
+    EXPECT_EQ(health->nominalRateHz, 48000U);
+    EXPECT_FALSE(health->sourceLocked);
+
+    const auto unsupported = family.ApplyClockIdle({.sampleRateHz = 44100});
+    ASSERT_FALSE(unsupported.has_value());
+    EXPECT_EQ(unsupported.error(), kIOReturnUnsupported);
+    const auto noTransport = family.ApplyClockIdle({.sampleRateHz = 48000});
+    ASSERT_FALSE(noTransport.has_value());
+    EXPECT_EQ(noTransport.error(), kIOReturnNotReady);
+}
+
