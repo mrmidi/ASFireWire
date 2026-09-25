@@ -281,13 +281,13 @@ void LogDirection(const char* directionName,
 DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
-                                   AudioDuplexCoordinator& duplexCoordinator,
+                                   Session::AudioSessions& sessions,
                                    Driver::HardwareInterface& hardware) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
     , hardware_(hardware)
-    , restartCoordinator_(duplexCoordinator) {
+    , sessions_(sessions) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: Failed to allocate lock");
@@ -335,7 +335,7 @@ void DiceAudioBackend::BeginTeardown() noexcept {
         const uint64_t probeAbortBefore =
             probeAbortCount_.load(std::memory_order_acquire);
         const uint64_t coordinatorAbortBefore =
-            restartCoordinator_.TeardownAbortCount();
+            sessions_.TeardownAbortCount();
         const uint64_t publicationRejectBefore =
             publicationGate_.RejectCount();
         const uint64_t startMs = UptimeMilliseconds();
@@ -357,7 +357,7 @@ void DiceAudioBackend::BeginTeardown() noexcept {
         const uint64_t endMs = UptimeMilliseconds();
         const uint64_t drainMs = endMs >= startMs ? endMs - startMs : 0;
         const uint64_t coordinatorAborted =
-            restartCoordinator_.TeardownAbortCount() - coordinatorAbortBefore;
+            sessions_.TeardownAbortCount() - coordinatorAbortBefore;
         const uint64_t probeAborted =
             probeAbortCount_.load(std::memory_order_acquire) - probeAbortBefore;
         const uint64_t recoveryRejected =
@@ -432,8 +432,7 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
         return;
     }
 
-    if (stopping_.load(std::memory_order_acquire) ||
-        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
+    if (stopping_.load(std::memory_order_acquire) || sessions_.IsCancelled(guid)) {
         recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
                  "DiceAudioBackend: recovery event ignored by lifecycle cancellation "
@@ -443,36 +442,18 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
         return;
     }
 
-    // Runtime-fault recoveries (timing loss, cycle-inconsistent, ...) are only valid
-    // for the session that raised them. CoreAudio re-probes a fresh rate with rapid
-    // StartIO/StopIO cycles, and each ordered teardown fires the same replay-
-    // discontinuity detectors as a genuine mid-run fault; a recovery queued from
-    // that churn executes after the next start goes live, tears down the healthy
-    // session, and its restart then fails TX prime (stale producer cursors -- the
-    // cursor reset only runs in ADK StartIO) leaving the HAL running silent IO.
-    // Drop the event when the coordinator is already running an operation (the
-    // "fault" is that transition), and re-check the restart epoch when the queued
-    // block finally runs. Bus-reset rebinds stay unguarded: they are external
-    // topology events that must always rebind.
+    // A runtime fault (timing loss, cycle-inconsistent, ...) belongs to the run
+    // that was streaming when it fired. CoreAudio re-probes a rate with rapid
+    // StartIO/StopIO cycles, and each ordered teardown trips the same replay
+    // detectors as a genuine mid-run fault; the session drops a fault whose run
+    // has ended, or that fired while no run was confirmed. Bus-reset rebinds are
+    // topology events and always restart.
     const bool isRuntimeFault =
         reason == DuplexRestartReason::kRecoverAfterTimingLoss ||
         reason == DuplexRestartReason::kRecoverAfterCycleInconsistent ||
         reason == DuplexRestartReason::kRecoverAfterLockLoss ||
         reason == DuplexRestartReason::kRecoverAfterTxFault;
-    uint64_t faultRestartId = 0;
-    if (isRuntimeFault) {
-        if (restartCoordinator_.IsOperationInFlight(guid)) {
-            recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
-            ASFW_LOG(Audio,
-                     "DiceAudioBackend: recovery event dropped (duplex operation in "
-                     "flight) GUID=%llx reason=%u",
-                     guid,
-                     static_cast<unsigned>(reason));
-            return;
-        }
-        const auto session = restartCoordinator_.GetSession(guid);
-        faultRestartId = session ? session->restartId : 0;
-    }
+    const uint64_t observedRun = isRuntimeFault ? sessions_.RunningRun(guid) : 0;
 
     if (!TryBeginRecovery(guid)) {
         return;
@@ -481,8 +462,7 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
     auto recover = ^{
         // FW-61: a block enqueued just before BeginTeardown's drain bails here before any
         // MMIO, so it cannot run after ASFWDriver::Stop detaches hardware.
-        if (stopping_.load(std::memory_order_acquire) ||
-            restartCoordinator_.IsDeviceOperationCancelled(guid)) {
+        if (stopping_.load(std::memory_order_acquire) || sessions_.IsCancelled(guid)) {
             recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
             ASFW_LOG(Audio,
                      "DiceAudioBackend: queued recovery aborted by lifecycle cancellation "
@@ -492,76 +472,47 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
             FinishRecovery(guid);
             return;
         }
-        if (isRuntimeFault) {
-            // Re-validate at execution time: an operation may have started, or a
-            // restart may have completed, while this block sat on the queue. In
-            // either case the fault belongs to a superseded session -- recovering
-            // now would tear down healthy state.
-            const auto session = restartCoordinator_.GetSession(guid);
-            const uint64_t currentRestartId = session ? session->restartId : 0;
-            if (restartCoordinator_.IsOperationInFlight(guid) ||
-                currentRestartId != faultRestartId) {
-                recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
-                ASFW_LOG(Audio,
-                         "DiceAudioBackend: queued recovery dropped as stale GUID=%llx "
-                         "reason=%u faultRestartId=%llu currentRestartId=%llu",
-                         guid,
-                         static_cast<unsigned>(reason),
-                         faultRestartId,
-                         currentRestartId);
-                FinishRecovery(guid);
-                return;
-            }
 
-            // Health gate: a host-side replay discontinuity (aggregate-device
-            // StartIO/StopIO churn, an RX packet gap) fires the same timing-loss
-            // detector as a genuine device clock drop. When the device still
-            // reports a locked, healthy clock the discontinuity is host-side and
-            // the RX epoch reset (ResetReplayEpochForDiscontinuity) already
-            // re-establishes cadence and replay for both directions. A destructive
-            // coordinator restart here would only tear down a healthy running
-            // session -- and it cannot re-prime TX (the producer-cursor reset lives
-            // in ADK StartIO), so it lands Failed and leaves the HAL running silent
-            // IO. Only escalate to a restart when the device clock is genuinely
-            // unhealthy. (Read failure returns false -> recover, never suppress on
-            // missing evidence.)
-            if (DeviceReportsHealthyClock(guid)) {
-                recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
-                ASFW_LOG(Audio,
-                         "DiceAudioBackend: runtime-fault recovery dropped (device clock "
-                         "locked+healthy; RX self-heals) GUID=%llx reason=%u",
-                         guid,
-                         static_cast<unsigned>(reason));
-                FinishRecovery(guid);
-                return;
-            }
+        // Health gate: a host-side replay discontinuity (aggregate-device
+        // StartIO/StopIO churn, an RX packet gap) fires the same timing-loss
+        // detector as a genuine device clock drop. When the device still reports
+        // a locked, healthy clock, the RX epoch reset
+        // (ResetReplayEpochForDiscontinuity) already re-establishes cadence and
+        // replay; a restart would only tear down a healthy session. A read
+        // failure returns false: never suppress a recovery on missing evidence.
+        if (isRuntimeFault && DeviceReportsHealthyClock(guid)) {
+            recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: runtime-fault recovery dropped (device clock "
+                     "locked+healthy; RX self-heals) GUID=%llx reason=%u",
+                     guid,
+                     static_cast<unsigned>(reason));
+            FinishRecovery(guid);
+            return;
         }
-        const IOReturn status = restartCoordinator_.RecoverStreaming(guid, reason);
+
+        const IOReturn status = sessions_.RequestRestart(guid, reason, observedRun);
         if (status == kIOReturnSuccess) {
             EnsureNubForGuid(guid);
             ASFW_LOG(Audio,
                      "DiceAudioBackend: Recovery succeeded GUID=%llx reason=%u",
                      guid,
                      static_cast<unsigned>(reason));
-            FinishRecovery(guid);
-            return;
-        }
-        if (status == kIOReturnUnsupported) {
-            // The policy declined to recover; nothing ran, so this is neither a
-            // success to announce nor a failure to escalate (FW-146).
+        } else if (status == kIOReturnUnsupported || status == kIOReturnAborted) {
+            // The session declined: nothing should run, or the fault is stale.
+            // Neither a success to announce nor a failure to escalate (FW-146).
             ASFW_LOG(Audio,
-                     "DiceAudioBackend: Recovery not applicable GUID=%llx reason=%u",
+                     "DiceAudioBackend: Recovery not applicable GUID=%llx reason=%u kr=0x%x",
                      guid,
-                     static_cast<unsigned>(reason));
-            FinishRecovery(guid);
-            return;
+                     static_cast<unsigned>(reason),
+                     status);
+        } else {
+            ASFW_LOG_ERROR(Audio,
+                           "DiceAudioBackend: Recovery failed GUID=%llx reason=%u kr=0x%x",
+                           guid,
+                           static_cast<unsigned>(reason),
+                           status);
         }
-
-        ASFW_LOG_ERROR(Audio,
-                       "DiceAudioBackend: Recovery failed GUID=%llx reason=%u kr=0x%x",
-                       guid,
-                       static_cast<unsigned>(reason),
-                       status);
         FinishRecovery(guid);
     };
 
@@ -586,12 +537,12 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
         return;
     }
 
-    const std::vector<uint64_t> guids = restartCoordinator_.GetStreamingGuids();
+    const std::vector<uint64_t> guids = sessions_.StreamingGuids();
 
     for (const uint64_t guid : guids) {
         auto probe = ^{
             if (stopping_.load(std::memory_order_acquire) ||
-                restartCoordinator_.IsDeviceOperationCancelled(guid)) {
+                sessions_.IsCancelled(guid)) {
                 probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
                 ASFW_LOG(Audio,
                          "DiceAudioBackend: queued health probe ignored by lifecycle cancellation "
@@ -613,7 +564,7 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
 
 void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept {
     if (stopping_.load(std::memory_order_acquire) ||
-        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
+        sessions_.IsCancelled(guid)) {
         probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
                  "DiceAudioBackend: health probe refused by lifecycle cancellation "
@@ -631,7 +582,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
     if (stopping_.load(std::memory_order_acquire) ||
-        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
+        sessions_.IsCancelled(guid)) {
         probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
                  "DiceAudioBackend: health probe refused by lifecycle cancellation before read "
@@ -649,7 +600,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         kIOReturnTimeout,
         [&]() noexcept {
             return stopping_.load(std::memory_order_acquire) ||
-                   restartCoordinator_.IsDeviceOperationCancelled(guid);
+                   sessions_.IsCancelled(guid);
         },
         kHealthBridgePollMs);
 
@@ -714,16 +665,15 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
             // window. Notifying then would inject a second, competing
             // config-change into the middle of the host's own change (HAL
             // rate switches wedge until the client reopens the device).
-            // Suppress while the coordinator holds the gate / has a queued
-            // clock request, and when the "new" device rate is just the echo
+            // Suppress while the session reconciles or holds an unapplied
+            // clock change, and when the "new" device rate is just the echo
             // of the clock the host itself asked for.
-            const auto session = restartCoordinator_.GetSession(guid);
+            const auto session = sessions_.Snapshot(guid);
             const bool echoesHostClock =
                 session.has_value() &&
-                (session->hasPendingClockRequest ||
-                 session->pendingClock.sampleRateHz == deviceRateHz ||
+                (session->clockChangePending ||
                  session->desiredClock.sampleRateHz == deviceRateHz);
-            if (echoesHostClock || restartCoordinator_.IsOperationInFlight(guid)) {
+            if (echoesHostClock || sessions_.IsReconciling(guid)) {
                 ASFW_LOG_RL(Audio, "dice/rate-echo", 1000, OS_LOG_TYPE_DEFAULT,
                             "DiceAudioBackend: rate mismatch is host-initiated "
                             "(in flight) GUID=%llx device=%u Hz host=%u Hz -> no resync",
@@ -756,7 +706,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
 
 bool DiceAudioBackend::DeviceReportsHealthyClock(uint64_t guid) noexcept {
     if (stopping_.load(std::memory_order_acquire) ||
-        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
+        sessions_.IsCancelled(guid)) {
         return false;
     }
     // Hold the protocol alive for the blocking read (same discipline as
@@ -775,7 +725,7 @@ bool DiceAudioBackend::DeviceReportsHealthyClock(uint64_t guid) noexcept {
         kIOReturnTimeout,
         [&]() noexcept {
             return stopping_.load(std::memory_order_acquire) ||
-                   restartCoordinator_.IsDeviceOperationCancelled(guid);
+                   sessions_.IsCancelled(guid);
         },
         kHealthBridgePollMs);
 
@@ -1187,7 +1137,7 @@ IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
         return kIOReturnNotReady;
     }
 
-    const IOReturn status = restartCoordinator_.StartStreaming(guid);
+    const IOReturn status = sessions_.Attach(guid);
     if (status == kIOReturnSuccess) {
         EnsureNubForGuid(guid);
         if (lock_) {
@@ -1213,7 +1163,7 @@ IOReturn DiceAudioBackend::StopStreaming(uint64_t guid) noexcept {
         return kIOReturnAborted;
     }
 
-    const IOReturn status = restartCoordinator_.StopStreaming(guid);
+    const IOReturn status = sessions_.Detach(guid);
     if (status == kIOReturnSuccess && lock_) {
         IOLockLock(lock_);
         activeStreamingGuids_.erase(guid);
@@ -1233,7 +1183,7 @@ IOReturn DiceAudioBackend::RequestClockConfig(uint64_t guid,
         return kIOReturnAborted;
     }
 
-    const IOReturn status = restartCoordinator_.RequestClockConfig(guid, desiredClock, reason);
+    const IOReturn status = sessions_.ChangeClock(guid, desiredClock, reason);
     if (status == kIOReturnSuccess) {
         EnsureNubForGuid(guid);
     }

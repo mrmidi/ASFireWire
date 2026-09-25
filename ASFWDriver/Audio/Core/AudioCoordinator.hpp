@@ -13,6 +13,7 @@
 #include "../Protocols/Backends/DiceAudioBackend.hpp"
 #include "../Protocols/Backends/MotuAudioBackend.hpp"
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
+#include "../Session/AudioSessions.hpp"
 
 #include "../../Logging/Logging.hpp"
 
@@ -93,7 +94,7 @@ private:
     IsochDuplexHostTransport hostTransport_;
     std::atomic_flag captureCommandBusy_ = ATOMIC_FLAG_INIT;
     std::atomic<bool> teardownRequested_{false};
-    AudioDuplexCoordinator duplexCoordinator_;
+    Session::AudioSessions sessions_;
     DiceAudioBackend dice_;
     MotuAudioBackend motu_;
     AVCAudioBackend avc_;

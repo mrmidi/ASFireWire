@@ -113,6 +113,11 @@ public:
     [[nodiscard]] bool IsReconciling() const noexcept;
     [[nodiscard]] bool IsRetired() const noexcept;
     [[nodiscard]] uint64_t CurrentRun() const noexcept;
+    // The run a fault seen now belongs to: the current run while the streams
+    // are confirmed running, otherwise kNotRunning, which no run matches. Pass
+    // it back as RequestRestart's `observedRun`.
+    [[nodiscard]] uint64_t RunningRun() const noexcept;
+    static constexpr uint64_t kNotRunning = ~uint64_t{0};
     [[nodiscard]] SessionSnapshot Snapshot() const noexcept;
 
 private:

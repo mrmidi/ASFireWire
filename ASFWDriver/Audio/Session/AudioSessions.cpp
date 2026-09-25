@@ -132,6 +132,11 @@ bool AudioSessions::IsStreaming(uint64_t guid) const noexcept {
     return session && session->IsStreaming();
 }
 
+uint64_t AudioSessions::RunningRun(uint64_t guid) const noexcept {
+    const auto session = Find(guid);
+    return session ? session->RunningRun() : SessionScheduler::kNotRunning;
+}
+
 bool AudioSessions::IsReconciling(uint64_t guid) const noexcept {
     const auto session = Find(guid);
     return session && session->IsReconciling();

@@ -265,6 +265,11 @@ uint64_t SessionScheduler::CurrentRun() const noexcept {
     return Snapshot().run;
 }
 
+uint64_t SessionScheduler::RunningRun() const noexcept {
+    const SessionSnapshot now = Snapshot();
+    return now.state == SessionState::Running ? now.run : kNotRunning;
+}
+
 SessionSnapshot SessionScheduler::Snapshot() const noexcept {
     SessionSnapshot out{};
     if (lock_ == nullptr) {

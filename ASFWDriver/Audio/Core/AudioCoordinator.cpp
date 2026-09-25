@@ -25,20 +25,20 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
     , registry_(registry)
     , runtime_(runtime)
     , hostTransport_(isoch)
-    , duplexCoordinator_(registry_, runtime_, hostTransport_, hardware, &teardownRequested_,
-                         [this](uint64_t guid) -> Runtime::IDirectAudioBindingSource* {
-                             auto endpoint = runtime_.FindEndpointRuntime(guid);
-                             return endpoint ? endpoint.get() : nullptr;
-                         })
-    , dice_(publisher_, registry_, runtime_, duplexCoordinator_, hardware)
-    , motu_(publisher_, registry_, runtime_, duplexCoordinator_, hardware)
-    , avc_(publisher_, registry_, runtime_, hostTransport_, duplexCoordinator_, hardware) {
+    , sessions_(registry_, runtime_, hostTransport_, hardware, &teardownRequested_,
+                [this](uint64_t guid) -> Runtime::IDirectAudioBindingSource* {
+                    auto endpoint = runtime_.FindEndpointRuntime(guid);
+                    return endpoint ? endpoint.get() : nullptr;
+                })
+    , dice_(publisher_, registry_, runtime_, sessions_, hardware)
+    , motu_(publisher_, registry_, runtime_, sessions_, hardware)
+    , avc_(publisher_, registry_, runtime_, hostTransport_, sessions_, hardware) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AudioCoordinator: Failed to allocate lock");
     }
 
-    duplexCoordinator_.SetEndpointStartGuard([this](uint64_t guid) {
+    sessions_.SetStartGuard([this](uint64_t guid) {
         return !publisher_.IsGeometryChangeBlocked(guid);
     });
     deviceManager_.RegisterDeviceObserver(this);
@@ -63,7 +63,7 @@ void AudioCoordinator::SetCMPClient(ASFW::CMP::CMPClient* client) noexcept {
 void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) return;
     const uint64_t guid = device->GetGUID();
-    duplexCoordinator_.AcknowledgeDevicePresent(guid);
+    sessions_.Present(guid);
     if (lock_) {
         IOLockLock(lock_);
         remoteLostGuids_.erase(guid);
@@ -77,7 +77,7 @@ void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device
 void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) return;
     const uint64_t guid = device->GetGUID();
-    duplexCoordinator_.AcknowledgeDevicePresent(guid);
+    sessions_.Present(guid);
     if (lock_) {
         IOLockLock(lock_);
         remoteLostGuids_.erase(guid);
@@ -88,7 +88,7 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
         backend->OnDeviceRecordUpdated(guid);
     }
 
-    const bool recoverActiveStream = duplexCoordinator_.IsStreaming(guid);
+    const bool recoverActiveStream = sessions_.IsStreaming(guid);
     if (!recoverActiveStream || !backend) {
         return;
     }
@@ -102,7 +102,7 @@ void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> de
     }
 
     const uint64_t guid = device->GetGUID();
-    const bool suspendedActiveStream = duplexCoordinator_.IsStreaming(guid);
+    const bool suspendedActiveStream = sessions_.IsStreaming(guid);
     if (!suspendedActiveStream) {
         return;
     }
@@ -135,7 +135,7 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     // Discovery has completed a new-generation scan and confirmed this GUID is
     // absent. Latch before touching backend work: delayed recovery and StopIO
     // callbacks must not recreate a session for the old route.
-    duplexCoordinator_.CancelRemoteDevice(guid);
+    sessions_.Retire(guid);
     // The registry has already invalidated the route policy by the time
     // removal is reported. Cancel all backend work so cleanup does not depend
     // on resolving a policy for a device that is known to be gone.
@@ -161,7 +161,7 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     // the terminal latch prevents it from starting a new duplex session.
     runtime_.Remove(guid);
     publisher_.TerminateNub(guid, "remote-device-lost");
-    duplexCoordinator_.ClearSession(guid);
+    sessions_.Erase(guid);
     ASFW_LOG(Audio,
              "[Lifecycle] AudioCoordinator remote-device-lost owner GUID=0x%016llx "
              "active=%u host=0x%08x",
@@ -257,7 +257,7 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
         IOLockUnlock(lock_);
     }
 
-    const IOReturn kr = duplexCoordinator_.StartStreaming(guid);
+    const IOReturn kr = sessions_.Attach(guid);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
                        "AudioCoordinator: StartStreaming failed GUID=0x%016llx kr=0x%x",
@@ -298,7 +298,7 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
         IOLockUnlock(lock_);
     }
 
-    const IOReturn kr = duplexCoordinator_.StopStreaming(guid);
+    const IOReturn kr = sessions_.Detach(guid);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
                        "AudioCoordinator: StopStreaming failed GUID=0x%016llx kr=0x%x",
@@ -349,7 +349,7 @@ IOReturn AudioCoordinator::RequestClockConfig(
         return kIOReturnNotReady;
     }
 
-    const IOReturn kr = duplexCoordinator_.RequestClockConfig(guid, desiredClock, reason);
+    const IOReturn kr = sessions_.ChangeClock(guid, desiredClock, reason);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
                        "AudioCoordinator: RequestClockConfig failed GUID=0x%016llx kr=0x%x",

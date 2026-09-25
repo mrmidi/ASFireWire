@@ -7,7 +7,7 @@
 #pragma once
 
 #include "IAudioBackend.hpp"
-#include "AudioDuplexCoordinator.hpp"
+#include "../../Session/AudioSessions.hpp"
 #include "IsochDuplexHostTransport.hpp"
 #include "PublicationGate.hpp"
 
@@ -33,7 +33,7 @@ public:
     DiceAudioBackend(AudioNubPublisher& publisher,
                      Discovery::DeviceRegistry& registry,
                      AudioRuntimeRegistry& runtime,
-                     AudioDuplexCoordinator& duplexCoordinator,
+                     Session::AudioSessions& sessions,
                      Driver::HardwareInterface& hardware) noexcept;
     ~DiceAudioBackend() noexcept override;
 
@@ -58,7 +58,7 @@ public:
                                               DuplexRestartReason reason) noexcept;
 
     // FW-61: quiesce the dice queue before the core detaches hardware. Sets the stop flag,
-    // cancels in-flight recovery (coordinator), then drains the work queue (synchronous
+    // cancels in-flight recovery (sessions), then drains the work queue (synchronous
     // barrier) so no recovery/probe block issues MMIO after ASFWDriver::Stop's Detach.
     // Idempotent; must be called before HardwareInterface::Detach().
     void BeginTeardown() noexcept override;
@@ -85,7 +85,7 @@ private:
     std::atomic<bool> teardownStarted_{false};
     std::atomic<bool> teardownComplete_{false};
     PublicationGate publicationGate_{};
-    AudioDuplexCoordinator& restartCoordinator_;
+    Session::AudioSessions& sessions_;
 
 #ifdef ASFW_HOST_TEST
 public:

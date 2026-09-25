@@ -15,14 +15,14 @@ AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
                                  Discovery::DeviceRegistry& registry,
                                  AudioRuntimeRegistry& runtime,
                                  IIsochDuplexHostTransport& hostTransport,
-                                 AudioDuplexCoordinator& duplexCoordinator,
+                                 Session::AudioSessions& sessions,
                                  Driver::HardwareInterface& hardware) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
     , hardware_(hardware)
     , hostTransport_(hostTransport)
-    , duplexCoordinator_(duplexCoordinator) {
+    , sessions_(sessions) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AVCAudioBackend: Failed to allocate lock");
@@ -90,7 +90,6 @@ void AVCAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
         IOLockLock(lock_);
         configByGuid_.erase(guid);
         recoveringGuids_.erase(guid);
-        timingLossAttempts_.erase(guid);
         if (activeGuid_ == guid) {
             activeGuid_ = 0;
         }
@@ -103,7 +102,7 @@ void AVCAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
 }
 
 bool AVCAudioBackend::IsActiveDevice(uint64_t guid) noexcept {
-    return duplexCoordinator_.IsStreaming(guid);
+    return sessions_.IsStreaming(guid);
 }
 
 void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
@@ -114,7 +113,7 @@ void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
     bool queueRecovery = false;
     if (lock_) {
         IOLockLock(lock_);
-        queueRecovery = duplexCoordinator_.IsStreaming(guid) && recoveringGuids_.insert(guid).second;
+        queueRecovery = sessions_.IsStreaming(guid) && recoveringGuids_.insert(guid).second;
         IOLockUnlock(lock_);
     }
     if (!queueRecovery) {
@@ -122,7 +121,7 @@ void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
     }
 
     // DeviceManager emits resume only after it refreshed the stable GUID's
-    // node/generation mapping. The coordinator stops stale host state, makes
+    // node/generation mapping. The session stops stale host state, makes
     // fresh IRM reservations, and lets the AV/C adapter establish fresh PCRs.
     // This is the same reset-then-reconnect ordering as Linux cmp.c:294-334.
     ASFW_LOG(Audio,
@@ -130,12 +129,13 @@ void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
              guid);
     auto recover = ^{
         if (!stopping_.load(std::memory_order_acquire)) {
-            const IOReturn status = duplexCoordinator_.RecoverStreaming(
-                guid, DuplexRestartReason::kBusResetRebind);
-            // Unsupported means the policy declined to act — a decision, not a
-            // fault. Reporting it as a failure would put an error line on a
+            const IOReturn status =
+                sessions_.RequestRestart(guid, DuplexRestartReason::kBusResetRebind);
+            // Unsupported/Aborted mean the session declined to act — a decision,
+            // not a fault. Reporting it as a failure would put an error line on a
             // benign path (FW-146).
-            if (status != kIOReturnSuccess && status != kIOReturnUnsupported) {
+            if (status != kIOReturnSuccess && status != kIOReturnUnsupported &&
+                status != kIOReturnAborted) {
                 ASFW_LOG_ERROR(Audio,
                                "AVCAudioBackend: post-reset recovery failed GUID=0x%016llx kr=0x%x",
                                guid,
@@ -183,25 +183,19 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
     // GUID it claimed; a mismatch means the loss belongs to no stream we own.
     // recoveringGuids_ dedups against a bus-reset recovery already in flight
     // (OnDeviceResumed) and against a second timing-loss for the same GUID.
+    // The fault belongs to the run streaming now. If a reconcile is under way
+    // the loss is that transition's own, and no run is confirmed: the session
+    // drops it as stale when the block below asks for the restart.
+    const uint64_t observedRun = sessions_.RunningRun(guid);
     bool armed = false;
     if (lock_) {
         IOLockLock(lock_);
-        if (duplexCoordinator_.IsStreaming(guid)) {
+        if (sessions_.IsStreaming(guid)) {
             armed = recoveringGuids_.insert(guid).second;
         }
         IOLockUnlock(lock_);
     }
     if (!armed) {
-        return;
-    }
-
-    // A duplex operation already running (start/stop/recovery) is itself the
-    // transition that tripped the replay-discontinuity detector; let it settle.
-    if (duplexCoordinator_.IsOperationInFlight(guid)) {
-        ASFW_LOG(Audio,
-                 "AVCAudioBackend: timing-loss dropped (duplex op in flight) GUID=0x%016llx",
-                 guid);
-        FinishRecovery(guid);
         return;
     }
 
@@ -239,14 +233,8 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
 
         // AV/C health verdict = RX cadence (no register probe, doc §5/§6). If
         // replay re-established during the settle window the gap was host-side
-        // (StartIO/StopIO churn, a brief RX gap) and already self-healed;
-        // suppress and reset the escalation budget.
+        // (StartIO/StopIO churn, a brief RX gap) and already self-healed.
         if (hostTransport_.IsReceiveReplayEstablished()) {
-            if (lock_) {
-                IOLockLock(lock_);
-                timingLossAttempts_.erase(guid);
-                IOLockUnlock(lock_);
-            }
             ASFW_LOG(Audio,
                      "AVCAudioBackend: timing-loss self-healed (RX replay re-established) "
                      "GUID=0x%016llx",
@@ -255,48 +243,26 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
             return;
         }
 
-        // Still stalled: a genuine device outage. Bound the escalations so a
-        // device that only partially returns cannot restart-loop forever.
-        uint8_t attempt = 0;
-        if (lock_) {
-            IOLockLock(lock_);
-            attempt = ++timingLossAttempts_[guid];
-            IOLockUnlock(lock_);
-        }
-        if (attempt > kTimingLossMaxAttempts) {
-            ASFW_LOG_ERROR(Audio,
-                           "AVCAudioBackend: timing-loss escalation budget exhausted "
-                           "(attempt=%u); leaving stream stopped GUID=0x%016llx",
-                           attempt, guid);
-            FinishRecovery(guid);
-            return;
-        }
-
-        // Escalate: coordinator restart re-establishes CMP/PCR (the wire-observable
-        // recovery — bebob break_both_connections + cmp_connection_establish; doc §2/§7).
+        // Still stalled: a genuine device outage. A session restart
+        // re-establishes CMP/PCR (the wire-observable recovery — bebob
+        // break_both_connections + cmp_connection_establish; doc §2/§7).
         ASFW_LOG_WARNING(Audio,
                          "AVCAudioBackend: RX replay stalled past settle; restarting duplex "
-                         "attempt=%u GUID=0x%016llx",
-                         attempt, guid);
-        const IOReturn status = duplexCoordinator_.RecoverStreaming(
-            guid, DuplexRestartReason::kRecoverAfterTimingLoss);
+                         "GUID=0x%016llx",
+                         guid);
+        const IOReturn status = sessions_.RequestRestart(
+            guid, DuplexRestartReason::kRecoverAfterTimingLoss, observedRun);
         if (status == kIOReturnSuccess) {
-            if (lock_) {
-                IOLockLock(lock_);
-                timingLossAttempts_.erase(guid); // fresh session; reset budget
-                IOLockUnlock(lock_);
-            }
             ASFW_LOG(Audio,
                      "AVCAudioBackend: timing-loss recovery succeeded GUID=0x%016llx",
                      guid);
-        } else if (status == kIOReturnUnsupported) {
-            // The policy declined to recover. Nothing was restarted, so the
-            // budget must keep accumulating — resetting it here would mean a
-            // device that always declines can never exhaust its escalations.
+        } else if (status == kIOReturnUnsupported || status == kIOReturnAborted) {
+            // The session declined: the fault is stale, or repeated failures
+            // already left the streams stopped.
             ASFW_LOG(Audio,
                      "AVCAudioBackend: timing-loss recovery not applicable "
-                     "(attempt=%u retained) GUID=0x%016llx",
-                     attempt, guid);
+                     "GUID=0x%016llx kr=0x%x",
+                     guid, status);
         } else {
             ASFW_LOG_ERROR(Audio,
                            "AVCAudioBackend: timing-loss recovery failed GUID=0x%016llx kr=0x%x",
@@ -369,7 +335,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
                              active);
             return kIOReturnBusy;
         }
-        // Claim the backend before leaving the lock. The coordinator performs
+        // Claim the backend before leaving the lock. The session performs
         // blocking setup, so delaying this assignment until it returns would
         // allow a second GUID to begin concurrently.
         activeGuid_ = guid;
@@ -428,9 +394,9 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
         return failStart(kIOReturnNotReady, "direct memory");
     }
 
-    const IOReturn startStatus = duplexCoordinator_.StartStreaming(guid);
+    const IOReturn startStatus = sessions_.Attach(guid);
     if (startStatus != kIOReturnSuccess) {
-        return failStart(startStatus, "AudioDuplexCoordinator");
+        return failStart(startStatus, "session");
     }
 
     ASFW_LOG(Audio,
@@ -468,7 +434,7 @@ IOReturn AVCAudioBackend::StopStreaming(uint64_t guid) noexcept {
         IOLockUnlock(lock_);
     }
 
-    const IOReturn stopStatus = duplexCoordinator_.StopStreaming(guid);
+    const IOReturn stopStatus = sessions_.Detach(guid);
     if (stopStatus != kIOReturnSuccess) return stopStatus;
 
     if (lock_) {
@@ -476,7 +442,6 @@ IOReturn AVCAudioBackend::StopStreaming(uint64_t guid) noexcept {
         if (activeGuid_ == guid) {
             activeGuid_ = 0;
         }
-        timingLossAttempts_.erase(guid);
         IOLockUnlock(lock_);
     }
 
