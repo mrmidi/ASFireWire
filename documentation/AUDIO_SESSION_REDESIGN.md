@@ -621,8 +621,40 @@ rely on fixtures plus the vendors' identical code (§2.1).
     teardown (§8 Q7).
   Not yet run on hardware; batched with the S1 and S2 checks on the Pro 24 DSP. The one
   real risk is a config-change notification the device sends *after* a restart finishes,
-  which would cost one extra restart (TCAT absorbs that with its 400 ms debounce, S4).
-- **S4: DICE wire follows the device**, after a spike (§4.4).
+  which would cost one extra restart. TCAT would restart on it too: its debounce only
+  merges events that arrive before the restart runs. Hardware (2026-09-25, Pro 24 DSP):
+  cold start, stop/start without a re-claim, and 48→44.1 kHz all passed; the device's own
+  config change during the idle rate change was dropped as stale. Replug not yet tested.
+- **S4: DICE wire follows the device.** Split into three parts; only S4a is done.
+  - **S4a, done (2026-09-25), branch `refactor/session-quiet-period`.**
+    - The idle clock apply waits up to 1 s for the device to reach the new rate
+      (`ab5782d6`). Before, the next start found the old rate and rewrote `CLOCK_SELECT`.
+    - Device and transport restart requests (bus reset, config change, runtime faults)
+      wait out a per-family quiet period. DICE uses 400 ms, TCAT's two 200 ms ticks; every
+      other family uses 0, which keeps its timing and goldens (`8723a407`, `f3156d26`).
+      - A pending restart is covered when another run has started since.
+      - HAL requests are never delayed and cancel a pending restart.
+      - Retirement and teardown cancel it.
+      - Each device session has its own queue, drained on erasure and teardown.
+      - Backends refresh the nub after the restart actually happens (`OnStreamsRestarted`).
+    - Not yet run on hardware: an idle rate change followed by a start, a replug while
+      playing, and StartIO/StopIO churn.
+  - **S4b, the hardware spike: stopped, did not pass.** A throwaway branch,
+    `spike/dice-wire-idle`, never merged. It kept the Pro 24 DSP's stream running after
+    StopIO. The results are in `S4B_PRO24DSP_SPIKE_2026-09-25.md` on that branch.
+    - **Idle is fine.** With CoreAudio detached, TX kept producing: 30,906 packets,
+      7,726 of them no-data, with no underrun or content fault.
+    - **Rejoining is not.** Three attempts failed:
+      1. A sustained ~2,300-frame exposure shortfall and suspected clicks.
+      2. Silence: every returning client frame fell beyond the exposed, writable packets,
+         so it was counted as `noPkt`.
+      3. An explicit client-to-wire frame map played its first start but found no safe
+         join packet after a long idle.
+    - **The root problem** is that nothing defines where a returning CoreAudio client's
+      frame range meets a live packet timeline.
+  - **S4b rejoin and S4c are parked** (user decision, 2026-09-25) until the audio stack's
+    hardening work defines that join contract (§8 Q8). DICE streams keep following
+    CoreAudio.
 - **S5: native `FamilyDriver` for CMP families and MOTU.** Delete the adapter and
   `IDuplexDeviceControl`.
 - **S6: geometry stages B–D**, owned by `DICE_TCAT_ARCHITECTURE.md` §4.2. They are independent
@@ -646,12 +678,14 @@ rely on fixtures plus the vendors' identical code (§2.1).
 
 1. **Wire policy for non-DICE families.** What does Apple's AV/C audio driver do? The source is
    needed before choosing.
-2. **Debounce vs `StartIO` latency.** Decided for S2: no debounce, coalescing only. TCAT's
-   ~400 ms quiet period arrives with S4, for device events; how `StartIO` bypasses it is
-   still open.
-3. **Blocking primitive.** Answered: `IODispatchQueue::SleepWithTimeout`/`Wakeup` (§4.2).
-   Still open: the timeout's unit, confirmed by a spike once a session queue exists (S4).
-   S1 and S2 ship a polling backoff.
+2. **Debounce vs `StartIO` latency.** Answered in S4a: only device and transport restart
+   requests wait out the quiet period; HAL requests (attach, detach, clock) run at once and
+   cancel a pending restart.
+3. **Blocking primitive.** Answered: `IODispatchQueue::SleepWithTimeout`/`Wakeup`
+   (§4.2). The DriverKit 25.5 header also has `SleepWithDeadline(event, options,
+   deadline)` with an explicit `kIOTimerClock*` timebase, which settles the unit question
+   without a spike. The polling backoff stays: replacing it needs every reconcile and
+   every bus completion's wake-up on one session queue, and polling works on hardware.
 4. **Where `DesiredState` lives** relative to route tokens (`TOKEN_BASED_LIFECYCLE.md`): per
    GUID across generations, or per route?
 5. **Faulted exit policy.** Which events clear `Faulted`, and is a user-visible reset needed?
@@ -663,3 +697,9 @@ rely on fixtures plus the vendors' identical code (§2.1).
    the Default queue, so no release reaches the device. A bus reset clears it, and our own
    next claim accepts "already ours". A release needs teardown reordered so the bus is still
    up for one bounded transaction per DICE device.
+8. **Rejoining a running wire.** For the wire to follow the device (S4c), a returning
+   CoreAudio client must join a TX timeline that kept running without it. The client's
+   ring position, the exposed packet frontier and the packetizer's audio-frame
+   coordinates need one explicit contract, with sustained exposure margin verified on
+   hardware. S4b's three failed attempts (§6) are the evidence. Parked for the audio-stack
+   hardening work.
