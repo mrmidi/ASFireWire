@@ -481,7 +481,16 @@ policy, so the scheduler does not care which one a family picks.
 
 ### 4.5 Concurrency and teardown
 
-- One serial session queue per device. Only the scheduler runs on it.
+- **As built in S2:** no session queue yet. Reconciles are serialized per device, and the
+  caller whose request finds none running runs it on its own thread; requests arriving
+  meanwhile edit what is wanted and wait, and the running caller loops until one reconcile
+  has seen every edit. Every caller (the nub's queue, a backend queue) is off the Default
+  queue where bus completions land, so blocking there is safe, as it was under the
+  coordinator. Restart requests made during a reconcile are queued behind it and return at
+  once, so a request raised on the reconciling thread cannot wait on itself. A per-device
+  queue arrives with S4, when the wire stops following CoreAudio and the scheduler needs a
+  place of its own to run the debounce timer.
+- Target: one serial session queue per device. Only the scheduler runs on it.
 - Bus completions, notifications and timers arrive on other queues and only enqueue
   requests or complete waits.
 - Teardown sets a cancellation token that every blocking wait checks, then runs
@@ -552,10 +561,27 @@ rely on fixtures plus the vendors' identical code (§2.1).
   All 27 goldens pass unchanged, with no declared delta. The ported controller tests run as
   `DiceFamilyDriverTests` (20). Not yet run on hardware; batched with the pending Pro 24 DSP
   checks. The `SleepWithTimeout`/`Wakeup` spike moved to S2 (§4.2).
-- **S2: the scheduler replaces the coordinator.** `SessionScheduler` + `RestartRoutine` +
-  `StopRoutine` for **all** families; non-DICE families run through an adapter over their
-  current `IDuplexDeviceControl`. Delete the coordinator and its helpers. Hardware: Pro 24 DSP,
-  M-Audio 1814, PHASE 88, Apogee Duet.
+- **S2: the scheduler replaces the coordinator. Done (2026-09-25), branch
+  `refactor/audio-session-scheduler`.** Session goldens first (`6e5815f7`, `a22f60c0`):
+  `tests/golden/session/`, 19 scenarios × 6 recipes, recorded against the coordinator.
+  Then `Audio/Session/` (`fd5d0f7c`): `FamilyDriver`, `DuplexControlAdapter` (every family,
+  one place for the callback bridge), `RestartRoutine`, `StopRoutine`, `SessionScheduler`,
+  `AudioSessions`; the goldens ran against both implementations. Backends switched
+  (`c875b45e`); coordinator, gate, store, broker, journal, recovery policy and the lifecycle
+  vocabulary deleted (`7801126d`). Coalesce only, no debounce (user decision; the TCAT
+  quiet period is S4). Declared deltas, each a golden:
+  - `double-start`: a second StartIO no longer re-runs the start over running streams.
+  - `fault-after-stop`: a fault after StopIO no longer restarts the streams.
+  - `stop-after-refused-start`: succeeds; the coordinator hit an illegal lifecycle
+    transition whose `assert` is live in the dext (no build defines `NDEBUG`).
+  Behaviour changes without a golden: three failed fault recoveries in a row leave the
+  streams stopped until the next attach, for every family (AV/C allowed four, DICE and MOTU
+  had no limit); a clock change that overlaps a stop is applied idle instead of dropped;
+  recovery no longer aborts a pending clock change, it applies it. Backends keep their
+  evidence filters (DICE health gate and rate echo, AV/C settle and self-heal) and their
+  one-queued-block flags; the scheduler owns staleness (`RunningRun`). The
+  `SleepWithTimeout`/`Wakeup` spike is deferred with the session queue (S4). Not yet run
+  on hardware: Pro 24 DSP, M-Audio 1814, PHASE 88, Apogee Duet.
 - **S3: wire fixes, each declared.** IRM picks channels; config-change notifications
   restart; owner held while present and re-claimed per generation; per-device notification
   endpoint. Also: the first `GLOBAL_STATUS` read of a bring-up uses an empty section layout,
@@ -585,10 +611,12 @@ rely on fixtures plus the vendors' identical code (§2.1).
 
 1. **Wire policy for non-DICE families.** What does Apple's AV/C audio driver do? The source is
    needed before choosing.
-2. **Debounce vs `StartIO` latency.** TCAT's ~400 ms quiet period suits device events. The first
-   start after `StartIO` on a "follows CoreAudio" family should probably bypass it. How exactly?
+2. **Debounce vs `StartIO` latency.** Decided for S2: no debounce, coalescing only. TCAT's
+   ~400 ms quiet period arrives with S4, for device events; how `StartIO` bypasses it is
+   still open.
 3. **Blocking primitive.** Answered: `IODispatchQueue::SleepWithTimeout`/`Wakeup` (§4.2).
-   Still open: the timeout's unit, confirmed by a spike in S2. S1 ships a polling backoff.
+   Still open: the timeout's unit, confirmed by a spike once a session queue exists (S4).
+   S1 and S2 ship a polling backoff.
 4. **Where `DesiredState` lives** relative to route tokens (`TOKEN_BASED_LIFECYCLE.md`): per
    GUID across generations, or per route?
 5. **Faulted exit policy.** Which events clear `Faulted`, and is a user-visible reset needed?

@@ -22,8 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sample-rate changes made while no audio is playing were undone by the next start: the stream restarted at the previous rate while macOS rendered the new one, so playback came out at the wrong pitch (44.1 kHz played about 9% sharp on a 48 kHz device clock). The start now uses the rate you picked.
 - Focusrite Saffire Pro 24 DSP: waits during stream start (clock change accepted, clock lock, source lock) failed immediately instead of waiting, because this model's protocol was created without a timer. It now waits like every other DICE device.
 
+- Audio: stopping playback after a start that had been refused (for example by a bus reset during setup) could crash the driver, through an internal consistency check that is active in every build. The stop now succeeds.
+- Audio: a timing fault reported just after playback stopped could restart the streams although nothing was playing. It is now ignored.
+- Audio: a second start request for a device that was already streaming re-ran the whole start over the live streams. It is now recognised as already done.
+
 ### Changed
 
+- Audio: stream start, stop, rate changes and recovery for every device family now go through one per-device session scheduler that replaces the previous coordinator. Requests that overlap are combined into one restart. After three failed recoveries in a row the streams stay stopped until playback is started again; this limit now applies to DICE and MOTU devices too, which previously retried without limit (AV/C devices previously allowed four). The FireWire traffic is otherwise unchanged, checked against traces recorded from the previous code. Hardware confirmation is pending.
 - Focusrite Saffire Pro 40 (original revision) playback now uses the same raw 24-in-32 PCM encoding as the other Saffire models, without AM824 labels. This matches Focusrite's own driver; the earlier contributor verification used AM824 labels, so a retest on hardware is welcome.
 - DICE: stream start and stop now run as one straight sequence instead of a chain of callbacks. The FireWire traffic is unchanged: it matches, transaction for transaction, the recorded traces of the previous code on five DICE devices. Hardware confirmation is pending.
 
