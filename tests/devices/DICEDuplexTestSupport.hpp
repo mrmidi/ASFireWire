@@ -752,7 +752,7 @@ struct DuplexRig {
         : io(bus, bus, routeState.registry, routeState.route)
         , tx(io)
         , deviceIo(io, tx, clock)
-        , driver(deviceIo, bus, MakeGeneralSections(), bringupPolicy) {
+        , driver(deviceIo, bus, bringupPolicy) {
         driver.SetTeardownCancelToken(&cancel);
     }
 };

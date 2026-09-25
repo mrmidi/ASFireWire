@@ -9,7 +9,6 @@ R ffff.e00007dc 104 @s400
 # bus-reset gen=2
 # device: bus reset
 H begin
-R ffff.e0000054 4 @s400
 R ffff.e0000000 40 @s400
 R ffff.e0000028 380 @s400
 R ffff.e0000028 8 @s400

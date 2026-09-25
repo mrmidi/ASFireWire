@@ -7,7 +7,6 @@ R ffff.e00003dc 512 @s400
 R ffff.e00005dc 512 @s400
 R ffff.e00007dc 104 @s400
 H begin
-R ffff.e0000054 4 @s400
 R ffff.e0000000 40 @s400
 R ffff.e0000028 380 @s400
 R ffff.e0000028 8 @s400

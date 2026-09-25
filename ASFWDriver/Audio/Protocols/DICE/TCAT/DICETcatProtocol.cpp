@@ -89,7 +89,7 @@ DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
 
 IOReturn DICETcatProtocol::Initialize() {
     if (!driver_) {
-        driver_.emplace(deviceIo_, busInfo_, GeneralSections{},
+        driver_.emplace(deviceIo_, busInfo_,
                         DICEBringupPolicy{
                             .requireSourceLockBeforeStreamEnable =
                                 runtimePolicy_.requireSourceLockBeforeStreamEnable,

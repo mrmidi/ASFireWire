@@ -101,9 +101,8 @@ void CacheRuntimeCaps(AudioStreamRuntimeCaps& caps,
 
 DiceFamilyDriver::DiceFamilyDriver(DiceDeviceIo& io,
                                    Protocols::Ports::FireWireBusInfo& busInfo,
-                                   GeneralSections sections,
                                    DICEBringupPolicy bringupPolicy) noexcept
-    : io_(io), busInfo_(busInfo), bringupPolicy_(bringupPolicy), sections_(sections) {}
+    : io_(io), busInfo_(busInfo), bringupPolicy_(bringupPolicy) {}
 
 // ---------------------------------------------------------------------------
 // Public stages
@@ -350,15 +349,8 @@ IOReturn DiceFamilyDriver::ReleaseOwner() {
 // ---------------------------------------------------------------------------
 
 IOReturn DiceFamilyDriver::ClaimAndClock(const AudioDuplexChannels& channels) {
-    // GLOBAL_STATUS, read at the previously known section offset.
-    if (!EnsureRouteCurrent()) {
-        return Rollback(kIOReturnOffline);
-    }
-    if (const auto status = io_.ReadQuad(sections_.global.offset + GlobalOffset::kStatus); !status) {
-        return Rollback(status.error());
-    }
-
-    // Section layout.
+    // Section layout first: every GLOBAL access below depends on it (TCAT
+    // RestartStreaming reads the 0x28-byte table before GLOBAL).
     if (!EnsureRouteCurrent()) {
         return Rollback(kIOReturnOffline);
     }

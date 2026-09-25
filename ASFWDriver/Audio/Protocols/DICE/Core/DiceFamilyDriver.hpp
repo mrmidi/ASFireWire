@@ -31,12 +31,9 @@ namespace ASFW::Audio::DICE {
 
 class DiceFamilyDriver {
 public:
-    // `sections` is the layout to assume until the bring-up re-reads it. The
-    // first GLOBAL_STATUS read uses it; production passes an empty layout, so
-    // that read lands at offset 0x54 of the section table (an S3 cleanup).
+    // The section layout is read at the start of every bring-up.
     DiceFamilyDriver(DiceDeviceIo& io,
                      Protocols::Ports::FireWireBusInfo& busInfo,
-                     GeneralSections sections,
                      DICEBringupPolicy bringupPolicy) noexcept;
 
     DiceFamilyDriver(const DiceFamilyDriver&) = delete;

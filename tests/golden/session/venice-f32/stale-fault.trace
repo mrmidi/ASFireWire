@@ -7,7 +7,6 @@ R ffff.e00003c8 512 @s400
 R ffff.e00005c8 512 @s400
 R ffff.e00007c8 104 @s400
 H begin
-R ffff.e0000054 4 @s400
 R ffff.e0000000 40 @s400
 R ffff.e0000028 360 @s400
 R ffff.e0000028 8 @s400
@@ -84,7 +83,6 @@ W ffff.e00004e8 ffffffff @s400
 W ffff.e00004ec 00000000 @s400
 L ffff.e0000028 ffc0000100000000 -> ffff000000000000 = ffc0000100000000 @s400
 H begin
-R ffff.e000007c 4 @s400
 R ffff.e0000000 40 @s400
 R ffff.e0000028 360 @s400
 R ffff.e0000028 8 @s400

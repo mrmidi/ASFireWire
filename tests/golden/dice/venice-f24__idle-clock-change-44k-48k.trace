@@ -1,5 +1,4 @@
 ## ApplyClockConfig 48000
-R ffff.e0000054 4 @s400
 R ffff.e0000000 40 @s400
 R ffff.e0000028 360 @s400
 R ffff.e0000028 8 @s400

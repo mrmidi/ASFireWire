@@ -181,15 +181,18 @@ TEST(DiceFamilyDriverTests, PrepareSequenceMatchesReferenceWindow) {
     //     still-relocking clock.
     // Net: the Write op is replaced by a second 380-byte global read, and that
     // read consumes one extra scripted response reporting locked-at-target.
+    //  3. The capture opens with a GLOBAL_STATUS read (0x7C) whose value the
+    //     kext discards. The bring-up starts with the section table instead,
+    //     as TCAT RestartStreaming does (AUDIO_SESSION_REDESIGN.md S3).
     const auto& refRequests = ReferencePhase0ParityFixture::kPrepareExpectedRequests;
     const auto& refResponses = ReferencePhase0ParityFixture::kPrepareResponseSteps;
-    std::vector<ExpectedRequest> requests(refRequests.begin(), refRequests.end());
-    ASSERT_GT(requests.size(), 7U);
-    ASSERT_EQ(requests[6].kind, OpKind::Write); // CLOCK_SELECT in the reference
-    requests[6] = requests[7];                  // becomes the await-lock global read
-    std::vector<ResponseStep> responses(refResponses.begin(), refResponses.end());
-    ASSERT_GT(responses.size(), 6U);
-    responses.insert(responses.begin() + 7, responses[6]); // second locked global read
+    std::vector<ExpectedRequest> requests(refRequests.begin() + 1, refRequests.end());
+    ASSERT_GT(requests.size(), 6U);
+    ASSERT_EQ(requests[5].kind, OpKind::Write); // CLOCK_SELECT in the reference
+    requests[5] = requests[6];                  // becomes the await-lock global read
+    std::vector<ResponseStep> responses(refResponses.begin() + 1, refResponses.end());
+    ASSERT_GT(responses.size(), 5U);
+    responses.insert(responses.begin() + 6, responses[5]); // second locked global read
 
     rig.bus.SetScript(requests, responses);
 
