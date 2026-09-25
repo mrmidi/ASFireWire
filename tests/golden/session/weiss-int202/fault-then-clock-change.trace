@@ -13,16 +13,14 @@ H start tx
 H start rx
 D confirm
 ## -> 0x00000000 streaming=1
-# bus-reset gen=2
-# device: bus reset
-## RecoverStreaming bus-reset
+## RecoverStreaming timing-loss
 ## -> 0x00000000 streaming=1
-## QuietPeriod
+## RequestClockConfig 44100
 H stop all
 D stop
 D geometry
 H begin
-D prepare rate=48000 cap=1[1] play=1[0]
+D prepare rate=44100 cap=1[1] play=1[0]
 H reserve playback allowed=00000000ffffffff bw=308 -> ch=0
 H reserve capture allowed=00000000ffffffff bw=308 -> ch=1
 D assign cap=1[1] play=1[0]

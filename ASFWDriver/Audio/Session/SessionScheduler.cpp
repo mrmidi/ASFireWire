@@ -126,6 +126,7 @@ IOReturn SessionScheduler::Attach() noexcept {
     if (IsRetired()) {
         return kIOReturnNoDevice;
     }
+    CancelPendingRestart();
     return Submit([](Wanted& wanted, Actual& actual) {
         wanted.halAttached = true;
         // A new attach is a fresh chance for a session that gave up on faults.
@@ -141,6 +142,7 @@ IOReturn SessionScheduler::Detach() noexcept {
         ASFW_LOG(Audio, "[Session] detach refused by teardown GUID=%llx", guid_);
         return kIOReturnAborted;
     }
+    CancelPendingRestart();
     return Submit([](Wanted& wanted, Actual&) { wanted.halAttached = false; });
 }
 
@@ -162,6 +164,7 @@ IOReturn SessionScheduler::ChangeClock(const AudioClockConfig& clock, DuplexRest
     if (IsRetired()) {
         return kIOReturnAborted;
     }
+    CancelPendingRestart();
 
     AudioClockConfig target{};
     const IOReturn status = Submit(
@@ -178,7 +181,8 @@ IOReturn SessionScheduler::ChangeClock(const AudioClockConfig& clock, DuplexRest
     return status;
 }
 
-IOReturn SessionScheduler::RequestRestart(DuplexRestartReason reason, uint64_t observedRun) noexcept {
+std::optional<IOReturn> SessionScheduler::RestartRefusal(DuplexRestartReason reason,
+                                                        uint64_t observedRun) const noexcept {
     if (!StartAllowed()) {
         return kIOReturnNotReady;
     }
@@ -190,14 +194,13 @@ IOReturn SessionScheduler::RequestRestart(DuplexRestartReason reason, uint64_t o
         return kIOReturnAborted;
     }
 
-    const bool fault = IsRuntimeFault(reason);
     const SessionSnapshot now = Snapshot();
     if (observedRun != 0 && (observedRun != now.run || now.state != SessionState::Running)) {
         ASFW_LOG(Audio, "[Session] stale restart dropped GUID=%llx reason=%u observedRun=%llu run=%llu",
                  guid_, static_cast<unsigned>(reason), observedRun, now.run);
         return kIOReturnAborted;
     }
-    if (fault && IsReconciling()) {
+    if (IsRuntimeFault(reason) && IsReconciling()) {
         // The fault is the running reconcile's own transition.
         ASFW_LOG(Audio, "[Session] fault dropped during reconcile GUID=%llx reason=%u", guid_,
                  static_cast<unsigned>(reason));
@@ -213,7 +216,22 @@ IOReturn SessionScheduler::RequestRestart(DuplexRestartReason reason, uint64_t o
     if (now.state == SessionState::Failed && !IsRetryableStatus(now.lastStatus)) {
         return now.lastStatus;
     }
+    return std::nullopt;
+}
 
+IOReturn SessionScheduler::RequestRestart(DuplexRestartReason reason, uint64_t observedRun) noexcept {
+    if (const auto refusal = RestartRefusal(reason, observedRun)) {
+        return *refusal;
+    }
+    if (const uint32_t quietMs = RestartQuietPeriodMs(); quietMs != 0) {
+        return DeferRestart(reason, observedRun, quietMs);
+    }
+    return RunRestart(reason, observedRun);
+}
+
+IOReturn SessionScheduler::RunRestart(DuplexRestartReason reason, uint64_t observedRun) noexcept {
+    (void)observedRun;
+    const bool fault = IsRuntimeFault(reason);
     return Submit(
         [&](Wanted& wanted, Actual&) {
             wanted.restart = true;
@@ -223,8 +241,146 @@ IOReturn SessionScheduler::RequestRestart(DuplexRestartReason reason, uint64_t o
         nullptr, WaitMode::QueueBehindRunning);
 }
 
+uint32_t SessionScheduler::RestartQuietPeriodMs() const noexcept {
+    const auto record = deps_.registry.SnapshotByGuid(guid_);
+    const auto* policy = record ? DeviceProfiles::Audio::CurrentAudioPolicy(*record) : nullptr;
+    const uint32_t quietMs =
+        policy != nullptr ? policy->plan.streamTraits.start.restartQuietPeriodMs : 0;
+    if (quietMs != 0 && (deps_.timer == nullptr || *deps_.timer == nullptr || deps_.queue == nullptr)) {
+        // A composition bug: the family wants its events to settle, but no
+        // timer was installed. Restart at once, as before the quiet period.
+        ASFW_LOG_RL(Audio, "session/no-timer", 60000, OS_LOG_TYPE_ERROR,
+                    "[Session] no timer for a %u ms quiet period GUID=%llx; restarting at once",
+                    quietMs, guid_);
+        return 0;
+    }
+    return quietMs;
+}
+
+IOReturn SessionScheduler::DeferRestart(DuplexRestartReason reason, uint64_t observedRun,
+                                        uint32_t quietMs) noexcept {
+    if (lock_ == nullptr) {
+        return kIOReturnNoResources;
+    }
+    IOLockLock(lock_);
+    const bool merged = pending_.active;
+    const bool untied = observedRun == 0 || (merged && pending_.observedRun == 0);
+    if (!merged || observedRun == 0 || pending_.observedRun != 0) {
+        // Keep the reason of the strongest request: an untied one (a bus
+        // reset) is never replaced by a later fault.
+        pending_.reason = reason;
+    }
+    pending_.observedRun = untied ? 0 : observedRun;
+    if (!merged) {
+        pending_.runAtRequest = actual_.run;
+    }
+    pending_.active = true;
+    const uint64_t generation = ++pending_.generation;
+    const Scheduling::TimerToken previous = pending_.timer;
+    pending_.timer = Scheduling::kInvalidTimerToken;
+    IOLockUnlock(lock_);
+
+    if (previous != Scheduling::kInvalidTimerToken) {
+        (*deps_.timer)->Cancel(previous);
+    }
+    ArmPendingTimer(quietMs, generation);
+    ASFW_LOG(Audio, "[Session] restart pending GUID=%llx reason=%u quiet=%ums%s", guid_,
+             static_cast<unsigned>(reason), quietMs, merged ? " (merged)" : "");
+    return kIOReturnSuccess;
+}
+
+void SessionScheduler::ArmPendingTimer(uint32_t quietMs, uint64_t generation) noexcept {
+    std::weak_ptr<SessionScheduler> weak = weak_from_this();
+    IODispatchQueue* queue = deps_.queue;
+    const Scheduling::TimerToken token = (*deps_.timer)->ScheduleAfter(
+        static_cast<uint64_t>(quietMs) * 1'000'000ULL, [weak, queue, generation] {
+            // Default queue: never reconcile here, only hand over.
+            auto self = weak.lock();
+            if (!self) {
+                return;
+            }
+            queue->DispatchAsync(^{
+                self->FirePendingRestart(generation);
+            });
+        });
+    IOLockLock(lock_);
+    if (pending_.active && pending_.generation == generation) {
+        pending_.timer = token;
+    }
+    IOLockUnlock(lock_);
+}
+
+void SessionScheduler::FirePendingRestart(uint64_t generation) noexcept {
+    if (lock_ == nullptr) {
+        return;
+    }
+    IOLockLock(lock_);
+    if (!pending_.active || pending_.generation != generation) {
+        IOLockUnlock(lock_);
+        return;
+    }
+    if (reconciling_) {
+        // A reconcile is rebuilding the streams now; wait out another period
+        // rather than restart behind it (TCAT: "unless one is running").
+        IOLockUnlock(lock_);
+        const uint32_t quietMs = RestartQuietPeriodMs();
+        if (quietMs != 0) {
+            ArmPendingTimer(quietMs, generation);
+            return;
+        }
+        IOLockLock(lock_);
+    }
+    const PendingRestart pending = pending_;
+    pending_.active = false;
+    pending_.timer = Scheduling::kInvalidTimerToken;
+    const uint64_t runNow = actual_.run;
+    IOLockUnlock(lock_);
+
+    if (runNow != pending.runAtRequest) {
+        ASFW_LOG(Audio, "[Session] pending restart covered GUID=%llx reason=%u run=%llu->%llu",
+                 guid_, static_cast<unsigned>(pending.reason), pending.runAtRequest, runNow);
+        return;
+    }
+    if (const auto refusal = RestartRefusal(pending.reason, pending.observedRun)) {
+        ASFW_LOG(Audio, "[Session] pending restart dropped GUID=%llx reason=%u kr=0x%x", guid_,
+                 static_cast<unsigned>(pending.reason), *refusal);
+        return;
+    }
+    const IOReturn status = RunRestart(pending.reason, pending.observedRun);
+    if (status != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio, "[Session] restart after quiet period failed GUID=%llx reason=%u kr=0x%x",
+                       guid_, static_cast<unsigned>(pending.reason), status);
+    }
+}
+
+void SessionScheduler::CancelPendingRestart() noexcept {
+    if (lock_ == nullptr) {
+        return;
+    }
+    IOLockLock(lock_);
+    const Scheduling::TimerToken token = pending_.timer;
+    pending_.active = false;
+    pending_.timer = Scheduling::kInvalidTimerToken;
+    ++pending_.generation;
+    IOLockUnlock(lock_);
+    if (token != Scheduling::kInvalidTimerToken && deps_.timer != nullptr && *deps_.timer != nullptr) {
+        (*deps_.timer)->Cancel(token);
+    }
+}
+
+bool SessionScheduler::HasPendingRestart() const noexcept {
+    if (lock_ == nullptr) {
+        return false;
+    }
+    IOLockLock(lock_);
+    const bool active = pending_.active;
+    IOLockUnlock(lock_);
+    return active;
+}
+
 void SessionScheduler::Retire() noexcept {
     retired_.store(true, std::memory_order_release);
+    CancelPendingRestart();
 }
 
 void SessionScheduler::Present() noexcept {
@@ -468,6 +624,10 @@ IOReturn SessionScheduler::Reconcile(const Wanted& wanted) noexcept {
     }
 
     const Actual after = LoadActual();
+    if (wanted.restart && status == kIOReturnSuccess && after.state == SessionState::Running &&
+        after.run != before.run && deps_.restartObserver != nullptr && *deps_.restartObserver) {
+        (*deps_.restartObserver)(guid_);
+    }
     ASFW_LOG(Audio,
              "[Session] GUID=0x%016llx hal=%u clockDirty=%u restart=%u reason=%u action=%{public}s "
              "-> 0x%08x state=%{public}s run=%llu %llums",

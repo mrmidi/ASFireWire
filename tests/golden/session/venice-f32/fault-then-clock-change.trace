@@ -68,10 +68,9 @@ R ffff.e00003c8 512 @s400
 R ffff.e00005c8 512 @s400
 R ffff.e00007c8 104 @s400
 ## -> 0x00000000 streaming=1
-## DeviceNotification 0x03
-# notify 0x03
+## RecoverStreaming timing-loss
 ## -> 0x00000000 streaming=1
-## QuietPeriod
+## RequestClockConfig 44100
 H stop all
 W ffff.e0000078 00000000 @s400
 R ffff.e0000194 4 @s400
@@ -87,6 +86,8 @@ W ffff.e00004ec 00000000 @s400
 H begin
 R ffff.e0000000 40 @s400
 R ffff.e0000028 360 @s400
+W ffff.e0000074 0000010c @s400
+# notify 0x23
 R ffff.e0000028 360 @s400
 R ffff.e0000028 360 @s400
 R ffff.e0000190 4 @s400

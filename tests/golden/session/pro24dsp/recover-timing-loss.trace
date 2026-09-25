@@ -61,6 +61,8 @@ R ffff.e00005dc 512 @s400
 R ffff.e00007dc 104 @s400
 ## -> 0x00000000 streaming=1
 ## RecoverStreaming timing-loss
+## -> 0x00000000 streaming=1
+## QuietPeriod
 H stop all
 W ffff.e0000078 00000000 @s400
 R ffff.e00001a8 4 @s400

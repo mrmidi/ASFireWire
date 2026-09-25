@@ -68,6 +68,7 @@ public:
     void OnDeviceRecordUpdated(uint64_t guid) noexcept override;
     void CancelRemoteDeviceWork(uint64_t guid) noexcept override;
     void HandleHostTimingLoss(uint64_t guid) noexcept override { (void)QueueTimingRecovery(guid); }
+    void OnStreamsRestarted(uint64_t guid) noexcept override { EnsureNubForGuid(guid); }
     [[nodiscard]] bool QueueTimingRecovery(uint64_t guid) noexcept;
 
 #ifdef ASFW_HOST_TEST

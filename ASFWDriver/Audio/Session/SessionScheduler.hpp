@@ -20,6 +20,15 @@
 // fault is dropped. A runtime fault raised while a reconcile runs is that
 // reconcile's own transition and is dropped too. Bus-reset rebinds are exempt:
 // they are topology events and must always restart.
+//
+// Quiet period (stage S4a). A family can ask for device and transport events
+// to settle first: a restart request then only records a pending restart and
+// (re)arms a timer, and one restart runs once the device has been quiet for
+// the period (TCAT's debounce, §2.2). The timer fires on the Default queue and
+// hands the restart to the sessions' queue. A pending restart is covered, and
+// dropped, when the run it was raised on is no longer the current one: a
+// start, clock change or other restart has already rebuilt the streams. HAL
+// requests (attach, detach, clock) are never delayed.
 
 #pragma once
 
@@ -29,13 +38,16 @@
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
+#include "../../Scheduling/ITimerScheduler.hpp"
 
+#include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOLib.h>
 
 #include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 
 namespace ASFW::Audio {
 class AudioRuntimeRegistry;
@@ -67,10 +79,12 @@ struct SessionSnapshot {
     IOReturn lastStatus{kIOReturnSuccess};
 };
 
-class SessionScheduler final {
+class SessionScheduler final : public std::enable_shared_from_this<SessionScheduler> {
 public:
     using BindingSourceProvider = std::function<Runtime::IDirectAudioBindingSource*(uint64_t)>;
     using StartGuard = std::function<bool(uint64_t)>;
+    // Called after a restart request rebuilt the streams, on the thread that ran it.
+    using RestartObserver = std::function<void(uint64_t)>;
 
     struct Dependencies {
         Discovery::DeviceRegistry& registry;
@@ -83,6 +97,13 @@ public:
         // Owned by AudioSessions, so a guard installed later reaches every
         // session. Null or empty: every start is allowed.
         const StartGuard* startGuard;
+        // Owned by AudioSessions and installed before device callbacks begin.
+        // Null: no quiet period can be kept; restarts run at once.
+        Scheduling::ITimerScheduler* const* timer;
+        // Where a restart that waited out its quiet period runs. Never the
+        // Default queue.
+        IODispatchQueue* queue;
+        const RestartObserver* restartObserver;
     };
 
     // Failed fault recoveries in a row before the session stops trying.
@@ -110,6 +131,9 @@ public:
     // Discovery retired the device after a bus reset, or found it again.
     void Retire() noexcept;
     void Present() noexcept;
+    // Forget a restart waiting out its quiet period (teardown, retirement).
+    void CancelPendingRestart() noexcept;
+    [[nodiscard]] bool HasPendingRestart() const noexcept;
 
     [[nodiscard]] bool IsStreaming() const noexcept;
     [[nodiscard]] bool IsReconciling() const noexcept;
@@ -173,6 +197,15 @@ private:
                                        const std::shared_ptr<IDeviceProtocol>& protocol) noexcept;
     [[nodiscard]] IOReturn ApplyClockIdle(const AudioClockConfig& clock,
                                           const std::shared_ptr<IDeviceProtocol>& protocol) noexcept;
+    // Why a restart request cannot run now, or nullopt when it can.
+    [[nodiscard]] std::optional<IOReturn> RestartRefusal(DuplexRestartReason reason,
+                                                         uint64_t observedRun) const noexcept;
+    [[nodiscard]] IOReturn RunRestart(DuplexRestartReason reason, uint64_t observedRun) noexcept;
+    [[nodiscard]] IOReturn DeferRestart(DuplexRestartReason reason, uint64_t observedRun,
+                                        uint32_t quietMs) noexcept;
+    void ArmPendingTimer(uint32_t quietMs, uint64_t generation) noexcept;
+    void FirePendingRestart(uint64_t generation) noexcept;
+    [[nodiscard]] uint32_t RestartQuietPeriodMs() const noexcept;
     [[nodiscard]] bool TeardownRequested() const noexcept;
     [[nodiscard]] bool StartAllowed() const noexcept;
     [[nodiscard]] Actual LoadActual() const noexcept;
@@ -193,6 +226,19 @@ private:
     uint64_t completed_{0};   // last ticket a finished reconcile covered
     Result results_[kResultHistory]{};
     uint32_t resultCount_{0};
+
+    // A restart waiting out its quiet period. Merged requests keep the
+    // strongest claim: a request not tied to a run (a bus reset) makes the
+    // whole restart untied.
+    struct PendingRestart {
+        bool active{false};
+        DuplexRestartReason reason{DuplexRestartReason::kManualReconfigure};
+        uint64_t observedRun{0};
+        uint64_t runAtRequest{0};   // covered once another run has started
+        uint64_t generation{0};     // bumped per request; a stale timer is a no-op
+        Scheduling::TimerToken timer{Scheduling::kInvalidTimerToken};
+    };
+    PendingRestart pending_{};
 
     std::atomic<bool> halAttached_{false};  // mirror of wanted_.halAttached for the routine
     std::atomic<bool> retired_{false};

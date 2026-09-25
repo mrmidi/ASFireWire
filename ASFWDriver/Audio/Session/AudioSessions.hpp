@@ -11,7 +11,9 @@
 
 #include "SessionScheduler.hpp"
 
+#include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOLib.h>
+#include <DriverKit/OSSharedPtr.h>
 
 #include <atomic>
 #include <memory>
@@ -35,6 +37,15 @@ public:
 
     // Installed by composition before device callbacks begin.
     void SetStartGuard(SessionScheduler::StartGuard guard);
+    // The timer that keeps restart quiet periods (callbacks on the Default queue).
+    void SetTimerScheduler(Scheduling::ITimerScheduler* timer) noexcept { timer_ = timer; }
+    // Told after a restart request rebuilt a device's streams.
+    void SetRestartObserver(SessionScheduler::RestartObserver observer);
+
+    // Service teardown: forget every pending restart, then wait for any
+    // restart already handed to the sessions' queue. Call after the teardown
+    // flag is set, so a restart that is running aborts.
+    void BeginTeardown() noexcept;
 
     // The device's session, created on first use. Callers keep the returned
     // pointer for as long as they use it; Erase does not free a session in use.
@@ -72,6 +83,11 @@ private:
     const std::atomic<bool>* teardown_;
     SessionScheduler::BindingSourceProvider bindingSource_;
     SessionScheduler::StartGuard startGuard_;
+    SessionScheduler::RestartObserver restartObserver_;
+    Scheduling::ITimerScheduler* timer_{nullptr};
+    // Runs restarts that waited out a quiet period. Shared by every session and
+    // owned here, so a session is never destroyed by its own queue.
+    OSSharedPtr<IODispatchQueue> queue_{};
     std::atomic<uint64_t> teardownAborts_{0};
 
     IOLock* lock_{nullptr};

@@ -2,8 +2,8 @@
 D geometry
 H begin
 D prepare rate=48000 cap=1[1] play=1[0]
-H reserve playback allowed=00000000ffffffff bw=308 -> ch=0
-H reserve capture allowed=00000000ffffffff bw=308 -> ch=1
+H reserve playback allowed=ffffffffffffffff bw=308 -> ch=0
+H reserve capture allowed=ffffffffffffffff bw=308 -> ch=1
 D assign cap=1[1] play=1[0]
 H prepare rx ch=1 fmt=0 slots=9 pcm=0
 H prepare tx ch=0 sid=0 @s400
@@ -13,18 +13,14 @@ H start tx
 H start rx
 D confirm
 ## -> 0x00000000 streaming=1
-# bus-reset gen=2
-# device: bus reset
-## RecoverStreaming bus-reset
-## -> 0x00000000 streaming=1
-## QuietPeriod
+## RecoverStreaming timing-loss
 H stop all
 D stop
 D geometry
 H begin
 D prepare rate=48000 cap=1[1] play=1[0]
-H reserve playback allowed=00000000ffffffff bw=308 -> ch=0
-H reserve capture allowed=00000000ffffffff bw=308 -> ch=1
+H reserve playback allowed=ffffffffffffffff bw=308 -> ch=0
+H reserve capture allowed=ffffffffffffffff bw=308 -> ch=1
 D assign cap=1[1] play=1[0]
 H prepare rx ch=1 fmt=0 slots=9 pcm=0
 H prepare tx ch=0 sid=0 @s400
@@ -34,3 +30,5 @@ H start tx
 H start rx
 D confirm
 ## -> 0x00000000 streaming=1
+## RequestClockConfig 44100
+## -> 0xe00002c7 streaming=1

@@ -418,6 +418,10 @@ void DiceAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
     HandleRecoveryEvent(guid, DuplexRestartReason::kBusResetRebind);
 }
 
+void DiceAudioBackend::OnStreamsRestarted(uint64_t guid) noexcept {
+    EnsureNubForGuid(guid);
+}
+
 void DiceAudioBackend::HandleHostTimingLoss(uint64_t guid) noexcept {
     HandleRecoveryEvent(guid, DuplexRestartReason::kRecoverAfterTimingLoss);
 }
@@ -498,11 +502,12 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
             return;
         }
 
+        // DICE restarts after a quiet period: success means the restart is
+        // queued; OnStreamsRestarted runs once it has happened.
         const IOReturn status = sessions_.RequestRestart(guid, reason, observedRun);
         if (status == kIOReturnSuccess) {
-            EnsureNubForGuid(guid);
             ASFW_LOG(Audio,
-                     "DiceAudioBackend: Recovery succeeded GUID=%llx reason=%u",
+                     "DiceAudioBackend: Recovery requested GUID=%llx reason=%u",
                      guid,
                      static_cast<unsigned>(reason));
         } else if (status == kIOReturnUnsupported || status == kIOReturnAborted) {

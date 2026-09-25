@@ -87,6 +87,7 @@ const Scenario kScenarios[] = {
          r.Start();
          r.Stop();
          r.Recover("timing-loss", DuplexRestartReason::kRecoverAfterTimingLoss);
+         r.Settle();
      }},
     {"clock-change-running", [](SessionRig& r) { r.Start(); r.Clock(44100); }},
     {"idle-clock-then-start", [](SessionRig& r) { r.Clock(44100); r.Start(); }},
@@ -94,17 +95,21 @@ const Scenario kScenarios[] = {
          r.Start();
          r.BusReset();
          r.Recover("bus-reset", DuplexRestartReason::kBusResetRebind);
+         r.Settle();
      }},
     {"recover-timing-loss", [](SessionRig& r) {
          r.Start();
          r.Recover("timing-loss", DuplexRestartReason::kRecoverAfterTimingLoss);
+         r.Settle();
      }},
     {"stale-fault", [](SessionRig& r) {
          r.Start();
          const uint64_t firstRun = r.CurrentRun();
          r.Recover("timing-loss", DuplexRestartReason::kRecoverAfterTimingLoss);
+         r.Settle();
          r.Recover("timing-loss from the first run", DuplexRestartReason::kRecoverAfterTimingLoss,
                    firstRun);
+         r.Settle();
      }},
     {"fail-prepare", [](SessionRig& r) { r.FailDevice("prepare"); r.Start(); }},
     {"fail-reserve-capture", [](SessionRig& r) {
@@ -141,12 +146,40 @@ const Scenario kScenarios[] = {
     {"config-change-running", [](SessionRig& r) {
          r.Start();
          r.DeviceNotifies(kConfigChangeBits);
+         r.Settle();
      }},
     // The same notification while idle: nothing runs, nothing restarts.
     {"config-change-idle", [](SessionRig& r) {
          r.Start();
          r.Stop();
          r.DeviceNotifies(kConfigChangeBits);
+         r.Settle();
+     }},
+    // Three faults 100 ms apart. A family with a quiet period restarts once,
+    // after the last; the others restart per fault (S4a).
+    {"event-storm", [](SessionRig& r) {
+         r.Start();
+         r.Recover("timing-loss 1", DuplexRestartReason::kRecoverAfterTimingLoss, r.RunningRun());
+         r.Wait(100);
+         r.Recover("timing-loss 2", DuplexRestartReason::kRecoverAfterTimingLoss, r.RunningRun());
+         r.Wait(100);
+         r.Recover("timing-loss 3", DuplexRestartReason::kRecoverAfterTimingLoss, r.RunningRun());
+         r.Settle();
+     }},
+    // StopIO while a restart waits out its quiet period: nothing restarts.
+    {"fault-then-stop", [](SessionRig& r) {
+         r.Start();
+         r.Recover("timing-loss", DuplexRestartReason::kRecoverAfterTimingLoss, r.RunningRun());
+         r.Stop();
+         r.Settle();
+     }},
+    // A clock change while a restart waits: the change rebuilds the streams,
+    // which covers the pending restart.
+    {"fault-then-clock-change", [](SessionRig& r) {
+         r.Start();
+         r.Recover("timing-loss", DuplexRestartReason::kRecoverAfterTimingLoss, r.RunningRun());
+         r.Clock(44100);
+         r.Settle();
      }},
     // Arriving mid-start (our own CLOCK_SELECT raises one): the start is
     // already applying the device's configuration, so it is not restarted.

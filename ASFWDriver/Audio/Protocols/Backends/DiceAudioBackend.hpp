@@ -52,6 +52,7 @@ public:
     // per-device notification/recovery work so it cannot revive a dead GUID.
     void CancelRemoteDeviceWork(uint64_t guid) noexcept override;
     void OnDeviceResumed(uint64_t guid) noexcept override;
+    void OnStreamsRestarted(uint64_t guid) noexcept override;
     void HandleHostTimingLoss(uint64_t guid) noexcept override;
     void HandleCycleInconsistent(uint64_t guid) noexcept override;
     void HandleRecoveryEvent(uint64_t guid, DuplexRestartReason reason) noexcept;

@@ -83,6 +83,10 @@ constexpr AudioDeviceDefinition Definition(
     if (family == AudioFamilyProviderId::DICE && result.streamTraits.resource.irmChannelMask == 0) {
         result.streamTraits.resource.irmChannelMask = kDiceIrmChannelMask;
     }
+    // Likewise the restart quiet period (TCAT's debounce).
+    if (family == AudioFamilyProviderId::DICE && result.streamTraits.start.restartQuietPeriodMs == 0) {
+        result.streamTraits.start.restartQuietPeriodMs = kDiceRestartQuietPeriodMs;
+    }
     if (guidModel.has_value()) {
         guidClause = GuidEncoded(vendor, *guidModel);
         constrainSelectedUnit(guidClause);

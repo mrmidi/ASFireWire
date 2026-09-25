@@ -70,6 +70,9 @@ public:
         const AudioClockConfig& desiredClock,
         DuplexRestartReason reason) noexcept;
     void BeginTeardown() noexcept;
+    // The timer that keeps device-event quiet periods; installed by
+    // composition before device callbacks begin.
+    void SetSessionTimer(Scheduling::ITimerScheduler* timer) noexcept { sessions_.SetTimerScheduler(timer); }
     void HandleHostTimingLoss(uint64_t guid) noexcept;
     [[nodiscard]] bool RequestMotuTimingRecovery(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn MotuCaptureCommand(uint64_t guid, uint32_t stream,

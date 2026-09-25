@@ -60,8 +60,11 @@ R ffff.e00003dc 512 @s400
 R ffff.e00005dc 512 @s400
 R ffff.e00007dc 104 @s400
 ## -> 0x00000000 streaming=1
-## DeviceNotification 0x03
-# notify 0x03
+## RecoverStreaming timing-loss 1
+## -> 0x00000000 streaming=1
+## RecoverStreaming timing-loss 2
+## -> 0x00000000 streaming=1
+## RecoverStreaming timing-loss 3
 ## -> 0x00000000 streaming=1
 ## QuietPeriod
 H stop all

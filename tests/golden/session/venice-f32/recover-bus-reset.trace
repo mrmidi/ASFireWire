@@ -71,6 +71,8 @@ R ffff.e00007c8 104 @s400
 # bus-reset gen=2
 # device: bus reset
 ## RecoverStreaming bus-reset
+## -> 0x00000000 streaming=1
+## QuietPeriod
 H stop all
 W ffff.e0000078 00000000 @s400
 R ffff.e0000194 4 @s400

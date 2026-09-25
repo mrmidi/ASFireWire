@@ -276,7 +276,6 @@ bool MotuAudioBackend::QueueTimingRecovery(uint64_t guid) noexcept {
         const IOReturn status = sessions_.RequestRestart(
             guid, DuplexRestartReason::kRecoverAfterTimingLoss, observedRun);
         if (status == kIOReturnSuccess) {
-            EnsureNubForGuid(guid);
             ASFW_LOG(Audio,
                      "MotuAudioBackend: timing-loss recovery succeeded GUID=0x%016llx",
                      guid);

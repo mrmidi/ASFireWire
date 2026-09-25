@@ -31,6 +31,9 @@ const SessionShape kCmpDevice{"phase88", Ids::kTerraTecVendorId, Ids::kPhase88Ra
 // The Apogee recipe: pre-stream clock gate, interleaved host starts, staged stop.
 const SessionShape kApogeeDevice{"apogee-duet", Ids::kApogeeVendorId, Ids::kApogeeDuetModelId,
                                  kAvcUnitSpecifier, kAvcUnitVersion};
+const SessionShape kDiceDevice{"pro24dsp", Ids::kFocusriteVendorId, Ids::kSPro24DspModelId,
+                               Ids::kFocusriteVendorId, kDiceUnitVersion,
+                               &ASFW::Testing::DICE::DiceDeviceImages::kSaffirePro24Dsp, true};
 
 template <const SessionShape& Shape>
 struct ShapedSchedulerTest : ::testing::Test {
@@ -78,6 +81,60 @@ private:
 
 using SchedulerTest = ShapedSchedulerTest<kCmpDevice>;
 using ApogeeTest = ShapedSchedulerTest<kApogeeDevice>;
+using DiceQuietPeriodTest = ShapedSchedulerTest<kDiceDevice>;
+
+TEST_F(DiceQuietPeriodTest, EachEventRearmsTheQuietPeriod) {
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    const uint64_t firstRun = Snapshot().run;
+    ASSERT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kRecoverAfterTimingLoss,
+                                          firstRun), kIOReturnSuccess);
+    EXPECT_EQ(rig.sessionTimer.PendingCount(), 1U);
+    rig.Wait(300);
+    ASSERT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kRecoverAfterTimingLoss,
+                                          firstRun), kIOReturnSuccess);
+    rig.Wait(399);
+    EXPECT_EQ(Snapshot().run, firstRun);
+    rig.Wait(1);
+    EXPECT_EQ(Snapshot().run, firstRun + 1);
+    EXPECT_EQ(rig.sessionTimer.PendingCount(), 0U);
+}
+
+TEST_F(DiceQuietPeriodTest, DetachCancelsPendingRestart) {
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    ASSERT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kRecoverAfterTimingLoss,
+                                          Snapshot().run), kIOReturnSuccess);
+    ASSERT_EQ(rig.sessionTimer.PendingCount(), 1U);
+    ASSERT_EQ(rig.sessions.Detach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(rig.sessionTimer.PendingCount(), 0U);
+    rig.Wait(1000);
+    EXPECT_EQ(Count("D prepare"), 0);
+    EXPECT_EQ(Snapshot().state, SessionState::Idle);
+}
+
+TEST_F(DiceQuietPeriodTest, ClockChangeCancelsPendingRestart) {
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    ASSERT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kRecoverAfterTimingLoss,
+                                          Snapshot().run), kIOReturnSuccess);
+    ASSERT_EQ(rig.sessionTimer.PendingCount(), 1U);
+    ASSERT_EQ(rig.sessions.ChangeClock(rig.guid, AudioClockConfig{.sampleRateHz = 44100},
+                                       DuplexRestartReason::kSampleRateChange), kIOReturnSuccess);
+    const uint64_t runAfterClock = Snapshot().run;
+    EXPECT_EQ(rig.sessionTimer.PendingCount(), 0U);
+    rig.Wait(1000);
+    EXPECT_EQ(Snapshot().run, runAfterClock);
+}
+
+TEST_F(DiceQuietPeriodTest, TeardownCancelsPendingRestart) {
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    const uint64_t run = Snapshot().run;
+    ASSERT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kRecoverAfterTimingLoss,
+                                          run), kIOReturnSuccess);
+    rig.cancel.store(true, std::memory_order_release);
+    rig.sessions.BeginTeardown();
+    EXPECT_EQ(rig.sessionTimer.PendingCount(), 0U);
+    rig.Wait(1000);
+    EXPECT_EQ(Snapshot().run, run);
+}
 
 TEST_F(SchedulerTest, DetachWithNothingRunningDoesNothing) {
     EXPECT_EQ(rig.sessions.Detach(rig.guid), kIOReturnSuccess);
@@ -181,6 +238,29 @@ TEST_F(SchedulerTest, BusResetDuringAReconcileQueuesOneFollowUpRestart) {
     EXPECT_EQ(rebind, kIOReturnSuccess);
     EXPECT_EQ(Count("D prepare"), 2);
     EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+}
+
+TEST_F(SchedulerTest, RestartObserverWaitsForQueuedReconcile) {
+    std::promise<void> held;
+    std::promise<void> release;
+    auto releaseFuture = release.get_future();
+    int prepareCalls = 0;
+    rig.hooks["device.prepare"] = [&] {
+        if (++prepareCalls == 1) {
+            held.set_value();
+            releaseFuture.wait();
+        }
+    };
+    std::atomic<int> observed{0};
+    rig.sessions.SetRestartObserver([&](uint64_t) { observed.fetch_add(1); });
+    auto start = std::async(std::launch::async, [&] { return rig.sessions.Attach(rig.guid); });
+    held.get_future().wait();
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind),
+              kIOReturnSuccess);
+    EXPECT_EQ(observed.load(), 0);
+    release.set_value();
+    EXPECT_EQ(start.get(), kIOReturnSuccess);
+    EXPECT_EQ(observed.load(), 1);
 }
 
 TEST_F(SchedulerTest, RepeatedFailedFaultRecoveriesStopUntilTheNextAttach) {

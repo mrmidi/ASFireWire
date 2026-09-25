@@ -287,6 +287,10 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
     if (d.audioRuntimeRegistry && d.sbp2SessionScheduler) {
         d.audioRuntimeRegistry->SetTimerScheduler(d.sbp2SessionScheduler.get());
     }
+    // Keeps the DICE restart quiet period (AUDIO_SESSION_REDESIGN.md S4a).
+    if (ctx.audioCoordinator && d.sbp2SessionScheduler) {
+        ctx.audioCoordinator->SetSessionTimer(d.sbp2SessionScheduler.get());
+    }
 
     if (!d.sbp2SessionRegistry && ctx.controller && d.sbp2AddressSpaceManager &&
         d.deviceRegistry && d.deviceManager && d.sbp2SessionScheduler) {

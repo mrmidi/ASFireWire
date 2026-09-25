@@ -13,9 +13,11 @@ H start tx
 H start rx
 D confirm
 ## -> 0x00000000 streaming=1
-# bus-reset gen=2
-# device: bus reset
-## RecoverStreaming bus-reset
+## RecoverStreaming timing-loss 1
+## -> 0x00000000 streaming=1
+## RecoverStreaming timing-loss 2
+## -> 0x00000000 streaming=1
+## RecoverStreaming timing-loss 3
 ## -> 0x00000000 streaming=1
 ## QuietPeriod
 H stop all

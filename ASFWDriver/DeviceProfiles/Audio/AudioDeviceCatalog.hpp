@@ -251,7 +251,16 @@ struct StreamStartPolicy final {
     /// Fixed or default start sample rate in Hz (e.g. 48000 for Duet, 44100 for Onyx-i / Onyx 400F).
     /// 0 means no pin (use standard 48 kHz default or requested session clock).
     uint32_t startRatePinHz{0};
+
+    /// How long device and transport events (bus reset, config change,
+    /// runtime faults) must stay quiet before the streams restart once for all
+    /// of them. 0 restarts at once, per event.
+    uint32_t restartQuietPeriodMs{0};
 };
+
+/// DICE: TCAT's kexts restart after two quiet ticks of a 200 ms timer
+/// (MidasFW TimerFired 0xa6b6); one 400 ms window gives the same quiet time.
+inline constexpr uint32_t kDiceRestartQuietPeriodMs = 400;
 
 struct DeviceStreamTraits final {
     StreamWirePolicy wire{};

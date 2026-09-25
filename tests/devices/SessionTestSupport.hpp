@@ -506,6 +506,7 @@ struct SessionRig {
                        return &binding;
                    }) {
         hardware.SetTestRegister(Register32::kNodeID, 0);
+        sessions.SetTimerScheduler(&sessionTimer);
         bus.Device().ResetToIdle();
         Install(Generation{1});
         const auto route = *registry.CurrentRoute(guid);
@@ -564,6 +565,20 @@ struct SessionRig {
                                         DuplexRestartReason::kSampleRateChange);
         });
     }
+    // Let a pending restart's quiet period run out. Records nothing when no
+    // restart is pending, so families without a quiet period trace as before.
+    void Settle() {
+        if (sessionTimer.PendingCount() == 0) {
+            return;
+        }
+        (void)Call("QuietPeriod", [&] {
+            sessionTimer.Advance(1'000'000'000ULL);
+            return kIOReturnSuccess;
+        });
+    }
+    // Advance the quiet-period clock without letting it run out.
+    void Wait(uint32_t ms) { sessionTimer.Advance(static_cast<uint64_t>(ms) * 1'000'000ULL); }
+
     // The device writes a notification to its owner, as the firmware does.
     IOReturn DeviceNotifies(uint32_t bits) {
         char what[48];
@@ -577,6 +592,7 @@ struct SessionRig {
         return Call(std::string("RecoverStreaming ") + what,
                     [&] { return sessions.RequestRestart(guid, reason, observedRun); });
     }
+    [[nodiscard]] uint64_t RunningRun() const { return sessions.RunningRun(guid); }
     [[nodiscard]] uint64_t CurrentRun() const {
         const auto snapshot = sessions.Snapshot(guid);
         return snapshot ? snapshot->run : 0;
@@ -631,6 +647,9 @@ struct SessionRig {
     TracingHostTransport host;
     FakeTimerScheduler timer;
     FakeDiceWaitClock waitClock{timer};
+    // Restart quiet periods run on their own virtual clock, so a DICE wait
+    // inside a reconcile never fires one.
+    FakeTimerScheduler sessionTimer;
     ASFW::Discovery::DeviceRegistry registry;
     // Declared before everything that registers with it.
     ASFW::Audio::DICE::DiceNotificationRouter notifications{registry};

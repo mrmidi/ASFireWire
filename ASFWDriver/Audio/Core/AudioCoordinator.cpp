@@ -42,6 +42,11 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
     sessions_.SetStartGuard([this](uint64_t guid) {
         return !publisher_.IsGeometryChangeBlocked(guid);
     });
+    sessions_.SetRestartObserver([this](uint64_t guid) {
+        if (auto* backend = BackendForGuid(guid)) {
+            backend->OnStreamsRestarted(guid);
+        }
+    });
     deviceManager_.RegisterDeviceObserver(this);
     hostTransport_.SetTimingLossCallback([this](uint64_t guid) { HandleHostTimingLoss(guid); });
     ASFW_LOG(Audio, "AudioCoordinator: Registered device observer");
@@ -378,6 +383,8 @@ IOReturn AudioCoordinator::RequestClockConfig(
 void AudioCoordinator::BeginTeardown() noexcept {
     ASFW_LOG(Audio, "AudioCoordinator: BeginTeardown");
     teardownRequested_.store(true, std::memory_order_release);
+    // Pending restarts go first: once the backends drain, nothing can raise one.
+    sessions_.BeginTeardown();
     // Block new backend recovery callbacks before draining either backend
     // queue. The coordinator owns this one subscription for every family.
     hostTransport_.SetTimingLossCallback({});
