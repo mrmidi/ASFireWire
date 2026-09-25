@@ -423,7 +423,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     // The observation is the packet's arrival: its receive bus time and the
     // drain's (bus, host) pair, the same arithmetic as the host time above,
     // so a boundary on a packet start is byte-identical to before.
-    // Without an epoch (a rate the timeline does not model yet) the previous
+    // Without an epoch (a rate outside the HAL ladder) the previous
     // rule stands: publish when the packet starts exactly on the grid.
     uint64_t anchorFrame = 0;
     uint64_t anchorHostTicks = 0;

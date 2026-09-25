@@ -892,8 +892,8 @@ bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars,
         profile.TransmitClockSource() == ASFW::Isoch::Audio::TxClockSource::kInternalCadence;
     // The start's timeline epoch. A Transmit clock (M-Audio internal cadence)
     // begins its own when the TX clock bridge arms; every other device takes
-    // its clock from RX. A rate the timeline does not model yet (32 kHz) gets
-    // no epoch, and RX anchors stay untagged as before.
+    // its clock from RX. A rate outside the HAL ladder gets no epoch, and RX
+    // anchors stay untagged as before.
     if (!ivars.runtime.mAudioInternalTxActive) {
         if (auto* control = ivars.runtime.directAudioGraph.control) {
             const uint32_t rateHz = static_cast<uint32_t>(ivars.device.currentSampleRate);

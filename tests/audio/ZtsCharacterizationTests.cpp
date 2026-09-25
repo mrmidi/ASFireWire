@@ -104,7 +104,8 @@ public:
         packet[0] = static_cast<uint8_t>(stamp & 0xFF);
         packet[1] = static_cast<uint8_t>(stamp >> 8);
         WriteBE32(packet.data() + 8, 0x02000000u | (kChannels << 16) | (dbc_ & 0xFF));
-        const uint8_t fdf = spec_.rateHz == 44100 ? 0x01 : 0x02;
+        // IEC 61883-6 FDF sample-frequency code: 32 kHz 0, 44.1 kHz 1, 48 kHz 2.
+        const uint8_t fdf = spec_.rateHz == 32000 ? 0x00 : spec_.rateHz == 44100 ? 0x01 : 0x02;
         if (!data) {
             WriteBE32(packet.data() + 12, 0x90FFFFFFu);
             return packet;
@@ -254,6 +255,11 @@ void ExpectBothPathsMatch(StreamSpec spec, const char* golden) {
 // About five ZTS periods (12288 frames at 1x) of a clean 48 kHz stream.
 TEST(ZtsCharacterization, Clean48k) {
     ExpectBothPathsMatch({.rateHz = 48000, .cycles = 11'000}, "zts/clean-48k.txt");
+}
+
+// 32 kHz had no timeline epoch before Epic 4 T5; both paths must agree there too.
+TEST(ZtsCharacterization, Clean32k) {
+    ExpectBothPathsMatch({.rateHz = 32000, .cycles = 16'000}, "zts/clean-32k.txt");
 }
 
 TEST(ZtsCharacterization, Clean44k1) {
