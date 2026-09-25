@@ -11,7 +11,6 @@
 #include "DiceFamilyDriver.hpp"
 
 #include "DICENotificationMailbox.hpp"
-#include "../../Backends/RestartJournal.hpp"
 #include "../../../../Common/WireFormat.hpp"
 #include "../../../../Logging/Logging.hpp"
 
@@ -123,7 +122,7 @@ std::expected<DuplexPrepareResult, IOReturn> DiceFamilyDriver::Prepare(
     if (!IsSupportedDiceClockConfiguration(clock)) {
         return std::unexpected(kIOReturnUnsupported);
     }
-    if (HasAnyRestartState(session_)) {
+    if (HasDeviceRestartState(session_)) {
         const IOReturn stopStatus = Stop();
         if (stopStatus != kIOReturnSuccess) {
             return std::unexpected(stopStatus);
@@ -278,7 +277,7 @@ std::expected<DuplexClockApplyResult, IOReturn> DiceFamilyDriver::ApplyClock(
     if (!busInfo_.GetLocalNodeID().IsValid()) {
         return std::unexpected(kIOReturnNotReady);
     }
-    if (HasAnyRestartState(session_)) {
+    if (HasDeviceRestartState(session_)) {
         return std::unexpected(kIOReturnBusy);
     }
 
@@ -707,7 +706,7 @@ IOReturn DiceFamilyDriver::CompleteClockApply() {
     session_.appliedClock = session_.desiredClock;
     const IOReturn releaseStatus = ReleaseOwner();
     if (releaseStatus != kIOReturnSuccess) {
-        Backends::EnterFailed(session_, releaseStatus, "release_failed");
+        ClearRestartProgress(session_, DuplexRestartPhase::kFailed);
         flowMode_ = FlowMode::kNone;
         return releaseStatus;
     }

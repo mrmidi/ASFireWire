@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// The sequence is AudioDuplexCoordinator's DuplexStartTransaction::Run, step
-// for step; the session golden traces in tests/golden/session/ prove the wire
-// order is unchanged. Device stream programming before GLOBAL_ENABLE is
+// The sequence is the one the deleted AudioDuplexCoordinator ran
+// (DuplexStartTransaction::Run), step for step; the session golden traces in
+// tests/golden/session/ recorded it before the rewrite and pin it now. Device stream programming before GLOBAL_ENABLE is
 // cross-validated with Linux dice-stream.c:326-374 and dice-interface.h:120-125.
 
 #include "RestartRoutine.hpp"

@@ -13,6 +13,8 @@
 
 #include "SessionTestSupport.hpp"
 
+#include "Bus/IRM/IRMTypes.hpp"
+
 #include <future>
 #include <string>
 #include <thread>
@@ -26,9 +28,15 @@ namespace Ids = ASFW::DeviceProfiles::Audio;
 // A CMP family: no pre-stream clock gate, one stream per direction.
 const SessionShape kCmpDevice{"phase88", Ids::kTerraTecVendorId, Ids::kPhase88RackFwModelId,
                               kAvcUnitSpecifier, kAvcUnitVersion};
+// The Apogee recipe: pre-stream clock gate, interleaved host starts, staged stop.
+const SessionShape kApogeeDevice{"apogee-duet", Ids::kApogeeVendorId, Ids::kApogeeDuetModelId,
+                                 kAvcUnitSpecifier, kAvcUnitVersion};
 
-struct SchedulerTest : ::testing::Test {
-    SessionRig rig{kCmpDevice, Impl::Scheduler};
+template <const SessionShape& Shape>
+struct ShapedSchedulerTest : ::testing::Test {
+    SessionRig rig{Shape};
+
+    ScriptedDeviceControl& Device() { return static_cast<ScriptedDeviceControl&>(*rig.protocol); }
 
     [[nodiscard]] ASFW::Audio::Session::SessionSnapshot Snapshot() const {
         return rig.sessions.Snapshot(rig.guid).value_or(ASFW::Audio::Session::SessionSnapshot{});
@@ -67,6 +75,9 @@ private:
     std::promise<void> held_;
     std::promise<void> release_;
 };
+
+using SchedulerTest = ShapedSchedulerTest<kCmpDevice>;
+using ApogeeTest = ShapedSchedulerTest<kApogeeDevice>;
 
 TEST_F(SchedulerTest, DetachWithNothingRunningDoesNothing) {
     EXPECT_EQ(rig.sessions.Detach(rig.guid), kIOReturnSuccess);
@@ -222,6 +233,167 @@ TEST_F(SchedulerTest, RetiredDeviceAbortsTheStartAndRefusesNewOnes) {
     rig.sessions.Present(rig.guid);
     EXPECT_FALSE(rig.sessions.IsCancelled(rig.guid));
     EXPECT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+}
+
+
+// ---------------------------------------------------------------------------
+// Carried over from the deleted AudioDuplexCoordinatorTests: behaviour the
+// session goldens do not pin.
+// ---------------------------------------------------------------------------
+
+// 9 host->device AM824 slots x 8 events x 4 bytes + an 8-byte CIP header.
+constexpr uint32_t kPlaybackPayloadBytes = 8 + 8 * 9 * 4;
+
+[[nodiscard]] std::string ReservePlaybackLine(ASFW::FW::FwSpeed speed) {
+    return "H reserve playback allowed=ffffffffffffffff bw=" +
+           std::to_string(ASFW::IRM::PacketBandwidthUnits(kPlaybackPayloadBytes,
+                                                           static_cast<uint8_t>(speed)));
+}
+
+// The IRM is charged at the speed the transmit context runs at. Charging for
+// one speed and transmitting at another is how a reservation that fits turns
+// into packets the bus was not paid for.
+TEST_F(SchedulerTest, TransmitSpeedIsTheSpeedTheReservationWasChargedAt) {
+    rig.link = {.localToNode = ASFW::FW::FwSpeed::S200, .isochToNode = ASFW::FW::FwSpeed::S200};
+    rig.Install(ASFW::FW::Generation{1});
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(Count(ReservePlaybackLine(ASFW::FW::FwSpeed::S200)), 1);
+    EXPECT_EQ(Count("H prepare tx ch=0 sid=0 @s200"), 1);
+}
+
+// Isochronous speed comes from Self-ID, never from async outcomes: SpeedPolicy
+// demotes the async speed when a device times out a request, and isoch used to
+// inherit it, doubling the bandwidth charge. Apple keeps them apart
+// (IOFWIsochChannel.cpp:653 vs IOFireWireController.cpp:2755-2759).
+TEST_F(SchedulerTest, AsyncSpeedDemotionDoesNotLowerIsochronousSpeed) {
+    rig.link = {.localToNode = ASFW::FW::FwSpeed::S200, .isochToNode = ASFW::FW::FwSpeed::S400};
+    rig.Install(ASFW::FW::Generation{1});
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(Count(ReservePlaybackLine(ASFW::FW::FwSpeed::S400)), 1);
+    EXPECT_EQ(Count("H prepare tx ch=0 sid=0 @s400"), 1);
+}
+
+TEST_F(SchedulerTest, S100IsochronousPathIsNotAnUnsetSpeed) {
+    rig.link = {.localToNode = ASFW::FW::FwSpeed::S400, .isochToNode = ASFW::FW::FwSpeed::S100};
+    rig.Install(ASFW::FW::Generation{1});
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(Count("H reserve playback allowed=ffffffffffffffff bw=1232"), 1);
+    EXPECT_EQ(Count("H prepare tx ch=0 sid=0 @s100"), 1);
+}
+
+// A confirmation the device takes its time over keeps the start going: nothing
+// is stopped while it is pending, and the start completes when it arrives.
+TEST_F(SchedulerTest, SlowConfirmationKeepsTheHostRunningUntilItArrives) {
+    Hold("device.confirm");
+    auto start = std::async(std::launch::async, [&] { return rig.sessions.Attach(rig.guid); });
+    WaitHeld();
+    EXPECT_EQ(Count("H stop"), 0);
+    EXPECT_EQ(Count("D stop"), 0);
+    Release();
+    EXPECT_EQ(start.get(), kIOReturnSuccess);
+    EXPECT_EQ(Count("H stop"), 0);
+    EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+}
+
+TEST_F(SchedulerTest, TeardownDuringPrepareAbortsWithoutTouchingTheDevice) {
+    rig.hooks["device.prepare"] = [&] { rig.cancel.store(true, std::memory_order_release); };
+    EXPECT_EQ(rig.sessions.Attach(rig.guid), kIOReturnAborted);
+    EXPECT_EQ(Count("D program"), 0);
+    EXPECT_EQ(Count("H stop"), 0);
+    EXPECT_EQ(Count("D break"), 0);
+    EXPECT_EQ(rig.sessions.TeardownAbortCount(), 1U);
+}
+
+TEST_F(SchedulerTest, RetryableFailureRestartsOnRecovery) {
+    rig.failures["device.program_rx"] = kIOReturnTimeout;
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnTimeout);
+    EXPECT_EQ(Snapshot().state, SessionState::Failed);
+
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kRecoverAfterTimingLoss),
+              kIOReturnSuccess);
+    EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+    EXPECT_EQ(Snapshot().lastStatus, kIOReturnSuccess);
+}
+
+// Unsupported, not success (FW-146): an ignored recovery ran nothing, and a
+// caller that reads success resets budgets it should keep.
+TEST_F(SchedulerTest, RecoveryIsIgnoredWhileNothingShouldRun) {
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kRecoverAfterTimingLoss),
+              kIOReturnUnsupported);
+    ASSERT_EQ(rig.sessions.Detach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kRecoverAfterTimingLoss),
+              kIOReturnUnsupported);
+    EXPECT_TRUE(rig.bus.Trace().Lines().empty());
+}
+
+// 2x/4x rates are not validated end to end and are refused before any host
+// allocation.
+TEST_F(SchedulerTest, UnsupportedClockIsRefusedBeforeAnyWork) {
+    EXPECT_EQ(rig.sessions.ChangeClock(rig.guid, AudioClockConfig{.sampleRateHz = 96000},
+                                       DuplexRestartReason::kSampleRateChange),
+              kIOReturnUnsupported);
+    EXPECT_TRUE(rig.bus.Trace().Lines().empty());
+    EXPECT_EQ(Snapshot().desiredClock.sampleRateHz, 0U);
+}
+
+// A published endpoint whose geometry changed must be recreated before any
+// start, recovery or clock change; rediscovery does not reopen it.
+TEST_F(SchedulerTest, ChangedEndpointGeometryRefusesStartRecoveryAndClock) {
+    rig.sessions.SetStartGuard([](uint64_t) { return false; });
+    EXPECT_EQ(rig.sessions.Attach(rig.guid), kIOReturnNotReady);
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kRecoverAfterTimingLoss),
+              kIOReturnNotReady);
+    EXPECT_EQ(rig.sessions.ChangeClock(rig.guid, AudioClockConfig{.sampleRateHz = 44100},
+                                       DuplexRestartReason::kSampleRateChange),
+              kIOReturnNotReady);
+    rig.sessions.Present(rig.guid);
+    EXPECT_EQ(rig.sessions.Attach(rig.guid), kIOReturnNotReady);
+    EXPECT_TRUE(rig.bus.Trace().Lines().empty());
+}
+
+TEST_F(ApogeeTest, ClockGateNeedsConsecutiveStableReads) {
+    Device().healthLocked = {true, false, true, true, true};
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(Count("D health"), 5);
+}
+
+TEST_F(ApogeeTest, ClockGateFailureRollsBackBeforeAnyHostStart) {
+    rig.failures["device.health"] = kIOReturnNoDevice;
+    EXPECT_EQ(rig.sessions.Attach(rig.guid), kIOReturnNoDevice);
+    EXPECT_EQ(Count("H start"), 0);
+    EXPECT_EQ(Count("D break connections"), 1);
+    EXPECT_EQ(Count("H stop all"), 1);
+}
+
+// The Duet runs at 48 kHz until dynamic rate changes exist: a start after a
+// manual 44.1 kHz request still prepares the device at 48 kHz.
+TEST_F(ApogeeTest, StartIsPinnedTo48kEvenAfterAnotherRateWasApplied) {
+    ASSERT_EQ(rig.sessions.ChangeClock(rig.guid, AudioClockConfig{.sampleRateHz = 44100},
+                                       DuplexRestartReason::kManualReconfigure),
+              kIOReturnSuccess);
+    EXPECT_EQ(Count("D apply clock rate=44100"), 1);
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(Count("D prepare rate=48000"), 1);
+    EXPECT_EQ(Snapshot().appliedClock.sampleRateHz, 48000U);
+}
+
+// FW-61: the staged stop reaches both directions even when steps fail, and
+// reports the failure, so a context that did not quiesce is not treated as
+// safely releasable.
+TEST_F(ApogeeTest, StagedStopFinishesAndReportsTheFirstHostFailure) {
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    rig.bus.Trace().Clear();
+    rig.failures["device.disconnect_playback"] = kIOReturnTimeout;
+    rig.failures["device.disconnect_capture"] = kIOReturnError;
+    rig.failures["host.stop_transmit"] = kIOReturnError;
+    rig.failures["host.stop_receive"] = kIOReturnTimeout;
+    EXPECT_EQ(rig.sessions.Detach(rig.guid), kIOReturnError);
+    EXPECT_EQ(Count("D disconnect playback"), 1);
+    EXPECT_EQ(Count("H stop tx"), 1);
+    EXPECT_EQ(Count("D disconnect capture"), 1);
+    EXPECT_EQ(Count("H stop rx"), 1);
+    EXPECT_EQ(Count("H stop all"), 1);
+    EXPECT_EQ(Count("D stop"), 0);
 }
 
 } // namespace

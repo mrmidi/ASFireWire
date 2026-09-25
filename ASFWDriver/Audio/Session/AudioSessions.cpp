@@ -53,7 +53,7 @@ std::shared_ptr<SessionScheduler> AudioSessions::Ensure(uint64_t guid) noexcept 
                       .teardown = teardown_,
                       .teardownAborts = teardownAborts_,
                       .bindingSource = bindingSource_,
-                      .startGuard = startGuard_,
+                      .startGuard = &startGuard_,
                   });
     }
     auto session = slot;

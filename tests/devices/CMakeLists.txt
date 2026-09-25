@@ -77,7 +77,6 @@ add_device_test(SessionCharacterizationTests
     "${ASFW_DRIVER_DIR}/Audio/Session/RestartRoutine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/SessionScheduler.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/StopRoutine.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
@@ -100,7 +99,6 @@ add_device_test(AudioSessionSchedulerTests
     "${ASFW_DRIVER_DIR}/Audio/Session/RestartRoutine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/SessionScheduler.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/StopRoutine.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
@@ -115,26 +113,6 @@ add_device_test(AudioSessionSchedulerTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
-# DICE restart-session tests
-add_device_test(DuplexRestartSessionTests
-    DuplexRestartSessionTests.cpp
-)
-
-# Stage 2b Phase A: duplex restart FSM characterization tests (header-only)
-add_device_test(DuplexRestartFsmTests
-    DuplexRestartFsmTests.cpp
-)
-
-# DICE duplex restart coordinator FSM tests
-add_device_test(AudioDuplexCoordinatorTests
-    AudioDuplexCoordinatorTests.cpp
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
-    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
-    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
-)
 
 # FW-74: resolver-owned duplex stream geometry, wire-format quirks, and host recipe.
 add_device_test(DuplexStreamProfileTests
@@ -163,31 +141,6 @@ add_device_test(DiceRuntimeDeviceConfigTests
 # FW-65: sync/async bridge (WaitForAsyncResult) characterization tests (header-only)
 add_device_test(WaitForAsyncResultTests
     WaitForAsyncResultTests.cpp
-)
-
-# DICE recovery-policy classification kernel tests (FW-66, header-only policy)
-add_device_test(DuplexRecoveryPolicyTests
-    DuplexRecoveryPolicyTests.cpp
-)
-
-# DICE duplex operation gate (active/stop-intent) tests (FW-68, header-only gate)
-add_device_test(DuplexOperationGateTests
-    DuplexOperationGateTests.cpp
-)
-
-# DICE restart-journal FSM mutator tests (FW-69a, header-only journal)
-add_device_test(RestartJournalTests
-    RestartJournalTests.cpp
-)
-
-# DICE restart-session store tests (FW-69b, header-only lock-borrowing store)
-add_device_test(RestartSessionStoreTests
-    RestartSessionStoreTests.cpp
-)
-
-# DICE clock-request broker tests (FW-67, header-only lock-borrowing broker)
-add_device_test(ClockRequestBrokerTests
-    ClockRequestBrokerTests.cpp
 )
 
 # FW-130: Apogee Duet device spec (control caps + CIP quirks), header-only
@@ -400,7 +353,6 @@ add_device_test(SelectProbeBootstrapTests
 add_device_test(BeBoBCaptureChannelMapTests
     BeBoBCaptureChannelMapTests.cpp
 )
-
 
 # M-Audio special firmware capture channel order and model-specific skew
 add_device_test(MAudioCaptureChannelMapTests

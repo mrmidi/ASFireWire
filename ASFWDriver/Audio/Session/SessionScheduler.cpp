@@ -107,7 +107,7 @@ bool SessionScheduler::TeardownRequested() const noexcept {
 }
 
 bool SessionScheduler::StartAllowed() const noexcept {
-    return !deps_.startGuard || deps_.startGuard(guid_);
+    return deps_.startGuard == nullptr || !*deps_.startGuard || (*deps_.startGuard)(guid_);
 }
 
 // ---------------------------------------------------------------------------

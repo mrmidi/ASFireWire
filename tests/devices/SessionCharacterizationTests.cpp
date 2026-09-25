@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// SessionCharacterizationTests.cpp - Golden traces of today's duplex session layer.
+// SessionCharacterizationTests.cpp - Golden traces of the audio session layer.
 //
-// Stage S2 of documentation/AUDIO_SESSION_REDESIGN.md replaces
-// AudioDuplexCoordinator. Before that, these tests record what it does today
-// for every start/stop recipe the device catalog resolves: host transport calls
-// (IRM reservation, DMA prepare/start/stop), device stages, and for DICE the
-// bus traffic underneath. The rewrite must reproduce these traces except for
-// deltas it declares. Like the S0 DICE goldens, they characterize; they do not
-// judge.
+// For every start/stop recipe the device catalog resolves, these record what
+// the session does: host transport calls (IRM reservation, DMA
+// prepare/start/stop), device stages, and for DICE the bus traffic underneath.
+// They were first recorded against AudioDuplexCoordinator; stage S2 of
+// documentation/AUDIO_SESSION_REDESIGN.md replaced it with SessionScheduler,
+// which reproduced every trace except three declared deltas (double-start,
+// fault-after-stop, stop-after-refused-start). Like the S0 DICE goldens, they
+// characterize; they do not judge.
 //
 // Regenerate after an intended change: ASFW_UPDATE_GOLDEN=1, then review the diff.
 
@@ -18,7 +19,6 @@
 #include "SessionTestSupport.hpp"
 #include "WireTrace.hpp"
 
-#include "Audio/Protocols/Backends/AudioDuplexCoordinator.hpp"
 #include "Audio/Session/AudioSessions.hpp"
 #include "DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 
@@ -30,7 +30,6 @@ namespace {
 
 using namespace ASFW::Testing::DICE;
 using namespace ASFW::Testing::Session;
-using ASFW::Audio::AudioDuplexCoordinator;
 using ASFW::Audio::AudioRuntimeRegistry;
 using ASFW::Audio::DuplexRestartReason;
 using ASFW::DeviceProfiles::Audio::StreamStartShape;
@@ -66,34 +65,26 @@ const ShapeCase kShapes[] = {
      StreamStartShape::MAudioSpecial},
 };
 
-struct ScopedLifecycleAssertOff {
-    ScopedLifecycleAssertOff() { ASFW::Audio::Backends::gDisableLifecycleAssertForTesting.store(true); }
-    ~ScopedLifecycleAssertOff() { ASFW::Audio::Backends::gDisableLifecycleAssertForTesting.store(false); }
-};
-
 struct Scenario {
     const char* key;
     void (*run)(SessionRig&);
-    // The scheduler deliberately behaves differently here: it compares against
-    // <key>.scheduler.trace instead. Each such delta is explained at the scenario.
-    bool schedulerDelta{false};
 };
 
 const Scenario kScenarios[] = {
     {"cold-start", [](SessionRig& r) { r.Start(); }},
     {"stop", [](SessionRig& r) { r.Start(); r.Stop(); }},
     {"double-stop", [](SessionRig& r) { r.Start(); r.Stop(); r.Stop(); }},
-    // Delta: the coordinator re-runs the whole start over the running streams;
-    // the scheduler sees nothing to change.
-    {"double-start", [](SessionRig& r) { r.Start(); r.Start(); }, true},
-    // A runtime fault queued during StopIO's teardown and run after it.
-    // Delta: the coordinator restarts the streams CoreAudio just stopped; the
-    // scheduler refuses (nothing should run, so there is nothing to recover).
+    // Nothing to change: the coordinator used to re-run the whole start over
+    // the running streams.
+    {"double-start", [](SessionRig& r) { r.Start(); r.Start(); }},
+    // A runtime fault queued during StopIO's teardown and run after it. Nothing
+    // should run, so nothing is recovered; the coordinator used to restart the
+    // streams CoreAudio had just stopped.
     {"fault-after-stop", [](SessionRig& r) {
          r.Start();
          r.Stop();
          r.Recover("timing-loss", DuplexRestartReason::kRecoverAfterTimingLoss);
-     }, true},
+     }},
     {"clock-change-running", [](SessionRig& r) { r.Start(); r.Clock(44100); }},
     {"idle-clock-then-start", [](SessionRig& r) { r.Clock(44100); r.Start(); }},
     {"recover-bus-reset", [](SessionRig& r) {
@@ -141,40 +132,34 @@ const Scenario kScenarios[] = {
          r.hooks["host.begin"] = [&r] { r.BusReset(); };
          r.Start();
      }},
-    // A bus reset during the geometry read refuses the start before any session
-    // is stored; the next stop then asks for an illegal Idle -> Stopping
-    // transition, which asserts (live in the dext: no build defines NDEBUG).
-    // The trace records the refusal with the assertion disabled. Only a scripted
-    // device exposes this point in the sequence.
-    // Delta: the scheduler has nothing to stop and reports success.
+    // A bus reset during the geometry read refuses the start; the stop then has
+    // nothing to stop. The coordinator used to ask for an illegal Idle ->
+    // Stopping transition here, which asserted. Only a scripted device exposes
+    // this point in the sequence.
     {"stop-after-refused-start", [](SessionRig& r) {
          r.hooks["device.geometry"] = [&r] { r.BusReset(); };
          r.Start();
-         ScopedLifecycleAssertOff off;
          r.Stop();
-     }, true},
+     }},
 };
 
 class SessionCharacterization
-    : public ::testing::TestWithParam<std::tuple<Impl, ShapeCase, Scenario>> {};
+    : public ::testing::TestWithParam<std::tuple<ShapeCase, Scenario>> {};
 
 TEST_P(SessionCharacterization, MatchesGolden) {
-    const auto& [impl, shapeCase, scenario] = GetParam();
-    SessionRig rig(shapeCase.shape, impl);
+    const auto& [shapeCase, scenario] = GetParam();
+    SessionRig rig(shapeCase.shape);
     scenario.run(rig);
-    const bool delta = impl == Impl::Scheduler && scenario.schedulerDelta;
     ExpectMatchesGolden(rig.bus.Trace(), std::string("session/") + shapeCase.shape.key + "/" +
-                                             scenario.key + (delta ? ".scheduler.trace" : ".trace"));
+                                             scenario.key + ".trace");
 }
 
 INSTANTIATE_TEST_SUITE_P(
     Recorded, SessionCharacterization,
-    ::testing::Combine(::testing::Values(Impl::Coordinator, Impl::Scheduler),
-                       ::testing::ValuesIn(kShapes), ::testing::ValuesIn(kScenarios)),
+    ::testing::Combine(::testing::ValuesIn(kShapes), ::testing::ValuesIn(kScenarios)),
     [](const auto& info) {
-        std::string name = std::string(std::get<0>(info.param) == Impl::Coordinator ? "coordinator_"
-                                                                                    : "scheduler_") +
-                           std::get<1>(info.param).shape.key + "_" + std::get<2>(info.param).key;
+        std::string name = std::string(std::get<0>(info.param).shape.key) + "_" +
+                           std::get<1>(info.param).key;
         for (char& c : name) {
             if (c == '-') {
                 c = '_';

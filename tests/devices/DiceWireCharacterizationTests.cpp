@@ -4,7 +4,7 @@
 // DiceWireCharacterizationTests.cpp - Golden wire traces of today's DICE bring-up.
 //
 // Stage S0 of documentation/AUDIO_SESSION_REDESIGN.md. Each test drives a DICE
-// protocol through IDuplexDeviceControl, in the order AudioDuplexCoordinator
+// protocol through IDuplexDeviceControl, in the order the session
 // calls it, against a SimulatedDiceDevice built from a recorded device, and
 // compares every transaction put on the wire with tests/golden/dice/*.trace.
 //
@@ -150,7 +150,7 @@ struct DiceRig {
         return channels;
     }
 
-    // Every stage AudioDuplexCoordinator runs for a start, in its order.
+    // Every stage the session runs for a start, in its order.
     IOReturn Start(uint32_t rateHz) {
         IOReturn status = Run("EnsureRuntimeStreamGeometry", [&](auto done) {
             control->EnsureRuntimeStreamGeometry(done);

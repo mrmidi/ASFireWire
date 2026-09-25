@@ -339,7 +339,7 @@ void MotuV2Protocol::PrepareDuplex(const AudioDuplexChannels& channels,
     // iso resources.
     //
     // ASFW's start path never applied the clock at all -- ApplyClockConfig is only reached
-    // from DuplexStartTransaction::ApplyIdleClock, which RunDuplexStart does not call. The
+    // from the idle clock apply, which the start path does not call. The
     // UltraLite therefore stayed on whatever rate it powered up with (44.1 kHz, clock
     // status reading 0x00000000) while the host had negotiated 48 kHz. WaitForStableGlobalClock
     // requires nominalRateHz == desiredClock.sampleRateHz, so it could never succeed: it

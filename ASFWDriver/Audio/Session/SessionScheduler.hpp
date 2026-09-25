@@ -80,7 +80,9 @@ public:
         const std::atomic<bool>* teardown;
         std::atomic<uint64_t>& teardownAborts;
         BindingSourceProvider bindingSource;
-        StartGuard startGuard;  // empty: every start is allowed
+        // Owned by AudioSessions, so a guard installed later reaches every
+        // session. Null or empty: every start is allowed.
+        const StartGuard* startGuard;
     };
 
     // Failed fault recoveries in a row before the session stops trying.

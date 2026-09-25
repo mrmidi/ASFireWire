@@ -35,7 +35,7 @@ struct ClockStatus {
 
 /// MOTU protocol-v2 register device.
 ///
-/// Also serves as its own IDuplexDeviceControl: AudioDuplexCoordinator reaches every
+/// Also serves as its own IDuplexDeviceControl: the audio session reaches every
 /// protocol through IDeviceProtocol::AsDuplexDeviceControl(), so that -- not the
 /// DICE-internal *48k hooks on IDeviceProtocol -- is the seam a new family must
 /// implement to be driven at all.
@@ -87,7 +87,7 @@ public:
     //==========================================================================
 
     // IDeviceProtocol -> IDuplexDeviceControl bridge. Returning `this` is what makes
-    // AudioDuplexCoordinator able to drive this protocol at all.
+    // the audio session able to drive this protocol at all.
     Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
     const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override {
         return this;

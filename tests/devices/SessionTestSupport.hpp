@@ -26,7 +26,6 @@
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
-#include "Audio/Protocols/Backends/AudioDuplexCoordinator.hpp"
 #include "Audio/Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "Audio/Session/AudioSessions.hpp"
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
@@ -348,11 +347,19 @@ public:
 
     void ReadDuplexHealth(HealthCallback callback) override {
         const IOReturn status = Stage("health", "D health");
-        // Locked at the current clock: the pre-stream clock gate passes.
+        // Locked at the current clock unless a test scripted the lock states;
+        // the last scripted state repeats.
+        bool locked = true;
+        if (!healthLocked.empty()) {
+            locked = healthLocked.front();
+            if (healthLocked.size() > 1) {
+                healthLocked.erase(healthLocked.begin());
+            }
+        }
         const uint32_t rateIndex = clock_.sampleRateHz == 44100U ? 1U : 2U;
         const uint32_t statusValue = 0x1U | (rateIndex << 8);
         callback(status, DuplexHealthResult{.generation = Generation{1}, .appliedClock = clock_,
-                                            .runtimeCaps = caps_, .sourceLocked = true,
+                                            .runtimeCaps = caps_, .sourceLocked = locked,
                                             .clockReferenceHealthy = true,
                                             .nominalRateHz = clock_.sampleRateHz,
                                             .status = statusValue});
@@ -370,6 +377,9 @@ public:
     void SetTeardownCancelToken(const std::atomic<bool>*) noexcept override {}
     IOReturn StopDuplex() override { return Stage("stop", "D stop"); }
     ::ASFW::IRM::IRMClient* GetIRMClient() const override { return &irm_; }
+
+    // Source-lock state of successive health reads.
+    std::vector<bool> healthLocked;
 
 private:
     static std::string Channels(const AudioDuplexChannels& c) {
@@ -459,7 +469,6 @@ inline ConfigROM MakeSessionRom(const SessionShape& shape, Generation gen) {
 }
 
 
-using ::ASFW::Audio::AudioDuplexCoordinator;
 using ::ASFW::Audio::AudioRuntimeRegistry;
 using ::ASFW::Audio::DuplexRestartReason;
 using ::ASFW::Driver::HardwareInterface;
@@ -478,24 +487,14 @@ constexpr AudioStreamRuntimeCaps kScriptedCaps{
     .sampleRateHz = 48000,
 };
 
-// Which session layer drives the device: today's coordinator, or the S2
-// scheduler that replaces it. Both must produce the same traces, except for
-// deltas the scheduler declares.
-enum class Impl { Coordinator, Scheduler };
-
 // One device, the session layer above it, and one trace for everything.
 struct SessionRig {
-    explicit SessionRig(const SessionShape& s, Impl i = Impl::Coordinator)
-        : impl(i),
-          shape(s),
+    explicit SessionRig(const SessionShape& s)
+        : shape(s),
           guid(SessionGuid(s)),
           bus(s.diceImage != nullptr ? *s.diceImage : DiceDeviceImages::kSaffirePro24Dsp),
           irm(nullBus),
           host(bus.Trace(), hooks, failures),
-          coordinator(registry, runtime, host, hardware, &cancel,
-                      [this](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
-                          return &binding;
-                      }),
           sessions(registry, runtime, host, hardware, &cancel,
                    [this](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
                        return &binding;
@@ -524,9 +523,7 @@ struct SessionRig {
     ~SessionRig() { NotificationMailbox::Reset(); }
 
     void Install(Generation gen) {
-        (void)registry.UpsertFromROM(
-            MakeSessionRom(shape, gen),
-            ASFW::Discovery::LinkPolicy{.localToNode = FwSpeed::S400, .isochToNode = FwSpeed::S400});
+        (void)registry.UpsertFromROM(MakeSessionRom(shape, gen), link);
     }
 
     [[nodiscard]] bool IsDice() const noexcept { return shape.diceImage != nullptr; }
@@ -542,43 +539,29 @@ struct SessionRig {
         return status;
     }
 
-    [[nodiscard]] bool IsStreaming() const {
-        return impl == Impl::Coordinator ? coordinator.IsStreaming(guid) : sessions.IsStreaming(guid);
-    }
+    [[nodiscard]] bool IsStreaming() const { return sessions.IsStreaming(guid); }
 
-    // The markers keep the coordinator's names, so both implementations
-    // compare against the same golden files.
+    // The markers keep the names of the coordinator calls the goldens were
+    // first recorded against (S2), so the history of each file reads as one.
     IOReturn Start() {
-        return Call("StartStreaming", [&] {
-            return impl == Impl::Coordinator ? coordinator.StartStreaming(guid) : sessions.Attach(guid);
-        });
+        return Call("StartStreaming", [&] { return sessions.Attach(guid); });
     }
     IOReturn Stop() {
-        return Call("StopStreaming", [&] {
-            return impl == Impl::Coordinator ? coordinator.StopStreaming(guid) : sessions.Detach(guid);
-        });
+        return Call("StopStreaming", [&] { return sessions.Detach(guid); });
     }
     IOReturn Clock(uint32_t rateHz) {
         return Call("RequestClockConfig " + std::to_string(rateHz), [&] {
-            const AudioClockConfig clock{.sampleRateHz = rateHz};
-            return impl == Impl::Coordinator
-                       ? coordinator.RequestClockConfig(guid, clock, DuplexRestartReason::kSampleRateChange)
-                       : sessions.ChangeClock(guid, clock, DuplexRestartReason::kSampleRateChange);
+            return sessions.ChangeClock(guid, AudioClockConfig{.sampleRateHz = rateHz},
+                                        DuplexRestartReason::kSampleRateChange);
         });
     }
     IOReturn Recover(const char* what, DuplexRestartReason reason, uint64_t observedRun = 0) {
-        return Call(std::string("RecoverStreaming ") + what, [&] {
-            return impl == Impl::Coordinator ? coordinator.RecoverStreaming(guid, reason, observedRun)
-                                             : sessions.RequestRestart(guid, reason, observedRun);
-        });
+        return Call(std::string("RecoverStreaming ") + what,
+                    [&] { return sessions.RequestRestart(guid, reason, observedRun); });
     }
     [[nodiscard]] uint64_t CurrentRun() const {
-        if (impl == Impl::Scheduler) {
-            const auto snapshot = sessions.Snapshot(guid);
-            return snapshot ? snapshot->run : 0;
-        }
-        const auto session = coordinator.GetSession(guid);
-        return session ? session->restartId : 0;
+        const auto snapshot = sessions.Snapshot(guid);
+        return snapshot ? snapshot->run : 0;
     }
 
     // A bus reset that rediscovers the same device on the next generation.
@@ -618,7 +601,8 @@ struct SessionRig {
         }
     }
 
-    Impl impl;
+    // The link the device is discovered with; tests may reinstall with another.
+    ::ASFW::Discovery::LinkPolicy link{.localToNode = FwSpeed::S400, .isochToNode = FwSpeed::S400};
     SessionShape shape;
     uint64_t guid;
     RecordingFireWireBus bus;
@@ -635,7 +619,6 @@ struct SessionRig {
     FakeBindingSource binding;
     std::atomic<bool> cancel{false};
     std::shared_ptr<IDeviceProtocol> protocol;
-    AudioDuplexCoordinator coordinator;
     ASFW::Audio::Session::AudioSessions sessions;
 };
 
