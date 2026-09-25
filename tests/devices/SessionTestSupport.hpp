@@ -507,6 +507,7 @@ struct SessionRig {
                    }) {
         hardware.SetTestRegister(Register32::kNodeID, 0);
         sessions.SetTimerScheduler(&sessionTimer);
+        sessions.SetIrmClient(&irm);
         bus.Device().ResetToIdle();
         Install(Generation{1});
         const auto route = *registry.CurrentRoute(guid);

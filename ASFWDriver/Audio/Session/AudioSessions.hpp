@@ -39,6 +39,8 @@ public:
     void SetStartGuard(SessionScheduler::StartGuard guard);
     // The timer that keeps restart quiet periods (callbacks on the Default queue).
     void SetTimerScheduler(Scheduling::ITimerScheduler* timer) noexcept { timer_ = timer; }
+    // The bus's IRM client, which reserves every stream's channel and bandwidth.
+    void SetIrmClient(::ASFW::IRM::IRMClient* irm) noexcept { irm_ = irm; }
     // Told after a restart request rebuilt a device's streams.
     void SetRestartObserver(SessionScheduler::RestartObserver observer);
 
@@ -85,6 +87,7 @@ private:
     SessionScheduler::StartGuard startGuard_;
     SessionScheduler::RestartObserver restartObserver_;
     Scheduling::ITimerScheduler* timer_{nullptr};
+    ::ASFW::IRM::IRMClient* irm_{nullptr};
     std::atomic<uint64_t> teardownAborts_{0};
 
     IOLock* lock_{nullptr};

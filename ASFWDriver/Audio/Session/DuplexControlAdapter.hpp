@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "FamilyDriver.hpp"
+#include "../Protocols/Duplex/FamilyDriver.hpp"
 
 #include "../Protocols/Duplex/IDuplexDeviceControl.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
@@ -38,6 +38,9 @@ public:
     // The IRM client the protocol was built with. A bus resource the session
     // hands to the restart routine; it is not part of FamilyDriver (§4.2 rule 5).
     [[nodiscard]] ::ASFW::IRM::IRMClient* IrmClient() const noexcept;
+    void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override {
+        control_.SetTeardownCancelToken(cancel);
+    }
 
     [[nodiscard]] IOReturn LoadGeometry() override;
     [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;

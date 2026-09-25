@@ -95,6 +95,7 @@ std::shared_ptr<SessionScheduler> AudioSessions::Ensure(uint64_t guid) noexcept 
                       .timer = &timer_,
                       .queue = rawQueue,
                       .restartObserver = &restartObserver_,
+                      .irm = &irm_,
                   });
     }
     auto session = slot;

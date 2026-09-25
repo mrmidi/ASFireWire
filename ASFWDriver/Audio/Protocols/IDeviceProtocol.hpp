@@ -24,6 +24,7 @@ namespace ASFW::IRM {
 
 namespace ASFW::Audio {
 class IDuplexDeviceControl;
+class FamilyDriver;
 }
 
 namespace ASFW::Audio {
@@ -86,6 +87,10 @@ public:
     virtual ::ASFW::IRM::IRMClient* GetIRMClient() const {
         return nullptr;
     }
+
+    /// The protocol's streaming driver, for the audio session. Null: the device
+    /// does not stream.
+    virtual FamilyDriver* AsFamilyDriver() noexcept { return nullptr; }
 
     /// Optional protocol-neutral duplex control interface used by the audio lifecycle.
     virtual IDuplexDeviceControl* AsDuplexDeviceControl() noexcept {

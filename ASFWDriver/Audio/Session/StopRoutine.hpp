@@ -10,7 +10,7 @@
 
 #pragma once
 
-#include "FamilyDriver.hpp"
+#include "../Protocols/Duplex/FamilyDriver.hpp"
 
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"

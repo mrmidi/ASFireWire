@@ -480,6 +480,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 
     if (ctx.audioCoordinator) {
         ctx.audioCoordinator->SetCMPClient(ctx.deps.cmpClient.get());
+        ctx.audioCoordinator->SetIRMClient(ctx.deps.irmClient.get());
     }
 
     // Allocate the queryable log ring before configuration so its

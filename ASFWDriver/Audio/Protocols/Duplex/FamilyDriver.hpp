@@ -6,13 +6,13 @@
 // documentation/AUDIO_SESSION_REDESIGN.md §4.2. A pure interface: only pure
 // virtuals and a virtual destructor, so every family states its answer to every
 // step. A step with nothing to do is written out in the family, with its
-// reason; it is never inherited. Shared sequencing lives in RestartRoutine and
-// StopRoutine, never here.
+// reason; it is never inherited. Shared sequencing lives in Audio/Session's
+// RestartRoutine and StopRoutine, never here. Each device protocol implements
+// it (IDeviceProtocol::AsFamilyDriver); the session consumes it.
 //
-// The stages are shaped (stage S2) to reproduce today's wire order exactly:
-// device RX is armed before device TX, and TX arming and the device enable are
-// one step because DICE writes GLOBAL_ENABLE straight after the last TX stream.
-// Stage S5 reshapes this when the families get native drivers.
+// The stages reproduce the wire order recorded in S2: device RX is armed
+// before device TX, and TX arming and the device enable are one step because
+// DICE writes GLOBAL_ENABLE straight after the last TX stream.
 //
 // Threading: every method blocks until the device answers. The session calls
 // them on its caller's thread, never on the driver's Default queue, where the
@@ -20,19 +20,24 @@
 
 #pragma once
 
-#include "../Protocols/Duplex/DuplexControlTypes.hpp"
+#include "DuplexControlTypes.hpp"
 
 #include <DriverKit/IOReturn.h>
 
+#include <atomic>
 #include <cstdint>
 #include <expected>
 #include <optional>
 
-namespace ASFW::Audio::Session {
+namespace ASFW::Audio {
 
 class FamilyDriver {
 public:
     virtual ~FamilyDriver() = default;
+
+    // Service teardown: once `cancel` reads true, waits give up and no new
+    // device work starts. Null clears it.
+    virtual void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept = 0;
 
     // Read the device's stream geometry so channel planning sees every stream.
     [[nodiscard]] virtual IOReturn LoadGeometry() = 0;
@@ -66,4 +71,4 @@ public:
     [[nodiscard]] virtual IOReturn Stop() = 0;
 };
 
-} // namespace ASFW::Audio::Session
+} // namespace ASFW::Audio

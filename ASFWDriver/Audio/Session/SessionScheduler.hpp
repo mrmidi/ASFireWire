@@ -104,6 +104,8 @@ public:
         // Default queue.
         IODispatchQueue* queue;
         const RestartObserver* restartObserver;
+        // Owned by AudioSessions, installed where the IRM client is created.
+        ::ASFW::IRM::IRMClient* const* irm;
     };
 
     // Failed fault recoveries in a row before the session stops trying.

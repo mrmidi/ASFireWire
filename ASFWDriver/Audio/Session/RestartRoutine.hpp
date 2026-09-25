@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include "FamilyDriver.hpp"
+#include "../Protocols/Duplex/FamilyDriver.hpp"
 #include "StopRoutine.hpp"
 
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
