@@ -1,0 +1,27 @@
+name=Focusrite Saffire Pro 40
+nameForGeometry in=16 out=16 -> Focusrite Saffire Pro 40
+nameForGeometry in=24 out=24 -> Focusrite Saffire Pro 40
+nameForGeometry in=32 out=32 -> Focusrite Saffire Pro 40
+nameForGeometry in=16 out=8 -> Focusrite Saffire Pro 40
+nameForGeometry in=8 out=16 -> Focusrite Saffire Pro 40
+nameForGeometry in=2 out=2 -> Focusrite Saffire Pro 40
+nameForGeometry in=0 out=2 -> Focusrite Saffire Pro 40
+nameForGeometry in=12 out=8 -> Focusrite Saffire Pro 40
+nameForGeometry in=20 out=20 -> Focusrite Saffire Pro 40
+wire tx=1 rx=0
+channels tx=20 rx=20 midi tx=1 rx=1 dbs tx=13 rx=11
+streams tx=2 rx=2 authority playback=asserted capture=asserted
+txPolicy enc=1 variableDbs=0 nonAudioWord=0x80000000 initNonAudio=1 preserveFdf=1 emptyIdle=0 cadenceData=0 cadenceWord=0xcf000000 dbcEnd=0
+txClock=rx-replay anchorTimeoutMs=500
+defaultTx dir=0 rate=48000 mode=1 sid=0 pcm=12 dbs=13 midi=1 fpp=8 fdf=0x02 fmt=0x10 offset=0
+defaultRx dir=1 rate=48000 mode=1 sid=0 pcm=10 dbs=11 midi=1 fpp=8 fdf=0x02 fmt=0x10 offset=0
+tx[0] dir=0 rate=48000 mode=1 sid=0 pcm=12 dbs=13 midi=1 fpp=8 fdf=0x02 fmt=0x10 offset=0
+rx[0] dir=1 rate=48000 mode=1 sid=0 pcm=10 dbs=11 midi=1 fpp=8 fdf=0x02 fmt=0x10 offset=0
+tx[1] dir=0 rate=48000 mode=1 sid=0 pcm=8 dbs=8 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=12
+rx[1] dir=1 rate=48000 mode=1 sid=0 pcm=10 dbs=10 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=10
+tx[2] none
+rx[2] none
+@32000 safety tx=48 rx=128 latency tx=29 rx=29 delay tx=12800 rx=12800
+@44100 safety tx=48 rx=128 latency tx=29 rx=29 delay tx=12800 rx=12800
+@48000 safety tx=48 rx=128 latency tx=29 rx=29 delay tx=12800 rx=12800
+rates 48000
