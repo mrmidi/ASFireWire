@@ -69,6 +69,8 @@ public:
     void Present(uint64_t guid) noexcept;
 
     [[nodiscard]] bool IsStreaming(uint64_t guid) const noexcept;
+    // Forget a restart still waiting out its quiet period (device suspended).
+    void CancelPendingRestart(uint64_t guid) noexcept;
     [[nodiscard]] uint64_t RunningRun(uint64_t guid) const noexcept;
     [[nodiscard]] bool IsReconciling(uint64_t guid) const noexcept;
     // Service teardown, or the device retired: device work must not start.

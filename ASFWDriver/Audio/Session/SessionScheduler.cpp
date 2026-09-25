@@ -240,6 +240,13 @@ bool SessionScheduler::HandRestartToHost(DuplexRestartReason reason) noexcept {
         !*deps_.hostRestart) {
         return false;
     }
+    // Mid-reset (no operational node) CoreAudio's StartIO would be refused and
+    // CoreAudio gives up for good; in place the restart fails as not-ready and
+    // the resume requests a fresh one. So only hand over a startable device.
+    const auto record = deps_.registry.SnapshotByGuid(guid_);
+    if (!record || !Discovery::TryOperationalNodeId(record->nodeId).has_value()) {
+        return false;
+    }
     if (!(*deps_.hostRestart)(guid_, reason)) {
         return false;
     }
@@ -607,13 +614,24 @@ IOReturn SessionScheduler::Reconcile(const Wanted& wanted) noexcept {
         if (before.needsStop) {
             action = "stop";
             if (!device.Known()) {
-                // Nothing left to stop on a device that is gone; host cleanup
-                // belongs to the removal path.
+                // No device traffic is possible: it is gone, or mid-reset with
+                // no operational node. The host's own IR/IT contexts still run
+                // either way, so stop them here -- leaving them to the removal
+                // path left a suspended device's transmit running with no
+                // producer until IT FATAL (hardware, 2026-09-25). A service
+                // teardown owns its own ordering (no MMIO after detach).
+                status = kIOReturnNoDevice;
+                if (!TeardownRequested()) {
+                    status = deps_.host.StopAll();
+                    ASFW_LOG(Audio,
+                             "[Session] stop without a device GUID=%llx: host transport "
+                             "stopped (kr=0x%08x), no device traffic",
+                             guid_, status);
+                }
                 Actual actual = before;
                 actual.needsStop = false;
                 actual.state = SessionState::Idle;
                 StoreActual(actual);
-                status = kIOReturnNoDevice;
             } else {
                 status = StopStreams(*device.record, device.protocol);
             }

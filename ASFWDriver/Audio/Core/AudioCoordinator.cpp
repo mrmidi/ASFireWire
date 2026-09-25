@@ -115,6 +115,11 @@ void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> de
     }
 
     const uint64_t guid = device->GetGUID();
+    // A restart still waiting out its quiet period targets the generation that
+    // just ended; the resume requests a fresh one. Firing it now would restart
+    // a device with no operational node (hardware, 2026-09-25: a reset landing
+    // as the quiet period expired sent CoreAudio a restart it could not start).
+    sessions_.CancelPendingRestart(guid);
     const bool suspendedActiveStream = sessions_.IsStreaming(guid);
     if (!suspendedActiveStream) {
         return;

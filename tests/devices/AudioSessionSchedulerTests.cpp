@@ -111,6 +111,22 @@ TEST_F(DiceQuietPeriodTest, DetachCancelsPendingRestart) {
     EXPECT_EQ(Snapshot().state, SessionState::Idle);
 }
 
+// A suspended device (bus reset) cancels the restart still waiting out its
+// quiet period; the resume requests a fresh one. Hardware, 2026-09-25: a reset
+// landing as the quiet period expired restarted a device with no node.
+TEST_F(DiceQuietPeriodTest, SuspensionCancelsPendingRestart) {
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    ASSERT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind),
+              kIOReturnSuccess);
+    ASSERT_EQ(rig.sessionTimer.PendingCount(), 1U);
+    const size_t linesBefore = rig.bus.Trace().Lines().size();
+    rig.sessions.CancelPendingRestart(rig.guid);
+    EXPECT_EQ(rig.sessionTimer.PendingCount(), 0U);
+    rig.Wait(1000);
+    EXPECT_EQ(rig.bus.Trace().Lines().size(), linesBefore);  // no restart ran
+    EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+}
+
 TEST_F(DiceQuietPeriodTest, ClockChangeCancelsPendingRestart) {
     ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
     ASSERT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kRecoverAfterTimingLoss,
@@ -418,6 +434,35 @@ TEST_F(SchedulerTest, RestartWhileCoreAudioRunsIsHandedToTheHost) {
     // Nothing was rebuilt here: the host's StopIO/StartIO does it.
     EXPECT_EQ(rig.bus.Trace().Lines().size(), linesBefore);
     EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+}
+
+// Mid-reset there is no operational node: CoreAudio's StartIO would be
+// refused and it gives up for good. Keep the restart in place instead, where
+// it fails as not-ready and the resume asks again.
+TEST_F(SchedulerTest, NoHostHandoverWhileTheDeviceIsMidReset) {
+    std::atomic<int> routed{0};
+    rig.sessions.SetHostRestartRouter([&](uint64_t, DuplexRestartReason) {
+        routed.fetch_add(1);
+        return true;
+    });
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    rig.registry.InvalidateLiveMappingsForBusReset();
+    (void)rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind);
+    EXPECT_EQ(routed.load(), 0);
+}
+
+// StopIO while the device is mid-reset: no device traffic is possible, but the
+// host's IR/IT contexts must still stop. Hardware, 2026-09-25: they were left
+// running and transmit ran with no producer until IT FATAL.
+TEST_F(SchedulerTest, StopWhileTheDeviceIsMidResetStillStopsTheHost) {
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    rig.registry.InvalidateLiveMappingsForBusReset();
+    const int hostStopsBefore = Count("H stop all");
+    const int deviceLinesBefore = Count("D ");
+    EXPECT_EQ(rig.sessions.Detach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(Count("H stop all"), hostStopsBefore + 1);
+    EXPECT_EQ(Count("D "), deviceLinesBefore);
+    EXPECT_FALSE(rig.sessions.IsStreaming(rig.guid));
 }
 
 // No audio driver listening (the router declines): restart in place, as before.
