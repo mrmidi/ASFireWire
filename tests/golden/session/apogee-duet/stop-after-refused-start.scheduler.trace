@@ -1,0 +1,7 @@
+## StartStreaming
+# bus-reset gen=2
+# device: bus reset
+D geometry
+## -> 0xe00002d7 streaming=0
+## StopStreaming
+## -> 0x00000000 streaming=0

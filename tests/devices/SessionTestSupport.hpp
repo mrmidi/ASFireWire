@@ -20,12 +20,15 @@
 
 #include "DICEDuplexTestSupport.hpp"
 #include "FakeDiceWaitClock.hpp"
+#include "WireTrace.hpp"
 #include "FakeTimerScheduler.hpp"
 
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
+#include "Audio/Protocols/Backends/AudioDuplexCoordinator.hpp"
 #include "Audio/Protocols/Backends/IsochDuplexHostTransport.hpp"
+#include "Audio/Session/AudioSessions.hpp"
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "Audio/Protocols/DICE/TCAT/DICETcatProtocol.hpp"
 #include "Audio/Protocols/Duplex/IDuplexDeviceControl.hpp"
@@ -454,5 +457,186 @@ inline ConfigROM MakeSessionRom(const SessionShape& shape, Generation gen) {
     rom.unitDirectories.push_back(unit);
     return rom;
 }
+
+
+using ::ASFW::Audio::AudioDuplexCoordinator;
+using ::ASFW::Audio::AudioRuntimeRegistry;
+using ::ASFW::Audio::DuplexRestartReason;
+using ::ASFW::Driver::HardwareInterface;
+using ::ASFW::Driver::Register32;
+using ::ASFW::Testing::FakeDiceWaitClock;
+using ::ASFW::Testing::FakeTimerScheduler;
+using namespace ::ASFW::Testing::DICE;
+
+// Plain caps for the scripted families: two streams' worth of AM824 slots in
+// one stream per direction, the shape every AV/C unit here uses.
+constexpr AudioStreamRuntimeCaps kScriptedCaps{
+    .hostInputPcmChannels = 8,
+    .hostOutputPcmChannels = 8,
+    .deviceToHostAm824Slots = 9,
+    .hostToDeviceAm824Slots = 9,
+    .sampleRateHz = 48000,
+};
+
+// Which session layer drives the device: today's coordinator, or the S2
+// scheduler that replaces it. Both must produce the same traces, except for
+// deltas the scheduler declares.
+enum class Impl { Coordinator, Scheduler };
+
+// One device, the session layer above it, and one trace for everything.
+struct SessionRig {
+    explicit SessionRig(const SessionShape& s, Impl i = Impl::Coordinator)
+        : impl(i),
+          shape(s),
+          guid(SessionGuid(s)),
+          bus(s.diceImage != nullptr ? *s.diceImage : DiceDeviceImages::kSaffirePro24Dsp),
+          irm(nullBus),
+          host(bus.Trace(), hooks, failures),
+          coordinator(registry, runtime, host, hardware, &cancel,
+                      [this](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
+                          return &binding;
+                      }),
+          sessions(registry, runtime, host, hardware, &cancel,
+                   [this](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
+                       return &binding;
+                   }) {
+        NotificationMailbox::Reset();
+        hardware.SetTestRegister(Register32::kNodeID, 0);
+        bus.Device().ResetToIdle();
+        Install(Generation{1});
+        const auto route = *registry.CurrentRoute(guid);
+        if (s.diceImage == nullptr) {
+            protocol = std::make_shared<ScriptedDeviceControl>(bus.Trace(), hooks, failures, irm,
+                                                               kScriptedCaps);
+        } else if (s.spro24Dsp) {
+            protocol = std::make_shared<ASFW::Audio::DICE::Focusrite::SPro24DspProtocol>(
+                bus, bus, registry, route, &irm, waitClock);
+        } else {
+            protocol = std::make_shared<ASFW::Audio::DICE::TCAT::DICETcatProtocol>(
+                bus, bus, registry, route, &irm, waitClock);
+        }
+        EXPECT_EQ(protocol->Initialize(), kIOReturnSuccess);
+        protocol->AsDuplexDeviceControl()->SetTeardownCancelToken(&cancel);
+        runtime.Insert(guid, protocol);
+        bus.Trace().Clear();
+    }
+
+    ~SessionRig() { NotificationMailbox::Reset(); }
+
+    void Install(Generation gen) {
+        (void)registry.UpsertFromROM(
+            MakeSessionRom(shape, gen),
+            ASFW::Discovery::LinkPolicy{.localToNode = FwSpeed::S400, .isochToNode = FwSpeed::S400});
+    }
+
+    [[nodiscard]] bool IsDice() const noexcept { return shape.diceImage != nullptr; }
+
+    void Mark(const std::string& line) { bus.Trace().Add(line); }
+
+    template <typename Fn>
+    IOReturn Call(const std::string& what, Fn&& fn) {
+        Mark("## " + what);
+        const IOReturn status = fn();
+        Mark("## -> " + Status(status) +
+             " streaming=" + std::to_string(IsStreaming() ? 1 : 0));
+        return status;
+    }
+
+    [[nodiscard]] bool IsStreaming() const {
+        return impl == Impl::Coordinator ? coordinator.IsStreaming(guid) : sessions.IsStreaming(guid);
+    }
+
+    // The markers keep the coordinator's names, so both implementations
+    // compare against the same golden files.
+    IOReturn Start() {
+        return Call("StartStreaming", [&] {
+            return impl == Impl::Coordinator ? coordinator.StartStreaming(guid) : sessions.Attach(guid);
+        });
+    }
+    IOReturn Stop() {
+        return Call("StopStreaming", [&] {
+            return impl == Impl::Coordinator ? coordinator.StopStreaming(guid) : sessions.Detach(guid);
+        });
+    }
+    IOReturn Clock(uint32_t rateHz) {
+        return Call("RequestClockConfig " + std::to_string(rateHz), [&] {
+            const AudioClockConfig clock{.sampleRateHz = rateHz};
+            return impl == Impl::Coordinator
+                       ? coordinator.RequestClockConfig(guid, clock, DuplexRestartReason::kSampleRateChange)
+                       : sessions.ChangeClock(guid, clock, DuplexRestartReason::kSampleRateChange);
+        });
+    }
+    IOReturn Recover(const char* what, DuplexRestartReason reason, uint64_t observedRun = 0) {
+        return Call(std::string("RecoverStreaming ") + what, [&] {
+            return impl == Impl::Coordinator ? coordinator.RecoverStreaming(guid, reason, observedRun)
+                                             : sessions.RequestRestart(guid, reason, observedRun);
+        });
+    }
+    [[nodiscard]] uint64_t CurrentRun() const {
+        if (impl == Impl::Scheduler) {
+            const auto snapshot = sessions.Snapshot(guid);
+            return snapshot ? snapshot->run : 0;
+        }
+        const auto session = coordinator.GetSession(guid);
+        return session ? session->restartId : 0;
+    }
+
+    // A bus reset that rediscovers the same device on the next generation.
+    void BusReset() {
+        bus.BusReset();
+        const Generation next{bus.GetGeneration().value};
+        Install(next);
+        protocol->UpdateRuntimeContext(*registry.CurrentRoute(guid), nullptr);
+    }
+
+    // Make one device stage fail. A scripted family fails the stage itself; a
+    // real DICE protocol fails the bus transaction that stage depends on.
+    void FailDevice(const std::string& stage) {
+        if (!IsDice()) {
+            failures["device." + stage] = kIOReturnError;
+            return;
+        }
+        auto& dev = bus.Device();
+        if (stage == "prepare") {
+            bus.FailNext(OpKind::Lock, kDiceBaseAddressLo + dev.GlobalBase() + GlobalOffset::kOwnerHi,
+                         AsyncStatus::kTimeout);
+        } else if (stage == "program_rx") {
+            bus.FailNext(OpKind::Write,
+                         kDiceBaseAddressLo + dev.RxEntryBase(0) + RxOffset::kIsochronous,
+                         AsyncStatus::kTimeout);
+        } else if (stage == "program_tx") {
+            bus.FailNext(OpKind::Write,
+                         kDiceBaseAddressLo + dev.TxEntryBase(0) + TxOffset::kIsochronous,
+                         AsyncStatus::kTimeout);
+        } else if (stage == "confirm") {
+            // The device loses source lock just as the host starts transmitting.
+            hooks["host.start_transmit"] = [this] {
+                bus.Device().SetAchievedClock(ClockRateIndex::k48000, false);
+            };
+        } else {
+            ADD_FAILURE() << "no DICE fault for stage " << stage;
+        }
+    }
+
+    Impl impl;
+    SessionShape shape;
+    uint64_t guid;
+    RecordingFireWireBus bus;
+    NullFireWireBus nullBus;
+    ASFW::IRM::IRMClient irm;
+    Hooks hooks;
+    Failures failures;
+    TracingHostTransport host;
+    FakeTimerScheduler timer;
+    FakeDiceWaitClock waitClock{timer};
+    ASFW::Discovery::DeviceRegistry registry;
+    AudioRuntimeRegistry runtime;
+    HardwareInterface hardware{};
+    FakeBindingSource binding;
+    std::atomic<bool> cancel{false};
+    std::shared_ptr<IDeviceProtocol> protocol;
+    AudioDuplexCoordinator coordinator;
+    ASFW::Audio::Session::AudioSessions sessions;
+};
 
 } // namespace ASFW::Testing::Session

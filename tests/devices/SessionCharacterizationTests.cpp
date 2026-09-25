@@ -19,6 +19,7 @@
 #include "WireTrace.hpp"
 
 #include "Audio/Protocols/Backends/AudioDuplexCoordinator.hpp"
+#include "Audio/Session/AudioSessions.hpp"
 #include "DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 
 #include <atomic>
@@ -38,16 +39,6 @@ using ASFW::Driver::Register32;
 using ASFW::Testing::FakeDiceWaitClock;
 using ASFW::Testing::FakeTimerScheduler;
 namespace Ids = ASFW::DeviceProfiles::Audio;
-
-// Plain caps for the scripted families: two streams' worth of AM824 slots in
-// one stream per direction, the shape every AV/C unit here uses.
-constexpr AudioStreamRuntimeCaps kScriptedCaps{
-    .hostInputPcmChannels = 8,
-    .hostOutputPcmChannels = 8,
-    .deviceToHostAm824Slots = 9,
-    .hostToDeviceAm824Slots = 9,
-    .sampleRateHz = 48000,
-};
 
 struct ShapeCase {
     SessionShape shape;
@@ -75,138 +66,6 @@ const ShapeCase kShapes[] = {
      StreamStartShape::MAudioSpecial},
 };
 
-// One device, the session layer above it, and one trace for everything.
-struct SessionRig {
-    explicit SessionRig(const SessionShape& s)
-        : shape(s),
-          guid(SessionGuid(s)),
-          bus(s.diceImage != nullptr ? *s.diceImage : DiceDeviceImages::kSaffirePro24Dsp),
-          irm(nullBus),
-          host(bus.Trace(), hooks, failures),
-          coordinator(registry, runtime, host, hardware, &cancel,
-                      [this](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
-                          return &binding;
-                      }) {
-        NotificationMailbox::Reset();
-        hardware.SetTestRegister(Register32::kNodeID, 0);
-        bus.Device().ResetToIdle();
-        Install(Generation{1});
-        const auto route = *registry.CurrentRoute(guid);
-        if (s.diceImage == nullptr) {
-            protocol = std::make_shared<ScriptedDeviceControl>(bus.Trace(), hooks, failures, irm,
-                                                               kScriptedCaps);
-        } else if (s.spro24Dsp) {
-            protocol = std::make_shared<ASFW::Audio::DICE::Focusrite::SPro24DspProtocol>(
-                bus, bus, registry, route, &irm, waitClock);
-        } else {
-            protocol = std::make_shared<ASFW::Audio::DICE::TCAT::DICETcatProtocol>(
-                bus, bus, registry, route, &irm, waitClock);
-        }
-        EXPECT_EQ(protocol->Initialize(), kIOReturnSuccess);
-        protocol->AsDuplexDeviceControl()->SetTeardownCancelToken(&cancel);
-        runtime.Insert(guid, protocol);
-        bus.Trace().Clear();
-    }
-
-    ~SessionRig() { NotificationMailbox::Reset(); }
-
-    void Install(Generation gen) {
-        (void)registry.UpsertFromROM(
-            MakeSessionRom(shape, gen),
-            ASFW::Discovery::LinkPolicy{.localToNode = FwSpeed::S400, .isochToNode = FwSpeed::S400});
-    }
-
-    [[nodiscard]] bool IsDice() const noexcept { return shape.diceImage != nullptr; }
-
-    void Mark(const std::string& line) { bus.Trace().Add(line); }
-
-    template <typename Fn>
-    IOReturn Call(const std::string& what, Fn&& fn) {
-        Mark("## " + what);
-        const IOReturn status = fn();
-        Mark("## -> " + Status(status) +
-             " streaming=" + std::to_string(coordinator.IsStreaming(guid) ? 1 : 0));
-        return status;
-    }
-
-    IOReturn Start() {
-        return Call("StartStreaming", [&] { return coordinator.StartStreaming(guid); });
-    }
-    IOReturn Stop() {
-        return Call("StopStreaming", [&] { return coordinator.StopStreaming(guid); });
-    }
-    IOReturn Clock(uint32_t rateHz) {
-        return Call("RequestClockConfig " + std::to_string(rateHz), [&] {
-            return coordinator.RequestClockConfig(guid, AudioClockConfig{.sampleRateHz = rateHz},
-                                                  DuplexRestartReason::kSampleRateChange);
-        });
-    }
-    IOReturn Recover(const char* what, DuplexRestartReason reason, uint64_t observedRun = 0) {
-        return Call(std::string("RecoverStreaming ") + what, [&] {
-            return coordinator.RecoverStreaming(guid, reason, observedRun);
-        });
-    }
-    [[nodiscard]] uint64_t CurrentRun() const {
-        const auto session = coordinator.GetSession(guid);
-        return session ? session->restartId : 0;
-    }
-
-    // A bus reset that rediscovers the same device on the next generation.
-    void BusReset() {
-        bus.BusReset();
-        const Generation next{bus.GetGeneration().value};
-        Install(next);
-        protocol->UpdateRuntimeContext(*registry.CurrentRoute(guid), nullptr);
-    }
-
-    // Make one device stage fail. A scripted family fails the stage itself; a
-    // real DICE protocol fails the bus transaction that stage depends on.
-    void FailDevice(const std::string& stage) {
-        if (!IsDice()) {
-            failures["device." + stage] = kIOReturnError;
-            return;
-        }
-        auto& dev = bus.Device();
-        if (stage == "prepare") {
-            bus.FailNext(OpKind::Lock, kDiceBaseAddressLo + dev.GlobalBase() + GlobalOffset::kOwnerHi,
-                         AsyncStatus::kTimeout);
-        } else if (stage == "program_rx") {
-            bus.FailNext(OpKind::Write,
-                         kDiceBaseAddressLo + dev.RxEntryBase(0) + RxOffset::kIsochronous,
-                         AsyncStatus::kTimeout);
-        } else if (stage == "program_tx") {
-            bus.FailNext(OpKind::Write,
-                         kDiceBaseAddressLo + dev.TxEntryBase(0) + TxOffset::kIsochronous,
-                         AsyncStatus::kTimeout);
-        } else if (stage == "confirm") {
-            // The device loses source lock just as the host starts transmitting.
-            hooks["host.start_transmit"] = [this] {
-                bus.Device().SetAchievedClock(ClockRateIndex::k48000, false);
-            };
-        } else {
-            ADD_FAILURE() << "no DICE fault for stage " << stage;
-        }
-    }
-
-    SessionShape shape;
-    uint64_t guid;
-    RecordingFireWireBus bus;
-    NullFireWireBus nullBus;
-    ASFW::IRM::IRMClient irm;
-    Hooks hooks;
-    Failures failures;
-    TracingHostTransport host;
-    FakeTimerScheduler timer;
-    FakeDiceWaitClock waitClock{timer};
-    ASFW::Discovery::DeviceRegistry registry;
-    AudioRuntimeRegistry runtime;
-    HardwareInterface hardware{};
-    FakeBindingSource binding;
-    std::atomic<bool> cancel{false};
-    std::shared_ptr<IDeviceProtocol> protocol;
-    AudioDuplexCoordinator coordinator;
-};
-
 struct ScopedLifecycleAssertOff {
     ScopedLifecycleAssertOff() { ASFW::Audio::Backends::gDisableLifecycleAssertForTesting.store(true); }
     ~ScopedLifecycleAssertOff() { ASFW::Audio::Backends::gDisableLifecycleAssertForTesting.store(false); }
@@ -215,19 +74,26 @@ struct ScopedLifecycleAssertOff {
 struct Scenario {
     const char* key;
     void (*run)(SessionRig&);
+    // The scheduler deliberately behaves differently here: it compares against
+    // <key>.scheduler.trace instead. Each such delta is explained at the scenario.
+    bool schedulerDelta{false};
 };
 
 const Scenario kScenarios[] = {
     {"cold-start", [](SessionRig& r) { r.Start(); }},
     {"stop", [](SessionRig& r) { r.Start(); r.Stop(); }},
     {"double-stop", [](SessionRig& r) { r.Start(); r.Stop(); r.Stop(); }},
-    {"double-start", [](SessionRig& r) { r.Start(); r.Start(); }},
+    // Delta: the coordinator re-runs the whole start over the running streams;
+    // the scheduler sees nothing to change.
+    {"double-start", [](SessionRig& r) { r.Start(); r.Start(); }, true},
     // A runtime fault queued during StopIO's teardown and run after it.
+    // Delta: the coordinator restarts the streams CoreAudio just stopped; the
+    // scheduler refuses (nothing should run, so there is nothing to recover).
     {"fault-after-stop", [](SessionRig& r) {
          r.Start();
          r.Stop();
          r.Recover("timing-loss", DuplexRestartReason::kRecoverAfterTimingLoss);
-     }},
+     }, true},
     {"clock-change-running", [](SessionRig& r) { r.Start(); r.Clock(44100); }},
     {"idle-clock-then-start", [](SessionRig& r) { r.Clock(44100); r.Start(); }},
     {"recover-bus-reset", [](SessionRig& r) {
@@ -280,31 +146,35 @@ const Scenario kScenarios[] = {
     // transition, which asserts (live in the dext: no build defines NDEBUG).
     // The trace records the refusal with the assertion disabled. Only a scripted
     // device exposes this point in the sequence.
+    // Delta: the scheduler has nothing to stop and reports success.
     {"stop-after-refused-start", [](SessionRig& r) {
          r.hooks["device.geometry"] = [&r] { r.BusReset(); };
          r.Start();
          ScopedLifecycleAssertOff off;
          r.Stop();
-     }},
+     }, true},
 };
 
 class SessionCharacterization
-    : public ::testing::TestWithParam<std::tuple<ShapeCase, Scenario>> {};
+    : public ::testing::TestWithParam<std::tuple<Impl, ShapeCase, Scenario>> {};
 
 TEST_P(SessionCharacterization, MatchesGolden) {
-    const auto& [shapeCase, scenario] = GetParam();
-    SessionRig rig(shapeCase.shape);
+    const auto& [impl, shapeCase, scenario] = GetParam();
+    SessionRig rig(shapeCase.shape, impl);
     scenario.run(rig);
+    const bool delta = impl == Impl::Scheduler && scenario.schedulerDelta;
     ExpectMatchesGolden(rig.bus.Trace(), std::string("session/") + shapeCase.shape.key + "/" +
-                                             scenario.key + ".trace");
+                                             scenario.key + (delta ? ".scheduler.trace" : ".trace"));
 }
 
 INSTANTIATE_TEST_SUITE_P(
     Recorded, SessionCharacterization,
-    ::testing::Combine(::testing::ValuesIn(kShapes), ::testing::ValuesIn(kScenarios)),
+    ::testing::Combine(::testing::Values(Impl::Coordinator, Impl::Scheduler),
+                       ::testing::ValuesIn(kShapes), ::testing::ValuesIn(kScenarios)),
     [](const auto& info) {
-        std::string name = std::string(std::get<0>(info.param).shape.key) + "_" +
-                           std::get<1>(info.param).key;
+        std::string name = std::string(std::get<0>(info.param) == Impl::Coordinator ? "coordinator_"
+                                                                                    : "scheduler_") +
+                           std::get<1>(info.param).shape.key + "_" + std::get<2>(info.param).key;
         for (char& c : name) {
             if (c == '-') {
                 c = '_';
