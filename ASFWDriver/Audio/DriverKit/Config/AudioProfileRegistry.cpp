@@ -13,13 +13,7 @@
 #include "AVC/Phase88Profile.hpp"
 #include "AVC/MAudioSpecialProfile.hpp"
 
-#include "DICE/Isoch/Profiles/AlesisMultiMixProfile.hpp"
-#include "DICE/Isoch/Profiles/FocusriteSaffireProfile.hpp"
-#include "DICE/Isoch/Profiles/GenericDiceProfile.hpp"
-#include "DICE/Isoch/Profiles/MidasVeniceProfile.hpp"
-#include "DICE/Isoch/Profiles/PreSonusStudioLive2442Profile.hpp"
-#include "DICE/Isoch/Profiles/PreSonusStudioLiveProfile.hpp"
-#include "DICE/Isoch/Profiles/WeissIntProfile.hpp"
+#include "DICE/DiceProfile.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
@@ -35,18 +29,40 @@ std::unordered_map<uint64_t, std::unique_ptr<IAudioDeviceProfile>>& AudioProfile
 
 namespace {
 
-// The DICE profile singletons. They used to be selected by walking a registry
-// and asking each one Matches(vendorId, modelId) -- a fifth independent device
-// matcher, and the one that gave the StudioLive 24.4.2 a profile while the
-// protocol factory had no clause for it (issue #115). The catalog answers that
-// question now, so these are just objects with names.
-DICE::Profiles::FocusriteSaffireProfile gFocusriteProfile{};
-DICE::Profiles::FocusriteSaffirePro40Profile gFocusritePro40Profile{};
-DICE::Profiles::MidasVeniceProfile gMidasVeniceProfile{};
-DICE::Profiles::PreSonusStudioLiveProfile gPreSonusStudioLiveProfile{};
-DICE::Profiles::PreSonusStudioLive2442Profile gPreSonusStudioLive2442Profile{};
-DICE::Profiles::AlesisMultiMixProfile gAlesisMultiMixProfile{};
-DICE::Profiles::WeissIntProfile gWeissIntProfile{};
+// The DICE profiles: one class, one spec per catalog builder, holding only
+// what the device cannot report (DICE_TCAT_ARCHITECTURE.md §4.1). The catalog
+// picks the builder; nothing here matches on identity (issue #115 was a
+// profile matcher that disagreed with the protocol factory).
+using DICE::DiceProfile;
+using DICE::DiceRangeMember;
+
+// One Venice identity covers the F16, F24 and F32; the model number is the
+// capture width (documentation/fixtures/DICE/midasF24.txt).
+constexpr DiceRangeMember kVeniceMembers[] = {
+    {16, "Midas Venice F16"},
+    {24, "Midas Venice F24"},
+    {32, "Midas Venice F32"},
+};
+
+DiceProfile gFocusriteProfile{{.name = "Focusrite Saffire (DICE)"}};
+DiceProfile gFocusritePro40Profile{{.name = "Focusrite Saffire Pro 40"}};
+DiceProfile gMidasVeniceProfile{{.name = "Midas Venice F (DICE)", .rangeMembers = kVeniceMembers}};
+DiceProfile gPreSonusStudioLiveProfile{{.name = "PreSonus StudioLive 16.0.2 (DICE)"}};
+DiceProfile gPreSonusStudioLive2442Profile{{.name = "PreSonus StudioLive 24.4.2 (DICE)"}};
+// Alesis leaves the non-audio slots alone, and has one playback stream whatever
+// its register says (libffado dice_avdevice.cpp:1686-1700).
+DiceProfile gAlesisMultiMixProfile{{.name = "Alesis MultiMix FireWire (DICE)",
+                                    .initializeNonAudioSlots = false,
+                                    .assertedPlaybackStreams = 1}};
+// Weiss still sends AM824, unlike WeissFirewire.kext's raw path; it has never
+// run on hardware, so the flip waits for evidence (§3.2).
+DiceProfile gWeissIntProfile{{.name = "Weiss INT (DICE)",
+                              .txEncoding = Encoding::AudioWireFormat::kAM824,
+                              .preserveFdfInNoDataPackets = false}};
+// The registry's last resort, for a nub whose builder did not travel.
+DiceProfile gGenericDiceProfile{{.name = "Generic DICE",
+                                 .txEncoding = Encoding::AudioWireFormat::kAM824,
+                                 .preserveFdfInNoDataPackets = false}};
 
 AVC::Profiles::ApogeeDuetProfile gApogeeDuetProfile{};
 AVC::Profiles::Phase88Profile gPhase88Profile{};
@@ -59,15 +75,12 @@ MOTU::Profiles::MotuV2Profile gMotuUltraliteProfile{
 MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
     DeviceProfiles::Audio::kMotu828mk2SwVersion};
 
-/// The DICE half, kept separate so callers that need the richer
-/// IDiceDeviceProfile interface get it without a downcast. Returns nullptr for
-/// every non-DICE builder.
-[[nodiscard]] const DICE::IDiceDeviceProfile* DiceProfileForBuilder(
+/// The DICE half, kept separate so DICE callers get the DICE profile without a
+/// downcast. Returns nullptr for every non-DICE builder.
+[[nodiscard]] const DICE::DiceProfile* DiceProfileForBuilder(
     DeviceProfiles::Audio::ProfileBuilderId builder) noexcept {
     using Builder = DeviceProfiles::Audio::ProfileBuilderId;
     switch (builder) {
-        // The Pro 40 is the one Saffire with geometry of its own; the rest
-        // share the base profile.
         case Builder::FocusriteSPro40:
             return &gFocusritePro40Profile;
         case Builder::FocusriteSPro14:
@@ -175,7 +188,7 @@ const IAudioDeviceProfile* AudioProfileRegistry::ProfileForBuilderId(
     return ProfileForBuilder(static_cast<Builder>(profileBuilderId));
 }
 
-const DICE::IDiceDeviceProfile* AudioProfileRegistry::DiceProfileForBuilderId(
+const DICE::DiceProfile* AudioProfileRegistry::DiceProfileForBuilderId(
     uint32_t profileBuilderId) noexcept {
     using Builder = DeviceProfiles::Audio::ProfileBuilderId;
     if (profileBuilderId == 0 ||
@@ -218,8 +231,7 @@ const IAudioDeviceProfile* AudioProfileRegistry::FindProfile(uint32_t vendorId,
     // The generic DICE fallback. Reaching it means either an unrecognised
     // device -- which is correct -- or a builder that did not travel, which the
     // warning above has already reported.
-    static DICE::Profiles::GenericDiceProfile genericProfile{};
-    return &genericProfile;
+    return &gGenericDiceProfile;
 }
 
 const IAudioDeviceProfile* AudioProfileRegistry::RegisterBeBoBProfile(

@@ -21,7 +21,7 @@
 
 #include "Audio/DriverKit/ASFWAudioDriverPrivate.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
-#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.hpp"
+#include "Audio/DriverKit/Config/DICE/DiceProfile.hpp"
 #include "Audio/DriverKit/Config/ResolvedStreamConfig.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "Isoch/Core/IsochTxQueue.hpp"
@@ -93,6 +93,12 @@ public:
 
     // Mirrors StartIO: select the clock domain, arm the producer on freshly
     // mapped memory, prefill one lap, then hand the queue to the transport.
+    // One playback stream as the nub publishes it after resolution.
+    void SetResolvedPlayback(const ASFW::Isoch::Audio::ParsedWireStream& stream) {
+        ivars_.device.playbackStreams[0] = stream;
+        ivars_.device.playbackStreamCount = 1;
+    }
+
     [[nodiscard]] bool Start(const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
                              ProfileBuilderId builder,
                              uint32_t sampleRateHz) {
@@ -103,8 +109,12 @@ public:
             return false;
         }
 
+        // As StartIO frames stream 0: the device's resolved geometry when the
+        // nub carried it, otherwise the profile's own.
         ASFW::Isoch::Audio::AudioStreamConfig txConfig{};
-        if (!profile.BuildDefaultTxStreamConfig(txConfig)) {
+        if (!ASFW::Isoch::Audio::BuildResolvedTxStreamConfig(
+                profile, ivars_.device.playbackStreams, ivars_.device.playbackStreamCount, 0,
+                txConfig)) {
             return false;
         }
         txConfig.sampleRate = sampleRateHz;
@@ -403,8 +413,12 @@ uint8_t BlocksIn(const WirePacket& packet, uint32_t dbs) {
 }
 
 TEST(AudioDriverTxProducerTests, SaffireReplaysRxTimingOnceReplayEstablishes) {
-    ASFW::Isoch::Audio::DICE::Profiles::FocusriteSaffireProfile profile;
+    // The registry's Saffire entry: the default spec, named.
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
     TxProducerRig rig;
+    // The DICE profile states no geometry; the device reports one playback
+    // stream of 8 PCM + 1 MIDI (DBS 9), and it crosses the nub resolved.
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
     ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
     rig.FeedBlockingRx(8);
     ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();

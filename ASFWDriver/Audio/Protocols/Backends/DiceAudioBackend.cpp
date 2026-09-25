@@ -18,7 +18,7 @@
 #include "../DeviceProtocolChoice.hpp"
 #include "../../DriverKit/Config/AudioDriverConfig.hpp"
 #include "../../DriverKit/Config/AudioProfileRegistry.hpp"
-#include "../../DriverKit/Config/DICE/DiceDeviceProfile.hpp"
+#include "../../DriverKit/Config/DICE/DiceProfile.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSSharedPtr.h>
@@ -44,28 +44,13 @@ namespace {
     return static_cast<uint64_t>(nanos / 1'000'000U);
 }
 
-// Report how the device's own DICE registers compare with the profile's
-// compiled-in constants, for every playback (DICE RX) stream.
-//
-// These are the two descriptions of the same streams that used to be consumed
-// by different layers without ever meeting: DuplexStreamProfile reserves isoch
-// bandwidth from the caps, while ASFWAudioDevice::StartIO frames CIP from the
-// profile. A disagreement therefore shipped correctly-reserved bandwidth
-// carrying wrongly-framed packets, and the symptom was silence with nothing
-// logged. This is the first place both sides are in scope, so it is where they
-// get compared. See StreamGeometryResolver.hpp for the precedence rule and why
-// it is the device's.
-//
-// Stage 4: this now RESOLVES rather than reports. It answers both directions
-// -- capture was previously never compared at all -- and returns a
-// ResolvedDeviceGeometry whose Usable() is the refusal the resolver's contract
-// always required.
-//
-// The verdict is not yet enforced at the start path: the consumers
-// (AudioStreamProfile::Tx/RxChannelCount and ASFWAudioDevice::StartIO's
-// BuildTxStreamConfig call) still read the profile, and switching them is the
-// next step. Until then a disagreement is a loud, named refusal in the log
-// rather than a silent mis-framing.
+// The device's own DICE registers describe its streams, and every consumer
+// reads that one description: bandwidth (DuplexStreamProfile), capture framing
+// (IsochDuplexHostTransport) and playback framing (the nub's per-stream arrays,
+// BuildResolvedTxStreamConfig). The profile states no geometry
+// (DICE_TCAT_ARCHITECTURE.md §4.2 stage C). What is left to check here: the one
+// stream count a reference stack says a device overstates, and that the device
+// described something usable. See StreamGeometryResolver.hpp.
 
 [[nodiscard]] constexpr uint32_t ClampStreamCountToHost(uint32_t count) noexcept {
     return (count < kMaxAudioStreamsPerDirection) ? count : kMaxAudioStreamsPerDirection;
@@ -82,77 +67,10 @@ namespace {
             .midiPorts = wire.midiPorts};
 }
 
-// Seeding a direction means "let the device's answer win without argument".
-// That is only SAFE where the device's answer actually reaches the code that
-// frames packets. Both directions now qualify:
-//
-//   - Bandwidth and transport geometry come from the device in both directions
-//     (DuplexStreamProfile::Build reads caps.{deviceToHost,hostToDevice}Streams).
-//   - CAPTURE encoding: IsochDuplexHostTransport hands caps-derived per-stream
-//     geometry to DirectAudioReceiveConsumer.
-//   - PLAYBACK encoding and packet allocation: the resolved per-stream geometry
-//     is published across the nub (Audio/Model/AudioPropertyKeys.hpp) and
-//     ASFWAudioDevice::StartIO builds each stream from it via
-//     BuildResolvedTxStreamConfig, keeping only the framing constants the DICE
-//     registers do not hold.
-//
-// Playback was false until that last line was true. While it was, a seeded
-// playback geometry disagreeing with the device would have been waved through
-// at publication and then mis-framed -- the recorded Venice F24 carries 16 + 8
-// while its F32 profile says 16 + 16, so stream 1 was built at 16 channels /
-// DBS 16 into an 8-slot stream. It now resolves to 16 + 8 end to end.
-//
-// These stay as named constants rather than being deleted: they are the
-// statement of WHICH directions have been migrated, and the next family to move
-// off profile constants needs the same question asked of it.
-inline constexpr bool kPlaybackEncodingIsDeviceSourced = true;
-inline constexpr bool kCaptureEncodingIsDeviceSourced = true;
-
 /// Playback streams ASFWAudioDevice::StartIO can allocate: one primary plus one
 /// secondary. Kept here as well so publication and start refuse the same
 /// devices; StartIO carries the matching bound.
 inline constexpr uint32_t kMaxPlaybackStreamsSupported = 2;
-
-// Does this profile ASSERT the direction's geometry, or only seed it? The
-// resolver takes a bool (it is deliberately free of profile headers), so this
-// is the one place the profile's enum is read.
-[[nodiscard]] bool AssertsGeometry(
-    ASFW::Isoch::Audio::StreamGeometryAuthority authority) noexcept {
-    return authority == ASFW::Isoch::Audio::StreamGeometryAuthority::kAsserted;
-}
-
-// Capture: honour what the profile declares -- the device already drives
-// capture framing, so accepting its answer costs nothing.
-[[nodiscard]] bool CaptureGeometryIsAsserted(
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) noexcept {
-    return TreatProfileAsAsserted(AssertsGeometry(profile.CaptureGeometryAuthority()),
-                                  kCaptureEncodingIsDeviceSourced);
-}
-
-// Playback: a declared seed is treated as an ASSERTION while framing still
-// reads the profile, so a disagreement refuses publication instead of shipping
-// a mis-framed stream. The profile's own declaration is left untouched -- it
-// describes what its constants MEAN; this decides what we can safely act on.
-[[nodiscard]] bool PlaybackGeometryIsAsserted(
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) noexcept {
-    return TreatProfileAsAsserted(AssertsGeometry(profile.PlaybackGeometryAuthority()),
-                                  kPlaybackEncodingIsDeviceSourced);
-}
-
-[[nodiscard]] WireStreamGeometry PlaybackGeometryFromProfile(
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
-    if (!PlaybackGeometryIsAsserted(profile)) {
-        return {};
-    }
-    ASFW::Isoch::Audio::AudioStreamConfig config{};
-    if (index >= ClampStreamCountToHost(profile.TxStreamCount()) ||
-        !profile.BuildTxStreamConfig(index, config)) {
-        return {};
-    }
-    return {.pcmChannels = config.pcmChannels,
-            .am824Slots = config.dbs,
-            .midiPorts = config.midiSlots};
-}
 
 [[nodiscard]] WireStreamGeometry CaptureGeometryFromDevice(
     const AudioStreamRuntimeCaps& caps, uint32_t index) noexcept {
@@ -165,24 +83,9 @@ inline constexpr uint32_t kMaxPlaybackStreamsSupported = 2;
             .midiPorts = wire.midiPorts};
 }
 
-// Indexed, like the playback side: a profile describing unequal capture streams
-// is compared stream by stream rather than every stream against stream 0.
-// Using the default config here would have made an asymmetric profile report a
-// correct aggregate while the resolver silently compared the wrong shapes.
-// ASFW's profile naming inverts: Rx* is host capture.
-[[nodiscard]] WireStreamGeometry CaptureGeometryFromProfile(
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile, uint32_t index) noexcept {
-    if (!CaptureGeometryIsAsserted(profile)) {
-        return {};
-    }
-    ASFW::Isoch::Audio::AudioStreamConfig config{};
-    if (index >= ClampStreamCountToHost(profile.RxStreamCount()) ||
-        !profile.BuildRxStreamConfig(index, config)) {
-        return {};
-    }
-    return {.pcmChannels = config.pcmChannels,
-            .am824Slots = config.dbs,
-            .midiPorts = config.midiSlots};
+// The profile states no per-stream geometry.
+[[nodiscard]] constexpr WireStreamGeometry NoProfileGeometry(uint32_t) noexcept {
+    return {};
 }
 
 // Log one direction's resolution. The resolution itself is
@@ -230,7 +133,7 @@ void LogDirection(const char* directionName,
 [[nodiscard]] ResolvedDeviceGeometry ResolveDeviceStreamGeometry(
     uint64_t guid,
     const AudioStreamRuntimeCaps& caps,
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile& profile) {
     static_assert(kMaxResolvedStreams == kMaxAudioStreamsPerDirection,
                   "resolver bound drifted from the host array bound");
     static_assert(kMaxResolvedStreams == ASFW::Isoch::Audio::kMaxConfiguredStreams,
@@ -238,15 +141,13 @@ void LogDirection(const char* directionName,
 
     ResolvedDeviceGeometry resolved{};
     resolved.capture = ResolveDirectionGeometry(
-        caps.deviceToHostStreamCount,
-        ProfileStatedStreamCount(CaptureGeometryIsAsserted(profile), profile.RxStreamCount()),
-        [&caps](uint32_t i) { return CaptureGeometryFromDevice(caps, i); },
-        [&profile](uint32_t i) { return CaptureGeometryFromProfile(profile, i); });
+        caps.deviceToHostStreamCount, 0,
+        [&caps](uint32_t i) { return CaptureGeometryFromDevice(caps, i); }, NoProfileGeometry);
+    // A device whose register overstates its playback streams is refused
+    // rather than armed on a stream it does not have.
     resolved.playback = ResolveDirectionGeometry(
-        caps.hostToDeviceStreamCount,
-        ProfileStatedStreamCount(PlaybackGeometryIsAsserted(profile), profile.TxStreamCount()),
-        [&caps](uint32_t i) { return PlaybackGeometryFromDevice(caps, i); },
-        [&profile](uint32_t i) { return PlaybackGeometryFromProfile(profile, i); });
+        caps.hostToDeviceStreamCount, profile.AssertedPlaybackStreams(),
+        [&caps](uint32_t i) { return PlaybackGeometryFromDevice(caps, i); }, NoProfileGeometry);
 
     LogDirection("capture", guid, resolved.capture);
     LogDirection("playback", guid, resolved.playback);
@@ -836,9 +737,7 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // scalars and must not have to re-derive it.
     dev.profileBuilderId = profileBuilderId;
     dev.deviceName = profile->Name();
-    dev.inputChannelCount = profile->RxChannelCount();
-    dev.outputChannelCount = profile->TxChannelCount();
-    dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
+    // Channel counts come from the device's caps below; the profile states none.
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
     // The rate set comes from the device once its caps are loaded (below);

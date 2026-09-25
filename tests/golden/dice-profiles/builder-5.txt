@@ -9,14 +9,15 @@ nameForGeometry in=0 out=2 -> Weiss INT (DICE)
 nameForGeometry in=12 out=8 -> Weiss INT (DICE)
 nameForGeometry in=20 out=20 -> Weiss INT (DICE)
 wire tx=0 rx=0
-channels tx=2 rx=0 midi tx=0 rx=0 dbs tx=2 rx=2
-streams tx=1 rx=1 authority playback=asserted capture=asserted
+channels tx=0 rx=0 midi tx=0 rx=0 dbs tx=0 rx=0
+streams tx=1 rx=1
+assertedPlaybackStreams=0
 txPolicy enc=0 variableDbs=0 nonAudioWord=0x80000000 initNonAudio=1 preserveFdf=0 emptyIdle=0 cadenceData=0 cadenceWord=0xcf000000 dbcEnd=0
 txClock=rx-replay anchorTimeoutMs=500
-defaultTx dir=0 rate=48000 mode=1 sid=0 pcm=2 dbs=2 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
-defaultRx dir=1 rate=48000 mode=1 sid=0 pcm=2 dbs=2 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
-tx[0] dir=0 rate=48000 mode=1 sid=0 pcm=2 dbs=2 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
-rx[0] dir=1 rate=48000 mode=1 sid=0 pcm=2 dbs=2 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+defaultTx dir=0 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+defaultRx dir=1 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+tx[0] dir=0 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+rx[0] dir=1 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
 tx[1] none
 rx[1] none
 tx[2] none

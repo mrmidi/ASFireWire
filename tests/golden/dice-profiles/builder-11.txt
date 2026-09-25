@@ -9,14 +9,15 @@ nameForGeometry in=0 out=2 -> PreSonus StudioLive 16.0.2 (DICE)
 nameForGeometry in=12 out=8 -> PreSonus StudioLive 16.0.2 (DICE)
 nameForGeometry in=20 out=20 -> PreSonus StudioLive 16.0.2 (DICE)
 wire tx=1 rx=0
-channels tx=16 rx=16 midi tx=1 rx=1 dbs tx=17 rx=17
-streams tx=1 rx=1 authority playback=asserted capture=asserted
+channels tx=0 rx=0 midi tx=0 rx=0 dbs tx=0 rx=0
+streams tx=1 rx=1
+assertedPlaybackStreams=0
 txPolicy enc=1 variableDbs=0 nonAudioWord=0x80000000 initNonAudio=1 preserveFdf=1 emptyIdle=0 cadenceData=0 cadenceWord=0xcf000000 dbcEnd=0
 txClock=rx-replay anchorTimeoutMs=500
-defaultTx dir=0 rate=48000 mode=1 sid=0 pcm=16 dbs=17 midi=1 fpp=8 fdf=0x02 fmt=0x10 offset=0
-defaultRx dir=1 rate=48000 mode=1 sid=0 pcm=16 dbs=17 midi=1 fpp=8 fdf=0x02 fmt=0x10 offset=0
-tx[0] dir=0 rate=48000 mode=1 sid=0 pcm=16 dbs=17 midi=1 fpp=8 fdf=0x02 fmt=0x10 offset=0
-rx[0] dir=1 rate=48000 mode=1 sid=0 pcm=16 dbs=17 midi=1 fpp=8 fdf=0x02 fmt=0x10 offset=0
+defaultTx dir=0 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+defaultRx dir=1 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+tx[0] dir=0 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+rx[0] dir=1 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
 tx[1] none
 rx[1] none
 tx[2] none

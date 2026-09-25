@@ -10,27 +10,21 @@
 #include "Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/DiceDeviceProfile.hpp"
+#include "Audio/DriverKit/Config/DICE/DiceProfile.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "Discovery/DiscoveryTypes.hpp"
-#include "Audio/DriverKit/Config/DICE/DiceDeviceProfile.hpp"
-#include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
-#include "Discovery/DiscoveryTypes.hpp"
-#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/AlesisMultiMixProfile.hpp"
-#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.hpp"
-#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.hpp"
-#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.hpp"
-#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.hpp"
-#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/WeissIntProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
+#include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 #include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
 namespace {
 
 using namespace ASFW::Isoch::Audio;
 using namespace ASFW::Isoch::Audio::DICE;
+using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
 
 // The profile registry no longer matches on identity: the device catalog does
 // that once, and its answer travels to the audio side as a ProfileBuilderId on
@@ -118,117 +112,65 @@ TEST(DiceProfileTests, ResolvesFocusriteSaffireProfileByVendorAndModel) {
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
-    EXPECT_EQ(profile->TxChannelCount(), 8);
-    EXPECT_EQ(profile->RxChannelCount(), 16);
-    EXPECT_EQ(profile->TxMidiSlots(), 1);
-    EXPECT_EQ(profile->RxMidiSlots(), 1);
-    EXPECT_EQ(profile->TxDbs(), 9);
-    EXPECT_EQ(profile->RxDbs(), 17);
-
     const auto* diceProfile =
         static_cast<const IDiceDeviceProfile*>(profile);
     EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
 }
 
-TEST(DiceProfileTests, ResolvesOriginalPro40LowRateGeometry) {
+TEST(DiceProfileTests, ResolvesOriginalPro40ByModel) {
     constexpr uint32_t kFocusriteVendorId = 0x00130E;
     const auto* profile = FindDiceProfile(kFocusriteVendorId, 0x000005U);
 
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "Focusrite Saffire Pro 40");
-    EXPECT_EQ(profile->TxChannelCount(), 20U);
-    EXPECT_EQ(profile->RxChannelCount(), 20U);
-    const auto* streamProfile = static_cast<const IAudioStreamProfile*>(profile);
-    EXPECT_EQ(streamProfile->TxStreamCount(), 2U);
-    EXPECT_EQ(streamProfile->RxStreamCount(), 2U);
     // Same TX encoding as every Saffire: Focusrite's own kext sends the Pro 40
     // raw 24-in-32 PCM with no AM824 label.
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
-
-    AudioStreamConfig primary{}, secondary{};
-    ASSERT_TRUE(streamProfile->BuildTxStreamConfig(0, primary));
-    ASSERT_TRUE(streamProfile->BuildTxStreamConfig(1, secondary));
-    EXPECT_EQ(primary.pcmChannels, 12U);
-    EXPECT_EQ(primary.dbs, 13U);
-    EXPECT_EQ(primary.midiSlots, 1U);
-    EXPECT_EQ(primary.sourceChannelOffset, 0U);
-    EXPECT_EQ(secondary.pcmChannels, 8U);
-    EXPECT_EQ(secondary.dbs, 8U);
-    EXPECT_EQ(secondary.midiSlots, 0U);
-    EXPECT_EQ(secondary.sourceChannelOffset, 12U);
-    AudioStreamConfig capture{};
-    ASSERT_TRUE(streamProfile->BuildDefaultRxStreamConfig(capture));
-    EXPECT_EQ(capture.pcmChannels, 10U);
-    EXPECT_EQ(capture.dbs, 11U);
-    EXPECT_EQ(capture.midiSlots, 1U);
-    EXPECT_FALSE(streamProfile->BuildTxStreamConfig(2, secondary));
 }
 
-// The recorded dump is capture 10 PCM + MIDI, then 10 PCM alone. Both streams
-// are the same width, so the PCM total is right either way -- what the base's
-// repeat-stream-0 default got wrong is the DATA BLOCK SIZE, by putting a MIDI
-// slot on a stream that does not carry one.
-TEST(DiceProfileTests, Pro40CaptureStreamsDifferOnlyInTheirMidiSlot) {
-    const auto* profile = FindDiceProfile(0x00130E, 0x000005U);
-    ASSERT_NE(profile, nullptr);
-    const auto* streamProfile = static_cast<const IAudioStreamProfile*>(profile);
+// A DICE profile states no stream geometry: channel counts, stream counts and
+// slot layout come from the device's TX/RX registers (DICE_TCAT_ARCHITECTURE.md
+// §4.1), as in every TCAT kext. The default configs carry framing constants only.
+TEST(DiceProfileTests, DiceProfilesStateNoStreamGeometry) {
+    for (uint32_t id = 1; id <= static_cast<uint32_t>(ProfileBuilderId::kLastValid); ++id) {
+        const auto* profile = AudioProfileRegistry::DiceProfileForBuilderId(id);
+        if (profile == nullptr) {
+            continue;
+        }
+        EXPECT_EQ(profile->TxChannelCount(), 0U) << "builder " << id;
+        EXPECT_EQ(profile->RxChannelCount(), 0U) << "builder " << id;
 
-    AudioStreamConfig first{}, second{};
-    ASSERT_TRUE(streamProfile->BuildRxStreamConfig(0, first));
-    ASSERT_TRUE(streamProfile->BuildRxStreamConfig(1, second));
-
-    EXPECT_EQ(first.pcmChannels, 10U);
-    EXPECT_EQ(first.midiSlots, 1U);
-    EXPECT_EQ(first.dbs, 11U);
-    EXPECT_EQ(first.sourceChannelOffset, 0U);
-
-    EXPECT_EQ(second.pcmChannels, 10U);
-    EXPECT_EQ(second.midiSlots, 0U);
-    EXPECT_EQ(second.dbs, 10U);  // 11 would be stream 0's shape repeated.
-    EXPECT_EQ(second.sourceChannelOffset, 10U);
-
-    EXPECT_FALSE(streamProfile->BuildRxStreamConfig(2, second));
-
-    // And the aggregate is the sum of those two, not a separately stated total:
-    // the hand-written TxChannelCount() override that used to say 20 is gone,
-    // so 12 + 8 has to produce it.
-    EXPECT_EQ(profile->TxChannelCount(), 20U);
-    EXPECT_EQ(profile->RxChannelCount(), 20U);
+        AudioStreamConfig tx{}, rx{};
+        ASSERT_TRUE(profile->BuildDefaultTxStreamConfig(tx)) << "builder " << id;
+        ASSERT_TRUE(profile->BuildDefaultRxStreamConfig(rx)) << "builder " << id;
+        for (const auto& config : {tx, rx}) {
+            EXPECT_EQ(config.pcmChannels, 0U) << "builder " << id;
+            EXPECT_EQ(config.dbs, 0U) << "builder " << id;
+            EXPECT_EQ(config.midiSlots, 0U) << "builder " << id;
+            EXPECT_EQ(config.framesPerDataPacket, 8U) << "builder " << id;
+            EXPECT_EQ(config.fdf, 0x02U) << "builder " << id;
+            EXPECT_EQ(config.fmt, 0x10U) << "builder " << id;
+            EXPECT_EQ(config.streamMode, ASFW::Encoding::StreamMode::kBlocking)
+                << "builder " << id;
+        }
+    }
 }
 
-// The Pro 40 knows its geometry -- a register dump plus FFADO
-// saffire_pro40.cpp:50-97 -- so it asserts it, and a device contradicting it is
-// a real conflict rather than a seed being replaced.
-TEST(DiceProfileTests, Pro40AssertsItsGeometryInBothDirections) {
-    const auto* profile = FindDiceProfile(0x00130E, 0x000005U);
-    ASSERT_NE(profile, nullptr);
-    const auto* streamProfile = static_cast<const IAudioStreamProfile*>(profile);
-    EXPECT_EQ(streamProfile->CaptureGeometryAuthority(),
-              ASFW::Isoch::Audio::StreamGeometryAuthority::kAsserted);
-    EXPECT_EQ(streamProfile->PlaybackGeometryAuthority(),
-              ASFW::Isoch::Audio::StreamGeometryAuthority::kAsserted);
-}
-
-// Alesis: the two directions carry different authority, which is why it is a
-// per-direction question. Playback is libffado's forced nb_rx = 1
-// (dice_avdevice.cpp:1686-1700); capture never had a reference behind it.
-TEST(DiceProfileTests, AlesisMultiMixAssertsPlaybackButSeedsCapture) {
-    Profiles::AlesisMultiMixProfile profile;
-    EXPECT_EQ(profile.PlaybackGeometryAuthority(),
-              ASFW::Isoch::Audio::StreamGeometryAuthority::kAsserted);
-    EXPECT_EQ(profile.CaptureGeometryAuthority(),
-              ASFW::Isoch::Audio::StreamGeometryAuthority::kSeed);
-    EXPECT_EQ(profile.TxStreamCount(), 1U);
-}
-
-TEST(DiceProfileTests, UniformPlaybackStreamsKeepDisjointChannelSlices) {
-    Profiles::MidasVeniceProfile profile;
-    AudioStreamConfig primary{}, secondary{};
-    ASSERT_TRUE(profile.BuildTxStreamConfig(0, primary));
-    ASSERT_TRUE(profile.BuildTxStreamConfig(1, secondary));
-    EXPECT_EQ(primary.sourceChannelOffset, 0U);
-    EXPECT_EQ(secondary.sourceChannelOffset, 16U);
+// The one geometry fact a profile keeps: libffado forces nb_rx = 1 for the
+// Alesis MultiMix because the device "announces two receive transmitters, but
+// only has one" (dice_avdevice.cpp:1686-1700). Every other profile takes the
+// device's count.
+TEST(DiceProfileTests, OnlyTheMultiMixInsistsOnItsPlaybackStreamCount) {
+    for (uint32_t id = 1; id <= static_cast<uint32_t>(ProfileBuilderId::kLastValid); ++id) {
+        const auto* profile = AudioProfileRegistry::DiceProfileForBuilderId(id);
+        if (profile == nullptr) {
+            continue;
+        }
+        const bool multiMix =
+            id == static_cast<uint32_t>(ProfileBuilderId::AlesisMultiMix);
+        EXPECT_EQ(profile->AssertedPlaybackStreams(), multiMix ? 1U : 0U) << "builder " << id;
+    }
 }
 
 TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
@@ -239,17 +181,15 @@ TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
-    EXPECT_EQ(profile->TxChannelCount(), 2);
-    EXPECT_EQ(profile->RxChannelCount(), 2);
-    EXPECT_EQ(profile->TxMidiSlots(), 0);
-    EXPECT_EQ(profile->RxMidiSlots(), 0);
-
     const auto* diceProfile =
         static_cast<const IDiceDeviceProfile*>(profile);
     EXPECT_FALSE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
 }
 
-TEST(DiceProfileTests, WeissIntProfileKeepsDuplexWireShapeButHidesCaptureFromCoreAudio) {
+// Weiss sends AM824 and clears FDF in NO-DATA packets. Hiding its capture from
+// CoreAudio is the protocol's decision (it publishes hostInputPcmChannels = 0),
+// not the profile's.
+TEST(DiceProfileTests, WeissIntProfileSendsAm824) {
     constexpr uint32_t kWeissVendorId = 0x001c6a;
     constexpr uint32_t kInt202ModelId = 0x000006;
     constexpr uint32_t kInt203ModelId = 0x00000a;
@@ -258,16 +198,9 @@ TEST(DiceProfileTests, WeissIntProfileKeepsDuplexWireShapeButHidesCaptureFromCor
         const auto* profile = FindDiceProfile(kWeissVendorId, modelId);
         ASSERT_NE(profile, nullptr);
         EXPECT_STREQ(profile->Name(), "Weiss INT (DICE)");
-        EXPECT_EQ(profile->TxChannelCount(), 2U);
-        EXPECT_EQ(profile->RxChannelCount(), 0U);
-        // Rates are not a profile fact any more: DICE publishes the device's
-        // own CLOCK_CAPABILITIES (DicePublishedRates).
-
-        const auto* wireProfile = static_cast<const IAudioStreamProfile*>(profile);
-        AudioStreamConfig capture{};
-        ASSERT_TRUE(wireProfile->BuildDefaultRxStreamConfig(capture));
-        EXPECT_EQ(capture.pcmChannels, 2U);
-        EXPECT_EQ(capture.dbs, 2U);
+        EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+        const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
+        EXPECT_FALSE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
     }
 }
 
@@ -338,30 +271,10 @@ TEST(DiceProfileTests, ResolvesMidasVeniceProfileByVendorAndModel) {
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
-    // The seeded F32 geometry at 48 kHz: 2 streams/direction × 16ch. Both wire
-    // configs are per-stream (DBS=16) with Tx/RxStreamCount()==2, so the seeded
-    // aggregate is 32 per side.
-    EXPECT_EQ(profile->TxChannelCount(), 32); // 16 × 2 streams
-    EXPECT_EQ(profile->RxChannelCount(), 32); // 16 × 2 streams
-    EXPECT_EQ(profile->TxMidiSlots(), 0);
-    EXPECT_EQ(profile->RxMidiSlots(), 0);
-    EXPECT_EQ(profile->TxDbs(), 16); // per wire stream
-    EXPECT_EQ(profile->RxDbs(), 16); // per wire stream
-
     const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
-    EXPECT_EQ(diceProfile->TxStreamCount(), 2u);
-    EXPECT_EQ(diceProfile->RxStreamCount(), 2u);
     EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
     EXPECT_EQ(diceProfile->Quirks().tx.hostToDevicePcmEncoding,
               ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
-
-    // Those counts are a seed in BOTH directions. If either were asserted, the
-    // resolver would treat the recorded F24's 16 + 8 as a conflict and refuse
-    // to publish it.
-    EXPECT_EQ(diceProfile->CaptureGeometryAuthority(),
-              ASFW::Isoch::Audio::StreamGeometryAuthority::kSeed);
-    EXPECT_EQ(diceProfile->PlaybackGeometryAuthority(),
-              ASFW::Isoch::Audio::StreamGeometryAuthority::kSeed);
 }
 
 // The Stage 4 exit criterion: one catalog row, three devices, told apart by
@@ -427,15 +340,6 @@ TEST(DiceProfileTests, ResolvesPreSonusStudioLive1602ProfileByVendorAndModel) {
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
-    // DICE TX/RX sections at 48 kHz: single stream per direction, NB_AUDIO=16,
-    // NB_MIDI=1, so DBS = 17 both ways.
-    EXPECT_EQ(profile->TxChannelCount(), 16);
-    EXPECT_EQ(profile->RxChannelCount(), 16);
-    EXPECT_EQ(profile->TxMidiSlots(), 1);
-    EXPECT_EQ(profile->RxMidiSlots(), 1);
-    EXPECT_EQ(profile->TxDbs(), 17);
-    EXPECT_EQ(profile->RxDbs(), 17);
-
     const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
     EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
     EXPECT_EQ(diceProfile->Quirks().tx.hostToDevicePcmEncoding,
@@ -479,32 +383,15 @@ TEST(DiceProfileTests, ResolvesAlesisMultiMixProfileByVendorAndModel) {
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
-    // Seed geometry only — the real per-variant counts are read back from the
-    // device's TX/RX stream-format registers and overwrite these via
-    // ApplyDiceRuntimeCapsToDeviceConfig. Pinned here so a change is deliberate.
-    EXPECT_EQ(profile->TxChannelCount(), 2);
-    EXPECT_EQ(profile->RxChannelCount(), 16);
-    EXPECT_EQ(profile->TxMidiSlots(), 0);
-    EXPECT_EQ(profile->RxMidiSlots(), 0);
-    EXPECT_EQ(profile->TxDbs(), 2);
-    EXPECT_EQ(profile->RxDbs(), 16);
-
     const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
-    // ONE stream per direction. The device over-reports its host-to-device
-    // stream count (libffado dice_avdevice.cpp:1684-1693 forces nb_rx = 1 for
-    // Alesis models 0x000000/0x000001), so these must stay at 1.
-    EXPECT_EQ(diceProfile->TxStreamCount(), 1u);
-    EXPECT_EQ(diceProfile->RxStreamCount(), 1u);
     EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
     EXPECT_EQ(diceProfile->Quirks().tx.hostToDevicePcmEncoding,
               ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
 
-    // The MultiMix has no MIDI I/O: the host-to-device block is pure PCM
-    // (DBS == pcmChannels), so there is no non-audio slot and the 0x80000000
-    // MIDI-slot fill the other TCAT profiles carry stays off. If a non-audio
-    // slot is ever confirmed, midiSlots and this flag must be raised together.
+    // The MultiMix has no MIDI I/O: the host-to-device block is pure PCM, so
+    // there is no non-audio slot and the 0x80000000 MIDI-slot fill the other
+    // TCAT profiles carry stays off.
     EXPECT_FALSE(diceProfile->Quirks().tx.initializeNonAudioSlots);
-    EXPECT_EQ(profile->TxDbs(), profile->TxChannelCount());
 }
 
 TEST(DiceProfileTests, AlesisMultiMixSafetyOffsetsAndLatencies) {
@@ -640,14 +527,17 @@ TEST(DiceProfileTests, AnOutOfRangeBuilderIdResolvesToNothing) {
     EXPECT_EQ(AudioProfileRegistry::DiceProfileForBuilderId(0xFFFFFFFFU), nullptr);
 }
 
-TEST(DiceProfileTests, GenericDiceDefaultOffsetsAndLatencies) {
+// The generic fallback takes the same packet-scaled ladder as every DICE
+// profile (it used to be a flat 64/128). Reached only for a nub that lost its
+// builder id.
+TEST(DiceProfileTests, GenericDiceUsesThePacketScaledLadder) {
     const auto* profile = FindDiceProfile(0x999999, 0x000001, 0x123456789ULL);
     ASSERT_NE(profile, nullptr);
 
-    EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 64);
-    EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 64);
-    EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 128);
-    EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 128);
+    EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 48);
+    EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 128);
+    EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 29);
+    EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 29);
 }
 
 // Discovery-derived geometry for a BeBoB device without a curated profile.

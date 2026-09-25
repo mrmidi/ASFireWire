@@ -9,16 +9,17 @@ nameForGeometry in=0 out=2 -> Midas Venice F (DICE)
 nameForGeometry in=12 out=8 -> Midas Venice F (DICE)
 nameForGeometry in=20 out=20 -> Midas Venice F (DICE)
 wire tx=1 rx=0
-channels tx=32 rx=32 midi tx=0 rx=0 dbs tx=16 rx=16
-streams tx=2 rx=2 authority playback=seed capture=seed
+channels tx=0 rx=0 midi tx=0 rx=0 dbs tx=0 rx=0
+streams tx=1 rx=1
+assertedPlaybackStreams=0
 txPolicy enc=1 variableDbs=0 nonAudioWord=0x80000000 initNonAudio=1 preserveFdf=1 emptyIdle=0 cadenceData=0 cadenceWord=0xcf000000 dbcEnd=0
 txClock=rx-replay anchorTimeoutMs=500
-defaultTx dir=0 rate=48000 mode=1 sid=0 pcm=16 dbs=16 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
-defaultRx dir=1 rate=48000 mode=1 sid=0 pcm=16 dbs=16 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
-tx[0] dir=0 rate=48000 mode=1 sid=0 pcm=16 dbs=16 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
-rx[0] dir=1 rate=48000 mode=1 sid=0 pcm=16 dbs=16 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
-tx[1] dir=0 rate=48000 mode=1 sid=0 pcm=16 dbs=16 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=16
-rx[1] dir=1 rate=48000 mode=1 sid=0 pcm=16 dbs=16 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=16
+defaultTx dir=0 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+defaultRx dir=1 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+tx[0] dir=0 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+rx[0] dir=1 rate=48000 mode=1 sid=0 pcm=0 dbs=0 midi=0 fpp=8 fdf=0x02 fmt=0x10 offset=0
+tx[1] none
+rx[1] none
 tx[2] none
 rx[2] none
 @32000 safety tx=48 rx=128 latency tx=29 rx=29 delay tx=12800 rx=12800

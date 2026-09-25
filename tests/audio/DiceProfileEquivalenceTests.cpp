@@ -21,6 +21,7 @@
 #include "Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/DiceDeviceProfile.hpp"
+#include "Audio/DriverKit/Config/DICE/DiceProfile.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 #include <cstdio>
@@ -32,7 +33,6 @@ using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
 using ASFW::Isoch::Audio::AudioProfileRegistry;
 using ASFW::Isoch::Audio::AudioStreamConfig;
 using ASFW::Isoch::Audio::IAudioStreamProfile;
-using ASFW::Isoch::Audio::StreamGeometryAuthority;
 using ASFW::Isoch::Audio::TxClockSource;
 
 constexpr uint32_t kRates[] = {32000U, 44100U, 48000U};
@@ -51,10 +51,6 @@ std::string Config(const char* label, const AudioStreamConfig& c) {
                   c.framesPerDataPacket, c.fdf, c.fmt, c.sourceChannelOffset);
 }
 
-const char* Authority(StreamGeometryAuthority a) {
-    return a == StreamGeometryAuthority::kAsserted ? "asserted" : "seed";
-}
-
 void Dump(const IAudioStreamProfile& p, ASFW::Testing::WireTrace& out) {
     out.Add(Format("name=%s", p.Name()));
     // Channel counts a Venice or any range profile may be named by.
@@ -68,9 +64,10 @@ void Dump(const IAudioStreamProfile& p, ASFW::Testing::WireTrace& out) {
                    static_cast<unsigned>(p.RxWireFormat())));
     out.Add(Format("channels tx=%u rx=%u midi tx=%u rx=%u dbs tx=%u rx=%u", p.TxChannelCount(),
                    p.RxChannelCount(), p.TxMidiSlots(), p.RxMidiSlots(), p.TxDbs(), p.RxDbs()));
-    out.Add(Format("streams tx=%u rx=%u authority playback=%s capture=%s", p.TxStreamCount(),
-                   p.RxStreamCount(), Authority(p.PlaybackGeometryAuthority()),
-                   Authority(p.CaptureGeometryAuthority())));
+    out.Add(Format("streams tx=%u rx=%u", p.TxStreamCount(), p.RxStreamCount()));
+    if (const auto* dice = dynamic_cast<const ASFW::Isoch::Audio::DICE::DiceProfile*>(&p)) {
+        out.Add(Format("assertedPlaybackStreams=%u", dice->AssertedPlaybackStreams()));
+    }
     const auto policy = p.TxStreamPolicy();
     out.Add(Format("txPolicy enc=%u variableDbs=%u nonAudioWord=0x%08x initNonAudio=%u "
                    "preserveFdf=%u emptyIdle=%u cadenceData=%u cadenceWord=0x%08x dbcEnd=%u",

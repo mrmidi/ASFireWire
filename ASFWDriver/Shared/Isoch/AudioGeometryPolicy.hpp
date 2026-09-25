@@ -11,7 +11,7 @@
 // framesPerPacket. The boundary is semantic (compile-time constant vs
 // function-of-rate), not size.
 //
-// Device profiles (e.g. FocusriteSaffireProfile) should DELEGATE their
+// Device profiles (e.g. DICE::DiceProfile) should DELEGATE their
 // per-rate safety/latency to this header rather than re-deriving the ladder.
 // =============================================================================
 #pragma once
@@ -24,7 +24,7 @@ namespace ASFW::IsochTransport {
 
 struct AudioGeometryPolicy final {
     // Rate ladder. frames-per-packet doubles each 2x step; a rate addend pads
-    // the safety/latency scaling. (Matches FocusriteSaffireProfile.cpp.)
+    // the safety/latency scaling. (Focusrite Saffire.kext's ladder.)
     static constexpr uint32_t FramesPerPacket(double rate) {
         if (rate > 96000.0) return 32u;
         if (rate > 48000.0) return 16u;
