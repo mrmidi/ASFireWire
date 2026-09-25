@@ -7,6 +7,7 @@ R ffff.e0000028 8 @s400
 W ffff.e0000074 0000020c @s400
 # notify 0x23
 R ffff.e0000028 380 @s400
+R ffff.e0000028 380 @s400
 R ffff.e0000028 104 @s400
 R ffff.e00001a4 512 @s400
 R ffff.e00003a4 56 @s400

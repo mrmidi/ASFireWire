@@ -90,6 +90,7 @@ private:
                                                         IOReturn failureStatus);
     [[nodiscard]] IOReturn ClockConfirmed(const AudioDuplexChannels& channels);
     [[nodiscard]] IOReturn AwaitStreamingClockLock(const AudioDuplexChannels& channels);
+    [[nodiscard]] IOReturn AwaitIdleClockRate();
     [[nodiscard]] IOReturn DiscoverStreams();
     [[nodiscard]] IOReturn FinishPrepare();
     [[nodiscard]] IOReturn CompleteClockApply();

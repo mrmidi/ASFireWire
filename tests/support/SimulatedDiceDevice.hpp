@@ -72,6 +72,12 @@ struct SimulatedDiceOptions {
     // CAS that expects no owner), which implies the firmware drops the owner on
     // reset. Unverified on hardware, so it is an option.
     bool busResetClearsOwner{true};
+    // When non-zero, a rate change is accepted at once but the device reaches
+    // the new rate only on the Nth later read of GLOBAL_STATUS, and then raises
+    // LOCK_CHG. A Saffire Pro 24 DSP did this on hardware (2026-09-25):
+    // RxCfgChg|TxCfgChg|ClockAccepted at once, LockChg and the new rate about
+    // 50 ms later. Zero keeps the instant lock the goldens were recorded with.
+    uint32_t rateSettlesAfterStatusReads{0};
 };
 
 class SimulatedDiceDevice final {
@@ -98,11 +104,12 @@ public:
 
     // Returns nullopt for an address outside the modelled general space.
     [[nodiscard]] std::optional<std::vector<uint8_t>> Read(uint32_t addressLo,
-                                                           uint32_t length) const {
+                                                           uint32_t length) {
         const auto offset = Offset(addressLo, length);
         if (!offset) {
             return std::nullopt;
         }
+        SettleClockOnStatusRead(*offset, length);
         return std::vector<uint8_t>(memory_.begin() + *offset,
                                     memory_.begin() + *offset + length);
     }
@@ -156,6 +163,7 @@ public:
             SetQuad(RxEntryBase(i) + kRxIso, 0xFFFFFFFFU);
         }
         pendingClockSelect_.reset();
+        pendingSettle_.reset();
     }
 
     // A bus reset as the device sees it. The bus wrapper bumps the generation.
@@ -472,7 +480,12 @@ private:
         const bool locks = options_.clockResponse != ClockResponse::kAcceptNeverLock;
 
         uint32_t bits = ::ASFW::Audio::DICE::Notify::kClockAccepted;
-        if (locks) {
+        if (locks && rateIndex != previousIndex && options_.rateSettlesAfterStatusReads != 0) {
+            // Accepted now, reached later (SettleClockOnStatusRead).
+            pendingSettle_ = PendingSettle{rateIndex, options_.rateSettlesAfterStatusReads};
+            bits |= ::ASFW::Audio::DICE::Notify::kRxConfigChange |
+                    ::ASFW::Audio::DICE::Notify::kTxConfigChange;
+        } else if (locks) {
             SetAchievedClock(rateIndex, true);
             if (rateIndex != previousIndex) {
                 // A hardware-validated 44.1 -> 48 kHz change raised
@@ -491,6 +504,28 @@ private:
         if (publish) {
             Deliver(bits);
         }
+    }
+
+    void SettleClockOnStatusRead(uint32_t offset, uint32_t length) {
+        namespace G = ::ASFW::Audio::DICE::GlobalOffset;
+        const uint32_t status = GlobalField(G::kStatus);
+        if (!pendingSettle_ || status < offset || status + 4 > offset + length) {
+            return;
+        }
+        if (--pendingSettle_->readsLeft != 0) {
+            return;
+        }
+        const uint32_t rateIndex = pendingSettle_->rateIndex;
+        const uint32_t previousIndex =
+            (GlobalQuad(G::kStatus) >> ::ASFW::Audio::DICE::StatusBits::kNominalRateShift) & 0xFFU;
+        pendingSettle_.reset();
+        SetAchievedClock(rateIndex, true);
+        if (DiceRateModeForIndex(rateIndex) != DiceRateModeForIndex(previousIndex)) {
+            ApplyRateModeGeometry(DiceRateModeForIndex(rateIndex));
+        }
+        Trace("# device: clock settled");
+        SetNotificationRegister(::ASFW::Audio::DICE::Notify::kLockChange);
+        Deliver(::ASFW::Audio::DICE::Notify::kLockChange);
     }
 
     void Deliver(uint32_t bits) {
@@ -517,6 +552,11 @@ private:
     Options options_;
     std::vector<uint8_t> memory_;
     std::optional<uint32_t> pendingClockSelect_;
+    struct PendingSettle {
+        uint32_t rateIndex{0};
+        uint32_t readsLeft{0};
+    };
+    std::optional<PendingSettle> pendingSettle_;
     std::vector<std::string> violations_;
     NotifySink notify_;
     TraceSink trace_;

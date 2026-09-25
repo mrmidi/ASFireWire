@@ -27,6 +27,9 @@ constexpr uint32_t kClockAcceptedTimeoutMs = 150;
 constexpr uint32_t kStreamingClockLockTimeoutMs = 2000;
 constexpr uint32_t kPollIntervalMs = 10;
 constexpr uint32_t kReadyTimeoutMs = 200;
+// An idle clock change waits this long for the device to reach the new rate
+// (TCAT RestartStreaming waits up to 1 s for lock after a clock change).
+constexpr uint32_t kIdleClockRateTimeoutMs = 1000;
 
 constexpr uint32_t kDisabledIsoChannel = std::numeric_limits<uint32_t>::max();
 constexpr uint32_t kRxSeqStartDefault = 0;
@@ -593,9 +596,48 @@ IOReturn DiceFamilyDriver::ReadGlobalAfterClockAccepted(const AudioDuplexChannel
 
 IOReturn DiceFamilyDriver::ClockConfirmed(const AudioDuplexChannels& channels) {
     if (flowMode_ == FlowMode::kClockApply) {
+        const IOReturn status = AwaitIdleClockRate();
+        if (status != kIOReturnSuccess) {
+            return status;
+        }
         return CompleteClockApply();
     }
     return AwaitStreamingClockLock(channels);
+}
+
+IOReturn DiceFamilyDriver::AwaitIdleClockRate() {
+    // CLOCK_ACCEPTED means the device took CLOCK_SELECT, not that it runs at the
+    // new rate yet; the PLL relocks tens of ms later. Returning before then left
+    // the device at the old rate, so the next start saw requested != achieved
+    // and wrote CLOCK_SELECT a second time (hardware, 2026-09-25). Nothing
+    // streams, so only the rate matters, not source lock. The wait is advisory:
+    // a device that does not get there in time is logged, and the next start's
+    // requested-versus-achieved check still rewrites the clock.
+    for (uint32_t attempt = 0;; ++attempt) {
+        if (!EnsureRouteCurrent()) {
+            return Rollback(kIOReturnOffline);
+        }
+        const auto state = io_.ReadGlobalStateFull(sections_);
+        if (!state) {
+            return Rollback(state.error());
+        }
+        const uint32_t targetHz = session_.desiredClock.sampleRateHz;
+        if (NominalRateHz(state->status) == targetHz && state->sampleRate == targetHz) {
+            if (attempt > 0) {
+                ASFW_LOG(DICE, "ApplyClock: device reached %u Hz after %u ms", targetHz,
+                         attempt * kPollIntervalMs);
+            }
+            return kIOReturnSuccess;
+        }
+        if (attempt * kPollIntervalMs >= kIdleClockRateTimeoutMs) {
+            ASFW_LOG(DICE,
+                     "ApplyClock: device not at %u Hz within %u ms (status=0x%08x rate=%u); "
+                     "the next start rewrites the clock",
+                     targetHz, kIdleClockRateTimeoutMs, state->status, state->sampleRate);
+            return kIOReturnSuccess;
+        }
+        io_.Clock().SleepMs(kPollIntervalMs);
+    }
 }
 
 IOReturn DiceFamilyDriver::AwaitStreamingClockLock(const AudioDuplexChannels& channels) {

@@ -656,7 +656,7 @@ private:
 
     // Addresses outside the modelled DICE space read as zeros, as they did in
     // the legacy fake.
-    std::vector<uint8_t> ReadPayload(FWAddress address, uint32_t length) const {
+    std::vector<uint8_t> ReadPayload(FWAddress address, uint32_t length) {
         if (address.addressHi == kDiceBaseAddressHi) {
             if (auto bytes = device_.Read(address.addressLo, length)) {
                 return *bytes;

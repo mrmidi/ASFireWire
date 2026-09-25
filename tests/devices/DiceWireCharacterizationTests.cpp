@@ -282,6 +282,22 @@ TEST_P(DiceWireScenarios, IdleClockChange44kTo48k) {
     rig.ExpectGolden("idle-clock-change-44k-48k");
 }
 
+// The device accepts the new rate at once but reaches it later, as a Pro 24
+// DSP did on hardware (2026-09-25). The idle apply now waits for the rate, so
+// the start that follows finds the device at target and does not write
+// CLOCK_SELECT again (S4a).
+TEST_P(DiceWireScenarios, IdleClockChangeSettlesLate) {
+    DiceRig rig(*GetParam(), SimulatedDiceOptions{.rateSettlesAfterStatusReads = 3});
+    rig.SetClock(kClockSelect44kInternal, ClockRateIndex::k44100, true);
+    (void)rig.Run("ApplyClockConfig 48000", [&](auto done) {
+        rig.control->ApplyClockConfig(AudioClockConfig{.sampleRateHz = 48000},
+                                      [done](IOReturn s, auto) { done(s); });
+    });
+    (void)rig.Start(48000);
+    (void)rig.Stop();
+    rig.ExpectGolden("idle-clock-change-settles-late");
+}
+
 TEST_P(DiceWireScenarios, ClockNeverAccepted) {
     DiceRig rig(*GetParam(), SimulatedDiceOptions{.clockResponse = DiceClockResponse::kNeverAccept});
     rig.SetClock(kClockSelect44kInternal, ClockRateIndex::k44100, true);
