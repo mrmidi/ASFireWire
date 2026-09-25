@@ -280,6 +280,7 @@ These were paid for on hardware and must survive any rewrite:
 
 ### 3.2 Families behind it
 
+*(Before S5; `FamilyDriver` replaced this interface, §6.)*
 `IDuplexDeviceControl` (`Duplex/IDuplexDeviceControl.hpp`) is implemented by DICE TCAT,
 SPro24Dsp, BeBoB/PHASE 88/M-Audio special, Apogee Duet, Mackie Onyx / Fireworks (via the
 shared AV/C+CMP base), and MOTU. Its stages are `EnsureRuntimeStreamGeometry`,
@@ -444,7 +445,7 @@ misbehaves quietly; the `SetAssignedChannels` comment itself describes the failu
 5. **Resources flow in, not out.** The session owns the IRM client, host transport and
    cancellation token and passes them where needed. Today's
    `IDuplexDeviceControl::GetIRMClient()` asks the device for a bus resource and is not
-   carried forward.
+   carried forward. *(Done in S5: `AudioSessions::SetIrmClient`.)*
 
 A closed `std::variant` of family drivers with an exhaustive `std::visit` (the shape
 `FamilyProtocolConstruction` already has) was considered. It is deferred, not rejected:
@@ -534,7 +535,7 @@ No decision is taken here.
 | `DuplexRecoveryPolicy` | deleted: retry/backoff in the scheduler |
 | `WaitForStableGlobalClock` | moves into `DiceFamilyDriver::Configure` (it is DICE-shaped) |
 | Lifecycle variant, 16 phases, rollback ledger | deleted |
-| `IDuplexDeviceControl` | `FamilyDriver` (adapter during S2); its defaulted virtuals and `GetIRMClient()` are not carried forward (§4.2) |
+| `IDuplexDeviceControl` | `FamilyDriver`, implemented by every family (S5); its defaulted virtuals and `GetIRMClient()` are gone (§4.2) |
 | `AudioDuplexCoordinator` class shape | concrete `final` `SessionScheduler`; no interface over it (§4.2) |
 | `DICEDuplexBringupController` (async chain) | `DiceFamilyDriver` (linear) |
 | `DICETransaction`, `DICETypes` | kept for parsing; I/O moves to `DiceDeviceIo` |
@@ -542,7 +543,7 @@ No decision is taken here.
 | `DiceAudioBackend` recovery / health probe / `TryBeginRecovery` | deleted: notifications become requests |
 | `DiceAudioBackend::EnsureNubForGuid` | kept (publication; later endpoint-lifecycle work) |
 | `DuplexStreamProfile` | kept for host geometry; `playbackWireFormat` and the fixed-channel defaults deleted |
-| `SyncAsyncBridge` | folded into the `DeviceIo` blocking primitive (one place) |
+| `SyncAsyncBridge` | kept for the families still built on callback chains, reached through `FamilyStageWait.hpp` (S5); DICE waits in `DiceDeviceIo` |
 | `IsochDuplexHostTransport`, `DuplexIRMReservations` | kept; IRM gains the "any channel" policy |
 
 ---
@@ -655,8 +656,27 @@ rely on fixtures plus the vendors' identical code (§2.1).
   - **S4b rejoin and S4c are parked** (user decision, 2026-09-25) until the audio stack's
     hardening work defines that join contract (§8 Q8). DICE streams keep following
     CoreAudio.
-- **S5: native `FamilyDriver` for CMP families and MOTU.** Delete the adapter and
-  `IDuplexDeviceControl`.
+- **S5: every family implements `FamilyDriver`. Done (2026-09-25), structural,
+  branch `refactor/family-driver`.** User decision: with hardware checks parked, no family
+  is rewritten as one straight sequence yet.
+  - **Where `FamilyDriver` lives now.** It moved to `Audio/Protocols/Duplex/` and gained
+    `SetTeardownCancelToken` (`c9bd9ced`).
+  - **DICE is native** (`8fc3e9dd`). `DICETcatProtocol` calls `DiceFamilyDriver`
+    synchronously; its callback wrappers are gone. Geometry and health await the
+    asynchronous reads that nub publication also uses on the Default queue.
+    `EnsureRuntimeStreamGeometry` moved up to `IDeviceProtocol` for that path.
+  - **BeBoB, Apogee Duet and MOTU** implement it over their unchanged callback chains
+    (`da5a0a18`). They wait through `FamilyStageWait.hpp`, with the adapter's 12 s stage
+    bound. BeBoB covers PHASE 88, generic BeBoB, M-Audio special, Mackie Onyx and
+    Fireworks. Steps they used to inherit are written out with the same results.
+  - **Deleted** (`8e09f506`): `DuplexControlAdapter`, `IDuplexDeviceControl`,
+    `AsDuplexDeviceControl`, and every `GetIRMClient`. The session takes the IRM client by
+    composition.
+  - **Proof.** Every session and S0 golden is byte-identical. New `FamilyDriver`
+    entry-point tests per family cover teardown aborting an Apogee step whose CMP lock is
+    still in flight.
+  - **Still to do, per family, once its hardware can be checked:** record the real
+    protocol's wire traces, then rewrite its chain as one straight sequence (S1's method).
 - **S6: geometry stages B–D**, owned by `DICE_TCAT_ARCHITECTURE.md` §4.2. They are independent
   of S1–S5 and can interleave.
 
