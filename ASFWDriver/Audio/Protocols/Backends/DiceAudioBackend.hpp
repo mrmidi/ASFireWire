@@ -145,7 +145,6 @@ private:
     static constexpr uint32_t kCapsRetryDelayMs = 50;
     static constexpr uint8_t kCapsRetryMaxAttempts = 40; // 2s @ 50ms
     static constexpr uint32_t kHealthBridgeTimeoutMs = 1000;
-    static constexpr uint32_t kHealthBridgePollMs = 10;
 };
 
 } // namespace ASFW::Audio

@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "../../Duplex/FamilyDriver.hpp"
 #include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../Core/DiceDeviceIo.hpp"
 #include "../Core/DiceFamilyDriver.hpp"
@@ -40,7 +41,8 @@ struct DICETcatRuntimePolicy final {
 };
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
-                               public Audio::IDuplexDeviceControl {
+                               public Audio::IDuplexDeviceControl,
+                               public Audio::FamilyDriver {
 public:
     using VoidCallback = std::function<void(IOReturn)>;
     using PrepareCallback = IDuplexDeviceControl::PrepareCallback;
@@ -65,6 +67,7 @@ public:
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
     const char* GetName() const override { return "TCAT DICE"; }
+    Audio::FamilyDriver* AsFamilyDriver() noexcept override { return this; }
     Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
     const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
 
@@ -87,6 +90,26 @@ public:
     ::ASFW::IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
 
     IOReturn StopDuplex() override;
+
+    // FamilyDriver. The stages run DiceFamilyDriver synchronously; geometry and
+    // health await the same asynchronous reads the Default-queue publication
+    // path uses.
+    [[nodiscard]] IOReturn LoadGeometry() override;
+    [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;
+    [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
+        const AudioDuplexChannels& channels, const AudioClockConfig& clock) override;
+    void AssignChannels(const AudioDuplexChannels& channels) override;
+    [[nodiscard]] std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceRx() override;
+    [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceTxAndEnable() override;
+    [[nodiscard]] std::expected<DuplexConfirmResult, IOReturn> Confirm() override;
+    [[nodiscard]] std::expected<DuplexClockApplyResult, IOReturn> ApplyClockIdle(
+        const AudioClockConfig& clock) override;
+    [[nodiscard]] IOReturn DisconnectPlayback() override;
+    [[nodiscard]] IOReturn DisconnectCapture() override;
+    [[nodiscard]] IOReturn BreakConnections() override;
+    [[nodiscard]] IOReturn Stop() override;
+
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
 

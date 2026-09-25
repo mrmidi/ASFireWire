@@ -62,6 +62,13 @@ public:
         return false;
     }
 
+    /// Read the device's stream geometry into the cache GetRuntimeAudioStreamCaps
+    /// serves, then call back. Asynchronous, so it is safe on the Default queue
+    /// (nub publication). A protocol with nothing to read succeeds at once.
+    virtual void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) {
+        callback(kIOReturnSuccess);
+    }
+
     /// Query per-channel device labels discovered from the protocol's stream
     /// format (e.g. DICE TX/RX name sections). `inNames` is host input/capture,
     /// `outNames` is host output/playback, both in channel order; an empty entry

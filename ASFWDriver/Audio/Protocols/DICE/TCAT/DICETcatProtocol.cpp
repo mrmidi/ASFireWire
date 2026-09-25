@@ -5,6 +5,8 @@
 
 #include "DICETcatProtocol.hpp"
 
+#include "../../Duplex/FamilyStageWait.hpp"
+
 #include "../../../../Logging/Logging.hpp"
 
 #include <memory>
@@ -171,110 +173,171 @@ void DICETcatProtocol::SetTeardownCancelToken(const std::atomic<bool>* cancel) n
     }
 }
 
-void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
-                                     const AudioClockConfig& desiredClock,
-                                     PrepareCallback callback) {
+// ---------------------------------------------------------------------------
+// FamilyDriver
+// ---------------------------------------------------------------------------
+
+IOReturn DICETcatProtocol::LoadGeometry() {
+    return AwaitStageStatus([&](auto callback) { EnsureRuntimeStreamGeometry(std::move(callback)); },
+                            teardownCancel_);
+}
+
+std::optional<AudioStreamRuntimeCaps> DICETcatProtocol::RuntimeCaps() const {
+    AudioStreamRuntimeCaps caps{};
+    if (!GetRuntimeAudioStreamCaps(caps)) {
+        return std::nullopt;
+    }
+    return caps;
+}
+
+std::expected<DuplexPrepareResult, IOReturn> DICETcatProtocol::Configure(
+    const AudioDuplexChannels& channels, const AudioClockConfig& clock) {
     if (!initialized_ || !driver_) {
-        callback(kIOReturnNotReady, {});
-        return;
+        return std::unexpected(kIOReturnNotReady);
     }
 
     DiceClockConfiguration diceClock{};
-    if (!MakeDiceClockConfiguration(desiredClock, diceClock)) {
-        callback(kIOReturnUnsupported, {});
-        return;
+    if (!MakeDiceClockConfiguration(clock, diceClock)) {
+        return std::unexpected(kIOReturnUnsupported);
     }
 
     // Remember the live clock so a later per-StartIO PrepareDuplex48k targets it
     // rather than reverting the device to 48 kHz (see selectedClock_).
-    if (desiredClock.sampleRateHz != 0) {
-        selectedClock_ = desiredClock;
+    if (clock.sampleRateHz != 0) {
+        selectedClock_ = clock;
     }
 
     const auto result = driver_->Prepare(channels, diceClock, /*refreshRuntimeCaps=*/true);
-    if (!result) {
-        callback(result.error(), {});
-        return;
+    if (result) {
+        CacheRuntimeCaps(result->runtimeCaps);
     }
-    CacheRuntimeCaps(result->runtimeCaps);
-    callback(kIOReturnSuccess, *result);
+    return result;
 }
 
-void DICETcatProtocol::SetAssignedChannels(const AudioDuplexChannels& channels) noexcept {
+void DICETcatProtocol::AssignChannels(const AudioDuplexChannels& channels) {
     // The IRM chose these channels; the device must be told the same ones the
-    // host DMA will use. ProgramRx refuses to run unprepared, so a refusal
+    // host DMA will use. ArmDeviceRx refuses to run unprepared, so a refusal
     // here cannot leave the two sides on different channels.
     if (!driver_) {
         return;
     }
     if (const IOReturn status = driver_->AssignChannels(channels); status != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(DICE, "SetAssignedChannels: refused d2h=%u h2d=%u kr=0x%x",
+        ASFW_LOG_ERROR(DICE, "AssignChannels: refused d2h=%u h2d=%u kr=0x%x",
                        channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, status);
     }
 }
 
-void DICETcatProtocol::ProgramRx(StageCallback callback) {
+std::expected<DuplexHealthResult, IOReturn> DICETcatProtocol::ReadHealth(uint32_t timeoutMs) {
+    return AwaitStage<DuplexHealthResult>(
+        [&](auto callback) { ReadDuplexHealth(std::move(callback)); }, teardownCancel_, timeoutMs);
+}
+
+std::expected<DuplexStageResult, IOReturn> DICETcatProtocol::ArmDeviceRx() {
     if (!initialized_ || !driver_) {
-        callback(kIOReturnNotReady, {});
-        return;
+        return std::unexpected(kIOReturnNotReady);
+    }
+    return driver_->ProgramRx();
+}
+
+std::expected<DuplexStageResult, IOReturn> DICETcatProtocol::ArmDeviceTxAndEnable() {
+    if (!initialized_ || !driver_) {
+        return std::unexpected(kIOReturnNotReady);
+    }
+    return driver_->ProgramTxAndEnable();
+}
+
+std::expected<DuplexConfirmResult, IOReturn> DICETcatProtocol::Confirm() {
+    if (!initialized_ || !driver_) {
+        return std::unexpected(kIOReturnNotReady);
+    }
+    const auto result = driver_->Confirm();
+    if (result) {
+        CacheRuntimeCaps(result->runtimeCaps);
+    }
+    return result;
+}
+
+std::expected<DuplexClockApplyResult, IOReturn> DICETcatProtocol::ApplyClockIdle(
+    const AudioClockConfig& clock) {
+    if (!initialized_ || !driver_) {
+        return std::unexpected(kIOReturnNotReady);
     }
 
-    const auto result = driver_->ProgramRx();
-    callback(result ? kIOReturnSuccess : result.error(), result.value_or(DuplexStageResult{}));
+    DiceClockConfiguration diceClock{};
+    if (!MakeDiceClockConfiguration(clock, diceClock)) {
+        return std::unexpected(kIOReturnUnsupported);
+    }
+
+    // Remember an idle rate change so the next StartIO's PrepareDuplex48k keeps
+    // the device at this rate instead of rewriting CLOCK_SELECT back to 48 kHz
+    // (see selectedClock_).
+    if (clock.sampleRateHz != 0) {
+        selectedClock_ = clock;
+    }
+
+    const auto result = driver_->ApplyClock(diceClock);
+    if (result) {
+        CacheRuntimeCaps(result->runtimeCaps);
+    }
+    return result;
+}
+
+IOReturn DICETcatProtocol::DisconnectPlayback() {
+    // DICE has no per-direction connection to drop: its stop is one sequence
+    // (GLOBAL_ENABLE off, every stream's ISOCHRONOUS cleared). The staged-stop
+    // recipe that calls this is not DICE's.
+    return kIOReturnUnsupported;
+}
+
+IOReturn DICETcatProtocol::DisconnectCapture() {
+    // As DisconnectPlayback.
+    return kIOReturnUnsupported;
+}
+
+IOReturn DICETcatProtocol::BreakConnections() {
+    // No CMP connections to break; Stop undoes everything the bring-up armed.
+    return kIOReturnUnsupported;
+}
+
+IOReturn DICETcatProtocol::Stop() {
+    return StopDuplex();
+}
+
+// ---------------------------------------------------------------------------
+// IDuplexDeviceControl (callback form, until the session uses FamilyDriver)
+// ---------------------------------------------------------------------------
+
+template <typename T>
+static void Deliver(const std::expected<T, IOReturn>& result,
+                    const std::function<void(IOReturn, T)>& callback) {
+    callback(result ? kIOReturnSuccess : result.error(), result.value_or(T{}));
+}
+
+void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
+                                     const AudioClockConfig& desiredClock,
+                                     PrepareCallback callback) {
+    Deliver(Configure(channels, desiredClock), callback);
+}
+
+void DICETcatProtocol::SetAssignedChannels(const AudioDuplexChannels& channels) noexcept {
+    AssignChannels(channels);
+}
+
+void DICETcatProtocol::ProgramRx(StageCallback callback) {
+    Deliver(ArmDeviceRx(), callback);
 }
 
 void DICETcatProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
-    if (!initialized_ || !driver_) {
-        callback(kIOReturnNotReady, {});
-        return;
-    }
-
-    const auto result = driver_->ProgramTxAndEnable();
-    callback(result ? kIOReturnSuccess : result.error(), result.value_or(DuplexStageResult{}));
+    Deliver(ArmDeviceTxAndEnable(), callback);
 }
 
 void DICETcatProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
-    if (!initialized_ || !driver_) {
-        callback(kIOReturnNotReady, {});
-        return;
-    }
-
-    const auto result = driver_->Confirm();
-    if (!result) {
-        callback(result.error(), {});
-        return;
-    }
-    CacheRuntimeCaps(result->runtimeCaps);
-    callback(kIOReturnSuccess, *result);
+    Deliver(Confirm(), callback);
 }
 
 void DICETcatProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
                                         ClockApplyCallback callback) {
-    if (!initialized_ || !driver_) {
-        callback(kIOReturnNotReady, {});
-        return;
-    }
-
-    DiceClockConfiguration diceClock{};
-    if (!MakeDiceClockConfiguration(desiredClock, diceClock)) {
-        callback(kIOReturnUnsupported, {});
-        return;
-    }
-
-    // An idle sample-rate change lands here (RunIdleClockApply). Remember it so
-    // the next StartIO's PrepareDuplex48k keeps the device at this rate instead
-    // of rewriting CLOCK_SELECT back to 48 kHz (see selectedClock_).
-    if (desiredClock.sampleRateHz != 0) {
-        selectedClock_ = desiredClock;
-    }
-
-    const auto result = driver_->ApplyClock(diceClock);
-    if (!result) {
-        callback(result.error(), {});
-        return;
-    }
-    CacheRuntimeCaps(result->runtimeCaps);
-    callback(kIOReturnSuccess, *result);
+    Deliver(ApplyClockIdle(desiredClock), callback);
 }
 
 void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {

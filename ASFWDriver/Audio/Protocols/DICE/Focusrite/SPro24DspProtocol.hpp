@@ -71,6 +71,7 @@ public:
     
     /// Get device name
     const char* GetName() const override { return "Focusrite Saffire Pro 24 DSP"; }
+    Audio::FamilyDriver* AsFamilyDriver() noexcept override { return tcat_.AsFamilyDriver(); }
     Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override {
         return tcat_.AsDuplexDeviceControl();
     }
@@ -82,6 +83,9 @@ public:
     bool HasDsp() const override { return true; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) override {
+        tcat_.EnsureRuntimeStreamGeometry(std::move(callback));
+    }
     
     IOReturn StopDuplex() override;
     ::ASFW::IRM::IRMClient* GetIRMClient() const override { return tcat_.GetIRMClient(); }

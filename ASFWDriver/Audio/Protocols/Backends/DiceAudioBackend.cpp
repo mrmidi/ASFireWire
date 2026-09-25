@@ -3,7 +3,6 @@
 
 #include "DiceAudioBackend.hpp"
 #include "DiceRuntimeDeviceConfig.hpp"
-#include "SyncAsyncBridge.hpp"
 
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
@@ -11,7 +10,7 @@
 #include "../../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../DICE/Core/DiceNotificationRouter.hpp"
 #include "../DICE/Core/DICETypes.hpp"
-#include "../Duplex/IDuplexDeviceControl.hpp"
+#include "../Duplex/FamilyDriver.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../StreamGeometryResolver.hpp"
 #include "../DeviceProtocolChoice.hpp"
@@ -597,8 +596,8 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
     // Hold a shared_ptr for the duration of the (blocking) health probe so the
     // protocol cannot be torn down underneath us by a concurrent device removal.
     auto protocol = runtime_.FindShared(guid);
-    auto* diceProtocol = protocol ? protocol->AsDuplexDeviceControl() : nullptr;
-    if (!diceProtocol) {
+    auto* family = protocol ? protocol->AsFamilyDriver() : nullptr;
+    if (!family) {
         return;
     }
     if (stopping_.load(std::memory_order_acquire) ||
@@ -612,23 +611,16 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    const auto probe = WaitForAsyncResult<DuplexHealthResult>(
-        [&](auto callback) {
-            diceProtocol->ReadDuplexHealth(std::move(callback));
-        },
-        kHealthBridgeTimeoutMs,
-        kIOReturnTimeout,
-        [&]() noexcept {
-            return stopping_.load(std::memory_order_acquire) ||
-                   sessions_.IsCancelled(guid);
-        },
-        kHealthBridgePollMs);
+    // Blocks up to kHealthBridgeTimeoutMs; service teardown aborts it through
+    // the family's teardown token.
+    const auto health = family->ReadHealth(kHealthBridgeTimeoutMs);
+    const IOReturn probeStatus = health ? kIOReturnSuccess : health.error();
 
-    if (probe.wasCancelled) {
-        // Lifecycle abort: the bridge's cancellation predicate fired (stopping_ or
-        // device operation cancelled), which is what probeAbortCount_ measures and
-        // what the BeginTeardown drain summary reports. Authoritatively tracked by the
-        // bridge so ordinary device aborts (kIOReturnAborted from callback) never inflate it.
+    if (probeStatus == kIOReturnAborted &&
+        (stopping_.load(std::memory_order_acquire) || sessions_.IsCancelled(guid))) {
+        // Lifecycle abort, which is what probeAbortCount_ measures and what the
+        // BeginTeardown drain summary reports. A device-side abort while the
+        // backend runs normally is reported below as a failed probe instead.
         probeAbortCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
                  "DiceAudioBackend: health probe aborted by lifecycle cancellation "
@@ -639,7 +631,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    if (probe.status == kIOReturnTimeout) {
+    if (probeStatus == kIOReturnTimeout) {
         ASFW_LOG_WARNING(Audio,
                          "DiceAudioBackend: health probe timed out GUID=%llx bits=0x%08x",
                          guid,
@@ -647,24 +639,24 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    if (probe.status != kIOReturnSuccess) {
+    if (probeStatus != kIOReturnSuccess) {
         ASFW_LOG_WARNING(Audio,
                          "DiceAudioBackend: health probe failed GUID=%llx bits=0x%08x kr=0x%x",
                          guid,
                          notificationBits,
-                         probe.status);
+                         probeStatus);
         return;
     }
 
-    const bool sourceLocked = probe.value.sourceLocked;
-    const bool extClockHealthy = probe.value.clockReferenceHealthy;
+    const bool sourceLocked = health->sourceLocked;
+    const bool extClockHealthy = health->clockReferenceHealthy;
 
     char notifyStr[96];
     char clockStr[40];
     char extStr[128];
     DICE::FormatNotification(notificationBits, notifyStr, sizeof(notifyStr));
-    DICE::FormatGlobalStatus(probe.value.status, clockStr, sizeof(clockStr));
-    DICE::FormatExtStatus(probe.value.extStatus, extStr, sizeof(extStr));
+    DICE::FormatGlobalStatus(health->status, clockStr, sizeof(clockStr));
+    DICE::FormatExtStatus(health->extStatus, extStr, sizeof(extStr));
 
     if (sourceLocked && extClockHealthy) {
         // Healthy — but the device may have moved to a different rate on its
@@ -672,7 +664,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         // PLL's locked nominal rate against the host's current belief and, on
         // a mismatch, tell the audio driver to re-sync the HAL (forced format
         // change; AppleUSBAudio's device-driven rate-move analog).
-        const uint32_t deviceRateHz = probe.value.nominalRateHz;
+        const uint32_t deviceRateHz = health->nominalRateHz;
         auto* nub = publisher_.GetNub(guid);
         const uint32_t hostRateHz = nub ? nub->GetCurrentSampleRateHz() : 0;
         if (nub && deviceRateHz != 0 && hostRateHz != 0 &&
@@ -732,27 +724,13 @@ bool DiceAudioBackend::DeviceReportsHealthyClock(uint64_t guid) noexcept {
     // Hold the protocol alive for the blocking read (same discipline as
     // ProbeDuplexHealth) so a concurrent device removal cannot free it underneath.
     auto protocol = runtime_.FindShared(guid);
-    auto* diceProtocol = protocol ? protocol->AsDuplexDeviceControl() : nullptr;
-    if (!diceProtocol) {
+    auto* family = protocol ? protocol->AsFamilyDriver() : nullptr;
+    if (!family) {
         return false;
     }
 
-    const auto probe = WaitForAsyncResult<DuplexHealthResult>(
-        [&](auto callback) {
-            diceProtocol->ReadDuplexHealth(std::move(callback));
-        },
-        kHealthBridgeTimeoutMs,
-        kIOReturnTimeout,
-        [&]() noexcept {
-            return stopping_.load(std::memory_order_acquire) ||
-                   sessions_.IsCancelled(guid);
-        },
-        kHealthBridgePollMs);
-
-    if (probe.status != kIOReturnSuccess) {
-        return false;
-    }
-    return probe.value.sourceLocked && probe.value.clockReferenceHealthy;
+    const auto health = family->ReadHealth(kHealthBridgeTimeoutMs);
+    return health && health->sourceLocked && health->clockReferenceHealthy;
 }
 
 bool DiceAudioBackend::TryBeginRecovery(uint64_t guid) noexcept {
@@ -1106,8 +1084,8 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // refuses publication in the callback below, and a missing protocol refuses
     // inside finish(). Both are explicit: there is no path to EnsureNub that
     // has not compared the device against the profile.
-    if (auto* dice = protocol ? protocol->AsDuplexDeviceControl() : nullptr) {
-        dice->EnsureRuntimeStreamGeometry(
+    if (protocol) {
+        protocol->EnsureRuntimeStreamGeometry(
             [finish, dev, protocol, guid](IOReturn status) mutable {
                 if (status != kIOReturnSuccess) {
                     // Refuse here rather than handing off to finish(). finish()
