@@ -83,6 +83,9 @@ struct StreamSpec {
     // Begin a Receive epoch on the device timeline at each start, as StartIO
     // does since Epic 4 T3; the RX path then publishes through the timeline.
     bool timelineEpoch{false};
+    // Begin a Transmit epoch instead: the M-Audio TX clock owns the clock and
+    // RX must stay out of it.
+    bool transmitEpoch{false};
 };
 
 // Blocking AMDTP: a DATA packet of 8 frames whenever 8 frames have accrued by
@@ -151,9 +154,10 @@ ASFW::Testing::WireTrace RecordAnchors(const StreamSpec& spec) {
     DirectAudioReceiveConsumer consumer(&binding, {.am824Slots = kChannels,
                                                    .streamChannels = kChannels});
     auto beginEpoch = [&] {
-        if (spec.timelineEpoch) {
+        if (spec.timelineEpoch || spec.transmitEpoch) {
             (void)control.hardwareTimeline.BeginEpoch(
-                ASFW::Audio::Runtime::HardwareTimelineSource::Receive,
+                spec.transmitEpoch ? ASFW::Audio::Runtime::HardwareTimelineSource::Transmit
+                                   : ASFW::Audio::Runtime::HardwareTimelineSource::Receive,
                 ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO, spec.rateHz, 0);
         }
     };
@@ -287,6 +291,19 @@ TEST(ZtsCharacterization, NoSyt48k) {
 // The consumer quiesced and re-activated mid-stream (a transport restart).
 TEST(ZtsCharacterization, Restart48k) {
     ExpectBothPathsMatch({.rateHz = 48000, .cycles = 11'000, .restartAt = 4'800}, "zts/restart-48k.txt");
+}
+
+// When another source owns the epoch (the M-Audio Transmit clock), RX offers
+// no anchor and, above all, never reads its own silence as a timing loss.
+// Hardware, 2026-09-26: after Epic 4 T3 the RX grid rule still offered an
+// anchor each period; the publisher refused it and the consumer reported
+// kClockAnchorRejected, restarting an 1814's stream every few seconds.
+TEST(ZtsCharacterization, TransmitEpochLeavesTheRxClockSilent) {
+    const auto trace = RecordAnchors({.rateHz = 48000, .cycles = 11'000, .transmitEpoch = true});
+    const std::string text = trace.Text();
+    EXPECT_EQ(text.find("anchor "), std::string::npos) << text;
+    // Only the start-of-stream replay reset, no established one.
+    EXPECT_NE(text.find("replayResets=1"), std::string::npos) << text;
 }
 
 } // namespace

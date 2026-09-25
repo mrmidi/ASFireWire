@@ -460,6 +460,12 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                 haveAnchor = anchorHostTicks != 0;
             }
         }
+    } else if (timelineEpoch != 0) {
+        // Another source owns this epoch's clock (the M-Audio Transmit clock).
+        // RX offers no anchor at all: offering one would be refused, and the
+        // refusal read as kClockAnchorRejected -- a timing loss that restarts
+        // the stream every period (hardware, 2026-09-26: an 1814 dropping out
+        // every few seconds after Epic 4 T3).
     } else if (kZtsPeriodFrames != 0 && result.framesDecoded != 0 &&
                (packetFirstFrame % kZtsPeriodFrames) == 0 && packetHostTicks != 0 &&
                nanosPerSampleQ8 != 0 && clockPublisher_.IsBound() && timingEstablished) {
