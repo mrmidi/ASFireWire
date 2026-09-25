@@ -779,7 +779,6 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             ivars.audioDevice->SetClockDomain(1))) {
         return error;
     }
-    const auto& timing = ivars.device.timing;
     if (!requireAdkSuccess(
             "device.SetOutputLatency",
             ivars.audioDevice->SetOutputLatency(timing.outputLatencyFrames))) {
