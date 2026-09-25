@@ -72,11 +72,12 @@ pieces of state:
 - A changed AV/C geometry is never refused: `EnsureNub` returns early for an existing nub
   (`AudioNubPublisher.cpp:55`); only DICE calls `RefreshNubProperties`.
 - DICE asks the IRM for exactly one fixed channel (`DuplexStreamProfile.hpp:175, 200-240`);
-  both references let the IRM choose (§2.7).
+  both references let the IRM choose (§2.7). **Fixed in S3 (`6091e308`).**
 - DICE config-change notifications are ignored (`DiceAudioBackend.cpp:577` returns unless
-  `LOCK_CHG` or `EXT_STATUS`); TCAT restarts on them (§2.4).
+  `LOCK_CHG` or `EXT_STATUS`); TCAT restarts on them (§2.4). **Fixed in S3 (`e87f1670`).**
 - The DICE notification mailbox is one process-wide global with no source attribution
-  (`DICENotificationMailbox.hpp`), so a second DICE device would share it.
+  (`DICENotificationMailbox.hpp`), so a second DICE device would share it. **Fixed in S3
+  (`fabd595e`).**
 - `DuplexStreamProfile::playbackWireFormat` (`:106`) is only ever logged
   (`AudioDuplexCoordinator.cpp:1278`) and disagrees with the encoder actually used
   (the audio-side profile's `TxWireFormat`).
@@ -99,6 +100,8 @@ Found by the S0 golden traces (`tests/golden/dice/`). The first two are fixed (b
   required constructor parameter).
 - **Teardown during a wait leaves our owner claim on the device**
   (`venice-f24__teardown-during-clock-wait.trace`). TCAT and Linux release it on unbind.
+  Still open after S3, which holds the owner while the device is present: service teardown
+  quiesces the bus before audio teardown runs, so no release can reach the device (§8 Q7).
 
 ### 1.4 Recovery fights churn instead of absorbing it
 
@@ -245,13 +248,13 @@ These were paid for on hardware and must survive any rewrite:
 
 | Question | TCAT | Linux | Ours today | Recommendation |
 |---|---|---|---|---|
-| Owner lifetime | claim on new generation, hold while present | claim at bind + after reset, hold until unbind | claim every prepare, release every stop | **Hold while present, re-claim per generation.** Both references agree, and notifications keep flowing while idle (needed for §2.4). |
-| Isoch channel | IRM picks any of 64 | IRM picks from 0–31 | fixed one-bit mask, defaults 1/0 | **IRM picks**, mask 0–31 (the narrower, Linux mask). Write the result to the device. |
+| Owner lifetime | claim on new generation, hold while present | claim at bind + after reset, hold until unbind | claim every prepare, release every stop (held since S3: claimed once per generation, never released) | **Hold while present, re-claim per generation.** Both references agree, and notifications keep flowing while idle (needed for §2.4). Done in S3, except the release at unbind (§8 Q7). |
+| Isoch channel | IRM picks any of 64 | IRM picks from 0–31 | fixed one-bit mask, defaults 1/0 (IRM picks 0–31 since S3) | **IRM picks**, mask 0–31 (the narrower, Linux mask). Write the result to the device. Done in S3. |
 | `CLOCK_SELECT` rewrite | always, streams stopped | always, streams stopped | skip if requested + achieved match | Keep our skip rule (lesson 2); it is a strict subset of safe behaviour. Always stop first. |
 | Clock-accepted wait | ~150 ms | 100 ms | 150 ms (comment wrongly cites Linux) | 150 ms, cite TCAT. |
 | Lock wait | only if the clock changed, ≤1 s | via domain ready, 200 ms | always; up to 2 s + a 200 ms confirm poll | Wait when the clock changed or the device is unlocked; single 1 s bound. |
 | Host start order | ENABLE → 2 ms → IT → IR | ENABLE → domain start | ENABLE → 2 ms → IR → IT | **Keep IR → IT** (lesson 5, hardware-attested). Record the TCAT difference. |
-| Config-change notification | restart | wakes userspace | ignored | **Restart** (via the request counter). |
+| Config-change notification | restart | wakes userspace | ignored (restarts since S3) | **Restart** (via the request counter). Done in S3: a restart request tied to the running run, dropped while a reconcile runs or while idle. |
 | Wire lifetime | while device present | while a client is open | while CoreAudio runs | **Decision §4.4.** |
 
 ---
@@ -399,11 +402,18 @@ and calls `Wakeup`. Completions may then land on the session queue, and no polli
 needed. `Wakeup` must be called from a block running on that queue. The header does not
 state the timeout's unit, and ASFW does not use these calls yet, so S2 confirms the unit and
 the behaviour in a small spike first. `WaitNotification(mask, timeout)` arrives with the
-per-device notification endpoint (S3); S1 keeps the 10 ms poll of the global mailbox.
+per-device notification endpoint (S3); S1 keeps the 10 ms poll of the global mailbox. S3
+built the per-device mailbox and kept the poll: `WaitNotification` needs the session queue
+(S4).
 
 **`DiceNotifications`.** One endpoint per device, attributed by source node (or a
 per-device handler offset, as TCAT's per-device address space does), replacing the
-global `NotificationMailbox`.
+global `NotificationMailbox`. **As built in S3:** each `DICETcatProtocol` owns a
+`DiceNotificationMailbox` and registers it, by GUID, with the `DiceNotificationRouter` in
+the controller deps. The local request handler resolves the write's source node, at the
+generation it arrived in, through `DeviceRegistry::SnapshotByNode`, then publishes to that
+mailbox and tells the DICE backend `(guid, bits)`. Attribution by source keeps one host
+address, so the owner value and the wire are unchanged.
 
 **Where polymorphism lives.** The scheduler and the restart routine are **concrete
 `final` classes**. There is exactly one scheduling policy and one restart routine; that
@@ -528,7 +538,7 @@ No decision is taken here.
 | `AudioDuplexCoordinator` class shape | concrete `final` `SessionScheduler`; no interface over it (§4.2) |
 | `DICEDuplexBringupController` (async chain) | `DiceFamilyDriver` (linear) |
 | `DICETransaction`, `DICETypes` | kept for parsing; I/O moves to `DiceDeviceIo` |
-| `DICENotificationMailbox` (global) | `DiceNotifications` (per device) |
+| `DICENotificationMailbox` (global) | `DiceNotificationMailbox` per device + `DiceNotificationRouter` (S3) |
 | `DiceAudioBackend` recovery / health probe / `TryBeginRecovery` | deleted: notifications become requests |
 | `DiceAudioBackend::EnsureNubForGuid` | kept (publication; later endpoint-lifecycle work) |
 | `DuplexStreamProfile` | kept for host geometry; `playbackWireFormat` and the fixed-channel defaults deleted |
@@ -582,11 +592,36 @@ rely on fixtures plus the vendors' identical code (§2.1).
   one-queued-block flags; the scheduler owns staleness (`RunningRun`). The
   `SleepWithTimeout`/`Wakeup` spike is deferred with the session queue (S4). Not yet run
   on hardware: Pro 24 DSP, M-Audio 1814, PHASE 88, Apogee Duet.
-- **S3: wire fixes, each declared.** IRM picks channels; config-change notifications
-  restart; owner held while present and re-claimed per generation; per-device notification
-  endpoint. Also: the first `GLOBAL_STATUS` read of a bring-up uses an empty section layout,
-  so it lands at offset `0x54` of the section table instead of the GLOBAL section; read the
-  section table first.
+- **S3: wire fixes, each declared. Done (2026-09-25), branch `refactor/dice-wire-fixes`.**
+  One commit per fix, each regenerating only the goldens it declares:
+  - **Section table first** (`2e24d7fa`). The bring-up opened with a `GLOBAL_STATUS` read
+    at the layout held before the table was read: `0xFFFFE0000054` (past the table) on
+    the first bring-up, a discarded real read later. Deleted; 65 + 12 reads leave the
+    goldens. The Saffire.kext reference window also opens with a discarded read at
+    `0x7C`; the parity test records the deviation.
+  - **The IRM picks DICE channels from 0–31** (`6091e308`). The catalog's CMP bool became
+    `IsochResourcePolicy::irmChannelMask`, set for every DICE row in `Definition()`.
+    `DiceFamilyDriver::AssignChannels` writes the IRM's channels to the ISOCHRONOUS
+    registers. The Pro 24 DSP keeps 0/1 on an empty bus; the Venice F32 moves from
+    playback 0,3 and capture 1,2 to 0,1 and 2,3. New `channel-busy` goldens: with 0 and 1
+    held elsewhere, DICE streams on 2 and 3, where it used to be refused. MOTU keeps its
+    planned channel (Linux lets the IRM pick any of 64; no MOTU evidence here).
+  - **A notification mailbox per device** (`fabd595e`, §4.2). No wire change; every
+    golden unchanged. The legacy latch address `0x00FF0000D1CC` is no longer accepted.
+  - **Config-change notifications restart running streams** (`e87f1670`), with the new
+    reason `kDeviceConfigChange`. The session rig now runs the real `DiceAudioBackend`
+    for DICE shapes. Every existing golden is unchanged, so the config change our own
+    `CLOCK_SELECT` raises mid-start adds no restart. New goldens: `config-change-running`
+    (one restart), `config-change-idle` and `config-change-during-start` (none).
+  - **Owner held while present, re-claimed per generation** (`663b3d78`). `EnsureOwner`
+    skips the wire when it claimed in this generation and the GLOBAL read shows our value.
+    Stop, rollback and the idle clock apply no longer release. 51 goldens lose 47 releases
+    (plus 4 that went to a device without our owner) and 12 same-generation re-claims with
+    their 24 owner reads. `recover-bus-reset` still re-claims. Not released at service
+    teardown (§8 Q7).
+  Not yet run on hardware; batched with the S1 and S2 checks on the Pro 24 DSP. The one
+  real risk is a config-change notification the device sends *after* a restart finishes,
+  which would cost one extra restart (TCAT absorbs that with its 400 ms debounce, S4).
 - **S4: DICE wire follows the device**, after a spike (§4.4).
 - **S5: native `FamilyDriver` for CMP families and MOTU.** Delete the adapter and
   `IDuplexDeviceControl`.
@@ -622,3 +657,9 @@ rely on fixtures plus the vendors' identical code (§2.1).
 5. **Faulted exit policy.** Which events clear `Faulted`, and is a user-visible reset needed?
 6. **`ApogeeInterleaved`.** Does the Duet really need interleaved host/device starts, or would the
    neutral order work? This needs Duet hardware and the reason behind the original ordering.
+7. **Releasing the DICE owner at teardown.** S3 holds the owner while the device is present,
+   as TCAT and Linux do, but both also release it on unbind. Our service teardown quiesces
+   the async subsystem before `AudioCoordinator::BeginTeardown`, and DICE I/O cannot block on
+   the Default queue, so no release reaches the device. A bus reset clears it, and our own
+   next claim accepts "already ours". A release needs teardown reordered so the bus is still
+   up for one bounded transaction per DICE device.

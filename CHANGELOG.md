@@ -25,11 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Audio: stopping playback after a start that had been refused (for example by a bus reset during setup) could crash the driver, through an internal consistency check that is active in every build. The stop now succeeds.
 - Audio: a timing fault reported just after playback stopped could restart the streams although nothing was playing. It is now ignored.
 - Audio: a second start request for a device that was already streaming re-ran the whole start over the live streams. It is now recognised as already done.
+- DICE: a start was refused whenever another device on the bus held isochronous channel 0 or 1, because DICE devices asked for exactly those. The bus's isochronous resource manager now picks free channels from 0–31, as Linux does, and the device is told which ones.
+- DICE: when a device changed its stream configuration on its own and said so, the streams kept running with the old one. They now restart, as the vendor drivers do. The notification the device sends during our own start is ignored.
+- DICE: with two DICE devices connected, one device's notifications could complete the other's clock-change wait. Each device's notifications now reach only that device.
 
 ### Changed
 
 - Audio: stream start, stop, rate changes and recovery for every device family now go through one per-device session scheduler that replaces the previous coordinator. Requests that overlap are combined into one restart. After three failed recoveries in a row the streams stay stopped until playback is started again; this limit now applies to DICE and MOTU devices too, which previously retried without limit (AV/C devices previously allowed four). The FireWire traffic is otherwise unchanged, checked against traces recorded from the previous code. Hardware confirmation is pending.
 - Focusrite Saffire Pro 40 (original revision) playback now uses the same raw 24-in-32 PCM encoding as the other Saffire models, without AM824 labels. This matches Focusrite's own driver; the earlier contributor verification used AM824 labels, so a retest on hardware is welcome.
+- DICE: the driver now keeps ownership of a DICE device while it is connected, claiming it once per bus reset, instead of claiming it at every start and releasing it at every stop. This matches the vendor and Linux drivers and removes a few transactions from every start and stop. The first register read of a start is now the section table; a meaningless read before it is gone. Hardware confirmation is pending.
 - DICE: stream start and stop now run as one straight sequence instead of a chain of callbacks. The FireWire traffic is unchanged: it matches, transaction for transaction, the recorded traces of the previous code on five DICE devices. Hardware confirmation is pending.
 
 ## [0.3.1] - 2026-09-24
