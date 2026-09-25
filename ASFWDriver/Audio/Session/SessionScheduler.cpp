@@ -3,8 +3,9 @@
 
 #include "SessionScheduler.hpp"
 
-#include "DuplexControlAdapter.hpp"
 #include "SessionClock.hpp"
+
+#include "../Protocols/IDeviceProtocol.hpp"
 
 #include "../Core/AudioRuntimeRegistry.hpp"
 #include "../Protocols/Duplex/AudioClockConfig.hpp"
@@ -63,9 +64,9 @@ namespace {
 struct DeviceHandle {
     std::optional<Discovery::DeviceRecord> record;
     std::shared_ptr<IDeviceProtocol> protocol;
-    IDuplexDeviceControl* control{nullptr};
+    FamilyDriver* family{nullptr};
 
-    [[nodiscard]] bool Known() const noexcept { return record.has_value() && control != nullptr; }
+    [[nodiscard]] bool Known() const noexcept { return record.has_value() && family != nullptr; }
 };
 
 } // namespace
@@ -576,7 +577,7 @@ IOReturn SessionScheduler::Reconcile(const Wanted& wanted) noexcept {
         device.record.reset();
     }
     device.protocol = deps_.runtime.FindShared(guid_);
-    device.control = device.protocol ? device.protocol->AsDuplexDeviceControl() : nullptr;
+    device.family = device.protocol ? device.protocol->AsFamilyDriver() : nullptr;
 
     const char* action = "none";
     IOReturn status = kIOReturnSuccess;
@@ -655,12 +656,12 @@ IOReturn SessionScheduler::StartStreams(const Wanted& wanted, const Discovery::D
     actual.state = SessionState::Restarting;
     StoreActual(actual);
 
-    DuplexControlAdapter family(protocol, *protocol->AsDuplexDeviceControl(), deps_.teardown);
+    FamilyDriver& family = BindFamily(*protocol);
     const auto result = restart_.Run(RestartRoutine::Request{
         .guid = guid_,
         .record = record,
         .family = &family,
-        .irm = family.IrmClient(),
+        .irm = deps_.irm != nullptr ? *deps_.irm : nullptr,
         .binding = deps_.bindingSource ? deps_.bindingSource(guid_) : nullptr,
         .clock = clock,
         .reason = reason,
@@ -701,13 +702,21 @@ IOReturn SessionScheduler::StartStreams(const Wanted& wanted, const Discovery::D
     return result.error().status;
 }
 
+FamilyDriver& SessionScheduler::BindFamily(IDeviceProtocol& protocol) noexcept {
+    // Callers reach here only for a protocol whose AsFamilyDriver is non-null
+    // (DeviceHandle::Known).
+    FamilyDriver& family = *protocol.AsFamilyDriver();
+    family.SetTeardownCancelToken(deps_.teardown);
+    return family;
+}
+
 IOReturn SessionScheduler::StopStreams(const Discovery::DeviceRecord& record,
                                        const std::shared_ptr<IDeviceProtocol>& protocol) noexcept {
     Actual actual = LoadActual();
     actual.state = SessionState::Restarting;
     StoreActual(actual);
 
-    DuplexControlAdapter family(protocol, *protocol->AsDuplexDeviceControl(), deps_.teardown);
+    FamilyDriver& family = BindFamily(*protocol);
     const IOReturn status = stop_.Run(guid_, record, family, actual.runtimeCaps, actual.channels);
     if (status == kIOReturnSuccess) {
         actual.state = SessionState::Idle;
@@ -724,7 +733,7 @@ IOReturn SessionScheduler::StopStreams(const Discovery::DeviceRecord& record,
 IOReturn SessionScheduler::ApplyClockIdle(const AudioClockConfig& clock,
                                           const std::shared_ptr<IDeviceProtocol>& protocol) noexcept {
     Actual actual = LoadActual();
-    DuplexControlAdapter family(protocol, *protocol->AsDuplexDeviceControl(), deps_.teardown);
+    FamilyDriver& family = BindFamily(*protocol);
     const auto applied = family.ApplyClockIdle(clock);
     if (!applied) {
         actual.state = SessionState::Failed;

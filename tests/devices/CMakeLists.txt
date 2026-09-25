@@ -77,7 +77,6 @@ add_device_test(DiceWireCharacterizationTests
 add_device_test(SessionCharacterizationTests
     SessionCharacterizationTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Session/DuplexControlAdapter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/RestartRoutine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/SessionScheduler.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/StopRoutine.cpp"
@@ -117,7 +116,6 @@ add_device_test(SessionCharacterizationTests
 add_device_test(AudioSessionSchedulerTests
     AudioSessionSchedulerTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Session/DuplexControlAdapter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/RestartRoutine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/SessionScheduler.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/StopRoutine.cpp"
@@ -357,7 +355,6 @@ add_device_test(BackendLifecycleRaceTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/DiceAudioBackend.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Session/DuplexControlAdapter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/RestartRoutine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/SessionScheduler.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/StopRoutine.cpp"

@@ -7,8 +7,8 @@
 // async operation and blocks the calling thread, polling a shared completion flag until
 // the operation completes, a teardown cancel token fires (FW-61), or a timeout elapses.
 //
-// Used by Session::DuplexControlAdapter, the one place the session turns callback-style
-// device stages into blocking calls, and by the DICE backend's health reads.
+// Used through Duplex/FamilyStageWait.hpp, where a family's FamilyDriver step waits for
+// its own callback-style stage chain, and by the IRM reservations.
 
 #pragma once
 

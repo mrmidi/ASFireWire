@@ -355,20 +355,17 @@ ASFW::Audio::AudioDuplexChannels MakeChannels() {
 
 } // namespace
 
-// The coordinator reaches every protocol through
-// IDeviceProtocol::AsDuplexDeviceControl(). A protocol that returns nullptr there is
+// The audio session reaches every protocol through
+// IDeviceProtocol::AsFamilyDriver(). A protocol that returns nullptr there is
 // simply never driven -- no bring-up, no streaming, silently. This is the single
 // assertion that MOTU is reachable at all, so it guards the whole family.
-TEST(MotuV2DuplexTests, ExposesItselfAsDuplexDeviceControl) {
+TEST(MotuV2DuplexTests, ExposesItselfAsFamilyDriver) {
     RecordingBus bus;
     RouteState routes;
     MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     ASFW::Audio::IDeviceProtocol& asProtocol = protocol;
-    EXPECT_NE(asProtocol.AsDuplexDeviceControl(), nullptr);
-
-    const ASFW::Audio::IDeviceProtocol& asConstProtocol = protocol;
-    EXPECT_NE(asConstProtocol.AsDuplexDeviceControl(), nullptr);
+    EXPECT_NE(asProtocol.AsFamilyDriver(), nullptr);
 }
 
 TEST(MotuV2DuplexTests, ReportsChunkGeometryThroughRuntimeCaps) {

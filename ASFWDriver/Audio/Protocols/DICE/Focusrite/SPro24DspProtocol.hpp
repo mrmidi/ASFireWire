@@ -72,12 +72,6 @@ public:
     /// Get device name
     const char* GetName() const override { return "Focusrite Saffire Pro 24 DSP"; }
     Audio::FamilyDriver* AsFamilyDriver() noexcept override { return tcat_.AsFamilyDriver(); }
-    Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override {
-        return tcat_.AsDuplexDeviceControl();
-    }
-    const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override {
-        return tcat_.AsDuplexDeviceControl();
-    }
     
     /// Device has DSP effects
     bool HasDsp() const override { return true; }
@@ -88,7 +82,6 @@ public:
     }
     
     IOReturn StopDuplex() override;
-    ::ASFW::IRM::IRMClient* GetIRMClient() const override { return tcat_.GetIRMClient(); }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
     

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// DuplexControlTypes.hpp - Values exchanged across IDuplexDeviceControl.
+// DuplexControlTypes.hpp - Values exchanged across FamilyDriver.
 //
-// Why a restart happens, the result each device stage reports, and the
-// device-side progress a DICE bring-up tracks. Session state (what should run,
+// Why a restart happens, the result each device stage reports, the callbacks
+// the families' asynchronous stage chains answer with, and the device-side
+// progress a DICE bring-up tracks. Session state (what should run,
 // what runs) belongs to Audio/Session/SessionScheduler; the lifecycle variant,
 // clock-request tokens and rollback ledger that used to live here went with
 // AudioDuplexCoordinator (documentation/AUDIO_SESSION_REDESIGN.md, stage S2).
@@ -18,6 +19,7 @@
 #include <DriverKit/IOReturn.h>
 
 #include <cstdint>
+#include <functional>
 
 namespace ASFW::Audio {
 
@@ -97,6 +99,14 @@ struct DuplexHealthResult {
     uint32_t status{0};
     uint32_t extStatus{0};
 };
+
+// How a family's asynchronous stage chain answers. FamilyDriver steps start a
+// chain and wait for this answer (FamilyStageWait.hpp).
+using PrepareCallback = std::function<void(IOReturn, DuplexPrepareResult)>;
+using StageCallback = std::function<void(IOReturn, DuplexStageResult)>;
+using ConfirmCallback = std::function<void(IOReturn, DuplexConfirmResult)>;
+using ClockApplyCallback = std::function<void(IOReturn, DuplexClockApplyResult)>;
+using HealthCallback = std::function<void(IOReturn, DuplexHealthResult)>;
 
 // A DICE bring-up's device-side progress: what it claimed, armed and enabled,
 // so its stop and rollback know what to undo.

@@ -515,7 +515,7 @@ TEST(ApogeeDuetDuplexAdapter, PrepareDuplexRevalidates48kBeforeResourceAllocatio
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
     ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), rig.Transport(), &irm, &cmp, 0);
-    auto& duplex = *protocol.AsDuplexDeviceControl();
+    auto& duplex = protocol.Duplex();
     ASFW::Audio::AudioDuplexChannels channels{};
     IOReturn completionStatus = kIOReturnNotReady;
 
@@ -601,7 +601,7 @@ TEST(ApogeeDuetDuplexAdapter, ProgramsIRMChannelIntoOutputPCR) {
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
     ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
-    auto& duplex = *protocol.AsDuplexDeviceControl();
+    auto& duplex = protocol.Duplex();
     ASFW::Audio::AudioDuplexChannels channels{};
     channels.deviceToHostIsoChannel = 5;
     duplex.SetAssignedChannels(channels);
@@ -655,7 +655,7 @@ TEST(ApogeeDuetDuplexAdapter, ProgramRxReturnsBeforeItsCmpCompletionArrives) {
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
     ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
-    auto& duplex = *protocol.AsDuplexDeviceControl();
+    auto& duplex = protocol.Duplex();
 
     // CMP completions are delivered on the same queue the stage runs on. A
     // stage that waited here could never observe this being drained.
@@ -682,7 +682,7 @@ TEST(ApogeeDuetDuplexAdapter, ProgramTxReturnsBeforeItsCmpCompletionArrives) {
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
     ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
-    auto& duplex = *protocol.AsDuplexDeviceControl();
+    auto& duplex = protocol.Duplex();
 
     rig.Bus().SetDeferLocks(true);
 
@@ -711,7 +711,7 @@ namespace {
 /// fails before issuing any compare-swap — so the break never reaches the bus
 /// and the test would be asserting on the fixture rather than on the code.
 void ConnectBothPlugsAndReflectThemInPcrReads(AvcTestRig& rig,
-                                              ASFW::Audio::IDuplexDeviceControl& duplex) {
+                                              ApogeeDuetDuplex& duplex) {
     namespace PCR = ASFW::CMP::PCRRegisters;
     namespace Bits = ASFW::CMP::PCRBits;
 
@@ -732,7 +732,7 @@ TEST(ApogeeDuetDuplexAdapter, StopDuplexIssuesBothBreaksWithoutWaitingForThem) {
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
     ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
-    auto& duplex = *protocol.AsDuplexDeviceControl();
+    auto& duplex = protocol.Duplex();
 
     ConnectBothPlugsAndReflectThemInPcrReads(rig, duplex);
 
@@ -756,7 +756,7 @@ TEST(ApogeeDuetDuplexAdapter, StopDuplexCompletionsOutliveTheProtocolSafely) {
 
     {
         ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
-        auto& duplex = *protocol.AsDuplexDeviceControl();
+        auto& duplex = protocol.Duplex();
         ConnectBothPlugsAndReflectThemInPcrReads(rig, duplex);
 
         rig.Bus().SetDeferLocks(true);
@@ -773,7 +773,7 @@ TEST(ApogeeDuetDuplexAdapter, MapsCompletedCmpFailureToErrorRatherThanTimeout) {
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
     ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
-    auto& duplex = *protocol.AsDuplexDeviceControl();
+    auto& duplex = protocol.Duplex();
 
     IOReturn rxStatus = kIOReturnNotReady;
     duplex.ProgramRx([&rxStatus](IOReturn status, ASFW::Audio::DuplexStageResult) {

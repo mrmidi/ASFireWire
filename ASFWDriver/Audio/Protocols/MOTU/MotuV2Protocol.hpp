@@ -7,7 +7,7 @@
 // MotuV2Registers.hpp; this class owns only transport (async register IO against
 // kAddrBase + offset) and the cached device state those reads produce.
 //
-// Device-side streaming bring-up IS implemented here, through IDuplexDeviceControl.
+// Device-side streaming bring-up IS implemented here, through FamilyDriver.
 // The host-side half -- replaying the device's per-data-block SPH presentation times --
 // lives in Audio/Wire/MOTU (MotuEventOffsetCache captures, MotuTxTiming stamps), because
 // it belongs with packet timing rather than register control.
@@ -17,7 +17,6 @@
 #include "MotuV2Registers.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../Duplex/FamilyDriver.hpp"
-#include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 
 #include <atomic>
@@ -36,13 +35,10 @@ struct ClockStatus {
 
 /// MOTU protocol-v2 register device.
 ///
-/// Also serves as its own IDuplexDeviceControl: the audio session reaches every
-/// protocol through IDeviceProtocol::AsDuplexDeviceControl(), so that -- not the
-/// DICE-internal *48k hooks on IDeviceProtocol -- is the seam a new family must
+/// Also serves as its own FamilyDriver: the audio session reaches every protocol
+/// through IDeviceProtocol::AsFamilyDriver(), so that is the seam a new family must
 /// implement to be driven at all.
-class MotuV2Protocol final : public IDeviceProtocol,
-                             public IDuplexDeviceControl,
-                             public FamilyDriver {
+class MotuV2Protocol final : public IDeviceProtocol, public FamilyDriver {
 public:
     using ClockStatusCallback = std::function<void(IOReturn, ClockStatus)>;
     using CompletionCallback = std::function<void(IOReturn)>;
@@ -89,27 +85,22 @@ public:
     // captures the offsets on receive, MotuTxTiming stamps them back on transmit.
     //==========================================================================
 
-    // IDeviceProtocol -> IDuplexDeviceControl bridge. Returning `this` is what makes
-    // the audio session able to drive this protocol at all.
+    // IDeviceProtocol -> FamilyDriver. Returning `this` is what makes the audio
+    // session able to drive this protocol at all.
     Audio::FamilyDriver* AsFamilyDriver() noexcept override { return this; }
-    Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
-    const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override {
-        return this;
-    }
 
-    // ---- IDuplexDeviceControl ----
+    // ---- Stage chains (callback form; the FamilyDriver steps below wait on them) ----
     void PrepareDuplex(const AudioDuplexChannels& channels,
                        const AudioClockConfig& desiredClock,
-                       PrepareCallback callback) override;
-    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept override;
-    void ProgramRx(StageCallback callback) override;
-    void ProgramTxAndEnableDuplex(StageCallback callback) override;
-    void ConfirmDuplexStart(ConfirmCallback callback) override;
+                       PrepareCallback callback);
+    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept;
+    void ProgramRx(StageCallback callback);
+    void ProgramTxAndEnableDuplex(StageCallback callback);
+    void ConfirmDuplexStart(ConfirmCallback callback);
     void ApplyClockConfig(const AudioClockConfig& desiredClock,
-                          ClockApplyCallback callback) override;
-    void ReadDuplexHealth(HealthCallback callback) override;
+                          ClockApplyCallback callback);
+    void ReadDuplexHealth(HealthCallback callback);
     [[nodiscard]] IOReturn StopDuplex() override;
-    [[nodiscard]] ::ASFW::IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
 
     // ---- FamilyDriver ----
     // Each step starts the callback chain above and waits for it

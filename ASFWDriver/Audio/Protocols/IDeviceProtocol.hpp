@@ -23,7 +23,6 @@ namespace ASFW::IRM {
 }
 
 namespace ASFW::Audio {
-class IDuplexDeviceControl;
 class FamilyDriver;
 }
 
@@ -90,23 +89,11 @@ public:
         return kIOReturnUnsupported;
     }
 
-    /// Optional internal hook for backends that need the protocol's IRM client.
-    virtual ::ASFW::IRM::IRMClient* GetIRMClient() const {
-        return nullptr;
-    }
 
     /// The protocol's streaming driver, for the audio session. Null: the device
     /// does not stream.
     virtual FamilyDriver* AsFamilyDriver() noexcept { return nullptr; }
 
-    /// Optional protocol-neutral duplex control interface used by the audio lifecycle.
-    virtual IDuplexDeviceControl* AsDuplexDeviceControl() noexcept {
-        return nullptr;
-    }
-
-    virtual const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept {
-        return nullptr;
-    }
 
     /// Update volatile runtime context that can change across bus resets.
     virtual void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,

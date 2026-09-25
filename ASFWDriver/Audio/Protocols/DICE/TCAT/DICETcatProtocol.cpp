@@ -303,43 +303,6 @@ IOReturn DICETcatProtocol::Stop() {
     return StopDuplex();
 }
 
-// ---------------------------------------------------------------------------
-// IDuplexDeviceControl (callback form, until the session uses FamilyDriver)
-// ---------------------------------------------------------------------------
-
-template <typename T>
-static void Deliver(const std::expected<T, IOReturn>& result,
-                    const std::function<void(IOReturn, T)>& callback) {
-    callback(result ? kIOReturnSuccess : result.error(), result.value_or(T{}));
-}
-
-void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
-                                     const AudioClockConfig& desiredClock,
-                                     PrepareCallback callback) {
-    Deliver(Configure(channels, desiredClock), callback);
-}
-
-void DICETcatProtocol::SetAssignedChannels(const AudioDuplexChannels& channels) noexcept {
-    AssignChannels(channels);
-}
-
-void DICETcatProtocol::ProgramRx(StageCallback callback) {
-    Deliver(ArmDeviceRx(), callback);
-}
-
-void DICETcatProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
-    Deliver(ArmDeviceTxAndEnable(), callback);
-}
-
-void DICETcatProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
-    Deliver(Confirm(), callback);
-}
-
-void DICETcatProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
-                                        ClockApplyCallback callback) {
-    Deliver(ApplyClockIdle(desiredClock), callback);
-}
-
 void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {
     if (!initialized_) {
         callback(kIOReturnNotReady, {});

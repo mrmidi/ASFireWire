@@ -6,7 +6,6 @@
 #pragma once
 
 #include "../../Duplex/FamilyDriver.hpp"
-#include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../Core/DiceDeviceIo.hpp"
 #include "../Core/DiceFamilyDriver.hpp"
 #include "../Core/DiceNotificationMailbox.hpp"
@@ -41,15 +40,9 @@ struct DICETcatRuntimePolicy final {
 };
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
-                               public Audio::IDuplexDeviceControl,
                                public Audio::FamilyDriver {
 public:
     using VoidCallback = std::function<void(IOReturn)>;
-    using PrepareCallback = IDuplexDeviceControl::PrepareCallback;
-    using StageCallback = IDuplexDeviceControl::StageCallback;
-    using ConfirmCallback = IDuplexDeviceControl::ConfirmCallback;
-    using ClockApplyCallback = IDuplexDeviceControl::ClockApplyCallback;
-    using HealthCallback = IDuplexDeviceControl::HealthCallback;
 
     DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                      Protocols::Ports::FireWireBusInfo& busInfo,
@@ -68,26 +61,15 @@ public:
     IOReturn Shutdown() override;
     const char* GetName() const override { return "TCAT DICE"; }
     Audio::FamilyDriver* AsFamilyDriver() noexcept override { return this; }
-    Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
-    const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
     bool GetChannelLabels(std::vector<std::string>& inNames,
                           std::vector<std::string>& outNames) const override;
 
-    void PrepareDuplex(const AudioDuplexChannels& channels,
-                       const AudioClockConfig& desiredClock,
-                       PrepareCallback callback) override;
-    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept override;
-    void ProgramRx(StageCallback callback) override;
-    void ProgramTxAndEnableDuplex(StageCallback callback) override;
-    void ConfirmDuplexStart(ConfirmCallback callback) override;
-    void ApplyClockConfig(const AudioClockConfig& desiredClock,
-                          ClockApplyCallback callback) override;
-    void ReadDuplexHealth(HealthCallback callback) override;
+    // The GLOBAL clock and lock state, read asynchronously (safe on any queue).
+    void ReadDuplexHealth(HealthCallback callback);
     void EnsureRuntimeStreamGeometry(VoidCallback callback) override;
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
-    ::ASFW::IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
 
     IOReturn StopDuplex() override;
 

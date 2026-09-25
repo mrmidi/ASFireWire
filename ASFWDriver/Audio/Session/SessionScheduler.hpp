@@ -33,6 +33,7 @@
 #pragma once
 
 #include "RestartRoutine.hpp"
+#include "../Protocols/Duplex/FamilyDriver.hpp"
 #include "StopRoutine.hpp"
 
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
@@ -195,6 +196,8 @@ private:
     [[nodiscard]] IOReturn Reconcile(const Wanted& wanted) noexcept;
     [[nodiscard]] IOReturn StartStreams(const Wanted& wanted, const Discovery::DeviceRecord& record,
                                         const std::shared_ptr<IDeviceProtocol>& protocol) noexcept;
+    // The protocol's FamilyDriver, bound to the service-teardown token.
+    [[nodiscard]] FamilyDriver& BindFamily(IDeviceProtocol& protocol) noexcept;
     [[nodiscard]] IOReturn StopStreams(const Discovery::DeviceRecord& record,
                                        const std::shared_ptr<IDeviceProtocol>& protocol) noexcept;
     [[nodiscard]] IOReturn ApplyClockIdle(const AudioClockConfig& clock,

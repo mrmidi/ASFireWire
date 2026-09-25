@@ -96,7 +96,7 @@ struct ApogeeDuetDuplex::ClockTransition {
     SignalFormatCommand::SignalFormat outputBefore{};
     SignalFormatCommand::SignalFormat inputAfter{};
     SignalFormatCommand::SignalFormat outputAfter{};
-    IDuplexDeviceControl::ClockApplyCallback completion{};
+    ClockApplyCallback completion{};
     Phase phase{Phase::kReadInputBefore};
     IOReturn failureStatus{kIOReturnSuccess};
     bool inputChanged{false};

@@ -13,7 +13,7 @@
 //   ## ...  a call the test made into the session layer, and what it returned
 //
 // A scripted device stands in for the AV/C, BeBoB and MOTU protocols: the
-// session layer sees only IDuplexDeviceControl, so the scripted stages and the
+// session layer sees only FamilyDriver, so the scripted steps and the
 // recipe the device catalog resolves for the ROM are what shape its sequence.
 
 #pragma once
@@ -32,7 +32,7 @@
 #include "Audio/Session/AudioSessions.hpp"
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "Audio/Protocols/DICE/TCAT/DICETcatProtocol.hpp"
-#include "Audio/Protocols/Duplex/IDuplexDeviceControl.hpp"
+#include "Audio/Protocols/Duplex/FamilyDriver.hpp"
 #include "Audio/Protocols/IDeviceProtocol.hpp"
 #include "Bus/IRM/IRMClient.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
@@ -61,7 +61,7 @@ using ::ASFW::Audio::DuplexHealthResult;
 using ::ASFW::Audio::DuplexPrepareResult;
 using ::ASFW::Audio::DuplexStageResult;
 using ::ASFW::Audio::IDeviceProtocol;
-using ::ASFW::Audio::IDuplexDeviceControl;
+using ::ASFW::Audio::FamilyDriver;
 using ::ASFW::Audio::IIsochDuplexHostTransport;
 using ::ASFW::Discovery::CfgKey;
 using ::ASFW::Discovery::ConfigROM;
@@ -277,82 +277,83 @@ private:
     uint64_t takenElsewhere_{0};
 };
 
-// A non-DICE family as the session layer sees it: every stage completes at
+// A non-DICE family as the session layer sees it: every step completes at
 // once, records itself, and can be failed or hooked by name ("device.<stage>").
-class ScriptedDeviceControl final : public IDeviceProtocol, public IDuplexDeviceControl {
+class ScriptedDeviceControl final : public IDeviceProtocol, public FamilyDriver {
 public:
     ScriptedDeviceControl(WireTrace& trace, Hooks& hooks, Failures& failures,
-                          ::ASFW::IRM::IRMClient& irm, AudioStreamRuntimeCaps caps) noexcept
-        : trace_(trace), hooks_(hooks), failures_(failures), irm_(irm), caps_(caps) {}
+                          AudioStreamRuntimeCaps caps) noexcept
+        : trace_(trace), hooks_(hooks), failures_(failures), caps_(caps) {}
 
     IOReturn Initialize() override { return kIOReturnSuccess; }
     IOReturn Shutdown() override { return kIOReturnSuccess; }
     const char* GetName() const override { return "Scripted"; }
-    IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
-    const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
+    FamilyDriver* AsFamilyDriver() noexcept override { return this; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& out) const override {
         out = caps_;
         return true;
     }
 
-    void EnsureRuntimeStreamGeometry(VoidCallback callback) override {
-        callback(Stage("geometry", "D geometry"));
-    }
+    void SetTeardownCancelToken(const std::atomic<bool>*) noexcept override {}
 
-    void PrepareDuplex(const AudioDuplexChannels& channels, const AudioClockConfig& clock,
-                       PrepareCallback callback) override {
+    IOReturn LoadGeometry() override { return Stage("geometry", "D geometry"); }
+
+    std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override { return caps_; }
+
+    std::expected<DuplexPrepareResult, IOReturn> Configure(const AudioDuplexChannels& channels,
+                                                           const AudioClockConfig& clock) override {
         channels_ = channels;
         const IOReturn status = Stage("prepare", "D prepare rate=" + std::to_string(clock.sampleRateHz) +
                                                      Channels(channels));
-        if (status == kIOReturnSuccess) {
-            clock_ = clock;
-            caps_.sampleRateHz = clock.sampleRateHz;
+        if (status != kIOReturnSuccess) {
+            return std::unexpected(status);
         }
-        callback(status, status == kIOReturnSuccess
-                             ? DuplexPrepareResult{.generation = Generation{1}, .channels = channels,
-                                                   .appliedClock = clock_, .runtimeCaps = caps_}
-                             : DuplexPrepareResult{});
+        clock_ = clock;
+        caps_.sampleRateHz = clock.sampleRateHz;
+        return DuplexPrepareResult{.generation = Generation{1}, .channels = channels,
+                                   .appliedClock = clock_, .runtimeCaps = caps_};
     }
 
-    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept override {
+    void AssignChannels(const AudioDuplexChannels& channels) override {
         channels_ = channels;
         trace_.Add("D assign" + Channels(channels));
     }
 
-    void ProgramRx(StageCallback callback) override {
-        const IOReturn status = Stage("program_rx", "D program rx");
-        callback(status, StageResult(status));
+    std::expected<DuplexStageResult, IOReturn> ArmDeviceRx() override {
+        return StageResult(Stage("program_rx", "D program rx"));
     }
 
-    void ProgramTxAndEnableDuplex(StageCallback callback) override {
-        const IOReturn status = Stage("program_tx", "D program tx+enable");
-        callback(status, StageResult(status));
+    std::expected<DuplexStageResult, IOReturn> ArmDeviceTxAndEnable() override {
+        return StageResult(Stage("program_tx", "D program tx+enable"));
     }
 
-    void ConfirmDuplexStart(ConfirmCallback callback) override {
+    std::expected<DuplexConfirmResult, IOReturn> Confirm() override {
         const IOReturn status = Stage("confirm", "D confirm");
-        callback(status, status == kIOReturnSuccess
-                             ? DuplexConfirmResult{.generation = Generation{1}, .channels = channels_,
-                                                   .appliedClock = clock_, .runtimeCaps = caps_,
-                                                   .notification = 0x20, .status = 0x201}
-                             : DuplexConfirmResult{});
-    }
-
-    void ApplyClockConfig(const AudioClockConfig& clock, ClockApplyCallback callback) override {
-        const IOReturn status = Stage("apply_clock", "D apply clock rate=" + std::to_string(clock.sampleRateHz));
-        if (status == kIOReturnSuccess) {
-            clock_ = clock;
-            caps_.sampleRateHz = clock.sampleRateHz;
+        if (status != kIOReturnSuccess) {
+            return std::unexpected(status);
         }
-        callback(status, status == kIOReturnSuccess
-                             ? DuplexClockApplyResult{.generation = Generation{1},
-                                                      .appliedClock = clock_, .runtimeCaps = caps_}
-                             : DuplexClockApplyResult{});
+        return DuplexConfirmResult{.generation = Generation{1}, .channels = channels_,
+                                   .appliedClock = clock_, .runtimeCaps = caps_,
+                                   .notification = 0x20, .status = 0x201};
     }
 
-    void ReadDuplexHealth(HealthCallback callback) override {
+    std::expected<DuplexClockApplyResult, IOReturn> ApplyClockIdle(const AudioClockConfig& clock) override {
+        const IOReturn status = Stage("apply_clock", "D apply clock rate=" + std::to_string(clock.sampleRateHz));
+        if (status != kIOReturnSuccess) {
+            return std::unexpected(status);
+        }
+        clock_ = clock;
+        caps_.sampleRateHz = clock.sampleRateHz;
+        return DuplexClockApplyResult{.generation = Generation{1}, .appliedClock = clock_,
+                                      .runtimeCaps = caps_};
+    }
+
+    std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t) override {
         const IOReturn status = Stage("health", "D health");
+        if (status != kIOReturnSuccess) {
+            return std::unexpected(status);
+        }
         // Locked at the current clock unless a test scripted the lock states;
         // the last scripted state repeats.
         bool locked = true;
@@ -364,25 +365,21 @@ public:
         }
         const uint32_t rateIndex = clock_.sampleRateHz == 44100U ? 1U : 2U;
         const uint32_t statusValue = 0x1U | (rateIndex << 8);
-        callback(status, DuplexHealthResult{.generation = Generation{1}, .appliedClock = clock_,
-                                            .runtimeCaps = caps_, .sourceLocked = locked,
-                                            .clockReferenceHealthy = true,
-                                            .nominalRateHz = clock_.sampleRateHz,
-                                            .status = statusValue});
+        return DuplexHealthResult{.generation = Generation{1}, .appliedClock = clock_,
+                                  .runtimeCaps = caps_, .sourceLocked = locked,
+                                  .clockReferenceHealthy = true,
+                                  .nominalRateHz = clock_.sampleRateHz,
+                                  .status = statusValue};
     }
 
-    void DisconnectPlayback(VoidCallback callback) override {
-        callback(Stage("disconnect_playback", "D disconnect playback"));
+    IOReturn DisconnectPlayback() override {
+        return Stage("disconnect_playback", "D disconnect playback");
     }
-    void DisconnectCapture(VoidCallback callback) override {
-        callback(Stage("disconnect_capture", "D disconnect capture"));
+    IOReturn DisconnectCapture() override {
+        return Stage("disconnect_capture", "D disconnect capture");
     }
-    void BreakBothConnections(VoidCallback callback) override {
-        callback(Stage("break", "D break connections"));
-    }
-    void SetTeardownCancelToken(const std::atomic<bool>*) noexcept override {}
-    IOReturn StopDuplex() override { return Stage("stop", "D stop"); }
-    ::ASFW::IRM::IRMClient* GetIRMClient() const override { return &irm_; }
+    IOReturn BreakConnections() override { return Stage("break", "D break connections"); }
+    IOReturn Stop() override { return Stage("stop", "D stop"); }
 
     // Source-lock state of successive health reads.
     std::vector<bool> healthLocked;
@@ -400,11 +397,12 @@ private:
         return out + "]";
     }
 
-    DuplexStageResult StageResult(IOReturn status) const {
-        return status == kIOReturnSuccess
-                   ? DuplexStageResult{.generation = Generation{1}, .channels = channels_,
-                                       .runtimeCaps = caps_}
-                   : DuplexStageResult{};
+    std::expected<DuplexStageResult, IOReturn> StageResult(IOReturn status) const {
+        if (status != kIOReturnSuccess) {
+            return std::unexpected(status);
+        }
+        return DuplexStageResult{.generation = Generation{1}, .channels = channels_,
+                                 .runtimeCaps = caps_};
     }
 
     IOReturn Stage(const std::string& op, std::string line) {
@@ -426,7 +424,6 @@ private:
     WireTrace& trace_;
     Hooks& hooks_;
     Failures& failures_;
-    ::ASFW::IRM::IRMClient& irm_;
     AudioStreamRuntimeCaps caps_;
     AudioDuplexChannels channels_{};
     AudioClockConfig clock_{.sampleRateHz = 48000U};
@@ -512,7 +509,7 @@ struct SessionRig {
         Install(Generation{1});
         const auto route = *registry.CurrentRoute(guid);
         if (s.diceImage == nullptr) {
-            protocol = std::make_shared<ScriptedDeviceControl>(bus.Trace(), hooks, failures, irm,
+            protocol = std::make_shared<ScriptedDeviceControl>(bus.Trace(), hooks, failures,
                                                                kScriptedCaps);
         } else if (s.spro24Dsp) {
             protocol = std::make_shared<ASFW::Audio::DICE::Focusrite::SPro24DspProtocol>(
@@ -522,7 +519,7 @@ struct SessionRig {
                 bus, bus, registry, route, &irm, waitClock, &notifications);
         }
         EXPECT_EQ(protocol->Initialize(), kIOReturnSuccess);
-        protocol->AsDuplexDeviceControl()->SetTeardownCancelToken(&cancel);
+        protocol->AsFamilyDriver()->SetTeardownCancelToken(&cancel);
         runtime.Insert(guid, protocol);
         bus.RouteNotificationsTo(notifications);
         if (IsDice()) {

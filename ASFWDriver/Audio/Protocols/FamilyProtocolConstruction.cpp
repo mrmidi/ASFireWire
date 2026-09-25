@@ -165,9 +165,9 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // --- MotuRegister Family ---
         // MOTU publishes model_id 0; the model is the unit's Unit_Sw_Version,
         // which the protocol needs in order to pick its chunk layout.
-        // The IRM client must reach the protocol: the coordinator allocates iso
-        // channels through IDuplexDeviceControl::GetIRMClient() before
-        // programming the device.
+        // The protocol keeps the IRM client for its own use; the audio session
+        // reserves the iso channels with the same client before programming
+        // the device.
         case ProtocolImplementationId::MotuV2:
             ASFW_LOG(Audio,
                      "Creating MotuV2Protocol version=0x%06x node=0x%04x",

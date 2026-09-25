@@ -4,8 +4,8 @@
 // DiceWireCharacterizationTests.cpp - Golden wire traces of today's DICE bring-up.
 //
 // Stage S0 of documentation/AUDIO_SESSION_REDESIGN.md. Each test drives a DICE
-// protocol through IDuplexDeviceControl, in the order the session
-// calls it, against a SimulatedDiceDevice built from a recorded device, and
+// protocol through its FamilyDriver (the callback interface it used until S5),
+// in the order the session calls it, against a SimulatedDiceDevice built from a recorded device, and
 // compares every transaction put on the wire with tests/golden/dice/*.trace.
 //
 // These tests characterize behaviour; they do not judge it. A golden may record
@@ -28,7 +28,7 @@
 
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "Audio/Protocols/DICE/TCAT/DICETcatProtocol.hpp"
-#include "Audio/Protocols/Duplex/IDuplexDeviceControl.hpp"
+#include "Audio/Protocols/Duplex/FamilyDriver.hpp"
 
 #include <atomic>
 #include <cstdio>
@@ -43,7 +43,7 @@ using ASFW::Audio::AudioClockConfig;
 using ASFW::Audio::AudioDuplexChannels;
 using ASFW::Audio::AudioStreamRuntimeCaps;
 using ASFW::Audio::IDeviceProtocol;
-using ASFW::Audio::IDuplexDeviceControl;
+using ASFW::Audio::FamilyDriver;
 using ASFW::Audio::kMaxAudioStreamsPerDirection;
 using ASFW::Testing::FakeDiceWaitClock;
 using ASFW::Testing::FakeTimerScheduler;
@@ -68,9 +68,9 @@ struct DiceRig {
                 bus, bus, routeState.registry, routeState.route, nullptr, waitClock, &notifications);
         }
         EXPECT_EQ(protocol->Initialize(), kIOReturnSuccess);
-        control = protocol->AsDuplexDeviceControl();
-        EXPECT_NE(control, nullptr);
-        control->SetTeardownCancelToken(&cancel);
+        family = protocol->AsFamilyDriver();
+        EXPECT_NE(family, nullptr);
+        family->SetTeardownCancelToken(&cancel);
         bus.Trace().Clear();
         bus.RouteNotificationsTo(notifications);
     }
@@ -149,7 +149,7 @@ struct DiceRig {
     // Every stage the session runs for a start, in its order.
     IOReturn Start(uint32_t rateHz) {
         IOReturn status = Run("EnsureRuntimeStreamGeometry", [&](auto done) {
-            control->EnsureRuntimeStreamGeometry(done);
+            protocol->EnsureRuntimeStreamGeometry(done);
         });
         if (status != kIOReturnSuccess) {
             return status;
@@ -159,31 +159,30 @@ struct DiceRig {
         const AudioDuplexChannels channels = ChannelsFor(caps);
 
         status = Run("PrepareDuplex", [&](auto done) {
-            control->PrepareDuplex(channels, AudioClockConfig{.sampleRateHz = rateHz},
-                                   [done](IOReturn s, auto) { done(s); });
+            done(StatusOf(family->Configure(channels, AudioClockConfig{.sampleRateHz = rateHz})));
         });
         if (status != kIOReturnSuccess) {
             return status;
         }
-        control->SetAssignedChannels(channels);
-        status = Run("ProgramRx", [&](auto done) {
-            control->ProgramRx([done](IOReturn s, auto) { done(s); });
-        });
+        family->AssignChannels(channels);
+        status = Run("ProgramRx", [&](auto done) { done(StatusOf(family->ArmDeviceRx())); });
         if (status != kIOReturnSuccess) {
             return status;
         }
-        status = Run("ProgramTxAndEnableDuplex", [&](auto done) {
-            control->ProgramTxAndEnableDuplex([done](IOReturn s, auto) { done(s); });
-        });
+        status = Run("ProgramTxAndEnableDuplex",
+                     [&](auto done) { done(StatusOf(family->ArmDeviceTxAndEnable())); });
         if (status != kIOReturnSuccess) {
             return status;
         }
-        return Run("ConfirmDuplexStart", [&](auto done) {
-            control->ConfirmDuplexStart([done](IOReturn s, auto) { done(s); });
-        });
+        return Run("ConfirmDuplexStart", [&](auto done) { done(StatusOf(family->Confirm())); });
     }
 
-    IOReturn Stop() { return Sync("StopDuplex", [this] { return control->StopDuplex(); }); }
+    IOReturn Stop() { return Sync("StopDuplex", [this] { return family->Stop(); }); }
+
+    template <typename T>
+    static IOReturn StatusOf(const std::expected<T, IOReturn>& result) {
+        return result ? kIOReturnSuccess : result.error();
+    }
 
     // Final device state, so leftovers (an owner, an armed stream) show up.
     void Summarize() {
@@ -217,7 +216,7 @@ struct DiceRig {
     ::ASFW::Audio::DICE::DiceNotificationRouter notifications{routeState.registry};
     std::atomic<bool> cancel{false};
     std::unique_ptr<IDeviceProtocol> protocol;
-    IDuplexDeviceControl* control{nullptr};
+    FamilyDriver* family{nullptr};
 };
 
 std::string KeyName(const ::testing::TestParamInfo<const DiceDeviceImage*>& info) {
@@ -276,8 +275,7 @@ TEST_P(DiceWireScenarios, IdleClockChange44kTo48k) {
     DiceRig rig(*GetParam());
     rig.SetClock(kClockSelect44kInternal, ClockRateIndex::k44100, true);
     (void)rig.Run("ApplyClockConfig 48000", [&](auto done) {
-        rig.control->ApplyClockConfig(AudioClockConfig{.sampleRateHz = 48000},
-                                      [done](IOReturn s, auto) { done(s); });
+        done(DiceRig::StatusOf(rig.family->ApplyClockIdle(AudioClockConfig{.sampleRateHz = 48000})));
     });
     rig.ExpectGolden("idle-clock-change-44k-48k");
 }
@@ -290,8 +288,7 @@ TEST_P(DiceWireScenarios, IdleClockChangeSettlesLate) {
     DiceRig rig(*GetParam(), SimulatedDiceOptions{.rateSettlesAfterStatusReads = 3});
     rig.SetClock(kClockSelect44kInternal, ClockRateIndex::k44100, true);
     (void)rig.Run("ApplyClockConfig 48000", [&](auto done) {
-        rig.control->ApplyClockConfig(AudioClockConfig{.sampleRateHz = 48000},
-                                      [done](IOReturn s, auto) { done(s); });
+        done(DiceRig::StatusOf(rig.family->ApplyClockIdle(AudioClockConfig{.sampleRateHz = 48000})));
     });
     (void)rig.Start(48000);
     (void)rig.Stop();
@@ -349,7 +346,7 @@ TEST_P(DiceWireScenarios, HealthAfterLockNotification) {
     (void)rig.Start(48000);
     rig.bus.Device().RaiseNotification(NotifyBits::kLockChange);
     (void)rig.Run("ReadDuplexHealth", [&](auto done) {
-        rig.control->ReadDuplexHealth([done](IOReturn s, auto) { done(s); });
+        done(DiceRig::StatusOf(rig.family->ReadHealth(1000)));
     });
     (void)rig.Stop();
     rig.ExpectGolden("health-after-lock-notification");

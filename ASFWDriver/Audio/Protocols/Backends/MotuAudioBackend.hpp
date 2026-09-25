@@ -8,12 +8,11 @@
 // CLOCK_ACCEPTED handshake, clock-lock probing and the recovery state machine those
 // notifications drive. MOTU v2 publishes no notification register at all -- its clock
 // status word is the only health evidence it offers, which MotuV2Protocol already
-// exposes through IDuplexDeviceControl::ReadDuplexHealth().
+// exposes through FamilyDriver::ReadHealth().
 //
 // So this backend does the part that is genuinely shared: gate on teardown, make sure a
 // nub and a bound runtime endpoint exist, and hand streaming to the audio session,
-// which drives the device through the IDuplexDeviceControl seam MotuV2Protocol
-// implements.
+// which drives the device through the FamilyDriver MotuV2Protocol implements.
 
 #pragma once
 

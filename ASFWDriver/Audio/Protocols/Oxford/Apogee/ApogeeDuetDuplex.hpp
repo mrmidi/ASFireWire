@@ -4,7 +4,7 @@
 // ApogeeDuetDuplex.hpp - The Duet's duplex lifecycle and clock-transition FSM
 // (FW-127), lifted out of ApogeeDuetProtocol.
 //
-// This is the whole IDuplexDeviceControl implementation: stream bring-up, the
+// This is the Duet's whole FamilyDriver: stream bring-up, the
 // AV/C signal-format transition machine, CMP plug programming and teardown. It
 // owns every piece of state that only the duplex path reads, so the device class
 // above it keeps nothing but composition.
@@ -23,7 +23,6 @@
 #include <DriverKit/IOReturn.h>
 
 #include "../../Duplex/FamilyDriver.hpp"
-#include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../../Discovery/DeviceRouteToken.hpp"
 
 namespace ASFW::Discovery {
@@ -65,7 +64,7 @@ struct DuetRuntime {
     uint32_t formatSettleDelayMs{100U};
 };
 
-class ApogeeDuetDuplex final : public IDuplexDeviceControl, public FamilyDriver {
+class ApogeeDuetDuplex final : public FamilyDriver {
 public:
     explicit ApogeeDuetDuplex(DuetRuntime& runtime) noexcept : runtime_(runtime) {}
 
@@ -78,21 +77,23 @@ public:
 
     [[nodiscard]] bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const;
 
-    // IDuplexDeviceControl
+    using VoidCallback = std::function<void(IOReturn)>;
+
+    // The Duet's stages, as callback chains over CMP and AV/C. The
+    // FamilyDriver steps below start them and wait; tests drive them directly.
     void PrepareDuplex(const AudioDuplexChannels& channels,
                        const AudioClockConfig& desiredClock,
-                       PrepareCallback callback) override;
-    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept override;
-    void ProgramRx(StageCallback callback) override;
-    void ProgramTxAndEnableDuplex(StageCallback callback) override;
-    void ConfirmDuplexStart(ConfirmCallback callback) override;
+                       PrepareCallback callback);
+    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept;
+    void ProgramRx(StageCallback callback);
+    void ProgramTxAndEnableDuplex(StageCallback callback);
+    void ConfirmDuplexStart(ConfirmCallback callback);
     void ApplyClockConfig(const AudioClockConfig& desiredClock,
-                          ClockApplyCallback callback) override;
-    void ReadDuplexHealth(HealthCallback callback) override;
-    void DisconnectPlayback(VoidCallback callback) override;
-    void DisconnectCapture(VoidCallback callback) override;
-    [[nodiscard]] IOReturn StopDuplex() override;
-    [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return runtime_.irmClient; }
+                          ClockApplyCallback callback);
+    void ReadDuplexHealth(HealthCallback callback);
+    void DisconnectPlayback(VoidCallback callback);
+    void DisconnectCapture(VoidCallback callback);
+    [[nodiscard]] IOReturn StopDuplex();
 
     // FamilyDriver: each step starts the callback chain above and waits for it
     // (FamilyStageWait.hpp), so the chains and their wire traffic are unchanged.
