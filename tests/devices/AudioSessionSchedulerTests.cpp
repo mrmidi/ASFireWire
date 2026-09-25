@@ -395,6 +395,60 @@ TEST_F(SchedulerTest, RetryableFailureRestartsOnRecovery) {
     EXPECT_EQ(Snapshot().lastStatus, kIOReturnSuccess);
 }
 
+// While CoreAudio runs the streams, a recovery restart goes to the host, whose
+// StopIO -> StartIO rebuilds the audio-owned TX queue. Restarting in place kept
+// the old queue and the transmit prime refused it (hardware, 2026-09-25: a
+// bus-reset burst while playing left the Pro 24 DSP silent, session failed).
+TEST_F(SchedulerTest, RestartWhileCoreAudioRunsIsHandedToTheHost) {
+    std::atomic<int> routed{0};
+    DuplexRestartReason routedReason{};
+    rig.sessions.SetHostRestartRouter([&](uint64_t guid, DuplexRestartReason reason) {
+        EXPECT_EQ(guid, rig.guid);
+        routedReason = reason;
+        routed.fetch_add(1);
+        return true;
+    });
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    const size_t linesBefore = rig.bus.Trace().Lines().size();
+
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind),
+              kIOReturnSuccess);
+    EXPECT_EQ(routed.load(), 1);
+    EXPECT_EQ(routedReason, DuplexRestartReason::kBusResetRebind);
+    // Nothing was rebuilt here: the host's StopIO/StartIO does it.
+    EXPECT_EQ(rig.bus.Trace().Lines().size(), linesBefore);
+    EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+}
+
+// No audio driver listening (the router declines): restart in place, as before.
+TEST_F(SchedulerTest, RestartRunsInPlaceWhenNoHostTakesIt) {
+    std::atomic<int> routed{0};
+    rig.sessions.SetHostRestartRouter([&](uint64_t, DuplexRestartReason) {
+        routed.fetch_add(1);
+        return false;
+    });
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    const size_t linesBefore = rig.bus.Trace().Lines().size();
+
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind),
+              kIOReturnSuccess);
+    EXPECT_EQ(routed.load(), 1);
+    EXPECT_GT(rig.bus.Trace().Lines().size(), linesBefore);
+    EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+}
+
+// With CoreAudio detached there is no IO to bounce: the host is never asked.
+TEST_F(SchedulerTest, NoHostHandoverWhileCoreAudioIsDetached) {
+    std::atomic<int> routed{0};
+    rig.sessions.SetHostRestartRouter([&](uint64_t, DuplexRestartReason) {
+        routed.fetch_add(1);
+        return true;
+    });
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kRecoverAfterTimingLoss),
+              kIOReturnUnsupported);
+    EXPECT_EQ(routed.load(), 0);
+}
+
 // Unsupported, not success (FW-146): an ignored recovery ran nothing, and a
 // caller that reads success resets budgets it should keep.
 TEST_F(SchedulerTest, RecoveryIsIgnoredWhileNothingShouldRun) {

@@ -8,6 +8,7 @@
 #include "../../Discovery/FWDevice.hpp"
 #include "../Protocols/DeviceProtocolChoice.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
+#include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 #include <cstdio>
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
@@ -41,6 +42,12 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
 
     sessions_.SetStartGuard([this](uint64_t guid) {
         return !publisher_.IsGeometryChangeBlocked(guid);
+    });
+    // A restart while CoreAudio runs the streams goes through the host
+    // (StopIO -> StartIO) so the audio-owned TX queue is rebuilt too.
+    sessions_.SetHostRestartRouter([this](uint64_t guid, DuplexRestartReason reason) {
+        ASFWAudioNub* nub = publisher_.GetNub(guid);
+        return nub != nullptr && nub->NotifyIoRestartRequired(static_cast<uint32_t>(reason));
     });
     sessions_.SetRestartObserver([this](uint64_t guid) {
         if (auto* backend = BackendForGuid(guid)) {

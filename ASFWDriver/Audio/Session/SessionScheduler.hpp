@@ -86,6 +86,10 @@ public:
     using StartGuard = std::function<bool(uint64_t)>;
     // Called after a restart request rebuilt the streams, on the thread that ran it.
     using RestartObserver = std::function<void(uint64_t)>;
+    // Hands a restart to CoreAudio while it runs the streams, so the host's
+    // StopIO -> StartIO rebuilds them, audio-owned TX queue included. True when
+    // taken; false (no audio driver listening) restarts in place.
+    using HostRestartRouter = std::function<bool(uint64_t, DuplexRestartReason)>;
 
     struct Dependencies {
         Discovery::DeviceRegistry& registry;
@@ -107,6 +111,8 @@ public:
         const RestartObserver* restartObserver;
         // Owned by AudioSessions, installed where the IRM client is created.
         ::ASFW::IRM::IRMClient* const* irm;
+        // Owned by AudioSessions. Null or empty: restarts always run in place.
+        const HostRestartRouter* hostRestart{nullptr};
     };
 
     // Failed fault recoveries in a row before the session stops trying.
@@ -206,6 +212,7 @@ private:
     [[nodiscard]] std::optional<IOReturn> RestartRefusal(DuplexRestartReason reason,
                                                          uint64_t observedRun) const noexcept;
     [[nodiscard]] IOReturn RunRestart(DuplexRestartReason reason, uint64_t observedRun) noexcept;
+    [[nodiscard]] bool HandRestartToHost(DuplexRestartReason reason) noexcept;
     [[nodiscard]] IOReturn DeferRestart(DuplexRestartReason reason, uint64_t observedRun,
                                         uint32_t quietMs) noexcept;
     void ArmPendingTimer(uint32_t quietMs, uint64_t generation) noexcept;

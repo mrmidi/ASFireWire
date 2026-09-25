@@ -110,12 +110,25 @@ public:
     virtual kern_return_t RegisterDeviceClockChangedAction(
         OSAction* action TYPE(DeviceClockChanged));
 
+    // The transport side must restart the streams while CoreAudio is running
+    // them (bus reset, device fault). The audio driver asks the host for a
+    // configuration change, so the restart goes StopIO -> StartIO: the only
+    // path that rebuilds the audio-owned TX queue and its prefill.
+    virtual void IoRestartRequired(OSAction* action TARGET,
+                                   uint32_t reason);
+    virtual kern_return_t RegisterIoRestartRequiredAction(
+        OSAction* action TYPE(IoRestartRequired));
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
 
     // Fire the registered DeviceClockChanged action (called by the DICE
     // backend when a health probe sees a healthy device at a foreign rate).
     void NotifyDeviceClockChanged(uint32_t nominalRateHz) LOCALONLY;
+
+    // Fire the registered IoRestartRequired action. False when no audio
+    // driver is listening, so the caller restarts in place instead.
+    bool NotifyIoRestartRequired(uint32_t reason) LOCALONLY;
 
     // Host-side belief of the device rate (updated on publish and on every
     // successful RequestSampleRateChange). Used by the transport side to
@@ -177,6 +190,7 @@ struct ASFWAudioNub_IVars {
     OSAction* txPreparationAction{nullptr};
     OSAction* ztsAnchorAction{nullptr};
     OSAction* deviceClockChangedAction{nullptr};
+    OSAction* ioRestartRequiredAction{nullptr};
 };
 
 #endif /* ASFWAudioNub_h */

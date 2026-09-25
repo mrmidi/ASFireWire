@@ -230,8 +230,29 @@ IOReturn SessionScheduler::RequestRestart(DuplexRestartReason reason, uint64_t o
     return RunRestart(reason, observedRun);
 }
 
+// While CoreAudio runs the streams, a restart underneath it would keep the
+// audio-owned TX queue: StartIO alone resets and prefills it, and the transmit
+// prime refuses the stale committed cursor (hardware, 2026-09-25: a bus-reset
+// burst while playing left the session failed at StartTransmit). So hand the
+// restart to the host, which stops IO, and restarts it through StartIO.
+bool SessionScheduler::HandRestartToHost(DuplexRestartReason reason) noexcept {
+    if (!halAttached_.load(std::memory_order_acquire) || deps_.hostRestart == nullptr ||
+        !*deps_.hostRestart) {
+        return false;
+    }
+    if (!(*deps_.hostRestart)(guid_, reason)) {
+        return false;
+    }
+    ASFW_LOG(Audio, "[Session] restart handed to CoreAudio GUID=%llx reason=%u (StopIO -> StartIO)",
+             guid_, static_cast<unsigned>(reason));
+    return true;
+}
+
 IOReturn SessionScheduler::RunRestart(DuplexRestartReason reason, uint64_t observedRun) noexcept {
     (void)observedRun;
+    if (HandRestartToHost(reason)) {
+        return kIOReturnSuccess;
+    }
     const bool fault = IsRuntimeFault(reason);
     return Submit(
         [&](Wanted& wanted, Actual&) {

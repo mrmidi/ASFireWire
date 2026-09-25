@@ -708,6 +708,13 @@ namespace {
 // driver-internal per the ADK contract.
 constexpr uint64_t kConfigChangeActionSampleRate = 0x4153465752415445ULL;
 
+// Transport-requested IO restart ("ASFWIORS"). Nothing changes inside the
+// window: the host's StopIO -> StartIO around it is the restart, and StartIO
+// is the one path that rebuilds the audio-owned TX queue and prefill. A
+// restart underneath running IO kept the old queue, whose committed cursor
+// the transmit prime then refused (hardware: bus-reset burst while playing).
+constexpr uint64_t kConfigChangeActionIoRestart = 0x41534657494F5253ULL;
+
 // Validation shared by the request (HandleChangeSampleRate, external resync)
 // and the commit (PerformDeviceConfigurationChange): the rate must be one this
 // device advertised and resolve to a timing geometry that fits the shared
@@ -932,8 +939,20 @@ kern_return_t ASFWAudioDevice::RequestExternalRateResync(uint32_t nominalRateHz)
                                             nullptr);
 }
 
+kern_return_t ASFWAudioDevice::RequestIoRestart(uint32_t reason) {
+    ASFW_LOG(Audio,
+             "ASFWAudioDevice: transport requests an IO restart (reason=%u) -- "
+             "requesting configuration-change window",
+             reason);
+    return RequestDeviceConfigurationChange(kConfigChangeActionIoRestart, nullptr);
+}
+
 kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
     uint64_t change_action, OSObject* in_change_info) {
+    if (change_action == kConfigChangeActionIoRestart) {
+        ASFW_LOG(Audio, "ASFWAudioDevice: IO restart window (StopIO done; StartIO follows)");
+        return super::PerformDeviceConfigurationChange(change_action, in_change_info);
+    }
     if (change_action != kConfigChangeActionSampleRate || !ivars ||
         !ivars->driverIvars) {
         return super::PerformDeviceConfigurationChange(change_action,
@@ -969,6 +988,9 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
 
 kern_return_t ASFWAudioDevice::AbortDeviceConfigurationChange(
     uint64_t change_action, OSObject* in_change_info) {
+    if (change_action == kConfigChangeActionIoRestart) {
+        ASFW_LOG(Audio, "ASFWAudioDevice: IO restart aborted by host");
+    }
     if (change_action == kConfigChangeActionSampleRate) {
         if (ivars && ivars->driverIvars) {
             ivars->driverIvars->device.pendingSampleRateHz.store(

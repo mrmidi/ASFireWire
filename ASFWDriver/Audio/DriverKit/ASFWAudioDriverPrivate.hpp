@@ -303,6 +303,7 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<OSAction> ztsAnchorAction;
     OSSharedPtr<IODispatchQueue> ztsQueue;
     OSSharedPtr<OSAction> deviceClockChangedAction;
+    OSSharedPtr<OSAction> ioRestartRequiredAction;
 
 
 

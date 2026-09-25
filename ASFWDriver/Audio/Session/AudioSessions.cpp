@@ -35,6 +35,10 @@ void AudioSessions::SetStartGuard(SessionScheduler::StartGuard guard) {
     startGuard_ = std::move(guard);
 }
 
+void AudioSessions::SetHostRestartRouter(SessionScheduler::HostRestartRouter router) {
+    hostRestart_ = std::move(router);
+}
+
 void AudioSessions::SetRestartObserver(SessionScheduler::RestartObserver observer) {
     restartObserver_ = std::move(observer);
 }
@@ -96,6 +100,7 @@ std::shared_ptr<SessionScheduler> AudioSessions::Ensure(uint64_t guid) noexcept 
                       .queue = rawQueue,
                       .restartObserver = &restartObserver_,
                       .irm = &irm_,
+                      .hostRestart = &hostRestart_,
                   });
     }
     auto session = slot;

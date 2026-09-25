@@ -266,6 +266,10 @@ void ASFWAudioNub::free()
             ivars->deviceClockChangedAction->release();
             ivars->deviceClockChangedAction = nullptr;
         }
+        if (ivars->ioRestartRequiredAction) {
+            ivars->ioRestartRequiredAction->release();
+            ivars->ioRestartRequiredAction = nullptr;
+        }
         IOSafeDeleteNULL(ivars, ASFWAudioNub_IVars, 1);
     }
     super::free();
@@ -321,6 +325,10 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
         if (ivars->deviceClockChangedAction) {
             ivars->deviceClockChangedAction->release();
             ivars->deviceClockChangedAction = nullptr;
+        }
+        if (ivars->ioRestartRequiredAction) {
+            ivars->ioRestartRequiredAction->release();
+            ivars->ioRestartRequiredAction = nullptr;
         }
         ivars->parentDriver = nullptr;
     }
@@ -489,6 +497,41 @@ void ASFWAudioNub::NotifyDeviceClockChanged(uint32_t nominalRateHz)
              "ASFWAudioNub: NotifyDeviceClockChanged %u Hz guid=0x%016llx",
              nominalRateHz, ivars->guid);
     DeviceClockChanged(ivars->deviceClockChangedAction, nominalRateHz);
+}
+
+kern_return_t IMPL(ASFWAudioNub, RegisterIoRestartRequiredAction)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+
+    if (action) {
+        action->retain();
+    }
+    OSAction* oldAction = ivars->ioRestartRequiredAction;
+    ivars->ioRestartRequiredAction = action;
+    if (oldAction) {
+        oldAction->release();
+    }
+    return kIOReturnSuccess;
+}
+
+void IMPL(ASFWAudioNub, IoRestartRequired)
+{
+    (void)action;
+    (void)reason;
+}
+
+bool ASFWAudioNub::NotifyIoRestartRequired(uint32_t reason)
+{
+    if (!ivars || !ivars->ioRestartRequiredAction) {
+        return false;
+    }
+    ASFW_LOG(Audio,
+             "ASFWAudioNub: NotifyIoRestartRequired reason=%u guid=0x%016llx",
+             reason, ivars->guid);
+    IoRestartRequired(ivars->ioRestartRequiredAction, reason);
+    return true;
 }
 
 uint32_t ASFWAudioNub::GetCurrentSampleRateHz() const

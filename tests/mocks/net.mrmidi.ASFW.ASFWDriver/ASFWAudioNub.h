@@ -13,6 +13,8 @@ public:
     void SetGuid(uint64_t) {}
     [[nodiscard]] uint32_t GetCurrentSampleRateHz() const noexcept { return 48000; }
     void NotifyDeviceClockChanged(uint32_t) noexcept {}
+    // No audio driver in the host suite: restarts stay in place.
+    bool NotifyIoRestartRequired(uint32_t) noexcept { return false; }
     kern_return_t RequestTxPreparation(uint64_t generation) {
         ++txPreparationRequests;
         lastTxPreparationGeneration = generation;

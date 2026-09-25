@@ -43,8 +43,10 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
             (void)ivars->device.audioNub->RegisterDeviceClockChangedAction(nullptr);
+            (void)ivars->device.audioNub->RegisterIoRestartRequiredAction(nullptr);
         }
         ivars->deviceClockChangedAction.reset();
+        ivars->ioRestartRequiredAction.reset();
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();
         ivars->txPreparationAction.reset();
@@ -144,6 +146,22 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         return failStart(error, "RegisterDeviceClockChangedAction");
     }
 
+    OSAction* rawIoRestartRequiredAction = nullptr;
+    error = CreateActionIoRestartRequired(0, &rawIoRestartRequiredAction);
+    if (error != kIOReturnSuccess || !rawIoRestartRequiredAction) {
+        return failStart(
+            error == kIOReturnSuccess ? kIOReturnNoMemory : error,
+            "CreateActionIoRestartRequired");
+    }
+    ivars->ioRestartRequiredAction =
+        ASFW::Common::AdoptRetained(rawIoRestartRequiredAction);
+    error = ivars->device.audioNub->RegisterIoRestartRequiredAction(
+        ivars->ioRestartRequiredAction.get());
+    if (error != kIOReturnSuccess) {
+        ivars->ioRestartRequiredAction.reset();
+        return failStart(error, "RegisterIoRestartRequiredAction");
+    }
+
     return kIOReturnSuccess;
 }
 
@@ -165,6 +183,18 @@ void IMPL(ASFWAudioDriver, DeviceClockChanged)
     }
 }
 
+void IMPL(ASFWAudioDriver, IoRestartRequired)
+{
+    (void)action;
+    if (!ivars || !ivars->audioDevice) {
+        return;
+    }
+    const kern_return_t kr = ivars->audioDevice->RequestIoRestart(reason);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: IO restart request failed: 0x%x", kr);
+    }
+}
+
 kern_return_t IMPL(ASFWAudioDriver, Stop)
 {
     ASFW_LOG(Audio, "ASFWAudioDriver: Stop()");
@@ -179,10 +209,12 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
             (void)ivars->device.audioNub->RegisterDeviceClockChangedAction(nullptr);
+            (void)ivars->device.audioNub->RegisterIoRestartRequiredAction(nullptr);
         }
         ivars->txPreparationAction.reset();
         ivars->txPreparationQueue.reset();
         ivars->deviceClockChangedAction.reset();
+        ivars->ioRestartRequiredAction.reset();
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();
         ivars->device.audioNub = nullptr;

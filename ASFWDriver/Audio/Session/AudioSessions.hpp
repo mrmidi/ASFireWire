@@ -43,6 +43,9 @@ public:
     void SetIrmClient(::ASFW::IRM::IRMClient* irm) noexcept { irm_ = irm; }
     // Told after a restart request rebuilt a device's streams.
     void SetRestartObserver(SessionScheduler::RestartObserver observer);
+    // Installed by AudioCoordinator: how a restart reaches CoreAudio while it
+    // runs the streams (SessionScheduler::HostRestartRouter).
+    void SetHostRestartRouter(SessionScheduler::HostRestartRouter router);
 
     // Service teardown: forget every pending restart, then wait for any
     // restart already handed to the sessions' queue. Call after the teardown
@@ -86,6 +89,7 @@ private:
     SessionScheduler::BindingSourceProvider bindingSource_;
     SessionScheduler::StartGuard startGuard_;
     SessionScheduler::RestartObserver restartObserver_;
+    SessionScheduler::HostRestartRouter hostRestart_;
     Scheduling::ITimerScheduler* timer_{nullptr};
     ::ASFW::IRM::IRMClient* irm_{nullptr};
     std::atomic<uint64_t> teardownAborts_{0};
