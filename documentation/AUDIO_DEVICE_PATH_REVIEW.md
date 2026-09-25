@@ -214,6 +214,11 @@ and compared with `MAudioSpecialProfile` in
    device clock, then the ADK rate, ZTS period, stream formats and declarations.
    An idle rate change waits until the device runs at the new rate.
    [ASFWAudioDevice.cpp](../ASFWDriver/Audio/DriverKit/ASFWAudioDevice.cpp)
+6. The CoreAudio clock is a projection of the device's one `HardwareSampleTimeline` (in the
+   audio transport control block). StartIO begins its epoch: Receive for most devices,
+   Transmit for M-Audio special firmware. RX packets, or M-Audio TX completions, are its
+   observations, and every zero timestamp reaches the HAL through one function.
+   [HARDWARE_TIMELINE_OWNERSHIP.md](HARDWARE_TIMELINE_OWNERSHIP.md)
 
 ## Review observations
 

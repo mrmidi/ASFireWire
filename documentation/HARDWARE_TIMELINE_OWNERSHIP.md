@@ -1,6 +1,7 @@
 # Hardware sample timeline: ownership (Epic 4)
 
-**Status:** accepted model, 2026-09-26. Linear FW-186 (milestone 4), with FW-187/188/189
+**Status:** implemented, 2026-09-26 (T0–T7 on `refactor/hardware-timeline`); hardware check
+pending (§6). Linear FW-186 (milestone 4), with FW-187/188/189
 condensed here. Stages T0–T7 in the milestone plan; this document is T0.
 
 **Goal.** One authority for `absolute audio frame ↔ bus time ↔ host time`. CoreAudio's zero
@@ -139,3 +140,38 @@ observations, and `HostClockAnchor` refuses stale-epoch anchors.
 | T5 | 44.1/88.2 `NominalBusTicksPerFrame` gap (G-17) |
 | T6 | Split `ASFWAudioDriverZts.cpp` into ZTS publication and the TX producer |
 | T7 | Reverse audit and docs |
+
+## 6. Final state and reverse audit (T7)
+
+The final tree, searched:
+
+| Question | Answer |
+|---|---|
+| Who calls `UpdateCurrentZeroTimestamp`? | **One place:** `PublishSharedZeroTimestampToHAL` (`ASFWAudioDriverZts.cpp`) |
+| Who writes the anchor mailbox? | The RX publisher (`AudioClockPublisher`, Receive epochs only) and the M-Audio TX clock (`ObserveMAudioTxClock`, Transmit epoch). Both carry the timeline epoch |
+| How many `HardwareSampleTimeline` instances? | **One**, `AudioTransportControlBlock::hardwareTimeline` |
+| Who begins an epoch? | StartIO (`SelectTxClockDomain`: Receive; `TxClockBridge::Arm`: Transmit) and the RX consumer on presentation loss |
+| Who writes the HAL mirror (`lastHalZeroTimestamp*`)? | The publish function; everything else is a reset at bind or start |
+| Is a stale mapping ever published? | No: `Observe` rejects stale-epoch observations, and the publish point refuses stale-epoch anchors (`StaleEpoch`) |
+| Rates | Every HAL-ladder rate has an epoch (`HalRateTier`); outside the ladder, the old grid rule remains as the only compatibility path |
+
+**Rows resolved, per §2:**
+- **REPLACE:** the RX authority now observes, and the timeline projects.
+- **ADAPT:** the M-Audio clock uses the shared instance and the common path.
+- **ADAPT:** `HostClockAnchor` carries the epoch.
+- **DELETE:** `DeviceTimeline`, `rxDbcFrameCount`.
+- **KEEP:** the observations and gates.
+- **DEFER:** the rest, below.
+
+**Still deferred, with owners:**
+- **FW-194**, TX presentation planning, and the TX frame cursor's one-shot RX-replay alignment → milestone 6 (FW-209).
+- **The RX→TX source switch on presentation loss** → milestone 6.
+- **Accounting for lost frames so a stream survives a loss without a restart** → FW-218.
+- **A Transmit clock for playback-only devices without the M-Audio bridge** (e.g. Weiss). Only the M-Audio bridge feeds Transmit observations today; any other device stays on Receive → milestone 6 (TX completion observations).
+- **SYT-presentation basis instead of arrival** → needs a hardware comparison.
+- **HAL clock algorithm (Raw vs IIR)** → from the FW-176 baseline.
+
+**Hardware check (pending), against §1:**
+- Instruments ZTS on the Pro 24 DSP at 48 kHz: anchors one period apart, jitter within the baseline's 3.1–3.3 µs.
+- A 48 ↔ 44.1 kHz switch: each start logs `[Zts] epoch=… reason=start-io`.
+- M-Audio 1814, if available: its clock unchanged (it now goes through the mailbox).
