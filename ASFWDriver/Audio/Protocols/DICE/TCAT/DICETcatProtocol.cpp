@@ -78,18 +78,30 @@ DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                    const Discovery::DeviceRouteToken& route,
                                    ::ASFW::IRM::IRMClient* irmClient,
                                    DiceWaitClock& waitClock,
+                                   DiceNotificationRouter* notifications,
                                    DICETcatRuntimePolicy runtimePolicy)
     : busInfo_(busInfo)
     , irmClient_(irmClient)
     , io_(busOps, busInfo, routeRegistry, route)
     , diceReader_(io_)
     , deviceIo_(io_, diceReader_, waitClock)
+    , notificationRouter_(notifications)
+    , guid_(route.guid)
     , runtimePolicy_(runtimePolicy) {
+    if (notificationRouter_) {
+        notificationRouter_->Register(guid_, notifications_);
+    }
+}
+
+DICETcatProtocol::~DICETcatProtocol() {
+    if (notificationRouter_) {
+        notificationRouter_->Unregister(guid_, notifications_);
+    }
 }
 
 IOReturn DICETcatProtocol::Initialize() {
     if (!driver_) {
-        driver_.emplace(deviceIo_, busInfo_,
+        driver_.emplace(deviceIo_, busInfo_, notifications_,
                         DICEBringupPolicy{
                             .requireSourceLockBeforeStreamEnable =
                                 runtimePolicy_.requireSourceLockBeforeStreamEnable,

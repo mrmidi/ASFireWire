@@ -14,10 +14,95 @@ namespace {
 
 using namespace ASFW::Testing::DICE;
 
-TEST(DiceFamilyDriverTests, NotificationMailboxMatchesReferenceAndLegacyOffsets) {
-    EXPECT_TRUE(NotificationMailbox::MatchesDestOffset(NotificationMailbox::kHandlerOffset));
-    EXPECT_TRUE(NotificationMailbox::MatchesDestOffset(NotificationMailbox::kLegacyHandlerOffset));
-    EXPECT_FALSE(NotificationMailbox::MatchesDestOffset(0x000100000004ULL));
+TEST(DiceFamilyDriverTests, NotificationAddressIsTheOneTheOwnerValueNames) {
+    EXPECT_TRUE(IsNotificationAddress(kNotificationHandlerOffset));
+    // The old software-latch address is no longer ours: nothing names it.
+    EXPECT_FALSE(IsNotificationAddress(0x00FF0000D1CCULL));
+    EXPECT_FALSE(IsNotificationAddress(0x000100000004ULL));
+}
+
+// Two DICE devices on one bus, at nodes 2 and 3 of generation 1.
+struct TwoDeviceBus {
+    static constexpr uint64_t kGuidA = 0xD1CE00000000000AULL;
+    static constexpr uint64_t kGuidB = 0xD1CE00000000000BULL;
+
+    ::ASFW::Discovery::DeviceRegistry registry;
+    DiceNotificationRouter router{registry};
+    DiceNotificationMailbox mailboxA;
+    DiceNotificationMailbox mailboxB;
+
+    TwoDeviceBus() {
+        Add(kGuidA, 0x02);
+        Add(kGuidB, 0x03);
+        router.Register(kGuidA, mailboxA);
+        router.Register(kGuidB, mailboxB);
+    }
+
+    void Add(uint64_t guid, uint8_t node) {
+        ::ASFW::Discovery::ConfigROM rom{};
+        rom.bib.guid = guid;
+        rom.gen = Generation{1};
+        rom.nodeId = node;
+        (void)registry.UpsertFromROM(rom, ::ASFW::Discovery::LinkPolicy{});
+    }
+};
+
+TEST(DiceNotificationRouterTests, BitsReachOnlyTheDeviceThatWroteThem) {
+    TwoDeviceBus bus;
+    EXPECT_EQ(bus.router.Deliver(1, 0xFFC3, NotifyBits::kClockAccepted), TwoDeviceBus::kGuidB);
+    // A's clock-accepted wait must not end on B's notification.
+    EXPECT_EQ(bus.mailboxA.Consume(), 0U);
+    EXPECT_EQ(bus.mailboxB.Consume(), NotifyBits::kClockAccepted);
+}
+
+TEST(DiceNotificationRouterTests, UnknownNodesAndOldGenerationsAreDropped) {
+    TwoDeviceBus bus;
+    struct Seen {
+        int calls{0};
+    } seen;
+    bus.router.SetObserver(&seen, [](void* context, uint64_t, uint32_t) {
+        ++static_cast<Seen*>(context)->calls;
+    });
+    EXPECT_EQ(bus.router.Deliver(1, 0xFFC5, NotifyBits::kClockAccepted), 0U);
+    // Node 2 in generation 2 has not been discovered yet.
+    EXPECT_EQ(bus.router.Deliver(2, 0xFFC2, NotifyBits::kClockAccepted), 0U);
+    EXPECT_EQ(bus.mailboxA.Snapshot(), 0U);
+    EXPECT_EQ(bus.mailboxB.Snapshot(), 0U);
+    EXPECT_EQ(seen.calls, 0);
+    bus.router.ClearObserver(&seen);
+}
+
+TEST(DiceNotificationRouterTests, ObserverSeesTheDeviceAndStopsWhenCleared) {
+    TwoDeviceBus bus;
+    struct Seen {
+        uint64_t guid{0};
+        uint32_t bits{0};
+        int calls{0};
+    } seen;
+    bus.router.SetObserver(&seen, [](void* context, uint64_t guid, uint32_t bits) {
+        auto* s = static_cast<Seen*>(context);
+        s->guid = guid;
+        s->bits |= bits;
+        ++s->calls;
+    });
+    (void)bus.router.Deliver(1, 0xFFC2, NotifyBits::kLockChange);
+    EXPECT_EQ(seen.calls, 1);
+    EXPECT_EQ(seen.guid, TwoDeviceBus::kGuidA);
+    EXPECT_EQ(seen.bits, NotifyBits::kLockChange);
+
+    bus.router.ClearObserver(&seen);
+    (void)bus.router.Deliver(1, 0xFFC2, NotifyBits::kExtStatus);
+    EXPECT_EQ(seen.calls, 1);
+}
+
+TEST(DiceNotificationRouterTests, UnregisteringAReplacedMailboxKeepsTheReplacement) {
+    TwoDeviceBus bus;
+    DiceNotificationMailbox replacement;
+    bus.router.Register(TwoDeviceBus::kGuidA, replacement);
+    bus.router.Unregister(TwoDeviceBus::kGuidA, bus.mailboxA);
+    (void)bus.router.Deliver(1, 0xFFC2, NotifyBits::kClockAccepted);
+    EXPECT_EQ(replacement.Consume(), NotifyBits::kClockAccepted);
+    EXPECT_EQ(bus.mailboxA.Consume(), 0U);
 }
 
 TEST(DiceFamilyDriverTests, ProtocolRegisterIOUsesNegotiatedSpeedAndDiceReaderUsesFullGlobalReadSize) {
@@ -168,7 +253,6 @@ TEST(DiceFamilyDriverTests, ProtocolRegisterIOCompareSwap64UsesLockAndDecodesBig
 
 TEST(DiceFamilyDriverTests, PrepareSequenceMatchesReferenceWindow) {
     DuplexRig rig;
-    NotificationMailbox::Reset();
 
     // The reference trace always rewrites CLOCK_SELECT during prepare. ASFW
     // intentionally deviates in two HW-validated ways (see
@@ -466,7 +550,6 @@ TEST(DiceFamilyDriverTests,
         .requireSourceLockBeforeStreamEnable = false,
         .requireSourceLockAtConfirm = false,
     });
-    NotificationMailbox::Reset();
     rig.bus.SetGlobalClockState(
         ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
         48000U,
@@ -476,7 +559,7 @@ TEST(DiceFamilyDriverTests,
             ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
             48000U,
             NotifyBits::kClockAccepted);
-        NotificationMailbox::Publish(NotifyBits::kClockAccepted);
+        rig.notifications.Publish(NotifyBits::kClockAccepted);
     });
 
     const AudioDuplexChannels channels{
@@ -509,7 +592,6 @@ TEST(DiceFamilyDriverTests,
 TEST(DiceFamilyDriverTests,
      ClockAcceptedRetryUsesVirtualTimerAndCompletesAfterDelayedNotification) {
     DuplexRig rig;
-    NotificationMailbox::Reset();
     rig.bus.SetGlobalClockState(/*status=*/0, /*sampleRate=*/0);
     rig.bus.SetClockSelectWriteHandler([] {});
     // The device's CLOCK_ACCEPTED arrives 15 ms into the wait: the 0 ms and 10 ms
@@ -534,7 +616,6 @@ TEST(DiceFamilyDriverTests,
 TEST(DiceFamilyDriverTests,
      ClockAcceptedDeadlineTimesOutAfterVirtual150Milliseconds) {
     DuplexRig rig;
-    NotificationMailbox::Reset();
     rig.bus.SetGlobalClockState(/*status=*/0, /*sampleRate=*/0);
     rig.bus.SetClockSelectWriteHandler([] {});
 
@@ -559,7 +640,6 @@ TEST(DiceFamilyDriverTests, LateClockAcceptedNotifyDoesNotTriggerRollback) {
     // the driver reads global state immediately after the clock-select write and
     // short-circuits because the device is already locked at 48 kHz.
     DuplexRig rig;
-    NotificationMailbox::Reset();
     rig.bus.SetClockSelectWriteHandler([&rig] {
         (void)rig.timer.ScheduleAfter(3'250'000'000ULL, [&rig] { rig.bus.PublishClockAccepted(); });
     });
@@ -581,7 +661,6 @@ TEST(DiceFamilyDriverTests, GlobalStateConfirmationRecoversIfMailboxMissesClockA
     // When the mailbox notification never arrives but the device is already locked
     // at 48 kHz, the active clock check after the write short-circuits immediately.
     DuplexRig rig;
-    NotificationMailbox::Reset();
     rig.bus.SetClockSelectWriteHandler([&rig]() { rig.bus.LatchClockAccepted(); });
 
     std::optional<IOReturn> startStatus;

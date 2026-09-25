@@ -43,6 +43,10 @@ namespace ASFW::Scheduling {
 class ITimerScheduler;
 } // namespace ASFW::Scheduling
 
+namespace ASFW::Audio::DICE {
+class DiceNotificationRouter;
+} // namespace ASFW::Audio::DICE
+
 namespace ASFW::Audio {
 
 class IDeviceProtocol;
@@ -72,6 +76,10 @@ public:
     // Set before discovery creates protocol instances. Provides genuinely-deferred
     // one-shot timers (no IOSleep) for protocol control planes such as BeBoB settle.
     // The registry does not own the scheduler; DriverContext owns it.
+    // Where DICE protocols register their notification mailboxes.
+    void SetDiceNotificationRouter(DICE::DiceNotificationRouter* router) noexcept {
+        diceNotifications_ = router;
+    }
     void SetTimerScheduler(Scheduling::ITimerScheduler* timerScheduler) noexcept {
         timerScheduler_ = timerScheduler;
     }
@@ -102,6 +110,7 @@ private:
     std::unordered_map<uint64_t, std::shared_ptr<AudioEndpointRuntime>> endpointsByGuid_;
     CMP::CMPClient* cmpClient_{nullptr};
     Scheduling::ITimerScheduler* timerScheduler_{nullptr};
+    DICE::DiceNotificationRouter* diceNotifications_{nullptr};
 };
 
 } // namespace ASFW::Audio

@@ -38,7 +38,8 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
     const Discovery::DeviceRouteToken& route,
     IRM::IRMClient* irmClient,
     CMP::CMPClient* cmpClient,
-    Scheduling::ITimerScheduler* timerScheduler
+    Scheduling::ITimerScheduler* timerScheduler,
+    DICE::DiceNotificationRouter* diceNotifications
 ) {
     if (!route) {
         return nullptr;
@@ -79,7 +80,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(
                 busOps, busInfo, routeRegistry, route, irmClient,
-                DICE::DriverKitWaitClock::Shared());
+                DICE::DriverKitWaitClock::Shared(), diceNotifications);
 
         // The plain TCAT devices differ in their profile, not their protocol:
         // geometry comes from the device's own registers either way.
@@ -89,7 +90,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::TCAT::DICETcatProtocol>(
                 busOps, busInfo, routeRegistry, route, irmClient,
-                DICE::DriverKitWaitClock::Shared());
+                DICE::DriverKitWaitClock::Shared(), diceNotifications);
 
         // Weiss is the one DICE device with a non-default runtime policy: it is
         // a one-way interface, so CoreAudio must not be shown the device->host
@@ -101,7 +102,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::TCAT::DICETcatProtocol>(
                 busOps, busInfo, routeRegistry, route, irmClient,
-                DICE::DriverKitWaitClock::Shared(),
+                DICE::DriverKitWaitClock::Shared(), diceNotifications,
                 DICE::TCAT::DICETcatRuntimePolicy{
                     .exposeDeviceToHostToCoreAudio = false,
                     .requireSourceLockBeforeStreamEnable = false,

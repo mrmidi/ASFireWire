@@ -60,7 +60,8 @@ public:
                       Discovery::DeviceRegistry& routeRegistry,
                       const Discovery::DeviceRouteToken& route,
                       ::ASFW::IRM::IRMClient* irmClient,
-                      DiceWaitClock& waitClock);
+                      DiceWaitClock& waitClock,
+                      DiceNotificationRouter* notifications);
     
     /// Initialize protocol (generic DICE init is delegated to the TCAT core)
     IOReturn Initialize() override;

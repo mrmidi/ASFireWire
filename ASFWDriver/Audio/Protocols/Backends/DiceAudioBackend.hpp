@@ -28,13 +28,18 @@ namespace ASFW::Audio {
 
 class AudioRuntimeRegistry;
 
+namespace DICE {
+class DiceNotificationRouter;
+}
+
 class DiceAudioBackend final : public IAudioBackend {
 public:
     DiceAudioBackend(AudioNubPublisher& publisher,
                      Discovery::DeviceRegistry& registry,
                      AudioRuntimeRegistry& runtime,
                      Session::AudioSessions& sessions,
-                     Driver::HardwareInterface& hardware) noexcept;
+                     Driver::HardwareInterface& hardware,
+                     DICE::DiceNotificationRouter& notifications) noexcept;
     ~DiceAudioBackend() noexcept override;
 
     DiceAudioBackend(const DiceAudioBackend&) = delete;
@@ -65,7 +70,7 @@ public:
 
 private:
     void EnsureNubForGuid(uint64_t guid) noexcept;
-    void HandleDeviceNotification(uint32_t bits) noexcept;
+    void HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept;
     void ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept;
     // Blocking device-health read (dice queue only). Returns true ONLY when the device
     // confirms a locked, healthy clock reference (sourceLocked && clockReferenceHealthy).
@@ -74,7 +79,7 @@ private:
     [[nodiscard]] bool DeviceReportsHealthyClock(uint64_t guid) noexcept;
     [[nodiscard]] bool TryBeginRecovery(uint64_t guid) noexcept;
     void FinishRecovery(uint64_t guid) noexcept;
-    static void NotificationObserverThunk(void* context, uint32_t bits) noexcept;
+    static void NotificationObserverThunk(void* context, uint64_t guid, uint32_t bits) noexcept;
 
 
     AudioNubPublisher& publisher_;
@@ -86,6 +91,7 @@ private:
     std::atomic<bool> teardownComplete_{false};
     PublicationGate publicationGate_{};
     Session::AudioSessions& sessions_;
+    DICE::DiceNotificationRouter& notifications_;
 
 #ifdef ASFW_HOST_TEST
 public:

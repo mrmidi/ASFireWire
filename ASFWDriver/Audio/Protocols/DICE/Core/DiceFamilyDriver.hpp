@@ -18,6 +18,7 @@
 
 #include "DICETypes.hpp"
 #include "DiceDeviceIo.hpp"
+#include "DiceNotificationMailbox.hpp"
 #include "../../Duplex/DuplexControlTypes.hpp"
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
 
@@ -32,8 +33,10 @@ namespace ASFW::Audio::DICE {
 class DiceFamilyDriver {
 public:
     // The section layout is read at the start of every bring-up.
+    // `notifications` receives this device's notification bits only.
     DiceFamilyDriver(DiceDeviceIo& io,
                      Protocols::Ports::FireWireBusInfo& busInfo,
+                     DiceNotificationMailbox& notifications,
                      DICEBringupPolicy bringupPolicy) noexcept;
 
     DiceFamilyDriver(const DiceFamilyDriver&) = delete;
@@ -104,6 +107,7 @@ private:
 
     DiceDeviceIo& io_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
+    DiceNotificationMailbox& notifications_;
     DICEBringupPolicy bringupPolicy_{};
     GeneralSections sections_{};
 

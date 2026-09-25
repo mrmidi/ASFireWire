@@ -17,7 +17,6 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
-#include <vector>
 
 namespace ASFW::Audio::Session {
 
@@ -59,7 +58,6 @@ public:
     // Service teardown, or the device retired: device work must not start.
     [[nodiscard]] bool IsCancelled(uint64_t guid) const noexcept;
     [[nodiscard]] std::optional<SessionSnapshot> Snapshot(uint64_t guid) const noexcept;
-    [[nodiscard]] std::vector<uint64_t> StreamingGuids() const noexcept;
     [[nodiscard]] uint64_t TeardownAbortCount() const noexcept {
         return teardownAborts_.load(std::memory_order_acquire);
     }

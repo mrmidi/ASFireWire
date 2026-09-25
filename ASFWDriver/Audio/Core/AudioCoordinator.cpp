@@ -19,7 +19,8 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
                                     Driver::IsochService& isoch,
-                                    Driver::HardwareInterface& hardware) noexcept
+                                    Driver::HardwareInterface& hardware,
+                                    DICE::DiceNotificationRouter& diceNotifications) noexcept
     : publisher_(driver)
     , deviceManager_(deviceManager)
     , registry_(registry)
@@ -30,7 +31,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                     auto endpoint = runtime_.FindEndpointRuntime(guid);
                     return endpoint ? endpoint.get() : nullptr;
                 })
-    , dice_(publisher_, registry_, runtime_, sessions_, hardware)
+    , dice_(publisher_, registry_, runtime_, sessions_, hardware, diceNotifications)
     , motu_(publisher_, registry_, runtime_, sessions_, hardware)
     , avc_(publisher_, registry_, runtime_, hostTransport_, sessions_, hardware) {
     lock_ = IOLockAlloc();

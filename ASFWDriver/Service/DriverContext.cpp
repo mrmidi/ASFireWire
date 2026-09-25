@@ -11,6 +11,7 @@
 #include "../Async/Tx/ResponseSender.hpp"
 #include "../Audio/Core/AudioCoordinator.hpp"
 #include "../Audio/Core/AudioRuntimeRegistry.hpp"
+#include "../Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
 #include "../Bus/BusManager.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
@@ -124,6 +125,11 @@ void ServiceContext::Reset(ResetMode mode) {
     deps.irmClient.reset();         // Clean up IRM client
     deps.asyncController.reset();
     deps.asyncSubsystem.reset(); // Stop and cleanup asyncSubsystem
+    // No local request is delivered once the async subsystem is gone, and the
+    // DICE protocols and backend that register with the router went with the
+    // audio runtime above. The router borrows the device registry, so it goes
+    // before it.
+    deps.diceNotifications.reset();
     if (mode == ResetMode::Full) {
         // A new provider incarnation must rediscover remote hardware. Retaining
         // old FWDevice/FWUnit objects here would let a new SBP-2 nub publisher
@@ -217,6 +223,13 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     if (!d.audioRuntimeRegistry) {
         d.audioRuntimeRegistry = std::make_shared<ASFW::Audio::AudioRuntimeRegistry>();
     }
+    if (!d.diceNotifications && d.deviceRegistry) {
+        d.diceNotifications =
+            std::make_shared<ASFW::Audio::DICE::DiceNotificationRouter>(*d.deviceRegistry);
+    }
+    if (d.audioRuntimeRegistry) {
+        d.audioRuntimeRegistry->SetDiceNotificationRouter(d.diceNotifications.get());
+    }
 
     // Provide genuinely-deferred one-shot timers to protocol control planes.
     // BeBoB uses this for the post-format settle delay instead of IOSleep.
@@ -225,10 +238,10 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     }
 
     if (!ctx.audioCoordinator && d.deviceManager && d.deviceRegistry && d.hardware &&
-        d.audioRuntimeRegistry) {
+        d.audioRuntimeRegistry && d.diceNotifications) {
         ctx.audioCoordinator = std::make_shared<ASFW::Audio::AudioCoordinator>(
             driver, *d.deviceManager, *d.deviceRegistry, *d.audioRuntimeRegistry, ctx.isoch,
-            *d.hardware);
+            *d.hardware, *d.diceNotifications);
         ASFW_LOG(Controller, "[Controller] ✅ AudioCoordinator initialized");
     }
 

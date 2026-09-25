@@ -22,6 +22,7 @@ add_device_test(DiceFamilyDriverTests
     DiceFamilyDriverTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
@@ -37,6 +38,7 @@ add_device_test(DICETcatProtocolTests
     DICETcatProtocolTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/TCAT/DICETcatProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.cpp"
@@ -50,6 +52,7 @@ add_device_test(DiceDeviceIoTests
     DiceDeviceIoTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
@@ -60,6 +63,7 @@ add_device_test(DiceWireCharacterizationTests
     DiceWireCharacterizationTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/TCAT/DICETcatProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.cpp"
@@ -83,6 +87,7 @@ add_device_test(SessionCharacterizationTests
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/TCAT/DICETcatProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.cpp"
@@ -105,6 +110,7 @@ add_device_test(AudioSessionSchedulerTests
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/TCAT/DICETcatProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.cpp"
@@ -315,6 +321,7 @@ add_device_test(BackendLifecycleRaceTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/MotuAudioBackend.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AVCAudioBackend.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/DiceAudioBackend.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/DuplexControlAdapter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/RestartRoutine.cpp"

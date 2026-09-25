@@ -166,7 +166,7 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     // says Supported while its units resolve to nothing at all.
     auto created = CreateFamilyDeviceProtocol(
         policy->plan, *busOps, *busInfo, routeRegistry, *route,
-        irmClient, cmpClient_, timerScheduler_);
+        irmClient, cmpClient_, timerScheduler_, diceNotifications_);
     if (!created) {
         ASFW_LOG_ERROR(Audio,
                        "AudioRuntimeRegistry: no protocol for SUPPORTED device "

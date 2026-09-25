@@ -8,6 +8,8 @@
 #include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../Core/DiceDeviceIo.hpp"
 #include "../Core/DiceFamilyDriver.hpp"
+#include "../Core/DiceNotificationMailbox.hpp"
+#include "../Core/DiceNotificationRouter.hpp"
 #include "../Core/DiceWaitClock.hpp"
 #include "../Core/DICETransaction.hpp"
 #include "../Core/DICETypes.hpp"
@@ -53,7 +55,12 @@ public:
                      const Discovery::DeviceRouteToken& route,
                      ::ASFW::IRM::IRMClient* irmClient,
                      DiceWaitClock& waitClock,
+                     DiceNotificationRouter* notifications,
                      DICETcatRuntimePolicy runtimePolicy = {});
+    ~DICETcatProtocol() override;
+
+    DICETcatProtocol(const DICETcatProtocol&) = delete;
+    DICETcatProtocol& operator=(const DICETcatProtocol&) = delete;
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
@@ -105,6 +112,11 @@ private:
     Protocols::Ports::ProtocolRegisterIO io_;
     DICETransaction diceReader_;
     DiceDeviceIo deviceIo_;
+    // This device's notification bits. Registered with the router for the
+    // protocol's lifetime; null router: no notification reaches it (tests).
+    DiceNotificationMailbox notifications_;
+    DiceNotificationRouter* notificationRouter_{nullptr};
+    uint64_t guid_{0};
     std::optional<DiceFamilyDriver> driver_;
     const std::atomic<bool>* teardownCancel_{nullptr};
     DICETcatRuntimePolicy runtimePolicy_{};

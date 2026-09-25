@@ -10,7 +10,6 @@
 
 #include "DiceFamilyDriver.hpp"
 
-#include "DICENotificationMailbox.hpp"
 #include "../../../../Common/WireFormat.hpp"
 #include "../../../../Logging/Logging.hpp"
 
@@ -101,8 +100,9 @@ void CacheRuntimeCaps(AudioStreamRuntimeCaps& caps,
 
 DiceFamilyDriver::DiceFamilyDriver(DiceDeviceIo& io,
                                    Protocols::Ports::FireWireBusInfo& busInfo,
+                                   DiceNotificationMailbox& notifications,
                                    DICEBringupPolicy bringupPolicy) noexcept
-    : io_(io), busInfo_(busInfo), bringupPolicy_(bringupPolicy) {}
+    : io_(io), busInfo_(busInfo), notifications_(notifications), bringupPolicy_(bringupPolicy) {}
 
 // ---------------------------------------------------------------------------
 // Public stages
@@ -130,7 +130,7 @@ std::expected<DuplexPrepareResult, IOReturn> DiceFamilyDriver::Prepare(
 
     flowMode_ = FlowMode::kPrepareDuplex;
     refreshRuntimeCapsOnPrepare_ = refreshRuntimeCaps;
-    NotificationMailbox::Reset();
+    notifications_.Reset();
     stopSequenceError_ = kIOReturnSuccess;
     diceClock_ = clock;
     session_ = DuplexRestartSession{
@@ -223,7 +223,7 @@ std::expected<DuplexConfirmResult, IOReturn> DiceFamilyDriver::Confirm() {
     }
 
     session_.phase = DuplexRestartPhase::kConfirmingDeviceStart;
-    NotificationMailbox::Reset();
+    notifications_.Reset();
 
     // Poll for source lock, then read NOTIFICATION and EXT_STATUS once.
     uint32_t notify = 0;
@@ -233,7 +233,7 @@ std::expected<DuplexConfirmResult, IOReturn> DiceFamilyDriver::Confirm() {
             return std::unexpected(kIOReturnOffline);
         }
 
-        notify |= NotificationMailbox::Consume();
+        notify |= notifications_.Consume();
         const auto status = io_.ReadQuad(sections_.global.offset + GlobalOffset::kStatus);
         if (!status) {
             (void)Stop();
@@ -292,7 +292,7 @@ std::expected<DuplexClockApplyResult, IOReturn> DiceFamilyDriver::ApplyClock(
     }
 
     flowMode_ = FlowMode::kClockApply;
-    NotificationMailbox::Reset();
+    notifications_.Reset();
     stopSequenceError_ = kIOReturnSuccess;
     diceClock_ = clock;
     session_ = DuplexRestartSession{
@@ -456,7 +456,7 @@ IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels)
         ASFW_LOG(DICE,
                  "PrepareDuplex48k: device already at target clockSelect=0x%08x rate=%u; skipping redundant write",
                  diceClock_.clockSelect, targetHz);
-        return ActiveClockCheck(channels, NotificationMailbox::Consume());
+        return ActiveClockCheck(channels, notifications_.Consume());
     }
     if (requestedAtTarget) {
         ASFW_LOG(DICE,
@@ -465,7 +465,7 @@ IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels)
                  diceClock_.clockSelect, targetHz, preClaimSampleRate_, preClaimStatus_);
     }
 
-    NotificationMailbox::Reset();
+    notifications_.Reset();
     if (const auto written = io_.WriteQuad(sections_.global.offset + GlobalOffset::kClockSelect,
                                            diceClock_.clockSelect);
         !written) {
@@ -473,7 +473,7 @@ IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels)
     }
 
     // The notification may have arrived during the write.
-    const uint32_t earlyBits = NotificationMailbox::Consume();
+    const uint32_t earlyBits = notifications_.Consume();
     if ((earlyBits & Notify::kClockAccepted) != 0) {
         ASFW_LOG(DICE,
                  "PrepareDuplex48k: CLOCK_ACCEPTED arrived during write, bits=0x%08x",
@@ -499,7 +499,7 @@ IOReturn DiceFamilyDriver::ActiveClockCheck(const AudioDuplexChannels& channels,
     }
 
     // Include any mailbox bits that arrived during the read.
-    const uint32_t combinedNotify = accumulatedNotify | NotificationMailbox::Consume();
+    const uint32_t combinedNotify = accumulatedNotify | notifications_.Consume();
     const bool clockAccepted = (combinedNotify & Notify::kClockAccepted) != 0;
     const bool sourceLockedAtTarget =
         IsSourceLocked(state->status) &&
@@ -528,7 +528,7 @@ IOReturn DiceFamilyDriver::WaitClockAccepted(const AudioDuplexChannels& channels
             return Rollback(kIOReturnOffline);
         }
 
-        const uint32_t mailboxBits = NotificationMailbox::Consume();
+        const uint32_t mailboxBits = notifications_.Consume();
         if ((mailboxBits & Notify::kClockAccepted) != 0) {
             ASFW_LOG(DICE, "PrepareDuplex48k: observed async CLOCK_ACCEPTED bits=0x%08x",
                      mailboxBits);
@@ -542,7 +542,7 @@ IOReturn DiceFamilyDriver::WaitClockAccepted(const AudioDuplexChannels& channels
             if (!EnsureRouteCurrent()) {
                 return Rollback(kIOReturnOffline);
             }
-            const uint32_t lateMailboxBits = NotificationMailbox::Consume();
+            const uint32_t lateMailboxBits = notifications_.Consume();
             if ((lateMailboxBits & Notify::kClockAccepted) != 0) {
                 ASFW_LOG(DICE, "PrepareDuplex48k: observed late async CLOCK_ACCEPTED bits=0x%08x",
                          lateMailboxBits);
@@ -1045,7 +1045,7 @@ bool DiceFamilyDriver::TeardownRequested() const noexcept {
 uint64_t DiceFamilyDriver::OwnerValue() const noexcept {
     const uint64_t localNodeId =
         0xFFC0ULL | static_cast<uint64_t>(busInfo_.GetLocalNodeID().value & 0x3FU);
-    return (localNodeId << kOwnerNodeShift) | NotificationMailbox::kHandlerOffset;
+    return (localNodeId << kOwnerNodeShift) | kNotificationHandlerOffset;
 }
 
 uint32_t DiceFamilyDriver::ResolvedTxSpeed() const noexcept {

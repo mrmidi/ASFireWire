@@ -12,7 +12,8 @@
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Common/WireFormat.hpp"
 #include "Discovery/DeviceRegistry.hpp"
-#include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
+#include "Audio/Protocols/DICE/Core/DiceNotificationMailbox.hpp"
+#include "Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Core/DiceDeviceIo.hpp"
 #include "Audio/Protocols/DICE/Core/DiceFamilyDriver.hpp"
@@ -52,10 +53,13 @@ using ::ASFW::Audio::DICE::kOwnerNoOwner;
 using ::ASFW::Audio::DICE::MakeDICEAddress;
 using ::ASFW::Audio::DuplexRestartPhase;
 using ::ASFW::Audio::DuplexRestartReason;
-namespace NotificationMailbox = ::ASFW::Audio::DICE::NotificationMailbox;
 using ::ASFW::Audio::DICE::Section;
 using ::ASFW::Audio::DICE::DiceDeviceIo;
 using ::ASFW::Audio::DICE::DiceFamilyDriver;
+using ::ASFW::Audio::DICE::DiceNotificationMailbox;
+using ::ASFW::Audio::DICE::DiceNotificationRouter;
+using ::ASFW::Audio::DICE::IsNotificationAddress;
+using ::ASFW::Audio::DICE::kNotificationHandlerOffset;
 using ::ASFW::Audio::DICE::DiceClockConfiguration;
 using ::ASFW::FW::FwSpeed;
 using ::ASFW::FW::Generation;
@@ -226,12 +230,26 @@ public:
         generation_ = Generation{1};
         localNodeId_ = NodeId{0};
         speeds_[0x02] = FwSpeed::S400;
-        device_.SetNotifySink([](uint32_t bits) { NotificationMailbox::Publish(bits); });
         device_.SetTraceSink([this](std::string_view line) { trace_.Add(line); });
     }
 
     RecordingFireWireBus(const RecordingFireWireBus&) = delete;
     RecordingFireWireBus& operator=(const RecordingFireWireBus&) = delete;
+
+    // The simulated device sits at node 2 of bus 0x3FF.
+    static constexpr uint16_t kDeviceSourceId = 0xFFC0 | 0x02;
+
+    // Deliver the device's notification writes as the local request path
+    // does: through the router, attributed by source node and generation.
+    void RouteNotificationsTo(::ASFW::Audio::DICE::DiceNotificationRouter& router) {
+        device_.SetNotifySink([this, &router](uint32_t bits) {
+            (void)router.Deliver(generation_.value, kDeviceSourceId, bits);
+        });
+    }
+    // Straight into one mailbox (driver-level tests have no router).
+    void RouteNotificationsTo(::ASFW::Audio::DICE::DiceNotificationMailbox& mailbox) {
+        device_.SetNotifySink([&mailbox](uint32_t bits) { mailbox.Publish(bits); });
+    }
 
     AsyncHandle ReadBlock(Generation generation,
                           NodeId nodeId,
@@ -745,6 +763,7 @@ struct DuplexRig {
     ::ASFW::Testing::FakeDiceWaitClock clock{timer};
     DiceDeviceIo deviceIo;
     std::atomic<bool> cancel{false};
+    DiceNotificationMailbox notifications;
     DiceFamilyDriver driver;
     CallbackDriver controller{driver};
 
@@ -752,8 +771,9 @@ struct DuplexRig {
         : io(bus, bus, routeState.registry, routeState.route)
         , tx(io)
         , deviceIo(io, tx, clock)
-        , driver(deviceIo, bus, bringupPolicy) {
+        , driver(deviceIo, bus, notifications, bringupPolicy) {
         driver.SetTeardownCancelToken(&cancel);
+        bus.RouteNotificationsTo(notifications);
     }
 };
 

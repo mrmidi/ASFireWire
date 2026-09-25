@@ -9,7 +9,7 @@
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
-#include "../DICE/Core/DICENotificationMailbox.hpp"
+#include "../DICE/Core/DiceNotificationRouter.hpp"
 #include "../DICE/Core/DICETypes.hpp"
 #include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../IDeviceProtocol.hpp"
@@ -282,12 +282,14 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
                                    Session::AudioSessions& sessions,
-                                   Driver::HardwareInterface& hardware) noexcept
+                                   Driver::HardwareInterface& hardware,
+                                   DICE::DiceNotificationRouter& notifications) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
     , hardware_(hardware)
-    , sessions_(sessions) {
+    , sessions_(sessions)
+    , notifications_(notifications) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: Failed to allocate lock");
@@ -301,7 +303,7 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: Failed to create work queue (0x%x)", kr);
     }
 
-    DICE::NotificationMailbox::SetObserver(this, &DiceAudioBackend::NotificationObserverThunk);
+    notifications_.SetObserver(this, &DiceAudioBackend::NotificationObserverThunk);
 }
 
 DiceAudioBackend::~DiceAudioBackend() noexcept {
@@ -309,7 +311,7 @@ DiceAudioBackend::~DiceAudioBackend() noexcept {
     // shape. Normal lifecycle calls BeginTeardown() explicitly before destruction;
     // this only covers a destructor-only path. Idempotent by exchange latch.
     BeginTeardown();
-    DICE::NotificationMailbox::ClearObserver(this);
+    notifications_.ClearObserver(this);
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
@@ -318,7 +320,7 @@ DiceAudioBackend::~DiceAudioBackend() noexcept {
 
 void DiceAudioBackend::BeginTeardown() noexcept {
     stopping_.store(true, std::memory_order_release);
-    DICE::NotificationMailbox::ClearObserver(this);
+    notifications_.ClearObserver(this);
 
     if (teardownComplete_.load(std::memory_order_acquire)) {
         return;
@@ -524,7 +526,7 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
     recover();
 }
 
-void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
+void DiceAudioBackend::HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept {
     if ((bits & (DICE::Notify::kLockChange | DICE::Notify::kExtStatus)) == 0) {
         return;
     }
@@ -532,33 +534,35 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
     if (stopping_.load(std::memory_order_acquire)) {
         probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
-                 "DiceAudioBackend: device notification ignored by teardown bits=0x%08x",
-                 bits);
+                 "DiceAudioBackend: device notification ignored by teardown GUID=%llx bits=0x%08x",
+                 guid, bits);
         return;
     }
 
-    const std::vector<uint64_t> guids = sessions_.StreamingGuids();
+    // Only a streaming device's clock health matters here; an idle device
+    // re-reads its clock at the next start.
+    if (!sessions_.IsStreaming(guid)) {
+        return;
+    }
 
-    for (const uint64_t guid : guids) {
-        auto probe = ^{
-            if (stopping_.load(std::memory_order_acquire) ||
-                sessions_.IsCancelled(guid)) {
-                probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
-                ASFW_LOG(Audio,
-                         "DiceAudioBackend: queued health probe ignored by lifecycle cancellation "
-                         "GUID=%llx bits=0x%08x",
-                         guid,
-                         bits);
-                return;
-            }
-            ProbeDuplexHealth(guid, bits);
-        };
-
-        if (workQueue_) {
-            workQueue_->DispatchAsync(probe);
-        } else {
-            probe();
+    auto probe = ^{
+        if (stopping_.load(std::memory_order_acquire) ||
+            sessions_.IsCancelled(guid)) {
+            probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: queued health probe ignored by lifecycle cancellation "
+                     "GUID=%llx bits=0x%08x",
+                     guid,
+                     bits);
+            return;
         }
+        ProbeDuplexHealth(guid, bits);
+    };
+
+    if (workQueue_) {
+        workQueue_->DispatchAsync(probe);
+    } else {
+        probe();
     }
 }
 
@@ -756,12 +760,12 @@ void DiceAudioBackend::FinishRecovery(uint64_t guid) noexcept {
     IOLockUnlock(lock_);
 }
 
-void DiceAudioBackend::NotificationObserverThunk(void* context, uint32_t bits) noexcept {
+void DiceAudioBackend::NotificationObserverThunk(void* context, uint64_t guid, uint32_t bits) noexcept {
     auto* self = static_cast<DiceAudioBackend*>(context);
     if (!self) {
         return;
     }
-    self->HandleDeviceNotification(bits);
+    self->HandleDeviceNotification(guid, bits);
 }
 
 void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {

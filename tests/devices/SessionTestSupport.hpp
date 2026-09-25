@@ -503,7 +503,6 @@ struct SessionRig {
                    [this](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
                        return &binding;
                    }) {
-        NotificationMailbox::Reset();
         hardware.SetTestRegister(Register32::kNodeID, 0);
         bus.Device().ResetToIdle();
         Install(Generation{1});
@@ -513,18 +512,17 @@ struct SessionRig {
                                                                kScriptedCaps);
         } else if (s.spro24Dsp) {
             protocol = std::make_shared<ASFW::Audio::DICE::Focusrite::SPro24DspProtocol>(
-                bus, bus, registry, route, &irm, waitClock);
+                bus, bus, registry, route, &irm, waitClock, &notifications);
         } else {
             protocol = std::make_shared<ASFW::Audio::DICE::TCAT::DICETcatProtocol>(
-                bus, bus, registry, route, &irm, waitClock);
+                bus, bus, registry, route, &irm, waitClock, &notifications);
         }
         EXPECT_EQ(protocol->Initialize(), kIOReturnSuccess);
         protocol->AsDuplexDeviceControl()->SetTeardownCancelToken(&cancel);
         runtime.Insert(guid, protocol);
+        bus.RouteNotificationsTo(notifications);
         bus.Trace().Clear();
     }
-
-    ~SessionRig() { NotificationMailbox::Reset(); }
 
     void Install(Generation gen) {
         (void)registry.UpsertFromROM(MakeSessionRom(shape, gen), link);
@@ -618,6 +616,8 @@ struct SessionRig {
     FakeTimerScheduler timer;
     FakeDiceWaitClock waitClock{timer};
     ASFW::Discovery::DeviceRegistry registry;
+    // Declared before everything that registers with it.
+    ASFW::Audio::DICE::DiceNotificationRouter notifications{registry};
     AudioRuntimeRegistry runtime;
     HardwareInterface hardware{};
     FakeBindingSource binding;

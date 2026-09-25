@@ -62,21 +62,17 @@ struct DiceRig {
         bus.Device().ResetToIdle();
         if (std::string_view(image.key) == "saffire-pro24-dsp") {
             protocol = std::make_unique<ASFW::Audio::DICE::Focusrite::SPro24DspProtocol>(
-                bus, bus, routeState.registry, routeState.route, nullptr, waitClock);
+                bus, bus, routeState.registry, routeState.route, nullptr, waitClock, &notifications);
         } else {
             protocol = std::make_unique<ASFW::Audio::DICE::TCAT::DICETcatProtocol>(
-                bus, bus, routeState.registry, routeState.route, nullptr, waitClock);
+                bus, bus, routeState.registry, routeState.route, nullptr, waitClock, &notifications);
         }
         EXPECT_EQ(protocol->Initialize(), kIOReturnSuccess);
         control = protocol->AsDuplexDeviceControl();
         EXPECT_NE(control, nullptr);
         control->SetTeardownCancelToken(&cancel);
         bus.Trace().Clear();
-        NotificationMailbox::Reset();
-    }
-
-    ~DiceRig() {
-        NotificationMailbox::Reset();
+        bus.RouteNotificationsTo(notifications);
     }
 
     // Stage the device's clock: what it was asked for and what it achieved.
@@ -218,6 +214,7 @@ struct DiceRig {
     RouteState routeState;
     FakeTimerScheduler timer;
     FakeDiceWaitClock waitClock{timer};
+    ::ASFW::Audio::DICE::DiceNotificationRouter notifications{routeState.registry};
     std::atomic<bool> cancel{false};
     std::unique_ptr<IDeviceProtocol> protocol;
     IDuplexDeviceControl* control{nullptr};

@@ -28,6 +28,10 @@ namespace ASFW::Scheduling {
 class ITimerScheduler;
 }
 
+namespace ASFW::Audio::DICE {
+class DiceNotificationRouter;
+}
+
 namespace ASFW::Audio {
 
 /// Constructs a device-specific protocol handler from an already resolved
@@ -40,7 +44,8 @@ namespace ASFW::Audio {
     const Discovery::DeviceRouteToken& route,
     ::ASFW::IRM::IRMClient* irmClient = nullptr,
     ::ASFW::CMP::CMPClient* cmpClient = nullptr,
-    Scheduling::ITimerScheduler* timerScheduler = nullptr
+    Scheduling::ITimerScheduler* timerScheduler = nullptr,
+    DICE::DiceNotificationRouter* diceNotifications = nullptr
 );
 
 } // namespace ASFW::Audio

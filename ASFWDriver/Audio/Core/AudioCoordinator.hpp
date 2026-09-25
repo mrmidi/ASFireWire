@@ -43,7 +43,8 @@ public:
                      Discovery::DeviceRegistry& registry,
                      AudioRuntimeRegistry& runtime,
                      Driver::IsochService& isoch,
-                     Driver::HardwareInterface& hardware) noexcept;
+                     Driver::HardwareInterface& hardware,
+                     DICE::DiceNotificationRouter& diceNotifications) noexcept;
     ~AudioCoordinator() noexcept override;
 
     AudioCoordinator(const AudioCoordinator&) = delete;

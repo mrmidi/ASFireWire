@@ -30,8 +30,9 @@ SPro24DspProtocol::SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                      Discovery::DeviceRegistry& routeRegistry,
                                      const Discovery::DeviceRouteToken& route,
                                      IRM::IRMClient* irmClient,
-                                     DiceWaitClock& waitClock)
-    : tcat_(busOps, busInfo, routeRegistry, route, irmClient, waitClock)
+                                     DiceWaitClock& waitClock,
+                                     DiceNotificationRouter* notifications)
+    : tcat_(busOps, busInfo, routeRegistry, route, irmClient, waitClock, notifications)
 {
     ASFW_LOG(DICE, "SPro24DspProtocol created for GUID=0x%016llx node=0x%04x", route.guid,
              route.nodeId);

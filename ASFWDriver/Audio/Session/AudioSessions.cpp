@@ -158,25 +158,4 @@ std::optional<SessionSnapshot> AudioSessions::Snapshot(uint64_t guid) const noex
     return session->Snapshot();
 }
 
-std::vector<uint64_t> AudioSessions::StreamingGuids() const noexcept {
-    std::vector<uint64_t> guids;
-    if (lock_ == nullptr) {
-        return guids;
-    }
-    IOLockLock(lock_);
-    std::vector<std::shared_ptr<SessionScheduler>> sessions;
-    for (const auto& [guid, session] : sessions_) {
-        sessions.push_back(session);
-        guids.push_back(guid);
-    }
-    IOLockUnlock(lock_);
-    std::vector<uint64_t> streaming;
-    for (size_t i = 0; i < sessions.size(); ++i) {
-        if (sessions[i]->IsStreaming()) {
-            streaming.push_back(guids[i]);
-        }
-    }
-    return streaming;
-}
-
 } // namespace ASFW::Audio::Session
