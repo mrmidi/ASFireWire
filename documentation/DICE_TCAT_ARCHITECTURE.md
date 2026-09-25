@@ -164,8 +164,15 @@ Focusrite's own driver supports the device from Saffire.kext 4.3.0 / MixControl
   stream addressed across both blocks, which agrees with Linux's one stream of
   20 (low) / 16 (middle) plus MIDI.
 
-Linux's table is therefore best read as covering the missing extension: without
-it, registers describe only the current rate mode. Evidence tools live in
+Why Linux needs the table: it fixes each mode's channel counts at probe time.
+Without the extension it can cache only the current mode. It still offers every
+rate in the caps (`dice-pcm.c:104-118`), but at stream start it re-reads the
+registers and refuses on a mismatch with the cache (`dice-stream.c:238-244`,
+`"cache mismatch"` → `-EPROTO`). An uncached mode is 0, so without a table this
+device would list 88.2/96 kHz on Linux and fail to start at them. The TCAT kext
+has no such cache: it re-reads and rebuilds the streams after every switch
+(`RestartStreaming → PopulateDeviceStruct → CreateStreams`), so it needs no
+table. Stage D should follow the kext. Evidence tools live in
 `tmp/dicere/` (`probe_430.c`, `pro40_sigtabs.txt`).
 
 The earlier plan modelled two cases. It is three, and the EAP case is *better*
