@@ -310,6 +310,17 @@ add_protocols_test(SBP2TargetBridgeTests
     "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
 )
 
+# SBP-2 nub publisher over the real DeviceManager, ASFWDriver replaced by a fake IOService
+add_protocols_test(SBP2NubPublisherTests
+    SBP2NubPublisherTests.cpp
+    "${ASFW_DRIVER_DIR}/SCSIController/SBP2NubPublisher.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceManager.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
+)
+
 # SBP2Handler Tests (user-client boundary: session state + command ABI hardening)
 add_protocols_test(SBP2HandlerTests
     SBP2HandlerTests.cpp
