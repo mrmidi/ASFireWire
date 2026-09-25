@@ -5,7 +5,6 @@
 
 #include "DiceProfile.hpp"
 
-#include "../../../../Shared/Isoch/AudioGeometryPolicy.hpp"
 
 namespace ASFW::Isoch::Audio::DICE {
 
@@ -64,24 +63,41 @@ bool DiceProfile::BuildDefaultRxStreamConfig(DiceStreamConfig& outConfig) const 
     return true;
 }
 
-// The packet-scaled ladder of Focusrite's Saffire.kext, which the per-model
-// DICE classes carried in three spellings of the same numbers.
-using Policy = ::ASFW::IsochTransport::AudioGeometryPolicy;
+// Safety offsets and latency follow the packet-scaled ladder of Focusrite's
+// Saffire.kext (TimingLadder), which the per-model DICE classes carried in three
+// spellings. A spec may replace the capture safety and the latency with values
+// measured on the device.
+namespace {
+
+[[nodiscard]] constexpr uint32_t PerTier(uint32_t at1x, double sampleRate) noexcept {
+    return TimingLadder::FramesPerPacket(sampleRate) == 0
+               ? 0U
+               : at1x << TimingLadder::RateTier(sampleRate);
+}
+static_assert(PerTier(53, 48000.0) == 53);
+static_assert(PerTier(53, 96000.0) == 106);
+static_assert(PerTier(52, 192000.0) == 208);
+
+} // namespace
 
 uint32_t DiceProfile::TxSafetyOffsetFrames(double sampleRate) const noexcept {
-    return Policy::TxSafetyOffsetFrames(sampleRate);
+    return TimingLadder::SafetyOffsetFrames(TimingLadder::kTxDelayPackets, sampleRate,
+                                            TimingLadder::RateAddend::kPerTier);
 }
 
 uint32_t DiceProfile::RxSafetyOffsetFrames(double sampleRate) const noexcept {
-    return Policy::RxSafetyOffsetFrames(sampleRate);
+    return TimingLadder::SafetyOffsetFrames(spec_.captureSafetyPackets, sampleRate,
+                                            TimingLadder::RateAddend::kPerTier);
 }
 
 uint32_t DiceProfile::TxReportedLatencyFrames(double sampleRate) const noexcept {
-    return Policy::ReportedLatencyFrames(sampleRate);
+    return spec_.outputLatency1x != 0 ? PerTier(spec_.outputLatency1x, sampleRate)
+                                      : TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 
 uint32_t DiceProfile::RxReportedLatencyFrames(double sampleRate) const noexcept {
-    return Policy::ReportedLatencyFrames(sampleRate);
+    return spec_.inputLatency1x != 0 ? PerTier(spec_.inputLatency1x, sampleRate)
+                                     : TimingLadder::ReportedLatencyFrames(sampleRate);
 }
 
 } // namespace ASFW::Isoch::Audio::DICE

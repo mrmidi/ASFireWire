@@ -22,7 +22,7 @@ tx[1] none
 rx[1] none
 tx[2] none
 rx[2] none
-@32000 safety tx=48 rx=128 latency tx=29 rx=29 delay tx=12800 rx=12800
-@44100 safety tx=48 rx=128 latency tx=29 rx=29 delay tx=12800 rx=12800
-@48000 safety tx=48 rx=128 latency tx=29 rx=29 delay tx=12800 rx=12800
+@32000 safety tx=48 rx=128 latency tx=29 rx=29
+@44100 safety tx=48 rx=128 latency tx=29 rx=29
+@48000 safety tx=48 rx=128 latency tx=29 rx=29
 rates 48000

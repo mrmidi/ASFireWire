@@ -1,5 +1,7 @@
 # ZTS, Buffers, and Interrupt/DCL Cadence — Saffire.kext reference vs ASFW
 
+> **Vocabulary:** latency-shaped numbers in this document (delays, offsets, leads, depths) are classified in [`LATENCY_VOCABULARY.md`](LATENCY_VOCABULARY.md). A configured frame count is not a measured duration, and a depth is never a latency.
+
 **Status:** analysis / reference. No code changes.
 **Goal:** document how Focusrite's `Saffire.kext` (DICE/TCAT, IOAudioFamily) anchors the
 CoreAudio clock and sizes its buffers, how its isoch DCL program is constructed (interrupt
@@ -190,7 +192,7 @@ two *frame* rings whose wrap points can disagree.
   updates the authoritative ZTS (`RxClock`).
 
 ### 4c. ZTS → HAL — `ASFWAudioDriverZts.cpp::PublishSharedZeroTimestampToHAL`
-- Steps in `P = TimingCursorPolicy::HalZeroTimestampPeriodFrames()` increments, and for every
+- Steps in `P` = the HAL zero-timestamp period (`AudioTimingGeometry::kHalZeroTimestampPeriodFrames`; the resolved `zeroTimestampPeriodFrames` since FW-177) increments, and for every
   `P`-boundary crossed since the last event frame calls
   `audioDevice->UpdateCurrentZeroTimestamp(nextFrame, targetHostTicks)` (`targetHostTicks`
   linearly interpolated from `eventFrame/eventHostTicks/nanosPerSampleQ8`).

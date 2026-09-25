@@ -1,24 +1,50 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// Read-only, value-owned audio telemetry contract.  This is deliberately not a
-// view of AudioTransportControlBlock: callers receive copied atomics while the
-// endpoint still owns the direct-audio mapping.
+// Read-only, value-owned audio telemetry contract (selector 1013,
+// kMethodDiagGetAudioTelemetry). Callers receive copied atomics while the
+// endpoint still owns the direct-audio mapping; nothing here is a view of
+// AudioTransportControlBlock.
+//
+// Wire v4 (FW-175). What it is for: a small STABLE per-endpoint health summary
+// for the app, MCP and field reports. Research traces never go here -- they go
+// to the log ring or an optional sidecar, so an experiment never enlarges this
+// ABI (documentation/OBSERVABILITY_INVENTORY.md).
+//
+// Layout rules, each pinned by a static_assert below:
+//  - a self-describing header: version, header size, total bytes, endpoint
+//    count and record size, so a reader strides by the declared record size and
+//    tolerates a LONGER record from a newer driver;
+//  - only `endpointCount` records are serialised (SerializeAudioTelemetry), and
+//    the full 8-endpoint worst case must fit the 4 KiB inline user-client reply:
+//    a larger reply is not an error, it silently returns nothing;
+//  - every field offset is asserted, and the host test suite compares a golden
+//    byte fixture (tests/fixtures/audio_telemetry_v4.bin) that the Swift tests
+//    decode too, so the two sides cannot drift apart unnoticed;
+//  - completed-interval fields are read under the Seqlock.hpp protocol; a copy
+//    that never stabilises is discarded (defaults, flag clear), never torn;
+//  - no device-family fields: family diagnostics belong to their own paths.
 
 #pragma once
 
 #include "../DriverKit/Runtime/AudioTransportControlBlock.hpp"
 #include "../../Shared/Isoch/AudioTimingGeometry.hpp"
+#include "Seqlock.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <span>
 
 namespace ASFW::Audio::Runtime {
 
-constexpr uint32_t kAudioTelemetryWireVersion = 3;
+constexpr uint16_t kAudioTelemetryWireVersion = 4;
 constexpr uint32_t kAudioTelemetryMaxEndpoints = 8;
+// IOConnectCallStructMethod inline reply limit: a reply above this returns no
+// data at all rather than failing.
+constexpr size_t kAudioTelemetryInlineReplyLimitBytes = 4096;
 
 enum AudioTelemetryFlags : uint32_t {
     kAudioTelemetryBindingReady = 1U << 0,
@@ -28,7 +54,32 @@ enum AudioTelemetryFlags : uint32_t {
     // CoreAudio issued BeginRead during the completed RX interval. Without a
     // reader, a full capture ring is intentionally only a retained window.
     kAudioTelemetryRxCaptureReaderActive = 1U << 4,
+    // The completed interval's duration is known (not the first interval
+    // after a reset). Without it, interval counts cannot be turned into rates.
+    kAudioTelemetryTxIntervalDurationKnown = 1U << 5,
+    kAudioTelemetryRxIntervalDurationKnown = 1U << 6,
 };
+
+struct AudioTelemetryHeader final {
+    uint16_t version{kAudioTelemetryWireVersion};
+    uint16_t headerBytes{0};
+    uint32_t totalBytes{0};          // header + endpointCount * endpointRecordBytes
+    uint32_t endpointCount{0};
+    uint32_t endpointRecordBytes{0};
+    uint64_t captureHostTicks{0};    // mach_absolute_time() when copied
+    uint32_t hostTimebaseNumer{0};   // ticks -> ns = ticks * numer / denom
+    uint32_t hostTimebaseDenom{0};
+};
+
+static_assert(sizeof(AudioTelemetryHeader) == 32);
+static_assert(offsetof(AudioTelemetryHeader, version) == 0);
+static_assert(offsetof(AudioTelemetryHeader, headerBytes) == 2);
+static_assert(offsetof(AudioTelemetryHeader, totalBytes) == 4);
+static_assert(offsetof(AudioTelemetryHeader, endpointCount) == 8);
+static_assert(offsetof(AudioTelemetryHeader, endpointRecordBytes) == 12);
+static_assert(offsetof(AudioTelemetryHeader, captureHostTicks) == 16);
+static_assert(offsetof(AudioTelemetryHeader, hostTimebaseNumer) == 24);
+static_assert(offsetof(AudioTelemetryHeader, hostTimebaseDenom) == 28);
 
 struct AudioTelemetryEndpointSnapshot final {
     uint64_t guid{0};
@@ -79,10 +130,7 @@ struct AudioTelemetryEndpointSnapshot final {
                    kRxCaptureOccupancyHistogramBuckets>
         rxCompletedOccupancyHistogram{};
     uint32_t inputFrameCapacityFrames{0};
-    // Wire v3. Appended at the tail deliberately: the app parses this struct by
-    // fixed byte offset (DriverConnector+AudioTelemetry.swift), so new fields go
-    // last or every existing offset shifts.
-    //
+    uint32_t reserved0{0};  // explicit; was implicit padding in v3
     // Bring-up attribution; see AudioTransportControlBlock for how to read the
     // combination. These make a never-establishing stream explainable without a
     // packet analyser: all-zero means nothing arrived, seen == noData means the
@@ -95,17 +143,116 @@ struct AudioTelemetryEndpointSnapshot final {
     uint64_t rxInvalidCipHeaders{0};
     uint64_t rxZeroDataBlockSize{0};
     uint64_t rxGeometryMismatch{0};
+    // v4: when and over how long the completed intervals were measured.
+    uint64_t txCompletedIntervalDurationTicks{0};
+    uint64_t txCompletedIntervalEndHostTicks{0};
+    uint64_t rxCompletedIntervalDurationTicks{0};
+    uint64_t rxCompletedIntervalEndHostTicks{0};
 };
 
-static_assert(sizeof(AudioTelemetryEndpointSnapshot) == 432);
+// Every offset is part of the wire contract (Swift: DriverConnector+AudioTelemetry.swift).
+#define ASFW_TELEMETRY_OFFSET(field, off) \
+    static_assert(offsetof(AudioTelemetryEndpointSnapshot, field) == (off), #field)
+ASFW_TELEMETRY_OFFSET(guid, 0);
+ASFW_TELEMETRY_OFFSET(endpointGeneration, 8);
+ASFW_TELEMETRY_OFFSET(controlGeneration, 16);
+ASFW_TELEMETRY_OFFSET(completedIntervalSequence, 24);
+ASFW_TELEMETRY_OFFSET(lastPreparationLatencyTicks, 32);
+ASFW_TELEMETRY_OFFSET(completedIntervalMaxLatencyTicks, 40);
+ASFW_TELEMETRY_OFFSET(maxPreparationLatencyTicks, 48);
+ASFW_TELEMETRY_OFFSET(preparationWakeCount, 56);
+ASFW_TELEMETRY_OFFSET(preparationAtMost750Us, 64);
+ASFW_TELEMETRY_OFFSET(preparationAtLeast1500Us, 72);
+ASFW_TELEMETRY_OFFSET(rxReplayEntries, 80);
+ASFW_TELEMETRY_OFFSET(rxReplayEpochResets, 88);
+ASFW_TELEMETRY_OFFSET(completedLatencyHistogram, 96);
+ASFW_TELEMETRY_OFFSET(completedMarginHistogram, 144);
+ASFW_TELEMETRY_OFFSET(flags, 184);
+ASFW_TELEMETRY_OFFSET(sampleRateHz, 188);
+ASFW_TELEMETRY_OFFSET(outputChannels, 192);
+ASFW_TELEMETRY_OFFSET(inputChannels, 196);
+ASFW_TELEMETRY_OFFSET(currentCommittedMarginPackets, 200);
+ASFW_TELEMETRY_OFFSET(completedIntervalMarginMinPackets, 204);
+ASFW_TELEMETRY_OFFSET(completedIntervalMarginMaxPackets, 208);
+ASFW_TELEMETRY_OFFSET(minimumCommittedMarginPackets, 212);
+ASFW_TELEMETRY_OFFSET(preparationLeadPackets, 216);
+ASFW_TELEMETRY_OFFSET(hardwareFloorPackets, 220);
+ASFW_TELEMETRY_OFFSET(rxCurrentAvailableFrames, 224);
+ASFW_TELEMETRY_OFFSET(rxCompletedIntervalSequence, 232);
+ASFW_TELEMETRY_OFFSET(rxCompletedIntervalMinimumAvailableFrames, 240);
+ASFW_TELEMETRY_OFFSET(rxCompletedIntervalMaximumAvailableFrames, 248);
+ASFW_TELEMETRY_OFFSET(rxCompletedIntervalMinimumFreeHeadroomFrames, 256);
+ASFW_TELEMETRY_OFFSET(rxCompletedIntervalOverrunEvents, 264);
+ASFW_TELEMETRY_OFFSET(rxCompletedIntervalOverwrittenFrames, 272);
+ASFW_TELEMETRY_OFFSET(rxCompletedIntervalStarvationEvents, 280);
+ASFW_TELEMETRY_OFFSET(rxCompletedIntervalStarvedFrames, 288);
+ASFW_TELEMETRY_OFFSET(rxCaptureOverrunEvents, 296);
+ASFW_TELEMETRY_OFFSET(rxCaptureStarvationEvents, 304);
+ASFW_TELEMETRY_OFFSET(rxTotalOverwrittenFrames, 312);
+ASFW_TELEMETRY_OFFSET(rxTotalStarvedFrames, 320);
+ASFW_TELEMETRY_OFFSET(rxCompletedOccupancyHistogram, 328);
+ASFW_TELEMETRY_OFFSET(inputFrameCapacityFrames, 368);
+ASFW_TELEMETRY_OFFSET(reserved0, 372);
+ASFW_TELEMETRY_OFFSET(rxPacketsSeen, 376);
+ASFW_TELEMETRY_OFFSET(rxDataPackets, 384);
+ASFW_TELEMETRY_OFFSET(rxNoDataPackets, 392);
+ASFW_TELEMETRY_OFFSET(rxShortPackets, 400);
+ASFW_TELEMETRY_OFFSET(rxInvalidCipHeaders, 408);
+ASFW_TELEMETRY_OFFSET(rxZeroDataBlockSize, 416);
+ASFW_TELEMETRY_OFFSET(rxGeometryMismatch, 424);
+ASFW_TELEMETRY_OFFSET(txCompletedIntervalDurationTicks, 432);
+ASFW_TELEMETRY_OFFSET(txCompletedIntervalEndHostTicks, 440);
+ASFW_TELEMETRY_OFFSET(rxCompletedIntervalDurationTicks, 448);
+ASFW_TELEMETRY_OFFSET(rxCompletedIntervalEndHostTicks, 456);
+#undef ASFW_TELEMETRY_OFFSET
+
+constexpr uint32_t kAudioTelemetryEndpointRecordBytes = 464;
+static_assert(sizeof(AudioTelemetryEndpointSnapshot) == kAudioTelemetryEndpointRecordBytes);
 
 struct AudioTelemetrySnapshot final {
-    uint32_t version{kAudioTelemetryWireVersion};
-    uint32_t endpointCount{0};
+    AudioTelemetryHeader header{};
     std::array<AudioTelemetryEndpointSnapshot, kAudioTelemetryMaxEndpoints> endpoints{};
 };
 
-static_assert(sizeof(AudioTelemetrySnapshot) == 3464);
+// The worst case (every endpoint) must fit one inline reply.
+static_assert(sizeof(AudioTelemetryHeader) +
+                  kAudioTelemetryMaxEndpoints * kAudioTelemetryEndpointRecordBytes <=
+              kAudioTelemetryInlineReplyLimitBytes,
+              "audio telemetry no longer fits the 4 KiB inline reply; "
+              "move it to an IOMemoryDescriptor before growing it");
+
+/// Bytes SerializeAudioTelemetry writes for `endpointCount` endpoints.
+[[nodiscard]] constexpr size_t AudioTelemetryWireBytes(uint32_t endpointCount) noexcept {
+    const uint32_t count = endpointCount < kAudioTelemetryMaxEndpoints
+                               ? endpointCount
+                               : kAudioTelemetryMaxEndpoints;
+    return sizeof(AudioTelemetryHeader) +
+           static_cast<size_t>(count) * kAudioTelemetryEndpointRecordBytes;
+}
+
+/// Fills the header's size fields and writes header + the populated records.
+/// Returns the byte count written, or 0 if `out` is too small.
+[[nodiscard]] inline size_t SerializeAudioTelemetry(AudioTelemetrySnapshot& snapshot,
+                                                    std::span<uint8_t> out) noexcept {
+    auto& h = snapshot.header;
+    if (h.endpointCount > kAudioTelemetryMaxEndpoints) {
+        h.endpointCount = kAudioTelemetryMaxEndpoints;
+    }
+    h.version = kAudioTelemetryWireVersion;
+    h.headerBytes = static_cast<uint16_t>(sizeof(AudioTelemetryHeader));
+    h.endpointRecordBytes = kAudioTelemetryEndpointRecordBytes;
+    const size_t bytes = AudioTelemetryWireBytes(h.endpointCount);
+    h.totalBytes = static_cast<uint32_t>(bytes);
+    if (out.size() < bytes) {
+        return 0;
+    }
+    std::memcpy(out.data(), &h, sizeof(h));
+    if (h.endpointCount != 0) {
+        std::memcpy(out.data() + sizeof(h), snapshot.endpoints.data(),
+                    static_cast<size_t>(h.endpointCount) * kAudioTelemetryEndpointRecordBytes);
+    }
+    return bytes;
+}
 
 inline void CopyAudioTelemetrySnapshot(
     const AudioTransportControlBlock& control,
@@ -143,73 +290,92 @@ inline void CopyAudioTelemetrySnapshot(
     out.rxTotalStarvedFrames =
         control.rxCaptureBufferTelemetry.totalStarvedFrames.load(memoryOrder);
 
-    // The heartbeat writer brackets this completed interval with an even
-    // sequence. Retry a few times rather than blocking a real-time producer.
-    for (uint32_t attempt = 0; attempt < 3; ++attempt) {
-        const uint64_t before = control.txCompletedIntervalSequence.load(memoryOrder);
-        if ((before & 1U) != 0U) {
-            continue;
-        }
-        out.completedIntervalMarginMinPackets =
+    // Completed intervals: accept a copy only if its sequence was stable
+    // (Seqlock.hpp). A copy that never stabilises is discarded, so a reader
+    // sees either a whole interval or the defaults -- never a torn mix.
+    const auto& rx = control.rxCaptureBufferTelemetry;
+    AudioTelemetryEndpointSnapshot tx{};
+    const auto txSequence = SeqlockTryRead(control.txCompletedIntervalSequence, [&] {
+        tx.completedIntervalMarginMinPackets =
             control.txCompletedIntervalMarginMinPackets.load(memoryOrder);
-        out.completedIntervalMarginMaxPackets =
+        tx.completedIntervalMarginMaxPackets =
             control.txCompletedIntervalMarginMaxPackets.load(memoryOrder);
-        out.completedIntervalMaxLatencyTicks =
+        tx.completedIntervalMaxLatencyTicks =
             control.txCompletedIntervalPreparationLatencyMaxTicks.load(memoryOrder);
-        for (size_t index = 0; index < out.completedLatencyHistogram.size(); ++index) {
-            out.completedLatencyHistogram[index] =
+        tx.txCompletedIntervalDurationTicks =
+            control.txCompletedIntervalDurationTicks.load(memoryOrder);
+        tx.txCompletedIntervalEndHostTicks =
+            control.txCompletedIntervalEndHostTicks.load(memoryOrder);
+        for (size_t index = 0; index < tx.completedLatencyHistogram.size(); ++index) {
+            tx.completedLatencyHistogram[index] =
                 control.txCompletedIntervalPreparationLatencyHistogram[index].load(memoryOrder);
         }
-        for (size_t index = 0; index < out.completedMarginHistogram.size(); ++index) {
-            out.completedMarginHistogram[index] =
+        for (size_t index = 0; index < tx.completedMarginHistogram.size(); ++index) {
+            tx.completedMarginHistogram[index] =
                 control.txCompletedIntervalCommittedMarginHistogram[index].load(memoryOrder);
         }
-        const uint64_t after = control.txCompletedIntervalSequence.load(memoryOrder);
-        if (before == after && (after & 1U) == 0U) {
-            out.completedIntervalSequence = after;
-            if (after != 0) {
-                out.flags |= kAudioTelemetryHasCompletedInterval;
-            }
-            break;
+    });
+    if (txSequence && *txSequence != 0) {
+        out.completedIntervalSequence = *txSequence;
+        out.completedIntervalMarginMinPackets = tx.completedIntervalMarginMinPackets;
+        out.completedIntervalMarginMaxPackets = tx.completedIntervalMarginMaxPackets;
+        out.completedIntervalMaxLatencyTicks = tx.completedIntervalMaxLatencyTicks;
+        out.txCompletedIntervalDurationTicks = tx.txCompletedIntervalDurationTicks;
+        out.txCompletedIntervalEndHostTicks = tx.txCompletedIntervalEndHostTicks;
+        out.completedLatencyHistogram = tx.completedLatencyHistogram;
+        out.completedMarginHistogram = tx.completedMarginHistogram;
+        out.flags |= kAudioTelemetryHasCompletedInterval;
+        if (tx.txCompletedIntervalDurationTicks != 0) {
+            out.flags |= kAudioTelemetryTxIntervalDurationKnown;
         }
     }
 
-    for (uint32_t attempt = 0; attempt < 3; ++attempt) {
-        const uint64_t before =
-            control.rxCaptureBufferTelemetry.completedIntervalSequence.load(memoryOrder);
-        if ((before & 1U) != 0U) {
-            continue;
+    AudioTelemetryEndpointSnapshot rxCopy{};
+    uint64_t readerCalls = 0;
+    const auto rxSequence = SeqlockTryRead(rx.completedIntervalSequence, [&] {
+        rxCopy.rxCompletedIntervalMinimumAvailableFrames =
+            rx.completedMinimumAvailableFrames.load(memoryOrder);
+        rxCopy.rxCompletedIntervalMaximumAvailableFrames =
+            rx.completedMaximumAvailableFrames.load(memoryOrder);
+        rxCopy.rxCompletedIntervalMinimumFreeHeadroomFrames =
+            rx.completedMinimumFreeHeadroomFrames.load(memoryOrder);
+        rxCopy.rxCompletedIntervalOverrunEvents = rx.completedOverrunEvents.load(memoryOrder);
+        rxCopy.rxCompletedIntervalOverwrittenFrames =
+            rx.completedOverwrittenFrames.load(memoryOrder);
+        rxCopy.rxCompletedIntervalStarvationEvents =
+            rx.completedStarvationEvents.load(memoryOrder);
+        rxCopy.rxCompletedIntervalStarvedFrames = rx.completedStarvedFrames.load(memoryOrder);
+        rxCopy.rxCompletedIntervalDurationTicks =
+            rx.completedIntervalDurationTicks.load(memoryOrder);
+        rxCopy.rxCompletedIntervalEndHostTicks =
+            rx.completedIntervalEndHostTicks.load(memoryOrder);
+        for (size_t index = 0; index < rxCopy.rxCompletedOccupancyHistogram.size(); ++index) {
+            rxCopy.rxCompletedOccupancyHistogram[index] =
+                rx.completedOccupancyHistogram[index].load(memoryOrder);
         }
+        readerCalls = rx.completedReaderBeginReadCalls.load(memoryOrder);
+    });
+    if (rxSequence && *rxSequence != 0) {
+        out.rxCompletedIntervalSequence = *rxSequence;
         out.rxCompletedIntervalMinimumAvailableFrames =
-            control.rxCaptureBufferTelemetry.completedMinimumAvailableFrames.load(memoryOrder);
+            rxCopy.rxCompletedIntervalMinimumAvailableFrames;
         out.rxCompletedIntervalMaximumAvailableFrames =
-            control.rxCaptureBufferTelemetry.completedMaximumAvailableFrames.load(memoryOrder);
+            rxCopy.rxCompletedIntervalMaximumAvailableFrames;
         out.rxCompletedIntervalMinimumFreeHeadroomFrames =
-            control.rxCaptureBufferTelemetry.completedMinimumFreeHeadroomFrames.load(memoryOrder);
-        out.rxCompletedIntervalOverrunEvents =
-            control.rxCaptureBufferTelemetry.completedOverrunEvents.load(memoryOrder);
-        out.rxCompletedIntervalOverwrittenFrames =
-            control.rxCaptureBufferTelemetry.completedOverwrittenFrames.load(memoryOrder);
-        out.rxCompletedIntervalStarvationEvents =
-            control.rxCaptureBufferTelemetry.completedStarvationEvents.load(memoryOrder);
-        out.rxCompletedIntervalStarvedFrames =
-            control.rxCaptureBufferTelemetry.completedStarvedFrames.load(memoryOrder);
-        for (size_t index = 0; index < out.rxCompletedOccupancyHistogram.size(); ++index) {
-            out.rxCompletedOccupancyHistogram[index] =
-                control.rxCaptureBufferTelemetry.completedOccupancyHistogram[index].load(memoryOrder);
+            rxCopy.rxCompletedIntervalMinimumFreeHeadroomFrames;
+        out.rxCompletedIntervalOverrunEvents = rxCopy.rxCompletedIntervalOverrunEvents;
+        out.rxCompletedIntervalOverwrittenFrames = rxCopy.rxCompletedIntervalOverwrittenFrames;
+        out.rxCompletedIntervalStarvationEvents = rxCopy.rxCompletedIntervalStarvationEvents;
+        out.rxCompletedIntervalStarvedFrames = rxCopy.rxCompletedIntervalStarvedFrames;
+        out.rxCompletedIntervalDurationTicks = rxCopy.rxCompletedIntervalDurationTicks;
+        out.rxCompletedIntervalEndHostTicks = rxCopy.rxCompletedIntervalEndHostTicks;
+        out.rxCompletedOccupancyHistogram = rxCopy.rxCompletedOccupancyHistogram;
+        out.flags |= kAudioTelemetryHasCompletedRxInterval;
+        if (rxCopy.rxCompletedIntervalDurationTicks != 0) {
+            out.flags |= kAudioTelemetryRxIntervalDurationKnown;
         }
-        const uint64_t after =
-            control.rxCaptureBufferTelemetry.completedIntervalSequence.load(memoryOrder);
-        if (before == after && (after & 1U) == 0U) {
-            out.rxCompletedIntervalSequence = after;
-            if (after != 0) {
-                out.flags |= kAudioTelemetryHasCompletedRxInterval;
-                if (control.rxCaptureBufferTelemetry.completedReaderBeginReadCalls.load(
-                        memoryOrder) != 0) {
-                    out.flags |= kAudioTelemetryRxCaptureReaderActive;
-                }
-            }
-            return;
+        if (readerCalls != 0) {
+            out.flags |= kAudioTelemetryRxCaptureReaderActive;
         }
     }
 }

@@ -92,11 +92,15 @@ def cmd_geometry(args) -> int:
 
     _rule("HAL / CoreAudio buffers")
     _row("kFrameRingFrames", t["kFrameRingFrames"], "frames",
-         f"{t['kFrameRingFrames'] / 48:.1f} ms @48k -- shared stream ring")
+         f"{t['kFrameRingFrames'] / 48:.1f} ms @48k -- ACTIVE ring (per rate, V3)")
+    _row("kAllocatedFrameRingFrames", t["kAllocatedFrameRingFrames"], "frames",
+         "shared memory allocated once (largest supported ring)")
     _row("kHalIoPeriodFrames", t["kHalIoPeriodFrames"], "frames",
-         "client IO budget (max CoreAudio callback)")
+         "nominal client IO budget (not enforced)")
+    _row("kMaxClientIoFrames", t["kMaxClientIoFrames"], "frames",
+         "ADK client ceiling min(zts*3/8, 4096) -- TX budgets hold this")
     _row("kHalZeroTimestampPeriodFrames", t["kHalZeroTimestampPeriodFrames"], "frames",
-         "ZTS anchor period")
+         "ZTS anchor period @48k (== active ring)")
     _row("kFrameAlignment", t["kFrameAlignment"], "frames")
     _row("kSchedulingJitterFrames", t["kSchedulingJitterFrames"], "frames",
          "single-queue contention cushion")

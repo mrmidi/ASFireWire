@@ -14,6 +14,7 @@
 #pragma once
 
 #include "DiceDeviceProfile.hpp"
+#include "../TimingLadder.hpp"
 
 #include <cstdint>
 #include <span>
@@ -41,6 +42,12 @@ struct DiceProfileSpec {
     // model 0 "announces two receive transmitters, but only has one").
     // Zero: the device's count stands.
     uint32_t assertedPlaybackStreams{0};
+    // Capture safety offset in packets; the vendor ladder's 16 unless measured.
+    uint32_t captureSafetyPackets{TimingLadder::kRxDelayPackets};
+    // Measured device latency at 1x, doubling per rate tier. Zero keeps the
+    // vendor ladder (29/59/119).
+    uint32_t inputLatency1x{0};
+    uint32_t outputLatency1x{0};
 };
 
 class DiceProfile final : public IDiceDeviceProfile {

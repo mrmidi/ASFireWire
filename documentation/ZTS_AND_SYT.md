@@ -1,5 +1,7 @@
 # Zero Timestamp (ZTS) and SYT Timing Architecture
 
+> **Vocabulary:** latency-shaped numbers in this document (delays, offsets, leads, depths) are classified in [`LATENCY_VOCABULARY.md`](LATENCY_VOCABULARY.md). A configured frame count is not a measured duration, and a depth is never a latency.
+
 This document provides a comprehensive guide to the clock recovery, synchronization, and presentation timing architectures in the ASFW Driver. It explains how the driver bridges the asynchronous Apple CoreAudio host domain with the synchronous, cycle-aligned IEEE 1394 (FireWire) bus domain.
 
 > [!IMPORTANT]
@@ -717,8 +719,9 @@ static_assert(kTxExposureLeadFrames >= kHalIoPeriodFrames + kSchedulingJitterFra
               "TX exposure lead must cover one full IO window plus scheduling jitter");
 ```
 
-The rate-dependent partner `RequiredOutputExposureFrames` lives beside
-`RequiredInputSafetyFrames` in `AudioGeometryPolicy.hpp`.
+(`AudioGeometryPolicy.hpp`, which held `RequiredOutputExposureFrames` and
+`RequiredInputSafetyFrames`, was removed by FW-177; input safety is now
+`ResolveInputSafetyFrames` in `Audio/Runtime/ResolvedTimingGeometry.hpp`.)
 
 #### Resolution (2026-06-16, hardware-validated)
 
@@ -775,6 +778,13 @@ overflow, but `[PayloadWriter]` logs a record only on a fault
 `[TxPrepRange]` only on `stoppedShort` (refill hole) or `frameShort` (`W > E`).
 The periodic `[TxPrep]` summary remains the lone liveness/margin heartbeat. A
 clean run prints only that heartbeat; any other line is a regression.
+
+> **Retired (FW-171).** The `[PayloadWriter]` record and its ring were removed
+> from the driver: it was written from the real-time IO callback into the
+> shared control block and drained behind receive-context liveness. The W > E
+> fault it detected is reported by `[TxPrepFrame]` (and `[TxExposure]`). The
+> measurements above remain valid history; `tools/analyze_payloadwriter.py`
+> still parses those historical dumps.
 
 > **Capturing the trace.** DriverKit dexts have no real os_log categories
 > (`os_log_create` is unavailable — every line is `OS_LOG_DEFAULT` from
@@ -1267,10 +1277,11 @@ The research-stage replacement direction was:
 *   preserve captured ZTS anchors across the required cross-process
     notification path.
 
-The current implementation retained the clock-domain and ownership
-corrections while adopting a six-packet interrupt group. Because six is not a
-complete four-packet cadence multiple, a group advances by either 32 or 40
-frames depending on cadence phase.
+The implementation retained the clock-domain and ownership corrections and
+first adopted a six-packet interrupt group, which advanced by 32 or 40 frames
+depending on cadence phase. FW-183b (Epic 3) moved to eight-packet groups:
+two whole cadence blocks, so every group advances by exactly 48 frames at 1x
+and tiles the ZTS period (see §12, stage 4).
 
 ---
 
@@ -1286,10 +1297,20 @@ requirements is the source of several apparent contradictions:
     retained while the HAL IO size, frame ring, and ZTS period were made
     512 frames. ZTS grid points had to be reconstructed inside a sequence of
     48-frame nominal group advances.
-3.  **Current adopted state:** the transport uses six-packet timing groups,
-    a phase-dependent 32/40-frame group advance, and a 1536-frame ADK ZTS
-    period equal to the 1536-frame HAL ring. Packet-ring ownership and startup
-    prefill remain separate from the HAL frame-ring geometry.
+3.  **Six-packet state (superseded):** the transport used six-packet timing
+    groups, a phase-dependent 32/40-frame group advance, and a 1536-frame ADK
+    ZTS period equal to the 1536-frame HAL ring. Packet-ring ownership and
+    startup prefill remain separate from the HAL frame-ring geometry.
+4.  **Eight-packet groups (FW-183b):** eight-packet timing groups on IR and
+    IT (1.0 ms, Apple's `fNumPacketsPerBufferGroup`), a fixed 48/96/192-frame
+    group advance at 1x/2x/4x, with the stage-3 ZTS/ring. The group tiles
+    every V3 ZTS period (12288 / 48 = 256), which a six-packet group
+    (36-frame average) cannot.
+5.  **Current adopted state (FW-183c, V3):** the ZTS period and the active
+    HAL ring are per rate tier (12288 frames at 1x, 24576 at 2x), inside one
+    24576-frame allocation; the period changes only inside the
+    configuration-change window. The TX budgets hold the 4096-frame
+    AudioDriverKit client ceiling that the V3 period unlocks.
 
 Reference-driver sections describe evidence, not configuration inheritance.
 Apple's eight-packet groups, Linux's period-derived queues, and FFADO's
@@ -1305,26 +1326,34 @@ live in `ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp`.
 
 ### A. Authoritative Values
 
+The HAL buffer geometry is per rate: `HalBufferProfileForRate(rate)` in
+`AudioHalBufferProfiles.hpp`, applied through `ResolvedTimingGeometry`
+(`TIMING_GEOMETRY_OWNERSHIP.md`). Values below are at 48 kHz unless stated.
+
 | Quantity | Current value | Meaning |
 |---|---:|---|
-| Sample rate | 48,000 Hz | Current supported timing profile |
+| Sample rate | 32–96 kHz | 4x rates need a 49152-frame ring, larger than the allocation, and are not advertised |
 | Blocking cadence block | 4 packets | D/D/D/N, phase may rotate |
 | Frames per DATA packet | 8 | AMDTP SYT interval at 48 kHz |
 | Frames per cadence block | 24 | Three DATA packets |
-| RX/TX timing group | 6 packets | 0.75 ms interrupt target |
-| Group advance | 32 or 40 frames | Depends on D/D/D/N starting phase; 36 average |
-| ADK ZTS period | 1536 frames | Equal to the mapped ADK stream-ring length |
-| Maximum HAL IO transfer | 512 frames | Client-transfer upper bound |
-| HAL frame ring | 1536 frames | One ZTS period, three max IO transfers |
+| RX/TX timing group | 8 packets | 1.0 ms interrupt target |
+| Group advance | 48 frames | Two whole D/D/D/N blocks: fixed at every phase (96 at 2x, 192 at 4x) |
+| ADK ZTS period | 12288 frames (24576 at 2x) | 2¹²·3: 512 cadence blocks, 256 completion groups at every tier; set with `SetZeroTimeStampPeriod` in the rate-change window |
+| HAL frame ring (active) | 12288 frames (24576 at 2x) | Equal to the ZTS period; the HAL wraps the stream buffer on it |
+| Shared allocation | 24576 frames | Allocated once; a rate change moves the active ring inside it |
+| Nominal HAL IO budget | 1024 frames | Not enforced by ADK |
+| Maximum client IO | 4096 frames | `min(zts · 3/8, 4096)`: the AudioDriverKit ceiling the TX budgets hold |
 | Frame alignment | 32 frames | Shared alignment contract |
 | IR descriptor ring | 504 packets | Packet-domain receive storage |
 | TX hardware ring | 48 packets | OHCI-owned transmit program |
-| TX preparation slack | 96 packets | Sixteen groups / 12 ms of producer scheduling tolerance |
+| TX preparation slack | 96 packets | Twelve groups / 12 ms of producer scheduling tolerance |
 | TX coverage lead | 144 packets | Hardware ring plus scheduling slack; refill-safety sub-budget |
-| TX frame-exposure window | 192 packets | Packetized cushion for `WriteEnd + kTxExposureLeadFrames` |
-| TX preparation lead | 336 packets | Coverage lead plus frame-exposure window |
-| TX shared packet ring | 384 packets | Preparation lead plus one hardware-ring reuse guard |
-| Input safety floor | 104 frames | Maximum 40-frame group plus 64-frame jitter floor |
+| TX content horizon | 4160 frames (4800 at 96 kHz) | `max(400 cycles, maxClientIO + jitter)`: one whole 4096-frame write must land on exposed packets (Defect B) |
+| TX exposure lead | 760 packets | That horizon at the 44.1k cadence, rounded to a group |
+| TX frame-exposure window | 1504 packets | Packetized cushion for `WriteEnd(4096) + kTxExposureLeadFrames` |
+| TX preparation lead | 1648 packets | Coverage lead plus frame-exposure window |
+| TX shared packet ring / timeline | 1696 packets | Holds the lead plus one hardware-ring reuse guard; ≥ 2 × exposure lead |
+| Input safety floor | one completion batch | `CompletionBatchFrames(rate)`: 48 frames at 1x (decision D3, no jitter term) |
 
 The HAL has one frame-domain sample ring per direction. Packet-domain IR
 descriptor buffers and TX payload/metadata slots also exist, but they do not
@@ -1332,14 +1361,19 @@ define HAL frame-wrap timing.
 
 ### B. Load-Bearing Invariants
 
-The design requires the following relationships:
+The design requires the following relationships (static_asserts in
+`AudioHalBufferProfiles.hpp` and `AudioTimingGeometry.hpp`):
 
 ```text
 rxDescriptorPackets % cadenceBlockPackets == 0
 rxDescriptorPackets % timingGroupPackets == 0
-frameRing == ztsPeriod
-frameRing % maxIO == 0
-frameRing % frameAlignment == 0
+activeRing == ztsPeriod                      (every rate)
+allocatedRing % activeRing == 0              (48 and 96 kHz)
+ztsPeriod % 32 == 0                          (packet-first anchors at every tier)
+ztsPeriod / groupFrames(rate) == 256
+activeRing % ioBudget == 0
+min(ztsPeriod * 3/8, 4096) == 4096           (ADK client ceiling reached)
+exposureLeadFrames >= maxClientIO + jitter   (Defect B)
 txSharedSlots % timingGroupPackets == 0
 txSharedSlots % cadenceBlockPackets == 0
 txHardwarePackets % timingGroupPackets == 0
@@ -1348,27 +1382,40 @@ txHardwarePackets % timingGroupPackets == 0
 For the adopted values:
 
 ```text
-504 / 4    = 126 complete cadence blocks
-504 / 6    = 84 interrupt groups
-1536       = 1536-frame ZTS period
-1536 / 512 = 3 maximum IO transfers
-1536 / 32  = 48 alignment quanta
-384 / 6    = 64 shared-ring groups
-384 / 4    = 96 complete cadence blocks
-48 / 6     = 8 hardware-ring groups
+504 / 4      = 126 complete cadence blocks
+504 / 8      = 63 interrupt groups
+12288        = 2^12 * 3 = 512 cadence blocks
+12288 / 48   = 256 groups per ZTS period (24576 / 96 at 2x)
+24576 / 12288 = 2 (the 1x ring inside the allocation)
+12288 / 1024 = 12 nominal IO transfers
+12288 * 3/8  = 4608 -> ADK caps clients at 4096
+1696 / 8     = 212 shared-ring groups
+1696 / 4     = 424 complete cadence blocks
+48 / 8       = 6 hardware-ring groups
 ```
 
 The frame ring equals the declared ZTS period because AudioDriverKit wraps the
-mapped stream buffer on that contract. The six-packet DMA cadence remains
-independent from the frame-domain ZTS grid.
+mapped stream buffer on that contract. The eight-packet DMA cadence tiles the
+frame-domain ZTS grid but does not define it: anchors still come from the
+DATA packet that starts on the grid.
+
+The shared store grew from 912 to 1696 packets because the content horizon is
+floored at one 4096-frame write. Without the floor a 4096-frame client loses
+the tail of every write (`tools/tx_data_horizon_burst_sim.py suite`, row
+"pre-V3: 4096-frame writes": 46,872 frames dropped and a descriptor fatal in
+one second). With it, 64–4096-frame writes survive an 87.5 ms producer stall
+with at least 947 packets of descriptor margin. The cost on main's
+prepare-time TX is a longer start-up prefill: the first DATA follows about
+1696 prepared packets (~0.21 s, was ~0.11 s). Late binding (FW-209) removes it.
 
 ### C. ZTS Publication
 
-Host anchors are RX-interrupt-derived ADK ZTS-grid anchors. A six-packet group
-advances by 32 or 40 decoded frames, so many receive drains occur between
-1536-frame anchors. The receive path advances the absolute frame cursor by the
+Host anchors are RX-interrupt-derived ADK ZTS-grid anchors. An eight-packet
+group advances by 48 decoded frames, so 256 receive drains occur between
+12288-frame anchors at 48 kHz. The receive path advances the absolute frame cursor by the
 decoded data-block count. It publishes only when a real DATA packet begins
-exactly on the 1536-frame grid, using that packet's hardware-derived receive
+exactly on the ZTS grid (12288 frames at 1x, 24576 at 2x; the period is
+read per epoch from `HalBufferProfileForRate`), using that packet's hardware-derived receive
 host time unchanged. It does not synthesize a boundary timestamp by adding
 nominal frame durations to another packet observation.
 
@@ -1390,9 +1437,9 @@ must not advance merely because a NO-DATA packet occupied a bus cycle. For
 Saffire, the gap carries the cadence-appropriate already-advanced DBC and the
 following DATA packet repeats it.
 
-Before IT RUN, the packetizer seeds the entire 384-slot shared TX ring with
-committed NO-DATA packets. This is 48 ms of valid packet-domain backing. It is
-deliberately larger than the 336-packet total preparation lead because action
+Before IT RUN, the packetizer seeds the entire 1696-slot shared TX ring with
+committed NO-DATA packets. This is 212 ms of valid packet-domain backing. It is
+deliberately larger than the 1648-packet total preparation lead because action
 delivery and the startup handoff can be delayed. `TxPreparationReady` uses a
 dedicated DriverKit dispatch queue, so the synchronous `StartIO` wait for the
 first hardware ZTS does not starve the producer.
@@ -1400,7 +1447,7 @@ first hardware ZTS does not starve the producer.
 Once the action runs, the producer has two targets. It must always reach the
 refill-coverage target (`completion + 144`) so the core never sees an
 uncommitted slot. It may continue up to the total preparation limit
-(`completion + 336`) until `AmdtpPacketTimeline::ExposedFrameEnd()` covers the
+(`completion + 1648`) until `AmdtpPacketTimeline::ExposedFrameEnd()` covers the
 latest CoreAudio `WriteEnd + kTxExposureLeadFrames`. This separates the
 packet-domain underrun budget from the audio-frame under-exposure budget.
 
@@ -1410,40 +1457,26 @@ reconcile DBC and cadence before normal DATA resumes.
 
 ### E. Safety Offsets
 
-The implemented input safety rule currently raises the selected device-profile
-value to at least:
+Decision D3 (`TIMING_GEOMETRY_OWNERSHIP.md` §0): the declared input safety is
+the device profile's value floored at one completion batch,
 
 ```text
-maximumTimingGroupFrames + jitterMargin = 40 + 64 = 104 frames
+inputSafetyFrames = max(profileInputSafety, CompletionBatchFrames(rate))
+                  = max(profile, 48)   at 1x (96 at 2x)
 ```
 
-For general client IO sizes, the required runtime rule is:
-
-```text
-inputSafetyFrames =
-    max(profileInputSafety,
-        outputSafetyFrames + actualClientIOFrames + jitterMargin,
-        timingGroupFrames + jitterMargin)
-```
-
-Thus 104 frames is a floor, not a universally sufficient value for a
-512-frame client transfer. Runtime/profile logic must raise it when the active
-client IO geometry requires more headroom.
-
-This rule must be enforced when the device profile is activated and whenever
-the HAL client IO size changes. The current 48-frame output safety and
-512-frame maximum client transfer raise the registered input safety to 624
-frames. A runtime assertion or focused test must reject any configuration in
-which the registered input safety is below the computed requirement;
-documentation alone is not protection against a stale hardcoded floor.
+with no jitter term and no 32-frame alignment, so a hardware-calibrated value
+(Saffire: 10 packets = 80 frames at 48 kHz) stands exactly. The client IO
+size is not part of the safety offset: CoreAudio accounts for the IO buffer
+separately. (The earlier `outputSafety + clientIO + jitter` rule, 624 frames
+at 48 kHz, inflated capture latency by ~10 ms and is retired.)
 
 ### F. Current Residual Work
 
 1.  Validate per-packet timestamp/grid correlation during coalesced
     multi-group drains and cycle-timer wraparound.
-2.  Enforce and test the dynamic input-safety rule at profile activation and
-    HAL client-buffer-size changes; do not treat the 104-frame floor as the
-    final value.
+2.  Validate the V3 rate change on hardware: 48 -> 96 -> 48 kHz must move
+    the ZTS period (`SetZeroTimeStampPeriod`) and the active ring together.
 3.  Remove any DMA-owned generic NO-DATA synthesis that copies a previous CIP
     header. Prefill and underrun packets must come from the packetizer/profile.
 4.  Verify the prefill-to-live handoff on both Saffire Pro 24 and Apogee Duet,

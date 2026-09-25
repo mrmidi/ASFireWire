@@ -92,13 +92,7 @@ public:
 
     [[nodiscard]] const AMDTP::AmdtpStreamConfig& StreamConfig() const noexcept;
 
-    [[nodiscard]] AMDTP::AmdtpTxPacketizerTelemetrySnapshot
-    PacketizerTelemetrySnapshot() const noexcept;
-
     [[nodiscard]] const DiceTxEngineCounters& Counters() const noexcept;
-
-    [[nodiscard]] const AMDTP::AmdtpPayloadWriterCounters&
-    PayloadWriterCounters() const noexcept;
 
     AMDTP::AmdtpTxPolicy BuildTxPolicy(
         const ASFW::Isoch::Audio::AudioStreamTxPolicy& policy) const noexcept;

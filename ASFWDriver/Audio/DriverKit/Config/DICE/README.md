@@ -35,4 +35,5 @@ A profile states no channel or stream counts. Its default stream configs carry
 framing constants only (8 frames per packet, FDF 0x02, FMT 0x10, blocking); the
 device's resolved geometry fills in the rest (`DiceAudioBackend` resolves it,
 `BuildResolvedTxStreamConfig` frames from it). Safety offsets and reported
-latency follow the packet-scaled ladder in `Shared/Isoch/AudioGeometryPolicy.hpp`.
+latency follow the packet-scaled ladder in `Config/TimingLadder.hpp`; a spec may carry
+measured values instead (the Saffire Pro 14/24/24 DSP calibration).

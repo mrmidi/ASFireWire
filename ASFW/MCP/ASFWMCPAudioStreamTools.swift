@@ -1,7 +1,7 @@
 import Foundation
 
 // Audio stream health: read-only projection of the driver's per-endpoint RX
-// bring-up attribution (AudioTelemetrySnapshot wire v3).
+// bring-up attribution (AudioTelemetrySnapshot; fields added in wire v3, current v4).
 //
 // This exists because a stream that never establishes used to be one
 // indistinguishable silence. Every RX outcome now lands in exactly one counter,
@@ -13,7 +13,8 @@ import Foundation
 
 extension ASFWMCPToolCatalog {
     static let audioStreamTools: [ASFWMCPToolDefinition] = [
-        ASFWMCPToolDefinition(name: "asfw_get_audio_stream_health", group: "audio_streams", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Per-endpoint RX bring-up attribution: what the device sent and what we did with it. No transaction.")
+        ASFWMCPToolDefinition(name: "asfw_get_audio_stream_health", group: "audio_streams", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Per-endpoint RX bring-up attribution: what the device sent and what we did with it. No transaction."),
+        ASFWMCPToolDefinition(name: "asfw_get_audio_telemetry", group: "audio_streams", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Full stable audio telemetry summary (wire v4): TX preparation/margin and RX capture intervals with their durations. No transaction.")
     ]
 }
 
@@ -123,5 +124,81 @@ extension AudioTelemetryEndpoint {
             replayEntries: rxReplayEntries,
             replayEpochResets: rxReplayEpochResets
         )
+    }
+}
+
+// Full stable telemetry summary (wire v4). Field names follow the C++ record
+// (AudioTelemetrySnapshot.hpp) so a report can be matched to the contract.
+// ASFWMCPValue has no floating point, so durations are also given in ns.
+extension AudioTelemetrySnapshot {
+    func mcpValue() -> ASFWMCPValue {
+        func nanos(_ ticks: UInt64) -> ASFWMCPValue {
+            guard hostTimebaseDenom != 0 else { return .null }
+            let product = ticks.multipliedFullWidth(by: UInt64(hostTimebaseNumer))
+            let (quotient, _) = UInt64(hostTimebaseDenom).dividingFullWidth(product)
+            return .uint64(quotient)
+        }
+        func u64s(_ values: [UInt64]) -> ASFWMCPValue { .array(values.map { .uint64($0) }) }
+        return .object([
+            "wireVersion": .int(Int(AudioTelemetryWireDecoder.minimumVersion)),
+            "captureHostTicks": .uint64(captureHostTicks),
+            "hostTimebaseNumer": .int(Int(hostTimebaseNumer)),
+            "hostTimebaseDenom": .int(Int(hostTimebaseDenom)),
+            "endpointCount": .int(endpoints.count),
+            "endpoints": .array(endpoints.map { e in
+                .object([
+                    "guid": .uint64(e.guid),
+                    "endpointGeneration": .uint64(e.endpointGeneration),
+                    "controlGeneration": .uint64(e.controlGeneration),
+                    "flags": .int(Int(e.flags)),
+                    "streaming": .bool(e.isStreaming),
+                    "sampleRateHz": .int(Int(e.sampleRateHz)),
+                    "outputChannels": .int(Int(e.outputChannels)),
+                    "inputChannels": .int(Int(e.inputChannels)),
+                    "tx": .object([
+                        "completedIntervalSequence": .uint64(e.completedIntervalSequence),
+                        "completedIntervalDurationTicks": .uint64(e.txCompletedIntervalDurationTicks),
+                        "completedIntervalDurationNs": e.txCompletedIntervalDurationTicks == 0 ? .null : nanos(e.txCompletedIntervalDurationTicks),
+                        "completedIntervalEndHostTicks": .uint64(e.txCompletedIntervalEndHostTicks),
+                        "lastPreparationLatencyTicks": .uint64(e.lastPreparationLatencyTicks),
+                        "completedIntervalMaxLatencyTicks": .uint64(e.completedIntervalMaxLatencyTicks),
+                        "maxPreparationLatencyTicks": .uint64(e.maxPreparationLatencyTicks),
+                        "preparationWakeCount": .uint64(e.preparationWakeCount),
+                        "preparationAtMost750Us": .uint64(e.preparationAtMost750Us),
+                        "preparationAtLeast1500Us": .uint64(e.preparationAtLeast1500Us),
+                        "completedLatencyHistogram": u64s(e.completedLatencyHistogram),
+                        "completedMarginHistogram": u64s(e.completedMarginHistogram),
+                        "currentCommittedMarginPackets": .int(Int(e.currentCommittedMarginPackets)),
+                        "completedIntervalMarginMinPackets": .int(Int(e.completedIntervalMarginMinPackets)),
+                        "completedIntervalMarginMaxPackets": .int(Int(e.completedIntervalMarginMaxPackets)),
+                        "minimumCommittedMarginPackets": .int(Int(e.minimumCommittedMarginPackets)),
+                        "preparationLeadPackets": .int(Int(e.preparationLeadPackets)),
+                        "hardwareFloorPackets": .int(Int(e.hardwareFloorPackets))
+                    ]),
+                    "rx": .object([
+                        "completedIntervalSequence": .uint64(e.rxCompletedIntervalSequence),
+                        "completedIntervalDurationTicks": .uint64(e.rxCompletedIntervalDurationTicks),
+                        "completedIntervalDurationNs": e.rxCompletedIntervalDurationTicks == 0 ? .null : nanos(e.rxCompletedIntervalDurationTicks),
+                        "completedIntervalEndHostTicks": .uint64(e.rxCompletedIntervalEndHostTicks),
+                        "captureReaderActive": .bool(e.isRxCaptureReaderActive),
+                        "currentAvailableFrames": .uint64(e.rxCurrentAvailableFrames),
+                        "inputFrameCapacityFrames": .int(Int(e.inputFrameCapacityFrames)),
+                        "completedIntervalMinimumAvailableFrames": .uint64(e.rxCompletedIntervalMinimumAvailableFrames),
+                        "completedIntervalMaximumAvailableFrames": .uint64(e.rxCompletedIntervalMaximumAvailableFrames),
+                        "completedIntervalMinimumFreeHeadroomFrames": .uint64(e.rxCompletedIntervalMinimumFreeHeadroomFrames),
+                        "completedIntervalOverrunEvents": .uint64(e.rxCompletedIntervalOverrunEvents),
+                        "completedIntervalOverwrittenFrames": .uint64(e.rxCompletedIntervalOverwrittenFrames),
+                        "completedIntervalStarvationEvents": .uint64(e.rxCompletedIntervalStarvationEvents),
+                        "completedIntervalStarvedFrames": .uint64(e.rxCompletedIntervalStarvedFrames),
+                        "completedOccupancyHistogram": u64s(e.rxCompletedOccupancyHistogram),
+                        "captureOverrunEvents": .uint64(e.rxCaptureOverrunEvents),
+                        "captureStarvationEvents": .uint64(e.rxCaptureStarvationEvents),
+                        "totalOverwrittenFrames": .uint64(e.rxTotalOverwrittenFrames),
+                        "totalStarvedFrames": .uint64(e.rxTotalStarvedFrames)
+                    ]),
+                    "rxAttribution": e.mcpStreamHealth.mcpValue()
+                ])
+            })
+        ])
     }
 }

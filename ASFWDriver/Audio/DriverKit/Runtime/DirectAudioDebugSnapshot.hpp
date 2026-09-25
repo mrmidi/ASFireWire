@@ -7,8 +7,6 @@
 
 namespace ASFW::Audio::Runtime {
 
-constexpr uint64_t kDirectAudioDebugLogIntervalNs = 5'000'000'000ULL;
-
 struct DirectAudioDebugSnapshot final {
     bool bound{false};
 
@@ -57,9 +55,6 @@ struct DirectAudioDebugSnapshot final {
     uint64_t txPreparationLatencySamples{0};
     uint64_t txPreparationAtMost750Us{0};
     uint64_t txPreparationAtLeast1500Us{0};
-    int64_t txLastLeadTicks{0};
-    int64_t txMinimumLeadTicks{INT64_MAX};
-    int64_t txMaximumLeadTicks{INT64_MIN};
     uint64_t txDataPackets{0};
     uint64_t txNoDataPackets{0};
     uint64_t txEmptyPackets{0};
@@ -121,18 +116,6 @@ struct DirectAudioDebugSnapshot final {
     uint64_t txUnderrunSilencePackets{0};
     uint64_t txStaleSyncPackets{0};
     uint64_t txInvalidGeometryPackets{0};
-};
-
-struct DirectAudioDebugLogState final {
-    uint64_t lastLogTimeNs{0};
-    bool hasLogged{false};
-    bool lastBound{false};
-
-    void Reset() noexcept {
-        lastLogTimeNs = 0;
-        hasLogged = false;
-        lastBound = false;
-    }
 };
 
 [[nodiscard]] inline DirectAudioDebugSnapshot CaptureDirectAudioDebugSnapshot(
@@ -223,12 +206,6 @@ struct DirectAudioDebugLogState final {
         control.txPreparationAtMost750Us.load(std::memory_order_relaxed);
     snapshot.txPreparationAtLeast1500Us =
         control.txPreparationAtLeast1500Us.load(std::memory_order_relaxed);
-    snapshot.txLastLeadTicks =
-        control.txLastLeadTicks.load(std::memory_order_relaxed);
-    snapshot.txMinimumLeadTicks =
-        control.txMinimumLeadTicks.load(std::memory_order_relaxed);
-    snapshot.txMaximumLeadTicks =
-        control.txMaximumLeadTicks.load(std::memory_order_relaxed);
     snapshot.txDataPackets =
         control.counters.txDataPackets.load(std::memory_order_relaxed);
     snapshot.txNoDataPackets =
@@ -347,29 +324,6 @@ struct DirectAudioDebugLogState final {
     snapshot.txInvalidGeometryPackets = control.counters.txInvalidGeometryPackets.load(std::memory_order_relaxed);
 
     return snapshot;
-}
-
-[[nodiscard]] inline bool ShouldLogDirectAudioDebugSnapshot(
-    DirectAudioDebugLogState& state,
-    const DirectAudioDebugSnapshot& snapshot,
-    uint64_t nowNs,
-    uint64_t intervalNs = kDirectAudioDebugLogIntervalNs) noexcept {
-    const bool first = !state.hasLogged;
-    const bool boundChanged = state.hasLogged && state.lastBound != snapshot.bound;
-    const bool intervalElapsed =
-        state.hasLogged &&
-        intervalNs > 0 &&
-        nowNs >= state.lastLogTimeNs &&
-        (nowNs - state.lastLogTimeNs) >= intervalNs;
-
-    if (!first && !boundChanged && !(snapshot.bound && intervalElapsed)) {
-        return false;
-    }
-
-    state.lastLogTimeNs = nowNs;
-    state.hasLogged = true;
-    state.lastBound = snapshot.bound;
-    return true;
 }
 
 } // namespace ASFW::Audio::Runtime

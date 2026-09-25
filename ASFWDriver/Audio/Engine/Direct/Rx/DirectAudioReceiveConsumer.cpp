@@ -48,7 +48,6 @@ void DirectAudioReceiveConsumer::SetBindingSource(
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept {
     bindingSource_ = bindingSource;
     lastBindingGeneration_ = 0;
-    payloadWriterTelemetryAggregator_.Reset();
 }
 
 void DirectAudioReceiveConsumer::SetTimingLossCallback(
@@ -128,7 +127,6 @@ void DirectAudioReceiveConsumer::BeginReceiveBatch(
         return;
     }
 
-    payloadWriterTelemetryAggregator_.Reset();
     if (snapshot.valid && snapshot.HasInput()) {
         inputView_.guid = 0;
         inputView_.sampleRateHz = snapshot.sampleRateHz;
@@ -408,8 +406,12 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     }
 
     const uint64_t packetFirstFrame = absoluteFrameCursor_ - result.framesDecoded;
-    constexpr uint64_t kZtsPeriodFrames =
-        ::ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+    // The HAL's ZTS grid at the bound rate (V3: 12288 at 1x, 24576 at 2x). The
+    // same HalBufferProfileForRate value is the period the driver declares, so
+    // the anchor grid follows a rate change with the binding generation.
+    const uint64_t kZtsPeriodFrames =
+        ::ASFW::IsochTransport::HalBufferProfileForRate(inputView_.sampleRateHz)
+            .zeroTimestampPeriodFrames;
     const uint32_t nanosPerSampleQ8 = inputView_.sampleRateHz == 0 ? 0 :
         static_cast<uint32_t>((1'000'000'000ULL << 8) / inputView_.sampleRateHz);
     if (kZtsPeriodFrames != 0 && result.framesDecoded != 0 &&
@@ -533,10 +535,19 @@ void DirectAudioReceiveConsumer::DrainReceiveTelemetry(uint32_t maxRecords) {
     }
 }
 
-void DirectAudioReceiveConsumer::DrainPayloadTelemetry() {
+void DirectAudioReceiveConsumer::ServiceConsumerDiagnostics() {
     auto* control = inputView_.control;
     if (!control) {
         return;
+    }
+    // FW-175: RX capture intervals must not depend on the TX heartbeat, which
+    // is absent for capture-only streams. The heartbeat closes intervals every
+    // 5 s; this fallback uses a longer period so it only fires when nobody else
+    // did. Only the primary consumer owns the capture telemetry.
+    if (!configuration_.isSecondary) {
+        constexpr uint64_t kRxIntervalFallbackNanos = 6'000'000'000ULL;
+        (void)control->rxCaptureBufferTelemetry.CompleteIntervalIfDue(
+            mach_absolute_time(), ::ASFW::Timing::nanosToHostTicks(kRxIntervalFallbackNanos));
     }
     const uint64_t errorGeneration =
         control->ioCallbackErrorGeneration.load(std::memory_order_acquire);
@@ -554,93 +565,6 @@ void DirectAudioReceiveConsumer::DrainPayloadTelemetry() {
                  errorGeneration);
         control->ioCallbackErrorReportedGeneration.store(errorGeneration,
                                                           std::memory_order_release);
-    }
-
-    payloadWriterTelemetryAggregator_.BeginDrain();
-    ::ASFW::Audio::Runtime::PayloadWriterTelemetryRecord firstRecord{};
-    ::ASFW::Audio::Runtime::PayloadWriterTelemetryRecord firstDeficitRecord{};
-    ::ASFW::Audio::Runtime::PayloadWriterTelemetryRecord lastRecord{};
-    bool haveFirstRecord = false;
-    bool haveFirstDeficitRecord = false;
-    bool haveLastRecord = false;
-    const uint64_t dropped = control->payloadWriterTelemetry.Drain(
-        [this, &firstRecord, &haveFirstRecord,
-         &firstDeficitRecord, &haveFirstDeficitRecord,
-         &lastRecord, &haveLastRecord](
-            const ::ASFW::Audio::Runtime::PayloadWriterTelemetryRecord& record) {
-            payloadWriterTelemetryAggregator_.Observe(record);
-            if (!haveFirstRecord) {
-                firstRecord = record;
-                haveFirstRecord = true;
-            }
-            if (!haveFirstDeficitRecord && record.exposureDeficitFrames != 0) {
-                firstDeficitRecord = record;
-                haveFirstDeficitRecord = true;
-            }
-            lastRecord = record;
-            haveLastRecord = true;
-        });
-    const auto& summary = payloadWriterTelemetryAggregator_.Summary();
-    if (haveLastRecord && summary.HasAnomaly()) {
-        ASFW_LOG_RING_ONLY(
-            DirectAudio,
-            ::ASFW::Logging::LogLevel::Warning,
-            "[PayloadWriter] delta v=%llu w=%llu noPkt=%llu outside=%llu race=%llu tx=%llu under=%llu/%llu maxDef=%llu",
-            summary.visitedDelta,
-            summary.writtenDelta,
-            summary.withoutPacketDelta,
-            summary.outsidePacketDelta,
-            summary.racedReuseDelta,
-            summary.wroteIntoTransmittedDelta,
-            summary.underExposureCallsDelta,
-            summary.underExposureFramesDelta,
-            summary.maxExposureDeficitFrames);
-        ASFW_LOG_RING_ONLY(
-            DirectAudio,
-            ::ASFW::Logging::LogLevel::Warning,
-            "[PayloadWriter] last sample=%llu comp=%llu pkt=%llu aligned=%u epoch=%llu prepared=%llu/%llu/%llu acquire=%llu ring=%llu/%llu",
-            lastRecord.sampleTime,
-            lastRecord.completionCursor,
-            lastRecord.packetizerNextAudioFrame,
-            lastRecord.packetizerFrameCursorAligned ? 1u : 0u,
-            lastRecord.packetizerCursorEpoch,
-            lastRecord.dataPacketsPrepared,
-            lastRecord.noDataPacketsPrepared,
-            lastRecord.packetsPrepared,
-            lastRecord.slotAcquireFailures,
-            lastRecord.playbackRingReadFrame,
-            lastRecord.playbackRingWriteFrame);
-        if (haveFirstDeficitRecord) {
-            ASFW_LOG_RING_ONLY(
-                DirectAudio,
-                ::ASFW::Logging::LogLevel::Warning,
-                "[PayloadWriter] deficit sample=%llu write=%llu exposed=%llu d=%llu comp=%llu target=%llu gen=%llu/%llu wake=%u",
-                firstDeficitRecord.sampleTime,
-                firstDeficitRecord.writeEndFrame,
-                firstDeficitRecord.exposedFrameEnd,
-                firstDeficitRecord.exposureDeficitFrames,
-                firstDeficitRecord.completionCursor,
-                firstDeficitRecord.txPreparationTargetFrameEnd,
-                firstDeficitRecord.txPreparationRequestedGeneration,
-                firstDeficitRecord.txPreparationHandledGeneration,
-                firstDeficitRecord.txPreparationWakeScheduled ? 1u : 0u);
-        } else if (haveFirstRecord) {
-            ASFW_LOG_RING_ONLY(
-                DirectAudio,
-                ::ASFW::Logging::LogLevel::Warning,
-                "[PayloadWriter] first sample=%llu write=%llu exposed=%llu comp=%llu pkt=%llu aligned=%u epoch=%llu",
-                firstRecord.sampleTime,
-                firstRecord.writeEndFrame,
-                firstRecord.exposedFrameEnd,
-                firstRecord.completionCursor,
-                firstRecord.packetizerNextAudioFrame,
-                firstRecord.packetizerFrameCursorAligned ? 1u : 0u,
-                firstRecord.packetizerCursorEpoch);
-        }
-    }
-    if (dropped != 0) {
-        ASFW_LOG(DirectAudio, "[PayloadWriter] drain overflow: dropped=%llu (capacity=%u)",
-                 dropped, ::ASFW::Audio::Runtime::PayloadWriterTelemetryRing::kCapacity);
     }
 }
 

@@ -44,7 +44,20 @@ constexpr DiceRangeMember kVeniceMembers[] = {
     {32, "Midas Venice F32"},
 };
 
-DiceProfile gFocusriteProfile{{.name = "Focusrite Saffire (DICE)"}};
+// Saffire Pro 14 / 24 / 24 DSP, calibrated on hardware (FW-182 decision D3,
+// carried over from the midi branch's DICE profile builder):
+// - latency 53 in / 52 out at 48 kHz, doubling per rate tier. A physical
+//   loopback (tools/rtl/rtl_loopback -d "Saffire") measured RTL_ts invariant at
+//   105.01 frames across buffer sizes 512/128/64; the vendor ladder (29/29) left
+//   a +47-frame uncompensated residual, the calibrated pair +0.01;
+// - capture safety 10 packets (80 frames at 48 kHz): one completion batch with
+//   headroom, 1 ms less round trip than the vendor's 16. The timing resolver
+//   floors it at one completion batch.
+// The Pro 40 was not measured and keeps the vendor ladder.
+DiceProfile gFocusriteProfile{{.name = "Focusrite Saffire (DICE)",
+                               .captureSafetyPackets = 10,
+                               .inputLatency1x = 53,
+                               .outputLatency1x = 52}};
 DiceProfile gFocusritePro40Profile{{.name = "Focusrite Saffire Pro 40"}};
 DiceProfile gMidasVeniceProfile{{.name = "Midas Venice F (DICE)", .rangeMembers = kVeniceMembers}};
 DiceProfile gPreSonusStudioLiveProfile{{.name = "PreSonus StudioLive 16.0.2 (DICE)"}};

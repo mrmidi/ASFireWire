@@ -53,17 +53,18 @@ _UINT_CONST = re.compile(
     re.DOTALL,
 )
 
-# `inline constexpr AudioHalBufferProfile NAME{ "text", a, b, c, };`
-_PROFILE = re.compile(
-    r"inline\s+constexpr\s+AudioHalBufferProfile\s+(\w+)\s*\{(.*?)\}\s*;",
+# `inline constexpr uint32_t NAME = <expr>;`  (namespace-scope constants)
+_INLINE_UINT_CONST = re.compile(
+    r"inline\s+constexpr\s+uint32_t\s+(\w+)\s*=\s*([^;]+);",
     re.DOTALL,
 )
 
-# `inline constexpr uint8_t kAudioHalBufferProfileRaw = 2;` in the #else branch
-_RAW_PROFILE_DEFAULT = re.compile(
-    r"#else\s*inline\s+constexpr\s+uint8_t\s+kAudioHalBufferProfileRaw\s*=\s*(\d+)\s*;",
-    re.DOTALL,
-)
+# `HalBufferProfileForRate(<rate>).<field>` -> a call the evaluator understands.
+_PROFILE_FIELD = re.compile(r"\bHalBufferProfileForRate\s*\(([^()]*)\)\s*\.\s*(\w+)")
+
+# The rate the simulator models; the active ring and ZTS period it uses are
+# HalBufferProfileForRate at this rate (V3: they are per rate tier).
+SIM_SAMPLE_RATE_HZ = 48_000
 
 
 def _strip_comments(text: str) -> str:
@@ -76,6 +77,42 @@ _BIN_OPS = {
     ast.Mult: operator.mul,
     ast.Mod: operator.mod,
 }
+
+
+def _hal_rate_tier(rate: int) -> int:
+    """Mirror of ``HalRateTier`` (AudioHalBufferProfiles.hpp)."""
+    return {32000: 1, 44100: 1, 48000: 1, 88200: 2, 96000: 2, 176400: 4, 192000: 4}.get(rate, 0)
+
+
+def _cpp_functions(names: dict[str, int]) -> dict:
+    """The constexpr helpers the geometry headers call, mirrored exactly.
+
+    The HalBufferProfileForRate mirror reads the V3 constants scraped from the
+    header itself, so only the rate-tier table and the ring == ZTS rule are
+    restated here (and pinned by test_constants_match_headers).
+    """
+
+    def profile_field(field: str):
+        def fn(rate: int) -> int:
+            period = names["kV3ZeroTimestampPeriodFrames1x"] * _hal_rate_tier(rate)
+            return {
+                "frameRingFrames": period,
+                "zeroTimestampPeriodFrames": period,
+                "clientIoBudgetFrames": names["kV3ClientIoBudgetFrames"],
+            }[field]
+
+        return fn
+
+    return {
+        "max": max,
+        "min": min,
+        "AdkMaxClientIoFrames": lambda zts: min(zts * 3 // 8, 4096),
+        "HalBufferProfileForRate__frameRingFrames": profile_field("frameRingFrames"),
+        "HalBufferProfileForRate__zeroTimestampPeriodFrames": profile_field(
+            "zeroTimestampPeriodFrames"
+        ),
+        "HalBufferProfileForRate__clientIoBudgetFrames": profile_field("clientIoBudgetFrames"),
+    }
 
 
 def _eval_cpp_int(expr: str, names: dict[str, int]) -> int:
@@ -91,6 +128,8 @@ def _eval_cpp_int(expr: str, names: dict[str, int]) -> int:
     cleaned = " ".join(expr.split())
     cleaned = cleaned.replace("'", "")  # C++14 digit separators: 24'576'000
     cleaned = re.sub(r"\bstatic_cast<\s*\w+\s*>\s*", "", cleaned)
+    cleaned = re.sub(r"(?:::)?\b(?:ASFW::IsochTransport|std)::", "", cleaned)
+    cleaned = _PROFILE_FIELD.sub(r"HalBufferProfileForRate__\2(\1)", cleaned)
     cleaned = cleaned.replace(".", "__")  # profile.field -> profile__field
     cleaned = re.sub(r"\b(\d+)[uU][lL]{0,2}\b", r"\1", cleaned)  # 8000u -> 8000
 
@@ -127,6 +166,11 @@ def _eval_cpp_int(expr: str, names: dict[str, int]) -> int:
             return fn(left, right)
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd):
             return walk(node.operand)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords:
+            fn = _cpp_functions(names).get(node.func.id)
+            if fn is None:
+                raise CppEvalError(f"unsupported function {node.func.id!r} in {expr!r}")
+            return fn(*[walk(arg) for arg in node.args])
         raise CppEvalError(f"unsupported syntax in {expr!r}: {ast.dump(node)}")
 
     return walk(tree)
@@ -179,6 +223,10 @@ class DriverHeaders:
     @property
     def tx_data_horizon_packets(self) -> int:
         return self.timing["kTxDataHorizonPackets"]
+
+    @property
+    def tx_exposure_floor_frames(self) -> int:
+        return self.timing["kTxExposureFloorFrames"]
 
     @property
     def tx_exposure_lead_frames(self) -> int:
@@ -244,44 +292,16 @@ def find_driver_root(start: Path | None = None) -> Path:
     )
 
 
-def _parse_active_profile(text: str) -> tuple[str, dict[str, int]]:
-    """Return the active HAL buffer profile's name and its fields.
-
-    Mirrors ``SelectAudioHalBufferProfile`` + the ``#else`` default of
-    ``kAudioHalBufferProfileRaw``.  If the build ever passes
-    ``-DASFW_AUDIO_HAL_BUFFER_PROFILE`` the sim would need that flag too, so we
-    read the in-header default and record which profile it selected.
-    """
-    profiles: list[tuple[str, dict[str, int]]] = []
-    for name, body in _PROFILE.findall(text):
-        parts = [p.strip() for p in body.split(",") if p.strip()]
-        if len(parts) < 4:
-            raise CppEvalError(f"profile {name} has {len(parts)} fields, expected 4")
-        label = parts[0].strip('"')
-        profiles.append(
-            (
-                label,
-                {
-                    "frameRingFrames": int(parts[1]),
-                    "clientIoBudgetFrames": int(parts[2]),
-                    "zeroTimestampPeriodFrames": int(parts[3]),
-                },
-            )
-        )
-
-    if not profiles:
-        raise CppEvalError("no AudioHalBufferProfile definitions found")
-
-    match = _RAW_PROFILE_DEFAULT.search(text)
-    if match is None:
+def _scrape_inline_constants(text: str) -> dict[str, int]:
+    """Evaluate every namespace-scope ``inline constexpr uint32_t`` in order."""
+    names: dict[str, int] = {}
+    for name, expr in _INLINE_UINT_CONST.findall(text):
+        names[name] = _eval_cpp_int(expr, names)
+    if "kV3ZeroTimestampPeriodFrames1x" not in names:
         raise CppEvalError(
-            "could not find the default kAudioHalBufferProfileRaw; "
-            "AudioHalBufferProfiles.hpp changed shape"
+            "kV3ZeroTimestampPeriodFrames1x not found; AudioHalBufferProfiles.hpp changed shape"
         )
-    index = int(match.group(1))
-    if index >= len(profiles):
-        raise CppEvalError(f"profile index {index} out of range ({len(profiles)})")
-    return profiles[index]
+    return names
 
 
 # <cstdint> limit macros the geometry headers reference (e.g. kNoInfo).
@@ -319,17 +339,25 @@ def load_driver_headers(root: Path | None = None) -> DriverHeaders:
         if not path.is_file():
             raise CppEvalError(f"expected driver header not found: {path}")
 
-    profile_name, profile_fields = _parse_active_profile(
+    seed = _scrape_inline_constants(
         _strip_comments(profiles_path.read_text(encoding="utf-8"))
     )
-    seed = {
-        f"kActiveAudioHalBufferProfile__{field}": value
-        for field, value in profile_fields.items()
-    }
 
     timing = _scrape_uint_constants(
         _strip_comments(timing_path.read_text(encoding="utf-8")), seed
     )
+    # V3: the active ring and ZTS period are per rate (HalBufferProfileForRate),
+    # not class constants. The simulator models SIM_SAMPLE_RATE_HZ, so expose
+    # that rate's values under the names the models read.
+    functions = _cpp_functions(seed)
+    timing["kFrameRingFrames"] = functions["HalBufferProfileForRate__frameRingFrames"](
+        SIM_SAMPLE_RATE_HZ
+    )
+    timing["kHalZeroTimestampPeriodFrames"] = functions[
+        "HalBufferProfileForRate__zeroTimestampPeriodFrames"
+    ](SIM_SAMPLE_RATE_HZ)
+    tier = _hal_rate_tier(SIM_SAMPLE_RATE_HZ)
+    profile_name = f"audio-engine-v3-{tier}x"
     replay = _scrape_uint_constants(
         _strip_comments(replay_path.read_text(encoding="utf-8")), {}
     )

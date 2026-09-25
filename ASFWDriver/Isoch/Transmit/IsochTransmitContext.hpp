@@ -99,7 +99,6 @@ public:
     
     uint64_t PacketsAssembled() const noexcept { return packetsAssembled_; }
     
-    void LogStatistics() const noexcept;
     void DumpDescriptorRing(uint32_t startPacket = 0, uint32_t numPackets = 8) const noexcept;
 
 private:
@@ -137,12 +136,6 @@ private:
     static constexpr uint32_t kIrqSilentKickFatalThreshold = 16;
     uint32_t irqSilentKickStreak_{0};
 
-    // Refill Latency Histogram (buckets: <50us, 50-200us, 200-500us, >500us)
-    std::atomic<uint64_t> latencyBucket0_{0};
-    std::atomic<uint64_t> latencyBucket1_{0};
-    std::atomic<uint64_t> latencyBucket2_{0};
-    std::atomic<uint64_t> latencyBucket3_{0};
-    std::atomic<uint32_t> maxRefillLatencyUs_{0};
     std::atomic<uint64_t> irqWatchdogKicks_{0};
     TxPreparationCallback txPreparationCallback_{};
 

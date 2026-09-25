@@ -84,17 +84,9 @@ public:
         return {48000u};
     }
 
-    /// IEC 61883-6 presentation delay removed from received SYT before replay.
-    [[nodiscard]] virtual uint32_t RxTransferDelayTicks(double sampleRate) const noexcept {
-        (void)sampleRate;
-        return 12800;
-    }
-
-    /// IEC 61883-6 presentation delay added when rebuilding transmit SYT.
-    [[nodiscard]] virtual uint32_t TxTransferDelayTicks(double sampleRate) const noexcept {
-        (void)sampleRate;
-        return 12800;
-    }
+    // Transfer delay is not device policy: it is derived from the wire rate
+    // geometry by ResolveTimingGeometry (AmdtpTransferDelay.hpp). No profile
+    // ever overrode the old 12800 default (TIMING_GEOMETRY_INVENTORY.md G-04).
 };
 
 } // namespace ASFW::Isoch::Audio

@@ -1,0 +1,3 @@
+# Built locally from hal_geometry.c -- never commit the binary.
+hal_geometry
+build/

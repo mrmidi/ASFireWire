@@ -86,10 +86,8 @@ class IsochReceiveContext final
     // interpretation and any state derived from it.
     void SetReceiveConsumer(IIsochReceiveConsumer* consumer) noexcept;
 
-    void LogHardwareState();
-
     void DrainZtsTelemetry(uint32_t maxRecords);
-    void DrainPayloadWriterTelemetry();
+    void ServiceConsumerDiagnostics();
     void LogTxSytTrace();
 
   private:

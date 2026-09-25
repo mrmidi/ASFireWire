@@ -24,7 +24,8 @@ enum {
     kMethodGetBusResetCount = 0,
     kMethodGetBusResetHistory = 1,
     kMethodGetControllerStatus = 2,
-    kMethodGetMetricsSnapshot = 3,
+    // 3 (kMethodGetMetricsSnapshot) retired: it only ever returned
+    // kIOReturnUnsupported (FW-171).
     kMethodClearHistory = 4,
     kMethodGetSelfIDCapture = 5,
     // 6 (kMethodGetTopologySnapshot) retired: topology now served via the
@@ -87,9 +88,9 @@ enum {
     kMethodStartIsochReceive = 32,
     kMethodStopIsochReceive = 33,
 
-    // Isoch Metrics
-    kMethodGetIsochRxMetrics = 34,
-    kMethodResetIsochRxMetrics = 35,
+    // 34/35 (kMethodGetIsochRxMetrics / kMethodResetIsochRxMetrics) retired:
+    // they returned a zeroed snapshot and a no-op; audio receive health is
+    // served by kMethodDiagGetAudioTelemetry (FW-171).
 
     // Isoch Transmit Control (IT DMA allocation only - no CMP)
     kMethodStartIsochTransmit = 36,
@@ -149,8 +150,6 @@ MethodDispatchResult DispatchStatusMethods(ASFW::UserClient::UserClientRuntimeSt
     switch (selector) {
     case kMethodGetControllerStatus:
         return runtimeState.Status().GetControllerStatus(arguments);
-    case kMethodGetMetricsSnapshot:
-        return runtimeState.Status().GetMetricsSnapshot(arguments);
     case kMethodPing:
         return runtimeState.Status().Ping(arguments);
     case kMethodRegisterStatusListener:
@@ -370,10 +369,6 @@ MethodDispatchResult DispatchIsochMethods(ASFW::UserClient::UserClientRuntimeSta
         return runtimeState.Isoch().StartIsochReceive(arguments);
     case kMethodStopIsochReceive:
         return runtimeState.Isoch().StopIsochReceive(arguments);
-    case kMethodGetIsochRxMetrics:
-        return runtimeState.Isoch().GetIsochRxMetrics(arguments);
-    case kMethodResetIsochRxMetrics:
-        return runtimeState.Isoch().ResetIsochRxMetrics(arguments);
     case kMethodStartIsochTransmit:
         return runtimeState.Isoch().StartIsochTransmit(arguments);
     case kMethodStopIsochTransmit:

@@ -64,12 +64,15 @@ public:
     // config_.currentSampleRate. That field (and directGeneration_) is latched
     // only when the direct-audio memory is allocated in
     // EnsureDirectAudioMemoryLocked, which does not re-run on an idle rate change
-    // because the ring buffers are rate-independent (fixed kAudioRingBufferFrames)
-    // and are allocated once at bring-up then reused. So updating config_ alone
+    // because the ring buffers are allocated once at bring-up at the maximum
+    // (kAudioRingBufferFrames) and then reused. So updating config_ alone
     // leaves the binding (and the ZTS the HAL judges) stuck at the publish-time
     // 48 kHz. Refresh directSampleRateHz_ and bump the generation here so
     // CopyDirectAudioBinding reports the new rate and the IR re-arms the RX/ZTS
-    // clock at it.
+    // clock at it. The ACTIVE ring moves with the rate (V3: 12288 frames at 1x,
+    // 24576 at 2x) inside the unchanged allocation; the audio driver applies the
+    // same HalBufferProfileForRate value to its graph binding in the rate-change
+    // window, so both sides of the seam wrap on the same ring.
     void SetCurrentSampleRate(uint32_t sampleRateHz) noexcept {
         if (sampleRateHz == 0) {
             return;
@@ -78,8 +81,12 @@ public:
             IOLockLock(lock_);
         }
         config_.currentSampleRate = sampleRateHz;
-        if (directSampleRateHz_ != 0 && directSampleRateHz_ != sampleRateHz) {
+        const uint32_t activeFrames = ActiveRingFramesForRate(sampleRateHz);
+        if (directSampleRateHz_ != 0 && directSampleRateHz_ != sampleRateHz &&
+            activeFrames != 0) {
             directSampleRateHz_ = sampleRateHz;
+            directOutputCapacityFrames_ = activeFrames;
+            directInputCapacityFrames_ = activeFrames;
             ++directGeneration_;
         }
         if (lock_) {
@@ -478,10 +485,13 @@ private:
         const uint32_t inputChannels = ClampAudioChannels(
             config_.inputChannelCount ? config_.inputChannelCount : config_.channelCount);
         const uint32_t sampleRateHz = config_.currentSampleRate ? config_.currentSampleRate : 48000;
-        const uint32_t outputFrames = Isoch::Config::kAudioRingBufferFrames;
-        const uint32_t inputFrames = Isoch::Config::kAudioRingBufferFrames;
+        // Allocate the maximum once; publish the active ring for this rate.
+        const uint32_t allocatedFrames = Isoch::Config::kAudioRingBufferFrames;
+        const uint32_t outputFrames = ActiveRingFramesForRate(sampleRateHz);
+        const uint32_t inputFrames = outputFrames;
 
-        if (outputChannels == 0 || inputChannels == 0 || sampleRateHz == 0) {
+        if (outputChannels == 0 || inputChannels == 0 || sampleRateHz == 0 ||
+            outputFrames == 0) {
             ASFW_LOG(DirectAudio,
                      "ADK DBG MEM runtime ensure failed bad_config guid=0x%016llx agg=%u in=%u out=%u rate=%u",
                      guid_,
@@ -512,8 +522,8 @@ private:
 
         ReleaseDirectAudioMemoryLocked();
 
-        const uint64_t outputBytes = static_cast<uint64_t>(outputFrames) * outputChannels * sizeof(float);
-        const uint64_t inputBytes = static_cast<uint64_t>(inputFrames) * inputChannels * sizeof(int32_t);
+        const uint64_t outputBytes = static_cast<uint64_t>(allocatedFrames) * outputChannels * sizeof(float);
+        const uint64_t inputBytes = static_cast<uint64_t>(allocatedFrames) * inputChannels * sizeof(int32_t);
         const uint64_t controlBytes = sizeof(Runtime::AudioTransportControlBlock);
 
         ASFW_LOG(DirectAudio,
@@ -569,6 +579,16 @@ private:
 
         PublishDirectAudioBindingFromMappedMemoryLocked();
         return HasCompleteDirectAudioMemoryLocked() ? kIOReturnSuccess : kIOReturnNotReady;
+    }
+
+    // Active ring at a rate: the HAL profile's ring when it fits the fixed
+    // allocation, else 0 (the rate is not supported by this allocation).
+    [[nodiscard]] static constexpr uint32_t ActiveRingFramesForRate(uint32_t sampleRateHz) noexcept {
+        const auto hal = IsochTransport::HalBufferProfileForRate(sampleRateHz);
+        return IsochTransport::IsValidAudioHalBufferProfile(hal) &&
+                       IsochTransport::ProfileFitsAllocation(hal)
+                   ? hal.frameRingFrames
+                   : 0;
     }
 
     uint64_t guid_{0};

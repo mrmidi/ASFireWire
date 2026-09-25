@@ -18,7 +18,7 @@ struct TxDataClockObservation final {
 };
 
 /// The special cadence is DATA at phases 0/1024/2048, then NO-DATA. Queue
-/// indices retain cadence phase because the 912-slot shared ring is divisible
+/// indices retain cadence phase because the 1696-slot shared ring is divisible
 /// by four.
 [[nodiscard]] constexpr uint16_t SytOffsetTicksForPacketIndex(
     const uint64_t packetIndex) noexcept {

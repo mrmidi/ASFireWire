@@ -11,7 +11,7 @@ final class ASFWDriverConnector: ObservableObject {
         case getBusResetCount = 0
         case getBusResetHistory = 1
         case getControllerStatus = 2
-        case getMetricsSnapshot = 3
+        // 3 retired (FW-171): the driver only ever answered kIOReturnUnsupported.
         case clearHistory = 4
         case getSelfIDCapture = 5
         case getTopologySnapshot = 6
@@ -40,10 +40,11 @@ final class ASFWDriverConnector: ObservableObject {
         case testCMPDisconnectOPCR = 29
         case testCMPConnectIPCR = 30
         case testCMPDisconnectIPCR = 31
-        // Isoch Stream Control & Metrics
+        // Isoch Stream Control
         case startIsochReceive = 32
         case stopIsochReceive = 33
-        case getIsochRxMetrics = 34
+        // 34/35 retired (FW-171): zeroed metrics / no-op reset. Use
+        // getAudioTelemetry (1013) for audio receive health.
         // IT DMA Allocation (no CMP)
         case startIsochTransmit = 36
         case stopIsochTransmit = 37

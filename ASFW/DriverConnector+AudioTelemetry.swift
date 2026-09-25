@@ -2,7 +2,10 @@
 //  DriverConnector+AudioTelemetry.swift
 //  ASFW
 //
-//  Typed decoding for the read-only AudioTelemetrySnapshot wire contract.
+//  Typed decoding for the read-only AudioTelemetrySnapshot wire contract
+//  (v4, ASFWDriver/Audio/Runtime/AudioTelemetrySnapshot.hpp). The golden
+//  fixture tests/fixtures/audio_telemetry_v4.bin is decoded by both the C++
+//  host tests and ASFWTests/AudioTelemetryWireTests.swift.
 //
 
 import Foundation
@@ -65,6 +68,15 @@ struct AudioTelemetryEndpoint: Identifiable, Equatable {
     let rxInvalidCipHeaders: UInt64
     let rxZeroDataBlockSize: UInt64
     let rxGeometryMismatch: UInt64
+    // Wire v4: what the completed intervals cover, in host ticks, plus the
+    // same durations converted with the header's timebase (nil = unknown,
+    // e.g. the first interval after a reset).
+    let txCompletedIntervalDurationTicks: UInt64
+    let txCompletedIntervalEndHostTicks: UInt64
+    let rxCompletedIntervalDurationTicks: UInt64
+    let rxCompletedIntervalEndHostTicks: UInt64
+    let txCompletedIntervalSeconds: Double?
+    let rxCompletedIntervalSeconds: Double?
 
     var id: UInt64 { guid }
     var isStreaming: Bool { (flags & (1 << 1)) != 0 }
@@ -86,7 +98,16 @@ struct AudioTelemetryEndpoint: Identifiable, Equatable {
 }
 
 struct AudioTelemetrySnapshot {
+    let captureHostTicks: UInt64
+    let hostTimebaseNumer: UInt32
+    let hostTimebaseDenom: UInt32
     let endpoints: [AudioTelemetryEndpoint]
+
+    /// Host ticks -> seconds with the driver's timebase; nil if it is unknown.
+    static func seconds(ticks: UInt64, numer: UInt32, denom: UInt32) -> Double? {
+        guard ticks != 0, numer != 0, denom != 0 else { return nil }
+        return Double(ticks) * Double(numer) / Double(denom) / 1_000_000_000
+    }
 }
 
 extension ASFWDriverConnector {
@@ -99,30 +120,54 @@ extension ASFWDriverConnector {
     }
 }
 
-private enum AudioTelemetryWireDecoder {
-    private static let version = 3
-    private static let headerBytes = 8
-    private static let endpointBytes = 432
-    private static let maximumEndpoints = 8
+enum AudioTelemetryWireDecoder {
+    static let minimumVersion: UInt16 = 4
+    /// Size of the v4 header; a newer driver may declare a larger one.
+    static let minimumHeaderBytes = 32
+    /// Size of the v4 record; a newer driver may append fields (stride grows).
+    static let minimumEndpointBytes = 464
+    static let maximumEndpoints = 8
 
+    /// Decodes the v4 header and strides records by the declared record size,
+    /// so a newer driver that appends fields still decodes. Rejects older
+    /// versions (they have no header) and inconsistent sizes.
     static func decode(_ data: Data) -> AudioTelemetrySnapshot? {
-        guard data.count >= headerBytes,
-              let wireVersion: UInt32 = data.readInteger(at: 0),
-              wireVersion == version,
-              let endpointCount: UInt32 = data.readInteger(at: 4),
+        guard let version: UInt16 = data.readInteger(at: 0), version >= minimumVersion,
+              let headerBytes16: UInt16 = data.readInteger(at: 2),
+              let totalBytes: UInt32 = data.readInteger(at: 4),
+              let endpointCount: UInt32 = data.readInteger(at: 8),
+              let recordBytes32: UInt32 = data.readInteger(at: 12),
+              let captureHostTicks: UInt64 = data.readInteger(at: 16),
+              let numer: UInt32 = data.readInteger(at: 24),
+              let denom: UInt32 = data.readInteger(at: 28) else {
+            return nil
+        }
+        let headerBytes = Int(headerBytes16)
+        let recordBytes = Int(recordBytes32)
+        guard headerBytes >= minimumHeaderBytes,
+              recordBytes >= minimumEndpointBytes,
               endpointCount <= maximumEndpoints,
-              data.count >= headerBytes + Int(endpointCount) * endpointBytes else {
+              Int(totalBytes) == headerBytes + Int(endpointCount) * recordBytes,
+              data.count >= Int(totalBytes) else {
             return nil
         }
 
-        let endpoints = (0..<Int(endpointCount)).compactMap { index -> AudioTelemetryEndpoint? in
-            let base = headerBytes + index * endpointBytes
-            return decodeEndpoint(data, base: base)
+        var endpoints: [AudioTelemetryEndpoint] = []
+        for index in 0..<Int(endpointCount) {
+            guard let endpoint = decodeEndpoint(data, base: headerBytes + index * recordBytes,
+                                                numer: numer, denom: denom) else {
+                return nil
+            }
+            endpoints.append(endpoint)
         }
-        return AudioTelemetrySnapshot(endpoints: endpoints.sorted { $0.guid < $1.guid })
+        return AudioTelemetrySnapshot(captureHostTicks: captureHostTicks,
+                                      hostTimebaseNumer: numer,
+                                      hostTimebaseDenom: denom,
+                                      endpoints: endpoints.sorted { $0.guid < $1.guid })
     }
 
-    private static func decodeEndpoint(_ data: Data, base: Int) -> AudioTelemetryEndpoint? {
+    private static func decodeEndpoint(_ data: Data, base: Int,
+                                       numer: UInt32, denom: UInt32) -> AudioTelemetryEndpoint? {
         func u64(_ offset: Int) -> UInt64? { data.readInteger(at: base + offset) }
         func u32(_ offset: Int) -> UInt32? { data.readInteger(at: base + offset) }
         guard let guid = u64(0),
@@ -167,7 +212,11 @@ private enum AudioTelemetryWireDecoder {
               let rxShortPackets = u64(400),
               let rxInvalidCipHeaders = u64(408),
               let rxZeroDataBlockSize = u64(416),
-              let rxGeometryMismatch = u64(424) else {
+              let rxGeometryMismatch = u64(424),
+              let txIntervalDuration = u64(432),
+              let txIntervalEnd = u64(440),
+              let rxIntervalDuration = u64(448),
+              let rxIntervalEnd = u64(456) else {
             return nil
         }
         let latencyHistogram = (0..<6).compactMap { u64(96 + $0 * 8) }
@@ -222,7 +271,15 @@ private enum AudioTelemetryWireDecoder {
             rxShortPackets: rxShortPackets,
             rxInvalidCipHeaders: rxInvalidCipHeaders,
             rxZeroDataBlockSize: rxZeroDataBlockSize,
-            rxGeometryMismatch: rxGeometryMismatch
+            rxGeometryMismatch: rxGeometryMismatch,
+            txCompletedIntervalDurationTicks: txIntervalDuration,
+            txCompletedIntervalEndHostTicks: txIntervalEnd,
+            rxCompletedIntervalDurationTicks: rxIntervalDuration,
+            rxCompletedIntervalEndHostTicks: rxIntervalEnd,
+            txCompletedIntervalSeconds: AudioTelemetrySnapshot.seconds(
+                ticks: txIntervalDuration, numer: numer, denom: denom),
+            rxCompletedIntervalSeconds: AudioTelemetrySnapshot.seconds(
+                ticks: rxIntervalDuration, numer: numer, denom: denom)
         )
     }
 }

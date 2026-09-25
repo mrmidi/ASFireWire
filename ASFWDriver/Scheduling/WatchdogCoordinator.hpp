@@ -51,10 +51,8 @@ class WatchdogCoordinator {
 
     OSSharedPtr<IOTimerDispatchSource> timer_;
     OSSharedPtr<OSAction> action_;
-    uint32_t isochLogDivider_{0};
-    uint32_t itLogDivider_{0};
     uint32_t ztsLogDivider_{0};
-    uint32_t payloadWriterLogDivider_{0};
+    uint32_t consumerDiagnosticsDivider_{0};
     uint32_t txSytTraceDivider_{0};
     // Edge-triggered so a permanently ineligible drain reports once, not at
     // 1 kHz. Starts true: the interesting event is the drop to false.

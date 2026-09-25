@@ -18,8 +18,8 @@ extension DiagnosticsTextFormatter {
         r.raw(String(repeating: "═", count: 60) + "\n")
         // The driver header timestamp is mach_absolute_time since SYSTEM BOOT, not
         // driver load — so this is system uptime, not driver uptime. Labeled
-        // accordingly. (True per-load driver uptime lives in ControllerMetrics but
-        // is not yet plumbed through the diagnostics ABI.)
+        // accordingly. (Per-load driver uptime is not plumbed through the
+        // diagnostics ABI.)
         r.row("Report Generated", Date().description)
         r.row("System Uptime (since boot)", DiagFormat.uptime(snapshot.busContract.header.timestampNs))
         r.row("System Uptime (ns)", snapshot.busContract.header.timestampNs)

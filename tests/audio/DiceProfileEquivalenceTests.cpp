@@ -93,10 +93,11 @@ void Dump(const IAudioStreamProfile& p, ASFW::Testing::WireTrace& out) {
     }
     for (const uint32_t rate : kRates) {
         const double hz = rate;
-        out.Add(Format("@%u safety tx=%u rx=%u latency tx=%u rx=%u delay tx=%u rx=%u", rate,
+        // Transfer delay is no longer a profile answer: it derives from the
+        // wire rate (AppliedTransferDelayTicks, FW-182).
+        out.Add(Format("@%u safety tx=%u rx=%u latency tx=%u rx=%u", rate,
                        p.TxSafetyOffsetFrames(hz), p.RxSafetyOffsetFrames(hz),
-                       p.TxReportedLatencyFrames(hz), p.RxReportedLatencyFrames(hz),
-                       p.TxTransferDelayTicks(hz), p.RxTransferDelayTicks(hz)));
+                       p.TxReportedLatencyFrames(hz), p.RxReportedLatencyFrames(hz)));
     }
     std::string rates = "rates";
     for (const uint32_t rate : p.SupportedSampleRates()) {

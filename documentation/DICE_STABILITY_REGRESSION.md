@@ -185,7 +185,8 @@ Each of these silently produced a wrong or unreadable answer.
    D's `maxLatUs` (587) is *better* than C's (1640). Judging on TX telemetry scores the
    broken build as healthy.
 
-3. **W > E telemetry went ring-only.** Baseline logs `[PayloadWriter] … deficit=` via
+3. **W > E telemetry went ring-only.** *(The `[PayloadWriter]` record itself was later
+   retired in FW-171; `[TxPrepFrame]` carries the W > E signal.)* Baseline logs `[PayloadWriter] … deficit=` via
    `ASFW_LOG` (`IsochReceiveContext.cpp:884`) → reaches `log show`. From `94cbd067` it is
    `ASFW_LOG_RING_ONLY` (`DirectAudioReceiveConsumer.cpp:475/488/504`) → internal ring only,
    never mirrored regardless of `ASFWMirrorToOsLog`. Read it via the ring viewer

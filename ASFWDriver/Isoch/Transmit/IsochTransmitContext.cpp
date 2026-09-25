@@ -282,11 +282,6 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     irqSilentKickStreak_ = 0;
     refillInProgress_.clear(std::memory_order_release);
 
-    latencyBucket0_.store(0, std::memory_order_relaxed);
-    latencyBucket1_.store(0, std::memory_order_relaxed);
-    latencyBucket2_.store(0, std::memory_order_relaxed);
-    latencyBucket3_.store(0, std::memory_order_relaxed);
-    maxRefillLatencyUs_.store(0, std::memory_order_relaxed);
     irqWatchdogKicks_.store(0, std::memory_order_relaxed);
 
     ring_.ResetForStart();
@@ -630,25 +625,7 @@ void IsochTransmitContext::HandleInterrupt() noexcept {
         return;
     }
 
-    const uint64_t refillStart = mach_absolute_time();
-    DoRefillOnce(refillStart, /*publishTimingEvent=*/true);
-    const uint64_t refillEnd = mach_absolute_time();
-
-    const uint64_t deltaNs = ASFW::Timing::hostTicksToNanos(refillEnd - refillStart);
-    const uint32_t deltaUs = static_cast<uint32_t>(deltaNs / 1000);
-    if (deltaUs < 50) {
-        latencyBucket0_.fetch_add(1, std::memory_order_relaxed);
-    } else if (deltaUs < 200) {
-        latencyBucket1_.fetch_add(1, std::memory_order_relaxed);
-    } else if (deltaUs < 500) {
-        latencyBucket2_.fetch_add(1, std::memory_order_relaxed);
-    } else {
-        latencyBucket3_.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    uint32_t prevMax = maxRefillLatencyUs_.load(std::memory_order_relaxed);
-    while (deltaUs > prevMax && !maxRefillLatencyUs_.compare_exchange_weak(
-               prevMax, deltaUs, std::memory_order_relaxed, std::memory_order_relaxed)) {}
+    DoRefillOnce(mach_absolute_time(), /*publishTimingEvent=*/true);
 
     refillInProgress_.clear(std::memory_order_release);
 }
@@ -656,9 +633,6 @@ void IsochTransmitContext::HandleInterrupt() noexcept {
 void IsochTransmitContext::WakeHardware() noexcept {
     if (!hardware_) return;
     ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
-}
-
-void IsochTransmitContext::LogStatistics() const noexcept {
 }
 
 void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {
