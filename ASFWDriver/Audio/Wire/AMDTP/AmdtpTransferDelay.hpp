@@ -53,6 +53,11 @@ namespace detail {
 }
 } // namespace detail
 
+/// Blocking transfer delay at the 48 kHz reference rate: the reset value of the
+/// control block's delay fields before StartIO copies the resolved value in.
+inline constexpr uint32_t kAmdtpReferenceBlockingTransferDelayTicks =
+    detail::BlockingDelayAt(48'000);
+
 static_assert(detail::BlockingDelayAt(48'000) == 12'800);
 static_assert(detail::BlockingDelayAt(96'000) == 12'800);
 static_assert(detail::BlockingDelayAt(192'000) == 12'800);

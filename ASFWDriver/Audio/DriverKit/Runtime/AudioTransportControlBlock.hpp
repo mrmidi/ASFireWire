@@ -7,6 +7,7 @@
 #include "TxWirePayloadTelemetry.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Runtime/Seqlock.hpp"
+#include "../../Wire/AMDTP/AmdtpTransferDelay.hpp"
 #include "../../Wire/AMDTP/RxSequenceReplay.hpp"
 #include "../../Wire/AMDTP/RxSytCadence.hpp"
 #include "../../Wire/MOTU/MotuEventOffsetCache.hpp"
@@ -655,8 +656,11 @@ struct AudioTransportControlBlock final {
     /// AM824 counterpart above, because this block is the lifetime-owned seam both
     /// services map; neither side may hold a pointer into the other's memory.
     ::ASFW::Encoding::Motu::MotuEventOffsetCache motuEventOffsets{};
-    std::atomic<uint32_t> rxTransferDelayTicks{12800};
-    std::atomic<uint32_t> txTransferDelayTicks{12800};
+    // Reset values only: StartIO stores ivars.device.timing's resolved delays.
+    std::atomic<uint32_t> rxTransferDelayTicks{
+        ::ASFW::Encoding::kAmdtpReferenceBlockingTransferDelayTicks};
+    std::atomic<uint32_t> txTransferDelayTicks{
+        ::ASFW::Encoding::kAmdtpReferenceBlockingTransferDelayTicks};
     std::atomic<uint64_t> rxReplayEntries{0};
     std::atomic<uint64_t> rxReplayEpochResets{0};
 

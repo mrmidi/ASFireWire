@@ -49,3 +49,14 @@ if (Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_summarize_baseline
         WORKING_DIRECTORY "${ASFW_TOOLS_DIR}/baseline")
 endif()
+
+# FW-184: retired timing/HAL geometry must not come back (tree scan), and the
+# scanner must catch what it claims to (unit tests).
+if (Python3_Interpreter_FOUND)
+    add_test(NAME TimingGeometryGuard
+        COMMAND "${Python3_EXECUTABLE}" "${ASFW_TOOLS_DIR}/timing_geometry_guard.py"
+                --root "${ASFW_ROOT_DIR}")
+    add_test(NAME TimingGeometryGuardPyTests
+        COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_timing_geometry_guard
+        WORKING_DIRECTORY "${ASFW_TOOLS_DIR}")
+endif()
