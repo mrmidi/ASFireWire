@@ -26,7 +26,6 @@ W ffff.e00001b8 00000002 @s400 !stale-generation
 R ffff.e00003e0 4 @s400 !stale-generation
 W ffff.e00003e4 ffffffff @s400 !stale-generation
 W ffff.e00003e8 00000000 @s400 !stale-generation
-L ffff.e0000028 ffc0000100000000 -> ffff000000000000 @s400 !stale-generation
 # waited 150ms
 ## -> 0xe00002d7
 ## StopDuplex

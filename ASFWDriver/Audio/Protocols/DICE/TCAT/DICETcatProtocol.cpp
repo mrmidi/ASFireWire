@@ -124,11 +124,6 @@ IOReturn DICETcatProtocol::Shutdown() {
                 ASFW_LOG(DICE, "DICETcatProtocol::Shutdown duplex stop failed: 0x%x", stopStatus);
             }
         }
-
-        const IOReturn releaseStatus = driver_->ReleaseOwner();
-        if (releaseStatus != kIOReturnSuccess) {
-            ASFW_LOG(DICE, "DICETcatProtocol::Shutdown ReleaseOwner failed: 0x%x", releaseStatus);
-        }
     }
 
     sections_ = {};

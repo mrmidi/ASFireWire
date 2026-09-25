@@ -49,5 +49,4 @@ W ffff.e00003d0 ffffffff @s400
 W ffff.e00003d4 00000000 @s400
 W ffff.e00004e8 ffffffff @s400
 W ffff.e00004ec 00000000 @s400
-L ffff.e0000028 ffc0000100000000 -> ffff000000000000 = ffc0000100000000 @s400
 ## -> 0xe00002be streaming=0

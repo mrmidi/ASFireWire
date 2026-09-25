@@ -327,32 +327,7 @@ IOReturn DiceFamilyDriver::Stop() {
         flowMode_ = FlowMode::kNone;
         return kIOReturnAborted;
     }
-    return StopSequence(true);
-}
-
-IOReturn DiceFamilyDriver::ReleaseOwner() {
-    if (!session_.ownerClaimed) {
-        return kIOReturnSuccess;
-    }
-    if (TeardownRequested()) {
-        RecordStopTeardownAbort("ReleaseOwnerEntry");
-        return kIOReturnAborted;
-    }
-    if (!EnsureRouteCurrent()) {
-        session_.ownerClaimed = false;
-        return kIOReturnSuccess;
-    }
-
-    const auto previous = io_.CompareSwap64(sections_.global.offset + GlobalOffset::kOwnerHi,
-                                            OwnerValue(), kOwnerNoOwner);
-    if (!previous) {
-        return previous.error();
-    }
-    if (*previous != OwnerValue() && *previous != kOwnerNoOwner) {
-        return kIOReturnExclusiveAccess;
-    }
-    session_.ownerClaimed = false;
-    return kIOReturnSuccess;
+    return StopSequence();
 }
 
 // ---------------------------------------------------------------------------
@@ -391,45 +366,67 @@ IOReturn DiceFamilyDriver::ClaimAndClock(const AudioDuplexChannels& channels) {
              preClaim->status,
              preClaim->sampleRate);
 
+    const IOReturn owner = EnsureOwner(preClaim->owner);
+    if (owner != kIOReturnSuccess) {
+        return Rollback(owner);
+    }
+    session_.ownerConfirmed = true;
+
+    return WriteClockSelect(channels);
+}
+
+IOReturn DiceFamilyDriver::EnsureOwner(uint64_t currentOwner) {
+    // Held since earlier in this bus generation: nothing to do on the wire. The
+    // GLOBAL read just before this showed the owner is still ours. TCAT claims
+    // only when the generation changed (GetOwnership 0xc624); Linux re-claims
+    // after every reset (dice-transaction.c:254). A bus reset clears the owner
+    // on the device, so a new generation always claims again.
+    const FW::Generation generation = session_.generation;
+    if (ownerGeneration_.has_value() && ownerGeneration_->value == generation.value &&
+        currentOwner == OwnerValue()) {
+        return kIOReturnSuccess;
+    }
+    ownerGeneration_.reset();
+
     // Owner before the claim.
     if (!EnsureRouteCurrent()) {
-        return Rollback(kIOReturnOffline);
+        return kIOReturnOffline;
     }
     const uint32_t ownerOffset = sections_.global.offset + GlobalOffset::kOwnerHi;
     const auto ownerBefore = io_.ReadBlock(ownerOffset, kOwnerBytes);
     if (!ownerBefore || ownerBefore->size() < kOwnerBytes) {
-        return Rollback(ownerBefore ? kIOReturnUnderrun : ownerBefore.error());
+        return ownerBefore ? kIOReturnUnderrun : ownerBefore.error();
     }
     ASFW_LOG(DICE, "PrepareDuplex48k: owner before claim=0x%016llx",
              ASFW::FW::ReadBE64(ownerBefore->data()));
 
-    // Claim: compare-swap from "no owner".
+    // Claim: compare-swap from "no owner", accepting "already ours" (Linux
+    // register_notification_address).
     if (!EnsureRouteCurrent()) {
-        return Rollback(kIOReturnOffline);
+        return kIOReturnOffline;
     }
     const uint64_t ownerValue = OwnerValue();
     const auto previous = io_.CompareSwap64(ownerOffset, kOwnerNoOwner, ownerValue);
     if (!previous) {
-        return Rollback(previous.error());
+        return previous.error();
     }
     if (*previous != kOwnerNoOwner && *previous != ownerValue) {
-        return Rollback(kIOReturnExclusiveAccess);
+        return kIOReturnExclusiveAccess;
     }
-    session_.ownerClaimed = true;
 
     // Owner after the claim must read back as ours.
     if (!EnsureRouteCurrent()) {
-        return Rollback(kIOReturnOffline);
+        return kIOReturnOffline;
     }
     const auto ownerAfter = io_.ReadBlock(ownerOffset, kOwnerBytes);
     if (!ownerAfter || ownerAfter->size() < kOwnerBytes) {
-        return Rollback(ownerAfter ? kIOReturnUnderrun : ownerAfter.error());
+        return ownerAfter ? kIOReturnUnderrun : ownerAfter.error();
     }
     if (ASFW::FW::ReadBE64(ownerAfter->data()) != OwnerValue()) {
-        return Rollback(kIOReturnExclusiveAccess);
+        return kIOReturnExclusiveAccess;
     }
-
-    return WriteClockSelect(channels);
+    ownerGeneration_ = generation;
+    return kIOReturnSuccess;
 }
 
 IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels) {
@@ -707,12 +704,7 @@ IOReturn DiceFamilyDriver::CompleteClockApply() {
     }
 
     session_.appliedClock = session_.desiredClock;
-    const IOReturn releaseStatus = ReleaseOwner();
-    if (releaseStatus != kIOReturnSuccess) {
-        ClearRestartProgress(session_, DuplexRestartPhase::kFailed);
-        flowMode_ = FlowMode::kNone;
-        return releaseStatus;
-    }
+    // The owner stays ours: we hold it while the device is present.
     ClearRestartProgress(session_);
     flowMode_ = FlowMode::kNone;
     return kIOReturnSuccess;
@@ -867,13 +859,13 @@ IOReturn DiceFamilyDriver::Rollback(IOReturn error) {
     // rollback itself runs with the progress flags intact so Stop knows what to undo.
     session_.phase = DuplexRestartPhase::kFailed;
 
-    if (!session_.ownerClaimed || !EnsureRouteCurrent()) {
+    if (!session_.ownerConfirmed || !EnsureRouteCurrent()) {
         ResetSession(session_);
         flowMode_ = FlowMode::kNone;
         return error;
     }
 
-    const IOReturn stopStatus = StopSequence(session_.ownerClaimed);
+    const IOReturn stopStatus = StopSequence();
     if (stopStatus != kIOReturnSuccess) {
         ASFW_LOG(DICE, "DoRollback: cleanup reported 0x%x after start failure 0x%x", stopStatus, error);
     }
@@ -885,7 +877,7 @@ IOReturn DiceFamilyDriver::Rollback(IOReturn error) {
 // Stop sequence
 // ---------------------------------------------------------------------------
 
-IOReturn DiceFamilyDriver::StopSequence(bool releaseOwner) {
+IOReturn DiceFamilyDriver::StopSequence() {
     stopSequenceError_ = kIOReturnSuccess;
     session_.phase = DuplexRestartPhase::kStopping;
     if (AbortStopIfTeardown("SequenceEntry")) {
@@ -974,43 +966,8 @@ IOReturn DiceFamilyDriver::StopSequence(bool releaseOwner) {
         return stopSequenceError_;
     }
 
-    if (releaseOwner) {
-        return StopReleaseOwner();
-    }
-    session_.devicePrepared = false;
-    session_.deviceTxArmed = false;
-    session_.deviceRunning = false;
-    session_.deviceRxProgrammed = false;
-    session_.phase = DuplexRestartPhase::kIdle;
-    flowMode_ = FlowMode::kNone;
-    return stopSequenceError_;
-}
-
-IOReturn DiceFamilyDriver::StopReleaseOwner() {
-    if (AbortStopIfTeardown("ReleaseOwner")) {
-        return stopSequenceError_;
-    }
-    if (!session_.ownerClaimed) {
-        ResetSession(session_);
-        flowMode_ = FlowMode::kNone;
-        return stopSequenceError_;
-    }
-    if (!EnsureRouteCurrent()) {
-        RecordFirstError(stopSequenceError_, kIOReturnOffline);
-        ResetSession(session_);
-        flowMode_ = FlowMode::kNone;
-        return stopSequenceError_;
-    }
-
-    const auto previous = io_.CompareSwap64(sections_.global.offset + GlobalOffset::kOwnerHi,
-                                            OwnerValue(), kOwnerNoOwner);
-    if (AbortStopIfTeardown("ReleaseOwnerComplete")) {
-        return stopSequenceError_;
-    }
-    RecordFirstError(stopSequenceError_, ErrorOr(previous));
-    if (previous && *previous != OwnerValue() && *previous != kOwnerNoOwner) {
-        RecordFirstError(stopSequenceError_, kIOReturnExclusiveAccess);
-    }
+    // The owner is not released: we hold it while the device is present, as
+    // TCAT and Linux do, so its notifications keep reaching us.
     ResetSession(session_);
     flowMode_ = FlowMode::kNone;
     return stopSequenceError_;

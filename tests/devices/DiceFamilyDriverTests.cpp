@@ -293,7 +293,7 @@ TEST(DiceFamilyDriverTests, PrepareSequenceMatchesReferenceWindow) {
     EXPECT_TRUE(rig.controller.IsPrepared());
     EXPECT_FALSE(rig.controller.IsArmed());
     EXPECT_FALSE(rig.controller.IsRunning());
-    EXPECT_TRUE(rig.controller.IsOwnerClaimed());
+    EXPECT_TRUE(rig.controller.IsOwnerHeld());
 
     EXPECT_EQ(rig.bus.Owner(), 0xFFC0000100000000ULL);
     ExpectRequests(rig.bus.Operations(), requests);
@@ -372,7 +372,7 @@ TEST(DiceFamilyDriverTests, ProgramRxMatchesReferenceSegment) {
     EXPECT_EQ(rig.bus.Enable(), 0U);
 }
 
-TEST(DiceFamilyDriverTests, StopSequenceReleasesOwnerLast) {
+TEST(DiceFamilyDriverTests, StopKeepsTheOwner) {
     DuplexRig rig;
     const AudioDuplexChannels channels{
         .deviceToHostIsoChannel = 1,
@@ -388,9 +388,31 @@ TEST(DiceFamilyDriverTests, StopSequenceReleasesOwnerLast) {
     const IOReturn stopStatus = rig.controller.StopDuplex();
     EXPECT_EQ(stopStatus, kIOReturnSuccess);
     EXPECT_FALSE(rig.controller.IsPrepared());
-    EXPECT_FALSE(rig.controller.IsOwnerClaimed());
-    EXPECT_EQ(rig.bus.Owner(), kOwnerNoOwner);
+    // Held while the device is present, as TCAT and Linux do.
+    EXPECT_TRUE(rig.controller.IsOwnerHeld());
+    EXPECT_NE(rig.bus.Owner(), kOwnerNoOwner);
     ExpectOperations(rig.bus.Operations(), ExpectedStopOps());
+}
+
+TEST(DiceFamilyDriverTests, SecondPrepareInTheSameGenerationClaimsNothing) {
+    DuplexRig rig;
+    const AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = 1,
+        .hostToDeviceIsoChannel = 0,
+    };
+    std::optional<IOReturn> first;
+    rig.controller.PrepareDuplex48k(channels, [&first](IOReturn status) { first = status; });
+    ASSERT_EQ(first, kIOReturnSuccess);
+    ASSERT_EQ(rig.controller.StopDuplex(), kIOReturnSuccess);
+
+    rig.bus.ClearOperations();
+    std::optional<IOReturn> second;
+    rig.controller.PrepareDuplex48k(channels, [&second](IOReturn status) { second = status; });
+    ASSERT_EQ(second, kIOReturnSuccess);
+    EXPECT_TRUE(rig.controller.IsOwnerHeld());
+    for (const auto& op : rig.bus.Operations()) {
+        EXPECT_NE(op.kind, OpKind::Lock) << "claimed again at 0x" << std::hex << op.addressLo;
+    }
 }
 
 TEST(DiceFamilyDriverTests, StopDuplexTeardownCancelAbortsWithoutMoreDeviceIo) {
@@ -412,7 +434,7 @@ TEST(DiceFamilyDriverTests, StopDuplexTeardownCancelAbortsWithoutMoreDeviceIo) {
 
     EXPECT_EQ(stopStatus, kIOReturnAborted);
     EXPECT_FALSE(rig.controller.IsPrepared());
-    EXPECT_FALSE(rig.controller.IsOwnerClaimed());
+    EXPECT_TRUE(rig.controller.IsOwnerHeld());
     EXPECT_TRUE(rig.bus.Operations().empty());
 }
 
@@ -443,7 +465,7 @@ TEST(DiceFamilyDriverTests, RestartSessionTracksDevicePhasesAcrossBringupAndStop
     EXPECT_TRUE(rig.controller.IsPrepared());
     EXPECT_FALSE(rig.controller.IsArmed());
     EXPECT_FALSE(rig.controller.IsRunning());
-    EXPECT_TRUE(rig.controller.IsOwnerClaimed());
+    EXPECT_TRUE(rig.controller.IsOwnerHeld());
 
     rig.bus.ClearOperations();
     rig.bus.SetScript(ReferencePhase0ParityFixture::kProgramRxExpectedRequests,
@@ -494,7 +516,7 @@ TEST(DiceFamilyDriverTests, RestartSessionTracksDevicePhasesAcrossBringupAndStop
 
     const IOReturn stopStatus = rig.controller.StopDuplex();
     EXPECT_EQ(stopStatus, kIOReturnSuccess);
-    EXPECT_FALSE(rig.controller.IsOwnerClaimed());
+    EXPECT_TRUE(rig.controller.IsOwnerHeld());
     EXPECT_FALSE(rig.controller.IsPrepared());
     EXPECT_FALSE(rig.controller.IsArmed());
     EXPECT_FALSE(rig.controller.IsRunning());
@@ -630,7 +652,8 @@ TEST(DiceFamilyDriverTests,
     ASSERT_TRUE(startStatus.has_value());
     EXPECT_EQ(*startStatus, kIOReturnTimeout);
     EXPECT_FALSE(rig.controller.IsPrepared());
-    EXPECT_FALSE(rig.controller.IsOwnerClaimed());
+    // The rollback undoes the bring-up, not the ownership.
+    EXPECT_TRUE(rig.controller.IsOwnerHeld());
     EXPECT_EQ(rig.timer.NowNs(), 150'000'000ULL);
     EXPECT_EQ(rig.timer.PendingCount(), 0U);
 }

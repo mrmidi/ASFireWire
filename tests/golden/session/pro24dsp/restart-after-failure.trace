@@ -78,16 +78,12 @@ W ffff.e00001b8 00000002 @s400
 R ffff.e00003e0 4 @s400
 W ffff.e00003e4 ffffffff @s400
 W ffff.e00003e8 00000000 @s400
-L ffff.e0000028 ffc0000100000000 -> ffff000000000000 = ffc0000100000000 @s400
 H stop all
 ## -> 0xe00002d6 streaming=0
 ## StartStreaming
 H begin
 R ffff.e0000000 40 @s400
 R ffff.e0000028 380 @s400
-R ffff.e0000028 8 @s400
-L ffff.e0000028 ffff000000000000 -> ffc0000100000000 = ffff000000000000 @s400
-R ffff.e0000028 8 @s400
 R ffff.e0000028 380 @s400
 R ffff.e0000028 380 @s400
 R ffff.e00001a4 4 @s400

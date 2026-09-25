@@ -27,6 +27,7 @@
 #include <atomic>
 #include <cstdint>
 #include <expected>
+#include <optional>
 
 namespace ASFW::Audio::DICE {
 
@@ -58,25 +59,29 @@ public:
     [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ProgramTxAndEnable();
     // Wait for source lock and confirm the device runs the channels we armed.
     [[nodiscard]] std::expected<DuplexConfirmResult, IOReturn> Confirm();
-    // Change the clock while idle: claim, apply, release.
+    // Change the clock while idle: claim if needed, apply.
     [[nodiscard]] std::expected<DuplexClockApplyResult, IOReturn> ApplyClock(
         const DiceClockConfiguration& clock);
-    // Total stop: disable, disarm every stream, release the owner.
+    // Total stop: disable and disarm every stream. The owner stays ours.
     [[nodiscard]] IOReturn Stop();
-    [[nodiscard]] IOReturn ReleaseOwner();
 
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept { teardownCancel_ = cancel; }
 
     [[nodiscard]] bool IsPrepared() const noexcept { return session_.devicePrepared; }
     [[nodiscard]] bool IsArmed() const noexcept { return session_.deviceTxArmed; }
     [[nodiscard]] bool IsRunning() const noexcept { return session_.deviceRunning; }
-    [[nodiscard]] bool IsOwnerClaimed() const noexcept { return session_.ownerClaimed; }
+    // We claimed the owner in the current bus generation.
+    [[nodiscard]] bool IsOwnerHeld() const noexcept {
+        return ownerGeneration_.has_value() &&
+               ownerGeneration_->value == busInfo_.GetGeneration().value;
+    }
 
 private:
     enum class FlowMode : uint8_t { kNone, kPrepareDuplex, kClockApply };
 
     // Bring-up chain. Each returns kIOReturnSuccess, or the error after rolling back.
     [[nodiscard]] IOReturn ClaimAndClock(const AudioDuplexChannels& channels);
+    [[nodiscard]] IOReturn EnsureOwner(uint64_t currentOwner);
     [[nodiscard]] IOReturn WriteClockSelect(const AudioDuplexChannels& channels);
     [[nodiscard]] IOReturn ActiveClockCheck(const AudioDuplexChannels& channels, uint32_t accumulatedNotify);
     [[nodiscard]] IOReturn WaitClockAccepted(const AudioDuplexChannels& channels);
@@ -95,8 +100,7 @@ private:
     [[nodiscard]] IOReturn Rollback(IOReturn error);
 
     // Stop sequence.
-    [[nodiscard]] IOReturn StopSequence(bool releaseOwner);
-    [[nodiscard]] IOReturn StopReleaseOwner();
+    [[nodiscard]] IOReturn StopSequence();
     [[nodiscard]] bool AbortStopIfTeardown(const char* stage);
 
     [[nodiscard]] bool EnsureRouteCurrent() const noexcept;
@@ -127,6 +131,9 @@ private:
     uint32_t preClaimStatus_{0};
     uint32_t preClaimSampleRate_{0};
     const std::atomic<bool>* teardownCancel_{nullptr};
+    // The bus generation we last claimed the owner in. Held across stops;
+    // a new generation claims again.
+    std::optional<FW::Generation> ownerGeneration_;
 };
 
 } // namespace ASFW::Audio::DICE

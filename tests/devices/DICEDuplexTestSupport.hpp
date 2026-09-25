@@ -733,12 +733,11 @@ public:
         Deliver(driver_.Confirm(), callback);
     }
     [[nodiscard]] IOReturn StopDuplex() { return driver_.Stop(); }
-    void ReleaseOwner(std::function<void(IOReturn)> callback) { callback(driver_.ReleaseOwner()); }
 
     [[nodiscard]] bool IsPrepared() const noexcept { return driver_.IsPrepared(); }
     [[nodiscard]] bool IsArmed() const noexcept { return driver_.IsArmed(); }
     [[nodiscard]] bool IsRunning() const noexcept { return driver_.IsRunning(); }
-    [[nodiscard]] bool IsOwnerClaimed() const noexcept { return driver_.IsOwnerClaimed(); }
+    [[nodiscard]] bool IsOwnerHeld() const noexcept { return driver_.IsOwnerHeld(); }
 
 private:
     static constexpr DiceClockConfiguration k48k{
@@ -786,7 +785,6 @@ inline std::vector<ExpectedOp> ExpectedStopOps() {
         {OpKind::Read,  0xE00003E0U, 4, FwSpeed::S400},
         {OpKind::Write, 0xE00003E4U, 4, FwSpeed::S400},
         {OpKind::Write, 0xE00003E8U, 4, FwSpeed::S400},
-        {OpKind::Lock,  0xE0000028U, 16, FwSpeed::S400},
     };
 }
 

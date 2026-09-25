@@ -13,6 +13,5 @@ R ffff.e00003a4 56 @s400
 R ffff.e00003dc 512 @s400
 R ffff.e00005dc 512 @s400
 R ffff.e00007dc 104 @s400
-L ffff.e0000028 ffc0000100000000 -> ffff000000000000 = ffc0000100000000 @s400
 ## -> 0x00000000
-== owner=ffff000000000000 enable=0 tx=[-1] rx=[-1]
+== owner=ffc0000100000000 enable=0 tx=[-1] rx=[-1]

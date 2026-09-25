@@ -109,7 +109,9 @@ struct DuplexRestartSession {
     AudioStreamRuntimeCaps runtimeCaps{};
     DuplexRestartPhase phase{DuplexRestartPhase::kIdle};
 
-    bool ownerClaimed{false};
+    // Past the owner step: the device is ours and may carry state this
+    // bring-up wrote, so its stop and rollback have something to undo.
+    bool ownerConfirmed{false};
     bool devicePrepared{false};
     bool deviceRxProgrammed{false};
     bool deviceTxArmed{false};
@@ -117,7 +119,7 @@ struct DuplexRestartSession {
 };
 
 [[nodiscard]] constexpr bool HasDeviceRestartState(const DuplexRestartSession& session) noexcept {
-    return session.ownerClaimed ||
+    return session.ownerConfirmed ||
            session.devicePrepared ||
            session.deviceRxProgrammed ||
            session.deviceTxArmed ||
@@ -128,7 +130,7 @@ struct DuplexRestartSession {
 constexpr void ClearRestartProgress(DuplexRestartSession& session,
                                     DuplexRestartPhase terminalPhase = DuplexRestartPhase::kIdle) noexcept {
     session.phase = terminalPhase;
-    session.ownerClaimed = false;
+    session.ownerConfirmed = false;
     session.devicePrepared = false;
     session.deviceRxProgrammed = false;
     session.deviceTxArmed = false;
