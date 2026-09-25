@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 
 #include "../../Hardware/HWNamespaceAlias.hpp"
@@ -44,6 +45,8 @@ public:
     [[nodiscard]] bool Finalize(uint64_t descriptorsIOVABase) noexcept;
     [[nodiscard]] uint32_t CommandPtrWordTo(const HW::OHCIDescriptor* target, uint8_t zBlocks) const noexcept;
     [[nodiscard]] uint32_t CommandPtrWordFromIOVA(uint32_t iova32, uint8_t zBlocks) const noexcept;
+    /// Ring index of the descriptor at a 32-bit IOVA (CommandPtr address part), if inside the ring.
+    [[nodiscard]] std::optional<size_t> IndexFromIOVA(uint32_t iova32) const noexcept;
     DescriptorRing(const DescriptorRing&) = delete;
     DescriptorRing& operator=(const DescriptorRing&) = delete;
 private:

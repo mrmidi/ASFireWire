@@ -105,12 +105,17 @@ void SBP2NubPublisher::Shutdown() noexcept {
         deviceManager_.UnregisterUnitObserver(this);
     }
 
+    // Shutdown only runs while ASFWDriver itself is stopping (planned stop or
+    // provider revoked). The kernel has already terminated the driver's client
+    // services by then and released their dispatch queues, so Terminate() on a
+    // nub here always aborted the dext: "Assertion failed: (priv->queueArray),
+    // function QueueForObject, file uioserver.cpp, line 1056" (every teardown
+    // with a nub published, 2026-09-22..24). Just drop the bookkeeping.
     for (const auto& [key, published] : nubs) {
         if (published.nub != nullptr) {
             ASFW_LOG(Controller,
-                     "[SBP2Nub] terminating GUID=0x%016llx unitOffset=%u during shutdown",
+                     "[SBP2Nub] releasing GUID=0x%016llx unitOffset=%u during shutdown (kernel terminates it)",
                      key.guid, key.directoryOffset);
-            published.nub->Terminate(0);
         }
     }
 }

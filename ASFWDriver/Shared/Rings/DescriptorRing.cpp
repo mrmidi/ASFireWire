@@ -40,16 +40,21 @@ uint32_t DescriptorRing::CommandPtrWordTo(const HW::OHCIDescriptor* target, uint
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 uint32_t DescriptorRing::CommandPtrWordFromIOVA(uint32_t iova32, uint8_t zBlocks) const noexcept {
-    if (storage_.empty() || descIOVABase_ == 0) return 0;
     if ((iova32 & 0xFULL) != 0) return 0;
-    const uint64_t iova64 = static_cast<uint64_t>(iova32);
-    if (iova64 < descIOVABase_) return 0;
-    const uint64_t offset = iova64 - descIOVABase_;
-    if ((offset % sizeof(HW::OHCIDescriptor)) != 0) return 0;
-    const uint64_t idxu = offset / sizeof(HW::OHCIDescriptor);
-    if (idxu >= storage_.size()) return 0;
+    if (!IndexFromIOVA(iova32)) return 0;
     const uint32_t z = static_cast<uint32_t>(zBlocks & 0xF);
     return (iova32 & 0xFFFFFFF0u) | z;
+}
+
+std::optional<size_t> DescriptorRing::IndexFromIOVA(uint32_t iova32) const noexcept {
+    if (storage_.empty() || descIOVABase_ == 0) return std::nullopt;
+    const uint64_t iova64 = static_cast<uint64_t>(iova32 & 0xFFFFFFF0u);
+    if (iova64 < descIOVABase_) return std::nullopt;
+    const uint64_t offset = iova64 - descIOVABase_;
+    if ((offset % sizeof(HW::OHCIDescriptor)) != 0) return std::nullopt;
+    const uint64_t idxu = offset / sizeof(HW::OHCIDescriptor);
+    if (idxu >= storage_.size()) return std::nullopt;
+    return static_cast<size_t>(idxu);
 }
 
 bool DescriptorRing::IsFull() const noexcept {

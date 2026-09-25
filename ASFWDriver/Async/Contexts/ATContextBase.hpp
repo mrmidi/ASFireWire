@@ -19,6 +19,7 @@
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
+#include "../Engine/ATTrace.hpp"
 
 namespace ASFW::Async {
 
@@ -218,6 +219,9 @@ public:
      */
     [[nodiscard]] kern_return_t SubmitChain(DescriptorBuilder::DescriptorChain&& chain) noexcept;
 
+    [[nodiscard]] uint32_t DrainStopCount() const noexcept { return drainStops_.load(std::memory_order_relaxed); }
+    [[nodiscard]] uint64_t LastDrainStopNs() const noexcept { return lastDrainStopNs_.load(std::memory_order_relaxed); }
+
     /**
      * \brief Push descriptor block count into FIFO for head advancement tracking.
      *
@@ -328,6 +332,10 @@ private:
 
     /// Lock for serializing SubmitChain() operations (tail patch + tail update)
     IOLock* submitLock_{nullptr};
+
+    /// Diagnostics: RUN cleared by StopIfRingDrained() (completion side), count + last time.
+    std::atomic<uint32_t> drainStops_{0};
+    std::atomic<uint64_t> lastDrainStopNs_{0};
 
     void LockSubmit() noexcept;
     void UnlockSubmit() noexcept;
@@ -789,7 +797,7 @@ size_t ATContextBase<Derived, Tag>::CommitSubmittedChain(
     size_t capacity) noexcept {
     const size_t newTail = (chain.lastRingIndex + 1) % capacity;
     ring_->SetTail(newTail);
-    ring_->SetPrevLastBlocks(static_cast<uint8_t>(chain.lastBlocks));
+    ring_->SetPrevLastBlocks(chain.TotalBlocks());
     return newTail;
 }
 
@@ -935,6 +943,8 @@ void ATContextBase<Derived, Tag>::StopIfRingDrained(const char* scopeTag,
 
     ring_->SetPrevLastBlocks(0);
     this->WriteControlClear(kContextControlRunBit);
+    drainStops_.fetch_add(1, std::memory_order_relaxed);
+    lastDrainStopNs_.store(Engine::NowNs(), std::memory_order_relaxed);
     const kern_return_t quiesceResult = WaitForQuiesce();
     if (quiesceResult == kIOReturnSuccess) {
         contextRunning_ = false;
