@@ -1,7 +1,7 @@
 # Hardware sample timeline: ownership (Epic 4)
 
 **Status:** implemented, 2026-09-26 (T0–T7 on `refactor/hardware-timeline`). Hardware check
-passed on the Saffire Pro 24 DSP at 48 kHz (§6); 44.1 kHz switch and M-Audio still to run. Linear FW-186 (milestone 4), with FW-187/188/189
+passed on the Saffire Pro 24 DSP at 48 and 44.1 kHz, the Apogee Duet and the M-Audio 1814 (§6). Linear FW-186 (milestone 4), with FW-187/188/189
 condensed here. Stages T0–T7 in the milestone plan; this document is T0.
 
 **Goal.** One authority for `absolute audio frame ↔ bus time ↔ host time`. CoreAudio's zero
@@ -201,8 +201,26 @@ No `Prime failed`, no `IT FATAL`, no stale anchor, and audio came back without t
 playback. This also verifies the FW-218 recovery fixes (`557d4965`, `3e31eab1`), which had
 failed twice before them.
 
-**Still to run:**
-- A 48 ↔ 44.1 kHz switch: each start logs `[Zts] epoch=… reason=start-io`.
+**48 → 44.1 kHz switch while playing, 2026-09-26: passed** (Pro 24 DSP, same build):
+- The device locks at 44.1 kHz 80 ms after the request. The restart logs
+  `[Zts] epoch=1 source=receive reason=start-io rate=44100`.
+- The first ZTS lands at frame 12288, and every later one is an exact multiple of 12288.
+- No RX replay reset, `StaleEpoch`, loss epoch or `Prime failed`. 0 dropped records.
+- Playback sounds clean, by ear better than at 48 kHz, where a few glitches were heard.
+  Not investigated: parked until the audio stack is complete.
 
-Done since: M-Audio 1814, cold start, clean after `6a74bbf6` (see that commit); Apogee Duet
+The clock fit is noisier than at 48 kHz: 12 anchors over 44 s fit a +11.1 ppm line with
+RMS 31.7 µs (±54 µs). At 48 kHz it is 0.89 µs. This follows from decision (a), and the old
+path behaved the same way:
+- A ZTS host time is the arrival time of the packet that carries the boundary frame.
+  Arrival is only known to one bus cycle (125 µs).
+- At 48 kHz, 12,288 frames are exactly 2,048 cycles, so that packet arrives at the same
+  point in a cycle every time.
+- At 44.1 kHz they are 2,229.14 cycles, so the point walks through the cycle. An error
+  spread evenly over 125 µs gives about 36 µs RMS.
+- ±54 µs is about 5 % of the HAL's 1 ms out-of-bounds gate, so the HAL filters these
+  anchors; it does not substitute them.
+- The SYT-presentation basis (§4) would remove it.
+
+Also done: M-Audio 1814, cold start, clean after `6a74bbf6` (see that commit); Apogee Duet
 (Receive epoch) clean; hot swaps 1814 ↔ DICE clean.
