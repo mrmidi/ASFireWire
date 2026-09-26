@@ -1,6 +1,7 @@
-# Platform-neutral analysis core: timeline audit, admission, detector,
-# aggregation, evidence JSON, self-test. Unit-tested on any host.
-add_library(asfw_rtl_core STATIC rtl_core.c)
+# Platform-neutral analysis cores: timeline audit, admission, detector,
+# aggregation, evidence JSON, self-test (rtl_core), and the tone glitch
+# detector (tone_core). Unit-tested on any host.
+add_library(asfw_rtl_core STATIC rtl_core.c tone_core.c)
 target_include_directories(asfw_rtl_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_options(asfw_rtl_core PRIVATE ${ASFW_TOOLS_WARNINGS})
 if (NOT MSVC)
