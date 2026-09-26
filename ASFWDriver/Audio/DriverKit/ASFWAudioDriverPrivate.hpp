@@ -241,6 +241,8 @@ struct AudioDriverRuntimeState {
     std::atomic<uint64_t> ioDebugCallbacks{0};
     std::atomic<uint64_t> ioCallbacksOutsideRun{0};
     std::atomic<bool> txActive{false};
+    // [TxPlace] rate gate (host ticks); 0 logs the first measurement at once.
+    uint64_t txPlacementNextLogHost{0};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Audio::BeBoB::MAudioInternalTxTiming mAudioInternalTxTiming;
@@ -338,6 +340,24 @@ void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept;
 namespace DirectDiagnostics {
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept;
 } // namespace DirectDiagnostics
+
+// TX placement meter (milestone 6; documentation/TX_OWNERSHIP.md). Where one
+// transmitted frame sits relative to the HAL clock: the first audio frame of
+// the newest completed DATA packet, against the HAL sample time projected at
+// the bus cycle that packet left in. Diagnostic only; nothing reads it back.
+struct TxPlacementSample final {
+    uint64_t packetIndex{0};
+    uint64_t firstAudioFrame{0};
+    int64_t halSampleTime{0};
+    // firstAudioFrame - halSampleTime. Negative: the frame left after its HAL
+    // time, so output is late by that many frames.
+    int64_t offsetFrames{0};
+};
+
+// Runs on the TX preparation queue, the timeline's only writer. False when
+// any input is missing (no completion yet, a NO-DATA packet, no HAL anchor).
+[[nodiscard]] bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars,
+                                      TxPlacementSample& out) noexcept;
 
 // The CoreAudio WriteEnd step (ASFWAudioDriverOutputWrite.cpp). Returns false
 // when the span exceeds the output ring, which the IO handler reports as

@@ -46,6 +46,30 @@ glitches. The user's hypothesis is that it lines up with the TX interrupt period
 **Stability bar.** Main ran DICE for one 7.4 h stream at 44.1 kHz (95,551 ZTS) without a restart or fault. This
 milestone must not regress that.
 
+## 1b. The TX placement meter `[TxPlace]` (T3)
+
+It splits the loopback's ~158 ms between TX and RX. Once a second, and at once after start, the TX producer logs:
+
+```
+[TxPlace] pkt=<packet> frame=<first audio frame> halSample=<HAL sample time when it left> offset=<frame - halSample> rate=<Hz>
+```
+
+- It uses the newest completed DATA packet.
+- The packet's transmit cycle comes from its completion stamp, mapped to host time through the transport's clock
+  pair.
+- The HAL sample time comes from the anchor mailbox CoreAudio is fed.
+- **Negative `offset` means the frame left after its HAL time**, so output is late by that many frames.
+
+If TX placement holds the ~158 ms, expect about **−7578 at 48 kHz** (−6933 at 44.1 kHz). A value near the host
+rig's is the other outcome: then TX is placed correctly and the RX side is the one to look at.
+
+The host rig checks that the meter reports what the wire shows (`TxOwnershipGolden.PlacementMeterAgreesWithTheWire`).
+For the 1814 in the rig it reads `offset=+26`. The rig publishes no HAL anchor for the DICE cases, so the meter is
+silent there.
+
+To read it on hardware:
+`asfw_log_query {"categories":["DirectAudio"],"contains":"[TxPlace]"}`.
+
 ## 1a. TX goldens (T1): what the host rig shows today
 
 `tests/audio/AudioDriverTxProducerTests.cpp` (`TxOwnershipGolden.*`, goldens in `tests/golden/tx/`) runs the real

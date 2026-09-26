@@ -723,6 +723,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     }
     ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);
     ivars.runtime.txStreamEngine.ResetForStart(0, 0);
+    ivars.runtime.txPlacementNextLogHost = 0;
     ivars.runtime.txReplayReader.Reset();
 
     // The resolved geometry is the only rate/timing source here; there is no
@@ -756,6 +757,65 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     control->txTransferDelayTicks.store(timing.txTransferDelayTicks,
                                         std::memory_order_relaxed);
     return {};
+}
+
+bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars, TxPlacementSample& out) noexcept {
+    const auto* queue = ivars.runtime.txSlotProvider.queueControl;
+    const auto* control = ivars.runtime.directAudioGraph.control;
+    if (queue == nullptr || control == nullptr) {
+        return false;
+    }
+    const uint64_t stamps = queue->completionStampCount.load(std::memory_order_acquire);
+    uint64_t packet = 0;
+    uint32_t stamp = 0;
+    if (stamps == 0 || !queue->ReadCompletionStamp(stamps - 1, packet, stamp)) {
+        return false;
+    }
+
+    // This runs on the preparation queue, which also writes the timeline, so
+    // the slot is read without the RT-side seqlock.
+    const auto* slot =
+        ivars.runtime.txStreamEngine.Timeline().SlotByIndex(static_cast<uint32_t>(packet));
+    if (slot == nullptr || slot->packetIndex != static_cast<uint32_t>(packet) ||
+        !slot->isData || slot->framesInPacket == 0) {
+        return false;
+    }
+
+    // The packet's transmit cycle, as host time, through the transport's
+    // cycle-timer/host-time pair from the same refill.
+    ASFW::Isoch::IsochTxClockPairSample pair{};
+    if (!queue->clockPair.TryRead(pair) || pair.hostTimeMid == 0) {
+        return false;
+    }
+    const int64_t busDelta = ASFW::Timing::extOffsetDiff(
+        ASFW::Timing::encodedTstampToOffsets(stamp),
+        ASFW::Timing::encodedTstampToOffsets(pair.cycleTimer32));
+    const uint64_t busMagnitude =
+        static_cast<uint64_t>(busDelta < 0 ? -busDelta : busDelta);
+    const uint64_t busHost = ASFW::Timing::nanosToHostTicks(
+        busMagnitude * 1'000'000'000ULL / ASFW::Timing::kTicksPerSecond);
+    const uint64_t txHost =
+        busDelta >= 0 ? pair.hostTimeMid + busHost : pair.hostTimeMid - busHost;
+
+    // The HAL's sample time at that host time, from the one anchor CoreAudio
+    // is fed (Epic 4: HostClockAnchor is the ZTS projection).
+    ASFW::Audio::Runtime::HostClockAnchorSample anchor{};
+    const uint32_t rate = ivars.runtime.txStreamEngine.StreamConfig().sampleRate;
+    if (!control->hostClockAnchor.TryReadLatest(0, anchor) || anchor.hostTicks == 0 ||
+        rate == 0) {
+        return false;
+    }
+    const bool after = txHost >= anchor.hostTicks;
+    const uint64_t hostNanos = ASFW::Timing::hostTicksToNanos(
+        after ? txHost - anchor.hostTicks : anchor.hostTicks - txHost);
+    const auto frames = static_cast<int64_t>(
+        static_cast<__uint128_t>(hostNanos) * rate / 1'000'000'000ULL);
+
+    out.packetIndex = packet;
+    out.firstAudioFrame = slot->firstAudioFrame;
+    out.halSampleTime = static_cast<int64_t>(anchor.sampleFrame) + (after ? frames : -frames);
+    out.offsetFrames = static_cast<int64_t>(slot->firstAudioFrame) - out.halSampleTime;
+    return true;
 }
 
 } // namespace ASFW::Audio::DriverKit
@@ -1401,6 +1461,25 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     }
 
     txControl->MarkRefillHandled(requested);
+
+    // [TxPlace]: where a transmitted frame sits against the HAL clock
+    // (milestone 6, documentation/TX_OWNERSHIP.md). Once a second, and the
+    // first measurement after start at once. Diagnostic only.
+    {
+        const uint64_t nowHost = mach_absolute_time();
+        if (nowHost >= ivars->runtime.txPlacementNextLogHost) {
+            ASFW::Audio::DriverKit::TxPlacementSample placement{};
+            if (ASFW::Audio::DriverKit::MeasureTxPlacement(*ivars, placement)) {
+                ASFW_LOG(DirectAudio,
+                         "[TxPlace] pkt=%llu frame=%llu halSample=%lld offset=%lld rate=%u",
+                         placement.packetIndex, placement.firstAudioFrame,
+                         placement.halSampleTime, placement.offsetFrames,
+                         ivars->runtime.txStreamEngine.StreamConfig().sampleRate);
+                ivars->runtime.txPlacementNextLogHost =
+                    nowHost + ASFW::Timing::nanosToHostTicks(1'000'000'000ULL);
+            }
+        }
+    }
 
     if (scheduleAudioFollowUp && ivars->device.audioNub) {
         const kern_return_t requestKr =

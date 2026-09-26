@@ -224,6 +224,10 @@ public:
     [[nodiscard]] uint32_t PcmChannels() const { return pcmChannels_; }
     [[nodiscard]] uint32_t Dbs() const { return dbs_; }
     [[nodiscard]] uint64_t WriteEnds() const { return writeEnds_; }
+    // The HAL's sample time as the rig's CoreAudio sees it at a packet time.
+    [[nodiscard]] bool HalNow(uint64_t atPacket, uint64_t& now) const {
+        return NowSampleTime(atPacket, now);
+    }
 
     // Retires `packets` bus cycles of transmit, one interrupt per batch.
     // Returns false once the transport has stopped on a fault.
@@ -851,6 +855,44 @@ TEST(TxOwnershipGolden, SaffireStall48k) {
 TEST(TxOwnershipGolden, MAudio1814Clean48k) {
     RecordMAudioTxGolden({"tx/maudio-1814/clean-48k-io512.txt",
                           {.ioFrames = 512, .leadFrames = 560, .clockFromZts = true}});
+}
+
+// [TxPlace] (milestone 6): the driver's placement meter must report what the
+// wire shows -- the frame a transmitted packet carries, minus the HAL's
+// sample time when that packet left -- computed here from the rig's own
+// clocks. Host ticks are 1:1 nanoseconds so the rig's clock pair and the
+// meter's conversions agree exactly.
+TEST(TxOwnershipGolden, PlacementMeterAgreesWithTheWire) {
+    const mach_timebase_info_data_t saved = ASFW::Timing::gHostTimebaseInfo;
+    ASFW::Timing::gHostTimebaseInfo = {1, 1};
+
+    ASFW::Isoch::Audio::AVC::Profiles::MAudioSpecialProfile profile(false);
+    TxProducerRig rig;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::MAudioFireWire1814, 48000));
+    rig.EnableHostOutput({.ioFrames = 512, .leadFrames = 560, .clockFromZts = true});
+    // End on a DATA packet: the 1814 cadence sends NO-DATA when index % 4 == 3.
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets + 1)) << rig.DescribeFault();
+
+    ASFW::Audio::DriverKit::TxPlacementSample sample{};
+    ASSERT_TRUE(ASFW::Audio::DriverKit::MeasureTxPlacement(rig.Ivars(), sample));
+
+    const auto& wire = rig.Wire();
+    ASSERT_LT(sample.packetIndex, wire.size());
+    const PacketView onWire = ViewPacket(wire[sample.packetIndex], rig.Dbs(), rig.PcmChannels());
+    ASSERT_EQ(onWire.kind, PacketView::Kind::Pcm);
+    EXPECT_EQ(static_cast<int64_t>(sample.firstAudioFrame % kTagFrameModulo), onWire.firstFrame);
+
+    uint64_t halNow = 0;
+    ASSERT_TRUE(rig.HalNow(sample.packetIndex, halNow));
+    EXPECT_NEAR(static_cast<double>(sample.offsetFrames),
+                static_cast<double>(static_cast<int64_t>(sample.firstAudioFrame) -
+                                    static_cast<int64_t>(halNow)),
+                1.0);
+    std::printf("[TxPlace] rig 1814: pkt=%llu frame=%llu halSample=%lld offset=%lld\n",
+                (unsigned long long)sample.packetIndex, (unsigned long long)sample.firstAudioFrame,
+                (long long)sample.halSampleTime, (long long)sample.offsetFrames);
+
+    ASFW::Timing::gHostTimebaseInfo = saved;
 }
 
 } // namespace
