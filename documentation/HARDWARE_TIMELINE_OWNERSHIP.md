@@ -224,3 +224,20 @@ path behaved the same way:
 
 Also done: M-Audio 1814, cold start, clean after `6a74bbf6` (see that commit); Apogee Duet
 (Receive epoch) clean; hot swaps 1814 ↔ DICE clean.
+
+**7.4 h at 44.1 kHz, then back to 48 kHz, 2026-09-26 (Pro 24 DSP, same dext process).**
+After one uninterrupted 44.1 kHz stream (95,551 ZTS, 7.4 h, no restart and no fault), Instruments showed ZTS
+jitter of 99.9–225.1 µs, σ 44.8 µs. In the same dext process, switching to 48 kHz restarts the stream: 2.25–3.71 µs,
+σ 266 ns, back at the fresh-start level. Instruments' "jitter" is |ZTS host interval − nominal period|: at 48 kHz
+the ring's per-period deviation is 2.7–3.3 µs, which is exactly the +11.8 ppm device clock over 256 ms.
+
+The published 44.1 kHz anchors did **not** drift in rate: the last 1.8 h in the ring fit +7.4 and +7.9 ppm. The
+linear-fit residual grows over the hour (RMS 57 → 251 µs), which is consistent with the host↔bus ppm wandering by
+about 0.15 ppm, not with a defect.
+
+**Open, not investigated:** is the ~100 µs *floor* caused by the rate or the runtime?
+- Arrival quantization at 44.1 kHz explains the σ, but not a floor where every interval is off.
+- The ring logs only one anchor in ~16, so it cannot answer.
+- The deciding check is a fresh 44.1 kHz start in Instruments.
+  - If the floor returns, it comes from the arrival basis, and the fix is the SYT-presentation basis (§4).
+  - If it stays near 3 µs, something accumulates over a long stream.
