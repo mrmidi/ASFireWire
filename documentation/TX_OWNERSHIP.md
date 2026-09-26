@@ -424,7 +424,7 @@ still plays; RTL and tone unchanged (the ring does not add latency); a 48 ↔ 44
   stopped the IT, then the reset was handled, the device resumed and the DICE recovery restarted the stream
   through StopIO → StartIO. Running again after ~1.9 s with ARX1 locked and no fault. The exhaustion stop and the
   reset recovery do not conflict.
-- **Open (pre-T5, not M6):** every bus reset seen so far (two unplugs, one requested reset) comes with a ~500 ms
+- **Open (pre-T5, not M6; Linear FW-257):** every bus reset seen so far (two unplugs, one requested reset) comes with a ~500 ms
   stall of the queue that runs the IT refill: after the reset on the unplugs, between request and handling on the
   requested reset. The cyclic ring hid it by replaying stale packets; the finite queue turns it into a fault that
   the reset recovery then repairs.
