@@ -11,8 +11,12 @@
 
 #define TWO_PI (2.0 * M_PI)
 
-// Blocks skipped after the tone arrives and before it ends, so the
-// converters' settling and the capture edges are never judged.
+// Blocks skipped after the tone arrives, so the converters' response to a
+// tone switching on from silence is never judged: on the Pro 24 DSP that
+// start transient lasts ~450 frames and read as one "click" per run. 32
+// blocks = 2048 frames (43 ms at 48 kHz).
+#define ONSET_SETTLE_BLOCKS 32
+// Blocks skipped before the capture ends.
 #define SETTLE_BLOCKS 4
 // A block "fits cleanly" when the sine alone explains it this well.
 #define CLEAN_FIT_NOISE_FACTOR 3.0
@@ -211,11 +215,11 @@ int tone_analyse(const float *x, uint64_t n, double sampleRate, double freqHz,
         if (fit[k].amp > 0.5 * ref) { onset = k; break; }
     for (uint64_t k = nb; k-- > 0;)
         if (fit[k].amp > 0.5 * ref) { end = k + 1; break; }
-    if (onset + 2 * SETTLE_BLOCKS + 16 > end) {
+    if (onset + ONSET_SETTLE_BLOCKS + SETTLE_BLOCKS + 16 > end) {
         out->invalidReason = "too little tone after it arrived";
         goto done;
     }
-    const uint64_t from = onset + SETTLE_BLOCKS, to = end - SETTLE_BLOCKS;
+    const uint64_t from = onset + ONSET_SETTLE_BLOCKS, to = end - SETTLE_BLOCKS;
 
     m = 0;
     for (uint64_t k = from; k < to; k++) scratch[m++] = fit[k].err;

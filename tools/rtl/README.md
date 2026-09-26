@@ -223,7 +223,10 @@ RTL_TONE_DUMP=tmp/tone.f32 tools/rtl/rtl_loopback -d Saffire --tone  # also keep
 | `RTL_TONE_DUMP=<path>` | write the raw capture: mono float32, little-endian, no header |
 
 Each event is one disturbance. Stretches within 1024 frames of each other are
-merged, and the slip is the net shift across the whole event.
+merged, and the slip is the net shift across the whole event. The first 2048
+frames after the tone arrives are not judged: the converters' response to a
+tone switching on from silence (~450 frames on the Pro 24 DSP) would otherwise
+read as one click per run.
 
 | Kind | What the signal did | What it points to |
 |---|---|---|
