@@ -64,13 +64,13 @@ constexpr DiceRangeMember kVeniceMembers[] = {
 //   ADC 27/fS + DAC 28/fS = 55 frames at the 1x rates. The Windows Focusrite
 //   table's unreported AD/DA part is 58-60 frames at 44.1 kHz, which agrees.
 //   The rest is FireWire transport. Converter delay is not removable latency.
-// - Experiment E1b (same doc): capture safety 10 -> 8 packets (80 -> 64
-//   frames). [TxPrep] sInMinFr measured 24-36 frames of the 80 unused on the
-//   Pro 24 DSP at a 16-frame buffer (110 s, no starvation after start-up).
-//   Revert to 10 if the tone runs click or sInStarve shows after start-up.
+// - Experiment E1b (same doc) tried capture safety 8 packets (64 frames) and
+//   reverted: RTL dropped by the predicted 16 frames, but at a 16-frame
+//   buffer the steady-state headroom sat at 16 with drops to 0, the input
+//   starved after start-up, and the tone clicked. 10 stays.
 // The Pro 40 was not measured and keeps the vendor ladder.
 DiceProfile gFocusriteProfile{{.name = "Focusrite Saffire (DICE)",
-                               .captureSafetyPackets = 8,
+                               .captureSafetyPackets = 10,
                                .inputLatency1x = 53,
                                .outputLatency1x = 56}};
 DiceProfile gFocusritePro40Profile{{.name = "Focusrite Saffire Pro 40"}};

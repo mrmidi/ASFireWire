@@ -315,6 +315,18 @@ Pre-E1 baseline (build `7ff335bd`, 48 kHz): see §1d. RTL = 2B + 237 fixed (S_in
 - S_out waits for T5: part of the output margin is the provisional 3-packet guard, which exists because the fill
   projects the hardware position instead of reading it.
 
+**E1b on hardware (Pro 24 DSP, 48 kHz, build `f1e28985`): reverted.**
+- RTL moved exactly as predicted: 255 at 16 frames, 287 at 32 (residual +2.03 against 253/285; Oblique agrees).
+- At a 16-frame buffer (Oblique holding the device, ~150 s) steady-state `sInMinFr` sat at 16, the 16 frames cut.
+  Five intervals dropped to 0, three with `sInStarve` 1–2, all after start-up (`sInStart=0`).
+- The 16-frame tone had 4 clicks with 1–3 silent samples each, which fits reads zero-filled 1–3 frames short. The
+  same tone at 80 was clean. The 32-frame tone was clean, but Oblique was still holding the device at 16.
+- Capture safety back to 10 packets. The instruments stay.
+- Reading: at 16 frames the input path needs 64 + a tail of up to ~16 frames, so S_in cannot drop until the
+  capture ring is filled closer to the read (not by the interrupt cadence alone).
+- Seen again: `missedFinality=32580` in the first 5 s of a stream started by a 16-frame client (32648 last time).
+  Reproducible; the next thing to find.
+
 ## 2. How we got here: keep midi's understanding, not its architecture
 
 The core TX problem is **pacing**. CoreAudio writes PCM when its IO thread runs; this is `W`, the client write end.

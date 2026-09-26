@@ -245,18 +245,18 @@ TEST(DiceProfileTests, FocusriteAsymmetricSafetyOffsetsAndLatencies) {
     ASSERT_NE(profile, nullptr);
 
     // Hardware-calibrated Saffire declarations (decision D3): 6-packet playback
-    // safety, 8-packet capture safety, device latency 53 in / 56 out at 48 kHz
+    // safety, 10-packet capture safety, device latency 53 in / 56 out at 48 kHz
     // doubling per rate tier (output 52 -> 56: experiment E1a; capture safety
-    // 10 -> 8: experiment E1b, TX_OWNERSHIP.md).
+    // 8 was tried and reverted: experiment E1b, TX_OWNERSHIP.md).
     // 48 kHz
     EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 48);   // 6 x 8
-    EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 64);   // 8 x 8
+    EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 80);   // 10 x 8
     EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 56);
     EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 53);
 
     // 96 kHz
     EXPECT_EQ(profile->TxSafetyOffsetFrames(96000.0), 128);  // (6 + 2) x 16
-    EXPECT_EQ(profile->RxSafetyOffsetFrames(96000.0), 160);  // (8 + 2) x 16
+    EXPECT_EQ(profile->RxSafetyOffsetFrames(96000.0), 192);  // (10 + 2) x 16
     EXPECT_EQ(profile->TxReportedLatencyFrames(96000.0), 112);
     EXPECT_EQ(profile->RxReportedLatencyFrames(96000.0), 106);
 }
