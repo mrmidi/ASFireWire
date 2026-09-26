@@ -417,6 +417,17 @@ still plays; RTL and tone unchanged (the ring does not add latency); a 48 ↔ 44
 - M-Audio 1814 → Pro 24 DSP re-plug: the device came up cold at 44.1 kHz, the start rewrote the clock to 48 kHz,
   the device reconfigured and locked, and it played. (A start with the same rewrite was silent on `de9ea3f` this
   morning, so the rewrite alone does not cause the cold-start silence; that investigation is outside M6.)
+- Instruments recording while playing (Pro 24 DSP, ~13 min, user: smooth): no fault, `missedFinality=0`, worst
+  producer wake 3.0 ms, committed lead never below 952 of 1008. ZTS jitter 2.96–3.17 µs, σ 58 ns (22 anchors).
+- Bus reset with the Pro 24 DSP streaming (MCP `asfw_bus_reset_dev`, generation 8 → 9): nothing was processed for
+  ~506 ms after the reset request (the MCP call took 624 ms), the first refill found the queue exhausted and
+  stopped the IT, then the reset was handled, the device resumed and the DICE recovery restarted the stream
+  through StopIO → StartIO. Running again after ~1.9 s with ARX1 locked and no fault. The exhaustion stop and the
+  reset recovery do not conflict.
+- **Open (pre-T5, not M6):** every bus reset seen so far (two unplugs, one requested reset) comes with a ~500 ms
+  stall of the queue that runs the IT refill: after the reset on the unplugs, between request and handling on the
+  requested reset. The cyclic ring hid it by replaying stale packets; the finite queue turns it into a fault that
+  the reset recovery then repairs.
 - The Pro 24 DSP stream before the unplug (~35 min) had one slow producer wake (5.1 ms, `late1500=9`) and
   `missedFinality=16`: two packets filled too late, once.
 - Instrument fix: `sInMinFr` printed the capture-ring capacity (12288) when no client read input, because the
