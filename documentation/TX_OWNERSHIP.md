@@ -523,6 +523,24 @@ Linux's minimum, `amdtp-stream.c`); input safety unchanged at 80 (its floor need
 - Under Instruments at a 16-frame buffer the stream had late fills (two ~15.8k-frame bursts plus small steps); the
   user's call: acceptable at 16 frames. Adopted without a separate load check at 32.
 
+**Soak (2026-09-27): the E2 build for 3 h 24 min.** Build `f382219` + E2 (uncommitted at build time, branch
+`experiment/e2-output-floor`), Pro 24 DSP, 48 kHz, one stream of 12,255 s read from the driver ring with no dropped
+records. The client buffer size was not recorded.
+- Transport: no `IT FATAL`, `[TxProducerFatal]`, `[TxPrepRange]`, `[RxReplayReset]`, `[AudioIO]` or replay lines;
+  `forcedNoData=0`. The 13 IT stops earlier in the same dext process (streams up to 4.75 M packets, a 48 ↔ 44.1
+  switch) all show `exhausted=0`. The transport margin never fell below 963 of 1008; one producer wake above 1.5 ms
+  (max 2.6 ms) in the whole stream.
+- Placement: `[TxPlace]` over 11,611 samples was −4 (9,918), −2 (1,511), 0 (174), −3/−5 (8). No drift in 3.4 h.
+- Instruments at the end of the stream (sample time ~593 M frames): ZTS jitter 2.67–2.96 µs, σ 71 ns (19
+  anchors), the same as a fresh 48 kHz start. At 48 kHz the clock does not degrade with runtime.
+- **Output gaps:** `missedFinality` rose in 18 bursts to 169,456 frames (~3.5 s): 9 min, 24 min (3), 1 h 19 min,
+  1 h 46 min, 1 h 57 min–2 h 02 min (10 bursts), 2 h 15 min. Large bursts are 7k–22k frames (0.15–0.45 s), and
+  `sOutMinPk` is 0 in exactly those intervals (9 otherwise). `[TxPlace]` and the ZTS updates are unchanged around
+  every burst, so the FireWire side kept time. The likely source is CoreAudio's IO thread writing late, but the
+  counter cannot tell a late write from a skipped one, so audibility is not established from the ring.
+- Input: 4 single `sInStarve` intervals (1 h 16 min–1 h 24 min); 17 more in the last 10 s coincide with the ring
+  queries for this analysis.
+
 ## 1j. T6: stream lifetimes (2026-09-26)
 
 - **StopIO and a failed StartIO quiesce the TX producer for every family.** `QuiesceTxPreparation` clears `txActive`
