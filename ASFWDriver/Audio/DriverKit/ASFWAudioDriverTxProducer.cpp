@@ -171,6 +171,11 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         if (nextPacketToPrepare >= requiredPacketIndex) {
             break;
         }
+        // A pass can prepare a whole coverage lead (1008 packets); stop as
+        // soon as StopIO has cleared txActive instead of finishing it.
+        if (!ivars.runtime.txActive.load(std::memory_order_acquire)) {
+            break;
+        }
 
         ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
         timing.replayValid = true;

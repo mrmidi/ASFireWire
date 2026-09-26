@@ -523,6 +523,22 @@ Linux's minimum, `amdtp-stream.c`); input safety unchanged at 80 (its floor need
 - Under Instruments at a 16-frame buffer the stream had late fills (two ~15.8k-frame bursts plus small steps); the
   user's call: acceptable at 16 frames. Adopted without a separate load check at 32.
 
+## 1j. T6: stream lifetimes (2026-09-26)
+
+- **StopIO and a failed StartIO quiesce the TX producer for every family.** `QuiesceTxPreparation` clears `txActive`
+  and waits out a pass in flight on `txPreparationQueue` before the slot provider is cleared and the mapped slabs are
+  released. It used to wait only for M-Audio, so a DICE/OXFW/MOTU pass could still be writing packets while StopIO
+  released them. The producer never waits on `workQueue`, so the wait cannot deadlock.
+- **`txSecondaryActive` is atomic.** It is read by the IO-thread fill and the producer queue and written by
+  StartIO/StopIO.
+- **The producer re-checks `txActive` inside its loop.** A pass can prepare a whole coverage lead (1008 packets).
+- **`PerformLoudTeardown` deleted:** no callers, and it released TX memory without waiting for the producer.
+- **Restart test** (`TxOwnershipLifecycle.RestartStartsEveryPerStreamStateOver`): after a stream ran, StartIO on fresh
+  memory resets the fill position, frame-cursor alignment, replay reader, missed-frame baseline and headroom minimum
+  together. Mutation-checked.
+- "One recovery transaction" needs nothing new here: DICE recovery is already one StopIO → StartIO through CoreAudio
+  (the bus-reset run in §1f).
+
 ## 1i. Parked: E3, the input side (not scheduled; written down 2026-09-26)
 
 **Why.** After T7 + E2 the Pro 24 DSP at 48 kHz measures RTL 241 / 273 / 337 frames at 16 / 32 / 64 (5.02 / 5.69 /
@@ -756,7 +772,7 @@ single-constant tweak.
 | T3 | Silence-first valid DATA packets | FW-215 |
 | T4 | Audio-side fill; delete the `W`/`E` rendezvous and its metering | FW-213/214/215 |
 | T5 | Finite DMA + descriptor-status completion; 64-bit packet index | FW-216 |
-| T6 | Lifetimes + one recovery transaction | FW-218 |
+| T6 | Lifetimes: producer quiesced for every family, atomic secondary flag, restart test (§1j) | FW-218 |
 | T7 | Frame cursor to the projected frame, no rounding; Saffire output latency back to 52 (§1g) | FW-194 |
 | B3 | Measure: dispatch latency, finality distance, missed/torn fills, RTL, 16/32-frame buffers | FW-217 |
 | T8 | Derived output safety + remaining instrumentation cleanup | FW-171 overlap |

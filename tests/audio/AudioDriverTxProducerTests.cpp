@@ -1001,4 +1001,37 @@ TEST(TxFrameCursorProjection, KeepsTheProjectedFrameInsteadOfAPacketBoundary) {
     EXPECT_EQ(ASFW::Audio::DriverKit::ProjectTxFrameCursor(5, kTicksPerSecond, 44100), 44105u);
 }
 
+// T6: a restart resets every piece of per-stream TX state together. StartIO
+// re-arms the producer on fresh TX memory; nothing from the previous stream --
+// fill position, frame-cursor alignment, replay reader, the per-stream
+// missed-frame baseline or the headroom minimum -- may carry into the next.
+TEST(TxOwnershipLifecycle, RestartStartsEveryPerStreamStateOver) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    rig.EnableHostOutput({.ioFrames = 64, .leadFrames = 112});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+
+    auto& runtime = rig.Ivars().runtime;
+    // The first stream really ran: it filled PCM from an aligned cursor.
+    ASSERT_GT(runtime.txFilledFrameEnd, 0U);
+    ASSERT_TRUE(runtime.txStreamEngine.IsFrameCursorAligned());
+    ASSERT_TRUE(runtime.txReplayReader.IsActive());
+
+    // StopIO, then StartIO on fresh memory.
+    runtime.txActive.store(false);
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+
+    EXPECT_EQ(runtime.txFilledFrameEnd, 0U);
+    EXPECT_FALSE(runtime.txStreamEngine.IsFrameCursorAligned());
+    EXPECT_FALSE(runtime.txReplayReader.IsActive());
+    EXPECT_EQ(runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load() +
+                  runtime.motuPayloadWriter.Counters().framesMissedFinality.load(),
+              runtime.txMissedFinalityAtStart);
+    EXPECT_EQ(runtime.txStreamEngine.TakeMinFinalityMarginPackets(), INT64_MAX);
+    EXPECT_TRUE(runtime.txActive.load());
+}
+
 } // namespace

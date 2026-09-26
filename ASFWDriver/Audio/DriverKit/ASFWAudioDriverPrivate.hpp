@@ -272,7 +272,7 @@ struct AudioDriverRuntimeState {
     // single-stream devices, leaving the master path untouched.
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngineSecondary;
     DextTxSlotProvider txSlotProviderSecondary;
-    bool txSecondaryActive{false};
+    std::atomic<bool> txSecondaryActive{false};
 
     ASFW::Encoding::Motu::MotuPayloadWriter motuPayloadWriter;
     ASFW::Audio::Wire::MotuTxTimingStamper motuTxTimingStamper;
@@ -472,5 +472,4 @@ struct PrimaryTxArmResult final {
     const PrimaryTxQueueMemory& memory) noexcept;
 
 
-void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept;
 } // namespace ASFW::Audio::DriverKit

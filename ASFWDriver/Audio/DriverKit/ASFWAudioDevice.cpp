@@ -65,6 +65,23 @@ void ASFWAudioDevice::SetDriverIvars(ASFWAudioDriver_IVars* ivars) {
     }
 }
 
+namespace {
+
+// Stop the TX producer and wait out a pass in flight, for every device family,
+// before the slot provider is cleared and the mapped slabs are released
+// (TX_OWNERSHIP.md, T6). It used to wait only for M-Audio, so a DICE/OXFW/MOTU
+// pass could still be writing packets while StopIO released them. The producer
+// runs on txPreparationQueue and never waits on workQueue, so this cannot
+// deadlock when called from workQueue.
+void QuiesceTxPreparation(ASFWAudioDriver_IVars& ivars) noexcept {
+    ivars.runtime.txActive.store(false, std::memory_order_release);
+    if (ivars.txPreparationQueue) {
+        ivars.txPreparationQueue->DispatchSync(^{ });
+    }
+}
+
+} // namespace
+
 kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
     if (!ivars || !ivars->driverIvars) {
         ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - no driver ivars");
@@ -121,10 +138,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             const kern_return_t result =
                 status == kIOReturnSuccess ? kIOReturnError : status;
             ivars.runtime.isRunning.store(false, std::memory_order_release);
-            ivars.runtime.txActive.store(false, std::memory_order_release);
-            if (ivars.runtime.mAudioInternalTxActive && ivars.txPreparationQueue) {
-                ivars.txPreparationQueue->DispatchSync(^{ });
-            }
+            QuiesceTxPreparation(ivars);
             ivars.runtime.mAudioInternalTxTiming.Disarm();
             ivars.runtime.mAudioTxClockBridge.Disarm();
             ivars.runtime.mAudioInternalTxActive = false;
@@ -629,10 +643,7 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
 
     ivars.workQueue->DispatchSync(^{
         ivars.runtime.isRunning.store(false, std::memory_order_release);
-        ivars.runtime.txActive.store(false, std::memory_order_release);
-        if (ivars.runtime.mAudioInternalTxActive && ivars.txPreparationQueue) {
-            ivars.txPreparationQueue->DispatchSync(^{ });
-        }
+        QuiesceTxPreparation(ivars);
         ivars.runtime.mAudioInternalTxTiming.Disarm();
         ivars.runtime.mAudioTxClockBridge.Disarm();
         ivars.runtime.mAudioInternalTxActive = false;
