@@ -226,7 +226,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             bool replayReadable = ivars.runtime.txReplayReader.TryRead(
                 directControl->rxSequenceReplay, replay,
                 &replayDiagnostic);
-            // A reader that fell out of the bounded 512-entry RX history is
+            // A reader that fell out of the bounded RX history (kCapacity) is
             // repositionable, not faulted: Begin() re-anchors kReadDelay
             // behind the live producer and the skipped entries only shift
             // NODATA placement, which IEC 61883-6 blocking permits (DBC
