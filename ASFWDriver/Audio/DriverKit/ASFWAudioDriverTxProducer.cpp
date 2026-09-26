@@ -1081,9 +1081,6 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             ASFW::IsochTransport::AudioTimingGeometry::kTxHardwareRingPackets;
         const bool newCommittedMarginLow =
             boundedMargin < committedMarginFloorBefore;
-        const bool slackBudgetExceeded =
-            latencyNanos >= Geometry::kTxPreparationLatency1500Us *
-                                Geometry::kNanosecondsPerMicrosecond;
 
         // Wall-clock heartbeat. A wake-count trigger is rate-dependent: the
         // same divisor emits ~1.3 lines/s at 48 kHz and 2-4x that at 96/192 kHz,
@@ -1098,7 +1095,11 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             ASFW::Timing::hostTicksToNanos(now - lastHeartbeatTicks) >=
                 kHeartbeatIntervalNanos;
 
-        if (newCommittedMarginLow || slackBudgetExceeded || heartbeatDue) {
+        // A slow wake is counted (late1500), not logged on its own: since T4
+        // the transport margin is the coverage target (~16 ms), far above the
+        // 1.5 ms wake budget, and the fill's exposure to slow wakes shows up
+        // as missedFinality in the heartbeat.
+        if (newCommittedMarginLow || heartbeatDue) {
             // Anomaly emissions intentionally close an interval early. This
             // keeps every retained [TxPrep] line self-contained and leaves the
             // normal healthy interval wall-clock paced at five seconds.
@@ -1193,48 +1194,29 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             // themselves suppressed.
             directControl->txHeartbeatLastHostTicks.store(
                 now, std::memory_order_relaxed);
+            // Kept under the driver ring's 232-byte message: fill health
+            // first, then margin and wake latency (T4, TX_OWNERSHIP.md).
             ASFW_LOG(
                 DirectAudio,
-                "[TxPrep] margin=%u iMin=%u iMax=%u min=%u lead=%u "
-                "lastLatUs=%llu iMaxLatUs=%llu maxLatUs=%llu "
-                "latHist=%llu/%llu/%llu/%llu/%llu/%llu "
-                "marginHist=%llu/%llu/%llu/%llu/%llu fast750=%llu "
-                "late1500=%llu wakes=%llu "
-                "forcedNoData=%llu missedFinality=%llu coverageLead=%u%{public}s",
-                boundedMargin,
-                intervalMarginMin,
-                intervalMarginMax,
-                minCommittedMargin,
-                ASFW::IsochTransport::AudioTimingGeometry::
-                    kTxPreparationLeadPackets,
-                latencyNanos / 1000,
-                intervalLatencyMaxNanos / 1000,
-                maxLatencyNanos / 1000,
-                latencyBucket0,
-                latencyBucket1,
-                latencyBucket2,
-                latencyBucket3,
-                latencyBucket4,
-                latencyBucket5,
-                marginBucket0,
-                marginBucket1,
-                marginBucket2,
-                marginBucket3,
-                marginBucket4,
-                directControl->txPreparationAtMost750Us.load(
-                    std::memory_order_relaxed),
-                directControl->txPreparationAtLeast1500Us.load(
-                    std::memory_order_relaxed),
-                wakeSamples,
+                "[TxPrep] forcedNoData=%llu missedFinality=%llu margin=%u "
+                "iMin=%u iMax=%u min=%u latUs=%llu/%llu/%llu late1500=%llu "
+                "wakes=%llu%{public}s",
                 directControl->txReplayForcedNoData.load(std::memory_order_relaxed),
                 ivars->runtime.txStreamEngine.PayloadWriterCounters()
                         .framesMissedFinality.load(std::memory_order_relaxed) +
                     ivars->runtime.motuPayloadWriter.Counters()
                         .framesMissedFinality.load(std::memory_order_relaxed),
-                ASFW::IsochTransport::AudioTimingGeometry::
-                    kTxCoverageLeadPackets,
-                boundedMargin <= kCommittedMarginDangerPackets ? " DANGER"
-                                                               : "");
+                boundedMargin,
+                intervalMarginMin,
+                intervalMarginMax,
+                minCommittedMargin,
+                latencyNanos / 1000,
+                intervalLatencyMaxNanos / 1000,
+                maxLatencyNanos / 1000,
+                directControl->txPreparationAtLeast1500Us.load(
+                    std::memory_order_relaxed),
+                wakeSamples,
+                boundedMargin <= kCommittedMarginDangerPackets ? " DANGER" : "");
         }
 
         directControl->counters.txPreparationWakeRequests.store(
