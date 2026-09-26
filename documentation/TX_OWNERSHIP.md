@@ -290,12 +290,18 @@ Pre-E1 baseline (build `7ff335bd`, 48 kHz): see §1d. RTL = 2B + 237 fixed (S_in
 - Open: `missedFinality=32648` (~680 ms of frames) in the first 5 s of one stream, 0 after it. Cause unknown.
 - Instrument bug: the first heartbeat of a stream carried `sOutMinPk` over from the previous stream.
 
-**What L is made of (assumption, not verified on the board).** L = 109–111 frames at 48 kHz.
-- Converters: we assume the Pro 24 DSP uses the TI PCM3168A (user). Its datasheet (SBAS452A) gives group delay
-  ADC 27/fS + DAC 28/fS = **55 frames** in single-rate mode, whatever the rate. Dual rate differs (ADC 17/fS,
-  DAC 28/fS), so the 2×/4× doubling rule is not what the converters do.
-- The Windows Focusrite 4.0.0 table agrees: its "I/O" column excludes AD/DA (its footnote), and RTL − (in + out)
-  = 58–60 frames at 44.1 kHz for buffers 32–256 (the 512 row does not fit and is left out).
+**What L is made of.** L = 109–111 frames at 48 kHz.
+- Converters: the Pro 24 and Pro 24 DSP use the TI PCM3168A, and the Pro 14, Pro 40 and Liquid Saffire 56 the
+  Cirrus CS4272. Source: Focusrite support's e-mail reply, quoted on Gearspace
+  (https://gearspace.com/threads/focusrite-saffire-pro-24-vs-apogee-duet-converters-shoot-out.469949/post-6195320).
+  Not checked on the board. The PCM3168A datasheet (SBAS452A) gives group delay ADC 27/fS + DAC 28/fS =
+  **55 frames** in single-rate mode, whatever the rate. Dual rate differs (ADC 17/fS, DAC 28/fS), so the 2×/4×
+  doubling rule is not what the converters do. The CS4272 parts (Pro 40 profile) have not been looked at.
+- The Windows numbers agree. Source: DAWbench LLP Database, January 2025, Focusrite Saffire Pro 24, driver 4.0.0,
+  Windows 7 x64 (https://dawbench.com/images/DAWbench%20LLP%20Database-January-2025.pdf). Its "I/O" column
+  excludes AD/DA (the table's footnote; RTL is measured with a utility), and RTL − (in + out) = 58–60 frames for
+  buffers 32–256 (the 512 row does not fit and is left out). The table does not state the sample rate; 44.1 kHz
+  is our inference, because every I/O value is a whole number of frames only at 44.1 kHz.
 - The remaining ~54–56 frames are FireWire transport: 12800-tick transfer delay per direction (~25 frames each at
   48 kHz) plus a few frames of placement.
 - Our declared device latencies include the converters, as CoreAudio expects. Windows' reported I/O does not, so

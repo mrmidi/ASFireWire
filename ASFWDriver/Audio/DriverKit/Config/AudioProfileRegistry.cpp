@@ -59,11 +59,13 @@ constexpr DiceRangeMember kVeniceMembers[] = {
 //   2-4 frames over what was declared. The loopback measures only the in+out
 //   sum, so the +4 goes where it was measured: output. Revert to 52 if the
 //   residual does not land at ~0.
-// - What the 53/56 contain (assumption, not verified on the board): if the
-//   Pro 24 DSP uses the TI PCM3168A, its datasheet (SBAS452A) group delay is
-//   ADC 27/fS + DAC 28/fS = 55 frames at the 1x rates. The Windows Focusrite
-//   table's unreported AD/DA part is 58-60 frames at 44.1 kHz, which agrees.
-//   The rest is FireWire transport. Converter delay is not removable latency.
+// - What the 53/56 contain: the Pro 24 / Pro 24 DSP use the TI PCM3168A
+//   (Focusrite support e-mail, quoted on Gearspace thread 469949, post
+//   6195320; not checked on the board). Its datasheet (SBAS452A) group delay
+//   is ADC 27/fS + DAC 28/fS = 55 frames at the 1x rates. The unreported AD/DA
+//   part of the DAWbench LLP Database (January 2025) Pro 24 entry is 58-60
+//   frames, which agrees. The rest is FireWire transport. Converter delay is
+//   not removable latency. The Pro 40 uses the Cirrus CS4272 (same source).
 // - Experiment E1b (same doc) tried capture safety 8 packets (64 frames) and
 //   reverted: RTL dropped by the predicted 16 frames, but at a 16-frame
 //   buffer the steady-state headroom sat at 16 with drops to 0, the input
