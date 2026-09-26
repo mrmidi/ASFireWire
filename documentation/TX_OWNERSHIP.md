@@ -279,10 +279,41 @@ Pre-E1 baseline (build `7ff335bd`, 48 kHz): see §1d. RTL = 2B + 237 fixed (S_in
 **Keep E1a if** the residual lands at ~0 (±1) at 16/32/64, the tone runs are clean, and nothing else moves.
 **Revert** output latency to 52 otherwise.
 
-**E1b (next, only from E1a's numbers):** cut S_in and S_out by the measured minimum headroom minus a margin.
-- Keep if tone and RTL stay clean over long runs at 16 frames, `sOutMinPk` and `sInMinFr` never reach 0,
-  `missedFinality` stays 0 and `sInStarve` stays 0.
-- Otherwise revert to 80/48.
+**E1a on hardware (Pro 24 DSP, 48 kHz, build `de9ea3f`, 16 frames, 110 s stream):**
+- RTL 271 measured against 269 declared: residual **+2.03** (Oblique: 271). The measured path moved +2 against the
+  pre-E1a run, so it varies by ~2 frames between starts (placement alternates −2/−4 on this stream). The declared
+  latency only reaches the HAL, so this is not E1a moving audio. Kept: with 52 the residual would be +6.
+- Tone at 16 frames clean.
+- `sOutMinPk` 0–5 packets. At a 512-frame buffer it was 22–23. No room to cut S_out before T5.
+- `sInMinFr` 24–36 frames of the 80; no starvation after start-up. The cold start's first interval showed one
+  start-up starvation (`sInMinFr=0`).
+- Open: `missedFinality=32648` (~680 ms of frames) in the first 5 s of one stream, 0 after it. Cause unknown.
+- Instrument bug: the first heartbeat of a stream carried `sOutMinPk` over from the previous stream.
+
+**What L is made of (assumption, not verified on the board).** L = 109–111 frames at 48 kHz.
+- Converters: we assume the Pro 24 DSP uses the TI PCM3168A (user). Its datasheet (SBAS452A) gives group delay
+  ADC 27/fS + DAC 28/fS = **55 frames** in single-rate mode, whatever the rate. Dual rate differs (ADC 17/fS,
+  DAC 28/fS), so the 2×/4× doubling rule is not what the converters do.
+- The Windows Focusrite 4.0.0 table agrees: its "I/O" column excludes AD/DA (its footnote), and RTL − (in + out)
+  = 58–60 frames at 44.1 kHz for buffers 32–256 (the 512 row does not fit and is left out).
+- The remaining ~54–56 frames are FireWire transport: 12800-tick transfer delay per direction (~25 frames each at
+  48 kHz) plus a few frames of placement.
+- Our declared device latencies include the converters, as CoreAudio expects. Windows' reported I/O does not, so
+  compare RTL with RTL: at the same buffer ours is ~1.75 ms longer (32: 6.27 vs 4.444 ms; 64: 7.60 vs 5.897 ms),
+  and that gap is in safety and transport, not the converters.
+
+**E1b (this commit): cut S_in by 16 frames, S_out unchanged.**
+- **Declared delta: Saffire capture safety 10 → 8 packets** (80 → 64 frames at 1×). 2×/4× follow the formula
+  (160/384), unmeasured and parked. Pins and `tests/golden/dice-profiles` updated.
+- Instruments:
+  - The S_out interval minimum is reset when the producer is armed.
+  - Reads that starve before the stream's first complete read are start-up: counted in `sInStart` for the whole
+    stream, and kept out of `sInStarve` and `sInMinFr`, which now describe the steady state only.
+- Expected: RTL −16 frames at every buffer (16: 253, 32: 285, 64: 349).
+- **Keep if** tone is clean at 16/32/64, the residual stays where E1a left it, `sInStarve` stays 0, and steady-state
+  `sInMinFr` stays ≥ 8. **Revert** to 10 packets otherwise.
+- S_out waits for T5: part of the output margin is the provisional 3-packet guard, which exists because the fill
+  projects the hardware position instead of reading it.
 
 ## 2. How we got here: keep midi's understanding, not its architecture
 

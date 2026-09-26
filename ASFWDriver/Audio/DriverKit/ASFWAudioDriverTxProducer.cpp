@@ -716,6 +716,8 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txStreamEngine.ResetForStart(0, 0);
     ivars.runtime.txPlacementNextLogHost = 0;
     ivars.runtime.txFilledFrameEnd = 0;
+    // The interval minimum belongs to one stream: drop the previous one's.
+    (void)ivars.runtime.txStreamEngine.TakeMinFinalityMarginPackets();
     ivars.runtime.txMissedFinalityAtStart =
         ivars.runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load(
             std::memory_order_relaxed) +
@@ -1208,7 +1210,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             //   ahead of the finality frontier (-1: nothing was filled);
             // sInMinFr = smallest S_in headroom, capture frames already
             //   written past the HAL read end (-1: no reads);
-            // sInStarve = capture starvations this interval.
+            // sInStarve = capture starvations this interval after start-up;
+            // sInStart = reads that starved before the stream's first complete
+            //   read (the capture ring still filling), for the whole stream.
             const uint64_t missedNow =
                 ivars->runtime.txStreamEngine.PayloadWriterCounters()
                     .framesMissedFinality.load(std::memory_order_relaxed) +
@@ -1222,7 +1226,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             ASFW_LOG(
                 DirectAudio,
                 "[TxPrep] forcedNoData=%llu missedFinality=%llu sOutMinPk=%lld "
-                "sInMinFr=%lld sInStarve=%llu margin=%u min=%u latUs=%llu/%llu/%llu "
+                "sInMinFr=%lld sInStarve=%llu sInStart=%llu margin=%u min=%u latUs=%llu/%llu/%llu "
                 "late1500=%llu wakes=%llu%{public}s",
                 directControl->txReplayForcedNoData.load(std::memory_order_relaxed),
                 missedNow >= ivars->runtime.txMissedFinalityAtStart
@@ -1232,6 +1236,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 sInMin == UINT64_MAX ? -1LL : static_cast<long long>(sInMin),
                 directControl->rxCaptureBufferTelemetry.completedStarvationEvents.load(
                     std::memory_order_relaxed),
+                directControl->captureRingStartupStarvations.load(std::memory_order_relaxed),
                 boundedMargin,
                 minCommittedMargin,
                 latencyNanos / 1000,

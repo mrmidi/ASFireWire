@@ -675,6 +675,11 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> captureRingReadFrame{0};
     std::atomic<uint64_t> captureRingOverruns{0};
     std::atomic<uint64_t> captureRingStarvations{0};
+    // Of those, the reads that starved before CoreAudio's first complete read
+    // of the stream: start-up, kept out of the S_in headroom telemetry so it
+    // measures the steady state. Written only on the IO thread.
+    std::atomic<uint64_t> captureRingStartupStarvations{0};
+    std::atomic<bool> captureRingFirstCompleteRead{false};
     RxCaptureBufferTelemetry rxCaptureBufferTelemetry{};
 
     [[nodiscard]] HostClockAnchorPublishResult PublishHostClockAnchor(
@@ -789,6 +794,8 @@ struct AudioTransportControlBlock final {
         captureRingReadFrame.store(0, std::memory_order_relaxed);
         captureRingOverruns.store(0, std::memory_order_relaxed);
         captureRingStarvations.store(0, std::memory_order_relaxed);
+        captureRingStartupStarvations.store(0, std::memory_order_relaxed);
+        captureRingFirstCompleteRead.store(false, std::memory_order_relaxed);
         rxCaptureBufferTelemetry.Reset();
 
         generation.fetch_add(1, std::memory_order_acq_rel);

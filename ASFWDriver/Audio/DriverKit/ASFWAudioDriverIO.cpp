@@ -60,6 +60,17 @@ bool PrepareCaptureRingForBeginRead(ASFW::Audio::Runtime::AudioGraphBinding& gra
     }
     if (starved) {
         control.captureRingStarvations.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Until the first complete read the capture ring is still filling behind
+    // the HAL clock: count that as start-up, not as S_in headroom.
+    if (!control.captureRingFirstCompleteRead.load(std::memory_order_relaxed)) {
+        if (starved) {
+            control.captureRingStartupStarvations.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        control.captureRingFirstCompleteRead.store(true, std::memory_order_relaxed);
+    }
+    if (starved) {
         control.rxCaptureBufferTelemetry.RecordStarvation(starvedFrames);
     }
     control.rxCaptureBufferTelemetry.Observe(
