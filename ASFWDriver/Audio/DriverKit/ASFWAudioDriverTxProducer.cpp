@@ -508,7 +508,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 
         const auto prepareResult =
             ivars.runtime.txStreamEngine.PrepareNextTransmitSlot(
-                static_cast<uint32_t>(nextPacketToPrepare),
+                nextPacketToPrepare,
                 timing);
         if (prepareResult !=
             ASFW::Protocols::Audio::DICE::TxSlotPrepareResult::
@@ -567,7 +567,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         // a secondary hiccup must never stall the master (channels 1–16).
         if (ivars.runtime.txSecondaryActive) {
             (void)ivars.runtime.txStreamEngineSecondary.PrepareNextTransmitSlot(
-                static_cast<uint32_t>(nextPacketToPrepare), timing);
+                nextPacketToPrepare, timing);
         }
 
         const uint32_t slotIdx =
@@ -578,7 +578,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         // M-Audio cadence NO-DATA packets are full-size (CF-labelled blocks).
         const auto* preparedSlot =
             ivars.runtime.txStreamEngine.Timeline().SlotByIndex(
-                static_cast<uint32_t>(nextPacketToPrepare));
+                nextPacketToPrepare);
         const bool emittedData = preparedSlot != nullptr && preparedSlot->isData;
         if (ivars.runtime.mAudioInternalTxActive.load(std::memory_order_acquire) &&
             !ivars.runtime.mAudioInternalTxTiming.CommitPacket(
@@ -643,7 +643,7 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
             break;
         }
         if (ivars.runtime.txStreamEngine.PrepareNextTransmitSlot(
-                static_cast<uint32_t>(packetIndex), timing) !=
+                packetIndex, timing) !=
             ASFW::Protocols::Audio::DICE::TxSlotPrepareResult::
                 kPrepared) {
             break;
@@ -651,7 +651,7 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
         // Seed the secondary ring in lockstep with the same NO-DATA packets.
         if (ivars.runtime.txSecondaryActive) {
             (void)ivars.runtime.txStreamEngineSecondary.PrepareNextTransmitSlot(
-                static_cast<uint32_t>(packetIndex), timing);
+                packetIndex, timing);
         }
         if (ivars.runtime.mAudioInternalTxActive.load(std::memory_order_acquire) &&
             !ivars.runtime.mAudioInternalTxTiming.CommitPacket(mAudioPlan, false)) {
@@ -783,7 +783,7 @@ bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars, TxPlacementSample& out) no
     // the slot is read without the RT-side seqlock.
     const auto* slot =
         ivars.runtime.txStreamEngine.Timeline().SlotByIndex(static_cast<uint32_t>(packet));
-    if (slot == nullptr || slot->packetIndex != static_cast<uint32_t>(packet) ||
+    if (slot == nullptr || slot->packetIndex != packet ||
         !slot->isData || slot->framesInPacket == 0) {
         return false;
     }

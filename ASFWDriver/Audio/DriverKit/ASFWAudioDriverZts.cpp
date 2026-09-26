@@ -188,8 +188,7 @@ void ObserveMAudioTxClock(ASFWAudioDriver_IVars& ivars,
         newestCompletionBusTicks = completionTicks;
         correlationBusTicks = correlationTicks;
 
-        const auto* slot = ivars.runtime.txStreamEngine.Timeline().SlotByIndex(
-            static_cast<uint32_t>(packetIndex));
+        const auto* slot = ivars.runtime.txStreamEngine.Timeline().SlotByIndex(packetIndex);
         if (!slot || !slot->isData || slot->framesInPacket == 0 ||
             dataPacketCount == dataPackets.size()) {
             continue;

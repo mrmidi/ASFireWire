@@ -953,4 +953,38 @@ TEST(TxOwnershipGolden, PlacementMeterAgreesWithTheWire) {
 
 }
 
+// The transport maps absolute 64-bit packets and accepts a slot only at
+// ExpectedTxCommitGeneration(packet). A 32-bit index on the producer side
+// diverged from it after 2^32 packets (6.2 days at 8000/s) and the next
+// refill would FATAL on "slot not committed" (T5d).
+TEST(TxPacketIndexWidth, APacketPastTwoToTheThirtySecondCommitsItsOwnGeneration) {
+    constexpr uint32_t kSlots = Geometry::kTxSharedSlotPackets;
+    constexpr uint32_t kStride = 296;
+    std::vector<uint8_t> payload(uint64_t{kSlots} * kStride);
+    std::vector<IsochTxPacketMeta> metadata(kSlots);
+    IsochTxQueueControl queue{};
+
+    DextTxSlotProvider provider;
+    provider.payloadBase = payload.data();
+    provider.metadataRing = metadata.data();
+    provider.queueControl = &queue;
+    provider.numSlots = kSlots;
+    provider.slotStrideBytes = kStride;
+
+    constexpr uint64_t kPacket = (uint64_t{1} << 32) + 5;
+    ASFW::Protocols::Audio::AMDTP::TxPacketSlotView slot{};
+    ASSERT_TRUE(provider.AcquireWritableSlot(kPacket, slot));
+    EXPECT_EQ(slot.packetIndex, kPacket);
+    EXPECT_EQ(slot.bytes, payload.data() + (kPacket % kSlots) * kStride);
+
+    ASFW::Protocols::Audio::AMDTP::PreparedTxPacket packet{};
+    packet.packetIndex = kPacket;
+    packet.byteCount = 8;
+    ASSERT_TRUE(provider.PublishSlot(packet));
+    const auto& meta = metadata[kPacket % kSlots];
+    EXPECT_EQ(meta.packetIndex, kPacket);
+    EXPECT_EQ(meta.commitGeneration.load(), ASFW::Isoch::ExpectedTxCommitGeneration(kPacket, kSlots));
+    EXPECT_EQ(queue.committedEnd.load(), kPacket + 1);
+}
+
 } // namespace

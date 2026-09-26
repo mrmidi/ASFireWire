@@ -14,7 +14,7 @@ enum class PacketSlotState : uint8_t {
 };
 
 struct PacketTimelineSlot final {
-    uint32_t packetIndex{0};
+    uint64_t packetIndex{0};
 
     uint8_t* packetBytes{nullptr};
     uint32_t packetCapacityBytes{0};
@@ -39,7 +39,7 @@ struct PacketTimelineSlot final {
 struct PacketSlotSnapshot final {
     const PacketTimelineSlot* slot{nullptr};
     uint32_t generation{0};
-    uint32_t packetIndex{0};
+    uint64_t packetIndex{0};
     uint8_t* packetBytes{nullptr};
     uint32_t packetSizeBytes{0};
     uint64_t firstAudioFrame{0};
@@ -60,7 +60,7 @@ public:
                           uint8_t* packetBytes,
                           uint32_t packetCapacityBytes) noexcept;
 
-    void MarkNoDataPacket(uint32_t packetIndex) noexcept;
+    void MarkNoDataPacket(uint64_t packetIndex) noexcept;
 
     // Pump-side lookup (same thread as the mutators). Returns a live slot;
     // must not be used from the IO/RT side — use SnapshotSlotForAudioFrame.
@@ -72,8 +72,8 @@ public:
     [[nodiscard]] bool SnapshotSlotForAudioFrame(uint64_t absoluteFrame,
                                                  PacketSlotSnapshot& out) const noexcept;
 
-    PacketTimelineSlot* SlotByIndex(uint32_t packetIndex) noexcept;
-    const PacketTimelineSlot* SlotByIndex(uint32_t packetIndex) const noexcept;
+    PacketTimelineSlot* SlotByIndex(uint64_t packetIndex) noexcept;
+    const PacketTimelineSlot* SlotByIndex(uint64_t packetIndex) const noexcept;
 
     [[nodiscard]] uint32_t SlotCount() const noexcept;
 

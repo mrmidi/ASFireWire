@@ -83,7 +83,6 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     }
 
     // Slot packet indices are 32-bit; compare in wrap-safe 32-bit arithmetic.
-    const uint32_t firstWritable = static_cast<uint32_t>(firstWritablePacket);
     const uint64_t writeEndFrame =
         hostBuffer.firstFrame + hostBuffer.frameCount;
     const uint64_t exposedFrameEnd = timeline_->ExposedFrameEnd();
@@ -117,7 +116,7 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         }
 
         if (firstWritablePacket != 0) {
-            const auto margin = static_cast<int32_t>(snap.packetIndex - firstWritable);
+            const auto margin = static_cast<int64_t>(snap.packetIndex - firstWritablePacket);
             if (margin < 0) {
                 ++missedFinality;
                 continue;

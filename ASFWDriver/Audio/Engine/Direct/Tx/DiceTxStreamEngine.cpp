@@ -96,7 +96,7 @@ bool DiceTxStreamEngine::IsFrameCursorAligned() const noexcept {
 }
 
 TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
-    uint32_t packetIndex, const AMDTP::AmdtpTimingState& timing) noexcept {
+    uint64_t packetIndex, const AMDTP::AmdtpTimingState& timing) noexcept {
     if (slotProvider_ == nullptr) {
         return TxSlotPrepareResult::kSlotProviderUnavailable;
     }

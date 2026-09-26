@@ -31,7 +31,7 @@ public:
     PreparedTxPacket publishedPacket{};
 
     bool AcquireWritableSlot(
-        uint32_t packetIndex,
+        uint64_t packetIndex,
         TxPacketSlotView& outSlot) noexcept override {
         if (!allowAcquire) {
             return false;
@@ -61,7 +61,7 @@ public:
     std::array<uint8_t, 232> bytes{};
     PreparedTxPacket published{};
 
-    bool AcquireWritableSlot(uint32_t packetIndex,
+    bool AcquireWritableSlot(uint64_t packetIndex,
                              TxPacketSlotView& outSlot) noexcept override {
         outSlot = {packetIndex, bytes.data(), static_cast<uint32_t>(bytes.size())};
         return true;

@@ -43,7 +43,6 @@ const MotuPayloadWriterCounters& MotuPayloadWriter::Counters() const noexcept {
 void MotuPayloadWriter::WriteFloat32Interleaved(
     const Protocols::Audio::AMDTP::HostAudioBufferView& hostBuffer,
     uint64_t firstWritablePacket) noexcept {
-    const uint32_t firstWritable = static_cast<uint32_t>(firstWritablePacket);
 
     if (timeline_ == nullptr || hostBuffer.interleavedFloat32 == nullptr ||
         hostBuffer.channels == 0 || hostBuffer.frameCount == 0 ||
@@ -77,7 +76,7 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
         }
 
         if (firstWritablePacket != 0 &&
-            static_cast<int32_t>(snap.packetIndex - firstWritable) < 0) {
+            static_cast<int64_t>(snap.packetIndex - firstWritablePacket) < 0) {
             ++missedFinality;
             continue;
         }

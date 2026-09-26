@@ -371,7 +371,14 @@ began. So the replay distance follows the lead by itself; what limits a producer
   newest completion, an unbounded status walk, a missing tail link, an unterminated batch, ignoring exhaustion
   and waking only when idle each fail at least one test. The older refill tests now run in production order
   (the first refill maps packet 504 into slot 0).
-- Left for T5d: 64-bit packet index end to end.
+- T5d (next commit): 64-bit packet index end to end.
+
+**T5d: 64-bit TX packet index.** The transport maps absolute 64-bit packets and accepts a slot only at
+`ExpectedTxCommitGeneration(packet)`, but the slot-provider port, the stream engine, the packet timeline and
+both payload writers carried a 32-bit index. After 2^32 packets (6.2 days at 8000/s) the producer would commit
+the wrong generation and the next refill would FATAL. All of them are 64-bit now; the writers' finality margin
+is a signed 64-bit difference. The `[TxWire]` log printed the index with `%u` and now uses `%llu`. A test commits
+packet 2^32 + 5 and checks its generation (fails if the index is truncated). No wire change; goldens unchanged.
 
 **On hardware, to check:** `IT: Stopped` shows `exhausted=0`; `minGap` stays far above 0; no `IT FATAL`; start-up
 still plays; RTL and tone unchanged (the ring does not add latency); a 48 ↔ 44.1 switch.

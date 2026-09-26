@@ -89,13 +89,13 @@ struct HostAudioBufferView final {
 };
 
 struct TxPacketSlotView final {
-    uint32_t packetIndex{0};
+    uint64_t packetIndex{0};
     uint8_t* bytes{nullptr};
     uint32_t capacityBytes{0};
 };
 
 struct PreparedTxPacket final {
-    uint32_t packetIndex{0};
+    uint64_t packetIndex{0};
     uint32_t byteCount{0};
 
     bool isData{false};

@@ -136,13 +136,13 @@ public:
     uint32_t slotStrideBytes{0};
 
     bool AcquireWritableSlot(
-        uint32_t packetIndex,
+        uint64_t packetIndex,
         ASFW::Protocols::Audio::AMDTP::TxPacketSlotView& outSlot)
         noexcept override {
         if (!payloadBase || numSlots == 0 || slotStrideBytes == 0) {
             return false;
         }
-        const uint32_t slotIdx = packetIndex % numSlots;
+        const auto slotIdx = static_cast<uint32_t>(packetIndex % numSlots);
         outSlot.packetIndex = packetIndex;
         outSlot.bytes = payloadBase + (slotIdx * slotStrideBytes);
         outSlot.capacityBytes = slotStrideBytes;
@@ -155,7 +155,7 @@ public:
         if (!metadataRing || !queueControl || numSlots == 0) {
             return false;
         }
-        const uint32_t slotIdx = packet.packetIndex % numSlots;
+        const auto slotIdx = static_cast<uint32_t>(packet.packetIndex % numSlots);
         auto& meta = metadataRing[slotIdx];
 
         meta.packetIndex = packet.packetIndex;
@@ -187,7 +187,7 @@ public:
         // Content inspection belongs to Audio and runs immediately before the
         // release commit. Transport receives only opaque bytes and metadata.
         if (audioControl) {
-            const uint32_t slotIndex = packet.packetIndex % numSlots;
+            const auto slotIndex = static_cast<uint32_t>(packet.packetIndex % numSlots);
             const auto observation = audioControl->txWirePayloadTelemetry.Observe(
                 packet.packetIndex,
                 payloadBase + static_cast<uint64_t>(slotIndex) * slotStrideBytes,
@@ -198,7 +198,7 @@ public:
                     "tx-wire-payload",
                     observation.firstInfo ? 0u : 1000u,
                     ::ASFW::Logging::LogLevel::Warning,
-                    "[TxWire] packet=%u first=%d dropout=%d infoQuads=%u maxAbs24=%u lastQuad=0x%08x",
+                    "[TxWire] packet=%llu first=%d dropout=%d infoQuads=%u maxAbs24=%u lastQuad=0x%08x",
                     packet.packetIndex,
                     observation.firstInfo ? 1 : 0,
                     observation.dropout ? 1 : 0,

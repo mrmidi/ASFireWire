@@ -108,7 +108,7 @@ bool AmdtpPacketTimeline::ExposeDataPacket(const PreparedTxPacket& packet,
     return true;
 }
 
-void AmdtpPacketTimeline::MarkNoDataPacket(uint32_t packetIndex) noexcept {
+void AmdtpPacketTimeline::MarkNoDataPacket(uint64_t packetIndex) noexcept {
     if (slots_ == nullptr) {
         return;
     }
@@ -172,7 +172,7 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
 
         const PacketSlotState state = slot.state.load(std::memory_order_relaxed);
         const bool isData = slot.isData;
-        const uint32_t pktIdx = slot.packetIndex;
+        const uint64_t pktIdx = slot.packetIndex;
         uint8_t* packetBytes = slot.packetBytes;
         const uint32_t packetSizeBytes = slot.packetSizeBytes;
         const uint64_t firstAudioFrame = slot.firstAudioFrame;
@@ -209,7 +209,7 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
 }
 
 const PacketTimelineSlot*
-AmdtpPacketTimeline::SlotByIndex(uint32_t packetIndex) const noexcept {
+AmdtpPacketTimeline::SlotByIndex(uint64_t packetIndex) const noexcept {
     if (slots_ == nullptr) {
         return nullptr;
     }
@@ -224,7 +224,7 @@ AmdtpPacketTimeline::SlotByIndex(uint32_t packetIndex) const noexcept {
     return &slot;
 }
 
-PacketTimelineSlot* AmdtpPacketTimeline::SlotByIndex(uint32_t packetIndex) noexcept {
+PacketTimelineSlot* AmdtpPacketTimeline::SlotByIndex(uint64_t packetIndex) noexcept {
     return const_cast<PacketTimelineSlot*>(
         static_cast<const AmdtpPacketTimeline*>(this)->SlotByIndex(packetIndex));
 }

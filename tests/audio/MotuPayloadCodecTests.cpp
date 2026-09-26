@@ -39,7 +39,7 @@ public:
     PreparedTxPacket publishedPacket{};
 
     bool AcquireWritableSlot(
-        uint32_t packetIndex,
+        uint64_t packetIndex,
         TxPacketSlotView& outSlot) noexcept override {
         if (!allowAcquire) {
             return false;

@@ -80,7 +80,7 @@ public:
     }
 
     [[nodiscard]] TxSlotPrepareResult PrepareNextTransmitSlot(
-        uint32_t packetIndex,
+        uint64_t packetIndex,
         const AMDTP::AmdtpTimingState& timing) noexcept;
     [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
 
