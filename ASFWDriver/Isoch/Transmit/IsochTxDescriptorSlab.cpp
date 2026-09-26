@@ -38,8 +38,9 @@ kern_return_t IsochTxDescriptorSlab::AllocateAndInitialize(Memory::IIsochDMAMemo
         return kIOReturnNoResources;
     }
 
-    // Zero the entire slab (will be filled with 0xDE in Start()).
-    std::memset(descRegion_.virtualBase, 0, Layout::kDescriptorRingSize);
+    // Zero the whole region the allocator returned (filled with 0xDE in
+    // Start()). Plain stores: the slab is cache-inhibited (UncachedFill.hpp).
+    ASFW::Shared::FillUncachedDma(descRegion_.virtualBase, 0, descRegion_.size);
 
     ASFW_LOG(Isoch, "IT: Descriptor ring ready. DescIOVA=0x%llx (pageOff=0x%llx)",
              descRegion_.deviceBase, pageOffset);
