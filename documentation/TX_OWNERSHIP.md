@@ -296,7 +296,9 @@ Pre-E1 baseline (build `7ff335bd`, 48 kHz): see §1d. RTL = 2B + 237 fixed (S_in
   (https://gearspace.com/threads/focusrite-saffire-pro-24-vs-apogee-duet-converters-shoot-out.469949/post-6195320).
   Not checked on the board. The PCM3168A datasheet (SBAS452A) gives group delay ADC 27/fS + DAC 28/fS =
   **55 frames** in single-rate mode, whatever the rate. Dual rate differs (ADC 17/fS, DAC 28/fS), so the 2×/4×
-  doubling rule is not what the converters do. The CS4272 parts (Pro 40 profile) have not been looked at.
+  doubling rule is not what the converters do. The CS4272 parts (Pro 40 profile) have not been looked at. The
+  same Gearspace post also says the Apogee Duet uses the CS4272; that is the poster's statement, not Focusrite's
+  e-mail, so it is a lead for the Duet's latency, not a fact.
 - The Windows numbers agree. Source: DAWbench LLP Database, January 2025, Focusrite Saffire Pro 24, driver 4.0.0,
   Windows 7 x64 (https://dawbench.com/images/DAWbench%20LLP%20Database-January-2025.pdf). Its "I/O" column
   excludes AD/DA (the table's footnote; RTL is measured with a utility), and RTL − (in + out) = 58–60 frames for
