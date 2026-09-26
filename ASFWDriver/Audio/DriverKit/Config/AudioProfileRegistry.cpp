@@ -68,9 +68,14 @@ constexpr DiceRangeMember kVeniceMembers[] = {
 //   reverted: RTL dropped by the predicted 16 frames, but at a 16-frame
 //   buffer the steady-state headroom sat at 16 with drops to 0, the input
 //   starved after start-up, and the tone clicked. 10 stays.
+// - E2 (same doc, §1h): playback safety 6 -> 3 packets (48 -> 24 frames).
+//   RTL 337/273/241 at 64/32/16-frame buffers, residual +0.03, tone clean,
+//   no late fills at 32/64; at 16 frames the fill lands on the guard with
+//   no cushion (acceptable at that buffer size).
 // The Pro 40 was not measured and keeps the vendor ladder.
 DiceProfile gFocusriteProfile{{.name = "Focusrite Saffire (DICE)",
                                .captureSafetyPackets = 10,
+                               .playbackSafetyPackets = 3,
                                .inputLatency1x = 53,
                                .outputLatency1x = 52}};
 DiceProfile gFocusritePro40Profile{{.name = "Focusrite Saffire Pro 40"}};

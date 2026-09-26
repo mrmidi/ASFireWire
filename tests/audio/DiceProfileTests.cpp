@@ -250,13 +250,13 @@ TEST(DiceProfileTests, FocusriteAsymmetricSafetyOffsetsAndLatencies) {
     // tried and reverted; T7 removed the rounding E1a had measured,
     // TX_OWNERSHIP.md §1g).
     // 48 kHz
-    EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 48);   // 6 x 8
+    EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 24);   // 3 x 8 (E2)
     EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 80);   // 10 x 8
     EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 52);
     EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 53);
 
     // 96 kHz
-    EXPECT_EQ(profile->TxSafetyOffsetFrames(96000.0), 128);  // (6 + 2) x 16
+    EXPECT_EQ(profile->TxSafetyOffsetFrames(96000.0), 80);   // (3 + 2) x 16 (E2)
     EXPECT_EQ(profile->RxSafetyOffsetFrames(96000.0), 192);  // (10 + 2) x 16
     EXPECT_EQ(profile->TxReportedLatencyFrames(96000.0), 104);
     EXPECT_EQ(profile->RxReportedLatencyFrames(96000.0), 106);

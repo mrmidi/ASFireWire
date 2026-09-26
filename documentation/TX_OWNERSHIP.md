@@ -501,6 +501,28 @@ The physical path no longer depends on the start, and output is 2–6 frames ear
 (0–7, ~3.5 on average). `[TxPlace]` read +2/+4 (it was −2…−6 before T7), consistent with earlier output, within
 its one-cycle resolution.
 
+## 1h. E2: output side at the estimated floor (2026-09-26, adopted)
+
+**Change (tried on `experiment/e2-output-floor`, then adopted on this branch):** Saffire playback safety 6 → 3 packets (48 → 24 frames, new
+per-profile `playbackSafetyPackets`); fill finality guard 3 → 2 packets. TX transfer delay unchanged (12800 ticks is
+Linux's minimum, `amdtp-stream.c`); input safety unchanged at 80 (its floor needs the input drain; E1b starved at 64).
+
+**Hardware (Pro 24 DSP, 48 kHz):**
+
+| Buffer | RTL declared = measured (Oblique agrees) | Before E2 | `sOutMinPk` | `missedFinality` | tone |
+|---|---|---|---|---|---|
+| 64 | 337 fr, 7.02 ms, residual +0.03 | 361 | 8 | 0 | — |
+| 32 | 273 fr, 5.69 ms, residual +0.03 | 297 | 2–3 | 0 | clean |
+| 16 | 241 fr, 5.02 ms, residual +0.03 | 265 | **0** | 0 | clean |
+
+- The output side runs at the floor estimate at every buffer, and the physical path stays 105.03.
+- At 16 frames the fill lands exactly at the 2-packet guard with nothing to spare: clean for ~90 s, robustness under
+  load (Instruments, long runs) not shown. At 32 frames there is a 2–3 packet cushion.
+- Input headroom 28–36 frames of 80 at every buffer: the remaining gap to Windows (DAWbench best 4.444 ms at 32
+  frames) is on the input side. With an input drain (S_in → ~16–24) the estimate is ~3.7–3.9 ms at 16 frames.
+- Under Instruments at a 16-frame buffer the stream had late fills (two ~15.8k-frame bursts plus small steps); the
+  user's call: acceptable at 16 frames. Adopted without a separate load check at 32.
+
 ## 2. How we got here: keep midi's understanding, not its architecture
 
 The core TX problem is **pacing**. CoreAudio writes PCM when its IO thread runs; this is `W`, the client write end.

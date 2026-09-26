@@ -178,13 +178,13 @@ struct AudioTimingGeometry final {
         kTxHardwareRingPackets;
     static constexpr uint32_t kTxCoverageLeadPackets =
         kTxHardwareRingPackets + kTxPreparationSlackPackets;
-    // TX fill finality guard (documentation/TX_OWNERSHIP.md, T4): packets
-    // ahead of the projected hardware position that the fill still treats as
-    // taken. OHCI fetches a packet's payload about 2 packets before it goes
-    // out, plus 1 packet of slack -- the midi finding c3e27a53, backed by
-    // Saffire.kext writing PCM ~2 packets ahead of the playhead. Provisional:
-    // B3 measures the real writable frontier and replaces this number.
-    static constexpr uint32_t kTxFillFinalityGuardPackets = 3;
+    // TX fill finality guard (documentation/TX_OWNERSHIP.md, T4 and E2):
+    // packets ahead of the projected hardware position that the fill still
+    // treats as taken. 2 is what Saffire.kext writes ahead of the playhead;
+    // with T5's descriptor-status completion the projection is exact at each
+    // refill, and E2 ran clean with it at 64/32/16-frame buffers on the Pro 24
+    // DSP (it was 3, from midi c3e27a53: ~2 packets of OHCI fetch + 1 slack).
+    static constexpr uint32_t kTxFillFinalityGuardPackets = 2;
     // Covers a full client write window plus the output exposure cushion when
     // the producer target is expressed as WriteEnd + kTxExposureLeadFrames.
     // The producer needs to preserve a whole maximum CoreAudio write window
