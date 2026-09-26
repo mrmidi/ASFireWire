@@ -15,8 +15,8 @@ as a starting point to compare against a loopback measurement, never as a declar
   The same post's author (not Focusrite) says the Apogee Duet uses the CS4272.
 - **Community list**, Gearspace:
   https://gearspace.com/threads/anyone-here-got-the-forssell-mad2-ad-converter.1034635/post-11376511
-  Compiled by forum users; entries are hearsay unless confirmed elsewhere. It lists "Saffire Pro: CS4272", which
-  must be an older Saffire Pro model, not the Pro 24 (see the Focusrite e-mail above).
+  Compiled by forum users; entries are hearsay unless confirmed elsewhere. Its "Saffire Pro: CS4272" row does not
+  name a model; for the Pro 24 the Focusrite e-mail above is the source.
 
 ## Devices this driver supports or has seen
 
@@ -28,7 +28,11 @@ as a starting point to compare against a loopback measurement, never as a declar
 | M-Audio FireWire 1814 | Ins 1–2 AKM AK5385A, ins 3–8 AKM AK5381 | AKM AK4358 | Community list | — |
 | M-Audio ProjectMix | AKM AK5381 | AKM AK4358 | Community list | — |
 
-Note the 1814 uses two A/D parts, so its inputs 1–2 and 3–8 may not have the same group delay.
+The 1814 lists two A/D parts (inputs 1–2 and 3–8). The driver declares one input latency for all its inputs
+(`MAudioSpecialProfile::RxReportedLatencyFrames`, input stream latency 0): CoreAudio has no per-channel latency,
+only device and per-stream latency, so a difference could only be expressed by splitting the inputs into two
+streams. Whether the two parts differ at all is not known yet: it needs their datasheets and a per-input
+loopback measurement.
 
 ## Other FireWire interfaces in the community list
 
