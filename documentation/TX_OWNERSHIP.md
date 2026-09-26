@@ -95,6 +95,28 @@ Pro 24 DSP, 48 kHz, build `2dbae402`, from the driver ring:
 
 This is the host rig's stall case (§1a), happening at every start on hardware.
 
+**Same-stream check, 16-frame buffer (2026-09-26).** One continuous stream (driver sequence 6538 onward); the tool
+runs joined it rather than restarting IO:
+- `rtl_loopback --measure --frames 16`: RTL 7825 fr (163.0 ms), 20/20 trials.
+  - Scheduling: 160 measured = 160 declared.
+  - Hardware path: 7665 against 105 declared, residual **+7560**.
+- `[TxPlace]` in the same stream: **−7562 to −7564**.
+
+So TX placement accounts for the whole residual to within ~2–4 frames, and RX contributes about nothing. The
+residual does not depend on buffer size (+7578 at 512 in an earlier stream, +7560 at 16).
+
+**The lag also grows mid-stream.** In this stream `[TxPlace]` moved from −7506 to −7564 around packet 146k (~18 s in)
+without a restart. This is consistent with another client starting IO, which makes `W` jump, then a preparation
+burst and more `kAheadOfProducer` NO-DATA packets. It is inferred from timing, not correlated to a logged event.
+
+**Small buffers in the same stream.** `--tone` at 32 and 16 frames, 5 s each: 0 dropouts, 0 slips, and one "click"
+per run. It sits at the same place each time, ~450 frames right after the tone arrives, and is inaudible. That is the
+tone's own start transient, and the tool now settles past it. Caveats:
+- the device IO cycle was probably 16, because Oblique was also running at 16;
+- the earlier audible glitches were on a long-running older dext.
+
+Which of those differences matters is not known.
+
 **Consequence for T4.** Removing the frame-target loop is necessary but not sufficient. The producer must never
 commit a packet for a cycle whose replay entry does not exist yet. It must stop that preparation pass instead of
 shipping NO-DATA. Preparation depth for replay-driven streams is bounded by RX availability, not by `W`. The check
