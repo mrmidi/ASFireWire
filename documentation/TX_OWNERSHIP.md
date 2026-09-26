@@ -233,6 +233,14 @@ start-up no frame may miss its deadline. With the fill moved back to the queue i
 
 The residual is now entirely TX placement (+4 against `[TxPlace]` −2 to −4).
 
+**Full sweep on `7ff335bd` (48 kHz, pre-T5 baseline).** RTL = 2B + 237 fixed frames (S_in 80 + S_out 48 + L 109):
+
+| Buffer | Declared | Measured | Oblique | Residual | `--tone`, 5 s |
+|---|---|---|---|---|---|
+| 64 | 361 | 365 (7.604 ms) | 365 | +4 | clean |
+| 32 | 297 | 301 (6.271 ms) | 301 | +4 | clean |
+| 16 | 265 | 269 (5.604 ms, as predicted) | 269 | +4 | clean |
+
 `missedFinality` still jumps at every stream start: frames CoreAudio wrote before any TX packet existed for them. It
 must be reset per stream and must exclude those frames, which is pending.
 
