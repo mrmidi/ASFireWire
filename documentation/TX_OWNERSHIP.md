@@ -478,6 +478,16 @@ output latency to 52. Expected: RTL_ts 105.03 on every start, residual ~0, and o
 latency. Verify with the same controlled runs. FW-194's time-basis question stays open but is no longer needed to
 explain the variation.
 
+**T7 (this commit).**
+- `ProjectTxFrameCursor` (`ASFWAudioDriverTxProducer.cpp`) returns the projected frame; the cursor starts there with
+  no rounding. The projection is a named function now so it is unit-tested
+  (`TxFrameCursorProjection.KeepsTheProjectedFrameInsteadOfAPacketBoundary`, which fails with the rounding put back).
+- **Declared delta:** Saffire output latency 56 → 52 at the 1× rates (E1a reverted; 2×/4× follow the doubling rule,
+  104/208). Pins and `tests/golden/dice-profiles` return to their pre-E1a values.
+- TX goldens unchanged: the rig's start projects onto a packet boundary, so it never saw the rounding.
+- **Expected on hardware:** declared 361 at 64 frames; RTL_ts ≈ 105.03 and residual ≈ 0 on every start, whatever
+  `[TxAlign]` would have rounded by. Check with the controlled runs above; `[TxAlign]` now logs cursor = projected.
+
 ## 2. How we got here: keep midi's understanding, not its architecture
 
 The core TX problem is **pacing**. CoreAudio writes PCM when its IO thread runs; this is `W`, the client write end.

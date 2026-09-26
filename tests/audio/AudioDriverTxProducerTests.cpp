@@ -987,4 +987,18 @@ TEST(TxPacketIndexWidth, APacketPastTwoToTheThirtySecondCommitsItsOwnGeneration)
     EXPECT_EQ(queue.committedEnd.load(), kPacket + 1);
 }
 
+// T7 (TX_OWNERSHIP.md §1g): the TX frame cursor starts at the projected frame.
+// Rounding it down to a packet boundary delayed every output frame by 0-7
+// frames depending on the start; on hardware RTL_ts measured 105.03 + that.
+TEST(TxFrameCursorProjection, KeepsTheProjectedFrameInsteadOfAPacketBoundary) {
+    constexpr uint64_t kTicksPerSecond = ASFW::Timing::kTicksPerSecond;
+    // 48 kHz: 512 ticks per frame. 6 frames past a packet boundary stays 6.
+    EXPECT_EQ(ASFW::Audio::DriverKit::ProjectTxFrameCursor(2600, 7566 * 512, 48000), 2600u + 7566u);
+    EXPECT_EQ((2600u + 7566u) % 8u, 6u);
+    // A sub-frame remainder is truncated, never rounded to a packet.
+    EXPECT_EQ(ASFW::Audio::DriverKit::ProjectTxFrameCursor(0, 3 * 512 + 511, 48000), 3u);
+    // 44.1 kHz: exact from the tick*rate product (one second = 44100 frames).
+    EXPECT_EQ(ASFW::Audio::DriverKit::ProjectTxFrameCursor(5, kTicksPerSecond, 44100), 44105u);
+}
+
 } // namespace

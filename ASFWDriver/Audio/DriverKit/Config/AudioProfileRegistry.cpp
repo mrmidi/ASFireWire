@@ -53,13 +53,11 @@ constexpr DiceRangeMember kVeniceMembers[] = {
 // - capture safety 10 packets (80 frames at 48 kHz): one completion batch with
 //   headroom, 1 ms less round trip than the vendor's 16. The timing resolver
 //   floors it at one completion batch.
-// - Experiment E1a (documentation/TX_OWNERSHIP.md, 2026-09-26): output 52 -> 56.
-//   With the T4 fill, RTL_ts measures 109.03 at 16/32/64 frames on the Pro 24
-//   DSP (Oblique agrees), and [TxPlace] shows our TX part of the output path
-//   2-4 frames over what was declared. The loopback measures only the in+out
-//   sum, so the +4 goes where it was measured: output. Revert to 52 if the
-//   residual does not land at ~0.
-// - What the 53/56 contain: the Pro 24 / Pro 24 DSP use the TI PCM3168A
+// - Experiment E1a declared output 56 from a measured RTL_ts of 109.03; the
+//   controlled restart runs (TX_OWNERSHIP.md §1g) showed that was 105.03 plus
+//   the [TxAlign] rounding (0-7 frames per start). T7 removed the rounding, so
+//   output is back to the measured 52 (RTL_ts 105.03, midi 105.01).
+// - What the 53/52 contain: the Pro 24 / Pro 24 DSP use the TI PCM3168A
 //   (Focusrite support e-mail, quoted on Gearspace thread 469949, post
 //   6195320; not checked on the board). Its datasheet (SBAS452A) group delay
 //   is ADC 27/fS + DAC 28/fS = 55 frames at the 1x rates. The unreported AD/DA
@@ -74,7 +72,7 @@ constexpr DiceRangeMember kVeniceMembers[] = {
 DiceProfile gFocusriteProfile{{.name = "Focusrite Saffire (DICE)",
                                .captureSafetyPackets = 10,
                                .inputLatency1x = 53,
-                               .outputLatency1x = 56}};
+                               .outputLatency1x = 52}};
 DiceProfile gFocusritePro40Profile{{.name = "Focusrite Saffire Pro 40"}};
 DiceProfile gMidasVeniceProfile{{.name = "Midas Venice F (DICE)", .rangeMembers = kVeniceMembers}};
 DiceProfile gPreSonusStudioLiveProfile{{.name = "PreSonus StudioLive 16.0.2 (DICE)"}};

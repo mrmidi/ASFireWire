@@ -326,6 +326,11 @@ struct AudioGraphStartState {
 
 namespace ASFW::Audio::DriverKit {
 
+// Start of the TX frame cursor from an RX replay entry (see the definition).
+[[nodiscard]] uint64_t ProjectTxFrameCursor(uint64_t rxFirstFrame,
+                                            uint64_t presentationDeltaTicks,
+                                            uint32_t sampleRate) noexcept;
+
 // Physical direct-memory geometry may be wider than the CoreAudio-visible
 // topology. DICE devices can require a hidden return stream for clock/control
 // purposes even when their user-facing device has no input stream.

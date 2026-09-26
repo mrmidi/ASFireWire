@@ -34,6 +34,20 @@ static_assert(ASFW::Audio::Runtime::RxSequenceReplayState::kCapacity -
 
 namespace ASFW::Audio::DriverKit {
 
+// The TX frame cursor's start: the RX packet's first frame plus the
+// presentation distance to the TX packet, in frames at the live rate. 44.1k
+// has no integer ticks per sample, so the tick*rate product is divided.
+// It is NOT rounded to a packet boundary: rounding down made every output
+// frame play 0-7 frames late, chosen by each start's phase (measured on the
+// Pro 24 DSP: RTL_ts = 105.03 + the rounding, TX_OWNERSHIP.md §1g). Nothing
+// downstream needs packet-aligned frames.
+uint64_t ProjectTxFrameCursor(uint64_t rxFirstFrame,
+                              uint64_t presentationDeltaTicks,
+                              uint32_t sampleRate) noexcept {
+    return rxFirstFrame +
+           (presentationDeltaTicks * sampleRate) / ASFW::Timing::kTicksPerSecond;
+}
+
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                              uint64_t startPacketIndex,
                              uint64_t requiredPacketIndex,
@@ -471,16 +485,12 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     // constant (the old /512 overshot ~8.8% at 44.1k).
                     const auto& txConfig =
                         ivars.runtime.txStreamEngine.StreamConfig();
-                    const uint32_t kFramesPerPacket =
-                        txConfig.framesPerDataPacket;
                     const uint64_t projectedFrame =
-                        replay.firstAudioFrame +
-                        (static_cast<uint64_t>(presentationDeltaTicks) *
-                         txConfig.sampleRate) /
-                            ASFW::Timing::kTicksPerSecond;
-                    const uint64_t alignedFrame =
-                        (projectedFrame / kFramesPerPacket) *
-                        kFramesPerPacket;
+                        ASFW::Audio::DriverKit::ProjectTxFrameCursor(
+                            replay.firstAudioFrame,
+                            static_cast<uint64_t>(presentationDeltaTicks),
+                            txConfig.sampleRate);
+                    const uint64_t alignedFrame = projectedFrame;
                     const bool aligned =
                         ivars.runtime.txStreamEngine
                             .AlignFrameCursorOnce(alignedFrame);
