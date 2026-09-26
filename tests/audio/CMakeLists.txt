@@ -246,6 +246,7 @@ add_audio_test(AudioDriverTxProducerTests
     AudioDriverTxProducerTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverZts.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverTxProducer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverOutputWrite.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"

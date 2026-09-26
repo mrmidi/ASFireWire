@@ -341,6 +341,15 @@ namespace DirectDiagnostics {
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept;
 } // namespace DirectDiagnostics
 
+// The CoreAudio WriteEnd step (ASFWAudioDriverOutputWrite.cpp). Returns false
+// when the span exceeds the output ring, which the IO handler reports as
+// kIOReturnBadArgument.
+[[nodiscard]] bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
+                                        ASFW::Audio::Runtime::AudioTransportControlBlock& control,
+                                        uint64_t sampleTime,
+                                        uint64_t hostTime,
+                                        uint32_t ioBufferFrameSize) noexcept;
+
 [[nodiscard]] kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                                                       ASFWAudioDriver_IVars& ivars) noexcept;
 

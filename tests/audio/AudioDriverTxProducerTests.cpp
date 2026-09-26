@@ -30,10 +30,12 @@
 #include "ASFWAudioDevice.h"
 
 #include "../support/MAudioSpecialHappyPathFixture.inc"
+#include "WireTrace.hpp"
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <optional>
 #include <string>
@@ -72,6 +74,17 @@ struct TransportFault final {
     uint64_t packetIndex{0};
     const char* reason{""};
 };
+
+// A sample that names itself: tag = 1 + (frame mod 32768) * 16 + channel,
+// stored as tag / (2^23 - 1). PcmSlotCodec scales by exactly 2^23 - 1, so the
+// 24-bit slot decodes back to the tag, and 0 means nothing was written.
+constexpr uint32_t kTagFrameModulo = 32768;
+constexpr float kScale24 = 8388607.0f;
+
+float SampleTag(uint64_t frame, uint32_t channel) {
+    const uint32_t tag = 1 + static_cast<uint32_t>(frame % kTagFrameModulo) * 16 + channel;
+    return static_cast<float>(tag) / kScale24;
+}
 
 // Owns everything StartIO would own for the primary playback stream, and
 // plays the transport's part of the shared-queue contract.
@@ -127,6 +140,9 @@ public:
             return false;
         }
         txConfig.sampleRate = sampleRateHz;
+        sampleRate_ = sampleRateHz;
+        pcmChannels_ = txConfig.pcmChannels;
+        dbs_ = txConfig.dbs;
 
         numSlots_ = Geometry::kTxSharedSlotPackets;
         stride_ = ASFW::Isoch::Audio::TxPacketBytesForStreamConfig(txConfig);
@@ -169,6 +185,45 @@ public:
     // device -- the only mode the reference Saffire capture shows (host
     // packets are 8 or 296 bytes, device packets up to 552 = 8 x DBS 17).
     void FeedBlockingRx(uint32_t dataBlocksPerPacket) { rxBlocksPerPacket_ = dataBlocksPerPacket; }
+
+    // CoreAudio's side of playback. Each IO cycle CoreAudio fills its output
+    // ring for [sampleTime, sampleTime + ioFrames) and calls WriteEnd; this
+    // plays that through the driver's real WriteEnd step
+    // (HandleOutputWriteEnd). Sample time runs on the device frame clock: at
+    // bus packet p the device is at frame p * rate / 8000, and CoreAudio
+    // writes up to leadFrames ahead of it, checking at every packet time. No IO runs for packets in
+    // [stallFrom, stallTo); afterwards CoreAudio resumes at the current time,
+    // as the HAL does after an overload, so the frames in between are never
+    // written.
+    //
+    // Every sample carries its own identity (see SampleTag), so the wire
+    // shows which frame landed in which packet.
+    struct HostOutputPlan final {
+        uint32_t ioFrames{512};
+        uint32_t leadFrames{560};
+        uint64_t stallFrom{0};
+        uint64_t stallTo{0};
+        // True where the HAL clock comes from published zero timestamps
+        // (M-Audio: TX completions); IO waits for the first one.
+        bool clockFromZts{false};
+    };
+
+    void EnableHostOutput(const HostOutputPlan& plan) {
+        hostPlan_ = plan;
+        clockFromZts_ = plan.clockFromZts;
+        ringFrames_ = ASFW::IsochTransport::HalBufferProfileForRate(sampleRate_)
+                          .zeroTimestampPeriodFrames;
+        outputRing_.assign(static_cast<size_t>(ringFrames_) * pcmChannels_, 0.0f);
+        auto& memory = ivars_.runtime.directAudioGraph.memory;
+        memory.outputBase = outputRing_.data();
+        memory.outputFrameCapacity = ringFrames_;
+        memory.outputChannels = pcmChannels_;
+    }
+
+    [[nodiscard]] uint32_t SampleRate() const { return sampleRate_; }
+    [[nodiscard]] uint32_t PcmChannels() const { return pcmChannels_; }
+    [[nodiscard]] uint32_t Dbs() const { return dbs_; }
+    [[nodiscard]] uint64_t WriteEnds() const { return writeEnds_; }
 
     // Retires `packets` bus cycles of transmit, one interrupt per batch.
     // Returns false once the transport has stopped on a fault.
@@ -237,6 +292,9 @@ private:
             const uint8_t* bytes = payload_.data() + (packet % numSlots_) * stride_;
             wire_.push_back({packet, std::vector<uint8_t>(bytes, bytes + meta.payloadLength)});
             queue_->PushCompletionStamp(packet, CycleTimerFor(packet, 0));
+            // CoreAudio wakes on its own clock, not on our interrupt: give it
+            // every packet time, after that packet has left.
+            DriveHostWrites(packet + 1);
         }
         completed_ += delta;
         queue_->completionCursor.store(completed_);
@@ -252,6 +310,61 @@ private:
 
         if (queue_->statusWord.load() == IsochTxQueueStatus::kProducerFault) {
             fault_ = TransportFault{completed_, "producer-fault-status"};
+        }
+    }
+
+    // CoreAudio's sample time "now", as the HAL derives it from the latest
+    // zero timestamp. Where the rig publishes none (the DICE cases feed RX
+    // replay directly and run no RX consumer), the device frame clock stands
+    // in: packet * rate / 8000, the frame the RX timeline would project.
+    [[nodiscard]] bool NowSampleTime(uint64_t atPacket, uint64_t& now) const {
+        const auto& published = device_->published;
+        if (!published.empty()) {
+            const auto& anchor = published.back();
+            const uint64_t host = HostTicksFor(atPacket);
+            if (host < anchor.hostTime) {
+                return false;
+            }
+            now = anchor.sampleTime + (host - anchor.hostTime) * sampleRate_ / 1'000'000'000ULL;
+            return true;
+        }
+        if (clockFromZts_) {
+            return false;
+        }
+        now = atPacket * sampleRate_ / kCyclesPerSecond;
+        return true;
+    }
+
+    void DriveHostWrites(uint64_t atPacket) {
+        if (!hostPlan_) {
+            return;
+        }
+        const auto& plan = *hostPlan_;
+        if (atPacket >= plan.stallFrom && atPacket < plan.stallTo) {
+            stalled_ = true;
+            return;
+        }
+        uint64_t now = 0;
+        if (!NowSampleTime(atPacket, now)) {
+            return;  // the HAL has no clock yet, so CoreAudio does no IO
+        }
+        if (stalled_) {
+            stalled_ = false;
+            if (nextWrite_ < now) {
+                nextWrite_ = (now / plan.ioFrames + 1) * plan.ioFrames;
+            }
+        }
+        while (nextWrite_ + plan.ioFrames <= now + plan.leadFrames) {
+            for (uint64_t f = nextWrite_; f < nextWrite_ + plan.ioFrames; ++f) {
+                float* frame = outputRing_.data() + (f % ringFrames_) * pcmChannels_;
+                for (uint32_t ch = 0; ch < pcmChannels_; ++ch) {
+                    frame[ch] = SampleTag(f, ch);
+                }
+            }
+            EXPECT_TRUE(ASFW::Audio::DriverKit::HandleOutputWriteEnd(
+                ivars_, *control_, nextWrite_, HostTicksFor(atPacket), plan.ioFrames));
+            ++writeEnds_;
+            nextWrite_ += plan.ioFrames;
         }
     }
 
@@ -316,6 +429,18 @@ private:
     std::vector<uint8_t> payload_;
     std::unique_ptr<IsochTxPacketMeta[]> metadata_;
     std::unique_ptr<IsochTxQueueControl> queue_;
+
+    uint32_t sampleRate_{0};
+    uint32_t pcmChannels_{0};
+    uint32_t dbs_{0};
+
+    std::optional<HostOutputPlan> hostPlan_;
+    std::vector<float> outputRing_;
+    uint32_t ringFrames_{0};
+    uint64_t nextWrite_{0};
+    uint64_t writeEnds_{0};
+    bool stalled_{false};
+    bool clockFromZts_{false};
 
     uint32_t rxBlocksPerPacket_{0};
     uint64_t rxCycles_{0};
@@ -500,6 +625,232 @@ TEST(AudioDriverTxProducerTests, SaffireReplaysRxTimingOnceReplayEstablishes) {
     ASSERT_LT(firstData, wire.size());
     EXPECT_LE(firstData, Geometry::kTxSharedSlotPackets);
     EXPECT_GE(dataPackets, (wire.size() - firstData) * 3 / 4 - 1);
+}
+
+// ---------------------------------------------------------------------------
+// TX ownership goldens (milestone 6, T1; documentation/TX_OWNERSHIP.md)
+//
+// Records, before milestone 6 changes anything, which CoreAudio frames reach
+// which packets on the wire. Each run of packets becomes one line:
+//
+//   NODATA          no data blocks (SYT 0xFFFF)
+//   PCM             every block carries a written frame, consecutive
+//   SILENT          DATA packets whose blocks were never written
+//   MIXED           written and unwritten blocks in one packet, or a torn one
+//
+// `offset` is the run's first frame minus the device frame at the packet's
+// transmit time (packet * rate / 8000): where output frames land relative to
+// transmission. NODATA packets inside a PCM or SILENT run are counted there.
+
+struct PacketView final {
+    enum class Kind { NoData, Pcm, Silent, Mixed } kind{Kind::NoData};
+    uint32_t blocks{0};
+    int64_t firstFrame{-1};
+    int64_t lastFrame{-1};
+    uint32_t silentBlocks{0};
+    uint8_t label{0};
+};
+
+PacketView ViewPacket(const WirePacket& packet, uint32_t dbs, uint32_t pcm) {
+    PacketView v{};
+    if (packet.bytes.size() <= 8 || !packet.IsData()) {
+        return v;
+    }
+    v.blocks = static_cast<uint32_t>((packet.bytes.size() - 8) / (dbs * 4));
+    v.label = packet.bytes[8];
+    bool torn = false;
+    int64_t expected = -1;
+    for (uint32_t b = 0; b < v.blocks; ++b) {
+        int64_t blockFrame = -1;
+        uint32_t written = 0;
+        for (uint32_t slot = 0; slot < pcm; ++slot) {
+            const uint32_t q = packet.Quadlet(8 + (static_cast<size_t>(b) * dbs + slot) * 4);
+            int32_t value = static_cast<int32_t>(q & 0x00FFFFFFu);
+            if (value & 0x00800000) {
+                value -= 0x01000000;
+            }
+            if (value <= 0) {
+                continue;
+            }
+            ++written;
+            const int64_t frame = (value - 1) / 16;
+            if (blockFrame < 0) {
+                blockFrame = frame;
+            } else if (frame != blockFrame) {
+                torn = true;
+            }
+        }
+        if (written == 0) {
+            ++v.silentBlocks;
+            continue;
+        }
+        if (written != pcm) {
+            torn = true;
+        }
+        if (v.firstFrame < 0) {
+            v.firstFrame = blockFrame;
+        } else if (blockFrame != expected) {
+            torn = true;
+        }
+        v.lastFrame = blockFrame;
+        expected = (blockFrame + 1) % kTagFrameModulo;
+    }
+    if (v.silentBlocks == v.blocks) {
+        v.kind = PacketView::Kind::Silent;
+    } else if (v.silentBlocks != 0 || torn) {
+        v.kind = PacketView::Kind::Mixed;
+    } else {
+        v.kind = PacketView::Kind::Pcm;
+    }
+    return v;
+}
+
+ASFW::Testing::WireTrace DescribeTxWire(const std::vector<WirePacket>& wire,
+                                        const TxProducerRig& rig) {
+    using Kind = PacketView::Kind;
+    ASFW::Testing::WireTrace trace;
+    struct Run {
+        Kind kind{Kind::NoData};
+        uint64_t firstPacket{0}, lastPacket{0};
+        int64_t firstFrame{-1}, lastFrame{-1};
+        uint64_t data{0}, noData{0};
+        uint8_t label{0};
+        bool open{false};
+    } run;
+    char line[192];
+    const auto flush = [&] {
+        if (!run.open) {
+            return;
+        }
+        const auto deviceFrame = static_cast<int64_t>(run.firstPacket * rig.SampleRate() /
+                                                      kCyclesPerSecond);
+        switch (run.kind) {
+        case Kind::NoData:
+            std::snprintf(line, sizeof line, "pkts %llu-%llu NODATA x%llu",
+                          (unsigned long long)run.firstPacket, (unsigned long long)run.lastPacket,
+                          (unsigned long long)run.noData);
+            break;
+        case Kind::Pcm:
+            std::snprintf(line, sizeof line,
+                          "pkts %llu-%llu PCM frames %lld-%lld data=%llu nodata=%llu label=0x%02x offset=%+lld",
+                          (unsigned long long)run.firstPacket, (unsigned long long)run.lastPacket,
+                          (long long)run.firstFrame, (long long)run.lastFrame,
+                          (unsigned long long)run.data, (unsigned long long)run.noData, run.label,
+                          (long long)(run.firstFrame - deviceFrame));
+            break;
+        case Kind::Silent:
+            std::snprintf(line, sizeof line, "pkts %llu-%llu SILENT data=%llu nodata=%llu label=0x%02x",
+                          (unsigned long long)run.firstPacket, (unsigned long long)run.lastPacket,
+                          (unsigned long long)run.data, (unsigned long long)run.noData, run.label);
+            break;
+        case Kind::Mixed:
+            std::snprintf(line, sizeof line, "pkts %llu-%llu MIXED frames %lld-%lld label=0x%02x",
+                          (unsigned long long)run.firstPacket, (unsigned long long)run.lastPacket,
+                          (long long)run.firstFrame, (long long)run.lastFrame, run.label);
+            break;
+        }
+        trace.Add(line);
+        run.open = false;
+    };
+    for (const auto& packet : wire) {
+        const PacketView v = ViewPacket(packet, rig.Dbs(), rig.PcmChannels());
+        if (v.kind == Kind::NoData) {
+            if (run.open && run.kind != Kind::Mixed) {
+                ++run.noData;
+                run.lastPacket = packet.index;
+                continue;
+            }
+            flush();
+            run = Run{Kind::NoData, packet.index, packet.index, -1, -1, 0, 1, 0, true};
+            continue;
+        }
+        const bool continues =
+            run.open && run.kind == v.kind && run.label == v.label &&
+            (v.kind == Kind::Silent ||
+             (v.kind == Kind::Pcm && v.firstFrame == (run.lastFrame + 1) % kTagFrameModulo));
+        if (continues) {
+            ++run.data;
+            run.lastPacket = packet.index;
+            if (v.kind == Kind::Pcm) {
+                run.lastFrame = v.lastFrame;
+            }
+            continue;
+        }
+        flush();
+        run = Run{v.kind, packet.index, packet.index, v.firstFrame, v.lastFrame, 1, 0, v.label,
+                  true};
+    }
+    flush();
+    return trace;
+}
+
+struct TxGoldenCase final {
+    const char* golden;
+    TxProducerRig::HostOutputPlan plan;
+};
+
+void ExpectTxGolden(const TxProducerRig& rig, const TxGoldenCase& c) {
+    ASFW::Testing::WireTrace trace;
+    char line[160];
+    std::snprintf(line, sizeof line,
+                  "case rate=%u io=%u lead=%u stall=%llu-%llu clock=%s writeEnds=%llu",
+                  rig.SampleRate(), c.plan.ioFrames, c.plan.leadFrames,
+                  (unsigned long long)c.plan.stallFrom, (unsigned long long)c.plan.stallTo,
+                  c.plan.clockFromZts ? "zts" : "device-frame", (unsigned long long)rig.WriteEnds());
+    trace.Add(line);
+    for (const auto& l : DescribeTxWire(rig.Wire(), rig).Lines()) {
+        trace.Add(l);
+    }
+    ASFW::Testing::ExpectMatchesGolden(trace, c.golden);
+}
+
+void RecordSaffireTxGolden(const TxGoldenCase& c) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    rig.EnableHostOutput(c.plan);
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+    ASSERT_GT(rig.WriteEnds(), 0U);
+    ExpectTxGolden(rig, c);
+}
+
+void RecordMAudioTxGolden(const TxGoldenCase& c) {
+    ASFW::Isoch::Audio::AVC::Profiles::MAudioSpecialProfile profile(false);
+    TxProducerRig rig;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::MAudioFireWire1814, 48000));
+    rig.EnableHostOutput(c.plan);
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+    ASSERT_GT(rig.WriteEnds(), 0U);
+    ExpectTxGolden(rig, c);
+}
+
+// CoreAudio writes 512-frame buffers well ahead of the device.
+TEST(TxOwnershipGolden, SaffireClean48k) {
+    RecordSaffireTxGolden({"tx/saffire/clean-48k-io512.txt", {.ioFrames = 512, .leadFrames = 560}});
+}
+
+// A small buffer: 64 frames, written 48 safety frames ahead.
+TEST(TxOwnershipGolden, SaffireSmallBuffer48k) {
+    RecordSaffireTxGolden({"tx/saffire/clean-48k-io64.txt", {.ioFrames = 64, .leadFrames = 112}});
+}
+
+// CoreAudio writes only frames the device has already reached.
+TEST(TxOwnershipGolden, SaffireLateWriter48k) {
+    RecordSaffireTxGolden({"tx/saffire/late-writer-48k-io64.txt", {.ioFrames = 64, .leadFrames = 0}});
+}
+
+// 50 ms without IO (packets 2000-2400), then CoreAudio resumes at the
+// current time.
+TEST(TxOwnershipGolden, SaffireStall48k) {
+    RecordSaffireTxGolden({"tx/saffire/stall-48k-io512.txt",
+                           {.ioFrames = 512, .leadFrames = 560, .stallFrom = 2000, .stallTo = 2400}});
+}
+
+TEST(TxOwnershipGolden, MAudio1814Clean48k) {
+    RecordMAudioTxGolden({"tx/maudio-1814/clean-48k-io512.txt",
+                          {.ioFrames = 512, .leadFrames = 560, .clockFromZts = true}});
 }
 
 } // namespace

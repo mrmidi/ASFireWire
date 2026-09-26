@@ -46,6 +46,41 @@ glitches. The user's hypothesis is that it lines up with the TX interrupt period
 **Stability bar.** Main ran DICE for one 7.4 h stream at 44.1 kHz (95,551 ZTS) without a restart or fault. This
 milestone must not regress that.
 
+## 1a. TX goldens (T1): what the host rig shows today
+
+`tests/audio/AudioDriverTxProducerTests.cpp` (`TxOwnershipGolden.*`, goldens in `tests/golden/tx/`) runs the real
+producer, the real WriteEnd step and an emulated IT consumer. The WriteEnd body is extracted to
+`HandleOutputWriteEnd` (`ASFWAudioDriverOutputWrite.cpp`) so the test calls the same code as the IO handler.
+
+**The rig's model.**
+- CoreAudio acts at every packet time and writes each sample as a tag naming its frame and channel.
+- Its "now" comes from the latest published zero timestamp, as the HAL's does. The DICE cases publish none (the rig
+  feeds RX replay directly), so the device frame clock `packet × rate / 8000` stands in.
+- Only 48 kHz is covered: the rig's RX feed models the 48 kHz blocking cadence only. There is no restart case yet
+  (T6).
+
+These are **rig results**, not hardware results:
+
+| Case | Result |
+|---|---|
+| Saffire, 512 or 64 frames, lead = io + 48 | Every DATA packet after the prefill carries consecutive written frames. `offset +0`: a frame leaves when the device clock reaches it |
+| Saffire, late writer (lead 0) | Every DATA packet is silent: the writes land in packets already sent |
+| Saffire, 50 ms CoreAudio stall | After the stall, TX replay underflows 1124 times, and every packet from about packet 2990 to the end of the run (4000) is **NO-DATA** |
+| 1814, 512 frames | PCM after the first 7 DATA packets. The packet on the wire is about 26 frames ahead of the HAL's "now", leaving ~22 frames of the 48-frame lead |
+| AM824 label on unfilled PCM | `0x00`, not MBLA `0x40` (T3 changes this) |
+
+**The stall case, hypothesis only.** When CoreAudio resumes, `W` and the frame target (`W` + the 4160-frame
+horizon) jump by the stalled frames. The producer then prepares ahead of the RX replay it depends on. Each underflow
+commits a NO-DATA packet, and TX and RX then advance in step, so the gap persists.
+
+The rig runs 0.5 s, shorter than the ~1 s `[TxExposure]` sampler that drives the self-heal, so recovery is not
+exercised. On hardware this would be up to ~1 s of silence after a CoreAudio stall. **Not verified on hardware.**
+It is the `W`/`E` rendezvous that T4 deletes.
+
+Two earlier rig models were wrong and were corrected before these results were recorded:
+- CoreAudio writing on the nominal clock for the 1814, which lost all PCM;
+- CoreAudio acting only at interrupt boundaries, which made periodic 16-frame gaps.
+
 ## 2. How we got here: keep midi's understanding, not its architecture
 
 The core TX problem is **pacing**. CoreAudio writes PCM when its IO thread runs; this is `W`, the client write end.
