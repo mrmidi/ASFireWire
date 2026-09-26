@@ -47,6 +47,9 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     counters_.minDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
     counters_.maxDeltaConsumed.store(0, std::memory_order_relaxed);
     counters_.criticalGapEvents.store(0, std::memory_order_relaxed);
+    // Per stream, like the gap counters: the IT context outlives devices, so
+    // a stale value would report an earlier stream's fault.
+    counters_.mappedRegionExhausted.store(0, std::memory_order_relaxed);
 }
 
 void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {

@@ -409,6 +409,11 @@ still plays; RTL and tone unchanged (the ring does not add latency); a 48 ↔ 44
   0-node scan followed at 881302. So the Default queue was most likely blocked ~520 ms in the discovery/ROM-scan
   path after the reset (older than T5; the cyclic ring used to replay stale packets through such a gap). Harmless
   on an unplug. Open: a reset with the device still present, where the TX fault stop and the reset recovery meet.
+- Duet → M-Audio 1814 re-plug: the Duet streamed cleanly; its unplug took the same exhaustion fault 103 ms after
+  the reset, and the ROM scan again completed ~520 ms later. The 1814 plays (bootloader cue, CMP verified, two
+  stream starts, `forcedNoData=0`, `missedFinality=0`, no fault); its clock runs from the completion stamps T5
+  changed. Instrument fix: `exhausted` was not reset per stream, so a clean Duet stop reported the Pro 24 DSP
+  unplug's fault (`exhausted=1`).
 - The Pro 24 DSP stream before the unplug (~35 min) had one slow producer wake (5.1 ms, `late1500=9`) and
   `missedFinality=16`: two packets filled too late, once.
 - Instrument fix: `sInMinFr` printed the capture-ring capacity (12288) when no client read input, because the

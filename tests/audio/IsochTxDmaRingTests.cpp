@@ -987,6 +987,10 @@ TEST_F(IsochTxDmaRingFiniteTest, AQueueThatRanDryIsAFaultNotAReplay) {
     // Nothing moved: no descriptor re-mapped, no completion published.
     EXPECT_EQ(controlBlock_.completionCursor.load(), 8u);
     EXPECT_EQ(HeaderInSlot(0), headerBefore);
+
+    // The count belongs to that stream: the next start begins at zero.
+    ring_.ResetForStart();
+    EXPECT_EQ(ring_.RTCounters().mappedRegionExhausted.load(), 0u);
 }
 
 TEST_F(IsochTxDmaRingFiniteTest, AFailedBatchStaysUnreachable) {
