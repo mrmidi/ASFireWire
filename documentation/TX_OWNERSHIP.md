@@ -325,7 +325,9 @@ Pre-E1 baseline (build `7ff335bd`, 48 kHz): see §1d. RTL = 2B + 237 fixed (S_in
 - Reading: at 16 frames the input path needs 64 + a tail of up to ~16 frames, so S_in cannot drop until the
   capture ring is filled closer to the read (not by the interrupt cadence alone).
 - Seen again: `missedFinality=32580` in the first 5 s of a stream started by a 16-frame client (32648 last time).
-  Reproducible; the next thing to find.
+  Reproducible, but only seen with a 16-frame client starting the stream. 16 frames is an experimental buffer
+  size, so this is parked until after T5 (user, 2026-09-26). First step when it is picked up: a one-shot line on
+  the first miss of a stream (frame, its packet, the projected hardware packet, time since StartIO).
 
 ## 2. How we got here: keep midi's understanding, not its architecture
 
