@@ -434,6 +434,50 @@ still plays; RTL and tone unchanged (the ring does not add latency); a 48 ↔ 44
   receive side feeds the same minimum. It now prints −1 without a read in the interval.
 
 
+## 1g. Controlled restart runs: the hardware path moves with the `[TxAlign]` rounding (2026-09-26)
+
+**Question.** RTL_ts (the round trip minus scheduling, i.e. the physical path) was fixed within a stream but differed
+between stream starts in 2-frame steps: 107.03, 109.03 or 111.03 frames. Which start-time decision sets it?
+
+**Method.** Pro 24 DSP, 48 kHz, 64-frame buffer, build `e6833d59`, electrical loopback out 1 → in 1. For each start:
+1. restart the stream with a bus reset over MCP (`asfw_bus_reset_dev`); the DICE recovery re-runs StopIO → StartIO;
+2. read that start's alignment facts from the driver ring (`tools/rtl/start_alignment.py --after <seq>`): the `[TxAlign]` cursor and projected
+   frame, the first `[TxSyt]` `sytOffDelayFree`, the ZTS seed, the first `[TxPlace]` offsets;
+3. run `tools/rtl/rtl_loopback -d Saffire --measure --frames 64 --window 16384` (20 trials each, sd 0.00);
+4. before measuring start 3, predict its RTL_ts from its ring facts.
+
+**Results.**
+
+| Start (ring seq) | Run | `[TxAlign]` cursor / projected | diff | `sytOffDelayFree` | `[TxPlace]` | RTL_ts |
+|---|---|---|---|---|---|---|
+| 2752 | E1a, 16 fr | 10192 / 10198 | 6 | — | −2/−4 | 111.03 |
+| 2159 | T5 first run | 10168 / 10170 | 2 | — | −4 | 107.03 |
+| 14791 | controlled 1 | 10168 / 10174 | 6 | 44639 | −4/−2 | 111.03 |
+| 15457 | controlled 2 | 10160 / 10162 | 2 | 43103 | −6 | 107.03 |
+| 16452 | controlled 3 | 10160 / 10166 | 6 | 43103 | −6 | **predicted 111.03, measured 111.03** |
+
+**Finding. RTL_ts = 105.03 + diff**, where diff = projected − cursor. `[TxAlign]`
+(`ASFWAudioDriverTxProducer.cpp:476-481`) rounds the frame cursor down to a multiple of 8
+(`alignedFrame = projectedFrame / kFramesPerPacket * kFramesPerPacket`). The packet whose presentation time
+belongs to frame `projected` then carries frame `projected − diff`, so every output frame plays `diff` frames late:
+0–7 frames, chosen at random by each start's phase, fixed for the stream.
+- The SYT offset does not predict it: starts 15457 and 16452 had the same `sytOffDelayFree` (43103) and different
+  RTL_ts. So FW-194's arrival-vs-presentation question (§6) is not the cause of this variation.
+- `[TxPlace]` does not show it (−6 at diff 2, −4/−2 at diff 6): the meter resolves one bus cycle (~6 frames), too
+  coarse for a 0–7 frame shift.
+- With diff = 0 the path is 105.03 frames: midi's measured 105.01. midi has no rounding (`projectedFrame` /
+  `alignedFrame` do not exist there).
+- E1a's "+4 on output" (§1e) was this rounding's average, not device latency: 56 over-declares by 4 on a diff-0
+  start and under-declares by 3 on a diff-7 start.
+- Nothing downstream needs 8-aligned frames: the packet timeline, both payload writers and the fill use range checks
+  against each packet's `firstAudioFrame`, and the fill indexes the HAL ring per frame (`% frameCapacity`), so a
+  packet may straddle the ring wrap. The rounding came in with `119ba6ed` (2026-06-14) without a stated reason.
+
+**Consequence for T7.** T7 becomes: align the frame cursor to the projected frame (no rounding) and return the Saffire
+output latency to 52. Expected: RTL_ts 105.03 on every start, residual ~0, and on average ~3.5 frames less real
+latency. Verify with the same controlled runs. FW-194's time-basis question stays open but is no longer needed to
+explain the variation.
+
 ## 2. How we got here: keep midi's understanding, not its architecture
 
 The core TX problem is **pacing**. CoreAudio writes PCM when its IO thread runs; this is `W`, the client write end.
@@ -626,7 +670,7 @@ single-constant tweak.
 | T4 | Audio-side fill; delete the `W`/`E` rendezvous and its metering | FW-213/214/215 |
 | T5 | Finite DMA + descriptor-status completion; 64-bit packet index | FW-216 |
 | T6 | Lifetimes + one recovery transaction | FW-218 |
-| T7 | FW-194, decided after B3 (§6) | FW-194 |
+| T7 | Frame cursor to the projected frame, no rounding; Saffire output latency back to 52 (§1g) | FW-194 |
 | B3 | Measure: dispatch latency, finality distance, missed/torn fills, RTL, 16/32-frame buffers | FW-217 |
 | T8 | Derived output safety + remaining instrumentation cleanup | FW-171 overlap |
 | T9 | Reverse audit + docs | FW-220 |
