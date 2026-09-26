@@ -32,7 +32,10 @@ The 1814 lists two A/D parts (inputs 1–2 and 3–8). The driver declares one i
 (`MAudioSpecialProfile::RxReportedLatencyFrames`, input stream latency 0): CoreAudio has no per-channel latency,
 only device and per-stream latency, so a difference could only be expressed by splitting the inputs into two
 streams. Whether the two parts differ at all is not known yet: it needs their datasheets and a per-input
-loopback measurement.
+loopback measurement. M-Audio's own driver also reports one value for all inputs: its
+`m_audio_b_FWBaseEngine::ResetLatency` (@0x3f7a, recorded on the `midi` branch in
+`Audio/Families/BeBoB/MAudio/MAudioSpecialTiming.hpp`) takes the per-model `GetRoundTripLatencyForFDF` and reports
+`(rt + 1) >> 1` as input latency and `rt >> 1` as output latency. A split would go beyond the vendor reference.
 
 ## Other FireWire interfaces in the community list
 
