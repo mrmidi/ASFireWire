@@ -716,6 +716,11 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txStreamEngine.ResetForStart(0, 0);
     ivars.runtime.txPlacementNextLogHost = 0;
     ivars.runtime.txFilledFrameEnd = 0;
+    ivars.runtime.txMissedFinalityAtStart =
+        ivars.runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load(
+            std::memory_order_relaxed) +
+        ivars.runtime.motuPayloadWriter.Counters().framesMissedFinality.load(
+            std::memory_order_relaxed);
     ivars.runtime.txReplayReader.Reset();
 
     // The resolved geometry is the only rate/timing source here; there is no
@@ -1096,7 +1101,13 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         // the transport margin is the coverage target (~16 ms), far above the
         // 1.5 ms wake budget, and the fill's exposure to slow wakes shows up
         // as missedFinality in the heartbeat.
-        if (newCommittedMarginLow || heartbeatDue) {
+        // A new margin low is an anomaly only near the descriptor floor; the
+        // drain from the prefill down to the coverage target at start-up is
+        // a sequence of new lows by design.
+        const bool nearFloor =
+            boundedMargin <= ASFW::IsochTransport::AudioTimingGeometry::kTxHardwareRingPackets +
+                                 ASFW::IsochTransport::AudioTimingGeometry::kTxPacketsPerGroup;
+        if ((newCommittedMarginLow && nearFloor) || heartbeatDue) {
             // Anomaly emissions intentionally close an interval early. This
             // keeps every retained [TxPrep] line self-contained and leaves the
             // normal healthy interval wall-clock paced at five seconds.
@@ -1191,21 +1202,37 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             // themselves suppressed.
             directControl->txHeartbeatLastHostTicks.store(
                 now, std::memory_order_relaxed);
-            // Kept under the driver ring's 232-byte message: fill health
-            // first, then margin and wake latency (T4, TX_OWNERSHIP.md).
+            // Kept under the driver ring's 232-byte message. Fill health and
+            // the CoreAudio budget first (TX_OWNERSHIP.md, experiment E1):
+            // sOutMinPk = smallest S_out headroom this interval, in packets
+            //   ahead of the finality frontier (-1: nothing was filled);
+            // sInMinFr = smallest S_in headroom, capture frames already
+            //   written past the HAL read end (-1: no reads);
+            // sInStarve = capture starvations this interval.
+            const uint64_t missedNow =
+                ivars->runtime.txStreamEngine.PayloadWriterCounters()
+                    .framesMissedFinality.load(std::memory_order_relaxed) +
+                ivars->runtime.motuPayloadWriter.Counters()
+                    .framesMissedFinality.load(std::memory_order_relaxed);
+            const int64_t sOutMin =
+                ivars->runtime.txStreamEngine.TakeMinFinalityMarginPackets();
+            const uint64_t sInMin =
+                directControl->rxCaptureBufferTelemetry.completedMinimumAvailableFrames.load(
+                    std::memory_order_relaxed);
             ASFW_LOG(
                 DirectAudio,
-                "[TxPrep] forcedNoData=%llu missedFinality=%llu margin=%u "
-                "iMin=%u iMax=%u min=%u latUs=%llu/%llu/%llu late1500=%llu "
-                "wakes=%llu%{public}s",
+                "[TxPrep] forcedNoData=%llu missedFinality=%llu sOutMinPk=%lld "
+                "sInMinFr=%lld sInStarve=%llu margin=%u min=%u latUs=%llu/%llu/%llu "
+                "late1500=%llu wakes=%llu%{public}s",
                 directControl->txReplayForcedNoData.load(std::memory_order_relaxed),
-                ivars->runtime.txStreamEngine.PayloadWriterCounters()
-                        .framesMissedFinality.load(std::memory_order_relaxed) +
-                    ivars->runtime.motuPayloadWriter.Counters()
-                        .framesMissedFinality.load(std::memory_order_relaxed),
+                missedNow >= ivars->runtime.txMissedFinalityAtStart
+                    ? missedNow - ivars->runtime.txMissedFinalityAtStart
+                    : 0,
+                sOutMin == INT64_MAX ? -1LL : static_cast<long long>(sOutMin),
+                sInMin == UINT64_MAX ? -1LL : static_cast<long long>(sInMin),
+                directControl->rxCaptureBufferTelemetry.completedStarvationEvents.load(
+                    std::memory_order_relaxed),
                 boundedMargin,
-                intervalMarginMin,
-                intervalMarginMax,
                 minCommittedMargin,
                 latencyNanos / 1000,
                 intervalLatencyMaxNanos / 1000,

@@ -251,6 +251,39 @@ session also had no Music.app playing.
 controller re-sent 96 old packets and `[TxPlace]` moved −4 → −580 for good. That boot then logged ~30 more
 `IT lap sighted` events without a further shift.
 
+## 1e. Experiment E1: instrument the CoreAudio budget, then spend it (2026-09-26)
+
+Model (user): **RTL ≈ L_in + S_in + 2B + S_out + L_out**, all around the ZTS-projected hardware NOW.
+- S_in is our promise that input is in the ring S_in behind NOW.
+- S_out is our deadline to put output on the wire S_out ahead of NOW.
+- L is the fixed device path.
+
+Pre-E1 baseline (build `7ff335bd`, 48 kHz): see §1d. RTL = 2B + 237 fixed (S_in 80 + S_out 48 + measured L 109), residual
++4 at 16/32/64.
+
+**E1a (this commit): instrument, and declare the measured L_out.**
+- `[TxPrep]` gains the budget in the model's terms:
+  - `sOutMinPk`: the smallest S_out headroom in the interval, in packets ahead of the finality frontier (−1: nothing
+    filled);
+  - `sInMinFr`: the smallest S_in headroom, capture frames already written past the HAL read end (−1: no reads);
+  - `sInStarve`: capture starvations;
+  - `missedFinality` now counts this stream only, and frames before CoreAudio's first write are no longer counted.
+- The start-up heartbeat burst is gone: a new margin low is logged only near the descriptor floor.
+- **Declared delta: Saffire output latency 52 → 56** at the 1× rates (32/44.1/48 kHz). `RTL_ts` measures 109.03, and
+  `[TxPlace]` puts the +4 on output.
+  - 2×/4× follow the profile's doubling rule (112/224), unmeasured and parked.
+  - Pins updated: `ProfileTimingPinTable.inc`, `DiceProfileTests`, `tests/golden/dice-profiles`.
+- Note: midi measured `RTL_ts` 105.01 with the same 53/52, so midi's TX placement was ~4 frames earlier than ours.
+  Recovering those 4 real frames is a separate item; E1a only declares them.
+
+**Keep E1a if** the residual lands at ~0 (±1) at 16/32/64, the tone runs are clean, and nothing else moves.
+**Revert** output latency to 52 otherwise.
+
+**E1b (next, only from E1a's numbers):** cut S_in and S_out by the measured minimum headroom minus a margin.
+- Keep if tone and RTL stay clean over long runs at 16 frames, `sOutMinPk` and `sInMinFr` never reach 0,
+  `missedFinality` stays 0 and `sInStarve` stays 0.
+- Otherwise revert to 80/48.
+
 ## 2. How we got here: keep midi's understanding, not its architecture
 
 The core TX problem is **pacing**. CoreAudio writes PCM when its IO thread runs; this is `W`, the client write end.

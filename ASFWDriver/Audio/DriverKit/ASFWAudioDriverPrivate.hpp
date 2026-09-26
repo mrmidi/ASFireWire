@@ -247,6 +247,9 @@ struct AudioDriverRuntimeState {
     // were already copied into their packets, or passed their finality and
     // stay silent. Reset per start, before IO runs.
     uint64_t txFilledFrameEnd{0};
+    // framesMissedFinality at this stream's start; [TxPrep] reports the
+    // difference, so the heartbeat counts only this stream's missed frames.
+    uint64_t txMissedFinalityAtStart{0};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Audio::BeBoB::MAudioInternalTxTiming mAudioInternalTxTiming;

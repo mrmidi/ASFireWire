@@ -101,6 +101,11 @@ public:
     [[nodiscard]] const AMDTP::AmdtpPayloadWriterCounters& PayloadWriterCounters() const noexcept {
         return payloadWriter_.Counters();
     }
+    // S_out headroom since the last call, in packets (INT64_MAX: nothing
+    // written); the interval restarts.
+    [[nodiscard]] int64_t TakeMinFinalityMarginPackets() noexcept {
+        return payloadWriter_.TakeMinFinalityMarginPackets();
+    }
 
     AMDTP::AmdtpTxPolicy BuildTxPolicy(
         const ASFW::Isoch::Audio::AudioStreamTxPolicy& policy) const noexcept;

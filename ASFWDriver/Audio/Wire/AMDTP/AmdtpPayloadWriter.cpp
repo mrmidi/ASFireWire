@@ -98,6 +98,7 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     uint64_t outsidePacket = 0;
     uint64_t racedReuse = 0;
     uint64_t missedFinality = 0;
+    int64_t minMarginPackets = INT64_MAX;
     uint64_t nonZeroFrames = 0;
     uint64_t nonZeroSlots = 0;
     float localMaxAbs = 0.0f;
@@ -115,10 +116,15 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
             continue;
         }
 
-        if (firstWritablePacket != 0 &&
-            static_cast<int32_t>(snap.packetIndex - firstWritable) < 0) {
-            ++missedFinality;
-            continue;
+        if (firstWritablePacket != 0) {
+            const auto margin = static_cast<int32_t>(snap.packetIndex - firstWritable);
+            if (margin < 0) {
+                ++missedFinality;
+                continue;
+            }
+            if (margin < minMarginPackets) {
+                minMarginPackets = margin;
+            }
         }
 
         const uint64_t sourceFrame =
@@ -192,6 +198,14 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
                                             std::memory_order_relaxed);
     counters_.framesRacedReuse.fetch_add(racedReuse,
                                          std::memory_order_relaxed);
+    if (minMarginPackets != INT64_MAX) {
+        int64_t current =
+            counters_.intervalMinFinalityMarginPackets.load(std::memory_order_relaxed);
+        while (minMarginPackets < current &&
+               !counters_.intervalMinFinalityMarginPackets.compare_exchange_weak(
+                   current, minMarginPackets, std::memory_order_relaxed)) {
+        }
+    }
     counters_.framesMissedFinality.fetch_add(missedFinality,
                                                     std::memory_order_relaxed);
     counters_.framesNonZero.fetch_add(nonZeroFrames,

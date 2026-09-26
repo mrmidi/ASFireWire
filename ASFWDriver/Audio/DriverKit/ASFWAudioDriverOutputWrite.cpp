@@ -138,6 +138,11 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     const uint64_t oldestValid =
         control->playbackRingOldestValidFrame.load(std::memory_order_acquire);
     uint64_t& filled = ivars.runtime.txFilledFrameEnd;
+    if (filled == 0) {
+        // Frames before CoreAudio's first write were never written: there is
+        // nothing to fill, and they must not count as missed deadlines.
+        filled = control->client.outputWriteEndSampleFrame.load(std::memory_order_acquire);
+    }
     if (filled < oldestValid) {
         filled = oldestValid;  // frames the ring no longer holds stay silent
     }

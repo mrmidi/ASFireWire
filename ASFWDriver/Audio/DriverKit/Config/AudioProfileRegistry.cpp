@@ -53,11 +53,17 @@ constexpr DiceRangeMember kVeniceMembers[] = {
 // - capture safety 10 packets (80 frames at 48 kHz): one completion batch with
 //   headroom, 1 ms less round trip than the vendor's 16. The timing resolver
 //   floors it at one completion batch.
+// - Experiment E1a (documentation/TX_OWNERSHIP.md, 2026-09-26): output 52 -> 56.
+//   With the T4 fill, RTL_ts measures 109.03 at 16/32/64 frames on the Pro 24
+//   DSP (Oblique agrees), and [TxPlace] shows our TX part of the output path
+//   2-4 frames over what was declared. The loopback measures only the in+out
+//   sum, so the +4 goes where it was measured: output. Revert to 52 if the
+//   residual does not land at ~0.
 // The Pro 40 was not measured and keeps the vendor ladder.
 DiceProfile gFocusriteProfile{{.name = "Focusrite Saffire (DICE)",
                                .captureSafetyPackets = 10,
                                .inputLatency1x = 53,
-                               .outputLatency1x = 52}};
+                               .outputLatency1x = 56}};
 DiceProfile gFocusritePro40Profile{{.name = "Focusrite Saffire Pro 40"}};
 DiceProfile gMidasVeniceProfile{{.name = "Midas Venice F (DICE)", .rangeMembers = kVeniceMembers}};
 DiceProfile gPreSonusStudioLiveProfile{{.name = "PreSonus StudioLive 16.0.2 (DICE)"}};

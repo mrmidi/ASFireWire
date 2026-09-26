@@ -21,6 +21,10 @@ struct AmdtpPayloadWriterCounters final {
     // Frames not written because their packet was below the first writable
     // packet (the finality frontier): that packet keeps its armed silence.
     std::atomic<uint64_t> framesMissedFinality{0};
+    // S_out headroom: the smallest distance, in packets, between a written
+    // frame's packet and the first writable packet, since the last reader
+    // took it (exchange with INT64_MAX). INT64_MAX: nothing written.
+    std::atomic<int64_t> intervalMinFinalityMarginPackets{INT64_MAX};
     std::atomic<uint64_t> framesNonZero{0};
     std::atomic<uint64_t> slotsNonZero{0};
     std::atomic<uint64_t> underExposureCalls{0};
@@ -41,6 +45,10 @@ public:
                                  uint64_t firstWritablePacket) noexcept override;
 
     [[nodiscard]] const AmdtpPayloadWriterCounters& Counters() const noexcept;
+    [[nodiscard]] int64_t TakeMinFinalityMarginPackets() noexcept {
+        return counters_.intervalMinFinalityMarginPackets.exchange(INT64_MAX,
+                                                                   std::memory_order_relaxed);
+    }
 
 private:
     AmdtpStreamConfig streamConfig_{};
