@@ -8,6 +8,13 @@ copy, fallback and local re-derivation of timing/HAL geometry on `main`, taken a
 Vocabulary follows [`LATENCY_VOCABULARY.md`](LATENCY_VOCABULARY.md). Where this document says "depth",
 it means a buffer or runway size, which is *not* a latency.
 
+> **Milestone 6 update (2026-09-26).** The TX rows here describe the tree before the
+> audio-side fill. Since then: the IT ring is a finite 504-packet queue (not a cyclic 48-packet
+> ring), the preparation lead is 1008 packets and the shared store 1512, and the exposure
+> horizon (`kTxDataHorizonPackets`, `kTxExposureFloorFrames`, `TxDataHorizonFrames`,
+> `kTxExposureLead*`, `kTxFrameExposureWindow*`) plus `kMinAvgCadence*` and
+> `kSchedulingJitterFrames` are deleted. See [TX_OWNERSHIP.md](TX_OWNERSHIP.md) §1f, §1k.
+
 **How to read the tables**
 
 - **ID**: a stable row identifier (`G-nn`). Keep IDs when updating a row; do not renumber.

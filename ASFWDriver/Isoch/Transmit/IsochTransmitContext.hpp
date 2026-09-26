@@ -135,10 +135,10 @@ private:
     uint32_t irqStallTicks_{0};
 
     // Consecutive watchdog kicks with zero interrupts observed. The watchdog
-    // bridges interrupt-delivery jitter only: its cadence is far coarser than
-    // the 48-packet descriptor ring, so a stream carried by the watchdog
-    // re-transmits stale ring laps between kicks. A sustained silent streak
-    // is a dead interrupt path and the context must stop honestly.
+    // bridges interrupt-delivery jitter only. Before the finite IT queue (T5)
+    // a watchdog-carried stream re-transmitted stale ring laps between kicks;
+    // now the queue stops at its mapped end instead. Either way a sustained
+    // silent streak is a dead interrupt path and the context stops honestly.
     static constexpr uint32_t kIrqSilentKickFatalThreshold = 16;
     uint32_t irqSilentKickStreak_{0};
 

@@ -5,6 +5,12 @@
 > through one function. [`HARDWARE_TIMELINE_OWNERSHIP.md`](HARDWARE_TIMELINE_OWNERSHIP.md) is
 > authoritative for who owns sample time. Where this document describes the RX anchor or a
 > private M-Audio timeline, read it as history.
+>
+> **TX ownership (milestone 6, 2026-09-26):** the TX exposure cushion described below
+> (`kTxExposureLeadFrames`, `kTxFrameExposureWindowPackets`, the `W`/`E` race, Defect B) no longer
+> exists. PCM reaches packets through the audio-side fill, once, from the HAL output ring, so there
+> is no exposure frontier to keep ahead of CoreAudio. [`TX_OWNERSHIP.md`](TX_OWNERSHIP.md) is
+> authoritative for TX; read the exposure sections here as history.
 
 > **Vocabulary:** latency-shaped numbers in this document (delays, offsets, leads, depths) are classified in [`LATENCY_VOCABULARY.md`](LATENCY_VOCABULARY.md). A configured frame count is not a measured duration, and a depth is never a latency.
 

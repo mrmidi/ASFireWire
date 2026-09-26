@@ -128,6 +128,19 @@ void AmdtpPacketTimeline::MarkNoDataPacket(uint64_t packetIndex) noexcept {
     EndSlotWrite(slot);
 }
 
+void AmdtpPacketTimeline::RetractNewestDataPacket(uint64_t packetIndex,
+                                                  uint64_t firstAudioFrame) noexcept {
+    if (slots_ == nullptr) {
+        return;
+    }
+    // Lower the bound before the slot disappears, so a fill that sees the
+    // slot gone also sees the lower bound.
+    if (firstAudioFrame < exposedFrameEnd_.load(std::memory_order_relaxed)) {
+        exposedFrameEnd_.store(firstAudioFrame, std::memory_order_release);
+    }
+    MarkNoDataPacket(packetIndex);
+}
+
 const PacketTimelineSlot*
 AmdtpPacketTimeline::FindSlotForAudioFrame(uint64_t absoluteFrame) const noexcept {
     if (slots_ == nullptr) {

@@ -213,7 +213,7 @@ void AmdtpTxPacketizer::RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& 
     const bool isEmptyPacket = txPolicy_.emptyPacketsDuringIdle;
     if (isEmptyPacket) {
         packet.byteCount = 0;
-        timeline_->MarkNoDataPacket(packet.packetIndex);
+        timeline_->RetractNewestDataPacket(packet.packetIndex, packet.firstAudioFrame);
     } else {
         const uint8_t cadenceBlocks =
             (txPolicy_.cadencePacketsCarryDataBlocks &&
@@ -231,7 +231,7 @@ void AmdtpTxPacketizer::RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& 
             WriteCadencePacketFill(slot.bytes, payloadBytes);
             dbcCounter_.AdvanceDataBlocks(cadenceBlocks);
         }
-        timeline_->MarkNoDataPacket(packet.packetIndex);
+        timeline_->RetractNewestDataPacket(packet.packetIndex, packet.firstAudioFrame);
     }
     packet.isData = false;
     packet.dbc = dbc;

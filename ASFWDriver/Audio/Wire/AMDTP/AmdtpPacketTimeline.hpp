@@ -61,6 +61,11 @@ public:
                           uint32_t packetCapacityBytes) noexcept;
 
     void MarkNoDataPacket(uint64_t packetIndex) noexcept;
+    // The newest DATA packet was rewritten as NO-DATA (RevertToNoData): its
+    // frames move to the next DATA packet, so the exposed end falls back to
+    // its first frame. Without this the fill takes those frames for already
+    // lost and skips them.
+    void RetractNewestDataPacket(uint64_t packetIndex, uint64_t firstAudioFrame) noexcept;
 
     // Pump-side lookup (same thread as the mutators). Returns a live slot;
     // must not be used from the IO/RT side — use SnapshotSlotForAudioFrame.

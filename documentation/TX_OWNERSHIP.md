@@ -1,6 +1,6 @@
 # TX ownership: PCM → packet → DMA (milestone 6)
 
-**Status:** T0–T8 done (design, goldens, dead surfaces, silence-first + `[TxPlace]`, audio-side fill, finite IT queue, lifetimes, frame cursor, E2, instrument cleanup); T9 open. 2026-09-26, branch `refactor/tx-ownership` off main `52d05ca8`.
+**Status:** T0–T9 done (design, goldens, dead surfaces, silence-first + `[TxPlace]`, audio-side fill, finite IT queue, lifetimes, frame cursor, E2, instrument cleanup, reverse audit). B3's measurements come from the hardware runs in §1d–§1h (RTL at 16/32/64 frames, missed finality, finality margin, a 48 ↔ 44.1 switch, Duet and 1814 re-plugs). Not measured on this branch: a 20-minute soak, and torn fills (there is no counter for them, so dual image + rebind stay parked). 2026-09-26, branch `refactor/tx-ownership` off main `52d05ca8`.
 Linear FW-209 (milestone 6), condensing FW-210 (main inventory), FW-211 (midi distillation) and FW-212 (ownership
 model). The stages are in §8. This document is T0.
 
@@ -572,6 +572,34 @@ histograms, which feed `AudioTelemetrySnapshot` and belong to the telemetry ABI 
 
 No wire change: host goldens unchanged, 2498/2498 host tests, dext build OK.
 
+## 1l. T9: reverse audit of the final tree (2026-09-26)
+
+Greps over `ASFWDriver/` for each thing milestone 6 was meant to remove:
+
+| Looked for | Found | Result |
+|---|---|---|
+| A second PCM buffer or copy | The HAL output ring (`outputBase`) is read only by `FillTransmitPayloads`; no staging, cache or `memcpy` on the TX path | None |
+| Payload writes outside the fill | The packetizer (header + silence arming, producer queue), the MOTU/SYT timing stamp (header/SPH, before publish), `RevertToNoData`, and the two fill writers (sample words only) | None outside the model |
+| Extra TX frame cursors | `DiceTxStreamEngine::nextAudioFrame_` (one per stream engine; the secondary engine is aligned from the same projection), the fill position `txFilledFrameEnd` | Deleted the dead `AmdtpTimingState::nextAudioFrame` field |
+| Cyclic or inferred completion | Completion from descriptor status only (`IsochTxDmaRing.cpp`); comments in `IsochTransmitContext` still said the watchdog "re-transmits stale ring laps" of a "48-packet ring" | Comments corrected; behaviour unchanged (a silent interrupt path still stops the context). `IsochTxLayout.hpp`: deleted five unused guard constants sized for the 48-packet ring and fixed its page-count comments |
+| Leftover `W`/`E` code | `ExposedFrameEnd()` remains, as the fill's upper bound (the frame end of the newest armed DATA packet). Nothing races it | Kept. **Fixed:** `RevertToNoData` did not lower it (noted in §3), so after a MOTU timing revert the fill took the reverted frames for lost and they went out silent. It now retracts to the reverted packet's first frame (`AmdtpPacketTimeline::RetractNewestDataPacket`); `MAudioRevertedDataKeepsFullSizeCadenceAndDbc` checks it and fails without the fix |
+
+**§3 rows, final state** (only rows whose outcome differs from the planned disposition, or that the table left open):
+
+| Row | Planned | Outcome |
+|---|---|---|
+| `AmdtpPayloadWriter` / `MotuPayloadWriter` | The fill, called by the producer | The fill, called from CoreAudio's WriteEnd on the IO thread (§1d: queue wakes were up to 13.7 ms late) |
+| `SnapshotSlotForAudioFrame` | Read by the producer only; RT access goes | Read by the IO-thread fill, so the seqlock stays. A slot is re-armed one shared-slot ring (1512 packets) after its packet, so reuse during a frame's write needs a > 60 ms stall inside it |
+| `exposedFrameEnd_` (`E`) | Delete with the rendezvous | Kept as the fill's bound, retracted on revert (above) |
+| `[TxAlign]` | Keep until B3 | Kept; T7 made it the timeline projection without rounding (§1g) |
+| Alignment re-arm on a replay failure | Review in T6 | Kept: a replay miss re-arms both stream engines together |
+| `AcquireWritableSlot` | Reuse justified by descriptor completion | 64-bit (T5). Not checked per call: the producer arms at most `completion + 1008`, and `kTxPreparationLeadPackets <= kTxSharedSlotPackets - kTxHardwareRingPackets` is a static assert, so a slot is never re-armed while the queue still maps its packet |
+| `PublishSlot` `[TxWire]` | Delete (T8) | Deleted (T8) |
+| StopIO drain, `txSecondaryActive` | T6 | Done (§1j) |
+
+Every other §3 row ended as planned. No wire change in T9 apart from the revert fix, which only affects a stream
+whose MOTU timing stamp failed. Host tests 2498/2498, dext build OK.
+
 ## 1i. Parked: E3, the input side (not scheduled; written down 2026-09-26)
 
 **Why.** After T7 + E2 the Pro 24 DSP at 48 kHz measures RTL 241 / 273 / 337 frames at 16 / 32 / 64 (5.02 / 5.69 /
@@ -809,7 +837,7 @@ single-constant tweak.
 | T7 | Frame cursor to the projected frame, no rounding; Saffire output latency back to 52 (§1g) | FW-194 |
 | B3 | Measure: dispatch latency, finality distance, missed/torn fills, RTL, 16/32-frame buffers | FW-217 |
 | T8 | Instrument cleanup; output safety stays per family, measured (§1k) | FW-171 overlap |
-| T9 | Reverse audit + docs | FW-220 |
+| T9 | Reverse audit + docs (§1l) | FW-220 |
 
 **Not in this milestone:**
 - 88.2/96 kHz (milestone 7).

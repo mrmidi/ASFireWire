@@ -248,16 +248,22 @@ timed.  A small, targeted driver-ring query is permitted only when requested;
 it is read-only and never changes stream state.  Do not run broad or parallel
 queries while audio is playing.
 
-For a live TX-content incident, query the retained `DirectAudio` anomaly lines.
-The under-exposure (W > E) and refill-hole evidence is `[TxPrepFrame]` /
-`[TxPrepRange]`; exposure attribution is `[TxExposure]`:
+For a live TX-content incident, query the retained `DirectAudio` lines. The
+`[TxPrep]` heartbeat carries the fill's health (`missedFinality`: frames that
+reached their packet too late and went out silent; `sOutMinPk`: the smallest
+margin, in packets, between a filled packet and the first packet the fill may
+still write, which is the projected hardware position plus 2). `[TxPrepRange]`
+is the refill-hole evidence (a producer pass that stopped below the descriptor
+floor):
 
 ```bash
 python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query \
   '{"categories":["DirectAudio"],"contains":"[TxPrep","maxLevel":"debug","maxRecords":20}'
-python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query \
-  '{"categories":["DirectAudio"],"contains":"[TxExposure]","maxLevel":"debug","maxRecords":20}'
 ```
+
+`[TxPrepFrame]` and `[TxExposure]` no longer exist (milestone 6,
+`documentation/TX_OWNERSHIP.md`); an older log that has them came from a
+driver before the audio-side fill.
 
 These lines are ring-only (`ASFW_LOG_RING_ONLY`), so read them through the
 driver log ring as above rather than `log show`. A healthy run shows only the

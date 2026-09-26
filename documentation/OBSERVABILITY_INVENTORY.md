@@ -104,16 +104,16 @@ and they must not be reported as round-trip latency.
 | Tag | Event | Producer | Perturbation | Disposition |
 |---|---|---|---|---|
 | `[TxPrep]` | liveness + margin heartbeat, every 5 s; also closes the TX/RX intervals | `ASFWAudioDriverZts.cpp` TX preparation | periodic (5 s) | **keep**: the only expected line on a clean run |
-| `[TxPrepRange]` | preparation stopped short / frame short | TX preparation | gated | **keep** |
-| `[TxPrepFrame]` | a frame deficit while preparing | TX preparation | gated (`frameShort`) | **keep** |
-| `[TxExposure]` | exposure change or unhealthy | TX preparation | gated (changed ∨ unhealthy) | **keep** |
+| `[TxPrepRange]` | preparation stopped below the descriptor floor | TX preparation | gated (`stoppedShort`) | **keep** |
+| `[TxPrepFrame]`, `[TxExposure]` | the old `W`/`E` deficit and its attribution | — | — | **deleted** (milestone 6, T4): the audio-side fill has no exposure frontier to chase ([TX_OWNERSHIP.md](TX_OWNERSHIP.md)) |
+| `[TxPlace]` | where a transmitted frame sits against the HAL clock | TX preparation | once per stream | **keep**: read by `tools/rtl/start_alignment.py` |
 | `[TxAlign]` | frame-cursor self-heal | TX preparation | gated (once at start, then per re-alignment) | **keep** |
 | `[TxReplay]` / `[TxReplayRearm]` | replay read failure / reclamp | TX preparation | gated | **keep** |
 | `[TxProducerFatal]` | a fatal producer fault record | TX preparation | gated (fatal) | **keep** |
-| `[TxWire]` | consecutive-packet dropout detection on the final wire payload | `TxWirePayloadTelemetry` | gated | **keep, not sampled**. FW-171 decided against midi's 1-in-64 sampling: dropout detection needs consecutive packets, and main inspects final content |
+| `[TxWire]` | consecutive-packet dropout scan in `PublishSlot` | — | — | **deleted** (milestone 6, T8): since the audio-side fill, `PublishSlot` runs before PCM reaches the packet, so the scan inspected silence |
 | `[RxReplayReset]` | RX replay reset / bootstrap phase | `DirectAudioReceiveConsumer` | gated, bounded per start | **keep** |
 | `[AudioIO]` | the IO callback returned an error | `DirectAudioReceiveConsumer::ServiceConsumerDiagnostics` | gated (new error generation) | **keep** |
-| `TxSyt` trace (`TxSytTraceLatest`) | the latest TX SYT decision | TX SYT path | low latest-value slot + verbose drain | **keep**: consumed by `tools/zts_sim.py` |
+| `[TxSyt]` | the stream's first replayed TX SYT decision | TX preparation | once per stream | **keep**: read by `tools/rtl/start_alignment.py`. The per-second `TxSytTraceLatest` drain was deleted (T8). `tools/zts_sim.py verify` expects an older `[TxSyt]` format and matches none of these lines |
 | `[Timing]` | the resolved timing/HAL geometry actually applied (rate, SYT, ring, ZTS, IO budget, declarations, safety floor, transfer delay) | `LogResolvedTimingGeometry` (graph build, rate change) | once per resolution | **keep** (FW-183). It replaces the `TimingCursorPolicy (fallback, not applied)` line, which FW-177 deleted together with the policy |
 | `HAL buffer profile`, `Reported HAL latency`, `GetZeroTimestampPeriod`, `txTransferDelay` | declared geometry | `ASFWAudioDevice*` | once per configuration | **keep**; collected by `capture_baseline.sh` |
 | `[MAudioTxClock]`, `[Fireworks]`, `[EFC]`, `[BeBoB]`, `[Onyx]`, `[M8]`, `[MAudio]`, `[DV]`, `[BootloaderCue]`, `[DeviceIdentity]` | device-family control and bring-up | family backends | gated / per command | **keep**; they belong to their families, not to the stable summary |

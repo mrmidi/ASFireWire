@@ -286,7 +286,11 @@ TEST(AmdtpDirectTxTests, MAudioRevertedDataKeepsFullSizeCadenceAndDbc) {
     PreparedTxPacket packet{};
     ASSERT_TRUE(packetizer.PrepareNextPacket(slot, {}, plan, packet));
     ASSERT_TRUE(packet.isData);
+    EXPECT_EQ(timeline.ExposedFrameEnd(), 8U);
     packetizer.RevertToNoData(slot, packet);
+    // The reverted frames belong to the next DATA packet: the fill must wait
+    // for it instead of treating them as lost.
+    EXPECT_EQ(timeline.ExposedFrameEnd(), 0U);
     EXPECT_FALSE(packet.isData);
     EXPECT_EQ(packet.byteCount, 232U);
     EXPECT_EQ(packet.framesInPacket, 0U);

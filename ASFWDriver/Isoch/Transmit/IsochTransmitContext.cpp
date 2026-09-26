@@ -563,11 +563,10 @@ void IsochTransmitContext::Poll() noexcept {
                          latchedIntEvents);
             }
             if (irqSilentKickStreak_ >= kIrqSilentKickFatalThreshold) {
-                // Watchdog-carried streaming re-transmits stale descriptor
-                // laps between kicks (observed Duet zombie, 2026-07-19: the
-                // interrupt path died mid-session and the watchdog fed the
-                // wire for 35 minutes of corrupt audio). Sustained interrupt
-                // silence is a transport fault, not jitter.
+                // Sustained interrupt silence is a transport fault, not
+                // jitter (observed Duet zombie, 2026-07-19, on the old cyclic
+                // ring: the interrupt path died mid-session and the watchdog
+                // fed the wire for 35 minutes of corrupt audio).
                 auto access = hardware_ ? hardware_->TryBeginAccess() : Driver::HardwareAccessScope{};
                 const uint32_t ctrl = access ? access.Read(static_cast<Register32>(
                     DMAContextHelpers::IsoXmitContextControl(contextIndex_))) : 0;
