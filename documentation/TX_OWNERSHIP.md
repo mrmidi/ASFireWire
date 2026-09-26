@@ -414,6 +414,9 @@ still plays; RTL and tone unchanged (the ring does not add latency); a 48 ↔ 44
   stream starts, `forcedNoData=0`, `missedFinality=0`, no fault); its clock runs from the completion stamps T5
   changed. Instrument fix: `exhausted` was not reset per stream, so a clean Duet stop reported the Pro 24 DSP
   unplug's fault (`exhausted=1`).
+- M-Audio 1814 → Pro 24 DSP re-plug: the device came up cold at 44.1 kHz, the start rewrote the clock to 48 kHz,
+  the device reconfigured and locked, and it played. (A start with the same rewrite was silent on `de9ea3f` this
+  morning, so the rewrite alone does not cause the cold-start silence; that investigation is outside M6.)
 - The Pro 24 DSP stream before the unplug (~35 min) had one slow producer wake (5.1 ms, `late1500=9`) and
   `missedFinality=16`: two packets filled too late, once.
 - Instrument fix: `sInMinFr` printed the capture-ring capacity (12288) when no client read input, because the
