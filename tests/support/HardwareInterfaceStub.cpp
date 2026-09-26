@@ -209,7 +209,6 @@ void HardwareInterface::SetInterruptMask(uint32_t mask, bool enable) {
 
 InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp) const noexcept {
     return InterruptSnapshot{ReadScoped(Register32::kIntEvent), ReadScoped(Register32::kIntMaskSet),
-                             ReadScoped(Register32::kIsoXmitEvent), ReadScoped(Register32::kIsoRecvEvent),
                              timestamp};
 }
 
@@ -227,20 +226,20 @@ void HardwareInterface::ClearIntEvents(uint32_t mask) {
     });
 }
 
-void HardwareInterface::ClearIsoXmitEvents(uint32_t mask) {
-    WithState(this, [mask](HardwareTestState& state) {
-        state.registers[KeyFor(Register32::kIsoXmitIntEventClear)] = mask;
-        state.registers[KeyFor(Register32::kIsoXmitEvent)] &= ~mask;
-        state.operations.push_back(TestOperation::ClearIsoXmitEvents);
+IsochContextEvents HardwareInterface::TakeIsochContextEvents(uint32_t intEvent) noexcept {
+    IsochContextEvents events{};
+    WithState(this, [intEvent, &events](HardwareTestState& state) {
+        if ((intEvent & IntEventBits::kIsochRx) != 0) {
+            events.receive = state.registers[KeyFor(Register32::kIsoRecvIntEventClear)];
+            state.registers[KeyFor(Register32::kIsoRecvIntEventClear)] &= ~events.receive;
+        }
+        if ((intEvent & IntEventBits::kIsochTx) != 0) {
+            events.transmit = state.registers[KeyFor(Register32::kIsoXmitIntEventClear)];
+            state.registers[KeyFor(Register32::kIsoXmitIntEventClear)] &= ~events.transmit;
+        }
+        state.operations.push_back(TestOperation::TakeIsochContextEvents);
     });
-}
-
-void HardwareInterface::ClearIsoRecvEvents(uint32_t mask) {
-    WithState(this, [mask](HardwareTestState& state) {
-        state.registers[KeyFor(Register32::kIsoRecvIntEventClear)] = mask;
-        state.registers[KeyFor(Register32::kIsoRecvEvent)] &= ~mask;
-        state.operations.push_back(TestOperation::ClearIsoRecvEvents);
-    });
+    return events;
 }
 
 bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,

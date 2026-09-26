@@ -93,8 +93,10 @@ class HardwareInterface {
     void SetLinkControlBits(uint32_t bits);
     void ClearLinkControlBits(uint32_t bits);
     void ClearIntEvents(uint32_t mask);
-    void ClearIsoXmitEvents(uint32_t mask);
-    void ClearIsoRecvEvents(uint32_t mask);
+    // Reads and clears the per-context isoch event masks, once, for each
+    // direction `intEvent` signals. Call after the global events are
+    // acknowledged; the caller then services every returned context.
+    [[nodiscard]] IsochContextEvents TakeIsochContextEvents(uint32_t intEvent) noexcept;
 
     bool SendPhyConfig(std::optional<uint8_t> gapCount, std::optional<uint8_t> forceRootPhyId,
                        std::string_view caller);
@@ -220,8 +222,7 @@ class HardwareInterface {
         Write,
         WriteAndFlush,
         ClearIntEvents,
-        ClearIsoXmitEvents,
-        ClearIsoRecvEvents,
+        TakeIsochContextEvents,
         SendPhyConfig,
         InitiateBusReset,
         SendPhyGlobalResume,
