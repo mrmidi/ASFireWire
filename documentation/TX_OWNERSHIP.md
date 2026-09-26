@@ -391,6 +391,22 @@ packet 2^32 + 5 and checks its generation (fails if the index is truncated). No 
 **On hardware, to check:** `IT: Stopped` shows `exhausted=0`; `minGap` stays far above 0; no `IT FATAL`; start-up
 still plays; RTL and tone unchanged (the ring does not add latency); a 48 ↔ 44.1 switch.
 
+**On hardware (Pro 24 DSP, build `e6833d59`, 2026-09-26): T5 holds.**
+- Cold start plays (the device was already at 48 kHz, so this is not the cold-silence case).
+- Seven stream stops including a 48 ↔ 44.1 switch: `exhausted=0` every time, no `IT FATAL`, `minGap` ≥ 487 of 504
+  (the latest refill still had 61 ms of runway), `maxDelta` ≤ 16. `forcedNoData=0`, `missedFinality=0` throughout.
+- The replay distance moved as T5b predicted: `[TxAlign] deltaTicks=3864576` = 1258 cycles (256 + ~1008).
+  `[TxPlace]` is unchanged (−4).
+- 64 frames: RTL 363 against 365 declared (−1.97; Oblique 363), tone clean. The ring adds no latency.
+- **Open, predates T5:** the hardware path (RTL_ts) differs between stream starts in 2-frame steps: 109.03 on
+  several starts, 111.03 on two, 107.03 on this one, fixed within a stream (sd 0.00). The `[TxAlign]` rounding
+  (projected − cursor: 6, 2, 6, 2) and the first `[TxPlace]` offsets (−4, +2, −6, −4) do not line up with it on
+  their own. To find the cause, pair RTL_ts with each start's alignment lines over a few restarts. The declared
+  latency cannot be right to better than ±2 frames until then.
+- Instrument fix: `sInMinFr` printed the capture-ring capacity (12288) when no client read input, because the
+  receive side feeds the same minimum. It now prints −1 without a read in the interval.
+
+
 ## 2. How we got here: keep midi's understanding, not its architecture
 
 The core TX problem is **pacing**. CoreAudio writes PCM when its IO thread runs; this is `W`, the client write end.

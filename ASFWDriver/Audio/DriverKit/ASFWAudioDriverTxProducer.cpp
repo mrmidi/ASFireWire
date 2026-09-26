@@ -1228,9 +1228,16 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                     .framesMissedFinality.load(std::memory_order_relaxed);
             const int64_t sOutMin =
                 ivars->runtime.txStreamEngine.TakeMinFinalityMarginPackets();
-            const uint64_t sInMin =
-                directControl->rxCaptureBufferTelemetry.completedMinimumAvailableFrames.load(
-                    std::memory_order_relaxed);
+            // The receive side also observes the capture ring, so without a
+            // CoreAudio read in the interval the minimum is just the ring
+            // capacity. Headroom only exists relative to a read.
+            const bool inputRead =
+                directControl->rxCaptureBufferTelemetry.completedReaderBeginReadCalls.load(
+                    std::memory_order_relaxed) != 0;
+            const uint64_t sInMin = inputRead
+                ? directControl->rxCaptureBufferTelemetry.completedMinimumAvailableFrames.load(
+                      std::memory_order_relaxed)
+                : UINT64_MAX;
             ASFW_LOG(
                 DirectAudio,
                 "[TxPrep] forcedNoData=%llu missedFinality=%llu sOutMinPk=%lld "
