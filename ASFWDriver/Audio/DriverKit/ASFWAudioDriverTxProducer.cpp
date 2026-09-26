@@ -870,9 +870,6 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 kTxPreparationLeadPackets,
             replayEstablished);
 
-    // Copy what CoreAudio has written into the packets that carry it, while
-    // they are still ahead of the hardware (T4, TX_OWNERSHIP.md).
-    ASFW::Audio::DriverKit::FillTransmitPayloads(*ivars);
 
     // [TxPrepRange] Refill-coverage instrumentation. Answers the decisive
     // question: did the producer's range reach `target` this wake, or stop

@@ -243,9 +243,9 @@ struct AudioDriverRuntimeState {
     std::atomic<bool> txActive{false};
     // [TxPlace] rate gate (host ticks); 0 logs the first measurement at once.
     uint64_t txPlacementNextLogHost{0};
-    // TX fill (FillTransmitPayloads): audio frames below this were already
-    // copied into their packets, or passed their finality and stay silent.
-    // Reset per start.
+    // TX fill (FillTransmitPayloads, IO thread only): audio frames below this
+    // were already copied into their packets, or passed their finality and
+    // stay silent. Reset per start, before IO runs.
     uint64_t txFilledFrameEnd{0};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
@@ -366,8 +366,8 @@ struct TxPlacementSample final {
 // The TX fill (ASFWAudioDriverOutputWrite.cpp, documentation/TX_OWNERSHIP.md):
 // copies frames CoreAudio has written to the HAL output ring into the armed
 // packets that carry them, once each, unless the packet is at or behind the
-// finality frontier (projected hardware position + guard). Runs on the TX
-// preparation queue.
+// finality frontier (projected hardware position + guard). Runs inside
+// WriteEnd on CoreAudio's IO thread, its only owner; RT-safe.
 void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept;
 
 // The CoreAudio WriteEnd step (ASFWAudioDriverOutputWrite.cpp). Returns false

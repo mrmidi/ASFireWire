@@ -195,6 +195,35 @@ counted 1124.
 - The write-less `txExposure*` fields and `requestedTargetFrameEnd` (T8).
 - The exposure-window geometry that still sizes the 1648-packet cap and the 1696-slot ring (B3/T8).
 
+## 1d. T4 on hardware, and the fill moved to the IO thread (2026-09-26)
+
+**RTL, 48 kHz, 64-frame buffer:**
+- 367 fr (7.646 ms) against 361 declared: **residual +6 fr (0.126 ms)**, down from +7578.
+- Oblique RTL Utility: 367.
+- `[TxPlace]` in the same stream: −4.
+
+The 157 ms is gone. What we declare to CoreAudio now matches the physical path to within ~6 frames.
+
+**What it cost.** With the fill on the TX preparation queue, `missedFinality` grew in bursts (~27 fr/s over ~70 s)
+while a 64-frame client ran. `rtl_loopback --tone --frames 64` heard them: 3 clicks in 5 s with the one-packet-silence
+signature.
+- A frame has ~1 ms between WriteEnd and its packet's deadline (48-frame safety minus the 3-packet guard).
+- Queue wakes were measured up to **13.7 ms** late (4–7 ms worst per 5 s interval).
+- The old path never met this: it wrote on the IO thread, 157 ms early.
+
+**Decision (user, 2026-09-26): the fill runs inside WriteEnd, on CoreAudio's IO thread, its only owner.**
+- The preparation queue still arms packets with silence ~18 ms ahead (coverage) and no longer fills.
+- Still one PCM copy.
+- RT-safe: no locks, no allocation; the timeline and the clock pair are read through their seqlocks.
+- This is how the vendor drivers fill: inside their own callback context.
+
+**Test:** `SmallBufferFillDoesNotWaitForTheQueue` never runs WriteEnd's queue wake and uses a 64-frame buffer. After
+start-up no frame may miss its deadline. With the fill moved back to the queue it fails (80 → 576 missed).
+
+**Also seen, T5's area:** on one boot an IT refill ~12 ms late lapped the 48-packet cyclic descriptor ring twice. The
+controller re-sent 96 old packets and `[TxPlace]` moved −4 → −580 for good. That boot then logged ~30 more
+`IT lap sighted` events without a further shift.
+
 ## 2. How we got here: keep midi's understanding, not its architecture
 
 The core TX problem is **pacing**. CoreAudio writes PCM when its IO thread runs; this is `W`, the client write end.

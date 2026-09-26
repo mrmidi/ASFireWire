@@ -5,11 +5,13 @@
 // The CoreAudio output side of TX (documentation/TX_OWNERSHIP.md):
 //
 // - WriteEnd publishes the client's write end W and the playback-ring range,
-//   and wakes the TX producer. It does not touch packets: the HAL output ring
-//   CoreAudio just wrote is the PCM publication.
-// - FillTransmitPayloads, run by the producer, copies each written frame once
-//   from that ring into the armed packet that carries it, if the packet is
-//   still ahead of the hardware.
+//   fills, and wakes the TX producer. The HAL output ring CoreAudio just
+//   wrote is the PCM publication.
+// - FillTransmitPayloads, run inside WriteEnd on the IO thread (its only
+//   owner), copies each written frame once from that ring into the armed
+//   packet that carries it, if the packet is still ahead of the hardware.
+//   RT-safe: no locks, no allocation; the timeline and the clock pair are
+//   read through their seqlocks.
 //
 // Both are called unchanged from the host TX tests.
 //
@@ -69,8 +71,15 @@ bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
     control.client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
     PublishPlaybackRingWriteEnd(ivars.runtime.directAudioGraph, control);
 
-    // Wake the producer so it fills what CoreAudio just wrote. The coalescing
-    // latch keeps this RT callback to at most one outstanding action.
+    // Fill here, on CoreAudio's IO thread, not on the TX preparation queue: a
+    // frame has ~1 ms between this write and its packet's deadline, and queue
+    // wakes were measured up to 13.7 ms late on hardware, leaving packets
+    // silent (TX_OWNERSHIP.md §1d). This thread is the fill's only owner.
+    FillTransmitPayloads(ivars);
+
+    // Wake the producer so packet arming keeps pace with CoreAudio. The
+    // coalescing latch keeps this RT callback to at most one outstanding
+    // action.
     const uint64_t requestGeneration =
         control.txPreparationRequests.PublishRequest(hostTime, 0);
     if (ivars.device.audioNub &&

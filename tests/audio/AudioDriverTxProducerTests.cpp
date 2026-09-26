@@ -217,6 +217,9 @@ public:
         // True where the HAL clock comes from published zero timestamps
         // (M-Audio: TX completions); IO waits for the first one.
         bool clockFromZts{false};
+        // False models a TX preparation queue that wakes late: WriteEnd's
+        // wake request is not run, only the transport interrupts are.
+        bool dispatchWriteEndWakes{true};
     };
 
     void EnableHostOutput(const HostOutputPlan& plan) {
@@ -384,7 +387,7 @@ private:
             nextWrite_ += plan.ioFrames;
             // WriteEnd asked for a TX preparation action: run it now, as the
             // action queue would, so the fill sees what CoreAudio just wrote.
-            if (nub_.txPreparationRequests != wakesBefore) {
+            if (plan.dispatchWriteEndWakes && nub_.txPreparationRequests != wakesBefore) {
                 driver_.TxPreparationReady_Impl(nullptr, nub_.lastTxPreparationGeneration);
             }
         }
@@ -888,6 +891,27 @@ TEST(TxOwnershipGolden, StallDoesNotRunTxAheadOfRxReplay) {
     ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
     EXPECT_EQ(rig.Control().txReplayUnderflows.load(), 0U);
     EXPECT_EQ(rig.Control().txReplayForcedNoData.load(), 0U);
+}
+
+// T4 on hardware: with the fill on the TX preparation queue, a 64-frame
+// buffer lost packets whenever the queue woke late (up to 13.7 ms), because a
+// frame has ~1 ms from WriteEnd to its packet's deadline (TX_OWNERSHIP.md §1d).
+// The fill now runs inside WriteEnd, so it must not depend on that wake:
+// here WriteEnd's wake requests are never run, and after start-up no frame
+// may miss its deadline.
+TEST(TxOwnershipGolden, SmallBufferFillDoesNotWaitForTheQueue) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    rig.EnableHostOutput({.ioFrames = 64, .leadFrames = 112, .dispatchWriteEndWakes = false});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets / 2)) << rig.DescribeFault();
+    const uint64_t missedAfterStart =
+        rig.Ivars().runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load();
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets / 2)) << rig.DescribeFault();
+    EXPECT_EQ(rig.Ivars().runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load(),
+              missedAfterStart);
 }
 
 TEST(TxOwnershipGolden, MAudio1814Clean48k) {
