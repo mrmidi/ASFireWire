@@ -403,6 +403,14 @@ still plays; RTL and tone unchanged (the ring does not add latency); a 48 ↔ 44
   (projected − cursor: 6, 2, 6, 2) and the first `[TxPlace]` offsets (−4, +2, −6, −4) do not line up with it on
   their own. To find the cause, pair RTL_ts with each start's alignment lines over a few restarts. The declared
   latency cannot be right to better than ±2 frames until then.
+- Pro 24 DSP unplug → Duet re-plug (same build): the Duet comes up and streams. At the unplug the queue ran dry:
+  after the bus reset the local cycle master came on at 880782 ms, no IT refill (interrupt or watchdog) ran until
+  881301, and that refill reported `mapped region exhausted` and stopped the context; `ROM scan complete` for a
+  0-node scan followed at 881302. So the Default queue was most likely blocked ~520 ms in the discovery/ROM-scan
+  path after the reset (older than T5; the cyclic ring used to replay stale packets through such a gap). Harmless
+  on an unplug. Open: a reset with the device still present, where the TX fault stop and the reset recovery meet.
+- The Pro 24 DSP stream before the unplug (~35 min) had one slow producer wake (5.1 ms, `late1500=9`) and
+  `missedFinality=16`: two packets filled too late, once.
 - Instrument fix: `sInMinFr` printed the capture-ring capacity (12288) when no client read input, because the
   receive side feeds the same minimum. It now prints −1 without a read in the interval.
 
