@@ -49,7 +49,7 @@ What is real today:
 - Audio publication and experimental streaming paths exist in-tree.
 - Audio hardware tested by the maintainer: the Apogee Duet FireWire path, Terratec PHASE 88 Rack, Focusrite Saffire Pro 24 DSP, and M-Audio FireWire 1814 at 48 kHz. Contributors have additionally verified the Focusrite Saffire Pro 40 (full duplex 20-in/20-out), PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out), and Midas Venice F32 (full duplex 32-in/32-out).
 - **M-Audio FireWire 1814 and ProjectMix I/O special-firmware support is in-tree at 48 kHz.** The 1814's playback, capture, and cold bootloader-to-firmware start were verified on hardware. ProjectMix I/O worked on an earlier development build but has not been independently retested against the merged implementation. Higher rates and optical modes are outside the validated path.
-- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, Saffire Pro 40, PreSonus StudioLive 16.0.2 and 24.4.2, the Midas Venice range (F16/F24/F32 from one catalog row, told apart by reported geometry), the Alesis MultiMix 8/12/16, and Weiss INT202/INT203.
+- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, Saffire Pro 40, PreSonus StudioLive 16.0.2 and 24.4.2, the PreSonus FireStudio Project, the Midas Venice range (F16/F24/F32 from one catalog row, told apart by reported geometry), the Alesis MultiMix 8/12/16, and Weiss INT202/INT203.
 - **MOTU protocol-v2 support is in-tree** for the 828mkII and UltraLite — a vendor register protocol rather than AV/C or DICE, with 3-byte PCM chunks behind a per-block source packet header. Contributed by [@deweydb](https://github.com/deweydb), built on Jonathan Woodward's ([@Dreambrother7](https://github.com/Dreambrother7)) wire/codec layer.
 - **Mackie support is in-tree** for the Onyx 400F (Echo Fireworks) and the Onyx-i series on the Oxford run, contributed by [@ottendorfcipher](https://github.com/ottendorfcipher). Neither has an audio-verified report yet.
 - **Multi-stream DICE now works.** The Midas Venice F32 runs two 16-channel streams per direction; the original Saffire Pro 40 runs asymmetric 12+8 playback and 10+10 capture streams.
@@ -74,6 +74,7 @@ Please test these currently enabled DICE devices:
 - Midas Venice F32 (contributor-verified; broader validation welcome)
 - Midas Venice F16 and F24 (enabled, never confirmed working — see the note below)
 - PreSonus StudioLive 24.4.2 (enabled from a capture; no streaming result on record)
+- PreSonus FireStudio Project (streamed at 44.1/48 kHz on a contributor's earlier branch, #105; not yet run on this code)
 - Alesis MultiMix 8 / 12 / 16
 - MOTU 828mkII and UltraLite
 - Mackie Onyx 400F and Onyx-i
@@ -139,6 +140,7 @@ Audio-device support in tree today:
 - Midas Venice F32 (multi-stream DICE, 32-in/32-out)
 - Terratec PHASE 88 Rack
 - PreSonus StudioLive 24.4.2 (asymmetric multi-stream DICE, 16+10 playback / 16+16 capture; enabled from a contributed register capture)
+- PreSonus FireStudio Project (single-stream DICE, 10+1 each way; enabled from the register capture and hardware results in #105)
 - Midas Venice F16 and F24 (same catalog row as the F32; the variant is named from reported geometry)
 - Alesis MultiMix 8 / 12 / 16 (one row for the range — all three publish the same vendor/model; enabled from a contributed dump of a 12-input unit)
 - Weiss INT202 and INT203 (DICE 2-channel layout; wired up but **never run against real hardware**)

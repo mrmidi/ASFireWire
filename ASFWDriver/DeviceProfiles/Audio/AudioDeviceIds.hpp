@@ -124,6 +124,11 @@ inline constexpr uint32_t kStudioLive1602ModelId = 0x000013;
 inline constexpr uint32_t kStudioLive1642ModelId = 0x000010;
 inline constexpr uint32_t kStudioLive2442ModelId = 0x000012;
 inline constexpr uint32_t kStudioLive3242ModelId = 0x000014;
+// FireStudio Project: model 0x00000b in the Config ROM and TCAT product 0x00B
+// in its GUID; PaeFireStudio.kext derives the same id 11 from the GUID. Its
+// register dump (#105, documentation/fixtures/DICE/presonus-firestudio-project.txt)
+// shows one 10 PCM + 1 MIDI stream each way.
+inline constexpr uint32_t kFireStudioProjectModelId = 0x00000b;
 
 // ---- M-Audio / Avid (BridgeCo BeBoB family, "special" firmware) ----
 // Recognised for their probe bound, not for audio: this branch has no
@@ -191,6 +196,7 @@ inline constexpr const char* kStudioLive1602ModelName = "StudioLive 16.0.2";
 inline constexpr const char* kStudioLive1642ModelName = "StudioLive 16.4.2";
 inline constexpr const char* kStudioLive2442ModelName = "StudioLive 24.4.2";
 inline constexpr const char* kStudioLive3242ModelName = "StudioLive 32.4.2";
+inline constexpr const char* kFireStudioProjectModelName = "FireStudio Project";
 inline constexpr const char* kMAudioVendorName        = "M-Audio";
 inline constexpr const char* kMAudioFireWire1814BootloaderModelName = "FireWire 1814 (bootloader)";
 inline constexpr const char* kMAudioFireWire1814ModelName = "FireWire 1814";

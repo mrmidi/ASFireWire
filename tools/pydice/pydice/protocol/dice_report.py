@@ -454,6 +454,7 @@ DEFAULT_REPORTS = (
     ("venice-f24", "documentation/fixtures/DICE/midasF24.txt"),
     ("venice-f32", "documentation/fixtures/DICE/midasF32.txt"),
     ("studiolive-2442", "documentation/fixtures/DICE/presonus2442.txt"),
+    ("firestudio-project", "documentation/fixtures/DICE/presonus-firestudio-project.txt"),
     ("multimix", "documentation/fixtures/alesismultimix.txt"),
 )
 

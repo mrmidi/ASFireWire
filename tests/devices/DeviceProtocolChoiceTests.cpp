@@ -127,6 +127,9 @@ struct Expectation {
     cases.push_back({"StudioLive 24.4.2",
                      DiceDevice(kPreSonusVendorId, kStudioLive2442ModelId),
                      ProfileBuilderId::PreSonusStudioLive2442});
+    cases.push_back({"FireStudio Project",
+                     DiceDevice(kPreSonusVendorId, kFireStudioProjectModelId),
+                     ProfileBuilderId::PreSonusFireStudioProject});
     cases.push_back({"Apogee Duet", AvcDevice(kApogeeVendorId, kApogeeDuetModelId),
                      ProfileBuilderId::ApogeeDuet});
     cases.push_back({"TerraTec PHASE 88",
@@ -346,6 +349,7 @@ TEST(DeviceProtocolChoice, BackendRoutingMatchesWhatTheProfileRegistrySays) {
             case ProfileBuilderId::MidasVeniceF32:
             case ProfileBuilderId::PreSonusStudioLive1602:
             case ProfileBuilderId::PreSonusStudioLive2442:
+            case ProfileBuilderId::PreSonusFireStudioProject:
                 EXPECT_EQ(backend, AudioBackendKind::Dice) << expected.what;
                 break;
             default:

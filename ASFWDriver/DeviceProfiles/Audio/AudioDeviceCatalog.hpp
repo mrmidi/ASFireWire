@@ -63,6 +63,7 @@ enum class DeviceDefinitionId : uint32_t {
     MackieOnyxBlackbird,
     MackieOnyx400F,
     MackieOnyx1200F,
+    PreSonusFireStudioProject,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -142,6 +143,7 @@ enum class ProfileBuilderId : uint16_t {
     MackieOnyxIOxfw,
     MackieOnyx400F,
     GenericBeBoB,
+    PreSonusFireStudioProject,
 
     // Alias for the last real member. Range checks over this enum live in two
     // places — the catalog validator and the endpoint-profile wire validator —
@@ -149,7 +151,7 @@ enum class ProfileBuilderId : uint16_t {
     // device installs, publishes a nub, and then Start() rejects the profile
     // with a bare kIOReturnBadArgument. Extend the enum above this line and the
     // bounds follow.
-    kLastValid = GenericBeBoB,
+    kLastValid = PreSonusFireStudioProject,
 };
 
 /// Concrete protocol class chosen by the catalog. This is deliberately

@@ -251,6 +251,27 @@ constexpr DiceFixture kFixtures[] = {
         .captureChannelBase = {0, 12},
         .playbackChannelBase = {0, 0},
     },
+    {
+        // Streamed on #105's branch, not yet on this code: not verified here.
+        .name = "PreSonus FireStudio Project",
+        .dump = "documentation/fixtures/DICE/presonus-firestudio-project.txt",
+        .guid = 0x000A920402D07FACULL,
+        .clockCaps = 0x1102001F,
+        .role = {.discriminatesAggregation = false,
+                 .exercisesMidiSlots = true,
+                 .unequalStreamCounts = false,
+                 .singleStream = true,
+                 .hardwareVerified = false},
+        .captureStreamCount = 1,
+        .capture = {{10, 1}, {0, 0}},
+        .expectedCapturePcm = 10,
+        .playbackStreamCount = 1,
+        .playback = {{10, 1}, {0, 0}},
+        .expectedPlaybackPcm = 10,
+        .captureChannelBase = {0, 0},
+        .playbackChannelBase = {0, 0},
+        .announcedRates = {32000U, 44100U, 48000U, 88200U, 96000U},
+    },
 };
 
 // Build the caps a protocol would publish after reading this device.
@@ -425,7 +446,8 @@ INSTANTIATE_TEST_SUITE_P(
             case 1: return "MidasVeniceF24";
             case 2: return "MidasVeniceF32";
             case 3: return "PreSonusStudioLive2442";
-            default: return "AlesisMultiMix";
+            case 4: return "AlesisMultiMix";
+            default: return "PreSonusFireStudioProject";
         }
     });
 
@@ -568,15 +590,20 @@ TEST(DiceFixtureSet, CoversEveryPropertyItClaimsTo) {
 // At least four distinct vendors, not four rows from one. Geometry conventions are a
 // vendor trait, so a set drawn from a single vendor would agree for reasons that do not
 // generalise. Sibling variants behind one identity (Venice F24 vs F32) share a vendor
-// to prove one catalog row serves the range.
+// to prove one catalog row serves the range. The two PreSonus rows are two
+// identities (StudioLive 24.4.2, FireStudio Project) with different geometry, each
+// evidence of its own; they do not count twice towards the vendor total.
 TEST(DiceFixtureSet, DrawsFromDistinctVendors) {
     constexpr size_t kCount = sizeof(kFixtures) / sizeof(kFixtures[0]);
     std::set<uint32_t> vendors;
     for (size_t i = 0; i < kCount; ++i) {
         vendors.insert(static_cast<uint32_t>((kFixtures[i].guid >> 40) & 0xFFFFFF));
         for (size_t j = i + 1; j < kCount; ++j) {
-            if (std::string_view(kFixtures[i].name).starts_with("Midas Venice") &&
-                std::string_view(kFixtures[j].name).starts_with("Midas Venice")) {
+            const auto sameFamily = [&](std::string_view prefix) {
+                return std::string_view(kFixtures[i].name).starts_with(prefix) &&
+                       std::string_view(kFixtures[j].name).starts_with(prefix);
+            };
+            if (sameFamily("Midas Venice") || sameFamily("PreSonus")) {
                 continue;
             }
             EXPECT_NE((kFixtures[i].guid >> 40) & 0xFFFFFF,
