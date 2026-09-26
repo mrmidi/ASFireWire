@@ -230,16 +230,16 @@ TEST(RxDrivenTimingTests, GeometryUsesEightCycleInterruptsAndCurrentTxDepths) {
     EXPECT_EQ(ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames,
               12288U);
     EXPECT_EQ(AudioTimingGeometry::kRxDescriptorPackets, 504U);
-    EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 48U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 96U);
-    EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 144U);
-    // Content horizon floored at the 4096-frame ADK client maximum plus
-    // jitter (4160 frames) at worst-case 44.1k cadence, plus one full
-    // 4096-frame client write window.
+    EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 504U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 504U);
+    EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 1008U);
+    // The finite IT queue (T5): ring 504 (63 ms), slack one ring, coverage
+    // two, shared slots three. The exposure constants no longer size
+    // anything (T8 deletes them).
     EXPECT_EQ(AudioTimingGeometry::kTxExposureLeadPackets, 760U);
     EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 1504U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 1648U);
-    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 1696U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 1008U);
+    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 1512U);
 }
 
 TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {

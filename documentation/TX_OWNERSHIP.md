@@ -329,6 +329,53 @@ Pre-E1 baseline (build `7ff335bd`, 48 kHz): see §1d. RTL = 2B + 237 fixed (S_in
   size, so this is parked until after T5 (user, 2026-09-26). First step when it is picked up: a one-shot line on
   the first miss of a stream (frame, its packet, the projected hardware packet, time since StartIO).
 
+## 1f. T5: the finite IT queue (2026-09-26)
+
+**Why.** The IT descriptor ring was cyclic (48 packets, 6 ms), and completion was inferred from the CommandPtr
+plus a lap detector reading OUTPUT_LAST timestamps. A refill more than one ring late replayed stale packets and
+permanently lagged the stream (the −580 event in §1d). midi replaced this with a finite queue (`c4dd1700`),
+deepened the ring (`8298af5f`) and fixed the uncached-fill crash the deeper slab exposed (`51a150d6`). T5 ports
+the mechanism, not the code, and without midi's late-payload binding.
+
+**T5a (`1f067fb4`): DMA fills without memset.** Cache-inhibited DMA memory rejects `dc zva`, which `__bzero` uses
+above a size threshold. `Shared/Memory/UncachedFill.hpp` holds the one plain-store fill; a boundary test flags
+memset over a DMA region base.
+
+**T5b (`5ea43602`): RX replay history 512 → 2048, read delay kept at 256.** Measured on hardware: `[TxSyt]`
+shows the RX observation replayed 394 cycles later = read delay 256 + the ~138-packet TX lead when the reader
+began. So the replay distance follows the lead by itself; what limits a producer stall is history − read delay
+(was 256 cycles, 32 ms; now 1792, 224 ms). Replay distance and start-up timing are unchanged.
+
+**T5c (this commit): the finite queue.** Behaviour cross-checked with Linux `firewire-ohci`:
+- Prime ends the chain with a zero branch; the cycle-loss skip address stays self-linked.
+- Completion is OUTPUT_LAST xferStatus, walked from the completion cursor up to the mapped end
+  (`ohci.c:2918-2922`; the status bit is set on every OUTPUT_LAST, `ohci.c:3302-3306`). No CommandPtr
+  arithmetic; the lap detector and its counters are deleted.
+- The newest completed descriptor is not recycled until its successor completes (`ohci.c:954-982`). Unlike
+  midi, the public completion cursor still counts it: the fill projects the hardware position from that cursor,
+  and holding it back one packet would spend one of the three guard packets.
+- Each refill builds a zero-terminated batch in recycled slots, publishes it, then links it with one aligned
+  store to the old tail's branch word, then always WAKEs (`ohci.c:1137-1141`, `3471-3476`).
+- If every mapped packet completed before the refill ran, the queue ran dry: `MappedRegionExhausted`, the
+  context stops through the existing fault path, and a restart recovers. The `IT: Stopped` line reports
+  `minGap`, `criticalGaps`, `maxDelta` and `exhausted`.
+- Geometry: ring 48 → **504** (63 ms, RX parity; AppleFWAudio's DCL ring is ~100 ms), slack = one ring,
+  coverage 144 → **1008**, shared slots 1696 → **1512**. The frame-exposure window no longer sizes anything
+  (T8 deletes the constants). Depth is not latency: the fill writes PCM up to the finality guard whatever is
+  mapped.
+- Budgets: a refill may be up to 63 ms late; the producer may stall up to 63 ms; the replay history covers
+  224 ms.
+- **Declared delta** (TX goldens): the start-up NO-DATA prefill is 1512 packets instead of 1696, so DATA starts
+  184 packets (23 ms) earlier. PCM placement unchanged (Saffire `offset=+0`).
+- Tests: the lap tests are replaced by finite-queue tests, each mutation-checked: a cyclic tail, recycling the
+  newest completion, an unbounded status walk, a missing tail link, an unterminated batch, ignoring exhaustion
+  and waking only when idle each fail at least one test. The older refill tests now run in production order
+  (the first refill maps packet 504 into slot 0).
+- Left for T5d: 64-bit packet index end to end.
+
+**On hardware, to check:** `IT: Stopped` shows `exhausted=0`; `minGap` stays far above 0; no `IT FATAL`; start-up
+still plays; RTL and tone unchanged (the ring does not add latency); a 48 ↔ 44.1 switch.
+
 ## 2. How we got here: keep midi's understanding, not its architecture
 
 The core TX problem is **pacing**. CoreAudio writes PCM when its IO thread runs; this is `W`, the client write end.

@@ -11,7 +11,11 @@ namespace ASFW::Isoch {
 struct IsochDmaGeometry final {
     static constexpr uint32_t kPacketsPerInterrupt = 8;
     static constexpr uint32_t kReceiveDescriptorPackets = 504;
-    static constexpr uint32_t kTransmitDescriptorPackets = 48;
+    // Finite IT queue (T5, documentation/TX_OWNERSHIP.md): the hardware stops
+    // at the end of what is mapped, so the ring is the refill-stall budget.
+    // 504 packets = 63 ms, at RX parity: both directions survive the same
+    // dispatch outage.
+    static constexpr uint32_t kTransmitDescriptorPackets = 504;
 };
 
 static_assert(IsochDmaGeometry::kPacketsPerInterrupt != 0);

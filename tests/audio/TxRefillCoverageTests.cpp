@@ -34,10 +34,10 @@ namespace {
 using ASFW::IsochTransport::AudioTimingGeometry;
 using ASFW::Isoch::ExpectedTxCommitGeneration;
 
-constexpr uint32_t kNumSlots = AudioTimingGeometry::kTxSharedSlotPackets;     // 1696
-constexpr uint32_t kHwRing = AudioTimingGeometry::kTxHardwareRingPackets;     // 48
-constexpr uint32_t kCoverageLead = AudioTimingGeometry::kTxCoverageLeadPackets; // 144
-constexpr uint32_t kLead = AudioTimingGeometry::kTxPreparationLeadPackets;    // 1648
+constexpr uint32_t kNumSlots = AudioTimingGeometry::kTxSharedSlotPackets;     // 1512
+constexpr uint32_t kHwRing = AudioTimingGeometry::kTxHardwareRingPackets;     // 504
+constexpr uint32_t kCoverageLead = AudioTimingGeometry::kTxCoverageLeadPackets; // 1008
+constexpr uint32_t kLead = AudioTimingGeometry::kTxPreparationLeadPackets;    // 1008
 constexpr uint32_t kGroup = AudioTimingGeometry::kTxPacketsPerGroup;          // 8
 
 // The historical pre-fix lead (slack == 2*group) the hardware IT FATAL was
@@ -264,21 +264,21 @@ TEST(TxRefillCoverage, LeadSizedForMaxCoalesceIsHoleFree) {
               kNoMiss);
 }
 
-// The refill-coverage sub-budget (lead 144, slack 96 packets = 12 ms) covers
-// the captured hardware worst case and twelve eight-packet groups without a
-// producer wake (the same 12 ms as the former sixteen six-packet groups).
-TEST(TxRefillCoverage, CurrentGeometryCoversTwelveGroupsWithoutProducer) {
-    EXPECT_EQ(DriveSteady(kCoverageLead, kHwRing, 13, /*cycles=*/8000),
+// The refill-coverage budget since the finite queue (T5): coverage 1008 =
+// ring 504 + slack 504 packets, so 63 eight-packet groups (63 ms) complete
+// without a producer wake before a refill finds an uncommitted packet.
+TEST(TxRefillCoverage, CurrentGeometryCoversSixtyThreeGroupsWithoutProducer) {
+    constexpr uint32_t kSlackGroups = AudioTimingGeometry::kTxPreparationSlackPackets / kGroup;
+    static_assert(kSlackGroups == 63);
+    EXPECT_EQ(DriveSteady(kCoverageLead, kHwRing, kCapturedStallPackets, /*cycles=*/8000),
               kNoMiss);
-    for (uint32_t groups = 1; groups <= 12; ++groups) {
-        EXPECT_EQ(
-            DriveSteady(
-                kCoverageLead, kHwRing, groups * kGroup, /*cycles=*/4000),
-            kNoMiss)
+    for (uint32_t groups = 1; groups <= kSlackGroups; ++groups) {
+        EXPECT_EQ(DriveSteady(kCoverageLead, kHwRing, groups * kGroup, /*cycles=*/4000),
+                  kNoMiss)
             << "groups=" << groups;
     }
-    // Still holes one group beyond the slack budget — the bound stays tight.
-    EXPECT_NE(DriveSteady(kCoverageLead, kHwRing, 13 * kGroup, /*cycles=*/8),
+    // Still holes one group beyond the slack budget -- the bound stays tight.
+    EXPECT_NE(DriveSteady(kCoverageLead, kHwRing, (kSlackGroups + 1) * kGroup, /*cycles=*/8),
               kNoMiss);
 }
 
@@ -288,12 +288,9 @@ TEST(TxRefillCoverage, CoverageBoundMatchesGeometryConstants) {
               AudioTimingGeometry::kTxPreparationSlackPackets);
     EXPECT_EQ(kLead - kHwRing,
               AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets);
-    EXPECT_EQ(kLead - kCoverageLead,
-              AudioTimingGeometry::kTxFrameExposureWindowPackets);
-    // Current geometry tolerates twelve groups (12 ms) without a producer wake.
-    EXPECT_EQ((kCoverageLead - kHwRing) / kGroup, 12u);
+    // Since T5 the producer's lead is coverage only: no frame-exposure window.
+    EXPECT_EQ(kLead, kCoverageLead);
     EXPECT_LE(kLead + kHwRing, kNumSlots);
-    EXPECT_GE(kNumSlots, 2 * AudioTimingGeometry::kTxExposureLeadPackets);
 }
 
 } // namespace

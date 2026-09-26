@@ -139,21 +139,21 @@ struct AudioTimingGeometry final {
          kTxPacketsPerGroup) *
         kTxPacketsPerGroup;
 
-    // Packet-domain TX ownership: 48 descriptors on hardware, plus two
-    // independent producer budgets:
+    // Packet-domain TX ownership (T5, documentation/TX_OWNERSHIP.md):
     //
-    // 1. Refill coverage: packets that keep the core from holing the OHCI
-    //    refill when the producer action is delayed.
-    // 2. Frame exposure: extra packets the producer may prepare so the AMDTP
-    //    timeline covers CoreAudio's latest WriteEnd plus kTxExposureLeadFrames.
+    // - Hardware ring: the finite IT queue maps this many packets ahead of
+    //   the newest completion. A refill later than the ring exhausts it and
+    //   stops the stream, so the ring is the refill-stall budget (63 ms).
+    // - Preparation slack: packets committed beyond the ring, so the refill
+    //   finds every packet it maps committed even when the producer action
+    //   is late. It is the producer-stall budget (63 ms).
     //
-    // COVERAGE INVARIANT (hardware-confirmed). The IT refill ISR checks slots
-    //   [completion + hardwareRing, completion + hardwareRing + deltaConsumed)
-    // and FATALs if any is not yet committed. The coverage target stays
-    // hardwareRing + slack (144 packets), but the total preparation limit is
-    // larger so the audio-frame invariant can be satisfied without reusing
-    // hardware-owned shared slots.
-    static constexpr uint32_t kTxHardwareRingPackets = 48;
+    // COVERAGE INVARIANT. A refill maps packets up to completion + ring and
+    //   FATALs on one that is not committed. The producer therefore keeps
+    //   committed packets up to completion + ring + slack (coverage). Since T4
+    //   the producer arms only up to coverage; PCM reaches packets from the
+    //   HAL ring through the fill, so no frame-exposure window is needed.
+    static constexpr uint32_t kTxHardwareRingPackets = 504;
     // [TxPrep] telemetry buckets intentionally track the immutable hardware
     // floor rather than the larger, tuneable preparation lead.  That keeps a
     // captured distribution meaningful if the lead changes during tuning.
@@ -175,7 +175,7 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kTxCommittedMargin16xFloorPackets =
         16 * kTxHardwareRingPackets;
     static constexpr uint32_t kTxPreparationSlackPackets =
-        2 * kTxHardwareRingPackets;
+        kTxHardwareRingPackets;
     static constexpr uint32_t kTxCoverageLeadPackets =
         kTxHardwareRingPackets + kTxPreparationSlackPackets;
     // TX fill finality guard (documentation/TX_OWNERSHIP.md, T4): packets
@@ -199,13 +199,12 @@ struct AudioTimingGeometry final {
         ((kTxFrameExposureWindowPacketsRaw + kTxPacketsPerGroup - 1) /
          kTxPacketsPerGroup) *
         kTxPacketsPerGroup;
+    // The producer's per-pass and total lead: coverage only (T5). The
+    // frame-exposure constants above no longer size anything; T8 deletes them.
     static constexpr uint32_t kTxPreparationLeadPackets =
-        kTxCoverageLeadPackets + kTxFrameExposureWindowPackets;
-    // Backing ring: the preparation lead plus one OHCI ring depth before a
-    // slot is reused (1648 + 48 = 1696 packets, 212 ms). It also keeps the
-    // exposure lead below half the ring. The 48-packet hardware descriptor
-    // ring remains a separate low-latency transport concern (the 504-packet
-    // ring and late binding are Epic 6, FW-209).
+        kTxCoverageLeadPackets;
+    // Backing ring: the preparation lead plus one hardware ring before a
+    // slot is reused (1008 + 504 = 1512 packets, 189 ms).
     static constexpr uint32_t kTxSharedSlotPackets =
         kTxPreparationLeadPackets + kTxHardwareRingPackets;
     // Largest single coalesced deltaConsumed a refill can absorb without holing.
@@ -321,12 +320,6 @@ static_assert(AudioTimingGeometry::kTxFrameExposureWindowPackets * 12 >=
 static_assert(AudioTimingGeometry::kTxFrameExposureWindowPackets * 24 >=
               AudioTimingGeometry::kMaxClientIoFrames +
                   AudioTimingGeometry::TxDataHorizonFrames(192'000));
-static_assert(AudioTimingGeometry::kTxExposureLeadPackets <=
-                  AudioTimingGeometry::kTxSharedSlotPackets,
-              "TX packet lead must be able to hold the required exposure frames");
-static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
-                  2 * AudioTimingGeometry::kTxExposureLeadPackets,
-              "TX backing ring must keep the exposure target below half ring");
 static_assert(AudioTimingGeometry::kTxFrameExposureWindowPackets *
                   AudioTimingGeometry::kMinAvgCadenceFrames >=
               (AudioTimingGeometry::kMaxClientIoFrames +
@@ -337,6 +330,20 @@ static_assert(AudioTimingGeometry::kTxFrameExposureWindowPackets *
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
                   AudioTimingGeometry::kTimelineSlots,
               "shared packet ring must fit inside the timeline slot array");
+
+// --- Finite IT queue coverage (T5). A refill maps packets up to
+//     completion + ring and needs every one committed; the producer keeps
+//     coverage beyond that, and a slot is reused only a ring after coverage.
+//     AppleFWAudio's DCL ring is 100 groups of 8 packets (~100 ms, reference
+//     block below), the same order as this 63 ms ring. -------------------
+static_assert(AudioTimingGeometry::kTxCoverageLeadPackets >=
+                  AudioTimingGeometry::kTxHardwareRingPackets +
+                      AudioTimingGeometry::kTxPacketsPerGroup,
+              "the producer must commit past what one refill can map");
+static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
+                  AudioTimingGeometry::kTxCoverageLeadPackets +
+                      AudioTimingGeometry::kTxHardwareRingPackets,
+              "a shared slot must not be re-armed while its packet is mapped");
 
 } // namespace ASFW::IsochTransport
 

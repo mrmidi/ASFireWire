@@ -28,18 +28,18 @@ EXPECTED_TIMING = {
     "kTxExposureFloorFrames": 4160,
     "kTxExposureLeadFrames": 4160,
     "kTxExposureLeadPackets": 760,
-    "kTxCoverageLeadPackets": 144,
+    "kTxCoverageLeadPackets": 1008,
     "kTxFrameExposureWindowPackets": 1504,
-    "kTxPreparationLeadPackets": 1648,
-    "kTxSharedSlotPackets": 1696,
-    "kTimelineSlots": 1696,
-    "kTxHardwareRingPackets": 48,
+    "kTxPreparationLeadPackets": 1008,
+    "kTxSharedSlotPackets": 1512,
+    "kTimelineSlots": 1512,
+    "kTxHardwareRingPackets": 504,
     "kFramesPerDataPacket": 8,
     "kMinAvgCadencePackets": 80,
     "kMinAvgCadenceFrames": 441,
 }
 
-EXPECTED_REPLAY = {"kCapacity": 512, "kReadDelay": 256}
+EXPECTED_REPLAY = {"kCapacity": 2048, "kReadDelay": 256}
 
 
 @pytest.fixture(scope="module")
@@ -67,11 +67,11 @@ def test_active_profile_is_v3(headers):
     assert headers.profile_name == "audio-engine-v3-1x"
 
 
-def test_derived_lead_is_the_sum_of_its_two_budgets(headers):
-    """1648 = 144 refill coverage + 1504 frame exposure."""
+def test_derived_lead_is_the_coverage_alone(headers):
+    """Since T5 the lead is refill coverage only (1008 = ring 504 + slack 504);
+    the frame-exposure window no longer sizes anything."""
     assert (
         headers.timing["kTxCoverageLeadPackets"]
-        + headers.timing["kTxFrameExposureWindowPackets"]
         == headers.timing["kTxPreparationLeadPackets"]
     )
 
@@ -84,7 +84,7 @@ def test_replay_capacity_is_a_power_of_two(headers):
 def test_geometry_reports_the_negative_headroom(headers):
     """Records the state of the tree, not a claim that it is the bug (see F1)."""
     g = Geometry.from_headers(48_000, headers)
-    assert g.replay_headroom_packets == 256 - 1648
+    assert g.replay_headroom_packets == 256 - 1008
 
 
 def test_sim_horizon_mirrors_the_header_floor(headers):

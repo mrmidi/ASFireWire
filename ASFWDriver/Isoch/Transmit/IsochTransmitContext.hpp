@@ -101,6 +101,12 @@ public:
     
     void DumpDescriptorRing(uint32_t startPacket = 0, uint32_t numPackets = 8) const noexcept;
 
+#ifdef ASFW_HOST_TEST
+    // Host tests stand in for the controller: they write OUTPUT_LAST status
+    // into the slab to say which packets it finished.
+    Tx::IsochTxDmaRing& RingForTesting() noexcept { return ring_; }
+#endif
+
 private:
     void WakeHardware() noexcept;
     void DoRefillOnce(uint64_t eventHostTicks, bool publishTimingEvent) noexcept;

@@ -24,6 +24,14 @@
 
 #include <DriverKit/DriverKit.h>
 
+// A producer stall up to the preparation slack is survivable by the ring; the
+// RX replay history must outlast it too, or the reader re-anchors and the lead
+// cannot recover (TX_OWNERSHIP.md, T5b).
+static_assert(ASFW::Audio::Runtime::RxSequenceReplayState::kCapacity -
+                      ASFW::Audio::Runtime::RxSequenceReplayState::kReadDelay >=
+                  ASFW::IsochTransport::AudioTimingGeometry::kTxPreparationSlackPackets,
+              "RX replay history must outlast a producer stall the IT ring survives");
+
 namespace ASFW::Audio::DriverKit {
 
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
