@@ -1,6 +1,6 @@
 # TX ownership: PCM → packet → DMA (milestone 6)
 
-**Status:** T0 (design + inventory), T1 (goldens) and T2 (dead surfaces) done, 2026-09-26, branch `refactor/tx-ownership` off main `52d05ca8`.
+**Status:** T0 (design + inventory), T1 (goldens), T2 (dead surfaces) and T3 (silence-first, `[TxPlace]` meter) done, 2026-09-26, branch `refactor/tx-ownership` off main `52d05ca8`.
 Linear FW-209 (milestone 6), condensing FW-210 (main inventory), FW-211 (midi distillation) and FW-212 (ownership
 model). The stages are in §8. This document is T0.
 
@@ -91,7 +91,7 @@ These are **rig results**, not hardware results:
 | Saffire, late writer (lead 0) | Every DATA packet is silent: the writes land in packets already sent |
 | Saffire, 50 ms CoreAudio stall | After the stall, TX replay underflows 1124 times, and every packet from about packet 2990 to the end of the run (4000) is **NO-DATA** |
 | 1814, 512 frames | PCM after the first 7 DATA packets. The packet on the wire is about 26 frames ahead of the HAL's "now", leaving ~22 frames of the 48-frame lead |
-| AM824 label on unfilled PCM | `0x00`, not MBLA `0x40` (T3 changes this) |
+| AM824 label on unfilled PCM | Was `0x00`; since T3 it is MBLA `0x40` (`tests/golden/tx/maudio-1814`) |
 
 **The stall case, hypothesis only.** When CoreAudio resumes, `W` and the frame target (`W` + the 4160-frame
 horizon) jump by the stalled frames. The producer then prepares ahead of the RX replay it depends on. Each underflow
@@ -156,7 +156,7 @@ Legend for cursor kinds: AF = audio-frame cursor, PK = packet cursor, DMA = DMA 
 | `exposedFrameEnd_` (`E`) | `AmdtpPacketTimeline.cpp:104-107` | High-water only; not retracted on `RevertToNoData` | **DELETE (T4)** along with the `W`/`E` rendezvous |
 | `DiceTxStreamEngine::nextAudioFrame_` | `DiceTxStreamEngine.hpp`, `.cpp:65-99,157` | The content-frame cursor (AF) | **KEEP**: the single frame cursor |
 | Packetizer `telemetryNextAudioFrame_` + its own Align/ReArm | `AmdtpTxPacketizer.cpp:119,132,149,227,276,316,343` | Shadow frame cursor; its header claims ownership | **DELETED (T2)**: also its telemetry snapshot, the 3-argument `PrepareNextPacket`, and the packetizer epoch guard (dead: the engine sets `plan.epoch` from its own epoch in the same call). Tests frame packets through `tests/support/TxPacketizerTestSupport.hpp`; align-once is now tested on the engine |
-| Payload clear before exposure | `AmdtpTxPacketizer.cpp:382-386` (policy set at `DiceTxStreamEngine.cpp:210`) | Zeroes the payload; an unfilled AM824 PCM slot goes out as `0x00000000` (label 0x00) | **REPLACE (T3)** → encoded silence (AM824 MBLA `0x40000000`) |
+| Payload clear before exposure | `AmdtpTxPacketizer.cpp:382-386` (policy set at `DiceTxStreamEngine.cpp:210`) | Zeroes the payload; an unfilled AM824 PCM slot goes out as `0x00000000` (label 0x00) | **DONE (T3)**: the payload is still cleared, then every PCM slot is armed with encoded silence through the slot encoding and channel map (AM824 `0x40000000`; raw PCM stays 0). Golden delta: the 1814's start-up silent packets carry label `0x40` |
 | `RevertToNoData` | `AmdtpTxPacketizer.cpp:284-321` | Rewinds DBC and rewrites the slot as NO-DATA (MOTU timing unavailable) | **KEEP**; T2 removes its shadow-cursor write |
 | TX frame alignment `[TxAlign]` | `ASFWAudioDriverTxProducer.cpp:449-505` | Places TX frames from the RX replay entry (§6) | **KEEP until B3** (see §6) |
 | Alignment re-arm on a replay failure | `ASFWAudioDriverTxProducer.cpp:342-367` | Re-arms after a non-ahead replay miss | **KEEP**; it is reviewed in T6 as part of the recovery transaction |

@@ -1,6 +1,7 @@
 #include "AmdtpTxPacketizer.hpp"
 
 #include "AmdtpRateGeometry.hpp"
+#include "PcmSlotCodec.hpp"
 #include "../IEC61883/Syt.hpp"
 
 namespace ASFW::Protocols::Audio::AMDTP {
@@ -264,6 +265,28 @@ void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,
     if (txPolicy_.clearPayloadBeforeExposure) {
         for (uint32_t i = 0; i < payloadBytes; ++i) {
             payload[i] = 0;
+        }
+        // Arm every PCM slot with encoded silence, so a DATA packet whose PCM
+        // never arrives is still valid on the wire: AM824 MBLA 0x40000000,
+        // not label 0x00. Cross-validated with Linux amdtp-am824.c:209-220
+        // (write_pcm_silence, used at :362 when no PCM is available). Slots
+        // follow the playback channel map as the payload writer does.
+        const uint32_t silence =
+            PcmSlotCodec::EncodeFloat32(0.0f, txPolicy_.hostToDevicePcmEncoding);
+        if (silence != 0) {
+            const uint32_t dbs = streamConfig_.dbs;
+            const uint32_t pcmSlots = streamConfig_.pcmChannels < dbs
+                                          ? streamConfig_.pcmChannels
+                                          : dbs;
+            const bool mapUsable = txPolicy_.playbackChannelMap.FitsWithin(pcmSlots, dbs);
+            const uint32_t frames = payloadBytes / (dbs * kBytesPerSlot);
+            for (uint32_t frame = 0; frame < frames; ++frame) {
+                for (uint32_t channel = 0; channel < pcmSlots; ++channel) {
+                    const uint32_t slot =
+                        mapUsable ? txPolicy_.playbackChannelMap.SlotFor(channel) : channel;
+                    WriteBE32(payload + (frame * dbs + slot) * kBytesPerSlot, silence);
+                }
+            }
         }
     }
 

@@ -514,6 +514,69 @@ TEST(AmdtpDirectTxTests, PayloadWriterReadsMappedInt32RingDirectly) {
     EXPECT_EQ(dataBytes[15], 0x01);
 }
 
+// T3 (documentation/TX_OWNERSHIP.md): a planned DATA packet is armed with valid
+// AM824 silence -- 0x40000000 in every PCM slot, as Linux amdtp-am824.c:209-220
+// writes when it has no PCM -- so a packet whose PCM never arrives is still
+// valid on the wire. Filling it later changes only the PCM sample words.
+TEST(AmdtpDirectTxTests, ArmedDataPacketCarriesValidSilenceAndFillChangesOnlySamples) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+
+    AmdtpStreamConfig config = BlockingStereoConfig();
+    config.dbs = 3;         // two PCM slots and one MIDI slot
+    config.midiSlots = 1;
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(config, AmdtpTxPolicy{}));
+
+    std::array<uint8_t, 128> bytes{};
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    TxPresentationPlan plan{};
+    plan.firstAudioFrame = 0;
+    plan.frameCount = 8;
+    plan.disposition = AmdtpPacketDisposition::Data;
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket({0, bytes.data(), bytes.size()}, timing, plan, packet));
+    ASSERT_TRUE(packet.isData);
+
+    const auto quadlet = [](const std::array<uint8_t, 128>& b, size_t offset) {
+        return (uint32_t{b[offset]} << 24) | (uint32_t{b[offset + 1]} << 16) |
+               (uint32_t{b[offset + 2]} << 8) | uint32_t{b[offset + 3]};
+    };
+    const auto slotOffset = [&](uint32_t frame, uint32_t slot) {
+        return 8 + (static_cast<size_t>(frame) * config.dbs + slot) * 4;
+    };
+    for (uint32_t frame = 0; frame < 8; ++frame) {
+        EXPECT_EQ(quadlet(bytes, slotOffset(frame, 0)), 0x40000000U) << "frame " << frame;
+        EXPECT_EQ(quadlet(bytes, slotOffset(frame, 1)), 0x40000000U) << "frame " << frame;
+        EXPECT_EQ(quadlet(bytes, slotOffset(frame, 2)), 0x80000000U) << "frame " << frame;
+    }
+    const auto armed = bytes;
+
+    AmdtpPayloadWriter writer{};
+    writer.Configure(config, AmdtpTxPolicy{});
+    writer.BindTimeline(&timeline);
+    std::array<float, 16> ring{};
+    for (uint32_t i = 0; i < ring.size(); ++i) {
+        ring[i] = 0.25f + 0.01f * static_cast<float>(i);
+    }
+    writer.WriteFloat32Interleaved({ring.data(), 0, 8, 8, 2}, 0);
+
+    for (size_t offset = 0; offset < 8; ++offset) {
+        EXPECT_EQ(bytes[offset], armed[offset]) << "CIP header byte " << offset;
+    }
+    for (uint32_t frame = 0; frame < 8; ++frame) {
+        EXPECT_EQ(quadlet(bytes, slotOffset(frame, 2)), quadlet(armed, slotOffset(frame, 2)));
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            const uint32_t filled = quadlet(bytes, slotOffset(frame, slot));
+            EXPECT_EQ(filled >> 24, 0x40U) << "frame " << frame << " slot " << slot;
+            EXPECT_NE(filled, quadlet(armed, slotOffset(frame, slot)));
+        }
+    }
+}
+
 TEST(AmdtpDirectTxTests, PayloadWriterCountsUnderExposureAtCallBoundary) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 4> timelineSlots{};

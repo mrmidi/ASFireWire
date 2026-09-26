@@ -1,4 +1,4 @@
 case rate=48000 io=512 lead=560 stall=0-0 clock=zts writeEnds=28
 pkts 0-1695 NODATA x1696
-pkts 1696-1704 SILENT data=7 nodata=2 label=0x00
+pkts 1696-1704 SILENT data=7 nodata=2 label=0x40
 pkts 1705-3999 PCM frames 56-13823 data=1721 nodata=574 label=0x40 offset=-10174
