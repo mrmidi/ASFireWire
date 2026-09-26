@@ -220,6 +220,25 @@ signature.
 **Test:** `SmallBufferFillDoesNotWaitForTheQueue` never runs WriteEnd's queue wake and uses a 64-frame buffer. After
 start-up no frame may miss its deadline. With the fill moved back to the queue it fails (80 → 576 missed).
 
+**Hardware result of the IO-thread fill (build `7ff335bd`, 48 kHz, 64-frame buffer, 2026-09-26):**
+
+| | Queue fill | Fill in WriteEnd |
+|---|---|---|
+| `--tone --frames 64`, 5 s | 3 clicks | **clean** |
+| RTL (declared 361) | 367, +6 | **365, +4 fr (0.084 ms)**; Oblique 365 |
+| `[TxPlace]` | −4 | −2 / −4 |
+| `missedFinality` while streaming | +~27 fr/s | **flat for ~2 min** |
+| Worst producer wake per 5 s | 4–13.7 ms | 0.1–0.6 ms |
+| IT ring laps | ~30 | 0 |
+
+The residual is now entirely TX placement (+4 against `[TxPlace]` −2 to −4).
+
+`missedFinality` still jumps at every stream start: frames CoreAudio wrote before any TX packet existed for them. It
+must be reset per stream and must exclude those frames, which is pending.
+
+The drop in wake latency is not explained. A lighter queue once the fill left it would account for it, but this
+session also had no Music.app playing.
+
 **Also seen, T5's area:** on one boot an IT refill ~12 ms late lapped the 48-packet cyclic descriptor ring twice. The
 controller re-sent 96 old packets and `[TxPlace]` moved −4 → −580 for good. That boot then logged ~30 more
 `IT lap sighted` events without a further shift.
