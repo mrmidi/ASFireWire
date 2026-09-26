@@ -83,17 +83,13 @@ public:
             .zeroTimestampPeriodFrames;
     }
 
+    // Every rate on the HAL ladder (32/44.1/48, 88.2/96, 176.4/192 kHz): the
+    // one rate authority is HalRateTier, so the timeline, the ZTS period and
+    // the declared HAL geometry agree by construction. Frame<->tick conversion
+    // is exact rational at all of them.
     [[nodiscard]] static constexpr bool IsSupportedSampleRate(
         uint32_t sampleRateHz) noexcept {
-        switch (sampleRateHz) {
-            case 44'100:
-            case 48'000:
-            case 96'000:
-            case 192'000:
-                return true;
-            default:
-                return false;
-        }
+        return ASFW::IsochTransport::HalRateTier(sampleRateHz) != 0;
     }
 
     [[nodiscard]] static constexpr uint64_t BusTicksToAudioFrames(
@@ -120,9 +116,13 @@ public:
         return static_cast<uint64_t>(ticks);
     }
 
+    // Bus ticks per frame where that is an integer. The 44.1 kHz family has
+    // none (24,576,000 / 44,100 = 557.28...), so it returns 0 there by design:
+    // use BusTicksToAudioFrames / AudioFramesToBusTicks, which are exact.
     [[nodiscard]] static constexpr uint32_t NominalBusTicksPerFrame(
         uint32_t sampleRateHz) noexcept {
         switch (sampleRateHz) {
+            case 32'000: return 768;
             case 48'000: return 512;
             case 96'000: return 256;
             case 192'000: return 128;

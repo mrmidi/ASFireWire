@@ -32,7 +32,8 @@ struct TimebaseGuard final {
 // HAL is given (HalBufferProfileForRate), so a 48 -> 96 kHz change moves the
 // anchor grid with the declared period.
 TEST(HardwareSampleTimelineTests, EpochTakesTheZtsPeriodOfItsRate) {
-    for (const uint32_t rate : {44'100U, 48'000U, 96'000U}) {  // 88.2 kHz: FW-186
+    for (const uint32_t rate :
+         {32'000U, 44'100U, 48'000U, 88'200U, 96'000U, 176'400U, 192'000U}) {
         HardwareSampleTimeline timeline{};
         ASSERT_NE(timeline.BeginEpoch(HardwareTimelineSource::Receive,
                                       HardwareTimelineDiscontinuity::StartIO, rate, 0),
@@ -382,6 +383,21 @@ TEST(HardwareSampleTimelineTests, ObservingOnlyTheNewestPacketOfAWakeLosesBounda
                 << "wakeGroup=" << wakeGroup;
         }
     }
+}
+
+// Nominal ticks per frame exist only where they are an integer: 32 kHz and
+// the 48 kHz family. The 44.1 kHz family has none, and says so with 0 rather
+// than a rounded value; its conversions are exact rational instead.
+TEST(HardwareSampleTimelineTests, NominalTicksOnlyWhereIntegral) {
+    EXPECT_EQ(HardwareSampleTimeline::NominalBusTicksPerFrame(32'000), 768U);
+    EXPECT_EQ(HardwareSampleTimeline::NominalBusTicksPerFrame(48'000), 512U);
+    EXPECT_EQ(HardwareSampleTimeline::NominalBusTicksPerFrame(96'000), 256U);
+    EXPECT_EQ(HardwareSampleTimeline::NominalBusTicksPerFrame(44'100), 0U);
+    EXPECT_EQ(HardwareSampleTimeline::NominalBusTicksPerFrame(88'200), 0U);
+    // 441 frames at 44.1 kHz are exactly 245,760 ticks (10 ms).
+    EXPECT_EQ(HardwareSampleTimeline::AudioFramesToBusTicks(441, 44'100), 245'760U);
+    EXPECT_EQ(HardwareSampleTimeline::BusTicksToAudioFrames(245'760, 44'100), 441U);
+    EXPECT_FALSE(HardwareSampleTimeline::IsSupportedSampleRate(22'050));
 }
 
 } // namespace

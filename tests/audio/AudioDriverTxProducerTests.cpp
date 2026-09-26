@@ -188,6 +188,10 @@ public:
         return *control_;
     }
     [[nodiscard]] uint32_t Stride() const { return stride_; }
+    [[nodiscard]] ASFWAudioDriver_IVars& Ivars() { return ivars_; }
+    [[nodiscard]] ASFW::Audio::Runtime::AudioTransportControlBlock& MutableControl() {
+        return *control_;
+    }
 
     [[nodiscard]] std::string DescribeFault() const {
         if (!fault_) {
@@ -419,6 +423,37 @@ constexpr size_t kSaffireFullBytes = 8 + 8 * kSaffireDbs * 4;
 
 uint8_t BlocksIn(const WirePacket& packet, uint32_t dbs) {
     return static_cast<uint8_t>((packet.bytes.size() - 8) / (dbs * 4));
+}
+
+// Epic 4: the one HAL publish point refuses an anchor projected in a timeline
+// epoch that has since ended, and passes one from the live epoch.
+TEST(AudioDriverTxProducerTests, HalPublishRefusesAnAnchorFromAnEndedEpoch) {
+    using ASFW::Audio::Runtime::HardwareTimelineDiscontinuity;
+    using ASFW::Audio::Runtime::HardwareTimelineSource;
+    using ASFW::Audio::Runtime::ZtsMirrorPublishResult;
+    TxProducerRig rig;
+    auto& control = rig.MutableControl();
+    const uint64_t first = control.hardwareTimeline.BeginEpoch(
+        HardwareTimelineSource::Receive, HardwareTimelineDiscontinuity::StartIO, 48000, 0);
+    ASSERT_NE(first, 0U);
+    ASSERT_TRUE(control.PublishHostClockAnchor(12288, 1000, 5333333, first).accepted);
+    EXPECT_EQ(ASFW::Audio::DriverKit::PublishSharedZeroTimestampToHAL(rig.Ivars(), "test", false),
+              ZtsMirrorPublishResult::Published);
+    ASSERT_EQ(rig.Device().published.size(), 1U);
+
+    const uint64_t second = control.hardwareTimeline.BeginEpoch(
+        HardwareTimelineSource::Receive, HardwareTimelineDiscontinuity::PresentationLoss, 48000,
+        24576);
+    ASSERT_NE(second, first);
+    ASSERT_TRUE(control.PublishHostClockAnchor(24576, 2000, 5333333, first).accepted);
+    EXPECT_EQ(ASFW::Audio::DriverKit::PublishSharedZeroTimestampToHAL(rig.Ivars(), "test", false),
+              ZtsMirrorPublishResult::StaleEpoch);
+    EXPECT_EQ(rig.Device().published.size(), 1U);
+
+    ASSERT_TRUE(control.PublishHostClockAnchor(24576, 2100, 5333333, second).accepted);
+    EXPECT_EQ(ASFW::Audio::DriverKit::PublishSharedZeroTimestampToHAL(rig.Ivars(), "test", false),
+              ZtsMirrorPublishResult::Published);
+    EXPECT_EQ(rig.Device().published.size(), 2U);
 }
 
 TEST(AudioDriverTxProducerTests, SaffireReplaysRxTimingOnceReplayEstablishes) {

@@ -65,13 +65,24 @@ void DirectAudioReceiveConsumer::SetReplayReadyCallback(
     replayReadyCallback_ = std::move(callback);
 }
 
+uint64_t DirectAudioReceiveConsumer::UnwrapDrainBusTicks(uint32_t drainCycleTimer) noexcept {
+    constexpr uint64_t kWrapTicks =
+        uint64_t{::ASFW::Timing::kFWTimeWrapSeconds} * ::ASFW::Timing::kTicksPerSecond;
+    const int64_t offsets = ::ASFW::Timing::encodedTstampToOffsets(drainCycleTimer);
+    if (lastDrainOffsets_ >= 0 && offsets < lastDrainOffsets_) {
+        ++drainBusWraps_;
+    }
+    lastDrainOffsets_ = offsets;
+    return drainBusWraps_ * kWrapTicks + static_cast<uint64_t>(offsets);
+}
+
 void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     secondaryAnchored_ = false;
     secondaryAnchorEpoch_ = 0;
     absoluteFrameCursor_ = 0;
     cursorInitialized_ = false;
-    lastDbc_ = 0;
-    dbcInitialized_ = false;
+    drainBusWraps_ = 0;
+    lastDrainOffsets_ = -1;
     ztsPublishCount_ = 0;
     timestampValidCount_ = 0;
     timestampInvalidCount_ = 0;
@@ -275,16 +286,6 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         return;
     }
 
-    if (result.hasValidCip) {
-        if (dbcInitialized_) {
-            inputView_.control->rxDbcFrameCount.fetch_add(
-                static_cast<uint8_t>(result.dbc - lastDbc_),
-                std::memory_order_relaxed);
-        }
-        lastDbc_ = result.dbc;
-        dbcInitialized_ = true;
-    }
-
     ::ASFW::Isoch::Rx::ExpandedReceiveTimestamp timestamp{};
     const bool validTimestamp = result.hasReceiveCycleTimestamp &&
         ::ASFW::Isoch::Rx::ExpandReceiveTimestamp(
@@ -414,11 +415,67 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             .zeroTimestampPeriodFrames;
     const uint32_t nanosPerSampleQ8 = inputView_.sampleRateHz == 0 ? 0 :
         static_cast<uint32_t>((1'000'000'000ULL << 8) / inputView_.sampleRateHz);
-    if (kZtsPeriodFrames != 0 && result.framesDecoded != 0 &&
-        (packetFirstFrame % kZtsPeriodFrames) == 0 && packetHostTicks != 0 &&
-        nanosPerSampleQ8 != 0 && clockPublisher_.IsBound() && timingEstablished) {
-        const auto publish = clockPublisher_.Publish(packetFirstFrame, packetHostTicks,
-                                                     nanosPerSampleQ8);
+    // The anchor to publish, if this packet yields one.
+    //
+    // With a Receive epoch on the device's hardware timeline, the packet is an
+    // observation and the timeline projects every ZTS boundary it covers,
+    // including one inside the packet (documentation/HARDWARE_TIMELINE_OWNERSHIP.md).
+    // The observation is the packet's arrival: its receive bus time and the
+    // drain's (bus, host) pair, the same arithmetic as the host time above,
+    // so a boundary on a packet start is byte-identical to before.
+    // Without an epoch (a rate outside the HAL ladder) the previous
+    // rule stands: publish when the packet starts exactly on the grid.
+    uint64_t anchorFrame = 0;
+    uint64_t anchorHostTicks = 0;
+    uint32_t anchorNanosPerSampleQ8 = nanosPerSampleQ8;
+    bool haveAnchor = false;
+    auto& timeline = inputView_.control->hardwareTimeline;
+    const uint64_t timelineEpoch = timeline.Epoch();
+    if (timelineEpoch != 0 &&
+        timeline.Source() == ::ASFW::Audio::Runtime::HardwareTimelineSource::Receive) {
+        if (result.framesDecoded != 0 && timingEstablished && clockPublisher_.IsBound()) {
+            const uint64_t drainBusTicks = UnwrapDrainBusTicks(batch.drainCycleTimer);
+            const uint64_t ageTicks = timestamp.ageTicks >= 0
+                ? static_cast<uint64_t>(timestamp.ageTicks)
+                : static_cast<uint64_t>(-timestamp.ageTicks);
+            const uint64_t packetBusTicks = timestamp.ageTicks >= 0
+                ? (drainBusTicks > ageTicks ? drainBusTicks - ageTicks : 0)
+                : drainBusTicks + ageTicks;
+            ::ASFW::Audio::Runtime::HardwareZeroTimestamp boundary{};
+            const auto observed = timeline.Observe(
+                {
+                    .epoch = timelineEpoch,
+                    .source = ::ASFW::Audio::Runtime::HardwareTimelineSource::Receive,
+                    .sampleFrame = packetFirstFrame,
+                    .frameCount = result.framesDecoded,
+                    .presentationBusTicks = packetBusTicks,
+                    .correlationBusTicks = drainBusTicks,
+                    .correlationHostTicks = batch.drainHostTicks,
+                },
+                &boundary);
+            if (observed == ::ASFW::Audio::Runtime::HardwareObservationResult::BoundaryReady) {
+                anchorFrame = boundary.sampleFrame;
+                anchorHostTicks = boundary.hostTicks;
+                anchorNanosPerSampleQ8 = boundary.hostNanosPerSampleQ8;
+                haveAnchor = anchorHostTicks != 0;
+            }
+        }
+    } else if (timelineEpoch != 0) {
+        // Another source owns this epoch's clock (the M-Audio Transmit clock).
+        // RX offers no anchor at all: offering one would be refused, and the
+        // refusal read as kClockAnchorRejected -- a timing loss that restarts
+        // the stream every period (hardware, 2026-09-26: an 1814 dropping out
+        // every few seconds after Epic 4 T3).
+    } else if (kZtsPeriodFrames != 0 && result.framesDecoded != 0 &&
+               (packetFirstFrame % kZtsPeriodFrames) == 0 && packetHostTicks != 0 &&
+               nanosPerSampleQ8 != 0 && clockPublisher_.IsBound() && timingEstablished) {
+        anchorFrame = packetFirstFrame;
+        anchorHostTicks = packetHostTicks;
+        haveAnchor = true;
+    }
+    if (haveAnchor) {
+        const auto publish = clockPublisher_.Publish(anchorFrame, anchorHostTicks,
+                                                     anchorNanosPerSampleQ8);
         if (!publish.accepted) {
             ResetReplayEpochForDiscontinuity(
                 ReplayResetReason::kClockAnchorRejected,
@@ -429,7 +486,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                     .receiveCycleTimestamp = result.receiveCycleTimestamp,
                     .syt = result.syt,
                     .observedCycleOrdinal = cycleOrdinal,
-                    .sampleFrame = packetFirstFrame,
+                    .sampleFrame = anchorFrame,
                 });
         } else {
             ++ztsPublishCount_;
@@ -438,8 +495,8 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             }
             ::ASFW::Isoch::Rx::ZtsTelemetryRecord record{};
             record.publishCount = ztsPublishCount_;
-            record.sampleFrame = packetFirstFrame;
-            record.hostTicks = packetHostTicks;
+            record.sampleFrame = anchorFrame;
+            record.hostTicks = anchorHostTicks;
             record.rawHostTicks = packetHostTicks;
             record.drainHostTicks = batch.drainHostTicks;
             record.ageTicks = timestamp.ageTicks;
@@ -447,7 +504,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             record.rxCycleTimer = timestamp.cycleTimer;
             record.descriptorIndex = packet.descriptorIndex;
             record.framesDecoded = result.framesDecoded;
-            record.hostNanosPerSampleQ8 = nanosPerSampleQ8;
+            record.hostNanosPerSampleQ8 = anchorNanosPerSampleQ8;
             record.rawRxTs = result.receiveCycleTimestamp;
             record.syt = result.syt;
             record.kind = static_cast<uint8_t>(ztsPublishCount_ == 1
@@ -467,6 +524,29 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
         return;
     }
     const bool wasEstablished = control->rxSequenceReplay.IsEstablished();
+    // An established stream lost its presentation: the frame <-> time mapping
+    // it held no longer describes the wire. Start a new Receive epoch at the
+    // current frame, so nothing is carried across the gap and an anchor from
+    // before it is refused at the HAL. The frames are not renumbered: that
+    // would move the input ring and the RX replay the TX cursor aligns from
+    // (milestone 6). Accounting for the lost frames, instead of the restart
+    // the timing-loss callback triggers, is FW-218's call.
+    // documentation/HARDWARE_TIMELINE_OWNERSHIP.md decision (b).
+    if (wasEstablished && !configuration_.isSecondary) {
+        auto& timeline = control->hardwareTimeline;
+        if (timeline.Epoch() != 0 &&
+            timeline.Source() == ::ASFW::Audio::Runtime::HardwareTimelineSource::Receive) {
+            const uint64_t epoch = timeline.BeginEpoch(
+                ::ASFW::Audio::Runtime::HardwareTimelineSource::Receive,
+                ::ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::PresentationLoss,
+                timeline.SampleRateHz(), absoluteFrameCursor_);
+            // Once per loss, capped: a device that keeps losing presentation
+            // restarts each time and would otherwise log every cycle of it.
+            ASFW_LOG_RL(DirectAudio, "zts/loss-epoch", 1000, OS_LOG_TYPE_DEFAULT,
+                        "[Zts] epoch=%llu source=receive reason=presentation-loss frame=%llu",
+                        epoch, absoluteFrameCursor_);
+        }
+    }
     control->rxSytCadence.Reset();
     control->rxSequenceReplay.Reset();
     const uint64_t resetEpoch =
@@ -477,7 +557,6 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
     }
     cadenceEstablishedLogged_ = false;
     replayCycleInitialized_ = false;
-    dbcInitialized_ = false;
     // Before this was gated on `wasEstablished` alone, which made the one record
     // that explains a reset unreachable in the only case where nothing else
     // explains it: a stream that never established. A device that is rejected on

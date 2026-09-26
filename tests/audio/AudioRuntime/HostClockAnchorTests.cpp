@@ -1,4 +1,6 @@
+#include "Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
 #include "Audio/DriverKit/Runtime/AudioTransportControlBlock.hpp"
+#include "Audio/Engine/Direct/AudioClockPublisher.hpp"
 
 #include <gtest/gtest.h>
 
@@ -104,6 +106,52 @@ TEST(HostClockAnchorTests, RejectsOnlyInvalidHostMetadata) {
 
     EXPECT_TRUE(control.PublishHostClockAnchor(0, 100, 300).accepted);
     EXPECT_EQ(control.hostClockAnchor.generation.load(), 1U);
+}
+
+// Epic 4 (HARDWARE_TIMELINE_OWNERSHIP.md): an anchor carries the timeline
+// epoch it was projected in, so the HAL publish point can refuse one whose
+// epoch has ended.
+TEST(HostClockAnchorTests, AnchorCarriesItsTimelineEpoch) {
+    AudioTransportControlBlock control{};
+    ASSERT_TRUE(control.PublishHostClockAnchor(12288, 1000, 300, 7).accepted);
+    HostClockAnchorSample anchor{};
+    ASSERT_TRUE(control.hostClockAnchor.TryReadLatest(0, anchor));
+    EXPECT_EQ(anchor.timelineEpoch, 7U);
+    control.ResetForStart();
+    EXPECT_EQ(control.hostClockAnchor.timelineEpoch.load(), 0U);
+    EXPECT_EQ(control.hardwareTimeline.Epoch(), 0U);
+}
+
+// One authority per device: while the timeline is in a Transmit epoch (M-Audio
+// special firmware), the RX publisher stays silent; in a Receive epoch it
+// publishes, tagged; with no epoch (a rate the timeline does not model) it
+// publishes untagged as before.
+TEST(HostClockAnchorTests, RxPublisherFollowsTheTimelineSource) {
+    using ASFW::Audio::Runtime::HardwareTimelineDiscontinuity;
+    using ASFW::Audio::Runtime::HardwareTimelineSource;
+    AudioTransportControlBlock control{};
+    ASFW::Audio::Runtime::AudioGraphBinding binding{};
+    binding.control = &control;
+    ASFW::AudioEngine::Direct::AudioClockPublisher publisher;
+    publisher.Bind(&binding);
+
+    EXPECT_TRUE(publisher.Publish(12288, 1000, 300).accepted);
+    HostClockAnchorSample anchor{};
+    ASSERT_TRUE(control.hostClockAnchor.TryReadLatest(0, anchor));
+    EXPECT_EQ(anchor.timelineEpoch, 0U);
+
+    const uint64_t transmit = control.hardwareTimeline.BeginEpoch(
+        HardwareTimelineSource::Transmit, HardwareTimelineDiscontinuity::StartIO, 48000, 0);
+    ASSERT_NE(transmit, 0U);
+    EXPECT_FALSE(publisher.Publish(24576, 2000, 300).accepted);
+    EXPECT_EQ(control.hostClockAnchor.generation.load(), anchor.generation);
+
+    const uint64_t receive = control.hardwareTimeline.BeginEpoch(
+        HardwareTimelineSource::Receive, HardwareTimelineDiscontinuity::StartIO, 48000, 0);
+    ASSERT_NE(receive, 0U);
+    EXPECT_TRUE(publisher.Publish(36864, 3000, 300).accepted);
+    ASSERT_TRUE(control.hostClockAnchor.TryReadLatest(anchor.generation, anchor));
+    EXPECT_EQ(anchor.timelineEpoch, receive);
 }
 
 } // namespace ASFW::Tests::AudioRuntime

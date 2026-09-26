@@ -32,11 +32,14 @@ struct TxClockBoundaryResult final {
 };
 
 /// Qualifies M-Audio TX completion timing and turns data-packet observations
-/// into HAL-grid boundaries. All mutation is serialized on the TX preparation
-/// queue after Arm() completes before transport start.
+/// into HAL-grid boundaries on the device's shared HardwareSampleTimeline
+/// (documentation/HARDWARE_TIMELINE_OWNERSHIP.md). Arm() begins that
+/// timeline's Transmit epoch at StartIO. All mutation is serialized on the TX
+/// preparation queue after Arm() completes before transport start.
 class TxClockBridge final {
 public:
-    [[nodiscard]] bool Arm(uint64_t startEpoch,
+    [[nodiscard]] bool Arm(ASFW::Audio::Runtime::HardwareSampleTimeline& timeline,
+                           uint64_t startEpoch,
                            uint32_t sampleRateHz,
                            uint32_t zeroTimestampPeriodFrames,
                            uint32_t presentationOffsetTicks) noexcept;
@@ -53,7 +56,8 @@ public:
     [[nodiscard]] uint64_t Epoch() const noexcept { return epoch_; }
 
 private:
-    ASFW::Audio::Runtime::HardwareSampleTimeline timeline_{};
+    // The device's timeline, owned by the audio transport control block.
+    ASFW::Audio::Runtime::HardwareSampleTimeline* timeline_{nullptr};
     PresentationObserver observer_{};
     uint64_t epoch_{0};
 };

@@ -168,7 +168,6 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     control.generation.store(41, std::memory_order_relaxed);
     control.client.PublishBeginRead(2000, 456, 64);
     control.client.PublishWriteEnd(1000, 123, 128);
-    control.device.Publish(3000, 789, 55);
     control.counters.CountBeginRead();
     control.counters.CountWriteEnd();
     control.counters.CountZtsPublished();
@@ -236,11 +235,6 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     EXPECT_EQ(control.client.outputWriteEndHostTicks.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.client.outputWriteEndFrames.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.client.OutputWrittenEndFrame(), 0U);
-
-    EXPECT_EQ(control.device.sampleFrame.load(std::memory_order_relaxed), 0U);
-    EXPECT_EQ(control.device.hostTicks.load(std::memory_order_relaxed), 0U);
-    EXPECT_EQ(control.device.hostNanosPerSampleQ8.load(std::memory_order_relaxed), 0U);
-    EXPECT_EQ(control.device.generation.load(std::memory_order_acquire), 0U);
 
     EXPECT_EQ(control.counters.ioBeginReadCount.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.ioWriteEndCount.load(std::memory_order_relaxed), 0U);

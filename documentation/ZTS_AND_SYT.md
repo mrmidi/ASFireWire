@@ -1,5 +1,11 @@
 # Zero Timestamp (ZTS) and SYT Timing Architecture
 
+> **Current ownership (Epic 4, 2026-09-26):** the CoreAudio clock is now a projection of one
+> `HardwareSampleTimeline` per device (RX observations, or the M-Audio TX clock), published
+> through one function. [`HARDWARE_TIMELINE_OWNERSHIP.md`](HARDWARE_TIMELINE_OWNERSHIP.md) is
+> authoritative for who owns sample time. Where this document describes the RX anchor or a
+> private M-Audio timeline, read it as history.
+
 > **Vocabulary:** latency-shaped numbers in this document (delays, offsets, leads, depths) are classified in [`LATENCY_VOCABULARY.md`](LATENCY_VOCABULARY.md). A configured frame count is not a measured duration, and a depth is never a latency.
 
 This document provides a comprehensive guide to the clock recovery, synchronization, and presentation timing architectures in the ASFW Driver. It explains how the driver bridges the asynchronous Apple CoreAudio host domain with the synchronous, cycle-aligned IEEE 1394 (FireWire) bus domain.

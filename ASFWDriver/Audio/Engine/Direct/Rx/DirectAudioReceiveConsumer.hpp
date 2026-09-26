@@ -108,6 +108,11 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint64_t secondaryAnchorEpoch_{0};
     uint64_t absoluteFrameCursor_{0};
     bool cursorInitialized_{false};
+    // Drain cycle timers unwrapped across the 128 s cycle-timer wrap, so the
+    // hardware timeline sees monotonic bus time for the whole activation.
+    [[nodiscard]] uint64_t UnwrapDrainBusTicks(uint32_t drainCycleTimer) noexcept;
+    uint64_t drainBusWraps_{0};
+    int64_t lastDrainOffsets_{-1};
     uint64_t ztsPublishCount_{0};
     uint64_t timestampValidCount_{0};
     uint64_t timestampInvalidCount_{0};
@@ -128,8 +133,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint32_t bootstrapResetLogBudget_{kBootstrapResetLogBudget};
     bool replayCycleInitialized_{false};
     uint32_t lastReplayCycleOrdinal_{0};
-    uint8_t lastDbc_{0};
-    bool dbcInitialized_{false};
     ::ASFW::Isoch::Rx::ZtsTelemetryLogGate ztsTelemetryLogGate_{};
     uint64_t prevLoggedAnchorFrame_{0};
     uint64_t prevLoggedAnchorHostTicks_{0};

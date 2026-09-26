@@ -1,0 +1,7 @@
+stream rate=32000 syt=1 cycles=16000
+anchor cycle=3073 frame=12288 hostNs=384125000 nsPerSampleQ8=8000000
+anchor cycle=6145 frame=24576 hostNs=768125000 nsPerSampleQ8=8000000
+anchor cycle=9217 frame=36864 hostNs=1152125000 nsPerSampleQ8=8000000
+anchor cycle=12289 frame=49152 hostNs=1536125000 nsPerSampleQ8=8000000
+anchor cycle=15361 frame=61440 hostNs=1920125000 nsPerSampleQ8=8000000
+replayResets=1
