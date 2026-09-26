@@ -488,6 +488,19 @@ explain the variation.
 - **Expected on hardware:** declared 361 at 64 frames; RTL_ts ≈ 105.03 and residual ≈ 0 on every start, whatever
   `[TxAlign]` would have rounded by. Check with the controlled runs above; `[TxAlign]` now logs cursor = projected.
 
+**T7 on hardware (Pro 24 DSP, 48 kHz, 64-frame buffer, build `c27f727`, same controlled-run method):**
+
+| Start (ring seq) | `[TxAlign]` cursor = projected | Old rounding would have given | RTL_ts | Residual |
+|---|---|---|---|---|
+| 3137 | 10158 | diff 6 → 111.03 | **105.03** | +0.03 |
+| 5278 | 10162 | diff 2 → 107.03 | **105.03** | +0.03 |
+| 5880 | 10150 | diff 6 → 111.03 | **105.03** | +0.03 |
+
+Declared round trip 361 at 64 frames, measured 361.03 on every start; Oblique RTL Utility agrees (361 / 361).
+The physical path no longer depends on the start, and output is 2–6 frames earlier than before on these starts
+(0–7, ~3.5 on average). `[TxPlace]` read +2/+4 (it was −2…−6 before T7), consistent with earlier output, within
+its one-cycle resolution.
+
 ## 2. How we got here: keep midi's understanding, not its architecture
 
 The core TX problem is **pacing**. CoreAudio writes PCM when its IO thread runs; this is `W`, the client write end.
