@@ -13,16 +13,15 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    no cycle numbering.
 // 3. Slot bytes are wire-order (big-endian); this is the single
 //    logical-to-bus conversion point for the packet image.
-// 4. Frame continuity is owned here (nextAudioFrame_, seeded by Reset);
-//    AmdtpTimingState.nextAudioFrame is reserved for rebase logic
-//    (Milestone 2) and ignored for now — the timeline stays gapless by
-//    construction.
+// 4. Frame continuity is NOT owned here. The caller's TxPresentationPlan
+//    states each packet's first frame; DiceTxStreamEngine owns the one
+//    audio-frame cursor (documentation/TX_OWNERSHIP.md).
 // 5. The default no-data packet is CIP-header-only (8 bytes) and leaves DBC
 //    unchanged. The M-Audio special profile sends full-size cadence packets
 //    with no-audio labels; those wire blocks advance DBC.
 //
-// Failure contract: PrepareNextPacket mutates no state (cadence, DBC, frame
-// counter) on any failure path, so a failed call can be retried with a
+// Failure contract: PrepareNextPacket mutates no state (cadence, DBC) on any
+// failure path, so a failed call can be retried with a
 // corrected slot.
 
 namespace {
@@ -99,7 +98,7 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
         cadence_ = static_cast<IAmdtpCadence*>(&nonBlocking48kCadence_);
     }
 
-    Reset(0, 0);
+    Reset(0);
     return true;
 }
 
@@ -107,47 +106,11 @@ void AmdtpTxPacketizer::BindTimeline(AmdtpPacketTimeline* timeline) noexcept {
     timeline_ = timeline;
 }
 
-void AmdtpTxPacketizer::Reset(uint8_t initialDbc,
-                              uint64_t initialAudioFrame) noexcept {
+void AmdtpTxPacketizer::Reset(uint8_t initialDbc) noexcept {
     dbcCounter_.Reset(initialDbc);
-    frameCursorAligned_ = false;
-    ++cursorEpoch_;
-    lastDataFirstAudioFrame_ = 0;
-    lastDataEndAudioFrame_ = 0;
-    lastDataPacketIndex_ = 0;
-    hasLastDataPacket_ = false;
-    telemetryNextAudioFrame_.store(initialAudioFrame, std::memory_order_relaxed);
     if (cadence_ != nullptr) {
         cadence_->Reset();
     }
-    PublishTelemetrySnapshot();
-}
-
-bool AmdtpTxPacketizer::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
-    if (frameCursorAligned_) {
-        return false;
-    }
-    frameCursorAligned_ = true;
-    ++cursorEpoch_;
-    telemetryNextAudioFrame_.store(frameIndex, std::memory_order_relaxed);
-    PublishTelemetrySnapshot();
-    return true;
-}
-
-void AmdtpTxPacketizer::ReArmFrameCursorAlignment() noexcept {
-    if (!frameCursorAligned_) {
-        return;
-    }
-    frameCursorAligned_ = false;
-    ++cursorEpoch_;
-    PublishTelemetrySnapshot();
-}
-
-void AmdtpTxPacketizer::SetPresentationCursor(uint64_t epoch, uint64_t frame, bool aligned) noexcept {
-    cursorEpoch_ = epoch;
-    frameCursorAligned_ = aligned;
-    telemetryNextAudioFrame_.store(frame, std::memory_order_relaxed);
-    PublishTelemetrySnapshot();
 }
 
 bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
@@ -156,10 +119,6 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
                                           PreparedTxPacket& outPacket) noexcept {
     if (cadence_ == nullptr || timeline_ == nullptr || slot.bytes == nullptr) {
         return false;
-    }
-
-    if (plan.epoch != 0 && plan.epoch != cursorEpoch_) {
-        return false; // Stale or rejected epoch cannot publish
     }
 
     const bool isData =
@@ -220,12 +179,6 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
         }
 
         dbcCounter_.AdvanceDataBlocks(frames);
-        lastDataFirstAudioFrame_ = outPacket.firstAudioFrame;
-        lastDataEndAudioFrame_ = plan.firstAudioFrame + frames;
-        lastDataPacketIndex_ = outPacket.packetIndex;
-        hasLastDataPacket_ = true;
-        telemetryNextAudioFrame_.store(lastDataEndAudioFrame_, std::memory_order_release);
-        PublishTelemetrySnapshot();
     } else {
         outPacket.syt = IEC61883::SytFormatter::kNoInfo;
 
@@ -247,38 +200,6 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
 
     cadence_->AdvanceCycle();
     return true;
-}
-
-bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
-                                          const AmdtpTimingState& timing,
-                                          PreparedTxPacket& outPacket) noexcept {
-    if (cadence_ == nullptr) {
-        return false;
-    }
-
-    const bool cadenceData = cadence_->CurrentCycleIsData();
-    const bool isData =
-        timing.disposition == AmdtpPacketDisposition::Data &&
-        (timing.replayValid
-             ? timing.replayDataBlocks != 0
-             : cadenceData);
-    const uint8_t frames =
-        isData
-            ? static_cast<uint8_t>(
-                  timing.replayValid
-                      ? timing.replayDataBlocks
-                      : cadence_->CurrentCycleDataFrames())
-            : 0;
-
-    TxPresentationPlan plan{};
-    plan.epoch = cursorEpoch_;
-    plan.cycleOrdinal = slot.packetIndex;
-    plan.firstAudioFrame = telemetryNextAudioFrame_.load(std::memory_order_relaxed);
-    plan.frameCount = frames;
-    plan.disposition =
-        isData ? AmdtpPacketDisposition::Data : AmdtpPacketDisposition::NoData;
-
-    return PrepareNextPacket(slot, timing, plan, outPacket);
 }
 
 void AmdtpTxPacketizer::RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& packet) noexcept {
@@ -313,11 +234,8 @@ void AmdtpTxPacketizer::RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& 
     }
     packet.isData = false;
     packet.dbc = dbc;
-    telemetryNextAudioFrame_.store(packet.firstAudioFrame, std::memory_order_relaxed);
     packet.framesInPacket = 0;
     packet.syt = IEC61883::SytFormatter::kNoInfo;
-    hasLastDataPacket_ = false;
-    PublishTelemetrySnapshot();
 }
 
 const AmdtpStreamConfig& AmdtpTxPacketizer::StreamConfig() const noexcept {
@@ -334,42 +252,6 @@ bool AmdtpTxPacketizer::NextPacketWouldCarryData() const noexcept {
 
 uint8_t AmdtpTxPacketizer::CurrentCycleDataFrames() const noexcept {
     return cadence_ != nullptr ? cadence_->CurrentCycleDataFrames() : 0;
-}
-
-AmdtpTxPacketizerTelemetrySnapshot
-AmdtpTxPacketizer::TelemetrySnapshot() const noexcept {
-    AmdtpTxPacketizerTelemetrySnapshot snapshot{};
-    snapshot.nextAudioFrame =
-        telemetryNextAudioFrame_.load(std::memory_order_acquire);
-    snapshot.lastDataFirstAudioFrame =
-        telemetryLastDataFirstAudioFrame_.load(std::memory_order_relaxed);
-    snapshot.lastDataEndAudioFrame =
-        telemetryLastDataEndAudioFrame_.load(std::memory_order_relaxed);
-    snapshot.lastDataPacketIndex =
-        telemetryLastDataPacketIndex_.load(std::memory_order_relaxed);
-    snapshot.cursorEpoch = telemetryCursorEpoch_.load(std::memory_order_relaxed);
-    snapshot.frameCursorAligned =
-        telemetryFrameCursorAligned_.load(std::memory_order_relaxed);
-    snapshot.hasLastDataPacket =
-        telemetryHasLastDataPacket_.load(std::memory_order_relaxed);
-    return snapshot;
-}
-
-void AmdtpTxPacketizer::PublishTelemetrySnapshot() noexcept {
-    // Publish data fields before the acquire load of nextAudioFrame in
-    // TelemetrySnapshot(). The snapshot is deliberately best-effort: it is
-    // diagnostic only and never participates in packet preparation.
-    telemetryLastDataFirstAudioFrame_.store(lastDataFirstAudioFrame_,
-                                            std::memory_order_relaxed);
-    telemetryLastDataEndAudioFrame_.store(lastDataEndAudioFrame_,
-                                          std::memory_order_relaxed);
-    telemetryLastDataPacketIndex_.store(lastDataPacketIndex_,
-                                        std::memory_order_relaxed);
-    telemetryCursorEpoch_.store(cursorEpoch_, std::memory_order_relaxed);
-    telemetryFrameCursorAligned_.store(frameCursorAligned_,
-                                       std::memory_order_relaxed);
-    telemetryHasLastDataPacket_.store(hasLastDataPacket_,
-                                      std::memory_order_relaxed);
 }
 
 void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,

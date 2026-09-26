@@ -182,8 +182,6 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     control.discontinuities.store(5, std::memory_order_relaxed);
     control.playbackRingOldestValidFrame.store(123, std::memory_order_relaxed);
     control.playbackRingDiscontinuityGeneration.store(6, std::memory_order_relaxed);
-    control.txScheduledSampleFrame.store(456, std::memory_order_relaxed);
-    control.txCompletedSampleFrame.store(400, std::memory_order_relaxed);
     control.txMinimumPreparationDistance.store(70, std::memory_order_relaxed);
     control.txMinimumCommittedMarginPackets.store(
         12, std::memory_order_relaxed);
@@ -215,11 +213,8 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     (void)control.txPreparationRequests.PublishRequest(1000);
     control.txPreparationRequests.MarkHandled(1, 1100);
     control.counters.txPreparationWakeRequests.store(1, std::memory_order_relaxed);
-    control.counters.txCompletedPayloadHashMatches.store(4, std::memory_order_relaxed);
-    control.counters.txCompletedPayloadHashMismatches.store(5, std::memory_order_relaxed);
     control.counters.txPayloadMismatchFaults.store(6, std::memory_order_relaxed);
     control.counters.txPostLockNoDataPackets.store(8, std::memory_order_relaxed);
-    control.txFatalSnapshot.packetIndex.store(12, std::memory_order_relaxed);
     control.fatalGeneration.store(13, std::memory_order_relaxed);
     control.fatalReason.store(FatalStreamReason::TxReadAhead, std::memory_order_relaxed);
 
@@ -251,8 +246,6 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     EXPECT_EQ(control.discontinuities.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.playbackRingOldestValidFrame.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.playbackRingDiscontinuityGeneration.load(std::memory_order_acquire), 0U);
-    EXPECT_EQ(control.txScheduledSampleFrame.load(std::memory_order_acquire), 0U);
-    EXPECT_EQ(control.txCompletedSampleFrame.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.txMinimumPreparationDistance.load(std::memory_order_acquire),
               UINT32_MAX);
     EXPECT_EQ(
@@ -294,19 +287,12 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     EXPECT_EQ(control.counters.txPreparationWakeRequests.load(
                   std::memory_order_relaxed),
               0U);
-    EXPECT_EQ(control.counters.txCompletedPayloadHashMatches.load(
-                  std::memory_order_relaxed),
-              0U);
-    EXPECT_EQ(control.counters.txCompletedPayloadHashMismatches.load(
-                  std::memory_order_relaxed),
-              0U);
     EXPECT_EQ(control.counters.txPayloadMismatchFaults.load(
                   std::memory_order_relaxed),
               0U);
     EXPECT_EQ(control.counters.txPostLockNoDataPackets.load(
                   std::memory_order_relaxed),
               0U);
-    EXPECT_EQ(control.txFatalSnapshot.packetIndex.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.fatalGeneration.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.fatalReason.load(std::memory_order_acquire),
               FatalStreamReason::None);

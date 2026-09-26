@@ -492,34 +492,6 @@ struct TxPreparationRequestState final {
     }
 };
 
-struct TxFatalSnapshot final {
-    std::atomic<uint64_t> audioFrame{0};
-    std::atomic<int64_t> outputPhaseTicks{-1};
-    std::atomic<uint64_t> oldestValidFrame{0};
-    std::atomic<uint64_t> writtenEndFrame{0};
-    std::atomic<uint32_t> packetIndex{0};
-    std::atomic<uint32_t> distanceToHardware{0};
-    std::atomic<uint32_t> slotState{0};
-    std::atomic<uint32_t> dbc{0};
-    std::atomic<uint32_t> syt{0};
-    std::atomic<uint64_t> preparedPayloadHash{0};
-    std::atomic<uint64_t> completedPayloadHash{0};
-
-    void Reset() noexcept {
-        audioFrame.store(0, std::memory_order_relaxed);
-        outputPhaseTicks.store(-1, std::memory_order_relaxed);
-        oldestValidFrame.store(0, std::memory_order_relaxed);
-        writtenEndFrame.store(0, std::memory_order_relaxed);
-        packetIndex.store(0, std::memory_order_relaxed);
-        distanceToHardware.store(0, std::memory_order_relaxed);
-        slotState.store(0, std::memory_order_relaxed);
-        dbc.store(0, std::memory_order_relaxed);
-        syt.store(0, std::memory_order_relaxed);
-        preparedPayloadHash.store(0, std::memory_order_relaxed);
-        completedPayloadHash.store(0, std::memory_order_relaxed);
-    }
-};
-
 struct AudioTransportControlBlock final {
     std::atomic<uint64_t> generation{0};
 
@@ -561,7 +533,6 @@ struct AudioTransportControlBlock final {
     // Latest-value trace of the live replay TX SYT decision (diagnostics).
     TxSytTraceLatest txSytTrace{};
     TxPreparationRequestState txPreparationRequests{};
-    TxFatalSnapshot txFatalSnapshot{};
     TxProducerFaultSnapshot txProducerFault{};
 
     std::atomic<uint64_t> outputConsumedEndFrame{0};
@@ -573,8 +544,6 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> playbackRingDiscontinuityGeneration{0};
     std::atomic<uint64_t> playbackRingUnderruns{0};
     std::atomic<uint64_t> playbackRingOverruns{0};
-    std::atomic<uint64_t> txScheduledSampleFrame{0};
-    std::atomic<uint64_t> txCompletedSampleFrame{0};
     std::atomic<uint32_t> txCurrentCommittedMarginPackets{0};
     std::atomic<uint32_t> txMinimumPreparationDistance{UINT32_MAX};
     std::atomic<uint32_t> txMinimumCommittedMarginPackets{UINT32_MAX};
@@ -745,7 +714,6 @@ struct AudioTransportControlBlock final {
         txWirePayloadTelemetry.Reset();
         txSytTrace.Reset();
         txPreparationRequests.Reset();
-        txFatalSnapshot.Reset();
         txProducerFault.Reset();
 
         outputConsumedEndFrame.store(0, std::memory_order_relaxed);
@@ -757,8 +725,6 @@ struct AudioTransportControlBlock final {
         playbackRingDiscontinuityGeneration.store(0, std::memory_order_relaxed);
         playbackRingUnderruns.store(0, std::memory_order_relaxed);
         playbackRingOverruns.store(0, std::memory_order_relaxed);
-        txScheduledSampleFrame.store(0, std::memory_order_relaxed);
-        txCompletedSampleFrame.store(0, std::memory_order_relaxed);
         txCurrentCommittedMarginPackets.store(0, std::memory_order_relaxed);
         txMinimumPreparationDistance.store(UINT32_MAX, std::memory_order_relaxed);
         txMinimumCommittedMarginPackets.store(

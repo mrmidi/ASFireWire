@@ -160,7 +160,6 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/AudioClientCursorTests.cpp
     AudioRuntime/AudioTransportControlBlockTests.cpp
     AudioRuntime/AudioGraphBindingTests.cpp
-    AudioRuntime/DirectAudioEngineTests.cpp
     AudioRuntime/DirectAudioDebugSnapshotTests.cpp
     AudioRuntime/HostClockAnchorTests.cpp
     AudioRuntime/PlaybackRingRangeTests.cpp
@@ -178,9 +177,7 @@ target_compile_definitions(AudioTelemetryWireTests PRIVATE
 
 
 
-# RX packet decode outcome split. NOTE: the other files under AudioEngineDirect/
-# (DirectTxProbeTests, TxAudioPacketProcessorTests, TxAudioPacketWriterTests) are
-# not registered in any CMakeLists and therefore never run.
+# RX packet decode outcome split.
 add_audio_test(RxAudioPacketProcessorTests
     AudioEngineDirect/RxAudioPacketProcessorTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp"

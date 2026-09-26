@@ -1,6 +1,6 @@
 # TX ownership: PCM → packet → DMA (milestone 6)
 
-**Status:** T0 (design + inventory), 2026-09-26, branch `refactor/tx-ownership` off main `52d05ca8`.
+**Status:** T0 (design + inventory), T1 (goldens) and T2 (dead surfaces) done, 2026-09-26, branch `refactor/tx-ownership` off main `52d05ca8`.
 Linear FW-209 (milestone 6), condensing FW-210 (main inventory), FW-211 (midi distillation) and FW-212 (ownership
 model). The stages are in §8. This document is T0.
 
@@ -128,10 +128,10 @@ Legend for cursor kinds: AF = audio-frame cursor, PK = packet cursor, DMA = DMA 
 | `MotuPayloadWriter::WriteFloat32Interleaved` | `MotuPayloadWriter.cpp:43-133` | Same, MOTU layout | **ADAPT (T4)**: same |
 | `DiceTxStreamEngine::WriteHostOutputFloat32` | `DiceTxStreamEngine.cpp:169-175` | RT forwarder to the writer | **DELETE (T4)** |
 | `AmdtpPacketTimeline` slots + `SnapshotSlotForAudioFrame` | `AmdtpPacketTimeline.cpp` | Frame→packet map read by the RT writer through a seqlock | **ADAPT (T4)**: read by the producer's fill only; RT access goes |
-| `AmdtpPacketTimeline::Published` state | `AmdtpPacketTimeline.hpp` | Declared, never set | **DELETE (T2)** |
+| `AmdtpPacketTimeline::Published` state | `AmdtpPacketTimeline.hpp` | Declared, never set | **DELETED (T2)** |
 | `exposedFrameEnd_` (`E`) | `AmdtpPacketTimeline.cpp:104-107` | High-water only; not retracted on `RevertToNoData` | **DELETE (T4)** along with the `W`/`E` rendezvous |
 | `DiceTxStreamEngine::nextAudioFrame_` | `DiceTxStreamEngine.hpp`, `.cpp:65-99,157` | The content-frame cursor (AF) | **KEEP**: the single frame cursor |
-| Packetizer `telemetryNextAudioFrame_` + its own Align/ReArm | `AmdtpTxPacketizer.cpp:119,132,149,227,276,316,343` | Shadow frame cursor; its header claims ownership | **DELETE (T2)**: the packetizer consumes the plan statelessly |
+| Packetizer `telemetryNextAudioFrame_` + its own Align/ReArm | `AmdtpTxPacketizer.cpp:119,132,149,227,276,316,343` | Shadow frame cursor; its header claims ownership | **DELETED (T2)**: also its telemetry snapshot, the 3-argument `PrepareNextPacket`, and the packetizer epoch guard (dead: the engine sets `plan.epoch` from its own epoch in the same call). Tests frame packets through `tests/support/TxPacketizerTestSupport.hpp`; align-once is now tested on the engine |
 | Payload clear before exposure | `AmdtpTxPacketizer.cpp:382-386` (policy set at `DiceTxStreamEngine.cpp:210`) | Zeroes the payload; an unfilled AM824 PCM slot goes out as `0x00000000` (label 0x00) | **REPLACE (T3)** → encoded silence (AM824 MBLA `0x40000000`) |
 | `RevertToNoData` | `AmdtpTxPacketizer.cpp:284-321` | Rewinds DBC and rewrites the slot as NO-DATA (MOTU timing unavailable) | **KEEP**; T2 removes its shadow-cursor write |
 | TX frame alignment `[TxAlign]` | `ASFWAudioDriverTxProducer.cpp:449-505` | Places TX frames from the RX replay entry (§6) | **KEEP until B3** (see §6) |
@@ -150,10 +150,10 @@ Legend for cursor kinds: AF = audio-frame cursor, PK = packet cursor, DMA = DMA 
 | Interrupt every 8 packets | `IsochTxDmaRing.cpp:473, 934` (`IsTimingGroupBoundary`); `AudioTimingGeometry.hpp:60-62` | TX/RX interrupt cadence | **KEEP**. Changing it is a geometry change (§7), not a tweak |
 | StopIO prep-queue drain | `ASFWAudioDevice.cpp:633-634` | Drains only when `mAudioInternalTxActive` | **ADAPT (T6)**: drain for every family |
 | `txSecondaryActive` | `ASFWAudioDriverPrivate.hpp:268` | Plain `bool` read by the RT thread | **ADAPT (T6)**: atomic |
-| `FireWireAudioEngine` / `DirectOutputReader` | `Audio/Engine/Direct/*` | Never bound; dead read path | **DELETE (T2)** |
-| `IsochTransmitContextTests.cpp`, `DirectTxProbeTests`, `TxAudioPacket*Tests` | `tests/audio/` | Not built (stale includes) | **DELETE (T2)** |
-| `HashTxPayload`, `TxFatalSnapshot` hashes | `TxPayloadHash.hpp`, ATCB | No callers / never written | **DELETE (T2)**; keep the rest of `TxFatalSnapshot` |
-| `txScheduledSampleFrame`, `txCompletedSampleFrame` | ATCB (`:760-761` reset only) | Never written except by reset; read by `DirectAudioDebugSnapshot.hpp:190-193` and two tests | **DELETE (T2)** with its readers |
+| `FireWireAudioEngine` / `DirectOutputReader` | `Audio/Engine/Direct/*` | Never bound; dead read path | **DELETED (T2)**, with `DirectAudioEngineTests` (it tested only this engine) |
+| `IsochTransmitContextTests.cpp`, `DirectTxProbeTests`, `TxAudioPacket*Tests` | `tests/audio/` | Not built (stale includes) | **DELETED (T2)** |
+| `HashTxPayload`, `TxFatalSnapshot`, `txCompletedPayloadHash*`/`txCompletedPcmSlots`/`txCompletedStartupSilenceSlots` | `TxPayloadHash.hpp`, ATCB, `AudioRtCounters.hpp` | No callers; **no writer anywhere** (only `Reset()` and the debug snapshot touched them) | **DELETED (T2)**: the whole `TxFatalSnapshot`, not just its hashes (T0 assumed the rest was written; it is not). `ADK FORCED FATAL` keeps the live `fatalReason`/`fatalGeneration` |
+| `txScheduledSampleFrame`, `txCompletedSampleFrame` | ATCB (`:760-761` reset only) | Never written except by reset; read by `DirectAudioDebugSnapshot.hpp:190-193` and two tests | **DELETED (T2)** with its readers |
 
 ## 4. midi distillation (FW-211)
 

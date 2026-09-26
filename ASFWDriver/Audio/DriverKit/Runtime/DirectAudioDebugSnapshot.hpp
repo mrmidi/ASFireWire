@@ -46,8 +46,6 @@ struct DirectAudioDebugSnapshot final {
     uint64_t playbackRingAvailableFrames{0};
     uint64_t playbackRingUnderruns{0};
     uint64_t playbackRingOverruns{0};
-    uint64_t txScheduledSampleFrame{0};
-    uint64_t txCompletedSampleFrame{0};
     uint64_t txMinimumPreparationDistance{UINT32_MAX};
     uint64_t txMinimumCommittedMarginPackets{UINT32_MAX};
     uint64_t txLastPreparationLatencyTicks{0};
@@ -81,21 +79,9 @@ struct DirectAudioDebugSnapshot final {
     uint64_t txPreparationWakeDispatches{0};
     uint64_t txPreparationWakeCoalesced{0};
     uint64_t txPreparationDrainPasses{0};
-    uint64_t txCompletedPayloadHashMatches{0};
-    uint64_t txCompletedPayloadHashMismatches{0};
-    uint64_t txCompletedPcmSlots{0};
-    uint64_t txCompletedStartupSilenceSlots{0};
     uint64_t txPayloadMismatchFaults{0};
     FatalStreamReason fatalReason{FatalStreamReason::None};
     uint64_t fatalGeneration{0};
-    uint32_t fatalPacketIndex{0};
-    uint32_t fatalDistanceToHardware{0};
-    uint64_t fatalAudioFrame{0};
-    int64_t fatalOutputPhaseTicks{-1};
-    uint64_t fatalOldestValidFrame{0};
-    uint64_t fatalWrittenEndFrame{0};
-    uint64_t fatalPreparedPayloadHash{0};
-    uint64_t fatalCompletedPayloadHash{0};
 
     uint64_t captureRingWriteFrame{0};
     uint64_t captureRingReadFrame{0};
@@ -187,10 +173,6 @@ struct DirectAudioDebugSnapshot final {
         control.playbackRingUnderruns.load(std::memory_order_relaxed);
     snapshot.playbackRingOverruns =
         control.playbackRingOverruns.load(std::memory_order_relaxed);
-    snapshot.txScheduledSampleFrame =
-        control.txScheduledSampleFrame.load(std::memory_order_acquire);
-    snapshot.txCompletedSampleFrame =
-        control.txCompletedSampleFrame.load(std::memory_order_acquire);
     snapshot.txMinimumPreparationDistance =
         control.txMinimumPreparationDistance.load(std::memory_order_acquire);
     snapshot.txMinimumCommittedMarginPackets =
@@ -257,14 +239,6 @@ struct DirectAudioDebugSnapshot final {
         control.counters.txPreparationWakeCoalesced.load(std::memory_order_relaxed);
     snapshot.txPreparationDrainPasses =
         control.counters.txPreparationDrainPasses.load(std::memory_order_relaxed);
-    snapshot.txCompletedPayloadHashMatches =
-        control.counters.txCompletedPayloadHashMatches.load(std::memory_order_relaxed);
-    snapshot.txCompletedPayloadHashMismatches =
-        control.counters.txCompletedPayloadHashMismatches.load(std::memory_order_relaxed);
-    snapshot.txCompletedPcmSlots =
-        control.counters.txCompletedPcmSlots.load(std::memory_order_relaxed);
-    snapshot.txCompletedStartupSilenceSlots =
-        control.counters.txCompletedStartupSilenceSlots.load(std::memory_order_relaxed);
     snapshot.txPayloadMismatchFaults =
         control.counters.txPayloadMismatchFaults.load(std::memory_order_relaxed);
     snapshot.hostAnchorGeneration =
@@ -284,22 +258,6 @@ struct DirectAudioDebugSnapshot final {
             std::memory_order_relaxed);
     snapshot.fatalReason = control.fatalReason.load(std::memory_order_acquire);
     snapshot.fatalGeneration = control.fatalGeneration.load(std::memory_order_acquire);
-    snapshot.fatalPacketIndex =
-        control.txFatalSnapshot.packetIndex.load(std::memory_order_relaxed);
-    snapshot.fatalDistanceToHardware =
-        control.txFatalSnapshot.distanceToHardware.load(std::memory_order_relaxed);
-    snapshot.fatalAudioFrame =
-        control.txFatalSnapshot.audioFrame.load(std::memory_order_relaxed);
-    snapshot.fatalOutputPhaseTicks =
-        control.txFatalSnapshot.outputPhaseTicks.load(std::memory_order_relaxed);
-    snapshot.fatalOldestValidFrame =
-        control.txFatalSnapshot.oldestValidFrame.load(std::memory_order_relaxed);
-    snapshot.fatalWrittenEndFrame =
-        control.txFatalSnapshot.writtenEndFrame.load(std::memory_order_relaxed);
-    snapshot.fatalPreparedPayloadHash =
-        control.txFatalSnapshot.preparedPayloadHash.load(std::memory_order_relaxed);
-    snapshot.fatalCompletedPayloadHash =
-        control.txFatalSnapshot.completedPayloadHash.load(std::memory_order_relaxed);
 
     snapshot.captureRingWriteFrame =
         control.captureRingWriteFrame.load(std::memory_order_acquire);

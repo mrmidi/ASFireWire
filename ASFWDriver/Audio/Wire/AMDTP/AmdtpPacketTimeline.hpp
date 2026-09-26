@@ -10,7 +10,6 @@ namespace ASFW::Protocols::Audio::AMDTP {
 enum class PacketSlotState : uint8_t {
     Empty = 0,
     ExposedForAudio = 1,
-    Published = 2,
     Completed = 3,
 };
 

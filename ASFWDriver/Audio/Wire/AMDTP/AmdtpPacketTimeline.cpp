@@ -17,12 +17,12 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    produced the M3 WriteBE32 wild-pointer crash (stale range check, then
 //    a reused slot's newer firstAudioFrame underflowing frameInPacket).
 // 4. State ownership: the timeline owns Empty→ExposedForAudio (expose) and
-//    retirement; the provider path owns →Published. No-data ring positions go
-//    straight to Completed and are invisible to frame lookup.
+//    retirement. No-data ring positions go straight to Completed and are
+//    invisible to frame lookup.
 // 5. ExposedFrameEnd() is a monotonic high-water mark: one past the highest
-//    audio frame ever exposed. It survives publication, retirement, and ring
-//    eviction, so a frame-lookup miss can be classified as "not produced yet"
-//    (at/beyond the mark) versus "no longer writable" (below it). Cleared
+//    audio frame ever exposed. It survives retirement and ring eviction, so
+//    a frame-lookup miss can be classified as "not produced yet" (at/beyond
+//    the mark) versus "no longer writable" (below it). Cleared
 //    only by Reset()/AttachSlots().
 //
 // Ordering contract (Linux-style seqlock; the slot fields stay plain data):

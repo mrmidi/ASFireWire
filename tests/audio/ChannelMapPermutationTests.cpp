@@ -20,6 +20,8 @@
 #include "Audio/Wire/AMDTP/PcmSlotMap.hpp"
 #include "Audio/Wire/AM824/Am824PayloadCodec.hpp"
 
+#include "TxPacketizerTestSupport.hpp"
+
 #include <gtest/gtest.h>
 
 #include <array>
@@ -227,6 +229,7 @@ TEST(ChannelMapPermutationTests, TxInjectedMapDemonstrablyChangesWirePlacement) 
 
     AmdtpTxPolicy policyIdentity{};
     AmdtpTxPacketizer packetizerIdentity{};
+    uint64_t packetizerIdentityFrame = 0;
     AmdtpPayloadWriter writerIdentity{};
     packetizerIdentity.BindTimeline(&timelineIdentity);
     ASSERT_TRUE(packetizerIdentity.Configure(config, policyIdentity));
@@ -235,8 +238,8 @@ TEST(ChannelMapPermutationTests, TxInjectedMapDemonstrablyChangesWirePlacement) 
 
     std::array<uint8_t, 128> bytesIdentity{};
     PreparedTxPacket preparedIdentity{};
-    ASSERT_TRUE(packetizerIdentity.PrepareNextPacket(
-        {0, bytesIdentity.data(), bytesIdentity.size()}, timing, preparedIdentity));
+    ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(packetizerIdentity,
+        {0, bytesIdentity.data(), bytesIdentity.size()}, timing, packetizerIdentityFrame, preparedIdentity));
     writerIdentity.WriteFloat32Interleaved(hostBuffer, /*completionCursor=*/1);
 
     // Read back the AM824 slots from the identity packet (after 8 bytes CIP header)
@@ -268,6 +271,8 @@ TEST(ChannelMapPermutationTests, TxInjectedMapDemonstrablyChangesWirePlacement) 
     ASSERT_TRUE(policyPermuted.playbackChannelMap.SetSlots(reversedSlots));
 
     AmdtpTxPacketizer packetizerPermuted{};
+
+    uint64_t packetizerPermutedFrame = 0;
     AmdtpPayloadWriter writerPermuted{};
     packetizerPermuted.BindTimeline(&timelinePermuted);
     ASSERT_TRUE(packetizerPermuted.Configure(config, policyPermuted));
@@ -276,8 +281,8 @@ TEST(ChannelMapPermutationTests, TxInjectedMapDemonstrablyChangesWirePlacement) 
 
     std::array<uint8_t, 128> bytesPermuted{};
     PreparedTxPacket preparedPermuted{};
-    ASSERT_TRUE(packetizerPermuted.PrepareNextPacket(
-        {0, bytesPermuted.data(), bytesPermuted.size()}, timing, preparedPermuted));
+    ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(packetizerPermuted,
+        {0, bytesPermuted.data(), bytesPermuted.size()}, timing, packetizerPermutedFrame, preparedPermuted));
     writerPermuted.WriteFloat32Interleaved(hostBuffer, /*completionCursor=*/1);
 
     const uint8_t* payloadPermuted = bytesPermuted.data() + 8;
