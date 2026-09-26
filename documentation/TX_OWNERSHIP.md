@@ -523,6 +523,48 @@ Linux's minimum, `amdtp-stream.c`); input safety unchanged at 80 (its floor need
 - Under Instruments at a 16-frame buffer the stream had late fills (two ~15.8k-frame bursts plus small steps); the
   user's call: acceptable at 16 frames. Adopted without a separate load check at 32.
 
+## 1i. Parked: E3, the input side (not scheduled; written down 2026-09-26)
+
+**Why.** After T7 + E2 the Pro 24 DSP at 48 kHz measures RTL 241 / 273 / 337 frames at 16 / 32 / 64 (5.02 / 5.69 /
+7.02 ms), declared = measured. The remaining gap to the Saffire's own Windows driver (DAWbench LLP, January 2025:
+4.444 ms at 32 frames, its minimum) is almost all input: excluding buffer and converters, Windows' input is ~0.5 ms,
+ours ~2.2 ms (S_in 80 + ~26 frames of transport). Output is within ~0.1–0.3 ms. Reference points from the same
+DAWbench table: Prism Orpheus 5.971 / 7.551 ms at 32 / 64 (we are below both at equal buffers).
+
+**Where S_in goes.** Captured packets sit in the IR DMA ring until the IR interrupt drains them, every 8 packets
+(~48 frames), plus Default-queue dispatch latency and jitter. E1a/E1b: at 80 the spare is 24–36 frames; at 64 it
+starved at a 16-frame buffer.
+
+**Goal.** Make captured frames visible sooner, then lower S_in on measured headroom.
+
+**Targets (estimates).**
+- S_in 80 → ~16–24 frames (drain on read) or ~40–48 (faster interrupt only).
+- RTL at 16 frames ~177–185 frames (3.7–3.85 ms), below Windows' best 4.444 ms; at 32 frames ~4.35–4.5 ms, about
+  equal to Windows at the same buffer.
+- No regression: `sInStarve=0` after start-up, tone clean at 16/32/64, ZTS jitter unchanged (~3 µs), declared =
+  measured.
+
+**Steps.**
+1. **Reference check first:**
+   - Linux: `sound/firewire/amdtp-stream.c` `amdtp_domain_stream_pcm_pointer` is believed to flush completed isoch
+     packets on demand (`fw_iso_context_flush_completions`) before reporting the capture position. Verify in
+     `references/`.
+   - Saffire.kext and AppleFWAudio input paths: where and when do they drain IR? AppleFWAudio uses 8 packets per
+     interrupt group (`fNumPacketsPerBufferGroup = 8`).
+2. **E3a, measurement only:** move the IR interrupt bit to every 2 or 4 packets while keeping the ZTS / timing group
+   at 8. Today `IsochDmaGeometry::kPacketsPerInterrupt` doubles as the timing group, and the ZTS grid asserts 48-frame
+   groups and 256 groups per period, so the two must be split first. Then lower S_in stepwise as in E1b and read
+   `sInMinFr` / `sInStarve`. This separates interrupt spacing from dispatch jitter and decides whether E3b is worth
+   building.
+3. **E3b, drain on read:** in CoreAudio's BeginRead (IO thread), process completed IR packets before serving the
+   read, the input-side mirror of T4's fill in WriteEnd. Design constraints:
+   - the transport exposes "drain completed packets now" through `Audio/Ports`; audio never touches IR DMA;
+   - one owner for the drain (interrupt path vs IO thread), lock-free and RT-safe on the IO thread;
+   - ZTS anchors and the TX replay history, which the RX drain also feeds, stay consistent whichever thread drains.
+4. **Measure with the controlled-run method (§1g)**, then set S_in from the measured headroom minus a margin.
+
+**Out of scope for E3:** TX transfer delay (already Linux's minimum), converters.
+
 ## 2. How we got here: keep midi's understanding, not its architecture
 
 The core TX problem is **pacing**. CoreAudio writes PCM when its IO thread runs; this is `W`, the client write end.
