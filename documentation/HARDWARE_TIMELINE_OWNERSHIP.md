@@ -241,3 +241,8 @@ about 0.15 ppm, not with a defect.
 - The deciding check is a fresh 44.1 kHz start in Instruments.
   - If the floor returns, it comes from the arrival basis, and the fix is the SYT-presentation basis (§4).
   - If it stays near 3 µs, something accumulates over a long stream.
+
+**48 kHz, ~14 min into one stream, 2026-09-26** (Pro 24 DSP, build `2dbae402`, dext pid 82593, Instruments):
+ZTS jitter **3.17–3.33 µs, σ 60 ns**, 14 anchors, sample times 40,243,200–40,402,944 (≈ 838 s into the stream).
+This is the fresh-start level (3.08–3.33 µs, σ 50 ns), so 14 minutes of running does not degrade the 48 kHz
+anchors. It narrows but does not close the 44.1 kHz long-run question above: that was 44.1 kHz after 7.4 h.
