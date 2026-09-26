@@ -70,6 +70,36 @@ silent there.
 To read it on hardware:
 `asfw_log_query {"categories":["DirectAudio"],"contains":"[TxPlace]"}`.
 
+### `[TxPlace]` on hardware, 2026-09-26: TX placement holds the delay
+
+Pro 24 DSP, 48 kHz, build `2dbae402`, from the driver ring:
+
+| When | `offset` |
+|---|---|
+| First measurement, packet 2048 (~1 s after start) | **−10**: correctly placed |
+| Next measurement (packet 10047), and every one after | **−7556, then a steady −7594 (±2)** |
+
+−7594 frames matches the RTL residual (+7578 frames) to within ~16 frames.
+
+**Mechanism, confirmed in the ring and the code:**
+1. Right after start the frame-target loop (target = `W` + the 4160-frame horizon; `[TxPrepFrame] deficit=2820`)
+   prepares packets ahead of the RX replay they depend on. The ring shows
+   `[TxReplay] fail=ahead pkt=2559 cur=2169 prod=2169`, plus 1257 more suppressed within ~0.8 s.
+2. On `kAheadOfProducer` the producer "holds the reader where it is and ships one NODATA packet"
+   (`ASFWAudioDriverTxProducer.cpp`, the `kAheadOfProducer` branch). Its comment calls this transient and
+   self-resolving.
+3. It is not. Each such NO-DATA packet uses a transmit cycle but no replay entry and no frames, so the replay reader
+   and the TX frame cursor end up one cycle further behind real time **for good**.
+4. ~1258 of them = 1258 × 6 = ~7548 frames = **157 ms**, the RTL residual.
+5. Afterwards the reader is far enough behind that replay entries always exist, so the lag is exactly constant.
+
+This is the host rig's stall case (§1a), happening at every start on hardware.
+
+**Consequence for T4.** Removing the frame-target loop is necessary but not sufficient. The producer must never
+commit a packet for a cycle whose replay entry does not exist yet. It must stop that preparation pass instead of
+shipping NO-DATA. Preparation depth for replay-driven streams is bounded by RX availability, not by `W`. The check
+after T4: `[TxPlace]` stays near the first reading (−10) and the RTL residual falls toward 0.
+
 ## 1a. TX goldens (T1): what the host rig shows today
 
 `tests/audio/AudioDriverTxProducerTests.cpp` (`TxOwnershipGolden.*`, goldens in `tests/golden/tx/`) runs the real
