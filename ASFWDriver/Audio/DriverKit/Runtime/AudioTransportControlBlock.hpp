@@ -663,6 +663,9 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> rxGeometryMismatch{0};
     std::atomic<uint64_t> txReplayEntries{0};
     std::atomic<uint64_t> txReplayUnderflows{0};
+    // NO-DATA packets shipped because RX replay was not there yet inside the
+    // descriptor floor. Each one delays TX by a cycle for good (T4).
+    std::atomic<uint64_t> txReplayForcedNoData{0};
     std::atomic<uint64_t> txReplayInvalidSyt{0};
 
     std::atomic<uint64_t> inputProducedEndFrame{0};
@@ -776,6 +779,7 @@ struct AudioTransportControlBlock final {
         rxGeometryMismatch.store(0, std::memory_order_relaxed);
         txReplayEntries.store(0, std::memory_order_relaxed);
         txReplayUnderflows.store(0, std::memory_order_relaxed);
+        txReplayForcedNoData.store(0, std::memory_order_relaxed);
         txReplayInvalidSyt.store(0, std::memory_order_relaxed);
 
         inputProducedEndFrame.store(0, std::memory_order_relaxed);

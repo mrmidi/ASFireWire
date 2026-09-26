@@ -243,6 +243,10 @@ struct AudioDriverRuntimeState {
     std::atomic<bool> txActive{false};
     // [TxPlace] rate gate (host ticks); 0 logs the first measurement at once.
     uint64_t txPlacementNextLogHost{0};
+    // TX fill (FillTransmitPayloads): audio frames below this were already
+    // copied into their packets, or passed their finality and stay silent.
+    // Reset per start.
+    uint64_t txFilledFrameEnd{0};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Audio::BeBoB::MAudioInternalTxTiming mAudioInternalTxTiming;
@@ -359,6 +363,13 @@ struct TxPlacementSample final {
 [[nodiscard]] bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars,
                                       TxPlacementSample& out) noexcept;
 
+// The TX fill (ASFWAudioDriverOutputWrite.cpp, documentation/TX_OWNERSHIP.md):
+// copies frames CoreAudio has written to the HAL output ring into the armed
+// packets that carry them, once each, unless the packet is at or behind the
+// finality frontier (projected hardware position + guard). Runs on the TX
+// preparation queue.
+void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept;
+
 // The CoreAudio WriteEnd step (ASFWAudioDriverOutputWrite.cpp). Returns false
 // when the span exceeds the output ring, which the IO handler reports as
 // kIOReturnBadArgument.
@@ -401,10 +412,13 @@ void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
 // stamps into the device timeline and publishes its boundaries. Called from the
 // TX preparation wake (ASFWAudioDriverTxProducer.cpp).
 void ObserveMAudioTxClock(ASFWAudioDriver_IVars& ivars, uint64_t transportGeneration) noexcept;
-// Prepares transmit slots from startPacketIndex until both producer invariants
-// are true or limitPacketIndex is reached:
-//   * requiredPacketIndex covers the core refill / commit-generation invariant.
-//   * targetFrameEnd covers the AMDTP frame-exposure invariant for WriteEnd.
+// Prepares transmit slots from startPacketIndex until requiredPacketIndex
+// (the core refill / commit-generation invariant) or limitPacketIndex is
+// reached. Content availability never extends preparation: packets are armed
+// with valid silence and FillTransmitPayloads copies PCM in later
+// (documentation/TX_OWNERSHIP.md, T4). A replay-driven packet whose RX entry
+// does not exist yet ends the pass instead of shipping NO-DATA, unless the
+// hardware would otherwise reach an uncommitted descriptor.
 // Returns the number of slots prepared. With an unseeded transmit clock the
 // normal AMDTP cadence is preserved but every packet carries NO_INFO
 // (SYT=0xffff), matching the reference Saffire seed behavior. Set
@@ -414,7 +428,6 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                               uint64_t requiredPacketIndex,
                               uint64_t limitPacketIndex,
                               uint32_t maxToPrepare,
-                              uint64_t targetFrameEnd,
                               bool allowRecoveredClock) noexcept;
 
 // Synchronously seeds the transmit ring with cadence-correct NO_INFO packets

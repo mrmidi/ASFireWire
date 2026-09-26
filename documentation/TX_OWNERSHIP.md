@@ -1,6 +1,6 @@
 # TX ownership: PCM → packet → DMA (milestone 6)
 
-**Status:** T0 (design + inventory), T1 (goldens), T2 (dead surfaces) and T3 (silence-first, `[TxPlace]` meter) done, 2026-09-26, branch `refactor/tx-ownership` off main `52d05ca8`.
+**Status:** T0–T4 done (design, goldens, dead surfaces, silence-first + `[TxPlace]`, audio-side fill), 2026-09-26, branch `refactor/tx-ownership` off main `52d05ca8`.
 Linear FW-209 (milestone 6), condensing FW-210 (main inventory), FW-211 (midi distillation) and FW-212 (ownership
 model). The stages are in §8. This document is T0.
 
@@ -156,6 +156,44 @@ It is the `W`/`E` rendezvous that T4 deletes.
 Two earlier rig models were wrong and were corrected before these results were recorded:
 - CoreAudio writing on the nominal clock for the 1814, which lost all PCM;
 - CoreAudio acting only at interrupt boundaries, which made periodic 16-frame gaps.
+
+## 1c. T4: the audio-side fill (2026-09-26)
+
+**What changed:**
+- **WriteEnd** publishes `W` and the playback-ring range and wakes the producer. It no longer touches packets.
+- **The producer** prepares packets only to the coverage target. The `W` + 4160-frame target, `[TxPrepFrame]`,
+  `[TxExposure]` and the self-heal re-arm driven by a diagnostic sample are gone.
+- **`FillTransmitPayloads`** (`ASFWAudioDriverOutputWrite.cpp`) copies `[filled, min(W, E))` from the HAL output
+  ring into the armed packets, once each. A packet at or behind the finality frontier keeps its armed silence and
+  is counted as `framesMissedFinality`:
+  - frontier = projected hardware packet + `kTxFillFinalityGuardPackets` (3, provisional);
+  - projected hardware packet = `completionCursor` plus the whole bus cycles since that refill's clock pair.
+- **A replay-driven packet whose RX entry does not exist yet ends the pass** instead of shipping NO-DATA. The one
+  exception is a packet the hardware would reach first (below completion + 48 + 8). That is shipped as NO-DATA,
+  counted in `txReplayForcedNoData`, and logged as `[TxReplay] forced NO-DATA`.
+- **`[TxPrep]`** reports `forcedNoData` and `missedFinality` in place of the exposure lead.
+- **`[TxPrepRange]`** logs only a hole below the descriptor floor.
+
+**Declared golden deltas** (`tests/golden/tx`):
+
+| Case | Change |
+|---|---|
+| Saffire, 512 and 64 frames | First DATA packet directly after the prefill (1696), not at 1896. The 200 "ahead" NO-DATA packets are gone |
+| Saffire stall | After the stall the 3-of-4 cadence continues (1144 DATA / 382 NO-DATA), where it used to be 1134 NO-DATA of 1526 |
+| 1814 | 2 more silent start-up packets (frames 56–71 now miss the enforced guard) |
+
+`StallDoesNotRunTxAheadOfRxReplay` asserts 0 underflows and 0 forced NO-DATA in the stall case; before T4 the rig
+counted 1124.
+
+**On hardware, check** (acceptance ownership undecided; see §1):
+- `[TxPlace]` stays near the first reading (−10) for the whole stream;
+- the RTL residual falls toward 0;
+- `forcedNoData=0` in `[TxPrep]`;
+- the tone check at 16/32/64/512, because the accidental 157 ms cushion is gone.
+
+**Still left:**
+- The write-less `txExposure*` fields and `requestedTargetFrameEnd` (T8).
+- The exposure-window geometry that still sizes the 1648-packet cap and the 1696-slot ring (B3/T8).
 
 ## 2. How we got here: keep midi's understanding, not its architecture
 

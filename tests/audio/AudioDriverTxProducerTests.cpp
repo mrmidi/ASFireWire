@@ -377,10 +377,16 @@ private:
                     frame[ch] = SampleTag(f, ch);
                 }
             }
+            const auto wakesBefore = nub_.txPreparationRequests;
             EXPECT_TRUE(ASFW::Audio::DriverKit::HandleOutputWriteEnd(
                 ivars_, *control_, nextWrite_, HostTicksFor(atPacket), plan.ioFrames));
             ++writeEnds_;
             nextWrite_ += plan.ioFrames;
+            // WriteEnd asked for a TX preparation action: run it now, as the
+            // action queue would, so the fill sees what CoreAudio just wrote.
+            if (nub_.txPreparationRequests != wakesBefore) {
+                driver_.TxPreparationReady_Impl(nullptr, nub_.lastTxPreparationGeneration);
+            }
         }
     }
 
@@ -865,6 +871,23 @@ TEST(TxOwnershipGolden, SaffireLateWriter48k) {
 TEST(TxOwnershipGolden, SaffireStall48k) {
     RecordSaffireTxGolden({"tx/saffire/stall-48k-io512.txt",
                            {.ioFrames = 512, .leadFrames = 560, .stallFrom = 2000, .stallTo = 2400}});
+}
+
+// T4: a CoreAudio stall no longer makes TX run ahead of the RX replay. Before,
+// the producer chased W + 4160 frames on resume, read past RX, and shipped a
+// NO-DATA packet per miss -- each one a cycle of permanent lag (the 157 ms RTL
+// residual, TX_OWNERSHIP.md §1b). Now preparation stays within coverage and
+// a miss would end the pass.
+TEST(TxOwnershipGolden, StallDoesNotRunTxAheadOfRxReplay) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    rig.EnableHostOutput({.ioFrames = 512, .leadFrames = 560, .stallFrom = 2000, .stallTo = 2400});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+    EXPECT_EQ(rig.Control().txReplayUnderflows.load(), 0U);
+    EXPECT_EQ(rig.Control().txReplayForcedNoData.load(), 0U);
 }
 
 TEST(TxOwnershipGolden, MAudio1814Clean48k) {

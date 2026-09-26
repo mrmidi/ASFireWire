@@ -42,8 +42,8 @@ const MotuPayloadWriterCounters& MotuPayloadWriter::Counters() const noexcept {
 
 void MotuPayloadWriter::WriteFloat32Interleaved(
     const Protocols::Audio::AMDTP::HostAudioBufferView& hostBuffer,
-    uint64_t completionCursor) noexcept {
-    (void)completionCursor;
+    uint64_t firstWritablePacket) noexcept {
+    const uint32_t firstWritable = static_cast<uint32_t>(firstWritablePacket);
 
     if (timeline_ == nullptr || hostBuffer.interleavedFloat32 == nullptr ||
         hostBuffer.channels == 0 || hostBuffer.frameCount == 0 ||
@@ -56,6 +56,7 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     uint64_t withoutPacket = 0;
     uint64_t outsidePacket = 0;
     uint64_t truncated = 0;
+    uint64_t missedFinality = 0;
     uint64_t nonZeroFrames = 0;
     const MotuPortMap ports = EffectivePortMap(streamConfig_.ports, streamConfig_.pcmChunks);
 
@@ -72,6 +73,12 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
             } else {
                 ++outsidePacket;
             }
+            continue;
+        }
+
+        if (firstWritablePacket != 0 &&
+            static_cast<int32_t>(snap.packetIndex - firstWritable) < 0) {
+            ++missedFinality;
             continue;
         }
 
@@ -133,6 +140,7 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     counters_.framesOutsidePacket.fetch_add(outsidePacket, std::memory_order_relaxed);
     counters_.framesTruncated.fetch_add(truncated, std::memory_order_relaxed);
     counters_.framesNonZero.fetch_add(nonZeroFrames, std::memory_order_relaxed);
+    counters_.framesMissedFinality.fetch_add(missedFinality, std::memory_order_relaxed);
 }
 
 } // namespace ASFW::Encoding::Motu

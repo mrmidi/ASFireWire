@@ -163,11 +163,11 @@ bool DiceTxStreamEngine::NextPacketWouldCarryData() const noexcept {
     return packetizer_.NextPacketWouldCarryData();
 }
 
-void DiceTxStreamEngine::WriteHostOutputFloat32(
+void DiceTxStreamEngine::FillFromHostOutput(
     const AMDTP::HostAudioBufferView& hostBuffer,
-    uint64_t completionCursor) noexcept {
+    uint64_t firstWritablePacket) noexcept {
     if (activePayloadWriter_ != nullptr) {
-        activePayloadWriter_->WriteFloat32Interleaved(hostBuffer, completionCursor);
+        activePayloadWriter_->WriteFloat32Interleaved(hostBuffer, firstWritablePacket);
     }
 }
 

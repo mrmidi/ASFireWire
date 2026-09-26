@@ -240,7 +240,7 @@ TEST(ChannelMapPermutationTests, TxInjectedMapDemonstrablyChangesWirePlacement) 
     PreparedTxPacket preparedIdentity{};
     ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(packetizerIdentity,
         {0, bytesIdentity.data(), bytesIdentity.size()}, timing, packetizerIdentityFrame, preparedIdentity));
-    writerIdentity.WriteFloat32Interleaved(hostBuffer, /*completionCursor=*/1);
+    writerIdentity.WriteFloat32Interleaved(hostBuffer, /*firstWritablePacket=*/0);
 
     // Read back the AM824 slots from the identity packet (after 8 bytes CIP header)
     const uint8_t* payloadIdentity = bytesIdentity.data() + 8;
@@ -283,7 +283,7 @@ TEST(ChannelMapPermutationTests, TxInjectedMapDemonstrablyChangesWirePlacement) 
     PreparedTxPacket preparedPermuted{};
     ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(packetizerPermuted,
         {0, bytesPermuted.data(), bytesPermuted.size()}, timing, packetizerPermutedFrame, preparedPermuted));
-    writerPermuted.WriteFloat32Interleaved(hostBuffer, /*completionCursor=*/1);
+    writerPermuted.WriteFloat32Interleaved(hostBuffer, /*firstWritablePacket=*/0);
 
     const uint8_t* payloadPermuted = bytesPermuted.data() + 8;
     const uint32_t slot0_permuted = (static_cast<uint32_t>(payloadPermuted[0]) << 24) |

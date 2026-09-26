@@ -44,9 +44,14 @@ class ITxPayloadWriter {
 public:
     virtual ~ITxPayloadWriter() = default;
 
+    // Copies host frames into the packets that carry them. A frame whose
+    // packet index is below firstWritablePacket is not written: that packet
+    // may already be with the hardware, so it keeps its armed silence and is
+    // counted as having missed finality (documentation/TX_OWNERSHIP.md).
+    // 0 means every packet is writable.
     virtual void WriteFloat32Interleaved(
         const Protocols::Audio::AMDTP::HostAudioBufferView& hostBuffer,
-        uint64_t completionCursor) noexcept = 0;
+        uint64_t firstWritablePacket) noexcept = 0;
 };
 
 /// Outcome of physical timing stamping.

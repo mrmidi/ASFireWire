@@ -49,6 +49,9 @@ struct MotuPayloadWriterCounters final {
     /// configured channel count -- indicates a geometry/config mismatch, not a race.
     std::atomic<uint64_t> framesTruncated{0};
     std::atomic<uint64_t> framesNonZero{0};
+    /// Frames not written because their packet was below the first writable
+    /// packet (the finality frontier): that packet keeps its armed silence.
+    std::atomic<uint64_t> framesMissedFinality{0};
 };
 
 struct MotuPayloadStreamConfig final {
@@ -74,7 +77,7 @@ public:
     /// against a live DMA ring, exactly as the AMDTP writer is.
     void WriteFloat32Interleaved(
         const Protocols::Audio::AMDTP::HostAudioBufferView& hostBuffer,
-        uint64_t completionCursor) noexcept override;
+        uint64_t firstWritablePacket) noexcept override;
 
     [[nodiscard]] const MotuPayloadWriterCounters& Counters() const noexcept;
 

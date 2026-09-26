@@ -11,12 +11,17 @@ namespace ASFW::Protocols::Audio::AMDTP {
 // 1. Reference model (one buffer, absolute sample frame): PCM lands in
 //    already-exposed packets located via SnapshotSlotForAudioFrame. The
 //    writer never creates, publishes, or retires packets — slot lifecycle
-//    stays with the timeline/packetizer/provider.
+//    stays with the timeline/packetizer/provider. It is the TX fill: the
+//    producer calls it with frames CoreAudio has already written to the HAL
+//    ring, once each (documentation/TX_OWNERSHIP.md). It does not run on the
+//    IO thread.
 // 2. Per-frame count-and-skip: a partially coverable window is never
 //    rejected wholesale; each frame is individually written or counted into
-//    exactly one miss bucket, so
-//    framesVisited == framesWritten + framesWithoutPacket + framesOutsidePacket
-//    holds by construction. The counters are the diagnostic payload (the lab
+//    exactly one miss bucket, so framesVisited == framesWritten +
+//    framesWithoutPacket + framesOutsidePacket + framesMissedFinality holds
+//    by construction. A frame whose packet is below the caller's first
+//    writable packet is not written (framesMissedFinality): that packet may
+//    already be with the hardware and keeps its armed silence. The counters are the diagnostic payload (the lab
 //    analog of the ASFW pcmNZ/pcmZero decider).
 // 3. Miss classification uses the timeline's monotonic exposure high-water
 //    mark (ExposedFrameEnd): at or beyond it the packet does not exist yet
@@ -71,14 +76,14 @@ void AmdtpPayloadWriter::BindTimeline(AmdtpPacketTimeline* timeline) noexcept {
 
 void AmdtpPayloadWriter::WriteFloat32Interleaved(
     const HostAudioBufferView& hostBuffer,
-    uint64_t completionCursor) noexcept {
+    uint64_t firstWritablePacket) noexcept {
     if (timeline_ == nullptr || hostBuffer.interleavedFloat32 == nullptr ||
         hostBuffer.channels == 0 || hostBuffer.frameCount == 0) {
         return; // invalid view: nothing visited, nothing counted
     }
 
-    const uint32_t retiredCursor =
-        static_cast<uint32_t>(completionCursor);
+    // Slot packet indices are 32-bit; compare in wrap-safe 32-bit arithmetic.
+    const uint32_t firstWritable = static_cast<uint32_t>(firstWritablePacket);
     const uint64_t writeEndFrame =
         hostBuffer.firstFrame + hostBuffer.frameCount;
     const uint64_t exposedFrameEnd = timeline_->ExposedFrameEnd();
@@ -92,7 +97,7 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     uint64_t withoutPacket = 0;
     uint64_t outsidePacket = 0;
     uint64_t racedReuse = 0;
-    uint64_t wroteIntoTransmitted = 0;
+    uint64_t missedFinality = 0;
     uint64_t nonZeroFrames = 0;
     uint64_t nonZeroSlots = 0;
     float localMaxAbs = 0.0f;
@@ -107,6 +112,12 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
             } else {
                 ++outsidePacket;
             }
+            continue;
+        }
+
+        if (firstWritablePacket != 0 &&
+            static_cast<int32_t>(snap.packetIndex - firstWritable) < 0) {
+            ++missedFinality;
             continue;
         }
 
@@ -164,9 +175,6 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         }
         ++written;
 
-        if (snap.packetIndex < retiredCursor) {
-            ++wroteIntoTransmitted;
-        }
 
         std::atomic_thread_fence(std::memory_order_acquire);
         if (snap.slot->generation.load(std::memory_order_relaxed) !=
@@ -184,7 +192,7 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
                                             std::memory_order_relaxed);
     counters_.framesRacedReuse.fetch_add(racedReuse,
                                          std::memory_order_relaxed);
-    counters_.framesWroteIntoTransmitted.fetch_add(wroteIntoTransmitted,
+    counters_.framesMissedFinality.fetch_add(missedFinality,
                                                     std::memory_order_relaxed);
     counters_.framesNonZero.fetch_add(nonZeroFrames,
                                       std::memory_order_relaxed);

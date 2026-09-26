@@ -500,7 +500,7 @@ TEST(AmdtpDirectTxTests, PayloadWriterReadsMappedInt32RingDirectly) {
     std::array<float, 16> mappedRing{};
     mappedRing[0] = 1.0f;
     mappedRing[1] = -1.0f;
-    // completionCursor 0: no packet counts as already transmitted here.
+    // firstWritablePacket 0: every packet is writable here.
     writer.WriteFloat32Interleaved(
         {mappedRing.data(), 0, 8, 8, 2}, 0);
 
