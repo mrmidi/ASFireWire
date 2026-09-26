@@ -81,7 +81,7 @@ bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
     // coalescing latch keeps this RT callback to at most one outstanding
     // action.
     const uint64_t requestGeneration =
-        control.txPreparationRequests.PublishRequest(hostTime, 0);
+        control.txPreparationRequests.PublishRequest(hostTime);
     if (ivars.device.audioNub &&
         control.txPreparationRequests.TryScheduleWake()) {
         const kern_return_t requestKr =

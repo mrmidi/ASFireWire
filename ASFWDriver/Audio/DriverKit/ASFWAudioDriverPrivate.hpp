@@ -131,7 +131,6 @@ public:
     uint8_t* payloadBase{nullptr};
     ASFW::Isoch::IsochTxPacketMeta* metadataRing{nullptr};
     ASFW::Isoch::IsochTxQueueControl* queueControl{nullptr};
-    ASFW::Audio::Runtime::AudioTransportControlBlock* audioControl{nullptr};
     uint32_t numSlots{0};
     uint32_t slotStrideBytes{0};
 
@@ -184,30 +183,6 @@ public:
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
             static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
 
-        // Content inspection belongs to Audio and runs immediately before the
-        // release commit. Transport receives only opaque bytes and metadata.
-        if (audioControl) {
-            const auto slotIndex = static_cast<uint32_t>(packet.packetIndex % numSlots);
-            const auto observation = audioControl->txWirePayloadTelemetry.Observe(
-                packet.packetIndex,
-                payloadBase + static_cast<uint64_t>(slotIndex) * slotStrideBytes,
-                packet.byteCount);
-            if (observation.firstInfo || observation.dropout) {
-                ASFW_LOG_RING_ONLY_RL(
-                    DirectAudio,
-                    "tx-wire-payload",
-                    observation.firstInfo ? 0u : 1000u,
-                    ::ASFW::Logging::LogLevel::Warning,
-                    "[TxWire] packet=%llu first=%d dropout=%d infoQuads=%u maxAbs24=%u lastQuad=0x%08x",
-                    packet.packetIndex,
-                    observation.firstInfo ? 1 : 0,
-                    observation.dropout ? 1 : 0,
-                    observation.infoQuads,
-                    observation.maxAbs24,
-                    observation.lastInfoQuad);
-            }
-        }
-
         // Compute expected generation and release-store it last.
         const uint64_t generation =
             ASFW::Isoch::ExpectedTxCommitGeneration(packet.packetIndex, numSlots);
@@ -241,8 +216,9 @@ struct AudioDriverRuntimeState {
     std::atomic<uint64_t> ioDebugCallbacks{0};
     std::atomic<uint64_t> ioCallbacksOutsideRun{0};
     std::atomic<bool> txActive{false};
-    // [TxPlace] rate gate (host ticks); 0 logs the first measurement at once.
-    uint64_t txPlacementNextLogHost{0};
+    // [TxPlace] and [TxSyt] log once per stream (TX preparation queue).
+    bool txPlacementLogged{false};
+    bool txSytLogged{false};
     // TX fill (FillTransmitPayloads, IO thread only): audio frames below this
     // were already copied into their packets, or passed their finality and
     // stay silent. Reset per start, before IO runs.

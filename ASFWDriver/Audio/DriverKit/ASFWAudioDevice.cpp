@@ -108,7 +108,6 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProvider.payloadBase = nullptr;
             ivars.runtime.txSlotProvider.metadataRing = nullptr;
             ivars.runtime.txSlotProvider.queueControl = nullptr;
-            ivars.runtime.txSlotProvider.audioControl = nullptr;
             ivars.runtime.txSlotProvider.numSlots = 0;
             ivars.runtime.txExecutionTimeline.queueControl = nullptr;
 
@@ -122,7 +121,6 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
             ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
             ivars.runtime.txSlotProviderSecondary.queueControl = nullptr;
-            ivars.runtime.txSlotProviderSecondary.audioControl = nullptr;
             ivars.runtime.txSlotProviderSecondary.numSlots = 0;
             ivars.runtime.txSecondaryActive = false;
 
@@ -390,7 +388,6 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProviderSecondary.payloadBase = payloadBase2;
             ivars.runtime.txSlotProviderSecondary.metadataRing = metadataRing2;
             ivars.runtime.txSlotProviderSecondary.queueControl = queueControl2;
-            ivars.runtime.txSlotProviderSecondary.audioControl = control;
             ivars.runtime.txSlotProviderSecondary.numSlots = numSlots2;
             ivars.runtime.txSlotProviderSecondary.slotStrideBytes = maxPacketBytes2;
 
@@ -682,7 +679,6 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.txSlotProvider.payloadBase = nullptr;
         ivars.runtime.txSlotProvider.metadataRing = nullptr;
         ivars.runtime.txSlotProvider.queueControl = nullptr;
-        ivars.runtime.txSlotProvider.audioControl = nullptr;
         ivars.runtime.txSlotProvider.numSlots = 0;
         ivars.runtime.txExecutionTimeline.queueControl = nullptr;
 
@@ -699,7 +695,6 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
         ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
         ivars.runtime.txSlotProviderSecondary.queueControl = nullptr;
-        ivars.runtime.txSlotProviderSecondary.audioControl = nullptr;
         ivars.runtime.txSlotProviderSecondary.numSlots = 0;
 
         if (ivars.device.audioNub) {

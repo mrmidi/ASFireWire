@@ -56,7 +56,6 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     uint64_t outsidePacket = 0;
     uint64_t truncated = 0;
     uint64_t missedFinality = 0;
-    uint64_t nonZeroFrames = 0;
     const MotuPortMap ports = EffectivePortMap(streamConfig_.ports, streamConfig_.pcmChunks);
 
     for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
@@ -108,7 +107,6 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
         }
 
         const uint32_t srcOffset = streamConfig_.sourceChannelOffset;
-        bool frameNonZero = false;
         // Walk host channels rather than chunks: the port map is a permutation of the
         // chunk range, so every chunk is still written exactly once.
         for (uint32_t hostCh = 0; hostCh < streamConfig_.pcmChunks; ++hostCh) {
@@ -122,15 +120,9 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
                 std::span<uint8_t>(block + kPcmByteOffset + chunk * kBytesPerChunk,
                                    kBytesPerChunk),
                 Float32ToMotuSample(sample));
-            if (sample != 0.0f) {
-                frameNonZero = true;
-            }
         }
 
         ++written;
-        if (frameNonZero) {
-            ++nonZeroFrames;
-        }
     }
 
     counters_.framesVisited.fetch_add(visited, std::memory_order_relaxed);
@@ -138,7 +130,6 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     counters_.framesWithoutPacket.fetch_add(withoutPacket, std::memory_order_relaxed);
     counters_.framesOutsidePacket.fetch_add(outsidePacket, std::memory_order_relaxed);
     counters_.framesTruncated.fetch_add(truncated, std::memory_order_relaxed);
-    counters_.framesNonZero.fetch_add(nonZeroFrames, std::memory_order_relaxed);
     counters_.framesMissedFinality.fetch_add(missedFinality, std::memory_order_relaxed);
 }
 

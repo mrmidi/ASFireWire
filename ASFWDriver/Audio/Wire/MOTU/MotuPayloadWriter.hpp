@@ -48,7 +48,6 @@ struct MotuPayloadWriterCounters final {
     /// Frames written into a data block whose declared chunk count cannot hold the
     /// configured channel count -- indicates a geometry/config mismatch, not a race.
     std::atomic<uint64_t> framesTruncated{0};
-    std::atomic<uint64_t> framesNonZero{0};
     /// Frames not written because their packet was below the first writable
     /// packet (the finality frontier): that packet keeps its armed silence.
     std::atomic<uint64_t> framesMissedFinality{0};

@@ -2,7 +2,6 @@
 
 #include "AudioHalBufferProfiles.hpp"
 
-#include <algorithm>
 #include <cstdint>
 
 namespace ASFW::IsochTransport {
@@ -20,14 +19,11 @@ namespace ASFW::IsochTransport {
 //   ...Ticks    24.576 MHz FireWire ticks (3072/cycle)
 // Never compare a *Packets value to a *Frames value without an explicit
 // conversion (the cadence is the only bridge: 6 frames/packet average at 48k,
-// 5.5125 at 44.1k -- budgets use the worst case, kMinAvgCadence*).
+// 5.5125 at 44.1k).
 //
-// CURSOR MODEL (TX): three frame-domain cursors race --
-//   T hardware transmit pos,  W CoreAudio write frontier,  E exposure frontier.
-// A PCM frame survives iff  T <= W <= E. The only failure is W > E
-// (under-exposure = `withoutPkt` = Defect B). The cushion that prevents it is
-// kTxExposureLeadFrames below. See documentation/ZTS_AND_SYT.md and
-// tools/tx_payload_ownership_sim.py. Live evidence of W > E: [TxPrepFrame].
+// TX OWNERSHIP: PCM reaches packets through the audio-side fill, from the
+// HAL output ring, once (documentation/TX_OWNERSHIP.md). There is no
+// frame-exposure frontier and no W/E cushion any more (T4, T8).
 //
 // Rate-DEPENDENT geometry (frames-per-packet, safety floor, declarations,
 // transfer delay) is resolved per rate by Audio/Runtime/ResolvedTimingGeometry.hpp
@@ -41,14 +37,6 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kFramesPerDataPacket = 8;
     static constexpr uint32_t kCadenceBlockPackets = 4;
     static constexpr uint32_t kCadenceBlockFrames = 24;
-
-    // Worst-case average cadence across supported 1x rates: the 44.1k family
-    // carries 441 frames per 80 packets (5.5125 frames/packet average), fewer
-    // than 48k's 6. Packet budgets that must cover a frame requirement are
-    // sized with this ratio so they hold at every supported rate
-    // (tools/amdtp_blocking_cadence_sim.py, production wiring item 4).
-    static constexpr uint32_t kMinAvgCadencePackets = 80;
-    static constexpr uint32_t kMinAvgCadenceFrames = 441;
 
     // DMA completion cadence: one interrupt per 8 FireWire cycles (1.0 ms),
     // the AppleFWAudio fNumPacketsPerBufferGroup value (see REFERENCE GEOMETRY
@@ -71,11 +59,6 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kAllocatedFrameRingFrames =
         ::ASFW::IsochTransport::kAllocatedFrameRingFrames;
 
-    // Scheduling-jitter cushion (single Default-queue contention). Field runs
-    // showed producer wakes delayed by tens of packets; every "must lead by"
-    // budget adds this on top of its nominal requirement. Frames.
-    static constexpr uint32_t kSchedulingJitterFrames = 64;
-
     // Nominal client IO budget (the profile's clientIoBudgetFrames). ADK may
     // issue a different operation span; the callback validates that span
     // against the active stream ring.
@@ -91,53 +74,6 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kFrameAlignment = 32;
 
     static constexpr uint32_t kRxDescriptorPackets = 504;
-
-    // === TX exposure lead (E - W) -- the audio-frame cushion ================
-    // Minimum audio frames the producer's exposure frontier (E) must keep ahead
-    // of CoreAudio's write-window end. TX analogue of RX's
-    // input-safety cushion (ResolveInputSafetyFrames): RX had it, TX did not -- which is why
-    // TX shipped silence when the writer ran beyond ExposedFrameEnd()
-    // (Defect B = under-exposure, W > E). Conservative form = one full
-    // AppleFWAudio's AM824NuDCLWrite keeps its CIP insertion target roughly
-    // 400 FireWire cycles ahead of the client write frontier at 48 kHz.  This
-    // is content lead, not the much smaller OHCI descriptor/refill lead. Keep
-    // the invariant in packet time so it remains a 50 ms horizon at every 1x
-    // sample rate (the runtime converts it to frames for the active stream).
-    // See AVC_RECOVERY_AND_SYNC_ALGO_AND_BUGS.md, "Apple reference target".
-    //
-    // Floor: one whole maximum client write window plus jitter. One WriteEnd
-    // advances W by the client's IO size at once, before the producer can run,
-    // so a horizon shorter than the IO leaves the tail of every write without
-    // a packet (Defect B). With V3 clients may pick 4096 frames, above the
-    // 2400-frame 400-cycle horizon at 48 kHz: tools/tx_data_horizon_burst_sim.py
-    // run --io-frames 4096 drops 1696 frames per write without the floor.
-    static constexpr uint32_t kTxDataHorizonPackets = 400;
-    static constexpr uint32_t kTxExposureFloorFrames =
-        kMaxClientIoFrames + kSchedulingJitterFrames; // 4,160
-
-    [[nodiscard]] static constexpr uint32_t TxDataHorizonFrames(
-        uint32_t sampleRateHz) noexcept {
-        return std::max((kTxDataHorizonPackets * sampleRateHz + 7999) / 8000,
-                        kTxExposureFloorFrames);
-    }
-    // The 1x cushion (the floor wins at 32/44.1/48 kHz): 4,160 frames.
-    // (Spelled out: a static member function is not usable in a constant
-    // expression inside its own class; a static_assert below pins equality.)
-    static constexpr uint32_t kTxExposureLeadFrames =
-        std::max((kTxDataHorizonPackets * kSampleRateHz + 7999) / 8000,
-                 kTxExposureFloorFrames);
-    // Packet lead deep enough to expose that many frames at the worst-case
-    // (44.1k) average cadence: ceil(4160 / 5.5125) = 755 packets, rounded up
-    // to a whole interrupt group (760) so every budget derived from it keeps
-    // the group- and cadence-block-aligned ring-wrap asserts below.
-    static constexpr uint32_t kTxExposureLeadPacketsRaw =
-        (kTxExposureLeadFrames * kMinAvgCadencePackets +
-         kMinAvgCadenceFrames - 1) /
-        kMinAvgCadenceFrames;
-    static constexpr uint32_t kTxExposureLeadPackets =
-        ((kTxExposureLeadPacketsRaw + kTxPacketsPerGroup - 1) /
-         kTxPacketsPerGroup) *
-        kTxPacketsPerGroup;
 
     // Packet-domain TX ownership (T5, documentation/TX_OWNERSHIP.md):
     //
@@ -185,22 +121,7 @@ struct AudioTimingGeometry final {
     // refill, and E2 ran clean with it at 64/32/16-frame buffers on the Pro 24
     // DSP (it was 3, from midi c3e27a53: ~2 packets of OHCI fetch + 1 slack).
     static constexpr uint32_t kTxFillFinalityGuardPackets = 2;
-    // Covers a full client write window plus the output exposure cushion when
-    // the producer target is expressed as WriteEnd + kTxExposureLeadFrames.
-    // The producer needs to preserve a whole maximum CoreAudio write window
-    // in addition to the data horizon. Round the result to an interrupt
-    // group: ceil((4096 + 4160) / 5.5125) = 1498 -> 1504 packets.
-    static constexpr uint32_t kTxFrameExposureWindowPacketsRaw =
-        ((kMaxClientIoFrames + kTxExposureLeadFrames) *
-             kMinAvgCadencePackets +
-         kMinAvgCadenceFrames - 1) /
-        kMinAvgCadenceFrames;
-    static constexpr uint32_t kTxFrameExposureWindowPackets =
-        ((kTxFrameExposureWindowPacketsRaw + kTxPacketsPerGroup - 1) /
-         kTxPacketsPerGroup) *
-        kTxPacketsPerGroup;
-    // The producer's per-pass and total lead: coverage only (T5). The
-    // frame-exposure constants above no longer size anything; T8 deletes them.
+    // The producer's per-pass and total lead: coverage only (T5).
     static constexpr uint32_t kTxPreparationLeadPackets =
         kTxCoverageLeadPackets;
     // Backing ring: the preparation lead plus one hardware ring before a
@@ -298,35 +219,6 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets %
               0,
               "TX shared slot wrap must preserve blocking-cadence phase");
 
-// --- TX exposure cushion (Defect B guard: the invariant whose absence let TX
-//     ship ~1% silence). E must lead W by a full IO window plus jitter, for
-//     the largest window a client can pick, at every rate. ------------------
-static_assert(AudioTimingGeometry::kTxExposureLeadFrames >=
-                  AudioTimingGeometry::kMaxClientIoFrames +
-                      AudioTimingGeometry::kSchedulingJitterFrames,
-              "TX exposure lead must cover one full IO window plus scheduling "
-              "jitter (the cushion whose absence was Defect B)");
-static_assert(AudioTimingGeometry::kTxExposureLeadFrames ==
-              AudioTimingGeometry::TxDataHorizonFrames(AudioTimingGeometry::kSampleRateHz));
-static_assert(AudioTimingGeometry::TxDataHorizonFrames(44'100) >=
-              AudioTimingGeometry::kTxExposureFloorFrames);
-static_assert(AudioTimingGeometry::TxDataHorizonFrames(96'000) >=
-              AudioTimingGeometry::kTxExposureFloorFrames);
-// 2x/4x rates carry 12/24 frames per packet on average, so the 1x packet
-// window over-covers their larger horizon.
-static_assert(AudioTimingGeometry::kTxFrameExposureWindowPackets * 12 >=
-              AudioTimingGeometry::kMaxClientIoFrames +
-                  AudioTimingGeometry::TxDataHorizonFrames(96'000));
-static_assert(AudioTimingGeometry::kTxFrameExposureWindowPackets * 24 >=
-              AudioTimingGeometry::kMaxClientIoFrames +
-                  AudioTimingGeometry::TxDataHorizonFrames(192'000));
-static_assert(AudioTimingGeometry::kTxFrameExposureWindowPackets *
-                  AudioTimingGeometry::kMinAvgCadenceFrames >=
-              (AudioTimingGeometry::kMaxClientIoFrames +
-               AudioTimingGeometry::kTxExposureLeadFrames) *
-                  AudioTimingGeometry::kMinAvgCadencePackets,
-              "TX frame-exposure packet window must cover WriteEnd plus the "
-              "exposure cushion at the worst-case (44.1k) cadence");
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
                   AudioTimingGeometry::kTimelineSlots,
               "shared packet ring must fit inside the timeline slot array");
@@ -407,6 +299,6 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
 //   * Everyone keeps SYT/presentation in the 1394 tick domain, not host time.
 //   * Backing ring depth (Apple ~800 pkt, ffado 128) is decoupled from the
 //     active near-wire lead -- matches our capacity-is-not-latency rule. None of
-//     these exposes a direct AudioDriverKit ZTS analogue (see §9.F), so
-//     kTxExposureLeadFrames and the ZTS period are OURS to justify, not inherited.
+//     these exposes a direct AudioDriverKit ZTS analogue (see §9.F), so the
+//     ZTS period is OURS to justify, not inherited.
 // =============================================================================

@@ -577,7 +577,7 @@ TEST(AmdtpDirectTxTests, ArmedDataPacketCarriesValidSilenceAndFillChangesOnlySam
     }
 }
 
-TEST(AmdtpDirectTxTests, PayloadWriterCountsUnderExposureAtCallBoundary) {
+TEST(AmdtpDirectTxTests, PayloadWriterCountsFramesWithoutPacket) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 4> timelineSlots{};
     ASSERT_TRUE(timeline.AttachSlots(
@@ -593,11 +593,8 @@ TEST(AmdtpDirectTxTests, PayloadWriterCountsUnderExposureAtCallBoundary) {
 
     const auto& counters = writer.Counters();
     EXPECT_EQ(
-        counters.underExposureCalls.load(std::memory_order_relaxed), 1U);
-    EXPECT_EQ(
-        counters.underExposureFrames.load(std::memory_order_relaxed), 8U);
-    EXPECT_EQ(
         counters.framesWithoutPacket.load(std::memory_order_relaxed), 8U);
+    EXPECT_EQ(counters.framesWritten.load(std::memory_order_relaxed), 0U);
 }
 
 // The engine owns the one TX audio-frame cursor. Alignment is accepted once

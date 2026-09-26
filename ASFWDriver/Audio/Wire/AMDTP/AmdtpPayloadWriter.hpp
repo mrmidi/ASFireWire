@@ -14,10 +14,6 @@ struct AmdtpPayloadWriterCounters final {
     std::atomic<uint64_t> framesWritten{0};
     std::atomic<uint64_t> framesWithoutPacket{0};
     std::atomic<uint64_t> framesOutsidePacket{0};
-    // Overlap diagnostic, not a partition bucket: frames already counted in
-    // framesWritten whose slot was reused while the payload was being
-    // written (detected by the post-write generation recheck).
-    std::atomic<uint64_t> framesRacedReuse{0};
     // Frames not written because their packet was below the first writable
     // packet (the finality frontier): that packet keeps its armed silence.
     std::atomic<uint64_t> framesMissedFinality{0};
@@ -25,11 +21,6 @@ struct AmdtpPayloadWriterCounters final {
     // frame's packet and the first writable packet, since the last reader
     // took it (exchange with INT64_MAX). INT64_MAX: nothing written.
     std::atomic<int64_t> intervalMinFinalityMarginPackets{INT64_MAX};
-    std::atomic<uint64_t> framesNonZero{0};
-    std::atomic<uint64_t> slotsNonZero{0};
-    std::atomic<uint64_t> underExposureCalls{0};
-    std::atomic<uint64_t> underExposureFrames{0};
-    std::atomic<uint32_t> maxAbsSampleBits{0}; // Absolute int32 sample magnitude
 };
 
 class AmdtpPayloadWriter final : public ::ASFW::Audio::ITxPayloadWriter {

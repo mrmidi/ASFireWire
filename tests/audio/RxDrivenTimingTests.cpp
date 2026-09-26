@@ -234,10 +234,7 @@ TEST(RxDrivenTimingTests, GeometryUsesEightCycleInterruptsAndCurrentTxDepths) {
     EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 504U);
     EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 1008U);
     // The finite IT queue (T5): ring 504 (63 ms), slack one ring, coverage
-    // two, shared slots three. The exposure constants no longer size
-    // anything (T8 deletes them).
-    EXPECT_EQ(AudioTimingGeometry::kTxExposureLeadPackets, 760U);
-    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 1504U);
+    // two, shared slots three.
     EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 1008U);
     EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 1512U);
 }

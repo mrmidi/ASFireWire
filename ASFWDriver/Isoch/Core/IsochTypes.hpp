@@ -55,7 +55,6 @@ class IIsochReceiveConsumer {
     // Periodic, off-hot-path service for consumer-owned diagnostics (e.g. a
     // consumer reporting errors its own real-time path recorded).
     virtual void ServiceConsumerDiagnostics() {}
-    virtual void LogTransmitTimingTrace() {}
 };
 
 // Callback for received packets (Raw transport level)

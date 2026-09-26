@@ -434,34 +434,30 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                               replay.sytOffset, packetAnchorTicks, txDelay)
                         : ASFW::Protocols::Audio::IEC61883::SytFormatter::kNoInfo;
 
-                // Publish the live SYT decision to a lock-free latest-value
-                // trace. The watchdog logs it off the hot path (~1 s) so the
-                // observed device SYT, the delay-free replay offset, and the
-                // re-anchored transmit SYT are visible without logging here.
-                // `observedRxSyt` is the device's original SYT, reconstructed
-                // from the replayed delay-free offset against its source cycle.
-                if (hasReplaySyt) {
-                ASFW::Audio::Runtime::TxSytTraceSample trace{};
-                trace.packetIndex = nextPacketToPrepare;
-                trace.sourceCycle =
-                    ASFW::Timing::decodeCycleTimer(
-                        replay.sourceCycleTimer)
-                        .cycle;
-                trace.outCycle = static_cast<uint32_t>(
-                    (ASFW::Timing::normalizeOffsetDomain(
-                         packetAnchorTicks) /
-                     ASFW::Timing::kTicksPerCycle) %
-                    ASFW::Timing::kCyclesPerSecond);
-                trace.sytOffsetDelayFree = replay.sytOffset;
-                trace.txDelayTicks = txDelay;
-                trace.observedRxSyt =
-                    ASFW::Audio::Runtime::ComputeReplaySyt(
-                        replay.sytOffset,
-                        replay.sourceCycleTimer,
-                        directControl->rxTransferDelayTicks.load(
-                            std::memory_order_relaxed));
-                trace.txSyt = timing.nextDataSyt;
-                directControl->txSytTrace.Publish(trace);
+                // [TxSyt]: the stream's first replayed SYT decision, once per
+                // stream: the device's SYT (reconstructed from the replayed
+                // delay-free offset against its source cycle), that offset,
+                // and the transmit SYT re-anchored to our cycle.
+                if (hasReplaySyt && !ivars.runtime.txSytLogged) {
+                    ivars.runtime.txSytLogged = true;
+                    const uint32_t sourceCycle =
+                        ASFW::Timing::decodeCycleTimer(replay.sourceCycleTimer).cycle;
+                    const auto outCycle = static_cast<uint32_t>(
+                        (ASFW::Timing::normalizeOffsetDomain(packetAnchorTicks) /
+                         ASFW::Timing::kTicksPerCycle) %
+                        ASFW::Timing::kCyclesPerSecond);
+                    const auto observedRxSyt = static_cast<uint16_t>(
+                        ASFW::Audio::Runtime::ComputeReplaySyt(
+                            replay.sytOffset, replay.sourceCycleTimer,
+                            directControl->rxTransferDelayTicks.load(
+                                std::memory_order_relaxed)));
+                    const auto txSyt = static_cast<uint16_t>(timing.nextDataSyt);
+                    ASFW_LOG(TxSyt,
+                             "obsCyc=%u rxSyt=0x%04x sytOffDelayFree=%u +txDelay=%u outCyc=%u "
+                             "=> txSyt=0x%04x (cyc=%u off=0x%03x) pkt=%llu",
+                             sourceCycle, observedRxSyt, replay.sytOffset, txDelay, outCycle,
+                             txSyt, (static_cast<uint32_t>(txSyt) >> 12) & 0x0fu,
+                             static_cast<uint32_t>(txSyt) & 0x0fffu, nextPacketToPrepare);
                 }
 
                 const int64_t sourcePresentationTicks =
@@ -702,7 +698,6 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txSlotProvider.payloadBase = memory.payloadBase;
     ivars.runtime.txSlotProvider.metadataRing = memory.metadataRing;
     ivars.runtime.txSlotProvider.queueControl = memory.queueControl;
-    ivars.runtime.txSlotProvider.audioControl = control;
     ivars.runtime.txSlotProvider.numSlots = memory.numSlots;
     ivars.runtime.txSlotProvider.slotStrideBytes = memory.slotStrideBytes;
 
@@ -737,7 +732,8 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     }
     ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);
     ivars.runtime.txStreamEngine.ResetForStart(0, 0);
-    ivars.runtime.txPlacementNextLogHost = 0;
+    ivars.runtime.txPlacementLogged = false;
+    ivars.runtime.txSytLogged = false;
     ivars.runtime.txFilledFrameEnd = 0;
     // The interval minimum belongs to one stream: drop the previous one's.
     (void)ivars.runtime.txStreamEngine.TakeMinFinalityMarginPackets();
@@ -1305,21 +1301,17 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     txControl->MarkRefillHandled(requested);
 
     // [TxPlace]: where a transmitted frame sits against the HAL clock
-    // (milestone 6, documentation/TX_OWNERSHIP.md). Once a second, and the
-    // first measurement after start at once. Diagnostic only.
-    {
-        const uint64_t nowHost = mach_absolute_time();
-        if (nowHost >= ivars->runtime.txPlacementNextLogHost) {
-            ASFW::Audio::DriverKit::TxPlacementSample placement{};
-            if (ASFW::Audio::DriverKit::MeasureTxPlacement(*ivars, placement)) {
-                ASFW_LOG(DirectAudio,
-                         "[TxPlace] pkt=%llu frame=%llu halSample=%lld offset=%lld rate=%u",
-                         placement.packetIndex, placement.firstAudioFrame,
-                         placement.halSampleTime, placement.offsetFrames,
-                         ivars->runtime.txStreamEngine.StreamConfig().sampleRate);
-                ivars->runtime.txPlacementNextLogHost =
-                    nowHost + ASFW::Timing::nanosToHostTicks(1'000'000'000ULL);
-            }
+    // (milestone 6, documentation/TX_OWNERSHIP.md). The first measurement of
+    // each stream only (T8); the start-to-start difference is what matters.
+    if (!ivars->runtime.txPlacementLogged) {
+        ASFW::Audio::DriverKit::TxPlacementSample placement{};
+        if (ASFW::Audio::DriverKit::MeasureTxPlacement(*ivars, placement)) {
+            ivars->runtime.txPlacementLogged = true;
+            ASFW_LOG(DirectAudio,
+                     "[TxPlace] pkt=%llu frame=%llu halSample=%lld offset=%lld rate=%u",
+                     placement.packetIndex, placement.firstAudioFrame,
+                     placement.halSampleTime, placement.offsetFrames,
+                     ivars->runtime.txStreamEngine.StreamConfig().sampleRate);
         }
     }
 

@@ -1,6 +1,6 @@
 # TX ownership: PCM → packet → DMA (milestone 6)
 
-**Status:** T0–T4 done (design, goldens, dead surfaces, silence-first + `[TxPlace]`, audio-side fill), 2026-09-26, branch `refactor/tx-ownership` off main `52d05ca8`.
+**Status:** T0–T8 done (design, goldens, dead surfaces, silence-first + `[TxPlace]`, audio-side fill, finite IT queue, lifetimes, frame cursor, E2, instrument cleanup); T9 open. 2026-09-26, branch `refactor/tx-ownership` off main `52d05ca8`.
 Linear FW-209 (milestone 6), condensing FW-210 (main inventory), FW-211 (midi distillation) and FW-212 (ownership
 model). The stages are in §8. This document is T0.
 
@@ -539,6 +539,39 @@ Linux's minimum, `amdtp-stream.c`); input safety unchanged at 80 (its floor need
 - "One recovery transaction" needs nothing new here: DICE recovery is already one StopIO → StartIO through CoreAudio
   (the bus-reset run in §1f).
 
+## 1k. T8: output safety and the instrument cleanup (2026-09-26)
+
+**Output safety is not derived for every family.** The plan was midi's `5d1ea98c` formula: output safety = measured
+finality lead, floored by the profile. Not done:
+- E2 (§1h) measured the Saffire floor directly: 3 packets (24 frames) with a 2-packet fill guard, declared = measured
+  at 16/32/64 frames. The profile keeps it as `playbackSafetyPackets = 3`.
+- A general formula would change the declared output safety of every other family (DICE, BeBoB, M-Audio, OXFW, MOTU,
+  Mackie, Phase 88) with no hardware run behind the new values. Each family keeps its own
+  `TxSafetyOffsetFrames`; a family moves to a lower value only after a loopback run on its hardware, as the Saffire did.
+
+**Removed, because they measured the old `W`/`E` model or nothing at all:**
+- `AudioTimingGeometry`: `kTxDataHorizonPackets`, `kTxExposureFloorFrames`, `TxDataHorizonFrames`,
+  `kTxExposureLead*`, `kTxFrameExposureWindow*`, and the now-unused `kMinAvgCadence*` and `kSchedulingJitterFrames`,
+  with their static asserts and test pins. Nothing sized from them since T5.
+- `AudioTransportControlBlock`: `TxExposureReason`, the `txExposure*` fields, `requestedTargetFrameEnd`,
+  `TxWirePayloadTelemetry` and `txSytTrace`. `PublishRequest` takes only the host time.
+- `[TxWire]`: the every-packet scan in `DextTxSlotProvider::PublishSlot`, and the `audioControl` pointer it needed.
+- Payload writer counters nothing read: `underExposure*`, `framesNonZero`, `slotsNonZero`, `maxAbsSampleBits`,
+  `framesRacedReuse` and its post-write generation recheck (a reuse mid-frame needs a > 60 ms stall inside the fill,
+  see `AmdtpPayloadWriter.cpp` note 8). Kept: the partition counters (visited, written, without packet, outside packet,
+  missed finality) and the finality-margin minimum that `[TxPrep]` prints.
+- The watchdog's per-second `[TxSyt]` path: `TxSytTraceLatest`, `IIsochReceiveConsumer::LogTransmitTimingTrace`,
+  `IsochReceiveContext::LogTxSytTrace` and the watchdog divider. That also removes an audio-only hook from the
+  transport layer.
+
+**Once per stream now:** `[TxSyt]` (logged by the producer at the stream's first replayed SYT decision) and
+`[TxPlace]` (the first measurement). `tools/rtl/start_alignment.py` reads only the first of each, so it is unchanged.
+
+**Left as they are:** the `[TxPrep]` heartbeat; `[TxPrepRange]`, already only on `stoppedShort`; the `[TxPrep]`
+histograms, which feed `AudioTelemetrySnapshot` and belong to the telemetry ABI redesign (FW-175).
+
+No wire change: host goldens unchanged, 2498/2498 host tests, dext build OK.
+
 ## 1i. Parked: E3, the input side (not scheduled; written down 2026-09-26)
 
 **Why.** After T7 + E2 the Pro 24 DSP at 48 kHz measures RTL 241 / 273 / 337 frames at 16 / 32 / 64 (5.02 / 5.69 /
@@ -749,11 +782,11 @@ diagnostic sample even drives control: the self-heal at `TxProducer:256-275`.
 | `[TxPrep]` heartbeat | **Take**, reduced to one line: margin + fill health |
 | Fill anomalies (missed finality, torn, silence because late) | **Take**, anomaly-only (new, T4) |
 | `[TxPrepFrame]`, `[TxExposure]`, `txExposure*`, debt counters | **Leave (T4)**: they measure `W`/`E` |
-| `[TxPrepRange]` per-second WARNING | **Leave** (or only on `stoppedShort`) |
-| Writer RT counters (`withoutPkt`, `wroteIntoTransmitted`, `racedReuse`, …) | **Leave (T4)** |
-| `[TxWire]` every-packet scan in `PublishSlot` | **Leave (T8)**: it inspects the payload before PCM arrives, so it misleads |
-| `[TxPrep]` histograms + seqlock interval | **Leave (T8)**; keep what the heartbeat prints |
-| `txSytTrace` per-second `[TxSyt]` | **Demote** to anomaly-only |
+| `[TxPrepRange]` per-second WARNING | **Done**: only on `stoppedShort` |
+| Writer RT counters (`withoutPkt`, `wroteIntoTransmitted`, `racedReuse`, …) | **Done (T4, T8)**: the partition counters stay as the fill's oracle (§1k) |
+| `[TxWire]` every-packet scan in `PublishSlot` | **Done (T8)**: it inspected the payload before PCM arrived, so it misled |
+| `[TxPrep]` histograms + seqlock interval | **Deferred to FW-175**: they feed the telemetry snapshot |
+| `txSytTrace` per-second `[TxSyt]` | **Done (T8)**: once per stream, from the producer; the trace is gone |
 | Host tools (`halprobe`, `rtl_loopback`) | **Take**: measurement lives on the host |
 
 **The interrupt cadence is geometry.** The 8-packet group feeds the ZTS period, frame alignment, ring sizes and laps,
@@ -775,7 +808,7 @@ single-constant tweak.
 | T6 | Lifetimes: producer quiesced for every family, atomic secondary flag, restart test (§1j) | FW-218 |
 | T7 | Frame cursor to the projected frame, no rounding; Saffire output latency back to 52 (§1g) | FW-194 |
 | B3 | Measure: dispatch latency, finality distance, missed/torn fills, RTL, 16/32-frame buffers | FW-217 |
-| T8 | Derived output safety + remaining instrumentation cleanup | FW-171 overlap |
+| T8 | Instrument cleanup; output safety stays per family, measured (§1k) | FW-171 overlap |
 | T9 | Reverse audit + docs | FW-220 |
 
 **Not in this milestone:**

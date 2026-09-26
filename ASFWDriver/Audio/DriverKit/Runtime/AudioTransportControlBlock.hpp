@@ -2,8 +2,6 @@
 
 #include "AudioClientCursor.hpp"
 #include "AudioRtCounters.hpp"
-#include "TxSytTrace.hpp"
-#include "TxWirePayloadTelemetry.hpp"
 #include "../../Runtime/HardwareSampleTimeline.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Runtime/Seqlock.hpp"
@@ -89,39 +87,6 @@ enum class TxProducerFaultReason : uint32_t {
         case TxProducerFaultReason::kSlotPublishFailed: return "slot-publish-failed";
         case TxProducerFaultReason::kCadencePlanMismatch: return "cadence-plan-mismatch";
         case TxProducerFaultReason::kCadenceCommitRejected: return "cadence-commit-rejected";
-    }
-    return "unknown";
-}
-
-/// Why the CoreAudio write frontier (W) has overtaken the exposure frontier (E).
-///
-/// W > E means the payload writer found no packet for a host frame and dropped
-/// it: audible silence with transport still perfectly healthy. Three mechanisms
-/// produce it, and they are distinguishable only by how the deficit MOVES --
-/// see tools/asfw_sim/FINDINGS.md F2/F6/F9, where each was reproduced.
-enum class TxExposureReason : uint32_t {
-    kUnknown = 0,
-    /// E leads W by about the content horizon: the intended state.
-    kHealthy,
-    /// One step, then flat. A producer-wake stall past the exposure budget
-    /// (the observable signature of a dead IT interrupt path, TX-IRQ-001).
-    kStall,
-    /// Ramping, and the replay-miss count accounts for the lost frames. Every
-    /// miss ships NODATA, which never advances E, and alignment is one-shot.
-    kReplayMiss,
-    /// Ramping, and the replay-miss count CANNOT account for the lost frames:
-    /// E is advancing at a slower rate than W (TX cadence under-production).
-    kRateMismatch,
-};
-
-[[nodiscard]] inline const char* TxExposureReasonName(
-    TxExposureReason reason) noexcept {
-    switch (reason) {
-        case TxExposureReason::kUnknown: return "unknown";
-        case TxExposureReason::kHealthy: return "healthy";
-        case TxExposureReason::kStall: return "stall";
-        case TxExposureReason::kReplayMiss: return "replay-miss";
-        case TxExposureReason::kRateMismatch: return "rate-mismatch";
     }
     return "unknown";
 }
@@ -439,19 +404,13 @@ struct TxPreparationRequestState final {
     std::atomic<uint64_t> handledGeneration{0};
     std::atomic<uint64_t> requestHostTicks{0};
     std::atomic<uint64_t> handledHostTicks{0};
-    // Audio-owned target: the packetizer must expose content through this
-    // absolute host frame before the request is considered drained. Transport
-    // only carries packet cursors and never interprets or resets this value.
-    std::atomic<uint64_t> requestedTargetFrameEnd{0};
     // CoreAudio can publish every IO period while TxPreparation runs on a
     // different queue. This latch makes action delivery edge-triggered and
     // coalesces those writes into one follow-up action.
     std::atomic<bool> wakeScheduled{false};
 
-    [[nodiscard]] uint64_t PublishRequest(uint64_t hostTicks,
-                                          uint64_t targetFrameEnd = 0) noexcept {
+    [[nodiscard]] uint64_t PublishRequest(uint64_t hostTicks) noexcept {
         requestHostTicks.store(hostTicks, std::memory_order_relaxed);
-        requestedTargetFrameEnd.store(targetFrameEnd, std::memory_order_relaxed);
         return requestedGeneration.fetch_add(1, std::memory_order_release) + 1;
     }
 
@@ -487,7 +446,6 @@ struct TxPreparationRequestState final {
         handledGeneration.store(0, std::memory_order_relaxed);
         requestHostTicks.store(0, std::memory_order_relaxed);
         handledHostTicks.store(0, std::memory_order_relaxed);
-        requestedTargetFrameEnd.store(0, std::memory_order_relaxed);
         wakeScheduled.store(false, std::memory_order_relaxed);
     }
 };
@@ -528,10 +486,7 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> fatalGeneration{0};
 
     // TX control block members
-    TxWirePayloadTelemetry txWirePayloadTelemetry{};
 
-    // Latest-value trace of the live replay TX SYT decision (diagnostics).
-    TxSytTraceLatest txSytTrace{};
     TxPreparationRequestState txPreparationRequests{};
     TxProducerFaultSnapshot txProducerFault{};
 
@@ -593,32 +548,6 @@ struct AudioTransportControlBlock final {
     /// flooding the log ring exactly when retention matters most).
     std::atomic<uint64_t> txHeartbeatLastHostTicks{0};
 
-    // --- TX exposure attribution (W > E) -----------------------------------
-    // W = CoreAudio write frontier, E = exposed frame end. A PCM frame survives
-    // iff it is written before its packet is exposed, so W > E is silence.
-    // Three distinct mechanisms produce it and they are separable only by
-    // *rate*, not by any single counter (tools/asfw_sim FINDINGS F2/F6/F9):
-    //
-    //   stall         W-E steps once, then holds flat
-    //   replay-miss   W-E ramps, and the miss count can PAY for the lost
-    //                 frames at ~kFramesPerDataPacket each
-    //   rate-mismatch W-E ramps, and the miss count cannot -- E is simply
-    //                 advancing slower than W
-    //
-    // These carry the previous sample so the driver can compute the ramp and
-    // attribute it, instead of leaving it to post-hoc log arithmetic.
-    std::atomic<uint64_t> txExposureSampleHostTicks{0};
-    std::atomic<uint64_t> txExposureSampleWriteFrame{0};
-    std::atomic<uint64_t> txExposureSampleExposedFrame{0};
-    std::atomic<uint64_t> txExposureSampleMisses{0};
-    //! Frames of deficit attributed to replay misses since stream start.
-    std::atomic<uint64_t> txExposureDebtReplayFrames{0};
-    //! Frames of deficit no replay miss can account for (the F9 residue).
-    std::atomic<uint64_t> txExposureDebtUnexplainedFrames{0};
-    //! Last classified TxExposureReason; 0 until the first classification.
-    std::atomic<uint32_t> txExposureReason{0};
-    //! Measured (W rate - E rate) in ppm; positive means E is falling behind.
-    std::atomic<int32_t> txExposurePpm{0};
 
     // RX control block members
     ASFW::Driver::RxSytCadence rxSytCadence{};
@@ -719,8 +648,6 @@ struct AudioTransportControlBlock final {
         discontinuities.store(0, std::memory_order_release);
 
         // Reset TX members
-        txWirePayloadTelemetry.Reset();
-        txSytTrace.Reset();
         txPreparationRequests.Reset();
         txProducerFault.Reset();
 
