@@ -80,6 +80,78 @@ TEST(DiceDeviceIoTests, TransactionReadsReuseTheParsers) {
     EXPECT_EQ(global->sampleRate, 48000U);
 }
 
+// The TCAT drivers refuse TX_NUMBER >= 3 and RX_NUMBER > 4 (PopulateDeviceStruct
+// in the TCAT SDK kexts). A count outside that fails the read; it is never
+// clamped into a smaller device.
+TEST(DiceDeviceIoTests, StreamCountsAboveTheVendorLimitsAreRefused) {
+    IoRig rig;
+    const auto sections = rig.dio.ReadGeneralSections();
+    ASSERT_TRUE(sections.has_value());
+
+    rig.bus.Device().SetTxCount(3);
+    const auto tx = rig.dio.ReadTxStreamConfig(*sections);
+    ASSERT_FALSE(tx.has_value());
+    EXPECT_EQ(tx.error(), kIOReturnUnsupported);
+
+    rig.bus.Device().SetRxCount(5);
+    const auto rx = rig.dio.ReadRxStreamConfig(*sections);
+    ASSERT_FALSE(rx.has_value());
+    EXPECT_EQ(rx.error(), kIOReturnUnsupported);
+}
+
+TEST(DiceDeviceIoTests, FourRxStreamsAreAccepted) {
+    IoRig rig;
+    const auto sections = rig.dio.ReadGeneralSections();
+    ASSERT_TRUE(sections.has_value());
+    rig.bus.Device().SetRxCount(4);  // the Venice RX section holds four entries
+    const auto rx = rig.dio.ReadRxStreamConfig(*sections);
+    ASSERT_TRUE(rx.has_value());
+    EXPECT_EQ(rx->numStreams, 4U);
+}
+
+// A section too short for the declared streams must fail the read, not shrink
+// the device to the streams that fit.
+TEST(DiceDeviceIoTests, TruncatedStreamCoresFailTheRead) {
+    IoRig rig;
+    auto sections = rig.dio.ReadGeneralSections();
+    ASSERT_TRUE(sections.has_value());
+    rig.bus.Device().SetRxCount(4);
+    // Stream 2's core starts at byte 8 + 2 * 280 = 568.
+    sections->rxStreamFormat.size = 568;
+    const auto rx = rig.dio.ReadRxStreamConfig(*sections);
+    ASSERT_FALSE(rx.has_value());
+    EXPECT_EQ(rx.error(), kIOReturnUnderrun);
+}
+
+// As in the TCAT drivers, a failed read of any part of the stream section,
+// names included, fails the device (PopulateTxStruct -> PopulateDeviceStruct).
+TEST(DiceDeviceIoTests, FailedSectionChunkFailsTheRead) {
+    IoRig rig;
+    const auto sections = rig.dio.ReadGeneralSections();
+    ASSERT_TRUE(sections.has_value());
+    // Stream 1's core (bytes 288..304) is in the first 512-byte chunk; its
+    // label blob is in the second.
+    rig.bus.FailNext(OpKind::Read, kDiceBaseAddressLo + sections->txStreamFormat.offset + 512,
+                     AsyncStatus::kTimeout);
+    const auto tx = rig.dio.ReadTxStreamConfig(*sections);
+    ASSERT_FALSE(tx.has_value());
+    EXPECT_EQ(tx.error(), kIOReturnTimeout);
+}
+
+// Labels past the end of the section keep empty labels: stream 1's core
+// (bytes 288..304) is inside the section, its label blob is not.
+TEST(DiceDeviceIoTests, LabelsPastTheSectionKeepTheStream) {
+    IoRig rig;
+    auto sections = rig.dio.ReadGeneralSections();
+    ASSERT_TRUE(sections.has_value());
+    sections->txStreamFormat.size = 304;
+    const auto tx = rig.dio.ReadTxStreamConfig(*sections);
+    ASSERT_TRUE(tx.has_value());
+    EXPECT_EQ(tx->numStreams, 2U);
+    EXPECT_EQ(tx->TotalPcmChannels(), 24U);
+    EXPECT_EQ(tx->streams[1].labels[0], '\0');
+}
+
 TEST(DiceDeviceIoTests, TransportFailureIsReturnedNotHidden) {
     IoRig rig;
     rig.bus.FailNext(OpKind::Read, kDiceBaseAddressLo + rig.TxBase(), AsyncStatus::kTimeout);
