@@ -31,6 +31,7 @@
 
 #include "../support/MAudioSpecialHappyPathFixture.inc"
 #include "WireTrace.hpp"
+#include "Testing/HostDriverKitStubs.hpp"
 
 #include <gtest/gtest.h>
 
@@ -91,6 +92,12 @@ float SampleTag(uint64_t frame, uint32_t channel) {
 class TxProducerRig final {
 public:
     TxProducerRig() {
+        // The rig owns time: host ticks are nanoseconds (1:1 timebase) and
+        // "now" is the rig's packet clock, so driver code that projects the
+        // hardware position from the host clock sees the rig's bus.
+        savedTimebase_ = ASFW::Timing::gHostTimebaseInfo;
+        ASFW::Timing::gHostTimebaseInfo = {1, 1};
+        ASFW::Testing::SetHostMonotonicClockForTesting([this] { return HostTicksFor(clockPacket_); });
         device_ = new ASFWAudioDevice();
         device_->zeroTimestampPeriod = ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames;
         ivars_.audioDevice = OSSharedPtr<ASFWAudioDevice>(device_, OSNoRetain);
@@ -99,7 +106,11 @@ public:
         driver_.ivars = &ivars_;
     }
 
-    ~TxProducerRig() { driver_.ivars = nullptr; }
+    ~TxProducerRig() {
+        driver_.ivars = nullptr;
+        ASFW::Testing::ResetHostMonotonicClockForTesting();
+        ASFW::Timing::gHostTimebaseInfo = savedTimebase_;
+    }
 
     TxProducerRig(const TxProducerRig&) = delete;
     TxProducerRig& operator=(const TxProducerRig&) = delete;
@@ -298,6 +309,7 @@ private:
             queue_->PushCompletionStamp(packet, CycleTimerFor(packet, 0));
             // CoreAudio wakes on its own clock, not on our interrupt: give it
             // every packet time, after that packet has left.
+            clockPacket_ = packet + 1;
             DriveHostWrites(packet + 1);
         }
         completed_ += delta;
@@ -433,6 +445,9 @@ private:
     std::vector<uint8_t> payload_;
     std::unique_ptr<IsochTxPacketMeta[]> metadata_;
     std::unique_ptr<IsochTxQueueControl> queue_;
+
+    mach_timebase_info_data_t savedTimebase_{};
+    uint64_t clockPacket_{0};
 
     uint32_t sampleRate_{0};
     uint32_t pcmChannels_{0};
@@ -860,12 +875,9 @@ TEST(TxOwnershipGolden, MAudio1814Clean48k) {
 // [TxPlace] (milestone 6): the driver's placement meter must report what the
 // wire shows -- the frame a transmitted packet carries, minus the HAL's
 // sample time when that packet left -- computed here from the rig's own
-// clocks. Host ticks are 1:1 nanoseconds so the rig's clock pair and the
-// meter's conversions agree exactly.
+// clocks. The rig runs host ticks 1:1 with nanoseconds, so its clock pair and
+// the meter's conversions agree exactly.
 TEST(TxOwnershipGolden, PlacementMeterAgreesWithTheWire) {
-    const mach_timebase_info_data_t saved = ASFW::Timing::gHostTimebaseInfo;
-    ASFW::Timing::gHostTimebaseInfo = {1, 1};
-
     ASFW::Isoch::Audio::AVC::Profiles::MAudioSpecialProfile profile(false);
     TxProducerRig rig;
     ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::MAudioFireWire1814, 48000));
@@ -892,7 +904,6 @@ TEST(TxOwnershipGolden, PlacementMeterAgreesWithTheWire) {
                 (unsigned long long)sample.packetIndex, (unsigned long long)sample.firstAudioFrame,
                 (long long)sample.halSampleTime, (long long)sample.offsetFrames);
 
-    ASFW::Timing::gHostTimebaseInfo = saved;
 }
 
 } // namespace
