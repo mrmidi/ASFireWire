@@ -19,6 +19,12 @@ macro(add_protocols_mock_test TARGET_NAME)
     gtest_discover_tests(${TARGET_NAME})
 endmacro()
 
+# AVC Codec Tests (Core and Commands)
+add_protocols_test(AvcCodecTests
+    AvcCodecTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)
+
 # FCP Packet Parsing Tests
 add_executable(FCPPacketParsingTests
     FCPPacketParsingTests.cpp
