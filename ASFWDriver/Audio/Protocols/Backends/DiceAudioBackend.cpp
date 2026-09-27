@@ -132,8 +132,7 @@ void LogDirection(const char* directionName,
 // unchecked.
 [[nodiscard]] ResolvedDeviceGeometry ResolveDeviceStreamGeometry(
     uint64_t guid,
-    const AudioStreamRuntimeCaps& caps,
-    const ASFW::Isoch::Audio::DICE::DiceProfile& profile) {
+    const AudioStreamRuntimeCaps& caps) {
     static_assert(kMaxResolvedStreams == kMaxAudioStreamsPerDirection,
                   "resolver bound drifted from the host array bound");
     static_assert(kMaxResolvedStreams == ASFW::Isoch::Audio::kMaxConfiguredStreams,
@@ -143,10 +142,10 @@ void LogDirection(const char* directionName,
     resolved.capture = ResolveDirectionGeometry(
         caps.deviceToHostStreamCount, 0,
         [&caps](uint32_t i) { return CaptureGeometryFromDevice(caps, i); }, NoProfileGeometry);
-    // A device whose register overstates its playback streams is refused
-    // rather than armed on a stream it does not have.
+    // The device's count stands in both directions, as in the TCAT kexts
+    // (PopulateDeviceStruct loops the full TX_NUMBER and RX_NUMBER).
     resolved.playback = ResolveDirectionGeometry(
-        caps.hostToDeviceStreamCount, profile.AssertedPlaybackStreams(),
+        caps.hostToDeviceStreamCount, 0,
         [&caps](uint32_t i) { return PlaybackGeometryFromDevice(caps, i); }, NoProfileGeometry);
 
     LogDirection("capture", guid, resolved.capture);
@@ -881,7 +880,7 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             // before anything consumes either, and make the aggregate the HAL
             // is told match the streams the device actually carries.
             const auto resolvedGeometry =
-                ResolveDeviceStreamGeometry(guid, caps, *profile);
+                ResolveDeviceStreamGeometry(guid, caps);
 
             if (!resolvedGeometry.Usable()) {
                 // Publishing anyway is what used to happen, and the symptom was

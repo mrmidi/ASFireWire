@@ -17,9 +17,11 @@
 #include <gtest/gtest.h>
 
 #include "SessionTestSupport.hpp"
+#include "SyntheticDiceImages.hpp"
 #include "WireTrace.hpp"
 
 #include "Audio/Session/AudioSessions.hpp"
+#include "Audio/Core/AudioEndpointRuntime.hpp"
 #include "DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 
 #include <atomic>
@@ -204,6 +206,33 @@ const Scenario kScenarios[] = {
          r.Stop();
      }},
 };
+
+// A MultiMix announcing two playback streams (synthetic; see
+// SyntheticDiceImages.hpp). Alesis's own kext streams both, so we publish and
+// start both rather than refuse the device (libffado clamps it to one).
+constexpr SessionShape kMultimixTwoPlaybackShape{
+    "multimix-two-playback", Ids::kAlesisVendorId, Ids::kAlesisMultiMixModelId,
+    Ids::kAlesisVendorId, kDiceUnitVersion, &SyntheticDiceImages::kMultimixTwoPlayback, false};
+
+// Publication resolves the geometry; a refusal returns before the endpoint
+// exists, so CoreAudio would never see the device.
+TEST(SessionMultimixTwoPlayback, PublicationKeepsBothPlaybackStreams) {
+    SessionRig rig(kMultimixTwoPlaybackShape);
+    ASSERT_TRUE(rig.diceBackend.has_value());
+    rig.diceBackend->EnsureNubForGuidForTesting(rig.guid);
+    const auto endpoint = rig.runtime.FindEndpointRuntime(rig.guid);
+    ASSERT_NE(endpoint, nullptr) << "the device was refused at publication";
+    ASFW::Audio::Model::ASFWAudioDevice config{};
+    ASSERT_TRUE(endpoint->CopyConfig(config));
+    EXPECT_EQ(config.playbackStreams.size(), 2U);
+    EXPECT_EQ(config.outputChannelCount, 4U);
+}
+
+TEST(SessionMultimixTwoPlayback, ColdStartArmsBothPlaybackStreams) {
+    SessionRig rig(kMultimixTwoPlaybackShape);
+    rig.Start();
+    ExpectMatchesGolden(rig.bus.Trace(), "session/multimix-two-playback/cold-start.trace");
+}
 
 class SessionCharacterization
     : public ::testing::TestWithParam<std::tuple<ShapeCase, Scenario>> {};

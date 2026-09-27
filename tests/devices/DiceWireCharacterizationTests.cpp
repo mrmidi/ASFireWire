@@ -24,6 +24,7 @@
 #include "FakeDiceWaitClock.hpp"
 #include "FakeTimerScheduler.hpp"
 #include "SimulatedDiceDevice.hpp"
+#include "SyntheticDiceImages.hpp"
 #include "WireTrace.hpp"
 
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
@@ -225,6 +226,16 @@ std::string KeyName(const ::testing::TestParamInfo<const DiceDeviceImage*>& info
         if (c == '-') c = '_';
     }
     return name;
+}
+
+// A MultiMix announcing two playback streams (synthetic; see
+// SyntheticDiceImages.hpp): the device is programmed for both, as Alesis's own
+// kext does.
+TEST(DiceWireMultimixTwoPlayback, StartStopAt48k) {
+    DiceRig rig(SyntheticDiceImages::kMultimixTwoPlayback);
+    (void)rig.Start(48000);
+    (void)rig.Stop();
+    rig.ExpectGolden("start-stop-48k");
 }
 
 // ---- every recorded device: clean start and stop at 48 kHz -----------------

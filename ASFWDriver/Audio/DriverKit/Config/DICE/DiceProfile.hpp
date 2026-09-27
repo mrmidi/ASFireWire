@@ -37,11 +37,6 @@ struct DiceProfileSpec {
     Encoding::AudioWireFormat txEncoding{Encoding::AudioWireFormat::kRawPcm24In32};
     bool preserveFdfInNoDataPackets{true};
     bool initializeNonAudioSlots{true};
-    // Playback streams the device really has, when a reference stack says the
-    // register overstates it (libffado dice_avdevice.cpp:1686-1700: Alesis
-    // model 0 "announces two receive transmitters, but only has one").
-    // Zero: the device's count stands.
-    uint32_t assertedPlaybackStreams{0};
     // Capture safety offset in packets; the vendor ladder's 16 unless measured.
     uint32_t captureSafetyPackets{TimingLadder::kRxDelayPackets};
     // Playback safety offset in packets; the vendor ladder's 6 unless measured.
@@ -71,9 +66,6 @@ public:
     [[nodiscard]] uint32_t RxReportedLatencyFrames(double sampleRate) const noexcept override;
 
     // Playback streams to insist on, or zero to take the device's count.
-    [[nodiscard]] uint32_t AssertedPlaybackStreams() const noexcept {
-        return spec_.assertedPlaybackStreams;
-    }
 
 private:
     DiceProfileSpec spec_;

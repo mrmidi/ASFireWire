@@ -97,7 +97,9 @@ Cleanup classifications from the same audit:
 - **Kept although unused today:** the `AudioSafetyRule` mechanism (empty table)
   and `SupportDisposition::Quarantined`. They are fail-closed capabilities, not
   dead code.
-- **Evidence gates, not implemented:** replacing main's DICE cold-start order,
-  and any Alesis/Focusrite host-playback stream clamp. FFADO's clamp is on
-  `m_nb_rx` (host playback), and the owner has no hardware to settle it.
+- **Evidence gate, not implemented:** replacing main's DICE cold-start order.
+- **Decided, no clamp (2026-09-27):** Alesis/Focusrite host-playback stream
+  counts come from the device. FFADO clamps `m_nb_rx` (host playback) to one;
+  Alesis's own kext streams every stream the register reports, and for DICE the
+  vendor kext is the reference (`DICE_TCAT_ARCHITECTURE.md` §2.9).
 

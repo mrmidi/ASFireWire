@@ -28,8 +28,6 @@ generic fallback. Each is a `DiceProfileSpec`:
 * **TX encoding**: raw 24-in-32 (every TCAT kext) or AM824 (Weiss, generic);
 * **preserveFdfInNoDataPackets** and **initializeNonAudioSlots** (off for the
   Alesis MultiMix, which carries no MIDI slot);
-* **assertedPlaybackStreams**: set only for the Alesis MultiMix, whose register
-  overstates its playback streams (libffado `dice_avdevice.cpp:1686-1700`).
 
 A profile states no channel or stream counts. Its default stream configs carry
 framing constants only (8 frames per packet, FDF 0x02, FMT 0x10, blocking); the
