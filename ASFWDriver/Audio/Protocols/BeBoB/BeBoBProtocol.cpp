@@ -177,17 +177,18 @@ void BeBoBProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
     // Linux's BeBoB start sequence explicitly writes OUTPUT plug first, then INPUT
     // plug, using AM824 at the negotiated rate. Cross-validated with
     // linux-sound-firewire-stack/firewire/bebob/bebob_stream.c:96-115.
-    ProgramSignalFormat(desiredClock, [this, desiredClock, callback = std::move(callback)](IOReturn fmtStatus) mutable {
+    auto callbackPtr = std::make_shared<ClockApplyCallback>(std::move(callback));
+    ProgramSignalFormat(desiredClock, [this, desiredClock, callbackPtr](IOReturn fmtStatus) mutable {
         if (fmtStatus != kIOReturnSuccess) {
-            callback(fmtStatus, {});
+            (*callbackPtr)(fmtStatus, {});
             return;
         }
 
         // Async mixer configuration (device-specific, may be no-op).
         ConfigureMixer(MixerFailurePolicy::kBestEffort,
-                       [this, desiredClock, callback = std::move(callback)](IOReturn mixerStatus) mutable {
+                       [this, desiredClock, callbackPtr](IOReturn mixerStatus) mutable {
             if (mixerStatus != kIOReturnSuccess) {
-                callback(mixerStatus, {});
+                (*callbackPtr)(mixerStatus, {});
                 return;
             }
 
@@ -195,7 +196,7 @@ void BeBoBProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
             // Cross-validated with Linux bebob_stream.c:96-115 (300 ms settle).
             auto epoch = std::make_shared<ClockApplyEpoch>();
             epoch->generation = busInfo_.GetGeneration();
-            epoch->completion = std::move(callback);
+            epoch->completion = std::move(*callbackPtr);
             epoch->appliedClock = desiredClock;
             activeClockApply_ = epoch.get();
 
@@ -222,31 +223,31 @@ void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
         return;
     }
     auto output = std::make_shared<SignalFormatCommand>(*fcpTransport_, outPlug, false, rate);
-    output->Submit([this, completion = std::move(completion), output, rate](
+    auto completionPtr = std::make_shared<std::function<void(IOReturn)>>(std::move(completion));
+    output->Submit([this, completionPtr, output, rate](
                        Protocols::AVC::AVCResult outputResult,
                        const SignalFormatCommand::SignalFormat& /*outputFormat*/) mutable {
         const IOReturn outputStatus = MapAVCResultToIOReturn(outputResult);
         if (outputStatus != kIOReturnSuccess) {
-            completion(outputStatus);
+            (*completionPtr)(outputStatus);
             return;
         }
 
         if (!fcpTransport_) {
-            completion(kIOReturnNotReady);
+            (*completionPtr)(kIOReturnNotReady);
             return;
         }
         const uint8_t inPlug = StreamPlug(true);
-        auto finalCompletion = std::make_shared<std::function<void(IOReturn)>>(std::move(completion));
-        auto submitInput = [this, inPlug, rate, finalCompletion]() mutable {
+        auto submitInput = [this, inPlug, rate, completionPtr]() mutable {
             if (!fcpTransport_) {
-                (*finalCompletion)(kIOReturnNotReady);
+                (*completionPtr)(kIOReturnNotReady);
                 return;
             }
             auto input = std::make_shared<SignalFormatCommand>(*fcpTransport_, inPlug, true, rate);
-            input->Submit([finalCompletion, input](
+            input->Submit([completionPtr, input](
                                Protocols::AVC::AVCResult inputResult,
                                const SignalFormatCommand::SignalFormat& /*inputFormat*/) mutable {
-                (*finalCompletion)(MapAVCResultToIOReturn(inputResult));
+                (*completionPtr)(MapAVCResultToIOReturn(inputResult));
             });
         };
         const uint32_t interlockMs = SignalFormatInterlockMs();
@@ -255,22 +256,22 @@ void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
             return;
         }
         if (!timerScheduler_) {
-            (*finalCompletion)(kIOReturnNotReady);
+            (*completionPtr)(kIOReturnNotReady);
             return;
         }
-        signalFormatInterlockCompletion_ = finalCompletion;
+        signalFormatInterlockCompletion_ = completionPtr;
         signalFormatInterlockTimer_ = timerScheduler_->ScheduleAfter(
             static_cast<uint64_t>(interlockMs) * 1000ULL * 1000ULL,
-            [this, finalCompletion, submitInput = std::move(submitInput)]() mutable {
+            [this, completionPtr, submitInput = std::move(submitInput)]() mutable {
                 signalFormatInterlockTimer_ = Scheduling::kInvalidTimerToken;
-                if (signalFormatInterlockCompletion_ == finalCompletion) {
+                if (signalFormatInterlockCompletion_ == completionPtr) {
                     signalFormatInterlockCompletion_.reset();
                 }
                 submitInput();
             });
         if (signalFormatInterlockTimer_ == Scheduling::kInvalidTimerToken) {
             signalFormatInterlockCompletion_.reset();
-            (*finalCompletion)(kIOReturnNoResources);
+            (*completionPtr)(kIOReturnNoResources);
         }
     });
 }
@@ -530,21 +531,22 @@ void BeBoBProtocol::EnsurePlugFree(CMP::PCRDirection dir, uint8_t plug,
         cb(kIOReturnNotReady);
         return;
     }
+    auto cbPtr = std::make_shared<std::function<void(IOReturn)>>(std::move(cb));
     const auto device = CurrentCMPDevice();
     cmpClient_->CheckPlugUsed(device, dir, plug,
-                              [this, device, plug, dir, cb = std::move(cb)](bool success, bool used) mutable {
+                              [this, device, plug, dir, cbPtr](bool success, bool used) mutable {
         if (!success) {
-            cb(kIOReturnNotResponding);
+            (*cbPtr)(kIOReturnNotResponding);
             return;
         }
         if (used) {
             ASFW_LOG(Audio, "[BeBoB] Plug %u (direction %s) in use, breaking connections",
                      plug, dir == CMP::PCRDirection::kInput ? "Input" : "Output");
-            cmpClient_->BreakBothConnections(device, plug, [cb](CMP::CMPStatus status) {
-                cb(status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError);
+            cmpClient_->BreakBothConnections(device, plug, [cbPtr](CMP::CMPStatus status) {
+                (*cbPtr)(status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError);
             });
         } else {
-            cb(kIOReturnSuccess);
+            (*cbPtr)(kIOReturnSuccess);
         }
     });
 }

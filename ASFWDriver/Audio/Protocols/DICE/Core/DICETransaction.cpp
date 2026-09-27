@@ -88,15 +88,15 @@ void ReadSectionChunked(Protocols::Ports::ProtocolRegisterIO& io,
 
     const uint32_t chunk = static_cast<uint32_t>(
         std::min(kSectionReadChunkBytes, totalBytes - have));
+    auto donePtr = std::make_shared<std::function<void(IOReturn)>>(std::move(done));
     (void)io.ReadBlock(
         MakeDICEAddress(sectionOffsetBytes + static_cast<uint32_t>(have)),
         chunk,
-        [&io, sectionOffsetBytes, totalBytes, accumulated,
-         done = std::move(done)](Async::AsyncStatus status,
+        [&io, sectionOffsetBytes, totalBytes, accumulated, donePtr](Async::AsyncStatus status,
                                  std::span<const uint8_t> payload) mutable {
             if (status != Async::AsyncStatus::kSuccess || payload.empty()) {
                 if (accumulated->empty()) {
-                    done(MapReadStatus(status));
+                    (*donePtr)(MapReadStatus(status));
                     return;
                 }
                 ASFW_LOG(DICE,
@@ -105,13 +105,13 @@ void ReadSectionChunked(Protocols::Ports::ProtocolRegisterIO& io,
                          ASFW::Async::ToString(status),
                          accumulated->size(),
                          totalBytes);
-                done(kIOReturnSuccess);
+                (*donePtr)(kIOReturnSuccess);
                 return;
             }
 
             accumulated->insert(accumulated->end(), payload.begin(), payload.end());
             ReadSectionChunked(io, sectionOffsetBytes, totalBytes, accumulated,
-                               std::move(done));
+                               std::move(*donePtr));
         });
 }
 

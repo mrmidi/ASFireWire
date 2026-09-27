@@ -185,23 +185,23 @@ void CMPClient::ReadQuadlet(const CMPDevice& device, uint32_t address, FW::FwSpe
              address == PCRAddress(PCRDirection::kInput, 0) ? "iPCR0" :
              address == PCRAddress(PCRDirection::kOutput, 0) ? "oPCR0" : "other");
     busOps_.ReadQuad(device.route.generation, FW::NodeId{static_cast<uint8_t>(device.route.nodeId)}, target, speed,
-                      [this, device, callback = std::move(callback), address](Async::AsyncStatus status,
+                      [this, device, callbackPtr = std::make_shared<PCRReadCallback>(std::move(callback)), address](Async::AsyncStatus status,
                                                                                 std::span<const uint8_t> payload) mutable {
         if (!IsCurrent(device)) {
-            callback(false, 0);
+            (*callbackPtr)(false, 0);
             return;
         }
         if (status != Async::AsyncStatus::kSuccess || payload.size() != sizeof(uint32_t)) {
             CMPTRACE("ReadQuadlet DONE: addr=0x%08x status=%{public}s (FAIL, payload=%zu)",
                      address, ASFW::Async::ToString(status), payload.size());
-            callback(false, 0);
+            (*callbackPtr)(false, 0);
             return;
         }
         uint32_t raw = 0;
         __builtin_memcpy(&raw, payload.data(), sizeof(raw));
         const uint32_t value = OSSwapBigToHostInt32(raw);
         CMPTRACE("ReadQuadlet DONE: addr=0x%08x value=0x%08x", address, value);
-        callback(true, value);
+        (*callbackPtr)(true, value);
     });
 }
 
@@ -225,21 +225,21 @@ void CMPClient::CompareSwap(const CMPDevice& device, uint32_t address, uint32_t 
              device.route.generation.value, device.route.nodeId, address, expected, desired);
     busOps_.Lock(device.route.generation, FW::NodeId{static_cast<uint8_t>(device.route.nodeId)}, target, FW::LockOp::kCompareSwap,
                  operand, sizeof(uint32_t), speed,
-                 [this, device, callback = std::move(callback), address, expected, desired](Async::AsyncStatus status,
+                 [this, device, callbackPtr = std::make_shared<CompareSwapCallback>(std::move(callback)), address, expected, desired](Async::AsyncStatus status,
                                                                                                std::span<const uint8_t> payload) mutable {
         if (!IsCurrent(device)) {
-            callback(CMPStatus::Failed, 0);
+            (*callbackPtr)(CMPStatus::Failed, 0);
             return;
         }
         if (status != Async::AsyncStatus::kSuccess) {
             CMPTRACE("CompareSwap DONE: addr=0x%08x status=%{public}s (async FAIL)", address,
                      ASFW::Async::ToString(status));
-            callback(MapAsyncStatus(status), 0);
+            (*callbackPtr)(MapAsyncStatus(status), 0);
             return;
         }
         if (payload.size() != sizeof(uint32_t)) {
             CMPTRACE("CompareSwap DONE: addr=0x%08x payload=%zu (SIZE FAIL)", address, payload.size());
-            callback(CMPStatus::Failed, 0);
+            (*callbackPtr)(CMPStatus::Failed, 0);
             return;
         }
         uint32_t raw = 0;
@@ -248,7 +248,7 @@ void CMPClient::CompareSwap(const CMPDevice& device, uint32_t address, uint32_t 
         CMPTRACE("CompareSwap DONE: addr=0x%08x expected=0x%08x desired=0x%08x observed=0x%08x (%{public}s)",
                  address, expected, desired, observed,
                  observed == expected ? "MATCH" : "MISMATCH");
-        callback(CMPStatus::Success, observed);
+        (*callbackPtr)(CMPStatus::Success, observed);
     });
 }
 
@@ -259,24 +259,24 @@ void CMPClient::ReadMPR(const CMPDevice& device, PCRDirection direction, uint8_t
     CMPTRACE("ReadMPR SUBMIT: dir=%{public}s plug=%u addr=0x%08x",
              direction == PCRDirection::kInput ? "Input" : "Output", plugNum, mprAddr);
     ReadQuadlet(device, mprAddr, routeSpeed,
-                [routeSpeed, plugNum, direction, callback = std::move(callback)](bool success, uint32_t mpr) mutable {
+                [routeSpeed, plugNum, direction, callbackPtr = std::make_shared<std::function<void(CMPStatus, FW::FwSpeed)>>(std::move(callback))](bool success, uint32_t mpr) mutable {
         if (!success) {
             CMPTRACE("ReadMPR DONE: dir=%{public}s plug=%u FAIL",
                      direction == PCRDirection::kInput ? "Input" : "Output", plugNum);
-            callback(CMPStatus::Failed, FW::FwSpeed::S100);
+            (*callbackPtr)(CMPStatus::Failed, FW::FwSpeed::S100);
             return;
         }
         const uint8_t plugCount = static_cast<uint8_t>(mpr & 0x1FU);
         if (plugNum >= plugCount) {
             CMPTRACE("ReadMPR DONE: dir=%{public}s plug=%u NotFound (count=%u)",
                      direction == PCRDirection::kInput ? "Input" : "Output", plugNum, plugCount);
-            callback(CMPStatus::NotFound, FW::FwSpeed::S100);
+            (*callbackPtr)(CMPStatus::NotFound, FW::FwSpeed::S100);
             return;
         }
         const auto mprSpeed = static_cast<FW::FwSpeed>((mpr >> 30U) & 0x03U);
         CMPTRACE("ReadMPR DONE: dir=%{public}s plug=%u OK speed=%u plugCount=%u",
                  direction == PCRDirection::kInput ? "Input" : "Output", plugNum, mprSpeed, plugCount);
-        callback(CMPStatus::Success, MinSpeed(routeSpeed, mprSpeed));
+        (*callbackPtr)(CMPStatus::Success, MinSpeed(routeSpeed, mprSpeed));
     });
 }
 
@@ -344,36 +344,35 @@ void CMPClient::AttemptDisconnect(const LeaseKey& key, const Lease& lease, uint8
                                   CMPCallback callback) {
     const FW::FwSpeed speed = busInfo_.GetSpeed(FW::NodeId{static_cast<uint8_t>(lease.device.route.nodeId)});
     ReadQuadlet(lease.device, PCRAddress(key.direction, key.plugNum), speed,
-                [this, key, lease, speed, attempt, callback = std::move(callback)]
+                [this, key, lease, speed, attempt, callbackPtr = std::make_shared<CMPCallback>(std::move(callback))]
                 (bool success, uint32_t current) mutable {
         if (!success) {
-            CompleteDisconnect(key, CMPStatus::Failed, std::move(callback));
+            CompleteDisconnect(key, CMPStatus::Failed, std::move(*callbackPtr));
             return;
         }
         // Never decrement a PCR unless it still describes the exclusive lease
         // that this client established in this generation.
         if (PCRBits::GetP2P(current) != 1 || PCRBits::GetChannel(current) != lease.channel ||
             (current & PCRBits::kBcastMask) != 0) {
-            CompleteDisconnect(key, CMPStatus::Failed, std::move(callback));
+            CompleteDisconnect(key, CMPStatus::Failed, std::move(*callbackPtr));
             return;
         }
         const uint32_t desired = PCRBits::SetP2P(current, 0);
         CompareSwap(lease.device, PCRAddress(key.direction, key.plugNum), current, desired, speed,
-                    [this, key, lease, attempt, current, callback = std::move(callback)]
-                    (CMPStatus status, uint32_t observed) mutable {
+                    [this, key, lease, attempt, current, callbackPtr](CMPStatus status, uint32_t observed) mutable {
             if (status != CMPStatus::Success) {
-                CompleteDisconnect(key, status, std::move(callback));
+                CompleteDisconnect(key, status, std::move(*callbackPtr));
                 return;
             }
             if (observed == current) {
-                CompleteDisconnect(key, CMPStatus::Success, std::move(callback));
+                CompleteDisconnect(key, CMPStatus::Success, std::move(*callbackPtr));
                 return;
             }
             if (attempt + 1U >= kMaxCompareSwapAttempts) {
-                CompleteDisconnect(key, CMPStatus::Failed, std::move(callback));
+                CompleteDisconnect(key, CMPStatus::Failed, std::move(*callbackPtr));
                 return;
             }
-            AttemptDisconnect(key, lease, attempt + 1U, std::move(callback));
+            AttemptDisconnect(key, lease, attempt + 1U, std::move(*callbackPtr));
         });
     });
 }

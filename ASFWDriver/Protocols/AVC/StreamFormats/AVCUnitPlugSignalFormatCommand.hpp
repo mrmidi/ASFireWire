@@ -81,15 +81,16 @@ public:
 
     /// Submit command with signal format response
     void Submit(std::function<void(AVC::AVCResult, SignalFormat)> completion) {
-        AVCCommand::Submit([completion](AVC::AVCResult result, const AVC::AVCCdb& response) {
+        auto completionPtr = std::make_shared<std::function<void(AVC::AVCResult, SignalFormat)>>(std::move(completion));
+        AVCCommand::Submit([completionPtr](AVC::AVCResult result, const AVC::AVCCdb& response) {
             if (AVC::IsSuccess(result) && response.operandLength >= 3) {
                 SignalFormat fmt;
                 fmt.plugID = response.operands[0];
                 fmt.format = response.operands[1];
                 fmt.frequency = response.operands[2];
-                completion(result, fmt);
+                (*completionPtr)(result, fmt);
             } else {
-                completion(result, {0, 0xFF, 0xFF});
+                (*completionPtr)(result, {0, 0xFF, 0xFF});
             }
         });
     }

@@ -92,13 +92,14 @@ void MotuV2Protocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& rou
 }
 
 void MotuV2Protocol::ReadClockStatus(ClockStatusCallback callback) {
+    auto callbackPtr = std::make_shared<ClockStatusCallback>(std::move(callback));
     (void)io_.ReadQuadBE(
         AddressOf(Reg::ClockStatusV2),
-        [this, callback = std::move(callback)](Async::AsyncStatus status, uint32_t value) mutable {
+        [this, callbackPtr](Async::AsyncStatus status, uint32_t value) mutable {
             const IOReturn result = Protocols::Ports::MapAsyncStatusToIOReturn(status);
             if (result != kIOReturnSuccess) {
-                if (callback) {
-                    callback(result, ClockStatus{});
+                if (callbackPtr) {
+                    (*callbackPtr)(result, ClockStatus{});
                 }
                 return;
             }
@@ -109,8 +110,8 @@ void MotuV2Protocol::ReadClockStatus(ClockStatusCallback callback) {
             clock.source = DecodeClockSourceV2(value);
             cachedSampleRateHz_.store(clock.sampleRateHz, std::memory_order_release);
 
-            if (callback) {
-                callback(kIOReturnSuccess, clock);
+            if (callbackPtr) {
+                (*callbackPtr)(kIOReturnSuccess, clock);
             }
         });
 }
@@ -118,11 +119,12 @@ void MotuV2Protocol::ReadClockStatus(ClockStatusCallback callback) {
 void MotuV2Protocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback) {
     // Read-modify-write: the rate lives in bits [5:3] and must not disturb the clock
     // source or any other field (motu-protocol-v2.c:59-86).
-    ReadClockStatus([this, rateHz, callback = std::move(callback)](
+    auto callbackPtr = std::make_shared<CompletionCallback>(std::move(callback));
+    ReadClockStatus([this, rateHz, callbackPtr](
                         IOReturn status, ClockStatus clock) mutable {
         if (status != kIOReturnSuccess) {
-            if (callback) {
-                callback(status);
+            if (callbackPtr) {
+                (*callbackPtr)(status);
             }
             return;
         }
@@ -130,15 +132,15 @@ void MotuV2Protocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback)
         const auto encoded = EncodeRateV2(clock.raw, rateHz);
         if (!encoded.has_value()) {
             ASFW_LOG(Audio, "MotuV2Protocol: unsupported sample rate %u", rateHz);
-            if (callback) {
-                callback(kIOReturnUnsupported);
+            if (callbackPtr) {
+                (*callbackPtr)(kIOReturnUnsupported);
             }
             return;
         }
 
         if (*encoded == clock.raw) {
-            if (callback) {
-                callback(kIOReturnSuccess);
+            if (callbackPtr) {
+                (*callbackPtr)(kIOReturnSuccess);
             }
             return;
         }
@@ -146,13 +148,13 @@ void MotuV2Protocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback)
         (void)io_.WriteQuadBE(
             AddressOf(Reg::ClockStatusV2),
             *encoded,
-            [this, rateHz, callback = std::move(callback)](Async::AsyncStatus writeStatus) mutable {
+            [this, rateHz, callbackPtr](Async::AsyncStatus writeStatus) mutable {
                 const IOReturn result = Protocols::Ports::MapAsyncStatusToIOReturn(writeStatus);
                 if (result == kIOReturnSuccess) {
                     cachedSampleRateHz_.store(rateHz, std::memory_order_release);
                 }
-                if (callback) {
-                    callback(result);
+                if (callbackPtr) {
+                    (*callbackPtr)(result);
                 }
             });
     });
@@ -218,23 +220,24 @@ void MotuV2Protocol::ReleaseAsyncMessageAddress(CompletionCallback callback) {
 void MotuV2Protocol::ModifyRegister(Reg reg,
                                     std::function<uint32_t(uint32_t)> transform,
                                     CompletionCallback callback) {
+    auto callbackPtr = std::make_shared<CompletionCallback>(std::move(callback));
     (void)io_.ReadQuadBE(
         AddressOf(reg),
-        [this, reg, transform = std::move(transform), callback = std::move(callback)](
+        [this, reg, transform, callbackPtr](
             Async::AsyncStatus status, uint32_t current) mutable {
             const IOReturn readResult = Protocols::Ports::MapAsyncStatusToIOReturn(status);
             if (readResult != kIOReturnSuccess) {
-                if (callback) {
-                    callback(readResult);
+                if (callbackPtr) {
+                    (*callbackPtr)(readResult);
                 }
                 return;
             }
             (void)io_.WriteQuadBE(
                 AddressOf(reg),
                 transform(current),
-                [callback = std::move(callback)](Async::AsyncStatus writeStatus) mutable {
-                    if (callback) {
-                        callback(Protocols::Ports::MapAsyncStatusToIOReturn(writeStatus));
+                [callbackPtr](Async::AsyncStatus writeStatus) mutable {
+                    if (callbackPtr) {
+                        (*callbackPtr)(Protocols::Ports::MapAsyncStatusToIOReturn(writeStatus));
                     }
                 });
         });

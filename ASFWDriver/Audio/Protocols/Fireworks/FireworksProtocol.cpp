@@ -152,20 +152,21 @@ void FireworksProtocol::ProbeHardwareInfo(SimpleCallback callback) {
         callback(kIOReturnSuccess);
         return;
     }
+    auto callbackPtr = std::make_shared<SimpleCallback>(std::move(callback));
     efc_->Submit(Efc::Category::kHwInfo,
                 static_cast<uint32_t>(Efc::HwInfoCommand::kGetCaps), {},
-                [this, callback = std::move(callback)](IOReturn status,
+                [this, callbackPtr](IOReturn status,
                                                        const Efc::Response& response) mutable {
         if (status != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio, "[Fireworks] HWINFO GET_CAPS failed status=0x%x", status);
-            callback(status);
+            (*callbackPtr)(status);
             return;
         }
         auto info = Efc::ParseHwInfo(response.paramBytes);
         if (!info) {
             ASFW_LOG_ERROR(Audio, "[Fireworks] HWINFO GET_CAPS short response: %zu quadlets",
                            response.ParamQuadletCount());
-            callback(kIOReturnIOError);
+            (*callbackPtr)(kIOReturnIOError);
             return;
         }
         ASFW_LOG(Audio,
@@ -193,7 +194,7 @@ void FireworksProtocol::ProbeHardwareInfo(SimpleCallback callback) {
         }
         hwInfo_ = std::move(info);
         EvaluateGeometry(*hwInfo_);
-        callback(kIOReturnSuccess);
+        (*callbackPtr)(kIOReturnSuccess);
     });
 }
 
@@ -202,38 +203,40 @@ void FireworksProtocol::EnsureTransportMode(SimpleCallback callback) {
         callback(kIOReturnSuccess);
         return;
     }
+    auto callbackPtr = std::make_shared<SimpleCallback>(std::move(callback));
     const uint32_t params[] = {static_cast<uint32_t>(Efc::TransportMode::kIec61883)};
     efc_->Submit(Efc::Category::kTransport,
                 static_cast<uint32_t>(Efc::TransportCommand::kSetTxMode), params,
-                [this, callback = std::move(callback)](IOReturn status, const Efc::Response&) mutable {
+                [this, callbackPtr](IOReturn status, const Efc::Response&) mutable {
         if (status == kIOReturnSuccess) {
             transportModeSet_ = true;
         } else {
             ASFW_LOG_ERROR(Audio, "[Fireworks] TRANSPORT SET_TX_MODE(IEC61883) failed status=0x%x",
                            status);
         }
-        callback(status);
+        (*callbackPtr)(status);
     });
 }
 
 void FireworksProtocol::ReadClock(ClockCallback callback) {
+    auto callbackPtr = std::make_shared<ClockCallback>(std::move(callback));
     efc_->Submit(Efc::Category::kHwCtl,
                 static_cast<uint32_t>(Efc::HwCtlCommand::kGetClock), {},
-                [this, callback = std::move(callback)](IOReturn status,
+                [this, callbackPtr](IOReturn status,
                                                        const Efc::Response& response) mutable {
         if (status != kIOReturnSuccess) {
-            callback(status, Efc::Clock{});
+            (*callbackPtr)(status, Efc::Clock{});
             return;
         }
         auto clock = Efc::ParseClock(response);
         if (!clock) {
             ASFW_LOG_ERROR(Audio, "[Fireworks] HWCTL GET_CLOCK short response: %zu quadlets",
                            response.ParamQuadletCount());
-            callback(kIOReturnIOError, Efc::Clock{});
+            (*callbackPtr)(kIOReturnIOError, Efc::Clock{});
             return;
         }
         lastClock_ = *clock;
-        callback(kIOReturnSuccess, *clock);
+        (*callbackPtr)(kIOReturnSuccess, *clock);
     });
 }
 

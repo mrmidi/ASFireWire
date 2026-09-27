@@ -96,9 +96,10 @@ void SPro24DspProtocol::EnsureExtensionsLoaded(VoidCallback callback) {
         return;
     }
 
+    auto callbackPtr = std::make_shared<VoidCallback>(std::move(callback));
     tcat_.Transaction().ReadExtensionSections(
-        [this, callback = std::move(callback)](IOReturn status, ExtensionSections sections) mutable {
-            HandleExtensionSectionsRead(status, sections, std::move(callback));
+        [this, callbackPtr](IOReturn status, ExtensionSections sections) mutable {
+            HandleExtensionSectionsRead(status, sections, std::move(*callbackPtr));
         });
 }
 
@@ -125,30 +126,32 @@ void SPro24DspProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& 
 
 void SPro24DspProtocol::ReadAppQuad(uint32_t offset,
                                     std::function<void(IOReturn, uint32_t)> callback) {
-    EnsureExtensionsLoaded([this, offset, callback = std::move(callback)](IOReturn status) mutable {
+    auto callbackPtr = std::make_shared<std::function<void(IOReturn, uint32_t)>>(std::move(callback));
+    EnsureExtensionsLoaded([this, offset, callbackPtr](IOReturn status) mutable {
         if (status != kIOReturnSuccess) {
-            callback(status, 0);
+            (*callbackPtr)(status, 0);
             return;
         }
 
         (void)tcat_.IO().ReadQuadBE(MakeDICEAddress(appSectionBase_ + offset),
-                              [callback = std::move(callback)](Async::AsyncStatus transportStatus, uint32_t value) mutable {
-                                  callback(Protocols::Ports::MapAsyncStatusToIOReturn(transportStatus), value);
+                              [callbackPtr](Async::AsyncStatus transportStatus, uint32_t value) mutable {
+                                  (*callbackPtr)(Protocols::Ports::MapAsyncStatusToIOReturn(transportStatus), value);
                               });
     });
 }
 
 void SPro24DspProtocol::WriteAppQuad(uint32_t offset, uint32_t value, VoidCallback callback) {
-    EnsureExtensionsLoaded([this, offset, value, callback = std::move(callback)](IOReturn status) mutable {
+    auto callbackPtr = std::make_shared<VoidCallback>(std::move(callback));
+    EnsureExtensionsLoaded([this, offset, value, callbackPtr](IOReturn status) mutable {
         if (status != kIOReturnSuccess) {
-            callback(status);
+            (*callbackPtr)(status);
             return;
         }
 
         (void)tcat_.IO().WriteQuadBE(MakeDICEAddress(appSectionBase_ + offset),
                                value,
-                               [callback = std::move(callback)](Async::AsyncStatus transportStatus) mutable {
-                                   callback(Protocols::Ports::MapAsyncStatusToIOReturn(transportStatus));
+                               [callbackPtr](Async::AsyncStatus transportStatus) mutable {
+                                   (*callbackPtr)(Protocols::Ports::MapAsyncStatusToIOReturn(transportStatus));
                                });
     });
 }
