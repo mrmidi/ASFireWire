@@ -421,6 +421,12 @@ TEST(AvcFixtureTests, DuetApogeeVendorCommandsValidate) {
     bool foundMute = false;
     bool foundInquiryPhantom = false;
     bool foundMixer = false;
+    bool foundFwVersion = false;
+    bool foundMicsGrouped = false;
+    bool foundIdentify = false;
+    bool foundInputsMuted = false;
+    bool foundLimitedGain = false;
+    bool foundInquiryMicsGrouped = false;
 
     for (const auto& rec : Testing::kDuet.records) {
         if (std::string_view(rec.name) == "apogee_hw_state") {
@@ -439,6 +445,17 @@ TEST(AvcFixtureTests, DuetApogeeVendorCommandsValidate) {
             EXPECT_EQ(resp->operands[4], 'C');
             EXPECT_EQ(resp->operands[5], 'M');
             EXPECT_EQ(resp->operands[6], 0x07); // HwState cmd
+        } else if (std::string_view(rec.name) == "apogee_firmware_version") {
+            foundFwVersion = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+            ASSERT_GE(resp->operands.size(), 13U);
+            EXPECT_EQ(resp->operands[6], 0x0A); // Version cmd (0x0A)
+            EXPECT_EQ(resp->operands[9], 0x01); // Major 1
+            EXPECT_EQ(resp->operands[10], 0x02); // Minor 2
+            EXPECT_EQ(resp->operands[11], 0x00); // Rev 0
+            EXPECT_EQ(resp->operands[12], 0x04); // Build 4 (v1.2.0.4)
         } else if (std::string_view(rec.name) == "apogee_in_gain_ch0") {
             foundGain = true;
             auto resp = ParseResponse(rec.response);
@@ -447,6 +464,14 @@ TEST(AvcFixtureTests, DuetApogeeVendorCommandsValidate) {
             ASSERT_GE(resp->operands.size(), 10U);
             EXPECT_EQ(resp->operands[6], 0x05); // InGain cmd
             EXPECT_EQ(resp->operands[9], 0x0A); // 10 dB
+        } else if (std::string_view(rec.name) == "apogee_mics_grouped") {
+            foundMicsGrouped = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+            ASSERT_GE(resp->operands.size(), 10U);
+            EXPECT_EQ(resp->operands[6], 0x08); // MicsGrouped cmd
+            EXPECT_EQ(resp->operands[9], 0x60); // Ungrouped (0x60)
         } else if (std::string_view(rec.name) == "apogee_mic_phantom_ch0") {
             foundPhantom = true;
             auto resp = ParseResponse(rec.response);
@@ -463,8 +488,37 @@ TEST(AvcFixtureTests, DuetApogeeVendorCommandsValidate) {
             ASSERT_GE(resp->operands.size(), 10U);
             EXPECT_EQ(resp->operands[6], 0x09); // OutMute cmd
             EXPECT_EQ(resp->operands[9], 0x70); // Muted (0x70)
+        } else if (std::string_view(rec.name) == "apogee_identify") {
+            foundIdentify = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+            ASSERT_GE(resp->operands.size(), 10U);
+            EXPECT_EQ(resp->operands[6], 0x12); // Identify cmd
+            EXPECT_EQ(resp->operands[9], 0x60); // Off/idle (0x60)
+        } else if (std::string_view(rec.name) == "apogee_inputs_muted") {
+            foundInputsMuted = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+            ASSERT_GE(resp->operands.size(), 10U);
+            EXPECT_EQ(resp->operands[6], 0x23); // InputsMuted cmd
+            EXPECT_EQ(resp->operands[9], 0x70); // Muted (0x70)
+        } else if (std::string_view(rec.name) == "apogee_limited_gain_range") {
+            foundLimitedGain = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+            ASSERT_GE(resp->operands.size(), 10U);
+            EXPECT_EQ(resp->operands[6], 0x1E); // LimitedGainRange cmd
+            EXPECT_EQ(resp->operands[9], 0x60); // Normal range (0x60)
         } else if (std::string_view(rec.name) == "inquiry_apogee_mic_phantom_ch0_on") {
             foundInquiryPhantom = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kAccepted);
+        } else if (std::string_view(rec.name) == "inquiry_apogee_mics_grouped_on") {
+            foundInquiryMicsGrouped = true;
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
             EXPECT_EQ(resp->code, ResponseCode::kAccepted);
@@ -480,10 +534,16 @@ TEST(AvcFixtureTests, DuetApogeeVendorCommandsValidate) {
     }
 
     EXPECT_TRUE(foundHwState);
+    EXPECT_TRUE(foundFwVersion);
     EXPECT_TRUE(foundGain);
+    EXPECT_TRUE(foundMicsGrouped);
     EXPECT_TRUE(foundPhantom);
     EXPECT_TRUE(foundMute);
+    EXPECT_TRUE(foundIdentify);
+    EXPECT_TRUE(foundInputsMuted);
+    EXPECT_TRUE(foundLimitedGain);
     EXPECT_TRUE(foundInquiryPhantom);
+    EXPECT_TRUE(foundInquiryMicsGrouped);
     EXPECT_TRUE(foundMixer);
 }
 

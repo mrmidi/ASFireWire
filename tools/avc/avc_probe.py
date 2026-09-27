@@ -602,11 +602,15 @@ class AvcProbeRunner:
             ("apogee_out_is_consumer", [0x04, 0x80, 0xFF]),
             ("apogee_in_gain_ch0", [0x05, 0x80, 0x00]),
             ("apogee_in_gain_ch1", [0x05, 0x80, 0x01]),
+            ("apogee_controller_instances", [0x06, 0x80, 0xFF]),
             ("apogee_hw_state", [0x07, 0xFF, 0xFF]),
+            ("apogee_mics_grouped", [0x08, 0x80, 0x00]),
             ("apogee_out_mute", [0x09, 0x80, 0xFF]),
+            ("apogee_firmware_version", [0x0A, 0x80, 0xFF]),
             ("apogee_in_src_is_phone_ch0", [0x0C, 0x80, 0x00]),
             ("apogee_in_src_is_phone_ch1", [0x0C, 0x80, 0x01]),
             ("apogee_out_src_is_mixer", [0x11, 0xFF, 0xFF]),
+            ("apogee_identify", [0x12, 0x80, 0xFF]),
             ("apogee_disp_overhold_2s", [0x13, 0xFF, 0xFF]),
             ("apogee_out_volume", [0x15, 0x80, 0xFF]),
             ("apogee_mute_line_out", [0x16, 0x80, 0xFF]),
@@ -614,8 +618,11 @@ class AvcProbeRunner:
             ("apogee_unmute_line_out", [0x18, 0x80, 0xFF]),
             ("apogee_unmute_hp_out", [0x19, 0x80, 0xFF]),
             ("apogee_disp_is_input", [0x1B, 0xFF, 0xFF]),
-            ("apogee_in_clickless", [0x1E, 0xFF, 0xFF]),
+            ("apogee_limited_gain_range", [0x1E, 0xFF, 0xFF]),
+            ("apogee_nudge_count", [0x20, 0x80, 0xFF]),
             ("apogee_disp_follow_knob", [0x22, 0xFF, 0xFF]),
+            ("apogee_inputs_muted", [0x23, 0x80, 0xFF]),
+            ("apogee_select_encoder_control", [0x25, 0x80, 0x80]),
         ]
 
         for name, tail in vendor_status_cmds:
@@ -634,10 +641,15 @@ class AvcProbeRunner:
             ("inquiry_apogee_mic_phantom_ch0_on", [0x03, 0x80, 0x00, 0x70]),
             ("inquiry_apogee_mic_phantom_ch0_off", [0x03, 0x80, 0x00, 0x60]),
             ("inquiry_apogee_in_gain_ch0_30db", [0x05, 0x80, 0x00, 0x1E]),
+            ("inquiry_apogee_mics_grouped_on", [0x08, 0x80, 0x00, 0x70]),
+            ("inquiry_apogee_mics_grouped_off", [0x08, 0x80, 0x00, 0x60]),
             ("inquiry_apogee_out_mute_on", [0x09, 0x80, 0xFF, 0x70]),
             ("inquiry_apogee_out_mute_off", [0x09, 0x80, 0xFF, 0x60]),
+            ("inquiry_apogee_identify_on", [0x12, 0x80, 0xFF, 0x70]),
             ("inquiry_apogee_out_volume_40", [0x15, 0x80, 0xFF, 0x28]),
             ("inquiry_apogee_disp_follow_knob_on", [0x22, 0xFF, 0xFF, 0x70]),
+            ("inquiry_apogee_inputs_muted_on", [0x23, 0x80, 0xFF, 0x70]),
+            ("inquiry_apogee_inputs_muted_off", [0x23, 0x80, 0xFF, 0x60]),
         ]
 
         for name, tail in inquiry_cmds:
@@ -760,7 +772,7 @@ def export_fixtures(runner: AvcProbeRunner, out_dir: Path) -> tuple[Path, Path]:
 
         for r in runner.records:
             cmd_hex = " ".join(f"{b:02X}" for b in r.command)
-            intent = "STATUS" if r.command[0] == 0x01 else ("INQUIRY" if r.command[0] == 0x02 else "CONTROL")
+            intent = "STATUS" if r.command[0] == 0x01 else ("INQUIRY" if r.command[0] == 0x02 else ("CSR_READ" if r.command[0] == 0xF0 else "CONTROL"))
             code_str = code_names.get(r.responseCode, f"0x{r.responseCode:02X}" if r.responseCode is not None else "NO_RESPONSE")
             dur_str = f"{r.durationUsec}" if r.durationUsec is not None else "-"
             res_str = "OK" if r.ok else f"ERR ({r.status})"

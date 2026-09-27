@@ -8,9 +8,9 @@
     "nodeId": 0,
     "generation": 3,
     "driverVersion": "0.3.1",
-    "capturedAt": "2026-09-27T19:36:28.535413+00:00"
+    "capturedAt": "2026-09-27T19:56:06.720435+00:00"
   },
-  "totalRecords": 209,
+  "totalRecords": 221,
   "records": [
     {
       "name": "unit_info",
@@ -35,7 +35,7 @@
         219
       ],
       "responseCode": 12,
-      "durationUsec": 6559,
+      "durationUsec": 6484,
       "ok": true,
       "status": "ok",
       "error": null
@@ -63,7 +63,7 @@
         255
       ],
       "responseCode": 12,
-      "durationUsec": 6875,
+      "durationUsec": 6072,
       "ok": true,
       "status": "ok",
       "error": null
@@ -91,7 +91,7 @@
         255
       ],
       "responseCode": 8,
-      "durationUsec": 6077,
+      "durationUsec": 6547,
       "ok": true,
       "status": "ok",
       "error": null
@@ -119,7 +119,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6588,
+      "durationUsec": 6790,
       "ok": true,
       "status": "ok",
       "error": null
@@ -147,7 +147,7 @@
         255
       ],
       "responseCode": 12,
-      "durationUsec": 6227,
+      "durationUsec": 6618,
       "ok": true,
       "status": "ok",
       "error": null
@@ -175,7 +175,7 @@
         255
       ],
       "responseCode": 12,
-      "durationUsec": 6052,
+      "durationUsec": 6850,
       "ok": true,
       "status": "ok",
       "error": null
@@ -203,7 +203,7 @@
         255
       ],
       "responseCode": 12,
-      "durationUsec": 6165,
+      "durationUsec": 6150,
       "ok": true,
       "status": "ok",
       "error": null
@@ -231,7 +231,7 @@
         255
       ],
       "responseCode": 12,
-      "durationUsec": 6107,
+      "durationUsec": 6626,
       "ok": true,
       "status": "ok",
       "error": null
@@ -259,7 +259,7 @@
         255
       ],
       "responseCode": 12,
-      "durationUsec": 6728,
+      "durationUsec": 6155,
       "ok": true,
       "status": "ok",
       "error": null
@@ -287,7 +287,7 @@
         255
       ],
       "responseCode": 12,
-      "durationUsec": 6813,
+      "durationUsec": 6090,
       "ok": true,
       "status": "ok",
       "error": null
@@ -315,7 +315,7 @@
         255
       ],
       "responseCode": 12,
-      "durationUsec": 6872,
+      "durationUsec": 6713,
       "ok": true,
       "status": "ok",
       "error": null
@@ -354,7 +354,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6811,
+      "durationUsec": 6867,
       "ok": true,
       "status": "ok",
       "error": null
@@ -395,7 +395,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 5901,
+      "durationUsec": 6134,
       "ok": true,
       "status": "ok",
       "error": null
@@ -436,7 +436,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6409,
+      "durationUsec": 6644,
       "ok": true,
       "status": "ok",
       "error": null
@@ -477,7 +477,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6412,
+      "durationUsec": 6626,
       "ok": true,
       "status": "ok",
       "error": null
@@ -518,7 +518,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6700,
+      "durationUsec": 6808,
       "ok": true,
       "status": "ok",
       "error": null
@@ -552,7 +552,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6155,
+      "durationUsec": 6279,
       "ok": true,
       "status": "ok",
       "error": null
@@ -591,7 +591,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6106,
+      "durationUsec": 6217,
       "ok": true,
       "status": "ok",
       "error": null
@@ -632,7 +632,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6695,
+      "durationUsec": 6314,
       "ok": true,
       "status": "ok",
       "error": null
@@ -673,7 +673,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 5990,
+      "durationUsec": 6317,
       "ok": true,
       "status": "ok",
       "error": null
@@ -714,7 +714,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6904,
+      "durationUsec": 6638,
       "ok": true,
       "status": "ok",
       "error": null
@@ -755,7 +755,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 7066,
+      "durationUsec": 6708,
       "ok": true,
       "status": "ok",
       "error": null
@@ -789,7 +789,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6885,
+      "durationUsec": 6152,
       "ok": true,
       "status": "ok",
       "error": null
@@ -828,7 +828,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6096,
+      "durationUsec": 6219,
       "ok": true,
       "status": "ok",
       "error": null
@@ -869,7 +869,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6236,
+      "durationUsec": 6068,
       "ok": true,
       "status": "ok",
       "error": null
@@ -910,7 +910,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6044,
+      "durationUsec": 6231,
       "ok": true,
       "status": "ok",
       "error": null
@@ -951,7 +951,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 5810,
+      "durationUsec": 6695,
       "ok": true,
       "status": "ok",
       "error": null
@@ -992,7 +992,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6556,
+      "durationUsec": 6145,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1026,7 +1026,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6857,
+      "durationUsec": 6296,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1065,7 +1065,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6129,
+      "durationUsec": 5957,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1106,7 +1106,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6708,
+      "durationUsec": 6461,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1147,7 +1147,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 5852,
+      "durationUsec": 6103,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1188,7 +1188,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6296,
+      "durationUsec": 6069,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1229,7 +1229,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6670,
+      "durationUsec": 6585,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1263,7 +1263,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6189,
+      "durationUsec": 6190,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1302,7 +1302,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6806,
+      "durationUsec": 6576,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1343,7 +1343,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6730,
+      "durationUsec": 6236,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1384,7 +1384,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6690,
+      "durationUsec": 6069,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1425,7 +1425,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6009,
+      "durationUsec": 6564,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1466,7 +1466,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6206,
+      "durationUsec": 6047,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1500,7 +1500,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 7053,
+      "durationUsec": 6422,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1539,7 +1539,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6415,
+      "durationUsec": 6391,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1580,7 +1580,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6576,
+      "durationUsec": 6845,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1621,7 +1621,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6657,
+      "durationUsec": 5988,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1662,7 +1662,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6107,
+      "durationUsec": 6438,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1703,7 +1703,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6196,
+      "durationUsec": 6312,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1737,7 +1737,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6028,
+      "durationUsec": 6837,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1776,7 +1776,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6548,
+      "durationUsec": 5489,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1817,7 +1817,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6643,
+      "durationUsec": 5980,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1858,7 +1858,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6904,
+      "durationUsec": 6155,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1899,7 +1899,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6052,
+      "durationUsec": 6281,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1940,7 +1940,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6646,
+      "durationUsec": 6168,
       "ok": true,
       "status": "ok",
       "error": null
@@ -1974,7 +1974,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6556,
+      "durationUsec": 6421,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2013,7 +2013,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6698,
+      "durationUsec": 6106,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2054,7 +2054,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6232,
+      "durationUsec": 6497,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2095,7 +2095,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6291,
+      "durationUsec": 6106,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2136,7 +2136,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6679,
+      "durationUsec": 6168,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2177,7 +2177,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 7039,
+      "durationUsec": 6220,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2211,7 +2211,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6554,
+      "durationUsec": 6078,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2246,7 +2246,7 @@
         64
       ],
       "responseCode": 12,
-      "durationUsec": 6475,
+      "durationUsec": 6505,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2287,7 +2287,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6099,
+      "durationUsec": 7109,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2328,7 +2328,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6523,
+      "durationUsec": 6442,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2369,7 +2369,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6066,
+      "durationUsec": 6108,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2410,7 +2410,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6705,
+      "durationUsec": 6095,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2444,7 +2444,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6755,
+      "durationUsec": 6577,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2479,7 +2479,7 @@
         64
       ],
       "responseCode": 12,
-      "durationUsec": 6049,
+      "durationUsec": 6458,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2520,7 +2520,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6594,
+      "durationUsec": 6746,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2561,7 +2561,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6466,
+      "durationUsec": 6494,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2602,7 +2602,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6493,
+      "durationUsec": 6023,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2643,7 +2643,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 5985,
+      "durationUsec": 6241,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2677,7 +2677,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6166,
+      "durationUsec": 6011,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2716,7 +2716,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6057,
+      "durationUsec": 6116,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2757,7 +2757,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6651,
+      "durationUsec": 6253,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2798,7 +2798,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6662,
+      "durationUsec": 6040,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2839,7 +2839,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6439,
+      "durationUsec": 6554,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2880,7 +2880,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6067,
+      "durationUsec": 6744,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2914,7 +2914,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6564,
+      "durationUsec": 6455,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2953,7 +2953,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6716,
+      "durationUsec": 6047,
       "ok": true,
       "status": "ok",
       "error": null
@@ -2994,7 +2994,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6347,
+      "durationUsec": 6095,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3035,7 +3035,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6186,
+      "durationUsec": 6604,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3076,7 +3076,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6085,
+      "durationUsec": 6870,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3117,7 +3117,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6540,
+      "durationUsec": 6229,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3151,7 +3151,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6132,
+      "durationUsec": 6574,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3190,7 +3190,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6492,
+      "durationUsec": 6099,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3231,7 +3231,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6597,
+      "durationUsec": 6904,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3272,7 +3272,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6112,
+      "durationUsec": 6180,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3313,7 +3313,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 5903,
+      "durationUsec": 5967,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3354,7 +3354,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6155,
+      "durationUsec": 6775,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3388,7 +3388,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 7008,
+      "durationUsec": 5998,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3427,7 +3427,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6524,
+      "durationUsec": 6598,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3468,7 +3468,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6716,
+      "durationUsec": 6549,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3509,7 +3509,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 5974,
+      "durationUsec": 6531,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3550,7 +3550,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6579,
+      "durationUsec": 6126,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3591,7 +3591,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6811,
+      "durationUsec": 6018,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3625,7 +3625,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6793,
+      "durationUsec": 7070,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3660,7 +3660,7 @@
         64
       ],
       "responseCode": 12,
-      "durationUsec": 6036,
+      "durationUsec": 6371,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3701,7 +3701,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6388,
+      "durationUsec": 6350,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3742,7 +3742,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6132,
+      "durationUsec": 6914,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3783,7 +3783,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6585,
+      "durationUsec": 5954,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3824,7 +3824,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6610,
+      "durationUsec": 5917,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3858,7 +3858,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6906,
+      "durationUsec": 6399,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3893,7 +3893,7 @@
         64
       ],
       "responseCode": 12,
-      "durationUsec": 6098,
+      "durationUsec": 6576,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3934,7 +3934,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 5581,
+      "durationUsec": 5743,
       "ok": true,
       "status": "ok",
       "error": null
@@ -3975,7 +3975,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6273,
+      "durationUsec": 6410,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4016,7 +4016,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6693,
+      "durationUsec": 6098,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4057,7 +4057,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6749,
+      "durationUsec": 6456,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4091,7 +4091,7 @@
         4
       ],
       "responseCode": 10,
-      "durationUsec": 6744,
+      "durationUsec": 6657,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4119,7 +4119,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 6090,
+      "durationUsec": 6053,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4147,7 +4147,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 6496,
+      "durationUsec": 6003,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4175,7 +4175,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6183,
+      "durationUsec": 6634,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4203,7 +4203,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6559,
+      "durationUsec": 6551,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4231,7 +4231,7 @@
         2
       ],
       "responseCode": 12,
-      "durationUsec": 6936,
+      "durationUsec": 6283,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4259,7 +4259,7 @@
         2
       ],
       "responseCode": 12,
-      "durationUsec": 6747,
+      "durationUsec": 5962,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4291,7 +4291,7 @@
         0
       ],
       "responseCode": 8,
-      "durationUsec": 6060,
+      "durationUsec": 6044,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4323,7 +4323,7 @@
         1
       ],
       "responseCode": 8,
-      "durationUsec": 6496,
+      "durationUsec": 5942,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4355,7 +4355,7 @@
         2
       ],
       "responseCode": 8,
-      "durationUsec": 6676,
+      "durationUsec": 6718,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4387,7 +4387,7 @@
         3
       ],
       "responseCode": 8,
-      "durationUsec": 6137,
+      "durationUsec": 6100,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4419,7 +4419,7 @@
         4
       ],
       "responseCode": 8,
-      "durationUsec": 6165,
+      "durationUsec": 6453,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4451,7 +4451,7 @@
         5
       ],
       "responseCode": 8,
-      "durationUsec": 6898,
+      "durationUsec": 6063,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4483,7 +4483,7 @@
         6
       ],
       "responseCode": 8,
-      "durationUsec": 6792,
+      "durationUsec": 6416,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4515,7 +4515,7 @@
         0
       ],
       "responseCode": 8,
-      "durationUsec": 6485,
+      "durationUsec": 6880,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4547,7 +4547,7 @@
         1
       ],
       "responseCode": 8,
-      "durationUsec": 6155,
+      "durationUsec": 6541,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4579,7 +4579,7 @@
         2
       ],
       "responseCode": 8,
-      "durationUsec": 6130,
+      "durationUsec": 6301,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4611,7 +4611,7 @@
         3
       ],
       "responseCode": 8,
-      "durationUsec": 6189,
+      "durationUsec": 5527,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4643,7 +4643,7 @@
         4
       ],
       "responseCode": 8,
-      "durationUsec": 6157,
+      "durationUsec": 6397,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4675,7 +4675,7 @@
         5
       ],
       "responseCode": 8,
-      "durationUsec": 6716,
+      "durationUsec": 6276,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4707,7 +4707,7 @@
         6
       ],
       "responseCode": 8,
-      "durationUsec": 6067,
+      "durationUsec": 6454,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4737,7 +4737,7 @@
         1
       ],
       "responseCode": 8,
-      "durationUsec": 6038,
+      "durationUsec": 6788,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4767,7 +4767,7 @@
         1
       ],
       "responseCode": 8,
-      "durationUsec": 6546,
+      "durationUsec": 6013,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4801,7 +4801,7 @@
         255
       ],
       "responseCode": 8,
-      "durationUsec": 6650,
+      "durationUsec": 6373,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4837,7 +4837,7 @@
         255
       ],
       "responseCode": 8,
-      "durationUsec": 6759,
+      "durationUsec": 6585,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4871,7 +4871,7 @@
         112
       ],
       "responseCode": 12,
-      "durationUsec": 6175,
+      "durationUsec": 6606,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4907,7 +4907,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 6097,
+      "durationUsec": 6270,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4943,7 +4943,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 6556,
+      "durationUsec": 6211,
       "ok": true,
       "status": "ok",
       "error": null
@@ -4979,7 +4979,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 6814,
+      "durationUsec": 6144,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5013,7 +5013,7 @@
         255
       ],
       "responseCode": 8,
-      "durationUsec": 6347,
+      "durationUsec": 6152,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5049,7 +5049,7 @@
         255
       ],
       "responseCode": 8,
-      "durationUsec": 5771,
+      "durationUsec": 6420,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5077,7 +5077,7 @@
         255
       ],
       "responseCode": 12,
-      "durationUsec": 6659,
+      "durationUsec": 6768,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5105,7 +5105,7 @@
         255
       ],
       "responseCode": 12,
-      "durationUsec": 6018,
+      "durationUsec": 6003,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5151,7 +5151,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 5643,
+      "durationUsec": 6036,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5197,7 +5197,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6838,
+      "durationUsec": 5860,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5243,7 +5243,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6191,
+      "durationUsec": 6259,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5289,7 +5289,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 5895,
+      "durationUsec": 6691,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5335,7 +5335,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6667,
+      "durationUsec": 6603,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5381,7 +5381,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6775,
+      "durationUsec": 6168,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5427,7 +5427,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6175,
+      "durationUsec": 6484,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5473,7 +5473,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6047,
+      "durationUsec": 6462,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5511,7 +5511,7 @@
         64
       ],
       "responseCode": 10,
-      "durationUsec": 6233,
+      "durationUsec": 6960,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5549,7 +5549,7 @@
         64
       ],
       "responseCode": 10,
-      "durationUsec": 6983,
+      "durationUsec": 6060,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5595,7 +5595,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6874,
+      "durationUsec": 6343,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5641,7 +5641,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6602,
+      "durationUsec": 6099,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5687,7 +5687,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6098,
+      "durationUsec": 6535,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5733,7 +5733,7 @@
         6
       ],
       "responseCode": 12,
-      "durationUsec": 6554,
+      "durationUsec": 6966,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5771,7 +5771,7 @@
         64
       ],
       "responseCode": 10,
-      "durationUsec": 6648,
+      "durationUsec": 5985,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5809,7 +5809,7 @@
         64
       ],
       "responseCode": 10,
-      "durationUsec": 6777,
+      "durationUsec": 6033,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5837,7 +5837,7 @@
         0
       ],
       "responseCode": 8,
-      "durationUsec": 6205,
+      "durationUsec": 6512,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5865,7 +5865,7 @@
         0
       ],
       "responseCode": 8,
-      "durationUsec": 6082,
+      "durationUsec": 6566,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5893,7 +5893,7 @@
         1
       ],
       "responseCode": 8,
-      "durationUsec": 6006,
+      "durationUsec": 6344,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5921,7 +5921,7 @@
         1
       ],
       "responseCode": 8,
-      "durationUsec": 6093,
+      "durationUsec": 6661,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5949,7 +5949,7 @@
         2
       ],
       "responseCode": 8,
-      "durationUsec": 6810,
+      "durationUsec": 6016,
       "ok": true,
       "status": "ok",
       "error": null
@@ -5977,7 +5977,7 @@
         2
       ],
       "responseCode": 8,
-      "durationUsec": 7099,
+      "durationUsec": 6414,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6011,7 +6011,7 @@
         112
       ],
       "responseCode": 12,
-      "durationUsec": 2722,
+      "durationUsec": 6628,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6045,7 +6045,7 @@
         96
       ],
       "responseCode": 12,
-      "durationUsec": 6004,
+      "durationUsec": 6543,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6081,7 +6081,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 5797,
+      "durationUsec": 5676,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6101,7 +6101,7 @@
         5
       ],
       "responseCode": 12,
-      "durationUsec": 45804,
+      "durationUsec": 42248,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6121,7 +6121,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 334,
+      "durationUsec": 316,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6138,15 +6138,15 @@
       "response": [
         0,
         0,
-        179,
+        183,
         0,
         0,
         0,
-        188,
+        198,
         0
       ],
       "responseCode": 12,
-      "durationUsec": 38033,
+      "durationUsec": 41254,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6179,7 +6179,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 36656,
+      "durationUsec": 39960,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6218,7 +6218,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6240,
+      "durationUsec": 5887,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6257,7 +6257,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6610,
+      "durationUsec": 6211,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6296,7 +6296,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6441,
+      "durationUsec": 6474,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6335,7 +6335,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6008,
+      "durationUsec": 5915,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6374,7 +6374,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6160,
+      "durationUsec": 6188,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6413,7 +6413,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6052,
+      "durationUsec": 6425,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6452,7 +6452,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6476,
+      "durationUsec": 6675,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6491,7 +6491,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6075,
+      "durationUsec": 6371,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6530,7 +6530,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 5973,
+      "durationUsec": 6173,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6569,7 +6569,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6474,
+      "durationUsec": 6026,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6608,7 +6608,46 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6884,
+      "durationUsec": 5967,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "apogee_controller_instances",
+      "command": [
+        1,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        6,
+        128,
+        255
+      ],
+      "response": [
+        12,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        6,
+        128,
+        255,
+        0,
+        2,
+        1
+      ],
+      "responseCode": 12,
+      "durationUsec": 6602,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6655,7 +6694,46 @@
         96
       ],
       "responseCode": 12,
-      "durationUsec": 6157,
+      "durationUsec": 6574,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "apogee_mics_grouped",
+      "command": [
+        1,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        8,
+        128,
+        0
+      ],
+      "response": [
+        12,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        8,
+        128,
+        0,
+        96,
+        2,
+        1
+      ],
+      "responseCode": 12,
+      "durationUsec": 6074,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6694,7 +6772,50 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6129,
+      "durationUsec": 6072,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "apogee_firmware_version",
+      "command": [
+        1,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        10,
+        128,
+        255
+      ],
+      "response": [
+        12,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        10,
+        128,
+        255,
+        1,
+        2,
+        0,
+        4,
+        10,
+        10,
+        0
+      ],
+      "responseCode": 12,
+      "durationUsec": 6119,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6733,7 +6854,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6567,
+      "durationUsec": 6806,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6772,7 +6893,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6680,
+      "durationUsec": 6807,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6811,7 +6932,46 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6660,
+      "durationUsec": 6300,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "apogee_identify",
+      "command": [
+        1,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        18,
+        128,
+        255
+      ],
+      "response": [
+        12,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        18,
+        128,
+        255,
+        96,
+        2,
+        1
+      ],
+      "responseCode": 12,
+      "durationUsec": 6142,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6850,7 +7010,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6664,
+      "durationUsec": 6084,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6889,7 +7049,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6163,
+      "durationUsec": 6459,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6928,7 +7088,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 5886,
+      "durationUsec": 6307,
       "ok": true,
       "status": "ok",
       "error": null
@@ -6967,7 +7127,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6634,
+      "durationUsec": 6873,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7006,7 +7166,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 5617,
+      "durationUsec": 6639,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7045,7 +7205,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6723,
+      "durationUsec": 5977,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7084,13 +7244,13 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6172,
+      "durationUsec": 6591,
       "ok": true,
       "status": "ok",
       "error": null
     },
     {
-      "name": "apogee_in_clickless",
+      "name": "apogee_limited_gain_range",
       "command": [
         1,
         255,
@@ -7123,7 +7283,46 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6082,
+      "durationUsec": 5926,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "apogee_nudge_count",
+      "command": [
+        1,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        32,
+        128,
+        255
+      ],
+      "response": [
+        12,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        32,
+        128,
+        255,
+        128,
+        2,
+        1
+      ],
+      "responseCode": 12,
+      "durationUsec": 6824,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7162,7 +7361,82 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6027,
+      "durationUsec": 6191,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "apogee_inputs_muted",
+      "command": [
+        1,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        35,
+        128,
+        255
+      ],
+      "response": [
+        12,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        35,
+        128,
+        255,
+        112,
+        2,
+        1
+      ],
+      "responseCode": 12,
+      "durationUsec": 5892,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "apogee_select_encoder_control",
+      "command": [
+        1,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        37,
+        128,
+        128
+      ],
+      "response": [
+        8,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        37,
+        128,
+        128
+      ],
+      "responseCode": 8,
+      "durationUsec": 5995,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7205,7 +7479,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 5654,
+      "durationUsec": 6311,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7248,7 +7522,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 5998,
+      "durationUsec": 6785,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7291,7 +7565,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 6137,
+      "durationUsec": 7028,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7334,7 +7608,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 6450,
+      "durationUsec": 5562,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7377,7 +7651,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 6849,
+      "durationUsec": 5653,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7420,7 +7694,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 6384,
+      "durationUsec": 6644,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7463,7 +7737,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 6662,
+      "durationUsec": 6330,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7506,7 +7780,7 @@
         0
       ],
       "responseCode": 12,
-      "durationUsec": 6098,
+      "durationUsec": 6257,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7544,7 +7818,7 @@
         112
       ],
       "responseCode": 9,
-      "durationUsec": 6441,
+      "durationUsec": 6386,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7582,7 +7856,7 @@
         96
       ],
       "responseCode": 9,
-      "durationUsec": 6785,
+      "durationUsec": 6219,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7620,7 +7894,83 @@
         30
       ],
       "responseCode": 9,
-      "durationUsec": 6032,
+      "durationUsec": 6564,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "inquiry_apogee_mics_grouped_on",
+      "command": [
+        2,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        8,
+        128,
+        0,
+        112
+      ],
+      "response": [
+        9,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        8,
+        128,
+        0,
+        112
+      ],
+      "responseCode": 9,
+      "durationUsec": 6515,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "inquiry_apogee_mics_grouped_off",
+      "command": [
+        2,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        8,
+        128,
+        0,
+        96
+      ],
+      "response": [
+        9,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        8,
+        128,
+        0,
+        96
+      ],
+      "responseCode": 9,
+      "durationUsec": 6513,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7658,7 +8008,7 @@
         112
       ],
       "responseCode": 9,
-      "durationUsec": 6768,
+      "durationUsec": 6134,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7696,7 +8046,45 @@
         96
       ],
       "responseCode": 9,
-      "durationUsec": 6826,
+      "durationUsec": 6416,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "inquiry_apogee_identify_on",
+      "command": [
+        2,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        18,
+        128,
+        255,
+        112
+      ],
+      "response": [
+        9,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        18,
+        128,
+        255,
+        112
+      ],
+      "responseCode": 9,
+      "durationUsec": 6139,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7734,7 +8122,7 @@
         40
       ],
       "responseCode": 9,
-      "durationUsec": 6499,
+      "durationUsec": 6500,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7772,7 +8160,83 @@
         112
       ],
       "responseCode": 9,
-      "durationUsec": 6260,
+      "durationUsec": 6363,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "inquiry_apogee_inputs_muted_on",
+      "command": [
+        2,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        35,
+        128,
+        255,
+        112
+      ],
+      "response": [
+        9,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        35,
+        128,
+        255,
+        112
+      ],
+      "responseCode": 9,
+      "durationUsec": 6224,
+      "ok": true,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "inquiry_apogee_inputs_muted_off",
+      "command": [
+        2,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        35,
+        128,
+        255,
+        96
+      ],
+      "response": [
+        9,
+        255,
+        0,
+        0,
+        3,
+        219,
+        80,
+        67,
+        77,
+        35,
+        128,
+        255,
+        96
+      ],
+      "responseCode": 9,
+      "durationUsec": 6150,
       "ok": true,
       "status": "ok",
       "error": null
@@ -7800,7 +8264,7 @@
         1
       ],
       "responseCode": 12,
-      "durationUsec": 6646,
+      "durationUsec": 6392,
       "ok": true,
       "status": "ok",
       "error": null
