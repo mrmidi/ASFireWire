@@ -143,6 +143,23 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     }
     // The per-context isoch events are read and cleared after this, by
     // InterruptDispatcher (HardwareInterface::TakeIsochContextEvents).
+
+    if ((events & IntEventBits::kCycleTooLong) != 0U) {
+        HandleCycleTooLong();
+    }
+}
+
+// A cycle ran past 115-120 us while this node was root and cycle master, and
+// the controller cleared LinkControl.cycleMaster (OHCI 1.2 draft Table 6-1,
+// Table 5-17). Until something sets it again the bus has no cycle starts, so
+// no isochronous stream runs. The cycle policy owns the decision (FW-9/FW-10);
+// it re-applies it. Runs after the acknowledge above: cycleMaster stays zero
+// while cycleTooLong is set.
+void ControllerCore::HandleCycleTooLong() {
+    const bool restored =
+        cyclePolicy_ && cyclePolicy_->OnCycleTooLong(currentGeneration_, *this);
+    ASFW_LOG(Controller, "[CyclePolicy] cycleTooLong gen=%u cycleMaster %{public}s",
+             currentGeneration_, restored ? "re-enabled" : "not ours; left off");
 }
 
 void ControllerCore::LogInterruptContext(const InterruptSnapshot& snapshot,
@@ -184,13 +201,6 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
             "Common causes: Self-ID buffer access, Config ROM mapping, or context register access");
     }
 
-    if ((events & IntEventBits::kCycleTooLong) != 0U) {
-        ASFW_LOG(Controller, "⚠️ WARNING: Cycle too long - isochronous cycle overran 125μs budget");
-        ASFW_LOG(Controller,
-                 "This indicates DMA descriptors or system latency causing timing violation");
-        // FW-9/FW-10: local cycleMaster is no longer reasserted from the fault path.
-        // RoleCoordinator owns local-vs-remote cycle-master enablement.
-    }
 
     if ((events & IntEventBits::kCycleInconsistent) != 0U) {
         const bool busResetActive =

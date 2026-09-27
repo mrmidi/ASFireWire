@@ -265,6 +265,8 @@ class ControllerCore final : private Role::IPhyConfigReset,
     Bus::BroadcastChannelCSR* GetBroadcastChannel() const { return broadcastChannel_.get(); }
 
   private:
+    friend class ControllerCoreTestPeer;
+
     void LogBuildBanner() const;
     kern_return_t InitializeBusResetAndDiscovery();
     kern_return_t PerformSoftReset() const;
@@ -276,6 +278,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
                              uint32_t currentMask,
                              uint32_t events) const;
     void HandleFaultInterrupts(uint32_t events);
+    void HandleCycleTooLong();
     void NotifyBusResetCoordinator(uint32_t events, uint64_t timestamp) const;
     void DispatchAsyncInterrupts(uint32_t events) const;
     void LogBusResetCompletionEvents(uint32_t events, uint64_t timestamp) const;

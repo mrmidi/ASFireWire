@@ -151,6 +151,9 @@ struct CyclePolicySnapshot {
     uint32_t remoteCmstrSubmitCount{0};
     uint32_t suppressedCount{0};
     uint32_t staleGenerationDrops{0};
+
+    uint32_t cycleTooLongCount{0};
+    uint32_t cycleMasterRestoreCount{0};
 };
 
 /**
@@ -186,6 +189,21 @@ public:
     void OnBusResetStarted(uint32_t generation) noexcept;
 
     /**
+     * @brief Re-applies this generation's cycle-master decision after cycleTooLong.
+     *
+     * The controller raises cycleTooLong only while it is root with
+     * LinkControl.cycleMaster set, and clears cycleMaster itself when it does
+     * (OHCI 1.2 draft Table 6-1, Table 5-17). If this policy enabled the local
+     * cycle master in the current generation, it is enabled again; otherwise
+     * nothing is written. Call after cycleTooLong is acknowledged: cycleMaster
+     * stays zero while the event is set. Apple re-applies its last decision the
+     * same way (AppleFWOHCI::handleInterrupts -> setCycleMaster); Linux re-sets
+     * cycleMaster unconditionally (ohci.c:2286-2290).
+     * Returns true if the cycle master was enabled again.
+     */
+    bool OnCycleTooLong(uint32_t generation, ICyclePolicyExecutor& executor) noexcept;
+
+    /**
      * @brief Completion callback for remote CMSTR write.
      */
     void OnRemoteCmstrComplete(uint32_t generation, uint8_t targetNode,
@@ -195,6 +213,9 @@ private:
     CyclePolicySnapshot snapshot_{};
 
     uint32_t lastLocalCycleMasterGeneration_{0};
+    // This generation's decision is "local cycle master on". Set when the
+    // enable succeeds; cleared by a clear or a bus reset.
+    bool localCycleMasterOwned_{false};
     uint32_t lastRemoteCmstrGeneration_{0};
     uint8_t lastRemoteCmstrTargetNode_{0x3F};
     Async::AsyncHandle remoteCmstrHandle_{};

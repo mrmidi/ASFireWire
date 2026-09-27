@@ -194,3 +194,65 @@ TEST_F(CyclePolicyExecutorTests, ExecutorDoesNotSubmitRemoteCmstrWhenBibCmcFalse
               CyclePolicyDecision::AlreadySatisfiedCycleStartObserved);
     EXPECT_EQ(coordinator_.Snapshot().lastAction, CyclePolicyAction::None);
 }
+
+namespace {
+
+CyclePolicyInputs LocalRootInputs(uint32_t generation) {
+    CyclePolicyInputs in{};
+    in.generation = generation;
+    in.topologyValid = true;
+    in.roleMode = RoleMode::FullBusManager;
+    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
+    in.localIsBM = true;
+    in.localIsRoot = true;
+    MarkLocalSelfIdRoot(in);
+    return in;
+}
+
+} // namespace
+
+// The controller clears LinkControl.cycleMaster when it raises cycleTooLong
+// (OHCI 1.2 draft Table 6-1, Table 5-17). A cycle master this policy enabled
+// is enabled again, as Apple re-applies its last setCycleMaster decision.
+TEST_F(CyclePolicyExecutorTests, CycleTooLongReenablesTheCycleMasterThisPolicyEnabled) {
+    EXPECT_CALL(executor_, EnableLocalCycleMasterMutation(5))
+        .Times(2)
+        .WillRepeatedly(Return(true));
+    coordinator_.Evaluate(LocalRootInputs(5), executor_);
+    ASSERT_EQ(coordinator_.Snapshot().localCycleMasterEnableCount, 1U);
+
+    EXPECT_TRUE(coordinator_.OnCycleTooLong(5, executor_));
+    EXPECT_EQ(coordinator_.Snapshot().cycleTooLongCount, 1U);
+    EXPECT_EQ(coordinator_.Snapshot().cycleMasterRestoreCount, 1U);
+}
+
+// Not our decision: the policy never enabled the local cycle master (no
+// evaluation yet, or a remote root was chosen), so nothing is written.
+TEST_F(CyclePolicyExecutorTests, CycleTooLongLeavesCycleMasterOffWhenThePolicyDidNotEnableIt) {
+    EXPECT_CALL(executor_, EnableLocalCycleMasterMutation(_)).Times(0);
+    EXPECT_FALSE(coordinator_.OnCycleTooLong(5, executor_));
+
+    CyclePolicyInputs remote = LocalRootInputs(5);
+    remote.localIsRoot = false;
+    remote.busBase16 = 0xFFC0;
+    MarkRemoteRootSelfIdContender(remote, 2);
+    remote.rootCmcKnown = true;
+    remote.rootCmcCapable = true;
+    EXPECT_CALL(executor_, WriteRemoteStateSetCmstr(5, 0xFFC0, 2))
+        .WillOnce(Return(ASFW::Async::AsyncHandle{7}));
+    coordinator_.Evaluate(remote, executor_);
+    EXPECT_FALSE(coordinator_.OnCycleTooLong(5, executor_));
+    EXPECT_EQ(coordinator_.Snapshot().cycleMasterRestoreCount, 0U);
+}
+
+// A bus reset ends the generation's decision; the next evaluation makes a new one.
+TEST_F(CyclePolicyExecutorTests, CycleTooLongAfterABusResetDoesNotReenable) {
+    EXPECT_CALL(executor_, EnableLocalCycleMasterMutation(5)).WillOnce(Return(true));
+    coordinator_.Evaluate(LocalRootInputs(5), executor_);
+    coordinator_.OnBusResetStarted(6);
+
+    EXPECT_CALL(executor_, EnableLocalCycleMasterMutation(6)).Times(0);
+    EXPECT_FALSE(coordinator_.OnCycleTooLong(6, executor_));
+    EXPECT_FALSE(coordinator_.OnCycleTooLong(5, executor_));
+    EXPECT_EQ(coordinator_.Snapshot().cycleTooLongCount, 2U);
+}

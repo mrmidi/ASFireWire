@@ -178,7 +178,14 @@ void HardwareInterface::WriteScoped(Register32 reg, uint32_t value) const noexce
             state.registers[KeyFor(Register32::kIntMaskSet)] &=
                 ~value;
         } else if (reg == Register32::kLinkControlSet) {
-            state.registers[KeyFor(Register32::kLinkControl)] |= value;
+            // "This bit shall be zero when the IntEvent.cycleTooLong bit is
+            // set" (OHCI 1.2 draft Table 5-17): setting cycleMaster has no
+            // effect until cycleTooLong is acknowledged.
+            uint32_t bits = value;
+            if ((state.registers[KeyFor(Register32::kIntEvent)] & IntEventBits::kCycleTooLong) != 0U) {
+                bits &= ~LinkControlBits::kCycleMaster;
+            }
+            state.registers[KeyFor(Register32::kLinkControl)] |= bits;
         } else if (reg == Register32::kLinkControlClear) {
             state.registers[KeyFor(Register32::kLinkControl)] &=
                 ~value;
