@@ -82,11 +82,11 @@ DiceProfile gFocusritePro40Profile{{.name = "Focusrite Saffire Pro 40"}};
 DiceProfile gMidasVeniceProfile{{.name = "Midas Venice F (DICE)", .rangeMembers = kVeniceMembers}};
 DiceProfile gPreSonusStudioLiveProfile{{.name = "PreSonus StudioLive 16.0.2 (DICE)"}};
 DiceProfile gPreSonusStudioLive2442Profile{{.name = "PreSonus StudioLive 24.4.2 (DICE)"}};
-// Alesis leaves the non-audio slots alone, and has one playback stream whatever
-// its register says (libffado dice_avdevice.cpp:1686-1700).
+// Alesis leaves the non-audio slots alone. Its stream counts come from the
+// registers like every DICE device: Alesis's own kext streams every stream they
+// report (AllocateStreams), where libffado forces one playback stream.
 DiceProfile gAlesisMultiMixProfile{{.name = "Alesis MultiMix FireWire (DICE)",
-                                    .initializeNonAudioSlots = false,
-                                    .assertedPlaybackStreams = 1}};
+                                    .initializeNonAudioSlots = false}};
 // Weiss still sends AM824, unlike WeissFirewire.kext's raw path; it has never
 // run on hardware, so the flip waits for evidence (§3.2).
 DiceProfile gWeissIntProfile{{.name = "Weiss INT (DICE)",

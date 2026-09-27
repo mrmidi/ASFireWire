@@ -65,9 +65,6 @@ void Dump(const IAudioStreamProfile& p, ASFW::Testing::WireTrace& out) {
     out.Add(Format("channels tx=%u rx=%u midi tx=%u rx=%u dbs tx=%u rx=%u", p.TxChannelCount(),
                    p.RxChannelCount(), p.TxMidiSlots(), p.RxMidiSlots(), p.TxDbs(), p.RxDbs()));
     out.Add(Format("streams tx=%u rx=%u", p.TxStreamCount(), p.RxStreamCount()));
-    if (const auto* dice = dynamic_cast<const ASFW::Isoch::Audio::DICE::DiceProfile*>(&p)) {
-        out.Add(Format("assertedPlaybackStreams=%u", dice->AssertedPlaybackStreams()));
-    }
     const auto policy = p.TxStreamPolicy();
     out.Add(Format("txPolicy enc=%u variableDbs=%u nonAudioWord=0x%08x initNonAudio=%u "
                    "preserveFdf=%u emptyIdle=%u cadenceData=%u cadenceWord=0x%08x dbcEnd=%u",

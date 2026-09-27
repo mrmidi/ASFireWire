@@ -284,34 +284,31 @@ So the clamp is libffado's own workaround, with no vendor basis, and libffado's
 adjacent `FIXME` proposes the general rule instead: *ignore a stream announced
 with zero channels*.
 
-**Our copy of it is disabled** (§3.3). The hazard libffado guards — arming an
-iso channel and reserving bandwidth for a stream the device never consumes — is
-real in principle, so the code is retained under `#if 0` rather than deleted.
+**Resolved 2026-09-27: we follow the vendor, with no clamp.** For DICE the vendor
+kext is the reference, and Alesis's own driver streams every stream the
+registers report: `AllocateStreams` (AlesisFirewire 3.5.6) gives each
+`RX_NUMBER` stream an isochronous port, with no zero-channel skip. The
+`assertedPlaybackStreams` profile field, which had brought libffado's clamp back
+as a refusal (a MultiMix reporting two playback streams was not published at
+all), is removed; the `#if 0` copy was already deleted in `91063015`.
 
 **What hardware already says.** The contributed dump
 (`fixtures/alesismultimix.txt`) reports DICE `TX_NUMBER = 2` (12 + 2) and DICE
-`RX_NUMBER = 1` (2 PCM). **That unit does not over-report playback at all** — so
-libffado's clamp would be a no-op on it, while ours removed a capture stream it
-genuinely has.
+`RX_NUMBER = 1` (2 PCM), so the change does nothing on that unit. libffado names
+the MultiMix **16** specifically (*"Same is true for Alesis Multimix16 and
+Focusrite Saffire PRO 26"*); a 16 dump would still be welcome evidence, but it
+no longer gates anything. If one ever shows a second playback stream announced
+with zero channels, libffado's own suggested rule (ignore a zero-channel stream)
+is the form to consider, not a per-model clamp.
 
-**TODO(FW-DICE-ALESIS): one variant remains, and it is the accused one.**
-libffado names the MultiMix **16** specifically — *"Same is true for Alesis
-Multimix16 and Focusrite Saffire PRO 26."* The dump we hold is a 12-input unit
-(`MIC_LINE_1..4`, `LINE_5..12`, `MAIN_IN L/R`), and 8/12/16 all publish vendor
-`0x000595` model `0x000000`, so it cannot speak for the range.
-
-1. Obtain a MultiMix **16** dump — `TX_NUMBER`, `RX_NUMBER`, per-stream
-   `NUMBER_AUDIO`. A Saffire PRO 26 would corroborate independently.
-2. If it reports `RX_NUMBER > 1` with only one real playback stream, re-enable
-   against **playback** (`playbackStreamCount`), never capture, scoped so the 12
-   is unaffected.
-3. Prefer libffado's own suggested general form over a per-model rule: ignore a
-   stream announced with zero channels. No vendor/model table, no direction to
-   get wrong. Not implemented yet because no recorded device shows such a
-   stream, and implementing it on spec alone would be inventing wire behaviour.
-4. If the 16 also reports `RX_NUMBER = 1`, **delete the block and the trait**.
-   libffado's workaround would then have no basis on any hardware we have seen,
-   and Alesis's own driver clamps nothing in either direction (§2.9).
+**Tests.** `SyntheticDiceImages::kMultimixTwoPlayback` is the recorded MultiMix
+with `RX_NUMBER = 2` (stream 1 copies stream 0; the dump does not show the
+unused blocks). `SessionMultimixTwoPlayback.PublicationKeepsBothPlaybackStreams`
+fails on the old code (refused at publication); the session and wire goldens
+(`session/multimix-two-playback/cold-start.trace`,
+`dice/multimix-two-playback__start-stop-48k.trace`) show both playback streams
+reserved, prepared and programmed. The session layer already handled two
+playback streams; only publication refused them.
 
 ---
 
@@ -519,8 +516,8 @@ can be deleted.
   **Landed 2026-09-25** (`3a856d9d` records every builder's answers in
   `tests/golden/dice-profiles/`, `7b0585ba` collapses). One `DiceProfile`
   built from a `DiceProfileSpec` (name, Venice range names, TX encoding,
-  `preserveFdfInNoDataPackets`, `initializeNonAudioSlots`,
-  `assertedPlaybackStreams`); latency from `AudioGeometryPolicy`. Capture
+  `preserveFdfInNoDataPackets`, `initializeNonAudioSlots`, and
+  `assertedPlaybackStreams` until 2026-09-27, §2.9); latency from `AudioGeometryPolicy`. Capture
   visibility needed no scalar: the Weiss protocol already publishes
   `hostInputPcmChannels = 0`. Declared deltas are listed in §4.4.
 - **D — invalidate on rate change**, per discovery source (§2.5): EAP devices
@@ -576,7 +573,7 @@ all 26 rows. Its diff moved only these lines:
 - geometry (channels, stream counts, per-stream configs) is zero: profiles no
   longer state it, and a device whose registers differ from an old constant is
   no longer refused;
-- the Alesis MultiMix keeps one asserted playback stream;
+- the Alesis MultiMix keeps one asserted playback stream (removed 2026-09-27, §2.9);
 - the generic fallback now uses the ladder (48/128, latency 29 at 1x);
 - Weiss is unchanged at every published rate (the addend only matters at 2x/4x).
 
@@ -595,7 +592,7 @@ Names, TX policy, framing constants and clock source did not move, and
    mode too, or only for the modes we are not in? The Pro 24 DSP agrees with
    itself across both, so the question is currently unforced.
 3. **Zero-channel streams.** libffado's `FIXME` proposes ignoring a stream
-   announced with zero channels, which would generalise its Alesis clamp. No
+   announced with zero channels, which would generalise libffado's Alesis clamp. No
    recorded device exhibits one, so this stays a hypothesis.
 4. **Extended channel-name layout.** Needs a device with stream `SIZE >= 326` to
    confirm whether the standard block is still populated on such a device.

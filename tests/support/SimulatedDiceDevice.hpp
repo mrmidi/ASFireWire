@@ -239,6 +239,8 @@ public:
     void SetGlobalQuad(uint32_t globalOffset, uint32_t value) { SetGlobal(globalOffset, value); }
     void SetTxIso(uint32_t i, uint32_t value) { SetQuad(TxEntryBase(i) + kTxIso, value); }
     void SetRxIso(uint32_t i, uint32_t value) { SetQuad(RxEntryBase(i) + kRxIso, value); }
+    void SetTxCount(uint32_t value) { SetQuad(TxSectionBase(), value); }
+    void SetRxCount(uint32_t value) { SetQuad(RxSectionBase(), value); }
 
     // Byte offsets (relative to the DICE base) for tests that address registers.
     [[nodiscard]] uint32_t GlobalBase() const { return image_.globalSection.offsetQuadlets * 4; }

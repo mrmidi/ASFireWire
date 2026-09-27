@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <expected>
 #include <memory>
 #include <string>
 #include <vector>
@@ -69,9 +70,9 @@ void LogSectionPreview(const char* label, const uint8_t* data, size_t size) {
 // the Venice F32 needs 8 + 2*280 = 568 bytes, and stream 1's 256-byte label
 // blob starts at byte 304 — past a single 512-byte read. Chain fixed-size
 // chunk reads into one buffer so ParseStreamConfig sees every stream's labels.
-// A failure after the first chunk delivers the partial buffer (the parser
-// guards each stream's core/label region against the buffer size), matching
-// the old best-effort behavior; only a failed first chunk is a hard error.
+// Any failed chunk fails the whole read, as in the TCAT drivers: there a failed
+// read of any stream register or name block fails the device
+// (PopulateTxStruct/PopulateRxStruct -> PopulateDeviceStruct).
 constexpr size_t kSectionReadChunkBytes = 512;
 constexpr size_t kMaxSectionReadBytes = 4096;
 
@@ -95,17 +96,13 @@ void ReadSectionChunked(Protocols::Ports::ProtocolRegisterIO& io,
          done = std::move(done)](Async::AsyncStatus status,
                                  std::span<const uint8_t> payload) mutable {
             if (status != Async::AsyncStatus::kSuccess || payload.empty()) {
-                if (accumulated->empty()) {
-                    done(MapReadStatus(status));
-                    return;
-                }
                 ASFW_LOG(DICE,
-                         "ReadSectionChunked: chunk at +%zu failed (status=%{public}s); using %zu/%zu bytes",
+                         "ReadSectionChunked: chunk at +%zu of %zu failed (status=%{public}s)",
                          accumulated->size(),
-                         ASFW::Async::ToString(status),
-                         accumulated->size(),
-                         totalBytes);
-                done(kIOReturnSuccess);
+                         totalBytes,
+                         ASFW::Async::ToString(status));
+                done(status == Async::AsyncStatus::kSuccess ? kIOReturnUnderrun
+                                                            : MapReadStatus(status));
                 return;
             }
 
@@ -351,29 +348,52 @@ void CopyLabelBlob(char (&dst)[256], const uint8_t* src, size_t bytesAvailable) 
     dst[copyBytes] = '\0';
 }
 
-uint32_t ClampStreamCount(uint32_t count) noexcept {
-    return (count > 4u) ? 4u : count;
-}
+// The most streams the TCAT DICE drivers accept per direction. In
+// PopulateDeviceStruct, TX_NUMBER >= 3 or RX_NUMBER > 4 marks the device failed
+// and it is not streamed (PaeFireStudio and Midas 4.2.1, Weiss 4.3.1,
+// Saffire 4.1.4 and 4.3.0). The older Alesis 3.5.6 has no check, but its device
+// struct holds only 2 TX and 4 RX streams. A device outside that is refused
+// here too, never clamped into a smaller device.
+constexpr uint32_t kMaxTxStreams = 2;
+constexpr uint32_t kMaxRxStreams = 4;
+static_assert(kMaxRxStreams <= sizeof(StreamConfig::streams) / sizeof(StreamConfig::streams[0]));
 
-StreamConfig ParseStreamConfig(const uint8_t* data, size_t size, bool isRxLayout) {
+// Parses a TX or RX stream-format section. Fails when the device reports more
+// streams than the vendor drivers accept, or when the buffer ends before a
+// declared stream's core registers: a partial read must never be reported as
+// a device with fewer streams. A stream whose label blob lies past the read
+// (the section size or kMaxSectionReadBytes) keeps empty labels.
+std::expected<StreamConfig, IOReturn> ParseStreamConfig(const uint8_t* data, size_t size,
+                                                        bool isRxLayout) {
+    const char* const direction = isRxLayout ? "RX" : "TX";
     StreamConfig config;
     config.isRxLayout = isRxLayout;
 
     if (!data || size < kStreamSectionHeaderBytes) {
-        return config;
+        ASFW_LOG(DICE, "DICE %{public}s stream format: section header missing (readSize=%zu)",
+                 direction, size);
+        return std::unexpected(kIOReturnUnderrun);
     }
 
     const uint32_t reportedStreams = ReadBE32(data);
     const uint32_t entryQuadlets = ReadBE32(data + 4);
-    config.numStreams = ClampStreamCount(reportedStreams);
+    const uint32_t maxStreams = isRxLayout ? kMaxRxStreams : kMaxTxStreams;
+    if (reportedStreams > maxStreams) {
+        ASFW_LOG(DICE, "DICE %{public}s stream format: %u streams, more than the %u DICE drivers accept",
+                 direction, reportedStreams, maxStreams);
+        return std::unexpected(kIOReturnUnsupported);
+    }
+    config.numStreams = reportedStreams;
     config.entrySizeBytes = entryQuadlets * 4u;
     config.parsedEntrySizeBytes = config.entrySizeBytes;
+    if (config.numStreams == 0) {
+        return config;
+    }
 
     if (config.entrySizeBytes < kStreamEntryMinCoreBytes) {
         ASFW_LOG(DICE, "DICE %{public}s stream format: invalid entry size %u bytes (reported streams=%u)",
-                 isRxLayout ? "RX" : "TX", config.entrySizeBytes, reportedStreams);
-        config.numStreams = 0;
-        return config;
+                 direction, config.entrySizeBytes, reportedStreams);
+        return std::unexpected(kIOReturnUnsupported);
     }
 
     uint32_t parsedCount = 0;
@@ -411,14 +431,13 @@ StreamConfig ParseStreamConfig(const uint8_t* data, size_t size, bool isRxLayout
 
     if (parsedCount < config.numStreams) {
         ASFW_LOG(DICE,
-                 "DICE %{public}s stream format truncated: reported=%u clamped=%u parsed=%u readSize=%zu entrySize=%u",
-                 isRxLayout ? "RX" : "TX",
+                 "DICE %{public}s stream cores truncated: reported=%u parsed=%u readSize=%zu entrySize=%u",
+                 direction,
                  reportedStreams,
-                 ClampStreamCount(reportedStreams),
                  parsedCount,
                  size,
                  config.entrySizeBytes);
-        config.numStreams = parsedCount;
+        return std::unexpected(kIOReturnUnderrun);
     }
 
     return config;
@@ -510,10 +529,15 @@ void DICETransaction::ReadRxStreamConfig(const GeneralSections& sections,
             }
 
             LogSectionPreview("ReadRxStreamConfig", accumulated->data(), accumulated->size());
-            StreamConfig config = ParseStreamConfig(accumulated->data(), accumulated->size(), true);
-            LogStreamConfigDetails("RX", config);
+            const auto config =
+                ParseStreamConfig(accumulated->data(), accumulated->size(), true);
+            if (!config) {
+                Common::InvokeSharedCallback(callbackState, config.error(), StreamConfig{});
+                return;
+            }
+            LogStreamConfigDetails("RX", *config);
 
-            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, config);
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, *config);
         });
 }
 
@@ -534,10 +558,15 @@ void DICETransaction::ReadTxStreamConfig(const GeneralSections& sections,
             }
 
             LogSectionPreview("ReadTxStreamConfig", accumulated->data(), accumulated->size());
-            StreamConfig config = ParseStreamConfig(accumulated->data(), accumulated->size(), false);
-            LogStreamConfigDetails("TX", config);
+            const auto config =
+                ParseStreamConfig(accumulated->data(), accumulated->size(), false);
+            if (!config) {
+                Common::InvokeSharedCallback(callbackState, config.error(), StreamConfig{});
+                return;
+            }
+            LogStreamConfigDetails("TX", *config);
 
-            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, config);
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, *config);
         });
 }
 

@@ -158,22 +158,6 @@ TEST(DiceProfileTests, DiceProfilesStateNoStreamGeometry) {
     }
 }
 
-// The one geometry fact a profile keeps: libffado forces nb_rx = 1 for the
-// Alesis MultiMix because the device "announces two receive transmitters, but
-// only has one" (dice_avdevice.cpp:1686-1700). Every other profile takes the
-// device's count.
-TEST(DiceProfileTests, OnlyTheMultiMixInsistsOnItsPlaybackStreamCount) {
-    for (uint32_t id = 1; id <= static_cast<uint32_t>(ProfileBuilderId::kLastValid); ++id) {
-        const auto* profile = AudioProfileRegistry::DiceProfileForBuilderId(id);
-        if (profile == nullptr) {
-            continue;
-        }
-        const bool multiMix =
-            id == static_cast<uint32_t>(ProfileBuilderId::AlesisMultiMix);
-        EXPECT_EQ(profile->AssertedPlaybackStreams(), multiMix ? 1U : 0U) << "builder " << id;
-    }
-}
-
 TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
     const auto* profile = FindDiceProfile(0x999999, 0x000001, 0x123456789ULL);
 
