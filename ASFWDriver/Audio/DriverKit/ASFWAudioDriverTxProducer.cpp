@@ -21,6 +21,7 @@
 #include "../../Logging/Logging.hpp"
 #include "../Wire/IEC61883/Syt.hpp"
 #include "../Families/BeBoB/MAudio/MAudioClockSourcePolicy.hpp"
+#include "../Protocols/BeBoB/BeBoBChannelMaps.hpp"
 
 #include <DriverKit/DriverKit.h>
 
@@ -703,7 +704,18 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
 
     ivars.runtime.txExecutionTimeline.queueControl = memory.queueControl;
 
-    if (!ivars.runtime.txStreamEngine.Configure(profile, txConfig)) {
+    // A BeBoB device that reported its own slot order at discovery (the Phase 88
+    // is planar) gets it here; every other device stays on the profile's map.
+    auto devicePlaybackMap =
+        ::ASFW::Audio::BeBoB::DeviceChannelMapsFor(ivars.device.guid).playback;
+    if (!devicePlaybackMap.FitsWithin(txConfig.pcmChannels, txConfig.dbs)) {
+        ASFW_LOG(Audio,
+                 "[BeBoB] device playback map (%u channels) does not fit pcm=%u dbs=%u; using the profile map",
+                 static_cast<unsigned>(devicePlaybackMap.channelCount),
+                 static_cast<unsigned>(txConfig.pcmChannels), static_cast<unsigned>(txConfig.dbs));
+        devicePlaybackMap = {};
+    }
+    if (!ivars.runtime.txStreamEngine.Configure(profile, txConfig, devicePlaybackMap)) {
         ASFW_LOG(Audio, "ASFWAudioDevice: txStreamEngine Configure failed");
         return {kIOReturnError, "ConfigureTxStreamEngine"};
     }

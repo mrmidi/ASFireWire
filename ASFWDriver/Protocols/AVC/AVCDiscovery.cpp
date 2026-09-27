@@ -18,6 +18,8 @@
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
 #include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "../../Audio/Protocols/BeBoB/BeBoBCaptureChannelMap.hpp"
+#include "../../Audio/Protocols/BeBoB/BeBoBChannelMaps.hpp"
 #include "../../Audio/Protocols/BeBoB/MAudioSpecialFormation.hpp"
 #include "../../Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "StreamFormats/AVCSignalFormatCommand.hpp"
@@ -29,6 +31,7 @@
 #include <DriverKit/OSDictionary.h>
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <functional>
 
 using namespace ASFW::Protocols::AVC;
@@ -615,6 +618,37 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
                        static_cast<unsigned>(kPcmChannels), static_cast<unsigned>(kMidiSlots), guid);
         return;
     }
+
+    // Build both channel->slot maps from the device's own channel positions,
+    // as Linux map_data_channels does (bebob_stream.c:254-372); see
+    // BeBoBChannelMaps.hpp. The builder fails closed to identity on anything
+    // malformed.
+    constexpr uint32_t kDataBlockSize = kPcmChannels + kMidiSlots;
+    const ::ASFW::Audio::BeBoB::DeviceChannelMaps channelMaps{
+        .capture = ::ASFW::Audio::BeBoBProbe::ChannelMapFromProbe(
+            inventory.output, kPcmChannels, kDataBlockSize),
+        .playback = ::ASFW::Audio::BeBoBProbe::PlaybackChannelMapFromProbe(
+            inventory.input, kPcmChannels, kDataBlockSize),
+    };
+    ::ASFW::Audio::BeBoB::RegisterDeviceChannelMaps(guid, channelMaps);
+    const auto describe = [](const ::ASFW::Audio::Wire::PcmSlotMap& map, char* out, size_t size) {
+        if (map.IsIdentity()) {
+            std::snprintf(out, size, "identity");
+            return;
+        }
+        size_t pos = 0;
+        for (uint32_t ch = 0; ch < map.channelCount && pos + 4 < size; ++ch) {
+            pos += static_cast<size_t>(std::snprintf(out + pos, size - pos, ch == 0 ? "%u" : ",%u",
+                                                     static_cast<unsigned>(map.SlotFor(ch))));
+        }
+    };
+    char captureText[64];
+    char playbackText[64];
+    describe(channelMaps.capture, captureText, sizeof(captureText));
+    describe(channelMaps.playback, playbackText, sizeof(playbackText));
+    ASFW_LOG(Audio,
+             "[BeBoB] channel->slot maps GUID=0x%016llx capture=[%{public}s] playback=[%{public}s]",
+             guid, captureText, playbackText);
 
     ::ASFW::Audio::Model::ASFWAudioDevice config{};
     config.guid = guid;

@@ -43,8 +43,12 @@ public:
 
     DiceTxStreamEngine() noexcept = default;
 
+    /// `devicePlaybackMap`: where this device wants each PCM channel in the data
+    /// block, when the device reported it (BeBoB channel positions). Empty =
+    /// use the profile's map (identity for every static profile today).
     bool Configure(const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
-                   const ASFW::Isoch::Audio::AudioStreamConfig& txConfig) noexcept;
+                   const ASFW::Isoch::Audio::AudioStreamConfig& txConfig,
+                   const ::ASFW::Audio::Wire::PcmSlotMap& devicePlaybackMap = {}) noexcept;
 
     void BindSlotProvider(AMDTP::IAmdtpTxSlotProvider* slotProvider) noexcept;
 
