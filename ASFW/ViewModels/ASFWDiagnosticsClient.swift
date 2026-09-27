@@ -23,6 +23,7 @@ struct ASFWDiagnosticsSnapshot {
 }
 
 /// Client to invoke diagnostic selectors on the ASFW driver.
+@ASFWDriverConnectorQueue
 final class ASFWDiagnosticsClient {
     private let connector: ASFWDriverConnector
 
@@ -30,7 +31,7 @@ final class ASFWDiagnosticsClient {
     private static let diagStatusUnavailable: UInt32 = 1
     private static let diagStatusStaleGeneration: UInt32 = 2
     
-    init(connector: ASFWDriverConnector) {
+    nonisolated init(connector: ASFWDriverConnector) {
         self.connector = connector
     }
     

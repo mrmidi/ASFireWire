@@ -2,6 +2,7 @@ import Foundation
 import IOKit
 
 /// Thin wrapper around IOConnectCall* patterns with kIOReturn decoding and size retry.
+@ASFWDriverConnectorQueue
 final class DriverConnectorTransport {
     typealias ConnectionProvider = () -> io_connect_t
     typealias ErrorHandler = (String) -> Void

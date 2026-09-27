@@ -9,13 +9,15 @@ import Foundation
 import Combine
 import CoreAudio
 
-class AudioDebugViewModel: ObservableObject {
-    @Published var devices: [AudioWrapperDevice] = []
-    @Published var selectedDevice: AudioWrapperDevice?
-    @Published var selectedDeviceStreams: [AudioStream] = []
+@MainActor
+@Observable
+class AudioDebugViewModel {
+    var devices: [AudioWrapperDevice] = []
+    var selectedDevice: AudioWrapperDevice?
+    var selectedDeviceStreams: [AudioStream] = []
     
     // Auto-select ASFW device if found
-    private let targetDeviceName = "FireWire" // Adjust based on your driver's actual name
+    @ObservationIgnored private let targetDeviceName = "FireWire" // Adjust based on your driver's actual name
     
     init() {
         refreshDevices()

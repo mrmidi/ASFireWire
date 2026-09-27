@@ -4,8 +4,8 @@ import Testing
 
 @MainActor
 struct LogCategoryCatalogTests {
-    @Test func decodesDriverCategoriesAndPresetMask() throws {
-        let catalog = try #require(
+    @Test func decodesDriverCategoriesAndPresetMask() async throws {
+        let catalog = try await #require(
             ASFWDriverConnector.decodeLogCategoryCatalog(makeCatalogData())
         )
 
@@ -20,17 +20,17 @@ struct LogCategoryCatalogTests {
         #expect(!preset.contains(category: 4))
     }
 
-    @Test func rejectsTruncatedCatalog() {
+    @Test func rejectsTruncatedCatalog() async {
         let truncated = makeCatalogData().dropLast()
-        #expect(ASFWDriverConnector.decodeLogCategoryCatalog(Data(truncated)) == nil)
+        await #expect(ASFWDriverConnector.decodeLogCategoryCatalog(Data(truncated)) == nil)
     }
 
-    @Test func rejectsPresetBitsMissingFromCategoryCatalog() {
+    @Test func rejectsPresetBitsMissingFromCategoryCatalog() async {
         var data = makeCatalogData()
         // Preset starts at byte 80. Add Metrics (ID 4), which is not present
         // in this two-category fixture.
         write(UInt32((1 << 15) | (1 << 17) | (1 << 4)), at: 80, into: &data)
-        #expect(ASFWDriverConnector.decodeLogCategoryCatalog(data) == nil)
+        await #expect(ASFWDriverConnector.decodeLogCategoryCatalog(data) == nil)
     }
 
     private func makeCatalogData() -> Data {

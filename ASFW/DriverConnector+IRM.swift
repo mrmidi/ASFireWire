@@ -21,8 +21,8 @@ extension ASFWDriverConnector {
         )
 
         if kr != KERN_SUCCESS {
-            print("[Connector] ❌ testIRMAllocation failed: \(interpretIOReturn(kr))")
-            log("testIRMAllocation failed: \(interpretIOReturn(kr))", level: .error)
+            print("[Connector] ❌ testIRMAllocation failed: \(Self.interpretIOReturn(kr))")
+            log("testIRMAllocation failed: \(Self.interpretIOReturn(kr))", level: .error)
             return false
         }
 
@@ -48,8 +48,8 @@ extension ASFWDriverConnector {
         )
 
         if kr != KERN_SUCCESS {
-            print("[Connector] ❌ testIRMRelease failed: \(interpretIOReturn(kr))")
-            log("testIRMRelease failed: \(interpretIOReturn(kr))", level: .error)
+            print("[Connector] ❌ testIRMRelease failed: \(Self.interpretIOReturn(kr))")
+            log("testIRMRelease failed: \(Self.interpretIOReturn(kr))", level: .error)
             return false
         }
 
@@ -66,7 +66,7 @@ extension ASFWDriverConnector {
         
         let kr = IOConnectCallScalarMethod(connection, Method.testCMPConnectOPCR.rawValue, nil, 0, nil, nil)
         if kr != KERN_SUCCESS {
-            print("[Connector] ❌ testCMPConnectOPCR failed: \(interpretIOReturn(kr))")
+            print("[Connector] ❌ testCMPConnectOPCR failed: \(Self.interpretIOReturn(kr))")
             return false
         }
         print("[Connector] ✅ CMP oPCR connect triggered - check Console.app")
@@ -79,7 +79,7 @@ extension ASFWDriverConnector {
         
         let kr = IOConnectCallScalarMethod(connection, Method.testCMPDisconnectOPCR.rawValue, nil, 0, nil, nil)
         if kr != KERN_SUCCESS {
-            print("[Connector] ❌ testCMPDisconnectOPCR failed: \(interpretIOReturn(kr))")
+            print("[Connector] ❌ testCMPDisconnectOPCR failed: \(Self.interpretIOReturn(kr))")
             return false
         }
         print("[Connector] ✅ CMP oPCR disconnect triggered - check Console.app")
@@ -92,7 +92,7 @@ extension ASFWDriverConnector {
         
         let kr = IOConnectCallScalarMethod(connection, Method.testCMPConnectIPCR.rawValue, nil, 0, nil, nil)
         if kr != KERN_SUCCESS {
-            print("[Connector] ❌ testCMPConnectIPCR failed: \(interpretIOReturn(kr))")
+            print("[Connector] ❌ testCMPConnectIPCR failed: \(Self.interpretIOReturn(kr))")
             return false
         }
         print("[Connector] ✅ CMP iPCR connect triggered - check Console.app")
@@ -105,7 +105,7 @@ extension ASFWDriverConnector {
         
         let kr = IOConnectCallScalarMethod(connection, Method.testCMPDisconnectIPCR.rawValue, nil, 0, nil, nil)
         if kr != KERN_SUCCESS {
-            print("[Connector] ❌ testCMPDisconnectIPCR failed: \(interpretIOReturn(kr))")
+            print("[Connector] ❌ testCMPDisconnectIPCR failed: \(Self.interpretIOReturn(kr))")
             return false
         }
         print("[Connector] ✅ CMP iPCR disconnect triggered - check Console.app")
@@ -123,7 +123,7 @@ extension ASFWDriverConnector {
         var input: [UInt64] = [UInt64(channel)]
         let kr = IOConnectCallScalarMethod(connection, Method.startIsochTransmit.rawValue, &input, 1, nil, nil)
         if kr != KERN_SUCCESS {
-            print("[Connector] ❌ allocateITDMA failed: \(interpretIOReturn(kr))")
+            print("[Connector] ❌ allocateITDMA failed: \(Self.interpretIOReturn(kr))")
             return false
         }
         print("[Connector] ✅ IT DMA allocated for channel \(channel) - check Console.app")
@@ -136,7 +136,7 @@ extension ASFWDriverConnector {
         
         let kr = IOConnectCallScalarMethod(connection, Method.stopIsochTransmit.rawValue, nil, 0, nil, nil)
         if kr != KERN_SUCCESS {
-            print("[Connector] ❌ deallocateITDMA failed: \(interpretIOReturn(kr))")
+            print("[Connector] ❌ deallocateITDMA failed: \(Self.interpretIOReturn(kr))")
             return false
         }
         print("[Connector] ✅ IT DMA deallocated - check Console.app")

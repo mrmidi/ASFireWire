@@ -24,7 +24,7 @@ extension ASFWDriverConnector {
         return Self.parseAVCUnitsWire(data)
     }
 
-    static func parseAVCUnitsWire(_ data: Data) -> [AVCUnitInfo] {
+    nonisolated static func parseAVCUnitsWire(_ data: Data) -> [AVCUnitInfo] {
         guard data.count >= 4 else { return [] }
 
         // Helper to read UInt64 from unaligned offset
@@ -152,7 +152,7 @@ extension ASFWDriverConnector {
         }
 
         guard kr == KERN_SUCCESS else {
-            print("[Connector] ❌ callStruct error: getSubunitCapabilities failed: \(interpretIOReturn(kr))")
+            print("[Connector] ❌ callStruct error: getSubunitCapabilities failed: \(Self.interpretIOReturn(kr))")
             return nil
         }
 
@@ -192,7 +192,7 @@ extension ASFWDriverConnector {
         }
 
         guard kr == KERN_SUCCESS else {
-            print("[Connector] ❌ callStruct error: getSubunitDescriptor failed: \(interpretIOReturn(kr))")
+            print("[Connector] ❌ callStruct error: getSubunitDescriptor failed: \(Self.interpretIOReturn(kr))")
             return nil
         }
 
@@ -239,7 +239,7 @@ extension ASFWDriverConnector {
         }
 
         guard submitKR == KERN_SUCCESS else {
-            let error = "sendRawFCPCommand submit failed: \(interpretIOReturn(submitKR))"
+            let error = "sendRawFCPCommand submit failed: \(Self.interpretIOReturn(submitKR))"
             log(error, level: .error)
             lastError = error
             return nil
@@ -283,7 +283,7 @@ extension ASFWDriverConnector {
                 continue
             }
 
-            let error = "sendRawFCPCommand poll failed: \(interpretIOReturn(pollKR))"
+            let error = "sendRawFCPCommand poll failed: \(Self.interpretIOReturn(pollKR))"
             log(error, level: .error)
             lastError = error
             return nil
@@ -307,7 +307,7 @@ extension ASFWDriverConnector {
         )
 
         if kr != KERN_SUCCESS {
-            print("[Connector] ❌ reScanAVCUnits failed: \(interpretIOReturn(kr))")
+            print("[Connector] ❌ reScanAVCUnits failed: \(Self.interpretIOReturn(kr))")
             return false
         }
 

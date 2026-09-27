@@ -30,14 +30,14 @@ extension ASFWDriverConnector {
     
     /// Read output group state from Saffire device
     /// - Returns: OutputGroupState if successful, nil otherwise
-    func getSaffireOutputGroup(destinationID: UInt16) -> OutputGroupState? {
+    func getSaffireOutputGroup(destinationID: UInt16) async -> OutputGroupState? {
         guard isConnected else {
             log("Cannot get Saffire output group: not connected", level: .error)
             return nil
         }
         
         // Read 80 bytes (0x50) from output group offset
-        guard let data = readTCATApplicationData(destinationID: destinationID,
+        guard let data = await readTCATApplicationData(destinationID: destinationID,
                                                  offset: SaffireOffset.outputGroup,
                                                  length: 80) else {
             log("Failed to read Saffire output group", level: .error)
@@ -50,7 +50,7 @@ extension ASFWDriverConnector {
     /// Write output group state to Saffire device
     /// - Parameter state: Output group state to write
     /// - Returns: true if successful
-    func setSaffireOutputGroup(destinationID: UInt16, _ state: OutputGroupState) -> Bool {
+    func setSaffireOutputGroup(destinationID: UInt16, _ state: OutputGroupState) async -> Bool {
         guard isConnected else {
             log("Cannot set Saffire output group: not connected", level: .error)
             return false
@@ -59,7 +59,7 @@ extension ASFWDriverConnector {
         let data = state.toWire()
         
         // Write to device
-        guard writeTCATApplicationData(destinationID: destinationID,
+        guard await writeTCATApplicationData(destinationID: destinationID,
                                        offset: SaffireOffset.outputGroup,
                                        data: data) else {
             log("Failed to write Saffire output group", level: .error)
@@ -67,7 +67,7 @@ extension ASFWDriverConnector {
         }
         
         // Send software notice to commit changes
-        guard sendSaffireSwNotice(destinationID: destinationID, .outputGroupChanged) else {
+        guard await sendSaffireSwNotice(destinationID: destinationID, .outputGroupChanged) else {
             log("Failed to send Saffire output group change notice", level: .error)
             return false
         }
@@ -77,14 +77,14 @@ extension ASFWDriverConnector {
     
     /// Read input parameters from Saffire device
     /// - Returns: InputParams if successful, nil otherwise
-    func getSaffireInputParams(destinationID: UInt16) -> InputParams? {
+    func getSaffireInputParams(destinationID: UInt16) async -> InputParams? {
         guard isConnected else {
             log("Cannot get Saffire input params: not connected", level: .error)
             return nil
         }
         
         // Read 8 bytes from input params offset
-        guard let data = readTCATApplicationData(destinationID: destinationID,
+        guard let data = await readTCATApplicationData(destinationID: destinationID,
                                                  offset: SaffireOffset.inputParams,
                                                  length: 8) else {
             log("Failed to read Saffire input params", level: .error)
@@ -97,7 +97,7 @@ extension ASFWDriverConnector {
     /// Write input parameters to Saffire device
     /// - Parameter params: Input parameters to write
     /// - Returns: true if successful
-    func setSaffireInputParams(destinationID: UInt16, _ params: InputParams) -> Bool {
+    func setSaffireInputParams(destinationID: UInt16, _ params: InputParams) async -> Bool {
         guard isConnected else {
             log("Cannot set Saffire input params: not connected", level: .error)
             return false
@@ -106,7 +106,7 @@ extension ASFWDriverConnector {
         let data = params.toWire()
         
         // Write to device
-        guard writeTCATApplicationData(destinationID: destinationID,
+        guard await writeTCATApplicationData(destinationID: destinationID,
                                        offset: SaffireOffset.inputParams,
                                        data: data) else {
             log("Failed to write Saffire input params", level: .error)
@@ -114,7 +114,7 @@ extension ASFWDriverConnector {
         }
         
         // Send software notice to commit changes
-        guard sendSaffireSwNotice(destinationID: destinationID, .inputChanged) else {
+        guard await sendSaffireSwNotice(destinationID: destinationID, .inputChanged) else {
             log("Failed to send Saffire input params change notice", level: .error)
             return false
         }
@@ -125,7 +125,7 @@ extension ASFWDriverConnector {
     // MARK: - Private Helpers
     
     /// Read data from TCAT application section
-    private func readTCATApplicationData(destinationID: UInt16, offset: UInt32, length: Int) -> Data? {
+    private func readTCATApplicationData(destinationID: UInt16, offset: UInt32, length: Int) async -> Data? {
         // TCAT application section base address
         // For Saffire Pro, this is typically at 0xFFFFE0200000 + offset
         let tcatBaseHigh: UInt16 = 0xFFFF
@@ -134,59 +134,43 @@ extension ASFWDriverConnector {
         let address = tcatBaseLow + offset
         
         // Use async read to fetch data
-        var result: Data?
-        let semaphore = DispatchSemaphore(value: 0)
-        
-        DispatchQueue.global(qos: .userInitiated).async {
-            if let data = self.performSyncAsyncRead(
-                destinationID: destinationID,
-                addressHigh: tcatBaseHigh,
-                addressLow: address,
-                length: UInt32(length)
-            ) {
-                result = data
-            }
-            semaphore.signal()
-        }
-        
-        _ = semaphore.wait(timeout: .now() + 2.0)
-        return result
+        let data = await self.performSyncAsyncRead(
+            destinationID: destinationID,
+            addressHigh: tcatBaseHigh,
+            addressLow: address,
+            length: UInt32(length)
+        )
+        return data
     }
     
     /// Write data to TCAT application section
-    private func writeTCATApplicationData(destinationID: UInt16, offset: UInt32, data: Data) -> Bool {
+    private func writeTCATApplicationData(destinationID: UInt16, offset: UInt32, data: Data) async -> Bool {
         let tcatBaseHigh: UInt16 = 0xFFFF
         let tcatBaseLow: UInt32 = 0xE0200000
         
         let address = tcatBaseLow + offset
         
         var success = false
-        let semaphore = DispatchSemaphore(value: 0)
         
-        DispatchQueue.global(qos: .userInitiated).async {
-            success = self.performSyncAsyncWrite(
-                destinationID: destinationID,
-                addressHigh: tcatBaseHigh,
-                addressLow: address,
-                payload: data
-            )
-            semaphore.signal()
-        }
-        
-        _ = semaphore.wait(timeout: .now() + 2.0)
+        success = await self.performSyncAsyncWrite(
+            destinationID: destinationID,
+            addressHigh: tcatBaseHigh,
+            addressLow: address,
+            payload: data
+        )
         return success
     }
     
     /// Send software notice to Saffire device to commit parameter changes
-    private func sendSaffireSwNotice(destinationID: UInt16, _ notice: SaffireSwNotice) -> Bool {
+    private func sendSaffireSwNotice(destinationID: UInt16, _ notice: SaffireSwNotice) async -> Bool {
         let noticeData = withUnsafeBytes(of: notice.rawValue.bigEndian) { Data($0) }
-        return writeTCATApplicationData(destinationID: destinationID,
+        return await writeTCATApplicationData(destinationID: destinationID,
                                         offset: SaffireOffset.swNotice,
                                         data: noticeData)
     }
     
     /// Synchronous async read helper
-    private func performSyncAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> Data? {
+    private func performSyncAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) async -> Data? {
         guard let handle = asyncRead(
             destinationID: destinationID,
             addressHigh: addressHigh,
@@ -197,7 +181,7 @@ extension ASFWDriverConnector {
         }
 
         let timeout = Date().addingTimeInterval(2.0)
-        while Date() < timeout {
+        while Date() < timeout, !Task.isCancelled {
             if let result = getTransactionResult(handle: handle, initialPayloadCapacity: Int(length) + 128) {
                 guard result.status == 0 && result.responseCode == 0 else {
                     log(String(format: "Saffire read failed status=0x%08X rCode=0x%02X", result.status, result.responseCode), level: .warning)
@@ -205,7 +189,7 @@ extension ASFWDriverConnector {
                 }
                 return result.payload
             }
-            Thread.sleep(forTimeInterval: 0.05)
+            try? await Task.sleep(until: .now.advanced(by: .milliseconds(50)))
         }
 
         log(String(format: "Saffire read timed out waiting for result (handle=0x%04X)", handle), level: .warning)
@@ -213,7 +197,7 @@ extension ASFWDriverConnector {
     }
     
     /// Synchronous async write helper
-    private func performSyncAsyncWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> Bool {
+    private func performSyncAsyncWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) async -> Bool {
         guard let handle = asyncBlockWrite(
             destinationID: destinationID,
             addressHigh: addressHigh,
@@ -224,11 +208,11 @@ extension ASFWDriverConnector {
         }
 
         let timeout = Date().addingTimeInterval(2.0)
-        while Date() < timeout {
+        while Date() < timeout, !Task.isCancelled {
             if let result = getTransactionResult(handle: handle) {
                 return result.status == 0 && result.responseCode == 0
             }
-            Thread.sleep(forTimeInterval: 0.05)
+            try? await Task.sleep(until: .now.advanced(by: .milliseconds(50)))
         }
 
         log(String(format: "Saffire block write timed out waiting for result (handle=0x%04X)", handle), level: .warning)

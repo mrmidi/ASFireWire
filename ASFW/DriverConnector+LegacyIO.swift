@@ -41,7 +41,7 @@ extension ASFWDriverConnector {
         }
 
         guard kr == KERN_SUCCESS else {
-            let errorMsg = "asyncRead failed: \(interpretIOReturn(kr))"
+            let errorMsg = "asyncRead failed: \(Self.interpretIOReturn(kr))"
             log(errorMsg, level: .error)
             lastError = errorMsg
             return nil
@@ -88,7 +88,7 @@ extension ASFWDriverConnector {
         }
 
         guard kr == KERN_SUCCESS else {
-            let errorMsg = "asyncWrite failed: \(interpretIOReturn(kr))"
+            let errorMsg = "asyncWrite failed: \(Self.interpretIOReturn(kr))"
             log(errorMsg, level: .error)
             lastError = errorMsg
             return nil
@@ -129,7 +129,7 @@ extension ASFWDriverConnector {
         }
 
         guard kr == KERN_SUCCESS else {
-            let errorMsg = "asyncBlockRead failed: \(interpretIOReturn(kr))"
+            let errorMsg = "asyncBlockRead failed: \(Self.interpretIOReturn(kr))"
             log(errorMsg, level: .error)
             lastError = errorMsg
             return nil
@@ -176,7 +176,7 @@ extension ASFWDriverConnector {
         }
 
         guard kr == KERN_SUCCESS else {
-            let errorMsg = "asyncBlockWrite failed: \(interpretIOReturn(kr))"
+            let errorMsg = "asyncBlockWrite failed: \(Self.interpretIOReturn(kr))"
             log(errorMsg, level: .error)
             lastError = errorMsg
             return nil
@@ -226,7 +226,7 @@ extension ASFWDriverConnector {
         }
 
         guard kr == KERN_SUCCESS else {
-            let errorMsg = "getTransactionResult failed: \(interpretIOReturn(kr))"
+            let errorMsg = "getTransactionResult failed: \(Self.interpretIOReturn(kr))"
             log(errorMsg, level: .error)
             lastError = errorMsg
             return nil
@@ -311,7 +311,7 @@ extension ASFWDriverConnector {
         }
 
         guard kr == KERN_SUCCESS else {
-            let errorMsg = "asyncCompareSwap failed: \(interpretIOReturn(kr))"
+            let errorMsg = "asyncCompareSwap failed: \(Self.interpretIOReturn(kr))"
             log(errorMsg, level: .error)
             lastError = errorMsg
             return nil

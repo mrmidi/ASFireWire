@@ -1,14 +1,14 @@
 import SwiftUI
 
 struct SystemLogsView: View {
-    @ObservedObject private var connector: ASFWDriverConnector
-    @StateObject private var viewModel: DriverLogViewModel
+    @ObservedObject private var connector: ASFWDriverConnector.Observable
+    @State private var viewModel: DriverLogViewModel
     @State private var followsTail = true
     @State private var selectedRecordSequences: Set<UInt64> = []
 
-    init(connector: ASFWDriverConnector) {
-        _connector = ObservedObject(wrappedValue: connector)
-        _viewModel = StateObject(wrappedValue: DriverLogViewModel(connector: connector))
+    init(connectorObservable: ASFWDriverConnector.Observable) {
+        _connector = ObservedObject(wrappedValue: connectorObservable)
+        _viewModel = State(wrappedValue: DriverLogViewModel(connectorObservable: connectorObservable))
     }
 
     var body: some View {

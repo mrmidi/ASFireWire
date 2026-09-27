@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct AVCCommandView: View {
-    @ObservedObject var viewModel: DebugViewModel
+    var viewModel: DebugViewModel
 
     @State private var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
     @State private var selectedUnitGUID: UInt64?
@@ -340,10 +340,11 @@ struct AVCCommandView: View {
 
     private func refreshUnits() {
         guard viewModel.isConnected else { return }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let units = viewModel.connector.getAVCUnits() ?? []
-            DispatchQueue.main.async {
+        
+        let connector = viewModel.connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak connector] in
+            let units = await connector?.getAVCUnits() ?? []
+            Task { @MainActor in
                 self.avcUnits = units
                 if let first = units.first {
                     self.selectedUnitGUID = first.guid
@@ -376,17 +377,18 @@ struct AVCCommandView: View {
         lastResponseSummary = nil
         lastSentTime = Date()
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let response = viewModel.connector.sendRawFCPCommand(guid: guid, frame: commandData)
+        let connector = viewModel.connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak connector] in
+            let response = await connector?.sendRawFCPCommand(guid: guid, frame: commandData)
 
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.isSending = false
                 if let response {
                     self.lastResponseData = response
                     self.lastResponseSummary = self.responseSummary(response)
                     self.lastError = nil
                 } else {
-                    self.lastError = viewModel.connector.lastError ?? "Failed to send FCP command"
+                    self.lastError = viewModel.connectorObservable.lastError ?? "Failed to send FCP command"
                     self.lastResponseData = nil
                     self.lastResponseSummary = nil
                 }

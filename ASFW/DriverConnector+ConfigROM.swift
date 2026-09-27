@@ -41,7 +41,7 @@ extension ASFWDriverConnector {
         }
 
         guard kr == KERN_SUCCESS else {
-            let errorMsg = "getConfigROM failed: \(interpretIOReturn(kr))"
+            let errorMsg = "getConfigROM failed: \(Self.interpretIOReturn(kr))"
             log(errorMsg, level: .error)
             lastError = errorMsg
             return nil
@@ -98,7 +98,7 @@ extension ASFWDriverConnector {
         print("[Connector]    IOKit result: kr=\(kr) (0x\(String(UInt32(bitPattern: kr), radix: 16))) output=\(output[0]) outputCount=\(outputCount)")
 
         guard kr == KERN_SUCCESS else {
-            let errorMsg = "triggerROMRead failed: \(interpretIOReturn(kr))"
+            let errorMsg = "triggerROMRead failed: \(Self.interpretIOReturn(kr))"
             log(errorMsg, level: .error)
             lastError = errorMsg
             print("[Connector] ❌ triggerROMRead failed: \(errorMsg)")

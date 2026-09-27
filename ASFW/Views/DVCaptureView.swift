@@ -17,36 +17,37 @@ import Combine
 // MARK: - Capture Controller
 
 @MainActor
-final class DVCaptureController: ObservableObject {
-    @Published var isCapturing = false
-    @Published var bytesWritten: UInt64 = 0
-    @Published var framesSeen: Int = 0
-    @Published var droppedFrames: Int = 0
-    @Published var duplicateBlocks: Int = 0
-    @Published var invalidBlocks: Int = 0
-    @Published var stats = DVCaptureStats()
-    @Published var systemLabel = "—"
-    @Published var lastError: String?
+@Observable
+final class DVCaptureController {
+    var isCapturing = false
+    var bytesWritten: UInt64 = 0
+    var framesSeen: Int = 0
+    var droppedFrames: Int = 0
+    var duplicateBlocks: Int = 0
+    var invalidBlocks: Int = 0
+    var stats = DVCaptureStats()
+    var systemLabel = "—"
+    var lastError: String?
 
-    private var ring: DVCaptureRing?
-    private var fileWriter: DVFileWriter?
-    private var captureTask: Task<Void, Never>?
-    private var assembler = DVFrameAssembler()
+    @ObservationIgnored private var ring: DVCaptureRing?
+    @ObservationIgnored private var fileWriter: DVFileWriter?
+    @ObservationIgnored private var captureTask: Task<Void, Never>?
+    @ObservationIgnored private var assembler = DVFrameAssembler()
 
     func start(connector: ASFWDriverConnector,
                deviceGUID: UInt64,
-               url: URL) {
+               url: URL) async {
         guard !isCapturing else { return }
         lastError = nil
 
-        guard connector.startDVCapture(deviceGUID: deviceGUID) else {
-            lastError = connector.lastError ?? "startDVCapture failed (is audio receive running?)"
+        guard await connector.startDVCapture(deviceGUID: deviceGUID) else {
+            lastError = await connector.lastError ?? "startDVCapture failed (is audio receive running?)"
             return
         }
 
-        guard let mappedRing = connector.mapDVCaptureRing() else {
+        guard let mappedRing = await connector.mapDVCaptureRing() else {
             lastError = "Failed to map DV ring"
-            _ = connector.stopDVCapture()
+            _ = await connector.stopDVCapture()
             return
         }
 
@@ -55,8 +56,8 @@ final class DVCaptureController: ObservableObject {
             writer = try DVFileWriter(url: url)
         } catch {
             lastError = "Could not create \(url.lastPathComponent): \(error.localizedDescription)"
-            _ = connector.stopDVCapture()
-            mappedRing.unmap()
+            _ = await connector.stopDVCapture()
+            await mappedRing.unmap()
             return
         }
 
@@ -98,29 +99,32 @@ final class DVCaptureController: ObservableObject {
 
     private func tick(connector: ASFWDriverConnector) async {
         guard let ring else { return }
-
-        var completedFrames: [Data] = []
-        var dropped = 0
-        var duplicates = 0
-        var invalid = 0
-        ring.drain { chunk in
-            let result = assembler.ingest(chunk)
-            if let frame = result.completedFrame { completedFrames.append(frame) }
-            if result.droppedFrame { dropped += 1 }
-            duplicates += result.duplicateBlocks
-            invalid += result.invalidBlocks
+        
+        struct Collector: Sendable {
+            var assembler: DVFrameAssembler
+            var completedFrames: [Data] = []
+            var dropped = 0
+            var duplicates = 0
+            var invalid = 0
         }
-
-        droppedFrames += dropped
-        duplicateBlocks += duplicates
-        invalidBlocks += invalid
+        let (_, collected) = await ring.drain(Collector(assembler: assembler)) { chunk, collector in
+            let result = collector.assembler.ingest(chunk)
+            if let frame = result.completedFrame { collector.completedFrames.append(frame) }
+            if result.droppedFrame { collector.dropped += 1 }
+            collector.duplicates += result.duplicateBlocks
+            collector.invalid += result.invalidBlocks
+        }
+        assembler = collected.assembler
+        droppedFrames += collected.dropped
+        duplicateBlocks += collected.duplicates
+        invalidBlocks += collected.invalid
         if systemLabel == "—", let isPAL = assembler.isPAL {
             systemLabel = isPAL ? "PAL (625/50)" : "NTSC (525/60)"
         }
-        if !completedFrames.isEmpty {
-            await write(completedFrames, connector: connector)
+        if !collected.completedFrames.isEmpty {
+            await write(collected.completedFrames, connector: connector)
         }
-        stats = ring.stats
+        stats = await ring.stats
         if DVCaptureSessionState(rawValue: stats.sessionState) == .busReset {
             lastError = "Capture stopped because the FireWire bus reset. Select the camcorder again and restart capture."
             await shutdown(connector: connector)
@@ -152,8 +156,8 @@ final class DVCaptureController: ObservableObject {
     private func shutdown(connector: ASFWDriverConnector) async {
         captureTask?.cancel()
         captureTask = nil
-        _ = connector.stopDVCapture()
-        ring?.unmap()
+        _ = await connector.stopDVCapture()
+        await ring?.unmap()
         ring = nil
         if let fileWriter {
             do {
@@ -170,8 +174,8 @@ final class DVCaptureController: ObservableObject {
 // MARK: - View
 
 struct DVCaptureView: View {
-    @ObservedObject var viewModel: DebugViewModel
-    @StateObject private var controller = DVCaptureController()
+    var viewModel: DebugViewModel
+    @State private var controller = DVCaptureController()
 
     @State private var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
     @State private var selectedUnitGUID: UInt64?
@@ -189,7 +193,7 @@ struct DVCaptureView: View {
         .navigationTitle("DV Capture")
         .onAppear { refreshUnits() }
         .onDisappear {
-            Task { await controller.stop(connector: viewModel.connector) }
+            Task { await controller.stop(connector: viewModel.connectorObservable.connector) }
         }
     }
 
@@ -268,7 +272,7 @@ struct DVCaptureView: View {
 
             if controller.isCapturing {
                 Button {
-                    Task { await controller.stop(connector: viewModel.connector) }
+                    Task { await controller.stop(connector: viewModel.connectorObservable.connector) }
                 } label: {
                     Label("Stop Capture", systemImage: "stop.circle.fill")
                 }
@@ -329,13 +333,14 @@ struct DVCaptureView: View {
     private func refreshUnits() {
         guard viewModel.isConnected else { return }
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let units = (viewModel.connector.getAVCUnits() ?? []).sorted {
+        let connector = viewModel.connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak connector] in
+            let units = await (connector?.getAVCUnits() ?? []).sorted {
                 let lhsTape = $0.subunits.contains { $0.type == 0x04 }
                 let rhsTape = $1.subunits.contains { $0.type == 0x04 }
                 return lhsTape && !rhsTape
             }
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.avcUnits = units
                 if !units.contains(where: { $0.guid == self.selectedUnitGUID }) {
                     self.selectedUnitGUID = units.first?.guid
@@ -355,9 +360,10 @@ struct DVCaptureView: View {
         transportBusy = true
         transportStatus = "Sending \(label)…"
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let response = viewModel.connector.sendRawFCPCommand(guid: guid, frame: frame)
-            DispatchQueue.main.async {
+        let connector = viewModel.connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak connector] in
+            let response = await connector?.sendRawFCPCommand(guid: guid, frame: frame)
+            Task { @MainActor in
                 self.transportBusy = false
                 if let response, response.count >= 1 {
                     let code = response[0]
@@ -391,9 +397,11 @@ struct DVCaptureView: View {
 
     private func startCapture() {
         guard let url = outputURL, let guid = selectedUnitGUID else { return }
-        controller.start(connector: viewModel.connector,
-                         deviceGUID: guid,
-                         url: url)
+        Task {
+            await controller.start(connector: viewModel.connectorObservable.connector,
+                                   deviceGUID: guid,
+                                   url: url)
+        }
     }
 
     private func connectionModeLabel(_ rawValue: UInt8) -> String {

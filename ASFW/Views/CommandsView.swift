@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct CommandsView: View {
-    @ObservedObject var viewModel: DebugViewModel
-    @StateObject private var connector = ASFWDriverConnector()
+    var viewModel: DebugViewModel
+    @StateObject private var connectorObservable = ASFWDriverConnector.Observable()
 
     var body: some View {
         TabView {
@@ -20,7 +20,7 @@ struct CommandsView: View {
                 }
 
             // Compare & Swap Tab
-            CompareSwapView(connector: connector)
+            CompareSwapView(connectorObservable: connectorObservable)
                 .tabItem {
                     Label("Compare & Swap", systemImage: "lock.rectangle")
                 }
@@ -28,8 +28,8 @@ struct CommandsView: View {
         .navigationTitle("Async Commands")
         .onAppear {
             // Connect to driver when view appears
-            if !connector.isConnected {
-                _ = connector.connect()
+            if !connectorObservable.isConnected {
+                _ = connectorObservable.connector.connect()
             }
         }
     }

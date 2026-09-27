@@ -129,25 +129,33 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
 
     func request(_ request: OSSystemExtensionRequest,
                  didFinishWithResult result: OSSystemExtensionRequest.Result) {
-        guard let operation = pending else { return }
-        operation.resultDescription =
-            "\(operation.kind.rawValue.capitalized) finished with result \(result.rawValue)"
-        beginRegistryVerification()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard let operation = self.pending else { return }
+            operation.resultDescription =
+                "\(operation.kind.rawValue.capitalized) finished with result \(result.rawValue)"
+            self.beginRegistryVerification()
+        }
     }
 
     func request(_ request: OSSystemExtensionRequest,
                  didFailWithError error: Error) {
-        if let replacementError = pending?.replacementError {
-            finish(.failure(replacementError))
-        } else {
-            finish(.failure(error))
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let replacementError = self.pending?.replacementError {
+                self.finish(.failure(replacementError))
+            } else {
+                self.finish(.failure(error))
+            }
         }
     }
 
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
-        pending?.progress?(
-            "Approve ASFW in System Settings > General > Login Items & Extensions > Driver Extensions."
-        )
+        DispatchQueue.main.async { [weak self] in
+            self?.pending?.progress?(
+                "Approve ASFW in System Settings > General > Login Items & Extensions > Driver Extensions."
+            )
+        }
     }
 
     func request(
@@ -155,24 +163,34 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         actionForReplacingExtension existing: OSSystemExtensionProperties,
         withExtension replacement: OSSystemExtensionProperties
     ) -> OSSystemExtensionRequest.ReplacementAction {
+        // This delegate method is called on a system thread. We need to access
+        // shared state, so we dispatch to main queue synchronously.
+        // The actionForReplacingExtension method is expected to return synchronously.
+        // Capture the version values before dispatching to avoid Sendable errors.
         let existingVersion = existing.bundleVersion
         let replacementVersion = replacement.bundleVersion
-        guard DriverExtensionVersionPolicy.replacementIsAllowed(
-            existing: existingVersion,
-            replacement: replacementVersion,
-            requireNewerBuild: pending?.requireNewerBuild ?? DriverInstallSettings.defaultRequireNewerBuild
-        ) else {
-            pending?.replacementError = .replacementVersionNotNewer(
-                existing: existingVersion,
-                replacement: replacementVersion
-            )
-            return .cancel
-        }
+        var result: OSSystemExtensionRequest.ReplacementAction = .cancel
 
-        pending?.progress?(
-            "Replacing ASFW build \(existingVersion) with build \(replacementVersion)…"
-        )
-        return .replace
+        DispatchQueue.main.sync {
+            guard DriverExtensionVersionPolicy.replacementIsAllowed(
+                existing: existingVersion,
+                replacement: replacementVersion,
+                requireNewerBuild: self.pending?.requireNewerBuild ?? DriverInstallSettings.defaultRequireNewerBuild
+            ) else {
+                self.pending?.replacementError = .replacementVersionNotNewer(
+                    existing: existingVersion,
+                    replacement: replacementVersion
+                )
+                result = .cancel
+                return
+            }
+
+            self.pending?.progress?(
+                "Replacing ASFW build \(existingVersion) with build \(replacementVersion)…"
+            )
+            result = .replace
+        }
+        return result
     }
 
     // MARK: Registry verification
@@ -289,3 +307,12 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         print("[DriverInstall] Activation target identifier: \(extensionIdentifier)")
     }
 }
+
+// MARK: Sendable
+
+// swift-format-skip
+// DriverInstallManager holds mutable state and is used on main actor only.
+// For Swift 6 strict concurrency, we use @unchecked Sendable to allow this.
+// This is safe because all public API methods dispatch to main actor.
+// swift-format-skip
+extension DriverInstallManager: @unchecked Sendable {}

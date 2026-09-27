@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MCPSettingsView: View {
-    @ObservedObject var viewModel: ASFWMCPControlViewModel
+    @Bindable var viewModel: ASFWMCPControlViewModel
 
     var body: some View {
         ScrollView {
@@ -116,6 +116,6 @@ struct MCPSettingsView: View {
 }
 
 #Preview {
-    MCPSettingsView(viewModel: ASFWMCPControlViewModel(connector: ASFWDriverConnector()))
+    MCPSettingsView(viewModel: ASFWMCPControlViewModel(connectorObservable: ASFWDriverConnector.Observable()))
         .frame(width: 720, height: 420)
 }

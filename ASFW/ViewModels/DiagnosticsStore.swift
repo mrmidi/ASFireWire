@@ -8,23 +8,25 @@
 import Foundation
 import Combine
 
-final class DiagnosticsStore: ObservableObject {
-    @Published var isRefreshing = false
-    @Published var error: String?
-    @Published var reportText: String = "No diagnostics report loaded yet. Click Refresh to query the driver."
-    @Published var lastSnapshot: ASFWDiagnosticsSnapshot?
-    @Published var isClearingTrace = false
+@MainActor
+@Observable
+final class DiagnosticsStore {
+    var isRefreshing = false
+    var error: String?
+    var reportText: String = "No diagnostics report loaded yet. Click Refresh to query the driver."
+    var lastSnapshot: ASFWDiagnosticsSnapshot?
+    var isClearingTrace = false
     
-    private let client: ASFWDiagnosticsClient
-    private let connector: ASFWDriverConnector
-    private var statusCancellable: AnyCancellable?
+    @ObservationIgnored private let client: ASFWDiagnosticsClient
+    @ObservationIgnored private let connectorObservable: ASFWDriverConnector.Observable
+    @ObservationIgnored private var statusCancellable: AnyCancellable?
     
-    init(connector: ASFWDriverConnector) {
-        self.connector = connector
-        self.client = ASFWDiagnosticsClient(connector: connector)
+    init(connectorObservable: ASFWDriverConnector.Observable) {
+        self.connectorObservable = connectorObservable
+        self.client = ASFWDiagnosticsClient(connector: connectorObservable.connector)
         
         // Refresh diagnostics when driver connects
-        statusCancellable = connector.statusPublisher
+        statusCancellable = connectorObservable.$latestStatus
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refresh()
@@ -32,7 +34,7 @@ final class DiagnosticsStore: ObservableObject {
     }
     
     func refresh() {
-        guard connector.isConnected else {
+        guard connectorObservable.isConnected else {
             self.error = "Not connected to ASFW driver. Check connection status."
             self.reportText = "ASFW driver is not connected. Connect the driver using the controls in the toolbar, then try refreshing diagnostics."
             return
@@ -42,20 +44,21 @@ final class DiagnosticsStore: ObservableObject {
         isRefreshing = true
         error = nil
         
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+        let connector = connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak self, weak connector] in
+            guard let self, let connector else { return }
             
             do {
                 print("[DiagStore] 🔍 Querying driver diagnostics selectors...")
-                let snapshot = try self.client.fetchSnapshot()
+                let snapshot = try await self.client.fetchSnapshot()
                 print("[DiagStore] ✅ Successfully retrieved diagnostic snapshot.")
 
                 // Loaded-driver build, so the report shows which dext is actually
                 // running (build-freshness check). Best-effort; nil just omits the row.
-                let version = self.connector.getDriverVersion()
+                let version = await connector.getDriverVersion()
                 let text = DiagnosticsTextFormatter.format(snapshot: snapshot, version: version)
                 
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self.lastSnapshot = snapshot
                     self.reportText = text
                     self.isRefreshing = false
@@ -63,8 +66,8 @@ final class DiagnosticsStore: ObservableObject {
             } catch {
                 print("[DiagStore] ❌ Failed to fetch diagnostics: \(error)")
                 let errorDescription = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                
-                DispatchQueue.main.async {
+
+                Task { @MainActor in
                     self.error = errorDescription
                     self.reportText = "ERROR: Failed to fetch diagnostics.\n\nDetails: \(errorDescription)"
                     self.isRefreshing = false
@@ -74,19 +77,19 @@ final class DiagnosticsStore: ObservableObject {
     }
     
     func clearTrace() {
-        guard connector.isConnected else { return }
+        guard connectorObservable.isConnected else { return }
         guard !isClearingTrace else { return }
         isClearingTrace = true
         
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+        Task.detached(priority: .userInitiated) { [weak self, weak client] in
+            guard let self, let client else { return }
             
             do {
                 print("[DiagStore] 🧹 Clearing async transactions trace...")
-                try self.client.clearAsyncTrace()
+                try await client.clearAsyncTrace()
                 print("[DiagStore] ✅ Cleared async transactions trace.")
                 
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self.isClearingTrace = false
                     // Re-fetch snapshot immediately to show the cleared trace state
                     self.refresh()
@@ -95,15 +98,11 @@ final class DiagnosticsStore: ObservableObject {
                 print("[DiagStore] ❌ Failed to clear async trace: \(error)")
                 let errorDescription = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self.error = "Failed to clear trace: \(errorDescription)"
                     self.isClearingTrace = false
                 }
             }
         }
-    }
-    
-    deinit {
-        statusCancellable = nil
     }
 }

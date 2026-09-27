@@ -3,8 +3,71 @@ import Combine
 import IOKit
 import SystemExtensions
 import Darwin.Mach
+import Dispatch
 
-final class ASFWDriverConnector: ObservableObject {
+@globalActor
+final actor ASFWDriverConnectorQueue: GlobalActor {
+    static let dispatchQueue = DispatchSerialQueue(label: "net.mrmidi.ASFWDriverConnector.connection")
+    static let shared = ASFWDriverConnectorQueue()
+    static let sharedUnownedExecutor: UnownedSerialExecutor = dispatchQueue
+        .asUnownedSerialExecutor()
+
+    nonisolated var unownedExecutor: UnownedSerialExecutor {
+        Self.sharedUnownedExecutor
+    }
+}
+
+@ASFWDriverConnectorQueue
+final class ASFWDriverConnector {
+    @MainActor
+    final class Observable: ObservableObject {
+        @Published fileprivate(set) var isConnected: Bool = false
+        @Published fileprivate(set) var lastError: String?
+        @Published fileprivate(set) var logMessages: [LogMessage] = []
+        @Published fileprivate(set) var latestStatus: DriverStatus?
+
+        let connector = ASFWDriverConnector()
+
+        init() {
+            connector.observable = self
+        }
+    }
+
+    nonisolated(unsafe) weak private var observable: Observable?
+    // MARK: - Published Properties
+    var isConnected: Bool = false {
+        didSet {
+            let isConnected = self.isConnected
+            Task { @MainActor [weak observable] in
+                observable?.isConnected = isConnected
+            }
+        }
+    }
+    var lastError: String? {
+        didSet {
+            let lastError = self.lastError
+            Task { @MainActor [weak observable] in
+                observable?.lastError = lastError
+            }
+        }
+    }
+    var logMessages: [LogMessage] = [] {
+        didSet {
+            let logMessages = self.logMessages
+            Task { @MainActor [weak observable] in
+                observable?.logMessages = logMessages
+            }
+        }
+    }
+    var latestStatus: DriverStatus? {
+        didSet {
+            let latestStatus = self.latestStatus
+            Task { @MainActor [weak observable] in
+                observable?.latestStatus = latestStatus
+            }
+        }
+    }
+
     // MARK: - Types
 
     enum Method: UInt32 {
@@ -82,32 +145,10 @@ final class ASFWDriverConnector: ObservableObject {
     typealias FWUnitInfo = DriverConnectorFWUnitInfo
     typealias LogMessage = DriverConnectorLogMessage
 
-    // MARK: - Published Properties
-
-    @Published var isConnected: Bool = false
-    @Published var lastError: String?
-    @Published var logMessages: [LogMessage] = []
-    @Published var latestStatus: DriverStatus?
-
-    // MARK: - Public Publishers
-
-    let statusSubject = PassthroughSubject<DriverStatus, Never>()
-    var statusPublisher: AnyPublisher<DriverStatus, Never> {
-        statusSubject.eraseToAnyPublisher()
-    }
-
     // MARK: - Connection State
 
     var connection: io_connect_t = 0
-    let connectionQueue = DispatchQueue(label: "net.mrmidi.ASFWDriverConnector.connection")
 
-    /// Marks `connectionQueue` so `deinit` can tell whether it is already running on
-    /// it. The async-notification event handler takes a temporary strong `self` for the
-    /// duration of the callback (`[weak self]` cannot prevent that), so when the last
-    /// other reference is dropped while a notification is in flight, `deinit` runs on
-    /// `connectionQueue` itself. A `sync` there is a self-deadlock and traps with
-    /// "dispatch_sync called on queue already owned by current thread".
-    private static let connectionQueueKey = DispatchSpecificKey<UInt8>()
     let serviceName = "ASFWDriver"
 
     var notificationPort: IONotificationPortRef?
@@ -127,51 +168,42 @@ final class ASFWDriverConnector: ObservableObject {
 
     lazy var transport = DriverConnectorTransport(
         connectionProvider: { [weak self] in self?.connection ?? 0 },
-        interpretIOReturn: { [weak self] kr in
-            self?.interpretIOReturn(kr) ?? String(format: "Unknown error 0x%x (%d)", UInt32(bitPattern: kr), kr)
+        interpretIOReturn: { kr in
+            Self.interpretIOReturn(kr)
         },
         errorHandler: { [weak self] message in
-            DispatchQueue.main.async { [weak self] in
-                self?.lastError = message
-            }
+            self?.lastError = message
         }
     )
 
     // MARK: - Initialisation
-
-    init() {
-        connectionQueue.setSpecific(key: Self.connectionQueueKey, value: 1)
-        startMonitoring()
+    nonisolated init() {
+        Task { @ASFWDriverConnectorQueue in
+            startMonitoring()
+        }
     }
 
+    isolated
     deinit {
-        // By deinit no other reference exists, so running the teardown inline when we
-        // are already on `connectionQueue` cannot race with anything — and it is the
-        // only safe option, since `sync` onto the current queue traps.
-        if DispatchQueue.getSpecific(key: Self.connectionQueueKey) != nil {
-            closeConnectionLocked(reason: "Connector deinit (on connection queue)")
-            stopMonitoringLocked()
-        } else {
-            connectionQueue.sync {
-                self.closeConnectionLocked(reason: "Connector deinit")
-                self.stopMonitoringLocked()
-            }
-        }
+        closeConnectionLocked(reason: "Connector deinit (on connection queue)")
+        stopMonitoringLocked()
     }
 
     // MARK: - Public API
 
-    func connect(forceAttempt: Bool = false) -> Bool {
-        log("Manual connect requested", level: .info)
-        connectionQueue.async {
-            self.manualConnectLocked(forceAttempt: forceAttempt)
+    nonisolated func connect(forceAttempt: Bool = false) -> Bool {
+        // Capture self strongly for the async operation
+        // The class is already bound to ASFWDriverConnectorQueue actor
+        Task { @ASFWDriverConnectorQueue in
+            log("Manual connect requested", level: .info)
+            manualConnectLocked(forceAttempt: forceAttempt)
         }
         return true
     }
 
-    func disconnect() {
-        connectionQueue.async {
-            self.closeConnectionLocked(reason: "Manual disconnect")
+    nonisolated func disconnect() {
+        Task { @ASFWDriverConnectorQueue in
+            closeConnectionLocked(reason: "Manual disconnect")
         }
     }
 
@@ -189,25 +221,10 @@ final class ASFWDriverConnector: ObservableObject {
 
     func log(_ message: String, level: LogMessage.Level = .info) {
         let logEntry = LogMessage(timestamp: Date(), level: level, message: message)
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.logMessages = self.logStore.append(logEntry)
-        }
+        logMessages = logStore.append(logEntry)
     }
 
-
-    func interpretIOReturn(_ kr: kern_return_t) -> String {
-        let KERN_SUCCESS: kern_return_t = 0
-        let KERN_PROTECTION_FAILURE: kern_return_t = -308
-        let kIOReturnNotPrivileged: kern_return_t = -536870207
-        let kIOReturnNoDevice: kern_return_t = -536870208
-        let kIOReturnBadArgument: kern_return_t = -536870206
-        let kIOReturnUnsupported: kern_return_t = -536870201
-        let kIOReturnNotOpen: kern_return_t = -536870195
-        let kIOReturnBusy: kern_return_t = -536870187
-        let kIOReturnTimeout: kern_return_t = -536870186
-        let kIOReturnNotFound: kern_return_t = -536870160
-
+    static func interpretIOReturn(_ kr: kern_return_t) -> String {
         switch kr {
         case KERN_SUCCESS:
             return "Success"
@@ -234,11 +251,10 @@ final class ASFWDriverConnector: ObservableObject {
         }
     }
 
-    func kernResultString(_ kr: kern_return_t) -> String {
+    static func kernResultString(_ kr: kern_return_t) -> String {
         if let cString = mach_error_string(kr) {
             return String(cString: cString)
         }
         return "kern_result = \(kr)"
     }
-
 }

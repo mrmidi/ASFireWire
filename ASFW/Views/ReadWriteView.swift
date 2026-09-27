@@ -9,7 +9,7 @@ import SwiftUI
 import Foundation
 
 struct ReadWriteView: View {
-    @ObservedObject var viewModel: DebugViewModel
+    var viewModel: DebugViewModel
 
     // Transaction parameters
     @State private var operationType: OperationType = .read
@@ -236,7 +236,9 @@ struct ReadWriteView: View {
 
             // Send Button
             Button {
-                sendTransaction()
+                Task {
+                    await sendTransaction()
+                }
             } label: {
                 if isSending {
                     ProgressView()
@@ -258,7 +260,7 @@ struct ReadWriteView: View {
 
     // MARK: - Transaction Logic
 
-    private func sendTransaction() {
+    private func sendTransaction() async {
         guard viewModel.isConnected else {
             lastError = "Driver connection unavailable"
             return
@@ -307,9 +309,10 @@ struct ReadWriteView: View {
 
         let handle: UInt16?
 
+        let connector = viewModel.connectorObservable.connector
         switch operationType {
         case .read:
-            handle = viewModel.connector.asyncRead(
+            handle = await connector.asyncRead(
                 destinationID: destID,
                 addressHigh: addrHi,
                 addressLow: addrLo,
@@ -317,7 +320,7 @@ struct ReadWriteView: View {
             )
 
         case .blockRead:
-            handle = viewModel.connector.asyncBlockRead(
+            handle = await connector.asyncBlockRead(
                 destinationID: destID,
                 addressHigh: addrHi,
                 addressLow: addrLo,
@@ -325,7 +328,7 @@ struct ReadWriteView: View {
             )
 
         case .write:
-            handle = viewModel.connector.asyncWrite(
+            handle = await connector.asyncWrite(
                 destinationID: destID,
                 addressHigh: addrHi,
                 addressLow: addrLo,
@@ -333,7 +336,7 @@ struct ReadWriteView: View {
             )
 
         case .blockWrite:
-            handle = viewModel.connector.asyncBlockWrite(
+            handle = await connector.asyncBlockWrite(
                 destinationID: destID,
                 addressHigh: addrHi,
                 addressLow: addrLo,
@@ -343,38 +346,35 @@ struct ReadWriteView: View {
 
         guard let handle else {
             isSending = false
-            lastError = viewModel.connector.lastError ?? "Failed to issue transaction"
+            lastError = viewModel.connectorObservable.lastError ?? "Failed to issue transaction"
             return
         }
 
         lastHandle = handle
         lastTransactionDate = Date()
-        pollForResult(handle: handle, isReadOperation: operationType.isRead, deadline: Date().addingTimeInterval(2.0))
+        await pollForResult(handle: handle, isReadOperation: operationType.isRead, deadline: Date().addingTimeInterval(2.0))
     }
 
     private func pollForResult(handle: UInt16,
                                isReadOperation: Bool,
-                               deadline: Date) {
-        viewModel.fetchTransactionResult(handle: handle) { result in
-            if let result {
-                self.isSending = false
-                self.lastError = nil
-                self.lastStatus = result.status
-                self.lastResponseCode = result.responseCode
-                self.lastPayloadHex = isReadOperation ? formatPayloadHex(result.payload) : nil
-                return
-            }
-
+                               deadline: Date) async {
+        guard let result = await viewModel.fetchTransactionResult(handle: handle) else {
             if Date() >= deadline {
                 self.isSending = false
                 self.lastError = "Timed out waiting for transaction result"
                 return
             }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                self.pollForResult(handle: handle, isReadOperation: isReadOperation, deadline: deadline)
-            }
+            try? await Task.sleep(nanoseconds: UInt64(0.05 * 1_000_000_000))
+            await pollForResult(handle: handle, isReadOperation: isReadOperation, deadline: deadline)
+            return
         }
+
+        self.isSending = false
+        self.lastError = nil
+        self.lastStatus = result.status
+        self.lastResponseCode = result.responseCode
+        self.lastPayloadHex = isReadOperation ? formatPayloadHex(result.payload) : nil
     }
 
     // MARK: - Hex Parsing Helpers

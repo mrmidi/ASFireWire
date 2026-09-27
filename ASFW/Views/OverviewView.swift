@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct OverviewView: View {
-    @ObservedObject var viewModel: DriverViewModel
+    var viewModel: DriverViewModel
     @Binding var requireNewerBuild: Bool
     
     var body: some View {

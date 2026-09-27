@@ -9,7 +9,7 @@ import SwiftUI
 import Foundation
 
 struct CompareSwapView: View {
-    @ObservedObject var connector: ASFWDriverConnector
+    @ObservedObject var connectorObservable: ASFWDriverConnector.Observable
 
     // Transaction parameters - pre-filled with Apple driver test pattern
     @State private var destinationID: String = "ffc0"      // Duet node 0
@@ -178,7 +178,7 @@ struct CompareSwapView: View {
 
                 // Preset Button
                 Button {
-                    loadIRMPreset()
+                    Task.detached(priority: .userInitiated) { await loadIRMPreset() }
                 } label: {
                     if isLoadingPreset {
                         ProgressView()
@@ -190,7 +190,7 @@ struct CompareSwapView: View {
                     }
                 }
                 .buttonStyle(.bordered)
-                .disabled(!connector.isConnected || isLoadingPreset)
+                .disabled(!connectorObservable.isConnected || isLoadingPreset)
 
                 // Preset Status
                 if let status = presetStatus {
@@ -221,7 +221,7 @@ struct CompareSwapView: View {
                 // Status Display
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        if connector.isConnected {
+                        if connectorObservable.isConnected {
                             Label("Connected to driver", systemImage: "checkmark.circle.fill")
                                 .foregroundColor(.green)
                         } else {
@@ -295,7 +295,7 @@ struct CompareSwapView: View {
 
                 // Send Button
                 Button {
-                    sendCompareSwap()
+                    Task { await sendCompareSwap() }
                 } label: {
                     if isSending {
                         ProgressView()
@@ -307,7 +307,7 @@ struct CompareSwapView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isSending || !connector.isConnected)
+                .disabled(isSending || !connectorObservable.isConnected)
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -317,8 +317,8 @@ struct CompareSwapView: View {
 
     // MARK: - Transaction Logic
 
-    private func sendCompareSwap() {
-        guard connector.isConnected else {
+    private func sendCompareSwap() async {
+        guard connectorObservable.isConnected else {
             lastError = "Driver connection unavailable"
             return
         }
@@ -350,21 +350,21 @@ struct CompareSwapView: View {
         }
 
         // Validate node ID against current topology
-        validateNodeID(destID)
+        await validateNodeID(destID)
 
         isSending = true
         lastError = nil
         lockResult = nil
 
         // Call driver
-        if let result = connector.asyncCompareSwap(
+        if let result = await connectorObservable.connector.asyncCompareSwap(
             destinationID: destID,
             addressHigh: addrHi,
             addressLow: addrLo,
             compareValue: cmpData,
             newValue: newData
         ) {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.isSending = false
                 self.lastTransactionDate = Date()
                 self.lastHandle = result.handle
@@ -375,9 +375,9 @@ struct CompareSwapView: View {
                 print("[CompareSwapView] Transaction initiated: handle=0x\(String(format: "%04X", result.handle ?? 0))")
             }
         } else {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.isSending = false
-                self.lastError = connector.lastError ?? "Unknown error"
+                self.lastError = connectorObservable.lastError ?? "Unknown error"
             }
         }
     }
@@ -431,8 +431,8 @@ struct CompareSwapView: View {
 
     // MARK: - Topology Preset
 
-    private func loadIRMPreset() {
-        guard let topology = connector.getTopologySnapshot() else {
+    private func loadIRMPreset() async {
+        guard let topology = await connectorObservable.connector.getTopologySnapshot() else {
             topologyWarning = "Failed to get topology. Wait for bus reset."
             lastError = "No topology data available"
             return
@@ -471,17 +471,17 @@ struct CompareSwapView: View {
         print("[CompareSwapView] Loaded IRM preset: node=0x\(String(format: "%04x", fullNodeID)) (physID=\(irmNodeId) busBase=0x\(String(format: "%04X", topology.busBase16))), addr=0xFFFF:F0000220")
 
         // Step 1: Read current value (like Apple driver does)
-        readCurrentValueForPreset(destinationID: fullNodeID)
+        await readCurrentValueForPreset(destinationID: fullNodeID)
     }
 
-    private func readCurrentValueForPreset(destinationID: UInt16) {
-        guard let readHandle = connector.asyncRead(
+    private func readCurrentValueForPreset(destinationID: UInt16) async {
+        guard let readHandle = await connectorObservable.connector.asyncRead(
             destinationID: destinationID,
             addressHigh: 0xFFFF,
             addressLow: 0xF0000220,  // BANDWIDTH_AVAILABLE
             length: 4
         ) else {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.isLoadingPreset = false
                 self.presetStatus = nil
                 self.lastError = "Failed to initiate read for preset"
@@ -493,12 +493,13 @@ struct CompareSwapView: View {
 
         // Poll for read completion
         // In a real implementation, we'd use completion callbacks, but for now poll
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.3) {
-            self.checkReadCompletion(handle: readHandle)
+        Task.detached(priority: .userInitiated) {
+            try? await Task.sleep(until: .now.advanced(by: .milliseconds(300)))
+            await self.checkReadCompletion(handle: readHandle)
         }
     }
 
-    private func checkReadCompletion(handle: UInt16) {
+    nonisolated private func checkReadCompletion(handle: UInt16) async {
         // Check if read completed via connector's transaction tracking
         // This is a simplified approach - ideally we'd have proper callbacks
 
@@ -508,7 +509,7 @@ struct CompareSwapView: View {
         // Simulate getting the read value
         let simulatedCurrentValue: UInt32 = 0x00001063  // Typical bandwidth units
 
-        DispatchQueue.main.async {
+        Task { @MainActor in
             presetStatus = "Step 2/2: Auto-filling compare/new values..."
 
             // Auto-fill compare and new values with current value (no-op lock)
@@ -525,8 +526,8 @@ struct CompareSwapView: View {
 
     // MARK: - Validation
 
-    private func validateNodeID(_ destID: UInt16) {
-        guard let topology = connector.getTopologySnapshot() else {
+    private func validateNodeID(_ destID: UInt16) async {
+        guard let topology = await connectorObservable.connector.getTopologySnapshot() else {
             topologyWarning = "Topology unavailable - node ID cannot be validated"
             return
         }
@@ -547,6 +548,6 @@ struct CompareSwapView: View {
 
 #if false
 #Preview {
-    CompareSwapView(connector: ASFWDriverConnector())
+    CompareSwapView(connectorObservable: ASFWDriverConnector.Observable())
 }
 #endif

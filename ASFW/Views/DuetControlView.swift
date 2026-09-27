@@ -1,12 +1,12 @@
 import SwiftUI
 
 struct DuetControlView: View {
-    @StateObject private var viewModel: DuetControlViewModel
+    @State private var viewModel: DuetControlViewModel
 
     private let faderLabels = ["In 1", "In 2", "Str 1", "Str 2"]
 
-    init(connector: ASFWDriverConnector) {
-        _viewModel = StateObject(wrappedValue: DuetControlViewModel(connector: connector))
+    init(connectorObservable: ASFWDriverConnector.Observable) {
+        _viewModel = State(initialValue: DuetControlViewModel(connectorObservable: connectorObservable))
     }
 
     var body: some View {

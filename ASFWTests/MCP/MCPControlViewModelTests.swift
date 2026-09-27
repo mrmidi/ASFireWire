@@ -4,13 +4,15 @@ import Testing
 
 @MainActor
 struct MCPControlViewModelTests {
-    @Test func viewModelStartsStopsAndPersistsEnabledSettings() async throws {
+    @Test
+    @MainActor
+    func viewModelStartsStopsAndPersistsEnabledSettings() async throws {
         let suiteName = "ASFWTests.MCPControl.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
 
         let viewModel = ASFWMCPControlViewModel(
-            connector: ASFWDriverConnector(),
+            connectorObservable: ASFWDriverConnector.Observable(),
             defaults: defaults
         )
         viewModel.setGuardedFCPExperimentsEnabled(true)

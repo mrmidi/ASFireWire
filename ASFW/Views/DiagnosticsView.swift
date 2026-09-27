@@ -9,7 +9,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct DiagnosticsView: View {
-    @ObservedObject var store: DiagnosticsStore
+    var store: DiagnosticsStore
     @State private var showingClearConfirmation = false
     @State private var copyFeedbackText = "Copy Report"
     @State private var copyFeedbackIcon = "doc.on.doc"

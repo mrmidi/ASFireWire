@@ -1,6 +1,6 @@
 import Foundation
 
-struct ASFWMCPCore<Driver: ASFWDriverControlling> {
+struct ASFWMCPCore<Driver: ASFWDriverControlling>: Sendable {
     let configuration: ASFWMCPRuntimeConfiguration
     let driver: Driver
 

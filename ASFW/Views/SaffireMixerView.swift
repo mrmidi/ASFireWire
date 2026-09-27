@@ -8,10 +8,10 @@
 import SwiftUI
 
 struct SaffireMixerView: View {
-    @StateObject private var viewModel: SaffireMixerViewModel
+    @State private var viewModel: SaffireMixerViewModel
     
-    init(connector: ASFWDriverConnector) {
-        _viewModel = StateObject(wrappedValue: SaffireMixerViewModel(connector: connector))
+    init(connectorObservable: ASFWDriverConnector.Observable) {
+        _viewModel = State(initialValue: SaffireMixerViewModel(connectorObservable: connectorObservable))
     }
     
     var body: some View {

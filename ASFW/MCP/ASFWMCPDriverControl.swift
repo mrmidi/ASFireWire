@@ -1,7 +1,7 @@
 import Foundation
 
-protocol ASFWDriverControlling {
-    func fetchDriverVersion() async -> DriverVersionInfo?
+protocol ASFWDriverControlling: Sendable {
+	func fetchDriverVersion() async -> DriverVersionInfo?
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot
     func fetchTopology() async -> ASFWMCPTopologySnapshot?
     func fetchConfigROM(nodeId: UInt32, generation: UInt32) async -> ASFWMCPConfigRomSummary?

@@ -57,7 +57,7 @@ enum DVCaptureSessionState: UInt32 {
 // MARK: - Mapped Ring
 
 /// Consumer-side view of the shared DV ring. Single consumer only.
-final class DVCaptureRing {
+final actor DVCaptureRing {
     static let magic: UInt32 = 0x41534456 // 'ASDV'
     static let version: UInt16 = 3
     static let headerBytes = 192
@@ -120,26 +120,28 @@ final class DVCaptureRing {
         IOConnectUnmapMemory64(connection, 1, mach_task_self_, mappedAddress)
     }
 
+    isolated
     deinit { unmap() }
 
     /// Drain all available records, invoking the handler with each 480-byte chunk.
     /// Returns the number of records consumed.
     ///
     @discardableResult
-    func drain(_ handler: (UnsafeRawBufferPointer) -> Void) -> Int {
+    func drain<R>(_ collector: R, _ handler: @Sendable (UnsafeRawBufferPointer, inout R) -> Void) -> (Int, R) {
         let writePointer = (base + 64).assumingMemoryBound(to: UInt32.self)
         let readPointer = (base + 128).assumingMemoryBound(to: UInt32.self)
         let w = ASFWAtomicLoadU32Acquire(writePointer)
         var r = ASFWAtomicLoadU32Acquire(readPointer)
         var consumed = 0
 
+        var collector = collector
         while r != w {
             let idx = Int(r % numRecords)
             let chunk = UnsafeRawBufferPointer(
                 start: base + dataOffset + idx * DVCaptureRing.recordBytes,
                 count: DVCaptureRing.recordBytes
             )
-            handler(chunk)
+            handler(chunk, &collector)
             r &+= 1
             consumed += 1
         }
@@ -147,7 +149,7 @@ final class DVCaptureRing {
         if consumed > 0 {
             ASFWAtomicStoreU32Release(readPointer, r)
         }
-        return consumed
+        return (consumed, collector)
     }
 
     var stats: DVCaptureStats {
@@ -191,7 +193,7 @@ extension ASFWDriverConnector {
         )
 
         if kr != KERN_SUCCESS {
-            log("startDVCapture failed: \(interpretIOReturn(kr))", level: .error)
+            log("startDVCapture failed: \(Self.interpretIOReturn(kr))", level: .error)
             return false
         }
         log("Started DV capture for GUID \(String(format: "%016llX", deviceGUID))",
@@ -211,7 +213,7 @@ extension ASFWDriverConnector {
         )
 
         if kr != KERN_SUCCESS {
-            log("stopDVCapture failed: \(interpretIOReturn(kr))", level: .error)
+            log("stopDVCapture failed: \(Self.interpretIOReturn(kr))", level: .error)
             return false
         }
         log("Stopped DV capture", level: .info)
