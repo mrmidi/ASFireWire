@@ -87,6 +87,103 @@ public:
                                 });
     }
 
+    // RME Fireface vendor registers are little-endian quadlets. Keep these
+    // explicit beside the AV/C/DICE big-endian operations; they must never
+    // silently change the established BE protocol contract.
+    [[nodiscard]] Async::AsyncHandle ReadQuadLE(
+        Async::FWAddress address, QuadReadCallback callback,
+        std::optional<FW::FwSpeed> speedOverride = std::nullopt)
+    {
+        if (!IsRouteCurrent()) {
+            callback(Async::AsyncStatus::kStaleGeneration, 0U);
+            return {};
+        }
+        const auto route = route_;
+        auto* registry = &routeRegistry_;
+        const auto node = NodeId();
+        const auto speed = ResolveSpeed(speedOverride);
+        return busOps_.ReadQuad(route.generation, node, address, speed,
+            [registry, route, callback = std::move(callback)](Async::AsyncStatus status,
+                                                               std::span<const uint8_t> payload) mutable {
+                if (!callback) return;
+                if (!registry->IsCurrent(route)) {
+                    callback(Async::AsyncStatus::kStaleGeneration, 0U);
+                } else if (status != Async::AsyncStatus::kSuccess) {
+                    callback(status, 0U);
+                } else if (payload.size() < sizeof(uint32_t)) {
+                    callback(Async::AsyncStatus::kShortRead, 0U);
+                } else {
+                    const uint32_t value = static_cast<uint32_t>(payload[0]) |
+                        (static_cast<uint32_t>(payload[1]) << 8) |
+                        (static_cast<uint32_t>(payload[2]) << 16) |
+                        (static_cast<uint32_t>(payload[3]) << 24);
+                    callback(Async::AsyncStatus::kSuccess, value);
+                }
+            });
+    }
+
+    [[nodiscard]] Async::AsyncHandle WriteQuadLE(
+        Async::FWAddress address, uint32_t value, WriteCallback callback,
+        std::optional<FW::FwSpeed> speedOverride = std::nullopt)
+    {
+        if (!IsRouteCurrent()) {
+            callback(Async::AsyncStatus::kStaleGeneration);
+            return {};
+        }
+        std::array<uint8_t, sizeof(uint32_t)> bytes{
+            static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8),
+            static_cast<uint8_t>(value >> 16), static_cast<uint8_t>(value >> 24)};
+        const auto route = route_;
+        auto* registry = &routeRegistry_;
+        const auto node = NodeId();
+        const auto speed = ResolveSpeed(speedOverride);
+        return busOps_.WriteBlock(route.generation, node, address, bytes, speed,
+            [registry, route, callback = std::move(callback)](Async::AsyncStatus status,
+                                                               std::span<const uint8_t>) mutable {
+                if (callback) callback(registry->IsCurrent(route) ? status
+                    : Async::AsyncStatus::kStaleGeneration);
+            });
+    }
+
+    [[nodiscard]] Async::AsyncHandle WriteBlockLEQuadlets(
+        Async::FWAddress address, std::span<const uint32_t> values, WriteCallback callback,
+        std::optional<FW::FwSpeed> speedOverride = std::nullopt)
+    {
+        if (!IsRouteCurrent()) {
+            callback(Async::AsyncStatus::kStaleGeneration);
+            return {};
+        }
+        if (values.empty()) {
+            callback(Async::AsyncStatus::kSuccess);
+            return {};
+        }
+        // Current family commands are fixed small tuples; bounded stack storage
+        // avoids heap work on control callbacks and rejects oversized writes.
+        if (values.size() > 32) {
+            callback(Async::AsyncStatus::kHardwareError);
+            return {};
+        }
+        std::array<uint8_t, 32 * sizeof(uint32_t)> bytes{};
+        for (size_t i = 0; i < values.size(); ++i) {
+            const uint32_t value = values[i];
+            bytes[i * 4] = static_cast<uint8_t>(value);
+            bytes[i * 4 + 1] = static_cast<uint8_t>(value >> 8);
+            bytes[i * 4 + 2] = static_cast<uint8_t>(value >> 16);
+            bytes[i * 4 + 3] = static_cast<uint8_t>(value >> 24);
+        }
+        const auto route = route_;
+        auto* registry = &routeRegistry_;
+        const auto node = NodeId();
+        const auto speed = ResolveSpeed(speedOverride);
+        return busOps_.WriteBlock(route.generation, node, address,
+            std::span<const uint8_t>(bytes.data(), values.size() * 4), speed,
+            [registry, route, callback = std::move(callback)](Async::AsyncStatus status,
+                                                               std::span<const uint8_t>) mutable {
+                if (callback) callback(registry->IsCurrent(route) ? status
+                    : Async::AsyncStatus::kStaleGeneration);
+            });
+    }
+
     [[nodiscard]] Async::AsyncHandle WriteQuadBE(
         Async::FWAddress address,
         uint32_t value,

@@ -756,8 +756,9 @@ std::expected<DuplexPrepareResult, IOReturn> ApogeeDuetDuplex::Configure(
         teardownCancel_);
 }
 
-void ApogeeDuetDuplex::AssignChannels(const AudioDuplexChannels& channels) {
+std::expected<AudioDuplexChannels, IOReturn> ApogeeDuetDuplex::AssignChannels(const AudioDuplexChannels& channels) {
     SetAssignedChannels(channels);
+    return channels;
 }
 
 std::expected<DuplexHealthResult, IOReturn> ApogeeDuetDuplex::ReadHealth(uint32_t timeoutMs) {

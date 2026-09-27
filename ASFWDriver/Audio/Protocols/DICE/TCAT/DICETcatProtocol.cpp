@@ -231,17 +231,19 @@ std::expected<DuplexPrepareResult, IOReturn> DICETcatProtocol::Configure(
     return result;
 }
 
-void DICETcatProtocol::AssignChannels(const AudioDuplexChannels& channels) {
+std::expected<AudioDuplexChannels, IOReturn> DICETcatProtocol::AssignChannels(const AudioDuplexChannels& channels) {
     // The IRM chose these channels; the device must be told the same ones the
     // host DMA will use. ArmDeviceRx refuses to run unprepared, so a refusal
     // here cannot leave the two sides on different channels.
     if (!driver_) {
-        return;
+        return std::unexpected(kIOReturnNotReady);
     }
     if (const IOReturn status = driver_->AssignChannels(channels); status != kIOReturnSuccess) {
         ASFW_LOG_ERROR(DICE, "AssignChannels: refused d2h=%u h2d=%u kr=0x%x",
                        channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, status);
+        return std::unexpected(status);
     }
+    return channels;
 }
 
 std::expected<DuplexHealthResult, IOReturn> DICETcatProtocol::ReadHealth(uint32_t timeoutMs) {

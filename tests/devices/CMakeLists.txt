@@ -27,6 +27,12 @@ add_device_test(DiceFamilyDriverTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
+# Scripted FF400/FF800 register sequencing, clock admission, and resource ownership.
+add_device_test(FirefaceFamilyDriverTests
+    FirefaceFamilyDriverTests.cpp
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+
 # Generic audio duplex IRM stream reservations and channel geometry tests
 add_device_test(DuplexIRMReservationsTests
     DuplexIRMReservationsTests.cpp

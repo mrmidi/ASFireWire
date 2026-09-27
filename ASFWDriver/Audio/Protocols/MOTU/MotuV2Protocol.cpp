@@ -663,8 +663,9 @@ std::expected<DuplexPrepareResult, IOReturn> MotuV2Protocol::Configure(
         teardownCancel_);
 }
 
-void MotuV2Protocol::AssignChannels(const AudioDuplexChannels& channels) {
+std::expected<AudioDuplexChannels, IOReturn> MotuV2Protocol::AssignChannels(const AudioDuplexChannels& channels) {
     SetAssignedChannels(channels);
+    return channels;
 }
 
 std::expected<DuplexHealthResult, IOReturn> MotuV2Protocol::ReadHealth(uint32_t timeoutMs) {

@@ -602,8 +602,9 @@ std::expected<DuplexPrepareResult, IOReturn> BeBoBProtocol::Configure(
         teardownCancel_);
 }
 
-void BeBoBProtocol::AssignChannels(const AudioDuplexChannels& channels) {
+std::expected<AudioDuplexChannels, IOReturn> BeBoBProtocol::AssignChannels(const AudioDuplexChannels& channels) {
     SetAssignedChannels(channels);
+    return channels;
 }
 
 std::expected<DuplexHealthResult, IOReturn> BeBoBProtocol::ReadHealth(uint32_t timeoutMs) {
