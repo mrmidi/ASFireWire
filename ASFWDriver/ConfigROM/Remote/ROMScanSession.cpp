@@ -210,14 +210,15 @@ void ROMScanSession::DispatchDelayed(std::function<void()> work, uint64_t delayN
 #else
         const uint64_t delayMs = delayNs / 1'000'000ULL;
         const uint64_t trailingNs = delayNs % 1'000'000ULL;
-        Post([delayMs, trailingNs, work = std::move(work)]() mutable {
+        auto workPtr = std::make_shared<std::function<void()>>(std::move(work));
+        Post([delayMs, trailingNs, workPtr]() mutable {
             if (delayMs > 0) {
                 IOSleep(delayMs);
             }
             if (trailingNs > 0) {
                 IODelay((trailingNs + 999ULL) / 1000ULL);
             }
-            work();
+            (*workPtr)();
         });
         return;
 #endif

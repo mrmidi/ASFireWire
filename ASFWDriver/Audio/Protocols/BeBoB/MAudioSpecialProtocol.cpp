@@ -356,10 +356,13 @@ void MAudioSpecialProtocol::SetSignalFormat(uint32_t rateHz, bool input,
         return;
     }
     auto command = std::make_shared<SignalCommand>(*fcpTransport_, 0, input, rate);
-    command->Submit([completion = std::move(completion), command](
+    auto completionPtr = std::make_shared<std::function<void(IOReturn)>>(std::move(completion));
+    command->Submit([completionPtr, command](
                         Protocols::AVC::AVCResult result,
                         const SignalCommand::SignalFormat&) mutable {
-        completion(ToIOReturn(result));
+        if (completionPtr) {
+            (*completionPtr)(ToIOReturn(result));
+        }
     });
 }
 

@@ -392,10 +392,11 @@ void DICETcatProtocol::EnsureSectionsLoaded(VoidCallback callback) {
         return;
     }
 
-    diceReader_.ReadGeneralSections([this, callback = std::move(callback)](IOReturn status, GeneralSections sections) mutable {
+    auto callbackPtr = std::make_shared<VoidCallback>(std::move(callback));
+    diceReader_.ReadGeneralSections([this, callbackPtr](IOReturn status, GeneralSections sections) mutable {
         if (status != kIOReturnSuccess) {
             ASFW_LOG(DICE, "DICETcatProtocol: failed to read general sections: 0x%x", status);
-            callback(status);
+            (*callbackPtr)(status);
             return;
         }
 
@@ -411,7 +412,7 @@ void DICETcatProtocol::EnsureSectionsLoaded(VoidCallback callback) {
                  sections_.rxStreamFormat.size,
                  sections_.extSync.offset,
                  sections_.extSync.size);
-        callback(kIOReturnSuccess);
+        (*callbackPtr)(kIOReturnSuccess);
     });
 }
 
@@ -426,9 +427,9 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
         return;
     }
 
-    EnsureSectionsLoaded([this, callback = std::move(callback)](IOReturn sectionStatus) mutable {
+    EnsureSectionsLoaded([this, callback = std::make_shared<VoidCallback>(std::move(callback))](IOReturn sectionStatus) mutable {
         if (sectionStatus != kIOReturnSuccess) {
-            callback(sectionStatus);
+            (*callback)(sectionStatus);
             return;
         }
 
@@ -444,7 +445,7 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
             [this, state, callback = std::move(callback)](IOReturn globalStatus, GlobalState global) mutable {
                 if (globalStatus != kIOReturnSuccess) {
                     ASFW_LOG(DICE, "DICETcatProtocol: failed to read global state: 0x%x", globalStatus);
-                    callback(globalStatus);
+                    (*callback)(globalStatus);
                     return;
                 }
 
@@ -461,7 +462,7 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
                     [this, state, callback = std::move(callback)](IOReturn txStatus, StreamConfig tx) mutable {
                         if (txStatus != kIOReturnSuccess) {
                             ASFW_LOG(DICE, "DICETcatProtocol: failed to read TX stream config: 0x%x", txStatus);
-                            callback(txStatus);
+                            (*callback)(txStatus);
                             return;
                         }
 
@@ -472,7 +473,7 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
                             [this, state, callback = std::move(callback)](IOReturn rxStatus, StreamConfig rx) mutable {
                                 if (rxStatus != kIOReturnSuccess) {
                                     ASFW_LOG(DICE, "DICETcatProtocol: failed to read RX stream config: 0x%x", rxStatus);
-                                    callback(rxStatus);
+                                    (*callback)(rxStatus);
                                     return;
                                 }
 
@@ -486,7 +487,7 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
                                     ASFW_LOG(DICE,
                                              "DICETcatProtocol: standard DICE discovery produced zero or partial caps; audio publication should fail closed");
                                 }
-                                callback(kIOReturnSuccess);
+                                (*callback)(kIOReturnSuccess);
                             });
                     });
             });

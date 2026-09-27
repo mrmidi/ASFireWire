@@ -62,28 +62,29 @@ public:
             return {};
         }
         const auto route = route_;
+        auto callbackPtr = std::make_shared<QuadReadCallback>(std::move(callback));
         return busOps_.ReadQuad(route.generation,
                                 NodeId(),
                                 address,
                                 ResolveSpeed(speedOverride),
-                                [this, route, callback = std::move(callback)](Async::AsyncStatus status,
+                                [this, route, callbackPtr](Async::AsyncStatus status,
                                                                  std::span<const uint8_t> payload) mutable {
-                                    if (!callback) {
+                                    if (!callbackPtr) {
                                         return;
                                     }
                                     if (!routeRegistry_.IsCurrent(route)) {
-                                        callback(Async::AsyncStatus::kStaleGeneration, 0U);
+                                        (*callbackPtr)(Async::AsyncStatus::kStaleGeneration, 0U);
                                         return;
                                     }
                                     if (status != Async::AsyncStatus::kSuccess) {
-                                        callback(status, 0U);
+                                        (*callbackPtr)(status, 0U);
                                         return;
                                     }
                                     if (payload.size() < sizeof(uint32_t)) {
-                                        callback(Async::AsyncStatus::kShortRead, 0U);
+                                        (*callbackPtr)(Async::AsyncStatus::kShortRead, 0U);
                                         return;
                                     }
-                                    callback(Async::AsyncStatus::kSuccess, FW::ReadBE32(payload.data()));
+                                    (*callbackPtr)(Async::AsyncStatus::kSuccess, FW::ReadBE32(payload.data()));
                                 });
     }
 
@@ -100,15 +101,16 @@ public:
         std::array<uint8_t, sizeof(uint32_t)> bytes{};
         FW::WriteBE32(bytes.data(), value);
         const auto route = route_;
+        auto callbackPtr = std::make_shared<WriteCallback>(std::move(callback));
         return busOps_.WriteBlock(route.generation,
                                   NodeId(),
                                   address,
                                   std::span<const uint8_t>(bytes.data(), bytes.size()),
                                   ResolveSpeed(speedOverride),
-                                  [this, route, callback = std::move(callback)](Async::AsyncStatus status,
+                                  [this, route, callbackPtr](Async::AsyncStatus status,
                                                                    std::span<const uint8_t>) mutable {
-                                      if (callback) {
-                                          callback(routeRegistry_.IsCurrent(route)
+                                      if (callbackPtr) {
+                                          (*callbackPtr)(routeRegistry_.IsCurrent(route)
                                                        ? status
                                                        : Async::AsyncStatus::kStaleGeneration);
                                       }
@@ -126,29 +128,30 @@ public:
             return {};
         }
         const auto route = route_;
+        auto callbackPtr = std::make_shared<BlockReadCallback>(std::move(callback));
         return busOps_.ReadBlock(route.generation,
                                  NodeId(),
                                  address,
                                  length,
                                  ResolveSpeed(speedOverride),
-                                 [this, route, callback = std::move(callback), length](Async::AsyncStatus status,
+                                 [this, route, callbackPtr, length](Async::AsyncStatus status,
                                                                           std::span<const uint8_t> payload) mutable {
-                                     if (!callback) {
+                                     if (!callbackPtr) {
                                          return;
                                      }
                                      if (!routeRegistry_.IsCurrent(route)) {
-                                         callback(Async::AsyncStatus::kStaleGeneration, {});
+                                         (*callbackPtr)(Async::AsyncStatus::kStaleGeneration, {});
                                          return;
                                      }
                                      if (status != Async::AsyncStatus::kSuccess) {
-                                         callback(status, {});
+                                         (*callbackPtr)(status, {});
                                          return;
                                      }
                                      if (payload.size() < length) {
-                                         callback(Async::AsyncStatus::kShortRead, payload);
+                                         (*callbackPtr)(Async::AsyncStatus::kShortRead, payload);
                                          return;
                                      }
-                                     callback(Async::AsyncStatus::kSuccess, payload);
+                                     (*callbackPtr)(Async::AsyncStatus::kSuccess, payload);
                                  });
     }
 
@@ -163,15 +166,16 @@ public:
             return {};
         }
         const auto route = route_;
+        auto callbackPtr = std::make_shared<WriteCallback>(std::move(callback));
         return busOps_.WriteBlock(route.generation,
                                   NodeId(),
                                   address,
                                   payload,
                                   ResolveSpeed(speedOverride),
-                                  [this, route, callback = std::move(callback)](Async::AsyncStatus status,
+                                  [this, route, callbackPtr](Async::AsyncStatus status,
                                                                    std::span<const uint8_t>) mutable {
-                                      if (callback) {
-                                          callback(routeRegistry_.IsCurrent(route)
+                                      if (callbackPtr) {
+                                          (*callbackPtr)(routeRegistry_.IsCurrent(route)
                                                        ? status
                                                        : Async::AsyncStatus::kStaleGeneration);
                                       }
@@ -194,6 +198,7 @@ public:
         FW::WriteBE64(operand.data() + 8, desired);
 
         const auto route = route_;
+        auto callbackPtr = std::make_shared<CompareSwap64Callback>(std::move(callback));
         return busOps_.Lock(route.generation,
                             NodeId(),
                             address,
@@ -201,24 +206,24 @@ public:
                             std::span<const uint8_t>(operand.data(), operand.size()),
                             8,
                             ResolveSpeed(speedOverride),
-                            [this, route, callback = std::move(callback)](Async::AsyncStatus status,
+                            [this, route, callbackPtr](Async::AsyncStatus status,
                                                              std::span<const uint8_t> payload) mutable {
-                                if (!callback) {
+                                if (!callbackPtr) {
                                     return;
                                 }
                                 if (!routeRegistry_.IsCurrent(route)) {
-                                    callback(Async::AsyncStatus::kStaleGeneration, 0ULL);
+                                    (*callbackPtr)(Async::AsyncStatus::kStaleGeneration, 0ULL);
                                     return;
                                 }
                                 if (status != Async::AsyncStatus::kSuccess) {
-                                    callback(status, 0ULL);
+                                    (*callbackPtr)(status, 0ULL);
                                     return;
                                 }
                                 if (payload.size() < sizeof(uint64_t)) {
-                                    callback(Async::AsyncStatus::kShortRead, 0ULL);
+                                    (*callbackPtr)(Async::AsyncStatus::kShortRead, 0ULL);
                                     return;
                                 }
-                                callback(Async::AsyncStatus::kSuccess, FW::ReadBE64(payload.data()));
+                                (*callbackPtr)(Async::AsyncStatus::kSuccess, FW::ReadBE64(payload.data()));
                             });
     }
 
