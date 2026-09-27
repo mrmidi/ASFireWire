@@ -236,9 +236,19 @@ TEST(AvcFixtureTests, DuetAllRecordsParseConsistently) {
     size_t stableCount = 0;
     size_t notImplementedCount = 0;
     size_t rejectedCount = 0;
+    size_t acceptedCount = 0;
+    size_t csrCount = 0;
 
     for (const auto& rec : device.records) {
         ASSERT_TRUE(rec.ok) << "Failed exchange: " << rec.name;
+
+        // Raw IEEE 1394 CSR transactions (Oxford ASIC registers / DSP meters)
+        if (!rec.command.empty() && rec.command[0] == 0xF0) {
+            csrCount++;
+            EXPECT_GE(rec.response.size(), 4U) << "CSR response too short: " << rec.name;
+            continue;
+        }
+
         ASSERT_GE(rec.response.size(), 3U) << "Response too short: " << rec.name;
 
         auto respRes = ParseResponse(rec.response);
@@ -250,6 +260,11 @@ TEST(AvcFixtureTests, DuetAllRecordsParseConsistently) {
             EXPECT_EQ(resp.code, ResponseCode::kImplementedStable) << "Record: " << rec.name;
             auto ops = OperandsIf(resp, ResponseCode::kImplementedStable);
             EXPECT_TRUE(ops.has_value()) << "OperandsIf failed on stable record: " << rec.name;
+        } else if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kAccepted)) {
+            acceptedCount++;
+            EXPECT_EQ(resp.code, ResponseCode::kAccepted) << "Record: " << rec.name;
+            auto ops = OperandsIf(resp, ResponseCode::kAccepted);
+            EXPECT_TRUE(ops.has_value()) << "OperandsIf failed on accepted record: " << rec.name;
         } else if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kNotImplemented)) {
             notImplementedCount++;
             EXPECT_EQ(resp.code, ResponseCode::kNotImplemented) << "Record: " << rec.name;
@@ -269,6 +284,8 @@ TEST(AvcFixtureTests, DuetAllRecordsParseConsistently) {
 
     EXPECT_GT(stableCount, 50U);
     EXPECT_GT(notImplementedCount, 10U);
+    EXPECT_GT(acceptedCount, 5U);
+    EXPECT_EQ(csrCount, 4U);
 }
 
 TEST(AvcFixtureTests, DuetUnitInfoParsesCorrectly) {
@@ -360,4 +377,115 @@ TEST(AvcFixtureTests, DuetFunctionBlocksAndInquiryValidate) {
     }
 }
 
+TEST(AvcFixtureTests, DuetOxfordAsicRegistersAndDspMetersValidate) {
+    bool foundFwId = false;
+    bool foundHwId = false;
+    bool foundInMeters = false;
+    bool foundMixMeters = false;
+
+    for (const auto& rec : Testing::kDuet.records) {
+        if (std::string_view(rec.name) == "oxford_firmware_id") {
+            foundFwId = true;
+            ASSERT_EQ(rec.response.size(), 4U);
+            EXPECT_EQ(rec.response[0], 0x97);
+            EXPECT_EQ(rec.response[1], 0x10);
+            EXPECT_EQ(rec.response[2], 0x01);
+            EXPECT_EQ(rec.response[3], 0x05);
+        } else if (std::string_view(rec.name) == "oxford_hardware_id") {
+            foundHwId = true;
+            ASSERT_EQ(rec.response.size(), 4U);
+            // "971\0" = 0x39, 0x37, 0x31, 0x00
+            EXPECT_EQ(rec.response[0], '9');
+            EXPECT_EQ(rec.response[1], '7');
+            EXPECT_EQ(rec.response[2], '1');
+            EXPECT_EQ(rec.response[3], '\0');
+        } else if (std::string_view(rec.name) == "apogee_dsp_input_meters") {
+            foundInMeters = true;
+            EXPECT_EQ(rec.response.size(), 8U);
+        } else if (std::string_view(rec.name) == "apogee_dsp_mixer_meters") {
+            foundMixMeters = true;
+            EXPECT_EQ(rec.response.size(), 16U);
+        }
+    }
+
+    EXPECT_TRUE(foundFwId);
+    EXPECT_TRUE(foundHwId);
+    EXPECT_TRUE(foundInMeters);
+    EXPECT_TRUE(foundMixMeters);
+}
+
+TEST(AvcFixtureTests, DuetApogeeVendorCommandsValidate) {
+    bool foundHwState = false;
+    bool foundGain = false;
+    bool foundPhantom = false;
+    bool foundMute = false;
+    bool foundInquiryPhantom = false;
+    bool foundMixer = false;
+
+    for (const auto& rec : Testing::kDuet.records) {
+        if (std::string_view(rec.name) == "apogee_hw_state") {
+            foundHwState = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+            EXPECT_TRUE(resp->address.IsUnit());
+            EXPECT_EQ(resp->opcode, Opcode::kVendorDependent);
+            // 6-byte prefix (OUI 00:03:DB + 'PCM') + 3 bytes header + 11 bytes status = 20 operands (23 frame bytes)
+            ASSERT_EQ(resp->operands.size(), 20U);
+            EXPECT_EQ(resp->operands[0], 0x00);
+            EXPECT_EQ(resp->operands[1], 0x03);
+            EXPECT_EQ(resp->operands[2], 0xDB);
+            EXPECT_EQ(resp->operands[3], 'P');
+            EXPECT_EQ(resp->operands[4], 'C');
+            EXPECT_EQ(resp->operands[5], 'M');
+            EXPECT_EQ(resp->operands[6], 0x07); // HwState cmd
+        } else if (std::string_view(rec.name) == "apogee_in_gain_ch0") {
+            foundGain = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+            ASSERT_GE(resp->operands.size(), 10U);
+            EXPECT_EQ(resp->operands[6], 0x05); // InGain cmd
+            EXPECT_EQ(resp->operands[9], 0x0A); // 10 dB
+        } else if (std::string_view(rec.name) == "apogee_mic_phantom_ch0") {
+            foundPhantom = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+            ASSERT_GE(resp->operands.size(), 10U);
+            EXPECT_EQ(resp->operands[6], 0x03); // Phantom cmd
+            EXPECT_EQ(resp->operands[9], 0x60); // Off (0x60)
+        } else if (std::string_view(rec.name) == "apogee_out_mute") {
+            foundMute = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+            ASSERT_GE(resp->operands.size(), 10U);
+            EXPECT_EQ(resp->operands[6], 0x09); // OutMute cmd
+            EXPECT_EQ(resp->operands[9], 0x70); // Muted (0x70)
+        } else if (std::string_view(rec.name) == "inquiry_apogee_mic_phantom_ch0_on") {
+            foundInquiryPhantom = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kAccepted);
+        } else if (std::string_view(rec.name) == "apogee_mixer_src_0_dst_0") {
+            foundMixer = true;
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+            EXPECT_EQ(resp->opcode, Opcode::kVendorDependent);
+            ASSERT_GE(resp->operands.size(), 9U);
+            EXPECT_EQ(resp->operands[6], 0x10); // Mixer cmd
+        }
+    }
+
+    EXPECT_TRUE(foundHwState);
+    EXPECT_TRUE(foundGain);
+    EXPECT_TRUE(foundPhantom);
+    EXPECT_TRUE(foundMute);
+    EXPECT_TRUE(foundInquiryPhantom);
+    EXPECT_TRUE(foundMixer);
+}
+
 } // namespace ASFW::AVC::Test
+

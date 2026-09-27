@@ -527,175 +527,351 @@ inline constexpr uint8_t kResp_162_inquiry_feature_mute_off_fb_1_ch_0[] = {0x0C,
 inline constexpr uint8_t kCmd_163_inquiry_feature_volume_fb_1_ch_0[] = {0x02, 0x08, 0xB8, 0x81, 0x01, 0x10, 0x02, 0x00, 0x02, 0x02, 0x02, 0x00};
 inline constexpr uint8_t kResp_163_inquiry_feature_volume_fb_1_ch_0[] = {0x0C, 0x08, 0xB8, 0x81, 0x01, 0x10, 0x02, 0x00, 0x02, 0x02, 0x02, 0x00};
 
-inline constexpr uint8_t kCmd_164_post_check_plug_info[] = {0x01, 0xFF, 0x02, 0x00, 0xFF, 0xFF, 0xFF, 0xFF};
-inline constexpr uint8_t kResp_164_post_check_plug_info[] = {0x0C, 0xFF, 0x02, 0x00, 0x01, 0x01, 0x01, 0x01};
+inline constexpr uint8_t kCmd_164_oxford_firmware_id[] = {0xF0, 0x05, 0x00, 0x00};
+inline constexpr uint8_t kResp_164_oxford_firmware_id[] = {0x97, 0x10, 0x01, 0x05};
+
+inline constexpr uint8_t kCmd_165_oxford_hardware_id[] = {0xF0, 0x09, 0x00, 0x20};
+inline constexpr uint8_t kResp_165_oxford_hardware_id[] = {0x39, 0x37, 0x31, 0x00};
+
+inline constexpr uint8_t kCmd_166_apogee_dsp_input_meters[] = {0xF0, 0x08, 0x00, 0x04, 0x08};
+inline constexpr uint8_t kResp_166_apogee_dsp_input_meters[] = {0x00, 0x00, 0xB3, 0x00, 0x00, 0x00, 0xBC, 0x00};
+
+inline constexpr uint8_t kCmd_167_apogee_dsp_mixer_meters[] = {0xF0, 0x08, 0x04, 0x04, 0x10};
+inline constexpr uint8_t kResp_167_apogee_dsp_mixer_meters[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+inline constexpr uint8_t kCmd_168_apogee_mic_polarity_ch0[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x00, 0x80, 0x00};
+inline constexpr uint8_t kResp_168_apogee_mic_polarity_ch0[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x00, 0x80, 0x00, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_169_apogee_mic_polarity_ch1[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x00, 0x80, 0x01};
+inline constexpr uint8_t kResp_169_apogee_mic_polarity_ch1[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x00, 0x80, 0x01, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_170_apogee_xlr_is_mic_level_ch0[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x01, 0x80, 0x00};
+inline constexpr uint8_t kResp_170_apogee_xlr_is_mic_level_ch0[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x01, 0x80, 0x00, 0x70, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_171_apogee_xlr_is_mic_level_ch1[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x01, 0x80, 0x01};
+inline constexpr uint8_t kResp_171_apogee_xlr_is_mic_level_ch1[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x01, 0x80, 0x01, 0x70, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_172_apogee_xlr_is_consumer_ch0[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x02, 0x80, 0x00};
+inline constexpr uint8_t kResp_172_apogee_xlr_is_consumer_ch0[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x02, 0x80, 0x00, 0x70, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_173_apogee_xlr_is_consumer_ch1[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x02, 0x80, 0x01};
+inline constexpr uint8_t kResp_173_apogee_xlr_is_consumer_ch1[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x02, 0x80, 0x01, 0x70, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_174_apogee_mic_phantom_ch0[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x03, 0x80, 0x00};
+inline constexpr uint8_t kResp_174_apogee_mic_phantom_ch0[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x03, 0x80, 0x00, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_175_apogee_mic_phantom_ch1[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x03, 0x80, 0x01};
+inline constexpr uint8_t kResp_175_apogee_mic_phantom_ch1[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x03, 0x80, 0x01, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_176_apogee_out_is_consumer[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x04, 0x80, 0xFF};
+inline constexpr uint8_t kResp_176_apogee_out_is_consumer[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x04, 0x80, 0xFF, 0x70, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_177_apogee_in_gain_ch0[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x05, 0x80, 0x00};
+inline constexpr uint8_t kResp_177_apogee_in_gain_ch0[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x05, 0x80, 0x00, 0x0A, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_178_apogee_in_gain_ch1[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x05, 0x80, 0x01};
+inline constexpr uint8_t kResp_178_apogee_in_gain_ch1[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x05, 0x80, 0x01, 0x0A, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_179_apogee_hw_state[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x07, 0xFF, 0xFF};
+inline constexpr uint8_t kResp_179_apogee_hw_state[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x07, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x0A, 0x00, 0x00, 0x03, 0x03, 0x60};
+
+inline constexpr uint8_t kCmd_180_apogee_out_mute[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x09, 0x80, 0xFF};
+inline constexpr uint8_t kResp_180_apogee_out_mute[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x09, 0x80, 0xFF, 0x70, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_181_apogee_in_src_is_phone_ch0[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x0C, 0x80, 0x00};
+inline constexpr uint8_t kResp_181_apogee_in_src_is_phone_ch0[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x0C, 0x80, 0x00, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_182_apogee_in_src_is_phone_ch1[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x0C, 0x80, 0x01};
+inline constexpr uint8_t kResp_182_apogee_in_src_is_phone_ch1[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x0C, 0x80, 0x01, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_183_apogee_out_src_is_mixer[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x11, 0xFF, 0xFF};
+inline constexpr uint8_t kResp_183_apogee_out_src_is_mixer[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x11, 0xFF, 0xFF, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_184_apogee_disp_overhold_2s[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x13, 0xFF, 0xFF};
+inline constexpr uint8_t kResp_184_apogee_disp_overhold_2s[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x13, 0xFF, 0xFF, 0x70, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_185_apogee_out_volume[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x15, 0x80, 0xFF};
+inline constexpr uint8_t kResp_185_apogee_out_volume[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x15, 0x80, 0xFF, 0x00, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_186_apogee_mute_line_out[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x16, 0x80, 0xFF};
+inline constexpr uint8_t kResp_186_apogee_mute_line_out[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x16, 0x80, 0xFF, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_187_apogee_mute_hp_out[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x17, 0x80, 0xFF};
+inline constexpr uint8_t kResp_187_apogee_mute_hp_out[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x17, 0x80, 0xFF, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_188_apogee_unmute_line_out[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x18, 0x80, 0xFF};
+inline constexpr uint8_t kResp_188_apogee_unmute_line_out[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x18, 0x80, 0xFF, 0x70, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_189_apogee_unmute_hp_out[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x19, 0x80, 0xFF};
+inline constexpr uint8_t kResp_189_apogee_unmute_hp_out[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x19, 0x80, 0xFF, 0x70, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_190_apogee_disp_is_input[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x1B, 0xFF, 0xFF};
+inline constexpr uint8_t kResp_190_apogee_disp_is_input[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x1B, 0xFF, 0xFF, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_191_apogee_in_clickless[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x1E, 0xFF, 0xFF};
+inline constexpr uint8_t kResp_191_apogee_in_clickless[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x1E, 0xFF, 0xFF, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_192_apogee_disp_follow_knob[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x22, 0xFF, 0xFF};
+inline constexpr uint8_t kResp_192_apogee_disp_follow_knob[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x22, 0xFF, 0xFF, 0x60, 0x02, 0x01};
+
+inline constexpr uint8_t kCmd_193_apogee_mixer_src_0_dst_0[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x00, 0x00};
+inline constexpr uint8_t kResp_193_apogee_mixer_src_0_dst_0[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x0A, 0x00};
+
+inline constexpr uint8_t kCmd_194_apogee_mixer_src_0_dst_1[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x00, 0x01};
+inline constexpr uint8_t kResp_194_apogee_mixer_src_0_dst_1[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x0A, 0x00};
+
+inline constexpr uint8_t kCmd_195_apogee_mixer_src_1_dst_0[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x01, 0x00};
+inline constexpr uint8_t kResp_195_apogee_mixer_src_1_dst_0[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x0A, 0x00};
+
+inline constexpr uint8_t kCmd_196_apogee_mixer_src_1_dst_1[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x01, 0x01};
+inline constexpr uint8_t kResp_196_apogee_mixer_src_1_dst_1[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x0A, 0x00};
+
+inline constexpr uint8_t kCmd_197_apogee_mixer_src_2_dst_0[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x10, 0x00};
+inline constexpr uint8_t kResp_197_apogee_mixer_src_2_dst_0[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x0A, 0x00};
+
+inline constexpr uint8_t kCmd_198_apogee_mixer_src_2_dst_1[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x10, 0x01};
+inline constexpr uint8_t kResp_198_apogee_mixer_src_2_dst_1[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x0A, 0x00};
+
+inline constexpr uint8_t kCmd_199_apogee_mixer_src_3_dst_0[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x11, 0x00};
+inline constexpr uint8_t kResp_199_apogee_mixer_src_3_dst_0[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x0A, 0x00};
+
+inline constexpr uint8_t kCmd_200_apogee_mixer_src_3_dst_1[] = {0x01, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x11, 0x01};
+inline constexpr uint8_t kResp_200_apogee_mixer_src_3_dst_1[] = {0x0C, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x10, 0x11, 0x01, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x0A, 0x00};
+
+inline constexpr uint8_t kCmd_201_inquiry_apogee_mic_phantom_ch0_on[] = {0x02, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x03, 0x80, 0x00, 0x70};
+inline constexpr uint8_t kResp_201_inquiry_apogee_mic_phantom_ch0_on[] = {0x09, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x03, 0x80, 0x00, 0x70};
+
+inline constexpr uint8_t kCmd_202_inquiry_apogee_mic_phantom_ch0_off[] = {0x02, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x03, 0x80, 0x00, 0x60};
+inline constexpr uint8_t kResp_202_inquiry_apogee_mic_phantom_ch0_off[] = {0x09, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x03, 0x80, 0x00, 0x60};
+
+inline constexpr uint8_t kCmd_203_inquiry_apogee_in_gain_ch0_30db[] = {0x02, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x05, 0x80, 0x00, 0x1E};
+inline constexpr uint8_t kResp_203_inquiry_apogee_in_gain_ch0_30db[] = {0x09, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x05, 0x80, 0x00, 0x1E};
+
+inline constexpr uint8_t kCmd_204_inquiry_apogee_out_mute_on[] = {0x02, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x09, 0x80, 0xFF, 0x70};
+inline constexpr uint8_t kResp_204_inquiry_apogee_out_mute_on[] = {0x09, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x09, 0x80, 0xFF, 0x70};
+
+inline constexpr uint8_t kCmd_205_inquiry_apogee_out_mute_off[] = {0x02, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x09, 0x80, 0xFF, 0x60};
+inline constexpr uint8_t kResp_205_inquiry_apogee_out_mute_off[] = {0x09, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x09, 0x80, 0xFF, 0x60};
+
+inline constexpr uint8_t kCmd_206_inquiry_apogee_out_volume_40[] = {0x02, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x15, 0x80, 0xFF, 0x28};
+inline constexpr uint8_t kResp_206_inquiry_apogee_out_volume_40[] = {0x09, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x15, 0x80, 0xFF, 0x28};
+
+inline constexpr uint8_t kCmd_207_inquiry_apogee_disp_follow_knob_on[] = {0x02, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x22, 0xFF, 0xFF, 0x70};
+inline constexpr uint8_t kResp_207_inquiry_apogee_disp_follow_knob_on[] = {0x09, 0xFF, 0x00, 0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D, 0x22, 0xFF, 0xFF, 0x70};
+
+inline constexpr uint8_t kCmd_208_post_check_plug_info[] = {0x01, 0xFF, 0x02, 0x00, 0xFF, 0xFF, 0xFF, 0xFF};
+inline constexpr uint8_t kResp_208_post_check_plug_info[] = {0x0C, 0xFF, 0x02, 0x00, 0x01, 0x01, 0x01, 0x01};
 
 inline constexpr AvcExchangeRecord kRecords[] = {
-    {"unit_info", kCmd_0_unit_info, kResp_0_unit_info, 0x0C, 6329U, true},
-    {"subunit_info_page_0", kCmd_1_subunit_info_page_0, kResp_1_subunit_info_page_0, 0x0C, 6285U, true},
-    {"subunit_info_page_1", kCmd_2_subunit_info_page_1, kResp_2_subunit_info_page_1, 0x08, 6494U, true},
-    {"plug_info_unit_00", kCmd_3_plug_info_unit_00, kResp_3_plug_info_unit_00, 0x0C, 5915U, true},
-    {"plug_info_unit_01", kCmd_4_plug_info_unit_01, kResp_4_plug_info_unit_01, 0x0C, 6642U, true},
-    {"plug_info_audio_0", kCmd_5_plug_info_audio_0, kResp_5_plug_info_audio_0, 0x0C, 6335U, true},
-    {"plug_info_music_0", kCmd_6_plug_info_music_0, kResp_6_plug_info_music_0, 0x0C, 5937U, true},
-    {"plug_signal_format_in_0_all_wildcard", kCmd_7_plug_signal_format_in_0_all_wildcard, kResp_7_plug_signal_format_in_0_all_wildcard, 0x0C, 6173U, true},
-    {"plug_signal_format_in_0_am824_wildcard", kCmd_8_plug_signal_format_in_0_am824_wildcard, kResp_8_plug_signal_format_in_0_am824_wildcard, 0x0C, 6155U, true},
-    {"plug_signal_format_out_0_all_wildcard", kCmd_9_plug_signal_format_out_0_all_wildcard, kResp_9_plug_signal_format_out_0_all_wildcard, 0x0C, 6399U, true},
-    {"plug_signal_format_out_0_am824_wildcard", kCmd_10_plug_signal_format_out_0_am824_wildcard, kResp_10_plug_signal_format_out_0_am824_wildcard, 0x0C, 6629U, true},
-    {"stream_format_0x2F_single_unit_iso_in_0", kCmd_11_stream_format_0x2F_single_unit_iso_in_0, kResp_11_stream_format_0x2F_single_unit_iso_in_0, 0x0C, 6101U, true},
-    {"stream_format_0x2F_list_unit_iso_in_0_idx_0", kCmd_12_stream_format_0x2F_list_unit_iso_in_0_idx_0, kResp_12_stream_format_0x2F_list_unit_iso_in_0_idx_0, 0x0C, 6484U, true},
-    {"stream_format_0x2F_list_unit_iso_in_0_idx_1", kCmd_13_stream_format_0x2F_list_unit_iso_in_0_idx_1, kResp_13_stream_format_0x2F_list_unit_iso_in_0_idx_1, 0x0C, 6153U, true},
-    {"stream_format_0x2F_list_unit_iso_in_0_idx_2", kCmd_14_stream_format_0x2F_list_unit_iso_in_0_idx_2, kResp_14_stream_format_0x2F_list_unit_iso_in_0_idx_2, 0x0C, 6819U, true},
-    {"stream_format_0x2F_list_unit_iso_in_0_idx_3", kCmd_15_stream_format_0x2F_list_unit_iso_in_0_idx_3, kResp_15_stream_format_0x2F_list_unit_iso_in_0_idx_3, 0x0C, 6175U, true},
-    {"stream_format_0x2F_list_unit_iso_in_0_idx_4", kCmd_16_stream_format_0x2F_list_unit_iso_in_0_idx_4, kResp_16_stream_format_0x2F_list_unit_iso_in_0_idx_4, 0x0A, 6192U, true},
-    {"stream_format_0xBF_single_unit_iso_in_0", kCmd_17_stream_format_0xBF_single_unit_iso_in_0, kResp_17_stream_format_0xBF_single_unit_iso_in_0, 0x0C, 6659U, true},
-    {"stream_format_0xBF_list_unit_iso_in_0_idx_0", kCmd_18_stream_format_0xBF_list_unit_iso_in_0_idx_0, kResp_18_stream_format_0xBF_list_unit_iso_in_0_idx_0, 0x0C, 6567U, true},
-    {"stream_format_0xBF_list_unit_iso_in_0_idx_1", kCmd_19_stream_format_0xBF_list_unit_iso_in_0_idx_1, kResp_19_stream_format_0xBF_list_unit_iso_in_0_idx_1, 0x0C, 6222U, true},
-    {"stream_format_0xBF_list_unit_iso_in_0_idx_2", kCmd_20_stream_format_0xBF_list_unit_iso_in_0_idx_2, kResp_20_stream_format_0xBF_list_unit_iso_in_0_idx_2, 0x0C, 6168U, true},
-    {"stream_format_0xBF_list_unit_iso_in_0_idx_3", kCmd_21_stream_format_0xBF_list_unit_iso_in_0_idx_3, kResp_21_stream_format_0xBF_list_unit_iso_in_0_idx_3, 0x0C, 6062U, true},
-    {"stream_format_0xBF_list_unit_iso_in_0_idx_4", kCmd_22_stream_format_0xBF_list_unit_iso_in_0_idx_4, kResp_22_stream_format_0xBF_list_unit_iso_in_0_idx_4, 0x0A, 6469U, true},
-    {"stream_format_0x2F_single_unit_iso_out_0", kCmd_23_stream_format_0x2F_single_unit_iso_out_0, kResp_23_stream_format_0x2F_single_unit_iso_out_0, 0x0C, 6847U, true},
-    {"stream_format_0x2F_list_unit_iso_out_0_idx_0", kCmd_24_stream_format_0x2F_list_unit_iso_out_0_idx_0, kResp_24_stream_format_0x2F_list_unit_iso_out_0_idx_0, 0x0C, 6572U, true},
-    {"stream_format_0x2F_list_unit_iso_out_0_idx_1", kCmd_25_stream_format_0x2F_list_unit_iso_out_0_idx_1, kResp_25_stream_format_0x2F_list_unit_iso_out_0_idx_1, 0x0C, 6101U, true},
-    {"stream_format_0x2F_list_unit_iso_out_0_idx_2", kCmd_26_stream_format_0x2F_list_unit_iso_out_0_idx_2, kResp_26_stream_format_0x2F_list_unit_iso_out_0_idx_2, 0x0C, 6422U, true},
-    {"stream_format_0x2F_list_unit_iso_out_0_idx_3", kCmd_27_stream_format_0x2F_list_unit_iso_out_0_idx_3, kResp_27_stream_format_0x2F_list_unit_iso_out_0_idx_3, 0x0C, 6142U, true},
-    {"stream_format_0x2F_list_unit_iso_out_0_idx_4", kCmd_28_stream_format_0x2F_list_unit_iso_out_0_idx_4, kResp_28_stream_format_0x2F_list_unit_iso_out_0_idx_4, 0x0A, 6414U, true},
-    {"stream_format_0xBF_single_unit_iso_out_0", kCmd_29_stream_format_0xBF_single_unit_iso_out_0, kResp_29_stream_format_0xBF_single_unit_iso_out_0, 0x0C, 6711U, true},
-    {"stream_format_0xBF_list_unit_iso_out_0_idx_0", kCmd_30_stream_format_0xBF_list_unit_iso_out_0_idx_0, kResp_30_stream_format_0xBF_list_unit_iso_out_0_idx_0, 0x0C, 6702U, true},
-    {"stream_format_0xBF_list_unit_iso_out_0_idx_1", kCmd_31_stream_format_0xBF_list_unit_iso_out_0_idx_1, kResp_31_stream_format_0xBF_list_unit_iso_out_0_idx_1, 0x0C, 6000U, true},
-    {"stream_format_0xBF_list_unit_iso_out_0_idx_2", kCmd_32_stream_format_0xBF_list_unit_iso_out_0_idx_2, kResp_32_stream_format_0xBF_list_unit_iso_out_0_idx_2, 0x0C, 6052U, true},
-    {"stream_format_0xBF_list_unit_iso_out_0_idx_3", kCmd_33_stream_format_0xBF_list_unit_iso_out_0_idx_3, kResp_33_stream_format_0xBF_list_unit_iso_out_0_idx_3, 0x0C, 6603U, true},
-    {"stream_format_0xBF_list_unit_iso_out_0_idx_4", kCmd_34_stream_format_0xBF_list_unit_iso_out_0_idx_4, kResp_34_stream_format_0xBF_list_unit_iso_out_0_idx_4, 0x0A, 6109U, true},
-    {"stream_format_0x2F_single_music_0_dest_0", kCmd_35_stream_format_0x2F_single_music_0_dest_0, kResp_35_stream_format_0x2F_single_music_0_dest_0, 0x0C, 6764U, true},
-    {"stream_format_0x2F_list_music_0_dest_0_idx_0", kCmd_36_stream_format_0x2F_list_music_0_dest_0_idx_0, kResp_36_stream_format_0x2F_list_music_0_dest_0_idx_0, 0x0C, 6675U, true},
-    {"stream_format_0x2F_list_music_0_dest_0_idx_1", kCmd_37_stream_format_0x2F_list_music_0_dest_0_idx_1, kResp_37_stream_format_0x2F_list_music_0_dest_0_idx_1, 0x0C, 5551U, true},
-    {"stream_format_0x2F_list_music_0_dest_0_idx_2", kCmd_38_stream_format_0x2F_list_music_0_dest_0_idx_2, kResp_38_stream_format_0x2F_list_music_0_dest_0_idx_2, 0x0C, 6325U, true},
-    {"stream_format_0x2F_list_music_0_dest_0_idx_3", kCmd_39_stream_format_0x2F_list_music_0_dest_0_idx_3, kResp_39_stream_format_0x2F_list_music_0_dest_0_idx_3, 0x0C, 6641U, true},
-    {"stream_format_0x2F_list_music_0_dest_0_idx_4", kCmd_40_stream_format_0x2F_list_music_0_dest_0_idx_4, kResp_40_stream_format_0x2F_list_music_0_dest_0_idx_4, 0x0A, 6813U, true},
-    {"stream_format_0xBF_single_music_0_dest_0", kCmd_41_stream_format_0xBF_single_music_0_dest_0, kResp_41_stream_format_0xBF_single_music_0_dest_0, 0x0C, 6126U, true},
-    {"stream_format_0xBF_list_music_0_dest_0_idx_0", kCmd_42_stream_format_0xBF_list_music_0_dest_0_idx_0, kResp_42_stream_format_0xBF_list_music_0_dest_0_idx_0, 0x0C, 6623U, true},
-    {"stream_format_0xBF_list_music_0_dest_0_idx_1", kCmd_43_stream_format_0xBF_list_music_0_dest_0_idx_1, kResp_43_stream_format_0xBF_list_music_0_dest_0_idx_1, 0x0C, 6157U, true},
-    {"stream_format_0xBF_list_music_0_dest_0_idx_2", kCmd_44_stream_format_0xBF_list_music_0_dest_0_idx_2, kResp_44_stream_format_0xBF_list_music_0_dest_0_idx_2, 0x0C, 6631U, true},
-    {"stream_format_0xBF_list_music_0_dest_0_idx_3", kCmd_45_stream_format_0xBF_list_music_0_dest_0_idx_3, kResp_45_stream_format_0xBF_list_music_0_dest_0_idx_3, 0x0C, 6021U, true},
-    {"stream_format_0xBF_list_music_0_dest_0_idx_4", kCmd_46_stream_format_0xBF_list_music_0_dest_0_idx_4, kResp_46_stream_format_0xBF_list_music_0_dest_0_idx_4, 0x0A, 5580U, true},
-    {"stream_format_0x2F_single_music_0_dest_1", kCmd_47_stream_format_0x2F_single_music_0_dest_1, kResp_47_stream_format_0x2F_single_music_0_dest_1, 0x0C, 6489U, true},
-    {"stream_format_0x2F_list_music_0_dest_1_idx_0", kCmd_48_stream_format_0x2F_list_music_0_dest_1_idx_0, kResp_48_stream_format_0x2F_list_music_0_dest_1_idx_0, 0x0C, 6615U, true},
-    {"stream_format_0x2F_list_music_0_dest_1_idx_1", kCmd_49_stream_format_0x2F_list_music_0_dest_1_idx_1, kResp_49_stream_format_0x2F_list_music_0_dest_1_idx_1, 0x0C, 6593U, true},
-    {"stream_format_0x2F_list_music_0_dest_1_idx_2", kCmd_50_stream_format_0x2F_list_music_0_dest_1_idx_2, kResp_50_stream_format_0x2F_list_music_0_dest_1_idx_2, 0x0C, 6698U, true},
-    {"stream_format_0x2F_list_music_0_dest_1_idx_3", kCmd_51_stream_format_0x2F_list_music_0_dest_1_idx_3, kResp_51_stream_format_0x2F_list_music_0_dest_1_idx_3, 0x0C, 6072U, true},
-    {"stream_format_0x2F_list_music_0_dest_1_idx_4", kCmd_52_stream_format_0x2F_list_music_0_dest_1_idx_4, kResp_52_stream_format_0x2F_list_music_0_dest_1_idx_4, 0x0A, 6164U, true},
-    {"stream_format_0xBF_single_music_0_dest_1", kCmd_53_stream_format_0xBF_single_music_0_dest_1, kResp_53_stream_format_0xBF_single_music_0_dest_1, 0x0C, 6610U, true},
-    {"stream_format_0xBF_list_music_0_dest_1_idx_0", kCmd_54_stream_format_0xBF_list_music_0_dest_1_idx_0, kResp_54_stream_format_0xBF_list_music_0_dest_1_idx_0, 0x0C, 6760U, true},
-    {"stream_format_0xBF_list_music_0_dest_1_idx_1", kCmd_55_stream_format_0xBF_list_music_0_dest_1_idx_1, kResp_55_stream_format_0xBF_list_music_0_dest_1_idx_1, 0x0C, 6060U, true},
-    {"stream_format_0xBF_list_music_0_dest_1_idx_2", kCmd_56_stream_format_0xBF_list_music_0_dest_1_idx_2, kResp_56_stream_format_0xBF_list_music_0_dest_1_idx_2, 0x0C, 6377U, true},
-    {"stream_format_0xBF_list_music_0_dest_1_idx_3", kCmd_57_stream_format_0xBF_list_music_0_dest_1_idx_3, kResp_57_stream_format_0xBF_list_music_0_dest_1_idx_3, 0x0C, 6104U, true},
-    {"stream_format_0xBF_list_music_0_dest_1_idx_4", kCmd_58_stream_format_0xBF_list_music_0_dest_1_idx_4, kResp_58_stream_format_0xBF_list_music_0_dest_1_idx_4, 0x0A, 6831U, true},
-    {"stream_format_0x2F_single_music_0_dest_2", kCmd_59_stream_format_0x2F_single_music_0_dest_2, kResp_59_stream_format_0x2F_single_music_0_dest_2, 0x0C, 6656U, true},
-    {"stream_format_0x2F_list_music_0_dest_2_idx_0", kCmd_60_stream_format_0x2F_list_music_0_dest_2_idx_0, kResp_60_stream_format_0x2F_list_music_0_dest_2_idx_0, 0x0C, 6543U, true},
-    {"stream_format_0x2F_list_music_0_dest_2_idx_1", kCmd_61_stream_format_0x2F_list_music_0_dest_2_idx_1, kResp_61_stream_format_0x2F_list_music_0_dest_2_idx_1, 0x0C, 6031U, true},
-    {"stream_format_0x2F_list_music_0_dest_2_idx_2", kCmd_62_stream_format_0x2F_list_music_0_dest_2_idx_2, kResp_62_stream_format_0x2F_list_music_0_dest_2_idx_2, 0x0C, 6038U, true},
-    {"stream_format_0x2F_list_music_0_dest_2_idx_3", kCmd_63_stream_format_0x2F_list_music_0_dest_2_idx_3, kResp_63_stream_format_0x2F_list_music_0_dest_2_idx_3, 0x0C, 6393U, true},
-    {"stream_format_0x2F_list_music_0_dest_2_idx_4", kCmd_64_stream_format_0x2F_list_music_0_dest_2_idx_4, kResp_64_stream_format_0x2F_list_music_0_dest_2_idx_4, 0x0A, 6633U, true},
-    {"stream_format_0xBF_single_music_0_dest_2", kCmd_65_stream_format_0xBF_single_music_0_dest_2, kResp_65_stream_format_0xBF_single_music_0_dest_2, 0x0C, 6808U, true},
-    {"stream_format_0xBF_list_music_0_dest_2_idx_0", kCmd_66_stream_format_0xBF_list_music_0_dest_2_idx_0, kResp_66_stream_format_0xBF_list_music_0_dest_2_idx_0, 0x0C, 6652U, true},
-    {"stream_format_0xBF_list_music_0_dest_2_idx_1", kCmd_67_stream_format_0xBF_list_music_0_dest_2_idx_1, kResp_67_stream_format_0xBF_list_music_0_dest_2_idx_1, 0x0C, 5510U, true},
-    {"stream_format_0xBF_list_music_0_dest_2_idx_2", kCmd_68_stream_format_0xBF_list_music_0_dest_2_idx_2, kResp_68_stream_format_0xBF_list_music_0_dest_2_idx_2, 0x0C, 6649U, true},
-    {"stream_format_0xBF_list_music_0_dest_2_idx_3", kCmd_69_stream_format_0xBF_list_music_0_dest_2_idx_3, kResp_69_stream_format_0xBF_list_music_0_dest_2_idx_3, 0x0C, 6600U, true},
-    {"stream_format_0xBF_list_music_0_dest_2_idx_4", kCmd_70_stream_format_0xBF_list_music_0_dest_2_idx_4, kResp_70_stream_format_0xBF_list_music_0_dest_2_idx_4, 0x0A, 6134U, true},
-    {"stream_format_0x2F_single_music_0_src_0", kCmd_71_stream_format_0x2F_single_music_0_src_0, kResp_71_stream_format_0x2F_single_music_0_src_0, 0x0C, 6598U, true},
-    {"stream_format_0x2F_list_music_0_src_0_idx_0", kCmd_72_stream_format_0x2F_list_music_0_src_0_idx_0, kResp_72_stream_format_0x2F_list_music_0_src_0_idx_0, 0x0C, 6275U, true},
-    {"stream_format_0x2F_list_music_0_src_0_idx_1", kCmd_73_stream_format_0x2F_list_music_0_src_0_idx_1, kResp_73_stream_format_0x2F_list_music_0_src_0_idx_1, 0x0C, 6152U, true},
-    {"stream_format_0x2F_list_music_0_src_0_idx_2", kCmd_74_stream_format_0x2F_list_music_0_src_0_idx_2, kResp_74_stream_format_0x2F_list_music_0_src_0_idx_2, 0x0C, 6109U, true},
-    {"stream_format_0x2F_list_music_0_src_0_idx_3", kCmd_75_stream_format_0x2F_list_music_0_src_0_idx_3, kResp_75_stream_format_0x2F_list_music_0_src_0_idx_3, 0x0C, 6722U, true},
-    {"stream_format_0x2F_list_music_0_src_0_idx_4", kCmd_76_stream_format_0x2F_list_music_0_src_0_idx_4, kResp_76_stream_format_0x2F_list_music_0_src_0_idx_4, 0x0A, 6578U, true},
-    {"stream_format_0xBF_single_music_0_src_0", kCmd_77_stream_format_0xBF_single_music_0_src_0, kResp_77_stream_format_0xBF_single_music_0_src_0, 0x0C, 6231U, true},
-    {"stream_format_0xBF_list_music_0_src_0_idx_0", kCmd_78_stream_format_0xBF_list_music_0_src_0_idx_0, kResp_78_stream_format_0xBF_list_music_0_src_0_idx_0, 0x0C, 6223U, true},
-    {"stream_format_0xBF_list_music_0_src_0_idx_1", kCmd_79_stream_format_0xBF_list_music_0_src_0_idx_1, kResp_79_stream_format_0xBF_list_music_0_src_0_idx_1, 0x0C, 6739U, true},
-    {"stream_format_0xBF_list_music_0_src_0_idx_2", kCmd_80_stream_format_0xBF_list_music_0_src_0_idx_2, kResp_80_stream_format_0xBF_list_music_0_src_0_idx_2, 0x0C, 6608U, true},
-    {"stream_format_0xBF_list_music_0_src_0_idx_3", kCmd_81_stream_format_0xBF_list_music_0_src_0_idx_3, kResp_81_stream_format_0xBF_list_music_0_src_0_idx_3, 0x0C, 6474U, true},
-    {"stream_format_0xBF_list_music_0_src_0_idx_4", kCmd_82_stream_format_0xBF_list_music_0_src_0_idx_4, kResp_82_stream_format_0xBF_list_music_0_src_0_idx_4, 0x0A, 6569U, true},
-    {"stream_format_0x2F_single_music_0_src_1", kCmd_83_stream_format_0x2F_single_music_0_src_1, kResp_83_stream_format_0x2F_single_music_0_src_1, 0x0C, 5907U, true},
-    {"stream_format_0x2F_list_music_0_src_1_idx_0", kCmd_84_stream_format_0x2F_list_music_0_src_1_idx_0, kResp_84_stream_format_0x2F_list_music_0_src_1_idx_0, 0x0C, 6546U, true},
-    {"stream_format_0x2F_list_music_0_src_1_idx_1", kCmd_85_stream_format_0x2F_list_music_0_src_1_idx_1, kResp_85_stream_format_0x2F_list_music_0_src_1_idx_1, 0x0C, 5963U, true},
-    {"stream_format_0x2F_list_music_0_src_1_idx_2", kCmd_86_stream_format_0x2F_list_music_0_src_1_idx_2, kResp_86_stream_format_0x2F_list_music_0_src_1_idx_2, 0x0C, 6155U, true},
-    {"stream_format_0x2F_list_music_0_src_1_idx_3", kCmd_87_stream_format_0x2F_list_music_0_src_1_idx_3, kResp_87_stream_format_0x2F_list_music_0_src_1_idx_3, 0x0C, 6223U, true},
-    {"stream_format_0x2F_list_music_0_src_1_idx_4", kCmd_88_stream_format_0x2F_list_music_0_src_1_idx_4, kResp_88_stream_format_0x2F_list_music_0_src_1_idx_4, 0x0A, 5975U, true},
-    {"stream_format_0xBF_single_music_0_src_1", kCmd_89_stream_format_0xBF_single_music_0_src_1, kResp_89_stream_format_0xBF_single_music_0_src_1, 0x0C, 6043U, true},
-    {"stream_format_0xBF_list_music_0_src_1_idx_0", kCmd_90_stream_format_0xBF_list_music_0_src_1_idx_0, kResp_90_stream_format_0xBF_list_music_0_src_1_idx_0, 0x0C, 6337U, true},
-    {"stream_format_0xBF_list_music_0_src_1_idx_1", kCmd_91_stream_format_0xBF_list_music_0_src_1_idx_1, kResp_91_stream_format_0xBF_list_music_0_src_1_idx_1, 0x0C, 6705U, true},
-    {"stream_format_0xBF_list_music_0_src_1_idx_2", kCmd_92_stream_format_0xBF_list_music_0_src_1_idx_2, kResp_92_stream_format_0xBF_list_music_0_src_1_idx_2, 0x0C, 6958U, true},
-    {"stream_format_0xBF_list_music_0_src_1_idx_3", kCmd_93_stream_format_0xBF_list_music_0_src_1_idx_3, kResp_93_stream_format_0xBF_list_music_0_src_1_idx_3, 0x0C, 6298U, true},
-    {"stream_format_0xBF_list_music_0_src_1_idx_4", kCmd_94_stream_format_0xBF_list_music_0_src_1_idx_4, kResp_94_stream_format_0xBF_list_music_0_src_1_idx_4, 0x0A, 6242U, true},
-    {"stream_format_0x2F_single_music_0_src_2", kCmd_95_stream_format_0x2F_single_music_0_src_2, kResp_95_stream_format_0x2F_single_music_0_src_2, 0x0C, 6787U, true},
-    {"stream_format_0x2F_list_music_0_src_2_idx_0", kCmd_96_stream_format_0x2F_list_music_0_src_2_idx_0, kResp_96_stream_format_0x2F_list_music_0_src_2_idx_0, 0x0C, 6943U, true},
-    {"stream_format_0x2F_list_music_0_src_2_idx_1", kCmd_97_stream_format_0x2F_list_music_0_src_2_idx_1, kResp_97_stream_format_0x2F_list_music_0_src_2_idx_1, 0x0C, 6721U, true},
-    {"stream_format_0x2F_list_music_0_src_2_idx_2", kCmd_98_stream_format_0x2F_list_music_0_src_2_idx_2, kResp_98_stream_format_0x2F_list_music_0_src_2_idx_2, 0x0C, 7126U, true},
-    {"stream_format_0x2F_list_music_0_src_2_idx_3", kCmd_99_stream_format_0x2F_list_music_0_src_2_idx_3, kResp_99_stream_format_0x2F_list_music_0_src_2_idx_3, 0x0C, 6095U, true},
-    {"stream_format_0x2F_list_music_0_src_2_idx_4", kCmd_100_stream_format_0x2F_list_music_0_src_2_idx_4, kResp_100_stream_format_0x2F_list_music_0_src_2_idx_4, 0x0A, 6677U, true},
-    {"stream_format_0xBF_single_music_0_src_2", kCmd_101_stream_format_0xBF_single_music_0_src_2, kResp_101_stream_format_0xBF_single_music_0_src_2, 0x0C, 6090U, true},
-    {"stream_format_0xBF_list_music_0_src_2_idx_0", kCmd_102_stream_format_0xBF_list_music_0_src_2_idx_0, kResp_102_stream_format_0xBF_list_music_0_src_2_idx_0, 0x0C, 6775U, true},
-    {"stream_format_0xBF_list_music_0_src_2_idx_1", kCmd_103_stream_format_0xBF_list_music_0_src_2_idx_1, kResp_103_stream_format_0xBF_list_music_0_src_2_idx_1, 0x0C, 6767U, true},
-    {"stream_format_0xBF_list_music_0_src_2_idx_2", kCmd_104_stream_format_0xBF_list_music_0_src_2_idx_2, kResp_104_stream_format_0xBF_list_music_0_src_2_idx_2, 0x0C, 6044U, true},
-    {"stream_format_0xBF_list_music_0_src_2_idx_3", kCmd_105_stream_format_0xBF_list_music_0_src_2_idx_3, kResp_105_stream_format_0xBF_list_music_0_src_2_idx_3, 0x0C, 6333U, true},
-    {"stream_format_0xBF_list_music_0_src_2_idx_4", kCmd_106_stream_format_0xBF_list_music_0_src_2_idx_4, kResp_106_stream_format_0xBF_list_music_0_src_2_idx_4, 0x0A, 6967U, true},
-    {"signal_source_0xFF_music_0_dest_0", kCmd_107_signal_source_0xFF_music_0_dest_0, kResp_107_signal_source_0xFF_music_0_dest_0, 0x0C, 6123U, true},
-    {"signal_source_0x0F_music_0_dest_0", kCmd_108_signal_source_0x0F_music_0_dest_0, kResp_108_signal_source_0x0F_music_0_dest_0, 0x0C, 6111U, true},
-    {"signal_source_0xFF_music_0_dest_1", kCmd_109_signal_source_0xFF_music_0_dest_1, kResp_109_signal_source_0xFF_music_0_dest_1, 0x0C, 6197U, true},
-    {"signal_source_0x0F_music_0_dest_1", kCmd_110_signal_source_0x0F_music_0_dest_1, kResp_110_signal_source_0x0F_music_0_dest_1, 0x0C, 6608U, true},
-    {"signal_source_0xFF_music_0_dest_2", kCmd_111_signal_source_0xFF_music_0_dest_2, kResp_111_signal_source_0xFF_music_0_dest_2, 0x0C, 6261U, true},
-    {"signal_source_0x0F_music_0_dest_2", kCmd_112_signal_source_0x0F_music_0_dest_2, kResp_112_signal_source_0x0F_music_0_dest_2, 0x0C, 6262U, true},
-    {"bridgeco_plug_info_plug_type_in_0", kCmd_113_bridgeco_plug_info_plug_type_in_0, kResp_113_bridgeco_plug_info_plug_type_in_0, 0x08, 6088U, true},
-    {"bridgeco_plug_info_plug_name_in_0", kCmd_114_bridgeco_plug_info_plug_name_in_0, kResp_114_bridgeco_plug_info_plug_name_in_0, 0x08, 6532U, true},
-    {"bridgeco_plug_info_channel_count_in_0", kCmd_115_bridgeco_plug_info_channel_count_in_0, kResp_115_bridgeco_plug_info_channel_count_in_0, 0x08, 6142U, true},
-    {"bridgeco_plug_info_channel_positions_in_0", kCmd_116_bridgeco_plug_info_channel_positions_in_0, kResp_116_bridgeco_plug_info_channel_positions_in_0, 0x08, 6649U, true},
-    {"bridgeco_plug_info_channel_name_in_0", kCmd_117_bridgeco_plug_info_channel_name_in_0, kResp_117_bridgeco_plug_info_channel_name_in_0, 0x08, 6582U, true},
-    {"bridgeco_plug_info_plug_input_in_0", kCmd_118_bridgeco_plug_info_plug_input_in_0, kResp_118_bridgeco_plug_info_plug_input_in_0, 0x08, 6703U, true},
-    {"bridgeco_plug_info_plug_outputs_in_0", kCmd_119_bridgeco_plug_info_plug_outputs_in_0, kResp_119_bridgeco_plug_info_plug_outputs_in_0, 0x08, 6088U, true},
-    {"bridgeco_plug_info_plug_type_out_0", kCmd_120_bridgeco_plug_info_plug_type_out_0, kResp_120_bridgeco_plug_info_plug_type_out_0, 0x08, 6623U, true},
-    {"bridgeco_plug_info_plug_name_out_0", kCmd_121_bridgeco_plug_info_plug_name_out_0, kResp_121_bridgeco_plug_info_plug_name_out_0, 0x08, 6465U, true},
-    {"bridgeco_plug_info_channel_count_out_0", kCmd_122_bridgeco_plug_info_channel_count_out_0, kResp_122_bridgeco_plug_info_channel_count_out_0, 0x08, 6298U, true},
-    {"bridgeco_plug_info_channel_positions_out_0", kCmd_123_bridgeco_plug_info_channel_positions_out_0, kResp_123_bridgeco_plug_info_channel_positions_out_0, 0x08, 6024U, true},
-    {"bridgeco_plug_info_channel_name_out_0", kCmd_124_bridgeco_plug_info_channel_name_out_0, kResp_124_bridgeco_plug_info_channel_name_out_0, 0x08, 6148U, true},
-    {"bridgeco_plug_info_plug_input_out_0", kCmd_125_bridgeco_plug_info_plug_input_out_0, kResp_125_bridgeco_plug_info_plug_input_out_0, 0x08, 6774U, true},
-    {"bridgeco_plug_info_plug_outputs_out_0", kCmd_126_bridgeco_plug_info_plug_outputs_out_0, kResp_126_bridgeco_plug_info_plug_outputs_out_0, 0x08, 6228U, true},
-    {"function_block_selector_status_fb_0", kCmd_127_function_block_selector_status_fb_0, kResp_127_function_block_selector_status_fb_0, 0x08, 6237U, true},
-    {"function_block_selector_status_fb_1", kCmd_128_function_block_selector_status_fb_1, kResp_128_function_block_selector_status_fb_1, 0x08, 6734U, true},
-    {"function_block_feature_mute_status_fb_0", kCmd_129_function_block_feature_mute_status_fb_0, kResp_129_function_block_feature_mute_status_fb_0, 0x08, 6103U, true},
-    {"function_block_feature_volume_current_fb_0", kCmd_130_function_block_feature_volume_current_fb_0, kResp_130_function_block_feature_volume_current_fb_0, 0x08, 6309U, true},
-    {"function_block_feature_mute_status_fb_1", kCmd_131_function_block_feature_mute_status_fb_1, kResp_131_function_block_feature_mute_status_fb_1, 0x0C, 6729U, true},
-    {"function_block_feature_volume_current_fb_1", kCmd_132_function_block_feature_volume_current_fb_1, kResp_132_function_block_feature_volume_current_fb_1, 0x0C, 6253U, true},
-    {"function_block_feature_volume_min_fb_1", kCmd_133_function_block_feature_volume_min_fb_1, kResp_133_function_block_feature_volume_min_fb_1, 0x0C, 6242U, true},
-    {"function_block_feature_volume_max_fb_1", kCmd_134_function_block_feature_volume_max_fb_1, kResp_134_function_block_feature_volume_max_fb_1, 0x0C, 6121U, true},
-    {"function_block_feature_mute_status_fb_2", kCmd_135_function_block_feature_mute_status_fb_2, kResp_135_function_block_feature_mute_status_fb_2, 0x08, 6644U, true},
-    {"function_block_feature_volume_current_fb_2", kCmd_136_function_block_feature_volume_current_fb_2, kResp_136_function_block_feature_volume_current_fb_2, 0x08, 6285U, true},
-    {"inquiry_plug_signal_format_in_0", kCmd_137_inquiry_plug_signal_format_in_0, kResp_137_inquiry_plug_signal_format_in_0, 0x0C, 6269U, true},
-    {"inquiry_plug_signal_format_out_0", kCmd_138_inquiry_plug_signal_format_out_0, kResp_138_inquiry_plug_signal_format_out_0, 0x0C, 6827U, true},
-    {"inquiry_stream_format_0x2F_single", kCmd_139_inquiry_stream_format_0x2F_single, kResp_139_inquiry_stream_format_0x2F_single, 0x0C, 6059U, true},
-    {"inquiry_stream_format_0xBF_single", kCmd_140_inquiry_stream_format_0xBF_single, kResp_140_inquiry_stream_format_0xBF_single, 0x0C, 6128U, true},
-    {"inquiry_stream_format_0x2F_single", kCmd_141_inquiry_stream_format_0x2F_single, kResp_141_inquiry_stream_format_0x2F_single, 0x0C, 6397U, true},
-    {"inquiry_stream_format_0xBF_single", kCmd_142_inquiry_stream_format_0xBF_single, kResp_142_inquiry_stream_format_0xBF_single, 0x0C, 6268U, true},
-    {"inquiry_stream_format_0x2F_single", kCmd_143_inquiry_stream_format_0x2F_single, kResp_143_inquiry_stream_format_0x2F_single, 0x0C, 6466U, true},
-    {"inquiry_stream_format_0xBF_single", kCmd_144_inquiry_stream_format_0xBF_single, kResp_144_inquiry_stream_format_0xBF_single, 0x0C, 6422U, true},
-    {"inquiry_stream_format_0x2F_single", kCmd_145_inquiry_stream_format_0x2F_single, kResp_145_inquiry_stream_format_0x2F_single, 0x0C, 6099U, true},
-    {"inquiry_stream_format_0xBF_single", kCmd_146_inquiry_stream_format_0xBF_single, kResp_146_inquiry_stream_format_0xBF_single, 0x0C, 6505U, true},
-    {"inquiry_stream_format_0x2F_single", kCmd_147_inquiry_stream_format_0x2F_single, kResp_147_inquiry_stream_format_0x2F_single, 0x0A, 6205U, true},
-    {"inquiry_stream_format_0xBF_single", kCmd_148_inquiry_stream_format_0xBF_single, kResp_148_inquiry_stream_format_0xBF_single, 0x0A, 6316U, true},
-    {"inquiry_stream_format_0x2F_single", kCmd_149_inquiry_stream_format_0x2F_single, kResp_149_inquiry_stream_format_0x2F_single, 0x0C, 5753U, true},
-    {"inquiry_stream_format_0xBF_single", kCmd_150_inquiry_stream_format_0xBF_single, kResp_150_inquiry_stream_format_0xBF_single, 0x0C, 6216U, true},
-    {"inquiry_stream_format_0x2F_single", kCmd_151_inquiry_stream_format_0x2F_single, kResp_151_inquiry_stream_format_0x2F_single, 0x0C, 6160U, true},
-    {"inquiry_stream_format_0xBF_single", kCmd_152_inquiry_stream_format_0xBF_single, kResp_152_inquiry_stream_format_0xBF_single, 0x0C, 6268U, true},
-    {"inquiry_stream_format_0x2F_single", kCmd_153_inquiry_stream_format_0x2F_single, kResp_153_inquiry_stream_format_0x2F_single, 0x0A, 6554U, true},
-    {"inquiry_stream_format_0xBF_single", kCmd_154_inquiry_stream_format_0xBF_single, kResp_154_inquiry_stream_format_0xBF_single, 0x0A, 6078U, true},
-    {"inquiry_signal_source_0xFF", kCmd_155_inquiry_signal_source_0xFF, kResp_155_inquiry_signal_source_0xFF, 0x08, 5944U, true},
-    {"inquiry_signal_source_0x0F", kCmd_156_inquiry_signal_source_0x0F, kResp_156_inquiry_signal_source_0x0F, 0x08, 6764U, true},
-    {"inquiry_signal_source_0xFF", kCmd_157_inquiry_signal_source_0xFF, kResp_157_inquiry_signal_source_0xFF, 0x08, 6607U, true},
-    {"inquiry_signal_source_0x0F", kCmd_158_inquiry_signal_source_0x0F, kResp_158_inquiry_signal_source_0x0F, 0x08, 6810U, true},
-    {"inquiry_signal_source_0xFF", kCmd_159_inquiry_signal_source_0xFF, kResp_159_inquiry_signal_source_0xFF, 0x08, 6782U, true},
-    {"inquiry_signal_source_0x0F", kCmd_160_inquiry_signal_source_0x0F, kResp_160_inquiry_signal_source_0x0F, 0x08, 6163U, true},
-    {"inquiry_feature_mute_on_fb_1_ch_0", kCmd_161_inquiry_feature_mute_on_fb_1_ch_0, kResp_161_inquiry_feature_mute_on_fb_1_ch_0, 0x0C, 6226U, true},
-    {"inquiry_feature_mute_off_fb_1_ch_0", kCmd_162_inquiry_feature_mute_off_fb_1_ch_0, kResp_162_inquiry_feature_mute_off_fb_1_ch_0, 0x0C, 6088U, true},
-    {"inquiry_feature_volume_fb_1_ch_0", kCmd_163_inquiry_feature_volume_fb_1_ch_0, kResp_163_inquiry_feature_volume_fb_1_ch_0, 0x0C, 5878U, true},
-    {"post_check_plug_info", kCmd_164_post_check_plug_info, kResp_164_post_check_plug_info, 0x0C, 6701U, true},
+    {"unit_info", kCmd_0_unit_info, kResp_0_unit_info, 0x0C, 6559U, true},
+    {"subunit_info_page_0", kCmd_1_subunit_info_page_0, kResp_1_subunit_info_page_0, 0x0C, 6875U, true},
+    {"subunit_info_page_1", kCmd_2_subunit_info_page_1, kResp_2_subunit_info_page_1, 0x08, 6077U, true},
+    {"plug_info_unit_00", kCmd_3_plug_info_unit_00, kResp_3_plug_info_unit_00, 0x0C, 6588U, true},
+    {"plug_info_unit_01", kCmd_4_plug_info_unit_01, kResp_4_plug_info_unit_01, 0x0C, 6227U, true},
+    {"plug_info_audio_0", kCmd_5_plug_info_audio_0, kResp_5_plug_info_audio_0, 0x0C, 6052U, true},
+    {"plug_info_music_0", kCmd_6_plug_info_music_0, kResp_6_plug_info_music_0, 0x0C, 6165U, true},
+    {"plug_signal_format_in_0_all_wildcard", kCmd_7_plug_signal_format_in_0_all_wildcard, kResp_7_plug_signal_format_in_0_all_wildcard, 0x0C, 6107U, true},
+    {"plug_signal_format_in_0_am824_wildcard", kCmd_8_plug_signal_format_in_0_am824_wildcard, kResp_8_plug_signal_format_in_0_am824_wildcard, 0x0C, 6728U, true},
+    {"plug_signal_format_out_0_all_wildcard", kCmd_9_plug_signal_format_out_0_all_wildcard, kResp_9_plug_signal_format_out_0_all_wildcard, 0x0C, 6813U, true},
+    {"plug_signal_format_out_0_am824_wildcard", kCmd_10_plug_signal_format_out_0_am824_wildcard, kResp_10_plug_signal_format_out_0_am824_wildcard, 0x0C, 6872U, true},
+    {"stream_format_0x2F_single_unit_iso_in_0", kCmd_11_stream_format_0x2F_single_unit_iso_in_0, kResp_11_stream_format_0x2F_single_unit_iso_in_0, 0x0C, 6811U, true},
+    {"stream_format_0x2F_list_unit_iso_in_0_idx_0", kCmd_12_stream_format_0x2F_list_unit_iso_in_0_idx_0, kResp_12_stream_format_0x2F_list_unit_iso_in_0_idx_0, 0x0C, 5901U, true},
+    {"stream_format_0x2F_list_unit_iso_in_0_idx_1", kCmd_13_stream_format_0x2F_list_unit_iso_in_0_idx_1, kResp_13_stream_format_0x2F_list_unit_iso_in_0_idx_1, 0x0C, 6409U, true},
+    {"stream_format_0x2F_list_unit_iso_in_0_idx_2", kCmd_14_stream_format_0x2F_list_unit_iso_in_0_idx_2, kResp_14_stream_format_0x2F_list_unit_iso_in_0_idx_2, 0x0C, 6412U, true},
+    {"stream_format_0x2F_list_unit_iso_in_0_idx_3", kCmd_15_stream_format_0x2F_list_unit_iso_in_0_idx_3, kResp_15_stream_format_0x2F_list_unit_iso_in_0_idx_3, 0x0C, 6700U, true},
+    {"stream_format_0x2F_list_unit_iso_in_0_idx_4", kCmd_16_stream_format_0x2F_list_unit_iso_in_0_idx_4, kResp_16_stream_format_0x2F_list_unit_iso_in_0_idx_4, 0x0A, 6155U, true},
+    {"stream_format_0xBF_single_unit_iso_in_0", kCmd_17_stream_format_0xBF_single_unit_iso_in_0, kResp_17_stream_format_0xBF_single_unit_iso_in_0, 0x0C, 6106U, true},
+    {"stream_format_0xBF_list_unit_iso_in_0_idx_0", kCmd_18_stream_format_0xBF_list_unit_iso_in_0_idx_0, kResp_18_stream_format_0xBF_list_unit_iso_in_0_idx_0, 0x0C, 6695U, true},
+    {"stream_format_0xBF_list_unit_iso_in_0_idx_1", kCmd_19_stream_format_0xBF_list_unit_iso_in_0_idx_1, kResp_19_stream_format_0xBF_list_unit_iso_in_0_idx_1, 0x0C, 5990U, true},
+    {"stream_format_0xBF_list_unit_iso_in_0_idx_2", kCmd_20_stream_format_0xBF_list_unit_iso_in_0_idx_2, kResp_20_stream_format_0xBF_list_unit_iso_in_0_idx_2, 0x0C, 6904U, true},
+    {"stream_format_0xBF_list_unit_iso_in_0_idx_3", kCmd_21_stream_format_0xBF_list_unit_iso_in_0_idx_3, kResp_21_stream_format_0xBF_list_unit_iso_in_0_idx_3, 0x0C, 7066U, true},
+    {"stream_format_0xBF_list_unit_iso_in_0_idx_4", kCmd_22_stream_format_0xBF_list_unit_iso_in_0_idx_4, kResp_22_stream_format_0xBF_list_unit_iso_in_0_idx_4, 0x0A, 6885U, true},
+    {"stream_format_0x2F_single_unit_iso_out_0", kCmd_23_stream_format_0x2F_single_unit_iso_out_0, kResp_23_stream_format_0x2F_single_unit_iso_out_0, 0x0C, 6096U, true},
+    {"stream_format_0x2F_list_unit_iso_out_0_idx_0", kCmd_24_stream_format_0x2F_list_unit_iso_out_0_idx_0, kResp_24_stream_format_0x2F_list_unit_iso_out_0_idx_0, 0x0C, 6236U, true},
+    {"stream_format_0x2F_list_unit_iso_out_0_idx_1", kCmd_25_stream_format_0x2F_list_unit_iso_out_0_idx_1, kResp_25_stream_format_0x2F_list_unit_iso_out_0_idx_1, 0x0C, 6044U, true},
+    {"stream_format_0x2F_list_unit_iso_out_0_idx_2", kCmd_26_stream_format_0x2F_list_unit_iso_out_0_idx_2, kResp_26_stream_format_0x2F_list_unit_iso_out_0_idx_2, 0x0C, 5810U, true},
+    {"stream_format_0x2F_list_unit_iso_out_0_idx_3", kCmd_27_stream_format_0x2F_list_unit_iso_out_0_idx_3, kResp_27_stream_format_0x2F_list_unit_iso_out_0_idx_3, 0x0C, 6556U, true},
+    {"stream_format_0x2F_list_unit_iso_out_0_idx_4", kCmd_28_stream_format_0x2F_list_unit_iso_out_0_idx_4, kResp_28_stream_format_0x2F_list_unit_iso_out_0_idx_4, 0x0A, 6857U, true},
+    {"stream_format_0xBF_single_unit_iso_out_0", kCmd_29_stream_format_0xBF_single_unit_iso_out_0, kResp_29_stream_format_0xBF_single_unit_iso_out_0, 0x0C, 6129U, true},
+    {"stream_format_0xBF_list_unit_iso_out_0_idx_0", kCmd_30_stream_format_0xBF_list_unit_iso_out_0_idx_0, kResp_30_stream_format_0xBF_list_unit_iso_out_0_idx_0, 0x0C, 6708U, true},
+    {"stream_format_0xBF_list_unit_iso_out_0_idx_1", kCmd_31_stream_format_0xBF_list_unit_iso_out_0_idx_1, kResp_31_stream_format_0xBF_list_unit_iso_out_0_idx_1, 0x0C, 5852U, true},
+    {"stream_format_0xBF_list_unit_iso_out_0_idx_2", kCmd_32_stream_format_0xBF_list_unit_iso_out_0_idx_2, kResp_32_stream_format_0xBF_list_unit_iso_out_0_idx_2, 0x0C, 6296U, true},
+    {"stream_format_0xBF_list_unit_iso_out_0_idx_3", kCmd_33_stream_format_0xBF_list_unit_iso_out_0_idx_3, kResp_33_stream_format_0xBF_list_unit_iso_out_0_idx_3, 0x0C, 6670U, true},
+    {"stream_format_0xBF_list_unit_iso_out_0_idx_4", kCmd_34_stream_format_0xBF_list_unit_iso_out_0_idx_4, kResp_34_stream_format_0xBF_list_unit_iso_out_0_idx_4, 0x0A, 6189U, true},
+    {"stream_format_0x2F_single_music_0_dest_0", kCmd_35_stream_format_0x2F_single_music_0_dest_0, kResp_35_stream_format_0x2F_single_music_0_dest_0, 0x0C, 6806U, true},
+    {"stream_format_0x2F_list_music_0_dest_0_idx_0", kCmd_36_stream_format_0x2F_list_music_0_dest_0_idx_0, kResp_36_stream_format_0x2F_list_music_0_dest_0_idx_0, 0x0C, 6730U, true},
+    {"stream_format_0x2F_list_music_0_dest_0_idx_1", kCmd_37_stream_format_0x2F_list_music_0_dest_0_idx_1, kResp_37_stream_format_0x2F_list_music_0_dest_0_idx_1, 0x0C, 6690U, true},
+    {"stream_format_0x2F_list_music_0_dest_0_idx_2", kCmd_38_stream_format_0x2F_list_music_0_dest_0_idx_2, kResp_38_stream_format_0x2F_list_music_0_dest_0_idx_2, 0x0C, 6009U, true},
+    {"stream_format_0x2F_list_music_0_dest_0_idx_3", kCmd_39_stream_format_0x2F_list_music_0_dest_0_idx_3, kResp_39_stream_format_0x2F_list_music_0_dest_0_idx_3, 0x0C, 6206U, true},
+    {"stream_format_0x2F_list_music_0_dest_0_idx_4", kCmd_40_stream_format_0x2F_list_music_0_dest_0_idx_4, kResp_40_stream_format_0x2F_list_music_0_dest_0_idx_4, 0x0A, 7053U, true},
+    {"stream_format_0xBF_single_music_0_dest_0", kCmd_41_stream_format_0xBF_single_music_0_dest_0, kResp_41_stream_format_0xBF_single_music_0_dest_0, 0x0C, 6415U, true},
+    {"stream_format_0xBF_list_music_0_dest_0_idx_0", kCmd_42_stream_format_0xBF_list_music_0_dest_0_idx_0, kResp_42_stream_format_0xBF_list_music_0_dest_0_idx_0, 0x0C, 6576U, true},
+    {"stream_format_0xBF_list_music_0_dest_0_idx_1", kCmd_43_stream_format_0xBF_list_music_0_dest_0_idx_1, kResp_43_stream_format_0xBF_list_music_0_dest_0_idx_1, 0x0C, 6657U, true},
+    {"stream_format_0xBF_list_music_0_dest_0_idx_2", kCmd_44_stream_format_0xBF_list_music_0_dest_0_idx_2, kResp_44_stream_format_0xBF_list_music_0_dest_0_idx_2, 0x0C, 6107U, true},
+    {"stream_format_0xBF_list_music_0_dest_0_idx_3", kCmd_45_stream_format_0xBF_list_music_0_dest_0_idx_3, kResp_45_stream_format_0xBF_list_music_0_dest_0_idx_3, 0x0C, 6196U, true},
+    {"stream_format_0xBF_list_music_0_dest_0_idx_4", kCmd_46_stream_format_0xBF_list_music_0_dest_0_idx_4, kResp_46_stream_format_0xBF_list_music_0_dest_0_idx_4, 0x0A, 6028U, true},
+    {"stream_format_0x2F_single_music_0_dest_1", kCmd_47_stream_format_0x2F_single_music_0_dest_1, kResp_47_stream_format_0x2F_single_music_0_dest_1, 0x0C, 6548U, true},
+    {"stream_format_0x2F_list_music_0_dest_1_idx_0", kCmd_48_stream_format_0x2F_list_music_0_dest_1_idx_0, kResp_48_stream_format_0x2F_list_music_0_dest_1_idx_0, 0x0C, 6643U, true},
+    {"stream_format_0x2F_list_music_0_dest_1_idx_1", kCmd_49_stream_format_0x2F_list_music_0_dest_1_idx_1, kResp_49_stream_format_0x2F_list_music_0_dest_1_idx_1, 0x0C, 6904U, true},
+    {"stream_format_0x2F_list_music_0_dest_1_idx_2", kCmd_50_stream_format_0x2F_list_music_0_dest_1_idx_2, kResp_50_stream_format_0x2F_list_music_0_dest_1_idx_2, 0x0C, 6052U, true},
+    {"stream_format_0x2F_list_music_0_dest_1_idx_3", kCmd_51_stream_format_0x2F_list_music_0_dest_1_idx_3, kResp_51_stream_format_0x2F_list_music_0_dest_1_idx_3, 0x0C, 6646U, true},
+    {"stream_format_0x2F_list_music_0_dest_1_idx_4", kCmd_52_stream_format_0x2F_list_music_0_dest_1_idx_4, kResp_52_stream_format_0x2F_list_music_0_dest_1_idx_4, 0x0A, 6556U, true},
+    {"stream_format_0xBF_single_music_0_dest_1", kCmd_53_stream_format_0xBF_single_music_0_dest_1, kResp_53_stream_format_0xBF_single_music_0_dest_1, 0x0C, 6698U, true},
+    {"stream_format_0xBF_list_music_0_dest_1_idx_0", kCmd_54_stream_format_0xBF_list_music_0_dest_1_idx_0, kResp_54_stream_format_0xBF_list_music_0_dest_1_idx_0, 0x0C, 6232U, true},
+    {"stream_format_0xBF_list_music_0_dest_1_idx_1", kCmd_55_stream_format_0xBF_list_music_0_dest_1_idx_1, kResp_55_stream_format_0xBF_list_music_0_dest_1_idx_1, 0x0C, 6291U, true},
+    {"stream_format_0xBF_list_music_0_dest_1_idx_2", kCmd_56_stream_format_0xBF_list_music_0_dest_1_idx_2, kResp_56_stream_format_0xBF_list_music_0_dest_1_idx_2, 0x0C, 6679U, true},
+    {"stream_format_0xBF_list_music_0_dest_1_idx_3", kCmd_57_stream_format_0xBF_list_music_0_dest_1_idx_3, kResp_57_stream_format_0xBF_list_music_0_dest_1_idx_3, 0x0C, 7039U, true},
+    {"stream_format_0xBF_list_music_0_dest_1_idx_4", kCmd_58_stream_format_0xBF_list_music_0_dest_1_idx_4, kResp_58_stream_format_0xBF_list_music_0_dest_1_idx_4, 0x0A, 6554U, true},
+    {"stream_format_0x2F_single_music_0_dest_2", kCmd_59_stream_format_0x2F_single_music_0_dest_2, kResp_59_stream_format_0x2F_single_music_0_dest_2, 0x0C, 6475U, true},
+    {"stream_format_0x2F_list_music_0_dest_2_idx_0", kCmd_60_stream_format_0x2F_list_music_0_dest_2_idx_0, kResp_60_stream_format_0x2F_list_music_0_dest_2_idx_0, 0x0C, 6099U, true},
+    {"stream_format_0x2F_list_music_0_dest_2_idx_1", kCmd_61_stream_format_0x2F_list_music_0_dest_2_idx_1, kResp_61_stream_format_0x2F_list_music_0_dest_2_idx_1, 0x0C, 6523U, true},
+    {"stream_format_0x2F_list_music_0_dest_2_idx_2", kCmd_62_stream_format_0x2F_list_music_0_dest_2_idx_2, kResp_62_stream_format_0x2F_list_music_0_dest_2_idx_2, 0x0C, 6066U, true},
+    {"stream_format_0x2F_list_music_0_dest_2_idx_3", kCmd_63_stream_format_0x2F_list_music_0_dest_2_idx_3, kResp_63_stream_format_0x2F_list_music_0_dest_2_idx_3, 0x0C, 6705U, true},
+    {"stream_format_0x2F_list_music_0_dest_2_idx_4", kCmd_64_stream_format_0x2F_list_music_0_dest_2_idx_4, kResp_64_stream_format_0x2F_list_music_0_dest_2_idx_4, 0x0A, 6755U, true},
+    {"stream_format_0xBF_single_music_0_dest_2", kCmd_65_stream_format_0xBF_single_music_0_dest_2, kResp_65_stream_format_0xBF_single_music_0_dest_2, 0x0C, 6049U, true},
+    {"stream_format_0xBF_list_music_0_dest_2_idx_0", kCmd_66_stream_format_0xBF_list_music_0_dest_2_idx_0, kResp_66_stream_format_0xBF_list_music_0_dest_2_idx_0, 0x0C, 6594U, true},
+    {"stream_format_0xBF_list_music_0_dest_2_idx_1", kCmd_67_stream_format_0xBF_list_music_0_dest_2_idx_1, kResp_67_stream_format_0xBF_list_music_0_dest_2_idx_1, 0x0C, 6466U, true},
+    {"stream_format_0xBF_list_music_0_dest_2_idx_2", kCmd_68_stream_format_0xBF_list_music_0_dest_2_idx_2, kResp_68_stream_format_0xBF_list_music_0_dest_2_idx_2, 0x0C, 6493U, true},
+    {"stream_format_0xBF_list_music_0_dest_2_idx_3", kCmd_69_stream_format_0xBF_list_music_0_dest_2_idx_3, kResp_69_stream_format_0xBF_list_music_0_dest_2_idx_3, 0x0C, 5985U, true},
+    {"stream_format_0xBF_list_music_0_dest_2_idx_4", kCmd_70_stream_format_0xBF_list_music_0_dest_2_idx_4, kResp_70_stream_format_0xBF_list_music_0_dest_2_idx_4, 0x0A, 6166U, true},
+    {"stream_format_0x2F_single_music_0_src_0", kCmd_71_stream_format_0x2F_single_music_0_src_0, kResp_71_stream_format_0x2F_single_music_0_src_0, 0x0C, 6057U, true},
+    {"stream_format_0x2F_list_music_0_src_0_idx_0", kCmd_72_stream_format_0x2F_list_music_0_src_0_idx_0, kResp_72_stream_format_0x2F_list_music_0_src_0_idx_0, 0x0C, 6651U, true},
+    {"stream_format_0x2F_list_music_0_src_0_idx_1", kCmd_73_stream_format_0x2F_list_music_0_src_0_idx_1, kResp_73_stream_format_0x2F_list_music_0_src_0_idx_1, 0x0C, 6662U, true},
+    {"stream_format_0x2F_list_music_0_src_0_idx_2", kCmd_74_stream_format_0x2F_list_music_0_src_0_idx_2, kResp_74_stream_format_0x2F_list_music_0_src_0_idx_2, 0x0C, 6439U, true},
+    {"stream_format_0x2F_list_music_0_src_0_idx_3", kCmd_75_stream_format_0x2F_list_music_0_src_0_idx_3, kResp_75_stream_format_0x2F_list_music_0_src_0_idx_3, 0x0C, 6067U, true},
+    {"stream_format_0x2F_list_music_0_src_0_idx_4", kCmd_76_stream_format_0x2F_list_music_0_src_0_idx_4, kResp_76_stream_format_0x2F_list_music_0_src_0_idx_4, 0x0A, 6564U, true},
+    {"stream_format_0xBF_single_music_0_src_0", kCmd_77_stream_format_0xBF_single_music_0_src_0, kResp_77_stream_format_0xBF_single_music_0_src_0, 0x0C, 6716U, true},
+    {"stream_format_0xBF_list_music_0_src_0_idx_0", kCmd_78_stream_format_0xBF_list_music_0_src_0_idx_0, kResp_78_stream_format_0xBF_list_music_0_src_0_idx_0, 0x0C, 6347U, true},
+    {"stream_format_0xBF_list_music_0_src_0_idx_1", kCmd_79_stream_format_0xBF_list_music_0_src_0_idx_1, kResp_79_stream_format_0xBF_list_music_0_src_0_idx_1, 0x0C, 6186U, true},
+    {"stream_format_0xBF_list_music_0_src_0_idx_2", kCmd_80_stream_format_0xBF_list_music_0_src_0_idx_2, kResp_80_stream_format_0xBF_list_music_0_src_0_idx_2, 0x0C, 6085U, true},
+    {"stream_format_0xBF_list_music_0_src_0_idx_3", kCmd_81_stream_format_0xBF_list_music_0_src_0_idx_3, kResp_81_stream_format_0xBF_list_music_0_src_0_idx_3, 0x0C, 6540U, true},
+    {"stream_format_0xBF_list_music_0_src_0_idx_4", kCmd_82_stream_format_0xBF_list_music_0_src_0_idx_4, kResp_82_stream_format_0xBF_list_music_0_src_0_idx_4, 0x0A, 6132U, true},
+    {"stream_format_0x2F_single_music_0_src_1", kCmd_83_stream_format_0x2F_single_music_0_src_1, kResp_83_stream_format_0x2F_single_music_0_src_1, 0x0C, 6492U, true},
+    {"stream_format_0x2F_list_music_0_src_1_idx_0", kCmd_84_stream_format_0x2F_list_music_0_src_1_idx_0, kResp_84_stream_format_0x2F_list_music_0_src_1_idx_0, 0x0C, 6597U, true},
+    {"stream_format_0x2F_list_music_0_src_1_idx_1", kCmd_85_stream_format_0x2F_list_music_0_src_1_idx_1, kResp_85_stream_format_0x2F_list_music_0_src_1_idx_1, 0x0C, 6112U, true},
+    {"stream_format_0x2F_list_music_0_src_1_idx_2", kCmd_86_stream_format_0x2F_list_music_0_src_1_idx_2, kResp_86_stream_format_0x2F_list_music_0_src_1_idx_2, 0x0C, 5903U, true},
+    {"stream_format_0x2F_list_music_0_src_1_idx_3", kCmd_87_stream_format_0x2F_list_music_0_src_1_idx_3, kResp_87_stream_format_0x2F_list_music_0_src_1_idx_3, 0x0C, 6155U, true},
+    {"stream_format_0x2F_list_music_0_src_1_idx_4", kCmd_88_stream_format_0x2F_list_music_0_src_1_idx_4, kResp_88_stream_format_0x2F_list_music_0_src_1_idx_4, 0x0A, 7008U, true},
+    {"stream_format_0xBF_single_music_0_src_1", kCmd_89_stream_format_0xBF_single_music_0_src_1, kResp_89_stream_format_0xBF_single_music_0_src_1, 0x0C, 6524U, true},
+    {"stream_format_0xBF_list_music_0_src_1_idx_0", kCmd_90_stream_format_0xBF_list_music_0_src_1_idx_0, kResp_90_stream_format_0xBF_list_music_0_src_1_idx_0, 0x0C, 6716U, true},
+    {"stream_format_0xBF_list_music_0_src_1_idx_1", kCmd_91_stream_format_0xBF_list_music_0_src_1_idx_1, kResp_91_stream_format_0xBF_list_music_0_src_1_idx_1, 0x0C, 5974U, true},
+    {"stream_format_0xBF_list_music_0_src_1_idx_2", kCmd_92_stream_format_0xBF_list_music_0_src_1_idx_2, kResp_92_stream_format_0xBF_list_music_0_src_1_idx_2, 0x0C, 6579U, true},
+    {"stream_format_0xBF_list_music_0_src_1_idx_3", kCmd_93_stream_format_0xBF_list_music_0_src_1_idx_3, kResp_93_stream_format_0xBF_list_music_0_src_1_idx_3, 0x0C, 6811U, true},
+    {"stream_format_0xBF_list_music_0_src_1_idx_4", kCmd_94_stream_format_0xBF_list_music_0_src_1_idx_4, kResp_94_stream_format_0xBF_list_music_0_src_1_idx_4, 0x0A, 6793U, true},
+    {"stream_format_0x2F_single_music_0_src_2", kCmd_95_stream_format_0x2F_single_music_0_src_2, kResp_95_stream_format_0x2F_single_music_0_src_2, 0x0C, 6036U, true},
+    {"stream_format_0x2F_list_music_0_src_2_idx_0", kCmd_96_stream_format_0x2F_list_music_0_src_2_idx_0, kResp_96_stream_format_0x2F_list_music_0_src_2_idx_0, 0x0C, 6388U, true},
+    {"stream_format_0x2F_list_music_0_src_2_idx_1", kCmd_97_stream_format_0x2F_list_music_0_src_2_idx_1, kResp_97_stream_format_0x2F_list_music_0_src_2_idx_1, 0x0C, 6132U, true},
+    {"stream_format_0x2F_list_music_0_src_2_idx_2", kCmd_98_stream_format_0x2F_list_music_0_src_2_idx_2, kResp_98_stream_format_0x2F_list_music_0_src_2_idx_2, 0x0C, 6585U, true},
+    {"stream_format_0x2F_list_music_0_src_2_idx_3", kCmd_99_stream_format_0x2F_list_music_0_src_2_idx_3, kResp_99_stream_format_0x2F_list_music_0_src_2_idx_3, 0x0C, 6610U, true},
+    {"stream_format_0x2F_list_music_0_src_2_idx_4", kCmd_100_stream_format_0x2F_list_music_0_src_2_idx_4, kResp_100_stream_format_0x2F_list_music_0_src_2_idx_4, 0x0A, 6906U, true},
+    {"stream_format_0xBF_single_music_0_src_2", kCmd_101_stream_format_0xBF_single_music_0_src_2, kResp_101_stream_format_0xBF_single_music_0_src_2, 0x0C, 6098U, true},
+    {"stream_format_0xBF_list_music_0_src_2_idx_0", kCmd_102_stream_format_0xBF_list_music_0_src_2_idx_0, kResp_102_stream_format_0xBF_list_music_0_src_2_idx_0, 0x0C, 5581U, true},
+    {"stream_format_0xBF_list_music_0_src_2_idx_1", kCmd_103_stream_format_0xBF_list_music_0_src_2_idx_1, kResp_103_stream_format_0xBF_list_music_0_src_2_idx_1, 0x0C, 6273U, true},
+    {"stream_format_0xBF_list_music_0_src_2_idx_2", kCmd_104_stream_format_0xBF_list_music_0_src_2_idx_2, kResp_104_stream_format_0xBF_list_music_0_src_2_idx_2, 0x0C, 6693U, true},
+    {"stream_format_0xBF_list_music_0_src_2_idx_3", kCmd_105_stream_format_0xBF_list_music_0_src_2_idx_3, kResp_105_stream_format_0xBF_list_music_0_src_2_idx_3, 0x0C, 6749U, true},
+    {"stream_format_0xBF_list_music_0_src_2_idx_4", kCmd_106_stream_format_0xBF_list_music_0_src_2_idx_4, kResp_106_stream_format_0xBF_list_music_0_src_2_idx_4, 0x0A, 6744U, true},
+    {"signal_source_0xFF_music_0_dest_0", kCmd_107_signal_source_0xFF_music_0_dest_0, kResp_107_signal_source_0xFF_music_0_dest_0, 0x0C, 6090U, true},
+    {"signal_source_0x0F_music_0_dest_0", kCmd_108_signal_source_0x0F_music_0_dest_0, kResp_108_signal_source_0x0F_music_0_dest_0, 0x0C, 6496U, true},
+    {"signal_source_0xFF_music_0_dest_1", kCmd_109_signal_source_0xFF_music_0_dest_1, kResp_109_signal_source_0xFF_music_0_dest_1, 0x0C, 6183U, true},
+    {"signal_source_0x0F_music_0_dest_1", kCmd_110_signal_source_0x0F_music_0_dest_1, kResp_110_signal_source_0x0F_music_0_dest_1, 0x0C, 6559U, true},
+    {"signal_source_0xFF_music_0_dest_2", kCmd_111_signal_source_0xFF_music_0_dest_2, kResp_111_signal_source_0xFF_music_0_dest_2, 0x0C, 6936U, true},
+    {"signal_source_0x0F_music_0_dest_2", kCmd_112_signal_source_0x0F_music_0_dest_2, kResp_112_signal_source_0x0F_music_0_dest_2, 0x0C, 6747U, true},
+    {"bridgeco_plug_info_plug_type_in_0", kCmd_113_bridgeco_plug_info_plug_type_in_0, kResp_113_bridgeco_plug_info_plug_type_in_0, 0x08, 6060U, true},
+    {"bridgeco_plug_info_plug_name_in_0", kCmd_114_bridgeco_plug_info_plug_name_in_0, kResp_114_bridgeco_plug_info_plug_name_in_0, 0x08, 6496U, true},
+    {"bridgeco_plug_info_channel_count_in_0", kCmd_115_bridgeco_plug_info_channel_count_in_0, kResp_115_bridgeco_plug_info_channel_count_in_0, 0x08, 6676U, true},
+    {"bridgeco_plug_info_channel_positions_in_0", kCmd_116_bridgeco_plug_info_channel_positions_in_0, kResp_116_bridgeco_plug_info_channel_positions_in_0, 0x08, 6137U, true},
+    {"bridgeco_plug_info_channel_name_in_0", kCmd_117_bridgeco_plug_info_channel_name_in_0, kResp_117_bridgeco_plug_info_channel_name_in_0, 0x08, 6165U, true},
+    {"bridgeco_plug_info_plug_input_in_0", kCmd_118_bridgeco_plug_info_plug_input_in_0, kResp_118_bridgeco_plug_info_plug_input_in_0, 0x08, 6898U, true},
+    {"bridgeco_plug_info_plug_outputs_in_0", kCmd_119_bridgeco_plug_info_plug_outputs_in_0, kResp_119_bridgeco_plug_info_plug_outputs_in_0, 0x08, 6792U, true},
+    {"bridgeco_plug_info_plug_type_out_0", kCmd_120_bridgeco_plug_info_plug_type_out_0, kResp_120_bridgeco_plug_info_plug_type_out_0, 0x08, 6485U, true},
+    {"bridgeco_plug_info_plug_name_out_0", kCmd_121_bridgeco_plug_info_plug_name_out_0, kResp_121_bridgeco_plug_info_plug_name_out_0, 0x08, 6155U, true},
+    {"bridgeco_plug_info_channel_count_out_0", kCmd_122_bridgeco_plug_info_channel_count_out_0, kResp_122_bridgeco_plug_info_channel_count_out_0, 0x08, 6130U, true},
+    {"bridgeco_plug_info_channel_positions_out_0", kCmd_123_bridgeco_plug_info_channel_positions_out_0, kResp_123_bridgeco_plug_info_channel_positions_out_0, 0x08, 6189U, true},
+    {"bridgeco_plug_info_channel_name_out_0", kCmd_124_bridgeco_plug_info_channel_name_out_0, kResp_124_bridgeco_plug_info_channel_name_out_0, 0x08, 6157U, true},
+    {"bridgeco_plug_info_plug_input_out_0", kCmd_125_bridgeco_plug_info_plug_input_out_0, kResp_125_bridgeco_plug_info_plug_input_out_0, 0x08, 6716U, true},
+    {"bridgeco_plug_info_plug_outputs_out_0", kCmd_126_bridgeco_plug_info_plug_outputs_out_0, kResp_126_bridgeco_plug_info_plug_outputs_out_0, 0x08, 6067U, true},
+    {"function_block_selector_status_fb_0", kCmd_127_function_block_selector_status_fb_0, kResp_127_function_block_selector_status_fb_0, 0x08, 6038U, true},
+    {"function_block_selector_status_fb_1", kCmd_128_function_block_selector_status_fb_1, kResp_128_function_block_selector_status_fb_1, 0x08, 6546U, true},
+    {"function_block_feature_mute_status_fb_0", kCmd_129_function_block_feature_mute_status_fb_0, kResp_129_function_block_feature_mute_status_fb_0, 0x08, 6650U, true},
+    {"function_block_feature_volume_current_fb_0", kCmd_130_function_block_feature_volume_current_fb_0, kResp_130_function_block_feature_volume_current_fb_0, 0x08, 6759U, true},
+    {"function_block_feature_mute_status_fb_1", kCmd_131_function_block_feature_mute_status_fb_1, kResp_131_function_block_feature_mute_status_fb_1, 0x0C, 6175U, true},
+    {"function_block_feature_volume_current_fb_1", kCmd_132_function_block_feature_volume_current_fb_1, kResp_132_function_block_feature_volume_current_fb_1, 0x0C, 6097U, true},
+    {"function_block_feature_volume_min_fb_1", kCmd_133_function_block_feature_volume_min_fb_1, kResp_133_function_block_feature_volume_min_fb_1, 0x0C, 6556U, true},
+    {"function_block_feature_volume_max_fb_1", kCmd_134_function_block_feature_volume_max_fb_1, kResp_134_function_block_feature_volume_max_fb_1, 0x0C, 6814U, true},
+    {"function_block_feature_mute_status_fb_2", kCmd_135_function_block_feature_mute_status_fb_2, kResp_135_function_block_feature_mute_status_fb_2, 0x08, 6347U, true},
+    {"function_block_feature_volume_current_fb_2", kCmd_136_function_block_feature_volume_current_fb_2, kResp_136_function_block_feature_volume_current_fb_2, 0x08, 5771U, true},
+    {"inquiry_plug_signal_format_in_0", kCmd_137_inquiry_plug_signal_format_in_0, kResp_137_inquiry_plug_signal_format_in_0, 0x0C, 6659U, true},
+    {"inquiry_plug_signal_format_out_0", kCmd_138_inquiry_plug_signal_format_out_0, kResp_138_inquiry_plug_signal_format_out_0, 0x0C, 6018U, true},
+    {"inquiry_stream_format_0x2F_single", kCmd_139_inquiry_stream_format_0x2F_single, kResp_139_inquiry_stream_format_0x2F_single, 0x0C, 5643U, true},
+    {"inquiry_stream_format_0xBF_single", kCmd_140_inquiry_stream_format_0xBF_single, kResp_140_inquiry_stream_format_0xBF_single, 0x0C, 6838U, true},
+    {"inquiry_stream_format_0x2F_single", kCmd_141_inquiry_stream_format_0x2F_single, kResp_141_inquiry_stream_format_0x2F_single, 0x0C, 6191U, true},
+    {"inquiry_stream_format_0xBF_single", kCmd_142_inquiry_stream_format_0xBF_single, kResp_142_inquiry_stream_format_0xBF_single, 0x0C, 5895U, true},
+    {"inquiry_stream_format_0x2F_single", kCmd_143_inquiry_stream_format_0x2F_single, kResp_143_inquiry_stream_format_0x2F_single, 0x0C, 6667U, true},
+    {"inquiry_stream_format_0xBF_single", kCmd_144_inquiry_stream_format_0xBF_single, kResp_144_inquiry_stream_format_0xBF_single, 0x0C, 6775U, true},
+    {"inquiry_stream_format_0x2F_single", kCmd_145_inquiry_stream_format_0x2F_single, kResp_145_inquiry_stream_format_0x2F_single, 0x0C, 6175U, true},
+    {"inquiry_stream_format_0xBF_single", kCmd_146_inquiry_stream_format_0xBF_single, kResp_146_inquiry_stream_format_0xBF_single, 0x0C, 6047U, true},
+    {"inquiry_stream_format_0x2F_single", kCmd_147_inquiry_stream_format_0x2F_single, kResp_147_inquiry_stream_format_0x2F_single, 0x0A, 6233U, true},
+    {"inquiry_stream_format_0xBF_single", kCmd_148_inquiry_stream_format_0xBF_single, kResp_148_inquiry_stream_format_0xBF_single, 0x0A, 6983U, true},
+    {"inquiry_stream_format_0x2F_single", kCmd_149_inquiry_stream_format_0x2F_single, kResp_149_inquiry_stream_format_0x2F_single, 0x0C, 6874U, true},
+    {"inquiry_stream_format_0xBF_single", kCmd_150_inquiry_stream_format_0xBF_single, kResp_150_inquiry_stream_format_0xBF_single, 0x0C, 6602U, true},
+    {"inquiry_stream_format_0x2F_single", kCmd_151_inquiry_stream_format_0x2F_single, kResp_151_inquiry_stream_format_0x2F_single, 0x0C, 6098U, true},
+    {"inquiry_stream_format_0xBF_single", kCmd_152_inquiry_stream_format_0xBF_single, kResp_152_inquiry_stream_format_0xBF_single, 0x0C, 6554U, true},
+    {"inquiry_stream_format_0x2F_single", kCmd_153_inquiry_stream_format_0x2F_single, kResp_153_inquiry_stream_format_0x2F_single, 0x0A, 6648U, true},
+    {"inquiry_stream_format_0xBF_single", kCmd_154_inquiry_stream_format_0xBF_single, kResp_154_inquiry_stream_format_0xBF_single, 0x0A, 6777U, true},
+    {"inquiry_signal_source_0xFF", kCmd_155_inquiry_signal_source_0xFF, kResp_155_inquiry_signal_source_0xFF, 0x08, 6205U, true},
+    {"inquiry_signal_source_0x0F", kCmd_156_inquiry_signal_source_0x0F, kResp_156_inquiry_signal_source_0x0F, 0x08, 6082U, true},
+    {"inquiry_signal_source_0xFF", kCmd_157_inquiry_signal_source_0xFF, kResp_157_inquiry_signal_source_0xFF, 0x08, 6006U, true},
+    {"inquiry_signal_source_0x0F", kCmd_158_inquiry_signal_source_0x0F, kResp_158_inquiry_signal_source_0x0F, 0x08, 6093U, true},
+    {"inquiry_signal_source_0xFF", kCmd_159_inquiry_signal_source_0xFF, kResp_159_inquiry_signal_source_0xFF, 0x08, 6810U, true},
+    {"inquiry_signal_source_0x0F", kCmd_160_inquiry_signal_source_0x0F, kResp_160_inquiry_signal_source_0x0F, 0x08, 7099U, true},
+    {"inquiry_feature_mute_on_fb_1_ch_0", kCmd_161_inquiry_feature_mute_on_fb_1_ch_0, kResp_161_inquiry_feature_mute_on_fb_1_ch_0, 0x0C, 2722U, true},
+    {"inquiry_feature_mute_off_fb_1_ch_0", kCmd_162_inquiry_feature_mute_off_fb_1_ch_0, kResp_162_inquiry_feature_mute_off_fb_1_ch_0, 0x0C, 6004U, true},
+    {"inquiry_feature_volume_fb_1_ch_0", kCmd_163_inquiry_feature_volume_fb_1_ch_0, kResp_163_inquiry_feature_volume_fb_1_ch_0, 0x0C, 5797U, true},
+    {"oxford_firmware_id", kCmd_164_oxford_firmware_id, kResp_164_oxford_firmware_id, 0x0C, 45804U, true},
+    {"oxford_hardware_id", kCmd_165_oxford_hardware_id, kResp_165_oxford_hardware_id, 0x0C, 334U, true},
+    {"apogee_dsp_input_meters", kCmd_166_apogee_dsp_input_meters, kResp_166_apogee_dsp_input_meters, 0x0C, 38033U, true},
+    {"apogee_dsp_mixer_meters", kCmd_167_apogee_dsp_mixer_meters, kResp_167_apogee_dsp_mixer_meters, 0x0C, 36656U, true},
+    {"apogee_mic_polarity_ch0", kCmd_168_apogee_mic_polarity_ch0, kResp_168_apogee_mic_polarity_ch0, 0x0C, 6240U, true},
+    {"apogee_mic_polarity_ch1", kCmd_169_apogee_mic_polarity_ch1, kResp_169_apogee_mic_polarity_ch1, 0x0C, 6610U, true},
+    {"apogee_xlr_is_mic_level_ch0", kCmd_170_apogee_xlr_is_mic_level_ch0, kResp_170_apogee_xlr_is_mic_level_ch0, 0x0C, 6441U, true},
+    {"apogee_xlr_is_mic_level_ch1", kCmd_171_apogee_xlr_is_mic_level_ch1, kResp_171_apogee_xlr_is_mic_level_ch1, 0x0C, 6008U, true},
+    {"apogee_xlr_is_consumer_ch0", kCmd_172_apogee_xlr_is_consumer_ch0, kResp_172_apogee_xlr_is_consumer_ch0, 0x0C, 6160U, true},
+    {"apogee_xlr_is_consumer_ch1", kCmd_173_apogee_xlr_is_consumer_ch1, kResp_173_apogee_xlr_is_consumer_ch1, 0x0C, 6052U, true},
+    {"apogee_mic_phantom_ch0", kCmd_174_apogee_mic_phantom_ch0, kResp_174_apogee_mic_phantom_ch0, 0x0C, 6476U, true},
+    {"apogee_mic_phantom_ch1", kCmd_175_apogee_mic_phantom_ch1, kResp_175_apogee_mic_phantom_ch1, 0x0C, 6075U, true},
+    {"apogee_out_is_consumer", kCmd_176_apogee_out_is_consumer, kResp_176_apogee_out_is_consumer, 0x0C, 5973U, true},
+    {"apogee_in_gain_ch0", kCmd_177_apogee_in_gain_ch0, kResp_177_apogee_in_gain_ch0, 0x0C, 6474U, true},
+    {"apogee_in_gain_ch1", kCmd_178_apogee_in_gain_ch1, kResp_178_apogee_in_gain_ch1, 0x0C, 6884U, true},
+    {"apogee_hw_state", kCmd_179_apogee_hw_state, kResp_179_apogee_hw_state, 0x0C, 6157U, true},
+    {"apogee_out_mute", kCmd_180_apogee_out_mute, kResp_180_apogee_out_mute, 0x0C, 6129U, true},
+    {"apogee_in_src_is_phone_ch0", kCmd_181_apogee_in_src_is_phone_ch0, kResp_181_apogee_in_src_is_phone_ch0, 0x0C, 6567U, true},
+    {"apogee_in_src_is_phone_ch1", kCmd_182_apogee_in_src_is_phone_ch1, kResp_182_apogee_in_src_is_phone_ch1, 0x0C, 6680U, true},
+    {"apogee_out_src_is_mixer", kCmd_183_apogee_out_src_is_mixer, kResp_183_apogee_out_src_is_mixer, 0x0C, 6660U, true},
+    {"apogee_disp_overhold_2s", kCmd_184_apogee_disp_overhold_2s, kResp_184_apogee_disp_overhold_2s, 0x0C, 6664U, true},
+    {"apogee_out_volume", kCmd_185_apogee_out_volume, kResp_185_apogee_out_volume, 0x0C, 6163U, true},
+    {"apogee_mute_line_out", kCmd_186_apogee_mute_line_out, kResp_186_apogee_mute_line_out, 0x0C, 5886U, true},
+    {"apogee_mute_hp_out", kCmd_187_apogee_mute_hp_out, kResp_187_apogee_mute_hp_out, 0x0C, 6634U, true},
+    {"apogee_unmute_line_out", kCmd_188_apogee_unmute_line_out, kResp_188_apogee_unmute_line_out, 0x0C, 5617U, true},
+    {"apogee_unmute_hp_out", kCmd_189_apogee_unmute_hp_out, kResp_189_apogee_unmute_hp_out, 0x0C, 6723U, true},
+    {"apogee_disp_is_input", kCmd_190_apogee_disp_is_input, kResp_190_apogee_disp_is_input, 0x0C, 6172U, true},
+    {"apogee_in_clickless", kCmd_191_apogee_in_clickless, kResp_191_apogee_in_clickless, 0x0C, 6082U, true},
+    {"apogee_disp_follow_knob", kCmd_192_apogee_disp_follow_knob, kResp_192_apogee_disp_follow_knob, 0x0C, 6027U, true},
+    {"apogee_mixer_src_0_dst_0", kCmd_193_apogee_mixer_src_0_dst_0, kResp_193_apogee_mixer_src_0_dst_0, 0x0C, 5654U, true},
+    {"apogee_mixer_src_0_dst_1", kCmd_194_apogee_mixer_src_0_dst_1, kResp_194_apogee_mixer_src_0_dst_1, 0x0C, 5998U, true},
+    {"apogee_mixer_src_1_dst_0", kCmd_195_apogee_mixer_src_1_dst_0, kResp_195_apogee_mixer_src_1_dst_0, 0x0C, 6137U, true},
+    {"apogee_mixer_src_1_dst_1", kCmd_196_apogee_mixer_src_1_dst_1, kResp_196_apogee_mixer_src_1_dst_1, 0x0C, 6450U, true},
+    {"apogee_mixer_src_2_dst_0", kCmd_197_apogee_mixer_src_2_dst_0, kResp_197_apogee_mixer_src_2_dst_0, 0x0C, 6849U, true},
+    {"apogee_mixer_src_2_dst_1", kCmd_198_apogee_mixer_src_2_dst_1, kResp_198_apogee_mixer_src_2_dst_1, 0x0C, 6384U, true},
+    {"apogee_mixer_src_3_dst_0", kCmd_199_apogee_mixer_src_3_dst_0, kResp_199_apogee_mixer_src_3_dst_0, 0x0C, 6662U, true},
+    {"apogee_mixer_src_3_dst_1", kCmd_200_apogee_mixer_src_3_dst_1, kResp_200_apogee_mixer_src_3_dst_1, 0x0C, 6098U, true},
+    {"inquiry_apogee_mic_phantom_ch0_on", kCmd_201_inquiry_apogee_mic_phantom_ch0_on, kResp_201_inquiry_apogee_mic_phantom_ch0_on, 0x09, 6441U, true},
+    {"inquiry_apogee_mic_phantom_ch0_off", kCmd_202_inquiry_apogee_mic_phantom_ch0_off, kResp_202_inquiry_apogee_mic_phantom_ch0_off, 0x09, 6785U, true},
+    {"inquiry_apogee_in_gain_ch0_30db", kCmd_203_inquiry_apogee_in_gain_ch0_30db, kResp_203_inquiry_apogee_in_gain_ch0_30db, 0x09, 6032U, true},
+    {"inquiry_apogee_out_mute_on", kCmd_204_inquiry_apogee_out_mute_on, kResp_204_inquiry_apogee_out_mute_on, 0x09, 6768U, true},
+    {"inquiry_apogee_out_mute_off", kCmd_205_inquiry_apogee_out_mute_off, kResp_205_inquiry_apogee_out_mute_off, 0x09, 6826U, true},
+    {"inquiry_apogee_out_volume_40", kCmd_206_inquiry_apogee_out_volume_40, kResp_206_inquiry_apogee_out_volume_40, 0x09, 6499U, true},
+    {"inquiry_apogee_disp_follow_knob_on", kCmd_207_inquiry_apogee_disp_follow_knob_on, kResp_207_inquiry_apogee_disp_follow_knob_on, 0x09, 6260U, true},
+    {"post_check_plug_info", kCmd_208_post_check_plug_info, kResp_208_post_check_plug_info, 0x0C, 6646U, true},
 };
 
 } // namespace DuetData
@@ -708,7 +884,7 @@ inline constexpr AvcDeviceImage kDuet{
     .nodeId = 0U,
     .generation = 3U,
     .driverVersion = "0.3.1",
-    .capturedAt = "2026-09-27T19:28:32.823566+00:00",
+    .capturedAt = "2026-09-27T19:36:28.535413+00:00",
     .records = DuetData::kRecords,
 };
 

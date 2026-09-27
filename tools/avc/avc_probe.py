@@ -571,6 +571,132 @@ class AvcProbeRunner:
             inq_vol = [0x02, saddr, 0xB8, 0x81, fbid, 0x10, 0x02, ch, 0x02, 0x02, vol_bytes[0], vol_bytes[1]]
             self.send_frame(f"inquiry_feature_volume_fb_{fbid}_ch_{ch}", inq_vol, intent="inquiry")
 
+        # ---------------------------------------------------------------------
+        # 10. Apogee Duet Vendor Protocol & Oxford ASIC (if Apogee)
+        # ---------------------------------------------------------------------
+        if "apogee" in self.metadata.vendorName.lower() or (self.metadata.guidUint64 >> 40) == 0x0003DB:
+            print("\n[10/10] Probing Apogee Duet Vendor Protocol & Oxford ASIC...")
+            self.probe_oxford_and_apogee()
+
+    def probe_oxford_and_apogee(self) -> None:
+        # Oxford ASIC CSR Registers
+        print("  Probing Oxford ASIC CSR registers...")
+        self.read_csr_quadlet("oxford_firmware_id", 0xF0050000)
+        self.read_csr_quadlet("oxford_hardware_id", 0xF0090020)
+        self.read_csr_block("apogee_dsp_input_meters", 0xF0080004, 8)
+        self.read_csr_block("apogee_dsp_mixer_meters", 0xF0080404, 16)
+
+        # Apogee Vendor Commands (AV/C Vendor Dependent 0x00, OUI 0x0003DB, prefix 'PCM')
+        print("  Probing Apogee AV/C Vendor commands...")
+        apogee_prefix = [0x00, 0x03, 0xDB, 0x50, 0x43, 0x4D]
+
+        vendor_status_cmds = [
+            ("apogee_mic_polarity_ch0", [0x00, 0x80, 0x00]),
+            ("apogee_mic_polarity_ch1", [0x00, 0x80, 0x01]),
+            ("apogee_xlr_is_mic_level_ch0", [0x01, 0x80, 0x00]),
+            ("apogee_xlr_is_mic_level_ch1", [0x01, 0x80, 0x01]),
+            ("apogee_xlr_is_consumer_ch0", [0x02, 0x80, 0x00]),
+            ("apogee_xlr_is_consumer_ch1", [0x02, 0x80, 0x01]),
+            ("apogee_mic_phantom_ch0", [0x03, 0x80, 0x00]),
+            ("apogee_mic_phantom_ch1", [0x03, 0x80, 0x01]),
+            ("apogee_out_is_consumer", [0x04, 0x80, 0xFF]),
+            ("apogee_in_gain_ch0", [0x05, 0x80, 0x00]),
+            ("apogee_in_gain_ch1", [0x05, 0x80, 0x01]),
+            ("apogee_hw_state", [0x07, 0xFF, 0xFF]),
+            ("apogee_out_mute", [0x09, 0x80, 0xFF]),
+            ("apogee_in_src_is_phone_ch0", [0x0C, 0x80, 0x00]),
+            ("apogee_in_src_is_phone_ch1", [0x0C, 0x80, 0x01]),
+            ("apogee_out_src_is_mixer", [0x11, 0xFF, 0xFF]),
+            ("apogee_disp_overhold_2s", [0x13, 0xFF, 0xFF]),
+            ("apogee_out_volume", [0x15, 0x80, 0xFF]),
+            ("apogee_mute_line_out", [0x16, 0x80, 0xFF]),
+            ("apogee_mute_hp_out", [0x17, 0x80, 0xFF]),
+            ("apogee_unmute_line_out", [0x18, 0x80, 0xFF]),
+            ("apogee_unmute_hp_out", [0x19, 0x80, 0xFF]),
+            ("apogee_disp_is_input", [0x1B, 0xFF, 0xFF]),
+            ("apogee_in_clickless", [0x1E, 0xFF, 0xFF]),
+            ("apogee_disp_follow_knob", [0x22, 0xFF, 0xFF]),
+        ]
+
+        for name, tail in vendor_status_cmds:
+            payload = [0x01, 0xFF, 0x00] + apogee_prefix + tail
+            self.send_frame(name, payload, intent="status")
+
+        # Mixer coefficients
+        for src in range(4):
+            for dst in range(2):
+                arg1 = ((src // 2) << 4) | (src % 2)
+                payload = [0x01, 0xFF, 0x00] + apogee_prefix + [0x10, arg1, dst]
+                self.send_frame(f"apogee_mixer_src_{src}_dst_{dst}", payload, intent="status")
+
+        # Specific Inquiries
+        inquiry_cmds = [
+            ("inquiry_apogee_mic_phantom_ch0_on", [0x03, 0x80, 0x00, 0x70]),
+            ("inquiry_apogee_mic_phantom_ch0_off", [0x03, 0x80, 0x00, 0x60]),
+            ("inquiry_apogee_in_gain_ch0_30db", [0x05, 0x80, 0x00, 0x1E]),
+            ("inquiry_apogee_out_mute_on", [0x09, 0x80, 0xFF, 0x70]),
+            ("inquiry_apogee_out_mute_off", [0x09, 0x80, 0xFF, 0x60]),
+            ("inquiry_apogee_out_volume_40", [0x15, 0x80, 0xFF, 0x28]),
+            ("inquiry_apogee_disp_follow_knob_on", [0x22, 0xFF, 0xFF, 0x70]),
+        ]
+
+        for name, tail in inquiry_cmds:
+            payload = [0x02, 0xFF, 0x00] + apogee_prefix + tail
+            self.send_frame(name, payload, intent="inquiry")
+
+    def read_csr_quadlet(self, name: str, addr_low: int) -> None:
+        args = {
+            "nodeId": self.metadata.nodeId,
+            "generation": self.metadata.generation,
+            "addressHigh": FCP_COMMAND_ADDR_HIGH,
+            "addressLow": addr_low,
+        }
+        res = self.client.call_tool("asfw_read_quadlet", args)
+        ok = res.get("ok", False)
+        data = res.get("data", {})
+        payload = data.get("payload", [])
+        dur = data.get("durationUsec", 0)
+        rec = ExchangeRecord(
+            name=name,
+            command=[(addr_low >> 24) & 0xFF, (addr_low >> 16) & 0xFF, (addr_low >> 8) & 0xFF, addr_low & 0xFF],
+            response=payload,
+            responseCode=0x0C if ok else 0x08,
+            durationUsec=dur,
+            ok=ok,
+            status=data.get("status", ""),
+        )
+        self.records.append(rec)
+        if self.verbose:
+            payload_hex = " ".join(f"{b:02X}" for b in payload)
+            print(f"  [<] QUADLET ({dur:>5} µs) : {name:<25} = {payload_hex}")
+
+    def read_csr_block(self, name: str, addr_low: int, length: int) -> None:
+        args = {
+            "nodeId": self.metadata.nodeId,
+            "generation": self.metadata.generation,
+            "addressHigh": FCP_COMMAND_ADDR_HIGH,
+            "addressLow": addr_low,
+            "length": length,
+        }
+        res = self.client.call_tool("asfw_read_block", args)
+        ok = res.get("ok", False)
+        data = res.get("data", {})
+        payload = data.get("payload", [])
+        dur = data.get("durationUsec", 0)
+        rec = ExchangeRecord(
+            name=name,
+            command=[(addr_low >> 24) & 0xFF, (addr_low >> 16) & 0xFF, (addr_low >> 8) & 0xFF, addr_low & 0xFF, length],
+            response=payload,
+            responseCode=0x0C if ok else 0x08,
+            durationUsec=dur,
+            ok=ok,
+            status=data.get("status", ""),
+        )
+        self.records.append(rec)
+        if self.verbose:
+            payload_hex = " ".join(f"{b:02X}" for b in payload)
+            print(f"  [<] BLOCK   ({dur:>5} µs) : {name:<25} = {payload_hex}")
+
     def post_check(self) -> None:
         print("\nRunning post-check...")
         # 1. Health
