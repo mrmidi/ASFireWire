@@ -146,6 +146,68 @@ TEST(AvcFixtureTests, Phase88PlugSignalFormatParsesCorrectly) {
     EXPECT_EQ(fmt->fdf[0], 0x02);  // 48 kHz
 }
 
+TEST(AvcFixtureTests, Phase88StreamFormatListHighLevelParsing) {
+    // Phase 88 supports 5 rates per direction (indices 0..4), all 10 PCM + 1 MIDI.
+    const StreamFormatRate expectedRates[] = {
+        StreamFormatRate::k32000,
+        StreamFormatRate::k44100,
+        StreamFormatRate::k48000,
+        StreamFormatRate::k88200,
+        StreamFormatRate::k96000,
+    };
+
+    size_t inListFound = 0;
+    size_t outListFound = 0;
+
+    for (const auto& rec : Testing::kPhase88.records) {
+        std::string_view name{rec.name};
+        if (name.starts_with("stream_format_0x2F_list_unit_iso_in_0_idx_")) {
+            uint8_t idx = static_cast<uint8_t>(name.back() - '0');
+            if (idx <= 4) {
+                auto resp = ParseResponse(rec.response);
+                ASSERT_TRUE(resp.has_value());
+                auto entry = Cmd::ParseStreamFormatList(*resp, idx);
+                ASSERT_TRUE(entry.has_value()) << "Failed to parse in list entry " << int(idx);
+                EXPECT_EQ(entry->index, idx);
+                EXPECT_EQ(entry->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
+                EXPECT_EQ(entry->format.compound.rate, expectedRates[idx]);
+                EXPECT_EQ(entry->format.compound.PcmChannels(), 10U);
+                EXPECT_EQ(entry->format.compound.MidiChannels(), 1U);
+                EXPECT_TRUE(entry->format.compound.OnlyPcmAndMidi());
+                inListFound++;
+            }
+        } else if (name.starts_with("stream_format_0x2F_list_unit_iso_out_0_idx_")) {
+            uint8_t idx = static_cast<uint8_t>(name.back() - '0');
+            if (idx <= 4) {
+                auto resp = ParseResponse(rec.response);
+                ASSERT_TRUE(resp.has_value());
+                auto entry = Cmd::ParseStreamFormatList(*resp, idx);
+                ASSERT_TRUE(entry.has_value()) << "Failed to parse out list entry " << int(idx);
+                EXPECT_EQ(entry->index, idx);
+                EXPECT_EQ(entry->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
+                EXPECT_EQ(entry->format.compound.rate, expectedRates[idx]);
+                EXPECT_EQ(entry->format.compound.PcmChannels(), 10U);
+                EXPECT_EQ(entry->format.compound.MidiChannels(), 1U);
+                EXPECT_TRUE(entry->format.compound.OnlyPcmAndMidi());
+                outListFound++;
+            }
+        } else if (name == "stream_format_0x2F_single_unit_iso_in_0") {
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            auto single = Cmd::ParseStreamFormatSingle(*resp, ResponseCode::kImplementedStable);
+            ASSERT_TRUE(single.has_value());
+            EXPECT_EQ(single->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
+            EXPECT_EQ(single->format.compound.rate, StreamFormatRate::k48000);
+            EXPECT_EQ(single->format.compound.PcmChannels(), 10U);
+            EXPECT_EQ(single->format.compound.MidiChannels(), 1U);
+            EXPECT_TRUE(single->format.compound.OnlyPcmAndMidi());
+        }
+    }
+
+    EXPECT_EQ(inListFound, 5U);
+    EXPECT_EQ(outListFound, 5U);
+}
+
 TEST(AvcFixtureTests, Phase88BridgeCoExtensionsParseCorrectly) {
     // Find bridgeco plug type response in records
     for (const auto& rec : Testing::kPhase88.records) {
@@ -328,23 +390,42 @@ TEST(AvcFixtureTests, DuetPlugInfoParsesCorrectly) {
 
 TEST(AvcFixtureTests, DuetExtendedStreamFormatParsesCorrectly) {
     // Duet supports draft 0xBF stream format single
+    bool inParsed = false;
+    bool outParsed = false;
+
     for (const auto& rec : Testing::kDuet.records) {
-        if (std::string_view(rec.name) == "stream_format_0xBF_single_unit_iso_in_0") {
+        std::string_view name{rec.name};
+        if (name == "stream_format_0xBF_single_unit_iso_in_0") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
             EXPECT_EQ(resp->opcode, static_cast<Opcode>(0xBF));
             EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
-            // Format data starts at operand 7 (frame byte 10)
-            ASSERT_GE(rec.response.size(), 17U);
-            std::span<const uint8_t> fmtBytes{rec.response.data() + 10, rec.response.size() - 10};
-            auto parsedFmt = Cmd::ParseStreamFormatBlock(fmtBytes);
-            ASSERT_TRUE(parsedFmt.has_value());
-            EXPECT_EQ(parsedFmt->kind, Cmd::StreamFormat::Kind::kCompoundAm824);
-            EXPECT_EQ(parsedFmt->compound.rate, StreamFormatRate::k48000);
-            EXPECT_EQ(parsedFmt->compound.entryCount, 1U);
-            EXPECT_EQ(parsedFmt->compound.entries[0].count, 2U);  // 2 channels
+
+            auto single = Cmd::ParseStreamFormatSingle(*resp, ResponseCode::kImplementedStable);
+            ASSERT_TRUE(single.has_value());
+            EXPECT_EQ(single->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
+            EXPECT_EQ(single->format.compound.rate, StreamFormatRate::k48000);
+            EXPECT_EQ(single->format.compound.PcmChannels(), 2U);
+            EXPECT_EQ(single->format.compound.MidiChannels(), 0U);
+            inParsed = true;
+        } else if (name == "stream_format_0xBF_single_unit_iso_out_0") {
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->opcode, static_cast<Opcode>(0xBF));
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+
+            auto single = Cmd::ParseStreamFormatSingle(*resp, ResponseCode::kImplementedStable);
+            ASSERT_TRUE(single.has_value());
+            EXPECT_EQ(single->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
+            EXPECT_EQ(single->format.compound.rate, StreamFormatRate::k48000);
+            EXPECT_EQ(single->format.compound.PcmChannels(), 2U);
+            EXPECT_EQ(single->format.compound.MidiChannels(), 0U);
+            outParsed = true;
         }
     }
+
+    EXPECT_TRUE(inParsed);
+    EXPECT_TRUE(outParsed);
 }
 
 TEST(AvcFixtureTests, DuetFunctionBlocksAndInquiryValidate) {

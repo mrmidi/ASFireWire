@@ -205,13 +205,22 @@ class AvcProbeRunner:
         model_name = target_node.get("modelName", "Unknown Model")
         vendor_name = target_node.get("vendorName", "Unknown Vendor")
         node_id = target_node.get("nodeId", 0)
+        vendor_id = target_node.get("vendorId", (guid_int >> 40) & 0xFFFFFF)
+        model_id = target_node.get("modelId", 0)
 
-        # Safety lockout for FW 1814 and ProjectMix I/O:
+        # Safety lockout for FW 1814 and ProjectMix I/O based on catalog identity:
+        # Vendor ID: 0x000D6C, Model IDs: 0x00010071 (1814) / 0x00010091 (ProjectMix)
         # Standard AV/C discovery (SUBUNIT_INFO, PLUG_INFO) will freeze this hardware.
-        model_lower = model_name.lower()
-        if ("1814" in model_lower or "projectmix" in model_lower) and not getattr(self, "force", False):
+        is_maudio_special = (
+            (vendor_id == 0x000D6C and model_id in (0x00010071, 0x00010091))
+            or target_node.get("avcCommandFilter") == "MAudioSpecialBeBoB"
+            or "1814" in model_name.lower()
+            or "projectmix" in model_name.lower()
+        )
+        if is_maudio_special and not getattr(self, "force", False):
             raise ProbeError(
-                f"SAFETY LOCKOUT: Target device '{model_name}' ({vendor_name}) is an M-Audio FireWire 1814 / ProjectMix I/O.\n"
+                f"SAFETY LOCKOUT: Target device '{model_name}' ({vendor_name}, vendorId=0x{vendor_id:06X}, modelId=0x{model_id:08X}) "
+                f"is an M-Audio FireWire 1814 / ProjectMix I/O.\n"
                 f"Standard AV/C discovery commands (SUBUNIT_INFO, PLUG_INFO, Extended Stream Format) will FREEZE this firmware!\n"
                 f"Please use 'tools/avc/avc_probe_1814.py' instead (or pass --force to override)."
             )

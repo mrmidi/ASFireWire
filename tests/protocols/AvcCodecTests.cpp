@@ -227,8 +227,8 @@ TEST(GeneralCommandsTests, BuildUnitInfoStatusMatchesSpec) {
 }
 
 TEST(GeneralCommandsTests, ParseUnitInfoSuccessAndErrors) {
-    // Vector: Unit type 0x1F (unit), unit id 7, company ID 0x001198 (TerraTec)
-    const uint8_t respBytes[] = {0x0C, 0xFF, 0x30, 0x07, 0xFF, 0x00, 0x11, 0x98};
+    // Vector: Unit type 0x1F (unit), unit id 7, company ID 0x000AAC (TerraTec)
+    const uint8_t respBytes[] = {0x0C, 0xFF, 0x30, 0x07, 0xFF, 0x00, 0x0A, 0xAC};
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
 
@@ -236,10 +236,10 @@ TEST(GeneralCommandsTests, ParseUnitInfoSuccessAndErrors) {
     ASSERT_TRUE(unitInfo.has_value());
     EXPECT_EQ(unitInfo->unitType, SubunitType::kUnit);
     EXPECT_EQ(unitInfo->unitId, 7);
-    EXPECT_EQ(unitInfo->companyId, (CompanyId{0x00, 0x11, 0x98}));
+    EXPECT_EQ(unitInfo->companyId, (CompanyId{0x00, 0x0A, 0xAC}));
 
     // Error: malformed first operand
-    const uint8_t badFirst[] = {0x0C, 0xFF, 0x30, 0x00, 0xFF, 0x00, 0x11, 0x98};
+    const uint8_t badFirst[] = {0x0C, 0xFF, 0x30, 0x00, 0xFF, 0x00, 0x0A, 0xAC};
     auto badResp = ParseResponse(badFirst);
     ASSERT_TRUE(badResp.has_value());
     auto err1 = Cmd::ParseUnitInfo(*badResp);
@@ -589,7 +589,9 @@ TEST(FunctionBlockTests, FeatureVolumeBuildAndParse) {
     ASSERT_EQ(volCmd->Operands().size(), sizeof(expectedVol));
     EXPECT_TRUE(std::equal(expectedVol, expectedVol + sizeof(expectedVol), volCmd->Operands().data()));
 
-    // Vector from ta1394 audio lib.rs:1511: volume -1234 (0xFB2E)
+    // Vector adapted from ta1394 audio lib.rs:1511:
+    // ta1394 defines multi-channel volume [-1234, 5678, 3210]; here we adapt the
+    // first channel int16 -1234 (0xFB2E) for single-channel master volume testing.
     const uint8_t respBytes[] = {0x0C, 0x08, 0xB8, 0x81, 0x03, 0x10, 0x02, 0x00, 0x02, 0x02, 0xFB, 0x2E};
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());

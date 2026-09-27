@@ -41,6 +41,20 @@ add_protocols_test(AvcFixtureTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
 )
 
+# AVC Differential Tests (Legacy vs New ASFW::AVC Codecs)
+add_protocols_test(AvcDifferentialTests
+    AvcDifferentialTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/GeneralCommands.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/SignalSourceCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/FunctionBlockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
+)
+
 
 # FCP Packet Parsing Tests
 add_executable(FCPPacketParsingTests

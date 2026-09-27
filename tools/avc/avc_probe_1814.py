@@ -5,23 +5,32 @@ Unlike standard AV/C and BridgeCo devices, the FW 1814 and ProjectMix I/O run
 custom DM1000 firmware with a fragile AV/C parser. Standard discovery commands
 will FREEZE the hardware, requiring a physical power cycle.
 
-What this probe NEVER sends (Hardware Freeze Blocklist):
+Strict Client-Side Allowlist:
+  This probe enforces an exact client-side mirror of the driver's kernel-side
+  allowlist (kMAudioSpecialPermittedFrames in AVCCommandFilter.hpp). Every AV/C
+  frame is validated against masked prefix rules before being submitted to FCP.
+  Any frame outside this allowlist is rejected immediately before transmission.
+
+What Will FREEZE the 1814 / ProjectMix (DO NOT SEND):
   ❌ SUBUNIT_INFO (0x31)
   ❌ PLUG_INFO (0x02)
   ❌ Extended Stream Format (0x2F / 0xBF, subfunctions 0xC0 / 0xC1)
   ❌ SIGNAL SOURCE (0x1A)
+  ❌ UNIT_INFO (0x30)
   ❌ BridgeCo Extended Plug Info (0x02 subfunction 0xC0)
   ❌ Standard Feature Blocks (FB 0, FB 1..3 mute/volume)
+  ❌ Status queries for proprietary vendor commands (LED, Clock 04 00 04)
 
-What this probe DOES safely inspect:
+What this probe safely inspects:
   1. BootROM / Software Info Register (Async memory read at 0xFFC700000000)
-  2. Hardware Peak Meters & Clock Sync Status (Async block read at 0xFFC700600000)
-  3. Hardware Mixer Matrix snapshot (Async block read at 0xFFC700700000)
-  4. AV/C UNIT_INFO Status (0x30)
-  5. AV/C Input/Output Plug Signal Format Status (0x18 / 0x19)
-  6. AV/C Specific Inquiries for AM824 Sample Rates (44.1k .. 192k)
-  7. Digital Interface Selector FB 4 Status (Optical vs Coaxial)
-  8. (Optional) Proprietary Vendor Controls (LED status, Clock selection)
+  2. Hardware Peak Meters & Clock Sync Status (Async block read at 0xFFC700600000, 84 bytes)
+  3. Hardware Mixer Matrix snapshot (Async block read at 0xFFC700700000, 160 bytes)
+  4. AV/C Plug Signal Format Status (0x18 / 0x19 with FMT pinned to 0x90 AM824)
+  5. (Optional, --include-control) Proven Vendor Controls:
+     - Front-panel LED toggle (CONTROL 00 FF 00 03 00 01 [01/00] 00)
+     - Blank-slate input selector (CONTROL 00 08 B8 80 04 10 02 00 01 00 00 00)
+     - Internal Clock selection (CONTROL 16-byte frame, lock=0x00 per Linux bebob_maudio.c:276)
+     - Sample Rate switching via CONTROL signal format
 """
 
 from __future__ import annotations
@@ -51,6 +60,101 @@ MAUDIO_MIXER_ADDR_LOW = 0x00700000
 
 METER_BUFFER_SIZE = 84
 MIXER_BUFFER_SIZE = 160
+
+# AM824 / IEC 61883-6 Sampling Frequency Code (SFC) Table
+SFC_TABLE: dict[int, str] = {
+    0x00: "32.0 kHz",
+    0x01: "44.1 kHz",
+    0x02: "48.0 kHz",
+    0x03: "88.2 kHz",
+    0x04: "96.0 kHz",
+    0x05: "176.4 kHz",
+    0x06: "192.0 kHz",
+}
+
+# ==============================================================================
+# Strict Client-Side Allowlist (Mirror of kMAudioSpecialPermittedFrames)
+# ==============================================================================
+
+PERMITTED_FRAMES: list[dict[str, Any]] = [
+    # 1. STATUS, unit, INPUT PLUG SIGNAL FORMAT (length 8, FMT pinned to 0x90 AM824)
+    #    references/linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:302-313
+    {
+        "name": "sig-fmt STATUS input plug",
+        "length": 8,
+        "prefix": [0x01, 0xFF, 0x19, 0x00, 0x90, 0x00, 0x00, 0x00],
+        "care":   [0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0x00, 0x00, 0x00],
+    },
+    # 2. STATUS, unit, OUTPUT PLUG SIGNAL FORMAT (length 8, FMT pinned to 0x90 AM824)
+    #    references/alsa-userspace-control-protocols-impl/protocols/bebob/src/maudio/special.rs:101-119
+    {
+        "name": "sig-fmt STATUS output plug",
+        "length": 8,
+        "prefix": [0x01, 0xFF, 0x18, 0x00, 0x90, 0x00, 0x00, 0x00],
+        "care":   [0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0x00, 0x00, 0x00],
+    },
+    # 3. CONTROL, unit, INPUT PLUG SIGNAL FORMAT (length 8, FMT pinned to 0x90 AM824)
+    #    references/linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:315-338
+    {
+        "name": "sig-fmt CONTROL input plug",
+        "length": 8,
+        "prefix": [0x00, 0xFF, 0x19, 0x00, 0x90, 0x00, 0x00, 0x00],
+        "care":   [0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0x00, 0x00, 0x00],
+    },
+    # 4. CONTROL, unit, OUTPUT PLUG SIGNAL FORMAT (length 8, FMT pinned to 0x90 AM824)
+    #    references/linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:315-338
+    {
+        "name": "sig-fmt CONTROL output plug",
+        "length": 8,
+        "prefix": [0x00, 0xFF, 0x18, 0x00, 0x90, 0x00, 0x00, 0x00],
+        "care":   [0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0x00, 0x00, 0x00],
+    },
+    # 5. M-Audio vendor clock/format (16 bytes, OUI 0x04 0x00 0x04)
+    #    references/linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:186-198, 276
+    #    vendor kext SetClockSourceInternal @ 0xe25c
+    {
+        "name": "M-Audio vendor clock/format",
+        "length": 16,
+        "prefix": [0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00,
+                   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        "care":   [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00,
+                   0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+    },
+    # 6. M-Audio blank-slate input selector (12 bytes, audio subunit 0, FB 4)
+    #    vendor kext SetClockSourceInternal @ 0xe45a -> base @ 0x23148
+    #    references/linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:461-462,514
+    {
+        "name": "M-Audio blank-slate input selector",
+        "length": 12,
+        "prefix": [0x00, 0x08, 0xB8, 0x80, 0x04, 0x10, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00],
+        "care":   [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+    },
+    # 7. M-Audio front-panel LED (8 bytes, OUI 0x03 0x00 0x01)
+    #    vendor kext AVCControlSetLEDStatus @ 0xdaaa
+    #    references/alsa-userspace-control-protocols-impl/protocols/bebob/src/maudio/special.rs:121-167
+    {
+        "name": "M-Audio LED",
+        "length": 8,
+        "prefix": [0x00, 0xFF, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00],
+        "care":   [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0xFF],
+    },
+]
+
+
+def frame_matches(rule: dict[str, Any], payload: list[int]) -> bool:
+    if len(payload) != rule["length"]:
+        return False
+    for p_byte, c_byte, byte in zip(rule["prefix"], rule["care"], payload):
+        if (byte & c_byte) != (p_byte & c_byte):
+            return False
+    return True
+
+
+def frame_is_permitted(payload: list[int]) -> tuple[bool, str]:
+    for rule in PERMITTED_FRAMES:
+        if frame_matches(rule, payload):
+            return True, rule["name"]
+    return False, ""
 
 
 class ProbeError(RuntimeError):
@@ -166,6 +270,8 @@ class DeviceMetadata:
     key: str
     modelName: str
     vendorName: str
+    vendorId: int
+    modelId: int
     guid: str
     guidUint64: int
     nodeId: int
@@ -218,11 +324,20 @@ class FW1814ProbeRunner:
 
         target_node = None
         for n in node_list:
+            guid_str = n.get("guid", "0x0")
+            guid_int = int(guid_str, 16) if guid_str.startswith("0x") else int(guid_str)
+            vendor_id = n.get("vendorId", (guid_int >> 40) & 0xFFFFFF)
+            model_id = n.get("modelId", 0)
             model = n.get("modelName", "").lower()
-            vendor = n.get("vendorName", "").lower()
-            if "1814" in model or "projectmix" in model:
+            if (
+                (vendor_id == 0x000D6C and model_id in (0x00010071, 0x00010091))
+                or n.get("avcCommandFilter") == "MAudioSpecialBeBoB"
+                or "1814" in model
+                or "projectmix" in model
+            ):
                 target_node = n
                 break
+
         if target_node is None:
             if not self.force:
                 models_found = [f"{n.get('vendorName')} {n.get('modelName')}" for n in node_list]
@@ -238,6 +353,8 @@ class FW1814ProbeRunner:
         model_name = target_node.get("modelName", "FireWire 1814")
         vendor_name = target_node.get("vendorName", "M-Audio")
         node_id = target_node.get("nodeId", 0)
+        vendor_id = target_node.get("vendorId", (guid_int >> 40) & 0xFFFFFF)
+        model_id = target_node.get("modelId", 0)
 
         if not generation:
             telem_res = self.client.read_resource("asfw://telemetry/snapshot")
@@ -245,47 +362,41 @@ class FW1814ProbeRunner:
 
         key = device_key_override
         if not key:
-            key = "maudio-fw1814" if "1814" in model_name else "maudio-projectmix"
+            key = "maudio-fw1814" if "1814" in model_name.lower() or model_id == 0x00010071 else "maudio-projectmix"
 
         self.metadata = DeviceMetadata(
             key=key,
             modelName=model_name,
             vendorName=vendor_name,
+            vendorId=vendor_id,
+            modelId=model_id,
             guid=f"0x{guid_int:016X}",
             guidUint64=guid_int,
             nodeId=node_id,
             generation=generation,
             driverVersion=driver_ver,
             capturedAt=datetime.now(timezone.utc).isoformat(),
-            is1814=("1814" in model_name.lower()),
+            is1814=("1814" in model_name.lower() or model_id == 0x00010071),
         )
         return self.metadata
 
     def send_frame(self, name: str, payload: list[int], intent: str = "status") -> ExchangeRecord:
-        """Sends an AV/C frame with strict hardware freeze protection."""
+        """Sends an AV/C frame strictly guarded by the M-Audio special allowlist."""
         if self.metadata is None:
             raise ProbeError("Runner has not passed pre_check.")
 
-        # STRICT FREEZE INTERLOCK
-        if len(payload) >= 3:
-            opcode = payload[2]
-            ctype = payload[0]
-            # 1. Opcode 0x31: SUBUNIT_INFO
-            if opcode == 0x31:
-                raise ProbeError(f"HARDWARE HAZARD INTERLOCK: Refusing to send SUBUNIT_INFO (0x31) to 1814! This freezes firmware.")
-            # 2. Opcode 0x02: PLUG_INFO
-            if opcode == 0x02:
-                raise ProbeError(f"HARDWARE HAZARD INTERLOCK: Refusing to send PLUG_INFO (0x02) to 1814! This freezes firmware.")
-            # 3. Opcode 0x2F / 0xBF: EXTENDED_STREAM_FORMAT
-            if opcode in (0x2F, 0xBF):
-                raise ProbeError(f"HARDWARE HAZARD INTERLOCK: Refusing to send EXTENDED_STREAM_FORMAT (0x{opcode:02X}) to 1814! This freezes firmware.")
-            # 4. Opcode 0x1A: SIGNAL_SOURCE
-            if opcode == 0x1A:
-                raise ProbeError(f"HARDWARE HAZARD INTERLOCK: Refusing to send SIGNAL_SOURCE (0x1A) to 1814! This freezes firmware.")
-            # 5. Feature Block 0x81
-            if opcode == 0xB8 and len(payload) >= 4 and payload[3] == 0x81:
-                raise ProbeError(f"HARDWARE HAZARD INTERLOCK: Refusing to send Feature Block (0x81) to 1814! This freezes firmware.")
+        if len(payload) < 3:
+            raise ProbeError(f"Payload too short ({len(payload)} bytes): {payload}")
 
+        permitted, rule_name = frame_is_permitted(payload)
+        if not permitted:
+            cmd_hex = " ".join(f"{b:02X}" for b in payload)
+            raise ProbeError(
+                f"SAFETY ALLOWLIST REFUSAL: Frame '{name}' ({cmd_hex}) is NOT in the M-Audio special allowlist!\n"
+                f"Sending unpermitted commands to 1814/ProjectMix hardware will FREEZE the DM1000 firmware."
+            )
+
+        ctype = payload[0]
         tool_name = "asfw_fcp_send_command_dev" if ctype == 0x00 else "asfw_fcp_send_command"
 
         args = {
@@ -300,7 +411,7 @@ class FW1814ProbeRunner:
 
         if self.verbose:
             cmd_hex = " ".join(f"{b:02X}" for b in payload)
-            print(f"  [FCP] {name:<35} : {cmd_hex}")
+            print(f"  [FCP] {name:<35} : {cmd_hex} (rule: {rule_name})")
 
         result = self.client.call_tool(tool_name, args)
         ok = result.get("ok", False)
@@ -340,7 +451,7 @@ class FW1814ProbeRunner:
         return record
 
     def read_register_block(self, name: str, addr_high: int, addr_low: int, length: int) -> list[int] | None:
-        """Reads a memory-mapped block via IEEE 1394 async block read."""
+        """Reads a memory-mapped block via IEEE 1394 async block read (stored in register_dumps, not records)."""
         if self.metadata is None:
             raise ProbeError("Runner has not passed pre_check.")
 
@@ -396,7 +507,7 @@ class FW1814ProbeRunner:
             rot2 = (block[0] >> 4) & 3
             rot3 = (block[0] >> 2) & 3
             sw = block[0] & 3
-            print(f"   [+] Controls: Rot1={rot1}, Rot2={rot2}, Rot3={rot3}, Switch={sw}")
+            print(f"   [+] Front Panel Encoders: Rot1={rot1}, Rot2={rot2}, Rot3={rot3}, Switch={sw}")
 
             # Trailing quadlet: Sync Lock & External Rate
             sync_val = (block[80] << 24) | (block[81] << 16) | (block[82] << 8) | block[83]
@@ -412,76 +523,87 @@ class FW1814ProbeRunner:
         self.read_register_block("mixer_matrix_160b", MAUDIO_SPECIAL_ADDR_HIGH, MAUDIO_MIXER_ADDR_LOW, MIXER_BUFFER_SIZE)
 
     def probe_safe_avc(self) -> None:
-        """Probes safe, read-only AV/C frames verified against vendor driver disassembly."""
-        print("-> Probing Safe AV/C Commands...")
+        """Probes safe, read-only AV/C frames strictly matching kMAudioSpecialPermittedFrames."""
+        print("-> Probing Safe AV/C Commands (Allowlist Enforced)...")
 
-        # 1. UNIT_INFO (Standard AV/C Opcode 0x30 is safe; 0x31 SUBUNIT_INFO freezes)
-        self.send_frame("unit_info", [0x01, 0xFF, 0x30, 0x07, 0xFF, 0xFF, 0xFF, 0xFF])
+        # 1. Input Plug 0 Signal Format (Status - safe per Linux bebob_maudio.c:308)
+        #    Byte 4 pinned to 0x90 (AM824) to match driver filter care mask
+        rec_in0 = self.send_frame("input_plug_0_signal_format_status", [0x01, 0xFF, 0x19, 0x00, 0x90, 0xFF, 0xFF, 0xFF])
+        if rec_in0.ok and rec_in0.response and len(rec_in0.response) >= 6:
+            sfc = rec_in0.response[5] & 0x07
+            rate_str = SFC_TABLE.get(sfc, f"unknown (0x{sfc:02X})")
+            print(f"   [+] Input Plug 0 Signal Format: Rate={rate_str} (SFC=0x{sfc:02X})")
 
-        # 2. Input Plug 0 Signal Format (Status - safe per Linux bebob_maudio.c:308)
-        self.send_frame("input_plug_0_signal_format_status", [0x01, 0xFF, 0x19, 0x00, 0xFF, 0xFF, 0xFF, 0xFF])
+        # 2. Output Plug 0 Signal Format (Status)
+        rec_out0 = self.send_frame("output_plug_0_signal_format_status", [0x01, 0xFF, 0x18, 0x00, 0x90, 0xFF, 0xFF, 0xFF])
+        if rec_out0.ok and rec_out0.response and len(rec_out0.response) >= 6:
+            sfc = rec_out0.response[5] & 0x07
+            rate_str = SFC_TABLE.get(sfc, f"unknown (0x{sfc:02X})")
+            print(f"   [+] Output Plug 0 Signal Format: Rate={rate_str} (SFC=0x{sfc:02X})")
 
-        # 3. Output Plug 0 Signal Format (Status)
-        self.send_frame("output_plug_0_signal_format_status", [0x01, 0xFF, 0x18, 0x00, 0xFF, 0xFF, 0xFF, 0xFF])
-
-        # 4. Selector Function Block 4 (Status - S/PDIF Optical vs Coaxial interface)
-        self.send_frame("selector_fb_4_status", [0x01, 0x08, 0xB8, 0x80, 0x04, 0x10, 0x02, 0xFF, 0x01, 0x00, 0x00, 0x00])
-
-        # 5. SPECIFIC INQUIRIES for supported sampling rates on Input & Output plugs (AM824 format 0x90)
-        # FDF values: 0x00=44.1k, 0x01=48k, 0x02=88.2k, 0x03=96k, 0x04=176.4k, 0x05=192k
-        rates = [
-            ("44k1", 0x00),
-            ("48k", 0x01),
-            ("88k2", 0x02),
-            ("96k", 0x03),
-            ("176k4", 0x04),
-            ("192k", 0x05),
-        ]
-        for name, fdf in rates:
-            # Skip 176.4k and 192k on ProjectMix (max rate is 96k)
-            if self.metadata and not self.metadata.is1814 and fdf >= 0x04:
-                continue
-            self.send_frame(
-                f"inquiry_output_rate_{name}",
-                [0x02, 0xFF, 0x18, 0x00, 0x90, fdf, 0xFF, 0xFF],
-                intent="inquiry",
-            )
-            self.send_frame(
-                f"inquiry_input_rate_{name}",
-                [0x02, 0xFF, 0x19, 0x00, 0x90, fdf, 0xFF, 0xFF],
-                intent="inquiry",
-            )
-
-        # 6. Status of proprietary vendor commands if answered (read-only query)
-        self.send_frame(
-            "vendor_led_status_query",
-            [0x01, 0xFF, 0x00, 0x03, 0x00, 0x01, 0xFF, 0x00],
-        )
-        self.send_frame(
-            "vendor_clock_status_query",
-            [0x01, 0xFF, 0x00, 0x04, 0x00, 0x04, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00],
-        )
+        # 3. Check Input and Output Plug 1 if present
+        self.send_frame("input_plug_1_signal_format_status", [0x01, 0xFF, 0x19, 0x01, 0x90, 0xFF, 0xFF, 0xFF])
+        self.send_frame("output_plug_1_signal_format_status", [0x01, 0xFF, 0x18, 0x01, 0x90, 0xFF, 0xFF, 0xFF])
 
     def probe_optional_controls(self) -> None:
-        """Runs non-destructive proprietary control tests if enabled."""
+        """Runs non-destructive proprietary control tests if enabled (--include-control)."""
         if not self.include_control:
             return
 
         print("-> Running Proprietary Control Tests (--include-control enabled)...")
-        # 1. Front-panel LED test: toggle ON, then OFF
+
+        # 1. Front-panel LED test: toggle ON, then OFF (CONTROL 8 bytes, OUI 0x03 0x00 0x01)
         print("   [+] Toggling LED ON...")
         self.send_frame("vendor_led_control_on", [0x00, 0xFF, 0x00, 0x03, 0x00, 0x01, 0x01, 0x00], intent="control")
         time.sleep(0.5)
         print("   [+] Toggling LED OFF...")
         self.send_frame("vendor_led_control_off", [0x00, 0xFF, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00], intent="control")
 
-        # 2. Clock Source control (sets Internal Clock = 0x03, S/PDIF format = 0x00, lock = 0x01)
-        print("   [+] Refreshing Clock Source (Internal, Locked)...")
+        # 2. Blank-slate input selector (CONTROL 12 bytes, Audio Subunit 0, FB 4)
+        print("   [+] Sending blank-slate input selector...")
         self.send_frame(
-            "vendor_clock_control_internal",
-            [0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x03, 0x00, 0x00, 0x01, 0x00, 0x00],
+            "blank_slate_input_selector",
+            [0x00, 0x08, 0xB8, 0x80, 0x04, 0x10, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00],
             intent="control",
         )
+
+        # 3. Clock Source control (16 bytes, lock = 0x00 per Linux bebob_maudio.c:276)
+        #    Internal clock = 0x03, S/PDIF input = 0x00, S/PDIF output = 0x00, lock = 0x00
+        print("   [+] Setting Clock Source (Internal, Unlocked, 16 bytes)...")
+        self.send_frame(
+            "vendor_clock_control_internal",
+            [0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+            intent="control",
+        )
+
+        # 4. Signal Format Rate Switching via CONTROL (AM824 format 0x90)
+        #    SFC indices: 0x00=32k, 0x01=44.1k, 0x02=48k, 0x03=88.2k, 0x04=96k, 0x05=176.4k, 0x06=192k
+        #    Linux sets OUT plug first, then sleeps 100ms, then sets IN plug.
+        rates = [
+            ("32k", 0x00),
+            ("44k1", 0x01),
+            ("48k", 0x02),
+            ("88k2", 0x03),
+            ("96k", 0x04),
+            ("176k4", 0x05),
+            ("192k", 0x06),
+        ]
+        for name, sfc in rates:
+            # Skip 176.4k and 192k on ProjectMix (max rate is 96k)
+            if self.metadata and not self.metadata.is1814 and sfc >= 0x05:
+                continue
+            print(f"   [+] Testing Sample Rate CONTROL: {name} (SFC=0x{sfc:02X})...")
+            self.send_frame(
+                f"control_output_rate_{name}",
+                [0x00, 0xFF, 0x18, 0x00, 0x90, sfc, 0xFF, 0xFF],
+                intent="control",
+            )
+            time.sleep(0.1)  # 100 ms settle delay matching Linux bebob_maudio.c:328
+            self.send_frame(
+                f"control_input_rate_{name}",
+                [0x00, 0xFF, 0x19, 0x00, 0x90, sfc, 0xFF, 0xFF],
+                intent="control",
+            )
 
 
 def export_fixtures(runner: FW1814ProbeRunner, out_dir: Path) -> tuple[Path, Path]:
@@ -507,10 +629,12 @@ def export_fixtures(runner: FW1814ProbeRunner, out_dir: Path) -> tuple[Path, Pat
 
     # 2. Markdown Export
     with open(md_path, "w", encoding="utf-8") as f:
-        f.write(f"# M-Audio FireWire 1814 / ProjectMix Probe Fixture\n\n")
+        f.write("# M-Audio FireWire 1814 / ProjectMix Probe Fixture\n\n")
         f.write(f"- **Device Key**: `{runner.metadata.key}`\n")
         f.write(f"- **Model**: `{runner.metadata.modelName}`\n")
         f.write(f"- **Vendor**: `{runner.metadata.vendorName}`\n")
+        f.write(f"- **Vendor ID**: `0x{runner.metadata.vendorId:06X}`\n")
+        f.write(f"- **Model ID**: `0x{runner.metadata.modelId:08X}`\n")
         f.write(f"- **GUID**: `{runner.metadata.guid}`\n")
         f.write(f"- **Node ID**: `{runner.metadata.nodeId}` (Gen {runner.metadata.generation})\n")
         f.write(f"- **Driver Version**: `{runner.metadata.driverVersion}`\n")
@@ -550,7 +674,7 @@ def main() -> int:
     parser.add_argument("--out-dir", default="documentation/fixtures/AVC", help="Output directory for fixtures")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print raw commands and responses")
     parser.add_argument("--force", action="store_true", help="Bypass 1814/ProjectMix model name safety check")
-    parser.add_argument("--include-control", action="store_true", help="Run non-destructive vendor control tests (LED, Clock)")
+    parser.add_argument("--include-control", action="store_true", help="Run non-destructive vendor control tests (LED, Clock, Rate)")
 
     args = parser.parse_args()
 
