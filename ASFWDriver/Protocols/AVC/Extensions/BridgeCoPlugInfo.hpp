@@ -16,7 +16,7 @@
 //   Response info data starts at operand 7 (frame byte 10): Linux reads the plug
 //   type at buf[10] (:139), the channel count at buf[10] (:175).
 //   Cluster (section) info sends the 1-based section id at operand 7 and reads the
-//   section type at operand 8 (:228, :246).
+//   section type at operand 8 (:228, :246). Linux zero-fills the rest (kzalloc).
 //
 // Used by BeBoB discovery (today: BeBoBPlug0StreamDiscovery). Never send to
 // M-Audio special firmware (AVC_DEVICE_HAZARDS.md); the per-unit allowlist
@@ -34,6 +34,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 namespace ASFW::AVC::BridgeCo {
@@ -83,11 +84,15 @@ enum class PortType : uint8_t {
 
 using Cmd::PlugAddress;
 
-/// STATUS [C0][plug][info type][extra][FF...]. `extra` goes at operand 7: the
-/// 1-based section id for kClusterInfo, 0xFF otherwise. The exact padding after
-/// operand 7 must match today's BeBoBPlug0StreamDiscovery frames (differential test).
+/// STATUS [C0][plug][info type] plus, only when given, [extra] at operand 7.
+/// kClusterInfo requires `extra` = the 1-based section id (kInvalidArgument
+/// without it); other info types pass nothing. Nothing else is appended: 7 operands
+/// (10-byte frame), or 8 with extra (11 bytes), as today's BeBoBPlug0StreamDiscovery
+/// sends. WireBytes() zero-pads to 12, byte-identical to Linux, which sends a
+/// 12-byte kzalloc'd buffer (bebob_command.c:116, :222), so trailing bytes are 0x00.
 [[nodiscard]] Expected<CommandFrame> BuildExtendedPlugInfoStatus(SubunitAddress subunit, const PlugAddress& plug,
-                                                                 InfoType type, uint8_t extra = 0xFF) noexcept;
+                                                                 InfoType type,
+                                                                 std::optional<uint8_t> extra = std::nullopt) noexcept;
 
 /// Common checks for every reply: IMPLEMENTED/STABLE, subfunction C0, info type
 /// echoed. Returns the info data (operands from 7). A VIEW into the response buffer.

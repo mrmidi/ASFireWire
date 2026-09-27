@@ -12,14 +12,26 @@
 // Linux bebob_command.c:10-86 (selector CONTROL/STATUS). Fresh implementation.
 //
 // Operands: [fb type][fb id][control attribute][selector length][selector data][control]
-//   Selector: selector data = [input plug]; control = [0x01]. Linux:
-//     buf[3]=0x80 buf[4]=fb id buf[5]=0x10 buf[6]=0x02 buf[7]=plug (0xFF for STATUS) buf[8]=0x01
-//   Feature:  selector data = [audio channel]; control = [control selector][length][data].
+//   selector length = bytes of audio_selector_data + the control selector
+//   (TA 1999008 Audio Subunit 1.0, line "selector_length (n+1)"; see tmp/specs).
+//   Selector: [80][fb id][attr][02][input plug][01]. Linux bebob_command.c:20-28
+//     (input plug 0xFF for STATUS). Today's AudioFunctionBlockCommand sends the same.
+//   Feature:  [81][fb id][attr][02][channel][control selector][data length][data].
+//     "The selector_length field (Operand[3]) for feature function block shall
+//     always be set to 2" (TA 1999008 §10.3, p.74). Mute: data length 1, Mute_On
+//     0x70 = TRUE (muted), 0x60 = FALSE (not muted), 0xFF invalid in CONTROL
+//     (§10.3.1, p.75). Volume: data length 2, big-endian int16.
 //
-// BYTE-EXACT RULE: today's AudioFunctionBlockCommand.{hpp,cpp} set the Phase 88
-// mixer on hardware. The new codec must produce the same bytes for the same
-// calls (differential test). If ta1394 and the old code disagree, the old code
-// wins and the disagreement is reported in the phase-1 review.
+// BYTE RULE:
+//   - Selector blocks: byte-equal to today's AudioFunctionBlockCommand (it matches
+//     Linux and the spec).
+//   - Feature blocks: follow the SPEC, not today's code. Today's
+//     BeBoBProtocol::SetFeatureMute/Volume send selector length 4 / 5 and 0x00 for
+//     "mute", which break §10.3 and §10.3.1; they were only ever sent best-effort
+//     (BeBoBProtocol.cpp:187, failures ignored), so nothing proves a device accepted
+//     them. The differential test records old vs new bytes as an INTENDED difference.
+//     The phase-1 capture (FB STATUS + SPECIFIC INQUIRY on the Phase 88) shows what
+//     the device accepts.
 //
 // Implementation: FunctionBlockCommand.cpp (phase 1).
 
