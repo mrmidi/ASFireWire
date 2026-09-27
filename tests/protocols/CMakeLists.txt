@@ -23,6 +23,11 @@ endmacro()
 add_protocols_test(AvcCodecTests
     AvcCodecTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/GeneralCommands.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/SignalSourceCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/FunctionBlockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
 )
 
 # FCP Packet Parsing Tests
