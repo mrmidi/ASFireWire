@@ -30,6 +30,8 @@ const char* TxStateName(ITState state) noexcept {
         return "running";
     case ITState::Stopped:
         return "stopped";
+    case ITState::Faulted:
+        return "faulted";
     }
     return "unknown";
 }
@@ -88,6 +90,12 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
 
     if (!payloadSlab || !metadataRing || !controlBlock) {
         return kIOReturnBadArgument;
+    }
+    if (NeedsQuiesce()) {
+        // Replacing the maps would pull memory from under a context that may
+        // still be fetching it.
+        ASFW_LOG(Isoch, "IT: shared memory rejected - state=%{public}s", TxStateName(state_));
+        return kIOReturnBusy;
     }
 
     // Unmap any existing maps first
@@ -349,7 +357,9 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 }
 
 kern_return_t IsochTransmitContext::Stop() noexcept {
-    if (state_ == State::Running && hardware_) {
+    // A faulted context takes the same path: its RUN is already clear, but it
+    // is not quiesced until ACTIVE is (Linux ohci.c context_stop).
+    if (NeedsQuiesce() && hardware_) {
         // This gate also covers watchdog Poll().  Acquire it before clearing
         // RUN so an already-dispatched refill cannot retain a direct-audio
         // mapping past the point this function reports quiesced.
@@ -511,7 +521,7 @@ void IsochTransmitContext::SetTxPreparationCallback(
 }
 
 void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
-    if (state_ == State::Stopped) {
+    if (state_ != State::Running) {
         return;
     }
     if (hardware_) {
@@ -529,8 +539,11 @@ void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
             controlBlock_->statusWord.store(IsochTxQueueStatus::kDeadContext, std::memory_order_release);
         }
     }
-    state_ = State::Stopped;
-    ASFW_LOG(Isoch, "IT FATAL STOP: RUN cleared and interrupt masked");
+    // Clearing RUN stops new work; it does not mean the context is idle
+    // (OHCI 1.1 §3.1.1). Stop() still has to see ACTIVE clear before the
+    // memory may go.
+    state_ = State::Faulted;
+    ASFW_LOG(Isoch, "IT FATAL STOP: RUN cleared and interrupt masked; awaiting Stop() quiesce");
 }
 
 void IsochTransmitContext::Poll() noexcept {
@@ -567,6 +580,15 @@ void IsochTransmitContext::Poll() noexcept {
                 // jitter (observed Duet zombie, 2026-07-19, on the old cyclic
                 // ring: the interrupt path died mid-session and the watchdog
                 // fed the wire for 35 minutes of corrupt audio).
+                // Take the refill gate first, as the other fault path has it:
+                // an interrupt-driven refill must not run into the stop.
+                if (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+                    return;  // a refill is running; the next kick retries
+                }
+                if (state_ != State::Running) {
+                    refillInProgress_.clear(std::memory_order_release);
+                    return;
+                }
                 auto access = hardware_ ? hardware_->TryBeginAccess() : Driver::HardwareAccessScope{};
                 const uint32_t ctrl = access ? access.Read(static_cast<Register32>(
                     DMAContextHelpers::IsoXmitContextControl(contextIndex_))) : 0;
@@ -587,6 +609,7 @@ void IsochTransmitContext::Poll() noexcept {
                 // as the RUN-clear path above.
                 access = {};
                 StopImmediatelyForTxFault();
+                refillInProgress_.clear(std::memory_order_release);
                 return;
             }
             if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {

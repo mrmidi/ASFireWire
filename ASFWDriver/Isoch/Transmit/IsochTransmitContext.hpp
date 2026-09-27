@@ -39,7 +39,13 @@ enum class ITState {
     Unconfigured,
     Configured,
     Running,
-    Stopped
+    Stopped,
+    // A transport fault cleared RUN, but the context may still be ACTIVE:
+    // after RUN is cleared, ACTIVE may stay set while in-flight operations
+    // complete (OHCI 1.1 §3.1.1). Only Stop() leaves this state, once it has
+    // seen ACTIVE clear; until then the context is neither restarted nor given
+    // new memory.
+    Faulted
 };
 
 /**
@@ -96,6 +102,11 @@ public:
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
 
     State GetState() const noexcept { return state_; }
+    // Running or Faulted: DMA may be active, so the context's memory bindings
+    // must stay until Stop() has quiesced it.
+    [[nodiscard]] bool NeedsQuiesce() const noexcept {
+        return state_ == State::Running || state_ == State::Faulted;
+    }
     
     uint64_t PacketsAssembled() const noexcept { return packetsAssembled_; }
     
@@ -110,6 +121,7 @@ public:
 private:
     void WakeHardware() noexcept;
     void DoRefillOnce(uint64_t eventHostTicks, bool publishTimingEvent) noexcept;
+    // Caller holds refillInProgress_ and no HardwareAccessScope.
     void StopImmediatelyForTxFault() noexcept;
 
     // ==========================================================================

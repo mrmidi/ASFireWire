@@ -167,6 +167,80 @@ TEST(IsochServiceTxPreparation, ActiveTransmitStopRetainsQueueUntilHardwareQuies
     EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Stopped);
 }
 
+// A refill fault clears RUN, but the context may still be ACTIVE. It must stay
+// Faulted -- refusing new memory -- until Stop() has seen ACTIVE clear, the same
+// barrier a running context gets (Linux ohci.c context_stop).
+TEST(IsochServiceTxPreparation, FaultedTransmitIsQuiescedByStopBeforeReuse) {
+    IsochService service;
+    HardwareInterface hardware;
+    IOMemoryDescriptor* payloadDescriptor = nullptr;
+    IOMemoryDescriptor* metadataDescriptor = nullptr;
+    IOMemoryDescriptor* controlDescriptor = nullptr;
+    ASSERT_EQ(service.AllocateTxIsochResources(
+                  0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor,
+                  &metadataDescriptor, &controlDescriptor),
+              kIOReturnSuccess);
+
+    IOAddressSegment metadataRange{};
+    ASSERT_EQ(metadataDescriptor->GetAddressRange(&metadataRange), kIOReturnSuccess);
+    auto* metadata = reinterpret_cast<IsochTxPacketMeta*>(metadataRange.address);
+    for (uint64_t packetIndex = 0; packetIndex < AudioTimingGeometry::kTxSharedSlotPackets;
+         ++packetIndex) {
+        auto& meta = metadata[packetIndex];
+        meta.packetIndex = packetIndex;
+        meta.payloadLength = 8;
+        meta.commitGeneration.store(
+            ExpectedTxCommitGeneration(packetIndex, AudioTimingGeometry::kTxSharedSlotPackets),
+            std::memory_order_release);
+    }
+    IOAddressSegment controlRange{};
+    ASSERT_EQ(controlDescriptor->GetAddressRange(&controlRange), kIOReturnSuccess);
+    auto* queue = reinterpret_cast<IsochTxQueueControl*>(controlRange.address);
+    queue->ResetProducerForStart();
+    queue->committedEnd.store(AudioTimingGeometry::kTxPreparationLeadPackets,
+                              std::memory_order_release);
+
+    ASSERT_EQ(service.StartTransmit(3, hardware, 0x3f, ASFW::FW::FwSpeed::S400),
+              kIOReturnSuccess);
+    auto* context = service.TransmitContext();
+    ASSERT_NE(context, nullptr);
+
+    // Start primes one ring (packets 0..503). The first refill after one
+    // interrupt group maps from 504 on; an uncommitted packet there is a
+    // refill fault.
+    const uint32_t completed = AudioTimingGeometry::kTxPacketsPerGroup;
+    const uint64_t uncommitted = Layout::kNumPackets;
+    metadata[uncommitted].commitGeneration.store(0, std::memory_order_release);
+    const Register32 commandPtrRegister =
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0));
+    const uint32_t descriptorBase = hardware.GetTestRegister(commandPtrRegister) & 0xfffffff0U;
+    hardware.SetTestRegister(commandPtrRegister,
+                             (descriptorBase + completed * Layout::kBlocksPerPacket *
+                                                   Layout::kDescriptorStride) |
+                                 Layout::kBlocksPerPacket);
+    MarkPacketsSent(*context, 0, completed);
+    context->HandleInterrupt();
+    ASSERT_EQ(context->GetState(), ASFW::Isoch::ITState::Faulted);
+    EXPECT_TRUE(context->NeedsQuiesce());
+
+    // Still ACTIVE: the memory stays, and Stop() reports it.
+    const Register32 controlSet = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlSet(0));
+    hardware.SetTestRegister(controlSet, ASFW::Driver::ContextControl::kActive);
+    EXPECT_EQ(context->SetSharedMemoryDescriptors(payloadDescriptor, metadataDescriptor,
+                                                  controlDescriptor,
+                                                  AudioTimingGeometry::kTxPacketsPerGroup),
+              kIOReturnBusy);
+    EXPECT_EQ(service.StopTransmit(), kIOReturnTimeout);
+    EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Faulted);
+
+    hardware.SetTestRegister(controlSet, 0);
+    EXPECT_EQ(service.StopTransmit(), kIOReturnSuccess);
+    EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Stopped);
+    EXPECT_FALSE(context->NeedsQuiesce());
+}
+
 // Secondary-stream container: a multi-stream DICE device (Venice F32 = 2×16)
 // needs IsochService to manage a second IR and second IT context on their own
 // OHCI context indices, while the master (stream 0) is untouched. This pass only

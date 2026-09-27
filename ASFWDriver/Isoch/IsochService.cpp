@@ -647,11 +647,11 @@ void IsochService::UpdateStreamingActiveState() noexcept {
             active = true;
         }
     }
-    if (isochTransmitContext_ && isochTransmitContext_->GetState() == ITState::Running) {
+    if (isochTransmitContext_ && isochTransmitContext_->NeedsQuiesce()) {
         active = true;
     }
     for (auto& ctx : secondaryTransmitContexts_) {
-        if (ctx && ctx->GetState() == ITState::Running) {
+        if (ctx && ctx->NeedsQuiesce()) {
             active = true;
         }
     }
