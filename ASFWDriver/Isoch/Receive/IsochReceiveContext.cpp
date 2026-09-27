@@ -88,8 +88,13 @@ kern_return_t IsochReceiveContext::Start() {
         access.Write(registers_.ContextMatch, contextMatch);
         access.Write(registers_.CommandPtr, cmdPtr);
         access.Write(registers_.ContextControlClear, 0xFFFFFFFFu);
-        access.Write(registers_.ContextControlSet, ctlValue);
+        // Stopping a context sets its event bit (OHCI 1.2 draft §3.1.1.3).
+        // Clear this context's stale bit and unmask it before RUN, as Linux
+        // ohci_start_iso does (ohci.c:3209), so the clear cannot take a
+        // completion of this run.
+        access.Write(ASFW::Driver::Register32::kIsoRecvIntEventClear, contextMask);
         access.Write(ASFW::Driver::Register32::kIsoRecvIntMaskSet, contextMask);
+        access.Write(registers_.ContextControlSet, ctlValue);
     }
     ASFW_LOG(Isoch, "Start: Enabled IR interrupt for context %u (mask=0x%08x)", contextIndex_, contextMask);
 

@@ -134,14 +134,19 @@ TEST_F(IsochReceiveContextTest, ConfigurationAllocatesRings) {
     EXPECT_GT(dmaMemory_->TotalSize(), 2000000);
 }
 
+// Start clears the whole ContextControl and only this context's stale event
+// bit (a stop leaves it set, OHCI 1.2 draft §3.1.1.3), then unmasks it, as
+// Linux ohci_start_iso does.
 TEST_F(IsochReceiveContextTest, StartProgramsRegisters) {
     context_->Configure(0, 0);
     auto kr = context_->Start();
     EXPECT_EQ(kr, kIOReturnSuccess);
-    
-    // We would need to inspect HardwareInterface stub state to verify writes
-    // Since we are using the simple Stub, we trust it returns success.
-    // Ideally we'd use a MockHardwareInterface to verify ::Write calls.
+
+    const auto reg = [](uint32_t offset) { return static_cast<::ASFW::Driver::Register32>(offset); };
+    EXPECT_EQ(hardware_->GetTestRegister(reg(::DMAContextHelpers::IsoRcvContextControlClear(0))),
+              0xFFFFFFFFu);
+    EXPECT_EQ(hardware_->GetTestRegister(::ASFW::Driver::Register32::kIsoRecvIntEventClear), 1u);
+    EXPECT_EQ(hardware_->GetTestRegister(::ASFW::Driver::Register32::kIsoRecvIntMaskSet) & 1u, 1u);
 }
 
 TEST_F(IsochReceiveContextTest, StopFlushesRunClearAndOnlyThenMarksStopped) {

@@ -326,9 +326,17 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     if (!access) return kIOReturnNotReady;
     access.Write(cmdPtrReg, cmdPtr);
 
-    access.Write(ctrlClrReg, Driver::ContextControl::kWritableBits);
+    // Clear every ContextControl bit, as Linux context_run does (ohci.c:1319).
+    // cycleMatchEnable (bit 31) and cycleMatch have an undefined reset value
+    // (OHCI 1.2 draft Table 9-7); left set, the context would wait for a cycle
+    // match this driver never programs.
+    access.Write(ctrlClrReg, 0xFFFFFFFFu);
 
-    access.Write(Register32::kIsoXmitIntEventClear, 0xFFFFFFFF);
+    // Stopping a context sets its event bit (OHCI 1.2 draft §3.1.1.3). Clear
+    // only this context's stale bit before unmasking it: clearing all of them
+    // would drop a pending completion of a sibling context that is running
+    // (Linux ohci_start_iso, ohci.c:3193).
+    access.Write(Register32::kIsoXmitIntEventClear, (1u << contextIndex_));
     access.Write(Register32::kIsoXmitIntMaskSet, (1u << contextIndex_));
     access.Write(Register32::kIntMaskSet, IntEventBits::kIsochTx);
     ASFW_LOG(Isoch, "IT: Enabled IT interrupt for context %u", contextIndex_);
