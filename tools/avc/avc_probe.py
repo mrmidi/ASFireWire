@@ -153,9 +153,10 @@ class DeviceMetadata:
 
 
 class AvcProbeRunner:
-    def __init__(self, client: MCPClient, verbose: bool = False) -> None:
+    def __init__(self, client: MCPClient, verbose: bool = False, force: bool = False) -> None:
         self.client = client
         self.verbose = verbose
+        self.force = force
         self.records: list[ExchangeRecord] = []
         self.metadata: DeviceMetadata | None = None
 
@@ -204,6 +205,16 @@ class AvcProbeRunner:
         model_name = target_node.get("modelName", "Unknown Model")
         vendor_name = target_node.get("vendorName", "Unknown Vendor")
         node_id = target_node.get("nodeId", 0)
+
+        # Safety lockout for FW 1814 and ProjectMix I/O:
+        # Standard AV/C discovery (SUBUNIT_INFO, PLUG_INFO) will freeze this hardware.
+        model_lower = model_name.lower()
+        if ("1814" in model_lower or "projectmix" in model_lower) and not getattr(self, "force", False):
+            raise ProbeError(
+                f"SAFETY LOCKOUT: Target device '{model_name}' ({vendor_name}) is an M-Audio FireWire 1814 / ProjectMix I/O.\n"
+                f"Standard AV/C discovery commands (SUBUNIT_INFO, PLUG_INFO, Extended Stream Format) will FREEZE this firmware!\n"
+                f"Please use 'tools/avc/avc_probe_1814.py' instead (or pass --force to override)."
+            )
 
         # Fallback generation check from telemetry/snapshot
         if not generation:
@@ -788,6 +799,7 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=5.0, help="Per-request timeout seconds")
     parser.add_argument("--out-dir", default="documentation/fixtures/AVC", help="Output directory for fixtures")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print every frame sent/received")
+    parser.add_argument("--force", action="store_true", help="Bypass safety lockouts (e.g. FW 1814 lockout)")
     args = parser.parse_args()
 
     client = MCPClient(endpoint=args.endpoint, timeout=args.timeout)
@@ -797,7 +809,7 @@ def main() -> int:
         print(f"Error connecting to MCP: {e}", file=sys.stderr)
         return 1
 
-    runner = AvcProbeRunner(client, verbose=args.verbose)
+    runner = AvcProbeRunner(client, verbose=args.verbose, force=args.force)
     try:
         meta = runner.pre_check(device_key_override=args.device)
         print(f"Target node identified: {meta.vendorName} {meta.modelName} (nodeId {meta.nodeId}, generation {meta.generation})")
