@@ -7,7 +7,7 @@
 // gain staging (feature blocks) as static data. The BeBoBProtocol base executes
 // selectors first, then features, to respect FB ordering dependencies. Phase88
 // ships with its mixer muted at minimum volume; this data drives the unmute +
-// max-volume workaround on stream start.
+// level workaround on stream start.
 
 #pragma once
 
