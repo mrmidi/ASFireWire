@@ -1014,19 +1014,15 @@ TEST_F(IsochTxDmaRingFiniteTest, AnAppendWakesEvenAnActiveContext) {
     // there; the host stub keeps the last value written.
     const auto ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(0));
 
-    // Active context, no append: nothing to do.
-    hardware_.SetTestRegister(ctrlReg, kRun | kActive);
-    EXPECT_FALSE(ring_.WakeHardware(hardware_, 0, /*queueAppended=*/false));
-    EXPECT_EQ(hardware_.GetTestRegister(ctrlReg), kRun | kActive);
-
     // After an append the context may already have fetched the old zero
     // branch, so it is woken even though it reads active.
-    EXPECT_TRUE(ring_.WakeHardware(hardware_, 0, /*queueAppended=*/true));
+    hardware_.SetTestRegister(ctrlReg, kRun | kActive);
+    EXPECT_TRUE(ring_.WakeHardware(hardware_, 0));
     EXPECT_EQ(hardware_.GetTestRegister(ctrlReg), kWake);
 
-    // A stopped context is never restarted by a wake.
+    // A stopped context is never woken.
     hardware_.SetTestRegister(ctrlReg, 0);
-    EXPECT_FALSE(ring_.WakeHardware(hardware_, 0, /*queueAppended=*/true));
+    EXPECT_FALSE(ring_.WakeHardware(hardware_, 0));
     EXPECT_EQ(hardware_.GetTestRegister(ctrlReg), 0u);
 }
 

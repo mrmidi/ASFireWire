@@ -514,7 +514,7 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
     } else {
         packetsAssembled_ += outcome.packetsFilled;
         if (outcome.packetsFilled > 0) {
-            (void)ring_.WakeHardware(*hardware_, contextIndex_, /*queueAppended=*/true);
+            (void)ring_.WakeHardware(*hardware_, contextIndex_);
         }
         if (outcome.refillRequestGeneration != 0 &&
             txPreparationCallback_) {
@@ -654,11 +654,6 @@ void IsochTransmitContext::HandleInterrupt() noexcept {
     DoRefillOnce(mach_absolute_time(), /*publishTimingEvent=*/true);
 
     refillInProgress_.clear(std::memory_order_release);
-}
-
-void IsochTransmitContext::WakeHardware() noexcept {
-    if (!hardware_) return;
-    (void)ring_.WakeHardware(*hardware_, contextIndex_, /*queueAppended=*/false);
 }
 
 void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {

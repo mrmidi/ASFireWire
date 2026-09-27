@@ -141,13 +141,16 @@ public:
                                        uint8_t* payloadBase,
                                        const TxPayloadDmaMap& payloadDmaMap) noexcept;
 
-    /// WAKE after the queue was extended (`queueAppended`), even when the
-    /// context reads active: it may already have fetched the old zero branch
-    /// and stop after it (Linux ohci_flush_queue_iso always wakes,
-    /// ohci.c:3471-3476). Without an append only an idle context is woken.
-    /// Never restarts a stopped or dead context.
-    bool WakeHardware(Driver::HardwareInterface& hw, uint8_t contextIndex,
-                      bool queueAppended) noexcept;
+    /// WAKE after the queue was extended, even when the context reads active.
+    /// OHCI 1.2 draft §3.1.1.2: "If the Host Controller is not at the end of
+    /// the list then no action is taken when ContextControl.wake is set."
+    /// §3.1.1.3 advisory note (written for a receive context that ran out of
+    /// buffers): "if software appends a new descriptor and sets the
+    /// ContextControl.wake bit, the DMA will correctly process it regardless
+    /// of the state of the ContextControl.active bit." Linux
+    /// ohci_flush_queue_iso always wakes too (ohci.c:3471-3476).
+    /// Never wakes a stopped or dead context.
+    bool WakeHardware(Driver::HardwareInterface& hw, uint8_t contextIndex) noexcept;
 
     // Debug helpers (delegated by IsochTransmitContext)
     void DumpAtCmdPtr(Driver::HardwareInterface& hw, uint8_t contextIndex) const noexcept;

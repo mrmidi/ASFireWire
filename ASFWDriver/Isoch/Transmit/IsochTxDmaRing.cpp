@@ -775,8 +775,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     return out;
 }
 
-bool IsochTxDmaRing::WakeHardware(Driver::HardwareInterface& hw, uint8_t contextIndex,
-                                  const bool queueAppended) noexcept {
+bool IsochTxDmaRing::WakeHardware(Driver::HardwareInterface& hw, uint8_t contextIndex) noexcept {
     Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
     auto access = hw.TryBeginAccess();
     if (!access) return false;
@@ -784,9 +783,8 @@ bool IsochTxDmaRing::WakeHardware(Driver::HardwareInterface& hw, uint8_t context
 
     const bool run = (ctrl & Driver::ContextControl::kRun) != 0;
     const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
-    const bool active = (ctrl & Driver::ContextControl::kActive) != 0;
 
-    if (run && !dead && (queueAppended || !active)) {
+    if (run && !dead) {
         Register32 ctrlSetReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex));
         // Posted writes must reach the controller before the refill returns.
         access.WriteAndFlush(ctrlSetReg, Driver::ContextControl::kWake);

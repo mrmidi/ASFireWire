@@ -225,7 +225,7 @@ The Isoch Transmit (IT) context uses a carefully constructed descriptor program 
 ### Descriptor Layout (Linux/Apple Validated)
 This driver follows **Linux firewire-ohci + AppleFWOHCI-validated behavior** for `OUTPUT_MORE_IMMEDIATE` descriptors.
 > [!WARNING]
-> Critical Difference: The **Skip Address** is located at **Offset 0x08** (Branch Word), NOT at Offset 0x04 (Data Address) as seen in some OHCI 1.1 documentation.
+> The **Skip Address** (with its Z) is the third quadlet, **offset 0x08**, not 0x04. OHCI 1.2 draft Figure 9-2 (OUTPUT_MORE-Immediate) and Figures 9-3/9-4 (OUTPUT_LAST, OUTPUT_LAST-Immediate) all place the skip/branch address there, as Linux and Apple do.
 
 #### Diagram
 ```mermaid
