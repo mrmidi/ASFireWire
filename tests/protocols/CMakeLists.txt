@@ -30,6 +30,18 @@ add_protocols_test(AvcCodecTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
 )
 
+# AVC Hardware Fixture Tests (Phase 88 / Duet)
+add_protocols_test(AvcFixtureTests
+    AvcFixtureTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/GeneralCommands.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/SignalSourceCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/FunctionBlockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
+)
+
+
 # FCP Packet Parsing Tests
 add_executable(FCPPacketParsingTests
     FCPPacketParsingTests.cpp
