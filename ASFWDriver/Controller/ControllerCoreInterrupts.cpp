@@ -141,8 +141,8 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     if (toAck != 0U) {
         hw.ClearIntEvents(toAck);
     }
-    hw.ClearIsoXmitEvents(snapshot.isoXmitEvent);
-    hw.ClearIsoRecvEvents(snapshot.isoRecvEvent);
+    // The per-context isoch events are read and cleared after this, by
+    // InterruptDispatcher (HardwareInterface::TakeIsochContextEvents).
 }
 
 void ControllerCore::LogInterruptContext(const InterruptSnapshot& snapshot,

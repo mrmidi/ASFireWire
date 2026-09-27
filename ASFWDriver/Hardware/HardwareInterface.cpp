@@ -315,18 +315,37 @@ void HardwareInterface::ClearIntEvents(uint32_t mask) {
     if (auto access = TryBeginAccess()) access.WriteAndFlush(Register32::kIntEventClear, mask);
 }
 
-void HardwareInterface::ClearIsoXmitEvents(uint32_t mask) {
-    if (!mask) {
-        return;
+// Global events first, then each signalled direction's context mask, read and
+// cleared once (Linux ohci.c irq_handler, cross-validated at :2203-2268).
+// IntEvent.isochTx and isochRx are not latched: each is the OR of
+// (isoXmitIntEvent & isoXmitIntMask), or of the isoRecv pair (OHCI 1.1
+// Table 6-1), so it deasserts only when those context bits are cleared.
+// Reading the Clear address returns the masked events (OHCI 1.1 §6.3.1,
+// §6.4.1), as Linux reads it, so a context whose interrupt is masked is left
+// alone. Only the bits read are cleared: a completion that lands after the
+// read keeps its bit and raises a new interrupt.
+IsochContextEvents HardwareInterface::TakeIsochContextEvents(uint32_t intEvent) noexcept {
+    IsochContextEvents events{};
+    if ((intEvent & (IntEventBits::kIsochTx | IntEventBits::kIsochRx)) == 0) {
+        return events;
     }
-    if (auto access = TryBeginAccess()) access.WriteAndFlush(Register32::kIsoXmitIntEventClear, mask);
-}
-
-void HardwareInterface::ClearIsoRecvEvents(uint32_t mask) {
-    if (!mask) {
-        return;
+    auto access = TryBeginAccess();
+    if (!access) {
+        return events;
     }
-    if (auto access = TryBeginAccess()) access.WriteAndFlush(Register32::kIsoRecvIntEventClear, mask);
+    if ((intEvent & IntEventBits::kIsochRx) != 0) {
+        events.receive = access.Read(Register32::kIsoRecvIntEventClear);
+        if (events.receive != 0) {
+            access.WriteAndFlush(Register32::kIsoRecvIntEventClear, events.receive);
+        }
+    }
+    if ((intEvent & IntEventBits::kIsochTx) != 0) {
+        events.transmit = access.Read(Register32::kIsoXmitIntEventClear);
+        if (events.transmit != 0) {
+            access.WriteAndFlush(Register32::kIsoXmitIntEventClear, events.transmit);
+        }
+    }
+    return events;
 }
 
 InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp) const noexcept {
@@ -336,8 +355,6 @@ InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp
     if (!access) return snapshot;
     snapshot.intEvent = access.Read(Register32::kIntEvent);
     snapshot.intMask = 0;
-    snapshot.isoXmitEvent = access.Read(Register32::kIsoXmitEvent);
-    snapshot.isoRecvEvent = access.Read(Register32::kIsoRecvEvent);
     return snapshot;
 }
 

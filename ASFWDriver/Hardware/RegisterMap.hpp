@@ -38,12 +38,10 @@ enum class Register32 : uint32_t {
     kIntEventClear = 0x084,
     kIntMaskSet = 0x088,
     kIntMaskClear = 0x08C,
-    kIsoXmitEvent = 0x090, // Read-only: current isochronous transmit interrupt event status
     kIsoXmitIntEventSet = 0x090,
     kIsoXmitIntEventClear = 0x094,
     kIsoXmitIntMaskSet = 0x098,
     kIsoXmitIntMaskClear = 0x09C,
-    kIsoRecvEvent = 0x0A0, // Read-only: current isochronous receive interrupt event status
     kIsoRecvIntEventSet = 0x0A0,
     kIsoRecvIntEventClear = 0x0A4,
     kIsoRecvIntMaskSet = 0x0A8,
