@@ -131,3 +131,10 @@
     {20, 96000, 256, 256, 192, 256},  // Onyx 400F
     {20, 176400, 256, 256, 192, 256},  // Onyx 400F
     {20, 192000, 256, 256, 192, 256},  // Onyx 400F
+    {22, 32000, 29, 29, 48, 128},  // PreSonus FireStudio Project (DICE)
+    {22, 44100, 29, 29, 48, 128},  // PreSonus FireStudio Project (DICE)
+    {22, 48000, 29, 29, 48, 128},  // PreSonus FireStudio Project (DICE)
+    {22, 88200, 59, 59, 128, 288},  // PreSonus FireStudio Project (DICE)
+    {22, 96000, 59, 59, 128, 288},  // PreSonus FireStudio Project (DICE)
+    {22, 176400, 119, 119, 320, 640},  // PreSonus FireStudio Project (DICE)
+    {22, 192000, 119, 119, 320, 640},  // PreSonus FireStudio Project (DICE)

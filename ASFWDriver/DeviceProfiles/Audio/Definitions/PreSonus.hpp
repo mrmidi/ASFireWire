@@ -37,6 +37,15 @@ inline constexpr std::array kPreSonusDefinitions{
                ProtocolImplementationId::None,
                SupportDisposition::RecognizedUnsupported, kPreSonusVendorName,
                kStudioLive3242ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
+    // Streamed at 44.1/48 kHz on #105's branch (raw PCM playback, S/PDIF
+    // tones, GarageBand). Geometry and rates come from its registers like any
+    // DICE device; nothing here is model-specific.
+    Definition(DeviceDefinitionId::PreSonusFireStudioProject, kPreSonusVendorId,
+               kFireStudioProjectModelId, AudioFamilyProviderId::DICE,
+               ProbePolicyId::DiceTcat, ProfileBuilderId::PreSonusFireStudioProject,
+               ProtocolImplementationId::DiceTcat,
+               SupportDisposition::Supported, kPreSonusVendorName,
+               kFireStudioProjectModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions

@@ -82,6 +82,7 @@ DiceProfile gFocusritePro40Profile{{.name = "Focusrite Saffire Pro 40"}};
 DiceProfile gMidasVeniceProfile{{.name = "Midas Venice F (DICE)", .rangeMembers = kVeniceMembers}};
 DiceProfile gPreSonusStudioLiveProfile{{.name = "PreSonus StudioLive 16.0.2 (DICE)"}};
 DiceProfile gPreSonusStudioLive2442Profile{{.name = "PreSonus StudioLive 24.4.2 (DICE)"}};
+DiceProfile gPreSonusFireStudioProjectProfile{{.name = "PreSonus FireStudio Project (DICE)"}};
 // Alesis leaves the non-audio slots alone. Its stream counts come from the
 // registers like every DICE device: Alesis's own kext streams every stream they
 // report (AllocateStreams), where libffado forces one playback stream.
@@ -131,6 +132,8 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
             return &gPreSonusStudioLiveProfile;
         case Builder::PreSonusStudioLive2442:
             return &gPreSonusStudioLive2442Profile;
+        case Builder::PreSonusFireStudioProject:
+            return &gPreSonusFireStudioProjectProfile;
 
         // Not DICE, or DICE with no profile object on this branch.
         case Builder::FocusriteLiquidS56:
@@ -201,6 +204,7 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         case Builder::MidasVeniceF32:
         case Builder::PreSonusStudioLive1602:
         case Builder::PreSonusStudioLive2442:
+        case Builder::PreSonusFireStudioProject:
         case Builder::GenericAvc:
         case Builder::GenericBeBoB:
         case Builder::None:

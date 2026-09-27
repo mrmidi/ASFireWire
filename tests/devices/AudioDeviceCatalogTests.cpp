@@ -231,6 +231,21 @@ TEST(AudioDeviceCatalog, TheStudioLive2442ResolvesToItsOwnBuilder) {
     EXPECT_NE(plan->profileBuilder, ProfileBuilderId::PreSonusStudioLive1602);
 }
 
+// The FireStudio Project shares the PreSonus OUI with the StudioLive range and
+// the BeBoB-era devices; only its exact model id may reach its builder.
+TEST(AudioDeviceCatalog, TheFireStudioProjectResolvesToItsOwnBuilder) {
+    const auto device = MakeDevice(0x000A920402D07FACULL, kPreSonusVendorId,
+                                   kFireStudioProjectModelId,
+                                   {{.offset = 5,
+                                     .specifierId = kPreSonusVendorId,
+                                     .version = kDiceInterfaceVersion}});
+    const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(plan->support, SupportDisposition::Supported);
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::PreSonusFireStudioProject);
+    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::DiceTcat);
+}
+
 // Linux constrains a DICE unit on the interface version alone in its catch-all
 // (dice.c:457-460), and writes Weiss, the PreSonus FireStudio and the TCD3070
 // Saffire without a specifier constraint. The Midas Venice is the live reason:
@@ -397,6 +412,7 @@ TEST(AudioDeviceCatalog, TheDevicesThisBranchStreamsAreAllSupported) {
         DeviceDefinitionId::MidasVeniceF32,
         DeviceDefinitionId::PreSonusStudioLive1602,
         DeviceDefinitionId::PreSonusStudioLive2442,
+        DeviceDefinitionId::PreSonusFireStudioProject,
         DeviceDefinitionId::Motu828mk2,
         DeviceDefinitionId::MotuUltralite,
         DeviceDefinitionId::MackieOnyxIOxfw,

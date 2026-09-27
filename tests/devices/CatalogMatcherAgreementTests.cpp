@@ -299,6 +299,20 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBootstrap = Audio::ProbeBootstrap::AvcInitializeThenPlug0,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
         },
+        // 16. PreSonus FireStudio Project
+        {
+            .description = "PreSonus FireStudio Project (DICE, supported)",
+            .evidence = MakeEvidence(kPreSonusVendorId, kFireStudioProjectModelId, std::nullopt,
+                                     std::nullopt, 0x000001),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::DICE,
+            .expectedProfileBuilder = ProfileBuilderId::PreSonusFireStudioProject,
+            .expectedModelName = kFireStudioProjectModelName,
+            .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedBootstrap = Audio::ProbeBootstrap::DiceProtocol,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+        },
     };
     return kTable;
 }

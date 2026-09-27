@@ -140,6 +140,40 @@ inline constexpr DiceDeviceImage kStudiolive2442{
     .rateModes = {},
 };
 
+// PreSonus FireStudio Project — presonus-firestudio-project.txt
+inline constexpr DiceDeviceImage kFirestudioProject{
+    .key = "firestudio-project",
+    .reportedModel = "PreSonus FireStudio Project",
+    .source = "presonus-firestudio-project.txt",
+    .guid = 0x000A920402D07FACULL,
+    .globalSection = {.offsetQuadlets = 10U, .sizeQuadlets = 90U},
+    .txSection = {.offsetQuadlets = 100U, .sizeQuadlets = 142U},
+    .rxSection = {.offsetQuadlets = 242U, .sizeQuadlets = 282U},
+    .extSyncSection = {.offsetQuadlets = 524U, .sizeQuadlets = 4U},
+    .hasExtension = true,
+    .owner = 0xFFFF000000000000ULL,
+    .notification = 0x00000040U,
+    .nickname = "FireStudio Project",
+    .clockSelect = 0x0000010CU,
+    .enable = 0U,
+    .status = 0x00000101U,
+    .extStatus = 0x00000000U,
+    .sampleRate = 44100U,
+    .version = 0x01000400U,
+    .clockCaps = 0x1102001FU,
+    .clockSourceNames = "AES12\\SPDIF\\AES56\\AES78\\AES_ANY\\ADAT\\ADAT_AUX\\Word Clock\\Unused\\Unused\\Unused\\Unused\\Internal\\\\",
+    .txEntryQuadlets = 70U,
+    .rxEntryQuadlets = 70U,
+    .txCount = 1U,
+    .tx = {{{.iso = -1, .pcm = 10U, .midi = 1U, .speedOrSeqStart = 2U, .names = "Mic 1\\Mic 2\\Mic 3\\Mic 4\\Mic 5\\Mic 6\\Mic 7\\Mic 8\\SPDIF L\\SPDIF R\\\\"}}},
+    .rxCount = 1U,
+    .rx = {{{.iso = -1, .pcm = 10U, .midi = 1U, .speedOrSeqStart = 0U, .names = "daw rt.1\\daw rt.2\\daw rt.3\\daw rt.4\\daw rt.5\\daw rt.6\\daw rt.7\\daw rt.8\\daw rt.9\\daw rt.10\\\\"}}},
+    .hasExtSync = true,
+    .extSync = {.clockSource = 12U, .locked = 1U, .rateIndex = 1U, .adatUserData = 0x10U},
+    .hasRateModeFormats = true,
+    .rateModes = {{{.tx = {.count = 1U, .streams = {{{.pcm = 10U, .midi = 1U, .names = "Mic 1\\Mic 2\\Mic 3\\Mic 4\\Mic 5\\Mic 6\\Mic 7\\Mic 8\\SPDIF L\\SPDIF R\\\\"}}}}, .rx = {.count = 1U, .streams = {{{.pcm = 10U, .midi = 1U, .names = "daw rt.1\\daw rt.2\\daw rt.3\\daw rt.4\\daw rt.5\\daw rt.6\\daw rt.7\\daw rt.8\\daw rt.9\\daw rt.10\\\\"}}}}}, {.tx = {.count = 1U, .streams = {{{.pcm = 10U, .midi = 1U, .names = "Mic 1\\Mic 2\\Mic 3\\Mic 4\\Mic 5\\Mic 6\\Mic 7\\Mic 8\\SPDIF L\\SPDIF R\\\\"}}}}, .rx = {.count = 1U, .streams = {{{.pcm = 10U, .midi = 1U, .names = "daw rt.1\\daw rt.2\\daw rt.3\\daw rt.4\\daw rt.5\\daw rt.6\\daw rt.7\\daw rt.8\\daw rt.9\\daw rt.10\\\\"}}}}}, {.tx = {.count = 1U, .streams = {{{.pcm = 8U, .midi = 1U, .names = "AES1\\AES2\\AES3\\AES4\\AES5\\AES6\\AES7\\AES8\\\\"}}}}, .rx = {.count = 1U, .streams = {{{.pcm = 8U, .midi = 1U, .names = "AES1\\AES2\\AES3\\AES4\\AES5\\AES6\\AES7\\AES8\\\\"}}}}}}},
+};
+
 // Alesis MultiMix FireWire — alesismultimix.txt
 inline constexpr DiceDeviceImage kMultimix{
     .key = "multimix",
@@ -174,11 +208,12 @@ inline constexpr DiceDeviceImage kMultimix{
     .rateModes = {},
 };
 
-inline constexpr std::array<const DiceDeviceImage*, 5> kAll{{
+inline constexpr std::array<const DiceDeviceImage*, 6> kAll{{
     &kSaffirePro24Dsp,
     &kVeniceF24,
     &kVeniceF32,
     &kStudiolive2442,
+    &kFirestudioProject,
     &kMultimix,
 }};
 

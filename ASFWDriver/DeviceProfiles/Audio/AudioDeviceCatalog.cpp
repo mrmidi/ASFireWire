@@ -48,7 +48,7 @@ constexpr auto kDefinitions = ConcatArrays(
     Definitions::kMackieDefinitions
 );
 
-static_assert(kDefinitions.size() == 39U, "Catalog definition count mismatch");
+static_assert(kDefinitions.size() == 40U, "Catalog definition count mismatch");
 
 // No safety rule is currently defined.
 //
