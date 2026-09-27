@@ -430,17 +430,13 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
         refillInProgress_.clear(std::memory_order_release);
         const auto& ringCounters = ring_.RTCounters();
         ASFW_LOG(Isoch,
-                 "IT: Stopped. Stats: %llu pkts IRQs=%llu ringLaps=%llu skipped=%llu lostCycles=%llu "
-                 "refusedStamps=%llu/%llu/%llu unrealignable=%llu inFlightFallbacks=%llu",
+                 "IT: Stopped. Stats: %llu pkts IRQs=%llu minGap=%u criticalGaps=%llu "
+                 "maxDelta=%u exhausted=%llu",
                  packetsAssembled_, interruptCount_.load(std::memory_order_relaxed),
-                 ringCounters.ringLaps.load(std::memory_order_relaxed),
-                 ringCounters.ringLapPacketsSkipped.load(std::memory_order_relaxed),
-                 ringCounters.lostCycles.load(std::memory_order_relaxed),
-                 ringCounters.staleStampReads.load(std::memory_order_relaxed),
-                 ringCounters.inconsistentStampReads.load(std::memory_order_relaxed),
-                 ringCounters.implausibleLapReads.load(std::memory_order_relaxed),
-                 ringCounters.unrealignableLaps.load(std::memory_order_relaxed),
-                 ringCounters.inFlightFallbacks.load(std::memory_order_relaxed));
+                 ringCounters.minDmaGapPackets.load(std::memory_order_relaxed),
+                 ringCounters.criticalGapEvents.load(std::memory_order_relaxed),
+                 ringCounters.maxDeltaConsumed.load(std::memory_order_relaxed),
+                 ringCounters.mappedRegionExhausted.load(std::memory_order_relaxed));
         return kIOReturnSuccess;
     }
 
@@ -500,7 +496,7 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
     } else {
         packetsAssembled_ += outcome.packetsFilled;
         if (outcome.packetsFilled > 0) {
-            ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
+            (void)ring_.WakeHardware(*hardware_, contextIndex_, /*queueAppended=*/true);
         }
         if (outcome.refillRequestGeneration != 0 &&
             txPreparationCallback_) {
@@ -567,11 +563,10 @@ void IsochTransmitContext::Poll() noexcept {
                          latchedIntEvents);
             }
             if (irqSilentKickStreak_ >= kIrqSilentKickFatalThreshold) {
-                // Watchdog-carried streaming re-transmits stale descriptor
-                // laps between kicks (observed Duet zombie, 2026-07-19: the
-                // interrupt path died mid-session and the watchdog fed the
-                // wire for 35 minutes of corrupt audio). Sustained interrupt
-                // silence is a transport fault, not jitter.
+                // Sustained interrupt silence is a transport fault, not
+                // jitter (observed Duet zombie, 2026-07-19, on the old cyclic
+                // ring: the interrupt path died mid-session and the watchdog
+                // fed the wire for 35 minutes of corrupt audio).
                 auto access = hardware_ ? hardware_->TryBeginAccess() : Driver::HardwareAccessScope{};
                 const uint32_t ctrl = access ? access.Read(static_cast<Register32>(
                     DMAContextHelpers::IsoXmitContextControl(contextIndex_))) : 0;
@@ -632,7 +627,7 @@ void IsochTransmitContext::HandleInterrupt() noexcept {
 
 void IsochTransmitContext::WakeHardware() noexcept {
     if (!hardware_) return;
-    ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
+    (void)ring_.WakeHardware(*hardware_, contextIndex_, /*queueAppended=*/false);
 }
 
 void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {

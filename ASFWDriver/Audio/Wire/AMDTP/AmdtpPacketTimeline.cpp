@@ -17,12 +17,12 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    produced the M3 WriteBE32 wild-pointer crash (stale range check, then
 //    a reused slot's newer firstAudioFrame underflowing frameInPacket).
 // 4. State ownership: the timeline owns Empty→ExposedForAudio (expose) and
-//    retirement; the provider path owns →Published. No-data ring positions go
-//    straight to Completed and are invisible to frame lookup.
+//    retirement. No-data ring positions go straight to Completed and are
+//    invisible to frame lookup.
 // 5. ExposedFrameEnd() is a monotonic high-water mark: one past the highest
-//    audio frame ever exposed. It survives publication, retirement, and ring
-//    eviction, so a frame-lookup miss can be classified as "not produced yet"
-//    (at/beyond the mark) versus "no longer writable" (below it). Cleared
+//    audio frame ever exposed. It survives retirement and ring eviction, so
+//    a frame-lookup miss can be classified as "not produced yet" (at/beyond
+//    the mark) versus "no longer writable" (below it). Cleared
 //    only by Reset()/AttachSlots().
 //
 // Ordering contract (Linux-style seqlock; the slot fields stay plain data):
@@ -108,7 +108,7 @@ bool AmdtpPacketTimeline::ExposeDataPacket(const PreparedTxPacket& packet,
     return true;
 }
 
-void AmdtpPacketTimeline::MarkNoDataPacket(uint32_t packetIndex) noexcept {
+void AmdtpPacketTimeline::MarkNoDataPacket(uint64_t packetIndex) noexcept {
     if (slots_ == nullptr) {
         return;
     }
@@ -126,6 +126,19 @@ void AmdtpPacketTimeline::MarkNoDataPacket(uint32_t packetIndex) noexcept {
     // Retired immediately: never enters frame lookup.
     slot.state.store(PacketSlotState::Completed, std::memory_order_relaxed);
     EndSlotWrite(slot);
+}
+
+void AmdtpPacketTimeline::RetractNewestDataPacket(uint64_t packetIndex,
+                                                  uint64_t firstAudioFrame) noexcept {
+    if (slots_ == nullptr) {
+        return;
+    }
+    // Lower the bound before the slot disappears, so a fill that sees the
+    // slot gone also sees the lower bound.
+    if (firstAudioFrame < exposedFrameEnd_.load(std::memory_order_relaxed)) {
+        exposedFrameEnd_.store(firstAudioFrame, std::memory_order_release);
+    }
+    MarkNoDataPacket(packetIndex);
 }
 
 const PacketTimelineSlot*
@@ -172,7 +185,7 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
 
         const PacketSlotState state = slot.state.load(std::memory_order_relaxed);
         const bool isData = slot.isData;
-        const uint32_t pktIdx = slot.packetIndex;
+        const uint64_t pktIdx = slot.packetIndex;
         uint8_t* packetBytes = slot.packetBytes;
         const uint32_t packetSizeBytes = slot.packetSizeBytes;
         const uint64_t firstAudioFrame = slot.firstAudioFrame;
@@ -209,7 +222,7 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
 }
 
 const PacketTimelineSlot*
-AmdtpPacketTimeline::SlotByIndex(uint32_t packetIndex) const noexcept {
+AmdtpPacketTimeline::SlotByIndex(uint64_t packetIndex) const noexcept {
     if (slots_ == nullptr) {
         return nullptr;
     }
@@ -224,7 +237,7 @@ AmdtpPacketTimeline::SlotByIndex(uint32_t packetIndex) const noexcept {
     return &slot;
 }
 
-PacketTimelineSlot* AmdtpPacketTimeline::SlotByIndex(uint32_t packetIndex) noexcept {
+PacketTimelineSlot* AmdtpPacketTimeline::SlotByIndex(uint64_t packetIndex) noexcept {
     return const_cast<PacketTimelineSlot*>(
         static_cast<const AmdtpPacketTimeline*>(this)->SlotByIndex(packetIndex));
 }

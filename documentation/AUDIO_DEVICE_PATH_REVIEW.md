@@ -219,6 +219,18 @@ and compared with `MAudioSpecialProfile` in
    Transmit for M-Audio special firmware. RX packets, or M-Audio TX completions, are its
    observations, and every zero timestamp reaches the HAL through one function.
    [HARDWARE_TIMELINE_OWNERSHIP.md](HARDWARE_TIMELINE_OWNERSHIP.md)
+7. Transmit has one owner per step. The TX producer (its own dispatch queue)
+   arms packets ahead of the hardware with valid silence and the stream's one
+   frame cursor. CoreAudio's WriteEnd copies the frames it just wrote from the
+   HAL output ring into those packets, once, and only into packets at least
+   two ahead of the projected hardware position; a later frame stays silent
+   and is counted. The IT context runs a finite descriptor queue: completion
+   is read from each packet's descriptor status, and the queue stops at its
+   mapped end instead of replaying old packets. StopIO and a failed StartIO
+   wait out a producer pass before the TX memory is released.
+   [TX_OWNERSHIP.md](TX_OWNERSHIP.md),
+   [ASFWAudioDriverOutputWrite.cpp](../ASFWDriver/Audio/DriverKit/ASFWAudioDriverOutputWrite.cpp),
+   [IsochTxDmaRing.cpp](../ASFWDriver/Isoch/Transmit/IsochTxDmaRing.cpp)
 
 ## Review observations
 

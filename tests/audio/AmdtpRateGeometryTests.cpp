@@ -45,29 +45,18 @@ TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
     EXPECT_EQ(Geometry::kTxPacketsPerGroup, 8U);
     EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 48U);
     EXPECT_EQ(Geometry::kRxDescriptorPackets, 504U);
-    // The content horizon is the Apple-comparable 400 cycles, floored at the
-    // largest client write AudioDriverKit permits (4096) plus scheduling
-    // jitter: a 4096-frame WriteEnd must land on exposed packets (Defect B,
-    // tools/tx_data_horizon_burst_sim.py --io-frames 4096).
-    EXPECT_EQ(Geometry::kTxDataHorizonPackets, 400U);
-    EXPECT_EQ(Geometry::TxDataHorizonFrames(48000), 4160U);
-    EXPECT_EQ(Geometry::TxDataHorizonFrames(44100), 4160U);
-    EXPECT_EQ(Geometry::TxDataHorizonFrames(96000), 4800U);
-    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 1696U);
+    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 1512U);
     EXPECT_EQ(Geometry::kTimelineSlots, Geometry::kTxSharedSlotPackets);
-    EXPECT_EQ(Geometry::kTxHardwareRingPackets, 48U);
+    EXPECT_EQ(Geometry::kTxHardwareRingPackets, 504U);
     EXPECT_EQ(Geometry::kTxPreparationLatencyHistogramBuckets, 6U);
     EXPECT_EQ(Geometry::kTxCommittedMarginHistogramBuckets, 5U);
     EXPECT_EQ(Geometry::kTxPreparationLatency250Us, 250U);
     EXPECT_EQ(Geometry::kTxPreparationLatency1500Us, 1500U);
-    EXPECT_EQ(Geometry::kTxCommittedMargin2xFloorPackets, 96U);
-    EXPECT_EQ(Geometry::kTxCommittedMargin16xFloorPackets, 768U);
-    EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 96U);
-    EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 144U);
-    EXPECT_EQ(Geometry::kTxExposureLeadFrames, 4160U);
-    EXPECT_EQ(Geometry::kTxExposureLeadPackets, 760U);
-    EXPECT_EQ(Geometry::kTxFrameExposureWindowPackets, 1504U);
-    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 1648U);
+    EXPECT_EQ(Geometry::kTxCommittedMargin2xFloorPackets, 1008U);
+    EXPECT_EQ(Geometry::kTxCommittedMargin16xFloorPackets, 8064U);
+    EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 504U);
+    EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 1008U);
+    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 1008U);
 
     // DMA completion cadence and the ZTS grid are intentionally independent,
     // but the V3 period is a whole number of completion groups (256).

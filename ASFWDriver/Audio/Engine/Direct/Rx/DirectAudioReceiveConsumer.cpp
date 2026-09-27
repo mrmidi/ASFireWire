@@ -647,23 +647,4 @@ void DirectAudioReceiveConsumer::ServiceConsumerDiagnostics() {
     }
 }
 
-void DirectAudioReceiveConsumer::LogTransmitTimingTrace() {
-    auto* control = inputView_.control;
-    if (!control) {
-        return;
-    }
-    ::ASFW::Audio::Runtime::TxSytTraceSample sample{};
-    uint64_t decisions = 0;
-    if (!control->txSytTrace.ReadLatest(sample, decisions)) {
-        return;
-    }
-    ASFW_LOG(TxSyt,
-             "obsCyc=%u rxSyt=0x%04x sytOffDelayFree=%u +txDelay=%u outCyc=%u "
-             "=> txSyt=0x%04x (cyc=%u off=0x%03x) pkt=%llu decisions=%llu",
-             sample.sourceCycle, sample.observedRxSyt, sample.sytOffsetDelayFree,
-             sample.txDelayTicks, sample.outCycle, sample.txSyt,
-             (static_cast<uint32_t>(sample.txSyt) >> 12) & 0x0fu,
-             static_cast<uint32_t>(sample.txSyt) & 0x0fffu, sample.packetIndex, decisions);
-}
-
 } // namespace ASFW::AudioEngine::Direct::Rx

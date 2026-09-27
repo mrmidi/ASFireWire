@@ -89,13 +89,13 @@ struct HostAudioBufferView final {
 };
 
 struct TxPacketSlotView final {
-    uint32_t packetIndex{0};
+    uint64_t packetIndex{0};
     uint8_t* bytes{nullptr};
     uint32_t capacityBytes{0};
 };
 
 struct PreparedTxPacket final {
-    uint32_t packetIndex{0};
+    uint64_t packetIndex{0};
     uint32_t byteCount{0};
 
     bool isData{false};
@@ -122,7 +122,6 @@ struct AmdtpTimingState final {
     uint16_t nextDataSyt{0xFFFF};
     uint16_t replayDataBlocks{0};
     bool replayValid{false};
-    uint64_t nextAudioFrame{0};
     /// Bus cycle (0..7999) this packet is transmitted in. MOTU bases each block's SPH on
     /// it (write_sph, amdtp-motu.c:373-393); families that time by SYT ignore it.
     uint32_t transmitCycle{0};

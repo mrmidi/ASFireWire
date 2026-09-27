@@ -80,12 +80,15 @@ public:
     }
 
     [[nodiscard]] TxSlotPrepareResult PrepareNextTransmitSlot(
-        uint32_t packetIndex,
+        uint64_t packetIndex,
         const AMDTP::AmdtpTimingState& timing) noexcept;
     [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
 
-    void WriteHostOutputFloat32(const AMDTP::HostAudioBufferView& hostBuffer,
-                                uint64_t completionCursor) noexcept;
+    // Copies host output into the packets that carry those frames (the TX
+    // fill, run by the producer; documentation/TX_OWNERSHIP.md). Frames whose
+    // packet is below firstWritablePacket keep their armed silence.
+    void FillFromHostOutput(const AMDTP::HostAudioBufferView& hostBuffer,
+                            uint64_t firstWritablePacket) noexcept;
 
     [[nodiscard]] AMDTP::AmdtpPacketTimeline& Timeline() noexcept;
     [[nodiscard]] const AMDTP::AmdtpPacketTimeline& Timeline() const noexcept;
@@ -93,6 +96,16 @@ public:
     [[nodiscard]] const AMDTP::AmdtpStreamConfig& StreamConfig() const noexcept;
 
     [[nodiscard]] const DiceTxEngineCounters& Counters() const noexcept;
+    // The built-in AMDTP writer's counters (fill health; a MOTU stream uses
+    // its own writer and counters).
+    [[nodiscard]] const AMDTP::AmdtpPayloadWriterCounters& PayloadWriterCounters() const noexcept {
+        return payloadWriter_.Counters();
+    }
+    // S_out headroom since the last call, in packets (INT64_MAX: nothing
+    // written); the interval restarts.
+    [[nodiscard]] int64_t TakeMinFinalityMarginPackets() noexcept {
+        return payloadWriter_.TakeMinFinalityMarginPackets();
+    }
 
     AMDTP::AmdtpTxPolicy BuildTxPolicy(
         const ASFW::Isoch::Audio::AudioStreamTxPolicy& policy) const noexcept;

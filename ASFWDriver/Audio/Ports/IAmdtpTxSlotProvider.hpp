@@ -8,7 +8,7 @@ class IAmdtpTxSlotProvider {
 public:
     virtual ~IAmdtpTxSlotProvider() = default;
 
-    virtual bool AcquireWritableSlot(uint32_t packetIndex,
+    virtual bool AcquireWritableSlot(uint64_t packetIndex,
                                      TxPacketSlotView& outSlot) noexcept = 0;
 
     [[nodiscard]] virtual bool PublishSlot(

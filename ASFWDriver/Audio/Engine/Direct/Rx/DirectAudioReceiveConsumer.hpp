@@ -69,7 +69,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     void DrainReceiveTelemetry(uint32_t maxRecords) override;
     // Reports IO-callback errors recorded by the real-time path.
     void ServiceConsumerDiagnostics() override;
-    void LogTransmitTimingTrace() override;
 
   private:
     enum class ReplayResetReason : uint8_t {

@@ -44,6 +44,8 @@ struct DiceProfileSpec {
     uint32_t assertedPlaybackStreams{0};
     // Capture safety offset in packets; the vendor ladder's 16 unless measured.
     uint32_t captureSafetyPackets{TimingLadder::kRxDelayPackets};
+    // Playback safety offset in packets; the vendor ladder's 6 unless measured.
+    uint32_t playbackSafetyPackets{TimingLadder::kTxDelayPackets};
     // Measured device latency at 1x, doubling per rate tier. Zero keeps the
     // vendor ladder (29/59/119).
     uint32_t inputLatency1x{0};

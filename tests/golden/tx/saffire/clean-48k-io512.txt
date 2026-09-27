@@ -1,0 +1,3 @@
+case rate=48000 io=512 lead=560 stall=0-0 clock=device-frame writeEnds=47
+pkts 0-1511 NODATA x1512
+pkts 1512-3999 PCM frames 9072-23999 data=1866 nodata=622 label=0x00 offset=+0

@@ -10,12 +10,11 @@ namespace ASFW::Protocols::Audio::AMDTP {
 enum class PacketSlotState : uint8_t {
     Empty = 0,
     ExposedForAudio = 1,
-    Published = 2,
     Completed = 3,
 };
 
 struct PacketTimelineSlot final {
-    uint32_t packetIndex{0};
+    uint64_t packetIndex{0};
 
     uint8_t* packetBytes{nullptr};
     uint32_t packetCapacityBytes{0};
@@ -40,7 +39,7 @@ struct PacketTimelineSlot final {
 struct PacketSlotSnapshot final {
     const PacketTimelineSlot* slot{nullptr};
     uint32_t generation{0};
-    uint32_t packetIndex{0};
+    uint64_t packetIndex{0};
     uint8_t* packetBytes{nullptr};
     uint32_t packetSizeBytes{0};
     uint64_t firstAudioFrame{0};
@@ -61,7 +60,12 @@ public:
                           uint8_t* packetBytes,
                           uint32_t packetCapacityBytes) noexcept;
 
-    void MarkNoDataPacket(uint32_t packetIndex) noexcept;
+    void MarkNoDataPacket(uint64_t packetIndex) noexcept;
+    // The newest DATA packet was rewritten as NO-DATA (RevertToNoData): its
+    // frames move to the next DATA packet, so the exposed end falls back to
+    // its first frame. Without this the fill takes those frames for already
+    // lost and skips them.
+    void RetractNewestDataPacket(uint64_t packetIndex, uint64_t firstAudioFrame) noexcept;
 
     // Pump-side lookup (same thread as the mutators). Returns a live slot;
     // must not be used from the IO/RT side — use SnapshotSlotForAudioFrame.
@@ -73,8 +77,8 @@ public:
     [[nodiscard]] bool SnapshotSlotForAudioFrame(uint64_t absoluteFrame,
                                                  PacketSlotSnapshot& out) const noexcept;
 
-    PacketTimelineSlot* SlotByIndex(uint32_t packetIndex) noexcept;
-    const PacketTimelineSlot* SlotByIndex(uint32_t packetIndex) const noexcept;
+    PacketTimelineSlot* SlotByIndex(uint64_t packetIndex) noexcept;
+    const PacketTimelineSlot* SlotByIndex(uint64_t packetIndex) const noexcept;
 
     [[nodiscard]] uint32_t SlotCount() const noexcept;
 

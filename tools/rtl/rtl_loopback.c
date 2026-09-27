@@ -14,6 +14,8 @@
 //   ./rtl_loopback -d ASFW --measure         run the measurement (starts real IO)
 //   ./rtl_loopback -d ASFW --measure --frames 64 --trials 32 --window auto --json out.json
 //   ./rtl_loopback --selftest                check the analysis maths, no hardware
+//   ./rtl_loopback -d ASFW --tone            play a sine, find every glitch (dropout/slip/click)
+//   ./rtl_loopback -d ASFW --tone --frames 32 --duration 60
 //
 // See tools/rtl/README.md for the meaning of every number, and
 // documentation/LATENCY_VOCABULARY.md for the shared vocabulary.
@@ -21,6 +23,7 @@
 // The IOProc allocates nothing, logs nothing, and touches only preallocated
 // storage. All analysis happens after the run.
 #include "rtl_core.h"
+#include "tone_core.h"
 
 #include <CoreAudio/CoreAudio.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -281,6 +284,235 @@ static OSStatus rtl_ioproc(AudioObjectID dev, const AudioTimeStamp *now,
     return noErr;
 }
 
+// ---------------------------------------------------------------------- tone
+// --tone: play a continuous sine on one output, capture the looped-back input
+// for a fixed duration, and find every glitch in it (tone_core). Like the
+// impulse mode, the IOProc only generates, copies and records; all analysis
+// runs after AudioDeviceStop().
+
+// One IO callback, so a capture index can be named by sample time and host
+// time, and so an event can be tied to the IO anomaly around it.
+typedef struct {
+    double   hostSec;
+    double   itSample;       // input sample time of the callback's first frame
+    uint64_t captureStart;   // capture index of that frame
+    uint32_t n;              // input frames delivered
+    uint32_t overloads;      // overload count seen at this callback
+    uint8_t  itValid;
+} tone_cb_t;
+
+static struct {
+    tone_gen_t gen;
+    float     *cap;
+    uint64_t   capCap, capLen;
+    tone_cb_t *cb;
+    uint32_t   cbCap, cbLen;
+} gt;
+
+static OSStatus tone_ioproc(AudioObjectID dev, const AudioTimeStamp *now,
+                            const AudioBufferList *in, const AudioTimeStamp *it,
+                            AudioBufferList *out, const AudioTimeStamp *ot,
+                            void *ud) {
+    (void)dev; (void)now; (void)ot; (void)ud;
+
+    const UInt32 nOut = bl_frames(out);
+    if (out)
+        for (UInt32 i = 0; i < out->mNumberBuffers; i++)
+            if (out->mBuffers[i].mData)
+                memset(out->mBuffers[i].mData, 0, out->mBuffers[i].mDataByteSize);
+    // The generator advances once per output frame whether or not the channel
+    // exists, so the tone stays phase-continuous in output sample time.
+    for (UInt32 f = 0; f < nOut; f++) {
+        const float s = tone_gen_next(&gt.gen);
+        Float32 *p = bl_slot(out, f, g.outCh);
+        if (p) *p = s;
+    }
+
+    const UInt32 nIn = bl_frames(in);
+    if (!nIn || atomic_load_explicit(&g.done, memory_order_relaxed)) return noErr;
+    if (gt.cbLen < gt.cbCap) {
+        const int itOk = it && (it->mFlags & kAudioTimeStampSampleTimeValid);
+        gt.cb[gt.cbLen++] = (tone_cb_t){
+            .hostSec = (double)mach_absolute_time() * g_h2s,
+            .itSample = itOk ? it->mSampleTime : 0.0,
+            .captureStart = gt.capLen,
+            .n = nIn,
+            .overloads = atomic_load_explicit(&g.overloads, memory_order_relaxed),
+            .itValid = (uint8_t)itOk,
+        };
+    }
+    for (UInt32 f = 0; f < nIn && gt.capLen < gt.capCap; f++) {
+        const Float32 *p = bl_slot(in, f, g.inCh);
+        gt.cap[gt.capLen++] = p ? *p : 0.0f;
+    }
+    if (gt.capLen >= gt.capCap || gt.cbLen >= gt.cbCap)
+        atomic_store_explicit(&g.done, 1, memory_order_release);
+    return noErr;
+}
+
+// The callback that delivered capture index i.
+static const tone_cb_t *tone_cb_for(uint64_t i) {
+    if (!gt.cbLen) return NULL;
+    uint32_t lo = 0, hi = gt.cbLen - 1;
+    while (lo < hi) {
+        const uint32_t mid = lo + (hi - lo + 1) / 2;
+        if (gt.cb[mid].captureStart <= i) lo = mid; else hi = mid - 1;
+    }
+    return &gt.cb[lo];
+}
+
+// IO anomalies within +-2 callbacks of callback c: a delivered-frame gap
+// (input sample time did not advance by the frames delivered), an overload,
+// or a missing timestamp. Returns a short label or "" when the IO was clean.
+static const char *tone_io_near(const tone_cb_t *c) {
+    const uint32_t idx = (uint32_t)(c - gt.cb);
+    const uint32_t lo = idx >= 2 ? idx - 2 : 0;
+    const uint32_t hi = idx + 2 < gt.cbLen ? idx + 2 : gt.cbLen - 1;
+    int gap = 0, overload = 0, missing = 0;
+    for (uint32_t k = lo; k <= hi; k++) {
+        if (!gt.cb[k].itValid) missing = 1;
+        if (k == 0) continue;
+        const tone_cb_t *p = &gt.cb[k - 1], *q = &gt.cb[k];
+        if (p->itValid && q->itValid && q->itSample != p->itSample + p->n) gap = 1;
+        if (q->overloads != p->overloads) overload = 1;
+    }
+    if (overload) return "overload nearby";
+    if (gap)      return "input sample-time gap nearby";
+    if (missing)  return "missing timestamp nearby";
+    return "";
+}
+
+static int run_tone(AudioObjectID dev, Float64 sr, double durationSec, double freqHz,
+                    Float32 amplitude, UInt32 maxListed) {
+    gt.capCap = (uint64_t)(durationSec * sr);
+    gt.cbCap = (uint32_t)(gt.capCap / 8 + 1024);  // HAL buffers are >= 15 frames
+    gt.cap = malloc((size_t)gt.capCap * sizeof *gt.cap);
+    gt.cb = malloc((size_t)gt.cbCap * sizeof *gt.cb);
+    if (!gt.cap || !gt.cb) {
+        fprintf(stderr, "cannot allocate a %.0f s capture\n", durationSec);
+        return 1;
+    }
+    tone_gen_init(&gt.gen, sr, freqHz, amplitude);
+
+    // Another client already running the device sets its IO cycle: the HAL
+    // runs the device at the smallest buffer any client asked for, while this
+    // tool's callbacks keep its own size. Say so, or the run gets labelled
+    // with the wrong buffer size.
+    UInt32 runningSomewhere = 0;
+    if (getprop(dev, kAudioDevicePropertyDeviceIsRunningSomewhere, kAudioObjectPropertyScopeGlobal,
+                &runningSomewhere, sizeof runningSomewhere) && runningSomewhere)
+        printf("\nNOTE: another client is already running this device. Its IO buffer, not\n"
+               "      ours, may set the device's IO cycle; the glitch rate below belongs\n"
+               "      to that cycle.\n");
+
+    printf("\ntone: %.1f Hz, amp %.2f, out ch %u -> in ch %u, %.0f s capture\n",
+           freqHz, amplitude, g.outCh, g.inCh, durationSec);
+
+    AudioObjectPropertyAddress ola = { kAudioDeviceProcessorOverload,
+                                       kAudioObjectPropertyScopeGlobal,
+                                       kAudioObjectPropertyElementMain };
+    AudioObjectAddPropertyListener(dev, &ola, overload_listener, NULL);
+    AudioDeviceIOProcID id = NULL;
+    if (AudioDeviceCreateIOProcID(dev, tone_ioproc, NULL, &id) != noErr ||
+        AudioDeviceStart(dev, id) != noErr) {
+        fprintf(stderr, "cannot start IO\n");
+        if (id) AudioDeviceDestroyIOProcID(dev, id);
+        AudioObjectRemovePropertyListener(dev, &ola, overload_listener, NULL);
+        return 1;
+    }
+    const int timeout = (int)(durationSec * 2.0) + 5;
+    for (int i = 0; i < timeout * 20 &&
+                    !atomic_load_explicit(&g.done, memory_order_acquire); i++)
+        usleep(50000);
+    const int completed = atomic_load_explicit(&g.done, memory_order_acquire);
+    AudioDeviceStop(dev, id);
+    AudioDeviceDestroyIOProcID(dev, id);
+    AudioObjectRemovePropertyListener(dev, &ola, overload_listener, NULL);
+    // AudioDeviceStop has quiesced the IOProc: the capture is this thread's now.
+
+    if (!completed)
+        printf("\nWARNING: timed out after %d s with %.1f s captured -- IO may have stalled\n",
+               timeout, (double)gt.capLen / sr);
+
+    uint32_t gaps = 0, missing = 0;
+    for (uint32_t k = 0; k < gt.cbLen; k++) {
+        if (!gt.cb[k].itValid) { missing++; continue; }
+        if (k && gt.cb[k - 1].itValid &&
+            gt.cb[k].itSample != gt.cb[k - 1].itSample + gt.cb[k - 1].n)
+            gaps++;
+    }
+    const unsigned overloads = atomic_load_explicit(&g.overloads, memory_order_relaxed);
+    printf("\n--- IO ---\n");
+    printf("  %-24s %u", "callbacks", gt.cbLen);
+    if (gt.cbLen) printf("  (%.1f frames each on average -- this tool's buffer)",
+                         (double)gt.capLen / gt.cbLen);
+    printf("\n");
+    printf("  %-24s %u\n", "processor overloads", overloads);
+    printf("  %-24s %u\n", "input sample-time gaps", gaps);
+    printf("  %-24s %u\n", "missing timestamps", missing);
+
+    // Raw capture for offline inspection: float32 little-endian, mono, no header.
+    const char *dump = getenv("RTL_TONE_DUMP");
+    if (dump) {
+        FILE *df = fopen(dump, "wb");
+        if (df) {
+            fwrite(gt.cap, sizeof *gt.cap, (size_t)gt.capLen, df);
+            fclose(df);
+            printf("  %-24s %s (%llu float32 frames at %.0f Hz)\n", "raw capture written", dump,
+                   (unsigned long long)gt.capLen, sr);
+        }
+    }
+
+    enum { kStored = 256 };
+    static tone_event_t events[kStored];
+    tone_result_t r;
+    if (tone_analyse(gt.cap, gt.capLen, sr, freqHz, events, kStored, &r) != 0) {
+        fprintf(stderr, "analysis ran out of memory\n");
+        return 1;
+    }
+    printf("\n--- tone ---\n");
+    if (!r.valid) {
+        printf("  no verdict: %s\n", r.invalidReason);
+        return 1;
+    }
+    const double seconds = (double)(r.analysedTo - r.analysedFrom) / sr;
+    printf("  %-24s %.3f (%.1f dBFS), noise %.5f rms (%.1f dB SNR)\n", "looped-back tone",
+           r.amplitude, 20.0 * log10(r.amplitude), r.noiseRms,
+           r.noiseRms > 0 ? 20.0 * log10(r.amplitude / r.noiseRms) : 99.0);
+    printf("  %-24s %.1f s (%llu fr), tone arrived at capture frame %llu\n", "analysed",
+           seconds, (unsigned long long)(r.analysedTo - r.analysedFrom),
+           (unsigned long long)r.onsetSample);
+    printf("  %-24s %u dropouts, %u slips, %u clicks  (%.2f per minute)\n", "glitches",
+           r.counts[TONE_EVENT_DROPOUT], r.counts[TONE_EVENT_SLIP], r.counts[TONE_EVENT_CLICK],
+           seconds > 0 ? r.eventCount * 60.0 / seconds : 0.0);
+    if (!r.eventCount) {
+        printf("  clean: every analysed frame matches the tone\n");
+        return 0;
+    }
+
+    const UInt32 listed = r.storedEvents < maxListed ? r.storedEvents : maxListed;
+    printf("\n  %-4s %-8s %14s %10s %7s %9s %9s  %s\n", "#", "kind", "input sample", "t (s)",
+           "frames", "silent", "slip fr", "IO");
+    for (UInt32 i = 0; i < listed; i++) {
+        const tone_event_t *e = &events[i];
+        const tone_cb_t *c = tone_cb_for(e->firstSample);
+        const double off = c ? (double)(e->firstSample - c->captureStart) : 0.0;
+        const double inSample = (c && c->itValid) ? c->itSample + off : -1.0;
+        const double t = (double)e->firstSample / sr;
+        char slip[16] = "";
+        if (e->kind == TONE_EVENT_SLIP) snprintf(slip, sizeof slip, "%+.2f", e->slipFrames);
+        printf("  %-4u %-8s %14.0f %10.3f %7llu %9u %9s  %s\n", i + 1,
+               tone_event_name(e->kind), inSample, t,
+               (unsigned long long)(e->lastSample - e->firstSample + 1), e->silentSamples, slip,
+               c ? tone_io_near(c) : "");
+    }
+    if (r.eventCount > listed)
+        printf("  ... %u more not listed\n", r.eventCount - listed);
+    printf("\n  \"input sample\" is the HAL input sample time of the event's first frame.\n"
+           "  A slip is measured modulo one tone period (%.1f frames).\n", sr / freqHz);
+    return 0;
+}
+
 // ---------------------------------------------------------------- provenance
 static void os_version(char *buf, size_t cap) {
     size_t len = cap;
@@ -309,7 +541,9 @@ static void usage(FILE *f) {
     fprintf(f,
         "usage: rtl_loopback [-d <name-substring>] [--measure] [--frames N]\n"
         "                    [--trials N] [--window N|auto] [--out-ch N] [--in-ch N]\n"
-        "                    [--amp F] [--json <path>] [--selftest]\n");
+        "                    [--amp F] [--json <path>] [--selftest]\n"
+        "       rtl_loopback [-d <name-substring>] --tone [--frames N] [--duration S]\n"
+        "                    [--freq HZ] [--amp F] [--out-ch N] [--in-ch N] [--list N]\n");
 }
 
 // --------------------------------------------------------------------- main
@@ -317,9 +551,10 @@ int main(int argc, char **argv) {
     init_hostclock();
     const char *filter = "ASFW";
     const char *jsonPath = NULL;
-    int measure = 0, reqFrames = 0, autoWindow = 0;
-    UInt32 trials = 20, window = 4096;
+    int measure = 0, reqFrames = 0, autoWindow = 0, tone = 0, ampSet = 0;
+    UInt32 trials = 20, window = 4096, listEvents = 20;
     Float32 amplitude = 0.9f;
+    double duration = 30.0, freq = 997.0;
     g.outCh = 0; g.inCh = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -341,11 +576,24 @@ int main(int argc, char **argv) {
         }
         else if (!strcmp(argv[i], "--out-ch") && i + 1 < argc) g.outCh = (UInt32)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--in-ch")  && i + 1 < argc) g.inCh  = (UInt32)atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--amp")    && i + 1 < argc) amplitude = (Float32)atof(argv[++i]);
+        else if (!strcmp(argv[i], "--amp")    && i + 1 < argc) { amplitude = (Float32)atof(argv[++i]); ampSet = 1; }
+        else if (!strcmp(argv[i], "--tone"))                     tone = 1;
+        else if (!strcmp(argv[i], "--duration") && i + 1 < argc) duration = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--freq")   && i + 1 < argc) freq = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--list")   && i + 1 < argc) listEvents = (UInt32)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--json")   && i + 1 < argc) jsonPath = argv[++i];
         else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage(stdout); return 0; }
         else { fprintf(stderr, "unknown argument: %s\n", argv[i]); usage(stderr); return 2; }
     }
+    if (tone && measure) {
+        fprintf(stderr, "--tone and --measure are separate runs; pick one\n");
+        return 2;
+    }
+    if (tone && !(duration >= 1.0 && duration <= 600.0)) {
+        fprintf(stderr, "--duration must be 1..600 seconds\n");
+        return 2;
+    }
+    if (tone && !ampSet) amplitude = 0.5f;  // a continuous sine; the impulse default is too hot
     if (trials > RTL_MAX_TRIALS) trials = RTL_MAX_TRIALS;
     if (window > RTL_MAX_WINDOW) window = RTL_MAX_WINDOW;
 
@@ -413,6 +661,14 @@ int main(int argc, char **argv) {
     if (autoWindow) {
         window = rtl_auto_window(&dc);
         printf("  %-24s %u fr (4x declared round trip, clamped)\n", "auto window", window);
+    }
+
+    if (tone) {
+        if (!(freq > 0.0 && freq < sr / 2.0)) {
+            fprintf(stderr, "--freq must be between 0 and %.0f Hz\n", sr / 2.0);
+            return 2;
+        }
+        return run_tone(dev, sr, duration, freq, amplitude, listEvents);
     }
 
     if (!measure) {

@@ -43,10 +43,6 @@ struct AudioRtCounters final {
     std::atomic<uint64_t> txPreparationWakeDispatches{0};
     std::atomic<uint64_t> txPreparationWakeCoalesced{0};
     std::atomic<uint64_t> txPreparationDrainPasses{0};
-    std::atomic<uint64_t> txCompletedPayloadHashMatches{0};
-    std::atomic<uint64_t> txCompletedPayloadHashMismatches{0};
-    std::atomic<uint64_t> txCompletedPcmSlots{0};
-    std::atomic<uint64_t> txCompletedStartupSilenceSlots{0};
     std::atomic<uint64_t> txPayloadMismatchFaults{0};
     std::atomic<uint64_t> txPostLockNoDataPackets{0};
 
@@ -95,10 +91,6 @@ struct AudioRtCounters final {
         txPreparationWakeDispatches.store(0, std::memory_order_relaxed);
         txPreparationWakeCoalesced.store(0, std::memory_order_relaxed);
         txPreparationDrainPasses.store(0, std::memory_order_relaxed);
-        txCompletedPayloadHashMatches.store(0, std::memory_order_relaxed);
-        txCompletedPayloadHashMismatches.store(0, std::memory_order_relaxed);
-        txCompletedPcmSlots.store(0, std::memory_order_relaxed);
-        txCompletedStartupSilenceSlots.store(0, std::memory_order_relaxed);
         txPayloadMismatchFaults.store(0, std::memory_order_relaxed);
         txPostLockNoDataPackets.store(0, std::memory_order_relaxed);
 

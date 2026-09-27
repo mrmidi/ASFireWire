@@ -135,8 +135,18 @@ struct RxSequenceReplayReadDiagnostic final {
 
 class RxSequenceReplayState final {
 public:
-    static constexpr uint32_t kCapacity = 512;
-    static constexpr uint32_t kReadDelay = kCapacity / 2;
+    // History and read delay are separate budgets (TX_OWNERSHIP.md, T5):
+    // - kReadDelay is how far behind the newest RX entry a reader starts. The
+    //   distance from an RX observation to the TX packet that replays it is
+    //   kReadDelay plus the TX lead when the reader began, so it does not
+    //   need to grow with the TX lead.
+    // - kCapacity - kReadDelay is how long the TX producer can stall before
+    //   the entries it needs are overwritten. RX keeps publishing during a
+    //   stall, so the reader falls that far behind; past it the reader
+    //   re-anchors and the lead cannot fully recover. 1792 cycles (224 ms)
+    //   covers any stall the finite IT ring itself survives.
+    static constexpr uint32_t kCapacity = 2048;
+    static constexpr uint32_t kReadDelay = 256;
     static constexpr uint32_t kNoInfo = UINT32_MAX;
 
     struct Slot final {
@@ -347,5 +357,6 @@ private:
 static_assert(
     (RxSequenceReplayState::kCapacity &
      (RxSequenceReplayState::kCapacity - 1)) == 0);
+static_assert(RxSequenceReplayState::kReadDelay < RxSequenceReplayState::kCapacity);
 
 } // namespace ASFW::Audio::Runtime

@@ -88,7 +88,6 @@ class IsochReceiveContext final
 
     void DrainZtsTelemetry(uint32_t maxRecords);
     void ServiceConsumerDiagnostics();
-    void LogTxSytTrace();
 
   private:
     struct Registers {

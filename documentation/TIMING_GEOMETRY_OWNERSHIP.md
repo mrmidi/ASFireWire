@@ -8,6 +8,13 @@ Epic FW-177, ticket FW-180. This document turns two inputs into the target owner
 It names **one final authority for every semantic quantity**. The implementation tickets (FW-181/182/183)
 and the regression tests (FW-184) follow it. FW-185 checks the final tree against it.
 
+> **Milestone 6 update (2026-09-26).** The TX rows here describe the tree before the
+> audio-side fill. Since then: the IT ring is a finite 504-packet queue (not a cyclic 48-packet
+> ring), the preparation lead is 1008 packets and the shared store 1512, and the exposure
+> horizon (`kTxDataHorizonPackets`, `kTxExposureFloorFrames`, `TxDataHorizonFrames`,
+> `kTxExposureLead*`, `kTxFrameExposureWindow*`) plus `kMinAvgCadence*` and
+> `kSchedulingJitterFrames` are deleted. See [TX_OWNERSHIP.md](TX_OWNERSHIP.md) §1f, §1k.
+
 ## 0. Decisions taken (2026-09-24, after the first migration)
 
 The first migration (FW-181/182/183) kept main's shipped values. The owner then

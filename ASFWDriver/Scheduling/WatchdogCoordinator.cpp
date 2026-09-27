@@ -22,10 +22,6 @@ constexpr uint32_t kZtsRecordsPerDrain = 8;
 // Consumer-owned diagnostics (IO-callback error reports recorded by the
 // real-time path) are serviced every 100 ticks (~100 ms), off that path.
 constexpr uint32_t kConsumerDiagnosticsIntervalTicks = 100;
-// TX SYT decisions arrive ~6000/s; the trace is a single latest-value mailbox,
-// so log the most recent decision once per ~1 s (1000 ticks). The line carries
-// the total decision count so collapsed updates are still visible.
-constexpr uint32_t kTxSytTraceIntervalTicks = 1000;
 
 uint64_t MicrosecondsToMachTicks(uint64_t usec) {
     static mach_timebase_info_data_t timebase{0, 0};
@@ -113,7 +109,6 @@ void WatchdogCoordinator::Reset() {
     }
     ztsLogDivider_ = 0;
     consumerDiagnosticsDivider_ = 0;
-    txSytTraceDivider_ = 0;
     lastDrainEligible_ = true;
 }
 
@@ -171,9 +166,8 @@ void WatchdogCoordinator::TickIsochReceive(
     // frequent; the receive-side log gate controls the much lower print rate.
     // 951abcc7 made these drains conditional on IsochReceiveContext's
     // receiveConsumer_ (they used to drain a context-owned ring
-    // unconditionally). Zts and TxSyt were silent for a whole hardware
-    // session after that - and LogTransmitTimingTrace has no anomaly gate, so
-    // its silence cannot be explained by a healthy stream. Report the two
+    // unconditionally). Zts was silent for a whole hardware session after
+    // that, and its silence could not be told from a healthy stream. Report the two
     // preconditions once per transition so the dead precondition is named
     // rather than inferred.
     const bool drainEligible =
@@ -198,10 +192,6 @@ void WatchdogCoordinator::TickIsochReceive(
         if (++ztsLogDivider_ >= kZtsDrainIntervalTicks) {
             ztsLogDivider_ = 0;
             isochReceiveContext->DrainZtsTelemetry(kZtsRecordsPerDrain);
-        }
-        if (++txSytTraceDivider_ >= kTxSytTraceIntervalTicks) {
-            txSytTraceDivider_ = 0;
-            isochReceiveContext->LogTxSytTrace();
         }
     }
 }

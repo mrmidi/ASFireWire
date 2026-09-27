@@ -9,7 +9,6 @@
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
-#include "../Engine/Direct/FireWireAudioEngine.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
 #include "../Families/BeBoB/MAudio/MAudioTxClockBridge.hpp"
@@ -132,18 +131,17 @@ public:
     uint8_t* payloadBase{nullptr};
     ASFW::Isoch::IsochTxPacketMeta* metadataRing{nullptr};
     ASFW::Isoch::IsochTxQueueControl* queueControl{nullptr};
-    ASFW::Audio::Runtime::AudioTransportControlBlock* audioControl{nullptr};
     uint32_t numSlots{0};
     uint32_t slotStrideBytes{0};
 
     bool AcquireWritableSlot(
-        uint32_t packetIndex,
+        uint64_t packetIndex,
         ASFW::Protocols::Audio::AMDTP::TxPacketSlotView& outSlot)
         noexcept override {
         if (!payloadBase || numSlots == 0 || slotStrideBytes == 0) {
             return false;
         }
-        const uint32_t slotIdx = packetIndex % numSlots;
+        const auto slotIdx = static_cast<uint32_t>(packetIndex % numSlots);
         outSlot.packetIndex = packetIndex;
         outSlot.bytes = payloadBase + (slotIdx * slotStrideBytes);
         outSlot.capacityBytes = slotStrideBytes;
@@ -156,7 +154,7 @@ public:
         if (!metadataRing || !queueControl || numSlots == 0) {
             return false;
         }
-        const uint32_t slotIdx = packet.packetIndex % numSlots;
+        const auto slotIdx = static_cast<uint32_t>(packet.packetIndex % numSlots);
         auto& meta = metadataRing[slotIdx];
 
         meta.packetIndex = packet.packetIndex;
@@ -184,30 +182,6 @@ public:
         // firewire/ohci.h:287-288 and firewire/ohci.c:3383.
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
             static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
-
-        // Content inspection belongs to Audio and runs immediately before the
-        // release commit. Transport receives only opaque bytes and metadata.
-        if (audioControl) {
-            const uint32_t slotIndex = packet.packetIndex % numSlots;
-            const auto observation = audioControl->txWirePayloadTelemetry.Observe(
-                packet.packetIndex,
-                payloadBase + static_cast<uint64_t>(slotIndex) * slotStrideBytes,
-                packet.byteCount);
-            if (observation.firstInfo || observation.dropout) {
-                ASFW_LOG_RING_ONLY_RL(
-                    DirectAudio,
-                    "tx-wire-payload",
-                    observation.firstInfo ? 0u : 1000u,
-                    ::ASFW::Logging::LogLevel::Warning,
-                    "[TxWire] packet=%u first=%d dropout=%d infoQuads=%u maxAbs24=%u lastQuad=0x%08x",
-                    packet.packetIndex,
-                    observation.firstInfo ? 1 : 0,
-                    observation.dropout ? 1 : 0,
-                    observation.infoQuads,
-                    observation.maxAbs24,
-                    observation.lastInfoQuad);
-            }
-        }
 
         // Compute expected generation and release-store it last.
         const uint64_t generation =
@@ -238,11 +212,20 @@ struct AudioDriverRuntimeState {
 
     ASFW::Audio::Runtime::AudioTransportControlBlock directAudioControl;
     ASFW::Audio::Runtime::AudioGraphBinding directAudioGraph;
-    ASFW::AudioEngine::Direct::FireWireAudioEngine directAudioEngine;
     std::atomic<bool> directAudioSkeletonBound{false};
     std::atomic<uint64_t> ioDebugCallbacks{0};
     std::atomic<uint64_t> ioCallbacksOutsideRun{0};
     std::atomic<bool> txActive{false};
+    // [TxPlace] and [TxSyt] log once per stream (TX preparation queue).
+    bool txPlacementLogged{false};
+    bool txSytLogged{false};
+    // TX fill (FillTransmitPayloads, IO thread only): audio frames below this
+    // were already copied into their packets, or passed their finality and
+    // stay silent. Reset per start, before IO runs.
+    uint64_t txFilledFrameEnd{0};
+    // framesMissedFinality at this stream's start; [TxPrep] reports the
+    // difference, so the heartbeat counts only this stream's missed frames.
+    uint64_t txMissedFinalityAtStart{0};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Audio::BeBoB::MAudioInternalTxTiming mAudioInternalTxTiming;
@@ -265,7 +248,7 @@ struct AudioDriverRuntimeState {
     // single-stream devices, leaving the master path untouched.
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngineSecondary;
     DextTxSlotProvider txSlotProviderSecondary;
-    bool txSecondaryActive{false};
+    std::atomic<bool> txSecondaryActive{false};
 
     ASFW::Encoding::Motu::MotuPayloadWriter motuPayloadWriter;
     ASFW::Audio::Wire::MotuTxTimingStamper motuTxTimingStamper;
@@ -319,6 +302,11 @@ struct AudioGraphStartState {
 
 namespace ASFW::Audio::DriverKit {
 
+// Start of the TX frame cursor from an RX replay entry (see the definition).
+[[nodiscard]] uint64_t ProjectTxFrameCursor(uint64_t rxFirstFrame,
+                                            uint64_t presentationDeltaTicks,
+                                            uint32_t sampleRate) noexcept;
+
 // Physical direct-memory geometry may be wider than the CoreAudio-visible
 // topology. DICE devices can require a hidden return stream for clock/control
 // purposes even when their user-facing device has no input stream.
@@ -340,6 +328,40 @@ void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept;
 namespace DirectDiagnostics {
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept;
 } // namespace DirectDiagnostics
+
+// TX placement meter (milestone 6; documentation/TX_OWNERSHIP.md). Where one
+// transmitted frame sits relative to the HAL clock: the first audio frame of
+// the newest completed DATA packet, against the HAL sample time projected at
+// the bus cycle that packet left in. Diagnostic only; nothing reads it back.
+struct TxPlacementSample final {
+    uint64_t packetIndex{0};
+    uint64_t firstAudioFrame{0};
+    int64_t halSampleTime{0};
+    // firstAudioFrame - halSampleTime. Negative: the frame left after its HAL
+    // time, so output is late by that many frames.
+    int64_t offsetFrames{0};
+};
+
+// Runs on the TX preparation queue, the timeline's only writer. False when
+// any input is missing (no completion yet, a NO-DATA packet, no HAL anchor).
+[[nodiscard]] bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars,
+                                      TxPlacementSample& out) noexcept;
+
+// The TX fill (ASFWAudioDriverOutputWrite.cpp, documentation/TX_OWNERSHIP.md):
+// copies frames CoreAudio has written to the HAL output ring into the armed
+// packets that carry them, once each, unless the packet is at or behind the
+// finality frontier (projected hardware position + guard). Runs inside
+// WriteEnd on CoreAudio's IO thread, its only owner; RT-safe.
+void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept;
+
+// The CoreAudio WriteEnd step (ASFWAudioDriverOutputWrite.cpp). Returns false
+// when the span exceeds the output ring, which the IO handler reports as
+// kIOReturnBadArgument.
+[[nodiscard]] bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
+                                        ASFW::Audio::Runtime::AudioTransportControlBlock& control,
+                                        uint64_t sampleTime,
+                                        uint64_t hostTime,
+                                        uint32_t ioBufferFrameSize) noexcept;
 
 [[nodiscard]] kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                                                       ASFWAudioDriver_IVars& ivars) noexcept;
@@ -374,10 +396,13 @@ void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
 // stamps into the device timeline and publishes its boundaries. Called from the
 // TX preparation wake (ASFWAudioDriverTxProducer.cpp).
 void ObserveMAudioTxClock(ASFWAudioDriver_IVars& ivars, uint64_t transportGeneration) noexcept;
-// Prepares transmit slots from startPacketIndex until both producer invariants
-// are true or limitPacketIndex is reached:
-//   * requiredPacketIndex covers the core refill / commit-generation invariant.
-//   * targetFrameEnd covers the AMDTP frame-exposure invariant for WriteEnd.
+// Prepares transmit slots from startPacketIndex until requiredPacketIndex
+// (the core refill / commit-generation invariant) or limitPacketIndex is
+// reached. Content availability never extends preparation: packets are armed
+// with valid silence and FillTransmitPayloads copies PCM in later
+// (documentation/TX_OWNERSHIP.md, T4). A replay-driven packet whose RX entry
+// does not exist yet ends the pass instead of shipping NO-DATA, unless the
+// hardware would otherwise reach an uncommitted descriptor.
 // Returns the number of slots prepared. With an unseeded transmit clock the
 // normal AMDTP cadence is preserved but every packet carries NO_INFO
 // (SYT=0xffff), matching the reference Saffire seed behavior. Set
@@ -387,7 +412,6 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                               uint64_t requiredPacketIndex,
                               uint64_t limitPacketIndex,
                               uint32_t maxToPrepare,
-                              uint64_t targetFrameEnd,
                               bool allowRecoveredClock) noexcept;
 
 // Synchronously seeds the transmit ring with cadence-correct NO_INFO packets
@@ -424,5 +448,4 @@ struct PrimaryTxArmResult final {
     const PrimaryTxQueueMemory& memory) noexcept;
 
 
-void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept;
 } // namespace ASFW::Audio::DriverKit

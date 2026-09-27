@@ -113,13 +113,17 @@ in a latency sum. Restate this wherever these constants live.
 
 | main constant (`AudioTimingGeometry`) | Value | Why it is not latency |
 |---|---:|---|
-| `kTxHardwareRingPackets` | 48 pkt | OHCI-owned transmit program: ownership capacity |
-| `kTxPreparationSlackPackets` | 96 pkt | producer scheduling tolerance |
-| `kTxCoverageLeadPackets` | 144 pkt | refill-safety sub-budget |
-| `kTxPreparationLeadPackets` | 336 pkt | how far ahead packets are prepared; packets armed early carry silence until content arrives, so capacity alone does not establish playback delay |
-| `kTxDataHorizonPackets` | 400 pkt | data horizon |
-| HAL frame ring / ZTS period | 1536 fr | one ZTS period; the wrap unit of the ADK ring, not a delay |
+| `kTxHardwareRingPackets` | 504 pkt | finite IT queue mapped ahead of the newest completion: the refill-stall budget |
+| `kTxPreparationSlackPackets` | 504 pkt | producer-stall budget |
+| `kTxCoverageLeadPackets` / `kTxPreparationLeadPackets` | 1008 pkt | how far ahead packets are armed; armed packets carry silence until the fill copies PCM into them just before the hardware needs it, so this depth does not delay playback |
+| `kTxSharedSlotPackets` | 1512 pkt | shared packet slots (coverage + one ring) |
+| HAL frame ring / ZTS period | 12288 fr at 48 kHz (per rate) | one ZTS period; the wrap unit of the ADK ring, not a delay |
 | `kRxDescriptorPackets` | 504 pkt | receive storage |
+
+Values as of milestone 6 (T5, [TX_OWNERSHIP.md](TX_OWNERSHIP.md)); the exposure horizon
+(`kTxDataHorizonPackets`, `kTxExposureLead*`) was deleted in T8. The fill finality guard
+(`kTxFillFinalityGuardPackets`, 2) is also not a latency: it is covered by the playback
+safety offset.
 
 (`midi`-branch equivalents with different names — `kTxPreparedTargetCycleSlots`,
 `kPcmPublicationCacheFrames` — are the same category.)

@@ -99,7 +99,6 @@ TEST(MotuPayloadWriterTests, PlacesPcmAtTheMotuChunkOffsets) {
     writer.WriteFloat32Interleaved(view, 0);
 
     EXPECT_EQ(writer.Counters().framesWritten.load(), 2U);
-    EXPECT_EQ(writer.Counters().framesNonZero.load(), 2U);
 
     // Full scale is 2^23-1 in the low 24 bits, shifted into the top 24.
     const int32_t expectFullPos = static_cast<int32_t>(static_cast<uint32_t>(8388607) << 8);

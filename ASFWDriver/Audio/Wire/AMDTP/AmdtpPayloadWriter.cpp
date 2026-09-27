@@ -3,7 +3,6 @@
 #include "PcmSlotCodec.hpp"
 
 #include <atomic>
-#include <cstring>
 namespace ASFW::Protocols::Audio::AMDTP {
 
 // Design decisions (see ../../../README.md, Step 4):
@@ -11,12 +10,16 @@ namespace ASFW::Protocols::Audio::AMDTP {
 // 1. Reference model (one buffer, absolute sample frame): PCM lands in
 //    already-exposed packets located via SnapshotSlotForAudioFrame. The
 //    writer never creates, publishes, or retires packets — slot lifecycle
-//    stays with the timeline/packetizer/provider.
+//    stays with the timeline/packetizer/provider. It is the TX fill: the
+//    driver calls it from the CoreAudio WriteEnd step with frames already in
+//    the HAL ring, once each (documentation/TX_OWNERSHIP.md §1d).
 // 2. Per-frame count-and-skip: a partially coverable window is never
 //    rejected wholesale; each frame is individually written or counted into
-//    exactly one miss bucket, so
-//    framesVisited == framesWritten + framesWithoutPacket + framesOutsidePacket
-//    holds by construction. The counters are the diagnostic payload (the lab
+//    exactly one miss bucket, so framesVisited == framesWritten +
+//    framesWithoutPacket + framesOutsidePacket + framesMissedFinality holds
+//    by construction. A frame whose packet is below the caller's first
+//    writable packet is not written (framesMissedFinality): that packet may
+//    already be with the hardware and keeps its armed silence. The counters are the diagnostic payload (the lab
 //    analog of the ASFW pcmNZ/pcmZero decider).
 // 3. Miss classification uses the timeline's monotonic exposure high-water
 //    mark (ExposedFrameEnd): at or beyond it the packet does not exist yet
@@ -35,15 +38,13 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    host channels encode PCM zero; non-PCM slots (MIDI etc.) are never
 //    touched and keep the packetizer's defaults.
 // 7. Counters accumulate locally and publish once per call with relaxed
-//    atomics — no per-frame RMW traffic in the IO path.
-// 8. RT-vs-pump discipline: this runs on the ADK real-time IO thread while
-//    the pump rewrites slots on the work queue. All slot fields come from a
-//    PacketSlotSnapshot validated under the generation seqlock; the live
-//    slot pointer is touched only to recheck the generation after the
-//    payload bytes are written. A failed recheck means the slot was reused
-//    mid-write — the bytes landed in a valid (but newer) packet image, so
-//    the frame is counted in framesRacedReuse (an overlap diagnostic on top
-//    of framesWritten, not a fourth miss bucket).
+//    atomics -- no per-frame RMW traffic in the fill loop.
+// 8. The fill runs on CoreAudio's IO thread while the producer arms and
+//    recycles slots on the TX preparation queue. Slot fields come from a
+//    PacketSlotSnapshot validated under the generation seqlock. The fill
+//    writes only packets at or beyond the finality frontier, and a slot is
+//    re-armed one shared-slot ring (1512 packets) later, so a reuse during
+//    one frame's write would need a stall of more than 60 ms inside it.
 
 namespace {
 
@@ -71,31 +72,17 @@ void AmdtpPayloadWriter::BindTimeline(AmdtpPacketTimeline* timeline) noexcept {
 
 void AmdtpPayloadWriter::WriteFloat32Interleaved(
     const HostAudioBufferView& hostBuffer,
-    uint64_t completionCursor) noexcept {
+    uint64_t firstWritablePacket) noexcept {
     if (timeline_ == nullptr || hostBuffer.interleavedFloat32 == nullptr ||
         hostBuffer.channels == 0 || hostBuffer.frameCount == 0) {
         return; // invalid view: nothing visited, nothing counted
     }
 
-    const uint32_t retiredCursor =
-        static_cast<uint32_t>(completionCursor);
-    const uint64_t writeEndFrame =
-        hostBuffer.firstFrame + hostBuffer.frameCount;
-    const uint64_t exposedFrameEnd = timeline_->ExposedFrameEnd();
-    if (writeEndFrame > exposedFrameEnd) {
-        counters_.underExposureCalls.fetch_add(1, std::memory_order_relaxed);
-        counters_.underExposureFrames.fetch_add(
-            writeEndFrame - exposedFrameEnd, std::memory_order_relaxed);
-    }
-
     uint64_t written = 0;
     uint64_t withoutPacket = 0;
     uint64_t outsidePacket = 0;
-    uint64_t racedReuse = 0;
-    uint64_t wroteIntoTransmitted = 0;
-    uint64_t nonZeroFrames = 0;
-    uint64_t nonZeroSlots = 0;
-    float localMaxAbs = 0.0f;
+    uint64_t missedFinality = 0;
+    int64_t minMarginPackets = INT64_MAX;
 
     for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
         const uint64_t absoluteFrame = hostBuffer.firstFrame + i;
@@ -108,6 +95,17 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
                 ++outsidePacket;
             }
             continue;
+        }
+
+        if (firstWritablePacket != 0) {
+            const auto margin = static_cast<int64_t>(snap.packetIndex - firstWritablePacket);
+            if (margin < 0) {
+                ++missedFinality;
+                continue;
+            }
+            if (margin < minMarginPackets) {
+                minMarginPackets = margin;
+            }
         }
 
         const uint64_t sourceFrame =
@@ -141,7 +139,6 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         // the de-interleave that mirrors the RX side's channelOffset. Host
         // channels outside the buffer encode PCM zero.
         const uint32_t srcOffset = streamConfig_.sourceChannelOffset;
-        bool frameNonZero = false;
         for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
             const uint32_t srcCh = srcOffset + ch;
             const float sample =
@@ -150,29 +147,8 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
             WriteBE32(dest + slot * kBytesPerSlot,
                       PcmSlotCodec::EncodeFloat32(
                           sample, txPolicy_.hostToDevicePcmEncoding));
-            if (sample != 0.0f) {
-                frameNonZero = true;
-                ++nonZeroSlots;
-                const float absSample = (sample >= 0.0f) ? sample : -sample;
-                if (absSample > localMaxAbs) {
-                    localMaxAbs = absSample;
-                }
-            }
-        }
-        if (frameNonZero) {
-            ++nonZeroFrames;
         }
         ++written;
-
-        if (snap.packetIndex < retiredCursor) {
-            ++wroteIntoTransmitted;
-        }
-
-        std::atomic_thread_fence(std::memory_order_acquire);
-        if (snap.slot->generation.load(std::memory_order_relaxed) !=
-            snap.generation) {
-            ++racedReuse; // slot reused mid-write: bytes hit the newer image
-        }
     }
 
     counters_.framesVisited.fetch_add(hostBuffer.frameCount,
@@ -182,29 +158,16 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
                                             std::memory_order_relaxed);
     counters_.framesOutsidePacket.fetch_add(outsidePacket,
                                             std::memory_order_relaxed);
-    counters_.framesRacedReuse.fetch_add(racedReuse,
-                                         std::memory_order_relaxed);
-    counters_.framesWroteIntoTransmitted.fetch_add(wroteIntoTransmitted,
-                                                    std::memory_order_relaxed);
-    counters_.framesNonZero.fetch_add(nonZeroFrames,
-                                      std::memory_order_relaxed);
-    counters_.slotsNonZero.fetch_add(nonZeroSlots,
-                                     std::memory_order_relaxed);
-    // IEEE 754 float32: for non-negative values, the uint32 bit pattern is
-    // monotonically increasing, so a simple max on the bit representation
-    // is correct. Only one RT writer thread exists, so the CAS never contends.
-    if (localMaxAbs > 0.0f) {
-        uint32_t desired;
-        std::memcpy(&desired, &localMaxAbs, sizeof(desired));
-        uint32_t expected =
-            counters_.maxAbsSampleBits.load(std::memory_order_relaxed);
-        while (desired > expected) {
-            if (counters_.maxAbsSampleBits.compare_exchange_weak(
-                    expected, desired, std::memory_order_relaxed)) {
-                break;
-            }
+    if (minMarginPackets != INT64_MAX) {
+        int64_t current =
+            counters_.intervalMinFinalityMarginPackets.load(std::memory_order_relaxed);
+        while (minMarginPackets < current &&
+               !counters_.intervalMinFinalityMarginPackets.compare_exchange_weak(
+                   current, minMarginPackets, std::memory_order_relaxed)) {
         }
     }
+    counters_.framesMissedFinality.fetch_add(missedFinality,
+                                                    std::memory_order_relaxed);
 }
 
 const AmdtpPayloadWriterCounters& AmdtpPayloadWriter::Counters() const noexcept {

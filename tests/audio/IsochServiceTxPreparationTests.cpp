@@ -20,6 +20,20 @@ using ASFW::Isoch::ExpectedTxCommitGeneration;
 using ASFW::Isoch::IsochTxPacketMeta;
 using ASFW::Isoch::IsochTxQueueControl;
 
+// The ring reads completion from OUTPUT_LAST xferStatus (T5). A test that only
+// moves the CommandPtr describes a controller that finished nothing, so it must
+// also mark the packets it says went out.
+void MarkPacketsSent(ASFW::Isoch::IsochTransmitContext& context,
+                     uint64_t firstAbs, uint32_t count) {
+    auto& slab = context.RingForTesting().Slab();
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t slot = static_cast<uint32_t>((firstAbs + i) % Layout::kNumPackets);
+        auto* completion = slab.GetDescriptorPtr(
+            slot * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        completion->statusWord = (0x0011u << 16) | (completion->statusWord & 0xFFFFu);
+    }
+}
+
 class RecordingReceiveConsumer final : public ASFW::Isoch::IIsochReceiveConsumer {
   public:
     void OnReceiveActivated() noexcept override { ++activated; }
@@ -94,6 +108,7 @@ TEST(IsochServiceTxPreparation, CallbackRegisteredBeforeContextCreationSurvivesS
     const uint32_t nextCommandPtr =
         descriptorBase + completedPackets * Layout::kBlocksPerPacket * Layout::kDescriptorStride;
     hardware.SetTestRegister(commandPtrRegister, nextCommandPtr | Layout::kBlocksPerPacket);
+    MarkPacketsSent(*context, 0, completedPackets);
 
     context->HandleInterrupt();
 

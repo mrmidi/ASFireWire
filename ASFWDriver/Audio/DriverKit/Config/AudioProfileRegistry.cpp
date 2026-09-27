@@ -53,9 +53,29 @@ constexpr DiceRangeMember kVeniceMembers[] = {
 // - capture safety 10 packets (80 frames at 48 kHz): one completion batch with
 //   headroom, 1 ms less round trip than the vendor's 16. The timing resolver
 //   floors it at one completion batch.
+// - Experiment E1a declared output 56 from a measured RTL_ts of 109.03; the
+//   controlled restart runs (TX_OWNERSHIP.md §1g) showed that was 105.03 plus
+//   the [TxAlign] rounding (0-7 frames per start). T7 removed the rounding, so
+//   output is back to the measured 52 (RTL_ts 105.03, midi 105.01).
+// - What the 53/52 contain: the Pro 24 / Pro 24 DSP use the TI PCM3168A
+//   (Focusrite support e-mail, quoted on Gearspace thread 469949, post
+//   6195320; not checked on the board). Its datasheet (SBAS452A) group delay
+//   is ADC 27/fS + DAC 28/fS = 55 frames at the 1x rates. The unreported AD/DA
+//   part of the DAWbench LLP Database (January 2025) Pro 24 entry is 58-60
+//   frames, which agrees. The rest is FireWire transport. Converter delay is
+//   not removable latency. The Pro 40 uses the Cirrus CS4272 (same source).
+// - Experiment E1b (same doc) tried capture safety 8 packets (64 frames) and
+//   reverted: RTL dropped by the predicted 16 frames, but at a 16-frame
+//   buffer the steady-state headroom sat at 16 with drops to 0, the input
+//   starved after start-up, and the tone clicked. 10 stays.
+// - E2 (same doc, §1h): playback safety 6 -> 3 packets (48 -> 24 frames).
+//   RTL 337/273/241 at 64/32/16-frame buffers, residual +0.03, tone clean,
+//   no late fills at 32/64; at 16 frames the fill lands on the guard with
+//   no cushion (acceptable at that buffer size).
 // The Pro 40 was not measured and keeps the vendor ladder.
 DiceProfile gFocusriteProfile{{.name = "Focusrite Saffire (DICE)",
                                .captureSafetyPackets = 10,
+                               .playbackSafetyPackets = 3,
                                .inputLatency1x = 53,
                                .outputLatency1x = 52}};
 DiceProfile gFocusritePro40Profile{{.name = "Focusrite Saffire Pro 40"}};

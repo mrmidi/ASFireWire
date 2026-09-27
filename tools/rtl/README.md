@@ -16,6 +16,7 @@ Baseline procedure: [`documentation/MEASUREMENT_BASELINE.md`](../../documentatio
 | File | What it is |
 |---|---|
 | `rtl_core.h` / `rtl_core.c` | platform-neutral core: timeline audit, trial admission, detector, aggregation, evidence JSON, self-test. No CoreAudio. Unit-tested on any host (`tests/tools/RtlCoreTests.cpp`). |
+| `tone_core.h` / `tone_core.c` | platform-neutral tone glitch detector behind `--tone`. Unit-tested on any host (`tests/tools/ToneCoreTests.cpp`). |
 | `rtl_loopback.c` | macOS front end: device selection, declared geometry, IOProc, report |
 | `analyze_rtl.py` | offline analyser for pre-recorded WAV/AIFF click trains (the DAW-era method) |
 | `test_analyze_rtl.py` | unit tests for the analyser (run by ctest when Python 3 is available) |
@@ -199,3 +200,50 @@ reached the HAL.
 
 **Do not probe with safety offsets or the client buffer size.** Those
 legitimately change physical timing.
+
+## Tone glitch check (`--tone`)
+
+Latency needs an impulse. Glitches need a continuous signal whose every sample
+is known. `--tone` plays a sine on one output, captures the looped-back input
+for a fixed time, and fits the sine block by block. Whatever the sine does not
+explain is a glitch.
+
+```bash
+tools/rtl/rtl_loopback -d Saffire --tone                           # 30 s at the current buffer
+tools/rtl/rtl_loopback -d Saffire --tone --frames 32 --duration 60
+RTL_TONE_DUMP=tmp/tone.f32 tools/rtl/rtl_loopback -d Saffire --tone  # also keep the raw capture
+```
+
+| Option | Meaning |
+|---|---|
+| `--duration S` | capture length, 1–600 s (default 30) |
+| `--freq HZ` | tone frequency (default 997 Hz: it divides no buffer or packet size, so a glitch cannot hide in phase with one) |
+| `--amp F` | output amplitude (default 0.5 in tone mode) |
+| `--list N` | events to list (default 20) |
+| `RTL_TONE_DUMP=<path>` | write the raw capture: mono float32, little-endian, no header |
+
+Each event is one disturbance. Stretches within 1024 frames of each other are
+merged, and the slip is the net shift across the whole event. The first 2048
+frames after the tone arrives are not judged: the converters' response to a
+tone switching on from silence (~450 frames on the Pro 24 DSP) would otherwise
+read as one click per run.
+
+| Kind | What the signal did | What it points to |
+|---|---|---|
+| **dropout** | samples went silent where the tone should be; phase unchanged after | content replaced in place, e.g. silence for late PCM. Judged per sample, so one 8-frame packet of silence counts |
+| **slip** | phase shifted afterwards (`+` frames lost, `-` repeated, modulo one tone period) | frames lost or duplicated somewhere on the path |
+| **click** | off the tone, but net phase unchanged and not silent | wrong content, or a disturbance that settled back |
+
+Each listed event carries the HAL input sample time of its first frame. That
+is the key for joining it to a driver-side trace. The `IO` column names any
+overload, input sample-time gap or missing timestamp within two callbacks of
+it; a glitch next to one of those may be CoreAudio's, not the driver's.
+
+**Another client sets the device's IO cycle.** The HAL runs the device at the
+smallest buffer any client asked for, while this tool's callbacks keep its own
+size. The tool warns when the device is already running elsewhere. Quit other
+audio apps (including other RTL tools) before labelling a run with a buffer
+size.
+
+A loopback cannot say whether a glitch happened on the way out or on the way
+in. It measures the sum of both.

@@ -45,15 +45,9 @@ void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const ch
         snapshot.playbackRingAvailableFrames);
     ASFW_LOG(
         DirectAudio,
-        "ADK FORCED FATAL reason=%u generation=%llu pkt=%u distance=%u audioFrame=%llu phase=%lld valid=[%llu,%llu)",
+        "ADK FORCED FATAL reason=%u generation=%llu",
         static_cast<uint32_t>(snapshot.fatalReason),
-        snapshot.fatalGeneration,
-        snapshot.fatalPacketIndex,
-        snapshot.fatalDistanceToHardware,
-        snapshot.fatalAudioFrame,
-        snapshot.fatalOutputPhaseTicks,
-        snapshot.fatalOldestValidFrame,
-        snapshot.fatalWrittenEndFrame);
+        snapshot.fatalGeneration);
 }
 
 } // namespace ASFW::Audio::DriverKit::DirectDiagnostics

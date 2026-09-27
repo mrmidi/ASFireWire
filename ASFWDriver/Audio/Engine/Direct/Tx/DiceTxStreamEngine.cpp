@@ -70,8 +70,7 @@ void DiceTxStreamEngine::ResetForStart(uint8_t initialDbc,
     consecutiveTimingReverts_ = 0;
     timingLossReported_ = false;
     ++cursorEpoch_;
-    packetizer_.Reset(initialDbc, initialAudioFrame);
-    packetizer_.SetPresentationCursor(cursorEpoch_, nextAudioFrame_, frameCursorAligned_);
+    packetizer_.Reset(initialDbc);
 }
 
 bool DiceTxStreamEngine::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
@@ -81,7 +80,6 @@ bool DiceTxStreamEngine::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
     nextAudioFrame_ = frameIndex;
     frameCursorAligned_ = true;
     ++cursorEpoch_;
-    packetizer_.SetPresentationCursor(cursorEpoch_, nextAudioFrame_, frameCursorAligned_);
     return true;
 }
 
@@ -91,7 +89,6 @@ void DiceTxStreamEngine::ReArmFrameCursorAlignment() noexcept {
     }
     frameCursorAligned_ = false;
     ++cursorEpoch_;
-    packetizer_.SetPresentationCursor(cursorEpoch_, nextAudioFrame_, frameCursorAligned_);
 }
 
 bool DiceTxStreamEngine::IsFrameCursorAligned() const noexcept {
@@ -99,7 +96,7 @@ bool DiceTxStreamEngine::IsFrameCursorAligned() const noexcept {
 }
 
 TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
-    uint32_t packetIndex, const AMDTP::AmdtpTimingState& timing) noexcept {
+    uint64_t packetIndex, const AMDTP::AmdtpTimingState& timing) noexcept {
     if (slotProvider_ == nullptr) {
         return TxSlotPrepareResult::kSlotProviderUnavailable;
     }
@@ -166,11 +163,11 @@ bool DiceTxStreamEngine::NextPacketWouldCarryData() const noexcept {
     return packetizer_.NextPacketWouldCarryData();
 }
 
-void DiceTxStreamEngine::WriteHostOutputFloat32(
+void DiceTxStreamEngine::FillFromHostOutput(
     const AMDTP::HostAudioBufferView& hostBuffer,
-    uint64_t completionCursor) noexcept {
+    uint64_t firstWritablePacket) noexcept {
     if (activePayloadWriter_ != nullptr) {
-        activePayloadWriter_->WriteFloat32Interleaved(hostBuffer, completionCursor);
+        activePayloadWriter_->WriteFloat32Interleaved(hostBuffer, firstWritablePacket);
     }
 }
 

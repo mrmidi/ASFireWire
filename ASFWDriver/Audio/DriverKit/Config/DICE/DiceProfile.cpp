@@ -81,7 +81,7 @@ static_assert(PerTier(52, 192000.0) == 208);
 } // namespace
 
 uint32_t DiceProfile::TxSafetyOffsetFrames(double sampleRate) const noexcept {
-    return TimingLadder::SafetyOffsetFrames(TimingLadder::kTxDelayPackets, sampleRate,
+    return TimingLadder::SafetyOffsetFrames(spec_.playbackSafetyPackets, sampleRate,
                                             TimingLadder::RateAddend::kPerTier);
 }
 

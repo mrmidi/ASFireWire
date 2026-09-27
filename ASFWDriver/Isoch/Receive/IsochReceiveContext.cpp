@@ -259,8 +259,4 @@ void IsochReceiveContext::ServiceConsumerDiagnostics() {
     if (receiveConsumer_) receiveConsumer_->ServiceConsumerDiagnostics();
 }
 
-void IsochReceiveContext::LogTxSytTrace() {
-    if (receiveConsumer_) receiveConsumer_->LogTransmitTimingTrace();
-}
-
 } // namespace ASFW::Isoch
