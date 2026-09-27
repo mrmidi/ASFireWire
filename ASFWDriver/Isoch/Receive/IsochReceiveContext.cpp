@@ -82,9 +82,15 @@ kern_return_t IsochReceiveContext::Start() {
     const uint32_t contextMatch = 0xF0000000 | (channel_ & 0x3F);
     const uint32_t ctlValue = Driver::ContextControl::kRun | Driver::ContextControl::kIsochHeader;
     const uint32_t contextMask = 1u << contextIndex_;
+    uint32_t ctrlBefore = 0;
+    uint32_t pendingEvents = 0;
     {
         auto access = hardware_->TryBeginAccess();
         if (!access) return kIOReturnNotReady;
+        // What the context held before this start (one line per start). The
+        // Set address returns the unmasked events.
+        ctrlBefore = access.Read(registers_.ContextControlSet);
+        pendingEvents = access.Read(ASFW::Driver::Register32::kIsoRecvIntEventSet);
         access.Write(registers_.ContextMatch, contextMatch);
         access.Write(registers_.CommandPtr, cmdPtr);
         access.Write(registers_.ContextControlClear, 0xFFFFFFFFu);
@@ -96,7 +102,8 @@ kern_return_t IsochReceiveContext::Start() {
         access.Write(ASFW::Driver::Register32::kIsoRecvIntMaskSet, contextMask);
         access.Write(registers_.ContextControlSet, ctlValue);
     }
-    ASFW_LOG(Isoch, "Start: Enabled IR interrupt for context %u (mask=0x%08x)", contextIndex_, contextMask);
+    ASFW_LOG(Isoch, "IR: start ctx=%u ctrlBefore=0x%08x pendingEvents=0x%08x",
+             contextIndex_, ctrlBefore, pendingEvents);
 
     while (rxLock_.test_and_set(std::memory_order_acquire)) {
     }

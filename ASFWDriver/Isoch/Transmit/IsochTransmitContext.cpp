@@ -326,6 +326,12 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     if (!access) return kIOReturnNotReady;
     access.Write(cmdPtrReg, cmdPtr);
 
+    // What the context held before this start (one line per start): a set
+    // cycleMatchEnable, or a stale or sibling event, is the evidence for the
+    // two clears below. The Set address returns the unmasked events.
+    const uint32_t ctrlBefore = access.Read(ctrlReg);
+    const uint32_t pendingEvents = access.Read(Register32::kIsoXmitIntEventSet);
+
     // Clear every ContextControl bit, as Linux context_run does (ohci.c:1319).
     // cycleMatchEnable (bit 31) and cycleMatch have an undefined reset value
     // (OHCI 1.2 draft Table 9-7); left set, the context would wait for a cycle
@@ -339,7 +345,10 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     access.Write(Register32::kIsoXmitIntEventClear, (1u << contextIndex_));
     access.Write(Register32::kIsoXmitIntMaskSet, (1u << contextIndex_));
     access.Write(Register32::kIntMaskSet, IntEventBits::kIsochTx);
-    ASFW_LOG(Isoch, "IT: Enabled IT interrupt for context %u", contextIndex_);
+    ASFW_LOG(Isoch, "IT: start ctx=%u ctrlBefore=0x%08x cycleMatchEnable=%u pendingEvents=0x%08x",
+             contextIndex_, ctrlBefore,
+             (ctrlBefore & Driver::ContextControl::kItCycleMatchEnable) != 0 ? 1U : 0U,
+             pendingEvents);
 
     access.Write(ctrlSetReg, Driver::ContextControl::kRun);
 
