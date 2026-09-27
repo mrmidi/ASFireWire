@@ -160,12 +160,14 @@ class AvcProbeRunner:
         self.metadata: DeviceMetadata | None = None
 
     def pre_check(self, device_key_override: str | None = None) -> DeviceMetadata:
-        # 1. Health check
+        # 1. Health check & generation
         health_res = self.client.read_resource("asfw://control-plane/health")
         health_data = health_res.get("data", health_res) if isinstance(health_res, dict) else {}
         status = health_data.get("status")
         if status != "ready":
             raise ProbeError(f"Driver health is not ready: status='{status}', reasons={health_data.get('reasons')}")
+
+        generation = health_res.get("generation") or health_data.get("expectedGeneration")
 
         # 2. Driver version
         ver_res = self.client.call_tool("asfw_get_driver_version", {})
@@ -203,10 +205,10 @@ class AvcProbeRunner:
         vendor_name = target_node.get("vendorName", "Unknown Vendor")
         node_id = target_node.get("nodeId", 0)
 
-        # Telemetry generation
-        telem_res = self.client.read_resource("asfw://telemetry")
-        telem_data = telem_res.get("data", telem_res) if isinstance(telem_res, dict) else {}
-        generation = telem_data.get("generation", 1)
+        # Fallback generation check from telemetry/snapshot
+        if not generation:
+            telem_res = self.client.read_resource("asfw://telemetry/snapshot")
+            generation = telem_res.get("generation", 1)
 
         key = device_key_override
         if not key:
@@ -578,9 +580,10 @@ class AvcProbeRunner:
             raise ProbeError(f"Post-check failed: driver health is {health_data.get('status')}")
 
         # 2. Same generation
-        telem_res = self.client.read_resource("asfw://telemetry")
-        telem_data = telem_res.get("data", telem_res) if isinstance(telem_res, dict) else {}
-        post_gen = telem_data.get("generation", 1)
+        post_gen = health_res.get("generation") or health_data.get("expectedGeneration")
+        if not post_gen:
+            telem_res = self.client.read_resource("asfw://telemetry/snapshot")
+            post_gen = telem_res.get("generation", 1)
         if post_gen != self.metadata.generation:
             raise ProbeError(f"Post-check failed: bus generation shifted from {self.metadata.generation} to {post_gen}")
 

@@ -223,4 +223,141 @@ TEST(AvcFixtureTests, Phase88FunctionBlocksParseCorrectly) {
     }
 }
 
+// ===========================================================================
+// Apogee Duet Hardware Fixture Tests
+// ===========================================================================
+
+TEST(AvcFixtureTests, DuetAllRecordsParseConsistently) {
+    const auto& device = Testing::kDuet;
+    EXPECT_STREQ(device.key, "duet");
+    EXPECT_EQ(device.guid, 0x0003DB0A0000D112ULL);
+    EXPECT_GT(device.records.size(), 150U);
+
+    size_t stableCount = 0;
+    size_t notImplementedCount = 0;
+    size_t rejectedCount = 0;
+
+    for (const auto& rec : device.records) {
+        ASSERT_TRUE(rec.ok) << "Failed exchange: " << rec.name;
+        ASSERT_GE(rec.response.size(), 3U) << "Response too short: " << rec.name;
+
+        auto respRes = ParseResponse(rec.response);
+        ASSERT_TRUE(respRes.has_value()) << "ParseResponse failed for: " << rec.name;
+        const auto& resp = *respRes;
+
+        if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kImplementedStable)) {
+            stableCount++;
+            EXPECT_EQ(resp.code, ResponseCode::kImplementedStable) << "Record: " << rec.name;
+            auto ops = OperandsIf(resp, ResponseCode::kImplementedStable);
+            EXPECT_TRUE(ops.has_value()) << "OperandsIf failed on stable record: " << rec.name;
+        } else if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kNotImplemented)) {
+            notImplementedCount++;
+            EXPECT_EQ(resp.code, ResponseCode::kNotImplemented) << "Record: " << rec.name;
+            auto ops = OperandsIf(resp, ResponseCode::kImplementedStable);
+            ASSERT_FALSE(ops.has_value()) << "OperandsIf should fail on NOT_IMPLEMENTED: " << rec.name;
+            EXPECT_EQ(ops.error().kind, AvcErrorKind::kUnexpectedResponse);
+            EXPECT_EQ(ops.error().response, ResponseCode::kNotImplemented);
+        } else if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kRejected)) {
+            rejectedCount++;
+            EXPECT_EQ(resp.code, ResponseCode::kRejected) << "Record: " << rec.name;
+            auto ops = OperandsIf(resp, ResponseCode::kImplementedStable);
+            ASSERT_FALSE(ops.has_value()) << "OperandsIf should fail on REJECTED: " << rec.name;
+            EXPECT_EQ(ops.error().kind, AvcErrorKind::kUnexpectedResponse);
+            EXPECT_EQ(ops.error().response, ResponseCode::kRejected);
+        }
+    }
+
+    EXPECT_GT(stableCount, 50U);
+    EXPECT_GT(notImplementedCount, 10U);
+}
+
+TEST(AvcFixtureTests, DuetUnitInfoParsesCorrectly) {
+    auto resp = ParseResponse(Testing::DuetData::kResp_0_unit_info);
+    ASSERT_TRUE(resp.has_value());
+
+    auto info = Cmd::ParseUnitInfo(*resp);
+    ASSERT_TRUE(info.has_value());
+    EXPECT_EQ(info->unitType, SubunitType::kAudio);
+    EXPECT_EQ(info->unitId, 0x00);
+    EXPECT_EQ(info->companyId[0], 0x00);
+    EXPECT_EQ(info->companyId[1], 0x03);
+    EXPECT_EQ(info->companyId[2], 0xDB);
+}
+
+TEST(AvcFixtureTests, DuetPlugInfoParsesCorrectly) {
+    auto respUnit0 = ParseResponse(Testing::DuetData::kResp_3_plug_info_unit_00);
+    ASSERT_TRUE(respUnit0.has_value());
+    auto plugsIsoExt = Cmd::ParseUnitIsochronousExternalPlugs(*respUnit0);
+    ASSERT_TRUE(plugsIsoExt.has_value());
+    EXPECT_EQ(plugsIsoExt->isochronousInputs, 1);
+    EXPECT_EQ(plugsIsoExt->isochronousOutputs, 1);
+    EXPECT_EQ(plugsIsoExt->externalInputs, 1);
+    EXPECT_EQ(plugsIsoExt->externalOutputs, 1);
+
+    auto respAudio = ParseResponse(Testing::DuetData::kResp_5_plug_info_audio_0);
+    ASSERT_TRUE(respAudio.has_value());
+    auto audioPlugs = Cmd::ParseSubunitPlugs(*respAudio);
+    ASSERT_TRUE(audioPlugs.has_value());
+    EXPECT_EQ(audioPlugs->destinationPlugs, 1);
+    EXPECT_EQ(audioPlugs->sourcePlugs, 1);
+
+    auto respMusic = ParseResponse(Testing::DuetData::kResp_6_plug_info_music_0);
+    ASSERT_TRUE(respMusic.has_value());
+    auto musicPlugs = Cmd::ParseSubunitPlugs(*respMusic);
+    ASSERT_TRUE(musicPlugs.has_value());
+    EXPECT_EQ(musicPlugs->destinationPlugs, 3);
+    EXPECT_EQ(musicPlugs->sourcePlugs, 3);
+}
+
+TEST(AvcFixtureTests, DuetExtendedStreamFormatParsesCorrectly) {
+    // Duet supports draft 0xBF stream format single
+    for (const auto& rec : Testing::kDuet.records) {
+        if (std::string_view(rec.name) == "stream_format_0xBF_single_unit_iso_in_0") {
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->opcode, static_cast<Opcode>(0xBF));
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+            // Format data starts at operand 7 (frame byte 10)
+            ASSERT_GE(rec.response.size(), 17U);
+            std::span<const uint8_t> fmtBytes{rec.response.data() + 10, rec.response.size() - 10};
+            auto parsedFmt = Cmd::ParseStreamFormatBlock(fmtBytes);
+            ASSERT_TRUE(parsedFmt.has_value());
+            EXPECT_EQ(parsedFmt->kind, Cmd::StreamFormat::Kind::kCompoundAm824);
+            EXPECT_EQ(parsedFmt->compound.rate, StreamFormatRate::k48000);
+            EXPECT_EQ(parsedFmt->compound.entryCount, 1U);
+            EXPECT_EQ(parsedFmt->compound.entries[0].count, 2U);  // 2 channels
+        }
+    }
+}
+
+TEST(AvcFixtureTests, DuetFunctionBlocksAndInquiryValidate) {
+    for (const auto& rec : Testing::kDuet.records) {
+        if (std::string_view(rec.name) == "function_block_feature_mute_status_fb_1") {
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            auto mute = Cmd::ParseFeatureMute(*resp, ResponseCode::kImplementedStable);
+            ASSERT_TRUE(mute.has_value());
+            EXPECT_TRUE(*mute);  // muted (0x70 = true)
+        } else if (std::string_view(rec.name) == "function_block_feature_volume_current_fb_1") {
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            auto vol = Cmd::ParseFeatureVolume(*resp, ResponseCode::kImplementedStable);
+            ASSERT_TRUE(vol.has_value());
+            EXPECT_EQ(*vol, 0x0000);
+        } else if (std::string_view(rec.name) == "inquiry_feature_mute_on_fb_1_ch_0") {
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+        } else if (std::string_view(rec.name) == "inquiry_feature_mute_off_fb_1_ch_0") {
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+        } else if (std::string_view(rec.name) == "inquiry_feature_volume_fb_1_ch_0") {
+            auto resp = ParseResponse(rec.response);
+            ASSERT_TRUE(resp.has_value());
+            EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
+        }
+    }
+}
+
 } // namespace ASFW::AVC::Test
