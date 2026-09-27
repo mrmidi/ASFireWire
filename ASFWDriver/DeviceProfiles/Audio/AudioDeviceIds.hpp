@@ -14,6 +14,17 @@
 
 namespace ASFW::DeviceProfiles::Audio {
 
+// RME former Fireface models share root model 0x101800 and are distinguished
+// by their unit version (Linux firewire/fireface/ff.c:185-200).
+inline constexpr uint32_t kRmeVendorId = 0x000a35;
+inline constexpr uint32_t kRmeRootModelId = 0x101800;
+inline constexpr uint32_t kRmeUnitSpecifierId = kRmeVendorId;
+inline constexpr uint32_t kRmeFireface800UnitVersion = 0x000001;
+inline constexpr uint32_t kRmeFireface400UnitVersion = 0x000002;
+inline constexpr const char* kRmeVendorName = "RME";
+inline constexpr const char* kRmeFireface400ModelName = "Fireface 400";
+inline constexpr const char* kRmeFireface800ModelName = "Fireface 800";
+
 // ---- Focusrite (DICE / TCAT family) ----
 inline constexpr uint32_t kFocusriteVendorId    = 0x00130e;
 inline constexpr uint32_t kSPro40ModelId        = 0x000005;

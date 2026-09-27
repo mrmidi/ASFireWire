@@ -63,7 +63,12 @@ enum class DeviceDefinitionId : uint32_t {
     MackieOnyxBlackbird,
     MackieOnyx400F,
     MackieOnyx1200F,
+<<<<<<< HEAD
     PreSonusFireStudioProject,
+=======
+    RmeFireface400,
+    RmeFireface800,
+>>>>>>> 68d65157 (feat(rme): establish reviewed FF400 and FF800 catalog identities)
 };
 
 enum class AudioFamilyProviderId : uint8_t {

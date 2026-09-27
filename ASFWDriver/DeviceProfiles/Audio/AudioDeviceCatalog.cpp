@@ -11,6 +11,7 @@
 #include "Definitions/Midas.hpp"
 #include "Definitions/MOTU.hpp"
 #include "Definitions/PreSonus.hpp"
+#include "Definitions/RME.hpp"
 #include "Definitions/TerraTec.hpp"
 #include "Definitions/Weiss.hpp"
 
@@ -45,10 +46,15 @@ constexpr auto kDefinitions = ConcatArrays(
     Definitions::kPreSonusDefinitions,
     Definitions::kMAudioDefinitions,
     Definitions::kMotuDefinitions,
-    Definitions::kMackieDefinitions
+    Definitions::kMackieDefinitions,
+    Definitions::kRmeDefinitions
 );
 
+<<<<<<< HEAD
 static_assert(kDefinitions.size() == 40U, "Catalog definition count mismatch");
+=======
+static_assert(kDefinitions.size() == 41U, "Catalog definition count mismatch");
+>>>>>>> 68d65157 (feat(rme): establish reviewed FF400 and FF800 catalog identities)
 
 // No safety rule is currently defined.
 //

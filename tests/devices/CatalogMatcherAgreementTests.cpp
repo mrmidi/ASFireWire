@@ -299,6 +299,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBootstrap = Audio::ProbeBootstrap::AvcInitializeThenPlug0,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
         },
+<<<<<<< HEAD
         // 16. PreSonus FireStudio Project
         {
             .description = "PreSonus FireStudio Project (DICE, supported)",
@@ -312,6 +313,35 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBootstrap = Audio::ProbeBootstrap::DiceProtocol,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+=======
+        // Synthetic evidence rows from Linux ff.c, not ASFW hardware captures.
+        {
+            .description = "RME Fireface 400 (Linux reference-derived identity fixture)",
+            .evidence = MakeEvidence(kRmeVendorId, kRmeRootModelId, std::nullopt,
+                                     kRmeUnitSpecifierId,
+                                     kRmeFireface400UnitVersion),
+            .expectedSupport = SupportDisposition::RecognizedUnsupported,
+            .expectedFamily = AudioFamilyProviderId::None,
+            .expectedProfileBuilder = ProfileBuilderId::None,
+            .expectedModelName = kRmeFireface400ModelName,
+            .expectedBackend = std::nullopt,
+            .expectedBootstrap = Audio::ProbeBootstrap::Unsupported,
+            .expectedFilter = Discovery::AvcCommandFilterId::BlockAll,
+        },
+        // Synthetic evidence rows from Linux ff.c, not ASFW hardware captures.
+        {
+            .description = "RME Fireface 800 (Linux reference-derived identity fixture)",
+            .evidence = MakeEvidence(kRmeVendorId, kRmeRootModelId, std::nullopt,
+                                     kRmeUnitSpecifierId,
+                                     kRmeFireface800UnitVersion),
+            .expectedSupport = SupportDisposition::RecognizedUnsupported,
+            .expectedFamily = AudioFamilyProviderId::None,
+            .expectedProfileBuilder = ProfileBuilderId::None,
+            .expectedModelName = kRmeFireface800ModelName,
+            .expectedBackend = std::nullopt,
+            .expectedBootstrap = Audio::ProbeBootstrap::Unsupported,
+            .expectedFilter = Discovery::AvcCommandFilterId::BlockAll,
+>>>>>>> 68d65157 (feat(rme): establish reviewed FF400 and FF800 catalog identities)
         },
     };
     return kTable;
