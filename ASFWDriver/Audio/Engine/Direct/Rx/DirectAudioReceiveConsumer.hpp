@@ -135,6 +135,7 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint32_t bootstrapResetLogBudget_{kBootstrapResetLogBudget};
     bool replayCycleInitialized_{false};
     uint32_t lastReplayCycleOrdinal_{0};
+    uint32_t headerlessContinuousCycles_{0};
     ::ASFW::Isoch::Rx::ZtsTelemetryLogGate ztsTelemetryLogGate_{};
     uint64_t prevLoggedAnchorFrame_{0};
     uint64_t prevLoggedAnchorHostTicks_{0};

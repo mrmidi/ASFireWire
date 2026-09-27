@@ -20,8 +20,9 @@ public:
         lastTxPreparationGeneration = generation;
         return kIOReturnSuccess;
     }
-    void RequestTimingRecovery(uint64_t) {}
+    void RequestTimingRecovery(uint64_t rxEpoch) { lastTimingRecoveryEpoch = rxEpoch; }
 
     uint64_t txPreparationRequests{0};
     uint64_t lastTxPreparationGeneration{0};
+    uint64_t lastTimingRecoveryEpoch{0};
 };

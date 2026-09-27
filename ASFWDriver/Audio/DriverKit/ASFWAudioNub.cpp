@@ -412,7 +412,9 @@ void IMPL(ASFWAudioNub, RequestTimingRecovery)
     if (!endpoint || !coordinator || !endpoint->IsCurrentStreamingRxEpoch(rxEpoch))
         return;
     // Only enqueue here: never wait for recovery on the packet preparation queue.
-    (void)coordinator->RequestMotuTimingRecovery(ivars->guid);
+    // This seam is family-neutral. The coordinator routes the current loss to
+    // the backend that owns this GUID (MOTU, AV/C, DICE, or a later profile).
+    coordinator->HandleHostTimingLoss(ivars->guid);
 }
 
 void IMPL(ASFWAudioNub, TxPreparationReady)

@@ -241,6 +241,9 @@ struct AudioDriverRuntimeState {
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Audio::BeBoB::MAudioInternalTxTiming mAudioInternalTxTiming;
     std::atomic<bool> mAudioInternalTxActive{false};
+    std::atomic<bool> rxReplayAfterBootstrap{false};
+    std::atomic<uint32_t> rxReplayLossRun{0};
+    std::atomic<bool> rxReplayRecoveryRequested{false};
     std::atomic<bool> mAudioTxClockProfile{false};
     ASFW::Audio::Families::BeBoB::MAudio::TxClockBridge mAudioTxClockBridge;
     ASFW::Audio::Shared::TxCorrelationUnwrapState mAudioTxCorrelationUnwrap{};

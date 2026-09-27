@@ -98,6 +98,7 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     replayResetForStart_ = false;
     replayCycleInitialized_ = false;
     lastReplayCycleOrdinal_ = 0;
+    headerlessContinuousCycles_ = 0;
     ztsTelemetry_.Reset();
     ztsTelemetryLogGate_.Reset();
     prevLoggedAnchorFrame_ = 0;
@@ -320,8 +321,19 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         cycleFields.cycle;
     constexpr uint32_t kCycleDomain =
         ::ASFW::Timing::kFWTimeWrapSeconds * ::ASFW::Timing::kCyclesPerSecond;
-    if (replayCycleInitialized_ &&
-        cycleOrdinal != (lastReplayCycleOrdinal_ + 1) % kCycleDomain) {
+    const bool headerless = configuration_.framing ==
+        ::ASFW::Encoding::AudioPacketFraming::kHeaderless;
+    const uint32_t cycleDelta = replayCycleInitialized_
+        ? (cycleOrdinal + kCycleDomain - lastReplayCycleOrdinal_) % kCycleDomain
+        : 1U;
+    bool reconstructOneCycle = false;
+    if (replayCycleInitialized_ && cycleDelta != 1U) {
+        if (headerless && cycleDelta == 2U) {
+            reconstructOneCycle = true;
+            if (headerlessContinuousCycles_ != UINT32_MAX) {
+                ++headerlessContinuousCycles_;
+            }
+        } else {
         ResetReplayEpochForDiscontinuity(
             ReplayResetReason::kReceiveCycleGap,
             {
@@ -334,6 +346,10 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                 .observedCycleOrdinal = cycleOrdinal,
                 .sampleFrame = absoluteFrameCursor_,
             });
+            headerlessContinuousCycles_ = 0;
+        }
+    } else if (headerless && headerlessContinuousCycles_ != UINT32_MAX) {
+        ++headerlessContinuousCycles_;
     }
     lastReplayCycleOrdinal_ = cycleOrdinal;
     replayCycleInitialized_ = true;
@@ -349,6 +365,21 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     replayEntry.dbc = result.dbc;
     if (result.hasValidCip) {
         replayEntry.flags |= ::ASFW::Audio::Runtime::RxSequenceFlags::kValidCip;
+    }
+    if (reconstructOneCycle) {
+        auto missing = ::ASFW::Audio::Runtime::RxSequenceEntry{};
+        const uint32_t missingOrdinal =
+            (lastReplayCycleOrdinal_ + kCycleDomain - 1U) % kCycleDomain;
+        const uint32_t missingSeconds = missingOrdinal /
+            ::ASFW::Timing::kCyclesPerSecond;
+        const uint32_t missingCycle = missingOrdinal %
+            ::ASFW::Timing::kCyclesPerSecond;
+        missing.firstAudioFrame = absoluteFrameCursor_ - result.framesDecoded;
+        missing.sourceCycleTimer = ::ASFW::Timing::encodeCycleTimer(
+            missingSeconds, missingCycle, 0);
+        missing.dataBlocks = 0;
+        inputView_.control->rxSequenceReplay.Publish(missing);
+        inputView_.control->rxReplayEntries.fetch_add(1, std::memory_order_relaxed);
     }
     // Master stream only: the timing observer is single and shared across streams.
     if (timingObserver_ != nullptr && !configuration_.isSecondary) {
@@ -383,7 +414,10 @@ void DirectAudioReceiveConsumer::ConsumePacket(
 
     ::ASFW::Driver::RxSytCadence::Snapshot cadence{};
     (void)inputView_.control->rxSytCadence.TrySnapshot(cadence);
-    const bool timingEstablished = timingObserver_ != nullptr
+    const bool timingEstablished = headerless
+        ? headerlessContinuousCycles_ >=
+              ::ASFW::Audio::Runtime::RxSequenceReplayState::kReadDelay
+        : timingObserver_ != nullptr
         ? timingObserver_->IsTimingEstablished()
         : cadence.established;
     if (timingEstablished) {
@@ -566,6 +600,7 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
     }
     cadenceEstablishedLogged_ = false;
     replayCycleInitialized_ = false;
+    headerlessContinuousCycles_ = 0;
     // Before this was gated on `wasEstablished` alone, which made the one record
     // that explains a reset unreachable in the only case where nothing else
     // explains it: a stream that never established. A device that is rejected on

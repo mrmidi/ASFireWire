@@ -60,6 +60,10 @@ enum class TxClockSource : uint8_t {
     /// completions. M-Audio special firmware idles in NO-DATA until it has
     /// received host DATA, so transmit cannot wait for RX timing.
     kInternalCadence,
+    /// Start TX from a nominal blocking cadence, then replay timestamped RX
+    /// data-block counts once the receive clock has a bounded stable history.
+    /// Used only by the synthetic RME profile until its Stage 5 publication.
+    kRxReplayAfterBootstrap,
 };
 
 // ADK packet allocation and AMDTP encoding are shared by multiple protocol

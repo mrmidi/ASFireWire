@@ -166,6 +166,18 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             std::memory_order_acquire) +
         ASFW::IsochTransport::AudioTimingGeometry::kTxHardwareRingPackets +
         ASFW::IsochTransport::AudioTimingGeometry::kTxPacketsPerGroup;
+    const auto requestHeaderlessRecovery = [&]() noexcept {
+        const uint32_t lossRun = ivars.runtime.rxReplayLossRun.fetch_add(
+            1, std::memory_order_relaxed) + 1;
+        auto* current = ivars.runtime.directAudioGraph.control;
+        if (lossRun >= 32 && current && ivars.device.audioNub &&
+            ivars.runtime.txActive.load(std::memory_order_acquire) &&
+            !ivars.runtime.rxReplayRecoveryRequested.exchange(
+                true, std::memory_order_acq_rel)) {
+            ivars.device.audioNub->RequestTimingRecovery(
+                current->rxReplayEpochResets.load(std::memory_order_acquire));
+        }
+    };
 
     while (nextPacketToPrepare < limitPacketIndex &&
            preparedCount < maxToPrepare) {
@@ -179,10 +191,18 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         }
 
         ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
-        timing.replayValid = true;
         timing.disposition =
-            ASFW::Protocols::Audio::AMDTP::
-                AmdtpPacketDisposition::NoData;
+            ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
+        const bool bootstrapCadence =
+            ivars.runtime.rxReplayAfterBootstrap.load(std::memory_order_acquire) &&
+            !allowRecoveredClock;
+        // Start with configured cadence; after RX history establishes, the
+        // next writable index is the immutable transition boundary.
+        timing.replayValid = !bootstrapCadence;
+        if (bootstrapCadence) {
+            timing.disposition =
+                ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::Data;
+        }
 
         ASFW::Audio::BeBoB::MAudioInternalTxTiming::PacketPlan mAudioPlan{};
         if (ivars.runtime.mAudioInternalTxActive.load(std::memory_order_acquire)) {
@@ -248,6 +268,11 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 (void)ivars.runtime.txReplayReader.Begin(
                     directControl->rxSequenceReplay);
             }
+            const bool headerlessReplayMode =
+                ivars.runtime.rxReplayAfterBootstrap.load(std::memory_order_acquire) &&
+                ivars.runtime.txStreamEngine.StreamConfig().packetFraming ==
+                    ASFW::Protocols::Audio::AMDTP::AmdtpStreamConfig::
+                        PacketFraming::Headerless;
 
             ASFW::Audio::Runtime::RxSequenceEntry replay{};
             ASFW::Audio::Runtime::RxSequenceReplayReadDiagnostic replayDiagnostic{};
@@ -266,7 +291,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             if (!replayReadable &&
                 replayDiagnostic.failure ==
                     ASFW::Audio::Runtime::RxSequenceReplayReadFailure::
-                        kHistoryOverwritten) {
+                        kHistoryOverwritten && !headerlessReplayMode) {
                 if (ivars.runtime.txReplayReader.Begin(
                         directControl->rxSequenceReplay)) {
                     replayReadable = ivars.runtime.txReplayReader.TryRead(
@@ -285,6 +310,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     replayReadable ? 1u : 0u);
             }
             if (replayReadable) {
+                ivars.runtime.rxReplayLossRun.store(0, std::memory_order_relaxed);
                 directControl->txReplayEntries.fetch_add(
                     1, std::memory_order_relaxed);
                 timing.replayDataBlocks = replay.dataBlocks;
@@ -292,15 +318,20 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                            ASFW::Audio::Runtime::RxSequenceReplayReadFailure::
                                kAheadOfProducer &&
                        nextPacketToPrepare >= mustCommitBefore) {
-                // RX has not published this entry yet. Do not ship a NO-DATA
-                // packet for it: that is NOT self-resolving. It spends a
-                // transmit cycle with no replay entry and no frames, so the
-                // reader and the frame cursor end up one cycle further behind
-                // real time for good. ~1258 of these at start were the whole
-                // 157 ms RTL residual (TX_OWNERSHIP.md §1b). End the pass; the
-                // held reader serves this packet once RX catches up.
-                break;
+                if (headerlessReplayMode) {
+                    requestHeaderlessRecovery();
+                }
+                // Existing CIP replay must stop here: NO-DATA would move its
+                // SYT/frame mapping. Headerless RME has no presentation field
+                // to corrupt, so bounded skip cycles keep OHCI committed while
+                // recovery is queued.
+                if (!headerlessReplayMode) {
+                    break;
+                }
             } else {
+                if (headerlessReplayMode) {
+                    requestHeaderlessRecovery();
+                }
                 const int64_t replayDistance =
                     replayDiagnostic.readerCursor >= replayDiagnostic.producerCursor
                         ? static_cast<int64_t>(replayDiagnostic.readerCursor -
@@ -378,16 +409,23 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                         replayDiagnostic.slotSequence,
                         replayDiagnostic.slotEpoch,
                         replayDiagnostic.replayEstablished ? 1u : 0u);
-                    ivars.runtime.txReplayReader.Reset();
-                    ivars.runtime.txStreamEngine.ReArmFrameCursorAlignment();
-                    if (ivars.runtime.txSecondaryActive) {
-                        ivars.runtime.txStreamEngineSecondary
-                            .ReArmFrameCursorAlignment();
+                    if (!headerlessReplayMode) {
+                        ivars.runtime.txReplayReader.Reset();
+                        ivars.runtime.txStreamEngine.ReArmFrameCursorAlignment();
+                        if (ivars.runtime.txSecondaryActive) {
+                            ivars.runtime.txStreamEngineSecondary
+                                .ReArmFrameCursorAlignment();
+                        }
                     }
                 }
             }
 
             if (replay.dataBlocks != 0) {
+                const bool headerlessReplay =
+                    ivars.runtime.rxReplayAfterBootstrap.load(std::memory_order_acquire) &&
+                    ivars.runtime.txStreamEngine.StreamConfig().packetFraming ==
+                        ASFW::Protocols::Audio::AMDTP::AmdtpStreamConfig::
+                            PacketFraming::Headerless;
                 // A replayed entry with data blocks but no SYT offset is corruption for
                 // an SYT-aware family -- but it is the normal case for MOTU, whose capture
                 // side correctly never sets kValidSyt. Linux treats it as an ordinary DATA
@@ -400,7 +438,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                         ASFW::Audio::Runtime::RxSequenceReplayState::kNoInfo &&
                     (replay.flags &
                      ASFW::Audio::Runtime::RxSequenceFlags::kValidSyt) != 0;
-                const bool sytUnaware =
+                const bool sytUnaware = headerlessReplay ||
                     ivars.runtime.txStreamEngine.IsSytUnaware();
                 // kNoInfo is UINT32_MAX; the presentation arithmetic below must never see
                 // it. For an SYT-unaware family the packet's cycle timer is the best
@@ -461,6 +499,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                              static_cast<uint32_t>(txSyt) & 0x0fffu, nextPacketToPrepare);
                 }
 
+                if (!headerlessReplay) {
                 const int64_t sourcePresentationTicks =
                     ASFW::Timing::normalizeOffsetDomain(
                         ASFW::Timing::encodedTstampToOffsets(
@@ -514,6 +553,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                                  static_cast<long long>(presentationDeltaTicks),
                                  txConfig.sampleRate);
                     }
+                }
                 }
             }
         }
@@ -602,25 +642,39 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 nextPacketToPrepare);
             break;
         }
+        const bool headerless = ivars.runtime.txStreamEngine.StreamConfig().packetFraming ==
+            ASFW::Protocols::Audio::AMDTP::AmdtpStreamConfig::PacketFraming::Headerless;
         if (emittedData) {
             directControl->counters.txDataPackets.fetch_add(
                 1, std::memory_order_relaxed);
-            directControl->counters.txValidSytPackets.fetch_add(
-                1, std::memory_order_relaxed);
-        } else if (meta.payloadLength == 0) {
+            if (!headerless) {
+                directControl->counters.txValidSytPackets.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        } else if (!headerless && meta.payloadLength == 0) {
             directControl->counters.txEmptyPackets.fetch_add(
                 1, std::memory_order_relaxed);
         } else {
             directControl->counters.txNoDataPackets.fetch_add(
                 1, std::memory_order_relaxed);
-            directControl->counters.txSytFfffPackets.fetch_add(
-                1, std::memory_order_relaxed);
+            if (!headerless) {
+                directControl->counters.txSytFfffPackets.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
         }
         directControl->counters.txPackets.fetch_add(
             1, std::memory_order_relaxed);
 
         ++nextPacketToPrepare;
         ++preparedCount;
+        if (ivars.runtime.rxReplayAfterBootstrap.load(std::memory_order_acquire) &&
+            ivars.runtime.txStreamEngine.StreamConfig().packetFraming ==
+                ASFW::Protocols::Audio::AMDTP::AmdtpStreamConfig::
+                    PacketFraming::Headerless &&
+            ivars.runtime.rxReplayRecoveryRequested.load(std::memory_order_acquire) &&
+            preparedCount >= 32) {
+            break;
+        }
     }
 
     return preparedCount;
@@ -638,11 +692,15 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     // action cannot expose an uncommitted slot to IT DMA. Steady state still
     // targets completion + kTxPreparationLeadPackets.
     ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
-    timing.replayValid = true;
-    timing.txClockValid = false;
     timing.disposition =
-        ASFW::Protocols::Audio::AMDTP::
-            AmdtpPacketDisposition::NoData;
+        ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
+    timing.replayValid = !ivars.runtime.rxReplayAfterBootstrap.load(
+        std::memory_order_acquire);
+    if (!timing.replayValid) {
+        timing.disposition =
+            ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::Data;
+    }
+    timing.txClockValid = false;
 
     uint32_t prepared = 0;
     for (uint64_t packetIndex = 0;
@@ -755,6 +813,8 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         ivars.runtime.motuPayloadWriter.Counters().framesMissedFinality.load(
             std::memory_order_relaxed);
     ivars.runtime.txReplayReader.Reset();
+    ivars.runtime.rxReplayLossRun.store(0, std::memory_order_relaxed);
+    ivars.runtime.rxReplayRecoveryRequested.store(false, std::memory_order_relaxed);
 
     // The resolved geometry is the only rate/timing source here; there is no
     // 48 kHz fallback (a graph that failed to resolve never reaches StartIO).
