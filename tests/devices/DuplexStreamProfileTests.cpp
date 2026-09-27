@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <optional>
+#include <tuple>
 
 #include "Audio/Protocols/Backends/DuplexStreamProfile.hpp"
 #include "DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
@@ -28,6 +29,11 @@ using ASFW::DeviceProfiles::Audio::kOnyx400FModelId;
 using ASFW::DeviceProfiles::Audio::kWeissInt202ModelId;
 using ASFW::DeviceProfiles::Audio::kWeissInt203ModelId;
 using ASFW::DeviceProfiles::Audio::kWeissVendorId;
+using ASFW::DeviceProfiles::Audio::kRmeVendorId;
+using ASFW::DeviceProfiles::Audio::kRmeRootModelId;
+using ASFW::DeviceProfiles::Audio::kRmeUnitSpecifierId;
+using ASFW::DeviceProfiles::Audio::kRmeFireface400UnitVersion;
+using ASFW::DeviceProfiles::Audio::kRmeFireface800UnitVersion;
 using ASFW::Discovery::DeviceRecord;
 using ASFW::Encoding::AudioWireFormat;
 
@@ -378,4 +384,32 @@ TEST(DuplexStreamProfileTests, NonMotuDevicesCarryNoPortMap) {
     AudioStreamRuntimeCaps caps{.hostInputPcmChannels = 2, .hostOutputPcmChannels = 2};
     const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
     EXPECT_TRUE(profile.captureMotuPorts.empty());
+}
+
+TEST(DuplexStreamProfileTests, FirefaceUsesHeaderlessBandwidthAndModelChannelMasks) {
+    for (const auto [version, channels, mask] : {
+             std::tuple{kRmeFireface400UnitVersion, 18U, uint64_t{0xff}},
+             std::tuple{kRmeFireface800UnitVersion, 28U, ~uint64_t{0}}}) {
+        auto record = MakeRecord(kRmeVendorId, kRmeRootModelId, kRmeUnitSpecifierId, version);
+        AudioStreamRuntimeCaps caps{.hostInputPcmChannels = channels,
+                                    .hostOutputPcmChannels = channels,
+                                    .deviceToHostAm824Slots = channels,
+                                    .hostToDeviceAm824Slots = channels,
+                                    .sampleRateHz = 48000,
+                                    .deviceToHostStreamCount = 1,
+                                    .hostToDeviceStreamCount = 1};
+        const auto profile = DuplexStreamProfileResolver::Resolve(record, caps);
+        const uint32_t expectedBytes = channels * 8U * 4U;
+        EXPECT_TRUE(profile.policyResolved);
+        EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kRawPcm24Upper24In32LE);
+        EXPECT_EQ(profile.playbackWireFormat, AudioWireFormat::kRawPcm24Upper24In32LE);
+        EXPECT_EQ(profile.capturePacketFraming, ASFW::Encoding::AudioPacketFraming::kHeaderless);
+        EXPECT_EQ(profile.playbackPacketFraming, ASFW::Encoding::AudioPacketFraming::kHeaderless);
+        EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, mask);
+        EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, mask);
+        EXPECT_EQ(profile.captureStreams[0].packetBandwidthUnits,
+                  ASFW::IRM::PacketBandwidthUnits(expectedBytes, 2));
+        EXPECT_EQ(profile.playbackStreams[0].packetBandwidthUnits,
+                  ASFW::IRM::PacketBandwidthUnits(expectedBytes, 2));
+    }
 }

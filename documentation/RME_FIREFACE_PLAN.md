@@ -1,14 +1,15 @@
 # RME Fireface 400/800 support plan
 
-**Status:** staged implementation plan, updated 2026-09-27. Current work is
-Stage 1 only. The approved target is duplex audio on Fireface 400 and 800 at
+**Status:** staged implementation completed through Stage 5, updated
+2026-09-27. The approved target is duplex audio on Fireface 400 and 800 at
 48 kHz only, with 18 and 28 channels per direction respectively. MIDI,
 Fireface UFX/UCX/802, flash updates, and mixer writes are outside scope.
 
 Neither model has been tested on hardware; the maintainer has no unit. Both
-models will be enabled by default after the staged implementation and review,
-while remaining clearly hardware-unverified. Until then, both models remain
-recognized but unsupported. AV/C/FCP remains blocked for these RME personas.
+models are enabled by default but remain explicitly hardware-unverified.
+AV/C/FCP remains blocked for these RME personas. Saved TotalMix routing is
+preserved, so playback may be silent when the device's saved mixer state does
+not route the FireWire playback channels to physical outputs.
 
 ## User and device constraints
 
@@ -127,7 +128,8 @@ across that transition.
 
 ## Five reviewed stages
 
-1. **Evidence and catalog (current):** record exact identities, mark both
+1. **Evidence and catalog (complete):** record exact identities, initially
+   mark both
    models `RecognizedUnsupported`, block AV/C/FCP traffic, and add
    reference-derived identity fixtures. These fixtures describe the Linux
    reference match table; they are not claimed as captures from ASFW hardware.
@@ -140,9 +142,9 @@ across that transition.
 4. **RME protocol and resources:** implement register sequencing and
    per-direction ownership. `AssignChannels` supplies final channels before
    DMA preparation; all failures roll back resources and reset device state.
-5. **Profiles and publication:** integrate the FF400/FF800 profiles, backend,
-   and device publication. Enable both by default after stages 1–4 and review;
-   document their lack of hardware validation.
+5. **Profiles and publication (complete):** integrate the FF400/FF800
+   profiles, backend, and device publication. Both models are default-enabled;
+   hardware behavior still needs physical validation.
 
 Each stage should be reviewed before proceeding to the next. Do not make a
 commit that combines stages. Preserve existing DICE, AV/C, M-Audio, and MOTU behavior, TX ownership, and
@@ -150,13 +152,15 @@ ZTS invariants unless a reviewed, explicitly justified shared-layer change
 requires an update. Regression coverage should include those families, session
 choreography, transmit ownership, and ZTS.
 
-## Stage 1 implementation record
+## Implementation record
 
 The catalog recognizes only the exact root vendor/model and unit
-specifier/version pairs above. Both entries have no family backend, profile,
-or protocol implementation and use `NoAutomaticTraffic`; the resolved command
-filter blocks all AV/C commands. Added tests should assert exact matching,
-non-matching nearby identities, unsupported routing, and the block-all filter.
+specifier/version pairs above. FF400 and FF800 resolve to the RME register
+protocol, fixed 48 kHz profiles, and the shared headerless content/timing
+paths. The RME backend publishes 18 or 28 channels per direction. Tests use
+synthetic, reference-derived fixtures and scripted register I/O; they do not
+replace a hardware test. Both models are default-enabled, while non-48 kHz
+requests are rejected before device traffic.
 
 ## Evidence limits and bring-up gate
 

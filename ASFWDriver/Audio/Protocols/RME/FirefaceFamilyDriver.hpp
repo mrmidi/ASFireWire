@@ -82,6 +82,7 @@ public:
     }
     [[nodiscard]] StopPolicy GetStopPolicy() const noexcept override { return {.stopHostContextsBeforeDevice = true}; }
     [[nodiscard]] std::optional<uint32_t> PostEnableDelayMs() const noexcept override { return 5U; }
+    void SetLinkSpeed(bool s800) noexcept { s800_ = s800; }
 
     [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
         const AudioDuplexChannels& channels, const AudioClockConfig& clock) override {

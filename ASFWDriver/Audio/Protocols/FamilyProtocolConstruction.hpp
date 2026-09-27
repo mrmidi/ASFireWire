@@ -45,7 +45,8 @@ namespace ASFW::Audio {
     ::ASFW::IRM::IRMClient* irmClient = nullptr,
     ::ASFW::CMP::CMPClient* cmpClient = nullptr,
     Scheduling::ITimerScheduler* timerScheduler = nullptr,
-    DICE::DiceNotificationRouter* diceNotifications = nullptr
+    DICE::DiceNotificationRouter* diceNotifications = nullptr,
+    bool isS800 = false
 );
 
 } // namespace ASFW::Audio

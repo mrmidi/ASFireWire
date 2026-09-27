@@ -4,6 +4,10 @@
 // Scripted Fireface register sequencing, clock admission, and resource-policy tests.
 #include "DICEDuplexTestSupport.hpp"
 #include "Audio/Protocols/RME/FirefaceFamilyDriver.hpp"
+#include "Audio/Protocols/RME/FirefaceDeviceProtocol.hpp"
+#include "Audio/Protocols/Backends/RmeAudioBackend.hpp"
+#include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include <utility>
 
 namespace {
 using namespace ASFW::Testing::DICE;
@@ -15,6 +19,7 @@ public:
     AsyncHandle ReadBlock(Generation, NodeId, FWAddress address, uint32_t length, FwSpeed,
                           InterfaceCompletionCallback callback) override {
         const uint64_t key = (static_cast<uint64_t>(address.addressHi) << 32) | address.addressLo;
+        reads.push_back(key);
         uint32_t value = 0;
         if (key == 0x000200000100ULL) value = revision;
         else if (key == 0x801c0000ULL) value = status0;
@@ -58,9 +63,65 @@ public:
     std::function<void(uint64_t)> readHook;
     bool deferRead{false};
     std::vector<Write> writes;
+    std::vector<uint64_t> reads;
     InterfaceCompletionCallback delayed;
     std::array<uint8_t, 4> delayedBytes{};
 };
+
+TEST(FirefaceIntegrationTests, Non48kAdmissionReturnsBeforeAnyRegisterTraffic) {
+    FirefaceScriptBus bus;
+    RouteState route;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(
+        io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
+    const auto result = family.Configure({}, {.sampleRateHz = 44100});
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), kIOReturnUnsupported);
+    EXPECT_TRUE(bus.reads.empty());
+    EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST(FirefaceIntegrationTests, ProtocolInitializationPublishesFixedGeometryWithoutBusTraffic) {
+    FirefaceScriptBus bus;
+    RouteState route;
+    ASFW::Audio::RME::FirefaceDeviceProtocol protocol(
+        bus, bus, route.registry, route.route, ASFW::Audio::RME::FirefaceModel::kFF400, false);
+    EXPECT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    EXPECT_TRUE(bus.writes.empty());
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 18U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 18U);
+    EXPECT_EQ(caps.deviceToHostStreamCount, 1U);
+    EXPECT_EQ(caps.hostToDeviceStreamCount, 1U);
+    EXPECT_STREQ(protocol.GetName(), "RME Fireface 400");
+}
+
+TEST(FirefaceIntegrationTests, PublicationConfigIsFixedDuplex48kWithoutMidi) {
+    ASFW::Discovery::DeviceRecord record{};
+    record.guid = 0x1234;
+    record.vendorId = ASFW::DeviceProfiles::Audio::kRmeVendorId;
+    record.modelId = ASFW::DeviceProfiles::Audio::kRmeRootModelId;
+    for (const auto [builder, channels] : {
+             std::pair{ASFW::DeviceProfiles::Audio::ProfileBuilderId::RmeFireface400, 18U},
+             std::pair{ASFW::DeviceProfiles::Audio::ProfileBuilderId::RmeFireface800, 28U}}) {
+        const auto config = ASFW::Audio::RmeAudioBackend::BuildNubConfig(record, builder, "RME");
+        EXPECT_EQ(config.profileBuilderId, static_cast<uint32_t>(builder));
+        EXPECT_EQ(config.inputChannelCount, channels);
+        EXPECT_EQ(config.outputChannelCount, channels);
+        EXPECT_EQ(config.channelCount, channels);
+        EXPECT_EQ(config.sampleRates, (std::vector<uint32_t>{48000U}));
+        ASSERT_EQ(config.captureStreams.size(), 1U);
+        ASSERT_EQ(config.playbackStreams.size(), 1U);
+        EXPECT_EQ(config.captureStreams[0].pcmChannels, channels);
+        EXPECT_EQ(config.captureStreams[0].am824Slots, channels);
+        EXPECT_EQ(config.captureStreams[0].midiPorts, 0U);
+        EXPECT_EQ(config.playbackStreams[0].pcmChannels, channels);
+        EXPECT_EQ(config.playbackStreams[0].am824Slots, channels);
+        EXPECT_EQ(config.playbackStreams[0].midiPorts, 0U);
+        EXPECT_TRUE(config.resolvedGeometryRequired);
+    }
+}
 
 TEST(FirefaceRegisterTests, RegisterTupleUsesLittleEndianWithoutChangingBigEndianWriter) {
     RecordingFireWireBus bus;

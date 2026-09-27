@@ -88,7 +88,9 @@ BuildResolvedTxStreamConfig(const IAudioStreamProfile& profile,
 /// framing from another is the defect this whole path removes.
 [[nodiscard]] inline constexpr uint32_t
 TxPacketBytesForStreamConfig(const AudioStreamConfig& config) noexcept {
-    return 8u + static_cast<uint32_t>(config.framesPerDataPacket) *
+    const uint32_t framingBytes =
+        config.packetFraming == Encoding::AudioPacketFraming::kHeaderless ? 0u : 8u;
+    return framingBytes + static_cast<uint32_t>(config.framesPerDataPacket) *
                     static_cast<uint32_t>(config.dbs) * 4u;
 }
 

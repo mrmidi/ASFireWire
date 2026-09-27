@@ -14,6 +14,7 @@
 #include "BeBoB/GenericBeBoBProtocol.hpp"
 #include "BeBoB/MAudioSpecialProtocol.hpp"
 #include "MOTU/MotuV2Protocol.hpp"
+#include "RME/FirefaceDeviceProtocol.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Scheduling/ITimerScheduler.hpp"
@@ -22,12 +23,12 @@ namespace ASFW::Audio {
 
 static_assert(
     static_cast<uint8_t>(DeviceProfiles::Audio::AudioFamilyProviderId::kLastValid) ==
-    static_cast<uint8_t>(DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister),
+    static_cast<uint8_t>(DeviceProfiles::Audio::AudioFamilyProviderId::RmeRegister),
     "AudioFamilyProviderId member added without updating family protocol construction");
 
 static_assert(
     static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::kLastValid) ==
-    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::MotuV2),
+    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::RmeFireface),
     "ProtocolImplementationId member added without updating family protocol construction");
 
 std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
@@ -39,7 +40,8 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
     IRM::IRMClient* irmClient,
     CMP::CMPClient* cmpClient,
     Scheduling::ITimerScheduler* timerScheduler,
-    DICE::DiceNotificationRouter* diceNotifications
+    DICE::DiceNotificationRouter* diceNotifications,
+    bool isS800
 ) {
     if (!route) {
         return nullptr;
@@ -63,6 +65,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         case AudioFamilyProviderId::Fireworks:
         case AudioFamilyProviderId::BeBoB:
         case AudioFamilyProviderId::MotuRegister:
+        case AudioFamilyProviderId::RmeRegister:
             break;
 
         case AudioFamilyProviderId::GenericAvc:
@@ -174,6 +177,16 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      plan.unitVersion, nodeId);
             return std::make_unique<Motu::MotuV2Protocol>(
                 busOps, busInfo, routeRegistry, route, plan.unitVersion, irmClient);
+
+        case ProtocolImplementationId::RmeFireface: {
+            const auto definition = plan.candidates.empty()
+                ? DeviceProfiles::Audio::DeviceDefinitionId::Unknown
+                : plan.candidates.front();
+            const auto model = definition == DeviceProfiles::Audio::DeviceDefinitionId::RmeFireface800
+                ? RME::FirefaceModel::kFF800 : RME::FirefaceModel::kFF400;
+            return std::make_unique<RME::FirefaceDeviceProtocol>(
+                busOps, busInfo, routeRegistry, route, model, isS800);
+        }
 
         // --- Generic AV/C & None ---
         // An unknown AV/C unit resolves to the generic fallback in the catalog,

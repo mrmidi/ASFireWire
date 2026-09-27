@@ -165,12 +165,12 @@ class DuplexStreamProfileResolver final {
     // IRM ledger.
     [[nodiscard]] static constexpr uint32_t
     AmdtpPacketBandwidthUnits(uint32_t am824Slots, uint32_t sampleRateHz,
-                              FW::FwSpeed speed) noexcept {
+                              FW::FwSpeed speed, bool headerless = false) noexcept {
         const auto rate = Encoding::AmdtpRateGeometryForSampleRate(
             sampleRateHz != 0 ? sampleRateHz : 48000U);
         const uint32_t blocksPerPacket = rate ? rate->sytIntervalFrames : 8U;
         const uint32_t slots = am824Slots != 0 ? am824Slots : 1U;
-        const uint32_t maxPayloadBytes = 8U + blocksPerPacket * slots * 4U;
+        const uint32_t maxPayloadBytes = (headerless ? 0U : 8U) + blocksPerPacket * slots * 4U;
         return IRM::PacketBandwidthUnits(maxPayloadBytes, static_cast<uint8_t>(speed));
     }
 
@@ -277,7 +277,8 @@ class DuplexStreamProfileResolver final {
             geometry.pcmChannels = multiCapture ? stream.pcmChannels : 0;
             geometry.am824Slots = multiCapture ? stream.am824Slots : caps.deviceToHostAm824Slots;
             geometry.packetBandwidthUnits = AmdtpPacketBandwidthUnits(
-                geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed);
+                geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed,
+                traits.wire.headerlessUpper24LE);
             geometry.allowedIsoChannels = irmChannelMask != 0
                                               ? irmChannelMask
                                               : FixedChannelMask(geometry.isoChannel);
@@ -295,7 +296,8 @@ class DuplexStreamProfileResolver final {
                                        ? stream.am824Slots
                                        : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
             geometry.packetBandwidthUnits = AmdtpPacketBandwidthUnits(
-                geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed);
+                geometry.am824Slots, caps.sampleRateHz, profile.linkSpeed,
+                traits.wire.headerlessUpper24LE);
             geometry.allowedIsoChannels = irmChannelMask != 0
                                               ? irmChannelMask
                                               : FixedChannelMask(geometry.isoChannel);
@@ -333,6 +335,13 @@ class DuplexStreamProfileResolver final {
         if (traits.wire.rawPcm24In32WhenEightInNineSlots && caps.hostOutputPcmChannels == 8 &&
             caps.hostToDeviceAm824Slots == 9) {
             profile.playbackWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
+        }
+
+        if (traits.wire.headerlessUpper24LE) {
+            profile.captureWireFormat = Encoding::AudioWireFormat::kRawPcm24Upper24In32LE;
+            profile.playbackWireFormat = Encoding::AudioWireFormat::kRawPcm24Upper24In32LE;
+            profile.capturePacketFraming = Encoding::AudioPacketFraming::kHeaderless;
+            profile.playbackPacketFraming = Encoding::AudioPacketFraming::kHeaderless;
         }
 
         if (traits.wire.captureTrustConfiguredStride) {

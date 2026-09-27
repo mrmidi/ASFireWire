@@ -294,11 +294,14 @@ TEST(AudioDeviceCatalog, RmeFormerModelsRequireExactUnitIdentityAndBlockAvc) {
         const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
         ASSERT_TRUE(plan.has_value());
         EXPECT_NE(std::ranges::find(plan->candidates, definitionId), plan->candidates.end());
-        EXPECT_EQ(plan->support, SupportDisposition::RecognizedUnsupported);
+        EXPECT_EQ(plan->support, SupportDisposition::Supported);
         EXPECT_EQ(plan->modelName, modelName);
-        EXPECT_EQ(plan->family, AudioFamilyProviderId::None);
-        EXPECT_EQ(plan->probePolicy, ProbePolicyId::NoAutomaticTraffic);
-        EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
+        EXPECT_EQ(plan->family, AudioFamilyProviderId::RmeRegister);
+        EXPECT_EQ(plan->probePolicy, ProbePolicyId::RmeRegister);
+        EXPECT_EQ(plan->profileBuilder,
+                  version == kRmeFireface400UnitVersion ? ProfileBuilderId::RmeFireface400
+                                                        : ProfileBuilderId::RmeFireface800);
+        EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::RmeFireface);
         EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
                   Discovery::AvcCommandFilterId::BlockAll);
 

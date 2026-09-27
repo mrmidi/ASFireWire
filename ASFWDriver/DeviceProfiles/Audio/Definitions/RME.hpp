@@ -15,7 +15,9 @@ namespace ASFW::DeviceProfiles::Audio::Definitions {
 // protocol, so AV/C/FCP remains blocked even after direct-register support.
 constexpr AudioDeviceDefinition RmeDefinition(DeviceDefinitionId id,
                                                uint32_t unitVersion,
-                                               const char* modelName) {
+                                               const char* modelName,
+                                               ProfileBuilderId builder,
+                                               uint64_t channelMask) {
     return AudioDeviceDefinition{
         .id = id,
         .variantId = static_cast<uint32_t>(id),
@@ -27,12 +29,19 @@ constexpr AudioDeviceDefinition RmeDefinition(DeviceDefinitionId id,
                     },
                     IdentityMatchClause{}},
         .clauseCount = 1,
-        .family = AudioFamilyProviderId::None,
-        .probePolicy = ProbePolicyId::NoAutomaticTraffic,
-        .profileBuilder = ProfileBuilderId::None,
-        .protocolImplementation = ProtocolImplementationId::None,
-        .support = SupportDisposition::RecognizedUnsupported,
+        .family = AudioFamilyProviderId::RmeRegister,
+        .probePolicy = ProbePolicyId::RmeRegister,
+        .profileBuilder = builder,
+        .protocolImplementation = ProtocolImplementationId::RmeFireface,
+        .support = SupportDisposition::Supported,
         .guidReliability = GuidReliability::ReliableWhenUnique,
+        .streamTraits = DeviceStreamTraits{
+            .wire = StreamWirePolicy{.forcedStreamMode = ForcedStreamMode::Blocking,
+                                     .headerlessUpper24LE = true},
+            .resource = IsochResourcePolicy{.irmChannelMask = channelMask},
+            .start = StreamStartPolicy{.startShape = StreamStartShape::CmpReceiveThenTransmit,
+                                       .startRatePinHz = 48000},
+        },
         .vendorName = kRmeVendorName,
         .modelName = modelName,
     };
@@ -40,9 +49,11 @@ constexpr AudioDeviceDefinition RmeDefinition(DeviceDefinitionId id,
 
 inline constexpr std::array kRmeDefinitions{
     RmeDefinition(DeviceDefinitionId::RmeFireface400,
-                  kRmeFireface400UnitVersion, kRmeFireface400ModelName),
+                  kRmeFireface400UnitVersion, kRmeFireface400ModelName,
+                  ProfileBuilderId::RmeFireface400, 0xffU),
     RmeDefinition(DeviceDefinitionId::RmeFireface800,
-                  kRmeFireface800UnitVersion, kRmeFireface800ModelName),
+                  kRmeFireface800UnitVersion, kRmeFireface800ModelName,
+                  ProfileBuilderId::RmeFireface800, kAnyIsoChannel),
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions

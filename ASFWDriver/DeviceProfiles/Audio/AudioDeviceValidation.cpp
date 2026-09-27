@@ -157,6 +157,8 @@ enum ClauseConstraintBit : uint16_t {
             return family == AudioFamilyProviderId::BeBoB;
         case ProtocolImplementationId::MotuV2:
             return family == AudioFamilyProviderId::MotuRegister;
+        case ProtocolImplementationId::RmeFireface:
+            return family == AudioFamilyProviderId::RmeRegister;
         case ProtocolImplementationId::None:
             return false;
     }
@@ -177,6 +179,8 @@ enum ClauseConstraintBit : uint16_t {
                    probe == ProbePolicyId::BeBoBFilteredCommandSet;
         case AudioFamilyProviderId::MotuRegister:
             return probe == ProbePolicyId::MotuRegister;
+        case AudioFamilyProviderId::RmeRegister:
+            return probe == ProbePolicyId::RmeRegister;
         case AudioFamilyProviderId::GenericAvc:
             return probe == ProbePolicyId::GenericAvc;
         case AudioFamilyProviderId::None:
@@ -225,6 +229,9 @@ enum ClauseConstraintBit : uint16_t {
         case ProfileBuilderId::Motu828mk2:
         case ProfileBuilderId::MotuUltralite:
             return ProtocolImplementationId::MotuV2;
+        case ProfileBuilderId::RmeFireface400:
+        case ProfileBuilderId::RmeFireface800:
+            return ProtocolImplementationId::RmeFireface;
         case ProfileBuilderId::None:
         case ProfileBuilderId::GenericAvc:
             return ProtocolImplementationId::None;

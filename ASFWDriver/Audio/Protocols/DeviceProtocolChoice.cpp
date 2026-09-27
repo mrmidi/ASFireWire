@@ -39,6 +39,8 @@ ChooseAudioBackend(
             return AudioBackendKind::Dice;
         case AudioFamilyProviderId::MotuRegister:
             return AudioBackendKind::MotuRegister;
+        case AudioFamilyProviderId::RmeRegister:
+            return AudioBackendKind::RmeRegister;
         case AudioFamilyProviderId::GenericAvc:
         case AudioFamilyProviderId::BeBoB:
         case AudioFamilyProviderId::OXFW:

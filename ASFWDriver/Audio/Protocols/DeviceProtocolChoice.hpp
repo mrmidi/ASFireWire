@@ -54,6 +54,7 @@ enum class AudioBackendKind : uint8_t {
     Avc = 0,
     Dice,
     MotuRegister,
+    RmeRegister,
 };
 
 [[nodiscard]] std::optional<AudioBackendKind>

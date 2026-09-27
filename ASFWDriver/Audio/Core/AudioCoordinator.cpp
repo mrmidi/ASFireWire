@@ -34,6 +34,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                 })
     , dice_(publisher_, registry_, runtime_, sessions_, hardware, diceNotifications)
     , motu_(publisher_, registry_, runtime_, sessions_, hardware)
+    , rme_(publisher_, registry_, runtime_, sessions_)
     , avc_(publisher_, registry_, runtime_, hostTransport_, sessions_, hardware) {
     lock_ = IOLockAlloc();
     if (!lock_) {
@@ -159,6 +160,7 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     // on resolving a policy for a device that is known to be gone.
     dice_.CancelRemoteDeviceWork(guid);
     motu_.CancelRemoteDeviceWork(guid);
+    rme_.CancelRemoteDeviceWork(guid);
     avc_.CancelRemoteDeviceWork(guid);
 
     kern_return_t hostStatus = kIOReturnSuccess;
@@ -231,6 +233,8 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
     switch (*backendKind) {
         case AudioBackendKind::MotuRegister:
             return &motu_;
+        case AudioBackendKind::RmeRegister:
+            return &rme_;
         case AudioBackendKind::Dice:
             return &dice_;
         case AudioBackendKind::Avc:
@@ -367,6 +371,14 @@ IOReturn AudioCoordinator::RequestClockConfig(
         return kIOReturnNotReady;
     }
 
+    const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(*record);
+    if (policy && policy->plan.family == DeviceProfiles::Audio::AudioFamilyProviderId::RmeRegister &&
+        desiredClock.sampleRateHz != 48000U) {
+        // Fireface control does not expose a software rate switch. Refuse at
+        // the coordinator boundary before any protocol read/write is queued.
+        return kIOReturnUnsupported;
+    }
+
     const IOReturn kr = sessions_.ChangeClock(guid, desiredClock, reason);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
@@ -402,6 +414,7 @@ void AudioCoordinator::BeginTeardown() noexcept {
     hostTransport_.SetTimingLossCallback({});
     dice_.BeginTeardown();
     motu_.BeginTeardown();
+    rme_.BeginTeardown();
     avc_.BeginTeardown();
     const kern_return_t hostStatus = StopHostTransport("service-teardown");
     if (hostStatus != kIOReturnSuccess) {

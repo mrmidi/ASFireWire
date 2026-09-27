@@ -41,6 +41,7 @@ struct DeviceTestCase {
     ForcedStreamMode expectedForcedStreamMode{ForcedStreamMode::Unspecified};
     StreamStartShape expectedStartShape{StreamStartShape::Default};
     bool expectedIrmChoosesAnyChannel{false};
+    std::optional<uint64_t> expectedChannelMask{};
 };
 
 Discovery::DeviceIdentityEvidence MakeEvidence(
@@ -299,7 +300,6 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBootstrap = Audio::ProbeBootstrap::AvcInitializeThenPlug0,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
         },
-<<<<<<< HEAD
         // 16. PreSonus FireStudio Project
         {
             .description = "PreSonus FireStudio Project (DICE, supported)",
@@ -313,20 +313,24 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBootstrap = Audio::ProbeBootstrap::DiceProtocol,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
-=======
-        // Synthetic evidence rows from Linux ff.c, not ASFW hardware captures.
+            // 17. RME Fireface 400
+            // Synthetic evidence row from Linux ff.c, not an ASFW hardware capture.
         {
             .description = "RME Fireface 400 (Linux reference-derived identity fixture)",
             .evidence = MakeEvidence(kRmeVendorId, kRmeRootModelId, std::nullopt,
                                      kRmeUnitSpecifierId,
                                      kRmeFireface400UnitVersion),
-            .expectedSupport = SupportDisposition::RecognizedUnsupported,
-            .expectedFamily = AudioFamilyProviderId::None,
-            .expectedProfileBuilder = ProfileBuilderId::None,
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::RmeRegister,
+            .expectedProfileBuilder = ProfileBuilderId::RmeFireface400,
             .expectedModelName = kRmeFireface400ModelName,
-            .expectedBackend = std::nullopt,
-            .expectedBootstrap = Audio::ProbeBootstrap::Unsupported,
+            .expectedBackend = Audio::AudioBackendKind::RmeRegister,
+            .expectedBootstrap = Audio::ProbeBootstrap::RmeRegister,
             .expectedFilter = Discovery::AvcCommandFilterId::BlockAll,
+            .expectedStartRatePinHz = 48000U,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::CmpReceiveThenTransmit,
+            .expectedChannelMask = 0xffU,
         },
         // Synthetic evidence rows from Linux ff.c, not ASFW hardware captures.
         {
@@ -334,14 +338,17 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .evidence = MakeEvidence(kRmeVendorId, kRmeRootModelId, std::nullopt,
                                      kRmeUnitSpecifierId,
                                      kRmeFireface800UnitVersion),
-            .expectedSupport = SupportDisposition::RecognizedUnsupported,
-            .expectedFamily = AudioFamilyProviderId::None,
-            .expectedProfileBuilder = ProfileBuilderId::None,
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::RmeRegister,
+            .expectedProfileBuilder = ProfileBuilderId::RmeFireface800,
             .expectedModelName = kRmeFireface800ModelName,
-            .expectedBackend = std::nullopt,
-            .expectedBootstrap = Audio::ProbeBootstrap::Unsupported,
+            .expectedBackend = Audio::AudioBackendKind::RmeRegister,
+            .expectedBootstrap = Audio::ProbeBootstrap::RmeRegister,
             .expectedFilter = Discovery::AvcCommandFilterId::BlockAll,
->>>>>>> 68d65157 (feat(rme): establish reviewed FF400 and FF800 catalog identities)
+            .expectedStartRatePinHz = 48000U,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::CmpReceiveThenTransmit,
+            .expectedChannelMask = kAnyIsoChannel,
         },
     };
     return kTable;
@@ -369,10 +376,11 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
         EXPECT_EQ(plan->streamTraits.wire.forcedStreamMode, testCase.expectedForcedStreamMode);
         EXPECT_EQ(plan->streamTraits.start.startShape, testCase.expectedStartShape);
         // CMP rows accept any channel; every DICE row takes 0-31 from the IRM.
-        const uint64_t expectedMask = testCase.expectedIrmChoosesAnyChannel ? kAnyIsoChannel
-                                      : testCase.expectedFamily == AudioFamilyProviderId::DICE
-                                          ? kDiceIrmChannelMask
-                                          : 0;
+        const uint64_t expectedMask = testCase.expectedChannelMask.value_or(
+            testCase.expectedIrmChoosesAnyChannel ? kAnyIsoChannel
+            : testCase.expectedFamily == AudioFamilyProviderId::DICE
+                ? kDiceIrmChannelMask
+                : 0);
         EXPECT_EQ(plan->streamTraits.resource.irmChannelMask, expectedMask);
 
         // 2. Protocol Choice: consumers use the resolved policy plan directly.
@@ -401,8 +409,13 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
             ASSERT_TRUE(backend.has_value());
             ASSERT_TRUE(protocolFromPlan.has_value());
             EXPECT_NE(plan->protocolImplementation, ProtocolImplementationId::None);
-            EXPECT_NE(AudioDeviceCatalog::CommandFilterFor(*plan),
-                      Discovery::AvcCommandFilterId::BlockAll);
+            if (plan->family != AudioFamilyProviderId::RmeRegister) {
+                EXPECT_NE(AudioDeviceCatalog::CommandFilterFor(*plan),
+                          Discovery::AvcCommandFilterId::BlockAll);
+            } else {
+                EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
+                          Discovery::AvcCommandFilterId::BlockAll);
+            }
             switch (plan->family) {
                 case AudioFamilyProviderId::DICE:
                     EXPECT_EQ(*backend, Audio::AudioBackendKind::Dice);
@@ -440,6 +453,12 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
                     EXPECT_EQ(*backend, Audio::AudioBackendKind::MotuRegister);
                     EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::MotuRegister);
                     EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::MotuV2);
+                    break;
+                case AudioFamilyProviderId::RmeRegister:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::RmeRegister);
+                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::RmeRegister);
+                    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::RmeFireface);
+                    EXPECT_EQ(ASFW::Audio::ChooseDeviceProtocol(*plan)->builder, plan->profileBuilder);
                     break;
                 case AudioFamilyProviderId::GenericAvc:
                 case AudioFamilyProviderId::None:
