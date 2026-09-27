@@ -319,9 +319,12 @@ kern_return_t IsochTransmitContext::Start() noexcept {
         ASFW_LOG(Isoch, "IT: Invalid descriptor IOVA 0x%llx", descIOVA);
         return kIOReturnInternalError;
     }
-    const uint32_t cmdPtr = static_cast<uint32_t>(descIOVA) | Tx::Layout::kBlocksPerPacket;
-
-    ASFW_LOG(Isoch, "IT: Writing CommandPtr=0x%08x (Z=%u)", cmdPtr, Tx::Layout::kBlocksPerPacket);
+    const uint32_t cmdPtr = primeStats.firstCommandPointer;
+    if (cmdPtr == 0) {
+        ASFW_LOG(Isoch, "IT: Prime did not provide a valid initial command pointer");
+        return kIOReturnInternalError;
+    }
+    ASFW_LOG(Isoch, "IT: Writing CommandPtr=0x%08x", cmdPtr);
     auto access = hardware_->TryBeginAccess();
     if (!access) return kIOReturnNotReady;
     access.Write(cmdPtrReg, cmdPtr);

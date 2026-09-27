@@ -15,9 +15,11 @@
 #include "Audio/Engine/Direct/Rx/RxAudioPacketProcessor.hpp"
 #include "Audio/Wire/AM824/Am824PayloadCodec.hpp"
 #include "Audio/Wire/MOTU/MotuPayloadCodec.hpp"
+#include "Audio/Wire/RawPcm24In32/RawPcm24Upper24In32LEPayloadCodec.hpp"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -433,6 +435,41 @@ TEST(RxAudioPacketProcessorTests, Am824PathIsUnaffectedByTheMotuBranch) {
     // am824Slots disagreeing with dbs is still a geometry mismatch.
     EXPECT_EQ(Process(processor, good, kSlots, kSlots + 1).status,
               DirectRxWriteStatus::kGeometryMismatch);
+}
+
+TEST(RxAudioPacketProcessorTests, HeaderlessUpper24LEDecodesAndIgnoresLowByte) {
+    Fixture fixture;
+    RxAudioPacketProcessor processor(fixture.writer);
+    ASFW::Audio::Wire::RawPcm24Upper24In32LEPayloadCodec codec(2);
+    std::array<uint8_t, kIsochHeaderBytes + 16> packet{};
+    // Independent LE32 reference bytes: upper signed-24 is -8388608 / +8388607;
+    // deliberately vary the ignored low byte between samples.
+    const std::array<uint8_t, 16> samples{
+        0x12, 0x00, 0x00, 0x80, 0xA5, 0xFF, 0xFF, 0x7F,
+        0xFF, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00};
+    std::copy(samples.begin(), samples.end(), packet.begin() + kIsochHeaderBytes);
+    const auto result = processor.ProcessPacket(
+        packet.data(), packet.size(), 0, 2, codec, 0, true, {}, false,
+        ASFW::Encoding::AudioPacketFraming::kHeaderless);
+    EXPECT_EQ(result.status, DirectRxWriteStatus::kAvailable);
+    EXPECT_EQ(result.framesDecoded, 2U);
+    EXPECT_FALSE(result.hasValidCip);
+    EXPECT_EQ(result.syt, 0xFFFFU);
+    EXPECT_NEAR(fixture.inputBuffer[0], -1.0f, 1e-6f);
+    EXPECT_NEAR(fixture.inputBuffer[1], 1.0f, 1e-6f);
+    EXPECT_NEAR(fixture.inputBuffer[kSlots], -1.0f, 1e-6f);
+    EXPECT_NEAR(fixture.inputBuffer[kSlots + 1], 0.0f, 1e-6f);
+}
+
+TEST(RxAudioPacketProcessorTests, HeaderlessRejectsPartialChannelFrame) {
+    Fixture fixture;
+    RxAudioPacketProcessor processor(fixture.writer);
+    ASFW::Audio::Wire::RawPcm24Upper24In32LEPayloadCodec codec(2);
+    std::array<uint8_t, kIsochHeaderBytes + 7> packet{};
+    const auto result = processor.ProcessPacket(
+        packet.data(), packet.size(), 0, 2, codec, 0, true, {}, false,
+        ASFW::Encoding::AudioPacketFraming::kHeaderless);
+    EXPECT_EQ(result.status, DirectRxWriteStatus::kGeometryMismatch);
 }
 
 

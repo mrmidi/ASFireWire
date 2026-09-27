@@ -13,6 +13,7 @@
 #include "RxAudioPacketProcessor.hpp"
 #include "../../../Wire/AM824/Am824PayloadCodec.hpp"
 #include "../../../Wire/RawPcm24In32/RawPcm24In32PayloadCodec.hpp"
+#include "../../../Wire/RawPcm24In32/RawPcm24Upper24In32LEPayloadCodec.hpp"
 #include "../../../Ports/IWirePayloadCodec.hpp"
 
 #include <functional>
@@ -29,6 +30,8 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     struct Configuration final {
         ::ASFW::Encoding::AudioWireFormat wireFormat{
             ::ASFW::Encoding::AudioWireFormat::kAM824};
+        ::ASFW::Encoding::AudioPacketFraming framing{
+            ::ASFW::Encoding::AudioPacketFraming::kCip};
         uint32_t am824Slots{0};
         uint32_t channelOffset{0};
         uint32_t streamChannels{0};
@@ -139,6 +142,7 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     bool prevLoggedAnchorValid_{false};
     ::ASFW::Audio::Wire::Am824RxPayloadCodec am824Codec_{};
     ::ASFW::Audio::Wire::RawPcm24In32RxPayloadCodec rawPcmCodec_{};
+    ::ASFW::Audio::Wire::RawPcm24Upper24In32LEPayloadCodec rawUpper24LeCodec_{};
     const ::ASFW::Audio::IRxPayloadCodec* payloadCodec_{nullptr};
 
 };

@@ -19,10 +19,17 @@ AMDTP::AmdtpStreamConfig DiceStreamConfigMapper::ToAmdtpConfig(
     config.fdf = streamConfig.fdf;
     config.framesPerDataPacket = streamConfig.framesPerDataPacket;
     config.sourceChannelOffset = streamConfig.sourceChannelOffset;
-    // Compute the true max packet size: CIP headers (8 bytes) + frames × DBS × 4 bytes/slot.
+    config.packetFraming = (streamConfig.packetFraming ==
+                            ASFW::Encoding::AudioPacketFraming::kHeaderless)
+                               ? AMDTP::AmdtpStreamConfig::PacketFraming::Headerless
+                               : AMDTP::AmdtpStreamConfig::PacketFraming::Cip;
+    config.isochTag = config.packetFraming == AMDTP::AmdtpStreamConfig::PacketFraming::Headerless
+                          ? 0 : 1;
+    config.isochSync = 0;
+    // Compute the true max packet size: framing header + frames × DBS × 4 bytes/slot.
     // Do not use the AmdtpStreamConfig default (512) — it is too small for high-channel
     // devices (e.g. a 24-channel device with DBS=24 needs 776 bytes at 8 fpd).
-    config.maxPacketBytes = 8u +
+    config.maxPacketBytes = (config.packetFraming == AMDTP::AmdtpStreamConfig::PacketFraming::Cip ? 8u : 0u) +
         static_cast<uint32_t>(streamConfig.framesPerDataPacket) * streamConfig.dbs * 4u;
     return config;
 }
@@ -194,9 +201,17 @@ const DiceTxEngineCounters& DiceTxStreamEngine::Counters() const noexcept {
 AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     const ASFW::Isoch::Audio::AudioStreamTxPolicy& streamPolicy) const noexcept {
     AMDTP::AmdtpTxPolicy policy{};
-    policy.hostToDevicePcmEncoding = (streamPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kRawPcm24In32)
-                                     ? AMDTP::PcmSlotEncoding::RawSigned24In32BE
-                                     : AMDTP::PcmSlotEncoding::Am824MBLA;
+    switch (streamPolicy.hostToDevicePcmEncoding) {
+        case ASFW::Encoding::AudioWireFormat::kRawPcm24In32:
+            policy.hostToDevicePcmEncoding = AMDTP::PcmSlotEncoding::RawSigned24In32BE;
+            break;
+        case ASFW::Encoding::AudioWireFormat::kRawPcm24Upper24In32LE:
+            policy.hostToDevicePcmEncoding = AMDTP::PcmSlotEncoding::RawPcm24Upper24In32LE;
+            break;
+        default:
+            policy.hostToDevicePcmEncoding = AMDTP::PcmSlotEncoding::Am824MBLA;
+            break;
+    }
     policy.dbsPolicy = streamPolicy.variableDbs
                        ? AMDTP::DbsPolicy::VariablePerPacket
                        : AMDTP::DbsPolicy::Constant;

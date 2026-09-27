@@ -22,6 +22,7 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
     using Consumer = ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer;
     Consumer::Configuration configuration{
         .wireFormat = format.wireFormat,
+        .framing = format.framing,
         .am824Slots = format.am824Slots,
         .channelOffset = channelOffset,
         .streamChannels = format.streamChannels,

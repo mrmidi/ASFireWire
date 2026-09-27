@@ -105,6 +105,8 @@ struct DuplexStreamProfile {
     std::array<DuplexPlaybackStreamGeometry, kMaxAudioStreamsPerDirection> playbackStreams{};
     Encoding::AudioWireFormat captureWireFormat{Encoding::AudioWireFormat::kAM824};
     Encoding::AudioWireFormat playbackWireFormat{Encoding::AudioWireFormat::kAM824};
+    Encoding::AudioPacketFraming capturePacketFraming{Encoding::AudioPacketFraming::kCip};
+    Encoding::AudioPacketFraming playbackPacketFraming{Encoding::AudioPacketFraming::kCip};
     // Loud OXFW units stamp an unreliable dbs in device->host packets; when set,
     // the RX decode takes its stride from the configured AM824 slot count instead
     // of the CIP header (Linux snd-oxfw SND_OXFW_QUIRK_WRONG_DBS semantics).

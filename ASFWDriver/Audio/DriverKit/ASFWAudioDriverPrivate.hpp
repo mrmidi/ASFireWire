@@ -154,14 +154,25 @@ public:
         if (!metadataRing || !queueControl || numSlots == 0) {
             return false;
         }
+        if ((packet.operation != ASFW::Protocols::Audio::AMDTP::PreparedTxPacket::Operation::Packet &&
+             packet.operation != ASFW::Protocols::Audio::AMDTP::PreparedTxPacket::Operation::SkipCycle) ||
+            (packet.operation == ASFW::Protocols::Audio::AMDTP::PreparedTxPacket::Operation::SkipCycle &&
+             packet.byteCount != 0)) {
+            return false;
+        }
         const auto slotIdx = static_cast<uint32_t>(packet.packetIndex % numSlots);
         auto& meta = metadataRing[slotIdx];
 
         meta.packetIndex = packet.packetIndex;
         meta.payloadLength = packet.byteCount;
+        meta.operation = packet.operation ==
+                                 ASFW::Protocols::Audio::AMDTP::PreparedTxPacket::Operation::SkipCycle
+                             ? ASFW::Isoch::IsochTxOperation::SkipCycle
+                             : ASFW::Isoch::IsochTxOperation::Packet;
 
-        // immediateData[0] = isoch packet header: tag=1 (standard CIP) at
-        // [15:14], tcode=0xA (isoch data block transmit) at [7:4], sy=0.
+        // immediateData[0] = isoch packet header: the content packetizer
+        // supplies tag/sy (CIP streams use tag=1; headerless streams use 0),
+        // tcode=0xA (isoch data block transmit) at [7:4].
         // Both channel [13:8] and speed [18:16] are placeholders: the owning
         // transport ring stamps its configured values immediately before
         // publishing the descriptor, because only transport knows the channel
@@ -171,14 +182,14 @@ public:
         // Cross-validated with Linux: firewire/ohci.h:277-286 and
         // firewire/ohci.c:3377-3381.
         const uint32_t isochHeaderQ0 = (static_cast<uint32_t>(2 & 0x7) << 16) |
-                                       (static_cast<uint32_t>(1 & 0x3) << 14) |
-                                       (static_cast<uint32_t>(0xA & 0xF) << 4);
+                                       (static_cast<uint32_t>(packet.isochTag & 0x3) << 14) |
+                                       (static_cast<uint32_t>(0xA & 0xF) << 4) |
+                                       (static_cast<uint32_t>(packet.isochSync & 0xF));
         meta.immediateHeader[0] = OSSwapHostToLittleInt32(isochHeaderQ0);
 
-        // immediateData[1] = data_length (payload bytes) in bits [31:16]. The
-        // CIP header is the first 8 bytes of the payload buffer and is shipped
-        // by the OUTPUT_LAST descriptor — it does NOT belong in the packet
-        // header immediate. Cross-validated with Linux:
+        // immediateData[1] = data_length (payload bytes) in bits [31:16]. Any
+        // content framing bytes are in the payload buffer and are shipped by
+        // OUTPUT_LAST; they do NOT belong in the immediate header. Cross-validated with Linux:
         // firewire/ohci.h:287-288 and firewire/ohci.c:3383.
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
             static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);

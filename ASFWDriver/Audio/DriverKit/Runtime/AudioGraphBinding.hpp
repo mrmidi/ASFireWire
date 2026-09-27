@@ -23,6 +23,7 @@ enum class AudioWireFormat : uint32_t {
     // separate (this one is part of the shared control block's ABI and carries
     // kUnknown), so a value added to either must be added to both.
     kMotuV2 = 3,
+    kRawPcm24Upper24In32LE = 4,
 };
 
 struct AudioGraphBinding final {

@@ -41,6 +41,10 @@ DirectAudioReceiveConsumer::DirectAudioReceiveConsumer(
     } else if (configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
         rawPcmCodec_.Configure(configuration_.am824Slots, configuration_.trustConfiguredStride);
         payloadCodec_ = &rawPcmCodec_;
+    } else if (configuration_.wireFormat ==
+               ::ASFW::Encoding::AudioWireFormat::kRawPcm24Upper24In32LE) {
+        rawUpper24LeCodec_.Configure(configuration_.am824Slots);
+        payloadCodec_ = &rawUpper24LeCodec_;
     }
 }
 
@@ -223,6 +227,10 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     } else if (configuration_.wireFormat == ::ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
         rawPcmCodec_.Configure(inputView_.deviceToHostAm824Slots, configuration_.trustConfiguredStride);
         payloadCodec_ = &rawPcmCodec_;
+    } else if (configuration_.wireFormat ==
+               ::ASFW::Encoding::AudioWireFormat::kRawPcm24Upper24In32LE) {
+        rawUpper24LeCodec_.Configure(inputView_.deviceToHostAm824Slots);
+        payloadCodec_ = &rawUpper24LeCodec_;
     }
 
     if (payloadCodec_ == nullptr) {
@@ -233,7 +241,8 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         packet.payload.data(), packet.payload.size(),
         absoluteFrameCursor_, channels,
         *payloadCodec_, configuration_.channelOffset,
-        !configuration_.isSecondary, configuration_.captureChannelMap);
+        !configuration_.isSecondary, configuration_.captureChannelMap,
+        false, configuration_.framing);
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {

@@ -26,6 +26,8 @@ enum class PcmSlotEncoding : uint8_t {
     Am824MBLA = 0,
     RawSigned24In32BE = 1,
     RawSigned24In32LE = 2,
+    /// Signed 24-bit sample in bits 31:8 of a little-endian quadlet.
+    RawPcm24Upper24In32LE = 3,
 };
 
 enum class DbsPolicy : uint8_t {
@@ -53,6 +55,12 @@ struct AmdtpStreamConfig final {
     // stream 0 reads channels [0, pcmChannels), stream 1 reads [16, 16+pcmChannels),
     // etc. Single-stream devices keep 0.
     uint8_t sourceChannelOffset{0};
+
+    /// Content framing. Defaults to the existing 8-byte IEC 61883 CIP header.
+    enum class PacketFraming : uint8_t { Cip = 0, Headerless = 1 };
+    PacketFraming packetFraming{PacketFraming::Cip};
+    uint8_t isochTag{1};
+    uint8_t isochSync{0};
 };
 
 struct AmdtpTxPolicy final {
@@ -99,6 +107,10 @@ struct PreparedTxPacket final {
     uint32_t byteCount{0};
 
     bool isData{false};
+    enum class Operation : uint8_t { Packet = 0, SkipCycle = 1 };
+    Operation operation{Operation::Packet};
+    uint8_t isochTag{1};
+    uint8_t isochSync{0};
     uint8_t dbc{0};
     uint16_t syt{0xFFFF};
 
@@ -144,6 +156,13 @@ enum class AudioWireFormat : uint8_t {
     // SPH quadlet and two message chunks. Not a quadlet-slot format, so the slot-based
     // encode/decode helpers do not apply -- see Audio/Wire/MOTU.
     kMotuV2 = 2,
+    /// Headerless RME-style signed 24-in-32 with significant bits at [31:8].
+    kRawPcm24Upper24In32LE = 3,
+};
+
+enum class AudioPacketFraming : uint8_t {
+    kCip = 0,
+    kHeaderless = 1,
 };
 
 } // namespace ASFW::Encoding

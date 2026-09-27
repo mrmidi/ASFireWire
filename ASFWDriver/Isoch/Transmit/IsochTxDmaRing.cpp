@@ -13,6 +13,19 @@ using namespace ASFW::Async::HW;
 using namespace ASFW::Driver;
 
 namespace {
+[[nodiscard]] inline uint32_t PacketEntry(const IsochTxDescriptorSlab& slab,
+                                          uint32_t slot) noexcept {
+    return MakeBranchWordAT(slab.GetDescriptorIOVA(slot * Layout::kBlocksPerPacket),
+                            Layout::kBlocksPerPacket);
+}
+[[nodiscard]] inline uint32_t SkipEntry(const IsochTxDescriptorSlab& slab,
+                                        uint32_t slot) noexcept {
+    // OHCI IT skip-cycle commands use Z=1. MakeBranchWordAT intentionally
+    // excludes this reserved value for the generic async chains, so encode the
+    // isoch-specific form after relying on the slab's aligned 32-bit IOVA.
+    return static_cast<uint32_t>(slab.GetDescriptorIOVA(
+               slot * Layout::kBlocksPerPacket + Layout::kCompletionBlock)) | 1U;
+}
 // Replace the channel field [13:8] and the speed field [18:16] of a little-endian
 // OHCI isoch transmit header quadlet with the values owned by this ring. Linux
 // queue_iso_transmit() likewise takes both from the isoch context, never from
@@ -206,6 +219,12 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
                 pktIdx);
             return stats;
         }
+        const auto operationValue = static_cast<uint32_t>(meta.operation);
+        if ((operationValue != static_cast<uint32_t>(IsochTxOperation::Packet) &&
+             operationValue != static_cast<uint32_t>(IsochTxOperation::SkipCycle)) ||
+            (meta.operation == IsochTxOperation::SkipCycle && meta.payloadLength != 0)) {
+            return stats;
+        }
         if (meta.payloadLength != 0 && (meta.payloadLength < 2 || meta.payloadLength > slotStrideBytes)) {
             ASFW_LOG(
                 Isoch,
@@ -271,8 +290,11 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         auto* desc3 =
             slab_.GetDescriptorPtr(descBase + Layout::kCompletionBlock);
         std::memset(desc3, 0, sizeof(OHCIDescriptor));
+        const bool skip = meta.operation == IsochTxOperation::SkipCycle;
+        // Linux queues a skip cycle as a single zero-length OUTPUT_LAST entry,
+        // with no immediate isoch header (firewire/ohci.c:3330-3420).
         desc3->control = OHCIDescriptor::BuildControl({
-            .reqCount = static_cast<uint16_t>(payloadFragments[1].length),
+            .reqCount = static_cast<uint16_t>(skip ? 0 : payloadFragments[1].length),
             .command = OHCIDescriptor::kCmdOutputLast,
             .key = OHCIDescriptor::kKeyStandard,
             .interruptBits =
@@ -284,19 +306,23 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         desc3->control |=
             (1u << (OHCIDescriptor::kStatusShift +
                     OHCIDescriptor::kControlHighShift));
-        desc3->dataAddress = payloadFragments[1].deviceAddress;
+        desc3->dataAddress = skip ? 0 : payloadFragments[1].deviceAddress;
 
         // Finite queue: the last primed packet ends the chain. Refill links
         // each new batch to it, so the hardware stops at the mapped end
         // instead of replaying the head (Linux context_append leaves the new
         // tail zero and links it after publication, ohci.c:1105-1107,
         // 1137-1141).
-        desc3->branchWord = pktIdx + 1 < numPackets
-            ? MakeBranchWordAT(
-                  slab_.GetDescriptorIOVA((pktIdx + 1) * Layout::kBlocksPerPacket),
-                  Layout::kBlocksPerPacket)
-            : 0;
+        desc3->branchWord = 0;
+        if (pktIdx > 0) {
+            auto* previousTail = slab_.GetDescriptorPtr(
+                (pktIdx - 1) * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+            previousTail->branchWord = skip ? SkipEntry(slab_, pktIdx) : PacketEntry(slab_, pktIdx);
+        }
         AR_init_status(*desc3, 0);
+        if (pktIdx == 0) {
+            stats.firstCommandPointer = skip ? SkipEntry(slab_, 0) : PacketEntry(slab_, 0);
+        }
     }
 
     if (dmaMemory_) {
@@ -345,6 +371,8 @@ const char* IsochTxDmaRing::RefillFailureReasonName(
             return "uncommitted-slot";
         case RefillFailureReason::InvalidPacketSize:
             return "invalid-packet-size";
+        case RefillFailureReason::InvalidOperation:
+            return "invalid-operation";
         case RefillFailureReason::PayloadMapping:
             return "payload-mapping";
         case RefillFailureReason::MappedRegionExhausted:
@@ -557,6 +585,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     // tail's branch is published below the controller can reach only the old
     // queue, whose zero branch stops it even if this loop stalls.
     uint32_t packetsFilled = 0;
+    uint32_t firstNewEntry = 0;
     for (uint32_t i = 0; i < toFill; ++i) {
         const uint64_t fillAbsIdx = softwareFillAbsIdx_ + i;
         const uint32_t pktSlot = static_cast<uint32_t>(fillAbsIdx % numSlots);
@@ -636,6 +665,17 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
         const uint32_t payloadLength = meta.payloadLength;
 
+        const auto operationValue = static_cast<uint32_t>(meta.operation);
+        if ((operationValue != static_cast<uint32_t>(IsochTxOperation::Packet) &&
+             operationValue != static_cast<uint32_t>(IsochTxOperation::SkipCycle)) ||
+            (meta.operation == IsochTxOperation::SkipCycle && payloadLength != 0)) {
+            out.failureReason = RefillFailureReason::InvalidOperation;
+            out.failurePacketAbs = fillAbsIdx;
+            out.failureSlot = pktSlot;
+            out.failurePayloadLength = payloadLength;
+            return out;
+        }
+
         if (payloadLength != 0 && (payloadLength < 2 ||
             payloadLength > controlBlock->maxPacketBytes)) {
             counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
@@ -673,6 +713,11 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             return out;
         }
 
+        const uint32_t thisEntry = meta.operation == IsochTxOperation::SkipCycle
+            ? SkipEntry(slab_, hwSlot)
+            : PacketEntry(slab_, hwSlot);
+        if (i == 0) firstNewEntry = thisEntry;
+
         // Linux queue_iso_transmit() writes this pair through (__le32 *)&d[1]:
         // offsets 0x10/0x14 after the OMI command descriptor. Offsets 0x08/0x0c
         // are the cycle-loss skip address and command status, not transmitted
@@ -702,8 +747,9 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
         auto* desc3 =
             slab_.GetDescriptorPtr(descBase + Layout::kCompletionBlock);
+        const bool skip = meta.operation == IsochTxOperation::SkipCycle;
         desc3->control = OHCIDescriptor::BuildControl({
-            .reqCount = static_cast<uint16_t>(payloadFragments[1].length),
+            .reqCount = static_cast<uint16_t>(skip ? 0 : payloadFragments[1].length),
             .command = OHCIDescriptor::kCmdOutputLast,
             .key = OHCIDescriptor::kKeyStandard,
             .interruptBits =
@@ -715,15 +761,9 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         desc3->control |=
             (1u << (OHCIDescriptor::kStatusShift +
                     OHCIDescriptor::kControlHighShift));
-        desc3->dataAddress = payloadFragments[1].deviceAddress;
-        const uint32_t nextHwSlot = (hwSlot + 1) % Layout::kNumPackets;
-        desc3->branchWord = i + 1 < toFill
-            ? MakeBranchWordAT(
-                  slab_.GetDescriptorIOVA(nextHwSlot * Layout::kBlocksPerPacket),
-                  Layout::kBlocksPerPacket)
-            : 0;
-        AR_init_status(
-            *desc3, static_cast<uint16_t>(payloadFragments[1].length));
+        desc3->dataAddress = skip ? 0 : payloadFragments[1].deviceAddress;
+        desc3->branchWord = 0;
+        AR_init_status(*desc3, static_cast<uint16_t>(skip ? 0 : payloadFragments[1].length));
 
         // Publish the shared producer slot before exposing descriptor changes.
         if (dmaMemory_) {
@@ -735,6 +775,21 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(immDesc), sizeof(OHCIDescriptorImmediate));
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(OHCIDescriptor));
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc3), sizeof(OHCIDescriptor));
+        }
+
+        // Link only after this slot's metadata was acquired, validated, and
+        // its descriptors rebuilt. The preceding new slot is still detached.
+        if (i > 0) {
+            const uint32_t previousHwSlot =
+                static_cast<uint32_t>((fillAbsIdx - 1) % Layout::kNumPackets);
+            auto* previousTail = slab_.GetDescriptorPtr(
+                previousHwSlot * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+            previousTail->branchWord = thisEntry;
+            if (dmaMemory_) {
+                dmaMemory_->PublishToDevice(
+                    reinterpret_cast<const std::byte*>(&previousTail->branchWord),
+                    sizeof(previousTail->branchWord));
+            }
         }
 
         packetsFilled++;
@@ -754,11 +809,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             static_cast<uint32_t>((softwareFillAbsIdx_ - 1) % Layout::kNumPackets);
         auto* oldTail = slab_.GetDescriptorPtr(
             oldTailSlot * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
-        oldTail->branchWord = MakeBranchWordAT(
-            slab_.GetDescriptorIOVA(
-                static_cast<uint32_t>(softwareFillAbsIdx_ % Layout::kNumPackets) *
-                Layout::kBlocksPerPacket),
-            Layout::kBlocksPerPacket);
+        oldTail->branchWord = firstNewEntry;
         if (dmaMemory_) {
             dmaMemory_->PublishToDevice(
                 reinterpret_cast<const std::byte*>(&oldTail->branchWord),

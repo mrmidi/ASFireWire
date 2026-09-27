@@ -14,14 +14,22 @@
 
 namespace ASFW::Isoch {
 
-inline constexpr uint32_t kTxQueueAbiVersion = 5;
+inline constexpr uint32_t kTxQueueAbiVersion = 6;
+
+/// Neutral OHCI queue operation for one packet slot. Numeric zero is Packet
+/// for value-initialized current publishers. The queue contract version still
+/// rejects ABI-5 clients; the default does not make the new ABI backward-compatible.
+enum class IsochTxOperation : uint32_t {
+    Packet = 0,
+    SkipCycle = 1,
+};
 
 /// Producer fills the plain fields, then release-stores commitGeneration.
 /// Consumer acquire-loads it and accepts only ExpectedTxCommitGeneration().
 struct alignas(64) IsochTxPacketMeta final {
     uint32_t immediateHeader[2];  ///< Opaque OUTPUT_MORE_IMMEDIATE quadlets.
     uint32_t payloadLength;       ///< Opaque payload byte count.
-    uint32_t reserved0;
+    IsochTxOperation operation{IsochTxOperation::Packet};
     uint64_t packetIndex;         ///< Absolute packet index.
     std::atomic<uint64_t> commitGeneration{0};
     uint8_t reserved1[64 - 32];

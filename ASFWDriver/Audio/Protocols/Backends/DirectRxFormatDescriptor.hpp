@@ -15,6 +15,7 @@ namespace ASFW::Audio {
 /// and backend-specific format traits into a single value-type descriptor.
 struct DirectRxFormatDescriptor final {
     ::ASFW::Encoding::AudioWireFormat wireFormat{::ASFW::Encoding::AudioWireFormat::kAM824};
+    ::ASFW::Encoding::AudioPacketFraming framing{::ASFW::Encoding::AudioPacketFraming::kCip};
     uint32_t am824Slots{0};
     uint32_t streamChannels{0};
     bool trustConfiguredStride{false};

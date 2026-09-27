@@ -62,6 +62,7 @@ public:
 
     struct PrimeStats {
         uint64_t packetsAssembled{0};
+        uint32_t firstCommandPointer{0};
     };
 
     enum class RefillFailureReason : uint8_t {
@@ -72,6 +73,7 @@ public:
         CommandPointerDecode,
         UncommittedSlot,
         InvalidPacketSize,
+        InvalidOperation,
         PayloadMapping,
         /// The hardware finished every mapped packet before this refill: the
         /// finite queue ran dry, so its packets are no longer on their

@@ -46,7 +46,9 @@ public:
         uint32_t channelOffset = 0,
         bool publishTimeline = true,
         const RxCaptureChannelMap& captureMap = {},
-        bool primeDelayLine = false) noexcept;
+        bool primeDelayLine = false,
+        ::ASFW::Encoding::AudioPacketFraming framing =
+            ::ASFW::Encoding::AudioPacketFraming::kCip) noexcept;
 
 private:
     DirectInputWriter& writer_;

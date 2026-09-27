@@ -79,6 +79,7 @@ void LogReservationSummary(uint64_t guid, FW::Generation generation, FW::FwSpeed
                                                      const DuplexCaptureStreamGeometry& stream) noexcept {
     return DirectRxFormatDescriptor{
         .wireFormat = profile.captureWireFormat,
+        .framing = profile.capturePacketFraming,
         .am824Slots = stream.am824Slots,
         .streamChannels = stream.pcmChannels,
         .trustConfiguredStride = profile.captureTrustConfiguredStride,

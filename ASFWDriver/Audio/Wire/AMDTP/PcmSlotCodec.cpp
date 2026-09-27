@@ -51,12 +51,20 @@ uint32_t PcmSlotCodec::EncodeRawSigned24In32LE(float sample) noexcept {
     return ByteSwap32(EncodeRawSigned24In32BE(sample));
 }
 
+uint32_t PcmSlotCodec::EncodeRawPcm24Upper24In32LE(float sample) noexcept {
+    const uint32_t upperAligned =
+        static_cast<uint32_t>(Float32ToSigned24(sample)) << 8U;
+    return ByteSwap32(upperAligned);
+}
+
 uint32_t PcmSlotCodec::EncodeFloat32(float sample, PcmSlotEncoding encoding) noexcept {
     switch (encoding) {
     case PcmSlotEncoding::RawSigned24In32BE:
         return EncodeRawSigned24In32BE(sample);
     case PcmSlotEncoding::RawSigned24In32LE:
         return EncodeRawSigned24In32LE(sample);
+    case PcmSlotEncoding::RawPcm24Upper24In32LE:
+        return EncodeRawPcm24Upper24In32LE(sample);
     case PcmSlotEncoding::Am824MBLA:
         break;
     }
@@ -77,6 +85,8 @@ uint32_t PcmSlotCodec::EncodeInt32(
         return static_cast<uint32_t>(signed24);
     case PcmSlotEncoding::RawSigned24In32LE:
         return ByteSwap32(static_cast<uint32_t>(signed24));
+    case PcmSlotEncoding::RawPcm24Upper24In32LE:
+        return ByteSwap32(static_cast<uint32_t>(signed24) << 8U);
     case PcmSlotEncoding::Am824MBLA:
         break;
     }
