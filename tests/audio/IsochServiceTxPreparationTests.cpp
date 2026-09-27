@@ -241,6 +241,51 @@ TEST(IsochServiceTxPreparation, FaultedTransmitIsQuiescedByStopBeforeReuse) {
     EXPECT_FALSE(context->NeedsQuiesce());
 }
 
+// Start clears every ContextControl bit: cycleMatchEnable (bit 31) has an
+// undefined reset value (OHCI 1.2 draft Table 9-7). It clears only this
+// context's stale event bit, so a running sibling keeps its pending completion.
+TEST(IsochServiceTxPreparation, StartClearsContextControlAndOnlyItsOwnEvent) {
+    IsochService service;
+    HardwareInterface hardware;
+    IOMemoryDescriptor* payloadDescriptor = nullptr;
+    IOMemoryDescriptor* metadataDescriptor = nullptr;
+    IOMemoryDescriptor* controlDescriptor = nullptr;
+    ASSERT_EQ(service.AllocateTxIsochResources(
+                  0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor,
+                  &metadataDescriptor, &controlDescriptor),
+              kIOReturnSuccess);
+
+    IOAddressSegment metadataRange{};
+    ASSERT_EQ(metadataDescriptor->GetAddressRange(&metadataRange), kIOReturnSuccess);
+    auto* metadata = reinterpret_cast<IsochTxPacketMeta*>(metadataRange.address);
+    for (uint64_t packetIndex = 0;
+         packetIndex < AudioTimingGeometry::kTxSharedSlotPackets;
+         ++packetIndex) {
+        auto& meta = metadata[packetIndex % AudioTimingGeometry::kTxSharedSlotPackets];
+        meta.packetIndex = packetIndex;
+        meta.payloadLength = 8;
+        meta.commitGeneration.store(
+            ExpectedTxCommitGeneration(
+                packetIndex, AudioTimingGeometry::kTxSharedSlotPackets),
+            std::memory_order_release);
+    }
+    IOAddressSegment controlRange{};
+    ASSERT_EQ(controlDescriptor->GetAddressRange(&controlRange), kIOReturnSuccess);
+    auto* queue = reinterpret_cast<IsochTxQueueControl*>(controlRange.address);
+    queue->ResetProducerForStart();
+    queue->committedEnd.store(AudioTimingGeometry::kTxPreparationLeadPackets,
+                              std::memory_order_release);
+
+    ASSERT_EQ(service.StartTransmit(3, hardware, 0x3f, ASFW::FW::FwSpeed::S400),
+              kIOReturnSuccess);
+
+    const Register32 controlClear = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlClear(0));
+    EXPECT_EQ(hardware.GetTestRegister(controlClear), 0xFFFFFFFFu);
+    EXPECT_EQ(hardware.GetTestRegister(Register32::kIsoXmitIntEventClear), 1u);
+}
+
 // Secondary-stream container: a multi-stream DICE device (Venice F32 = 2×16)
 // needs IsochService to manage a second IR and second IT context on their own
 // OHCI context indices, while the master (stream 0) is untouched. This pass only

@@ -100,7 +100,6 @@ struct HCControlBits {
     static constexpr uint32_t kLinkEnable = 1u << 17;
     static constexpr uint32_t kPostedWriteEnable = 1u << 18;
     static constexpr uint32_t kLPS = 1u << 19;
-    static constexpr uint32_t kCycleMatchEnable = 1u << 20;
     static constexpr uint32_t kAPhyEnhanceEnable =
         1u << 22; // OHCI §5.7.2: Enable IEEE1394a enhancements in Link
     static constexpr uint32_t kProgramPhyEnable = 1u << 23;

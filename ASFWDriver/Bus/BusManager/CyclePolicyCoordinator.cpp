@@ -21,6 +21,7 @@ void CyclePolicyCoordinator::Evaluate(const CyclePolicyInputs& inputs, ICyclePol
     case CyclePolicyDecision::LocalCycleMasterClearNotRoot: {
         snapshot_.lastAction = CyclePolicyAction::ClearLocalCycleMaster;
         if (executor.ClearLocalCycleMasterMutation(inputs.generation)) {
+            localCycleMasterOwned_ = false;
             snapshot_.localCycleMasterAfter = false;
             snapshot_.localCycleMasterClearCount++;
         } else {
@@ -38,6 +39,7 @@ void CyclePolicyCoordinator::Evaluate(const CyclePolicyInputs& inputs, ICyclePol
         snapshot_.lastAction = CyclePolicyAction::EnableLocalCycleMaster;
         if (executor.EnableLocalCycleMasterMutation(inputs.generation)) {
             lastLocalCycleMasterGeneration_ = inputs.generation;
+            localCycleMasterOwned_ = true;
             snapshot_.localCycleMasterEnableCount++;
             snapshot_.localCycleMasterAfter = true;
         } else {
@@ -200,6 +202,8 @@ void CyclePolicyCoordinator::OnBusResetStarted(uint32_t generation) noexcept {
     const uint32_t localClearCount = snapshot_.localCycleMasterClearCount;
     const uint32_t remoteCount = snapshot_.remoteCmstrSubmitCount;
     const uint32_t suppressedCount = snapshot_.suppressedCount;
+    const uint32_t cycleTooLongCount = snapshot_.cycleTooLongCount;
+    const uint32_t restoreCount = snapshot_.cycleMasterRestoreCount;
     uint32_t staleCount = snapshot_.staleGenerationDrops;
 
     if (remoteCmstrHandle_.IsValid()) {
@@ -213,10 +217,26 @@ void CyclePolicyCoordinator::OnBusResetStarted(uint32_t generation) noexcept {
     snapshot_.remoteCmstrSubmitCount = remoteCount;
     snapshot_.suppressedCount = suppressedCount;
     snapshot_.staleGenerationDrops = staleCount;
+    snapshot_.cycleTooLongCount = cycleTooLongCount;
+    snapshot_.cycleMasterRestoreCount = restoreCount;
+    localCycleMasterOwned_ = false;
 
     remoteCmstrHandle_.Invalidate();
     lastRemoteCmstrGeneration_ = 0;
     lastRemoteCmstrTargetNode_ = 0x3F;
+}
+
+bool CyclePolicyCoordinator::OnCycleTooLong(uint32_t generation,
+                                            ICyclePolicyExecutor& executor) noexcept {
+    snapshot_.cycleTooLongCount++;
+    if (!localCycleMasterOwned_ || lastLocalCycleMasterGeneration_ != generation) {
+        return false;
+    }
+    if (!executor.EnableLocalCycleMasterMutation(generation)) {
+        return false;
+    }
+    snapshot_.cycleMasterRestoreCount++;
+    return true;
 }
 
 void CyclePolicyCoordinator::OnRemoteCmstrComplete(uint32_t generation, uint8_t targetNode,

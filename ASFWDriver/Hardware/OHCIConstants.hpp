@@ -128,9 +128,9 @@ struct ContextControl {
     static constexpr uint32_t kEventCodeMask = kContextControlEventMask;
     static constexpr uint32_t kEventCodeShift = 0;
     static constexpr uint32_t kIsochHeader = 1u << 30;     // IR: includes isoch header (OHCI §10.2.2)
-    static constexpr uint32_t kCycleMatchEnable = 1u << 30; // IT: stall until cycle match (OHCI §9.2)
-    // Mask of all writable bits (for safe clearing without hitting reserved bits)
-    static constexpr uint32_t kWritableBits = kRun | kWake | kCycleMatchEnable;
+    // IT only: wait for cycleMatch before the first packet. Undefined at reset
+    // (OHCI 1.2 draft Figure 9-7, Table 9-7; Linux IT_CONTEXT_CYCLE_MATCH_ENABLE).
+    static constexpr uint32_t kItCycleMatchEnable = 1u << 31;
 };
 
 // ============================================================================

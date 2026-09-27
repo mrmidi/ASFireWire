@@ -119,7 +119,6 @@ public:
 #endif
 
 private:
-    void WakeHardware() noexcept;
     void DoRefillOnce(uint64_t eventHostTicks, bool publishTimingEvent) noexcept;
     // Caller holds refillInProgress_ and no HardwareAccessScope.
     void StopImmediatelyForTxFault() noexcept;
