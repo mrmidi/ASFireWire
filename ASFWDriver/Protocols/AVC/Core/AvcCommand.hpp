@@ -3,7 +3,7 @@
 //
 // AvcCommand.hpp - The generic AV/C Command frame and operand codec concept.
 //
-// Contract (Phase 2b redo):
+// Contract:
 // Every AV/C command has two separate concerns:
 // 1. The frame: ctype, address, opcode, quadlet padding, response-code check.
 //    Identical for all commands; written once in Command<Op>.
@@ -75,7 +75,7 @@ concept AvcOperands = requires(const Op& op, OperandWriter& w, CommandType t, st
     { Op::kOpcode } -> std::convertible_to<Opcode>;
     typename Op::Reply;
     { op.Write(w, t) } -> std::same_as<Expected<void>>;
-    { Op::Read(in) }   -> std::same_as<Expected<typename Op::Reply>>;
+    { op.Read(in) }   -> std::same_as<Expected<typename Op::Reply>>;
 };
 
 /// Generic AV/C command template combining addressing and an AvcOperands codec.
@@ -84,20 +84,18 @@ struct Command {
     SubunitAddress address{SubunitAddress::Unit()};
     Op operands{};
 
-    using OperandsType = Op;
     using Reply = typename Op::Reply;
 
     [[nodiscard]] constexpr Expected<CommandFrame> Encode(CommandType type) const noexcept {
+        if constexpr (requires { operands.ValidateAddress(address); }) {
+            auto addressResult = operands.ValidateAddress(address);
+            if (!addressResult) {
+                return std::unexpected(addressResult.error());
+            }
+        }
         if constexpr (requires { { Op::kRequiresUnitAddress } -> std::convertible_to<bool>; }) {
             if constexpr (Op::kRequiresUnitAddress) {
                 if (!address.IsUnit()) {
-                    return Fail(AvcErrorKind::kInvalidArgument);
-                }
-            }
-        }
-        if constexpr (requires { { Op::kRequiresSubunitAddress } -> std::convertible_to<bool>; }) {
-            if constexpr (Op::kRequiresSubunitAddress) {
-                if (address.IsUnit()) {
                     return Fail(AvcErrorKind::kInvalidArgument);
                 }
             }
@@ -119,8 +117,8 @@ struct Command {
         return CommandFrame::Make(type, address, opcode, w.Bytes());
     }
 
-    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> in) noexcept {
-        return Op::Read(in);
+    [[nodiscard]] Expected<Reply> Decode(std::span<const uint8_t> in) const noexcept {
+        return operands.Read(in);
     }
 };
 

@@ -233,7 +233,7 @@ TEST(AvcDifferentialTests, UnitPlugInfo_CommandBytesMatch) {
     legacyCmd.Submit([](Protocols::AVC::AVCResult, const Protocols::AVC::UnitPlugCounts&) {});
     auto legacyEncoded = submitter.lastCdb.Encode();
 
-    Cmd::UnitPlugInfoIsoExtCommand newCmd{};
+    Cmd::PlugInfoCommand newCmd{};
     auto newFrame = newCmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(newFrame.has_value());
 
@@ -263,13 +263,13 @@ TEST(AvcDifferentialTests, UnitPlugInfo_ResponseParsing) {
 
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
-    auto newPlugs = Cmd::UnitPlugInfoIsoExtOperands::Read(resp->operands);
+    auto newPlugs = Cmd::PlugInfoOperands{}.Read(resp->operands);
     ASSERT_TRUE(newPlugs.has_value());
 
-    EXPECT_EQ(legacyCounts.isoInputPlugs, newPlugs->isochronousInputs);
-    EXPECT_EQ(legacyCounts.isoOutputPlugs, newPlugs->isochronousOutputs);
-    EXPECT_EQ(legacyCounts.extInputPlugs, newPlugs->externalInputs);
-    EXPECT_EQ(legacyCounts.extOutputPlugs, newPlugs->externalOutputs);
+    EXPECT_EQ(legacyCounts.isoInputPlugs, newPlugs->unit.isochronousInputs);
+    EXPECT_EQ(legacyCounts.isoOutputPlugs, newPlugs->unit.isochronousOutputs);
+    EXPECT_EQ(legacyCounts.extInputPlugs, newPlugs->unit.externalInputs);
+    EXPECT_EQ(legacyCounts.extOutputPlugs, newPlugs->unit.externalOutputs);
 }
 
 // ===========================================================================
@@ -461,9 +461,9 @@ TEST(AvcDifferentialTests, StreamFormatList_CommandBytesMatchBeBoBDiscovery) {
             auto newDir = (dir == Audio::BeBoB::PlugDirection::kInput)
                               ? Cmd::PlugDirection::kInput
                               : Cmd::PlugDirection::kOutput;
-            auto newCmd = Command<Cmd::StreamFormatListOperands>{
+            auto newCmd = Cmd::StreamFormatCommand{
                 .address = SubunitAddress::Unit(),
-                .operands = Cmd::StreamFormatListOperands{
+                .operands = Cmd::StreamFormatOperands{.form = Cmd::StreamFormatSubfunction::kList,
                     .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
                     .plug = Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0),
                     .index = idx,
@@ -498,7 +498,7 @@ TEST(AvcDifferentialTests, StreamFormatList_ResponseParsingComparison) {
     // New parse:
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
-    auto newEntry = Cmd::StreamFormatListOperands::Read(resp->operands, 0);
+    auto newEntry = Cmd::StreamFormatOperands{.form = Cmd::StreamFormatSubfunction::kList, .index = 0}.Read(resp->operands);
     ASSERT_TRUE(newEntry.has_value());
     EXPECT_EQ(newEntry->index, 0);
     EXPECT_EQ(newEntry->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
@@ -525,9 +525,9 @@ TEST(AvcDifferentialTests, RootStreamFormatCommand_CurrentFormatMatches) {
             auto newDir = isInput ? Cmd::PlugDirection::kInput : Cmd::PlugDirection::kOutput;
             auto newOpcode = useAlt ? Cmd::StreamFormatOpcode::kStreamFormatSupport
                                     : Cmd::StreamFormatOpcode::kExtendedStreamFormat;
-            auto newCmd = Command<Cmd::StreamFormatSingleOperands>{
+            auto newCmd = Cmd::StreamFormatCommand{
                 .address = SubunitAddress::Unit(),
-                .operands = Cmd::StreamFormatSingleOperands{
+                .operands = Cmd::StreamFormatOperands{
                     .opcode = newOpcode,
                     .plug = Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0),
                 },
@@ -569,9 +569,9 @@ TEST(AvcDifferentialTests, RootStreamFormatCommand_SupportedListMatches) {
                 auto newDir = isInput ? Cmd::PlugDirection::kInput : Cmd::PlugDirection::kOutput;
                 auto newOpcode = useAlt ? Cmd::StreamFormatOpcode::kStreamFormatSupport
                                         : Cmd::StreamFormatOpcode::kExtendedStreamFormat;
-                auto newCmd = Command<Cmd::StreamFormatListOperands>{
+                auto newCmd = Cmd::StreamFormatCommand{
                     .address = SubunitAddress::Unit(),
-                    .operands = Cmd::StreamFormatListOperands{
+                    .operands = Cmd::StreamFormatOperands{.form = Cmd::StreamFormatSubfunction::kList,
                         .opcode = newOpcode,
                         .plug = Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0),
                         .index = idx,
@@ -619,7 +619,7 @@ TEST(AvcDifferentialTests, RootStreamFormatCommand_ResponseParsingMatches) {
 
     auto newResp = ParseResponse(duetSingleResp);
     ASSERT_TRUE(newResp.has_value());
-    auto newParsed = Cmd::StreamFormatSingleOperands::Read(newResp->operands);
+    auto newParsed = Cmd::StreamFormatOperands{}.Read(newResp->operands);
     ASSERT_TRUE(newParsed.has_value());
     EXPECT_EQ(newParsed->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
     EXPECT_EQ(newParsed->format.compound.rate, StreamFormatRate::k48000);

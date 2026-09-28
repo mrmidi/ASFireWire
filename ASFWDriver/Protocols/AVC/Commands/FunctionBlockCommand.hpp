@@ -66,21 +66,27 @@ inline constexpr uint8_t kMasterChannel = 0x00;     ///< ta1394 lib.rs:961
 inline constexpr uint8_t kBooleanTrue = 0x70;       ///< ta1394 lib.rs:815 (mute on)
 inline constexpr uint8_t kBooleanFalse = 0x60;      ///< ta1394 lib.rs:816 (mute off)
 
-/// Per-control data width table (TA 1999008 §10.3 Table 10.8).
+/// Per-control data widths from ta1394 audio/src/lib.rs:820-862;
+/// zero denotes the variable-width graphic equalizer payload.
+struct FeatureControlWidth {
+    FeatureControl control;
+    uint8_t width;
+};
+
+inline constexpr std::array<FeatureControlWidth, 12> kFeatureControlWidths{{
+    {FeatureControl::kMute, 1}, {FeatureControl::kVolume, 2},
+    {FeatureControl::kLrBalance, 2}, {FeatureControl::kFrBalance, 2},
+    {FeatureControl::kBass, 1}, {FeatureControl::kMid, 1},
+    {FeatureControl::kTreble, 1}, {FeatureControl::kGraphicEqualizer, 0},
+    {FeatureControl::kAutomaticGain, 1}, {FeatureControl::kDelay, 2},
+    {FeatureControl::kBassBoost, 1}, {FeatureControl::kLoudness, 1},
+}};
+
 [[nodiscard]] constexpr std::optional<uint8_t> FeatureControlDataWidth(FeatureControl control) noexcept {
-    switch (control) {
-        case FeatureControl::kMute: return 1;
-        case FeatureControl::kVolume: return 2;
-        case FeatureControl::kLrBalance: return 2;
-        case FeatureControl::kFrBalance: return 2;
-        case FeatureControl::kBass: return 1;
-        case FeatureControl::kMid: return 1;
-        case FeatureControl::kTreble: return 1;
-        case FeatureControl::kGraphicEqualizer: return std::nullopt;
-        case FeatureControl::kAutomaticGain: return 1;
-        case FeatureControl::kDelay: return 2;
-        case FeatureControl::kBassBoost: return 1;
-        case FeatureControl::kLoudness: return 1;
+    for (const auto& entry : kFeatureControlWidths) {
+        if (entry.control == control) {
+            return entry.width == 0 ? std::nullopt : std::optional<uint8_t>{entry.width};
+        }
     }
     return std::nullopt;
 }

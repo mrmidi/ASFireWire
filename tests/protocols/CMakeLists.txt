@@ -23,10 +23,7 @@ endmacro()
 add_protocols_test(AvcCodecTests
     AvcCodecTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/GeneralCommands.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/SignalSourceCommand.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/FunctionBlockCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
 )
 
@@ -34,10 +31,7 @@ add_protocols_test(AvcCodecTests
 add_protocols_test(AvcFixtureTests
     AvcFixtureTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/GeneralCommands.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/SignalSourceCommand.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/FunctionBlockCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
 )
 
@@ -45,10 +39,7 @@ add_protocols_test(AvcFixtureTests
 add_protocols_test(AvcDifferentialTests
     AvcDifferentialTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/GeneralCommands.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/SignalSourceCommand.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/FunctionBlockCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
@@ -64,10 +55,7 @@ add_protocols_test(AvcSimulatedUnitTests
     AvcSimulatedUnitTests.cpp
     "${ASFW_TESTS_DIR}/support/SimulatedAvcUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/GeneralCommands.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/SignalSourceCommand.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/FunctionBlockCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
 )
 
@@ -76,10 +64,7 @@ add_protocols_test(AvcGoldenTests
     AvcGoldenTests.cpp
     "${ASFW_TESTS_DIR}/support/SimulatedAvcUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/GeneralCommands.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/SignalSourceCommand.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/FunctionBlockCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"

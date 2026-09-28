@@ -6,8 +6,10 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
+#include "ASFWDriver/Protocols/AVC/Commands/FunctionBlockCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/StreamFormatCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/IAvcUnit.hpp"
+#include "ASFWDriver/Protocols/AVC/Extensions/BridgeCoPlugInfo.hpp"
 #include "RecordingFireWireBus.hpp"
 #include "SimulatedAvcUnit.hpp"
 
@@ -25,7 +27,7 @@ TEST_F(AvcSimulatedUnitTests, DuetUnitInfoDiscovery) {
     EXPECT_EQ(duetUnit_.NodeId().value, 0);
 
     std::optional<Expected<Cmd::UnitInfo>> unitInfo;
-    Send(duetUnit_, Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> res) {
+    duetUnit_.Status(Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> res) {
         unitInfo = res;
     });
 
@@ -38,7 +40,7 @@ TEST_F(AvcSimulatedUnitTests, DuetUnitInfoDiscovery) {
 
 TEST_F(AvcSimulatedUnitTests, DuetSubunitAndPlugInfo) {
     std::optional<Expected<Cmd::SubunitInfo>> subunitInfo;
-    Send(duetUnit_, Cmd::SubunitInfoCommand{.operands = Cmd::SubunitInfoOperands{.page = 0}}, [&](Expected<Cmd::SubunitInfo> res) {
+    duetUnit_.Status(Cmd::SubunitInfoCommand{.operands = Cmd::SubunitInfoOperands{.page = 0}}, [&](Expected<Cmd::SubunitInfo> res) {
         subunitInfo = res;
     });
 
@@ -48,24 +50,100 @@ TEST_F(AvcSimulatedUnitTests, DuetSubunitAndPlugInfo) {
     EXPECT_EQ((*subunitInfo)->entries[0].type, SubunitType::kAudio);
     EXPECT_EQ((*subunitInfo)->entries[1].type, SubunitType::kMusic);
 
-    std::optional<Expected<Cmd::UnitIsochronousExternalPlugs>> plugInfo;
-    Send(duetUnit_, Cmd::UnitPlugInfoIsoExtCommand{}, [&](Expected<Cmd::UnitIsochronousExternalPlugs> res) {
+    std::optional<Expected<Cmd::PlugInfoReply>> plugInfo;
+    duetUnit_.Status(Cmd::PlugInfoCommand{}, [&](Expected<Cmd::PlugInfoReply> res) {
         plugInfo = res;
     });
 
     ASSERT_TRUE(plugInfo.has_value());
     ASSERT_TRUE(plugInfo->has_value());
-    EXPECT_EQ((*plugInfo)->isochronousInputs, 1);
-    EXPECT_EQ((*plugInfo)->isochronousOutputs, 1);
+    EXPECT_EQ((*plugInfo)->unit.isochronousInputs, 1);
+    EXPECT_EQ((*plugInfo)->unit.isochronousOutputs, 1);
+}
+
+TEST_F(AvcSimulatedUnitTests, BeBoBPlugDiscoveryCalls) {
+    std::optional<Expected<Cmd::PlugInfoReply>> counts;
+    phase88Unit_.Status(Cmd::PlugInfoCommand{}, [&](Expected<Cmd::PlugInfoReply> reply) {
+        counts = reply;
+    });
+    ASSERT_TRUE(counts && counts->has_value());
+    EXPECT_EQ((*counts)->unit.isochronousInputs, 2);
+
+    std::optional<Expected<Cmd::PlugInfoReply>> asyncCounts;
+    phase88Unit_.Status(Cmd::PlugInfoCommand{
+        .operands = {.form = Cmd::PlugInfoForm::kUnitAsync},
+    }, [&](Expected<Cmd::PlugInfoReply> reply) { asyncCounts = reply; });
+    ASSERT_TRUE(asyncCounts && asyncCounts->has_value());
+    EXPECT_EQ((*asyncCounts)->asynchronous.asynchronousInputs, 0);
+
+    std::optional<Expected<Cmd::PlugInfoReply>> audioCounts;
+    phase88Unit_.Status(Cmd::PlugInfoCommand{
+        .address = kAudioSubunit0,
+        .operands = {.form = Cmd::PlugInfoForm::kSubunit},
+    }, [&](Expected<Cmd::PlugInfoReply> reply) { audioCounts = reply; });
+    ASSERT_TRUE(audioCounts && audioCounts->has_value());
+    EXPECT_EQ((*audioCounts)->subunit.destinationPlugs, 8);
+
+    // The recorded Phase 88 probe returned NOT IMPLEMENTED for this extension.
+    // Supply a BridgeCo reply to exercise the typed discovery call itself.
+    phase88Unit_.SetResponseOverride(
+        {0x01, 0xFF, 0x02, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x02},
+        {0x0C, 0xFF, 0x02, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x02, 0x08});
+    std::optional<Expected<BridgeCo::ExtendedPlugInfoReply>> channelCount;
+    phase88Unit_.Status(BridgeCo::ExtendedPlugInfoCommand{
+        .operands = {.plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kInput,
+                                                       Cmd::UnitPlugType::kPcr, 0),
+                     .type = BridgeCo::InfoType::kChannelCount},
+    }, [&](Expected<BridgeCo::ExtendedPlugInfoReply> reply) { channelCount = reply; });
+    ASSERT_TRUE(channelCount && channelCount->has_value());
+    ASSERT_TRUE((*channelCount)->AsChannelCount().has_value());
+    EXPECT_EQ(*(*channelCount)->AsChannelCount(), 8);
+}
+
+TEST_F(AvcSimulatedUnitTests, Phase88MasterVolumeControlCall) {
+    // FB1 master channel, -35 dB in signed 1/256 dB units.
+    phase88Unit_.SetResponseOverride(
+        {0x00, 0x08, 0xB8, 0x81, 0x01, 0x10, 0x02, 0x00, 0x02, 0x02, 0xDD, 0x00},
+        {0x09, 0x08, 0xB8, 0x81, 0x01, 0x10, 0x02, 0x00, 0x02, 0x02, 0xDD, 0x00});
+    std::optional<Expected<Cmd::FeatureReply>> volume;
+    phase88Unit_.Control(Cmd::FeatureCommand{
+        .address = kAudioSubunit0,
+        .operands = Cmd::FeatureOperands::Volume(1, Cmd::kMasterChannel,
+                                                 AvcVolume::FromDb(-35.0f)),
+    }, [&](Expected<Cmd::FeatureReply> reply) { volume = reply; });
+    ASSERT_TRUE(volume && volume->has_value());
+    EXPECT_EQ((*volume)->AsVolume().Raw(), AvcVolume::FromDb(-35.0f).Raw());
+}
+
+TEST_F(AvcSimulatedUnitTests, DuetPcmVendorCall) {
+    const uint8_t pcm[] = {0x50, 0x43, 0x4D, 0x15, 0x80, 0xFF};
+    std::optional<Expected<std::vector<uint8_t>>> vendorReply;
+    duetUnit_.Status(Cmd::RawVendorDependentCommand{
+        .operands = Cmd::RawVendorDependentOperands({0x00, 0x03, 0xDB}, pcm),
+    }, [&](Expected<std::vector<uint8_t>> reply) { vendorReply = reply; });
+    ASSERT_TRUE(vendorReply && vendorReply->has_value());
+    ASSERT_GE((*vendorReply)->size(), 3u);
+    EXPECT_EQ((*vendorReply)->at(0), 0x50);
+    EXPECT_EQ((*vendorReply)->at(1), 0x43);
+    EXPECT_EQ((*vendorReply)->at(2), 0x4D);
+}
+
+TEST_F(AvcSimulatedUnitTests, SignalFormatStatusCall) {
+    std::optional<Expected<Cmd::PlugSignalFormat>> format;
+    duetUnit_.Status(Cmd::PlugSignalFormatCommand{
+        .operands = {.direction = Cmd::PlugSignalDirection::kInput, .plugId = 0},
+    }, [&](Expected<Cmd::PlugSignalFormat> reply) { format = reply; });
+    ASSERT_TRUE(format && format->has_value());
+    EXPECT_EQ((*format)->fmt, Cmd::kFmtAm824);
 }
 
 TEST_F(AvcSimulatedUnitTests, Phase88StreamFormatQuery) {
     EXPECT_EQ(phase88Unit_.Guid(), 0x000AAC0300B1D1F7ULL);
 
     // Query single format for Iso In 0 via 0x2F
-    auto cmd = Command<Cmd::StreamFormatSingleOperands>{
+    auto cmd = Cmd::StreamFormatCommand{
         .address = SubunitAddress::Unit(),
-        .operands = Cmd::StreamFormatSingleOperands{
+        .operands = Cmd::StreamFormatOperands{
             .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
             .plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kInput, Cmd::UnitPlugType::kPcr, 0),
         },
@@ -79,7 +157,7 @@ TEST_F(AvcSimulatedUnitTests, Phase88StreamFormatQuery) {
 
     ASSERT_TRUE(rawResponse.has_value());
     ASSERT_TRUE(rawResponse->has_value());
-    auto singleFmt = Cmd::StreamFormatSingleOperands::Read((*rawResponse)->operands);
+    auto singleFmt = Cmd::StreamFormatOperands{}.Read((*rawResponse)->operands);
     ASSERT_TRUE(singleFmt.has_value());
     EXPECT_EQ(singleFmt->format.compound.rate, StreamFormatRate::k48000);
 }
@@ -88,7 +166,7 @@ TEST_F(AvcSimulatedUnitTests, FaultKnobs_TimeoutAndInterimAndRejections) {
     // 1. Timeout
     duetUnit_.SetTimeoutNext(true);
     bool called = false;
-    Send(duetUnit_, Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo>) {
+    duetUnit_.Status(Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo>) {
         called = true;
     });
     EXPECT_FALSE(called); // Dropped
@@ -113,7 +191,7 @@ TEST_F(AvcSimulatedUnitTests, FaultKnobs_TimeoutAndInterimAndRejections) {
     // 3. Rejection
     duetUnit_.SetRejectNext(true);
     std::optional<Expected<Cmd::UnitInfo>> rejectedResult;
-    Send(duetUnit_, Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> res) {
+    duetUnit_.Status(Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> res) {
         rejectedResult = res;
     });
     ASSERT_TRUE(rejectedResult.has_value());
@@ -124,7 +202,7 @@ TEST_F(AvcSimulatedUnitTests, FaultKnobs_TimeoutAndInterimAndRejections) {
     // 4. Not Implemented
     duetUnit_.SetNotImplementedNext(true);
     std::optional<Expected<Cmd::UnitInfo>> notImplResult;
-    Send(duetUnit_, Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> res) {
+    duetUnit_.Status(Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> res) {
         notImplResult = res;
     });
     ASSERT_TRUE(notImplResult.has_value());
@@ -135,7 +213,7 @@ TEST_F(AvcSimulatedUnitTests, FaultKnobs_TimeoutAndInterimAndRejections) {
     // 5. Bus Reset
     duetUnit_.SetBusResetNext(true);
     std::optional<Expected<Cmd::UnitInfo>> busResetResult;
-    Send(duetUnit_, Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> res) {
+    duetUnit_.Status(Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> res) {
         busResetResult = res;
     });
     ASSERT_TRUE(busResetResult.has_value());

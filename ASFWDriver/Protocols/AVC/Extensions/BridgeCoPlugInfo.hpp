@@ -18,7 +18,7 @@
 //   Cluster (section) info sends the 1-based section id at operand 7 and reads the
 //   section type at operand 8 (:228, :246). Linux zero-fills the rest (kzalloc).
 //
-// Used by BeBoB discovery (today: BeBoBPlug0StreamDiscovery). Never send to
+// Used by BeBoB discovery. Never send to
 // M-Audio special firmware (AVC_DEVICE_HAZARDS.md); the per-unit allowlist
 // enforces that in the transaction engine, not here.
 
@@ -86,7 +86,7 @@ using Cmd::PlugAddress;
 /// Channel positions: [section count] then per section [channel count]
 /// ([stream position, 1-based][location in section, 1-based])...
 /// Linux bebob_stream.c map_data_channels :254-376. Positions are returned
-/// ZERO-based, as today's ParseChannelPositionSections does (behaviour to keep).
+/// ZERO-based, matching the existing channel-position parser.
 struct ChannelPosition {
     uint8_t streamPosition{0};
     uint8_t sectionLocation{0};
@@ -110,7 +110,12 @@ struct ChannelPositions {
 
 struct ExtendedPlugInfoReply {
     InfoType type{InfoType::kPlugType};
-    std::span<const uint8_t> data{};
+    std::array<uint8_t, kMaxOperandBytes> bytes{};
+    uint16_t length{0};
+
+    [[nodiscard]] std::span<const uint8_t> Data() const noexcept {
+        return {bytes.data(), length};
+    }
 
     [[nodiscard]] Expected<PlugType> AsPlugType() const noexcept;
     [[nodiscard]] Expected<uint8_t> AsChannelCount() const noexcept;

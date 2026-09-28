@@ -9,7 +9,6 @@
 // TA 2004006 AV/C General 4.2. Fresh implementation; no reference code copied.
 //
 // Namespace ASFW::AVC is the rebuilt AV/C layer (docs/avc-rebuild). It lives
-// beside the old ASFW::Protocols::AVC code until phase 2 moves every caller.
 
 #pragma once
 
@@ -118,7 +117,7 @@ static_assert(kAudioSubunit0.Byte() == 0x08);
 static_assert(kMusicSubunit0.Byte() == 0x60);
 static_assert(kMusicSubunit0.Type() == SubunitType::kMusic && kMusicSubunit0.Id() == 0);
 
-/// Opcodes implemented by the phase-1 command codecs. Later phases add their own
+/// Opcodes implemented by the AV/C command codecs. Other command families add their own
 /// (descriptors, connections). Spec names live in the comments.
 enum class Opcode : uint8_t {
     kVendorDependent = 0x00,         ///< VENDOR-DEPENDENT; ta1394 general.rs:226

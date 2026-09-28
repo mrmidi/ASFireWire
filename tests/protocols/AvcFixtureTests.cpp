@@ -22,6 +22,14 @@
 
 namespace ASFW::AVC::Test {
 
+[[nodiscard]] static Expected<std::span<const uint8_t>> FixtureOperandsIf(
+    const Response& response, ResponseCode code) noexcept {
+    if (response.code != code) {
+        return std::unexpected(AvcError::Unexpected(response.code));
+    }
+    return response.operands;
+}
+
 // ===========================================================================
 // Phase 88 Hardware Fixture Tests
 // ===========================================================================
@@ -47,20 +55,20 @@ TEST(AvcFixtureTests, Phase88AllRecordsParseConsistently) {
         if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kImplementedStable)) {
             stableCount++;
             EXPECT_EQ(resp.code, ResponseCode::kImplementedStable) << "Record: " << rec.name;
-            auto ops = OperandsIf(resp, ResponseCode::kImplementedStable);
-            EXPECT_TRUE(ops.has_value()) << "OperandsIf failed on stable record: " << rec.name;
+            auto ops = FixtureOperandsIf(resp, ResponseCode::kImplementedStable);
+            EXPECT_TRUE(ops.has_value()) << "FixtureOperandsIf failed on stable record: " << rec.name;
         } else if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kNotImplemented)) {
             notImplementedCount++;
             EXPECT_EQ(resp.code, ResponseCode::kNotImplemented) << "Record: " << rec.name;
-            auto ops = OperandsIf(resp, ResponseCode::kImplementedStable);
-            ASSERT_FALSE(ops.has_value()) << "OperandsIf should fail on NOT_IMPLEMENTED: " << rec.name;
+            auto ops = FixtureOperandsIf(resp, ResponseCode::kImplementedStable);
+            ASSERT_FALSE(ops.has_value()) << "FixtureOperandsIf should fail on NOT_IMPLEMENTED: " << rec.name;
             EXPECT_EQ(ops.error().kind, AvcErrorKind::kUnexpectedResponse);
             EXPECT_EQ(ops.error().response, ResponseCode::kNotImplemented);
         } else if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kRejected)) {
             rejectedCount++;
             EXPECT_EQ(resp.code, ResponseCode::kRejected) << "Record: " << rec.name;
-            auto ops = OperandsIf(resp, ResponseCode::kImplementedStable);
-            ASSERT_FALSE(ops.has_value()) << "OperandsIf should fail on REJECTED: " << rec.name;
+            auto ops = FixtureOperandsIf(resp, ResponseCode::kImplementedStable);
+            ASSERT_FALSE(ops.has_value()) << "FixtureOperandsIf should fail on REJECTED: " << rec.name;
             EXPECT_EQ(ops.error().kind, AvcErrorKind::kUnexpectedResponse);
             EXPECT_EQ(ops.error().response, ResponseCode::kRejected);
         }
@@ -98,7 +106,7 @@ TEST(AvcFixtureTests, Phase88SubunitInfoParsesCorrectly) {
     auto resp1 = ParseResponse(Testing::Phase88Data::kResp_2_subunit_info_page_1);
     ASSERT_TRUE(resp1.has_value());
     EXPECT_EQ(resp1->code, ResponseCode::kNotImplemented);
-    auto ops1 = OperandsIf(*resp1, ResponseCode::kImplementedStable);
+    auto ops1 = FixtureOperandsIf(*resp1, ResponseCode::kImplementedStable);
     ASSERT_FALSE(ops1.has_value());
     EXPECT_EQ(ops1.error().kind, AvcErrorKind::kUnexpectedResponse);
     EXPECT_EQ(ops1.error().response, ResponseCode::kNotImplemented);
@@ -107,33 +115,33 @@ TEST(AvcFixtureTests, Phase88SubunitInfoParsesCorrectly) {
 TEST(AvcFixtureTests, Phase88PlugInfoParsesCorrectly) {
     auto respUnit0 = ParseResponse(Testing::Phase88Data::kResp_3_plug_info_unit_00);
     ASSERT_TRUE(respUnit0.has_value());
-    auto plugsIsoExt = Cmd::UnitPlugInfoIsoExtOperands::Read(respUnit0->operands);
+    auto plugsIsoExt = Cmd::PlugInfoOperands{}.Read(respUnit0->operands);
     ASSERT_TRUE(plugsIsoExt.has_value());
-    EXPECT_EQ(plugsIsoExt->isochronousInputs, 2);
-    EXPECT_EQ(plugsIsoExt->isochronousOutputs, 2);
-    EXPECT_EQ(plugsIsoExt->externalInputs, 8);
-    EXPECT_EQ(plugsIsoExt->externalOutputs, 7);
+    EXPECT_EQ(plugsIsoExt->unit.isochronousInputs, 2);
+    EXPECT_EQ(plugsIsoExt->unit.isochronousOutputs, 2);
+    EXPECT_EQ(plugsIsoExt->unit.externalInputs, 8);
+    EXPECT_EQ(plugsIsoExt->unit.externalOutputs, 7);
 
     auto respUnit1 = ParseResponse(Testing::Phase88Data::kResp_4_plug_info_unit_01);
     ASSERT_TRUE(respUnit1.has_value());
-    auto plugsAsync = Cmd::UnitPlugInfoAsyncOperands::Read(respUnit1->operands);
+    auto plugsAsync = Cmd::PlugInfoOperands{.form = Cmd::PlugInfoForm::kUnitAsync}.Read(respUnit1->operands);
     ASSERT_TRUE(plugsAsync.has_value());
-    EXPECT_EQ(plugsAsync->asynchronousInputs, 0);
-    EXPECT_EQ(plugsAsync->asynchronousOutputs, 0);
+    EXPECT_EQ(plugsAsync->asynchronous.asynchronousInputs, 0);
+    EXPECT_EQ(plugsAsync->asynchronous.asynchronousOutputs, 0);
 
     auto respAudio = ParseResponse(Testing::Phase88Data::kResp_5_plug_info_audio_0);
     ASSERT_TRUE(respAudio.has_value());
-    auto audioPlugs = Cmd::SubunitPlugInfoOperands::Read(respAudio->operands);
+    auto audioPlugs = Cmd::PlugInfoOperands{.form = Cmd::PlugInfoForm::kSubunit}.Read(respAudio->operands);
     ASSERT_TRUE(audioPlugs.has_value());
-    EXPECT_EQ(audioPlugs->destinationPlugs, 8);
-    EXPECT_EQ(audioPlugs->sourcePlugs, 11);
+    EXPECT_EQ(audioPlugs->subunit.destinationPlugs, 8);
+    EXPECT_EQ(audioPlugs->subunit.sourcePlugs, 11);
 
     auto respMusic = ParseResponse(Testing::Phase88Data::kResp_6_plug_info_music_0);
     ASSERT_TRUE(respMusic.has_value());
-    auto musicPlugs = Cmd::SubunitPlugInfoOperands::Read(respMusic->operands);
+    auto musicPlugs = Cmd::PlugInfoOperands{.form = Cmd::PlugInfoForm::kSubunit}.Read(respMusic->operands);
     ASSERT_TRUE(musicPlugs.has_value());
-    EXPECT_EQ(musicPlugs->destinationPlugs, 10);
-    EXPECT_EQ(musicPlugs->sourcePlugs, 6);
+    EXPECT_EQ(musicPlugs->subunit.destinationPlugs, 10);
+    EXPECT_EQ(musicPlugs->subunit.sourcePlugs, 6);
 }
 
 TEST(AvcFixtureTests, Phase88PlugSignalFormatParsesCorrectly) {
@@ -166,7 +174,7 @@ TEST(AvcFixtureTests, Phase88StreamFormatListHighLevelParsing) {
             if (idx <= 4) {
                 auto resp = ParseResponse(rec.response);
                 ASSERT_TRUE(resp.has_value());
-                auto entry = Cmd::StreamFormatListOperands::Read(resp->operands, idx);
+                auto entry = Cmd::StreamFormatOperands{.form = Cmd::StreamFormatSubfunction::kList, .index = idx}.Read(resp->operands);
                 ASSERT_TRUE(entry.has_value()) << "Failed to parse in list entry " << int(idx);
                 EXPECT_EQ(entry->index, idx);
                 EXPECT_EQ(entry->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
@@ -181,7 +189,7 @@ TEST(AvcFixtureTests, Phase88StreamFormatListHighLevelParsing) {
             if (idx <= 4) {
                 auto resp = ParseResponse(rec.response);
                 ASSERT_TRUE(resp.has_value());
-                auto entry = Cmd::StreamFormatListOperands::Read(resp->operands, idx);
+                auto entry = Cmd::StreamFormatOperands{.form = Cmd::StreamFormatSubfunction::kList, .index = idx}.Read(resp->operands);
                 ASSERT_TRUE(entry.has_value()) << "Failed to parse out list entry " << int(idx);
                 EXPECT_EQ(entry->index, idx);
                 EXPECT_EQ(entry->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
@@ -194,7 +202,7 @@ TEST(AvcFixtureTests, Phase88StreamFormatListHighLevelParsing) {
         } else if (name == "stream_format_0x2F_single_unit_iso_in_0") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto single = Cmd::StreamFormatSingleOperands::Read(resp->operands);
+            auto single = Cmd::StreamFormatOperands{}.Read(resp->operands);
             ASSERT_TRUE(single.has_value());
             EXPECT_EQ(single->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
             EXPECT_EQ(single->format.compound.rate, StreamFormatRate::k48000);
@@ -332,25 +340,25 @@ TEST(AvcFixtureTests, DuetAllRecordsParseConsistently) {
         if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kImplementedStable)) {
             stableCount++;
             EXPECT_EQ(resp.code, ResponseCode::kImplementedStable) << "Record: " << rec.name;
-            auto ops = OperandsIf(resp, ResponseCode::kImplementedStable);
-            EXPECT_TRUE(ops.has_value()) << "OperandsIf failed on stable record: " << rec.name;
+            auto ops = FixtureOperandsIf(resp, ResponseCode::kImplementedStable);
+            EXPECT_TRUE(ops.has_value()) << "FixtureOperandsIf failed on stable record: " << rec.name;
         } else if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kAccepted)) {
             acceptedCount++;
             EXPECT_EQ(resp.code, ResponseCode::kAccepted) << "Record: " << rec.name;
-            auto ops = OperandsIf(resp, ResponseCode::kAccepted);
-            EXPECT_TRUE(ops.has_value()) << "OperandsIf failed on accepted record: " << rec.name;
+            auto ops = FixtureOperandsIf(resp, ResponseCode::kAccepted);
+            EXPECT_TRUE(ops.has_value()) << "FixtureOperandsIf failed on accepted record: " << rec.name;
         } else if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kNotImplemented)) {
             notImplementedCount++;
             EXPECT_EQ(resp.code, ResponseCode::kNotImplemented) << "Record: " << rec.name;
-            auto ops = OperandsIf(resp, ResponseCode::kImplementedStable);
-            ASSERT_FALSE(ops.has_value()) << "OperandsIf should fail on NOT_IMPLEMENTED: " << rec.name;
+            auto ops = FixtureOperandsIf(resp, ResponseCode::kImplementedStable);
+            ASSERT_FALSE(ops.has_value()) << "FixtureOperandsIf should fail on NOT_IMPLEMENTED: " << rec.name;
             EXPECT_EQ(ops.error().kind, AvcErrorKind::kUnexpectedResponse);
             EXPECT_EQ(ops.error().response, ResponseCode::kNotImplemented);
         } else if (rec.responseCode == static_cast<uint8_t>(ResponseCode::kRejected)) {
             rejectedCount++;
             EXPECT_EQ(resp.code, ResponseCode::kRejected) << "Record: " << rec.name;
-            auto ops = OperandsIf(resp, ResponseCode::kImplementedStable);
-            ASSERT_FALSE(ops.has_value()) << "OperandsIf should fail on REJECTED: " << rec.name;
+            auto ops = FixtureOperandsIf(resp, ResponseCode::kImplementedStable);
+            ASSERT_FALSE(ops.has_value()) << "FixtureOperandsIf should fail on REJECTED: " << rec.name;
             EXPECT_EQ(ops.error().kind, AvcErrorKind::kUnexpectedResponse);
             EXPECT_EQ(ops.error().response, ResponseCode::kRejected);
         }
@@ -378,26 +386,26 @@ TEST(AvcFixtureTests, DuetUnitInfoParsesCorrectly) {
 TEST(AvcFixtureTests, DuetPlugInfoParsesCorrectly) {
     auto respUnit0 = ParseResponse(Testing::DuetData::kResp_3_plug_info_unit_00);
     ASSERT_TRUE(respUnit0.has_value());
-    auto plugsIsoExt = Cmd::UnitPlugInfoIsoExtOperands::Read(respUnit0->operands);
+    auto plugsIsoExt = Cmd::PlugInfoOperands{}.Read(respUnit0->operands);
     ASSERT_TRUE(plugsIsoExt.has_value());
-    EXPECT_EQ(plugsIsoExt->isochronousInputs, 1);
-    EXPECT_EQ(plugsIsoExt->isochronousOutputs, 1);
-    EXPECT_EQ(plugsIsoExt->externalInputs, 1);
-    EXPECT_EQ(plugsIsoExt->externalOutputs, 1);
+    EXPECT_EQ(plugsIsoExt->unit.isochronousInputs, 1);
+    EXPECT_EQ(plugsIsoExt->unit.isochronousOutputs, 1);
+    EXPECT_EQ(plugsIsoExt->unit.externalInputs, 1);
+    EXPECT_EQ(plugsIsoExt->unit.externalOutputs, 1);
 
     auto respAudio = ParseResponse(Testing::DuetData::kResp_5_plug_info_audio_0);
     ASSERT_TRUE(respAudio.has_value());
-    auto audioPlugs = Cmd::SubunitPlugInfoOperands::Read(respAudio->operands);
+    auto audioPlugs = Cmd::PlugInfoOperands{.form = Cmd::PlugInfoForm::kSubunit}.Read(respAudio->operands);
     ASSERT_TRUE(audioPlugs.has_value());
-    EXPECT_EQ(audioPlugs->destinationPlugs, 1);
-    EXPECT_EQ(audioPlugs->sourcePlugs, 1);
+    EXPECT_EQ(audioPlugs->subunit.destinationPlugs, 1);
+    EXPECT_EQ(audioPlugs->subunit.sourcePlugs, 1);
 
     auto respMusic = ParseResponse(Testing::DuetData::kResp_6_plug_info_music_0);
     ASSERT_TRUE(respMusic.has_value());
-    auto musicPlugs = Cmd::SubunitPlugInfoOperands::Read(respMusic->operands);
+    auto musicPlugs = Cmd::PlugInfoOperands{.form = Cmd::PlugInfoForm::kSubunit}.Read(respMusic->operands);
     ASSERT_TRUE(musicPlugs.has_value());
-    EXPECT_EQ(musicPlugs->destinationPlugs, 3);
-    EXPECT_EQ(musicPlugs->sourcePlugs, 3);
+    EXPECT_EQ(musicPlugs->subunit.destinationPlugs, 3);
+    EXPECT_EQ(musicPlugs->subunit.sourcePlugs, 3);
 }
 
 TEST(AvcFixtureTests, DuetExtendedStreamFormatParsesCorrectly) {
@@ -413,7 +421,7 @@ TEST(AvcFixtureTests, DuetExtendedStreamFormatParsesCorrectly) {
             EXPECT_EQ(resp->opcode, static_cast<Opcode>(0xBF));
             EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
 
-            auto single = Cmd::StreamFormatSingleOperands::Read(resp->operands);
+            auto single = Cmd::StreamFormatOperands{}.Read(resp->operands);
             ASSERT_TRUE(single.has_value());
             EXPECT_EQ(single->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
             EXPECT_EQ(single->format.compound.rate, StreamFormatRate::k48000);
@@ -426,7 +434,7 @@ TEST(AvcFixtureTests, DuetExtendedStreamFormatParsesCorrectly) {
             EXPECT_EQ(resp->opcode, static_cast<Opcode>(0xBF));
             EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
 
-            auto single = Cmd::StreamFormatSingleOperands::Read(resp->operands);
+            auto single = Cmd::StreamFormatOperands{}.Read(resp->operands);
             ASSERT_TRUE(single.has_value());
             EXPECT_EQ(single->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
             EXPECT_EQ(single->format.compound.rate, StreamFormatRate::k48000);

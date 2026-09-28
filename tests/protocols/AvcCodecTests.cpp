@@ -26,7 +26,6 @@
 #include "ASFWDriver/Protocols/AVC/Core/IAvcUnit.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/RateCodes.hpp"
 #include "ASFWDriver/Protocols/AVC/Extensions/BridgeCoPlugInfo.hpp"
-#include "ASFWDriver/Protocols/AVC/Extensions/VendorFrame.hpp"
 
 #include <array>
 #include <cstdint>
@@ -162,19 +161,11 @@ TEST(AvcFrameTests, ParseResponseMapsAllValidResponseCodes) {
     }
 }
 
-TEST(AvcFrameTests, OperandsIfReturnsOperandsOrUnexpected) {
-    const uint8_t stableRaw[] = {0x0C, 0xFF, 0x30, 0x11, 0x22};
-    auto stableResp = ParseResponse(stableRaw);
-    ASSERT_TRUE(stableResp.has_value());
-
-    auto operandsOk = OperandsIf(*stableResp, ResponseCode::kImplementedStable);
-    ASSERT_TRUE(operandsOk.has_value());
-    EXPECT_EQ(operandsOk->size(), 2u);
-
-    auto operandsMismatch = OperandsIf(*stableResp, ResponseCode::kAccepted);
-    ASSERT_FALSE(operandsMismatch.has_value());
-    EXPECT_EQ(operandsMismatch.error().kind, AvcErrorKind::kUnexpectedResponse);
-    EXPECT_EQ(operandsMismatch.error().response, ResponseCode::kImplementedStable);
+TEST(AvcFrameTests, EngineResponsePolicy) {
+    EXPECT_TRUE(IsResponseCodeAccepted(ResponseCode::kImplementedStable, CommandType::kStatus));
+    EXPECT_FALSE(IsResponseCodeAccepted(ResponseCode::kRejected, CommandType::kStatus));
+    EXPECT_TRUE(IsResponseCodeAccepted(ResponseCode::kAccepted, CommandType::kControl));
+    EXPECT_FALSE(IsResponseCodeAccepted(ResponseCode::kImplementedStable, CommandType::kControl));
 }
 
 // ===========================================================================
@@ -305,15 +296,15 @@ TEST(GeneralCommandsTests, ParseSubunitInfoVector) {
 }
 
 TEST(GeneralCommandsTests, PlugInfoUnitAndSubunit) {
-    Cmd::UnitPlugInfoIsoExtCommand unitCmd{};
+    Cmd::PlugInfoCommand unitCmd{};
     auto unitFrame = unitCmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(unitFrame.has_value());
     EXPECT_EQ(unitFrame->Address(), SubunitAddress::Unit());
     EXPECT_EQ(unitFrame->Operands()[0], 0x00);
 
-    Cmd::SubunitPlugInfoCommand subunitCmd{
+    Cmd::PlugInfoCommand subunitCmd{
         .address = kMusicSubunit0,
-        .operands = Cmd::SubunitPlugInfoOperands{},
+        .operands = Cmd::PlugInfoOperands{.form = Cmd::PlugInfoForm::kSubunit},
     };
     auto subunitFrame = subunitCmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(subunitFrame.has_value());
@@ -321,9 +312,9 @@ TEST(GeneralCommandsTests, PlugInfoUnitAndSubunit) {
     EXPECT_EQ(subunitFrame->Operands()[0], 0x00);
 
     // Subunit plug info on Unit address must be rejected
-    Cmd::SubunitPlugInfoCommand badSubunitCmd{
+    Cmd::PlugInfoCommand badSubunitCmd{
         .address = SubunitAddress::Unit(),
-        .operands = Cmd::SubunitPlugInfoOperands{},
+        .operands = Cmd::PlugInfoOperands{.form = Cmd::PlugInfoForm::kSubunit},
     };
     auto badSubunitFrame = badSubunitCmd.Encode(CommandType::kStatus);
     ASSERT_FALSE(badSubunitFrame.has_value());
@@ -333,12 +324,12 @@ TEST(GeneralCommandsTests, PlugInfoUnitAndSubunit) {
     const uint8_t p88Resp[] = {0x0C, 0xFF, 0x02, 0x00, 0x02, 0x02, 0x08, 0x07};
     auto r = ParseResponse(p88Resp);
     ASSERT_TRUE(r.has_value());
-    auto plugs = Cmd::UnitPlugInfoIsoExtOperands::Read(r->operands);
+    auto plugs = Cmd::PlugInfoOperands{}.Read(r->operands);
     ASSERT_TRUE(plugs.has_value());
-    EXPECT_EQ(plugs->isochronousInputs, 2);
-    EXPECT_EQ(plugs->isochronousOutputs, 2);
-    EXPECT_EQ(plugs->externalInputs, 8);
-    EXPECT_EQ(plugs->externalOutputs, 7);
+    EXPECT_EQ(plugs->unit.isochronousInputs, 2);
+    EXPECT_EQ(plugs->unit.isochronousOutputs, 2);
+    EXPECT_EQ(plugs->unit.externalInputs, 8);
+    EXPECT_EQ(plugs->unit.externalOutputs, 7);
 }
 
 TEST(GeneralCommandsTests, PlugSignalFormatBuildAndParse) {
@@ -451,7 +442,7 @@ TEST(StreamFormatTests, CompoundAm824ParseAndEncodeRoundTrip) {
     const uint8_t rawBlock[] = {
         0x90, 0x40, 0x02, 0x01, 0x03, 0x08, 0x06, 0x02, 0x00, 0x01, 0x0D
     };
-    auto parsed = Cmd::ParseStreamFormatBlock(rawBlock);
+    auto parsed = Cmd::DecodeStreamFormatBlock(rawBlock);
     ASSERT_TRUE(parsed.has_value());
     EXPECT_EQ(parsed->kind, Cmd::StreamFormat::Kind::kCompoundAm824);
     EXPECT_EQ(parsed->compound.rate, StreamFormatRate::k32000);
@@ -482,9 +473,9 @@ TEST(StreamFormatTests, BuildAndParseStreamFormatListAndSingle) {
     const auto plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kInput, Cmd::UnitPlugType::kPcr, 0);
 
     // List query STATUS frame
-    Cmd::StreamFormatListCommand listCmd{
+    Cmd::StreamFormatCommand listCmd{
         .address = SubunitAddress::Unit(),
-        .operands = Cmd::StreamFormatListOperands{
+        .operands = Cmd::StreamFormatOperands{.form = Cmd::StreamFormatSubfunction::kList,
             .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
             .plug = plug,
             .index = 0,
@@ -505,7 +496,7 @@ TEST(StreamFormatTests, BuildAndParseStreamFormatListAndSingle) {
     };
     auto resp = ParseResponse(listResp);
     ASSERT_TRUE(resp.has_value());
-    auto listEntry = Cmd::StreamFormatListOperands::Read(resp->operands, 0);
+    auto listEntry = Cmd::StreamFormatOperands{.form = Cmd::StreamFormatSubfunction::kList, .index = 0}.Read(resp->operands);
     ASSERT_TRUE(listEntry.has_value());
     EXPECT_EQ(listEntry->index, 0);
     EXPECT_EQ(listEntry->status, Cmd::SupportStatus::kNotUsed);
@@ -513,14 +504,14 @@ TEST(StreamFormatTests, BuildAndParseStreamFormatListAndSingle) {
     EXPECT_EQ(listEntry->format.compound.PcmChannels(), 10u);
 
     // Index mismatch error
-    auto listEntryMismatch = Cmd::StreamFormatListOperands::Read(resp->operands, 1);
+    auto listEntryMismatch = Cmd::StreamFormatOperands{.form = Cmd::StreamFormatSubfunction::kList, .index = 1}.Read(resp->operands);
     ASSERT_FALSE(listEntryMismatch.has_value());
     EXPECT_EQ(listEntryMismatch.error().kind, AvcErrorKind::kMalformedOperands);
 
     // Single query STATUS frame
-    Cmd::StreamFormatSingleCommand singleCmd{
+    Cmd::StreamFormatCommand singleCmd{
         .address = SubunitAddress::Unit(),
-        .operands = Cmd::StreamFormatSingleOperands{
+        .operands = Cmd::StreamFormatOperands{
             .opcode = Cmd::StreamFormatOpcode::kExtendedStreamFormat,
             .plug = plug,
         }
@@ -827,8 +818,8 @@ TEST(BridgeCoPlugInfoTests, ParseChannelPositionsMap) {
 
 static_assert(AvcCommand<Cmd::UnitInfoCommand>);
 static_assert(AvcCommand<Cmd::SubunitInfoCommand>);
-static_assert(AvcCommand<Cmd::UnitPlugInfoIsoExtCommand>);
-static_assert(AvcCommand<Cmd::SubunitPlugInfoCommand>);
+static_assert(AvcCommand<Cmd::PlugInfoCommand>);
+static_assert(AvcCommand<Cmd::PlugInfoCommand>);
 static_assert(AvcCommand<Cmd::PlugSignalFormatCommand>);
 
 class MockAvcUnit final : public IAvcUnit {
@@ -880,7 +871,7 @@ TEST(AvcUnitSeamTests, IdentityAndDispatchSuccess) {
 
     // Dispatch UnitInfoCommand via Send<Cmd>
     std::optional<Expected<Cmd::UnitInfo>> callbackResult;
-    Send(unit, Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> result) {
+    unit.Status(Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> result) {
         callbackResult = result;
     });
 
@@ -910,7 +901,7 @@ TEST(AvcUnitSeamTests, DispatchPropagatesTransportFailure) {
     MockAvcUnit unit;
     std::optional<Expected<Cmd::UnitInfo>> callbackResult;
 
-    Send(unit, Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> result) {
+    unit.Status(Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> result) {
         callbackResult = result;
     });
 
@@ -926,7 +917,7 @@ TEST(AvcUnitSeamTests, DispatchPropagatesUnexpectedResponseCode) {
     MockAvcUnit unit;
     std::optional<Expected<Cmd::UnitInfo>> callbackResult;
 
-    Send(unit, Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> result) {
+    unit.Status(Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> result) {
         callbackResult = result;
     });
 
@@ -1125,9 +1116,9 @@ TEST(AvcReshapedTests, SignalSource_SignalSourceCommand) {
 TEST(AvcReshapedTests, StreamFormat_SingleAndListCommands) {
     auto plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kInput, Cmd::UnitPlugType::kPcr, 0);
 
-    Cmd::StreamFormatSingleCommand singleCmd{
+    Cmd::StreamFormatCommand singleCmd{
         .address = SubunitAddress::Unit(),
-        .operands = Cmd::StreamFormatSingleOperands{
+        .operands = Cmd::StreamFormatOperands{
             .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
             .plug = plug,
         }
@@ -1136,9 +1127,9 @@ TEST(AvcReshapedTests, StreamFormat_SingleAndListCommands) {
     ASSERT_TRUE(sFrame.has_value());
     EXPECT_EQ(sFrame->Operands()[0], static_cast<uint8_t>(Cmd::StreamFormatSubfunction::kSingle));
 
-    Cmd::StreamFormatListCommand listCmd{
+    Cmd::StreamFormatCommand listCmd{
         .address = SubunitAddress::Unit(),
-        .operands = Cmd::StreamFormatListOperands{
+        .operands = Cmd::StreamFormatOperands{.form = Cmd::StreamFormatSubfunction::kList,
             .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
             .plug = plug,
             .index = 2,
@@ -1179,46 +1170,28 @@ TEST(AvcReshapedTests, BridgeCo_ExtendedPlugInfoCommand) {
     EXPECT_EQ(*cc, 0x08);
 }
 
-namespace {
-
-struct StandardVendorSpec {
-    static constexpr CompanyId kCompanyId = {0x00, 0x01, 0x02};
-};
-
-struct TascamSpec {
-    static constexpr CompanyId kCompanyId = {0x00, 0x02, 0x2E};
-    static constexpr bool kEchoesCompanyId = false;
-};
-
-} // namespace
-
-TEST(AvcReshapedTests, VendorFrame_GenericAndQuirks) {
+TEST(AvcReshapedTests, VendorDependentOwnsPayloadAndDecodesReply) {
     const uint8_t payload[] = {0x10, 0x20, 0x30};
-    auto frame = Extensions::VendorFrame<StandardVendorSpec>::Build(
-        CommandType::kControl, SubunitAddress::Unit(), payload);
+    Cmd::RawVendorDependentCommand command{
+        .operands = Cmd::RawVendorDependentOperands({0x00, 0x01, 0x02}, payload),
+    };
+    auto frame = command.Encode(CommandType::kControl);
     ASSERT_TRUE(frame.has_value());
     EXPECT_EQ(frame->Operands()[0], 0x00);
     EXPECT_EQ(frame->Operands()[1], 0x01);
     EXPECT_EQ(frame->Operands()[2], 0x02);
     EXPECT_EQ(frame->Operands()[3], 0x10);
 
-    // Standard vendor: matching company ID succeeds
     const uint8_t validReply[] = {0x00, 0x01, 0x02, 0x55, 0x66};
-    auto parsed = Extensions::VendorFrame<StandardVendorSpec>::Parse(validReply);
+    auto parsed = command.Decode(validReply);
     ASSERT_TRUE(parsed.has_value());
     ASSERT_EQ(parsed->size(), 2u);
     EXPECT_EQ((*parsed)[0], 0x55);
 
-    // Standard vendor: wrong company ID fails
-    const uint8_t wrongOuiReply[] = {0xFF, 0xEE, 0xDD, 0x55, 0x66};
-    auto wrongParsed = Extensions::VendorFrame<StandardVendorSpec>::Parse(wrongOuiReply);
-    ASSERT_FALSE(wrongParsed.has_value());
-    EXPECT_EQ(wrongParsed.error().kind, AvcErrorKind::kMalformedOperands);
-
-    // TASCAM quirk: echoes FF FF FF, Spec declares kEchoesCompanyId = false
-    auto tascamParsed = Extensions::VendorFrame<TascamSpec>::Parse(wrongOuiReply);
+    // TASCAM replies with FF FF FF rather than its own company ID.
+    const uint8_t tascamReply[] = {0xFF, 0xFF, 0xFF, 0x55, 0x66};
+    auto tascamParsed = command.Decode(tascamReply);
     ASSERT_TRUE(tascamParsed.has_value());
-    ASSERT_EQ(tascamParsed->size(), 2u);
     EXPECT_EQ((*tascamParsed)[0], 0x55);
 }
 
@@ -1281,12 +1254,12 @@ TEST(AvcReshapedTests, CtypeRejectionOnOperands) {
     EXPECT_EQ(subunitInfo.Write(w2, CommandType::kControl).error().kind, AvcErrorKind::kInvalidArgument);
 
     // PlugInfo rejects kControl
-    Cmd::UnitPlugInfoIsoExtOperands plugInfo{};
+    Cmd::PlugInfoOperands plugInfo{};
     Cmd::OperandWriter w3;
     EXPECT_EQ(plugInfo.Write(w3, CommandType::kControl).error().kind, AvcErrorKind::kInvalidArgument);
 
     // StreamFormatList rejects kControl
-    Cmd::StreamFormatListOperands sfList{};
+    Cmd::StreamFormatOperands sfList{.form = Cmd::StreamFormatSubfunction::kList};
     Cmd::OperandWriter w4;
     EXPECT_EQ(sfList.Write(w4, CommandType::kControl).error().kind, AvcErrorKind::kInvalidArgument);
 

@@ -68,17 +68,19 @@ Expected<PlugAddress> PlugAddress::Decode(std::span<const uint8_t> raw) noexcept
 // Format Block Parsing & Encoding
 // ---------------------------------------------------------------------------
 
-Expected<StreamFormat> ParseStreamFormatBlock(std::span<const uint8_t> block) noexcept {
+Expected<StreamFormat> DecodeStreamFormatBlock(std::span<const uint8_t> block) noexcept {
     if (block.empty()) {
         return FailAt(AvcErrorKind::kOperandsTooShort, 0);
     }
 
     if (block[0] != kFormatRootAm || block.size() < 2 || block[1] != kFormatLevel1CompoundAm824) {
-        return StreamFormat{
-            .kind = StreamFormat::Kind::kOther,
-            .compound = {},
-            .raw = block,
-        };
+        StreamFormat format{.kind = StreamFormat::Kind::kOther};
+        if (block.size() > format.rawBytes.size()) {
+            return Fail(AvcErrorKind::kFrameTooLong);
+        }
+        format.rawLength = static_cast<uint16_t>(block.size());
+        std::copy(block.begin(), block.end(), format.rawBytes.begin());
+        return format;
     }
 
     // Compound AM824: [90][40][rate][flags][entry count][count, format]...
@@ -109,11 +111,13 @@ Expected<StreamFormat> ParseStreamFormatBlock(std::span<const uint8_t> block) no
         };
     }
 
-    return StreamFormat{
+    StreamFormat format{
         .kind = StreamFormat::Kind::kCompoundAm824,
         .compound = compound,
-        .raw = block.subspan(0, requiredSize),
     };
+    format.rawLength = static_cast<uint16_t>(requiredSize);
+    std::copy_n(block.begin(), requiredSize, format.rawBytes.begin());
+    return format;
 }
 
 Expected<size_t> EncodeCompoundAm824(const CompoundAm824& format, std::span<uint8_t> out) noexcept {
@@ -146,129 +150,64 @@ Expected<size_t> EncodeCompoundAm824(const CompoundAm824& format, std::span<uint
 }
 
 // ---------------------------------------------------------------------------
-// StreamFormatSingleOperands
+// StreamFormatOperands
 // ---------------------------------------------------------------------------
 
-Expected<void> StreamFormatSingleOperands::Write(OperandWriter& w, CommandType t) const noexcept {
-    if (t == CommandType::kControl) {
-        if (!controlFormat.has_value()) {
-            return Fail(AvcErrorKind::kInvalidArgument);
-        }
-        auto r1 = w.Append(static_cast<uint8_t>(StreamFormatSubfunction::kSingle));
-        if (!r1) return r1;
-        auto plugBytes = plug.Encode();
-        auto r2 = w.Append(plugBytes);
-        if (!r2) return r2;
-        auto r3 = w.Append(static_cast<uint8_t>(SupportStatus::kNotUsed));
-        if (!r3) return r3;
-
-        std::array<uint8_t, 5 + 2 * kMaxCompoundEntries> buf{};
-        auto encRes = EncodeCompoundAm824(*controlFormat, buf);
-        if (!encRes) {
-            return std::unexpected(encRes.error());
-        }
-        return w.Append(std::span<const uint8_t>{buf.data(), *encRes});
-    }
-
-    if (t == CommandType::kStatus) {
-        auto r1 = w.Append(static_cast<uint8_t>(StreamFormatSubfunction::kSingle));
-        if (!r1) return r1;
-        auto plugBytes = plug.Encode();
-        auto r2 = w.Append(plugBytes);
-        if (!r2) return r2;
-        return w.Append(static_cast<uint8_t>(SupportStatus::kNotUsed));
-    }
-
-    return Fail(AvcErrorKind::kInvalidArgument);
-}
-
-Expected<StreamFormatSingle> StreamFormatSingleOperands::Read(std::span<const uint8_t> in) noexcept {
-    if (in.size() < 7) {
-        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
-    }
-    if (in[0] != static_cast<uint8_t>(StreamFormatSubfunction::kSingle)) {
-        return FailAt(AvcErrorKind::kMalformedOperands, 0);
-    }
-
-    auto plugRes = PlugAddress::Decode(in.subspan(1, 5));
-    if (!plugRes) {
-        return std::unexpected(plugRes.error());
-    }
-
-    StreamFormat format{};
-    if (in.size() > 7) {
-        auto formatRes = ParseStreamFormatBlock(in.subspan(7));
-        if (!formatRes) {
-            return std::unexpected(formatRes.error());
-        }
-        format = *formatRes;
-    }
-
-    return StreamFormatSingle{
-        .plug = *plugRes,
-        .status = static_cast<SupportStatus>(in[6]),
-        .format = format,
-    };
-}
-
-// ---------------------------------------------------------------------------
-// StreamFormatListOperands
-// ---------------------------------------------------------------------------
-
-Expected<void> StreamFormatListOperands::Write(OperandWriter& w, CommandType t) const noexcept {
-    if (t != CommandType::kStatus) {
+Expected<void> StreamFormatOperands::Write(OperandWriter& w, CommandType t) const noexcept {
+    if (form == StreamFormatSubfunction::kList && t != CommandType::kStatus) {
         return Fail(AvcErrorKind::kInvalidArgument);
     }
-    auto r1 = w.Append(static_cast<uint8_t>(StreamFormatSubfunction::kList));
+    if (t != CommandType::kStatus && t != CommandType::kControl) {
+        return Fail(AvcErrorKind::kInvalidArgument);
+    }
+    if (t == CommandType::kControl && !controlFormat.has_value()) {
+        return Fail(AvcErrorKind::kInvalidArgument);
+    }
+    auto r1 = w.Append(static_cast<uint8_t>(form));
     if (!r1) return r1;
     auto plugBytes = plug.Encode();
     auto r2 = w.Append(plugBytes);
     if (!r2) return r2;
     auto r3 = w.Append(static_cast<uint8_t>(SupportStatus::kNotUsed));
     if (!r3) return r3;
-    return w.Append(index);
+
+    if (form == StreamFormatSubfunction::kList) {
+        return w.Append(index);
+    }
+    if (t == CommandType::kControl) {
+        std::array<uint8_t, 5 + 2 * kMaxCompoundEntries> buf{};
+        auto encoded = EncodeCompoundAm824(*controlFormat, buf);
+        if (!encoded) return std::unexpected(encoded.error());
+        return w.Append(std::span<const uint8_t>{buf.data(), *encoded});
+    }
+    return {};
 }
 
-Expected<StreamFormatListEntry> StreamFormatListOperands::Read(std::span<const uint8_t> in) noexcept {
-    if (in.size() < 8) {
+Expected<StreamFormatReply> StreamFormatOperands::Read(std::span<const uint8_t> in) const noexcept {
+    const size_t minimum = form == StreamFormatSubfunction::kList ? 8 : 7;
+    if (in.size() < minimum) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
     }
-    return Read(in, in[7]);
-}
-
-Expected<StreamFormatListEntry> StreamFormatListOperands::Read(std::span<const uint8_t> in,
-                                                              uint8_t requestedIndex) noexcept {
-    if (in.size() < 8) {
-        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
-    }
-    if (in[0] != static_cast<uint8_t>(StreamFormatSubfunction::kList)) {
+    if (in[0] != static_cast<uint8_t>(form)) {
         return FailAt(AvcErrorKind::kMalformedOperands, 0);
     }
-
-    auto plugRes = PlugAddress::Decode(in.subspan(1, 5));
-    if (!plugRes) {
-        return std::unexpected(plugRes.error());
-    }
-
-    if (in[7] != requestedIndex) {
+    auto plugResult = PlugAddress::Decode(in.subspan(1, 5));
+    if (!plugResult) return std::unexpected(plugResult.error());
+    if (form == StreamFormatSubfunction::kList && in[7] != index) {
         return FailAt(AvcErrorKind::kMalformedOperands, 7);
     }
-
-    StreamFormat format{};
-    if (in.size() > 8) {
-        auto formatRes = ParseStreamFormatBlock(in.subspan(8));
-        if (!formatRes) {
-            return std::unexpected(formatRes.error());
-        }
-        format = *formatRes;
-    }
-
-    return StreamFormatListEntry{
-        .plug = *plugRes,
+    StreamFormatReply reply{
+        .form = form,
+        .plug = *plugResult,
         .status = static_cast<SupportStatus>(in[6]),
-        .index = in[7],
-        .format = format,
+        .index = form == StreamFormatSubfunction::kList ? in[7] : uint8_t{0},
     };
+    if (in.size() > minimum) {
+        auto formatResult = DecodeStreamFormatBlock(in.subspan(minimum));
+        if (!formatResult) return std::unexpected(formatResult.error());
+        reply.format = *formatResult;
+    }
+    return reply;
 }
 
 } // namespace ASFW::AVC::Cmd

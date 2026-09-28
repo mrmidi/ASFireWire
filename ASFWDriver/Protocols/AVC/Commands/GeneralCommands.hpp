@@ -6,12 +6,6 @@
 //
 // Layouts: Linux ta1394 general/src/general.rs (MIT); TA 2004006 AV/C General 4.2.
 //
-// Pattern (Phase 2b redo):
-// - Every command is Command<Op> where Op satisfies AvcOperands.
-// - Op owns its bytes (no std::span members in queued types).
-// - Addressing rules (e.g. kRequiresUnitAddress) are compile-time traits.
-// - ctype is validated inside Write(w, ctype).
-// - Codecs decode operands only; response code validation is performed by the engine.
 
 #pragma once
 
@@ -162,112 +156,87 @@ using SubunitInfoCommand = Command<SubunitInfoOperands>;
 //   Subunit, subfunction 0x00: [1]=destination plugs, [2]=source plugs.
 // ---------------------------------------------------------------------------
 
-struct UnitIsochronousExternalPlugs {
+/// Counts returned by unit PLUG INFO subfunction 0x00. The unit model may own this value.
+struct UnitPlugCounts {
     uint8_t isochronousInputs{0};
     uint8_t isochronousOutputs{0};
     uint8_t externalInputs{0};
     uint8_t externalOutputs{0};
 };
 
-struct UnitAsynchronousPlugs {
+/// Counts returned by unit PLUG INFO subfunction 0x01.
+struct UnitAsyncPlugCounts {
     uint8_t asynchronousInputs{0};
     uint8_t asynchronousOutputs{0};
 };
 
-struct SubunitPlugs {
+/// Counts returned by subunit PLUG INFO subfunction 0x00.
+struct SubunitPlugCounts {
     uint8_t destinationPlugs{0};
     uint8_t sourcePlugs{0};
 };
 
-struct UnitPlugInfoIsoExtOperands {
-    static constexpr Opcode kOpcode = Opcode::kPlugInfo;
-    static constexpr bool kRequiresUnitAddress = true;
+enum class PlugInfoForm : uint8_t {
+    kUnitIsoExternal,
+    kUnitAsync,
+    kSubunit,
+};
 
-    using Reply = UnitIsochronousExternalPlugs;
+struct PlugInfoReply {
+    PlugInfoForm form{PlugInfoForm::kUnitIsoExternal};
+    UnitPlugCounts unit{};
+    UnitAsyncPlugCounts asynchronous{};
+    SubunitPlugCounts subunit{};
+};
+
+struct PlugInfoOperands {
+    static constexpr Opcode kOpcode = Opcode::kPlugInfo;
+
+    PlugInfoForm form{PlugInfoForm::kUnitIsoExternal};
+    using Reply = PlugInfoReply;
+
+    [[nodiscard]] constexpr Expected<void> ValidateAddress(SubunitAddress address) const noexcept {
+        if ((form == PlugInfoForm::kSubunit) == address.IsUnit()) {
+            return Fail(AvcErrorKind::kInvalidArgument);
+        }
+        return {};
+    }
 
     [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept {
         if (t != CommandType::kStatus) {
             return Fail(AvcErrorKind::kInvalidArgument);
         }
-        constexpr std::array<uint8_t, 5> ops = {0x00, 0xFF, 0xFF, 0xFF, 0xFF};
+        const uint8_t subfunction = form == PlugInfoForm::kUnitAsync ? 0x01 : 0x00;
+        const std::array<uint8_t, 5> ops = {subfunction, 0xFF, 0xFF, 0xFF, 0xFF};
         return w.Append(ops);
     }
 
-    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept {
-        if (in.size() < 5) {
+    [[nodiscard]] Expected<Reply> Read(std::span<const uint8_t> in) const noexcept {
+        const uint8_t subfunction = form == PlugInfoForm::kUnitAsync ? 0x01 : 0x00;
+        const size_t minimum = form == PlugInfoForm::kUnitIsoExternal ? 5 : 3;
+        if (in.size() < minimum) {
             return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
         }
-        if (in[0] != 0x00) {
+        if (in[0] != subfunction) {
             return FailAt(AvcErrorKind::kMalformedOperands, 0);
         }
-        return UnitIsochronousExternalPlugs{
-            .isochronousInputs = in[1],
-            .isochronousOutputs = in[2],
-            .externalInputs = in[3],
-            .externalOutputs = in[4],
-        };
+        Reply reply{.form = form};
+        switch (form) {
+            case PlugInfoForm::kUnitIsoExternal:
+                reply.unit = UnitPlugCounts{in[1], in[2], in[3], in[4]};
+                break;
+            case PlugInfoForm::kUnitAsync:
+                reply.asynchronous = UnitAsyncPlugCounts{in[1], in[2]};
+                break;
+            case PlugInfoForm::kSubunit:
+                reply.subunit = SubunitPlugCounts{in[1], in[2]};
+                break;
+        }
+        return reply;
     }
 };
 
-struct UnitPlugInfoAsyncOperands {
-    static constexpr Opcode kOpcode = Opcode::kPlugInfo;
-    static constexpr bool kRequiresUnitAddress = true;
-
-    using Reply = UnitAsynchronousPlugs;
-
-    [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept {
-        if (t != CommandType::kStatus) {
-            return Fail(AvcErrorKind::kInvalidArgument);
-        }
-        constexpr std::array<uint8_t, 5> ops = {0x01, 0xFF, 0xFF, 0xFF, 0xFF};
-        return w.Append(ops);
-    }
-
-    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept {
-        if (in.size() < 3) {
-            return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
-        }
-        if (in[0] != 0x01) {
-            return FailAt(AvcErrorKind::kMalformedOperands, 0);
-        }
-        return UnitAsynchronousPlugs{
-            .asynchronousInputs = in[1],
-            .asynchronousOutputs = in[2],
-        };
-    }
-};
-
-struct SubunitPlugInfoOperands {
-    static constexpr Opcode kOpcode = Opcode::kPlugInfo;
-    static constexpr bool kRequiresSubunitAddress = true;
-
-    using Reply = SubunitPlugs;
-
-    [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept {
-        if (t != CommandType::kStatus) {
-            return Fail(AvcErrorKind::kInvalidArgument);
-        }
-        constexpr std::array<uint8_t, 5> ops = {0x00, 0xFF, 0xFF, 0xFF, 0xFF};
-        return w.Append(ops);
-    }
-
-    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept {
-        if (in.size() < 3) {
-            return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
-        }
-        if (in[0] != 0x00) {
-            return FailAt(AvcErrorKind::kMalformedOperands, 0);
-        }
-        return SubunitPlugs{
-            .destinationPlugs = in[1],
-            .sourcePlugs = in[2],
-        };
-    }
-};
-
-using UnitPlugInfoIsoExtCommand = Command<UnitPlugInfoIsoExtOperands>;
-using UnitPlugInfoAsyncCommand = Command<UnitPlugInfoAsyncOperands>;
-using SubunitPlugInfoCommand = Command<SubunitPlugInfoOperands>;
+using PlugInfoCommand = Command<PlugInfoOperands>;
 
 // ---------------------------------------------------------------------------
 // INPUT (0x19) / OUTPUT (0x18) PLUG SIGNAL FORMAT. Unit address only.
@@ -366,80 +335,7 @@ using PlugSignalFormatCommand = Command<PlugSignalFormatOperands>;
 // VENDOR-DEPENDENT (0x00)
 // ---------------------------------------------------------------------------
 
-template <typename Payload>
-struct VendorDependentOperands {
-    static constexpr Opcode kOpcode = Opcode::kVendorDependent;
-
-    Payload payload{};
-
-    using Reply = typename Payload::Reply;
-
-    [[nodiscard]] static constexpr bool AcceptsResponseCode(ResponseCode code, CommandType ctype) noexcept {
-        if constexpr (requires { { Payload::AcceptsResponseCode(code, ctype) } -> std::convertible_to<bool>; }) {
-            return Payload::AcceptsResponseCode(code, ctype);
-        } else {
-            return (ctype == CommandType::kControl)
-                ? (code == ResponseCode::kAccepted)
-                : (code == ResponseCode::kImplementedStable);
-        }
-    }
-
-    [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept {
-        const CompanyId cid = Payload::kCompanyId;
-        auto res = w.Append(cid);
-        if (!res) return res;
-        return payload.WritePayload(w, t);
-    }
-
-    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept {
-        if (in.size() < 3) {
-            return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
-        }
-        const CompanyId echoed = {in[0], in[1], in[2]};
-        constexpr bool checkEcho = [] {
-            if constexpr (requires { { Payload::kEchoesCompanyId } -> std::convertible_to<bool>; }) {
-                return Payload::kEchoesCompanyId;
-            } else {
-                return true;
-            }
-        }();
-        if constexpr (checkEcho) {
-            if (echoed != Payload::kCompanyId) {
-                return FailAt(AvcErrorKind::kMalformedOperands, 0);
-            }
-        }
-        return Payload::ReadPayload(in.subspan(3));
-    }
-};
-
-template <typename Payload>
-using VendorDependentCommand = Command<VendorDependentOperands<Payload>>;
-
-/// Fixed-capacity raw vendor payload for raw FCP commands and tests.
-/// Owns its payload bytes (no std::span).
-struct RawVendorPayload {
-    CompanyId companyId{0xFF, 0xFF, 0xFF};
-    std::array<uint8_t, 256> bytes{};
-    uint16_t length{0};
-
-    using Reply = std::vector<uint8_t>;
-
-    RawVendorPayload() = default;
-    RawVendorPayload(CompanyId cid, std::span<const uint8_t> data) noexcept
-        : companyId(cid) {
-        length = static_cast<uint16_t>(std::min(data.size(), bytes.size()));
-        std::copy_n(data.begin(), length, bytes.begin());
-    }
-
-    [[nodiscard]] Expected<void> WritePayload(OperandWriter& w, CommandType /*t*/) const noexcept {
-        return w.Append(std::span<const uint8_t>{bytes.data(), length});
-    }
-
-    [[nodiscard]] static Expected<Reply> ReadPayload(std::span<const uint8_t> in) noexcept {
-        return std::vector<uint8_t>(in.begin(), in.end());
-    }
-};
-
+/// Owned VENDOR-DEPENDENT operands; the company ID and payload are supplied by the caller.
 struct RawVendorDependentOperands {
     static constexpr Opcode kOpcode = Opcode::kVendorDependent;
 

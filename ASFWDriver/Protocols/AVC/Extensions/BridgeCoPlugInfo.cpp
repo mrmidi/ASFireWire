@@ -26,6 +26,7 @@ namespace ASFW::AVC::BridgeCo {
 // ---------------------------------------------------------------------------
 
 Expected<PlugType> ExtendedPlugInfoReply::AsPlugType() const noexcept {
+    const auto data = Data();
     if (type != InfoType::kPlugType) {
         return FailAt(AvcErrorKind::kMalformedOperands, 6);
     }
@@ -36,6 +37,7 @@ Expected<PlugType> ExtendedPlugInfoReply::AsPlugType() const noexcept {
 }
 
 Expected<uint8_t> ExtendedPlugInfoReply::AsChannelCount() const noexcept {
+    const auto data = Data();
     if (type != InfoType::kChannelCount) {
         return FailAt(AvcErrorKind::kMalformedOperands, 6);
     }
@@ -46,6 +48,7 @@ Expected<uint8_t> ExtendedPlugInfoReply::AsChannelCount() const noexcept {
 }
 
 Expected<ChannelPositions> ExtendedPlugInfoReply::AsChannelPositions() const noexcept {
+    const auto data = Data();
     if (type != InfoType::kChannelPositions) {
         return FailAt(AvcErrorKind::kMalformedOperands, 6);
     }
@@ -91,6 +94,7 @@ Expected<ChannelPositions> ExtendedPlugInfoReply::AsChannelPositions() const noe
 }
 
 Expected<PortType> ExtendedPlugInfoReply::AsClusterPortType(uint8_t requestedSectionId) const noexcept {
+    const auto data = Data();
     if (type != InfoType::kClusterInfo) {
         return FailAt(AvcErrorKind::kMalformedOperands, 6);
     }
@@ -136,10 +140,14 @@ Expected<ExtendedPlugInfoReply> ExtendedPlugInfoOperands::Read(std::span<const u
     if (in[0] != kExtendedPlugInfoSubfunction) {
         return FailAt(AvcErrorKind::kMalformedOperands, 0);
     }
-    return ExtendedPlugInfoReply{
-        .type = static_cast<InfoType>(in[6]),
-        .data = in.subspan(7),
-    };
+    ExtendedPlugInfoReply reply{.type = static_cast<InfoType>(in[6])};
+    const auto payload = in.subspan(7);
+    if (payload.size() > reply.bytes.size()) {
+        return Fail(AvcErrorKind::kFrameTooLong);
+    }
+    reply.length = static_cast<uint16_t>(payload.size());
+    std::copy(payload.begin(), payload.end(), reply.bytes.begin());
+    return reply;
 }
 
 Expected<ExtendedPlugInfoReply> ExtendedPlugInfoOperands::Read(std::span<const uint8_t> in,

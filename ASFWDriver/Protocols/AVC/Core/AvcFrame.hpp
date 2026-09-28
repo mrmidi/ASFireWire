@@ -10,7 +10,6 @@
 // Pure codec: no transport, no allocation, no logging. Every function is
 // noexcept and reports failure through Expected<T>.
 //
-// Implementation: AvcFrame.cpp (phase 1, docs/avc-rebuild/phase-1.md).
 
 #pragma once
 
@@ -48,7 +47,7 @@ public:
     }
 
     /// Bytes() zero-padded to a quadlet boundary: what the transport writes to
-    /// the FCP command register. Matches today's AVCCdb::Encode (hardware-proven
+    /// the FCP command register. Matches legacy AVCCdb::Encode (hardware-proven
     /// on Phase 88 and Duet). Linux fcp.c:250-253 writes exactly what callers pass,
     /// and its callers size buffers in whole quadlets.
     [[nodiscard]] std::span<const uint8_t> WireBytes() const noexcept {
@@ -83,16 +82,5 @@ struct Response {
 /// (ta1394 lib.rs:488-501). kAddressMismatch / kOpcodeMismatch otherwise.
 [[nodiscard]] Expected<Response> ParseResponseFor(const CommandFrame& command,
                                                   std::span<const uint8_t> frame) noexcept;
-
-/// The operands of `response` if its code is `expected`; otherwise
-/// AvcError::Unexpected(response.code). The helper every command parser starts with:
-/// STATUS expects kImplementedStable, CONTROL expects kAccepted.
-[[nodiscard]] constexpr Expected<std::span<const uint8_t>> OperandsIf(const Response& response,
-                                                                      ResponseCode expected) noexcept {
-    if (response.code != expected) {
-        return std::unexpected(AvcError::Unexpected(response.code));
-    }
-    return response.operands;
-}
 
 } // namespace ASFW::AVC

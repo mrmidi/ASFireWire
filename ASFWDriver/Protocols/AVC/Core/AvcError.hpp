@@ -5,7 +5,7 @@
 //
 // Codec functions return Expected<T>. The error says what went wrong at the
 // codec level; it is NOT an IOReturn. Mapping to IOReturn happens once, at the
-// transaction-engine boundary (phase 3), so every caller sees the same mapping.
+// transaction-engine boundary, so every caller sees the same mapping.
 
 #pragma once
 

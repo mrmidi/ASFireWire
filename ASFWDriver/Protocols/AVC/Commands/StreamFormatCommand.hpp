@@ -9,8 +9,7 @@
 //   Phase 88 (BridgeCo) answers 0x2F only; 0xBF gives NOT IMPLEMENTED (MCP, 2026-09-27).
 //   Oxford devices answer 0xBF (Linux oxfw-command.c:22).
 //   Apple AppleFWAudio tries 0xBF then 0x2F on every call; AVCVideoServices
-//   MusicSubunitController.cpp:1785-1788 remembers the fallback. The policy lives
-//   in the transaction engine (phase 3), not here.
+//   MusicSubunitController.cpp:1785-1788 remembers the fallback. The transaction engine chooses the opcode from per-unit evidence.
 //
 // Layouts: ta1394 stream-format/src/lib.rs (MIT), cited per item; Linux
 // bebob_command.c:289-331 (0x2F list, BridgeCo). Fresh clean-room implementation.
@@ -233,83 +232,71 @@ struct CompoundAm824 {
     }
 };
 
-/// A parsed format block. `raw` is a VIEW of the whole block as received (valid
-/// while the response buffer lives); `compound` is filled only for kCompoundAm824.
+/// A parsed format block. Raw bytes are owned so the reply can outlive the FCP buffer.
+/// `compound` is filled only for kCompoundAm824.
 struct StreamFormat {
     enum class Kind : uint8_t { kCompoundAm824, kOther };
     Kind kind{Kind::kOther};
     CompoundAm824 compound{};
-    std::span<const uint8_t> raw{};
+    std::array<uint8_t, kMaxOperandBytes> rawBytes{};
+    uint16_t rawLength{0};
+
+    [[nodiscard]] std::span<const uint8_t> Raw() const noexcept {
+        return {rawBytes.data(), rawLength};
+    }
 };
 
 /// Parse a format block (starting at the 0x90 root). Anything that is not a
 /// compound AM824 block is Kind::kOther with `raw` set, not an error. Errors:
 /// kOperandsTooShort, kMalformedOperands (entry count disagrees with the bytes),
 /// kUnsupported (more than kMaxCompoundEntries).
-[[nodiscard]] Expected<StreamFormat> ParseStreamFormatBlock(std::span<const uint8_t> block) noexcept;
+[[nodiscard]] Expected<StreamFormat> DecodeStreamFormatBlock(std::span<const uint8_t> block) noexcept;
 
 /// Encode a compound AM824 block into `out`; returns the byte count
 /// (5 + 2 * entryCount). kFrameTooLong when `out` is too small.
 [[nodiscard]] Expected<size_t> EncodeCompoundAm824(const CompoundAm824& format, std::span<uint8_t> out) noexcept;
 
 // ---------------------------------------------------------------------------
-// Single and List Reply Types
+// STREAM FORMAT SUPPORT and EXTENDED STREAM FORMAT INFORMATION
 // ---------------------------------------------------------------------------
 
-struct StreamFormatSingle {
-    PlugAddress plug{};
-    SupportStatus status{SupportStatus::kNotUsed};
-    StreamFormat format{};
-};
-
-struct StreamFormatListEntry {
+struct StreamFormatReply {
+    StreamFormatSubfunction form{StreamFormatSubfunction::kSingle};
     PlugAddress plug{};
     SupportStatus status{SupportStatus::kNotUsed};
     uint8_t index{0};
     StreamFormat format{};
 };
 
-// ===========================================================================
-// Stream Format Operands (AvcOperands)
-// ===========================================================================
-
-struct StreamFormatSingleOperands {
+struct StreamFormatOperands {
     static constexpr Opcode kOpcode = Opcode::kStreamFormatSupport;
 
+    StreamFormatSubfunction form{StreamFormatSubfunction::kSingle};
     StreamFormatOpcode opcode{StreamFormatOpcode::kStreamFormatSupport};
     PlugAddress plug{};
+    uint8_t index{0};
     std::optional<CompoundAm824> controlFormat{std::nullopt};
 
-    using Reply = StreamFormatSingle;
+    using Reply = StreamFormatReply;
 
     [[nodiscard]] constexpr Opcode GetOpcode() const noexcept {
         return static_cast<Opcode>(opcode);
     }
 
-    [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept;
-    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept;
-};
-
-using StreamFormatSingleCommand = Command<StreamFormatSingleOperands>;
-
-struct StreamFormatListOperands {
-    static constexpr Opcode kOpcode = Opcode::kStreamFormatSupport;
-
-    StreamFormatOpcode opcode{StreamFormatOpcode::kStreamFormatSupport};
-    PlugAddress plug{};
-    uint8_t index{0};
-
-    using Reply = StreamFormatListEntry;
-
-    [[nodiscard]] constexpr Opcode GetOpcode() const noexcept {
-        return static_cast<Opcode>(opcode);
+    [[nodiscard]] constexpr Expected<void> ValidateAddress(SubunitAddress address) const noexcept {
+        if (plug.mode == PlugAddressMode::kUnit && !address.IsUnit()) {
+            return Fail(AvcErrorKind::kInvalidArgument);
+        }
+        if (plug.mode == PlugAddressMode::kSubunit && address.IsUnit()) {
+            return Fail(AvcErrorKind::kInvalidArgument);
+        }
+        return {};
     }
 
     [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept;
-    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept;
-    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in, uint8_t requestedIndex) noexcept;
+    [[nodiscard]] Expected<Reply> Read(std::span<const uint8_t> in) const noexcept;
 };
 
-using StreamFormatListCommand = Command<StreamFormatListOperands>;
+using StreamFormatCommand = Command<StreamFormatOperands>;
 
 } // namespace ASFW::AVC::Cmd
