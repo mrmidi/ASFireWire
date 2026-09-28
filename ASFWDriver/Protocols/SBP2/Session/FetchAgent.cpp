@@ -344,24 +344,23 @@ void FetchAgent::ResetNoWait(std::function<void()> onComplete) noexcept {
     // Fire-and-forget quadlet to AGENT_RESET — no ORB-tracking teardown, so a
     // command completing right now (and the next one submitted from its
     // completion) is untouched. Mirrors Linux sbp2_agent_reset_no_wait.
-    auto onCompletePtr = std::make_shared<std::function<void()>>(std::move(onComplete));
     const auto handle = bus_.WriteQuad(
         FW::Generation{binding_.generation},
         FW::NodeId{static_cast<uint8_t>(binding_.nodeID & 0x3Fu)},
         binding_.agentResetAddress,
         0,
         TargetSpeed(),
-        [onCompletePtr](Async::AsyncStatus status, std::span<const uint8_t>) {
+        [onComplete](Async::AsyncStatus status, std::span<const uint8_t>) {
             ASFW_LOG(Async, "FetchAgent: AGENT_RESET (no-wait) complete status=%{public}s",
                      ASFW::Async::ToString(status));
-            if (onCompletePtr) {
-                (*onCompletePtr)();
+            if (onComplete) {
+                onComplete();
             }
         });
     if (!handle) {
         ASFW_LOG(Async, "FetchAgent: AGENT_RESET (no-wait) WriteQuad submit FAILED");
-        if (onCompletePtr) {
-            (*onCompletePtr)();
+        if (onComplete) {
+            onComplete();
         }
     }
 }
