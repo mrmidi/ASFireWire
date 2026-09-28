@@ -1,10 +1,14 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SystemLogsView: View {
     @ObservedObject private var connector: ASFWDriverConnector
     @StateObject private var viewModel: DriverLogViewModel
     @State private var followsTail = true
     @State private var selectedRecordSequences: Set<UInt64> = []
+    @State private var isExporting = false
+    @State private var showingExportError = false
+    @State private var exportErrorMessage = ""
 
     init(connector: ASFWDriverConnector) {
         _connector = ObservedObject(wrappedValue: connector)
@@ -22,6 +26,11 @@ struct SystemLogsView: View {
         .toolbar { logToolbar }
         .task {
             await viewModel.runPolling()
+        }
+        .alert("Export Logs Failed", isPresented: $showingExportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportErrorMessage)
         }
     }
 
@@ -231,6 +240,14 @@ struct SystemLogsView: View {
             }
             .help("Reload a bounded tail of retained driver history")
 
+            Button {
+                Task { await exportLogs() }
+            } label: {
+                Label("Export Logs", systemImage: "square.and.arrow.down")
+            }
+            .disabled(connector.isConnected == false || isExporting)
+            .help("Save all logs retained by the driver, regardless of viewer filters")
+
             Button(role: .destructive) {
                 selectedRecordSequences.removeAll()
                 viewModel.clear()
@@ -246,6 +263,38 @@ struct SystemLogsView: View {
         if viewModel.isPaused { return "Paused" }
         if viewModel.lastPollError != nil { return "Read error" }
         return "Live"
+    }
+
+    private func exportLogs() async {
+        guard !isExporting else { return }
+        isExporting = true
+        guard let report = await viewModel.exportRetainedLogs() else {
+            isExporting = false
+            showExportError("Unable to read the driver log ring. Check the driver connection and try again.")
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = "ASFW_Driver_Logs_\(Date.now.formatted(.iso8601.year().month().day().dateSeparator(.dash))).txt"
+        panel.title = "Export Driver Logs"
+        panel.prompt = "Export"
+        panel.begin { response in
+            Task { @MainActor in
+                self.isExporting = false
+                guard response == .OK, let url = panel.url else { return }
+                do {
+                    try report.write(to: url, atomically: true, encoding: .utf8)
+                } catch {
+                    self.showExportError("Could not save logs: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func showExportError(_ message: String) {
+        exportErrorMessage = message
+        showingExportError = true
     }
 
     private var statusColor: Color {

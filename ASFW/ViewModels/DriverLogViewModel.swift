@@ -125,6 +125,58 @@ final class DriverLogViewModel: ObservableObject {
         )
     }
 
+    /// Reads the driver ring directly, independent of the viewer's filters,
+    /// pause state, and bounded local buffer.
+    func exportRetainedLogs() async -> String? {
+        guard let stats = await connector.logRingStatsAsync() else { return nil }
+        let catalog = await connector.logCategoryCatalogAsync()
+        let startCursor = stats.oldestSequence > 0 ? stats.oldestSequence - 1 : 0
+        guard let response = await connector.queryLogRecordsAsync(ASFWLogRingQuery(
+            afterSequence: startCursor,
+            maxRecords: max(Int(stats.capacityRecords), 1)
+        )) else { return nil }
+
+        let names = Dictionary(uniqueKeysWithValues: (catalog?.categories ?? []).map {
+            ($0.id, $0.name)
+        })
+        return Self.exportText(
+            records: response.records,
+            categoryNames: names,
+            stats: stats,
+            response: response,
+            exportedAt: Date()
+        )
+    }
+
+    static func exportText(
+        records: [ASFWLogRingRecord],
+        categoryNames: [UInt8: String],
+        stats: ASFWLogRingStats,
+        response: ASFWLogRingQueryResponse,
+        exportedAt: Date
+    ) -> String {
+        let complete = !response.cursorReset
+            && response.oldestSequence <= max(stats.oldestSequence, 1)
+            && response.nextSequence >= stats.latestSequence
+        let header = [
+            "ASFW Driver Log Ring",
+            "Exported: \(ISO8601DateFormatter().string(from: exportedAt))",
+            "Coverage: \(complete ? "complete at snapshot" : "partial; ring changed or read ended during export")",
+            "Snapshot sequence: \(stats.oldestSequence)...\(stats.latestSequence)",
+            "Exported records: \(records.count)",
+            "Driver dropped records: \(stats.droppedRecords)",
+            "Timestamps: seconds of host monotonic time",
+            "",
+        ]
+        let lines = records.map { record in
+            let timestamp = String(format: "%.6f s", Double(record.timestampNs) / 1_000_000_000)
+            let category = categoryNames[record.category] ?? "Unknown(\(record.category))"
+            return "#\(record.sequence) \(timestamp) [\(category)] "
+                + "\(record.levelName.uppercased()) \(record.message)"
+        }
+        return (header + lines).joined(separator: "\n") + "\n"
+    }
+
     func setCapacity(_ requestedCapacity: Int) {
         let newCapacity = Self.normalizedCapacity(requestedCapacity)
         guard newCapacity != capacity else { return }
