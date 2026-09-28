@@ -50,11 +50,7 @@ constexpr auto kDefinitions = ConcatArrays(
     Definitions::kRmeDefinitions
 );
 
-<<<<<<< HEAD
-static_assert(kDefinitions.size() == 40U, "Catalog definition count mismatch");
-=======
-static_assert(kDefinitions.size() == 41U, "Catalog definition count mismatch");
->>>>>>> 68d65157 (feat(rme): establish reviewed FF400 and FF800 catalog identities)
+static_assert(kDefinitions.size() == 42U, "Catalog definition count mismatch");
 
 // No safety rule is currently defined.
 //
