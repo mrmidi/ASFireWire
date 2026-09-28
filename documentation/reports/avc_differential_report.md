@@ -19,7 +19,7 @@ All tests are implemented in [`tests/protocols/AvcDifferentialTests.cpp`](../../
 
 | Command / Functional Area | Legacy Implementation | New Rebuilt Implementation (`ASFW::AVC`) | Wire Comparison | Status | Spec / Linux Reference |
 |---|---|---|---|---|---|
-| **UNIT INFO (0x30)** Request | `AVCUnit::ProbeUnitInfo` sends 3 bytes `[01, FF, 30]` (padded to 4) | `Cmd::BuildUnitInfoStatus()` sends 8 bytes `[01, FF, 30, 07, FF, FF, FF, FF]` | Header matches (`01 FF 30`). Legacy omitted operands; new sends 5 dummy bytes `07 FF FF FF FF`. | **INTENDED DIFFERENCE** | AV/C General Spec 4.2 §10.1; Linux `ta1394/general/src/general.rs:43`. Standard requires 5 operand bytes for UNIT INFO status. |
+| **UNIT INFO (0x30)** Request | `AVCUnit::ProbeUnitInfo` sends 3 bytes `[01, FF, 30]` (padded to 4) | `Cmd::BuildUnitInfoStatus()` sends 3 bytes `[01, FF, 30]` (padded to 4) by default | Header and zero-operand framing match byte-for-byte. Linux 5-operand form `[07, FF, FF, FF, FF]` available via `UnitInfoStyle::kLinuxFiveDummyOperands`. | **EXACT MATCH (Apple + Legacy; Linux form is optional)** | Apple AppleFWAudio, legacy ASFW, FireBug traces; Linux `ta1394/general/src/general.rs:43`. |
 | **UNIT INFO (0x30)** Response Parsing | `AVCCdb::Decode` / `AVCUnit` parses unit type, ID, company ID (inlined in `AVCUnit.cpp`; no standalone parser method) | `Cmd::ParseUnitInfo()` parses `UnitInfo` struct | Identical decoded values on live Apogee Duet and Phase 88 captures. Standalone parser replaces legacy inlined parsing. | **MATCH** | Spec §10.1; Linux `general.rs:60`. |
 | **SUBUNIT INFO (0x31)** Request | `AVCSubunitInfoCommand` across pages 0..7 | `Cmd::BuildSubunitInfoStatus(page, ext)` | Byte-for-byte identical across all pages 0..7: `[01, FF, 31, (page<<4)\|ext, FF, FF, FF, FF]`. | **EXACT MATCH** | AV/C General Spec 4.2 §10.2; Linux `ta1394/general/src/general.rs:136`. |
 | **SUBUNIT INFO (0x31)** Response Parsing & Enum Parity | `AVCSubunitInfoCommand::Submit` executed with live callback; `AVCDefs.hpp` defined `kMusic = 0x1C` (and `kMusic0C = 0x0C`) | `Cmd::ParseSubunitInfo()`; `AvcTypes.hpp` defines `SubunitType::kMusic = 0x0C` | Legacy callback and new parser decode Audio and Music subunits identically. Enum values aligned strictly to 0x0C per spec. | **EXACT MATCH / INTENDED ENUM FIX** | AV/C General Spec 4.2 Table 10.2; Linux `ta1394/general/src/general.rs:114`. |
@@ -45,10 +45,10 @@ All tests are implemented in [`tests/protocols/AvcDifferentialTests.cpp`](../../
 ## 3. Classification of Discrepancies
 
 ### A. Intended Differences (Validated by Spec & Reference Standards)
-1. **UNIT INFO Operands Length (3 bytes vs 8 bytes)**:
-   - *Legacy:* Sent 0 operands (`01 FF 30`), padded to 4 bytes. Legacy `AVCUnit::ProbeUnitInfo` parsed response directly in place.
-   - *New:* Sends 5 dummy operands (`01 FF 30 07 FF FF FF FF`), padded to 8 bytes, with dedicated `Cmd::ParseUnitInfo()`.
-   - *Authority:* AV/C General Specification 4.2 §10.1 explicitly specifies: `operand[0] = 0x07`, `operand[1..4] = 0xFF`. Linux `ta1394/general/src/general.rs:43` asserts 5 operand bytes.
+1. **UNIT INFO Operands Framing (Apple/Legacy 0 operands vs Linux 5 operands)**:
+   - *Legacy & Apple:* Send 0 operands (`01 FF 30`), padded to 4 bytes (`01 FF 30 00`), matching `AppleFWAudio` and FireBug hardware traces.
+   - *New:* Defaults to the 0-operand form (`UnitInfoStyle::kStandardAppleLegacy`), matching legacy ASFW and Apple byte-for-byte. The Linux 5-operand dummy form (`[07, FF, FF, FF, FF]`, `UnitInfoStyle::kLinuxFiveDummyOperands`) remains available as an explicit option.
+   - *Authority:* FireBug packet captures (`fixtures/apple_duet_discovery_firebug.md`), Apple `AppleFWAudio`, AV/C General Spec 4.2 §10.1, Linux `ta1394/general/src/general.rs:43`. Both forms are accepted by real hardware (Duet and Phase 88 return `0x0C` STABLE).
 2. **Audio Function Block Selector Length for Feature Blocks (4/5 vs 2)**:
    - *Legacy:* Set operand 3 to 4 for mute and 5 for volume.
    - *New:* Sets operand 3 to 2.
@@ -82,7 +82,7 @@ In accordance with Phase 1 Step 1.3(d), every new `.cpp` implementation file was
 | File Mutated | Line | Injected Mutation | Test Case That Detected Mutation | Failure Symptom Observed | Restoration Verified |
 |---|---|---|---|---|---|
 | `Core/AvcFrame.cpp` | 28 | `frame.bytes_[0] = 0xAA;` (corrupted header ctype) | `AvcFrameTests.MakeSetsHeaderAndAccessors` | `Expected equality: frame->Bytes()[0] (0xAA) vs 0x01` | Clean build & test pass (`sleep 1; touch`) |
-| `Commands/GeneralCommands.cpp` | 31 | `kOperands[0] = 0x08;` in `BuildUnitInfoStatus()` | `AvcDifferentialTests.UnitInfo_IdentifiesIntendedDifference` | `std::equal failed: expected dummy byte 0x07` | Clean build & test pass (`sleep 1; touch`) |
+| `Commands/GeneralCommands.cpp` | 31 | `kOperands[0] = 0x08;` in `BuildUnitInfoStatus()` | `AvcDifferentialTests.UnitInfo_CommandBytesMatchAppleAndLegacyWithLinuxOption` | `std::equal failed: expected dummy byte 0x07` | Clean build & test pass (`sleep 1; touch`) |
 | `Commands/StreamFormatCommand.cpp` | 100 | `compound.rate = StreamFormatRate::k48000;` (forced rate override) | `AvcDifferentialTests.StreamFormatList_ResponseParsingComparison` | `Expected equality: compound.rate (0x04) vs k32000 (0x02)` | Clean build & test pass (`sleep 1; touch`) |
 | `Commands/SignalSourceCommand.cpp` | 21 | `firstByte = 0xAA;` in `BuildSignalSourceStatus()` | `SignalSourceTests.BuildStatusAndControl` | `Expected equality: ops[0] (0xAA) vs 0xFF` | Clean build & test pass (`sleep 1; touch`) |
 | `Commands/FunctionBlockCommand.cpp` | 44 | `operand[3] = 0x03;` in `BuildSelectorControl()` | `AvcDifferentialTests.AudioFunctionBlock_SelectorCommandBytesMatch` | `Expected equality: legacyEncoded[6] (0x02) vs newCmd[6] (0x03) (fbId 1..4)` | Clean build & test pass (`sleep 1; touch`) |
@@ -93,7 +93,7 @@ In accordance with Phase 1 Step 1.3(d), every new `.cpp` implementation file was
 ## 5. Toolchain and Build Hygiene
 
 1. **Host Test Suite**:
-   - `ctest --test-dir build/tests_build`: **2,573 / 2,573 tests passed (100%)** (6 skipped pre-existing host mocks).
+   - `ctest --test-dir build/tests_build`: **2,579 / 2,579 tests passed (100%)** (6 skipped pre-existing host mocks).
    - Zero test failures, zero regressions across audio, discovery, bus, and protocol suites.
 2. **DriverKit Dext Compilation**:
    - Compiles cleanly with `./build.sh --no-bump`.

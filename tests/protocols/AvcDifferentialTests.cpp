@@ -103,8 +103,8 @@ public:
 // 1. UNIT INFO Differential Tests
 // ===========================================================================
 
-TEST(AvcDifferentialTests, UnitInfo_IdentifiesIntendedDifference) {
-    // Legacy AVCUnit::ProbeUnitInfo sent 0 operands: [0x01, 0xFF, 0x30], 3 bytes unpadded.
+TEST(AvcDifferentialTests, UnitInfo_CommandBytesMatchAppleAndLegacyWithLinuxOption) {
+    // Legacy AVCUnit::ProbeUnitInfo sent 0 operands: [0x01, 0xFF, 0x30], 3 bytes unpadded, padded to 4.
     Protocols::AVC::AVCCdb legacyCdb{};
     legacyCdb.ctype = static_cast<uint8_t>(Protocols::AVC::AVCCommandType::kStatus);
     legacyCdb.subunit = Protocols::AVC::kAVCSubunitUnit;
@@ -112,25 +112,28 @@ TEST(AvcDifferentialTests, UnitInfo_IdentifiesIntendedDifference) {
     legacyCdb.operandLength = 0;
     auto legacyEncoded = legacyCdb.Encode();
 
-    // The rebuilt ASFW::AVC codec sends the standard 5 dummy operands [0x07, FF, FF, FF, FF]
-    // per AV/C General Specification 4.2 §10.1 and Linux ta1394 general.rs:43.
-    auto newCmd = Cmd::BuildUnitInfoStatus();
-    ASSERT_TRUE(newCmd.has_value());
+    // 1. Default form: matches Apple AppleFWAudio and legacy ASFW exactly (0 operands, 3 header bytes padded to 4)
+    auto defaultCmd = Cmd::BuildUnitInfoStatus();
+    ASSERT_TRUE(defaultCmd.has_value());
 
-    // Difference: legacy was 3 bytes (padded to 4), new is 8 bytes (padded to 8).
     EXPECT_EQ(legacyEncoded.length, 4U);
-    EXPECT_EQ(newCmd->WireBytes().size(), 8U);
-    EXPECT_EQ(newCmd->Bytes().size(), 8U);
+    EXPECT_EQ(defaultCmd->WireBytes().size(), 4U);
+    EXPECT_EQ(defaultCmd->Bytes().size(), 3U);
+    EXPECT_EQ(defaultCmd->Operands().size(), 0U);
 
-    // Header matches
-    EXPECT_EQ(legacyEncoded.data[0], newCmd->Bytes()[0]); // 0x01 STATUS
-    EXPECT_EQ(legacyEncoded.data[1], newCmd->Bytes()[1]); // 0xFF Unit
-    EXPECT_EQ(legacyEncoded.data[2], newCmd->Bytes()[2]); // 0x30 Opcode::kUnitInfo
+    for (size_t i = 0; i < 4; ++i) {
+        EXPECT_EQ(legacyEncoded.data[i], defaultCmd->WireBytes()[i])
+            << "Mismatch between legacy and new default UNIT INFO at byte " << i;
+    }
 
-    // Operands differ (intended: legacy omitted operands, new carries spec dummy bytes)
-    const std::array<uint8_t, 5> kExpectedOperands = {0x07, 0xFF, 0xFF, 0xFF, 0xFF};
-    EXPECT_EQ(newCmd->Operands().size(), 5U);
-    EXPECT_TRUE(std::equal(kExpectedOperands.begin(), kExpectedOperands.end(), newCmd->Operands().begin()));
+    // 2. Linux form: ta1394 general.rs:43 (5 dummy operands [0x07, FF, FF, FF, FF])
+    auto linuxCmd = Cmd::BuildUnitInfoStatus(Cmd::UnitInfoStyle::kLinuxFiveDummyOperands);
+    ASSERT_TRUE(linuxCmd.has_value());
+    EXPECT_EQ(linuxCmd->Bytes().size(), 8U);
+    EXPECT_EQ(linuxCmd->WireBytes().size(), 8U);
+    EXPECT_EQ(linuxCmd->Operands().size(), 5U);
+    const std::array<uint8_t, 5> kExpectedLinuxOperands = {0x07, 0xFF, 0xFF, 0xFF, 0xFF};
+    EXPECT_TRUE(std::equal(kExpectedLinuxOperands.begin(), kExpectedLinuxOperands.end(), linuxCmd->Operands().begin()));
 }
 
 TEST(AvcDifferentialTests, UnitInfo_ResponseParsing) {

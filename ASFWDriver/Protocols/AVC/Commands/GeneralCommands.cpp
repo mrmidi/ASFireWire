@@ -27,9 +27,13 @@ namespace ASFW::AVC::Cmd {
 // UNIT INFO (0x30)
 // ---------------------------------------------------------------------------
 
-Expected<CommandFrame> BuildUnitInfoStatus() noexcept {
-    constexpr std::array<uint8_t, 5> kOperands = {0x07, 0xFF, 0xFF, 0xFF, 0xFF};
-    return CommandFrame::Make(CommandType::kStatus, SubunitAddress::Unit(), Opcode::kUnitInfo, kOperands);
+Expected<CommandFrame> BuildUnitInfoStatus(UnitInfoStyle style) noexcept {
+    if (style == UnitInfoStyle::kLinuxFiveDummyOperands) {
+        constexpr std::array<uint8_t, 5> kOperands = {0x07, 0xFF, 0xFF, 0xFF, 0xFF};
+        return CommandFrame::Make(CommandType::kStatus, SubunitAddress::Unit(), Opcode::kUnitInfo, kOperands);
+    }
+    // Apple AppleFWAudio + legacy ASFW form: zero operands, 3 header bytes padded to 4 (01 FF 30 00).
+    return CommandFrame::Make(CommandType::kStatus, SubunitAddress::Unit(), Opcode::kUnitInfo, {});
 }
 
 Expected<UnitInfo> ParseUnitInfo(const Response& response) noexcept {

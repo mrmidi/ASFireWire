@@ -31,9 +31,16 @@ namespace ASFW::AVC::Cmd {
 
 // ---------------------------------------------------------------------------
 // UNIT INFO (0x30), STATUS, unit address only.
-// Command operands: 07 FF FF FF FF. Response operands: [0]=07, [1]=unit type<<3|id,
-// [2..4]=company ID. ta1394 general.rs `UnitInfo` (OPCODE at :37, FIRST_OPERAND 0x07).
+// By default, sends 0 operands [01, FF, 30] (quadlet-padded to 4 bytes), matching
+// Apple's AppleFWAudio, legacy ASFW, and FireBug hardware traces.
+// The Linux ta1394 5-dummy-operand form [07, FF, FF, FF, FF] is available via UnitInfoStyle.
+// Response operands: [0]=07, [1]=unit type<<3|id, [2..4]=company ID.
 // ---------------------------------------------------------------------------
+
+enum class UnitInfoStyle : uint8_t {
+    kStandardAppleLegacy = 0,   ///< 0 operands: [01, FF, 30] (Apple + legacy ASFW)
+    kLinuxFiveDummyOperands = 1, ///< 5 dummy operands: [07, FF, FF, FF, FF] (Linux ta1394)
+};
 
 struct UnitInfo {
     SubunitType unitType{SubunitType::kUnit};
@@ -41,7 +48,8 @@ struct UnitInfo {
     CompanyId companyId{0xFF, 0xFF, 0xFF};
 };
 
-[[nodiscard]] Expected<CommandFrame> BuildUnitInfoStatus() noexcept;
+[[nodiscard]] Expected<CommandFrame> BuildUnitInfoStatus(
+    UnitInfoStyle style = UnitInfoStyle::kStandardAppleLegacy) noexcept;
 [[nodiscard]] Expected<UnitInfo> ParseUnitInfo(const Response& response) noexcept;
 
 // ---------------------------------------------------------------------------

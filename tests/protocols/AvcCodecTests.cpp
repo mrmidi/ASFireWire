@@ -204,26 +204,33 @@ TEST(AvcFrameTests, ParseResponseForValidatesAddressAndOpcodeMatch) {
 // Step 1.3: General Commands Tests
 // ===========================================================================
 
-TEST(GeneralCommandsTests, BuildUnitInfoStatusMatchesSpec) {
-    auto cmd = Cmd::BuildUnitInfoStatus();
-    ASSERT_TRUE(cmd.has_value());
-    EXPECT_EQ(cmd->Type(), CommandType::kStatus);
-    EXPECT_EQ(cmd->Address(), SubunitAddress::Unit());
-    EXPECT_EQ(cmd->OpcodeValue(), Opcode::kUnitInfo);
+TEST(GeneralCommandsTests, BuildUnitInfoStatusEncodesBothAppleAndLinuxStyles) {
+    // 1. Default form: Apple AppleFWAudio + legacy ASFW (0 operands, 3 header bytes padded to 4)
+    auto defaultCmd = Cmd::BuildUnitInfoStatus();
+    ASSERT_TRUE(defaultCmd.has_value());
+    EXPECT_EQ(defaultCmd->Type(), CommandType::kStatus);
+    EXPECT_EQ(defaultCmd->Address(), SubunitAddress::Unit());
+    EXPECT_EQ(defaultCmd->OpcodeValue(), Opcode::kUnitInfo);
+    EXPECT_EQ(defaultCmd->Bytes().size(), 3u);
+    EXPECT_EQ(defaultCmd->WireBytes().size(), 4u);
+    EXPECT_EQ(defaultCmd->WireBytes()[0], 0x01); // STATUS
+    EXPECT_EQ(defaultCmd->WireBytes()[1], 0xFF); // UNIT
+    EXPECT_EQ(defaultCmd->WireBytes()[2], 0x30); // UNIT INFO
+    EXPECT_EQ(defaultCmd->WireBytes()[3], 0x00); // quadlet zero padding
 
-    const auto bytes = cmd->Bytes();
-    ASSERT_EQ(bytes.size(), 8u);
-    EXPECT_EQ(bytes[0], 0x01); // STATUS
-    EXPECT_EQ(bytes[1], 0xFF); // UNIT
-    EXPECT_EQ(bytes[2], 0x30); // UNIT INFO
-    EXPECT_EQ(bytes[3], 0x07); // first operand per ta1394 general.rs:37
-    EXPECT_EQ(bytes[4], 0xFF);
-    EXPECT_EQ(bytes[5], 0xFF);
-    EXPECT_EQ(bytes[6], 0xFF);
-    EXPECT_EQ(bytes[7], 0xFF);
-
-    // Differential note: Legacy AVCUnit::ProbeUnitInfo sent 0 operands (01 FF 30).
-    // The spec (AV/C General 4.2 §10.1) and Linux ta1394 require [0x07, FF, FF, FF, FF].
+    // 2. Linux form: ta1394 general.rs:37 (5 dummy operands [0x07, FF, FF, FF, FF])
+    auto linuxCmd = Cmd::BuildUnitInfoStatus(Cmd::UnitInfoStyle::kLinuxFiveDummyOperands);
+    ASSERT_TRUE(linuxCmd.has_value());
+    EXPECT_EQ(linuxCmd->Bytes().size(), 8u);
+    EXPECT_EQ(linuxCmd->WireBytes().size(), 8u);
+    EXPECT_EQ(linuxCmd->WireBytes()[0], 0x01);
+    EXPECT_EQ(linuxCmd->WireBytes()[1], 0xFF);
+    EXPECT_EQ(linuxCmd->WireBytes()[2], 0x30);
+    EXPECT_EQ(linuxCmd->WireBytes()[3], 0x07);
+    EXPECT_EQ(linuxCmd->WireBytes()[4], 0xFF);
+    EXPECT_EQ(linuxCmd->WireBytes()[5], 0xFF);
+    EXPECT_EQ(linuxCmd->WireBytes()[6], 0xFF);
+    EXPECT_EQ(linuxCmd->WireBytes()[7], 0xFF);
 }
 
 TEST(GeneralCommandsTests, ParseUnitInfoSuccessAndErrors) {
