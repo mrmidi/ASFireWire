@@ -19,6 +19,7 @@
 #include "Audio/Protocols/DICE/Core/DiceFamilyDriver.hpp"
 #include "FakeDiceWaitClock.hpp"
 #include "Protocols/Ports/ProtocolRegisterIO.hpp"
+#include "RecordingFireWireBus.hpp"
 #include "SimulatedDiceDevice.hpp"
 #include "WireTrace.hpp"
 
@@ -101,54 +102,12 @@ constexpr uint32_t kLocked48kStatus =
     StatusBits::kSourceLocked |
     (ClockRateIndex::k48000 << StatusBits::kNominalRateShift);
 
-enum class OpKind {
-    Read,
-    Write,
-    Lock,
-};
-
-struct RecordedOp {
-    OpKind kind;
-    uint16_t addressHi;
-    uint32_t addressLo;
-    uint32_t length;
-    FwSpeed speed;
-    uint32_t responseLength{0};
-    std::vector<uint8_t> payload;
-};
-
-struct ByteView {
-    const uint8_t* data;
-    std::size_t size;
-};
-
-struct ExpectedOp {
-    OpKind kind;
-    uint32_t addressLo;
-    uint32_t length;
-    FwSpeed speed;
-};
-
-struct ExpectedRequest {
-    OpKind kind;
-    uint16_t addressHi;
-    uint32_t addressLo;
-    uint32_t length;
-    FwSpeed speed;
-    uint32_t responseLength;
-    ByteView payload;
-};
-
-struct ResponseStep {
-    OpKind kind;
-    uint16_t addressHi;
-    uint32_t addressLo;
-    uint32_t requestLength;
-    uint32_t responseLength;
-    FwSpeed speed;
-    AsyncStatus status;
-    ByteView payload;
-};
+using ::ASFW::Testing::OpKind;
+using ::ASFW::Testing::RecordedOp;
+using ::ASFW::Testing::ByteView;
+using ::ASFW::Testing::ExpectedOp;
+using ::ASFW::Testing::ExpectedRequest;
+using ::ASFW::Testing::ResponseStep;
 
 #include "ReferencePhase0ParityFixture.inc"
 
@@ -222,10 +181,10 @@ inline constexpr DiceDeviceImage kLegacyTestDeviceImage{
 // files), enforces the bus generation, and can inject one-shot faults.
 // Scripted mode replays recorded responses instead of asking the device;
 // writes and locks still reach the device so its state stays coherent.
-class RecordingFireWireBus final : public IFireWireBus {
+class DiceRecordingFireWireBus final : public ::ASFW::Testing::RecordingFireWireBus {
 public:
-    explicit RecordingFireWireBus(const DiceDeviceImage& image = kLegacyTestDeviceImage,
-                                  SimulatedDiceOptions options = {})
+    explicit DiceRecordingFireWireBus(const DiceDeviceImage& image = kLegacyTestDeviceImage,
+                                      SimulatedDiceOptions options = {})
         : device_(image, options), defaultClockResponse_(options.clockResponse) {
         generation_ = Generation{1};
         localNodeId_ = NodeId{0};
@@ -233,8 +192,8 @@ public:
         device_.SetTraceSink([this](std::string_view line) { trace_.Add(line); });
     }
 
-    RecordingFireWireBus(const RecordingFireWireBus&) = delete;
-    RecordingFireWireBus& operator=(const RecordingFireWireBus&) = delete;
+    DiceRecordingFireWireBus(const DiceRecordingFireWireBus&) = delete;
+    DiceRecordingFireWireBus& operator=(const DiceRecordingFireWireBus&) = delete;
 
     // The simulated device sits at node 2 of bus 0x3FF.
     static constexpr uint16_t kDeviceSourceId = 0xFFC0 | 0x02;
@@ -251,202 +210,8 @@ public:
         device_.SetNotifySink([&mailbox](uint32_t bits) { mailbox.Publish(bits); });
     }
 
-    AsyncHandle ReadBlock(Generation generation,
-                          NodeId nodeId,
-                          FWAddress address,
-                          uint32_t length,
-                          FwSpeed speed,
-                          ::ASFW::Async::InterfaceCompletionCallback callback) override {
-        (void)nodeId;
-        Record(OpKind::Read, address, length, speed, 0, {});
-        if (TakeDrop(OpKind::Read, address)) {
-            return NextHandle();
-        }
-        if (const auto failure = Failure(OpKind::Read, generation, address)) {
-            trace_.Read(address.addressHi, address.addressLo, length, speed, *failure);
-            callback(*failure, {});
-            return NextHandle();
-        }
-
-        if (HasScript()) {
-            ExpectScriptedRequest(OpKind::Read, address, length, speed, 0, {});
-            const auto response = TakeScriptedResponse(OpKind::Read, address, length, 0, speed);
-            trace_.Read(address.addressHi, address.addressLo, length, speed, response.status);
-            callback(response.status,
-                     std::span<const uint8_t>(response.payload.data(), response.payload.size()));
-            return NextHandle();
-        }
-
-        const auto payload = ReadPayload(address, length);
-        trace_.Read(address.addressHi, address.addressLo, length, speed, AsyncStatus::kSuccess);
-        callback(AsyncStatus::kSuccess, std::span<const uint8_t>(payload.data(), payload.size()));
-        return NextHandle();
-    }
-
-    AsyncHandle WriteBlock(Generation generation,
-                           NodeId nodeId,
-                           FWAddress address,
-                           std::span<const uint8_t> data,
-                           FwSpeed speed,
-                           ::ASFW::Async::InterfaceCompletionCallback callback) override {
-        (void)nodeId;
-        std::vector<uint8_t> payload(data.begin(), data.end());
-        Record(OpKind::Write, address, static_cast<uint32_t>(data.size()), speed, 0, payload);
-        if (TakeDrop(OpKind::Write, address)) {
-            return NextHandle();
-        }
-        if (const auto failure = Failure(OpKind::Write, generation, address)) {
-            trace_.Write(address.addressHi, address.addressLo, data, speed, *failure);
-            callback(*failure, {});
-            return NextHandle();
-        }
-
-        if (HasScript()) {
-            ExpectScriptedRequest(OpKind::Write,
-                                  address,
-                                  static_cast<uint32_t>(data.size()),
-                                  speed,
-                                  0,
-                                  payload);
-        }
-
-        trace_.Write(address.addressHi, address.addressLo, data, speed, AsyncStatus::kSuccess);
-        if (address.addressHi == kDiceBaseAddressHi) {
-            (void)device_.Write(address.addressLo, data);
-        }
-        if (clockSelectWriteHandler_ && IsClockSelect(address)) {
-            clockSelectWriteHandler_();
-        }
-        callback(AsyncStatus::kSuccess, {});
-        return NextHandle();
-    }
-
-    AsyncHandle Lock(Generation generation,
-                     NodeId nodeId,
-                     FWAddress address,
-                     LockOp lockOp,
-                     std::span<const uint8_t> operand,
-                     uint32_t responseLength,
-                     FwSpeed speed,
-                     ::ASFW::Async::InterfaceCompletionCallback callback) override {
-        (void)nodeId;
-        (void)lockOp;
-        std::vector<uint8_t> payload(operand.begin(), operand.end());
-        Record(OpKind::Lock, address, static_cast<uint32_t>(operand.size()), speed, responseLength, payload);
-        if (TakeDrop(OpKind::Lock, address)) {
-            return NextHandle();
-        }
-        const bool compareSwap64 = operand.size() == 16 && responseLength == 8;
-        const uint64_t expected = compareSwap64 ? ::ASFW::FW::ReadBE64(operand.data()) : 0;
-        const uint64_t desired = compareSwap64 ? ::ASFW::FW::ReadBE64(operand.data() + 8) : 0;
-        if (const auto failure = Failure(OpKind::Lock, generation, address)) {
-            trace_.CompareSwap(address.addressHi, address.addressLo, expected, desired,
-                               std::nullopt, speed, *failure);
-            callback(*failure, {});
-            return NextHandle();
-        }
-
-        if (HasScript()) {
-            ExpectScriptedRequest(OpKind::Lock,
-                                  address,
-                                  static_cast<uint32_t>(operand.size()),
-                                  speed,
-                                  responseLength,
-                                  payload);
-            const auto previous = ApplyLock(address, compareSwap64, expected, desired);
-            const auto response = TakeScriptedResponse(
-                OpKind::Lock, address, static_cast<uint32_t>(operand.size()), responseLength, speed);
-            trace_.CompareSwap(address.addressHi, address.addressLo, expected, desired, previous,
-                               speed, response.status);
-            callback(response.status,
-                     std::span<const uint8_t>(response.payload.data(), response.payload.size()));
-            return NextHandle();
-        }
-
-        const auto previous = ApplyLock(address, compareSwap64, expected, desired);
-        std::vector<uint8_t> response(responseLength, 0);
-        if (previous && responseLength == 8) {
-            PutBe64(response.data(), *previous);
-        }
-        trace_.CompareSwap(address.addressHi, address.addressLo, expected, desired, previous,
-                           speed, AsyncStatus::kSuccess);
-        callback(AsyncStatus::kSuccess, std::span<const uint8_t>(response.data(), response.size()));
-        return NextHandle();
-    }
-
-    bool Cancel(AsyncHandle handle) override {
-        (void)handle;
-        return false;
-    }
-
-    FwSpeed GetSpeed(NodeId nodeId) const override {
-        return speeds_[nodeId.value];
-    }
-
-    bool RecordVerifiedSpeed(Generation generation, NodeId nodeId, FwSpeed speed) override {
-        if (generation != generation_) {
-            return false;
-        }
-        auto& current = speeds_[nodeId.value];
-        if (static_cast<uint8_t>(speed) < static_cast<uint8_t>(current)) {
-            current = speed;
-        }
-        return true;
-    }
-
-    void SetSpeed(NodeId nodeId, FwSpeed speed) {
-        speeds_[nodeId.value] = speed;
-    }
-
     [[nodiscard]] uint32_t TxSpeed() const {
         return device_.TxSpeed(0);
-    }
-
-    uint8_t GetGapCount() const override { return gapCount_; }
-
-    void SetGapCount(uint8_t gapCount) { gapCount_ = gapCount; }
-
-    uint32_t HopCount(NodeId nodeA, NodeId nodeB) const override {
-        (void)nodeA;
-        (void)nodeB;
-        return 1;
-    }
-
-    Generation GetGeneration() const override {
-        return generation_;
-    }
-
-    NodeId GetLocalNodeID() const override {
-        return localNodeId_;
-    }
-
-    void ClearOperations() {
-        operations_.clear();
-    }
-
-    void SetScript(std::span<const ExpectedRequest> requests,
-                   std::span<const ResponseStep> responses) {
-        scriptedRequests_ = requests;
-        scriptedResponses_ = responses;
-        scriptedRequestIndex_ = 0;
-        scriptedResponseIndex_ = 0;
-    }
-
-    void ClearScript() {
-        scriptedRequests_ = {};
-        scriptedResponses_ = {};
-        scriptedRequestIndex_ = 0;
-        scriptedResponseIndex_ = 0;
-    }
-
-    [[nodiscard]] bool ScriptConsumed() const {
-        return !HasScript() ||
-               (scriptedRequestIndex_ == scriptedRequests_.size() &&
-                scriptedResponseIndex_ == scriptedResponses_.size());
-    }
-
-    const std::vector<RecordedOp>& Operations() const {
-        return operations_;
     }
 
     uint64_t Owner() const {
@@ -474,14 +239,6 @@ public:
         device_.SetGlobalQuad(GlobalOffset::kNotification, notification);
     }
 
-    void SetGeneration(Generation generation) {
-        generation_ = generation;
-    }
-
-    void SetLocalNodeID(NodeId nodeId) {
-        localNodeId_ = nodeId;
-    }
-
     void SetStreamIsoChannels(uint32_t txIso, uint32_t rxIso) {
         device_.SetTxIso(0, txIso);
         device_.SetRxIso(0, rxIso);
@@ -497,166 +254,11 @@ public:
         device_.SetNotificationRegister(bits);
     }
 
-    // ---- simulator access, faults and trace --------------------------------
-
     [[nodiscard]] SimulatedDiceDevice& Device() noexcept { return device_; }
     [[nodiscard]] const SimulatedDiceDevice& Device() const noexcept { return device_; }
-    [[nodiscard]] ::ASFW::Testing::WireTrace& Trace() noexcept { return trace_; }
 
-    // A bus reset: new generation, and the device's own reset behaviour.
-    void BusReset() {
-        generation_ = Generation{generation_.value + 1};
-        char line[48];
-        std::snprintf(line, sizeof(line), "# bus-reset gen=%u", generation_.value);
-        trace_.Add(line);
-        device_.BusReset();
-    }
-
-    // Fail the next request of `kind` at `addressLo` with `status`, once.
-    void FailNext(OpKind kind, uint32_t addressLo, AsyncStatus status) {
-        faults_.push_back(Fault{kind, addressLo, status});
-    }
-
-    // Swallow the next request of `kind` at `addressLo`: it is recorded, but its
-    // completion never arrives (a wedged or unreachable completion path).
-    void DropNext(OpKind kind, uint32_t addressLo) {
-        drops_.push_back(Fault{kind, addressLo, AsyncStatus::kSuccess});
-    }
-
-private:
-    struct ScriptResponse {
-        AsyncStatus status;
-        std::vector<uint8_t> payload;
-    };
-
-    struct Fault {
-        OpKind kind;
-        uint32_t addressLo;
-        AsyncStatus status;
-    };
-
-    AsyncHandle NextHandle() {
-        return AsyncHandle{nextHandle_++};
-    }
-
-    [[nodiscard]] bool IsClockSelect(FWAddress address) const {
-        return address.addressHi == kDiceBaseAddressHi &&
-               address.addressLo == kDiceBaseAddressLo + device_.GlobalBase() + GlobalOffset::kClockSelect;
-    }
-
-    // Stale generation first (a real bus rejects it before the device sees it),
-    // then any injected one-shot fault.
-    std::optional<AsyncStatus> Failure(OpKind kind, Generation generation, FWAddress address) {
-        if (generation != generation_) {
-            return AsyncStatus::kStaleGeneration;
-        }
-        for (auto it = faults_.begin(); it != faults_.end(); ++it) {
-            if (it->kind == kind && it->addressLo == address.addressLo) {
-                const AsyncStatus status = it->status;
-                faults_.erase(it);
-                return status;
-            }
-        }
-        return std::nullopt;
-    }
-
-    bool TakeDrop(OpKind kind, FWAddress address) {
-        for (auto it = drops_.begin(); it != drops_.end(); ++it) {
-            if (it->kind == kind && it->addressLo == address.addressLo) {
-                drops_.erase(it);
-                trace_.Add("# completion dropped");
-                return true;
-            }
-        }
-        return false;
-    }
-
-    std::optional<uint64_t> ApplyLock(FWAddress address, bool compareSwap64,
-                                      uint64_t expected, uint64_t desired) {
-        if (!compareSwap64 || address.addressHi != kDiceBaseAddressHi) {
-            return std::nullopt;
-        }
-        return device_.CompareSwap64(address.addressLo, expected, desired);
-    }
-
-    void Record(OpKind kind,
-                FWAddress address,
-                uint32_t length,
-                FwSpeed speed,
-                uint32_t responseLength,
-                std::vector<uint8_t> payload) {
-        operations_.push_back(RecordedOp{
-            .kind = kind,
-            .addressHi = address.addressHi,
-            .addressLo = address.addressLo,
-            .length = length,
-            .speed = speed,
-            .responseLength = responseLength,
-            .payload = std::move(payload),
-        });
-    }
-
-    [[nodiscard]] bool HasScript() const {
-        return !scriptedRequests_.empty() || !scriptedResponses_.empty();
-    }
-
-    void ExpectScriptedRequest(OpKind kind,
-                               FWAddress address,
-                               uint32_t length,
-                               FwSpeed speed,
-                               uint32_t responseLength,
-                               std::span<const uint8_t> payload) {
-        if (scriptedRequestIndex_ >= scriptedRequests_.size()) {
-            ADD_FAILURE() << "unexpected scripted request past end of fixture";
-            return;
-        }
-        const auto& expected = scriptedRequests_[scriptedRequestIndex_++];
-        EXPECT_EQ(expected.kind, kind) << "script request " << (scriptedRequestIndex_ - 1);
-        EXPECT_EQ(expected.addressHi, address.addressHi) << "script request " << (scriptedRequestIndex_ - 1);
-        EXPECT_EQ(expected.addressLo, address.addressLo) << "script request " << (scriptedRequestIndex_ - 1);
-        EXPECT_EQ(expected.length, length) << "script request " << (scriptedRequestIndex_ - 1);
-        EXPECT_EQ(expected.speed, speed) << "script request " << (scriptedRequestIndex_ - 1);
-        EXPECT_EQ(expected.responseLength, responseLength) << "script request " << (scriptedRequestIndex_ - 1);
-        EXPECT_EQ(expected.payload.size, payload.size()) << "script request " << (scriptedRequestIndex_ - 1);
-        if (expected.payload.size == payload.size() && expected.payload.size > 0) {
-            EXPECT_TRUE(std::equal(expected.payload.data,
-                                   expected.payload.data + expected.payload.size,
-                                   payload.begin()))
-                << "script request " << (scriptedRequestIndex_ - 1);
-        }
-    }
-
-    ScriptResponse TakeScriptedResponse(OpKind kind,
-                                        FWAddress address,
-                                        uint32_t requestLength,
-                                        uint32_t responseLength,
-                                        FwSpeed speed) {
-        if (scriptedResponseIndex_ >= scriptedResponses_.size()) {
-            ADD_FAILURE() << "unexpected scripted response past end of fixture";
-            return ScriptResponse{.status = AsyncStatus::kTimeout, .payload = {}};
-        }
-        const auto& expected = scriptedResponses_[scriptedResponseIndex_++];
-        EXPECT_EQ(expected.kind, kind) << "script response " << (scriptedResponseIndex_ - 1);
-        EXPECT_EQ(expected.addressHi, address.addressHi) << "script response " << (scriptedResponseIndex_ - 1);
-        EXPECT_EQ(expected.addressLo, address.addressLo) << "script response " << (scriptedResponseIndex_ - 1);
-        EXPECT_EQ(expected.requestLength, requestLength) << "script response " << (scriptedResponseIndex_ - 1);
-        EXPECT_EQ(expected.responseLength, responseLength == 0 ? expected.responseLength : responseLength)
-            << "script response " << (scriptedResponseIndex_ - 1);
-        EXPECT_EQ(expected.speed, speed) << "script response " << (scriptedResponseIndex_ - 1);
-
-        std::vector<uint8_t> payload;
-        if (expected.payload.size > 0) {
-            payload.assign(expected.payload.data, expected.payload.data + expected.payload.size);
-        }
-        return ScriptResponse{
-            .status = expected.status,
-            .payload = std::move(payload),
-        };
-    }
-
-    // Addresses outside the modelled DICE space read as zeros, as they did in
-    // the legacy fake.
-    std::vector<uint8_t> ReadPayload(FWAddress address, uint32_t length) {
+protected:
+    std::vector<uint8_t> ReadPayload(Async::FWAddress address, uint32_t length) override {
         if (address.addressHi == kDiceBaseAddressHi) {
             if (auto bytes = device_.Read(address.addressLo, length)) {
                 return *bytes;
@@ -665,28 +267,39 @@ private:
         return std::vector<uint8_t>(length, 0);
     }
 
+    void WritePayload(Async::FWAddress address, std::span<const uint8_t> data) override {
+        if (address.addressHi == kDiceBaseAddressHi) {
+            (void)device_.Write(address.addressLo, data);
+        }
+        if (clockSelectWriteHandler_ && IsClockSelect(address)) {
+            clockSelectWriteHandler_();
+        }
+    }
+
+    std::optional<uint64_t> ApplyLock(Async::FWAddress address, bool compareSwap64,
+                                      uint64_t expected, uint64_t desired) override {
+        if (!compareSwap64 || address.addressHi != kDiceBaseAddressHi) {
+            return std::nullopt;
+        }
+        return device_.CompareSwap64(address.addressLo, expected, desired);
+    }
+
+    void OnBusReset() override {
+        device_.BusReset();
+    }
+
+private:
+    [[nodiscard]] bool IsClockSelect(Async::FWAddress address) const {
+        return address.addressHi == kDiceBaseAddressHi &&
+               address.addressLo == kDiceBaseAddressLo + device_.GlobalBase() + GlobalOffset::kClockSelect;
+    }
+
     SimulatedDiceDevice device_;
     DiceClockResponse defaultClockResponse_;
-    ::ASFW::Testing::WireTrace trace_;
-    std::vector<Fault> faults_;
-    std::vector<Fault> drops_;
-    std::vector<RecordedOp> operations_;
-    Generation generation_{0};
-    NodeId localNodeId_{0};
-    std::array<FwSpeed, 64> speeds_{[] {
-        std::array<FwSpeed, 64> speeds{};
-        speeds.fill(FwSpeed::S100);
-        return speeds;
-    }()};
-    uint32_t nextHandle_{1};
-    uint8_t gapCount_{63};
-
     std::function<void()> clockSelectWriteHandler_;
-    std::span<const ExpectedRequest> scriptedRequests_{};
-    std::span<const ResponseStep> scriptedResponses_{};
-    std::size_t scriptedRequestIndex_{0};
-    std::size_t scriptedResponseIndex_{0};
 };
+
+using RecordingFireWireBus = DiceRecordingFireWireBus;
 
 struct HostClockResetGuard {
     ~HostClockResetGuard() {

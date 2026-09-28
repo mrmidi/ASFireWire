@@ -60,14 +60,24 @@ public:
 
     void CompareSwap(uint16_t hi, uint32_t lo, uint64_t expected, uint64_t desired,
                      std::optional<uint64_t> previous, ::ASFW::FW::FwSpeed speed,
-                     ::ASFW::Async::AsyncStatus status) {
+                     ::ASFW::Async::AsyncStatus status, bool is64Bit = true) {
         char buf[128];
-        std::snprintf(buf, sizeof(buf), "L %04x.%08x %016llx -> %016llx", hi, lo,
-                      static_cast<unsigned long long>(expected),
-                      static_cast<unsigned long long>(desired));
+        if (is64Bit) {
+            std::snprintf(buf, sizeof(buf), "L %04x.%08x %016llx -> %016llx", hi, lo,
+                          static_cast<unsigned long long>(expected),
+                          static_cast<unsigned long long>(desired));
+        } else {
+            std::snprintf(buf, sizeof(buf), "L %04x.%08x %08x -> %08x", hi, lo,
+                          static_cast<uint32_t>(expected),
+                          static_cast<uint32_t>(desired));
+        }
         std::string line = buf;
         if (previous) {
-            std::snprintf(buf, sizeof(buf), " = %016llx", static_cast<unsigned long long>(*previous));
+            if (is64Bit) {
+                std::snprintf(buf, sizeof(buf), " = %016llx", static_cast<unsigned long long>(*previous));
+            } else {
+                std::snprintf(buf, sizeof(buf), " = %08x", static_cast<uint32_t>(*previous));
+            }
             line += buf;
         }
         lines_.push_back(Finish(line, speed, status));

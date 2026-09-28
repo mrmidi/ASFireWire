@@ -23,6 +23,7 @@
 #include "ASFWDriver/Protocols/AVC/Core/AvcError.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/AvcFrame.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/AvcTypes.hpp"
+#include "ASFWDriver/Protocols/AVC/Core/IAvcUnit.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/RateCodes.hpp"
 #include "ASFWDriver/Protocols/AVC/Extensions/BridgeCoPlugInfo.hpp"
 
@@ -699,6 +700,130 @@ TEST(BridgeCoPlugInfoTests, ParseChannelPositionsMap) {
     auto rBad = ParseResponse(badPosResp);
     ASSERT_TRUE(rBad.has_value());
     EXPECT_EQ(BridgeCo::ParseChannelPositions(*rBad).error().kind, AvcErrorKind::kMalformedOperands);
+}
+
+// ===========================================================================
+// Phase 2a: IAvcUnit Seam & Typed Command Dispatch Tests
+// ===========================================================================
+
+static_assert(AvcCommand<Cmd::UnitInfoCommand>);
+static_assert(AvcCommand<Cmd::SubunitInfoCommand>);
+static_assert(AvcCommand<Cmd::UnitPlugInfoIsoExtCommand>);
+static_assert(AvcCommand<Cmd::SubunitPlugInfoCommand>);
+static_assert(AvcCommand<Cmd::PlugSignalFormatStatusCommand>);
+static_assert(AvcCommand<Cmd::PlugSignalFormatControlCommand>);
+
+class MockAvcUnit final : public IAvcUnit {
+public:
+    explicit MockAvcUnit(FW::NodeId node = FW::NodeId{2},
+                         FW::Generation gen = FW::Generation{5},
+                         uint64_t guid = 0x0003DB0001001234ULL)
+        : nodeId_(node), generation_(gen), guid_(guid) {}
+
+    void Submit(const CommandFrame& frame,
+                FW::Generation generation,
+                ResponseCallback completion) override {
+        lastFrame_ = frame;
+        lastGeneration_ = generation;
+        pendingCompletion_ = std::move(completion);
+    }
+
+    [[nodiscard]] FW::NodeId NodeId() const noexcept override { return nodeId_; }
+    [[nodiscard]] FW::Generation CurrentGeneration() const noexcept override { return generation_; }
+    [[nodiscard]] uint64_t Guid() const noexcept override { return guid_; }
+
+    void Respond(Expected<Response> response) {
+        if (pendingCompletion_) {
+            auto cb = std::move(pendingCompletion_);
+            cb(response);
+        }
+    }
+
+    [[nodiscard]] const std::optional<CommandFrame>& LastFrame() const { return lastFrame_; }
+    [[nodiscard]] const std::optional<FW::Generation>& LastGeneration() const { return lastGeneration_; }
+
+private:
+    FW::NodeId nodeId_;
+    FW::Generation generation_;
+    uint64_t guid_;
+    std::optional<CommandFrame> lastFrame_;
+    std::optional<FW::Generation> lastGeneration_;
+    ResponseCallback pendingCompletion_;
+};
+
+TEST(AvcUnitSeamTests, IdentityAndDispatchSuccess) {
+    MockAvcUnit unit(FW::NodeId{2}, FW::Generation{7}, 0x1122334455667788ULL);
+    EXPECT_EQ(unit.NodeId().value, 2);
+    EXPECT_EQ(unit.CurrentGeneration().value, 7);
+    EXPECT_EQ(unit.Guid(), 0x1122334455667788ULL);
+    EXPECT_EQ(unit.Identity().guid, 0x1122334455667788ULL);
+    EXPECT_EQ(unit.Identity().nodeId.value, 2);
+    EXPECT_EQ(unit.Identity().generation.value, 7);
+
+    // Dispatch UnitInfoCommand via Send<Cmd>
+    std::optional<Expected<Cmd::UnitInfo>> callbackResult;
+    Send(unit, Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> result) {
+        callbackResult = result;
+    });
+
+    ASSERT_TRUE(unit.LastFrame().has_value());
+    EXPECT_EQ(unit.LastGeneration()->value, 7);
+    // Verify default 0-operand Apple/legacy encoding: [01, FF, 30] (wire size 4)
+    EXPECT_EQ(unit.LastFrame()->Bytes().size(), 3u);
+    EXPECT_EQ(unit.LastFrame()->WireBytes().size(), 4u);
+
+    // Mock unit receives FCP response from device
+    const uint8_t rawResponse[] = {0x0C, 0xFF, 0x30, 0x07, 0x08, 0x00, 0x03, 0xDB};
+    auto parsedResponse = ParseResponseFor(*unit.LastFrame(), rawResponse);
+    ASSERT_TRUE(parsedResponse.has_value());
+
+    unit.Respond(*parsedResponse);
+
+    ASSERT_TRUE(callbackResult.has_value());
+    ASSERT_TRUE(callbackResult->has_value());
+    EXPECT_EQ((*callbackResult)->companyId[0], 0x00);
+    EXPECT_EQ((*callbackResult)->companyId[1], 0x03);
+    EXPECT_EQ((*callbackResult)->companyId[2], 0xDB);
+    EXPECT_EQ((*callbackResult)->unitType, SubunitType::kAudio);
+    EXPECT_EQ((*callbackResult)->unitId, 0x00);
+}
+
+TEST(AvcUnitSeamTests, DispatchPropagatesTransportFailure) {
+    MockAvcUnit unit;
+    std::optional<Expected<Cmd::UnitInfo>> callbackResult;
+
+    Send(unit, Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> result) {
+        callbackResult = result;
+    });
+
+    // Simulate transport timeout
+    unit.Respond(std::unexpected(AvcError::Of(AvcErrorKind::kTimeout)));
+
+    ASSERT_TRUE(callbackResult.has_value());
+    ASSERT_FALSE(callbackResult->has_value());
+    EXPECT_EQ(callbackResult->error().kind, AvcErrorKind::kTimeout);
+}
+
+TEST(AvcUnitSeamTests, DispatchPropagatesUnexpectedResponseCode) {
+    MockAvcUnit unit;
+    std::optional<Expected<Cmd::UnitInfo>> callbackResult;
+
+    Send(unit, Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> result) {
+        callbackResult = result;
+    });
+
+    // Simulate REJECTED response
+    const uint8_t rawResponse[] = {0x0A, 0xFF, 0x30, 0x07, 0x08, 0x00, 0x03, 0xDB};
+    auto parsedResponse = ParseResponseFor(*unit.LastFrame(), rawResponse);
+    ASSERT_TRUE(parsedResponse.has_value());
+
+    unit.Respond(*parsedResponse);
+
+    ASSERT_TRUE(callbackResult.has_value());
+    ASSERT_FALSE(callbackResult->has_value());
+    EXPECT_EQ(callbackResult->error().kind, AvcErrorKind::kUnexpectedResponse);
+    ASSERT_TRUE(callbackResult->error().response.has_value());
+    EXPECT_EQ(*callbackResult->error().response, ResponseCode::kRejected);
 }
 
 } // namespace ASFW::AVC::Test

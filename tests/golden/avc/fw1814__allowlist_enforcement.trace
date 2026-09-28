@@ -1,0 +1,10 @@
+## Allowed: InputSignalFormatProbe
+W ffff.f0000b00 01ff190090ffffff @s100
+## Allowed: OutputSignalFormatProbe
+W ffff.f0000b00 01ff180090ffffff @s100
+## Allowed: RateControl48k
+W ffff.f0000b00 00ff18009002ffff @s100
+## Refused: UnitInfo
+## Refused: SubunitInfo
+## Refused: PlugInfo
+## Refused: ExtendedStreamFormat

@@ -1,0 +1,14 @@
+## AVCUnit::Initialize
+W ffff.f0000b00 00ff088001ff0000 @s100
+W ffff.f0000b00 01ff1800ffffffff @s100
+W ffff.f0000b00 01ff3000 @s100
+W ffff.f0000b00 01ff3107ffffffff @s100
+W ffff.f0000b00 0060088001ff0000 @s100
+W ffff.f0000b00 00600980ff00008000000000 @s100
+W ffff.f0000b00 01ff0200ffffffff @s100
+## OxfwStreamFormats::DetectStreamFormats
+W ffff.f0000b00 01ffbfc100000000ffff0000 @s100
+W ffff.f0000b00 01ffbfc100000000ffff0100 @s100
+W ffff.f0000b00 01ffbfc100000000ffff0200 @s100
+W ffff.f0000b00 01ffbfc100000000ffff0300 @s100
+W ffff.f0000b00 01ffbfc100000000ffff0400 @s100

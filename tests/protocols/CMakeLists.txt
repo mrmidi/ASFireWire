@@ -59,6 +59,53 @@ add_protocols_test(AvcDifferentialTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
 )
 
+# AVC Simulated Unit Tests
+add_protocols_test(AvcSimulatedUnitTests
+    AvcSimulatedUnitTests.cpp
+    "${ASFW_TESTS_DIR}/support/SimulatedAvcUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/GeneralCommands.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/SignalSourceCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/FunctionBlockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
+)
+
+# AVC Golden Wire Characterization Tests (Phase 2a)
+add_protocols_test(AvcGoldenTests
+    AvcGoldenTests.cpp
+    "${ASFW_TESTS_DIR}/support/SimulatedAvcUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/GeneralCommands.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/SignalSourceCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/FunctionBlockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeParamsSerdes.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfwStreamFormats.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+)
+
 
 # FCP Packet Parsing Tests
 add_executable(FCPPacketParsingTests

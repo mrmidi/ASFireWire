@@ -191,4 +191,78 @@ struct VendorDependentReply {
 [[nodiscard]] Expected<VendorDependentReply> ParseVendorDependent(const Response& response,
                                                                   ResponseCode expected) noexcept;
 
+// ===========================================================================
+// Typed command structs satisfying the AvcCommand concept
+// ===========================================================================
+
+struct UnitInfoCommand {
+    UnitInfoStyle style{UnitInfoStyle::kStandardAppleLegacy};
+    using Reply = UnitInfo;
+    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+        return BuildUnitInfoStatus(style);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
+        return ParseUnitInfo(response);
+    }
+};
+
+struct SubunitInfoCommand {
+    uint8_t page{0};
+    uint8_t extensionCode{0x07};
+    using Reply = SubunitInfo;
+    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+        return BuildSubunitInfoStatus(page, extensionCode);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
+        return ParseSubunitInfo(response);
+    }
+};
+
+struct UnitPlugInfoIsoExtCommand {
+    UnitPlugInfoKind kind{UnitPlugInfoKind::kIsochronousExternal};
+    using Reply = UnitIsochronousExternalPlugs;
+    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+        return BuildUnitPlugInfoStatus(kind);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
+        return ParseUnitIsochronousExternalPlugs(response);
+    }
+};
+
+struct SubunitPlugInfoCommand {
+    SubunitAddress subunit{SubunitAddress::Unit()};
+    using Reply = SubunitPlugs;
+    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+        return BuildSubunitPlugInfoStatus(subunit);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
+        return ParseSubunitPlugs(response);
+    }
+};
+
+struct PlugSignalFormatStatusCommand {
+    PlugSignalDirection direction{PlugSignalDirection::kInput};
+    uint8_t plugId{0};
+    SignalFormatQuery query{SignalFormatQuery::kAllWildcard};
+    using Reply = PlugSignalFormat;
+    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+        return BuildPlugSignalFormatStatus(direction, plugId, query);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
+        return ParsePlugSignalFormat(response, ResponseCode::kImplementedStable);
+    }
+};
+
+struct PlugSignalFormatControlCommand {
+    PlugSignalDirection direction{PlugSignalDirection::kInput};
+    PlugSignalFormat format{};
+    using Reply = PlugSignalFormat;
+    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+        return BuildPlugSignalFormatControl(direction, format);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
+        return ParsePlugSignalFormat(response, ResponseCode::kAccepted);
+    }
+};
+
 } // namespace ASFW::AVC::Cmd

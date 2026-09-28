@@ -31,6 +31,10 @@ enum class AvcErrorKind : uint8_t {
                            ///< (e.g. a subunit address for a unit-only command).
     kUnsupported,          ///< Valid per spec, not modelled here (extended addressing,
                            ///< more compound entries than the fixed capacity, ...).
+    kTimeout,              ///< Command timed out waiting for FCP response.
+    kBusReset,             ///< Bus reset occurred during command execution.
+    kTransportError,       ///< Async 1394 transport failure.
+    kRefused,              ///< Refused by command allowlist/policy.
 };
 
 struct AvcError {
