@@ -13,10 +13,13 @@
 // describes an F32 (16 + 16) and the device carries 16 + 8.
 
 #include "Audio/DriverKit/Config/ResolvedStreamConfig.hpp"
+#include "Audio/DriverKit/Config/RME/FirefaceProfile.hpp"
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <tuple>
+#include <vector>
 
 namespace {
 
@@ -241,4 +244,31 @@ TEST(ResolvedStreamConfig, FallsBackToTheProfileWhenNothingWasResolved) {
     ASSERT_TRUE(BuildResolvedTxStreamConfig(profile, kVeniceF24Playback, 1, 1, alsoSecond));
     EXPECT_EQ(alsoSecond.pcmChannels, 16)
         << "index beyond the resolved count falls back too";
+}
+
+TEST(ResolvedStreamConfig, FirefaceProfilesUseExactHeaderlessPayloadGeometry) {
+    using ASFW::Isoch::Audio::RME::Profiles::FirefaceProfile;
+    for (const auto [channels, name, expectedBytes] : {
+             std::tuple{18U, "RME Fireface 400", 576U},
+             std::tuple{28U, "RME Fireface 800", 896U}}) {
+        const FirefaceProfile profile{channels, name};
+        EXPECT_STREQ(profile.Name(), name);
+        EXPECT_EQ(profile.SupportedSampleRates(), std::vector<uint32_t>{48000U});
+        EXPECT_EQ(profile.TxWireFormat(),
+                  ASFW::Encoding::AudioWireFormat::kRawPcm24Upper24In32LE);
+        EXPECT_EQ(profile.RxWireFormat(),
+                  ASFW::Encoding::AudioWireFormat::kRawPcm24Upper24In32LE);
+        EXPECT_EQ(profile.TransmitClockSource(),
+                  ASFW::Isoch::Audio::TxClockSource::kRxReplayAfterBootstrap);
+        AudioStreamConfig config{};
+        ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(config));
+        EXPECT_EQ(config.sampleRate, 48000U);
+        EXPECT_EQ(config.streamMode, ASFW::Encoding::StreamMode::kBlocking);
+        EXPECT_EQ(config.pcmChannels, channels);
+        EXPECT_EQ(config.dbs, channels);
+        EXPECT_EQ(config.framesPerDataPacket, 8U);
+        EXPECT_EQ(config.midiSlots, 0U);
+        EXPECT_EQ(config.packetFraming, ASFW::Encoding::AudioPacketFraming::kHeaderless);
+        EXPECT_EQ(TxPacketBytesForStreamConfig(config), expectedBytes);
+    }
 }

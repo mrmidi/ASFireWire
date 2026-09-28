@@ -249,6 +249,12 @@ bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars,
                          const ASFW::Isoch::Audio::IAudioStreamProfile& profile) noexcept {
     ivars.runtime.mAudioInternalTxActive =
         profile.TransmitClockSource() == ASFW::Isoch::Audio::TxClockSource::kInternalCadence;
+    ivars.runtime.rxReplayAfterBootstrap.store(
+        profile.TransmitClockSource() ==
+            ASFW::Isoch::Audio::TxClockSource::kRxReplayAfterBootstrap,
+        std::memory_order_release);
+    const bool bootstrapProfile = ivars.runtime.rxReplayAfterBootstrap.load(
+        std::memory_order_acquire);
     // The start's timeline epoch. A Transmit clock (M-Audio internal cadence)
     // begins its own when the TX clock bridge arms; every other device takes
     // its clock from RX. A rate outside the HAL ladder gets no epoch, and RX
@@ -267,7 +273,9 @@ bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars,
         ivars.runtime.mAudioInternalTxActive.load(
             std::memory_order_acquire),
         std::memory_order_release);
-    return !(ivars.runtime.mAudioInternalTxActive &&
+    return !(bootstrapProfile &&
+             static_cast<uint32_t>(ivars.device.currentSampleRate) != 48000U) &&
+           !(ivars.runtime.mAudioInternalTxActive &&
              (!ivars.runtime.mAudioInternalTxTiming.Arm() ||
               static_cast<uint32_t>(ivars.device.currentSampleRate) != 48000U));
 }

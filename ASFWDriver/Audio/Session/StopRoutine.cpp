@@ -41,7 +41,9 @@ IOReturn StopRoutine::Run(uint64_t guid,
     if (!profile.policyResolved || policy == nullptr || !registry_.IsCurrent(policy->route)) {
         // The route changed under this session. Stop local DMA, but do not infer
         // a device-side stop recipe from stale identity data.
-        return host_.StopAll();
+        return family.GetStopPolicy().stopHostContextsBeforeDevice
+                   ? host_.StopAllAfterBusReset()
+                   : host_.StopAll();
     }
 
     if (profile.stopOrder.disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive) {
@@ -66,7 +68,37 @@ IOReturn StopRoutine::Run(uint64_t guid,
         return result;
     }
 
-    IOReturn result = host_.StopAll();
+    const auto stopPolicy = family.GetStopPolicy();
+    IOReturn result = kIOReturnSuccess;
+    if (stopPolicy.stopHostContextsBeforeDevice) {
+        const IOReturn receive = host_.StopPreparedReceive();
+        const IOReturn transmit = host_.StopPreparedTransmit();
+        if (receive != kIOReturnSuccess) result = receive;
+        if (transmit != kIOReturnSuccess && result == kIOReturnSuccess) result = transmit;
+        const IOReturn device = family.Stop();
+        if (device == kIOReturnAborted && TeardownRequested()) {
+            RecordTeardownAbort("DeviceStop", guid);
+            return kIOReturnAborted;
+        }
+        if (device != kIOReturnSuccess && device != kIOReturnUnsupported && result == kIOReturnSuccess) {
+            result = device;
+        }
+        // A current device that refused its stop may still be transmitting.
+        // Keep host-owned IRM reservations attached until a later stop retry;
+        // releasing them could hand a live channel to another node. A stale
+        // route/reset may release through the reset cleanup path instead.
+        if (device != kIOReturnSuccess && device != kIOReturnUnsupported &&
+            registry_.IsCurrent(policy->route)) {
+            return result;
+        }
+        const IOReturn cleanup = registry_.IsCurrent(policy->route)
+                                     ? host_.StopAll()
+                                     : host_.StopAllAfterBusReset();
+        if (cleanup != kIOReturnSuccess && result == kIOReturnSuccess) result = cleanup;
+        return result;
+    }
+    // Existing families retain their established teardown ordering.
+    result = host_.StopAll();
     const IOReturn device = family.Stop();
     if (device == kIOReturnAborted && TeardownRequested()) {
         RecordTeardownAbort("DeviceStop", guid);
@@ -84,7 +116,7 @@ IOReturn StopRoutine::Rollback(uint64_t guid,
                                FamilyDriver& family,
                                const AudioStreamRuntimeCaps& caps,
                                const AudioDuplexChannels& channels) noexcept {
-    if (registry_.IsCurrent(route)) {
+    if (registry_.IsCurrent(route) && !family.GetStopPolicy().stopHostContextsBeforeDevice) {
         (void)family.BreakConnections();
     }
     return Run(guid, record, family, caps, channels);

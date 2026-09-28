@@ -28,11 +28,23 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <array>
 
 namespace ASFW::Audio {
 
 class FamilyDriver {
 public:
+    struct DirectionResourcePolicy {
+        bool reserveHostResources{true};
+        uint64_t allowedIsoChannels{~uint64_t{0}};
+    };
+    struct ResourcePolicy {
+        DirectionResourcePolicy playback{};
+        DirectionResourcePolicy capture{};
+    };
+    struct StopPolicy {
+        bool stopHostContextsBeforeDevice{false};
+    };
     virtual ~FamilyDriver() = default;
 
     // Service teardown: once `cancel` reads true, waits give up and no new
@@ -47,8 +59,15 @@ public:
     // Claim the device and bring its clock to `clock`.
     [[nodiscard]] virtual std::expected<DuplexPrepareResult, IOReturn> Configure(
         const AudioDuplexChannels& channels, const AudioClockConfig& clock) = 0;
-    // The channels the IRM assigned; the family writes them to the device.
-    virtual void AssignChannels(const AudioDuplexChannels& channels) = 0;
+    // Apply channel assignment and return the final channels. A device-selected
+    // direction can resolve its channel here before host DMA is prepared.
+    [[nodiscard]] virtual std::expected<AudioDuplexChannels, IOReturn> AssignChannels(
+        const AudioDuplexChannels& channels) = 0;
+    [[nodiscard]] virtual ResourcePolicy GetResourcePolicy() const noexcept { return {}; }
+    [[nodiscard]] virtual StopPolicy GetStopPolicy() const noexcept { return {}; }
+    // Families with device settle time after their enable command may raise
+    // the shared session delay; absent preserves the resolved profile value.
+    [[nodiscard]] virtual std::optional<uint32_t> PostEnableDelayMs() const noexcept { return std::nullopt; }
     // Clock and lock state, for the pre-stream clock gate.
     [[nodiscard]] virtual std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) = 0;
     // Arm the streams the device receives (host playback).

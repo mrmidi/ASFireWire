@@ -24,6 +24,7 @@
 #include <ios>
 #include <set>
 #include <string_view>
+#include <tuple>
 
 namespace {
 
@@ -275,6 +276,54 @@ TEST(AudioDeviceCatalog, MotuIsMatchedFromTheUnitDirectory) {
     ASSERT_TRUE(plan.has_value());
     EXPECT_EQ(plan->family, AudioFamilyProviderId::MotuRegister);
     EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::Motu828mk2);
+}
+
+// Synthetic fixture derived from the Linux snd-fireface match table, not a
+// Config ROM captured from ASFW hardware.
+TEST(AudioDeviceCatalog, RmeFormerModelsRequireExactUnitIdentityAndBlockAvc) {
+    for (const auto [definitionId, modelName, version] : {
+             std::tuple{DeviceDefinitionId::RmeFireface400, "Fireface 400",
+                        kRmeFireface400UnitVersion},
+             std::tuple{DeviceDefinitionId::RmeFireface800, "Fireface 800",
+                        kRmeFireface800UnitVersion}}) {
+        const auto device = MakeDevice(0x000a350000000001ULL, kRmeVendorId,
+                                       kRmeRootModelId,
+                                       {{.offset = 7,
+                                         .specifierId = kRmeUnitSpecifierId,
+                                         .version = version}});
+        const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+        ASSERT_TRUE(plan.has_value());
+        EXPECT_NE(std::ranges::find(plan->candidates, definitionId), plan->candidates.end());
+        EXPECT_EQ(plan->support, SupportDisposition::Supported);
+        EXPECT_EQ(plan->modelName, modelName);
+        EXPECT_EQ(plan->family, AudioFamilyProviderId::RmeRegister);
+        EXPECT_EQ(plan->probePolicy, ProbePolicyId::RmeRegister);
+        EXPECT_EQ(plan->profileBuilder,
+                  version == kRmeFireface400UnitVersion ? ProfileBuilderId::RmeFireface400
+                                                        : ProfileBuilderId::RmeFireface800);
+        EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::RmeFireface);
+        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
+                  Discovery::AvcCommandFilterId::BlockAll);
+
+        auto wrongRoot = device;
+        wrongRoot.identity.rootModelId = 0;
+        EXPECT_FALSE(AudioDeviceCatalog::Resolve(wrongRoot,
+                                                  wrongRoot.identity.units[0]).has_value());
+        auto wrongUnit = device;
+        wrongUnit.identity.units[0].specifierId = kRmeVendorId + 1;
+        EXPECT_FALSE(AudioDeviceCatalog::Resolve(wrongUnit,
+                                                  wrongUnit.identity.units[0]).has_value());
+        auto wrongVendor = device;
+        wrongVendor.identity.rootVendorId = kRmeVendorId + 1;
+        EXPECT_FALSE(AudioDeviceCatalog::Resolve(wrongVendor,
+                                                  wrongVendor.identity.units[0]).has_value());
+        for (const uint32_t otherRmeFormerVersion : {0x000003U, 0x000004U, 0x000005U}) {
+            auto otherRmeModel = device;
+            otherRmeModel.identity.units[0].version = otherRmeFormerVersion;
+            EXPECT_FALSE(AudioDeviceCatalog::Resolve(otherRmeModel,
+                                                      otherRmeModel.identity.units[0]).has_value());
+        }
+    }
 }
 
 TEST(AudioDeviceCatalog, AnUnverifiedMotuSiblingIsNamedButNotPlayable) {

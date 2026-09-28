@@ -12,6 +12,7 @@
 #include "../Protocols/Backends/AVCAudioBackend.hpp"
 #include "../Protocols/Backends/DiceAudioBackend.hpp"
 #include "../Protocols/Backends/MotuAudioBackend.hpp"
+#include "../Protocols/Backends/RmeAudioBackend.hpp"
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "../Session/AudioSessions.hpp"
 
@@ -103,6 +104,7 @@ private:
     Session::AudioSessions sessions_;
     DiceAudioBackend dice_;
     MotuAudioBackend motu_;
+    RmeAudioBackend rme_;
     AVCAudioBackend avc_;
 
     IOLock* lock_{nullptr};

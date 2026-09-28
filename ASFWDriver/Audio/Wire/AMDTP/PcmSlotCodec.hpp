@@ -26,6 +26,7 @@ private:
     [[nodiscard]] static uint32_t EncodeAm824MBLA(float sample) noexcept;
     [[nodiscard]] static uint32_t EncodeRawSigned24In32BE(float sample) noexcept;
     [[nodiscard]] static uint32_t EncodeRawSigned24In32LE(float sample) noexcept;
+    [[nodiscard]] static uint32_t EncodeRawPcm24Upper24In32LE(float sample) noexcept;
     [[nodiscard]] static int32_t NormalizeSigned24(int32_t sample) noexcept;
 };
 

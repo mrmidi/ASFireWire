@@ -165,7 +165,7 @@ struct DiceRig {
         if (status != kIOReturnSuccess) {
             return status;
         }
-        family->AssignChannels(channels);
+        EXPECT_TRUE(family->AssignChannels(channels));
         status = Run("ProgramRx", [&](auto done) { done(StatusOf(family->ArmDeviceRx())); });
         if (status != kIOReturnSuccess) {
             return status;

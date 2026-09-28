@@ -464,6 +464,7 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
 
         case ASFW::Audio::ProbeBootstrap::DiceProtocol:
         case ASFW::Audio::ProbeBootstrap::MotuRegister:
+        case ASFW::Audio::ProbeBootstrap::RmeRegister:
             // Register-driven families. An AV/C unit directory here is
             // incidental; their bring-up does not go through this path.
             ASFW_LOG(AVC,

@@ -147,6 +147,7 @@ public:
 
     // Channels another node already holds on the bus.
     void SetChannelsTakenElsewhere(uint64_t mask) noexcept { takenElsewhere_ = mask; }
+    [[nodiscard]] uint64_t AssignedChannelsForTest() const noexcept { return assigned_; }
 
     kern_return_t BeginSplitDuplex(uint64_t) noexcept override {
         assigned_ = takenElsewhere_;
@@ -199,7 +200,16 @@ public:
     kern_return_t StartPreparedTransmit() noexcept override { return Finish("start_transmit", "H start tx"); }
     kern_return_t StopPreparedReceive() noexcept override { return Finish("stop_receive", "H stop rx"); }
     kern_return_t StopPreparedTransmit() noexcept override { return Finish("stop_transmit", "H stop tx"); }
-    kern_return_t StopAll() noexcept override { return Finish("stop_all", "H stop all"); }
+    kern_return_t StopAll() noexcept override {
+        const kern_return_t result = Finish("stop_all", "H stop all");
+        if (result == kIOReturnSuccess) assigned_ = takenElsewhere_;
+        return result;
+    }
+    kern_return_t StopAllAfterBusReset() noexcept override {
+        const kern_return_t result = Finish("stop_all_after_reset", "H stop all after reset");
+        if (result == kIOReturnSuccess) assigned_ = takenElsewhere_;
+        return result;
+    }
 
 private:
     static std::string Format(const ::ASFW::Audio::DirectRxFormatDescriptor& f) {
@@ -300,6 +310,9 @@ public:
     IOReturn LoadGeometry() override { return Stage("geometry", "D geometry"); }
 
     std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override { return caps_; }
+    ResourcePolicy GetResourcePolicy() const noexcept override { return resourcePolicy; }
+    StopPolicy GetStopPolicy() const noexcept override { return stopPolicy; }
+    std::optional<uint32_t> PostEnableDelayMs() const noexcept override { return postEnableDelay; }
 
     std::expected<DuplexPrepareResult, IOReturn> Configure(const AudioDuplexChannels& channels,
                                                            const AudioClockConfig& clock) override {
@@ -315,9 +328,11 @@ public:
                                    .appliedClock = clock_, .runtimeCaps = caps_};
     }
 
-    void AssignChannels(const AudioDuplexChannels& channels) override {
+    std::expected<AudioDuplexChannels, IOReturn> AssignChannels(const AudioDuplexChannels& channels) override {
         channels_ = channels;
-        trace_.Add("D assign" + Channels(channels));
+        const IOReturn status = Stage("assign", "D assign" + Channels(channels));
+        if (status != kIOReturnSuccess) return std::unexpected(status);
+        return channels;
     }
 
     std::expected<DuplexStageResult, IOReturn> ArmDeviceRx() override {
@@ -383,6 +398,9 @@ public:
 
     // Source-lock state of successive health reads.
     std::vector<bool> healthLocked;
+    ResourcePolicy resourcePolicy{};
+    StopPolicy stopPolicy{};
+    std::optional<uint32_t> postEnableDelay{};
 
 private:
     static std::string Channels(const AudioDuplexChannels& c) {

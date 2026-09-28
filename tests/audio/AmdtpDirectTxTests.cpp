@@ -96,6 +96,122 @@ TEST(AmdtpDirectTxTests, Int32EncodingUsesHighSigned24Bits) {
               0x407FFFFFu);
 }
 
+TEST(AmdtpDirectTxTests, Upper24LittleEndianCodecHasIndependentWireGoldens) {
+    using ASFW::Protocols::Audio::AMDTP::PcmSlotCodec;
+    using ASFW::Protocols::Audio::AMDTP::PcmSlotEncoding;
+    const auto wireBytes = [](uint32_t encoded) {
+        return std::array<uint8_t, 4>{
+            static_cast<uint8_t>(encoded >> 24), static_cast<uint8_t>(encoded >> 16),
+            static_cast<uint8_t>(encoded >> 8), static_cast<uint8_t>(encoded)};
+    };
+    EXPECT_EQ(wireBytes(PcmSlotCodec::EncodeInt32(INT32_MAX,
+                      PcmSlotEncoding::RawPcm24Upper24In32LE)),
+              (std::array<uint8_t, 4>{0x00, 0xFF, 0xFF, 0x7F}));
+    EXPECT_EQ(wireBytes(PcmSlotCodec::EncodeInt32(INT32_MIN,
+                      PcmSlotEncoding::RawPcm24Upper24In32LE)),
+              (std::array<uint8_t, 4>{0x00, 0x00, 0x00, 0x80}));
+    EXPECT_EQ(wireBytes(PcmSlotCodec::EncodeInt32(0,
+                      PcmSlotEncoding::RawPcm24Upper24In32LE)),
+              (std::array<uint8_t, 4>{0, 0, 0, 0}));
+    EXPECT_NE(PcmSlotCodec::EncodeInt32(INT32_MAX,
+                  PcmSlotEncoding::RawPcm24Upper24In32LE),
+              PcmSlotCodec::EncodeInt32(INT32_MAX,
+                  PcmSlotEncoding::RawSigned24In32LE));
+    EXPECT_EQ(PcmSlotCodec::EncodeFloat32(2.0f,
+                  PcmSlotEncoding::RawPcm24Upper24In32LE),
+              PcmSlotCodec::EncodeFloat32(1.0f,
+                  PcmSlotEncoding::RawPcm24Upper24In32LE));
+    EXPECT_EQ(PcmSlotCodec::EncodeFloat32(-2.0f,
+                  PcmSlotEncoding::RawPcm24Upper24In32LE),
+              PcmSlotCodec::EncodeFloat32(-1.0f,
+                  PcmSlotEncoding::RawPcm24Upper24In32LE));
+}
+
+TEST(AmdtpDirectTxTests, HeaderlessPacketSizingAndNoDataOperationAreExplicit) {
+    for (const uint32_t channels : {18U, 28U}) {
+        AmdtpPacketTimeline timeline{};
+        std::array<PacketTimelineSlot, 8> timelineSlots{};
+        ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+        AmdtpStreamConfig config{};
+        config.streamMode = StreamMode::Blocking;
+        config.packetFraming = AmdtpStreamConfig::PacketFraming::Headerless;
+        config.pcmChannels = channels;
+        config.dbs = static_cast<uint8_t>(channels);
+        config.framesPerDataPacket = 8;
+        config.maxPacketBytes = channels == 18 ? 576 : 896;
+        AmdtpTxPolicy policy{};
+        policy.hostToDevicePcmEncoding = PcmSlotEncoding::RawPcm24Upper24In32LE;
+        AmdtpTxPacketizer packetizer{};
+        packetizer.BindTimeline(&timeline);
+        ASSERT_TRUE(packetizer.Configure(config, policy));
+        std::array<uint8_t, 896> bytes{};
+        PreparedTxPacket packet{};
+        uint64_t frame = 0;
+        AmdtpTimingState data{};
+        data.txClockValid = true;
+        data.disposition = AmdtpPacketDisposition::Data;
+        data.nextDataSyt = 0x1234;
+        data.replayValid = true;
+        data.replayDataBlocks = 8;
+        ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(
+            packetizer, {0, bytes.data(), config.maxPacketBytes}, data, frame, packet));
+        EXPECT_EQ(packet.byteCount, config.maxPacketBytes);
+        EXPECT_EQ(packet.isochTag, 0);
+        EXPECT_EQ(packet.isochSync, 0);
+        EXPECT_EQ(packet.syt, 0xFFFFU);
+        EXPECT_EQ(packet.operation, PreparedTxPacket::Operation::Packet);
+
+        AmdtpTimingState idle{};
+        idle.txClockValid = true;
+        idle.disposition = AmdtpPacketDisposition::NoData;
+        idle.replayValid = true;
+        ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(
+            packetizer, {1, bytes.data(), config.maxPacketBytes}, idle, frame, packet));
+        EXPECT_EQ(packet.byteCount, 0U);
+        EXPECT_EQ(packet.operation, PreparedTxPacket::Operation::SkipCycle);
+    }
+}
+
+TEST(AmdtpDirectTxTests, HeaderlessPayloadWriterStartsAtByteZeroAndPreservesChannelOrder) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+    AmdtpStreamConfig config{};
+    config.streamMode = StreamMode::Blocking;
+    config.packetFraming = AmdtpStreamConfig::PacketFraming::Headerless;
+    config.pcmChannels = 2;
+    config.dbs = 2;
+    config.framesPerDataPacket = 8;
+    config.maxPacketBytes = 64;
+    AmdtpTxPolicy policy{};
+    policy.hostToDevicePcmEncoding = PcmSlotEncoding::RawPcm24Upper24In32LE;
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(config, policy));
+    std::array<uint8_t, 64> packetBytes{};
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.replayValid = true;
+    timing.replayDataBlocks = 8;
+    uint64_t nextFrame = 0;
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(
+        packetizer, {0, packetBytes.data(), packetBytes.size()}, timing, nextFrame, packet));
+
+    AmdtpPayloadWriter writer{};
+    writer.Configure(config, policy);
+    writer.BindTimeline(&timeline);
+    std::array<float, 16> host{};
+    host[0] = 0.5f;
+    host[1] = -0.5f;
+    writer.WriteFloat32Interleaved({host.data(), 0, 8, 8, 2}, 0);
+    EXPECT_EQ((std::array<uint8_t, 4>{packetBytes[0], packetBytes[1], packetBytes[2], packetBytes[3]}),
+              (std::array<uint8_t, 4>{0x00, 0x00, 0x00, 0x40}));
+    EXPECT_EQ((std::array<uint8_t, 4>{packetBytes[4], packetBytes[5], packetBytes[6], packetBytes[7]}),
+              (std::array<uint8_t, 4>{0x00, 0x00, 0x00, 0xC0}));
+}
+
 TEST(AmdtpDirectTxTests, ForcedNoDataHoldsDbcAndAudioFrame) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 8> timelineSlots{};
@@ -133,6 +249,7 @@ TEST(AmdtpDirectTxTests, ForcedNoDataHoldsDbcAndAudioFrame) {
         {1, bytes[1].data(), bytes[1].size()}, noData, packetizerFrame, forced));
     EXPECT_FALSE(forced.isData);
     EXPECT_EQ(forced.byteCount, 8U);
+    EXPECT_EQ(forced.operation, PreparedTxPacket::Operation::Packet);
     EXPECT_EQ(forced.dbc, first.dbc);
     EXPECT_EQ(forced.firstAudioFrame, 0U);
 
@@ -143,6 +260,28 @@ TEST(AmdtpDirectTxTests, ForcedNoDataHoldsDbcAndAudioFrame) {
     EXPECT_EQ(data.firstAudioFrame, 0U);
     EXPECT_EQ(data.framesInPacket, 8U);
     EXPECT_EQ(data.syt, 0x1234U);
+}
+
+TEST(AmdtpDirectTxTests, EmptyCipPacketRemainsPacketOperation) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    auto config = BlockingStereoConfig();
+    AmdtpTxPolicy policy{};
+    policy.emptyPacketsDuringIdle = true;
+    ASSERT_TRUE(packetizer.Configure(config, policy));
+    std::array<uint8_t, 128> bytes{};
+    AmdtpTimingState idle{};
+    idle.disposition = AmdtpPacketDisposition::NoData;
+    uint64_t frame = 0;
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(
+        packetizer, {0, bytes.data(), bytes.size()}, idle, frame, packet));
+    EXPECT_FALSE(packet.isData);
+    EXPECT_EQ(packet.byteCount, 0U);
+    EXPECT_EQ(packet.operation, PreparedTxPacket::Operation::Packet);
 }
 
 TEST(AmdtpDirectTxTests,

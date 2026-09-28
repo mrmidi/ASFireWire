@@ -45,6 +45,8 @@ TEST(SelectProbeBootstrapTests, ReturnsExpectedBootstrapForFamilyPolicies) {
     // MotuRegister
     EXPECT_EQ(SelectProbeBootstrap(AudioFamilyProviderId::MotuRegister, ProbePolicyId::MotuRegister),
               ProbeBootstrap::MotuRegister);
+    EXPECT_EQ(SelectProbeBootstrap(AudioFamilyProviderId::RmeRegister, ProbePolicyId::RmeRegister),
+              ProbeBootstrap::RmeRegister);
     EXPECT_EQ(SelectProbeBootstrap(AudioFamilyProviderId::MotuRegister, ProbePolicyId::GenericAvc),
               ProbeBootstrap::Unsupported);
 

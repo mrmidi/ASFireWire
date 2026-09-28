@@ -183,7 +183,8 @@ DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolic
             device.modelName = endpointPlan->modelName;
         }
         if (endpointPlan->family == DeviceProfiles::Audio::AudioFamilyProviderId::DICE ||
-            endpointPlan->family == DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister) {
+            endpointPlan->family == DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister ||
+            endpointPlan->family == DeviceProfiles::Audio::AudioFamilyProviderId::RmeRegister) {
             device.kind = DeviceKind::VendorSpecificAudio;
             device.isAudioCandidate = true;
         } else {

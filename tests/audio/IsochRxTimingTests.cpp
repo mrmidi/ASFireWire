@@ -284,6 +284,80 @@ TEST(IsochRxTimingTests, DirectReceiveConsumerOwnsDecodeAcrossOpaqueIsochSeam) {
     EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 1u);
 }
 
+TEST(IsochRxTimingTests, SyntheticHeaderlessReplayHandlesWrapOneGapAndLargeLoss) {
+    std::array<float, 4096> input{};
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    FixedDirectAudioBindingSource source({
+        .generation = 1,
+        .inputBase = input.data(),
+        .inputBytes = sizeof(input),
+        .inputFrames = 2048,
+        .inputChannels = 2,
+        .control = &control,
+        .sampleRateHz = 48000,
+        .valid = true,
+    });
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer(
+        &source, {.wireFormat = ASFW::Encoding::AudioWireFormat::kRawPcm24Upper24In32LE,
+                 .framing = ASFW::Encoding::AudioPacketFraming::kHeaderless,
+                 .am824Slots = 2,
+                 .streamChannels = 2});
+    uint32_t recoveries = 0;
+    consumer.SetTimingLossCallback([&] { ++recoveries; });
+    consumer.OnReceiveActivated();
+    ASFW::Isoch::IsochReceivePacket packet{.descriptorIndex = 0};
+    std::array<uint8_t, 24> bytes{}; // 8-byte OHCI/isoch prefix + two PCM frames
+    packet.payload = bytes;
+
+    auto deliver = [&](uint32_t seconds, uint32_t cycle) {
+        const uint32_t timer = EncodeCycleTimer(seconds, cycle, 0);
+        const uint16_t raw = static_cast<uint16_t>(((seconds & 7u) << 13) | cycle);
+        bytes[0] = static_cast<uint8_t>(raw);
+        bytes[1] = static_cast<uint8_t>(raw >> 8);
+        const ASFW::Isoch::IsochReceiveBatch batch{
+            .drainCycleTimer = timer,
+            .drainHostTicks = uint64_t{seconds} * 1'000'000'000ULL + uint64_t{cycle} * 125'000ULL,
+        };
+        consumer.BeginReceiveBatch(batch);
+        consumer.ConsumePacket(batch, packet);
+    };
+
+    // Cross the 128-second hardware timestamp wrap with consecutive cycles.
+    uint32_t seconds = 127;
+    uint32_t cycle = 7743;
+    for (uint32_t i = 0;
+         i < ASFW::Audio::Runtime::RxSequenceReplayState::kReadDelay;
+         ++i) {
+        deliver(seconds, cycle);
+        if (++cycle == 8000) { cycle = 0; seconds = (seconds + 1) % 128; }
+    }
+    ASSERT_TRUE(control.rxSequenceReplay.IsEstablished());
+    const uint64_t beforeSingleGap = control.rxSequenceReplay.ProducerCursor();
+    uint32_t missingSeconds = seconds;
+    uint32_t missingCycle = cycle;
+    cycle = missingCycle + 1; // one absent RX cycle; represented as zero blocks
+    if (cycle == 8000) { cycle = 0; seconds = (seconds + 1) % 128; }
+    deliver(seconds, cycle);
+    EXPECT_EQ(control.rxSequenceReplay.ProducerCursor(), beforeSingleGap + 2);
+    EXPECT_EQ(recoveries, 0U);
+    ASFW::Audio::Runtime::RxSequenceEntry missing{};
+    ASFW::Audio::Runtime::RxSequenceEntry observed{};
+    ASSERT_TRUE(control.rxSequenceReplay.Read(
+        beforeSingleGap, control.rxSequenceReplay.Epoch(), missing));
+    ASSERT_TRUE(control.rxSequenceReplay.Read(
+        beforeSingleGap + 1, control.rxSequenceReplay.Epoch(), observed));
+    EXPECT_EQ(missing.dataBlocks, 0U);
+    EXPECT_EQ(missing.sourceCycleTimer, EncodeCycleTimer(missingSeconds, missingCycle, 0));
+    EXPECT_EQ(missing.firstAudioFrame, observed.firstAudioFrame);
+
+    const uint64_t afterTwoMissing = uint64_t{seconds} * 8000 + cycle + 3;
+    seconds = static_cast<uint32_t>((afterTwoMissing / 8000) % 128);
+    cycle = static_cast<uint32_t>(afterTwoMissing % 8000);
+    deliver(seconds, cycle);
+    EXPECT_EQ(recoveries, 1U);
+    EXPECT_FALSE(control.rxSequenceReplay.IsEstablished());
+}
+
 TEST(IsochRxTimingTests, PacketProcessorAddsAM824LabelForRawSaffireCapture) {
     constexpr size_t kFrames = 1;
     constexpr size_t kDbs = 2;

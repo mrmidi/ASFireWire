@@ -12,6 +12,7 @@
 #include "AVC/MackieOnyx400FProfile.hpp"
 #include "AVC/Phase88Profile.hpp"
 #include "AVC/MAudioSpecialProfile.hpp"
+#include "RME/FirefaceProfile.hpp"
 
 #include "DICE/DiceProfile.hpp"
 #include "../../../Logging/Logging.hpp"
@@ -35,6 +36,9 @@ namespace {
 // profile matcher that disagreed with the protocol factory).
 using DICE::DiceProfile;
 using DICE::DiceRangeMember;
+
+RME::Profiles::FirefaceProfile gRmeFireface400Profile{18U, "RME Fireface 400"};
+RME::Profiles::FirefaceProfile gRmeFireface800Profile{28U, "RME Fireface 800"};
 
 // One Venice identity covers the F16, F24 and F32; the model number is the
 // capture width (documentation/fixtures/DICE/midasF24.txt).
@@ -147,6 +151,8 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         case Builder::GenericBeBoB:
         case Builder::MAudioFireWire1814:
         case Builder::MAudioProjectMix:
+        case Builder::RmeFireface400:
+        case Builder::RmeFireface800:
         case Builder::None:
             break;
     }
@@ -190,6 +196,10 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
             return &gMotu828mk2Profile;
         case Builder::MotuUltralite:
             return &gMotuUltraliteProfile;
+        case Builder::RmeFireface400:
+            return &gRmeFireface400Profile;
+        case Builder::RmeFireface800:
+            return &gRmeFireface800Profile;
 
         // Handled by DiceProfileForBuilder above, or carrying no profile object
         // on this branch.

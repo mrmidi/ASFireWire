@@ -79,8 +79,11 @@ TEST(IsochServiceTxPreparation, CallbackRegisteredBeforeContextCreationSurvivesS
     for (uint64_t packetIndex = 0; packetIndex < AudioTimingGeometry::kTxSharedSlotPackets;
          ++packetIndex) {
         auto& meta = metadata[packetIndex % AudioTimingGeometry::kTxSharedSlotPackets];
+        meta.immediateHeader[0] = 0;
+        meta.immediateHeader[1] = 0;
         meta.packetIndex = packetIndex;
         meta.payloadLength = 8;
+        meta.operation = ASFW::Isoch::IsochTxOperation::Packet;
         meta.commitGeneration.store(
             ExpectedTxCommitGeneration(packetIndex, AudioTimingGeometry::kTxSharedSlotPackets),
             std::memory_order_release);
@@ -136,8 +139,11 @@ TEST(IsochServiceTxPreparation, ActiveTransmitStopRetainsQueueUntilHardwareQuies
          packetIndex < AudioTimingGeometry::kTxSharedSlotPackets;
          ++packetIndex) {
         auto& meta = metadata[packetIndex % AudioTimingGeometry::kTxSharedSlotPackets];
+        meta.immediateHeader[0] = 0;
+        meta.immediateHeader[1] = 0;
         meta.packetIndex = packetIndex;
         meta.payloadLength = 8;
+        meta.operation = ASFW::Isoch::IsochTxOperation::Packet;
         meta.commitGeneration.store(
             ExpectedTxCommitGeneration(
                 packetIndex, AudioTimingGeometry::kTxSharedSlotPackets),
@@ -188,8 +194,11 @@ TEST(IsochServiceTxPreparation, FaultedTransmitIsQuiescedByStopBeforeReuse) {
     for (uint64_t packetIndex = 0; packetIndex < AudioTimingGeometry::kTxSharedSlotPackets;
          ++packetIndex) {
         auto& meta = metadata[packetIndex];
+        meta.immediateHeader[0] = 0;
+        meta.immediateHeader[1] = 0;
         meta.packetIndex = packetIndex;
         meta.payloadLength = 8;
+        meta.operation = ASFW::Isoch::IsochTxOperation::Packet;
         meta.commitGeneration.store(
             ExpectedTxCommitGeneration(packetIndex, AudioTimingGeometry::kTxSharedSlotPackets),
             std::memory_order_release);
@@ -263,8 +272,11 @@ TEST(IsochServiceTxPreparation, StartClearsContextControlAndOnlyItsOwnEvent) {
          packetIndex < AudioTimingGeometry::kTxSharedSlotPackets;
          ++packetIndex) {
         auto& meta = metadata[packetIndex % AudioTimingGeometry::kTxSharedSlotPackets];
+        meta.immediateHeader[0] = 0;
+        meta.immediateHeader[1] = 0;
         meta.packetIndex = packetIndex;
         meta.payloadLength = 8;
+        meta.operation = ASFW::Isoch::IsochTxOperation::Packet;
         meta.commitGeneration.store(
             ExpectedTxCommitGeneration(
                 packetIndex, AudioTimingGeometry::kTxSharedSlotPackets),

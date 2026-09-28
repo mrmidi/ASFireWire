@@ -48,7 +48,6 @@ namespace ASFW::Protocols::Audio::AMDTP {
 
 namespace {
 
-constexpr uint32_t kCipHeaderBytes = 8;
 constexpr uint32_t kBytesPerSlot = 4;
 
 inline void WriteBE32(uint8_t* dest, uint32_t value) noexcept {
@@ -121,7 +120,10 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         // field set, so this cannot underflow.
         const uint32_t frameInPacket =
             static_cast<uint32_t>(absoluteFrame - snap.firstAudioFrame);
-        uint8_t* dest = snap.packetBytes + kCipHeaderBytes +
+        const uint32_t headerBytes = streamConfig_.packetFraming ==
+                                             AmdtpStreamConfig::PacketFraming::Cip
+                                         ? 8U : 0U;
+        uint8_t* dest = snap.packetBytes + headerBytes +
                         frameInPacket * snap.dbs * kBytesPerSlot;
 
         const uint32_t pcmSlots = (streamConfig_.pcmChannels < snap.dbs)

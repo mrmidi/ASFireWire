@@ -51,6 +51,42 @@ using ASFW::Isoch::IsochTxQueueStatus;
 using Geometry = ASFW::IsochTransport::AudioTimingGeometry;
 namespace Capture = MAudioSpecialHappyPathFixture;
 
+// Synthetic Stage 3 fixture; not a published or hardware-verified device.
+class SyntheticHeaderlessReplayProfile final : public ASFW::Isoch::Audio::IAudioStreamProfile {
+public:
+    const char* Name() const noexcept override { return "synthetic headerless replay"; }
+    ASFW::Encoding::AudioWireFormat TxWireFormat() const noexcept override {
+        return ASFW::Encoding::AudioWireFormat::kRawPcm24Upper24In32LE;
+    }
+    ASFW::Encoding::AudioWireFormat RxWireFormat() const noexcept override { return TxWireFormat(); }
+    uint32_t TxSafetyOffsetFrames(double) const noexcept override { return 64; }
+    uint32_t RxSafetyOffsetFrames(double) const noexcept override { return 64; }
+    uint32_t TxReportedLatencyFrames(double) const noexcept override { return 0; }
+    uint32_t RxReportedLatencyFrames(double) const noexcept override { return 0; }
+    ASFW::Isoch::Audio::TxClockSource TransmitClockSource() const noexcept override {
+        return ASFW::Isoch::Audio::TxClockSource::kRxReplayAfterBootstrap;
+    }
+    ASFW::Isoch::Audio::AudioStreamTxPolicy TxStreamPolicy() const noexcept override {
+        ASFW::Isoch::Audio::AudioStreamTxPolicy policy{};
+        policy.hostToDevicePcmEncoding = TxWireFormat();
+        return policy;
+    }
+    bool BuildDefaultTxStreamConfig(ASFW::Isoch::Audio::AudioStreamConfig& out) const noexcept override {
+        out = {};
+        out.sampleRate = 48000;
+        out.streamMode = ASFW::Encoding::StreamMode::kBlocking;
+        out.pcmChannels = 2;
+        out.dbs = 2;
+        out.framesPerDataPacket = 8;
+        out.packetFraming = ASFW::Encoding::AudioPacketFraming::kHeaderless;
+        return true;
+    }
+    bool BuildDefaultRxStreamConfig(ASFW::Isoch::Audio::AudioStreamConfig& out) const noexcept override {
+        return BuildDefaultTxStreamConfig(out);
+    }
+};
+
+
 constexpr uint32_t kCyclesPerSecond = 8000;
 // IsochTxDmaRing keeps this many descriptors loaded ahead of the hardware.
 constexpr uint32_t kDescriptorsAhead = 48;
@@ -262,6 +298,9 @@ public:
     }
     [[nodiscard]] uint32_t Stride() const { return stride_; }
     [[nodiscard]] ASFWAudioDriver_IVars& Ivars() { return ivars_; }
+    [[nodiscard]] uint64_t LastTimingRecoveryEpoch() const {
+        return nub_.lastTimingRecoveryEpoch;
+    }
     [[nodiscard]] ASFW::Audio::Runtime::AudioTransportControlBlock& MutableControl() {
         return *control_;
     }
@@ -1032,6 +1071,77 @@ TEST(TxOwnershipLifecycle, RestartStartsEveryPerStreamStateOver) {
               runtime.txMissedFinalityAtStart);
     EXPECT_EQ(runtime.txStreamEngine.TakeMinFinalityMarginPackets(), INT64_MAX);
     EXPECT_TRUE(runtime.txActive.load());
+}
+
+TEST(AudioDriverTxProducerTests, SyntheticHeaderlessBootstrapTransitionsAtWritableBoundary) {
+    SyntheticHeaderlessReplayProfile profile;
+    TxProducerRig rig;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    auto& runtime = rig.Ivars().runtime;
+    const uint64_t boundary = Geometry::kTxSharedSlotPackets;
+    uint32_t bootstrapDataPackets = 0;
+    uint64_t bootstrapFrames = 0;
+    for (uint64_t index = 0; index < boundary; ++index) {
+        const auto* slot = runtime.txStreamEngine.Timeline().SlotByIndex(index);
+        ASSERT_NE(slot, nullptr);
+        if (slot->isData) {
+            ++bootstrapDataPackets;
+            EXPECT_EQ(slot->framesInPacket, 8U);
+            EXPECT_EQ(slot->packetSizeBytes, 8U * 2U * 4U);
+            bootstrapFrames += slot->framesInPacket;
+        } else {
+            EXPECT_EQ(slot->packetSizeBytes, 0U);
+        }
+    }
+    ASSERT_GT(bootstrapDataPackets, 0U);
+    ASSERT_GT(bootstrapFrames, 0U);
+    const auto* finalBootstrap = runtime.txStreamEngine.Timeline().SlotByIndex(boundary - 1);
+    ASSERT_NE(finalBootstrap, nullptr);
+    const uint64_t nextFrame = finalBootstrap->firstAudioFrame + finalBootstrap->framesInPacket;
+
+    auto& replay = rig.MutableControl().rxSequenceReplay;
+    for (uint32_t i = 0; i < ASFW::Audio::Runtime::RxSequenceReplayState::kReadDelay + 128; ++i) {
+        ASFW::Audio::Runtime::RxSequenceEntry entry{};
+        entry.firstAudioFrame = uint64_t{i} * 8;
+        entry.dataBlocks = 8;
+        entry.sourceCycleTimer = ASFW::Timing::encodeCycleTimer(0, i % 8000, 0);
+        replay.Publish(entry); // no CIP or SYT exists on this synthetic path
+    }
+    ASSERT_TRUE(replay.MarkEstablished());
+    ASSERT_TRUE(rig.RunPackets(1100)) << rig.DescribeFault();
+
+    const auto* firstReplay = runtime.txStreamEngine.Timeline().SlotByIndex(boundary);
+    ASSERT_NE(firstReplay, nullptr);
+    EXPECT_TRUE(firstReplay->isData);
+    EXPECT_EQ(firstReplay->framesInPacket, 8U);
+    EXPECT_EQ(firstReplay->firstAudioFrame, nextFrame);
+    EXPECT_EQ(rig.Control().counters.txValidSytPackets.load(), 0U);
+    EXPECT_EQ(rig.Control().counters.txEmptyPackets.load(), 0U);
+
+    // An epoch change after replay was established must not silently reclamp
+    // or re-project this headerless cursor. Bounded failures request recovery.
+    const uint64_t cursorEpoch = runtime.txStreamEngine.CursorEpoch();
+    replay.Reset();
+    for (uint32_t i = 0; i < ASFW::Audio::Runtime::RxSequenceReplayState::kReadDelay + 128; ++i) {
+        ASFW::Audio::Runtime::RxSequenceEntry entry{};
+        entry.dataBlocks = 8;
+        entry.sourceCycleTimer = ASFW::Timing::encodeCycleTimer(1, i % 8000, 0);
+        replay.Publish(entry);
+    }
+    ASSERT_TRUE(replay.MarkEstablished());
+    ASSERT_TRUE(rig.RunPackets(24)) << rig.DescribeFault();
+    EXPECT_TRUE(runtime.rxReplayRecoveryRequested.load());
+    EXPECT_EQ(rig.LastTimingRecoveryEpoch(),
+              rig.Control().rxReplayEpochResets.load());
+    EXPECT_EQ(runtime.txStreamEngine.CursorEpoch(), cursorEpoch);
+
+    runtime.txActive.store(false);
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    EXPECT_FALSE(runtime.rxReplayRecoveryRequested.load());
+    EXPECT_FALSE(runtime.txReplayReader.IsActive());
+    const auto* restarted = runtime.txStreamEngine.Timeline().SlotByIndex(0);
+    ASSERT_NE(restarted, nullptr);
+    EXPECT_EQ(restarted->firstAudioFrame, 0U);
 }
 
 } // namespace

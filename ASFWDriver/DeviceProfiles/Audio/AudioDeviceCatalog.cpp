@@ -11,6 +11,7 @@
 #include "Definitions/Midas.hpp"
 #include "Definitions/MOTU.hpp"
 #include "Definitions/PreSonus.hpp"
+#include "Definitions/RME.hpp"
 #include "Definitions/TerraTec.hpp"
 #include "Definitions/Weiss.hpp"
 
@@ -45,10 +46,11 @@ constexpr auto kDefinitions = ConcatArrays(
     Definitions::kPreSonusDefinitions,
     Definitions::kMAudioDefinitions,
     Definitions::kMotuDefinitions,
-    Definitions::kMackieDefinitions
+    Definitions::kMackieDefinitions,
+    Definitions::kRmeDefinitions
 );
 
-static_assert(kDefinitions.size() == 40U, "Catalog definition count mismatch");
+static_assert(kDefinitions.size() == 42U, "Catalog definition count mismatch");
 
 // No safety rule is currently defined.
 //

@@ -238,6 +238,7 @@ Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
     // The bootloader cue, if later authorized, is a guarded BeBoB register
     // operation. It does not grant permission for generic or user-client FCP.
     if (plan.probePolicy == ProbePolicyId::NoAutomaticTraffic ||
+        plan.probePolicy == ProbePolicyId::RmeRegister ||
         plan.bootloaderCue != BootloaderCuePolicy::None ||
         plan.support == SupportDisposition::Quarantined) {
         return Discovery::AvcCommandFilterId::BlockAll;

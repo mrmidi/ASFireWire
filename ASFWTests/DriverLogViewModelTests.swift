@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ASFW
 
@@ -105,5 +106,36 @@ struct DriverLogViewModelTests {
                 + "[PayloadWriter] W=480 E=472 deficit=8\n"
                 + "#102 0.000003 s [Async] DEBUG [Async] request complete",
         ])
+    }
+
+    @Test func exportReportsCoverageAndRetainsEverySeverity() {
+        let stats = ASFWLogRingStats(
+            totalEmitted: 102, droppedRecords: 0, latestSequence: 102,
+            oldestSequence: 100, capacityRecords: 4_096, perCategory: [:]
+        )
+        let response = ASFWLogRingQueryResponse(
+            records: records, nextSequence: 102, latestSequence: 102,
+            oldestSequence: 100, scannedCount: 3
+        )
+        let text = DriverLogViewModel.exportText(
+            records: records, categoryNames: categoryNames,
+            stats: stats, response: response,
+            exportedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        #expect(text.contains("Coverage: complete at snapshot"))
+        #expect(text.contains("#100 0.000001 s [DirectAudio] ERROR"))
+        #expect(text.contains("#102 0.000003 s [Async] DEBUG"))
+
+        let incomplete = ASFWLogRingQueryResponse(
+            records: records, nextSequence: 101, latestSequence: 102,
+            oldestSequence: 100, scannedCount: 2
+        )
+        let partialText = DriverLogViewModel.exportText(
+            records: records, categoryNames: categoryNames,
+            stats: stats, response: incomplete,
+            exportedAt: Date(timeIntervalSince1970: 0)
+        )
+        #expect(partialText.contains("Coverage: partial"))
     }
 }

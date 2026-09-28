@@ -79,6 +79,7 @@ void LogReservationSummary(uint64_t guid, FW::Generation generation, FW::FwSpeed
                                                      const DuplexCaptureStreamGeometry& stream) noexcept {
     return DirectRxFormatDescriptor{
         .wireFormat = profile.captureWireFormat,
+        .framing = profile.capturePacketFraming,
         .am824Slots = stream.am824Slots,
         .streamChannels = stream.pcmChannels,
         .trustConfiguredStride = profile.captureTrustConfiguredStride,
@@ -223,6 +224,9 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     if (!profile.policyResolved) {
         return superseded("Configure");
     }
+    if (const auto delay = family.PostEnableDelayMs(); delay.has_value()) {
+        profile.startOrder.postDeviceEnableDelayMs = *delay;
+    }
 
     // 2. The IRM assigns a channel and bandwidth to every playback stream, then
     //    every capture stream. CMP families accept any channel the IRM picks;
@@ -232,15 +236,20 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     }
     uint32_t reservedUnits = 0;
     uint8_t gapCount = 63;
+    const FamilyDriver::ResourcePolicy resourcePolicy = family.GetResourcePolicy();
     for (uint32_t i = 0; i < channels.playbackStreamCount; ++i) {
         const DuplexPlaybackStreamGeometry& geometry = profile.playbackStreams[i];
+        if (!resourcePolicy.playback.reserveHostResources) {
+            continue;
+        }
+        const uint64_t allowed = geometry.allowedIsoChannels & resourcePolicy.playback.allowedIsoChannels;
         Backends::IRMReservationResult reservation{};
         const kern_return_t status = host.ReservePlaybackResources(
-            guid, *request.irm, geometry.allowedIsoChannels, geometry.packetBandwidthUnits,
+            guid, *request.irm, allowed, geometry.packetBandwidthUnits,
             reservation);
         if (status != kIOReturnSuccess) {
             LogReservationRefusal("playback", i, guid, generation, geometry.am824Slots,
-                                  geometry.allowedIsoChannels, reservation);
+                                  allowed, reservation);
             return rollback(status, "ReservePlayback");
         }
         reservedUnits += reservation.charge.Total();
@@ -258,13 +267,17 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     }
     for (uint32_t i = 0; i < channels.captureStreamCount; ++i) {
         const DuplexCaptureStreamGeometry& geometry = profile.captureStreams[i];
+        if (!resourcePolicy.capture.reserveHostResources) {
+            continue;
+        }
+        const uint64_t allowed = geometry.allowedIsoChannels & resourcePolicy.capture.allowedIsoChannels;
         Backends::IRMReservationResult reservation{};
         const kern_return_t status = host.ReserveCaptureResources(
-            guid, *request.irm, geometry.allowedIsoChannels, geometry.packetBandwidthUnits,
+            guid, *request.irm, allowed, geometry.packetBandwidthUnits,
             reservation);
         if (status != kIOReturnSuccess) {
             LogReservationRefusal("capture", i, guid, generation, geometry.am824Slots,
-                                  geometry.allowedIsoChannels, reservation);
+                                  allowed, reservation);
             return rollback(status, "ReserveCapture");
         }
         reservedUnits += reservation.charge.Total();
@@ -278,16 +291,28 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         }
     }
     LogReservationSummary(guid, generation, profile.linkSpeed, gapCount,
-                          channels.playbackStreamCount, channels.captureStreamCount, reservedUnits);
+                          resourcePolicy.playback.reserveHostResources ? channels.playbackStreamCount : 0,
+                          resourcePolicy.capture.reserveHostResources ? channels.captureStreamCount : 0,
+                          reservedUnits);
 
     // 3. The family writes the assigned channels to the device (CMP: into the
     //    remote PCRs) before either direction is armed, and the host DMA uses
     //    exactly the same values: allocation -> PCR -> DMA, as the Linux
     //    OXFW/CMP and FFADO lifecycles do.
-    family.AssignChannels(channels);
+    const auto assigned = family.AssignChannels(channels);
+    if (!assigned) {
+        return rollback(assigned.error(), "AssignChannels");
+    }
+    channels = *assigned;
+    if (!stillWanted()) {
+        return superseded("AssignChannels");
+    }
     profile = DuplexStreamProfileResolver::Resolve(record, caps, channels);
     if (!profile.policyResolved) {
         return superseded("AssignChannels");
+    }
+    if (const auto delay = family.PostEnableDelayMs(); delay.has_value()) {
+        profile.startOrder.postDeviceEnableDelayMs = *delay;
     }
     ASFW_LOG(Audio,
              "AUDIO DUPLEX START guid=0x%016llx ir=%u it=%u inCh=%u outCh=%u inSlots=%u outSlots=%u "

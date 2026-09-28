@@ -64,6 +64,8 @@ enum class DeviceDefinitionId : uint32_t {
     MackieOnyx400F,
     MackieOnyx1200F,
     PreSonusFireStudioProject,
+    RmeFireface400,
+    RmeFireface800,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -76,9 +78,11 @@ enum class AudioFamilyProviderId : uint8_t {
     Fireworks,
     /// MOTU's vendor register protocol. No AV/C at all.
     MotuRegister,
+    /// RME Fireface direct-register protocol. AV/C/FCP stays blocked.
+    RmeRegister,
 
     /// Alias for the last real member; see the note on ProfileBuilderId.
-    kLastValid = MotuRegister,
+    kLastValid = RmeRegister,
 };
 
 enum class ProbePolicyId : uint8_t {
@@ -101,9 +105,10 @@ enum class ProbePolicyId : uint8_t {
 
     /// MOTU: clock/format registers, read directly. No FCP is ever sent.
     MotuRegister,
+    RmeRegister,
 
     /// Alias for the last real member; see the note on ProfileBuilderId.
-    kLastValid = MotuRegister,
+    kLastValid = RmeRegister,
 };
 
 /// Device preparation that must run before an identity can become anything
@@ -144,6 +149,8 @@ enum class ProfileBuilderId : uint16_t {
     MackieOnyx400F,
     GenericBeBoB,
     PreSonusFireStudioProject,
+    RmeFireface400,
+    RmeFireface800,
 
     // Alias for the last real member. Range checks over this enum live in two
     // places — the catalog validator and the endpoint-profile wire validator —
@@ -151,7 +158,7 @@ enum class ProfileBuilderId : uint16_t {
     // device installs, publishes a nub, and then Start() rejects the profile
     // with a bare kIOReturnBadArgument. Extend the enum above this line and the
     // bounds follow.
-    kLastValid = PreSonusFireStudioProject,
+    kLastValid = RmeFireface800,
 };
 
 /// Concrete protocol class chosen by the catalog. This is deliberately
@@ -169,7 +176,8 @@ enum class ProtocolImplementationId : uint8_t {
     BeBoBGeneric,
     BeBoBMAudioSpecial,
     MotuV2,
-    kLastValid = MotuV2,
+    RmeFireface,
+    kLastValid = RmeFireface,
 };
 
 /// AMDTP cadence a device must be driven at regardless of what it reports.
@@ -228,6 +236,8 @@ struct StreamWirePolicy final {
     /// the Saffire Pro 24 DSP switches wire format with its configuration, so
     /// this cannot be a static property of the identity.
     bool rawPcm24In32WhenEightInNineSlots{false};
+    /// RME Fireface headerless LE PCM with signed data in the upper 24 bits.
+    bool headerlessUpper24LE{false};
 };
 
 /// Any of the 64 isochronous channels.

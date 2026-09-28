@@ -56,6 +56,10 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     }
 
     AmdtpStreamConfig config = streamConfig;
+    if (config.packetFraming != AmdtpStreamConfig::PacketFraming::Cip &&
+        config.packetFraming != AmdtpStreamConfig::PacketFraming::Headerless) {
+        return false;
+    }
     // FDF (AM824 SFC) must match the actual rate, not whatever the profile
     // defaulted (profiles hardcode the 48 kHz SFC 0x02).
     config.fdf = geometry->fdf;
@@ -65,9 +69,20 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     if (config.dbs == 0 || config.framesPerDataPacket == 0) {
         return false;
     }
+    if (config.packetFraming == AmdtpStreamConfig::PacketFraming::Headerless &&
+        config.midiSlots != 0) {
+        return false;
+    }
+    const uint32_t headerBytes =
+        config.packetFraming == AmdtpStreamConfig::PacketFraming::Cip
+            ? kCipHeaderBytes : 0U;
+    if (config.packetFraming == AmdtpStreamConfig::PacketFraming::Headerless) {
+        config.isochTag = 0;
+        config.isochSync = 0;
+    }
 
     const uint32_t dataPacketBytes =
-        kCipHeaderBytes + static_cast<uint32_t>(config.framesPerDataPacket) *
+        headerBytes + static_cast<uint32_t>(config.framesPerDataPacket) *
                               config.dbs * kBytesPerSlot;
     if (dataPacketBytes > config.maxPacketBytes) {
         return false;
@@ -137,13 +152,17 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     const uint32_t payloadBytes =
         static_cast<uint32_t>(wireBlocks) * streamConfig_.dbs * kBytesPerSlot;
 
+    const bool isHeaderless = streamConfig_.packetFraming ==
+                              AmdtpStreamConfig::PacketFraming::Headerless;
+    const uint32_t headerBytes = isHeaderless ? 0U : kCipHeaderBytes;
     const bool isEmptyPacket = !isData && txPolicy_.emptyPacketsDuringIdle;
+    const bool isSkipCycle = !isData && isHeaderless;
 
-    const uint32_t byteCount = isEmptyPacket
+    const uint32_t byteCount = (isEmptyPacket || isSkipCycle)
                                    ? 0
                                    : ((isData || cadenceBlocks != 0)
-                                          ? kCipHeaderBytes + payloadBytes
-                                          : kCipHeaderBytes);
+                                          ? headerBytes + payloadBytes
+                                          : headerBytes);
 
     if (slot.capacityBytes < byteCount) {
         return false; // no state advanced; caller may retry
@@ -161,17 +180,24 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     outPacket.packetIndex = slot.packetIndex;
     outPacket.byteCount = byteCount;
     outPacket.isData = isData;
+    outPacket.operation = isSkipCycle
+                              ? PreparedTxPacket::Operation::SkipCycle
+                              : PreparedTxPacket::Operation::Packet;
+    outPacket.isochTag = streamConfig_.isochTag;
+    outPacket.isochSync = streamConfig_.isochSync;
     outPacket.dbc = dbc;
     outPacket.dbs = streamConfig_.dbs;
     outPacket.firstAudioFrame = plan.firstAudioFrame;
     outPacket.framesInPacket = isData ? frames : 0;
 
     if (isData) {
-        outPacket.syt = timing.txClockValid
+        outPacket.syt = !isHeaderless && timing.txClockValid
                             ? timing.nextDataSyt
                             : IEC61883::SytFormatter::kNoInfo;
 
-        WriteCipHeader(slot.bytes, cipBuilder_.BuildData(dbc, outPacket.syt));
+        if (!isHeaderless) {
+            WriteCipHeader(slot.bytes, cipBuilder_.BuildData(dbc, outPacket.syt));
+        }
         WriteDataPacketDefaults(slot.bytes, slot.capacityBytes, payloadBytes);
 
         if (!timeline_->ExposeDataPacket(outPacket, slot.bytes,
@@ -183,8 +209,10 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     } else {
         outPacket.syt = IEC61883::SytFormatter::kNoInfo;
 
-        if (isEmptyPacket) {
-            // Emitting genuine empty packets: byteCount = 0. No CIP header or payload is written.
+        if (isSkipCycle || isEmptyPacket) {
+            // A headerless skip transmits no packet; a CIP empty packet carries
+            // its immediate isoch header with a zero-byte payload. Neither has
+            // a content header or payload in the shared buffer.
             timeline_->MarkNoDataPacket(slot.packetIndex);
         } else {
             // Some endpoints require a full-size cadence packet whose audio
@@ -210,6 +238,18 @@ void AmdtpTxPacketizer::RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& 
     const uint8_t frames = packet.framesInPacket;
     dbcCounter_.RewindDataBlocks(frames);
     const uint8_t dbc = dbcCounter_.ValueForNextPacket();
+    const bool isHeaderless = streamConfig_.packetFraming ==
+                              AmdtpStreamConfig::PacketFraming::Headerless;
+    if (isHeaderless) {
+        packet.byteCount = 0;
+        packet.operation = PreparedTxPacket::Operation::SkipCycle;
+        packet.isData = false;
+        packet.dbc = dbc;
+        packet.framesInPacket = 0;
+        packet.syt = IEC61883::SytFormatter::kNoInfo;
+        timeline_->RetractNewestDataPacket(packet.packetIndex, packet.firstAudioFrame);
+        return;
+    }
     const bool isEmptyPacket = txPolicy_.emptyPacketsDuringIdle;
     if (isEmptyPacket) {
         packet.byteCount = 0;
@@ -260,7 +300,10 @@ void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,
                                                 uint32_t payloadBytes) noexcept {
     (void)packetCapacityBytes; // capacity validated by the caller
 
-    uint8_t* payload = packetBytes + kCipHeaderBytes;
+    const uint32_t headerBytes = streamConfig_.packetFraming ==
+                                         AmdtpStreamConfig::PacketFraming::Cip
+                                     ? kCipHeaderBytes : 0U;
+    uint8_t* payload = packetBytes + headerBytes;
 
     if (txPolicy_.clearPayloadBeforeExposure) {
         for (uint32_t i = 0; i < payloadBytes; ++i) {
@@ -305,7 +348,10 @@ void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,
 
 void AmdtpTxPacketizer::WriteCadencePacketFill(uint8_t* packetBytes,
                                                uint32_t payloadBytes) noexcept {
-    uint8_t* payload = packetBytes + kCipHeaderBytes;
+    const uint32_t headerBytes = streamConfig_.packetFraming ==
+                                         AmdtpStreamConfig::PacketFraming::Cip
+                                     ? kCipHeaderBytes : 0U;
+    uint8_t* payload = packetBytes + headerBytes;
     const uint32_t blocks =
         payloadBytes / (streamConfig_.dbs * kBytesPerSlot);
 
@@ -331,7 +377,8 @@ void AmdtpTxPacketizer::WriteCipHeader(
 }
 
 uint32_t AmdtpTxPacketizer::DataPacketBytes() const noexcept {
-    return kCipHeaderBytes + PayloadBytes();
+    return (streamConfig_.packetFraming == AmdtpStreamConfig::PacketFraming::Cip
+                ? kCipHeaderBytes : 0U) + PayloadBytes();
 }
 
 uint32_t AmdtpTxPacketizer::PayloadBytes() const noexcept {

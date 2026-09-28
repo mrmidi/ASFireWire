@@ -25,8 +25,10 @@
 #include "DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 
 #include <atomic>
+#include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -232,6 +234,101 @@ TEST(SessionMultimixTwoPlayback, ColdStartArmsBothPlaybackStreams) {
     SessionRig rig(kMultimixTwoPlaybackShape);
     rig.Start();
     ExpectMatchesGolden(rig.bus.Trace(), "session/multimix-two-playback/cold-start.trace");
+}
+
+TEST(SessionFamilyResourcePolicy, FailedDeviceAssignmentReleasesOnlyHostOwnedChannelsBeforeDma) {
+    SessionRig rig(kShapes[4].shape); // scripted CMP receive-then-transmit family fixture
+    auto* family = dynamic_cast<ScriptedDeviceControl*>(rig.protocol.get());
+    ASSERT_NE(family, nullptr);
+    family->resourcePolicy.capture.reserveHostResources = false; // FF800-style device-owned capture
+    family->stopPolicy.stopHostContextsBeforeDevice = true;
+    family->postEnableDelay = 5;
+    rig.FailDevice("assign");
+    rig.Start();
+    const auto& lines = rig.bus.Trace().Lines();
+    auto findLine = [&](std::string_view prefix) {
+        return std::find_if(lines.begin(), lines.end(), [&](const std::string& line) {
+            return line.starts_with(prefix);
+        });
+    };
+    EXPECT_NE(findLine("H reserve playback"), lines.end());
+    EXPECT_EQ(findLine("H reserve capture"), lines.end());
+    EXPECT_EQ(findLine("H prepare rx"), lines.end());
+    EXPECT_EQ(findLine("H prepare tx"), lines.end());
+    const auto stopRx = findLine("H stop rx");
+    const auto stopTx = findLine("H stop tx");
+    const auto stopDevice = findLine("D stop");
+    const auto stopAll = findLine("H stop all");
+    ASSERT_NE(stopRx, lines.end());
+    ASSERT_NE(stopTx, lines.end());
+    ASSERT_NE(stopDevice, lines.end());
+    ASSERT_NE(stopAll, lines.end());
+    EXPECT_LT(stopRx, stopDevice);
+    EXPECT_LT(stopTx, stopDevice);
+    EXPECT_LT(stopDevice, stopAll);
+    EXPECT_EQ(rig.host.AssignedChannelsForTest(), 0U);
+}
+
+TEST(SessionFamilyResourcePolicy, PostEnableSettleKeepsReceiveBeforeTransmitStartOrder) {
+    SessionRig rig(kShapes[4].shape); // RME's post-enable IR-then-IT ordering
+    auto* family = dynamic_cast<ScriptedDeviceControl*>(rig.protocol.get());
+    ASSERT_NE(family, nullptr);
+    family->postEnableDelay = 5;
+    rig.Start();
+    const auto& lines = rig.bus.Trace().Lines();
+    auto findLine = [&](std::string_view prefix) {
+        return std::find_if(lines.begin(), lines.end(), [&](const std::string& line) {
+            return line.starts_with(prefix);
+        });
+    };
+    const auto enable = findLine("D program tx+enable");
+    const auto receive = findLine("H start rx");
+    const auto transmit = findLine("H start tx");
+    ASSERT_NE(enable, lines.end());
+    ASSERT_NE(receive, lines.end());
+    ASSERT_NE(transmit, lines.end());
+    EXPECT_LT(enable, receive);
+    EXPECT_LT(receive, transmit);
+}
+
+TEST(SessionFamilyResourcePolicy, FailedDeviceStopRetainsHostOwnershipUntilRetry) {
+    SessionRig rig(kShapes[4].shape); // CMP-shaped fixture with RME stop policy
+    auto* family = dynamic_cast<ScriptedDeviceControl*>(rig.protocol.get());
+    ASSERT_NE(family, nullptr);
+    family->stopPolicy.stopHostContextsBeforeDevice = true;
+    ASSERT_EQ(rig.Start(), kIOReturnSuccess);
+    ASSERT_GT(rig.host.AssignedChannelsForTest(), 0U);
+
+    rig.FailDevice("stop");
+    EXPECT_EQ(rig.Stop(), kIOReturnError);
+    EXPECT_GT(rig.host.AssignedChannelsForTest(), 0U);
+    const auto& failedTrace = rig.bus.Trace().Lines();
+    EXPECT_EQ(std::find_if(failedTrace.begin(), failedTrace.end(), [](const std::string& line) {
+                  return line.starts_with("H stop all");
+              }), failedTrace.end());
+
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+    EXPECT_EQ(rig.host.AssignedChannelsForTest(), 0U);
+}
+
+TEST(SessionFamilyResourcePolicy, ResetDuringDeviceStopUsesResetCleanupWithoutIrmRelease) {
+    SessionRig rig(kShapes[4].shape);
+    auto* family = dynamic_cast<ScriptedDeviceControl*>(rig.protocol.get());
+    ASSERT_NE(family, nullptr);
+    family->stopPolicy.stopHostContextsBeforeDevice = true;
+    ASSERT_EQ(rig.Start(), kIOReturnSuccess);
+    ASSERT_GT(rig.host.AssignedChannelsForTest(), 0U);
+
+    rig.hooks["device.stop"] = [&rig] { rig.registry.InvalidateLiveMappingsForBusReset(); };
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+    EXPECT_EQ(rig.host.AssignedChannelsForTest(), 0U);
+    const auto& lines = rig.bus.Trace().Lines();
+    EXPECT_NE(std::find_if(lines.begin(), lines.end(), [](const std::string& line) {
+                  return line.starts_with("H stop all after reset");
+              }), lines.end());
+    EXPECT_EQ(std::find_if(lines.begin(), lines.end(), [](const std::string& line) {
+                  return line == "H stop all";
+              }), lines.end());
 }
 
 class SessionCharacterization

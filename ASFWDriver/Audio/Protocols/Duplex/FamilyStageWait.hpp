@@ -31,9 +31,10 @@ inline constexpr uint32_t kFamilyStageTimeoutMs = 12000;
 template <typename T, typename StartFn>
 [[nodiscard]] std::expected<T, IOReturn> AwaitStage(StartFn&& start,
                                                     const std::atomic<bool>* cancel,
-                                                    uint32_t timeoutMs = kFamilyStageTimeoutMs) noexcept {
+                                                    uint32_t timeoutMs = kFamilyStageTimeoutMs,
+                                                    uint32_t pollIntervalMs = 10) noexcept {
     const SyncResult<T> result = WaitForAsyncResult<T>(std::forward<StartFn>(start), timeoutMs,
-                                                       kIOReturnTimeout, cancel);
+                                                       kIOReturnTimeout, cancel, pollIntervalMs);
     if (result.status != kIOReturnSuccess) {
         return std::unexpected(result.status);
     }

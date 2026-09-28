@@ -21,6 +21,7 @@ using ASFW::Isoch::Tx::TxPayloadDmaSegment;
 using ASFW::Isoch::Memory::IsochDMAMemoryManager;
 using ASFW::Isoch::Memory::IsochMemoryConfig;
 using ASFW::Isoch::IsochTxPacketMeta;
+using ASFW::Isoch::IsochTxOperation;
 using ASFW::Isoch::IsochTxQueueControl;
 using ASFW::Isoch::IsochTxQueueStatus;
 using ASFW::Isoch::ExpectedTxCommitGeneration;
@@ -225,6 +226,64 @@ TEST_F(IsochTxDmaRingTest, PrimeInitializesStaticDescriptorChain) {
             EXPECT_EQ(desc3->branchWord, (nextDescIOVA & 0xFFFFFFF0u) | Layout::kBlocksPerPacket);
         }
     }
+}
+
+TEST_F(IsochTxDmaRingTest, PrimeStartsWithSkipAndBranchesToNextOperationEntry) {
+    auto metadataRing = MakeMetadataRing();
+    metadataRing[0].operation = IsochTxOperation::SkipCycle;
+    metadataRing[0].payloadLength = 0;
+    const auto stats = ring_.Prime(payloadDmaMap_, kSharedPayloadSlots,
+                                   kSharedPayloadStride, metadataRing.data(),
+                                   Layout::kNumPackets);
+    ASSERT_EQ(stats.packetsAssembled, Layout::kNumPackets);
+    const auto* firstTail = ring_.Slab().GetDescriptorPtr(Layout::kCompletionBlock);
+    EXPECT_EQ(stats.firstCommandPointer,
+              static_cast<uint32_t>(ring_.Slab().GetDescriptorIOVA(Layout::kCompletionBlock)) | 1U);
+        EXPECT_EQ(firstTail->control & 0xF0000000U,
+              OHCIDescriptor::kCmdOutputLast <<
+                  (OHCIDescriptor::kCmdShift + OHCIDescriptor::kControlHighShift));
+    EXPECT_EQ(firstTail->control & 0xFFFFU, 0U);
+    EXPECT_EQ(firstTail->dataAddress, 0U);
+    EXPECT_EQ(firstTail->branchWord,
+              (ring_.Slab().GetDescriptorIOVA(Layout::kBlocksPerPacket) & 0xFFFFFFF0u) |
+                  Layout::kBlocksPerPacket);
+}
+
+TEST_F(IsochTxDmaRingTest, PrimeRejectsInvalidOperationOrSkipPayload) {
+    auto metadataRing = MakeMetadataRing();
+    metadataRing[0].operation = IsochTxOperation::SkipCycle;
+    metadataRing[0].payloadLength = 8;
+    EXPECT_EQ(ring_.Prime(payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+                          metadataRing.data(), Layout::kNumPackets).packetsAssembled, 0U);
+    metadataRing = MakeMetadataRing();
+    metadataRing[0].operation = static_cast<IsochTxOperation>(99);
+    EXPECT_EQ(ring_.Prime(payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+                          metadataRing.data(), Layout::kNumPackets).packetsAssembled, 0U);
+}
+
+TEST_F(IsochTxDmaRingTest, ZeroLengthPacketIsNotASkipCycle) {
+    auto metadataRing = MakeMetadataRing();
+    metadataRing[0].payloadLength = 0;
+    metadataRing[0].immediateHeader[0] = OSSwapHostToLittleInt32(0x000080A0U);
+    metadataRing[1].operation = IsochTxOperation::SkipCycle;
+    metadataRing[1].payloadLength = 0;
+    const auto stats = ring_.Prime(payloadDmaMap_, kSharedPayloadSlots,
+                                   kSharedPayloadStride, metadataRing.data(),
+                                   Layout::kNumPackets);
+    ASSERT_EQ(stats.packetsAssembled, Layout::kNumPackets);
+    EXPECT_EQ(stats.firstCommandPointer,
+              (ring_.Slab().GetDescriptorIOVA(0) & 0xFFFFFFF0u) |
+                  Layout::kBlocksPerPacket);
+    const auto* emptyPacket = ring_.Slab().GetDescriptorPtr(Layout::kCompletionBlock);
+    const auto* skip = ring_.Slab().GetDescriptorPtr(
+        Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+    EXPECT_EQ(emptyPacket->control & 0xFFFFU, 0U);
+    EXPECT_EQ(reinterpret_cast<const OHCIDescriptorImmediate*>(
+                  ring_.Slab().GetDescriptorPtr(0))->common.control & 0xFFFFU, 8U);
+    EXPECT_EQ(emptyPacket->branchWord,
+              static_cast<uint32_t>(ring_.Slab().GetDescriptorIOVA(
+                  Layout::kBlocksPerPacket + Layout::kCompletionBlock)) | 1U);
+    EXPECT_EQ(skip->control & 0xFFFFU, 0U);
 }
 
 TEST_F(IsochTxDmaRingTest,
@@ -971,6 +1030,71 @@ TEST_F(IsochTxDmaRingFiniteTest, EachBatchIsZeroTerminatedAndLinkedFromTheOldTai
     for (uint32_t slot = 0; slot < 7; ++slot) {
         EXPECT_EQ(CompletionDescriptor(slot)->statusWord >> 16, 0u) << slot;
     }
+}
+
+TEST_F(IsochTxDmaRingFiniteTest, MixedOperationsRefillAndReuseKeepCompletionAccounting) {
+    metadataRing_[kHw].operation = IsochTxOperation::SkipCycle;
+    metadataRing_[kHw].payloadLength = 0;
+    metadataRing_[kHw + 1].operation = IsochTxOperation::Packet;
+    metadataRing_[kHw + 1].payloadLength = 0; // empty packet, still an OMI packet
+    metadataRing_[kHw + 7].operation = IsochTxOperation::SkipCycle;
+    metadataRing_[kHw + 7].payloadLength = 0;
+
+    Complete(0, 8);
+    const auto first = Refill();
+    ASSERT_TRUE(first.ok);
+    EXPECT_EQ(first.completedPacketCount, 8U);
+    EXPECT_EQ(controlBlock_.completionStampCount.load(), 8U);
+    const uint32_t firstEntry = static_cast<uint32_t>(
+        ring_.Slab().GetDescriptorIOVA(Layout::kCompletionBlock)) | 1U;
+    EXPECT_EQ(CompletionDescriptor(kHw - 1)->branchWord, firstEntry);
+    EXPECT_EQ(CompletionDescriptor(0)->control & 0xFFFFU, 0U);
+    EXPECT_EQ(CompletionDescriptor(0)->dataAddress, 0U);
+    EXPECT_EQ(HeaderInSlot(1), PacketHeader(kHw + 1));
+    EXPECT_EQ(reinterpret_cast<const OHCIDescriptorImmediate*>(
+                  ring_.Slab().GetDescriptorPtr(Layout::kBlocksPerPacket))
+                  ->common.control & 0xFFFFU, 8U);
+
+    Complete(8, 9);
+    const auto reused = Refill();
+    ASSERT_TRUE(reused.ok);
+    EXPECT_EQ(reused.completedPacketCount, 1U);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 9U);
+    EXPECT_EQ(controlBlock_.completionStampCount.load(), 9U);
+    const uint32_t reusedSkipEntry = static_cast<uint32_t>(
+        ring_.Slab().GetDescriptorIOVA(7 * Layout::kBlocksPerPacket +
+                                       Layout::kCompletionBlock)) | 1U;
+    EXPECT_EQ(CompletionDescriptor(6)->branchWord, reusedSkipEntry);
+    EXPECT_EQ(CompletionDescriptor(7)->control & 0xFFFFU, 0U);
+    EXPECT_EQ(CompletionDescriptor(7)->dataAddress, 0U);
+
+    // Let the finite chain advance through the rest of the original ring and
+    // the first mixed batch. The next packet in slot 1 retires slot 0's skip,
+    // allowing that exact hardware entry to be rebuilt as a normal packet.
+    for (uint64_t absolute = kHw + 8; absolute <= 2 * kHw; ++absolute) {
+        auto& meta = metadataRing_[absolute % kSharedPayloadSlots];
+        meta.operation = IsochTxOperation::Packet;
+        meta.payloadLength = 64;
+        meta.immediateHeader[0] = 0x11000000u + static_cast<uint32_t>(absolute);
+        meta.immediateHeader[1] = 0x22000000u + static_cast<uint32_t>(absolute);
+        meta.commitGeneration.store(
+            ExpectedTxCommitGeneration(absolute, kSharedPayloadSlots),
+            std::memory_order_release);
+    }
+    Complete(9, kHw + 1);
+    const auto restOfRing = Refill();
+    ASSERT_TRUE(restOfRing.ok);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), kHw + 1);
+
+    Complete(kHw + 1, kHw + 2);
+    const auto skipToPacket = Refill();
+    ASSERT_TRUE(skipToPacket.ok);
+    EXPECT_EQ(skipToPacket.packetsFilled, 1U);
+    EXPECT_EQ(HeaderInSlot(0), PacketHeader(2 * kHw));
+    const auto* reusedPacketHead = reinterpret_cast<const OHCIDescriptorImmediate*>(
+        ring_.Slab().GetDescriptorPtr(0));
+    EXPECT_EQ(reusedPacketHead->common.branchWord, BranchToSlot(0));
+    EXPECT_EQ(reusedPacketHead->common.control & 0xFFFFU, 8U);
 }
 
 TEST_F(IsochTxDmaRingFiniteTest, AQueueThatRanDryIsAFaultNotAReplay) {

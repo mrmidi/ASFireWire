@@ -139,6 +139,9 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
     if (const auto* profile = ivars.device.profile) {
         if (profile->TxWireFormat() == ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
             wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kRawPcm24In32;
+        } else if (profile->TxWireFormat() ==
+                   ASFW::Encoding::AudioWireFormat::kRawPcm24Upper24In32LE) {
+            wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kRawPcm24Upper24In32LE;
         }
     }
 

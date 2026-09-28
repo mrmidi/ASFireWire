@@ -55,6 +55,7 @@ constexpr AudioDeviceDefinition Definition(
                 clause.unitVersion = MaskedValue32{0x010001};
                 break;
             case AudioFamilyProviderId::MotuRegister:
+            case AudioFamilyProviderId::RmeRegister:
                 break;
             case AudioFamilyProviderId::None:
                 break;

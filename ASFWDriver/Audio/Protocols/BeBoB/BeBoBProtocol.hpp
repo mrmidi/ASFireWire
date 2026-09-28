@@ -83,7 +83,7 @@ public:
     [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;
     [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
         const AudioDuplexChannels& channels, const AudioClockConfig& clock) override;
-    void AssignChannels(const AudioDuplexChannels& channels) override;
+    std::expected<AudioDuplexChannels, IOReturn> AssignChannels(const AudioDuplexChannels& channels) override;
     [[nodiscard]] std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) override;
     [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceRx() override;
     [[nodiscard]] std::expected<DuplexStageResult, IOReturn> ArmDeviceTxAndEnable() override;
