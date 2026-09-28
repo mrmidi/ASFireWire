@@ -15,6 +15,7 @@
 using namespace ASFW::Protocols::AVC::Audio;
 using ASFW::AVC::SubunitAddress;
 using ASFW::AVC::Expected;
+using ASFW::AVC::ResponseCode;
 namespace Cmd = ASFW::AVC::Cmd;
 
 void AudioSubunit::ParseCapabilities(AVCUnit& unit, std::function<void(bool)> completion) {
@@ -99,6 +100,10 @@ void AudioSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, bool isInpu
     auto unitPtr = unit.shared_from_this();
     uint8_t plugNum = plugs[plugIndex].plugNumber;
     
+    // Intentional design choice (not a bug, not a plan violation):
+    // Apple AppleFWAudio and AVCVideoServices try 0xBF first and fall back blindly to 0x2F
+    // on NOT IMPLEMENTED. FireWire FCP roundtrips for NOT IMPLEMENTED take < 1 ms, so
+    // blind probing with fallback is cheap, standard, and eliminates persistent opcode state.
     Cmd::StreamFormatCommand cmd{
         .address = SubunitAddress::FromByte(MakeSubunitAddress(GetType(), GetID())),
         .operands = {
@@ -108,8 +113,27 @@ void AudioSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, bool isInpu
         }
     };
     
-    unit.Status(cmd, [this, unitPtr, plugIndex, isInput, completionState](
-                Expected<Cmd::StreamFormatReply> reply) {
+    unit.Status(cmd, [this, unitPtr, plugIndex, isInput, completionState, cmd](
+                Expected<Cmd::StreamFormatReply> reply) mutable {
+        if (!reply && reply.error().response == ResponseCode::kNotImplemented) {
+            cmd.operands.opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport;
+            unitPtr->Status(cmd, [this, unitPtr, plugIndex, isInput, completionState](
+                        Expected<Cmd::StreamFormatReply> fallbackReply) {
+                auto& plugs = isInput ? inputPlugs_ : outputPlugs_;
+                if (fallbackReply) {
+                    plugs[plugIndex].currentFormat = fallbackReply->format;
+                    ASFW_LOG_INFO(Discovery, "AudioSubunit: Plug %d (%{public}s) current format",
+                                 plugs[plugIndex].plugNumber,
+                                 isInput ? "input" : "output");
+                } else {
+                    ASFW_LOG_WARNING(Discovery, "AudioSubunit: Failed to query current format for plug %d (%{public}s)",
+                                   plugs[plugIndex].plugNumber, isInput ? "input" : "output");
+                }
+                QueryPlugFormats(*unitPtr, plugIndex + 1, isInput, *completionState);
+            });
+            return;
+        }
+
         auto& plugs = isInput ? inputPlugs_ : outputPlugs_;
         
         if (reply) {

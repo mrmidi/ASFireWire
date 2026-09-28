@@ -11,6 +11,8 @@
 
 #include "AvcTypes.hpp"
 
+#include <DriverKit/IOReturn.h>
+
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -64,6 +66,45 @@ using Expected = std::expected<T, AvcError>;
 
 [[nodiscard]] constexpr std::unexpected<AvcError> FailAt(AvcErrorKind kind, uint16_t offset) noexcept {
     return std::unexpected(AvcError::AtOperand(kind, offset));
+}
+
+/// Single authority for mapping AV/C codec and transaction errors to IOReturn.
+[[nodiscard]] constexpr IOReturn ToIOReturn(const AvcError& error) noexcept {
+    switch (error.kind) {
+        case AvcErrorKind::kTimeout: return kIOReturnTimeout;
+        case AvcErrorKind::kBusReset: return kIOReturnNotResponding;
+        case AvcErrorKind::kRefused: return kIOReturnNotPermitted;
+        case AvcErrorKind::kInvalidArgument:
+        case AvcErrorKind::kMalformedOperands:
+        case AvcErrorKind::kOperandsTooShort:
+        case AvcErrorKind::kFrameTooShort:
+        case AvcErrorKind::kFrameTooLong:
+            return kIOReturnBadArgument;
+        case AvcErrorKind::kUnsupported:
+            return kIOReturnUnsupported;
+        case AvcErrorKind::kNotAResponse:
+        case AvcErrorKind::kAddressMismatch:
+        case AvcErrorKind::kOpcodeMismatch:
+            return kIOReturnInvalid;
+        case AvcErrorKind::kUnexpectedResponse:
+            if (error.response.has_value()) {
+                switch (*error.response) {
+                    case ResponseCode::kNotImplemented:
+                        return kIOReturnUnsupported;
+                    case ResponseCode::kInTransition:
+                    case ResponseCode::kInterim:
+                        return kIOReturnBusy;
+                    case ResponseCode::kRejected:
+                        return kIOReturnError;
+                    default:
+                        return kIOReturnError;
+                }
+            }
+            return kIOReturnError;
+        case AvcErrorKind::kTransportError:
+        default:
+            return kIOReturnError;
+    }
 }
 
 } // namespace ASFW::AVC

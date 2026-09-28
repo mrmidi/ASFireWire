@@ -42,30 +42,8 @@ namespace ASFW::Audio::Oxford::Apogee {
 
 namespace {
 
-[[nodiscard]] IOReturn MapAvcErrorToIOReturn(const AVC::AvcError& error) noexcept {
-    switch (error.kind) {
-        case AVC::AvcErrorKind::kTimeout:
-            return kIOReturnTimeout;
-        case AVC::AvcErrorKind::kBusReset:
-            return kIOReturnNotResponding;
-        case AVC::AvcErrorKind::kUnsupported:
-            return kIOReturnUnsupported;
-        case AVC::AvcErrorKind::kUnexpectedResponse:
-            if (error.response.has_value()) {
-                switch (*error.response) {
-                    case AVC::ResponseCode::kNotImplemented:
-                        return kIOReturnUnsupported;
-                    case AVC::ResponseCode::kInTransition:
-                    case AVC::ResponseCode::kInterim:
-                        return kIOReturnBusy;
-                    default:
-                        return kIOReturnError;
-                }
-            }
-            return kIOReturnError;
-        default:
-            return kIOReturnError;
-    }
+[[nodiscard]] constexpr IOReturn MapAvcErrorToIOReturn(const AVC::AvcError& error) noexcept {
+    return AVC::ToIOReturn(error);
 }
 
 } // namespace

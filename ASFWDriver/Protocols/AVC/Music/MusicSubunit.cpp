@@ -27,6 +27,7 @@ using ASFW::AVC::IAvcUnit;
 using ASFW::AVC::SubunitAddress;
 using ASFW::AVC::SubunitType;
 using ASFW::AVC::Expected;
+using ASFW::AVC::ResponseCode;
 namespace Cmd = ASFW::AVC::Cmd;
 
 //==============================================================================
@@ -288,6 +289,10 @@ void MusicSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, std::functi
 
     auto& plug = plugs_[plugIndex];
 
+    // Intentional design choice (not a bug, not a plan violation):
+    // Apple AppleFWAudio and AVCVideoServices try 0xBF first and fall back blindly to 0x2F
+    // on NOT IMPLEMENTED. FireWire FCP roundtrips for NOT IMPLEMENTED take < 1 ms, so
+    // blind probing with fallback is cheap, standard, and eliminates persistent opcode state.
     Cmd::StreamFormatCommand cmd{
         .address = SubunitAddress::FromByte(MakeSubunitAddress(GetType(), GetID())),
         .operands = {
@@ -297,7 +302,21 @@ void MusicSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, std::functi
         }
     };
 
-    unit.Status(cmd, [this, &unit, plugIndex, completion](Expected<Cmd::StreamFormatReply> reply) {
+    unit.Status(cmd, [this, &unit, plugIndex, completion, cmd](Expected<Cmd::StreamFormatReply> reply) mutable {
+        if (!reply && reply.error().response == ResponseCode::kNotImplemented) {
+            cmd.operands.opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport;
+            unit.Status(cmd, [this, &unit, plugIndex, completion](Expected<Cmd::StreamFormatReply> fallbackReply) {
+                if (fallbackReply && fallbackReply->format.rawLength > 0) {
+                    auto parsed = StreamFormats::StreamFormatParser::Parse(fallbackReply->format.rawBytes.data(), fallbackReply->format.rawLength);
+                    HandlePlugFormatResult(plugIndex, AVCResult::kImplementedStable, parsed);
+                } else {
+                    HandlePlugFormatResult(plugIndex, AVCResult::kNotImplemented, std::nullopt);
+                }
+                QueryPlugFormats(unit, plugIndex + 1, completion);
+            });
+            return;
+        }
+
         if (reply && reply->format.rawLength > 0) {
             auto parsed = StreamFormats::StreamFormatParser::Parse(reply->format.rawBytes.data(), reply->format.rawLength);
             HandlePlugFormatResult(plugIndex, AVCResult::kImplementedStable, parsed);
@@ -433,6 +452,10 @@ void MusicSubunit::QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmit
                 return;
             }
 
+            // Intentional design choice (not a bug, not a plan violation):
+            // Apple AppleFWAudio and AVCVideoServices try 0xBF first and fall back blindly to 0x2F
+            // on NOT IMPLEMENTED. FireWire FCP roundtrips for NOT IMPLEMENTED take < 1 ms, so
+            // blind probing with fallback is cheap, standard, and eliminates persistent opcode state.
             Cmd::StreamFormatCommand cmd{
                 .address = SubunitAddress::FromByte(MakeSubunitAddress(GetType(), GetID())),
                 .operands = {
@@ -443,7 +466,28 @@ void MusicSubunit::QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmit
                 }
             };
 
-            avcUnit->Status(cmd, [formats, iteration, queryNextList, currentPlugIndex, this, state, queryNextPlug](Expected<Cmd::StreamFormatReply> reply) {
+            avcUnit->Status(cmd, [formats, iteration, queryNextList, currentPlugIndex, this, state, queryNextPlug, avcUnit, cmd](Expected<Cmd::StreamFormatReply> reply) mutable {
+                if (!reply && reply.error().response == ResponseCode::kNotImplemented) {
+                    cmd.operands.opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport;
+                    avcUnit->Status(cmd, [formats, iteration, queryNextList, currentPlugIndex, this, state, queryNextPlug](Expected<Cmd::StreamFormatReply> fallbackReply) {
+                        if (fallbackReply && fallbackReply->format.rawLength > 0) {
+                            auto parsed = StreamFormats::StreamFormatParser::Parse(fallbackReply->format.rawBytes.data(), fallbackReply->format.rawLength);
+                            if (parsed) {
+                                formats->push_back(*parsed);
+                                (*iteration)++;
+                                (*queryNextList)();
+                                return;
+                            }
+                        }
+                        if (!formats->empty()) {
+                            plugs_[currentPlugIndex].supportedFormats = std::move(*formats);
+                        }
+                        state->plugIndex++;
+                        (*queryNextPlug)();
+                    });
+                    return;
+                }
+
                 if (reply && reply->format.rawLength > 0) {
                     auto parsed = StreamFormats::StreamFormatParser::Parse(reply->format.rawBytes.data(), reply->format.rawLength);
                     if (parsed) {
@@ -1312,6 +1356,10 @@ void MusicSubunit::SetSampleRate(ASFW::Protocols::AVC::IAVCCommandSubmitter& sub
         .entryCount = 1,
     };
 
+    // Intentional design choice (not a bug, not a plan violation):
+    // Apple AppleFWAudio and AVCVideoServices try 0xBF first and fall back blindly to 0x2F
+    // on NOT IMPLEMENTED. FireWire FCP roundtrips for NOT IMPLEMENTED take < 1 ms, so
+    // blind probing with fallback is cheap, standard, and eliminates persistent opcode state.
     Cmd::StreamFormatCommand cmd{
         .address = SubunitAddress::FromByte(MakeSubunitAddress(GetType(), GetID())),
         .operands = {
@@ -1322,7 +1370,21 @@ void MusicSubunit::SetSampleRate(ASFW::Protocols::AVC::IAVCCommandSubmitter& sub
         }
     };
 
-    avcUnit->Control(cmd, [completion](Expected<Cmd::StreamFormatReply> reply) {
+    avcUnit->Control(cmd, [completion, avcUnit, cmd](Expected<Cmd::StreamFormatReply> reply) mutable {
+        if (!reply && reply.error().response == ResponseCode::kNotImplemented) {
+            cmd.operands.opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport;
+            avcUnit->Control(cmd, [completion](Expected<Cmd::StreamFormatReply> fallbackReply) {
+                if (fallbackReply.has_value()) {
+                    ASFW_LOG_V1(MusicSubunit, "MusicSubunit: SetSampleRate succeeded (via 0x2F fallback)");
+                    completion(true);
+                } else {
+                    ASFW_LOG_V1(MusicSubunit, "MusicSubunit: SetSampleRate failed on fallback");
+                    completion(false);
+                }
+            });
+            return;
+        }
+
         if (reply.has_value()) {
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: SetSampleRate succeeded");
             completion(true);

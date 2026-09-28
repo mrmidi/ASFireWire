@@ -37,17 +37,7 @@ using MusicPlugChannel = MusicSubunit::MusicPlugChannel;
 using SubunitPtr = std::shared_ptr<ASFW::Protocols::AVC::Subunit>;
 
 kern_return_t AvcErrorToIOReturn(const ASFW::AVC::AvcError& error) noexcept {
-    using ASFW::AVC::AvcErrorKind;
-    switch (error.kind) {
-        case AvcErrorKind::kTimeout: return kIOReturnTimeout;
-        case AvcErrorKind::kBusReset: return kIOReturnAborted;
-        case AvcErrorKind::kRefused: return kIOReturnNotPermitted;
-        case AvcErrorKind::kInvalidArgument:
-        case AvcErrorKind::kMalformedOperands:
-        case AvcErrorKind::kOperandsTooShort:
-            return kIOReturnBadArgument;
-        default: return kIOReturnIOError;
-    }
+    return ASFW::AVC::ToIOReturn(error);
 }
 
 
