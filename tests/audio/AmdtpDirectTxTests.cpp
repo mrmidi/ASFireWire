@@ -6,6 +6,7 @@
 #include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
+#include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
 #include "../support/MAudioSpecialHappyPathFixture.inc"
 
 #include "TxPacketizerTestSupport.hpp"
@@ -331,6 +332,75 @@ TEST(AmdtpDirectTxTests, Captured1814HostPacketMatchesProfileAndEngine) {
     EXPECT_EQ(provider.published.byteCount, capturedPacket->size);
     EXPECT_TRUE(std::equal(provider.bytes.begin(), provider.bytes.end(),
                            capturedPacket->payload));
+}
+
+TEST(AmdtpDirectTxTests, DevicePlaybackMapMovesPhase88ChannelsToPlanarSlots) {
+    // The Phase 88 playback block is planar (channel positions captured from
+    // the device, 2026-09-27): Out 1-8 are channels 0-7, SPDIF L/R channels 8-9.
+    constexpr std::array<uint8_t, 10> kPlanarSlots{1, 6, 2, 7, 3, 8, 4, 9, 0, 5};
+    ASFW::Audio::Wire::PcmSlotMap deviceMap{};
+    ASSERT_TRUE(deviceMap.SetSlots(kPlanarSlots));
+
+    ASFW::Isoch::Audio::AVC::Profiles::Phase88Profile profile{};
+    ASFW::Isoch::Audio::AudioStreamConfig config{};
+    ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(config));
+    ASSERT_EQ(config.pcmChannels, 10U);
+    ASSERT_EQ(config.dbs, 11U);
+
+    constexpr uint32_t kFrames = 8;
+    std::array<float, kFrames * 10> host{};
+    for (uint32_t frame = 0; frame < kFrames; ++frame) {
+        for (uint32_t channel = 0; channel < 10; ++channel) {
+            host[frame * 10 + channel] = static_cast<float>(channel + 1) / 16.0f;
+        }
+    }
+    const HostAudioBufferView hostView{
+        .interleavedFloat32 = host.data(),
+        .firstFrame = 0,
+        .frameCount = kFrames,
+        .frameCapacity = kFrames,
+        .channels = 10,
+    };
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.nextDataSyt = 0x1234;
+    timing.replayValid = true;
+    timing.replayDataBlocks = kFrames;
+
+    const auto firstBlockSlots = [&](const ASFW::Audio::Wire::PcmSlotMap& map) {
+        DiceTxStreamEngine engine{};
+        EXPECT_TRUE(engine.Configure(profile, config, map));
+        std::array<uint8_t, 512> bytes{};
+        struct Provider final : IAmdtpTxSlotProvider {
+            std::array<uint8_t, 512>* bytes{nullptr};
+            bool AcquireWritableSlot(uint64_t packetIndex, TxPacketSlotView& outSlot) noexcept override {
+                outSlot = {packetIndex, bytes->data(), static_cast<uint32_t>(bytes->size())};
+                return true;
+            }
+            bool PublishSlot(const PreparedTxPacket&) noexcept override { return true; }
+            uint32_t SlotCount() const noexcept override { return 1; }
+        } provider{};
+        provider.bytes = &bytes;
+        engine.BindSlotProvider(&provider);
+        engine.ResetForStart(0, 0);
+        EXPECT_EQ(engine.PrepareNextTransmitSlot(0, timing), TxSlotPrepareResult::kPrepared);
+        engine.FillFromHostOutput(hostView, 0);
+        std::array<uint32_t, 11> slots{};
+        for (uint32_t slot = 0; slot < slots.size(); ++slot) {
+            const uint8_t* q = bytes.data() + 8 + slot * 4;
+            slots[slot] = (uint32_t{q[0]} << 24) | (uint32_t{q[1]} << 16) | (uint32_t{q[2]} << 8) | q[3];
+        }
+        return slots;
+    };
+
+    const auto interleaved = firstBlockSlots({});
+    const auto planar = firstBlockSlots(deviceMap);
+    for (uint32_t channel = 0; channel < 10; ++channel) {
+        ASSERT_NE(interleaved[channel], 0U) << "channel " << channel << " carried no sample";
+        EXPECT_EQ(planar[kPlanarSlots[channel]], interleaved[channel]) << "channel " << channel;
+    }
+    EXPECT_EQ(planar[10], interleaved[10]);  // MIDI slot is not PCM; untouched
 }
 
 TEST(AmdtpDirectTxTests, Captured1814Default48kGeometryMatchesProfile) {

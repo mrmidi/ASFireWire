@@ -13,12 +13,18 @@
 // terratec_device.cpp (clock source selection only). Cross-validated against
 // hardware: TERRATEC_TOPOLOGY_RESEARCH.md (2026-07-16).
 //
-// FB map (from device PUBs and FFADO libffado-2.5.0/src/bebob/terratec/):
-//   0x06 Selector: mixer destination (0x01 = analog-output-1/2)
+// FB map (FFADO support/mixer-qt4/ffado/mixer/phase88control.py:42-64, ui labels
+// in phase88.ui; confirmed on hardware 2026-09-27):
+//   0x06 Selector: mixer destination "Out Assign" (0x01 = Line Out 1/2)
 //   0x07 Selector: mixer stream source (0x01 = stream-input-1/2)
-//   0x07 Feature:  stream playback mute/volume (ch1=L, ch2=R)
-//   0x00 Feature:  mixer output 0 mute/volume (physical output 1)
-//   0x01 Feature:  mixer output 1 mute/volume (physical output 2)
+//   0x07 Feature:  "WavePlay", stream playback into the mixer (ch1=L, ch2=R)
+//   0x01 Feature:  mixer Master (ch1=L, ch2=R)
+// Feature block 0 does not exist: STATUS answers NOT IMPLEMENTED.
+//
+// Volume is a signed 16-bit value in 1/256 dB. The Phase 88 reports -100 dB
+// (0x9C00) to 0 dB (0x0000) in 1 dB steps for the Master (STATUS min/max/
+// resolution, 2026-09-27). The unit has no output volume knob, so the Master
+// starts at a listening level instead of full scale.
 
 #pragma once
 
@@ -34,18 +40,22 @@ inline constexpr std::array kPhase88Selectors{
     SelectorRoute{0x07, 0x01},  // Mixer Stream Source = stream-input-1/2
 };
 
+/// Master volume at stream start: -35 dB, chosen by ear on the user's unit.
+inline constexpr uint16_t kPhase88MasterVolume = 0xDD00;  // -35 * 256
+static_assert(static_cast<int16_t>(kPhase88MasterVolume) == -35 * 256);
+
 inline constexpr std::array kPhase88Mutes{
     ChannelMute{0x07, 1, true},   // Unmute Stream Playback Left
     ChannelMute{0x07, 2, true},   // Unmute Stream Playback Right
-    ChannelMute{0x00, 1, true},   // Unmute Mixer Output Left
-    ChannelMute{0x01, 1, true},   // Unmute Mixer Output Right
+    ChannelMute{0x01, 1, true},   // Unmute Master Left
+    ChannelMute{0x01, 2, true},   // Unmute Master Right
 };
 
 inline constexpr std::array kPhase88Volumes{
-    ChannelVolume{0x07, 1, 0x0000},  // Max Vol Stream Playback Left
-    ChannelVolume{0x07, 2, 0x0000},  // Max Vol Stream Playback Right
-    ChannelVolume{0x00, 1, 0x0000},  // Max Vol Mixer Output Left
-    ChannelVolume{0x01, 1, 0x0000},  // Max Vol Mixer Output Right
+    ChannelVolume{0x07, 1, 0x0000},                // Stream Playback Left, 0 dB
+    ChannelVolume{0x07, 2, 0x0000},                // Stream Playback Right, 0 dB
+    ChannelVolume{0x01, 1, kPhase88MasterVolume},  // Master Left
+    ChannelVolume{0x01, 2, kPhase88MasterVolume},  // Master Right
 };
 
 inline constexpr MixerMap kPhase88MixerMap{

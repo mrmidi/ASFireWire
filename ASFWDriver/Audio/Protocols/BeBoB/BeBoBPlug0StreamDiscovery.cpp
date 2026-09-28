@@ -87,6 +87,11 @@ private:
         for (const PlugDirection direction : {PlugDirection::kInput, PlugDirection::kOutput}) {
             queue_.push_back({ReadOnlyProbeCommand::kIsochPlugType, direction});
             queue_.push_back({ReadOnlyProbeCommand::kStreamFormatList, direction});
+            // The channel positions give the device's AM824 slot order (Linux
+            // bebob_stream.c map_data_channels :254-372). Without them the
+            // channel map stays identity, which is wrong for planar devices
+            // such as the Phase 88.
+            queue_.push_back({ReadOnlyProbeCommand::kChannelPositions, direction});
         }
     }
 
@@ -112,12 +117,16 @@ private:
             HandleFormation(request, response);
             return;
         }
-        if (response.operandLength < 8) {
+        // A section-info reply echoes the 1-based section id at operand 7 and
+        // carries the section type at operand 8 (Linux bebob_command.c:228,
+        // :246). Other extended PLUG_INFO replies carry their value at operand 7.
+        const bool isSectionType = request.command == ReadOnlyProbeCommand::kSectionType;
+        if (response.operandLength < (isSectionType ? 9U : 8U)) {
             ASFW_LOG(AVC, "BeBoBProbe: short %{public}s response (%zu operands) GUID=0x%016llx",
                      RequestName(request.command), response.operandLength, guid_);
             return;
         }
-        const uint8_t value = response.operands[7];
+        const uint8_t value = response.operands[isSectionType ? 8U : 7U];
         switch (request.command) {
             case ReadOnlyProbeCommand::kIsochPlugType:
                 Plug(request.direction).plugType = value;

@@ -101,7 +101,7 @@ std::vector<uint32_t> Phase88Protocol::SupportedRates() const {
 }
 
 void Phase88Protocol::ConfigureMixer(MixerFailurePolicy policy, MixerCompletion completion) {
-    ASFW_LOG(Audio, "[BeBoB] Phase88: configuring hardware mixer (unmute + max volume)");
+    ASFW_LOG(Audio, "[BeBoB] Phase88: configuring hardware mixer (unmute, stream 0 dB, master -35 dB)");
     RunMixerSteps(kPhase88MixerMap, policy, std::move(completion));
 }
 

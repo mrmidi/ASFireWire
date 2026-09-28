@@ -9,6 +9,7 @@
 #include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialRouting.hpp"
+#include "ASFWDriver/Audio/Protocols/BeBoB/Phase88MixerData.hpp"
 #include "ASFWDriver/Protocols/BeBoB/VirtualUart/BeBoBVirtualUartCommand.hpp"
 #include "ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
@@ -25,6 +26,30 @@
 using ASFW::Audio::DuplexHealthResult;
 
 namespace {
+
+TEST(Phase88MixerMapTests, MasterStartsAtTheSameLevelOnBothChannelsAndSkipsFb0) {
+    using ASFW::Audio::BeBoB::kPhase88MasterVolume;
+    using ASFW::Audio::BeBoB::kPhase88MixerMap;
+    // FB1 is the mixer Master (FFADO phase88control.py:43-44). Writing only one
+    // channel leaves L and R at different levels after a stream start.
+    uint16_t masterLeft = 0;
+    uint16_t masterRight = 0;
+    int masterWrites = 0;
+    for (const auto& volume : kPhase88MixerMap.volumes) {
+        EXPECT_NE(volume.fbId, 0x00) << "feature block 0 does not exist on the Phase 88";
+        if (volume.fbId != 0x01) continue;
+        ++masterWrites;
+        if (volume.channel == 1) masterLeft = volume.value;
+        if (volume.channel == 2) masterRight = volume.value;
+    }
+    EXPECT_EQ(masterWrites, 2);
+    EXPECT_EQ(masterLeft, kPhase88MasterVolume);
+    EXPECT_EQ(masterRight, kPhase88MasterVolume);
+    EXPECT_EQ(static_cast<int16_t>(kPhase88MasterVolume), -35 * 256);  // 1/256 dB units
+    for (const auto& mute : kPhase88MixerMap.mutes) {
+        EXPECT_NE(mute.fbId, 0x00) << "feature block 0 does not exist on the Phase 88";
+    }
+}
 
 TEST(BeBoBVirtualUartCommandTests, AllowsOnlyTheThreeShellOpcodes) {
     namespace VUart = ASFW::Protocols::BeBoB::VirtualUart;
