@@ -248,8 +248,6 @@ inline const char* GetSubunitTypeName(uint8_t type) {
             return "Panel";
         case AVCSubunitType::kBulletinBoard:
             return "Bulletin Board";
-        case AVCSubunitType::kMusic0C:
-            return "Music";
         case AVCSubunitType::kMusic:
             return "Music";
         case AVCSubunitType::kUnit:

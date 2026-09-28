@@ -153,6 +153,15 @@ add_library(asfw_catalog_host STATIC
 target_link_libraries(asfw_catalog_host PUBLIC asfw_test_common_interface)
 target_link_libraries(asfw_test_support PUBLIC asfw_catalog_host)
 
+# 6. AVC codecs host library
+add_library(asfw_avc_codecs STATIC
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
+)
+target_link_libraries(asfw_avc_codecs PUBLIC asfw_test_common_interface)
+target_link_libraries(asfw_test_support PUBLIC asfw_avc_codecs)
+
 # Include modular test subdirectories
 add_subdirectory(support)
 add_subdirectory(core)

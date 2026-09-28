@@ -62,7 +62,7 @@ struct DuetFormatModel {
 
         const bool isInput = command[2] == 0x19U;
         if (command[0] == static_cast<uint8_t>(AVCCommandType::kStatus)) {
-            return AvcReply::Accepted()
+            return AvcReply::ImplementedStable()
                 .WithPatch(4U, 0x90U)
                 .WithPatch(5U, isInput ? inputFrequency : outputFrequency);
         }

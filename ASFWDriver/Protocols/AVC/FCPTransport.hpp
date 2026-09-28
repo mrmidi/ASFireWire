@@ -23,6 +23,7 @@
 #include <span>
 #include "AVCDefs.hpp"
 #include "AVCCommandFilter.hpp"
+#include "Core/IAvcUnit.hpp"
 #include "../Ports/FireWireBusPort.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Discovery/FWDevice.hpp"
@@ -158,10 +159,11 @@ struct FCPTransportConfig {
 // FCP Transport
 //==============================================================================
 
-class FCPTransport : public std::enable_shared_from_this<FCPTransport> {
+class FCPTransport : public std::enable_shared_from_this<FCPTransport>,
+                     public ASFW::AVC::IAvcUnit {
 public:
     FCPTransport() = default;
-    ~FCPTransport();
+    ~FCPTransport() override;
 
     bool init(Protocols::Ports::FireWireBusOps* busOps,
               Protocols::Ports::FireWireBusInfo* busInfo,
@@ -172,6 +174,15 @@ public:
 
     FCPTransport(const FCPTransport&) = delete;
     FCPTransport& operator=(const FCPTransport&) = delete;
+
+    // --- IAvcUnit implementation ---
+    void Submit(const ASFW::AVC::CommandFrame& frame,
+                FW::Generation generation,
+                ResponseCallback completion) override;
+
+    [[nodiscard]] FW::NodeId NodeId() const noexcept override;
+    [[nodiscard]] FW::Generation CurrentGeneration() const noexcept override;
+    [[nodiscard]] uint64_t Guid() const noexcept override;
 
     [[nodiscard]] FCPHandle SubmitCommand(const FCPFrame& command,
                                           FCPCompletion completion);

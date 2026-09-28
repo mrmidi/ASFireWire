@@ -31,9 +31,8 @@
 
 #include "ASFWDriver/Protocols/AVC/AVCUnit.hpp"
 #include "ASFWDriver/Protocols/AVC/FCPTransport.hpp"
-#include "ASFWDriver/Protocols/AVC/AVCCommandFilter.hpp"
-#include "ASFWDriver/Protocols/AVC/AVCSignalFormatProbe.hpp"
-#include "ASFWDriver/Protocols/AVC/StreamFormats/AVCUnitPlugSignalFormatCommand.hpp"
+#include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
+#include "ASFWDriver/Protocols/AVC/Core/RateCodes.hpp"
 
 #include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 #include "ASFWDriver/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
@@ -249,12 +248,17 @@ TEST(AvcGoldenTests, DuetStreamingStartStop) {
     AvcGoldenRig rig(kDuet);
 
     rig.Mark("## SignalFormat::QueryOutputPlug0");
-    auto queryCmd = std::make_shared<Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand>(
-        rig.Transport(), 0, false);
+    Cmd::PlugSignalFormatCommand queryCmd{
+        .operands = {
+            .direction = Cmd::PlugSignalDirection::kOutput,
+            .plugId = 0,
+            .query = Cmd::SignalFormatQuery::kAllWildcard,
+        }
+    };
     bool queryDone = false;
-    queryCmd->Submit([&](AVCResult res, const auto&) {
+    rig.Unit()->Status(queryCmd, [&](Expected<Cmd::PlugSignalFormat> res) {
         queryDone = true;
-        EXPECT_TRUE(IsSuccess(res));
+        EXPECT_TRUE(res.has_value());
     });
     EXPECT_TRUE(queryDone);
 
@@ -262,12 +266,17 @@ TEST(AvcGoldenTests, DuetStreamingStartStop) {
     rig.Sim().SetResponseOverride(
         {0x00, 0xFF, 0x18, 0x00, 0x90, 0x01, 0xFF, 0xFF},
         {0x09, 0xFF, 0x18, 0x00, 0x90, 0x01, 0xFF, 0xFF});
-    auto setCmd44 = std::make_shared<Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand>(
-        rig.Transport(), 0, false, Protocols::AVC::StreamFormats::SampleRate::k44100Hz);
+    Cmd::PlugSignalFormatCommand setCmd44{
+        .operands = {
+            .direction = Cmd::PlugSignalDirection::kOutput,
+            .plugId = 0,
+            .format = Cmd::Am824SignalFormat(0, CipSfc::k44100),
+        }
+    };
     bool set44Done = false;
-    setCmd44->Submit([&](AVCResult res, const auto&) {
+    rig.Unit()->Control(setCmd44, [&](Expected<Cmd::PlugSignalFormat> res) {
         set44Done = true;
-        EXPECT_TRUE(IsSuccess(res));
+        EXPECT_TRUE(res.has_value());
     });
     EXPECT_TRUE(set44Done);
 
@@ -275,12 +284,17 @@ TEST(AvcGoldenTests, DuetStreamingStartStop) {
     rig.Sim().SetResponseOverride(
         {0x00, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF},
         {0x09, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF});
-    auto setCmd48 = std::make_shared<Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand>(
-        rig.Transport(), 0, false, Protocols::AVC::StreamFormats::SampleRate::k48000Hz);
+    Cmd::PlugSignalFormatCommand setCmd48{
+        .operands = {
+            .direction = Cmd::PlugSignalDirection::kOutput,
+            .plugId = 0,
+            .format = Cmd::Am824SignalFormat(0, CipSfc::k48000),
+        }
+    };
     bool set48Done = false;
-    setCmd48->Submit([&](AVCResult res, const auto&) {
+    rig.Unit()->Control(setCmd48, [&](Expected<Cmd::PlugSignalFormat> res) {
         set48Done = true;
-        EXPECT_TRUE(IsSuccess(res));
+        EXPECT_TRUE(res.has_value());
     });
     EXPECT_TRUE(set48Done);
 
@@ -380,26 +394,41 @@ TEST(AvcGoldenTests, Fw1814AllowlistEnforcement) {
     opts.filter = Discovery::AvcCommandFilterId::MAudioSpecialBeBoB;
     AvcGoldenRig rig(kPhase88, opts);
 
-    // Allowed commands
     rig.Mark("## Allowed: InputSignalFormatProbe");
-    const auto inProbe = BuildSignalFormatProbe(SignalFormatPlugDirection::Input, 0);
-    FCPFrame inFrame{};
-    std::copy(inProbe.begin(), inProbe.end(), inFrame.data.begin());
-    inFrame.length = inProbe.size();
+    Cmd::PlugSignalFormatCommand inCmd{
+        .operands = {
+            .direction = Cmd::PlugSignalDirection::kInput,
+            .plugId = 0,
+            .query = Cmd::SignalFormatQuery::kAm824Wildcard,
+        }
+    };
+    auto inFrame = inCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(inFrame.has_value());
+    FCPFrame inFcp{};
+    std::copy(inFrame->WireBytes().begin(), inFrame->WireBytes().end(), inFcp.data.begin());
+    inFcp.length = inFrame->WireBytes().size();
     bool inDone = false;
-    (void)rig.Transport().SubmitCommand(inFrame, [&](FCPStatus status, const FCPFrame&) {
+    (void)rig.Transport().SubmitCommand(inFcp, [&](FCPStatus status, const FCPFrame&) {
         inDone = true;
         EXPECT_EQ(status, FCPStatus::kOk);
     });
     EXPECT_TRUE(inDone);
 
     rig.Mark("## Allowed: OutputSignalFormatProbe");
-    const auto outProbe = BuildSignalFormatProbe(SignalFormatPlugDirection::Output, 0);
-    FCPFrame outFrame{};
-    std::copy(outProbe.begin(), outProbe.end(), outFrame.data.begin());
-    outFrame.length = outProbe.size();
+    Cmd::PlugSignalFormatCommand outCmd{
+        .operands = {
+            .direction = Cmd::PlugSignalDirection::kOutput,
+            .plugId = 0,
+            .query = Cmd::SignalFormatQuery::kAm824Wildcard,
+        }
+    };
+    auto outFrame = outCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(outFrame.has_value());
+    FCPFrame outFcp{};
+    std::copy(outFrame->WireBytes().begin(), outFrame->WireBytes().end(), outFcp.data.begin());
+    outFcp.length = outFrame->WireBytes().size();
     bool outDone = false;
-    (void)rig.Transport().SubmitCommand(outFrame, [&](FCPStatus status, const FCPFrame&) {
+    (void)rig.Transport().SubmitCommand(outFcp, [&](FCPStatus status, const FCPFrame&) {
         outDone = true;
         EXPECT_EQ(status, FCPStatus::kOk);
     });

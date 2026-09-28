@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include "Protocols/AVC/CMP/PCRCodec.hpp"
-#include "Protocols/AVC/PCRSpace.hpp"
 #include "Protocols/DV/DVConnectionPlan.hpp"
 
 TEST(PCRCodecTests, DecodesAllOutputPlugFields) {
@@ -28,26 +27,6 @@ TEST(PCRCodecTests, SettersPreserveUnrelatedFields) {
                             ASFW::CMP::PCRBits::kChannelMask));
 }
 
-TEST(PCRCodecTests, HigherLevelValueRoundTrips) {
-    ASFW::Protocols::AVC::PCRValue value{};
-    value.online = true;
-    value.broadcastConnection = true;
-    value.p2pCount = 37;
-    value.channel = 22;
-    value.dataRate = ASFW::Protocols::AVC::SpeedCode::kS400;
-    value.overhead = 9;
-    value.payload = 777;
-
-    const auto decoded =
-        ASFW::Protocols::AVC::PCRValue::Decode(value.Encode());
-    EXPECT_EQ(decoded.online, value.online);
-    EXPECT_EQ(decoded.broadcastConnection, value.broadcastConnection);
-    EXPECT_EQ(decoded.p2pCount, value.p2pCount);
-    EXPECT_EQ(decoded.channel, value.channel);
-    EXPECT_EQ(decoded.dataRate, value.dataRate);
-    EXPECT_EQ(decoded.overhead, value.overhead);
-    EXPECT_EQ(decoded.payload, value.payload);
-}
 
 TEST(PCRCodecTests, DecodesOutputMasterPlugRegister) {
     constexpr uint32_t raw = (2u << 30) | (63u << 24) | 3u;

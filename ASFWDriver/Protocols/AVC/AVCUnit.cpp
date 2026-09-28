@@ -9,7 +9,8 @@
 #include "../../Common/CallbackUtils.hpp"
 #include "../../Logging/Logging.hpp"
 #include "Descriptors/DescriptorAccessor.hpp"
-#include "AVCSignalFormatCommand.hpp"
+#include "Commands/GeneralCommands.hpp"
+#include "Core/RateCodes.hpp"
 
 using namespace ASFW::Protocols::AVC;
 
@@ -71,23 +72,41 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
                 GetGUID(), GetSpecID());
 }
 
+void AVCUnit::Submit(const ASFW::AVC::CommandFrame& frame,
+                     FW::Generation generation,
+                     ResponseCallback completion) {
+    if (fcpTransport_) {
+        fcpTransport_->Submit(frame, generation, std::move(completion));
+    } else {
+        completion(std::unexpected(ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kTransportError)));
+    }
+}
+
+ASFW::FW::NodeId AVCUnit::NodeId() const noexcept {
+    return fcpTransport_ ? fcpTransport_->NodeId() : ASFW::FW::NodeId{0};
+}
+
+ASFW::FW::Generation AVCUnit::CurrentGeneration() const noexcept {
+    return fcpTransport_ ? fcpTransport_->CurrentGeneration() : ASFW::FW::Generation{0};
+}
+
+uint64_t AVCUnit::Guid() const noexcept {
+    return fcpTransport_ ? fcpTransport_->Guid() : GetGUID();
+}
+
 void AVCUnit::ProbeUnitInfo(std::function<void(bool)> completion) {
     auto completionState = Common::ShareCallback(std::move(completion));
-    // UNIT_INFO: [STATUS, unit, opcode=0x30], no operands
-    AVCCdb cdb{};
-    cdb.ctype = static_cast<uint8_t>(AVCCommandType::kStatus);
-    cdb.subunit = kAVCSubunitUnit;
-    cdb.opcode = static_cast<uint8_t>(AVCOpcode::kUnitInfo);
-    cdb.operandLength = 0;
-
-    SubmitCommand(cdb, [this, completionState](AVCResult result, const AVCCdb&) {
-        if (!IsSuccess(result)) {
-            ASFW_LOG_V1(AVC, "AVCUnit: UNIT_INFO failed: result=%d",
-                         static_cast<int>(result));
+    ASFW::AVC::Cmd::UnitInfoCommand cmd{};
+    Status(cmd, [this, completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::UnitInfo> info) {
+        if (!info) {
+            ASFW_LOG_V1(AVC, "AVCUnit: UNIT_INFO failed");
             Common::InvokeSharedCallback(completionState, false);
             return;
         }
-        ASFW_LOG_V2(AVC, "AVCUnit: UNIT_INFO succeeded");
+        model_.info = *info;
+        ASFW_LOG_V2(AVC, "AVCUnit: UNIT_INFO succeeded: type=0x%02x id=%u company=0x%06x",
+                    static_cast<uint8_t>(info->unitType), info->unitId,
+                    ASFW::AVC::ToOui(info->companyId));
         Common::InvokeSharedCallback(completionState, true);
     });
 }
@@ -147,8 +166,8 @@ void AVCUnit::Initialize(std::function<void(bool)> completion) {
                                    "%zu subunits, %u/%u ISO plugs, "
                                    "descriptor support: %{public}s",
                                    subunits_.size(),
-                                   plugCounts_.isoInputPlugs,
-                                   plugCounts_.isoOutputPlugs,
+                                   model_.unitPlugs.isochronousInputs,
+                                   model_.unitPlugs.isochronousOutputs,
                                    descriptorInfo_.descriptorMechanismSupported ?
                                        "YES" : "NO");
                     } else {
@@ -169,7 +188,7 @@ void AVCUnit::ReScan(std::function<void(bool)> completion) {
     // Reset state
     initialized_ = false;
     subunits_.clear();
-    plugCounts_ = {};
+    model_ = {};
     descriptorInfo_ = {};
     
     // Re-initialize
@@ -190,21 +209,19 @@ void AVCUnit::ReScan(std::function<void(bool)> completion) {
 
 void AVCUnit::ProbeSubunits(std::function<void(bool)> completion) {
     auto completionState = Common::ShareCallback(std::move(completion));
-    // Create SUBUNIT_INFO command (page 0)
-    auto cmd = std::make_shared<AVCSubunitInfoCommand>(*fcpTransport_, 0);
+    ASFW::AVC::Cmd::SubunitInfoCommand cmd{
+        .operands = ASFW::AVC::Cmd::SubunitInfoOperands{.page = 0, .extensionCode = 0x07}
+    };
 
-    // Submit command
-    cmd->Submit([this, completionState, cmd](AVCResult result,
-                                         const AVCSubunitInfoCommand::SubunitInfo& info) {
-        if (!IsSuccess(result)) {
-        ASFW_LOG_V1(AVC, "AVCUnit: SUBUNIT_INFO failed: result=%d",
-                         static_cast<int>(result));
+    Status(cmd, [this, completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::SubunitInfo> info) {
+        if (!info) {
+            ASFW_LOG_V1(AVC, "AVCUnit: SUBUNIT_INFO failed");
             Common::InvokeSharedCallback(completionState, false);
             return;
         }
 
         // Store subunit info
-        StoreSubunitInfo(info);
+        StoreSubunitInfo(*info);
 
         ASFW_LOG_V1(AVC, "AVCUnit: Found %zu subunits", subunits_.size());
 
@@ -213,51 +230,54 @@ void AVCUnit::ProbeSubunits(std::function<void(bool)> completion) {
     });
 }
 
-void AVCUnit::StoreSubunitInfo(const AVCSubunitInfoCommand::SubunitInfo& info) {
+void AVCUnit::StoreSubunitInfo(const ASFW::AVC::Cmd::SubunitInfo& info) {
     subunits_.clear();
+    model_.subunits.clear();
 
     // First pass: Detect if Music Subunit is present
     bool hasMusicSubunit = false;
-    for (const auto& entry : info.subunits) {
-        AVCSubunitType type = static_cast<AVCSubunitType>(entry.type);
-        if (type == AVCSubunitType::kMusic || type == AVCSubunitType::kMusic0C) {
+    for (uint8_t i = 0; i < info.entryCount; ++i) {
+        if (info.entries[i].type == ASFW::AVC::SubunitType::kMusic) {
             hasMusicSubunit = true;
             break;
         }
     }
 
-    for (const auto& entry : info.subunits) {
-        // For each subunit type reported, enumerate instances
-        for (uint8_t id = 0; id <= entry.maxID; id++) {
+    for (uint8_t i = 0; i < info.entryCount; ++i) {
+        const auto& entry = info.entries[i];
+        for (uint8_t id = 0; id <= entry.maximumId; ++id) {
+            model_.subunits.push_back(ASFW::AVC::SubunitModel{
+                .id = ASFW::AVC::SubunitId{entry.type, id},
+                .plugs = {},
+            });
+
             std::shared_ptr<Subunit> subunit;
-            AVCSubunitType type = static_cast<AVCSubunitType>(entry.type);
+            auto legacyType = static_cast<AVCSubunitType>(entry.type);
 
             // Factory logic
-            if (type == AVCSubunitType::kMusic || type == AVCSubunitType::kMusic0C) {
-                subunit = std::make_shared<Music::MusicSubunit>(type, id);
-            } else if (type == AVCSubunitType::kCamera) {
-                subunit = std::make_shared<Camera::CameraSubunit>(type, id);
-            } else if (type == AVCSubunitType::kAudio) {
-                // Audio subunit - use dedicated AudioSubunit class
+            if (entry.type == ASFW::AVC::SubunitType::kMusic) {
+                subunit = std::make_shared<Music::MusicSubunit>(legacyType, id);
+            } else if (entry.type == ASFW::AVC::SubunitType::kCamera) {
+                subunit = std::make_shared<Camera::CameraSubunit>(legacyType, id);
+            } else if (entry.type == ASFW::AVC::SubunitType::kAudio) {
                 if (hasMusicSubunit) {
                     ASFW_LOG_V2(AVC, "AVCUnit: Skipping Audio Subunit (Apple driver matching artifact) because Music Subunit is present.");
                     continue;
                 }
-                subunit = std::make_shared<Audio::AudioSubunit>(type, id);
+                subunit = std::make_shared<Audio::AudioSubunit>(legacyType, id);
             } else {
-                // Generic subunit for others
                 class GenericSubunit : public Subunit {
                 public:
                     GenericSubunit(AVCSubunitType type, uint8_t id) : Subunit(type, id) {}
                     std::string GetName() const override { return "Generic"; }
                 };
-                subunit = std::make_shared<GenericSubunit>(type, id);
+                subunit = std::make_shared<GenericSubunit>(legacyType, id);
             }
 
             if (subunit) {
                 subunits_.push_back(subunit);
                 ASFW_LOG_V2(AVC, "AVCUnit: Subunit %zu: type=0x%02x, id=%d (%{public}s)",
-                            subunits_.size() - 1, entry.type, id, subunit->GetName().c_str());
+                            subunits_.size() - 1, static_cast<uint8_t>(entry.type), id, subunit->GetName().c_str());
             }
         }
     }
@@ -290,26 +310,26 @@ void AVCUnit::ParseSubunitCapabilities(size_t index, std::function<void(bool)> c
 
 void AVCUnit::ProbePlugs(std::function<void(bool)> completion) {
     auto completionState = Common::ShareCallback(std::move(completion));
-    // Query unit-level plugs (subunit = 0xFF) using new command (Opcode 0x02 Subfunction 0x00)
-    auto cmd = std::make_shared<AVCUnitPlugInfoCommand>(*this);
+    ASFW::AVC::Cmd::PlugInfoCommand cmd{
+        .operands = ASFW::AVC::Cmd::PlugInfoOperands{
+            .form = ASFW::AVC::Cmd::PlugInfoForm::kUnitIsoExternal
+        }
+    };
 
-    cmd->Submit([this, completionState](AVCResult result,
-                                         const UnitPlugCounts& info) {
-        if (!IsSuccess(result)) {
-            ASFW_LOG_V1(AVC,
-                         "AVCUnit: PLUG_INFO failed: result=%d",
-                         static_cast<int>(result));
+    Status(cmd, [this, completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::PlugInfoReply> reply) {
+        if (!reply) {
+            ASFW_LOG_V1(AVC, "AVCUnit: PLUG_INFO failed");
             Common::InvokeSharedCallback(completionState, false);
             return;
         }
 
         // Store plug info
-        plugCounts_ = info;
+        model_.unitPlugs = reply->unit;
 
         ASFW_LOG_V2(AVC,
                     "AVCUnit: Unit plugs: %u iso in, %u iso out, %u ext in, %u ext out",
-                    info.isoInputPlugs, info.isoOutputPlugs,
-                    info.extInputPlugs, info.extOutputPlugs);
+                    reply->unit.isochronousInputs, reply->unit.isochronousOutputs,
+                    reply->unit.externalInputs, reply->unit.externalOutputs);
 
         Common::InvokeSharedCallback(completionState, true);
     });
@@ -317,29 +337,34 @@ void AVCUnit::ProbePlugs(std::function<void(bool)> completion) {
 
 void AVCUnit::ProbeSignalFormat(std::function<void(bool)> completion) {
     auto completionState = Common::ShareCallback(std::move(completion));
-    // Query Plug 0
-    auto cmd = std::make_shared<AVCOutputPlugSignalFormatCommand>(*fcpTransport_, 0);
+    ASFW::AVC::Cmd::PlugSignalFormatCommand cmd{
+        .operands = ASFW::AVC::Cmd::PlugSignalFormatOperands{
+            .direction = ASFW::AVC::Cmd::PlugSignalDirection::kOutput,
+            .plugId = 0,
+            .format = std::nullopt,
+            .query = ASFW::AVC::Cmd::SignalFormatQuery::kAllWildcard,
+        }
+    };
 
-    cmd->Submit([this, completionState](AVCResult result,
-                                   const AVCOutputPlugSignalFormatCommand::SignalFormat& fmt) {
-        if (IsSuccess(result)) {
-            ASFW_LOG_INFO(Discovery, "Received Signal Format: Format=0x%02x, RateCode=0x%02x", fmt.formatHierarchy, fmt.formatSync);
+    Status(cmd, [this, completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::PlugSignalFormat> fmt) {
+        if (fmt) {
+            ASFW_LOG_INFO(Discovery, "Received Signal Format: Format=0x%02x, RateCode=0x%02x",
+                          fmt->fmt, fmt->fdf[0]);
 
-            if (fmt.formatHierarchy == 0x90) {
+            if (fmt->fmt == ASFW::AVC::Cmd::kFmtAm824) {
                 ASFW_LOG_INFO(Discovery, "Detected Apogee AM824 Format (0x90).");
-                
-                // Use Music Subunit helper to interpret rate code (0x01 = 44.1kHz, etc.)
-                auto rate = StreamFormats::MusicSubunitCodeToSampleRate(fmt.formatSync);
-                uint32_t freqHz = StreamFormats::SampleRateToHz(rate);
-                
-                if (freqHz > 0) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
-                    ASFW_LOG_INFO(Discovery, "Device is locked to %u Hz (Code 0x%02x).", freqHz, fmt.formatSync);
-                } else {
-                    ASFW_LOG_INFO(Discovery, "Device is locked to Unknown Rate (Code 0x%02x).", fmt.formatSync);
+                auto sfc = ASFW::AVC::Cmd::SfcOf(*fmt);
+                if (sfc.has_value()) {
+                    auto freqHz = ASFW::AVC::ToHz(*sfc);
+                    if (freqHz.has_value() && *freqHz > 0) {
+                        ASFW_LOG_INFO(Discovery, "Device is locked to %u Hz (Code 0x%02x).", *freqHz, fmt->fdf[0]);
+                    } else {
+                        ASFW_LOG_INFO(Discovery, "Device is locked to Unknown Rate (Code 0x%02x).", fmt->fdf[0]);
+                    }
                 }
             }
         } else {
-            ASFW_LOG_ERROR(Discovery, "Failed to send Signal Format Query: result=%d", static_cast<int>(result));
+            ASFW_LOG_ERROR(Discovery, "Failed to send Signal Format Query");
         }
         // Always continue
         Common::InvokeSharedCallback(completionState, true);
@@ -610,17 +635,28 @@ void AVCUnit::SubmitCommand(const AVCCdb& cdb, AVCCompletion completion) {
 }
 
 
-void AVCUnit::GetPlugInfo(std::function<void(AVCResult, const UnitPlugCounts&)> completion) {
+void AVCUnit::GetPlugInfo(std::function<void(AVCResult, const ASFW::AVC::Cmd::UnitPlugCounts&)> completion) {
     if (initialized_) {
         // Return cached result
-        completion(AVCResult::kImplementedStable, plugCounts_);
+        completion(AVCResult::kImplementedStable, model_.unitPlugs);
         return;
     }
 
-    // Query device
-    auto cmd = std::make_shared<AVCUnitPlugInfoCommand>(*this);
+    auto completionState = Common::ShareCallback(std::move(completion));
+    ASFW::AVC::Cmd::PlugInfoCommand cmd{
+        .operands = ASFW::AVC::Cmd::PlugInfoOperands{
+            .form = ASFW::AVC::Cmd::PlugInfoForm::kUnitIsoExternal
+        }
+    };
 
-    cmd->Submit(completion);
+    Status(cmd, [this, completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::PlugInfoReply> reply) {
+        if (!reply) {
+            Common::InvokeSharedCallback(completionState, AVCResult::kNotImplemented, ASFW::AVC::Cmd::UnitPlugCounts{});
+            return;
+        }
+        model_.unitPlugs = reply->unit;
+        Common::InvokeSharedCallback(completionState, AVCResult::kImplementedStable, model_.unitPlugs);
+    });
 }
 
 //==============================================================================

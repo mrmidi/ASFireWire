@@ -41,6 +41,8 @@ struct UnitInfo {
     SubunitType unitType{SubunitType::kUnit};
     uint8_t unitId{0x07};
     CompanyId companyId{0xFF, 0xFF, 0xFF};
+
+    friend constexpr bool operator==(const UnitInfo&, const UnitInfo&) noexcept = default;
 };
 
 struct UnitInfoOperands {
@@ -162,18 +164,24 @@ struct UnitPlugCounts {
     uint8_t isochronousOutputs{0};
     uint8_t externalInputs{0};
     uint8_t externalOutputs{0};
+
+    friend constexpr bool operator==(const UnitPlugCounts&, const UnitPlugCounts&) noexcept = default;
 };
 
 /// Counts returned by unit PLUG INFO subfunction 0x01.
 struct UnitAsyncPlugCounts {
     uint8_t asynchronousInputs{0};
     uint8_t asynchronousOutputs{0};
+
+    friend constexpr bool operator==(const UnitAsyncPlugCounts&, const UnitAsyncPlugCounts&) noexcept = default;
 };
 
 /// Counts returned by subunit PLUG INFO subfunction 0x00.
 struct SubunitPlugCounts {
     uint8_t destinationPlugs{0};
     uint8_t sourcePlugs{0};
+
+    friend constexpr bool operator==(const SubunitPlugCounts&, const SubunitPlugCounts&) noexcept = default;
 };
 
 enum class PlugInfoForm : uint8_t {
@@ -193,6 +201,7 @@ struct PlugInfoOperands {
     static constexpr Opcode kOpcode = Opcode::kPlugInfo;
 
     PlugInfoForm form{PlugInfoForm::kUnitIsoExternal};
+    uint8_t dummyByte{0xFF};
     using Reply = PlugInfoReply;
 
     [[nodiscard]] constexpr Expected<void> ValidateAddress(SubunitAddress address) const noexcept {
@@ -207,7 +216,7 @@ struct PlugInfoOperands {
             return Fail(AvcErrorKind::kInvalidArgument);
         }
         const uint8_t subfunction = form == PlugInfoForm::kUnitAsync ? 0x01 : 0x00;
-        const std::array<uint8_t, 5> ops = {subfunction, 0xFF, 0xFF, 0xFF, 0xFF};
+        const std::array<uint8_t, 5> ops = {subfunction, dummyByte, dummyByte, dummyByte, dummyByte};
         return w.Append(ops);
     }
 
@@ -293,7 +302,7 @@ struct PlugSignalFormatOperands {
     }
 
     [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept {
-        if (t == CommandType::kControl) {
+        if (t == CommandType::kControl || t == CommandType::kSpecificInquiry) {
             if (!format.has_value()) {
                 return Fail(AvcErrorKind::kInvalidArgument);
             }

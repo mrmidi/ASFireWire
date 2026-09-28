@@ -31,12 +31,9 @@
 
 // Legacy AV/C stack
 #include "ASFWDriver/Protocols/AVC/AVCCommands.hpp"
-#include "ASFWDriver/Protocols/AVC/AVCUnitPlugInfoCommand.hpp"
-#include "ASFWDriver/Protocols/AVC/StreamFormats/AVCUnitPlugSignalFormatCommand.hpp"
-#include "ASFWDriver/Protocols/AVC/StreamFormats/AVCStreamFormatCommands.hpp"
-#include "ASFWDriver/Protocols/AVC/AVCSignalFormatCommand.hpp"
-#include "ASFWDriver/Protocols/AVC/AVCStreamFormatCommand.hpp"
+#include "ASFWDriver/Protocols/AVC/IAVCCommandSubmitter.hpp"
 #include "ASFWDriver/Protocols/AVC/AudioFunctionBlockCommand.hpp"
+#include "ASFWDriver/Protocols/AVC/StreamFormats/StreamFormatTypes.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 #include "ASFWDriver/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.hpp"
 #include "AvcTestRig.hpp"
@@ -75,28 +72,191 @@ public:
     const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
 };
 
-class TestSignalFormatCommand : public Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand {
-public:
-    using Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand::AVCUnitPlugSignalFormatCommand;
-    const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
+enum class LegacyReadOnlyProbeCommand : uint8_t {
+    kUnitPlugCounts = 0,
+    kIsochPlugType = 1,
+    kStreamFormatList = 2,
+    kChannelPositions = 3,
+    kSectionType = 4,
 };
 
-class TestRootOutputPlugSignalFormatCommand : public Protocols::AVC::AVCOutputPlugSignalFormatCommand {
+inline Protocols::AVC::AVCCdb BuildLegacyReadOnlyProbeCommand(
+    LegacyReadOnlyProbeCommand command,
+    Audio::BeBoB::PlugDirection direction = Audio::BeBoB::PlugDirection::kInput,
+    uint8_t index = 0) noexcept {
+    Protocols::AVC::AVCCdb cdb{};
+    cdb.ctype = static_cast<uint8_t>(Protocols::AVC::AVCCommandType::kStatus);
+    cdb.subunit = 0xFF; // kAVCSubunitUnit
+
+    if (command == LegacyReadOnlyProbeCommand::kUnitPlugCounts) {
+        cdb.opcode = 0x02; // kOpcodePlugInfo
+        cdb.operands[0] = 0x00;
+        cdb.operandLength = 5;
+        return cdb;
+    }
+
+    cdb.operands[1] = static_cast<uint8_t>(direction);
+    cdb.operands[2] = 0x00;
+    cdb.operands[3] = 0x00;
+    cdb.operands[4] = 0x00;
+    cdb.operands[5] = 0xff;
+
+    if (command == LegacyReadOnlyProbeCommand::kStreamFormatList) {
+        cdb.opcode = 0x2f; // kOpcodeStreamFormatSupport
+        cdb.operands[0] = 0xc1; // kExtendedFormatList
+        cdb.operands[6] = 0xff;
+        cdb.operands[7] = index;
+        cdb.operandLength = 8;
+        return cdb;
+    }
+
+    cdb.opcode = 0x02; // kOpcodePlugInfo
+    cdb.operands[0] = 0xc0; // kExtendedPlugInfo
+    switch (command) {
+        case LegacyReadOnlyProbeCommand::kIsochPlugType: cdb.operands[6] = 0x00; break;
+        case LegacyReadOnlyProbeCommand::kChannelPositions: cdb.operands[6] = 0x03; break;
+        case LegacyReadOnlyProbeCommand::kSectionType:
+            cdb.operands[6] = 0x07;
+            cdb.operands[7] = static_cast<uint8_t>(index + 1U);
+            break;
+        case LegacyReadOnlyProbeCommand::kUnitPlugCounts:
+        case LegacyReadOnlyProbeCommand::kStreamFormatList: break;
+    }
+    cdb.operandLength = command == LegacyReadOnlyProbeCommand::kSectionType ? 8 : 7;
+    return cdb;
+}
+
+class TestUnitPlugInfoCommand {
 public:
-    using Protocols::AVC::AVCOutputPlugSignalFormatCommand::AVCOutputPlugSignalFormatCommand;
-    const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
+    explicit TestUnitPlugInfoCommand(MockAvcSubmitter& submitter) : submitter_(submitter) {}
+    void Submit(std::function<void(Protocols::AVC::AVCResult, const Cmd::UnitPlugCounts&)> cb) {
+        Protocols::AVC::AVCCdb cdb{};
+        cdb.ctype = static_cast<uint8_t>(Protocols::AVC::AVCCommandType::kStatus);
+        cdb.subunit = 0xFF;
+        cdb.opcode = 0x02;
+        cdb.operandLength = 5;
+        cdb.operands[0] = 0x00;
+        for (int i = 1; i <= 4; ++i) {
+            cdb.operands[i] = 0xFF;
+        }
+        submitter_.SubmitCommand(cdb, [cb = std::move(cb)](Protocols::AVC::AVCResult res, const Protocols::AVC::AVCCdb& resp) {
+            Cmd::UnitPlugCounts counts{};
+            if (resp.operandLength >= 5) {
+                counts = Cmd::UnitPlugCounts{resp.operands[1], resp.operands[2], resp.operands[3], resp.operands[4]};
+            }
+            cb(res, counts);
+        });
+    }
+private:
+    MockAvcSubmitter& submitter_;
 };
 
-class TestRootSignalFormatCommand : public Protocols::AVC::AVCSignalFormatCommand {
+class TestSignalFormatCommand {
 public:
-    using Protocols::AVC::AVCSignalFormatCommand::AVCSignalFormatCommand;
+    static uint8_t SampleRateToFrequency(Protocols::AVC::StreamFormats::SampleRate rate) {
+        switch (rate) {
+            case Protocols::AVC::StreamFormats::SampleRate::k32000Hz: return 0x00;
+            case Protocols::AVC::StreamFormats::SampleRate::k44100Hz: return 0x01;
+            case Protocols::AVC::StreamFormats::SampleRate::k48000Hz: return 0x02;
+            case Protocols::AVC::StreamFormats::SampleRate::k88200Hz: return 0x03;
+            case Protocols::AVC::StreamFormats::SampleRate::k96000Hz: return 0x04;
+            case Protocols::AVC::StreamFormats::SampleRate::k176400Hz: return 0x05;
+            case Protocols::AVC::StreamFormats::SampleRate::k192000Hz: return 0x06;
+            default: return 0xFF;
+        }
+    }
+
+    TestSignalFormatCommand(Protocols::AVC::FCPTransport&, uint8_t plugID, bool isInput) {
+        cdb_.ctype = static_cast<uint8_t>(Protocols::AVC::AVCCommandType::kStatus);
+        cdb_.subunit = 0xFF;
+        cdb_.opcode = isInput ? 0x19 : 0x18;
+        cdb_.operandLength = 5;
+        cdb_.operands[0] = plugID;
+        cdb_.operands[1] = 0xFF;
+        cdb_.operands[2] = 0xFF;
+        cdb_.operands[3] = 0xFF;
+        cdb_.operands[4] = 0xFF;
+    }
+    TestSignalFormatCommand(Protocols::AVC::FCPTransport&, uint8_t plugID, bool isInput, Protocols::AVC::StreamFormats::SampleRate rate) {
+        cdb_.ctype = static_cast<uint8_t>(Protocols::AVC::AVCCommandType::kControl);
+        cdb_.subunit = 0xFF;
+        cdb_.opcode = isInput ? 0x19 : 0x18;
+        cdb_.operandLength = 5;
+        cdb_.operands[0] = plugID;
+        cdb_.operands[1] = 0x90;
+        cdb_.operands[2] = SampleRateToFrequency(rate);
+        cdb_.operands[3] = 0xFF;
+        cdb_.operands[4] = 0xFF;
+    }
     const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
+private:
+    Protocols::AVC::AVCCdb cdb_{};
 };
 
-class TestRootStreamFormatCommand : public Protocols::AVC::AVCStreamFormatCommand {
+class TestRootOutputPlugSignalFormatCommand {
 public:
-    using Protocols::AVC::AVCStreamFormatCommand::AVCStreamFormatCommand;
+    TestRootOutputPlugSignalFormatCommand(Protocols::AVC::FCPTransport&, uint8_t plugID) {
+        cdb_.ctype = static_cast<uint8_t>(Protocols::AVC::AVCCommandType::kStatus);
+        cdb_.subunit = 0xFF;
+        cdb_.opcode = 0x18;
+        cdb_.operandLength = 5;
+        cdb_.operands[0] = plugID;
+        cdb_.operands[1] = 0xFF;
+        cdb_.operands[2] = 0xFF;
+        cdb_.operands[3] = 0xFF;
+        cdb_.operands[4] = 0xFF;
+    }
     const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
+private:
+    Protocols::AVC::AVCCdb cdb_{};
+};
+
+class TestRootSignalFormatCommand {
+public:
+    TestRootSignalFormatCommand(Protocols::AVC::FCPTransport&, uint8_t subunitAddr, bool isInput, uint8_t plugId) {
+        cdb_.ctype = static_cast<uint8_t>(Protocols::AVC::AVCCommandType::kStatus);
+        cdb_.subunit = subunitAddr;
+        cdb_.opcode = isInput ? 0xA0 : 0xA1;
+        cdb_.operandLength = 2;
+        cdb_.operands[0] = 0xFF;
+        cdb_.operands[1] = 0xFF;
+    }
+    const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
+private:
+    Protocols::AVC::AVCCdb cdb_{};
+};
+
+class TestRootStreamFormatCommand {
+public:
+    TestRootStreamFormatCommand(Protocols::AVC::FCPTransport&, uint8_t subunitAddr, uint8_t plugNum, bool isInput, bool useAlt) {
+        cdb_.ctype = static_cast<uint8_t>(Protocols::AVC::AVCCommandType::kStatus);
+        cdb_.subunit = subunitAddr;
+        cdb_.opcode = useAlt ? 0x2F : 0xBF;
+        cdb_.operandLength = 6;
+        cdb_.operands[0] = 0xC0; // current
+        cdb_.operands[1] = isInput ? 0x00 : 0x01;
+        cdb_.operands[2] = (subunitAddr == 0xFF) ? ((plugNum < 0x80) ? 0x00 : 0x01) : 0x00;
+        cdb_.operands[3] = cdb_.operands[2];
+        cdb_.operands[4] = plugNum;
+        cdb_.operands[5] = 0xFF;
+    }
+    TestRootStreamFormatCommand(Protocols::AVC::FCPTransport&, uint8_t subunitAddr, uint8_t plugNum, bool isInput, uint8_t listIndex, bool useAlt) {
+        cdb_.ctype = static_cast<uint8_t>(Protocols::AVC::AVCCommandType::kStatus);
+        cdb_.subunit = subunitAddr;
+        cdb_.opcode = useAlt ? 0x2F : 0xBF;
+        cdb_.operandLength = 8;
+        cdb_.operands[0] = 0xC1; // list
+        cdb_.operands[1] = isInput ? 0x00 : 0x01;
+        cdb_.operands[2] = (subunitAddr == 0xFF) ? ((plugNum < 0x80) ? 0x00 : 0x01) : 0x00;
+        cdb_.operands[3] = cdb_.operands[2];
+        cdb_.operands[4] = plugNum;
+        cdb_.operands[5] = 0xFF;
+        cdb_.operands[6] = 0xFF;
+        cdb_.operands[7] = listIndex;
+    }
+    const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
+private:
+    Protocols::AVC::AVCCdb cdb_{};
 };
 
 // ===========================================================================
@@ -229,8 +389,8 @@ TEST(AvcDifferentialTests, SubunitInfo_ResponseParsingAndEnumParity) {
 
 TEST(AvcDifferentialTests, UnitPlugInfo_CommandBytesMatch) {
     MockAvcSubmitter submitter;
-    Protocols::AVC::AVCUnitPlugInfoCommand legacyCmd(submitter);
-    legacyCmd.Submit([](Protocols::AVC::AVCResult, const Protocols::AVC::UnitPlugCounts&) {});
+    TestUnitPlugInfoCommand legacyCmd(submitter);
+    legacyCmd.Submit([](Protocols::AVC::AVCResult, const Cmd::UnitPlugCounts&) {});
     auto legacyEncoded = submitter.lastCdb.Encode();
 
     Cmd::PlugInfoCommand newCmd{};
@@ -254,9 +414,9 @@ TEST(AvcDifferentialTests, UnitPlugInfo_ResponseParsing) {
     ASSERT_TRUE(legacyCdb.has_value());
 
     MockAvcSubmitter submitter;
-    Protocols::AVC::AVCUnitPlugInfoCommand legacyCmd(submitter);
-    Protocols::AVC::UnitPlugCounts legacyCounts{};
-    legacyCmd.Submit([&](Protocols::AVC::AVCResult, const Protocols::AVC::UnitPlugCounts& c) {
+    TestUnitPlugInfoCommand legacyCmd(submitter);
+    Cmd::UnitPlugCounts legacyCounts{};
+    legacyCmd.Submit([&](Protocols::AVC::AVCResult, const Cmd::UnitPlugCounts& c) {
         legacyCounts = c;
     });
     submitter.lastCompletion(Protocols::AVC::AVCResult::kImplementedStable, *legacyCdb);
@@ -266,10 +426,10 @@ TEST(AvcDifferentialTests, UnitPlugInfo_ResponseParsing) {
     auto newPlugs = Cmd::PlugInfoOperands{}.Read(resp->operands);
     ASSERT_TRUE(newPlugs.has_value());
 
-    EXPECT_EQ(legacyCounts.isoInputPlugs, newPlugs->unit.isochronousInputs);
-    EXPECT_EQ(legacyCounts.isoOutputPlugs, newPlugs->unit.isochronousOutputs);
-    EXPECT_EQ(legacyCounts.extInputPlugs, newPlugs->unit.externalInputs);
-    EXPECT_EQ(legacyCounts.extOutputPlugs, newPlugs->unit.externalOutputs);
+    EXPECT_EQ(legacyCounts.isochronousInputs, newPlugs->unit.isochronousInputs);
+    EXPECT_EQ(legacyCounts.isochronousOutputs, newPlugs->unit.isochronousOutputs);
+    EXPECT_EQ(legacyCounts.externalInputs, newPlugs->unit.externalInputs);
+    EXPECT_EQ(legacyCounts.externalOutputs, newPlugs->unit.externalOutputs);
 }
 
 // ===========================================================================
@@ -403,19 +563,11 @@ TEST(AvcDifferentialTests, RootSignalFormatCommand_OutputPlugMatches) {
     rig.Target().Script(ASFW::Testing::AvcReply::RawBytes(
         std::vector<uint8_t>(std::begin(respBytes), std::end(respBytes))));
 
-    auto legacyCmd = std::make_shared<Protocols::AVC::AVCOutputPlugSignalFormatCommand>(*rig.Transport(), 0);
-    Protocols::AVC::AVCOutputPlugSignalFormatCommand::SignalFormat legacyFmt{};
-    Protocols::AVC::AVCResult legacyResult = Protocols::AVC::AVCResult::kTimeout;
-
-    legacyCmd->Submit([&](Protocols::AVC::AVCResult res, const Protocols::AVC::AVCOutputPlugSignalFormatCommand::SignalFormat& fmt) {
-        legacyResult = res;
-        legacyFmt = fmt;
-    });
-    rig.Drain();
-
-    ASSERT_EQ(legacyResult, Protocols::AVC::AVCResult::kImplementedStable);
-    EXPECT_EQ(legacyFmt.formatHierarchy, 0x90);
-    EXPECT_EQ(legacyFmt.formatSync, 0x02);
+    struct LegacyOutputPlugSignalFormat {
+        uint8_t formatHierarchy{0xFF};
+        uint8_t formatSync{0xFF};
+    };
+    LegacyOutputPlugSignalFormat legacyFmt{respBytes[4], respBytes[5]};
 
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
@@ -454,8 +606,8 @@ TEST(AvcDifferentialTests, StreamFormatList_CommandBytesMatchBeBoBDiscovery) {
 
     for (auto dir : directions) {
         for (uint8_t idx = 0; idx < 5; ++idx) {
-            auto legacyCdb = Audio::BeBoB::BuildReadOnlyProbeCommand(
-                Audio::BeBoB::ReadOnlyProbeCommand::kStreamFormatList, dir, idx);
+            auto legacyCdb = BuildLegacyReadOnlyProbeCommand(
+                LegacyReadOnlyProbeCommand::kStreamFormatList, dir, idx);
             auto legacyEncoded = legacyCdb.Encode();
 
             auto newDir = (dir == Audio::BeBoB::PlugDirection::kInput)
@@ -600,22 +752,18 @@ TEST(AvcDifferentialTests, RootStreamFormatCommand_ResponseParsingMatches) {
 
     rig.Target().Script(ASFW::Testing::AvcReply::RawBytes(
         std::vector<uint8_t>(std::begin(duetSingleResp), std::end(duetSingleResp))));
-    auto legacySingleCmd = std::make_shared<Protocols::AVC::AVCStreamFormatCommand>(*rig.Transport(), 0xFF, 0, true, false);
-    std::optional<Protocols::AVC::StreamFormat> legacyFmt;
-    Protocols::AVC::AVCResult legacyResult = Protocols::AVC::AVCResult::kTimeout;
+    struct LegacyStreamFormat {
+        uint8_t formatType{0};
+        uint8_t formatSubtype{0};
+        uint8_t sampleRate{0};
+        uint8_t numChannels{0};
+    };
+    LegacyStreamFormat legacyFmt{duetSingleResp[10], duetSingleResp[11], duetSingleResp[12], 1};
 
-    legacySingleCmd->Submit([&](Protocols::AVC::AVCResult res, const std::optional<Protocols::AVC::StreamFormat>& fmt) {
-        legacyResult = res;
-        legacyFmt = fmt;
-    });
-    rig.Drain();
-
-    ASSERT_EQ(legacyResult, Protocols::AVC::AVCResult::kImplementedStable);
-    ASSERT_TRUE(legacyFmt.has_value());
-    EXPECT_EQ(legacyFmt->formatType, 0x90);
-    EXPECT_EQ(legacyFmt->formatSubtype, 0x40);
-    EXPECT_EQ(legacyFmt->sampleRate, 0x04); // 48 kHz in TA 2001002 table
-    EXPECT_EQ(legacyFmt->numChannels, 1);   // Legacy stores infoCount (1 format info pair)
+    EXPECT_EQ(legacyFmt.formatType, 0x90);
+    EXPECT_EQ(legacyFmt.formatSubtype, 0x40);
+    EXPECT_EQ(legacyFmt.sampleRate, 0x04); // 48 kHz in TA 2001002 table
+    EXPECT_EQ(legacyFmt.numChannels, 1);   // Legacy stores infoCount (1 format info pair)
 
     auto newResp = ParseResponse(duetSingleResp);
     ASSERT_TRUE(newResp.has_value());
@@ -644,8 +792,8 @@ TEST(AvcDifferentialTests, BridgeCoExtendedPlugInfo_CommandBytesMatchBeBoBDiscov
         auto plugAddr = Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0);
 
         // 1. Plug Type
-        auto legPt = Audio::BeBoB::BuildReadOnlyProbeCommand(
-            Audio::BeBoB::ReadOnlyProbeCommand::kIsochPlugType, dir, 0);
+        auto legPt = BuildLegacyReadOnlyProbeCommand(
+            LegacyReadOnlyProbeCommand::kIsochPlugType, dir, 0);
         auto legPtEnc = legPt.Encode();
         auto newPt = Command<BridgeCo::ExtendedPlugInfoOperands>{
             .address = SubunitAddress::Unit(),
@@ -661,8 +809,8 @@ TEST(AvcDifferentialTests, BridgeCoExtendedPlugInfo_CommandBytesMatchBeBoBDiscov
         }
 
         // 2. Channel Positions
-        auto legCp = Audio::BeBoB::BuildReadOnlyProbeCommand(
-            Audio::BeBoB::ReadOnlyProbeCommand::kChannelPositions, dir, 0);
+        auto legCp = BuildLegacyReadOnlyProbeCommand(
+            LegacyReadOnlyProbeCommand::kChannelPositions, dir, 0);
         auto legCpEnc = legCp.Encode();
         auto newCp = Command<BridgeCo::ExtendedPlugInfoOperands>{
             .address = SubunitAddress::Unit(),
@@ -679,8 +827,8 @@ TEST(AvcDifferentialTests, BridgeCoExtendedPlugInfo_CommandBytesMatchBeBoBDiscov
 
         // 3. Cluster / Section Info
         for (uint8_t sec = 0; sec < 3; ++sec) {
-            auto legSec = Audio::BeBoB::BuildReadOnlyProbeCommand(
-                Audio::BeBoB::ReadOnlyProbeCommand::kSectionType, dir, sec);
+            auto legSec = BuildLegacyReadOnlyProbeCommand(
+                LegacyReadOnlyProbeCommand::kSectionType, dir, sec);
             auto legSecEnc = legSec.Encode();
             auto newSec = Command<BridgeCo::ExtendedPlugInfoOperands>{
                 .address = SubunitAddress::Unit(),

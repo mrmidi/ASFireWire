@@ -9,8 +9,9 @@
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
 #include "../../Protocols/AVC/AVCUnit.hpp"
 #include "../../Protocols/AVC/Music/MusicSubunit.hpp"
-#include "../../Protocols/AVC/Audio/AudioSubunit.hpp"
 #include "../../Protocols/AVC/AVCDefs.hpp"
+#include "../../Protocols/AVC/Core/AvcFrame.hpp"
+#include "../../Protocols/AVC/Core/IAvcUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Shared/SharedDataModels.hpp"
@@ -35,32 +36,20 @@ using MusicPlugInfo = MusicSubunit::PlugInfo;
 using MusicPlugChannel = MusicSubunit::MusicPlugChannel;
 using SubunitPtr = std::shared_ptr<ASFW::Protocols::AVC::Subunit>;
 
-kern_return_t FCPStatusToIOReturn(ASFW::Protocols::AVC::FCPStatus status) {
-    using ASFW::Protocols::AVC::FCPStatus;
-
-    switch (status) {
-        case FCPStatus::kOk:
-            return kIOReturnSuccess;
-        case FCPStatus::kTimeout:
-            return kIOReturnTimeout;
-        case FCPStatus::kBusReset:
-            return kIOReturnAborted;
-        case FCPStatus::kTransportError:
-            return kIOReturnIOError;
-        case FCPStatus::kInvalidPayload:
+kern_return_t AvcErrorToIOReturn(const ASFW::AVC::AvcError& error) noexcept {
+    using ASFW::AVC::AvcErrorKind;
+    switch (error.kind) {
+        case AvcErrorKind::kTimeout: return kIOReturnTimeout;
+        case AvcErrorKind::kBusReset: return kIOReturnAborted;
+        case AvcErrorKind::kRefused: return kIOReturnNotPermitted;
+        case AvcErrorKind::kInvalidArgument:
+        case AvcErrorKind::kMalformedOperands:
+        case AvcErrorKind::kOperandsTooShort:
             return kIOReturnBadArgument;
-        case FCPStatus::kResponseMismatch:
-            return kIOReturnInvalid;
-        case FCPStatus::kBusy:
-            return kIOReturnBusy;
-        case FCPStatus::kRefusedByFilter:
-            // Distinct from kInvalidPayload: the frame was well formed, the
-            // device simply may not be sent it. See AVCCommandFilter.hpp.
-            return kIOReturnNotPermitted;
+        default: return kIOReturnIOError;
     }
-
-    return kIOReturnError;
 }
+
 
 struct RawFCPResult {
     bool ready{false};
@@ -483,8 +472,7 @@ uint64_t ReserveRawFCPRequestSlot(RawFCPResultStore& store) {
 }
 
 void StoreRawFCPCompletion(uint64_t requestID,
-                           Protocols::AVC::FCPStatus status,
-                           const Protocols::AVC::FCPFrame& response) {
+                           const ASFW::AVC::Expected<ASFW::AVC::Response>& response) {
     auto& resultStore = GetRawFCPResultStore();
     if (!resultStore.lock) {
         return;
@@ -494,28 +482,24 @@ void StoreRawFCPCompletion(uint64_t requestID,
     const auto it = resultStore.results.find(requestID);
     if (it != resultStore.results.end()) {
         it->second.ready = true;
-        it->second.status = FCPStatusToIOReturn(status);
-        if (status == Protocols::AVC::FCPStatus::kOk && response.IsValid()) {
-            it->second.responseLength = static_cast<uint32_t>(response.length);
-            std::memcpy(it->second.response.data(), response.data.data(), response.length);
-        } else {
+        if (!response) {
+            it->second.status = AvcErrorToIOReturn(response.error());
             it->second.responseLength = 0;
+        } else {
+            it->second.status = kIOReturnSuccess;
+            it->second.response[0] = static_cast<uint8_t>(response->code);
+            it->second.response[1] = response->address.Byte();
+            it->second.response[2] = static_cast<uint8_t>(response->opcode);
+            const size_t opsLen = std::min(response->operands.size(), it->second.response.size() - 3);
+            if (opsLen > 0) {
+                std::memcpy(it->second.response.data() + 3, response->operands.data(), opsLen);
+            }
+            it->second.responseLength = static_cast<uint32_t>(3 + opsLen);
         }
     }
     IOLockUnlock(resultStore.lock);
 }
 
-void MarkRawFCPRequestFailed(RawFCPResultStore& store, uint64_t requestID) {
-    IOLockLock(store.lock);
-    const auto it = store.results.find(requestID);
-    if (it != store.results.end()) {
-        it->second.ready = true;
-        if (it->second.status == kIOReturnNotReady) {
-            it->second.status = kIOReturnIOError;
-        }
-    }
-    IOLockUnlock(store.lock);
-}
 
 } // anonymous namespace
 
@@ -601,10 +585,10 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
         
         // Populate unit-level plug counts from AVCUnitPlugInfoCommand results
         const auto& plugCounts = avcUnit->GetCachedPlugCounts();
-        unitWire.isoInputPlugs = plugCounts.isoInputPlugs;
-        unitWire.isoOutputPlugs = plugCounts.isoOutputPlugs;
-        unitWire.extInputPlugs = plugCounts.extInputPlugs;
-        unitWire.extOutputPlugs = plugCounts.extOutputPlugs;
+        unitWire.isoInputPlugs = plugCounts.isochronousInputs;
+        unitWire.isoOutputPlugs = plugCounts.isochronousOutputs;
+        unitWire.extInputPlugs = plugCounts.externalInputs;
+        unitWire.extOutputPlugs = plugCounts.externalOutputs;
         // unitWire._reserved is zero-init
 
         if (!data->appendBytes(&unitWire, sizeof(unitWire))) {
@@ -767,9 +751,20 @@ kern_return_t AVCHandler::SendRawFCPCommand(IOUserClientMethodArguments* args) {
         return kIOReturnNotFound;
     }
 
-    Protocols::AVC::FCPFrame command{};
-    command.length = request->commandLength;
-    std::memcpy(command.data.data(), request->commandData->getBytesNoCopy(), command.length);
+    if (request->commandLength < 3) {
+        return kIOReturnBadArgument;
+    }
+
+    const auto* rawBytes = static_cast<const uint8_t*>(request->commandData->getBytesNoCopy());
+    const auto ctype = static_cast<ASFW::AVC::CommandType>(rawBytes[0] & 0x0F);
+    const auto addr = ASFW::AVC::SubunitAddress::FromByte(rawBytes[1]);
+    const auto opcode = static_cast<ASFW::AVC::Opcode>(rawBytes[2]);
+    const std::span<const uint8_t> operands{rawBytes + 3, request->commandLength - 3};
+
+    auto frame = ASFW::AVC::CommandFrame::Make(ctype, addr, opcode, operands);
+    if (!frame) {
+        return kIOReturnBadArgument;
+    }
 
     auto& store = GetRawFCPResultStore();
     if (!store.lock) {
@@ -779,16 +774,12 @@ kern_return_t AVCHandler::SendRawFCPCommand(IOUserClientMethodArguments* args) {
 
     const uint64_t requestID = ReserveRawFCPRequestSlot(store);
 
-    const auto handle = targetUnit->GetFCPTransport().SubmitCommand(
-        command,
-        [requestID](Protocols::AVC::FCPStatus status, const Protocols::AVC::FCPFrame& response) {
-            StoreRawFCPCompletion(requestID, status, response);
-        }
-    );
-
-    if (!handle.IsValid()) {
-        MarkRawFCPRequestFailed(store, requestID);
-    }
+    targetUnit->Submit(
+        *frame,
+        targetUnit->CurrentGeneration(),
+        [requestID](ASFW::AVC::Expected<ASFW::AVC::Response> response) {
+            StoreRawFCPCompletion(requestID, response);
+        });
 
     args->scalarOutput[0] = requestID;
     args->scalarOutputCount = 1;

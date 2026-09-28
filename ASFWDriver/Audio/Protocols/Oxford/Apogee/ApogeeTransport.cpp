@@ -7,83 +7,13 @@
 
 #include "../../../../Common/CallbackUtils.hpp"
 #include "../../../../Logging/Logging.hpp"
-#include "../../../../Protocols/AVC/AVCDefs.hpp"
-#include "../../../../Protocols/AVC/FCPTransport.hpp"
+#include "../../../../Protocols/AVC/Commands/GeneralCommands.hpp"
+#include "../../../../Protocols/AVC/Core/IAvcUnit.hpp"
 
 #include <algorithm>
 #include <memory>
 
 namespace ASFW::Audio::Oxford::Apogee {
-
-namespace {
-
-using Protocols::AVC::AVCResult;
-using Protocols::AVC::CTypeToResult;
-using Protocols::AVC::FCPFrame;
-using Protocols::AVC::FCPStatus;
-
-/// Renders the framed operand bytes for a log line. The framing is the whole
-/// point of the OXFW-common template (FW-126), and a one-byte error in the OUI
-/// or magic prefix is invisible to host tests - they check our framing against
-/// our own expectations, not against the device. This is what makes it visible.
-void FormatFrameBytes(const FCPFrame& frame, char* out, size_t outSize) noexcept {
-    size_t written = 0;
-    for (size_t index = 0; index < frame.length && written + 3 < outSize; ++index) {
-        static constexpr char kHex[] = "0123456789abcdef";
-        out[written++] = kHex[(frame.data[index] >> 4U) & 0x0FU];
-        out[written++] = kHex[frame.data[index] & 0x0FU];
-        out[written++] = ' ';
-    }
-    out[written > 0 ? written - 1 : 0] = '\0';
-}
-
-constexpr uint8_t kCTypeControl = 0x00;
-constexpr uint8_t kCTypeStatus = 0x01;
-constexpr uint8_t kSubunitUnit = 0xFF;
-constexpr uint8_t kOpcodeVendorDependent = 0x00;
-
-/// ctype + subunit + opcode precede the vendor operands in every AV/C frame.
-constexpr size_t kAvcHeaderBytes = 3;
-
-[[nodiscard]] IOReturn MapFCPStatusToIOReturn(FCPStatus status) noexcept {
-    switch (status) {
-        case FCPStatus::kOk:
-            return kIOReturnSuccess;
-        case FCPStatus::kTimeout:
-            return kIOReturnTimeout;
-        case FCPStatus::kBusReset:
-            return kIOReturnNotResponding;
-        case FCPStatus::kBusy:
-            return kIOReturnBusy;
-        case FCPStatus::kInvalidPayload:
-            return kIOReturnBadArgument;
-        default:
-            return kIOReturnError;
-    }
-}
-
-[[nodiscard]] IOReturn MapAVCResultToIOReturn(AVCResult result) noexcept {
-    switch (result) {
-        case AVCResult::kAccepted:
-        case AVCResult::kImplementedStable:
-        case AVCResult::kChanged:
-            return kIOReturnSuccess;
-        case AVCResult::kNotImplemented:
-            return kIOReturnUnsupported;
-        case AVCResult::kInTransition:
-        case AVCResult::kInterim:
-        case AVCResult::kBusy:
-            return kIOReturnBusy;
-        case AVCResult::kTimeout:
-            return kIOReturnTimeout;
-        case AVCResult::kBusReset:
-            return kIOReturnNotResponding;
-        default:
-            return kIOReturnError;
-    }
-}
-
-} // namespace
 
 //==============================================================================
 // Transport A - AV/C vendor commands over FCP
@@ -91,7 +21,7 @@ constexpr size_t kAvcHeaderBytes = 3;
 
 namespace VendorFcp {
 
-void Send(Protocols::AVC::FCPTransport* transport,
+void Send(AVC::IAvcUnit* transport,
           const ApogeeVendorCommand& command,
           bool isStatus,
           ResultCallback callback) {
@@ -106,97 +36,49 @@ void Send(Protocols::AVC::FCPTransport* transport,
         command.AppendControlValue(operands);
     }
 
-    // AV/C frames are quadlet-aligned, so the operand tail is zero-padded up.
-    const size_t unpaddedLength = kAvcHeaderBytes + operands.size();
-    const size_t paddedLength = (unpaddedLength + 3U) & ~3U;
-
-    if (paddedLength < Protocols::AVC::kAVCFrameMinSize ||
-        paddedLength > Protocols::AVC::kAVCFrameMaxSize) {
-        ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: framed length %zu out of AV/C bounds",
-                       static_cast<unsigned>(command.code), paddedLength);
+    if (operands.size() < 3) {
         Common::InvokeSharedCallback(callbackState, kIOReturnBadArgument, command);
         return;
     }
 
-    FCPFrame frame{};
-    frame.data[0] = isStatus ? kCTypeStatus : kCTypeControl;
-    frame.data[1] = kSubunitUnit;
-    frame.data[2] = kOpcodeVendorDependent;
+    AVC::CompanyId oui{operands[0], operands[1], operands[2]};
+    std::span<const uint8_t> payload{operands.data() + 3, operands.size() - 3};
+    AVC::Cmd::RawVendorDependentOperands vendorOps(oui, payload);
+    AVC::Cmd::RawVendorDependentCommand cmd{.operands = vendorOps};
 
-    if (!operands.empty()) {
-        std::copy(operands.begin(), operands.end(), frame.data.begin() + kAvcHeaderBytes);
-    }
+    ASFW_LOG_INFO(Oxfw, "vendor %{public}s code=0x%02x",
+                  isStatus ? "STATUS" : "CONTROL",
+                  static_cast<unsigned>(command.code));
 
-    if (paddedLength > unpaddedLength) {
-        std::fill(frame.data.begin() + unpaddedLength, frame.data.begin() + paddedLength, 0);
-    }
+    auto completion = [callbackState, command, isStatus](AVC::Expected<std::vector<uint8_t>> res) {
+        if (!res) {
+            ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: AV/C command failed error=%u",
+                           static_cast<unsigned>(command.code), static_cast<unsigned>(res.error().kind));
+            Common::InvokeSharedCallback(callbackState, kIOReturnError, command);
+            return;
+        }
 
-    frame.length = paddedLength;
-
-    {
-        char bytes[(3 * 24) + 1];
-        FormatFrameBytes(frame, bytes, sizeof(bytes));
-        ASFW_LOG_INFO(Oxfw, "vendor %{public}s code=0x%02x tx=[%{public}s]",
-                      isStatus ? "STATUS" : "CONTROL",
-                      static_cast<unsigned>(command.code), bytes);
-    }
-
-    const auto handle = transport->SubmitCommand(
-        frame,
-        [callbackState, command, isStatus](FCPStatus status, const FCPFrame& response) {
-            const IOReturn transportStatus = MapFCPStatusToIOReturn(status);
-            if (transportStatus != kIOReturnSuccess) {
-                ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: FCP transport failed status=%d",
-                               static_cast<unsigned>(command.code), static_cast<int>(status));
-                Common::InvokeSharedCallback(callbackState, transportStatus, command);
-                return;
-            }
-
-            if (response.length < Protocols::AVC::kAVCFrameMinSize) {
-                ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: runt response (%zu bytes)",
-                               static_cast<unsigned>(command.code),
-                               static_cast<size_t>(response.length));
+        ApogeeVendorCommand parsed = command;
+        if (isStatus) {
+            if (!parsed.ParseStatusPayload(*res)) {
+                ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: status parse failed",
+                               static_cast<unsigned>(command.code));
                 Common::InvokeSharedCallback(callbackState, kIOReturnBadMessageID, command);
                 return;
             }
+        }
 
-            const AVCResult avcResult = CTypeToResult(response.data[0]);
-            const IOReturn avcStatus = MapAVCResultToIOReturn(avcResult);
-            if (avcStatus != kIOReturnSuccess) {
-                // REJECTED vs NOT IMPLEMENTED is the difference between a wrong
-                // operand and an unsupported code - do not collapse them.
-                ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: AV/C refused ctype=0x%02x result=%d",
-                               static_cast<unsigned>(command.code),
-                               static_cast<unsigned>(response.data[0]),
-                               static_cast<int>(avcResult));
-                Common::InvokeSharedCallback(callbackState, avcStatus, command);
-                return;
-            }
+        Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, parsed);
+    };
 
-            ApogeeVendorCommand parsed = command;
-            if (isStatus) {
-                const size_t operandLength = response.length - kAvcHeaderBytes;
-                std::span<const uint8_t> payload{response.data.data() + kAvcHeaderBytes,
-                                                 operandLength};
-                if (!parsed.ParseStatusPayload(payload)) {
-                    char bytes[(3 * 24) + 1];
-                    FormatFrameBytes(response, bytes, sizeof(bytes));
-                    ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: status parse failed rx=[%{public}s]",
-                                   static_cast<unsigned>(command.code), bytes);
-                    Common::InvokeSharedCallback(callbackState, kIOReturnBadMessageID, command);
-                    return;
-                }
-            }
-
-            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, parsed);
-        });
-    // The handle is deliberately dropped: these commands are never cancelled
-    // individually, and a host transport may complete synchronously, in which
-    // case the returned handle is already stale.
-    (void)handle;
+    if (isStatus) {
+        transport->Status(cmd, std::move(completion));
+    } else {
+        transport->Control(cmd, std::move(completion));
+    }
 }
 
-void ExecuteSequence(Protocols::AVC::FCPTransport* transport,
+void ExecuteSequence(AVC::IAvcUnit* transport,
                      const std::vector<ApogeeVendorCommand>& commands,
                      bool isStatus,
                      SequenceCallback callback) {
@@ -210,7 +92,7 @@ void ExecuteSequence(Protocols::AVC::FCPTransport* transport,
         std::vector<ApogeeVendorCommand> responses;
         size_t index{0};
         bool isStatus{false};
-        Protocols::AVC::FCPTransport* transport{nullptr};
+        AVC::IAvcUnit* transport{nullptr};
         SequenceCallback completion;
     };
 

@@ -854,3 +854,82 @@ void FCPTransport::CompleteCommand(FCPStatus status, const FCPFrame& response) {
     // still starts first here.
     StartNextQueuedCommand();
 }
+
+//==============================================================================
+// IAvcUnit Implementation
+//==============================================================================
+
+namespace {
+
+[[nodiscard]] constexpr ASFW::AVC::AvcError MapFCPStatusToAvcError(FCPStatus status) noexcept {
+    switch (status) {
+        case FCPStatus::kTimeout:
+            return ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kTimeout);
+        case FCPStatus::kBusReset:
+            return ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kBusReset);
+        case FCPStatus::kRefusedByFilter:
+            return ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kRefused);
+        case FCPStatus::kInvalidPayload:
+            return ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kMalformedOperands);
+        case FCPStatus::kResponseMismatch:
+            return ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kOpcodeMismatch);
+        case FCPStatus::kTransportError:
+        case FCPStatus::kBusy:
+        case FCPStatus::kOk:
+        default:
+            return ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kTransportError);
+    }
+}
+
+} // namespace
+
+ASFW::FW::NodeId FCPTransport::NodeId() const noexcept {
+    return ASFW::FW::NodeId{static_cast<uint8_t>(device_ ? device_->GetNodeID() : 0)};
+}
+
+ASFW::FW::Generation FCPTransport::CurrentGeneration() const noexcept {
+    return busInfo_ ? busInfo_->GetGeneration() : ASFW::FW::Generation{0};
+}
+
+uint64_t FCPTransport::Guid() const noexcept {
+    return device_ ? device_->GetGUID() : 0;
+}
+
+void FCPTransport::Submit(const ASFW::AVC::CommandFrame& frame,
+                          FW::Generation /*generation*/,
+                          ResponseCallback completion) {
+    const auto wire = frame.WireBytes();
+    if (wire.size() < kAVCFrameMinSize || wire.size() > kAVCFrameMaxSize) {
+        completion(std::unexpected(ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kFrameTooLong)));
+        return;
+    }
+
+    FCPFrame fcpFrame{};
+    std::copy(wire.begin(), wire.end(), fcpFrame.data.begin());
+    fcpFrame.length = wire.size();
+
+    FCPCommandPolicy policy{};
+    if (frame.Type() == ASFW::AVC::CommandType::kStatus ||
+        frame.Type() == ASFW::AVC::CommandType::kSpecificInquiry ||
+        frame.Type() == ASFW::AVC::CommandType::kGeneralInquiry) {
+        policy.retryClass = FCPRetryClass::kIdempotent;
+    } else {
+        policy.retryClass = FCPRetryClass::kNever;
+    }
+
+    (void)SubmitCommand(
+        fcpFrame,
+        [frame, completion = std::move(completion)](FCPStatus status, const FCPFrame& response) mutable {
+            if (status != FCPStatus::kOk) {
+                completion(std::unexpected(MapFCPStatusToAvcError(status)));
+                return;
+            }
+            auto decoded = ASFW::AVC::ParseResponseFor(frame, response.Payload());
+            if (!decoded) {
+                completion(std::unexpected(decoded.error()));
+                return;
+            }
+            completion(*decoded);
+        },
+        policy);
+}

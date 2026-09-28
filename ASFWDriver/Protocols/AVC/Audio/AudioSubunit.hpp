@@ -8,7 +8,7 @@
 #pragma once
 
 #include "../Subunit.hpp"
-#include "../AVCStreamFormatCommand.hpp"
+#include "../Commands/StreamFormatCommand.hpp"
 #include <vector>
 #include <optional>
 
@@ -18,8 +18,8 @@ namespace ASFW::Protocols::AVC::Audio {
 struct AudioPlugInfo {
     uint8_t plugNumber{0};
     bool isInput{false};
-    std::optional<StreamFormat> currentFormat;
-    std::vector<StreamFormat> supportedFormats;
+    std::optional<ASFW::AVC::Cmd::StreamFormat> currentFormat;
+    std::vector<ASFW::AVC::Cmd::StreamFormat> supportedFormats;
 };
 
 /// Audio Subunit class

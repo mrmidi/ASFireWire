@@ -106,6 +106,9 @@ gtest_discover_tests(FCPPacketParsingTests)
 # BeBoB STATUS-only inventory codec tests (plug-0 scope)
 add_protocols_test(BeBoBPlug0StreamDiscoveryTests
     BeBoBPlug0StreamDiscoveryTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
 )
 
@@ -187,11 +190,6 @@ add_protocols_test(ClusterInfoParsingTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
 )
 
-# AVC Stream Format Command Tests
-add_protocols_mock_test(AVCStreamFormatCommandTests
-    AVCStreamFormatCommandTests.cpp
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
-)
 
 # Audio Function Block Command Tests
 add_protocols_mock_test(AudioFunctionBlockCommandTests
@@ -291,10 +289,6 @@ target_link_libraries(AVCCapabilitiesSerializerTests PRIVATE
 )
 gtest_discover_tests(AVCCapabilitiesSerializerTests)
 
-# AVC Unit Plug Info Command Tests
-add_protocols_mock_test(AVCUnitPlugInfoCommandTests
-    AVCUnitPlugInfoCommandTests.cpp
-)
 
 add_protocols_test(PCRCodecTests
     PCRCodecTests.cpp
@@ -417,11 +411,6 @@ add_protocols_test(AVCCommandFilterTests
     AVCCommandFilterTests.cpp
 )
 
-# The one AV/C exchange that is safe on freeze-prone firmware. Closed by
-# construction: no opcode or operand parameter anywhere in the interface.
-add_protocols_test(AVCSignalFormatProbeTests
-    AVCSignalFormatProbeTests.cpp
-)
 
 # M-Audio special firmware stream formation geometry
 add_protocols_test(MAudioSpecialFormationTests

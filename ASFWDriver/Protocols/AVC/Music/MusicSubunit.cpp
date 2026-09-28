@@ -8,7 +8,9 @@
 #include "MusicSubunit.hpp"
 #include "../AVCUnit.hpp"
 #include "../../../Logging/Logging.hpp"
-#include "../StreamFormats/AVCStreamFormatCommands.hpp"
+#include "../Commands/StreamFormatCommand.hpp"
+#include "../Core/IAvcUnit.hpp"
+#include "../Core/AvcTypes.hpp"
 #include "../StreamFormats/AVCSignalSourceCommand.hpp"
 #include "../AudioFunctionBlockCommand.hpp"
 #include "../StreamFormats/StreamFormatParser.hpp"
@@ -20,6 +22,12 @@
 #include <unordered_map>
 
 namespace ASFW::Protocols::AVC::Music {
+
+using ASFW::AVC::IAvcUnit;
+using ASFW::AVC::SubunitAddress;
+using ASFW::AVC::SubunitType;
+using ASFW::AVC::Expected;
+namespace Cmd = ASFW::AVC::Cmd;
 
 //==============================================================================
 // Helper Functions for Big-Endian Reads
@@ -280,16 +288,22 @@ void MusicSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, std::functi
 
     auto& plug = plugs_[plugIndex];
 
-    // Query current stream format for this plug (subfunction 0xC0)
-    auto cmd = std::make_shared<AVCStreamFormatCommand>(
-        unit,
-        GetAddress(),
-        plug.plugID,
-        plug.IsInput()
-    );
+    Cmd::StreamFormatCommand cmd{
+        .address = SubunitAddress::FromByte(MakeSubunitAddress(GetType(), GetID())),
+        .operands = {
+            .form = Cmd::StreamFormatSubfunction::kSingle,
+            .opcode = Cmd::StreamFormatOpcode::kExtendedStreamFormat,
+            .plug = Cmd::PlugAddress::SubunitPlug(plug.IsInput() ? Cmd::PlugDirection::kInput : Cmd::PlugDirection::kOutput, plug.plugID),
+        }
+    };
 
-    cmd->Submit([this, &unit, plugIndex, completion](AVCResult result, const std::optional<AudioStreamFormat>& format) {
-        HandlePlugFormatResult(plugIndex, result, format);
+    unit.Status(cmd, [this, &unit, plugIndex, completion](Expected<Cmd::StreamFormatReply> reply) {
+        if (reply && reply->format.rawLength > 0) {
+            auto parsed = StreamFormats::StreamFormatParser::Parse(reply->format.rawBytes.data(), reply->format.rawLength);
+            HandlePlugFormatResult(plugIndex, AVCResult::kImplementedStable, parsed);
+        } else {
+            HandlePlugFormatResult(plugIndex, AVCResult::kNotImplemented, std::nullopt);
+        }
         QueryPlugFormats(unit, plugIndex + 1, completion);
     });
 }
@@ -399,29 +413,54 @@ void MusicSubunit::QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmit
         ASFW_LOG_V3(MusicSubunit, "MusicSubunit: Querying supported formats for plug %u (%{public}s)",
                       plug.plugID, plug.IsInput() ? "in" : "out");
 
-        // Use QueryAllSupportedFormats helper to enumerate all supported formats
-        QueryAllSupportedFormats(
-            submitter,
-            GetAddress(),
-            plug.plugID,
-            plug.IsInput(),
-            [this, currentPlugIndex, state, queryNextPlug](std::vector<AudioStreamFormat> formats) {
-                if (!formats.empty()) {
-                    plugs_[currentPlugIndex].supportedFormats = std::move(formats);
-                    ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Plug %u supports %zu formats",
-                                 plugs_[currentPlugIndex].plugID,
-                                 plugs_[currentPlugIndex].supportedFormats.size());
-                } else {
-                    ASFW_LOG_V3(MusicSubunit, "MusicSubunit: Plug %u has no supported formats or command not implemented",
-                                  plugs_[currentPlugIndex].plugID);
-                }
+        auto formats = std::make_shared<std::vector<AudioStreamFormat>>();
+        auto iteration = std::make_shared<uint8_t>(0);
+        auto queryNextList = std::make_shared<std::function<void()>>();
+        auto avcUnit = submitter.AsAvcUnit();
+        if (!avcUnit) {
+            state->plugIndex++;
+            (*queryNextPlug)();
+            return;
+        }
 
-                // Move to next plug
+        *queryNextList = [this, avcUnit, currentPlugIndex, &plug, formats, iteration, state, queryNextPlug, queryNextList]() {
+            if (*iteration >= 16) {
+                if (!formats->empty()) {
+                    plugs_[currentPlugIndex].supportedFormats = std::move(*formats);
+                }
                 state->plugIndex++;
                 (*queryNextPlug)();
-            },
-            16  // Max 16 format iterations per plug
-        );
+                return;
+            }
+
+            Cmd::StreamFormatCommand cmd{
+                .address = SubunitAddress::FromByte(MakeSubunitAddress(GetType(), GetID())),
+                .operands = {
+                    .form = Cmd::StreamFormatSubfunction::kList,
+                    .opcode = Cmd::StreamFormatOpcode::kExtendedStreamFormat,
+                    .plug = Cmd::PlugAddress::SubunitPlug(plug.IsInput() ? Cmd::PlugDirection::kInput : Cmd::PlugDirection::kOutput, plug.plugID),
+                    .index = *iteration,
+                }
+            };
+
+            avcUnit->Status(cmd, [formats, iteration, queryNextList, currentPlugIndex, this, state, queryNextPlug](Expected<Cmd::StreamFormatReply> reply) {
+                if (reply && reply->format.rawLength > 0) {
+                    auto parsed = StreamFormats::StreamFormatParser::Parse(reply->format.rawBytes.data(), reply->format.rawLength);
+                    if (parsed) {
+                        formats->push_back(*parsed);
+                        (*iteration)++;
+                        (*queryNextList)();
+                        return;
+                    }
+                }
+                if (!formats->empty()) {
+                    plugs_[currentPlugIndex].supportedFormats = std::move(*formats);
+                }
+                state->plugIndex++;
+                (*queryNextPlug)();
+            });
+        };
+        (*queryNextList)();
     };
 
     // Start querying
@@ -1239,64 +1278,56 @@ void MusicSubunit::ReadStatusDescriptor(AVCUnit& unit, std::function<void(bool)>
 void MusicSubunit::SetSampleRate(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, uint32_t sampleRate, std::function<void(bool)> completion) {
     using namespace StreamFormats;
 
-    // Convert Hz to AM824 rate code
-    SampleRate rateCode = SampleRate::k48000Hz;
-    if (sampleRate == 44100) rateCode = SampleRate::k44100Hz;
-    else if (sampleRate == 48000) rateCode = SampleRate::k48000Hz;
-    else if (sampleRate == 88200) rateCode = SampleRate::k88200Hz;
-    else if (sampleRate == 96000) rateCode = SampleRate::k96000Hz;
-    else if (sampleRate == 176400) rateCode = SampleRate::k176400Hz;
-    else if (sampleRate == 192000) rateCode = SampleRate::k192000Hz;
-    else {
+    auto avcUnit = submitter.AsAvcUnit();
+    if (!avcUnit) {
+        ASFW_LOG_V1(MusicSubunit, "MusicSubunit: submitter is not an IAvcUnit");
+        completion(false);
+        return;
+    }
+
+    const auto rateCode = ASFW::AVC::StreamFormatRateFromHz(sampleRate);
+    if (!rateCode.has_value()) {
         ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Unsupported sample rate %u Hz", sampleRate);
         completion(false);
         return;
     }
 
-    // Create format structure
-    AudioStreamFormat format;
-    format.formatHierarchy = FormatHierarchy::kAM824; // AM824
-    format.subtype = AM824Subtype::kCompound; // Compound
-    format.sampleRate = rateCode;
-    
-    // Add a single channel to satisfy BuildCdb validation
-    ChannelFormatInfo channel;
-    channel.channelCount = 1;
-    channel.formatCode = StreamFormatCode::kMBLA;
-    format.channelFormats.push_back(channel);
-
-    // Iterate all plugs and set format?
-    // Or just the first one?
-    // Usually setting one plug sets the device rate.
-    // Let's try setting plug 0 (or the first available plug).
-    
     if (plugs_.empty()) {
         ASFW_LOG_V1(MusicSubunit, "MusicSubunit: No plugs to set sample rate on");
         completion(false);
         return;
     }
 
-    // Use the first plug
     uint8_t plugID = plugs_[0].plugID;
     bool isInput = plugs_[0].IsInput();
 
     ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Setting sample rate to %u Hz (code 0x%02x) on plug %u", 
-                 sampleRate, static_cast<uint8_t>(rateCode), plugID);
+                 sampleRate, static_cast<uint8_t>(*rateCode), plugID);
 
-    auto cmd = std::make_shared<AVCStreamFormatCommand>(
-        submitter,
-        GetAddress(),
-        plugID,
-        isInput,
-        format
-    );
+    Cmd::CompoundAm824 compound{
+        .rate = *rateCode,
+        .syncSource = false,
+        .rateControl = Cmd::RateControl::kSupported,
+        .entries = { Cmd::CompoundEntry{ .count = 1, .format = Cmd::Am824Format::kMultiBitLinearAudioRaw } },
+        .entryCount = 1,
+    };
 
-    cmd->Submit([completion](AVCResult result, const std::optional<AudioStreamFormat>& format) {
-        if (IsSuccess(result)) {
+    Cmd::StreamFormatCommand cmd{
+        .address = SubunitAddress::FromByte(MakeSubunitAddress(GetType(), GetID())),
+        .operands = {
+            .form = Cmd::StreamFormatSubfunction::kSingle,
+            .opcode = Cmd::StreamFormatOpcode::kExtendedStreamFormat,
+            .plug = Cmd::PlugAddress::SubunitPlug(isInput ? Cmd::PlugDirection::kInput : Cmd::PlugDirection::kOutput, plugID),
+            .controlFormat = compound,
+        }
+    };
+
+    avcUnit->Control(cmd, [completion](Expected<Cmd::StreamFormatReply> reply) {
+        if (reply.has_value()) {
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: SetSampleRate succeeded");
             completion(true);
         } else {
-            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: SetSampleRate failed (result=%d)", static_cast<int>(result));
+            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: SetSampleRate failed");
             completion(false);
         }
     });

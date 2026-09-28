@@ -10,7 +10,7 @@
 #include "Protocols/AVC/Music/MusicSubunit.hpp"
 #include "Protocols/AVC/IAVCCommandSubmitter.hpp"
 #include "Protocols/AVC/AVCDefs.hpp"
-#include "Protocols/AVC/StreamFormats/AVCStreamFormatCommands.hpp"
+#include "Protocols/AVC/Core/IAvcUnit.hpp"
 
 using namespace ASFW;
 using namespace ASFW::Protocols::AVC;
@@ -18,10 +18,44 @@ using namespace ASFW::Protocols::AVC::Music;
 using namespace ASFW::Protocols::AVC::StreamFormats;
 using namespace testing;
 
-// Mock IAVCCommandSubmitter
-class MockAVCCommandSubmitter : public IAVCCommandSubmitter {
+// Mock IAVCCommandSubmitter & IAvcUnit
+class MockAVCCommandSubmitter : public IAVCCommandSubmitter, public ASFW::AVC::IAvcUnit {
 public:
     MOCK_METHOD(void, SubmitCommand, (const AVCCdb& cdb, AVCCompletion completion), (override));
+
+    void Submit(const ASFW::AVC::CommandFrame& frame,
+                ASFW::FW::Generation,
+                ResponseCallback completion) override {
+        AVCCdb cdb{};
+        cdb.ctype = frame.Bytes()[0];
+        cdb.subunit = frame.Bytes()[1];
+        cdb.opcode = frame.Bytes()[2];
+        cdb.operandLength = static_cast<uint16_t>(frame.Operands().size());
+        std::copy(frame.Operands().begin(), frame.Operands().end(), cdb.operands.begin());
+
+        SubmitCommand(cdb, [completion = std::move(completion)](AVCResult res, const AVCCdb& respCdb) {
+            if (res != AVCResult::kAccepted && res != AVCResult::kImplementedStable) {
+                completion(std::unexpected(ASFW::AVC::AvcError{ASFW::AVC::AvcErrorKind::kRefused}));
+                return;
+            }
+            std::vector<uint8_t> respBytes;
+            respBytes.push_back(respCdb.ctype);
+            respBytes.push_back(respCdb.subunit);
+            respBytes.push_back(respCdb.opcode);
+            respBytes.insert(respBytes.end(), respCdb.operands.begin(), respCdb.operands.begin() + respCdb.operandLength);
+            auto resp = ASFW::AVC::ParseResponse(respBytes);
+            if (!resp) {
+                completion(std::unexpected(resp.error()));
+                return;
+            }
+            completion(*resp);
+        });
+    }
+
+    ASFW::FW::NodeId NodeId() const noexcept override { return ASFW::FW::NodeId(0); }
+    ASFW::FW::Generation CurrentGeneration() const noexcept override { return ASFW::FW::Generation(1); }
+    uint64_t Guid() const noexcept override { return 0; }
+    [[nodiscard]] ASFW::AVC::IAvcUnit* AsAvcUnit() noexcept override { return this; }
 };
 
 class MusicSubunitTests : public Test {
@@ -99,11 +133,11 @@ TEST_F(MusicSubunitTests, SetSampleRate_Sends0xBF_Control) {
             EXPECT_EQ(cdb.operands[2], 0x01); // Subunit plug
             EXPECT_EQ(cdb.operands[3], 0x00); // Plug 0
             
-            // Verify format in operands (starts at offset 6)
-            // [6]=0x90 (AM824), [7]=0x40 (Compound), [8]=0x04 (48k), [9]=0x00, [10]=0x00 (0 channels)
-            EXPECT_EQ(cdb.operands[6], 0x90);
-            EXPECT_EQ(cdb.operands[7], 0x40);
-            EXPECT_EQ(cdb.operands[8], 0x04); // 48kHz
+            // Verify format in operands (starts at offset 7, after 5-byte plug address and 1-byte support status)
+            EXPECT_EQ(cdb.operands[6], 0xFF); // Support status (not used in control)
+            EXPECT_EQ(cdb.operands[7], 0x90);
+            EXPECT_EQ(cdb.operands[8], 0x40);
+            EXPECT_EQ(cdb.operands[9], 0x04); // 48kHz
             
             // Simulate a response (ACCEPTED)
             AVCCdb response = cdb;

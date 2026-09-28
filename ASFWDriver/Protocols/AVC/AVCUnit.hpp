@@ -24,7 +24,8 @@
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Scheduling/ITimerScheduler.hpp"
-#include "AVCUnitPlugInfoCommand.hpp" // Added include here
+#include "Core/AvcUnitModel.hpp"
+#include "Core/IAvcUnit.hpp"
 
 namespace ASFW::Protocols::AVC {
 
@@ -65,7 +66,9 @@ struct UnitDescriptorInfo {
 // AV/C Unit
 //==============================================================================
 
-class AVCUnit : public std::enable_shared_from_this<AVCUnit>, public IAVCCommandSubmitter {
+class AVCUnit : public std::enable_shared_from_this<AVCUnit>,
+                public IAVCCommandSubmitter,
+                public ASFW::AVC::IAvcUnit {
 public:
     AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
             std::shared_ptr<Discovery::FWUnit> unit,
@@ -74,10 +77,19 @@ public:
             Protocols::Ports::FireWireBusInfo& busInfo,
             Scheduling::ITimerScheduler& timerScheduler);
 
-    ~AVCUnit();
+    ~AVCUnit() override;
 
     AVCUnit(const AVCUnit&) = delete;
     AVCUnit& operator=(const AVCUnit&) = delete;
+
+    // --- IAvcUnit implementation ---
+    void Submit(const ASFW::AVC::CommandFrame& frame,
+                FW::Generation generation,
+                ResponseCallback completion) override;
+
+    [[nodiscard]] FW::NodeId NodeId() const noexcept override;
+    [[nodiscard]] FW::Generation CurrentGeneration() const noexcept override;
+    [[nodiscard]] uint64_t Guid() const noexcept override;
 
     void Initialize(std::function<void(bool success)> completion);
 
@@ -85,11 +97,14 @@ public:
 
     void ProbeUnitInfo(std::function<void(bool)> completion);
 
-    virtual void SubmitCommand(const AVCCdb& cdb, AVCCompletion completion);
+    void SubmitCommand(const AVCCdb& cdb, AVCCompletion completion) override;
+    [[nodiscard]] ASFW::AVC::IAvcUnit* AsAvcUnit() noexcept override { return this; }
 
-    void GetPlugInfo(std::function<void(AVCResult, const UnitPlugCounts&)> completion);
+    void GetPlugInfo(std::function<void(AVCResult, const ASFW::AVC::Cmd::UnitPlugCounts&)> completion);
 
-    const UnitPlugCounts& GetCachedPlugCounts() const { return plugCounts_; }
+    const ASFW::AVC::Cmd::UnitPlugCounts& GetCachedPlugCounts() const { return model_.unitPlugs; }
+    const ASFW::AVC::UnitModel& GetModel() const noexcept { return model_; }
+    ASFW::AVC::UnitModel& GetModel() noexcept { return model_; }
 
     const std::vector<std::shared_ptr<Subunit>>& GetSubunits() const { return subunits_; }
 
@@ -131,7 +146,7 @@ private:
 
     void ProbeSignalFormat(std::function<void(bool)> completion);
 
-    void StoreSubunitInfo(const AVCSubunitInfoCommand::SubunitInfo& info);
+    void StoreSubunitInfo(const ASFW::AVC::Cmd::SubunitInfo& info);
 
     void ParseSubunitCapabilities(size_t index, std::function<void(bool)> completion);
 
@@ -148,7 +163,7 @@ private:
     std::shared_ptr<DescriptorAccessor> descriptorAccessor_;
 
     std::vector<std::shared_ptr<Subunit>> subunits_;
-    UnitPlugCounts plugCounts_;
+    ASFW::AVC::UnitModel model_{};
     UnitDescriptorInfo descriptorInfo_;
 
     bool initialized_{false};

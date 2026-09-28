@@ -17,14 +17,8 @@
 
 #pragma once
 
-#include "../../../Protocols/AVC/IAVCCommandSubmitter.hpp"
-
-using ::ASFW::Protocols::AVC::IAVCCommandSubmitter;
-using ::ASFW::Protocols::AVC::AVCCdb;
-using ::ASFW::Protocols::AVC::AVCResult;
-using ::ASFW::Protocols::AVC::AVCCompletion;
-using ::ASFW::Protocols::AVC::kAVCSubunitUnit;
-using ::ASFW::Protocols::AVC::AVCCommandType;
+#include "../../../Protocols/AVC/Core/IAvcUnit.hpp"
+#include "../../../Protocols/AVC/Commands/GeneralCommands.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -80,12 +74,7 @@ struct IsochronousPlugModel {
     std::vector<ChannelSection> channelSections{};
 };
 
-struct UnitPlugCounts {
-    uint8_t isochronousInputs{0};
-    uint8_t isochronousOutputs{0};
-    uint8_t externalInputs{0};
-    uint8_t externalOutputs{0};
-};
+using UnitPlugCounts = ASFW::AVC::Cmd::UnitPlugCounts;
 
 struct DeviceModel {
     std::optional<UnitPlugCounts> unitPlugCounts{};
@@ -112,10 +101,6 @@ ParseExtendedStreamFormatSingleResponse(std::span<const uint8_t> operands) noexc
 [[nodiscard]] std::optional<std::vector<ChannelSection>>
 ParseChannelPositionSections(std::span<const uint8_t> payload) noexcept;
 
-[[nodiscard]] AVCCdb BuildReadOnlyProbeCommand(ReadOnlyProbeCommand command,
-                                                PlugDirection direction = PlugDirection::kInput,
-                                                uint8_t index = 0) noexcept;
-
 using ReadOnlyProbeCompletion = std::function<void(const DeviceModel&)>;
 
 [[nodiscard]] std::optional<StreamFormation>
@@ -123,7 +108,7 @@ ParseStreamFormation(std::span<const uint8_t> formation) noexcept;
 
 /// Sends STATUS queries only. Never changes device clock, rate, routing, CMP,
 /// PCR, or stream state. Scopes to the ISO plug-0 pair.
-void StartBeBoBPlug0Discovery(IAVCCommandSubmitter& submitter, uint64_t guid,
+void StartBeBoBPlug0Discovery(ASFW::AVC::IAvcUnit& unit, uint64_t guid,
                               ReadOnlyProbeCompletion completion = {});
 
 } // namespace ASFW::Audio::BeBoB

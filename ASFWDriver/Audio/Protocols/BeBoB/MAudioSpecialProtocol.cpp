@@ -9,8 +9,9 @@
 #include "MAudioSpecialRouting.hpp"
 #include "MAudioSpecialStartPolicy.hpp"
 #include "../../../Protocols/AVC/AVCCommand.hpp"
+#include "../../../Protocols/AVC/Commands/GeneralCommands.hpp"
+#include "../../../Protocols/AVC/Core/RateCodes.hpp"
 #include "../../../Protocols/AVC/MAudioSpecialCommand.hpp"
-#include "../../../Protocols/AVC/StreamFormats/AVCUnitPlugSignalFormatCommand.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -19,9 +20,6 @@
 
 namespace ASFW::Audio::BeBoB {
 namespace {
-
-using SignalCommand = Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand;
-using SignalRate = Protocols::AVC::StreamFormats::SampleRate;
 
 [[nodiscard]] IOReturn ToIOReturn(Protocols::AVC::AVCResult result) noexcept {
     using Protocols::AVC::AVCResult;
@@ -42,18 +40,6 @@ using SignalRate = Protocols::AVC::StreamFormats::SampleRate;
             return kIOReturnNotResponding;
         default:
             return kIOReturnError;
-    }
-}
-
-[[nodiscard]] SignalRate ToSignalRate(uint32_t hz) noexcept {
-    switch (hz) {
-        case 44100: return SignalRate::k44100Hz;
-        case 48000: return SignalRate::k48000Hz;
-        case 88200: return SignalRate::k88200Hz;
-        case 96000: return SignalRate::k96000Hz;
-        case 176400: return SignalRate::k176400Hz;
-        case 192000: return SignalRate::k192000Hz;
-        default: return SignalRate::kUnknown;
     }
 }
 
@@ -350,17 +336,28 @@ void MAudioSpecialProtocol::SetSignalFormat(uint32_t rateHz, bool input,
         completion(kIOReturnNotReady);
         return;
     }
-    const SignalRate rate = ToSignalRate(rateHz);
-    if (rate == SignalRate::kUnknown) {
+    const auto sfc = AVC::CipSfcFromHz(rateHz);
+    if (!sfc) {
         completion(kIOReturnUnsupported);
         return;
     }
-    auto command = std::make_shared<SignalCommand>(*fcpTransport_, 0, input, rate);
-    command->Submit([completion = std::move(completion), command](
-                        Protocols::AVC::AVCResult result,
-                        const SignalCommand::SignalFormat&) mutable {
-        completion(ToIOReturn(result));
-    });
+    const auto dir = input ? AVC::Cmd::PlugSignalDirection::kInput
+                           : AVC::Cmd::PlugSignalDirection::kOutput;
+    fcpTransport_->Control(
+        AVC::Cmd::PlugSignalFormatCommand{
+            .operands = {
+                .direction = dir,
+                .plugId = 0,
+                .format = AVC::Cmd::PlugSignalFormat{
+                    .plugId = 0,
+                    .fmt = 0x90,
+                    .fdf = {static_cast<uint8_t>(*sfc), 0xFF, 0xFF},
+                },
+            },
+        },
+        [completion = std::move(completion)](AVC::Expected<AVC::Cmd::PlugSignalFormat> res) mutable {
+            completion(res ? kIOReturnSuccess : kIOReturnError);
+        });
 }
 
 void MAudioSpecialProtocol::SetPostStartOutput(

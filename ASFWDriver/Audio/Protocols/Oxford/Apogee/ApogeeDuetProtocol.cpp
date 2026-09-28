@@ -15,6 +15,7 @@
 
 #include "../../../../Common/CallbackUtils.hpp"
 #include "../../../../Protocols/AVC/CMP/CMPClient.hpp"
+#include "../../../../Protocols/AVC/FCPTransport.hpp"
 
 #include <memory>
 #include <vector>

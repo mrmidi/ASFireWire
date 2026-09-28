@@ -18,7 +18,7 @@
 #include "AvcError.hpp"
 #include "AvcFrame.hpp"
 #include "AvcTypes.hpp"
-#include "Common/FWTypes.hpp"
+#include "../../../Common/FWTypes.hpp"
 
 #include <concepts>
 #include <cstdint>

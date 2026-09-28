@@ -29,8 +29,8 @@
 #include "../../../../Async/Interfaces/IFireWireBusOps.hpp"
 #include "../../../../Discovery/DeviceRouteToken.hpp"
 
-namespace ASFW::Protocols::AVC {
-class FCPTransport;
+namespace ASFW::AVC {
+class IAvcUnit;
 }
 
 namespace ASFW::Audio::Oxford::Apogee {
@@ -53,7 +53,7 @@ using SequenceCallback = std::function<void(IOReturn, const std::vector<ApogeeVe
 ///
 /// `isStatus` selects the AV/C ctype: a status query omits the value operands
 /// and expects them back, a control command carries them.
-void Send(Protocols::AVC::FCPTransport* transport,
+void Send(AVC::IAvcUnit* transport,
           const ApogeeVendorCommand& command,
           bool isStatus,
           ResultCallback callback);
@@ -62,7 +62,7 @@ void Send(Protocols::AVC::FCPTransport* transport,
 /// first failure. The Duet's params groups are read and written as sequences,
 /// and a partially applied group is worse than a failed one - so an error
 /// aborts rather than continuing with the rest.
-void ExecuteSequence(Protocols::AVC::FCPTransport* transport,
+void ExecuteSequence(AVC::IAvcUnit* transport,
                      const std::vector<ApogeeVendorCommand>& commands,
                      bool isStatus,
                      SequenceCallback callback);

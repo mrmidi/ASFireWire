@@ -34,10 +34,8 @@
 
 #include <DriverKit/IOReturn.h>
 
-#include "../../../Protocols/AVC/StreamFormats/StreamFormatTypes.hpp"
-
-namespace ASFW::Protocols::AVC {
-class FCPTransport;
+namespace ASFW::AVC {
+class IAvcUnit;
 }
 
 namespace ASFW::Audio::Oxford {
@@ -77,7 +75,7 @@ using StreamFormatSetCallback = std::function<void(IOReturn, const StreamFormatS
 ///
 /// `isOutput` selects the plug direction from the *device's* point of view,
 /// matching the reference: output = device transmits (host capture).
-void DetectStreamFormats(Protocols::AVC::FCPTransport& transport,
+void DetectStreamFormats(AVC::IAvcUnit& unit,
                          bool isOutput,
                          StreamFormatSetCallback callback);
 

@@ -22,7 +22,6 @@
 #include "../../Audio/Protocols/BeBoB/BeBoBChannelMaps.hpp"
 #include "../../Audio/Protocols/BeBoB/MAudioSpecialFormation.hpp"
 #include "../../Audio/DriverKit/Config/AudioProfileRegistry.hpp"
-#include "StreamFormats/AVCSignalFormatCommand.hpp"
 #include <DriverKit/IOService.h>
 #include <DriverKit/OSSharedPtr.h>
 #include <DriverKit/OSString.h>

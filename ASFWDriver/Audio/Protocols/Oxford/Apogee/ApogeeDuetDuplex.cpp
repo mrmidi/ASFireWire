@@ -32,38 +32,37 @@
 #include "../../../../Protocols/AVC/AVCDefs.hpp"
 #include "../../../../Protocols/AVC/CMP/CMPClient.hpp"
 #include "../../../../Protocols/AVC/FCPTransport.hpp"
-#include "../../../../Protocols/AVC/StreamFormats/AVCUnitPlugSignalFormatCommand.hpp"
+#include "../../../../Protocols/AVC/Commands/GeneralCommands.hpp"
+#include "../../../../Protocols/AVC/Core/RateCodes.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <memory>
 
 namespace ASFW::Audio::Oxford::Apogee {
 
-using Protocols::AVC::AVCResult;
-
-using SignalFormatCommand = Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand;
-using SignalSampleRate = Protocols::AVC::StreamFormats::SampleRate;
-
 namespace {
 
-// Still needed here by the clock-transition path, which maps AV/C signal-format
-// results. The FCP-status mapping moved out with dispatch (FW-129).
-[[nodiscard]] IOReturn MapAVCResultToIOReturn(AVCResult result) noexcept {
-    switch (result) {
-        case AVCResult::kAccepted:
-        case AVCResult::kImplementedStable:
-        case AVCResult::kChanged:
-            return kIOReturnSuccess;
-        case AVCResult::kNotImplemented:
-            return kIOReturnUnsupported;
-        case AVCResult::kInTransition:
-        case AVCResult::kInterim:
-        case AVCResult::kBusy:
-            return kIOReturnBusy;
-        case AVCResult::kTimeout:
+[[nodiscard]] IOReturn MapAvcErrorToIOReturn(const AVC::AvcError& error) noexcept {
+    switch (error.kind) {
+        case AVC::AvcErrorKind::kTimeout:
             return kIOReturnTimeout;
-        case AVCResult::kBusReset:
+        case AVC::AvcErrorKind::kBusReset:
             return kIOReturnNotResponding;
+        case AVC::AvcErrorKind::kUnsupported:
+            return kIOReturnUnsupported;
+        case AVC::AvcErrorKind::kUnexpectedResponse:
+            if (error.response.has_value()) {
+                switch (*error.response) {
+                    case AVC::ResponseCode::kNotImplemented:
+                        return kIOReturnUnsupported;
+                    case AVC::ResponseCode::kInTransition:
+                    case AVC::ResponseCode::kInterim:
+                        return kIOReturnBusy;
+                    default:
+                        return kIOReturnError;
+                }
+            }
+            return kIOReturnError;
         default:
             return kIOReturnError;
     }
@@ -91,11 +90,11 @@ struct ApogeeDuetDuplex::ClockTransition {
     std::atomic<bool> completed{false};
 
     AudioClockConfig desiredClock{};
-    SignalSampleRate desiredRate{SignalSampleRate::kUnknown};
-    SignalFormatCommand::SignalFormat inputBefore{};
-    SignalFormatCommand::SignalFormat outputBefore{};
-    SignalFormatCommand::SignalFormat inputAfter{};
-    SignalFormatCommand::SignalFormat outputAfter{};
+    AVC::CipSfc desiredSfc{AVC::CipSfc::k48000};
+    AVC::Cmd::PlugSignalFormat inputBefore{};
+    AVC::Cmd::PlugSignalFormat outputBefore{};
+    AVC::Cmd::PlugSignalFormat inputAfter{};
+    AVC::Cmd::PlugSignalFormat outputAfter{};
     ClockApplyCallback completion{};
     Phase phase{Phase::kReadInputBefore};
     IOReturn failureStatus{kIOReturnSuccess};
@@ -105,15 +104,13 @@ struct ApogeeDuetDuplex::ClockTransition {
 
 namespace {
 
-[[nodiscard]] bool IsAM824Format(const SignalFormatCommand::SignalFormat& format) noexcept {
-    return format.format == 0x90U &&
-           SignalFormatCommand::FrequencyToSampleRate(format.frequency) != SignalSampleRate::kUnknown;
+[[nodiscard]] bool IsAM824Format(const AVC::Cmd::PlugSignalFormat& format) noexcept {
+    return format.fmt == AVC::Cmd::kFmtAm824 && AVC::Cmd::SfcOf(format).has_value();
 }
 
-[[nodiscard]] bool MatchesRequestedRate(const SignalFormatCommand::SignalFormat& format,
-                                        SignalSampleRate requestedRate) noexcept {
-    return IsAM824Format(format) &&
-           SignalFormatCommand::FrequencyToSampleRate(format.frequency) == requestedRate;
+[[nodiscard]] bool MatchesRequestedRate(const AVC::Cmd::PlugSignalFormat& format,
+                                        AVC::CipSfc requestedSfc) noexcept {
+    return IsAM824Format(format) && AVC::Cmd::SfcOf(format) == requestedSfc;
 }
 
 } // namespace
@@ -252,20 +249,8 @@ void ApogeeDuetDuplex::ApplyClockConfig(const AudioClockConfig& desiredClock,
         return;
     }
 
-    const SignalSampleRate sampleRate = [&desiredClock]() noexcept {
-        switch (desiredClock.sampleRateHz) {
-            case 32000U:
-                return SignalSampleRate::k32000Hz;
-            case 44100U:
-                return SignalSampleRate::k44100Hz;
-            case 48000U:
-                return SignalSampleRate::k48000Hz;
-            default:
-                return SignalSampleRate::kUnknown;
-        }
-    }();
-
-    if (sampleRate == SignalSampleRate::kUnknown) {
+    const auto sampleRate = AVC::CipSfcFromHz(desiredClock.sampleRateHz);
+    if (!sampleRate.has_value()) {
         callback(kIOReturnUnsupported, {});
         return;
     }
@@ -281,7 +266,7 @@ void ApogeeDuetDuplex::ApplyClockConfig(const AudioClockConfig& desiredClock,
     transition->generation = runtime_.busInfo.GetGeneration();
     transition->transportAtStart = runtime_.fcpTransport;
     transition->desiredClock = desiredClock;
-    transition->desiredRate = sampleRate;
+    transition->desiredSfc = *sampleRate;
     transition->completion = std::move(callback);
 
     activeClockTransition_ = transition;
@@ -302,26 +287,30 @@ void ApogeeDuetDuplex::AdvanceClockTransition(
     const auto submitStatus = [this, transition](bool isInput,
                                                    bool captureBefore,
                                                    ClockTransition::Phase nextPhase) {
-        auto command = std::make_shared<SignalFormatCommand>(*runtime_.fcpTransport, 0, isInput);
-        command->Submit([this, transition, isInput, captureBefore, nextPhase, command](
-                            Protocols::AVC::AVCResult result,
-                            const SignalFormatCommand::SignalFormat& format) {
+        AVC::Cmd::PlugSignalFormatCommand cmd{
+            .operands = {
+                .direction = isInput ? AVC::Cmd::PlugSignalDirection::kInput : AVC::Cmd::PlugSignalDirection::kOutput,
+                .plugId = 0,
+                .query = AVC::Cmd::SignalFormatQuery::kAllWildcard,
+            }
+        };
+        runtime_.fcpTransport->Status(cmd, [this, transition, isInput, captureBefore, nextPhase](
+                                               AVC::Expected<AVC::Cmd::PlugSignalFormat> reply) {
             if (!IsActive(*transition)) {
                 return;
             }
-            const IOReturn status = MapAVCResultToIOReturn(result);
-            if (status != kIOReturnSuccess) {
-                FailClockTransition(transition, status);
+            if (!reply) {
+                FailClockTransition(transition, MapAvcErrorToIOReturn(reply.error()));
                 return;
             }
             if (isInput && captureBefore) {
-                transition->inputBefore = format;
+                transition->inputBefore = *reply;
             } else if (isInput) {
-                transition->inputAfter = format;
+                transition->inputAfter = *reply;
             } else if (captureBefore) {
-                transition->outputBefore = format;
+                transition->outputBefore = *reply;
             } else {
-                transition->outputAfter = format;
+                transition->outputAfter = *reply;
             }
             transition->phase = nextPhase;
             AdvanceClockTransition(transition);
@@ -341,23 +330,26 @@ void ApogeeDuetDuplex::AdvanceClockTransition(
                 FailClockTransition(transition, kIOReturnUnsupported);
                 return;
             }
-            if (MatchesRequestedRate(transition->inputBefore, transition->desiredRate)) {
+            if (MatchesRequestedRate(transition->inputBefore, transition->desiredSfc)) {
                 transition->phase = ClockTransition::Phase::kSetOutput;
                 AdvanceClockTransition(transition);
                 return;
             }
             {
-                auto command = std::make_shared<SignalFormatCommand>(
-                    *runtime_.fcpTransport, 0, true, transition->desiredRate);
-                command->Submit([this, transition, command](
-                                    Protocols::AVC::AVCResult result,
-                                    const SignalFormatCommand::SignalFormat&) {
+                AVC::Cmd::PlugSignalFormatCommand cmd{
+                    .operands = {
+                        .direction = AVC::Cmd::PlugSignalDirection::kInput,
+                        .plugId = 0,
+                        .format = AVC::Cmd::Am824SignalFormat(0, transition->desiredSfc),
+                    }
+                };
+                runtime_.fcpTransport->Control(cmd, [this, transition](
+                                                       AVC::Expected<AVC::Cmd::PlugSignalFormat> reply) {
                     if (!IsActive(*transition)) {
                         return;
                     }
-                    const IOReturn status = MapAVCResultToIOReturn(result);
-                    if (status != kIOReturnSuccess) {
-                        FailClockTransition(transition, status);
+                    if (!reply) {
+                        FailClockTransition(transition, MapAvcErrorToIOReturn(reply.error()));
                         return;
                     }
                     transition->inputChanged = true;
@@ -367,23 +359,26 @@ void ApogeeDuetDuplex::AdvanceClockTransition(
             }
             return;
         case ClockTransition::Phase::kSetOutput:
-            if (MatchesRequestedRate(transition->outputBefore, transition->desiredRate)) {
+            if (MatchesRequestedRate(transition->outputBefore, transition->desiredSfc)) {
                 transition->phase = ClockTransition::Phase::kSettle;
                 AdvanceClockTransition(transition);
                 return;
             }
             {
-                auto command = std::make_shared<SignalFormatCommand>(
-                    *runtime_.fcpTransport, 0, false, transition->desiredRate);
-                command->Submit([this, transition, command](
-                                    Protocols::AVC::AVCResult result,
-                                    const SignalFormatCommand::SignalFormat&) {
+                AVC::Cmd::PlugSignalFormatCommand cmd{
+                    .operands = {
+                        .direction = AVC::Cmd::PlugSignalDirection::kOutput,
+                        .plugId = 0,
+                        .format = AVC::Cmd::Am824SignalFormat(0, transition->desiredSfc),
+                    }
+                };
+                runtime_.fcpTransport->Control(cmd, [this, transition](
+                                                       AVC::Expected<AVC::Cmd::PlugSignalFormat> reply) {
                     if (!IsActive(*transition)) {
                         return;
                     }
-                    const IOReturn status = MapAVCResultToIOReturn(result);
-                    if (status != kIOReturnSuccess) {
-                        FailClockTransition(transition, status);
+                    if (!reply) {
+                        FailClockTransition(transition, MapAvcErrorToIOReturn(reply.error()));
                         return;
                     }
                     transition->outputChanged = true;
@@ -427,8 +422,8 @@ void ApogeeDuetDuplex::AdvanceClockTransition(
             submitStatus(false, false, ClockTransition::Phase::kRestoreInput);
             return;
         case ClockTransition::Phase::kRestoreInput:
-            if (!MatchesRequestedRate(transition->inputAfter, transition->desiredRate) ||
-                !MatchesRequestedRate(transition->outputAfter, transition->desiredRate)) {
+            if (!MatchesRequestedRate(transition->inputAfter, transition->desiredSfc) ||
+                !MatchesRequestedRate(transition->outputAfter, transition->desiredSfc)) {
                 FailClockTransition(transition, kIOReturnError);
                 return;
             }
@@ -436,14 +431,21 @@ void ApogeeDuetDuplex::AdvanceClockTransition(
             return;
         case ClockTransition::Phase::kRestoreOutput:
             if (transition->outputChanged) {
-                auto command = std::make_shared<SignalFormatCommand>(
-                    *runtime_.fcpTransport, 0, false,
-                    SignalFormatCommand::FrequencyToSampleRate(transition->outputBefore.frequency));
-                command->Submit([this, transition, command](Protocols::AVC::AVCResult,
-                                                              const SignalFormatCommand::SignalFormat&) {
-                    CompleteClockTransition(transition, transition->failureStatus);
-                });
-                return;
+                const auto origSfc = AVC::Cmd::SfcOf(transition->outputBefore);
+                if (origSfc.has_value()) {
+                    AVC::Cmd::PlugSignalFormatCommand cmd{
+                        .operands = {
+                            .direction = AVC::Cmd::PlugSignalDirection::kOutput,
+                            .plugId = 0,
+                            .format = AVC::Cmd::Am824SignalFormat(0, *origSfc),
+                        }
+                    };
+                    runtime_.fcpTransport->Control(cmd, [this, transition](
+                                                           AVC::Expected<AVC::Cmd::PlugSignalFormat>) {
+                        CompleteClockTransition(transition, transition->failureStatus);
+                    });
+                    return;
+                }
             }
             CompleteClockTransition(transition, transition->failureStatus);
             return;
@@ -483,18 +485,25 @@ void ApogeeDuetDuplex::FailClockTransition(const std::shared_ptr<ClockTransition
 
     if (transition->inputChanged) {
         transition->phase = ClockTransition::Phase::kRestoreInput;
-        auto command = std::make_shared<SignalFormatCommand>(
-            *runtime_.fcpTransport, 0, true,
-            SignalFormatCommand::FrequencyToSampleRate(transition->inputBefore.frequency));
-        command->Submit([this, transition, command](Protocols::AVC::AVCResult,
-                                                      const SignalFormatCommand::SignalFormat&) {
-            if (!IsActive(*transition)) {
-                return;
-            }
-            transition->phase = ClockTransition::Phase::kRestoreOutput;
-            AdvanceClockTransition(transition);
-        });
-        return;
+        const auto origSfc = AVC::Cmd::SfcOf(transition->inputBefore);
+        if (origSfc.has_value()) {
+            AVC::Cmd::PlugSignalFormatCommand cmd{
+                .operands = {
+                    .direction = AVC::Cmd::PlugSignalDirection::kInput,
+                    .plugId = 0,
+                    .format = AVC::Cmd::Am824SignalFormat(0, *origSfc),
+                }
+            };
+            runtime_.fcpTransport->Control(cmd, [this, transition](
+                                                   AVC::Expected<AVC::Cmd::PlugSignalFormat>) {
+                if (!IsActive(*transition)) {
+                    return;
+                }
+                transition->phase = ClockTransition::Phase::kRestoreOutput;
+                AdvanceClockTransition(transition);
+            });
+            return;
+        }
     }
 
     transition->phase = ClockTransition::Phase::kRestoreOutput;

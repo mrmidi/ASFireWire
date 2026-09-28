@@ -13,6 +13,9 @@
 #include "../../../Logging/Logging.hpp"
 
 using namespace ASFW::Protocols::AVC::Audio;
+using ASFW::AVC::SubunitAddress;
+using ASFW::AVC::Expected;
+namespace Cmd = ASFW::AVC::Cmd;
 
 void AudioSubunit::ParseCapabilities(AVCUnit& unit, std::function<void(bool)> completion) {
     auto completionState = Common::ShareCallback(std::move(completion));
@@ -94,23 +97,26 @@ void AudioSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, bool isInpu
     }
     
     auto unitPtr = unit.shared_from_this();
-    
-    uint8_t subunitAddr = (static_cast<uint8_t>(GetType()) << 3) | (GetID() & 0x07);
     uint8_t plugNum = plugs[plugIndex].plugNumber;
     
-    auto cmd = std::make_shared<AVCStreamFormatCommand>(unit.GetFCPTransport(),
-                                                        subunitAddr, plugNum, isInput);
+    Cmd::StreamFormatCommand cmd{
+        .address = SubunitAddress::FromByte(MakeSubunitAddress(GetType(), GetID())),
+        .operands = {
+            .form = Cmd::StreamFormatSubfunction::kSingle,
+            .opcode = Cmd::StreamFormatOpcode::kExtendedStreamFormat,
+            .plug = Cmd::PlugAddress::SubunitPlug(isInput ? Cmd::PlugDirection::kInput : Cmd::PlugDirection::kOutput, plugNum),
+        }
+    };
     
-    cmd->Submit([this, unitPtr, plugIndex, isInput, completionState, cmd](
-                AVCResult result, const std::optional<StreamFormat>& format) {
+    unit.Status(cmd, [this, unitPtr, plugIndex, isInput, completionState](
+                Expected<Cmd::StreamFormatReply> reply) {
         auto& plugs = isInput ? inputPlugs_ : outputPlugs_;
         
-        if (IsSuccess(result) && format) {
-            plugs[plugIndex].currentFormat = *format;
-            ASFW_LOG_INFO(Discovery, "AudioSubunit: Plug %d (%{public}s) current format: type=0x%02x",
+        if (reply) {
+            plugs[plugIndex].currentFormat = reply->format;
+            ASFW_LOG_INFO(Discovery, "AudioSubunit: Plug %d (%{public}s) current format",
                          plugs[plugIndex].plugNumber,
-                         isInput ? "input" : "output",
-                         format->formatType);
+                         isInput ? "input" : "output");
         } else {
             ASFW_LOG_WARNING(Discovery, "AudioSubunit: Failed to query current format for plug %d (%{public}s)",
                            plugs[plugIndex].plugNumber, isInput ? "input" : "output");
