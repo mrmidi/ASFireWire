@@ -34,9 +34,12 @@
 #include "ASFWDriver/Protocols/AVC/AVCUnitPlugInfoCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/StreamFormats/AVCUnitPlugSignalFormatCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/StreamFormats/AVCStreamFormatCommands.hpp"
+#include "ASFWDriver/Protocols/AVC/AVCSignalFormatCommand.hpp"
+#include "ASFWDriver/Protocols/AVC/AVCStreamFormatCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/AudioFunctionBlockCommand.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 #include "ASFWDriver/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.hpp"
+#include "AvcTestRig.hpp"
 
 #include <array>
 #include <cstdint>
@@ -78,6 +81,24 @@ public:
     const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
 };
 
+class TestRootOutputPlugSignalFormatCommand : public Protocols::AVC::AVCOutputPlugSignalFormatCommand {
+public:
+    using Protocols::AVC::AVCOutputPlugSignalFormatCommand::AVCOutputPlugSignalFormatCommand;
+    const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
+};
+
+class TestRootSignalFormatCommand : public Protocols::AVC::AVCSignalFormatCommand {
+public:
+    using Protocols::AVC::AVCSignalFormatCommand::AVCSignalFormatCommand;
+    const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
+};
+
+class TestRootStreamFormatCommand : public Protocols::AVC::AVCStreamFormatCommand {
+public:
+    using Protocols::AVC::AVCStreamFormatCommand::AVCStreamFormatCommand;
+    const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
+};
+
 // ===========================================================================
 // 1. UNIT INFO Differential Tests
 // ===========================================================================
@@ -115,6 +136,10 @@ TEST(AvcDifferentialTests, UnitInfo_IdentifiesIntendedDifference) {
 TEST(AvcDifferentialTests, UnitInfo_ResponseParsing) {
     // Response from Apogee Duet: STABLE, unit, 0x30, 0x07 (dummy), 0x48 (audio 0x09, id 0), OUI 00:03:DB
     const uint8_t respBytes[] = {0x0C, 0xFF, 0x30, 0x07, 0x48, 0x00, 0x03, 0xDB};
+
+    // Note: Legacy AVCUnit::ProbeUnitInfo (AVCUnit.cpp:83) checked IsSuccess(result)
+    // but never parsed the operand payload (no UnitInfo decode struct existed).
+    // The rebuilt ASFW::AVC stack decodes the full UnitInfo struct per AV/C General Spec 4.2 §10.1.
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
 
@@ -151,17 +176,27 @@ TEST(AvcDifferentialTests, SubunitInfo_ResponseParsingAndEnumParity) {
     // Response containing Audio (0x01 << 3 | 0 = 0x08) and Music (0x0C << 3 | 0 = 0x60)
     const uint8_t respBytes[] = {0x0C, 0xFF, 0x31, 0x00, 0x08, 0x60, 0xFF, 0xFF};
 
-    // Legacy parser decoding formula (AVCCommands.hpp:215-216):
-    // subunit.type = (entry >> 3) & 0x1F; subunit.maxID = entry & 0x07;
-    uint8_t legacyEntry0Type = (respBytes[4] >> 3) & 0x1F;
-    uint8_t legacyEntry0MaxId = respBytes[4] & 0x07;
-    uint8_t legacyEntry1Type = (respBytes[5] >> 3) & 0x1F;
-    uint8_t legacyEntry1MaxId = respBytes[5] & 0x07;
+    // Real legacy AVCSubunitInfoCommand execution via AvcTestRig:
+    ASFW::Testing::AvcTestRig rig;
+    rig.Target().Script(ASFW::Testing::AvcReply::RawBytes(
+        std::vector<uint8_t>(std::begin(respBytes), std::end(respBytes))));
 
-    EXPECT_EQ(legacyEntry0Type, 0x01); // Audio
-    EXPECT_EQ(legacyEntry0MaxId, 0);
-    EXPECT_EQ(legacyEntry1Type, 0x0C); // Music code on wire
-    EXPECT_EQ(legacyEntry1MaxId, 0);
+    auto legacyCmd = std::make_shared<Protocols::AVC::AVCSubunitInfoCommand>(*rig.Transport(), 0);
+    Protocols::AVC::AVCSubunitInfoCommand::SubunitInfo legacyInfo{};
+    Protocols::AVC::AVCResult legacyResult = Protocols::AVC::AVCResult::kTimeout;
+
+    legacyCmd->Submit([&](Protocols::AVC::AVCResult res, const Protocols::AVC::AVCSubunitInfoCommand::SubunitInfo& info) {
+        legacyResult = res;
+        legacyInfo = info;
+    });
+    rig.Drain();
+
+    ASSERT_EQ(legacyResult, Protocols::AVC::AVCResult::kImplementedStable);
+    ASSERT_EQ(legacyInfo.subunits.size(), 2U);
+    EXPECT_EQ(legacyInfo.subunits[0].type, 0x01); // Audio
+    EXPECT_EQ(legacyInfo.subunits[0].maxID, 0);
+    EXPECT_EQ(legacyInfo.subunits[1].type, 0x0C); // Music code on wire
+    EXPECT_EQ(legacyInfo.subunits[1].maxID, 0);
 
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
@@ -301,6 +336,72 @@ TEST(AvcDifferentialTests, PlugSignalFormat_ResponseParsing) {
 }
 
 // ===========================================================================
+// 4b. Root AVCSignalFormatCommand Differential Tests (AVCUnit.cpp:12 duplicate)
+// ===========================================================================
+
+TEST(AvcDifferentialTests, RootSignalFormatCommand_OutputPlugMatches) {
+    ASFW::Testing::AvcTestRig rig;
+
+    // 1. Command framing parity
+    for (uint8_t plug = 0; plug < 4; ++plug) {
+        TestRootOutputPlugSignalFormatCommand legacyCmd(*rig.Transport(), plug);
+        auto legacyEncoded = legacyCmd.Cdb().Encode();
+
+        auto newCmd = Cmd::BuildPlugSignalFormatStatus(
+            Cmd::PlugSignalDirection::kOutput, plug, Cmd::SignalFormatQuery::kAllWildcard);
+        ASSERT_TRUE(newCmd.has_value());
+
+        ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
+        for (size_t i = 0; i < legacyEncoded.length; ++i) {
+            EXPECT_EQ(legacyEncoded.data[i], newCmd->WireBytes()[i]) << "Mismatch at byte " << i;
+        }
+    }
+
+    // 2. Decode parity via real legacy Submit callback execution
+    const uint8_t respBytes[] = {0x0C, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF}; // 48 kHz
+    rig.Target().Script(ASFW::Testing::AvcReply::RawBytes(
+        std::vector<uint8_t>(std::begin(respBytes), std::end(respBytes))));
+
+    auto legacyCmd = std::make_shared<Protocols::AVC::AVCOutputPlugSignalFormatCommand>(*rig.Transport(), 0);
+    Protocols::AVC::AVCOutputPlugSignalFormatCommand::SignalFormat legacyFmt{};
+    Protocols::AVC::AVCResult legacyResult = Protocols::AVC::AVCResult::kTimeout;
+
+    legacyCmd->Submit([&](Protocols::AVC::AVCResult res, const Protocols::AVC::AVCOutputPlugSignalFormatCommand::SignalFormat& fmt) {
+        legacyResult = res;
+        legacyFmt = fmt;
+    });
+    rig.Drain();
+
+    ASSERT_EQ(legacyResult, Protocols::AVC::AVCResult::kImplementedStable);
+    EXPECT_EQ(legacyFmt.formatHierarchy, 0x90);
+    EXPECT_EQ(legacyFmt.formatSync, 0x02);
+
+    auto resp = ParseResponse(respBytes);
+    ASSERT_TRUE(resp.has_value());
+    auto newFmt = Cmd::ParsePlugSignalFormat(*resp, ResponseCode::kImplementedStable);
+    ASSERT_TRUE(newFmt.has_value());
+    EXPECT_EQ(newFmt->fmt, legacyFmt.formatHierarchy);
+    EXPECT_EQ(newFmt->fdf[0], legacyFmt.formatSync);
+}
+
+TEST(AvcDifferentialTests, RootSignalFormatCommand_MusicSubunitMatches) {
+    ASFW::Testing::AvcTestRig rig;
+
+    // Legacy AVCSignalFormatCommand queries Music Subunit signal format (0xA0 input, 0xA1 output)
+    TestRootSignalFormatCommand legacyInCmd(*rig.Transport(), 0x08, true, 0);
+    EXPECT_EQ(legacyInCmd.Cdb().opcode, 0xA0);
+    EXPECT_EQ(legacyInCmd.Cdb().operandLength, 2U);
+    EXPECT_EQ(legacyInCmd.Cdb().operands[0], 0xFF);
+    EXPECT_EQ(legacyInCmd.Cdb().operands[1], 0xFF);
+
+    TestRootSignalFormatCommand legacyOutCmd(*rig.Transport(), 0x08, false, 0);
+    EXPECT_EQ(legacyOutCmd.Cdb().opcode, 0xA1);
+    EXPECT_EQ(legacyOutCmd.Cdb().operandLength, 2U);
+    EXPECT_EQ(legacyOutCmd.Cdb().operands[0], 0xFF);
+    EXPECT_EQ(legacyOutCmd.Cdb().operands[1], 0xFF);
+}
+
+// ===========================================================================
 // 5. STREAM FORMAT (0x2F / 0xBF) Differential Tests
 // ===========================================================================
 
@@ -363,6 +464,115 @@ TEST(AvcDifferentialTests, StreamFormatList_ResponseParsingComparison) {
 }
 
 // ===========================================================================
+// 5b. Root AVCStreamFormatCommand Differential Tests (OxfwStreamFormats.cpp:9 duplicate)
+// ===========================================================================
+
+TEST(AvcDifferentialTests, RootStreamFormatCommand_CurrentFormatMatches) {
+    auto dummyTransport = reinterpret_cast<Protocols::AVC::FCPTransport*>(0x1000);
+
+    const bool dirs[] = {true, false}; // isInput
+    const bool opcodes[] = {false, true}; // false = 0xBF, true = 0x2F
+
+    for (bool isInput : dirs) {
+        for (bool useAlt : opcodes) {
+            TestRootStreamFormatCommand legacyCmd(*dummyTransport, 0xFF, 0, isInput, useAlt);
+            auto legacyEncoded = legacyCmd.Cdb().Encode();
+
+            auto newDir = isInput ? Cmd::PlugDirection::kInput : Cmd::PlugDirection::kOutput;
+            auto newOpcode = useAlt ? Cmd::StreamFormatOpcode::kStreamFormatSupport
+                                    : Cmd::StreamFormatOpcode::kExtendedStreamFormat;
+            auto newCmd = Cmd::BuildStreamFormatSingleStatus(
+                newOpcode, SubunitAddress::Unit(), Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0));
+            ASSERT_TRUE(newCmd.has_value());
+
+            ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
+            // Bytes 0..8 match identically (header + subfunc + plug address)
+            for (size_t i = 0; i < 9; ++i) {
+                EXPECT_EQ(legacyEncoded.data[i], newCmd->WireBytes()[i])
+                    << "Mismatch at byte " << i << " isInput=" << isInput << " useAlt=" << useAlt;
+            }
+            // Byte 9: Intended difference!
+            // Legacy wrote 6 operands and zero-padded byte 9; new sends SupportStatus::kNotUsed (0xFF)
+            // per TA 2001002 §8.1.1 (and matches Linux ta1394).
+            EXPECT_EQ(legacyEncoded.data[9], 0x00);
+            EXPECT_EQ(newCmd->WireBytes()[9], 0xFF);
+            // Bytes 10..11 are quadlet zero padding in both
+            EXPECT_EQ(legacyEncoded.data[10], 0x00);
+            EXPECT_EQ(newCmd->WireBytes()[10], 0x00);
+            EXPECT_EQ(legacyEncoded.data[11], 0x00);
+            EXPECT_EQ(newCmd->WireBytes()[11], 0x00);
+        }
+    }
+}
+
+TEST(AvcDifferentialTests, RootStreamFormatCommand_SupportedListMatches) {
+    auto dummyTransport = reinterpret_cast<Protocols::AVC::FCPTransport*>(0x1000);
+
+    const bool dirs[] = {true, false}; // isInput
+    const bool opcodes[] = {false, true}; // false = 0xBF, true = 0x2F
+
+    for (bool isInput : dirs) {
+        for (bool useAlt : opcodes) {
+            for (uint8_t idx = 0; idx < 5; ++idx) {
+                TestRootStreamFormatCommand legacyCmd(*dummyTransport, 0xFF, 0, isInput, idx, useAlt);
+                auto legacyEncoded = legacyCmd.Cdb().Encode();
+
+                auto newDir = isInput ? Cmd::PlugDirection::kInput : Cmd::PlugDirection::kOutput;
+                auto newOpcode = useAlt ? Cmd::StreamFormatOpcode::kStreamFormatSupport
+                                        : Cmd::StreamFormatOpcode::kExtendedStreamFormat;
+                auto newCmd = Cmd::BuildStreamFormatListStatus(
+                    newOpcode, SubunitAddress::Unit(), Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0), idx);
+                ASSERT_TRUE(newCmd.has_value());
+
+                ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
+                for (size_t i = 0; i < legacyEncoded.length; ++i) {
+                    EXPECT_EQ(legacyEncoded.data[i], newCmd->WireBytes()[i])
+                        << "Mismatch at byte " << i << " idx=" << int(idx) << " isInput=" << isInput << " useAlt=" << useAlt;
+                }
+            }
+        }
+    }
+}
+
+TEST(AvcDifferentialTests, RootStreamFormatCommand_ResponseParsingMatches) {
+    ASFW::Testing::AvcTestRig rig;
+
+    // Duet 0xBF single response (48 kHz, 2 PCM)
+    const uint8_t duetSingleResp[] = {
+        0x0C, 0xFF, 0xBF, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00,
+        0x90, 0x40, 0x04, 0x00, 0x01, 0x02, 0x06
+    };
+
+    rig.Target().Script(ASFW::Testing::AvcReply::RawBytes(
+        std::vector<uint8_t>(std::begin(duetSingleResp), std::end(duetSingleResp))));
+    auto legacySingleCmd = std::make_shared<Protocols::AVC::AVCStreamFormatCommand>(*rig.Transport(), 0xFF, 0, true, false);
+    std::optional<Protocols::AVC::StreamFormat> legacyFmt;
+    Protocols::AVC::AVCResult legacyResult = Protocols::AVC::AVCResult::kTimeout;
+
+    legacySingleCmd->Submit([&](Protocols::AVC::AVCResult res, const std::optional<Protocols::AVC::StreamFormat>& fmt) {
+        legacyResult = res;
+        legacyFmt = fmt;
+    });
+    rig.Drain();
+
+    ASSERT_EQ(legacyResult, Protocols::AVC::AVCResult::kImplementedStable);
+    ASSERT_TRUE(legacyFmt.has_value());
+    EXPECT_EQ(legacyFmt->formatType, 0x90);
+    EXPECT_EQ(legacyFmt->formatSubtype, 0x40);
+    EXPECT_EQ(legacyFmt->sampleRate, 0x04); // 48 kHz in TA 2001002 table
+    EXPECT_EQ(legacyFmt->numChannels, 1);   // Legacy stores infoCount (1 format info pair)
+
+    auto newResp = ParseResponse(duetSingleResp);
+    ASSERT_TRUE(newResp.has_value());
+    auto newParsed = Cmd::ParseStreamFormatSingle(*newResp, ResponseCode::kImplementedStable);
+    ASSERT_TRUE(newParsed.has_value());
+    EXPECT_EQ(newParsed->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
+    EXPECT_EQ(newParsed->format.compound.rate, StreamFormatRate::k48000);
+    EXPECT_EQ(newParsed->format.compound.entryCount, 1U);
+    EXPECT_EQ(newParsed->format.compound.PcmChannels(), 2U); // New computes actual PCM channels
+}
+
+// ===========================================================================
 // 6. BridgeCo Extended PLUG INFO (0xC0) Differential Tests
 // ===========================================================================
 
@@ -417,6 +627,58 @@ TEST(AvcDifferentialTests, BridgeCoExtendedPlugInfo_CommandBytesMatchBeBoBDiscov
 }
 
 // ===========================================================================
+// 6b. BridgeCo Channel Positions Trailing-Bytes Strictness Parity
+// ===========================================================================
+
+TEST(AvcDifferentialTests, BridgeCoExtendedPlugInfo_ChannelPositionsStrictnessDifference) {
+    // Valid channel position payload: 1 section, 2 channels
+    // Format: [section_count: 1][position_count: 2][stream_pos: 1, sec_loc: 1][stream_pos: 2, sec_loc: 2]
+    const std::vector<uint8_t> exactPayload = {0x01, 0x02, 0x01, 0x01, 0x02, 0x02};
+
+    // 1. Both legacy and new accept exact payload
+    auto legacyExact = Audio::BeBoB::ParseChannelPositionSections(exactPayload);
+    ASSERT_TRUE(legacyExact.has_value());
+    ASSERT_EQ(legacyExact->size(), 1U);
+    EXPECT_EQ((*legacyExact)[0].positions.size(), 2U);
+
+    // Build FCP response with exact payload (operands 0..6 header + extra, payload starts at operand 7)
+    // Response frame: [0x0C, 0xFF, 0x02, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x03] + exactPayload
+    std::vector<uint8_t> exactFrame = {0x0C, 0xFF, 0x02, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x03};
+    exactFrame.insert(exactFrame.end(), exactPayload.begin(), exactPayload.end());
+
+    auto respExact = ParseResponse(exactFrame);
+    ASSERT_TRUE(respExact.has_value());
+    auto newExact = BridgeCo::ParseChannelPositions(*respExact);
+    ASSERT_TRUE(newExact.has_value());
+    EXPECT_EQ(newExact->sectionCount, 1U);
+    EXPECT_EQ(newExact->sections[0].positionCount, 2U);
+    EXPECT_EQ(newExact->sections[0].positions[0].streamPosition, 0); // 0-based
+    EXPECT_EQ(newExact->sections[0].positions[0].sectionLocation, 0);
+
+    // 2. Trailing padding bytes behavior (e.g. 2 zero quadlet-padding bytes appended)
+    std::vector<uint8_t> paddedPayload = exactPayload;
+    paddedPayload.push_back(0x00);
+    paddedPayload.push_back(0x00);
+
+    // Legacy strictly enforces cursor == payload.size() and rejects trailing bytes:
+    auto legacyPadded = Audio::BeBoB::ParseChannelPositionSections(paddedPayload);
+    EXPECT_FALSE(legacyPadded.has_value())
+        << "Legacy ParseChannelPositionSections strictly fails when trailing bytes are present";
+
+    // New codec ignores trailing quadlet padding bytes per specification:
+    std::vector<uint8_t> paddedFrame = {0x0C, 0xFF, 0x02, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x03};
+    paddedFrame.insert(paddedFrame.end(), paddedPayload.begin(), paddedPayload.end());
+
+    auto respPadded = ParseResponse(paddedFrame);
+    ASSERT_TRUE(respPadded.has_value());
+    auto newPadded = BridgeCo::ParseChannelPositions(*respPadded);
+    ASSERT_TRUE(newPadded.has_value())
+        << "New BridgeCo::ParseChannelPositions safely accepts trailing quadlet padding bytes";
+    EXPECT_EQ(newPadded->sectionCount, 1U);
+    EXPECT_EQ(newPadded->sections[0].positionCount, 2U);
+}
+
+// ===========================================================================
 // 7. Audio Function Block Differential Tests
 // ===========================================================================
 
@@ -466,6 +728,11 @@ TEST(AvcDifferentialTests, AudioFunctionBlock_FeatureMuteAndVolume_IdentifiesInt
     // Rebuilt codec per TA 1394 Audio Subunit 1.0 §10.3 / §10.3.1:
     // selector length is ALWAYS 2: [channel][control selector]
     // followed by [data length 1][0x60/0x70]
+    //
+    // HARDWARE PROOF ON TERRAMAC PHASE 88 (2026-09-27):
+    // Phase 88 ACCEPTED both the spec form (selector length 02, FB1 ch1/ch2 volume)
+    // and the old driver's form (length 05), and read back the value.
+    // The new form is now hardware-proven on the Phase 88, not just spec-correct.
     auto newMute = Cmd::BuildFeatureMuteControl(kAudioSubunit0, 1, 0x00, false);
     ASSERT_TRUE(newMute.has_value());
 

@@ -283,11 +283,19 @@ class DeviceMetadata:
 
 
 class FW1814ProbeRunner:
-    def __init__(self, client: MCPClient, verbose: bool = False, force: bool = False, include_control: bool = False) -> None:
+    def __init__(
+        self,
+        client: MCPClient,
+        verbose: bool = False,
+        force: bool = False,
+        include_control: bool = False,
+        allow_clock_write: bool = False,
+    ) -> None:
         self.client = client
         self.verbose = verbose
         self.force = force
         self.include_control = include_control
+        self.allow_clock_write = allow_clock_write
         self.records: list[ExchangeRecord] = []
         self.metadata: DeviceMetadata | None = None
         self.register_dumps: dict[str, Any] = {}
@@ -541,16 +549,20 @@ class FW1814ProbeRunner:
             rate_str = SFC_TABLE.get(sfc, f"unknown (0x{sfc:02X})")
             print(f"   [+] Output Plug 0 Signal Format: Rate={rate_str} (SFC=0x{sfc:02X})")
 
-        # 3. Check Input and Output Plug 1 if present
-        self.send_frame("input_plug_1_signal_format_status", [0x01, 0xFF, 0x19, 0x01, 0x90, 0xFF, 0xFF, 0xFF])
-        self.send_frame("output_plug_1_signal_format_status", [0x01, 0xFF, 0x18, 0x01, 0x90, 0xFF, 0xFF, 0xFF])
-
     def probe_optional_controls(self) -> None:
-        """Runs non-destructive proprietary control tests if enabled (--include-control)."""
+        """Runs state-modifying vendor control tests if enabled (--include-control)."""
         if not self.include_control:
             return
 
-        print("-> Running Proprietary Control Tests (--include-control enabled)...")
+        print("-> Running State-Modifying Vendor Control Tests (--include-control enabled)...")
+
+        # Read current rate first to restore it at the end
+        rec_orig = self.send_frame("pre_control_output_rate_status", [0x01, 0xFF, 0x18, 0x00, 0x90, 0xFF, 0xFF, 0xFF])
+        orig_sfc = None
+        if rec_orig.ok and rec_orig.response and len(rec_orig.response) >= 6:
+            orig_sfc = rec_orig.response[5] & 0x07
+            orig_name = SFC_TABLE.get(orig_sfc, f"0x{orig_sfc:02X}")
+            print(f"   [+] Pre-control output sample rate: {orig_name} (SFC=0x{orig_sfc:02X})")
 
         # 1. Front-panel LED test: toggle ON, then OFF (CONTROL 8 bytes, OUI 0x03 0x00 0x01)
         print("   [+] Toggling LED ON...")
@@ -569,12 +581,18 @@ class FW1814ProbeRunner:
 
         # 3. Clock Source control (16 bytes, lock = 0x00 per Linux bebob_maudio.c:276)
         #    Internal clock = 0x03, S/PDIF input = 0x00, S/PDIF output = 0x00, lock = 0x00
-        print("   [+] Setting Clock Source (Internal, Unlocked, 16 bytes)...")
-        self.send_frame(
-            "vendor_clock_control_internal",
-            [0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-            intent="control",
-        )
+        #    NOTE: This write alters internal clock and resets dig_in_fmt/dig_out_fmt,
+        #    which select the formation table (hazard doc H5).
+        if self.allow_clock_write:
+            print("   [!] WARNING: Writing vendor clock control changes device internal clock and resets dig_in_fmt/dig_out_fmt routing!")
+            print("   [+] Setting Clock Source (Internal, Unlocked, 16 bytes)...")
+            self.send_frame(
+                "vendor_clock_control_internal",
+                [0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                intent="control",
+            )
+        else:
+            print("   [-] Skipping clock source write: requires --i-understand-this-changes-clock (resets digital formation table routing)")
 
         # 4. Signal Format Rate Switching via CONTROL (AM824 format 0x90)
         #    SFC indices: 0x00=32k, 0x01=44.1k, 0x02=48k, 0x03=88.2k, 0x04=96k, 0x05=176.4k, 0x06=192k
@@ -602,6 +620,22 @@ class FW1814ProbeRunner:
             self.send_frame(
                 f"control_input_rate_{name}",
                 [0x00, 0xFF, 0x19, 0x00, 0x90, sfc, 0xFF, 0xFF],
+                intent="control",
+            )
+
+        # 5. Restore original sample rate if one was captured
+        if orig_sfc is not None:
+            orig_name = SFC_TABLE.get(orig_sfc, f"0x{orig_sfc:02X}")
+            print(f"   [+] Restoring original sample rate: {orig_name} (SFC=0x{orig_sfc:02X})...")
+            self.send_frame(
+                "restore_output_rate",
+                [0x00, 0xFF, 0x18, 0x00, 0x90, orig_sfc, 0xFF, 0xFF],
+                intent="control",
+            )
+            time.sleep(0.1)
+            self.send_frame(
+                "restore_input_rate",
+                [0x00, 0xFF, 0x19, 0x00, 0x90, orig_sfc, 0xFF, 0xFF],
                 intent="control",
             )
 
@@ -674,7 +708,16 @@ def main() -> int:
     parser.add_argument("--out-dir", default="documentation/fixtures/AVC", help="Output directory for fixtures")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print raw commands and responses")
     parser.add_argument("--force", action="store_true", help="Bypass 1814/ProjectMix model name safety check")
-    parser.add_argument("--include-control", action="store_true", help="Run non-destructive vendor control tests (LED, Clock, Rate)")
+    parser.add_argument(
+        "--include-control",
+        action="store_true",
+        help="Run state-modifying vendor control tests (LED, rate sweep and restoration)",
+    )
+    parser.add_argument(
+        "--i-understand-this-changes-clock",
+        action="store_true",
+        help="Explicitly authorize vendor clock source write (resets digital format routing and internal clock)",
+    )
 
     args = parser.parse_args()
 
@@ -690,6 +733,7 @@ def main() -> int:
         verbose=args.verbose,
         force=args.force,
         include_control=args.include_control,
+        allow_clock_write=args.i_understand_this_changes_clock,
     )
 
     try:

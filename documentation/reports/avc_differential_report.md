@@ -2,7 +2,7 @@
 
 **Branch:** `refactor/avc-stack`  
 **Worktree:** `/Volumes/SDExt/DEV/ASFireWire/tmp/avc-wt`  
-**Test Suite:** `tests/protocols/AvcDifferentialTests.cpp` (16/16 tests passing)  
+**Test Suite:** `tests/protocols/AvcDifferentialTests.cpp` (22/22 tests passing)  
 **Date:** 2026-09-27  
 
 ---
@@ -20,20 +20,23 @@ All tests are implemented in [`tests/protocols/AvcDifferentialTests.cpp`](../../
 | Command / Functional Area | Legacy Implementation | New Rebuilt Implementation (`ASFW::AVC`) | Wire Comparison | Status | Spec / Linux Reference |
 |---|---|---|---|---|---|
 | **UNIT INFO (0x30)** Request | `AVCUnit::ProbeUnitInfo` sends 3 bytes `[01, FF, 30]` (padded to 4) | `Cmd::BuildUnitInfoStatus()` sends 8 bytes `[01, FF, 30, 07, FF, FF, FF, FF]` | Header matches (`01 FF 30`). Legacy omitted operands; new sends 5 dummy bytes `07 FF FF FF FF`. | **INTENDED DIFFERENCE** | AV/C General Spec 4.2 §10.1; Linux `ta1394/general/src/general.rs:43`. Standard requires 5 operand bytes for UNIT INFO status. |
-| **UNIT INFO (0x30)** Response Parsing | `AVCCdb::Decode` / `AVCUnit` parses unit type, ID, company ID | `Cmd::ParseUnitInfo()` parses `UnitInfo` struct | Identical decoded values on live Apogee Duet and Phase 88 captures. | **MATCH** | Spec §10.1; Linux `general.rs:60`. |
+| **UNIT INFO (0x30)** Response Parsing | `AVCCdb::Decode` / `AVCUnit` parses unit type, ID, company ID (inlined in `AVCUnit.cpp`; no standalone parser method) | `Cmd::ParseUnitInfo()` parses `UnitInfo` struct | Identical decoded values on live Apogee Duet and Phase 88 captures. Standalone parser replaces legacy inlined parsing. | **MATCH** | Spec §10.1; Linux `general.rs:60`. |
 | **SUBUNIT INFO (0x31)** Request | `AVCSubunitInfoCommand` across pages 0..7 | `Cmd::BuildSubunitInfoStatus(page, ext)` | Byte-for-byte identical across all pages 0..7: `[01, FF, 31, (page<<4)\|ext, FF, FF, FF, FF]`. | **EXACT MATCH** | AV/C General Spec 4.2 §10.2; Linux `ta1394/general/src/general.rs:136`. |
-| **SUBUNIT INFO (0x31)** Enum Parity | `AVCDefs.hpp` defined `kMusic = 0x1C` (and `kMusic0C = 0x0C`) | `AvcTypes.hpp` defines `SubunitType::kMusic = 0x0C` | Wire bytes decode identically (`(entry >> 3) & 0x1F = 0x0C`). Legacy had duplicate/wrong enum values (`0x1C`); new adheres strictly to 0x0C. | **INTENDED ENUM FIX** | AV/C General Spec 4.2 Table 10.2; Linux `ta1394/general/src/general.rs:114`. |
+| **SUBUNIT INFO (0x31)** Response Parsing & Enum Parity | `AVCSubunitInfoCommand::Submit` executed with live callback; `AVCDefs.hpp` defined `kMusic = 0x1C` (and `kMusic0C = 0x0C`) | `Cmd::ParseSubunitInfo()`; `AvcTypes.hpp` defines `SubunitType::kMusic = 0x0C` | Legacy callback and new parser decode Audio and Music subunits identically. Enum values aligned strictly to 0x0C per spec. | **EXACT MATCH / INTENDED ENUM FIX** | AV/C General Spec 4.2 Table 10.2; Linux `ta1394/general/src/general.rs:114`. |
 | **PLUG INFO (0x02)** Request | `AVCUnitPlugInfoCommand` (subfunction 0x00) | `Cmd::BuildUnitPlugInfoStatus(kIsochronousExternal)` | Byte-for-byte identical: `[01, FF, 02, 00, FF, FF, FF, FF]`. | **EXACT MATCH** | AV/C General Spec 4.2 §10.3; Linux `ta1394/general/src/general.rs:388`. |
 | **PLUG INFO (0x02)** Response Parsing | `AVCUnitPlugInfoCommand::ParseResponse` | `Cmd::ParseUnitIsochronousExternalPlugs()` | Decoded counts identical across iso inputs, iso outputs, ext inputs, ext outputs. | **EXACT MATCH** | Live Phase 88 capture (`02 02 08 07`). |
 | **PLUG SIGNAL FORMAT (0x19/0x18)** Status Query | `AVCUnitPlugSignalFormatCommand` (query mode) | `Cmd::BuildPlugSignalFormatStatus(dir, plug, kAllWildcard)` | Byte-for-byte identical for input (`0x19`) and output (`0x18`) unit plugs: `[01, FF, 19/18, 00, FF, FF, FF, FF]`. | **EXACT MATCH** | TA 2004006 General 4.2 §10.10, §10.11; Linux `fcp.c:64`. |
 | **PLUG SIGNAL FORMAT (0x19/0x18)** Control Set | `AVCUnitPlugSignalFormatCommand` across 7 rates (32k..192k) | `Cmd::BuildPlugSignalFormatControl(dir, Am824SignalFormat(plug, sfc))` | Byte-for-byte identical across all 7 sampling frequencies: `[00, FF, 19/18, plug, 0x90, sfc, FF, FF]`. | **EXACT MATCH** | TA 2004006 §10.10; Linux `fcp.c:82`. |
 | **PLUG SIGNAL FORMAT (0x19/0x18)** Response Parsing | `AVCUnitPlugSignalFormatCommand::ParseResponse` | `Cmd::ParsePlugSignalFormat()`, `Cmd::SfcOf()` | Decoded FMT (`0x90`) and SFC match legacy interpretation across all rates. | **EXACT MATCH** | Linux `fcp.c:98`. |
+| **Root PLUG SIGNAL FORMAT (0x18)** (Root duplicate) | `AVCOutputPlugSignalFormatCommand` (used by `AVCUnit`) | `Cmd::BuildPlugSignalFormatStatus(kOutput, plug, kAllWildcard)` | Byte-for-byte identical framing across output plugs 0..3. Response callback execution decodes FMT 0x90 and SFC 0x02 identically. | **EXACT MATCH** | TA 2004006 §10.11; `AVCSignalFormatCommand.hpp:60`. |
 | **STREAM FORMAT LIST (0x2F)** Request | `Audio::BeBoB::BuildReadOnlyProbeCommand` (kStreamFormatList) | `Cmd::BuildStreamFormatListStatus(kStreamFormatSupport, Unit, plug, idx)` | Byte-for-byte identical across input/output directions and indices 0..4: `[01, FF, 2F, C1, dir, 00, 00, 00, FF, FF, idx]`. | **EXACT MATCH** | TA 2001002; Linux `bebob_command.c:295`. |
 | **STREAM FORMAT LIST (0x2F)** Response Parsing | `Audio::BeBoB::ParseExtendedStreamFormatListResponse` | `Cmd::ParseStreamFormatList()` | Decoded sample rate, PCM channel count, and MIDI slot count match on Phase 88 live captures. | **EXACT MATCH** | Live Phase 88 capture (10 PCM + 1 MIDI, 32k/44.1k/48k/88.2k/96k). |
+| **Root STREAM FORMAT (0xBF/0x2F)** (Root duplicate) | `AVCStreamFormatCommand` (used by `OxfwStreamFormats.cpp`) | `Cmd::BuildStreamFormatSingleStatus()`, `Cmd::BuildStreamFormatListStatus()` | **Supported (0xC1):** Byte-for-byte identical across dirs and opcodes.<br>**Current (0xC0):** Bytes 0..8 match identically. Byte 9 is `0x00` in legacy (6 operands padded with zeroes) vs `0xFF` (`SupportStatus::kNotUsed`) in new stack. Response decoding matches. | **EXACT MATCH (0xC1) / INTENDED DIFFERENCE (0xC0)** | TA 2001002 §8.1.1; Linux `ta1394`. Support status byte is required by spec. |
 | **BridgeCo Extended PLUG INFO (0x02, subfunction 0xC0)** | `Audio::BeBoB::BuildReadOnlyProbeCommand` (Plug Type, Channel Positions, Cluster Info) | `BridgeCo::BuildExtendedPlugInfoStatus()` | Byte-for-byte identical across input/output and sections 0..2 (12-byte zero-padded wire buffer). | **EXACT MATCH** | Linux `bebob_command.c:116`, `:222`; `bridgeco.rs:844`. |
+| **BridgeCo Channel Positions Strictness** | `Audio::BeBoB::ParseChannelPositionSections` | `BridgeCo::ParseChannelPositions()` | **Padding tolerance:** Both accept exact unpadded payloads. Legacy strictly rejects trailing quadlet padding (`cursor == size`); new safely ignores padding bytes. | **INTENDED ROBUSTNESS FIX** | Avoids spurious discovery failures on quadlet-padded FCP responses. |
 | **Function Block Selector (0xB8)** | `AudioFunctionBlockCommand` (Selector Control) | `Cmd::BuildSelectorControl(kAudioSubunit0, fbId, plug)` | Byte-for-byte identical across FB IDs 1..4 and plugs 0..1: `[00, 08, B8, 80, fbId, 10, 02, plug, 01]`. | **EXACT MATCH** | TA 1999008 Audio Subunit 1.0 §10.2; Linux `bebob_command.c:20-28`. |
-| **Function Block Feature Mute (0xB8)** | `BeBoBProtocol::SetFeatureMute` | `Cmd::BuildFeatureMuteControl(kAudioSubunit0, fbId, chan, muted)` | **Byte 6 (selector length):** legacy sent `0x04`; new sends `0x02`.<br>**Byte 8 (control):** legacy sent `0x00` (mute) / `0x60` (unmute); new sends `0x70` (mute) / `0x60` (unmute). | **INTENDED DIFFERENCE** | TA 1999008 Audio Subunit 1.0 §10.3 ("selector_length shall always be set to 2") and §10.3.1 (Mute_On: `0x70` = TRUE, `0x60` = FALSE, `0x00` invalid). Legacy implementation was best-effort unvalidated code. |
-| **Function Block Feature Volume (0xB8)** | `BeBoBProtocol::SetFeatureVolume` | `Cmd::BuildFeatureVolumeControl(kAudioSubunit0, fbId, chan, volume)` | **Byte 6 (selector length):** legacy sent `0x05`; new sends `0x02`. | **INTENDED DIFFERENCE** | TA 1999008 §10.3 ("selector_length shall always be set to 2"). Legacy sent length of selector + data in selector length field. |
+| **Function Block Feature Mute (0xB8)** | `BeBoBProtocol::SetFeatureMute` | `Cmd::BuildFeatureMuteControl(kAudioSubunit0, fbId, chan, muted)` | **Byte 6 (selector length):** legacy sent `0x04`; new sends `0x02`.<br>**Byte 8 (control):** legacy sent `0x00` (mute) / `0x60` (unmute); new sends `0x70` (mute) / `0x60` (unmute). | **INTENDED DIFFERENCE (HARDWARE PROVEN)** | TA 1999008 Audio Subunit 1.0 §10.3 ("selector_length shall always be set to 2") and §10.3.1 (Mute_On: `0x70` = TRUE, `0x60` = FALSE, `0x00` invalid). On 2026-09-27 Phase 88 ACCEPTED both selector lengths (02 and 05) and read back values, proving new form on hardware. |
+| **Function Block Feature Volume (0xB8)** | `BeBoBProtocol::SetFeatureVolume` | `Cmd::BuildFeatureVolumeControl(kAudioSubunit0, fbId, chan, volume)` | **Byte 6 (selector length):** legacy sent `0x05`; new sends `0x02`. | **INTENDED DIFFERENCE (HARDWARE PROVEN)** | TA 1999008 §10.3 ("selector_length shall always be set to 2"). Proven on Phase 88 hardware on 2026-09-27. |
 | **Apogee Vendor-Dependent (0x00)** | `Audio::Oxford::Apogee::ApogeeVendorCommand` | `Cmd::BuildVendorDependent(kStatus, Unit, OUI, payload)` | Byte-for-byte identical operand sequence: OUI `00 03 DB`, Magic `'PCM'`, Code, Args. | **EXACT MATCH** | Live Apogee Duet probe; `ApogeeVendorCodec.hpp`. |
 | **M-Audio Special Allowlist** | `kMAudioSpecialPermittedFrames` in `AVCCommandFilter.hpp` | `tools/avc/avc_probe_1814.py` `PERMITTED_FRAMES` | Exact mirror of driver table (7 permitted commands; all hazardous queries blocked). | **EXACT MATCH** | DriverKit filter table & Linux `sound/firewire/bebob/bebob_maudio.c`. |
 
@@ -43,13 +46,13 @@ All tests are implemented in [`tests/protocols/AvcDifferentialTests.cpp`](../../
 
 ### A. Intended Differences (Validated by Spec & Reference Standards)
 1. **UNIT INFO Operands Length (3 bytes vs 8 bytes)**:
-   - *Legacy:* Sent 0 operands (`01 FF 30`), padded to 4 bytes.
-   - *New:* Sends 5 dummy operands (`01 FF 30 07 FF FF FF FF`), padded to 8 bytes.
+   - *Legacy:* Sent 0 operands (`01 FF 30`), padded to 4 bytes. Legacy `AVCUnit::ProbeUnitInfo` parsed response directly in place.
+   - *New:* Sends 5 dummy operands (`01 FF 30 07 FF FF FF FF`), padded to 8 bytes, with dedicated `Cmd::ParseUnitInfo()`.
    - *Authority:* AV/C General Specification 4.2 §10.1 explicitly specifies: `operand[0] = 0x07`, `operand[1..4] = 0xFF`. Linux `ta1394/general/src/general.rs:43` asserts 5 operand bytes.
 2. **Audio Function Block Selector Length for Feature Blocks (4/5 vs 2)**:
    - *Legacy:* Set operand 3 to 4 for mute and 5 for volume.
    - *New:* Sets operand 3 to 2.
-   - *Authority:* TA 1999008 Audio Subunit 1.0 §10.3: *"The selector_length field (Operand[3]) for feature function block shall always be set to 2."*
+   - *Authority & Hardware Proof:* TA 1999008 Audio Subunit 1.0 §10.3: *"The selector_length field (Operand[3]) for feature function block shall always be set to 2."* **On 2026-09-27 the Phase 88 ACCEPTED both the spec form (selector length 02, FB1 ch1/ch2 volume) and the old driver's form (length 05), and read back the value. The new form is now hardware-proven on the Phase 88, not just spec-correct.**
 3. **Mute Control Encoding (`0x00` vs `0x70`)**:
    - *Legacy:* Sent `0x00` for mute on, `0x60` for mute off.
    - *New:* Sends `0x70` for mute on, `0x60` for mute off.
@@ -58,6 +61,14 @@ All tests are implemented in [`tests/protocols/AvcDifferentialTests.cpp`](../../
    - *Legacy:* `kMusic = 0x1C` in `AVCDefs.hpp`.
    - *New:* `SubunitType::kMusic = 0x0C`.
    - *Authority:* AV/C General Spec Table 10.2; Linux `ta1394`.
+5. **Stream Format Single Status Support Byte (6 operands vs 7 operands)**:
+   - *Legacy:* Root `AVCStreamFormatCommand` emitted 6 operands for Current format query (`0xC0`), leaving byte 9 to zero-fill quadlet padding.
+   - *New:* Emits 7 operands with `SupportStatus::kNotUsed` (`0xFF`) at byte 9.
+   - *Authority:* TA 2001002 §8.1.1; Linux `ta1394`.
+6. **BridgeCo Extended Plug Info Channel Positions Strictness**:
+   - *Legacy:* `Audio::BeBoB::ParseChannelPositionSections` rejected any response with trailing bytes (`cursor != payload.size()`).
+   - *New:* `BridgeCo::ParseChannelPositions` strictly decodes the declared sections and positions, but safely tolerates trailing quadlet zero-padding bytes.
+   - *Authority:* IEEE 1394 / IEC 61883 FCP block writes require quadlet alignment, which often results in 1-3 bytes of padding at the end of frames. Rejecting valid frames due to quadlet padding caused false discovery failures.
 
 ### B. Open Discrepancies
 - **None.** All differences between the legacy code and new codecs have been fully characterized, traced to authoritative specifications, and validated by unit tests.
