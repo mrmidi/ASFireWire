@@ -146,73 +146,58 @@ Expected<size_t> EncodeCompoundAm824(const CompoundAm824& format, std::span<uint
 }
 
 // ---------------------------------------------------------------------------
-// Commands
+// StreamFormatSingleOperands
 // ---------------------------------------------------------------------------
 
-Expected<CommandFrame> BuildStreamFormatSingleStatus(StreamFormatOpcode opcode,
-                                                     SubunitAddress address,
-                                                     const PlugAddress& plug) noexcept {
-    const auto plugBytes = plug.Encode();
-    const std::array<uint8_t, 7> operands = {
-        static_cast<uint8_t>(StreamFormatSubfunction::kSingle),
-        plugBytes[0], plugBytes[1], plugBytes[2], plugBytes[3], plugBytes[4],
-        static_cast<uint8_t>(SupportStatus::kNotUsed),
-    };
+Expected<void> StreamFormatSingleOperands::Write(OperandWriter& w, CommandType t) const noexcept {
+    if (t == CommandType::kControl) {
+        if (!controlFormat.has_value()) {
+            return Fail(AvcErrorKind::kInvalidArgument);
+        }
+        auto r1 = w.Append(static_cast<uint8_t>(StreamFormatSubfunction::kSingle));
+        if (!r1) return r1;
+        auto plugBytes = plug.Encode();
+        auto r2 = w.Append(plugBytes);
+        if (!r2) return r2;
+        auto r3 = w.Append(static_cast<uint8_t>(SupportStatus::kNotUsed));
+        if (!r3) return r3;
 
-    return CommandFrame::Make(CommandType::kStatus, address, static_cast<Opcode>(opcode), operands);
-}
-
-Expected<CommandFrame> BuildStreamFormatListStatus(StreamFormatOpcode opcode,
-                                                   SubunitAddress address,
-                                                   const PlugAddress& plug,
-                                                   uint8_t index) noexcept {
-    const auto plugBytes = plug.Encode();
-    const std::array<uint8_t, 8> operands = {
-        static_cast<uint8_t>(StreamFormatSubfunction::kList),
-        plugBytes[0], plugBytes[1], plugBytes[2], plugBytes[3], plugBytes[4],
-        static_cast<uint8_t>(SupportStatus::kNotUsed),
-        index,
-    };
-
-    return CommandFrame::Make(CommandType::kStatus, address, static_cast<Opcode>(opcode), operands);
-}
-
-Expected<CommandFrame> BuildStreamFormatSingleControl(StreamFormatOpcode opcode,
-                                                     SubunitAddress address,
-                                                     const PlugAddress& plug,
-                                                     const CompoundAm824& format) noexcept {
-    std::array<uint8_t, kMaxOperandBytes> operands{};
-    operands[0] = static_cast<uint8_t>(StreamFormatSubfunction::kSingle);
-    const auto plugBytes = plug.Encode();
-    std::copy(plugBytes.begin(), plugBytes.end(), operands.begin() + 1);
-    operands[6] = static_cast<uint8_t>(SupportStatus::kNotUsed);
-
-    auto encodeRes = EncodeCompoundAm824(format, std::span<uint8_t>{operands}.subspan(7));
-    if (!encodeRes) {
-        return std::unexpected(encodeRes.error());
+        std::array<uint8_t, 5 + 2 * kMaxCompoundEntries> buf{};
+        auto encRes = EncodeCompoundAm824(*controlFormat, buf);
+        if (!encRes) {
+            return std::unexpected(encRes.error());
+        }
+        return w.Append(std::span<const uint8_t>{buf.data(), *encRes});
     }
 
-    const size_t totalLength = 7u + *encodeRes;
-    return CommandFrame::Make(CommandType::kControl, address, static_cast<Opcode>(opcode),
-                              std::span<const uint8_t>{operands.data(), totalLength});
+    if (t == CommandType::kStatus) {
+        auto r1 = w.Append(static_cast<uint8_t>(StreamFormatSubfunction::kSingle));
+        if (!r1) return r1;
+        auto plugBytes = plug.Encode();
+        auto r2 = w.Append(plugBytes);
+        if (!r2) return r2;
+        return w.Append(static_cast<uint8_t>(SupportStatus::kNotUsed));
+    }
+
+    return Fail(AvcErrorKind::kInvalidArgument);
 }
 
-Expected<StreamFormatSingle> ParseStreamFormatSingle(std::span<const uint8_t> operands) noexcept {
-    if (operands.size() < 7) {
-        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
+Expected<StreamFormatSingle> StreamFormatSingleOperands::Read(std::span<const uint8_t> in) noexcept {
+    if (in.size() < 7) {
+        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
     }
-    if (operands[0] != static_cast<uint8_t>(StreamFormatSubfunction::kSingle)) {
+    if (in[0] != static_cast<uint8_t>(StreamFormatSubfunction::kSingle)) {
         return FailAt(AvcErrorKind::kMalformedOperands, 0);
     }
 
-    auto plugRes = PlugAddress::Decode(operands.subspan(1, 5));
+    auto plugRes = PlugAddress::Decode(in.subspan(1, 5));
     if (!plugRes) {
         return std::unexpected(plugRes.error());
     }
 
     StreamFormat format{};
-    if (operands.size() > 7) {
-        auto formatRes = ParseStreamFormatBlock(operands.subspan(7));
+    if (in.size() > 7) {
+        auto formatRes = ParseStreamFormatBlock(in.subspan(7));
         if (!formatRes) {
             return std::unexpected(formatRes.error());
         }
@@ -221,41 +206,57 @@ Expected<StreamFormatSingle> ParseStreamFormatSingle(std::span<const uint8_t> op
 
     return StreamFormatSingle{
         .plug = *plugRes,
-        .status = static_cast<SupportStatus>(operands[6]),
+        .status = static_cast<SupportStatus>(in[6]),
         .format = format,
     };
 }
 
-Expected<StreamFormatSingle> ParseStreamFormatSingle(const Response& response,
-                                                    ResponseCode expected) noexcept {
-    auto operandsRes = OperandsIf(response, expected);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
+// ---------------------------------------------------------------------------
+// StreamFormatListOperands
+// ---------------------------------------------------------------------------
+
+Expected<void> StreamFormatListOperands::Write(OperandWriter& w, CommandType t) const noexcept {
+    if (t != CommandType::kStatus) {
+        return Fail(AvcErrorKind::kInvalidArgument);
     }
-    return ParseStreamFormatSingle(*operandsRes);
+    auto r1 = w.Append(static_cast<uint8_t>(StreamFormatSubfunction::kList));
+    if (!r1) return r1;
+    auto plugBytes = plug.Encode();
+    auto r2 = w.Append(plugBytes);
+    if (!r2) return r2;
+    auto r3 = w.Append(static_cast<uint8_t>(SupportStatus::kNotUsed));
+    if (!r3) return r3;
+    return w.Append(index);
 }
 
-Expected<StreamFormatListEntry> ParseStreamFormatList(std::span<const uint8_t> operands,
-                                                     uint8_t requestedIndex) noexcept {
-    if (operands.size() < 8) {
-        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
+Expected<StreamFormatListEntry> StreamFormatListOperands::Read(std::span<const uint8_t> in) noexcept {
+    if (in.size() < 8) {
+        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
     }
-    if (operands[0] != static_cast<uint8_t>(StreamFormatSubfunction::kList)) {
+    return Read(in, in[7]);
+}
+
+Expected<StreamFormatListEntry> StreamFormatListOperands::Read(std::span<const uint8_t> in,
+                                                              uint8_t requestedIndex) noexcept {
+    if (in.size() < 8) {
+        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
+    }
+    if (in[0] != static_cast<uint8_t>(StreamFormatSubfunction::kList)) {
         return FailAt(AvcErrorKind::kMalformedOperands, 0);
     }
 
-    auto plugRes = PlugAddress::Decode(operands.subspan(1, 5));
+    auto plugRes = PlugAddress::Decode(in.subspan(1, 5));
     if (!plugRes) {
         return std::unexpected(plugRes.error());
     }
 
-    if (operands[7] != requestedIndex) {
+    if (in[7] != requestedIndex) {
         return FailAt(AvcErrorKind::kMalformedOperands, 7);
     }
 
     StreamFormat format{};
-    if (operands.size() > 8) {
-        auto formatRes = ParseStreamFormatBlock(operands.subspan(8));
+    if (in.size() > 8) {
+        auto formatRes = ParseStreamFormatBlock(in.subspan(8));
         if (!formatRes) {
             return std::unexpected(formatRes.error());
         }
@@ -264,54 +265,10 @@ Expected<StreamFormatListEntry> ParseStreamFormatList(std::span<const uint8_t> o
 
     return StreamFormatListEntry{
         .plug = *plugRes,
-        .status = static_cast<SupportStatus>(operands[6]),
-        .index = operands[7],
+        .status = static_cast<SupportStatus>(in[6]),
+        .index = in[7],
         .format = format,
     };
-}
-
-Expected<StreamFormatListEntry> ParseStreamFormatList(const Response& response,
-                                                     uint8_t requestedIndex) noexcept {
-    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
-    }
-    return ParseStreamFormatList(*operandsRes, requestedIndex);
-}
-
-// ---------------------------------------------------------------------------
-// Typed Command Implementations
-// ---------------------------------------------------------------------------
-
-Expected<CommandFrame> StreamFormatSingleCommand::Encode(CommandType type) const noexcept {
-    if (type == CommandType::kControl) {
-        if (controlFormat.has_value()) {
-            return BuildStreamFormatSingleControl(opcode, address, plug, *controlFormat);
-        }
-        return Fail(AvcErrorKind::kInvalidArgument);
-    }
-    return BuildStreamFormatSingleStatus(opcode, address, plug);
-}
-
-Expected<StreamFormatSingle> StreamFormatSingleCommand::Decode(std::span<const uint8_t> operands) noexcept {
-    return ParseStreamFormatSingle(operands);
-}
-
-Expected<StreamFormatSingle> StreamFormatSingleCommand::Decode(const Response& response) noexcept {
-    return ParseStreamFormatSingle(response);
-}
-
-Expected<CommandFrame> StreamFormatListCommand::Encode(CommandType type) const noexcept {
-    (void)type;
-    return BuildStreamFormatListStatus(opcode, address, plug, index);
-}
-
-Expected<StreamFormatListEntry> StreamFormatListCommand::Decode(std::span<const uint8_t> operands) const noexcept {
-    return ParseStreamFormatList(operands, index);
-}
-
-Expected<StreamFormatListEntry> StreamFormatListCommand::Decode(const Response& response) const noexcept {
-    return ParseStreamFormatList(response, index);
 }
 
 } // namespace ASFW::AVC::Cmd

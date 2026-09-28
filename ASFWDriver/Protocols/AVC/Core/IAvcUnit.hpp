@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include "AvcCommand.hpp"
 #include "AvcError.hpp"
 #include "AvcFrame.hpp"
 #include "AvcTypes.hpp"
@@ -49,6 +50,29 @@ concept AvcCommand = requires(const T& cmd, const Response& response, std::span<
         requires { { cmd.Decode(span) } -> std::same_as<Expected<typename T::Reply>>; }
     );
 };
+
+template <typename Cmd>
+[[nodiscard]] constexpr bool IsResponseCodeAccepted(const Cmd& cmd, ResponseCode code, CommandType ctype) noexcept {
+    (void)cmd;
+    if constexpr (requires { { Cmd::OperandsType::AcceptsResponseCode(code, ctype) } -> std::convertible_to<bool>; }) {
+        return Cmd::OperandsType::AcceptsResponseCode(code, ctype);
+    } else if constexpr (requires { { Cmd::AcceptsResponseCode(code, ctype) } -> std::convertible_to<bool>; }) {
+        return Cmd::AcceptsResponseCode(code, ctype);
+    } else {
+        switch (ctype) {
+            case CommandType::kControl:
+                return code == ResponseCode::kAccepted;
+            case CommandType::kStatus:
+                return code == ResponseCode::kImplementedStable || code == ResponseCode::kInTransition;
+            case CommandType::kSpecificInquiry:
+            case CommandType::kGeneralInquiry:
+                return code == ResponseCode::kImplementedStable;
+            case CommandType::kNotify:
+                return false;
+        }
+        return false;
+    }
+}
 
 class IAvcUnit;
 
@@ -145,12 +169,12 @@ void SendCommand(IAvcUnit& unit, const Cmd& cmd, CommandType type, FW::Generatio
     }
 
     unit.Submit(*encoded, generation,
-                [cmd, cb = std::forward<Callback>(completion)](Expected<Response> response) mutable {
+                [cmd, type, cb = std::forward<Callback>(completion)](Expected<Response> response) mutable {
                     if (!response) {
                         cb(std::unexpected(response.error()));
                         return;
                     }
-                    if (response->code == ResponseCode::kRejected || response->code == ResponseCode::kNotImplemented) {
+                    if (!IsResponseCodeAccepted(cmd, response->code, type)) {
                         cb(std::unexpected(AvcError::Unexpected(response->code)));
                         return;
                     }

@@ -113,27 +113,31 @@ TEST(AvcDifferentialTests, UnitInfo_CommandBytesMatchAppleAndLegacyWithLinuxOpti
     auto legacyEncoded = legacyCdb.Encode();
 
     // 1. Default form: matches Apple AppleFWAudio and legacy ASFW exactly (0 operands, 3 header bytes padded to 4)
-    auto defaultCmd = Cmd::BuildUnitInfoStatus();
-    ASSERT_TRUE(defaultCmd.has_value());
+    Cmd::UnitInfoCommand defaultCmd{};
+    auto defaultFrame = defaultCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(defaultFrame.has_value());
 
     EXPECT_EQ(legacyEncoded.length, 4U);
-    EXPECT_EQ(defaultCmd->WireBytes().size(), 4U);
-    EXPECT_EQ(defaultCmd->Bytes().size(), 3U);
-    EXPECT_EQ(defaultCmd->Operands().size(), 0U);
+    EXPECT_EQ(defaultFrame->WireBytes().size(), 4U);
+    EXPECT_EQ(defaultFrame->Bytes().size(), 3U);
+    EXPECT_EQ(defaultFrame->Operands().size(), 0U);
 
     for (size_t i = 0; i < 4; ++i) {
-        EXPECT_EQ(legacyEncoded.data[i], defaultCmd->WireBytes()[i])
+        EXPECT_EQ(legacyEncoded.data[i], defaultFrame->WireBytes()[i])
             << "Mismatch between legacy and new default UNIT INFO at byte " << i;
     }
 
     // 2. Linux form: ta1394 general.rs:43 (5 dummy operands [0x07, FF, FF, FF, FF])
-    auto linuxCmd = Cmd::BuildUnitInfoStatus(Cmd::UnitInfoStyle::kLinuxFiveDummyOperands);
-    ASSERT_TRUE(linuxCmd.has_value());
-    EXPECT_EQ(linuxCmd->Bytes().size(), 8U);
-    EXPECT_EQ(linuxCmd->WireBytes().size(), 8U);
-    EXPECT_EQ(linuxCmd->Operands().size(), 5U);
+    Cmd::UnitInfoCommand linuxCmd{
+        .operands = Cmd::UnitInfoOperands{Cmd::UnitInfoStyle::kLinuxFiveDummyOperands}
+    };
+    auto linuxFrame = linuxCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(linuxFrame.has_value());
+    EXPECT_EQ(linuxFrame->Bytes().size(), 8U);
+    EXPECT_EQ(linuxFrame->WireBytes().size(), 8U);
+    EXPECT_EQ(linuxFrame->Operands().size(), 5U);
     const std::array<uint8_t, 5> kExpectedLinuxOperands = {0x07, 0xFF, 0xFF, 0xFF, 0xFF};
-    EXPECT_TRUE(std::equal(kExpectedLinuxOperands.begin(), kExpectedLinuxOperands.end(), linuxCmd->Operands().begin()));
+    EXPECT_TRUE(std::equal(kExpectedLinuxOperands.begin(), kExpectedLinuxOperands.end(), linuxFrame->Operands().begin()));
 }
 
 TEST(AvcDifferentialTests, UnitInfo_ResponseParsing) {
@@ -146,7 +150,7 @@ TEST(AvcDifferentialTests, UnitInfo_ResponseParsing) {
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
 
-    auto info = Cmd::ParseUnitInfo(*resp);
+    auto info = Cmd::UnitInfoOperands::Read(resp->operands);
     ASSERT_TRUE(info.has_value());
     EXPECT_EQ(info->unitType, SubunitType::kPanel); // 0x09 per Duet capture
     EXPECT_EQ(info->unitId, 0);
@@ -164,13 +168,16 @@ TEST(AvcDifferentialTests, SubunitInfo_CommandBytesMatchAcrossPages) {
         TestSubunitInfoCommand legacyCmd(*dummyTransport, page);
         auto legacyEncoded = legacyCmd.Cdb().Encode();
 
-        auto newCmd = Cmd::BuildSubunitInfoStatus(page, 0x07);
-        ASSERT_TRUE(newCmd.has_value());
+        Cmd::SubunitInfoCommand newCmd{
+            .operands = Cmd::SubunitInfoOperands{.page = page, .extensionCode = 0x07}
+        };
+        auto newFrame = newCmd.Encode(CommandType::kStatus);
+        ASSERT_TRUE(newFrame.has_value());
 
-        ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
+        ASSERT_EQ(legacyEncoded.length, newFrame->WireBytes().size());
         EXPECT_EQ(legacyEncoded.length, 8U);
         for (size_t i = 0; i < legacyEncoded.length; ++i) {
-            EXPECT_EQ(legacyEncoded.data[i], newCmd->WireBytes()[i]) << "Mismatch at byte " << i << " for page " << int(page);
+            EXPECT_EQ(legacyEncoded.data[i], newFrame->WireBytes()[i]) << "Mismatch at byte " << i << " for page " << int(page);
         }
     }
 }
@@ -203,7 +210,7 @@ TEST(AvcDifferentialTests, SubunitInfo_ResponseParsingAndEnumParity) {
 
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
-    auto newParsed = Cmd::ParseSubunitInfo(*resp);
+    auto newParsed = Cmd::SubunitInfoOperands::Read(resp->operands);
     ASSERT_TRUE(newParsed.has_value());
     ASSERT_EQ(newParsed->entryCount, 2U);
     EXPECT_EQ(newParsed->entries[0].type, SubunitType::kAudio);
@@ -226,13 +233,14 @@ TEST(AvcDifferentialTests, UnitPlugInfo_CommandBytesMatch) {
     legacyCmd.Submit([](Protocols::AVC::AVCResult, const Protocols::AVC::UnitPlugCounts&) {});
     auto legacyEncoded = submitter.lastCdb.Encode();
 
-    auto newCmd = Cmd::BuildUnitPlugInfoStatus(Cmd::UnitPlugInfoKind::kIsochronousExternal);
-    ASSERT_TRUE(newCmd.has_value());
+    Cmd::UnitPlugInfoIsoExtCommand newCmd{};
+    auto newFrame = newCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(newFrame.has_value());
 
-    ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
+    ASSERT_EQ(legacyEncoded.length, newFrame->WireBytes().size());
     EXPECT_EQ(legacyEncoded.length, 8U);
     for (size_t i = 0; i < legacyEncoded.length; ++i) {
-        EXPECT_EQ(legacyEncoded.data[i], newCmd->WireBytes()[i]) << "Mismatch at byte " << i;
+        EXPECT_EQ(legacyEncoded.data[i], newFrame->WireBytes()[i]) << "Mismatch at byte " << i;
     }
 }
 
@@ -255,7 +263,7 @@ TEST(AvcDifferentialTests, UnitPlugInfo_ResponseParsing) {
 
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
-    auto newPlugs = Cmd::ParseUnitIsochronousExternalPlugs(*resp);
+    auto newPlugs = Cmd::UnitPlugInfoIsoExtOperands::Read(resp->operands);
     ASSERT_TRUE(newPlugs.has_value());
 
     EXPECT_EQ(legacyCounts.isoInputPlugs, newPlugs->isochronousInputs);
@@ -274,7 +282,15 @@ TEST(AvcDifferentialTests, PlugSignalFormat_StatusQueryBytesMatch) {
     // Input plug 0
     TestSignalFormatCommand legacyIn0(*dummyTransport, 0, true);
     auto legacyIn0Encoded = legacyIn0.Cdb().Encode();
-    auto newIn0 = Cmd::BuildPlugSignalFormatStatus(Cmd::PlugSignalDirection::kInput, 0, Cmd::SignalFormatQuery::kAllWildcard);
+    Cmd::PlugSignalFormatCommand newIn0Cmd{
+        .operands = Cmd::PlugSignalFormatOperands{
+            .direction = Cmd::PlugSignalDirection::kInput,
+            .plugId = 0,
+            .format = std::nullopt,
+            .query = Cmd::SignalFormatQuery::kAllWildcard,
+        }
+    };
+    auto newIn0 = newIn0Cmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(newIn0.has_value());
     ASSERT_EQ(legacyIn0Encoded.length, newIn0->WireBytes().size());
     for (size_t i = 0; i < legacyIn0Encoded.length; ++i) {
@@ -284,7 +300,15 @@ TEST(AvcDifferentialTests, PlugSignalFormat_StatusQueryBytesMatch) {
     // Output plug 0
     TestSignalFormatCommand legacyOut0(*dummyTransport, 0, false);
     auto legacyOut0Encoded = legacyOut0.Cdb().Encode();
-    auto newOut0 = Cmd::BuildPlugSignalFormatStatus(Cmd::PlugSignalDirection::kOutput, 0, Cmd::SignalFormatQuery::kAllWildcard);
+    Cmd::PlugSignalFormatCommand newOut0Cmd{
+        .operands = Cmd::PlugSignalFormatOperands{
+            .direction = Cmd::PlugSignalDirection::kOutput,
+            .plugId = 0,
+            .format = std::nullopt,
+            .query = Cmd::SignalFormatQuery::kAllWildcard,
+        }
+    };
+    auto newOut0 = newOut0Cmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(newOut0.has_value());
     ASSERT_EQ(legacyOut0Encoded.length, newOut0->WireBytes().size());
     for (size_t i = 0; i < legacyOut0Encoded.length; ++i) {
@@ -314,12 +338,19 @@ TEST(AvcDifferentialTests, PlugSignalFormat_ControlSetBytesMatchAcrossRates) {
         TestSignalFormatCommand legacyCmd(*dummyTransport, 0, true, r.legacyRate);
         auto legacyEncoded = legacyCmd.Cdb().Encode();
 
-        auto newCmd = Cmd::BuildPlugSignalFormatControl(Cmd::PlugSignalDirection::kInput, Cmd::Am824SignalFormat(0, r.sfc));
-        ASSERT_TRUE(newCmd.has_value());
+        Cmd::PlugSignalFormatCommand newCmd{
+            .operands = Cmd::PlugSignalFormatOperands{
+                .direction = Cmd::PlugSignalDirection::kInput,
+                .plugId = 0,
+                .format = Cmd::Am824SignalFormat(0, r.sfc),
+            }
+        };
+        auto newFrame = newCmd.Encode(CommandType::kControl);
+        ASSERT_TRUE(newFrame.has_value());
 
-        ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
+        ASSERT_EQ(legacyEncoded.length, newFrame->WireBytes().size());
         for (size_t i = 0; i < legacyEncoded.length; ++i) {
-            EXPECT_EQ(legacyEncoded.data[i], newCmd->WireBytes()[i]) << "Mismatch for rate " << int(static_cast<uint8_t>(r.sfc));
+            EXPECT_EQ(legacyEncoded.data[i], newFrame->WireBytes()[i]) << "Mismatch for rate " << int(static_cast<uint8_t>(r.sfc));
         }
     }
 }
@@ -329,7 +360,7 @@ TEST(AvcDifferentialTests, PlugSignalFormat_ResponseParsing) {
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
 
-    auto fmt = Cmd::ParsePlugSignalFormat(*resp, ResponseCode::kImplementedStable);
+    auto fmt = Cmd::PlugSignalFormatOperands::Read(resp->operands);
     ASSERT_TRUE(fmt.has_value());
     EXPECT_EQ(fmt->plugId, 0);
     EXPECT_EQ(fmt->fmt, 0x90);
@@ -350,13 +381,20 @@ TEST(AvcDifferentialTests, RootSignalFormatCommand_OutputPlugMatches) {
         TestRootOutputPlugSignalFormatCommand legacyCmd(*rig.Transport(), plug);
         auto legacyEncoded = legacyCmd.Cdb().Encode();
 
-        auto newCmd = Cmd::BuildPlugSignalFormatStatus(
-            Cmd::PlugSignalDirection::kOutput, plug, Cmd::SignalFormatQuery::kAllWildcard);
-        ASSERT_TRUE(newCmd.has_value());
+        Cmd::PlugSignalFormatCommand newCmd{
+            .operands = Cmd::PlugSignalFormatOperands{
+                .direction = Cmd::PlugSignalDirection::kOutput,
+                .plugId = plug,
+                .format = std::nullopt,
+                .query = Cmd::SignalFormatQuery::kAllWildcard,
+            }
+        };
+        auto newFrame = newCmd.Encode(CommandType::kStatus);
+        ASSERT_TRUE(newFrame.has_value());
 
-        ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
+        ASSERT_EQ(legacyEncoded.length, newFrame->WireBytes().size());
         for (size_t i = 0; i < legacyEncoded.length; ++i) {
-            EXPECT_EQ(legacyEncoded.data[i], newCmd->WireBytes()[i]) << "Mismatch at byte " << i;
+            EXPECT_EQ(legacyEncoded.data[i], newFrame->WireBytes()[i]) << "Mismatch at byte " << i;
         }
     }
 
@@ -381,7 +419,7 @@ TEST(AvcDifferentialTests, RootSignalFormatCommand_OutputPlugMatches) {
 
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
-    auto newFmt = Cmd::ParsePlugSignalFormat(*resp, ResponseCode::kImplementedStable);
+    auto newFmt = Cmd::PlugSignalFormatOperands::Read(resp->operands);
     ASSERT_TRUE(newFmt.has_value());
     EXPECT_EQ(newFmt->fmt, legacyFmt.formatHierarchy);
     EXPECT_EQ(newFmt->fdf[0], legacyFmt.formatSync);
@@ -423,11 +461,14 @@ TEST(AvcDifferentialTests, StreamFormatList_CommandBytesMatchBeBoBDiscovery) {
             auto newDir = (dir == Audio::BeBoB::PlugDirection::kInput)
                               ? Cmd::PlugDirection::kInput
                               : Cmd::PlugDirection::kOutput;
-            auto newCmd = Cmd::BuildStreamFormatListStatus(
-                Cmd::StreamFormatOpcode::kStreamFormatSupport,
-                SubunitAddress::Unit(),
-                Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0),
-                idx);
+            auto newCmd = Command<Cmd::StreamFormatListOperands>{
+                .address = SubunitAddress::Unit(),
+                .operands = Cmd::StreamFormatListOperands{
+                    .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
+                    .plug = Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0),
+                    .index = idx,
+                },
+            }.Encode(CommandType::kStatus);
             ASSERT_TRUE(newCmd.has_value());
 
             ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
@@ -457,7 +498,7 @@ TEST(AvcDifferentialTests, StreamFormatList_ResponseParsingComparison) {
     // New parse:
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
-    auto newEntry = Cmd::ParseStreamFormatList(*resp, 0);
+    auto newEntry = Cmd::StreamFormatListOperands::Read(resp->operands, 0);
     ASSERT_TRUE(newEntry.has_value());
     EXPECT_EQ(newEntry->index, 0);
     EXPECT_EQ(newEntry->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
@@ -484,8 +525,13 @@ TEST(AvcDifferentialTests, RootStreamFormatCommand_CurrentFormatMatches) {
             auto newDir = isInput ? Cmd::PlugDirection::kInput : Cmd::PlugDirection::kOutput;
             auto newOpcode = useAlt ? Cmd::StreamFormatOpcode::kStreamFormatSupport
                                     : Cmd::StreamFormatOpcode::kExtendedStreamFormat;
-            auto newCmd = Cmd::BuildStreamFormatSingleStatus(
-                newOpcode, SubunitAddress::Unit(), Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0));
+            auto newCmd = Command<Cmd::StreamFormatSingleOperands>{
+                .address = SubunitAddress::Unit(),
+                .operands = Cmd::StreamFormatSingleOperands{
+                    .opcode = newOpcode,
+                    .plug = Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0),
+                },
+            }.Encode(CommandType::kStatus);
             ASSERT_TRUE(newCmd.has_value());
 
             ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
@@ -523,8 +569,14 @@ TEST(AvcDifferentialTests, RootStreamFormatCommand_SupportedListMatches) {
                 auto newDir = isInput ? Cmd::PlugDirection::kInput : Cmd::PlugDirection::kOutput;
                 auto newOpcode = useAlt ? Cmd::StreamFormatOpcode::kStreamFormatSupport
                                         : Cmd::StreamFormatOpcode::kExtendedStreamFormat;
-                auto newCmd = Cmd::BuildStreamFormatListStatus(
-                    newOpcode, SubunitAddress::Unit(), Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0), idx);
+                auto newCmd = Command<Cmd::StreamFormatListOperands>{
+                    .address = SubunitAddress::Unit(),
+                    .operands = Cmd::StreamFormatListOperands{
+                        .opcode = newOpcode,
+                        .plug = Cmd::PlugAddress::UnitPlug(newDir, Cmd::UnitPlugType::kPcr, 0),
+                        .index = idx,
+                    },
+                }.Encode(CommandType::kStatus);
                 ASSERT_TRUE(newCmd.has_value());
 
                 ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
@@ -567,7 +619,7 @@ TEST(AvcDifferentialTests, RootStreamFormatCommand_ResponseParsingMatches) {
 
     auto newResp = ParseResponse(duetSingleResp);
     ASSERT_TRUE(newResp.has_value());
-    auto newParsed = Cmd::ParseStreamFormatSingle(*newResp, ResponseCode::kImplementedStable);
+    auto newParsed = Cmd::StreamFormatSingleOperands::Read(newResp->operands);
     ASSERT_TRUE(newParsed.has_value());
     EXPECT_EQ(newParsed->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
     EXPECT_EQ(newParsed->format.compound.rate, StreamFormatRate::k48000);
@@ -595,7 +647,13 @@ TEST(AvcDifferentialTests, BridgeCoExtendedPlugInfo_CommandBytesMatchBeBoBDiscov
         auto legPt = Audio::BeBoB::BuildReadOnlyProbeCommand(
             Audio::BeBoB::ReadOnlyProbeCommand::kIsochPlugType, dir, 0);
         auto legPtEnc = legPt.Encode();
-        auto newPt = BridgeCo::BuildExtendedPlugInfoStatus(SubunitAddress::Unit(), plugAddr, BridgeCo::InfoType::kPlugType);
+        auto newPt = Command<BridgeCo::ExtendedPlugInfoOperands>{
+            .address = SubunitAddress::Unit(),
+            .operands = BridgeCo::ExtendedPlugInfoOperands{
+                .plug = plugAddr,
+                .type = BridgeCo::InfoType::kPlugType,
+            },
+        }.Encode(CommandType::kStatus);
         ASSERT_TRUE(newPt.has_value());
         ASSERT_EQ(legPtEnc.length, newPt->WireBytes().size());
         for (size_t i = 0; i < legPtEnc.length; ++i) {
@@ -606,7 +664,13 @@ TEST(AvcDifferentialTests, BridgeCoExtendedPlugInfo_CommandBytesMatchBeBoBDiscov
         auto legCp = Audio::BeBoB::BuildReadOnlyProbeCommand(
             Audio::BeBoB::ReadOnlyProbeCommand::kChannelPositions, dir, 0);
         auto legCpEnc = legCp.Encode();
-        auto newCp = BridgeCo::BuildExtendedPlugInfoStatus(SubunitAddress::Unit(), plugAddr, BridgeCo::InfoType::kChannelPositions);
+        auto newCp = Command<BridgeCo::ExtendedPlugInfoOperands>{
+            .address = SubunitAddress::Unit(),
+            .operands = BridgeCo::ExtendedPlugInfoOperands{
+                .plug = plugAddr,
+                .type = BridgeCo::InfoType::kChannelPositions,
+            },
+        }.Encode(CommandType::kStatus);
         ASSERT_TRUE(newCp.has_value());
         ASSERT_EQ(legCpEnc.length, newCp->WireBytes().size());
         for (size_t i = 0; i < legCpEnc.length; ++i) {
@@ -618,8 +682,14 @@ TEST(AvcDifferentialTests, BridgeCoExtendedPlugInfo_CommandBytesMatchBeBoBDiscov
             auto legSec = Audio::BeBoB::BuildReadOnlyProbeCommand(
                 Audio::BeBoB::ReadOnlyProbeCommand::kSectionType, dir, sec);
             auto legSecEnc = legSec.Encode();
-            auto newSec = BridgeCo::BuildExtendedPlugInfoStatus(
-                SubunitAddress::Unit(), plugAddr, BridgeCo::InfoType::kClusterInfo, static_cast<uint8_t>(sec + 1));
+            auto newSec = Command<BridgeCo::ExtendedPlugInfoOperands>{
+                .address = SubunitAddress::Unit(),
+                .operands = BridgeCo::ExtendedPlugInfoOperands{
+                    .plug = plugAddr,
+                    .type = BridgeCo::InfoType::kClusterInfo,
+                    .extra = static_cast<uint8_t>(sec + 1),
+                },
+            }.Encode(CommandType::kStatus);
             ASSERT_TRUE(newSec.has_value());
             ASSERT_EQ(legSecEnc.length, newSec->WireBytes().size());
             for (size_t i = 0; i < legSecEnc.length; ++i) {
@@ -651,7 +721,9 @@ TEST(AvcDifferentialTests, BridgeCoExtendedPlugInfo_ChannelPositionsStrictnessDi
 
     auto respExact = ParseResponse(exactFrame);
     ASSERT_TRUE(respExact.has_value());
-    auto newExact = BridgeCo::ParseChannelPositions(*respExact);
+    auto replyExact = BridgeCo::ExtendedPlugInfoOperands::Read(respExact->operands, BridgeCo::InfoType::kChannelPositions);
+    ASSERT_TRUE(replyExact.has_value());
+    auto newExact = replyExact->AsChannelPositions();
     ASSERT_TRUE(newExact.has_value());
     EXPECT_EQ(newExact->sectionCount, 1U);
     EXPECT_EQ(newExact->sections[0].positionCount, 2U);
@@ -674,7 +746,10 @@ TEST(AvcDifferentialTests, BridgeCoExtendedPlugInfo_ChannelPositionsStrictnessDi
 
     auto respPadded = ParseResponse(paddedFrame);
     ASSERT_TRUE(respPadded.has_value());
-    auto newPadded = BridgeCo::ParseChannelPositions(*respPadded);
+    auto replyPadded = BridgeCo::ExtendedPlugInfoOperands::Read(respPadded->operands, BridgeCo::InfoType::kChannelPositions);
+    ASSERT_TRUE(replyPadded.has_value())
+        << "New BridgeCo::ExtendedPlugInfoOperands::Read safely accepts trailing quadlet padding bytes";
+    auto newPadded = replyPadded->AsChannelPositions();
     ASSERT_TRUE(newPadded.has_value())
         << "New BridgeCo::ParseChannelPositions safely accepts trailing quadlet padding bytes";
     EXPECT_EQ(newPadded->sectionCount, 1U);
@@ -701,7 +776,13 @@ TEST(AvcDifferentialTests, AudioFunctionBlock_SelectorCommandBytesMatch) {
             legacyCmd.Submit([](Protocols::AVC::AVCResult, const std::vector<uint8_t>&) {});
             auto legacyEncoded = submitter.lastCdb.Encode();
 
-            auto newCmd = Cmd::BuildSelectorControl(kAudioSubunit0, fbId, inputPlug);
+            auto newCmd = Command<Cmd::SelectorOperands>{
+                .address = kAudioSubunit0,
+                .operands = Cmd::SelectorOperands{
+                    .functionBlockId = fbId,
+                    .inputPlug = inputPlug,
+                },
+            }.Encode(CommandType::kControl);
             ASSERT_TRUE(newCmd.has_value());
 
             ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
@@ -736,7 +817,10 @@ TEST(AvcDifferentialTests, AudioFunctionBlock_FeatureMuteAndVolume_IdentifiesInt
     // Phase 88 ACCEPTED both the spec form (selector length 02, FB1 ch1/ch2 volume)
     // and the old driver's form (length 05), and read back the value.
     // The new form is now hardware-proven on the Phase 88, not just spec-correct.
-    auto newMute = Cmd::BuildFeatureMuteControl(kAudioSubunit0, 1, 0x00, false);
+    auto newMute = Command<Cmd::FeatureOperands>{
+        .address = kAudioSubunit0,
+        .operands = Cmd::FeatureOperands::Mute(1, 0x00, false),
+    }.Encode(CommandType::kControl);
     ASSERT_TRUE(newMute.has_value());
 
     // Both commands have the same total wire length (12 bytes padded)
@@ -768,7 +852,10 @@ TEST(AvcDifferentialTests, AudioFunctionBlock_FeatureMuteAndVolume_IdentifiesInt
     legacyVol.Submit([](Protocols::AVC::AVCResult, const std::vector<uint8_t>&) {});
     auto legacyVolEncoded = submitter.lastCdb.Encode();
 
-    auto newVol = Cmd::BuildFeatureVolumeControl(kAudioSubunit0, 1, 0x00, 0x0000);
+    auto newVol = Command<Cmd::FeatureOperands>{
+        .address = kAudioSubunit0,
+        .operands = Cmd::FeatureOperands::Volume(1, 0x00, AvcVolume::FromRaw(0x0000)),
+    }.Encode(CommandType::kControl);
     ASSERT_TRUE(newVol.has_value());
 
     // Intended difference at operand 3: legacy sent 5; new sends 2 per spec §10.3.
@@ -793,11 +880,13 @@ TEST(AvcDifferentialTests, ApogeeVendorDependent_CommandBytesMatch) {
     // [01][FF][00][OUI 3][Vendor Data 6]
     // Where Vendor Data is Magic (3) + Code (1) + Args (2)
     std::span<const uint8_t> vendorPayload{baseOperands.data() + 3, baseOperands.size() - 3};
-    auto newVendorCmd = Cmd::BuildVendorDependent(
-        CommandType::kStatus,
-        SubunitAddress::Unit(),
-        CompanyId{0x00, 0x03, 0xDB},
-        vendorPayload);
+    auto newVendorCmd = Command<Cmd::RawVendorDependentOperands>{
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::RawVendorDependentOperands{
+            CompanyId{0x00, 0x03, 0xDB},
+            vendorPayload,
+        },
+    }.Encode(CommandType::kStatus);
     ASSERT_TRUE(newVendorCmd.has_value());
 
     // Unpadded size: 3 header + 3 OUI + 6 vendor data = 12 bytes

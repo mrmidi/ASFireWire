@@ -74,7 +74,7 @@ TEST(AvcFixtureTests, Phase88UnitInfoParsesCorrectly) {
     auto resp = ParseResponse(Testing::Phase88Data::kResp_0_unit_info);
     ASSERT_TRUE(resp.has_value());
 
-    auto info = Cmd::ParseUnitInfo(*resp);
+    auto info = Cmd::UnitInfoOperands::Read(resp->operands);
     ASSERT_TRUE(info.has_value());
     EXPECT_EQ(info->unitType, SubunitType::kAudio);
     EXPECT_EQ(info->unitId, 0x07);
@@ -86,7 +86,7 @@ TEST(AvcFixtureTests, Phase88UnitInfoParsesCorrectly) {
 TEST(AvcFixtureTests, Phase88SubunitInfoParsesCorrectly) {
     auto resp0 = ParseResponse(Testing::Phase88Data::kResp_1_subunit_info_page_0);
     ASSERT_TRUE(resp0.has_value());
-    auto sub0 = Cmd::ParseSubunitInfo(*resp0);
+    auto sub0 = Cmd::SubunitInfoOperands::Read(resp0->operands);
     ASSERT_TRUE(sub0.has_value());
     EXPECT_EQ(sub0->page, 0);
     EXPECT_EQ(sub0->entryCount, 2U);
@@ -98,16 +98,16 @@ TEST(AvcFixtureTests, Phase88SubunitInfoParsesCorrectly) {
     auto resp1 = ParseResponse(Testing::Phase88Data::kResp_2_subunit_info_page_1);
     ASSERT_TRUE(resp1.has_value());
     EXPECT_EQ(resp1->code, ResponseCode::kNotImplemented);
-    auto sub1 = Cmd::ParseSubunitInfo(*resp1);
-    ASSERT_FALSE(sub1.has_value());
-    EXPECT_EQ(sub1.error().kind, AvcErrorKind::kUnexpectedResponse);
-    EXPECT_EQ(sub1.error().response, ResponseCode::kNotImplemented);
+    auto ops1 = OperandsIf(*resp1, ResponseCode::kImplementedStable);
+    ASSERT_FALSE(ops1.has_value());
+    EXPECT_EQ(ops1.error().kind, AvcErrorKind::kUnexpectedResponse);
+    EXPECT_EQ(ops1.error().response, ResponseCode::kNotImplemented);
 }
 
 TEST(AvcFixtureTests, Phase88PlugInfoParsesCorrectly) {
     auto respUnit0 = ParseResponse(Testing::Phase88Data::kResp_3_plug_info_unit_00);
     ASSERT_TRUE(respUnit0.has_value());
-    auto plugsIsoExt = Cmd::ParseUnitIsochronousExternalPlugs(*respUnit0);
+    auto plugsIsoExt = Cmd::UnitPlugInfoIsoExtOperands::Read(respUnit0->operands);
     ASSERT_TRUE(plugsIsoExt.has_value());
     EXPECT_EQ(plugsIsoExt->isochronousInputs, 2);
     EXPECT_EQ(plugsIsoExt->isochronousOutputs, 2);
@@ -116,21 +116,21 @@ TEST(AvcFixtureTests, Phase88PlugInfoParsesCorrectly) {
 
     auto respUnit1 = ParseResponse(Testing::Phase88Data::kResp_4_plug_info_unit_01);
     ASSERT_TRUE(respUnit1.has_value());
-    auto plugsAsync = Cmd::ParseUnitAsynchronousPlugs(*respUnit1);
+    auto plugsAsync = Cmd::UnitPlugInfoAsyncOperands::Read(respUnit1->operands);
     ASSERT_TRUE(plugsAsync.has_value());
     EXPECT_EQ(plugsAsync->asynchronousInputs, 0);
     EXPECT_EQ(plugsAsync->asynchronousOutputs, 0);
 
     auto respAudio = ParseResponse(Testing::Phase88Data::kResp_5_plug_info_audio_0);
     ASSERT_TRUE(respAudio.has_value());
-    auto audioPlugs = Cmd::ParseSubunitPlugs(*respAudio);
+    auto audioPlugs = Cmd::SubunitPlugInfoOperands::Read(respAudio->operands);
     ASSERT_TRUE(audioPlugs.has_value());
     EXPECT_EQ(audioPlugs->destinationPlugs, 8);
     EXPECT_EQ(audioPlugs->sourcePlugs, 11);
 
     auto respMusic = ParseResponse(Testing::Phase88Data::kResp_6_plug_info_music_0);
     ASSERT_TRUE(respMusic.has_value());
-    auto musicPlugs = Cmd::ParseSubunitPlugs(*respMusic);
+    auto musicPlugs = Cmd::SubunitPlugInfoOperands::Read(respMusic->operands);
     ASSERT_TRUE(musicPlugs.has_value());
     EXPECT_EQ(musicPlugs->destinationPlugs, 10);
     EXPECT_EQ(musicPlugs->sourcePlugs, 6);
@@ -139,7 +139,7 @@ TEST(AvcFixtureTests, Phase88PlugInfoParsesCorrectly) {
 TEST(AvcFixtureTests, Phase88PlugSignalFormatParsesCorrectly) {
     auto resp = ParseResponse(Testing::Phase88Data::kResp_7_plug_signal_format_in_0_all_wildcard);
     ASSERT_TRUE(resp.has_value());
-    auto fmt = Cmd::ParsePlugSignalFormat(*resp, ResponseCode::kImplementedStable);
+    auto fmt = Cmd::PlugSignalFormatOperands::Read(resp->operands);
     ASSERT_TRUE(fmt.has_value());
     EXPECT_EQ(fmt->plugId, 0);
     EXPECT_EQ(fmt->fmt, 0x90);  // AM824
@@ -166,7 +166,7 @@ TEST(AvcFixtureTests, Phase88StreamFormatListHighLevelParsing) {
             if (idx <= 4) {
                 auto resp = ParseResponse(rec.response);
                 ASSERT_TRUE(resp.has_value());
-                auto entry = Cmd::ParseStreamFormatList(*resp, idx);
+                auto entry = Cmd::StreamFormatListOperands::Read(resp->operands, idx);
                 ASSERT_TRUE(entry.has_value()) << "Failed to parse in list entry " << int(idx);
                 EXPECT_EQ(entry->index, idx);
                 EXPECT_EQ(entry->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
@@ -181,7 +181,7 @@ TEST(AvcFixtureTests, Phase88StreamFormatListHighLevelParsing) {
             if (idx <= 4) {
                 auto resp = ParseResponse(rec.response);
                 ASSERT_TRUE(resp.has_value());
-                auto entry = Cmd::ParseStreamFormatList(*resp, idx);
+                auto entry = Cmd::StreamFormatListOperands::Read(resp->operands, idx);
                 ASSERT_TRUE(entry.has_value()) << "Failed to parse out list entry " << int(idx);
                 EXPECT_EQ(entry->index, idx);
                 EXPECT_EQ(entry->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
@@ -194,7 +194,7 @@ TEST(AvcFixtureTests, Phase88StreamFormatListHighLevelParsing) {
         } else if (name == "stream_format_0x2F_single_unit_iso_in_0") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto single = Cmd::ParseStreamFormatSingle(*resp, ResponseCode::kImplementedStable);
+            auto single = Cmd::StreamFormatSingleOperands::Read(resp->operands);
             ASSERT_TRUE(single.has_value());
             EXPECT_EQ(single->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
             EXPECT_EQ(single->format.compound.rate, StreamFormatRate::k48000);
@@ -214,37 +214,49 @@ TEST(AvcFixtureTests, Phase88BridgeCoExtensionsParseCorrectly) {
         if (std::string_view(rec.name) == "bridgeco_plug_info_plug_type_in_0") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto pt = BridgeCo::ParsePlugType(*resp);
+            auto reply = BridgeCo::ExtendedPlugInfoOperands::Read(resp->operands, BridgeCo::InfoType::kPlugType);
+            ASSERT_TRUE(reply.has_value());
+            auto pt = reply->AsPlugType();
             ASSERT_TRUE(pt.has_value());
             EXPECT_EQ(*pt, BridgeCo::PlugType::kIsochronousStream);
         } else if (std::string_view(rec.name) == "bridgeco_plug_info_channel_count_in_0") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto cc = BridgeCo::ParseChannelCount(*resp);
+            auto reply = BridgeCo::ExtendedPlugInfoOperands::Read(resp->operands, BridgeCo::InfoType::kChannelCount);
+            ASSERT_TRUE(reply.has_value());
+            auto cc = reply->AsChannelCount();
             ASSERT_TRUE(cc.has_value());
             EXPECT_EQ(*cc, 11);
         } else if (std::string_view(rec.name) == "bridgeco_plug_info_channel_positions_in_0") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto pos = BridgeCo::ParseChannelPositions(*resp);
+            auto reply = BridgeCo::ExtendedPlugInfoOperands::Read(resp->operands, BridgeCo::InfoType::kChannelPositions);
+            ASSERT_TRUE(reply.has_value());
+            auto pos = reply->AsChannelPositions();
             ASSERT_TRUE(pos.has_value());
             EXPECT_EQ(pos->sectionCount, 3);
         } else if (std::string_view(rec.name) == "bridgeco_cluster_info_in_0_sec_1") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto pt = BridgeCo::ParseClusterPortType(*resp, 1);
+            auto reply = BridgeCo::ExtendedPlugInfoOperands::Read(resp->operands, BridgeCo::InfoType::kClusterInfo);
+            ASSERT_TRUE(reply.has_value());
+            auto pt = reply->AsClusterPortType(1);
             ASSERT_TRUE(pt.has_value());
             EXPECT_EQ(*pt, BridgeCo::PortType::kLine);
         } else if (std::string_view(rec.name) == "bridgeco_cluster_info_in_0_sec_2") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto pt = BridgeCo::ParseClusterPortType(*resp, 2);
+            auto reply = BridgeCo::ExtendedPlugInfoOperands::Read(resp->operands, BridgeCo::InfoType::kClusterInfo);
+            ASSERT_TRUE(reply.has_value());
+            auto pt = reply->AsClusterPortType(2);
             ASSERT_TRUE(pt.has_value());
             EXPECT_EQ(*pt, BridgeCo::PortType::kSpdif);
         } else if (std::string_view(rec.name) == "bridgeco_cluster_info_in_0_sec_3") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto pt = BridgeCo::ParseClusterPortType(*resp, 3);
+            auto reply = BridgeCo::ExtendedPlugInfoOperands::Read(resp->operands, BridgeCo::InfoType::kClusterInfo);
+            ASSERT_TRUE(reply.has_value());
+            auto pt = reply->AsClusterPortType(3);
             ASSERT_TRUE(pt.has_value());
             EXPECT_EQ(*pt, BridgeCo::PortType::kMidi);
         }
@@ -265,22 +277,22 @@ TEST(AvcFixtureTests, Phase88FunctionBlocksParseCorrectly) {
         } else if (std::string_view(rec.name) == "function_block_selector_status_fb_1") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto sel = Cmd::ParseSelector(*resp, ResponseCode::kImplementedStable);
+            auto sel = Cmd::SelectorOperands::Read(resp->operands);
             ASSERT_TRUE(sel.has_value());
             EXPECT_EQ(sel->functionBlockId, 1);
             EXPECT_EQ(sel->inputPlug, 0);
         } else if (std::string_view(rec.name) == "function_block_feature_mute_status_fb_1") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto mute = Cmd::ParseFeatureMute(*resp, ResponseCode::kImplementedStable);
+            auto mute = Cmd::FeatureOperands::Read(resp->operands);
             ASSERT_TRUE(mute.has_value());
-            EXPECT_FALSE(*mute);  // unmuted (0x60 = false)
+            EXPECT_FALSE(mute->AsMute());  // unmuted (0x60 = false)
         } else if (std::string_view(rec.name) == "function_block_feature_volume_current_fb_1") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto vol = Cmd::ParseFeatureVolume(*resp, ResponseCode::kImplementedStable);
+            auto vol = Cmd::FeatureOperands::Read(resp->operands);
             ASSERT_TRUE(vol.has_value());
-            EXPECT_EQ(*vol, 0x0000);  // 0 dB
+            EXPECT_EQ(vol->AsVolume(), AvcVolume::FromRaw(0x0000));  // 0 dB
         }
     }
 }
@@ -354,7 +366,7 @@ TEST(AvcFixtureTests, DuetUnitInfoParsesCorrectly) {
     auto resp = ParseResponse(Testing::DuetData::kResp_0_unit_info);
     ASSERT_TRUE(resp.has_value());
 
-    auto info = Cmd::ParseUnitInfo(*resp);
+    auto info = Cmd::UnitInfoOperands::Read(resp->operands);
     ASSERT_TRUE(info.has_value());
     EXPECT_EQ(info->unitType, SubunitType::kAudio);
     EXPECT_EQ(info->unitId, 0x00);
@@ -366,7 +378,7 @@ TEST(AvcFixtureTests, DuetUnitInfoParsesCorrectly) {
 TEST(AvcFixtureTests, DuetPlugInfoParsesCorrectly) {
     auto respUnit0 = ParseResponse(Testing::DuetData::kResp_3_plug_info_unit_00);
     ASSERT_TRUE(respUnit0.has_value());
-    auto plugsIsoExt = Cmd::ParseUnitIsochronousExternalPlugs(*respUnit0);
+    auto plugsIsoExt = Cmd::UnitPlugInfoIsoExtOperands::Read(respUnit0->operands);
     ASSERT_TRUE(plugsIsoExt.has_value());
     EXPECT_EQ(plugsIsoExt->isochronousInputs, 1);
     EXPECT_EQ(plugsIsoExt->isochronousOutputs, 1);
@@ -375,14 +387,14 @@ TEST(AvcFixtureTests, DuetPlugInfoParsesCorrectly) {
 
     auto respAudio = ParseResponse(Testing::DuetData::kResp_5_plug_info_audio_0);
     ASSERT_TRUE(respAudio.has_value());
-    auto audioPlugs = Cmd::ParseSubunitPlugs(*respAudio);
+    auto audioPlugs = Cmd::SubunitPlugInfoOperands::Read(respAudio->operands);
     ASSERT_TRUE(audioPlugs.has_value());
     EXPECT_EQ(audioPlugs->destinationPlugs, 1);
     EXPECT_EQ(audioPlugs->sourcePlugs, 1);
 
     auto respMusic = ParseResponse(Testing::DuetData::kResp_6_plug_info_music_0);
     ASSERT_TRUE(respMusic.has_value());
-    auto musicPlugs = Cmd::ParseSubunitPlugs(*respMusic);
+    auto musicPlugs = Cmd::SubunitPlugInfoOperands::Read(respMusic->operands);
     ASSERT_TRUE(musicPlugs.has_value());
     EXPECT_EQ(musicPlugs->destinationPlugs, 3);
     EXPECT_EQ(musicPlugs->sourcePlugs, 3);
@@ -401,7 +413,7 @@ TEST(AvcFixtureTests, DuetExtendedStreamFormatParsesCorrectly) {
             EXPECT_EQ(resp->opcode, static_cast<Opcode>(0xBF));
             EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
 
-            auto single = Cmd::ParseStreamFormatSingle(*resp, ResponseCode::kImplementedStable);
+            auto single = Cmd::StreamFormatSingleOperands::Read(resp->operands);
             ASSERT_TRUE(single.has_value());
             EXPECT_EQ(single->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
             EXPECT_EQ(single->format.compound.rate, StreamFormatRate::k48000);
@@ -414,7 +426,7 @@ TEST(AvcFixtureTests, DuetExtendedStreamFormatParsesCorrectly) {
             EXPECT_EQ(resp->opcode, static_cast<Opcode>(0xBF));
             EXPECT_EQ(resp->code, ResponseCode::kImplementedStable);
 
-            auto single = Cmd::ParseStreamFormatSingle(*resp, ResponseCode::kImplementedStable);
+            auto single = Cmd::StreamFormatSingleOperands::Read(resp->operands);
             ASSERT_TRUE(single.has_value());
             EXPECT_EQ(single->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824);
             EXPECT_EQ(single->format.compound.rate, StreamFormatRate::k48000);
@@ -433,15 +445,15 @@ TEST(AvcFixtureTests, DuetFunctionBlocksAndInquiryValidate) {
         if (std::string_view(rec.name) == "function_block_feature_mute_status_fb_1") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto mute = Cmd::ParseFeatureMute(*resp, ResponseCode::kImplementedStable);
+            auto mute = Cmd::FeatureOperands::Read(resp->operands);
             ASSERT_TRUE(mute.has_value());
-            EXPECT_TRUE(*mute);  // muted (0x70 = true)
+            EXPECT_TRUE(mute->AsMute());  // muted (0x70 = true)
         } else if (std::string_view(rec.name) == "function_block_feature_volume_current_fb_1") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());
-            auto vol = Cmd::ParseFeatureVolume(*resp, ResponseCode::kImplementedStable);
+            auto vol = Cmd::FeatureOperands::Read(resp->operands);
             ASSERT_TRUE(vol.has_value());
-            EXPECT_EQ(*vol, 0x0000);
+            EXPECT_EQ(vol->AsVolume(), AvcVolume::FromRaw(0x0000));
         } else if (std::string_view(rec.name) == "inquiry_feature_mute_on_fb_1_ch_0") {
             auto resp = ParseResponse(rec.response);
             ASSERT_TRUE(resp.has_value());

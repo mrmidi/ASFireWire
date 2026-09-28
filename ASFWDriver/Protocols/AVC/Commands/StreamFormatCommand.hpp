@@ -13,7 +13,7 @@
 //   in the transaction engine (phase 3), not here.
 //
 // Layouts: ta1394 stream-format/src/lib.rs (MIT), cited per item; Linux
-// bebob_command.c:289-331 (0x2F list, BridgeCo). Fresh implementation.
+// bebob_command.c:289-331 (0x2F list, BridgeCo). Fresh clean-room implementation.
 //
 // Operands (both opcodes):
 //   single (C0): [C0][plug address, 5][support status][format...]
@@ -22,11 +22,10 @@
 //   Verified byte for byte against the Phase 88 capture:
 //     cmd  01 FF 2F C1 | 00 00 00 00 FF | FF | 00
 //     resp 0C FF 2F C1 | 00 00 00 00 FF | FF | 00 | 90 40 02 01 03 08 06 02 00 01 0D
-//
-// Implementation: StreamFormatCommand.cpp (phase 1).
 
 #pragma once
 
+#include "../Core/AvcCommand.hpp"
 #include "../Core/AvcError.hpp"
 #include "../Core/AvcFrame.hpp"
 #include "../Core/AvcTypes.hpp"
@@ -35,6 +34,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 namespace ASFW::AVC::Cmd {
@@ -253,8 +253,7 @@ struct StreamFormat {
 [[nodiscard]] Expected<size_t> EncodeCompoundAm824(const CompoundAm824& format, std::span<uint8_t> out) noexcept;
 
 // ---------------------------------------------------------------------------
-// Commands. `address` is the frame's subunit address: the unit (0xFF) for unit
-// plugs, the music subunit (0x60) for its plugs.
+// Single and List Reply Types
 // ---------------------------------------------------------------------------
 
 struct StreamFormatSingle {
@@ -270,71 +269,47 @@ struct StreamFormatListEntry {
     StreamFormat format{};
 };
 
-/// STATUS single: [C0][plug][FF]. ta1394 lib.rs:1166-1238.
-[[nodiscard]] Expected<CommandFrame> BuildStreamFormatSingleStatus(StreamFormatOpcode opcode,
-                                                                   SubunitAddress address,
-                                                                   const PlugAddress& plug) noexcept;
-
-/// STATUS list entry `index`: [C1][plug][FF][index]. ta1394 lib.rs:1239-1300;
-/// Linux bebob_command.c:289-331 (entry id at frame byte 10 = operand 7).
-[[nodiscard]] Expected<CommandFrame> BuildStreamFormatListStatus(StreamFormatOpcode opcode,
-                                                                 SubunitAddress address,
-                                                                 const PlugAddress& plug,
-                                                                 uint8_t index) noexcept;
-
-/// CONTROL single (set the format): [C0][plug][support status][format].
-/// The support-status byte of today's hardware-proven CONTROL frames (Duet 0xBF
-/// apply-format, BeBoB) must be checked and matched by the differential test;
-/// do not guess it.
-[[nodiscard]] Expected<CommandFrame> BuildStreamFormatSingleControl(StreamFormatOpcode opcode,
-                                                                    SubunitAddress address,
-                                                                    const PlugAddress& plug,
-                                                                    const CompoundAm824& format) noexcept;
-
-[[nodiscard]] Expected<StreamFormatSingle> ParseStreamFormatSingle(
-    std::span<const uint8_t> operands) noexcept;
-
-[[nodiscard]] Expected<StreamFormatSingle> ParseStreamFormatSingle(
-    const Response& response,
-    ResponseCode expected = ResponseCode::kImplementedStable) noexcept;
-
-[[nodiscard]] Expected<StreamFormatListEntry> ParseStreamFormatList(
-    std::span<const uint8_t> operands,
-    uint8_t requestedIndex) noexcept;
-
-[[nodiscard]] Expected<StreamFormatListEntry> ParseStreamFormatList(
-    const Response& response,
-    uint8_t requestedIndex) noexcept;
-
 // ===========================================================================
-// Typed command structs satisfying the AvcCommand concept
+// Stream Format Operands (AvcOperands)
 // ===========================================================================
 
-struct StreamFormatSingleCommand {
+struct StreamFormatSingleOperands {
+    static constexpr Opcode kOpcode = Opcode::kStreamFormatSupport;
+
     StreamFormatOpcode opcode{StreamFormatOpcode::kStreamFormatSupport};
-    SubunitAddress address{SubunitAddress::Unit()};
     PlugAddress plug{};
     std::optional<CompoundAm824> controlFormat{std::nullopt};
 
     using Reply = StreamFormatSingle;
 
-    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
-    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept;
-    [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept;
+    [[nodiscard]] constexpr Opcode GetOpcode() const noexcept {
+        return static_cast<Opcode>(opcode);
+    }
+
+    [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept;
+    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept;
 };
 
-struct StreamFormatListCommand {
+using StreamFormatSingleCommand = Command<StreamFormatSingleOperands>;
+
+struct StreamFormatListOperands {
+    static constexpr Opcode kOpcode = Opcode::kStreamFormatSupport;
+
     StreamFormatOpcode opcode{StreamFormatOpcode::kStreamFormatSupport};
-    SubunitAddress address{SubunitAddress::Unit()};
     PlugAddress plug{};
     uint8_t index{0};
 
     using Reply = StreamFormatListEntry;
 
-    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
-    [[nodiscard]] Expected<Reply> Decode(std::span<const uint8_t> operands) const noexcept;
-    [[nodiscard]] Expected<Reply> Decode(const Response& response) const noexcept;
+    [[nodiscard]] constexpr Opcode GetOpcode() const noexcept {
+        return static_cast<Opcode>(opcode);
+    }
+
+    [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept;
+    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept;
+    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in, uint8_t requestedIndex) noexcept;
 };
 
-} // namespace ASFW::AVC::Cmd
+using StreamFormatListCommand = Command<StreamFormatListOperands>;
 
+} // namespace ASFW::AVC::Cmd

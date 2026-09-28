@@ -1,46 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// FunctionBlockCommand.hpp - FUNCTION BLOCK (0xB8) on the audio subunit:
-// selector blocks, and the mute and volume controls of feature blocks.
-// Phase 1 covers what today's callers use (the Phase 88 mixer map: selectors,
-// mutes, volumes). Other feature controls and processing blocks come later.
+// FunctionBlockCommand.hpp - FUNCTION BLOCK (0xB8) operand codecs.
 //
-// Layout: ta1394 audio/src/lib.rs (MIT): AudioFuncBlkType :35-46,
-// CtlAttr :54-100, AudioFuncBlk :180-260 (OPCODE :256), AudioSelector :283-350,
-// FeatureCtl :773-816, AudioCh :943-963, AudioFeature :993-1066.
-// Linux bebob_command.c:10-86 (selector CONTROL/STATUS). Fresh implementation.
+// Layouts and logic citations:
+// - TA 1999008 Audio Subunit 1.0 §10.2 (Selector), §10.3 (Feature), §10.3.1 (Mute), §10.3.2 (Volume).
+// - ta1394 audio/src/lib.rs (MIT): AudioFuncBlk :180-260, AudioSelector :283-350,
+//   FeatureCtl :773-816, AudioFeature :993-1066.
 //
 // Operands: [fb type][fb id][control attribute][selector length][selector data][control]
-//   selector length = bytes of audio_selector_data + the control selector
-//   (TA 1999008 Audio Subunit 1.0, line "selector_length (n+1)"; see tmp/specs).
-//   Selector: [80][fb id][attr][02][input plug][01]. Linux bebob_command.c:20-28
-//     (input plug 0xFF for STATUS). Today's AudioFunctionBlockCommand sends the same.
-//   Feature:  [81][fb id][attr][02][channel][control selector][data length][data].
-//     "The selector_length field (Operand[3]) for feature function block shall
-//     always be set to 2" (TA 1999008 §10.3, p.74). Mute: data length 1, Mute_On
-//     0x70 = TRUE (muted), 0x60 = FALSE (not muted), 0xFF invalid in CONTROL
-//     (§10.3.1, p.75). Volume: data length 2, big-endian int16.
-//
-// BYTE RULE:
-//   - Selector blocks: byte-equal to today's AudioFunctionBlockCommand (it matches
-//     Linux and the spec).
-//   - Feature blocks: follow the SPEC, not today's code. Today's
-//     BeBoBProtocol::SetFeatureMute/Volume send selector length 4 / 5 and 0x00 for
-//     "mute", which break §10.3 and §10.3.1; they were only ever sent best-effort
-//     (BeBoBProtocol.cpp:187, failures ignored), so nothing proves a device accepted
-//     them. The differential test records old vs new bytes as an INTENDED difference.
-//     The phase-1 capture (FB STATUS + SPECIFIC INQUIRY on the Phase 88) shows what
-//     the device accepts.
-//
-// Implementation: FunctionBlockCommand.cpp (phase 1).
+//   Selector: [80][fb id][attr][02][input plug][01]
+//   Feature:  [81][fb id][attr][02][channel][control selector][data length][data]
 
 #pragma once
 
+#include "../Core/AvcCommand.hpp"
 #include "../Core/AvcError.hpp"
 #include "../Core/AvcFrame.hpp"
 #include "../Core/AvcTypes.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -81,13 +61,12 @@ enum class FeatureControl : uint8_t {
     kLoudness = 0x0C,
 };
 
-inline constexpr uint8_t kSelectorControl = 0x01;   ///< ta1394 lib.rs:289; Linux bebob_command.c:28
+inline constexpr uint8_t kSelectorControl = 0x01;   ///< ta1394 lib.rs:289
 inline constexpr uint8_t kMasterChannel = 0x00;     ///< ta1394 lib.rs:961
 inline constexpr uint8_t kBooleanTrue = 0x70;       ///< ta1394 lib.rs:815 (mute on)
 inline constexpr uint8_t kBooleanFalse = 0x60;      ///< ta1394 lib.rs:816 (mute off)
-inline constexpr int16_t kVolumeInvalid = 0x7FFF;   ///< ta1394 lib.rs:359
 
-/// Per-control data width table (TA 1999008 §10.3 Table 10.8, p.74).
+/// Per-control data width table (TA 1999008 §10.3 Table 10.8).
 [[nodiscard]] constexpr std::optional<uint8_t> FeatureControlDataWidth(FeatureControl control) noexcept {
     switch (control) {
         case FeatureControl::kMute: return 1;
@@ -97,7 +76,7 @@ inline constexpr int16_t kVolumeInvalid = 0x7FFF;   ///< ta1394 lib.rs:359
         case FeatureControl::kBass: return 1;
         case FeatureControl::kMid: return 1;
         case FeatureControl::kTreble: return 1;
-        case FeatureControl::kGraphicEqualizer: return std::nullopt; // complex/variable
+        case FeatureControl::kGraphicEqualizer: return std::nullopt;
         case FeatureControl::kAutomaticGain: return 1;
         case FeatureControl::kDelay: return 2;
         case FeatureControl::kBassBoost: return 1;
@@ -107,180 +86,314 @@ inline constexpr int16_t kVolumeInvalid = 0x7FFF;   ///< ta1394 lib.rs:359
 }
 
 // ===========================================================================
-// Generic Function Block Frame Codec (Opcode 0xB8)
+// Generic Function Block Frame Operands (Opcode 0xB8)
 // ===========================================================================
-
-struct FunctionBlockFrame {
-    FunctionBlockType type{FunctionBlockType::kFeature};
-    uint8_t functionBlockId{0};
-    ControlAttribute attribute{ControlAttribute::kCurrent};
-    std::span<const uint8_t> selectorBytes{};
-    std::span<const uint8_t> dataBytes{};
-};
 
 struct FunctionBlockReply {
     FunctionBlockType type{FunctionBlockType::kFeature};
     uint8_t functionBlockId{0};
     ControlAttribute attribute{ControlAttribute::kCurrent};
-    std::span<const uint8_t> selectorBytes{};
-    std::span<const uint8_t> dataBytes{};
+    std::array<uint8_t, 16> selectorBytes{};
+    uint8_t selectorLength{0};
+    std::array<uint8_t, 32> dataBytes{};
+    uint8_t dataLength{0};
+
+    [[nodiscard]] std::span<const uint8_t> Selector() const noexcept {
+        return {selectorBytes.data(), selectorLength};
+    }
+    [[nodiscard]] std::span<const uint8_t> Data() const noexcept {
+        return {dataBytes.data(), dataLength};
+    }
 };
 
-[[nodiscard]] Expected<CommandFrame> BuildFunctionBlock(
-    CommandType type,
-    SubunitAddress subunit,
-    const FunctionBlockFrame& frame) noexcept;
+struct FunctionBlockOperands {
+    static constexpr Opcode kOpcode = Opcode::kFunctionBlock;
 
-[[nodiscard]] Expected<FunctionBlockReply> ParseFunctionBlock(
-    std::span<const uint8_t> operands) noexcept;
+    FunctionBlockType type{FunctionBlockType::kFeature};
+    uint8_t functionBlockId{0};
+    ControlAttribute attribute{ControlAttribute::kCurrent};
+    std::array<uint8_t, 16> selectorBytes{};
+    uint8_t selectorLength{0};
+    std::array<uint8_t, 32> dataBytes{};
+    uint8_t dataLength{0};
+
+    using Reply = FunctionBlockReply;
+
+    [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType /*t*/) const noexcept {
+        auto r1 = w.Append(static_cast<uint8_t>(type));
+        if (!r1) return r1;
+        auto r2 = w.Append(functionBlockId);
+        if (!r2) return r2;
+        auto r3 = w.Append(static_cast<uint8_t>(attribute));
+        if (!r3) return r3;
+        auto r4 = w.Append(selectorLength);
+        if (!r4) return r4;
+        auto r5 = w.Append(std::span<const uint8_t>{selectorBytes.data(), selectorLength});
+        if (!r5) return r5;
+
+        if (type == FunctionBlockType::kFeature || type == FunctionBlockType::kProcessing) {
+            auto r6 = w.Append(dataLength);
+            if (!r6) return r6;
+            return w.Append(std::span<const uint8_t>{dataBytes.data(), dataLength});
+        }
+        if (dataLength > 0) {
+            return w.Append(std::span<const uint8_t>{dataBytes.data(), dataLength});
+        }
+        return {};
+    }
+
+    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept {
+        if (in.size() < 4) {
+            return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
+        }
+
+        const auto fbType = static_cast<FunctionBlockType>(in[0]);
+        const uint8_t fbId = in[1];
+        const auto attr = static_cast<ControlAttribute>(in[2]);
+        const uint8_t selLen = in[3];
+
+        if (in.size() < 4u + selLen) {
+            return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
+        }
+
+        FunctionBlockReply reply{
+            .type = fbType,
+            .functionBlockId = fbId,
+            .attribute = attr,
+            .selectorLength = selLen,
+        };
+        const size_t copySel = std::min<size_t>(selLen, reply.selectorBytes.size());
+        std::copy_n(in.begin() + 4, copySel, reply.selectorBytes.begin());
+
+        if (fbType == FunctionBlockType::kFeature || fbType == FunctionBlockType::kProcessing) {
+            const size_t dataLenOffset = 4u + selLen;
+            if (in.size() < dataLenOffset + 1) {
+                return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
+            }
+            const uint8_t dLen = in[dataLenOffset];
+            if (in.size() < dataLenOffset + 1 + dLen) {
+                return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
+            }
+            reply.dataLength = dLen;
+            const size_t copyData = std::min<size_t>(dLen, reply.dataBytes.size());
+            std::copy_n(in.begin() + dataLenOffset + 1, copyData, reply.dataBytes.begin());
+        }
+
+        return reply;
+    }
+};
+
+using FunctionBlockCommand = Command<FunctionBlockOperands>;
 
 // ===========================================================================
-// Typed Commands (per block type)
+// Typed Selector Operands
 // ===========================================================================
-
-// ---- Selector -------------------------------------------------------------
 
 struct SelectorValue {
     uint8_t functionBlockId{0};
     uint8_t inputPlug{0xFF};
 };
 
-struct SelectorCommand {
+struct SelectorOperands {
+    static constexpr Opcode kOpcode = Opcode::kFunctionBlock;
+
     uint8_t functionBlockId{0};
     uint8_t inputPlug{0xFF};
-    SubunitAddress subunit{kAudioSubunit0};
 
     using Reply = SelectorValue;
 
-    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
-    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept;
+    [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept {
+        const uint8_t plug = (t == CommandType::kControl) ? inputPlug : 0xFF;
+        const std::array<uint8_t, 6> ops = {
+            static_cast<uint8_t>(FunctionBlockType::kSelector),
+            functionBlockId,
+            static_cast<uint8_t>(ControlAttribute::kCurrent),
+            0x02,
+            plug,
+            kSelectorControl,
+        };
+        return w.Append(ops);
+    }
+
+    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept {
+        if (in.size() < 6) {
+            return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
+        }
+        if (in[0] != static_cast<uint8_t>(FunctionBlockType::kSelector)) {
+            return FailAt(AvcErrorKind::kMalformedOperands, 0);
+        }
+        if (in[3] != 0x02) {
+            return FailAt(AvcErrorKind::kMalformedOperands, 3);
+        }
+        if (in[5] != kSelectorControl) {
+            return FailAt(AvcErrorKind::kMalformedOperands, 5);
+        }
+
+        return SelectorValue{
+            .functionBlockId = in[1],
+            .inputPlug = in[4],
+        };
+    }
 };
 
-// ---- Feature: Generic -----------------------------------------------------
+using SelectorCommand = Command<SelectorOperands>;
+
+// ===========================================================================
+// Typed Feature Operands
+// ===========================================================================
 
 struct FeatureReply {
     uint8_t functionBlockId{0};
     uint8_t channel{0};
     FeatureControl control{FeatureControl::kMute};
     ControlAttribute attribute{ControlAttribute::kCurrent};
-    std::span<const uint8_t> data{};
+    std::array<uint8_t, 8> data{};
+    uint8_t dataLength{0};
+
+    [[nodiscard]] bool AsMute() const noexcept {
+        return dataLength > 0 && data[0] == kBooleanTrue;
+    }
+
+    [[nodiscard]] AvcVolume AsVolume() const noexcept {
+        if (dataLength < 2) {
+            return AvcVolume::Invalid();
+        }
+        const uint16_t raw = (static_cast<uint16_t>(data[0]) << 8) | data[1];
+        return AvcVolume::FromRaw(static_cast<int16_t>(raw));
+    }
 };
 
-struct FeatureCommand {
+struct FeatureOperands {
+    static constexpr Opcode kOpcode = Opcode::kFunctionBlock;
+
     uint8_t functionBlockId{0};
     uint8_t channel{kMasterChannel};
     FeatureControl control{FeatureControl::kMute};
     ControlAttribute attribute{ControlAttribute::kCurrent};
-    std::span<const uint8_t> controlData{};
-    SubunitAddress subunit{kAudioSubunit0};
+    std::array<uint8_t, 8> data{};
+    uint8_t dataLength{0};
 
     using Reply = FeatureReply;
 
-    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
-    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept;
+    // Helper constructors (no function per control; just builders on the operand type)
+    static FeatureOperands Mute(uint8_t fbId, uint8_t ch, bool muted) noexcept {
+        FeatureOperands op{
+            .functionBlockId = fbId,
+            .channel = ch,
+            .control = FeatureControl::kMute,
+            .attribute = ControlAttribute::kCurrent,
+            .data = { muted ? kBooleanTrue : kBooleanFalse },
+            .dataLength = 1,
+        };
+        return op;
+    }
+
+    static FeatureOperands MuteStatus(uint8_t fbId, uint8_t ch) noexcept {
+        FeatureOperands op{
+            .functionBlockId = fbId,
+            .channel = ch,
+            .control = FeatureControl::kMute,
+            .attribute = ControlAttribute::kCurrent,
+            .data = {},
+            .dataLength = 0,
+        };
+        return op;
+    }
+
+    static FeatureOperands Volume(uint8_t fbId, uint8_t ch, AvcVolume vol,
+                                  ControlAttribute attr = ControlAttribute::kCurrent) noexcept {
+        const uint16_t raw = static_cast<uint16_t>(vol.Raw());
+        FeatureOperands op{
+            .functionBlockId = fbId,
+            .channel = ch,
+            .control = FeatureControl::kVolume,
+            .attribute = attr,
+            .data = { static_cast<uint8_t>((raw >> 8) & 0xFF), static_cast<uint8_t>(raw & 0xFF) },
+            .dataLength = 2,
+        };
+        return op;
+    }
+
+    static FeatureOperands VolumeStatus(uint8_t fbId, uint8_t ch,
+                                        ControlAttribute attr = ControlAttribute::kCurrent) noexcept {
+        FeatureOperands op{
+            .functionBlockId = fbId,
+            .channel = ch,
+            .control = FeatureControl::kVolume,
+            .attribute = attr,
+            .data = {},
+            .dataLength = 0,
+        };
+        return op;
+    }
+
+    [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept {
+        const std::array<uint8_t, 6> prefix = {
+            static_cast<uint8_t>(FunctionBlockType::kFeature),
+            functionBlockId,
+            static_cast<uint8_t>(attribute),
+            0x02,
+            channel,
+            static_cast<uint8_t>(control),
+        };
+        auto r1 = w.Append(prefix);
+        if (!r1) return r1;
+
+        if (t == CommandType::kControl) {
+            auto r2 = w.Append(dataLength);
+            if (!r2) return r2;
+            return w.Append(std::span<const uint8_t>{data.data(), dataLength});
+        }
+        if (t == CommandType::kStatus) {
+            if (dataLength > 0) {
+                auto r2 = w.Append(dataLength);
+                if (!r2) return r2;
+                return w.Append(std::span<const uint8_t>{data.data(), dataLength});
+            }
+            auto width = FeatureControlDataWidth(control);
+            if (!width.has_value()) {
+                return Fail(AvcErrorKind::kInvalidArgument);
+            }
+            auto r2 = w.Append(*width);
+            if (!r2) return r2;
+            for (uint8_t i = 0; i < *width; ++i) {
+                auto r3 = w.Append(0xFF);
+                if (!r3) return r3;
+            }
+            return {};
+        }
+        return Fail(AvcErrorKind::kInvalidArgument);
+    }
+
+    [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept {
+        if (in.size() < 7) {
+            return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
+        }
+        if (in[0] != static_cast<uint8_t>(FunctionBlockType::kFeature)) {
+            return FailAt(AvcErrorKind::kMalformedOperands, 0);
+        }
+        if (in[3] != 0x02) {
+            return FailAt(AvcErrorKind::kMalformedOperands, 3);
+        }
+
+        const uint8_t dLen = in[6];
+        if (in.size() < 7u + dLen) {
+            return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
+        }
+
+        FeatureReply reply{
+            .functionBlockId = in[1],
+            .channel = in[4],
+            .control = static_cast<FeatureControl>(in[5]),
+            .attribute = static_cast<ControlAttribute>(in[2]),
+            .dataLength = dLen,
+        };
+        const size_t copyN = std::min<size_t>(dLen, reply.data.size());
+        std::copy_n(in.begin() + 7, copyN, reply.data.begin());
+        return reply;
+    }
 };
 
-// ---- Feature: Mute --------------------------------------------------------
-
-struct FeatureMuteCommand {
-    uint8_t functionBlockId{0};
-    uint8_t channel{kMasterChannel};
-    bool muted{false};
-    SubunitAddress subunit{kAudioSubunit0};
-
-    using Reply = bool;
-
-    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
-    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept;
-};
-
-// ---- Feature: Volume ------------------------------------------------------
-
-struct FeatureVolumeCommand {
-    uint8_t functionBlockId{0};
-    uint8_t channel{kMasterChannel};
-    AvcVolume volume{AvcVolume::Invalid()};
-    ControlAttribute attribute{ControlAttribute::kCurrent};
-    SubunitAddress subunit{kAudioSubunit0};
-
-    using Reply = AvcVolume;
-
-    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
-    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept;
-};
-
-// ===========================================================================
-// Compatibility Wrappers (used until callers migrate in phase 2c)
-// ===========================================================================
-
-[[nodiscard]] inline Expected<CommandFrame> BuildSelectorStatus(SubunitAddress subunit, uint8_t functionBlockId) noexcept {
-    return SelectorCommand{functionBlockId, 0xFF, subunit}.Encode(CommandType::kStatus);
-}
-
-[[nodiscard]] inline Expected<CommandFrame> BuildSelectorControl(SubunitAddress subunit, uint8_t functionBlockId,
-                                                                 uint8_t inputPlug) noexcept {
-    return SelectorCommand{functionBlockId, inputPlug, subunit}.Encode(CommandType::kControl);
-}
-
-[[nodiscard]] inline Expected<SelectorValue> ParseSelector(std::span<const uint8_t> operands) noexcept {
-    return SelectorCommand::Decode(operands);
-}
-
-[[nodiscard]] inline Expected<SelectorValue> ParseSelector(const Response& response,
-                                                           ResponseCode expected = ResponseCode::kImplementedStable) noexcept {
-    if (response.code != expected) {
-        return std::unexpected(AvcError::Unexpected(response.code));
-    }
-    return SelectorCommand::Decode(response.operands);
-}
-
-[[nodiscard]] inline Expected<CommandFrame> BuildFeatureMuteStatus(SubunitAddress subunit, uint8_t functionBlockId,
-                                                                   uint8_t channel) noexcept {
-    return FeatureMuteCommand{functionBlockId, channel, false, subunit}.Encode(CommandType::kStatus);
-}
-
-[[nodiscard]] inline Expected<CommandFrame> BuildFeatureMuteControl(SubunitAddress subunit, uint8_t functionBlockId,
-                                                                    uint8_t channel, bool muted) noexcept {
-    return FeatureMuteCommand{functionBlockId, channel, muted, subunit}.Encode(CommandType::kControl);
-}
-
-[[nodiscard]] inline Expected<bool> ParseFeatureMute(std::span<const uint8_t> operands) noexcept {
-    return FeatureMuteCommand::Decode(operands);
-}
-
-[[nodiscard]] inline Expected<bool> ParseFeatureMute(const Response& response,
-                                                     ResponseCode expected = ResponseCode::kImplementedStable) noexcept {
-    if (response.code != expected) {
-        return std::unexpected(AvcError::Unexpected(response.code));
-    }
-    return FeatureMuteCommand::Decode(response.operands);
-}
-
-[[nodiscard]] inline Expected<CommandFrame> BuildFeatureVolumeStatus(
-    SubunitAddress subunit, uint8_t functionBlockId,
-    uint8_t channel,
-    ControlAttribute attribute = ControlAttribute::kCurrent) noexcept {
-    return FeatureVolumeCommand{functionBlockId, channel, AvcVolume::Invalid(), attribute, subunit}.Encode(CommandType::kStatus);
-}
-
-[[nodiscard]] inline Expected<CommandFrame> BuildFeatureVolumeControl(
-    SubunitAddress subunit, uint8_t functionBlockId,
-    uint8_t channel, int16_t value) noexcept {
-    return FeatureVolumeCommand{functionBlockId, channel, AvcVolume::FromRaw(value), ControlAttribute::kCurrent, subunit}.Encode(CommandType::kControl);
-}
-
-[[nodiscard]] inline Expected<int16_t> ParseFeatureVolume(std::span<const uint8_t> operands) noexcept {
-    auto res = FeatureVolumeCommand::Decode(operands);
-    if (!res) return std::unexpected(res.error());
-    return res->Raw();
-}
-
-[[nodiscard]] inline Expected<int16_t> ParseFeatureVolume(const Response& response,
-                                                          ResponseCode expected = ResponseCode::kImplementedStable) noexcept {
-    if (response.code != expected) {
-        return std::unexpected(AvcError::Unexpected(response.code));
-    }
-    return ParseFeatureVolume(response.operands);
-}
+using FeatureCommand = Command<FeatureOperands>;
 
 } // namespace ASFW::AVC::Cmd

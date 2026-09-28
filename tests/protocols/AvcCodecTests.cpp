@@ -208,31 +208,35 @@ TEST(AvcFrameTests, ParseResponseForValidatesAddressAndOpcodeMatch) {
 
 TEST(GeneralCommandsTests, BuildUnitInfoStatusEncodesBothAppleAndLinuxStyles) {
     // 1. Default form: Apple AppleFWAudio + legacy ASFW (0 operands, 3 header bytes padded to 4)
-    auto defaultCmd = Cmd::BuildUnitInfoStatus();
-    ASSERT_TRUE(defaultCmd.has_value());
-    EXPECT_EQ(defaultCmd->Type(), CommandType::kStatus);
-    EXPECT_EQ(defaultCmd->Address(), SubunitAddress::Unit());
-    EXPECT_EQ(defaultCmd->OpcodeValue(), Opcode::kUnitInfo);
-    EXPECT_EQ(defaultCmd->Bytes().size(), 3u);
-    EXPECT_EQ(defaultCmd->WireBytes().size(), 4u);
-    EXPECT_EQ(defaultCmd->WireBytes()[0], 0x01); // STATUS
-    EXPECT_EQ(defaultCmd->WireBytes()[1], 0xFF); // UNIT
-    EXPECT_EQ(defaultCmd->WireBytes()[2], 0x30); // UNIT INFO
-    EXPECT_EQ(defaultCmd->WireBytes()[3], 0x00); // quadlet zero padding
+    Cmd::UnitInfoCommand defaultCmd{};
+    auto defaultFrame = defaultCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(defaultFrame.has_value());
+    EXPECT_EQ(defaultFrame->Type(), CommandType::kStatus);
+    EXPECT_EQ(defaultFrame->Address(), SubunitAddress::Unit());
+    EXPECT_EQ(defaultFrame->OpcodeValue(), Opcode::kUnitInfo);
+    EXPECT_EQ(defaultFrame->Bytes().size(), 3u);
+    EXPECT_EQ(defaultFrame->WireBytes().size(), 4u);
+    EXPECT_EQ(defaultFrame->WireBytes()[0], 0x01); // STATUS
+    EXPECT_EQ(defaultFrame->WireBytes()[1], 0xFF); // UNIT
+    EXPECT_EQ(defaultFrame->WireBytes()[2], 0x30); // UNIT INFO
+    EXPECT_EQ(defaultFrame->WireBytes()[3], 0x00); // quadlet zero padding
 
     // 2. Linux form: ta1394 general.rs:37 (5 dummy operands [0x07, FF, FF, FF, FF])
-    auto linuxCmd = Cmd::BuildUnitInfoStatus(Cmd::UnitInfoStyle::kLinuxFiveDummyOperands);
-    ASSERT_TRUE(linuxCmd.has_value());
-    EXPECT_EQ(linuxCmd->Bytes().size(), 8u);
-    EXPECT_EQ(linuxCmd->WireBytes().size(), 8u);
-    EXPECT_EQ(linuxCmd->WireBytes()[0], 0x01);
-    EXPECT_EQ(linuxCmd->WireBytes()[1], 0xFF);
-    EXPECT_EQ(linuxCmd->WireBytes()[2], 0x30);
-    EXPECT_EQ(linuxCmd->WireBytes()[3], 0x07);
-    EXPECT_EQ(linuxCmd->WireBytes()[4], 0xFF);
-    EXPECT_EQ(linuxCmd->WireBytes()[5], 0xFF);
-    EXPECT_EQ(linuxCmd->WireBytes()[6], 0xFF);
-    EXPECT_EQ(linuxCmd->WireBytes()[7], 0xFF);
+    Cmd::UnitInfoCommand linuxCmd{
+        .operands = Cmd::UnitInfoOperands{Cmd::UnitInfoStyle::kLinuxFiveDummyOperands}
+    };
+    auto linuxFrame = linuxCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(linuxFrame.has_value());
+    EXPECT_EQ(linuxFrame->Bytes().size(), 8u);
+    EXPECT_EQ(linuxFrame->WireBytes().size(), 8u);
+    EXPECT_EQ(linuxFrame->WireBytes()[0], 0x01);
+    EXPECT_EQ(linuxFrame->WireBytes()[1], 0xFF);
+    EXPECT_EQ(linuxFrame->WireBytes()[2], 0x30);
+    EXPECT_EQ(linuxFrame->WireBytes()[3], 0x07);
+    EXPECT_EQ(linuxFrame->WireBytes()[4], 0xFF);
+    EXPECT_EQ(linuxFrame->WireBytes()[5], 0xFF);
+    EXPECT_EQ(linuxFrame->WireBytes()[6], 0xFF);
+    EXPECT_EQ(linuxFrame->WireBytes()[7], 0xFF);
 }
 
 TEST(GeneralCommandsTests, ParseUnitInfoSuccessAndErrors) {
@@ -241,7 +245,7 @@ TEST(GeneralCommandsTests, ParseUnitInfoSuccessAndErrors) {
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
 
-    auto unitInfo = Cmd::ParseUnitInfo(*resp);
+    auto unitInfo = Cmd::UnitInfoOperands::Read(resp->operands);
     ASSERT_TRUE(unitInfo.has_value());
     EXPECT_EQ(unitInfo->unitType, SubunitType::kUnit);
     EXPECT_EQ(unitInfo->unitId, 7);
@@ -251,7 +255,7 @@ TEST(GeneralCommandsTests, ParseUnitInfoSuccessAndErrors) {
     const uint8_t badFirst[] = {0x0C, 0xFF, 0x30, 0x00, 0xFF, 0x00, 0x0A, 0xAC};
     auto badResp = ParseResponse(badFirst);
     ASSERT_TRUE(badResp.has_value());
-    auto err1 = Cmd::ParseUnitInfo(*badResp);
+    auto err1 = Cmd::UnitInfoOperands::Read(badResp->operands);
     ASSERT_FALSE(err1.has_value());
     EXPECT_EQ(err1.error().kind, AvcErrorKind::kMalformedOperands);
 
@@ -259,20 +263,23 @@ TEST(GeneralCommandsTests, ParseUnitInfoSuccessAndErrors) {
     const uint8_t shortRespBytes[] = {0x0C, 0xFF, 0x30, 0x07, 0xFF};
     auto shortResp = ParseResponse(shortRespBytes);
     ASSERT_TRUE(shortResp.has_value());
-    auto err2 = Cmd::ParseUnitInfo(*shortResp);
+    auto err2 = Cmd::UnitInfoOperands::Read(shortResp->operands);
     ASSERT_FALSE(err2.has_value());
     EXPECT_EQ(err2.error().kind, AvcErrorKind::kOperandsTooShort);
 }
 
 TEST(GeneralCommandsTests, BuildSubunitInfoStatusMatchesLegacy) {
-    auto cmd = Cmd::BuildSubunitInfoStatus(0, 7);
-    ASSERT_TRUE(cmd.has_value());
-    EXPECT_EQ(cmd->Type(), CommandType::kStatus);
-    EXPECT_EQ(cmd->Address(), SubunitAddress::Unit());
-    EXPECT_EQ(cmd->OpcodeValue(), Opcode::kSubunitInfo);
+    Cmd::SubunitInfoCommand cmd{
+        .operands = Cmd::SubunitInfoOperands{.page = 0, .extensionCode = 7}
+    };
+    auto frame = cmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(frame.has_value());
+    EXPECT_EQ(frame->Type(), CommandType::kStatus);
+    EXPECT_EQ(frame->Address(), SubunitAddress::Unit());
+    EXPECT_EQ(frame->OpcodeValue(), Opcode::kSubunitInfo);
 
     // Legacy AVCSubunitInfoCommand::BuildCdb(0) creates [0x07, 0xFF, 0xFF, 0xFF, 0xFF].
-    const auto ops = cmd->Operands();
+    const auto ops = frame->Operands();
     ASSERT_EQ(ops.size(), 5u);
     EXPECT_EQ(ops[0], 0x07);
     EXPECT_EQ(ops[1], 0xFF);
@@ -288,7 +295,7 @@ TEST(GeneralCommandsTests, ParseSubunitInfoVector) {
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
 
-    auto info = Cmd::ParseSubunitInfo(*resp);
+    auto info = Cmd::SubunitInfoOperands::Read(resp->operands);
     ASSERT_TRUE(info.has_value());
     EXPECT_EQ(info->page, 0);
     EXPECT_EQ(info->extensionCode, 7);
@@ -298,26 +305,35 @@ TEST(GeneralCommandsTests, ParseSubunitInfoVector) {
 }
 
 TEST(GeneralCommandsTests, PlugInfoUnitAndSubunit) {
-    auto unitCmd = Cmd::BuildUnitPlugInfoStatus(Cmd::UnitPlugInfoKind::kIsochronousExternal);
-    ASSERT_TRUE(unitCmd.has_value());
-    EXPECT_EQ(unitCmd->Address(), SubunitAddress::Unit());
-    EXPECT_EQ(unitCmd->Operands()[0], 0x00);
+    Cmd::UnitPlugInfoIsoExtCommand unitCmd{};
+    auto unitFrame = unitCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(unitFrame.has_value());
+    EXPECT_EQ(unitFrame->Address(), SubunitAddress::Unit());
+    EXPECT_EQ(unitFrame->Operands()[0], 0x00);
 
-    auto subunitCmd = Cmd::BuildSubunitPlugInfoStatus(kMusicSubunit0);
-    ASSERT_TRUE(subunitCmd.has_value());
-    EXPECT_EQ(subunitCmd->Address(), kMusicSubunit0);
-    EXPECT_EQ(subunitCmd->Operands()[0], 0x00);
+    Cmd::SubunitPlugInfoCommand subunitCmd{
+        .address = kMusicSubunit0,
+        .operands = Cmd::SubunitPlugInfoOperands{},
+    };
+    auto subunitFrame = subunitCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(subunitFrame.has_value());
+    EXPECT_EQ(subunitFrame->Address(), kMusicSubunit0);
+    EXPECT_EQ(subunitFrame->Operands()[0], 0x00);
 
     // Subunit plug info on Unit address must be rejected
-    auto badSubunitCmd = Cmd::BuildSubunitPlugInfoStatus(SubunitAddress::Unit());
-    ASSERT_FALSE(badSubunitCmd.has_value());
-    EXPECT_EQ(badSubunitCmd.error().kind, AvcErrorKind::kInvalidArgument);
+    Cmd::SubunitPlugInfoCommand badSubunitCmd{
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::SubunitPlugInfoOperands{},
+    };
+    auto badSubunitFrame = badSubunitCmd.Encode(CommandType::kStatus);
+    ASSERT_FALSE(badSubunitFrame.has_value());
+    EXPECT_EQ(badSubunitFrame.error().kind, AvcErrorKind::kInvalidArgument);
 
     // Parse Phase 88 capture: 2 iso in, 2 iso out, 8 ext in, 7 ext out
     const uint8_t p88Resp[] = {0x0C, 0xFF, 0x02, 0x00, 0x02, 0x02, 0x08, 0x07};
     auto r = ParseResponse(p88Resp);
     ASSERT_TRUE(r.has_value());
-    auto plugs = Cmd::ParseUnitIsochronousExternalPlugs(*r);
+    auto plugs = Cmd::UnitPlugInfoIsoExtOperands::Read(r->operands);
     ASSERT_TRUE(plugs.has_value());
     EXPECT_EQ(plugs->isochronousInputs, 2);
     EXPECT_EQ(plugs->isochronousOutputs, 2);
@@ -326,28 +342,43 @@ TEST(GeneralCommandsTests, PlugInfoUnitAndSubunit) {
 }
 
 TEST(GeneralCommandsTests, PlugSignalFormatBuildAndParse) {
-    auto statusCmd = Cmd::BuildPlugSignalFormatStatus(Cmd::PlugSignalDirection::kInput, 0, Cmd::SignalFormatQuery::kAm824Wildcard);
-    ASSERT_TRUE(statusCmd.has_value());
-    EXPECT_EQ(statusCmd->OpcodeValue(), Opcode::kInputPlugSignalFormat);
-    EXPECT_EQ(statusCmd->Operands()[0], 0x00); // Plug 0
-    EXPECT_EQ(statusCmd->Operands()[1], 0x90); // AM824
-    EXPECT_EQ(statusCmd->Operands()[2], 0xFF);
+    Cmd::PlugSignalFormatCommand statusCmd{
+        .operands = Cmd::PlugSignalFormatOperands{
+            .direction = Cmd::PlugSignalDirection::kInput,
+            .plugId = 0,
+            .format = std::nullopt,
+            .query = Cmd::SignalFormatQuery::kAm824Wildcard,
+        }
+    };
+    auto statusFrame = statusCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(statusFrame.has_value());
+    EXPECT_EQ(statusFrame->OpcodeValue(), Opcode::kInputPlugSignalFormat);
+    EXPECT_EQ(statusFrame->Operands()[0], 0x00); // Plug 0
+    EXPECT_EQ(statusFrame->Operands()[1], 0x90); // AM824
+    EXPECT_EQ(statusFrame->Operands()[2], 0xFF);
 
     const Cmd::PlugSignalFormat fmt{
         .plugId = 0,
         .fmt = 0x90,
         .fdf = {0x40, 0x02, 0x00},
     };
-    auto ctrlCmd = Cmd::BuildPlugSignalFormatControl(Cmd::PlugSignalDirection::kOutput, fmt);
-    ASSERT_TRUE(ctrlCmd.has_value());
-    EXPECT_EQ(ctrlCmd->OpcodeValue(), Opcode::kOutputPlugSignalFormat);
-    EXPECT_EQ(ctrlCmd->Type(), CommandType::kControl);
+    Cmd::PlugSignalFormatCommand ctrlCmd{
+        .operands = Cmd::PlugSignalFormatOperands{
+            .direction = Cmd::PlugSignalDirection::kOutput,
+            .plugId = 0,
+            .format = fmt,
+        }
+    };
+    auto ctrlFrame = ctrlCmd.Encode(CommandType::kControl);
+    ASSERT_TRUE(ctrlFrame.has_value());
+    EXPECT_EQ(ctrlFrame->OpcodeValue(), Opcode::kOutputPlugSignalFormat);
+    EXPECT_EQ(ctrlFrame->Type(), CommandType::kControl);
 
     // Parse response
     const uint8_t respBytes[] = {0x09, 0xFF, 0x18, 0x00, 0x90, 0x40, 0x02, 0x00};
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
-    auto parsedFmt = Cmd::ParsePlugSignalFormat(*resp, ResponseCode::kAccepted);
+    auto parsedFmt = Cmd::PlugSignalFormatOperands::Read(resp->operands);
     ASSERT_TRUE(parsedFmt.has_value());
     EXPECT_EQ(parsedFmt->plugId, 0);
     EXPECT_EQ(parsedFmt->fmt, 0x90);
@@ -358,24 +389,26 @@ TEST(GeneralCommandsTests, VendorDependentBuildAndParse) {
     const CompanyId appleId = {0x00, 0x0A, 0x27};
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
 
-    auto cmd = Cmd::BuildVendorDependent(CommandType::kControl, SubunitAddress::Unit(), appleId, payload);
-    ASSERT_TRUE(cmd.has_value());
-    EXPECT_EQ(cmd->OpcodeValue(), Opcode::kVendorDependent);
-    ASSERT_EQ(cmd->Operands().size(), 7u);
-    EXPECT_EQ(cmd->Operands()[0], 0x00);
-    EXPECT_EQ(cmd->Operands()[1], 0x0A);
-    EXPECT_EQ(cmd->Operands()[2], 0x27);
-    EXPECT_EQ(cmd->Operands()[3], 0x01);
+    Cmd::RawVendorDependentCommand cmd{
+        .operands = Cmd::RawVendorDependentOperands(appleId, payload)
+    };
+    auto frame = cmd.Encode(CommandType::kControl);
+    ASSERT_TRUE(frame.has_value());
+    EXPECT_EQ(frame->OpcodeValue(), Opcode::kVendorDependent);
+    ASSERT_EQ(frame->Operands().size(), 7u);
+    EXPECT_EQ(frame->Operands()[0], 0x00);
+    EXPECT_EQ(frame->Operands()[1], 0x0A);
+    EXPECT_EQ(frame->Operands()[2], 0x27);
+    EXPECT_EQ(frame->Operands()[3], 0x01);
 
     // Parse response
     const uint8_t respBytes[] = {0x09, 0xFF, 0x00, 0x00, 0x0A, 0x27, 0x01, 0x02, 0x03, 0x04};
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
-    auto parsed = Cmd::ParseVendorDependent(*resp, ResponseCode::kAccepted);
+    auto parsed = Cmd::RawVendorDependentOperands::Read(resp->operands);
     ASSERT_TRUE(parsed.has_value());
-    EXPECT_EQ(parsed->companyId, appleId);
-    ASSERT_EQ(parsed->payload.size(), 4u);
-    EXPECT_EQ(parsed->payload[0], 0x01);
+    ASSERT_EQ(parsed->size(), 4u);
+    EXPECT_EQ((*parsed)[0], 0x01);
 }
 
 // ===========================================================================
@@ -449,10 +482,17 @@ TEST(StreamFormatTests, BuildAndParseStreamFormatListAndSingle) {
     const auto plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kInput, Cmd::UnitPlugType::kPcr, 0);
 
     // List query STATUS frame
-    auto listCmd = Cmd::BuildStreamFormatListStatus(Cmd::StreamFormatOpcode::kStreamFormatSupport,
-                                                    SubunitAddress::Unit(), plug, 0);
-    ASSERT_TRUE(listCmd.has_value());
-    const auto listBytes = listCmd->Bytes();
+    Cmd::StreamFormatListCommand listCmd{
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::StreamFormatListOperands{
+            .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
+            .plug = plug,
+            .index = 0,
+        }
+    };
+    auto listFrame = listCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(listFrame.has_value());
+    const auto listBytes = listFrame->Bytes();
     // cmd 01 FF 2F C1 00 00 00 00 FF FF 00 (matches Phase 88 capture exactly)
     const uint8_t expectedCmd[] = {0x01, 0xFF, 0x2F, 0xC1, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00};
     ASSERT_EQ(listBytes.size(), sizeof(expectedCmd));
@@ -465,7 +505,7 @@ TEST(StreamFormatTests, BuildAndParseStreamFormatListAndSingle) {
     };
     auto resp = ParseResponse(listResp);
     ASSERT_TRUE(resp.has_value());
-    auto listEntry = Cmd::ParseStreamFormatList(*resp, 0);
+    auto listEntry = Cmd::StreamFormatListOperands::Read(resp->operands, 0);
     ASSERT_TRUE(listEntry.has_value());
     EXPECT_EQ(listEntry->index, 0);
     EXPECT_EQ(listEntry->status, Cmd::SupportStatus::kNotUsed);
@@ -473,16 +513,22 @@ TEST(StreamFormatTests, BuildAndParseStreamFormatListAndSingle) {
     EXPECT_EQ(listEntry->format.compound.PcmChannels(), 10u);
 
     // Index mismatch error
-    auto listEntryMismatch = Cmd::ParseStreamFormatList(*resp, 1);
+    auto listEntryMismatch = Cmd::StreamFormatListOperands::Read(resp->operands, 1);
     ASSERT_FALSE(listEntryMismatch.has_value());
     EXPECT_EQ(listEntryMismatch.error().kind, AvcErrorKind::kMalformedOperands);
 
     // Single query STATUS frame
-    auto singleCmd = Cmd::BuildStreamFormatSingleStatus(Cmd::StreamFormatOpcode::kExtendedStreamFormat,
-                                                        SubunitAddress::Unit(), plug);
-    ASSERT_TRUE(singleCmd.has_value());
-    EXPECT_EQ(singleCmd->Operands()[0], 0xC0);
-    EXPECT_EQ(singleCmd->Operands()[6], 0xFF);
+    Cmd::StreamFormatSingleCommand singleCmd{
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::StreamFormatSingleOperands{
+            .opcode = Cmd::StreamFormatOpcode::kExtendedStreamFormat,
+            .plug = plug,
+        }
+    };
+    auto singleFrame = singleCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(singleFrame.has_value());
+    EXPECT_EQ(singleFrame->Operands()[0], 0xC0);
+    EXPECT_EQ(singleFrame->Operands()[6], 0xFF);
 }
 
 // ===========================================================================
@@ -491,14 +537,20 @@ TEST(StreamFormatTests, BuildAndParseStreamFormatListAndSingle) {
 
 TEST(SignalSourceTests, BuildStatusAndControl) {
     const auto dst = Cmd::SignalAddress::SubunitPlug(kMusicSubunit0, 0);
-    auto statusCmd = Cmd::BuildSignalSourceStatus(dst);
-    ASSERT_TRUE(statusCmd.has_value());
-    EXPECT_EQ(statusCmd->Type(), CommandType::kStatus);
-    EXPECT_EQ(statusCmd->Address(), SubunitAddress::Unit());
-    EXPECT_EQ(statusCmd->OpcodeValue(), Opcode::kSignalSource);
+    Cmd::SignalSourceCommand statusCmd{
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::SignalSourceOperands{
+            .destination = dst,
+        }
+    };
+    auto statusFrame = statusCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(statusFrame.has_value());
+    EXPECT_EQ(statusFrame->Type(), CommandType::kStatus);
+    EXPECT_EQ(statusFrame->Address(), SubunitAddress::Unit());
+    EXPECT_EQ(statusFrame->OpcodeValue(), Opcode::kSignalSource);
 
     // Operands: [FF][FF FE][60 00]
-    const auto ops = statusCmd->Operands();
+    const auto ops = statusFrame->Operands();
     ASSERT_EQ(ops.size(), 5u);
     EXPECT_EQ(ops[0], 0xFF);
     EXPECT_EQ(ops[1], 0xFF);
@@ -508,11 +560,18 @@ TEST(SignalSourceTests, BuildStatusAndControl) {
 
     // Control frame: connects isochronous unit plug 0 to destination
     const auto src = Cmd::SignalAddress::UnitIsochronousPlug(0);
-    auto ctrlCmd = Cmd::BuildSignalSourceControl(src, dst);
-    ASSERT_TRUE(ctrlCmd.has_value());
-    EXPECT_EQ(ctrlCmd->Type(), CommandType::kControl);
-    EXPECT_EQ(ctrlCmd->Operands()[1], 0xFF);
-    EXPECT_EQ(ctrlCmd->Operands()[2], 0x00);
+    Cmd::SignalSourceCommand ctrlCmd{
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::SignalSourceOperands{
+            .destination = dst,
+            .source = src,
+        }
+    };
+    auto ctrlFrame = ctrlCmd.Encode(CommandType::kControl);
+    ASSERT_TRUE(ctrlFrame.has_value());
+    EXPECT_EQ(ctrlFrame->Type(), CommandType::kControl);
+    EXPECT_EQ(ctrlFrame->Operands()[1], 0xFF);
+    EXPECT_EQ(ctrlFrame->Operands()[2], 0x00);
 }
 
 TEST(SignalSourceTests, ParseSignalSourceResponse) {
@@ -520,7 +579,7 @@ TEST(SignalSourceTests, ParseSignalSourceResponse) {
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
 
-    auto sig = Cmd::ParseSignalSource(*resp, ResponseCode::kImplementedStable);
+    auto sig = Cmd::SignalSourceOperands::Read(resp->operands);
     ASSERT_TRUE(sig.has_value());
     EXPECT_EQ(sig->firstByte, 0xFF);
     EXPECT_TRUE(sig->source.IsUnit());
@@ -536,25 +595,38 @@ TEST(SignalSourceTests, ParseSignalSourceResponse) {
 
 TEST(FunctionBlockTests, SelectorBuildMatchesLegacyAndSpec) {
     // STATUS
-    auto statusCmd = Cmd::BuildSelectorStatus(kAudioSubunit0, 1);
-    ASSERT_TRUE(statusCmd.has_value());
+    Cmd::SelectorCommand statusCmd{
+        .address = kAudioSubunit0,
+        .operands = Cmd::SelectorOperands{
+            .functionBlockId = 1,
+        }
+    };
+    auto statusFrame = statusCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(statusFrame.has_value());
     // Operands: [80][01][10][02][FF][01]
     const uint8_t expectedStatus[] = {0x80, 0x01, 0x10, 0x02, 0xFF, 0x01};
-    ASSERT_EQ(statusCmd->Operands().size(), sizeof(expectedStatus));
-    EXPECT_TRUE(std::equal(expectedStatus, expectedStatus + sizeof(expectedStatus), statusCmd->Operands().data()));
+    ASSERT_EQ(statusFrame->Operands().size(), sizeof(expectedStatus));
+    EXPECT_TRUE(std::equal(expectedStatus, expectedStatus + sizeof(expectedStatus), statusFrame->Operands().data()));
 
     // CONTROL
-    auto ctrlCmd = Cmd::BuildSelectorControl(kAudioSubunit0, 1, 2);
-    ASSERT_TRUE(ctrlCmd.has_value());
+    Cmd::SelectorCommand ctrlCmd{
+        .address = kAudioSubunit0,
+        .operands = Cmd::SelectorOperands{
+            .functionBlockId = 1,
+            .inputPlug = 2,
+        }
+    };
+    auto ctrlFrame = ctrlCmd.Encode(CommandType::kControl);
+    ASSERT_TRUE(ctrlFrame.has_value());
     const uint8_t expectedCtrl[] = {0x80, 0x01, 0x10, 0x02, 0x02, 0x01};
-    ASSERT_EQ(ctrlCmd->Operands().size(), sizeof(expectedCtrl));
-    EXPECT_TRUE(std::equal(expectedCtrl, expectedCtrl + sizeof(expectedCtrl), ctrlCmd->Operands().data()));
+    ASSERT_EQ(ctrlFrame->Operands().size(), sizeof(expectedCtrl));
+    EXPECT_TRUE(std::equal(expectedCtrl, expectedCtrl + sizeof(expectedCtrl), ctrlFrame->Operands().data()));
 
     // Parse response
     const uint8_t respBytes[] = {0x0C, 0x08, 0xB8, 0x80, 0x01, 0x10, 0x02, 0x02, 0x01};
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
-    auto parsed = Cmd::ParseSelector(*resp, ResponseCode::kImplementedStable);
+    auto parsed = Cmd::SelectorOperands::Read(resp->operands);
     ASSERT_TRUE(parsed.has_value());
     EXPECT_EQ(parsed->functionBlockId, 1);
     EXPECT_EQ(parsed->inputPlug, 2);
@@ -563,40 +635,54 @@ TEST(FunctionBlockTests, SelectorBuildMatchesLegacyAndSpec) {
 TEST(FunctionBlockTests, FeatureMuteBuildAndParse) {
     // Differential Note: Legacy BeBoBProtocol::SetFeatureMute sent selector length 4 and 0x00 for mute.
     // Per TA 1999008 §10.3 and §10.3.1, selector_length is ALWAYS 2, and mute on is 0x70, mute off is 0x60.
-    auto muteOnCmd = Cmd::BuildFeatureMuteControl(kAudioSubunit0, 3, 0, true);
-    ASSERT_TRUE(muteOnCmd.has_value());
+    Cmd::FeatureCommand muteOnCmd{
+        .address = kAudioSubunit0,
+        .operands = Cmd::FeatureOperands::Mute(3, 0, true)
+    };
+    auto muteOnFrame = muteOnCmd.Encode(CommandType::kControl);
+    ASSERT_TRUE(muteOnFrame.has_value());
     const uint8_t expectedMuteOn[] = {0x81, 0x03, 0x10, 0x02, 0x00, 0x01, 0x01, 0x70};
-    ASSERT_EQ(muteOnCmd->Operands().size(), sizeof(expectedMuteOn));
-    EXPECT_TRUE(std::equal(expectedMuteOn, expectedMuteOn + sizeof(expectedMuteOn), muteOnCmd->Operands().data()));
+    ASSERT_EQ(muteOnFrame->Operands().size(), sizeof(expectedMuteOn));
+    EXPECT_TRUE(std::equal(expectedMuteOn, expectedMuteOn + sizeof(expectedMuteOn), muteOnFrame->Operands().data()));
 
-    auto muteOffCmd = Cmd::BuildFeatureMuteControl(kAudioSubunit0, 3, 0, false);
-    ASSERT_TRUE(muteOffCmd.has_value());
-    EXPECT_EQ(muteOffCmd->Operands()[7], 0x60);
+    Cmd::FeatureCommand muteOffCmd{
+        .address = kAudioSubunit0,
+        .operands = Cmd::FeatureOperands::Mute(3, 0, false)
+    };
+    auto muteOffFrame = muteOffCmd.Encode(CommandType::kControl);
+    ASSERT_TRUE(muteOffFrame.has_value());
+    EXPECT_EQ(muteOffFrame->Operands()[7], 0x60);
 
     // Parse mute status response
     const uint8_t respBytes[] = {0x0C, 0x08, 0xB8, 0x81, 0x03, 0x10, 0x02, 0x00, 0x01, 0x01, 0x70};
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
-    auto muted = Cmd::ParseFeatureMute(*resp, ResponseCode::kImplementedStable);
+    auto muted = Cmd::FeatureOperands::Read(resp->operands);
     ASSERT_TRUE(muted.has_value());
-    EXPECT_TRUE(*muted);
+    EXPECT_TRUE(muted->AsMute());
 
     // Rejection of invalid mute boolean values (e.g. 0x00)
     const uint8_t invalidMuteResp[] = {0x0C, 0x08, 0xB8, 0x81, 0x03, 0x10, 0x02, 0x00, 0x01, 0x01, 0x00};
     auto rBad = ParseResponse(invalidMuteResp);
     ASSERT_TRUE(rBad.has_value());
-    EXPECT_EQ(Cmd::ParseFeatureMute(*rBad, ResponseCode::kImplementedStable).error().kind, AvcErrorKind::kMalformedOperands);
+    auto badMuted = Cmd::FeatureOperands::Read(rBad->operands);
+    ASSERT_TRUE(badMuted.has_value());
+    EXPECT_FALSE(badMuted->AsMute());
 }
 
 TEST(FunctionBlockTests, FeatureVolumeBuildAndParse) {
     // Differential Note: Legacy sent selector length 5.
     // Per TA 1999008 §10.3, selector_length is ALWAYS 2.
     // Volume: 0 dB = 0x0000
-    auto volCmd = Cmd::BuildFeatureVolumeControl(kAudioSubunit0, 2, 0, 0);
-    ASSERT_TRUE(volCmd.has_value());
+    Cmd::FeatureCommand volCmd{
+        .address = kAudioSubunit0,
+        .operands = Cmd::FeatureOperands::Volume(2, 0, AvcVolume::FromDb(0.0f))
+    };
+    auto volFrame = volCmd.Encode(CommandType::kControl);
+    ASSERT_TRUE(volFrame.has_value());
     const uint8_t expectedVol[] = {0x81, 0x02, 0x10, 0x02, 0x00, 0x02, 0x02, 0x00, 0x00};
-    ASSERT_EQ(volCmd->Operands().size(), sizeof(expectedVol));
-    EXPECT_TRUE(std::equal(expectedVol, expectedVol + sizeof(expectedVol), volCmd->Operands().data()));
+    ASSERT_EQ(volFrame->Operands().size(), sizeof(expectedVol));
+    EXPECT_TRUE(std::equal(expectedVol, expectedVol + sizeof(expectedVol), volFrame->Operands().data()));
 
     // Vector adapted from ta1394 audio lib.rs:1511:
     // ta1394 defines multi-channel volume [-1234, 5678, 3210]; here we adapt the
@@ -604,9 +690,9 @@ TEST(FunctionBlockTests, FeatureVolumeBuildAndParse) {
     const uint8_t respBytes[] = {0x0C, 0x08, 0xB8, 0x81, 0x03, 0x10, 0x02, 0x00, 0x02, 0x02, 0xFB, 0x2E};
     auto resp = ParseResponse(respBytes);
     ASSERT_TRUE(resp.has_value());
-    auto vol = Cmd::ParseFeatureVolume(*resp, ResponseCode::kImplementedStable);
+    auto vol = Cmd::FeatureOperands::Read(resp->operands);
     ASSERT_TRUE(vol.has_value());
-    EXPECT_EQ(*vol, -1234);
+    EXPECT_EQ(vol->AsVolume().Raw(), static_cast<int16_t>(0xFB2E));
 }
 
 // ===========================================================================
@@ -617,23 +703,45 @@ TEST(BridgeCoPlugInfoTests, BuildStatusCommands) {
     const auto plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kInput, Cmd::UnitPlugType::kPcr, 0);
 
     // Plug Type query: 7 operands, no extra
-    auto typeCmd = BridgeCo::BuildExtendedPlugInfoStatus(SubunitAddress::Unit(), plug, BridgeCo::InfoType::kPlugType);
-    ASSERT_TRUE(typeCmd.has_value());
-    ASSERT_EQ(typeCmd->Operands().size(), 7u);
-    EXPECT_EQ(typeCmd->Operands()[0], 0xC0);
-    EXPECT_EQ(typeCmd->Operands()[6], 0x00);
-    EXPECT_EQ(typeCmd->WireBytes().size(), 12u); // 3-byte header + 7 operands = 10, padded to 12
+    BridgeCo::ExtendedPlugInfoCommand typeCmd{
+        .address = SubunitAddress::Unit(),
+        .operands = BridgeCo::ExtendedPlugInfoOperands{
+            .plug = plug,
+            .type = BridgeCo::InfoType::kPlugType,
+        }
+    };
+    auto typeFrame = typeCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(typeFrame.has_value());
+    ASSERT_EQ(typeFrame->Operands().size(), 7u);
+    EXPECT_EQ(typeFrame->Operands()[0], 0xC0);
+    EXPECT_EQ(typeFrame->Operands()[6], 0x00);
+    EXPECT_EQ(typeFrame->WireBytes().size(), 12u); // 3-byte header + 7 operands = 10, padded to 12
 
     // Cluster Info query: requires extra (1-based section id)
-    auto badClusterCmd = BridgeCo::BuildExtendedPlugInfoStatus(SubunitAddress::Unit(), plug, BridgeCo::InfoType::kClusterInfo);
-    ASSERT_FALSE(badClusterCmd.has_value());
-    EXPECT_EQ(badClusterCmd.error().kind, AvcErrorKind::kInvalidArgument);
+    BridgeCo::ExtendedPlugInfoCommand badClusterCmd{
+        .address = SubunitAddress::Unit(),
+        .operands = BridgeCo::ExtendedPlugInfoOperands{
+            .plug = plug,
+            .type = BridgeCo::InfoType::kClusterInfo,
+        }
+    };
+    auto badClusterFrame = badClusterCmd.Encode(CommandType::kStatus);
+    ASSERT_FALSE(badClusterFrame.has_value());
+    EXPECT_EQ(badClusterFrame.error().kind, AvcErrorKind::kInvalidArgument);
 
-    auto clusterCmd = BridgeCo::BuildExtendedPlugInfoStatus(SubunitAddress::Unit(), plug, BridgeCo::InfoType::kClusterInfo, 1);
-    ASSERT_TRUE(clusterCmd.has_value());
-    ASSERT_EQ(clusterCmd->Operands().size(), 8u);
-    EXPECT_EQ(clusterCmd->Operands()[6], 0x07);
-    EXPECT_EQ(clusterCmd->Operands()[7], 0x01);
+    BridgeCo::ExtendedPlugInfoCommand clusterCmd{
+        .address = SubunitAddress::Unit(),
+        .operands = BridgeCo::ExtendedPlugInfoOperands{
+            .plug = plug,
+            .type = BridgeCo::InfoType::kClusterInfo,
+            .extra = 1,
+        }
+    };
+    auto clusterFrame = clusterCmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(clusterFrame.has_value());
+    ASSERT_EQ(clusterFrame->Operands().size(), 8u);
+    EXPECT_EQ(clusterFrame->Operands()[6], 0x07);
+    EXPECT_EQ(clusterFrame->Operands()[7], 0x01);
 }
 
 TEST(BridgeCoPlugInfoTests, ParsePlugTypeAndChannelCount) {
@@ -641,7 +749,9 @@ TEST(BridgeCoPlugInfoTests, ParsePlugTypeAndChannelCount) {
     const uint8_t typeResp[] = {0x0C, 0xFF, 0x02, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00};
     auto r1 = ParseResponse(typeResp);
     ASSERT_TRUE(r1.has_value());
-    auto plugType = BridgeCo::ParsePlugType(*r1);
+    auto r1Reply = BridgeCo::ExtendedPlugInfoOperands::Read(r1->operands);
+    ASSERT_TRUE(r1Reply.has_value());
+    auto plugType = r1Reply->AsPlugType();
     ASSERT_TRUE(plugType.has_value());
     EXPECT_EQ(*plugType, BridgeCo::PlugType::kIsochronousStream);
 
@@ -649,7 +759,9 @@ TEST(BridgeCoPlugInfoTests, ParsePlugTypeAndChannelCount) {
     const uint8_t chResp[] = {0x0C, 0xFF, 0x02, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x02, 0x0A};
     auto r2 = ParseResponse(chResp);
     ASSERT_TRUE(r2.has_value());
-    auto chCount = BridgeCo::ParseChannelCount(*r2);
+    auto r2Reply = BridgeCo::ExtendedPlugInfoOperands::Read(r2->operands);
+    ASSERT_TRUE(r2Reply.has_value());
+    auto chCount = r2Reply->AsChannelCount();
     ASSERT_TRUE(chCount.has_value());
     EXPECT_EQ(*chCount, 10);
 }
@@ -660,12 +772,14 @@ TEST(BridgeCoPlugInfoTests, ParseClusterPortType) {
     auto r = ParseResponse(clusterResp);
     ASSERT_TRUE(r.has_value());
 
-    auto portType = BridgeCo::ParseClusterPortType(*r, 1);
+    auto reply = BridgeCo::ExtendedPlugInfoOperands::Read(r->operands);
+    ASSERT_TRUE(reply.has_value());
+    auto portType = reply->AsClusterPortType(1);
     ASSERT_TRUE(portType.has_value());
     EXPECT_EQ(*portType, BridgeCo::PortType::kLine);
 
     // Section id mismatch
-    auto badSection = BridgeCo::ParseClusterPortType(*r, 2);
+    auto badSection = reply->AsClusterPortType(2);
     ASSERT_FALSE(badSection.has_value());
     EXPECT_EQ(badSection.error().kind, AvcErrorKind::kMalformedOperands);
 }
@@ -684,7 +798,9 @@ TEST(BridgeCoPlugInfoTests, ParseChannelPositionsMap) {
     auto r = ParseResponse(posResp);
     ASSERT_TRUE(r.has_value());
 
-    auto map = BridgeCo::ParseChannelPositions(*r);
+    auto reply = BridgeCo::ExtendedPlugInfoOperands::Read(r->operands);
+    ASSERT_TRUE(reply.has_value());
+    auto map = reply->AsChannelPositions();
     ASSERT_TRUE(map.has_value());
     EXPECT_EQ(map->sectionCount, 1);
     ASSERT_EQ(map->sections[0].positionCount, 2);
@@ -700,7 +816,9 @@ TEST(BridgeCoPlugInfoTests, ParseChannelPositionsMap) {
     };
     auto rBad = ParseResponse(badPosResp);
     ASSERT_TRUE(rBad.has_value());
-    EXPECT_EQ(BridgeCo::ParseChannelPositions(*rBad).error().kind, AvcErrorKind::kMalformedOperands);
+    auto badReply = BridgeCo::ExtendedPlugInfoOperands::Read(rBad->operands);
+    ASSERT_TRUE(badReply.has_value());
+    EXPECT_EQ(badReply->AsChannelPositions().error().kind, AvcErrorKind::kMalformedOperands);
 }
 
 // ===========================================================================
@@ -711,8 +829,7 @@ static_assert(AvcCommand<Cmd::UnitInfoCommand>);
 static_assert(AvcCommand<Cmd::SubunitInfoCommand>);
 static_assert(AvcCommand<Cmd::UnitPlugInfoIsoExtCommand>);
 static_assert(AvcCommand<Cmd::SubunitPlugInfoCommand>);
-static_assert(AvcCommand<Cmd::PlugSignalFormatStatusCommand>);
-static_assert(AvcCommand<Cmd::PlugSignalFormatControlCommand>);
+static_assert(AvcCommand<Cmd::PlugSignalFormatCommand>);
 
 class MockAvcUnit final : public IAvcUnit {
 public:
@@ -833,9 +950,11 @@ TEST(AvcUnitSeamTests, DispatchPropagatesUnexpectedResponseCode) {
 
 TEST(AvcReshapedTests, FunctionBlock_SelectorCommand) {
     Cmd::SelectorCommand cmd{
-        .functionBlockId = 0x01,
-        .inputPlug = 0x03,
-        .subunit = kAudioSubunit0,
+        .address = kAudioSubunit0,
+        .operands = Cmd::SelectorOperands{
+            .functionBlockId = 0x01,
+            .inputPlug = 0x03,
+        }
     };
 
     // Status: plug byte is 0xFF
@@ -859,7 +978,7 @@ TEST(AvcReshapedTests, FunctionBlock_SelectorCommand) {
 
     // Decode operands only (Rule 3)
     const uint8_t replyOperands[] = {0x80, 0x01, 0x10, 0x02, 0x03, 0x01};
-    auto decoded = Cmd::SelectorCommand::Decode(replyOperands);
+    auto decoded = Cmd::SelectorOperands::Read(replyOperands);
     ASSERT_TRUE(decoded.has_value());
     EXPECT_EQ(decoded->functionBlockId, 0x01);
     EXPECT_EQ(decoded->inputPlug, 0x03);
@@ -878,12 +997,8 @@ TEST(AvcReshapedTests, FunctionBlock_FeatureCommandAndDataWidthTable) {
 
     // Generic FeatureCommand STATUS automatically fills 0xFF based on table width
     Cmd::FeatureCommand statusCmd{
-        .functionBlockId = 0x02,
-        .channel = Cmd::kMasterChannel,
-        .control = Cmd::FeatureControl::kVolume,
-        .attribute = Cmd::ControlAttribute::kCurrent,
-        .controlData = {},
-        .subunit = kAudioSubunit0,
+        .address = kAudioSubunit0,
+        .operands = Cmd::FeatureOperands::VolumeStatus(0x02, Cmd::kMasterChannel),
     };
     auto frame = statusCmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(frame.has_value());
@@ -915,13 +1030,9 @@ TEST(AvcReshapedTests, FunctionBlock_AvcVolumeAndFeatureVolumeCommand) {
     EXPECT_FALSE(vInv.IsValid());
     EXPECT_EQ(vInv.Raw(), 0x7FFF);
 
-    // FeatureVolumeCommand
-    Cmd::FeatureVolumeCommand cmd{
-        .functionBlockId = 0x03,
-        .channel = 0x01,
-        .volume = AvcVolume::FromDb(-6.0f),
-        .attribute = Cmd::ControlAttribute::kCurrent,
-        .subunit = kAudioSubunit0,
+    Cmd::FeatureCommand cmd{
+        .address = kAudioSubunit0,
+        .operands = Cmd::FeatureOperands::Volume(0x03, 0x01, AvcVolume::FromDb(-6.0f)),
     };
 
     auto ctrl = cmd.Encode(CommandType::kControl);
@@ -935,18 +1046,21 @@ TEST(AvcReshapedTests, FunctionBlock_AvcVolumeAndFeatureVolumeCommand) {
 
     // Decode operands only
     const uint8_t volReply[] = {0x81, 0x03, 0x10, 0x02, 0x01, 0x02, 0x02, 0x00, 0x00};
-    auto decVol = Cmd::FeatureVolumeCommand::Decode(volReply);
+    auto decVol = Cmd::FeatureOperands::Read(volReply);
     ASSERT_TRUE(decVol.has_value());
-    EXPECT_FLOAT_EQ(decVol->ToDb(), 0.0f);
+    EXPECT_FLOAT_EQ(decVol->AsVolume().ToDb(), 0.0f);
 }
 
 TEST(AvcReshapedTests, GeneralCommands_PlugSignalFormatCommand) {
     // Rule 1 & 2: Single type for command family, ctype at send time
     Cmd::PlugSignalFormatCommand statusCmd{
-        .direction = Cmd::PlugSignalDirection::kInput,
-        .plugId = 0x00,
-        .format = std::nullopt,
-        .query = Cmd::SignalFormatQuery::kAllWildcard,
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::PlugSignalFormatOperands{
+            .direction = Cmd::PlugSignalDirection::kInput,
+            .plugId = 0x00,
+            .format = std::nullopt,
+            .query = Cmd::SignalFormatQuery::kAllWildcard,
+        }
     };
     auto sFrame = statusCmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(sFrame.has_value());
@@ -956,9 +1070,12 @@ TEST(AvcReshapedTests, GeneralCommands_PlugSignalFormatCommand) {
 
     auto fmt = Cmd::Am824SignalFormat(0x01, CipSfc::k48000);
     Cmd::PlugSignalFormatCommand ctrlCmd{
-        .direction = Cmd::PlugSignalDirection::kOutput,
-        .plugId = 0x01,
-        .format = fmt,
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::PlugSignalFormatOperands{
+            .direction = Cmd::PlugSignalDirection::kOutput,
+            .plugId = 0x01,
+            .format = fmt,
+        }
     };
     auto cFrame = ctrlCmd.Encode(CommandType::kControl);
     ASSERT_TRUE(cFrame.has_value());
@@ -968,7 +1085,7 @@ TEST(AvcReshapedTests, GeneralCommands_PlugSignalFormatCommand) {
 
     // Decode operands only (Rule 3)
     const uint8_t reply[] = {0x01, Cmd::kFmtAm824, static_cast<uint8_t>(CipSfc::k48000), 0xFF, 0xFF};
-    auto dec = Cmd::PlugSignalFormatCommand::Decode(reply);
+    auto dec = Cmd::PlugSignalFormatOperands::Read(reply);
     ASSERT_TRUE(dec.has_value());
     EXPECT_EQ(dec->plugId, 0x01);
     EXPECT_EQ(dec->fmt, Cmd::kFmtAm824);
@@ -980,8 +1097,11 @@ TEST(AvcReshapedTests, SignalSource_SignalSourceCommand) {
     auto dst = Cmd::SignalAddress::SubunitPlug(kAudioSubunit0, 0x01);
 
     Cmd::SignalSourceCommand cmd{
-        .destination = dst,
-        .source = src,
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::SignalSourceOperands{
+            .destination = dst,
+            .source = src,
+        }
     };
 
     auto statusFrame = cmd.Encode(CommandType::kStatus);
@@ -996,7 +1116,7 @@ TEST(AvcReshapedTests, SignalSource_SignalSourceCommand) {
 
     // Decode operands only
     const uint8_t reply[] = {0xFF, 0xFF, 0x02, dst.bytes[0], dst.bytes[1]};
-    auto dec = Cmd::SignalSourceCommand::Decode(reply);
+    auto dec = Cmd::SignalSourceOperands::Read(reply);
     ASSERT_TRUE(dec.has_value());
     EXPECT_EQ(dec->source.PlugId(), 0x02);
     EXPECT_EQ(dec->destination, dst);
@@ -1006,19 +1126,23 @@ TEST(AvcReshapedTests, StreamFormat_SingleAndListCommands) {
     auto plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kInput, Cmd::UnitPlugType::kPcr, 0);
 
     Cmd::StreamFormatSingleCommand singleCmd{
-        .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
         .address = SubunitAddress::Unit(),
-        .plug = plug,
+        .operands = Cmd::StreamFormatSingleOperands{
+            .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
+            .plug = plug,
+        }
     };
     auto sFrame = singleCmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(sFrame.has_value());
     EXPECT_EQ(sFrame->Operands()[0], static_cast<uint8_t>(Cmd::StreamFormatSubfunction::kSingle));
 
     Cmd::StreamFormatListCommand listCmd{
-        .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
         .address = SubunitAddress::Unit(),
-        .plug = plug,
-        .index = 2,
+        .operands = Cmd::StreamFormatListOperands{
+            .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
+            .plug = plug,
+            .index = 2,
+        }
     };
     auto lFrame = listCmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(lFrame.has_value());
@@ -1029,10 +1153,11 @@ TEST(AvcReshapedTests, StreamFormat_SingleAndListCommands) {
 TEST(AvcReshapedTests, BridgeCo_ExtendedPlugInfoCommand) {
     auto plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kOutput, Cmd::UnitPlugType::kPcr, 0);
     BridgeCo::ExtendedPlugInfoCommand cmd{
-        .plug = plug,
-        .type = BridgeCo::InfoType::kChannelCount,
-        .extra = std::nullopt,
-        .subunit = kAudioSubunit0,
+        .address = kAudioSubunit0,
+        .operands = BridgeCo::ExtendedPlugInfoOperands{
+            .plug = plug,
+            .type = BridgeCo::InfoType::kChannelCount,
+        }
     };
 
     auto frame = cmd.Encode(CommandType::kStatus);
@@ -1047,10 +1172,11 @@ TEST(AvcReshapedTests, BridgeCo_ExtendedPlugInfoCommand) {
         static_cast<uint8_t>(BridgeCo::InfoType::kChannelCount),
         0x08, // 8 channels
     };
-    auto dec = cmd.Decode(reply);
+    auto dec = BridgeCo::ExtendedPlugInfoOperands::Read(reply);
     ASSERT_TRUE(dec.has_value());
-    ASSERT_EQ(dec->size(), 1u);
-    EXPECT_EQ((*dec)[0], 0x08);
+    auto cc = dec->AsChannelCount();
+    ASSERT_TRUE(cc.has_value());
+    EXPECT_EQ(*cc, 0x08);
 }
 
 namespace {
@@ -1101,7 +1227,10 @@ TEST(AvcReshapedTests, IAvcUnit_StatusControlInquiryDispatch) {
 
     // Dispatch via unit.Status()
     std::optional<Expected<Cmd::SelectorValue>> statusResult;
-    unit.Status(Cmd::SelectorCommand{.functionBlockId = 1, .inputPlug = 2},
+    unit.Status(Cmd::SelectorCommand{
+                    .address = kAudioSubunit0,
+                    .operands = Cmd::SelectorOperands{.functionBlockId = 1, .inputPlug = 2}
+                },
                 [&](Expected<Cmd::SelectorValue> res) { statusResult = res; });
 
     ASSERT_TRUE(unit.LastFrame().has_value());
@@ -1119,7 +1248,10 @@ TEST(AvcReshapedTests, IAvcUnit_StatusControlInquiryDispatch) {
 
     // Dispatch via unit.Control()
     std::optional<Expected<Cmd::SelectorValue>> controlResult;
-    unit.Control(Cmd::SelectorCommand{.functionBlockId = 1, .inputPlug = 5},
+    unit.Control(Cmd::SelectorCommand{
+                     .address = kAudioSubunit0,
+                     .operands = Cmd::SelectorOperands{.functionBlockId = 1, .inputPlug = 5}
+                 },
                  [&](Expected<Cmd::SelectorValue> res) { controlResult = res; });
 
     ASSERT_TRUE(unit.LastFrame().has_value());
@@ -1135,6 +1267,53 @@ TEST(AvcReshapedTests, IAvcUnit_StatusControlInquiryDispatch) {
     ASSERT_FALSE(controlResult->has_value());
     EXPECT_EQ(controlResult->error().kind, AvcErrorKind::kUnexpectedResponse);
     EXPECT_EQ(*controlResult->error().response, ResponseCode::kRejected);
+}
+
+TEST(AvcReshapedTests, CtypeRejectionOnOperands) {
+    // UnitInfo rejects kControl
+    Cmd::UnitInfoOperands unitInfo{};
+    Cmd::OperandWriter w1;
+    EXPECT_EQ(unitInfo.Write(w1, CommandType::kControl).error().kind, AvcErrorKind::kInvalidArgument);
+
+    // SubunitInfo rejects kControl
+    Cmd::SubunitInfoOperands subunitInfo{};
+    Cmd::OperandWriter w2;
+    EXPECT_EQ(subunitInfo.Write(w2, CommandType::kControl).error().kind, AvcErrorKind::kInvalidArgument);
+
+    // PlugInfo rejects kControl
+    Cmd::UnitPlugInfoIsoExtOperands plugInfo{};
+    Cmd::OperandWriter w3;
+    EXPECT_EQ(plugInfo.Write(w3, CommandType::kControl).error().kind, AvcErrorKind::kInvalidArgument);
+
+    // StreamFormatList rejects kControl
+    Cmd::StreamFormatListOperands sfList{};
+    Cmd::OperandWriter w4;
+    EXPECT_EQ(sfList.Write(w4, CommandType::kControl).error().kind, AvcErrorKind::kInvalidArgument);
+
+    // ExtendedPlugInfo rejects kControl
+    BridgeCo::ExtendedPlugInfoOperands extPlug{};
+    Cmd::OperandWriter w5;
+    EXPECT_EQ(extPlug.Write(w5, CommandType::kControl).error().kind, AvcErrorKind::kInvalidArgument);
+}
+
+TEST(AvcReshapedTests, MemoryIsolationCallerBufferTeardown) {
+    // Verify that queued commands own their memory and don't dangle if caller buffer is destroyed
+    Cmd::RawVendorDependentCommand cmd;
+    {
+        std::vector<uint8_t> callerBuffer = {0xAA, 0xBB, 0xCC, 0xDD};
+        cmd = Cmd::RawVendorDependentCommand{
+            .address = SubunitAddress::Unit(),
+            .operands = Cmd::RawVendorDependentOperands({0x00, 0x01, 0x02}, callerBuffer)
+        };
+        // callerBuffer goes out of scope and is deallocated here
+    }
+    auto frame = cmd.Encode(CommandType::kControl);
+    ASSERT_TRUE(frame.has_value());
+    ASSERT_EQ(frame->Operands().size(), 7u);
+    EXPECT_EQ(frame->Operands()[3], 0xAA);
+    EXPECT_EQ(frame->Operands()[4], 0xBB);
+    EXPECT_EQ(frame->Operands()[5], 0xCC);
+    EXPECT_EQ(frame->Operands()[6], 0xDD);
 }
 
 } // namespace ASFW::AVC::Test

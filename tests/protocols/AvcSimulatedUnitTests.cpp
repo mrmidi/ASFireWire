@@ -38,7 +38,7 @@ TEST_F(AvcSimulatedUnitTests, DuetUnitInfoDiscovery) {
 
 TEST_F(AvcSimulatedUnitTests, DuetSubunitAndPlugInfo) {
     std::optional<Expected<Cmd::SubunitInfo>> subunitInfo;
-    Send(duetUnit_, Cmd::SubunitInfoCommand{.page = 0}, [&](Expected<Cmd::SubunitInfo> res) {
+    Send(duetUnit_, Cmd::SubunitInfoCommand{.operands = Cmd::SubunitInfoOperands{.page = 0}}, [&](Expected<Cmd::SubunitInfo> res) {
         subunitInfo = res;
     });
 
@@ -63,10 +63,13 @@ TEST_F(AvcSimulatedUnitTests, Phase88StreamFormatQuery) {
     EXPECT_EQ(phase88Unit_.Guid(), 0x000AAC0300B1D1F7ULL);
 
     // Query single format for Iso In 0 via 0x2F
-    auto cmd = Cmd::BuildStreamFormatSingleStatus(
-        Cmd::StreamFormatOpcode::kStreamFormatSupport,
-        SubunitAddress::Unit(),
-        Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kInput, Cmd::UnitPlugType::kPcr, 0));
+    auto cmd = Command<Cmd::StreamFormatSingleOperands>{
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::StreamFormatSingleOperands{
+            .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
+            .plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kInput, Cmd::UnitPlugType::kPcr, 0),
+        },
+    }.Encode(CommandType::kStatus);
     ASSERT_TRUE(cmd.has_value());
 
     std::optional<Expected<Response>> rawResponse;
@@ -76,7 +79,7 @@ TEST_F(AvcSimulatedUnitTests, Phase88StreamFormatQuery) {
 
     ASSERT_TRUE(rawResponse.has_value());
     ASSERT_TRUE(rawResponse->has_value());
-    auto singleFmt = Cmd::ParseStreamFormatSingle(**rawResponse, ResponseCode::kImplementedStable);
+    auto singleFmt = Cmd::StreamFormatSingleOperands::Read((*rawResponse)->operands);
     ASSERT_TRUE(singleFmt.has_value());
     EXPECT_EQ(singleFmt->format.compound.rate, StreamFormatRate::k48000);
 }
@@ -93,7 +96,10 @@ TEST_F(AvcSimulatedUnitTests, FaultKnobs_TimeoutAndInterimAndRejections) {
     // 2. Interim deferral
     duetUnit_.SetInterimNext(true);
     std::vector<ResponseCode> codes;
-    auto cmd = Cmd::BuildUnitInfoStatus();
+    auto cmd = Command<Cmd::UnitInfoOperands>{
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::UnitInfoOperands{},
+    }.Encode(CommandType::kStatus);
     ASSERT_TRUE(cmd.has_value());
     duetUnit_.Submit(*cmd, duetUnit_.CurrentGeneration(), [&](Expected<Response> res) {
         if (res) {

@@ -21,93 +21,34 @@
 
 namespace ASFW::AVC::BridgeCo {
 
-Expected<CommandFrame> BuildExtendedPlugInfoStatus(SubunitAddress subunit, const PlugAddress& plug,
-                                                   InfoType type,
-                                                   std::optional<uint8_t> extra) noexcept {
-    if (type == InfoType::kClusterInfo && !extra.has_value()) {
-        return Fail(AvcErrorKind::kInvalidArgument);
-    }
+// ---------------------------------------------------------------------------
+// ExtendedPlugInfoReply Helpers
+// ---------------------------------------------------------------------------
 
-    const auto plugBytes = plug.Encode();
-
-    if (extra.has_value()) {
-        const std::array<uint8_t, 8> operands = {
-            kExtendedPlugInfoSubfunction,
-            plugBytes[0], plugBytes[1], plugBytes[2], plugBytes[3], plugBytes[4],
-            static_cast<uint8_t>(type),
-            *extra,
-        };
-        return CommandFrame::Make(CommandType::kStatus, subunit, Opcode::kPlugInfo, operands);
-    }
-
-    const std::array<uint8_t, 7> operands = {
-        kExtendedPlugInfoSubfunction,
-        plugBytes[0], plugBytes[1], plugBytes[2], plugBytes[3], plugBytes[4],
-        static_cast<uint8_t>(type),
-    };
-    return CommandFrame::Make(CommandType::kStatus, subunit, Opcode::kPlugInfo, operands);
-}
-
-Expected<std::span<const uint8_t>> ExtendedPlugInfoData(std::span<const uint8_t> operands,
-                                                        InfoType type) noexcept {
-    if (operands.size() < 7) {
-        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
-    }
-    if (operands[0] != kExtendedPlugInfoSubfunction) {
-        return FailAt(AvcErrorKind::kMalformedOperands, 0);
-    }
-    if (operands[6] != static_cast<uint8_t>(type)) {
+Expected<PlugType> ExtendedPlugInfoReply::AsPlugType() const noexcept {
+    if (type != InfoType::kPlugType) {
         return FailAt(AvcErrorKind::kMalformedOperands, 6);
     }
-
-    return operands.subspan(7);
-}
-
-Expected<std::span<const uint8_t>> ExtendedPlugInfoData(const Response& response,
-                                                        InfoType type) noexcept {
-    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
-    }
-    return ExtendedPlugInfoData(*operandsRes, type);
-}
-
-Expected<PlugType> ParsePlugType(std::span<const uint8_t> operands) noexcept {
-    auto dataRes = ExtendedPlugInfoData(operands, InfoType::kPlugType);
-    if (!dataRes) {
-        return std::unexpected(dataRes.error());
-    }
-    if (dataRes->empty()) {
+    if (data.empty()) {
         return FailAt(AvcErrorKind::kOperandsTooShort, 7);
     }
-    return static_cast<PlugType>((*dataRes)[0]);
+    return static_cast<PlugType>(data[0]);
 }
 
-Expected<PlugType> ParsePlugType(const Response& response) noexcept {
-    return ParsePlugType(response.operands);
-}
-
-Expected<uint8_t> ParseChannelCount(std::span<const uint8_t> operands) noexcept {
-    auto dataRes = ExtendedPlugInfoData(operands, InfoType::kChannelCount);
-    if (!dataRes) {
-        return std::unexpected(dataRes.error());
+Expected<uint8_t> ExtendedPlugInfoReply::AsChannelCount() const noexcept {
+    if (type != InfoType::kChannelCount) {
+        return FailAt(AvcErrorKind::kMalformedOperands, 6);
     }
-    if (dataRes->empty()) {
+    if (data.empty()) {
         return FailAt(AvcErrorKind::kOperandsTooShort, 7);
     }
-    return (*dataRes)[0];
+    return data[0];
 }
 
-Expected<uint8_t> ParseChannelCount(const Response& response) noexcept {
-    return ParseChannelCount(response.operands);
-}
-
-Expected<ChannelPositions> ParseChannelPositions(std::span<const uint8_t> operands) noexcept {
-    auto dataRes = ExtendedPlugInfoData(operands, InfoType::kChannelPositions);
-    if (!dataRes) {
-        return std::unexpected(dataRes.error());
+Expected<ChannelPositions> ExtendedPlugInfoReply::AsChannelPositions() const noexcept {
+    if (type != InfoType::kChannelPositions) {
+        return FailAt(AvcErrorKind::kMalformedOperands, 6);
     }
-    const auto data = *dataRes;
     if (data.empty()) {
         return FailAt(AvcErrorKind::kOperandsTooShort, 7);
     }
@@ -149,36 +90,66 @@ Expected<ChannelPositions> ParseChannelPositions(std::span<const uint8_t> operan
     return positions;
 }
 
-Expected<ChannelPositions> ParseChannelPositions(const Response& response) noexcept {
-    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
+Expected<PortType> ExtendedPlugInfoReply::AsClusterPortType(uint8_t requestedSectionId) const noexcept {
+    if (type != InfoType::kClusterInfo) {
+        return FailAt(AvcErrorKind::kMalformedOperands, 6);
     }
-    return ParseChannelPositions(*operandsRes);
-}
-
-Expected<PortType> ParseClusterPortType(std::span<const uint8_t> operands,
-                                        uint8_t requestedSectionId) noexcept {
-    auto dataRes = ExtendedPlugInfoData(operands, InfoType::kClusterInfo);
-    if (!dataRes) {
-        return std::unexpected(dataRes.error());
+    if (data.size() < 2) {
+        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(7 + data.size()));
     }
-    if (dataRes->size() < 2) {
-        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(7 + dataRes->size()));
-    }
-    if ((*dataRes)[0] != requestedSectionId) {
+    if (data[0] != requestedSectionId) {
         return FailAt(AvcErrorKind::kMalformedOperands, 7);
     }
-    return static_cast<PortType>((*dataRes)[1]);
+    return static_cast<PortType>(data[1]);
 }
 
-Expected<PortType> ParseClusterPortType(const Response& response,
-                                        uint8_t requestedSectionId) noexcept {
-    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
+// ---------------------------------------------------------------------------
+// ExtendedPlugInfoOperands
+// ---------------------------------------------------------------------------
+
+Expected<void> ExtendedPlugInfoOperands::Write(Cmd::OperandWriter& w, CommandType t) const noexcept {
+    if (t != CommandType::kStatus) {
+        return Fail(AvcErrorKind::kInvalidArgument);
     }
-    return ParseClusterPortType(*operandsRes, requestedSectionId);
+    if (type == InfoType::kClusterInfo && !extra.has_value()) {
+        return Fail(AvcErrorKind::kInvalidArgument);
+    }
+
+    auto r1 = w.Append(kExtendedPlugInfoSubfunction);
+    if (!r1) return r1;
+    auto plugBytes = plug.Encode();
+    auto r2 = w.Append(plugBytes);
+    if (!r2) return r2;
+    auto r3 = w.Append(static_cast<uint8_t>(type));
+    if (!r3) return r3;
+
+    if (extra.has_value()) {
+        return w.Append(*extra);
+    }
+    return {};
+}
+
+Expected<ExtendedPlugInfoReply> ExtendedPlugInfoOperands::Read(std::span<const uint8_t> in) noexcept {
+    if (in.size() < 7) {
+        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
+    }
+    if (in[0] != kExtendedPlugInfoSubfunction) {
+        return FailAt(AvcErrorKind::kMalformedOperands, 0);
+    }
+    return ExtendedPlugInfoReply{
+        .type = static_cast<InfoType>(in[6]),
+        .data = in.subspan(7),
+    };
+}
+
+Expected<ExtendedPlugInfoReply> ExtendedPlugInfoOperands::Read(std::span<const uint8_t> in,
+                                                              InfoType expectedType) noexcept {
+    auto reply = Read(in);
+    if (!reply) return reply;
+    if (reply->type != expectedType) {
+        return FailAt(AvcErrorKind::kMalformedOperands, 6);
+    }
+    return reply;
 }
 
 } // namespace ASFW::AVC::BridgeCo
