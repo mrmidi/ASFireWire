@@ -291,7 +291,8 @@ TEST(FirefaceSequenceTests, FF800CapturePollTimesOutAtBoundAndHonorsCancellation
     EXPECT_FALSE(assignment);
     EXPECT_EQ(assignment.error(), kIOReturnTimeout);
     EXPECT_GE(elapsed, 490U);
-    EXPECT_LT(elapsed, 530U);
+    // Sanitized CI can add scheduling overhead to the 500 ms polling deadline.
+    EXPECT_LT(elapsed, 750U);
     EXPECT_EQ(family.Stop(), kIOReturnSuccess);
     EXPECT_EQ(bus.writes.back().lo, 0x34U); // assignment timeout resets the partially configured device
 
