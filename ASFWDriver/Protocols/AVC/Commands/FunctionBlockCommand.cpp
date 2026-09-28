@@ -15,46 +15,101 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 namespace ASFW::AVC::Cmd {
 
 // ---------------------------------------------------------------------------
-// Selector Block
+// Generic Function Block Frame Codec
 // ---------------------------------------------------------------------------
 
-Expected<CommandFrame> BuildSelectorStatus(SubunitAddress subunit, uint8_t functionBlockId) noexcept {
-    const std::array<uint8_t, 6> operands = {
-        static_cast<uint8_t>(FunctionBlockType::kSelector),
-        functionBlockId,
-        static_cast<uint8_t>(ControlAttribute::kCurrent),
-        0x02,
-        0xFF,
-        kSelectorControl,
-    };
-
-    return CommandFrame::Make(CommandType::kStatus, subunit, Opcode::kFunctionBlock, operands);
-}
-
-Expected<CommandFrame> BuildSelectorControl(SubunitAddress subunit, uint8_t functionBlockId,
-                                            uint8_t inputPlug) noexcept {
-    const std::array<uint8_t, 6> operands = {
-        static_cast<uint8_t>(FunctionBlockType::kSelector),
-        functionBlockId,
-        static_cast<uint8_t>(ControlAttribute::kCurrent),
-        0x02,
-        inputPlug,
-        kSelectorControl,
-    };
-
-    return CommandFrame::Make(CommandType::kControl, subunit, Opcode::kFunctionBlock, operands);
-}
-
-Expected<SelectorValue> ParseSelector(const Response& response, ResponseCode expected) noexcept {
-    auto operandsRes = OperandsIf(response, expected);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
+Expected<CommandFrame> BuildFunctionBlock(
+    CommandType type,
+    SubunitAddress subunit,
+    const FunctionBlockFrame& frame) noexcept {
+    if (frame.selectorBytes.size() > 255) {
+        return Fail(AvcErrorKind::kInvalidArgument);
     }
-    const auto& operands = *operandsRes;
+
+    std::vector<uint8_t> operands;
+    operands.reserve(4 + frame.selectorBytes.size() + 1 + frame.dataBytes.size());
+
+    operands.push_back(static_cast<uint8_t>(frame.type));
+    operands.push_back(frame.functionBlockId);
+    operands.push_back(static_cast<uint8_t>(frame.attribute));
+    operands.push_back(static_cast<uint8_t>(frame.selectorBytes.size()));
+    operands.insert(operands.end(), frame.selectorBytes.begin(), frame.selectorBytes.end());
+
+    if (frame.type == FunctionBlockType::kFeature || frame.type == FunctionBlockType::kProcessing) {
+        operands.push_back(static_cast<uint8_t>(frame.dataBytes.size()));
+        operands.insert(operands.end(), frame.dataBytes.begin(), frame.dataBytes.end());
+    } else if (!frame.dataBytes.empty()) {
+        operands.insert(operands.end(), frame.dataBytes.begin(), frame.dataBytes.end());
+    }
+
+    return CommandFrame::Make(type, subunit, Opcode::kFunctionBlock, operands);
+}
+
+Expected<FunctionBlockReply> ParseFunctionBlock(std::span<const uint8_t> operands) noexcept {
+    if (operands.size() < 4) {
+        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
+    }
+
+    const auto fbType = static_cast<FunctionBlockType>(operands[0]);
+    const uint8_t fbId = operands[1];
+    const auto attr = static_cast<ControlAttribute>(operands[2]);
+    const uint8_t selectorLen = operands[3];
+
+    if (operands.size() < 4 + selectorLen) {
+        return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
+    }
+
+    auto selectorBytes = operands.subspan(4, selectorLen);
+    std::span<const uint8_t> dataBytes{};
+
+    if (fbType == FunctionBlockType::kFeature || fbType == FunctionBlockType::kProcessing) {
+        const size_t dataLenOffset = 4 + selectorLen;
+        if (operands.size() < dataLenOffset + 1) {
+            return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
+        }
+        const uint8_t dataLen = operands[dataLenOffset];
+        if (operands.size() < dataLenOffset + 1 + dataLen) {
+            return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
+        }
+        dataBytes = operands.subspan(dataLenOffset + 1, dataLen);
+    } else if (operands.size() > 4 + selectorLen) {
+        dataBytes = operands.subspan(4 + selectorLen);
+    }
+
+    return FunctionBlockReply{
+        .type = fbType,
+        .functionBlockId = fbId,
+        .attribute = attr,
+        .selectorBytes = selectorBytes,
+        .dataBytes = dataBytes,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Selector Command
+// ---------------------------------------------------------------------------
+
+Expected<CommandFrame> SelectorCommand::Encode(CommandType type) const noexcept {
+    const uint8_t plug = (type == CommandType::kStatus) ? 0xFF : inputPlug;
+    const std::array<uint8_t, 2> selectorBytes = { plug, kSelectorControl };
+
+    FunctionBlockFrame frame{
+        .type = FunctionBlockType::kSelector,
+        .functionBlockId = functionBlockId,
+        .attribute = ControlAttribute::kCurrent,
+        .selectorBytes = selectorBytes,
+        .dataBytes = {},
+    };
+
+    return BuildFunctionBlock(type, subunit, frame);
+}
+
+Expected<SelectorValue> SelectorCommand::Decode(std::span<const uint8_t> operands) noexcept {
     if (operands.size() < 6) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -75,47 +130,81 @@ Expected<SelectorValue> ParseSelector(const Response& response, ResponseCode exp
 }
 
 // ---------------------------------------------------------------------------
-// Feature Block: Mute
+// Feature Command (Generic)
 // ---------------------------------------------------------------------------
 
-Expected<CommandFrame> BuildFeatureMuteStatus(SubunitAddress subunit, uint8_t functionBlockId,
-                                              uint8_t channel) noexcept {
-    const std::array<uint8_t, 8> operands = {
-        static_cast<uint8_t>(FunctionBlockType::kFeature),
-        functionBlockId,
-        static_cast<uint8_t>(ControlAttribute::kCurrent),
-        0x02,
+Expected<CommandFrame> FeatureCommand::Encode(CommandType type) const noexcept {
+    const std::array<uint8_t, 2> selectorBytes = {
         channel,
-        static_cast<uint8_t>(FeatureControl::kMute),
-        0x01,
-        0xFF,
+        static_cast<uint8_t>(control),
     };
 
-    return CommandFrame::Make(CommandType::kStatus, subunit, Opcode::kFunctionBlock, operands);
-}
+    std::vector<uint8_t> dataBuf;
+    std::span<const uint8_t> payload = controlData;
 
-Expected<CommandFrame> BuildFeatureMuteControl(SubunitAddress subunit, uint8_t functionBlockId,
-                                               uint8_t channel, bool muted) noexcept {
-    const std::array<uint8_t, 8> operands = {
-        static_cast<uint8_t>(FunctionBlockType::kFeature),
-        functionBlockId,
-        static_cast<uint8_t>(ControlAttribute::kCurrent),
-        0x02,
-        channel,
-        static_cast<uint8_t>(FeatureControl::kMute),
-        0x01,
-        muted ? kBooleanTrue : kBooleanFalse,
-    };
-
-    return CommandFrame::Make(CommandType::kControl, subunit, Opcode::kFunctionBlock, operands);
-}
-
-Expected<bool> ParseFeatureMute(const Response& response, ResponseCode expected) noexcept {
-    auto operandsRes = OperandsIf(response, expected);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
+    if (type == CommandType::kStatus && controlData.empty()) {
+        auto width = FeatureControlDataWidth(control);
+        if (width) {
+            dataBuf.assign(*width, 0xFF);
+            payload = dataBuf;
+        }
     }
-    const auto& operands = *operandsRes;
+
+    FunctionBlockFrame frame{
+        .type = FunctionBlockType::kFeature,
+        .functionBlockId = functionBlockId,
+        .attribute = attribute,
+        .selectorBytes = selectorBytes,
+        .dataBytes = payload,
+    };
+
+    return BuildFunctionBlock(type, subunit, frame);
+}
+
+Expected<FeatureReply> FeatureCommand::Decode(std::span<const uint8_t> operands) noexcept {
+    auto parsed = ParseFunctionBlock(operands);
+    if (!parsed) {
+        return std::unexpected(parsed.error());
+    }
+
+    if (parsed->type != FunctionBlockType::kFeature) {
+        return FailAt(AvcErrorKind::kMalformedOperands, 0);
+    }
+    if (parsed->selectorBytes.size() < 2) {
+        return FailAt(AvcErrorKind::kMalformedOperands, 3);
+    }
+
+    return FeatureReply{
+        .functionBlockId = parsed->functionBlockId,
+        .channel = parsed->selectorBytes[0],
+        .control = static_cast<FeatureControl>(parsed->selectorBytes[1]),
+        .attribute = parsed->attribute,
+        .data = parsed->dataBytes,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Feature: Mute Command
+// ---------------------------------------------------------------------------
+
+Expected<CommandFrame> FeatureMuteCommand::Encode(CommandType type) const noexcept {
+    const std::array<uint8_t, 1> muteData = {
+        (type == CommandType::kStatus) ? uint8_t{0xFF} : (muted ? kBooleanTrue : kBooleanFalse)
+    };
+
+    FeatureCommand cmd{
+        .functionBlockId = functionBlockId,
+        .channel = channel,
+        .control = FeatureControl::kMute,
+        .attribute = ControlAttribute::kCurrent,
+        .controlData = muteData,
+        .subunit = subunit,
+    };
+
+    return cmd.Encode(type);
+}
+
+Expected<bool> FeatureMuteCommand::Decode(std::span<const uint8_t> operands) noexcept {
     if (operands.size() < 8) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -144,51 +233,32 @@ Expected<bool> ParseFeatureMute(const Response& response, ResponseCode expected)
 }
 
 // ---------------------------------------------------------------------------
-// Feature Block: Volume
+// Feature: Volume Command
 // ---------------------------------------------------------------------------
 
-Expected<CommandFrame> BuildFeatureVolumeStatus(SubunitAddress subunit, uint8_t functionBlockId,
-                                                uint8_t channel, ControlAttribute attribute) noexcept {
-    const auto rawInvalid = static_cast<uint16_t>(kVolumeInvalid);
-    const std::array<uint8_t, 9> operands = {
-        static_cast<uint8_t>(FunctionBlockType::kFeature),
-        functionBlockId,
-        static_cast<uint8_t>(attribute),
-        0x02,
-        channel,
-        static_cast<uint8_t>(FeatureControl::kVolume),
-        0x02,
-        static_cast<uint8_t>((rawInvalid >> 8) & 0xFF),
-        static_cast<uint8_t>(rawInvalid & 0xFF),
+Expected<CommandFrame> FeatureVolumeCommand::Encode(CommandType type) const noexcept {
+    const uint16_t rawVal = (type == CommandType::kStatus)
+        ? static_cast<uint16_t>(kVolumeInvalid)
+        : static_cast<uint16_t>(volume.Raw());
+
+    const std::array<uint8_t, 2> volData = {
+        static_cast<uint8_t>((rawVal >> 8) & 0xFF),
+        static_cast<uint8_t>(rawVal & 0xFF),
     };
 
-    return CommandFrame::Make(CommandType::kStatus, subunit, Opcode::kFunctionBlock, operands);
-}
-
-Expected<CommandFrame> BuildFeatureVolumeControl(SubunitAddress subunit, uint8_t functionBlockId,
-                                                 uint8_t channel, int16_t value) noexcept {
-    const auto rawValue = static_cast<uint16_t>(value);
-    const std::array<uint8_t, 9> operands = {
-        static_cast<uint8_t>(FunctionBlockType::kFeature),
-        functionBlockId,
-        static_cast<uint8_t>(ControlAttribute::kCurrent),
-        0x02,
-        channel,
-        static_cast<uint8_t>(FeatureControl::kVolume),
-        0x02,
-        static_cast<uint8_t>((rawValue >> 8) & 0xFF),
-        static_cast<uint8_t>(rawValue & 0xFF),
+    FeatureCommand cmd{
+        .functionBlockId = functionBlockId,
+        .channel = channel,
+        .control = FeatureControl::kVolume,
+        .attribute = attribute,
+        .controlData = volData,
+        .subunit = subunit,
     };
 
-    return CommandFrame::Make(CommandType::kControl, subunit, Opcode::kFunctionBlock, operands);
+    return cmd.Encode(type);
 }
 
-Expected<int16_t> ParseFeatureVolume(const Response& response, ResponseCode expected) noexcept {
-    auto operandsRes = OperandsIf(response, expected);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
-    }
-    const auto& operands = *operandsRes;
+Expected<AvcVolume> FeatureVolumeCommand::Decode(std::span<const uint8_t> operands) noexcept {
     if (operands.size() < 9) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -206,7 +276,7 @@ Expected<int16_t> ParseFeatureVolume(const Response& response, ResponseCode expe
     }
 
     const uint16_t rawVal = (static_cast<uint16_t>(operands[7]) << 8) | operands[8];
-    return static_cast<int16_t>(rawVal);
+    return AvcVolume::FromRaw(static_cast<int16_t>(rawVal));
 }
 
 } // namespace ASFW::AVC::Cmd

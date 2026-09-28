@@ -36,12 +36,7 @@ Expected<CommandFrame> BuildUnitInfoStatus(UnitInfoStyle style) noexcept {
     return CommandFrame::Make(CommandType::kStatus, SubunitAddress::Unit(), Opcode::kUnitInfo, {});
 }
 
-Expected<UnitInfo> ParseUnitInfo(const Response& response) noexcept {
-    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
-    }
-    const auto& operands = *operandsRes;
+Expected<UnitInfo> ParseUnitInfo(std::span<const uint8_t> operands) noexcept {
     if (operands.size() < 5) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -56,6 +51,14 @@ Expected<UnitInfo> ParseUnitInfo(const Response& response) noexcept {
     };
 }
 
+Expected<UnitInfo> ParseUnitInfo(const Response& response) noexcept {
+    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
+    if (!operandsRes) {
+        return std::unexpected(operandsRes.error());
+    }
+    return ParseUnitInfo(*operandsRes);
+}
+
 // ---------------------------------------------------------------------------
 // SUBUNIT INFO (0x31)
 // ---------------------------------------------------------------------------
@@ -68,12 +71,7 @@ Expected<CommandFrame> BuildSubunitInfoStatus(uint8_t page, uint8_t extensionCod
     return CommandFrame::Make(CommandType::kStatus, SubunitAddress::Unit(), Opcode::kSubunitInfo, operands);
 }
 
-Expected<SubunitInfo> ParseSubunitInfo(const Response& response) noexcept {
-    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
-    }
-    const auto& operands = *operandsRes;
+Expected<SubunitInfo> ParseSubunitInfo(std::span<const uint8_t> operands) noexcept {
     if (operands.size() < 5) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -99,6 +97,14 @@ Expected<SubunitInfo> ParseSubunitInfo(const Response& response) noexcept {
     return info;
 }
 
+Expected<SubunitInfo> ParseSubunitInfo(const Response& response) noexcept {
+    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
+    if (!operandsRes) {
+        return std::unexpected(operandsRes.error());
+    }
+    return ParseSubunitInfo(*operandsRes);
+}
+
 // ---------------------------------------------------------------------------
 // PLUG INFO (0x02)
 // ---------------------------------------------------------------------------
@@ -118,12 +124,8 @@ Expected<CommandFrame> BuildSubunitPlugInfoStatus(SubunitAddress subunit) noexce
     return CommandFrame::Make(CommandType::kStatus, subunit, Opcode::kPlugInfo, kOperands);
 }
 
-Expected<UnitIsochronousExternalPlugs> ParseUnitIsochronousExternalPlugs(const Response& response) noexcept {
-    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
-    }
-    const auto& operands = *operandsRes;
+Expected<UnitIsochronousExternalPlugs> ParseUnitIsochronousExternalPlugs(
+    std::span<const uint8_t> operands) noexcept {
     if (operands.size() < 5) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -139,12 +141,16 @@ Expected<UnitIsochronousExternalPlugs> ParseUnitIsochronousExternalPlugs(const R
     };
 }
 
-Expected<UnitAsynchronousPlugs> ParseUnitAsynchronousPlugs(const Response& response) noexcept {
+Expected<UnitIsochronousExternalPlugs> ParseUnitIsochronousExternalPlugs(const Response& response) noexcept {
     auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
     if (!operandsRes) {
         return std::unexpected(operandsRes.error());
     }
-    const auto& operands = *operandsRes;
+    return ParseUnitIsochronousExternalPlugs(*operandsRes);
+}
+
+Expected<UnitAsynchronousPlugs> ParseUnitAsynchronousPlugs(
+    std::span<const uint8_t> operands) noexcept {
     if (operands.size() < 3) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -158,12 +164,16 @@ Expected<UnitAsynchronousPlugs> ParseUnitAsynchronousPlugs(const Response& respo
     };
 }
 
-Expected<SubunitPlugs> ParseSubunitPlugs(const Response& response) noexcept {
+Expected<UnitAsynchronousPlugs> ParseUnitAsynchronousPlugs(const Response& response) noexcept {
     auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
     if (!operandsRes) {
         return std::unexpected(operandsRes.error());
     }
-    const auto& operands = *operandsRes;
+    return ParseUnitAsynchronousPlugs(*operandsRes);
+}
+
+Expected<SubunitPlugs> ParseSubunitPlugs(
+    std::span<const uint8_t> operands) noexcept {
     if (operands.size() < 3) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -175,6 +185,14 @@ Expected<SubunitPlugs> ParseSubunitPlugs(const Response& response) noexcept {
         .destinationPlugs = operands[1],
         .sourcePlugs = operands[2],
     };
+}
+
+Expected<SubunitPlugs> ParseSubunitPlugs(const Response& response) noexcept {
+    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
+    if (!operandsRes) {
+        return std::unexpected(operandsRes.error());
+    }
+    return ParseSubunitPlugs(*operandsRes);
 }
 
 // ---------------------------------------------------------------------------
@@ -209,12 +227,7 @@ Expected<CommandFrame> BuildPlugSignalFormatControl(PlugSignalDirection directio
     return CommandFrame::Make(CommandType::kControl, SubunitAddress::Unit(), opcode, operands);
 }
 
-Expected<PlugSignalFormat> ParsePlugSignalFormat(const Response& response, ResponseCode expected) noexcept {
-    auto operandsRes = OperandsIf(response, expected);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
-    }
-    const auto& operands = *operandsRes;
+Expected<PlugSignalFormat> ParsePlugSignalFormat(std::span<const uint8_t> operands) noexcept {
     if (operands.size() < 5) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -224,6 +237,14 @@ Expected<PlugSignalFormat> ParsePlugSignalFormat(const Response& response, Respo
         .fmt = operands[1],
         .fdf = {operands[2], operands[3], operands[4]},
     };
+}
+
+Expected<PlugSignalFormat> ParsePlugSignalFormat(const Response& response, ResponseCode expected) noexcept {
+    auto operandsRes = OperandsIf(response, expected);
+    if (!operandsRes) {
+        return std::unexpected(operandsRes.error());
+    }
+    return ParsePlugSignalFormat(*operandsRes);
 }
 
 // ---------------------------------------------------------------------------
@@ -250,12 +271,7 @@ Expected<CommandFrame> BuildVendorDependent(CommandType type, SubunitAddress add
                               std::span<const uint8_t>{operands.data(), 3u + payload.size()});
 }
 
-Expected<VendorDependentReply> ParseVendorDependent(const Response& response, ResponseCode expected) noexcept {
-    auto operandsRes = OperandsIf(response, expected);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
-    }
-    const auto& operands = *operandsRes;
+Expected<VendorDependentReply> ParseVendorDependent(std::span<const uint8_t> operands) noexcept {
     if (operands.size() <= 3) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -264,6 +280,14 @@ Expected<VendorDependentReply> ParseVendorDependent(const Response& response, Re
         .companyId = CompanyId{operands[0], operands[1], operands[2]},
         .payload = operands.subspan(3),
     };
+}
+
+Expected<VendorDependentReply> ParseVendorDependent(const Response& response, ResponseCode expected) noexcept {
+    auto operandsRes = OperandsIf(response, expected);
+    if (!operandsRes) {
+        return std::unexpected(operandsRes.error());
+    }
+    return ParseVendorDependent(*operandsRes);
 }
 
 } // namespace ASFW::AVC::Cmd

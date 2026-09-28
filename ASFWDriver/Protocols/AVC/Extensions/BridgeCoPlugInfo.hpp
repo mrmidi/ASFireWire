@@ -94,12 +94,19 @@ using Cmd::PlugAddress;
                                                                  InfoType type,
                                                                  std::optional<uint8_t> extra = std::nullopt) noexcept;
 
-/// Common checks for every reply: IMPLEMENTED/STABLE, subfunction C0, info type
+/// Common checks for every reply: subfunction C0, info type
 /// echoed. Returns the info data (operands from 7). A VIEW into the response buffer.
-[[nodiscard]] Expected<std::span<const uint8_t>> ExtendedPlugInfoData(const Response& response,
-                                                                      InfoType type) noexcept;
+[[nodiscard]] Expected<std::span<const uint8_t>> ExtendedPlugInfoData(
+    std::span<const uint8_t> operands,
+    InfoType type) noexcept;
+[[nodiscard]] Expected<std::span<const uint8_t>> ExtendedPlugInfoData(
+    const Response& response,
+    InfoType type) noexcept;
 
+[[nodiscard]] Expected<PlugType> ParsePlugType(std::span<const uint8_t> operands) noexcept;
 [[nodiscard]] Expected<PlugType> ParsePlugType(const Response& response) noexcept;
+
+[[nodiscard]] Expected<uint8_t> ParseChannelCount(std::span<const uint8_t> operands) noexcept;
 [[nodiscard]] Expected<uint8_t> ParseChannelCount(const Response& response) noexcept;
 
 /// Channel positions: [section count] then per section [channel count]
@@ -122,12 +129,43 @@ struct ChannelPositions {
 };
 /// kUnsupported when a count exceeds the fixed capacity; kMalformedOperands when
 /// the counts run past the data.
+[[nodiscard]] Expected<ChannelPositions> ParseChannelPositions(std::span<const uint8_t> operands) noexcept;
 [[nodiscard]] Expected<ChannelPositions> ParseChannelPositions(const Response& response) noexcept;
 
 /// Section (cluster) type for the section requested with BuildExtendedPlugInfoStatus
 /// (kClusterInfo, extra = 1-based section id). The reply echoes the id at operand 7
 /// (kMalformedOperands at 7 on mismatch); the port type is at operand 8.
-[[nodiscard]] Expected<PortType> ParseClusterPortType(const Response& response,
-                                                      uint8_t requestedSectionId) noexcept;
+[[nodiscard]] Expected<PortType> ParseClusterPortType(
+    std::span<const uint8_t> operands,
+    uint8_t requestedSectionId) noexcept;
+[[nodiscard]] Expected<PortType> ParseClusterPortType(
+    const Response& response,
+    uint8_t requestedSectionId) noexcept;
+
+// ===========================================================================
+// Typed command struct satisfying the AvcCommand concept
+// ===========================================================================
+
+struct ExtendedPlugInfoCommand {
+    PlugAddress plug{};
+    InfoType type{InfoType::kPlugType};
+    std::optional<uint8_t> extra{std::nullopt};
+    SubunitAddress subunit{kAudioSubunit0};
+
+    using Reply = std::span<const uint8_t>;
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType ctype = CommandType::kStatus) const noexcept {
+        (void)ctype;
+        return BuildExtendedPlugInfoStatus(subunit, plug, type, extra);
+    }
+
+    [[nodiscard]] Expected<Reply> Decode(std::span<const uint8_t> operands) const noexcept {
+        return ExtendedPlugInfoData(operands, type);
+    }
+    [[nodiscard]] Expected<Reply> Decode(const Response& response) const noexcept {
+        return ExtendedPlugInfoData(response, type);
+    }
+};
 
 } // namespace ASFW::AVC::BridgeCo
+

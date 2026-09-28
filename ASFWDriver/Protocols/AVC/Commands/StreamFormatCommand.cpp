@@ -197,13 +197,7 @@ Expected<CommandFrame> BuildStreamFormatSingleControl(StreamFormatOpcode opcode,
                               std::span<const uint8_t>{operands.data(), totalLength});
 }
 
-Expected<StreamFormatSingle> ParseStreamFormatSingle(const Response& response,
-                                                    ResponseCode expected) noexcept {
-    auto operandsRes = OperandsIf(response, expected);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
-    }
-    const auto& operands = *operandsRes;
+Expected<StreamFormatSingle> ParseStreamFormatSingle(std::span<const uint8_t> operands) noexcept {
     if (operands.size() < 7) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -232,13 +226,17 @@ Expected<StreamFormatSingle> ParseStreamFormatSingle(const Response& response,
     };
 }
 
-Expected<StreamFormatListEntry> ParseStreamFormatList(const Response& response,
-                                                     uint8_t requestedIndex) noexcept {
-    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
+Expected<StreamFormatSingle> ParseStreamFormatSingle(const Response& response,
+                                                    ResponseCode expected) noexcept {
+    auto operandsRes = OperandsIf(response, expected);
     if (!operandsRes) {
         return std::unexpected(operandsRes.error());
     }
-    const auto& operands = *operandsRes;
+    return ParseStreamFormatSingle(*operandsRes);
+}
+
+Expected<StreamFormatListEntry> ParseStreamFormatList(std::span<const uint8_t> operands,
+                                                     uint8_t requestedIndex) noexcept {
     if (operands.size() < 8) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -270,6 +268,50 @@ Expected<StreamFormatListEntry> ParseStreamFormatList(const Response& response,
         .index = operands[7],
         .format = format,
     };
+}
+
+Expected<StreamFormatListEntry> ParseStreamFormatList(const Response& response,
+                                                     uint8_t requestedIndex) noexcept {
+    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
+    if (!operandsRes) {
+        return std::unexpected(operandsRes.error());
+    }
+    return ParseStreamFormatList(*operandsRes, requestedIndex);
+}
+
+// ---------------------------------------------------------------------------
+// Typed Command Implementations
+// ---------------------------------------------------------------------------
+
+Expected<CommandFrame> StreamFormatSingleCommand::Encode(CommandType type) const noexcept {
+    if (type == CommandType::kControl) {
+        if (controlFormat.has_value()) {
+            return BuildStreamFormatSingleControl(opcode, address, plug, *controlFormat);
+        }
+        return Fail(AvcErrorKind::kInvalidArgument);
+    }
+    return BuildStreamFormatSingleStatus(opcode, address, plug);
+}
+
+Expected<StreamFormatSingle> StreamFormatSingleCommand::Decode(std::span<const uint8_t> operands) noexcept {
+    return ParseStreamFormatSingle(operands);
+}
+
+Expected<StreamFormatSingle> StreamFormatSingleCommand::Decode(const Response& response) noexcept {
+    return ParseStreamFormatSingle(response);
+}
+
+Expected<CommandFrame> StreamFormatListCommand::Encode(CommandType type) const noexcept {
+    (void)type;
+    return BuildStreamFormatListStatus(opcode, address, plug, index);
+}
+
+Expected<StreamFormatListEntry> StreamFormatListCommand::Decode(std::span<const uint8_t> operands) const noexcept {
+    return ParseStreamFormatList(operands, index);
+}
+
+Expected<StreamFormatListEntry> StreamFormatListCommand::Decode(const Response& response) const noexcept {
+    return ParseStreamFormatList(response, index);
 }
 
 } // namespace ASFW::AVC::Cmd

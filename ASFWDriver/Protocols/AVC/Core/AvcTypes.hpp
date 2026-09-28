@@ -149,4 +149,47 @@ using CompanyId = std::array<uint8_t, 3>;
 
 static_assert(ToOui(CompanyIdFromOui(0x001198)) == 0x001198);
 
+// ---------------------------------------------------------------------------
+// AvcVolume - Typed volume in 1/256 dB (TA 1999008 §10.3.2, ta1394 audio:355)
+// 0x7FFF is invalid; 0x8000 is -infinity dB (full mute / cutoff).
+// ---------------------------------------------------------------------------
+
+struct AvcVolume {
+    int16_t raw{kInvalidRaw};
+
+    static constexpr int16_t kInvalidRaw = 0x7FFF;
+    static constexpr int16_t kNegativeInfinityRaw = static_cast<int16_t>(0x8000);
+
+    static constexpr AvcVolume Invalid() noexcept { return AvcVolume{kInvalidRaw}; }
+    static constexpr AvcVolume NegativeInfinity() noexcept { return AvcVolume{kNegativeInfinityRaw}; }
+    static constexpr AvcVolume FromRaw(int16_t r) noexcept { return AvcVolume{r}; }
+    static constexpr AvcVolume FromDb(float db) noexcept {
+        if (db <= -128.0f) {
+            return NegativeInfinity();
+        }
+        float val = db * 256.0f;
+        if (val > 32766.0f) val = 32766.0f;
+        if (val < -32767.0f) val = -32767.0f;
+        return AvcVolume{static_cast<int16_t>(val)};
+    }
+
+    [[nodiscard]] constexpr bool IsValid() const noexcept { return raw != kInvalidRaw; }
+    [[nodiscard]] constexpr bool IsNegativeInfinity() const noexcept { return raw == kNegativeInfinityRaw; }
+    [[nodiscard]] constexpr float ToDb() const noexcept {
+        if (IsNegativeInfinity()) {
+            return -1000.0f; // Represents -infinity in float
+        }
+        return static_cast<float>(raw) / 256.0f;
+    }
+    [[nodiscard]] constexpr int16_t Raw() const noexcept { return raw; }
+
+    friend constexpr bool operator==(AvcVolume, AvcVolume) noexcept = default;
+};
+
+static_assert(AvcVolume::Invalid().raw == 0x7FFF);
+static_assert(AvcVolume::NegativeInfinity().raw == static_cast<int16_t>(0x8000));
+static_assert(AvcVolume::FromRaw(0x0000).ToDb() == 0.0f);
+static_assert(AvcVolume::FromRaw(0x0100).ToDb() == 1.0f);
+static_assert(AvcVolume::FromRaw(static_cast<int16_t>(0xFF00)).ToDb() == -1.0f);
+
 } // namespace ASFW::AVC

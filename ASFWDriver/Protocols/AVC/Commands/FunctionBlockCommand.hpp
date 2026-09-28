@@ -42,6 +42,9 @@
 #include "../Core/AvcTypes.hpp"
 
 #include <cstdint>
+#include <optional>
+#include <span>
+#include <vector>
 
 namespace ASFW::AVC::Cmd {
 
@@ -84,37 +87,200 @@ inline constexpr uint8_t kBooleanTrue = 0x70;       ///< ta1394 lib.rs:815 (mute
 inline constexpr uint8_t kBooleanFalse = 0x60;      ///< ta1394 lib.rs:816 (mute off)
 inline constexpr int16_t kVolumeInvalid = 0x7FFF;   ///< ta1394 lib.rs:359
 
-// ---- Selector ----------------------------------------------------------------
+/// Per-control data width table (TA 1999008 §10.3 Table 10.8, p.74).
+[[nodiscard]] constexpr std::optional<uint8_t> FeatureControlDataWidth(FeatureControl control) noexcept {
+    switch (control) {
+        case FeatureControl::kMute: return 1;
+        case FeatureControl::kVolume: return 2;
+        case FeatureControl::kLrBalance: return 2;
+        case FeatureControl::kFrBalance: return 2;
+        case FeatureControl::kBass: return 1;
+        case FeatureControl::kMid: return 1;
+        case FeatureControl::kTreble: return 1;
+        case FeatureControl::kGraphicEqualizer: return std::nullopt; // complex/variable
+        case FeatureControl::kAutomaticGain: return 1;
+        case FeatureControl::kDelay: return 2;
+        case FeatureControl::kBassBoost: return 1;
+        case FeatureControl::kLoudness: return 1;
+    }
+    return std::nullopt;
+}
+
+// ===========================================================================
+// Generic Function Block Frame Codec (Opcode 0xB8)
+// ===========================================================================
+
+struct FunctionBlockFrame {
+    FunctionBlockType type{FunctionBlockType::kFeature};
+    uint8_t functionBlockId{0};
+    ControlAttribute attribute{ControlAttribute::kCurrent};
+    std::span<const uint8_t> selectorBytes{};
+    std::span<const uint8_t> dataBytes{};
+};
+
+struct FunctionBlockReply {
+    FunctionBlockType type{FunctionBlockType::kFeature};
+    uint8_t functionBlockId{0};
+    ControlAttribute attribute{ControlAttribute::kCurrent};
+    std::span<const uint8_t> selectorBytes{};
+    std::span<const uint8_t> dataBytes{};
+};
+
+[[nodiscard]] Expected<CommandFrame> BuildFunctionBlock(
+    CommandType type,
+    SubunitAddress subunit,
+    const FunctionBlockFrame& frame) noexcept;
+
+[[nodiscard]] Expected<FunctionBlockReply> ParseFunctionBlock(
+    std::span<const uint8_t> operands) noexcept;
+
+// ===========================================================================
+// Typed Commands (per block type)
+// ===========================================================================
+
+// ---- Selector -------------------------------------------------------------
 
 struct SelectorValue {
     uint8_t functionBlockId{0};
     uint8_t inputPlug{0xFF};
 };
 
-/// `subunit`: normally the audio subunit (kAudioSubunit0).
-[[nodiscard]] Expected<CommandFrame> BuildSelectorStatus(SubunitAddress subunit, uint8_t functionBlockId) noexcept;
-[[nodiscard]] Expected<CommandFrame> BuildSelectorControl(SubunitAddress subunit, uint8_t functionBlockId,
-                                                          uint8_t inputPlug) noexcept;
-[[nodiscard]] Expected<SelectorValue> ParseSelector(const Response& response, ResponseCode expected) noexcept;
+struct SelectorCommand {
+    uint8_t functionBlockId{0};
+    uint8_t inputPlug{0xFF};
+    SubunitAddress subunit{kAudioSubunit0};
 
-// ---- Feature: mute -----------------------------------------------------------
+    using Reply = SelectorValue;
 
-[[nodiscard]] Expected<CommandFrame> BuildFeatureMuteStatus(SubunitAddress subunit, uint8_t functionBlockId,
-                                                            uint8_t channel) noexcept;
-[[nodiscard]] Expected<CommandFrame> BuildFeatureMuteControl(SubunitAddress subunit, uint8_t functionBlockId,
-                                                             uint8_t channel, bool muted) noexcept;
-/// true = muted (kBooleanTrue). A value that is neither 0x70 nor 0x60 is kMalformedOperands.
-[[nodiscard]] Expected<bool> ParseFeatureMute(const Response& response, ResponseCode expected) noexcept;
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept;
+};
 
-// ---- Feature: volume ---------------------------------------------------------
-// Volume data is a big-endian int16 (ta1394 VolumeData, lib.rs:355-395).
-// STATUS can ask for current, minimum, maximum, resolution or default.
+// ---- Feature: Generic -----------------------------------------------------
 
-[[nodiscard]] Expected<CommandFrame> BuildFeatureVolumeStatus(SubunitAddress subunit, uint8_t functionBlockId,
-                                                              uint8_t channel,
-                                                              ControlAttribute attribute = ControlAttribute::kCurrent) noexcept;
-[[nodiscard]] Expected<CommandFrame> BuildFeatureVolumeControl(SubunitAddress subunit, uint8_t functionBlockId,
-                                                               uint8_t channel, int16_t value) noexcept;
-[[nodiscard]] Expected<int16_t> ParseFeatureVolume(const Response& response, ResponseCode expected) noexcept;
+struct FeatureReply {
+    uint8_t functionBlockId{0};
+    uint8_t channel{0};
+    FeatureControl control{FeatureControl::kMute};
+    ControlAttribute attribute{ControlAttribute::kCurrent};
+    std::span<const uint8_t> data{};
+};
+
+struct FeatureCommand {
+    uint8_t functionBlockId{0};
+    uint8_t channel{kMasterChannel};
+    FeatureControl control{FeatureControl::kMute};
+    ControlAttribute attribute{ControlAttribute::kCurrent};
+    std::span<const uint8_t> controlData{};
+    SubunitAddress subunit{kAudioSubunit0};
+
+    using Reply = FeatureReply;
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept;
+};
+
+// ---- Feature: Mute --------------------------------------------------------
+
+struct FeatureMuteCommand {
+    uint8_t functionBlockId{0};
+    uint8_t channel{kMasterChannel};
+    bool muted{false};
+    SubunitAddress subunit{kAudioSubunit0};
+
+    using Reply = bool;
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept;
+};
+
+// ---- Feature: Volume ------------------------------------------------------
+
+struct FeatureVolumeCommand {
+    uint8_t functionBlockId{0};
+    uint8_t channel{kMasterChannel};
+    AvcVolume volume{AvcVolume::Invalid()};
+    ControlAttribute attribute{ControlAttribute::kCurrent};
+    SubunitAddress subunit{kAudioSubunit0};
+
+    using Reply = AvcVolume;
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept;
+};
+
+// ===========================================================================
+// Compatibility Wrappers (used until callers migrate in phase 2c)
+// ===========================================================================
+
+[[nodiscard]] inline Expected<CommandFrame> BuildSelectorStatus(SubunitAddress subunit, uint8_t functionBlockId) noexcept {
+    return SelectorCommand{functionBlockId, 0xFF, subunit}.Encode(CommandType::kStatus);
+}
+
+[[nodiscard]] inline Expected<CommandFrame> BuildSelectorControl(SubunitAddress subunit, uint8_t functionBlockId,
+                                                                 uint8_t inputPlug) noexcept {
+    return SelectorCommand{functionBlockId, inputPlug, subunit}.Encode(CommandType::kControl);
+}
+
+[[nodiscard]] inline Expected<SelectorValue> ParseSelector(std::span<const uint8_t> operands) noexcept {
+    return SelectorCommand::Decode(operands);
+}
+
+[[nodiscard]] inline Expected<SelectorValue> ParseSelector(const Response& response,
+                                                           ResponseCode expected = ResponseCode::kImplementedStable) noexcept {
+    if (response.code != expected) {
+        return std::unexpected(AvcError::Unexpected(response.code));
+    }
+    return SelectorCommand::Decode(response.operands);
+}
+
+[[nodiscard]] inline Expected<CommandFrame> BuildFeatureMuteStatus(SubunitAddress subunit, uint8_t functionBlockId,
+                                                                   uint8_t channel) noexcept {
+    return FeatureMuteCommand{functionBlockId, channel, false, subunit}.Encode(CommandType::kStatus);
+}
+
+[[nodiscard]] inline Expected<CommandFrame> BuildFeatureMuteControl(SubunitAddress subunit, uint8_t functionBlockId,
+                                                                    uint8_t channel, bool muted) noexcept {
+    return FeatureMuteCommand{functionBlockId, channel, muted, subunit}.Encode(CommandType::kControl);
+}
+
+[[nodiscard]] inline Expected<bool> ParseFeatureMute(std::span<const uint8_t> operands) noexcept {
+    return FeatureMuteCommand::Decode(operands);
+}
+
+[[nodiscard]] inline Expected<bool> ParseFeatureMute(const Response& response,
+                                                     ResponseCode expected = ResponseCode::kImplementedStable) noexcept {
+    if (response.code != expected) {
+        return std::unexpected(AvcError::Unexpected(response.code));
+    }
+    return FeatureMuteCommand::Decode(response.operands);
+}
+
+[[nodiscard]] inline Expected<CommandFrame> BuildFeatureVolumeStatus(
+    SubunitAddress subunit, uint8_t functionBlockId,
+    uint8_t channel,
+    ControlAttribute attribute = ControlAttribute::kCurrent) noexcept {
+    return FeatureVolumeCommand{functionBlockId, channel, AvcVolume::Invalid(), attribute, subunit}.Encode(CommandType::kStatus);
+}
+
+[[nodiscard]] inline Expected<CommandFrame> BuildFeatureVolumeControl(
+    SubunitAddress subunit, uint8_t functionBlockId,
+    uint8_t channel, int16_t value) noexcept {
+    return FeatureVolumeCommand{functionBlockId, channel, AvcVolume::FromRaw(value), ControlAttribute::kCurrent, subunit}.Encode(CommandType::kControl);
+}
+
+[[nodiscard]] inline Expected<int16_t> ParseFeatureVolume(std::span<const uint8_t> operands) noexcept {
+    auto res = FeatureVolumeCommand::Decode(operands);
+    if (!res) return std::unexpected(res.error());
+    return res->Raw();
+}
+
+[[nodiscard]] inline Expected<int16_t> ParseFeatureVolume(const Response& response,
+                                                          ResponseCode expected = ResponseCode::kImplementedStable) noexcept {
+    if (response.code != expected) {
+        return std::unexpected(AvcError::Unexpected(response.code));
+    }
+    return ParseFeatureVolume(response.operands);
+}
 
 } // namespace ASFW::AVC::Cmd

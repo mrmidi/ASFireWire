@@ -291,14 +291,50 @@ struct StreamFormatListEntry {
                                                                     const PlugAddress& plug,
                                                                     const CompoundAm824& format) noexcept;
 
-/// `expected`: kImplementedStable for STATUS, kAccepted for CONTROL. The response
-/// subfunction must be C0 (kMalformedOperands at 0 otherwise).
-[[nodiscard]] Expected<StreamFormatSingle> ParseStreamFormatSingle(const Response& response,
-                                                                   ResponseCode expected) noexcept;
+[[nodiscard]] Expected<StreamFormatSingle> ParseStreamFormatSingle(
+    std::span<const uint8_t> operands) noexcept;
 
-/// STATUS only. The response subfunction must be C1 and must echo the requested
-/// index (kMalformedOperands at 7 otherwise; ta1394 lib.rs checks the same).
-[[nodiscard]] Expected<StreamFormatListEntry> ParseStreamFormatList(const Response& response,
-                                                                    uint8_t requestedIndex) noexcept;
+[[nodiscard]] Expected<StreamFormatSingle> ParseStreamFormatSingle(
+    const Response& response,
+    ResponseCode expected = ResponseCode::kImplementedStable) noexcept;
+
+[[nodiscard]] Expected<StreamFormatListEntry> ParseStreamFormatList(
+    std::span<const uint8_t> operands,
+    uint8_t requestedIndex) noexcept;
+
+[[nodiscard]] Expected<StreamFormatListEntry> ParseStreamFormatList(
+    const Response& response,
+    uint8_t requestedIndex) noexcept;
+
+// ===========================================================================
+// Typed command structs satisfying the AvcCommand concept
+// ===========================================================================
+
+struct StreamFormatSingleCommand {
+    StreamFormatOpcode opcode{StreamFormatOpcode::kStreamFormatSupport};
+    SubunitAddress address{SubunitAddress::Unit()};
+    PlugAddress plug{};
+    std::optional<CompoundAm824> controlFormat{std::nullopt};
+
+    using Reply = StreamFormatSingle;
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept;
+    [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept;
+};
+
+struct StreamFormatListCommand {
+    StreamFormatOpcode opcode{StreamFormatOpcode::kStreamFormatSupport};
+    SubunitAddress address{SubunitAddress::Unit()};
+    PlugAddress plug{};
+    uint8_t index{0};
+
+    using Reply = StreamFormatListEntry;
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept;
+    [[nodiscard]] Expected<Reply> Decode(std::span<const uint8_t> operands) const noexcept;
+    [[nodiscard]] Expected<Reply> Decode(const Response& response) const noexcept;
+};
 
 } // namespace ASFW::AVC::Cmd
+

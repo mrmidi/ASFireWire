@@ -9,11 +9,10 @@
 // hardware, the new codec must produce the SAME bytes (differential test,
 // docs/avc-rebuild/phase-1.md). Fresh implementation; no reference code copied.
 //
-// Pattern for every command: Build*() returns the full CommandFrame; Parse*()
-// takes a Response from ParseResponseFor() and checks the response code itself
-// (STATUS -> IMPLEMENTED/STABLE, CONTROL -> ACCEPTED).
+// Pattern: Commands satisfy the AvcCommand concept with Encode(ctype) and Decode(span).
+// Codecs decode operands only; response code policy is enforced by the dispatcher.
 //
-// Implementation: GeneralCommands.cpp (phase 1).
+// Implementation: GeneralCommands.cpp (phase 1, reshaped phase 2b).
 
 #pragma once
 
@@ -50,6 +49,7 @@ struct UnitInfo {
 
 [[nodiscard]] Expected<CommandFrame> BuildUnitInfoStatus(
     UnitInfoStyle style = UnitInfoStyle::kStandardAppleLegacy) noexcept;
+[[nodiscard]] Expected<UnitInfo> ParseUnitInfo(std::span<const uint8_t> operands) noexcept;
 [[nodiscard]] Expected<UnitInfo> ParseUnitInfo(const Response& response) noexcept;
 
 // ---------------------------------------------------------------------------
@@ -73,6 +73,7 @@ struct SubunitInfo {
 };
 
 [[nodiscard]] Expected<CommandFrame> BuildSubunitInfoStatus(uint8_t page, uint8_t extensionCode = 0x07) noexcept;
+[[nodiscard]] Expected<SubunitInfo> ParseSubunitInfo(std::span<const uint8_t> operands) noexcept;
 [[nodiscard]] Expected<SubunitInfo> ParseSubunitInfo(const Response& response) noexcept;
 
 // ---------------------------------------------------------------------------
@@ -112,9 +113,19 @@ struct SubunitPlugs {
 [[nodiscard]] Expected<CommandFrame> BuildSubunitPlugInfoStatus(SubunitAddress subunit) noexcept;
 
 [[nodiscard]] Expected<UnitIsochronousExternalPlugs> ParseUnitIsochronousExternalPlugs(
+    std::span<const uint8_t> operands) noexcept;
+[[nodiscard]] Expected<UnitIsochronousExternalPlugs> ParseUnitIsochronousExternalPlugs(
     const Response& response) noexcept;
-[[nodiscard]] Expected<UnitAsynchronousPlugs> ParseUnitAsynchronousPlugs(const Response& response) noexcept;
-[[nodiscard]] Expected<SubunitPlugs> ParseSubunitPlugs(const Response& response) noexcept;
+
+[[nodiscard]] Expected<UnitAsynchronousPlugs> ParseUnitAsynchronousPlugs(
+    std::span<const uint8_t> operands) noexcept;
+[[nodiscard]] Expected<UnitAsynchronousPlugs> ParseUnitAsynchronousPlugs(
+    const Response& response) noexcept;
+
+[[nodiscard]] Expected<SubunitPlugs> ParseSubunitPlugs(
+    std::span<const uint8_t> operands) noexcept;
+[[nodiscard]] Expected<SubunitPlugs> ParseSubunitPlugs(
+    const Response& response) noexcept;
 
 // ---------------------------------------------------------------------------
 // INPUT (0x19) / OUTPUT (0x18) PLUG SIGNAL FORMAT. Unit address only.
@@ -131,12 +142,10 @@ enum class PlugSignalDirection : uint8_t {
     kOutput,  ///< opcode 0x18: a plug the device SENDS on (host capture).
 };
 
-/// What a STATUS query puts after the plug id. Two references disagree; the
-/// phase-1 hardware matrix records how each device answers both.
+/// What a STATUS query puts after the plug id.
 enum class SignalFormatQuery : uint8_t {
     kAllWildcard,    ///< FF FF FF FF: ta1394 general.rs, and what ASFW sends today
-                     ///< (AVCUnitPlugSignalFormatCommand.hpp:135-139, hardware-proven). Default.
-    kAm824Wildcard,  ///< 90 FF FF FF: Linux fcp.c:103-106 (FDF-hi 0xFF at :104).
+    kAm824Wildcard,  ///< 90 FF FF FF: Linux fcp.c:103-106.
 };
 
 inline constexpr uint8_t kFmtAm824 = 0x90;  ///< Linux fcp.c:58 "EOH_1, Form_1, FMT. AM824".
@@ -165,17 +174,19 @@ struct PlugSignalFormat {
     PlugSignalDirection direction, uint8_t plugId,
     SignalFormatQuery query = SignalFormatQuery::kAllWildcard) noexcept;
 
-[[nodiscard]] Expected<CommandFrame> BuildPlugSignalFormatControl(PlugSignalDirection direction,
-                                                                  const PlugSignalFormat& format) noexcept;
+[[nodiscard]] Expected<CommandFrame> BuildPlugSignalFormatControl(
+    PlugSignalDirection direction, const PlugSignalFormat& format) noexcept;
 
-/// `expected`: kImplementedStable for STATUS, kAccepted for CONTROL.
-[[nodiscard]] Expected<PlugSignalFormat> ParsePlugSignalFormat(const Response& response,
-                                                               ResponseCode expected) noexcept;
+[[nodiscard]] Expected<PlugSignalFormat> ParsePlugSignalFormat(
+    std::span<const uint8_t> operands) noexcept;
+
+[[nodiscard]] Expected<PlugSignalFormat> ParsePlugSignalFormat(
+    const Response& response,
+    ResponseCode expected = ResponseCode::kImplementedStable) noexcept;
 
 // ---------------------------------------------------------------------------
 // VENDOR-DEPENDENT (0x00). Any address, any command type.
 // Operands: [company ID 3 bytes][vendor payload]. ta1394 general.rs `VendorDependent` (OPCODE at :226)
-// (payload must be non-empty; response must carry more than the company ID).
 // ---------------------------------------------------------------------------
 
 /// A VIEW into the response buffer; valid while that buffer lives.
@@ -184,12 +195,17 @@ struct VendorDependentReply {
     std::span<const uint8_t> payload{};
 };
 
-[[nodiscard]] Expected<CommandFrame> BuildVendorDependent(CommandType type, SubunitAddress address,
-                                                          const CompanyId& companyId,
-                                                          std::span<const uint8_t> payload) noexcept;
+[[nodiscard]] Expected<CommandFrame> BuildVendorDependent(
+    CommandType type, SubunitAddress address,
+    const CompanyId& companyId,
+    std::span<const uint8_t> payload) noexcept;
 
-[[nodiscard]] Expected<VendorDependentReply> ParseVendorDependent(const Response& response,
-                                                                  ResponseCode expected) noexcept;
+[[nodiscard]] Expected<VendorDependentReply> ParseVendorDependent(
+    std::span<const uint8_t> operands) noexcept;
+
+[[nodiscard]] Expected<VendorDependentReply> ParseVendorDependent(
+    const Response& response,
+    ResponseCode expected = ResponseCode::kAccepted) noexcept;
 
 // ===========================================================================
 // Typed command structs satisfying the AvcCommand concept
@@ -198,8 +214,12 @@ struct VendorDependentReply {
 struct UnitInfoCommand {
     UnitInfoStyle style{UnitInfoStyle::kStandardAppleLegacy};
     using Reply = UnitInfo;
-    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept {
         return BuildUnitInfoStatus(style);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept {
+        return ParseUnitInfo(operands);
     }
     [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
         return ParseUnitInfo(response);
@@ -210,8 +230,12 @@ struct SubunitInfoCommand {
     uint8_t page{0};
     uint8_t extensionCode{0x07};
     using Reply = SubunitInfo;
-    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept {
         return BuildSubunitInfoStatus(page, extensionCode);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept {
+        return ParseSubunitInfo(operands);
     }
     [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
         return ParseSubunitInfo(response);
@@ -221,8 +245,12 @@ struct SubunitInfoCommand {
 struct UnitPlugInfoIsoExtCommand {
     UnitPlugInfoKind kind{UnitPlugInfoKind::kIsochronousExternal};
     using Reply = UnitIsochronousExternalPlugs;
-    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept {
         return BuildUnitPlugInfoStatus(kind);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept {
+        return ParseUnitIsochronousExternalPlugs(operands);
     }
     [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
         return ParseUnitIsochronousExternalPlugs(response);
@@ -232,21 +260,57 @@ struct UnitPlugInfoIsoExtCommand {
 struct SubunitPlugInfoCommand {
     SubunitAddress subunit{SubunitAddress::Unit()};
     using Reply = SubunitPlugs;
-    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept {
         return BuildSubunitPlugInfoStatus(subunit);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept {
+        return ParseSubunitPlugs(operands);
     }
     [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
         return ParseSubunitPlugs(response);
     }
 };
 
+// Unified PlugSignalFormatCommand (Rule 1 & 2)
+struct PlugSignalFormatCommand {
+    PlugSignalDirection direction{PlugSignalDirection::kInput};
+    uint8_t plugId{0};
+    std::optional<PlugSignalFormat> format{std::nullopt};
+    SignalFormatQuery query{SignalFormatQuery::kAllWildcard};
+
+    using Reply = PlugSignalFormat;
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept {
+        if (type == CommandType::kControl) {
+            if (format.has_value()) {
+                return BuildPlugSignalFormatControl(direction, *format);
+            }
+            return Fail(AvcErrorKind::kInvalidArgument);
+        }
+        return BuildPlugSignalFormatStatus(direction, plugId, query);
+    }
+
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept {
+        return ParsePlugSignalFormat(operands);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
+        return ParsePlugSignalFormat(response);
+    }
+};
+
+// Wrappers for compatibility with existing tests
 struct PlugSignalFormatStatusCommand {
     PlugSignalDirection direction{PlugSignalDirection::kInput};
     uint8_t plugId{0};
     SignalFormatQuery query{SignalFormatQuery::kAllWildcard};
     using Reply = PlugSignalFormat;
-    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept {
         return BuildPlugSignalFormatStatus(direction, plugId, query);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept {
+        return ParsePlugSignalFormat(operands);
     }
     [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
         return ParsePlugSignalFormat(response, ResponseCode::kImplementedStable);
@@ -257,11 +321,34 @@ struct PlugSignalFormatControlCommand {
     PlugSignalDirection direction{PlugSignalDirection::kInput};
     PlugSignalFormat format{};
     using Reply = PlugSignalFormat;
-    [[nodiscard]] Expected<CommandFrame> Encode() const noexcept {
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kControl) const noexcept {
         return BuildPlugSignalFormatControl(direction, format);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept {
+        return ParsePlugSignalFormat(operands);
     }
     [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
         return ParsePlugSignalFormat(response, ResponseCode::kAccepted);
+    }
+};
+
+// Generic VENDOR-DEPENDENT command struct (Rule 6)
+struct VendorDependentCommand {
+    CompanyId companyId{0xFF, 0xFF, 0xFF};
+    std::span<const uint8_t> payload{};
+    SubunitAddress address{SubunitAddress::Unit()};
+
+    using Reply = VendorDependentReply;
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kControl) const noexcept {
+        return BuildVendorDependent(type, address, companyId, payload);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept {
+        return ParseVendorDependent(operands);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
+        return ParseVendorDependent(response);
     }
 };
 

@@ -9,6 +9,8 @@
 // - Asynchronous and callback-based; non-blocking.
 // - At most one command outstanding per unit (enforced by the transport/engine).
 // - Strongly typed commands dispatched via C++26 concept `AvcCommand` and `Send<Cmd>()`.
+// - ctype selected at dispatch time via unit.Status(), unit.Control(), unit.Inquiry().
+// - Response code policy lives in the engine (IAvcUnit dispatch).
 
 #pragma once
 
@@ -32,6 +34,35 @@ struct AvcUnitIdentity {
     FW::NodeId nodeId{0};
     FW::Generation generation{0};
 };
+
+template <typename T>
+concept AvcCommand = requires(const T& cmd, const Response& response, std::span<const uint8_t> span) {
+    typename T::Reply;
+    requires (
+        requires { { cmd.Encode() }; } ||
+        requires { { cmd.Encode(CommandType::kStatus) }; }
+    );
+    requires (
+        requires { { T::Decode(response) } -> std::same_as<Expected<typename T::Reply>>; } ||
+        requires { { T::Decode(span) } -> std::same_as<Expected<typename T::Reply>>; } ||
+        requires { { cmd.Decode(response) } -> std::same_as<Expected<typename T::Reply>>; } ||
+        requires { { cmd.Decode(span) } -> std::same_as<Expected<typename T::Reply>>; }
+    );
+};
+
+class IAvcUnit;
+
+template <AvcCommand Cmd, typename Callback>
+void SendCommand(IAvcUnit& unit, const Cmd& cmd, CommandType type, FW::Generation generation, Callback&& completion);
+
+template <AvcCommand Cmd, typename Callback>
+void SendStatus(IAvcUnit& unit, const Cmd& cmd, FW::Generation generation, Callback&& completion);
+
+template <AvcCommand Cmd, typename Callback>
+void SendControl(IAvcUnit& unit, const Cmd& cmd, FW::Generation generation, Callback&& completion);
+
+template <AvcCommand Cmd, typename Callback>
+void SendInquiry(IAvcUnit& unit, const Cmd& cmd, FW::Generation generation, Callback&& completion);
 
 /// Pure-virtual interface representing an AV/C Unit on the FireWire bus.
 /// Decouples command callers from the concrete transport/simulation engine.
@@ -62,29 +93,47 @@ public:
             .generation = CurrentGeneration(),
         };
     }
+
+    /// Dispatch a STATUS command.
+    template <AvcCommand Cmd, typename Callback>
+    void Status(const Cmd& cmd, FW::Generation generation, Callback&& completion) {
+        SendStatus(*this, cmd, generation, std::forward<Callback>(completion));
+    }
+
+    template <AvcCommand Cmd, typename Callback>
+    void Status(const Cmd& cmd, Callback&& completion) {
+        Status(cmd, CurrentGeneration(), std::forward<Callback>(completion));
+    }
+
+    /// Dispatch a CONTROL command.
+    template <AvcCommand Cmd, typename Callback>
+    void Control(const Cmd& cmd, FW::Generation generation, Callback&& completion) {
+        SendControl(*this, cmd, generation, std::forward<Callback>(completion));
+    }
+
+    template <AvcCommand Cmd, typename Callback>
+    void Control(const Cmd& cmd, Callback&& completion) {
+        Control(cmd, CurrentGeneration(), std::forward<Callback>(completion));
+    }
+
+    /// Dispatch a SPECIFIC INQUIRY command.
+    template <AvcCommand Cmd, typename Callback>
+    void Inquiry(const Cmd& cmd, FW::Generation generation, Callback&& completion) {
+        SendInquiry(*this, cmd, generation, std::forward<Callback>(completion));
+    }
+
+    template <AvcCommand Cmd, typename Callback>
+    void Inquiry(const Cmd& cmd, Callback&& completion) {
+        Inquiry(cmd, CurrentGeneration(), std::forward<Callback>(completion));
+    }
 };
 
-/// Concept defining a strongly-typed AV/C command.
-/// A command type provides:
-/// - `Encode() const` returning either `CommandFrame` or `Expected<CommandFrame>`
-/// - An associated `Reply` type
-/// - `static Decode(const Response&)` or `static Decode(std::span<const uint8_t>)` returning `Expected<Reply>`
-template <typename T>
-concept AvcCommand = requires(const T& cmd, const Response& response, std::span<const uint8_t> span) {
-    typename T::Reply;
-    { cmd.Encode() };
-    requires (
-        requires { { T::Decode(response) } -> std::same_as<Expected<typename T::Reply>>; } ||
-        requires { { T::Decode(span) } -> std::same_as<Expected<typename T::Reply>>; }
-    );
-};
-
-/// Helper to asynchronously dispatch a strongly typed AV/C command to an IAvcUnit.
+/// Helper to asynchronously dispatch a strongly typed AV/C command to an IAvcUnit with a specific CommandType.
 template <AvcCommand Cmd, typename Callback>
-void Send(IAvcUnit& unit, const Cmd& cmd, FW::Generation generation, Callback&& completion) {
+void SendCommand(IAvcUnit& unit, const Cmd& cmd, CommandType type, FW::Generation generation, Callback&& completion) {
     auto encoded = [&]() -> Expected<CommandFrame> {
-        if constexpr (std::is_same_v<std::decay_t<decltype(cmd.Encode())>, CommandFrame>) {
-            return cmd.Encode();
+        if constexpr (requires { { cmd.Encode(type) }; }) {
+            return cmd.Encode(type);
         } else {
             return cmd.Encode();
         }
@@ -96,20 +145,48 @@ void Send(IAvcUnit& unit, const Cmd& cmd, FW::Generation generation, Callback&& 
     }
 
     unit.Submit(*encoded, generation,
-                [cb = std::forward<Callback>(completion)](Expected<Response> response) mutable {
+                [cmd, cb = std::forward<Callback>(completion)](Expected<Response> response) mutable {
                     if (!response) {
                         cb(std::unexpected(response.error()));
                         return;
                     }
+                    if (response->code == ResponseCode::kRejected || response->code == ResponseCode::kNotImplemented) {
+                        cb(std::unexpected(AvcError::Unexpected(response->code)));
+                        return;
+                    }
                     if constexpr (requires { { Cmd::Decode(*response) } -> std::same_as<Expected<typename Cmd::Reply>>; }) {
                         cb(Cmd::Decode(*response));
-                    } else {
+                    } else if constexpr (requires { { Cmd::Decode(response->operands) } -> std::same_as<Expected<typename Cmd::Reply>>; }) {
                         cb(Cmd::Decode(response->operands));
+                    } else if constexpr (requires { { cmd.Decode(*response) } -> std::same_as<Expected<typename Cmd::Reply>>; }) {
+                        cb(cmd.Decode(*response));
+                    } else {
+                        cb(cmd.Decode(response->operands));
                     }
                 });
 }
 
-/// Overload using the unit's current bus generation.
+template <AvcCommand Cmd, typename Callback>
+void SendStatus(IAvcUnit& unit, const Cmd& cmd, FW::Generation generation, Callback&& completion) {
+    SendCommand(unit, cmd, CommandType::kStatus, generation, std::forward<Callback>(completion));
+}
+
+template <AvcCommand Cmd, typename Callback>
+void SendControl(IAvcUnit& unit, const Cmd& cmd, FW::Generation generation, Callback&& completion) {
+    SendCommand(unit, cmd, CommandType::kControl, generation, std::forward<Callback>(completion));
+}
+
+template <AvcCommand Cmd, typename Callback>
+void SendInquiry(IAvcUnit& unit, const Cmd& cmd, FW::Generation generation, Callback&& completion) {
+    SendCommand(unit, cmd, CommandType::kSpecificInquiry, generation, std::forward<Callback>(completion));
+}
+
+/// Generic Send() defaulting to STATUS for commands supporting ctype, or cmd.Encode().
+template <AvcCommand Cmd, typename Callback>
+void Send(IAvcUnit& unit, const Cmd& cmd, FW::Generation generation, Callback&& completion) {
+    SendCommand(unit, cmd, CommandType::kStatus, generation, std::forward<Callback>(completion));
+}
+
 template <AvcCommand Cmd, typename Callback>
 void Send(IAvcUnit& unit, const Cmd& cmd, Callback&& completion) {
     Send(unit, cmd, unit.CurrentGeneration(), std::forward<Callback>(completion));

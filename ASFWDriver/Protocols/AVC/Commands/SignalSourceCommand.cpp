@@ -10,6 +10,8 @@
 
 #include "SignalSourceCommand.hpp"
 
+#include "../Core/OperandPack.hpp"
+
 #include <array>
 #include <cstdint>
 
@@ -37,12 +39,7 @@ Expected<CommandFrame> BuildSignalSourceControl(SignalAddress source, SignalAddr
     return CommandFrame::Make(CommandType::kControl, SubunitAddress::Unit(), Opcode::kSignalSource, operands);
 }
 
-Expected<SignalSource> ParseSignalSource(const Response& response, ResponseCode expected) noexcept {
-    auto operandsRes = OperandsIf(response, expected);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
-    }
-    const auto& operands = *operandsRes;
+Expected<SignalSource> ParseSignalSource(std::span<const uint8_t> operands) noexcept {
     if (operands.size() < 5) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -52,6 +49,14 @@ Expected<SignalSource> ParseSignalSource(const Response& response, ResponseCode 
         .source = SignalAddress{{operands[1], operands[2]}},
         .destination = SignalAddress{{operands[3], operands[4]}},
     };
+}
+
+Expected<SignalSource> ParseSignalSource(const Response& response, ResponseCode expected) noexcept {
+    auto operandsRes = OperandsIf(response, expected);
+    if (!operandsRes) {
+        return std::unexpected(operandsRes.error());
+    }
+    return ParseSignalSource(*operandsRes);
 }
 
 } // namespace ASFW::AVC::Cmd

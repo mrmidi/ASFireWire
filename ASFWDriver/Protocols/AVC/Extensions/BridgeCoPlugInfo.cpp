@@ -48,13 +48,8 @@ Expected<CommandFrame> BuildExtendedPlugInfoStatus(SubunitAddress subunit, const
     return CommandFrame::Make(CommandType::kStatus, subunit, Opcode::kPlugInfo, operands);
 }
 
-Expected<std::span<const uint8_t>> ExtendedPlugInfoData(const Response& response,
+Expected<std::span<const uint8_t>> ExtendedPlugInfoData(std::span<const uint8_t> operands,
                                                         InfoType type) noexcept {
-    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
-    if (!operandsRes) {
-        return std::unexpected(operandsRes.error());
-    }
-    const auto& operands = *operandsRes;
     if (operands.size() < 7) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(operands.size()));
     }
@@ -68,8 +63,17 @@ Expected<std::span<const uint8_t>> ExtendedPlugInfoData(const Response& response
     return operands.subspan(7);
 }
 
-Expected<PlugType> ParsePlugType(const Response& response) noexcept {
-    auto dataRes = ExtendedPlugInfoData(response, InfoType::kPlugType);
+Expected<std::span<const uint8_t>> ExtendedPlugInfoData(const Response& response,
+                                                        InfoType type) noexcept {
+    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
+    if (!operandsRes) {
+        return std::unexpected(operandsRes.error());
+    }
+    return ExtendedPlugInfoData(*operandsRes, type);
+}
+
+Expected<PlugType> ParsePlugType(std::span<const uint8_t> operands) noexcept {
+    auto dataRes = ExtendedPlugInfoData(operands, InfoType::kPlugType);
     if (!dataRes) {
         return std::unexpected(dataRes.error());
     }
@@ -79,8 +83,12 @@ Expected<PlugType> ParsePlugType(const Response& response) noexcept {
     return static_cast<PlugType>((*dataRes)[0]);
 }
 
-Expected<uint8_t> ParseChannelCount(const Response& response) noexcept {
-    auto dataRes = ExtendedPlugInfoData(response, InfoType::kChannelCount);
+Expected<PlugType> ParsePlugType(const Response& response) noexcept {
+    return ParsePlugType(response.operands);
+}
+
+Expected<uint8_t> ParseChannelCount(std::span<const uint8_t> operands) noexcept {
+    auto dataRes = ExtendedPlugInfoData(operands, InfoType::kChannelCount);
     if (!dataRes) {
         return std::unexpected(dataRes.error());
     }
@@ -90,8 +98,12 @@ Expected<uint8_t> ParseChannelCount(const Response& response) noexcept {
     return (*dataRes)[0];
 }
 
-Expected<ChannelPositions> ParseChannelPositions(const Response& response) noexcept {
-    auto dataRes = ExtendedPlugInfoData(response, InfoType::kChannelPositions);
+Expected<uint8_t> ParseChannelCount(const Response& response) noexcept {
+    return ParseChannelCount(response.operands);
+}
+
+Expected<ChannelPositions> ParseChannelPositions(std::span<const uint8_t> operands) noexcept {
+    auto dataRes = ExtendedPlugInfoData(operands, InfoType::kChannelPositions);
     if (!dataRes) {
         return std::unexpected(dataRes.error());
     }
@@ -137,9 +149,17 @@ Expected<ChannelPositions> ParseChannelPositions(const Response& response) noexc
     return positions;
 }
 
-Expected<PortType> ParseClusterPortType(const Response& response,
+Expected<ChannelPositions> ParseChannelPositions(const Response& response) noexcept {
+    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
+    if (!operandsRes) {
+        return std::unexpected(operandsRes.error());
+    }
+    return ParseChannelPositions(*operandsRes);
+}
+
+Expected<PortType> ParseClusterPortType(std::span<const uint8_t> operands,
                                         uint8_t requestedSectionId) noexcept {
-    auto dataRes = ExtendedPlugInfoData(response, InfoType::kClusterInfo);
+    auto dataRes = ExtendedPlugInfoData(operands, InfoType::kClusterInfo);
     if (!dataRes) {
         return std::unexpected(dataRes.error());
     }
@@ -150,6 +170,15 @@ Expected<PortType> ParseClusterPortType(const Response& response,
         return FailAt(AvcErrorKind::kMalformedOperands, 7);
     }
     return static_cast<PortType>((*dataRes)[1]);
+}
+
+Expected<PortType> ParseClusterPortType(const Response& response,
+                                        uint8_t requestedSectionId) noexcept {
+    auto operandsRes = OperandsIf(response, ResponseCode::kImplementedStable);
+    if (!operandsRes) {
+        return std::unexpected(operandsRes.error());
+    }
+    return ParseClusterPortType(*operandsRes, requestedSectionId);
 }
 
 } // namespace ASFW::AVC::BridgeCo

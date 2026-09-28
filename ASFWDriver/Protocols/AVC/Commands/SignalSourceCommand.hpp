@@ -16,7 +16,7 @@
 //   (no CCM spec on hand to decode them). The phase-1 hardware matrix records
 //   what Duet and Phase 88 answer to each.
 //
-// Implementation: SignalSourceCommand.cpp (phase 1).
+// Implementation: SignalSourceCommand.cpp (phase 1, reshaped phase 2b).
 
 #pragma once
 
@@ -26,6 +26,8 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
+#include <span>
 
 namespace ASFW::AVC::Cmd {
 
@@ -74,8 +76,39 @@ struct SignalSource {
     SignalAddress source, SignalAddress destination,
     uint8_t firstByte = kSignalSourceFirstByteDefault) noexcept;
 
-/// `expected`: kImplementedStable for STATUS, kAccepted for CONTROL. Needs at least
-/// 5 operands (ta1394 LENGTH_MIN).
-[[nodiscard]] Expected<SignalSource> ParseSignalSource(const Response& response, ResponseCode expected) noexcept;
+[[nodiscard]] Expected<SignalSource> ParseSignalSource(std::span<const uint8_t> operands) noexcept;
+
+[[nodiscard]] Expected<SignalSource> ParseSignalSource(
+    const Response& response,
+    ResponseCode expected = ResponseCode::kImplementedStable) noexcept;
+
+// ===========================================================================
+// Typed command struct satisfying the AvcCommand concept
+// ===========================================================================
+
+struct SignalSourceCommand {
+    SignalAddress destination{};
+    std::optional<SignalAddress> source{std::nullopt};
+    uint8_t firstByte{kSignalSourceFirstByteDefault};
+
+    using Reply = SignalSource;
+
+    [[nodiscard]] Expected<CommandFrame> Encode(CommandType type = CommandType::kStatus) const noexcept {
+        if (type == CommandType::kControl) {
+            if (source.has_value()) {
+                return BuildSignalSourceControl(*source, destination, firstByte);
+            }
+            return Fail(AvcErrorKind::kInvalidArgument);
+        }
+        return BuildSignalSourceStatus(destination, firstByte);
+    }
+
+    [[nodiscard]] static Expected<Reply> Decode(std::span<const uint8_t> operands) noexcept {
+        return ParseSignalSource(operands);
+    }
+    [[nodiscard]] static Expected<Reply> Decode(const Response& response) noexcept {
+        return ParseSignalSource(response);
+    }
+};
 
 } // namespace ASFW::AVC::Cmd
