@@ -27,6 +27,7 @@ public:
     IOReturn StartStreaming(uint64_t guid) noexcept override;
     IOReturn StopStreaming(uint64_t guid) noexcept override;
     void OnDeviceRecordUpdated(uint64_t guid) noexcept override;
+    void OnDeviceResumed(uint64_t guid) noexcept override;
     void CancelRemoteDeviceWork(uint64_t guid) noexcept override;
     void HandleHostTimingLoss(uint64_t guid) noexcept override;
     void OnStreamsRestarted(uint64_t guid) noexcept override { EnsureNubForGuid(guid); }
@@ -73,5 +74,6 @@ private:
     std::atomic<bool> teardownComplete_{false};
     IOLock* lock_{nullptr};
     std::unordered_set<uint64_t> active_{};
+    std::unordered_set<uint64_t> recoveringGuids_{};
 };
 } // namespace ASFW::Audio

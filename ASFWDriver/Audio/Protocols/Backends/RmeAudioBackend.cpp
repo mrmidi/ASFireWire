@@ -41,7 +41,10 @@ void RmeAudioBackend::BeginTeardown() noexcept {
 #endif
     }
     if (lock_) {
-        IOLockLock(lock_); active_.clear(); IOLockUnlock(lock_);
+        IOLockLock(lock_);
+        active_.clear();
+        recoveringGuids_.clear();
+        IOLockUnlock(lock_);
     }
     teardownComplete_.store(true, std::memory_order_release);
 }
@@ -50,8 +53,58 @@ void RmeAudioBackend::OnDeviceRecordUpdated(uint64_t guid) noexcept {
     if (!stopping_.load(std::memory_order_acquire)) EnsureNubForGuid(guid);
 }
 
+void RmeAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
+    PublicationGate::AdmissionScope admission(recoveryAdmission_);
+    if (!admission.IsAdmitted() || guid == 0 || stopping_.load(std::memory_order_acquire) ||
+        !workQueue_ || !sessions_.IsStreaming(guid) || sessions_.IsCancelled(guid)) {
+        return;
+    }
+
+    const auto record = registry_.SnapshotByGuid(guid);
+    const auto* policy = record ? DeviceProfiles::Audio::CurrentAudioPolicy(*record) : nullptr;
+    if (!policy || policy->plan.family != DeviceProfiles::Audio::AudioFamilyProviderId::RmeRegister ||
+        !registry_.IsCurrent(policy->route)) {
+        return;
+    }
+
+    if (lock_) {
+        IOLockLock(lock_);
+        const bool inserted = recoveringGuids_.insert(guid).second;
+        IOLockUnlock(lock_);
+        if (!inserted) return;
+    }
+
+    const auto route = policy->route;
+    const uint64_t run = sessions_.RunningRun(guid);
+    workQueue_->DispatchAsync(^{
+        // The resumed route has fresh node/channel state. Re-run the full RME
+        // configure/reserve/assign/start sequence while CoreAudio still owns IO.
+        if (!stopping_.load(std::memory_order_acquire) && registry_.IsCurrent(route) &&
+            sessions_.IsStreaming(guid) && !sessions_.IsCancelled(guid)) {
+            const IOReturn status =
+                sessions_.RequestRestart(guid, DuplexRestartReason::kBusResetRebind, run);
+            if (status != kIOReturnSuccess && status != kIOReturnUnsupported &&
+                status != kIOReturnAborted) {
+                ASFW_LOG_ERROR(Audio,
+                    "RmeAudioBackend: post-reset recovery failed GUID=0x%016llx kr=0x%x",
+                    guid, status);
+            }
+        }
+        if (lock_) {
+            IOLockLock(lock_);
+            recoveringGuids_.erase(guid);
+            IOLockUnlock(lock_);
+        }
+    });
+}
+
 void RmeAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
-    if (lock_) { IOLockLock(lock_); active_.erase(guid); IOLockUnlock(lock_); }
+    if (lock_) {
+        IOLockLock(lock_);
+        active_.erase(guid);
+        recoveringGuids_.erase(guid);
+        IOLockUnlock(lock_);
+    }
 }
 
 void RmeAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
