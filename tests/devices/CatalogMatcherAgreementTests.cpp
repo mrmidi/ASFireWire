@@ -313,6 +313,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBootstrap = Audio::ProbeBootstrap::DiceProtocol,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+        },
             // 17. RME Fireface 400
             // Synthetic evidence row from Linux ff.c, not an ASFW hardware capture.
         {
