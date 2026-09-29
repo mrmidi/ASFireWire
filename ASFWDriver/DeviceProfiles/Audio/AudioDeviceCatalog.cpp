@@ -4,6 +4,7 @@
 #include "AudioDeviceCatalog.hpp"
 
 #include "Definitions/Alesis.hpp"
+#include "Definitions/Avid.hpp"
 #include "Definitions/Apogee.hpp"
 #include "Definitions/Focusrite.hpp"
 #include "Definitions/MAudio.hpp"
@@ -47,10 +48,11 @@ constexpr auto kDefinitions = ConcatArrays(
     Definitions::kMAudioDefinitions,
     Definitions::kMotuDefinitions,
     Definitions::kMackieDefinitions,
-    Definitions::kRmeDefinitions
+    Definitions::kRmeDefinitions,
+    Definitions::kAvidDefinitions
 );
 
-static_assert(kDefinitions.size() == 42U, "Catalog definition count mismatch");
+static_assert(kDefinitions.size() == 43U, "Catalog definition count mismatch");
 
 // No safety rule is currently defined.
 //

@@ -204,6 +204,7 @@ enum ClauseConstraintBit : uint16_t {
         case ProfileBuilderId::FocusriteLiquidS56:
         case ProfileBuilderId::AlesisMultiMix:
         case ProfileBuilderId::MidasVeniceF32:
+        case ProfileBuilderId::AvidMboxPro:
         case ProfileBuilderId::PreSonusStudioLive1602:
         case ProfileBuilderId::PreSonusStudioLive2442:
         case ProfileBuilderId::PreSonusFireStudioProject:

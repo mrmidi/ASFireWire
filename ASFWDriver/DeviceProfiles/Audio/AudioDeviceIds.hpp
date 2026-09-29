@@ -21,6 +21,20 @@ inline constexpr uint32_t kRmeRootModelId = 0x101800;
 inline constexpr uint32_t kRmeUnitSpecifierId = kRmeVendorId;
 inline constexpr uint32_t kRmeFireface800UnitVersion = 0x000001;
 inline constexpr uint32_t kRmeFireface400UnitVersion = 0x000002;
+// ---- Avid / Digidesign (DICE / TCAT family) ----
+// Mbox Pro (3rd gen, 2011). Config ROM read from hardware 2026-09-16:
+//   ieee1394:ven0000A07Emo00000004sp0000A07Ever00000001
+// The single unit directory carries specifier_id == the vendor OUI (0x00A07E) and
+// version 0x000001 -- the canonical DICE signature, which is why the generic
+// TA 61883 classifier leaves this device Unknown. Cross-checked against Linux
+// sound/firewire/dice/dice.c:246 (DICE_INTERFACE 0x000001) and dice.c:263
+// DICE_DEV_ENTRY_TYPICAL(OUI_AVID, 0x000004, snd_dice_detect_extension_formats).
+inline constexpr uint32_t kAvidVendorId   = 0x00a07e;
+inline constexpr uint32_t kMboxProModelId = 0x000004;
+
+inline constexpr const char* kAvidVendorName   = "Avid";
+inline constexpr const char* kMboxProModelName = "Mbox Pro";
+
 inline constexpr const char* kRmeVendorName = "RME";
 inline constexpr const char* kRmeFireface400ModelName = "Fireface 400";
 inline constexpr const char* kRmeFireface800ModelName = "Fireface 800";
