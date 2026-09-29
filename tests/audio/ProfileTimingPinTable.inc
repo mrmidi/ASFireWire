@@ -152,3 +152,10 @@
     {24, 96000, 0, 0, 16, 16},  // RME Fireface 800
     {24, 176400, 0, 0, 16, 16},  // RME Fireface 800
     {24, 192000, 0, 0, 16, 16},  // RME Fireface 800
+    {25, 32000, 29, 29, 48, 128},  // Avid Mbox Pro (DICE)
+    {25, 44100, 29, 29, 48, 128},  // Avid Mbox Pro (DICE)
+    {25, 48000, 29, 29, 48, 128},  // Avid Mbox Pro (DICE)
+    {25, 88200, 59, 59, 128, 288},  // Avid Mbox Pro (DICE)
+    {25, 96000, 59, 59, 128, 288},  // Avid Mbox Pro (DICE)
+    {25, 176400, 119, 119, 320, 640},  // Avid Mbox Pro (DICE)
+    {25, 192000, 119, 119, 320, 640},  // Avid Mbox Pro (DICE)
