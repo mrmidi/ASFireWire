@@ -227,8 +227,125 @@ std::expected<DuplexPrepareResult, IOReturn> DICETcatProtocol::Configure(
     const auto result = driver_->Prepare(channels, diceClock, /*refreshRuntimeCaps=*/true);
     if (result) {
         CacheRuntimeCaps(result->runtimeCaps);
+        // Device configuration, not a bring-up gate: a device that needs a
+        // router program comes up silent without one, but the streams are
+        // sound either way, so a failure here is logged and not propagated.
+        ApplyStartupProgram();
     }
     return result;
+}
+
+// --- Startup router program ---------------------------------------------------
+
+std::expected<uint32_t, IOReturn> DICETcatProtocol::ReadRouterEntryCount(
+    const ExtensionSections& ext) {
+    // The *current* configuration is what the device is really holding; the
+    // router section is only a staging buffer, and reading it on a freshly
+    // attached device returns zero even though the device is working.
+    const uint32_t base = ASFW::Audio::DICE::ExtensionAbsoluteOffset(ext.currentConfig);
+    if (base == kDICEExtensionOffset) {
+        return std::unexpected(kIOReturnUnsupported);
+    }
+    return deviceIo_.ReadQuad(base);
+}
+
+std::expected<void, IOReturn> DICETcatProtocol::WriteRouterProgram(
+    const ExtensionSections& ext) {
+    const uint32_t routerBase = ASFW::Audio::DICE::ExtensionAbsoluteOffset(ext.router);
+    const uint32_t commandBase = ASFW::Audio::DICE::ExtensionAbsoluteOffset(ext.command);
+    if (routerBase == kDICEExtensionOffset || commandBase == kDICEExtensionOffset) {
+        ASFW_LOG(DICE, "Startup router: device exposes no TCAT router/command section");
+        return std::unexpected(kIOReturnUnsupported);
+    }
+
+    const uint32_t count = runtimePolicy_.startupRouterEntryCount;
+    // Wire image: quadlet 0 is the entry count, then one quadlet per entry.
+    std::vector<uint8_t> buffer(static_cast<size_t>(count + 1U) * 4U, 0U);
+    FW::WriteBE32(buffer.data(), count);
+    for (uint32_t i = 0; i < count; ++i) {
+        FW::WriteBE32(buffer.data() + (i + 1U) * 4U, runtimePolicy_.startupRouterEntries[i]);
+    }
+
+    if (const auto written = deviceIo_.WriteBlock(routerBase, buffer); !written) {
+        ASFW_LOG(DICE, "Startup router: write failed (0x%08x)", written.error());
+        return std::unexpected(written.error());
+    }
+
+    // Commit for every rate mode, as the vendor driver does. A commit of the
+    // low mode alone is accepted and does not take effect.
+    const uint32_t opcode = ExtensionCommandOpcode::kExecute |
+                            ExtensionCommandOpcode::kRateLow |
+                            ExtensionCommandOpcode::kRateMiddle |
+                            ExtensionCommandOpcode::kRateHigh |
+                            ExtensionCommandOpcode::kLoadRouter;
+    if (const auto committed =
+            deviceIo_.WriteQuad(commandBase + ExtensionCommandOffset::kOpcode, opcode);
+        !committed) {
+        ASFW_LOG(DICE, "Startup router: commit failed (0x%08x)", committed.error());
+        return std::unexpected(committed.error());
+    }
+
+    ASFW_LOG(DICE, "Startup router: programmed %u entries (opcode=0x%08x)", count, opcode);
+    return {};
+}
+
+void DICETcatProtocol::WriteStartupMixerCells(const ExtensionSections& ext) {
+    if (runtimePolicy_.startupMixerCells == nullptr ||
+        runtimePolicy_.startupMixerCellCount == 0) {
+        return;
+    }
+    const uint32_t mixerBase = ASFW::Audio::DICE::ExtensionAbsoluteOffset(ext.mixer);
+    if (mixerBase == kDICEExtensionOffset) {
+        return;
+    }
+    // Coefficients start one quadlet past the section base.
+    uint32_t written = 0;
+    for (uint32_t i = 0; i < runtimePolicy_.startupMixerCellCount; ++i) {
+        const auto& cell = runtimePolicy_.startupMixerCells[i];
+        if (deviceIo_.WriteQuad(mixerBase + 4U + cell.index * 4U, cell.gain)) {
+            ++written;
+        } else {
+            // One bad cell should not abort the rest.
+            ASFW_LOG(DICE, "Startup mixer: cell %u failed", cell.index);
+        }
+    }
+    ASFW_LOG(DICE, "Startup mixer: wrote %u of %u coefficients", written,
+             runtimePolicy_.startupMixerCellCount);
+}
+
+void DICETcatProtocol::ApplyStartupProgram() {
+    if (runtimePolicy_.startupRouterEntries == nullptr ||
+        runtimePolicy_.startupRouterEntryCount == 0) {
+        return;
+    }
+
+    const auto ext = deviceIo_.ReadExtensionSections();
+    if (!ext) {
+        ASFW_LOG(DICE, "Startup program: extension sections unreadable (0x%08x)", ext.error());
+        return;
+    }
+
+    // Do not latch on the first success. A burst of bus resets around bring-up
+    // can leave the device holding nothing while every write still reports
+    // success, and a latch then guarantees nobody ever puts the program back:
+    // the device stays silent until someone reprograms it by hand. Read the
+    // count the device is really holding and reprogram whenever it disagrees.
+    const uint32_t want = runtimePolicy_.startupRouterEntryCount;
+    const auto live = ReadRouterEntryCount(*ext);
+    if (startupProgramApplied_ && live && *live == want) {
+        return;
+    }
+    if (startupProgramApplied_) {
+        ASFW_LOG(DICE, "Startup router lost: device holds %u of %u entries; reprogramming",
+                 live ? *live : 0U, want);
+        startupProgramApplied_ = false;
+    }
+
+    if (!WriteRouterProgram(*ext)) {
+        return;
+    }
+    WriteStartupMixerCells(*ext);
+    startupProgramApplied_ = true;
 }
 
 std::expected<AudioDuplexChannels, IOReturn> DICETcatProtocol::AssignChannels(const AudioDuplexChannels& channels) {

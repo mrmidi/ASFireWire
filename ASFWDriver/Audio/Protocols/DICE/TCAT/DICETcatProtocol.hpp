@@ -29,6 +29,13 @@ namespace ASFW::Audio::DICE::TCAT {
 // Separates DICE's operational stream topology from the channels the HAL
 // publishes. Some hardware needs both DICE directions active for its clock or
 // firmware protocol while exposing only one analog/audio direction to users.
+// One mixer cell of a startup program: the cell index and its gain.
+// Index is output * 18 + input; unity is 0x4000.
+struct DiceStartupMixerCell final {
+    uint16_t index{0};
+    uint16_t gain{0};
+};
+
 struct DICETcatRuntimePolicy final {
     bool exposeDeviceToHostToCoreAudio{true};
     // Keep the target-rate transition strict, but do not require a GLOBAL
@@ -37,6 +44,21 @@ struct DICETcatRuntimePolicy final {
     // are flowing; it does not select ARX1 as a clock source.
     bool requireSourceLockBeforeStreamEnable{true};
     bool requireSourceLockAtConfirm{true};
+
+    // A router program to write at bring-up. Some devices power up with no
+    // usable router program and stay silent until a host writes one: the Avid
+    // Mbox Pro streams correctly and passes nothing to its analog stage.
+    // Entries are (source << 8) | destination, each byte (block << 4) | channel.
+    const uint16_t* startupRouterEntries{nullptr};
+    uint32_t startupRouterEntryCount{0};
+
+    // Mixer coefficients to write alongside it. A route table on its own is
+    // half a configuration on devices whose outputs are fed from MIXo: without
+    // coefficients the mixer path carries silence and nothing reaches the
+    // outputs, which is how an earlier experiment was misread as "the mixer
+    // path does not work".
+    const DiceStartupMixerCell* startupMixerCells{nullptr};
+    uint32_t startupMixerCellCount{0};
 };
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
@@ -126,6 +148,17 @@ private:
     std::optional<DiceFamilyDriver> driver_;
     const std::atomic<bool>* teardownCancel_{nullptr};
     DICETcatRuntimePolicy runtimePolicy_{};
+    bool startupProgramApplied_{false};
+
+    // Writes the startup router program and mixer coefficients when the policy
+    // carries them. Device configuration, not a bring-up gate: a failure is
+    // logged and the streams still come up (silently, on devices that need it).
+    void ApplyStartupProgram();
+    [[nodiscard]] std::expected<uint32_t, IOReturn> ReadRouterEntryCount(
+        const ExtensionSections& ext);
+    [[nodiscard]] std::expected<void, IOReturn> WriteRouterProgram(
+        const ExtensionSections& ext);
+    void WriteStartupMixerCells(const ExtensionSections& ext);
     GeneralSections sections_{};
     bool initialized_{false};
     bool sectionsLoaded_{false};
