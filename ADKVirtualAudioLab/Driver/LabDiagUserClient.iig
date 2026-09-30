@@ -15,6 +15,10 @@ public:
     virtual kern_return_t Start(IOService* provider) override;
     virtual kern_return_t Stop(IOService* provider) override;
 
+    virtual kern_return_t CopyClientMemoryForType(uint64_t type,
+                                                   uint64_t* options,
+                                                   IOMemoryDescriptor** memory) override;
+
     virtual kern_return_t ExternalMethod(uint64_t selector,
                                          IOUserClientMethodArguments* arguments,
                                          const IOUserClientMethodDispatch* dispatch,

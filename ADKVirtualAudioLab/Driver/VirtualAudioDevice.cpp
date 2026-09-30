@@ -94,6 +94,7 @@ struct VirtualAudioDevice_IVars
     OSSharedPtr<IOUserAudioDriver> driver;
     OSSharedPtr<IODispatchQueue> workQueue;
     OSSharedPtr<IOUserAudioStream> outputStream;
+    OSSharedPtr<IOBufferMemoryDescriptor> outputMemoryDescriptor;
     OSSharedPtr<IOMemoryMap> outputMemoryMap;
     OSSharedPtr<IOUserAudioStream> inputStream;
     OSSharedPtr<IOMemoryMap> inputMemoryMap;
@@ -157,6 +158,7 @@ struct VirtualAudioDevice_IVars
     std::atomic<uint32_t> maxIoFrames{0};
     std::atomic<uint64_t> sampleTimeBreaks{0};
     std::atomic<uint64_t> expectedNextSampleTime{0};
+    std::atomic<uint64_t> outputWriteEndFrame{0};
     std::atomic<bool> expectedSampleTimeValid{false};
     std::atomic<uint64_t> payloadCommittedEndFrame{0};
     std::atomic<bool> payloadCommittedValid{false};
@@ -411,6 +413,8 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         LAB_LOG("init - Failed to create output IOBufferMemoryDescriptor (kr = 0x%{public}08x)", kr);
         return false;
     }
+    ivars->outputMemoryDescriptor =
+        OSSharedPtr<IOBufferMemoryDescriptor>(buffer.get(), OSRetain);
     LAB_LOG("init - IOBufferMemoryDescriptor created successfully. Length: %{public}u bytes", bufferSize);
 
     // Map the ring here, before SetIOOperationHandler ever runs: the RT IO
@@ -609,6 +613,12 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
                     in_sample_time + in_io_buffer_frame_size, std::memory_order_relaxed);
                 ivarsPtr->payloadCommittedValid.store(true, std::memory_order_relaxed);
             }
+
+            // CoreAudio has completed this output span. The host's acquire
+            // load from GetAudioViewState observes the published cursor.
+            ivarsPtr->outputWriteEndFrame.store(
+                in_sample_time + in_io_buffer_frame_size,
+                std::memory_order_release);
         } else if (in_io_operation == IOUserAudioIOOperationBeginRead) {
             if (!ivarsPtr->ioRunning.load(std::memory_order_relaxed)) {
                 ivarsPtr->readAfterStop.fetch_add(1, std::memory_order_relaxed);
@@ -853,6 +863,7 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
         ivars->anchorsPublished.store(0, std::memory_order_relaxed);
         ivars->anchorsBeforeFirstWriteEnd.store(0, std::memory_order_relaxed);
         ivars->writeEndCount.store(0, std::memory_order_relaxed);
+        ivars->outputWriteEndFrame.store(0, std::memory_order_release);
         ivars->framesDelivered.store(0, std::memory_order_relaxed);
         ivars->minIoFrames.store(0xFFFFFFFFu, std::memory_order_relaxed);
         ivars->maxIoFrames.store(0, std::memory_order_relaxed);
@@ -1153,6 +1164,42 @@ kern_return_t VirtualAudioDevice::CopyPacketDump(uint32_t in_count,
     }
     IODelete(buffer, uint8_t, capacity);
     return result;
+}
+
+kern_return_t VirtualAudioDevice::CopyOutputRingMemory(
+    uint64_t* out_options, IOMemoryDescriptor** out_memory)
+{
+    if (out_memory == nullptr || ivars == nullptr ||
+        !ivars->outputMemoryDescriptor) {
+        return kIOReturnNotReady;
+    }
+
+    auto* descriptor = ivars->outputMemoryDescriptor.get();
+    descriptor->retain(); // CopyClientMemoryForType transfers one reference.
+    *out_memory = descriptor;
+    if (out_options != nullptr) {
+        *out_options = kIOUserClientMemoryReadOnly;
+    }
+    return kIOReturnSuccess;
+}
+
+kern_return_t VirtualAudioDevice::GetAudioViewState(
+    uint64_t* out_write_end_frame, uint32_t* out_active_ring_frames,
+    uint32_t* out_channels, uint32_t* out_sample_rate, bool* out_io_running)
+{
+    if (ivars == nullptr || out_write_end_frame == nullptr ||
+        out_active_ring_frames == nullptr || out_channels == nullptr ||
+        out_sample_rate == nullptr || out_io_running == nullptr) {
+        return kIOReturnBadArgument;
+    }
+
+    *out_write_end_frame =
+        ivars->outputWriteEndFrame.load(std::memory_order_acquire);
+    *out_active_ring_frames = ivars->activeRingFrames;
+    *out_channels = ivars->outputChannels;
+    *out_sample_rate = kSampleRate;
+    *out_io_running = ivars->ioRunning.load(std::memory_order_acquire);
+    return kIOReturnSuccess;
 }
 
 kern_return_t VirtualAudioDevice::PerformDeviceConfigurationChange(uint64_t change_action,

@@ -17,6 +17,9 @@ C1–C4 questions with counters; this file is the procedure around it.
 - `StopIO` dumps everything via `IOLog` with the `ADKLab[dump]` prefix.
 - Output and input descriptors each allocate 24576 frames. PCM wraps at the
   active 12288-frame ring. Transport type reports FireWire.
+- The host's Waveform tab maps the same output descriptor read-only and asks
+  Metal to wrap the mapped pages with `bytesNoCopy`; the vertex shader draws
+  the latest 960 channel-0 samples. There is no PCM-copy fallback.
 
 ## Build
 
@@ -79,6 +82,12 @@ host app's is `Host/ADKLabHost.entitlements` (system-extension install).
    afplay /System/Library/Sounds/Submarine.aiff
    # or run minutes of pink noise from Music/Logic for a soak
    ```
+   While playback is running, select the **Waveform** tab. It reports mapped
+   capacity, active ring geometry, the WriteEnd cursor, and the last four
+   channel-0 samples. `Zero-copy Metal import succeeded` means the mapped
+   address was accepted as an `MTLBuffer`; visual movement confirms the shader
+   sees live CoreAudio writes. A rejected import is shown as
+   `ZERO-COPY IMPORT FAILED` and does not silently switch to a copied buffer.
 
 4. Stop playback (coreaudiod stops IO a moment later), or switch default
    output away — `StopIO` fires and the `ADKLab[dump]` lines appear.
@@ -100,8 +109,8 @@ ADKLab[free] ...:      io_after_stop / timer_after_stop (O2, logged at teardown)
 
 ## Packet inspector (live dumps)
 
-The host app embeds a packet inspector below the activation controls. **Dump**
-(or ⌘D) snapshots the most recent N packets (8/16/32/64) from the running
+The host app has a **Packets** tab with the packet inspector. **Dump** (or ⌘D)
+snapshots the most recent N packets (8/16/32/64) from the running
 dext — any time, including mid-stream. The capture is one `DispatchSync` onto
 the dext work queue (~µs, serialized with the pump); the RT path is never
 touched, so it is soak-safe.

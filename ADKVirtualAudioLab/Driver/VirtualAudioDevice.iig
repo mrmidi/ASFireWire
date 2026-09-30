@@ -49,6 +49,14 @@ public:
     virtual kern_return_t CopyPacketDump(uint32_t in_count,
                                          uint64_t in_anchor,
                                          OSData** out_data) LOCALONLY;
+
+    virtual kern_return_t CopyOutputRingMemory(uint64_t* out_options,
+                                               IOMemoryDescriptor** out_memory) LOCALONLY;
+    virtual kern_return_t GetAudioViewState(uint64_t* out_write_end_frame,
+                                            uint32_t* out_active_ring_frames,
+                                            uint32_t* out_channels,
+                                            uint32_t* out_sample_rate,
+                                            bool* out_io_running) LOCALONLY;
 };
 
 #endif
