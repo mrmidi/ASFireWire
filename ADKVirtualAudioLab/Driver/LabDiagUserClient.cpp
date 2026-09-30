@@ -79,7 +79,7 @@ kern_return_t LabDiagUserClient::ExternalMethod(
     switch (selector) {
     case ASFW::Lab::kLabDiagSelectorGetAudioViewState: {
         if (arguments->scalarOutput == nullptr ||
-            arguments->scalarOutputCount < 5) {
+            arguments->scalarOutputCount < 7) {
             return kIOReturnBadArgument;
         }
         VirtualAudioDevice* device = ivars->driver->GetVirtualAudioDevice();
@@ -92,9 +92,11 @@ kern_return_t LabDiagUserClient::ExternalMethod(
         uint32_t channels = 0;
         uint32_t sampleRate = 0;
         bool ioRunning = false;
+        uint64_t epoch = 0;
+        uint32_t validHistoryFrames = 0;
         const kern_return_t kr = device->GetAudioViewState(
             &writeEndFrame, &activeRingFrames, &channels, &sampleRate,
-            &ioRunning);
+            &ioRunning, &epoch, &validHistoryFrames);
         if (kr != kIOReturnSuccess) {
             return kr;
         }
@@ -104,7 +106,9 @@ kern_return_t LabDiagUserClient::ExternalMethod(
         arguments->scalarOutput[2] = channels;
         arguments->scalarOutput[3] = sampleRate;
         arguments->scalarOutput[4] = ioRunning ? 1 : 0;
-        arguments->scalarOutputCount = 5;
+        arguments->scalarOutput[5] = epoch;
+        arguments->scalarOutput[6] = validHistoryFrames;
+        arguments->scalarOutputCount = 7;
         return kIOReturnSuccess;
     }
     case ASFW::Lab::kLabDiagSelectorDumpPackets: {
