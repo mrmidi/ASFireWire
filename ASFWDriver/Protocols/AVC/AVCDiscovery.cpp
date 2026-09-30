@@ -1460,21 +1460,33 @@ void AVCDiscovery::ReScanAllUnits() {
     if (shuttingDown_.load(std::memory_order_acquire)) {
         return;
     }
+    std::vector<std::pair<uint64_t, std::shared_ptr<AVCUnit>>> scanUnits;
     IOLockLock(lock_);
-    
-    os_log_info(log_, "AVCDiscovery: Re-scanning all %zu units", units_.size());
-    rescanAttempts_.clear();
-
-    for (auto& [guid, avcUnit] : units_) {
-        if (avcUnit) {
-            // Trigger re-scan (async)
-            avcUnit->ReScan([guid](bool success) {
-                // Logging handled inside AVCUnit
-            });
-        }
+    scanUnits.reserve(units_.size());
+    for (const auto& [guid, avcUnit] : units_) {
+        if (avcUnit) scanUnits.emplace_back(guid, avcUnit);
     }
-
+    rescanAttempts_.clear();
     IOLockUnlock(lock_);
+
+    ASFW_LOG(AVC, "[AVCDiag] manual discovery requested units=%zu", scanUnits.size());
+    std::vector<std::pair<uint64_t, std::shared_ptr<AVCUnit>>> eligible;
+    for (const auto& [guid, avcUnit] : scanUnits) {
+        const auto plan = CurrentPolicyPlan(deviceRegistry_, guid);
+        if (ProbeBootstrapFor(plan) != ASFW::Audio::ProbeBootstrap::AvcInitializeThenPlug0) {
+            ASFW_LOG(AVC, "[AVCDiag] GUID=%llx skipped by probe policy", guid);
+            avcUnit->MarkRescanSkipped();
+            continue;
+        }
+        if (avcUnit->TryBeginRescan()) eligible.emplace_back(guid, avcUnit);
+    }
+    // Publish every unit's synchronous state before any async probe can finish.
+    for (const auto& [guid, avcUnit] : eligible) {
+        avcUnit->ReScanAlreadyBegun([avcUnit, guid](bool success) {
+            ASFW_LOG(AVC, "[AVCDiag] GUID=%llx result=%{public}s", guid, success ? "completed" : "failed");
+            // Per-unit status is finalized before this callback; no discovery lock is held.
+        });
+    }
 }
 
 FCPTransport* AVCDiscovery::GetFCPTransportForNodeID(uint16_t nodeID) {

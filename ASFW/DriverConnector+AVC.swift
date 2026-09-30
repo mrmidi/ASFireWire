@@ -69,7 +69,7 @@ extension ASFWDriverConnector {
             let isoOutputPlugs = data[offset + 20]
             let extInputPlugs = data[offset + 21]
             let extOutputPlugs = data[offset + 22]
-            // _reserved at offset + 23
+            let diagnosticStatus = data[offset + 23]
 
             offset += 24
 
@@ -95,7 +95,8 @@ extension ASFWDriverConnector {
                 isoInputPlugs: isoInputPlugs,
                 isoOutputPlugs: isoOutputPlugs,
                 extInputPlugs: extInputPlugs,
-                extOutputPlugs: extOutputPlugs
+                extOutputPlugs: extOutputPlugs,
+                diagnosticStatus: diagnosticStatus
             ))
         }
 
@@ -123,6 +124,12 @@ extension ASFWDriverConnector {
     }
 
     func getSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities? {
+        guard let data = getSubunitCapabilitiesData(guid: guid, type: type, id: id) else { return nil }
+        return AVCMusicCapabilities(data: data)
+    }
+
+    /// Preserve the driver capability wire blob for investigation reports.
+    func getSubunitCapabilitiesData(guid: UInt64, type: UInt8, id: UInt8) -> Data? {
         guard isConnected else { return nil }
         guard connection != 0 else { return nil }
 
@@ -134,7 +141,7 @@ extension ASFWDriverConnector {
             UInt64(id)               // Subunit ID
         ]
 
-        var outSize = 1024  // Initial capacity for output
+        var outSize = 4096  // Match the driver's bounded capability export.
         var out = Data(count: outSize)
         let scalarInputCount: UInt32 = 4
 
@@ -157,7 +164,7 @@ extension ASFWDriverConnector {
         }
 
         out.count = outSize
-        return AVCMusicCapabilities(data: out)
+        return out
     }
 
     func getSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) -> Data? {

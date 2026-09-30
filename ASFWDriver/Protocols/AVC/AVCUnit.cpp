@@ -132,7 +132,21 @@ void AVCUnit::Shutdown() {
 //==============================================================================
 
 void AVCUnit::Initialize(std::function<void(bool)> completion) {
-    auto completionState = Common::ShareCallback(std::move(completion));
+    if (!TryBeginRescan()) {
+        if (completion) completion(false);
+        return;
+    }
+    InitializeAlreadyBegun(std::move(completion));
+}
+
+void AVCUnit::InitializeAlreadyBegun(std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(
+        [this, completion = std::move(completion)](bool success) mutable {
+            discoveryStatus_.store(success ? AVCDiscoveryStatus::Completed : AVCDiscoveryStatus::Failed,
+                                   std::memory_order_release);
+            rescanInProgress_.store(false, std::memory_order_release);
+            if (completion) completion(success);
+        });
     if (initialized_) {
         ASFW_LOG_V2(AVC, "AVCUnit: Already initialized");
         Common::InvokeSharedCallback(completionState, true);
@@ -189,6 +203,14 @@ void AVCUnit::Initialize(std::function<void(bool)> completion) {
 
 void AVCUnit::ReScan(std::function<void(bool)> completion) {
     ASFW_LOG_V1(AVC, "AVCUnit: Re-scan requested (GUID=%llx)", GetGUID());
+    if (!TryBeginRescan()) {
+        if (completion) completion(false);
+        return;
+    }
+    ReScanAlreadyBegun(std::move(completion));
+}
+
+void AVCUnit::ReScanAlreadyBegun(std::function<void(bool)> completion) {
     
     // Reset state
     initialized_ = false;
@@ -199,7 +221,7 @@ void AVCUnit::ReScan(std::function<void(bool)> completion) {
     model_.identity = Identity();
     
     // Re-initialize
-    Initialize(completion);
+    InitializeAlreadyBegun(std::move(completion));
 }
 
 //==============================================================================

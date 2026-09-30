@@ -228,6 +228,7 @@ TEST(AvcGoldenTests, DuetAttachDiscovery) {
     bool initOk = false;
     rig.Unit()->Initialize([&](bool ok) { initOk = ok; });
     EXPECT_TRUE(initOk);
+    EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Completed);
 
     rig.Mark("## OxfwStreamFormats::DetectStreamFormats");
     bool detectFired = false;

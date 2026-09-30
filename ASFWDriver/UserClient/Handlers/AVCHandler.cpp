@@ -128,7 +128,7 @@ SubunitPtr FindRequestedSubunit(Protocols::AVC::IAVCDiscovery& discovery,
                                 const SubunitLookupRequest& request) {
     const auto allUnits = discovery.GetAllAVCUnits();
     for (auto* unit : allUnits) {
-        if (!unit) {
+        if (!unit || unit->GetDiscoveryStatus() == Protocols::AVC::AVCDiscoveryStatus::Running) {
             continue;
         }
 
@@ -137,6 +137,9 @@ SubunitPtr FindRequestedSubunit(Protocols::AVC::IAVCDiscovery& discovery,
             continue;
         }
 
+        if (unit->GetDiscoveryStatus() == Protocols::AVC::AVCDiscoveryStatus::Running) {
+            continue;
+        }
         for (const auto& subunit : unit->GetSubunits()) {
             if (!subunit) {
                 continue;
@@ -431,7 +434,7 @@ ParseRawFCPSubmissionRequest(IOUserClientMethodArguments* args) {
 Protocols::AVC::AVCUnit* FindAVCUnitByGuid(Protocols::AVC::IAVCDiscovery& discovery, uint64_t guid) {
     const auto allUnits = discovery.GetAllAVCUnits();
     for (auto* unit : allUnits) {
-        if (!unit) {
+        if (!unit || unit->GetDiscoveryStatus() == Protocols::AVC::AVCDiscoveryStatus::Running) {
             continue;
         }
 
@@ -513,7 +516,7 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
     // Get all AV/C units
     auto allUnits = discovery_->GetAllAVCUnits();
 
-    ASFW_LOG(UserClient, "GetAVCUnits: found %zu AV/C units", allUnits.size());
+    ASFW_LOG_V3(UserClient, "GetAVCUnits: found %zu AV/C units", allUnits.size());
 
     // Calculate total size
     // We send an OSData containing a sequence of AVCUnitInfoWire structures.
@@ -531,11 +534,13 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
     for (auto* avcUnit : allUnits) {
         if (avcUnit) {
             totalSize += sizeof(AVCUnitInfoWire);
-            totalSize += avcUnit->GetSubunits().size() * sizeof(AVCSubunitInfoWire);
+            if (avcUnit->GetDiscoveryStatus() != Protocols::AVC::AVCDiscoveryStatus::Running) {
+                totalSize += avcUnit->GetSubunits().size() * sizeof(AVCSubunitInfoWire);
+            }
         }
     }
 
-    ASFW_LOG(UserClient, "GetAVCUnits: total wire format size=%zu bytes", totalSize);
+    ASFW_LOG_V3(UserClient, "GetAVCUnits: total wire format size=%zu bytes", totalSize);
 
     // Create OSData buffer
     OSData* data = OSData::withCapacity(static_cast<uint32_t>(totalSize));
@@ -571,16 +576,22 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
             unitWire.modelID = 0;
         }
 
+        const auto status = avcUnit->GetDiscoveryStatus();
         const auto& subunits = avcUnit->GetSubunits();
-        unitWire.subunitCount = static_cast<uint8_t>(subunits.size());
+        const bool scanRunning = status == Protocols::AVC::AVCDiscoveryStatus::Running;
+        unitWire.subunitCount = scanRunning ? 0 : static_cast<uint8_t>(subunits.size());
         
         // Populate unit-level plug counts from AVCUnitPlugInfoCommand results
-        const auto& plugCounts = avcUnit->GetCachedPlugCounts();
-        unitWire.isoInputPlugs = plugCounts.isochronousInputs;
-        unitWire.isoOutputPlugs = plugCounts.isochronousOutputs;
-        unitWire.extInputPlugs = plugCounts.externalInputs;
-        unitWire.extOutputPlugs = plugCounts.externalOutputs;
-        // unitWire._reserved is zero-init
+        if (!scanRunning) {
+            const auto& plugCounts = avcUnit->GetCachedPlugCounts();
+            unitWire.isoInputPlugs = plugCounts.isochronousInputs;
+            unitWire.isoOutputPlugs = plugCounts.isochronousOutputs;
+            unitWire.extInputPlugs = plugCounts.externalInputs;
+            unitWire.extOutputPlugs = plugCounts.externalOutputs;
+        }
+        // Status is an additive diagnostic in the former reserved byte.
+        unitWire.discoveryStatus = static_cast<uint8_t>(0x80u |
+            static_cast<uint8_t>(status));
 
         if (!data->appendBytes(&unitWire, sizeof(unitWire))) {
             data->release();
@@ -588,7 +599,7 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
         }
 
         // Write subunits for this unit
-        for (const auto& subunitPtr : subunits) {
+        if (!scanRunning) for (const auto& subunitPtr : subunits) {
             if (!subunitPtr) continue;
 
             AVCSubunitInfoWire subunitWire{};
@@ -608,7 +619,7 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
     args->structureOutput = data;
     args->structureOutputDescriptor = nullptr;
 
-    ASFW_LOG(UserClient, "GetAVCUnits: returning %zu units in %zu bytes",
+    ASFW_LOG_V3(UserClient, "GetAVCUnits: returning %zu units in %zu bytes",
              allUnits.size(), data->getLength());
     return kIOReturnSuccess;
 }

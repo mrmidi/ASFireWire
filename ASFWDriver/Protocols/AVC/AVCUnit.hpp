@@ -15,6 +15,7 @@
 #include <DriverKit/OSSharedPtr.h>
 #endif
 #include <memory>
+#include <atomic>
 #include <vector>
 #include "FCPTransport.hpp"
 #include "IAVCCommandSubmitter.hpp"
@@ -27,6 +28,12 @@
 #include "Core/IAvcUnit.hpp"
 
 namespace ASFW::Protocols::AVC {
+
+class AVCDiscovery;
+
+enum class AVCDiscoveryStatus : uint8_t {
+    Idle = 0, Running = 1, Completed = 2, Failed = 3, Skipped = 4
+};
 
 //==============================================================================
 // Forward Declarations
@@ -94,7 +101,24 @@ public:
     void Initialize(std::function<void(bool success)> completion);
 
     void ReScan(std::function<void(bool success)> completion);
-
+    [[nodiscard]] AVCDiscoveryStatus GetDiscoveryStatus() const noexcept {
+        return discoveryStatus_.load(std::memory_order_acquire);
+    }
+    void MarkRescanSkipped() noexcept {
+        if (rescanInProgress_.load(std::memory_order_acquire)) return;
+        auto status = discoveryStatus_.load(std::memory_order_acquire);
+        while (status != AVCDiscoveryStatus::Running &&
+               !discoveryStatus_.compare_exchange_weak(status, AVCDiscoveryStatus::Skipped,
+                                                       std::memory_order_acq_rel)) {}
+    }
+    [[nodiscard]] bool TryBeginRescan() noexcept {
+        bool expected = false;
+        if (!rescanInProgress_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+            return false;
+        }
+        discoveryStatus_.store(AVCDiscoveryStatus::Running, std::memory_order_release);
+        return true;
+    }
     void ProbeUnitInfo(std::function<void(bool)> completion);
 
     void SubmitCommand(const AVCCdb& cdb, AVCCompletion completion) override;
@@ -132,6 +156,10 @@ public:
     uint32_t GetSpecID() const;
 
 private:
+    friend class AVCDiscovery;
+    void InitializeAlreadyBegun(std::function<void(bool success)> completion);
+    void ReScanAlreadyBegun(std::function<void(bool success)> completion);
+
     void ProbeDescriptorMechanism(std::function<void(bool)> completion);
 
     bool ParseUnitIdentifier(const std::vector<uint8_t>& data);
@@ -173,6 +201,8 @@ private:
     UnitDescriptorInfo descriptorInfo_;
 
     bool initialized_{false};
+    std::atomic<AVCDiscoveryStatus> discoveryStatus_{AVCDiscoveryStatus::Idle};
+    std::atomic<bool> rescanInProgress_{false};
 };
 
 } // namespace ASFW::Protocols::AVC
