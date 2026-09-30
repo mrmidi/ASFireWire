@@ -14,6 +14,7 @@
 #include <DriverKit/OSObject.iig>
 #include <DriverKit/IOTimerDispatchSource.iig>
 #include <DriverKit/IOUserClient.iig>
+#include <DriverKit/IOMemoryDescriptor.iig>
 #include <DriverKit/IOServiceNotificationDispatchSource.iig>
 
 struct ServiceContext;
@@ -124,6 +125,20 @@ public:
     kern_return_t CopyDVCaptureMemory(uint64_t ownerToken,
                                       uint64_t* options,
                                       IOMemoryDescriptor** memory) const LOCALONLY;
+
+    // Read-only observer access to a GUID's existing HAL output ring.
+    kern_return_t CopyAudioObserverMemory(uint64_t guid,
+                                          uint64_t* outMemoryGeneration,
+                                          IOMemoryDescriptor** outMemory) LOCALONLY;
+    kern_return_t CopyAudioObserverState(uint64_t guid,
+                                         uint64_t* outWriteEndFrame,
+                                         uint64_t* outOldestValidFrame,
+                                         uint64_t* outSessionEpoch,
+                                         uint64_t* outDiscontinuityEpoch,
+                                         uint64_t* outMemoryGeneration,
+                                         uint32_t* outActiveRingFrames,
+                                         uint32_t* outChannels,
+                                         uint32_t* outSampleRateHz) LOCALONLY;
     
     // Isochronous Transmit Control
     kern_return_t StartIsochTransmit(uint8_t channel) LOCALONLY;

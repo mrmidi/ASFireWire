@@ -75,6 +75,9 @@ public:
         kMethodStartAudioStreaming     = 62,
         kMethodStopAudioStreaming      = 63,
         kMethodMotuCapture = 64,
+        // Read-only audio observer: select GUID, query state; memory type 2 is its output ring.
+        kMethodSelectAudioObserver = 65,
+        kMethodGetAudioObserverState = 66,
         // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,
@@ -170,4 +173,7 @@ struct ASFWDriverUserClient_IVars {
     void* runtimeState;
     IOLock* actionLock;
     bool stopping;
+    uint64_t audioObserverGuid;
+    uint64_t audioObserverMappingGeneration;
+    bool audioObserverMemoryRequested;
 };
