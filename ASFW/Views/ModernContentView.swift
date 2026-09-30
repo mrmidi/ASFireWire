@@ -56,6 +56,7 @@ struct ModernContentView: View {
         case loggingSettings = "Logging Settings"
         case mcpSettings = "MCP Control"
         case audio = "Core Audio"
+        case audioAnalyzer = "Audio Analyzer"
         case saffire = "Saffire"
         case duet = "Duet"
         case diagnostics = "1394 Diagnostics"
@@ -82,6 +83,7 @@ struct ModernContentView: View {
             case .loggingSettings: return "slider.horizontal.3"
             case .mcpSettings: return "point.3.connected.trianglepath.dotted"
             case .audio: return "hifispeaker.fill"
+            case .audioAnalyzer: return "waveform"
             case .saffire: return "slider.vertical.3"
             case .duet: return "slider.horizontal.below.square.filled.and.square"
             case .diagnostics: return "heart.text.square"
@@ -140,6 +142,8 @@ struct ModernContentView: View {
                     MCPSettingsView(viewModel: mcpVM)
                 case .audio:
                     AudioDebugView()
+                case .audioAnalyzer:
+                    AudioAnalyzerView()
                 case .saffire:
                     SaffireMixerView(connector: debugVM.connector)
                 case .duet:

@@ -96,11 +96,6 @@ struct AudioDebugView: View {
                             AvailableFormatsSection(formats: firstStream.availablePhysicalFormats)
                         }
 
-                        if let guid = ASFWAudioObserverClient.guid(fromDeviceUID: device.uid) {
-                            Divider()
-                            AudioObserverPanel(guid: guid, deviceName: device.name)
-                                .id(guid)
-                        }
                     }
                     .padding()
                 }
