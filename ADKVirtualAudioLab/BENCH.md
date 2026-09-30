@@ -23,6 +23,8 @@ C1–C4 questions with counters; this file is the procedure around it.
   correlation, plus GPU/queue/completion timing, sample age, overwrite margin,
   wrap counts, restart epoch/history, and periodic exact CPU/GPU sample checks.
   There is no PCM-copy fallback.
+- The adjacent Waveform tab remains available as a simple channel-0
+  time-domain view over that same mapped ring.
 
 ## Build
 

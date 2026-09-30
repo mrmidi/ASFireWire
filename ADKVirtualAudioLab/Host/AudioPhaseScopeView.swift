@@ -3,9 +3,10 @@ import SwiftUI
 
 @MainActor
 @Observable
-final class AudioWaveformModel {
+final class AudioPhaseScopeModel {
     private(set) var client: AudioRingClient?
     private(set) var snapshot = AudioViewSnapshot()
+    private(set) var metrics = ScopeMetricsSnapshot()
     private(set) var status = "Waiting to open the virtual device…"
     private(set) var failure = false
 
@@ -15,7 +16,7 @@ final class AudioWaveformModel {
                 let newClient = AudioRingClient()
                 try newClient.open()
                 client = newClient
-                status = "Zero-copy Metal import succeeded. Start playback to see the waveform."
+                status = "Zero-copy Metal import succeeded. Start playback to see the phase scope."
                 failure = false
             } catch {
                 status = error.localizedDescription
@@ -28,6 +29,7 @@ final class AudioWaveformModel {
         while !Task.isCancelled {
             do {
                 snapshot = try client.poll()
+                metrics = client.diagnostics.read()
                 status = snapshot.ioRunning
                     ? "Live output ring"
                     : "Connected — waiting for CoreAudio playback"
@@ -36,9 +38,8 @@ final class AudioWaveformModel {
                 failure = true
                 return
             }
-
             do {
-                try await Task.sleep(nanoseconds: 33_333_333)
+                try await Task.sleep(nanoseconds: 16_666_667)
             } catch {
                 return
             }
@@ -46,8 +47,8 @@ final class AudioWaveformModel {
     }
 }
 
-struct AudioWaveformView: View {
-    @State private var model = AudioWaveformModel()
+struct AudioPhaseScopeView: View {
+    @State private var model = AudioPhaseScopeModel()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -65,17 +66,27 @@ struct AudioWaveformView: View {
                 .foregroundStyle(model.failure ? .red : .secondary)
                 .textSelection(.enabled)
 
+            Text("In phase → vertical · polarity reversed → horizontal · wider stereo → broader trace")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             if let client = model.client,
                let buffer = client.metalBuffer,
-               let pipeline = client.renderPipeline {
-                MetalWaveformView(client: client, buffer: buffer, pipeline: pipeline)
-                    .frame(minHeight: 240)
+               let renderPipeline = client.renderPipeline,
+               let analysisPipeline = client.analysisPipeline,
+               let analysisBuffer = client.analysisBuffer {
+                MetalPhaseScopeView(client: client,
+                                    buffer: buffer,
+                                    renderPipeline: renderPipeline,
+                                    analysisPipeline: analysisPipeline,
+                                    analysisBuffer: analysisBuffer)
+                    .frame(minHeight: 280)
                     .clipShape(.rect(cornerRadius: 10))
-                    .accessibilityLabel("Live waveform for virtual device output channel zero")
+                    .accessibilityLabel("Live stereo phase scope for virtual device output")
             } else {
                 ContentUnavailableView(
-                    model.failure ? "Waveform unavailable" : "Waiting for device",
-                    systemImage: model.failure ? "exclamationmark.triangle" : "waveform",
+                    model.failure ? "Phase scope unavailable" : "Waiting for device",
+                    systemImage: model.failure ? "exclamationmark.triangle" : "waveform.path.ecg",
                     description: Text(model.status))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.black.opacity(0.12))
@@ -83,6 +94,27 @@ struct AudioWaveformView: View {
             }
 
             HStack(spacing: 24) {
+                metric("L peak", value: String(format: "%.3f", model.metrics.leftPeak))
+                metric("R peak", value: String(format: "%.3f", model.metrics.rightPeak))
+                metric("Correlation", value: String(format: "%+.3f", model.metrics.correlation))
+                metric("Valid history", value: "\(model.snapshot.validHistoryFrames) frames")
+                metric("Epoch", value: "\(model.snapshot.epoch)")
+            }
+
+            Text("GPU \(milliseconds(model.metrics.gpuMs))   age \(milliseconds(model.metrics.sampleAgeMs))   overwrite margin \(milliseconds(model.metrics.overwriteMarginMs))   inflight \(model.metrics.inFlight)")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+
+            Text("CPU encode \(milliseconds(model.metrics.cpuEncodeMs))   queued→GPU \(milliseconds(model.metrics.scheduledToStartMs))   completion \(milliseconds(model.metrics.completionMs))   wrap windows \(model.metrics.windowsCrossingWrap)/\(model.metrics.windowsRendered)   bad \(model.metrics.badWindows)")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+
+            Text("CPU/GPU exact sample checks: \(model.metrics.cpuGpuValidationChecks), mismatches: \(model.metrics.cpuGpuValidationMismatches)")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(model.metrics.cpuGpuValidationMismatches == 0
+                                 ? Color.secondary : Color.red)
+
+            HStack(spacing: 18) {
                 metric("Mapped", value: "\(model.snapshot.mappedFrames) frames")
                 metric("Active ring", value: "\(model.snapshot.activeRingFrames) frames")
                 metric("Channels", value: "\(model.snapshot.channels)")
@@ -90,7 +122,7 @@ struct AudioWaveformView: View {
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("Last ch 0 samples")
+                Text("Recent L / R")
                     .foregroundStyle(.secondary)
                 Text(sampleLine)
                     .font(.system(.callout, design: .monospaced))
@@ -103,9 +135,13 @@ struct AudioWaveformView: View {
 
     private var sampleLine: String {
         guard !model.snapshot.lastLeftSamples.isEmpty else { return "—" }
-        return model.snapshot.lastLeftSamples
-            .map { String(format: "%+.3f", $0) }
-            .joined(separator: "   ")
+        return zip(model.snapshot.lastLeftSamples, model.snapshot.lastRightSamples)
+            .map { String(format: "%+.3f / %+.3f", $0, $1) }
+            .joined(separator: "    ")
+    }
+
+    private func milliseconds(_ value: Double?) -> String {
+        value.map { String(format: "%.3f ms", $0) } ?? "—"
     }
 
     private func metric(_ title: String, value: String) -> some View {
