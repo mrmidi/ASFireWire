@@ -9,6 +9,8 @@
 
 #define LAB_LOG(fmt, ...) os_log(OS_LOG_DEFAULT, "[ADKLab] " fmt, ##__VA_ARGS__)
 #include "../Core/VirtualAudioDeviceController.hpp"
+#include "../Core/LabAudioGeometry.hpp"
+#include "../Core/TransportPumpGeometry.hpp"
 #include "../Lab/PacketDumpBlob.hpp"
 #include "../Lab/StickyCounterSink.hpp"
 #include "../Lab/VerifyingSlotProvider.hpp"
@@ -19,17 +21,15 @@ using namespace ASFW::Driver;
 // Milestone 3):
 //
 // - The device is its own clock master. An IOTimerDispatchSource on the work
-//   queue fires once per ZTS period (512 frames at 48 kHz = 10.667 ms) in the
-//   kIOTimerClockMachAbsoluteTime timebase — the same clock CoreAudio host
-//   times use. Each fire anchors UpdateCurrentZeroTimestamp(n * period,
+//   queue fires once per production ZTS period (12288 frames at 48 kHz = 256 ms)
+//   in the kIOTimerClockMachAbsoluteTime timebase — the same clock CoreAudio
+//   host times use. Each fire anchors UpdateCurrentZeroTimestamp(n * period,
 //   fire_time) with RAW values: the deadline chain is nominal (computed from
 //   the period index, never from the previous fire), the host time is the
 //   actual fire time, and the host smooths via the clock algorithm. No
 //   driver-side extrapolation (the model RE'd from the Saffire kext).
-// - The same timer fire exposes the next period's packets through the
-//   controller (PrepareLabPacket) — the lab's stand-in for the OHCI IT ring
-//   interrupt: "hardware" requests data on its interrupt; WriteEnd only fills
-//   PCM into already-exposed packets.
+// - A separate 1 ms transport timer exposes a bounded amount of packet
+//   coverage. ZTS publication never drives the transport pump.
 // - The Verifying(Fake) decorator from Step 6 sits between the engine and the
 //   fake ring for the whole run; StopIO dumps its sticky counters plus the
 //   O/C instrumentation via IOLog (never from the IO callback).
@@ -60,9 +60,8 @@ constexpr uint32_t kLabOutputSafetyOffsetFrames = 64;
 constexpr uint32_t kLabInputSafetyOffsetFrames = 128;
 constexpr uint32_t kLabOutputLatencyFrames = 128;
 constexpr uint32_t kLabInputLatencyFrames = 128;
-constexpr uint64_t kZtsPeriodNsNumer = 32000000ull; // 512/48000 s = 32e6/3 ns
-constexpr uint64_t kZtsPeriodNsDenom = 3ull;
-constexpr uint32_t kMaxPreparePerCall = 512; // runaway guard for the pump
+constexpr uint32_t kMaxPreparePerCall =
+    ASFW::Protocols::Audio::AMDTP::kAmdtpPacketHistorySlots;
 
 struct LabTimebase final {
     uint32_t numer{1};
@@ -73,10 +72,19 @@ struct LabTimebase final {
     }
 };
 
-// Nominal nanoseconds elapsed after n ZTS periods (exact thirds, no
-// accumulated rounding: computed from n, not incrementally).
-inline uint64_t NsForPeriodIndex(uint64_t n) noexcept {
-    return (n * kZtsPeriodNsNumer) / kZtsPeriodNsDenom;
+// Nanoseconds for an absolute frame count, rounded down without incremental
+// accumulation. ZTS deadlines are derived from this on every period.
+inline uint64_t NsForFrameCount(uint64_t frames) noexcept {
+    return (frames / kSampleRate) * 1'000'000'000ull +
+           ((frames % kSampleRate) * 1'000'000'000ull) / kSampleRate;
+}
+
+inline uint64_t FramesForElapsedTicks(uint64_t ticks,
+                                      const LabTimebase& timebase) noexcept {
+    const uint64_t elapsedNs = (ticks / timebase.denom) * timebase.numer +
+        ((ticks % timebase.denom) * timebase.numer) / timebase.denom;
+    return (elapsedNs / 1'000'000'000ull) * kSampleRate +
+           ((elapsedNs % 1'000'000'000ull) * kSampleRate) / 1'000'000'000ull;
 }
 
 } // namespace
@@ -91,6 +99,8 @@ struct VirtualAudioDevice_IVars
     OSSharedPtr<IOMemoryMap> inputMemoryMap;
     OSSharedPtr<IOTimerDispatchSource> ztsTimer;
     OSSharedPtr<OSAction> ztsTimerAction;
+    OSSharedPtr<IOTimerDispatchSource> transportPumpTimer;
+    OSSharedPtr<OSAction> transportPumpTimerAction;
 
     VirtualAudioDeviceController* controller{nullptr};
     ASFW::Lab::VerifyingSlotProvider* verifier{nullptr};
@@ -103,11 +113,13 @@ struct VirtualAudioDevice_IVars
     float* ringBase{nullptr};
     uint32_t outputBytesPerFrame{0};
     uint32_t outputChannels{0};
-    uint32_t ringFrames{0};
+    uint32_t activeRingFrames{0};
+    uint32_t allocatedRingFrames{0};
+    uint32_t clientIoBudgetFrames{0};
+    uint32_t adkMaxClientIoFrames{0};
 
     // C4 duplex rig: the input ring's "hardware" fill cursor is advanced by
-    // the same ZTS timer that stands in for the OHCI IT ring interrupt (see
-    // ZtsTimerOccurred_Impl) -- independent of when the HAL calls BeginRead,
+    // the transport pump -- independent of ZTS publication and HAL BeginRead,
     // matching how real capture hardware fills continuously in the
     // background. inputRingBase is cached before SetIOOperationHandler for
     // the same RT-discipline reason as ringBase.
@@ -120,14 +132,16 @@ struct VirtualAudioDevice_IVars
     // Clock chain state (work-queue confined).
     uint64_t startHostTime{0};
     uint64_t periodIndex{0};
+    uint64_t pumpTickIndex{0};
 
     // Packet pump state (work-queue confined).
     uint32_t nextPacketIndex{0};
     uint64_t exposedFrames{0};
     uint64_t prepareFailures{0};
+    uint64_t coverageShortfalls{0};
 
-    // C4 rig: simulated hardware capture cursor, advanced on the work queue
-    // by ZtsTimerOccurred_Impl. "Frames captured up through this point are
+    // C4 rig: simulated hardware capture cursor, advanced by the transport
+    // pump from host time and sample rate. "Frames captured up through this point are
     // safe to read." Cross-queue read from the RT BeginRead handler, so
     // atomic (relaxed -- advisory instrumentation, not a correctness gate).
     std::atomic<uint64_t> capturedFrames{0};
@@ -151,6 +165,7 @@ struct VirtualAudioDevice_IVars
     std::atomic<uint64_t> otherIoOperations{0};
     std::atomic<uint64_t> ioAfterStop{0};      // O2: WriteEnd after StopIO
     std::atomic<uint64_t> timerAfterStop{0};   // O2: timer fire after StopIO
+    std::atomic<uint64_t> pumpAfterStop{0};    // O2: pump fire after StopIO
 
     // C4 rig: BeginRead-side mirror of the WriteEnd instrumentation above,
     // plus the capture-readiness measurement that actually answers the
@@ -255,12 +270,25 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         return false;
     }
     if (caps.sampleRate != kSampleRate) {
-        // NsForPeriodIndex/kZtsPeriodNs* are exact-thirds 48 kHz math; refuse
-        // a profile rate the lab clock chain cannot honor.
+        // The lab's current clock chain and simulated cadence are 48 kHz.
         LAB_LOG("init - profile sample rate %{public}u unsupported by lab clock chain",
                 caps.sampleRate);
         return false;
     }
+    const auto geometry = ASFW::Lab::AudioGeometryForRate(caps.sampleRate);
+    if (!ASFW::Lab::IsValidAudioGeometry(geometry) ||
+        in_zero_timestamp_period != geometry.zeroTimestampPeriodFrames) {
+        LAB_LOG("init - invalid HAL geometry rate=%{public}u active=%{public}u allocated=%{public}u zts=%{public}u supplied_zts=%{public}u",
+                geometry.sampleRateHz, geometry.activeRingFrames,
+                geometry.allocatedRingFrames,
+                geometry.zeroTimestampPeriodFrames,
+                in_zero_timestamp_period);
+        return false;
+    }
+    ivars->activeRingFrames = geometry.activeRingFrames;
+    ivars->allocatedRingFrames = geometry.allocatedRingFrames;
+    ivars->clientIoBudgetFrames = geometry.clientIoBudgetFrames;
+    ivars->adkMaxClientIoFrames = geometry.adkMaxClientIoFrames;
     LAB_LOG("init - device caps from profile: %{public}u ch @ %{public}u Hz",
             caps.pcmChannels, caps.sampleRate);
 
@@ -367,15 +395,17 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     ivars->outputBytesPerFrame = format.mBytesPerFrame;
     ivars->outputChannels = format.mChannelsPerFrame;
 
-    // CoreAudio HAL wraps stream writes at zeroTimestampPeriod, so the ring
-    // buffer size must match the period exactly to avoid a wrap mismatch where
-    // the driver reads unwritten/silent buffer regions.
-    ivars->ringFrames = in_zero_timestamp_period;
-
-    LAB_LOG("init - creating output ring buffer (%{public}u bytes, ringFrames = %{public}u, zeroTimestampPeriod = %{public}u)",
-            ivars->ringFrames * format.mBytesPerFrame, ivars->ringFrames, in_zero_timestamp_period);
+    // The descriptor covers every supported rate; the HAL wraps PCM at the
+    // active ring, which equals the ZTS period for this rate.
+    LAB_LOG("init - output geometry active=%{public}u allocated=%{public}u zts=%{public}u io_budget=%{public}u adk_max=%{public}u channels=%{public}u",
+            ivars->activeRingFrames, ivars->allocatedRingFrames,
+            geometry.zeroTimestampPeriodFrames, ivars->clientIoBudgetFrames,
+            ivars->adkMaxClientIoFrames, ivars->outputChannels);
+    LAB_LOG("init - creating output ring buffer (%{public}u bytes, activeFrames = %{public}u, allocatedFrames = %{public}u)",
+            ivars->allocatedRingFrames * format.mBytesPerFrame,
+            ivars->activeRingFrames, ivars->allocatedRingFrames);
     OSSharedPtr<IOBufferMemoryDescriptor> buffer;
-    uint32_t bufferSize = ivars->ringFrames * format.mBytesPerFrame;
+    uint32_t bufferSize = ivars->allocatedRingFrames * format.mBytesPerFrame;
     kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, bufferSize, 0, buffer.attach());
     if (kr != kIOReturnSuccess) {
         LAB_LOG("init - Failed to create output IOBufferMemoryDescriptor (kr = 0x%{public}08x)", kr);
@@ -426,10 +456,11 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     ivars->inputBytesPerFrame = format.mBytesPerFrame;
     ivars->inputChannels = format.mChannelsPerFrame;
 
-    LAB_LOG("init - creating input ring buffer (%{public}u bytes, ringFrames = %{public}u)",
-            ivars->ringFrames * format.mBytesPerFrame, ivars->ringFrames);
+    LAB_LOG("init - creating input ring buffer (%{public}u bytes, activeFrames = %{public}u, allocatedFrames = %{public}u)",
+            ivars->allocatedRingFrames * format.mBytesPerFrame,
+            ivars->activeRingFrames, ivars->allocatedRingFrames);
     OSSharedPtr<IOBufferMemoryDescriptor> inputBuffer;
-    uint32_t inputBufferSize = ivars->ringFrames * format.mBytesPerFrame;
+    uint32_t inputBufferSize = ivars->allocatedRingFrames * format.mBytesPerFrame;
     kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, inputBufferSize, 0, inputBuffer.attach());
     if (kr != kIOReturnSuccess) {
         LAB_LOG("init - Failed to create input IOBufferMemoryDescriptor (kr = 0x%{public}08x)", kr);
@@ -463,7 +494,7 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
 
     LAB_LOG("init - configuring controller output stream");
     ivars->controller->ConfigureOutputStream(caps.sampleRate, ivars->outputChannels,
-                                             ivars->ringFrames);
+                                             ivars->activeRingFrames);
 
     // M2: SYT realism — the controller stamps real SYTs from TxTimingModel
     // against the simulated timeline (which rides the exposure cursor: the
@@ -487,6 +518,27 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         }
     } else {
         LAB_LOG("init - failed to create ZTS timer");
+        return false;
+    }
+
+    LAB_LOG("init - creating transport pump timer");
+    IOTimerDispatchSource* pumpTimer = nullptr;
+    if (IOTimerDispatchSource::Create(ivars->workQueue.get(), &pumpTimer) ==
+        kIOReturnSuccess) {
+        ivars->transportPumpTimer = OSSharedPtr(pumpTimer, OSNoRetain);
+        OSAction* pumpAction = nullptr;
+        if (CreateActionTransportPumpTimerOccurred(0, &pumpAction) ==
+            kIOReturnSuccess) {
+            ivars->transportPumpTimerAction =
+                OSSharedPtr(pumpAction, OSNoRetain);
+            ivars->transportPumpTimer->SetHandler(
+                ivars->transportPumpTimerAction.get());
+        } else {
+            LAB_LOG("init - failed to create transport pump timer action");
+            return false;
+        }
+    } else {
+        LAB_LOG("init - failed to create transport pump timer");
         return false;
     }
 
@@ -538,16 +590,16 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
 
             // Cached-only IO state (no IOMemoryMap deref on the RT thread).
             if (ivarsPtr->controller && ivarsPtr->ringBase &&
-                ivarsPtr->ringFrames != 0) {
-                const uint32_t offsetFrames =
-                    static_cast<uint32_t>(in_sample_time % ivarsPtr->ringFrames);
+                ivarsPtr->activeRingFrames != 0) {
+                const uint32_t offsetFrames = static_cast<uint32_t>(
+                    in_sample_time % ivarsPtr->activeRingFrames);
 
                 ASFW::Protocols::Audio::AMDTP::HostAudioBufferView outputView {
                     .interleavedFloat32 =
                         &ivarsPtr->ringBase[offsetFrames * ivarsPtr->outputChannels],
                     .firstFrame = in_sample_time,
                     .frameCount = in_io_buffer_frame_size,
-                    .frameCapacity = ivarsPtr->ringFrames,
+                    .frameCapacity = ivarsPtr->activeRingFrames,
                     .channels = ivarsPtr->outputChannels
                 };
 
@@ -644,6 +696,9 @@ void VirtualAudioDevice::free()
         if (ivars->ztsTimer) {
             ivars->ztsTimer->Cancel(^{});
         }
+        if (ivars->transportPumpTimer) {
+            ivars->transportPumpTimer->Cancel(^{});
+        }
         if (ivars->verifier) {
             delete ivars->verifier;
         }
@@ -661,6 +716,8 @@ void VirtualAudioDevice::free()
         ivars->inputMemoryMap.reset();
         ivars->ztsTimer.reset();
         ivars->ztsTimerAction.reset();
+        ivars->transportPumpTimer.reset();
+        ivars->transportPumpTimerAction.reset();
     }
     IOSafeDeleteNULL(ivars, VirtualAudioDevice_IVars, 1);
     super::free();
@@ -689,6 +746,9 @@ static void PrepareCoverage(VirtualAudioDevice_IVars* ivars, uint64_t targetFram
         ++ivars->nextPacketIndex;
         ++prepared;
     }
+    if (ivars->exposedFrames < targetFrames) {
+        ++ivars->coverageShortfalls;
+    }
 }
 
 void VirtualAudioDevice::ZtsTimerOccurred_Impl(OSAction* action, uint64_t time)
@@ -706,27 +766,52 @@ void VirtualAudioDevice::ZtsTimerOccurred_Impl(OSAction* action, uint64_t time)
     UpdateCurrentZeroTimestamp(sampleTime, time);
     ivars->anchorsPublished.fetch_add(1, std::memory_order_relaxed);
 
-    // C4 rig: this fire IS the simulated hardware capture interrupt --
-    // "frames up through sampleTime have now been captured," independent of
-    // whether/when the HAL has called BeginRead for them. Real capture
-    // hardware behaves the same way (continuous background fill).
-    ivars->capturedFrames.store(sampleTime, std::memory_order_relaxed);
     if (ivars->writeEndCount.load(std::memory_order_relaxed) == 0) {
         ivars->anchorsBeforeFirstWriteEnd.fetch_add(1, std::memory_order_relaxed);
     }
-
-    // The "hardware" requests the next period's data: keep the exposed
-    // timeline one ring-wrap ahead of where the HAL will write.
-    PrepareCoverage(ivars, sampleTime + 3ull * GetZeroTimestampPeriod());
 
     // Drift-free nominal chain: the next deadline comes from the period
     // index, never from the (jittered) previous fire time.
     ivars->periodIndex += 1;
     const uint64_t deadline =
         ivars->startHostTime +
-        ivars->timebase.NsToTicks(NsForPeriodIndex(ivars->periodIndex));
+        ivars->timebase.NsToTicks(
+            NsForFrameCount(ivars->periodIndex * GetZeroTimestampPeriod()));
     const uint64_t leeway = ivars->timebase.NsToTicks(500000); // 0.5 ms
     ivars->ztsTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime, deadline, leeway);
+}
+
+void VirtualAudioDevice::TransportPumpTimerOccurred_Impl(OSAction* action,
+                                                          uint64_t time)
+{
+    if (ivars == nullptr) {
+        return;
+    }
+    if (!ivars->ioRunning.load(std::memory_order_relaxed)) {
+        ivars->pumpAfterStop.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    // Packet exposure and simulated capture follow elapsed stream time. ZTS
+    // anchors retain their independent production cadence.
+    const uint64_t now = (time != 0) ? time : mach_absolute_time();
+    const uint64_t elapsedTicks =
+        (now >= ivars->startHostTime) ? now - ivars->startHostTime : 0;
+    const uint64_t transportFrame =
+        FramesForElapsedTicks(elapsedTicks, ivars->timebase);
+    ivars->capturedFrames.store(transportFrame, std::memory_order_relaxed);
+
+    const auto geometry = ASFW::Lab::AudioGeometryForRate(kSampleRate);
+    PrepareCoverage(ivars, transportFrame +
+                    ASFW::Lab::TransportCoverageFrames(geometry));
+
+    ++ivars->pumpTickIndex;
+    const uint64_t deadline = ivars->startHostTime +
+        ivars->timebase.NsToTicks(
+            ivars->pumpTickIndex * ASFW::Lab::kTransportPumpIntervalNs);
+    const uint64_t leeway = ivars->timebase.NsToTicks(100'000); // 0.1 ms
+    ivars->transportPumpTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime,
+                                          deadline, leeway);
 }
 
 kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
@@ -762,7 +847,9 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
         ivars->nextPacketIndex = 0;
         ivars->exposedFrames = 0;
         ivars->prepareFailures = 0;
+        ivars->coverageShortfalls = 0;
         ivars->periodIndex = 0;
+        ivars->pumpTickIndex = 0;
         ivars->anchorsPublished.store(0, std::memory_order_relaxed);
         ivars->anchorsBeforeFirstWriteEnd.store(0, std::memory_order_relaxed);
         ivars->writeEndCount.store(0, std::memory_order_relaxed);
@@ -786,10 +873,10 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
         ivars->captureStarvations.store(0, std::memory_order_relaxed);
         ivars->minCaptureMarginFrames.store(INT64_MAX, std::memory_order_relaxed);
         ivars->readAfterStop.store(0, std::memory_order_relaxed);
+        ivars->pumpAfterStop.store(0, std::memory_order_relaxed);
 
-        // Seed the clock chain: anchor (0, now), pre-expose two periods, and
-        // arm the first wrap. C1 counts how many anchors precede the first
-        // WriteEnd the HAL ever delivers.
+        // Seed the clock chain, prepare a bounded transport lead, then arm
+        // the production ZTS timer and independent transport pump.
         ivars->startHostTime = mach_absolute_time();
         LAB_LOG("StartIO - seeding clock chain: startHostTime = %{public}llu ticks", ivars->startHostTime);
         UpdateCurrentZeroTimestamp(0, ivars->startHostTime);
@@ -797,8 +884,19 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
         ivars->anchorsBeforeFirstWriteEnd.fetch_add(1, std::memory_order_relaxed);
 
         if (ivars->controller) {
-            LAB_LOG("StartIO - pre-preparing coverage");
-            PrepareCoverage(ivars, 3ull * GetZeroTimestampPeriod());
+            const auto geometry =
+                ASFW::Lab::AudioGeometryForRate(kSampleRate);
+            const uint32_t initialCoverage =
+                ASFW::Lab::TransportCoverageFrames(geometry);
+            LAB_LOG("StartIO - geometry rate=%{public}u active=%{public}u allocated=%{public}u zts=%{public}u client_budget=%{public}u adk_max=%{public}u channels=%{public}u packet_slots=%{public}u pump_lead=%{public}u",
+                    geometry.sampleRateHz, ivars->activeRingFrames,
+                    ivars->allocatedRingFrames,
+                    geometry.zeroTimestampPeriodFrames,
+                    ivars->clientIoBudgetFrames, ivars->adkMaxClientIoFrames,
+                    ivars->outputChannels,
+                    ivars->controller->FakeSlotProvider().SlotCount(),
+                    initialCoverage);
+            PrepareCoverage(ivars, initialCoverage);
         }
 
         // Open the RT gate before super so the first WriteEnds are accepted,
@@ -819,7 +917,8 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
         ivars->periodIndex = 1;
         const uint64_t deadline =
             ivars->startHostTime +
-            ivars->timebase.NsToTicks(NsForPeriodIndex(1));
+            ivars->timebase.NsToTicks(
+                NsForFrameCount(GetZeroTimestampPeriod()));
         const uint64_t leeway = ivars->timebase.NsToTicks(500000);
 
         LAB_LOG("StartIO - arming ZTS timer for first deadline = %{public}llu ticks (leeway = %{public}llu)", deadline, leeway);
@@ -828,6 +927,17 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
                                         leeway);
         } else {
             LAB_LOG("StartIO - ZTS timer is null!");
+        }
+        if (ivars->transportPumpTimer) {
+            const uint64_t pumpDeadline = ivars->startHostTime +
+                ivars->timebase.NsToTicks(
+                    ASFW::Lab::kTransportPumpIntervalNs);
+            ivars->pumpTickIndex = 1;
+            ivars->transportPumpTimer->WakeAtTime(
+                kIOTimerClockMachAbsoluteTime, pumpDeadline,
+                ivars->timebase.NsToTicks(100'000));
+        } else {
+            LAB_LOG("StartIO - transport pump timer is null!");
         }
     });
 
@@ -862,11 +972,14 @@ kern_return_t VirtualAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags)
         using ASFW::Lab::VerifierCounterId;
 
         LAB_LOG("dump zts: anchors=%{public}llu before_first_io=%{public}llu period=%{public}u "
-                "ring_frames=%{public}u prepare_failures=%{public}llu",
+                "active_frames=%{public}u allocated_frames=%{public}u prepare_failures=%{public}llu "
+                "coverage_shortfalls=%{public}llu pump_after_stop=%{public}llu",
                 ivars->anchorsPublished.load(std::memory_order_relaxed),
                 ivars->anchorsBeforeFirstWriteEnd.load(std::memory_order_relaxed),
-                GetZeroTimestampPeriod(), ivars->ringFrames,
-                ivars->prepareFailures);
+                GetZeroTimestampPeriod(), ivars->activeRingFrames,
+                ivars->allocatedRingFrames, ivars->prepareFailures,
+                ivars->coverageShortfalls,
+                ivars->pumpAfterStop.load(std::memory_order_relaxed));
 
         const uint64_t firstHost =
             ivars->firstWriteEndHostTime.load(std::memory_order_relaxed);

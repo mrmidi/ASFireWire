@@ -176,7 +176,7 @@ ADKVirtualAudioLab/
 │   ├── ICycleTimeline         production: cycle timer · lab: synthesized from sample_time
 │   └── IDiagSink              RT-safe counters/snapshot sink
 ├── Lab/              Host-side adapters and instruments.
-│   ├── FakeIsochTxSlotProvider   dumb storage: 256 slots × 512 B (mirrors IT ring geometry)
+│   ├── FakeIsochTxSlotProvider   dumb storage: 1024 packet slots × 512 B (packet domain)
 │   ├── VerifyingSlotProvider     decorator wrapping ANY provider — the invariant checker
 │   ├── SimulatedCycleTimeline    6 frames per 125 µs cycle at 48 kHz
 │   ├── WriteEndTraceReplayer     replays recorded (sample_time, host_time, frames) sequences

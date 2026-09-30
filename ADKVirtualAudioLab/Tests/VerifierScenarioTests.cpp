@@ -2,6 +2,8 @@
 
 #include "../Core/TxTimingModel.hpp"
 #include "../Core/VirtualAudioDeviceController.hpp"
+#include "../Core/LabAudioGeometry.hpp"
+#include "../Core/TransportPumpGeometry.hpp"
 #include "../Lab/VerifyingSlotProvider.hpp"
 #include "../Lab/WriteEndTraceReplayer.hpp"
 #include "../Protocols/Audio/DICE/DiceTxStreamEngine.hpp"
@@ -27,6 +29,7 @@ using Protocols::Audio::DICE::DiceDeviceIdentity;
 namespace {
 
 constexpr uint32_t kChannels = 8;
+constexpr auto kAudioGeometry = Lab::AudioGeometryForRate(48'000);
 constexpr uint32_t kRingFrames = 4096;
 
 // Matches DiceTxEngineTests: resolves to the Focusrite profile
@@ -49,10 +52,12 @@ struct LabPump final {
 
     LabPump() noexcept : verifier(controller.FakeSlotProvider()) {}
 
-    bool Init(bool useTiming = false) noexcept {
+    bool Init(bool useTiming = false,
+              uint32_t activeRingFrames = kRingFrames) noexcept {
         if (!controller.Initialize() ||
             !controller.SelectProfile(kFocusriteIdentity) ||
-            !controller.ConfigureOutputStream(48000, kChannels, kRingFrames)) {
+            !controller.ConfigureOutputStream(48000, kChannels,
+                                              activeRingFrames)) {
             return false;
         }
         controller.BindLabSlotProvider(&verifier);
@@ -73,7 +78,10 @@ struct LabPump final {
     // of stamping SYT against the packet's projected transmit cycle (the
     // Saffire FillFirewireBuffers model), not against "now".
     void PrepareCoverage(uint64_t endFrame) noexcept {
-        while (exposedFrames < endFrame) {
+        uint32_t preparedCount = 0;
+        while (exposedFrames < endFrame &&
+               preparedCount <
+                   Protocols::Audio::AMDTP::kAmdtpPacketHistorySlots) {
             bool prepared;
             if (timed) {
                 controller.AdvanceLabTimelineToFrame(exposedFrames);
@@ -92,6 +100,10 @@ struct LabPump final {
                 exposedFrames += published->framesInPacket;
             }
             ++nextPacketIndex;
+            ++preparedCount;
+        }
+        if (exposedFrames < endFrame) {
+            ++prepareFailures;
         }
     }
 
@@ -188,8 +200,8 @@ void RunVerifierScenarioTests(TestContext& ctx) {
 
     // Scenario C — skipped callback: the gap frames are never written and
     // must surface as silence in structurally valid packets, not as a
-    // violation. (Skip late in the run so the gap packets are still live in
-    // the 256-slot fake ring for payload inspection.)
+    // violation. Skip late enough that packets around the gap remain in fake
+    // packet history for inspection.
     {
         LabPump pump{};
         CHECK(ctx, pump.Init());
@@ -219,7 +231,10 @@ void RunVerifierScenarioTests(TestContext& ctx) {
         bool sawSilentGapPacket = false;
         bool sawWrittenPacket = false;
         const uint32_t scanStart =
-            (pump.nextPacketIndex > 512) ? pump.nextPacketIndex - 512 : 0;
+            (pump.nextPacketIndex > pump.controller.FakeSlotProvider().SlotCount())
+                ? pump.nextPacketIndex -
+                      pump.controller.FakeSlotProvider().SlotCount()
+                : 0;
         for (uint32_t index = scanStart; index < pump.nextPacketIndex; ++index) {
             const auto* packet =
                 pump.controller.FakeSlotProvider().PublishedPacket(index);
@@ -248,7 +263,7 @@ void RunVerifierScenarioTests(TestContext& ctx) {
             } else if (packet->firstAudioFrame >= gapEnd ||
                        packet->firstAudioFrame + packet->framesInPacket <=
                            gapStart) {
-                // Written region (the 256-slot ring may retain only the
+                // Written region (the packet history may retain only the
                 // post-gap side; pre-gap packets are typically evicted).
                 sawWrittenPacket = sawWrittenPacket || !allZero;
             }
@@ -265,7 +280,7 @@ void RunVerifierScenarioTests(TestContext& ctx) {
         CHECK(ctx, pump.Init());
 
         uint64_t sampleTime = 0;
-        for (int i = 0; i < 8; ++i) { // warmup wraps the 256-slot ring
+        for (int i = 0; i < 20; ++i) { // exceed the 1024-cycle packet history
             pump.Callback(sampleTime, 512, 0.25f);
             sampleTime += 512;
         }
@@ -406,6 +421,57 @@ void RunVerifierScenarioTests(TestContext& ctx) {
         CheckAllGreen(ctx, pump);
         CHECK_EQ_U64(ctx, pump.controller.TimingCounters().seeds, 1);
     }
+}
+
+void RunProductionGeometryPumpScenarioTests(TestContext& ctx) {
+    constexpr uint64_t kActiveWraps = 1'000;
+    constexpr uint64_t kPumpTicksPerZts =
+        kAudioGeometry.zeroTimestampPeriodFrames * 1'000'000'000ull /
+        (static_cast<uint64_t>(kAudioGeometry.sampleRateHz) *
+         Lab::kTransportPumpIntervalNs);
+    static_assert(kPumpTicksPerZts == 256);
+
+    LabPump pump{};
+    CHECK(ctx, pump.Init(true, kAudioGeometry.activeRingFrames));
+
+    const uint32_t lead = Lab::TransportCoverageFrames(kAudioGeometry);
+    pump.PrepareCoverage(lead);
+    CHECK(ctx, pump.exposedFrames >= lead);
+    CHECK(ctx, pump.exposedFrames - lead < 8);
+
+    uint64_t nextZtsFrame = kAudioGeometry.zeroTimestampPeriodFrames;
+    uint64_t publishedAnchors = 1; // StartIO publishes the (0, now) seed.
+    const uint64_t totalPumpTicks = kActiveWraps * kPumpTicksPerZts;
+    for (uint64_t tick = 1; tick <= totalPumpTicks; ++tick) {
+        const uint64_t transportFrame = tick * 48; // 1 ms at 48 kHz.
+        pump.PrepareCoverage(transportFrame + lead);
+
+        if (transportFrame >= nextZtsFrame) {
+            // Production ZTS boundaries coincide exactly with every 256th
+            // pump tick and advance by one active ring each time.
+            CHECK_EQ_U64(ctx, transportFrame, nextZtsFrame);
+            ++publishedAnchors;
+            nextZtsFrame += kAudioGeometry.zeroTimestampPeriodFrames;
+        }
+    }
+
+    CHECK_EQ_U64(ctx, publishedAnchors, kActiveWraps + 1);
+    CHECK_EQ_U64(ctx, nextZtsFrame,
+                 (kActiveWraps + 1) * kAudioGeometry.zeroTimestampPeriodFrames);
+    CHECK_EQ_U64(ctx, pump.prepareFailures, 0);
+    CHECK_EQ_U64(ctx, pump.verifier.Snapshot().TotalViolations(), 0);
+
+    // Restart resets the absolute packet/frame timeline and rebuilds the
+    // same bounded lead from frame zero.
+    pump.controller.ResetTransportLab(0, 0);
+    pump.verifier.Reset();
+    pump.nextPacketIndex = 0;
+    pump.exposedFrames = 0;
+    pump.prepareFailures = 0;
+    pump.PrepareCoverage(lead);
+    CHECK(ctx, pump.exposedFrames >= lead);
+    CHECK_EQ_U64(ctx, pump.prepareFailures, 0);
+    CHECK_EQ_U64(ctx, pump.verifier.Snapshot().TotalViolations(), 0);
 }
 
 } // namespace ASFW::LabTests

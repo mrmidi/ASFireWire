@@ -7,6 +7,11 @@
 
 namespace ASFW::Protocols::Audio::AMDTP {
 
+// Packet-domain history sized to retain the maximum ADK callback plus the
+// lab pump's bounded preparation lead at 48 kHz. It is independent of the
+// HAL frame-ring and production OHCI descriptor-ring geometries.
+inline constexpr uint32_t kAmdtpPacketHistorySlots = 1'024;
+
 enum class PacketSlotState : uint8_t {
     Empty = 0,
     ExposedForAudio = 1,
