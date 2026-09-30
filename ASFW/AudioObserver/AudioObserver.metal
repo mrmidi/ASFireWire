@@ -7,6 +7,7 @@ struct ObserverParams {
     uint channels;
     uint windowFrames;
     uint channel;
+    uint rightChannel;
 };
 
 struct ObserverVertex {
@@ -26,8 +27,8 @@ vertex ObserverVertex asfwPhaseVertex(
     uint vertexID [[vertex_id]],
     device const float* samples [[buffer(0)]],
     constant ObserverParams& params [[buffer(1)]]) {
-    const float left = sampleAt(samples, params, vertexID, 0);
-    const float right = sampleAt(samples, params, vertexID, 1);
+    const float left = sampleAt(samples, params, vertexID, params.channel);
+    const float right = sampleAt(samples, params, vertexID, params.rightChannel);
     const float x = (left - right) * 0.70710678118f;
     const float y = (left + right) * 0.70710678118f;
     return { float4(clamp(x, -1.0f, 1.0f), clamp(y, -1.0f, 1.0f), 0.0f, 1.0f) };
@@ -65,8 +66,8 @@ kernel void asfwAnalyzeRing(
     float sumRightSquared = 0.0f;
 
     for (uint i = 0; i < count; ++i) {
-        const float left = sampleAt(samples, params, i, 0);
-        const float right = sampleAt(samples, params, i, 1);
+        const float left = sampleAt(samples, params, i, params.channel);
+        const float right = sampleAt(samples, params, i, params.rightChannel);
         peakLeft = max(peakLeft, abs(left));
         peakRight = max(peakRight, abs(right));
         sumLeft += left;

@@ -12,6 +12,8 @@ enum AudioObserverDisplayMode: Sendable, Equatable {
 struct MetalAudioObserverView: NSViewRepresentable {
     let client: ASFWAudioObserverClient
     let mode: AudioObserverDisplayMode
+    var leftChannel: UInt32 = 0
+    var rightChannel: UInt32 = 1
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -34,6 +36,9 @@ struct MetalAudioObserverView: NSViewRepresentable {
     }
 
     private func configure(_ view: MTKView, coordinator: Coordinator) {
+        let key = "\(client.ringBuffer.map { ObjectIdentifier($0).hashValue } ?? 0)-\(mode)-\(leftChannel)-\(rightChannel)"
+        guard coordinator.configurationKey != key else { return }
+        coordinator.configurationKey = key
         let pipeline = mode == .phaseScope ? client.phaseRenderPipeline : client.waveformRenderPipeline
         if let pipeline {
             let renderer = AudioObserverRenderer(
@@ -42,6 +47,8 @@ struct MetalAudioObserverView: NSViewRepresentable {
                 analysisPipeline: mode == .phaseScope ? client.analysisPipeline : nil,
                 analysisBuffer: client.analysisBuffer,
                 mode: mode,
+                leftChannel: leftChannel,
+                rightChannel: rightChannel,
                 renderState: client.renderState,
                 metrics: client.metrics,
                 stateReader: client.stateReader)
@@ -54,6 +61,7 @@ struct MetalAudioObserverView: NSViewRepresentable {
     }
 
     final class Coordinator {
+        var configurationKey: String?
         var renderer: AudioObserverRenderer?
     }
 }
@@ -64,6 +72,7 @@ private struct ObserverParams {
     var channels: UInt32
     var windowFrames: UInt32
     var channel: UInt32
+    var rightChannel: UInt32
 }
 
 private final class ObserverScheduledTimestamp: @unchecked Sendable {
@@ -91,6 +100,8 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
     private let renderPipeline: MTLRenderPipelineState
     private let analysisPipeline: MTLComputePipelineState?
     private let analysisBuffer: MTLBuffer?
+    private let leftChannel: UInt32
+    private let rightChannel: UInt32
     private let mode: AudioObserverDisplayMode
     private let renderState: AudioObserverRenderState
     private let metrics: AudioObserverMetricsState
@@ -102,6 +113,8 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
          analysisPipeline: MTLComputePipelineState?,
          analysisBuffer: MTLBuffer?,
          mode: AudioObserverDisplayMode,
+         leftChannel: UInt32,
+         rightChannel: UInt32,
          renderState: AudioObserverRenderState,
          metrics: AudioObserverMetricsState,
          stateReader: AudioObserverStateReader?) {
@@ -110,6 +123,8 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
         self.analysisPipeline = analysisPipeline
         self.analysisBuffer = analysisBuffer
         self.mode = mode
+        self.leftChannel = leftChannel
+        self.rightChannel = rightChannel
         self.renderState = renderState
         self.metrics = metrics
         self.stateReader = stateReader
@@ -147,7 +162,8 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
                 ringFrames: snapshot.activeRingFrames,
                 channels: snapshot.channels,
                 windowFrames: validFrames,
-                channel: 0)
+                channel: min(leftChannel, snapshot.channels - 1),
+                rightChannel: min(rightChannel, snapshot.channels - 1))
             compute.setComputePipelineState(analysisPipeline)
             compute.setBuffer(buffer, offset: 0, index: 0)
             compute.setBuffer(analysisBuffer, offset: 0, index: 1)
@@ -162,7 +178,8 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
             ringFrames: snapshot.activeRingFrames,
             channels: snapshot.channels,
             windowFrames: validFrames,
-            channel: 0)
+            channel: min(leftChannel, snapshot.channels - 1),
+                rightChannel: min(rightChannel, snapshot.channels - 1))
         let crossesWrap = validFrames > 0 &&
             ((snapshot.writeEndFrame - UInt64(validFrames)) % UInt64(snapshot.activeRingFrames)) +
             UInt64(validFrames) > UInt64(snapshot.activeRingFrames)

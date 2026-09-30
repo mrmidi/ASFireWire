@@ -64,6 +64,9 @@ private final class AudioObserverPanelModel: ObservableObject {
 
 struct AudioObserverPanel: View {
     @StateObject private var model: AudioObserverPanelModel
+    @State private var leftChannel: UInt32 = 0
+    @State private var rightChannel: UInt32 = 1
+    @State private var stereoSpectrum = true
     private let deviceName: String
 
     init(guid: UInt64, deviceName: String) {
@@ -87,24 +90,41 @@ struct AudioObserverPanel: View {
                     Text("Waveform").tag(AudioObserverDisplayMode.waveform)
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .frame(width: 230)
             }
 
-            ZStack {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.black.opacity(0.88))
-                grid
-                if model.snapshot.validHistoryFrames > 1 {
-                    MetalAudioObserverView(client: model.client, mode: model.mode)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                } else {
-                    ContentUnavailableView("Waiting for audio",
-                                           systemImage: "waveform",
-                                           description: Text("Start playback to see live samples."))
+            HStack {
+                channelPicker("L / A", selection: $leftChannel)
+                channelPicker("R / B", selection: $rightChannel)
+                Spacer()
+                Picker("Spectrum", selection: $stereoSpectrum) {
+                    Text("Mono").tag(false)
+                    Text("Stereo").tag(true)
                 }
+                .pickerStyle(.segmented)
+                .frame(width: 160)
             }
-            .frame(height: 280)
-            .accessibilityLabel(model.mode == .phaseScope ? "Stereo phase scope" : "Output waveform")
+
+            if model.mode == .phaseScope {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack {
+                        Text("Goniometer").font(.headline)
+                        scopePlot.frame(width: 320, height: 320)
+                    }
+                    VStack {
+                        Text("Spectrum · Hann · 2048 samples").font(.headline)
+                        HStack(spacing: 12) {
+                            spectrumPlot(channel: leftChannel)
+                            if stereoSpectrum { spectrumPlot(channel: rightChannel) }
+                        }
+                        .frame(height: 320)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            } else {
+                scopePlot.frame(height: 280)
+            }
 
             HStack(spacing: 8) {
                 Circle()
@@ -128,6 +148,7 @@ struct AudioObserverPanel: View {
                 metric("Epoch", "\(model.snapshot.sessionEpoch)/\(model.snapshot.discontinuityEpoch)")
             }
 
+            Text("Goniometer timing / safety").font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 18) {
                 metric("CPU encode", milliseconds(model.metrics.cpuEncodeMilliseconds))
                 metric("Queued → GPU", milliseconds(model.metrics.scheduledToStartMilliseconds))
@@ -147,21 +168,51 @@ struct AudioObserverPanel: View {
         .task { await model.run() }
     }
 
-    private var grid: some View {
-        Canvas { context, size in
-            var lines = Path()
-            for fraction in [0.25, 0.5, 0.75] {
-                let x = size.width * fraction
-                let y = size.height * fraction
-                lines.move(to: CGPoint(x: x, y: 0))
-                lines.addLine(to: CGPoint(x: x, y: size.height))
-                lines.move(to: CGPoint(x: 0, y: y))
-                lines.addLine(to: CGPoint(x: size.width, y: y))
+    private func channelPicker(_ title: String, selection: Binding<UInt32>) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(0..<max(2, Int(model.snapshot.channels)), id: \.self) { channel in
+                Text("Output \(channel + 1)").tag(UInt32(channel))
             }
-            context.stroke(lines, with: .color(.white.opacity(0.12)), lineWidth: 1)
         }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+        .frame(width: 190)
+    }
+
+    private var scopePlot: some View {
+        ZStack {
+            Color(red: 0.025, green: 0.035, blue: 0.05)
+            if model.snapshot.validHistoryFrames > 1 {
+                MetalAudioObserverView(client: model.client, mode: model.mode,
+                                       leftChannel: leftChannel, rightChannel: rightChannel)
+                    .id("\(model.snapshot.memoryGeneration)-\(model.mode)-\(leftChannel)-\(rightChannel)")
+                    .padding(model.mode == .phaseScope ? 30 : 0)
+            } else {
+                Text("Waiting for audio").foregroundStyle(.secondary)
+            }
+            if model.mode == .phaseScope {
+                AnalyzerPlotAxes(kind: .goniometer)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func spectrumPlot(channel: UInt32) -> some View {
+        VStack(spacing: 4) {
+            Text("Output \(channel + 1)").font(.caption)
+            ZStack {
+                Color(red: 0.025, green: 0.035, blue: 0.05)
+                if model.snapshot.validHistoryFrames >= 2048 {
+                    MetalSpectrumView(client: model.client, channel: channel)
+                        .id("\(model.snapshot.memoryGeneration)-\(channel)")
+                        .padding(.leading, 38).padding(.trailing, 12)
+                        .padding(.top, 12).padding(.bottom, 30)
+                } else {
+                    Text("Waiting for audio").foregroundStyle(.secondary)
+                }
+                AnalyzerPlotAxes(kind: .spectrum(sampleRate: model.snapshot.sampleRateHz))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func metric(_ title: String, _ value: String) -> some View {
