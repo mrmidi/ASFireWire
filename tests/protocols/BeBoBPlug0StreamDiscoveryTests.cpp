@@ -139,6 +139,9 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
         // Input channel positions; unavailable here, so the map stays identity.
         {Command(0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x03}),
          Reply(0x08, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x03})},
+        // Input signal format STATUS query (wildcard). SFC 0x02 = 48 kHz.
+        {{0x01, 0xFF, 0x19, 0x00, 0x90, 0xFF, 0xFF, 0xFF},
+         {0x0C, 0xFF, 0x19, 0x00, 0x90, 0x02, 0xFF, 0xFF}},
         // BridgeCo ISO output plug type.
         {{0x01, 0xFF, 0x02, 0xC0, 0x01, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00},
          {0x0C, 0xFF, 0x02, 0xC0, 0x01, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00}},
@@ -148,6 +151,9 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
                                0x90, 0x40, 0x04, 0x00, 0x02, 0x0a, 0x06, 0x01, 0x0d})},
         {Command(0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x03}),
          Reply(0x08, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x03})},
+        // Output signal format STATUS query (wildcard). SFC 0x02 = 48 kHz.
+        {{0x01, 0xFF, 0x18, 0x00, 0x90, 0xFF, 0xFF, 0xFF},
+         {0x0C, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF}},
         // Linux treats the first invalid next list entry as end-of-list.
         {{0x01, 0xFF, 0x2F, 0xC1, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x01, 0x00},
          {0x08, 0xFF, 0x2F, 0xC1, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x01}},
@@ -173,6 +179,10 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
     EXPECT_EQ(model->output.supportedFormations[0].midiSlots, 1);
     EXPECT_TRUE(model->SupportsDuplexFormation(10, 1));
     EXPECT_FALSE(model->SupportsDuplexFormation(10, 2));
+    EXPECT_EQ(model->input.activeRateHz, 48000U);
+    EXPECT_EQ(model->output.activeRateHz, 48000U);
+    EXPECT_EQ(model->CurrentRateHz(), 48000U);
+    EXPECT_EQ(model->SupportedRatesHz(), std::vector<uint32_t>{48000U});
 }
 
 TEST(BridgeCoReadOnlyProbeTests, Phase88PlaybackPositionsProducePlanarSlotMap) {
@@ -196,6 +206,8 @@ TEST(BridgeCoReadOnlyProbeTests, Phase88PlaybackPositionsProducePlanarSlotMap) {
                                      0x04, 0x05, 0x09, 0x06, 0x05, 0x07, 0x0a, 0x08,
                                0x02, 0x01, 0x01, 0x06, 0x02,
                                0x02, 0x0b, 0x01, 0x0b, 0x02})},
+        {{0x01, 0xFF, 0x19, 0x00, 0x90, 0xFF, 0xFF, 0xFF},
+         {0x0C, 0xFF, 0x19, 0x00, 0x90, 0x02, 0xFF, 0xFF}},
         {Command(0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00}),
          Reply(0x0c, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00})},
         {Command(0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00}),
@@ -203,6 +215,8 @@ TEST(BridgeCoReadOnlyProbeTests, Phase88PlaybackPositionsProducePlanarSlotMap) {
                                0x90, 0x40, 0x04, 0x00, 0x02, 0x0a, 0x06, 0x01, 0x0d})},
         {Command(0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x03}),
          Reply(0x08, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x03})},
+        {{0x01, 0xFF, 0x18, 0x00, 0x90, 0xFF, 0xFF, 0xFF},
+         {0x0C, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF}},
         {Command(0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x01}),
          Reply(0x08, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x01})},
         // Section-info replies echo the section id at operand 7, type at 8.
@@ -291,6 +305,61 @@ TEST(BridgeCoReadOnlyProbeTests, ParsesOneBasedSectionPositionsWithoutGuessingMi
     EXPECT_EQ((*sections)[1].positions[0].streamPosition, 2);
     const uint8_t zeroPosition[]{0x01, 0x01, 0x00, 0x01};
     EXPECT_FALSE(ParseChannelPositionSections(zeroPosition).has_value());
+}
+
+TEST(BridgeCoReadOnlyProbeTests, DecodesStreamFormatRateCodesAccordingToBridgeCoTable) {
+    using ASFW::Audio::BeBoB::StreamFormation;
+    // 0x02 is 32 kHz in BridgeCo/compound stream format, NOT 48 kHz (which is CIP SFC)
+    EXPECT_EQ((StreamFormation{.rateCode = 0x02}.RateHz()), 32000U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x03}.RateHz()), 44100U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x04}.RateHz()), 48000U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x05}.RateHz()), 96000U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x0A}.RateHz()), 88200U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x06}.RateHz()), 176400U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x07}.RateHz()), 192000U);
+    EXPECT_FALSE((StreamFormation{.rateCode = 0xFF}.RateHz().has_value()));
+}
+
+TEST(BridgeCoReadOnlyProbeTests, DecodesPlugSignalFormatSfcAccordingToCipTable) {
+    using ASFW::AVC::Cmd::PlugSignalFormat;
+    using ASFW::AVC::Cmd::SfcOf;
+    using ASFW::AVC::ToHz;
+
+    // AM824 with FDF SFC 0x02 is 48 kHz in CIP SFC table
+    PlugSignalFormat fmt48{.plugId = 0, .fmt = 0x90, .fdf = {0x02, 0xFF, 0xFF}};
+    auto sfc48 = SfcOf(fmt48);
+    ASSERT_TRUE(sfc48.has_value());
+    EXPECT_EQ(ToHz(*sfc48), 48000U);
+
+    // AM824 with FDF SFC 0x00 is 32 kHz
+    PlugSignalFormat fmt32{.plugId = 0, .fmt = 0x90, .fdf = {0x00, 0xFF, 0xFF}};
+    auto sfc32 = SfcOf(fmt32);
+    ASSERT_TRUE(sfc32.has_value());
+    EXPECT_EQ(ToHz(*sfc32), 32000U);
+
+    // Non-AM824 FMT is rejected
+    PlugSignalFormat nonAm824{.plugId = 0, .fmt = 0x00, .fdf = {0x02, 0xFF, 0xFF}};
+    EXPECT_FALSE(SfcOf(nonAm824).has_value());
+}
+
+TEST(BridgeCoReadOnlyProbeTests, ResolvesAgreedRateAndSupportedRates) {
+    using ASFW::Audio::BeBoB::DeviceModel;
+    using ASFW::Audio::BeBoB::StreamFormation;
+
+    DeviceModel model;
+    model.input.activeRateHz = 48000U;
+    model.output.activeRateHz = 48000U;
+    EXPECT_TRUE(model.HasAgreedCurrentRate());
+    EXPECT_EQ(model.CurrentRateHz(), 48000U);
+
+    // Formations with BridgeCo rates: 0x02 (32k), 0x03 (44.1k), 0x04 (48k)
+    model.input.supportedFormations.push_back(StreamFormation{.rateCode = 0x02});
+    model.input.supportedFormations.push_back(StreamFormation{.rateCode = 0x03});
+    model.output.supportedFormations.push_back(StreamFormation{.rateCode = 0x03});
+    model.output.supportedFormations.push_back(StreamFormation{.rateCode = 0x04});
+
+    const std::vector<uint32_t> expectedRates = {32000U, 44100U, 48000U};
+    EXPECT_EQ(model.SupportedRatesHz(), expectedRates);
 }
 
 } // namespace

@@ -9,37 +9,9 @@
 #include "GenericBeBoBProtocol.hpp"
 
 #include "../../../Logging/Logging.hpp"
+#include "../../../Protocols/AVC/Core/RateCodes.hpp"
 
 namespace ASFW::Audio::BeBoB {
-namespace {
-
-// BridgeCo rate codes → Hz. Cross-validated with Linux
-// sound/firewire/bebob/bebob_stream.c:24-30 (snd_bebob_rate_table).
-uint32_t RateCodeToHz(uint8_t code) noexcept {
-    switch (code) {
-        case 0x00: return 32000U;
-        case 0x01: return 44100U;
-        case 0x02: return 48000U;
-        case 0x03: return 88200U;
-        case 0x04: return 96000U;
-        case 0x05: return 176400U;
-        case 0x06: return 192000U;
-        case 0x0A: return 88200U;  // Some devices use 0x0A for 88.2k.
-        default: return 0U;
-    }
-}
-
-template<typename F>
-void ForEachFormationRate(const DeviceModel& model, F&& fn) noexcept {
-    for (const auto& formation : model.input.supportedFormations) {
-        fn(formation.rateCode);
-    }
-    for (const auto& formation : model.output.supportedFormations) {
-        fn(formation.rateCode);
-    }
-}
-
-} // namespace
 
 GenericBeBoBProtocol::GenericBeBoBProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                            Protocols::Ports::FireWireBusInfo& busInfo,
@@ -65,7 +37,8 @@ GenericBeBoBProtocol::GenericBeBoBProtocol(Protocols::Ports::FireWireBusOps& bus
     caps_.hostOutputPcmChannels = pcmChannels;
     caps_.deviceToHostAm824Slots = pcmChannels + midiSlots;
     caps_.hostToDeviceAm824Slots = pcmChannels + midiSlots;
-    caps_.sampleRateHz = supportedRates_.empty() ? 48000U : supportedRates_[0];
+    caps_.sampleRateHz = discoveryModel.CurrentRateHz().value_or(
+        supportedRates_.empty() ? 48000U : supportedRates_[0]);
     caps_.deviceToHostIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel;
     caps_.hostToDeviceIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel;
     caps_.deviceToHostStreamCount = 1;
@@ -78,16 +51,7 @@ GenericBeBoBProtocol::GenericBeBoBProtocol(Protocols::Ports::FireWireBusOps& bus
 
 std::vector<uint32_t>
 GenericBeBoBProtocol::MakeSupportedRates(const DeviceModel& model) noexcept {
-    bool seen[128] = {};
-    std::vector<uint32_t> rates;
-    ForEachFormationRate(model, [&seen, &rates](uint8_t code) {
-        const uint32_t hz = RateCodeToHz(code);
-        if (hz > 0 && !seen[code]) {
-            seen[code] = true;
-            rates.push_back(hz);
-        }
-    });
-    return rates;
+    return model.SupportedRatesHz();
 }
 
 } // namespace ASFW::Audio::BeBoB

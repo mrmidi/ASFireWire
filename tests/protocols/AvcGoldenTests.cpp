@@ -350,6 +350,7 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
             EXPECT_TRUE(model.unitPlugCounts.has_value());
             EXPECT_EQ(model.input.supportedFormations.size(), 5U);
             EXPECT_EQ(model.output.supportedFormations.size(), 5U);
+            EXPECT_EQ(model.CurrentRateHz(), 48000U);
         });
     EXPECT_TRUE(bebobDone);
 

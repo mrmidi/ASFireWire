@@ -41,6 +41,7 @@ struct Request { ReadOnlyProbeCommand command; PlugDirection direction; uint8_t 
         case ReadOnlyProbeCommand::kStreamFormatList: return "stream format";
         case ReadOnlyProbeCommand::kChannelPositions: return "channel map";
         case ReadOnlyProbeCommand::kSectionType: return "section type";
+        case ReadOnlyProbeCommand::kSignalFormat: return "signal format";
     }
     return "unknown";
 }
@@ -193,6 +194,27 @@ private:
                     });
                 break;
             }
+            case ReadOnlyProbeCommand::kSignalFormat: {
+                const auto dir = request.direction == PlugDirection::kInput ?
+                    ASFW::AVC::Cmd::PlugSignalDirection::kInput : ASFW::AVC::Cmd::PlugSignalDirection::kOutput;
+                unit_.Status(
+                    ASFW::AVC::Cmd::PlugSignalFormatCommand{
+                        .operands = ASFW::AVC::Cmd::PlugSignalFormatOperands{
+                            .direction = dir,
+                            .plugId = 0,
+                            .query = ASFW::AVC::Cmd::SignalFormatQuery::kAm824Wildcard,
+                        },
+                    },
+                    [self, request](ASFW::AVC::Expected<ASFW::AVC::Cmd::PlugSignalFormat> res) {
+                        if (!res) {
+                            self->HandleError(request, res.error());
+                        } else {
+                            self->HandleSignalFormat(request, *res);
+                        }
+                        self->SubmitNext();
+                    });
+                break;
+            }
         }
     }
 
@@ -205,6 +227,7 @@ private:
             // channel map stays identity, which is wrong for planar devices
             // such as the Phase 88.
             queue_.push_back({ReadOnlyProbeCommand::kChannelPositions, direction});
+            queue_.push_back({ReadOnlyProbeCommand::kSignalFormat, direction});
         }
     }
 
@@ -284,6 +307,28 @@ private:
         Plug(request.direction).channelSections = std::move(*sections);
         for (uint8_t section = 0; section < Plug(request.direction).channelSections.size(); ++section) {
             queue_.push_back({ReadOnlyProbeCommand::kSectionType, request.direction, section});
+        }
+    }
+
+    void HandleSignalFormat(const Request& request, const ASFW::AVC::Cmd::PlugSignalFormat& reply) {
+        const auto sfc = ASFW::AVC::Cmd::SfcOf(reply);
+        if (!sfc.has_value()) {
+            ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s signal-format fmt=0x%02x not AM824 GUID=0x%016llx",
+                     DirectionName(request.direction), reply.fmt, guid_);
+            return;
+        }
+        const auto rateHz = ASFW::AVC::ToHz(*sfc);
+        if (!rateHz.has_value()) {
+            ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s signal-format SFC=0x%02x unknown GUID=0x%016llx",
+                     DirectionName(request.direction), static_cast<uint8_t>(*sfc), guid_);
+            return;
+        }
+        Plug(request.direction).activeRateHz = *rateHz;
+        ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s active rate %u Hz (SFC=0x%02x) GUID=0x%016llx",
+                 DirectionName(request.direction), *rateHz, static_cast<uint8_t>(*sfc), guid_);
+        if (model_.input.activeRateHz.has_value() && model_.output.activeRateHz.has_value() &&
+            model_.input.activeRateHz == model_.output.activeRateHz) {
+            model_.currentRateHz = model_.input.activeRateHz;
         }
     }
 
@@ -370,38 +415,6 @@ ParseChannelPositionSections(std::span<const uint8_t> payload) noexcept {
         result.push_back(std::move(parsed));
     }
     return cursor == payload.size() ? std::optional{std::move(result)} : std::nullopt;
-}
-
-bool DeviceModel::HasAgreedCurrentRate() const noexcept {
-    return CurrentRateCode().has_value();
-}
-
-std::optional<uint8_t> DeviceModel::CurrentRateCode() const noexcept {
-    const auto inputRate = input.currentFormat.has_value() ? input.currentFormat->formation : std::nullopt;
-    const auto outputRate = output.currentFormat.has_value() ? output.currentFormat->formation : std::nullopt;
-    if (!inputRate.has_value() || !outputRate.has_value() || inputRate->rateCode != outputRate->rateCode) {
-        return std::nullopt;
-    }
-    return inputRate->rateCode;
-}
-
-bool DeviceModel::SupportsDuplexFormation(uint8_t pcmChannels,
-                                          uint8_t midiSlots) const noexcept {
-    if (!unitPlugCounts.has_value() ||
-        unitPlugCounts->isochronousInputs == 0 ||
-        unitPlugCounts->isochronousOutputs == 0) {
-        return false;
-    }
-
-    const auto supports = [pcmChannels, midiSlots](const IsochronousPlugModel& plug) {
-        for (const auto& formation : plug.supportedFormations) {
-            if (formation.pcmChannels == pcmChannels && formation.midiSlots == midiSlots) {
-                return true;
-            }
-        }
-        return false;
-    };
-    return supports(input) && supports(output);
 }
 
 void StartBeBoBPlug0Discovery(ASFW::AVC::IAvcUnit& unit, uint64_t guid,
