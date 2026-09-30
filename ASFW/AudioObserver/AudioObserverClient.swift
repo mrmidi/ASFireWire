@@ -20,6 +20,9 @@ struct AudioObserverMetrics: Sendable {
     var leftPeak: Float = 0
     var rightPeak: Float = 0
     var correlation: Float = 0
+    var correlationAverage: Float = 0
+    var correlationValid = false
+    var meterValues: [Float] = Array(repeating: 0, count: 8)
     var cpuEncodeMilliseconds: Double?
     var scheduledToStartMilliseconds: Double?
     var gpuMilliseconds: Double?
@@ -161,6 +164,8 @@ final class AudioObserverRenderState: @unchecked Sendable {
 final class AudioObserverMetricsState: @unchecked Sendable {
     private let lock = NSLock()
     private var value = AudioObserverMetrics()
+    private var lastMeterTime = Date.distantPast
+    private var meterKey: String?
 
     func read() -> AudioObserverMetrics {
         lock.lock()
@@ -178,6 +183,9 @@ final class AudioObserverMetricsState: @unchecked Sendable {
     func completed(leftPeak: Float,
                    rightPeak: Float,
                    correlation: Float,
+                   correlationValid: Bool,
+                   meterValues: [Float],
+                   meterKey: String,
                    cpuEncodeMilliseconds: Double,
                    scheduledToStartMilliseconds: Double?,
                    gpuMilliseconds: Double?,
@@ -188,9 +196,18 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         lock.lock()
         value.inFlight = max(0, value.inFlight - 1)
         value.windowsRendered += 1
-        value.leftPeak = leftPeak
-        value.rightPeak = rightPeak
-        value.correlation = correlation
+        if safe {
+            value.leftPeak = leftPeak
+            value.rightPeak = rightPeak
+            value.correlationValid = correlationValid
+            let now = Date()
+            let alpha = self.meterKey == meterKey ? Float(exp(-now.timeIntervalSince(lastMeterTime))) : 0
+            value.correlationAverage = alpha * value.correlationAverage + (1 - alpha) * correlation
+            lastMeterTime = now
+            self.meterKey = meterKey
+            value.correlation = correlation
+            value.meterValues = meterValues
+        }
         value.cpuEncodeMilliseconds = cpuEncodeMilliseconds
         value.scheduledToStartMilliseconds = scheduledToStartMilliseconds
         value.gpuMilliseconds = gpuMilliseconds

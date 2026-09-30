@@ -7,18 +7,26 @@ private struct SpectrumParams {
     var channels: UInt32
     var channel: UInt32
     var sampleRate: UInt32
+    var otherChannel: UInt32
+    var transform: UInt32
 }
+
+private struct SmoothingParams { var alpha: Float; var elapsed: Float; var reset: UInt32; var unused: UInt32 = 0 }
 
 struct MetalSpectrumView: NSViewRepresentable {
     let client: ASFWAudioObserverClient
     let channel: UInt32
+    var otherChannel: UInt32 = 0
+    var transform: UInt32 = 0
+    var slow = false
+    var peakHold = true
 
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> NSView {
         guard let device = client.metalDevice,
               let buffer = client.ringBuffer,
               let renderer = SpectrumRenderer(device: device, ring: buffer,
-                                               state: client.renderState, channel: channel) else {
+                                               state: client.renderState, channel: channel, otherChannel: otherChannel, transform: transform, slow: slow, peakHold: peakHold) else {
             return NSTextField(labelWithString: "Spectrum Metal pipeline unavailable")
         }
         let view = MTKView(frame: .zero, device: device)
@@ -41,10 +49,27 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
     private let queue: MTLCommandQueue
     private let state: AudioObserverRenderState
     private let channel: UInt32
+    private let otherChannel: UInt32
+    private let transform: UInt32
+    private let slow: Bool
+    private let peakHold: Bool
+    private let smooth: MTLComputePipelineState
+    private let peakRender: MTLRenderPipelineState
+    private let history: MTLBuffer
+    private let average: MTLBuffer
+    private let peaks: MTLBuffer
+    private var lastTime: Double?
+    private var epoch: String?
     private let slots = DispatchSemaphore(value: 2)
 
-    init?(device: MTLDevice, ring: MTLBuffer, state: AudioObserverRenderState, channel: UInt32) {
+    init?(device: MTLDevice, ring: MTLBuffer, state: AudioObserverRenderState, channel: UInt32, otherChannel: UInt32, transform: UInt32, slow: Bool, peakHold: Bool) {
         guard let library = device.makeDefaultLibrary(),
+              let smoothing = library.makeFunction(name: "asfwSpectrumSmooth"),
+              let smooth = try? device.makeComputePipelineState(function: smoothing),
+              let peakFragment = library.makeFunction(name: "asfwSpectrumPeakFragment"),
+              let history = device.makeBuffer(length: 1025 * 16, options: .storageModePrivate),
+              let average = device.makeBuffer(length: 1025 * 4, options: .storageModePrivate),
+              let peaks = device.makeBuffer(length: 1025 * 4, options: .storageModePrivate),
               let fft = library.makeFunction(name: "asfwSpectrumFFT"),
               let vertex = library.makeFunction(name: "asfwSpectrumVertex"),
               let fragment = library.makeFunction(name: "asfwAudioFragment"),
@@ -57,6 +82,12 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         descriptor.fragmentFunction = fragment
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         guard let render = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
+        descriptor.fragmentFunction = peakFragment
+        guard let peakRender = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
+        self.smooth = smooth; self.peakRender = peakRender
+        self.history = history; self.average = average; self.peaks = peaks
+        self.otherChannel = otherChannel; self.transform = transform
+        self.slow = slow; self.peakHold = peakHold
         self.ring = ring
         self.amplitudes = amplitudes
         self.compute = compute
@@ -69,7 +100,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         let snapshot = state.read()
         guard snapshot.validHistoryFrames >= 2048, snapshot.sampleRateHz > 40,
-              channel < snapshot.channels,
+              channel < snapshot.channels, otherChannel < snapshot.channels,
               let pass = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
               slots.wait(timeout: .now()) == .success else { return }
@@ -79,7 +110,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         var params = SpectrumParams(writeEnd: snapshot.writeEndFrame,
                                     ringFrames: snapshot.activeRingFrames,
                                     channels: snapshot.channels,
-                                    channel: channel, sampleRate: snapshot.sampleRateHz)
+                                    channel: channel, sampleRate: snapshot.sampleRateHz, otherChannel: otherChannel, transform: transform)
         encoder.setComputePipelineState(compute)
         encoder.setBuffer(ring, offset: 0, index: 0)
         encoder.setBuffer(amplitudes, offset: 0, index: 1)
@@ -87,14 +118,35 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         encoder.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1),
                                      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         encoder.endEncoding()
+        guard let filtering = command.makeComputeCommandEncoder() else { slots.signal(); return }
+        let now = CACurrentMediaTime()
+        let key = "\(snapshot.sessionEpoch)-\(snapshot.discontinuityEpoch)"
+        let elapsed = Float(min(0.25, max(0, now - (lastTime ?? now))))
+        var smoothing = SmoothingParams(alpha: exp(-elapsed / (slow ? 1.0 : 0.15)),
+                                        elapsed: elapsed, reset: epoch == key && now - (lastTime ?? now) < 0.5 ? 0 : 1)
+        filtering.setComputePipelineState(smooth)
+        filtering.setBuffer(amplitudes, offset: 0, index: 0)
+        filtering.setBuffer(history, offset: 0, index: 1)
+        filtering.setBuffer(average, offset: 0, index: 2)
+        filtering.setBuffer(peaks, offset: 0, index: 3)
+        filtering.setBytes(&smoothing, length: MemoryLayout<SmoothingParams>.stride, index: 4)
+        filtering.dispatchThreads(MTLSize(width: 1025, height: 1, depth: 1),
+                                  threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        filtering.endEncoding()
         guard let drawing = command.makeRenderCommandEncoder(descriptor: pass) else { slots.signal(); return }
         drawing.setRenderPipelineState(render)
-        drawing.setVertexBuffer(amplitudes, offset: 0, index: 0)
+        drawing.setVertexBuffer(average, offset: 0, index: 0)
         drawing.setVertexBytes(&params, length: MemoryLayout<SpectrumParams>.stride, index: 1)
         drawing.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: 512)
+        if peakHold {
+            drawing.setRenderPipelineState(peakRender)
+            drawing.setVertexBuffer(peaks, offset: 0, index: 0)
+            drawing.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: 512)
+        }
         drawing.endEncoding()
         command.present(drawable)
         command.addCompletedHandler { _ in slots.signal() }
+        lastTime = now; epoch = key
         command.commit()
     }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}

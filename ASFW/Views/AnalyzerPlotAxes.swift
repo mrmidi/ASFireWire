@@ -29,8 +29,8 @@ struct AnalyzerPlotAxes: View {
                 label("X: (L−R)/√2 · opposite phase", at: CGPoint(x: size.width / 2, y: size.height - 12))
             case .spectrum(let rate):
                 let plot = CGRect(x: 38, y: 12, width: max(1, size.width - 50), height: max(1, size.height - 42))
-                for db in stride(from: 0, through: -120, by: -30) {
-                    let y = plot.minY + CGFloat(-db) / 120 * plot.height
+                for db in [6, 0, -30, -60, -90, -120] {
+                    let y = plot.minY + CGFloat(6 - db) / 126 * plot.height
                     line(CGPoint(x: plot.minX, y: y), CGPoint(x: plot.maxX, y: y))
                     label("\(db)", at: CGPoint(x: plot.minX - 5, y: y), anchor: .trailing)
                 }

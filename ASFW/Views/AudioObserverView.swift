@@ -67,6 +67,9 @@ struct AudioObserverPanel: View {
     @State private var leftChannel: UInt32 = 0
     @State private var rightChannel: UInt32 = 1
     @State private var stereoSpectrum = true
+    @State private var midSide = false
+    @State private var slowSpectrum = false
+    @State private var peakHold = true
     private let deviceName: String
 
     init(guid: UInt64, deviceName: String) {
@@ -107,6 +110,16 @@ struct AudioObserverPanel: View {
             }
 
             if model.mode == .phaseScope {
+                HStack {
+                    Picker("Basis", selection: $midSide) {
+                        Text("L/R").tag(false); Text("M/S").tag(true)
+                    }.pickerStyle(.segmented).frame(width: 160)
+                    Picker("Average", selection: $slowSpectrum) {
+                        Text("Fast · 150 ms").tag(false); Text("Slow · 1 s").tag(true)
+                    }.pickerStyle(.segmented).frame(width: 250)
+                    Toggle("Peak hold · 2 s / 12 dB/s", isOn: $peakHold)
+                    Spacer()
+                }
                 HStack(alignment: .top, spacing: 16) {
                     VStack {
                         Text("Goniometer").font(.headline)
@@ -115,8 +128,8 @@ struct AudioObserverPanel: View {
                     VStack {
                         Text("Spectrum · Hann · 2048 samples").font(.headline)
                         HStack(spacing: 12) {
-                            spectrumPlot(channel: leftChannel)
-                            if stereoSpectrum { spectrumPlot(channel: rightChannel) }
+                            spectrumPlot(channel: leftChannel, side: false)
+                            if stereoSpectrum { spectrumPlot(channel: rightChannel, side: true) }
                         }
                         .frame(height: 320)
                     }
@@ -124,6 +137,10 @@ struct AudioObserverPanel: View {
                 }
             } else {
                 scopePlot.frame(height: 280)
+            }
+
+            if model.mode == .phaseScope {
+                StereoMetersView(metrics: model.metrics, active: model.snapshot.validHistoryFrames > 1)
             }
 
             HStack(spacing: 8) {
@@ -195,14 +212,16 @@ struct AudioObserverPanel: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
-    private func spectrumPlot(channel: UInt32) -> some View {
+    private func spectrumPlot(channel: UInt32, side: Bool) -> some View {
         VStack(spacing: 4) {
-            Text("Output \(channel + 1)").font(.caption)
+            Text(midSide ? (side ? "Side · (L−R)/√2" : "Mid · (L+R)/√2") : "Output \(channel + 1)").font(.caption)
             ZStack {
                 Color(red: 0.025, green: 0.035, blue: 0.05)
                 if model.snapshot.validHistoryFrames >= 2048 {
-                    MetalSpectrumView(client: model.client, channel: channel)
-                        .id("\(model.snapshot.memoryGeneration)-\(channel)")
+                    MetalSpectrumView(client: model.client, channel: midSide ? leftChannel : channel,
+                                      otherChannel: rightChannel, transform: midSide ? (side ? 2 : 1) : 0,
+                                      slow: slowSpectrum, peakHold: peakHold)
+                        .id("\(model.snapshot.memoryGeneration)-\(channel)-\(leftChannel)-\(rightChannel)-\(midSide)-\(slowSpectrum)-\(peakHold)")
                         .padding(.leading, 38).padding(.trailing, 12)
                         .padding(.top, 12).padding(.bottom, 30)
                 } else {

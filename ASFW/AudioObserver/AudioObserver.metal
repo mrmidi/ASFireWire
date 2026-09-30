@@ -59,6 +59,7 @@ kernel void asfwAnalyzeRing(
     const uint count = min(params.windowFrames, params.ringFrames);
     float peakLeft = 0.0f;
     float peakRight = 0.0f;
+    float peakMid = 0, peakSide = 0, energyMid = 0, energySide = 0;
     float sumLeft = 0.0f;
     float sumRight = 0.0f;
     float sumLeftRight = 0.0f;
@@ -70,6 +71,10 @@ kernel void asfwAnalyzeRing(
         const float right = sampleAt(samples, params, i, params.rightChannel);
         peakLeft = max(peakLeft, abs(left));
         peakRight = max(peakRight, abs(right));
+        float mid = (left + right) * 0.70710678118f;
+        float side = (left - right) * 0.70710678118f;
+        peakMid = max(peakMid, abs(mid)); peakSide = max(peakSide, abs(side));
+        energyMid += mid * mid; energySide += side * side;
         sumLeft += left;
         sumRight += right;
         sumLeftRight += left * right;
@@ -78,17 +83,27 @@ kernel void asfwAnalyzeRing(
     }
 
     float correlation = 0.0f;
+    uint correlationValid = 0;
     if (count > 1) {
         const float n = float(count);
         const float covariance = sumLeftRight - sumLeft * sumRight / n;
         const float varianceLeft = max(0.0f, sumLeftSquared - sumLeft * sumLeft / n);
         const float varianceRight = max(0.0f, sumRightSquared - sumRight * sumRight / n);
         const float denominator = sqrt(varianceLeft * varianceRight);
-        if (denominator > 1.0e-12f) correlation = clamp(covariance / denominator, -1.0f, 1.0f);
+        if (denominator > 1.0e-12f) { correlation = clamp(covariance / denominator, -1.0f, 1.0f); correlationValid = 1; }
     }
 
     output[0] = as_type<uint>(peakLeft);
     output[1] = as_type<uint>(peakRight);
     output[2] = as_type<uint>(correlation);
     output[3] = count;
+    output[12] = correlationValid;
+    output[4] = as_type<uint>(peakMid); output[5] = as_type<uint>(peakSide);
+    output[6] = as_type<uint>(sqrt(sumLeftSquared / max(1u, count)));
+    output[7] = as_type<uint>(sqrt(sumRightSquared / max(1u, count)));
+    output[8] = as_type<uint>(sqrt(energyMid / max(1u, count)));
+    output[9] = as_type<uint>(sqrt(energySide / max(1u, count)));
+    float total = sumLeftSquared + sumRightSquared;
+    output[10] = as_type<uint>(total > 1e-12f ? (sumRightSquared - sumLeftSquared) / total : 0.0f);
+    output[11] = as_type<uint>(total > 1e-12f ? energySide / total : 0.0f);
 }

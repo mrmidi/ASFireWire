@@ -207,6 +207,7 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
             commandBuffer.addScheduledHandler { _ in
                 scheduledTimestamp.set(CACurrentMediaTime())
             }
+            let meterKey = "\(snapshot.sessionEpoch)-\(snapshot.discontinuityEpoch)-\(params.channel)-\(params.rightChannel)"
             commandBuffer.addCompletedHandler { completedBuffer in
                 let completionTime = CACurrentMediaTime()
                 let output = analysisBuffer.contents().assumingMemoryBound(to: UInt32.self)
@@ -240,6 +241,9 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
                 metrics.completed(leftPeak: leftPeak,
                                   rightPeak: rightPeak,
                                   correlation: correlation,
+                                  correlationValid: output[12] != 0,
+                                  meterValues: (4...11).map { Float(bitPattern: output[$0]) },
+                                  meterKey: meterKey,
                                   cpuEncodeMilliseconds: encodeMilliseconds,
                                   scheduledToStartMilliseconds: scheduledToStartMilliseconds,
                                   gpuMilliseconds: gpuMilliseconds,
