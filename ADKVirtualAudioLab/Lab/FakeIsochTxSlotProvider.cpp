@@ -2,8 +2,8 @@
 
 namespace ASFW::Lab {
 
-// Dumb storage standing in for the OHCI IT DMA ring: 256 slots × 512 B
-// (mirrors the production ring geometry). Acquiring a ring position
+// Packet-domain history for the fake transport: 1024 slots × 512 B.
+// Acquiring a ring position
 // invalidates its previous publication — the analog of the hardware ring
 // reusing a descriptor — and PublishSlot records the PreparedTxPacket
 // verbatim so tests (and the Step 6 verifier) can inspect exactly what the

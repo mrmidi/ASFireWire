@@ -21,11 +21,11 @@ namespace {
 struct DumpFixture final {
     FakeIsochTxSlotProvider provider{};
     AmdtpPacketTimeline timeline{};
-    PacketTimelineSlot slots[512]{};
+    PacketTimelineSlot slots[FakeIsochTxSlotProvider::kSlotCount]{};
     AmdtpPayloadWriterCounters payload{};
     uint64_t nextFrame{0};
 
-    DumpFixture() { timeline.AttachSlots(slots, 512); }
+    DumpFixture() { timeline.AttachSlots(slots, FakeIsochTxSlotProvider::kSlotCount); }
 
     void PublishData(uint32_t packetIndex, uint8_t marker) {
         TxPacketSlotView view{};
@@ -189,13 +189,14 @@ void RunPacketDumpBlobTests(TestContext& ctx) {
     // --- Evicted index (ring wrapped): reported, not faked ---
     {
         DumpFixture f;
-        // 520 publications wrap the 512-slot ring; index 3 is long gone.
-        for (uint32_t i = 0; i < 520; ++i) {
+        // One full history window plus eight packets evicts index 3.
+        for (uint32_t i = 0; i < FakeIsochTxSlotProvider::kSlotCount + 8; ++i) {
             f.PublishData(i, static_cast<uint8_t>(i & 0xFF));
         }
         std::vector<uint8_t> blob(PacketDumpBlobSize(2));
         const size_t written = BuildPacketDumpBlob(
-            f.provider, f.timeline, f.payload, f.Context(520), 2, 3,
+            f.provider, f.timeline, f.payload,
+            f.Context(FakeIsochTxSlotProvider::kSlotCount + 8), 2, 3,
             blob.data(), blob.size());
         CHECK_EQ_U64(ctx, written, PacketDumpBlobSize(2));
         const PacketDumpRecord* evicted = RecordOf(blob, 1); // index 3

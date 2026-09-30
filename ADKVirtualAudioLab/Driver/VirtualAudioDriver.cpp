@@ -8,6 +8,7 @@
 #include "VirtualAudioDevice.h"
 
 #include "../Lab/PacketDumpBlob.hpp"
+#include "../Core/LabAudioGeometry.hpp"
 
 #define LAB_LOG(fmt, ...) os_log(OS_LOG_DEFAULT, "[ADKLab] " fmt, ##__VA_ARGS__)
 
@@ -73,7 +74,9 @@ kern_return_t VirtualAudioDriver::Start_Impl(IOService* provider)
     }
     
     LAB_LOG("Initializing VirtualAudioDevice");
-    if (!ivars->audioDevice->init(this, false, deviceUID.get(), modelUID.get(), manufacturerUID.get(), 512)) {
+    constexpr auto geometry = ASFW::Lab::AudioGeometryForRate(48'000);
+    if (!ivars->audioDevice->init(this, false, deviceUID.get(), modelUID.get(), manufacturerUID.get(),
+                                  geometry.zeroTimestampPeriodFrames)) {
         LAB_LOG("VirtualAudioDevice::init failed");
         return kIOReturnInternalError;
     }

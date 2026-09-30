@@ -4,6 +4,7 @@
 
 namespace ASFW::LabTests {
 
+void RunAudioGeometryTests(TestContext& ctx);
 void RunPcmSlotCodecTests(TestContext& ctx);
 void RunCipHeaderTests(TestContext& ctx);
 void RunDbcCounterTests(TestContext& ctx);
@@ -15,6 +16,7 @@ void RunPayloadWriterTests(TestContext& ctx);
 void RunDiceTxEngineTests(TestContext& ctx);
 void RunVerifyingSlotProviderTests(TestContext& ctx);
 void RunVerifierScenarioTests(TestContext& ctx);
+void RunProductionGeometryPumpScenarioTests(TestContext& ctx);
 void RunTxTimingModelTests(TestContext& ctx);
 void RunWriteEndTraceReplayerTests(TestContext& ctx);
 void RunPacketDumpBlobTests(TestContext& ctx);
@@ -26,6 +28,7 @@ int main() {
 
     TestContext ctx{};
 
+    RunAudioGeometryTests(ctx);
     RunPcmSlotCodecTests(ctx);
     RunCipHeaderTests(ctx);
     RunDbcCounterTests(ctx);
@@ -39,6 +42,7 @@ int main() {
     RunTxTimingModelTests(ctx);
     RunWriteEndTraceReplayerTests(ctx);
     RunVerifierScenarioTests(ctx);
+    RunProductionGeometryPumpScenarioTests(ctx);
     RunPacketDumpBlobTests(ctx);
 
     std::printf("%d checks, %d failures\n", ctx.checks, ctx.failures);
