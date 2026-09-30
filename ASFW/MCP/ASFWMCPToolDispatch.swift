@@ -101,16 +101,7 @@ extension ASFWMCPCore {
         case "asfw_fcp_get_recent_responses":
             return await recentFcpResponsesResult(toolName: name, decoder: decoder)
         case "asfw_avc_get_subunit_descriptor":
-            // Unlike the other read-only tools, this one is not a routing gap: AV/C
-            // descriptor access is a wire-observable OPEN/READ/CLOSE DESCRIPTOR
-            // sequence that has to be written against the AV/C descriptor mechanism
-            // and cross-checked with references/IOFireWireAVC before it may issue FCP
-            // to a real device. Left explicitly unimplemented rather than synthesized.
-            return notImplementedToolResult(
-                name,
-                reason: "AV/C READ DESCRIPTOR is not implemented. It requires the OPEN/READ/CLOSE "
-                    + "descriptor sequence validated against a reference stack, not a routing change."
-            )
+            return await avcSubunitDescriptorResult(toolName: name, decoder: decoder)
         case "asfw_fcp_send_command":
             return await dispatchFcpReadCommand(name, decoder: decoder)
         case "asfw_apogee_duet_apply_format_dev":
@@ -1900,6 +1891,53 @@ private extension ASFWMCPCore {
                     "subunitType": .int(Int(type)),
                     "subunitId": .int(Int(id)),
                     "capabilities": capabilities.mcpValue,
+                ])
+            )
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func avcSubunitDescriptorResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let guid = try decoder.uint64("targetGuid")
+            let type = try decoder.uint32("subunitType")
+            let id = try decoder.uint32("subunitId")
+            guard type <= UInt32(UInt8.max), id <= UInt32(UInt8.max) else {
+                return malformedToolResult(toolName, reason: "subunitType and subunitId must fit in one byte")
+            }
+
+            let unit = await driver.listAVCUnits().first { $0.guid == guid }
+            guard unit?.subunits.contains(where: { $0.type == UInt8(type) && $0.id == UInt8(id) }) == true else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "The requested AV/C subunit is not present in the current discovery snapshot."
+                )
+            }
+            guard let descriptorData = await driver.avcSubunitDescriptor(
+                guid: guid, type: UInt8(type), id: UInt8(id)
+            ) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "The driver could not provide descriptor data for the requested AV/C subunit."
+                )
+            }
+
+            let hex = descriptorData.map { String(format: "%02x", $0) }.joined()
+            return .success(
+                toolName: toolName,
+                data: .object([
+                    "kind": .string("avcSubunitDescriptor"),
+                    "targetGuid": .string(String(format: "0x%016llX", guid)),
+                    "subunitType": .int(Int(type)),
+                    "subunitId": .int(Int(id)),
+                    "byteCount": .int(descriptorData.count),
+                    "hex": .string(hex),
                 ])
             )
         } catch {

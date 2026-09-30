@@ -111,3 +111,25 @@ TEST_F(AVCHandlerTests, ReScanAVCUnits_CallsDiscovery) {
     kern_return_t ret = handler->ReScanAVCUnits(&args);
     EXPECT_EQ(ret, kIOReturnSuccess);
 }
+
+// Test: GetSubunitDescriptor with missing inputs returns kIOReturnBadArgument
+TEST_F(AVCHandlerTests, GetSubunitDescriptor_MissingInputs_ReturnsBadArgument) {
+    uint64_t scalarInputs[2] = {0, 0};
+    args.scalarInput = scalarInputs;
+    args.scalarInputCount = 2;
+
+    kern_return_t ret = handler->GetSubunitDescriptor(&args);
+    EXPECT_EQ(ret, kIOReturnBadArgument);
+}
+
+// Test: GetSubunitDescriptor with subunit not found returns kIOReturnNotFound
+TEST_F(AVCHandlerTests, GetSubunitDescriptor_SubunitNotFound_ReturnsNotFound) {
+    uint64_t scalarInputs[4] = {0x0003, 0xDB000001, 0x01, 0x00};
+    args.scalarInput = scalarInputs;
+    args.scalarInputCount = 4;
+
+    EXPECT_CALL(mockDiscovery, GetAllAVCUnits()).WillOnce(Return(std::vector<AVCUnit*>{}));
+
+    kern_return_t ret = handler->GetSubunitDescriptor(&args);
+    EXPECT_EQ(ret, kIOReturnNotFound);
+}

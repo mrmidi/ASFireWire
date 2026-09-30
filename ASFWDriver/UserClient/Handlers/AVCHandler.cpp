@@ -9,6 +9,7 @@
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
 #include "../../Protocols/AVC/AVCUnit.hpp"
 #include "../../Protocols/AVC/Music/MusicSubunit.hpp"
+#include "../../Protocols/AVC/Audio/AudioSubunit.hpp"
 #include "../../Protocols/AVC/AVCDefs.hpp"
 #include "../../Protocols/AVC/Core/AvcFrame.hpp"
 #include "../../Protocols/AVC/Core/IAvcUnit.hpp"
@@ -688,15 +689,22 @@ kern_return_t AVCHandler::GetSubunitDescriptor(IOUserClientMethodArguments* args
                  request->id);
         return kIOReturnNotFound;
     }
-    if (!IsMusicSubunitType(subunit->GetType())) {
+    if (!IsMusicSubunitType(subunit->GetType()) && subunit->GetType() != Protocols::AVC::AVCSubunitType::kAudio) {
         ASFW_LOG(UserClient,
                  "GetSubunitDescriptor: not implemented for subunit type 0x%02x",
                  static_cast<uint8_t>(subunit->GetType()));
         return kIOReturnUnsupported;
     }
 
-    const auto musicSubunit = std::static_pointer_cast<MusicSubunit>(subunit);
-    const auto& descriptorData = musicSubunit->GetStatusDescriptorData();
+    std::optional<std::vector<uint8_t>> descriptorData;
+    if (IsMusicSubunitType(subunit->GetType())) {
+        const auto musicSubunit = std::static_pointer_cast<MusicSubunit>(subunit);
+        descriptorData = musicSubunit->GetStatusDescriptorData();
+    } else {
+        const auto audioSubunit = std::static_pointer_cast<Protocols::AVC::Audio::AudioSubunit>(subunit);
+        descriptorData = audioSubunit->GetDescriptorData();
+    }
+
     if (!descriptorData) {
         ASFW_LOG(UserClient, "GetSubunitDescriptor: descriptor data not available");
         return kIOReturnNotFound;

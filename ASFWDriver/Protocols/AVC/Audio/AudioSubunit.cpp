@@ -74,6 +74,7 @@ void AudioSubunit::ReadIdentifierDescriptor(ASFW::AVC::IAvcUnit& unit, std::func
             return;
         }
 
+        descriptorData_ = res.data;
         auto parsed = Descriptors::AudioSubunitDescriptorParser::ParseIdentifierDescriptor(res.data);
         if (!parsed) {
             ASFW_LOG_WARNING(Discovery, "AudioSubunit: Failed to parse Identifier Descriptor (%zu bytes)", res.data.size());

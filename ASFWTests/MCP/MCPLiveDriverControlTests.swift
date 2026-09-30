@@ -372,6 +372,7 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var configROM: ASFWDriverConnector.ConfigROMFetchResult?
     var avcUnits: [AVCUnitInfo] = []
     var avcSubunitCapabilities: AVCMusicCapabilities?
+    var avcSubunitDescriptor: Data?
     var nextHandle: UInt16 = 0x44
     var results: [UInt16: ASFWDriverConnector.AsyncTransactionResult] = [:]
     var reads = 0
@@ -405,6 +406,9 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     func mcpAVCUnits() -> [AVCUnitInfo]? { avcUnits }
     func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities? {
         avcSubunitCapabilities
+    }
+    func mcpAVCSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) -> Data? {
+        avcSubunitDescriptor
     }
 
     func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {

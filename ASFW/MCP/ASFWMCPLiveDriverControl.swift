@@ -16,6 +16,7 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpConfigROM(nodeId: UInt8, generation: UInt16) -> ASFWDriverConnector.ConfigROMFetchResult?
     func mcpAVCUnits() -> [AVCUnitInfo]?
     func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities?
+    func mcpAVCSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) -> Data?
 
     func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16?
     func mcpAsyncWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16?
@@ -98,6 +99,10 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
 
     func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities? {
         getSubunitCapabilities(guid: guid, type: type, id: id)
+    }
+
+    func mcpAVCSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) -> Data? {
+        getSubunitDescriptor(guid: guid, type: type, id: id)
     }
 
     func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {
@@ -458,6 +463,14 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
                 )
             }
         )
+    }
+
+    func avcSubunitDescriptor(
+        guid: UInt64,
+        type: UInt8,
+        id: UInt8
+    ) async -> Data? {
+        backend.mcpAVCSubunitDescriptor(guid: guid, type: type, id: id)
     }
 
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent] {

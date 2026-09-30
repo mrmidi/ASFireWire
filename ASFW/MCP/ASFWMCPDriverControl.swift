@@ -11,6 +11,7 @@ protocol ASFWDriverControlling {
     func listNodes() async -> [ASFWMCPNodeSummary]
     func listAVCUnits() async -> [ASFWMCPAVCUnitSummary]
     func avcSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWMCPAVCSubunitCapabilities?
+    func avcSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) async -> Data?
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent]
     func executeReadQuadlet(_ request: ASFWMCPReadQuadletRequest) async -> ASFWMCPTransactionResult
     func executeReadBlock(_ request: ASFWMCPReadBlockRequest) async -> ASFWMCPTransactionResult
@@ -270,6 +271,15 @@ actor MockASFWDriverControl: ASFWDriverControlling {
                 ]
             )]
         )
+    }
+
+    func avcSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) async -> Data? {
+        guard (await listAVCUnits()).contains(where: { $0.guid == guid &&
+            $0.subunits.contains(where: { $0.type == type && $0.id == id })
+        }) else {
+            return nil
+        }
+        return Data([0x00, 0x08, 0x02, 0x02, 0x02, 0x02, 0x00, 0x00])
     }
 
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent] {

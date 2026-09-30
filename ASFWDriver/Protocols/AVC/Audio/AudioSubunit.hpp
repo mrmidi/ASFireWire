@@ -48,6 +48,11 @@ public:
         return identifier_;
     }
 
+    /// Raw descriptor data read during discovery
+    const std::optional<std::vector<uint8_t>>& GetDescriptorData() const noexcept {
+        return descriptorData_;
+    }
+
     /// Read and parse Audio Subunit Identifier Descriptor (§5.1, §8.1)
     void ReadIdentifierDescriptor(ASFW::AVC::IAvcUnit& unit, std::function<void(bool)> completion);
 
@@ -57,6 +62,7 @@ private:
     std::vector<AudioPlugInfo> inputPlugs_;
     std::vector<AudioPlugInfo> outputPlugs_;
     std::optional<Descriptors::AudioSubunitIdentifier> identifier_;
+    std::optional<std::vector<uint8_t>> descriptorData_;
     
     void QueryPlugCounts(AVCUnit& unit, std::function<void(bool)> completion);
     void QueryPlugFormats(AVCUnit& unit, size_t plugIndex, bool isInput,
