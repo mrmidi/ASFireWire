@@ -114,8 +114,7 @@ final class PhaseScopeRenderer: NSObject, MTKViewDelegate {
               let pass = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
               let commandBuffer = commandQueue?.makeCommandBuffer(),
-              let compute = commandBuffer.makeComputeCommandEncoder(),
-              let render = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else {
+              let compute = commandBuffer.makeComputeCommandEncoder() else {
             return
         }
 
@@ -145,6 +144,9 @@ final class PhaseScopeRenderer: NSObject, MTKViewDelegate {
                                 threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
         compute.endEncoding()
 
+        guard let render = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else {
+            return
+        }
         render.setRenderPipelineState(renderPipeline)
         render.setVertexBuffer(buffer, offset: 0, index: 0)
         render.setVertexBytes(&params, length: MemoryLayout<ScopeParams>.stride, index: 1)
