@@ -75,6 +75,10 @@ protected:
         plug.direction = dir;
         subunit.plugs_.push_back(plug);
     }
+
+    void ParseBlock(ASFW::Protocols::AVC::Music::MusicSubunit& sub, const uint8_t* data, size_t len) {
+        sub.ParseDescriptorBlock(data, len);
+    }
 };
 
 // Test: QuerySupportedFormats should send 0xBF command
@@ -290,3 +294,58 @@ TEST_F(MusicSubunitTests, SetAudioVolume_SendsCorrectCDB) {
     
     EXPECT_TRUE(done);
 }
+
+// Test: ParseDescriptorBlock with captured Apogee Duet fixture
+TEST_F(MusicSubunitTests, ParseDescriptorBlock_DuetFixtureIntegration) {
+    const std::string duetHex =
+        "01ce000a810000060101ffffffff01c08108000403030005002e8109000800900200000100020020810a000b060302000000ff000101ff000f000a000b416e616c6f67204f757400002d810900080190020500010002001f810a000b060302000200ff000301ff000e000a000a416e616c6f6720496e0000248109000802900203000100010016810a0007400901000400ff0009000a000553796e6300002d810900080090020000010002001f810a000b060302000200ff000301ff000e000a000a416e616c6f6720496e00002e8109000801900205000100020020810a000b060302000000ff000101ff000f000a000b416e616c6f67204f75740000248109000802900203000100010016810a0007400901000400ff0009000a000553796e63000025810b000e00000000f000ff00fff101ff00ff0011000a000d416e616c6f67204f75742031000025810b000e00000100f000ff01fff101ff01ff0011000a000d416e616c6f67204f75742032000024810b000e00000200f001ff00fff100ff00ff0010000a000c416e616c6f6720496e2031000024810b000e00000300f001ff01fff100ff01ff0010000a000c416e616c6f6720496e2032000012810b000e80000400f002ff00fff102ff00ff";
+
+    std::vector<uint8_t> bytes;
+    bytes.reserve(duetHex.size() / 2);
+    for (size_t i = 0; i < duetHex.size(); i += 2) {
+        bytes.push_back(static_cast<uint8_t>(std::stoul(duetHex.substr(i, 2), nullptr, 16)));
+    }
+    ASSERT_EQ(bytes.size(), 464u);
+
+    // Call ParseDescriptorBlock on MusicSubunit
+    ParseBlock(*subunit, bytes.data(), bytes.size());
+
+    // Verify completion status
+    EXPECT_TRUE(subunit->HasCompleteDescriptorParse());
+
+    // Verify plugs
+    const auto& plugs = subunit->GetPlugs();
+    ASSERT_EQ(plugs.size(), 6u);
+    EXPECT_EQ(plugs[0].plugID, 0);
+    EXPECT_EQ(plugs[0].direction, StreamFormats::PlugDirection::kInput);
+    EXPECT_EQ(plugs[0].name, "Analog Out");
+
+    // Verify channel details within plug format
+    ASSERT_TRUE(plugs[0].currentFormat.has_value());
+    ASSERT_FALSE(plugs[0].currentFormat->channelFormats.empty());
+    const auto& chFormats = plugs[0].currentFormat->channelFormats[0];
+    ASSERT_GE(chFormats.channels.size(), 2u);
+    EXPECT_EQ(chFormats.channels[0].musicPlugID, 0);
+    EXPECT_EQ(chFormats.channels[0].name, "Analog Out 1");
+    EXPECT_EQ(chFormats.channels[1].musicPlugID, 1);
+    EXPECT_EQ(chFormats.channels[1].name, "Analog Out 2");
+
+    // Verify music channels
+    const auto& channels = subunit->GetMusicChannels();
+    ASSERT_EQ(channels.size(), 5u);
+    EXPECT_EQ(channels[0].musicPlugID, 0);
+    EXPECT_EQ(channels[0].name, "Analog Out 1");
+    EXPECT_EQ(channels[1].musicPlugID, 1);
+    EXPECT_EQ(channels[1].name, "Analog Out 2");
+    EXPECT_EQ(channels[2].musicPlugID, 2);
+    EXPECT_EQ(channels[2].name, "Analog In 1");
+    EXPECT_EQ(channels[3].musicPlugID, 3);
+    EXPECT_EQ(channels[3].name, "Analog In 2");
+
+    // Verify parsed status access
+    const auto& status = subunit->GetParsedStatus();
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(status->declaredLength, 462);
+    EXPECT_TRUE(status->capabilities.hasGeneralCapability);
+}
+

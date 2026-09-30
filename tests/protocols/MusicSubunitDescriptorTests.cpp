@@ -94,19 +94,19 @@ TEST(MusicSubunitDescriptorTests, DuetMusicStatusDescriptorParsing) {
     ASSERT_NE(mp0, nullptr);
     EXPECT_EQ(mp0->name, "Analog Out 1");
 
-    const auto* mp1 = result->FindMusicPlug(0x0100);
+    const auto* mp1 = result->FindMusicPlug(0x0001);
     ASSERT_NE(mp1, nullptr);
     EXPECT_EQ(mp1->name, "Analog Out 2");
 
-    const auto* mp2 = result->FindMusicPlug(0x0200);
+    const auto* mp2 = result->FindMusicPlug(0x0002);
     ASSERT_NE(mp2, nullptr);
     EXPECT_EQ(mp2->name, "Analog In 1");
 
-    const auto* mp3 = result->FindMusicPlug(0x0300);
+    const auto* mp3 = result->FindMusicPlug(0x0003);
     ASSERT_NE(mp3, nullptr);
     EXPECT_EQ(mp3->name, "Analog In 2");
 
-    const auto* mp4 = result->FindMusicPlug(0x0400);
+    const auto* mp4 = result->FindMusicPlug(0x0004);
     ASSERT_NE(mp4, nullptr);
 }
 
@@ -147,11 +147,11 @@ TEST(MusicSubunitDescriptorTests, Phase88MusicStatusDescriptorParsing) {
     EXPECT_EQ(dest0->clusters[0].channelCount, 8);
     EXPECT_EQ(dest0->clusters[0].signals.size(), 8u);
 
-    // Music Plugs (0x810B) - 25 music plugs in Phase 88 (0x0000..0x1800)
+    // Music Plugs (0x810B) - 25 music plugs in Phase 88 (0x0000..0x0018)
     ASSERT_EQ(result->musicPlugs.size(), 25u);
     EXPECT_NE(result->FindMusicPlug(0x0000), nullptr);
-    EXPECT_NE(result->FindMusicPlug(0x0700), nullptr);
-    EXPECT_NE(result->FindMusicPlug(0x1800), nullptr);
+    EXPECT_NE(result->FindMusicPlug(0x0007), nullptr);
+    EXPECT_NE(result->FindMusicPlug(0x0018), nullptr);
 }
 
 } // namespace ASFW::Protocols::AVC::Descriptors::Test

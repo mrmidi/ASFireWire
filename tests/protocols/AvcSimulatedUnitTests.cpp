@@ -10,6 +10,8 @@
 #include "ASFWDriver/Protocols/AVC/Commands/StreamFormatCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/Descriptors/DescriptorAccessor.hpp"
 #include "ASFWDriver/Protocols/AVC/Descriptors/MusicSubunitDescriptor.hpp"
+#include "ASFWDriver/Protocols/AVC/Descriptors/AudioSubunitDescriptor.hpp"
+#include "ASFWDriver/Protocols/AVC/Audio/AudioSubunit.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/IAvcUnit.hpp"
 #include "ASFWDriver/Protocols/AVC/Extensions/BridgeCoPlugInfo.hpp"
 #include "RecordingFireWireBus.hpp"
@@ -295,6 +297,42 @@ TEST_F(AvcSimulatedUnitTests, DescriptorChunkedServing) {
     });
     ASSERT_TRUE(failedResult.has_value());
     EXPECT_FALSE(failedResult->success);
+}
+
+TEST_F(AvcSimulatedUnitTests, AudioSubunitReadIdentifierDescriptor_DuetIntegration) {
+    const std::string duetAudioHex =
+        "0036000200020000002c002a00010026000000040202c0000181000100188101ffff01f00000040202c00000090802000003000200020000";
+
+    std::vector<uint8_t> descriptorBytes;
+    descriptorBytes.reserve(duetAudioHex.size() / 2);
+    for (size_t i = 0; i < duetAudioHex.size(); i += 2) {
+        descriptorBytes.push_back(static_cast<uint8_t>(std::stoul(duetAudioHex.substr(i, 2), nullptr, 16)));
+    }
+    ASSERT_EQ(descriptorBytes.size(), 56u);
+
+    // Audio Subunit 0 address is 0x08 (0x01 << 3 | 0), identifier specifier is 0x00
+    duetUnit_.SetDescriptor(0x08, {0x00}, descriptorBytes);
+
+    Protocols::AVC::Audio::AudioSubunit audioSubunit(Protocols::AVC::AVCSubunitType::kAudio, 0);
+    EXPECT_FALSE(audioSubunit.GetIdentifier().has_value());
+
+    std::optional<bool> readOk;
+    audioSubunit.ReadIdentifierDescriptor(duetUnit_, [&](bool success) {
+        readOk = success;
+    });
+
+    ASSERT_TRUE(readOk.has_value());
+    EXPECT_TRUE(*readOk);
+
+    const auto& id = audioSubunit.GetIdentifier();
+    ASSERT_TRUE(id.has_value());
+    EXPECT_EQ(id->generationId, 0);
+    ASSERT_EQ(id->functionBlocks.size(), 1u);
+    EXPECT_EQ(id->functionBlocks[0].id, 1);
+    EXPECT_EQ(id->functionBlocks[0].type, Protocols::AVC::Descriptors::AudioFunctionBlockType::kFeature);
+    EXPECT_EQ(id->functionBlocks[0].clusterChannels, 2);
+    EXPECT_TRUE((id->functionBlocks[0].masterControls & Protocols::AVC::Descriptors::FeatureControlMask::kVolume) != 0);
+    EXPECT_TRUE((id->functionBlocks[0].masterControls & Protocols::AVC::Descriptors::FeatureControlMask::kMute) != 0);
 }
 
 } // namespace ASFW::AVC::Testing

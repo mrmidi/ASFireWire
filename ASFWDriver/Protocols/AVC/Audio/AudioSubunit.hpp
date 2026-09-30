@@ -9,8 +9,13 @@
 
 #include "../Subunit.hpp"
 #include "../Commands/StreamFormatCommand.hpp"
+#include "../Descriptors/AudioSubunitDescriptor.hpp"
 #include <vector>
 #include <optional>
+
+namespace ASFW::AVC {
+class IAvcUnit;
+}
 
 namespace ASFW::Protocols::AVC::Audio {
 
@@ -38,11 +43,20 @@ public:
     const std::vector<AudioPlugInfo>& GetInputPlugs() const { return inputPlugs_; }
     const std::vector<AudioPlugInfo>& GetOutputPlugs() const { return outputPlugs_; }
 
+    /// Parsed Audio Subunit Identifier Descriptor (§5.1, §8.1)
+    const std::optional<Descriptors::AudioSubunitIdentifier>& GetIdentifier() const noexcept {
+        return identifier_;
+    }
+
+    /// Read and parse Audio Subunit Identifier Descriptor (§5.1, §8.1)
+    void ReadIdentifierDescriptor(ASFW::AVC::IAvcUnit& unit, std::function<void(bool)> completion);
+
 private:
     uint8_t numInputPlugs_{0};
     uint8_t numOutputPlugs_{0};
     std::vector<AudioPlugInfo> inputPlugs_;
     std::vector<AudioPlugInfo> outputPlugs_;
+    std::optional<Descriptors::AudioSubunitIdentifier> identifier_;
     
     void QueryPlugCounts(AVCUnit& unit, std::function<void(bool)> completion);
     void QueryPlugFormats(AVCUnit& unit, size_t plugIndex, bool isInput,

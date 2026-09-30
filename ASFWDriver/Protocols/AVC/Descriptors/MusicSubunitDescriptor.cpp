@@ -207,10 +207,10 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                         }
 
                         status.plugs.push_back(std::move(plug));
-                    } else if (childType == 0x810B && childData.size() >= 4) { // Music Plug Info
+                    } else if (childType == 0x810B && childData.size() >= 3) { // Music Plug Info
                         MusicPlugDetail mp;
                         mp.portType = childData[0];
-                        mp.musicPlugId = ReadBE16(childData.data() + 2);
+                        mp.musicPlugId = ReadBE16(childData.data() + 1);
                         mp.name = ExtractName(child);
                         status.musicPlugs.push_back(std::move(mp));
                     }

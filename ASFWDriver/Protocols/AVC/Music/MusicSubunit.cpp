@@ -635,69 +635,6 @@ bool MusicSubunit::HasCompleteDescriptorParse() const noexcept {
     return true;
 }
 
-// Helper to extract name from a block (looks in nested blocks recursively)
-static std::string ExtractPlugName(const ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& block) {
-    // Look for Name (0x000B) or RawText (0x000A) blocks
-    auto nameBlock = block.FindNestedRecursive(0x000B); // Name
-    if (!nameBlock) {
-        nameBlock = block.FindNestedRecursive(0x000A); // Raw Text
-    }
-    
-    if (nameBlock) {
-        const auto& nameData = nameBlock->GetPrimaryData();
-        if (!nameData.empty()) {
-            std::string name;
-            name.assign(reinterpret_cast<const char*>(nameData.data()), nameData.size());
-            
-            // Remove non-printables
-            name.erase(std::remove_if(name.begin(), name.end(), [](unsigned char c){ 
-                return !std::isprint(c); 
-            }), name.end());
-            
-            return name;
-        }
-    }
-    return "";
-}
-
-// Extract individual channel names from MusicPlugInfo (0x810B) blocks
-// These blocks contain per-channel information with music_plug_id and name
-static void ExtractMusicPlugChannels(
-    const ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& block,
-    std::vector<MusicSubunit::MusicPlugChannel>& channels)
-{
-    using namespace ASFW::Protocols::AVC::Descriptors;
-    
-    // Look for MusicPlugInfo (0x810B) blocks recursively
-    auto musicPlugBlocks = block.FindAllNestedRecursive(0x810B);
-    
-    for (const auto& musicPlugBlock : musicPlugBlocks) {
-        const auto& primaryData = musicPlugBlock.GetPrimaryData();
-        
-        // MusicPlugInfo primary fields: Port Type + Music Plug ID (at least 3-4 bytes needed)
-        // Based on Python parser:
-        //   primary_len=14 with music_plug_id at bytes [1-2] and port_type at byte [0]
-        if (primaryData.size() < 3) {
-            continue;  // Too short to parse
-        }
-        
-        MusicSubunit::MusicPlugChannel channel;
-        channel.portType = primaryData[0];
-        // Music Plug ID is at bytes 1-2 (big-endian)
-        channel.musicPlugID = (static_cast<uint16_t>(primaryData[1]) << 8) | primaryData[2];
-        
-        // Extract name from nested RawText (0x000A) or Name (0x000B) block
-        channel.name = ExtractPlugName(musicPlugBlock);
-        
-        if (!channel.name.empty()) {
-            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Music Channel ID %u: '%{public}s' (plugType=0x%02x)",
-                        channel.musicPlugID, channel.name.c_str(), channel.portType);
-        }
-        
-        channels.push_back(channel);
-    }
-}
-
 //==============================================================================
 // Music Subunit Identifier Descriptor Parser
 // Spec: TA Document 2001007, Section 5.2
@@ -855,6 +792,7 @@ void MusicSubunit::ParseDescriptorBlock(const uint8_t* data, size_t length) {
     statusDescriptorHasClusterInfo_ = false;
     statusDescriptorHasPlugs_ = false;
     statusDescriptorExpectedPlugCount_ = 0;
+    parsedStatus_.reset();
     musicChannels_.clear();
     plugs_.clear();
 
@@ -863,265 +801,109 @@ void MusicSubunit::ParseDescriptorBlock(const uint8_t* data, size_t length) {
         return;
     }
 
-    // We are reading the Status Descriptor (0x80), which consists of a 2-byte length
-    // followed immediately by Info Blocks.
-    // Reference: TA Document 2001007, Figure 6.1
-    
-    uint16_t descriptorLength = ReadBE16(data);
-    ASFW_LOG_V1(MusicSubunit, "Parsing Status Descriptor: Declared Length=%u, Actual=%zu", 
-                descriptorLength, length);
-    // Per spec, info blocks immediately follow the 2-byte length.
-    // Clamp parsing to the advertised descriptor length to avoid reading
-    // appended data from buggy captures.
-    const size_t advertisedEnd = 2 + static_cast<size_t>(descriptorLength);
-    const size_t parseEnd = std::min(length, advertisedEnd);
-    size_t infoBlockOffset = 2; // Standard offset
-
-    DescriptorParsingContext ctx;
-    size_t parsedBlockCount = 0;
-    if (infoBlockOffset < parseEnd) {
-        ASFW_LOG_V3(MusicSubunit, "Parsing info blocks at offset %zu (length=%zu)",
-                    infoBlockOffset, parseEnd - infoBlockOffset);
-        ParseDescriptorInfoBlocks(data, parseEnd, infoBlockOffset, ctx, parsedBlockCount);
-    } else {
-        ASFW_LOG_V1(MusicSubunit, "No info blocks present");
-    }
-
-    FinalizeDescriptorContext(ctx);
-
-    statusDescriptorParsedOk_ = (parsedBlockCount > 0);
-}
-
-void MusicSubunit::ProcessStatusAreaBlock(uint16_t type, std::span<const uint8_t> primaryData) {
-    switch (type) {
-    case 0x8100:
-        if (primaryData.size() >= 6) {
-            capabilities_.hasGeneralCapability = true;
-            capabilities_.transmitCapabilityFlags = primaryData[0];
-            capabilities_.receiveCapabilityFlags = primaryData[1];
-            capabilities_.latencyCapability = ReadBE32(primaryData.data() + 2);
-            ASFW_LOG_V1(MusicSubunit, "GMSSA: Tx=0x%02x Rx=0x%02x Latency=%u",
-                        primaryData[0], primaryData[1], capabilities_.latencyCapability.value());
-        }
-        return;
-    case 0x8101:
-        if (primaryData.size() >= 5) {
-            capabilities_.hasAudioCapability = true;
-            const uint8_t numFormats = primaryData[0];
-            capabilities_.maxAudioInputChannels = ReadBE16(primaryData.data() + 1);
-            capabilities_.maxAudioOutputChannels = ReadBE16(primaryData.data() + 3);
-            ASFW_LOG_V1(MusicSubunit, "Audio Caps: In=%u Out=%u Formats=%u",
-                        capabilities_.maxAudioInputChannels.value(),
-                        capabilities_.maxAudioOutputChannels.value(), numFormats);
-        }
-        return;
-    case 0x8102:
-        if (primaryData.size() >= 6) {
-            capabilities_.hasMidiCapability = true;
-            capabilities_.midiVersionMajor = primaryData[0] >> 4;
-            capabilities_.midiVersionMinor = primaryData[0] & 0x0F;
-            capabilities_.midiAdaptationLayerVersion = primaryData[1];
-            capabilities_.maxMidiInputPorts = ReadBE16(primaryData.data() + 2);
-            capabilities_.maxMidiOutputPorts = ReadBE16(primaryData.data() + 4);
-            ASFW_LOG_V1(MusicSubunit, "MIDI Caps: Ports In=%u Out=%u",
-                        capabilities_.maxMidiInputPorts.value(), capabilities_.maxMidiOutputPorts.value());
-        }
-        return;
-    case 0x8103:
-        if (!primaryData.empty()) {
-            capabilities_.hasSmpteTimeCodeCapability = true;
-            capabilities_.smpteTimeCodeCapabilityFlags = primaryData[0];
-        }
-        return;
-    case 0x8104:
-        if (!primaryData.empty()) {
-            capabilities_.hasSampleCountCapability = true;
-            capabilities_.sampleCountCapabilityFlags = primaryData[0];
-        }
-        return;
-    case 0x8105:
-        if (!primaryData.empty()) {
-            capabilities_.hasAudioSyncCapability = true;
-            capabilities_.audioSyncCapabilityFlags = primaryData[0];
-            ASFW_LOG_V1(MusicSubunit, "Audio Sync Caps: Flags=0x%02x", primaryData[0]);
-        }
-        return;
-    default:
+    auto statusOpt = Descriptors::MusicSubunitDescriptorParser::ParseStatusDescriptor(
+        std::span<const uint8_t>{data, length});
+    if (!statusOpt) {
+        ASFW_LOG_V0(MusicSubunit, "Failed to parse Music Subunit Status Descriptor (%zu bytes)", length);
         return;
     }
-}
 
-void MusicSubunit::HandleRoutingStatusBlock(const ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& block,
-                                            DescriptorParsingContext& ctx) {
-    const auto& primaryData = block.GetPrimaryData();
-    if (primaryData.size() >= 2) {
-        ctx.numDest = primaryData[0];
-        ctx.numSrc = primaryData[1];
-        ctx.foundRouting = true;
+    statusDescriptorReadOk_ = true;
+    if (!statusDescriptorData_.has_value()) {
+        statusDescriptorData_ = std::vector<uint8_t>(data, data + length);
+    }
+    parsedStatus_ = std::move(statusOpt);
+    const auto& status = *parsedStatus_;
+    ASFW_LOG_V1(MusicSubunit, "Parsed Status Descriptor: Declared Length=%u, Plugs=%zu, MusicPlugs=%zu",
+                status.declaredLength, status.plugs.size(), status.musicPlugs.size());
+
+    // 1. General & Media Capabilities
+    if (status.capabilities.hasGeneralCapability) {
+        capabilities_.hasGeneralCapability = true;
+        capabilities_.transmitCapabilityFlags = status.capabilities.transmitCapabilityFlags;
+        capabilities_.receiveCapabilityFlags = status.capabilities.receiveCapabilityFlags;
+        capabilities_.latencyCapability = status.capabilities.latencyCapability;
+    }
+    if (status.capabilities.hasAudioCapability) {
+        capabilities_.hasAudioCapability = true;
+        capabilities_.maxAudioInputChannels = status.capabilities.maxAudioInputChannels;
+        capabilities_.maxAudioOutputChannels = status.capabilities.maxAudioOutputChannels;
+    }
+    if (status.capabilities.hasMidiCapability) {
+        capabilities_.hasMidiCapability = true;
+        capabilities_.midiVersionMajor = status.capabilities.midiVersionMajor;
+        capabilities_.midiVersionMinor = status.capabilities.midiVersionMinor;
+        capabilities_.midiAdaptationLayerVersion = status.capabilities.midiAdaptationLayerVersion;
+        capabilities_.maxMidiInputPorts = status.capabilities.maxMidiInputPorts;
+        capabilities_.maxMidiOutputPorts = status.capabilities.maxMidiOutputPorts;
+    }
+    if (status.capabilities.hasSmpteTimeCodeCapability) {
+        capabilities_.hasSmpteTimeCodeCapability = true;
+        capabilities_.smpteTimeCodeCapabilityFlags = status.capabilities.smpteTimeCodeCapabilityFlags;
+    }
+    if (status.capabilities.hasSampleCountCapability) {
+        capabilities_.hasSampleCountCapability = true;
+        capabilities_.sampleCountCapabilityFlags = status.capabilities.sampleCountCapabilityFlags;
+    }
+    if (status.capabilities.hasAudioSyncCapability) {
+        capabilities_.hasAudioSyncCapability = true;
+        capabilities_.audioSyncCapabilityFlags = status.capabilities.audioSyncCapabilityFlags;
+    }
+
+    // 2. Routing Status
+    if (status.hasRoutingStatus) {
         statusDescriptorHasRouting_ = true;
-        statusDescriptorExpectedPlugCount_ = static_cast<uint16_t>(ctx.numDest + ctx.numSrc);
-        ASFW_LOG_V1(MusicSubunit, "RoutingStatus found: dest=%d src=%d", ctx.numDest, ctx.numSrc);
+        statusDescriptorExpectedPlugCount_ = static_cast<uint16_t>(status.numDestPlugs + status.numSrcPlugs);
     }
 
-    for (const auto& child : block.GetNestedBlocks()) {
-        ProcessDescriptorInfoBlock(child, ctx);
+    // 3. Music Plug Channels (0x810B)
+    for (const auto& mp : status.musicPlugs) {
+        musicChannels_.push_back(MusicPlugChannel{
+            .musicPlugID = mp.musicPlugId,
+            .portType = mp.portType,
+            .name = mp.name,
+        });
     }
-}
 
-void MusicSubunit::ParseClusterInfoBlocks(const ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& block,
-                                          PlugInfo& plug) {
-    using namespace ASFW::Protocols::AVC::StreamFormats;
-    const auto clusterBlocks = block.FindAllNestedRecursive(0x810A);
-    ASFW_LOG_V1(MusicSubunit, "Plug %u: Found %zu ClusterInfo blocks", plug.plugID, clusterBlocks.size());
+    // 4. Subunit Plugs (0x8109) & Clusters (0x810A)
+    for (const auto& p : status.plugs) {
+        PlugInfo plug;
+        plug.plugID = p.plugId;
+        plug.direction = p.isDestination ? StreamFormats::PlugDirection::kInput
+                                         : StreamFormats::PlugDirection::kOutput;
+        plug.type = (p.usage == 0x04 || p.usage == 0x05)
+            ? StreamFormats::MusicPlugType::kAudio
+            : static_cast<StreamFormats::MusicPlugType>(p.usage);
+        plug.name = p.name;
 
-    for (const auto& clusterBlock : clusterBlocks) {
-        const auto& clusterData = clusterBlock.GetPrimaryData();
-        if (clusterData.size() < 3) {
-            continue;
+        if (!p.clusters.empty()) {
+            statusDescriptorHasClusterInfo_ = true;
+            StreamFormats::AudioStreamFormat currentFormat{};
+            for (const auto& cluster : p.clusters) {
+                StreamFormats::ChannelFormatInfo channelFormat;
+                channelFormat.formatCode = static_cast<StreamFormats::StreamFormatCode>(cluster.streamFormatCode);
+                channelFormat.channelCount = cluster.channelCount;
+                for (const auto& sig : cluster.signals) {
+                    StreamFormats::ChannelFormatInfo::ChannelDetail detail;
+                    detail.musicPlugID = sig.musicPlugId;
+                    detail.position = sig.position;
+                    channelFormat.channels.push_back(detail);
+                }
+                currentFormat.channelFormats.push_back(std::move(channelFormat));
+            }
+            plug.currentFormat = std::move(currentFormat);
         }
-
-        ChannelFormatInfo channelFormat;
-        channelFormat.formatCode = static_cast<StreamFormatCode>(clusterData[0]);
-        const uint8_t numSignals = clusterData[2];
-        channelFormat.channelCount = numSignals;
-
-        ASFW_LOG_V1(MusicSubunit, "ClusterInfo: formatCode=0x%02X, numSignals=%u",
-                    clusterData[0], numSignals);
-
-        for (uint8_t signalIndex = 0;
-             signalIndex < numSignals && (3 + (signalIndex + 1) * 4) <= clusterData.size();
-             ++signalIndex) {
-            const size_t signalOffset = 3 + signalIndex * 4;
-            ChannelFormatInfo::ChannelDetail detail;
-            detail.musicPlugID = (static_cast<uint16_t>(clusterData[signalOffset]) << 8) |
-                                 clusterData[signalOffset + 1];
-            detail.position = clusterData[signalOffset + 2];
-            channelFormat.channels.push_back(detail);
-
-            ASFW_LOG_V1(MusicSubunit, "  Signal %u: musicPlugID=0x%04X, position=%u",
-                        signalIndex, detail.musicPlugID, detail.position);
-        }
-
-        if (channelFormat.channels.empty()) {
-            continue;
-        }
-
-        statusDescriptorHasClusterInfo_ = true;
-        if (!plug.currentFormat.has_value()) {
-            plug.currentFormat = AudioStreamFormat{};
-        }
-        plug.currentFormat->channelFormats.push_back(channelFormat);
-    }
-}
-
-void MusicSubunit::HandleSubunitPlugInfoBlock(
-    const ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& block,
-    DescriptorParsingContext& ctx) {
-    using namespace ASFW::Protocols::AVC::StreamFormats;
-    const auto& primaryData = block.GetPrimaryData();
-    if (primaryData.size() < 4) {
-        return;
+        plugs_.push_back(std::move(plug));
     }
 
-    PlugInfo plug;
-    plug.plugID = primaryData[0];
-    const uint8_t usage = primaryData[3];
-    plug.type = (usage == 0x04 || usage == 0x05) ? MusicPlugType::kAudio
-                                                 : static_cast<MusicPlugType>(usage);
-    plug.name = ExtractPlugName(block);
-    ParseClusterInfoBlocks(block, plug);
-
-    ctx.discoveredPlugs.push_back(plug);
-    statusDescriptorHasPlugs_ = true;
-}
-
-void MusicSubunit::ProcessDescriptorInfoBlock(
-    const ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& block,
-    DescriptorParsingContext& ctx) {
-    const uint16_t type = block.GetType();
-    ProcessStatusAreaBlock(type, block.GetPrimaryData());
-
-    if (type == 0x8108) {
-        HandleRoutingStatusBlock(block, ctx);
-        return;
-    }
-    if (type == 0x8109) {
-        HandleSubunitPlugInfoBlock(block, ctx);
-        return;
+    // 5. Finalize Plugs: apply channel names from musicChannels_ and update capabilities
+    if (!plugs_.empty()) {
+        statusDescriptorHasPlugs_ = true;
+        ApplyMusicChannelNamesToPlugs();
+        UpdateCapabilitiesFromPlugs();
     }
 
-    for (const auto& child : block.GetNestedBlocks()) {
-        ProcessDescriptorInfoBlock(child, ctx);
-    }
-}
-
-void MusicSubunit::ParseDescriptorInfoBlocks(const uint8_t* data,
-                                             size_t parseEnd,
-                                             size_t infoBlockOffset,
-                                             DescriptorParsingContext& ctx,
-                                             size_t& parsedBlockCount) {
-    using namespace ASFW::Protocols::AVC::Descriptors;
-
-    size_t offset = infoBlockOffset;
-    while (offset < parseEnd) {
-        if (parseEnd - offset < 4) {
-            ASFW_LOG_V1(MusicSubunit, "End of descriptor cleanup: %zu bytes remaining (too small for header)",
-                        parseEnd - offset);
-            break;
-        }
-
-        const uint16_t compoundLength = (static_cast<uint16_t>(data[offset]) << 8) | data[offset + 1];
-        const size_t blockSize = compoundLength + 2;
-        if (blockSize < 4 || compoundLength == 0xFFFF) {
-            ASFW_LOG_V1(MusicSubunit, "Garbage/Invalid block at offset %zu (size=%zu). Scanning... (skipping 4 bytes)",
-                        offset, blockSize);
-            offset += 4;
-            continue;
-        }
-
-        size_t consumed = 0;
-        const size_t remaining = parseEnd - offset;
-        auto blockResult = AVCInfoBlock::Parse(data + offset, remaining, consumed);
-        if (!blockResult) {
-            ASFW_LOG_V1(MusicSubunit, "Failed to parse info block at offset %zu, attempting scan (skipping 4 bytes)",
-                        offset);
-            offset += 4;
-            continue;
-        }
-
-        parsedBlockCount++;
-        ProcessDescriptorInfoBlock(*blockResult, ctx);
-        ExtractMusicPlugChannels(*blockResult, musicChannels_);
-        offset += consumed;
-    }
-}
-
-void MusicSubunit::AssignDescriptorPlugDirections(DescriptorParsingContext& ctx) {
-    using namespace ASFW::Protocols::AVC::StreamFormats;
-    if (!ctx.foundRouting) {
-        ASFW_LOG_V1(MusicSubunit, "Warning: Plugs found but no RoutingStatus. Defaulting to Input.");
-    }
-
-    size_t index = 0;
-    for (auto& plug : ctx.discoveredPlugs) {
-        if (!ctx.foundRouting) {
-            plug.direction = PlugDirection::kInput;
-        } else if (index < static_cast<size_t>(ctx.numDest)) {
-            plug.direction = PlugDirection::kInput;
-        } else if (index < static_cast<size_t>(ctx.numDest + ctx.numSrc)) {
-            plug.direction = PlugDirection::kOutput;
-        } else {
-            plug.direction = PlugDirection::kInput;
-            ASFW_LOG_V1(MusicSubunit, "Plug index %zu beyond declared counts (dest=%d src=%d)",
-                        index, ctx.numDest, ctx.numSrc);
-        }
-
-        if (!plug.name.empty()) {
-            ASFW_LOG_V1(MusicSubunit, "Parsed Plug %u (%{public}s): %{public}s",
-                        plug.plugID, plug.direction == PlugDirection::kInput ? "In" : "Out", plug.name.c_str());
-        }
-        ++index;
-    }
+    statusDescriptorParsedOk_ = statusDescriptorHasPlugs_ || statusDescriptorHasRouting_;
 }
 
 void MusicSubunit::ApplyMusicChannelNamesToPlugs() {
@@ -1210,109 +992,32 @@ void MusicSubunit::UpdateCapabilitiesFromPlugs() {
                 midiIns, midiOuts);
 }
 
-void MusicSubunit::FinalizeDescriptorContext(DescriptorParsingContext& ctx) {
-    if (ctx.discoveredPlugs.empty()) {
-        return;
-    }
-
-    AssignDescriptorPlugDirections(ctx);
-    plugs_ = std::move(ctx.discoveredPlugs);
-    statusDescriptorHasPlugs_ = !plugs_.empty();
-    ApplyMusicChannelNamesToPlugs();
-    UpdateCapabilitiesFromPlugs();
-}
-
-// ... (ReadStatusDescriptor) ...
 void MusicSubunit::ReadStatusDescriptor(AVCUnit& unit, std::function<void(bool)> completion) {
     ASFW_LOG_V1(MusicSubunit, "Reading Music Subunit Status Descriptor (type 0x80)");
 
-    // Keep AVCUnit alive during async operations
     auto unitPtr = unit.shared_from_this();
+    auto accessor = std::make_shared<DescriptorAccessor>(unit, GetAddress());
 
-    auto accessor = std::make_shared<DescriptorAccessor>(
-        unit, GetAddress()
-    );
-
-    // Define specifier for Status Descriptor (0x80)
     DescriptorSpecifier specifier;
     specifier.type = static_cast<DescriptorSpecifierType>(0x80);
     specifier.typeSpecificFields = {};
 
-    // Common parsing logic
-    auto parseHandler = [this, completion](const DescriptorAccessor::ReadDescriptorResult& result) {
-        if (!result.success) {
-            ASFW_LOG_V0(MusicSubunit, "Failed to read Status Descriptor: %d",
-                          static_cast<int>(result.avcResult));
-            completion(false);
-            return;
-        }
-
-        const auto& data = result.data;
-        ASFW_LOG_V3(MusicSubunit, "Received Status Descriptor (%zu bytes)", data.size());
-
-        // Store raw data
-        statusDescriptorData_ = data;
-
-        // Parse total_info_block_length from header (2 bytes)
-        if (data.size() < 2) {
-            ASFW_LOG_V0(MusicSubunit, "Status Descriptor too short (need >=2 bytes for header)");
-            completion(false);
-            return;
-        }
-
-        uint16_t totalInfoBlockLength = ReadBE16(data.data());
-        ASFW_LOG_V3(MusicSubunit, "Total info block length: %u bytes", totalInfoBlockLength);
-
-        // Validate length
-        if (data.size() < 2 + totalInfoBlockLength) {
-            ASFW_LOG_V1(MusicSubunit,
-                "Status Descriptor shorter than claimed (have %zu, need %u)",
-                data.size(), 2 + totalInfoBlockLength);
-        }
-
-        // Parse info blocks using AVCInfoBlock::Parse
-        dynamicStatus_.clear();
-        const size_t advertisedEnd = 2 + static_cast<size_t>(totalInfoBlockLength);
-        const size_t parseEnd = std::min(data.size(), advertisedEnd);
-        size_t offset = 2;  // Skip total_info_block_length field
-
-        while (offset < parseEnd) {
-            size_t consumed = 0;
-            auto block = ASFW::Protocols::AVC::Descriptors::AVCInfoBlock::Parse(
-                data.data() + offset,
-                parseEnd - offset,
-                consumed
-            );
-
-            if (!block) {
-                ASFW_LOG_V1(MusicSubunit,
-                    "Failed to parse info block at offset %zu (error: %d), stopping",
-                    offset, static_cast<int>(block.error()));
-                break;
-            }
-
-            ASFW_LOG_V1(MusicSubunit, "Parsed status info block: type=0x%04x, %zu nested blocks",
-                         block->GetType(), block->GetNestedBlocks().size());
-
-            dynamicStatus_.push_back(std::move(*block));
-            offset += consumed;
-        }
-
-            ASFW_LOG_V1(MusicSubunit, "Successfully parsed %zu status info blocks",
-                         dynamicStatus_.size());
-
+    accessor->readWithOpenCloseSequence(specifier, [this, unitPtr, accessor, specifier, completion](const DescriptorAccessor::ReadDescriptorResult& result) {
+        if (result.success && !result.data.empty()) {
+            statusDescriptorReadOk_ = true;
+            statusDescriptorData_ = result.data;
+            ParseDescriptorBlock(result.data.data(), result.data.size());
             completion(true);
-    };
-
-    // 1. Try Standard Sequence
-    accessor->readWithOpenCloseSequence(specifier, [this, unitPtr, accessor, specifier, completion, parseHandler](const DescriptorAccessor::ReadDescriptorResult& result) {
-        if (result.success) {
-            parseHandler(result);
         } else {
-            // 2. Fallback: Non-Standard Direct Read
-            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Standard Status Read failed. Trying Non-Standard Direct Read...");
-            accessor->readComplete(specifier, [parseHandler](const DescriptorAccessor::ReadDescriptorResult& fallbackResult) {
-                parseHandler(fallbackResult);
+            accessor->readComplete(specifier, [this, completion](const DescriptorAccessor::ReadDescriptorResult& fallbackResult) {
+                if (fallbackResult.success && !fallbackResult.data.empty()) {
+                    statusDescriptorReadOk_ = true;
+                    statusDescriptorData_ = fallbackResult.data;
+                    ParseDescriptorBlock(fallbackResult.data.data(), fallbackResult.data.size());
+                    completion(true);
+                } else {
+                    completion(false);
+                }
             });
         }
     });
