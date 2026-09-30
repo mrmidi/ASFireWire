@@ -17,6 +17,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ASFW::Protocols::AVC::Descriptors {
@@ -69,6 +70,7 @@ struct MusicClusterSignal {
 
 struct MusicClusterInfo {
     uint8_t streamFormatCode{0};
+    uint8_t portType{0};
     uint8_t channelCount{0};
     std::string name;
     std::vector<MusicClusterSignal> signals;
@@ -101,6 +103,7 @@ struct MusicSubunitStatus {
 
     std::vector<MusicSubunitPlug> plugs;
     std::vector<MusicPlugDetail> musicPlugs;
+    std::unordered_map<uint8_t, std::vector<std::string>> perPlugChannelNames;
 
     [[nodiscard]] const MusicSubunitPlug* FindPlug(uint8_t plugId, bool isDest) const noexcept;
     [[nodiscard]] const MusicPlugDetail* FindMusicPlug(uint16_t musicPlugId) const noexcept;

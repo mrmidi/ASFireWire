@@ -144,6 +144,7 @@ TEST(MusicSubunitDescriptorTests, Phase88MusicStatusDescriptorParsing) {
     ASSERT_NE(dest0, nullptr);
     ASSERT_FALSE(dest0->clusters.empty());
     EXPECT_EQ(dest0->clusters[0].streamFormatCode, 0x06); // AM824
+    EXPECT_EQ(dest0->clusters[0].portType, 0x03);         // line
     EXPECT_EQ(dest0->clusters[0].channelCount, 8);
     EXPECT_EQ(dest0->clusters[0].signals.size(), 8u);
 
@@ -152,6 +153,11 @@ TEST(MusicSubunitDescriptorTests, Phase88MusicStatusDescriptorParsing) {
     EXPECT_NE(result->FindMusicPlug(0x0000), nullptr);
     EXPECT_NE(result->FindMusicPlug(0x0007), nullptr);
     EXPECT_NE(result->FindMusicPlug(0x0018), nullptr);
+
+    // Per-plug channel names from 0x8101 -> 0x8102 -> 0x8103
+    ASSERT_TRUE(result->perPlugChannelNames.contains(0));
+    EXPECT_EQ(result->perPlugChannelNames[0].size(), 10u);
+    EXPECT_EQ(result->perPlugChannelNames[0][0], "Line_1/2 left PHASE88 FW");
 }
 
 } // namespace ASFW::Protocols::AVC::Descriptors::Test

@@ -45,7 +45,16 @@ const MusicPlugDetail* MusicSubunitStatus::FindMusicPlug(uint16_t musicPlugId) c
 
 std::string MusicSubunitDescriptorParser::ExtractName(const AVCInfoBlock& block) noexcept {
     // 1. Try finding Raw Text Info Block (0x000A)
-    const auto rawTextBlock = block.FindNestedRecursive(0x000A);
+    std::optional<AVCInfoBlock> nestedRaw;
+    const AVCInfoBlock* rawTextBlock = nullptr;
+    if (block.GetType() == 0x000A) {
+        rawTextBlock = &block;
+    } else {
+        nestedRaw = block.FindNestedRecursive(0x000A);
+        if (nestedRaw.has_value()) {
+            rawTextBlock = &*nestedRaw;
+        }
+    }
     if (rawTextBlock && !rawTextBlock->GetPrimaryData().empty()) {
         const auto& data = rawTextBlock->GetPrimaryData();
         std::string text(reinterpret_cast<const char*>(data.data()), data.size());
@@ -58,14 +67,39 @@ std::string MusicSubunitDescriptorParser::ExtractName(const AVCInfoBlock& block)
     }
 
     // 2. Try Name Info Block (0x000B)
-    const auto nameBlock = block.FindNestedRecursive(0x000B);
-    if (nameBlock && nameBlock->GetPrimaryData().size() >= 16) {
+    std::optional<AVCInfoBlock> nestedName;
+    const AVCInfoBlock* nameBlock = nullptr;
+    if (block.GetType() == 0x000B) {
+        nameBlock = &block;
+    } else {
+        nestedName = block.FindNestedRecursive(0x000B);
+        if (nestedName.has_value()) {
+            nameBlock = &*nestedName;
+        }
+    }
+    if (nameBlock && !nameBlock->GetPrimaryData().empty()) {
         const auto& data = nameBlock->GetPrimaryData();
-        // Skip text descriptor header (16 bytes per IEEE 1212 / TA 1999045 §5.2)
-        const size_t textOffset = 16;
-        if (textOffset < data.size()) {
-            std::string text(reinterpret_cast<const char*>(data.data() + textOffset),
-                             data.size() - textOffset);
+
+        // 2a. Check for inline 0x000A Info Block inside 0x000B primary data after 4-byte header
+        // [0..3]: name info header (e.g. 0x0000ffff)
+        // [4..5]: compound_length, [6..7]: type (0x000A), [8..9]: primary_fields_length
+        if (data.size() >= 10 && data[6] == 0x00 && data[7] == 0x0A) {
+            const uint16_t plen = ReadBE16(data.data() + 8);
+            const size_t textLen = std::min(data.size() - 10, static_cast<size_t>(plen));
+            std::string text(reinterpret_cast<const char*>(data.data() + 10), textLen);
+            while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n')) {
+                text.pop_back();
+            }
+            if (!text.empty()) {
+                return text;
+            }
+        }
+
+        // 2b. IEEE 1212 text descriptor header (16 bytes)
+        constexpr size_t kTextDescHeaderLen = 16;
+        if (data.size() > kTextDescHeaderLen) {
+            std::string text(reinterpret_cast<const char*>(data.data() + kTextDescHeaderLen),
+                             data.size() - kTextDescHeaderLen);
             while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n')) {
                 text.pop_back();
             }
@@ -122,6 +156,32 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                     status.capabilities.hasAudioCapability = true;
                     status.capabilities.maxAudioInputChannels = ReadBE16(primaryData.data() + 1);
                     status.capabilities.maxAudioOutputChannels = ReadBE16(primaryData.data() + 3);
+                }
+                // Parse nested 0x8102 Plug Status Area -> 0x8103 Audio Info Area
+                for (const auto& plugStatus : block.GetNestedBlocks()) {
+                    if (plugStatus.GetType() == 0x8102 && !plugStatus.GetPrimaryData().empty()) {
+                        const uint8_t plugId = plugStatus.GetPrimaryData()[0];
+                        for (const auto& audioInfo : plugStatus.GetNestedBlocks()) {
+                            if (audioInfo.GetType() == 0x8103) {
+                                std::string text = ExtractName(audioInfo);
+                                if (!text.empty()) {
+                                    std::vector<std::string> names;
+                                    size_t start = 0;
+                                    while (start < text.size()) {
+                                        size_t end = text.find_first_of("\r\n", start);
+                                        if (end == std::string::npos) end = text.size();
+                                        if (end > start) {
+                                            names.push_back(text.substr(start, end - start));
+                                        }
+                                        start = text.find_first_not_of("\r\n", end);
+                                    }
+                                    if (!names.empty()) {
+                                        status.perPlugChannelNames[plugId] = std::move(names);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 break;
 
@@ -190,6 +250,7 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
 
                             MusicClusterInfo cluster;
                             cluster.streamFormatCode = cData[0];
+                            cluster.portType = cData[1];
                             const uint8_t numSignals = cData[2];
                             cluster.channelCount = numSignals;
                             cluster.name = ExtractName(clusterBlock);

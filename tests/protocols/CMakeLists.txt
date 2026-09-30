@@ -214,6 +214,15 @@ add_protocols_test(MusicSubunitDescriptorTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
 )
 
+# AVC Graph Builder Tests
+add_protocols_test(AvcGraphBuilderTests
+    AvcGraphBuilderTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
+)
+
 
 # Audio Function Block Command Tests
 add_protocols_mock_test(AudioFunctionBlockCommandTests
