@@ -284,6 +284,158 @@ TEST(IsochRxTimingTests, DirectReceiveConsumerOwnsDecodeAcrossOpaqueIsochSeam) {
     EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 1u);
 }
 
+namespace {
+
+// Two consecutive DATA packets (valid SYT) of one 2-channel frame each, one
+// isochronous cycle apart, drained together.
+struct TwoDataPackets {
+    alignas(4) std::array<uint8_t, 24> first{};
+    alignas(4) std::array<uint8_t, 24> second{};
+
+    TwoDataPackets() {
+        for (auto* packet : {&first, &second}) {
+            WriteBE32(packet->data() + 8, 0x02020000u);
+            WriteBE32(packet->data() + 12, 0x90020123u); // FDF 48 kHz, SYT 0x0123
+            WriteBE32(packet->data() + 16, 0x40000000u);
+            WriteBE32(packet->data() + 20, 0x407FFFFFu);
+        }
+        first[0] = 0x23;  first[1] = 0xA1;   // cycle 291, seconds 5 (mod 8)
+        second[0] = 0x24; second[1] = 0xA1;  // cycle 292
+    }
+};
+
+constexpr uint64_t kAnchorSampleFrame = 1000;
+constexpr uint32_t kNanosPerSampleQ8 = static_cast<uint32_t>((1'000'000'000ULL << 8) / 48000);
+
+// The frame the driver must put the first decoded frame at: the anchor's frame
+// plus the arrival's distance from the anchor, in samples.
+uint64_t ExpectedFirstFrame(uint64_t anchorHostTicks, uint64_t packetHostTicks) {
+    const int64_t deltaTicks =
+        static_cast<int64_t>(packetHostTicks) - static_cast<int64_t>(anchorHostTicks);
+    const int64_t deltaNanos = deltaTicks >= 0
+        ? static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(static_cast<uint64_t>(deltaTicks)))
+        : -static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(static_cast<uint64_t>(-deltaTicks)));
+    return static_cast<uint64_t>(static_cast<int64_t>(kAnchorSampleFrame) +
+                                 (deltaNanos << 8) / static_cast<int64_t>(kNanosPerSampleQ8));
+}
+
+} // namespace
+
+// M-Audio special firmware: a Transmit epoch owns the HAL clock and RX publishes
+// no anchor. The receive cursor used to start at 0 while the HAL read at the
+// TX-published frame for "now" (hundreds of ms apart), so every capture frame
+// was zero-filled while all counters stayed healthy (midi 6af4809a; ProjectMix
+// I/O silent on 0.3.1). The first DATA packet must give the cursor the anchor's
+// origin, once, and the next packet must land there.
+TEST(IsochRxTimingTests, TransmitOwnedClockGivesReceiveCursorTheHalOrigin) {
+    TwoDataPackets packets;
+    std::array<float, 8> input{};
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    const uint64_t epoch = control.hardwareTimeline.BeginEpoch(
+        ASFW::Audio::Runtime::HardwareTimelineSource::Transmit,
+        ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO, 48000, 0);
+    ASSERT_NE(epoch, 0u);
+    constexpr uint64_t kDrainHostTicks = 2'000'000'000ULL;
+    const uint64_t anchorHostTicks = kDrainHostTicks - 10'000'000ULL;
+    ASSERT_TRUE(control.PublishHostClockAnchor(kAnchorSampleFrame, anchorHostTicks,
+                                               kNanosPerSampleQ8, epoch).accepted);
+
+    FixedDirectAudioBindingSource source({
+        .generation = 1, .inputBase = input.data(), .inputBytes = sizeof(input),
+        .inputFrames = 4, .inputChannels = 2, .control = &control,
+        .sampleRateHz = 48000, .valid = true,
+    });
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer(
+        &source, {.am824Slots = 2, .streamChannels = 2});
+    uint32_t timingLosses = 0;
+    consumer.SetTimingLossCallback([&] { ++timingLosses; });
+    const ASFW::Isoch::IsochReceiveBatch batch{
+        .drainCycleTimer = EncodeCycleTimer(13, 300, 0), .drainHostTicks = kDrainHostTicks,
+    };
+
+    consumer.OnReceiveActivated();
+    consumer.BeginReceiveBatch(batch);
+    consumer.ConsumePacket(batch, {.descriptorIndex = 1, .payload = packets.first});
+    consumer.ConsumePacket(batch, {.descriptorIndex = 2, .payload = packets.second});
+
+    // Packet 1 anchors (its own PCM is orphaned at the old origin); packet 2 is
+    // the first frame written at the HAL's origin.
+    const uint64_t firstFrame = ExpectedFirstFrame(
+        anchorHostTicks,
+        kDrainHostTicks - ASFW::Timing::nanosToHostTicks(ASFW::Isoch::Rx::FireWireTicksToNanos(
+                              9ULL * ASFW::Timing::kTicksPerCycle)));
+    EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), firstFrame + 2u);
+    EXPECT_EQ(timingLosses, 0u) << "a rebase is not a timing loss";
+}
+
+// Every other family: RX publishes the anchor from its own cursor, so the two
+// share an origin by construction and the cursor must not be moved.
+TEST(IsochRxTimingTests, ReceiveOwnedClockKeepsItsOwnCursorOrigin) {
+    for (const bool withEpoch : {false, true}) {
+        TwoDataPackets packets;
+        std::array<float, 8> input{};
+        ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+        uint64_t epoch = 0;
+        if (withEpoch) {
+            epoch = control.hardwareTimeline.BeginEpoch(
+                ASFW::Audio::Runtime::HardwareTimelineSource::Receive,
+                ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO, 48000, 0);
+        }
+        ASSERT_TRUE(control.PublishHostClockAnchor(kAnchorSampleFrame, 1'990'000'000ULL,
+                                                   kNanosPerSampleQ8, epoch).accepted);
+        FixedDirectAudioBindingSource source({
+            .generation = 1, .inputBase = input.data(), .inputBytes = sizeof(input),
+            .inputFrames = 4, .inputChannels = 2, .control = &control,
+            .sampleRateHz = 48000, .valid = true,
+        });
+        ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer(
+            &source, {.am824Slots = 2, .streamChannels = 2});
+        const ASFW::Isoch::IsochReceiveBatch batch{
+            .drainCycleTimer = EncodeCycleTimer(13, 300, 0), .drainHostTicks = 2'000'000'000ULL,
+        };
+        consumer.OnReceiveActivated();
+        consumer.BeginReceiveBatch(batch);
+        consumer.ConsumePacket(batch, {.descriptorIndex = 1, .payload = packets.first});
+        consumer.ConsumePacket(batch, {.descriptorIndex = 2, .payload = packets.second});
+        EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 2u)
+            << "withEpoch=" << withEpoch;
+    }
+}
+
+// No anchor yet, or one from an epoch that has ended: stay unanchored rather
+// than commit to an origin the HAL would refuse, and anchor once a live one
+// exists.
+TEST(IsochRxTimingTests, TransmitOwnedClockWaitsForALiveAnchor) {
+    TwoDataPackets packets;
+    std::array<float, 8> input{};
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    const uint64_t epoch = control.hardwareTimeline.BeginEpoch(
+        ASFW::Audio::Runtime::HardwareTimelineSource::Transmit,
+        ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO, 48000, 0);
+    FixedDirectAudioBindingSource source({
+        .generation = 1, .inputBase = input.data(), .inputBytes = sizeof(input),
+        .inputFrames = 4, .inputChannels = 2, .control = &control,
+        .sampleRateHz = 48000, .valid = true,
+    });
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer(
+        &source, {.am824Slots = 2, .streamChannels = 2});
+    const ASFW::Isoch::IsochReceiveBatch batch{
+        .drainCycleTimer = EncodeCycleTimer(13, 300, 0), .drainHostTicks = 2'000'000'000ULL,
+    };
+    consumer.OnReceiveActivated();
+    consumer.BeginReceiveBatch(batch);
+
+    consumer.ConsumePacket(batch, {.descriptorIndex = 1, .payload = packets.first});
+    EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 1u)
+        << "no anchor published: cursor keeps its own origin";
+
+    ASSERT_TRUE(control.PublishHostClockAnchor(kAnchorSampleFrame, 1'990'000'000ULL,
+                                               kNanosPerSampleQ8, epoch + 7).accepted);
+    consumer.ConsumePacket(batch, {.descriptorIndex = 2, .payload = packets.second});
+    EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 2u)
+        << "anchor from another epoch: refused";
+}
+
 TEST(IsochRxTimingTests, SyntheticHeaderlessReplayHandlesWrapOneGapAndLargeLoss) {
     std::array<float, 4096> input{};
     ASFW::Audio::Runtime::AudioTransportControlBlock control{};
