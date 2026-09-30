@@ -74,8 +74,11 @@ enum {
     kMethodRequestUserBusReset = 61,
     kMethodStartAudioStreaming = 62,
     kMethodStopAudioStreaming = 63,
-        kMethodMotuCapture = 64,
+    kMethodMotuCapture = 64,
     kMethodGetFCPExchangeLog = 65,
+    // 66/67: the analyzer's observer. 65 belongs to the FCP exchange log (#165).
+    kMethodSelectAudioObserver = 66,
+    kMethodGetAudioObserverState = 67,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -464,6 +467,9 @@ bool ASFWDriverUserClient::init() {
         return false;
     }
     ivars->stopping = false;
+    ivars->audioObserverGuid = 0;
+    ivars->audioObserverMappingGeneration = 0;
+    ivars->audioObserverMemoryRequested = false;
 
     auto runtimeState = std::make_unique<ASFW::UserClient::UserClientRuntimeState>();
     if (!runtimeState || !runtimeState->IsValid()) {
@@ -625,6 +631,72 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
         return *result;
     }
 
+    if (selector == kMethodSelectAudioObserver) {
+        if (!arguments || !arguments->scalarInput || arguments->scalarInputCount < 1 ||
+            arguments->scalarInput[0] == 0) {
+            return kIOReturnBadArgument;
+        }
+        const uint64_t guid = arguments->scalarInput[0];
+        IOLockLock(ivars->actionLock);
+        if (ivars->stopping) {
+            IOLockUnlock(ivars->actionLock);
+            return kIOReturnNotReady;
+        }
+        if (ivars->audioObserverMemoryRequested && ivars->audioObserverGuid != guid) {
+            IOLockUnlock(ivars->actionLock);
+            return kIOReturnBusy;
+        }
+        if (ivars->audioObserverGuid != guid) {
+            ivars->audioObserverGuid = guid;
+            ivars->audioObserverMappingGeneration = 0;
+            ivars->audioObserverMemoryRequested = false;
+        }
+        IOLockUnlock(ivars->actionLock);
+        return kIOReturnSuccess;
+    }
+
+    if (selector == kMethodGetAudioObserverState) {
+        if (!arguments || !arguments->scalarOutput || arguments->scalarOutputCount < 9) {
+            return kIOReturnBadArgument;
+        }
+        uint64_t guid = 0;
+        uint64_t mappingGeneration = 0;
+        IOLockLock(ivars->actionLock);
+        guid = ivars->audioObserverGuid;
+        mappingGeneration = ivars->audioObserverMappingGeneration;
+        IOLockUnlock(ivars->actionLock);
+        if (guid == 0) {
+            return kIOReturnNotReady;
+        }
+
+        uint64_t writeEndFrame = 0;
+        uint64_t oldestValidFrame = 0;
+        uint64_t sessionEpoch = 0;
+        uint64_t discontinuityEpoch = 0;
+        uint64_t currentMemoryGeneration = 0;
+        uint32_t activeRingFrames = 0;
+        uint32_t channels = 0;
+        uint32_t sampleRateHz = 0;
+        const kern_return_t kr = ivars->driver->CopyAudioObserverState(
+            guid, &writeEndFrame, &oldestValidFrame, &sessionEpoch,
+            &discontinuityEpoch, &currentMemoryGeneration,
+            &activeRingFrames, &channels, &sampleRateHz);
+        if (kr != kIOReturnSuccess) {
+            return kr;
+        }
+        arguments->scalarOutput[0] = writeEndFrame;
+        arguments->scalarOutput[1] = oldestValidFrame;
+        arguments->scalarOutput[2] = sessionEpoch;
+        arguments->scalarOutput[3] = discontinuityEpoch;
+        arguments->scalarOutput[4] = currentMemoryGeneration;
+        arguments->scalarOutput[5] = mappingGeneration;
+        arguments->scalarOutput[6] = activeRingFrames;
+        arguments->scalarOutput[7] = channels;
+        arguments->scalarOutput[8] = sampleRateHz;
+        arguments->scalarOutputCount = 9;
+        return kIOReturnSuccess;
+    }
+
     // main's SBP2 address-space management methods (46-49), wired into DICE's
     // dispatch-helper ExternalMethod.
     switch (selector) {
@@ -775,7 +847,8 @@ kern_return_t IMPL(ASFWDriverUserClient, CopyClientMemoryForType) {
         return kIOReturnNotReady;
     }
 
-    // Type 0: shared status memory. Type 1: DV capture ring.
+    // Type 0: shared status memory. Type 1: DV capture ring. Type 2: the
+    // selected audio endpoint's existing output ring, mapped read-only.
     if (type == 0) {
         return ivars->driver->CopySharedStatusMemory(options, memory);
     }
@@ -784,6 +857,30 @@ kern_return_t IMPL(ASFWDriverUserClient, CopyClientMemoryForType) {
             reinterpret_cast<uintptr_t>(this));
         return ivars->driver->CopyDVCaptureMemory(
             ownerToken, options, memory);
+    }
+    if (type == 2) {
+        uint64_t guid = 0;
+        IOLockLock(ivars->actionLock);
+        guid = ivars->audioObserverGuid;
+        const bool stopping = ivars->stopping;
+        IOLockUnlock(ivars->actionLock);
+        if (stopping || guid == 0) {
+            return kIOReturnNotReady;
+        }
+        uint64_t mappingGeneration = 0;
+        const kern_return_t kr = ivars->driver->CopyAudioObserverMemory(
+            guid, &mappingGeneration, memory);
+        if (kr != kIOReturnSuccess) {
+            return kr;
+        }
+        if (options) {
+            *options = kIOUserClientMemoryReadOnly;
+        }
+        IOLockLock(ivars->actionLock);
+        ivars->audioObserverMappingGeneration = mappingGeneration;
+        ivars->audioObserverMemoryRequested = true;
+        IOLockUnlock(ivars->actionLock);
+        return kIOReturnSuccess;
     }
     return kIOReturnUnsupported;
 }
