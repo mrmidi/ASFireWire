@@ -90,6 +90,10 @@ Facts established so far:
   all streams added to the device. `in_supports_prewarming` is an init-time capability flag.
 - **User client** (`AudioDriverKitTypes.h`): `kIOUserAudioDriverUserClientType = 1128363364`
   is the only type the lab driver forwards to `super::NewUserClient`.
+- **Output observer** (`IOUserClient.iig`): `CopyClientMemoryForType` is the shared-memory
+  mapping hook; the lab returns the same output stream descriptor read-only. The host passes
+  that mapping directly to Metal's `newBufferWithBytesNoCopy` and displays the latest channel-0
+  samples. Runtime GPU visibility remains a bench validation item.
 
 ### MIDIDriverKit (Milestone 4 only)
 
