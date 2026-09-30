@@ -17,6 +17,7 @@
 #include "../../Audio/Protocols/SelectProbeBootstrap.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
+#include "Graph/AvcDeviceGraph.hpp"
 #include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 #include "../../Audio/Protocols/BeBoB/BeBoBCaptureChannelMap.hpp"
 #include "../../Audio/Protocols/BeBoB/BeBoBChannelMaps.hpp"
@@ -87,103 +88,6 @@ CurrentPolicyPlan(ASFW::Discovery::DeviceRegistry& registry,
     const std::optional<ASFW::DeviceProfiles::Audio::StaticAudioEndpointPlan>& plan) noexcept {
     return plan.has_value() ? ASFW::Audio::SelectProbeBootstrap(*plan)
                             : ASFW::Audio::ProbeBootstrap::Unsupported;
-}
-
-[[nodiscard]] constexpr const char* StreamModeToString(
-    ASFW::Audio::Model::StreamMode mode) noexcept {
-    return (mode == ASFW::Audio::Model::StreamMode::kBlocking) ? "blocking"
-                                                               : "non-blocking";
-}
-
-ASFW::Audio::Model::StreamMode ResolveStreamMode(
-    const ASFW::Protocols::AVC::Music::MusicSubunitCapabilities& caps,
-    const ASFW::DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
-    uint32_t vendorId,
-    uint32_t modelId,
-    const char*& reason) noexcept {
-    // Cadence a device must be driven at whatever it reports, from the one
-    // device catalog. Unspecified means "believe the probe", which is what an
-    // unlisted device gets.
-    using ASFW::DeviceProfiles::Audio::ForcedStreamMode;
-    const auto forced = plan.streamTraits.wire.forcedStreamMode;
-    if (forced != ForcedStreamMode::Unspecified) {
-        const auto mode = (forced == ForcedStreamMode::Blocking)
-                              ? ASFW::Audio::Model::StreamMode::kBlocking
-                              : ASFW::Audio::Model::StreamMode::kNonBlocking;
-        reason = "catalog";
-        ASFW_LOG_WARNING(Audio,
-                         "AVCDiscovery: catalog forces stream mode vendor=0x%06x "
-                         "model=0x%06x forced=%{public}s",
-                         vendorId, modelId, StreamModeToString(mode));
-        return mode;
-    }
-
-    // Use transmit capability as mode selection signal. This mode is currently
-    // used by the host IT stream and is expected to match RX in practical devices.
-    const bool supportsBlocking = caps.SupportsBlockingTransmit();
-    const bool supportsNonBlocking = caps.SupportsNonBlockingTransmit();
-
-    if (supportsBlocking && !supportsNonBlocking) {
-        reason = "avc-blocking-only";
-        return ASFW::Audio::Model::StreamMode::kBlocking;
-    }
-
-    if (supportsNonBlocking) {
-        reason = supportsBlocking ? "avc-both-prefer-nonblocking" : "avc-nonblocking-only";
-        return ASFW::Audio::Model::StreamMode::kNonBlocking;
-    }
-
-    reason = "default-nonblocking";
-    return ASFW::Audio::Model::StreamMode::kNonBlocking;
-}
-
-struct PlugChannelSummary {
-    uint32_t inputAudioMaxChannels{0};   // Subunit input audio stream width
-    uint32_t outputAudioMaxChannels{0};  // Subunit output audio stream width
-    uint32_t inputAudioPlugs{0};
-    uint32_t outputAudioPlugs{0};
-};
-
-[[nodiscard]] uint32_t ExtractPlugChannelCount(
-    const ASFW::Protocols::AVC::StreamFormats::PlugInfo& plug) noexcept {
-    if (!plug.currentFormat.has_value()) {
-        return 0;
-    }
-
-    const auto& fmt = *plug.currentFormat;
-    if (fmt.totalChannels > 0) {
-        return fmt.totalChannels;
-    }
-
-    uint32_t sum = 0;
-    for (const auto& block : fmt.channelFormats) {
-        sum += block.channelCount;
-    }
-    return sum;
-}
-
-[[nodiscard]] PlugChannelSummary SummarizePlugChannels(
-    const std::vector<ASFW::Protocols::AVC::StreamFormats::PlugInfo>& plugs) noexcept {
-    PlugChannelSummary summary{};
-    for (const auto& plug : plugs) {
-        if (plug.type != ASFW::Protocols::AVC::StreamFormats::MusicPlugType::kAudio) {
-            continue;
-        }
-
-        const uint32_t channels = ExtractPlugChannelCount(plug);
-        if (channels == 0) {
-            continue;
-        }
-
-        if (plug.IsInput()) {
-            ++summary.inputAudioPlugs;
-            summary.inputAudioMaxChannels = std::max(summary.inputAudioMaxChannels, channels);
-        } else if (plug.IsOutput()) {
-            ++summary.outputAudioPlugs;
-            summary.outputAudioMaxChannels = std::max(summary.outputAudioMaxChannels, channels);
-        }
-    }
-    return summary;
 }
 
 } // namespace
@@ -544,19 +448,9 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
         return;
     }
 
-    auto* musicSubunit = FindAudioMusicSubunit(*avcUnit);
-    if (!musicSubunit) {
-        os_log_debug(log_,
-                     "AVCDiscovery: No audio-capable music subunit found (GUID=%llx)",
-                     guid);
-        return;
-    }
-
-    if (!musicSubunit->HasCompleteDescriptorParse()) {
-        ASFW_LOG(Audio,
-                 "AVCDiscovery: MusicSubunit descriptor incomplete - scheduling re-scan (GUID=%llx)",
-                 guid);
-        // TODO: Remove this duct-tape once AV/C discovery is reliable.
+    const auto graph = avcUnit->GetDiscoveredGraph();
+    if (!graph || graph->playback.dataBlockSize == 0 || graph->capture.dataBlockSize == 0) {
+        ASFW_LOG_WARNING(Audio, "[AvcPublish] guid=%llx deferred reason=unresolved-stream-graph", guid);
         ScheduleRescan(guid, avcUnit);
         return;
     }
@@ -567,10 +461,7 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
         IOLockUnlock(lock_);
     }
 
-    PopulateMusicSubunitCapabilities(guid, *device, *musicSubunit);
-    UpdateCurrentSampleRate(*musicSubunit);
-
-    auto audioDeviceConfig = BuildAudioDeviceConfig(guid, *device, *musicSubunit);
+    auto audioDeviceConfig = BuildAudioDeviceConfig(guid, *device, *graph);
     if (audioDeviceConfig.channelCount == 0 || audioDeviceConfig.sampleRates.empty() ||
         audioDeviceConfig.currentSampleRate == 0) {
         ASFW_LOG_WARNING(Audio,
@@ -816,174 +707,48 @@ void AVCDiscovery::PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,
     PublishReadyAudioConfig(guid, config);
 }
 
-Music::MusicSubunit* AVCDiscovery::FindAudioMusicSubunit(const AVCUnit& avcUnit) const {
-    for (const auto& subunit : avcUnit.GetSubunits()) {
-        ASFW_LOG(Audio, "AVCDiscovery: Checking subunit type=0x%02x (kMusic=0x%02x)",
-                 static_cast<uint8_t>(subunit->GetType()),
-                 static_cast<uint8_t>(AVCSubunitType::kMusic));
-
-        if (subunit->GetType() != AVCSubunitType::kMusic &&
-            subunit->GetType() != AVCSubunitType::kMusic0C) {
-            continue;
-        }
-
-        auto* music = static_cast<Music::MusicSubunit*>(subunit.get());
-        const auto& caps = music->GetCapabilities();
-        ASFW_LOG(Audio, "AVCDiscovery: Found Music subunit - hasAudioCapability=%d",
-                 caps.HasAudioCapability());
-        if (caps.HasAudioCapability()) {
-            return music;
-        }
-    }
-
-    return nullptr;
-}
-
-void AVCDiscovery::PopulateMusicSubunitCapabilities(uint64_t guid,
-                                                    const Discovery::FWDevice& device,
-                                                    Music::MusicSubunit& musicSubunit) const {
-    auto& mutableCaps = const_cast<Music::MusicSubunitCapabilities&>(musicSubunit.GetCapabilities());
-    mutableCaps.guid = guid;
-    mutableCaps.vendorName = std::string(device.GetVendorName());
-    mutableCaps.modelName = std::string(device.GetModelName());
-
-    std::set<double> rateSet;
-    for (const auto& plug : musicSubunit.GetPlugs()) {
-        for (const auto& format : plug.supportedFormats) {
-            const uint32_t rateHz = format.GetSampleRateHz();
-            if (rateHz > 0) {
-                rateSet.insert(static_cast<double>(rateHz));
-            }
-        }
-    }
-
-    mutableCaps.supportedSampleRates.assign(rateSet.begin(), rateSet.end());
-
-    for (const auto& plug : musicSubunit.GetPlugs()) {
-        if (plug.IsInput() && !plug.name.empty() && mutableCaps.outputPlugName == "Output") {
-            mutableCaps.outputPlugName = plug.name;
-        }
-        if (plug.IsOutput() && !plug.name.empty() && mutableCaps.inputPlugName == "Input") {
-            mutableCaps.inputPlugName = plug.name;
-        }
-    }
-}
-
-void AVCDiscovery::UpdateCurrentSampleRate(Music::MusicSubunit& musicSubunit) const {
-    auto& mutableCaps = const_cast<Music::MusicSubunitCapabilities&>(musicSubunit.GetCapabilities());
-
-    for (const auto& plug : musicSubunit.GetPlugs()) {
-        if (!plug.currentFormat.has_value()) {
-            continue;
-        }
-
-        const uint32_t rateHz = plug.currentFormat->GetSampleRateHz();
-        if (rateHz == 0) {
-            continue;
-        }
-
-        mutableCaps.currentSampleRate = static_cast<double>(rateHz);
-        ASFW_LOG(Audio, "AVCDiscovery: Current sample rate from plug %u: %u Hz",
-                 plug.plugID, rateHz);
-        return;
-    }
-
-    if (!mutableCaps.supportedSampleRates.empty()) {
-        mutableCaps.currentSampleRate = mutableCaps.supportedSampleRates[0];
-        ASFW_LOG(Audio, "AVCDiscovery: Using first supported rate as current: %.0f Hz",
-                 mutableCaps.currentSampleRate);
-        return;
-    }
-    mutableCaps.currentSampleRate = 0.0;
-    ASFW_LOG_WARNING(Audio, "AVCDiscovery: Current sample rate unavailable from decoded format");
-}
-
 ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
-    uint64_t guid,
-    const Discovery::FWDevice& device,
-    const Music::MusicSubunit& musicSubunit) const {
-    auto& mutableCaps = const_cast<Music::MusicSubunitCapabilities&>(musicSubunit.GetCapabilities());
-    auto audioConfig = mutableCaps.GetAudioDeviceConfiguration();
-    const std::string deviceName = audioConfig.GetDeviceName();
-
-    const auto plugSummary = SummarizePlugChannels(musicSubunit.GetPlugs());
-    const uint32_t plugsDerivedMax = std::max(plugSummary.inputAudioMaxChannels,
-                                              plugSummary.outputAudioMaxChannels);
-    uint32_t channelCount = plugsDerivedMax;
-    const char* channelCountSource = "audio-plug-max-channels";
-    if (channelCount == 0) {
-        channelCount = audioConfig.GetMaxChannelCount();
-        channelCountSource = "capability-fallback";
-    }
-
-    if (plugSummary.inputAudioMaxChannels > 0) {
-        mutableCaps.maxAudioInputChannels = static_cast<uint16_t>(
-            std::min<uint32_t>(plugSummary.inputAudioMaxChannels, 0xFFFFu));
-    }
-    if (plugSummary.outputAudioMaxChannels > 0) {
-        mutableCaps.maxAudioOutputChannels = static_cast<uint16_t>(
-            std::min<uint32_t>(plugSummary.outputAudioMaxChannels, 0xFFFFu));
-    }
-
-    ASFW_LOG(Audio,
-             "AVCDiscovery: audio plug summary in=max%u/%u plugs out=max%u/%u plugs -> selected=%u (%{public}s)",
-             plugSummary.inputAudioMaxChannels, plugSummary.inputAudioPlugs,
-             plugSummary.outputAudioMaxChannels, plugSummary.outputAudioPlugs,
-             channelCount, channelCountSource);
-
-    std::vector<uint32_t> sampleRates;
-    const uint32_t currentRate = static_cast<uint32_t>(mutableCaps.currentSampleRate);
-    sampleRates.push_back(currentRate);
-    for (double rate : mutableCaps.supportedSampleRates) {
-        const uint32_t rateHz = static_cast<uint32_t>(rate);
-        if (rateHz != currentRate) {
-            sampleRates.push_back(rateHz);
-        }
-    }
-
-    const uint32_t vendorId = device.GetVendorID();
-    const uint32_t modelId = device.GetModelID();
-    const char* streamModeReason = "default-nonblocking";
-    const auto policyPlan = CurrentPolicyPlan(deviceRegistry_, device);
-    if (!policyPlan.has_value()) {
-        ASFW_LOG_WARNING(Audio,
-                         "AVCDiscovery: refusing audio configuration without current resolved policy GUID=0x%016llx",
-                         guid);
-        ASFW::Audio::Model::ASFWAudioDevice invalid{};
-        invalid.guid = guid;
-        invalid.channelCount = 0;
-        invalid.sampleRates.clear();
-        invalid.currentSampleRate = 0;
-        return invalid;
-    }
-    const auto streamMode =
-        ResolveStreamMode(mutableCaps, *policyPlan, vendorId, modelId, streamModeReason);
-
-    ASFW_LOG(Audio,
-             "AVCDiscovery: stream mode selected vendor=0x%06x model=0x%06x mode=%{public}s reason=%{public}s",
-             vendorId, modelId,
-             StreamModeToString(streamMode),
-             streamModeReason);
-    ASFW_LOG(Audio,
-             "AVCDiscovery: Publishing audio configuration for GUID=%llx: %{public}s, %u channels, %zu sample rates",
-             guid, deviceName.c_str(), channelCount, sampleRates.size());
-
+    uint64_t guid, const Discovery::FWDevice& device, const Graph::DeviceGraph& graph) const {
     ASFW::Audio::Model::ASFWAudioDevice config;
     config.guid = guid;
-    config.vendorId = vendorId;
-    config.modelId = modelId;
-    config.profileBuilderId = static_cast<uint32_t>(policyPlan->profileBuilder);
-    config.deviceName = deviceName;
-    config.channelCount = channelCount;
-    config.inputChannelCount =
-        (plugSummary.outputAudioMaxChannels > 0) ? plugSummary.outputAudioMaxChannels : channelCount;
-    config.outputChannelCount =
-        (plugSummary.inputAudioMaxChannels > 0) ? plugSummary.inputAudioMaxChannels : channelCount;
-    config.sampleRates = std::move(sampleRates);
-    config.currentSampleRate = currentRate;
-    config.inputPlugName = mutableCaps.inputPlugName;
-    config.outputPlugName = mutableCaps.outputPlugName;
-    config.streamMode = streamMode;
+    config.channelCount = config.inputChannelCount = config.outputChannelCount = 0;
+    config.currentSampleRate = 0;
+    const auto plan = CurrentPolicyPlan(deviceRegistry_, device);
+    if (!plan || graph.playback.currentSampleRate == 0 ||
+        graph.playback.currentSampleRate != graph.capture.currentSampleRate ||
+        graph.playback.dataBlockSize == 0 || graph.capture.dataBlockSize == 0) return config;
+    config.vendorId = device.GetVendorID();
+    config.modelId = device.GetModelID();
+    config.profileBuilderId = static_cast<uint32_t>(plan->profileBuilder);
+    config.deviceName = std::string(device.GetModelName());
+    config.inputChannelCount = graph.capture.channelCount;
+    config.outputChannelCount = graph.playback.channelCount;
+    config.channelCount = std::max(config.inputChannelCount, config.outputChannelCount);
+    config.currentSampleRate = graph.playback.currentSampleRate;
+    for (const auto hz : graph.playback.supportedSampleRates) {
+        if (std::find(graph.capture.supportedSampleRates.begin(), graph.capture.supportedSampleRates.end(), hz) !=
+            graph.capture.supportedSampleRates.end()) config.sampleRates.push_back(hz);
+    }
+    config.inputChannelNames = graph.capture.channelNames;
+    config.outputChannelNames = graph.playback.channelNames;
+    config.playbackStreams = {{.pcmChannels = graph.playback.channelCount,
+        .am824Slots = graph.playback.dataBlockSize, .midiPorts = graph.playback.midiStreamCount,
+        .pcmSlotMap = graph.playback.slotMap}};
+    config.captureStreams = {{.pcmChannels = graph.capture.channelCount,
+        .am824Slots = graph.capture.dataBlockSize, .midiPorts = graph.capture.midiStreamCount,
+        .pcmSlotMap = graph.capture.slotMap}};
+    config.resolvedGeometryRequired = true;
+    config.deviceSampleRates = true;
+    config.graphResolved = true;
+    using DeviceProfiles::Audio::ForcedStreamMode;
+    const auto forced = plan->streamTraits.wire.forcedStreamMode;
+    const bool blocking = forced == ForcedStreamMode::Blocking ||
+        (forced == ForcedStreamMode::Unspecified && graph.supportsBlockingTransmit);
+    config.streamMode = blocking ? ASFW::Audio::Model::StreamMode::kBlocking
+                                : ASFW::Audio::Model::StreamMode::kNonBlocking;
+    ASFW_LOG(Audio, "[AvcGraphConfig] guid=%llx source=graph in=%u out=%u rates=%zu rate=%u playbackDbs=%u captureDbs=%u",
+        guid, config.inputChannelCount, config.outputChannelCount, config.sampleRates.size(),
+        config.currentSampleRate, graph.playback.dataBlockSize, graph.capture.dataBlockSize);
     return config;
 }
 
@@ -1001,6 +766,9 @@ void AVCDiscovery::PublishReadyAudioConfig(uint64_t guid, const ::ASFW::Audio::M
         return;
     }
 
+    ASFW_LOG(Audio, "[AvcPublish] guid=%llx source=%{public}s rate=%u in=%u out=%u",
+        guid, config.graphResolved ? "graph" : "family", config.currentSampleRate,
+        config.inputChannelCount, config.outputChannelCount);
     audioConfigListener_->OnAVCAudioConfigurationReady(guid, config);
 }
 
@@ -1075,6 +843,9 @@ void AVCDiscovery::FinishDuetPrefetch(
                        operation->route.guid);
         return;
     }
+    ASFW_LOG(Audio, "[AvcPublish] guid=%llx source=graph rate=%u in=%u out=%u vendorPrefetch=verified",
+        operation->route.guid, finalConfig.currentSampleRate,
+        finalConfig.inputChannelCount, finalConfig.outputChannelCount);
     audioConfigListener_->OnAVCAudioConfigurationReady(operation->route.guid, finalConfig);
 }
 

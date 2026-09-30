@@ -162,7 +162,7 @@ TEST_F(MusicSubunitTests, SetSampleRate_Sends0xBF_Control) {
     EXPECT_TRUE(done);
 }
 
-// Test: QueryConnections should send 0x1A command for Input plugs
+// Test: QueryConnections sends a typed unit-addressed SIGNAL SOURCE command for Input plugs
 TEST_F(MusicSubunitTests, QueryConnections_Sends0x1A_Status) {
     // Add an Input plug (Destination)
     AddPlug(*subunit, 0, ASFW::Protocols::AVC::StreamFormats::PlugDirection::kInput);
@@ -176,26 +176,24 @@ TEST_F(MusicSubunitTests, QueryConnections_Sends0x1A_Status) {
             EXPECT_EQ(cdb.ctype, static_cast<uint8_t>(AVCCommandType::kStatus));
             EXPECT_EQ(cdb.opcode, 0x1A); // SIGNAL SOURCE
             
-            // Verify operands
-            // [0]=0xFF (Output Status), [1]=0xFF, [2]=0xFF (Conv Data)
-            // [3]=0x00 (Subunit Plug), [4]=0x00 (Plug ID 0)
+            EXPECT_EQ(cdb.subunit, 0xFF);
+            // [0]=0xFF, [1..2]=wildcard source, [3..4]=Music subunit plug 0.
             EXPECT_EQ(cdb.operands[0], 0xFF);
-            EXPECT_EQ(cdb.operands[3], 0x00);
+            EXPECT_EQ(cdb.operands[1], 0xFF);
+            EXPECT_EQ(cdb.operands[2], 0xFE);
+            EXPECT_EQ(cdb.operands[3], 0x60);
             EXPECT_EQ(cdb.operands[4], 0x00);
             
             // Simulate response: Connected to Unit Plug 0 (Iso)
             AVCCdb response = cdb;
             response.ctype = static_cast<uint8_t>(AVCResponseType::kImplementedStable); // Stable/Implemented
             
-            // Response format:
-            // [0]=OutputStatus, [1-2]=ConvData
-            // [3]=SourcePlugType (0x01=Unit), [4]=SourcePlugID (0x00)
-            // [5]=DestPlugType (0x00), [6]=DestPlugID (0x00)
-            response.operandLength = 7;
-            response.operands[3] = 0x01; // Unit plug
-            response.operands[4] = 0x00; // Plug 0
-            response.operands[5] = 0x00; // Subunit plug
-            response.operands[6] = 0x00; // Plug 0
+            response.operandLength = 5;
+            response.operands[0] = 0xFF;
+            response.operands[1] = 0xFF; // Unit source address
+            response.operands[2] = 0x00; // Unit isochronous plug 0
+            response.operands[3] = 0x60; // Music subunit destination
+            response.operands[4] = 0x00;
             
             completion(AVCResult::kAccepted, response);
         }));
@@ -208,40 +206,26 @@ TEST_F(MusicSubunitTests, QueryConnections_Sends0x1A_Status) {
 
     EXPECT_TRUE(done);
 }
-// Test: QueryConnections should retry with Unit address if Subunit returns kNotImplemented
-TEST_F(MusicSubunitTests, QueryConnections_RetryWithUnit) {
+// Test: SIGNAL SOURCE uses the unit address and encodes the destination subunit plug.
+TEST_F(MusicSubunitTests, QueryConnections_UsesUnitAddress) {
     // Add an Input plug
     AddPlug(*subunit, 0, ASFW::Protocols::AVC::StreamFormats::PlugDirection::kInput);
 
-    // Expect TWO command submissions
-    // 1. To Subunit (returns kNotImplemented)
-    // 2. To Unit (returns kAccepted)
-
     EXPECT_CALL(mockSubmitter, SubmitCommand(_, _))
         .WillOnce(Invoke([&](const AVCCdb& cdb, AVCCompletion completion) {
-            // First call: To Subunit
-            EXPECT_EQ(cdb.subunit, 0x60); // Music Subunit (0x0C << 3) | 0
-            EXPECT_EQ(cdb.opcode, 0x1A);
-            
-            // Return Not Implemented
-            completion(AVCResult::kNotImplemented, cdb);
-        }))
-        .WillOnce(Invoke([&](const AVCCdb& cdb, AVCCompletion completion) {
-            // Second call: To Unit
             EXPECT_EQ(cdb.subunit, 0xFF); // Unit Address (0xFF)
             EXPECT_EQ(cdb.opcode, 0x1A);
-            
-            // Verify operands (asking about Subunit Plug 0)
-            // [3]=0x00 (Subunit Plug), [4]=0x00 (Plug ID 0)
-            EXPECT_EQ(cdb.operands[3], 0x00);
+            EXPECT_EQ(cdb.operands[3], 0x60);
             EXPECT_EQ(cdb.operands[4], 0x00);
 
-            // Simulate response: Connected to Unit Plug 0
             AVCCdb response = cdb;
             response.ctype = static_cast<uint8_t>(AVCResponseType::kImplementedStable);
-            response.operandLength = 7;
-            response.operands[3] = 0x01; // Unit plug
-            response.operands[4] = 0x00; // Plug 0
+            response.operandLength = 5;
+            response.operands[0] = 0xFF;
+            response.operands[1] = 0xFF;
+            response.operands[2] = 0x00;
+            response.operands[3] = 0x60;
+            response.operands[4] = 0x00;
             
             completion(AVCResult::kAccepted, response);
         }));
@@ -260,6 +244,32 @@ TEST_F(MusicSubunitTests, QueryConnections_RetryWithUnit) {
     EXPECT_TRUE(plugs[0].connectionInfo.has_value());
     EXPECT_EQ(plugs[0].connectionInfo->sourceSubunitType, ASFW::Protocols::AVC::StreamFormats::SourceSubunitType::kUnit);
     EXPECT_EQ(plugs[0].connectionInfo->sourcePlugNumber, 0);
+    EXPECT_FALSE(plugs[0].connectionInfo->sourceIsExternalUnitPlug);
+}
+
+TEST_F(MusicSubunitTests, QueryConnections_PreservesExternalUnitPlugAddress) {
+    AddPlug(*subunit, 0, ASFW::Protocols::AVC::StreamFormats::PlugDirection::kInput);
+    EXPECT_CALL(mockSubmitter, SubmitCommand(_, _))
+        .WillOnce(Invoke([&](const AVCCdb& cdb, AVCCompletion completion) {
+            AVCCdb response = cdb;
+            response.ctype = static_cast<uint8_t>(AVCResponseType::kImplementedStable);
+            response.operandLength = 5;
+            response.operands[0] = 0xFF;
+            response.operands[1] = 0xFF;
+            response.operands[2] = 0x80; // Unit external plug zero, not isoch plug zero.
+            response.operands[3] = 0x60;
+            response.operands[4] = 0x00;
+            completion(AVCResult::kAccepted, response);
+        }));
+
+    bool done = false;
+    subunit->QueryConnections(mockSubmitter, [&](bool success) { EXPECT_TRUE(success); done = true; });
+    ASSERT_TRUE(done);
+    const auto plugs = subunit->GetPlugs();
+    ASSERT_EQ(plugs.size(), 1);
+    ASSERT_TRUE(plugs[0].connectionInfo.has_value());
+    EXPECT_EQ(plugs[0].connectionInfo->sourcePlugNumber, 0);
+    EXPECT_TRUE(plugs[0].connectionInfo->sourceIsExternalUnitPlug);
 }
 
 // Test: SetAudioVolume should send 0xB8 command to Audio Subunit (0x08)
@@ -277,13 +287,16 @@ TEST_F(MusicSubunitTests, SetAudioVolume_SendsCorrectCDB) {
             // [0]=0x81 (Feature), [1]=PlugID, [2]=0x10 (Current), [3]=Len, [4]=Channel, [5]=Selector
             EXPECT_EQ(cdb.operands[0], 0x81);
             EXPECT_EQ(cdb.operands[1], plugId);
+            EXPECT_EQ(cdb.operands[3], 0x02); // Selector length is exactly two bytes.
             EXPECT_EQ(cdb.operands[4], 0x00); // Channel
             EXPECT_EQ(cdb.operands[5], 0x02); // Volume Selector
             EXPECT_EQ(cdb.operands[6], 0x02); // Data length
             EXPECT_EQ(cdb.operands[7], 0x7F);
             EXPECT_EQ(cdb.operands[8], 0xFF);
             
-            completion(AVCResult::kAccepted, cdb);
+            AVCCdb response = cdb;
+            response.ctype = static_cast<uint8_t>(AVCResponseType::kAccepted);
+            completion(AVCResult::kAccepted, response);
         }));
         
     bool done = false;
@@ -348,4 +361,3 @@ TEST_F(MusicSubunitTests, ParseDescriptorBlock_DuetFixtureIntegration) {
     EXPECT_EQ(status->declaredLength, 462);
     EXPECT_TRUE(status->capabilities.hasGeneralCapability);
 }
-

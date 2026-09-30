@@ -164,7 +164,6 @@ add_device_test(BeBoBProtocolTests
     "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
 )
 
 add_device_test(DiceRuntimeDeviceConfigTests
@@ -310,7 +309,6 @@ add_device_test(FireworksProtocolTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
 )
 
 # One device catalog: the table that replaces the five independent matchers.

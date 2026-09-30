@@ -263,7 +263,7 @@ void DescriptorAccessor::readWithOpenCloseSequence(const DescriptorSpecifier& sp
 
     openForRead(*specifierCopy, [this, specifierCopy, completionPtr](bool openSuccess) {
         if (!openSuccess) {
-            ASFW_LOG_ERROR(Discovery, "OPEN→READ→CLOSE: OPEN failed");
+            ASFW_LOG_V2(Discovery, "OPEN→READ→CLOSE: OPEN unavailable");
             ReadDescriptorResult result;
             result.success = false;
             result.avcResult = AVCResult::kRejected;

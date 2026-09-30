@@ -23,6 +23,8 @@
 #include "RecordingFireWireBus.hpp"
 #include "SimulatedAvcUnit.hpp"
 #include "WireTrace.hpp"
+#include "DuetDescriptorFixture.hpp"
+#include "ASFWDriver/Protocols/AVC/Graph/AvcDeviceGraph.hpp"
 #include "FakeTimerScheduler.hpp"
 
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
@@ -238,6 +240,38 @@ TEST(AvcGoldenTests, DuetAttachDiscovery) {
     EXPECT_TRUE(detectFired);
 
     rig.ExpectGolden("duet__attach_discovery");
+}
+
+TEST(AvcGoldenTests, DescriptorGraphSelectsRoutedStreamsAndValidatesGeometry) {
+    AvcGoldenRig rig(kDuet);
+    std::vector<uint8_t> descriptor;
+    const auto& hex = Fixtures::kDuetMusicStatusHex;
+    for (size_t i = 0; i < hex.size(); i += 2)
+        descriptor.push_back(static_cast<uint8_t>(std::stoul(hex.substr(i, 2), nullptr, 16)));
+    rig.Sim().SetDescriptor(0x60, {0x80}, std::move(descriptor));
+    // Playback source unit ISO 0 -> Music destination 0; capture comes from
+    // Music source 1, deliberately not the descriptor's first source.
+    rig.Sim().SetResponseOverride({0x01,0xff,0x1a,0xff,0xff,0xfe,0x60,0x00},
+        {0x0c,0xff,0x1a,0xff,0xff,0x00,0x60,0x00});
+    rig.Sim().SetResponseOverride({0x01,0xff,0x1a,0xff,0xff,0xfe,0xff,0x00},
+        {0x0c,0xff,0x1a,0xff,0x60,0x01,0xff,0x00});
+    for (uint8_t direction = 0; direction < 2; ++direction) {
+        for (uint8_t plug = 0; plug < 2; ++plug) {
+            rig.Sim().SetResponseOverride({0x01,0x60,0xbf,0xc0,direction,0x01,plug,0xff,0xff,0xff},
+                {0x0c,0x60,0xbf,0xc0,direction,0x01,plug,0xff,0xff,0x00,0x90,0x40,0x03,0x00,0x01,0x02,0x06});
+        }
+    }
+    bool done = false;
+    rig.Unit()->Initialize([&](bool ok) { done = ok; });
+    ASSERT_TRUE(done);
+    const auto graph = rig.Unit()->GetDiscoveredGraph();
+    ASSERT_TRUE(graph);
+    EXPECT_EQ(graph->playback.subunitPlugId, 0);
+    EXPECT_EQ(graph->capture.subunitPlugId, 1);
+    EXPECT_EQ(graph->capture.channelNames[0], "Analog Out 1");
+    EXPECT_EQ(graph->playback.dataBlockSize, 2);
+    EXPECT_EQ(graph->capture.currentSampleRate, 44100);
+    EXPECT_EQ(graph->capture.slotMapValidation, Graph::SlotMapValidation::kValidated);
 }
 
 // ============================================================================

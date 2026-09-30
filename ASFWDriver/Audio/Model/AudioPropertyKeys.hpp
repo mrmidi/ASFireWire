@@ -54,6 +54,7 @@ inline constexpr const char* kStreamMidiPorts = "MIDI";
 /// while every stream is the same width. The vendor drivers carry the same
 /// running base (AlesisFirewireAudioEngine::CreateStreams advances it by each
 /// stream's own count).
+inline constexpr const char* kStreamPcmSlotMap = "PCMMap";
 inline constexpr const char* kStreamChannelOffset = "Offset";
 
 /// Set when the publisher resolved per-stream geometry from the device and the

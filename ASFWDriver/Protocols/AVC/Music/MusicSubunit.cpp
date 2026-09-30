@@ -11,8 +11,8 @@
 #include "../Commands/StreamFormatCommand.hpp"
 #include "../Core/IAvcUnit.hpp"
 #include "../Core/AvcTypes.hpp"
-#include "../StreamFormats/AVCSignalSourceCommand.hpp"
-#include "../AudioFunctionBlockCommand.hpp"
+#include "../Commands/SignalSourceCommand.hpp"
+#include "../Commands/FunctionBlockCommand.hpp"
 #include "../StreamFormats/StreamFormatParser.hpp"
 #include "../Descriptors/DescriptorAccessor.hpp"
 #include <cctype>
@@ -66,6 +66,36 @@ namespace {
 
         blockPtr = specificPtr + currentOffset + 1;
         return true;
+    }
+
+    [[nodiscard]] StreamFormats::ConnectionInfo ToConnectionInfo(const Cmd::SignalSource& source) noexcept {
+        StreamFormats::ConnectionInfo info{};
+        if (source.source.bytes[1] == 0xFE) {
+            info.sourceSubunitType = StreamFormats::SourceSubunitType::kNotConnected;
+            return info;
+        }
+
+        const auto address = ASFW::AVC::SubunitAddress::FromByte(source.source.bytes[0]);
+        info.sourcePlugNumber = source.source.PlugId();
+        if (address.IsUnit()) {
+            info.sourceIsExternalUnitPlug = source.source.IsExternalUnitPlug();
+            info.sourceSubunitType = StreamFormats::SourceSubunitType::kUnit;
+            return info;
+        }
+
+        info.sourceSubunitID = address.Id();
+        switch (address.Type()) {
+            case ASFW::AVC::SubunitType::kAudio:
+                info.sourceSubunitType = StreamFormats::SourceSubunitType::kAudio;
+                break;
+            case ASFW::AVC::SubunitType::kMusic:
+                info.sourceSubunitType = StreamFormats::SourceSubunitType::kMusic;
+                break;
+            default:
+                info.sourceSubunitType = StreamFormats::SourceSubunitType::kUnknown;
+                break;
+        }
+        return info;
     }
 
     [[nodiscard]] bool ParseGeneralCapabilityBlock(MusicSubunitCapabilities& capabilities,
@@ -513,6 +543,13 @@ void MusicSubunit::QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmit
 void MusicSubunit::QueryConnections(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, std::function<void(bool)> completion) {
     using namespace StreamFormats;
 
+    auto* avcUnit = submitter.AsAvcUnit();
+    if (!avcUnit) {
+        ASFW_LOG_V1(MusicSubunit, "MusicSubunit: submitter is not an IAvcUnit");
+        completion(false);
+        return;
+    }
+
     // Helper to recursively query connections for each destination (input) plug
     struct QueryState {
         size_t plugIndex{0};
@@ -531,7 +568,7 @@ void MusicSubunit::QueryConnections(ASFW::Protocols::AVC::IAVCCommandSubmitter& 
     state->completion = completion;
 
     // Define the recursive function
-    state->queryNext = [this, &submitter, state]() {
+    state->queryNext = [this, avcUnit, state]() {
         // Done with all plugs?
         if (state->plugIndex >= plugs_.size()) {
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Connection topology query complete");
@@ -558,45 +595,30 @@ void MusicSubunit::QueryConnections(ASFW::Protocols::AVC::IAVCCommandSubmitter& 
                       plug.plugID);
 
         // Query SIGNAL SOURCE for this destination plug
-        auto cmd = std::make_shared<AVCSignalSourceCommand>(
-            submitter,
-            GetAddress(),
-            plug.plugID,
-            true  // isSubunitPlug
-        );
-
-        cmd->Submit([this, currentPlugIndex, state, &submitter](AVCResult result, const ConnectionInfo& connInfo) {
-            if (IsSuccess(result)) {
+        Cmd::SignalSourceCommand cmd{
+            .address = SubunitAddress::Unit(),
+            .operands = {
+                .destination = Cmd::SignalAddress::SubunitPlug(
+                    SubunitAddress::FromByte(GetAddress()), plug.plugID),
+            },
+        };
+        const auto expectedDestination = cmd.operands.destination;
+        avcUnit->Status(cmd, [this, currentPlugIndex, state, expectedDestination](Expected<Cmd::SignalSource> reply) {
+            if (reply && reply->destination == expectedDestination) {
+                const auto connInfo = ToConnectionInfo(*reply);
                 plugs_[currentPlugIndex].connectionInfo = connInfo;
                 LogConnection(currentPlugIndex, connInfo);
-                state->Advance();
-            } else if (result == AVCResult::kNotImplemented) {
-                // Device might support SIGNAL SOURCE at the Unit level instead of Subunit level
-                // (e.g., Apogee Duet). Retry targeting the Unit.
-                ASFW_LOG_V3(MusicSubunit, "MusicSubunit: Subunit SIGNAL SOURCE not implemented, retrying with Unit address");
-
-                auto unitCmd = std::make_shared<AVCSignalSourceCommand>(
-                    submitter,
-                    kAVCSubunitUnit, // Target the Unit (0xFF)
-                    plugs_[currentPlugIndex].plugID,
-                    true  // Still asking about a Subunit Plug
-                );
-
-                unitCmd->Submit([this, currentPlugIndex, state](AVCResult unitResult, const ConnectionInfo& unitConnInfo) {
-                    if (IsSuccess(unitResult)) {
-                        plugs_[currentPlugIndex].connectionInfo = unitConnInfo;
-                        LogConnection(currentPlugIndex, unitConnInfo);
-                    } else {
-                        ASFW_LOG_V3(MusicSubunit, "MusicSubunit: Connection query failed for plug %u (Unit retry result: %d)",
-                                      plugs_[currentPlugIndex].plugID, static_cast<int>(unitResult));
-                    }
-                    state->Advance();
-                });
+            } else if (reply) {
+                ASFW_LOG_V3(MusicSubunit,
+                            "MusicSubunit: SIGNAL SOURCE destination mismatch for plug %u",
+                            plugs_[currentPlugIndex].plugID);
             } else {
-                ASFW_LOG_V3(MusicSubunit, "MusicSubunit: Connection query failed for plug %u (Result: %d)",
-                              plugs_[currentPlugIndex].plugID, static_cast<int>(result));
-                state->Advance();
+                ASFW_LOG_V3(MusicSubunit,
+                            "MusicSubunit: SIGNAL SOURCE failed for plug %u (error=%u)",
+                            plugs_[currentPlugIndex].plugID,
+                            static_cast<unsigned>(reply.error().kind));
             }
+            state->Advance();
         });
     };
 
@@ -1115,60 +1137,47 @@ void MusicSubunit::LogConnection(size_t index, const StreamFormats::ConnectionIn
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void MusicSubunit::SetAudioVolume(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, uint8_t plugId, int16_t volume, std::function<void(bool)> completion) {
-    // Target Audio Subunit 0 (0x01 << 3 | 0 = 0x08)
-    uint8_t subunitAddr = (static_cast<uint8_t>(AVCSubunitType::kAudio) << 3) | 0;
-    
-    // Volume data: channel (0x00 Master), data length (0x02), and 2-byte volume
-    std::vector<uint8_t> data;
-    data.push_back(0x00);
-    data.push_back(0x02);
-    data.push_back(static_cast<uint8_t>((volume >> 8) & 0xFF));
-    data.push_back(static_cast<uint8_t>(volume & 0xFF));
-    
-    auto cmd = std::make_shared<AudioFunctionBlockCommand>(
-        submitter,
-        subunitAddr,
-        AudioFunctionBlockCommand::CommandType::kControl,
-        plugId,
-        AudioFunctionBlockCommand::ControlSelector::kVolume,
-        data
-    );
-    
-    cmd->Submit([completion, plugId](AVCResult result, const std::vector<uint8_t>&) {
-        if (IsSuccess(result)) {
+    auto* avcUnit = submitter.AsAvcUnit();
+    if (!avcUnit) {
+        ASFW_LOG_V1(MusicSubunit, "MusicSubunit: submitter is not an IAvcUnit");
+        completion(false);
+        return;
+    }
+
+    Cmd::FeatureCommand cmd{
+        .address = SubunitAddress::Of(SubunitType::kAudio, 0),
+        .operands = Cmd::FeatureOperands::Volume(
+            plugId, Cmd::kMasterChannel, ASFW::AVC::AvcVolume::FromRaw(volume)),
+    };
+    avcUnit->Control(cmd, [completion = std::move(completion), plugId](Expected<Cmd::FeatureReply> result) mutable {
+        if (result) {
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Set Audio Volume success (plug %d)", plugId);
-            completion(true);
         } else {
-            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Set Audio Volume failed: result=%d", static_cast<int>(result));
-            completion(false);
+            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Set Audio Volume failed: error=%u",
+                        static_cast<unsigned>(result.error().kind));
         }
+        completion(result.has_value());
     });
 }
 
 void MusicSubunit::SetAudioMute(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, uint8_t plugId, bool mute, std::function<void(bool)> completion) {
-    // Target Audio Subunit 0
-    uint8_t subunitAddr = (static_cast<uint8_t>(AVCSubunitType::kAudio) << 3) | 0;
-    
-    // Mute: 0x70 (On), 0x60 (Off)
-    uint8_t muteVal = mute ? 0x70 : 0x60;
-    
-    auto cmd = std::make_shared<AudioFunctionBlockCommand>(
-        submitter,
-        subunitAddr,
-        AudioFunctionBlockCommand::CommandType::kControl,
-        plugId,
-        AudioFunctionBlockCommand::ControlSelector::kMute,
-        std::vector<uint8_t>{muteVal}
-    );
-    
-    cmd->Submit([completion, cmd](AVCResult result, const std::vector<uint8_t>&) {
-        if (IsSuccess(result)) {
-            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Set Audio Mute success");
-            completion(true);
-        } else {
-            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Set Audio Mute failed: result=%d", static_cast<int>(result));
-            completion(false);
+    auto* avcUnit = submitter.AsAvcUnit();
+    if (!avcUnit) {
+        ASFW_LOG_V1(MusicSubunit, "MusicSubunit: submitter is not an IAvcUnit");
+        completion(false);
+        return;
+    }
+
+    Cmd::FeatureCommand cmd{
+        .address = SubunitAddress::Of(SubunitType::kAudio, 0),
+        .operands = Cmd::FeatureOperands::Mute(plugId, Cmd::kMasterChannel, mute),
+    };
+    avcUnit->Control(cmd, [completion = std::move(completion)](Expected<Cmd::FeatureReply> result) mutable {
+        if (!result) {
+            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Set Audio Mute failed: error=%u",
+                        static_cast<unsigned>(result.error().kind));
         }
+        completion(result.has_value());
     });
 }
 

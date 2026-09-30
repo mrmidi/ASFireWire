@@ -17,7 +17,6 @@
 #include <memory>
 #include <vector>
 #include "FCPTransport.hpp"
-#include "AVCCommands.hpp"
 #include "IAVCCommandSubmitter.hpp"
 #include "Subunit.hpp"
 #include "../../Discovery/FWUnit.hpp"
@@ -148,7 +147,7 @@ private:
 
     void PopulateKnownSubunitPlugCounts();
 
-    void BuildDiscoveredGraph();
+    void ResolveDiscoveredGraph(std::function<void(bool)> completion);
 
     void ProbeSignalFormat(std::function<void(bool)> completion);
 

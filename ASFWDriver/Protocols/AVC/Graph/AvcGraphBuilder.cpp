@@ -122,6 +122,7 @@ DeviceGraph AvcGraphBuilder::BuildGraph(
     const Options& options) noexcept {
 
     DeviceGraph dg;
+    dg.supportsBlockingTransmit = (musicStatus.capabilities.transmitCapabilityFlags & 0x02) != 0;
     dg.modelName = options.modelName;
 
     // 1. Find Playback plug (destination plug)

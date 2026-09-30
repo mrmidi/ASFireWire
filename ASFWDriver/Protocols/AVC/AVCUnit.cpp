@@ -12,6 +12,8 @@
 #include "../../Logging/Logging.hpp"
 #include "Descriptors/DescriptorAccessor.hpp"
 #include "Commands/GeneralCommands.hpp"
+#include "Commands/SignalSourceCommand.hpp"
+#include "Commands/StreamFormatCommand.hpp"
 #include "Core/RateCodes.hpp"
 
 using namespace ASFW::Protocols::AVC;
@@ -282,8 +284,9 @@ void AVCUnit::ParseSubunitCapabilities(size_t index, std::function<void(bool)> c
     auto completionState = Common::ShareCallback(std::move(completion));
     if (index >= subunits_.size()) {
         PopulateKnownSubunitPlugCounts();
-        BuildDiscoveredGraph();
-        Common::InvokeSharedCallback(completionState, true);
+        ResolveDiscoveredGraph([completionState](bool) {
+            Common::InvokeSharedCallback(completionState, true);
+        });
         return;
     }
 
@@ -344,27 +347,109 @@ void AVCUnit::PopulateKnownSubunitPlugCounts() {
     }
 }
 
-void AVCUnit::BuildDiscoveredGraph() {
-    const Music::MusicSubunit* music = nullptr;
+void AVCUnit::ResolveDiscoveredGraph(std::function<void(bool)> completion) {
+    auto done = Common::ShareCallback(std::move(completion));
+    std::shared_ptr<Music::MusicSubunit> music;
     const Audio::AudioSubunit* audio = nullptr;
     for (const auto& subunit : subunits_) {
         if (subunit->GetType() == AVCSubunitType::kMusic && !music) {
-            music = static_cast<const Music::MusicSubunit*>(subunit.get());
+            music = std::static_pointer_cast<Music::MusicSubunit>(subunit);
         } else if (subunit->GetType() == AVCSubunitType::kAudio && !audio) {
             audio = static_cast<const Audio::AudioSubunit*>(subunit.get());
         }
     }
     if (!music || !music->GetParsedStatus()) {
         discoveredGraph_.reset();
+        ASFW_LOG_WARNING(AVC, "[AvcGraph] guid=%llx unavailable reason=music-descriptor", Guid());
+        Common::InvokeSharedCallback(done, false);
         return;
     }
-
     Graph::GraphBuildOptions options;
     options.allowDefaultPlugSelection = false;
     if (audio) options.audioSubunitId = audio->GetID();
     if (auto device = device_.lock()) options.modelName = std::string(device->GetModelName());
-    discoveredGraph_ = std::make_shared<Graph::DeviceGraph>(Graph::AvcGraphBuilder::BuildGraph(
-        *music->GetParsedStatus(), audio && audio->GetIdentifier() ? &*audio->GetIdentifier() : nullptr, options));
+    for (const auto& plug : music->GetPlugs()) {
+        if (plug.IsInput() && plug.connectionInfo && plug.connectionInfo->IsUnitConnection() &&
+            !plug.connectionInfo->sourceIsExternalUnitPlug &&
+            plug.connectionInfo->sourcePlugNumber == 0) {
+            if (options.playbackSubunitDestPlugId) {
+                ASFW_LOG_WARNING(AVC, "[AvcGraph] guid=%llx unavailable reason=ambiguous-playback-route", Guid());
+                discoveredGraph_.reset();
+                Common::InvokeSharedCallback(done, false);
+                return;
+            }
+            options.playbackSubunitDestPlugId = plug.plugID;
+        }
+    }
+    const auto identifier = audio ? audio->GetIdentifier() : std::nullopt;
+    const auto generation = CurrentGeneration();
+    // Capture is the source feeding unit ISO output 0, not source plug 0 by convention.
+    // Cross-validated: FFADO libavc/ccm/avc_signal_source.cpp:45-95;
+    // docs/avc-rebuild/fixtures/graph_build.py:133-139.
+    ASFW::AVC::Cmd::SignalSourceCommand command{
+        .address = ASFW::AVC::SubunitAddress::Unit(),
+        .operands = {.destination = ASFW::AVC::Cmd::SignalAddress::UnitIsochronousPlug(0)}};
+    Status(command, [this, music, identifier, options = std::move(options), generation, done]
+        (ASFW::AVC::Expected<ASFW::AVC::Cmd::SignalSource> reply) mutable {
+        if (CurrentGeneration() != generation) {
+            Common::InvokeSharedCallback(done, false);
+            return;
+        }
+        const auto destination = ASFW::AVC::Cmd::SignalAddress::UnitIsochronousPlug(0);
+        const auto sourceAddress = ASFW::AVC::SubunitAddress::FromByte(
+            static_cast<uint8_t>((static_cast<uint8_t>(AVCSubunitType::kMusic) << 3) | music->GetID()));
+        if (reply && reply->destination == destination && !reply->source.IsUnit() &&
+            reply->source.Subunit() == sourceAddress) {
+            options.captureSubunitSourcePlugId = reply->source.PlugId();
+        }
+        auto graph = Graph::AvcGraphBuilder::BuildGraph(*music->GetParsedStatus(),
+            identifier ? &*identifier : nullptr, options);
+        auto completeStream = [&](Graph::StreamGraph& stream) {
+            if (stream.selectionEvidence == Graph::StreamSelectionEvidence::kUnresolved) return;
+            const auto found = std::find_if(music->GetPlugs().begin(), music->GetPlugs().end(),
+                [&stream](const auto& plug) { return plug.plugID == stream.subunitPlugId &&
+                    plug.IsInput() == stream.isDestination; });
+            if (found == music->GetPlugs().end() || !found->currentFormat) return;
+            const auto formation = ASFW::AVC::Cmd::DecodeStreamFormatBlock(found->currentFormat->rawFormatBlock);
+            if (!formation || formation->kind != ASFW::AVC::Cmd::StreamFormat::Kind::kCompoundAm824 ||
+                !formation->compound.OnlyPcmAndMidi() || formation->compound.PcmChannels() != stream.channelCount) return;
+            const auto& compound = formation->compound;
+            const auto rate = ASFW::AVC::ToHz(compound.rate);
+            if (!rate) return;
+            stream.dataBlockSize = compound.PcmChannels() + compound.MidiChannels();
+            stream.currentSampleRate = *rate;
+            const auto* descriptor = music->GetParsedStatus()->FindPlug(stream.subunitPlugId, stream.isDestination);
+            auto validated = Graph::AvcGraphBuilder::BuildStreamGraph(*descriptor, *music->GetParsedStatus(), stream.dataBlockSize);
+            stream.slotMap = validated.slotMap;
+            stream.slotMapValidation = validated.slotMapValidation;
+            stream.usingFallbackMap = validated.usingFallbackMap;
+            for (const auto& format : found->supportedFormats) {
+                const auto parsed = ASFW::AVC::Cmd::DecodeStreamFormatBlock(format.rawFormatBlock);
+                if (!parsed || parsed->kind != ASFW::AVC::Cmd::StreamFormat::Kind::kCompoundAm824 ||
+                    !parsed->compound.OnlyPcmAndMidi() || parsed->compound.PcmChannels() != stream.channelCount ||
+                    parsed->compound.MidiChannels() != compound.MidiChannels()) continue;
+                if (auto hz = ASFW::AVC::ToHz(parsed->compound.rate); hz &&
+                    std::find(stream.supportedSampleRates.begin(), stream.supportedSampleRates.end(), *hz) == stream.supportedSampleRates.end())
+                    stream.supportedSampleRates.push_back(*hz);
+            }
+            if (stream.supportedSampleRates.empty()) stream.supportedSampleRates.push_back(*rate);
+        };
+        completeStream(graph.playback);
+        completeStream(graph.capture);
+        ASFW_LOG(AVC, "[AvcGraph] guid=%llx gen=%u playback=plug%u pcm=%u dbs=%u capture=plug%u pcm=%u dbs=%u controls=%zu",
+            Guid(), generation.value, graph.playback.subunitPlugId, graph.playback.channelCount,
+            graph.playback.dataBlockSize, graph.capture.subunitPlugId, graph.capture.channelCount,
+            graph.capture.dataBlockSize, graph.controls.size());
+        for (const auto* stream : {&graph.playback, &graph.capture}) {
+            ASFW_LOG(AVC, "[AvcGraphStream] guid=%llx direction=%{public}s selected=%u plug=%u rate=%u pcm=%u dbs=%u map=%u rates=%zu",
+                Guid(), stream->isDestination ? "playback" : "capture",
+                static_cast<unsigned>(stream->selectionEvidence), stream->subunitPlugId,
+                stream->currentSampleRate, stream->channelCount, stream->dataBlockSize,
+                static_cast<unsigned>(stream->slotMapValidation), stream->supportedSampleRates.size());
+        }
+        discoveredGraph_ = std::make_shared<Graph::DeviceGraph>(std::move(graph));
+        Common::InvokeSharedCallback(done, true);
+    });
 }
 
 void AVCUnit::ProbePlugs(std::function<void(bool)> completion) {

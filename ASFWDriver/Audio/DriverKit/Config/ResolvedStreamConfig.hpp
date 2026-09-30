@@ -71,6 +71,11 @@ BuildResolvedTxStreamConfig(const IAudioStreamProfile& profile,
     }
 
     const ParsedWireStream& wire = resolvedStreams[index];
+    if (wire.pcmChannels == 0 || wire.pcmChannels > 255 || wire.am824Slots > 255 ||
+        wire.am824Slots < wire.pcmChannels || wire.midiPorts > 255 || wire.channelOffset > 255 ||
+        !wire.pcmSlotMap.FitsWithin(wire.pcmChannels, wire.am824Slots)) return false;
+    outConfig.pcmSlotMap = wire.pcmSlotMap;
+    outConfig.hasPcmSlotMap = wire.hasPcmSlotMap;
     outConfig.pcmChannels = static_cast<uint8_t>(wire.pcmChannels);
     outConfig.midiSlots = static_cast<uint8_t>(wire.midiPorts);
     outConfig.dbs = static_cast<uint8_t>(wire.am824Slots);

@@ -11,7 +11,6 @@
 // - PLUG SIGNAL FORMAT (query and control across all sampling rates, response parsing)
 // - STREAM FORMAT (opcode 0x2F / 0xBF list and single across directions and indices)
 // - BridgeCo Extended PLUG INFO (plug type, channel positions, cluster info)
-// - Audio Function Block (selector match, feature mute/volume intended spec corrections)
 // - Apogee Vendor-Dependent framing
 // - M-Audio Special Allowlist Parity
 
@@ -30,9 +29,8 @@
 #include "ASFWDriver/Protocols/AVC/AVCCommandFilter.hpp"
 
 // Legacy AV/C stack
-#include "ASFWDriver/Protocols/AVC/AVCCommands.hpp"
+#include "LegacyAvcCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/IAVCCommandSubmitter.hpp"
-#include "ASFWDriver/Protocols/AVC/AudioFunctionBlockCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/StreamFormats/StreamFormatTypes.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 #include "ASFWDriver/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.hpp"
@@ -63,12 +61,6 @@ public:
 class TestSubunitInfoCommand : public Protocols::AVC::AVCSubunitInfoCommand {
 public:
     using Protocols::AVC::AVCSubunitInfoCommand::AVCSubunitInfoCommand;
-    const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
-};
-
-class TestPlugInfoCommand : public Protocols::AVC::AVCPlugInfoCommand {
-public:
-    using Protocols::AVC::AVCPlugInfoCommand::AVCPlugInfoCommand;
     const Protocols::AVC::AVCCdb& Cdb() const { return cdb_; }
 };
 
@@ -905,114 +897,7 @@ TEST(AvcDifferentialTests, BridgeCoExtendedPlugInfo_ChannelPositionsStrictnessDi
 }
 
 // ===========================================================================
-// 7. Audio Function Block Differential Tests
-// ===========================================================================
-
-TEST(AvcDifferentialTests, AudioFunctionBlock_SelectorCommandBytesMatch) {
-    MockAvcSubmitter submitter;
-
-    for (uint8_t fbId = 1; fbId <= 4; ++fbId) {
-        for (uint8_t inputPlug = 0; inputPlug < 2; ++inputPlug) {
-            Protocols::AVC::AudioFunctionBlockCommand legacyCmd(
-                submitter,
-                0x08, // Audio subunit 0
-                Protocols::AVC::AudioFunctionBlockCommand::CommandType::kControl,
-                Protocols::AVC::AudioFunctionBlockCommand::BlockType::kSelector,
-                fbId,
-                Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kSelectorControl,
-                std::vector<uint8_t>{inputPlug});
-            legacyCmd.Submit([](Protocols::AVC::AVCResult, const std::vector<uint8_t>&) {});
-            auto legacyEncoded = submitter.lastCdb.Encode();
-
-            auto newCmd = Command<Cmd::SelectorOperands>{
-                .address = kAudioSubunit0,
-                .operands = Cmd::SelectorOperands{
-                    .functionBlockId = fbId,
-                    .inputPlug = inputPlug,
-                },
-            }.Encode(CommandType::kControl);
-            ASSERT_TRUE(newCmd.has_value());
-
-            ASSERT_EQ(legacyEncoded.length, newCmd->WireBytes().size());
-            for (size_t i = 0; i < legacyEncoded.length; ++i) {
-                EXPECT_EQ(legacyEncoded.data[i], newCmd->WireBytes()[i])
-                    << "Mismatch at byte " << i << " for fbId " << int(fbId);
-            }
-        }
-    }
-}
-
-TEST(AvcDifferentialTests, AudioFunctionBlock_FeatureMuteAndVolume_IdentifiesIntendedDifference) {
-    MockAvcSubmitter submitter;
-
-    // Legacy BeBoBProtocol::SetFeatureMute:
-    // sent selector length 4, data {channel, 0x01, unmute ? 0x60 : 0x00}
-    Protocols::AVC::AudioFunctionBlockCommand legacyMute(
-        submitter, 0x08,
-        Protocols::AVC::AudioFunctionBlockCommand::CommandType::kControl,
-        Protocols::AVC::AudioFunctionBlockCommand::BlockType::kFeature,
-        1,
-        Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kMute,
-        std::vector<uint8_t>{0x00, 0x01, 0x60});
-    legacyMute.Submit([](Protocols::AVC::AVCResult, const std::vector<uint8_t>&) {});
-    auto legacyMuteEncoded = submitter.lastCdb.Encode();
-
-    // Rebuilt codec per TA 1394 Audio Subunit 1.0 §10.3 / §10.3.1:
-    // selector length is ALWAYS 2: [channel][control selector]
-    // followed by [data length 1][0x60/0x70]
-    //
-    // HARDWARE PROOF ON TERRAMAC PHASE 88 (2026-09-27):
-    // Phase 88 ACCEPTED both the spec form (selector length 02, FB1 ch1/ch2 volume)
-    // and the old driver's form (length 05), and read back the value.
-    // The new form is now hardware-proven on the Phase 88, not just spec-correct.
-    auto newMute = Command<Cmd::FeatureOperands>{
-        .address = kAudioSubunit0,
-        .operands = Cmd::FeatureOperands::Mute(1, 0x00, false),
-    }.Encode(CommandType::kControl);
-    ASSERT_TRUE(newMute.has_value());
-
-    // Both commands have the same total wire length (12 bytes padded)
-    EXPECT_EQ(legacyMuteEncoded.length, 12U);
-    EXPECT_EQ(newMute->WireBytes().size(), 12U);
-
-    // Header matches: 00 08 B8 (Control, Audio Subunit 0, Function Block 0xB8)
-    EXPECT_EQ(legacyMuteEncoded.data[0], newMute->Bytes()[0]);
-    EXPECT_EQ(legacyMuteEncoded.data[1], newMute->Bytes()[1]);
-    EXPECT_EQ(legacyMuteEncoded.data[2], newMute->Bytes()[2]);
-    EXPECT_EQ(legacyMuteEncoded.data[3], newMute->Bytes()[3]); // FB Type: 0x81 (Feature)
-    EXPECT_EQ(legacyMuteEncoded.data[4], newMute->Bytes()[4]); // FB ID: 1
-    EXPECT_EQ(legacyMuteEncoded.data[5], newMute->Bytes()[5]); // Attr: 0x10 (Current)
-
-    // Intended difference at operand 3 (frame byte 6):
-    // Legacy sent selector length 4 (invalid per spec §10.3); new sends 2.
-    EXPECT_EQ(legacyMuteEncoded.data[6], 0x04);
-    EXPECT_EQ(newMute->Bytes()[6], 0x02);
-
-    // Legacy BeBoBProtocol::SetFeatureVolume:
-    // sent selector length 5, data {channel, 0x02, hi, lo}
-    Protocols::AVC::AudioFunctionBlockCommand legacyVol(
-        submitter, 0x08,
-        Protocols::AVC::AudioFunctionBlockCommand::CommandType::kControl,
-        Protocols::AVC::AudioFunctionBlockCommand::BlockType::kFeature,
-        1,
-        Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kVolume,
-        std::vector<uint8_t>{0x00, 0x02, 0x00, 0x00});
-    legacyVol.Submit([](Protocols::AVC::AVCResult, const std::vector<uint8_t>&) {});
-    auto legacyVolEncoded = submitter.lastCdb.Encode();
-
-    auto newVol = Command<Cmd::FeatureOperands>{
-        .address = kAudioSubunit0,
-        .operands = Cmd::FeatureOperands::Volume(1, 0x00, AvcVolume::FromRaw(0x0000)),
-    }.Encode(CommandType::kControl);
-    ASSERT_TRUE(newVol.has_value());
-
-    // Intended difference at operand 3: legacy sent 5; new sends 2 per spec §10.3.
-    EXPECT_EQ(legacyVolEncoded.data[6], 0x05);
-    EXPECT_EQ(newVol->Bytes()[6], 0x02);
-}
-
-// ===========================================================================
-// 8. Apogee Vendor-Dependent Differential Tests
+// 7. Apogee Vendor-Dependent Differential Tests
 // ===========================================================================
 
 TEST(AvcDifferentialTests, ApogeeVendorDependent_CommandBytesMatch) {

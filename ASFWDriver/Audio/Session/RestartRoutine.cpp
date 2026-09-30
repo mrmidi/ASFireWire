@@ -184,8 +184,32 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     }
     record = *refreshed;
 
+    const auto applyGraph = [&](AudioStreamRuntimeCaps& geometry) {
+        if (!request.discoveredConfig) return true;
+        const auto& config = *request.discoveredConfig;
+        if (config.playbackStreams.size() != 1 || config.captureStreams.size() != 1 ||
+            std::find(config.sampleRates.begin(), config.sampleRates.end(), clock.sampleRateHz) == config.sampleRates.end()) return false;
+        const auto& playback = config.playbackStreams.front();
+        const auto& capture = config.captureStreams.front();
+        // Device stages must agree with the graph before any host DMA is armed.
+        if (geometry.hostInputPcmChannels != capture.pcmChannels ||
+            geometry.hostOutputPcmChannels != playback.pcmChannels ||
+            geometry.deviceToHostAm824Slots != capture.am824Slots ||
+            geometry.hostToDeviceAm824Slots != playback.am824Slots) return false;
+        geometry.deviceToHostStreamCount = geometry.hostToDeviceStreamCount = 1;
+        geometry.deviceToHostStreams[0] = {.pcmChannels = static_cast<uint16_t>(capture.pcmChannels),
+            .am824Slots = static_cast<uint16_t>(capture.am824Slots)};
+        geometry.hostToDeviceStreams[0] = {.pcmChannels = static_cast<uint16_t>(playback.pcmChannels),
+            .am824Slots = static_cast<uint16_t>(playback.am824Slots)};
+        return true;
+    };
+    auto initialCaps = family.RuntimeCaps().value_or(AudioStreamRuntimeCaps{});
+    if (!applyGraph(initialCaps)) {
+        ASFW_LOG_ERROR(Audio, "[AvcGraphBind] guid=%llx refused reason=device-geometry-or-rate", guid);
+        return refused(kIOReturnUnsupported, "GraphGeometry");
+    }
     DuplexStreamProfile profile =
-        DuplexStreamProfileResolver::Resolve(record, family.RuntimeCaps().value_or(AudioStreamRuntimeCaps{}));
+        DuplexStreamProfileResolver::Resolve(record, initialCaps);
     if (!profile.policyResolved) {
         return refused(kIOReturnNotReady, "Profile");
     }
@@ -220,6 +244,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         return superseded("Configure");
     }
     caps = prepared->runtimeCaps;
+    if (!applyGraph(caps)) return rollback(kIOReturnUnsupported, "GraphGeometry");
     profile = DuplexStreamProfileResolver::Resolve(record, caps, channels);
     if (!profile.policyResolved) {
         return superseded("Configure");
@@ -321,6 +346,18 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
              caps.hostInputPcmChannels, caps.hostOutputPcmChannels, caps.deviceToHostAm824Slots,
              caps.hostToDeviceAm824Slots, static_cast<uint32_t>(profile.captureWireFormat),
              static_cast<uint32_t>(profile.playbackWireFormat));
+
+    if (request.discoveredConfig) {
+        const auto& config = *request.discoveredConfig;
+        const auto& capture = config.captureStreams.front();
+        if (!capture.pcmSlotMap.FitsWithin(capture.pcmChannels, capture.am824Slots))
+            return rollback(kIOReturnUnsupported, "GraphSlotMap");
+        static_cast<Wire::PcmSlotMap&>(profile.captureChannelMap) = capture.pcmSlotMap;
+        profile.playbackChannelMap = config.playbackStreams.front().pcmSlotMap;
+        ASFW_LOG(Audio, "[AvcGraphBind] guid=%llx rate=%u playbackPcm=%u capturePcm=%u captureMapSlots=%u",
+            guid, clock.sampleRateHz, config.outputChannelCount, config.inputChannelCount,
+            capture.pcmSlotMap.slotCount);
+    }
 
     // 4. Prepare every host DMA program while the device is still disabled, in
     //    the recipe's order. The master capture stream owns clock, ZTS and

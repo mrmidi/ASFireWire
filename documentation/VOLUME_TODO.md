@@ -57,7 +57,8 @@ A `ASFWProtocolLevelControl : IOUserAudioLevelControl` is a near-copy of that.
 
 ### Option A — hardware volume (recommended for Phase 88)
 
-`HandleChangeDecibelValue` → RPC → `Phase88Protocol` sends `AudioFunctionBlockCommand kVolume` to
+`HandleChangeDecibelValue` → RPC → `Phase88Protocol` sends a typed `Cmd::FunctionBlockCommand`
+with `Cmd::FeatureOperands::Volume` to
 mixer-output FBs `0x00`/`0x01` (the ones already written in Phase88Protocol.cpp:298-299), **driven
 by the control instead of pinned to max**.
 

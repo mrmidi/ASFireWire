@@ -130,14 +130,8 @@ private:
                                               const Discovery::FWDevice& device);
     void PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,
                                                       const Discovery::FWDevice& device);
-    [[nodiscard]] Music::MusicSubunit* FindAudioMusicSubunit(const AVCUnit& avcUnit) const;
-    void PopulateMusicSubunitCapabilities(uint64_t guid,
-                                          const Discovery::FWDevice& device,
-                                          Music::MusicSubunit& musicSubunit) const;
-    void UpdateCurrentSampleRate(Music::MusicSubunit& musicSubunit) const;
-    [[nodiscard]] ::ASFW::Audio::Model::ASFWAudioDevice BuildAudioDeviceConfig(uint64_t guid,
-                                                                       const Discovery::FWDevice& device,
-                                                                       const Music::MusicSubunit& musicSubunit) const;
+    [[nodiscard]] ::ASFW::Audio::Model::ASFWAudioDevice BuildAudioDeviceConfig(
+        uint64_t guid, const Discovery::FWDevice& device, const Graph::DeviceGraph& graph) const;
     void PublishReadyAudioConfig(uint64_t guid, const ::ASFW::Audio::Model::ASFWAudioDevice& config);
     void PrefetchDuetStateAndCreateNub(uint64_t guid,
                                        const std::shared_ptr<AVCUnit>& avcUnit,

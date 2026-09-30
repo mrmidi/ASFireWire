@@ -48,6 +48,9 @@ struct StreamGraph {
     uint8_t subunitPlugId{0};
     StreamSelectionEvidence selectionEvidence{StreamSelectionEvidence::kUnresolved};
     bool isDestination{false};      ///< true = playback (dest plug), false = capture (src plug)
+    uint32_t dataBlockSize{0};
+    uint32_t currentSampleRate{0};
+    std::vector<uint32_t> supportedSampleRates;
     uint32_t channelCount{0};       ///< Total PCM audio channels
     uint32_t midiStreamCount{0};    ///< MIDI port/stream count
     ASFW::Audio::Wire::PcmSlotMap slotMap; ///< Mapped AM824 slots for PCM channels
@@ -142,6 +145,7 @@ struct ControlBlockInfo {
 /// Complete device graph built from descriptor discovery
 struct DeviceGraph {
     std::string modelName;
+    bool supportsBlockingTransmit{false};
     StreamGraph playback;
     StreamGraph capture;
     std::vector<ClockSourceInfo> clockSources;

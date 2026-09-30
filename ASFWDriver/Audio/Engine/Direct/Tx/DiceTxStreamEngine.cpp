@@ -41,7 +41,11 @@ bool DiceTxStreamEngine::Configure(const ASFW::Isoch::Audio::IAudioStreamProfile
         return false;
     }
 
-    const ASFW::Isoch::Audio::AudioStreamTxPolicy txPolicy = profile.TxStreamPolicy();
+    auto txPolicy = profile.TxStreamPolicy();
+    if (txConfig.hasPcmSlotMap) {
+        if (!txConfig.pcmSlotMap.FitsWithin(txConfig.pcmChannels, txConfig.dbs)) return false;
+        txPolicy.playbackChannelMap = txConfig.pcmSlotMap;
+    }
     const AMDTP::AmdtpStreamConfig amdtpConfig =
         DiceStreamConfigMapper::ToAmdtpConfig(txConfig);
     AMDTP::AmdtpTxPolicy policy = BuildTxPolicy(txPolicy);
