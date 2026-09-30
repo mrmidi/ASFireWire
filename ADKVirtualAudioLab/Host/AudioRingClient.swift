@@ -230,6 +230,7 @@ final class AudioRingClient {
     let diagnostics = ScopeDiagnostics()
     private(set) var metalDevice: MTLDevice?
     private(set) var metalBuffer: MTLBuffer?
+    private(set) var waveformPipeline: MTLRenderPipelineState?
     private(set) var renderPipeline: MTLRenderPipelineState?
     private(set) var analysisPipeline: MTLComputePipelineState?
     private(set) var analysisBuffer: MTLBuffer?
@@ -293,17 +294,25 @@ final class AudioRingClient {
         metalBuffer = buffer
 
         guard let library = device.makeDefaultLibrary(),
+              let waveformVertex = library.makeFunction(name: "waveformVertex"),
+              let waveformFragment = library.makeFunction(name: "waveformFragment"),
               let vertex = library.makeFunction(name: "phaseScopeVertex"),
               let fragment = library.makeFunction(name: "phaseScopeFragment"),
               let analysis = library.makeFunction(name: "analyzeRing") else {
             closeConnection()
             throw AudioRingClientError.shaderUnavailable
         }
+        let waveformDescriptor = MTLRenderPipelineDescriptor()
+        waveformDescriptor.vertexFunction = waveformVertex
+        waveformDescriptor.fragmentFunction = waveformFragment
+        waveformDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         let renderDescriptor = MTLRenderPipelineDescriptor()
         renderDescriptor.vertexFunction = vertex
         renderDescriptor.fragmentFunction = fragment
         renderDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         do {
+            waveformPipeline = try device.makeRenderPipelineState(
+                descriptor: waveformDescriptor)
             renderPipeline = try device.makeRenderPipelineState(
                 descriptor: renderDescriptor)
             analysisPipeline = try device.makeComputePipelineState(
@@ -387,6 +396,7 @@ final class AudioRingClient {
 
     private func closeConnection() {
         metalBuffer = nil
+        waveformPipeline = nil
         renderPipeline = nil
         analysisPipeline = nil
         analysisBuffer = nil

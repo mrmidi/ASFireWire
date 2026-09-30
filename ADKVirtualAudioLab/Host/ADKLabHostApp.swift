@@ -46,6 +46,9 @@ struct ContentView: View {
                     PacketInspectorView()
                 }
                 Tab("Phase Scope", systemImage: "waveform.path.ecg") {
+                    AudioPhaseScopeView()
+                }
+                Tab("Waveform", systemImage: "waveform") {
                     AudioWaveformView()
                 }
             }
