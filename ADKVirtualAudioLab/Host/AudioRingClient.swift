@@ -2,14 +2,45 @@ import Foundation
 import IOKit
 import Metal
 
-struct AudioViewSnapshot {
+struct AudioViewSnapshot: Sendable {
     var writeEndFrame: UInt64 = 0
     var activeRingFrames: UInt32 = 0
     var channels: UInt32 = 0
     var sampleRate: UInt32 = 0
     var ioRunning = false
+    var epoch: UInt64 = 0
+    var validHistoryFrames: UInt32 = 0
     var mappedFrames: UInt64 = 0
-    var lastSamples: [Float] = []
+    var lastLeftSamples: [Float] = []
+    var lastRightSamples: [Float] = []
+}
+
+struct ScopeMetricsSnapshot: Sendable {
+    var cpuEncodeMs: Double?
+    var scheduledToStartMs: Double?
+    var gpuMs: Double?
+    var completionMs: Double?
+    var sampleAgeMs: Double?
+    var overwriteMarginMs: Double?
+    var leftPeak: Float = 0
+    var rightPeak: Float = 0
+    var correlation: Float = 0
+    var inFlight = 0
+    var windowsRendered: UInt64 = 0
+    var windowsCrossingWrap: UInt64 = 0
+    var badWindows: UInt64 = 0
+    var cpuGpuValidationChecks: UInt64 = 0
+    var cpuGpuValidationMismatches: UInt64 = 0
+}
+
+struct AudioRingWireState: Sendable {
+    let writeEndFrame: UInt64
+    let activeRingFrames: UInt32
+    let channels: UInt32
+    let sampleRate: UInt32
+    let ioRunning: Bool
+    let epoch: UInt64
+    let validHistoryFrames: UInt32
 }
 
 private final class AudioRingMappingLifetime: @unchecked Sendable {
@@ -44,6 +75,66 @@ final class WaveformRenderState {
     }
 }
 
+final class ScopeDiagnostics: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = ScopeMetricsSnapshot()
+
+    func read() -> ScopeMetricsSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func submitted(crossesWrap: Bool) {
+        lock.lock()
+        value.inFlight += 1
+        if crossesWrap { value.windowsCrossingWrap += 1 }
+        lock.unlock()
+    }
+
+    func completed(cpuEncodeMs: Double,
+                   scheduledToStartMs: Double?,
+                   gpuMs: Double?,
+                   completionMs: Double,
+                   sampleAgeMs: Double?,
+                   overwriteMarginMs: Double?,
+                   leftPeak: Float,
+                   rightPeak: Float,
+                   correlation: Float,
+                   validationPassed: Bool?,
+                   windowWasSafe: Bool) {
+        lock.lock()
+        value.inFlight = max(0, value.inFlight - 1)
+        value.windowsRendered += 1
+        value.cpuEncodeMs = cpuEncodeMs
+        value.scheduledToStartMs = scheduledToStartMs
+        value.gpuMs = gpuMs
+        value.completionMs = completionMs
+        value.sampleAgeMs = sampleAgeMs
+        value.overwriteMarginMs = overwriteMarginMs
+        value.leftPeak = leftPeak
+        value.rightPeak = rightPeak
+        value.correlation = correlation
+        if let validationPassed {
+            value.cpuGpuValidationChecks += 1
+            if !validationPassed {
+                value.cpuGpuValidationMismatches += 1
+            }
+        }
+        if !windowWasSafe || validationPassed == false {
+            value.badWindows += 1
+        }
+        lock.unlock()
+    }
+
+    func failed() {
+        lock.lock()
+        value.inFlight = max(0, value.inFlight - 1)
+        value.badWindows += 1
+        lock.unlock()
+    }
+}
+
 enum AudioRingClientError: LocalizedError {
     case serviceNotFound
     case openFailed(kern_return_t)
@@ -54,6 +145,7 @@ enum AudioRingClientError: LocalizedError {
     case shaderUnavailable
     case pipelineFailed
     case zeroCopyImportFailed
+    case analysisBufferUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -70,12 +162,53 @@ enum AudioRingClientError: LocalizedError {
         case .metalUnavailable:
             return "No Metal device is available."
         case .shaderUnavailable:
-            return "The waveform Metal functions were not found in the app library."
+            return "The phase-scope Metal functions were not found in the app library."
         case .pipelineFailed:
-            return "Metal could not create the waveform render pipeline."
+            return "Metal could not create the phase-scope pipelines."
         case .zeroCopyImportFailed:
             return "ZERO-COPY IMPORT FAILED: Metal rejected the mapped ADK output ring."
+        case .analysisBufferUnavailable:
+            return "Metal could not allocate the small analyzer readback buffer."
         }
+    }
+}
+
+final class AudioRingStateReader: @unchecked Sendable {
+    private static let selector: UInt32 = 1
+    private static let outputCount: UInt32 = 7
+    private let connection: io_connect_t
+    private let lock = NSLock()
+
+    init(connection: io_connect_t) {
+        self.connection = connection
+    }
+
+    func read() throws -> AudioRingWireState {
+        lock.lock()
+        defer { lock.unlock() }
+        var values = [UInt64](repeating: 0, count: Int(Self.outputCount))
+        var outputCount = Self.outputCount
+        let result = values.withUnsafeMutableBufferPointer { buffer in
+            IOConnectCallScalarMethod(connection, Self.selector, nil, 0,
+                                      buffer.baseAddress, &outputCount)
+        }
+        guard result == KERN_SUCCESS, outputCount == Self.outputCount else {
+            throw AudioRingClientError.stateQueryFailed(result)
+        }
+        let state = AudioRingWireState(
+            writeEndFrame: values[0],
+            activeRingFrames: UInt32(truncatingIfNeeded: values[1]),
+            channels: UInt32(truncatingIfNeeded: values[2]),
+            sampleRate: UInt32(truncatingIfNeeded: values[3]),
+            ioRunning: values[4] != 0,
+            epoch: values[5],
+            validHistoryFrames: UInt32(truncatingIfNeeded: values[6]))
+        guard state.activeRingFrames > 0, state.channels >= 2,
+              state.sampleRate > 0,
+              state.validHistoryFrames <= state.activeRingFrames else {
+            throw AudioRingClientError.invalidGeometry
+        }
+        return state
     }
 }
 
@@ -84,20 +217,22 @@ final class AudioRingClient {
     private enum Wire {
         static let userClientType: UInt32 = 0x4C44_4247 // 'LDBG'
         static let outputRingMemoryType: UInt32 = 0
-        static let getAudioViewStateSelector: UInt32 = 1
-        static let stateScalarCount = 5
     }
 
     private var connection: io_connect_t = IO_OBJECT_NULL
     private var mappedAddress: mach_vm_address_t = 0
     private var mappedSize: mach_vm_size_t = 0
     private var mappingLifetime: AudioRingMappingLifetime?
+    private(set) var stateReader: AudioRingStateReader?
 
     private(set) var snapshot = AudioViewSnapshot()
     let renderState = WaveformRenderState()
+    let diagnostics = ScopeDiagnostics()
     private(set) var metalDevice: MTLDevice?
     private(set) var metalBuffer: MTLBuffer?
     private(set) var renderPipeline: MTLRenderPipelineState?
+    private(set) var analysisPipeline: MTLComputePipelineState?
+    private(set) var analysisBuffer: MTLBuffer?
 
     func open() throws {
         guard connection == IO_OBJECT_NULL else { return }
@@ -135,6 +270,7 @@ final class AudioRingClient {
         let lifetime = AudioRingMappingLifetime(
             connection: connection, address: mappedAddress)
         mappingLifetime = lifetime
+        stateReader = AudioRingStateReader(connection: connection)
 
         guard let device = MTLCreateSystemDefaultDevice() else {
             closeConnection()
@@ -142,8 +278,8 @@ final class AudioRingClient {
         }
         metalDevice = device
 
-        // This intentionally imports the IOConnect mapping itself. There is
-        // no PCM-copy fallback: acceptance is the experiment's key result.
+        // The imported pointer is the IOConnect mapping itself. There is no
+        // PCM-copy fallback; the Metal allocation retains the map lease.
         guard let buffer = device.makeBuffer(
             bytesNoCopy: rawPointer,
             length: Int(mappedSize),
@@ -157,85 +293,108 @@ final class AudioRingClient {
         metalBuffer = buffer
 
         guard let library = device.makeDefaultLibrary(),
-              let vertex = library.makeFunction(name: "waveformVertex"),
-              let fragment = library.makeFunction(name: "waveformFragment") else {
+              let vertex = library.makeFunction(name: "phaseScopeVertex"),
+              let fragment = library.makeFunction(name: "phaseScopeFragment"),
+              let analysis = library.makeFunction(name: "analyzeRing") else {
             closeConnection()
             throw AudioRingClientError.shaderUnavailable
         }
-        let descriptor = MTLRenderPipelineDescriptor()
-        descriptor.vertexFunction = vertex
-        descriptor.fragmentFunction = fragment
-        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        let renderDescriptor = MTLRenderPipelineDescriptor()
+        renderDescriptor.vertexFunction = vertex
+        renderDescriptor.fragmentFunction = fragment
+        renderDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         do {
-            renderPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+            renderPipeline = try device.makeRenderPipelineState(
+                descriptor: renderDescriptor)
+            analysisPipeline = try device.makeComputePipelineState(
+                function: analysis)
         } catch {
             closeConnection()
             throw AudioRingClientError.pipelineFailed
         }
+        guard let analysisBuffer = device.makeBuffer(
+            length: 36 * MemoryLayout<UInt32>.stride,
+            options: .storageModeShared) else {
+            closeConnection()
+            throw AudioRingClientError.analysisBufferUnavailable
+        }
+        self.analysisBuffer = analysisBuffer
     }
 
     func poll() throws -> AudioViewSnapshot {
-        guard connection != IO_OBJECT_NULL, mappedAddress != 0 else {
+        guard mappedAddress != 0, let stateReader else {
             throw AudioRingClientError.serviceNotFound
         }
-
-        var values = [UInt64](repeating: 0, count: Wire.stateScalarCount)
-        var outputCount = UInt32(values.count)
-        let result = values.withUnsafeMutableBufferPointer { buffer in
-            IOConnectCallScalarMethod(
-                connection, Wire.getAudioViewStateSelector,
-                nil, 0, buffer.baseAddress, &outputCount)
-        }
-        guard result == KERN_SUCCESS, outputCount == Wire.stateScalarCount else {
-            throw AudioRingClientError.stateQueryFailed(result)
-        }
-
-        let writeEndFrame = values[0]
-        let activeRingFrames = UInt32(truncatingIfNeeded: values[1])
-        let channels = UInt32(truncatingIfNeeded: values[2])
-        let sampleRate = UInt32(truncatingIfNeeded: values[3])
-        guard channels > 0, activeRingFrames > 0, sampleRate > 0 else {
-            throw AudioRingClientError.invalidGeometry
-        }
-
-        let bytesPerFrame = UInt64(channels) * UInt64(MemoryLayout<Float>.stride)
+        let state = try stateReader.read()
+        let bytesPerFrame = UInt64(state.channels) * UInt64(MemoryLayout<Float>.stride)
         let mappedFrames = UInt64(mappedSize) / bytesPerFrame
-        guard mappedFrames >= UInt64(activeRingFrames),
+        guard mappedFrames >= UInt64(state.activeRingFrames),
               let rawPointer = UnsafeRawPointer(bitPattern: UInt(mappedAddress)) else {
             throw AudioRingClientError.invalidGeometry
         }
 
         let floatPointer = rawPointer.assumingMemoryBound(to: Float.self)
-        var samples: [Float] = []
-        if writeEndFrame >= 4 {
-            samples.reserveCapacity(4)
-            for distance in stride(from: 4, through: 1, by: -1) {
-                let absoluteFrame = writeEndFrame - UInt64(distance)
-                let frame = absoluteFrame % UInt64(activeRingFrames)
-                samples.append(floatPointer[
-                    Int(frame * UInt64(channels))])
+        let available = min(state.validHistoryFrames, 4)
+        var left: [Float] = []
+        var right: [Float] = []
+        if available > 0 {
+            left.reserveCapacity(Int(available))
+            right.reserveCapacity(Int(available))
+            for distance in stride(from: Int(available), through: 1, by: -1) {
+                let absoluteFrame = state.writeEndFrame - UInt64(distance)
+                let frame = absoluteFrame % UInt64(state.activeRingFrames)
+                let sampleIndex = Int(frame * UInt64(state.channels))
+                left.append(floatPointer[sampleIndex])
+                right.append(floatPointer[sampleIndex + 1])
             }
         }
 
         snapshot = AudioViewSnapshot(
-            writeEndFrame: writeEndFrame,
-            activeRingFrames: activeRingFrames,
-            channels: channels,
-            sampleRate: sampleRate,
-            ioRunning: values[4] != 0,
+            writeEndFrame: state.writeEndFrame,
+            activeRingFrames: state.activeRingFrames,
+            channels: state.channels,
+            sampleRate: state.sampleRate,
+            ioRunning: state.ioRunning,
+            epoch: state.epoch,
+            validHistoryFrames: state.validHistoryFrames,
             mappedFrames: mappedFrames,
-            lastSamples: samples)
+            lastLeftSamples: left,
+            lastRightSamples: right)
         renderState.update(snapshot)
         return snapshot
+    }
+
+    func cpuValidationBits(snapshot: AudioViewSnapshot,
+                           windowFrames: UInt32) -> [UInt32] {
+        guard windowFrames > 1,
+              snapshot.validHistoryFrames >= windowFrames,
+              let rawPointer = UnsafeRawPointer(bitPattern: UInt(mappedAddress)) else {
+            return []
+        }
+        let floats = rawPointer.assumingMemoryBound(to: Float.self)
+        let firstFrame = snapshot.writeEndFrame - UInt64(windowFrames)
+        var result: [UInt32] = []
+        result.reserveCapacity(32)
+        for sampleNumber in 0..<16 {
+            let delta = UInt64(sampleNumber) * UInt64(windowFrames - 1) / 15
+            let frame = (firstFrame + delta) % UInt64(snapshot.activeRingFrames)
+            let base = Int(frame * UInt64(snapshot.channels))
+            result.append(floats[base].bitPattern)
+            result.append(floats[base + 1].bitPattern)
+        }
+        return result
     }
 
     private func closeConnection() {
         metalBuffer = nil
         renderPipeline = nil
+        analysisPipeline = nil
+        analysisBuffer = nil
         metalDevice = nil
+        stateReader = nil
         if mappingLifetime != nil {
-            // Metal's no-copy deallocator retains this lease until every
-            // MTLBuffer reference is gone; the lease then unmaps and closes.
+            // The no-copy MTLBuffer's deallocator retains this mapping lease
+            // until GPU and renderer references have all gone away.
             mappingLifetime = nil
             connection = IO_OBJECT_NULL
             mappedAddress = 0

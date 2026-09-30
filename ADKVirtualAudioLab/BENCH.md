@@ -17,9 +17,12 @@ C1–C4 questions with counters; this file is the procedure around it.
 - `StopIO` dumps everything via `IOLog` with the `ADKLab[dump]` prefix.
 - Output and input descriptors each allocate 24576 frames. PCM wraps at the
   active 12288-frame ring. Transport type reports FireWire.
-- The host's Waveform tab maps the same output descriptor read-only and asks
-  Metal to wrap the mapped pages with `bytesNoCopy`; the vertex shader draws
-  the latest 960 channel-0 samples. There is no PCM-copy fallback.
+- The host's Phase Scope tab maps the same output descriptor read-only and
+  wraps the mapped pages with `bytesNoCopy`; Metal plots the first two
+  interleaved channels as `(L-R, L+R)`. A compute pass reports L/R peak and
+  correlation, plus GPU/queue/completion timing, sample age, overwrite margin,
+  wrap counts, restart epoch/history, and periodic exact CPU/GPU sample checks.
+  There is no PCM-copy fallback.
 
 ## Build
 
@@ -82,11 +85,16 @@ host app's is `Host/ADKLabHost.entitlements` (system-extension install).
    afplay /System/Library/Sounds/Submarine.aiff
    # or run minutes of pink noise from Music/Logic for a soak
    ```
-   While playback is running, select the **Waveform** tab. It reports mapped
-   capacity, active ring geometry, the WriteEnd cursor, and the last four
-   channel-0 samples. `Zero-copy Metal import succeeded` means the mapped
-   address was accepted as an `MTLBuffer`; visual movement confirms the shader
-   sees live CoreAudio writes. A rejected import is shown as
+   While playback is running, select the **Phase Scope** tab. It reports the
+   mapped capacity, active ring, WriteEnd cursor, valid history, epoch, L/R
+   peaks, stereo correlation, GPU timing, sample age, overwrite margin, and
+   wrap/validation counters. For a 1 kHz sine at 48 kHz, use equal in-phase
+   left/right channels (vertical trace) and then invert one channel
+   (horizontal trace); the exact CPU/GPU sample mismatch count should remain
+   zero while the window crosses the ring boundary. `Zero-copy Metal import
+   succeeded` means the mapped address was accepted as an `MTLBuffer`; the
+   live trace plus exact sample checks confirm the shader reads live CoreAudio
+   writes. A rejected import is shown as
    `ZERO-COPY IMPORT FAILED` and does not silently switch to a copied buffer.
 
 4. Stop playback (coreaudiod stops IO a moment later), or switch default

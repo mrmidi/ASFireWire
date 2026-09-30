@@ -1,4 +1,5 @@
 #include <new>
+#include <algorithm>
 #include <atomic>
 #include <AudioDriverKit/AudioDriverKit.h>
 #include <DriverKit/IOLib.h>
@@ -159,6 +160,8 @@ struct VirtualAudioDevice_IVars
     std::atomic<uint64_t> sampleTimeBreaks{0};
     std::atomic<uint64_t> expectedNextSampleTime{0};
     std::atomic<uint64_t> outputWriteEndFrame{0};
+    std::atomic<uint64_t> outputEpoch{0};
+    std::atomic<uint32_t> validHistoryFrames{0};
     std::atomic<bool> expectedSampleTimeValid{false};
     std::atomic<uint64_t> payloadCommittedEndFrame{0};
     std::atomic<bool> payloadCommittedValid{false};
@@ -583,10 +586,14 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
                 ivarsPtr->maxIoFrames.store(in_io_buffer_frame_size,
                                             std::memory_order_relaxed);
             }
-            if (ivarsPtr->expectedSampleTimeValid.load(std::memory_order_relaxed) &&
+            const bool sampleTimeDiscontinuity =
+                ivarsPtr->expectedSampleTimeValid.load(std::memory_order_relaxed) &&
                 ivarsPtr->expectedNextSampleTime.load(std::memory_order_relaxed) !=
-                    in_sample_time) {
+                    in_sample_time;
+            if (sampleTimeDiscontinuity) {
                 ivarsPtr->sampleTimeBreaks.fetch_add(1, std::memory_order_relaxed);
+                ivarsPtr->validHistoryFrames.store(0, std::memory_order_relaxed);
+                ivarsPtr->outputEpoch.fetch_add(1, std::memory_order_release);
             }
             ivarsPtr->expectedNextSampleTime.store(
                 in_sample_time + in_io_buffer_frame_size, std::memory_order_relaxed);
@@ -612,6 +619,17 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
                 ivarsPtr->payloadCommittedEndFrame.store(
                     in_sample_time + in_io_buffer_frame_size, std::memory_order_relaxed);
                 ivarsPtr->payloadCommittedValid.store(true, std::memory_order_relaxed);
+            }
+
+            const uint32_t history =
+                ivarsPtr->validHistoryFrames.load(std::memory_order_relaxed);
+            if (history < ivarsPtr->activeRingFrames) {
+                const uint64_t accumulated =
+                    static_cast<uint64_t>(history) + in_io_buffer_frame_size;
+                ivarsPtr->validHistoryFrames.store(
+                    static_cast<uint32_t>(std::min<uint64_t>(
+                        accumulated, ivarsPtr->activeRingFrames)),
+                    std::memory_order_relaxed);
             }
 
             // CoreAudio has completed this output span. The host's acquire
@@ -863,7 +881,9 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
         ivars->anchorsPublished.store(0, std::memory_order_relaxed);
         ivars->anchorsBeforeFirstWriteEnd.store(0, std::memory_order_relaxed);
         ivars->writeEndCount.store(0, std::memory_order_relaxed);
-        ivars->outputWriteEndFrame.store(0, std::memory_order_release);
+        ivars->validHistoryFrames.store(0, std::memory_order_relaxed);
+        ivars->outputWriteEndFrame.store(0, std::memory_order_relaxed);
+        ivars->outputEpoch.fetch_add(1, std::memory_order_release);
         ivars->framesDelivered.store(0, std::memory_order_relaxed);
         ivars->minIoFrames.store(0xFFFFFFFFu, std::memory_order_relaxed);
         ivars->maxIoFrames.store(0, std::memory_order_relaxed);
@@ -1185,16 +1205,21 @@ kern_return_t VirtualAudioDevice::CopyOutputRingMemory(
 
 kern_return_t VirtualAudioDevice::GetAudioViewState(
     uint64_t* out_write_end_frame, uint32_t* out_active_ring_frames,
-    uint32_t* out_channels, uint32_t* out_sample_rate, bool* out_io_running)
+    uint32_t* out_channels, uint32_t* out_sample_rate, bool* out_io_running,
+    uint64_t* out_epoch, uint32_t* out_valid_history_frames)
 {
     if (ivars == nullptr || out_write_end_frame == nullptr ||
         out_active_ring_frames == nullptr || out_channels == nullptr ||
-        out_sample_rate == nullptr || out_io_running == nullptr) {
+        out_sample_rate == nullptr || out_io_running == nullptr ||
+        out_epoch == nullptr || out_valid_history_frames == nullptr) {
         return kIOReturnBadArgument;
     }
 
+    *out_epoch = ivars->outputEpoch.load(std::memory_order_acquire);
     *out_write_end_frame =
         ivars->outputWriteEndFrame.load(std::memory_order_acquire);
+    *out_valid_history_frames =
+        ivars->validHistoryFrames.load(std::memory_order_relaxed);
     *out_active_ring_frames = ivars->activeRingFrames;
     *out_channels = ivars->outputChannels;
     *out_sample_rate = kSampleRate;

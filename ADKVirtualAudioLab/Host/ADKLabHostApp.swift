@@ -1,7 +1,7 @@
 import SwiftUI
 import SystemExtensions
 
-// Activation host and observer for the lab dext. The Waveform tab maps the
+// Activation host and observer for the lab dext. The Phase Scope tab maps the
 // output ring read-only and renders directly from that mapping with Metal.
 
 @main
@@ -45,7 +45,7 @@ struct ContentView: View {
                 Tab("Packets", systemImage: "waveform.path") {
                     PacketInspectorView()
                 }
-                Tab("Waveform", systemImage: "waveform") {
+                Tab("Phase Scope", systemImage: "waveform.path.ecg") {
                     AudioWaveformView()
                 }
             }

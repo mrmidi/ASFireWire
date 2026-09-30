@@ -56,7 +56,9 @@ public:
                                             uint32_t* out_active_ring_frames,
                                             uint32_t* out_channels,
                                             uint32_t* out_sample_rate,
-                                            bool* out_io_running) LOCALONLY;
+                                            bool* out_io_running,
+                                            uint64_t* out_epoch,
+                                            uint32_t* out_valid_history_frames) LOCALONLY;
 };
 
 #endif
