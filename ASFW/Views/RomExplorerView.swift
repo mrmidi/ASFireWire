@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct ROMExplorerView: View {
-    @ObservedObject var viewModel: RomExplorerViewModel
+    @Bindable var viewModel: RomExplorerViewModel
 
     @State private var selectedNodeId: UInt8?
     @State private var autoRefreshEnabled = false
@@ -881,7 +881,7 @@ private extension DirectoryEntry {
 #if DEBUG
 struct ROMExplorerView_Previews: PreviewProvider {
     static var previews: some View {
-        ROMExplorerView(viewModel: RomExplorerViewModel())
+        ROMExplorerView(viewModel: RomExplorerViewModel(connectorObservable: ASFWDriverConnector.Observable()))
             .frame(width: 1100, height: 760)
     }
 }

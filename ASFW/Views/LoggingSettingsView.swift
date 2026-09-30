@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct LoggingSettingsView: View {
-    @ObservedObject var connector: ASFWDriverConnector
+    @ObservedObject var connectorObservable: ASFWDriverConnector.Observable
     @State private var asyncVerbosity: Double = 1.0
     @State private var isochTelemetryEnabled: Bool = false
     @State private var hexDumpsEnabled: Bool = false
@@ -21,7 +21,7 @@ struct LoggingSettingsView: View {
                 .font(.title2)
                 .fontWeight(.bold)
             
-            if !connector.isConnected {
+            if !connectorObservable.isConnected {
                 Text("⚠️ Not connected to driver")
                     .foregroundColor(.orange)
                     .padding()
@@ -34,7 +34,7 @@ struct LoggingSettingsView: View {
                 
                 HStack {
                     Slider(value: $asyncVerbosity, in: 0...4, step: 1)
-                        .disabled(!connector.isConnected || isLoading)
+                        .disabled(!connectorObservable.isConnected || isLoading)
                     
                     Text("\(Int(asyncVerbosity))")
                         .frame(width: 30)
@@ -56,7 +56,7 @@ struct LoggingSettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("Enable Isoch Telemetry Logs", isOn: $isochTelemetryEnabled)
                     .font(.headline)
-                    .disabled(!connector.isConnected || isLoading)
+                    .disabled(!connectorObservable.isConnected || isLoading)
 
                 Text("Temporarily show/hide high-frequency Isoch logs (CycleCorr, RxStats, IT Poll, Audio IO/CLK).")
                     .font(.caption)
@@ -71,7 +71,7 @@ struct LoggingSettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("Enable Hex Dumps", isOn: $hexDumpsEnabled)
                     .font(.headline)
-                    .disabled(!connector.isConnected || isLoading)
+                    .disabled(!connectorObservable.isConnected || isLoading)
                 
                 Text("Force enable/disable packet hex dumps independent of verbosity level")
                     .font(.caption)
@@ -87,12 +87,12 @@ struct LoggingSettingsView: View {
                 Button("Refresh") {
                     loadCurrentConfig()
                 }
-                .disabled(!connector.isConnected || isLoading)
+                .disabled(!connectorObservable.isConnected || isLoading)
                 
                 Button("Apply") {
                     applySettings()
                 }
-                .disabled(!connector.isConnected || isLoading)
+                .disabled(!connectorObservable.isConnected || isLoading)
                 .buttonStyle(.borderedProminent)
             }
             
@@ -105,19 +105,20 @@ struct LoggingSettingsView: View {
     }
     
     private func loadCurrentConfig() {
-        guard connector.isConnected else { return }
+        guard connectorObservable.isConnected else { return }
         isLoading = true
         
-        DispatchQueue.global(qos: .userInitiated).async {
-            if let config = connector.getLogConfig() {
-                DispatchQueue.main.async {
+        let connector = connectorObservable.connector
+        Task.detached(priority: .userInitiated) {
+            if let config = await connector.getLogConfig() {
+                Task { @MainActor in
                     self.asyncVerbosity = Double(config.asyncVerbosity)
                     self.hexDumpsEnabled = config.hexDumpsEnabled
                     self.isochTelemetryEnabled = config.isochVerbosity >= 3
                     self.isLoading = false
                 }
             } else {
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self.isLoading = false
                 }
             }
@@ -125,15 +126,17 @@ struct LoggingSettingsView: View {
     }
     
     private func applySettings() {
-        guard connector.isConnected else { return }
+        guard connectorObservable.isConnected else { return }
         isLoading = true
         
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = connector.setAsyncVerbosity(UInt32(asyncVerbosity))
-            _ = connector.setIsochTelemetryLogging(enabled: isochTelemetryEnabled)
-            _ = connector.setHexDumps(enabled: hexDumpsEnabled)
-            
-            DispatchQueue.main.async {
+        let connector = connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak connector] in
+            if let connector {
+                _ = await connector.setAsyncVerbosity(UInt32(asyncVerbosity))
+                _ = await connector.setIsochTelemetryLogging(enabled: isochTelemetryEnabled)
+                _ = await connector.setHexDumps(enabled: hexDumpsEnabled)
+            }
+            Task { @MainActor in
                 self.isLoading = false
                 // Success/failure is already logged by the connector methods
             }
@@ -142,6 +145,6 @@ struct LoggingSettingsView: View {
 }
 
 #Preview {
-    LoggingSettingsView(connector: ASFWDriverConnector())
+    LoggingSettingsView(connectorObservable: ASFWDriverConnector.Observable())
         .frame(width: 600, height: 500)
 }

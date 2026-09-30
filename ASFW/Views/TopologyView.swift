@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct TopologyView: View {
-    @ObservedObject var viewModel: TopologyViewModel
+    var viewModel: TopologyViewModel
     @State private var selectedNode: TopologyNode?
     @State private var showSelfIDDetail = false
     

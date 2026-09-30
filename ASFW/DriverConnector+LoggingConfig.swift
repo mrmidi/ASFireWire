@@ -21,7 +21,7 @@ extension ASFWDriverConnector {
         )
 
         guard kr == KERN_SUCCESS else {
-            log("setAsyncVerbosity failed: \(interpretIOReturn(kr))", level: .error)
+            log("setAsyncVerbosity failed: \(Self.interpretIOReturn(kr))", level: .error)
             return false
         }
 
@@ -46,7 +46,7 @@ extension ASFWDriverConnector {
         )
 
         guard kr == KERN_SUCCESS else {
-            log("setIsochVerbosity failed: \(interpretIOReturn(kr))", level: .error)
+            log("setIsochVerbosity failed: \(Self.interpretIOReturn(kr))", level: .error)
             return false
         }
 
@@ -76,7 +76,7 @@ extension ASFWDriverConnector {
         )
 
         guard kr == KERN_SUCCESS else {
-            log("setHexDumps failed: \(interpretIOReturn(kr))", level: .error)
+            log("setHexDumps failed: \(Self.interpretIOReturn(kr))", level: .error)
             return false
         }
 
@@ -103,7 +103,7 @@ extension ASFWDriverConnector {
         )
 
         guard kr == KERN_SUCCESS else {
-            log("getLogConfig failed: \(interpretIOReturn(kr))", level: .error)
+            log("getLogConfig failed: \(Self.interpretIOReturn(kr))", level: .error)
             return nil
         }
 

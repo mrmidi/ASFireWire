@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct DeviceDiscoveryView: View {
-    @ObservedObject var viewModel: DebugViewModel
+    var viewModel: DebugViewModel
     @State private var devices: [ASFWDriverConnector.FWDeviceInfo] = []
     @State private var selectedDeviceId: UInt64?
     @State private var autoRefreshEnabled = true
@@ -94,9 +94,14 @@ struct DeviceDiscoveryView: View {
     private func refreshDevices() {
         guard viewModel.isConnected else { return }
 
-        if let newDevices = viewModel.connector.getDiscoveredDevices() {
-            devices = newDevices
-            lastRefresh = Date()
+        let connector = viewModel.connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak connector] in
+            if let newDevices = await connector?.getDiscoveredDevices() {
+                Task { @MainActor in
+                    devices = newDevices
+                    lastRefresh = Date()
+                }
+            }
         }
     }
 
@@ -104,8 +109,10 @@ struct DeviceDiscoveryView: View {
         guard autoRefreshEnabled else { return }
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-            if autoRefreshEnabled {
-                refreshDevices()
+            Task { @MainActor in
+                if autoRefreshEnabled {
+                    refreshDevices()
+                }
             }
         }
     }

@@ -10,24 +10,33 @@ import Combine
 import SwiftUI
 
 @MainActor
-class DebugViewModel: ObservableObject {
-    @Published var isConnected: Bool = false
-    @Published var controllerStatus: ControllerStatus?
-    @Published var busResetHistory: [BusResetPacketSnapshot] = []
-    @Published var asyncStatusMessage: String?
-    @Published var asyncErrorMessage: String?
-    @Published var asyncInProgress: Bool = false
-    @Published var sharedStatus: DriverStatus?
-    @Published var topologyCache: TopologySnapshot?
-    @Published var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
+@Observable
+final class DebugViewModel {
+    var isConnected: Bool = false
+    var controllerStatus: ControllerStatus?
+    var busResetHistory: [BusResetPacketSnapshot] = []
+    var asyncStatusMessage: String?
+    var asyncErrorMessage: String?
+    var asyncInProgress: Bool = false
+    var sharedStatus: DriverStatus?
+    var topologyCache: TopologySnapshot?
+    var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
+    var romExplorerVM: RomExplorerViewModel
+    var diagnosticsStore: DiagnosticsStore
+    var diceReportStore: DiceReportStore
+    var mcpVM: ASFWMCPControlViewModel
 
-    let connector = ASFWDriverConnector()  // Internal access for TopologyViewModel
-    private var driverViewModel: DriverViewModel?
-    private let statusFetchQueue = DispatchQueue(label: "net.mrmidi.ASFW.debug.fetch", qos: .userInitiated)
-    private var cancellables = Set<AnyCancellable>()
+    @ObservationIgnored var connectorObservable = ASFWDriverConnector.Observable()  // Internal access for TopologyViewModel
+    @ObservationIgnored private var driverViewModel: DriverViewModel?
+    @ObservationIgnored private let statusFetchQueue = DispatchQueue(label: "net.mrmidi.ASFW.debug.fetch", qos: .userInitiated)
+    @ObservationIgnored private var cancellables = Set<AnyCancellable>()
     
     init() {
-        connector.$isConnected
+        romExplorerVM = RomExplorerViewModel(connectorObservable: connectorObservable)
+        diagnosticsStore = DiagnosticsStore(connectorObservable: connectorObservable)
+        diceReportStore = DiceReportStore(connectorObservable: connectorObservable)
+        mcpVM = ASFWMCPControlViewModel(connectorObservable: connectorObservable)
+        connectorObservable.$isConnected
             .receive(on: DispatchQueue.main)
             .sink { [weak self] connected in
                 self?.isConnected = connected
@@ -40,10 +49,11 @@ class DebugViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        connector.statusPublisher
+        connectorObservable.$latestStatus
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in
-                self?.handleStatusUpdate(status)
+                guard let self, let status else { return }
+                self.handleStatusUpdate(status)
             }
             .store(in: &cancellables)
         
@@ -59,7 +69,7 @@ class DebugViewModel: ObservableObject {
     }
     
     private func observeConnectorLogs() {
-        connector.$logMessages
+        connectorObservable.$logMessages
             .sink { [weak self] messages in
                 guard let self = self, let driverVM = self.driverViewModel else { return }
                 
@@ -80,11 +90,11 @@ class DebugViewModel: ObservableObject {
     }
     
     func connect() {
-        connector.connect(forceAttempt: false)
+        _ = connectorObservable.connector.connect(forceAttempt: false)
     }
     
     func disconnect() {
-        connector.disconnect()
+        connectorObservable.connector.disconnect()
         sharedStatus = nil
     }
     
@@ -105,11 +115,12 @@ class DebugViewModel: ObservableObject {
     }
 
     private func fetchLatestSnapshots() {
-        statusFetchQueue.async { [weak self] in
-            guard let self = self else { return }
-            let status = self.connector.getControllerStatus()
-            let history = self.connector.getBusResetHistory(startIndex: 0, count: 10) ?? []
-            let topology = self.connector.getTopologySnapshot()
+        let connector = connectorObservable.connector
+        Task.detached { [weak self, weak connector] in
+            guard let self, let connector else { return }
+            let status = await connector.getControllerStatus()
+            let history = await connector.getBusResetHistory(startIndex: 0, count: 10) ?? []
+            let topology = await connector.getTopologySnapshot()
             Task { @MainActor in
                 self.controllerStatus = status
                 self.busResetHistory = history
@@ -118,25 +129,21 @@ class DebugViewModel: ObservableObject {
         }
     }
 
-    func fetchTopology() {
-        statusFetchQueue.async { [weak self] in
-            guard let self = self else { return }
-            let topology = self.connector.getTopologySnapshot()
-            Task { @MainActor in
-                self.topologyCache = topology
-            }
-        }
+    func fetchTopology() async {
+        let topology = await connectorObservable.connector.getTopologySnapshot()
+        topologyCache = topology
     }
 
     private func fetchDriverVersion() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+        let connector = connectorObservable.connector
+        Task.detached { [weak self, weak connector] in
+            guard let self, let connector else { return }
             // Retry a few times if needed, as connection might be fresh
             var version: DriverVersionInfo? = nil
             for _ in 0..<3 {
-                version = self.connector.getDriverVersion()
+                version = await connector.getDriverVersion()
                 if version != nil { break }
-                Thread.sleep(forTimeInterval: 0.1)
+                try? await Task.sleep(until: .now.advanced(by: .milliseconds(100)))
             }
             
             if let v = version {
@@ -148,9 +155,10 @@ class DebugViewModel: ObservableObject {
     }
 
     func fetchAVCUnits() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let units = self.connector.getAVCUnits() ?? []
+        let connector = connectorObservable.connector
+        Task.detached { [weak self, weak connector] in
+            guard let self, let connector else { return }
+            let units = await connector.getAVCUnits() ?? []
             Task { @MainActor in
                 self.avcUnits = units
             }
@@ -158,7 +166,7 @@ class DebugViewModel: ObservableObject {
     }
     
     func getSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWDriverConnector.AVCMusicCapabilities? {
-        return self.connector.getSubunitCapabilities(guid: guid, type: type, id: id)
+        return await self.connectorObservable.connector.getSubunitCapabilities(guid: guid, type: type, id: id)
     }
 
 
@@ -176,13 +184,14 @@ class DebugViewModel: ObservableObject {
         asyncErrorMessage = nil
         asyncStatusMessage = "Issuing async read…"
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let handle = self.connector.asyncRead(destinationID: destinationID,
+        let connector = connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak self, weak connector] in
+            guard let self, let connector else { return }
+            let handle = await connector.asyncRead(destinationID: destinationID,
                                                   addressHigh: addressHigh,
                                                   addressLow: addressLow,
                                                   length: length)
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.asyncInProgress = false
                 if let handle = handle {
                     let message = String(format: "Async read handle 0x%04X (len=%u)", handle, length)
@@ -190,7 +199,7 @@ class DebugViewModel: ObservableObject {
                     self.asyncErrorMessage = nil
                     self.driverViewModel?.log(message, source: .userClient, level: .info)
                 } else {
-                    let error = self.connector.lastError ?? "Async read failed"
+                    let error = self.connectorObservable.lastError ?? "Async read failed"
                     self.asyncErrorMessage = error
                     self.asyncStatusMessage = nil
                     self.driverViewModel?.log(error, source: .userClient, level: .error)
@@ -213,13 +222,14 @@ class DebugViewModel: ObservableObject {
         asyncErrorMessage = nil
         asyncStatusMessage = "Issuing async write…"
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let handle = self.connector.asyncWrite(destinationID: destinationID,
+        let connector = connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak self, weak connector] in
+            guard let self, let connector else { return }
+            let handle = await connector.asyncWrite(destinationID: destinationID,
                                                    addressHigh: addressHigh,
                                                    addressLow: addressLow,
                                                    payload: payload)
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.asyncInProgress = false
                 if let handle = handle {
                     let message = String(format: "Async write handle 0x%04X (bytes=%u)", handle, payload.count)
@@ -227,7 +237,7 @@ class DebugViewModel: ObservableObject {
                     self.asyncErrorMessage = nil
                     self.driverViewModel?.log(message, source: .userClient, level: .info)
                 } else {
-                    let error = self.connector.lastError ?? "Async write failed"
+                    let error = self.connectorObservable.lastError ?? "Async write failed"
                     self.asyncErrorMessage = error
                     self.asyncStatusMessage = nil
                     self.driverViewModel?.log(error, source: .userClient, level: .error)
@@ -250,13 +260,14 @@ class DebugViewModel: ObservableObject {
         asyncErrorMessage = nil
         asyncStatusMessage = "Issuing async block read..."
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let handle = self.connector.asyncBlockRead(destinationID: destinationID,
+        let connector = connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak self, weak connector] in
+            guard let self, let connector else { return }
+            let handle = await connector.asyncBlockRead(destinationID: destinationID,
                                                        addressHigh: addressHigh,
                                                        addressLow: addressLow,
                                                        length: length)
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.asyncInProgress = false
                 if let handle = handle {
                     let message = String(format: "Async block read handle 0x%04X (len=%u)", handle, length)
@@ -264,7 +275,7 @@ class DebugViewModel: ObservableObject {
                     self.asyncErrorMessage = nil
                     self.driverViewModel?.log(message, source: .userClient, level: .info)
                 } else {
-                    let error = self.connector.lastError ?? "Async block read failed"
+                    let error = self.connectorObservable.lastError ?? "Async block read failed"
                     self.asyncErrorMessage = error
                     self.asyncStatusMessage = nil
                     self.driverViewModel?.log(error, source: .userClient, level: .error)
@@ -287,13 +298,14 @@ class DebugViewModel: ObservableObject {
         asyncErrorMessage = nil
         asyncStatusMessage = "Issuing async block write..."
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let handle = self.connector.asyncBlockWrite(destinationID: destinationID,
+        let connector = connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak self, weak connector] in
+            guard let self = self, let connector else { return }
+            let handle = await connector.asyncBlockWrite(destinationID: destinationID,
                                                         addressHigh: addressHigh,
                                                         addressLow: addressLow,
                                                         payload: payload)
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.asyncInProgress = false
                 if let handle = handle {
                     let message = String(format: "Async block write handle 0x%04X (bytes=%u)", handle, payload.count)
@@ -301,7 +313,7 @@ class DebugViewModel: ObservableObject {
                     self.asyncErrorMessage = nil
                     self.driverViewModel?.log(message, source: .userClient, level: .info)
                 } else {
-                    let error = self.connector.lastError ?? "Async block write failed"
+                    let error = self.connectorObservable.lastError ?? "Async block write failed"
                     self.asyncErrorMessage = error
                     self.asyncStatusMessage = nil
                     self.driverViewModel?.log(error, source: .userClient, level: .error)
@@ -310,16 +322,20 @@ class DebugViewModel: ObservableObject {
         }
     }
 
-    func fetchTransactionResult(handle: UInt16,
-                                completion: @escaping (ASFWDriverConnector.AsyncTransactionResult?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else {
-                DispatchQueue.main.async { completion(nil) }
-                return
-            }
-            let result = self.connector.getTransactionResult(handle: handle)
-            DispatchQueue.main.async {
-                completion(result)
+    func fetchTransactionResult(handle: UInt16) async -> ASFWDriverConnector.AsyncTransactionResult? {
+        let connector = connectorObservable.connector
+        return await withCheckedContinuation { continuation in
+            Task.detached(priority: .userInitiated) { [weak connector] in
+                guard let connector else {
+                    Task { @MainActor in
+                        continuation.resume(returning: nil)
+                    }
+                    return
+                }
+                let result = await connector.getTransactionResult(handle: handle)
+                Task { @MainActor in
+                    continuation.resume(returning: result)
+                }
             }
         }
     }
@@ -336,10 +352,8 @@ class DebugViewModel: ObservableObject {
         }
     }
 
-    nonisolated deinit {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.connector.disconnect()
-        }
+    isolated
+    deinit {
+        connectorObservable.connector.disconnect()
     }
 }

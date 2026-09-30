@@ -9,7 +9,7 @@ import SwiftUI
 import Foundation
 
 struct ControllerDetailView: View {
-    @ObservedObject var viewModel: DebugViewModel
+    var viewModel: DebugViewModel
     
     var body: some View {
         ScrollView {

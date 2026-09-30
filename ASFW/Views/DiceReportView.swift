@@ -10,7 +10,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct DiceReportView: View {
-    @ObservedObject var store: DiceReportStore
+    var store: DiceReportStore
     @State private var copyFeedbackText = "Copy Report"
     @State private var copyFeedbackIcon = "doc.on.doc"
 

@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct BusResetHistoryView: View {
-    @ObservedObject var viewModel: DebugViewModel
+    var viewModel: DebugViewModel
     @State private var selectedPacket: BusResetPacketSnapshot?
     
     var body: some View {

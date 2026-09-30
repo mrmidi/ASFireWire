@@ -7,7 +7,7 @@ import MCP
 // policy, and driver access. The SDK bridge only translates ASFW's value model
 // into MCP SDK declarations/results and registers handlers on an MCP Server.
 
-struct ASFWMCPSDKBridge<Driver: ASFWDriverControlling> {
+struct ASFWMCPSDKBridge<Driver: ASFWDriverControlling>: Sendable {
     let core: ASFWMCPCore<Driver>
 
     func registerHandlers(on server: Server) async {

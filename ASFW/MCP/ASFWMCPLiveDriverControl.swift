@@ -5,58 +5,58 @@ protocol ASFWLiveDriverBackend: AnyObject {
     var mcpIsConnected: Bool { get }
     var mcpLastError: String? { get }
 
-    func mcpDriverVersion() -> DriverVersionInfo?
+    func mcpDriverVersion() async -> DriverVersionInfo?
 
-    func mcpCurrentGeneration() -> UInt32?
-    func mcpControllerStatus() -> ControllerStatus?
-    func mcpFetchDiagnostics() throws -> ASFWDiagnosticsSnapshot
-    func mcpLocalIrmResourceSnapshot() -> ASFWMCPLocalIrmResourceSnapshot?
-    func mcpDiscoveredDevices() -> [FWDeviceInfo]?
-    func mcpTopologySnapshot() -> TopologySnapshot?
-    func mcpConfigROM(nodeId: UInt8, generation: UInt16) -> ASFWDriverConnector.ConfigROMFetchResult?
-    func mcpAVCUnits() -> [AVCUnitInfo]?
-    func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities?
+    func mcpCurrentGeneration() async -> UInt32?
+    func mcpControllerStatus() async -> ControllerStatus?
+    func mcpFetchDiagnostics() async throws -> ASFWDiagnosticsSnapshot
+    func mcpLocalIrmResourceSnapshot() async -> ASFWMCPLocalIrmResourceSnapshot?
+    func mcpDiscoveredDevices() async -> [FWDeviceInfo]?
+    func mcpTopologySnapshot() async -> TopologySnapshot?
+    func mcpConfigROM(nodeId: UInt8, generation: UInt16) async -> ASFWDriverConnector.ConfigROMFetchResult?
+    func mcpAVCUnits() async -> [AVCUnitInfo]?
+    func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> AVCMusicCapabilities?
 
-    func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16?
-    func mcpAsyncWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16?
-    func mcpAsyncBlockRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16?
-    func mcpAsyncBlockWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16?
-    func mcpAsyncCompareSwap(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, compareValue: Data, newValue: Data) -> UInt16?
-    func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) -> ASFWDriverConnector.AsyncTransactionResult?
-    func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data?
-    func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) -> Int32
-    func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32?
-    func mcpQueryLogRecords(_ query: ASFWLogRingQuery) -> ASFWLogRingQueryResponse?
-    func mcpLogRingStats() -> ASFWLogRingStats?
-    func mcpAudioTelemetry() -> AudioTelemetrySnapshot?
+    func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) async -> UInt16?
+    func mcpAsyncWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) async -> UInt16?
+    func mcpAsyncBlockRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) async -> UInt16?
+    func mcpAsyncBlockWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) async -> UInt16?
+    func mcpAsyncCompareSwap(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, compareValue: Data, newValue: Data) async -> UInt16?
+    func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) async -> ASFWDriverConnector.AsyncTransactionResult?
+    func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) async -> Data?
+    func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) async -> Int32
+    func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) async -> UInt32?
+    func mcpQueryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse?
+    func mcpLogRingStats() async -> ASFWLogRingStats?
+    func mcpAudioTelemetry() async -> AudioTelemetrySnapshot?
 }
 
-extension ASFWDriverConnector: ASFWLiveDriverBackend {
+extension ASFWDriverConnector.Observable: ASFWLiveDriverBackend {
     var mcpIsConnected: Bool { isConnected }
     var mcpLastError: String? { lastError }
 
-    func mcpDriverVersion() -> DriverVersionInfo? {
-        getDriverVersion()
+	func mcpDriverVersion() async -> DriverVersionInfo? {
+        await connector.getDriverVersion()
     }
 
-    func mcpCurrentGeneration() -> UInt32? {
-        getControllerStatus()?.generation
+    func mcpCurrentGeneration() async -> UInt32? {
+        await connector.getControllerStatus()?.generation
     }
 
-    func mcpControllerStatus() -> ControllerStatus? {
-        getControllerStatus()
+    func mcpControllerStatus() async -> ControllerStatus? {
+        await connector.getControllerStatus()
     }
 
-    func mcpFetchDiagnostics() throws -> ASFWDiagnosticsSnapshot {
-        try ASFWDiagnosticsClient(connector: self).fetchSnapshot()
+    func mcpFetchDiagnostics() async throws -> ASFWDiagnosticsSnapshot {
+        try await ASFWDiagnosticsClient(connector: connector).fetchSnapshot()
     }
 
-    func mcpAudioTelemetry() -> AudioTelemetrySnapshot? {
-        getAudioTelemetry()
+    func mcpAudioTelemetry() async -> AudioTelemetrySnapshot? {
+        await connector.getAudioTelemetry()
     }
 
-    func mcpLocalIrmResourceSnapshot() -> ASFWMCPLocalIrmResourceSnapshot? {
-        guard let diagnostics = try? mcpFetchDiagnostics(),
+    func mcpLocalIrmResourceSnapshot() async -> ASFWMCPLocalIrmResourceSnapshot? {
+        guard let diagnostics = try? await mcpFetchDiagnostics(),
               let localNodeId = diagnostics.busContract.localNode.nodeIdOrNil,
               let irmNodeId = diagnostics.busContract.irmNode.nodeIdOrNil else {
             return nil
@@ -80,44 +80,44 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
         )
     }
 
-    func mcpDiscoveredDevices() -> [FWDeviceInfo]? {
-        getDiscoveredDevices()
+    func mcpDiscoveredDevices() async -> [FWDeviceInfo]? {
+        await connector.getDiscoveredDevices()
     }
 
-    func mcpTopologySnapshot() -> TopologySnapshot? {
-        getTopologySnapshot()
+    func mcpTopologySnapshot() async -> TopologySnapshot? {
+        await connector.getTopologySnapshot()
     }
 
-    func mcpConfigROM(nodeId: UInt8, generation: UInt16) -> ASFWDriverConnector.ConfigROMFetchResult? {
-        getConfigROM(nodeId: nodeId, generation: generation)
+    func mcpConfigROM(nodeId: UInt8, generation: UInt16) async -> ASFWDriverConnector.ConfigROMFetchResult? {
+        await connector.getConfigROM(nodeId: nodeId, generation: generation)
     }
 
-    func mcpAVCUnits() -> [AVCUnitInfo]? {
-        getAVCUnits()
+    func mcpAVCUnits() async -> [AVCUnitInfo]? {
+        await connector.getAVCUnits()
     }
 
-    func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities? {
-        getSubunitCapabilities(guid: guid, type: type, id: id)
+    func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> AVCMusicCapabilities? {
+        await connector.getSubunitCapabilities(guid: guid, type: type, id: id)
     }
 
-    func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {
-        asyncRead(destinationID: destinationID, addressHigh: addressHigh, addressLow: addressLow, length: length)
+    func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) async -> UInt16? {
+        await connector.asyncRead(destinationID: destinationID, addressHigh: addressHigh, addressLow: addressLow, length: length)
     }
 
-    func mcpAsyncWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16? {
-        asyncWrite(destinationID: destinationID, addressHigh: addressHigh, addressLow: addressLow, payload: payload)
+    func mcpAsyncWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) async -> UInt16? {
+        await connector.asyncWrite(destinationID: destinationID, addressHigh: addressHigh, addressLow: addressLow, payload: payload)
     }
 
-    func mcpAsyncBlockRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {
-        asyncBlockRead(destinationID: destinationID, addressHigh: addressHigh, addressLow: addressLow, length: length)
+    func mcpAsyncBlockRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) async -> UInt16? {
+        await connector.asyncBlockRead(destinationID: destinationID, addressHigh: addressHigh, addressLow: addressLow, length: length)
     }
 
-    func mcpAsyncBlockWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16? {
-        asyncBlockWrite(destinationID: destinationID, addressHigh: addressHigh, addressLow: addressLow, payload: payload)
+    func mcpAsyncBlockWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) async -> UInt16? {
+        await connector.asyncBlockWrite(destinationID: destinationID, addressHigh: addressHigh, addressLow: addressLow, payload: payload)
     }
 
-    func mcpAsyncCompareSwap(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, compareValue: Data, newValue: Data) -> UInt16? {
-        asyncCompareSwap(
+    func mcpAsyncCompareSwap(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, compareValue: Data, newValue: Data) async -> UInt16? {
+        await connector.asyncCompareSwap(
             destinationID: destinationID,
             addressHigh: addressHigh,
             addressLow: addressLow,
@@ -126,28 +126,28 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
         )?.handle
     }
 
-    func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) -> ASFWDriverConnector.AsyncTransactionResult? {
-        getTransactionResult(handle: handle, initialPayloadCapacity: initialPayloadCapacity)
+    func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) async -> ASFWDriverConnector.AsyncTransactionResult? {
+        await connector.getTransactionResult(handle: handle, initialPayloadCapacity: initialPayloadCapacity)
     }
 
-    func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data? {
-        sendRawFCPCommand(guid: guid, frame: frame, timeoutMs: timeoutMs)
+    func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) async -> Data? {
+        await connector.sendRawFCPCommand(guid: guid, frame: frame, timeoutMs: timeoutMs)
     }
 
-    func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) -> Int32 {
-        Int32(setAudioStreaming(guid: guid, enabled: enabled))
+    func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) async -> Int32 {
+        await Int32(connector.setAudioStreaming(guid: guid, enabled: enabled))
     }
 
-    func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32? {
-        requestUserBusReset(expectedGeneration: expectedGeneration, shortReset: shortReset)
+    func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) async -> UInt32? {
+        await connector.requestUserBusReset(expectedGeneration: expectedGeneration, shortReset: shortReset)
     }
 
-    func mcpQueryLogRecords(_ query: ASFWLogRingQuery) -> ASFWLogRingQueryResponse? {
-        queryLogRecords(query)
+    func mcpQueryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse? {
+        await connector.queryLogRecords(query)
     }
 
-    func mcpLogRingStats() -> ASFWLogRingStats? {
-        logRingStats()
+    func mcpLogRingStats() async -> ASFWLogRingStats? {
+        await connector.logRingStats()
     }
 }
 
@@ -165,7 +165,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
     func fetchDriverVersion() async -> DriverVersionInfo? {
         guard backend.mcpIsConnected else { return nil }
-        return backend.mcpDriverVersion()
+        return await backend.mcpDriverVersion()
     }
 
     private static func bigEndianQuadlets(from data: Data) -> [UInt32] {
@@ -196,11 +196,19 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     }
 
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot {
-        let status = backend.mcpControllerStatus()
-        let diagnostics = try? backend.mcpFetchDiagnostics()
-        let nodes = listNodesFromBackend()
+        let status = await backend.mcpControllerStatus()
+        let diagnostics = try? await backend.mcpFetchDiagnostics()
+        let nodes = await listNodesFromBackend()
         let events = recentTransactions(from: diagnostics?.asyncTrace, limit: Int(ASFW_DIAG_MAX_ASYNC_EVENTS))
-        let generation = diagnostics?.busContract.header.generation ?? status?.generation ?? backend.mcpCurrentGeneration() ?? 0
+        let generation: UInt32
+        if let tmpGeneration = diagnostics?.busContract.header.generation ?? status?.generation {
+            generation = tmpGeneration
+        } else if let tmpGeneration = await backend.mcpCurrentGeneration() {
+            generation = tmpGeneration
+        } else {
+            generation = 0
+        }
+
         let nodeCount = diagnostics?.busContract.nodeCount ?? status?.nodeCount ?? UInt32(nodes.count)
         let busResetCount = UInt64(diagnostics?.busContract.asfwInitiatedResetCount ?? 0)
         let topologyValid = diagnostics?.topology.valid != 0 || status != nil
@@ -243,11 +251,11 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     }
 
     func listNodes() async -> [ASFWMCPNodeSummary] {
-        listNodesFromBackend()
+        await listNodesFromBackend()
     }
 
     func fetchTopology() async -> ASFWMCPTopologySnapshot? {
-        guard let topology = backend.mcpTopologySnapshot() else { return nil }
+        guard let topology = await backend.mcpTopologySnapshot() else { return nil }
         return ASFWMCPTopologySnapshot(
             generation: topology.generation,
             nodeCount: Int(topology.nodeCount),
@@ -296,7 +304,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     }
 
     func fetchIrmAllocations() async -> ASFWMCPIrmAllocationReport? {
-        guard let local = backend.mcpLocalIrmResourceSnapshot() else { return nil }
+        guard let local = await backend.mcpLocalIrmResourceSnapshot() else { return nil }
         return ASFWMCPIrmAllocationReport(
             generation: local.generation,
             irmNodeId: local.irmNodeId,
@@ -309,19 +317,19 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     }
 
     func fetchOhciSnapshot() async -> ASFWMCPOhciSnapshot? {
-        guard let diagnostics = try? backend.mcpFetchDiagnostics() else { return nil }
+        guard let diagnostics = try? await backend.mcpFetchDiagnostics() else { return nil }
         let ohci = diagnostics.ohci
         return ASFWMCPOhciSnapshot(
             generation: diagnostics.busContract.header.generation,
             registers: ASFWMCPOhciRegisterMap.covered.map { entry in
-                ASFWMCPOhciRegister(name: entry.name, offset: entry.offset, value: ohci[keyPath: entry.field])
+                ASFWMCPOhciRegister(name: entry.name, offset: entry.offset, value: ohci[keyPath: entry.field.keyPath])
             }
         )
     }
 
     func fetchConfigROM(nodeId: UInt32, generation: UInt32) async -> ASFWMCPConfigRomSummary? {
         guard nodeId <= UInt32(UInt8.max), generation <= UInt32(UInt16.max) else { return nil }
-        guard let fetched = backend.mcpConfigROM(
+        guard let fetched = await backend.mcpConfigROM(
             nodeId: UInt8(truncatingIfNeeded: nodeId),
             generation: UInt16(truncatingIfNeeded: generation)
         ) else {
@@ -403,7 +411,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     }
 
     func listAVCUnits() async -> [ASFWMCPAVCUnitSummary] {
-        (backend.mcpAVCUnits() ?? []).map { unit in
+        await (backend.mcpAVCUnits() ?? []).map { unit in
             ASFWMCPAVCUnitSummary(
                 guid: unit.guid,
                 nodeId: physicalNodeId(unit.nodeID),
@@ -430,7 +438,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         type: UInt8,
         id: UInt8
     ) async -> ASFWMCPAVCSubunitCapabilities? {
-        guard let capabilities = backend.mcpAVCSubunitCapabilities(guid: guid, type: type, id: id) else {
+        guard let capabilities = await backend.mcpAVCSubunitCapabilities(guid: guid, type: type, id: id) else {
             return nil
         }
         return ASFWMCPAVCSubunitCapabilities(
@@ -461,7 +469,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     }
 
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent] {
-        guard let diagnostics = try? backend.mcpFetchDiagnostics() else { return [] }
+        guard let diagnostics = try? await backend.mcpFetchDiagnostics() else { return [] }
         return recentTransactions(from: diagnostics.asyncTrace, limit: limit)
     }
 
@@ -471,7 +479,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             address: request.address,
             payloadCapacity: 4,
             issue: {
-                backend.mcpAsyncRead(
+                await backend.mcpAsyncRead(
                     destinationID: UInt16(truncatingIfNeeded: request.address.nodeId),
                     addressHigh: request.address.addressHigh,
                     addressLow: request.address.addressLow,
@@ -491,7 +499,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             address: request.address,
             payloadCapacity: Int(request.length),
             issue: {
-                backend.mcpAsyncBlockRead(
+                await backend.mcpAsyncBlockRead(
                     destinationID: UInt16(truncatingIfNeeded: request.address.nodeId),
                     addressHigh: request.address.addressHigh,
                     addressLow: request.address.addressLow,
@@ -507,7 +515,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             address: request.address,
             payloadCapacity: 4,
             issue: {
-                backend.mcpAsyncWrite(
+                await backend.mcpAsyncWrite(
                     destinationID: UInt16(truncatingIfNeeded: request.address.nodeId),
                     addressHigh: request.address.addressHigh,
                     addressLow: request.address.addressLow,
@@ -531,7 +539,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             address: request.address,
             payloadCapacity: request.payload.count,
             issue: {
-                backend.mcpAsyncBlockWrite(
+                await backend.mcpAsyncBlockWrite(
                     destinationID: UInt16(truncatingIfNeeded: request.address.nodeId),
                     addressHigh: request.address.addressHigh,
                     addressLow: request.address.addressLow,
@@ -551,7 +559,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             address: request.address,
             payloadCapacity: 4,
             issue: {
-                backend.mcpAsyncCompareSwap(
+                await backend.mcpAsyncCompareSwap(
                     destinationID: UInt16(truncatingIfNeeded: request.address.nodeId),
                     addressHigh: request.address.addressHigh,
                     addressLow: request.address.addressLow,
@@ -596,7 +604,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
     func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt {
         let correlationId = "live-fcp-\(UUID().uuidString)"
-        let currentGeneration = backend.mcpCurrentGeneration() ?? 0
+        let currentGeneration = await backend.mcpCurrentGeneration() ?? 0
         guard backend.mcpIsConnected else {
             return recordFcp(request, fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
                               response: nil, status: .unavailable, correlationId: correlationId, durationUsec: nil))
@@ -607,7 +615,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         }
 
         let guidText = String(format: "0x%016llX", request.targetGUID)
-        guard let node = listNodesFromBackend().first(where: {
+        guard let node = await listNodesFromBackend().first(where: {
             $0.guid == guidText && $0.nodeId == request.address.nodeId && $0.protocolHints.contains("avc")
         }) else {
             return recordFcp(request, fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
@@ -615,12 +623,12 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         }
 
         let started = Date()
-        let response = backend.mcpSendRawFCPCommand(
+        let response = await backend.mcpSendRawFCPCommand(
             guid: request.targetGUID,
             frame: Data(request.payload),
             timeoutMs: 15_000
         )
-        let completedGeneration = backend.mcpCurrentGeneration() ?? currentGeneration
+        let completedGeneration = await backend.mcpCurrentGeneration() ?? currentGeneration
         let status: ASFWMCPTransactionStatus = completedGeneration == currentGeneration
             ? (response == nil ? .timeout : .ok)
             : .busReset
@@ -639,7 +647,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         guard backend.mcpIsConnected else {
             return ASFWMCPPhase88StreamingReceipt(targetGuid: targetGuid, started: start, status: -536_870_201)
         }
-        return ASFWMCPPhase88StreamingReceipt(
+        return await ASFWMCPPhase88StreamingReceipt(
             targetGuid: targetGuid,
             started: start,
             status: backend.mcpSetAudioStreaming(guid: targetGuid, enabled: start)
@@ -648,7 +656,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
     func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt {
         let correlationId = "live-bus-reset-\(UUID().uuidString)"
-        let currentGeneration = backend.mcpCurrentGeneration() ?? 0
+        let currentGeneration = await backend.mcpCurrentGeneration() ?? 0
         guard backend.mcpIsConnected else {
             return busResetReceipt(request, acceptedGeneration: nil, observedGeneration: currentGeneration,
                                    status: .unavailable, correlationId: correlationId, durationUsec: nil)
@@ -659,7 +667,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         }
 
         let started = Date()
-        guard let acceptedGeneration = backend.mcpRequestUserBusReset(
+        guard let acceptedGeneration = await backend.mcpRequestUserBusReset(
             expectedGeneration: request.generation,
             shortReset: request.shortReset
         ) else {
@@ -671,12 +679,12 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         let deadline = started.addingTimeInterval(busResetTimeout)
         while Date() < deadline {
             guard backend.mcpIsConnected else {
-                return busResetReceipt(request, acceptedGeneration: acceptedGeneration,
+                return await busResetReceipt(request, acceptedGeneration: acceptedGeneration,
                                        observedGeneration: backend.mcpCurrentGeneration() ?? currentGeneration,
                                        status: .unavailable, correlationId: correlationId,
                                        durationUsec: elapsedUsec(since: started))
             }
-            if let observedGeneration = backend.mcpCurrentGeneration(), observedGeneration != currentGeneration {
+            if let observedGeneration = await backend.mcpCurrentGeneration(), observedGeneration != currentGeneration {
                 return busResetReceipt(request, acceptedGeneration: acceptedGeneration,
                                        observedGeneration: observedGeneration, status: .ok,
                                        correlationId: correlationId, durationUsec: elapsedUsec(since: started))
@@ -684,7 +692,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             try? await Task.sleep(nanoseconds: pollIntervalNs)
         }
 
-        return busResetReceipt(request, acceptedGeneration: acceptedGeneration,
+        return await busResetReceipt(request, acceptedGeneration: acceptedGeneration,
                                observedGeneration: backend.mcpCurrentGeneration() ?? currentGeneration,
                                status: .timeout, correlationId: correlationId,
                                durationUsec: elapsedUsec(since: started))
@@ -692,7 +700,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
     func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot {
         let correlationId = "live-irm-snapshot-\(UUID().uuidString)"
-        let currentGeneration = backend.mcpCurrentGeneration() ?? 0
+        let currentGeneration = await backend.mcpCurrentGeneration() ?? 0
         guard backend.mcpIsConnected else {
             return irmSnapshot(
                 request, observedGeneration: currentGeneration, irmNodeId: nil,
@@ -715,7 +723,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         // by LocalIRMResourceController and cross-checked with Linux
         // firewire-ohci's local CSRControl path.
         let started = Date()
-        if let local = backend.mcpLocalIrmResourceSnapshot(),
+        if let local = await backend.mcpLocalIrmResourceSnapshot(),
            local.localNodeId == local.irmNodeId {
             guard local.generation == request.generation else {
                 return irmSnapshot(
@@ -744,7 +752,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             )
         }
 
-        guard let controllerStatus = backend.mcpControllerStatus(),
+        guard let controllerStatus = await backend.mcpControllerStatus(),
               let irmNodeId = controllerStatus.irmNodeID.map({ UInt32($0 & 0x003F) }) else {
             return irmSnapshot(
                 request, observedGeneration: currentGeneration, irmNodeId: nil,
@@ -776,7 +784,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
                 )
             )
             guard result.ok, let value = quadletValue(result.payload) else {
-                return irmSnapshot(
+                return await irmSnapshot(
                     request,
                     observedGeneration: backend.mcpCurrentGeneration() ?? currentGeneration,
                     irmNodeId: irmNodeId,
@@ -791,7 +799,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             values.append(value)
         }
 
-        let observedGeneration = backend.mcpCurrentGeneration() ?? currentGeneration
+        let observedGeneration = await backend.mcpCurrentGeneration() ?? currentGeneration
         return irmSnapshot(
             request,
             observedGeneration: observedGeneration,
@@ -807,37 +815,37 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
     func queryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse? {
         guard backend.mcpIsConnected else { return nil }
-        return backend.mcpQueryLogRecords(query)
+        return await backend.mcpQueryLogRecords(query)
     }
 
     func logRingStats() async -> ASFWLogRingStats? {
         guard backend.mcpIsConnected else { return nil }
-        return backend.mcpLogRingStats()
+        return await backend.mcpLogRingStats()
     }
 
     func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth] {
         guard backend.mcpIsConnected else { return [] }
-        guard let snapshot = backend.mcpAudioTelemetry() else { return [] }
+        guard let snapshot = await backend.mcpAudioTelemetry() else { return [] }
         return snapshot.endpoints.map { $0.mcpStreamHealth }
     }
 
     func fetchAudioTelemetry() async -> ASFWMCPValue? {
         guard backend.mcpIsConnected else { return nil }
-        return backend.mcpAudioTelemetry()?.mcpValue()
+        return await backend.mcpAudioTelemetry()?.mcpValue()
     }
 
     private func executeTransaction(
         kind: ASFWMCPTransactionKind,
         address: ASFWMCPAddress,
         payloadCapacity: Int,
-        issue: () -> UInt16?
+        issue: () async -> UInt16?
     ) async -> ASFWMCPTransactionResult {
         let correlationId = correlationId(kind)
         guard backend.mcpIsConnected else {
             return unavailable(kind: kind, generation: address.generation, correlationId: correlationId, reason: "Driver is not connected.")
         }
 
-        guard let currentGeneration = backend.mcpCurrentGeneration() else {
+        guard let currentGeneration = await backend.mcpCurrentGeneration() else {
             return unavailable(kind: kind, generation: address.generation, correlationId: correlationId, reason: "Current bus generation is unavailable.")
         }
 
@@ -853,7 +861,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         }
 
         let started = Date()
-        guard let handle = issue() else {
+        guard let handle = await issue() else {
             return unavailable(
                 kind: kind,
                 generation: currentGeneration,
@@ -864,7 +872,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
         let deadline = started.addingTimeInterval(transactionTimeout)
         while Date() < deadline {
-            if let result = backend.mcpTransactionResult(handle: handle, initialPayloadCapacity: max(payloadCapacity, 64)) {
+            if let result = await backend.mcpTransactionResult(handle: handle, initialPayloadCapacity: max(payloadCapacity, 64)) {
                 return mapResult(
                     result,
                     kind: kind,
@@ -908,10 +916,10 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         )
     }
 
-    private func listNodesFromBackend() -> [ASFWMCPNodeSummary] {
-        let devices = backend.mcpDiscoveredDevices() ?? []
-        let avcNodeIds = Set((backend.mcpAVCUnits() ?? []).map { physicalNodeId($0.nodeID) })
-        let busBase16 = (try? backend.mcpFetchDiagnostics()).map { UInt16(truncatingIfNeeded: $0.topology.busBase16) } ?? 0
+    private func listNodesFromBackend() async -> [ASFWMCPNodeSummary] {
+        let devices = await backend.mcpDiscoveredDevices() ?? []
+        let avcNodeIds = await Set((backend.mcpAVCUnits() ?? []).map { physicalNodeId($0.nodeID) })
+        let busBase16 = await (try? backend.mcpFetchDiagnostics()).map { UInt16(truncatingIfNeeded: $0.topology.busBase16) } ?? 0
 
         return devices.map { device in
             let physicalNode = UInt32(device.nodeId)

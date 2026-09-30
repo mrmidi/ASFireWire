@@ -9,32 +9,31 @@ import SwiftUI
 import Foundation
 
 struct ModernContentView: View {
-    @StateObject private var driverVM = DriverViewModel()
-    @StateObject private var debugVM = DebugViewModel()
-    @StateObject private var topologyVM: TopologyViewModel
-    @StateObject private var romExplorerVM: RomExplorerViewModel
-    @StateObject private var diagnosticsStore: DiagnosticsStore
-    @StateObject private var diceReportStore: DiceReportStore
-    @StateObject private var mcpVM: ASFWMCPControlViewModel
+    @State private var driverVM: DriverViewModel = DriverViewModel()
+    @State private var debugVM = DebugViewModel()
     @State private var selectedSection: SidebarSection? = .overview
     @State private var loggingPreset: LoggingPreset = .standard
     @AppStorage(DriverInstallSettings.requireNewerBuildKey)
     private var requireNewerBuild = DriverInstallSettings.defaultRequireNewerBuild
-
-    init() {
-        let driverViewModel = DriverViewModel()
-        let debugViewModel = DebugViewModel()
-        let topologyViewModel = TopologyViewModel(connector: debugViewModel.connector)
-        _driverVM = StateObject(wrappedValue: driverViewModel)
-        _debugVM = StateObject(wrappedValue: debugViewModel)
-        _topologyVM = StateObject(wrappedValue: topologyViewModel)
-        _romExplorerVM = StateObject(wrappedValue: RomExplorerViewModel(
-            connector: debugViewModel.connector,
-            topologyViewModel: topologyViewModel
-        ))
-        _diagnosticsStore = StateObject(wrappedValue: DiagnosticsStore(connector: debugViewModel.connector))
-        _diceReportStore = StateObject(wrappedValue: DiceReportStore(connector: debugViewModel.connector))
-        _mcpVM = StateObject(wrappedValue: ASFWMCPControlViewModel(connector: debugViewModel.connector))
+    
+    private var topologyVM: TopologyViewModel {
+        debugVM.romExplorerVM.topologyViewModel
+    }
+    
+    private var romExplorerVM: RomExplorerViewModel {
+        debugVM.romExplorerVM
+    }
+    
+    private var diagnosticsStore: DiagnosticsStore {
+        debugVM.diagnosticsStore
+    }
+    
+    private var diceReportStore: DiceReportStore {
+        debugVM.diceReportStore
+    }
+    
+    private var mcpVM: ASFWMCPControlViewModel {
+        debugVM.mcpVM
     }
 
     enum SidebarSection: String, CaseIterable, Identifiable {
@@ -123,23 +122,23 @@ struct ModernContentView: View {
                 case .romExplorer:
                     ROMExplorerView(viewModel: romExplorerVM)
                 case .audioTelemetry:
-                    AudioTelemetryView(connector: debugVM.connector)
+                    AudioTelemetryView(connectorObservable: debugVM.connectorObservable)
                 case .dvCapture:
                     DVCaptureView(viewModel: debugVM)
                 case .busReset:
                     BusResetHistoryView(viewModel: debugVM)
                 case .logs:
-                    SystemLogsView(connector: debugVM.connector)
+                    SystemLogsView(connectorObservable: debugVM.connectorObservable)
                 case .loggingSettings:
-                    LoggingSettingsView(connector: debugVM.connector)
+                    LoggingSettingsView(connectorObservable: debugVM.connectorObservable)
                 case .mcpSettings:
                     MCPSettingsView(viewModel: mcpVM)
                 case .audio:
                     AudioDebugView()
                 case .saffire:
-                    SaffireMixerView(connector: debugVM.connector)
+                    SaffireMixerView(connectorObservable: debugVM.connectorObservable)
                 case .duet:
-                    DuetControlView(connector: debugVM.connector)
+                    DuetControlView(connectorObservable: debugVM.connectorObservable)
                 case .diagnostics:
                     DiagnosticsView(store: diagnosticsStore)
                 case .diceReport:
@@ -196,7 +195,7 @@ struct ModernContentView: View {
             debugVM.setDriverViewModel(driverVM)
             debugVM.connect()
             topologyVM.startAutoRefresh()
-            romExplorerVM.setConnector(debugVM.connector, topologyViewModel: topologyVM)
+            romExplorerVM.setConnector(debugVM.connectorObservable, topologyViewModel: topologyVM)
             loadLoggingPreset()
             if mcpVM.isEnabled {
                 Task { await mcpVM.start() }
@@ -220,34 +219,33 @@ struct ModernContentView: View {
     }
     
     private func applyLoggingPreset(_ preset: LoggingPreset) {
-        let connector = debugVM.connector
-        guard connector.isConnected else { return }
-        
-        DispatchQueue.global(qos: .userInitiated).async {
+        guard debugVM.connectorObservable.isConnected else { return }
+        let connector = debugVM.connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak connector] in
+            guard let connector else { return }
             switch preset {
             case .standard:
-                _ = connector.setAsyncVerbosity(1)
-                _ = connector.setIsochTelemetryLogging(enabled: false)
-                _ = connector.setHexDumps(enabled: false)
+                _ = await connector.setAsyncVerbosity(1)
+                _ = await connector.setIsochTelemetryLogging(enabled: false)
+                _ = await connector.setHexDumps(enabled: false)
             case .debug:
-                _ = connector.setAsyncVerbosity(4)
-                _ = connector.setIsochTelemetryLogging(enabled: true)
-                _ = connector.setHexDumps(enabled: true)
+                _ = await connector.setAsyncVerbosity(4)
+                _ = await connector.setIsochTelemetryLogging(enabled: true)
+                _ = await connector.setHexDumps(enabled: true)
             }
         }
     }
     
     private func loadLoggingPreset() {
-        let connector = debugVM.connector
         // We can try to load even if not fully connected yet, but it might fail.
         // The connector handles isConnected check internally for methods usually, 
         // but getLogConfig checks isConnected.
         // We'll retry a bit later if needed or just rely on user interaction.
         // For now, just try.
-        
-        DispatchQueue.global(qos: .userInitiated).async {
-            if let config = connector.getLogConfig() {
-                DispatchQueue.main.async {
+        let connector = debugVM.connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak connector] in
+            if let config = await connector?.getLogConfig() {
+                Task { @MainActor in
                     if config.asyncVerbosity >= 4 && config.hexDumpsEnabled && config.isochVerbosity >= 3 {
                         self.loggingPreset = .debug
                     } else {
@@ -260,7 +258,7 @@ struct ModernContentView: View {
 }
 
 struct AsyncCommandView: View {
-    @ObservedObject var viewModel: DebugViewModel
+    var viewModel: DebugViewModel
 
     @State private var destinationID: String = "0x0000"
     @State private var addressHigh: String = "0x0000"

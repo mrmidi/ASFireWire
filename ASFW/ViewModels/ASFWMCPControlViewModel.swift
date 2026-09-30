@@ -2,18 +2,19 @@ import Combine
 import Foundation
 
 @MainActor
-final class ASFWMCPControlViewModel: ObservableObject {
-    @Published var isEnabled: Bool
-    @Published var portText: String
-    @Published var guardedFCPExperimentsEnabled: Bool
-    @Published private(set) var status: ASFWMCPHostStatus = .stopped
-    @Published private(set) var isChangingState = false
-    @Published private(set) var lastError: String?
-    @Published private(set) var hardwareSmokeReport: ASFWMCPHardwareSmokeReport?
+@Observable
+final class ASFWMCPControlViewModel {
+    var isEnabled: Bool
+    var portText: String
+    var guardedFCPExperimentsEnabled: Bool
+    private(set) var status: ASFWMCPHostStatus = .stopped
+    private(set) var isChangingState = false
+    private(set) var lastError: String?
+    private(set) var hardwareSmokeReport: ASFWMCPHardwareSmokeReport?
 
-    private let connector: ASFWDriverConnector
-    private let defaults: UserDefaults
-    private var host: ASFWMCPHost<LiveASFWDriverControl>?
+    @ObservationIgnored var connector: ASFWDriverConnector.Observable!
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var host: ASFWMCPHost<LiveASFWDriverControl>?
 
     private enum DefaultsKey {
         static let enabled = "asfw.mcp.enabled"
@@ -21,8 +22,7 @@ final class ASFWMCPControlViewModel: ObservableObject {
         static let guardedFCPExperimentsEnabled = "asfw.mcp.guarded-fcp-experiments-enabled"
     }
 
-    init(connector: ASFWDriverConnector, defaults: UserDefaults = .standard) {
-        self.connector = connector
+    init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let savedPort = defaults.integer(forKey: DefaultsKey.port)
         self.portText = savedPort > 0 ? "\(savedPort)" : "8765"
@@ -30,24 +30,29 @@ final class ASFWMCPControlViewModel: ObservableObject {
         self.guardedFCPExperimentsEnabled = defaults.bool(forKey: DefaultsKey.guardedFCPExperimentsEnabled)
     }
 
-    var endpointText: String {
+    convenience init(connectorObservable: ASFWDriverConnector.Observable, defaults: UserDefaults = .standard) {
+        self.init(defaults: defaults)
+        self.connector = connectorObservable
+    }
+
+    @ObservationIgnored var endpointText: String {
         status.endpointURL?.absoluteString ?? "Not running"
     }
 
-    var sessionText: String {
+    @ObservationIgnored var sessionText: String {
         guard status.isRunning else { return "Stopped" }
         return status.activeHTTPConnections > 0 ? "Session active" : "Waiting for agent"
     }
 
-    var canEditPort: Bool {
+    @ObservationIgnored var canEditPort: Bool {
         status.isRunning == false && isChangingState == false
     }
 
-    var canRunReadOnlyHardwareSmoke: Bool {
+    @ObservationIgnored var canRunReadOnlyHardwareSmoke: Bool {
         status.isRunning && isChangingState == false
     }
 
-    var canEditGuardedFCPExperiments: Bool {
+    @ObservationIgnored var canEditGuardedFCPExperiments: Bool {
         status.isRunning == false && isChangingState == false
     }
 

@@ -9,7 +9,7 @@ import SwiftUI
 import CoreAudio
 
 struct AudioDebugView: View {
-    @StateObject private var viewModel = AudioDebugViewModel()
+    @State private var viewModel = AudioDebugViewModel()
     
     var body: some View {
         HSplitView {

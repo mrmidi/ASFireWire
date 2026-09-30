@@ -47,7 +47,7 @@ enum Summarizer {
     }
 
     private static func collectUnits(in entries: [DirectoryEntry], into out: inout [UnitInfo]) {
-        for (idx, e) in entries.enumerated() {
+        for (_, e) in entries.enumerated() {
             guard KeyType(rawValue: e.keyId) == .unit, case .directory(let sub) = e.value else { continue }
             var info = UnitInfo()
             let v = RomDirectoryView(romRaw: Data(), entries: sub)

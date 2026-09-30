@@ -2,23 +2,29 @@ import Combine
 import Foundation
 
 @MainActor
-final class DriverLogViewModel: ObservableObject {
+@Observable
+final class DriverLogViewModel {
     static let capacityOptions = [512, 1_024, 4_096, 8_192, 16_384]
 
-    @Published private(set) var records: [ASFWLogRingRecord] = []
-    @Published private(set) var filteredRecords: [ASFWLogRingRecord] = []
-    @Published private(set) var categories: [ASFWLogCategoryDescriptor] = []
-    @Published private(set) var presets: [ASFWLogCategoryPreset] = []
-    @Published var searchText = ""
-    @Published private(set) var maximumLevel: UInt8 = 4
-    @Published private(set) var selectedCategories: Set<UInt8> = []
-    @Published private(set) var capacity: Int
-    @Published private(set) var localEvictedCount: UInt64 = 0
-    @Published private(set) var cursorResetCount: UInt64 = 0
-    @Published private(set) var driverStats: ASFWLogRingStats?
-    @Published private(set) var latestSequence: UInt64 = 0
-    @Published private(set) var lastPollError: String?
-    @Published var isPaused = false
+    private(set) var records: [ASFWLogRingRecord] = []
+    private(set) var filteredRecords: [ASFWLogRingRecord] = []
+    private(set) var categories: [ASFWLogCategoryDescriptor] = []
+    private(set) var presets: [ASFWLogCategoryPreset] = []
+    var searchText = "" {
+        didSet {
+            searchTextSubject.send(searchText)
+        }
+    }
+    
+    private(set) var maximumLevel: UInt8 = 4
+    private(set) var selectedCategories: Set<UInt8> = []
+    private(set) var capacity: Int
+    private(set) var localEvictedCount: UInt64 = 0
+    private(set) var cursorResetCount: UInt64 = 0
+    private(set) var driverStats: ASFWLogRingStats?
+    private(set) var latestSequence: UInt64 = 0
+    private(set) var lastPollError: String?
+    var isPaused = false
 
     private static let capacityDefaultsKey = "driverLogViewer.capacity"
     private static let defaultCapacity = 4_096
@@ -27,20 +33,21 @@ final class DriverLogViewModel: ObservableObject {
     private static let pollIntervalNs: UInt64 = 500_000_000
     private static let statsPollDivisor = 4
 
-    private let connector: ASFWDriverConnector
-    private let defaults: UserDefaults
-    private var buffer: BoundedDeque<ASFWLogRingRecord>
-    private var cursor: UInt64 = 0
-    private var cursorInitialized = false
-    private var pollCount = 0
-    private var pollingLoopActive = false
-    private var catalogLoaded = false
-    private var categoryNamesByID: [UInt8: String] = [:]
-    private var allCategoryIDs: Set<UInt8> = []
-    private var searchCancellable: AnyCancellable?
+    @ObservationIgnored private let connectorObservable: ASFWDriverConnector.Observable
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var buffer: BoundedDeque<ASFWLogRingRecord>
+    @ObservationIgnored private var cursor: UInt64 = 0
+    @ObservationIgnored private var cursorInitialized = false
+    @ObservationIgnored private var pollCount = 0
+    @ObservationIgnored private var pollingLoopActive = false
+    @ObservationIgnored private var catalogLoaded = false
+    @ObservationIgnored private var categoryNamesByID: [UInt8: String] = [:]
+    @ObservationIgnored private var allCategoryIDs: Set<UInt8> = []
+    @ObservationIgnored private var searchCancellable: AnyCancellable?
+    @ObservationIgnored private let searchTextSubject = PassthroughSubject<String, Never>()
 
-    init(connector: ASFWDriverConnector, defaults: UserDefaults = .standard) {
-        self.connector = connector
+    init(connectorObservable: ASFWDriverConnector.Observable, defaults: UserDefaults = .standard) {
+        self.connectorObservable = connectorObservable
         self.defaults = defaults
 
         let persistedCapacity = defaults.integer(forKey: Self.capacityDefaultsKey)
@@ -48,7 +55,7 @@ final class DriverLogViewModel: ObservableObject {
         capacity = initialCapacity
         buffer = BoundedDeque(capacity: initialCapacity)
 
-        searchCancellable = $searchText
+        searchCancellable = searchTextSubject.eraseToAnyPublisher()
             .removeDuplicates()
             .debounce(for: .milliseconds(180), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -62,7 +69,7 @@ final class DriverLogViewModel: ObservableObject {
         defer { pollingLoopActive = false }
 
         while Task.isCancelled == false {
-            if connector.isConnected, isPaused == false {
+            if connectorObservable.isConnected, isPaused == false {
                 await pollOnce()
             }
 
@@ -278,7 +285,7 @@ final class DriverLogViewModel: ObservableObject {
 
     private func pollOnce() async {
         if catalogLoaded == false {
-            let catalog = await connector.logCategoryCatalogAsync()
+            let catalog = await connectorObservable.connector.logCategoryCatalog()
             guard Task.isCancelled == false else { return }
             if let catalog {
                 apply(catalog: catalog)
@@ -286,7 +293,7 @@ final class DriverLogViewModel: ObservableObject {
         }
 
         if cursorInitialized == false {
-            let stats = await connector.logRingStatsAsync()
+            let stats = await connectorObservable.connector.logRingStats()
             guard Task.isCancelled == false else { return }
 
             driverStats = stats
@@ -299,7 +306,7 @@ final class DriverLogViewModel: ObservableObject {
             cursorInitialized = true
         }
 
-        let response = await connector.queryLogRecordsAsync(ASFWLogRingQuery(
+        let response = await connectorObservable.connector.queryLogRecords(ASFWLogRingQuery(
             afterSequence: cursor,
             categoryMask: 0xFFFF_FFFF,
             maxLevel: 4,
@@ -328,7 +335,7 @@ final class DriverLogViewModel: ObservableObject {
 
         pollCount &+= 1
         if pollCount % Self.statsPollDivisor == 0 {
-            driverStats = await connector.logRingStatsAsync()
+            driverStats = await connectorObservable.connector.logRingStats()
         }
     }
 

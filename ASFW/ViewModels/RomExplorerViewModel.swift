@@ -11,7 +11,8 @@ import Combine
 import SwiftUI
 
 @MainActor
-final class RomExplorerViewModel: ObservableObject {
+@Observable
+final class RomExplorerViewModel {
     enum SourceType {
         case file
         case driver
@@ -24,60 +25,60 @@ final class RomExplorerViewModel: ObservableObject {
         case polling(Int)
     }
 
-    @Published var rom: RomTree?
-    @Published var error: String?
-    @Published var selection: DirectoryEntry?
-    @Published var showBusInfo: Bool = false
-    @Published var showInterpreted: Bool = true
-    @Published var isLoading: Bool = false
-    @Published var sourceType: SourceType = .file
-    @Published var statusMessage: String?
-    @Published var liveReadState: LiveReadState = .idle
+    var rom: RomTree?
+    var error: String?
+    var selection: DirectoryEntry?
+    var showBusInfo: Bool = false
+    var showInterpreted: Bool = true
+    var isLoading: Bool = false
+    var sourceType: SourceType = .file
+    var statusMessage: String?
+    var liveReadState: LiveReadState = .idle
 
     // Node selection for driver ROM reading
-    @Published var selectedNode: TopologyNode?
-    @Published var availableNodes: [TopologyNode] = []
+    var selectedNode: TopologyNode?
+    var availableNodes: [TopologyNode] = []
 
     // Reference to connector for driver ROM reading
-    private var connector: ASFWDriverConnector?
-    private var topologyViewModel: TopologyViewModel?
+    @ObservationIgnored private var connectorObservable: ASFWDriverConnector.Observable
+    @ObservationIgnored private(set) var topologyViewModel: TopologyViewModel
 
     // Summarized info for UI (vendor/model names, modalias, units)
-    var summary: RomSummary? {
+    @ObservationIgnored var summary: RomSummary? {
         guard let rom else { return nil }
         return Summarizer.summarize(tree: rom)
     }
 
-    var topologyGeneration: UInt16? {
-        guard let gen = topologyViewModel?.topology?.generation else { return nil }
+    @ObservationIgnored var topologyGeneration: UInt16? {
+        guard let gen = topologyViewModel.topology?.generation else { return nil }
         return UInt16(gen)
     }
 
-    var canReadSelectedNode: Bool {
-        selectedNode != nil && connector != nil
+    @ObservationIgnored var canReadSelectedNode: Bool {
+        selectedNode != nil
     }
 
-    init(connector: ASFWDriverConnector? = nil, topologyViewModel: TopologyViewModel? = nil) {
-        self.connector = connector
-        self.topologyViewModel = topologyViewModel
-        if let topology = topologyViewModel?.topology {
+    init(connectorObservable: ASFWDriverConnector.Observable) {
+        self.connectorObservable = connectorObservable
+        self.topologyViewModel = TopologyViewModel(connectorObservable: connectorObservable)
+        if let topology = topologyViewModel.topology {
             self.availableNodes = topology.nodes
         }
     }
 
-    func setConnector(_ connector: ASFWDriverConnector, topologyViewModel: TopologyViewModel) {
-        self.connector = connector
+    func setConnector(_ connector: ASFWDriverConnector.Observable, topologyViewModel: TopologyViewModel) {
+        self.connectorObservable = connector
         self.topologyViewModel = topologyViewModel
         refreshAvailableNodes()
     }
 
     func refreshTopology() {
-        topologyViewModel?.refresh()
+        topologyViewModel.refresh()
         refreshAvailableNodes()
     }
 
     func refreshAvailableNodes() {
-        if let topology = topologyViewModel?.topology {
+        if let topology = topologyViewModel.topology {
             availableNodes = topology.nodes
             if let selected = selectedNode {
                 selectedNode = topology.nodes.first(where: { $0.nodeId == selected.nodeId })
@@ -141,10 +142,6 @@ final class RomExplorerViewModel: ObservableObject {
     }
 
     func loadROMFromNode(_ node: TopologyNode) {
-        guard let connector = connector else {
-            error = "Driver not connected"
-            return
-        }
         guard let gen = topologyGeneration else {
             error = "Topology generation unknown. Refresh topology and try again."
             return
@@ -157,10 +154,11 @@ final class RomExplorerViewModel: ObservableObject {
         selectedNode = node
         liveReadState = .loadingCache
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            guard let result = connector.getConfigROM(nodeId: node.nodeId, generation: gen) else {
-                DispatchQueue.main.async {
+        let connector = connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak self, weak connector] in
+            guard let self, let connector else { return }
+            guard let result = await connector.getConfigROM(nodeId: node.nodeId, generation: gen) else {
+                Task { @MainActor in
                     self.isLoading = false
                     self.liveReadState = .idle
                     self.rom = nil
@@ -169,7 +167,7 @@ final class RomExplorerViewModel: ObservableObject {
                 }
                 return
             }
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 let staleSuffix = result.isExactGenerationMatch
                     ? ""
                     : " (stale cache gen \(result.resolvedGeneration), requested gen \(gen))"
@@ -185,22 +183,19 @@ final class RomExplorerViewModel: ObservableObject {
             error = "Select a node first"
             return
         }
-        triggerROMRead(nodeId: node.nodeId)
+        Task {
+            await triggerROMRead(nodeId: node.nodeId)
+        }
     }
 
-    func triggerROMRead(nodeId: UInt8) {
-        guard let connector = connector else {
-            error = "Driver not connected"
-            return
-        }
-
+    func triggerROMRead(nodeId: UInt8) async {
         isLoading = true
         error = nil
         statusMessage = "Initiating ROM read for node \(nodeId)..."
         liveReadState = .triggeringRead
         sourceType = .driver
 
-        let status = connector.triggerROMRead(nodeId: nodeId)
+        let status = await connectorObservable.connector.triggerROMRead(nodeId: nodeId)
         switch status {
         case .initiated:
             statusMessage = "ROM read initiated. Waiting for driver to cache the ROM..."
@@ -212,7 +207,7 @@ final class RomExplorerViewModel: ObservableObject {
         case .failed:
             isLoading = false
             liveReadState = .idle
-            error = connector.lastError ?? "Failed to initiate ROM read"
+            error = connectorObservable.lastError ?? "Failed to initiate ROM read"
         }
     }
 
@@ -223,7 +218,7 @@ final class RomExplorerViewModel: ObservableObject {
             statusMessage = "Timed out waiting for ROM read completion"
             return
         }
-        guard let connector, let gen = topologyGeneration else {
+        guard let gen = topologyGeneration else {
             isLoading = false
             liveReadState = .idle
             error = "Topology generation unavailable while polling ROM read"
@@ -232,11 +227,12 @@ final class RomExplorerViewModel: ObservableObject {
 
         liveReadState = .polling(13 - remainingRetries)
         statusMessage = "Waiting for ROM read... (attempt \(13 - remainingRetries)/12)"
-
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self else { return }
-            if let result = connector.getConfigROM(nodeId: nodeId, generation: gen) {
-                DispatchQueue.main.async {
+        let connector = connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak self, weak connector] in
+            try? await Task.sleep(until: .now.advanced(by: .milliseconds(400)))
+            guard let self, let connector else { return }
+            if let result = await connector.getConfigROM(nodeId: nodeId, generation: gen) {
+               Task { @MainActor in
                     if result.isExactGenerationMatch {
                         self.parseAndPublishROM(data: result.data,
                                                 sourceType: .driver,
@@ -247,7 +243,7 @@ final class RomExplorerViewModel: ObservableObject {
                     }
                 }
             } else {
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self.pollForROM(nodeId: nodeId, remainingRetries: remainingRetries - 1)
                 }
             }
@@ -255,10 +251,10 @@ final class RomExplorerViewModel: ObservableObject {
     }
 
     private func parseAndPublishROM(data: Data, sourceType: SourceType, statusMessage: String) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let romTree = try RomParser.parse(data: data)
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self?.rom = romTree
                     self?.sourceType = sourceType
                     self?.error = nil
@@ -269,7 +265,7 @@ final class RomExplorerViewModel: ObservableObject {
                     self?.statusMessage = statusMessage
                 }
             } catch {
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self?.rom = nil
                     self?.error = "Failed to parse Config ROM: \(error.localizedDescription)"
                     self?.isLoading = false
@@ -291,7 +287,7 @@ final class RomExplorerViewModel: ObservableObject {
         showBusInfo = false
     }
 
-    var entriesToShow: [DirectoryEntry]? {
+    @ObservationIgnored var entriesToShow: [DirectoryEntry]? {
         guard let rom else { return nil }
         if showInterpreted {
             return RomInterpreter.interpretRoot(rom.rootDirectory)
@@ -300,7 +296,7 @@ final class RomExplorerViewModel: ObservableObject {
         }
     }
 
-    var selectionDescription: String? {
+    @ObservationIgnored var selectionDescription: String? {
         guard let sel = selection else { return nil }
         var out: [String] = []
         out.append("Key: \(sel.keyName) (0x\(String(sel.keyId, radix: 16))) type: \(sel.type)")
@@ -320,7 +316,7 @@ final class RomExplorerViewModel: ObservableObject {
         return out.joined(separator: "\n")
     }
 
-    var sourceDescription: String {
+    @ObservationIgnored var sourceDescription: String {
         switch sourceType {
         case .file:
             return "File"

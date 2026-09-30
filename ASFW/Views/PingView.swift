@@ -9,7 +9,7 @@ import SwiftUI
 import Foundation
 
 struct PingView: View {
-    @ObservedObject var viewModel: DebugViewModel
+    var viewModel: DebugViewModel
     @State private var lastResponse: String?
     @State private var lastError: String?
     @State private var lastPingDate: Date?
@@ -96,10 +96,11 @@ struct PingView: View {
         isSending = true
         lastError = nil
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let response = viewModel.connector.ping()
+        let connector = viewModel.connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak connector] in
+            let response = await connector?.ping()
 
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.isSending = false
                 if let response = response {
                     self.lastResponse = response
@@ -108,7 +109,7 @@ struct PingView: View {
                 } else {
                     self.lastResponse = nil
                     self.lastPingDate = nil
-                    self.lastError = viewModel.connector.lastError ?? "Ping failed"
+                    self.lastError = viewModel.connectorObservable.lastError ?? "Ping failed"
                 }
             }
         }

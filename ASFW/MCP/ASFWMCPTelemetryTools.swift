@@ -16,7 +16,7 @@ import Foundation
 
 // MARK: - Topology models
 
-struct ASFWMCPTopologyPort: Equatable {
+struct ASFWMCPTopologyPort: Equatable, Sendable {
     let port: Int
     /// Reported Self-ID port state. The raw 2-bit encoding is the wire contract
     /// (NotPresent=0, NotActive=1, Parent=2, Child=3) and is mapped by case, never
@@ -26,7 +26,7 @@ struct ASFWMCPTopologyPort: Equatable {
     let remotePort: Int?
 }
 
-struct ASFWMCPTopologyNode: Equatable {
+struct ASFWMCPTopologyNode: Equatable, Sendable {
     let nodeId: Int
     let portCount: Int
     let gapCount: Int
@@ -41,7 +41,7 @@ struct ASFWMCPTopologyNode: Equatable {
     let ports: [ASFWMCPTopologyPort]
 }
 
-struct ASFWMCPTopologySnapshot: Equatable {
+struct ASFWMCPTopologySnapshot: Equatable, Sendable {
     let generation: UInt32
     let nodeCount: Int
     let rootNodeId: Int?
@@ -55,7 +55,7 @@ struct ASFWMCPTopologySnapshot: Equatable {
 
 // MARK: - Config ROM models
 
-struct ASFWMCPConfigRomUnit: Equatable {
+struct ASFWMCPConfigRomUnit: Equatable, Sendable {
     let specifierId: UInt32?
     let version: UInt32?
     let modelId: UInt32?
@@ -65,7 +65,7 @@ struct ASFWMCPConfigRomUnit: Equatable {
 /// One agent-facing BIB row. Keeping the bit location and a one-sentence
 /// explanation beside the value avoids repeated mask/spec research without
 /// turning routine Config-ROM reads into a raw-data dump.
-struct ASFWMCPConfigRomBIBField: Equatable {
+struct ASFWMCPConfigRomBIBField: Equatable, Sendable {
     let name: String
     let bits: String
     let value: String
@@ -76,7 +76,7 @@ struct ASFWMCPConfigRomBIBField: Equatable {
 /// full parser stays in the app model; this DTO intentionally omits arbitrary
 /// leaf payload bytes because agents normally need the decoded descriptor or
 /// the fact that a target was not fetched from the partial cache.
-struct ASFWMCPConfigRomTreeEntry: Equatable {
+struct ASFWMCPConfigRomTreeEntry: Equatable, Sendable {
     let path: String
     let key: String
     let keyId: UInt8
@@ -88,7 +88,7 @@ struct ASFWMCPConfigRomTreeEntry: Equatable {
     let children: [ASFWMCPConfigRomTreeEntry]
 }
 
-struct ASFWMCPConfigRomSummary: Equatable {
+struct ASFWMCPConfigRomSummary: Equatable, Sendable {
     let nodeId: UInt32
     let requestedGeneration: UInt32
     let resolvedGeneration: UInt32

@@ -7,11 +7,9 @@ extension ASFWDriverConnector {
     // MARK: - Monitoring & Notifications
 
     func startMonitoring() {
-        connectionQueue.sync {
-            if monitoringActive { return }
-            monitoringActive = true
-            startMonitoringLocked()
-        }
+        if monitoringActive { return }
+        monitoringActive = true
+        startMonitoringLocked()
     }
 
     func stopMonitoringLocked() {
@@ -89,7 +87,7 @@ extension ASFWDriverConnector {
         var newConnection: io_connect_t = 0
         let kr = IOServiceOpen(service, mach_task_self_, 0, &newConnection)
         guard kr == KERN_SUCCESS else {
-            let errorMsg = "Failed to open service: \(interpretIOReturn(kr))"
+            let errorMsg = "Failed to open service: \(Self.interpretIOReturn(kr))"
             log(errorMsg, level: .error)
             lastError = errorMsg
             return
@@ -108,9 +106,7 @@ extension ASFWDriverConnector {
             return
         }
 
-        DispatchQueue.main.async { [weak self] in
-            self?.isConnected = true
-        }
+        isConnected = true
         log("Connection established", level: .success)
     }
 
@@ -144,11 +140,9 @@ extension ASFWDriverConnector {
         }
 
         lastDeliveredSequence = 0
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.isConnected = false
-            self.latestStatus = nil
-        }
+
+        isConnected = false
+        latestStatus = nil
         log("Connection closed: \(reason)", level: .warning)
     }
 
@@ -163,7 +157,7 @@ extension ASFWDriverConnector {
                                       &length,
                                       options)
         guard kr == KERN_SUCCESS, let pointer = UnsafeMutableRawPointer(bitPattern: UInt(address)) else {
-            log("IOConnectMapMemory64 failed: \(interpretIOReturn(kr))", level: .error)
+            log("IOConnectMapMemory64 failed: \(Self.interpretIOReturn(kr))", level: .error)
             return false
         }
 
@@ -180,14 +174,14 @@ extension ASFWDriverConnector {
         var port: mach_port_t = mach_port_t(MACH_PORT_NULL)
         var kr = mach_port_allocate(mach_task_self_, MACH_PORT_RIGHT_RECEIVE, &port)
         guard kr == KERN_SUCCESS else {
-            log("mach_port_allocate failed: \(kernResultString(kr))", level: .error)
+            log("mach_port_allocate failed: \(Self.kernResultString(kr))", level: .error)
             return false
         }
 
         kr = mach_port_insert_right(mach_task_self_, port, port, mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND))
         guard kr == KERN_SUCCESS else {
             mach_port_deallocate(mach_task_self_, port)
-            log("mach_port_insert_right failed: \(kernResultString(kr))", level: .error)
+            log("mach_port_insert_right failed: \(Self.kernResultString(kr))", level: .error)
             return false
         }
 
@@ -204,12 +198,12 @@ extension ASFWDriverConnector {
                                             nil)
         guard kr == KERN_SUCCESS else {
             mach_port_deallocate(mach_task_self_, port)
-            log("IOConnectCallAsyncScalarMethod failed: \(interpretIOReturn(kr))", level: .error)
+            log("IOConnectCallAsyncScalarMethod failed: \(Self.interpretIOReturn(kr))", level: .error)
             return false
         }
 
         asyncPort = port
-        let source = DispatchSource.makeMachReceiveSource(port: port, queue: connectionQueue)
+        let source = DispatchSource.makeMachReceiveSource(port: port, queue: ASFWDriverConnectorQueue.dispatchQueue)
         source.setEventHandler { [weak self] in
             self?.handleAsyncMessages()
         }
@@ -242,7 +236,7 @@ extension ASFWDriverConnector {
             if result == MACH_RCV_TIMED_OUT {
                 break
             } else if result != KERN_SUCCESS {
-                log("mach_msg receive failed: \(kernResultString(result))", level: .error)
+                log("mach_msg receive failed: \(Self.kernResultString(result))", level: .error)
                 break
             }
 
@@ -267,10 +261,7 @@ extension ASFWDriverConnector {
         guard status.sequence != lastDeliveredSequence else { return }
         lastDeliveredSequence = status.sequence
 
-        DispatchQueue.main.async { [weak self] in
-            self?.latestStatus = status
-        }
-        statusSubject.send(status)
+        self.latestStatus = status
     }
 
     func emitCurrentStatus() {
@@ -278,10 +269,8 @@ extension ASFWDriverConnector {
         guard let status = DriverStatus(rawPointer: UnsafeRawPointer(pointer), length: Int(sharedMemoryLength)) else { return }
         guard status.sequence != 0 else { return }
         lastDeliveredSequence = status.sequence
-        DispatchQueue.main.async { [weak self] in
-            self?.latestStatus = status
-        }
-        statusSubject.send(status)
+
+        self.latestStatus = status
     }
 
     private func startMonitoringLocked() {
@@ -292,7 +281,7 @@ extension ASFWDriverConnector {
             return
         }
         notificationPort = port
-        IONotificationPortSetDispatchQueue(port, connectionQueue)
+        IONotificationPortSetDispatchQueue(port, ASFWDriverConnectorQueue.dispatchQueue)
 
         var matched: io_iterator_t = 0
         let matchDict = IOServiceNameMatching(serviceName)
@@ -313,7 +302,7 @@ extension ASFWDriverConnector {
             matchedIterator = matched
             handleMatched(iterator: matched)
         } else {
-            log("IOServiceAddMatchingNotification (first match) failed: \(interpretIOReturn(matchResult))", level: .error)
+            log("IOServiceAddMatchingNotification (first match) failed: \(Self.interpretIOReturn(matchResult))", level: .error)
         }
 
         var terminated: io_iterator_t = 0
@@ -335,7 +324,7 @@ extension ASFWDriverConnector {
             terminatedIterator = terminated
             handleTerminated(iterator: terminated)
         } else {
-            log("IOServiceAddMatchingNotification (terminated) failed: \(interpretIOReturn(termResult))", level: .error)
+            log("IOServiceAddMatchingNotification (terminated) failed: \(Self.interpretIOReturn(termResult))", level: .error)
         }
     }
 }

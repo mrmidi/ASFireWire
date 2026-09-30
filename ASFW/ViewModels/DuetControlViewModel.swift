@@ -1,41 +1,42 @@
 import Foundation
 import Combine
 
-final class DuetControlViewModel: ObservableObject {
-    @Published var isConnected: Bool = false
-    @Published var isLoading: Bool = false
-    @Published var isApplying: Bool = false
-    @Published var errorMessage: String?
-    @Published var infoMessage: String?
+@MainActor
+@Observable
+final class DuetControlViewModel {
+    var isConnected: Bool = false
+    var isLoading: Bool = false
+    var isApplying: Bool = false
+    var errorMessage: String?
+    var infoMessage: String?
 
-    @Published var duetGUID: UInt64?
+    var duetGUID: UInt64?
 
-    @Published var outputParams: DuetOutputParams = DuetOutputParams()
-    @Published var inputParams: DuetInputParams = DuetInputParams()
-    @Published var mixerParams: DuetMixerParams = DuetMixerParams()
-    @Published var displayParams: DuetDisplayParams = DuetDisplayParams()
+    var outputParams: DuetOutputParams = DuetOutputParams()
+    var inputParams: DuetInputParams = DuetInputParams()
+    var mixerParams: DuetMixerParams = DuetMixerParams()
+    var displayParams: DuetDisplayParams = DuetDisplayParams()
 
-    @Published var firmwareID: UInt32?
-    @Published var hardwareID: UInt32?
-    @Published var selectedOutputBank: DuetOutputBank = .output1
+    var firmwareID: UInt32?
+    var hardwareID: UInt32?
+    var selectedOutputBank: DuetOutputBank = .output1
 
-    @Published var lastRefreshTime: Date?
+    var lastRefreshTime: Date?
 
-    private let connector: ASFWDriverConnector
-    private var cancellables = Set<AnyCancellable>()
-    private var pendingMixerWrite: DispatchWorkItem?
-    private var pendingInputGainWrite: DispatchWorkItem?
-    private let inputWriteQueue = DispatchQueue(label: "net.mrmidi.ASFW.Duet.input-write", qos: .userInitiated)
-    private var pendingMixerDestination: Int = 0
-    private var pendingMixerSource: Int = 0
-    private var pendingMixerValue: UInt16 = DuetMixerParams.gainMin
-    private var pendingInputGainChannel: Int = 0
-    private var pendingInputGainValue: UInt8 = DuetInputParams.gainMin
+    @ObservationIgnored private let connectorObservable: ASFWDriverConnector.Observable
+    @ObservationIgnored private var cancellables = Set<AnyCancellable>()
+    @ObservationIgnored private var pendingMixerWrite: Task<Void, Never>?
+    @ObservationIgnored private var pendingInputGainWrite: Task<Void, Never>?
+    @ObservationIgnored private var pendingMixerDestination: Int = 0
+    @ObservationIgnored private var pendingMixerSource: Int = 0
+    @ObservationIgnored private var pendingMixerValue: UInt16 = DuetMixerParams.gainMin
+    @ObservationIgnored private var pendingInputGainChannel: Int = 0
+    @ObservationIgnored private var pendingInputGainValue: UInt8 = DuetInputParams.gainMin
 
-    init(connector: ASFWDriverConnector) {
-        self.connector = connector
+    init(connectorObservable: ASFWDriverConnector.Observable) {
+        self.connectorObservable = connectorObservable
 
-        connector.$isConnected
+        connectorObservable.$isConnected
             .receive(on: DispatchQueue.main)
             .sink { [weak self] connected in
                 guard let self else { return }
@@ -49,12 +50,14 @@ final class DuetControlViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        isConnected = connector.isConnected
+        isConnected = connectorObservable.isConnected
     }
 
     deinit {
-        pendingMixerWrite?.cancel()
-        pendingInputGainWrite?.cancel()
+        // Note: deinit in @MainActor classes is nonisolated in Swift 6.
+        // DispatchWorkItem is not Sendable, so we cannot cancel it in deinit.
+        // The work items will be automatically discarded when the class is deallocated.
+        // We rely on the fact that cancel() is idempotent and safe to not call.
     }
 
     var selectedDestinationIndex: Int {
@@ -62,7 +65,7 @@ final class DuetControlViewModel: ObservableObject {
     }
 
     func refresh() {
-        guard connector.isConnected else {
+        guard connectorObservable.isConnected else {
             errorMessage = "Driver not connected"
             return
         }
@@ -71,11 +74,12 @@ final class DuetControlViewModel: ObservableObject {
         errorMessage = nil
         infoMessage = nil
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
+        let connector = connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak self, weak connector] in
+            guard let self, let connector else { return }
 
-            guard let guid = self.connector.getFirstDuetUnitGUID() else {
-                DispatchQueue.main.async {
+            guard let guid = await connector.getFirstDuetUnitGUID() else {
+                Task { @MainActor in
                     self.isLoading = false
                     self.duetGUID = nil
                     self.errorMessage = "No Apogee Duet AV/C unit found"
@@ -83,11 +87,11 @@ final class DuetControlViewModel: ObservableObject {
                 return
             }
 
-            let snapshot = self.connector.refreshDuetState(guid: guid)
-            let cached = self.connector.getDuetCachedState(guid: guid)
+            let snapshot = await connector.refreshDuetState(guid: guid)
+            let cached = await connector.getDuetCachedState(guid: guid)
             let state = snapshot ?? cached
 
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.isLoading = false
                 self.duetGUID = guid
 
@@ -147,6 +151,7 @@ final class DuetControlViewModel: ObservableObject {
     func setInputSource(channel: Int, source: DuetInputSource) {
         guard channel >= 0 && channel < inputParams.sources.count else { return }
         inputParams.sources[channel] = source
+        let connector = connectorObservable.connector
         performInputWrite(failureMessage: "Failed to apply input source") { [connector] guid in
             connector.setDuetInputSource(guid: guid, channel: channel, source: source)
         }
@@ -155,6 +160,7 @@ final class DuetControlViewModel: ObservableObject {
     func setInputXlrNominalLevel(channel: Int, level: DuetInputXlrNominalLevel) {
         guard channel >= 0 && channel < inputParams.xlrNominalLevels.count else { return }
         inputParams.xlrNominalLevels[channel] = level
+        let connector = connectorObservable.connector
         performInputWrite(failureMessage: "Failed to apply XLR nominal level") { [connector] guid in
             connector.setDuetInputXlrNominalLevel(guid: guid, channel: channel, level: level)
         }
@@ -163,6 +169,7 @@ final class DuetControlViewModel: ObservableObject {
     func setInputPhantom(channel: Int, enabled: Bool) {
         guard channel >= 0 && channel < inputParams.phantomPowerings.count else { return }
         inputParams.phantomPowerings[channel] = enabled
+        let connector = connectorObservable.connector
         performInputWrite(failureMessage: "Failed to apply phantom power") { [connector] guid in
             connector.setDuetInputPhantom(guid: guid, channel: channel, enabled: enabled)
         }
@@ -171,6 +178,7 @@ final class DuetControlViewModel: ObservableObject {
     func setInputPolarity(channel: Int, inverted: Bool) {
         guard channel >= 0 && channel < inputParams.polarities.count else { return }
         inputParams.polarities[channel] = inverted
+        let connector = connectorObservable.connector
         performInputWrite(failureMessage: "Failed to apply input polarity") { [connector] guid in
             connector.setDuetInputPolarity(guid: guid, channel: channel, inverted: inverted)
         }
@@ -178,6 +186,7 @@ final class DuetControlViewModel: ObservableObject {
 
     func setClickless(_ enabled: Bool) {
         inputParams.clickless = enabled
+        let connector = connectorObservable.connector
         performInputWrite(failureMessage: "Failed to apply clickless mode") { [connector] guid in
             connector.setDuetInputClickless(guid: guid, enabled: enabled)
         }
@@ -191,13 +200,17 @@ final class DuetControlViewModel: ObservableObject {
         let source = pendingMixerSource
         let value = pendingMixerValue
 
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            let ok = self.connector.setDuetMixerGain(guid: guid,
+        let connector = connectorObservable.connector
+        pendingMixerWrite = Task.detached(priority: .utility) { [weak connector, weak self] in
+            try? await Task.sleep(until: .now.advanced(by: .milliseconds(120)))
+            guard let connector, !Task.isCancelled else { return }
+            let ok = await connector.setDuetMixerGain(guid: guid,
                                                      destination: destination,
                                                      source: source,
                                                      gain: value)
-            DispatchQueue.main.async {
+            guard !Task.isCancelled else { return }
+            Task { @MainActor in
+                guard let self else { return }
                 if !ok {
                     self.errorMessage = "Failed to apply mixer value"
                 } else {
@@ -206,9 +219,6 @@ final class DuetControlViewModel: ObservableObject {
                 }
             }
         }
-
-        pendingMixerWrite = work
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.12, execute: work)
     }
 
     private func scheduleInputGainWrite() {
@@ -218,10 +228,14 @@ final class DuetControlViewModel: ObservableObject {
         let channel = pendingInputGainChannel
         let value = pendingInputGainValue
 
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            let ok = self.connector.setDuetInputGain(guid: guid, channel: channel, gain: value)
-            DispatchQueue.main.async {
+        let connector = connectorObservable.connector
+        pendingInputGainWrite = Task.detached(priority: .utility) { [weak connector, weak self] in
+            try? await Task.sleep(until: .now.advanced(by: .milliseconds(120)))
+            guard let connector, !Task.isCancelled else { return }
+            let ok = await connector.setDuetInputGain(guid: guid, channel: channel, gain: value)
+            guard !Task.isCancelled else { return }
+            Task { @MainActor in
+                guard let self else { return }
                 if !ok {
                     self.errorMessage = "Failed to apply input gain"
                 } else {
@@ -230,22 +244,19 @@ final class DuetControlViewModel: ObservableObject {
                 }
             }
         }
-
-        pendingInputGainWrite = work
-        inputWriteQueue.asyncAfter(deadline: .now() + 0.12, execute: work)
     }
 
-    private func performInputWrite(failureMessage: String, _ operation: @escaping (_ guid: UInt64) -> Bool) {
+    private func performInputWrite(failureMessage: String, _ operation: @escaping @ASFWDriverConnectorQueue @Sendable (_ guid: UInt64) -> Bool) {
         pendingInputGainWrite?.cancel()
         pendingInputGainWrite = nil
 
         guard let guid = duetGUID else { return }
 
         isApplying = true
-        inputWriteQueue.async { [weak self] in
+        Task { @ASFWDriverConnectorQueue [weak self] in
             guard let self else { return }
             let ok = operation(guid)
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.isApplying = false
                 if !ok {
                     self.errorMessage = failureMessage

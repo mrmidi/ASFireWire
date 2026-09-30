@@ -1,10 +1,11 @@
 import Foundation
 
+@ASFWDriverConnectorQueue
 private final class DuetStateCacheStore {
-    let lock = NSLock()
     var snapshots: [UInt64: DuetStateSnapshot] = [:]
 }
 
+@ASFWDriverConnectorQueue
 private let duetStateCacheStore = DuetStateCacheStore()
 
 extension ASFWDriverConnector {
@@ -30,30 +31,22 @@ extension ASFWDriverConnector {
     // MARK: - Sidecar Cache
 
     func getDuetCachedState(guid: UInt64) -> DuetStateSnapshot? {
-        duetStateCacheStore.lock.lock()
-        defer { duetStateCacheStore.lock.unlock() }
         return duetStateCacheStore.snapshots[guid]
     }
 
     func setDuetCachedState(guid: UInt64, snapshot: DuetStateSnapshot) {
-        duetStateCacheStore.lock.lock()
         duetStateCacheStore.snapshots[guid] = snapshot
-        duetStateCacheStore.lock.unlock()
     }
 
     func clearDuetCachedState(guid: UInt64) {
-        duetStateCacheStore.lock.lock()
         duetStateCacheStore.snapshots.removeValue(forKey: guid)
-        duetStateCacheStore.lock.unlock()
     }
 
     private func updateDuetCachedState(guid: UInt64, _ mutate: (inout DuetStateSnapshot) -> Void) {
-        duetStateCacheStore.lock.lock()
         var snapshot = duetStateCacheStore.snapshots[guid] ?? DuetStateSnapshot()
         mutate(&snapshot)
         snapshot.updatedAt = Date()
         duetStateCacheStore.snapshots[guid] = snapshot
-        duetStateCacheStore.lock.unlock()
     }
 
     // MARK: - Typed Duet API (Vendor-dependent over raw FCP)

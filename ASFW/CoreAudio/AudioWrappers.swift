@@ -174,6 +174,7 @@ class AudioStream: AudioObject {
 
 // MARK: - AudioWrapperDevice
 
+@MainActor
 class AudioWrapperDevice: AudioObject {
     var uid: String {
         getAudioObjectStringProperty(objectID: id, selector: kAudioDevicePropertyDeviceUID)
@@ -430,6 +431,7 @@ extension AudioStreamBasicDescription {
 
 // MARK: - AudioSystem
 
+@MainActor
 class AudioSystem {
     static let shared = AudioSystem()
     

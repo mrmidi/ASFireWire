@@ -10,14 +10,15 @@ import Combine
 import SwiftUI
 
 @MainActor
-class DriverViewModel: ObservableObject {
-    @Published var activationStatus: String = "Ready"
-    @Published var isBusy: Bool = false
-    @Published var logMessages: [LogEntry] = []
-    @Published var driverVersion: DriverVersionInfo?
-    @Published private(set) var isDriverConnected: Bool = false
+@Observable
+final class DriverViewModel {
+    var activationStatus: String = "Ready"
+    var isBusy: Bool = false
+    var logMessages: [LogEntry] = []
+    var driverVersion: DriverVersionInfo?
+    private(set) var isDriverConnected: Bool = false
 
-    var displayedStatus: String {
+    @ObservationIgnored var displayedStatus: String {
         isDriverConnected ? "Driver is loaded and connected" : activationStatus
     }
     

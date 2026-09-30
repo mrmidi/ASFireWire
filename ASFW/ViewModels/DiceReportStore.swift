@@ -14,22 +14,23 @@ import Combine
 import Foundation
 
 @MainActor
-final class DiceReportStore: ObservableObject {
-    @Published var isRefreshing = false
-    @Published var error: String?
-    @Published var reportText: String =
+@Observable
+final class DiceReportStore {
+    var isRefreshing = false
+    var error: String?
+    var reportText: String =
         "No DICE report yet. Connect a device and click Refresh."
-    @Published var deviceCount: Int = 0
+    var deviceCount: Int = 0
 
-    private let connector: ASFWDriverConnector
-    private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private let connectorObservable: ASFWDriverConnector.Observable
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
 
-    init(connector: ASFWDriverConnector) {
-        self.connector = connector
+    init(connectorObservable: ASFWDriverConnector.Observable) {
+        self.connectorObservable = connectorObservable
     }
 
     func refresh() {
-        guard connector.isConnected else {
+        guard connectorObservable.isConnected else {
             error = "Not connected to the ASFW driver."
             reportText = "ASFW driver is not connected. Connect it from the toolbar, then refresh."
             return
@@ -46,7 +47,7 @@ final class DiceReportStore: ObservableObject {
         refreshTask?.cancel()
         refreshTask = Task { @MainActor [weak self] in
             guard let self, !Task.isCancelled else { return }
-            self.performRefresh()
+            await self.performRefresh()
         }
     }
 
@@ -54,9 +55,9 @@ final class DiceReportStore: ObservableObject {
         refreshTask?.cancel()
     }
 
-    private func performRefresh() {
-        let devices = connector.getDiscoveredDevices() ?? []
-        let driverVersion = connector.getDriverVersion().map { v in
+    private func performRefresh() async {
+        let devices = await connectorObservable.connector.getDiscoveredDevices() ?? []
+        let driverVersion = await connectorObservable.connector.getDriverVersion().map { v in
             "\(v.semanticVersion) (\(v.gitCommitShort) on \(v.gitBranch)"
                 + (v.gitDirty ? ", dirty" : "") + ") built \(v.buildTimestamp)"
         }
@@ -70,7 +71,7 @@ final class DiceReportStore: ObservableObject {
                 isRefreshing = false
                 return
             }
-            switch connector.captureDiceSnapshot(guid: device.guid) {
+            switch await connectorObservable.connector.captureDiceSnapshot(guid: device.guid) {
             case .captured(let snapshot):
                 // A device with no readable general section table is not DICE.
                 guard snapshot.generalSections != nil else { continue }

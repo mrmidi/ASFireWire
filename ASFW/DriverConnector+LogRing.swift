@@ -192,32 +192,6 @@ extension ASFWDriverConnector {
         return Self.decodeLogCategoryCatalog(data)
     }
 
-    /// Executes log-ring I/O away from the main actor and serializes it with
-    /// connector lifecycle work. The GUI uses this instead of blocking redraws.
-    func queryLogRecordsAsync(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse? {
-        await withCheckedContinuation { continuation in
-            connectionQueue.async { [weak self] in
-                continuation.resume(returning: self?.queryLogRecords(query))
-            }
-        }
-    }
-
-    func logRingStatsAsync() async -> ASFWLogRingStats? {
-        await withCheckedContinuation { continuation in
-            connectionQueue.async { [weak self] in
-                continuation.resume(returning: self?.logRingStats())
-            }
-        }
-    }
-
-    func logCategoryCatalogAsync() async -> ASFWLogCategoryCatalog? {
-        await withCheckedContinuation { continuation in
-            connectionQueue.async { [weak self] in
-                continuation.resume(returning: self?.logCategoryCatalog())
-            }
-        }
-    }
-
     private func encodeRequest(
         _ query: ASFWLogRingQuery,
         afterSequence: UInt64,

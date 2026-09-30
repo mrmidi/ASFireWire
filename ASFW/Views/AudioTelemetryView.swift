@@ -11,20 +11,21 @@ import Darwin.Mach
 import SwiftUI
 
 @MainActor
-final class AudioTelemetryViewModel: ObservableObject {
-    @Published private(set) var endpoints: [AudioTelemetryEndpoint] = []
-    @Published var selectedEndpointID: UInt64?
-    @Published private(set) var marginHistory: [MarginHistoryPoint] = []
-    @Published private(set) var lastUpdated: Date?
+@Observable
+final class AudioTelemetryViewModel {
+    private(set) var endpoints: [AudioTelemetryEndpoint] = []
+    var selectedEndpointID: UInt64?
+    private(set) var marginHistory: [MarginHistoryPoint] = []
+    private(set) var lastUpdated: Date?
 
-    private let connector: ASFWDriverConnector
-    private var observedIntervals: [UInt64: UInt64] = [:]
+    private let connectorObservable: ASFWDriverConnector.Observable
+    @ObservationIgnored private var observedIntervals: [UInt64: UInt64] = [:]
 
-    init(connector: ASFWDriverConnector) {
-        self.connector = connector
+    init(connectorObservable: ASFWDriverConnector.Observable) {
+        self.connectorObservable = connectorObservable
     }
 
-    var selectedEndpoint: AudioTelemetryEndpoint? {
+    @ObservationIgnored var selectedEndpoint: AudioTelemetryEndpoint? {
         if let selectedEndpointID,
            let endpoint = endpoints.first(where: { $0.guid == selectedEndpointID }) {
             return endpoint
@@ -34,13 +35,13 @@ final class AudioTelemetryViewModel: ObservableObject {
 
     func poll() async {
         while !Task.isCancelled {
-            refresh()
+            await refresh()
             try? await Task.sleep(for: .seconds(1))
         }
     }
 
-    private func refresh() {
-        guard let snapshot = connector.getAudioTelemetry() else { return }
+    private func refresh() async {
+        guard let snapshot = await connectorObservable.connector.getAudioTelemetry() else { return }
         endpoints = snapshot.endpoints
         if selectedEndpointID == nil || !endpoints.contains(where: { $0.guid == selectedEndpointID }) {
             selectedEndpointID = endpoints.first?.guid
@@ -64,10 +65,10 @@ final class AudioTelemetryViewModel: ObservableObject {
 }
 
 struct AudioTelemetryView: View {
-    @StateObject private var viewModel: AudioTelemetryViewModel
+    @State private var viewModel: AudioTelemetryViewModel
 
-    init(connector: ASFWDriverConnector) {
-        _viewModel = StateObject(wrappedValue: AudioTelemetryViewModel(connector: connector))
+    init(connectorObservable: ASFWDriverConnector.Observable) {
+        _viewModel = State(wrappedValue: AudioTelemetryViewModel(connectorObservable: connectorObservable))
     }
 
     var body: some View {
@@ -270,6 +271,8 @@ private extension AudioTelemetryEndpoint {
 
 private extension UInt64 {
     var microsecondsText: String {
+        // Accessing static property from extension (non-isolated).
+        // HostTimebase is not @MainActor so this is safe.
         let timebase = HostTimebase.shared
         return "\(timebase.microseconds(fromHostTicks: self).formatted()) µs"
     }
@@ -277,15 +280,24 @@ private extension UInt64 {
 
 private final class HostTimebase {
     static let shared = HostTimebase()
+
     private let info: mach_timebase_info_data_t
 
     private init() {
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
-        info = timebase
+        self.info = timebase
     }
 
     func microseconds(fromHostTicks ticks: UInt64) -> UInt64 {
         UInt64((Double(ticks) * Double(info.numer) / Double(info.denom)) / 1_000)
     }
 }
+
+// MARK: Sendable
+
+// swift-format-skip
+// HostTimebase holds immutable configuration data after init.
+// The shared instance is safe because the configuration is immutable.
+// swift-format-skip
+extension HostTimebase: @unchecked Sendable {}

@@ -9,7 +9,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct AVCDebugView: View {
-    @ObservedObject var viewModel: DebugViewModel
+    var viewModel: DebugViewModel
     @State private var isRefreshing = false
     @State private var lastRefresh: Date?
     
@@ -52,7 +52,7 @@ struct AVCDebugView: View {
                 refreshAVCUnits()
             }
         }
-        .onChange(of: viewModel.isConnected) { connected in
+        .onChange(of: viewModel.isConnected) { _, connected in
             if connected {
                 refreshAVCUnits()
             }
@@ -75,11 +75,12 @@ struct AVCDebugView: View {
         guard viewModel.isConnected else { return }
         isRefreshing = true
         
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = viewModel.connector.reScanAVCUnits()
-            Thread.sleep(forTimeInterval: 0.5)
+        let connector = viewModel.connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak viewModel, weak connector] in
+            _ = await connector?.reScanAVCUnits()
+            try? await Task.sleep(until: .now.advanced(by: .milliseconds(500)))
             Task { @MainActor in
-                viewModel.fetchAVCUnits()
+                viewModel?.fetchAVCUnits()
                 self.lastRefresh = Date()
                 self.isRefreshing = false
             }
@@ -89,36 +90,48 @@ struct AVCDebugView: View {
     // Phase 0.5: IRM allocation test
     private func triggerIRMTest() {
         guard viewModel.isConnected else { return }
-        _ = viewModel.connector.testIRMAllocation()
+        Task {
+            _ = await viewModel.connectorObservable.connector.testIRMAllocation()
+        }
     }
     
     // Phase 0.5: IRM release test
     private func triggerIRMRelease() {
         guard viewModel.isConnected else { return }
-        _ = viewModel.connector.testIRMRelease()
+        Task {
+            _ = await viewModel.connectorObservable.connector.testIRMRelease()
+        }
     }
     
     // Phase 0.5: CMP connect oPCR test
     private func triggerCMPConnectOPCR() {
         guard viewModel.isConnected else { return }
-        _ = viewModel.connector.testCMPConnectOPCR()
+        Task {
+            _ = await viewModel.connectorObservable.connector.testCMPConnectOPCR()
+        }
     }
     
     // Phase 0.5: CMP disconnect oPCR test
     private func triggerCMPDisconnectOPCR() {
         guard viewModel.isConnected else { return }
-        _ = viewModel.connector.testCMPDisconnectOPCR()
+        Task {
+            _ = await viewModel.connectorObservable.connector.testCMPDisconnectOPCR()
+        }
     }
     
     // Phase 1.5: IT DMA allocation (no CMP)
     private func triggerITDMAAllocate() {
         guard viewModel.isConnected else { return }
-        _ = viewModel.connector.allocateITDMA(channel: 1)
+        Task {
+            _ = await viewModel.connectorObservable.connector.allocateITDMA(channel: 1)
+        }
     }
     
     private func triggerITDMADeallocate() {
         guard viewModel.isConnected else { return }
-        _ = viewModel.connector.deallocateITDMA()
+        Task {
+            _ = await viewModel.connectorObservable.connector.deallocateITDMA()
+        }
     }
 }
 
@@ -241,7 +254,7 @@ struct EmptyStateView: View {
 
 struct AVCUnitCard: View {
     let unit: ASFWDriverConnector.AVCUnitInfo
-    @ObservedObject var viewModel: DebugViewModel
+    var viewModel: DebugViewModel
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -305,7 +318,7 @@ struct AVCUnitCard: View {
 struct SubunitRow: View {
     let unit: ASFWDriverConnector.AVCUnitInfo
     let subunit: ASFWDriverConnector.AVCSubunitInfo
-    @ObservedObject var viewModel: DebugViewModel
+    var viewModel: DebugViewModel
     
     @State private var isExpanded = false
     @State private var capabilities: ASFWDriverConnector.AVCMusicCapabilities?
@@ -446,7 +459,7 @@ struct PlugBadge: View {
 // I'll include the full definition to ensure it works with the new layout.
 
 struct SubunitCapabilitiesView: View {
-    @ObservedObject var viewModel: DebugViewModel
+    var viewModel: DebugViewModel
     let unit: ASFWDriverConnector.AVCUnitInfo
     let subunit: ASFWDriverConnector.AVCSubunitInfo
     let capabilities: ASFWDriverConnector.AVCMusicCapabilities?
@@ -551,13 +564,14 @@ struct SubunitCapabilitiesView: View {
     
     private func dumpDescriptor() {
         isExporting = true
-        DispatchQueue.global(qos: .userInitiated).async {
-            let data = viewModel.connector.getSubunitDescriptor(
+        let connector = viewModel.connectorObservable.connector
+        Task.detached(priority: .userInitiated) { [weak connector] in
+            let data = await connector?.getSubunitDescriptor(
                 guid: unit.guid,
                 type: subunit.type,
                 id: subunit.subunitID
             )
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.isExporting = false
                 if let data = data, !data.isEmpty {
                     self.descriptorData = data
