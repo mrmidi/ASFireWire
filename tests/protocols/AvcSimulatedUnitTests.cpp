@@ -8,6 +8,8 @@
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/FunctionBlockCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/StreamFormatCommand.hpp"
+#include "ASFWDriver/Protocols/AVC/Descriptors/DescriptorAccessor.hpp"
+#include "ASFWDriver/Protocols/AVC/Descriptors/MusicSubunitDescriptor.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/IAvcUnit.hpp"
 #include "ASFWDriver/Protocols/AVC/Extensions/BridgeCoPlugInfo.hpp"
 #include "RecordingFireWireBus.hpp"
@@ -249,6 +251,50 @@ TEST_F(AvcSimulatedUnitTests, BusAttachment_FcpCommandInterception) {
     // Verify trace recorded the write
     EXPECT_FALSE(bus_.Trace().Lines().empty());
     EXPECT_TRUE(bus_.Trace().Lines()[0].find("W ffff.f0000b00 01ff3000") != std::string::npos);
+}
+
+TEST_F(AvcSimulatedUnitTests, DescriptorChunkedServing) {
+    const std::string duetHex =
+        "01ce000a810000060101ffffffff01c08108000403030005002e8109000800900200000100020020810a000b060302000000ff000101ff000f000a000b416e616c6f67204f757400002d810900080190020500010002001f810a000b060302000200ff000301ff000e000a000a416e616c6f6720496e0000248109000802900203000100010016810a0007400901000400ff0009000a000553796e6300002d810900080090020000010002001f810a000b060302000200ff000301ff000e000a000a416e616c6f6720496e00002e8109000801900205000100020020810a000b060302000000ff000101ff000f000a000b416e616c6f67204f75740000248109000802900203000100010016810a0007400901000400ff0009000a000553796e63000025810b000e00000000f000ff00fff101ff00ff0011000a000d416e616c6f67204f75742031000025810b000e00000100f000ff01fff101ff01ff0011000a000d416e616c6f67204f75742032000024810b000e00000200f001ff00fff100ff00ff0010000a000c416e616c6f6720496e2031000024810b000e00000300f001ff01fff100ff01ff0010000a000c416e616c6f6720496e2032000012810b000e80000400f002ff00fff102ff00ff";
+
+    std::vector<uint8_t> descriptorBytes;
+    descriptorBytes.reserve(duetHex.size() / 2);
+    for (size_t i = 0; i < duetHex.size(); i += 2) {
+        descriptorBytes.push_back(static_cast<uint8_t>(std::stoul(duetHex.substr(i, 2), nullptr, 16)));
+    }
+    ASSERT_EQ(descriptorBytes.size(), 464u);
+
+    // Register descriptor for Music Subunit 0 (subunit address 0x60), Status Descriptor specifier 0x80
+    duetUnit_.SetDescriptor(0x60, {0x80}, descriptorBytes);
+
+    // Access descriptor via DescriptorAccessor
+    Protocols::AVC::DescriptorAccessor accessor(duetUnit_, SubunitAddress::Of(SubunitType::kMusic, 0));
+    std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> readResult;
+    accessor.readStatusDescriptor(0x80, [&](const Protocols::AVC::DescriptorAccessor::ReadDescriptorResult& res) {
+        readResult = res;
+    });
+
+    ASSERT_TRUE(readResult.has_value());
+    EXPECT_TRUE(readResult->success);
+    EXPECT_EQ(readResult->avcResult, Protocols::AVC::AVCResult::kAccepted);
+    EXPECT_EQ(readResult->data.size(), 464u);
+    EXPECT_EQ(readResult->data, descriptorBytes);
+
+    // Parse the retrieved bytes via MusicSubunitDescriptorParser
+    auto parsed = Protocols::AVC::Descriptors::MusicSubunitDescriptorParser::ParseStatusDescriptor(readResult->data);
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->declaredLength, 462);
+    EXPECT_EQ(parsed->plugs.size(), 6u);
+    EXPECT_EQ(parsed->musicPlugs.size(), 5u);
+
+    // Test ClearDescriptors
+    duetUnit_.ClearDescriptors();
+    std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> failedResult;
+    accessor.readStatusDescriptor(0x80, [&](const Protocols::AVC::DescriptorAccessor::ReadDescriptorResult& res) {
+        failedResult = res;
+    });
+    ASSERT_TRUE(failedResult.has_value());
+    EXPECT_FALSE(failedResult->success);
 }
 
 } // namespace ASFW::AVC::Testing

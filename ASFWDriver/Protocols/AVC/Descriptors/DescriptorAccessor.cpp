@@ -133,10 +133,13 @@ void DescriptorAccessor::handleReadChunk(
     const auto& readResult = *reply;
 
     // First chunk? Extract total length from descriptor header
+    // Per TA 2002013 Table 7: descriptor_length is the byte count of following fields,
+    // so the entire descriptor on wire is descriptor_length + 2 bytes.
     if (state->bytesReadSoFar == 0 && readResult.data.size() >= 2) {
-        state->totalDescriptorLength = (static_cast<uint16_t>(readResult.data[0]) << 8) | readResult.data[1];
-        ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Total length = %u bytes",
-                    state->totalDescriptorLength);
+        const uint16_t bodyLength = (static_cast<uint16_t>(readResult.data[0]) << 8) | readResult.data[1];
+        state->totalDescriptorLength = bodyLength + 2;
+        ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Total length = %u bytes (body=%u + header=2)",
+                    state->totalDescriptorLength, bodyLength);
 
         // Sanity check
         if (state->totalDescriptorLength > 4096) {
@@ -165,9 +168,8 @@ void DescriptorAccessor::handleReadChunk(
     }
 
     //==========================================================================
-    // Dual-Strategy Termination (Spec + Apple Workaround)
-    // Reference: Apple IOFireWireFamily comment: "Some devices don't report
-    // read_result_status correctly, so use a length check instead"
+    // Dual-Strategy Termination (Spec + Robust Length Check)
+    // Reference: Apple IOFireWireFamily pattern
     //==========================================================================
 
     bool shouldContinue = false;
@@ -182,25 +184,20 @@ void DescriptorAccessor::handleReadChunk(
                     static_cast<uint8_t>(readResult.status));
     }
 
-    // Strategy 2: Length-based fallback (Apple's robust approach)
+    // Strategy 2: Length-based fallback (TA 2002013 Table 7)
     if (state->totalDescriptorLength > 0) {
-        // Apogee quirk: Apogee devices (Duet, Ensemble) report descriptor lengths
-        // smaller than nested block sizes. Read extra safety margin.
-        constexpr uint16_t kApogeeExtraBytes = 64;
-        const uint16_t targetLength = state->totalDescriptorLength + kApogeeExtraBytes;
-
-        if (state->bytesReadSoFar < targetLength) {
+        if (state->bytesReadSoFar < state->totalDescriptorLength) {
             shouldContinue = true;
         } else {
             shouldContinue = false;
             ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Length-based complete (%u bytes, target=%u)",
-                        state->bytesReadSoFar, targetLength);
+                        state->bytesReadSoFar, state->totalDescriptorLength);
         }
     }
 
-    // Additional safety: No data received
-    if (readResult.data.empty() && readResult.status == ASFW::AVC::Cmd::ReadResultStatus::kMoreToRead) {
-        ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Device claims more data but sent empty chunk");
+    // Additional safety: No data received (reached end of data or invalid state)
+    if (readResult.data.empty()) {
+        ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Device sent empty chunk, terminating read");
         shouldContinue = false;
     }
 

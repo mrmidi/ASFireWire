@@ -212,6 +212,70 @@ std::optional<std::span<const uint8_t>> SimulatedAvcUnit::FindResponse(
         }
     }
 
+    // 6. Dynamic Descriptor Serving (OPEN: 0x08, READ: 0x09)
+    if (!descriptors_.empty() && command.size() >= 4 && command[0] == 0x00) {
+        const uint8_t subunit = command[1];
+        const uint8_t opcode = command[2];
+
+        for (const auto& desc : descriptors_) {
+            if (desc.subunit != subunit) continue;
+            const size_t specLen = desc.specifier.size();
+            if (command.size() < 3 + specLen) continue;
+            if (!std::equal(desc.specifier.begin(), desc.specifier.end(), command.begin() + 3)) {
+                continue;
+            }
+
+            if (opcode == 0x08 && command.size() >= 3 + specLen + 2) { // OPEN DESCRIPTOR
+                const uint8_t subfunc = command[3 + specLen];
+                dynamicResponseStorage_.clear();
+                dynamicResponseStorage_.push_back(0x09); // Accepted
+                dynamicResponseStorage_.push_back(subunit);
+                dynamicResponseStorage_.push_back(0x08);
+                dynamicResponseStorage_.insert(dynamicResponseStorage_.end(),
+                                               desc.specifier.begin(), desc.specifier.end());
+                dynamicResponseStorage_.push_back(subfunc);
+                dynamicResponseStorage_.push_back(0x00); // Success status
+                return std::span<const uint8_t>{dynamicResponseStorage_.data(),
+                                                dynamicResponseStorage_.size()};
+            }
+
+            if (opcode == 0x09 && command.size() >= 3 + specLen + 6) { // READ DESCRIPTOR
+                const size_t pOffset = 3 + specLen;
+                const uint16_t reqLen = (static_cast<uint16_t>(command[pOffset + 2]) << 8) | command[pOffset + 3];
+                const uint16_t reqOff = (static_cast<uint16_t>(command[pOffset + 4]) << 8) | command[pOffset + 5];
+
+                size_t chunkLen = 0;
+                uint8_t readStatus = 0x10; // Complete
+                if (reqOff < desc.rawBytes.size()) {
+                    const size_t avail = desc.rawBytes.size() - reqOff;
+                    chunkLen = std::min(static_cast<size_t>(reqLen), avail);
+                    readStatus = (reqOff + chunkLen < desc.rawBytes.size()) ? 0x11 : 0x10;
+                }
+
+                dynamicResponseStorage_.clear();
+                dynamicResponseStorage_.push_back(0x09); // Accepted
+                dynamicResponseStorage_.push_back(subunit);
+                dynamicResponseStorage_.push_back(0x09);
+                dynamicResponseStorage_.insert(dynamicResponseStorage_.end(),
+                                               desc.specifier.begin(), desc.specifier.end());
+                dynamicResponseStorage_.push_back(readStatus);
+                dynamicResponseStorage_.push_back(0x00); // reserved
+                dynamicResponseStorage_.push_back(static_cast<uint8_t>(chunkLen >> 8));
+                dynamicResponseStorage_.push_back(static_cast<uint8_t>(chunkLen & 0xFF));
+                dynamicResponseStorage_.push_back(static_cast<uint8_t>(reqOff >> 8));
+                dynamicResponseStorage_.push_back(static_cast<uint8_t>(reqOff & 0xFF));
+                if (chunkLen > 0) {
+                    dynamicResponseStorage_.insert(
+                        dynamicResponseStorage_.end(),
+                        desc.rawBytes.begin() + reqOff,
+                        desc.rawBytes.begin() + reqOff + chunkLen);
+                }
+                return std::span<const uint8_t>{dynamicResponseStorage_.data(),
+                                                dynamicResponseStorage_.size()};
+            }
+        }
+    }
+
     return std::nullopt;
 }
 

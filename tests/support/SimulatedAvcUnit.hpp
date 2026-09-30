@@ -99,9 +99,28 @@ public:
 
     void ClearOverrides() { overrides_.clear(); }
 
+    /// Register a raw descriptor image to be served dynamically for OPEN/READ/CLOSE commands.
+    /// @param subunit Subunit address (e.g. 0x60 for Music Subunit, 0x08 for Audio Subunit, 0xFF for Unit)
+    /// @param specifier Descriptor specifier bytes (e.g. {0x80} for Status, {0x00} for Identifier)
+    /// @param descriptorRaw Complete descriptor bytes (including 2-byte descriptor_length header)
+    void SetDescriptor(uint8_t subunit, std::vector<uint8_t> specifier, std::vector<uint8_t> descriptorRaw) {
+        descriptors_.push_back(DescriptorEntry{
+            .subunit = subunit,
+            .specifier = std::move(specifier),
+            .rawBytes = std::move(descriptorRaw),
+        });
+    }
+
+    void ClearDescriptors() { descriptors_.clear(); }
+
     [[nodiscard]] std::optional<std::span<const uint8_t>> FindResponse(std::span<const uint8_t> command) const;
 
 private:
+    struct DescriptorEntry {
+        uint8_t subunit{0xFF};
+        std::vector<uint8_t> specifier;
+        std::vector<uint8_t> rawBytes;
+    };
     struct OverrideEntry {
         std::vector<uint8_t> commandPrefix;
         std::vector<uint8_t> response;
@@ -113,7 +132,8 @@ private:
     uint64_t guid_{0};
     SimulatedAvcFaults faults_{};
     std::vector<OverrideEntry> overrides_;
-    std::vector<uint8_t> dynamicResponseStorage_;
+    std::vector<DescriptorEntry> descriptors_;
+    mutable std::vector<uint8_t> dynamicResponseStorage_;
 };
 
 } // namespace ASFW::AVC::Testing

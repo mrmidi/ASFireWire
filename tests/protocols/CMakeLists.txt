@@ -57,6 +57,9 @@ add_protocols_test(AvcSimulatedUnitTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
 )
 
 # AVC Golden Wire Characterization Tests (Phase 2a)
@@ -194,6 +197,13 @@ add_protocols_test(ClusterInfoParsingTests
 add_protocols_test(AudioSubunitDescriptorTests
     AudioSubunitDescriptorTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
+)
+
+# Music Subunit Descriptor Tests
+add_protocols_test(MusicSubunitDescriptorTests
+    MusicSubunitDescriptorTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
 )
 
 
