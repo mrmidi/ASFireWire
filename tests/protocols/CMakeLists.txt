@@ -190,6 +190,12 @@ add_protocols_test(ClusterInfoParsingTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
 )
 
+# Audio Subunit Descriptor Tests
+add_protocols_test(AudioSubunitDescriptorTests
+    AudioSubunitDescriptorTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
+)
+
 
 # Audio Function Block Command Tests
 add_protocols_mock_test(AudioFunctionBlockCommandTests

@@ -122,6 +122,8 @@ static_assert(kMusicSubunit0.Type() == SubunitType::kMusic && kMusicSubunit0.Id(
 enum class Opcode : uint8_t {
     kVendorDependent = 0x00,         ///< VENDOR-DEPENDENT; ta1394 general.rs:226
     kPlugInfo = 0x02,                ///< PLUG INFO; ta1394 general.rs:378
+    kOpenDescriptor = 0x08,          ///< OPEN DESCRIPTOR; TA 2002013 §7.1
+    kReadDescriptor = 0x09,          ///< READ DESCRIPTOR; TA 2002013 §7.5
     kOutputPlugSignalFormat = 0x18,  ///< OUTPUT PLUG SIGNAL FORMAT; General 4.2 §10.11, general.rs:560
     kInputPlugSignalFormat = 0x19,   ///< INPUT PLUG SIGNAL FORMAT; General 4.2 §10.10, general.rs:521
     kSignalSource = 0x1A,            ///< SIGNAL SOURCE (CCM); ta1394 ccm/src/lib.rs:213

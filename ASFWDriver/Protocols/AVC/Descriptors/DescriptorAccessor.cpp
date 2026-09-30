@@ -1,15 +1,16 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 ASFireWire Project
 //
-// DescriptorAccessor.cpp
-// ASFWDriver - AV/C Protocol Layer
+// DescriptorAccessor.cpp - High-level descriptor access with Apple-validated patterns
 //
-// Implementation of high-level descriptor access with Apple-validated patterns
+// Modernized implementation using IAvcUnit and typed Command<Operands>.
 //
 
 #include "DescriptorAccessor.hpp"
-#include "../AVCDefs.hpp"
 #include "../../../Common/CallbackUtils.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../../../Logging/LogConfig.hpp"
+
 #include <algorithm>
 
 namespace ASFW::Protocols::AVC {
@@ -18,9 +19,14 @@ namespace ASFW::Protocols::AVC {
 // Construction
 //==============================================================================
 
-DescriptorAccessor::DescriptorAccessor(FCPTransport& transport, uint8_t subunitAddr)
-    : transport_(transport), subunitAddr_(subunitAddr) {
+DescriptorAccessor::DescriptorAccessor(ASFW::AVC::IAvcUnit& unit, uint8_t subunitAddr)
+    : unit_(unit), subunitAddress_(ASFW::AVC::SubunitAddress::FromByte(subunitAddr)) {
     ASFW_LOG_V3(Discovery, "DescriptorAccessor created for subunit 0x%02x", subunitAddr);
+}
+
+DescriptorAccessor::DescriptorAccessor(ASFW::AVC::IAvcUnit& unit, ASFW::AVC::SubunitAddress subunitAddr)
+    : unit_(unit), subunitAddress_(subunitAddr) {
+    ASFW_LOG_V3(Discovery, "DescriptorAccessor created for subunit 0x%02x", subunitAddr.Byte());
 }
 
 //==============================================================================
@@ -31,19 +37,16 @@ void DescriptorAccessor::openForRead(const DescriptorSpecifier& specifier,
                                      SimpleCompletion completion) {
     auto completionState = Common::ShareCallback(std::move(completion));
     ASFW_LOG_V3(Discovery, "OPEN DESCRIPTOR: subunit=0x%02x, specifier type=0x%02x, size=%zu",
-                  subunitAddr_, static_cast<uint8_t>(specifier.type), specifier.size());
-    
-    auto cmd = std::make_shared<AVCOpenDescriptorCommand>(
-        transport_,
-        subunitAddr_,
-        specifier,
-        OpenDescriptorSubfunction::kReadOpen
-    );
-    
-    cmd->Submit([completionState](AVCResult result) {
-        bool success = IsSuccess(result);
-        ASFW_LOG_V3(Discovery, "OPEN DESCRIPTOR result: %d (success=%d)", 
-                      static_cast<int>(result), success);
+                subunitAddress_.Byte(), static_cast<uint8_t>(specifier.type), specifier.size());
+
+    ASFW::AVC::Cmd::OpenDescriptorCommand cmd;
+    cmd.address = subunitAddress_;
+    cmd.operands.specifier = ASFW::AVC::Cmd::DescriptorSpecifier::Raw(specifier.buildSpecifier());
+    cmd.operands.subfunction = ASFW::AVC::Cmd::OpenDescriptorSubfunction::kReadOpen;
+
+    unit_.Control(cmd, [completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::OpenDescriptorReply> reply) {
+        const bool success = reply.has_value();
+        ASFW_LOG_V3(Discovery, "OPEN DESCRIPTOR result: success=%d", success);
         Common::InvokeSharedCallback(completionState, success);
     });
 }
@@ -51,16 +54,14 @@ void DescriptorAccessor::openForRead(const DescriptorSpecifier& specifier,
 void DescriptorAccessor::close(const DescriptorSpecifier& specifier,
                                SimpleCompletion completion) {
     auto completionState = Common::ShareCallback(std::move(completion));
-    auto cmd = std::make_shared<AVCCloseDescriptorCommand>(
-        transport_,
-        subunitAddr_,
-        specifier
-    );
-    
-    cmd->Submit([completionState](AVCResult result) {
-        bool success = IsSuccess(result);
-        ASFW_LOG_V3(Discovery, "CLOSE DESCRIPTOR result: %d (success=%d)",
-                      static_cast<int>(result), success);
+    ASFW::AVC::Cmd::OpenDescriptorCommand cmd;
+    cmd.address = subunitAddress_;
+    cmd.operands.specifier = ASFW::AVC::Cmd::DescriptorSpecifier::Raw(specifier.buildSpecifier());
+    cmd.operands.subfunction = ASFW::AVC::Cmd::OpenDescriptorSubfunction::kClose;
+
+    unit_.Control(cmd, [completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::OpenDescriptorReply> reply) {
+        const bool success = reply.has_value();
+        ASFW_LOG_V3(Discovery, "CLOSE DESCRIPTOR result: success=%d", success);
         Common::InvokeSharedCallback(completionState, success);
     });
 }
@@ -68,15 +69,15 @@ void DescriptorAccessor::close(const DescriptorSpecifier& specifier,
 void DescriptorAccessor::readComplete(const DescriptorSpecifier& specifier,
                                       ReadCompletion completion) {
     ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Starting complete read (specifier size=%zu)",
-                  specifier.size());
-    
+                specifier.size());
+
     auto state = std::make_shared<ReadChunkState>();
-    state->specifier = specifier;
+    state->specifier = ASFW::AVC::Cmd::DescriptorSpecifier::Raw(specifier.buildSpecifier());
     state->totalDescriptorLength = 0;
     state->bytesReadSoFar = 0;
     state->attemptCount = 0;
-    state->completion = completion;
-    
+    state->completion = std::move(completion);
+
     readNextChunk(state);
 }
 
@@ -93,56 +94,54 @@ void DescriptorAccessor::readNextChunk(std::shared_ptr<ReadChunkState> state) {
         state->completion(result);
         return;
     }
-    
+
     // Determine chunk size
     uint16_t chunkSize = MAX_DESCRIPTOR_CHUNK_SIZE;
     if (state->totalDescriptorLength > 0) {
-        uint16_t remaining = state->totalDescriptorLength - state->bytesReadSoFar;
+        const uint16_t remaining = state->totalDescriptorLength - state->bytesReadSoFar;
         chunkSize = std::min(chunkSize, remaining);
     }
-    
-    
-    
+
     ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Attempt %d, offset=%u, chunk=%u",
-                  state->attemptCount, state->bytesReadSoFar, chunkSize);
-    
-    auto cmd = std::make_shared<AVCReadDescriptorCommand>(
-        transport_,
-        subunitAddr_,
-        state->specifier,
-        state->bytesReadSoFar, // offset
-        chunkSize              // length
-    );
-    
-    cmd->Submit([this, state](AVCResult result, 
-                             const AVCReadDescriptorCommand::ReadResult& readResult) {
-        handleReadChunk(state, result, readResult);
+                state->attemptCount, state->bytesReadSoFar, chunkSize);
+
+    ASFW::AVC::Cmd::ReadDescriptorCommand cmd;
+    cmd.address = subunitAddress_;
+    cmd.operands.specifier = state->specifier;
+    cmd.operands.offset = state->bytesReadSoFar;
+    cmd.operands.length = chunkSize;
+
+    unit_.Control(cmd, [this, state](ASFW::AVC::Expected<ASFW::AVC::Cmd::ReadDescriptorReply> reply) {
+        handleReadChunk(state, reply);
     });
 }
 
-void DescriptorAccessor::handleReadChunk(std::shared_ptr<ReadChunkState> state,
-                                        AVCResult result,
-                                        const AVCReadDescriptorCommand::ReadResult& readResult) {
-    if (!IsSuccess(result)) {
-        ASFW_LOG_ERROR(Discovery, "READ DESCRIPTOR: Command failed with result %d",
-                      static_cast<int>(result));
+void DescriptorAccessor::handleReadChunk(
+    std::shared_ptr<ReadChunkState> state,
+    ASFW::AVC::Expected<ASFW::AVC::Cmd::ReadDescriptorReply> reply) {
+    if (!reply) {
+        ASFW_LOG_ERROR(Discovery, "READ DESCRIPTOR: Command failed with error %d",
+                       static_cast<int>(reply.error().kind));
         ReadDescriptorResult finalResult;
         finalResult.success = false;
-        finalResult.avcResult = result;
+        finalResult.avcResult = (reply.error().kind == ASFW::AVC::AvcErrorKind::kTimeout)
+            ? AVCResult::kTimeout : AVCResult::kRejected;
         state->completion(finalResult);
         return;
     }
-    
+
+    const auto& readResult = *reply;
+
     // First chunk? Extract total length from descriptor header
     if (state->bytesReadSoFar == 0 && readResult.data.size() >= 2) {
-        state->totalDescriptorLength = (readResult.data[0] << 8) | readResult.data[1];
+        state->totalDescriptorLength = (static_cast<uint16_t>(readResult.data[0]) << 8) | readResult.data[1];
         ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Total length = %u bytes",
-                      state->totalDescriptorLength);
-        
+                    state->totalDescriptorLength);
+
         // Sanity check
         if (state->totalDescriptorLength > 4096) {
             ASFW_LOG_ERROR(Discovery, "READ DESCRIPTOR: Suspicious length %u, aborting",
-                          state->totalDescriptorLength);
+                           state->totalDescriptorLength);
             ReadDescriptorResult finalResult;
             finalResult.success = false;
             finalResult.avcResult = AVCResult::kInvalidResponse;
@@ -150,7 +149,7 @@ void DescriptorAccessor::handleReadChunk(std::shared_ptr<ReadChunkState> state,
             return;
         }
     }
-    
+
     // Append data from this chunk
     if (!readResult.data.empty()) {
         state->accumulatedData.insert(
@@ -158,71 +157,63 @@ void DescriptorAccessor::handleReadChunk(std::shared_ptr<ReadChunkState> state,
             readResult.data.begin(),
             readResult.data.end()
         );
-        state->bytesReadSoFar += readResult.data.size();
+        state->bytesReadSoFar += static_cast<uint16_t>(readResult.data.size());
 
-        
         ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Accumulated %u/%u bytes, status=0x%02x",
-                      state->bytesReadSoFar, state->totalDescriptorLength,
-                      static_cast<uint8_t>(readResult.status));
+                    state->bytesReadSoFar, state->totalDescriptorLength,
+                    static_cast<uint8_t>(readResult.status));
     }
-    
+
     //==========================================================================
     // Dual-Strategy Termination (Spec + Apple Workaround)
-    //==========================================================================
-    // Reference: Apple IOFireWireFamily comment - "Some devices don't report 
+    // Reference: Apple IOFireWireFamily comment: "Some devices don't report
     // read_result_status correctly, so use a length check instead"
     //==========================================================================
-    
+
     bool shouldContinue = false;
-    
+
     // Strategy 1: Spec-compliant read_result_status checking
-    if (readResult.status == ReadResultStatus::kMoreToRead) {
+    if (readResult.status == ASFW::AVC::Cmd::ReadResultStatus::kMoreToRead) {
         shouldContinue = true;
-    } else if (readResult.status == ReadResultStatus::kComplete ||
-               readResult.status == ReadResultStatus::kDataLengthTooLarge) {
+    } else if (readResult.status == ASFW::AVC::Cmd::ReadResultStatus::kComplete ||
+               readResult.status == ASFW::AVC::Cmd::ReadResultStatus::kDataLengthTooLarge) {
         shouldContinue = false;
         ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Spec says complete (status=0x%02x)",
-                      static_cast<uint8_t>(readResult.status));
+                    static_cast<uint8_t>(readResult.status));
     }
-    
+
     // Strategy 2: Length-based fallback (Apple's robust approach)
-    // Override spec status if we have valid length info
     if (state->totalDescriptorLength > 0) {
-        // APOGEE QUIRK: Apogee devices (Duet, Ensemble) report descriptor lengths
-        // that are smaller than the actual nested block sizes. The last MusicPlugInfo
-        // blocks get truncated. Read an extra buffer beyond the declared length to
-        // capture the complete data.
-        // Vendor ID 0xDB0300 = Apogee Electronics (from RE of AppleFWAudioDevice)
-        constexpr uint16_t kApogeeExtraBytes = 64;  // Safety margin for oversized descriptors
-        uint16_t targetLength = state->totalDescriptorLength + kApogeeExtraBytes;
-        
+        // Apogee quirk: Apogee devices (Duet, Ensemble) report descriptor lengths
+        // smaller than nested block sizes. Read extra safety margin.
+        constexpr uint16_t kApogeeExtraBytes = 64;
+        const uint16_t targetLength = state->totalDescriptorLength + kApogeeExtraBytes;
+
         if (state->bytesReadSoFar < targetLength) {
             shouldContinue = true;
         } else {
             shouldContinue = false;
             ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Length-based complete (%u bytes, target=%u)",
-                          state->bytesReadSoFar, targetLength);
+                        state->bytesReadSoFar, targetLength);
         }
     }
-    
+
     // Additional safety: No data received
-    if (readResult.data.empty() && readResult.status == ReadResultStatus::kMoreToRead) {
+    if (readResult.data.empty() && readResult.status == ASFW::AVC::Cmd::ReadResultStatus::kMoreToRead) {
         ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Device claims more data but sent empty chunk");
         shouldContinue = false;
     }
-    
+
     if (shouldContinue) {
-        // Continue reading
         readNextChunk(state);
     } else {
-        // Complete
         ASFW_LOG_V2(Discovery, "READ DESCRIPTOR: Complete - read %u bytes total",
-                     state->bytesReadSoFar);
-        
+                    state->bytesReadSoFar);
+
         ReadDescriptorResult finalResult;
         finalResult.success = true;
         finalResult.data = std::move(state->accumulatedData);
-        finalResult.avcResult = result;
+        finalResult.avcResult = AVCResult::kAccepted;
         state->completion(finalResult);
     }
 }
@@ -233,32 +224,20 @@ void DescriptorAccessor::handleReadChunk(std::shared_ptr<ReadChunkState> state,
 
 void DescriptorAccessor::readUnitIdentifier(ReadCompletion completion) {
     auto specifier = DescriptorSpecifier::forUnitIdentifier();
-    
     ASFW_LOG_V3(Discovery, "Reading Unit Identifier Descriptor");
-    
-    // Simple approach: Direct read without explicit OPEN/CLOSE
-    // Many devices work without the full sequence for Identifier descriptors
-    readComplete(specifier, completion);
+    readComplete(specifier, std::move(completion));
 }
 
 void DescriptorAccessor::readStatusDescriptor(uint8_t descriptorType,
                                               ReadCompletion completion) {
-    // Status descriptors use types 0x80-0xFF (subunit-dependent descriptors)
-    // For Music Subunit, 0x80 is the Music Subunit Identifier/Status Descriptor
-    // 
-    // CRITICAL: Unlike Unit Identifier, status descriptors REQUIRE the full
-    // OPEN → READ → CLOSE sequence! This was confirmed via packet capture
-    // of the Apple driver working with the Apogee Duet.
-    
     DescriptorSpecifier specifier;
     specifier.type = static_cast<DescriptorSpecifierType>(descriptorType);
-    specifier.typeSpecificFields = {}; // Status descriptors typically have no extra fields
-    
-    ASFW_LOG_V3(Discovery, "Reading Status Descriptor (type=0x%02x) with OPEN→READ→CLOSE", 
-                  descriptorType);
-    
-    // Use full sequence for subunit-dependent descriptors
-    readWithOpenCloseSequence(specifier, completion);
+    specifier.typeSpecificFields = {};
+
+    ASFW_LOG_V3(Discovery, "Reading Status Descriptor (type=0x%02x) with OPEN→READ→CLOSE",
+                descriptorType);
+
+    readWithOpenCloseSequence(specifier, std::move(completion));
 }
 
 //==============================================================================
@@ -266,17 +245,13 @@ void DescriptorAccessor::readStatusDescriptor(uint8_t descriptorType,
 //==============================================================================
 
 void DescriptorAccessor::readWithOpenCloseSequence(const DescriptorSpecifier& specifier,
-                                                    ReadCompletion completion) {
-    // Capture specifier for use in closures
+                                                   ReadCompletion completion) {
     auto specifierCopy = std::make_shared<DescriptorSpecifier>(specifier);
     auto completionPtr = std::make_shared<ReadCompletion>(std::move(completion));
-    
+
     ASFW_LOG_V3(Discovery, "OPEN→READ→CLOSE: Starting sequence (specifier type=0x%02x)",
-                  static_cast<uint8_t>(specifier.type));
-    
-    //==========================================================================
-    // Step 1: OPEN DESCRIPTOR (subfunction 0x01 = Read Open)
-    //==========================================================================
+                static_cast<uint8_t>(specifier.type));
+
     openForRead(*specifierCopy, [this, specifierCopy, completionPtr](bool openSuccess) {
         if (!openSuccess) {
             ASFW_LOG_ERROR(Discovery, "OPEN→READ→CLOSE: OPEN failed");
@@ -286,34 +261,24 @@ void DescriptorAccessor::readWithOpenCloseSequence(const DescriptorSpecifier& sp
             (*completionPtr)(result);
             return;
         }
-        
+
         ASFW_LOG_V3(Discovery, "OPEN→READ→CLOSE: OPEN succeeded, starting READ");
-        
-        //======================================================================
-        // Step 2: READ DESCRIPTOR (with chunking and 0x11 handling)
-        //======================================================================
+
         readComplete(*specifierCopy, [this, specifierCopy, completionPtr](
             const ReadDescriptorResult& readResult
         ) {
             ASFW_LOG_V3(Discovery, "OPEN→READ→CLOSE: READ %{public}s (%zu bytes)",
-                          readResult.success ? "succeeded" : "failed",
-                          readResult.data.size());
-            
-            // Save read result for after CLOSE
+                        readResult.success ? "succeeded" : "failed",
+                        readResult.data.size());
+
             auto savedResult = std::make_shared<ReadDescriptorResult>(readResult);
-            
-            //==================================================================
-            // Step 3: CLOSE DESCRIPTOR (subfunction 0x00)
-            //==================================================================
+
             close(*specifierCopy, [completionPtr, savedResult](bool closeSuccess) {
                 if (!closeSuccess) {
                     ASFW_LOG_V2(Discovery, "OPEN→READ→CLOSE: CLOSE failed (continuing anyway)");
-                    // Don't fail the overall operation - we have the data
                 }
-                
+
                 ASFW_LOG_V3(Discovery, "OPEN→READ→CLOSE: Sequence complete");
-                
-                // Return the read result
                 (*completionPtr)(*savedResult);
             });
         });

@@ -58,7 +58,7 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
         }
 
         // Create DescriptorAccessor for unit-level descriptors (Phase 5)
-        descriptorAccessor_ = std::make_shared<DescriptorAccessor>(*fcpTransport_, kAVCSubunitUnit);
+        descriptorAccessor_ = std::make_shared<DescriptorAccessor>(*this, kAVCSubunitUnit);
 
         if (!descriptorAccessor_) {
             ASFW_LOG_ERROR(Discovery, "AVCUnit: Failed to allocate DescriptorAccessor");

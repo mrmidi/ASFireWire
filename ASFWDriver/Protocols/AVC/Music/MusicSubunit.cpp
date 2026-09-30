@@ -14,7 +14,6 @@
 #include "../StreamFormats/AVCSignalSourceCommand.hpp"
 #include "../AudioFunctionBlockCommand.hpp"
 #include "../StreamFormats/StreamFormatParser.hpp"
-#include "../Descriptors/AVCDescriptorCommands.hpp"
 #include "../Descriptors/DescriptorAccessor.hpp"
 #include <cctype>
 #include <algorithm>
@@ -232,7 +231,7 @@ void MusicSubunit::ParseCapabilities(AVCUnit& unit, std::function<void(bool)> co
     // Without this, the FCPTransport reference becomes dangling after OPEN completes but
     // before READ is issued, causing a null pointer crash in FCPTransport::SubmitCommand.
     auto unitPtr = unit.shared_from_this();
-    auto accessor = std::make_shared<DescriptorAccessor>(unit.GetFCPTransport(), GetAddress());
+    auto accessor = std::make_shared<DescriptorAccessor>(unit, GetAddress());
 
     // Define specifier for Music Subunit Status Descriptor (0x80)
     // Note: Apple driver uses 0x80 (Status Descriptor) for Music Subunit discovery, not 0x00 (Identifier)
@@ -1231,7 +1230,7 @@ void MusicSubunit::ReadStatusDescriptor(AVCUnit& unit, std::function<void(bool)>
     auto unitPtr = unit.shared_from_this();
 
     auto accessor = std::make_shared<DescriptorAccessor>(
-        unit.GetFCPTransport(), GetAddress()
+        unit, GetAddress()
     );
 
     // Define specifier for Status Descriptor (0x80)

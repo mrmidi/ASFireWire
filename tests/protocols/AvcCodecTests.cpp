@@ -16,6 +16,7 @@
 
 #include <gtest/gtest.h>
 
+#include "ASFWDriver/Protocols/AVC/Commands/DescriptorCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/FunctionBlockCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/SignalSourceCommand.hpp"
@@ -1287,6 +1288,73 @@ TEST(AvcReshapedTests, MemoryIsolationCallerBufferTeardown) {
     EXPECT_EQ(frame->Operands()[4], 0xBB);
     EXPECT_EQ(frame->Operands()[5], 0xCC);
     EXPECT_EQ(frame->Operands()[6], 0xDD);
+}
+
+TEST(AvcReshapedTests, DescriptorCommands_OpenAndRead) {
+    // 1. OPEN for read: 00 60 08 80 01 FF
+    Cmd::OpenDescriptorCommand openCmd{
+        .address = SubunitAddress::Of(SubunitType::kMusic, 0),
+        .operands = {
+            .specifier = Cmd::DescriptorSpecifier::SubunitStatus(),
+            .subfunction = Cmd::OpenDescriptorSubfunction::kReadOpen,
+        }
+    };
+    auto openFrame = openCmd.Encode(CommandType::kControl);
+    ASSERT_TRUE(openFrame.has_value());
+    const uint8_t expectedOpen[] = {0x00, 0x60, 0x08, 0x80, 0x01, 0xFF};
+    ASSERT_EQ(openFrame->Bytes().size(), sizeof(expectedOpen));
+    EXPECT_TRUE(std::equal(openFrame->Bytes().begin(), openFrame->Bytes().end(), expectedOpen));
+
+    // Rejection of non-Control
+    EXPECT_EQ(openCmd.Encode(CommandType::kStatus).error().kind, AvcErrorKind::kUnsupported);
+
+    // Decode OPEN reply
+    const uint8_t openReplyBytes[] = {0x80, 0x01, 0x00};
+    auto openDecoded = openCmd.Decode(openReplyBytes);
+    ASSERT_TRUE(openDecoded.has_value());
+    EXPECT_EQ(openDecoded->subfunction, Cmd::OpenDescriptorSubfunction::kReadOpen);
+
+    // 2. CLOSE: 00 60 08 80 00 FF
+    Cmd::OpenDescriptorCommand closeCmd{
+        .address = SubunitAddress::Of(SubunitType::kMusic, 0),
+        .operands = {
+            .specifier = Cmd::DescriptorSpecifier::SubunitStatus(),
+            .subfunction = Cmd::OpenDescriptorSubfunction::kClose,
+        }
+    };
+    auto closeFrame = closeCmd.Encode(CommandType::kControl);
+    ASSERT_TRUE(closeFrame.has_value());
+    const uint8_t expectedClose[] = {0x00, 0x60, 0x08, 0x80, 0x00, 0xFF};
+    ASSERT_EQ(closeFrame->Bytes().size(), sizeof(expectedClose));
+    EXPECT_TRUE(std::equal(closeFrame->Bytes().begin(), closeFrame->Bytes().end(), expectedClose));
+
+    // 3. READ: 00 60 09 80 FF FF 00 8E 00 00
+    Cmd::ReadDescriptorCommand readCmd{
+        .address = SubunitAddress::Of(SubunitType::kMusic, 0),
+        .operands = {
+            .specifier = Cmd::DescriptorSpecifier::SubunitStatus(),
+            .offset = 0x0000,
+            .length = 0x008E,
+        }
+    };
+    auto readFrame = readCmd.Encode(CommandType::kControl);
+    ASSERT_TRUE(readFrame.has_value());
+    const uint8_t expectedRead[] = {0x00, 0x60, 0x09, 0x80, 0xFF, 0x00, 0x00, 0x8E, 0x00, 0x00};
+    ASSERT_EQ(readFrame->Bytes().size(), sizeof(expectedRead));
+    EXPECT_TRUE(std::equal(readFrame->Bytes().begin(), readFrame->Bytes().end(), expectedRead));
+
+    // Decode READ reply: [80] [status: 11] [pad: FF] [len: 00 04] [off: 00 00] [data: 01 02 03 04]
+    const uint8_t readReplyBytes[] = {
+        0x80, 0x11, 0xFF, 0x00, 0x04, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04
+    };
+    auto readDecoded = readCmd.Decode(readReplyBytes);
+    ASSERT_TRUE(readDecoded.has_value());
+    EXPECT_EQ(readDecoded->status, Cmd::ReadResultStatus::kMoreToRead);
+    EXPECT_EQ(readDecoded->reportedLength, 4);
+    EXPECT_EQ(readDecoded->reportedOffset, 0);
+    ASSERT_EQ(readDecoded->data.size(), 4u);
+    EXPECT_EQ(readDecoded->data[0], 0x01);
+    EXPECT_EQ(readDecoded->data[3], 0x04);
 }
 
 } // namespace ASFW::AVC::Test
