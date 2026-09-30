@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Avid Mbox Pro (3rd generation) DICE audio interface support, including its startup router and mixer configuration. (#162)
+
 ## [0.3.2] - 2026-09-28
 
 ### Added
