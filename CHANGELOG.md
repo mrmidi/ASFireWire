@@ -16,8 +16,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-28
+
+### Added
+
+- RME Fireface FF400 and FF800 duplex audio at 48 kHz (18 and 28 channels). The device's saved clock source and mixer routing are kept, an external clock is accepted only when locked at 48 kHz, and unsupported firmware, rates and clock states are refused before streaming. Uses headerless 24-bit PCM packets and neutral skipped isochronous cycles. (#161)
+- PreSonus FireStudio Project (`0x000a92:0x00000b`) as a DICE device. (#158)
+- The app's System Logs screen can export the driver's retained log ring. (#161)
+
+### Known issues
+
+- M-Audio ProjectMix I/O: a tester reports that recording gives silence on every channel with this release line (0.3.1 as well), while the device is detected and macOS lists its channels. A `midi` development build recorded correctly. The suspected cause is that the capture write position is not aligned to the clock macOS reads at when the transmit side owns that clock; this has not been confirmed on hardware. ProjectMix I/O was already listed as needing a retest in 0.3.1.
+
 ### Fixed
 
+- BeBoB: the Phase 88 sends its channels in planar order (S/PDIF left, Out 1/3/5/7, S/PDIF right, Out 2/4/6/8, MIDI), but they were streamed in channel order, so channel 1 reached the S/PDIF slot and only one side played. Discovery now asks the device for its channel positions and places playback and capture channels accordingly, falling back to channel order if the reply is malformed. The MIDI section is now recognised too. The Phase 88's master volume now starts at -35 dB on both channels. (#160)
+- OHCI: isochronous context interrupt masks are read and cleared once, after the global acknowledge. A faulted transmit context is no longer treated as stopped until the controller shows it inactive. Starting a transmit context now clears its whole control register and only its own event, and the cycle-master decision is re-applied after a `cycleTooLong` interrupt. (#152, #153, #154)
+- Async: Z=3 packets are now hot-appended to the transmit chain, and a transmit context that is still active is never re-armed. Contributed by Mathias Hellevang. (#147)
+- SBP-2: the driver no longer terminates SBP-2 targets while it is itself stopping. Contributed by Mathias Hellevang. (#148)
+- Audio: a bus reset in the middle of a restart no longer leaves the device silent, and a restart is handed to CoreAudio while it is running the streams.
+- Audio: the transmit producer is quiesced on stop for every device family, and transmit packets sent as DATA are armed with valid AM824 silence rather than zeros.
+- Audio: the transmit frame cursor starts at the projected frame, the transmit packet index is carried as 64 bits end to end, and the exhausted-packet counter is reset per stream.
 - DICE: a device reporting more streams than TC Applied Technologies' drivers accept (more than two it sends, more than four it receives) is now refused, as those drivers refuse it; it used to be shrunk to a smaller device. A failed read of the stream registers now fails the device's setup instead of publishing whatever was read before the failure.
 - DICE: the bring-up skipped the clock-select write whenever the device had already been asked for the target rate, even if it was running at another rate, so the start timed out. It now also checks the rate the device actually reached and rewrites the setting when they differ. This restores a fix that was validated on a Saffire Pro 24 DSP but never committed.
 - Sample-rate changes made while no audio is playing were undone by the next start: the stream restarted at the previous rate while macOS rendered the new one, so playback came out at the wrong pitch (44.1 kHz played about 9% sharp on a 48 kHz device clock). The start now uses the rate you picked.
@@ -33,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Audio: each device now has one hardware sample timeline, and the clock macOS reads (its zero timestamps) is a projection of it. Every sample rate on macOS's ladder gets a timeline; on M-Audio the transmit side owns the clock and receive stays out of it. (#150)
+- Audio: transmit packets are filled once, from the macOS output ring, and transmit no longer runs ahead of receive. The isochronous transmit queue is finite and completes on descriptor status (ring of 504), the receive replay history grew from 512 to 2048 frames, and the Saffire output safety offset is now 24 frames. (#151)
+- Tests: host tests for the SCSI adapter's target-ID and per-task decisions. Contributed by Mathias Hellevang. (#144)
 - DICE: an Alesis MultiMix that reports more than one playback stream is now published and streams every one of them, as Alesis's own driver does. It used to be refused, following libffado, which assumes the second stream is not real. The one MultiMix we have a register dump of reports a single playback stream and is unaffected. Hardware confirmation is pending.
 - DICE: the sample rates offered to macOS now come from the device's own list of supported rates, as Focusrite's and TC Applied Technologies' drivers do, instead of a fixed 44.1 and 48 kHz. A device that also supports 32 kHz now offers it, and a rate the device does not list is refused before anything is sent to it. Rates above 48 kHz (for example 88.2 and 96 kHz on the Saffire Pro 24 DSP) are listed but not yet supported: choosing one is refused, and the device stays at its current rate. Every device still starts at 48 kHz.
 - DICE (internal): the seven per-model profiles are replaced by one, with a short per-model description (name, playback encoding, two framing flags). Channel and stream counts always come from the device now, so a device whose counts differ from what the old profile expected is no longer refused. Hardware confirmation is pending.
