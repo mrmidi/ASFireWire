@@ -3,6 +3,7 @@
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Discovery/FWDevice.hpp"
 #include "ASFWDriver/Protocols/AVC/FCPTransport.hpp"
+#include "ASFWDriver/Protocols/AVC/Core/AvcFrame.hpp"
 #include "DeferredFireWireBus.hpp"
 #include "FakeSessionScheduler.hpp"
 
@@ -319,6 +320,108 @@ TEST_F(FCPTransportTests, ResetRetryWaitsForRevalidatedRouteBeforeResubmission) 
     const auto response = MakeAcceptedUnitInfoResponse();
     transport_->OnFCPResponse(3, 2, response);
     EXPECT_EQ(completionCount, 1);
+}
+
+TEST_F(FCPTransportTests, QueuedAvcSubmissionKeepsItsRequestedGeneration) {
+    const auto avcFrame = ASFW::AVC::CommandFrame::Make(
+        ASFW::AVC::CommandType::kControl, ASFW::AVC::SubunitAddress::Unit(),
+        ASFW::AVC::Opcode::kUnitInfo, {});
+    ASSERT_TRUE(avcFrame.has_value());
+
+    ASSERT_TRUE(transport_->SubmitCommand(
+        MakeUnitInfoCommand(), [](FCPStatus, const FCPFrame&) {}).IsValid());
+    ASSERT_EQ(bus_.WriteCount(), 1U);
+
+    std::optional<ASFW::AVC::Expected<ASFW::AVC::Response>> result;
+    transport_->Submit(*avcFrame, Generation{1},
+                       [&result](auto response) { result = std::move(response); });
+
+    // Discovery has moved the route to generation 2 before the queued frame
+    // becomes active. Only its explicit requested generation may decide if it
+    // can be written.
+    RebindRoute(Generation{2}, 3);
+    transport_->OnBusReset(2);
+
+    ASSERT_TRUE(result.has_value());
+    ASSERT_FALSE(*result);
+    EXPECT_EQ(result->error().kind, ASFW::AVC::AvcErrorKind::kBusReset);
+    EXPECT_EQ(bus_.WriteCount(), 1U) << "the stale queued command never reaches the rebound node";
+}
+
+TEST_F(FCPTransportTests, DirectStaleAvcSubmissionCompletesWithoutWriting) {
+    const auto avcFrame = ASFW::AVC::CommandFrame::Make(
+        ASFW::AVC::CommandType::kControl, ASFW::AVC::SubunitAddress::Unit(),
+        ASFW::AVC::Opcode::kUnitInfo, {});
+    ASSERT_TRUE(avcFrame.has_value());
+
+    RebindRoute(Generation{2}, 3);
+    size_t completionCount = 0;
+    std::optional<ASFW::AVC::AvcError> error;
+    transport_->Submit(*avcFrame, Generation{1}, [&completionCount, &error](auto response) {
+        ++completionCount;
+        if (!response) error = response.error();
+    });
+
+    EXPECT_EQ(completionCount, 1U);
+    ASSERT_TRUE(error.has_value());
+    EXPECT_EQ(error->kind, ASFW::AVC::AvcErrorKind::kBusReset);
+    EXPECT_EQ(bus_.WriteCount(), 0U);
+}
+
+TEST_F(FCPTransportTests, ExplicitIdempotentResetRetryMayBindToRevalidatedGeneration) {
+    config_.allowBusResetRetry = true;
+    config_.maxRetries = 1;
+    transport_->Shutdown();
+    transport_ = std::make_shared<FCPTransport>();
+    ASSERT_TRUE(transport_->init(&bus_, &bus_, device_.get(), routes_, scheduler_, config_));
+
+    const auto avcFrame = ASFW::AVC::CommandFrame::Make(
+        ASFW::AVC::CommandType::kStatus, ASFW::AVC::SubunitAddress::Unit(),
+        ASFW::AVC::Opcode::kUnitInfo, {});
+    ASSERT_TRUE(avcFrame.has_value());
+    int& completionCount = outstandingCompletionCount_;
+    transport_->Submit(*avcFrame, Generation{1},
+                       [&completionCount](auto) { ++completionCount; });
+    ASSERT_EQ(bus_.WriteCount(), 1U);
+
+    bus_.SetGeneration(Generation{2});
+    routes_.InvalidateLiveMappingsForBusReset();
+    transport_->OnBusReset(2);
+    EXPECT_EQ(completionCount, 0);
+    EXPECT_EQ(bus_.WriteCount(), 1U);
+
+    (void)routes_.UpsertFromROM(MakeROM(Generation{2}, 3), {});
+    const auto route = routes_.CurrentRoute(kGuid);
+    ASSERT_TRUE(route.has_value());
+    transport_->OnRouteRevalidated(*route);
+
+    EXPECT_EQ(bus_.WriteCount(), 2U);
+    EXPECT_EQ(bus_.WriteAt(1).nodeId.value, 3U);
+    EXPECT_EQ(bus_.WriteAt(1).generation.value, 2U);
+}
+
+TEST_F(FCPTransportTests, FcpAdmissionBusyMapsToAvcBusy) {
+    config_.queuePolicy = ASFW::Protocols::AVC::FCPQueuePolicy::kReject;
+    transport_->Shutdown();
+    transport_ = std::make_shared<FCPTransport>();
+    ASSERT_TRUE(transport_->init(&bus_, &bus_, device_.get(), routes_, scheduler_, config_));
+
+    const auto avcFrame = ASFW::AVC::CommandFrame::Make(
+        ASFW::AVC::CommandType::kControl, ASFW::AVC::SubunitAddress::Unit(),
+        ASFW::AVC::Opcode::kUnitInfo, {});
+    ASSERT_TRUE(avcFrame.has_value());
+    ASSERT_TRUE(transport_->SubmitCommand(
+        MakeUnitInfoCommand(), [](FCPStatus, const FCPFrame&) {}).IsValid());
+
+    std::optional<ASFW::AVC::AvcError> error;
+    transport_->Submit(*avcFrame, Generation{1}, [&error](auto response) {
+        if (!response) error = response.error();
+    });
+
+    ASSERT_TRUE(error.has_value());
+    EXPECT_EQ(error->kind, ASFW::AVC::AvcErrorKind::kBusy);
+    EXPECT_EQ(ASFW::AVC::ToIOReturn(*error), kIOReturnBusy);
+    EXPECT_EQ(bus_.WriteCount(), 1U);
 }
 
 TEST_F(FCPTransportTests, ShutdownCompletesPendingAndQueuedCommandsExactlyOnce) {

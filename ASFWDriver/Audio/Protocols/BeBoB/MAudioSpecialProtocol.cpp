@@ -10,6 +10,7 @@
 #include "MAudioSpecialStartPolicy.hpp"
 #include "../../../Protocols/AVC/AVCCommand.hpp"
 #include "../../../Protocols/AVC/Commands/GeneralCommands.hpp"
+#include "../../../Protocols/AVC/Core/AvcError.hpp"
 #include "../../../Protocols/AVC/Core/RateCodes.hpp"
 #include "../../../Protocols/AVC/MAudioSpecialCommand.hpp"
 
@@ -356,7 +357,7 @@ void MAudioSpecialProtocol::SetSignalFormat(uint32_t rateHz, bool input,
             },
         },
         [completion = std::move(completion)](AVC::Expected<AVC::Cmd::PlugSignalFormat> res) mutable {
-            completion(res ? kIOReturnSuccess : kIOReturnError);
+            completion(res ? kIOReturnSuccess : AVC::ToIOReturn(res.error()));
         });
 }
 

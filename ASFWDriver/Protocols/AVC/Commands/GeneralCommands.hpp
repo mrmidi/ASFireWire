@@ -344,6 +344,14 @@ using PlugSignalFormatCommand = Command<PlugSignalFormatOperands>;
 // VENDOR-DEPENDENT (0x00)
 // ---------------------------------------------------------------------------
 
+/// A VENDOR-DEPENDENT response retains the company ID as well as its payload.
+/// Callers that care about vendor identity must validate the received ID; they
+/// must not substitute the request's company ID during reply decoding.
+struct RawVendorDependentReply {
+    CompanyId companyId{0xFF, 0xFF, 0xFF};
+    std::vector<uint8_t> payload;
+};
+
 /// Owned VENDOR-DEPENDENT operands; the company ID and payload are supplied by the caller.
 struct RawVendorDependentOperands {
     static constexpr Opcode kOpcode = Opcode::kVendorDependent;
@@ -352,7 +360,7 @@ struct RawVendorDependentOperands {
     std::array<uint8_t, 256> payloadBytes{};
     uint16_t payloadLength{0};
 
-    using Reply = std::vector<uint8_t>;
+    using Reply = RawVendorDependentReply;
 
     RawVendorDependentOperands() = default;
     RawVendorDependentOperands(CompanyId cid, std::span<const uint8_t> data) noexcept
@@ -371,7 +379,10 @@ struct RawVendorDependentOperands {
         if (in.size() < 3) {
             return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
         }
-        return std::vector<uint8_t>(in.begin() + 3, in.end());
+        return Reply{
+            .companyId = {in[0], in[1], in[2]},
+            .payload = std::vector<uint8_t>(in.begin() + 3, in.end()),
+        };
     }
 };
 

@@ -137,6 +137,13 @@ public:
     /// Extracts mapping from object_position (index) to name string.
     [[nodiscard]] static TextDatabase ParseTextDatabaseList(
         std::span<const uint8_t> data) noexcept;
+    [[nodiscard]] static std::optional<TextDatabase> ParseTextDatabaseListChecked(
+        std::span<const uint8_t> data) noexcept;
+
+    /// Return child list IDs from a structurally valid list descriptor.
+    [[nodiscard]] static std::optional<std::vector<uint16_t>> ParseChildListIds(
+        std::span<const uint8_t> data, uint8_t listIdSize = 2,
+        uint8_t objectIdSize = 0) noexcept;
 
     /// Resolve and populate function block names in an identifier descriptor using a text DB.
     static void ResolveNames(AudioSubunitIdentifier& identifier, const TextDatabase& textDb) noexcept;

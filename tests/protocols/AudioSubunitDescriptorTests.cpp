@@ -8,6 +8,8 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Protocols/AVC/Descriptors/AudioSubunitDescriptor.hpp"
+#include "ASFWDriver/Protocols/AVC/Commands/DescriptorCommands.hpp"
+#include "tests/support/Phase88DescriptorFixtures.hpp"
 
 #include <string>
 #include <vector>
@@ -135,27 +137,10 @@ TEST(AudioSubunitDescriptorTests, Phase88AudioIdentifierParsing) {
 // =============================================================================
 
 TEST(AudioSubunitDescriptorTests, Phase88TextDatabaseParsingAndResolution) {
-    const std::string phase88Hex =
-        "02900202000200011800028402820001027e000100080202c000000000010bf002f003f004800af0068009800180028003800480051600448101000201820100220802800140012001100108010401020101010003000400050006000700080009000a00170015000200c000c000c000c000c000c000c000c000c00000208102000b01f002000a020280014001000c000d000b0009000200c000c000c00000208103000e01f003000a020280014001000f0010000b0009000200c000c000c00000208104001101f004000a02028001400100120013000b0009000200c000c000c00000208105001401f005000a02028001400100150016000b0009000200c000c000c00000208106001701f006000a02028001400100180019000b0009000200c000c000c00000208107001a018007000a020280014001001b001c000b0009000200c000c000c000000d8001001d028202800600000000000d80020020028203800600000000000d80030023028204800600000000000d80040026028205800600000000000d8005002902f00180060000000000158006002c068101810181018101810181010000000000138007002f05f001820282038204820500000000000d8008003202f006f00700000000000d8009003502feff800800000000000d800a003802f005feff00000000003a8201003b068107810281038104810581060022080280014001200110010801040102010101003c003d003e003f0040004100420043000301000000188202004401f000000a02028001400100450046000301000000188203004701f000000a02028001400100480049000301000000188204004a01f000000a020280014001004b004c000301000000188205004d01f000000a020280014001004e004f00030100000000";
-    auto idResult = AudioSubunitDescriptorParser::ParseIdentifierDescriptor(HexToBytes(phase88Hex));
+    auto idResult = AudioSubunitDescriptorParser::ParseIdentifierDescriptor(ASFW::AVC::Testing::Fixtures::kPhase88AudioIdentifier);
     ASSERT_TRUE(idResult.has_value());
 
-    // Slice of Phase 88 list 0x1801 text entries containing positions 0 through 11 (619 bytes)
-    const std::string textDbHex =
-        "0f3586080010000103000b00070007800000000000000050"
-        "002f9308002b0001030007800a000300ffff001d000a00194c696e655f312f32206c656674205048415345383820465700"
-        "00309308002c0001030007800a000300ffff001e000a001a4c696e655f312f32207269676874205048415345383820465700"
-        "0029930800250001030007800a000300ffff0017000a00134d69786572204f7574707574204c6576656c00"
-        "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2031205048415345383820465700"
-        "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2032205048415345383820465700"
-        "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2033205048415345383820465700"
-        "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2034205048415345383820465700"
-        "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2035205048415345383820465700"
-        "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2036205048415345383820465700"
-        "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2037205048415345383820465700"
-        "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2038205048415345383820465700"
-        "00339308002f0001030007800a000300ffff0021000a001d4d6978657220496e707574204c696e65496e20312f32204c6576656c00";
-    const auto textBytes = HexToBytes(textDbHex);
+    const auto& textBytes = ASFW::AVC::Testing::Fixtures::kPhase88TextChild;
 
     auto textDb = AudioSubunitDescriptorParser::ParseTextDatabaseList(textBytes);
     EXPECT_EQ(textDb[2], "Mixer Output Level");
@@ -171,6 +156,45 @@ TEST(AudioSubunitDescriptorTests, Phase88TextDatabaseParsingAndResolution) {
     const auto* fb2 = idResult->FindBlock(AudioFunctionBlockType::kFeature, 2);
     ASSERT_NE(fb2, nullptr);
     EXPECT_EQ(fb2->name, "Mixer Input LineIn 1/2 Level");
+}
+
+TEST(AudioSubunitDescriptorTests, RejectsTruncatedAndLengthMismatchedDescriptors) {
+    auto identifier = ASFW::AVC::Testing::Fixtures::kPhase88AudioIdentifier;
+    identifier.pop_back();
+    EXPECT_FALSE(AudioSubunitDescriptorParser::ParseIdentifierDescriptor(identifier).has_value());
+
+    identifier = ASFW::AVC::Testing::Fixtures::kPhase88AudioIdentifier;
+    identifier[1] = static_cast<uint8_t>(identifier[1] + 1);
+    EXPECT_FALSE(AudioSubunitDescriptorParser::ParseIdentifierDescriptor(identifier).has_value());
+
+    identifier = ASFW::AVC::Testing::Fixtures::kPhase88AudioIdentifier;
+    identifier[10] = 0xFF;
+    identifier[11] = 0xFF;
+    EXPECT_FALSE(AudioSubunitDescriptorParser::ParseIdentifierDescriptor(identifier).has_value());
+
+    auto root = ASFW::AVC::Testing::Fixtures::kPhase88TextRoot;
+    root.pop_back();
+    EXPECT_FALSE(AudioSubunitDescriptorParser::ParseChildListIds(root).has_value());
+    EXPECT_TRUE(AudioSubunitDescriptorParser::ParseTextDatabaseList(root).empty());
+}
+
+TEST(AudioSubunitDescriptorTests, ReadReplyRejectsReportedLengthBeyondPayload) {
+    const uint8_t operands[] = {
+        0x00,       // subunit identifier specifier
+        0x10, 0x00, // complete, reserved
+        0x00, 0x04, // reports four payload bytes
+        0x00, 0x00, // offset
+        0xAA, 0xBB, // only two payload bytes arrived
+    };
+    ASFW::AVC::Cmd::ReadDescriptorOperands commandOperands{};
+    const auto decoded = commandOperands.Read(operands);
+    EXPECT_FALSE(decoded.has_value());
+
+    const uint8_t wrongOffset[] = {
+        0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0x00, 0xAA,
+    };
+    ASFW::AVC::Cmd::ReadDescriptorOperands offsetZero{};
+    EXPECT_FALSE(offsetZero.Read(wrongOffset).has_value());
 }
 
 } // namespace ASFW::Protocols::AVC::Descriptors::Test

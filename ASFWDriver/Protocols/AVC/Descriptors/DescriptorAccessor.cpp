@@ -45,7 +45,7 @@ void DescriptorAccessor::openForRead(const DescriptorSpecifier& specifier,
     cmd.operands.subfunction = ASFW::AVC::Cmd::OpenDescriptorSubfunction::kReadOpen;
 
     unit_.Control(cmd, [completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::OpenDescriptorReply> reply) {
-        const bool success = reply.has_value();
+        const bool success = reply && reply->subfunction == ASFW::AVC::Cmd::OpenDescriptorSubfunction::kReadOpen && reply->status == 0;
         ASFW_LOG_V3(Discovery, "OPEN DESCRIPTOR result: success=%d", success);
         Common::InvokeSharedCallback(completionState, success);
     });
@@ -60,7 +60,7 @@ void DescriptorAccessor::close(const DescriptorSpecifier& specifier,
     cmd.operands.subfunction = ASFW::AVC::Cmd::OpenDescriptorSubfunction::kClose;
 
     unit_.Control(cmd, [completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::OpenDescriptorReply> reply) {
-        const bool success = reply.has_value();
+        const bool success = reply && reply->subfunction == ASFW::AVC::Cmd::OpenDescriptorSubfunction::kClose && reply->status == 0;
         ASFW_LOG_V3(Discovery, "CLOSE DESCRIPTOR result: success=%d", success);
         Common::InvokeSharedCallback(completionState, success);
     });
@@ -132,40 +132,45 @@ void DescriptorAccessor::handleReadChunk(
 
     const auto& readResult = *reply;
 
+    if (readResult.reportedOffset != state->bytesReadSoFar ||
+        readResult.data.empty()) {
+        ReadDescriptorResult finalResult;
+        finalResult.success = false;
+        finalResult.avcResult = AVCResult::kInvalidResponse;
+        state->completion(finalResult);
+        return;
+    }
+
     // First chunk? Extract total length from descriptor header
     // Per TA 2002013 Table 7: descriptor_length is the byte count of following fields,
     // so the entire descriptor on wire is descriptor_length + 2 bytes.
     if (state->bytesReadSoFar == 0 && readResult.data.size() >= 2) {
         const uint16_t bodyLength = (static_cast<uint16_t>(readResult.data[0]) << 8) | readResult.data[1];
-        state->totalDescriptorLength = bodyLength + 2;
-        ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Total length = %u bytes (body=%u + header=2)",
-                    state->totalDescriptorLength, bodyLength);
-
-        // Sanity check
-        if (state->totalDescriptorLength > 4096) {
-            ASFW_LOG_ERROR(Discovery, "READ DESCRIPTOR: Suspicious length %u, aborting",
-                           state->totalDescriptorLength);
+        const size_t declaredTotal = static_cast<size_t>(bodyLength) + 2;
+        if (declaredTotal > 4096) {
             ReadDescriptorResult finalResult;
             finalResult.success = false;
             finalResult.avcResult = AVCResult::kInvalidResponse;
             state->completion(finalResult);
             return;
         }
+        state->totalDescriptorLength = static_cast<uint16_t>(declaredTotal);
+        ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Total length = %u bytes (body=%u + header=2)",
+                    state->totalDescriptorLength, bodyLength);
+
     }
 
     // Append data from this chunk
-    if (!readResult.data.empty()) {
-        state->accumulatedData.insert(
-            state->accumulatedData.end(),
-            readResult.data.begin(),
-            readResult.data.end()
-        );
-        state->bytesReadSoFar += static_cast<uint16_t>(readResult.data.size());
+    state->accumulatedData.insert(
+        state->accumulatedData.end(),
+        readResult.data.begin(),
+        readResult.data.end()
+    );
+    state->bytesReadSoFar += static_cast<uint16_t>(readResult.data.size());
 
-        ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Accumulated %u/%u bytes, status=0x%02x",
-                    state->bytesReadSoFar, state->totalDescriptorLength,
-                    static_cast<uint8_t>(readResult.status));
-    }
+    ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Accumulated %u/%u bytes, status=0x%02x",
+                state->bytesReadSoFar, state->totalDescriptorLength,
+                static_cast<uint8_t>(readResult.status));
 
     //==========================================================================
     // Dual-Strategy Termination (Spec + Robust Length Check)
@@ -195,10 +200,15 @@ void DescriptorAccessor::handleReadChunk(
         }
     }
 
-    // Additional safety: No data received (reached end of data or invalid state)
-    if (readResult.data.empty()) {
-        ASFW_LOG_V3(Discovery, "READ DESCRIPTOR: Device sent empty chunk, terminating read");
-        shouldContinue = false;
+    if (state->totalDescriptorLength == 0 ||
+        state->bytesReadSoFar > state->totalDescriptorLength ||
+        (readResult.status == ASFW::AVC::Cmd::ReadResultStatus::kMoreToRead &&
+         state->bytesReadSoFar >= state->totalDescriptorLength)) {
+        ReadDescriptorResult finalResult;
+        finalResult.success = false;
+        finalResult.avcResult = AVCResult::kInvalidResponse;
+        state->completion(finalResult);
+        return;
     }
 
     if (shouldContinue) {
@@ -208,9 +218,9 @@ void DescriptorAccessor::handleReadChunk(
                     state->bytesReadSoFar);
 
         ReadDescriptorResult finalResult;
-        finalResult.success = true;
+        finalResult.success = state->bytesReadSoFar == state->totalDescriptorLength;
         finalResult.data = std::move(state->accumulatedData);
-        finalResult.avcResult = AVCResult::kAccepted;
+        finalResult.avcResult = finalResult.success ? AVCResult::kAccepted : AVCResult::kInvalidResponse;
         state->completion(finalResult);
     }
 }
@@ -222,7 +232,9 @@ void DescriptorAccessor::handleReadChunk(
 void DescriptorAccessor::readUnitIdentifier(ReadCompletion completion) {
     auto specifier = DescriptorSpecifier::forUnitIdentifier();
     ASFW_LOG_V3(Discovery, "Reading Unit Identifier Descriptor");
-    readComplete(specifier, std::move(completion));
+    // FFADO performs OPEN, READ, and CLOSE for descriptor loads as well
+    // (libavc/descriptors/avc_descriptor.cpp:165,184,274).
+    readWithOpenCloseSequence(specifier, std::move(completion));
 }
 
 void DescriptorAccessor::readStatusDescriptor(uint8_t descriptorType,

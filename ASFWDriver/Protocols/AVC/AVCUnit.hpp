@@ -33,6 +33,7 @@ namespace ASFW::Protocols::AVC {
 // Forward Declarations
 //==============================================================================
 class DescriptorAccessor;
+namespace Graph { struct DeviceGraph; }
 
 //==============================================================================
 // Unit Descriptor Information (Phase 5 Discovery)
@@ -104,6 +105,7 @@ public:
 
     const ASFW::AVC::Cmd::UnitPlugCounts& GetCachedPlugCounts() const { return model_.unitPlugs; }
     const ASFW::AVC::UnitModel& GetModel() const noexcept { return model_; }
+    std::shared_ptr<const Graph::DeviceGraph> GetDiscoveredGraph() const noexcept { return discoveredGraph_; }
     ASFW::AVC::UnitModel& GetModel() noexcept { return model_; }
 
     const std::vector<std::shared_ptr<Subunit>>& GetSubunits() const { return subunits_; }
@@ -144,6 +146,10 @@ private:
 
     void ProbePlugs(std::function<void(bool)> completion);
 
+    void PopulateKnownSubunitPlugCounts();
+
+    void BuildDiscoveredGraph();
+
     void ProbeSignalFormat(std::function<void(bool)> completion);
 
     void StoreSubunitInfo(const ASFW::AVC::Cmd::SubunitInfo& info);
@@ -164,6 +170,7 @@ private:
 
     std::vector<std::shared_ptr<Subunit>> subunits_;
     ASFW::AVC::UnitModel model_{};
+    std::shared_ptr<const Graph::DeviceGraph> discoveredGraph_{};
     UnitDescriptorInfo descriptorInfo_;
 
     bool initialized_{false};

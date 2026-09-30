@@ -38,6 +38,7 @@ struct SubunitId {
 struct SubunitModel {
     SubunitId id{};
     Cmd::SubunitPlugCounts plugs{};
+    bool plugsDiscovered{false};
 
     friend constexpr bool operator==(const SubunitModel&, const SubunitModel&) noexcept = default;
 };

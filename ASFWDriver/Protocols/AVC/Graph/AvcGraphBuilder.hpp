@@ -16,6 +16,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace ASFW::Protocols::AVC::Graph {
 
@@ -25,6 +26,19 @@ struct GraphBuildOptions {
     uint32_t captureDataBlockSize{0};
     std::optional<uint8_t> playbackSubunitDestPlugId{};  ///< Override from SIGNAL SOURCE (dest plug)
     std::optional<uint8_t> captureSubunitSourcePlugId{}; ///< Override from SIGNAL SOURCE (src plug)
+    bool allowDefaultPlugSelection{true}; ///< False for production when SIGNAL SOURCE is unavailable.
+    /// Sources returned by completed SPECIFIC INQUIRY probes. A descriptor
+    /// sync destination or selector declaration alone must not populate this.
+    std::vector<ClockSourceInfo> confirmedClockSources{};
+    uint8_t audioSubunitId{0};
+    struct ConfirmedFeatureControls {
+        uint8_t audioSubunitId{0};
+        uint8_t functionBlockId{0};
+        ConfirmedFeatureStatus status{};
+    };
+    /// Feature controls explicitly confirmed by successful STATUS discovery.
+    /// Entries are keyed by the typed Audio Feature FB identity.
+    std::vector<ConfirmedFeatureControls> confirmedFeatureControls{};
 };
 
 class AvcGraphBuilder {

@@ -113,13 +113,21 @@ public:
 
     void ClearDescriptors() { descriptors_.clear(); }
 
+    void SetDeferredResponses(bool deferred) noexcept { deferResponses_ = deferred; }
+    void FlushDeferredResponses();
+
     [[nodiscard]] std::optional<std::span<const uint8_t>> FindResponse(std::span<const uint8_t> command) const;
 
 private:
+    void Deliver(ResponseCallback completion, Expected<Response> response);
+    void DeliverResponse(const CommandFrame& frame, ResponseCallback completion,
+                         std::span<const uint8_t> bytes);
+
     struct DescriptorEntry {
         uint8_t subunit{0xFF};
         std::vector<uint8_t> specifier;
         std::vector<uint8_t> rawBytes;
+        bool readOpen{false};
     };
     struct OverrideEntry {
         std::vector<uint8_t> commandPrefix;
@@ -132,8 +140,10 @@ private:
     uint64_t guid_{0};
     SimulatedAvcFaults faults_{};
     std::vector<OverrideEntry> overrides_;
-    std::vector<DescriptorEntry> descriptors_;
+    mutable std::vector<DescriptorEntry> descriptors_;
     mutable std::vector<uint8_t> dynamicResponseStorage_;
+    bool deferResponses_{false};
+    std::vector<std::function<void()>> deferredResponses_;
 };
 
 } // namespace ASFW::AVC::Testing

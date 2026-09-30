@@ -76,6 +76,13 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
 FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
                                       FCPCompletion completion,
                                       FCPCommandPolicy policy) {
+    return SubmitCommand(command, std::move(completion), std::move(policy), std::nullopt);
+}
+
+FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
+                                      FCPCompletion completion,
+                                      FCPCommandPolicy policy,
+                                      std::optional<FW::Generation> requiredGeneration) {
     if (!command.IsValid()) {
         ASFW_LOG_V1(FCP,
                      "FCPTransport: Invalid command size %zu (must be 3-512)",
@@ -106,6 +113,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
     cmd->command = command;
     cmd->completion = std::move(completion);
     cmd->policy = std::move(policy);
+    cmd->requiredGeneration = requiredGeneration;
 
     IOLockLock(lock_);
 
@@ -115,6 +123,19 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
             cmd->completion(FCPStatus::kTransportError, {});
         }
         return {};
+    }
+
+    if (cmd->requiredGeneration.has_value()) {
+        const auto route = routeRegistry_ && device_
+                               ? routeRegistry_->CurrentRoute(device_->GetGUID())
+                               : std::nullopt;
+        if (!route.has_value() || route->generation != *cmd->requiredGeneration) {
+            IOLockUnlock(lock_);
+            if (cmd->completion) {
+                cmd->completion(FCPStatus::kBusReset, {});
+            }
+            return {};
+        }
     }
 
     // Reserve a non-zero ID before admission. Queued commands are fully
@@ -215,6 +236,7 @@ bool FCPTransport::StartPendingWrite() {
         IOLockUnlock(lock_);
         return false;  // nothing was admitted, so no completion is owed
     }
+    const uint32_t transactionID = pending_->transactionID;
 
     const bool shuttingDown = shuttingDown_;
     const bool hasRouteRegistry = routeRegistry_ != nullptr;
@@ -227,16 +249,28 @@ bool FCPTransport::StartPendingWrite() {
         ASFW_LOG_V1(FCP,
                     "FCPTransport: Cannot start write (shuttingDown=%d hasRouteRegistry=%d)",
                     shuttingDown ? 1 : 0, hasRouteRegistry ? 1 : 0);
-        CompleteCommand(FCPStatus::kTransportError, {});
+        CompleteCommand(FCPStatus::kTransportError, {}, transactionID);
         return false;
     }
 
     const auto route = routeRegistry_->CurrentRoute(device_->GetGUID());
     if (!route.has_value()) {
         IOLockUnlock(lock_);
-        CompleteCommand(FCPStatus::kBusReset, {});
+        CompleteCommand(FCPStatus::kBusReset, {}, transactionID);
         return false;
     }
+    if (pending_->requiredGeneration.has_value() &&
+        route->generation != *pending_->requiredGeneration) {
+        const auto requested = pending_->requiredGeneration->value;
+        const auto current = route->generation.value;
+        IOLockUnlock(lock_);
+        ASFW_LOG_V1(FCP,
+                    "FCPTransport: Rejecting stale command generation=%u current=%u",
+                    requested, current);
+        CompleteCommand(FCPStatus::kBusReset, {}, transactionID);
+        return false;
+    }
+    const auto requestedGeneration = pending_->requiredGeneration;
 
     pending_->asyncHandle = {};
     const FCPWriteAttempt writeAttempt{
@@ -245,7 +279,6 @@ bool FCPTransport::StartPendingWrite() {
     };
     pending_->activeWriteAttempt = writeAttempt;
     pending_->successfulWriteAttempt.reset();
-    const uint32_t transactionID = pending_->transactionID;
     const FCPFrame commandCopy = pending_->command;
     IOLockUnlock(lock_);
 
@@ -256,7 +289,13 @@ bool FCPTransport::StartPendingWrite() {
     const auto handle = SubmitWriteCommand(commandCopy, writeAttempt);
     if (!handle.value) {
         ASFW_LOG_V1(FCP, "FCPTransport: Failed to submit async write");
-        CompleteCommand(FCPStatus::kTransportError, {});
+        const auto currentRoute = routeRegistry_->CurrentRoute(device_->GetGUID());
+        const bool generationBecameStale = requestedGeneration.has_value() &&
+            (!currentRoute.has_value() ||
+             currentRoute->generation != *requestedGeneration);
+        CompleteCommand(generationBecameStale ? FCPStatus::kBusReset
+                                              : FCPStatus::kTransportError,
+                        {}, transactionID);
         return false;
     }
 
@@ -747,6 +786,10 @@ void FCPTransport::OnRouteRevalidated(const Discovery::DeviceRouteToken& route) 
 
     pending_->awaitingRouteRevalidation = false;
     pending_->resetRoute.reset();
+    // This generation change is permitted only for the explicitly configured
+    // idempotent retry path above. A normal stale submission keeps its original
+    // generation constraint and is rejected by StartPendingWrite().
+    pending_->requiredGeneration = route.generation;
     --pending_->retriesLeft;
     IOLockUnlock(lock_);
 
@@ -824,12 +867,15 @@ bool FCPTransport::ValidateResponse(std::span<const uint8_t> response) const {
 // Command Completion
 //==============================================================================
 
-void FCPTransport::CompleteCommand(FCPStatus status, const FCPFrame& response) {
+void FCPTransport::CompleteCommand(FCPStatus status,
+                                   const FCPFrame& response,
+                                   std::optional<uint32_t> expectedTransactionID) {
     // Must NOT be called with lock held
 
     IOLockLock(lock_);
 
-    if (!pending_) {
+    if (!pending_ || (expectedTransactionID.has_value() &&
+                      pending_->transactionID != *expectedTransactionID)) {
         IOLockUnlock(lock_);
         return;
     }
@@ -873,8 +919,9 @@ namespace {
             return ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kMalformedOperands);
         case FCPStatus::kResponseMismatch:
             return ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kOpcodeMismatch);
-        case FCPStatus::kTransportError:
         case FCPStatus::kBusy:
+            return ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kBusy);
+        case FCPStatus::kTransportError:
         case FCPStatus::kOk:
         default:
             return ASFW::AVC::AvcError::Of(ASFW::AVC::AvcErrorKind::kTransportError);
@@ -896,7 +943,7 @@ uint64_t FCPTransport::Guid() const noexcept {
 }
 
 void FCPTransport::Submit(const ASFW::AVC::CommandFrame& frame,
-                          FW::Generation /*generation*/,
+                          FW::Generation generation,
                           ResponseCallback completion) {
     const auto wire = frame.WireBytes();
     if (wire.size() < kAVCFrameMinSize || wire.size() > kAVCFrameMaxSize) {
@@ -931,5 +978,6 @@ void FCPTransport::Submit(const ASFW::AVC::CommandFrame& frame,
             }
             completion(*decoded);
         },
-        policy);
+        policy,
+        generation);
 }

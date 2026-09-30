@@ -31,6 +31,11 @@ public:
                          const DeviceModel& discoveryModel) noexcept;
 
     const char* GetName() const override { return deviceName_; }
+    bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override {
+        if (!geometryAvailable_) return false;
+        outCaps = caps_;
+        return true;
+    }
 
 protected:
     const char* DeviceName() const override { return deviceName_; }
@@ -44,6 +49,7 @@ private:
     const char* deviceName_{nullptr};
     AudioStreamRuntimeCaps caps_{};
     std::vector<uint32_t> supportedRates_;
+    bool geometryAvailable_{false};
 };
 
 } // namespace ASFW::Audio::BeBoB

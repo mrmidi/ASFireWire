@@ -286,7 +286,7 @@ void BeBoBProtocol::SetSelectorBlock(uint8_t fbId, uint8_t value, MixerCompletio
             },
         },
         [completion = std::move(completion)](AVC::Expected<AVC::Cmd::SelectorValue> res) mutable {
-            completion(res ? kIOReturnSuccess : kIOReturnError);
+            completion(res ? kIOReturnSuccess : AVC::ToIOReturn(res.error()));
         });
 }
 
@@ -302,7 +302,7 @@ void BeBoBProtocol::SetFeatureMute(uint8_t fbId, uint8_t channel, bool unmute,
             .operands = AVC::Cmd::FeatureOperands::Mute(fbId, channel, !unmute),
         },
         [completion = std::move(completion)](AVC::Expected<AVC::Cmd::FeatureReply> res) mutable {
-            completion(res ? kIOReturnSuccess : kIOReturnError);
+            completion(res ? kIOReturnSuccess : AVC::ToIOReturn(res.error()));
         });
 }
 
@@ -319,7 +319,7 @@ void BeBoBProtocol::SetFeatureVolume(uint8_t fbId, uint8_t channel, uint16_t val
                 fbId, channel, AVC::AvcVolume::FromRaw(static_cast<int16_t>(value))),
         },
         [completion = std::move(completion)](AVC::Expected<AVC::Cmd::FeatureReply> res) mutable {
-            completion(res ? kIOReturnSuccess : kIOReturnError);
+            completion(res ? kIOReturnSuccess : AVC::ToIOReturn(res.error()));
         });
 }
 

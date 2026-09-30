@@ -242,4 +242,13 @@ bool ApogeeVendorCommand::ParseStatusPayload(std::span<const uint8_t> payload) {
     return false;
 }
 
+bool ApogeeVendorCommand::ParseStatusPayload(::ASFW::AVC::CompanyId companyId,
+                                             std::span<const uint8_t> payload) {
+    std::vector<uint8_t> completeOperands;
+    completeOperands.reserve(companyId.size() + payload.size());
+    completeOperands.insert(completeOperands.end(), companyId.begin(), companyId.end());
+    completeOperands.insert(completeOperands.end(), payload.begin(), payload.end());
+    return ParseStatusPayload(completeOperands);
+}
+
 } // namespace ASFW::Audio::Oxford::Apogee

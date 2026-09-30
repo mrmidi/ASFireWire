@@ -25,28 +25,38 @@ GenericBeBoBProtocol::GenericBeBoBProtocol(Protocols::Ports::FireWireBusOps& bus
 
     deviceName_ = "Unknown BeBoB Device";
 
-    // Conservative single-stream geometry from the first duplex formation.
-    uint16_t pcmChannels = 0;
-    uint16_t midiSlots = 0;
-    if (!discoveryModel.input.supportedFormations.empty()) {
-        pcmChannels = discoveryModel.input.supportedFormations[0].pcmChannels;
-        midiSlots = discoveryModel.input.supportedFormations[0].midiSlots;
+    const auto selectedRate = discoveryModel.SelectDuplexRateHz();
+    if (!selectedRate) {
+        ASFW_LOG(AVC, "GenericBeBoB: no usable duplex rate/formation; leaving stream caps empty");
+        return;
+    }
+    const auto playback = discoveryModel.InputFormationAtRate(*selectedRate);
+    const auto capture = discoveryModel.OutputFormationAtRate(*selectedRate);
+    if (!playback || !capture) {
+        ASFW_LOG(AVC, "GenericBeBoB: selected rate %u has incomplete duplex geometry; leaving caps empty",
+                 *selectedRate);
+        return;
     }
 
-    caps_.hostInputPcmChannels = pcmChannels;
-    caps_.hostOutputPcmChannels = pcmChannels;
-    caps_.deviceToHostAm824Slots = pcmChannels + midiSlots;
-    caps_.hostToDeviceAm824Slots = pcmChannels + midiSlots;
-    caps_.sampleRateHz = discoveryModel.CurrentRateHz().value_or(
-        supportedRates_.empty() ? 48000U : supportedRates_[0]);
+    // ISO input is host-to-device playback; ISO output is device-to-host capture.
+    caps_.hostInputPcmChannels = capture->pcmChannels;
+    caps_.hostOutputPcmChannels = playback->pcmChannels;
+    caps_.deviceToHostAm824Slots = static_cast<uint16_t>(capture->pcmChannels + capture->midiSlots);
+    caps_.hostToDeviceAm824Slots = static_cast<uint16_t>(playback->pcmChannels + playback->midiSlots);
+    caps_.sampleRateHz = *selectedRate;
     caps_.deviceToHostIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel;
     caps_.hostToDeviceIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel;
     caps_.deviceToHostStreamCount = 1;
     caps_.hostToDeviceStreamCount = 1;
-    caps_.deviceToHostStreams[0] = {.pcmChannels = pcmChannels,
-                                    .am824Slots = static_cast<uint16_t>(pcmChannels + midiSlots)};
-    caps_.hostToDeviceStreams[0] = {.pcmChannels = pcmChannels,
-                                    .am824Slots = static_cast<uint16_t>(pcmChannels + midiSlots)};
+    caps_.deviceToHostStreams[0] = {
+        .pcmChannels = capture->pcmChannels,
+        .am824Slots = static_cast<uint16_t>(capture->pcmChannels + capture->midiSlots),
+    };
+    caps_.hostToDeviceStreams[0] = {
+        .pcmChannels = playback->pcmChannels,
+        .am824Slots = static_cast<uint16_t>(playback->pcmChannels + playback->midiSlots),
+    };
+    geometryAvailable_ = true;
 }
 
 std::vector<uint32_t>

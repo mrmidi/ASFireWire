@@ -15,11 +15,72 @@
 #include "../../../Common/CallbackUtils.hpp"
 #include "../../../Logging/Logging.hpp"
 
+#include <set>
+
 using namespace ASFW::Protocols::AVC::Audio;
 using ASFW::AVC::SubunitAddress;
 using ASFW::AVC::Expected;
 using ASFW::AVC::ResponseCode;
+using ASFW::Protocols::AVC::DescriptorAccessor;
+using ASFW::Protocols::AVC::DescriptorSpecifier;
+using ASFW::Protocols::AVC::DescriptorSpecifierType;
+namespace Descriptors = ASFW::Protocols::AVC::Descriptors;
+namespace Common = ASFW::Common;
 namespace Cmd = ASFW::AVC::Cmd;
+
+namespace {
+struct AudioTextListTraversal : std::enable_shared_from_this<AudioTextListTraversal> {
+    Descriptors::AudioSubunitIdentifier* identifier{};
+    std::shared_ptr<DescriptorAccessor> accessor;
+    std::shared_ptr<std::function<void(bool)>> completion;
+    std::vector<uint16_t> pendingListIds;
+    std::set<uint16_t> visited;
+    Descriptors::TextDatabase database;
+    size_t nextList{0};
+
+    void Advance() {
+        if (nextList == pendingListIds.size()) {
+            Descriptors::AudioSubunitDescriptorParser::ResolveNames(*identifier, database);
+            Common::InvokeSharedCallback(completion, true);
+            return;
+        }
+        const uint16_t listId = pendingListIds[nextList++];
+        if (!visited.insert(listId).second || visited.size() > 32) {
+            Common::InvokeSharedCallback(completion, false);
+            return;
+        }
+
+        DescriptorSpecifier specifier{.type = DescriptorSpecifierType::kListID,
+            .typeSpecificFields = {static_cast<uint8_t>(listId >> 8), static_cast<uint8_t>(listId)}};
+        auto self = shared_from_this();
+        accessor->readWithOpenCloseSequence(specifier, [self](const DescriptorAccessor::ReadDescriptorResult& result) {
+            if (!result.success) {
+                Common::InvokeSharedCallback(self->completion, false);
+                return;
+            }
+            if (result.data.size() < 3 || result.data[2] != 0x86) {
+                Common::InvokeSharedCallback(self->completion, false);
+                return;
+            }
+            const auto& identifier = *self->identifier;
+            auto children = Descriptors::AudioSubunitDescriptorParser::ParseChildListIds(
+                result.data, identifier.sizeOfListId, identifier.sizeOfObjectId);
+            if (!children) {
+                Common::InvokeSharedCallback(self->completion, false);
+                return;
+            }
+            auto text = Descriptors::AudioSubunitDescriptorParser::ParseTextDatabaseListChecked(result.data);
+            if (!text) {
+                Common::InvokeSharedCallback(self->completion, false);
+                return;
+            }
+            self->database.insert(text->begin(), text->end());
+            self->pendingListIds.insert(self->pendingListIds.end(), children->begin(), children->end());
+            self->Advance();
+        });
+    }
+};
+} // namespace
 
 void AudioSubunit::ParseCapabilities(AVCUnit& unit, std::function<void(bool)> completion) {
     auto completionState = Common::ShareCallback(std::move(completion));
@@ -86,34 +147,17 @@ void AudioSubunit::ReadIdentifierDescriptor(ASFW::AVC::IAvcUnit& unit, std::func
         ASFW_LOG_INFO(Discovery, "AudioSubunit: Parsed Identifier Descriptor: %zu function blocks, %zu root lists",
                      identifier_->functionBlocks.size(), identifier_->rootListIds.size());
 
-        // Check if there is a Text Database root list (0x1800 or 0x1801)
-        uint16_t textDbListId = 0;
-        for (uint16_t listId : identifier_->rootListIds) {
-            if (listId == 0x1800 || listId == 0x1801) {
-                textDbListId = listId;
-                break;
-            }
-        }
-
-        if (textDbListId == 0) {
+        if (identifier_->rootListIds.empty()) {
             Common::InvokeSharedCallback(completionState, true);
             return;
         }
 
-        // Read the Text Database list descriptor
-        DescriptorSpecifier specifier;
-        specifier.type = DescriptorSpecifierType::kListID;
-        specifier.typeSpecificFields = {static_cast<uint8_t>(textDbListId >> 8), static_cast<uint8_t>(textDbListId & 0xFF)};
-
-        accessor->readComplete(specifier, [this, completionState, textDbListId](const DescriptorAccessor::ReadDescriptorResult& textRes) {
-            if (textRes.success && !textRes.data.empty()) {
-                auto textDb = Descriptors::AudioSubunitDescriptorParser::ParseTextDatabaseList(textRes.data);
-                Descriptors::AudioSubunitDescriptorParser::ResolveNames(*identifier_, textDb);
-                ASFW_LOG_INFO(Discovery, "AudioSubunit: Resolved %zu names from Text Database 0x%04x",
-                             textDb.size(), textDbListId);
-            }
-            Common::InvokeSharedCallback(completionState, true);
-        });
+        auto traversal = std::make_shared<AudioTextListTraversal>();
+        traversal->identifier = &*identifier_;
+        traversal->accessor = accessor;
+        traversal->completion = completionState;
+        traversal->pendingListIds = identifier_->rootListIds;
+        traversal->Advance();
     });
 }
 

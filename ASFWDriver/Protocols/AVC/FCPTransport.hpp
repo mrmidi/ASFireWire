@@ -225,6 +225,9 @@ private:
         FCPFrame command;
         FCPCompletion completion;
         FCPCommandPolicy policy;
+        /// IAvcUnit callers bind work to the generation in which it was built.
+        /// Raw FCP callers leave this empty and use the current route.
+        std::optional<FW::Generation> requiredGeneration;
         uint32_t transactionID{0};
         uint8_t retriesLeft;
         bool allowBusResetRetry;
@@ -257,13 +260,20 @@ private:
     [[nodiscard]] bool StartPendingWrite();
     void StartNextQueuedCommand();
 
+    [[nodiscard]] FCPHandle SubmitCommand(const FCPFrame& command,
+                                          FCPCompletion completion,
+                                          FCPCommandPolicy policy,
+                                          std::optional<FW::Generation> requiredGeneration);
+
     void OnCommandTimeout();
 
     void RetryCommand();
 
     bool ValidateResponse(std::span<const uint8_t> response) const;
 
-    void CompleteCommand(FCPStatus status, const FCPFrame& response);
+    void CompleteCommand(FCPStatus status,
+                         const FCPFrame& response,
+                         std::optional<uint32_t> expectedTransactionID = std::nullopt);
 
     void ScheduleTimeout(uint32_t timeoutMs);
 

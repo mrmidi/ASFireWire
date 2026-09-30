@@ -9,18 +9,49 @@
 
 namespace ASFW::AVC::Testing {
 
+void SimulatedAvcUnit::Deliver(ResponseCallback completion, Expected<Response> response) {
+    if (deferResponses_) {
+        deferredResponses_.push_back([completion = std::move(completion),
+                                      response = std::move(response)]() mutable {
+            completion(std::move(response));
+        });
+    } else {
+        completion(std::move(response));
+    }
+}
+
+void SimulatedAvcUnit::DeliverResponse(const CommandFrame& frame, ResponseCallback completion,
+                                       std::span<const uint8_t> bytes) {
+    std::vector<uint8_t> ownedBytes(bytes.begin(), bytes.end());
+    if (deferResponses_) {
+        deferredResponses_.push_back([this, frame, completion = std::move(completion),
+                                      bytes = std::move(ownedBytes)]() mutable {
+            completion(ParseResponseFor(frame, bytes));
+        });
+    } else {
+        completion(ParseResponseFor(frame, bytes));
+    }
+}
+
+void SimulatedAvcUnit::FlushDeferredResponses() {
+    if (deferredResponses_.empty()) return;
+    auto next = std::move(deferredResponses_.front());
+    deferredResponses_.erase(deferredResponses_.begin());
+    next();
+}
+
 void SimulatedAvcUnit::Submit(const CommandFrame& frame,
                               FW::Generation generation,
                               ResponseCallback completion) {
     if (generation != generation_) {
-        completion(std::unexpected(AvcError::Of(AvcErrorKind::kBusReset)));
+        Deliver(std::move(completion), std::unexpected(AvcError::Of(AvcErrorKind::kBusReset)));
         return;
     }
 
     if (faults_.busResetNext) {
         faults_.busResetNext = false;
         generation_ = FW::Generation{generation_.value + 1};
-        completion(std::unexpected(AvcError::Of(AvcErrorKind::kBusReset)));
+        Deliver(std::move(completion), std::unexpected(AvcError::Of(AvcErrorKind::kBusReset)));
         return;
     }
 
@@ -42,17 +73,14 @@ void SimulatedAvcUnit::Submit(const CommandFrame& frame,
             faults_.interimNext = false;
             std::vector<uint8_t> interim(respBytes.begin(), respBytes.end());
             interim[0] = static_cast<uint8_t>(ResponseCode::kInterim);
-            auto interimParsed = ParseResponseFor(frame, interim);
-            if (interimParsed) {
-                completion(*interimParsed);
-            }
+            DeliverResponse(frame, completion, interim);
         }
 
         if (faults_.rejectNext) {
             faults_.rejectNext = false;
             std::vector<uint8_t> rejected(respBytes.begin(), respBytes.end());
             rejected[0] = static_cast<uint8_t>(ResponseCode::kRejected);
-            completion(ParseResponseFor(frame, rejected));
+            DeliverResponse(frame, std::move(completion), rejected);
             return;
         }
 
@@ -60,11 +88,11 @@ void SimulatedAvcUnit::Submit(const CommandFrame& frame,
             faults_.notImplementedNext = false;
             std::vector<uint8_t> notImpl(respBytes.begin(), respBytes.end());
             notImpl[0] = static_cast<uint8_t>(ResponseCode::kNotImplemented);
-            completion(ParseResponseFor(frame, notImpl));
+            DeliverResponse(frame, std::move(completion), notImpl);
             return;
         }
 
-        completion(ParseResponseFor(frame, respBytes));
+        DeliverResponse(frame, std::move(completion), respBytes);
         return;
     }
 
@@ -74,7 +102,7 @@ void SimulatedAvcUnit::Submit(const CommandFrame& frame,
         frame.Address().Byte(),
         static_cast<uint8_t>(frame.OpcodeValue()),
     };
-    completion(ParseResponseFor(frame, notImplBytes));
+    DeliverResponse(frame, std::move(completion), notImplBytes);
 }
 
 void SimulatedAvcUnit::AttachToBus(
@@ -217,7 +245,7 @@ std::optional<std::span<const uint8_t>> SimulatedAvcUnit::FindResponse(
         const uint8_t subunit = command[1];
         const uint8_t opcode = command[2];
 
-        for (const auto& desc : descriptors_) {
+        for (auto& desc : descriptors_) {
             if (desc.subunit != subunit) continue;
             const size_t specLen = desc.specifier.size();
             if (command.size() < 3 + specLen) continue;
@@ -227,6 +255,7 @@ std::optional<std::span<const uint8_t>> SimulatedAvcUnit::FindResponse(
 
             if (opcode == 0x08 && command.size() >= 3 + specLen + 2) { // OPEN DESCRIPTOR
                 const uint8_t subfunc = command[3 + specLen];
+                desc.readOpen = subfunc == 0x01;
                 dynamicResponseStorage_.clear();
                 dynamicResponseStorage_.push_back(0x09); // Accepted
                 dynamicResponseStorage_.push_back(subunit);
@@ -240,6 +269,7 @@ std::optional<std::span<const uint8_t>> SimulatedAvcUnit::FindResponse(
             }
 
             if (opcode == 0x09 && command.size() >= 3 + specLen + 6) { // READ DESCRIPTOR
+                if (!desc.readOpen) return std::nullopt;
                 const size_t pOffset = 3 + specLen;
                 const uint16_t reqLen = (static_cast<uint16_t>(command[pOffset + 2]) << 8) | command[pOffset + 3];
                 const uint16_t reqOff = (static_cast<uint16_t>(command[pOffset + 4]) << 8) | command[pOffset + 5];
@@ -248,7 +278,7 @@ std::optional<std::span<const uint8_t>> SimulatedAvcUnit::FindResponse(
                 uint8_t readStatus = 0x10; // Complete
                 if (reqOff < desc.rawBytes.size()) {
                     const size_t avail = desc.rawBytes.size() - reqOff;
-                    chunkLen = std::min(static_cast<size_t>(reqLen), avail);
+                    chunkLen = std::min({static_cast<size_t>(reqLen), avail, size_t{142}});
                     readStatus = (reqOff + chunkLen < desc.rawBytes.size()) ? 0x11 : 0x10;
                 }
 

@@ -10,6 +10,7 @@
 #include "ASFWDriver/Protocols/AVC/Descriptors/AudioSubunitDescriptor.hpp"
 #include "ASFWDriver/Protocols/AVC/Descriptors/MusicSubunitDescriptor.hpp"
 #include "ASFWDriver/Protocols/AVC/Graph/AvcGraphBuilder.hpp"
+#include "../support/Phase88DescriptorFixtures.hpp"
 
 #include <string>
 #include <vector>
@@ -50,21 +51,6 @@ const std::string kPhase88MusicStatusHex =
 const std::string kPhase88AudioIdHex =
     "02900202000200011800028402820001027e000100080202c000000000010bf002f003f004800af0068009800180028003800480051600448101000201820100220802800140012001100108010401020101010003000400050006000700080009000a00170015000200c000c000c000c000c000c000c000c000c00000208102000b01f002000a020280014001000c000d000b0009000200c000c000c00000208103000e01f003000a020280014001000f0010000b0009000200c000c000c00000208104001101f004000a02028001400100120013000b0009000200c000c000c00000208105001401f005000a02028001400100150016000b0009000200c000c000c00000208106001701f006000a02028001400100180019000b0009000200c000c000c00000208107001a018007000a020280014001001b001c000b0009000200c000c000c000000d8001001d028202800600000000000d80020020028203800600000000000d80030023028204800600000000000d80040026028205800600000000000d8005002902f00180060000000000158006002c068101810181018101810181010000000000138007002f05f001820282038204820500000000000d8008003202f006f00700000000000d8009003502feff800800000000000d800a003802f005feff00000000003a8201003b068107810281038104810581060022080280014001200110010801040102010101003c003d003e003f0040004100420043000301000000188202004401f000000a02028001400100450046000301000000188203004701f000000a02028001400100480049000301000000188204004a01f000000a020280014001004b004c000301000000188205004d01f000000a020280014001004e004f00030100000000";
 
-// Phase 88 Text Database List entries 0x1801 (partial, containing positions 0 through 11)
-const std::string kPhase88TextDbHex =
-    "0f3586080010000103000b00070007800000000000000050"
-    "002f9308002b0001030007800a000300ffff001d000a00194c696e655f312f32206c656674205048415345383820465700"
-    "00309308002c0001030007800a000300ffff001e000a001a4c696e655f312f32207269676874205048415345383820465700"
-    "0029930800250001030007800a000300ffff0017000a00134d69786572204f7574707574204c6576656c00"
-    "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2031205048415345383820465700"
-    "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2032205048415345383820465700"
-    "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2033205048415345383820465700"
-    "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2034205048415345383820465700"
-    "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2035205048415345383820465700"
-    "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2036205048415345383820465700"
-    "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2037205048415345383820465700"
-    "00309308002c0001030007800a000300ffff001e000a001a4d756c74696368616e6e656c2038205048415345383820465700"
-    "00339308002f0001030007800a000300ffff0021000a001d4d6978657220496e707574204c696e65496e20312f32204c6576656c00";
 
 } // namespace
 
@@ -82,7 +68,7 @@ TEST(AvcGraphBuilderTests, Phase88DeviceGraphConstruction) {
     ASSERT_TRUE(audioIdOpt.has_value());
 
     auto textDb = Descriptors::AudioSubunitDescriptorParser::ParseTextDatabaseList(
-        HexToBytes(kPhase88TextDbHex));
+        ASFW::AVC::Testing::Fixtures::kPhase88TextChild);
     // Provide additional selector text entries from full Phase 88 0x1801 text DB
     textDb[0x32] = "external Clocksource Selector";
     textDb[0x35] = "Clock Selector";
@@ -92,6 +78,16 @@ TEST(AvcGraphBuilderTests, Phase88DeviceGraphConstruction) {
         .modelName = "TerraTec PHASE 88 Rack FW",
         .playbackDataBlockSize = 11,
         .captureDataBlockSize = 11,
+        .confirmedFeatureControls = {{
+            .audioSubunitId = 0,
+            .functionBlockId = 1,
+            .status = ConfirmedFeatureStatus{
+                .state = FeatureStatusState::kConfirmed,
+                .master = {ConfirmedFeatureControl::kVolume},
+                .channels = std::vector<std::vector<ConfirmedFeatureControl>>(
+                    8, {ConfirmedFeatureControl::kVolume}),
+            },
+        }},
     };
 
     DeviceGraph graph = AvcGraphBuilder::BuildGraph(*musicOpt, &*audioIdOpt, options);
@@ -106,6 +102,7 @@ TEST(AvcGraphBuilderTests, Phase88DeviceGraphConstruction) {
     EXPECT_EQ(cap.channelCount, 10u);
     EXPECT_EQ(cap.midiStreamCount, 2u); // MidiSection.0 with 2 signals
     EXPECT_FALSE(cap.usingFallbackMap);
+    EXPECT_EQ(cap.slotMapValidation, SlotMapValidation::kValidated);
 
     // AM824 Slot Map verification: [1, 6, 2, 7, 3, 8, 4, 9, 0, 5]
     // Exactly matches BridgeCo C0 and PR #160 (tested by ear)
@@ -135,6 +132,7 @@ TEST(AvcGraphBuilderTests, Phase88DeviceGraphConstruction) {
     EXPECT_EQ(play.channelCount, 10u);
     EXPECT_EQ(play.midiStreamCount, 2u); // MidiSection.0 with 2 signals
     EXPECT_FALSE(play.usingFallbackMap);
+    EXPECT_EQ(play.slotMapValidation, SlotMapValidation::kValidated);
 
     // Playback slots: Multichannel Out (1, 6, 2, 7, 3, 8, 4, 9) + SPDIF Out (0, 5)
     const std::vector<uint8_t> expectedPlaySlots = {1, 6, 2, 7, 3, 8, 4, 9, 0, 5};
@@ -156,8 +154,12 @@ TEST(AvcGraphBuilderTests, Phase88DeviceGraphConstruction) {
         [](const ControlBlockInfo& c) { return c.id == 1 && c.type == Descriptors::AudioFunctionBlockType::kFeature; });
     ASSERT_NE(itFb1, graph.controls.end());
     EXPECT_EQ(itFb1->name, "Mixer Output Level");
-    EXPECT_TRUE(itFb1->isMasterVolume);
+    EXPECT_FALSE(itFb1->isMasterVolume); // English labels do not establish master-control semantics.
     EXPECT_EQ(itFb1->channelCount, 8);
+    ASSERT_EQ(itFb1->confirmedControls.state, FeatureStatusState::kConfirmed);
+    ASSERT_EQ(itFb1->confirmedControls.master.size(), 1u);
+    EXPECT_EQ(itFb1->confirmedControls.master[0], ConfirmedFeatureControl::kVolume);
+    EXPECT_NE(itFb1->advertisedMasterControls, 0u);
 
     // Feature 2: Mixer Input LineIn 1/2 Level
     const auto itFb2 = std::find_if(graph.controls.begin(), graph.controls.end(),
@@ -169,23 +171,34 @@ TEST(AvcGraphBuilderTests, Phase88DeviceGraphConstruction) {
     // -------------------------------------------------------------------------
     // Clock Sources Validation
     // -------------------------------------------------------------------------
-    // Plugs 8 and 9 are sync destination plugs (format 0x40)
-    bool hasSyncDest8 = false;
-    bool hasSyncDest9 = false;
-    bool hasClockSelector = false;
-    bool hasExtClockSelector = false;
+    // Plugs 8 and 9 are sync destinations (format 0x40), not clock sources.
+    ASSERT_EQ(graph.syncDestinations.size(), 2u);
+    EXPECT_EQ(graph.syncDestinations[0].subunitPlugId, 8);
+    EXPECT_EQ(graph.syncDestinations[1].subunitPlugId, 9);
+    EXPECT_TRUE(graph.clockSources.empty());
 
-    for (const auto& clk : graph.clockSources) {
-        if (clk.subunitPlugId == 8) hasSyncDest8 = true;
-        if (clk.subunitPlugId == 9) hasSyncDest9 = true;
-        if (clk.name == "Clock Selector") hasClockSelector = true;
-        if (clk.name == "external Clocksource Selector") hasExtClockSelector = true;
+    // Selectors retain function-block identity and declared source edges; names
+    // are display metadata, never a selector-discovery heuristic.
+    bool selector8 = false;
+    bool selector9 = false;
+    for (const auto& selector : graph.selectors) {
+        if (selector.functionBlockId == 8) {
+            selector8 = true;
+            EXPECT_EQ(selector.audioSubunitId, 0);
+            ASSERT_EQ(selector.declaredInputs.size(), 2u);
+            EXPECT_EQ(selector.declaredInputs[0], (Descriptors::AudioSourceId{0xF0, 6}));
+            EXPECT_EQ(selector.declaredInputs[1], (Descriptors::AudioSourceId{0xF0, 7}));
+        }
+        if (selector.functionBlockId == 9) {
+            selector9 = true;
+            EXPECT_EQ(selector.audioSubunitId, 0);
+            ASSERT_EQ(selector.declaredInputs.size(), 2u);
+            EXPECT_EQ(selector.declaredInputs[0], (Descriptors::AudioSourceId{0xFE, 0xFF}));
+            EXPECT_EQ(selector.declaredInputs[1], (Descriptors::AudioSourceId{0x80, 8}));
+        }
     }
-
-    EXPECT_TRUE(hasSyncDest8);
-    EXPECT_TRUE(hasSyncDest9);
-    EXPECT_TRUE(hasClockSelector);
-    EXPECT_TRUE(hasExtClockSelector);
+    EXPECT_TRUE(selector8);
+    EXPECT_TRUE(selector9);
 }
 
 // =============================================================================
@@ -230,10 +243,10 @@ TEST(AvcGraphBuilderTests, DuetDeviceGraphConstruction) {
     EXPECT_EQ(cap.channelNames[0], "Analog In 1");
     EXPECT_EQ(cap.channelNames[1], "Analog In 2");
 
-    // Clock sources
-    ASSERT_FALSE(graph.clockSources.empty());
-    EXPECT_EQ(graph.clockSources[0].subunitPlugId, 2);
-    EXPECT_EQ(graph.clockSources[0].name, "Sync");
+    // Sync destination is preserved without being claimed as a selectable clock source.
+    ASSERT_EQ(graph.syncDestinations.size(), 1u);
+    EXPECT_EQ(graph.syncDestinations[0].subunitPlugId, 2);
+    EXPECT_TRUE(graph.clockSources.empty());
 
     // Controls: FB 1
     ASSERT_EQ(graph.controls.size(), 1u);
@@ -241,12 +254,67 @@ TEST(AvcGraphBuilderTests, DuetDeviceGraphConstruction) {
     EXPECT_EQ(fb.id, 1);
     EXPECT_EQ(fb.type, Descriptors::AudioFunctionBlockType::kFeature);
     EXPECT_EQ(fb.channelCount, 2);
-    EXPECT_EQ(fb.masterControls, Descriptors::FeatureControlMask::kMute | Descriptors::FeatureControlMask::kVolume);
+    EXPECT_EQ(fb.confirmedControls.state, FeatureStatusState::kNotProbed);
+    EXPECT_NE(fb.advertisedMasterControls, 0u); // Preserve the raw hint separately.
+
+    // Duet's descriptor bitmap is not the control contract. Explicit STATUS
+    // evidence can confirm a smaller usable set without normalizing the hint.
+    options.confirmedFeatureControls = {{
+        .audioSubunitId = 0,
+        .functionBlockId = 1,
+        .status = ConfirmedFeatureStatus{
+            .state = FeatureStatusState::kConfirmed,
+            .master = {ConfirmedFeatureControl::kMute},
+            .channels = {
+                {ConfirmedFeatureControl::kMute, ConfirmedFeatureControl::kVolume},
+                {ConfirmedFeatureControl::kMute, ConfirmedFeatureControl::kVolume},
+                {ConfirmedFeatureControl::kMute, ConfirmedFeatureControl::kVolume},
+            },
+        },
+    }};
+    const auto advertisedMasterControls = fb.advertisedMasterControls;
+    graph = AvcGraphBuilder::BuildGraph(*musicOpt, &*audioIdOpt, options);
+    ASSERT_EQ(graph.controls[0].confirmedControls.state, FeatureStatusState::kConfirmed);
+    ASSERT_EQ(graph.controls[0].confirmedControls.master.size(), 1u);
+    EXPECT_EQ(graph.controls[0].confirmedControls.master[0], ConfirmedFeatureControl::kMute);
+    EXPECT_EQ(graph.controls[0].advertisedMasterControls, advertisedMasterControls);
 }
 
 // =============================================================================
 // Rejection and Fallback Tests
 // =============================================================================
+
+
+TEST(AvcGraphBuilderTests, UnresolvedStreamsAndClockSourcesRequireExplicitEvidence) {
+    auto music = Descriptors::MusicSubunitDescriptorParser::ParseStatusDescriptor(
+        HexToBytes(kDuetMusicStatusHex));
+    ASSERT_TRUE(music.has_value());
+
+    AvcGraphBuilder::Options options{.allowDefaultPlugSelection = false};
+    auto graph = AvcGraphBuilder::BuildGraph(*music, nullptr, options);
+    EXPECT_EQ(graph.playback.selectionEvidence, StreamSelectionEvidence::kUnresolved);
+    EXPECT_EQ(graph.capture.selectionEvidence, StreamSelectionEvidence::kUnresolved);
+    EXPECT_EQ(graph.playback.channelCount, 0u);
+    EXPECT_TRUE(graph.clockSources.empty());
+
+    options.playbackSubunitDestPlugId = 0;
+    options.captureSubunitSourcePlugId = 0;
+    options.confirmedClockSources = {{
+        .name = "External clock",
+        .endpoint = ClockEndpointId{
+            .kind = ClockEndpointKind::kUnitExternalInput,
+            .endpointId = 1,
+        },
+        .isCurrent = true,
+    }};
+    graph = AvcGraphBuilder::BuildGraph(*music, nullptr, options);
+    EXPECT_EQ(graph.playback.selectionEvidence, StreamSelectionEvidence::kSignalSourceInquiry);
+    EXPECT_EQ(graph.capture.selectionEvidence, StreamSelectionEvidence::kSignalSourceInquiry);
+    ASSERT_EQ(graph.clockSources.size(), 1u);
+    EXPECT_EQ(graph.clockSources[0].endpoint.kind, ClockEndpointKind::kUnitExternalInput);
+    EXPECT_EQ(graph.clockSources[0].endpoint.endpointId, 1);
+    EXPECT_TRUE(graph.clockSources[0].isCurrent);
+}
 
 TEST(AvcGraphBuilderTests, DescriptorMapRejectionWhenSlotExceedsDataBlockSize) {
     auto musicOpt = Descriptors::MusicSubunitDescriptorParser::ParseStatusDescriptor(
@@ -262,9 +330,11 @@ TEST(AvcGraphBuilderTests, DescriptorMapRejectionWhenSlotExceedsDataBlockSize) {
     DeviceGraph graph = AvcGraphBuilder::BuildGraph(*musicOpt, nullptr, options);
 
     EXPECT_TRUE(graph.playback.usingFallbackMap);
+    EXPECT_EQ(graph.playback.slotMapValidation, SlotMapValidation::kRejectedFallback);
     EXPECT_TRUE(graph.playback.slotMap.IsIdentity());
 
     EXPECT_TRUE(graph.capture.usingFallbackMap);
+    EXPECT_EQ(graph.capture.slotMapValidation, SlotMapValidation::kRejectedFallback);
     EXPECT_TRUE(graph.capture.slotMap.IsIdentity());
 }
 

@@ -6,6 +6,8 @@
 //
 
 #include "AVCUnit.hpp"
+#include "Graph/AvcGraphBuilder.hpp"
+#include <algorithm>
 #include "../../Common/CallbackUtils.hpp"
 #include "../../Logging/Logging.hpp"
 #include "Descriptors/DescriptorAccessor.hpp"
@@ -135,6 +137,7 @@ void AVCUnit::Initialize(std::function<void(bool)> completion) {
         return;
     }
 
+    model_.identity = Identity();
     ASFW_LOG_V1(AVC, "AVCUnit: Initializing...");
 
     ProbeDescriptorMechanism([this, completionState](bool descriptorOk) {
@@ -189,7 +192,9 @@ void AVCUnit::ReScan(std::function<void(bool)> completion) {
     initialized_ = false;
     subunits_.clear();
     model_ = {};
+    discoveredGraph_.reset();
     descriptorInfo_ = {};
+    model_.identity = Identity();
     
     // Re-initialize
     Initialize(completion);
@@ -234,15 +239,6 @@ void AVCUnit::StoreSubunitInfo(const ASFW::AVC::Cmd::SubunitInfo& info) {
     subunits_.clear();
     model_.subunits.clear();
 
-    // First pass: Detect if Music Subunit is present
-    bool hasMusicSubunit = false;
-    for (uint8_t i = 0; i < info.entryCount; ++i) {
-        if (info.entries[i].type == ASFW::AVC::SubunitType::kMusic) {
-            hasMusicSubunit = true;
-            break;
-        }
-    }
-
     for (uint8_t i = 0; i < info.entryCount; ++i) {
         const auto& entry = info.entries[i];
         for (uint8_t id = 0; id <= entry.maximumId; ++id) {
@@ -260,10 +256,8 @@ void AVCUnit::StoreSubunitInfo(const ASFW::AVC::Cmd::SubunitInfo& info) {
             } else if (entry.type == ASFW::AVC::SubunitType::kCamera) {
                 subunit = std::make_shared<Camera::CameraSubunit>(legacyType, id);
             } else if (entry.type == ASFW::AVC::SubunitType::kAudio) {
-                if (hasMusicSubunit) {
-                    ASFW_LOG_V2(AVC, "AVCUnit: Skipping Audio Subunit (Apple driver matching artifact) because Music Subunit is present.");
-                    continue;
-                }
+                // Subunit existence is independent of Apple's device-matching
+                // preference. Keep both runtime objects for mixed units.
                 subunit = std::make_shared<Audio::AudioSubunit>(legacyType, id);
             } else {
                 class GenericSubunit : public Subunit {
@@ -287,13 +281,20 @@ void AVCUnit::StoreSubunitInfo(const ASFW::AVC::Cmd::SubunitInfo& info) {
 void AVCUnit::ParseSubunitCapabilities(size_t index, std::function<void(bool)> completion) {
     auto completionState = Common::ShareCallback(std::move(completion));
     if (index >= subunits_.size()) {
-        // All done
+        PopulateKnownSubunitPlugCounts();
+        BuildDiscoveredGraph();
         Common::InvokeSharedCallback(completionState, true);
         return;
     }
 
     auto subunit = subunits_[index];
-    subunit->ParseCapabilities(*this, [this, index, completionState](bool success) {
+    subunit->ParseCapabilities(*this, [this, subunit, index, completionState](bool success) {
+        if (success && subunit->GetType() == AVCSubunitType::kAudio) {
+            const ASFW::AVC::SubunitId id{ASFW::AVC::SubunitType::kAudio, subunit->GetID()};
+            const auto model = std::find_if(model_.subunits.begin(), model_.subunits.end(),
+                [&id](const auto& item) { return item.id == id; });
+            if (model != model_.subunits.end()) model->plugsDiscovered = true;
+        }
         if (!success) {
             ASFW_LOG_V2(AVC, "AVCUnit: Failed to parse capabilities for subunit %zu", index);
             // Continue anyway? Yes, partial success is better than failure.
@@ -307,6 +308,64 @@ void AVCUnit::ParseSubunitCapabilities(size_t index, std::function<void(bool)> c
 //==============================================================================
 // Plug Probing
 //==============================================================================
+
+void AVCUnit::PopulateKnownSubunitPlugCounts() {
+    for (const auto& subunit : subunits_) {
+        ASFW::AVC::SubunitId id{
+            .type = static_cast<ASFW::AVC::SubunitType>(subunit->GetType()),
+            .id = subunit->GetID(),
+        };
+        const auto model = std::find_if(model_.subunits.begin(), model_.subunits.end(),
+            [&id](const auto& item) { return item.id == id; });
+        if (model == model_.subunits.end()) continue;
+
+        if (subunit->GetType() == AVCSubunitType::kMusic) {
+            const auto* typed = static_cast<const Music::MusicSubunit*>(subunit.get());
+            const auto status = typed->GetParsedStatus();
+            if (!status) continue;
+            const uint8_t destinations = static_cast<uint8_t>(std::count_if(
+                status->plugs.begin(), status->plugs.end(), [](const auto& plug) { return plug.isDestination; }));
+            const uint8_t sources = static_cast<uint8_t>(status->plugs.size() - destinations);
+            model->plugs = {destinations, sources};
+            model->plugsDiscovered = true;
+            subunit->SetPlugCounts(Subunit::PlugCounts{destinations, sources});
+        } else if (subunit->GetType() == AVCSubunitType::kAudio && model->plugsDiscovered) {
+            // ParseCapabilities reports success only after its existing PLUG_INFO
+            // query completes. The cached values are read below from AudioSubunit.
+            const auto* typed = static_cast<const Audio::AudioSubunit*>(subunit.get());
+            const ASFW::AVC::Cmd::SubunitPlugCounts counts{
+                typed->GetNumInputPlugs(), typed->GetNumOutputPlugs()};
+            model->plugs = counts;
+            model->plugsDiscovered = true;
+            subunit->SetPlugCounts(Subunit::PlugCounts{counts.destinationPlugs, counts.sourcePlugs});
+        }
+        // Camera and generic subunits remain explicitly unknown until their
+        // capability paths provide counts; do not add speculative wire probes.
+    }
+}
+
+void AVCUnit::BuildDiscoveredGraph() {
+    const Music::MusicSubunit* music = nullptr;
+    const Audio::AudioSubunit* audio = nullptr;
+    for (const auto& subunit : subunits_) {
+        if (subunit->GetType() == AVCSubunitType::kMusic && !music) {
+            music = static_cast<const Music::MusicSubunit*>(subunit.get());
+        } else if (subunit->GetType() == AVCSubunitType::kAudio && !audio) {
+            audio = static_cast<const Audio::AudioSubunit*>(subunit.get());
+        }
+    }
+    if (!music || !music->GetParsedStatus()) {
+        discoveredGraph_.reset();
+        return;
+    }
+
+    Graph::GraphBuildOptions options;
+    options.allowDefaultPlugSelection = false;
+    if (audio) options.audioSubunitId = audio->GetID();
+    if (auto device = device_.lock()) options.modelName = std::string(device->GetModelName());
+    discoveredGraph_ = std::make_shared<Graph::DeviceGraph>(Graph::AvcGraphBuilder::BuildGraph(
+        *music->GetParsedStatus(), audio && audio->GetIdentifier() ? &*audio->GetIdentifier() : nullptr, options));
+}
 
 void AVCUnit::ProbePlugs(std::function<void(bool)> completion) {
     auto completionState = Common::ShareCallback(std::move(completion));
@@ -672,6 +731,7 @@ void AVCUnit::OnBusReset(uint32_t newGeneration) {
     if (fcpTransport_) {
         fcpTransport_->OnBusReset(newGeneration);
     }
+    model_.identity = Identity();
 
     // v1: Keep cached state (subunits, plugs rarely change)
     // Caller can re-Initialize() if topology changed
@@ -685,6 +745,7 @@ void AVCUnit::OnRouteRevalidated() {
     if (fcpTransport_ && route.has_value()) {
         fcpTransport_->OnRouteRevalidated(*route);
     }
+    model_.identity = Identity();
 }
 
 //==============================================================================

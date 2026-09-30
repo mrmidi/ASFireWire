@@ -78,7 +78,7 @@ public:
 
     /// Read (Sub)unit Identifier Descriptor
     /// Spec: Section 6.2.1 - Type 0x00
-    /// Automatically performs direct read
+    /// Performs OPEN → READ → CLOSE for the identifier descriptor.
     void readUnitIdentifier(ReadCompletion completion);
 
     /// Read Status Descriptor (type 0x80) with proper OPEN→READ→CLOSE sequence

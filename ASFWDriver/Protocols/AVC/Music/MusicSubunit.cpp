@@ -252,7 +252,7 @@ void MusicSubunit::ParseCapabilities(AVCUnit& unit, std::function<void(bool)> co
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Standard descriptor access failed (result=%d). Trying Non-Standard Direct Read...", 
                            static_cast<int>(result.avcResult));
             
-            accessor->readComplete(specifier, [this, unitPtr, completion](const DescriptorAccessor::ReadDescriptorResult& fallbackResult) {
+            accessor->readComplete(specifier, [this, unitPtr, accessor, completion](const DescriptorAccessor::ReadDescriptorResult& fallbackResult) {
                 if (fallbackResult.success && !fallbackResult.data.empty()) {
                     ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Non-Standard Direct Read SUCCEEDED (%zu bytes)", fallbackResult.data.size());
                     statusDescriptorReadOk_ = true;
@@ -1009,7 +1009,7 @@ void MusicSubunit::ReadStatusDescriptor(AVCUnit& unit, std::function<void(bool)>
             ParseDescriptorBlock(result.data.data(), result.data.size());
             completion(true);
         } else {
-            accessor->readComplete(specifier, [this, completion](const DescriptorAccessor::ReadDescriptorResult& fallbackResult) {
+            accessor->readComplete(specifier, [this, unitPtr, accessor, completion](const DescriptorAccessor::ReadDescriptorResult& fallbackResult) {
                 if (fallbackResult.success && !fallbackResult.data.empty()) {
                     statusDescriptorReadOk_ = true;
                     statusDescriptorData_ = fallbackResult.data;

@@ -85,6 +85,7 @@ StreamGraph AvcGraphBuilder::BuildStreamGraph(
 
     if (rejectMap) {
         sg.usingFallbackMap = true;
+        sg.slotMapValidation = SlotMapValidation::kRejectedFallback;
         sg.slotMap = {}; // default identity
     } else if (!slots.empty()) {
         bool isIdentity = true;
@@ -100,10 +101,16 @@ StreamGraph AvcGraphBuilder::BuildStreamGraph(
                 sg.slotMap = {};
             } else {
                 sg.slotMap.channelCount = sg.channelCount;
+                sg.slotMapValidation = dataBlockSize > 0 ? SlotMapValidation::kValidated
+                                                         : SlotMapValidation::kNoDataBlockSize;
             }
         } else {
             sg.slotMap = {}; // default identity
+            sg.slotMapValidation = dataBlockSize > 0 ? SlotMapValidation::kValidated
+                                                     : SlotMapValidation::kNoDataBlockSize;
         }
+    } else if (dataBlockSize > 0) {
+        sg.slotMapValidation = SlotMapValidation::kValidated;
     }
 
     return sg;
@@ -121,7 +128,9 @@ DeviceGraph AvcGraphBuilder::BuildGraph(
     const Descriptors::MusicSubunitPlug* playbackPlug = nullptr;
     if (options.playbackSubunitDestPlugId.has_value()) {
         playbackPlug = musicStatus.FindPlug(*options.playbackSubunitDestPlugId, true);
-    } else {
+        if (playbackPlug) dg.playback.selectionEvidence = StreamSelectionEvidence::kSignalSourceInquiry;
+    } else if (options.allowDefaultPlugSelection) {
+        dg.playback.selectionEvidence = StreamSelectionEvidence::kDescriptorDefaultAssumption;
         // Default: find plug 0 or first destination plug
         playbackPlug = musicStatus.FindPlug(0, true);
         if (!playbackPlug) {
@@ -135,14 +144,18 @@ DeviceGraph AvcGraphBuilder::BuildGraph(
     }
 
     if (playbackPlug) {
+        const auto evidence = dg.playback.selectionEvidence;
         dg.playback = BuildStreamGraph(*playbackPlug, musicStatus, options.playbackDataBlockSize);
+        dg.playback.selectionEvidence = evidence;
     }
 
     // 2. Find Capture plug (source plug)
     const Descriptors::MusicSubunitPlug* capturePlug = nullptr;
     if (options.captureSubunitSourcePlugId.has_value()) {
         capturePlug = musicStatus.FindPlug(*options.captureSubunitSourcePlugId, false);
-    } else {
+        if (capturePlug) dg.capture.selectionEvidence = StreamSelectionEvidence::kSignalSourceInquiry;
+    } else if (options.allowDefaultPlugSelection) {
+        dg.capture.selectionEvidence = StreamSelectionEvidence::kDescriptorDefaultAssumption;
         // Default: find plug 0 or first source plug
         capturePlug = musicStatus.FindPlug(0, false);
         if (!capturePlug) {
@@ -156,24 +169,26 @@ DeviceGraph AvcGraphBuilder::BuildGraph(
     }
 
     if (capturePlug) {
+        const auto evidence = dg.capture.selectionEvidence;
         dg.capture = BuildStreamGraph(*capturePlug, musicStatus, options.captureDataBlockSize);
+        dg.capture.selectionEvidence = evidence;
     }
 
-    // 3. Discover clock sources
+    // Keep sync destinations separate from clock sources. A destination
+    // carrying sync content does not establish a selectable source.
     for (const auto& plug : musicStatus.plugs) {
-        if (plug.isDestination) {
-            for (const auto& cluster : plug.clusters) {
-                if (cluster.streamFormatCode == 0x40 || cluster.portType == 0x09) {
-                    ClockSourceInfo clk;
-                    clk.name = plug.name.empty() ? ("Sync Dest Plug " + std::to_string(plug.plugId))
-                                                 : plug.name;
-                    clk.subunitPlugId = plug.plugId;
-                    dg.clockSources.push_back(std::move(clk));
-                    break;
-                }
+        if (!plug.isDestination) continue;
+        for (const auto& cluster : plug.clusters) {
+            if (cluster.streamFormatCode == 0x40) {
+                dg.syncDestinations.push_back(SyncDestinationInfo{
+                    .subunitPlugId = plug.plugId,
+                    .name = plug.name,
+                });
+                break;
             }
         }
     }
+    dg.clockSources = options.confirmedClockSources;
 
     // 4. Function blocks and controls
     if (audioIdentifier) {
@@ -183,23 +198,33 @@ DeviceGraph AvcGraphBuilder::BuildGraph(
             cbi.id = fb.id;
             cbi.name = fb.name;
             cbi.channelCount = fb.clusterChannels;
-            cbi.masterControls = fb.masterControls;
-            cbi.channelControls = fb.channelControls;
+            cbi.advertisedMasterControls = fb.masterControls;
+            cbi.advertisedChannelControls = fb.channelControls;
             cbi.inputSources = fb.inputSources;
 
-            if (fb.type == Descriptors::AudioFunctionBlockType::kFeature) {
-                if (fb.generalTag == 1 || fb.name == "Mixer Output Level" || fb.name == "Master") {
-                    cbi.isMasterVolume = true;
-                }
+            if (fb.type == Descriptors::AudioFunctionBlockType::kSelector) {
+                dg.selectors.push_back(AudioSelectorInfo{
+                    .audioSubunitId = options.audioSubunitId,
+                    .functionBlockId = fb.id,
+                    .name = fb.name,
+                    .declaredInputs = fb.inputSources,
+                });
             }
 
-            // Register clock selectors as sync source options
-            if (fb.type == Descriptors::AudioFunctionBlockType::kSelector &&
-                (fb.name.find("Clock") != std::string::npos || fb.name.find("clock") != std::string::npos)) {
-                ClockSourceInfo clk;
-                clk.name = fb.name;
-                clk.subunitPlugId = 0xFF;
-                dg.clockSources.push_back(std::move(clk));
+            if (fb.type == Descriptors::AudioFunctionBlockType::kFeature) {
+                const auto confirmed = std::find_if(
+                    options.confirmedFeatureControls.begin(), options.confirmedFeatureControls.end(),
+                    [&fb, &options](const auto& item) {
+                        return item.audioSubunitId == options.audioSubunitId &&
+                               item.functionBlockId == fb.id;
+                    });
+                if (confirmed != options.confirmedFeatureControls.end()) {
+                    cbi.confirmedControls = confirmed->status;
+                }
+                cbi.isMasterVolume = fb.generalTag == 1 &&
+                    cbi.confirmedControls.state == FeatureStatusState::kConfirmed &&
+                    std::find(cbi.confirmedControls.master.begin(), cbi.confirmedControls.master.end(),
+                              ConfirmedFeatureControl::kVolume) != cbi.confirmedControls.master.end();
             }
 
             dg.controls.push_back(std::move(cbi));

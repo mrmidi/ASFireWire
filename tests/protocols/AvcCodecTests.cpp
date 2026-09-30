@@ -399,8 +399,9 @@ TEST(GeneralCommandsTests, VendorDependentBuildAndParse) {
     ASSERT_TRUE(resp.has_value());
     auto parsed = Cmd::RawVendorDependentOperands::Read(resp->operands);
     ASSERT_TRUE(parsed.has_value());
-    ASSERT_EQ(parsed->size(), 4u);
-    EXPECT_EQ((*parsed)[0], 0x01);
+    EXPECT_EQ(parsed->companyId, appleId);
+    ASSERT_EQ(parsed->payload.size(), 4u);
+    EXPECT_EQ(parsed->payload[0], 0x01);
 }
 
 // ===========================================================================
@@ -1186,14 +1187,16 @@ TEST(AvcReshapedTests, VendorDependentOwnsPayloadAndDecodesReply) {
     const uint8_t validReply[] = {0x00, 0x01, 0x02, 0x55, 0x66};
     auto parsed = command.Decode(validReply);
     ASSERT_TRUE(parsed.has_value());
-    ASSERT_EQ(parsed->size(), 2u);
-    EXPECT_EQ((*parsed)[0], 0x55);
+    EXPECT_EQ(parsed->companyId, (CompanyId{0x00, 0x01, 0x02}));
+    ASSERT_EQ(parsed->payload.size(), 2u);
+    EXPECT_EQ(parsed->payload[0], 0x55);
 
     // TASCAM replies with FF FF FF rather than its own company ID.
     const uint8_t tascamReply[] = {0xFF, 0xFF, 0xFF, 0x55, 0x66};
     auto tascamParsed = command.Decode(tascamReply);
     ASSERT_TRUE(tascamParsed.has_value());
-    EXPECT_EQ((*tascamParsed)[0], 0x55);
+    EXPECT_EQ(tascamParsed->companyId, (CompanyId{0xFF, 0xFF, 0xFF}));
+    EXPECT_EQ(tascamParsed->payload[0], 0x55);
 }
 
 TEST(AvcReshapedTests, IAvcUnit_StatusControlInquiryDispatch) {
@@ -1358,4 +1361,3 @@ TEST(AvcReshapedTests, DescriptorCommands_OpenAndRead) {
 }
 
 } // namespace ASFW::AVC::Test
-

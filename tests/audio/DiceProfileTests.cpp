@@ -16,8 +16,8 @@
 #include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
+#include "Audio/DriverKit/Config/AVC/BeBoBProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
-#include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 #include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
 namespace {
@@ -578,6 +578,52 @@ TEST(DiceProfileTests, DynamicBeBoBProfileServesUncuratedBeBoBDevices) {
         AudioProfileRegistry::FindProfile(0x0089AB, 0x000042, kUnknownBeBoBGuid);
     ASSERT_NE(fallback, nullptr);
     EXPECT_STREQ(fallback->Name(), "Generic DICE");
+}
+
+TEST(DiceProfileTests, BeBoBProfileUsesSeparateDirectionalFormationsAtCurrentRate) {
+    ASFW::Audio::BeBoB::DeviceModel model{};
+    model.currentRateHz = 96000U;
+    model.input.supportedFormations = {
+        {.rateCode = 0x04, .pcmChannels = 2, .midiSlots = 1},
+        {.rateCode = 0x05, .pcmChannels = 4, .midiSlots = 1},
+    };
+    model.output.supportedFormations = {
+        {.rateCode = 0x04, .pcmChannels = 6, .midiSlots = 2},
+        {.rateCode = 0x05, .pcmChannels = 8, .midiSlots = 0},
+    };
+
+    const ASFW::Isoch::Audio::AVC::Profiles::BeBoBProfile profile{model};
+    AudioStreamConfig tx{};
+    AudioStreamConfig rx{};
+    ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(tx));
+    ASSERT_TRUE(profile.BuildDefaultRxStreamConfig(rx));
+    EXPECT_EQ(tx.sampleRate, 96000U);
+    EXPECT_EQ(tx.pcmChannels, 4U);
+    EXPECT_EQ(tx.dbs, 5U);
+    EXPECT_EQ(tx.midiSlots, 1U);
+    EXPECT_EQ(rx.sampleRate, 96000U);
+    EXPECT_EQ(rx.pcmChannels, 8U);
+    EXPECT_EQ(rx.dbs, 8U);
+    EXPECT_EQ(rx.midiSlots, 0U);
+    EXPECT_EQ(profile.SupportedSampleRates(), (std::vector<uint32_t>{48000U, 96000U}));
+}
+
+TEST(DiceProfileTests, BeBoBProfileRejectsStreamGeometryThatDoesNotFitDBS) {
+    ASFW::Audio::BeBoB::DeviceModel model{};
+    model.currentRateHz = 48000U;
+    model.input.supportedFormations = {
+        {.rateCode = 0x04, .pcmChannels = 200, .midiSlots = 100},
+    };
+    model.output.supportedFormations = {
+        {.rateCode = 0x04, .pcmChannels = 2, .midiSlots = 0},
+    };
+
+    const ASFW::Isoch::Audio::AVC::Profiles::BeBoBProfile profile{model};
+    AudioStreamConfig tx{};
+    AudioStreamConfig rx{};
+    EXPECT_FALSE(profile.BuildDefaultTxStreamConfig(tx));
+    ASSERT_TRUE(profile.BuildDefaultRxStreamConfig(rx));
+    EXPECT_EQ(rx.dbs, 2U);
 }
 
 TEST(DiceProfileTests, ResolvesMackieOnyx820iAsymmetricProfileNotGenericDice) {

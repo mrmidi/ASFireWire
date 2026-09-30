@@ -37,6 +37,7 @@ enum class AvcErrorKind : uint8_t {
     kBusReset,             ///< Bus reset occurred during command execution.
     kTransportError,       ///< Async 1394 transport failure.
     kRefused,              ///< Refused by command allowlist/policy.
+    kBusy,                 ///< Command could not be admitted because another is pending.
 };
 
 struct AvcError {
@@ -82,6 +83,8 @@ using Expected = std::expected<T, AvcError>;
             return kIOReturnBadArgument;
         case AvcErrorKind::kUnsupported:
             return kIOReturnUnsupported;
+        case AvcErrorKind::kBusy:
+            return kIOReturnBusy;
         case AvcErrorKind::kNotAResponse:
         case AvcErrorKind::kAddressMismatch:
         case AvcErrorKind::kOpcodeMismatch:

@@ -358,8 +358,69 @@ TEST(BridgeCoReadOnlyProbeTests, ResolvesAgreedRateAndSupportedRates) {
     model.output.supportedFormations.push_back(StreamFormation{.rateCode = 0x03});
     model.output.supportedFormations.push_back(StreamFormation{.rateCode = 0x04});
 
-    const std::vector<uint32_t> expectedRates = {32000U, 44100U, 48000U};
+    // The generic duplex path may advertise only rates both directions support.
+    const std::vector<uint32_t> expectedRates = {44100U};
     EXPECT_EQ(model.SupportedRatesHz(), expectedRates);
+}
+
+TEST(BridgeCoReadOnlyProbeTests, SelectsAsymmetricGeometryAtTheAgreedHighRate) {
+    using ASFW::Audio::BeBoB::DeviceModel;
+    using ASFW::Audio::BeBoB::StreamFormation;
+
+    DeviceModel model;
+    model.currentRateHz = 96000U;
+    model.input.supportedFormations = {
+        StreamFormation{.rateCode = 0x04, .pcmChannels = 2, .midiSlots = 1},
+        StreamFormation{.rateCode = 0x05, .pcmChannels = 4, .midiSlots = 1},
+    };
+    model.output.supportedFormations = {
+        StreamFormation{.rateCode = 0x04, .pcmChannels = 6, .midiSlots = 2},
+        StreamFormation{.rateCode = 0x05, .pcmChannels = 8, .midiSlots = 0},
+    };
+
+    EXPECT_EQ(model.SupportedRatesHz(), (std::vector<uint32_t>{48000U, 96000U}));
+    EXPECT_EQ(model.SelectDuplexRateHz(), 96000U);
+    const auto playback = model.InputFormationAtRate(96000U);
+    const auto capture = model.OutputFormationAtRate(96000U);
+    ASSERT_TRUE(playback.has_value());
+    ASSERT_TRUE(capture.has_value());
+    EXPECT_EQ(playback->pcmChannels, 4U);
+    EXPECT_EQ(playback->midiSlots, 1U);
+    EXPECT_EQ(capture->pcmChannels, 8U);
+    EXPECT_EQ(capture->midiSlots, 0U);
+}
+
+TEST(BridgeCoReadOnlyProbeTests, DoesNotInventGeometryForUnsupportedCurrentRate) {
+    using ASFW::Audio::BeBoB::DeviceModel;
+    using ASFW::Audio::BeBoB::StreamFormation;
+
+    DeviceModel model;
+    model.currentRateHz = 176400U;
+    model.input.supportedFormations.push_back(
+        StreamFormation{.rateCode = 0x05, .pcmChannels = 4, .midiSlots = 1});
+    model.output.supportedFormations.push_back(
+        StreamFormation{.rateCode = 0x05, .pcmChannels = 8, .midiSlots = 0});
+
+    EXPECT_EQ(model.SupportedRatesHz(), (std::vector<uint32_t>{96000U}));
+    EXPECT_FALSE(model.SelectDuplexRateHz().has_value());
+}
+
+TEST(BridgeCoReadOnlyProbeTests, ConflictingDirectionalCurrentRatesAreUnavailable) {
+    using ASFW::Audio::BeBoB::DeviceModel;
+    using ASFW::Audio::BeBoB::StreamFormation;
+
+    DeviceModel model;
+    model.currentRateHz = 48000U;
+    model.input.activeRateHz = 48000U;
+    model.output.activeRateHz = 96000U;
+    model.input.supportedFormations = {
+        StreamFormation{.rateCode = 0x04, .pcmChannels = 2},
+        StreamFormation{.rateCode = 0x05, .pcmChannels = 4},
+    };
+    model.output.supportedFormations = model.input.supportedFormations;
+
+    EXPECT_FALSE(model.CurrentRateHz().has_value());
+    EXPECT_FALSE(model.SelectDuplexRateHz().has_value());
 }
 
 } // namespace

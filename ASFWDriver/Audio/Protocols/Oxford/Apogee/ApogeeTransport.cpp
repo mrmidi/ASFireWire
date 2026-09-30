@@ -8,6 +8,7 @@
 #include "../../../../Common/CallbackUtils.hpp"
 #include "../../../../Logging/Logging.hpp"
 #include "../../../../Protocols/AVC/Commands/GeneralCommands.hpp"
+#include "../../../../Protocols/AVC/Core/AvcError.hpp"
 #include "../../../../Protocols/AVC/Core/IAvcUnit.hpp"
 
 #include <algorithm>
@@ -43,27 +44,31 @@ void Send(AVC::IAvcUnit* transport,
 
     AVC::CompanyId oui{operands[0], operands[1], operands[2]};
     std::span<const uint8_t> payload{operands.data() + 3, operands.size() - 3};
-    AVC::Cmd::RawVendorDependentOperands vendorOps(oui, payload);
-    AVC::Cmd::RawVendorDependentCommand cmd{.operands = vendorOps};
+    AVC::Cmd::RawVendorDependentCommand cmd{
+        .operands = AVC::Cmd::RawVendorDependentOperands(oui, payload)};
 
     ASFW_LOG_INFO(Oxfw, "vendor %{public}s code=0x%02x",
                   isStatus ? "STATUS" : "CONTROL",
                   static_cast<unsigned>(command.code));
 
-    auto completion = [callbackState, command, isStatus](AVC::Expected<std::vector<uint8_t>> res) {
+    auto completion = [callbackState, command, isStatus](
+        AVC::Expected<AVC::Cmd::RawVendorDependentReply> res) {
         if (!res) {
             ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: AV/C command failed error=%u",
                            static_cast<unsigned>(command.code), static_cast<unsigned>(res.error().kind));
-            Common::InvokeSharedCallback(callbackState, kIOReturnError, command);
+            Common::InvokeSharedCallback(callbackState, AVC::ToIOReturn(res.error()), command);
             return;
         }
 
         ApogeeVendorCommand parsed = command;
         if (isStatus) {
-            if (!parsed.ParseStatusPayload(*res)) {
+            if (!parsed.ParseStatusPayload(res->companyId, res->payload)) {
                 ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: status parse failed",
                                static_cast<unsigned>(command.code));
-                Common::InvokeSharedCallback(callbackState, kIOReturnBadMessageID, command);
+                Common::InvokeSharedCallback(
+                    callbackState,
+                    AVC::ToIOReturn(AVC::AvcError::Of(AVC::AvcErrorKind::kMalformedOperands)),
+                    command);
                 return;
             }
         }

@@ -20,6 +20,7 @@
 
 #include "ApogeeCaps.hpp"
 #include "../OxfwVendorDependent.hpp"
+#include "../../../../Protocols/AVC/Core/AvcTypes.hpp"
 
 namespace ASFW::Audio::Oxford::Apogee {
 
@@ -93,6 +94,14 @@ struct ApogeeVendorCommand {
     /// Validate and decode a status response into this command's value fields.
     /// Returns false - never a partially-filled command - on any mismatch.
     [[nodiscard]] bool ParseStatusPayload(std::span<const uint8_t> payload);
+
+    /// Decode operands returned by a VENDOR-DEPENDENT command codec that keeps
+    /// the echoed company ID separate from its vendor payload. The returned
+    /// company ID is checked as received; it is never reconstructed from the
+    /// request. The OUI and PCM prefix are cross-validated with the local ALSA
+    /// behavioral reference, protocols/oxfw/src/apogee.rs:127,870-871.
+    [[nodiscard]] bool ParseStatusPayload(::ASFW::AVC::CompanyId companyId,
+                                          std::span<const uint8_t> payload);
 
     /// The params diff engine (FW-128) compares whole commands, so equality must
     /// cover every value field rather than just the code. Every factory above

@@ -45,9 +45,11 @@ public:
     [[nodiscard]] AudioStreamTxPolicy TxStreamPolicy() const noexcept override;
 
 private:
-    uint32_t pcmChannels_{0};
-    uint32_t midiSlots_{0};
-    uint32_t sampleRateHz_{48000};
+    uint32_t txPcmChannels_{0};
+    uint32_t txMidiSlots_{0};
+    uint32_t rxPcmChannels_{0};
+    uint32_t rxMidiSlots_{0};
+    uint32_t sampleRateHz_{0};
     std::vector<uint32_t> supportedRates_;
 };
 

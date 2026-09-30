@@ -16,6 +16,7 @@
 #include "ASFWDriver/Protocols/AVC/Extensions/BridgeCoPlugInfo.hpp"
 #include "RecordingFireWireBus.hpp"
 #include "SimulatedAvcUnit.hpp"
+#include "Phase88DescriptorFixtures.hpp"
 
 namespace ASFW::AVC::Testing {
 
@@ -121,15 +122,16 @@ TEST_F(AvcSimulatedUnitTests, Phase88MasterVolumeControlCall) {
 
 TEST_F(AvcSimulatedUnitTests, DuetPcmVendorCall) {
     const uint8_t pcm[] = {0x50, 0x43, 0x4D, 0x15, 0x80, 0xFF};
-    std::optional<Expected<std::vector<uint8_t>>> vendorReply;
+    std::optional<Expected<Cmd::RawVendorDependentReply>> vendorReply;
     duetUnit_.Status(Cmd::RawVendorDependentCommand{
         .operands = Cmd::RawVendorDependentOperands({0x00, 0x03, 0xDB}, pcm),
-    }, [&](Expected<std::vector<uint8_t>> reply) { vendorReply = reply; });
+    }, [&](Expected<Cmd::RawVendorDependentReply> reply) { vendorReply = reply; });
     ASSERT_TRUE(vendorReply && vendorReply->has_value());
-    ASSERT_GE((*vendorReply)->size(), 3u);
-    EXPECT_EQ((*vendorReply)->at(0), 0x50);
-    EXPECT_EQ((*vendorReply)->at(1), 0x43);
-    EXPECT_EQ((*vendorReply)->at(2), 0x4D);
+    EXPECT_EQ((*vendorReply)->companyId, (CompanyId{0x00, 0x03, 0xDB}));
+    ASSERT_GE((*vendorReply)->payload.size(), 3u);
+    EXPECT_EQ((*vendorReply)->payload[0], 0x50);
+    EXPECT_EQ((*vendorReply)->payload[1], 0x43);
+    EXPECT_EQ((*vendorReply)->payload[2], 0x4D);
 }
 
 TEST_F(AvcSimulatedUnitTests, SignalFormatStatusCall) {
@@ -164,6 +166,57 @@ TEST_F(AvcSimulatedUnitTests, Phase88StreamFormatQuery) {
     auto singleFmt = Cmd::StreamFormatOperands{}.Read((*rawResponse)->operands);
     ASSERT_TRUE(singleFmt.has_value());
     EXPECT_EQ(singleFmt->format.compound.rate, StreamFormatRate::k48000);
+}
+
+TEST_F(AvcSimulatedUnitTests, Phase88AudioDescriptorTraversalUsesSessionsAndRetainsDeferredOwners) {
+    phase88Unit_.SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
+    phase88Unit_.SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
+    phase88Unit_.SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
+
+    // The simulator requires OPEN before READ and defers each response, so every
+    // chunk and nested descriptor callback runs after its submitting frame returns.
+    Protocols::AVC::DescriptorAccessor unopened(phase88Unit_, SubunitAddress::FromByte(0x08));
+    std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> unopenedResult;
+    unopened.readComplete(Protocols::AVC::DescriptorSpecifier::forUnitIdentifier(),
+        [&](const auto& result) { unopenedResult = result; });
+    ASSERT_TRUE(unopenedResult.has_value());
+    EXPECT_FALSE(unopenedResult->success);
+
+    phase88Unit_.SetDeferredResponses(true);
+    Protocols::AVC::Audio::AudioSubunit audio(Protocols::AVC::AVCSubunitType::kAudio, 0);
+    std::optional<bool> completed;
+    audio.ReadIdentifierDescriptor(phase88Unit_, [&](bool ok) { completed = ok; });
+    for (size_t i = 0; i < 80 && !completed; ++i) {
+        phase88Unit_.FlushDeferredResponses();
+    }
+    ASSERT_TRUE(completed.has_value());
+    EXPECT_TRUE(*completed);
+    ASSERT_TRUE(audio.GetIdentifier().has_value());
+    const auto* master = audio.GetIdentifier()->FindBlock(
+        Descriptors::AudioFunctionBlockType::kFeature, 1);
+    ASSERT_NE(master, nullptr);
+    EXPECT_EQ(master->name, "Mixer Output Level");
+    const auto* input = audio.GetIdentifier()->FindBlock(
+        Descriptors::AudioFunctionBlockType::kFeature, 2);
+    ASSERT_NE(input, nullptr);
+    EXPECT_EQ(input->name, "Mixer Input LineIn 1/2 Level");
+    phase88Unit_.SetDeferredResponses(false);
+}
+
+TEST_F(AvcSimulatedUnitTests, DescriptorReadRejectsPrematureEmptyChunk) {
+    phase88Unit_.SetDescriptor(0x08, {0x10, 0x12, 0x34},
+                               {0x00, 0x14, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00});
+    Protocols::AVC::DescriptorAccessor accessor(phase88Unit_, SubunitAddress::FromByte(0x08));
+    auto specifier = Protocols::AVC::DescriptorSpecifier{
+        .type = Protocols::AVC::DescriptorSpecifierType::kListID,
+        .typeSpecificFields = {0x12, 0x34},
+    };
+    std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> result;
+    accessor.readWithOpenCloseSequence(specifier,
+        [&](const auto& read) { result = read; });
+    ASSERT_TRUE(result.has_value());
+    EXPECT_FALSE(result->success);
+    EXPECT_EQ(result->avcResult, Protocols::AVC::AVCResult::kInvalidResponse);
 }
 
 TEST_F(AvcSimulatedUnitTests, FaultKnobs_TimeoutAndInterimAndRejections) {

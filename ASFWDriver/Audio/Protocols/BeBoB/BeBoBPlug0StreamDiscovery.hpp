@@ -105,6 +105,10 @@ struct DeviceModel {
     }
 
     [[nodiscard]] std::optional<uint32_t> CurrentRateHz() const noexcept {
+        if (input.activeRateHz.has_value() && output.activeRateHz.has_value() &&
+            input.activeRateHz != output.activeRateHz) {
+            return std::nullopt;
+        }
         if (currentRateHz.has_value()) {
             return currentRateHz;
         }
@@ -133,15 +137,43 @@ struct DeviceModel {
         };
         for (const auto& formation : input.supportedFormations) {
             if (const auto hz = formation.RateHz()) {
-                addRate(*hz);
-            }
-        }
-        for (const auto& formation : output.supportedFormations) {
-            if (const auto hz = formation.RateHz()) {
-                addRate(*hz);
+                const bool outputSupports = std::any_of(
+                    output.supportedFormations.begin(), output.supportedFormations.end(),
+                    [hz](const StreamFormation& candidate) { return candidate.RateHz() == hz; });
+                if (outputSupports) addRate(*hz);
             }
         }
         return rates;
+    }
+
+    [[nodiscard]] std::optional<StreamFormation> InputFormationAtRate(uint32_t rateHz) const noexcept {
+        return FormationAtRate(input, rateHz);
+    }
+
+    [[nodiscard]] std::optional<StreamFormation> OutputFormationAtRate(uint32_t rateHz) const noexcept {
+        return FormationAtRate(output, rateHz);
+    }
+
+    /// Return the currently reported rate only when both directions have a
+    /// formation for it. If no current rate is known, select the first duplex
+    /// rate advertised by both directions. A known but unsupported current rate
+    /// leaves geometry unavailable instead of silently substituting another rate.
+    [[nodiscard]] std::optional<uint32_t> SelectDuplexRateHz() const noexcept {
+        // Conflicting reports mean the device has no trustworthy duplex clock.
+        // Do not turn that disagreement into an apparently valid advertised rate.
+        if ((input.activeRateHz.has_value() && output.activeRateHz.has_value() &&
+             input.activeRateHz != output.activeRateHz) ||
+            HasConflictingCurrentRateCodes()) {
+            return std::nullopt;
+        }
+        if (const auto current = CurrentRateHz()) {
+            return InputFormationAtRate(*current).has_value() &&
+                           OutputFormationAtRate(*current).has_value()
+                       ? current
+                       : std::nullopt;
+        }
+        const auto rates = SupportedRatesHz();
+        return rates.empty() ? std::nullopt : std::optional<uint32_t>{rates.front()};
     }
 
     /// True when both host-to-device and device-to-host ISO plug 0 advertise
@@ -155,15 +187,33 @@ struct DeviceModel {
             return false;
         }
 
-        const auto supports = [pcmChannels, midiSlots](const IsochronousPlugModel& plug) {
-            for (const auto& formation : plug.supportedFormations) {
-                if (formation.pcmChannels == pcmChannels && formation.midiSlots == midiSlots) {
+        for (const auto& in : input.supportedFormations) {
+            if (in.pcmChannels != pcmChannels || in.midiSlots != midiSlots) continue;
+            for (const auto& out : output.supportedFormations) {
+                if (out.rateCode == in.rateCode && out.pcmChannels == pcmChannels &&
+                    out.midiSlots == midiSlots) {
                     return true;
                 }
             }
-            return false;
-        };
-        return supports(input) && supports(output);
+        }
+        return false;
+    }
+
+private:
+    [[nodiscard]] bool HasConflictingCurrentRateCodes() const noexcept {
+        const auto inputRate = input.currentFormat.has_value() ? input.currentFormat->formation : std::nullopt;
+        const auto outputRate = output.currentFormat.has_value() ? output.currentFormat->formation : std::nullopt;
+        return inputRate.has_value() && outputRate.has_value() &&
+               inputRate->rateCode != outputRate->rateCode;
+    }
+
+    [[nodiscard]] static std::optional<StreamFormation> FormationAtRate(
+        const IsochronousPlugModel& plug, uint32_t rateHz) noexcept {
+        const auto found = std::find_if(
+            plug.supportedFormations.begin(), plug.supportedFormations.end(),
+            [rateHz](const StreamFormation& formation) { return formation.RateHz() == rateHz; });
+        return found == plug.supportedFormations.end() ? std::nullopt
+                                                       : std::optional<StreamFormation>{*found};
     }
 };
 

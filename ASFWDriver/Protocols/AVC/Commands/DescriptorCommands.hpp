@@ -178,15 +178,25 @@ struct ReadDescriptorOperands {
         const auto status = static_cast<ReadResultStatus>(in[specLen]);
         const uint16_t repLen = (static_cast<uint16_t>(in[specLen + 2]) << 8) | in[specLen + 3];
         const uint16_t repOff = (static_cast<uint16_t>(in[specLen + 4]) << 8) | in[specLen + 5];
+        if (repOff != offset) {
+            return Fail(AvcErrorKind::kMalformedOperands);
+        }
 
         const std::span<const uint8_t> payload = in.subspan(headerLen);
-        const size_t actualDataLen = std::min(static_cast<size_t>(repLen), payload.size());
+        if (payload.size() != static_cast<size_t>(repLen)) {
+            return Fail(AvcErrorKind::kMalformedOperands);
+        }
+        if (status != ReadResultStatus::kComplete &&
+            status != ReadResultStatus::kMoreToRead &&
+            status != ReadResultStatus::kDataLengthTooLarge) {
+            return Fail(AvcErrorKind::kMalformedOperands);
+        }
 
         return Reply{
             .status = status,
             .reportedLength = repLen,
             .reportedOffset = repOff,
-            .data = payload.subspan(0, actualDataLen),
+            .data = payload,
         };
     }
 };

@@ -157,6 +157,7 @@ add_device_test(DuplexStreamProfileTests
 add_device_test(BeBoBProtocolTests
     BeBoBProtocolTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/GenericBeBoBProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/MAudioSpecialProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"

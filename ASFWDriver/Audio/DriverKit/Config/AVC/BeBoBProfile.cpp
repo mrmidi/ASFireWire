@@ -9,24 +9,25 @@
 #include "BeBoBProfile.hpp"
 
 #include <algorithm>
+#include <limits>
 
 namespace ASFW::Isoch::Audio::AVC::Profiles {
 
 BeBoBProfile::BeBoBProfile(const ::ASFW::Audio::BeBoB::DeviceModel& discoveryModel) {
-    // Derive geometry from the first duplex formation.
-    if (!discoveryModel.input.supportedFormations.empty()) {
-        const auto& formation = discoveryModel.input.supportedFormations[0];
-        pcmChannels_ = formation.pcmChannels;
-        midiSlots_ = formation.midiSlots;
-        sampleRateHz_ = formation.RateHz().value_or(0U);
-    }
-
     supportedRates_ = discoveryModel.SupportedRatesHz();
-    if (const auto currentHz = discoveryModel.CurrentRateHz()) {
-        sampleRateHz_ = *currentHz;
-    } else if (sampleRateHz_ == 0 && !supportedRates_.empty()) {
-        sampleRateHz_ = supportedRates_[0];
+    const auto selectedRate = discoveryModel.SelectDuplexRateHz();
+    if (!selectedRate) {
+        return;
     }
+    const auto playback = discoveryModel.InputFormationAtRate(*selectedRate);
+    const auto capture = discoveryModel.OutputFormationAtRate(*selectedRate);
+    if (!playback || !capture) return;
+
+    sampleRateHz_ = *selectedRate;
+    txPcmChannels_ = playback->pcmChannels;
+    txMidiSlots_ = playback->midiSlots;
+    rxPcmChannels_ = capture->pcmChannels;
+    rxMidiSlots_ = capture->midiSlots;
 }
 
 Encoding::AudioWireFormat BeBoBProfile::TxWireFormat() const noexcept {
@@ -38,12 +39,18 @@ Encoding::AudioWireFormat BeBoBProfile::RxWireFormat() const noexcept {
 }
 
 bool BeBoBProfile::BuildDefaultTxStreamConfig(AudioStreamConfig& outConfig) const noexcept {
+    if (sampleRateHz_ == 0 || txPcmChannels_ == 0 ||
+        txPcmChannels_ > std::numeric_limits<uint8_t>::max() ||
+        txMidiSlots_ > std::numeric_limits<uint8_t>::max() ||
+        txPcmChannels_ + txMidiSlots_ > std::numeric_limits<uint8_t>::max()) {
+        return false;
+    }
     outConfig.direction = AudioStreamDirection::HostToDevice;
     outConfig.sampleRate = sampleRateHz_;
     outConfig.streamMode = Encoding::StreamMode::kBlocking;
-    outConfig.pcmChannels = static_cast<uint8_t>(pcmChannels_);
-    outConfig.dbs = static_cast<uint8_t>(pcmChannels_ + midiSlots_);
-    outConfig.midiSlots = static_cast<uint8_t>(midiSlots_);
+    outConfig.pcmChannels = static_cast<uint8_t>(txPcmChannels_);
+    outConfig.dbs = static_cast<uint8_t>(txPcmChannels_ + txMidiSlots_);
+    outConfig.midiSlots = static_cast<uint8_t>(txMidiSlots_);
     outConfig.framesPerDataPacket = 8;
     outConfig.fdf = 0x02;
     outConfig.fmt = 0x10;
@@ -51,12 +58,18 @@ bool BeBoBProfile::BuildDefaultTxStreamConfig(AudioStreamConfig& outConfig) cons
 }
 
 bool BeBoBProfile::BuildDefaultRxStreamConfig(AudioStreamConfig& outConfig) const noexcept {
+    if (sampleRateHz_ == 0 || rxPcmChannels_ == 0 ||
+        rxPcmChannels_ > std::numeric_limits<uint8_t>::max() ||
+        rxMidiSlots_ > std::numeric_limits<uint8_t>::max() ||
+        rxPcmChannels_ + rxMidiSlots_ > std::numeric_limits<uint8_t>::max()) {
+        return false;
+    }
     outConfig.direction = AudioStreamDirection::DeviceToHost;
     outConfig.sampleRate = sampleRateHz_;
     outConfig.streamMode = Encoding::StreamMode::kBlocking;
-    outConfig.pcmChannels = static_cast<uint8_t>(pcmChannels_);
-    outConfig.dbs = static_cast<uint8_t>(pcmChannels_ + midiSlots_);
-    outConfig.midiSlots = static_cast<uint8_t>(midiSlots_);
+    outConfig.pcmChannels = static_cast<uint8_t>(rxPcmChannels_);
+    outConfig.dbs = static_cast<uint8_t>(rxPcmChannels_ + rxMidiSlots_);
+    outConfig.midiSlots = static_cast<uint8_t>(rxMidiSlots_);
     outConfig.framesPerDataPacket = 8;
     outConfig.fdf = 0x02;
     outConfig.fmt = 0x10;
