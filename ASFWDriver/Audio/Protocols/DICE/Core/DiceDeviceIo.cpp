@@ -101,6 +101,20 @@ std::expected<void, IOReturn> DiceDeviceIo::WriteQuad(uint32_t offset, uint32_t 
     return {};
 }
 
+std::expected<void, IOReturn> DiceDeviceIo::WriteBlock(uint32_t offset,
+                                                       std::span<const uint8_t> bytes) {
+    const auto result = Run<NoValue>("WriteBlock", [&](auto pending) {
+        (void)io_.WriteBlock(MakeDICEAddress(offset), bytes,
+                             [pending](Async::AsyncStatus status) {
+                                 pending->Complete(MapStatus(status), NoValue{});
+                             });
+    });
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    return {};
+}
+
 std::expected<uint64_t, IOReturn> DiceDeviceIo::CompareSwap64(uint32_t offset,
                                                               uint64_t expected,
                                                               uint64_t desired) {
@@ -115,6 +129,14 @@ std::expected<uint64_t, IOReturn> DiceDeviceIo::CompareSwap64(uint32_t offset,
 std::expected<GeneralSections, IOReturn> DiceDeviceIo::ReadGeneralSections() {
     return Run<GeneralSections>("ReadGeneralSections", [&](auto pending) {
         transaction_.ReadGeneralSections([pending](IOReturn status, GeneralSections sections) {
+            pending->Complete(status, sections);
+        });
+    });
+}
+
+std::expected<ExtensionSections, IOReturn> DiceDeviceIo::ReadExtensionSections() {
+    return Run<ExtensionSections>("ReadExtensionSections", [&](auto pending) {
+        transaction_.ReadExtensionSections([pending](IOReturn status, ExtensionSections sections) {
             pending->Complete(status, sections);
         });
     });

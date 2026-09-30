@@ -66,6 +66,7 @@ enum class DeviceDefinitionId : uint32_t {
     PreSonusFireStudioProject,
     RmeFireface400,
     RmeFireface800,
+    AvidMboxPro,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -158,7 +159,8 @@ enum class ProfileBuilderId : uint16_t {
     // device installs, publishes a nub, and then Start() rejects the profile
     // with a bare kIOReturnBadArgument. Extend the enum above this line and the
     // bounds follow.
-    kLastValid = RmeFireface800,
+    AvidMboxPro,
+    kLastValid = AvidMboxPro,
 };
 
 /// Concrete protocol class chosen by the catalog. This is deliberately

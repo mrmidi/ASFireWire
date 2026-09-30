@@ -22,6 +22,7 @@
 #include <atomic>
 #include <cstdint>
 #include <expected>
+#include <span>
 #include <vector>
 
 namespace ASFW::Audio::DICE {
@@ -43,12 +44,19 @@ public:
     [[nodiscard]] std::expected<std::vector<uint8_t>, IOReturn> ReadBlock(uint32_t offset,
                                                                          uint32_t length);
     [[nodiscard]] std::expected<void, IOReturn> WriteQuad(uint32_t offset, uint32_t value);
+    // Block write, big-endian payload as handed in. The TCAT router program is
+    // the only caller: it is one count quadlet followed by one quadlet per
+    // entry, and writing it quadlet by quadlet would leave the device holding a
+    // half-written table between transactions.
+    [[nodiscard]] std::expected<void, IOReturn> WriteBlock(uint32_t offset,
+                                                           std::span<const uint8_t> bytes);
     // Returns the previous value; the swap happened only if it equals `expected`.
     [[nodiscard]] std::expected<uint64_t, IOReturn> CompareSwap64(uint32_t offset,
                                                                   uint64_t expected,
                                                                   uint64_t desired);
 
     [[nodiscard]] std::expected<GeneralSections, IOReturn> ReadGeneralSections();
+    [[nodiscard]] std::expected<ExtensionSections, IOReturn> ReadExtensionSections();
     // Full GLOBAL section (reference-parity read size).
     [[nodiscard]] std::expected<GlobalState, IOReturn> ReadGlobalStateFull(const GeneralSections& sections);
     // Leading GLOBAL fields only.

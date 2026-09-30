@@ -115,8 +115,8 @@ TEST(DiceProfileEquivalence, EveryDiceBuilderAnswersAsRecorded) {
         ASFW::Testing::ExpectMatchesGolden(trace, "dice-profiles/builder-" + std::to_string(id) + ".txt");
         ++dumped;
     }
-    // The eleven DICE builders the catalog names today.
-    EXPECT_EQ(dumped, 11U);
+    // The twelve DICE builders the catalog names today.
+    EXPECT_EQ(dumped, 12U);
 }
 
 TEST(DiceProfileEquivalence, TheGenericFallbackAnswersAsRecorded) {

@@ -5,6 +5,7 @@
 
 #include "FamilyProtocolConstruction.hpp"
 
+#include "DICE/Avid/AvidMboxProRouting.hpp"
 #include "DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "DICE/TCAT/DICETcatProtocol.hpp"
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
@@ -88,6 +89,29 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // The plain TCAT devices differ in their profile, not their protocol:
         // geometry comes from the device's own registers either way.
         case ProtocolImplementationId::DiceTcat:
+            // The Avid Mbox Pro is a generic TCAT device in every respect but
+            // one: it powers up with no usable router program and passes
+            // nothing to its analog stage until a host writes one, so it
+            // carries a startup program the other TCAT devices do not need.
+            if (plan.profileBuilder ==
+                DeviceProfiles::Audio::ProfileBuilderId::AvidMboxPro) {
+                ASFW_LOG(DICE,
+                         "Creating Avid Mbox Pro DICETcatProtocol node=0x%04x unitOffset=%u "
+                         "with %u startup router entries",
+                         nodeId, plan.unit.unitDirectoryOffset,
+                         DICE::Avid::MboxProRouting::kRouterEntryCount);
+                return std::make_unique<DICE::TCAT::DICETcatProtocol>(
+                    busOps, busInfo, routeRegistry, route, irmClient,
+                    DICE::DriverKitWaitClock::Shared(), diceNotifications,
+                    DICE::TCAT::DICETcatRuntimePolicy{
+                        .startupRouterEntries = DICE::Avid::MboxProRouting::kRouterEntries,
+                        .startupRouterEntryCount = DICE::Avid::MboxProRouting::kRouterEntryCount,
+                        .startupMixerCells =
+                            DICE::Avid::MboxProRouting::kStartupMixerCoefficients,
+                        .startupMixerCellCount =
+                            DICE::Avid::MboxProRouting::kStartupMixerCoefficientCount,
+                    });
+            }
             ASFW_LOG(DICE,
                      "Creating generic DICETcatProtocol node=0x%04x unitOffset=%u",
                      nodeId, plan.unit.unitDirectoryOffset);

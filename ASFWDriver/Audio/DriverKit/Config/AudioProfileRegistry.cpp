@@ -84,6 +84,7 @@ DiceProfile gFocusriteProfile{{.name = "Focusrite Saffire (DICE)",
                                .outputLatency1x = 52}};
 DiceProfile gFocusritePro40Profile{{.name = "Focusrite Saffire Pro 40"}};
 DiceProfile gMidasVeniceProfile{{.name = "Midas Venice F (DICE)", .rangeMembers = kVeniceMembers}};
+DiceProfile gAvidMboxProProfile{{.name = "Avid Mbox Pro (DICE)"}};
 DiceProfile gPreSonusStudioLiveProfile{{.name = "PreSonus StudioLive 16.0.2 (DICE)"}};
 DiceProfile gPreSonusStudioLive2442Profile{{.name = "PreSonus StudioLive 24.4.2 (DICE)"}};
 DiceProfile gPreSonusFireStudioProjectProfile{{.name = "PreSonus FireStudio Project (DICE)"}};
@@ -132,6 +133,8 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
             return &gAlesisMultiMixProfile;
         case Builder::MidasVeniceF32:
             return &gMidasVeniceProfile;
+        case Builder::AvidMboxPro:
+            return &gAvidMboxProProfile;
         case Builder::PreSonusStudioLive1602:
             return &gPreSonusStudioLiveProfile;
         case Builder::PreSonusStudioLive2442:
@@ -212,6 +215,7 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         case Builder::WeissInt203:
         case Builder::AlesisMultiMix:
         case Builder::MidasVeniceF32:
+        case Builder::AvidMboxPro:
         case Builder::PreSonusStudioLive1602:
         case Builder::PreSonusStudioLive2442:
         case Builder::PreSonusFireStudioProject:
