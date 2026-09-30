@@ -26,6 +26,8 @@ const char* DirectAudioReceiveConsumer::ReplayResetReasonName(
             return "syt-cadence-rejected";
         case ReplayResetReason::kClockAnchorRejected:
             return "clock-anchor-rejected";
+        case ReplayResetReason::kTransmitClockRebase:
+            return "transmit-clock-rebase";
     }
     return "unknown";
 }
@@ -85,6 +87,7 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     secondaryAnchorEpoch_ = 0;
     absoluteFrameCursor_ = 0;
     cursorInitialized_ = false;
+    primeCaptureDelayLine_ = false;
     drainBusWraps_ = 0;
     lastDrainOffsets_ = -1;
     ztsPublishCount_ = 0;
@@ -238,12 +241,16 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         return;
     }
 
+    const bool primeDelayLine = primeCaptureDelayLine_;
     const RxAudioPacketProcessorResult result = processor_.ProcessPacket(
         packet.payload.data(), packet.payload.size(),
         absoluteFrameCursor_, channels,
         *payloadCodec_, configuration_.channelOffset,
         !configuration_.isSecondary, configuration_.captureChannelMap,
-        false, configuration_.framing);
+        primeDelayLine, configuration_.framing);
+    if (primeDelayLine && result.framesDecoded != 0) {
+        primeCaptureDelayLine_ = false;
+    }
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {
@@ -316,6 +323,30 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     }
 
     ++timestampValidCount_;
+    // Derived before any frame-numbered bookkeeping is published, because the
+    // Transmit-clock anchoring re-bases the frame cursor and every record built
+    // after it must already carry the corrected numbering.
+    uint64_t packetHostTicks = batch.drainHostTicks;
+    if (timestamp.ageTicks >= 0) {
+        const uint64_t ageHostTicks = ::ASFW::Timing::nanosToHostTicks(
+            ::ASFW::Isoch::Rx::FireWireTicksToNanos(
+                static_cast<uint64_t>(timestamp.ageTicks)));
+        packetHostTicks = batch.drainHostTicks > ageHostTicks
+            ? batch.drainHostTicks - ageHostTicks
+            : batch.drainHostTicks;
+    } else {
+        ++negativeAgeCount_;
+        if (-timestamp.ageTicks >=
+            static_cast<int64_t>(::ASFW::Timing::kTicksPerCycle)) {
+            ++largeNegativeAgeCount_;
+        }
+        packetHostTicks += ::ASFW::Timing::nanosToHostTicks(
+            ::ASFW::Isoch::Rx::FireWireTicksToNanos(
+                static_cast<uint64_t>(-timestamp.ageTicks)));
+    }
+
+    (void)AnchorCursorToTransmitClock(packet, result, packetHostTicks);
+
     const auto cycleFields = ::ASFW::Timing::decodeCycleTimer(timestamp.cycleTimer);
     const uint32_t cycleOrdinal = cycleFields.seconds * ::ASFW::Timing::kCyclesPerSecond +
         cycleFields.cycle;
@@ -430,25 +461,6 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         }
     }
 
-    uint64_t packetHostTicks = batch.drainHostTicks;
-    if (timestamp.ageTicks >= 0) {
-        const uint64_t ageHostTicks = ::ASFW::Timing::nanosToHostTicks(
-            ::ASFW::Isoch::Rx::FireWireTicksToNanos(
-                static_cast<uint64_t>(timestamp.ageTicks)));
-        packetHostTicks = batch.drainHostTicks > ageHostTicks
-            ? batch.drainHostTicks - ageHostTicks
-            : batch.drainHostTicks;
-    } else {
-        ++negativeAgeCount_;
-        if (-timestamp.ageTicks >=
-            static_cast<int64_t>(::ASFW::Timing::kTicksPerCycle)) {
-            ++largeNegativeAgeCount_;
-        }
-        packetHostTicks += ::ASFW::Timing::nanosToHostTicks(
-            ::ASFW::Isoch::Rx::FireWireTicksToNanos(
-                static_cast<uint64_t>(-timestamp.ageTicks)));
-    }
-
     const uint64_t packetFirstFrame = absoluteFrameCursor_ - result.framesDecoded;
     // The HAL's ZTS grid at the bound rate (V3: 12288 at 1x, 24576 at 2x). The
     // same HalBufferProfileForRate value is the period the driver declares, so
@@ -558,9 +570,99 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     }
 }
 
+bool DirectAudioReceiveConsumer::AnchorCursorToTransmitClock(
+    const ::ASFW::Isoch::IsochReceivePacket& packet,
+    const RxAudioPacketProcessorResult& result,
+    uint64_t packetHostTicks) noexcept {
+    // Only when a Transmit epoch owns the clock. Everywhere else RX publishes
+    // the host clock anchor with this very cursor as the anchor's sampleFrame,
+    // so the HAL's read timeline is defined by the cursor and the two cannot
+    // disagree.
+    if (configuration_.isSecondary || cursorInitialized_ || inputView_.control == nullptr) {
+        return false;
+    }
+    const auto& timeline = inputView_.control->hardwareTimeline;
+    const uint64_t liveEpoch = timeline.Epoch();
+    if (liveEpoch == 0 ||
+        timeline.Source() != ::ASFW::Audio::Runtime::HardwareTimelineSource::Transmit) {
+        return false;
+    }
+    if (!result.hasValidCip || result.syt == 0xffff || result.framesDecoded == 0 ||
+        packetHostTicks == 0) {
+        return false;
+    }
+
+    // TX arms its epoch at StartIO, while OnReceiveActivated() resets this
+    // cursor to 0, and the device only sends DATA after a NO-DATA warm-up. The
+    // first decoded frame therefore lands at cursor 0 while the HAL is already
+    // reading at the frame for "now": measured 21400 frames (446 ms) apart on
+    // the M-Audio 1814 (midi branch, 6af4809a). With a 1536-frame capture ring
+    // the window the HAL reads never intersects the frames RX wrote, so every
+    // input frame is zero-filled while packet counters and payload stay healthy.
+    ::ASFW::Audio::Runtime::HostClockAnchorSample anchor{};
+    if (!inputView_.control->hostClockAnchor.TryReadLatest(0, anchor) ||
+        anchor.hostNanosPerSampleQ8 == 0 || anchor.hostTicks == 0) {
+        // TX has not published yet. Stay unanchored and retry on a later packet
+        // rather than commit to an origin we cannot justify.
+        return false;
+    }
+    // An anchor from an epoch that has ended describes a mapping the timeline
+    // no longer holds (the HAL refuses it for the same reason).
+    if (anchor.timelineEpoch != 0 && anchor.timelineEpoch != liveEpoch) {
+        return false;
+    }
+
+    // Project this packet's arrival onto the anchor's timeline. Q8 nanos per
+    // sample keeps the division exact enough at 44.1 kHz, where there is no
+    // integer nanosecond period.
+    const int64_t deltaTicks = static_cast<int64_t>(packetHostTicks) -
+                               static_cast<int64_t>(anchor.hostTicks);
+    const int64_t deltaNanos = deltaTicks >= 0
+        ? static_cast<int64_t>(::ASFW::Timing::hostTicksToNanos(
+              static_cast<uint64_t>(deltaTicks)))
+        : -static_cast<int64_t>(::ASFW::Timing::hostTicksToNanos(
+              static_cast<uint64_t>(-deltaTicks)));
+    const int64_t deltaFrames =
+        (deltaNanos << 8) / static_cast<int64_t>(anchor.hostNanosPerSampleQ8);
+    const int64_t projectedFirstFrame =
+        static_cast<int64_t>(anchor.sampleFrame) + deltaFrames;
+    if (projectedFirstFrame < 0) {
+        return false;
+    }
+
+    absoluteFrameCursor_ =
+        static_cast<uint64_t>(projectedFirstFrame) + result.framesDecoded;
+    cursorInitialized_ = true;
+    primeCaptureDelayLine_ = true;
+
+    // This packet's PCM was written at the pre-anchor cursor and is orphaned,
+    // and every frame number published before now belongs to the dead origin.
+    // Drop the replay epoch so no consumer mixes the two numberings. Once per
+    // start; a rebase is not a timing loss, so it does not restart the stream.
+    ResetReplayEpochForDiscontinuity(
+        ReplayResetReason::kTransmitClockRebase,
+        {
+            .descriptorIndex = packet.descriptorIndex,
+            .payloadBytes = static_cast<uint32_t>(packet.payload.size()),
+            .receiveCycleTimestamp = result.receiveCycleTimestamp,
+            .syt = result.syt,
+            .sampleFrame = absoluteFrameCursor_,
+        },
+        /*reportTimingLoss=*/false);
+
+    ASFW_LOG(DirectAudio,
+             "[RxClockRebase] cursor=%llu projected=%lld anchorSample=%llu "
+             "anchorHost=%llu packetHost=%llu deltaFrames=%lld nsPerSampleQ8=%u epoch=%llu",
+             absoluteFrameCursor_, static_cast<long long>(projectedFirstFrame),
+             anchor.sampleFrame, anchor.hostTicks, packetHostTicks,
+             static_cast<long long>(deltaFrames), anchor.hostNanosPerSampleQ8, liveEpoch);
+    return true;
+}
+
 void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
     ReplayResetReason reason,
-    const ReplayResetContext& context) noexcept {
+    const ReplayResetContext& context,
+    bool reportTimingLoss) noexcept {
     auto* control = inputView_.control;
     if (!control || !replayResetForStart_) {
         replayCycleInitialized_ = false;
@@ -624,7 +726,7 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
             context.syt, context.expectedCycleOrdinal, context.observedCycleOrdinal,
             context.packetStatus, context.sampleFrame, timestampValidCount_, timestampInvalidCount_);
     }
-    if (wasEstablished && timingLossCallback_) {
+    if (wasEstablished && reportTimingLoss && timingLossCallback_) {
         timingLossCallback_();
     }
 }

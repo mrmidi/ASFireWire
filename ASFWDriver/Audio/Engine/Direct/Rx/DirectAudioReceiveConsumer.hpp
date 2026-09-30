@@ -80,6 +80,7 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         kReceiveCycleGap,
         kSytCadenceRejected,
         kClockAnchorRejected,
+        kTransmitClockRebase,
     };
 
     struct ReplayResetContext final {
@@ -95,8 +96,20 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     };
 
     [[nodiscard]] static const char* ReplayResetReasonName(ReplayResetReason reason) noexcept;
+    // reportTimingLoss=false rebases the numbering without telling the session
+    // the stream lost timing: a rebase is not a loss, and restarting on it
+    // would only repeat it.
     void ResetReplayEpochForDiscontinuity(ReplayResetReason reason,
-                                          const ReplayResetContext& context) noexcept;
+                                          const ReplayResetContext& context,
+                                          bool reportTimingLoss = true) noexcept;
+
+    // When a Transmit epoch owns the device's clock (M-Audio special firmware),
+    // RX publishes no anchor, so nothing ties this cursor to the frame numbering
+    // the HAL reads at. Give it that origin, once per start, from the anchor TX
+    // published. Returns true if it moved the cursor.
+    bool AnchorCursorToTransmitClock(const ::ASFW::Isoch::IsochReceivePacket& packet,
+                                     const RxAudioPacketProcessorResult& result,
+                                     uint64_t packetHostTicks) noexcept;
 
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
     uint64_t lastBindingGeneration_{0};
@@ -110,6 +123,8 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint64_t secondaryAnchorEpoch_{0};
     uint64_t absoluteFrameCursor_{0};
     bool cursorInitialized_{false};
+    // The first frames after a rebase have no history to delay from.
+    bool primeCaptureDelayLine_{false};
     // Drain cycle timers unwrapped across the 128 s cycle-timer wrap, so the
     // hardware timeline sees monotonic bus time for the whole activation.
     [[nodiscard]] uint64_t UnwrapDrainBusTicks(uint32_t drainCycleTimer) noexcept;
