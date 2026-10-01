@@ -6,11 +6,9 @@ final class AudioObserverPanelModel: ObservableObject {
     @Published private(set) var status = "Connecting to the ASFW output ring…"
     @Published private(set) var snapshot = AudioObserverSnapshot()
     private(set) var metrics = AudioObserverMetrics()
-    let monitorUI = AnalyzerPanelUIState(section: .monitor)
-    let stereoUI = AnalyzerPanelUIState(section: .stereo)
-    let loudnessUI = AnalyzerPanelUIState(section: .loudness)
+    // Numeric readouts are drawn by the panel canvases (AnalyzerMetalText);
+    // only the loudness session controls still observe published metrics.
     let loudnessControlsUI = AnalyzerPanelUIState(section: .loudnessControls)
-    let diagnosticsUI = AnalyzerPanelUIState(section: .diagnostics)
 
     let client: ASFWAudioObserverClient
     private var connected = false
@@ -21,7 +19,6 @@ final class AudioObserverPanelModel: ObservableObject {
     private var routingGeneration: UInt64 = 0
     private var lastMetricsPublish = Date.distantPast
     private var lastScalarPublish = Date.distantPast
-    private var lastDiagnosticsPublish = Date.distantPast
     private var publicationHz = 4.0
     private var lastPolicyRead = Date.distantPast
 
@@ -112,25 +109,14 @@ final class AudioObserverPanelModel: ObservableObject {
         if publicationHz > 0 && now.timeIntervalSince(lastScalarPublish) >= 1 / publicationHz {
             lastScalarPublish = now
             let current = client.renderState.read()
-            monitorUI.publish(metrics, snapshot: current)
-            stereoUI.publish(metrics, snapshot: current)
-            loudnessUI.publish(metrics, snapshot: current)
             loudnessControlsUI.publish(metrics, snapshot: current)
-            if now.timeIntervalSince(lastDiagnosticsPublish) >= 0.5 {
-                lastDiagnosticsPublish = now
-                diagnosticsUI.publish(metrics, snapshot: current)
-            }
         }
     }
 
     func publishScalarPanels(_ metrics: AudioObserverMetrics, snapshot: AudioObserverSnapshot) {
         var scalars = metrics
         scalars.stereoHistory = []
-        monitorUI.publish(scalars, snapshot: snapshot)
-        stereoUI.publish(scalars, snapshot: snapshot)
-        loudnessUI.publish(scalars, snapshot: snapshot)
         loudnessControlsUI.publish(scalars, snapshot: snapshot)
-        diagnosticsUI.publish(scalars, snapshot: snapshot)
     }
 
     func setChannels(left: UInt32, right: UInt32) {
@@ -257,15 +243,15 @@ struct AudioObserverPanel: View {
 
     private var monitorPanel: some View {
         panel("Monitor", subtitle: "Live levels and stereo summary") {
-            StereoMetersView(client: model.client, state: model.monitorUI, active: model.snapshot.ioRunning)
+            StereoMetersView(client: model.client, active: model.snapshot.ioRunning)
                 .frame(maxHeight: .infinity, alignment: .center)
             HStack(spacing: 8) {
-                liveTile("L True Peak", state: model.monitorUI) { dbtpValue($0.analysis.levels.left.truePeak) }
-                liveTile("R True Peak", state: model.monitorUI) { dbtpValue($0.analysis.levels.right.truePeak) }
-                liveTile("Correlation", state: model.monitorUI) {
+                liveTile("L True Peak") { dbtpValue($0.analysis.levels.left.truePeak) }
+                liveTile("R True Peak") { dbtpValue($0.analysis.levels.right.truePeak) }
+                liveTile("Correlation") {
                     $0.correlationValid ? String(format: "%+.2f", $0.correlation) : "—"
                 }
-                liveTile("Side energy", state: model.monitorUI) { String(format: "%.1f%%", 100 * $0.meterValues[7]) }
+                liveTile("Side energy") { String(format: "%.1f%%", 100 * $0.meterValues[7]) }
             }.frame(height: 48)
         }
     }
@@ -277,16 +263,16 @@ struct AudioObserverPanel: View {
                     let scopeSide = min(CGFloat(230), min(geometry.size.height, geometry.size.width * 0.62))
                     HStack(spacing: 8) {
                         scopePlot(mode: .phaseScope).frame(width: scopeSide, height: scopeSide)
-                        StereoHistoryView(client: model.client, state: model.stereoUI,
+                        StereoHistoryView(client: model.client,
                             sampleRateHz: model.snapshot.sampleRateHz, active: model.snapshot.ioRunning)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }.frame(maxHeight: .infinity)
                 HStack(spacing: 8) {
-                    liveTile("Balance", state: model.stereoUI) { String(format: "%+.2f", $0.meterValues[6]) }
-                    liveTile("Mono retention", state: model.stereoUI) { db($0.analysis.stereo.monoEnergyRetentionDB.value) }
-                    liveTile("Side energy", state: model.stereoUI) { String(format: "%.1f%%", 100 * $0.meterValues[7]) }
-                    liveTile("Mono cancellation", state: model.stereoUI) { metrics in
+                    liveTile("Balance") { String(format: "%+.2f", $0.meterValues[6]) }
+                    liveTile("Mono retention") { db($0.analysis.stereo.monoEnergyRetentionDB.value) }
+                    liveTile("Side energy") { String(format: "%.1f%%", 100 * $0.meterValues[7]) }
+                    liveTile("Mono cancellation") { metrics in
                         switch metrics.analysis.stereo.cancellationRisk {
                         case .risk: "Risk"
                         case .normal: "Low"
@@ -298,13 +284,12 @@ struct AudioObserverPanel: View {
         }
     }
 
-    private func liveTile(_ title: String, state: AnalyzerPanelUIState,
+    private func liveTile(_ title: String,
                           value: @escaping (AudioObserverMetrics) -> String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.caption).foregroundStyle(.secondary)
-            AnalyzerScalarText(state: state) { metrics, _ in value(metrics) }
-                .font(.system(.callout, design: .monospaced).weight(.semibold))
-                .lineLimit(1).minimumScaleFactor(0.7)
+            AnalyzerMetalText("tile.\(title)", style: .tileValue, template: "-00.0 dBTP",
+                              alignment: .leading) { metrics, _ in value(metrics) }
         }
         .frame(maxWidth: .infinity, alignment: .leading).padding(8)
         .background(.white.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 7))
@@ -372,30 +357,32 @@ struct AudioObserverPanel: View {
     private var loudnessPanel: some View {
         panel("Loudness", subtitle: "Perceived loudness and dynamics · EBU R128 / ITU-R BS.1770") {
             HStack(spacing: 10) {
-                loudnessCard("Momentary", keyPath: \.momentaryLUFS, readout: .momentaryLUFS)
-                loudnessCard("Short-term", keyPath: \.shortTermLUFS, readout: .shortTermLUFS)
-                loudnessCard("Integrated", keyPath: \.integratedLUFS, readout: .integratedLUFS)
+                loudnessCard("Momentary", keyPath: \.momentaryLUFS)
+                loudnessCard("Short-term", keyPath: \.shortTermLUFS)
+                loudnessCard("Integrated", keyPath: \.integratedLUFS)
                 VStack(spacing: 8) {
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 4) {
-                            AnalyzerScalarText(state: model.loudnessUI) { metrics, _ in
+                            AnalyzerMetalText("lra.title", style: .caption, template: "LRA · provisional",
+                                              tone: .secondary, alignment: .leading) { metrics, _ in
                                 metrics.analysis.loudness.loudnessRangeIsProvisional ? "LRA · provisional" : "Loudness Range"
-                            }.font(.caption).foregroundStyle(.secondary)
-                            AnalyzerScalarText(state: model.loudnessUI) { metrics, _ in
+                            }
+                            AnalyzerMetalText("lra.value", style: .tileValue, template: "00.0 LU",
+                                              alignment: .leading) { metrics, _ in
                                 dbValue(metrics.analysis.loudness.loudnessRangeLU, unit: "LU")
-                            }.font(.system(.callout, design: .monospaced).weight(.semibold))
+                            }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                             .background(.white.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 7))
-                        liveTile("True Peak", state: model.loudnessUI) { dbtpText($0.analysis.loudness.maximumTruePeakDBTP) }
+                        liveTile("True Peak") { dbtpText($0.analysis.loudness.maximumTruePeakDBTP) }
                     }
                     HStack(spacing: 8) {
-                        liveTile("PLR", state: model.loudnessUI) { dbValue($0.analysis.loudness.plrDB, unit: "dB") }
-                        liveTile("Crest Factor", state: model.loudnessUI) { dbValue($0.analysis.loudness.crestFactorDB, unit: "dB") }
+                        liveTile("PLR") { dbValue($0.analysis.loudness.plrDB, unit: "dB") }
+                        liveTile("Crest Factor") { dbValue($0.analysis.loudness.crestFactorDB, unit: "dB") }
                     }
                 }.frame(maxWidth: .infinity)
             }.frame(height: 125)
             Text("Loudness History").font(.caption.weight(.medium))
-            LoudnessHistoryView(client: model.client, state: model.loudnessUI).frame(maxHeight: .infinity)
+            LoudnessHistoryView(client: model.client).frame(maxHeight: .infinity)
             HStack(spacing: 14) {
                 spectrumLegend(.green, "Momentary")
                 spectrumLegend(.blue, "Short-term")
@@ -404,26 +391,27 @@ struct AudioObserverPanel: View {
                 AnalyzerLivePanel(state: model.loudnessControlsUI) { metrics, _ in
                     loudnessSessionControls(metrics.analysis.loudness)
                 }
-                AnalyzerScalarText(state: model.loudnessUI) { metrics, _ in
+                AnalyzerMetalText("loudness.seconds", style: .caption, template: "0000.0 s",
+                                  tone: .secondary, alignment: .trailing) { metrics, _ in
                     String(format: "%.1f s", Double(metrics.analysis.loudness.includedAudioFrames) / 48_000)
-                }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
             }.font(.caption)
         }
     }
 
-    private func loudnessCard(_ title: String, keyPath: KeyPath<AudioLoudnessMetrics, AudioMeasurement<Float>>,
-                              readout: AnalyzerTextReadout) -> some View {
+    private func loudnessCard(_ title: String, keyPath: KeyPath<AudioLoudnessMetrics, AudioMeasurement<Float>>) -> some View {
         VStack(spacing: 7) {
             Text(title).font(.caption).foregroundStyle(.secondary)
-            // Metal draws the value (AnalyzerTextReadout); this hidden template
-            // only reserves the slot, so a new value never re-lays out the panel.
-            Text("-00.0").font(.system(size: 28, weight: .semibold, design: .rounded)).monospacedDigit()
-                .hidden()
-                .overlay { AnalyzerCanvasSlot(mode: AnalyzerTextReadout.canvasMode, index: readout.rawValue) }
-            AnalyzerScalarText(state: model.loudnessUI) { metrics, _ in
+            AnalyzerMetalText("card.\(title)", style: .loudnessHero, template: "-00.0",
+                              alignment: .center) { metrics, _ in
+                let measurement = metrics.analysis.loudness[keyPath: keyPath]
+                return measurement.value.map { $0.isFinite ? String(format: "%.1f", $0) : "−∞" } ?? "—"
+            }
+            AnalyzerMetalText("card.\(title).unit", style: .caption2, template: "Hold -00.0 LUFS",
+                              tone: .secondary, alignment: .center) { metrics, _ in
                 let measurement = metrics.analysis.loudness[keyPath: keyPath]
                 return measurement.value == nil ? measurementText(measurement) : "LUFS"
-            }.font(.caption2).foregroundStyle(.secondary)
+            }
             AnalyzerCanvasSlot(mode: 4, index: title == "Momentary" ? 0 : title == "Short-term" ? 1 : 2)
                 .frame(height: 5).background(.white.opacity(0.08)).clipShape(Capsule())
         }
@@ -516,9 +504,8 @@ struct AudioObserverPanel: View {
         HStack {
             Text(title).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
             Spacer(minLength: 12)
-            AnalyzerScalarText(state: model.diagnosticsUI, value: value)
-                .font(.system(.caption, design: .monospaced))
-                .multilineTextAlignment(.trailing).lineLimit(1).minimumScaleFactor(0.65)
+            AnalyzerMetalText("diag.\(title)", style: .captionMono, template: "000000000000",
+                              alignment: .trailing, interval: AnalyzerTextSpec.diagnostics, format: value)
         }
     }
 

@@ -2,7 +2,6 @@ import SwiftUI
 
 struct LoudnessHistoryView: View {
     let client: ASFWAudioObserverClient
-    let state: AnalyzerPanelUIState
 
     var body: some View {
         GeometryReader { geometry in
@@ -39,9 +38,11 @@ struct LoudnessHistoryView: View {
                               second == 0 ? .leading : second == 60 ? .trailing : .center)
                     }
                 }.allowsHitTesting(false)
-                AnalyzerScalarText(state: state) { metrics, _ in
+                AnalyzerMetalText("loudness.history.note", style: .caption,
+                                  template: "History appears during playback",
+                                  tone: .secondary, alignment: .center) { metrics, _ in
                     metrics.analysis.token == nil ? "History appears during playback" : ""
-                }.font(.caption).foregroundStyle(.secondary)
+                }
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }

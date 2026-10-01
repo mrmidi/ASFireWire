@@ -14,7 +14,6 @@ struct StereoHistoryView: View {
     }
 
     let client: ASFWAudioObserverClient
-    let state: AnalyzerPanelUIState
     let sampleRateHz: UInt32
     let active: Bool
 
@@ -25,10 +24,10 @@ struct StereoHistoryView: View {
                     HStack {
                         Text(series.rawValue).font(.caption.weight(.medium))
                         Spacer()
-                        AnalyzerScalarText(state: state) { metrics, _ in
+                        AnalyzerMetalText("history.\(series.rawValue)", style: .caption, template: "100.0%",
+                                          tone: .secondary, alignment: .trailing) { metrics, _ in
                             currentValue(for: series, metrics: metrics)
                         }
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
                     ZStack {
                         Canvas { context, size in draw(series, in: &context, size: size) }

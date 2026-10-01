@@ -47,10 +47,18 @@ nonisolated final class AnalyzerPlotHistoryState: @unchecked Sendable {
 }
 
 struct AnalyzerPlotRegion: Equatable {
+    /// Readout text slots (AnalyzerMetalText).
+    static let textMode: UInt32 = 6
     var mode: UInt32
     var index: UInt32
     var rect: CGRect
     var otherChannel: UInt32 = 0
+    var text: AnalyzerTextSpec? = nil
+
+    static func == (a: Self, b: Self) -> Bool {
+        a.mode == b.mode && a.index == b.index && a.rect == b.rect &&
+            a.otherChannel == b.otherChannel && a.text?.key == b.text?.key
+    }
 }
 
 /// Only scalar reductions/history cross the CPU. Geometry and trace drawing
@@ -112,7 +120,9 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
             context.coordinator.renderer?.updateHistory(points)
             context.coordinator.renderer?.updateLoudnessHistory(loudnessPoints)
         } else { context.coordinator.renderer?.updateLiveHistory(historyState) }
-        // GPU completion schedules the next visual frame.
+        // GPU completion schedules the next visual frame. A layout change
+        // (new readout slots, resize) draws once so readouts appear without audio.
+        view.needsDisplay = true
     }
 
     // SwiftUI creates the panel before client.open() makes Metal available.
@@ -206,8 +216,7 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private let pipeline: MTLRenderPipelineState
     private let glyphPipeline: MTLRenderPipelineState?
     private var glyphAtlases: [AnalyzerTextStyle: (scale: CGFloat, atlas: AnalyzerGlyphAtlas)] = [:]
-    private var readoutText: [UInt32: String] = [:]
-    private var readoutRefreshed = -Double.infinity
+    private var readoutText = AnalyzerTextCache()
     private let submission: AnalyzerRenderSubmission
     private let metrics: AudioObserverMetricsState
     private let state: AudioObserverRenderState
@@ -293,7 +302,7 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
         }
         encoder.setRenderPipelineState(pipeline)
         let plots = regions ?? [AnalyzerPlotRegion(mode: mode, index: index, rect: view.bounds)]
-        for plot in plots where plot.mode != AnalyzerTextReadout.canvasMode {
+        for plot in plots where plot.mode != AnalyzerPlotRegion.textMode {
             let rect = plot.rect.intersection(view.bounds)
             guard rect.width > 0, rect.height > 0 else { continue }
             encoder.setViewport(MTLViewport(originX: rect.minX * scale, originY: rect.minY * scale,
@@ -347,7 +356,7 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 12)
             }
         }
-        drawReadouts(plots.filter { $0.mode == AnalyzerTextReadout.canvasMode }, encoder: encoder,
+        drawReadouts(plots.filter { $0.text != nil }, encoder: encoder,
                      view: view, scale: scale, now: now)
         encoder.endEncoding()
         command.present(drawable)
@@ -363,38 +372,41 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private func drawReadouts(_ slots: [AnalyzerPlotRegion], encoder: MTLRenderCommandEncoder,
                               view: MTKView, scale: CGFloat, now: Double) {
         guard !slots.isEmpty, let glyphPipeline else { return }
-        // The canvas also draws at 10 Hz; a strict comparison would skip
-        // every other frame whenever a draw lands a little early.
-        if now - readoutRefreshed >= AnalyzerTextReadout.refreshInterval * 0.8 {
-            readoutRefreshed = now
-            let current = metrics.read(includeHistory: false)
-            for slot in slots {
-                guard let readout = AnalyzerTextReadout(rawValue: slot.index) else { continue }
-                readoutText[slot.index] = readout.text(current)
-            }
-        }
-        var color = SIMD4<Float>(1, 1, 1, 1)
+        var primary = SIMD4<Float>(1, 1, 1, 1)
+        var secondary = SIMD4<Float>(1, 1, 1, 0.55)
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
-            if let label = NSColor.labelColor.usingColorSpace(.sRGB) {
-                color = SIMD4(Float(label.redComponent), Float(label.greenComponent),
-                              Float(label.blueComponent), Float(label.alphaComponent))
+            func rgba(_ color: NSColor) -> SIMD4<Float>? {
+                color.usingColorSpace(.sRGB).map {
+                    SIMD4(Float($0.redComponent), Float($0.greenComponent), Float($0.blueComponent), Float($0.alphaComponent))
+                }
             }
+            primary = rgba(.labelColor) ?? primary
+            secondary = rgba(.secondaryLabelColor) ?? secondary
         }
+        var metricsSnapshot: AudioObserverMetrics?
+        let readMetrics = { [metrics] () -> AudioObserverMetrics in
+            if let metricsSnapshot { return metricsSnapshot }
+            let value = metrics.read(includeHistory: false)
+            metricsSnapshot = value
+            return value
+        }
+        let stateSnapshot = state.read()
         var drawableSize = SIMD2<Float>(Float(view.drawableSize.width), Float(view.drawableSize.height))
         encoder.setViewport(MTLViewport(originX: 0, originY: 0, width: Double(drawableSize.x),
                                         height: Double(drawableSize.y), znear: 0, zfar: 1))
         encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: Int(drawableSize.x), height: Int(drawableSize.y)))
         encoder.setRenderPipelineState(glyphPipeline)
         encoder.setVertexBytes(&drawableSize, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-        encoder.setFragmentBytes(&color, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
         for slot in slots {
-            guard let readout = AnalyzerTextReadout(rawValue: slot.index),
-                  let text = readoutText[slot.index],
-                  let atlas = atlas(for: readout.style, scale: scale), let texture = atlas.texture else { continue }
+            guard let spec = slot.text, let atlas = atlas(for: spec.style, scale: scale),
+                  let texture = atlas.texture else { continue }
+            let text = readoutText.text(for: spec, now: now, metrics: readMetrics, snapshot: { stateSnapshot })
             let rect = CGRect(x: slot.rect.minX * scale, y: slot.rect.minY * scale,
                               width: slot.rect.width * scale, height: slot.rect.height * scale)
-            let vertices = atlas.vertices(for: text, centredIn: rect)
+            let vertices = atlas.vertices(for: text, in: rect, alignment: spec.alignment)
             guard !vertices.isEmpty else { continue }
+            var color = spec.tone == .primary ? primary : secondary
+            encoder.setFragmentBytes(&color, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
             let length = vertices.count * MemoryLayout<AnalyzerGlyphVertex>.stride
             if length <= 4096 {
                 vertices.withUnsafeBytes { encoder.setVertexBytes($0.baseAddress!, length: length, index: 0) }

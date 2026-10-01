@@ -193,8 +193,7 @@ struct AudioAnalysisKernelTests {
     @MainActor
     @Test func monitorMetalViewsReceiveUsableSizesFromSwiftUILayout() throws {
         let client = ASFWAudioObserverClient(guid: 0)
-        let host = NSHostingView(rootView: StereoMetersView(client: client,
-            state: AnalyzerPanelUIState(section: .monitor), active: true))
+        let host = NSHostingView(rootView: StereoMetersView(client: client, active: true))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 300),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host

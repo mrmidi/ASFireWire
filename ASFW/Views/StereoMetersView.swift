@@ -2,7 +2,6 @@ import SwiftUI
 
 struct StereoMetersView: View {
     let client: ASFWAudioObserverClient
-    let state: AnalyzerPanelUIState
     let active: Bool
 
     private func db(_ level: Float) -> String {
@@ -12,9 +11,10 @@ struct StereoMetersView: View {
     private func meter(_ title: String, index: UInt32) -> some View {
         return VStack(spacing: 4) {
             Text(title).font(.caption.weight(.medium))
-            AnalyzerScalarText(state: state) { metrics, snapshot in
+            AnalyzerMetalText("meter.\(title)", style: .meterLabel, template: "-00.0",
+                              alignment: .center) { metrics, snapshot in
                 db(snapshot.ioRunning ? max(0, metrics.meterValues[Int(index) + 2]) : 0)
-            }.font(.system(size: 10, design: .monospaced)).lineLimit(1).minimumScaleFactor(0.8)
+            }
             AnalyzerCanvasSlot(mode: 0, index: index)
                 .background(.white.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
@@ -29,7 +29,8 @@ struct StereoMetersView: View {
             HStack {
                 Text(title)
                 Spacer(minLength: 4)
-                AnalyzerScalarText(state: state) { metrics, snapshot in
+                AnalyzerMetalText("scale.\(index)", style: .caption, template: "+0.00",
+                                  alignment: .trailing) { metrics, snapshot in
                     let value = index == 0 ? metrics.correlation : (index == 1 ? metrics.meterValues[6] : 100 * metrics.meterValues[7])
                     let valid = index != 0 || metrics.correlationValid
                     return snapshot.ioRunning && valid ? String(format: index == 2 ? "%.0f%%" : "%.2f", value) : "—"
@@ -64,7 +65,8 @@ struct StereoMetersView: View {
                 HStack {
                     Text("Rolling (1 s)").foregroundStyle(.secondary)
                     Spacer(minLength: 4)
-                    AnalyzerScalarText(state: state) { metrics, snapshot in
+                    AnalyzerMetalText("rolling", style: .caption, template: "+0.00",
+                                      alignment: .trailing) { metrics, snapshot in
                         snapshot.ioRunning && metrics.correlationValid ? String(format: "%+.2f", metrics.correlationAverage) : "—"
                     }
                 }
@@ -74,7 +76,8 @@ struct StereoMetersView: View {
                 HStack {
                     Text("Side energy").foregroundStyle(.secondary)
                     Spacer(minLength: 4)
-                    AnalyzerScalarText(state: state) { metrics, snapshot in
+                    AnalyzerMetalText("side", style: .caption, template: "-00.0 dBFS",
+                                      alignment: .trailing) { metrics, snapshot in
                         snapshot.ioRunning ? "\(db(metrics.meterValues[5])) dBFS" : "—"
                     }
                 }

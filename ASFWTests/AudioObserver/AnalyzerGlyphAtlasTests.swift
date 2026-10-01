@@ -27,7 +27,7 @@ struct AnalyzerGlyphAtlasTests {
 
     @Test func textIsCentredOnWholePixels() {
         let rect = CGRect(x: 100, y: 40, width: 160, height: 70)
-        let vertices = atlas.vertices(for: "-14.9", centredIn: rect)
+        let vertices = atlas.vertices(for: "-14.9", in: rect)
         #expect(vertices.count == 5 * 6)
         #expect(vertices.allSatisfy { $0.position.x == $0.position.x.rounded() && $0.position.y == $0.position.y.rounded() })
         let advance = atlas.advance(of: "-14.9")
@@ -38,20 +38,47 @@ struct AnalyzerGlyphAtlasTests {
     }
 
     @Test func aSpaceAdvancesWithoutDrawing() {
-        #expect(atlas.vertices(for: " ", centredIn: CGRect(x: 0, y: 0, width: 10, height: 10)).isEmpty)
+        #expect(atlas.vertices(for: " ", in: CGRect(x: 0, y: 0, width: 10, height: 10)).isEmpty)
     }
 
-    @Test func readoutsFormatLikeTheSwiftUIReadoutsTheyReplace() {
-        var metrics = AudioObserverMetrics()
-        metrics.analysis.loudness.momentaryLUFS = .valid(-14.94)
-        metrics.analysis.loudness.shortTermLUFS = .valid(-.infinity)
-        metrics.analysis.loudness.integratedLUFS = .warmingUp
-        #expect(AnalyzerTextReadout.momentaryLUFS.text(metrics) == "-14.9")
-        #expect(AnalyzerTextReadout.shortTermLUFS.text(metrics) == "−∞")
-        #expect(AnalyzerTextReadout.integratedLUFS.text(metrics) == "—")
-        for readout in AnalyzerTextReadout.allCases {
-            #expect(readout.text(metrics).allSatisfy { AnalyzerGlyphAtlas.characters.contains($0) })
+    @Test func alignmentPlacesTheRunAtTheEdgeOrCentre() {
+        let rect = CGRect(x: 100, y: 0, width: 200, height: 40)
+        let advance = atlas.advance(of: "12.3")
+        func penStart(_ alignment: AnalyzerTextAlignment) -> Float {
+            let first = atlas.vertices(for: "12.3", in: rect, alignment: alignment)[0].position.x
+            return first - Float(atlas.glyph("1")!.left)
         }
+        #expect(penStart(.leading) == 100)
+        #expect(abs(penStart(.trailing) - (300 - advance).rounded()) <= 0.5)
+        #expect(abs(penStart(.center) - (200 - advance / 2).rounded()) <= 0.5)
+    }
+
+    @Test func everyStyleCoversEveryCharacterReadoutsUse() {
+        let styles: [AnalyzerTextStyle] = [.loudnessHero, .tileValue, .caption, .captionMono, .caption2, .meterLabel]
+        for style in styles {
+            let atlas = AnalyzerGlyphAtlas(font: style.font(scale: 2), device: nil)
+            for character in "-+−0123456789.%∞— dBTPLUFSHoldWarmingupDiscontinuous/·→" {
+                #expect(atlas.glyph(character) != nil, "\(style) lacks \(character)")
+            }
+        }
+    }
+
+    @MainActor
+    @Test func formattingRunsOncePerIntervalAndKeysAreStable() {
+        var calls = 0
+        let spec = AnalyzerTextSpec(id: "tile.L True Peak", style: .tileValue, alignment: .leading,
+                                    interval: 0.1) { _, _ in calls += 1; return "\(calls)" }
+        #expect(spec.key == AnalyzerTextSpec.key(for: "tile.L True Peak"))
+        #expect(spec.key != AnalyzerTextSpec.key(for: "tile.R True Peak"))
+        #expect(spec.key >= 1 << 20)
+        var cache = AnalyzerTextCache()
+        let metrics = { AudioObserverMetrics() }
+        let snapshot = { AudioObserverSnapshot() }
+        #expect(cache.text(for: spec, now: 0, metrics: metrics, snapshot: snapshot) == "1")
+        #expect(cache.text(for: spec, now: 0.05, metrics: metrics, snapshot: snapshot) == "1")
+        // A draw landing a little early still refreshes (80% of the interval).
+        #expect(cache.text(for: spec, now: 0.085, metrics: metrics, snapshot: snapshot) == "2")
+        #expect(calls == 2)
     }
 
     @Test func theAtlasUploadsToTheGPU() throws {

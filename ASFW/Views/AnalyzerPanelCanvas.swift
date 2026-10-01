@@ -5,6 +5,7 @@ struct AnalyzerCanvasAnchor {
     let index: UInt32
     let otherChannel: UInt32
     let bounds: Anchor<CGRect>
+    var text: AnalyzerTextSpec? = nil
 }
 
 struct AnalyzerCanvasAnchors: PreferenceKey {
@@ -36,7 +37,7 @@ extension View {
                     let regions = anchors.keys.sorted().compactMap { key -> AnalyzerPlotRegion? in
                         guard let plot = anchors[key] else { return nil }
                         return AnalyzerPlotRegion(mode: plot.mode, index: plot.index,
-                            rect: geometry[plot.bounds], otherChannel: plot.otherChannel)
+                            rect: geometry[plot.bounds], otherChannel: plot.otherChannel, text: plot.text)
                     }
                     MetalAnalyzerPlotView(client: client, mode: 0, index: 0, regions: regions,
                         historyState: client.plotHistory)
@@ -44,5 +45,33 @@ extension View {
                 }
             }
         }
+    }
+}
+
+/// A numeric readout drawn by the enclosing panel canvas. SwiftUI lays out a
+/// hidden `template` once, so a changing value never re-lays out the panel;
+/// the canvas formats and draws the value in that slot.
+struct AnalyzerMetalText: View {
+    let spec: AnalyzerTextSpec
+    let template: String
+
+    init(_ id: String, style: AnalyzerTextStyle, template: String,
+         tone: AnalyzerTextSpec.Tone = .primary, alignment: AnalyzerTextAlignment,
+         interval: Double = AnalyzerTextSpec.metering,
+         format: @escaping (AudioObserverMetrics, AudioObserverSnapshot) -> String) {
+        spec = AnalyzerTextSpec(id: id, style: style, tone: tone, alignment: alignment,
+                                interval: interval, format: format)
+        self.template = template
+    }
+
+    var body: some View {
+        Text(template).font(spec.style.swiftUIFont).lineLimit(1).fixedSize().hidden()
+            .overlay {
+                Color.clear.anchorPreference(key: AnalyzerCanvasAnchors.self, value: .bounds) { [spec] in
+                    [spec.key: AnalyzerCanvasAnchor(mode: AnalyzerPlotRegion.textMode, index: 0,
+                        otherChannel: 0, bounds: $0, text: spec)]
+                }
+            }
+            .accessibilityHidden(true)
     }
 }
