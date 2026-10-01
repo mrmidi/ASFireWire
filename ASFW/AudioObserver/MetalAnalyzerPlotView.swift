@@ -363,7 +363,9 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private func drawReadouts(_ slots: [AnalyzerPlotRegion], encoder: MTLRenderCommandEncoder,
                               view: MTKView, scale: CGFloat, now: Double) {
         guard !slots.isEmpty, let glyphPipeline else { return }
-        if now - readoutRefreshed >= AnalyzerTextReadout.refreshInterval {
+        // The canvas also draws at 10 Hz; a strict comparison would skip
+        // every other frame whenever a draw lands a little early.
+        if now - readoutRefreshed >= AnalyzerTextReadout.refreshInterval * 0.8 {
             readoutRefreshed = now
             let current = metrics.read(includeHistory: false)
             for slot in slots {
