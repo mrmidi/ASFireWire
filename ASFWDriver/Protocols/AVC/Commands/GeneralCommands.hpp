@@ -26,16 +26,12 @@ namespace ASFW::AVC::Cmd {
 
 // ---------------------------------------------------------------------------
 // UNIT INFO (0x30)
-// By default, sends 0 operands [01, FF, 30] (quadlet-padded to 4 bytes), matching
-// Apple's AppleFWAudio, legacy ASFW, and FireBug hardware traces.
-// The Linux ta1394 5-dummy-operand form [07, FF, FF, FF, FF] is available via UnitInfoStyle.
-// Response operands: [0]=07, [1]=unit type<<3|id, [2..4]=company ID.
+// Command operands: 07 FF FF FF FF. Response operands: [0]=07, [1]=unit
+// type<<3|id, [2..4]=company ID. Linux ta1394 general.rs:41-49 sends this form;
+// Apple IOFireWireAVCUnit.cpp:946-950 also sends five operands (all FF). The
+// Duet and the Phase 88 were both captured answering it. Never send it bare
+// (no operands): the Phase 88 does not answer, stops acking, then resets the bus.
 // ---------------------------------------------------------------------------
-
-enum class UnitInfoStyle : uint8_t {
-    kStandardAppleLegacy = 0,   ///< 0 operands: [01, FF, 30] (Apple + legacy ASFW)
-    kLinuxFiveDummyOperands = 1, ///< 5 dummy operands: [07, FF, FF, FF, FF] (Linux ta1394)
-};
 
 struct UnitInfo {
     SubunitType unitType{SubunitType::kUnit};
@@ -49,19 +45,14 @@ struct UnitInfoOperands {
     static constexpr Opcode kOpcode = Opcode::kUnitInfo;
     static constexpr bool kRequiresUnitAddress = true;
 
-    UnitInfoStyle style{UnitInfoStyle::kStandardAppleLegacy};
-
     using Reply = UnitInfo;
 
     [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept {
         if (t != CommandType::kStatus) {
             return Fail(AvcErrorKind::kInvalidArgument);
         }
-        if (style == UnitInfoStyle::kLinuxFiveDummyOperands) {
-            constexpr std::array<uint8_t, 5> kOperands = {0x07, 0xFF, 0xFF, 0xFF, 0xFF};
-            return w.Append(kOperands);
-        }
-        return {}; // 0 operands
+        constexpr std::array<uint8_t, 5> kOperands = {0x07, 0xFF, 0xFF, 0xFF, 0xFF};
+        return w.Append(kOperands);
     }
 
     [[nodiscard]] static Expected<Reply> Read(std::span<const uint8_t> in) noexcept {

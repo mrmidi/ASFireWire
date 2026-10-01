@@ -91,21 +91,30 @@ final class AvcReportStore: ObservableObject {
                 notes.append("The exchange log was full: \(exchanges.dropped) later exchanges were not kept.")
             }
             let subunits: [AvcReportSnapshot.Subunit] = exportUnit?.subunits.map { subunit in
-                let capabilities = subunit.type == 0x0C
-                    ? connector.getSubunitCapabilitiesData(guid: device.guid, type: subunit.type, id: subunit.subunitID) : nil
-                let summary = capabilities.flatMap { AVCMusicCapabilities(data: $0) }
+                // The driver serializes capabilities for Music subunits only and
+                // keeps the Music status and Audio identifier descriptors.
+                let capabilities: Result<Data, AvcBlobUnavailable> = subunit.type == 0x0C
+                    ? connector.subunitCapabilitiesBlob(guid: device.guid, type: subunit.type, id: subunit.subunitID)
+                    : .failure(.init(reason: "ASFW exports decoded capabilities for Music subunits only; this subunit's plugs and formats are in the FCP exchanges"))
+                let descriptor: Result<Data, AvcBlobUnavailable> = [UInt8(0x01), 0x0C].contains(subunit.type)
+                    ? connector.subunitDescriptorBlob(guid: device.guid, type: subunit.type, id: subunit.subunitID)
+                    : .failure(.init(reason: "ASFW keeps no descriptor for this subunit type"))
+                let capabilityData = try? capabilities.get()
+                let summary = capabilityData.flatMap { AVCMusicCapabilities(data: $0) }
                     .map { AvcReportTextFormatter.capabilitiesSummary($0) }
-                let descriptor = [UInt8(0x01), 0x0C].contains(subunit.type)
-                    ? connector.getSubunitDescriptor(guid: device.guid, type: subunit.type, id: subunit.subunitID) : nil
                 return AvcReportSnapshot.Subunit(type: subunit.type, id: subunit.subunitID,
                     sourcePlugs: subunit.numSrcPlugs, destinationPlugs: subunit.numDestPlugs,
-                    capabilitySummary: summary, capabilities: capabilities, descriptor: descriptor)
+                    capabilitySummary: summary, capabilities: capabilityData, descriptor: try? descriptor.get(),
+                    capabilitiesMissing: Self.missingReason(capabilities),
+                    descriptorMissing: Self.missingReason(descriptor))
             } ?? []
             captured.append(.init(guid: device.guid, nodeID: device.nodeId, generation: device.generation,
                 vendorID: device.vendorId, modelID: device.modelId, vendorName: device.vendorName,
                 modelName: device.modelName, state: device.stateString,
                 romUnits: device.units.map { .init(offset: $0.romOffset, specifierID: $0.specId, version: $0.swVersion) },
                 configROM: rom?.isExactGenerationMatch == true ? rom?.data : nil,
+                configROMMissing: rom == nil ? "the driver returned no Config ROM"
+                    : (rom?.isExactGenerationMatch == true ? nil : "the cached Config ROM is from another bus generation"),
                 avcUnit: exportUnit.map { .init(isoInputPlugs: $0.isoInputPlugs, isoOutputPlugs: $0.isoOutputPlugs,
                     externalInputPlugs: $0.extInputPlugs, externalOutputPlugs: $0.extOutputPlugs, subunits: subunits) }, notes: notes,
                 exchanges: exchanges))
@@ -121,6 +130,11 @@ final class AvcReportStore: ObservableObject {
         let bundle = Bundle.main
         let appVersion = "\(bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown") (build \(bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"))"
         setSnapshot(.init(appVersion: appVersion, driverVersion: version, devices: captured), imported: false)
+    }
+
+    private static func missingReason(_ result: Result<Data, AvcBlobUnavailable>) -> String? {
+        if case .failure(let error) = result { return error.reason }
+        return nil
     }
 
     func openDump(_ url: URL) {

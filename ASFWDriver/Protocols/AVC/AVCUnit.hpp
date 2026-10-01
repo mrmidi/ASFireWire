@@ -91,6 +91,8 @@ struct AVCUnitDiscoveryOptions {
     // the generic discovery and before the discovery status completes, at
     // attach and on every refresh; it must call `done` exactly once.
     std::function<void(AVCUnit& unit, std::function<void()> done)> extensionInventory;
+    // The chip answers only STREAM FORMAT SUPPORT (0x2F), so 0xBF is never sent.
+    bool streamFormatSupportOnly{false};
 };
 
 class AVCUnit : public std::enable_shared_from_this<AVCUnit>,

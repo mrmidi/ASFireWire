@@ -22,6 +22,8 @@ struct AvcReportSnapshot: Codable, Sendable {
         var state: String
         var romUnits: [ROMUnit]
         var configROM: Data?
+        /// Why `configROM` is absent, when it is.
+        var configROMMissing: String? = nil
         var avcUnit: Unit?
         var notes: [String]
         /// Every FCP command the driver sent this unit and the reply, since attach
@@ -73,6 +75,9 @@ struct AvcReportSnapshot: Codable, Sendable {
         var capabilitySummary: String?
         var capabilities: Data?
         var descriptor: Data?
+        /// Why `capabilities` / `descriptor` are absent, when they are.
+        var capabilitiesMissing: String? = nil
+        var descriptorMissing: String? = nil
     }
 
     func jsonData() throws -> Data {

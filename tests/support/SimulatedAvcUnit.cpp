@@ -97,6 +97,7 @@ void SimulatedAvcUnit::Submit(const CommandFrame& frame,
     }
 
     // Default response when command is not in captured fixtures: NOT IMPLEMENTED
+    unmeasured_.emplace_back(frame.WireBytes().begin(), frame.WireBytes().end());
     const uint8_t notImplBytes[3] = {
         static_cast<uint8_t>(ResponseCode::kNotImplemented),
         frame.Address().Byte(),
@@ -127,6 +128,7 @@ void SimulatedAvcUnit::AttachToBus(
 
             auto respOpt = FindResponse(data);
             if (!respOpt) {
+                unmeasured_.emplace_back(data.begin(), data.end());
                 const uint8_t notImplBytes[3] = {
                     0x08, // NOT IMPLEMENTED
                     data.size() > 1 ? data[1] : uint8_t{0xFF},
@@ -209,16 +211,6 @@ std::optional<std::span<const uint8_t>> SimulatedAvcUnit::FindResponse(
             }
         }
 
-        // 3. Special case: UNIT INFO (0x30)
-        // Apple & legacy send 0 operands [01, FF, 30] (3 bytes, or 4 padded).
-        // Captured Linux fixtures record [01, FF, 30, 07, FF, FF, FF, FF] (8 bytes).
-        if (command.size() >= 3 && command[0] == 0x01 && command[1] == 0xFF && command[2] == 0x30) {
-            if (record.command.size() >= 3 && record.command[0] == 0x01 &&
-                record.command[1] == 0xFF && record.command[2] == 0x30) {
-                return record.response;
-            }
-        }
-
         // 4. Special case: SUBUNIT INFO (0x31) page query matching
         if (command.size() >= 4 && command[0] == 0x01 && command[1] == 0xFF && command[2] == 0x31) {
             if (record.command.size() >= 4 && record.command[0] == 0x01 &&
@@ -263,7 +255,8 @@ std::optional<std::span<const uint8_t>> SimulatedAvcUnit::FindResponse(
                 dynamicResponseStorage_.insert(dynamicResponseStorage_.end(),
                                                desc.specifier.begin(), desc.specifier.end());
                 dynamicResponseStorage_.push_back(subfunc);
-                dynamicResponseStorage_.push_back(0x00); // Success status
+                // A Phase 88 echoes the command's reserved byte (FF), not 00.
+                dynamicResponseStorage_.push_back(command[3 + specLen + 1]);
                 return std::span<const uint8_t>{dynamicResponseStorage_.data(),
                                                 dynamicResponseStorage_.size()};
             }

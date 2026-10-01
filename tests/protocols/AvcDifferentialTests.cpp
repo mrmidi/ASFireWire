@@ -255,41 +255,17 @@ private:
 // 1. UNIT INFO Differential Tests
 // ===========================================================================
 
-TEST(AvcDifferentialTests, UnitInfo_CommandBytesMatchAppleAndLegacyWithLinuxOption) {
-    // Legacy AVCUnit::ProbeUnitInfo sent 0 operands: [0x01, 0xFF, 0x30], 3 bytes unpadded, padded to 4.
-    Protocols::AVC::AVCCdb legacyCdb{};
-    legacyCdb.ctype = static_cast<uint8_t>(Protocols::AVC::AVCCommandType::kStatus);
-    legacyCdb.subunit = Protocols::AVC::kAVCSubunitUnit;
-    legacyCdb.opcode = static_cast<uint8_t>(Protocols::AVC::AVCOpcode::kUnitInfo);
-    legacyCdb.operandLength = 0;
-    auto legacyEncoded = legacyCdb.Encode();
-
-    // 1. Default form: matches Apple AppleFWAudio and legacy ASFW exactly (0 operands, 3 header bytes padded to 4)
-    Cmd::UnitInfoCommand defaultCmd{};
-    auto defaultFrame = defaultCmd.Encode(CommandType::kStatus);
-    ASSERT_TRUE(defaultFrame.has_value());
-
-    EXPECT_EQ(legacyEncoded.length, 4U);
-    EXPECT_EQ(defaultFrame->WireBytes().size(), 4U);
-    EXPECT_EQ(defaultFrame->Bytes().size(), 3U);
-    EXPECT_EQ(defaultFrame->Operands().size(), 0U);
-
-    for (size_t i = 0; i < 4; ++i) {
-        EXPECT_EQ(legacyEncoded.data[i], defaultFrame->WireBytes()[i])
-            << "Mismatch between legacy and new default UNIT INFO at byte " << i;
-    }
-
-    // 2. Linux form: ta1394 general.rs:43 (5 dummy operands [0x07, FF, FF, FF, FF])
-    Cmd::UnitInfoCommand linuxCmd{
-        .operands = Cmd::UnitInfoOperands{Cmd::UnitInfoStyle::kLinuxFiveDummyOperands}
-    };
-    auto linuxFrame = linuxCmd.Encode(CommandType::kStatus);
-    ASSERT_TRUE(linuxFrame.has_value());
-    EXPECT_EQ(linuxFrame->Bytes().size(), 8U);
-    EXPECT_EQ(linuxFrame->WireBytes().size(), 8U);
-    EXPECT_EQ(linuxFrame->Operands().size(), 5U);
-    const std::array<uint8_t, 5> kExpectedLinuxOperands = {0x07, 0xFF, 0xFF, 0xFF, 0xFF};
-    EXPECT_TRUE(std::equal(kExpectedLinuxOperands.begin(), kExpectedLinuxOperands.end(), linuxFrame->Operands().begin()));
+TEST(AvcDifferentialTests, UnitInfo_CommandHasFiveOperandsLikeBothReferences) {
+    // Apple IOFireWireAVCUnit.cpp:946-950 sends FF x5; Linux ta1394
+    // general.rs:41-49 sends 07 FF x4. Both are five operands; the legacy ASFW
+    // frame had none, and a Phase 88 never answered it.
+    Cmd::UnitInfoCommand cmd{};
+    auto frame = cmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(frame.has_value());
+    EXPECT_EQ(frame->Operands().size(), 5U);
+    EXPECT_EQ(frame->WireBytes().size(), 8U);
+    const std::array<uint8_t, 5> kLinuxOperands = {0x07, 0xFF, 0xFF, 0xFF, 0xFF};
+    EXPECT_TRUE(std::equal(kLinuxOperands.begin(), kLinuxOperands.end(), frame->Operands().begin()));
 }
 
 TEST(AvcDifferentialTests, UnitInfo_ResponseParsing) {

@@ -52,6 +52,8 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <regex>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -223,6 +225,57 @@ inline constexpr AvcDeviceImage kOnyxi{
 
 } // namespace
 
+// Attach must send only frames the device was captured answering, or frames a
+// reference stack sends that the capture lacks (each listed with its source).
+// The simulator answers any other frame NOT IMPLEMENTED, which hides frames a
+// real device may never answer at all: a bare UNIT INFO wedged a Phase 88.
+struct UncapturedFrame {
+    const char* hexPattern;  // regex over the lowercase hex frame
+    const char* source;
+};
+
+void ExpectOnlyMeasuredFrames(const SimulatedAvcUnit& sim, std::span<const UncapturedFrame> allowed) {
+    for (const auto& frame : sim.UnmeasuredCommands()) {
+        std::string hex;
+        for (const auto byte : frame) {
+            char buf[4];
+            std::snprintf(buf, sizeof(buf), "%02x", byte);
+            hex += buf;
+        }
+        const bool known = std::ranges::any_of(allowed, [&hex](const UncapturedFrame& entry) {
+            return std::regex_match(hex, std::regex(entry.hexPattern));
+        });
+        if (!known) {
+            ADD_FAILURE() << "attach sent a frame the device was never captured answering: " << hex;
+        }
+    }
+}
+
+// OPEN DESCRIPTOR (read) on the unit: Apple's stack sends it
+// (FireBug trace tools/pydice/isitduet.txt:112).
+constexpr UncapturedFrame kAppleUnitOpenDescriptor{"00ff088001ff0000", "Apple, isitduet.txt:112"};
+
+constexpr UncapturedFrame kDuetUncaptured[] = {
+    kAppleUnitOpenDescriptor,
+    // Music subunit status descriptor OPEN and READ: Apple, isitduet.txt:157,168.
+    {"0060088001ff0000", "Apple, isitduet.txt:157"},
+    {"00600980ff0000800+", "Apple, isitduet.txt:168"},
+    // Audio subunit identifier OPEN: captured on the Phase 88, not on the Duet.
+    {"0008080001ff0000", "Phase 88 descriptor capture"},
+    // Audio subunit plug formats: FFADO avc_plug.cpp:231-249 asks every plug.
+    {"0108(bf|2f)c0.*", "FFADO avc_plug.cpp:231"},
+};
+
+constexpr UncapturedFrame kPhase88Uncaptured[] = {
+    kAppleUnitOpenDescriptor,
+    // Audio subunit plug formats, 0x2F only: FFADO avc_plug.cpp:231-249 with
+    // avc_extended_stream_format.cpp:296.
+    {"01082fc0.*", "FFADO avc_plug.cpp:231"},
+    // BridgeCo EXTENDED PLUG INFO, section type (info type 0x07) per cluster:
+    // Linux bebob_command.c:214-227, bebob_stream.c:298.
+    {"01ff02c00[01]000000ff07..00", "Linux bebob_command.c:214"},
+};
+
 // ============================================================================
 // 1. Duet Attach Discovery
 // ============================================================================
@@ -241,6 +294,7 @@ TEST(AvcGoldenTests, DuetAttachDiscovery) {
     EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Completed);
 
     rig.ExpectGolden("duet__attach_discovery");
+    ExpectOnlyMeasuredFrames(rig.Sim(), kDuetUncaptured);
 }
 
 TEST(AvcGoldenTests, DescriptorGraphSelectsRoutedStreamsAndValidatesGeometry) {
@@ -426,6 +480,7 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     EXPECT_EQ(config->streamMode, Audio::Model::StreamMode::kBlocking);
 
     rig.ExpectGolden("phase88__attach_discovery");
+    ExpectOnlyMeasuredFrames(rig.Sim(), kPhase88Uncaptured);
 }
 
 // ============================================================================

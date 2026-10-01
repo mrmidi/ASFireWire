@@ -9,9 +9,14 @@ protocol AvcReportSource {
     func getAVCUnits() -> [AVCUnitInfo]?
     func getDriverVersion() -> DriverVersionInfo?
     func getConfigROM(nodeId: UInt8, generation: UInt16) -> ASFWDriverConnector.ConfigROMFetchResult?
-    func getSubunitCapabilitiesData(guid: UInt64, type: UInt8, id: UInt8) -> Data?
-    func getSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) -> Data?
+    func subunitCapabilitiesBlob(guid: UInt64, type: UInt8, id: UInt8) -> Result<Data, AvcBlobUnavailable>
+    func subunitDescriptorBlob(guid: UInt64, type: UInt8, id: UInt8) -> Result<Data, AvcBlobUnavailable>
     func getFCPExchangeLog(guid: UInt64) -> AvcReportSnapshot.ExchangeLog?
+}
+
+/// Why the driver returned no bytes for a report blob, in words for the report.
+struct AvcBlobUnavailable: Error, Sendable, Equatable {
+    var reason: String
 }
 
 extension ASFWDriverConnector: AvcReportSource {}

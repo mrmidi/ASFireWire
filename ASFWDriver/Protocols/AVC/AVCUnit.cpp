@@ -37,6 +37,9 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
       busInfo_(busInfo),
       timerScheduler_(timerScheduler),
       options_(options) {
+    if (options_.streamFormatSupportOnly) {
+        LearnStreamFormatSupportOpcode();
+    }
 
     // Check for custom FCP addresses in Config ROM (optional)
     // For now, use standard addresses
@@ -498,11 +501,15 @@ void AVCUnit::ResolveUnitStreamGraph(std::function<void(bool)> completion) {
     auto done = Common::ShareCallback(std::move(completion));
     const auto generation = CurrentGeneration();
     // Read the current formats without changing clock or routing. Cross-validated
-    // with Linux sound/firewire/oxfw/oxfw-stream.c:637-644 (format SINGLE).
-    const auto command = [](ASFW::AVC::Cmd::PlugDirection direction) {
+    // with Linux sound/firewire/oxfw/oxfw-stream.c:637-644 (format SINGLE). Uses
+    // the opcode the unit already answered; no 0xBF/0x2F probe of its own.
+    const auto opcode = UsesStreamFormatSupportOpcode()
+                            ? ASFW::AVC::Cmd::StreamFormatOpcode::kStreamFormatSupport
+                            : ASFW::AVC::Cmd::StreamFormatOpcode::kExtendedStreamFormat;
+    const auto command = [opcode](ASFW::AVC::Cmd::PlugDirection direction) {
         return ASFW::AVC::Cmd::StreamFormatCommand{
             .operands = {.form = ASFW::AVC::Cmd::StreamFormatSubfunction::kSingle,
-                .opcode = ASFW::AVC::Cmd::StreamFormatOpcode::kExtendedStreamFormat,
+                .opcode = opcode,
                 .plug = ASFW::AVC::Cmd::PlugAddress::UnitPlug(direction,
                     ASFW::AVC::Cmd::UnitPlugType::kPcr, 0)}};
     };

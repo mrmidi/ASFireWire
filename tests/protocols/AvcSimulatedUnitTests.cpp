@@ -285,7 +285,7 @@ TEST_F(AvcSimulatedUnitTests, BusAttachment_FcpCommandInterception) {
     });
 
     // Write FCP UNIT INFO command to 0xFFFFF0000B00
-    const uint8_t unitInfoCommand[] = {0x01, 0xFF, 0x30, 0x00};
+    const uint8_t unitInfoCommand[] = {0x01, 0xFF, 0x30, 0x07, 0xFF, 0xFF, 0xFF, 0xFF};
     Async::FWAddress fcpCmdAddr{Async::FWAddress::AddressParts{
         .addressHi = 0xFFFF,
         .addressLo = 0xF0000B00,
@@ -305,7 +305,7 @@ TEST_F(AvcSimulatedUnitTests, BusAttachment_FcpCommandInterception) {
 
     // Verify trace recorded the write
     EXPECT_FALSE(bus_.Trace().Lines().empty());
-    EXPECT_TRUE(bus_.Trace().Lines()[0].find("W ffff.f0000b00 01ff3000") != std::string::npos);
+    EXPECT_TRUE(bus_.Trace().Lines()[0].find("W ffff.f0000b00 01ff3007ffffffff") != std::string::npos);
 }
 
 TEST_F(AvcSimulatedUnitTests, DescriptorChunkedServing) {

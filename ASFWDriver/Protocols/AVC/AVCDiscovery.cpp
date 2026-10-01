@@ -339,9 +339,8 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
             return;
         }
         if (!success) {
-            os_log_error(self->log_,
-                         "AVCDiscovery: AVCUnit initialization failed: GUID=%llx",
-                         guid);
+            // A bus reset mid-attach lands here too; OnUnitResumed runs it again.
+            ASFW_LOG_ERROR(AVC, "AVCDiscovery: AVCUnit initialization failed: GUID=%llx", guid);
             return;
         }
 
@@ -604,6 +603,13 @@ void AVCDiscovery::OnUnitResumed(std::shared_ptr<Discovery::FWUnit> unit) {
 
     if (avcUnit) {
         avcUnit->OnRouteRevalidated();
+        // An attach that failed (a device that reset the bus mid-discovery, as a
+        // crashing Phase 88 does) never published an audio device. Run it once
+        // more now that the unit is back.
+        if (avcUnit->GetDiscoveryStatus() == AVCDiscoveryStatus::Failed) {
+            ASFW_LOG(AVC, "AVCDiscovery: unit resumed after a failed attach; rescanning GUID=%llx", guid);
+            ScheduleRescan(guid, avcUnit);
+        }
     }
 
     // Rebuild node ID map (resumed units back in routing)

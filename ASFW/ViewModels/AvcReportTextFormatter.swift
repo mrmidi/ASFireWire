@@ -47,17 +47,17 @@ enum AvcReportTextFormatter {
         for device in report.devices {
             let guid = String(format: "%016llX", device.guid)
             rawIndex += 1
-            appendBytes(device.configROM, title: "RAW \(rawIndex): CONFIG ROM (GUID \(guid))", into: &lines)
+            appendBytes(device.configROM, missing: device.configROMMissing, title: "RAW \(rawIndex): CONFIG ROM (GUID \(guid))", into: &lines)
             if let log = device.exchanges {
                 rawIndex += 1
                 appendExchanges(log, title: "RAW \(rawIndex): FCP EXCHANGES (GUID \(guid), session \(log.session))", into: &lines)
             }
             for subunit in device.avcUnit?.subunits ?? [] {
                 rawIndex += 1
-                appendBytes(subunit.capabilities, title: String(format: "RAW %u: SUBUNIT CAPABILITIES (GUID %@, type 0x%02X, id %u; ASFW user-client serialization, not an AV/C reply)", rawIndex, guid, subunit.type, subunit.id), into: &lines)
+                appendBytes(subunit.capabilities, missing: subunit.capabilitiesMissing, title: String(format: "RAW %u: SUBUNIT CAPABILITIES (GUID %@, type 0x%02X, id %u; ASFW user-client serialization, not an AV/C reply)", rawIndex, guid, subunit.type, subunit.id), into: &lines)
                 rawIndex += 1
                 let name = subunit.type == 0x0C ? "MUSIC STATUS DESCRIPTOR" : "AUDIO IDENTIFIER DESCRIPTOR"
-                appendBytes(subunit.descriptor, title: "RAW \(rawIndex): \(name) (GUID \(guid), type \(String(format: "0x%02X", subunit.type)), id \(subunit.id))", into: &lines)
+                appendBytes(subunit.descriptor, missing: subunit.descriptorMissing, title: "RAW \(rawIndex): \(name) (GUID \(guid), type \(String(format: "0x%02X", subunit.type)), id \(subunit.id))", into: &lines)
             }
         }
         if rawIndex == 0 { lines.append("\nNo raw binary blobs were available.") }
@@ -153,9 +153,10 @@ enum AvcReportTextFormatter {
         }
     }
 
-    private static func appendBytes(_ data: Data?, title: String, into lines: inout [String]) {
+    private static func appendBytes(_ data: Data?, missing: String?, title: String, into lines: inout [String]) {
         guard let data else {
-            lines += ["", title, "  <unavailable; export limit is 4096 bytes per blob>"]
+            // Older dumps carry no reason.
+            lines += ["", title, "  <unavailable: \(missing ?? "reason not recorded in this export")>"]
             return
         }
         lines += ["", title, "  \(data.count) bytes\(data.isEmpty ? " (empty)" : "")"]

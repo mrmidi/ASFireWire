@@ -21,6 +21,7 @@
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/SignalSourceCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/StreamFormatCommand.hpp"
+#include "ASFWDriver/Protocols/AVC/Commands/StreamFormatDispatch.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/AvcError.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/AvcFrame.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/AvcTypes.hpp"
@@ -30,6 +31,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace ASFW::AVC::Test {
@@ -198,37 +200,19 @@ TEST(AvcFrameTests, ParseResponseForValidatesAddressAndOpcodeMatch) {
 // Step 1.3: General Commands Tests
 // ===========================================================================
 
-TEST(GeneralCommandsTests, BuildUnitInfoStatusEncodesBothAppleAndLinuxStyles) {
-    // 1. Default form: Apple AppleFWAudio + legacy ASFW (0 operands, 3 header bytes padded to 4)
-    Cmd::UnitInfoCommand defaultCmd{};
-    auto defaultFrame = defaultCmd.Encode(CommandType::kStatus);
-    ASSERT_TRUE(defaultFrame.has_value());
-    EXPECT_EQ(defaultFrame->Type(), CommandType::kStatus);
-    EXPECT_EQ(defaultFrame->Address(), SubunitAddress::Unit());
-    EXPECT_EQ(defaultFrame->OpcodeValue(), Opcode::kUnitInfo);
-    EXPECT_EQ(defaultFrame->Bytes().size(), 3u);
-    EXPECT_EQ(defaultFrame->WireBytes().size(), 4u);
-    EXPECT_EQ(defaultFrame->WireBytes()[0], 0x01); // STATUS
-    EXPECT_EQ(defaultFrame->WireBytes()[1], 0xFF); // UNIT
-    EXPECT_EQ(defaultFrame->WireBytes()[2], 0x30); // UNIT INFO
-    EXPECT_EQ(defaultFrame->WireBytes()[3], 0x00); // quadlet zero padding
+TEST(GeneralCommandsTests, BuildUnitInfoStatusSendsFiveOperands) {
+    // ta1394 general.rs:41-49; the bare form wedged a Phase 88.
+    Cmd::UnitInfoCommand cmd{};
+    auto frame = cmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(frame.has_value());
+    EXPECT_EQ(frame->Type(), CommandType::kStatus);
+    EXPECT_EQ(frame->Address(), SubunitAddress::Unit());
+    EXPECT_EQ(frame->OpcodeValue(), Opcode::kUnitInfo);
+    const std::array<uint8_t, 8> kExpected = {0x01, 0xFF, 0x30, 0x07, 0xFF, 0xFF, 0xFF, 0xFF};
+    ASSERT_EQ(frame->WireBytes().size(), kExpected.size());
+    EXPECT_TRUE(std::equal(kExpected.begin(), kExpected.end(), frame->WireBytes().begin()));
 
-    // 2. Linux form: ta1394 general.rs:37 (5 dummy operands [0x07, FF, FF, FF, FF])
-    Cmd::UnitInfoCommand linuxCmd{
-        .operands = Cmd::UnitInfoOperands{Cmd::UnitInfoStyle::kLinuxFiveDummyOperands}
-    };
-    auto linuxFrame = linuxCmd.Encode(CommandType::kStatus);
-    ASSERT_TRUE(linuxFrame.has_value());
-    EXPECT_EQ(linuxFrame->Bytes().size(), 8u);
-    EXPECT_EQ(linuxFrame->WireBytes().size(), 8u);
-    EXPECT_EQ(linuxFrame->WireBytes()[0], 0x01);
-    EXPECT_EQ(linuxFrame->WireBytes()[1], 0xFF);
-    EXPECT_EQ(linuxFrame->WireBytes()[2], 0x30);
-    EXPECT_EQ(linuxFrame->WireBytes()[3], 0x07);
-    EXPECT_EQ(linuxFrame->WireBytes()[4], 0xFF);
-    EXPECT_EQ(linuxFrame->WireBytes()[5], 0xFF);
-    EXPECT_EQ(linuxFrame->WireBytes()[6], 0xFF);
-    EXPECT_EQ(linuxFrame->WireBytes()[7], 0xFF);
+    EXPECT_FALSE(cmd.Encode(CommandType::kControl).has_value());
 }
 
 TEST(GeneralCommandsTests, ParseUnitInfoSuccessAndErrors) {
@@ -879,9 +863,9 @@ TEST(AvcUnitSeamTests, IdentityAndDispatchSuccess) {
 
     ASSERT_TRUE(unit.LastFrame().has_value());
     EXPECT_EQ(unit.LastGeneration()->value, 7);
-    // Verify default 0-operand Apple/legacy encoding: [01, FF, 30] (wire size 4)
-    EXPECT_EQ(unit.LastFrame()->Bytes().size(), 3u);
-    EXPECT_EQ(unit.LastFrame()->WireBytes().size(), 4u);
+    // UNIT INFO carries five operands: [01, FF, 30, 07, FF, FF, FF, FF]
+    EXPECT_EQ(unit.LastFrame()->Bytes().size(), 8u);
+    EXPECT_EQ(unit.LastFrame()->WireBytes().size(), 8u);
 
     // Mock unit receives FCP response from device
     const uint8_t rawResponse[] = {0x0C, 0xFF, 0x30, 0x07, 0x08, 0x00, 0x03, 0xDB};
@@ -897,6 +881,85 @@ TEST(AvcUnitSeamTests, IdentityAndDispatchSuccess) {
     EXPECT_EQ((*callbackResult)->companyId[2], 0xDB);
     EXPECT_EQ((*callbackResult)->unitType, SubunitType::kAudio);
     EXPECT_EQ((*callbackResult)->unitId, 0x00);
+}
+
+namespace {
+
+Cmd::StreamFormatCommand UnitIsoInSingle() {
+    return Cmd::StreamFormatCommand{
+        .operands = {.form = Cmd::StreamFormatSubfunction::kSingle,
+                     .opcode = Cmd::StreamFormatOpcode::kExtendedStreamFormat,
+                     .plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kInput,
+                                                        Cmd::UnitPlugType::kPcr, 0)}};
+}
+
+uint8_t SentOpcode(const MockAvcUnit& unit) { return unit.LastFrame()->WireBytes()[2]; }
+
+void RespondWithCode(MockAvcUnit& unit, uint8_t code) {
+    std::vector<uint8_t> raw(unit.LastFrame()->WireBytes().begin(), unit.LastFrame()->WireBytes().end());
+    raw[0] = code;
+    auto parsed = ParseResponseFor(*unit.LastFrame(), raw);
+    ASSERT_TRUE(parsed.has_value());
+    unit.Respond(*parsed);
+}
+
+// Phase 88 answer to 0x2F SINGLE on unit ISO input 0 (A0 capture).
+void RespondPhase88CurrentFormat(MockAvcUnit& unit) {
+    const uint8_t raw[] = {0x0C, 0xFF, 0x2F, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x01, 0x90,
+                           0x40, 0x04, 0x01, 0x03, 0x08, 0x06, 0x02, 0x00, 0x01, 0x0D};
+    auto parsed = ParseResponseFor(*unit.LastFrame(), raw);
+    ASSERT_TRUE(parsed.has_value());
+    unit.Respond(*parsed);
+}
+
+} // namespace
+
+TEST(StreamFormatDispatchTests, LearnsStreamFormatSupportWhenItAnswersInsteadOfExtended) {
+    MockAvcUnit unit;
+    bool ok = false;
+    Cmd::SendStreamFormat(unit, UnitIsoInSingle(), CommandType::kStatus,
+                          [&ok](Expected<Cmd::StreamFormatReply> reply) { ok = reply.has_value(); });
+    EXPECT_EQ(SentOpcode(unit), 0xBF);
+    RespondWithCode(unit, 0x08);  // NOT IMPLEMENTED
+    EXPECT_EQ(SentOpcode(unit), 0x2F);
+    RespondPhase88CurrentFormat(unit);
+    EXPECT_TRUE(ok);
+    EXPECT_TRUE(unit.UsesStreamFormatSupportOpcode());
+
+    // Every later query goes out as 0x2F; a refusal is final, not retried.
+    bool answered = false;
+    Cmd::SendStreamFormat(unit, UnitIsoInSingle(), CommandType::kStatus,
+                          [&answered](Expected<Cmd::StreamFormatReply>) { answered = true; });
+    EXPECT_EQ(SentOpcode(unit), 0x2F);
+    RespondWithCode(unit, 0x08);
+    EXPECT_TRUE(answered);
+}
+
+TEST(StreamFormatDispatchTests, DoesNotLearnWhenBothOpcodesAreRefused) {
+    // A 0xBF unit may answer NOT IMPLEMENTED at the end of a format list; the
+    // 0x2F retry fails too, and the unit must stay on 0xBF.
+    MockAvcUnit unit;
+    std::optional<bool> ok;
+    Cmd::SendStreamFormat(unit, UnitIsoInSingle(), CommandType::kStatus,
+                          [&ok](Expected<Cmd::StreamFormatReply> reply) { ok = reply.has_value(); });
+    RespondWithCode(unit, 0x08);
+    EXPECT_EQ(SentOpcode(unit), 0x2F);
+    RespondWithCode(unit, 0x08);
+    ASSERT_TRUE(ok.has_value());
+    EXPECT_FALSE(*ok);
+    EXPECT_FALSE(unit.UsesStreamFormatSupportOpcode());
+}
+
+TEST(StreamFormatDispatchTests, OtherRefusalsAreNotRetried) {
+    MockAvcUnit unit;
+    std::optional<bool> ok;
+    Cmd::SendStreamFormat(unit, UnitIsoInSingle(), CommandType::kStatus,
+                          [&ok](Expected<Cmd::StreamFormatReply> reply) { ok = reply.has_value(); });
+    RespondWithCode(unit, 0x0A);  // REJECTED: the opcode is understood
+    ASSERT_TRUE(ok.has_value());
+    EXPECT_FALSE(*ok);
+    EXPECT_EQ(SentOpcode(unit), 0xBF);
+    EXPECT_FALSE(unit.UsesStreamFormatSupportOpcode());
 }
 
 TEST(AvcUnitSeamTests, DispatchPropagatesTransportFailure) {

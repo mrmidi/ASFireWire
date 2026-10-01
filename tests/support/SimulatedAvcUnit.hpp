@@ -118,6 +118,13 @@ public:
 
     [[nodiscard]] std::optional<std::span<const uint8_t>> FindResponse(std::span<const uint8_t> command) const;
 
+    /// Every command the image had no measured answer for. The simulator still
+    /// answers NOT IMPLEMENTED, but a real device was never asked: such a frame
+    /// is untested on the wire (a bare UNIT INFO wedged a Phase 88 this way).
+    [[nodiscard]] const std::vector<std::vector<uint8_t>>& UnmeasuredCommands() const noexcept {
+        return unmeasured_;
+    }
+
 private:
     void Deliver(ResponseCallback completion, Expected<Response> response);
     void DeliverResponse(const CommandFrame& frame, ResponseCallback completion,
@@ -140,6 +147,7 @@ private:
     uint64_t guid_{0};
     SimulatedAvcFaults faults_{};
     std::vector<OverrideEntry> overrides_;
+    std::vector<std::vector<uint8_t>> unmeasured_;
     mutable std::vector<DescriptorEntry> descriptors_;
     mutable std::vector<uint8_t> dynamicResponseStorage_;
     bool deferResponses_{false};

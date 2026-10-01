@@ -5,6 +5,14 @@ inspect it and attach it to investigations. It includes every discovered node
 with a standard AV/C Config ROM unit (specifier `0x00A02D`, version `0x010001`)
 or an existing AV/C inventory, independent of vendor/model support.
 
+> **Before Refresh: stop playback and turn speakers and headphones down, or
+> disconnect them.** Refresh sends dozens of AV/C commands to every device. A
+> device may glitch, stop answering, or reset the FireWire bus, and a reset can
+> produce a loud noise. The app asks for confirmation every time. If a device
+> stops responding afterwards, power-cycle it. (A TerraTec Phase 88 sent a
+> UNIT INFO without operands stopped answering, stopped acknowledging writes
+> and reset the bus until it was power-cycled.)
+
 Connect the app to the driver, then select **AV/C Report → Refresh**. The core
 of the report is each unit's **FCP exchange log**: every AV/C command the driver
 sent the unit and the reply, since attach or the last refresh. That is the
@@ -57,6 +65,13 @@ or republish audio devices. The decision of what each unit gets is
 
 A refusal at a format-list index is how a device ends the list; the report
 counts it as "end of list", not as an error.
+
+Each stream-format query is sent once. A unit is asked with EXTENDED STREAM
+FORMAT (`0xBF`); a unit that refuses it and answers STREAM FORMAT SUPPORT
+(`0x2F`) is asked only `0x2F` from then on, and BridgeCo units are asked only
+`0x2F` from the start. The test suite fails when an attach sends a frame that
+neither the device's capture nor a named reference stack covers
+(`tests/protocols/AvcGoldenTests.cpp`, `ExpectOnlyMeasuredFrames`).
 
 Each exchange records the command bytes as sent, the reply, and how it ended:
 `response`, `timeout`, `busReset`, `transportError`, `responseMismatch`, or

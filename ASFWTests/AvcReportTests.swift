@@ -56,10 +56,19 @@ struct AvcReportTests {
         snapshot.devices[0].avcUnit?.subunits[0].capabilities = nil
         snapshot.devices[0].avcUnit?.subunits[0].descriptor = Data()
         let text = AvcReportTextFormatter.format(snapshot)
-        #expect(text.contains("<unavailable; export limit"))
+        #expect(text.contains("<unavailable: reason not recorded in this export>"))
         #expect(text.contains("0 bytes (empty)"))
         snapshot.devices[0].avcUnit = nil
         #expect(AvcReportTextFormatter.format(snapshot).contains("AV/C UNIT: <unavailable"))
+    }
+
+    @Test func missingBlobShowsTheDriversReasonNotTheExportLimit() {
+        var snapshot = report()
+        snapshot.devices[0].avcUnit?.subunits[0].descriptor = nil
+        snapshot.devices[0].avcUnit?.subunits[0].descriptorMissing = "the driver has not read this descriptor from the device"
+        let text = AvcReportTextFormatter.format(snapshot)
+        #expect(text.contains("<unavailable: the driver has not read this descriptor from the device>"))
+        #expect(!text.contains("export limit"))
     }
 
     @Test func rejectsFutureSchemaWithoutReplacingData() throws {
@@ -284,8 +293,12 @@ struct AvcReportTests {
         func getConfigROM(nodeId: UInt8, generation: UInt16) -> ASFWDriverConnector.ConfigROMFetchResult? {
             .init(data: Data([1, 2, 3, 4]), requestedGeneration: generation, resolvedGeneration: generation)
         }
-        func getSubunitCapabilitiesData(guid: UInt64, type: UInt8, id: UInt8) -> Data? { nil }
-        func getSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) -> Data? { nil }
+        func subunitCapabilitiesBlob(guid: UInt64, type: UInt8, id: UInt8) -> Result<Data, AvcBlobUnavailable> {
+            .failure(.init(reason: "stub"))
+        }
+        func subunitDescriptorBlob(guid: UInt64, type: UInt8, id: UInt8) -> Result<Data, AvcBlobUnavailable> {
+            .failure(.init(reason: "the driver has not read this descriptor from the device"))
+        }
         var exchangeLog: AvcReportSnapshot.ExchangeLog?
         func getFCPExchangeLog(guid: UInt64) -> AvcReportSnapshot.ExchangeLog? { exchangeLog }
     }

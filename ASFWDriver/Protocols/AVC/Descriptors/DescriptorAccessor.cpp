@@ -45,7 +45,9 @@ void DescriptorAccessor::openForRead(const DescriptorSpecifier& specifier,
     cmd.operands.subfunction = ASFW::AVC::Cmd::OpenDescriptorSubfunction::kReadOpen;
 
     unit_.Control(cmd, [completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::OpenDescriptorReply> reply) {
-        const bool success = reply && reply->subfunction == ASFW::AVC::Cmd::OpenDescriptorSubfunction::kReadOpen && reply->status == 0;
+        // ACCEPTED is the answer (FFADO avc_descriptor.cpp:178). The byte after
+        // the subfunction is reserved: a Phase 88 echoes the command's FF there.
+        const bool success = reply && reply->subfunction == ASFW::AVC::Cmd::OpenDescriptorSubfunction::kReadOpen;
         ASFW_LOG_V3(Discovery, "OPEN DESCRIPTOR result: success=%d", success);
         Common::InvokeSharedCallback(completionState, success);
     });
@@ -60,7 +62,7 @@ void DescriptorAccessor::close(const DescriptorSpecifier& specifier,
     cmd.operands.subfunction = ASFW::AVC::Cmd::OpenDescriptorSubfunction::kClose;
 
     unit_.Control(cmd, [completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::OpenDescriptorReply> reply) {
-        const bool success = reply && reply->subfunction == ASFW::AVC::Cmd::OpenDescriptorSubfunction::kClose && reply->status == 0;
+        const bool success = reply && reply->subfunction == ASFW::AVC::Cmd::OpenDescriptorSubfunction::kClose;
         ASFW_LOG_V3(Discovery, "CLOSE DESCRIPTOR result: success=%d", success);
         Common::InvokeSharedCallback(completionState, success);
     });

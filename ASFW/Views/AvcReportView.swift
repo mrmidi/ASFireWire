@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct AvcReportView: View {
     @ObservedObject var store: AvcReportStore
     @State private var refreshing = false
+    @State private var confirmingRefresh = false
     @State private var openingDump = false
     @State private var copied = false
 
@@ -15,7 +16,7 @@ struct AvcReportView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if store.isRefreshing { ProgressView().controlSize(.small) }
-                Button("Refresh", systemImage: "arrow.clockwise") { refreshing = true }
+                Button("Refresh", systemImage: "arrow.clockwise") { confirmingRefresh = true }
                     .buttonStyle(.borderedProminent).disabled(store.isRefreshing || refreshing)
                 Button(copied ? "Copied!" : "Copy Report", systemImage: copied ? "checkmark" : "doc.on.doc") {
                     NSPasteboard.general.clearContents()
@@ -39,7 +40,7 @@ struct AvcReportView: View {
                 }.padding().background(Color.red.opacity(0.1))
             }
             HStack {
-                Label(store.isImported ? "Saved dump — no driver connection required." : "Refresh runs normal AV/C discovery manually. Reports include parsed data and original captured bytes.", systemImage: "info.circle")
+                Label(store.isImported ? "Saved dump — no driver connection required." : "Refresh reruns AV/C discovery on every device. Turn speakers and headphones down first. Reports include parsed data and original captured bytes.", systemImage: "info.circle")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }.padding(.horizontal).padding(.vertical, 8)
@@ -48,6 +49,7 @@ struct AvcReportView: View {
                     .textSelection(.enabled).padding().frame(maxWidth: .infinity, alignment: .leading)
             }.background(Color(nsColor: .textBackgroundColor))
         }
+        .avcProbeConfirmation(isPresented: $confirmingRefresh) { refreshing = true }
         .task(id: refreshing) {
             guard refreshing else { return }
             await store.refresh()

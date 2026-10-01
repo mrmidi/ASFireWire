@@ -124,6 +124,15 @@ public:
     void Inquiry(const Cmd& cmd, Callback&& completion) {
         Inquiry(cmd, CurrentGeneration(), std::forward<Callback>(completion));
     }
+
+    /// True once this unit answered STREAM FORMAT SUPPORT (0x2F) where it had
+    /// refused EXTENDED STREAM FORMAT (0xBF). Every later stream-format command
+    /// then goes out as 0x2F directly. See Cmd::SendStreamFormat.
+    [[nodiscard]] bool UsesStreamFormatSupportOpcode() const noexcept { return streamFormatSupportOnly_; }
+    void LearnStreamFormatSupportOpcode() noexcept { streamFormatSupportOnly_ = true; }
+
+private:
+    bool streamFormatSupportOnly_{false};
 };
 
 /// Helper to asynchronously dispatch a strongly typed AV/C command to an IAvcUnit with a specific CommandType.

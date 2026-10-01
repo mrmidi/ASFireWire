@@ -9,6 +9,7 @@
 #include "../AVCUnit.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../Commands/StreamFormatCommand.hpp"
+#include "../Commands/StreamFormatDispatch.hpp"
 #include "../Core/IAvcUnit.hpp"
 #include "../Core/AvcTypes.hpp"
 #include "../Commands/SignalSourceCommand.hpp"
@@ -269,41 +270,27 @@ void MusicSubunit::ParseCapabilities(AVCUnit& unit, std::function<void(bool)> co
     specifier.type = static_cast<DescriptorSpecifierType>(0x80); // Status Descriptor
     specifier.typeSpecificFields = {};
 
-    // 1. Try Standard Sequence (OPEN -> READ -> CLOSE)
-    accessor->readWithOpenCloseSequence(specifier, [this, unitPtr, accessor, specifier, completion](const DescriptorAccessor::ReadDescriptorResult& result) {
+    // OPEN -> READ -> CLOSE only (FFADO avc_descriptor.cpp:165-284). A descriptor
+    // the device would not open is never read: reading it anyway left firmware
+    // descriptor state behind on a Phase 88.
+    accessor->readWithOpenCloseSequence(specifier, [this, unitPtr, accessor, completion](const DescriptorAccessor::ReadDescriptorResult& result) {
         if (result.success && !result.data.empty()) {
-            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Standard OPEN-READ-CLOSE succeeded (%zu bytes)", result.data.size());
+            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: status descriptor read (%zu bytes)", result.data.size());
             statusDescriptorReadOk_ = true;
             statusDescriptorData_ = result.data; // Store raw data
             ParseDescriptorBlock(result.data.data(), result.data.size());
-            ParseSignalFormats(*unitPtr, completion);
         } else {
-            // 2. Fallback: Non-Standard Direct Read (Skip OPEN)
-            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Standard descriptor access failed (result=%d). Trying Non-Standard Direct Read...", 
-                           static_cast<int>(result.avcResult));
-            
-            accessor->readComplete(specifier, [this, unitPtr, accessor, completion](const DescriptorAccessor::ReadDescriptorResult& fallbackResult) {
-                if (fallbackResult.success && !fallbackResult.data.empty()) {
-                    ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Non-Standard Direct Read SUCCEEDED (%zu bytes)", fallbackResult.data.size());
-                    statusDescriptorReadOk_ = true;
-                    statusDescriptorData_ = fallbackResult.data; // Store raw data
-                    ParseDescriptorBlock(fallbackResult.data.data(), fallbackResult.data.size());
-                } else {
-                    ASFW_LOG_V0(MusicSubunit, "MusicSubunit: Non-Standard Direct Read also failed (result=%d). Capabilities may be incomplete.", 
-                                 static_cast<int>(fallbackResult.avcResult));
-                }
-                
-                // Proceed to signal formats regardless of descriptor success
-                ParseSignalFormats(*unitPtr, completion);
-            });
+            ASFW_LOG_V0(MusicSubunit, "MusicSubunit: status descriptor unavailable (result=%d)",
+                        static_cast<int>(result.avcResult));
         }
+        ParseSignalFormats(*unitPtr, completion);
     });
 }
 
 void MusicSubunit::ParseSignalFormats(AVCUnit& unit, std::function<void(bool)> completion) {
     // Use comprehensive Stream Format Support command (0xBF) instead of legacy Signal Format (0xA0/0xA1).
     // The legacy commands are often not implemented or are unit-level only.
-    ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Querying stream formats (using 0xBF/0x2F)...");
+    ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Querying stream formats...");
     QueryPlugFormats(unit, 0, completion);
 }
 
@@ -318,10 +305,7 @@ void MusicSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, std::functi
 
     auto& plug = plugs_[plugIndex];
 
-    // Intentional design choice (not a bug, not a plan violation):
-    // Apple AppleFWAudio and AVCVideoServices try 0xBF first and fall back blindly to 0x2F
-    // on NOT IMPLEMENTED. FireWire FCP roundtrips for NOT IMPLEMENTED take < 1 ms, so
-    // blind probing with fallback is cheap, standard, and eliminates persistent opcode state.
+    // 0xBF until the unit proves 0x2F-only (Cmd::SendStreamFormat).
     Cmd::StreamFormatCommand cmd{
         .address = SubunitAddress::FromByte(MakeSubunitAddress(GetType(), GetID())),
         .operands = {
@@ -331,21 +315,8 @@ void MusicSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, std::functi
         }
     };
 
-    unit.Status(cmd, [this, &unit, plugIndex, completion, cmd](Expected<Cmd::StreamFormatReply> reply) mutable {
-        if (!reply && reply.error().response == ResponseCode::kNotImplemented) {
-            cmd.operands.opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport;
-            unit.Status(cmd, [this, &unit, plugIndex, completion](Expected<Cmd::StreamFormatReply> fallbackReply) {
-                if (fallbackReply && fallbackReply->format.rawLength > 0) {
-                    auto parsed = StreamFormats::StreamFormatParser::Parse(fallbackReply->format.rawBytes.data(), fallbackReply->format.rawLength);
-                    HandlePlugFormatResult(plugIndex, AVCResult::kImplementedStable, parsed);
-                } else {
-                    HandlePlugFormatResult(plugIndex, AVCResult::kNotImplemented, std::nullopt);
-                }
-                QueryPlugFormats(unit, plugIndex + 1, completion);
-            });
-            return;
-        }
-
+    Cmd::SendStreamFormat(unit, cmd, ::ASFW::AVC::CommandType::kStatus,
+                          [this, &unit, plugIndex, completion](Expected<Cmd::StreamFormatReply> reply) {
         if (reply && reply->format.rawLength > 0) {
             auto parsed = StreamFormats::StreamFormatParser::Parse(reply->format.rawBytes.data(), reply->format.rawLength);
             HandlePlugFormatResult(plugIndex, AVCResult::kImplementedStable, parsed);
@@ -481,10 +452,7 @@ void MusicSubunit::QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmit
                 return;
             }
 
-            // Intentional design choice (not a bug, not a plan violation):
-            // Apple AppleFWAudio and AVCVideoServices try 0xBF first and fall back blindly to 0x2F
-            // on NOT IMPLEMENTED. FireWire FCP roundtrips for NOT IMPLEMENTED take < 1 ms, so
-            // blind probing with fallback is cheap, standard, and eliminates persistent opcode state.
+            // 0xBF until the unit proves 0x2F-only (Cmd::SendStreamFormat).
             Cmd::StreamFormatCommand cmd{
                 .address = SubunitAddress::FromByte(MakeSubunitAddress(GetType(), GetID())),
                 .operands = {
@@ -495,28 +463,8 @@ void MusicSubunit::QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmit
                 }
             };
 
-            avcUnit->Status(cmd, [formats, iteration, queryNextList, currentPlugIndex, this, state, queryNextPlug, avcUnit, cmd](Expected<Cmd::StreamFormatReply> reply) mutable {
-                if (!reply && reply.error().response == ResponseCode::kNotImplemented) {
-                    cmd.operands.opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport;
-                    avcUnit->Status(cmd, [formats, iteration, queryNextList, currentPlugIndex, this, state, queryNextPlug](Expected<Cmd::StreamFormatReply> fallbackReply) {
-                        if (fallbackReply && fallbackReply->format.rawLength > 0) {
-                            auto parsed = StreamFormats::StreamFormatParser::Parse(fallbackReply->format.rawBytes.data(), fallbackReply->format.rawLength);
-                            if (parsed) {
-                                formats->push_back(*parsed);
-                                (*iteration)++;
-                                (*queryNextList)();
-                                return;
-                            }
-                        }
-                        if (!formats->empty()) {
-                            plugs_[currentPlugIndex].supportedFormats = std::move(*formats);
-                        }
-                        state->plugIndex++;
-                        (*queryNextPlug)();
-                    });
-                    return;
-                }
-
+            Cmd::SendStreamFormat(*avcUnit, cmd, ::ASFW::AVC::CommandType::kStatus,
+                [formats, iteration, queryNextList, currentPlugIndex, this, state, queryNextPlug](Expected<Cmd::StreamFormatReply> reply) {
                 if (reply && reply->format.rawLength > 0) {
                     auto parsed = StreamFormats::StreamFormatParser::Parse(reply->format.rawBytes.data(), reply->format.rawLength);
                     if (parsed) {
@@ -1024,23 +972,14 @@ void MusicSubunit::ReadStatusDescriptor(AVCUnit& unit, std::function<void(bool)>
     specifier.type = static_cast<DescriptorSpecifierType>(0x80);
     specifier.typeSpecificFields = {};
 
-    accessor->readWithOpenCloseSequence(specifier, [this, unitPtr, accessor, specifier, completion](const DescriptorAccessor::ReadDescriptorResult& result) {
+    accessor->readWithOpenCloseSequence(specifier, [this, unitPtr, accessor, completion](const DescriptorAccessor::ReadDescriptorResult& result) {
         if (result.success && !result.data.empty()) {
             statusDescriptorReadOk_ = true;
             statusDescriptorData_ = result.data;
             ParseDescriptorBlock(result.data.data(), result.data.size());
             completion(true);
         } else {
-            accessor->readComplete(specifier, [this, unitPtr, accessor, completion](const DescriptorAccessor::ReadDescriptorResult& fallbackResult) {
-                if (fallbackResult.success && !fallbackResult.data.empty()) {
-                    statusDescriptorReadOk_ = true;
-                    statusDescriptorData_ = fallbackResult.data;
-                    ParseDescriptorBlock(fallbackResult.data.data(), fallbackResult.data.size());
-                    completion(true);
-                } else {
-                    completion(false);
-                }
-            });
+            completion(false);
         }
     });
 }
@@ -1082,10 +1021,7 @@ void MusicSubunit::SetSampleRate(ASFW::Protocols::AVC::IAVCCommandSubmitter& sub
         .entryCount = 1,
     };
 
-    // Intentional design choice (not a bug, not a plan violation):
-    // Apple AppleFWAudio and AVCVideoServices try 0xBF first and fall back blindly to 0x2F
-    // on NOT IMPLEMENTED. FireWire FCP roundtrips for NOT IMPLEMENTED take < 1 ms, so
-    // blind probing with fallback is cheap, standard, and eliminates persistent opcode state.
+    // 0xBF until the unit proves 0x2F-only (Cmd::SendStreamFormat).
     Cmd::StreamFormatCommand cmd{
         .address = SubunitAddress::FromByte(MakeSubunitAddress(GetType(), GetID())),
         .operands = {
@@ -1096,21 +1032,8 @@ void MusicSubunit::SetSampleRate(ASFW::Protocols::AVC::IAVCCommandSubmitter& sub
         }
     };
 
-    avcUnit->Control(cmd, [completion, avcUnit, cmd](Expected<Cmd::StreamFormatReply> reply) mutable {
-        if (!reply && reply.error().response == ResponseCode::kNotImplemented) {
-            cmd.operands.opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport;
-            avcUnit->Control(cmd, [completion](Expected<Cmd::StreamFormatReply> fallbackReply) {
-                if (fallbackReply.has_value()) {
-                    ASFW_LOG_V1(MusicSubunit, "MusicSubunit: SetSampleRate succeeded (via 0x2F fallback)");
-                    completion(true);
-                } else {
-                    ASFW_LOG_V1(MusicSubunit, "MusicSubunit: SetSampleRate failed on fallback");
-                    completion(false);
-                }
-            });
-            return;
-        }
-
+    Cmd::SendStreamFormat(*avcUnit, cmd, ::ASFW::AVC::CommandType::kControl,
+                          [completion](Expected<Cmd::StreamFormatReply> reply) {
         if (reply.has_value()) {
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: SetSampleRate succeeded");
             completion(true);

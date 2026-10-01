@@ -130,81 +130,55 @@ extension ASFWDriverConnector {
 
     /// Preserve the driver capability wire blob for investigation reports.
     func getSubunitCapabilitiesData(guid: UInt64, type: UInt8, id: UInt8) -> Data? {
-        guard isConnected else { return nil }
-        guard connection != 0 else { return nil }
-
-        // Use scalar inputs (kernel expects 4 × UInt64 via scalarInput, not structureInput)
-        let scalarInputs: [UInt64] = [
-            guid >> 32,              // GUID high 32 bits
-            guid & 0xFFFFFFFF,       // GUID low 32 bits
-            UInt64(type),            // Subunit type
-            UInt64(id)               // Subunit ID
-        ]
-
-        var outSize = 4096  // Match the driver's bounded capability export.
-        var out = Data(count: outSize)
-        let scalarInputCount: UInt32 = 4
-
-        let kr = out.withUnsafeMutableBytes { outPtr in
-            scalarInputs.withUnsafeBufferPointer { scalarPtr in
-                IOConnectCallMethod(
-                    connection,
-                    Method.getSubunitCapabilities.rawValue,
-                    scalarPtr.baseAddress, scalarInputCount,  // Scalar inputs ✅
-                    nil, 0,                                   // No struct input
-                    nil, nil,                                 // No scalar output
-                    outPtr.baseAddress?.assumingMemoryBound(to: UInt8.self), &outSize  // Struct output
-                )
-            }
-        }
-
-        guard kr == KERN_SUCCESS else {
-            print("[Connector] ❌ callStruct error: getSubunitCapabilities failed: \(interpretIOReturn(kr))")
-            return nil
-        }
-
-        out.count = outSize
-        return out
+        try? subunitCapabilitiesBlob(guid: guid, type: type, id: id).get()
     }
 
     func getSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) -> Data? {
-        guard isConnected else { return nil }
-        guard connection != 0 else { return nil }
+        try? subunitDescriptorBlob(guid: guid, type: type, id: id).get()
+    }
 
-        // Use scalar inputs (kernel expects 4 × UInt64 via scalarInput, not structureInput)
-        let scalarInputs: [UInt64] = [
-            guid >> 32,              // GUID high 32 bits
-            guid & 0xFFFFFFFF,       // GUID low 32 bits
-            UInt64(type),            // Subunit type
-            UInt64(id)               // Subunit ID
-        ]
+    func subunitCapabilitiesBlob(guid: UInt64, type: UInt8, id: UInt8) -> Result<Data, AvcBlobUnavailable> {
+        fetchSubunitBlob(.getSubunitCapabilities, guid: guid, type: type, id: id,
+                         notFound: "the driver has no such subunit")
+    }
 
-        // DriverKit structure outputs over ~4KB get rejected; cap to match kMaxWireSize on the driver
-        let maxWireSize = 4 * 1024
-        var outSize = maxWireSize
+    func subunitDescriptorBlob(guid: UInt64, type: UInt8, id: UInt8) -> Result<Data, AvcBlobUnavailable> {
+        fetchSubunitBlob(.getSubunitDescriptor, guid: guid, type: type, id: id,
+                         notFound: "the driver has not read this descriptor from the device")
+    }
+
+    /// One subunit blob, or the driver's reason for not returning it. Both
+    /// methods take the GUID halves, type and id as four scalars and answer
+    /// with at most 4096 bytes (the driver's structure-output limit).
+    private func fetchSubunitBlob(_ method: Method, guid: UInt64, type: UInt8, id: UInt8,
+                                  notFound: String) -> Result<Data, AvcBlobUnavailable> {
+        guard isConnected, connection != 0 else {
+            return .failure(.init(reason: "no driver connection"))
+        }
+        let scalarInputs: [UInt64] = [guid >> 32, guid & 0xFFFF_FFFF, UInt64(type), UInt64(id)]
+        var outSize = 4 * 1024
         var out = Data(count: outSize)
-        let scalarInputCount: UInt32 = 4
-
         let kr = out.withUnsafeMutableBytes { outPtr in
             scalarInputs.withUnsafeBufferPointer { scalarPtr in
-                IOConnectCallMethod(
-                    connection,
-                    Method.getSubunitDescriptor.rawValue,
-                    scalarPtr.baseAddress, scalarInputCount,  // Scalar inputs
-                    nil, 0,                                   // No struct input
-                    nil, nil,                                 // No scalar output
-                    outPtr.baseAddress?.assumingMemoryBound(to: UInt8.self), &outSize  // Struct output
-                )
+                IOConnectCallMethod(connection, method.rawValue,
+                                    scalarPtr.baseAddress, UInt32(scalarInputs.count),
+                                    nil, 0, nil, nil,
+                                    outPtr.baseAddress?.assumingMemoryBound(to: UInt8.self), &outSize)
             }
         }
-
-        guard kr == KERN_SUCCESS else {
-            print("[Connector] ❌ callStruct error: getSubunitDescriptor failed: \(interpretIOReturn(kr))")
-            return nil
+        switch kr {
+        case KERN_SUCCESS:
+            out.count = outSize
+            return .success(out)
+        case kIOReturnNotFound:
+            return .failure(.init(reason: notFound))
+        case kIOReturnUnsupported:
+            return .failure(.init(reason: "the driver does not export this for this subunit type"))
+        case kIOReturnMessageTooLarge:
+            return .failure(.init(reason: "larger than the 4096-byte export limit"))
+        default:
+            return .failure(.init(reason: "driver call failed: \(interpretIOReturn(kr))"))
         }
-
-        out.count = outSize
-        return out
     }
 
     /// Every FCP exchange the driver had with this unit since attach or the
