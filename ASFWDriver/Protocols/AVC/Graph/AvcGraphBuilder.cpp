@@ -44,12 +44,13 @@ StreamGraph AvcGraphBuilder::BuildStreamGraph(
                 info.name = mp->name;
             }
 
-            // 2. Per-plug channel name list (e.g. Phase 88 from 0x8101 -> 0x8102 -> 0x8103)
+            // 2. The music plug's audio stream label (Phase 88: the source plugs'
+            //    audio info blocks, TA 2001007 §6.2.3.1). Keyed by music plug, so
+            //    a playback channel gets the label of the output it is routed to.
             if (info.name.empty()) {
-                const auto it = musicStatus.perPlugChannelNames.find(plug.plugId);
-                if (it != musicStatus.perPlugChannelNames.end() &&
-                    info.logicalIndex < it->second.size()) {
-                    info.name = it->second[info.logicalIndex];
+                const auto it = musicStatus.musicPlugLabels.find(signal.musicPlugId);
+                if (it != musicStatus.musicPlugLabels.end()) {
+                    info.name = it->second;
                 }
             }
 

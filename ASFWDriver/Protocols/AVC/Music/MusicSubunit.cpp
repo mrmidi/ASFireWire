@@ -828,10 +828,16 @@ void MusicSubunit::ParseDescriptorBlock(const uint8_t* data, size_t length) {
 
     // 3. Music Plug Channels (0x810B)
     for (const auto& mp : status.musicPlugs) {
+        std::string name = mp.name;
+        if (name.empty()) {
+            if (const auto it = status.musicPlugLabels.find(mp.musicPlugId); it != status.musicPlugLabels.end()) {
+                name = it->second;
+            }
+        }
         musicChannels_.push_back(MusicPlugChannel{
             .musicPlugID = mp.musicPlugId,
             .portType = mp.portType,
-            .name = mp.name,
+            .name = std::move(name),
         });
     }
 

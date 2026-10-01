@@ -102,7 +102,10 @@ struct OpenDescriptorOperands {
         if (!res) return res;
         res = w.Append(static_cast<uint8_t>(subfunction));
         if (!res) return res;
-        // read_write_result = 0xFF for command
+        // Reserved byte. TA 2002013 Table 30 says 00 and FFADO sends 00
+        // (avc_descriptor_cmd.cpp:43); Apple sends FF (FireBug isitduet.txt:157),
+        // and the Duet and Phase 88 were captured accepting FF. The response
+        // echoes it, so it is not a status: success is the ACCEPTED code.
         return w.Append(0xFF);
     }
 

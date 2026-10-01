@@ -459,8 +459,18 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     for (uint32_t channel = 0; channel < 10; ++channel) {
         EXPECT_EQ(graph->playback.slotMap.SlotFor(channel), kPlanar[channel]) << "channel " << channel;
     }
+    // Labels from the source plugs' audio info blocks, per music plug
+    // (TA 2001007 Table 6.2): capture reads source plug 0's list; playback takes
+    // the label of the output each channel is routed to (source plugs 1 and 2).
     ASSERT_EQ(graph->capture.channelNames.size(), 10U);
     EXPECT_EQ(graph->capture.channelNames[0], "Line_1/2 left PHASE88 FW");
+    EXPECT_EQ(graph->capture.channelNames[1], "Line_1/2 right PHASE88 FW");
+    EXPECT_EQ(graph->capture.channelNames[9], "SPDIF right PHASE88 FW");
+    ASSERT_EQ(graph->playback.channelNames.size(), 10U);
+    EXPECT_EQ(graph->playback.channelNames[0], "Multichannel 1 PHASE88 FW");
+    EXPECT_EQ(graph->playback.channelNames[7], "Multichannel 8 PHASE88 FW");
+    EXPECT_EQ(graph->playback.channelNames[8], "SPDIF/AC3 left PHASE88 FW");
+    EXPECT_EQ(graph->playback.channelNames[9], "SPDIF/AC3 right PHASE88 FW");
 
     // What CoreAudio is offered: the runtime runs 48 kHz only.
     DeviceProfiles::Audio::StaticAudioEndpointPlan plan{};

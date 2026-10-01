@@ -84,10 +84,25 @@ struct MusicSubunitPlug {
     std::vector<MusicClusterInfo> clusters;
 };
 
+/// One end of a music plug's route (music plug info block 0x810B; layout per
+/// FFADO avc_descriptor_music.cpp:451-461). Function type F0 is a subunit
+/// destination plug, F1 a subunit source plug.
+struct MusicPlugEndpoint {
+    static constexpr uint8_t kSubunitDestinationPlug = 0xF0;
+    static constexpr uint8_t kSubunitSourcePlug = 0xF1;
+    uint8_t functionType{0xFF};
+    uint8_t plugId{0xFF};
+    uint8_t functionBlockId{0xFF};
+    uint8_t streamPosition{0xFF};
+    uint8_t streamLocation{0xFF};
+};
+
 struct MusicPlugDetail {
     uint16_t musicPlugId{0};
     uint8_t portType{0};
     std::string name;
+    std::optional<MusicPlugEndpoint> source;
+    std::optional<MusicPlugEndpoint> destination;
 };
 
 //==============================================================================
@@ -103,7 +118,13 @@ struct MusicSubunitStatus {
 
     std::vector<MusicSubunitPlug> plugs;
     std::vector<MusicPlugDetail> musicPlugs;
+    /// Audio stream labels per subunit source plug, from its audio info block
+    /// (TA 2001007 §6.2.3.1). One entry per stream; an unlabelled one is "".
     std::unordered_map<uint8_t, std::vector<std::string>> perPlugChannelNames;
+    /// The label of each audio music plug: the k-th audio music plug routed to
+    /// a source plug, in music plug ID order, carries that plug's k-th label
+    /// (TA 2001007 Table 6.2). Holds non-empty labels only.
+    std::unordered_map<uint16_t, std::string> musicPlugLabels;
 
     [[nodiscard]] const MusicSubunitPlug* FindPlug(uint8_t plugId, bool isDest) const noexcept;
     [[nodiscard]] const MusicPlugDetail* FindMusicPlug(uint16_t musicPlugId) const noexcept;
@@ -119,6 +140,9 @@ public:
         std::span<const uint8_t> data) noexcept;
 
     [[nodiscard]] static std::string ExtractName(const AVCInfoBlock& block) noexcept;
+
+private:
+    static void AssignMusicPlugLabels(MusicSubunitStatus& status);
 };
 
 } // namespace ASFW::Protocols::AVC::Descriptors

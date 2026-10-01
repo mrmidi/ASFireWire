@@ -163,21 +163,22 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                         const uint8_t plugId = plugStatus.GetPrimaryData()[0];
                         for (const auto& audioInfo : plugStatus.GetNestedBlocks()) {
                             if (audioInfo.GetType() == 0x8103) {
-                                std::string text = ExtractName(audioInfo);
+                                // Labels are separated by CR LF; an unlabelled
+                                // stream is an empty entry (TA 2001007 §6.2.3.1).
+                                const std::string text = ExtractName(audioInfo);
                                 if (!text.empty()) {
                                     std::vector<std::string> names;
                                     size_t start = 0;
                                     while (start < text.size()) {
-                                        size_t end = text.find_first_of("\r\n", start);
-                                        if (end == std::string::npos) end = text.size();
-                                        if (end > start) {
-                                            names.push_back(text.substr(start, end - start));
+                                        size_t end = text.find("\r\n", start);
+                                        if (end == std::string::npos) {
+                                            names.push_back(text.substr(start));
+                                            break;
                                         }
-                                        start = text.find_first_not_of("\r\n", end);
+                                        names.push_back(text.substr(start, end - start));
+                                        start = end + 2;
                                     }
-                                    if (!names.empty()) {
-                                        status.perPlugChannelNames[plugId] = std::move(names);
-                                    }
+                                    status.perPlugChannelNames[plugId] = std::move(names);
                                 }
                             }
                         }
@@ -273,6 +274,17 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                         mp.portType = childData[0];
                         mp.musicPlugId = ReadBE16(childData.data() + 1);
                         mp.name = ExtractName(child);
+                        if (childData.size() >= 14) {
+                            const auto endpoint = [&childData](size_t at) {
+                                return MusicPlugEndpoint{.functionType = childData[at],
+                                                         .plugId = childData[at + 1],
+                                                         .functionBlockId = childData[at + 2],
+                                                         .streamPosition = childData[at + 3],
+                                                         .streamLocation = childData[at + 4]};
+                            };
+                            mp.source = endpoint(4);
+                            mp.destination = endpoint(9);
+                        }
                         status.musicPlugs.push_back(std::move(mp));
                     }
                 }
@@ -286,7 +298,28 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
         offset += consumed;
     }
 
+    AssignMusicPlugLabels(status);
     return status;
+}
+
+void MusicSubunitDescriptorParser::AssignMusicPlugLabels(MusicSubunitStatus& status) {
+    constexpr uint8_t kAudioMusicPlug = 0x00;
+    for (const auto& [sourcePlug, labels] : status.perPlugChannelNames) {
+        std::vector<uint16_t> routed;
+        for (const auto& mp : status.musicPlugs) {
+            if (mp.portType == kAudioMusicPlug && mp.destination &&
+                mp.destination->functionType == MusicPlugEndpoint::kSubunitSourcePlug &&
+                mp.destination->plugId == sourcePlug) {
+                routed.push_back(mp.musicPlugId);
+            }
+        }
+        std::ranges::sort(routed);
+        for (size_t k = 0; k < routed.size() && k < labels.size(); ++k) {
+            if (!labels[k].empty()) {
+                status.musicPlugLabels[routed[k]] = labels[k];
+            }
+        }
+    }
 }
 
 } // namespace ASFW::Protocols::AVC::Descriptors

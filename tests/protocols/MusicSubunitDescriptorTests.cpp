@@ -9,6 +9,7 @@
 
 #include "ASFWDriver/Protocols/AVC/Descriptors/MusicSubunitDescriptor.hpp"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,48 @@ std::vector<uint8_t> HexToBytes(const std::string& hex) {
         }
     }
     return bytes;
+}
+
+// An AV/C info block: compound_length, type, primary_fields_length, primary
+// fields, nested blocks (TA 1999045).
+std::vector<uint8_t> InfoBlock(uint16_t type, std::vector<uint8_t> primary,
+                               const std::vector<uint8_t>& nested = {}) {
+    std::vector<uint8_t> out;
+    const size_t compound = 4 + primary.size() + nested.size();
+    out.push_back(static_cast<uint8_t>(compound >> 8));
+    out.push_back(static_cast<uint8_t>(compound));
+    out.push_back(static_cast<uint8_t>(type >> 8));
+    out.push_back(static_cast<uint8_t>(type));
+    out.push_back(static_cast<uint8_t>(primary.size() >> 8));
+    out.push_back(static_cast<uint8_t>(primary.size()));
+    out.insert(out.end(), primary.begin(), primary.end());
+    out.insert(out.end(), nested.begin(), nested.end());
+    return out;
+}
+
+// Source plug 0 labelled with `labels` (one raw text block), and audio music
+// plugs 12, 13, 14 routed from destination plug 1 to source plug 0.
+std::optional<MusicSubunitStatus> ParseSourcePlugLabels(const std::string& labels) {
+    const auto raw = InfoBlock(0x000A, std::vector<uint8_t>(labels.begin(), labels.end()));
+    std::vector<uint8_t> namePrimary{0x00, 0x00, 0xFF, 0xFF};
+    namePrimary.insert(namePrimary.end(), raw.begin(), raw.end());
+    const auto name = InfoBlock(0x000B, namePrimary);
+    const auto audioInfo = InfoBlock(0x8103, {3}, name);
+    const auto sourceStatus = InfoBlock(0x8102, {0}, audioInfo);
+    const auto outputArea = InfoBlock(0x8101, {1}, sourceStatus);
+    std::vector<uint8_t> musicPlugs;
+    for (uint8_t id = 12; id <= 14; ++id) {
+        const auto block = InfoBlock(0x810B, {0x00, 0x00, id, 0x00,
+                                              0xF0, 0x01, 0xFF, static_cast<uint8_t>(id - 12), 0x01,
+                                              0xF1, 0x00, 0xFF, static_cast<uint8_t>(id - 12), 0x01});
+        musicPlugs.insert(musicPlugs.end(), block.begin(), block.end());
+    }
+    const auto routing = InfoBlock(0x8108, {0x01, 0x01}, musicPlugs);
+    std::vector<uint8_t> body = outputArea;
+    body.insert(body.end(), routing.begin(), routing.end());
+    std::vector<uint8_t> descriptor{static_cast<uint8_t>(body.size() >> 8), static_cast<uint8_t>(body.size())};
+    descriptor.insert(descriptor.end(), body.begin(), body.end());
+    return MusicSubunitDescriptorParser::ParseStatusDescriptor(descriptor);
 }
 
 } // namespace
@@ -158,6 +201,41 @@ TEST(MusicSubunitDescriptorTests, Phase88MusicStatusDescriptorParsing) {
     ASSERT_TRUE(result->perPlugChannelNames.contains(0));
     EXPECT_EQ(result->perPlugChannelNames[0].size(), 10u);
     EXPECT_EQ(result->perPlugChannelNames[0][0], "Line_1/2 left PHASE88 FW");
+
+    // Music plug routing (0x810B, 14-byte primary fields): music plug 0 runs
+    // from destination plug 0 position 1 to source plug 1 position 0.
+    const auto* mp0 = result->FindMusicPlug(0);
+    ASSERT_NE(mp0, nullptr);
+    ASSERT_TRUE(mp0->source.has_value());
+    ASSERT_TRUE(mp0->destination.has_value());
+    EXPECT_EQ(mp0->source->functionType, MusicPlugEndpoint::kSubunitDestinationPlug);
+    EXPECT_EQ(mp0->source->streamPosition, 1);
+    EXPECT_EQ(mp0->destination->functionType, MusicPlugEndpoint::kSubunitSourcePlug);
+    EXPECT_EQ(mp0->destination->plugId, 1);
+
+    // Labels per music plug (TA 2001007 Table 6.2): the k-th audio music plug
+    // routed to a source plug gets that plug's k-th label.
+    EXPECT_EQ(result->musicPlugLabels.at(0), "Multichannel 1 PHASE88 FW");
+    EXPECT_EQ(result->musicPlugLabels.at(1), "Multichannel 2 PHASE88 FW");
+    EXPECT_EQ(result->musicPlugLabels.at(8), "SPDIF/AC3 left PHASE88 FW");
+    EXPECT_EQ(result->musicPlugLabels.at(12), "Line_1/2 left PHASE88 FW");
+    EXPECT_EQ(result->musicPlugLabels.at(21), "SPDIF right PHASE88 FW");
+    EXPECT_FALSE(result->musicPlugLabels.contains(10)); // MIDI plug: no audio label
+}
+
+TEST(MusicSubunitDescriptorTests, UnlabelledStreamKeepsItsPlaceInTheLabelList) {
+    // TA 2001007 §6.2.3.1: "If a music plug does not have a label, then (CR)(LF/NL)
+    // follow consecutively." A dropped empty entry would shift every later label.
+    auto status = ParseSourcePlugLabels("A\r\n\r\nC\r\n");
+    ASSERT_TRUE(status.has_value());
+    const auto& names = status->perPlugChannelNames.at(0);
+    ASSERT_GE(names.size(), 3U);
+    EXPECT_EQ(names[0], "A");
+    EXPECT_EQ(names[1], "");
+    EXPECT_EQ(names[2], "C");
+    EXPECT_EQ(status->musicPlugLabels.at(12), "A");
+    EXPECT_FALSE(status->musicPlugLabels.contains(13));
+    EXPECT_EQ(status->musicPlugLabels.at(14), "C");
 }
 
 } // namespace ASFW::Protocols::AVC::Descriptors::Test
