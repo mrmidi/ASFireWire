@@ -238,6 +238,21 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         return snapshot
     }
 
+    // Read only current scalar reductions; no history allocation on render events.
+    func plotValues(mode: UInt32, index: UInt32) -> (Float, Float, Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        if mode == 0 {
+            let channel = [value.analysis.levels.left, value.analysis.levels.right,
+                           value.analysis.levels.mid, value.analysis.levels.side][Int(index)]
+            return (channel.rms.value ?? 0, channel.samplePeak.value ?? 0,
+                    channel.rms.status == .valid)
+        }
+        if index == 0 { return (value.correlation, 0, value.correlationValid) }
+        if index == 1 { return (value.analysis.stereo.balance.value ?? 0, 0, true) }
+        return (2 * (value.analysis.stereo.sideEnergyFraction.value ?? 0) - 1, 0, true)
+    }
+
     func submitted(crossesWrap: Bool) {
         lock.lock()
         value.inFlight += 1
@@ -256,7 +271,7 @@ final class AudioObserverMetricsState: @unchecked Sendable {
                 sampleAgeMilliseconds: Double,
                 overwriteMarginMilliseconds: Double,
                 meterKey: String) {
-        guard result.count >= 95 else { return }
+        guard result.count >= AudioAnalysisLayout.outputWords else { return }
         let floats = result
         lock.lock()
         value.inFlight = max(0, value.inFlight - 1)
@@ -333,9 +348,9 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         value.sampleAgeMilliseconds = sampleAgeMilliseconds
         value.overwriteMarginMilliseconds = overwriteMarginMilliseconds
         if token.geometry.sampleRateHz == 48_000 {
-            let chunkCount = min(Int(floats[16]), (floats.count - 17) / 8)
+            let chunkCount = min(Int(floats[16]), AudioAnalysisLayout.chunkCapacity)
             for index in 0..<chunkCount {
-                let word = 17 + index * 8
+                let word = AudioAnalysisLayout.chunkOffset + index * AudioAnalysisLayout.chunkWords
                 let endFrame = UInt64(floats[word]) | (UInt64(floats[word + 1]) << 32)
                 let energy = Float(bitPattern: floats[word + 2]) + Float(bitPattern: floats[word + 3])
                 loudnessEnergyRing[loudnessWriteIndex] = AudioLoudnessEnergyChunk(

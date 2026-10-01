@@ -17,6 +17,8 @@ private final class AudioObserverPanelModel: ObservableObject {
     private var lastWriteEndFrame: UInt64?
     private var lastWriteProgress = Date.distantPast
     private var lastMetricsPublish = Date.distantPast
+    private var latestSnapshot = AudioObserverSnapshot()
+    private var lastPlotPublish = Date.distantPast
 
     init(guid: UInt64) {
         client = ASFWAudioObserverClient(guid: guid)
@@ -38,6 +40,7 @@ private final class AudioObserverPanelModel: ObservableObject {
                                                      metrics: client.metrics)
                     engine?.setPair(left: leftChannel, right: rightChannel,
                                     generation: routingGeneration)
+                    engine?.onCompletion = { [weak self] in self?.publishCompletedAnalysis() }
                     connected = true
                     status = "Observing the live output ring"
                 }
@@ -52,17 +55,26 @@ private final class AudioObserverPanelModel: ObservableObject {
                     // CoreAudio stops advancing the shared ring.
                     current.validHistoryFrames = 0
                 }
-                snapshot = current
+                latestSnapshot = current
+                client.renderState.update(current)
                 engine?.consume(current)
-                if !current.ioRunning {
-                    status = "Waiting for playback samples…"
+                if !current.ioRunning && snapshot.ioRunning {
                     client.metrics.markIdle()
-                } else {
-                    status = "Observing the live output ring"
                 }
-                if Date().timeIntervalSince(lastMetricsPublish) >= 0.1 {
-                    metrics = client.metrics.read()
-                    lastMetricsPublish = Date()
+                // Acquisition updates only lifecycle/geometry. Meters and history
+                // are published by completed GPU work, independently of this poll.
+                if snapshot.ioRunning != current.ioRunning ||
+                    snapshot.memoryGeneration != current.memoryGeneration ||
+                    snapshot.sessionEpoch != current.sessionEpoch ||
+                    snapshot.discontinuityEpoch != current.discontinuityEpoch ||
+                    snapshot.sampleRateHz != current.sampleRateHz ||
+                    snapshot.channels != current.channels ||
+                    snapshot.activeRingFrames != current.activeRingFrames {
+                    snapshot = current
+                    let nextStatus = current.ioRunning
+                        ? "Observing the live output ring" : "Waiting for playback samples…"
+                    if status != nextStatus { status = nextStatus }
+                    if !current.ioRunning { metrics = client.metrics.read() }
                 }
                 try await Task.sleep(for: .milliseconds(10))
             } catch is CancellationError {
@@ -84,6 +96,18 @@ private final class AudioObserverPanelModel: ObservableObject {
         engine = nil
         client.close()
         connected = false
+    }
+
+    private func publishCompletedAnalysis() {
+        let now = Date()
+        if now.timeIntervalSince(lastPlotPublish) >= 1.0 / 60.0 {
+            lastPlotPublish = now
+            NotificationCenter.default.post(name: .asfwAnalysisCompleted, object: client.renderState)
+        }
+        guard now.timeIntervalSince(lastMetricsPublish) >= 0.1 else { return }
+        lastMetricsPublish = now
+        snapshot = latestSnapshot
+        metrics = client.metrics.read()
     }
 
     func setChannels(left: UInt32, right: UInt32) {
@@ -201,7 +225,7 @@ struct AudioObserverPanel: View {
 
     private var monitorPanel: some View {
         panel("Monitor", subtitle: "Live levels and stereo summary") {
-            StereoMetersView(metrics: model.metrics, active: model.snapshot.ioRunning)
+            StereoMetersView(client: model.client, metrics: model.metrics, active: model.snapshot.ioRunning)
                 .frame(maxHeight: .infinity, alignment: .center)
             HStack(spacing: 8) {
                 valueTile("L True Peak", dbtpValue(model.metrics.analysis.levels.left.truePeak))
@@ -223,7 +247,7 @@ struct AudioObserverPanel: View {
                     HStack(spacing: 8) {
                         scopePlot(mode: .phaseScope)
                             .frame(width: scopeSide, height: scopeSide)
-                        StereoHistoryView(points: model.metrics.stereoHistory,
+                        StereoHistoryView(client: model.client, points: model.metrics.stereoHistory,
                                           sampleRateHz: model.snapshot.sampleRateHz,
                                           active: model.snapshot.ioRunning)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)

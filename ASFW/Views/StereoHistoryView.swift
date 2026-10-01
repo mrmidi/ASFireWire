@@ -13,6 +13,7 @@ struct StereoHistoryView: View {
         var bottomLabel: String { self == .correlation ? "−1" : "0%" }
     }
 
+    let client: ASFWAudioObserverClient
     let points: [AudioStereoHistoryPoint]
     let sampleRateHz: UInt32
     let active: Bool
@@ -27,8 +28,12 @@ struct StereoHistoryView: View {
                         Text(currentValue(for: series))
                             .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
-                    Canvas { context, size in
-                        draw(series, in: &context, size: size)
+                    ZStack {
+                        Canvas { context, size in draw(series, in: &context, size: size) }
+                        MetalAnalyzerPlotView(client: client, mode: 2,
+                                              index: series == .correlation ? 0 : 1, points: points)
+                            .padding(.leading, 34).padding(.trailing, 6)
+                            .padding(.top, 5).padding(.bottom, 16)
                     }
                     .frame(height: 74)
                     .background(Color.black.opacity(0.22))
@@ -78,30 +83,5 @@ struct StereoHistoryView: View {
         label("−30s", at: CGPoint(x: plot.midX, y: size.height - 7))
         label("now", at: CGPoint(x: plot.maxX, y: size.height - 7), anchor: .trailing)
 
-        guard let latest = points.last, sampleRateHz > 0 else { return }
-        let visibleFrames = UInt64(sampleRateHz) * 60
-        let firstVisibleFrame = latest.endFrame > visibleFrames ? latest.endFrame - visibleFrames : 0
-        var path = Path()
-        var hasCurrentSegment = false
-        var previousFrame: UInt64?
-        for point in points where point.endFrame >= firstVisibleFrame {
-            if point.breakBefore || (previousFrame.map { point.endFrame - $0 > UInt64(sampleRateHz) / 5 } ?? false) {
-                hasCurrentSegment = false
-            }
-            let timeFraction = min(1, Double(point.endFrame - firstVisibleFrame) / Double(visibleFrames))
-            let value = series == .correlation ? point.correlation : point.sideEnergyFraction
-            let normalized = min(1, max(0, (value - series.range.lowerBound)
-                                         / (series.range.upperBound - series.range.lowerBound)))
-            let position = CGPoint(x: plot.minX + plot.width * CGFloat(timeFraction),
-                                   y: plot.maxY - plot.height * CGFloat(normalized))
-            if hasCurrentSegment {
-                path.addLine(to: position)
-            } else {
-                path.move(to: position)
-                hasCurrentSegment = true
-            }
-            previousFrame = point.endFrame
-        }
-        context.stroke(path, with: .color(series.color), style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
     }
 }

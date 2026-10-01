@@ -20,13 +20,18 @@ struct MetalAudioObserverView: NSViewRepresentable {
         let view = MTKView(frame: .zero, device: client.metalDevice)
         view.colorPixelFormat = .bgra8Unorm
         view.framebufferOnly = true
-        view.isPaused = false
-        view.enableSetNeedsDisplay = false
+        view.isPaused = true
+        view.enableSetNeedsDisplay = true
         view.preferredFramesPerSecond = 60
         view.clearColor = MTLClearColor(red: 0.025, green: 0.035,
                                         blue: 0.05, alpha: 1)
 
         configure(view, coordinator: context.coordinator)
+        context.coordinator.drawObserver = NotificationCenter.default.addObserver(
+            forName: .asfwAnalysisCompleted, object: client.renderState, queue: .main
+        ) { [weak view] _ in
+            MainActor.assumeIsolated { view?.draw() }
+        }
         return view
     }
 
@@ -56,6 +61,9 @@ struct MetalAudioObserverView: NSViewRepresentable {
     }
 
     final class Coordinator {
+        var drawObserver: NSObjectProtocol?
+        deinit { if let drawObserver { NotificationCenter.default.removeObserver(drawObserver) } }
+
         var configurationKey: String?
         var renderer: AudioObserverRenderer?
     }
@@ -80,6 +88,8 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
     private let mode: AudioObserverDisplayMode
     private let renderState: AudioObserverRenderState
     private let commandQueue: MTLCommandQueue?
+    private let slots = DispatchSemaphore(value: 2)
+    private var lastWriteEnd: UInt64?
 
     init(buffer: MTLBuffer?,
          renderPipeline: MTLRenderPipelineState,
@@ -98,6 +108,11 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         let snapshot = renderState.read()
+        guard snapshot.ioRunning, snapshot.writeEndFrame != lastWriteEnd,
+              slots.wait(timeout: .now()) == .success else { return }
+        let slots = self.slots
+        var submitted = false
+        defer { if !submitted { slots.signal() } }
         // Read two thirds of the active ring directly. The unused third is
         // overwrite slack while the GPU consumes this best-effort view.
         let desiredWindow = mode == .phaseScope
@@ -136,6 +151,9 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
         }
         render.endEncoding()
         commandBuffer.present(drawable)
+        commandBuffer.addCompletedHandler { _ in slots.signal() }
+        submitted = true
+        lastWriteEnd = snapshot.writeEndFrame
         commandBuffer.commit()
     }
 

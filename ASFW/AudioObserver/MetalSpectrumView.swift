@@ -32,13 +32,24 @@ struct MetalSpectrumView: NSViewRepresentable {
         let view = MTKView(frame: .zero, device: device)
         view.colorPixelFormat = .bgra8Unorm
         view.clearColor = MTLClearColor(red: 0.025, green: 0.035, blue: 0.05, alpha: 1)
+        view.isPaused = true
+        view.enableSetNeedsDisplay = true
         view.preferredFramesPerSecond = 30
         context.coordinator.renderer = renderer
         view.delegate = renderer
+        context.coordinator.drawObserver = NotificationCenter.default.addObserver(
+            forName: .asfwAnalysisCompleted, object: client.renderState, queue: .main
+        ) { [weak view] _ in
+            MainActor.assumeIsolated { view?.draw() }
+        }
         return view
     }
     func updateNSView(_ view: NSView, context: Context) {}
-    final class Coordinator { var renderer: SpectrumRenderer? }
+    final class Coordinator {
+        var renderer: SpectrumRenderer?
+        var drawObserver: NSObjectProtocol?
+        deinit { if let drawObserver { NotificationCenter.default.removeObserver(drawObserver) } }
+    }
 }
 
 final class SpectrumRenderer: NSObject, MTKViewDelegate {
@@ -59,6 +70,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
     private let average: MTLBuffer
     private let peaks: MTLBuffer
     private var lastTime: Double?
+    private var lastWriteEnd: UInt64?
     private var epoch: String?
     private let slots = DispatchSemaphore(value: 2)
 
@@ -99,7 +111,8 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         let snapshot = state.read()
-        guard snapshot.validHistoryFrames >= 2048, snapshot.sampleRateHz > 40,
+        guard snapshot.ioRunning, snapshot.writeEndFrame != lastWriteEnd,
+              snapshot.validHistoryFrames >= 2048, snapshot.sampleRateHz > 40,
               channel < snapshot.channels, otherChannel < snapshot.channels,
               let pass = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
@@ -146,7 +159,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         drawing.endEncoding()
         command.present(drawable)
         command.addCompletedHandler { _ in slots.signal() }
-        lastTime = now; epoch = key
+        lastTime = now; epoch = key; lastWriteEnd = snapshot.writeEndFrame
         command.commit()
     }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}

@@ -49,6 +49,12 @@ fragment float4 asfwAudioFragment() {
     return float4(0.20f, 0.91f, 0.73f, 1.0f);
 }
 
+// Keep in sync with AudioAnalysisLayout; regression tests exercise both kernels
+// together and check the chunk region plus an output-buffer canary.
+constant uint analysisChunkOffset = 96;
+constant uint analysisChunkCapacity = 4;
+constant uint analysisMaximumBatchFrames = 480 * analysisChunkCapacity;
+
 struct ConsumeRangeParams {
     ulong startFrame;
     uint frameCount;
@@ -100,6 +106,7 @@ kernel void asfwKWeightRange(
     constant ConsumeRangeParams& params [[buffer(3)]],
     uint tid [[thread_position_in_grid]]) {
     if (tid != 0) return;
+    if (params.frameCount > analysisMaximumBatchFrames) { output[16] = 0; output[94] = 0; return; }
 
     float l1x1 = as_type<float>(state[0]);
     float l1x2 = as_type<float>(state[1]);
@@ -197,7 +204,7 @@ kernel void asfwKWeightRange(
         ++partialFrames;
         if (partialFrames == 480) {
             const ulong endFrame = params.startFrame + ulong(i) + 1;
-            const uint base = 17 + chunkCount * 8;
+            const uint base = analysisChunkOffset + chunkCount * 8;
             output[base] = uint(endFrame & 0xfffffffful);
             output[base + 1] = uint(endFrame >> 32);
             output[base + 2] = as_type<uint>(energyLeft);
@@ -336,4 +343,64 @@ kernel void asfwConsumeOutputRange(
         output[90] = result.invalidLeft;
         output[91] = result.invalidRight;
     }
+}
+
+struct AnalyzerPlotParams {
+    uint mode; uint index; uint active; uint count;
+    ulong latestFrame; uint sampleRate; uint padding;
+    float value; float peak; float width; float height;
+};
+struct AnalyzerHistoryVertex {
+    ulong frame; float correlation; float sideEnergy; uint breakBefore; uint padding;
+};
+struct AnalyzerPlotVertex { float4 position [[position]]; float4 color; };
+vertex AnalyzerPlotVertex asfwAnalyzerPlotVertex(uint vid [[vertex_id]],
+    constant AnalyzerPlotParams& p [[buffer(0)]],
+    device const AnalyzerHistoryVertex* points [[buffer(1)]]) {
+    float4 color = float4(0.20f, 0.91f, 0.73f, 1);
+    if (p.mode == 2) {
+        uint segment = vid / 2;
+        AnalyzerHistoryVertex a = points[segment];
+        AnalyzerHistoryVertex b = points[segment + 1];
+        AnalyzerHistoryVertex point = points[segment + vid % 2];
+        bool broken = b.breakBefore != 0 || b.frame < a.frame ||
+            b.frame - a.frame > ulong(p.sampleRate / 5);
+        float age = float(p.latestFrame - point.frame) / max(1.0f, float(p.sampleRate));
+        float x = 1.0f - 2.0f * age / 60.0f;
+        float y = p.index == 0 ? point.correlation : point.sideEnergy * 2.0f - 1.0f;
+        color = p.index == 0 ? float4(0.1f, 0.9f, 0.3f, 1) : float4(0.1f, 0.8f, 1, 1);
+        if (broken || age > 60) color.a = 0;
+        return { float4(x, clamp(y, -1.0f, 1.0f), 0, 1), color };
+    }
+    // Two rectangles: RMS fill + sample-peak marker, or indicator + centre tick.
+    uint rectangle = vid / 6;
+    const float2 corners[6] = { float2(0,0), float2(1,0), float2(0,1),
+                               float2(0,1), float2(1,0), float2(1,1) };
+    float2 corner = corners[vid % 6];
+    float2 lo; float2 hi;
+    if (p.mode == 0) {
+        float level = clamp((20.0f * log10(max(p.value, 1.0e-6f)) + 60) / 66, 0.0f, 1.0f);
+        float peak = clamp((20.0f * log10(max(p.peak, 1.0e-6f)) + 60) / 66, 0.0f, 1.0f);
+        lo = float2(-1, -1); hi = float2(1, -1 + 2 * level);
+        if (rectangle == 1) {
+            float y = -1 + 2 * peak;
+            lo.y = max(-1.0f, y - 2 / max(1.0f, p.height));
+            hi.y = min(1.0f, y + 2 / max(1.0f, p.height));
+            color = float4(1, 0.55f, 0.1f, 1);
+        }
+        if (!p.active) color.a = 0;
+    } else {
+        float x = clamp(p.value, -1.0f, 1.0f);
+        float radius = 8 / max(1.0f, p.width);
+        x *= 1 - radius;
+        lo = float2(x - radius, -0.65f); hi = float2(x + radius, 0.65f);
+        if (p.index == 0 && p.value < 0) color = float4(1,0.55f,0.1f,1);
+        if (!p.active) color.a = 0;
+        if (rectangle == 1) { lo = float2(-1 / max(1.0f,p.width),-1); hi = -lo; color = float4(0.5f,0.5f,0.5f,1); }
+    }
+    return { float4(mix(lo, hi, corner), 0, 1), color };
+}
+fragment float4 asfwAnalyzerPlotFragment(AnalyzerPlotVertex in [[stage_in]]) {
+    if (in.color.a == 0) discard_fragment();
+    return in.color;
 }

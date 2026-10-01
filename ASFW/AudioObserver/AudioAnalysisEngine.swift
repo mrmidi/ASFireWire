@@ -54,6 +54,7 @@ final class AudioAnalysisEngine {
     private let queue: MTLCommandQueue
     private let stateReader: AudioObserverStateReader
     private let metrics: AudioObserverMetricsState
+    var onCompletion: (() -> Void)?
     private var cursor: UInt64?
     private var lastSessionEpoch: UInt64?
     private var lastDiscontinuityEpoch: UInt64?
@@ -74,7 +75,7 @@ final class AudioAnalysisEngine {
               let function = library.makeFunction(name: "asfwConsumeOutputRange"),
               let kFunction = library.makeFunction(name: "asfwKWeightRange"),
               let queue = device.makeCommandQueue(),
-              let output = device.makeBuffer(length: 176 * MemoryLayout<UInt32>.stride,
+              let output = device.makeBuffer(length: AudioAnalysisLayout.outputWords * MemoryLayout<UInt32>.stride,
                                              options: .storageModeShared),
               let committed = device.makeBuffer(length: 49 * MemoryLayout<UInt32>.stride,
                                                 options: .storageModeShared),
@@ -136,20 +137,22 @@ final class AudioAnalysisEngine {
             return
         }
         guard !inFlight else { return }
-        let end = snapshot.writeEndFrame
+        let availableEnd = snapshot.writeEndFrame
         guard let start = cursor else {
-            cursor = end
+            cursor = availableEnd
             return
         }
-        guard end > start else { return }
+        guard availableEnd > start else { return }
 
         let ringFrames = UInt64(snapshot.activeRingFrames)
+        let backlog = availableEnd - start
+        let end = AudioAnalysisLayout.batchEnd(start: start, availableEnd: availableEnd)
         let distance = end - start
         guard start >= snapshot.oldestValidFrame,
               ringFrames > writerHeadroomFrames,
-              distance < ringFrames - writerHeadroomFrames,
+              backlog < ringFrames - writerHeadroomFrames,
               distance <= UInt64(UInt32.max) else {
-            cursor = end
+            cursor = availableEnd
             metrics.rejected()
             return
         }
@@ -229,7 +232,7 @@ final class AudioAnalysisEngine {
         commandBuffer.addScheduledHandler { _ in scheduled.set(CACurrentMediaTime()) }
         commandBuffer.addCompletedHandler { completed in
             let completionTime = CACurrentMediaTime()
-            let outputValues = output.copyValues(count: 176)
+            let outputValues = output.copyValues(count: AudioAnalysisLayout.outputWords)
             let gpuStart = completed.gpuStartTime
             let gpuEnd = completed.gpuEndTime
             let gpuMilliseconds = gpuStart > 0 && gpuEnd >= gpuStart
@@ -269,7 +272,7 @@ final class AudioAnalysisEngine {
                     return
                 }
                 if completed.status == .completed, geometryStillMatches,
-                   let postState, outputValues.count == 176 {
+                   let postState, outputValues.count == AudioAnalysisLayout.outputWords {
                     outputValues.withUnsafeBufferPointer { values in
                         metrics.accept(token: token,
                                        pair: resolvedPair,
@@ -294,6 +297,7 @@ final class AudioAnalysisEngine {
                     if usesKWeight { self.resetFilterState = true }
                     metrics.rejected()
                 }
+                self.onCompletion?()
             }
         }
         commandBuffer.commit()

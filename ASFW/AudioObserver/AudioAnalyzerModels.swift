@@ -1,5 +1,23 @@
 import Foundation
 
+extension Notification.Name {
+    static let asfwAnalysisCompleted = Notification.Name("ASFWAnalysisCompleted")
+}
+
+// Matches the GPU result layout in AudioObserver.metal. Header words 0...94
+// never overlap the fixed-capacity loudness chunk region.
+enum AudioAnalysisLayout {
+    static let chunkOffset = 96
+    static let chunkWords = 8
+    static let chunkCapacity = 4
+    static let outputWords = chunkOffset + chunkWords * chunkCapacity
+    static let maximumBatchFrames: UInt64 = 480 * UInt64(chunkCapacity)
+
+    static func batchEnd(start: UInt64, availableEnd: UInt64) -> UInt64 {
+        start + min(availableEnd - start, maximumBatchFrames)
+    }
+}
+
 enum AudioAnalyzerGeometry {
     /// Keep one third of the active ring between the oldest plotted sample
     /// and the writer, leaving overwrite slack for GPU execution.

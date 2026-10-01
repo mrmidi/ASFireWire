@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import Testing
+@testable import ASFW
 
 private struct ConsumeRangeTestParams {
     var startFrame: UInt64
@@ -64,7 +65,7 @@ struct AudioAnalysisKernelTests {
         let source = try #require(device.makeBuffer(bytes: samples,
                                                     length: samples.count * MemoryLayout<Float>.stride,
                                                     options: .storageModeShared))
-        let output = try #require(device.makeBuffer(length: 16 * MemoryLayout<UInt32>.stride,
+        let output = try #require(device.makeBuffer(length: AudioAnalysisLayout.outputWords * MemoryLayout<UInt32>.stride,
                                                     options: .storageModeShared))
         let queue = try #require(device.makeCommandQueue())
         let command = try #require(queue.makeCommandBuffer())
@@ -103,6 +104,119 @@ struct AudioAnalysisKernelTests {
         #expect(values[91] == 0)
     }
 
+    @Test func delayedAnalysisIsSplitWithoutCorruptingHeadersOrLosingChunks() throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let library = try #require(device.makeDefaultLibrary())
+        let reduction = try device.makeComputePipelineState(function: #require(library.makeFunction(name: "asfwConsumeOutputRange")))
+        let weighting = try device.makeComputePipelineState(function: #require(library.makeFunction(name: "asfwKWeightRange")))
+        let frames = 9_600 // 200 ms: previously overflowed the production result buffer.
+        var samples = [Float](repeating: 0.25, count: frames * 2)
+        samples[0] = .nan
+        let source = try #require(device.makeBuffer(bytes: samples, length: samples.count * 4, options: .storageModeShared))
+        let state = try #require(device.makeBuffer(length: 49 * 4, options: .storageModeShared))
+        state.contents().initializeMemory(as: UInt8.self, repeating: 0, count: state.length)
+        let output = try #require(device.makeBuffer(length: (AudioAnalysisLayout.outputWords + 8) * 4, options: .storageModeShared))
+        let queue = try #require(device.makeCommandQueue())
+        let words = output.contents().assumingMemoryBound(to: UInt32.self)
+        var start: UInt64 = 0
+        var totalChunks = 0
+        while start < UInt64(frames) {
+            let end = AudioAnalysisLayout.batchEnd(start: start, availableEnd: UInt64(frames))
+            try #require(end > start)
+            #expect(end - start <= AudioAnalysisLayout.maximumBatchFrames)
+            for i in 0..<(AudioAnalysisLayout.outputWords + 8) { words[i] = 0xDEADBEEF }
+            var params = makeLoudnessTestParams(startFrame: start, frameCount: UInt32(end - start),
+                                                ringFrames: UInt32(frames), channels: 2)
+            let command = try #require(queue.makeCommandBuffer())
+            let first = try #require(command.makeComputeCommandEncoder())
+            first.setComputePipelineState(reduction)
+            first.setBuffer(source, offset: 0, index: 0)
+            first.setBuffer(output, offset: 0, index: 1)
+            first.setBytes(&params, length: MemoryLayout<ConsumeRangeTestParams>.stride, index: 2)
+            first.dispatchThreads(MTLSize(width: 256, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            first.endEncoding()
+            let second = try #require(command.makeComputeCommandEncoder())
+            second.setComputePipelineState(weighting)
+            second.setBuffer(source, offset: 0, index: 0)
+            second.setBuffer(state, offset: 0, index: 1)
+            second.setBuffer(output, offset: 0, index: 2)
+            second.setBytes(&params, length: MemoryLayout<ConsumeRangeTestParams>.stride, index: 3)
+            second.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
+            second.endEncoding()
+            command.commit()
+            command.waitUntilCompleted()
+            try #require(command.status == .completed)
+            #expect(words[90] == (start == 0 ? 1 : 0))
+            #expect(words[91] == 0)
+            #expect(words[94] == 1)
+            #expect(Float(bitPattern: words[92]).isFinite)
+            try #require(words[16] == UInt32(AudioAnalysisLayout.chunkCapacity))
+            for chunk in 0..<Int(words[16]) {
+                let offset = AudioAnalysisLayout.chunkOffset + chunk * AudioAnalysisLayout.chunkWords
+                let chunkEnd = UInt64(words[offset]) | UInt64(words[offset + 1]) << 32
+                #expect(chunkEnd == start + UInt64((chunk + 1) * 480))
+                #expect(Float(bitPattern: words[offset + 2]).isFinite)
+                #expect(Float(bitPattern: words[offset + 4]) > 0)
+                #expect(Float(bitPattern: words[offset + 5]) == 0.25)
+                #expect(Float(bitPattern: words[offset + 6]).isFinite)
+            }
+            for i in AudioAnalysisLayout.outputWords..<(AudioAnalysisLayout.outputWords + 8) {
+                #expect(words[i] == 0xDEADBEEF)
+            }
+            totalChunks += Int(words[16])
+            start = end
+        }
+        #expect(totalChunks == 20)
+        #expect(state.contents().assumingMemoryBound(to: UInt32.self)[18] == 0)
+    }
+
+    @Test(arguments: [UInt32(0), 1, 2])
+    func analyzerPlotsRenderOnTheGPU(mode: UInt32) throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let library = try #require(device.makeDefaultLibrary())
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = library.makeFunction(name: "asfwAnalyzerPlotVertex")
+        descriptor.fragmentFunction = library.makeFunction(name: "asfwAnalyzerPlotFragment")
+        descriptor.colorAttachments[0].pixelFormat = .rgba8Unorm
+        let pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: 64, height: 64, mipmapped: false)
+        textureDescriptor.storageMode = .shared
+        textureDescriptor.usage = .renderTarget
+        let texture = try #require(device.makeTexture(descriptor: textureDescriptor))
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = texture
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0)
+        // Packed layout matches AnalyzerPlotParams and AnalyzerHistoryVertex.
+        let params: [UInt32] = [mode, 0, 1, 601, 2_880_000, 0, 48_000, 0,
+                                Float(0.5).bitPattern, Float(0.75).bitPattern,
+                                Float(64).bitPattern, Float(64).bitPattern]
+        let points: [UInt32] = (0...600).flatMap { i in
+            [UInt32(i * 4_800), 0, Float(0.5).bitPattern, Float(0.1).bitPattern, 0, 0]
+        }
+        let pointBuffer = try #require(device.makeBuffer(bytes: points, length: points.count * 4, options: .storageModeShared))
+        let queue = try #require(device.makeCommandQueue())
+        let command = try #require(queue.makeCommandBuffer())
+        let encoder = try #require(command.makeRenderCommandEncoder(descriptor: pass))
+        encoder.setRenderPipelineState(pipeline)
+        params.withUnsafeBytes { encoder.setVertexBytes($0.baseAddress!, length: $0.count, index: 0) }
+        encoder.setVertexBuffer(pointBuffer, offset: 0, index: 1)
+        encoder.drawPrimitives(type: mode == 2 ? .line : .triangle,
+                               vertexStart: 0, vertexCount: mode == 2 ? 1_200 : 12)
+        encoder.endEncoding()
+        command.commit()
+        command.waitUntilCompleted()
+        try #require(command.status == .completed)
+        var pixels = [UInt8](repeating: 0, count: 64 * 64 * 4)
+        pixels.withUnsafeMutableBytes {
+            texture.getBytes($0.baseAddress!, bytesPerRow: 64 * 4,
+                             from: MTLRegionMake2D(0, 0, 64, 64), mipmapLevel: 0)
+        }
+        #expect(stride(from: 1, to: pixels.count, by: 4).contains { pixels[$0] > 128 },
+                "Meter, indicator, and history shaders must draw visible geometry")
+    }
+
     @Test func kWeightingProducesTheExpectedStereoOneKilohertzLoudness() throws {
         let device = try #require(MTLCreateSystemDefaultDevice(), "Metal device is required")
         let library = try #require(device.makeDefaultLibrary(), "ASFW default Metal library is required")
@@ -121,7 +235,7 @@ struct AudioAnalysisKernelTests {
         let state = try #require(device.makeBuffer(length: 49 * MemoryLayout<UInt32>.stride,
                                                    options: .storageModeShared))
         state.contents().initializeMemory(as: UInt8.self, repeating: 0, count: state.length)
-        let output = try #require(device.makeBuffer(length: 96 * MemoryLayout<UInt32>.stride,
+        let output = try #require(device.makeBuffer(length: AudioAnalysisLayout.outputWords * MemoryLayout<UInt32>.stride,
                                                     options: .storageModeShared))
         let queue = try #require(device.makeCommandQueue())
         let command = try #require(queue.makeCommandBuffer())
@@ -142,9 +256,9 @@ struct AudioAnalysisKernelTests {
 
         let values = output.contents().assumingMemoryBound(to: UInt32.self)
         #expect(values[16] == 1)
-        #expect(values[17] == UInt32(sampleCount))
-        let energyLeft = Float(bitPattern: values[19])
-        let energyRight = Float(bitPattern: values[20])
+        #expect(values[AudioAnalysisLayout.chunkOffset] == UInt32(sampleCount))
+        let energyLeft = Float(bitPattern: values[AudioAnalysisLayout.chunkOffset + 2])
+        let energyRight = Float(bitPattern: values[AudioAnalysisLayout.chunkOffset + 3])
         let lufs = -0.691 + 10 * log10((energyLeft + energyRight) / Float(sampleCount))
         #expect(abs(lufs + 23) < 0.7)
         #expect(values[94] == 1)
@@ -173,7 +287,7 @@ struct AudioAnalysisKernelTests {
         let state = try #require(device.makeBuffer(length: 49 * MemoryLayout<UInt32>.stride,
                                                    options: .storageModeShared))
         state.contents().initializeMemory(as: UInt8.self, repeating: 0, count: state.length)
-        let output = try #require(device.makeBuffer(length: 96 * MemoryLayout<UInt32>.stride,
+        let output = try #require(device.makeBuffer(length: AudioAnalysisLayout.outputWords * MemoryLayout<UInt32>.stride,
                                                     options: .storageModeShared))
         let queue = try #require(device.makeCommandQueue())
 
