@@ -9,7 +9,9 @@ extension Notification.Name {
 nonisolated enum AudioAnalysisLayout {
     static let chunkOffset = 96
     static let chunkWords = 8
-    static let chunkCapacity = 4
+    /// 12 chunks = 5760 frames: 120 ms at 48 kHz, 60 ms at 96 kHz. A 40 ms
+    /// acquisition interval then drains a late wakeup's backlog in one pass.
+    static let chunkCapacity = 12
     static let outputWords = chunkOffset + chunkWords * chunkCapacity
     static let maximumBatchFrames: UInt64 = 480 * UInt64(chunkCapacity)
 

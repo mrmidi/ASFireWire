@@ -118,7 +118,9 @@ actor AudioAnalysisEngine {
             if running { consume(snapshot) }
             // Twenty milliseconds amortizes submission/completion overhead.
             // consume remains cursor based, so every accepted frame is measured.
-            try await Task.sleep(for: .milliseconds(20))
+            // 25 passes/s: each pass is a command buffer, a completion and two
+            // driver state reads. Loudness keeps its 10 ms chunks per batch.
+            try await Task.sleep(for: .milliseconds(40), tolerance: .milliseconds(5))
         }
     }
 

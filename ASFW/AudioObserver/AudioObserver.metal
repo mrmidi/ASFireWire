@@ -56,7 +56,7 @@ fragment float4 asfwWaveformFragment(constant float4& color [[buffer(0)]]) {
 // Keep in sync with AudioAnalysisLayout; regression tests exercise both kernels
 // together and check the chunk region plus an output-buffer canary.
 constant uint analysisChunkOffset = 96;
-constant uint analysisChunkCapacity = 4;
+constant uint analysisChunkCapacity = 12;
 constant uint analysisMaximumBatchFrames = 480 * analysisChunkCapacity;
 
 struct ConsumeRangeParams {

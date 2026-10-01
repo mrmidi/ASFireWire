@@ -152,7 +152,8 @@ struct AudioAnalysisKernelTests {
             #expect(words[91] == 0)
             #expect(words[94] == 1)
             #expect(Float(bitPattern: words[92]).isFinite)
-            try #require(words[16] == UInt32(AudioAnalysisLayout.chunkCapacity))
+            try #require(words[16] == UInt32((end - start) / 480))
+            #expect(Int(words[16]) <= AudioAnalysisLayout.chunkCapacity)
             for chunk in 0..<Int(words[16]) {
                 let offset = AudioAnalysisLayout.chunkOffset + chunk * AudioAnalysisLayout.chunkWords
                 let chunkEnd = UInt64(words[offset]) | UInt64(words[offset + 1]) << 32
