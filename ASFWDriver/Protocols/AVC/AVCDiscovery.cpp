@@ -15,6 +15,7 @@
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../../Audio/Protocols/SelectProbeBootstrap.hpp"
+#include "AvcProbeAdmission.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
 #include "Graph/AvcDeviceGraph.hpp"
@@ -80,14 +81,14 @@ CurrentPolicyPlan(ASFW::Discovery::DeviceRegistry& registry,
 }
 
 // Which bring-up a unit gets is a *policy* decision the catalog already
-// records, not a model identity. Asking SelectProbeBootstrap keeps discovery
-// out of the matching business: a new device that needs an existing bootstrap
-// is a catalog row, and a device whose family/policy pair has no bootstrap
-// resolves to Unsupported rather than silently taking the generic path.
-[[nodiscard]] ASFW::Audio::ProbeBootstrap ProbeBootstrapFor(
+// records, not a model identity. DecideAvcProbe keeps discovery out of the
+// matching business: a new device that needs an existing bootstrap is a
+// catalog row, and a device whose family/policy pair has no bootstrap is
+// refused rather than silently taking the generic path.
+[[nodiscard]] ASFW::Protocols::AVC::AvcProbeDecision ProbeDecisionFor(
+    uint32_t specifierId,
     const std::optional<ASFW::DeviceProfiles::Audio::StaticAudioEndpointPlan>& plan) noexcept {
-    return plan.has_value() ? ASFW::Audio::SelectProbeBootstrap(*plan)
-                            : ASFW::Audio::ProbeBootstrap::Unsupported;
+    return ASFW::Protocols::AVC::DecideAvcProbe(specifierId, plan ? &*plan : nullptr);
 }
 
 } // namespace
@@ -96,8 +97,6 @@ CurrentPolicyPlan(ASFW::Discovery::DeviceRegistry& registry,
 // Constants
 //==============================================================================
 
-/// 1394 Trade Association spec ID (24-bit)
-constexpr uint32_t kAVCSpecID = 0x00A02D;
 constexpr uint32_t kDuetPrefetchTimeoutMs = 5000;
 constexpr uint32_t kDuetFixedSampleRateHz = 48000;
 
@@ -276,7 +275,7 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
         RebuildNodeIDMap();
         return;
     }
-    const ASFW::Audio::ProbeBootstrap bootstrap = ProbeBootstrapFor(policyPlan);
+    const AvcProbeDecision decision = ProbeDecisionFor(unit->GetUnitSpecID(), policyPlan);
 
     // The PHASE 88 is a BeBoB unit matched by stable Config ROM identity.
     // Linux BeBoB starts directly with unit PLUG_INFO and BridgeCo commands;
@@ -284,7 +283,7 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     // wire ordering instead of letting generic AV/C discovery consume or race
     // its FCP route. Cross-validated: firewire/bebob/bebob.c:184-260 and
     // firewire/bebob/bebob_stream.c:908-940.
-    if (bootstrap == ASFW::Audio::ProbeBootstrap::BeBoBPlug0Only) {
+    if (decision == AvcProbeDecision::BeBoBPlug0) {
         ASFW_LOG(AVC,
                  "AVCDiscovery: BeBoB device matched; bypassing generic UNIT_INFO/SUBUNIT_INFO GUID=0x%016llx",
                  guid);
@@ -324,7 +323,7 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
         return;
     }
 
-    if (bootstrap == ASFW::Audio::ProbeBootstrap::BeBoBUnprobed) {
+    if (decision == AvcProbeDecision::ProfileOwned) {
         // The M-Audio special firmware freezes on the generic information and
         // BridgeCo probes. Its catalog-selected fixed formation is enough to
         // publish an endpoint; device commands are issued only by the selected
@@ -340,7 +339,7 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     // is the only stack that ever spoke AV/C to them. Skip generic discovery
     // and publish the profile-owned geometry, BeBoB-bypass style; the runtime
     // protocol verifies that geometry against HWINFO before streaming.
-    if (bootstrap == ASFW::Audio::ProbeBootstrap::FireworksEfc) {
+    if (decision == AvcProbeDecision::FireworksEfc) {
         ASFW_LOG(AVC,
                  "AVCDiscovery: Fireworks device matched; bypassing generic AV/C discovery GUID=0x%016llx",
                  guid);
@@ -355,19 +354,17 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     // whose policy forbids it -- which is what wedges M-Audio BeBoB firmware --
     // so each outcome is named here and no default: arm is allowed to swallow
     // a new one.
-    switch (bootstrap) {
-        case ASFW::Audio::ProbeBootstrap::AvcInitializeThenPlug0:
+    switch (decision) {
+        case AvcProbeDecision::GenericDiscovery:
             break;
 
-        // Handled above; both arms return before reaching this switch.
-        case ASFW::Audio::ProbeBootstrap::BeBoBPlug0Only:
-        case ASFW::Audio::ProbeBootstrap::BeBoBUnprobed:
-        case ASFW::Audio::ProbeBootstrap::FireworksEfc:
+        // Handled above; every arm returns before reaching this switch.
+        case AvcProbeDecision::BeBoBPlug0:
+        case AvcProbeDecision::ProfileOwned:
+        case AvcProbeDecision::FireworksEfc:
             break;
 
-        case ASFW::Audio::ProbeBootstrap::DiceProtocol:
-        case ASFW::Audio::ProbeBootstrap::MotuRegister:
-        case ASFW::Audio::ProbeBootstrap::RmeRegister:
+        case AvcProbeDecision::RegisterDriven:
             // Register-driven families. An AV/C unit directory here is
             // incidental; their bring-up does not go through this path.
             ASFW_LOG(AVC,
@@ -377,7 +374,9 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
             RebuildNodeIDMap();
             return;
 
-        case ASFW::Audio::ProbeBootstrap::Unsupported:
+        case AvcProbeDecision::NotAvcUnit:
+        case AvcProbeDecision::NoPolicy:
+        case AvcProbeDecision::Refused:
             // No family/policy pair resolved: a hazardous or ambiguous identity,
             // or a device with no units. Unrecognised is the unsafe state for
             // AV/C, so stay off the wire rather than probing generically.
@@ -1473,7 +1472,8 @@ void AVCDiscovery::ReScanAllUnits() {
     std::vector<std::pair<uint64_t, std::shared_ptr<AVCUnit>>> eligible;
     for (const auto& [guid, avcUnit] : scanUnits) {
         const auto plan = CurrentPolicyPlan(deviceRegistry_, guid);
-        if (ProbeBootstrapFor(plan) != ASFW::Audio::ProbeBootstrap::AvcInitializeThenPlug0) {
+        const auto unit = avcUnit->GetFWUnit();
+        if (!unit || ProbeDecisionFor(unit->GetUnitSpecID(), plan) != AvcProbeDecision::GenericDiscovery) {
             ASFW_LOG(AVC, "[AVCDiag] GUID=%llx skipped by probe policy", guid);
             avcUnit->MarkRescanSkipped();
             continue;
@@ -1606,10 +1606,7 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
         return false;
     }
 
-    // Check unit spec ID (24-bit, should be 0x00A02D for AV/C)
-    uint32_t specID = unit->GetUnitSpecID() & 0xFFFFFF;
-
-    return specID == kAVCSpecID;
+    return IsTa1394Unit(unit->GetUnitSpecID());
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {

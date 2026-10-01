@@ -374,6 +374,12 @@ add_device_test(SelectProbeBootstrapTests
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
 )
 
+# Config ROM unit evidence -> catalog plan -> AV/C probe decision
+add_device_test(AvcProbeAdmissionTests
+    AvcProbeAdmissionTests.cpp
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+)
+
 # BeBoB capture channel map tests
 add_device_test(BeBoBCaptureChannelMapTests
     BeBoBCaptureChannelMapTests.cpp
