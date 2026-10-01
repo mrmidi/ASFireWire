@@ -299,6 +299,8 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBackend = Audio::AudioBackendKind::Avc,
             .expectedBootstrap = Audio::ProbeBootstrap::AvcInitializeThenPlug0,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedStartShape = StreamStartShape::CmpReceiveThenTransmit,
+            .expectedIrmChoosesAnyChannel = true,
         },
         // 16. PreSonus FireStudio Project
         {
@@ -365,7 +367,7 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
         EXPECT_EQ(plan->support, testCase.expectedSupport);
         EXPECT_EQ(plan->family, testCase.expectedFamily);
         EXPECT_EQ(plan->profileBuilder, testCase.expectedProfileBuilder);
-        if (testCase.expectedSupport == SupportDisposition::Supported) {
+        if (AllowsAudioRuntime(testCase.expectedSupport)) {
             EXPECT_NE(plan->protocolImplementation, ProtocolImplementationId::None);
         } else {
             EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::None);

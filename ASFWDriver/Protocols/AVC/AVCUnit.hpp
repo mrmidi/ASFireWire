@@ -73,16 +73,27 @@ struct UnitDescriptorInfo {
 // AV/C Unit
 //==============================================================================
 
+// What discovery may send beyond the standard sequence. The unit's owner
+// decides from the probe policy; the unit itself never reads the catalog.
+struct AVCUnitDiscoveryOptions {
+    // Read the current stream format of unit plug 0 in each direction when
+    // the descriptors give no stream geometry (STATUS only).
+    bool unitPlugGeometryFallback{false};
+};
+
 class AVCUnit : public std::enable_shared_from_this<AVCUnit>,
                 public IAVCCommandSubmitter,
                 public ASFW::AVC::IAvcUnit {
 public:
+    using DiscoveryOptions = AVCUnitDiscoveryOptions;
+
     AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
             std::shared_ptr<Discovery::FWUnit> unit,
             Discovery::DeviceRegistry& routeRegistry,
             Protocols::Ports::FireWireBusOps& busOps,
             Protocols::Ports::FireWireBusInfo& busInfo,
-            Scheduling::ITimerScheduler& timerScheduler);
+            Scheduling::ITimerScheduler& timerScheduler,
+            DiscoveryOptions options = {});
 
     ~AVCUnit() override;
 
@@ -176,6 +187,7 @@ private:
     void PopulateKnownSubunitPlugCounts();
 
     void ResolveDiscoveredGraph(std::function<void(bool)> completion);
+    void ResolveUnitStreamGraph(std::function<void(bool)> completion);
 
     void ProbeSignalFormat(std::function<void(bool)> completion);
 
@@ -190,6 +202,7 @@ private:
     Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
     Scheduling::ITimerScheduler& timerScheduler_;
+    const DiscoveryOptions options_;
 
     std::shared_ptr<FCPTransport> fcpTransport_;
 

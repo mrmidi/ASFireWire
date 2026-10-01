@@ -7,6 +7,7 @@
 
 #include "AVCUnit.hpp"
 #include "Graph/AvcGraphBuilder.hpp"
+#include "Graph/AvcStreamGeometry.hpp"
 #include <algorithm>
 #include "../../Common/CallbackUtils.hpp"
 #include "../../Logging/Logging.hpp"
@@ -27,13 +28,15 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
                  Discovery::DeviceRegistry& routeRegistry,
                  Protocols::Ports::FireWireBusOps& busOps,
                  Protocols::Ports::FireWireBusInfo& busInfo,
-                 Scheduling::ITimerScheduler& timerScheduler)
+                 Scheduling::ITimerScheduler& timerScheduler,
+                 DiscoveryOptions options)
     : device_(device),
       unit_(unit),
       routeRegistry_(routeRegistry),
       busOps_(busOps),
       busInfo_(busInfo),
-      timerScheduler_(timerScheduler) {
+      timerScheduler_(timerScheduler),
+      options_(options) {
 
     // Check for custom FCP addresses in Config ROM (optional)
     // For now, use standard addresses
@@ -381,6 +384,10 @@ void AVCUnit::ResolveDiscoveredGraph(std::function<void(bool)> completion) {
         }
     }
     if (!music || !music->GetParsedStatus()) {
+        if ((music || audio) && options_.unitPlugGeometryFallback) {
+            ResolveUnitStreamGraph([done](bool success) { Common::InvokeSharedCallback(done, success); });
+            return;
+        }
         discoveredGraph_.reset();
         ASFW_LOG_WARNING(AVC, "[AvcGraph] guid=%llx unavailable reason=music-descriptor", Guid());
         Common::InvokeSharedCallback(done, false);
@@ -470,7 +477,54 @@ void AVCUnit::ResolveDiscoveredGraph(std::function<void(bool)> completion) {
                 static_cast<unsigned>(stream->slotMapValidation), stream->supportedSampleRates.size());
         }
         discoveredGraph_ = std::make_shared<Graph::DeviceGraph>(std::move(graph));
+        if (options_.unitPlugGeometryFallback &&
+            (discoveredGraph_->playback.dataBlockSize == 0 || discoveredGraph_->capture.dataBlockSize == 0)) {
+            ResolveUnitStreamGraph([done](bool success) { Common::InvokeSharedCallback(done, success); });
+            return;
+        }
         Common::InvokeSharedCallback(done, true);
+    });
+}
+
+void AVCUnit::ResolveUnitStreamGraph(std::function<void(bool)> completion) {
+    auto done = Common::ShareCallback(std::move(completion));
+    const auto generation = CurrentGeneration();
+    // Read the current formats without changing clock or routing. Cross-validated
+    // with Linux sound/firewire/oxfw/oxfw-stream.c:637-644 (format SINGLE).
+    const auto command = [](ASFW::AVC::Cmd::PlugDirection direction) {
+        return ASFW::AVC::Cmd::StreamFormatCommand{
+            .operands = {.form = ASFW::AVC::Cmd::StreamFormatSubfunction::kSingle,
+                .opcode = ASFW::AVC::Cmd::StreamFormatOpcode::kExtendedStreamFormat,
+                .plug = ASFW::AVC::Cmd::PlugAddress::UnitPlug(direction,
+                    ASFW::AVC::Cmd::UnitPlugType::kPcr, 0)}};
+    };
+    Status(command(ASFW::AVC::Cmd::PlugDirection::kInput),
+        [this, generation, command, done](ASFW::AVC::Expected<ASFW::AVC::Cmd::StreamFormatReply> playback) {
+        if (!playback || CurrentGeneration() != generation) {
+            Common::InvokeSharedCallback(done, false);
+            return;
+        }
+        auto playbackStream = Graph::BuildUnitStreamGeometry(playback->format, true);
+        if (!playbackStream) { Common::InvokeSharedCallback(done, false); return; }
+        Status(command(ASFW::AVC::Cmd::PlugDirection::kOutput),
+            [this, generation, playbackStream = std::move(*playbackStream), done]
+            (ASFW::AVC::Expected<ASFW::AVC::Cmd::StreamFormatReply> capture) mutable {
+            auto captureStream = capture ? Graph::BuildUnitStreamGeometry(capture->format, false) : std::nullopt;
+            if (!captureStream || CurrentGeneration() != generation ||
+                playbackStream.currentSampleRate != captureStream->currentSampleRate) {
+                Common::InvokeSharedCallback(done, false);
+                return;
+            }
+            Graph::DeviceGraph graph;
+            graph.playback = std::move(playbackStream);
+            graph.capture = std::move(*captureStream);
+            discoveredGraph_ = std::make_shared<Graph::DeviceGraph>(std::move(graph));
+            ASFW_LOG(AVC, "[AvcGeometry] guid=%llx source=unit-plug0 rate=%u playback=%u/%u capture=%u/%u",
+                Guid(), discoveredGraph_->playback.currentSampleRate,
+                discoveredGraph_->playback.channelCount, discoveredGraph_->playback.dataBlockSize,
+                discoveredGraph_->capture.channelCount, discoveredGraph_->capture.dataBlockSize);
+            Common::InvokeSharedCallback(done, true);
+        });
     });
 }
 

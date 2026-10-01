@@ -51,6 +51,9 @@ public:
     // device work starts. Null clears it.
     virtual void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept = 0;
 
+    // Geometry discovery derived from descriptors or plug formats, offered
+    // before LoadGeometry. A family that reads its own geometry ignores it.
+    virtual void AdoptDiscoveredGeometry(const AudioStreamRuntimeCaps& caps) noexcept { (void)caps; }
     // Read the device's stream geometry so channel planning sees every stream.
     [[nodiscard]] virtual IOReturn LoadGeometry() = 0;
     // The geometry last read from the device, if any.

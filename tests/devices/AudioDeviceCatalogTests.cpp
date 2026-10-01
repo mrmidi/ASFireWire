@@ -427,6 +427,10 @@ TEST(AudioDeviceCatalog, AnUnknownAvcUnitFallsBackToGenericAvc) {
     ASSERT_TRUE(plan.has_value());
     EXPECT_EQ(plan->support, SupportDisposition::GenericFallback);
     EXPECT_EQ(plan->family, AudioFamilyProviderId::GenericAvc);
+    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::GenericAvc);
+    EXPECT_TRUE(AllowsAudioRuntime(plan->support));
+    EXPECT_EQ(plan->probePolicy, ProbePolicyId::GenericAvc);
+    EXPECT_TRUE(plan->streamTraits.start.startAtObservedRate);
 }
 
 // An unknown DICE unit must not fall through into an FCP probe: DICE uses a
@@ -738,3 +742,16 @@ TEST(AudioDeviceCatalog, Preserves64BitDeviceInstanceIdAboveUint32Max) {
 }
 
 } // namespace
+
+TEST(AudioDeviceCatalog, UnprofiledOxfordUsesCapabilityDiscoveryInsteadOfIdentityVeto) {
+    const auto device = MakeDevice(0x000FF2'0400000000ULL, kMackieVendorId, kOnyx1640iOxfwModelId,
+                                   {{.offset = 5, .specifierId = kTa1394AvcSpecifier,
+                                     .version = kTa1394AvcVersion}});
+    const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+    ASSERT_TRUE(plan);
+    EXPECT_EQ(plan->family, AudioFamilyProviderId::GenericAvc);
+    EXPECT_EQ(plan->support, SupportDisposition::GenericFallback);
+    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::GenericAvc);
+    EXPECT_EQ(plan->probePolicy, ProbePolicyId::GenericAvc);
+    EXPECT_TRUE(plan->streamTraits.start.startAtObservedRate);
+}

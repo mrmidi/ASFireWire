@@ -10,6 +10,7 @@
 #include "ASFWDriver/Protocols/AVC/Descriptors/AudioSubunitDescriptor.hpp"
 #include "ASFWDriver/Protocols/AVC/Descriptors/MusicSubunitDescriptor.hpp"
 #include "ASFWDriver/Protocols/AVC/Graph/AvcGraphBuilder.hpp"
+#include "ASFWDriver/Protocols/AVC/Graph/AvcStreamGeometry.hpp"
 #include "../support/Phase88DescriptorFixtures.hpp"
 #include "../support/DuetDescriptorFixture.hpp"
 
@@ -338,4 +339,39 @@ TEST(AvcGraphBuilderTests, DescriptorMapRejectionWhenSlotExceedsDataBlockSize) {
     EXPECT_TRUE(graph.capture.slotMap.IsIdentity());
 }
 
+} // namespace ASFW::Protocols::AVC::Graph::Test
+
+namespace ASFW::Protocols::AVC::Graph::Test {
+TEST(AvcStreamGeometry, UsesReferencePcmFirstLayoutWithoutDescriptor) {
+    // A format list with MIDI first is not evidence of physical slot routing.
+    const uint8_t bytes[] = {0x90, 0x40, 0x04, 0, 2, 1, 0x0D, 2, 0x06};
+    const auto decoded = ASFW::AVC::Cmd::DecodeStreamFormatBlock(bytes);
+    ASSERT_TRUE(decoded);
+    const auto stream = BuildUnitStreamGeometry(*decoded, true);
+    ASSERT_TRUE(stream);
+    EXPECT_EQ(stream->currentSampleRate, 48000U);
+    EXPECT_EQ(stream->channelCount, 2U);
+    EXPECT_EQ(stream->dataBlockSize, 3U);
+    EXPECT_EQ(stream->slotMap.SlotFor(0), 0U);
+    EXPECT_EQ(stream->slotMap.SlotFor(1), 1U);
+    EXPECT_TRUE(stream->usingFallbackMap);
+    EXPECT_EQ(stream->selectionEvidence, StreamSelectionEvidence::kUnitPlugFormat);
+}
+TEST(AvcStreamGeometry, RejectsMidiOnlyAndUnsupportedContent) {
+    const uint8_t midi[] = {0x90, 0x40, 0x04, 0, 1, 1, 0x0D};
+    const auto decoded = ASFW::AVC::Cmd::DecodeStreamFormatBlock(midi);
+    ASSERT_TRUE(decoded);
+    EXPECT_FALSE(BuildUnitStreamGeometry(*decoded, false));
+    const uint8_t other[] = {0x90, 0x40, 0x04, 0, 1, 2, 0x01};
+    const auto nonPcm = ASFW::AVC::Cmd::DecodeStreamFormatBlock(other);
+    ASSERT_TRUE(nonPcm);
+    EXPECT_FALSE(BuildUnitStreamGeometry(*nonPcm, false));
+}
+TEST(AvcStreamGeometry, RejectsMoreMidiDataChannelsThanTheReference) {
+    // 2 MBLA + 2 MIDI-conformant data channels: Linux refuses more than one.
+    const uint8_t bytes[] = {0x90, 0x40, 0x04, 0, 2, 2, 0x06, 2, 0x0D};
+    const auto decoded = ASFW::AVC::Cmd::DecodeStreamFormatBlock(bytes);
+    ASSERT_TRUE(decoded);
+    EXPECT_FALSE(BuildUnitStreamGeometry(*decoded, true));
+}
 } // namespace ASFW::Protocols::AVC::Graph::Test

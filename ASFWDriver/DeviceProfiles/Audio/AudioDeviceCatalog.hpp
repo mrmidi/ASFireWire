@@ -179,7 +179,8 @@ enum class ProtocolImplementationId : uint8_t {
     BeBoBMAudioSpecial,
     MotuV2,
     RmeFireface,
-    kLastValid = RmeFireface,
+    GenericAvc,
+    kLastValid = GenericAvc,
 };
 
 /// AMDTP cadence a device must be driven at regardless of what it reports.
@@ -266,6 +267,11 @@ struct StreamStartPolicy final {
     /// 0 means no pin (use standard 48 kHz default or requested session clock).
     uint32_t startRatePinHz{0};
 
+    /// Start at, and offer only, the rate the device reported at discovery.
+    /// For a device whose geometry was observed at one rate only: another rate
+    /// would need fresh geometry. Ignored when startRatePinHz is set.
+    bool startAtObservedRate{false};
+
     /// How long device and transport events (bus reset, config change,
     /// runtime faults) must stay quiet before the streams restart once for all
     /// of them. 0 restarts at once, per event.
@@ -288,6 +294,11 @@ enum class SupportDisposition : uint8_t {
     RecognizedUnsupported,
     Quarantined,
 };
+
+[[nodiscard]] constexpr bool AllowsAudioRuntime(SupportDisposition support) noexcept {
+    return support == SupportDisposition::Supported || support == SupportDisposition::GenericFallback;
+}
+
 
 enum class GuidReliability : uint8_t {
     Unspecified = 0,

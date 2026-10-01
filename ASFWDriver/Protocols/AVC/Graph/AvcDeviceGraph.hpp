@@ -42,6 +42,7 @@ enum class StreamSelectionEvidence : uint8_t {
     kUnresolved,
     kSignalSourceInquiry,
     kDescriptorDefaultAssumption,
+    kUnitPlugFormat,
 };
 
 struct StreamGraph {

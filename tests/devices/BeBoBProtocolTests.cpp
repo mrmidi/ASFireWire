@@ -8,6 +8,7 @@
 
 #include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/GenericBeBoBProtocol.hpp"
+#include "ASFWDriver/Audio/Protocols/GenericAvcProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialRouting.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/Phase88MixerData.hpp"
@@ -669,4 +670,25 @@ TEST_F(BeBoBProtocolTest, FamilyDriverStepsAnswerThroughTheSameChains) {
     const auto noTransport = family.ApplyClockIdle({.sampleRateHz = 48000});
     ASSERT_FALSE(noTransport.has_value());
     EXPECT_EQ(noTransport.error(), kIOReturnNotReady);
+}
+
+TEST_F(BeBoBProtocolTest, GenericAvcUsesObservedAsymmetricGeometryAndRejectsOtherRates) {
+    ASFW::Audio::GenericAvcProtocol protocol(busOps_, bus_, route_, nullptr, &cmp_, &timer_);
+    EXPECT_FALSE(protocol.RuntimeCaps());
+    ASFW::Audio::AudioStreamRuntimeCaps geometry{};
+    geometry.sampleRateHz = 44100;
+    geometry.hostInputPcmChannels = 8;
+    geometry.hostOutputPcmChannels = 2;
+    geometry.deviceToHostAm824Slots = 9;
+    geometry.hostToDeviceAm824Slots = 3;
+    protocol.AdoptDiscoveredGeometry(geometry);
+    const auto caps = protocol.RuntimeCaps();
+    ASSERT_TRUE(caps);
+    EXPECT_EQ(caps->hostInputPcmChannels, 8U);
+    EXPECT_EQ(caps->hostOutputPcmChannels, 2U);
+    EXPECT_EQ(caps->deviceToHostAm824Slots, 9U);
+    EXPECT_EQ(caps->sampleRateHz, 44100U);
+    IOReturn status = kIOReturnSuccess;
+    protocol.ApplyClockConfig({.sampleRateHz = 48000}, [&status](IOReturn result, const auto&) { status = result; });
+    EXPECT_EQ(status, kIOReturnUnsupported);
 }

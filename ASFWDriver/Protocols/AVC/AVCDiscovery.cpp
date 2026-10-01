@@ -246,7 +246,13 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     }
 
     // Create AVCUnit
-    auto avcUnit = std::make_shared<AVCUnit>(device, unit, deviceRegistry_, busOps_, busInfo_, timerScheduler_);
+    // Only the generic probe policy permits reading plug formats for geometry;
+    // named devices keep their measured command sequences.
+    const AVCUnit::DiscoveryOptions options{
+        .unitPlugGeometryFallback =
+            policyPlan->probePolicy == ASFW::DeviceProfiles::Audio::ProbePolicyId::GenericAvc};
+    auto avcUnit = std::make_shared<AVCUnit>(device, unit, deviceRegistry_, busOps_, busInfo_,
+                                             timerScheduler_, options);
 
     // Publish the unit to the shutdown owner before initializing it. A
     // termination callback can race discovery after our first atomic check;
@@ -421,14 +427,6 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
         return;
     }
 
-    os_log_info(log_,
-                "AVCDiscovery: AVCUnit initialized: GUID=%llx, "
-                "%zu subunits, %d inputs, %d outputs",
-                guid,
-                avcUnit->GetSubunits().size(),
-                avcUnit->IsInitialized() ? 2 : 0,  // Placeholder
-                avcUnit->IsInitialized() ? 2 : 0); // Placeholder
-
     // The OXFW971's Music subunit implements no descriptor mechanism (standard
     // descriptor access and the non-standard direct read both refuse on real
     // hardware; Linux snd-oxfw never consults the Music subunit either), so the
@@ -447,6 +445,13 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
         return;
     }
 
+    const bool hasAudioSubunit = std::any_of(avcUnit->GetSubunits().begin(), avcUnit->GetSubunits().end(),
+        [](const auto& subunit) { return subunit->GetType() == AVCSubunitType::kAudio ||
+                                       subunit->GetType() == AVCSubunitType::kMusic; });
+    if (!hasAudioSubunit) {
+        ASFW_LOG(AVC, "[AvcPublish] guid=%llx skipped reason=no-audio-or-music-subunit", guid);
+        return;
+    }
     const auto graph = avcUnit->GetDiscoveredGraph();
     if (!graph || graph->playback.dataBlockSize == 0 || graph->capture.dataBlockSize == 0) {
         ASFW_LOG_WARNING(Audio, "[AvcPublish] guid=%llx deferred reason=unresolved-stream-graph", guid);
@@ -715,7 +720,10 @@ ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
     const auto plan = CurrentPolicyPlan(deviceRegistry_, device);
     if (!plan || graph.playback.currentSampleRate == 0 ||
         graph.playback.currentSampleRate != graph.capture.currentSampleRate ||
-        graph.playback.dataBlockSize == 0 || graph.capture.dataBlockSize == 0) return config;
+        graph.playback.dataBlockSize == 0 || graph.capture.dataBlockSize == 0 ||
+        graph.playback.channelCount > ASFW::Encoding::kMaxPcmChannels ||
+        graph.capture.channelCount > ASFW::Encoding::kMaxPcmChannels ||
+        graph.playback.dataBlockSize > 255 || graph.capture.dataBlockSize > 255) return config;
     config.vendorId = device.GetVendorID();
     config.modelId = device.GetModelID();
     config.profileBuilderId = static_cast<uint32_t>(plan->profileBuilder);
@@ -728,6 +736,8 @@ ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
         if (std::find(graph.capture.supportedSampleRates.begin(), graph.capture.supportedSampleRates.end(), hz) !=
             graph.capture.supportedSampleRates.end()) config.sampleRates.push_back(hz);
     }
+    if (plan->streamTraits.start.startAtObservedRate)
+        config.sampleRates = {config.currentSampleRate};
     config.inputChannelNames = graph.capture.channelNames;
     config.outputChannelNames = graph.playback.channelNames;
     config.playbackStreams = {{.pcmChannels = graph.playback.channelCount,
