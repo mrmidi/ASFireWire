@@ -120,6 +120,10 @@ kernel void asfwKWeightRange(
     float energyLeft = as_type<float>(state[16]);
     float energyRight = as_type<float>(state[17]);
     uint partialFrames = state[18];
+    float rawEnergy = as_type<float>(state[45]);
+    float samplePeak = as_type<float>(state[46]);
+    float chunkTruePeakLeft = as_type<float>(state[47]);
+    float chunkTruePeakRight = as_type<float>(state[48]);
     float truePeakHistoryLeft[12];
     float truePeakHistoryRight[12];
     for (uint tap = 0; tap < 12; ++tap) {
@@ -149,6 +153,8 @@ kernel void asfwKWeightRange(
         truePeakHistoryFrames = min(12u, truePeakHistoryFrames + 1);
         if (truePeakHistoryFrames >= 12) {
             truePeakValid = true;
+            float frameTruePeakLeft = 0.0f;
+            float frameTruePeakRight = 0.0f;
             for (uint phase = 0; phase < 4; ++phase) {
                 float interpolatedLeft = 0.0f;
                 float interpolatedRight = 0.0f;
@@ -157,13 +163,20 @@ kernel void asfwKWeightRange(
                     interpolatedRight += asfwTruePeakCoefficients[phase][tap] * truePeakHistoryRight[tap];
                 }
                 if (isfinite(interpolatedLeft)) {
-                    truePeakLeft = max(truePeakLeft, abs(interpolatedLeft));
+                    frameTruePeakLeft = max(frameTruePeakLeft, abs(interpolatedLeft));
                 }
                 if (isfinite(interpolatedRight)) {
-                    truePeakRight = max(truePeakRight, abs(interpolatedRight));
+                    frameTruePeakRight = max(frameTruePeakRight, abs(interpolatedRight));
                 }
             }
+            truePeakLeft = max(truePeakLeft, frameTruePeakLeft);
+            truePeakRight = max(truePeakRight, frameTruePeakRight);
+            chunkTruePeakLeft = max(chunkTruePeakLeft, frameTruePeakLeft);
+            chunkTruePeakRight = max(chunkTruePeakRight, frameTruePeakRight);
         }
+
+        rawEnergy += left * left + right * right;
+        samplePeak = max(samplePeak, max(abs(left), abs(right)));
 
         const float leftStage1 = 1.5351248596f * left - 2.6916961894f * l1x1
             + 1.1983928109f * l1x2 + 1.6906592932f * l1y1 - 0.7324807742f * l1y2;
@@ -184,14 +197,22 @@ kernel void asfwKWeightRange(
         ++partialFrames;
         if (partialFrames == 480) {
             const ulong endFrame = params.startFrame + ulong(i) + 1;
-            const uint base = 17 + chunkCount * 4;
+            const uint base = 17 + chunkCount * 8;
             output[base] = uint(endFrame & 0xfffffffful);
             output[base + 1] = uint(endFrame >> 32);
             output[base + 2] = as_type<uint>(energyLeft);
             output[base + 3] = as_type<uint>(energyRight);
+            output[base + 4] = as_type<uint>(rawEnergy);
+            output[base + 5] = as_type<uint>(samplePeak);
+            output[base + 6] = as_type<uint>(chunkTruePeakLeft);
+            output[base + 7] = as_type<uint>(chunkTruePeakRight);
             ++chunkCount;
             energyLeft = 0.0f;
             energyRight = 0.0f;
+            rawEnergy = 0.0f;
+            samplePeak = 0.0f;
+            chunkTruePeakLeft = 0.0f;
+            chunkTruePeakRight = 0.0f;
             partialFrames = 0;
         }
     }
@@ -212,6 +233,10 @@ kernel void asfwKWeightRange(
         state[32 + tap] = as_type<uint>(truePeakHistoryRight[tap]);
     }
     state[44] = truePeakHistoryFrames;
+    state[45] = as_type<uint>(rawEnergy);
+    state[46] = as_type<uint>(samplePeak);
+    state[47] = as_type<uint>(chunkTruePeakLeft);
+    state[48] = as_type<uint>(chunkTruePeakRight);
     output[16] = chunkCount;
     output[92] = as_type<uint>(truePeakLeft);
     output[93] = as_type<uint>(truePeakRight);

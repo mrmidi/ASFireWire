@@ -7,6 +7,7 @@ struct AudioLoudnessMeasurementSession: Sendable {
     static let maximumDurationSeconds: UInt64 = 24 * 60 * 60
     private static let shortTermWindowChunks = 300
     private static let shortTermHopChunks = 10
+    private static let momentaryWindowChunks = 40
     private static let chunksPerBlock = 40
     private static let chunksPerHop = 10
     private static let lraMinimumLUFS: Float = -100
@@ -20,7 +21,11 @@ struct AudioLoudnessMeasurementSession: Sendable {
     private(set) var integratedLUFS: Float?
     private(set) var loudnessRangeLU: Float?
     private(set) var loudnessRangeIsProvisional = false
-    private(set) var maximumTruePeakDBTP: Float?
+    private(set) var maximumTruePeakLeftDBTP: Float?
+    private(set) var maximumTruePeakRightDBTP: Float?
+    private(set) var maximumMomentaryLUFS: Float?
+    private(set) var maximumShortTermLUFS: Float?
+    private(set) var crestFactorDB: Float?
 
     private var blockWindow: [AudioLoudnessEnergyChunk] = []
     private var chunksSinceBlock = 0
@@ -32,6 +37,12 @@ struct AudioLoudnessMeasurementSession: Sendable {
     private var shortTermWriteIndex = 0
     private var shortTermEnergySum: Double = 0
     private var chunksSinceShortTerm = 0
+    private var momentaryEnergyRing = [Float](repeating: 0, count: momentaryWindowChunks)
+    private var momentaryRingCount = 0
+    private var momentaryWriteIndex = 0
+    private var momentaryEnergySum: Double = 0
+    private var sampleEnergySum: Double = 0
+    private var maximumSamplePeak: Float = 0
     private var lraHistogram = [UInt32](repeating: 0, count: lraBinCount)
     private var lraAbsolutePowerSum: Double = 0
     private var lraAbsoluteCount: UInt64 = 0
@@ -82,12 +93,6 @@ struct AudioLoudnessMeasurementSession: Sendable {
         recomputeIntegratedIfNeeded(now: Date())
     }
 
-    mutating func consumeTruePeak(amplitude: Float) {
-        guard phase == .running, amplitude.isFinite, amplitude > 0 else { return }
-        let dbtp = 20 * log10(amplitude)
-        maximumTruePeakDBTP = max(maximumTruePeakDBTP ?? -.infinity, dbtp)
-    }
-
     /// Returns true when the cached Integrated value was recomputed.
     @discardableResult
     mutating func consume(_ chunk: AudioLoudnessEnergyChunk,
@@ -96,20 +101,41 @@ struct AudioLoudnessMeasurementSession: Sendable {
               chunk.frameCount == 480,
               chunk.weightedEnergy.isFinite,
               chunk.weightedEnergy >= 0,
+              chunk.rawSampleEnergy.isFinite, chunk.rawSampleEnergy >= 0,
+              chunk.samplePeak.isFinite, chunk.samplePeak >= 0,
+              chunk.truePeakLeft.isFinite, chunk.truePeakLeft >= 0,
+              chunk.truePeakRight.isFinite, chunk.truePeakRight >= 0,
               includedFrames < Self.maximumFrames else { return false }
 
         includedFrames += UInt64(chunk.frameCount)
+        sampleEnergySum += Double(chunk.rawSampleEnergy)
+        maximumSamplePeak = max(maximumSamplePeak, chunk.samplePeak)
+        if chunk.truePeakLeft > 0 {
+            let value = 20 * log10(chunk.truePeakLeft)
+            maximumTruePeakLeftDBTP = max(maximumTruePeakLeftDBTP ?? -.infinity, value)
+        }
+        if chunk.truePeakRight > 0 {
+            let value = 20 * log10(chunk.truePeakRight)
+            maximumTruePeakRightDBTP = max(maximumTruePeakRightDBTP ?? -.infinity, value)
+        }
+        if let momentary = appendMomentaryChunk(chunk) {
+            maximumMomentaryLUFS = max(maximumMomentaryLUFS ?? -.infinity, momentary)
+        }
         blockWindow.append(chunk)
         chunksSinceBlock += 1
-        if let shortTerm = appendShortTermChunk(chunk) {
-            let power = pow(10, Double(shortTerm) / 10)
-            lraAbsolutePowerSum += power
-            lraAbsoluteCount &+= 1
-            let rawBin = Int(floor((shortTerm - Self.lraMinimumLUFS) / Self.lraBinWidthLU))
-            let bin = min(Self.lraBinCount - 1, max(0, rawBin))
-            lraHistogram[bin] &+= 1
-            hasNewLRAValues = true
+        if let values = appendShortTermChunk(chunk) {
+            maximumShortTermLUFS = max(maximumShortTermLUFS ?? -.infinity, values.loudness)
+            if let shortTermForLRA = values.lraValue {
+                let power = pow(10, Double(shortTermForLRA) / 10)
+                lraAbsolutePowerSum += power
+                lraAbsoluteCount &+= 1
+                let rawBin = Int(floor((shortTermForLRA - Self.lraMinimumLUFS) / Self.lraBinWidthLU))
+                let bin = min(Self.lraBinCount - 1, max(0, rawBin))
+                lraHistogram[bin] &+= 1
+                hasNewLRAValues = true
+            }
         }
+        updateCrestFactor()
 
         if blockWindow.count == Self.chunksPerBlock && chunksSinceBlock >= Self.chunksPerHop {
             let summedEnergy = blockWindow.reduce(Float.zero) { $0 + $1.weightedEnergy }
@@ -181,7 +207,21 @@ struct AudioLoudnessMeasurementSession: Sendable {
         return true
     }
 
-    private mutating func appendShortTermChunk(_ chunk: AudioLoudnessEnergyChunk) -> Float? {
+    private mutating func appendMomentaryChunk(_ chunk: AudioLoudnessEnergyChunk) -> Float? {
+        if momentaryRingCount < Self.momentaryWindowChunks {
+            momentaryRingCount += 1
+        } else {
+            momentaryEnergySum -= Double(momentaryEnergyRing[momentaryWriteIndex])
+        }
+        momentaryEnergyRing[momentaryWriteIndex] = chunk.weightedEnergy
+        momentaryEnergySum += Double(chunk.weightedEnergy)
+        momentaryWriteIndex = (momentaryWriteIndex + 1) % Self.momentaryWindowChunks
+        guard momentaryRingCount == Self.momentaryWindowChunks else { return nil }
+        return Self.lufs(forMeanEnergy: Float(momentaryEnergySum / Double(40 * 480)))
+    }
+
+    private mutating func appendShortTermChunk(_ chunk: AudioLoudnessEnergyChunk)
+        -> (loudness: Float, lraValue: Float?)? {
         if shortTermRingCount < Self.shortTermWindowChunks {
             shortTermRingCount += 1
         } else {
@@ -190,15 +230,28 @@ struct AudioLoudnessMeasurementSession: Sendable {
         shortTermEnergyRing[shortTermWriteIndex] = chunk.weightedEnergy
         shortTermEnergySum += Double(chunk.weightedEnergy)
         shortTermWriteIndex = (shortTermWriteIndex + 1) % Self.shortTermWindowChunks
-        chunksSinceShortTerm += 1
-
-        guard shortTermRingCount == Self.shortTermWindowChunks,
-              chunksSinceShortTerm >= Self.shortTermHopChunks else { return nil }
-        chunksSinceShortTerm = 0
+        guard shortTermRingCount == Self.shortTermWindowChunks else { return nil }
         let frameCount = Self.shortTermWindowChunks * 480
         let meanEnergy = Float(shortTermEnergySum / Double(frameCount))
         let loudness = Self.lufs(forMeanEnergy: meanEnergy)
-        return loudness >= -70 ? loudness : nil
+        chunksSinceShortTerm += 1
+        var lraValue: Float?
+        if chunksSinceShortTerm >= Self.shortTermHopChunks {
+            chunksSinceShortTerm = 0
+            if loudness >= -70 { lraValue = loudness }
+        }
+        return (loudness, lraValue)
+    }
+
+    private mutating func updateCrestFactor() {
+        guard includedFrames > 0, maximumSamplePeak > 0, sampleEnergySum > 0 else {
+            crestFactorDB = nil
+            return
+        }
+        let sampleCount = Double(includedFrames) * 2
+        let rms = sqrt(sampleEnergySum / sampleCount)
+        guard rms > 0 else { crestFactorDB = nil; return }
+        crestFactorDB = Float(20 * log10(Double(maximumSamplePeak) / rms))
     }
 
     private mutating func recomputeLRAIfNeeded() {
@@ -267,7 +320,13 @@ struct AudioLoudnessMeasurementSession: Sendable {
         integratedLUFS = nil
         loudnessRangeLU = nil
         loudnessRangeIsProvisional = false
-        maximumTruePeakDBTP = nil
+        maximumTruePeakLeftDBTP = nil
+        maximumTruePeakRightDBTP = nil
+        maximumMomentaryLUFS = nil
+        maximumShortTermLUFS = nil
+        crestFactorDB = nil
+        sampleEnergySum = 0
+        maximumSamplePeak = 0
         integratedBlockEnergies.removeAll(keepingCapacity: false)
         clearBlockWindow()
         lraHistogram = [UInt32](repeating: 0, count: Self.lraBinCount)
@@ -276,6 +335,10 @@ struct AudioLoudnessMeasurementSession: Sendable {
         hasNewLRAValues = false
         lastIntegratedUpdate = .distantPast
         hasNewIntegratedBlocks = false
+        momentaryEnergyRing = [Float](repeating: 0, count: Self.momentaryWindowChunks)
+        momentaryRingCount = 0
+        momentaryWriteIndex = 0
+        momentaryEnergySum = 0
     }
 
     private mutating func clearBlockWindow() {
@@ -286,5 +349,9 @@ struct AudioLoudnessMeasurementSession: Sendable {
         shortTermWriteIndex = 0
         shortTermEnergySum = 0
         chunksSinceShortTerm = 0
+        momentaryEnergyRing = [Float](repeating: 0, count: Self.momentaryWindowChunks)
+        momentaryRingCount = 0
+        momentaryWriteIndex = 0
+        momentaryEnergySum = 0
     }
 }

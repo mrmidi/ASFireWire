@@ -111,6 +111,11 @@ enum AudioLoudnessSessionPhase: Sendable, Equatable {
 struct AudioLoudnessEnergyChunk: Sendable, Equatable {
     var endFrame: UInt64
     var weightedEnergy: Float
+    /// Sum of squared, unweighted L/R samples for the same 10 ms interval.
+    var rawSampleEnergy: Float = 0
+    var samplePeak: Float = 0
+    var truePeakLeft: Float = 0
+    var truePeakRight: Float = 0
     var frameCount: UInt32
 }
 

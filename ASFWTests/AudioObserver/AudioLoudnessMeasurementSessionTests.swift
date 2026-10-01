@@ -86,4 +86,36 @@ struct AudioLoudnessMeasurementSessionTests {
         #expect(abs((session.loudnessRangeLU ?? 0) - 10) < 1)
         #expect(session.loudnessRangeIsProvisional)
     }
+
+    @Test func sessionDerivedMetricsShareTheIncludedTenMillisecondChunks() {
+        var session = AudioLoudnessMeasurementSession()
+        let started = session.start(sampleRateHz: 48_000)
+        #expect(started)
+        let start = Date(timeIntervalSince1970: 20_000)
+
+        for index in 0..<400 {
+            let chunk = AudioLoudnessEnergyChunk(
+                endFrame: UInt64(index + 1) * 480,
+                weightedEnergy: 0.01 * 480,
+                rawSampleEnergy: 2 * 0.25 * 0.25 * 480,
+                samplePeak: 0.25,
+                truePeakLeft: 0.30,
+                truePeakRight: 0.40,
+                frameCount: 480)
+            session.consume(chunk, now: start.addingTimeInterval(Double(index) / 100))
+        }
+
+        #expect(session.maximumMomentaryLUFS != nil)
+        #expect(session.maximumShortTermLUFS != nil)
+        #expect(abs((session.maximumTruePeakLeftDBTP ?? 0) - 20 * log10(0.30)) < 0.001)
+        #expect(abs((session.maximumTruePeakRightDBTP ?? 0) - 20 * log10(0.40)) < 0.001)
+        #expect(abs((session.crestFactorDB ?? .infinity)) < 0.001)
+
+        session.pause()
+        #expect(session.maximumTruePeakRightDBTP != nil)
+        #expect(session.crestFactorDB != nil)
+        session.reset()
+        #expect(session.maximumTruePeakRightDBTP == nil)
+        #expect(session.crestFactorDB == nil)
+    }
 }

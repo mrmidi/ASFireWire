@@ -267,7 +267,6 @@ final class AudioObserverMetricsState: @unchecked Sendable {
                 let truePeakRight = Float(bitPattern: floats[93])
                 value.analysis.levels.left.truePeak = .valid(truePeakLeft)
                 value.analysis.levels.right.truePeak = .valid(truePeakRight)
-                loudnessSession.consumeTruePeak(amplitude: max(truePeakLeft, truePeakRight))
             } else {
                 value.analysis.levels.left.truePeak = .warmingUp
                 value.analysis.levels.right.truePeak = .warmingUp
@@ -301,7 +300,8 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         value.invalidSampleCount &+= UInt64(floats[90]) + UInt64(floats[91])
         value.analysis.diagnostics.invalidSamples = value.invalidSampleCount
         value.analysis.stereo.monoEnergyRetentionDB = .valid(Float(bitPattern: floats[15]))
-        value.analysis.stereo.cancellationRisk = .insufficientSignal
+        value.analysis.stereo.cancellationRisk = correlationValid && Float(bitPattern: floats[2]) < 0
+            ? .risk : (correlationValid ? .normal : .insufficientSignal)
         value.analysis.diagnostics.cursor = .valid(token.endFrame)
         value.analysis.diagnostics.sampleAgeMilliseconds = .valid(sampleAgeMilliseconds)
         value.analysis.diagnostics.overwriteMarginMilliseconds = .valid(overwriteMarginMilliseconds)
@@ -323,35 +323,39 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         value.sampleAgeMilliseconds = sampleAgeMilliseconds
         value.overwriteMarginMilliseconds = overwriteMarginMilliseconds
         if token.geometry.sampleRateHz == 48_000 {
-            let chunkCount = min(Int(floats[16]), (floats.count - 17) / 4)
+            let chunkCount = min(Int(floats[16]), (floats.count - 17) / 8)
             for index in 0..<chunkCount {
-                let word = 17 + index * 4
+                let word = 17 + index * 8
                 let endFrame = UInt64(floats[word]) | (UInt64(floats[word + 1]) << 32)
                 let energy = Float(bitPattern: floats[word + 2]) + Float(bitPattern: floats[word + 3])
                 loudnessEnergyRing[loudnessWriteIndex] = AudioLoudnessEnergyChunk(
-                    endFrame: endFrame, weightedEnergy: energy, frameCount: 480)
+                    endFrame: endFrame,
+                    weightedEnergy: energy,
+                    rawSampleEnergy: Float(bitPattern: floats[word + 4]),
+                    samplePeak: Float(bitPattern: floats[word + 5]),
+                    truePeakLeft: Float(bitPattern: floats[word + 6]),
+                    truePeakRight: Float(bitPattern: floats[word + 7]),
+                    frameCount: 480)
                 loudnessWriteIndex = (loudnessWriteIndex + 1) % loudnessEnergyRing.count
                 loudnessCount = min(loudnessEnergyRing.count, loudnessCount + 1)
                 value.analysis.loudness.acceptedAudioFrames &+= 480
                 if let momentary = loudnessValue(forLastChunks: 40) {
                     value.analysis.loudness.momentaryLUFS = .valid(momentary)
-                    value.analysis.loudness.maximumMomentaryLUFS = .valid(
-                        max(value.analysis.loudness.maximumMomentaryLUFS.value ?? -Float.infinity,
-                            momentary))
                 } else {
                     value.analysis.loudness.momentaryLUFS = .warmingUp
                 }
                 if let shortTerm = loudnessValue(forLastChunks: 300) {
                     value.analysis.loudness.shortTermLUFS = .valid(shortTerm)
-                    value.analysis.loudness.maximumShortTermLUFS = .valid(
-                        max(value.analysis.loudness.maximumShortTermLUFS.value ?? -Float.infinity,
-                            shortTerm))
                 } else {
                     value.analysis.loudness.shortTermLUFS = .warmingUp
                 }
                 loudnessSession.consume(AudioLoudnessEnergyChunk(
                     endFrame: endFrame,
                     weightedEnergy: energy,
+                    rawSampleEnergy: Float(bitPattern: floats[word + 4]),
+                    samplePeak: Float(bitPattern: floats[word + 5]),
+                    truePeakLeft: Float(bitPattern: floats[word + 6]),
+                    truePeakRight: Float(bitPattern: floats[word + 7]),
                     frameCount: 480))
             }
             publishLoudnessSessionState()
@@ -449,6 +453,30 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         value.analysis.loudness.sessionPhase = loudnessSession.phase
         value.analysis.loudness.integratedMeasurementID = loudnessSession.measurementID
         value.analysis.loudness.includedAudioFrames = loudnessSession.includedFrames
+        let sessionStatus: AudioMeasurementStatus
+        switch loudnessSession.phase {
+        case .idle: sessionStatus = .idle
+        case .running, .paused, .complete: sessionStatus = .warmingUp
+        case .discontinuous: sessionStatus = .discontinuous
+        }
+        value.analysis.loudness.maximumMomentaryLUFS = measurement(
+            loudnessSession.maximumMomentaryLUFS, status: sessionStatus)
+        value.analysis.loudness.maximumShortTermLUFS = measurement(
+            loudnessSession.maximumShortTermLUFS, status: sessionStatus)
+        value.analysis.loudness.crestFactorDB = measurement(
+            loudnessSession.crestFactorDB, status: sessionStatus)
+        let maximumTruePeak = [loudnessSession.maximumTruePeakLeftDBTP,
+                               loudnessSession.maximumTruePeakRightDBTP]
+            .compactMap { $0 }.max()
+        value.analysis.loudness.maximumTruePeakDBTP = measurement(
+            maximumTruePeak, status: sessionStatus)
+        if let integrated = loudnessSession.integratedLUFS, let maximumTruePeak {
+            let plr = maximumTruePeak - integrated
+            value.analysis.loudness.plrDB = loudnessSession.phase == .discontinuous
+                ? .discontinuous(plr) : .valid(plr)
+        } else {
+            value.analysis.loudness.plrDB = AudioMeasurement(value: nil, status: sessionStatus)
+        }
         if let integrated = loudnessSession.integratedLUFS {
             value.analysis.loudness.integratedLUFS = loudnessSession.phase == .discontinuous
                 ? .discontinuous(integrated) : .valid(integrated)
@@ -473,19 +501,12 @@ final class AudioObserverMetricsState: @unchecked Sendable {
             }
             value.analysis.loudness.loudnessRangeLU = AudioMeasurement(value: nil, status: status)
         }
-        if let truePeak = loudnessSession.maximumTruePeakDBTP {
-            value.analysis.loudness.maximumTruePeakDBTP = loudnessSession.phase == .discontinuous
-                ? .discontinuous(truePeak) : .valid(truePeak)
-        } else {
-            let status: AudioMeasurementStatus
-            switch loudnessSession.phase {
-            case .idle: status = .idle
-            case .running, .paused, .complete: status = .warmingUp
-            case .discontinuous: status = .discontinuous
-            }
-            value.analysis.loudness.maximumTruePeakDBTP = AudioMeasurement(value: nil, status: status)
-        }
         value.analysis.loudness.loudnessRangeIsProvisional = loudnessSession.loudnessRangeIsProvisional
+    }
+
+    private func measurement(_ value: Float?, status: AudioMeasurementStatus) -> AudioMeasurement<Float> {
+        guard let value else { return AudioMeasurement(value: nil, status: status) }
+        return status == .discontinuous ? .discontinuous(value) : .valid(value)
     }
 
     private func loudnessValue(forLastChunks count: Int) -> Float? {

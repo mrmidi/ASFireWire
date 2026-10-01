@@ -74,11 +74,11 @@ final class AudioAnalysisEngine {
               let function = library.makeFunction(name: "asfwConsumeOutputRange"),
               let kFunction = library.makeFunction(name: "asfwKWeightRange"),
               let queue = device.makeCommandQueue(),
-              let output = device.makeBuffer(length: 96 * MemoryLayout<UInt32>.stride,
+              let output = device.makeBuffer(length: 176 * MemoryLayout<UInt32>.stride,
                                              options: .storageModeShared),
-              let committed = device.makeBuffer(length: 45 * MemoryLayout<UInt32>.stride,
+              let committed = device.makeBuffer(length: 49 * MemoryLayout<UInt32>.stride,
                                                 options: .storageModeShared),
-              let provisional = device.makeBuffer(length: 45 * MemoryLayout<UInt32>.stride,
+              let provisional = device.makeBuffer(length: 49 * MemoryLayout<UInt32>.stride,
                                                   options: .storageModeShared) else {
             throw AudioObserverError.pipelineFailed
         }
@@ -229,7 +229,7 @@ final class AudioAnalysisEngine {
         commandBuffer.addScheduledHandler { _ in scheduled.set(CACurrentMediaTime()) }
         commandBuffer.addCompletedHandler { completed in
             let completionTime = CACurrentMediaTime()
-            let outputValues = output.copyValues(count: 96)
+            let outputValues = output.copyValues(count: 176)
             let gpuStart = completed.gpuStartTime
             let gpuEnd = completed.gpuEndTime
             let gpuMilliseconds = gpuStart > 0 && gpuEnd >= gpuStart
@@ -269,7 +269,7 @@ final class AudioAnalysisEngine {
                     return
                 }
                 if completed.status == .completed, geometryStillMatches,
-                   let postState, outputValues.count == 96 {
+                   let postState, outputValues.count == 176 {
                     outputValues.withUnsafeBufferPointer { values in
                         metrics.accept(token: token,
                                        pair: resolvedPair,

@@ -118,7 +118,7 @@ struct AudioAnalysisKernelTests {
         let source = try #require(device.makeBuffer(bytes: samples,
                                                     length: samples.count * MemoryLayout<Float>.stride,
                                                     options: .storageModeShared))
-        let state = try #require(device.makeBuffer(length: 45 * MemoryLayout<UInt32>.stride,
+        let state = try #require(device.makeBuffer(length: 49 * MemoryLayout<UInt32>.stride,
                                                    options: .storageModeShared))
         state.contents().initializeMemory(as: UInt8.self, repeating: 0, count: state.length)
         let output = try #require(device.makeBuffer(length: 96 * MemoryLayout<UInt32>.stride,
@@ -148,7 +148,10 @@ struct AudioAnalysisKernelTests {
         let lufs = -0.691 + 10 * log10((energyLeft + energyRight) / Float(sampleCount))
         #expect(abs(lufs + 23) < 0.7)
         #expect(values[94] == 1)
-        #expect(abs(Float(bitPattern: values[92]) - scalarTruePeak(samples, channel: 0)) < 1e-5)
+        let gpuTruePeakLeft = Float(bitPattern: values[92])
+        let cpuTruePeakLeft = scalarTruePeak(samples, channel: 0)
+        #expect(abs(gpuTruePeakLeft - cpuTruePeakLeft) < 1e-5,
+                "GPU \(gpuTruePeakLeft), CPU \(cpuTruePeakLeft)")
         #expect(abs(Float(bitPattern: values[93]) - scalarTruePeak(samples, channel: 1)) < 1e-5)
         #expect(state.contents().assumingMemoryBound(to: UInt32.self)[18] == 0)
     }
@@ -167,7 +170,7 @@ struct AudioAnalysisKernelTests {
         let source = try #require(device.makeBuffer(bytes: samples,
                                                     length: samples.count * MemoryLayout<Float>.stride,
                                                     options: .storageModeShared))
-        let state = try #require(device.makeBuffer(length: 45 * MemoryLayout<UInt32>.stride,
+        let state = try #require(device.makeBuffer(length: 49 * MemoryLayout<UInt32>.stride,
                                                    options: .storageModeShared))
         state.contents().initializeMemory(as: UInt8.self, repeating: 0, count: state.length)
         let output = try #require(device.makeBuffer(length: 96 * MemoryLayout<UInt32>.stride,

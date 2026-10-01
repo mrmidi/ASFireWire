@@ -140,8 +140,8 @@ struct AudioObserverPanel: View {
                 panel("Monitor", subtitle: "Live levels and stereo summary") {
                     StereoMetersView(metrics: model.metrics, active: model.snapshot.ioRunning)
                     HStack {
-                        valueTile("L Peak", dbfs(model.metrics.leftPeak))
-                        valueTile("R Peak", dbfs(model.metrics.rightPeak))
+                        valueTile("L True Peak", dbtpValue(model.metrics.analysis.levels.left.truePeak))
+                        valueTile("R True Peak", dbtpValue(model.metrics.analysis.levels.right.truePeak))
                         valueTile("Correlation", model.metrics.correlationValid
                                   ? String(format: "%+.2f", model.metrics.correlation) : "—")
                         valueTile("Side energy", String(format: "%.1f%%", 100 * model.metrics.meterValues[7]))
@@ -153,6 +153,7 @@ struct AudioObserverPanel: View {
                         valueTile("Balance", String(format: "%+.2f", model.metrics.meterValues[6]))
                         valueTile("Mono retention", db(model.metrics.analysis.stereo.monoEnergyRetentionDB.value))
                         valueTile("Side energy", String(format: "%.1f%%", 100 * model.metrics.meterValues[7]))
+                        valueTile("Mono cancellation", cancellationRiskText)
                     }
                 }
             }
@@ -188,6 +189,15 @@ struct AudioObserverPanel: View {
                                   measurementText(model.metrics.analysis.loudness.loudnessRangeLU))
                         valueTile("Max True Peak",
                                   dbtpText(model.metrics.analysis.loudness.maximumTruePeakDBTP))
+                    }
+                    HStack {
+                        valueTile("Max Momentary",
+                                  measurementText(model.metrics.analysis.loudness.maximumMomentaryLUFS))
+                        valueTile("Max Short-term",
+                                  measurementText(model.metrics.analysis.loudness.maximumShortTermLUFS))
+                        valueTile("PLR", dbValue(model.metrics.analysis.loudness.plrDB, unit: "dB"))
+                        valueTile("Session crest",
+                                  dbValue(model.metrics.analysis.loudness.crestFactorDB, unit: "dB"))
                     }
                     HStack(spacing: 8) {
                         loudnessSessionControls
@@ -349,6 +359,35 @@ struct AudioObserverPanel: View {
             return String(format: "Hold %.1f dBTP", value)
         }
         return String(format: "%.1f dBTP", value)
+    }
+
+    private func dbtpValue(_ measurement: AudioMeasurement<Float>) -> String {
+        guard let value = measurement.value, value.isFinite else {
+            return measurement.status == .unsupported ? "Unsupported" : "—"
+        }
+        return String(format: "%.1f dBTP", 20 * log10(max(value, 1.0e-12)))
+    }
+
+    private func dbValue(_ measurement: AudioMeasurement<Float>, unit: String) -> String {
+        guard let value = measurement.value, value.isFinite else {
+            switch measurement.status {
+            case .unsupported: return "Unsupported"
+            case .warmingUp: return "Warming up"
+            case .idle: return "Idle"
+            case .discontinuous: return "Discontinuous"
+            case .valid: return "—"
+            }
+        }
+        let prefix = measurement.status == .discontinuous ? "Hold " : ""
+        return String(format: "%@%.1f %@", prefix, value, unit)
+    }
+
+    private var cancellationRiskText: String {
+        switch model.metrics.analysis.stereo.cancellationRisk {
+        case .insufficientSignal: "—"
+        case .normal: "Low"
+        case .risk: "Potential"
+        }
     }
 
     private func measurementText(_ measurement: AudioMeasurement<Float>) -> String {
