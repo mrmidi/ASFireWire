@@ -198,6 +198,8 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private let ring: MTLBuffer?
     private let phasePipeline: MTLRenderPipelineState?
     private var historyRevision: UInt64?
+    private var displaySmoothers: [UInt64: AnalyzerDisplaySmoother] = [:]
+    private var displayEpoch: (UInt64, UInt64, UInt64)?
     var regions: [AnalyzerPlotRegion]?
 
     init(device: MTLDevice, pipeline: MTLRenderPipelineState, submission: AnalyzerRenderSubmission,
@@ -256,6 +258,12 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
               let command = submission.commandBuffer(for: device),
               let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return }
         let snapshot = state.read()
+        let now = CACurrentMediaTime()
+        let epoch = (snapshot.sessionEpoch, snapshot.discontinuityEpoch, snapshot.memoryGeneration)
+        if displayEpoch == nil || displayEpoch! != epoch {
+            displaySmoothers.removeAll(keepingCapacity: true)
+            displayEpoch = epoch
+        }
         encoder.setRenderPipelineState(pipeline)
         let plots = regions ?? [AnalyzerPlotRegion(mode: mode, index: index, rect: view.bounds)]
         for plot in plots {
@@ -285,7 +293,17 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
             let count = plot.mode == 2 ? stereoCount : loudnessCount
             let latestFrame = plot.mode == 2 ? stereoFrame : loudnessFrame
             let history = plot.mode == 2 ? stereoHistory : loudnessHistory
-            let (value, peak, valid) = metrics.plotValues(mode: plot.mode, index: plot.index)
+            let (rawValue, rawPeak, valid) = metrics.plotValues(mode: plot.mode, index: plot.index)
+            let active = snapshot.ioRunning && valid
+            var value = rawValue
+            var peak = rawPeak
+            if plot.mode == 0 || plot.mode == 1 || plot.mode == 4 {
+                let key = UInt64(plot.mode) << 32 | UInt64(plot.index)
+                var smoother = displaySmoothers[key] ?? AnalyzerDisplaySmoother()
+                let smoothed = smoother.update(value: rawValue, peak: rawPeak, mode: plot.mode, now: now, active: active)
+                displaySmoothers[key] = smoother
+                value = smoothed.value; peak = smoothed.peak
+            }
             var params = AnalyzerPlotParams(mode: plot.mode, index: plot.index,
                 active: snapshot.ioRunning && valid ? 1 : 0, count: UInt32(count),
                 latestFrame: latestFrame, sampleRate: snapshot.sampleRateHz,
