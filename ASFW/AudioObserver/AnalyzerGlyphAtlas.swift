@@ -33,8 +33,10 @@ nonisolated enum AnalyzerTextReadout: UInt32, CaseIterable, Sendable {
     case integratedLUFS = 2
 
     static let canvasMode: UInt32 = 6
-    /// Same cadence as the SwiftUI readouts it replaces.
-    static let refreshInterval: Double = 0.25
+    /// 10 Hz: momentary loudness advances every 100 ms, and EBU Tech 3341
+    /// asks loudness displays to refresh at least that often. The canvas
+    /// draws at 10 Hz or faster, so every new value reaches the screen.
+    static let refreshInterval: Double = 0.1
 
     var style: AnalyzerTextStyle { .loudnessHero }
 
