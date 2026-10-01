@@ -74,6 +74,23 @@ struct ConsumeRangePartial {
     uint invalidRight;
 };
 
+// ITU-R BS.1770-5 Annex 2, order-48, four-phase FIR coefficients. The
+// standard's matrix is transposed here so each phase is contiguous.
+constant float asfwTruePeakCoefficients[4][12] = {
+    { 0.0017089843750f, 0.0109863281250f, -0.0196533203125f, 0.0332031250000f,
+      -0.0594482421875f, 0.1373291015625f, 0.9721679687500f, -0.1022949218750f,
+      0.0476074218750f, -0.0266113281250f, 0.0148925781250f, -0.0083007812500f },
+    { -0.0291748046875f, 0.0292968750000f, -0.0517578125000f, 0.0891113281250f,
+      -0.1665039062500f, 0.4650878906250f, 0.7797851562500f, -0.2003173828125f,
+      0.1015625000000f, -0.0582275390625f, 0.0330810546875f, -0.0189208984375f },
+    { -0.0189208984375f, 0.0330810546875f, -0.0582275390625f, 0.1015625000000f,
+      -0.2003173828125f, 0.7797851562500f, 0.4650878906250f, -0.1665039062500f,
+      0.0891113281250f, -0.0517578125f, 0.0292968750f, -0.0291748046875f },
+    { -0.0083007812500f, 0.0148925781250f, -0.0266113281250f, 0.0476074218750f,
+      -0.1022949218750f, 0.9721679687500f, 0.1373291015625f, -0.0594482421875f,
+      0.0332031250000f, -0.0196533203125f, 0.0109863281250f, 0.0017089843750f }
+};
+
 // Stateful 48 kHz BS.1770 K-weighting. State words contain two direct-form
 // biquads per selected channel plus unfinished 10 ms channel-energy sums.
 kernel void asfwKWeightRange(
@@ -103,6 +120,16 @@ kernel void asfwKWeightRange(
     float energyLeft = as_type<float>(state[16]);
     float energyRight = as_type<float>(state[17]);
     uint partialFrames = state[18];
+    float truePeakHistoryLeft[12];
+    float truePeakHistoryRight[12];
+    for (uint tap = 0; tap < 12; ++tap) {
+        truePeakHistoryLeft[tap] = as_type<float>(state[20 + tap]);
+        truePeakHistoryRight[tap] = as_type<float>(state[32 + tap]);
+    }
+    uint truePeakHistoryFrames = state[44];
+    float truePeakLeft = 0.0f;
+    float truePeakRight = 0.0f;
+    bool truePeakValid = false;
     uint chunkCount = 0;
 
     for (uint i = 0; i < params.frameCount; ++i) {
@@ -112,6 +139,31 @@ kernel void asfwKWeightRange(
         const float rawRight = samples[base + params.rightChannel];
         const float left = isfinite(rawLeft) ? rawLeft : 0.0f;
         const float right = isfinite(rawRight) ? rawRight : 0.0f;
+
+        for (int tap = 11; tap > 0; --tap) {
+            truePeakHistoryLeft[tap] = truePeakHistoryLeft[tap - 1];
+            truePeakHistoryRight[tap] = truePeakHistoryRight[tap - 1];
+        }
+        truePeakHistoryLeft[0] = left;
+        truePeakHistoryRight[0] = right;
+        truePeakHistoryFrames = min(12u, truePeakHistoryFrames + 1);
+        if (truePeakHistoryFrames >= 12) {
+            truePeakValid = true;
+            for (uint phase = 0; phase < 4; ++phase) {
+                float interpolatedLeft = 0.0f;
+                float interpolatedRight = 0.0f;
+                for (uint tap = 0; tap < 12; ++tap) {
+                    interpolatedLeft += asfwTruePeakCoefficients[phase][tap] * truePeakHistoryLeft[tap];
+                    interpolatedRight += asfwTruePeakCoefficients[phase][tap] * truePeakHistoryRight[tap];
+                }
+                if (isfinite(interpolatedLeft)) {
+                    truePeakLeft = max(truePeakLeft, abs(interpolatedLeft));
+                }
+                if (isfinite(interpolatedRight)) {
+                    truePeakRight = max(truePeakRight, abs(interpolatedRight));
+                }
+            }
+        }
 
         const float leftStage1 = 1.5351248596f * left - 2.6916961894f * l1x1
             + 1.1983928109f * l1x2 + 1.6906592932f * l1y1 - 0.7324807742f * l1y2;
@@ -155,7 +207,15 @@ kernel void asfwKWeightRange(
     state[16] = as_type<uint>(energyLeft);
     state[17] = as_type<uint>(energyRight);
     state[18] = partialFrames;
+    for (uint tap = 0; tap < 12; ++tap) {
+        state[20 + tap] = as_type<uint>(truePeakHistoryLeft[tap]);
+        state[32 + tap] = as_type<uint>(truePeakHistoryRight[tap]);
+    }
+    state[44] = truePeakHistoryFrames;
     output[16] = chunkCount;
+    output[92] = as_type<uint>(truePeakLeft);
+    output[93] = as_type<uint>(truePeakRight);
+    output[94] = uint(truePeakValid);
 }
 
 // Consume a bounded, previously unpublished frame range. The one-group tree

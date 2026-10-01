@@ -221,6 +221,7 @@ final class AudioObserverMetricsState: @unchecked Sendable {
     private var loudnessEnergyRing = [AudioLoudnessEnergyChunk?](repeating: nil, count: 300)
     private var loudnessWriteIndex = 0
     private var loudnessCount = 0
+    private var loudnessSession = AudioLoudnessMeasurementSession()
 
     func read() -> AudioObserverMetrics {
         lock.lock()
@@ -246,7 +247,7 @@ final class AudioObserverMetricsState: @unchecked Sendable {
                 sampleAgeMilliseconds: Double,
                 overwriteMarginMilliseconds: Double,
                 meterKey: String) {
-        guard result.count >= 16 else { return }
+        guard result.count >= 95 else { return }
         let floats = result
         lock.lock()
         value.inFlight = max(0, value.inFlight - 1)
@@ -260,6 +261,21 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         value.analysis.levels.right.rms = .valid(meterValues[3])
         value.analysis.levels.mid.rms = .valid(meterValues[4])
         value.analysis.levels.side.rms = .valid(meterValues[5])
+        if token.geometry.sampleRateHz == 48_000 {
+            if floats[94] != 0 {
+                let truePeakLeft = Float(bitPattern: floats[92])
+                let truePeakRight = Float(bitPattern: floats[93])
+                value.analysis.levels.left.truePeak = .valid(truePeakLeft)
+                value.analysis.levels.right.truePeak = .valid(truePeakRight)
+                loudnessSession.consumeTruePeak(amplitude: max(truePeakLeft, truePeakRight))
+            } else {
+                value.analysis.levels.left.truePeak = .warmingUp
+                value.analysis.levels.right.truePeak = .warmingUp
+            }
+        } else {
+            value.analysis.levels.left.truePeak = .unsupported
+            value.analysis.levels.right.truePeak = .unsupported
+        }
         if correlationValid {
             let now = Date()
             let alpha = self.meterKey == meterKey
@@ -333,7 +349,12 @@ final class AudioObserverMetricsState: @unchecked Sendable {
                 } else {
                     value.analysis.loudness.shortTermLUFS = .warmingUp
                 }
+                loudnessSession.consume(AudioLoudnessEnergyChunk(
+                    endFrame: endFrame,
+                    weightedEnergy: energy,
+                    frameCount: 480))
             }
+            publishLoudnessSessionState()
         } else {
             value.analysis.loudness.momentaryLUFS = .unsupported
             value.analysis.loudness.shortTermLUFS = .unsupported
@@ -349,6 +370,8 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         value.analysis.levels = AudioLevelMetrics()
         value.analysis.stereo = AudioStereoMetrics()
         clearLoudnessHistory(status: .discontinuous)
+        loudnessSession.markDiscontinuous()
+        publishLoudnessSessionState()
         value.analysis.diagnostics.inFlight = UInt32(max(0, value.inFlight))
         value.analysis.diagnostics.unsafeRanges = value.unsafeWindows
         value.analysis.diagnostics.rejectedRanges = value.unsafeWindows
@@ -370,6 +393,8 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         value.analysis.levels = AudioLevelMetrics()
         value.analysis.stereo = AudioStereoMetrics()
         clearLoudnessHistory(status: .discontinuous)
+        loudnessSession.markDiscontinuous()
+        publishLoudnessSessionState()
         meterKey = nil
         lock.unlock()
     }
@@ -384,8 +409,83 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         value.analysis.levels = AudioLevelMetrics()
         value.analysis.stereo = AudioStereoMetrics()
         clearLoudnessHistory(status: .idle)
+        loudnessSession.markDiscontinuous()
+        publishLoudnessSessionState()
         meterKey = nil
         lock.unlock()
+    }
+
+    @discardableResult
+    func startLoudnessMeasurement(sampleRateHz: UInt32) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard loudnessSession.start(sampleRateHz: sampleRateHz) else { return false }
+        publishLoudnessSessionState()
+        return true
+    }
+
+    func pauseLoudnessMeasurement() {
+        lock.lock()
+        loudnessSession.pause()
+        publishLoudnessSessionState()
+        lock.unlock()
+    }
+
+    func resumeLoudnessMeasurement() {
+        lock.lock()
+        loudnessSession.resume()
+        publishLoudnessSessionState()
+        lock.unlock()
+    }
+
+    func resetLoudnessMeasurement() {
+        lock.lock()
+        loudnessSession.reset()
+        publishLoudnessSessionState()
+        lock.unlock()
+    }
+
+    private func publishLoudnessSessionState() {
+        value.analysis.loudness.sessionPhase = loudnessSession.phase
+        value.analysis.loudness.integratedMeasurementID = loudnessSession.measurementID
+        value.analysis.loudness.includedAudioFrames = loudnessSession.includedFrames
+        if let integrated = loudnessSession.integratedLUFS {
+            value.analysis.loudness.integratedLUFS = loudnessSession.phase == .discontinuous
+                ? .discontinuous(integrated) : .valid(integrated)
+        } else {
+            let status: AudioMeasurementStatus
+            switch loudnessSession.phase {
+            case .idle: status = .idle
+            case .running, .paused, .complete: status = .warmingUp
+            case .discontinuous: status = .discontinuous
+            }
+            value.analysis.loudness.integratedLUFS = AudioMeasurement(value: nil, status: status)
+        }
+        if let range = loudnessSession.loudnessRangeLU {
+            value.analysis.loudness.loudnessRangeLU = loudnessSession.phase == .discontinuous
+                ? .discontinuous(range) : .valid(range)
+        } else {
+            let status: AudioMeasurementStatus
+            switch loudnessSession.phase {
+            case .idle: status = .idle
+            case .running, .paused, .complete: status = .warmingUp
+            case .discontinuous: status = .discontinuous
+            }
+            value.analysis.loudness.loudnessRangeLU = AudioMeasurement(value: nil, status: status)
+        }
+        if let truePeak = loudnessSession.maximumTruePeakDBTP {
+            value.analysis.loudness.maximumTruePeakDBTP = loudnessSession.phase == .discontinuous
+                ? .discontinuous(truePeak) : .valid(truePeak)
+        } else {
+            let status: AudioMeasurementStatus
+            switch loudnessSession.phase {
+            case .idle: status = .idle
+            case .running, .paused, .complete: status = .warmingUp
+            case .discontinuous: status = .discontinuous
+            }
+            value.analysis.loudness.maximumTruePeakDBTP = AudioMeasurement(value: nil, status: status)
+        }
+        value.analysis.loudness.loudnessRangeIsProvisional = loudnessSession.loudnessRangeIsProvisional
     }
 
     private func loudnessValue(forLastChunks count: Int) -> Float? {

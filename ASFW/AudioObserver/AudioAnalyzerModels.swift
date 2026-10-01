@@ -95,6 +95,17 @@ struct AudioLoudnessMetrics: Sendable, Equatable {
     var crestFactorDB: AudioMeasurement<Float> = .warmingUp
     var integratedMeasurementID: UInt64 = 0
     var acceptedAudioFrames: UInt64 = 0
+    var includedAudioFrames: UInt64 = 0
+    var sessionPhase: AudioLoudnessSessionPhase = .idle
+    var loudnessRangeIsProvisional = false
+}
+
+enum AudioLoudnessSessionPhase: Sendable, Equatable {
+    case idle
+    case running
+    case paused
+    case discontinuous
+    case complete
 }
 
 struct AudioLoudnessEnergyChunk: Sendable, Equatable {

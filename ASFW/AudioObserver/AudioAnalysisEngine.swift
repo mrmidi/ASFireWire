@@ -76,9 +76,9 @@ final class AudioAnalysisEngine {
               let queue = device.makeCommandQueue(),
               let output = device.makeBuffer(length: 96 * MemoryLayout<UInt32>.stride,
                                              options: .storageModeShared),
-              let committed = device.makeBuffer(length: 20 * MemoryLayout<UInt32>.stride,
+              let committed = device.makeBuffer(length: 45 * MemoryLayout<UInt32>.stride,
                                                 options: .storageModeShared),
-              let provisional = device.makeBuffer(length: 20 * MemoryLayout<UInt32>.stride,
+              let provisional = device.makeBuffer(length: 45 * MemoryLayout<UInt32>.stride,
                                                   options: .storageModeShared) else {
             throw AudioObserverError.pipelineFailed
         }

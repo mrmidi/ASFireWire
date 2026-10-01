@@ -93,6 +93,14 @@ private final class AudioObserverPanelModel: ObservableObject {
         routingGeneration &+= 1
         engine?.setPair(left: left, right: right, generation: routingGeneration)
     }
+
+    func startLoudnessMeasurement() {
+        client.metrics.startLoudnessMeasurement(sampleRateHz: snapshot.sampleRateHz)
+    }
+
+    func pauseLoudnessMeasurement() { client.metrics.pauseLoudnessMeasurement() }
+    func resumeLoudnessMeasurement() { client.metrics.resumeLoudnessMeasurement() }
+    func resetLoudnessMeasurement() { client.metrics.resetLoudnessMeasurement() }
 }
 
 struct AudioObserverPanel: View {
@@ -174,10 +182,21 @@ struct AudioObserverPanel: View {
                     HStack {
                         valueTile("Momentary", measurementText(model.metrics.analysis.loudness.momentaryLUFS))
                         valueTile("Short-term", measurementText(model.metrics.analysis.loudness.shortTermLUFS))
-                        valueTile("Integrated", "Not computed")
-                        valueTile("LRA / True Peak", "Not computed")
+                        valueTile("Integrated", measurementText(model.metrics.analysis.loudness.integratedLUFS))
+                        valueTile(model.metrics.analysis.loudness.loudnessRangeIsProvisional
+                                  ? "LRA · provisional" : "LRA",
+                                  measurementText(model.metrics.analysis.loudness.loudnessRangeLU))
+                        valueTile("Max True Peak",
+                                  dbtpText(model.metrics.analysis.loudness.maximumTruePeakDBTP))
                     }
-                    Text("Momentary and Short-term use the live 48 kHz K-weighted path. Integrated, LRA, and true peak are not implemented yet.")
+                    HStack(spacing: 8) {
+                        loudnessSessionControls
+                        Spacer()
+                        Text(String(format: "Included %.1f s · 24 h maximum",
+                                    Double(model.metrics.analysis.loudness.includedAudioFrames) / 48_000))
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    Text("Momentary and Short-term are live. Integrated, LRA, and maximum True Peak accumulate only while the measurement session runs; a stream discontinuity freezes them until Reset.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 panel("Diagnostics", subtitle: "Ring state, observer quality, and timing") {
@@ -282,6 +301,30 @@ struct AudioObserverPanel: View {
         .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 
+    @ViewBuilder
+    private var loudnessSessionControls: some View {
+        let loudness = model.metrics.analysis.loudness
+        switch loudness.sessionPhase {
+        case .idle:
+            Button("Start") { model.startLoudnessMeasurement() }
+                .disabled(model.snapshot.sampleRateHz != AudioLoudnessMeasurementSession.supportedSampleRate)
+        case .running:
+            Button("Pause") { model.pauseLoudnessMeasurement() }
+            Button("Reset", role: .destructive) { model.resetLoudnessMeasurement() }
+        case .paused:
+            Button("Continue") { model.resumeLoudnessMeasurement() }
+            Button("Reset", role: .destructive) { model.resetLoudnessMeasurement() }
+        case .discontinuous:
+            Label("Discontinuous · Reset to restart", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Button("Reset") { model.resetLoudnessMeasurement() }
+        case .complete:
+            Label("24-hour measurement complete", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            Button("Reset") { model.resetLoudnessMeasurement() }
+        }
+    }
+
     private func diagnosticsRow(_ title: String, _ value: String) -> some View {
         HStack {
             Text(title).foregroundStyle(.secondary)
@@ -298,7 +341,21 @@ struct AudioObserverPanel: View {
         value.map { String(format: "%+.1f dB", $0) } ?? "—"
     }
 
+    private func dbtpText(_ measurement: AudioMeasurement<Float>) -> String {
+        guard let value = measurement.value else {
+            return measurementText(measurement)
+        }
+        if measurement.status == .discontinuous {
+            return String(format: "Hold %.1f dBTP", value)
+        }
+        return String(format: "%.1f dBTP", value)
+    }
+
     private func measurementText(_ measurement: AudioMeasurement<Float>) -> String {
+        if measurement.status == .discontinuous {
+            guard let value = measurement.value, value.isFinite else { return "Discontinuous" }
+            return String(format: "Hold %.1f LUFS", value)
+        }
         guard let value = measurement.value else {
             switch measurement.status {
             case .unsupported: return "Unsupported"
