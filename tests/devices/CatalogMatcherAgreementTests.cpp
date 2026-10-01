@@ -446,10 +446,8 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
                         EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::BeBoBUnprobed);
                     } else {
                         EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::BeBoBPlug0Only);
-                        EXPECT_TRUE(plan->protocolImplementation ==
-                                        ProtocolImplementationId::BeBoBPhase88 ||
-                                    plan->protocolImplementation ==
-                                        ProtocolImplementationId::BeBoBGeneric);
+                        EXPECT_EQ(plan->protocolImplementation,
+                                  ProtocolImplementationId::BeBoBPhase88);
                     }
                     break;
                 case AudioFamilyProviderId::MotuRegister:

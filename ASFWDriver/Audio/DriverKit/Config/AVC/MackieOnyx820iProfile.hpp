@@ -7,9 +7,10 @@
 // from a real Onyx 820i (AV/C EXTENDED STREAM FORMAT INFORMATION, 2026-08-17): capture
 // 8ch MBLA, playback 2ch MBLA, compound AM824, 44.1/48/88.2/96 kHz, one isoch plug per
 // direction, no MIDI. The model id is shared across the Oxford-run Onyx-i mixers
-// (820i/1220i/1620i); siblings with different channel widths must NOT reuse this static
-// profile — they need a discovery-derived per-GUID profile (RegisterBeBoBProfile is the
-// precedent) before enablement.
+// (820i/1220i/1620i). A sibling with different channel widths publishes its own
+// discovered geometry (unit plug formats), but this profile's runtime caps then
+// disagree and the session refuses the start; it needs its own profile before
+// enablement.
 //
 // Loud behavioral notes (Linux snd-oxfw, references/linux-sound-firewire-stack):
 //   - blocking transmission vendor-wide (oxfw.c:189-196) — enforced here via streamMode

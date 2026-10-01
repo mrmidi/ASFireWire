@@ -26,8 +26,6 @@ namespace {
 using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
 using ASFW::Isoch::Audio::AudioProfileRegistry;
 
-// Per-GUID BeBoB profiles (RegisterBeBoBProfile) need a discovery model and
-// are not pinned here; BeBoBProfile's constants are 64/64/128/128 at all rates.
 constexpr std::array<uint32_t, 7> kRates = {32000, 44100, 48000, 88200, 96000, 176400, 192000};
 
 struct PinnedTiming {

@@ -16,7 +16,6 @@
 #include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
-#include "Audio/DriverKit/Config/AVC/BeBoBProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
 #include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
@@ -524,106 +523,6 @@ TEST(DiceProfileTests, GenericDiceUsesThePacketScaledLadder) {
     EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 128);
     EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 29);
     EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 29);
-}
-
-// Discovery-derived geometry for a BeBoB device without a curated profile.
-ASFW::Audio::BeBoB::DeviceModel MakeStereoBeBoBDiscoveryModel() {
-    ASFW::Audio::BeBoB::DeviceModel model{};
-    ASFW::Audio::BeBoB::StreamFormation formation{};
-    formation.pcmChannels = 2;
-    formation.midiSlots = 0;
-    formation.rateCode = 0x02; // 48 kHz
-    model.input.supportedFormations.push_back(formation);
-    model.output.supportedFormations.push_back(formation);
-    return model;
-}
-
-TEST(DiceProfileTests, DynamicBeBoBProfileNeverShadowsCuratedPhase88) {
-    // Regression for BUGLIST.md Bug 2a: AVCDiscovery registers a per-GUID
-    // generic BeBoBProfile for every BeBoB device it probes, including the
-    // PHASE 88. The curated Phase88Profile (name, emptyPacketsDuringIdle
-    // warm-up policy from FW-105) must still win the lookup.
-    const uint64_t kPhase88Guid = 0x000AAC0300B1D1F7ULL;
-    const auto model = MakeStereoBeBoBDiscoveryModel();
-    ASSERT_NE(AudioProfileRegistry::RegisterBeBoBProfile(kPhase88Guid, &model), nullptr);
-
-    const auto* profile = FindAvcProfile(0x000AAC, 0x000003, kPhase88Guid);
-    ASSERT_NE(profile, nullptr);
-    EXPECT_STREQ(profile->Name(), "PHASE 88 Rack FW");
-    const auto* wireProfile = static_cast<const IAudioStreamProfile*>(profile);
-    EXPECT_TRUE(wireProfile->TxStreamPolicy().emptyPacketsDuringIdle);
-
-    AudioProfileRegistry::UnregisterProfile(kPhase88Guid);
-}
-
-TEST(DiceProfileTests, DynamicBeBoBProfileServesUncuratedBeBoBDevices) {
-    // For a BeBoB device with no curated/static match, the per-GUID
-    // discovery-derived profile is the resolver (before the DICE generic
-    // fallback).
-    const uint64_t kUnknownBeBoBGuid = 0x00089ABCDEF01234ULL;
-    const auto model = MakeStereoBeBoBDiscoveryModel();
-    ASSERT_NE(AudioProfileRegistry::RegisterBeBoBProfile(kUnknownBeBoBGuid, &model), nullptr);
-
-    const auto* profile =
-        AudioProfileRegistry::FindProfile(0x0089AB, 0x000042, kUnknownBeBoBGuid);
-    ASSERT_NE(profile, nullptr);
-    EXPECT_STREQ(profile->Name(), "BeBoB Device");
-    EXPECT_EQ(profile->TxChannelCount(), 2U);
-
-    AudioProfileRegistry::UnregisterProfile(kUnknownBeBoBGuid);
-
-    // Without the dynamic registration the same identity falls back to the
-    // DICE generic profile.
-    const auto* fallback =
-        AudioProfileRegistry::FindProfile(0x0089AB, 0x000042, kUnknownBeBoBGuid);
-    ASSERT_NE(fallback, nullptr);
-    EXPECT_STREQ(fallback->Name(), "Generic DICE");
-}
-
-TEST(DiceProfileTests, BeBoBProfileUsesSeparateDirectionalFormationsAtCurrentRate) {
-    ASFW::Audio::BeBoB::DeviceModel model{};
-    model.currentRateHz = 96000U;
-    model.input.supportedFormations = {
-        {.rateCode = 0x04, .pcmChannels = 2, .midiSlots = 1},
-        {.rateCode = 0x05, .pcmChannels = 4, .midiSlots = 1},
-    };
-    model.output.supportedFormations = {
-        {.rateCode = 0x04, .pcmChannels = 6, .midiSlots = 2},
-        {.rateCode = 0x05, .pcmChannels = 8, .midiSlots = 0},
-    };
-
-    const ASFW::Isoch::Audio::AVC::Profiles::BeBoBProfile profile{model};
-    AudioStreamConfig tx{};
-    AudioStreamConfig rx{};
-    ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(tx));
-    ASSERT_TRUE(profile.BuildDefaultRxStreamConfig(rx));
-    EXPECT_EQ(tx.sampleRate, 96000U);
-    EXPECT_EQ(tx.pcmChannels, 4U);
-    EXPECT_EQ(tx.dbs, 5U);
-    EXPECT_EQ(tx.midiSlots, 1U);
-    EXPECT_EQ(rx.sampleRate, 96000U);
-    EXPECT_EQ(rx.pcmChannels, 8U);
-    EXPECT_EQ(rx.dbs, 8U);
-    EXPECT_EQ(rx.midiSlots, 0U);
-    EXPECT_EQ(profile.SupportedSampleRates(), (std::vector<uint32_t>{48000U, 96000U}));
-}
-
-TEST(DiceProfileTests, BeBoBProfileRejectsStreamGeometryThatDoesNotFitDBS) {
-    ASFW::Audio::BeBoB::DeviceModel model{};
-    model.currentRateHz = 48000U;
-    model.input.supportedFormations = {
-        {.rateCode = 0x04, .pcmChannels = 200, .midiSlots = 100},
-    };
-    model.output.supportedFormations = {
-        {.rateCode = 0x04, .pcmChannels = 2, .midiSlots = 0},
-    };
-
-    const ASFW::Isoch::Audio::AVC::Profiles::BeBoBProfile profile{model};
-    AudioStreamConfig tx{};
-    AudioStreamConfig rx{};
-    EXPECT_FALSE(profile.BuildDefaultTxStreamConfig(tx));
-    ASSERT_TRUE(profile.BuildDefaultRxStreamConfig(rx));
-    EXPECT_EQ(rx.dbs, 2U);
 }
 
 TEST(DiceProfileTests, ResolvesMackieOnyx820iAsymmetricProfileNotGenericDice) {

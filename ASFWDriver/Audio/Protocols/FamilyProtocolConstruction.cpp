@@ -13,7 +13,6 @@
 #include "Oxford/Mackie/MackieOnyxProtocol.hpp"
 #include "Fireworks/FireworksProtocol.hpp"
 #include "BeBoB/Phase88Protocol.hpp"
-#include "BeBoB/GenericBeBoBProtocol.hpp"
 #include "BeBoB/MAudioSpecialProtocol.hpp"
 #include "MOTU/MotuV2Protocol.hpp"
 #include "RME/FirefaceDeviceProtocol.hpp"
@@ -174,12 +173,6 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // row selects this today (the one BeBoB device on this branch, the
         // PHASE 88, has its own builder), so it is reachable only when a future
         // row names it.
-        case ProtocolImplementationId::BeBoBGeneric:
-            ASFW_LOG(Audio, "Creating GenericBeBoBProtocol node=0x%04x", nodeId);
-            return std::make_unique<BeBoB::GenericBeBoBProtocol>(
-                busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
-                BeBoB::DeviceModel{});
-
         case ProtocolImplementationId::BeBoBMAudioSpecial:
             if (plan.profileBuilder != DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 &&
                 plan.profileBuilder != DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix) {

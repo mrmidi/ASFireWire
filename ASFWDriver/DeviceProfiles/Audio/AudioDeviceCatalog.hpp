@@ -148,8 +148,9 @@ enum class ProfileBuilderId : uint16_t {
     MotuUltralite,
     MackieOnyxIOxfw,
     MackieOnyx400F,
-    GenericBeBoB,
-    PreSonusFireStudioProject,
+    // 21 retired (GenericBeBoB: no catalog row ever named it); the members
+    // below keep their numbers.
+    PreSonusFireStudioProject = 22,
     RmeFireface400,
     RmeFireface800,
 
@@ -175,8 +176,9 @@ enum class ProtocolImplementationId : uint8_t {
     MackieOnyx,
     FireworksOnyx400F,
     BeBoBPhase88,
-    BeBoBGeneric,
-    BeBoBMAudioSpecial,
+    // 8 retired (BeBoBGeneric, reachable only through the retired builder);
+    // the members below keep their numbers.
+    BeBoBMAudioSpecial = 9,
     MotuV2,
     RmeFireface,
     GenericAvc,

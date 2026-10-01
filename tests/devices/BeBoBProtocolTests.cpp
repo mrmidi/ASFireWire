@@ -7,7 +7,6 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBProtocol.hpp"
-#include "ASFWDriver/Audio/Protocols/BeBoB/GenericBeBoBProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/GenericAvcProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialRouting.hpp"
@@ -231,77 +230,6 @@ TEST_F(BeBoBProtocolTest, RejectsUnsupportedRate) {
     proto.ApplyClockConfig({.sampleRateHz = 44100},
                            [&status](IOReturn s, auto) { status = s; });
     EXPECT_EQ(status, kIOReturnUnsupported);
-}
-
-TEST_F(BeBoBProtocolTest, GenericProtocolUsesDirectionalFormationsAtCurrentDuplexRate) {
-    using ASFW::Audio::BeBoB::DeviceModel;
-    using ASFW::Audio::BeBoB::StreamFormation;
-
-    DeviceModel model{};
-    model.currentRateHz = 96000U;
-    model.input.supportedFormations = {
-        {.rateCode = 0x04, .pcmChannels = 2, .midiSlots = 1},
-        {.rateCode = 0x05, .pcmChannels = 4, .midiSlots = 1},
-    };
-    model.output.supportedFormations = {
-        {.rateCode = 0x04, .pcmChannels = 6, .midiSlots = 2},
-        {.rateCode = 0x05, .pcmChannels = 8, .midiSlots = 0},
-    };
-    ASFW::Audio::BeBoB::GenericBeBoBProtocol protocol(
-        busOps_, bus_, route_, nullptr, &cmp_, &timer_, model);
-
-    const auto caps = protocol.RuntimeCaps();
-    ASSERT_TRUE(caps.has_value());
-    EXPECT_EQ(caps->sampleRateHz, 96000U);
-    EXPECT_EQ(caps->hostInputPcmChannels, 8U);
-    EXPECT_EQ(caps->hostOutputPcmChannels, 4U);
-    EXPECT_EQ(caps->deviceToHostAm824Slots, 8U);
-    EXPECT_EQ(caps->hostToDeviceAm824Slots, 5U);
-    EXPECT_EQ(caps->deviceToHostStreams[0].pcmChannels, 8U);
-    EXPECT_EQ(caps->hostToDeviceStreams[0].pcmChannels, 4U);
-}
-
-TEST_F(BeBoBProtocolTest, GenericProtocolLeavesCapsEmptyForUnmatchedCurrentRate) {
-    using ASFW::Audio::BeBoB::DeviceModel;
-    using ASFW::Audio::BeBoB::StreamFormation;
-
-    DeviceModel model{};
-    model.currentRateHz = 176400U;
-    model.input.supportedFormations.push_back(
-        StreamFormation{.rateCode = 0x05, .pcmChannels = 4, .midiSlots = 1});
-    model.output.supportedFormations.push_back(
-        StreamFormation{.rateCode = 0x05, .pcmChannels = 8, .midiSlots = 0});
-    ASFW::Audio::BeBoB::GenericBeBoBProtocol protocol(
-        busOps_, bus_, route_, nullptr, &cmp_, &timer_, model);
-
-    ASFW::Audio::AudioStreamRuntimeCaps caps{};
-    EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
-    EXPECT_FALSE(protocol.RuntimeCaps().has_value());
-}
-
-TEST_F(BeBoBProtocolTest, GenericProtocolReportsNoCapsForEmptyOrConflictingGeometry) {
-    using ASFW::Audio::BeBoB::DeviceModel;
-    using ASFW::Audio::BeBoB::StreamFormation;
-
-    const auto expectUnavailable = [this](const DeviceModel& model) {
-        ASFW::Audio::BeBoB::GenericBeBoBProtocol protocol(
-            busOps_, bus_, route_, nullptr, &cmp_, &timer_, model);
-        ASFW::Audio::AudioStreamRuntimeCaps caps{};
-        EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
-        EXPECT_FALSE(protocol.RuntimeCaps().has_value());
-    };
-
-    expectUnavailable(DeviceModel{});
-
-    DeviceModel conflicting{};
-    conflicting.input.activeRateHz = 48000U;
-    conflicting.output.activeRateHz = 96000U;
-    conflicting.input.supportedFormations = {
-        StreamFormation{.rateCode = 0x04, .pcmChannels = 2},
-        StreamFormation{.rateCode = 0x05, .pcmChannels = 4},
-    };
-    conflicting.output.supportedFormations = conflicting.input.supportedFormations;
-    expectUnavailable(conflicting);
 }
 
 // Shutdown during settle cancels the timer and aborts the callback.

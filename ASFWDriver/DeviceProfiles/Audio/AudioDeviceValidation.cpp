@@ -131,12 +131,14 @@ enum ClauseConstraintBit : uint16_t {
 }
 
 [[nodiscard]] constexpr bool KnownBuilder(ProfileBuilderId id) noexcept {
-    return id >= ProfileBuilderId::GenericAvc && id <= ProfileBuilderId::kLastValid;
+    return id >= ProfileBuilderId::GenericAvc && id <= ProfileBuilderId::kLastValid &&
+           id != static_cast<ProfileBuilderId>(21);  // retired
 }
 
 [[nodiscard]] constexpr bool KnownProtocol(ProtocolImplementationId id) noexcept {
     return id > ProtocolImplementationId::None &&
-           id <= ProtocolImplementationId::kLastValid;
+           id <= ProtocolImplementationId::kLastValid &&
+           id != static_cast<ProtocolImplementationId>(8);  // retired
 }
 
 [[nodiscard]] constexpr bool ProtocolMatchesFamily(
@@ -152,7 +154,6 @@ enum ClauseConstraintBit : uint16_t {
         case ProtocolImplementationId::FireworksOnyx400F:
             return family == AudioFamilyProviderId::Fireworks;
         case ProtocolImplementationId::BeBoBPhase88:
-        case ProtocolImplementationId::BeBoBGeneric:
         case ProtocolImplementationId::BeBoBMAudioSpecial:
             return family == AudioFamilyProviderId::BeBoB;
         case ProtocolImplementationId::MotuV2:
@@ -224,8 +225,6 @@ enum ClauseConstraintBit : uint16_t {
             return ProtocolImplementationId::FireworksOnyx400F;
         case ProfileBuilderId::TerraTecPhase88:
             return ProtocolImplementationId::BeBoBPhase88;
-        case ProfileBuilderId::GenericBeBoB:
-            return ProtocolImplementationId::BeBoBGeneric;
         case ProfileBuilderId::MAudioFireWire1814:
         case ProfileBuilderId::MAudioProjectMix:
             return ProtocolImplementationId::BeBoBMAudioSpecial;
