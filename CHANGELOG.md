@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0-beta.1] - 2026-10-02
+
 > **First release since 0.3.1.** Version 0.3.2 was prepared but never tagged; its changes ship here and are merged into the lists below.
 >
 > **Best effort, no guarantees.** This release enables audio for many AV/C and DICE devices that have never been run on ASFireWire. Some will work, some won't. Turn your volume down before the first attach, and please report every result, including "it just works": https://asfirewire.mistermidi.chatgpt.site/test-device/
@@ -121,4 +123,5 @@ Use these headings, omitting any that are empty:
 ### Security
 -->
 
-[Unreleased]: https://github.com/mrmidi/ASFireWire/commits/main
+[Unreleased]: https://github.com/mrmidi/ASFireWire/compare/v0.4.0-beta.1...main
+[0.4.0-beta.1]: https://github.com/mrmidi/ASFireWire/releases/tag/v0.4.0-beta.1

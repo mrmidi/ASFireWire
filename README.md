@@ -55,9 +55,8 @@ What is real today:
 - **Multi-stream DICE now works.** The Midas Venice F32 runs two 16-channel streams per direction; the original Saffire Pro 40 runs asymmetric 12+8 playback and 10+10 capture streams.
 - **Host-controlled sample-rate switching is implemented**, including 44.1 kHz alongside 48 kHz. The driver decodes the device's advertised clock capabilities and drives DICE `CLOCK_SELECT`, so a rate change in the host (e.g. Logic) reprograms the device live without a reconnect. Switching rates on a CoreAudio aggregate device whose clock master is the FireWire interface is supported.
 - **Per-channel names** (device nickname plus per-channel TX/RX labels) are read from DICE devices and surfaced to CoreAudio.
-- Focusrite Saffire Pro 26, Saffire Pro 40 TCD3070, and Liquid Saffire 56 are recognized but intentionally not enabled yet — their stream layouts still need to be captured from real hardware. The TCD3070 is a different chip from the original Pro 40 and has no TCAT extension, so it needs a supplied rate-mode table rather than a register read.
-- PreSonus StudioLive 16.4.2 and 32.4.2 are recognized by name but not audio-enabled yet: their FireWire channel counts differ from the 16.0.2 and must be captured from real hardware first (a wrong channel count means the device never locks to the stream). The **24.4.2 is now enabled** from a contributed capture — its playback side is asymmetric, 16 + 10.
-- MOTU 896HD, Traveler and 8pre, and the Mackie Onyx 1640i, Blackbird and 1200F, are recognized by name only — their layouts have not been captured.
+- **New in 0.4.0-beta.1, best effort:** a rebuilt AV/C stack (#165) discovers and streams AV/C audio devices (BeBoB, Oxford) that have no catalog entry, from what each device reports about itself. Generic DICE support (#166) enables every recognised DICE model (Focusrite Liquid Saffire 56, Saffire Pro 26, Saffire Pro 40 TCD3070; PreSonus StudioLive 16.4.2 and 32.4.2; Alesis iO14/iO26; Mackie Onyx 1640i DICE run and Blackbird; Weiss ADC2, AFI1, Vesta, DAC2, DAC202, Maya, MAN301) plus DICE units recognised from their Config ROM. None of these has a hardware result yet: some will work, some won't. Turn your volume down before the first attach, and please report every result.
+- MOTU 896HD, Traveler and 8pre, and the Mackie Onyx 1200F (Echo Fireworks run), are recognized by name only — their layouts have not been captured.
 - The project is still not stable enough to recommend as a drop-in replacement for Apple's old FireWire stack.
 
 ## Call for testing
@@ -72,7 +71,7 @@ Please test these currently enabled DICE devices:
 - Focusrite Saffire Pro 40 (original TCD2220 revision; contributor-verified)
 - PreSonus StudioLive 16.0.2 (contributor-verified on one unit; broader validation welcome)
 - Midas Venice F32 (contributor-verified; broader validation welcome)
-- Midas Venice F16 and F24 (enabled, never confirmed working — see the note below)
+- Midas Venice F24 (contributor-verified at S200; see the note below) and F16 (enabled, unconfirmed)
 - PreSonus StudioLive 24.4.2 (enabled from a capture; no streaming result on record)
 - PreSonus FireStudio Project (streamed at 44.1/48 kHz on a contributor's earlier branch, #105; not yet run on this code)
 - Alesis MultiMix 8 / 12 / 16
@@ -85,12 +84,13 @@ Please test these currently enabled DICE devices:
 > same changes. Neither family is maintainer-owned hardware, so a regression in either
 > would not be caught locally.
 
-> **Midas Venice F24 needs a hardware recheck.** On a two-node Thunderbolt bus it
-> advertised S400 but did not acknowledge at that speed, so the DICE section read timed
-> out before CoreAudio publication. The observed-speed clamp is now in-tree and covered
-> by host tests; a successful F24 hardware run after that fix is not yet recorded.
+> **Midas Venice F24 works at S200.** On a two-node Thunderbolt bus it advertises S400
+> but does not acknowledge at that speed. A contributor confirmed (30 September 2026) that
+> the driver falls back to S200 for both async and isochronous traffic and plays full
+> tracks cleanly, including a dense Pro Tools session, on a diagnostic build of v0.3.1.
+> An earlier "static, then silence" failure on v0.3.1 has not reproduced since.
 
-StudioLive 16.4.2 / 32.4.2 owners can help too: the driver recognizes these mixers but does not enable audio yet because their stream layout has not been captured from hardware. If you own one, open an issue — a short register capture using the ASFW app is all that is needed to add support.
+StudioLive 16.4.2 / 32.4.2 owners can help too: these mixers now stream through the generic DICE path for the first time, with their channel layout read from the device. If you own one, please report whether it works — and attach the DICE Report from the ASFW app either way.
 
 If you try ASFireWire on one of them, please open a GitHub issue or reach out with:
 
