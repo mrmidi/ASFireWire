@@ -13,6 +13,28 @@
 
 using namespace ASFW::Protocols::AVC;
 
+namespace {
+
+[[nodiscard]] constexpr FcpExchangeOutcome OutcomeFor(FCPStatus status) noexcept {
+    switch (status) {
+        case FCPStatus::kOk: return FcpExchangeOutcome::kResponse;
+        case FCPStatus::kTimeout: return FcpExchangeOutcome::kTimeout;
+        case FCPStatus::kBusReset: return FcpExchangeOutcome::kBusReset;
+        case FCPStatus::kTransportError: return FcpExchangeOutcome::kTransportError;
+        case FCPStatus::kInvalidPayload: return FcpExchangeOutcome::kInvalid;
+        case FCPStatus::kResponseMismatch: return FcpExchangeOutcome::kResponseMismatch;
+        case FCPStatus::kBusy: return FcpExchangeOutcome::kBusy;
+        case FCPStatus::kRefusedByFilter: return FcpExchangeOutcome::kRefusedByFilter;
+    }
+    return FcpExchangeOutcome::kTransportError;
+}
+
+[[nodiscard]] std::span<const uint8_t> BoundedPayload(const FCPFrame& frame) noexcept {
+    return {frame.data.data(), std::min(frame.length, frame.data.size())};
+}
+
+} // namespace
+
 //==============================================================================
 // Init / Destruction
 //==============================================================================
@@ -42,6 +64,8 @@ bool FCPTransport::init(Protocols::Ports::FireWireBusOps* busOps,
         ASFW_LOG_V1(FCP, "FCPTransport: Failed to allocate lock");
         return false;
     }
+    // The attach-time discovery is the first session.
+    recorder_.BeginSession();
 
     ASFW_LOG_V1(FCP,
                 "FCPTransport: Initialized for device nodeID=%u, "
@@ -87,6 +111,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
         ASFW_LOG_V1(FCP,
                      "FCPTransport: Invalid command size %zu (must be 3-512)",
                      command.length);
+        RecordUnsent(FCPStatus::kInvalidPayload, command);
         completion(FCPStatus::kInvalidPayload, {});
         return {};
     }
@@ -100,6 +125,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
                        "FCPTransport: refused ctype=0x%02x opcode=0x%02x — not in "
                        "this device's permitted command set",
                        command.data[0], command.length > 2 ? command.data[2] : 0xFFU);
+        RecordUnsent(FCPStatus::kRefusedByFilter, command);
         completion(FCPStatus::kRefusedByFilter, {});
         return {};
     }
@@ -131,6 +157,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
                                : std::nullopt;
         if (!route.has_value() || route->generation != *cmd->requiredGeneration) {
             IOLockUnlock(lock_);
+            RecordUnsent(FCPStatus::kBusReset, command);
             if (cmd->completion) {
                 cmd->completion(FCPStatus::kBusReset, {});
             }
@@ -163,6 +190,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
 
         ASFW_LOG_V1(FCP,
                      "FCPTransport: Command already pending");
+        RecordUnsent(FCPStatus::kBusy, command);
         if (cmd->completion) {
             cmd->completion(FCPStatus::kBusy, {});
         }
@@ -882,6 +910,14 @@ void FCPTransport::CompleteCommand(FCPStatus status,
 
     auto completion = std::move(pending_->completion);
 
+    const uint8_t retries =
+        pending_->policy.retryClass == FCPRetryClass::kIdempotent && config_.maxRetries >= pending_->retriesLeft
+            ? static_cast<uint8_t>(config_.maxRetries - pending_->retriesLeft)
+            : 0;
+    recorder_.Record(CurrentGeneration().value, OutcomeFor(status), pending_->gotInterim, retries,
+                     BoundedPayload(pending_->command),
+                     status == FCPStatus::kOk ? BoundedPayload(response) : std::span<const uint8_t>{});
+
     // Cancel timeout
     CancelTimeout();
 
@@ -899,6 +935,35 @@ void FCPTransport::CompleteCommand(FCPStatus status,
     // sees the non-empty queue and appends it, so the oldest queued command
     // still starts first here.
     StartNextQueuedCommand();
+}
+
+void FCPTransport::RecordUnsent(FCPStatus status, const FCPFrame& command) {
+    if (!lock_) {
+        return;
+    }
+    IOLockLock(lock_);
+    recorder_.Record(CurrentGeneration().value, OutcomeFor(status), false, 0,
+                     BoundedPayload(command), {});
+    IOLockUnlock(lock_);
+}
+
+void FCPTransport::BeginExchangeSession() {
+    if (!lock_) {
+        return;
+    }
+    IOLockLock(lock_);
+    recorder_.BeginSession();
+    IOLockUnlock(lock_);
+}
+
+FcpExchangeLog FCPTransport::CopyExchangeLog() const {
+    if (!lock_) {
+        return {};
+    }
+    IOLockLock(lock_);
+    FcpExchangeLog copy = recorder_.Log();
+    IOLockUnlock(lock_);
+    return copy;
 }
 
 //==============================================================================

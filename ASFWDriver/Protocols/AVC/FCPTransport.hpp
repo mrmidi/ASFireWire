@@ -23,6 +23,7 @@
 #include <span>
 #include "AVCDefs.hpp"
 #include "AVCCommandFilter.hpp"
+#include "FcpExchangeRecorder.hpp"
 #include "Core/IAvcUnit.hpp"
 #include "../Ports/FireWireBusPort.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
@@ -208,6 +209,11 @@ public:
 
     const FCPTransportConfig& GetConfig() const { return config_; }
 
+    /// Start a new exchange log (attach, manual refresh).
+    void BeginExchangeSession();
+    /// A copy of every exchange since the session started.
+    [[nodiscard]] FcpExchangeLog CopyExchangeLog() const;
+
 private:
     /// Immutable route token for one FCP block-write attempt. A response may
     /// match only after this exact attempt has completed successfully.
@@ -259,6 +265,8 @@ private:
 
     [[nodiscard]] bool StartPendingWrite();
     void StartNextQueuedCommand();
+    /// Log a command that never reached the bus. Must NOT be called with lock_ held.
+    void RecordUnsent(FCPStatus status, const FCPFrame& command);
 
     [[nodiscard]] FCPHandle SubmitCommand(const FCPFrame& command,
                                           FCPCompletion completion,
@@ -296,6 +304,8 @@ private:
     bool shuttingDown_{false};
 
     std::unique_ptr<OutstandingCommand> pending_;
+    /// Guarded by lock_.
+    FcpExchangeRecorder recorder_;
     std::deque<std::unique_ptr<OutstandingCommand>> queued_;
     uint32_t nextTransactionID_{0};
 };
