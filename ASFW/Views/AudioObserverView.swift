@@ -372,9 +372,9 @@ struct AudioObserverPanel: View {
     private var loudnessPanel: some View {
         panel("Loudness", subtitle: "Perceived loudness and dynamics · EBU R128 / ITU-R BS.1770") {
             HStack(spacing: 10) {
-                loudnessCard("Momentary", keyPath: \.momentaryLUFS)
-                loudnessCard("Short-term", keyPath: \.shortTermLUFS)
-                loudnessCard("Integrated", keyPath: \.integratedLUFS)
+                loudnessCard("Momentary", keyPath: \.momentaryLUFS, readout: .momentaryLUFS)
+                loudnessCard("Short-term", keyPath: \.shortTermLUFS, readout: .shortTermLUFS)
+                loudnessCard("Integrated", keyPath: \.integratedLUFS, readout: .integratedLUFS)
                 VStack(spacing: 8) {
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 4) {
@@ -411,14 +411,15 @@ struct AudioObserverPanel: View {
         }
     }
 
-    private func loudnessCard(_ title: String, keyPath: KeyPath<AudioLoudnessMetrics, AudioMeasurement<Float>>) -> some View {
+    private func loudnessCard(_ title: String, keyPath: KeyPath<AudioLoudnessMetrics, AudioMeasurement<Float>>,
+                              readout: AnalyzerTextReadout) -> some View {
         VStack(spacing: 7) {
             Text(title).font(.caption).foregroundStyle(.secondary)
-            AnalyzerScalarText(state: model.loudnessUI) { metrics, _ in
-                let measurement = metrics.analysis.loudness[keyPath: keyPath]
-                return measurement.value.map { $0.isFinite ? String(format: "%.1f", $0) : "−∞" } ?? "—"
-            }
-            .font(.system(size: 28, weight: .semibold, design: .rounded)).monospacedDigit()
+            // Metal draws the value (AnalyzerTextReadout); this hidden template
+            // only reserves the slot, so a new value never re-lays out the panel.
+            Text("-00.0").font(.system(size: 28, weight: .semibold, design: .rounded)).monospacedDigit()
+                .hidden()
+                .overlay { AnalyzerCanvasSlot(mode: AnalyzerTextReadout.canvasMode, index: readout.rawValue) }
             AnalyzerScalarText(state: model.loudnessUI) { metrics, _ in
                 let measurement = metrics.analysis.loudness[keyPath: keyPath]
                 return measurement.value == nil ? measurementText(measurement) : "LUFS"

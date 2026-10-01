@@ -65,6 +65,7 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
     var loudnessPoints: [AnalyzerHistoryVertex] = []
     var historyState: AnalyzerPlotHistoryState?
     private static var pipelines: [ObjectIdentifier: MTLRenderPipelineState] = [:]
+    private static var glyphPipelines: [ObjectIdentifier: MTLRenderPipelineState] = [:]
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -134,7 +135,8 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
         // a device does not imply a subsequent AppKit resize notification.
         let scale = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
         view.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
-        let renderer = AnalyzerPlotRenderer(device: device, pipeline: pipeline, submission: client.renderSubmission,
+        let renderer = AnalyzerPlotRenderer(device: device, pipeline: pipeline, glyphPipeline: Self.glyphPipeline(device),
+                                            submission: client.renderSubmission,
                                             metrics: client.metrics, state: client.renderState,
                                             mode: mode, index: index, ring: client.ringBuffer,
                                             phasePipeline: client.phaseRenderPipeline)
@@ -168,6 +170,25 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
         return pipeline
     }
 
+    static func glyphPipeline(_ device: MTLDevice) -> MTLRenderPipelineState? {
+        let key = ObjectIdentifier(device)
+        if let pipeline = glyphPipelines[key] { return pipeline }
+        guard let library = device.makeDefaultLibrary() else { return nil }
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = library.makeFunction(name: "asfwAnalyzerGlyphVertex")
+        descriptor.fragmentFunction = library.makeFunction(name: "asfwAnalyzerGlyphFragment")
+        let attachment = descriptor.colorAttachments[0]!
+        attachment.pixelFormat = .bgra8Unorm
+        attachment.isBlendingEnabled = true
+        attachment.sourceRGBBlendFactor = .sourceAlpha
+        attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        attachment.sourceAlphaBlendFactor = .one
+        attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        guard let pipeline = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
+        glyphPipelines[key] = pipeline
+        return pipeline
+    }
+
     final class Coordinator {
         var cadence = AnalyzerDrawCadence()
         fileprivate var renderer: AnalyzerPlotRenderer?
@@ -183,6 +204,10 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
 private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private let device: MTLDevice
     private let pipeline: MTLRenderPipelineState
+    private let glyphPipeline: MTLRenderPipelineState?
+    private var glyphAtlases: [AnalyzerTextStyle: (scale: CGFloat, atlas: AnalyzerGlyphAtlas)] = [:]
+    private var readoutText: [UInt32: String] = [:]
+    private var readoutRefreshed = -Double.infinity
     private let submission: AnalyzerRenderSubmission
     private let metrics: AudioObserverMetricsState
     private let state: AudioObserverRenderState
@@ -202,10 +227,12 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private var displayEpoch: (UInt64, UInt64, UInt64)?
     var regions: [AnalyzerPlotRegion]?
 
-    init(device: MTLDevice, pipeline: MTLRenderPipelineState, submission: AnalyzerRenderSubmission,
+    init(device: MTLDevice, pipeline: MTLRenderPipelineState, glyphPipeline: MTLRenderPipelineState?,
+         submission: AnalyzerRenderSubmission,
          metrics: AudioObserverMetricsState, state: AudioObserverRenderState,
          mode: UInt32, index: UInt32, ring: MTLBuffer?, phasePipeline: MTLRenderPipelineState?) {
-        self.device = device; self.pipeline = pipeline; self.submission = submission
+        self.device = device; self.pipeline = pipeline; self.glyphPipeline = glyphPipeline
+        self.submission = submission
         self.metrics = metrics; self.state = state; self.mode = mode; self.index = index
         self.ring = ring; self.phasePipeline = phasePipeline
     }
@@ -266,7 +293,7 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
         }
         encoder.setRenderPipelineState(pipeline)
         let plots = regions ?? [AnalyzerPlotRegion(mode: mode, index: index, rect: view.bounds)]
-        for plot in plots {
+        for plot in plots where plot.mode != AnalyzerTextReadout.canvasMode {
             let rect = plot.rect.intersection(view.bounds)
             guard rect.width > 0, rect.height > 0 else { continue }
             encoder.setViewport(MTLViewport(originX: rect.minX * scale, originY: rect.minY * scale,
@@ -320,6 +347,8 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 12)
             }
         }
+        drawReadouts(plots.filter { $0.mode == AnalyzerTextReadout.canvasMode }, encoder: encoder,
+                     view: view, scale: scale, now: now)
         encoder.endEncoding()
         command.present(drawable)
         command.addCompletedHandler { _ in slots.signal() }
@@ -327,4 +356,59 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
         submission.commit(command)
     }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+
+    /// Numeric readouts drawn as glyph quads, so a changing value never goes
+    /// through SwiftUI text layout. Text is re-formatted at the SwiftUI
+    /// readouts' 250 ms cadence; every frame redraws the cached strings.
+    private func drawReadouts(_ slots: [AnalyzerPlotRegion], encoder: MTLRenderCommandEncoder,
+                              view: MTKView, scale: CGFloat, now: Double) {
+        guard !slots.isEmpty, let glyphPipeline else { return }
+        if now - readoutRefreshed >= AnalyzerTextReadout.refreshInterval {
+            readoutRefreshed = now
+            let current = metrics.read(includeHistory: false)
+            for slot in slots {
+                guard let readout = AnalyzerTextReadout(rawValue: slot.index) else { continue }
+                readoutText[slot.index] = readout.text(current)
+            }
+        }
+        var color = SIMD4<Float>(1, 1, 1, 1)
+        view.effectiveAppearance.performAsCurrentDrawingAppearance {
+            if let label = NSColor.labelColor.usingColorSpace(.sRGB) {
+                color = SIMD4(Float(label.redComponent), Float(label.greenComponent),
+                              Float(label.blueComponent), Float(label.alphaComponent))
+            }
+        }
+        var drawableSize = SIMD2<Float>(Float(view.drawableSize.width), Float(view.drawableSize.height))
+        encoder.setViewport(MTLViewport(originX: 0, originY: 0, width: Double(drawableSize.x),
+                                        height: Double(drawableSize.y), znear: 0, zfar: 1))
+        encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: Int(drawableSize.x), height: Int(drawableSize.y)))
+        encoder.setRenderPipelineState(glyphPipeline)
+        encoder.setVertexBytes(&drawableSize, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+        encoder.setFragmentBytes(&color, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
+        for slot in slots {
+            guard let readout = AnalyzerTextReadout(rawValue: slot.index),
+                  let text = readoutText[slot.index],
+                  let atlas = atlas(for: readout.style, scale: scale), let texture = atlas.texture else { continue }
+            let rect = CGRect(x: slot.rect.minX * scale, y: slot.rect.minY * scale,
+                              width: slot.rect.width * scale, height: slot.rect.height * scale)
+            let vertices = atlas.vertices(for: text, centredIn: rect)
+            guard !vertices.isEmpty else { continue }
+            let length = vertices.count * MemoryLayout<AnalyzerGlyphVertex>.stride
+            if length <= 4096 {
+                vertices.withUnsafeBytes { encoder.setVertexBytes($0.baseAddress!, length: length, index: 0) }
+            } else if let buffer = vertices.withUnsafeBytes({
+                device.makeBuffer(bytes: $0.baseAddress!, length: length, options: .storageModeShared) }) {
+                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+            } else { continue }
+            encoder.setFragmentTexture(texture, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: vertices.count)
+        }
+    }
+
+    private func atlas(for style: AnalyzerTextStyle, scale: CGFloat) -> AnalyzerGlyphAtlas? {
+        if let cached = glyphAtlases[style], cached.scale == scale { return cached.atlas }
+        let atlas = AnalyzerGlyphAtlas(font: style.font(scale: scale), device: device)
+        glyphAtlases[style] = (scale, atlas)
+        return atlas
+    }
 }

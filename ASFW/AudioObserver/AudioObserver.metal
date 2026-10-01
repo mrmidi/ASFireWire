@@ -423,3 +423,25 @@ fragment float4 asfwAnalyzerPlotFragment(AnalyzerPlotVertex in [[stage_in]]) {
     if (in.color.a == 0) discard_fragment();
     return in.color;
 }
+
+// Readout glyphs from AnalyzerGlyphAtlas: positions in drawable pixels (y
+// down), coverage from an R8 atlas sampled pixel for pixel.
+struct AnalyzerGlyphVertex { float2 position; float2 uv; };
+struct AnalyzerGlyphOut { float4 position [[position]]; float2 uv; };
+
+vertex AnalyzerGlyphOut asfwAnalyzerGlyphVertex(uint vid [[vertex_id]],
+    constant AnalyzerGlyphVertex* vertices [[buffer(0)]],
+    constant float2& drawableSize [[buffer(1)]]) {
+    AnalyzerGlyphVertex v = vertices[vid];
+    float2 ndc = float2(v.position.x / drawableSize.x * 2 - 1, 1 - v.position.y / drawableSize.y * 2);
+    return { float4(ndc, 0, 1), v.uv };
+}
+
+fragment float4 asfwAnalyzerGlyphFragment(AnalyzerGlyphOut in [[stage_in]],
+    texture2d<float> atlas [[texture(0)]],
+    constant float4& color [[buffer(0)]]) {
+    constexpr sampler pixelExact(filter::nearest, address::clamp_to_edge);
+    float coverage = atlas.sample(pixelExact, in.uv).r;
+    if (coverage <= 0) discard_fragment();
+    return float4(color.rgb, color.a * coverage);
+}
