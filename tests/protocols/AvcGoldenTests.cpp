@@ -50,6 +50,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <regex>
@@ -275,6 +276,37 @@ constexpr UncapturedFrame kPhase88Uncaptured[] = {
     // Linux bebob_command.c:214-227, bebob_stream.c:298.
     {"01ff02c00[01]000000ff07..00", "Linux bebob_command.c:214"},
 };
+
+TEST(AvcGoldenTests, ChainedCommandsDoNotGrowTheStack) {
+    // Every completion submits the next command, and the simulated unit answers
+    // inside the write -- as a bus reset fails every remaining command inside
+    // Submit on hardware. FCPTransport must run each completion after the
+    // previous one returned, not inside it: nested, a 227-command Phase 88
+    // attach overflowed the stack under ASan, and this chain overflows it
+    // without ASan (about 4 KB per command).
+    AvcGoldenRig rig(kDuet);
+    constexpr int kCommands = 2000;
+    int answered = 0;
+    uintptr_t lowest = UINTPTR_MAX;
+    uintptr_t highest = 0;
+    std::function<void()> next = [&] {
+        rig.Unit()->Status(Cmd::UnitInfoCommand{}, [&](Expected<Cmd::UnitInfo> reply) {
+            int marker = 0;
+            const auto here = reinterpret_cast<uintptr_t>(&marker);
+            lowest = std::min(lowest, here);
+            highest = std::max(highest, here);
+            if (reply) {
+                ++answered;
+            }
+            if (answered < kCommands && reply) {
+                next();
+            }
+        });
+    };
+    next();
+    EXPECT_EQ(answered, kCommands);
+    EXPECT_LT(highest - lowest, 64U * 1024U) << "completions nest: the stack grows with each command";
+}
 
 // ============================================================================
 // 1. Duet Attach Discovery

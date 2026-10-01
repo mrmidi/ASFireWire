@@ -283,6 +283,14 @@ private:
                          const FCPFrame& response,
                          std::optional<uint32_t> expectedTransactionID = std::nullopt);
 
+    /// Run a command's completion, then start the next queued command. A
+    /// completion that submits again, and a submit that fails or is answered
+    /// at once, would otherwise nest one call chain per command: a bus reset
+    /// fails every remaining discovery command synchronously. Deliveries made
+    /// while one is running are queued and run by the outermost call, so the
+    /// stack depth stays constant. Must NOT be called with lock_ held.
+    void Deliver(FCPCompletion completion, FCPStatus status, const FCPFrame& response);
+
     void ScheduleTimeout(uint32_t timeoutMs);
 
     void CancelTimeout();
@@ -308,6 +316,15 @@ private:
     FcpExchangeRecorder recorder_;
     std::deque<std::unique_ptr<OutstandingCommand>> queued_;
     uint32_t nextTransactionID_{0};
+
+    struct PendingDelivery {
+        FCPCompletion completion;
+        FCPStatus status;
+        FCPFrame response;
+    };
+    /// Guarded by lock_. Completions waiting for the outermost Deliver().
+    std::deque<PendingDelivery> deliveries_;
+    bool delivering_{false};
 };
 
 } // namespace ASFW::Protocols::AVC

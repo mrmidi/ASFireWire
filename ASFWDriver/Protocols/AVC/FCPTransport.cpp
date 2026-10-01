@@ -112,7 +112,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
                      "FCPTransport: Invalid command size %zu (must be 3-512)",
                      command.length);
         RecordUnsent(FCPStatus::kInvalidPayload, command);
-        completion(FCPStatus::kInvalidPayload, {});
+        Deliver(std::move(completion), FCPStatus::kInvalidPayload, {});
         return {};
     }
 
@@ -126,7 +126,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
                        "this device's permitted command set",
                        command.data[0], command.length > 2 ? command.data[2] : 0xFFU);
         RecordUnsent(FCPStatus::kRefusedByFilter, command);
-        completion(FCPStatus::kRefusedByFilter, {});
+        Deliver(std::move(completion), FCPStatus::kRefusedByFilter, {});
         return {};
     }
 
@@ -145,9 +145,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
 
     if (shuttingDown_) {
         IOLockUnlock(lock_);
-        if (cmd->completion) {
-            cmd->completion(FCPStatus::kTransportError, {});
-        }
+        Deliver(std::move(cmd->completion), FCPStatus::kTransportError, {});
         return {};
     }
 
@@ -158,9 +156,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
         if (!route.has_value() || route->generation != *cmd->requiredGeneration) {
             IOLockUnlock(lock_);
             RecordUnsent(FCPStatus::kBusReset, command);
-            if (cmd->completion) {
-                cmd->completion(FCPStatus::kBusReset, {});
-            }
+            Deliver(std::move(cmd->completion), FCPStatus::kBusReset, {});
             return {};
         }
     }
@@ -191,9 +187,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
         ASFW_LOG_V1(FCP,
                      "FCPTransport: Command already pending");
         RecordUnsent(FCPStatus::kBusy, command);
-        if (cmd->completion) {
-            cmd->completion(FCPStatus::kBusy, {});
-        }
+        Deliver(std::move(cmd->completion), FCPStatus::kBusy, {});
         return {};
     }
 
@@ -392,9 +386,7 @@ void FCPTransport::Shutdown() {
         busOps_->Cancel(handle);
     }
     for (auto& completion : completions) {
-        if (completion) {
-            completion(FCPStatus::kTransportError, {});
-        }
+        Deliver(std::move(completion), FCPStatus::kTransportError, {});
     }
 }
 
@@ -442,9 +434,7 @@ bool FCPTransport::CancelCommand(FCPHandle handle) {
     queued_.erase(queuedIt);
     IOLockUnlock(lock_);
     ASFW_LOG_V2(FCP, "FCPTransport: Cancelled queued command id=%u", handle.transactionID);
-    if (completion) {
-        completion(FCPStatus::kTransportError, {});
-    }
+    Deliver(std::move(completion), FCPStatus::kTransportError, {});
     return true;
 }
 
@@ -926,15 +916,42 @@ void FCPTransport::CompleteCommand(FCPStatus status,
 
     IOLockUnlock(lock_);
 
-    // Invoke completion OUTSIDE lock
-    if (completion) {
-        completion(status, response);
-    }
+    // Invoke completion OUTSIDE lock. A completion may synchronously submit
+    // another command; SubmitCommand() sees the non-empty queue and appends
+    // it, so the oldest queued command still starts first.
+    Deliver(std::move(completion), status, response);
+}
 
-    // A completion may synchronously submit another command. SubmitCommand()
-    // sees the non-empty queue and appends it, so the oldest queued command
-    // still starts first here.
-    StartNextQueuedCommand();
+void FCPTransport::Deliver(FCPCompletion completion, FCPStatus status, const FCPFrame& response) {
+    IOLockLock(lock_);
+    deliveries_.push_back(PendingDelivery{std::move(completion), status, response});
+    if (delivering_) {
+        IOLockUnlock(lock_);
+        return;
+    }
+    delivering_ = true;
+    IOLockUnlock(lock_);
+
+    // A completion may drop the last owner of this transport (unit teardown);
+    // keep it alive until the loop leaves. Null for a transport not owned by a
+    // shared_ptr, whose owner then outlives the call.
+    const auto self = weak_from_this().lock();
+    for (;;) {
+        IOLockLock(lock_);
+        if (deliveries_.empty()) {
+            delivering_ = false;
+            IOLockUnlock(lock_);
+            return;
+        }
+        PendingDelivery next = std::move(deliveries_.front());
+        deliveries_.pop_front();
+        IOLockUnlock(lock_);
+
+        if (next.completion) {
+            next.completion(next.status, next.response);
+        }
+        StartNextQueuedCommand();
+    }
 }
 
 void FCPTransport::RecordUnsent(FCPStatus status, const FCPFrame& command) {
