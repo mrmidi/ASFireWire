@@ -1,5 +1,12 @@
 import SwiftUI
 
+private struct MonitorPlotAnchors: PreferenceKey {
+    static var defaultValue: [Int: Anchor<CGRect>] { [:] }
+    static func reduce(value: inout [Int: Anchor<CGRect>], nextValue: () -> [Int: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
 struct StereoMetersView: View {
     let client: ASFWAudioObserverClient
     let metrics: AudioObserverMetrics
@@ -13,8 +20,9 @@ struct StereoMetersView: View {
         let level = active ? max(0, rms) : 0
         return VStack(spacing: 4) {
             Text(title).font(.caption.weight(.medium))
-            Text(db(level)).font(.system(size: 9, design: .monospaced))
-            MetalAnalyzerPlotView(client: client, mode: 0, index: index)
+            Text(db(level)).font(.system(size: 10, design: .monospaced)).lineLimit(1).minimumScaleFactor(0.8)
+            Color.clear
+                .anchorPreference(key: MonitorPlotAnchors.self, value: .bounds) { [Int(index): $0] }
                 .background(.white.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
             Text("−60").foregroundStyle(.secondary)
@@ -29,9 +37,10 @@ struct StereoMetersView: View {
             HStack {
                 Text(title)
                 Spacer(minLength: 4)
-                Text(active && valid ? String(format: "%.2f", value) : "—")
+                Text(active && valid ? String(format: title == "Stereo width" ? "%.0f%%" : "%.2f", value) : "—")
             }
-            MetalAnalyzerPlotView(client: client, mode: 1, index: index)
+            Color.clear
+                .anchorPreference(key: MonitorPlotAnchors.self, value: .bounds) { [4 + Int(index): $0] }
                 .background { Capsule().fill(.white.opacity(0.10)).frame(height: 4) }
                 .frame(height: 12)
             HStack {
@@ -66,7 +75,7 @@ struct StereoMetersView: View {
                          ? String(format: "%+.2f", metrics.correlationAverage) : "—")
                 }
                 scale("Balance", index: 1, value: values[6], left: "L", right: "R")
-                scale("Stereo width", index: 2, value: min(1, max(-1, 2 * values[7] - 1)),
+                scale("Stereo width", index: 2, value: 100 * values[7],
                       left: "0", right: "100%")
                 HStack {
                     Text("Side energy").foregroundStyle(.secondary)
@@ -75,6 +84,18 @@ struct StereoMetersView: View {
                 }
             }
             .frame(width: 168)
+        }
+        .backgroundPreferenceValue(MonitorPlotAnchors.self) { anchors in
+            GeometryReader { geometry in
+                let regions = anchors.keys.sorted().compactMap { key -> AnalyzerPlotRegion? in
+                    guard let anchor = anchors[key] else { return nil }
+                    return AnalyzerPlotRegion(mode: key < 4 ? 0 : 1,
+                        index: UInt32(key < 4 ? key : key - 4), rect: geometry[anchor])
+                }
+                MetalAnalyzerPlotView(client: client, mode: 0, index: 0, regions: regions)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
         .font(.caption.monospacedDigit())
     }

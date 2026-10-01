@@ -1,7 +1,6 @@
 #include <metal_stdlib>
 using namespace metal;
-constant uint fftSize = 2048;
-struct SpectrumParams { ulong writeEnd; uint ringFrames; uint channels; uint channel; uint sampleRate; uint otherChannel; uint transform; };
+struct SpectrumParams { ulong writeEnd; uint ringFrames; uint channels; uint channel; uint sampleRate; uint otherChannel; uint transform; uint fftSize; uint window; };
 struct SpectrumVertex { float4 position [[position]]; };
 
 // One threadgroup performs a radix-2 DIT FFT. Bit-reversed input followed by
@@ -12,19 +11,24 @@ kernel void asfwSpectrumFFT(device const float* ring [[buffer(0)]],
                             uint tid [[thread_index_in_threadgroup]],
                             uint3 groupSize [[threads_per_threadgroup]]) {
     const uint threads = groupSize.x;
-    threadgroup float2 values[2048];
+    const uint fftSize = p.fftSize;
+    const uint stages = uint(log2(float(fftSize)));
+    threadgroup float2 values[4096];
     for (uint i = tid; i < fftSize; i += threads) {
         uint reversed = 0;
         uint bits = i;
-        for (uint j = 0; j < 11; ++j) { reversed = (reversed << 1) | (bits & 1); bits >>= 1; }
+        for (uint j = 0; j < stages; ++j) { reversed = (reversed << 1) | (bits & 1); bits >>= 1; }
         uint frame = uint((p.writeEnd - fftSize + i) % p.ringFrames);
         // Periodic Hann has coherent gain exactly 1/2.
-        float window = 0.5f - 0.5f * cos(2.0f * M_PI_F * float(i) / float(fftSize));
+        float angle = 2.0f * M_PI_F * float(i) / float(fftSize);
+        float window = p.window == 1 ? 0.54f - 0.46f * cos(angle)
+            : p.window == 2 ? 0.42f - 0.5f * cos(angle) + 0.08f * cos(2 * angle)
+            : 0.5f - 0.5f * cos(angle);
         float sample = ring[ulong(frame) * p.channels + p.channel];
         float other = ring[ulong(frame) * p.channels + p.otherChannel];
         if (p.transform == 1) sample = (sample + other) * 0.70710678118f;
         if (p.transform == 2) sample = (sample - other) * 0.70710678118f;
-        values[reversed] = float2(sample * window, 0);
+        values[reversed] = float2(sample * window, p.transform == 3 ? other * window : 0);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     for (uint width = 2; width <= fftSize; width <<= 1) {
@@ -45,14 +49,26 @@ kernel void asfwSpectrumFFT(device const float* ring [[buffer(0)]],
     }
     for (uint bin = tid; bin <= fftSize / 2; bin += threads) {
         // Single-sided peak amplitude: a bin-centred full-scale sine is 0 dBFS.
-        float scale = (bin == 0 || bin == fftSize / 2) ? 2.0f / fftSize : 4.0f / fftSize;
-        amplitudes[bin] = length(values[bin]) * scale;
+        float gain = p.window == 1 ? 0.54f : p.window == 2 ? 0.42f : 0.5f;
+        float scale = (bin == 0 || bin == fftSize / 2) ? 1.0f / (fftSize * gain) : 2.0f / (fftSize * gain);
+        float amplitude = length(values[bin]);
+        if (p.transform == 3) {
+            // Two real FFTs packed into one complex FFT. Average channel power
+            // keeps the stereo spectrum independent of phase cancellation.
+            float2 a = values[bin];
+            float2 b = values[(fftSize - bin) % fftSize] * float2(1, -1);
+            float2 left = (a + b) * 0.5f;
+            float2 right = float2(a.y - b.y, b.x - a.x) * 0.5f;
+            amplitude = sqrt((dot(left, left) + dot(right, right)) * 0.5f);
+        }
+        amplitudes[bin] = amplitude * scale;
     }
 }
 
 vertex SpectrumVertex asfwSpectrumVertex(uint vid [[vertex_id]],
     device const float* amplitudes [[buffer(0)]],
     constant SpectrumParams& p [[buffer(1)]]) {
+    uint fftSize = p.fftSize;
     float maximumHz = min(20000.0f, float(p.sampleRate) * 0.5f);
     float ratio = maximumHz / 20.0f;
     float hz = 20.0f * pow(ratio, float(vid) / 511.0f);
@@ -75,7 +91,7 @@ kernel void asfwSpectrumSmooth(device const float* raw [[buffer(0)]],
     device float4* history [[buffer(1)]], device float* average [[buffer(2)]],
     device float* peaks [[buffer(3)]], constant SmoothingParams& p [[buffer(4)]],
     uint bin [[thread_position_in_grid]]) {
-    if (bin > 1024) return;
+    if (bin > 2048) return;
     float a = raw[bin];
     float4 h = p.reset ? float4(a*a, a, 0, 0) : history[bin];
     h.x = mix(a*a, h.x, p.alpha);

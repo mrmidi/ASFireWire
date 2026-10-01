@@ -28,11 +28,11 @@ struct AnalyzerPlotAxes: View {
                 label("Y: (L+R)/√2 · in phase", at: CGPoint(x: size.width / 2, y: 12))
                 label("X: (L−R)/√2 · opposite phase", at: CGPoint(x: size.width / 2, y: size.height - 12))
             case .waveform:
-                let plot = CGRect(x: 24, y: 12, width: max(1, size.width - 36), height: max(1, size.height - 24))
-                line(CGPoint(x: plot.minX, y: plot.midY), CGPoint(x: plot.maxX, y: plot.midY))
-                label("+1", at: CGPoint(x: 10, y: plot.minY))
-                label("0", at: CGPoint(x: 10, y: plot.midY))
-                label("−1", at: CGPoint(x: 10, y: plot.maxY))
+                for lane in 0..<2 {
+                    let middle = size.height * (CGFloat(lane) + 0.5) / 2
+                    line(CGPoint(x: 0, y: middle), CGPoint(x: size.width, y: middle))
+                    label(lane == 0 ? "L" : "R", at: CGPoint(x: 10, y: middle - 12))
+                }
             case .spectrum(let rate):
                 let plot = CGRect(x: 38, y: 12, width: max(1, size.width - 50), height: max(1, size.height - 42))
                 for db in [6, 0, -30, -60, -90, -120] {

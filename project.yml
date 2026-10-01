@@ -155,7 +155,7 @@ targets:
     type: application
     platform: macOS
     sources:
-      # Includes the AV/C report model, formatter, store and view; also AudioObserver/MetalAnalyzerPlotView.swift and the analyzer Metal shaders.
+      # Includes the AV/C report model, formatter, store and view; also shared Metal plots, Views/LoudnessHistoryView.swift, and analyzer shaders.
       - path: ASFW
     dependencies:
       - target: ASFWDriver
@@ -202,6 +202,7 @@ targets:
     type: bundle.unit-test
     platform: macOS
     sources:
+      # Includes AudioObserver/SpectrumKernelTests.swift for FFT/window calibration.
       - path: ASFWTests
     dependencies:
       - target: ASFW

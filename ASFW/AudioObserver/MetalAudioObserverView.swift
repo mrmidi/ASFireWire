@@ -143,11 +143,20 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
 
         render.setRenderPipelineState(renderPipeline)
         render.setVertexBuffer(buffer, offset: 0, index: 0)
-        render.setVertexBytes(&params, length: MemoryLayout<ObserverParams>.stride, index: 1)
         if validFrames > 1 {
-            render.drawPrimitives(type: .lineStrip,
-                                  vertexStart: 0,
-                                  vertexCount: Int(validFrames))
+            let draws = mode == .waveform ? 2 : 1
+            for lane in 0..<draws {
+                if mode == .waveform {
+                    params.channel = lane == 0 ? leftChannel : rightChannel
+                    let height = view.drawableSize.height / 2
+                    render.setViewport(MTLViewport(originX: 0, originY: Double(lane) * height,
+                        width: view.drawableSize.width, height: height, znear: 0, zfar: 1))
+                    var color = lane == 0 ? SIMD4<Float>(0.2, 0.91, 0.73, 1) : SIMD4<Float>(1, 0.55, 0.1, 1)
+                    render.setFragmentBytes(&color, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
+                }
+                render.setVertexBytes(&params, length: MemoryLayout<ObserverParams>.stride, index: 1)
+                render.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: Int(validFrames))
+            }
         }
         render.endEncoding()
         commandBuffer.present(drawable)

@@ -9,6 +9,8 @@ private struct SpectrumParams {
     var sampleRate: UInt32
     var otherChannel: UInt32
     var transform: UInt32
+    var fftSize: UInt32
+    var window: UInt32
 }
 
 private struct SmoothingParams { var alpha: Float; var elapsed: Float; var reset: UInt32; var unused: UInt32 = 0 }
@@ -20,13 +22,15 @@ struct MetalSpectrumView: NSViewRepresentable {
     var transform: UInt32 = 0
     var slow = false
     var peakHold = true
+    var fftSize: UInt32 = 2048
+    var window: UInt32 = 0
 
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> NSView {
         guard let device = client.metalDevice,
               let buffer = client.ringBuffer,
               let renderer = SpectrumRenderer(device: device, ring: buffer,
-                                               state: client.renderState, channel: channel, otherChannel: otherChannel, transform: transform, slow: slow, peakHold: peakHold) else {
+                                               state: client.renderState, channel: channel, otherChannel: otherChannel, transform: transform, slow: slow, peakHold: peakHold, fftSize: fftSize, window: window) else {
             return NSTextField(labelWithString: "Spectrum Metal pipeline unavailable")
         }
         let view = MTKView(frame: .zero, device: device)
@@ -64,6 +68,8 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
     private let transform: UInt32
     private let slow: Bool
     private let peakHold: Bool
+    private let fftSize: UInt32
+    private let window: UInt32
     private let smooth: MTLComputePipelineState
     private let peakRender: MTLRenderPipelineState
     private let history: MTLBuffer
@@ -74,20 +80,20 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
     private var epoch: String?
     private let slots = DispatchSemaphore(value: 2)
 
-    init?(device: MTLDevice, ring: MTLBuffer, state: AudioObserverRenderState, channel: UInt32, otherChannel: UInt32, transform: UInt32, slow: Bool, peakHold: Bool) {
+    init?(device: MTLDevice, ring: MTLBuffer, state: AudioObserverRenderState, channel: UInt32, otherChannel: UInt32, transform: UInt32, slow: Bool, peakHold: Bool, fftSize: UInt32 = 2048, window: UInt32 = 0) {
         guard let library = device.makeDefaultLibrary(),
               let smoothing = library.makeFunction(name: "asfwSpectrumSmooth"),
               let smooth = try? device.makeComputePipelineState(function: smoothing),
               let peakFragment = library.makeFunction(name: "asfwSpectrumPeakFragment"),
-              let history = device.makeBuffer(length: 1025 * 16, options: .storageModePrivate),
-              let average = device.makeBuffer(length: 1025 * 4, options: .storageModePrivate),
-              let peaks = device.makeBuffer(length: 1025 * 4, options: .storageModePrivate),
+              let history = device.makeBuffer(length: 2049 * 16, options: .storageModePrivate),
+              let average = device.makeBuffer(length: 2049 * 4, options: .storageModePrivate),
+              let peaks = device.makeBuffer(length: 2049 * 4, options: .storageModePrivate),
               let fft = library.makeFunction(name: "asfwSpectrumFFT"),
               let vertex = library.makeFunction(name: "asfwSpectrumVertex"),
               let fragment = library.makeFunction(name: "asfwAudioFragment"),
               let compute = try? device.makeComputePipelineState(function: fft),
               compute.maxTotalThreadsPerThreadgroup >= 256,
-              let amplitudes = device.makeBuffer(length: 1025 * 4, options: .storageModePrivate),
+              let amplitudes = device.makeBuffer(length: 2049 * 4, options: .storageModePrivate),
               let queue = device.makeCommandQueue() else { return nil }
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = vertex
@@ -100,6 +106,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         self.history = history; self.average = average; self.peaks = peaks
         self.otherChannel = otherChannel; self.transform = transform
         self.slow = slow; self.peakHold = peakHold
+        self.fftSize = fftSize; self.window = window
         self.ring = ring
         self.amplitudes = amplitudes
         self.compute = compute
@@ -112,7 +119,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         let snapshot = state.read()
         guard snapshot.ioRunning, snapshot.writeEndFrame != lastWriteEnd,
-              snapshot.validHistoryFrames >= 2048, snapshot.sampleRateHz > 40,
+              snapshot.validHistoryFrames >= UInt64(fftSize), snapshot.sampleRateHz > 40,
               channel < snapshot.channels, otherChannel < snapshot.channels,
               let pass = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
@@ -123,7 +130,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         var params = SpectrumParams(writeEnd: snapshot.writeEndFrame,
                                     ringFrames: snapshot.activeRingFrames,
                                     channels: snapshot.channels,
-                                    channel: channel, sampleRate: snapshot.sampleRateHz, otherChannel: otherChannel, transform: transform)
+                                    channel: channel, sampleRate: snapshot.sampleRateHz, otherChannel: otherChannel, transform: transform, fftSize: fftSize, window: window)
         encoder.setComputePipelineState(compute)
         encoder.setBuffer(ring, offset: 0, index: 0)
         encoder.setBuffer(amplitudes, offset: 0, index: 1)
@@ -143,7 +150,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         filtering.setBuffer(average, offset: 0, index: 2)
         filtering.setBuffer(peaks, offset: 0, index: 3)
         filtering.setBytes(&smoothing, length: MemoryLayout<SmoothingParams>.stride, index: 4)
-        filtering.dispatchThreads(MTLSize(width: 1025, height: 1, depth: 1),
+        filtering.dispatchThreads(MTLSize(width: Int(fftSize / 2 + 1), height: 1, depth: 1),
                                   threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         filtering.endEncoding()
         guard let drawing = command.makeRenderCommandEncoder(descriptor: pass) else { slots.signal(); return }

@@ -6,7 +6,7 @@ private final class AudioObserverPanelModel: ObservableObject {
     @Published private(set) var status = "Connecting to the ASFW output ring…"
     @Published private(set) var snapshot = AudioObserverSnapshot()
     @Published private(set) var metrics = AudioObserverMetrics()
-    @Published var mode: AudioObserverDisplayMode = .phaseScope
+    @Published private(set) var loudnessHistory: [AnalyzerHistoryVertex] = []
 
     let client: ASFWAudioObserverClient
     private var connected = false
@@ -108,6 +108,20 @@ private final class AudioObserverPanelModel: ObservableObject {
         lastMetricsPublish = now
         snapshot = latestSnapshot
         metrics = client.metrics.read()
+        if let token = metrics.analysis.token {
+            let loudness = metrics.analysis.loudness
+            let frame = token.endFrame
+            if let last = loudnessHistory.last, frame < last.frame { loudnessHistory.removeAll() }
+            if loudnessHistory.last?.frame != frame {
+                loudnessHistory.append(AnalyzerHistoryVertex(frame: frame,
+                    correlation: loudness.momentaryLUFS.value ?? .nan,
+                    sideEnergy: loudness.shortTermLUFS.value ?? .nan,
+                    breakBefore: metrics.analysis.streamStatus == .discontinuous ? 1 : 0,
+                    integrated: loudness.integratedLUFS.value ?? .nan))
+                let duration = UInt64(latestSnapshot.sampleRateHz) * 60
+                loudnessHistory.removeAll { frame > $0.frame && frame - $0.frame > duration }
+            }
+        }
     }
 
     func setChannels(left: UInt32, right: UInt32) {
@@ -131,7 +145,12 @@ struct AudioObserverPanel: View {
     @StateObject private var model: AudioObserverPanelModel
     @State private var leftChannel: UInt32 = 0
     @State private var rightChannel: UInt32 = 1
-    @State private var stereoSpectrum = true
+    @State private var fftSize: UInt32 = 2048
+    @State private var spectrumWindow: UInt32 = 0
+    @State private var diagnosticTab = "Performance"
+    @State private var testSignal = "1 kHz Sine"
+    @State private var testLevel = "−6 dBFS"
+    @State private var testMode = "L = R (Mono)"
     @State private var midSide = false
     @State private var slowSpectrum = false
     @State private var peakHold = true
@@ -163,7 +182,9 @@ struct AudioObserverPanel: View {
     private var dashboardHeader: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Audio Analyzer").font(.headline)
+                Label(model.snapshot.ioRunning ? "Running" : "Waiting for audio", systemImage: "circle.fill")
+                    .font(.caption.weight(.semibold)).foregroundStyle(model.snapshot.ioRunning ? .mint : .secondary)
+                    .help(model.status)
                 Text(deviceName).font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -185,10 +206,10 @@ struct AudioObserverPanel: View {
         let gap: CGFloat = 10
         let headerHeight: CGFloat = 42
         let width = max(0, size.width - inset * 2)
-        let height = max(0, size.height - inset * 2)
+        let height = max(0, min(size.height, 900) - inset * 2)
         let rowHeight = max(0, (height - headerHeight - gap * 2) / 2)
-        let topPanelWidth = max(0, (width - gap * 2) * 0.38)
-        let stereoPanelWidth = max(0, (width - gap * 2) * 0.32)
+        let topPanelWidth = max(0, (width - gap * 2) * 0.28)
+        let stereoPanelWidth = max(0, (width - gap * 2) * 0.31)
         let spectrumPanelWidth = max(0, width - gap * 2 - topPanelWidth - stereoPanelWidth)
         let bottomPanelWidth = max(0, width - gap)
 
@@ -217,8 +238,8 @@ struct AudioObserverPanel: View {
             monitorPanel.frame(height: 260)
             stereoPanel.frame(height: 470)
             spectrumPanel.frame(height: 330)
-            loudnessPanel.frame(height: 300)
-            diagnosticsPanel.frame(height: 300)
+            loudnessPanel.frame(height: 420)
+            diagnosticsPanel.frame(height: 430)
         }
         .padding(12)
     }
@@ -267,7 +288,7 @@ struct AudioObserverPanel: View {
     }
 
     private var spectrumPanel: some View {
-        panel("Spectrum", subtitle: "2048-point periodic Hann · logarithmic frequency") {
+        panel("Spectrum", subtitle: "Frequency domain analysis · stereo power / mid–side") {
             VStack(spacing: 7) {
                 HStack(spacing: 8) {
                     Text("Basis")
@@ -275,102 +296,178 @@ struct AudioObserverPanel: View {
                         Text("L/R").tag(false); Text("M/S").tag(true)
                     }
                     .labelsHidden().pickerStyle(.segmented).frame(width: 90)
-                    Text("Average")
-                    Picker("Average", selection: $slowSpectrum) {
-                        Text("Fast").tag(false); Text("Slow").tag(true)
-                    }
-                    .labelsHidden().pickerStyle(.segmented).frame(width: 100)
+                    Text("FFT Size")
+                    Picker("FFT Size", selection: $fftSize) {
+                        ForEach([UInt32(1024), 2048, 4096], id: \.self) { Text(String($0)).tag($0) }
+                    }.labelsHidden().frame(width: 78)
+                    Text("Window")
+                    Picker("Window", selection: $spectrumWindow) {
+                        Text("Hann").tag(UInt32(0)); Text("Hamming").tag(UInt32(1)); Text("Blackman").tag(UInt32(2))
+                    }.labelsHidden().frame(width: 100)
                     Spacer(minLength: 0)
                 }
                 HStack(spacing: 8) {
-                    Toggle("Peak hold", isOn: $peakHold).toggleStyle(.checkbox)
-                    Picker("Layout", selection: $stereoSpectrum) {
-                        Text("Mono").tag(false); Text("Stereo").tag(true)
-                    }
-                    .labelsHidden().pickerStyle(.segmented).frame(width: 110)
+                    Text("Average")
+                    Picker("Average", selection: $slowSpectrum) {
+                        Text("Fast · 150 ms").tag(false); Text("Slow · 1 s").tag(true)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 190)
+                    Toggle("Peak hold · 2 s / 12 dB/s", isOn: $peakHold).toggleStyle(.checkbox)
                     Spacer(minLength: 0)
                 }
                 HStack(spacing: 8) {
                     spectrumPlot(channel: leftChannel, side: false)
-                    if stereoSpectrum { spectrumPlot(channel: rightChannel, side: true) }
+                    if midSide { spectrumPlot(channel: rightChannel, side: true) }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 HStack(spacing: 14) {
-                    spectrumLegend(.mint, midSide ? "Mid" : "Output \(leftChannel + 1)")
-                    if stereoSpectrum {
+                    spectrumLegend(.mint, midSide ? "Mid" : "Stereo power")
+                    if midSide {
                         spectrumLegend(.orange, midSide ? "Side" : "Output \(rightChannel + 1)")
                     }
                     if peakHold { spectrumLegend(Color(red: 0.75, green: 0.55, blue: 0.22), "Peak hold") }
                     Spacer(minLength: 0)
                 }
                 .font(.caption2)
-            }
+            }.font(.caption)
         }
     }
 
     private var loudnessPanel: some View {
-        panel("Loudness", subtitle: "EBU R128 / ITU-R BS.1770 · 48 kHz measurement path") {
-            HStack(spacing: 8) {
-                valueTile("Momentary", measurementText(model.metrics.analysis.loudness.momentaryLUFS))
-                valueTile("Short-term", measurementText(model.metrics.analysis.loudness.shortTermLUFS))
-                valueTile("Integrated", measurementText(model.metrics.analysis.loudness.integratedLUFS))
-                valueTile(model.metrics.analysis.loudness.loudnessRangeIsProvisional
-                          ? "LRA · provisional" : "LRA",
-                          measurementText(model.metrics.analysis.loudness.loudnessRangeLU))
-                valueTile("Max True Peak", dbtpText(model.metrics.analysis.loudness.maximumTruePeakDBTP))
-            }
-            HStack(spacing: 8) {
-                valueTile("Max Momentary",
-                          measurementText(model.metrics.analysis.loudness.maximumMomentaryLUFS))
-                valueTile("Max Short-term",
-                          measurementText(model.metrics.analysis.loudness.maximumShortTermLUFS))
-                valueTile("PLR", dbValue(model.metrics.analysis.loudness.plrDB, unit: "dB"))
-                valueTile("Session crest",
-                          dbValue(model.metrics.analysis.loudness.crestFactorDB, unit: "dB"))
-            }
-            Spacer(minLength: 0)
-            HStack(spacing: 8) {
-                loudnessSessionControls
+        let loudness = model.metrics.analysis.loudness
+        return panel("Loudness", subtitle: "Perceived loudness and dynamics · EBU R128 / ITU-R BS.1770") {
+            HStack(spacing: 10) {
+                loudnessCard("Momentary", loudness.momentaryLUFS)
+                loudnessCard("Short-term", loudness.shortTermLUFS)
+                loudnessCard("Integrated", loudness.integratedLUFS)
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        valueTile(loudness.loudnessRangeIsProvisional ? "LRA · provisional" : "Loudness Range",
+                                  dbValue(loudness.loudnessRangeLU, unit: "LU"))
+                        valueTile("True Peak", dbtpText(loudness.maximumTruePeakDBTP))
+                    }
+                    HStack(spacing: 8) {
+                        valueTile("PLR", dbValue(loudness.plrDB, unit: "dB"))
+                        valueTile("Crest Factor", dbValue(loudness.crestFactorDB, unit: "dB"))
+                    }
+                }.frame(maxWidth: .infinity)
+            }.frame(height: 125)
+            Text("Loudness History").font(.caption.weight(.medium))
+            LoudnessHistoryView(client: model.client, points: model.loudnessHistory)
+                .frame(maxHeight: .infinity)
+            HStack(spacing: 14) {
+                spectrumLegend(.green, "Momentary")
+                spectrumLegend(.blue, "Short-term")
+                spectrumLegend(.purple, "Integrated")
                 Spacer()
-                Text(String(format: "Included %.1f s · 24 h max",
-                            Double(model.metrics.analysis.loudness.includedAudioFrames) / 48_000))
+                loudnessSessionControls
+                Text(String(format: "%.1f s", Double(loudness.includedAudioFrames) / 48_000))
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            }
-            Text("Integrated, LRA, and maximum True Peak accumulate while measurement runs.")
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }.font(.caption)
         }
     }
 
-    private var diagnosticsPanel: some View {
-        panel("Diagnostics", subtitle: "Ring state, observer quality, and timing") {
-            HStack(spacing: 8) {
-                Picker("View", selection: $model.mode) {
-                    Text("Waveform").tag(AudioObserverDisplayMode.waveform)
-                    Text("Performance").tag(AudioObserverDisplayMode.phaseScope)
-                }
-                .labelsHidden().pickerStyle(.segmented).frame(width: 170)
-                Text(model.status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            if model.mode == .waveform {
-                scopePlot(mode: .waveform)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 100)
-            }
-            HStack(alignment: .top, spacing: 20) {
-                VStack(alignment: .leading, spacing: 7) {
-                    diagnosticsRow("Ring / mapped", "\(model.snapshot.activeRingFrames) / \(model.snapshot.mappedFrames) frames")
-                    diagnosticsRow("Write end / epoch", "\(model.snapshot.writeEndFrame) · \(model.snapshot.sessionEpoch)/\(model.snapshot.discontinuityEpoch)")
-                    diagnosticsRow("In flight / wrap / unsafe", "\(model.metrics.inFlight) / \(model.metrics.windowsCrossingWrap) / \(model.metrics.unsafeWindows)")
-                }
-                VStack(alignment: .leading, spacing: 7) {
-                    diagnosticsRow("CPU / queued / GPU", "\(milliseconds(model.metrics.cpuEncodeMilliseconds)) / \(milliseconds(model.metrics.scheduledToStartMilliseconds)) / \(milliseconds(model.metrics.gpuMilliseconds))")
-                    diagnosticsRow("Age / overwrite margin", "\(milliseconds(model.metrics.sampleAgeMilliseconds)) / \(milliseconds(model.metrics.overwriteMarginMilliseconds))")
-                    diagnosticsRow("Invalid samples / over-range L·R", "\(model.metrics.invalidSampleCount) / \(model.metrics.analysis.levels.left.overRangeSamples) · \(model.metrics.analysis.levels.right.overRangeSamples)")
-                }
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-            .font(.caption)
+    private func loudnessCard(_ title: String, _ measurement: AudioMeasurement<Float>) -> some View {
+        VStack(spacing: 7) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(measurement.value.map { $0.isFinite ? String(format: "%.1f", $0) : "−∞" } ?? "—")
+                .font(.system(size: 28, weight: .semibold, design: .rounded)).monospacedDigit()
+            Text(measurement.value == nil ? measurementText(measurement) : "LUFS")
+                .font(.caption2).foregroundStyle(.secondary)
+            MetalAnalyzerPlotView(client: model.client, mode: 4,
+                                  index: title == "Momentary" ? 0 : title == "Short-term" ? 1 : 2)
+                .frame(height: 5).background(.white.opacity(0.08)).clipShape(Capsule())
         }
+        .padding(12).frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.white.opacity(0.035)).clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var diagnosticsPanel: some View {
+        panel("Diagnostics", subtitle: "Signal, performance and development tools") {
+            Picker("Diagnostics", selection: $diagnosticTab) {
+                ForEach(["Waveform", "Ring Buffer", "Performance", "Calibration", "Test Signal", "Log"], id: \.self) {
+                    Text($0).tag($0)
+                }
+            }.labelsHidden().pickerStyle(.segmented)
+            if diagnosticTab == "Performance" || diagnosticTab == "Ring Buffer" || diagnosticTab == "Waveform" {
+                HStack(alignment: .top, spacing: 10) {
+                    diagnosticCard("Ring Buffer") {
+                        diagnosticsRow("Active", "\(model.snapshot.activeRingFrames) frames")
+                        diagnosticsRow("Mapped", "\(model.snapshot.mappedFrames) frames")
+                        diagnosticsRow("Channels", "\(model.snapshot.channels)")
+                        diagnosticsRow("Write end", "\(model.snapshot.writeEndFrame)")
+                        diagnosticsRow("Epoch", "\(model.snapshot.sessionEpoch) / \(model.snapshot.discontinuityEpoch)")
+                    }
+                    if diagnosticTab != "Waveform" {
+                        diagnosticCard("Performance · last frame") {
+                            diagnosticsRow("CPU encode", milliseconds(model.metrics.cpuEncodeMilliseconds))
+                            diagnosticsRow("Queued → GPU", milliseconds(model.metrics.scheduledToStartMilliseconds))
+                            diagnosticsRow("GPU", milliseconds(model.metrics.gpuMilliseconds))
+                            Divider()
+                            diagnosticsRow("Sample age", milliseconds(model.metrics.sampleAgeMilliseconds))
+                            diagnosticsRow("Overwrite margin", milliseconds(model.metrics.overwriteMarginMilliseconds))
+                            diagnosticsRow("In flight", "\(model.metrics.inFlight)")
+                            diagnosticsRow("Wrap / unsafe", "\(model.metrics.windowsCrossingWrap) / \(model.metrics.unsafeWindows)")
+                        }
+                    }
+                    diagnosticCard("Output Waveform · L/R") {
+                        scopePlot(mode: .waveform).frame(maxHeight: .infinity).frame(minHeight: 100)
+                        HStack {
+                            spectrumLegend(.mint, "Left"); spectrumLegend(.orange, "Right")
+                        }
+                    }
+                }.frame(maxHeight: .infinity)
+            } else if diagnosticTab == "Calibration" {
+                ContentUnavailableView("Calibration", systemImage: "slider.horizontal.3",
+                    description: Text("Calibration tools are planned. No correction is applied to the signal."))
+                    .frame(maxHeight: .infinity)
+            } else if diagnosticTab == "Log" {
+                diagnosticCard("Observer status") {
+                    Text(model.status).font(.caption)
+                    diagnosticsRow("Invalid samples", "\(model.metrics.invalidSampleCount)")
+                    diagnosticsRow("Over-range L / R", "\(model.metrics.analysis.levels.left.overRangeSamples) / \(model.metrics.analysis.levels.right.overRangeSamples)")
+                    Text("Full driver logs are available in System Logs.").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            } else {
+                Text("Generator controls are a preview. Audio generation is not implemented.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            HStack(alignment: .top, spacing: 10) {
+                diagnosticCard("Test Signal Generator · preview") {
+                    HStack {
+                        Picker("Signal", selection: $testSignal) {
+                            Text("1 kHz Sine").tag("1 kHz Sine"); Text("Pink Noise").tag("Pink Noise"); Text("White Noise").tag("White Noise")
+                        }
+                        Picker("Level", selection: $testLevel) {
+                            ForEach(["−6 dBFS", "−12 dBFS", "−18 dBFS"], id: \.self) { Text($0).tag($0) }
+                        }
+                    }
+                    HStack {
+                        Picker("Mode", selection: $testMode) {
+                            ForEach(["L = R (Mono)", "L = −R", "Left only", "Right only"], id: \.self) { Text($0).tag($0) }
+                        }
+                        Button("Play", systemImage: "play.fill") {}.disabled(true)
+                            .help("Preview only — no audio is generated")
+                    }
+                }
+                diagnosticCard("Validation · unavailable") {
+                    diagnosticsRow("Peak / RMS", "— / —")
+                    diagnosticsRow("Correlation", "—")
+                    diagnosticsRow("Side Energy", "—")
+                }.frame(maxWidth: 180)
+            }.frame(height: 105)
+        }
+    }
+
+    private func diagnosticCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title).font(.caption.weight(.semibold))
+            content()
+        }.padding(10).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(.black.opacity(0.12))
+            .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.06)) }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func spectrumLegend(_ color: Color, _ title: String) -> some View {
@@ -411,15 +508,15 @@ struct AudioObserverPanel: View {
 
     private func spectrumPlot(channel: UInt32, side: Bool) -> some View {
         VStack(spacing: 4) {
-            Text(midSide ? (side ? "Side · (L−R)/√2" : "Mid · (L+R)/√2") : "Output \(channel + 1)")
+            Text(midSide ? (side ? "Side · (L−R)/√2" : "Mid · (L+R)/√2") : "L/R · averaged channel power")
                 .font(.caption2)
             ZStack {
                 Color(red: 0.025, green: 0.035, blue: 0.05)
-                if model.snapshot.validHistoryFrames >= 2048 {
-                    MetalSpectrumView(client: model.client, channel: midSide ? leftChannel : channel,
-                                      otherChannel: rightChannel, transform: midSide ? (side ? 2 : 1) : 0,
-                                      slow: slowSpectrum, peakHold: peakHold)
-                        .id("\(model.snapshot.memoryGeneration)-\(channel)-\(leftChannel)-\(rightChannel)-\(midSide)-\(slowSpectrum)-\(peakHold)")
+                if model.snapshot.validHistoryFrames >= UInt64(fftSize) {
+                    MetalSpectrumView(client: model.client, channel: leftChannel,
+                                      otherChannel: rightChannel, transform: midSide ? (side ? 2 : 1) : 3,
+                                      slow: slowSpectrum, peakHold: peakHold, fftSize: fftSize, window: spectrumWindow)
+                        .id("\(model.snapshot.memoryGeneration)-\(channel)-\(leftChannel)-\(rightChannel)-\(midSide)-\(slowSpectrum)-\(peakHold)-\(fftSize)-\(spectrumWindow)")
                         .padding(.leading, 38).padding(.trailing, 12)
                         .padding(.top, 12).padding(.bottom, 30)
                 } else {
@@ -436,15 +533,16 @@ struct AudioObserverPanel: View {
                                       @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline)
+                Text(title).font(.title3.weight(.semibold))
                 Text(subtitle).font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).minimumScaleFactor(0.85)
             }
             content()
         }
-        .padding(10)
+        .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.primary.opacity(0.035))
+        .background(LinearGradient(colors: [Color(red: 0.105, green: 0.14, blue: 0.165), Color(red: 0.065, green: 0.085, blue: 0.10)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.09), lineWidth: 1).allowsHitTesting(false) }
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 

@@ -242,6 +242,11 @@ final class AudioObserverMetricsState: @unchecked Sendable {
     func plotValues(mode: UInt32, index: UInt32) -> (Float, Float, Bool) {
         lock.lock()
         defer { lock.unlock() }
+        if mode == 4 {
+            let loudness = value.analysis.loudness
+            let measurement = [loudness.momentaryLUFS, loudness.shortTermLUFS, loudness.integratedLUFS][Int(index)]
+            return (measurement.value ?? -60, 0, measurement.value?.isFinite == true)
+        }
         if mode == 0 {
             let channel = [value.analysis.levels.left, value.analysis.levels.right,
                            value.analysis.levels.mid, value.analysis.levels.side][Int(index)]
@@ -717,14 +722,15 @@ final class ASFWAudioObserverClient {
         guard let library = device.makeDefaultLibrary(),
               let phaseVertex = library.makeFunction(name: "asfwPhaseVertex"),
               let waveformVertex = library.makeFunction(name: "asfwWaveformVertex"),
-              let fragment = library.makeFunction(name: "asfwAudioFragment") else {
+              let fragment = library.makeFunction(name: "asfwAudioFragment"),
+              let waveformFragment = library.makeFunction(name: "asfwWaveformFragment") else {
             closeConnection()
             throw AudioObserverError.shaderUnavailable
         }
         let phaseDescriptor = Self.renderDescriptor(vertex: phaseVertex,
                                                     fragment: fragment)
         let waveformDescriptor = Self.renderDescriptor(vertex: waveformVertex,
-                                                       fragment: fragment)
+                                                       fragment: waveformFragment)
         do {
             phaseRenderPipeline = try device.makeRenderPipelineState(descriptor: phaseDescriptor)
             waveformRenderPipeline = try device.makeRenderPipelineState(descriptor: waveformDescriptor)

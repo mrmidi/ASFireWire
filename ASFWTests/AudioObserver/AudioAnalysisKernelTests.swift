@@ -204,7 +204,7 @@ struct AudioAnalysisKernelTests {
             return view.subviews.flatMap(metalViews)
         }
         let plots = metalViews(host)
-        try #require(plots.count == 7)
+        try #require(plots.count == 1)
         let device = try #require(MTLCreateSystemDefaultDevice())
         for plot in plots {
             #expect(plot.bounds.width > 0)
@@ -252,7 +252,7 @@ struct AudioAnalysisKernelTests {
         #expect(recoveredRenderer !== firstRenderer)
     }
 
-    @Test(arguments: [UInt32(0), 1, 2])
+    @Test(arguments: [UInt32(0), 1, 2, 3, 4])
     func analyzerPlotsRenderOnTheGPU(mode: UInt32) throws {
         let device = try #require(MTLCreateSystemDefaultDevice())
         let library = try #require(device.makeDefaultLibrary())
@@ -274,7 +274,7 @@ struct AudioAnalysisKernelTests {
         var params = AnalyzerPlotParams(mode: mode, index: 0, active: 1, count: 601,
             latestFrame: 2_880_000, sampleRate: 48_000, value: 0.5, peak: 0.75, width: 64, height: 64)
         let points: [UInt32] = (0...600).flatMap { i in
-            [UInt32(i * 4_800), 0, Float(0.5).bitPattern, Float(0.1).bitPattern, 0, 0]
+            [UInt32(i * 4_800), 0, Float(mode == 3 ? -18 : 0.5).bitPattern, Float(mode == 3 ? -20 : 0.1).bitPattern, 0, Float(-22).bitPattern]
         }
         let pointBuffer = try #require(device.makeBuffer(bytes: points, length: points.count * 4, options: .storageModeShared))
         let queue = try #require(device.makeCommandQueue())
@@ -283,10 +283,10 @@ struct AudioAnalysisKernelTests {
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBytes(&params, length: MemoryLayout<AnalyzerPlotParams>.stride, index: 0)
         var emptyPoint = AnalyzerHistoryVertex(frame: 0, correlation: 0, sideEnergy: 0, breakBefore: 0)
-        if mode == 2 { encoder.setVertexBuffer(pointBuffer, offset: 0, index: 1) }
+        if mode == 2 || mode == 3 { encoder.setVertexBuffer(pointBuffer, offset: 0, index: 1) }
         else { encoder.setVertexBytes(&emptyPoint, length: MemoryLayout<AnalyzerHistoryVertex>.stride, index: 1) }
-        encoder.drawPrimitives(type: mode == 2 ? .line : .triangle,
-                               vertexStart: 0, vertexCount: mode == 2 ? 1_200 : 12)
+        encoder.drawPrimitives(type: (mode == 2 || mode == 3) ? .line : .triangle,
+                               vertexStart: 0, vertexCount: (mode == 2 || mode == 3) ? 1_200 : 12)
         encoder.endEncoding()
         command.commit()
         command.waitUntilCompleted()

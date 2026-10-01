@@ -49,6 +49,10 @@ fragment float4 asfwAudioFragment() {
     return float4(0.20f, 0.91f, 0.73f, 1.0f);
 }
 
+fragment float4 asfwWaveformFragment(constant float4& color [[buffer(0)]]) {
+    return color;
+}
+
 // Keep in sync with AudioAnalysisLayout; regression tests exercise both kernels
 // together and check the chunk region plus an output-buffer canary.
 constant uint analysisChunkOffset = 96;
@@ -351,14 +355,14 @@ struct AnalyzerPlotParams {
     float value; float peak; float width; float height;
 };
 struct AnalyzerHistoryVertex {
-    ulong frame; float correlation; float sideEnergy; uint breakBefore; uint padding;
+    ulong frame; float correlation; float sideEnergy; uint breakBefore; float integrated;
 };
 struct AnalyzerPlotVertex { float4 position [[position]]; float4 color; };
 vertex AnalyzerPlotVertex asfwAnalyzerPlotVertex(uint vid [[vertex_id]],
     constant AnalyzerPlotParams& p [[buffer(0)]],
     device const AnalyzerHistoryVertex* points [[buffer(1)]]) {
     float4 color = float4(0.20f, 0.91f, 0.73f, 1);
-    if (p.mode == 2) {
+    if (p.mode == 2 || p.mode == 3) {
         uint segment = vid / 2;
         AnalyzerHistoryVertex a = points[segment];
         AnalyzerHistoryVertex b = points[segment + 1];
@@ -369,6 +373,14 @@ vertex AnalyzerPlotVertex asfwAnalyzerPlotVertex(uint vid [[vertex_id]],
         float x = 1.0f - 2.0f * age / 60.0f;
         float y = p.index == 0 ? point.correlation : point.sideEnergy * 2.0f - 1.0f;
         color = p.index == 0 ? float4(0.1f, 0.9f, 0.3f, 1) : float4(0.1f, 0.8f, 1, 1);
+        if (p.mode == 3) {
+            float value = p.index == 0 ? point.correlation : p.index == 1 ? point.sideEnergy : point.integrated;
+            y = 2.0f * (value + 36.0f) / 30.0f - 1.0f;
+            color = p.index == 0 ? float4(0.1f,0.9f,0.4f,1) : p.index == 1 ? float4(0.1f,0.55f,1,1) : float4(0.65f,0.25f,1,1);
+            AnalyzerHistoryVertex other = points[segment + 1 - vid % 2];
+            float otherValue = p.index == 0 ? other.correlation : p.index == 1 ? other.sideEnergy : other.integrated;
+            if (!isfinite(value) || !isfinite(otherValue)) color.a = 0;
+        }
         if (broken || age > 60) color.a = 0;
         return { float4(x, clamp(y, -1.0f, 1.0f), 0, 1), color };
     }
@@ -378,10 +390,17 @@ vertex AnalyzerPlotVertex asfwAnalyzerPlotVertex(uint vid [[vertex_id]],
                                float2(0,1), float2(1,0), float2(1,1) };
     float2 corner = corners[vid % 6];
     float2 lo; float2 hi;
-    if (p.mode == 0) {
+    if (p.mode == 4) {
+        float level = clamp((p.value + 60.0f) / 60.0f, 0.0f, 1.0f);
+        lo = float2(-1,-1); hi = float2(-1 + 2 * level,1);
+        color = p.index == 0 ? float4(0.1f,0.9f,0.4f,1) : p.index == 1 ? float4(0.1f,0.55f,1,1) : float4(0.65f,0.25f,1,1);
+        if (!p.active || rectangle == 1) color.a = 0;
+    } else if (p.mode == 0) {
         float level = clamp((20.0f * log10(max(p.value, 1.0e-6f)) + 60) / 66, 0.0f, 1.0f);
         float peak = clamp((20.0f * log10(max(p.peak, 1.0e-6f)) + 60) / 66, 0.0f, 1.0f);
         lo = float2(-1, -1); hi = float2(1, -1 + 2 * level);
+        color = mix(float4(0.1f,0.88f,0.48f,1), float4(1,0.55f,0.1f,1),
+                    clamp((corner.y * level - 0.65f) / 0.35f, 0.0f, 1.0f));
         if (rectangle == 1) {
             float y = -1 + 2 * peak;
             lo.y = max(-1.0f, y - 2 / max(1.0f, p.height));
