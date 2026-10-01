@@ -34,6 +34,7 @@ constexpr uint64_t kPacketDumpAnchorPayload = ~1ull;
 // User-client plumbing shared with the host app.
 constexpr uint32_t kLabDiagUserClientType = 0x4C444247; // 'LDBG'
 constexpr uint64_t kLabDiagSelectorDumpPackets = 0;
+constexpr uint64_t kLabDiagSelectorGetAudioViewState = 1;
 
 constexpr uint32_t kDumpFlagIsData = 1u << 0;        // published as a data packet
 constexpr uint32_t kDumpFlagPublished = 1u << 1;     // provider still holds this index

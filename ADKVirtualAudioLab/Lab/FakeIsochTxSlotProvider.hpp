@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Ports/IAmdtpTxSlotProvider.hpp"
+#include "../Protocols/Audio/AMDTP/AmdtpPacketTimeline.hpp"
 
 #include <array>
 #include <cstdint>
@@ -10,7 +11,8 @@ namespace ASFW::Lab {
 class FakeIsochTxSlotProvider final
     : public Protocols::Audio::AMDTP::IAmdtpTxSlotProvider {
 public:
-    static constexpr uint32_t kSlotCount = 512;
+    static constexpr uint32_t kSlotCount =
+        Protocols::Audio::AMDTP::kAmdtpPacketHistorySlots;
     static constexpr uint32_t kSlotCapacityBytes = 512;
 
     FakeIsochTxSlotProvider() noexcept = default;

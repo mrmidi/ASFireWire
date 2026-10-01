@@ -58,6 +58,11 @@ jobs:
           xcode-select -p
           xcodebuild -version
 
+      - name: Install Metal toolchain
+        # Xcode 26+ ships the Metal compiler as a separate component; the
+        # analyzer's .metal shaders need it and the runner image lacks it.
+        run: xcodebuild -downloadComponent MetalToolchain
+
       # Derive every version string from the tag so they cannot drift apart.
       # There are two independent sources in the repo:
       #   VERSION.txt      -> bump.sh -> DriverVersion.hpp (driver's kSemanticVersion)

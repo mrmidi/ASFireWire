@@ -1256,6 +1256,76 @@ kern_return_t ASFWDriver::CopyDVCaptureMemory(
     return ivars->context->dvCapture.CopyMemory(ownerToken, options, memory);
 }
 
+kern_return_t ASFWDriver::CopyAudioObserverMemory(
+    uint64_t guid,
+    uint64_t* outMemoryGeneration,
+    IOMemoryDescriptor** outMemory) {
+    if (outMemoryGeneration) { *outMemoryGeneration = 0; }
+    if (outMemory) { *outMemory = nullptr; }
+    if (guid == 0 || !outMemoryGeneration || !outMemory) {
+        return kIOReturnBadArgument;
+    }
+    if (!ivars || !ivars->context || !ivars->context->deps.audioRuntimeRegistry) {
+        return kIOReturnNotReady;
+    }
+    auto endpoint = ivars->context->deps.audioRuntimeRegistry->FindEndpointRuntime(guid);
+    if (!endpoint) {
+        return kIOReturnNotFound;
+    }
+    ASFW::Audio::AudioOutputObserverState state{};
+    const kern_return_t kr = endpoint->CopyOutputObserverMemory(outMemory, state);
+    if (kr == kIOReturnSuccess) {
+        *outMemoryGeneration = state.memoryGeneration;
+    }
+    return kr;
+}
+
+kern_return_t ASFWDriver::CopyAudioObserverState(
+    uint64_t guid,
+    uint64_t* outWriteEndFrame,
+    uint64_t* outOldestValidFrame,
+    uint64_t* outSessionEpoch,
+    uint64_t* outDiscontinuityEpoch,
+    uint64_t* outMemoryGeneration,
+    uint32_t* outActiveRingFrames,
+    uint32_t* outChannels,
+    uint32_t* outSampleRateHz) {
+    if (outWriteEndFrame) { *outWriteEndFrame = 0; }
+    if (outOldestValidFrame) { *outOldestValidFrame = 0; }
+    if (outSessionEpoch) { *outSessionEpoch = 0; }
+    if (outDiscontinuityEpoch) { *outDiscontinuityEpoch = 0; }
+    if (outMemoryGeneration) { *outMemoryGeneration = 0; }
+    if (outActiveRingFrames) { *outActiveRingFrames = 0; }
+    if (outChannels) { *outChannels = 0; }
+    if (outSampleRateHz) { *outSampleRateHz = 0; }
+    if (guid == 0 || !outWriteEndFrame || !outOldestValidFrame ||
+        !outSessionEpoch || !outDiscontinuityEpoch || !outMemoryGeneration ||
+        !outActiveRingFrames || !outChannels || !outSampleRateHz) {
+        return kIOReturnBadArgument;
+    }
+    if (!ivars || !ivars->context || !ivars->context->deps.audioRuntimeRegistry) {
+        return kIOReturnNotReady;
+    }
+    auto endpoint = ivars->context->deps.audioRuntimeRegistry->FindEndpointRuntime(guid);
+    if (!endpoint) {
+        return kIOReturnNotFound;
+    }
+    ASFW::Audio::AudioOutputObserverState state{};
+    const kern_return_t kr = endpoint->CopyOutputObserverState(state);
+    if (kr != kIOReturnSuccess) {
+        return kr;
+    }
+    *outWriteEndFrame = state.writeEndFrame;
+    *outOldestValidFrame = state.oldestValidFrame;
+    *outSessionEpoch = state.sessionEpoch;
+    *outDiscontinuityEpoch = state.discontinuityEpoch;
+    *outMemoryGeneration = state.memoryGeneration;
+    *outActiveRingFrames = state.activeRingFrames;
+    *outChannels = state.channels;
+    *outSampleRateHz = state.sampleRateHz;
+    return kIOReturnSuccess;
+}
+
 // =============================================================================
 // MARK: - Isochronous Transmit
 // =============================================================================

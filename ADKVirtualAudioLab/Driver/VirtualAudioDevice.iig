@@ -34,11 +34,14 @@ public:
 
     virtual kern_return_t HandleChangeSampleRate(double in_sample_rate) override LOCALONLY;
 
-    // M3: the dext clock model — a timer fires once per ZTS period, anchors
-    // UpdateCurrentZeroTimestamp with the raw fire time, and exposes the next
-    // period's packets (the lab's stand-in for a hardware ring interrupt).
+    // The ZTS timer publishes raw anchors on the production period grid.
     virtual void ZtsTimerOccurred(OSAction* action,
                                   uint64_t time) TYPE(IOTimerDispatchSource::TimerOccurred);
+
+    // The transport pump advances fake packet exposure and capture progress
+    // independently of the much slower ZTS publication cadence.
+    virtual void TransportPumpTimerOccurred(OSAction* action,
+                                             uint64_t time) TYPE(IOTimerDispatchSource::TimerOccurred);
 
     // Inspector dump: snapshot up to in_count recent packets (ending at
     // in_anchor, ~0 = latest) into a PacketDumpBlob. Dispatches onto the
@@ -46,6 +49,16 @@ public:
     virtual kern_return_t CopyPacketDump(uint32_t in_count,
                                          uint64_t in_anchor,
                                          OSData** out_data) LOCALONLY;
+
+    virtual kern_return_t CopyOutputRingMemory(uint64_t* out_options,
+                                               IOMemoryDescriptor** out_memory) LOCALONLY;
+    virtual kern_return_t GetAudioViewState(uint64_t* out_write_end_frame,
+                                            uint32_t* out_active_ring_frames,
+                                            uint32_t* out_channels,
+                                            uint32_t* out_sample_rate,
+                                            bool* out_io_running,
+                                            uint64_t* out_epoch,
+                                            uint32_t* out_valid_history_frames) LOCALONLY;
 };
 
 #endif

@@ -27,6 +27,17 @@
 
 namespace ASFW::Audio {
 
+struct AudioOutputObserverState final {
+    uint64_t writeEndFrame{0};
+    uint64_t oldestValidFrame{0};
+    uint64_t sessionEpoch{0};
+    uint64_t discontinuityEpoch{0};
+    uint64_t memoryGeneration{0};
+    uint32_t activeRingFrames{0};
+    uint32_t channels{0};
+    uint32_t sampleRateHz{0};
+};
+
 class AudioEndpointRuntime final : public Runtime::IDirectAudioBindingSource {
 public:
     explicit AudioEndpointRuntime(uint64_t guid) noexcept : guid_(guid), lock_(IOLockAlloc()) {}
@@ -225,6 +236,45 @@ public:
         return kIOReturnSuccess;
     }
 
+    // Diagnostic observer export. It retains the exact output descriptor used
+    // by the AudioDriverKit stream and snapshots metadata under the runtime
+    // lock; sample bytes remain shared and are never copied.
+    [[nodiscard]] kern_return_t CopyOutputObserverMemory(
+        IOMemoryDescriptor** outMemory,
+        AudioOutputObserverState& outState) noexcept {
+        outState = {};
+        if (outMemory) { *outMemory = nullptr; }
+        if (!outMemory || !lock_) {
+            return kIOReturnBadArgument;
+        }
+        IOLockLock(lock_);
+        if (!HasCompleteDirectAudioMemoryLocked() || !directControl_) {
+            IOLockUnlock(lock_);
+            return kIOReturnNotReady;
+        }
+        directOutputMemory_->retain();
+        *outMemory = directOutputMemory_;
+        CopyOutputObserverStateLocked(outState);
+        IOLockUnlock(lock_);
+        return kIOReturnSuccess;
+    }
+
+    [[nodiscard]] kern_return_t CopyOutputObserverState(
+        AudioOutputObserverState& outState) noexcept {
+        outState = {};
+        if (!lock_) {
+            return kIOReturnNotReady;
+        }
+        IOLockLock(lock_);
+        if (!HasCompleteDirectAudioMemoryLocked() || !directControl_) {
+            IOLockUnlock(lock_);
+            return kIOReturnNotReady;
+        }
+        CopyOutputObserverStateLocked(outState);
+        IOLockUnlock(lock_);
+        return kIOReturnSuccess;
+    }
+
     void ReleaseDirectAudioMemory() noexcept {
         if (lock_) {
             IOLockLock(lock_);
@@ -336,6 +386,21 @@ public:
     }
 
 private:
+    void CopyOutputObserverStateLocked(AudioOutputObserverState& out) const noexcept {
+        const auto& control = *directControl_;
+        out.writeEndFrame =
+            control.playbackRingWriteFrame.load(std::memory_order_acquire);
+        out.oldestValidFrame =
+            control.playbackRingOldestValidFrame.load(std::memory_order_relaxed);
+        out.sessionEpoch = control.generation.load(std::memory_order_acquire);
+        out.discontinuityEpoch =
+            control.playbackRingDiscontinuityGeneration.load(std::memory_order_relaxed);
+        out.memoryGeneration = directGeneration_;
+        out.activeRingFrames = directOutputCapacityFrames_;
+        out.channels = directOutputChannels_;
+        out.sampleRateHz = directSampleRateHz_;
+    }
+
     [[nodiscard]] static uint32_t ClampAudioChannels(uint32_t channels) noexcept {
         if (channels == 0) {
             return 0;

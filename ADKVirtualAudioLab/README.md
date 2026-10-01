@@ -90,6 +90,10 @@ Facts established so far:
   all streams added to the device. `in_supports_prewarming` is an init-time capability flag.
 - **User client** (`AudioDriverKitTypes.h`): `kIOUserAudioDriverUserClientType = 1128363364`
   is the only type the lab driver forwards to `super::NewUserClient`.
+- **Output observer** (`IOUserClient.iig`): `CopyClientMemoryForType` is the shared-memory
+  mapping hook; the lab returns the same output stream descriptor read-only. The host passes
+  that mapping directly to Metal's `newBufferWithBytesNoCopy` and displays the latest channel-0
+  samples. Runtime GPU visibility remains a bench validation item.
 
 ### MIDIDriverKit (Milestone 4 only)
 
@@ -176,7 +180,7 @@ ADKVirtualAudioLab/
 │   ├── ICycleTimeline         production: cycle timer · lab: synthesized from sample_time
 │   └── IDiagSink              RT-safe counters/snapshot sink
 ├── Lab/              Host-side adapters and instruments.
-│   ├── FakeIsochTxSlotProvider   dumb storage: 256 slots × 512 B (mirrors IT ring geometry)
+│   ├── FakeIsochTxSlotProvider   dumb storage: 1024 packet slots × 512 B (packet domain)
 │   ├── VerifyingSlotProvider     decorator wrapping ANY provider — the invariant checker
 │   ├── SimulatedCycleTimeline    6 frames per 125 µs cycle at 48 kHz
 │   ├── WriteEndTraceReplayer     replays recorded (sample_time, host_time, frames) sequences

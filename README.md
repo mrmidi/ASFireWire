@@ -104,19 +104,17 @@ Even a failed test report is valuable. "It does not enumerate at all" is still u
 
 ## Collecting logs
 
-If you are reporting a bug, please share the logs from the ASFW app:
+After reproducing a problem, export and attach these from the ASFW app when possible:
 
-1. Open **System Logs** in the sidebar.
-2. Reproduce the problem.
-3. Copy the log entries around the failure and attach them to the report.
+1. **1394 Diagnostics** — choose **Save to .txt...**.
+2. **DICE Report** — choose **Save to .txt...**.
+3. **System Logs** — choose **Export Logs** to save the retained driver logs.
 
-Please include the ASFW version, device, and approximate time of the reproduction. Do
-not worry about interpreting the messages or removing repeated lines — the complete
-log is more useful.
-
-If the app cannot show logs, use Console.app to reproduce the problem and export the
-entries mentioning ASFW, then attach that file instead. The [Logging wiki page](https://github.com/mrmidi/ASFireWire/wiki/Logging)
-has optional fallback instructions if a maintainer asks for a broader capture.
+Attach the exported files as-is; there is no need to copy log text into your message.
+Include what happened and when it happened, plus your device, Mac, and macOS version.
+If you use Codex or Claude with ASFW's optional MCP control plane, an MCP-connected
+agent can also inspect live diagnostics. MCP is developer-only, disabled by default,
+and should remain bound to localhost; see [Developer MCP control plane](#developer-mcp-control-plane).
 
 ## Hardware compatibility
 

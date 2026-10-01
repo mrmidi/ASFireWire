@@ -95,6 +95,7 @@ struct AudioDebugView: View {
                         if let firstStream = device.allStreams.first, !firstStream.availablePhysicalFormats.isEmpty {
                             AvailableFormatsSection(formats: firstStream.availablePhysicalFormats)
                         }
+
                     }
                     .padding()
                 }

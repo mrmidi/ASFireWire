@@ -1,11 +1,8 @@
 import SwiftUI
 import SystemExtensions
 
-// Minimal activation host for the lab dext (Milestone 3). A DriverKit
-// extension can only be activated by an app that embeds it in
-// Contents/Library/SystemExtensions — this app does exactly that and nothing
-// else. All observation happens via the dext's IOLog output:
-//   log stream --predicate 'sender == "net.mrmidi.ASFW.ADKVirtualAudioLab"'
+// Activation host and observer for the lab dext. The Phase Scope tab maps the
+// output ring read-only and renders directly from that mapping with Metal.
 
 @main
 struct ADKLabHostApp: App {
@@ -38,14 +35,24 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
 
-            Text("After activation, the virtual device appears in Audio MIDI Setup. Start playback at it, then stop — the dext dumps verifier and O/C counters at StopIO (see BENCH.md). The inspector below snapshots recent packets on demand (⌘D) without touching the streaming path.")
+            Text("After activation, the virtual device appears in Audio MIDI Setup. Choose it as an output and play a test tone to inspect its output ring.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
 
             Divider()
 
-            PacketInspectorView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            TabView {
+                Tab("Packets", systemImage: "waveform.path") {
+                    PacketInspectorView()
+                }
+                Tab("Phase Scope", systemImage: "waveform.path.ecg") {
+                    AudioPhaseScopeView()
+                }
+                Tab("Waveform", systemImage: "waveform") {
+                    AudioWaveformView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(20)
     }
