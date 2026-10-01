@@ -142,4 +142,12 @@ void InterruptManager::UnmaskInterrupts(HardwareInterface* hw, uint32_t bits) {
     }
 }
 
+void InterruptManager::RetriggerPendingInterrupt(HardwareInterface* hw) {
+    if (!hw) return;
+    if (auto access = hw->TryBeginAccess()) {
+        access.Write(Register32::kIntMaskClear, IntMaskBits::kMasterIntEnable);
+        access.WriteAndFlush(Register32::kIntMaskSet, IntMaskBits::kMasterIntEnable);
+    }
+}
+
 } // namespace ASFW::Driver

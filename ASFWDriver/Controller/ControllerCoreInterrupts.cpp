@@ -135,9 +135,13 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
         hw.ClearIntEvents(faultAcks);
     }
 
-    // Only clear non-reset, non-sticky completion events generically here.
-    uint32_t toAck = events & ~(IntEventBits::kBusReset | IntEventBits::kSelfIDComplete |
-                                IntEventBits::kSelfIDComplete2 | faultAcks);
+    // Acknowledge everything read except busReset, which must stay set until
+    // the reset FSM has quiesced AT (OHCI 1.1 §7.2.3.2) and which OnIrq has
+    // masked. selfIDComplete/selfIDComplete2 are acknowledged here because
+    // they are already latched: left set and enabled, they kept the interrupt
+    // asserted, and an MSI controller then sends no message for anything that
+    // follows. Linux clears the same set in its handler (ohci.c:2219-2224).
+    uint32_t toAck = events & ~(IntEventBits::kBusReset | faultAcks);
     if (toAck != 0U) {
         hw.ClearIntEvents(toAck);
     }

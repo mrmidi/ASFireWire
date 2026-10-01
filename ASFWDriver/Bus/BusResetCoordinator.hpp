@@ -57,7 +57,7 @@ class BusResetCoordinatorTestPeer;
  * The coordinator owns the sequencing constraints around Self-ID capture,
  * async transmit quiescence, Config ROM restoration, interrupt ownership, and
  * post-reset discovery handoff. Heavy work stays off the IRQ path; `OnIrq()`
- * only latches reset-related bits and schedules deferred processing.
+ * latches reset-related bits, masks busReset, and schedules deferred processing.
  *
  * Key spec constraints preserved here:
  * - OHCI 1.1 §6.1 / Table 6-1 and §11.5 for `selfIDComplete2` sticky semantics
@@ -99,10 +99,14 @@ class BusResetCoordinator {
     /**
      * Latch bus-reset related interrupt bits and schedule deferred recovery work.
      *
-     * OHCI 1.1 §6.1 / Table 6-1 defines `selfIDComplete2` as a sticky companion
-     * to `selfIDComplete`, and §11.5 states it is cleared only via
-     * `IntEventClear`. This ingress path records the bits but leaves the
-     * ordering-sensitive clear/consume policy to the coordinator FSM.
+     * Runs inside the interrupt handler. A busReset edge is masked here, before
+     * the handler returns, because `IntEvent.busReset` stays set until the FSM
+     * has quiesced AT (OHCI 1.1 §7.2.3.2), and the controller's MSI fires only
+     * when no enabled event is pending: an unmasked, still-set busReset would
+     * swallow the edge of every event that arrives meanwhile (2026-10-01: the
+     * driver never heard the Duet join after an 1814 unplug). Linux masks it in
+     * its handler too (ohci.c:2227-2229). The handler acknowledges
+     * `selfIDComplete`/`selfIDComplete2` itself; only the latch lives here.
      */
     void OnIrq(uint32_t intEvent, uint64_t timestamp);
 
@@ -304,8 +308,7 @@ class BusResetCoordinator {
     void UnmaskBusReset();
     void ForceUnmaskBusResetIfNeeded();
     void HandleStraySelfID();
-    void ClearStaleSelfIDComplete2();
-    void ClearConsumedSelfIDInterrupts();
+    void ConsumeSelfIDLatch();
     void ArmSelfIDBuffer();
     void StopFlushAT();
     bool DecodeSelfID();

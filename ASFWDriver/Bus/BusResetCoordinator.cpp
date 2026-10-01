@@ -125,6 +125,12 @@ void BusResetCoordinator::OnIrq(uint32_t intEvent, uint64_t timestamp) {
         relevant = true;
         ++busResetIrqCount_;
         LogBusResetEdgeLatched(timestamp);
+        MaskBusReset();
+        // A Self-ID completion latched before this edge belongs to the reset it
+        // replaces. One in this same snapshot (latched below) belongs to this
+        // one: the handler has already cleared it in hardware, so the FSM must
+        // not drop it when it begins the new cycle.
+        selfIdLatch_.Reset();
     }
 
     if ((intEvent & IntEventBits::kSelfIDComplete) != 0U) {
