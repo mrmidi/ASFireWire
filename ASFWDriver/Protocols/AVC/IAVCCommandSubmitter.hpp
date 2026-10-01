@@ -11,6 +11,10 @@
 #include "AVCDefs.hpp"
 #include "AVCCommand.hpp"
 
+namespace ASFW::AVC {
+class IAvcUnit;
+}
+
 namespace ASFW::Protocols::AVC {
 
 class IAVCCommandSubmitter {
@@ -21,6 +25,8 @@ public:
     /// @param cdb Command descriptor block
     /// @param completion Callback with result and response
     virtual void SubmitCommand(const AVCCdb& cdb, AVCCompletion completion) = 0;
+
+    [[nodiscard]] virtual ASFW::AVC::IAvcUnit* AsAvcUnit() noexcept { return nullptr; }
 };
 
 } // namespace ASFW::Protocols::AVC

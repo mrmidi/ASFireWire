@@ -1,0 +1,516 @@
+Apple FireBug 2.3 05.04.01
+
+  [no activity logged for 0d 0h 15m 56s    Date/Time: 2005.12.17 15:38:51]
+058:2489:1246  BUS RESET ---------------------------------------------------------------------------
+058:2489:1246  Self-ID  803fc464  Node=0  Link=0  gap=3f  spd=1394b  C=0  pwr=4: use <3W   
+058:2489:1459  Self-ID  813f84e6  Node=1  Link=0  gap=3f  spd=s400  C=0  pwr=4: use <3W  *IR*
+058:2489:1668  Self-ID  827f8cc0  Node=2  Link=1  gap=3f  spd=s400  C=1  pwr=4: use <3W   
+   Bus Topology:
+   [node 2:  Root,  IRM,  s400,  use <3W,  ID=827f8cc0]
+   |  
+   [node 1:  s400,  use <3W,  ID=813f84e6]  ## FireBug ##
+   |  
+   [node 0:  1394b,  use <3W,  ID=803fc464]
+058:2490:1320  CycleStart from ffc2, value 74ddc00e = 058:3548:0014 (First one after Bus Reset)
+058:6522:0257  PHY Config, force_root = 02
+065:6893:2479  BUS RESET ---------------------------------------------------------------------------
+065:6893:2479  Self-ID  807fc466  Node=0  Link=1  gap=3f  spd=1394b  C=0  pwr=4: use <3W  *IR*
+065:6893:2692  Self-ID  813f84e4  Node=1  Link=0  gap=3f  spd=s400  C=0  pwr=4: use <3W   
+065:6893:2903  Self-ID  827f8cc0  Node=2  Link=1  gap=3f  spd=s400  C=1  pwr=4: use <3W   
+   Bus Topology:
+   [node 2:  Root,  IRM,  s400,  use <3W,  ID=827f8cc0]
+   |  
+   [node 1:  s400,  use <3W,  ID=813f84e4]  ## FireBug ##
+   |  
+   [node 0:  1394b,  use <3W,  ID=807fc466]
+065:6894:1609  CycleStart from ffc2, value 83f1300e = 065:7955:0014 (First one after Bus Reset)
+065:6899:0089  BUS RESET ---------------------------------------------------------------------------
+065:6899:0089  Self-ID  807fc466  Node=0  Link=1  gap=3f  spd=1394b  C=0  pwr=4: use <3W  *IR*
+065:6899:0303  Self-ID  813f84e4  Node=1  Link=0  gap=3f  spd=s400  C=0  pwr=4: use <3W   
+065:6899:0513  Self-ID  827f8cc0  Node=2  Link=1  gap=3f  spd=s400  C=1  pwr=4: use <3W   
+   Bus Topology:
+   [node 2:  Root,  IRM,  s400,  use <3W,  ID=827f8cc0]
+   |  
+   [node 1:  s400,  use <3W,  ID=813f84e4]  ## FireBug ##
+   |  
+   [node 0:  1394b,  use <3W,  ID=807fc466]
+065:6899:1603  CycleStart from ffc2, value 83f1800e = 065:7960:0014 (First one after Bus Reset)
+065:7836:2533  PHY Global Resume from node 0 [003c0000]
+065:7840:0351  Qread from ffc0 to ffc2.ffff.f000.0400, tLabel 1 [ack 2] s100
+065:7841:1917  QRresp from ffc2 to ffc0, tLabel 1, value 04208fe2 [ack 1] s100
+065:7842:2051  Qread from ffc0 to ffc2.ffff.f000.0408, tLabel 2 [ack 2] s100
+065:7843:2832  QRresp from ffc2 to ffc0, tLabel 2, value 20ff5003 [ack 1] s100
+065:7844:2208  Qread from ffc0 to ffc2.ffff.f000.040c, tLabel 3 [ack 2] s100
+065:7846:0033  QRresp from ffc2 to ffc0, tLabel 3, value 0003db0a [ack 1] s100
+065:7846:3071  Qread from ffc0 to ffc2.ffff.f000.0410, tLabel 4 [ack 2] s100
+065:7848:0893  QRresp from ffc2 to ffc0, tLabel 4, value 0000d112 [ack 1] s100
+065:7850:0055  Qread from ffc0 to ffc2.ffff.f000.0228, tLabel 5 [ack 2] s100
+065:7851:2488  QRresp from ffc2 to ffc0, tLabel 5, value ffffffff [ack 1] s100
+065:7853:1963  LockRq from ffc0 to ffc2.ffff.f000.0228, size 8, tLabel 6 [ack 2] s100
+               0000   ffffffff ffffffff                     ........
+    IRM: Simultaneous allocate and release (wow!)
+065:7855:1930  LockResp from ffc2 to ffc0, size 4, tLabel 6 [ack 1] s100
+               0000   ffffffff                              ....
+    IRM: Change was accepted
+065:7858:0384  Qread from ffc0 to ffc2.ffff.f000.0414, tLabel 7 [ack 2] s100
+065:7859:1916  QRresp from ffc2 to ffc0, tLabel 7, value 00069838 [ack 1] s100
+065:7860:1473  Qread from ffc0 to ffc2.ffff.f000.0418, tLabel 8 [ack 2] s100
+065:7861:2411  QRresp from ffc2 to ffc0, tLabel 8, value 030003db [ack 1] s100
+065:7862:2187  Qread from ffc0 to ffc2.ffff.f000.041c, tLabel 9 [ack 2] s100
+065:7863:2990  QRresp from ffc2 to ffc0, tLabel 9, value 8100000a [ack 1] s100
+065:7864:2820  Qread from ffc0 to ffc2.ffff.f000.0420, tLabel 10 [ack 2] s100
+065:7866:0724  QRresp from ffc2 to ffc0, tLabel 10, value 1701dddd [ack 1] s100
+065:7867:0307  Qread from ffc0 to ffc2.ffff.f000.0424, tLabel 11 [ack 2] s100
+065:7868:0999  QRresp from ffc2 to ffc0, tLabel 11, value 81000010 [ack 1] s100
+065:7869:1923  Qread from ffc0 to ffc2.ffff.f000.0428, tLabel 12 [ack 2] s100
+065:7870:2819  QRresp from ffc2 to ffc0, tLabel 12, value 0c0083c0 [ack 1] s100
+065:7871:2588  Qread from ffc0 to ffc2.ffff.f000.042c, tLabel 13 [ack 2] s100
+065:7873:0426  QRresp from ffc2 to ffc0, tLabel 13, value d1000001 [ack 1] s100
+065:7873:3071  Qread from ffc0 to ffc2.ffff.f000.0430, tLabel 14 [ack 2] s100
+065:7875:0887  QRresp from ffc2 to ffc0, tLabel 14, value 00040a08 [ack 1] s100
+065:7876:0593  Qread from ffc0 to ffc2.ffff.f000.0434, tLabel 15 [ack 2] s100
+065:7877:1877  QRresp from ffc2 to ffc0, tLabel 15, value 1200a02d [ack 1] s100
+065:7878:2427  Qread from ffc0 to ffc2.ffff.f000.0438, tLabel 16 [ack 2] s100
+065:7880:0250  QRresp from ffc2 to ffc0, tLabel 16, value 13010001 [ack 1] s100
+065:7881:0278  Qread from ffc0 to ffc2.ffff.f000.043c, tLabel 17 [ack 2] s100
+065:7882:0997  QRresp from ffc2 to ffc0, tLabel 17, value 1701dddd [ack 1] s100
+065:7883:0914  Qread from ffc0 to ffc2.ffff.f000.0440, tLabel 18 [ack 2] s100
+065:7884:2190  QRresp from ffc2 to ffc0, tLabel 18, value 8100000d [ack 1] s100
+065:7885:2136  Qread from ffc0 to ffc2.ffff.f000.0444, tLabel 19 [ack 2] s100
+065:7886:3058  QRresp from ffc2 to ffc0, tLabel 19, value 0007e392 [ack 1] s100
+065:7887:2658  Qread from ffc0 to ffc2.ffff.f000.0448, tLabel 20 [ack 2] s100
+065:7889:0475  QRresp from ffc2 to ffc0, tLabel 20, value 00000000 [ack 1] s100
+065:7890:0235  Qread from ffc0 to ffc2.ffff.f000.044c, tLabel 21 [ack 2] s100
+065:7891:0950  QRresp from ffc2 to ffc0, tLabel 21, value 00000000 [ack 1] s100
+065:7892:0500  Qread from ffc0 to ffc2.ffff.f000.0450, tLabel 22 [ack 2] s100
+065:7893:1867  QRresp from ffc2 to ffc0, tLabel 22, value 41706f67 [ack 1] s100
+065:7894:2140  Qread from ffc0 to ffc2.ffff.f000.0454, tLabel 23 [ack 2] s100
+065:7895:3038  QRresp from ffc2 to ffc0, tLabel 23, value 65652045 [ack 1] s100
+065:7896:2937  Qread from ffc0 to ffc2.ffff.f000.0458, tLabel 24 [ack 2] s100
+065:7898:0767  QRresp from ffc2 to ffc0, tLabel 24, value 6c656374 [ack 1] s100
+065:7899:1371  Qread from ffc0 to ffc2.ffff.f000.045c, tLabel 25 [ack 2] s100
+065:7900:2345  QRresp from ffc2 to ffc0, tLabel 25, value 726f6e69 [ack 1] s100
+065:7901:2136  Qread from ffc0 to ffc2.ffff.f000.0460, tLabel 26 [ack 2] s100
+065:7902:3039  QRresp from ffc2 to ffc0, tLabel 26, value 63730000 [ack 1] s100
+065:7903:2798  Qread from ffc0 to ffc2.ffff.f000.0464, tLabel 27 [ack 2] s100
+065:7905:0643  QRresp from ffc2 to ffc0, tLabel 27, value 00035d59 [ack 1] s100
+065:7906:0273  Qread from ffc0 to ffc2.ffff.f000.0468, tLabel 28 [ack 2] s100
+065:7907:0968  QRresp from ffc2 to ffc0, tLabel 28, value 00000000 [ack 1] s100
+065:7908:0631  Qread from ffc0 to ffc2.ffff.f000.046c, tLabel 29 [ack 2] s100
+065:7909:1861  QRresp from ffc2 to ffc0, tLabel 29, value 00000000 [ack 1] s100
+065:7910:1882  Qread from ffc0 to ffc2.ffff.f000.0470, tLabel 30 [ack 2] s100
+065:7911:2777  QRresp from ffc2 to ffc0, tLabel 30, value 44756574 [ack 1] s100
+065:7912:2435  Qread from ffc0 to ffc2.ffff.f000.0474, tLabel 31 [ack 2] s100
+065:7914:0259  QRresp from ffc2 to ffc0, tLabel 31, value 00035d59 [ack 1] s100
+065:7914:3026  Qread from ffc0 to ffc2.ffff.f000.0478, tLabel 32 [ack 2] s100
+065:7916:0900  QRresp from ffc2 to ffc0, tLabel 32, value 00000000 [ack 1] s100
+065:7917:0853  Qread from ffc0 to ffc2.ffff.f000.047c, tLabel 33 [ack 2] s100
+065:7918:2162  QRresp from ffc2 to ffc0, tLabel 33, value 00000000 [ack 1] s100
+065:7919:1914  Qread from ffc0 to ffc2.ffff.f000.0480, tLabel 34 [ack 2] s100
+065:7920:2853  QRresp from ffc2 to ffc0, tLabel 34, value 44756574 [ack 1] s100
+065:7940:0188  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 8 [actl 8], tLab 35 [ack 2] s100
+               0000   00ff0880 01ff0000                     ........
+    FCP Request: 0x0 (CONTROL);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x08
+065:7941:3066  WrResp from ffc2 to ffc0, tLabel 35, rCode 0 [ack 1] s100
+065:7942:2267  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 31 [ack 2] s100
+               0000   08ff0880 01ff0000                     ........
+    FCP Response: 0x8 (NOT IMPLEMENTED);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x08
+065:7944:1943  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 8 [actl 8], tLab 36 [ack 2] s100
+               0000   01ff1800 ffffffff                     ........
+    FCP Request: 0x1 (STATUS);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x18
+      AVC/UNIT:  OUTPUT PLUG SIGNAL FORMAT
+066:0625:1229  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 30 [ack 2] s100
+               0000   08ff0880 01ff0000                     ........
+    FCP Response: 0x8 (NOT IMPLEMENTED);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x08
+066:1308:0195  WrResp from ffc2 to ffc0, tLabel 36, rCode 0 [ack 1] s100
+066:1308:0898  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 1 [ack 2] s100
+               0000   0cff1800 9001ffff                     ........
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x18
+      AVC/UNIT:  OUTPUT PLUG SIGNAL FORMAT
+066:1313:0797  Qwrite from ffc0 to ffc2.ffff.f000.0b00, value 01ff3000, tLabel 37 [ack 2] s100
+    FCP Request: 0x1 (STATUS);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x30
+      AVC/UNIT:  UNIT INFO
+066:1990:2987  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 0 [ack 2] s100
+               0000   0cff1800 9001ffff                     ........
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x18
+      AVC/UNIT:  OUTPUT PLUG SIGNAL FORMAT
+066:2673:1990  WrResp from ffc2 to ffc0, tLabel 37, rCode 0 [ack 1] s100
+066:2673:2735  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 3 [ack 2] s100
+               0000   0cff3007 080003db                     ..0.....
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x30
+      AVC/UNIT:  UNIT INFO
+066:2677:1540  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 8 [actl 8], tLab 38 [ack 2] s100
+               0000   01ff3107 ffffffff                     ..1.....
+    FCP Request: 0x1 (STATUS);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x31
+      AVC/UNIT:  SUBUNIT INFO
+066:2867:0066  PHY Config, force_root = 02
+066:3356:1695  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 2 [ack 2] s100
+               0000   0cff3007 080003db                     ..0.....
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x30
+      AVC/UNIT:  UNIT INFO
+066:4039:0624  WrResp from ffc2 to ffc0, tLabel 38, rCode 0 [ack 1] s100
+066:4039:1326  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 5 [ack 2] s100
+               0000   0cff3107 0860ffff                     ..1..`..
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x31
+      AVC/UNIT:  SUBUNIT INFO
+066:4045:2771  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 8 [actl 8], tLab 39 [ack 2] s100
+               0000   00600880 01ff0000                     .`......
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x08
+066:4722:0334  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 4 [ack 2] s100
+               0000   0cff3107 0860ffff                     ..1..`..
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x31
+      AVC/UNIT:  SUBUNIT INFO
+066:5404:2419  WrResp from ffc2 to ffc0, tLabel 39, rCode 0 [ack 1] s100
+066:5405:0042  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 7 [ack 2] s100
+               0000   09600880 01ff0000                     .`......
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x08
+066:5407:1700  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 40 [ack 2] s100
+               0000   00600980 ff000080 00000000            .`..........
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+066:6087:2129  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 6 [ack 2] s100
+               0000   09600880 01ff0000                     .`......
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x08
+066:6770:1098  WrResp from ffc2 to ffc0, tLabel 40, rCode 0 [ack 1] s100
+066:6770:1883  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 9 [ack 2] s100
+               0000   09600980 11000026 000001ce 000a8100   .`.....&........
+               0010   00060101 ffffffff 01c08108 00040303   ................
+               0020   0005002e 81090008 00900100 00010002   ................
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+066:6773:1825  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 41 [ack 2] s100
+               0000   00600980 ff000080 00260000            .`.......&..
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+066:7453:1109  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 8 [ack 2] s100
+               0000   09600980 11000026 000001ce 000a8100   .`.....&........
+               0010   00060101 ffffffff 01c08108 00040303   ................
+               0020   0005002e 81090008 00900100 00010002   ................
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+066:7458:1401  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 42 [ack 2] s100
+               0000   00600980 ff000080 004c0000            .`.......L..
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:0136:0085  WrResp from ffc2 to ffc0, tLabel 41, rCode 0 [ack 1] s100
+067:0136:1253  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 11 [ack 2] s100
+               0000   09600980 11000026 00260020 810a000b   .`.....&.&. ....
+               0010   06030200 0000ff00 0101ff00 0f000a00   ................
+               0020   0b416e61 6c6f6720 4f757400 002d8109   .Analog Out..-..
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:0139:0699  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 43 [ack 2] s100
+               0000   00600980 ff000080 00720000            .`.......r..
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:0819:0691  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 10 [ack 2] s100
+               0000   09600980 11000026 00260020 810a000b   .`.....&.&. ....
+               0010   06030200 0000ff00 0101ff00 0f000a00   ................
+               0020   0b416e61 6c6f6720 4f757400 002d8109   .Analog Out..-..
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:0822:1361  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 44 [ack 2] s100
+               0000   00600980 ff000080 00980000            .`..........
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:1501:2702  WrResp from ffc2 to ffc0, tLabel 42, rCode 0 [ack 1] s100
+067:1502:1042  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 13 [ack 2] s100
+               0000   09600980 11000026 004c0008 01900105   .`.....&.L......
+               0010   00010002 001f810a 000b0603 02000200   ................
+               0020   ff000301 ff000e00 0a000a41 6e616c6f   ...........Analo
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:1505:1112  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 45 [ack 2] s100
+               0000   00600980 ff000080 00be0000            .`..........
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:2185:0447  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 12 [ack 2] s100
+               0000   09600980 11000026 004c0008 01900105   .`.....&.L......
+               0010   00010002 001f810a 000b0603 02000200   ................
+               0020   ff000301 ff000e00 0a000a41 6e616c6f   ...........Analo
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:2188:0654  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 46 [ack 2] s100
+               0000   00600980 ff000080 00e40000            .`..........
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:2867:2495  WrResp from ffc2 to ffc0, tLabel 43, rCode 0 [ack 1] s100
+067:2868:0584  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 15 [ack 2] s100
+               0000   09600980 11000026 00726720 496e0000   .`.....&.rg In..
+               0010   24810900 08029001 03000100 01001681   $...............
+               0020   0a000740 09010004 00ff0009 000a0005   ...@............
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:2871:2363  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 47 [ack 2] s100
+               0000   00600980 ff000080 010a0000            .`..........
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:3550:2781  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 14 [ack 2] s100
+               0000   09600980 11000026 00726720 496e0000   .`.....&.rg In..
+               0010   24810900 08029001 03000100 01001681   $...............
+               0020   0a000740 09010004 00ff0009 000a0005   ...@............
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:3554:0668  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 48 [ack 2] s100
+               0000   00600980 ff000080 01300000            .`.......0..
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:4233:1763  WrResp from ffc2 to ffc0, tLabel 44, rCode 0 [ack 1] s100
+067:4233:2537  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 17 [ack 2] s100
+               0000   09600980 11000026 00985379 6e630000   .`.....&..Sync..
+               0010   2d810900 08009001 00000100 02001f81   -...............
+               0020   0a000b06 03020002 00ff0003 01ff000e   ................
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:4236:0964  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 49 [ack 2] s100
+               0000   00600980 ff000078 01560000            .`.....x.V..
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:4916:1584  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 16 [ack 2] s100
+               0000   09600980 11000026 00985379 6e630000   .`.....&..Sync..
+               0010   2d810900 08009001 00000100 02001f81   -...............
+               0020   0a000b06 03020002 00ff0003 01ff000e   ................
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:4919:1228  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 50 [ack 2] s100
+               0000   00600980 ff000052 017c0000            .`.....R.|..
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:5599:0555  WrResp from ffc2 to ffc0, tLabel 45, rCode 0 [ack 1] s100
+067:5599:1337  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 19 [ack 2] s100
+               0000   09600980 11000026 00be000a 000a416e   .`.....&......An
+               0010   616c6f67 20496e00 002e8109 00080190   alog In.........
+               0020   01050001 00020020 810a000b 06030200   ....... ........
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:5602:0772  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 51 [ack 2] s100
+               0000   00600980 ff00002c 01a20000            .`.....,....
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:6282:0427  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 18 [ack 2] s100
+               0000   09600980 11000026 00be000a 000a416e   .`.....&......An
+               0010   616c6f67 20496e00 002e8109 00080190   alog In.........
+               0020   01050001 00020020 810a000b 06030200   ....... ........
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:6284:2870  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 52 [ack 2] s100
+               0000   00600980 ff000006 01c80000            .`..........
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:6964:2751  WrResp from ffc2 to ffc0, tLabel 46, rCode 0 [ack 1] s100
+067:6965:0408  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 21 [ack 2] s100
+               0000   09600980 11000026 00e40000 ff000101   .`.....&........
+               0010   ff000f00 0a000b41 6e616c6f 67204f75   .......Analog Ou
+               0020   74000024 81090008 02900103 00010001   t..$............
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:6967:2318  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 53 [ack 2] s100
+               0000   00600980 ff000080 01ee0000            .`..........
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:7647:2715  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 20 [ack 2] s100
+               0000   09600980 11000026 00e40000 ff000101   .`.....&........
+               0010   ff000f00 0a000b41 6e616c6f 67204f75   .......Analog Ou
+               0020   74000024 81090008 02900103 00010001   t..$............
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+067:7651:1429  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 8 [actl 8], tLab 54 [ack 2] s100
+               0000   00600880 00ff0000                     .`......
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x08
+068:0330:1690  WrResp from ffc2 to ffc0, tLabel 47, rCode 0 [ack 1] s100
+068:0330:2845  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 23 [ack 2] s100
+               0000   09600980 11000026 010a0016 810a0007   .`.....&........
+               0010   40090100 0400ff00 09000a00 0553796e   @............Syn
+               0020   63000025 810b000e 00000000 f000ff00   c..%............
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+068:1013:1933  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 22 [ack 2] s100
+               0000   09600980 11000026 010a0016 810a0007   .`.....&........
+               0010   40090100 0400ff00 09000a00 0553796e   @............Syn
+               0020   63000025 810b000e 00000000 f000ff00   c..%............
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+068:1696:0954  WrResp from ffc2 to ffc0, tLabel 48, rCode 0 [ack 1] s100
+068:1696:2449  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 25 [ack 2] s100
+               0000   09600980 11000026 0130fff1 01ff00ff   .`.....&.0......
+               0010   0011000a 000d416e 616c6f67 204f7574   ......Analog Out
+               0020   20310000 25810b00 0e000001 00f000ff    1..%...........
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+068:2379:1510  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 24 [ack 2] s100
+               0000   09600980 11000026 0130fff1 01ff00ff   .`.....&.0......
+               0010   0011000a 000d416e 616c6f67 204f7574   ......Analog Out
+               0020   20310000 25810b00 0e000001 00f000ff    1..%...........
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+068:3062:0480  WrResp from ffc2 to ffc0, tLabel 49, rCode 0 [ack 1] s100
+068:3062:1250  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 27 [ack 2] s100
+               0000   09600980 11000026 015601ff f101ff01   .`.....&.V......
+               0010   ff001100 0a000d41 6e616c6f 67204f75   .......Analog Ou
+               0020   74203200 0024810b 000e0000 0200f001   t 2..$..........
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+068:3745:0340  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 26 [ack 2] s100
+               0000   09600980 11000026 015601ff f101ff01   .`.....&.V......
+               0010   ff001100 0a000d41 6e616c6f 67204f75   .......Analog Ou
+               0020   74203200 0024810b 000e0000 0200f001   t 2..$..........
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+068:4427:2431  WrResp from ffc2 to ffc0, tLabel 51, rCode 0 [ack 1] s100
+068:4428:0133  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 29 [ack 2] s100
+               0000   09600980 11000026 01a2ff01 fff100ff   .`.....&........
+               0010   01ff0010 000a000c 416e616c 6f672049   ........Analog I
+               0020   6e203200 0012810b 000e8000 0400f002   n 2.............
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+068:4936:2127  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 8 [actl 8], tLab 55 [ack 2] s100
+               0000   00600880 00ff0000                     .`......
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x08
+068:5110:2293  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 28 [ack 2] s100
+               0000   09600980 11000026 01a2ff01 fff100ff   .`.....&........
+               0010   01ff0010 000a000c 416e616c 6f672049   ........Analog I
+               0020   6e203200 0012810b 000e8000 0400f002   n 2.............
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+068:5793:1223  WrResp from ffc2 to ffc0, tLabel 53, rCode 0 [ack 1] s100
+068:5793:2391  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 31 [ack 2] s100
+               0000   09600980 12000026 01eeff00 60000103   .`.....&....`...
+               0010   ff800801 02036000 ff000303 60010800   ......`.....`...
+               0020   04030800 ff800503 08016001 06036002   ..........`...`.
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+068:6290:1971  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 8 [actl 8], tLab 56 [ack 2] s100
+               0000   00600880 00ff0000                     .`......
+    FCP Request: 0x0 (CONTROL);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x08
+068:6476:1713  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 48 [actl 48], tLab 30 [ack 2] s100
+               0000   09600980 12000026 01eeff00 60000103   .`.....&....`...
+               0010   ff800801 02036000 ff000303 60010800   ......`.....`...
+               0020   04030800 ff800503 08016001 06036002   ..........`...`.
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x09
+068:7159:0692  WrResp from ffc2 to ffc0, tLabel 55, rCode 0 [ack 1] s100
+068:7159:1380  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 1 [ack 2] s100
+               0000   09600880 00ff0000                     .`......
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x08
+068:7166:1047  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 57 [ack 2] s100
+               0000   0160bfc0 000100ff ff000000            .`..........
+    FCP Request: 0x1 (STATUS);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7166:2081  WrResp from ffc0 to ffc2, tLabel 1, rCode 0 [ack 1] s400
+068:7166:2483  WrResp from ffc2 to ffc0, tLabel 56, rCode 0 [ack 1] s100
+068:7167:0156  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 3 [ack 2] s100
+               0000   09600880 00ff0000                     .`......
+    FCP Response: 0x9 (ACCEPTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x08
+068:7167:2598  WrResp from ffc0 to ffc2, tLabel 3, rCode 0 [ack 1] s400
+068:7168:0606  WrResp from ffc2 to ffc0, tLabel 57, rCode 0 [ack 1] s100
+068:7169:2824  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 17 [actl 20], tLab 5 [ack 2] s100
+               0000   0c60bfc0 000100ff ff019040 03020102   .`.........@....
+               0010   06000000                              ....
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7172:0623  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 58 [ack 2] s100
+               0000   0160bfc0 000181ff ff000000            .`..........
+    FCP Request: 0x1 (STATUS);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7172:1648  WrResp from ffc0 to ffc2, tLabel 5, rCode 0 [ack 1] s400
+068:7174:0389  WrResp from ffc2 to ffc0, tLabel 58, rCode 0 [ack 1] s100
+068:7175:1827  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 12 [actl 12], tLab 7 [ack 2] s100
+               0000   0860bfc0 000181ff ff000000            .`..........
+    FCP Response: 0x8 (NOT IMPLEMENTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7177:1590  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 59 [ack 2] s100
+               0000   0160bfc1 000100ff ffff0000            .`..........
+    FCP Request: 0x1 (STATUS);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7177:1938  WrResp from ffc0 to ffc2, tLabel 7, rCode 0 [ack 1] s400
+068:7179:1789  WrResp from ffc2 to ffc0, tLabel 59, rCode 0 [ack 1] s100
+068:7181:1840  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 18 [actl 20], tLab 9 [ack 2] s100
+               0000   0c60bfc1 000100ff ff000090 40030201   .`..........@...
+               0010   02060000                              ....
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7183:1942  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 60 [ack 2] s100
+               0000   0160bfc1 000100ff ffff0100            .`..........
+    FCP Request: 0x1 (STATUS);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7183:2349  WrResp from ffc0 to ffc2, tLabel 9, rCode 0 [ack 1] s400
+068:7185:1952  WrResp from ffc2 to ffc0, tLabel 60, rCode 0 [ack 1] s100
+068:7187:2005  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 18 [actl 20], tLab 11 [ack 2] s100
+               0000   0c60bfc1 000100ff ff000190 40040201   .`..........@...
+               0010   02060000                              ....
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7189:2393  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 61 [ack 2] s100
+               0000   0160bfc1 000100ff ffff0200            .`..........
+    FCP Request: 0x1 (STATUS);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7189:2742  WrResp from ffc0 to ffc2, tLabel 11, rCode 0 [ack 1] s400
+068:7191:2410  WrResp from ffc2 to ffc0, tLabel 61, rCode 0 [ack 1] s100
+068:7193:2460  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 18 [actl 20], tLab 13 [ack 2] s100
+               0000   0c60bfc1 000100ff ff000290 400a0201   .`..........@...
+               0010   02060000                              ....
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7195:2239  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 62 [ack 2] s100
+               0000   0160bfc1 000100ff ffff0300            .`..........
+    FCP Request: 0x1 (STATUS);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7195:2590  WrResp from ffc0 to ffc2, tLabel 13, rCode 0 [ack 1] s400
+068:7197:2250  WrResp from ffc2 to ffc0, tLabel 62, rCode 0 [ack 1] s100
+068:7199:2301  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 18 [actl 20], tLab 15 [ack 2] s100
+               0000   0c60bfc1 000100ff ff000390 40050201   .`..........@...
+               0010   02060000                              ....
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7201:2134  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 63 [ack 2] s100
+               0000   0160bfc1 000100ff ffff0400            .`..........
+    FCP Request: 0x1 (STATUS);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7201:2482  WrResp from ffc0 to ffc2, tLabel 15, rCode 0 [ack 1] s400
+068:7203:2156  WrResp from ffc2 to ffc0, tLabel 63, rCode 0 [ack 1] s100
+068:7205:0373  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 12 [actl 12], tLab 17 [ack 2] s100
+               0000   0a60bfc1 000100ff ffff0400            .`..........
+    FCP Response: 0xa (REJECTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7207:0471  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 12 [actl 12], tLab 0 [ack 2] s100
+               0000   0160bfc1 000181ff ffff0000            .`..........
+    FCP Request: 0x1 (STATUS);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7207:0894  WrResp from ffc0 to ffc2, tLabel 17, rCode 0 [ack 1] s400
+068:7209:1530  WrResp from ffc2 to ffc0, tLabel 0, rCode 0 [ack 1] s100
+068:7210:2090  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 12 [actl 12], tLab 19 [ack 2] s100
+               0000   0860bfc1 000181ff ffff0000            .`..........
+    FCP Response: 0x8 (NOT IMPLEMENTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0xbf
+068:7214:2237  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 16 [actl 16], tLab 1 [ack 2] s100
+               0000   01601aff ffff0000 ffffffff ff000000   .`..............
+    FCP Request: 0x1 (STATUS);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x1a
+068:7214:2921  WrResp from ffc0 to ffc2, tLabel 19, rCode 0 [ack 1] s400
+068:7216:2241  WrResp from ffc2 to ffc0, tLabel 1, rCode 0 [ack 1] s100
+068:7217:1804  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 3 [actl 4], tLab 21 [ack 2] s100
+               0000   08601a00                              .`..
+    FCP Response: 0x8 (NOT IMPLEMENTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x1a
+068:7219:0613  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 16 [actl 16], tLab 2 [ack 2] s100
+               0000   01ff1aff ffff0000 ffffffff ff000000   ................
+    FCP Request: 0x1 (STATUS);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x1a
+068:7219:0965  WrResp from ffc0 to ffc2, tLabel 21, rCode 0 [ack 1] s400
+068:7221:0360  WrResp from ffc2 to ffc0, tLabel 2, rCode 0 [ack 1] s100
+068:7222:2326  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 16 [actl 16], tLab 23 [ack 2] s100
+               0000   0cff1a70 00000000 ffffffff ff000000   ...p............
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x1a
+068:7224:2246  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 16 [actl 16], tLab 3 [ack 2] s100
+               0000   01601aff ffff0081 ffffffff ff000000   .`..............
+    FCP Request: 0x1 (STATUS);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x1a
+068:7224:2592  WrResp from ffc0 to ffc2, tLabel 23, rCode 0 [ack 1] s400
+068:7226:2257  WrResp from ffc2 to ffc0, tLabel 3, rCode 0 [ack 1] s100
+068:7227:1803  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 3 [actl 4], tLab 25 [ack 2] s100
+               0000   08601a00                              .`..
+    FCP Response: 0x8 (NOT IMPLEMENTED);  su_type 0xc (Reserved);  su_ID 0;  opcode 0x1a
+068:7229:0625  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 16 [actl 16], tLab 4 [ack 2] s100
+               0000   01ff1aff ffff0081 ffffffff ff000000   ................
+    FCP Request: 0x1 (STATUS);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x1a
+068:7229:0973  WrResp from ffc0 to ffc2, tLabel 25, rCode 0 [ack 1] s400
+068:7231:0417  WrResp from ffc2 to ffc0, tLabel 4, rCode 0 [ack 1] s100
+068:7232:0116  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 16 [actl 16], tLab 27 [ack 2] s100
+               0000   0aff1aff ffff0081 ffffffff ff000000   ................
+    FCP Response: 0xa (REJECTED);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x1a
+068:7233:2775  Bwrite fr ffc0 to ffc2.ffff.f000.0b00, sz 8 [actl 8], tLab 5 [ack 2] s100
+               0000   01ff0200 ffffffff                     ........
+    FCP Request: 0x1 (STATUS);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x02
+068:7234:0368  WrResp from ffc0 to ffc2, tLabel 27, rCode 0 [ack 1] s400
+068:7235:2794  WrResp from ffc2 to ffc0, tLabel 5, rCode 0 [ack 1] s100
+068:7236:1958  Bwrite fr ffc2 to ffc0.ffff.f000.0d00, sz 8 [actl 8], tLab 29 [ack 2] s100
+               0000   0cff0200 01010101                     ........
+    FCP Response: 0xc (IMPLEMENTED/STABLE);  su_type 0x1f (unit);  su_ID 7 (n/a);  opcode 0x02
+068:7237:0863  WrResp from ffc0 to ffc2, tLabel 29, rCode 0 [ack 1] s400
+094:7254:2381  Qread from ffc0 to ffc2.ffff.f000.0220, tLabel 6 [ack 2] s100
+094:7256:1748  QRresp from ffc2 to ffc0, tLabel 6, value 00001063 [ack 1] s100
+094:7258:1023  LockRq from ffc0 to ffc2.ffff.f000.0220, size 8, tLabel 7 [ack 2] s100
+               0000   00001063 0000100f                     ...c....
+    IRM: Allocate 0x54 (84) BANDWIDTH units
+094:7260:0164  LockResp from ffc2 to ffc0, size 4, tLabel 7 [ack 1] s100
+               0000   00001063                              ...c
+    IRM: Change was accepted
+094:7260:2225  Qread from ffc0 to ffc2.ffff.f000.0224, tLabel 8 [ack 2] s100
+094:7262:1713  QRresp from ffc2 to ffc0, tLabel 8, value fffffffe [ack 1] s100
+094:7263:1491  LockRq from ffc0 to ffc2.ffff.f000.0224, size 8, tLabel 9 [ack 2] s100
+               0000   fffffffe 7ffffffe                     .... ...
+    IRM: Allocate channel 0x0 (0)
+094:7265:1463  LockResp from ffc2 to ffc0, size 4, tLabel 9 [ack 1] s100
+               0000   fffffffe                              ....
+    IRM: Change was accepted
+097:7113:0495  Qread from ffc0 to ffc2.ffff.f000.0904, tLabel 10 [ack 2] s400
+097:7114:1534  QRresp from ffc2 to ffc0, tLabel 10, value 80008036 [ack 1] s400
+097:7116:2320  LockRq from ffc0 to ffc2.ffff.f000.0904, size 8, tLabel 11 [ack 2] s400
+               0000   80008036 81008036                     ...6...6
+    CMP: Change Output Plug 0 from 80008036 to 81008036
+      Change Point-to-point count from 0 to 1
+      -> Online 1;  Bcast 0;  #p2p 1;  Channel 0;  Rate s400;  Overhead 512;  Payload 54
+097:7118:2333  LockResp from ffc2 to ffc0, size 4, tLabel 11 [ack 1] s400
+               0000   80008036                              ...6
+    CMP: Change was accepted
+  [1 packet not shown]
+  Isoch channel 0 ACTIVE at 097:7120:0971 (CT 098:0193), speed s400
+097:7120:0971  Isoch channel 0, tag 1, sy 0, size 8 [actual 8] s400
+               0000   02020038 9001ffff                     ...8....
+  [73446 packets not shown]
+107:0563:2228  Isoch channel 0, tag 1, sy 0, size 72 [actual 72] s400
+               0000   020200c0 9001a292 40000041 4000003e   ........@..A@..>
+               0010   40000047 40000043 40000046 40000042   @..G@..C@..F@..B
+               0020   40000042 40000014 40000037 40000044   @..B@...@..7@..D
+               0030   4000007e 40000059 40000059 40000019   @..~@..Y@..Y@...
+               0040   40000047 4000001c                     @..G@...
+107:0564:2223  Isoch channel 0, tag 1, sy 0, size 8 [actual 8] s400
+               0000   020200c8 9001ffff                     ........
+107:0565:2222  Isoch channel 0, tag 1, sy 0, size 72 [actual 72] s400
+               0000   020200c8 9001b7fc 40000025 4000003a   ........@..%@..:
+               0010   40000041 40000026 4000002e 40000031   @..A@..&@...@..1
+               0020   40000054 4000004a 4000002f 40000042   @..T@..J@../@..B
+               0030   4000003a 4000004b 40000042 40000027   @..:@..K@..B@..'
+               0040   40000058 40000053                     @..X@..S

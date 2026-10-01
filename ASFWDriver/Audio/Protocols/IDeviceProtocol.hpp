@@ -31,7 +31,7 @@ namespace ASFW::Audio {
 /// Interface for device-specific protocol handlers
 ///
 /// Device protocols are instantiated by CreateFamilyDeviceProtocol when a
-/// known device is detected during discovery. Each protocol handler
+/// audio endpoint is resolved during discovery. Each protocol handler
 /// encapsulates vendor-specific control logic (DSP, routing, etc.).
 class IDeviceProtocol {
 public:

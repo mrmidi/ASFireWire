@@ -349,6 +349,5 @@ of whether the abstraction is right:
   the CustomProperty bucket rather than ADK controls.
 - Reading `CtlAttr::Minimum/Maximum/Resolution` (`0x02`/`0x03`/`0x01`, per
   `references/alsa-userspace-control-protocols-impl/protocols/ta1394/audio/src/lib.rs:80-107`) to
-  discover real ranges instead of hardcoding them needs
-  `AudioFunctionBlockCommand::BuildCdb` to stop hardcoding the attribute to `0x10` Current
-  (`Protocols/AVC/AudioFunctionBlockCommand.cpp:70`).
+  discover real ranges using `Cmd::FeatureOperands::VolumeStatus` with the requested
+  `Cmd::ControlAttribute` in `Protocols/AVC/Commands/FunctionBlockCommand.hpp`.

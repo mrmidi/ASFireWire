@@ -8,6 +8,7 @@
 #pragma once
 
 #include "AudioPropertyKeys.hpp"
+#include "../Wire/AMDTP/PcmSlotMap.hpp"
 
 #include <DriverKit/OSArray.h>
 #include <DriverKit/OSBoolean.h>
@@ -37,6 +38,7 @@ struct ASFWAudioWireStream {
     uint32_t am824Slots{0};
     uint32_t midiPorts{0};
     uint32_t channelOffset{0};
+    Wire::PcmSlotMap pcmSlotMap{};
 
     friend bool operator==(const ASFWAudioWireStream&,
                            const ASFWAudioWireStream&) noexcept = default;
@@ -75,6 +77,7 @@ struct ASFWAudioDevice {
     /// back to profile constants. Set by families that always resolve before
     /// publishing (DICE); see PropertyKeys::kResolvedGeometryRequired.
     bool resolvedGeometryRequired{false};
+    bool graphResolved{false};
 
     /// `sampleRates` came from the device (DICE CLOCK_CAPABILITIES) and the
     /// audio side must offer exactly them, not a profile's list; see
@@ -211,6 +214,14 @@ private:
                 // published device with the wrong shape.
                 return false;
             }
+            auto map = OSSharedPtr(OSArray::withCapacity(stream.pcmSlotMap.slotCount), OSNoRetain);
+            if (!map) return false;
+            for (uint32_t i = 0; i < stream.pcmSlotMap.slotCount; ++i) {
+                auto slot = OSSharedPtr(OSNumber::withNumber(stream.pcmSlotMap.slotForChannel[i], 32), OSNoRetain);
+                if (!slot) return false;
+                map->setObject(slot.get());
+            }
+            entry->setObject(PropertyKeys::kStreamPcmSlotMap, map.get());
             entry->setObject(PropertyKeys::kStreamPcmChannels, pcm.get());
             entry->setObject(PropertyKeys::kStreamAm824Slots, slots.get());
             entry->setObject(PropertyKeys::kStreamMidiPorts, midi.get());

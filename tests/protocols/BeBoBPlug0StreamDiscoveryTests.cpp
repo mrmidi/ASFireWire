@@ -2,10 +2,16 @@
 
 #include <gtest/gtest.h>
 
+#include <initializer_list>
+#include <vector>
+
 #include "Audio/Protocols/BeBoB/BeBoBCaptureChannelMap.hpp"
 #include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "Discovery/DiscoveryTypes.hpp"
+#include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
+#include "ASFWDriver/Protocols/AVC/Commands/StreamFormatCommand.hpp"
+#include "ASFWDriver/Protocols/AVC/Extensions/BridgeCoPlugInfo.hpp"
 
 namespace {
 
@@ -13,45 +19,41 @@ using ASFW::Audio::BeBoB::ParseStreamFormation;
 using ASFW::Audio::BeBoB::ParseExtendedStreamFormatListResponse;
 using ASFW::Audio::BeBoB::ParseExtendedStreamFormatSingleResponse;
 using ASFW::Audio::BeBoB::ParseChannelPositionSections;
-using ASFW::Audio::BeBoB::BuildReadOnlyProbeCommand;
 using ASFW::Audio::BeBoB::PlugDirection;
-using ASFW::Audio::BeBoB::ReadOnlyProbeCommand;
 using ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery;
-using ASFW::Protocols::AVC::AVCCdb;
-using ASFW::Protocols::AVC::AVCCompletion;
-using ASFW::Protocols::AVC::AVCResult;
-using ASFW::Protocols::AVC::IAVCCommandSubmitter;
+using namespace ASFW::AVC;
 
-AVCCdb MakeCdb(uint8_t ctype, uint8_t opcode, std::initializer_list<uint8_t> operands) {
-    AVCCdb cdb{};
-    cdb.ctype = ctype;
-    cdb.subunit = 0xff;
-    cdb.opcode = opcode;
-    cdb.operandLength = operands.size();
-    std::copy(operands.begin(), operands.end(), cdb.operands.begin());
-    return cdb;
-}
-
-class ScriptedBeBoBSubmitter final : public IAVCCommandSubmitter {
+class ScriptedBeBoBUnit final : public IAvcUnit {
 public:
     struct Step {
-        AVCCdb expected{};
-        AVCResult result{AVCResult::kImplementedStable};
-        AVCCdb response{};
+        std::vector<uint8_t> expectedFrame;
+        std::vector<uint8_t> responseFrame;
     };
 
-    explicit ScriptedBeBoBSubmitter(std::vector<Step> steps) : steps_(std::move(steps)) {}
+    explicit ScriptedBeBoBUnit(std::vector<Step> steps) : steps_(std::move(steps)) {}
 
-    void SubmitCommand(const AVCCdb& cdb, AVCCompletion completion) override {
-        ASSERT_LT(next_, steps_.size()) << "unexpected BeBoB FCP command";
+    void Submit(const CommandFrame& frame,
+                ASFW::FW::Generation,
+                ResponseCallback completion) override {
+        ASSERT_LT(next_, steps_.size()) << "unexpected BeBoB AV/C command";
         const auto& step = steps_[next_++];
-        EXPECT_EQ(cdb.ctype, step.expected.ctype);
-        EXPECT_EQ(cdb.subunit, step.expected.subunit);
-        EXPECT_EQ(cdb.opcode, step.expected.opcode);
-        EXPECT_EQ(cdb.operandLength, step.expected.operandLength);
-        EXPECT_EQ(cdb.operands, step.expected.operands);
-        completion(step.result, step.response);
+        std::vector<uint8_t> actual(frame.WireBytes().begin(), frame.WireBytes().end());
+        EXPECT_EQ(actual, step.expectedFrame);
+        if (step.responseFrame.empty()) {
+            completion(std::unexpected(AvcError::Of(AvcErrorKind::kTimeout)));
+        } else {
+            auto resp = ParseResponse(step.responseFrame);
+            if (resp) {
+                completion(*resp);
+            } else {
+                completion(std::unexpected(resp.error()));
+            }
+        }
     }
+
+    [[nodiscard]] ASFW::FW::NodeId NodeId() const noexcept override { return ASFW::FW::NodeId{0}; }
+    [[nodiscard]] ASFW::FW::Generation CurrentGeneration() const noexcept override { return ASFW::FW::Generation{1}; }
+    [[nodiscard]] uint64_t Guid() const noexcept override { return 0x000aac0300b1d1f7ULL; }
 
     [[nodiscard]] bool Finished() const noexcept { return next_ == steps_.size(); }
 
@@ -59,6 +61,21 @@ private:
     std::vector<Step> steps_{};
     size_t next_{0};
 };
+
+// AV/C frames as the scripted unit sees them: our encoder pads a command to
+// a quadlet with zeros; the scripted reply carries only its operands.
+std::vector<uint8_t> Command(uint8_t opcode, std::initializer_list<uint8_t> operands) {
+    std::vector<uint8_t> frame{0x01, 0xFF, opcode};
+    frame.insert(frame.end(), operands.begin(), operands.end());
+    while (frame.size() % 4 != 0) frame.push_back(0x00);
+    return frame;
+}
+
+std::vector<uint8_t> Reply(uint8_t response, uint8_t opcode, std::initializer_list<uint8_t> operands) {
+    std::vector<uint8_t> frame{response, 0xFF, opcode};
+    frame.insert(frame.end(), operands.begin(), operands.end());
+    return frame;
+}
 
 TEST(BridgeCoReadOnlyProbeTests, MatchesOnlyExactPhase88Identity) {
     auto isBeBoB = [](uint32_t vendor, uint32_t model) {
@@ -79,78 +96,76 @@ TEST(BridgeCoReadOnlyProbeTests, MatchesOnlyExactPhase88Identity) {
 }
 
 TEST(BridgeCoReadOnlyProbeTests, BuildsLinuxGenericUnitPlugInfoBeforeBridgeCoExtensions) {
-    const auto cdb = BuildReadOnlyProbeCommand(ReadOnlyProbeCommand::kUnitPlugCounts);
-    EXPECT_EQ(cdb.ctype, 0x01);
-    EXPECT_EQ(cdb.subunit, 0xff);
-    EXPECT_EQ(cdb.opcode, 0x02);
-    EXPECT_EQ(cdb.operandLength, 5U);
-    EXPECT_EQ(cdb.operands[0], 0x00);
-    EXPECT_EQ(cdb.operands[1], 0x00);
-    EXPECT_EQ(cdb.operands[4], 0x00);
+    Cmd::PlugInfoCommand cmd{
+        .operands = {
+            .form = Cmd::PlugInfoForm::kUnitIsoExternal,
+            .dummyByte = 0x00,
+        }
+    };
+    auto enc = cmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(enc.has_value());
+    const std::vector<uint8_t> expected{0x01, 0xFF, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00};
+    EXPECT_EQ(std::vector<uint8_t>(enc->WireBytes().begin(), enc->WireBytes().end()), expected);
 }
 
 TEST(BridgeCoReadOnlyProbeTests, BuildsBridgeCoFormatListWithSupportStatusBeforeIndex) {
-    const auto cdb = BuildReadOnlyProbeCommand(ReadOnlyProbeCommand::kStreamFormatList,
-                                                PlugDirection::kOutput, 3);
-    EXPECT_EQ(cdb.ctype, 0x01);
-    EXPECT_EQ(cdb.subunit, 0xff);
-    EXPECT_EQ(cdb.opcode, 0x2f);
-    EXPECT_EQ(cdb.operandLength, 8U);
-    EXPECT_EQ(cdb.operands[0], 0xc1);
-    EXPECT_EQ(cdb.operands[1], 0x01);
-    EXPECT_EQ(cdb.operands[2], 0x00);
-    EXPECT_EQ(cdb.operands[3], 0x00);
-    EXPECT_EQ(cdb.operands[4], 0x00);
-    EXPECT_EQ(cdb.operands[5], 0xff);
-    EXPECT_EQ(cdb.operands[6], 0xff);
-    EXPECT_EQ(cdb.operands[7], 0x03);
+    Cmd::StreamFormatCommand cmd{
+        .address = SubunitAddress::Unit(),
+        .operands = Cmd::StreamFormatOperands{
+            .form = Cmd::StreamFormatSubfunction::kList,
+            .opcode = Cmd::StreamFormatOpcode::kStreamFormatSupport,
+            .plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kOutput, Cmd::UnitPlugType::kPcr, 0),
+            .index = 3,
+        }
+    };
+    auto enc = cmd.Encode(CommandType::kStatus);
+    ASSERT_TRUE(enc.has_value());
+    const std::vector<uint8_t> expected{0x01, 0xFF, 0x2F, 0xC1, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00};
+    EXPECT_EQ(std::vector<uint8_t>(enc->WireBytes().begin(), enc->WireBytes().end()), expected);
 }
 
 TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChoreography) {
-    // The command/response offsets follow the ALSA BeBoB BridgeCo codec:
-    // bridgeco.rs:1003-1043 (extended plug info), 1600-1626 (format common
-    // fields), and 1743-1764 (list index and formation). No reference code is
-    // copied; this is an independent FCP mock fixture.
-    ScriptedBeBoBSubmitter submitter({
+    ScriptedBeBoBUnit unit({
         // Generic unit PLUG_INFO returns isoc-in/out, ext-in/out.
-        {MakeCdb(0x01, 0x02, {0x00, 0x00, 0x00, 0x00, 0x00}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x02, {0x00, 0x01, 0x01, 0x00, 0x00})},
+        {{0x01, 0xFF, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00},
+         {0x0C, 0xFF, 0x02, 0x00, 0x01, 0x01, 0x00, 0x00}},
         // BridgeCo ISO input plug type.
-        {MakeCdb(0x01, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00})},
+        {{0x01, 0xFF, 0x02, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00},
+         {0x0C, 0xFF, 0x02, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00}},
         // Input format-list entry 0: 48 kHz, 10 PCM slots.
-        {MakeCdb(0x01, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
+        {Command(0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00}),
+         Reply(0x0c, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
                                0x90, 0x40, 0x04, 0x00, 0x02, 0x0a, 0x06, 0x01, 0x0d})},
         // Input channel positions; unavailable here, so the map stays identity.
-        {MakeCdb(0x01, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x03}),
-         AVCResult::kNotImplemented, {}},
+        {Command(0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x03}),
+         Reply(0x08, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x03})},
+        // Input signal format STATUS query (wildcard). SFC 0x02 = 48 kHz.
+        {{0x01, 0xFF, 0x19, 0x00, 0x90, 0xFF, 0xFF, 0xFF},
+         {0x0C, 0xFF, 0x19, 0x00, 0x90, 0x02, 0xFF, 0xFF}},
         // BridgeCo ISO output plug type.
-        {MakeCdb(0x01, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00})},
+        {{0x01, 0xFF, 0x02, 0xC0, 0x01, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00},
+         {0x0C, 0xFF, 0x02, 0xC0, 0x01, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00}},
         // Output format-list entry 0: same 48 kHz / 10 PCM formation.
-        {MakeCdb(0x01, 0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
+        {Command(0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00}),
+         Reply(0x0c, 0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
                                0x90, 0x40, 0x04, 0x00, 0x02, 0x0a, 0x06, 0x01, 0x0d})},
-        {MakeCdb(0x01, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x03}),
-         AVCResult::kNotImplemented, {}},
+        {Command(0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x03}),
+         Reply(0x08, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x03})},
+        // Output signal format STATUS query (wildcard). SFC 0x02 = 48 kHz.
+        {{0x01, 0xFF, 0x18, 0x00, 0x90, 0xFF, 0xFF, 0xFF},
+         {0x0C, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF}},
         // Linux treats the first invalid next list entry as end-of-list.
-        {MakeCdb(0x01, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x01}),
-         AVCResult::kNotImplemented, {}},
-        {MakeCdb(0x01, 0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0x01}),
-         AVCResult::kNotImplemented, {}},
+        {{0x01, 0xFF, 0x2F, 0xC1, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x01, 0x00},
+         {0x08, 0xFF, 0x2F, 0xC1, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x01}},
+        {{0x01, 0xFF, 0x2F, 0xC1, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x01, 0x00},
+         {0x08, 0xFF, 0x2F, 0xC1, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x01}},
     });
 
     std::optional<ASFW::Audio::BeBoB::DeviceModel> model;
-    StartBeBoBPlug0Discovery(submitter, 0x000aac0300b1d1f7ULL,
+    StartBeBoBPlug0Discovery(unit, 0x000aac0300b1d1f7ULL,
                               [&model](const auto& discovered) { model = discovered; });
 
-    ASSERT_TRUE(submitter.Finished());
+    ASSERT_TRUE(unit.Finished());
     ASSERT_TRUE(model.has_value());
     ASSERT_TRUE(model->unitPlugCounts.has_value());
     EXPECT_EQ(model->unitPlugCounts->isochronousInputs, 1);
@@ -164,6 +179,10 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
     EXPECT_EQ(model->output.supportedFormations[0].midiSlots, 1);
     EXPECT_TRUE(model->SupportsDuplexFormation(10, 1));
     EXPECT_FALSE(model->SupportsDuplexFormation(10, 2));
+    EXPECT_EQ(model->input.activeRateHz, 48000U);
+    EXPECT_EQ(model->output.activeRateHz, 48000U);
+    EXPECT_EQ(model->CurrentRateHz(), 48000U);
+    EXPECT_EQ(model->SupportedRatesHz(), std::vector<uint32_t>{48000U});
 }
 
 TEST(BridgeCoReadOnlyProbeTests, Phase88PlaybackPositionsProducePlanarSlotMap) {
@@ -171,49 +190,44 @@ TEST(BridgeCoReadOnlyProbeTests, Phase88PlaybackPositionsProducePlanarSlotMap) {
     // playback (ISO input plug) data block is planar: slot 0 SPDIF L, slots
     // 1-4 Out 1/3/5/7, slot 5 SPDIF R, slots 6-9 Out 2/4/6/8, slot 10 MIDI.
     constexpr uint8_t kSectionInfo = 0x07;
-    ScriptedBeBoBSubmitter submitter({
-        {MakeCdb(0x01, 0x02, {0x00, 0x00, 0x00, 0x00, 0x00}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x02, {0x00, 0x01, 0x01, 0x00, 0x00})},
-        {MakeCdb(0x01, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00})},
-        {MakeCdb(0x01, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
+    ScriptedBeBoBUnit submitter({
+        {Command(0x02, {0x00, 0x00, 0x00, 0x00, 0x00}),
+         Reply(0x0c, 0x02, {0x00, 0x01, 0x01, 0x00, 0x00})},
+        {Command(0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00}),
+         Reply(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00})},
+        {Command(0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00}),
+         Reply(0x0c, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
                                0x90, 0x40, 0x04, 0x00, 0x02, 0x0a, 0x06, 0x01, 0x0d})},
         // Three sections: 8 line outs, 2 SPDIF, MIDI (two entries on slot 11).
-        {MakeCdb(0x01, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x03}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x03,
+        {Command(0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x03}),
+         Reply(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x03,
                                0x03,
                                0x08, 0x02, 0x01, 0x07, 0x02, 0x03, 0x03, 0x08, 0x04,
                                      0x04, 0x05, 0x09, 0x06, 0x05, 0x07, 0x0a, 0x08,
                                0x02, 0x01, 0x01, 0x06, 0x02,
                                0x02, 0x0b, 0x01, 0x0b, 0x02})},
-        {MakeCdb(0x01, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00})},
-        {MakeCdb(0x01, 0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
+        {{0x01, 0xFF, 0x19, 0x00, 0x90, 0xFF, 0xFF, 0xFF},
+         {0x0C, 0xFF, 0x19, 0x00, 0x90, 0x02, 0xFF, 0xFF}},
+        {Command(0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00}),
+         Reply(0x0c, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00})},
+        {Command(0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00}),
+         Reply(0x0c, 0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
                                0x90, 0x40, 0x04, 0x00, 0x02, 0x0a, 0x06, 0x01, 0x0d})},
-        {MakeCdb(0x01, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x03}),
-         AVCResult::kNotImplemented, {}},
-        {MakeCdb(0x01, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x01}),
-         AVCResult::kNotImplemented, {}},
+        {Command(0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x03}),
+         Reply(0x08, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x03})},
+        {{0x01, 0xFF, 0x18, 0x00, 0x90, 0xFF, 0xFF, 0xFF},
+         {0x0C, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF}},
+        {Command(0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x01}),
+         Reply(0x08, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x01})},
         // Section-info replies echo the section id at operand 7, type at 8.
-        {MakeCdb(0x01, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x01}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x01, 0x03})},
-        {MakeCdb(0x01, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x02}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x02, 0x04})},
-        {MakeCdb(0x01, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x03}),
-         AVCResult::kImplementedStable,
-         MakeCdb(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x03, 0x0a})},
-        {MakeCdb(0x01, 0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0x01}),
-         AVCResult::kNotImplemented, {}},
+        {Command(0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x01}),
+         Reply(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x01, 0x03})},
+        {Command(0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x02}),
+         Reply(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x02, 0x04})},
+        {Command(0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x03}),
+         Reply(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, kSectionInfo, 0x03, 0x0a})},
+        {Command(0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0x01}),
+         Reply(0x08, 0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0x01})},
     });
 
     std::optional<ASFW::Audio::BeBoB::DeviceModel> model;
@@ -291,6 +305,122 @@ TEST(BridgeCoReadOnlyProbeTests, ParsesOneBasedSectionPositionsWithoutGuessingMi
     EXPECT_EQ((*sections)[1].positions[0].streamPosition, 2);
     const uint8_t zeroPosition[]{0x01, 0x01, 0x00, 0x01};
     EXPECT_FALSE(ParseChannelPositionSections(zeroPosition).has_value());
+}
+
+TEST(BridgeCoReadOnlyProbeTests, DecodesStreamFormatRateCodesAccordingToBridgeCoTable) {
+    using ASFW::Audio::BeBoB::StreamFormation;
+    // 0x02 is 32 kHz in BridgeCo/compound stream format, NOT 48 kHz (which is CIP SFC)
+    EXPECT_EQ((StreamFormation{.rateCode = 0x02}.RateHz()), 32000U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x03}.RateHz()), 44100U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x04}.RateHz()), 48000U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x05}.RateHz()), 96000U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x0A}.RateHz()), 88200U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x06}.RateHz()), 176400U);
+    EXPECT_EQ((StreamFormation{.rateCode = 0x07}.RateHz()), 192000U);
+    EXPECT_FALSE((StreamFormation{.rateCode = 0xFF}.RateHz().has_value()));
+}
+
+TEST(BridgeCoReadOnlyProbeTests, DecodesPlugSignalFormatSfcAccordingToCipTable) {
+    using ASFW::AVC::Cmd::PlugSignalFormat;
+    using ASFW::AVC::Cmd::SfcOf;
+    using ASFW::AVC::ToHz;
+
+    // AM824 with FDF SFC 0x02 is 48 kHz in CIP SFC table
+    PlugSignalFormat fmt48{.plugId = 0, .fmt = 0x90, .fdf = {0x02, 0xFF, 0xFF}};
+    auto sfc48 = SfcOf(fmt48);
+    ASSERT_TRUE(sfc48.has_value());
+    EXPECT_EQ(ToHz(*sfc48), 48000U);
+
+    // AM824 with FDF SFC 0x00 is 32 kHz
+    PlugSignalFormat fmt32{.plugId = 0, .fmt = 0x90, .fdf = {0x00, 0xFF, 0xFF}};
+    auto sfc32 = SfcOf(fmt32);
+    ASSERT_TRUE(sfc32.has_value());
+    EXPECT_EQ(ToHz(*sfc32), 32000U);
+
+    // Non-AM824 FMT is rejected
+    PlugSignalFormat nonAm824{.plugId = 0, .fmt = 0x00, .fdf = {0x02, 0xFF, 0xFF}};
+    EXPECT_FALSE(SfcOf(nonAm824).has_value());
+}
+
+TEST(BridgeCoReadOnlyProbeTests, ResolvesAgreedRateAndSupportedRates) {
+    using ASFW::Audio::BeBoB::DeviceModel;
+    using ASFW::Audio::BeBoB::StreamFormation;
+
+    DeviceModel model;
+    model.input.activeRateHz = 48000U;
+    model.output.activeRateHz = 48000U;
+    EXPECT_TRUE(model.HasAgreedCurrentRate());
+    EXPECT_EQ(model.CurrentRateHz(), 48000U);
+
+    // Formations with BridgeCo rates: 0x02 (32k), 0x03 (44.1k), 0x04 (48k)
+    model.input.supportedFormations.push_back(StreamFormation{.rateCode = 0x02});
+    model.input.supportedFormations.push_back(StreamFormation{.rateCode = 0x03});
+    model.output.supportedFormations.push_back(StreamFormation{.rateCode = 0x03});
+    model.output.supportedFormations.push_back(StreamFormation{.rateCode = 0x04});
+
+    // The generic duplex path may advertise only rates both directions support.
+    const std::vector<uint32_t> expectedRates = {44100U};
+    EXPECT_EQ(model.SupportedRatesHz(), expectedRates);
+}
+
+TEST(BridgeCoReadOnlyProbeTests, SelectsAsymmetricGeometryAtTheAgreedHighRate) {
+    using ASFW::Audio::BeBoB::DeviceModel;
+    using ASFW::Audio::BeBoB::StreamFormation;
+
+    DeviceModel model;
+    model.currentRateHz = 96000U;
+    model.input.supportedFormations = {
+        StreamFormation{.rateCode = 0x04, .pcmChannels = 2, .midiSlots = 1},
+        StreamFormation{.rateCode = 0x05, .pcmChannels = 4, .midiSlots = 1},
+    };
+    model.output.supportedFormations = {
+        StreamFormation{.rateCode = 0x04, .pcmChannels = 6, .midiSlots = 2},
+        StreamFormation{.rateCode = 0x05, .pcmChannels = 8, .midiSlots = 0},
+    };
+
+    EXPECT_EQ(model.SupportedRatesHz(), (std::vector<uint32_t>{48000U, 96000U}));
+    EXPECT_EQ(model.SelectDuplexRateHz(), 96000U);
+    const auto playback = model.InputFormationAtRate(96000U);
+    const auto capture = model.OutputFormationAtRate(96000U);
+    ASSERT_TRUE(playback.has_value());
+    ASSERT_TRUE(capture.has_value());
+    EXPECT_EQ(playback->pcmChannels, 4U);
+    EXPECT_EQ(playback->midiSlots, 1U);
+    EXPECT_EQ(capture->pcmChannels, 8U);
+    EXPECT_EQ(capture->midiSlots, 0U);
+}
+
+TEST(BridgeCoReadOnlyProbeTests, DoesNotInventGeometryForUnsupportedCurrentRate) {
+    using ASFW::Audio::BeBoB::DeviceModel;
+    using ASFW::Audio::BeBoB::StreamFormation;
+
+    DeviceModel model;
+    model.currentRateHz = 176400U;
+    model.input.supportedFormations.push_back(
+        StreamFormation{.rateCode = 0x05, .pcmChannels = 4, .midiSlots = 1});
+    model.output.supportedFormations.push_back(
+        StreamFormation{.rateCode = 0x05, .pcmChannels = 8, .midiSlots = 0});
+
+    EXPECT_EQ(model.SupportedRatesHz(), (std::vector<uint32_t>{96000U}));
+    EXPECT_FALSE(model.SelectDuplexRateHz().has_value());
+}
+
+TEST(BridgeCoReadOnlyProbeTests, ConflictingDirectionalCurrentRatesAreUnavailable) {
+    using ASFW::Audio::BeBoB::DeviceModel;
+    using ASFW::Audio::BeBoB::StreamFormation;
+
+    DeviceModel model;
+    model.currentRateHz = 48000U;
+    model.input.activeRateHz = 48000U;
+    model.output.activeRateHz = 96000U;
+    model.input.supportedFormations = {
+        StreamFormation{.rateCode = 0x04, .pcmChannels = 2},
+        StreamFormation{.rateCode = 0x05, .pcmChannels = 4},
+    };
+    model.output.supportedFormations = model.input.supportedFormations;
+
+    EXPECT_FALSE(model.CurrentRateHz().has_value());
+    EXPECT_FALSE(model.SelectDuplexRateHz().has_value());
 }
 
 } // namespace

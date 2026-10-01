@@ -148,8 +148,9 @@ enum class ProfileBuilderId : uint16_t {
     MotuUltralite,
     MackieOnyxIOxfw,
     MackieOnyx400F,
-    GenericBeBoB,
-    PreSonusFireStudioProject,
+    // 21 retired (GenericBeBoB: no catalog row ever named it); the members
+    // below keep their numbers.
+    PreSonusFireStudioProject = 22,
     RmeFireface400,
     RmeFireface800,
 
@@ -175,11 +176,13 @@ enum class ProtocolImplementationId : uint8_t {
     MackieOnyx,
     FireworksOnyx400F,
     BeBoBPhase88,
-    BeBoBGeneric,
-    BeBoBMAudioSpecial,
+    // 8 retired (BeBoBGeneric, reachable only through the retired builder);
+    // the members below keep their numbers.
+    BeBoBMAudioSpecial = 9,
     MotuV2,
     RmeFireface,
-    kLastValid = RmeFireface,
+    GenericAvc,
+    kLastValid = GenericAvc,
 };
 
 /// AMDTP cadence a device must be driven at regardless of what it reports.
@@ -262,9 +265,16 @@ struct IsochResourcePolicy final {
 struct StreamStartPolicy final {
     StreamStartShape startShape{StreamStartShape::Default};
 
-    /// Fixed or default start sample rate in Hz (e.g. 48000 for Duet, 44100 for Onyx-i / Onyx 400F).
-    /// 0 means no pin (use standard 48 kHz default or requested session clock).
+    /// The one sample rate the device's runtime supports (48000 for Duet,
+    /// 44100 for Onyx-i / Onyx 400F): it is published as the only rate and
+    /// every start uses it. 0 means no pin (use the discovered rates and the
+    /// requested session clock).
     uint32_t startRatePinHz{0};
+
+    /// Start at, and offer only, the rate the device reported at discovery.
+    /// For a device whose geometry was observed at one rate only: another rate
+    /// would need fresh geometry. Ignored when startRatePinHz is set.
+    bool startAtObservedRate{false};
 
     /// How long device and transport events (bus reset, config change,
     /// runtime faults) must stay quiet before the streams restart once for all
@@ -288,6 +298,11 @@ enum class SupportDisposition : uint8_t {
     RecognizedUnsupported,
     Quarantined,
 };
+
+[[nodiscard]] constexpr bool AllowsAudioRuntime(SupportDisposition support) noexcept {
+    return support == SupportDisposition::Supported || support == SupportDisposition::GenericFallback;
+}
+
 
 enum class GuidReliability : uint8_t {
     Unspecified = 0,

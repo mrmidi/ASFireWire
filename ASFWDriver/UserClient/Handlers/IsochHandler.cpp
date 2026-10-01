@@ -15,8 +15,7 @@
 #include "../../Logging/Logging.hpp"
 #include "../../Protocols/AVC/AVCDiscovery.hpp"
 #include "../../Protocols/AVC/CMP/CMPClient.hpp"
-#include "../../Protocols/AVC/StreamFormats/AVCSignalFormatCommand.hpp"
-#include "../../Shared/SharedDataModels.hpp"
+#include "../../Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "ASFWDriver.h" // Generated header from .iig
 #include "ControllerCoreAccess.hpp"
 #include <DriverKit/IOLib.h>
@@ -93,26 +92,21 @@ kern_return_t IsochHandler::TestIRMAllocation(IOUserClientMethodArguments* args)
 
     ASFW_LOG(UserClient, "Step 1: Setting Unit Plug 0 to 48kHz (Oxford style)...");
 
-    ASFW::Protocols::AVC::AVCCdb cdb;
-    cdb.ctype = static_cast<uint8_t>(ASFW::Protocols::AVC::AVCCommandType::kControl);
-    cdb.subunit = 0xFF; // Unit
-    cdb.opcode = 0x19;  // INPUT PLUG SIGNAL FORMAT
+    AVC::Cmd::PlugSignalFormatOperands ops{
+        .direction = AVC::Cmd::PlugSignalDirection::kInput,
+        .plugId = 0x00,
+        .format = AVC::Cmd::PlugSignalFormat{
+            .plugId = 0x00,
+            .fmt = 0x90, // AM824
+            .fdf = {0x02, 0xFF, 0xFF}, // 48kHz (Standard FDF/SFC code)
+        },
+    };
 
-    cdb.operands[0] = 0x00; // Plug 0
-    cdb.operands[1] = 0x90; // AM824
-    cdb.operands[2] = 0x02; // 48kHz (Standard FDF/SFC code) - Confirmed by Golden Log
-    cdb.operands[3] = 0xFF; // Padding/Sync
-    cdb.operands[4] = 0xFF; // Padding/Sync
-    cdb.operandLength = 5;
-
-    // Use shared_ptr to ensure valid shared_from_this() logic
-    auto cmd = std::make_shared<ASFW::Protocols::AVC::AVCCommand>(avcUnit->GetFCPTransport(), cdb);
-
-    cmd->Submit([irmClient, driver = driver_, cmd](ASFW::Protocols::AVC::AVCResult result,
-                                                   const ASFW::Protocols::AVC::AVCCdb& response) {
-        if (!ASFW::Protocols::AVC::IsSuccess(result)) {
-            ASFW_LOG(UserClient, "❌ Failed to set 48kHz on Unit Plug 0: %d",
-                     static_cast<int>(result));
+    avcUnit->Control(AVC::Cmd::PlugSignalFormatCommand{.operands = ops},
+                     [irmClient, driver = driver_](AVC::Expected<AVC::Cmd::PlugSignalFormat> result) {
+        if (!result) {
+            ASFW_LOG(UserClient, "❌ Failed to set 48kHz on Unit Plug 0: %u",
+                     static_cast<unsigned>(result.error().kind));
             // Fallback or abort? Let's try Output Plug if Input failed, or just abort.
             return;
         }

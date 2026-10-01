@@ -8,9 +8,14 @@
 #pragma once
 
 #include "../Subunit.hpp"
-#include "../AVCStreamFormatCommand.hpp"
+#include "../Commands/StreamFormatCommand.hpp"
+#include "../Descriptors/AudioSubunitDescriptor.hpp"
 #include <vector>
 #include <optional>
+
+namespace ASFW::AVC {
+class IAvcUnit;
+}
 
 namespace ASFW::Protocols::AVC::Audio {
 
@@ -18,8 +23,8 @@ namespace ASFW::Protocols::AVC::Audio {
 struct AudioPlugInfo {
     uint8_t plugNumber{0};
     bool isInput{false};
-    std::optional<StreamFormat> currentFormat;
-    std::vector<StreamFormat> supportedFormats;
+    std::optional<ASFW::AVC::Cmd::StreamFormat> currentFormat;
+    std::vector<ASFW::AVC::Cmd::StreamFormat> supportedFormats;
 };
 
 /// Audio Subunit class
@@ -38,11 +43,26 @@ public:
     const std::vector<AudioPlugInfo>& GetInputPlugs() const { return inputPlugs_; }
     const std::vector<AudioPlugInfo>& GetOutputPlugs() const { return outputPlugs_; }
 
+    /// Parsed Audio Subunit Identifier Descriptor (§5.1, §8.1)
+    const std::optional<Descriptors::AudioSubunitIdentifier>& GetIdentifier() const noexcept {
+        return identifier_;
+    }
+
+    /// Raw descriptor data read during discovery
+    const std::optional<std::vector<uint8_t>>& GetDescriptorData() const noexcept {
+        return descriptorData_;
+    }
+
+    /// Read and parse Audio Subunit Identifier Descriptor (§5.1, §8.1)
+    void ReadIdentifierDescriptor(ASFW::AVC::IAvcUnit& unit, std::function<void(bool)> completion);
+
 private:
     uint8_t numInputPlugs_{0};
     uint8_t numOutputPlugs_{0};
     std::vector<AudioPlugInfo> inputPlugs_;
     std::vector<AudioPlugInfo> outputPlugs_;
+    std::optional<Descriptors::AudioSubunitIdentifier> identifier_;
+    std::optional<std::vector<uint8_t>> descriptorData_;
     
     void QueryPlugCounts(AVCUnit& unit, std::function<void(bool)> completion);
     void QueryPlugFormats(AVCUnit& unit, size_t plugIndex, bool isInput,

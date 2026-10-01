@@ -69,7 +69,7 @@ extension ASFWDriverConnector {
             let isoOutputPlugs = data[offset + 20]
             let extInputPlugs = data[offset + 21]
             let extOutputPlugs = data[offset + 22]
-            // _reserved at offset + 23
+            let diagnosticStatus = data[offset + 23]
 
             offset += 24
 
@@ -95,7 +95,8 @@ extension ASFWDriverConnector {
                 isoInputPlugs: isoInputPlugs,
                 isoOutputPlugs: isoOutputPlugs,
                 extInputPlugs: extInputPlugs,
-                extOutputPlugs: extOutputPlugs
+                extOutputPlugs: extOutputPlugs,
+                diagnosticStatus: diagnosticStatus
             ))
         }
 
@@ -123,81 +124,99 @@ extension ASFWDriverConnector {
     }
 
     func getSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities? {
-        guard isConnected else { return nil }
-        guard connection != 0 else { return nil }
+        guard let data = getSubunitCapabilitiesData(guid: guid, type: type, id: id) else { return nil }
+        return AVCMusicCapabilities(data: data)
+    }
 
-        // Use scalar inputs (kernel expects 4 × UInt64 via scalarInput, not structureInput)
-        let scalarInputs: [UInt64] = [
-            guid >> 32,              // GUID high 32 bits
-            guid & 0xFFFFFFFF,       // GUID low 32 bits
-            UInt64(type),            // Subunit type
-            UInt64(id)               // Subunit ID
-        ]
-
-        var outSize = 1024  // Initial capacity for output
-        var out = Data(count: outSize)
-        let scalarInputCount: UInt32 = 4
-
-        let kr = out.withUnsafeMutableBytes { outPtr in
-            scalarInputs.withUnsafeBufferPointer { scalarPtr in
-                IOConnectCallMethod(
-                    connection,
-                    Method.getSubunitCapabilities.rawValue,
-                    scalarPtr.baseAddress, scalarInputCount,  // Scalar inputs ✅
-                    nil, 0,                                   // No struct input
-                    nil, nil,                                 // No scalar output
-                    outPtr.baseAddress?.assumingMemoryBound(to: UInt8.self), &outSize  // Struct output
-                )
-            }
-        }
-
-        guard kr == KERN_SUCCESS else {
-            print("[Connector] ❌ callStruct error: getSubunitCapabilities failed: \(interpretIOReturn(kr))")
-            return nil
-        }
-
-        out.count = outSize
-        return AVCMusicCapabilities(data: out)
+    /// Preserve the driver capability wire blob for investigation reports.
+    func getSubunitCapabilitiesData(guid: UInt64, type: UInt8, id: UInt8) -> Data? {
+        try? subunitCapabilitiesBlob(guid: guid, type: type, id: id).get()
     }
 
     func getSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) -> Data? {
-        guard isConnected else { return nil }
-        guard connection != 0 else { return nil }
+        try? subunitDescriptorBlob(guid: guid, type: type, id: id).get()
+    }
 
-        // Use scalar inputs (kernel expects 4 × UInt64 via scalarInput, not structureInput)
-        let scalarInputs: [UInt64] = [
-            guid >> 32,              // GUID high 32 bits
-            guid & 0xFFFFFFFF,       // GUID low 32 bits
-            UInt64(type),            // Subunit type
-            UInt64(id)               // Subunit ID
-        ]
+    func subunitCapabilitiesBlob(guid: UInt64, type: UInt8, id: UInt8) -> Result<Data, AvcBlobUnavailable> {
+        fetchSubunitBlob(.getSubunitCapabilities, guid: guid, type: type, id: id,
+                         notFound: "the driver has no such subunit")
+    }
 
-        // DriverKit structure outputs over ~4KB get rejected; cap to match kMaxWireSize on the driver
-        let maxWireSize = 4 * 1024
-        var outSize = maxWireSize
+    func subunitDescriptorBlob(guid: UInt64, type: UInt8, id: UInt8) -> Result<Data, AvcBlobUnavailable> {
+        fetchSubunitBlob(.getSubunitDescriptor, guid: guid, type: type, id: id,
+                         notFound: "the driver has not read this descriptor from the device")
+    }
+
+    /// One subunit blob, or the driver's reason for not returning it. Both
+    /// methods take the GUID halves, type and id as four scalars and answer
+    /// with at most 4096 bytes (the driver's structure-output limit).
+    private func fetchSubunitBlob(_ method: Method, guid: UInt64, type: UInt8, id: UInt8,
+                                  notFound: String) -> Result<Data, AvcBlobUnavailable> {
+        guard isConnected, connection != 0 else {
+            return .failure(.init(reason: "no driver connection"))
+        }
+        let scalarInputs: [UInt64] = [guid >> 32, guid & 0xFFFF_FFFF, UInt64(type), UInt64(id)]
+        var outSize = 4 * 1024
         var out = Data(count: outSize)
-        let scalarInputCount: UInt32 = 4
-
         let kr = out.withUnsafeMutableBytes { outPtr in
             scalarInputs.withUnsafeBufferPointer { scalarPtr in
-                IOConnectCallMethod(
-                    connection,
-                    Method.getSubunitDescriptor.rawValue,
-                    scalarPtr.baseAddress, scalarInputCount,  // Scalar inputs
-                    nil, 0,                                   // No struct input
-                    nil, nil,                                 // No scalar output
-                    outPtr.baseAddress?.assumingMemoryBound(to: UInt8.self), &outSize  // Struct output
-                )
+                IOConnectCallMethod(connection, method.rawValue,
+                                    scalarPtr.baseAddress, UInt32(scalarInputs.count),
+                                    nil, 0, nil, nil,
+                                    outPtr.baseAddress?.assumingMemoryBound(to: UInt8.self), &outSize)
             }
         }
-
-        guard kr == KERN_SUCCESS else {
-            print("[Connector] ❌ callStruct error: getSubunitDescriptor failed: \(interpretIOReturn(kr))")
-            return nil
+        switch kr {
+        case KERN_SUCCESS:
+            out.count = outSize
+            return .success(out)
+        case kIOReturnNotFound:
+            return .failure(.init(reason: notFound))
+        case kIOReturnUnsupported:
+            return .failure(.init(reason: "the driver does not export this for this subunit type"))
+        case kIOReturnMessageTooLarge:
+            return .failure(.init(reason: "larger than the 4096-byte export limit"))
+        default:
+            return .failure(.init(reason: "driver call failed: \(interpretIOReturn(kr))"))
         }
+    }
 
-        out.count = outSize
-        return out
+    /// Every FCP exchange the driver had with this unit since attach or the
+    /// last refresh, read page by page.
+    func getFCPExchangeLog(guid: UInt64) -> AvcReportSnapshot.ExchangeLog? {
+        guard isConnected, connection != 0 else { return nil }
+        var log: AvcReportSnapshot.ExchangeLog?
+        var next: UInt32 = 0
+        // The log holds at most 1024 records, so this is bounded; the cap also
+        // stops a page that keeps arriving empty-but-incomplete.
+        for _ in 0..<1100 {
+            let scalarInputs: [UInt64] = [guid >> 32, guid & 0xFFFF_FFFF, UInt64(next)]
+            var outSize = 4 * 1024
+            var out = Data(count: outSize)
+            let kr = out.withUnsafeMutableBytes { outPtr in
+                scalarInputs.withUnsafeBufferPointer { scalarPtr in
+                    IOConnectCallMethod(connection, Method.getFCPExchangeLog.rawValue,
+                                        scalarPtr.baseAddress, 3, nil, 0, nil, nil,
+                                        outPtr.baseAddress?.assumingMemoryBound(to: UInt8.self), &outSize)
+                }
+            }
+            guard kr == KERN_SUCCESS else {
+                print("[Connector] ❌ getFCPExchangeLog failed: \(interpretIOReturn(kr))")
+                return nil
+            }
+            out.count = outSize
+            guard let page = AvcReportSnapshot.ExchangeLog.parsePage(out) else { return nil }
+            if log == nil {
+                log = .init(session: page.session, dropped: page.dropped, records: [])
+            }
+            // A refresh started mid-read: the pages no longer belong together.
+            guard page.session == log?.session else { return nil }
+            log?.dropped = page.dropped
+            log?.records += page.records
+            next += UInt32(page.records.count)
+            if page.records.isEmpty || next >= page.totalRecords { return log }
+        }
+        return log
     }
 
     func sendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32 = 15_000) -> Data? {

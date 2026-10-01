@@ -153,8 +153,8 @@ enum class AVCOpcode : uint8_t {
     kConnections = 0x26,            ///< Query connections
     kChannelUsage = 0x1F,           ///< Query channel allocation
     kSubunitInfo = 0x31,            ///< Enumerate subunits
-    kOutputPlugSignalFormat = 0xBF, ///< Query/set output format
-    kInputPlugSignalFormat = 0xFF,  ///< Query/set input format
+    kOutputPlugSignalFormat = 0x18, ///< Query/set output format
+    kInputPlugSignalFormat = 0x19,  ///< Query/set input format
 };
 
 //==============================================================================
@@ -169,10 +169,12 @@ enum class AVCSubunitType : uint8_t {
     kTuner = 0x05,              ///< TV tuner
     kCA = 0x06,                 ///< Conditional access
     kCamera = 0x07,             ///< Digital camera
-    kPanel = 0x0A,              ///< Control panel
-    kBulletinBoard = 0x0B,      ///< Info display
-    kMusic0C = 0x0C,            ///< Music subunit (devices sometimes report 0x0C)
-    kMusic = 0x1C,              ///< Audio interface (pro audio)
+    kPanel = 0x09,              ///< Control panel
+    kBulletinBoard = 0x0A,      ///< Info display
+    kCameraStorage = 0x0B,      ///< Camera storage
+    kMusic0C = 0x0C,            ///< Music subunit alias
+    kMusic = 0x0C,              ///< Music subunit (TA 2001007)
+    kVendorUnique = 0x1C,       ///< Vendor unique
     kUnit = 0x1F,               ///< Whole unit (not a subunit)
 };
 

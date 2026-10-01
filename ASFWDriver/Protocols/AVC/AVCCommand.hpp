@@ -23,9 +23,6 @@
 #include "../../Common/CallbackUtils.hpp"
 #include "../../Logging/Logging.hpp"
 
-// Forward declarations for dispatch types (implementation uses libdispatch)
-typedef struct dispatch_semaphore_s* dispatch_semaphore_t;
-
 namespace ASFW::Protocols::AVC {
 
 //==============================================================================
@@ -273,64 +270,5 @@ protected:
     FCPHandle fcpHandle_;
 };
 
-//==============================================================================
-// AV/C Command (Synchronous Variant)
-//==============================================================================
-
-/// Synchronous AV/C command
-///
-/// Blocks calling thread until response received or timeout expires.
-/// Uses dispatch_semaphore for blocking.
-///
-/// **Usage**:
-/// ```cpp
-/// AVCCdb cdb;
-/// cdb.ctype = static_cast<uint8_t>(AVCCommandType::kStatus);
-/// cdb.subunit = kAVCSubunitUnit;
-/// cdb.opcode = static_cast<uint8_t>(AVCOpcode::kPlugInfo);
-/// cdb.operands[0] = 0xFF;
-/// cdb.operandLength = 1;
-///
-/// AVCCommandSync cmd(transport, cdb);
-/// AVCCdb response;
-/// AVCResult result = cmd.SubmitAndWait(response, 5000);  // 5s timeout
-///
-/// if (IsSuccess(result)) {
-///     uint8_t numDestPlugs = response.operands[0];
-///     uint8_t numSrcPlugs = response.operands[1];
-/// }
-/// ```
-///
-/// **Thread Safety**:
-/// - Safe to call from UserClient ExternalMethod handlers
-/// - Do NOT call from FCP completion queue or timeout queue (will deadlock)
-/// - Completion callback runs on FCP timeout queue (different from caller)
-class AVCCommandSync : public AVCCommand {
-public:
-    using AVCCommand::AVCCommand;
-
-    /// Submit and wait for response (blocking)
-    ///
-    /// Blocks calling thread until:
-    /// - Response received (returns result from ctype)
-    /// - Timeout expires (returns kTimeout)
-    ///
-    /// @param outResponse Output response CDB (valid if IsSuccess(result))
-    /// @param timeoutMs Maximum wait time (milliseconds)
-    /// @return Command result
-    ///
-    /// TODO: Implement using DriverKit-compatible synchronization
-    /// (IOLock + condition variable or callback-based waiting mechanism)
-    /// DriverKit doesn't support dispatch_semaphore_t from libdispatch
-    AVCResult SubmitAndWait(AVCCdb& outResponse,
-                            uint32_t timeoutMs = 10000) {
-        // TEMPORARILY STUBBED - libdispatch not available in DriverKit
-        (void)outResponse;
-        (void)timeoutMs;
-        ASFW_LOG_ERROR(Async,
-                       "AVCCommand::SubmitAndWait() not yet implemented for DriverKit");
-        return AVCResult::kTransportError;
-    }
-};
 
 } // namespace ASFW::Protocols::AVC

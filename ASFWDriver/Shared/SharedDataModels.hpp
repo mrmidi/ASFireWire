@@ -35,7 +35,7 @@ struct AVCUnitInfoWire {
     uint8_t  isoOutputPlugs;
     uint8_t  extInputPlugs;
     uint8_t  extOutputPlugs;
-    uint8_t  _reserved;    // Padding to 24 bytes
+    uint8_t  discoveryStatus; // bit 7: supported; bits 0-2: 0 idle, 1 running, 2 complete, 3 failed, 4 skipped
     // Followed by variable length AVCSubunitInfoWire array
     // AVCSubunitInfoWire subunits[0];
 } __attribute__((packed));

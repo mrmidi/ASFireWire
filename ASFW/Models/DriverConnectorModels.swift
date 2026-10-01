@@ -199,7 +199,9 @@ struct DriverConnectorAVCUnitInfo: Identifiable {
 
     var guidHex: String { String(format: "0x%016X", guid) }
     var nodeIDHex: String { String(format: "0x%04X", nodeID) }
-    var isInitialized: Bool { true } // Always true for discovered units
+    var diagnosticStatus: UInt8 = 0
+    var isInitialized: Bool { diagnosticStatus == 0 || diagnosticStatus == 0x82 }
+    var diagnosticState: UInt8? { diagnosticStatus & 0x80 != 0 ? diagnosticStatus & 0x7F : nil }
     
     /// Total isochronous plugs (bidirectional)
     var totalIsoPlugs: UInt8 { isoInputPlugs + isoOutputPlugs }
@@ -259,7 +261,11 @@ struct DriverConnectorAVCMusicCapabilities {
         let channelCount: UInt8
 
         var sampleRateName: String {
-            switch sampleRateCode {
+            Self.sampleRateName(for: sampleRateCode)
+        }
+
+        static func sampleRateName(for code: UInt8) -> String {
+            switch code {
             case 0x00: return "22.05 kHz"
             case 0x01: return "24 kHz"
             case 0x02: return "32 kHz"
@@ -270,7 +276,7 @@ struct DriverConnectorAVCMusicCapabilities {
             case 0x07: return "192 kHz"
             case 0x0A: return "88.2 kHz"
             case 0x0F: return "Don't Care"
-            default: return String(format: "0x%02X", sampleRateCode)
+            default: return String(format: "0x%02X", code)
             }
         }
 

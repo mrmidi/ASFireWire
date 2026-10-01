@@ -4,9 +4,8 @@
 // AudioProfileRegistry.hpp
 // Global profile registry dispatcher.
 //
-// Static profiles (Phase88, Apogee) are returned as singletons. Dynamic profiles
-// (generic BeBoB) are constructed from discovery data and owned per-GUID so that
-// two different BeBoB devices can report different stream geometries.
+// Profiles are static singletons chosen by the catalog's profile builder. A
+// device's discovered geometry travels in its published config, not here.
 
 #pragma once
 
@@ -14,8 +13,6 @@
 #include "IAudioDeviceProfile.hpp"
 
 #include <cstdint>
-#include <memory>
-#include <unordered_map>
 
 namespace ASFW::Isoch::Audio {
 
@@ -50,17 +47,6 @@ public:
     /// without a downcast. nullptr for every non-DICE builder.
     [[nodiscard]] static const DICE::DiceProfile* DiceProfileForBuilderId(
         uint32_t profileBuilderId) noexcept;
-
-    // Create and store a per-GUID BeBoB profile from discovery data. Returns
-    // the stored pointer (owned by the registry). No-op if already registered.
-    static const IAudioDeviceProfile* RegisterBeBoBProfile(uint64_t guid,
-                                                            const void* discoveryModel) noexcept;
-
-    // Drop a per-GUID profile (device removed).
-    static void UnregisterProfile(uint64_t guid) noexcept;
-
-private:
-    static std::unordered_map<uint64_t, std::unique_ptr<IAudioDeviceProfile>>& DynamicProfiles();
 };
 
 } // namespace ASFW::Isoch::Audio

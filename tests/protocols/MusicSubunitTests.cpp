@@ -10,7 +10,7 @@
 #include "Protocols/AVC/Music/MusicSubunit.hpp"
 #include "Protocols/AVC/IAVCCommandSubmitter.hpp"
 #include "Protocols/AVC/AVCDefs.hpp"
-#include "Protocols/AVC/StreamFormats/AVCStreamFormatCommands.hpp"
+#include "Protocols/AVC/Core/IAvcUnit.hpp"
 
 using namespace ASFW;
 using namespace ASFW::Protocols::AVC;
@@ -18,10 +18,44 @@ using namespace ASFW::Protocols::AVC::Music;
 using namespace ASFW::Protocols::AVC::StreamFormats;
 using namespace testing;
 
-// Mock IAVCCommandSubmitter
-class MockAVCCommandSubmitter : public IAVCCommandSubmitter {
+// Mock IAVCCommandSubmitter & IAvcUnit
+class MockAVCCommandSubmitter : public IAVCCommandSubmitter, public ASFW::AVC::IAvcUnit {
 public:
     MOCK_METHOD(void, SubmitCommand, (const AVCCdb& cdb, AVCCompletion completion), (override));
+
+    void Submit(const ASFW::AVC::CommandFrame& frame,
+                ASFW::FW::Generation,
+                ResponseCallback completion) override {
+        AVCCdb cdb{};
+        cdb.ctype = frame.Bytes()[0];
+        cdb.subunit = frame.Bytes()[1];
+        cdb.opcode = frame.Bytes()[2];
+        cdb.operandLength = static_cast<uint16_t>(frame.Operands().size());
+        std::copy(frame.Operands().begin(), frame.Operands().end(), cdb.operands.begin());
+
+        SubmitCommand(cdb, [completion = std::move(completion)](AVCResult res, const AVCCdb& respCdb) {
+            if (res != AVCResult::kAccepted && res != AVCResult::kImplementedStable) {
+                completion(std::unexpected(ASFW::AVC::AvcError{ASFW::AVC::AvcErrorKind::kRefused}));
+                return;
+            }
+            std::vector<uint8_t> respBytes;
+            respBytes.push_back(respCdb.ctype);
+            respBytes.push_back(respCdb.subunit);
+            respBytes.push_back(respCdb.opcode);
+            respBytes.insert(respBytes.end(), respCdb.operands.begin(), respCdb.operands.begin() + respCdb.operandLength);
+            auto resp = ASFW::AVC::ParseResponse(respBytes);
+            if (!resp) {
+                completion(std::unexpected(resp.error()));
+                return;
+            }
+            completion(*resp);
+        });
+    }
+
+    ASFW::FW::NodeId NodeId() const noexcept override { return ASFW::FW::NodeId(0); }
+    ASFW::FW::Generation CurrentGeneration() const noexcept override { return ASFW::FW::Generation(1); }
+    uint64_t Guid() const noexcept override { return 0; }
+    [[nodiscard]] ASFW::AVC::IAvcUnit* AsAvcUnit() noexcept override { return this; }
 };
 
 class MusicSubunitTests : public Test {
@@ -40,6 +74,10 @@ protected:
         plug.plugID = id;
         plug.direction = dir;
         subunit.plugs_.push_back(plug);
+    }
+
+    void ParseBlock(ASFW::Protocols::AVC::Music::MusicSubunit& sub, const uint8_t* data, size_t len) {
+        sub.ParseDescriptorBlock(data, len);
     }
 };
 
@@ -99,11 +137,11 @@ TEST_F(MusicSubunitTests, SetSampleRate_Sends0xBF_Control) {
             EXPECT_EQ(cdb.operands[2], 0x01); // Subunit plug
             EXPECT_EQ(cdb.operands[3], 0x00); // Plug 0
             
-            // Verify format in operands (starts at offset 6)
-            // [6]=0x90 (AM824), [7]=0x40 (Compound), [8]=0x04 (48k), [9]=0x00, [10]=0x00 (0 channels)
-            EXPECT_EQ(cdb.operands[6], 0x90);
-            EXPECT_EQ(cdb.operands[7], 0x40);
-            EXPECT_EQ(cdb.operands[8], 0x04); // 48kHz
+            // Verify format in operands (starts at offset 7, after 5-byte plug address and 1-byte support status)
+            EXPECT_EQ(cdb.operands[6], 0xFF); // Support status (not used in control)
+            EXPECT_EQ(cdb.operands[7], 0x90);
+            EXPECT_EQ(cdb.operands[8], 0x40);
+            EXPECT_EQ(cdb.operands[9], 0x04); // 48kHz
             
             // Simulate a response (ACCEPTED)
             AVCCdb response = cdb;
@@ -124,7 +162,7 @@ TEST_F(MusicSubunitTests, SetSampleRate_Sends0xBF_Control) {
     EXPECT_TRUE(done);
 }
 
-// Test: QueryConnections should send 0x1A command for Input plugs
+// Test: QueryConnections sends a typed unit-addressed SIGNAL SOURCE command for Input plugs
 TEST_F(MusicSubunitTests, QueryConnections_Sends0x1A_Status) {
     // Add an Input plug (Destination)
     AddPlug(*subunit, 0, ASFW::Protocols::AVC::StreamFormats::PlugDirection::kInput);
@@ -138,26 +176,24 @@ TEST_F(MusicSubunitTests, QueryConnections_Sends0x1A_Status) {
             EXPECT_EQ(cdb.ctype, static_cast<uint8_t>(AVCCommandType::kStatus));
             EXPECT_EQ(cdb.opcode, 0x1A); // SIGNAL SOURCE
             
-            // Verify operands
-            // [0]=0xFF (Output Status), [1]=0xFF, [2]=0xFF (Conv Data)
-            // [3]=0x00 (Subunit Plug), [4]=0x00 (Plug ID 0)
+            EXPECT_EQ(cdb.subunit, 0xFF);
+            // [0]=0xFF, [1..2]=wildcard source, [3..4]=Music subunit plug 0.
             EXPECT_EQ(cdb.operands[0], 0xFF);
-            EXPECT_EQ(cdb.operands[3], 0x00);
+            EXPECT_EQ(cdb.operands[1], 0xFF);
+            EXPECT_EQ(cdb.operands[2], 0xFE);
+            EXPECT_EQ(cdb.operands[3], 0x60);
             EXPECT_EQ(cdb.operands[4], 0x00);
             
             // Simulate response: Connected to Unit Plug 0 (Iso)
             AVCCdb response = cdb;
             response.ctype = static_cast<uint8_t>(AVCResponseType::kImplementedStable); // Stable/Implemented
             
-            // Response format:
-            // [0]=OutputStatus, [1-2]=ConvData
-            // [3]=SourcePlugType (0x01=Unit), [4]=SourcePlugID (0x00)
-            // [5]=DestPlugType (0x00), [6]=DestPlugID (0x00)
-            response.operandLength = 7;
-            response.operands[3] = 0x01; // Unit plug
-            response.operands[4] = 0x00; // Plug 0
-            response.operands[5] = 0x00; // Subunit plug
-            response.operands[6] = 0x00; // Plug 0
+            response.operandLength = 5;
+            response.operands[0] = 0xFF;
+            response.operands[1] = 0xFF; // Unit source address
+            response.operands[2] = 0x00; // Unit isochronous plug 0
+            response.operands[3] = 0x60; // Music subunit destination
+            response.operands[4] = 0x00;
             
             completion(AVCResult::kAccepted, response);
         }));
@@ -170,40 +206,26 @@ TEST_F(MusicSubunitTests, QueryConnections_Sends0x1A_Status) {
 
     EXPECT_TRUE(done);
 }
-// Test: QueryConnections should retry with Unit address if Subunit returns kNotImplemented
-TEST_F(MusicSubunitTests, QueryConnections_RetryWithUnit) {
+// Test: SIGNAL SOURCE uses the unit address and encodes the destination subunit plug.
+TEST_F(MusicSubunitTests, QueryConnections_UsesUnitAddress) {
     // Add an Input plug
     AddPlug(*subunit, 0, ASFW::Protocols::AVC::StreamFormats::PlugDirection::kInput);
 
-    // Expect TWO command submissions
-    // 1. To Subunit (returns kNotImplemented)
-    // 2. To Unit (returns kAccepted)
-
     EXPECT_CALL(mockSubmitter, SubmitCommand(_, _))
         .WillOnce(Invoke([&](const AVCCdb& cdb, AVCCompletion completion) {
-            // First call: To Subunit
-            EXPECT_EQ(cdb.subunit, 0x60); // Music Subunit (0x0C << 3) | 0
-            EXPECT_EQ(cdb.opcode, 0x1A);
-            
-            // Return Not Implemented
-            completion(AVCResult::kNotImplemented, cdb);
-        }))
-        .WillOnce(Invoke([&](const AVCCdb& cdb, AVCCompletion completion) {
-            // Second call: To Unit
             EXPECT_EQ(cdb.subunit, 0xFF); // Unit Address (0xFF)
             EXPECT_EQ(cdb.opcode, 0x1A);
-            
-            // Verify operands (asking about Subunit Plug 0)
-            // [3]=0x00 (Subunit Plug), [4]=0x00 (Plug ID 0)
-            EXPECT_EQ(cdb.operands[3], 0x00);
+            EXPECT_EQ(cdb.operands[3], 0x60);
             EXPECT_EQ(cdb.operands[4], 0x00);
 
-            // Simulate response: Connected to Unit Plug 0
             AVCCdb response = cdb;
             response.ctype = static_cast<uint8_t>(AVCResponseType::kImplementedStable);
-            response.operandLength = 7;
-            response.operands[3] = 0x01; // Unit plug
-            response.operands[4] = 0x00; // Plug 0
+            response.operandLength = 5;
+            response.operands[0] = 0xFF;
+            response.operands[1] = 0xFF;
+            response.operands[2] = 0x00;
+            response.operands[3] = 0x60;
+            response.operands[4] = 0x00;
             
             completion(AVCResult::kAccepted, response);
         }));
@@ -222,6 +244,32 @@ TEST_F(MusicSubunitTests, QueryConnections_RetryWithUnit) {
     EXPECT_TRUE(plugs[0].connectionInfo.has_value());
     EXPECT_EQ(plugs[0].connectionInfo->sourceSubunitType, ASFW::Protocols::AVC::StreamFormats::SourceSubunitType::kUnit);
     EXPECT_EQ(plugs[0].connectionInfo->sourcePlugNumber, 0);
+    EXPECT_FALSE(plugs[0].connectionInfo->sourceIsExternalUnitPlug);
+}
+
+TEST_F(MusicSubunitTests, QueryConnections_PreservesExternalUnitPlugAddress) {
+    AddPlug(*subunit, 0, ASFW::Protocols::AVC::StreamFormats::PlugDirection::kInput);
+    EXPECT_CALL(mockSubmitter, SubmitCommand(_, _))
+        .WillOnce(Invoke([&](const AVCCdb& cdb, AVCCompletion completion) {
+            AVCCdb response = cdb;
+            response.ctype = static_cast<uint8_t>(AVCResponseType::kImplementedStable);
+            response.operandLength = 5;
+            response.operands[0] = 0xFF;
+            response.operands[1] = 0xFF;
+            response.operands[2] = 0x80; // Unit external plug zero, not isoch plug zero.
+            response.operands[3] = 0x60;
+            response.operands[4] = 0x00;
+            completion(AVCResult::kAccepted, response);
+        }));
+
+    bool done = false;
+    subunit->QueryConnections(mockSubmitter, [&](bool success) { EXPECT_TRUE(success); done = true; });
+    ASSERT_TRUE(done);
+    const auto plugs = subunit->GetPlugs();
+    ASSERT_EQ(plugs.size(), 1);
+    ASSERT_TRUE(plugs[0].connectionInfo.has_value());
+    EXPECT_EQ(plugs[0].connectionInfo->sourcePlugNumber, 0);
+    EXPECT_TRUE(plugs[0].connectionInfo->sourceIsExternalUnitPlug);
 }
 
 // Test: SetAudioVolume should send 0xB8 command to Audio Subunit (0x08)
@@ -239,13 +287,16 @@ TEST_F(MusicSubunitTests, SetAudioVolume_SendsCorrectCDB) {
             // [0]=0x81 (Feature), [1]=PlugID, [2]=0x10 (Current), [3]=Len, [4]=Channel, [5]=Selector
             EXPECT_EQ(cdb.operands[0], 0x81);
             EXPECT_EQ(cdb.operands[1], plugId);
+            EXPECT_EQ(cdb.operands[3], 0x02); // Selector length is exactly two bytes.
             EXPECT_EQ(cdb.operands[4], 0x00); // Channel
             EXPECT_EQ(cdb.operands[5], 0x02); // Volume Selector
             EXPECT_EQ(cdb.operands[6], 0x02); // Data length
             EXPECT_EQ(cdb.operands[7], 0x7F);
             EXPECT_EQ(cdb.operands[8], 0xFF);
             
-            completion(AVCResult::kAccepted, cdb);
+            AVCCdb response = cdb;
+            response.ctype = static_cast<uint8_t>(AVCResponseType::kAccepted);
+            completion(AVCResult::kAccepted, response);
         }));
         
     bool done = false;
@@ -255,4 +306,58 @@ TEST_F(MusicSubunitTests, SetAudioVolume_SendsCorrectCDB) {
     });
     
     EXPECT_TRUE(done);
+}
+
+// Test: ParseDescriptorBlock with captured Apogee Duet fixture
+TEST_F(MusicSubunitTests, ParseDescriptorBlock_DuetFixtureIntegration) {
+    const std::string duetHex =
+        "01ce000a810000060101ffffffff01c08108000403030005002e8109000800900200000100020020810a000b060302000000ff000101ff000f000a000b416e616c6f67204f757400002d810900080190020500010002001f810a000b060302000200ff000301ff000e000a000a416e616c6f6720496e0000248109000802900203000100010016810a0007400901000400ff0009000a000553796e6300002d810900080090020000010002001f810a000b060302000200ff000301ff000e000a000a416e616c6f6720496e00002e8109000801900205000100020020810a000b060302000000ff000101ff000f000a000b416e616c6f67204f75740000248109000802900203000100010016810a0007400901000400ff0009000a000553796e63000025810b000e00000000f000ff00fff101ff00ff0011000a000d416e616c6f67204f75742031000025810b000e00000100f000ff01fff101ff01ff0011000a000d416e616c6f67204f75742032000024810b000e00000200f001ff00fff100ff00ff0010000a000c416e616c6f6720496e2031000024810b000e00000300f001ff01fff100ff01ff0010000a000c416e616c6f6720496e2032000012810b000e80000400f002ff00fff102ff00ff";
+
+    std::vector<uint8_t> bytes;
+    bytes.reserve(duetHex.size() / 2);
+    for (size_t i = 0; i < duetHex.size(); i += 2) {
+        bytes.push_back(static_cast<uint8_t>(std::stoul(duetHex.substr(i, 2), nullptr, 16)));
+    }
+    ASSERT_EQ(bytes.size(), 464u);
+
+    // Call ParseDescriptorBlock on MusicSubunit
+    ParseBlock(*subunit, bytes.data(), bytes.size());
+
+    // Verify completion status
+    EXPECT_TRUE(subunit->HasCompleteDescriptorParse());
+
+    // Verify plugs
+    const auto& plugs = subunit->GetPlugs();
+    ASSERT_EQ(plugs.size(), 6u);
+    EXPECT_EQ(plugs[0].plugID, 0);
+    EXPECT_EQ(plugs[0].direction, StreamFormats::PlugDirection::kInput);
+    EXPECT_EQ(plugs[0].name, "Analog Out");
+
+    // Verify channel details within plug format
+    ASSERT_TRUE(plugs[0].currentFormat.has_value());
+    ASSERT_FALSE(plugs[0].currentFormat->channelFormats.empty());
+    const auto& chFormats = plugs[0].currentFormat->channelFormats[0];
+    ASSERT_GE(chFormats.channels.size(), 2u);
+    EXPECT_EQ(chFormats.channels[0].musicPlugID, 0);
+    EXPECT_EQ(chFormats.channels[0].name, "Analog Out 1");
+    EXPECT_EQ(chFormats.channels[1].musicPlugID, 1);
+    EXPECT_EQ(chFormats.channels[1].name, "Analog Out 2");
+
+    // Verify music channels
+    const auto& channels = subunit->GetMusicChannels();
+    ASSERT_EQ(channels.size(), 5u);
+    EXPECT_EQ(channels[0].musicPlugID, 0);
+    EXPECT_EQ(channels[0].name, "Analog Out 1");
+    EXPECT_EQ(channels[1].musicPlugID, 1);
+    EXPECT_EQ(channels[1].name, "Analog Out 2");
+    EXPECT_EQ(channels[2].musicPlugID, 2);
+    EXPECT_EQ(channels[2].name, "Analog In 1");
+    EXPECT_EQ(channels[3].musicPlugID, 3);
+    EXPECT_EQ(channels[3].name, "Analog In 2");
+
+    // Verify parsed status access
+    const auto& status = subunit->GetParsedStatus();
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(status->declaredLength, 462);
+    EXPECT_TRUE(status->capabilities.hasGeneralCapability);
 }

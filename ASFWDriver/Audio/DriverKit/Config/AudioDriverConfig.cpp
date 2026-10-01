@@ -195,6 +195,19 @@ void ParseWireStreams(OSDictionary* properties,
                 OSDynamicCast(OSNumber, entry->getObject(Keys::kStreamChannelOffset))) {
             parsed[i].channelOffset = offset->unsigned32BitValue();
         }
+        if (auto* map = OSDynamicCast(OSArray, entry->getObject(Keys::kStreamPcmSlotMap))) {
+            parsed[i].hasPcmSlotMap = true;
+            const auto count = map->getCount();
+            if (count > parsed[i].pcmSlotMap.slotForChannel.size() ||
+                (count != 0 && count != parsed[i].pcmChannels)) return;
+            parsed[i].pcmSlotMap.slotCount = count;
+            parsed[i].pcmSlotMap.channelCount = count;
+            for (uint32_t channel = 0; channel < count; ++channel) {
+                auto* slot = OSDynamicCast(OSNumber, map->getObject(channel));
+                if (slot == nullptr || slot->unsigned32BitValue() >= parsed[i].am824Slots) return;
+                parsed[i].pcmSlotMap.slotForChannel[channel] = static_cast<uint8_t>(slot->unsigned32BitValue());
+            }
+        }
         // A data block has to be at least as wide as the PCM it carries.
         if (parsed[i].am824Slots == 0) {
             parsed[i].am824Slots = parsed[i].pcmChannels + parsed[i].midiPorts;

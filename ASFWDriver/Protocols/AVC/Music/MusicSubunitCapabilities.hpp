@@ -94,61 +94,6 @@ struct MusicSubunitCapabilities {
     std::string outputPlugName = "Output";
 
     //==========================================================================
-    // AudioDriverKit Configuration Export
-    //==========================================================================
-    
-    /// Configuration struct matching AudioDriverKit expectations
-    /// Can be passed directly to ASFWDriver::CreateAudioDevice()
-    struct AudioConfig {
-        uint64_t guid{0};
-        const char* vendorName{nullptr};         // Points to parent's vendorName
-        const char* modelName{nullptr};          // Points to parent's modelName
-        const double* sampleRates{nullptr};      // Points to supportedSampleRates.data()
-        uint32_t sampleRateCount{0};
-        double defaultSampleRate{0.0};
-        uint16_t maxInputChannels{0};
-        uint16_t maxOutputChannels{0};
-        const char* inputStreamName{nullptr};    // Points to inputPlugName
-        const char* outputStreamName{nullptr};   // Points to outputPlugName
-        
-        /// Get device display name (Vendor + Model)
-        std::string GetDeviceName() const {
-            std::string name;
-            if (vendorName && vendorName[0] != '\0') {
-                name = vendorName;
-            }
-            if (modelName && modelName[0] != '\0') {
-                if (!name.empty()) name += " ";
-                name += modelName;
-                name += " — ASFW";
-            }
-            return name.empty() ? "FireWire Audio Device — ASFW" : name;
-        }
-        
-        /// Get maximum channel count (max of input/output)
-        uint16_t GetMaxChannelCount() const {
-            return std::max(maxInputChannels, maxOutputChannels);
-        }
-    };
-    
-    /// Get audio configuration for AudioDriverKit device creation
-    /// Returns pointers into this struct - valid only while capabilities object is alive
-    AudioConfig GetAudioDeviceConfiguration() const {
-        AudioConfig config;
-        config.guid = guid;
-        config.vendorName = vendorName.empty() ? "Unknown" : vendorName.c_str();
-        config.modelName = modelName.empty() ? "Device" : modelName.c_str();
-        config.sampleRates = supportedSampleRates.empty() ? nullptr : supportedSampleRates.data();
-        config.sampleRateCount = static_cast<uint32_t>(supportedSampleRates.size());
-        config.defaultSampleRate = supportedSampleRates.empty() ? 0.0 : supportedSampleRates[0];
-        config.maxInputChannels = maxAudioInputChannels.value_or(0);
-        config.maxOutputChannels = maxAudioOutputChannels.value_or(0);
-        config.inputStreamName = inputPlugName.c_str();
-        config.outputStreamName = outputPlugName.c_str();
-        return config;
-    }
-
-    //==========================================================================
     // Capability Flag Helpers
     //==========================================================================
     

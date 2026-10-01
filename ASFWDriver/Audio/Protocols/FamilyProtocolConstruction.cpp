@@ -4,6 +4,7 @@
 // FamilyProtocolConstruction.cpp - Family-keyed device protocol construction
 
 #include "FamilyProtocolConstruction.hpp"
+#include "GenericAvcProtocol.hpp"
 
 #include "DICE/Avid/AvidMboxProRouting.hpp"
 #include "DICE/Focusrite/SPro24DspProtocol.hpp"
@@ -12,7 +13,6 @@
 #include "Oxford/Mackie/MackieOnyxProtocol.hpp"
 #include "Fireworks/FireworksProtocol.hpp"
 #include "BeBoB/Phase88Protocol.hpp"
-#include "BeBoB/GenericBeBoBProtocol.hpp"
 #include "BeBoB/MAudioSpecialProtocol.hpp"
 #include "MOTU/MotuV2Protocol.hpp"
 #include "RME/FirefaceDeviceProtocol.hpp"
@@ -29,7 +29,7 @@ static_assert(
 
 static_assert(
     static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::kLastValid) ==
-    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::RmeFireface),
+    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::GenericAvc),
     "ProtocolImplementationId member added without updating family protocol construction");
 
 std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
@@ -49,7 +49,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
     }
     const uint16_t nodeId = route.nodeId;
 
-    if (plan.support != DeviceProfiles::Audio::SupportDisposition::Supported ||
+    if (!DeviceProfiles::Audio::AllowsAudioRuntime(plan.support) ||
         plan.protocolImplementation ==
             DeviceProfiles::Audio::ProtocolImplementationId::None) {
         return nullptr;
@@ -67,9 +67,9 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         case AudioFamilyProviderId::BeBoB:
         case AudioFamilyProviderId::MotuRegister:
         case AudioFamilyProviderId::RmeRegister:
+        case AudioFamilyProviderId::GenericAvc:
             break;
 
-        case AudioFamilyProviderId::GenericAvc:
         case AudioFamilyProviderId::None:
             return nullptr;
     }
@@ -173,12 +173,6 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // row selects this today (the one BeBoB device on this branch, the
         // PHASE 88, has its own builder), so it is reachable only when a future
         // row names it.
-        case ProtocolImplementationId::BeBoBGeneric:
-            ASFW_LOG(Audio, "Creating GenericBeBoBProtocol node=0x%04x", nodeId);
-            return std::make_unique<BeBoB::GenericBeBoBProtocol>(
-                busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
-                BeBoB::DeviceModel{});
-
         case ProtocolImplementationId::BeBoBMAudioSpecial:
             if (plan.profileBuilder != DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 &&
                 plan.profileBuilder != DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix) {
@@ -212,11 +206,11 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                 busOps, busInfo, routeRegistry, route, model, isS800);
         }
 
-        // --- Generic AV/C & None ---
-        // An unknown AV/C unit resolves to the generic fallback in the catalog,
-        // which is a *classification*, not a decision to stream it. This branch
-        // has no generic AV/C backend, and inventing one here would start
-        // talking to every AV/C device on the bus.
+        case ProtocolImplementationId::GenericAvc:
+            ASFW_LOG(Audio, "[AvcRuntime] generic CMP backend node=0x%04x", nodeId);
+            return std::make_unique<GenericAvcProtocol>(
+                busOps, busInfo, route, irmClient, cmpClient, timerScheduler);
+
         case ProtocolImplementationId::None:
             return nullptr;
     }

@@ -1,0 +1,17 @@
+## SignalFormat::QueryOutputPlug0
+W ffff.f0000b00 01ff1800ffffffff @s100
+## SignalFormat::Set44100
+W ffff.f0000b00 00ff18009001ffff @s100
+## SignalFormat::Set48000
+W ffff.f0000b00 00ff18009002ffff @s100
+## ApogeeDuetDuplex::ProgramRx
+R ffff.f0000900 4 @s400
+R ffff.f0000904 4 @s400
+L ffff.f0000904 80000000 -> 81008000 = 80000000 @s400
+## ApogeeDuetDuplex::ProgramTxAndEnable
+R ffff.f0000980 4 @s400
+R ffff.f0000984 4 @s400
+L ffff.f0000984 80000000 -> 81010000 = 80000000 @s400
+## ApogeeDuetDuplex::StopDuplex
+R ffff.f0000984 4 @s400
+R ffff.f0000904 4 @s400

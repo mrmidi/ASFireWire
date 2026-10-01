@@ -12,6 +12,7 @@ struct AVCDebugView: View {
     @ObservedObject var viewModel: DebugViewModel
     @State private var isRefreshing = false
     @State private var lastRefresh: Date?
+    @State private var confirmingReScan = false
     
     var body: some View {
         ScrollView {
@@ -22,7 +23,7 @@ struct AVCDebugView: View {
                     lastRefresh: lastRefresh,
                     isRefreshing: isRefreshing,
                     onRefresh: refreshAVCUnits,
-                    onReScan: triggerReScan,
+                    onReScan: { confirmingReScan = true },
                     onTestIRM: triggerIRMTest,
                     onReleaseIRM: triggerIRMRelease,
                     onCMPConnectOPCR: triggerCMPConnectOPCR,
@@ -47,6 +48,7 @@ struct AVCDebugView: View {
         }
         .navigationTitle("AV/C Units")
         .background(Color(NSColor.controlBackgroundColor))
+        .avcProbeConfirmation(isPresented: $confirmingReScan, onConfirm: triggerReScan)
         .onAppear {
             if viewModel.isConnected {
                 refreshAVCUnits()

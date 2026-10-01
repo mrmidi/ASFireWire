@@ -22,6 +22,8 @@ struct PcmSlotMap {
     uint32_t slotCount{0};
     uint32_t channelCount{0};
 
+    friend constexpr bool operator==(const PcmSlotMap&, const PcmSlotMap&) noexcept = default;
+
     template <size_t Count>
     [[nodiscard]] constexpr bool SetSlots(
         const std::array<uint8_t, Count>& slots) noexcept {

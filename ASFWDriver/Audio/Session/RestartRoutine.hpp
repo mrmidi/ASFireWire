@@ -13,6 +13,7 @@
 
 #include "../Protocols/Duplex/FamilyDriver.hpp"
 #include "StopRoutine.hpp"
+#include "../Model/ASFWAudioDevice.hpp"
 
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
@@ -71,6 +72,7 @@ public:
         FamilyDriver* family{nullptr};
         ::ASFW::IRM::IRMClient* irm{nullptr};
         Runtime::IDirectAudioBindingSource* binding{nullptr};
+        std::optional<Model::ASFWAudioDevice> discoveredConfig{};
         AudioClockConfig clock{};
         DuplexRestartReason reason{DuplexRestartReason::kInitialStart};
         // True when the session no longer wants this start: a stop was

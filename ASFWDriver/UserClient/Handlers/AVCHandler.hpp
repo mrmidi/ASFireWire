@@ -113,6 +113,14 @@ public:
      */
     kern_return_t ReScanAVCUnits(IOUserClientMethodArguments* args);
 
+    /**
+     * @brief One page of a unit's FCP exchange log
+     *
+     * Scalar inputs: [0] GUID high 32 bits, [1] GUID low 32 bits, [2] first record index.
+     * Structure output: Wire::AVCExchangePageWire followed by its records (<= 4096 bytes).
+     */
+    kern_return_t GetFCPExchangeLog(IOUserClientMethodArguments* args);
+
 private:
     Protocols::AVC::IAVCDiscovery* discovery_;
 };

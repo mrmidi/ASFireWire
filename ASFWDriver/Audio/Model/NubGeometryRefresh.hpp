@@ -63,6 +63,7 @@ ClassifyGeometryRefresh(const ASFWAudioDevice& published,
     const bool same = SameWireStreams(published.playbackStreams, incoming.playbackStreams) &&
                       SameWireStreams(published.captureStreams, incoming.captureStreams) &&
                       published.resolvedGeometryRequired == incoming.resolvedGeometryRequired &&
+                      published.graphResolved == incoming.graphResolved &&
                       published.inputChannelCount == incoming.inputChannelCount &&
                       published.outputChannelCount == incoming.outputChannelCount &&
                       published.channelCount == incoming.channelCount &&

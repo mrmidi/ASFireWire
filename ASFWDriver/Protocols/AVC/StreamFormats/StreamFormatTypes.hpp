@@ -192,6 +192,7 @@ struct ConnectionInfo {
     SourceSubunitType sourceSubunitType{SourceSubunitType::kUnknown};
     uint8_t sourceSubunitID{0xFF};
     uint8_t sourcePlugNumber{0xFF};
+    bool sourceIsExternalUnitPlug{false};
 
     bool IsConnected() const {
         return sourceSubunitType != SourceSubunitType::kNotConnected &&

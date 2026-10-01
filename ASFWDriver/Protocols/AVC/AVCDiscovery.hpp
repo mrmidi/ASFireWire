@@ -25,16 +25,13 @@
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Audio/Core/IAVCAudioConfigListener.hpp"
-#include "../../Audio/Protocols/Oxford/Apogee/ApogeeTypes.hpp"
 #include "../../Scheduling/ITimerScheduler.hpp"
 #include "../BeBoB/Bootloader/BeBoBBootloaderPreparationCoordinator.hpp"
 
 // Forward declarations
 namespace ASFW::Discovery { class DeviceRegistry; struct DeviceRecord; }
 namespace ASFW::Audio::Model { struct ASFWAudioDevice; }
-namespace ASFW::Audio::Oxford::Apogee { class ApogeeDuetProtocol; }
 namespace ASFW::Protocols::AVC::Music { class MusicSubunit; }
-namespace ASFW::Audio::BeBoB { struct DeviceModel; }
 
 namespace ASFW::Protocols::AVC {
 
@@ -87,29 +84,6 @@ public:
     void OnBusReset(uint32_t newGeneration);
 
 private:
-    struct DuetPrefetchState {
-        std::optional<::ASFW::Audio::Oxford::Apogee::InputParams> inputParams;
-        std::optional<::ASFW::Audio::Oxford::Apogee::MixerParams> mixerParams;
-        std::optional<::ASFW::Audio::Oxford::Apogee::OutputParams> outputParams;
-        std::optional<::ASFW::Audio::Oxford::Apogee::DisplayParams> displayParams;
-        std::optional<uint32_t> firmwareId;
-        std::optional<uint32_t> hardwareId;
-        IOReturn clockStatus{kIOReturnNotReady};
-        bool clockVerified{false};
-        bool timedOut{false};
-    };
-
-    struct DuetPrefetchOperation {
-        Discovery::DeviceRouteToken route{};
-        uint64_t operationSerial{0};
-        uint64_t startTimeNs{0};
-
-        DuetPrefetchState state{};
-        std::atomic<bool> completed{false};
-
-        Scheduling::TimerToken timeoutToken{Scheduling::kInvalidTimerToken};
-    };
-
     bool IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const;
 
     uint64_t GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const;
@@ -118,64 +92,11 @@ private:
     void PrepareMAudioBootloader(const std::shared_ptr<Discovery::FWDevice>& device);
 
     void HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit);
-    void PublishBeBoBAudioConfig(uint64_t guid,
-                                  uint32_t vendorId,
-                                  uint32_t modelId,
-                                  uint32_t profileBuilderId,
-                                  const std::string& deviceName,
-                                  const ::ASFW::Audio::BeBoB::DeviceModel& inventory);
-    void PublishMAudioSpecialConfig(uint64_t guid,
-                                    const Discovery::FWDevice& device);
-    void PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
-                                              const Discovery::FWDevice& device);
-    void PublishMackieOnyxFireworksProfileOwnedConfig(uint64_t guid,
-                                                      const Discovery::FWDevice& device);
-    [[nodiscard]] Music::MusicSubunit* FindAudioMusicSubunit(const AVCUnit& avcUnit) const;
-    void PopulateMusicSubunitCapabilities(uint64_t guid,
-                                          const Discovery::FWDevice& device,
-                                          Music::MusicSubunit& musicSubunit) const;
-    void UpdateCurrentSampleRate(Music::MusicSubunit& musicSubunit) const;
-    [[nodiscard]] ::ASFW::Audio::Model::ASFWAudioDevice BuildAudioDeviceConfig(uint64_t guid,
-                                                                       const Discovery::FWDevice& device,
-                                                                       const Music::MusicSubunit& musicSubunit) const;
+    /// A unit whose policy forbids discovery traffic publishes its catalog
+    /// profile's fixed geometry (M-Audio special firmware, Fireworks).
+    void PublishProfileOwnedConfig(uint64_t guid, const Discovery::FWDevice& device);
     void PublishReadyAudioConfig(uint64_t guid, const ::ASFW::Audio::Model::ASFWAudioDevice& config);
-    void PrefetchDuetStateAndCreateNub(uint64_t guid,
-                                       const std::shared_ptr<AVCUnit>& avcUnit,
-                                       const ::ASFW::Audio::Model::ASFWAudioDevice& config);
-    void FinishDuetPrefetch(const std::shared_ptr<DuetPrefetchOperation>& operation,
-                            const ::ASFW::Audio::Model::ASFWAudioDevice& config,
-                            const char* reason);
-    void ContinueDuetPrefetchMixer(uint64_t guid,
-                                   const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                   const std::shared_ptr<DuetPrefetchOperation>& operation,
-                                   const ::ASFW::Audio::Model::ASFWAudioDevice& config);
-    void ContinueDuetPrefetchOutput(uint64_t guid,
-                                    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                    const std::shared_ptr<DuetPrefetchOperation>& operation,
-                                    const ::ASFW::Audio::Model::ASFWAudioDevice& config);
-    void ContinueDuetPrefetchDisplay(uint64_t guid,
-                                     const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                     const std::shared_ptr<DuetPrefetchOperation>& operation,
-                                     const ::ASFW::Audio::Model::ASFWAudioDevice& config);
-    void ContinueDuetPrefetchFirmware(uint64_t guid,
-                                      const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                      const std::shared_ptr<DuetPrefetchOperation>& operation,
-                                      const ::ASFW::Audio::Model::ASFWAudioDevice& config);
-    void ContinueDuetPrefetchStreamFormats(uint64_t guid,
-                                           const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                           const std::shared_ptr<DuetPrefetchOperation>& operation,
-                                           const ::ASFW::Audio::Model::ASFWAudioDevice& config);
-    void ContinueDuetPrefetchClock(uint64_t guid,
-                                   const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                   const std::shared_ptr<DuetPrefetchOperation>& operation,
-                                   const ::ASFW::Audio::Model::ASFWAudioDevice& config);
-    void ContinueDuetPrefetchHardware(uint64_t guid,
-                                      const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                      const std::shared_ptr<DuetPrefetchOperation>& operation,
-                                      const ::ASFW::Audio::Model::ASFWAudioDevice& config);
     void ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit);
-    [[nodiscard]] bool IsDuetPrefetchCurrent(
-        const std::shared_ptr<DuetPrefetchOperation>& operation) const noexcept;
     [[nodiscard]] bool IsRescanCurrent(const Discovery::DeviceRouteToken& route,
                                        uint64_t operationSerial) const noexcept;
 
@@ -195,11 +116,8 @@ private:
 
     std::unordered_map<uint16_t, std::shared_ptr<FCPTransport>> fcpTransportsByNodeID_;
     std::unordered_map<uint64_t, uint8_t> rescanAttempts_;
-    std::unordered_map<uint64_t, DuetPrefetchState> duetPrefetchByGuid_;
-    std::unordered_map<uint64_t, std::shared_ptr<DuetPrefetchOperation>> activeDuetPrefetchByGuid_;
     std::unordered_map<uint64_t, Scheduling::TimerToken> rescanTimersByGuid_;
     std::unordered_map<uint64_t, uint64_t> activeRescanSerialByGuid_;
-    uint64_t nextDuetPrefetchEpoch_{0};
     uint64_t nextRescanOperationSerial_{0};
 
     OSSharedPtr<IODispatchQueue> rescanQueue_;

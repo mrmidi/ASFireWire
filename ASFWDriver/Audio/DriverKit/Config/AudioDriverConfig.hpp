@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "../../Wire/AMDTP/PcmSlotMap.hpp"
 
 // Forward declarations to avoid pulling in DriverKit headers
 class OSArray;
@@ -49,6 +50,8 @@ struct ParsedWireStream {
     uint32_t am824Slots{0};
     uint32_t midiPorts{0};
     uint32_t channelOffset{0};
+    ::ASFW::Audio::Wire::PcmSlotMap pcmSlotMap{};
+    bool hasPcmSlotMap{false};
 };
 
 struct ParsedAudioDriverConfig {

@@ -49,6 +49,9 @@
 
 namespace ASFW::Testing::Session {
 
+using ::ASFW::Testing::DICE::DiceRecordingFireWireBus;
+using RecordingFireWireBus = ::ASFW::Testing::DICE::DiceRecordingFireWireBus;
+
 using ::ASFW::Async::AsyncHandle;
 using ::ASFW::Async::AsyncStatus;
 using ::ASFW::Async::FWAddress;

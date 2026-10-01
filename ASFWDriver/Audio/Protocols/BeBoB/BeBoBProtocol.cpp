@@ -14,9 +14,9 @@
 #include "../../../Logging/Logging.hpp"
 #include "../../../Protocols/AVC/CMP/CMPClient.hpp"
 #include "../../../Protocols/AVC/FCPTransport.hpp"
-#include "../../../Protocols/AVC/AVCCommand.hpp"
-#include "../../../Protocols/AVC/StreamFormats/AVCUnitPlugSignalFormatCommand.hpp"
-#include "../../../Protocols/AVC/AudioFunctionBlockCommand.hpp"
+#include "../../../Protocols/AVC/Commands/FunctionBlockCommand.hpp"
+#include "../../../Protocols/AVC/Commands/GeneralCommands.hpp"
+#include "../../../Protocols/AVC/Core/RateCodes.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -25,47 +25,10 @@
 namespace ASFW::Audio::BeBoB {
 namespace {
 
-using SignalFormatCommand = Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand;
-using SignalSampleRate = Protocols::AVC::StreamFormats::SampleRate;
-
-[[nodiscard]] IOReturn MapAVCResultToIOReturn(Protocols::AVC::AVCResult result) noexcept {
-    using Protocols::AVC::AVCResult;
-    switch (result) {
-        case AVCResult::kAccepted:
-        case AVCResult::kImplementedStable:
-        case AVCResult::kChanged:
-            return kIOReturnSuccess;
-        case AVCResult::kNotImplemented:
-            return kIOReturnUnsupported;
-        case AVCResult::kInTransition:
-        case AVCResult::kInterim:
-        case AVCResult::kBusy:
-            return kIOReturnBusy;
-        case AVCResult::kTimeout:
-            return kIOReturnTimeout;
-        case AVCResult::kBusReset:
-            return kIOReturnNotResponding;
-        default:
-            return kIOReturnError;
-    }
-}
 
 [[nodiscard]] bool MatchesConnectedPCR(uint32_t value, uint8_t expectedChannel) noexcept {
     return CMP::PCRBits::IsOnline(value) && CMP::PCRBits::GetP2P(value) == 1U &&
            CMP::PCRBits::GetChannel(value) == expectedChannel;
-}
-
-[[nodiscard]] Protocols::AVC::StreamFormats::SampleRate RateToSignalRate(uint32_t hz) noexcept {
-    switch (hz) {
-        case 32000U: return SignalSampleRate::k32000Hz;
-        case 44100U: return SignalSampleRate::k44100Hz;
-        case 48000U: return SignalSampleRate::k48000Hz;
-        case 88200U: return SignalSampleRate::k88200Hz;
-        case 96000U: return SignalSampleRate::k96000Hz;
-        case 176400U: return SignalSampleRate::k176400Hz;
-        case 192000U: return SignalSampleRate::k192000Hz;
-        default: return SignalSampleRate::kUnknown;
-    }
 }
 
 #ifndef ASFW_HOST_TEST
@@ -215,64 +178,85 @@ void BeBoBProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
 
 void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
                                         std::function<void(IOReturn)> completion) {
-    const uint8_t outPlug = StreamPlug(false);
-    const auto rate = RateToSignalRate(desiredClock.sampleRateHz);
-    if (rate == Protocols::AVC::StreamFormats::SampleRate::kUnknown) {
+    if (!fcpTransport_) {
+        completion(kIOReturnNotReady);
+        return;
+    }
+    const auto sfc = AVC::CipSfcFromHz(desiredClock.sampleRateHz);
+    if (!sfc) {
         completion(kIOReturnUnsupported);
         return;
     }
-    auto output = std::make_shared<SignalFormatCommand>(*fcpTransport_, outPlug, false, rate);
-    output->Submit([this, completion = std::move(completion), output, rate](
-                       Protocols::AVC::AVCResult outputResult,
-                       const SignalFormatCommand::SignalFormat& /*outputFormat*/) mutable {
-        const IOReturn outputStatus = MapAVCResultToIOReturn(outputResult);
-        if (outputStatus != kIOReturnSuccess) {
-            completion(outputStatus);
-            return;
-        }
+    const uint8_t outPlug = StreamPlug(false);
+    fcpTransport_->Control(
+        AVC::Cmd::PlugSignalFormatCommand{
+            .operands = AVC::Cmd::PlugSignalFormatOperands{
+                .direction = AVC::Cmd::PlugSignalDirection::kOutput,
+                .plugId = outPlug,
+                .format = AVC::Cmd::PlugSignalFormat{
+                    .plugId = outPlug,
+                    .fmt = 0x90,
+                    .fdf = {static_cast<uint8_t>(*sfc), 0xFF, 0xFF},
+                },
+            },
+        },
+        [this, sfc, completion = std::move(completion)](AVC::Expected<AVC::Cmd::PlugSignalFormat> outputResult) mutable {
+            if (!outputResult) {
+                completion(kIOReturnError);
+                return;
+            }
 
-        if (!fcpTransport_) {
-            completion(kIOReturnNotReady);
-            return;
-        }
-        const uint8_t inPlug = StreamPlug(true);
-        auto finalCompletion = std::make_shared<std::function<void(IOReturn)>>(std::move(completion));
-        auto submitInput = [this, inPlug, rate, finalCompletion]() mutable {
             if (!fcpTransport_) {
+                completion(kIOReturnNotReady);
+                return;
+            }
+            const uint8_t inPlug = StreamPlug(true);
+            auto finalCompletion = std::make_shared<std::function<void(IOReturn)>>(std::move(completion));
+            auto submitInput = [this, inPlug, sfc, finalCompletion]() mutable {
+                if (!fcpTransport_) {
+                    (*finalCompletion)(kIOReturnNotReady);
+                    return;
+                }
+                fcpTransport_->Control(
+                    AVC::Cmd::PlugSignalFormatCommand{
+                        .operands = AVC::Cmd::PlugSignalFormatOperands{
+                            .direction = AVC::Cmd::PlugSignalDirection::kInput,
+                            .plugId = inPlug,
+                            .format = AVC::Cmd::PlugSignalFormat{
+                                .plugId = inPlug,
+                                .fmt = 0x90,
+                                .fdf = {static_cast<uint8_t>(*sfc), 0xFF, 0xFF},
+                            },
+                        },
+                    },
+                    [finalCompletion](AVC::Expected<AVC::Cmd::PlugSignalFormat> inputResult) mutable {
+                        (*finalCompletion)(inputResult ? kIOReturnSuccess : kIOReturnError);
+                    });
+            };
+            const uint32_t interlockMs = SignalFormatInterlockMs();
+            if (interlockMs == 0) {
+                submitInput();
+                return;
+            }
+            if (!timerScheduler_) {
                 (*finalCompletion)(kIOReturnNotReady);
                 return;
             }
-            auto input = std::make_shared<SignalFormatCommand>(*fcpTransport_, inPlug, true, rate);
-            input->Submit([finalCompletion, input](
-                               Protocols::AVC::AVCResult inputResult,
-                               const SignalFormatCommand::SignalFormat& /*inputFormat*/) mutable {
-                (*finalCompletion)(MapAVCResultToIOReturn(inputResult));
-            });
-        };
-        const uint32_t interlockMs = SignalFormatInterlockMs();
-        if (interlockMs == 0) {
-            submitInput();
-            return;
-        }
-        if (!timerScheduler_) {
-            (*finalCompletion)(kIOReturnNotReady);
-            return;
-        }
-        signalFormatInterlockCompletion_ = finalCompletion;
-        signalFormatInterlockTimer_ = timerScheduler_->ScheduleAfter(
-            static_cast<uint64_t>(interlockMs) * 1000ULL * 1000ULL,
-            [this, finalCompletion, submitInput = std::move(submitInput)]() mutable {
-                signalFormatInterlockTimer_ = Scheduling::kInvalidTimerToken;
-                if (signalFormatInterlockCompletion_ == finalCompletion) {
-                    signalFormatInterlockCompletion_.reset();
-                }
-                submitInput();
-            });
-        if (signalFormatInterlockTimer_ == Scheduling::kInvalidTimerToken) {
-            signalFormatInterlockCompletion_.reset();
-            (*finalCompletion)(kIOReturnNoResources);
-        }
-    });
+            signalFormatInterlockCompletion_ = finalCompletion;
+            signalFormatInterlockTimer_ = timerScheduler_->ScheduleAfter(
+                static_cast<uint64_t>(interlockMs) * 1000ULL * 1000ULL,
+                [this, finalCompletion, submitInput = std::move(submitInput)]() mutable {
+                    signalFormatInterlockTimer_ = Scheduling::kInvalidTimerToken;
+                    if (signalFormatInterlockCompletion_ == finalCompletion) {
+                        signalFormatInterlockCompletion_.reset();
+                    }
+                    submitInput();
+                });
+            if (signalFormatInterlockTimer_ == Scheduling::kInvalidTimerToken) {
+                signalFormatInterlockCompletion_.reset();
+                (*finalCompletion)(kIOReturnNoResources);
+            }
+        });
 }
 
 void BeBoBProtocol::ConfigureMixer(MixerFailurePolicy /*policy*/,
@@ -293,16 +277,17 @@ void BeBoBProtocol::SetSelectorBlock(uint8_t fbId, uint8_t value, MixerCompletio
         completion(kIOReturnNotReady);
         return;
     }
-    auto cmd = std::make_shared<Protocols::AVC::AudioFunctionBlockCommand>(
-        *this, 0x08,
-        Protocols::AVC::AudioFunctionBlockCommand::CommandType::kControl,
-        Protocols::AVC::AudioFunctionBlockCommand::BlockType::kSelector,
-        fbId,
-        Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kSelectorControl,
-        std::vector<uint8_t>{value});
-    cmd->Submit([completion = std::move(completion)](Protocols::AVC::AVCResult result, const std::vector<uint8_t>&) mutable {
-        completion(MapAVCResultToIOReturn(result));
-    });
+    fcpTransport_->Control(
+        AVC::Cmd::SelectorCommand{
+            .address = AVC::kAudioSubunit0,
+            .operands = AVC::Cmd::SelectorOperands{
+                .functionBlockId = fbId,
+                .inputPlug = value,
+            },
+        },
+        [completion = std::move(completion)](AVC::Expected<AVC::Cmd::SelectorValue> res) mutable {
+            completion(res ? kIOReturnSuccess : AVC::ToIOReturn(res.error()));
+        });
 }
 
 void BeBoBProtocol::SetFeatureMute(uint8_t fbId, uint8_t channel, bool unmute,
@@ -311,17 +296,14 @@ void BeBoBProtocol::SetFeatureMute(uint8_t fbId, uint8_t channel, bool unmute,
         completion(kIOReturnNotReady);
         return;
     }
-    // AV/C Feature block mute encoding: {channel, 0x01, 0x60=unmute / 0x00=mute}
-    auto cmd = std::make_shared<Protocols::AVC::AudioFunctionBlockCommand>(
-        *this, 0x08,
-        Protocols::AVC::AudioFunctionBlockCommand::CommandType::kControl,
-        Protocols::AVC::AudioFunctionBlockCommand::BlockType::kFeature,
-        fbId,
-        Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kMute,
-        std::vector<uint8_t>{channel, 0x01, static_cast<uint8_t>(unmute ? 0x60U : 0x00U)});
-    cmd->Submit([completion = std::move(completion)](Protocols::AVC::AVCResult result, const std::vector<uint8_t>&) mutable {
-        completion(MapAVCResultToIOReturn(result));
-    });
+    fcpTransport_->Control(
+        AVC::Cmd::FeatureCommand{
+            .address = AVC::kAudioSubunit0,
+            .operands = AVC::Cmd::FeatureOperands::Mute(fbId, channel, !unmute),
+        },
+        [completion = std::move(completion)](AVC::Expected<AVC::Cmd::FeatureReply> res) mutable {
+            completion(res ? kIOReturnSuccess : AVC::ToIOReturn(res.error()));
+        });
 }
 
 void BeBoBProtocol::SetFeatureVolume(uint8_t fbId, uint8_t channel, uint16_t value,
@@ -330,18 +312,15 @@ void BeBoBProtocol::SetFeatureVolume(uint8_t fbId, uint8_t channel, uint16_t val
         completion(kIOReturnNotReady);
         return;
     }
-    const uint8_t hi = static_cast<uint8_t>((value >> 8) & 0xFFU);
-    const uint8_t lo = static_cast<uint8_t>(value & 0xFFU);
-    auto cmd = std::make_shared<Protocols::AVC::AudioFunctionBlockCommand>(
-        *this, 0x08,
-        Protocols::AVC::AudioFunctionBlockCommand::CommandType::kControl,
-        Protocols::AVC::AudioFunctionBlockCommand::BlockType::kFeature,
-        fbId,
-        Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kVolume,
-        std::vector<uint8_t>{channel, 0x02, hi, lo});
-    cmd->Submit([completion = std::move(completion)](Protocols::AVC::AVCResult result, const std::vector<uint8_t>&) mutable {
-        completion(MapAVCResultToIOReturn(result));
-    });
+    fcpTransport_->Control(
+        AVC::Cmd::FeatureCommand{
+            .address = AVC::kAudioSubunit0,
+            .operands = AVC::Cmd::FeatureOperands::Volume(
+                fbId, channel, AVC::AvcVolume::FromRaw(static_cast<int16_t>(value))),
+        },
+        [completion = std::move(completion)](AVC::Expected<AVC::Cmd::FeatureReply> res) mutable {
+            completion(res ? kIOReturnSuccess : AVC::ToIOReturn(res.error()));
+        });
 }
 
 void BeBoBProtocol::FinishClockApply(ClockApplyEpoch* epoch, IOReturn status) {

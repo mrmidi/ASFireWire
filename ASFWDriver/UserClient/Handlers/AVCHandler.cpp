@@ -11,8 +11,11 @@
 #include "../../Protocols/AVC/Music/MusicSubunit.hpp"
 #include "../../Protocols/AVC/Audio/AudioSubunit.hpp"
 #include "../../Protocols/AVC/AVCDefs.hpp"
+#include "../../Protocols/AVC/Core/AvcFrame.hpp"
+#include "../../Protocols/AVC/Core/IAvcUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../WireFormats/AVCExchangeLogWire.hpp"
 #include "../../Shared/SharedDataModels.hpp"
 
 #include <algorithm>
@@ -35,32 +38,10 @@ using MusicPlugInfo = MusicSubunit::PlugInfo;
 using MusicPlugChannel = MusicSubunit::MusicPlugChannel;
 using SubunitPtr = std::shared_ptr<ASFW::Protocols::AVC::Subunit>;
 
-kern_return_t FCPStatusToIOReturn(ASFW::Protocols::AVC::FCPStatus status) {
-    using ASFW::Protocols::AVC::FCPStatus;
-
-    switch (status) {
-        case FCPStatus::kOk:
-            return kIOReturnSuccess;
-        case FCPStatus::kTimeout:
-            return kIOReturnTimeout;
-        case FCPStatus::kBusReset:
-            return kIOReturnAborted;
-        case FCPStatus::kTransportError:
-            return kIOReturnIOError;
-        case FCPStatus::kInvalidPayload:
-            return kIOReturnBadArgument;
-        case FCPStatus::kResponseMismatch:
-            return kIOReturnInvalid;
-        case FCPStatus::kBusy:
-            return kIOReturnBusy;
-        case FCPStatus::kRefusedByFilter:
-            // Distinct from kInvalidPayload: the frame was well formed, the
-            // device simply may not be sent it. See AVCCommandFilter.hpp.
-            return kIOReturnNotPermitted;
-    }
-
-    return kIOReturnError;
+kern_return_t AvcErrorToIOReturn(const ASFW::AVC::AvcError& error) noexcept {
+    return ASFW::AVC::ToIOReturn(error);
 }
+
 
 struct RawFCPResult {
     bool ready{false};
@@ -148,7 +129,7 @@ SubunitPtr FindRequestedSubunit(Protocols::AVC::IAVCDiscovery& discovery,
                                 const SubunitLookupRequest& request) {
     const auto allUnits = discovery.GetAllAVCUnits();
     for (auto* unit : allUnits) {
-        if (!unit) {
+        if (!unit || unit->GetDiscoveryStatus() == Protocols::AVC::AVCDiscoveryStatus::Running) {
             continue;
         }
 
@@ -157,6 +138,9 @@ SubunitPtr FindRequestedSubunit(Protocols::AVC::IAVCDiscovery& discovery,
             continue;
         }
 
+        if (unit->GetDiscoveryStatus() == Protocols::AVC::AVCDiscoveryStatus::Running) {
+            continue;
+        }
         for (const auto& subunit : unit->GetSubunits()) {
             if (!subunit) {
                 continue;
@@ -451,7 +435,7 @@ ParseRawFCPSubmissionRequest(IOUserClientMethodArguments* args) {
 Protocols::AVC::AVCUnit* FindAVCUnitByGuid(Protocols::AVC::IAVCDiscovery& discovery, uint64_t guid) {
     const auto allUnits = discovery.GetAllAVCUnits();
     for (auto* unit : allUnits) {
-        if (!unit) {
+        if (!unit || unit->GetDiscoveryStatus() == Protocols::AVC::AVCDiscoveryStatus::Running) {
             continue;
         }
 
@@ -483,8 +467,7 @@ uint64_t ReserveRawFCPRequestSlot(RawFCPResultStore& store) {
 }
 
 void StoreRawFCPCompletion(uint64_t requestID,
-                           Protocols::AVC::FCPStatus status,
-                           const Protocols::AVC::FCPFrame& response) {
+                           const ASFW::AVC::Expected<ASFW::AVC::Response>& response) {
     auto& resultStore = GetRawFCPResultStore();
     if (!resultStore.lock) {
         return;
@@ -494,28 +477,24 @@ void StoreRawFCPCompletion(uint64_t requestID,
     const auto it = resultStore.results.find(requestID);
     if (it != resultStore.results.end()) {
         it->second.ready = true;
-        it->second.status = FCPStatusToIOReturn(status);
-        if (status == Protocols::AVC::FCPStatus::kOk && response.IsValid()) {
-            it->second.responseLength = static_cast<uint32_t>(response.length);
-            std::memcpy(it->second.response.data(), response.data.data(), response.length);
-        } else {
+        if (!response) {
+            it->second.status = AvcErrorToIOReturn(response.error());
             it->second.responseLength = 0;
+        } else {
+            it->second.status = kIOReturnSuccess;
+            it->second.response[0] = static_cast<uint8_t>(response->code);
+            it->second.response[1] = response->address.Byte();
+            it->second.response[2] = static_cast<uint8_t>(response->opcode);
+            const size_t opsLen = std::min(response->operands.size(), it->second.response.size() - 3);
+            if (opsLen > 0) {
+                std::memcpy(it->second.response.data() + 3, response->operands.data(), opsLen);
+            }
+            it->second.responseLength = static_cast<uint32_t>(3 + opsLen);
         }
     }
     IOLockUnlock(resultStore.lock);
 }
 
-void MarkRawFCPRequestFailed(RawFCPResultStore& store, uint64_t requestID) {
-    IOLockLock(store.lock);
-    const auto it = store.results.find(requestID);
-    if (it != store.results.end()) {
-        it->second.ready = true;
-        if (it->second.status == kIOReturnNotReady) {
-            it->second.status = kIOReturnIOError;
-        }
-    }
-    IOLockUnlock(store.lock);
-}
 
 } // anonymous namespace
 
@@ -538,7 +517,7 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
     // Get all AV/C units
     auto allUnits = discovery_->GetAllAVCUnits();
 
-    ASFW_LOG(UserClient, "GetAVCUnits: found %zu AV/C units", allUnits.size());
+    ASFW_LOG_V3(UserClient, "GetAVCUnits: found %zu AV/C units", allUnits.size());
 
     // Calculate total size
     // We send an OSData containing a sequence of AVCUnitInfoWire structures.
@@ -556,11 +535,13 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
     for (auto* avcUnit : allUnits) {
         if (avcUnit) {
             totalSize += sizeof(AVCUnitInfoWire);
-            totalSize += avcUnit->GetSubunits().size() * sizeof(AVCSubunitInfoWire);
+            if (avcUnit->GetDiscoveryStatus() != Protocols::AVC::AVCDiscoveryStatus::Running) {
+                totalSize += avcUnit->GetSubunits().size() * sizeof(AVCSubunitInfoWire);
+            }
         }
     }
 
-    ASFW_LOG(UserClient, "GetAVCUnits: total wire format size=%zu bytes", totalSize);
+    ASFW_LOG_V3(UserClient, "GetAVCUnits: total wire format size=%zu bytes", totalSize);
 
     // Create OSData buffer
     OSData* data = OSData::withCapacity(static_cast<uint32_t>(totalSize));
@@ -596,16 +577,22 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
             unitWire.modelID = 0;
         }
 
+        const auto status = avcUnit->GetDiscoveryStatus();
         const auto& subunits = avcUnit->GetSubunits();
-        unitWire.subunitCount = static_cast<uint8_t>(subunits.size());
+        const bool scanRunning = status == Protocols::AVC::AVCDiscoveryStatus::Running;
+        unitWire.subunitCount = scanRunning ? 0 : static_cast<uint8_t>(subunits.size());
         
         // Populate unit-level plug counts from AVCUnitPlugInfoCommand results
-        const auto& plugCounts = avcUnit->GetCachedPlugCounts();
-        unitWire.isoInputPlugs = plugCounts.isoInputPlugs;
-        unitWire.isoOutputPlugs = plugCounts.isoOutputPlugs;
-        unitWire.extInputPlugs = plugCounts.extInputPlugs;
-        unitWire.extOutputPlugs = plugCounts.extOutputPlugs;
-        // unitWire._reserved is zero-init
+        if (!scanRunning) {
+            const auto& plugCounts = avcUnit->GetCachedPlugCounts();
+            unitWire.isoInputPlugs = plugCounts.isochronousInputs;
+            unitWire.isoOutputPlugs = plugCounts.isochronousOutputs;
+            unitWire.extInputPlugs = plugCounts.externalInputs;
+            unitWire.extOutputPlugs = plugCounts.externalOutputs;
+        }
+        // Status is an additive diagnostic in the former reserved byte.
+        unitWire.discoveryStatus = static_cast<uint8_t>(0x80u |
+            static_cast<uint8_t>(status));
 
         if (!data->appendBytes(&unitWire, sizeof(unitWire))) {
             data->release();
@@ -613,7 +600,7 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
         }
 
         // Write subunits for this unit
-        for (const auto& subunitPtr : subunits) {
+        if (!scanRunning) for (const auto& subunitPtr : subunits) {
             if (!subunitPtr) continue;
 
             AVCSubunitInfoWire subunitWire{};
@@ -633,7 +620,7 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
     args->structureOutput = data;
     args->structureOutputDescriptor = nullptr;
 
-    ASFW_LOG(UserClient, "GetAVCUnits: returning %zu units in %zu bytes",
+    ASFW_LOG_V3(UserClient, "GetAVCUnits: returning %zu units in %zu bytes",
              allUnits.size(), data->getLength());
     return kIOReturnSuccess;
 }
@@ -714,15 +701,22 @@ kern_return_t AVCHandler::GetSubunitDescriptor(IOUserClientMethodArguments* args
                  request->id);
         return kIOReturnNotFound;
     }
-    if (!IsMusicSubunitType(subunit->GetType())) {
+    if (!IsMusicSubunitType(subunit->GetType()) && subunit->GetType() != Protocols::AVC::AVCSubunitType::kAudio) {
         ASFW_LOG(UserClient,
                  "GetSubunitDescriptor: not implemented for subunit type 0x%02x",
                  static_cast<uint8_t>(subunit->GetType()));
         return kIOReturnUnsupported;
     }
 
-    const auto musicSubunit = std::static_pointer_cast<MusicSubunit>(subunit);
-    const auto& descriptorData = musicSubunit->GetStatusDescriptorData();
+    std::optional<std::vector<uint8_t>> descriptorData;
+    if (IsMusicSubunitType(subunit->GetType())) {
+        const auto musicSubunit = std::static_pointer_cast<MusicSubunit>(subunit);
+        descriptorData = musicSubunit->GetStatusDescriptorData();
+    } else {
+        const auto audioSubunit = std::static_pointer_cast<Protocols::AVC::Audio::AudioSubunit>(subunit);
+        descriptorData = audioSubunit->GetDescriptorData();
+    }
+
     if (!descriptorData) {
         ASFW_LOG(UserClient, "GetSubunitDescriptor: descriptor data not available");
         return kIOReturnNotFound;
@@ -767,9 +761,20 @@ kern_return_t AVCHandler::SendRawFCPCommand(IOUserClientMethodArguments* args) {
         return kIOReturnNotFound;
     }
 
-    Protocols::AVC::FCPFrame command{};
-    command.length = request->commandLength;
-    std::memcpy(command.data.data(), request->commandData->getBytesNoCopy(), command.length);
+    if (request->commandLength < 3) {
+        return kIOReturnBadArgument;
+    }
+
+    const auto* rawBytes = static_cast<const uint8_t*>(request->commandData->getBytesNoCopy());
+    const auto ctype = static_cast<ASFW::AVC::CommandType>(rawBytes[0] & 0x0F);
+    const auto addr = ASFW::AVC::SubunitAddress::FromByte(rawBytes[1]);
+    const auto opcode = static_cast<ASFW::AVC::Opcode>(rawBytes[2]);
+    const std::span<const uint8_t> operands{rawBytes + 3, request->commandLength - 3};
+
+    auto frame = ASFW::AVC::CommandFrame::Make(ctype, addr, opcode, operands);
+    if (!frame) {
+        return kIOReturnBadArgument;
+    }
 
     auto& store = GetRawFCPResultStore();
     if (!store.lock) {
@@ -779,16 +784,12 @@ kern_return_t AVCHandler::SendRawFCPCommand(IOUserClientMethodArguments* args) {
 
     const uint64_t requestID = ReserveRawFCPRequestSlot(store);
 
-    const auto handle = targetUnit->GetFCPTransport().SubmitCommand(
-        command,
-        [requestID](Protocols::AVC::FCPStatus status, const Protocols::AVC::FCPFrame& response) {
-            StoreRawFCPCompletion(requestID, status, response);
-        }
-    );
-
-    if (!handle.IsValid()) {
-        MarkRawFCPRequestFailed(store, requestID);
-    }
+    targetUnit->Submit(
+        *frame,
+        targetUnit->CurrentGeneration(),
+        [requestID](ASFW::AVC::Expected<ASFW::AVC::Response> response) {
+            StoreRawFCPCompletion(requestID, response);
+        });
 
     args->scalarOutput[0] = requestID;
     args->scalarOutputCount = 1;
@@ -840,6 +841,33 @@ kern_return_t AVCHandler::GetRawFCPCommandResult(IOUserClientMethodArguments* ar
     args->structureOutput = response;
     args->structureOutputDescriptor = nullptr;
     return kIOReturnSuccess;
+}
+
+kern_return_t AVCHandler::GetFCPExchangeLog(IOUserClientMethodArguments* args) {
+    if (!discovery_) {
+        return kIOReturnNotReady;
+    }
+    if (!args || args->scalarInputCount < 3) {
+        return kIOReturnBadArgument;
+    }
+    const uint64_t guid = (static_cast<uint64_t>(args->scalarInput[0]) << 32) | args->scalarInput[1];
+    const auto firstIndex = static_cast<uint32_t>(args->scalarInput[2]);
+
+    for (auto* unit : discovery_->GetAllAVCUnits()) {
+        const auto device = unit ? unit->GetDevice() : nullptr;
+        if (!device || device->GetGUID() != guid) {
+            continue;
+        }
+        const auto page = Wire::SerializeExchangePage(unit->CopyExchangeLog(), firstIndex, kMaxWireSize);
+        OSData* osData = OSData::withBytes(page.data(), static_cast<uint32_t>(page.size()));
+        if (!osData) {
+            return kIOReturnNoMemory;
+        }
+        args->structureOutput = osData;
+        args->structureOutputDescriptor = nullptr;
+        return kIOReturnSuccess;
+    }
+    return kIOReturnNotFound;
 }
 
 kern_return_t AVCHandler::ReScanAVCUnits(IOUserClientMethodArguments* args) {

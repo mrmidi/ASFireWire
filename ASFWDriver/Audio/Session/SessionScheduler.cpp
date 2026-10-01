@@ -8,6 +8,7 @@
 #include "../Protocols/IDeviceProtocol.hpp"
 
 #include "../Core/AudioRuntimeRegistry.hpp"
+#include "../Core/AudioEndpointRuntime.hpp"
 #include "../Protocols/Duplex/AudioClockConfig.hpp"
 #include "../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../../Logging/Logging.hpp"
@@ -695,6 +696,11 @@ IOReturn SessionScheduler::StartStreams(const Wanted& wanted, const Discovery::D
     actual.state = SessionState::Restarting;
     StoreActual(actual);
 
+    std::optional<Model::ASFWAudioDevice> discoveredConfig;
+    if (auto endpoint = deps_.runtime.FindEndpointRuntime(guid_)) {
+        Model::ASFWAudioDevice config;
+        if (endpoint->CopyConfig(config) && config.graphResolved) discoveredConfig = std::move(config);
+    }
     FamilyDriver& family = BindFamily(*protocol);
     const auto result = restart_.Run(RestartRoutine::Request{
         .guid = guid_,
@@ -702,6 +708,7 @@ IOReturn SessionScheduler::StartStreams(const Wanted& wanted, const Discovery::D
         .family = &family,
         .irm = deps_.irm != nullptr ? *deps_.irm : nullptr,
         .binding = deps_.bindingSource ? deps_.bindingSource(guid_) : nullptr,
+        .discoveredConfig = std::move(discoveredConfig),
         .clock = clock,
         .reason = reason,
         .superseded = [this] {

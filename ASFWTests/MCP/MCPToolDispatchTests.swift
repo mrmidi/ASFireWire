@@ -290,6 +290,42 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 0)
     }
 
+    @Test func avcDescriptorReturnsDescriptorHexForDiscoveredSubunit() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        let args: ASFWMCPValue = .object([
+            "targetGuid": .uint64(0x0011223344556677),
+            "subunitType": .int(0x0C),
+            "subunitId": .int(0),
+        ])
+
+        let result = await transport.callTool("asfw_avc_get_subunit_descriptor", arguments: args)
+        let data = try object(result)
+
+        #expect(result.ok)
+        #expect(data["kind"] == .string("avcSubunitDescriptor"))
+        #expect(data["targetGuid"] == .string("0x0011223344556677"))
+        #expect(data["byteCount"] == .int(8))
+        #expect(data["hex"] == .string("0008020202020000"))
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
+    @Test func avcDescriptorRefusesUnavailableDiscoveryTarget() async {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        let args: ASFWMCPValue = .object([
+            "targetGuid": .uint64(0xDEAD_BEEF_0000_0001),
+            "subunitType": .int(0x0C),
+            "subunitId": .int(0),
+        ])
+
+        let result = await transport.callTool("asfw_avc_get_subunit_descriptor", arguments: args)
+
+        #expect(result.ok == false)
+        #expect(result.errors.first?.code == .capabilityUnavailable)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
     @Test func readOnlyFcpRejectsControlFrameClaimedAsStatus() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))

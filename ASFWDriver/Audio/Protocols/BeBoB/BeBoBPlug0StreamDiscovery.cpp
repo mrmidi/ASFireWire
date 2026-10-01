@@ -11,26 +11,20 @@
 #include "BeBoBPlug0StreamDiscovery.hpp"
 
 #include "../../../Logging/Logging.hpp"
+#include "../../../Protocols/AVC/Commands/GeneralCommands.hpp"
+#include "../../../Protocols/AVC/Commands/StreamFormatCommand.hpp"
+#include "../../../Protocols/AVC/Extensions/BridgeCoPlugInfo.hpp"
 
-using ::ASFW::Protocols::AVC::IAVCCommandSubmitter;
-using ::ASFW::Protocols::AVC::AVCCdb;
-using ::ASFW::Protocols::AVC::AVCResult;
-using ::ASFW::Protocols::AVC::AVCCompletion;
-
+#include <algorithm>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
 namespace ASFW::Audio::BeBoB {
 namespace {
 
-constexpr uint8_t kOpcodePlugInfo = 0x02;
-constexpr uint8_t kOpcodeStreamFormatSupport = 0x2f;
 constexpr uint8_t kExtendedPlugInfo = 0xc0;
-constexpr uint8_t kExtendedFormatList = 0xc1;
-constexpr uint8_t kInfoPlugType = 0x00;
-constexpr uint8_t kInfoChannelPosition = 0x03;
-constexpr uint8_t kInfoSection = 0x07;
 constexpr uint8_t kMaxFormatEntries = 8;
 constexpr uint8_t kMaxSections = 16;
 
@@ -47,14 +41,15 @@ struct Request { ReadOnlyProbeCommand command; PlugDirection direction; uint8_t 
         case ReadOnlyProbeCommand::kStreamFormatList: return "stream format";
         case ReadOnlyProbeCommand::kChannelPositions: return "channel map";
         case ReadOnlyProbeCommand::kSectionType: return "section type";
+        case ReadOnlyProbeCommand::kSignalFormat: return "signal format";
     }
     return "unknown";
 }
 
 class Probe final : public std::enable_shared_from_this<Probe> {
 public:
-    Probe(IAVCCommandSubmitter& submitter, uint64_t guid, ReadOnlyProbeCompletion completion)
-        : submitter_(submitter), guid_(guid), completion_(std::move(completion)) {
+    Probe(ASFW::AVC::IAvcUnit& unit, uint64_t guid, ReadOnlyProbeCompletion completion)
+        : unit_(unit), guid_(guid), completion_(std::move(completion)) {
         // Linux BeBoB begins with generic unit PLUG_INFO, without UNIT_INFO or
         // SUBUNIT_INFO. Cross-validated: bebob_stream.c:908-940.
         queue_.push_back({ReadOnlyProbeCommand::kUnitPlugCounts, PlugDirection::kInput});
@@ -76,11 +71,151 @@ private:
         }
         const Request request = queue_[next_++];
         auto self = shared_from_this();
-        submitter_.SubmitCommand(BuildReadOnlyProbeCommand(request.command, request.direction, request.index),
-                                 [self, request](AVCResult result, const AVCCdb& response) {
-            self->HandleResponse(request, result, response);
-            self->SubmitNext();
-        });
+
+        switch (request.command) {
+            case ReadOnlyProbeCommand::kUnitPlugCounts: {
+                unit_.Status(
+                    ASFW::AVC::Cmd::PlugInfoCommand{
+                        .operands = ASFW::AVC::Cmd::PlugInfoOperands{
+                            .form = ASFW::AVC::Cmd::PlugInfoForm::kUnitIsoExternal,
+                            .dummyByte = 0x00,
+                        },
+                    },
+                    [self, request](ASFW::AVC::Expected<ASFW::AVC::Cmd::PlugInfoReply> res) {
+                        if (!res) {
+                            self->HandleError(request, res.error());
+                        } else {
+                            self->HandleUnitPlugCounts(*res);
+                        }
+                        self->SubmitNext();
+                    });
+                break;
+            }
+            case ReadOnlyProbeCommand::kIsochPlugType: {
+                const auto dir = request.direction == PlugDirection::kInput ?
+                    ASFW::AVC::Cmd::PlugDirection::kInput : ASFW::AVC::Cmd::PlugDirection::kOutput;
+                unit_.Status(
+                    ASFW::AVC::BridgeCo::ExtendedPlugInfoCommand{
+                        .operands = ASFW::AVC::BridgeCo::ExtendedPlugInfoOperands{
+                            .plug = ASFW::AVC::Cmd::PlugAddress::UnitPlug(dir, ASFW::AVC::Cmd::UnitPlugType::kPcr, 0),
+                            .type = ASFW::AVC::BridgeCo::InfoType::kPlugType,
+                        },
+                    },
+                    [self, request](ASFW::AVC::Expected<ASFW::AVC::BridgeCo::ExtendedPlugInfoReply> res) {
+                        if (!res) {
+                            self->HandleError(request, res.error());
+                        } else {
+                            auto plugType = res->AsPlugType();
+                            if (plugType) {
+                                const uint8_t value = static_cast<uint8_t>(*plugType);
+                                self->Plug(request.direction).plugType = value;
+                                ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s plug 0 type=0x%02x GUID=0x%016llx",
+                                         DirectionName(request.direction), value, self->guid_);
+                            }
+                        }
+                        self->SubmitNext();
+                    });
+                break;
+            }
+            case ReadOnlyProbeCommand::kStreamFormatList: {
+                const auto dir = request.direction == PlugDirection::kInput ?
+                    ASFW::AVC::Cmd::PlugDirection::kInput : ASFW::AVC::Cmd::PlugDirection::kOutput;
+                unit_.Status(
+                    ASFW::AVC::Cmd::StreamFormatCommand{
+                        .operands = ASFW::AVC::Cmd::StreamFormatOperands{
+                            .form = ASFW::AVC::Cmd::StreamFormatSubfunction::kList,
+                            .opcode = ASFW::AVC::Cmd::StreamFormatOpcode::kStreamFormatSupport,
+                            .plug = ASFW::AVC::Cmd::PlugAddress::UnitPlug(dir, ASFW::AVC::Cmd::UnitPlugType::kPcr, 0),
+                            .index = request.index,
+                        },
+                    },
+                    [self, request](ASFW::AVC::Expected<ASFW::AVC::Cmd::StreamFormatReply> res) {
+                        if (!res) {
+                            ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s stream-format list ended at entry %u GUID=0x%016llx",
+                                     DirectionName(request.direction), static_cast<unsigned>(request.index), self->guid_);
+                        } else {
+                            self->HandleFormation(request, *res);
+                        }
+                        self->SubmitNext();
+                    });
+                break;
+            }
+            case ReadOnlyProbeCommand::kChannelPositions: {
+                const auto dir = request.direction == PlugDirection::kInput ?
+                    ASFW::AVC::Cmd::PlugDirection::kInput : ASFW::AVC::Cmd::PlugDirection::kOutput;
+                unit_.Status(
+                    ASFW::AVC::BridgeCo::ExtendedPlugInfoCommand{
+                        .operands = ASFW::AVC::BridgeCo::ExtendedPlugInfoOperands{
+                            .plug = ASFW::AVC::Cmd::PlugAddress::UnitPlug(dir, ASFW::AVC::Cmd::UnitPlugType::kPcr, 0),
+                            .type = ASFW::AVC::BridgeCo::InfoType::kChannelPositions,
+                        },
+                    },
+                    [self, request](ASFW::AVC::Expected<ASFW::AVC::BridgeCo::ExtendedPlugInfoReply> res) {
+                        if (!res) {
+                            self->HandleError(request, res.error());
+                        } else {
+                            self->HandlePositions(request, res->Data());
+                        }
+                        self->SubmitNext();
+                    });
+                break;
+            }
+            case ReadOnlyProbeCommand::kSectionType: {
+                const auto dir = request.direction == PlugDirection::kInput ?
+                    ASFW::AVC::Cmd::PlugDirection::kInput : ASFW::AVC::Cmd::PlugDirection::kOutput;
+                unit_.Status(
+                    ASFW::AVC::BridgeCo::ExtendedPlugInfoCommand{
+                        .operands = ASFW::AVC::BridgeCo::ExtendedPlugInfoOperands{
+                            .plug = ASFW::AVC::Cmd::PlugAddress::UnitPlug(dir, ASFW::AVC::Cmd::UnitPlugType::kPcr, 0),
+                            .type = ASFW::AVC::BridgeCo::InfoType::kClusterInfo,
+                            .extra = static_cast<uint8_t>(request.index + 1U),
+                        },
+                    },
+                    [self, request](ASFW::AVC::Expected<ASFW::AVC::BridgeCo::ExtendedPlugInfoReply> res) {
+                        if (!res) {
+                            self->HandleError(request, res.error());
+                        } else {
+                            // The reply echoes the 1-based section id, then the
+                            // section type (Linux bebob_command.c:228, :246).
+                            const auto portType = res->AsClusterPortType(
+                                static_cast<uint8_t>(request.index + 1U));
+                            if (!portType) {
+                                self->HandleError(request, portType.error());
+                            } else {
+                                const auto value = static_cast<uint8_t>(*portType);
+                                if (request.index < self->Plug(request.direction).channelSections.size()) {
+                                    self->Plug(request.direction).channelSections[request.index].type = value;
+                                }
+                                ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s section %u type=0x%02x GUID=0x%016llx",
+                                         DirectionName(request.direction), static_cast<unsigned>(request.index), value, self->guid_);
+                            }
+                        }
+                        self->SubmitNext();
+                    });
+                break;
+            }
+            case ReadOnlyProbeCommand::kSignalFormat: {
+                const auto dir = request.direction == PlugDirection::kInput ?
+                    ASFW::AVC::Cmd::PlugSignalDirection::kInput : ASFW::AVC::Cmd::PlugSignalDirection::kOutput;
+                unit_.Status(
+                    ASFW::AVC::Cmd::PlugSignalFormatCommand{
+                        .operands = ASFW::AVC::Cmd::PlugSignalFormatOperands{
+                            .direction = dir,
+                            .plugId = 0,
+                            .query = ASFW::AVC::Cmd::SignalFormatQuery::kAm824Wildcard,
+                        },
+                    },
+                    [self, request](ASFW::AVC::Expected<ASFW::AVC::Cmd::PlugSignalFormat> res) {
+                        if (!res) {
+                            self->HandleError(request, res.error());
+                        } else {
+                            self->HandleSignalFormat(request, *res);
+                        }
+                        self->SubmitNext();
+                    });
+                break;
+            }
+        }
     }
 
     void AddFullInventory() {
@@ -92,74 +227,25 @@ private:
             // channel map stays identity, which is wrong for planar devices
             // such as the Phase 88.
             queue_.push_back({ReadOnlyProbeCommand::kChannelPositions, direction});
+            queue_.push_back({ReadOnlyProbeCommand::kSignalFormat, direction});
         }
     }
 
-    void HandleResponse(const Request& request, AVCResult result, const AVCCdb& response) {
-        if (!IsSuccess(result)) {
-            ASFW_LOG(AVC, "BeBoBProbe: %{public}s %{public}s unavailable result=%u GUID=0x%016llx",
-                     RequestName(request.command), DirectionName(request.direction),
-                     static_cast<unsigned>(result), guid_);
-            if (!unitPlugCountsComplete_) {
-                ASFW_LOG(AVC,
-                         "BeBoBProbe: generic PLUG_INFO unavailable; stopping inventory GUID=0x%016llx",
-                         guid_);
-                queue_.clear();
-                next_ = 0;
-            }
-            return;
-        }
-        if (request.command == ReadOnlyProbeCommand::kUnitPlugCounts) {
-            HandleUnitPlugCounts(response);
-            return;
-        }
-        if (request.command == ReadOnlyProbeCommand::kStreamFormatList) {
-            HandleFormation(request, response);
-            return;
-        }
-        // A section-info reply echoes the 1-based section id at operand 7 and
-        // carries the section type at operand 8 (Linux bebob_command.c:228,
-        // :246). Other extended PLUG_INFO replies carry their value at operand 7.
-        const bool isSectionType = request.command == ReadOnlyProbeCommand::kSectionType;
-        if (response.operandLength < (isSectionType ? 9U : 8U)) {
-            ASFW_LOG(AVC, "BeBoBProbe: short %{public}s response (%zu operands) GUID=0x%016llx",
-                     RequestName(request.command), response.operandLength, guid_);
-            return;
-        }
-        const uint8_t value = response.operands[isSectionType ? 8U : 7U];
-        switch (request.command) {
-            case ReadOnlyProbeCommand::kIsochPlugType:
-                Plug(request.direction).plugType = value;
-                ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s plug 0 type=0x%02x GUID=0x%016llx",
-                         DirectionName(request.direction), value, guid_);
-                break;
-            case ReadOnlyProbeCommand::kChannelPositions: HandlePositions(request, response); break;
-            case ReadOnlyProbeCommand::kSectionType:
-                if (request.index < Plug(request.direction).channelSections.size()) {
-                    Plug(request.direction).channelSections[request.index].type = value;
-                }
-                ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s section %u type=0x%02x GUID=0x%016llx",
-                         DirectionName(request.direction), static_cast<unsigned>(request.index), value, guid_);
-                break;
-            case ReadOnlyProbeCommand::kUnitPlugCounts:
-            case ReadOnlyProbeCommand::kStreamFormatList: break;
+    void HandleError(const Request& request, const ASFW::AVC::AvcError& err) {
+        ASFW_LOG(AVC, "BeBoBProbe: %{public}s %{public}s unavailable result=%u GUID=0x%016llx",
+                 RequestName(request.command), DirectionName(request.direction),
+                 static_cast<unsigned>(err.kind), guid_);
+        if (!unitPlugCountsComplete_) {
+            ASFW_LOG(AVC,
+                     "BeBoBProbe: generic PLUG_INFO unavailable; stopping inventory GUID=0x%016llx",
+                     guid_);
+            queue_.clear();
+            next_ = 0;
         }
     }
 
-    void HandleUnitPlugCounts(const AVCCdb& response) {
-        // Standard unit PLUG_INFO is an 8-byte CDB. Its four result bytes are
-        // operands 1..4: ISO input/output, external input/output.
-        if (response.operandLength < 5) {
-            ASFW_LOG(AVC, "BeBoBProbe: short generic PLUG_INFO response (%zu operands) GUID=0x%016llx",
-                     response.operandLength, guid_);
-            return;
-        }
-        model_.unitPlugCounts = UnitPlugCounts{
-            .isochronousInputs = response.operands[1],
-            .isochronousOutputs = response.operands[2],
-            .externalInputs = response.operands[3],
-            .externalOutputs = response.operands[4],
-        };
+    void HandleUnitPlugCounts(const ASFW::AVC::Cmd::PlugInfoReply& reply) {
+        model_.unitPlugCounts = reply.unit;
         unitPlugCountsComplete_ = true;
         const auto& counts = *model_.unitPlugCounts;
         ASFW_LOG(AVC,
@@ -175,14 +261,22 @@ private:
         AddFullInventory();
     }
 
-    void HandleFormation(const Request& request, const AVCCdb& response) {
-        if (response.operandLength < 9 || response.operands[7] != request.index) {
+    void HandleFormation(const Request& request, const ASFW::AVC::Cmd::StreamFormatReply& reply) {
+        if (reply.index != request.index) {
             ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s stream-format list ended at entry %u GUID=0x%016llx",
                      DirectionName(request.direction), static_cast<unsigned>(request.index), guid_);
             return;
         }
-        const auto formation = ParseExtendedStreamFormatListResponse(
-            request.index, std::span<const uint8_t>{response.operands.data(), response.operandLength});
+        std::optional<StreamFormation> formation;
+        if (reply.format.kind == ASFW::AVC::Cmd::StreamFormat::Kind::kCompoundAm824) {
+            formation = StreamFormation{
+                .rateCode = static_cast<uint8_t>(reply.format.compound.rate),
+                .pcmChannels = static_cast<uint8_t>(reply.format.compound.PcmChannels()),
+                .midiSlots = static_cast<uint8_t>(reply.format.compound.MidiChannels()),
+            };
+        } else {
+            formation = ParseStreamFormation(reply.format.Raw());
+        }
         if (!formation.has_value()) {
             ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s stream-format entry %u malformed/unsupported GUID=0x%016llx",
                      DirectionName(request.direction), static_cast<unsigned>(request.index), guid_);
@@ -200,9 +294,7 @@ private:
         }
     }
 
-    void HandlePositions(const Request& request, const AVCCdb& response) {
-        const std::span<const uint8_t> payload{response.operands.data() + 7,
-                                                response.operandLength - 7};
+    void HandlePositions(const Request& request, std::span<const uint8_t> payload) {
         const auto sections = ParseChannelPositionSections(payload);
         if (!sections.has_value()) {
             ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s channel-map malformed GUID=0x%016llx",
@@ -218,11 +310,33 @@ private:
         }
     }
 
+    void HandleSignalFormat(const Request& request, const ASFW::AVC::Cmd::PlugSignalFormat& reply) {
+        const auto sfc = ASFW::AVC::Cmd::SfcOf(reply);
+        if (!sfc.has_value()) {
+            ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s signal-format fmt=0x%02x not AM824 GUID=0x%016llx",
+                     DirectionName(request.direction), reply.fmt, guid_);
+            return;
+        }
+        const auto rateHz = ASFW::AVC::ToHz(*sfc);
+        if (!rateHz.has_value()) {
+            ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s signal-format SFC=0x%02x unknown GUID=0x%016llx",
+                     DirectionName(request.direction), static_cast<uint8_t>(*sfc), guid_);
+            return;
+        }
+        Plug(request.direction).activeRateHz = *rateHz;
+        ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s active rate %u Hz (SFC=0x%02x) GUID=0x%016llx",
+                 DirectionName(request.direction), *rateHz, static_cast<uint8_t>(*sfc), guid_);
+        if (model_.input.activeRateHz.has_value() && model_.output.activeRateHz.has_value() &&
+            model_.input.activeRateHz == model_.output.activeRateHz) {
+            model_.currentRateHz = model_.input.activeRateHz;
+        }
+    }
+
     [[nodiscard]] IsochronousPlugModel& Plug(PlugDirection direction) noexcept {
         return direction == PlugDirection::kInput ? model_.input : model_.output;
     }
 
-    IAVCCommandSubmitter& submitter_;
+    ASFW::AVC::IAvcUnit& unit_;
     uint64_t guid_{0};
     std::vector<Request> queue_{};
     size_t next_{0};
@@ -232,50 +346,6 @@ private:
 };
 
 } // namespace
-
-AVCCdb BuildReadOnlyProbeCommand(ReadOnlyProbeCommand command,
-                                 PlugDirection direction, uint8_t index) noexcept {
-    AVCCdb cdb{};
-    cdb.ctype = static_cast<uint8_t>(AVCCommandType::kStatus);
-    cdb.subunit = kAVCSubunitUnit;
-
-    if (command == ReadOnlyProbeCommand::kUnitPlugCounts) {
-        cdb.opcode = kOpcodePlugInfo;
-        cdb.operands[0] = 0x00;
-        cdb.operandLength = 5;
-        return cdb;
-    }
-
-    cdb.operands[1] = static_cast<uint8_t>(direction);
-    cdb.operands[2] = 0x00;
-    cdb.operands[3] = 0x00;
-    cdb.operands[4] = 0x00;
-    cdb.operands[5] = 0xff;
-
-    if (command == ReadOnlyProbeCommand::kStreamFormatList) {
-        cdb.opcode = kOpcodeStreamFormatSupport;
-        cdb.operands[0] = kExtendedFormatList;
-        cdb.operands[6] = 0xff;
-        cdb.operands[7] = index;
-        cdb.operandLength = 8;
-        return cdb;
-    }
-
-    cdb.opcode = kOpcodePlugInfo;
-    cdb.operands[0] = kExtendedPlugInfo;
-    switch (command) {
-        case ReadOnlyProbeCommand::kIsochPlugType: cdb.operands[6] = kInfoPlugType; break;
-        case ReadOnlyProbeCommand::kChannelPositions: cdb.operands[6] = kInfoChannelPosition; break;
-        case ReadOnlyProbeCommand::kSectionType:
-            cdb.operands[6] = kInfoSection;
-            cdb.operands[7] = static_cast<uint8_t>(index + 1U);
-            break;
-        case ReadOnlyProbeCommand::kUnitPlugCounts:
-        case ReadOnlyProbeCommand::kStreamFormatList: break;
-    }
-    cdb.operandLength = command == ReadOnlyProbeCommand::kSectionType ? 8 : 7;
-    return cdb;
-}
 
 std::optional<StreamFormation>
 ParseStreamFormation(std::span<const uint8_t> formation) noexcept {
@@ -347,41 +417,9 @@ ParseChannelPositionSections(std::span<const uint8_t> payload) noexcept {
     return cursor == payload.size() ? std::optional{std::move(result)} : std::nullopt;
 }
 
-bool DeviceModel::HasAgreedCurrentRate() const noexcept {
-    return CurrentRateCode().has_value();
-}
-
-std::optional<uint8_t> DeviceModel::CurrentRateCode() const noexcept {
-    const auto inputRate = input.currentFormat.has_value() ? input.currentFormat->formation : std::nullopt;
-    const auto outputRate = output.currentFormat.has_value() ? output.currentFormat->formation : std::nullopt;
-    if (!inputRate.has_value() || !outputRate.has_value() || inputRate->rateCode != outputRate->rateCode) {
-        return std::nullopt;
-    }
-    return inputRate->rateCode;
-}
-
-bool DeviceModel::SupportsDuplexFormation(uint8_t pcmChannels,
-                                          uint8_t midiSlots) const noexcept {
-    if (!unitPlugCounts.has_value() ||
-        unitPlugCounts->isochronousInputs == 0 ||
-        unitPlugCounts->isochronousOutputs == 0) {
-        return false;
-    }
-
-    const auto supports = [pcmChannels, midiSlots](const IsochronousPlugModel& plug) {
-        for (const auto& formation : plug.supportedFormations) {
-            if (formation.pcmChannels == pcmChannels && formation.midiSlots == midiSlots) {
-                return true;
-            }
-        }
-        return false;
-    };
-    return supports(input) && supports(output);
-}
-
-void StartBeBoBPlug0Discovery(IAVCCommandSubmitter& submitter, uint64_t guid,
+void StartBeBoBPlug0Discovery(ASFW::AVC::IAvcUnit& unit, uint64_t guid,
                               ReadOnlyProbeCompletion completion) {
-    std::make_shared<Probe>(submitter, guid, std::move(completion))->Start();
+    std::make_shared<Probe>(unit, guid, std::move(completion))->Start();
 }
 
 } // namespace ASFW::Audio::BeBoB

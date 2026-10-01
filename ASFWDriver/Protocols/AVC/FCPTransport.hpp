@@ -23,6 +23,8 @@
 #include <span>
 #include "AVCDefs.hpp"
 #include "AVCCommandFilter.hpp"
+#include "FcpExchangeRecorder.hpp"
+#include "Core/IAvcUnit.hpp"
 #include "../Ports/FireWireBusPort.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Discovery/FWDevice.hpp"
@@ -158,10 +160,11 @@ struct FCPTransportConfig {
 // FCP Transport
 //==============================================================================
 
-class FCPTransport : public std::enable_shared_from_this<FCPTransport> {
+class FCPTransport : public std::enable_shared_from_this<FCPTransport>,
+                     public ASFW::AVC::IAvcUnit {
 public:
     FCPTransport() = default;
-    ~FCPTransport();
+    ~FCPTransport() override;
 
     bool init(Protocols::Ports::FireWireBusOps* busOps,
               Protocols::Ports::FireWireBusInfo* busInfo,
@@ -172,6 +175,15 @@ public:
 
     FCPTransport(const FCPTransport&) = delete;
     FCPTransport& operator=(const FCPTransport&) = delete;
+
+    // --- IAvcUnit implementation ---
+    void Submit(const ASFW::AVC::CommandFrame& frame,
+                FW::Generation generation,
+                ResponseCallback completion) override;
+
+    [[nodiscard]] FW::NodeId NodeId() const noexcept override;
+    [[nodiscard]] FW::Generation CurrentGeneration() const noexcept override;
+    [[nodiscard]] uint64_t Guid() const noexcept override;
 
     [[nodiscard]] FCPHandle SubmitCommand(const FCPFrame& command,
                                           FCPCompletion completion);
@@ -197,6 +209,11 @@ public:
 
     const FCPTransportConfig& GetConfig() const { return config_; }
 
+    /// Start a new exchange log (attach, manual refresh).
+    void BeginExchangeSession();
+    /// A copy of every exchange since the session started.
+    [[nodiscard]] FcpExchangeLog CopyExchangeLog() const;
+
 private:
     /// Immutable route token for one FCP block-write attempt. A response may
     /// match only after this exact attempt has completed successfully.
@@ -214,6 +231,9 @@ private:
         FCPFrame command;
         FCPCompletion completion;
         FCPCommandPolicy policy;
+        /// IAvcUnit callers bind work to the generation in which it was built.
+        /// Raw FCP callers leave this empty and use the current route.
+        std::optional<FW::Generation> requiredGeneration;
         uint32_t transactionID{0};
         uint8_t retriesLeft;
         bool allowBusResetRetry;
@@ -245,6 +265,13 @@ private:
 
     [[nodiscard]] bool StartPendingWrite();
     void StartNextQueuedCommand();
+    /// Log a command that never reached the bus. Must NOT be called with lock_ held.
+    void RecordUnsent(FCPStatus status, const FCPFrame& command);
+
+    [[nodiscard]] FCPHandle SubmitCommand(const FCPFrame& command,
+                                          FCPCompletion completion,
+                                          FCPCommandPolicy policy,
+                                          std::optional<FW::Generation> requiredGeneration);
 
     void OnCommandTimeout();
 
@@ -252,7 +279,17 @@ private:
 
     bool ValidateResponse(std::span<const uint8_t> response) const;
 
-    void CompleteCommand(FCPStatus status, const FCPFrame& response);
+    void CompleteCommand(FCPStatus status,
+                         const FCPFrame& response,
+                         std::optional<uint32_t> expectedTransactionID = std::nullopt);
+
+    /// Run a command's completion, then start the next queued command. A
+    /// completion that submits again, and a submit that fails or is answered
+    /// at once, would otherwise nest one call chain per command: a bus reset
+    /// fails every remaining discovery command synchronously. Deliveries made
+    /// while one is running are queued and run by the outermost call, so the
+    /// stack depth stays constant. Must NOT be called with lock_ held.
+    void Deliver(FCPCompletion completion, FCPStatus status, const FCPFrame& response);
 
     void ScheduleTimeout(uint32_t timeoutMs);
 
@@ -275,8 +312,19 @@ private:
     bool shuttingDown_{false};
 
     std::unique_ptr<OutstandingCommand> pending_;
+    /// Guarded by lock_.
+    FcpExchangeRecorder recorder_;
     std::deque<std::unique_ptr<OutstandingCommand>> queued_;
     uint32_t nextTransactionID_{0};
+
+    struct PendingDelivery {
+        FCPCompletion completion;
+        FCPStatus status;
+        FCPFrame response;
+    };
+    /// Guarded by lock_. Completions waiting for the outermost Deliver().
+    std::deque<PendingDelivery> deliveries_;
+    bool delivering_{false};
 };
 
 } // namespace ASFW::Protocols::AVC

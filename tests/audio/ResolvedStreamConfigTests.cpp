@@ -272,3 +272,18 @@ TEST(ResolvedStreamConfig, FirefaceProfilesUseExactHeaderlessPayloadGeometry) {
         EXPECT_EQ(TxPacketBytesForStreamConfig(config), expectedBytes);
     }
 }
+
+TEST(ResolvedStreamConfigTests, DeviceSlotMapReachesPlaybackConfigAndRejectsOverflow) {
+    F32ShapedProfile profile;
+    ASFW::Isoch::Audio::ParsedWireStream wire{.pcmChannels = 2, .am824Slots = 3};
+    ASSERT_TRUE(wire.pcmSlotMap.SetSlots(std::array<uint8_t, 2>{2, 0}));
+    wire.hasPcmSlotMap = true;
+    ASFW::Isoch::Audio::AudioStreamConfig config;
+    ASSERT_TRUE(BuildResolvedTxStreamConfig(profile, &wire, 1, 0, config));
+    EXPECT_TRUE(config.hasPcmSlotMap);
+    EXPECT_EQ(config.pcmSlotMap.SlotFor(0), 2);
+    wire.am824Slots = 2;
+    EXPECT_FALSE(BuildResolvedTxStreamConfig(profile, &wire, 1, 0, config));
+    wire.am824Slots = 256;
+    EXPECT_FALSE(BuildResolvedTxStreamConfig(profile, &wire, 1, 0, config));
+}

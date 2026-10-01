@@ -7,7 +7,8 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Protocols/AVC/AVCCommandFilter.hpp"
-#include "ASFWDriver/Protocols/AVC/AVCSignalFormatProbe.hpp"
+#include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
+#include "ASFWDriver/Protocols/AVC/Commands/StreamFormatCommand.hpp"
 
 #include <array>
 #include <cstdint>
@@ -15,6 +16,8 @@
 
 using namespace ASFW::Protocols::AVC;
 using ASFW::Discovery::AvcCommandFilterId;
+namespace Cmd = ASFW::AVC::Cmd;
+using ASFW::AVC::CommandType;
 
 namespace {
 
@@ -24,6 +27,18 @@ std::vector<uint8_t> Frame(std::initializer_list<uint8_t> bytes) {
 
 std::span<const FCPPermittedFrame> MAudioTable() {
     return PermittedFramesFor(AvcCommandFilterId::MAudioSpecialBeBoB);
+}
+
+std::vector<uint8_t> BuildProbeFrame(Cmd::PlugSignalDirection dir, uint8_t plug) {
+    Cmd::PlugSignalFormatCommand cmd{
+        .operands = {
+            .direction = dir,
+            .plugId = plug,
+            .query = Cmd::SignalFormatQuery::kAm824Wildcard,
+        }
+    };
+    auto enc = cmd.Encode(CommandType::kStatus);
+    return std::vector<uint8_t>(enc->WireBytes().begin(), enc->WireBytes().end());
 }
 
 } // namespace
@@ -39,9 +54,9 @@ TEST(AVCCommandFilterTests, UnrestrictedIsTheDefaultAndAdmitsEverything) {
 
 TEST(AVCCommandFilterTests, AdmitsExactlyTheFrameTheProbeBuilds) {
     // The builder and the filter must agree, or the probe cannot be sent at all.
-    for (const auto direction : {SignalFormatPlugDirection::Input,
-                                 SignalFormatPlugDirection::Output}) {
-        const auto built = BuildSignalFormatProbe(direction, 0);
+    for (const auto direction : {Cmd::PlugSignalDirection::kInput,
+                                 Cmd::PlugSignalDirection::kOutput}) {
+        const auto built = BuildProbeFrame(direction, 0);
         EXPECT_TRUE(FrameIsPermitted(MAudioTable(), built))
             << "direction " << static_cast<int>(direction);
     }
@@ -52,8 +67,8 @@ TEST(AVCCommandFilterTests, PlugIdIsFreeAcrossItsWholeRange) {
     // and can never become a command code, so every value must pass.
     for (uint32_t plug = 0; plug <= 0xFF; ++plug) {
         const auto built =
-            BuildSignalFormatProbe(SignalFormatPlugDirection::Input,
-                                   static_cast<uint8_t>(plug));
+            BuildProbeFrame(Cmd::PlugSignalDirection::kInput,
+                            static_cast<uint8_t>(plug));
         EXPECT_TRUE(FrameIsPermitted(MAudioTable(), built)) << "plug " << plug;
     }
 }
@@ -197,7 +212,7 @@ TEST(AVCCommandFilterTests, AppendedOperandsCannotRideBehindAPermittedFrame) {
 TEST(AVCCommandFilterTests, PinnedBytesAreEnforcedIndividually) {
     // Each 0xFF care byte must actually be load-bearing; a row that pinned
     // nothing would admit everything of the right length.
-    const auto good = BuildSignalFormatProbe(SignalFormatPlugDirection::Input, 0);
+    const auto good = BuildProbeFrame(Cmd::PlugSignalDirection::kInput, 0);
     for (const size_t index : {size_t{0}, size_t{1}, size_t{2}, size_t{4}}) {
         std::vector<uint8_t> mutated(good.begin(), good.end());
         mutated[index] ^= 0xFFU;
@@ -229,9 +244,9 @@ TEST(AVCCommandFilterTests, BlockAllRefusesEveryFrame) {
     const auto table = PermittedFramesFor(AvcCommandFilterId::BlockAll);
     EXPECT_FALSE(table.empty());
     // Refuses probe frames
-    for (const auto direction : {SignalFormatPlugDirection::Input,
-                                 SignalFormatPlugDirection::Output}) {
-        const auto built = BuildSignalFormatProbe(direction, 0);
+    for (const auto direction : {Cmd::PlugSignalDirection::kInput,
+                                 Cmd::PlugSignalDirection::kOutput}) {
+        const auto built = BuildProbeFrame(direction, 0);
         EXPECT_FALSE(FrameIsPermitted(table, built));
     }
     // Refuses arbitrary command frames

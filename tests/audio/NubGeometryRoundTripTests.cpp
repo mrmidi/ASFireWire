@@ -250,3 +250,17 @@ TEST(NubGeometryRefresh, CaptureVisibilityRatesAndOffsetsArePartOfContract) {
     changed.sampleRates = {48000};
     check(changed);
 }
+
+TEST(NubGeometryRoundTrip, DescriptorPcmPermutationSurvivesBothDirections) {
+    auto device = MakeVeniceF24();
+    device.playbackStreams = {{.pcmChannels = 2, .am824Slots = 3}};
+    ASSERT_TRUE(device.playbackStreams[0].pcmSlotMap.SetSlots(std::array<uint8_t, 2>{2, 0}));
+    device.captureStreams = device.playbackStreams;
+    bool published = false;
+    const auto parsed = RoundTrip(device, published);
+    ASSERT_TRUE(published);
+    ASSERT_EQ(parsed.playbackStreamCount, 1);
+    EXPECT_TRUE(parsed.playbackStreams[0].hasPcmSlotMap);
+    EXPECT_EQ(parsed.playbackStreams[0].pcmSlotMap.SlotFor(0), 2);
+    EXPECT_EQ(parsed.captureStreams[0].pcmSlotMap.SlotFor(1), 0);
+}

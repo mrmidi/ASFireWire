@@ -75,6 +75,7 @@ enum {
     kMethodStartAudioStreaming = 62,
     kMethodStopAudioStreaming = 63,
         kMethodMotuCapture = 64,
+    kMethodGetFCPExchangeLog = 65,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -215,6 +216,8 @@ MethodDispatchResult DispatchAVCMethods(ASFW::UserClient::UserClientRuntimeState
         return runtimeState.AVC().SendRawFCPCommand(arguments);
     case kMethodGetRawFCPCommandResult:
         return runtimeState.AVC().GetRawFCPCommandResult(arguments);
+    case kMethodGetFCPExchangeLog:
+        return runtimeState.AVC().GetFCPExchangeLog(arguments);
     default:
         return std::nullopt;
     }

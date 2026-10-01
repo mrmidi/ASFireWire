@@ -1,0 +1,4 @@
+## Submit Idempotent Command Gen 1
+W ffff.f0000b00 01ff1800ffffffff @s100
+# bus-reset gen=2
+W ffff.f0000b00 01ff1800ffffffff @s100

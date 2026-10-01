@@ -81,7 +81,11 @@ AudioDeviceCatalog::ResolveWithDefinitions(
             .candidates = {DeviceDefinitionId::GenericAvc},
             .provenance = {{DeviceDefinitionId::GenericAvc, 0}},
             .profileBuilder = ProfileBuilderId::GenericAvc,
-            .protocolImplementation = ProtocolImplementationId::None,
+            .protocolImplementation = ProtocolImplementationId::GenericAvc,
+            .streamTraits = {
+                .resource = {.irmChannelMask = kAnyIsoChannel},
+                .start = {.startShape = StreamStartShape::CmpReceiveThenTransmit,
+                          .startAtObservedRate = true}},
             .vendorName = device.rootVendorName,
             .modelName = device.rootModelName.empty()
                              ? "Generic AV/C Audio"
@@ -135,6 +139,20 @@ AudioDeviceCatalog::ResolveWithDefinitions(
         plan.candidates.push_back(match.definition->id);
         plan.provenance.push_back(MatchProvenance{match.definition->id,
                                                   match.clauseIndex});
+    }
+    // Recognition without a vendor profile does not veto standard AV/C discovery.
+    // Keep explicit firmware hazards and non-AV/C families on their own paths.
+    if (allowGenericAvcFallback && plan.support == SupportDisposition::RecognizedUnsupported &&
+        (plan.family == AudioFamilyProviderId::BeBoB || plan.family == AudioFamilyProviderId::OXFW) &&
+        plan.probePolicy == ProbePolicyId::None && unit.specifierId.value_or(0) == 0x00A02D) {
+        plan.family = AudioFamilyProviderId::GenericAvc;
+        plan.probePolicy = ProbePolicyId::GenericAvc;
+        plan.support = SupportDisposition::GenericFallback;
+        plan.profileBuilder = ProfileBuilderId::GenericAvc;
+        plan.protocolImplementation = ProtocolImplementationId::GenericAvc;
+        plan.streamTraits.resource.irmChannelMask = kAnyIsoChannel;
+        plan.streamTraits.start.startShape = StreamStartShape::CmpReceiveThenTransmit;
+        plan.streamTraits.start.startAtObservedRate = true;
     }
     return plan;
 }

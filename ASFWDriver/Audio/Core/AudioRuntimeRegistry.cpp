@@ -134,7 +134,7 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
     if (policy == nullptr || policy->route != *route ||
         !routeRegistry.IsCurrent(*route) ||
-        policy->plan.support != DeviceProfiles::Audio::SupportDisposition::Supported) {
+        !DeviceProfiles::Audio::AllowsAudioRuntime(policy->plan.support)) {
         return nullptr;
     }
 

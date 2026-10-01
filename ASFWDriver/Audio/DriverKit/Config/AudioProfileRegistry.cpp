@@ -7,7 +7,6 @@
 #include "AudioProfileRegistry.hpp"
 #include "MOTU/MotuV2Profile.hpp"
 #include "AVC/ApogeeDuetProfile.hpp"
-#include "AVC/BeBoBProfile.hpp"
 #include "AVC/MackieOnyx820iProfile.hpp"
 #include "AVC/MackieOnyx400FProfile.hpp"
 #include "AVC/Phase88Profile.hpp"
@@ -16,17 +15,11 @@
 
 #include "DICE/DiceProfile.hpp"
 #include "../../../Logging/Logging.hpp"
-#include "../../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
 #include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
 namespace ASFW::Isoch::Audio {
-
-std::unordered_map<uint64_t, std::unique_ptr<IAudioDeviceProfile>>& AudioProfileRegistry::DynamicProfiles() {
-    static std::unordered_map<uint64_t, std::unique_ptr<IAudioDeviceProfile>> profiles;
-    return profiles;
-}
 
 namespace {
 
@@ -151,7 +144,6 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         case Builder::Motu828mk2:
         case Builder::MotuUltralite:
         case Builder::GenericAvc:
-        case Builder::GenericBeBoB:
         case Builder::MAudioFireWire1814:
         case Builder::MAudioProjectMix:
         case Builder::RmeFireface400:
@@ -220,7 +212,6 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         case Builder::PreSonusStudioLive2442:
         case Builder::PreSonusFireStudioProject:
         case Builder::GenericAvc:
-        case Builder::GenericBeBoB:
         case Builder::None:
             break;
     }
@@ -269,34 +260,10 @@ const IAudioDeviceProfile* AudioProfileRegistry::FindProfile(uint32_t vendorId,
                          vendorId, modelId, guid);
     }
 
-    // Per-GUID BeBoB profiles, registered during discovery, give a BeBoB
-    // device without a curated profile its discovery-derived geometry. They are
-    // keyed by GUID and not by identity, so no matching happens here either.
-    if (guid != 0) {
-        auto& dynamic = DynamicProfiles();
-        if (auto it = dynamic.find(guid); it != dynamic.end()) {
-            return it->second.get();
-        }
-    }
-
     // The generic DICE fallback. Reaching it means either an unrecognised
     // device -- which is correct -- or a builder that did not travel, which the
     // warning above has already reported.
     return &gGenericDiceProfile;
-}
-
-const IAudioDeviceProfile* AudioProfileRegistry::RegisterBeBoBProfile(
-    uint64_t guid, const void* discoveryModel) noexcept {
-    if (guid == 0 || discoveryModel == nullptr) return nullptr;
-    auto& dynamic = DynamicProfiles();
-    if (dynamic.find(guid) != dynamic.end()) return dynamic[guid].get();
-    const auto* model = static_cast<const ::ASFW::Audio::BeBoB::DeviceModel*>(discoveryModel);
-    dynamic[guid] = std::make_unique<AVC::Profiles::BeBoBProfile>(*model);
-    return dynamic[guid].get();
-}
-
-void AudioProfileRegistry::UnregisterProfile(uint64_t guid) noexcept {
-    DynamicProfiles().erase(guid);
 }
 
 } // namespace ASFW::Isoch::Audio

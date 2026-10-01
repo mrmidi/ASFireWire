@@ -61,14 +61,43 @@ void LogReservationSummary(uint64_t guid, FW::Generation generation, FW::FwSpeed
 }
 
 // A device the catalog pins to one start rate runs at that rate, whatever the
-// session asked for.
-[[nodiscard]] AudioClockConfig EffectiveStartClock(const Discovery::DeviceRecord& record,
-                                                   const AudioClockConfig& requested) noexcept {
+// session asked for. A device whose geometry was observed at one rate runs at
+// the rate discovery observed.
+[[nodiscard]] AudioClockConfig EffectiveStartClock(
+    const Discovery::DeviceRecord& record, const AudioClockConfig& requested,
+    const std::optional<Model::ASFWAudioDevice>& discoveredConfig) noexcept {
     const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
     if (policy != nullptr && policy->plan.streamTraits.start.startRatePinHz != 0) {
         return AudioClockConfig{.sampleRateHz = policy->plan.streamTraits.start.startRatePinHz};
     }
+    if (policy != nullptr && policy->plan.streamTraits.start.startAtObservedRate &&
+        discoveredConfig && discoveredConfig->currentSampleRate != 0) {
+        return AudioClockConfig{.sampleRateHz = discoveredConfig->currentSampleRate};
+    }
     return requested;
+}
+
+// The discovered single-stream geometry, in the form a family serves as caps.
+[[nodiscard]] std::optional<AudioStreamRuntimeCaps> DiscoveredCaps(
+    const Model::ASFWAudioDevice& config) noexcept {
+    if (config.playbackStreams.size() != 1 || config.captureStreams.size() != 1 ||
+        config.currentSampleRate == 0) {
+        return std::nullopt;
+    }
+    const auto& playback = config.playbackStreams.front();
+    const auto& capture = config.captureStreams.front();
+    AudioStreamRuntimeCaps caps{};
+    caps.sampleRateHz = config.currentSampleRate;
+    caps.hostInputPcmChannels = capture.pcmChannels;
+    caps.hostOutputPcmChannels = playback.pcmChannels;
+    caps.deviceToHostAm824Slots = capture.am824Slots;
+    caps.hostToDeviceAm824Slots = playback.am824Slots;
+    caps.deviceToHostStreamCount = caps.hostToDeviceStreamCount = 1;
+    caps.deviceToHostStreams[0] = {.pcmChannels = static_cast<uint16_t>(capture.pcmChannels),
+                                   .am824Slots = static_cast<uint16_t>(capture.am824Slots)};
+    caps.hostToDeviceStreams[0] = {.pcmChannels = static_cast<uint16_t>(playback.pcmChannels),
+                                   .am824Slots = static_cast<uint16_t>(playback.am824Slots)};
+    return caps;
 }
 
 [[nodiscard]] uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
@@ -105,7 +134,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     const uint64_t guid = request.guid;
     FamilyDriver& family = *request.family;
     Discovery::DeviceRecord record = request.record;
-    const AudioClockConfig clock = EffectiveStartClock(record, request.clock);
+    const AudioClockConfig clock = EffectiveStartClock(record, request.clock, request.discoveredConfig);
     auto& host = deps_.host;
 
     // What a failure leaves behind, and how to report it.
@@ -131,7 +160,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     }
     const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
     if (policy == nullptr || policy->route != *route ||
-        policy->plan.support != DeviceProfiles::Audio::SupportDisposition::Supported) {
+        !DeviceProfiles::Audio::AllowsAudioRuntime(policy->plan.support)) {
         ASFW_LOG(Audio,
                  "[Session] no current supported audio policy; refusing start GUID=0x%016llx", guid);
         return refused(kIOReturnNotReady, "Policy");
@@ -168,6 +197,14 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         return !(request.superseded && request.superseded()) && deps_.registry.IsCurrent(*route);
     };
 
+    // Offer the discovered geometry; a family that reads its own ignores it,
+    // and the graph check below still requires the two to agree.
+    if (request.discoveredConfig) {
+        if (const auto discovered = DiscoveredCaps(*request.discoveredConfig)) {
+            family.AdoptDiscoveredGeometry(*discovered);
+        }
+    }
+
     // Read the stream geometry first so channel planning and the IRM see every
     // stream. Not fatal: Configure surfaces a real device error. Cross-validated
     // with FFADO dice_avdevice.cpp prepare() (m_nb_rx/m_nb_tx).
@@ -184,8 +221,32 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     }
     record = *refreshed;
 
+    const auto applyGraph = [&](AudioStreamRuntimeCaps& geometry) {
+        if (!request.discoveredConfig) return true;
+        const auto& config = *request.discoveredConfig;
+        if (config.playbackStreams.size() != 1 || config.captureStreams.size() != 1 ||
+            std::find(config.sampleRates.begin(), config.sampleRates.end(), clock.sampleRateHz) == config.sampleRates.end()) return false;
+        const auto& playback = config.playbackStreams.front();
+        const auto& capture = config.captureStreams.front();
+        // Device stages must agree with the graph before any host DMA is armed.
+        if (geometry.hostInputPcmChannels != capture.pcmChannels ||
+            geometry.hostOutputPcmChannels != playback.pcmChannels ||
+            geometry.deviceToHostAm824Slots != capture.am824Slots ||
+            geometry.hostToDeviceAm824Slots != playback.am824Slots) return false;
+        geometry.deviceToHostStreamCount = geometry.hostToDeviceStreamCount = 1;
+        geometry.deviceToHostStreams[0] = {.pcmChannels = static_cast<uint16_t>(capture.pcmChannels),
+            .am824Slots = static_cast<uint16_t>(capture.am824Slots)};
+        geometry.hostToDeviceStreams[0] = {.pcmChannels = static_cast<uint16_t>(playback.pcmChannels),
+            .am824Slots = static_cast<uint16_t>(playback.am824Slots)};
+        return true;
+    };
+    auto initialCaps = family.RuntimeCaps().value_or(AudioStreamRuntimeCaps{});
+    if (!applyGraph(initialCaps)) {
+        ASFW_LOG_ERROR(Audio, "[AvcGraphBind] guid=%llx refused reason=device-geometry-or-rate", guid);
+        return refused(kIOReturnUnsupported, "GraphGeometry");
+    }
     DuplexStreamProfile profile =
-        DuplexStreamProfileResolver::Resolve(record, family.RuntimeCaps().value_or(AudioStreamRuntimeCaps{}));
+        DuplexStreamProfileResolver::Resolve(record, initialCaps);
     if (!profile.policyResolved) {
         return refused(kIOReturnNotReady, "Profile");
     }
@@ -220,6 +281,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         return superseded("Configure");
     }
     caps = prepared->runtimeCaps;
+    if (!applyGraph(caps)) return rollback(kIOReturnUnsupported, "GraphGeometry");
     profile = DuplexStreamProfileResolver::Resolve(record, caps, channels);
     if (!profile.policyResolved) {
         return superseded("Configure");
@@ -321,6 +383,18 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
              caps.hostInputPcmChannels, caps.hostOutputPcmChannels, caps.deviceToHostAm824Slots,
              caps.hostToDeviceAm824Slots, static_cast<uint32_t>(profile.captureWireFormat),
              static_cast<uint32_t>(profile.playbackWireFormat));
+
+    if (request.discoveredConfig) {
+        const auto& config = *request.discoveredConfig;
+        const auto& capture = config.captureStreams.front();
+        if (!capture.pcmSlotMap.FitsWithin(capture.pcmChannels, capture.am824Slots))
+            return rollback(kIOReturnUnsupported, "GraphSlotMap");
+        static_cast<Wire::PcmSlotMap&>(profile.captureChannelMap) = capture.pcmSlotMap;
+        profile.playbackChannelMap = config.playbackStreams.front().pcmSlotMap;
+        ASFW_LOG(Audio, "[AvcGraphBind] guid=%llx rate=%u playbackPcm=%u capturePcm=%u captureMapSlots=%u",
+            guid, clock.sampleRateHz, config.outputChannelCount, config.inputChannelCount,
+            capture.pcmSlotMap.slotCount);
+    }
 
     // 4. Prepare every host DMA program while the device is still disabled, in
     //    the recipe's order. The master capture stream owns clock, ZTS and
