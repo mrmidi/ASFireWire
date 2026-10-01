@@ -31,7 +31,7 @@ struct StereoHistoryView: View {
                     ZStack {
                         Canvas { context, size in draw(series, in: &context, size: size) }
                         MetalAnalyzerPlotView(client: client, mode: 2,
-                                              index: series == .correlation ? 0 : 1, points: points)
+                                              index: series == .correlation ? 0 : 1, historyState: client.plotHistory)
                             .padding(.leading, 34).padding(.trailing, 6)
                             .padding(.top, 5).padding(.bottom, 16)
                     }

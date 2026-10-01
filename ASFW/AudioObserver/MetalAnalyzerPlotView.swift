@@ -23,6 +23,13 @@ struct AnalyzerHistoryVertex {
     var integrated: Float = .nan
 }
 
+@MainActor
+final class AnalyzerPlotHistoryState {
+    var stereo: [AudioStereoHistoryPoint] = []
+    var loudness: [AnalyzerHistoryVertex] = []
+    var revision: UInt64 = 0
+}
+
 struct AnalyzerPlotRegion: Equatable {
     var mode: UInt32
     var index: UInt32
@@ -39,6 +46,7 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
     var points: [AudioStereoHistoryPoint] = []
     var regions: [AnalyzerPlotRegion]? = nil
     var loudnessPoints: [AnalyzerHistoryVertex] = []
+    var historyState: AnalyzerPlotHistoryState?
     private static var queues: [ObjectIdentifier: MTLCommandQueue] = [:]
     private static var pipelines: [ObjectIdentifier: MTLRenderPipelineState] = [:]
 
@@ -52,6 +60,7 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
         view.enableSetNeedsDisplay = true
         view.layer?.isOpaque = false
         context.coordinator.regions = regions
+        context.coordinator.historyState = historyState
         configure(view, coordinator: context.coordinator, device: client.metalDevice)
         observeCompletions(view, coordinator: context.coordinator) { client.metalDevice }
         return view
@@ -68,6 +77,7 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
                 // updateNSView after client.open(). GPU completion is also
                 // responsible for attaching the renderer in that case.
                 configure(view, coordinator: coordinator, device: deviceProvider())
+                coordinator.renderer?.updateLiveHistory(coordinator.historyState)
                 view.draw()
             }
         }
@@ -75,10 +85,13 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
 
     func updateNSView(_ view: MTKView, context: Context) {
         context.coordinator.regions = regions
+        context.coordinator.historyState = historyState
         context.coordinator.renderer?.regions = regions
         configure(view, coordinator: context.coordinator, device: client.metalDevice)
-        context.coordinator.renderer?.updateHistory(points)
-        context.coordinator.renderer?.updateLoudnessHistory(loudnessPoints)
+        if historyState == nil {
+            context.coordinator.renderer?.updateHistory(points)
+            context.coordinator.renderer?.updateLoudnessHistory(loudnessPoints)
+        } else { context.coordinator.renderer?.updateLiveHistory(historyState) }
         view.draw()
     }
 
@@ -103,8 +116,10 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
         let renderer = AnalyzerPlotRenderer(device: device, pipeline: pipeline, queue: queue,
                                             metrics: client.metrics, state: client.renderState,
                                             mode: mode, index: index)
-        renderer.updateHistory(points)
-        renderer.updateLoudnessHistory(loudnessPoints)
+        if historyState == nil {
+            renderer.updateHistory(points)
+            renderer.updateLoudnessHistory(loudnessPoints)
+        } else { renderer.updateLiveHistory(historyState) }
         renderer.regions = coordinator.regions
         coordinator.renderer = renderer
         coordinator.deviceKey = key
@@ -137,6 +152,7 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
         var observer: NSObjectProtocol?
         var deviceKey: ObjectIdentifier?
         var regions: [AnalyzerPlotRegion]?
+        var historyState: AnalyzerPlotHistoryState?
         deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
     }
 }
@@ -153,6 +169,7 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private var history: MTLBuffer?
     private var count = 0
     private var latestFrame: UInt64 = 0
+    private var historyRevision: UInt64?
     var regions: [AnalyzerPlotRegion]?
 
     init(device: MTLDevice, pipeline: MTLRenderPipelineState, queue: MTLCommandQueue,
@@ -160,6 +177,14 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
          mode: UInt32, index: UInt32) {
         self.device = device; self.pipeline = pipeline; self.queue = queue
         self.metrics = metrics; self.state = state; self.mode = mode; self.index = index
+    }
+
+    @MainActor
+    func updateLiveHistory(_ state: AnalyzerPlotHistoryState?) {
+        guard let state, historyRevision != state.revision else { return }
+        historyRevision = state.revision
+        if mode == 2 { updateHistory(state.stereo) }
+        if mode == 3 { updateLoudnessHistory(state.loudness) }
     }
 
     func updateHistory(_ points: [AudioStereoHistoryPoint]) {

@@ -2,7 +2,7 @@ import Foundation
 import IOKit
 import Metal
 
-struct AudioObserverSnapshot: Sendable {
+struct AudioObserverSnapshot: Sendable, Equatable {
     var writeEndFrame: UInt64 = 0
     var oldestValidFrame: UInt64 = 0
     var sessionEpoch: UInt64 = 0
@@ -16,7 +16,7 @@ struct AudioObserverSnapshot: Sendable {
     var ioRunning = false
 }
 
-struct AudioObserverMetrics: Sendable {
+struct AudioObserverMetrics: Sendable, Equatable {
     var analysis = AudioAnalyzerSnapshot()
     var stereoHistory: [AudioStereoHistoryPoint] = []
     var cpuEncodeMilliseconds: Double?
@@ -230,12 +230,18 @@ final class AudioObserverMetricsState: @unchecked Sendable {
     private var loudnessCount = 0
     private var loudnessSession = AudioLoudnessMeasurementSession()
 
-    func read() -> AudioObserverMetrics {
+    func read(includeHistory: Bool = true) -> AudioObserverMetrics {
         lock.lock()
         defer { lock.unlock() }
         var snapshot = value
-        snapshot.stereoHistory = orderedStereoHistory()
+        snapshot.stereoHistory = includeHistory ? orderedStereoHistory() : []
         return snapshot
+    }
+
+    func readStereoHistory() -> [AudioStereoHistoryPoint] {
+        lock.lock()
+        defer { lock.unlock() }
+        return orderedStereoHistory()
     }
 
     // Read only current scalar reductions; no history allocation on render events.
@@ -635,6 +641,7 @@ final class ASFWAudioObserverClient {
     private(set) var metalDevice: MTLDevice?
     private(set) var ringBuffer: MTLBuffer?
     private(set) var phaseRenderPipeline: MTLRenderPipelineState?
+    let plotHistory = AnalyzerPlotHistoryState()
     private(set) var waveformRenderPipeline: MTLRenderPipelineState?
 
     init(guid: UInt64) {
