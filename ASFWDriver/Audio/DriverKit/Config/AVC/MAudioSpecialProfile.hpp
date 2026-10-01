@@ -22,6 +22,9 @@ public:
     [[nodiscard]] bool BuildDefaultTxStreamConfig(AudioStreamConfig& out) const noexcept override;
     [[nodiscard]] bool BuildDefaultRxStreamConfig(AudioStreamConfig& out) const noexcept override;
     [[nodiscard]] std::vector<uint32_t> SupportedSampleRates() const override;
+    // One MIDI slot per direction multiplexes one 1814 port or two ProjectMix ports.
+    [[nodiscard]] uint32_t TxMidiPorts() const noexcept override { return projectMix_ ? 2U : 1U; }
+    [[nodiscard]] uint32_t RxMidiPorts() const noexcept override { return projectMix_ ? 2U : 1U; }
     [[nodiscard]] uint32_t TxSafetyOffsetFrames(double rate) const noexcept override;
     [[nodiscard]] uint32_t RxSafetyOffsetFrames(double rate) const noexcept override;
     [[nodiscard]] uint32_t TxReportedLatencyFrames(double rate) const noexcept override;

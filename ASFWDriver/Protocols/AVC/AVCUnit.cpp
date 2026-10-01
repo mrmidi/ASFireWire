@@ -143,13 +143,22 @@ void AVCUnit::Initialize(std::function<void(bool)> completion) {
 }
 
 void AVCUnit::InitializeAlreadyBegun(std::function<void(bool)> completion) {
-    auto completionState = Common::ShareCallback(
+    auto finish = Common::ShareCallback(
         [this, completion = std::move(completion)](bool success) mutable {
             discoveryStatus_.store(success ? AVCDiscoveryStatus::Completed : AVCDiscoveryStatus::Failed,
                                    std::memory_order_release);
             rescanInProgress_.store(false, std::memory_order_release);
             if (completion) completion(success);
         });
+    // The extension inventory reads more of the same device whatever the
+    // generic result, so a partial unit still reports everything it answers.
+    auto completionState = Common::ShareCallback([this, finish](bool success) {
+        if (!options_.extensionInventory) {
+            Common::InvokeSharedCallback(finish, success);
+            return;
+        }
+        options_.extensionInventory(*this, [finish, success] { Common::InvokeSharedCallback(finish, success); });
+    });
     if (initialized_) {
         ASFW_LOG_V2(AVC, "AVCUnit: Already initialized");
         Common::InvokeSharedCallback(completionState, true);
@@ -384,7 +393,7 @@ void AVCUnit::ResolveDiscoveredGraph(std::function<void(bool)> completion) {
         }
     }
     if (!music || !music->GetParsedStatus()) {
-        if ((music || audio) && options_.unitPlugGeometryFallback) {
+        if (music || audio) {
             ResolveUnitStreamGraph([done](bool success) { Common::InvokeSharedCallback(done, success); });
             return;
         }
@@ -477,8 +486,7 @@ void AVCUnit::ResolveDiscoveredGraph(std::function<void(bool)> completion) {
                 static_cast<unsigned>(stream->slotMapValidation), stream->supportedSampleRates.size());
         }
         discoveredGraph_ = std::make_shared<Graph::DeviceGraph>(std::move(graph));
-        if (options_.unitPlugGeometryFallback &&
-            (discoveredGraph_->playback.dataBlockSize == 0 || discoveredGraph_->capture.dataBlockSize == 0)) {
+        if (discoveredGraph_->playback.dataBlockSize == 0 || discoveredGraph_->capture.dataBlockSize == 0) {
             ResolveUnitStreamGraph([done](bool success) { Common::InvokeSharedCallback(done, success); });
             return;
         }
@@ -515,6 +523,22 @@ void AVCUnit::ResolveUnitStreamGraph(std::function<void(bool)> completion) {
                 Common::InvokeSharedCallback(done, false);
                 return;
             }
+            // Streams the descriptors selected keep their names and slot order;
+            // without a selection the plug formats are the whole graph.
+            if (discoveredGraph_) {
+                auto completed = *discoveredGraph_;
+                const auto midi = [](const Graph::StreamGraph& s) { return s.dataBlockSize - s.channelCount; };
+                if (CompleteStream(completed.playback, playbackStream.channelCount, midi(playbackStream),
+                                   playbackStream.currentSampleRate, playbackStream.supportedSampleRates) &&
+                    CompleteStream(completed.capture, captureStream->channelCount, midi(*captureStream),
+                                   captureStream->currentSampleRate, captureStream->supportedSampleRates)) {
+                    discoveredGraph_ = std::make_shared<Graph::DeviceGraph>(std::move(completed));
+                    ASFW_LOG(AVC, "[AvcGeometry] guid=%llx source=unit-plug0 completes=descriptor-graph rate=%u",
+                             Guid(), discoveredGraph_->playback.currentSampleRate);
+                    Common::InvokeSharedCallback(done, true);
+                    return;
+                }
+            }
             Graph::DeviceGraph graph;
             graph.playback = std::move(playbackStream);
             graph.capture = std::move(*captureStream);
@@ -526,6 +550,59 @@ void AVCUnit::ResolveUnitStreamGraph(std::function<void(bool)> completion) {
             Common::InvokeSharedCallback(done, true);
         });
     });
+}
+
+bool AVCUnit::CompleteStream(Graph::StreamGraph& stream, uint32_t pcmChannels, uint32_t midiChannels,
+                             uint32_t rateHz, std::vector<uint32_t> rates) const {
+    if (stream.selectionEvidence == Graph::StreamSelectionEvidence::kUnresolved ||
+        stream.channelCount != pcmChannels || pcmChannels == 0 || rateHz == 0) {
+        return false;
+    }
+    const auto music = std::find_if(subunits_.begin(), subunits_.end(),
+        [](const auto& subunit) { return subunit->GetType() == AVCSubunitType::kMusic; });
+    if (music == subunits_.end()) return false;
+    const auto& status = static_cast<const Music::MusicSubunit&>(**music).GetParsedStatus();
+    if (!status) return false;
+    const auto* descriptor = status->FindPlug(stream.subunitPlugId, stream.isDestination);
+    if (descriptor == nullptr) return false;
+    stream.dataBlockSize = pcmChannels + midiChannels;
+    stream.midiStreamCount = midiChannels;
+    stream.currentSampleRate = rateHz;
+    stream.supportedSampleRates = rates.empty() ? std::vector<uint32_t>{rateHz} : std::move(rates);
+    const auto validated = Graph::AvcGraphBuilder::BuildStreamGraph(*descriptor, *status, stream.dataBlockSize);
+    stream.slotMap = validated.slotMap;
+    stream.slotMapValidation = validated.slotMapValidation;
+    stream.usingFallbackMap = validated.usingFallbackMap;
+    return true;
+}
+
+void AVCUnit::CompleteGraphFromUnitPlugFormations(std::span<const UnitPlugFormation> playback,
+                                                  std::span<const UnitPlugFormation> capture,
+                                                  uint32_t currentRateHz) {
+    if (!discoveredGraph_ || currentRateHz == 0) return;
+    auto graph = *discoveredGraph_;
+    // The unit's live formations are current by definition; a size from the
+    // music subunit may not be (the Phase 88 descriptor is identical at every
+    // rate). Keep the existing size only when no live formation matches.
+    const auto complete = [&](Graph::StreamGraph& stream, std::span<const UnitPlugFormation> formations) {
+        const auto current = std::find_if(formations.begin(), formations.end(), [&](const auto& f) {
+            return f.rateHz == currentRateHz && f.pcmChannels == stream.channelCount;
+        });
+        if (current == formations.end()) return stream.dataBlockSize != 0;
+        std::vector<uint32_t> rates;
+        for (const auto& f : formations) {
+            if (f.pcmChannels == current->pcmChannels && f.midiChannels == current->midiChannels &&
+                std::find(rates.begin(), rates.end(), f.rateHz) == rates.end()) {
+                rates.push_back(f.rateHz);
+            }
+        }
+        return CompleteStream(stream, current->pcmChannels, current->midiChannels, currentRateHz, std::move(rates));
+    };
+    const bool playbackOk = complete(graph.playback, playback);
+    const bool captureOk = complete(graph.capture, capture);
+    ASFW_LOG(AVC, "[AvcGeometry] guid=%llx source=unit-plug-formations rate=%u playback=%{public}s capture=%{public}s",
+             Guid(), currentRateHz, playbackOk ? "sized" : "unsized", captureOk ? "sized" : "unsized");
+    discoveredGraph_ = std::make_shared<Graph::DeviceGraph>(std::move(graph));
 }
 
 void AVCUnit::ProbePlugs(std::function<void(bool)> completion) {

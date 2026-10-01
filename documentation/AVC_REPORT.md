@@ -39,15 +39,24 @@ does not matter.
 
 ## Evidence scope
 
-Refresh starts a new exchange session on each unit and reruns that device's own
-bring-up: generic AV/C discovery (UNIT INFO, SUBUNIT INFO, descriptors) for
-standard and Oxford units, the read-only BridgeCo plug probes for BeBoB units
-such as the Phase 88. A device whose probe policy forbids discovery commands
-(the M-Audio special firmware) is sent nothing; its log keeps everything the
-driver has sent it since attach. Completed, failed, skipped and timed-out
-captures are identified in each device's notes. Refresh does not select stream
-formats or republish audio devices. The decision of what each unit gets is
-`Protocols/AVC/AvcProbeAdmission.hpp`.
+Refresh starts a new exchange session on each unit and reruns the discovery
+attach runs: everything the unit answers. That is the generic AV/C discovery
+(UNIT INFO, SUBUNIT INFO, plugs, music and audio subunit descriptors, SIGNAL
+SOURCE, the current formats of unit plug 0 when the descriptors give none), then
+the read-only inventory of an identified chip's extensions: BridgeCo plug info,
+format lists, channel positions, sections and signal formats for BeBoB units;
+the stream-format lists in both directions for Oxford units. Only a device whose
+probe policy forbids discovery traffic is sent nothing (the M-Audio special
+firmware, which freezes on unproven frames; Fireworks, whose unit is not AV/C);
+its log keeps everything the driver has sent it since attach, and the report
+says its plugs were not read. Completed, failed, skipped and timed-out captures
+are identified in each device's notes. Refresh does not select stream formats
+or republish audio devices. The decision of what each unit gets is
+`Protocols/AVC/AvcProbeAdmission.hpp`; the extension inventories are
+`Protocols/AVC/AvcExtensionInventory.cpp`.
+
+A refusal at a format-list index is how a device ends the list; the report
+counts it as "end of list", not as an error.
 
 Each exchange records the command bytes as sent, the reply, and how it ended:
 `response`, `timeout`, `busReset`, `transportError`, `responseMismatch`, or

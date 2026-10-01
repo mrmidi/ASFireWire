@@ -83,7 +83,7 @@ TEST(AvcProbeAdmission, NamedDevicesKeepTheirBringUp) {
               AvcProbeDecision::GenericDiscovery);
     EXPECT_EQ(Decide(MakeDevice(0x000AAC0300B1D1F7ULL, kTerraTecVendorId, kPhase88RackFwModelId,
                                 kTa1394Specifier, kAvcVersion)),
-              AvcProbeDecision::BeBoBPlug0);
+              AvcProbeDecision::GenericDiscovery);
     EXPECT_EQ(Decide(MakeDevice(0x000D6C0400DA3D9AULL, kMAudioVendorId, kMAudioFireWire1814ModelId,
                                 kTa1394Specifier, kAvcVersion)),
               AvcProbeDecision::ProfileOwned);
@@ -96,9 +96,25 @@ TEST(AvcProbeAdmission, BootloaderPersonaGetsNoAvcTraffic) {
     const auto device = MakeDevice(0x000D6C0400DA3D9BULL, kMAudioVendorId,
                                    kMAudioFireWire1814BootloaderModelId, kTa1394Specifier,
                                    kAvcVersion);
-    const auto decision = Decide(device);
-    EXPECT_NE(decision, AvcProbeDecision::GenericDiscovery);
-    EXPECT_NE(decision, AvcProbeDecision::BeBoBPlug0);
+    EXPECT_NE(Decide(device), AvcProbeDecision::GenericDiscovery);
+}
+
+TEST(AvcProbeAdmission, IdentifiedChipsAddTheirExtensionInventory) {
+    using ASFW::Protocols::AVC::AvcExtensionInventory;
+    using ASFW::Protocols::AVC::ExtensionInventoryFor;
+    const auto inventory = [](const ASFW::Discovery::DeviceRecord& device) {
+        const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units.front());
+        return plan ? ExtensionInventoryFor(*plan) : AvcExtensionInventory::kNone;
+    };
+    EXPECT_EQ(inventory(MakeDevice(0x000AAC0300B1D1F7ULL, kTerraTecVendorId, kPhase88RackFwModelId,
+                                   kTa1394Specifier, kAvcVersion)),
+              AvcExtensionInventory::kBridgeCo);
+    EXPECT_EQ(inventory(MakeDevice(0x0003DB0A0000D112ULL, kApogeeVendorId, kApogeeDuetModelId,
+                                   kTa1394Specifier, kAvcVersion)),
+              AvcExtensionInventory::kOxford);
+    EXPECT_EQ(inventory(MakeDevice(0x00ABCD0000000001ULL, kUnknownVendor, 0x000001,
+                                   kTa1394Specifier, kAvcVersion)),
+              AvcExtensionInventory::kNone);
 }
 
 TEST(AvcProbeAdmission, NoPlanMeansNoTraffic) {

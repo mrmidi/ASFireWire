@@ -509,7 +509,10 @@ TEST(AmdtpDirectTxTests, DevicePlaybackMapMovesPhase88ChannelsToPlanarSlots) {
 
     const auto firstBlockSlots = [&](const ASFW::Audio::Wire::PcmSlotMap& map) {
         DiceTxStreamEngine engine{};
-        EXPECT_TRUE(engine.Configure(profile, config, map));
+        auto mapped = config;
+        mapped.pcmSlotMap = map;
+        mapped.hasPcmSlotMap = !map.IsIdentity();
+        EXPECT_TRUE(engine.Configure(profile, mapped));
         std::array<uint8_t, 512> bytes{};
         struct Provider final : IAmdtpTxSlotProvider {
             std::array<uint8_t, 512>* bytes{nullptr};

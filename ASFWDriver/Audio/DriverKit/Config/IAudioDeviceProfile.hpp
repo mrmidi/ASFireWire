@@ -58,6 +58,12 @@ public:
     /// Returns the number of receive MIDI slots embedded in the isochronous streams.
     [[nodiscard]] virtual uint32_t RxMidiSlots() const noexcept = 0;
 
+    /// MIDI ports carried by the transmit / receive MIDI slots. One AM824 MIDI
+    /// slot multiplexes up to eight ports, so a device can have more ports than
+    /// slots (M-Audio ProjectMix: two ports in one slot).
+    [[nodiscard]] virtual uint32_t TxMidiPorts() const noexcept { return TxMidiSlots(); }
+    [[nodiscard]] virtual uint32_t RxMidiPorts() const noexcept { return RxMidiSlots(); }
+
     /// Returns the transmit data block size (DBS) in quadlets.
     [[nodiscard]] virtual uint32_t TxDbs() const noexcept = 0;
 

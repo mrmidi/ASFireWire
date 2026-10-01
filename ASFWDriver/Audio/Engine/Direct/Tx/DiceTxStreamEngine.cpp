@@ -35,8 +35,7 @@ AMDTP::AmdtpStreamConfig DiceStreamConfigMapper::ToAmdtpConfig(
 }
 
 bool DiceTxStreamEngine::Configure(const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
-                                   const ASFW::Isoch::Audio::AudioStreamConfig& txConfig,
-                                   const ::ASFW::Audio::Wire::PcmSlotMap& devicePlaybackMap) noexcept {
+                                   const ASFW::Isoch::Audio::AudioStreamConfig& txConfig) noexcept {
     if (txConfig.direction != ASFW::Isoch::Audio::AudioStreamDirection::HostToDevice) {
         return false;
     }
@@ -49,9 +48,6 @@ bool DiceTxStreamEngine::Configure(const ASFW::Isoch::Audio::IAudioStreamProfile
     const AMDTP::AmdtpStreamConfig amdtpConfig =
         DiceStreamConfigMapper::ToAmdtpConfig(txConfig);
     AMDTP::AmdtpTxPolicy policy = BuildTxPolicy(txPolicy);
-    if (!devicePlaybackMap.IsIdentity()) {
-        policy.playbackChannelMap = devicePlaybackMap;
-    }
 
     const uint32_t slotCount =
         static_cast<uint32_t>(sizeof(timelineSlots_) / sizeof(timelineSlots_[0]));

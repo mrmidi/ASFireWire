@@ -71,6 +71,8 @@ add_protocols_test(AvcGoldenTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AvcAudioConfig.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AvcExtensionInventory.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
@@ -130,6 +132,11 @@ add_protocols_test(BeBoBBootloaderPreparationTests
 target_link_libraries(BeBoBBootloaderPreparationTests PRIVATE asfw_catalog_host)
 
 # FCP transport lifecycle tests (write completion, cancellable timeout, teardown)
+add_protocols_test(AvcAudioConfigTests
+    AvcAudioConfigTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AvcAudioConfig.cpp"
+)
+
 add_protocols_test(AVCExchangeLogWireTests
     AVCExchangeLogWireTests.cpp
 )

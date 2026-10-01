@@ -24,6 +24,7 @@
 #include "SimulatedAvcUnit.hpp"
 #include "WireTrace.hpp"
 #include "DuetDescriptorFixture.hpp"
+#include "Phase88DescriptorFixtures.hpp"
 #include "ASFWDriver/Protocols/AVC/Graph/AvcDeviceGraph.hpp"
 #include "FakeTimerScheduler.hpp"
 
@@ -32,6 +33,8 @@
 #include "ASFWDriver/Discovery/FWUnit.hpp"
 
 #include "ASFWDriver/Protocols/AVC/AVCUnit.hpp"
+#include "ASFWDriver/Protocols/AVC/AvcAudioConfig.hpp"
+#include "ASFWDriver/Protocols/AVC/AvcExtensionInventory.hpp"
 #include "ASFWDriver/Protocols/AVC/FCPTransport.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/RateCodes.hpp"
@@ -70,6 +73,8 @@ struct AvcGoldenRigOptions {
     uint32_t timeoutMs{100};
     uint32_t interimTimeoutMs{500};
     uint8_t maxRetries{1};
+    /// The extension inventory AVCDiscovery would give this unit.
+    AVCUnit::DiscoveryOptions unitOptions{};
 };
 
 class AvcGoldenRig {
@@ -88,7 +93,8 @@ public:
         device_ = Discovery::FWDevice::Create(record, Discovery::ConfigROM{});
         fwUnit_ = Discovery::FWUnit::Create(device_, 0x400, {});
 
-        avcUnit_ = std::make_shared<AVCUnit>(device_, fwUnit_, routes_, bus_, bus_, timers_);
+        avcUnit_ = std::make_shared<AVCUnit>(device_, fwUnit_, routes_, bus_, bus_, timers_,
+                                             options_.unitOptions);
 
         simUnit_ = std::make_unique<SimulatedAvcUnit>(image);
         simUnit_->SetNodeId(FW::NodeId{static_cast<uint8_t>(options_.nodeId)});
@@ -222,23 +228,17 @@ inline constexpr AvcDeviceImage kOnyxi{
 // ============================================================================
 
 TEST(AvcGoldenTests, DuetAttachDiscovery) {
-    AvcGoldenRig rig(kDuet);
+    AvcGoldenRigOptions opts;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kOxford);
+    AvcGoldenRig rig(kDuet, opts);
 
-    rig.Mark("## AVCUnit::Initialize");
+    // Attach as AVCDiscovery runs it: generic discovery, then the Oxford
+    // stream-format lists in both directions.
+    rig.Mark("## AVCUnit::Initialize + Oxford inventory");
     bool initOk = false;
     rig.Unit()->Initialize([&](bool ok) { initOk = ok; });
     EXPECT_TRUE(initOk);
     EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Completed);
-
-    rig.Mark("## OxfwStreamFormats::DetectStreamFormats");
-    bool detectFired = false;
-    Audio::Oxford::DetectStreamFormats(
-        rig.Transport(), false, [&](IOReturn status, const Audio::Oxford::StreamFormatSet& set) {
-            detectFired = true;
-            EXPECT_EQ(status, kIOReturnSuccess);
-            EXPECT_FALSE(set.assumed);
-        });
-    EXPECT_TRUE(detectFired);
 
     rig.ExpectGolden("duet__attach_discovery");
 }
@@ -370,24 +370,60 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     opts.guid = kPhase88.guid;
     opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
     opts.generation = kPhase88.generation;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
     AvcGoldenRig rig(kPhase88, opts);
+    // The device's own descriptors and its unit ISO output 0 source (captured
+    // 2026-09-28): the attach image predates descriptor capture.
+    rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
+    rig.Sim().SetResponseOverride({0x01, 0xFF, 0x1A, 0xFF, 0xFF, 0xFE, 0xFF, 0x00},
+                                  {0x0C, 0xFF, 0x1A, 0x10, 0x60, 0x00, 0xFF, 0x00});
 
-    rig.Mark("## AVCUnit::Initialize");
+    // Attach as AVCDiscovery runs it: generic discovery, then the BridgeCo
+    // inventory, before the discovery status completes.
+    rig.Mark("## AVCUnit::Initialize + BridgeCo inventory");
     bool initOk = false;
     rig.Unit()->Initialize([&](bool ok) { initOk = ok; });
     EXPECT_TRUE(initOk);
+    EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Completed);
 
-    rig.Mark("## BeBoBPlug0StreamDiscovery");
-    bool bebobDone = false;
-    Audio::BeBoB::StartBeBoBPlug0Discovery(
-        *rig.Unit(), rig.Unit()->GetGUID(), [&](const Audio::BeBoB::DeviceModel& model) {
-            bebobDone = true;
-            EXPECT_TRUE(model.unitPlugCounts.has_value());
-            EXPECT_EQ(model.input.supportedFormations.size(), 5U);
-            EXPECT_EQ(model.output.supportedFormations.size(), 5U);
-            EXPECT_EQ(model.CurrentRateHz(), 48000U);
-        });
-    EXPECT_TRUE(bebobDone);
+    // The live BridgeCo formations size both streams at the current 48 kHz,
+    // over the music subunit's own (stale) capture format.
+    const auto graph = rig.Unit()->GetDiscoveredGraph();
+    ASSERT_NE(graph, nullptr);
+    EXPECT_EQ(graph->playback.channelCount, 10U);
+    EXPECT_EQ(graph->playback.dataBlockSize, 11U);
+    EXPECT_EQ(graph->capture.channelCount, 10U);
+    EXPECT_EQ(graph->capture.dataBlockSize, 11U);
+    EXPECT_EQ(graph->playback.currentSampleRate, 48000U);
+    EXPECT_EQ(graph->capture.currentSampleRate, 48000U);
+    EXPECT_EQ(graph->playback.supportedSampleRates.size(), 5U);
+    // Planar playback block, as the BridgeCo channel positions also say.
+    constexpr uint8_t kPlanar[]{1, 6, 2, 7, 3, 8, 4, 9, 0, 5};
+    for (uint32_t channel = 0; channel < 10; ++channel) {
+        EXPECT_EQ(graph->playback.slotMap.SlotFor(channel), kPlanar[channel]) << "channel " << channel;
+    }
+    ASSERT_EQ(graph->capture.channelNames.size(), 10U);
+    EXPECT_EQ(graph->capture.channelNames[0], "Line_1/2 left PHASE88 FW");
+
+    // What CoreAudio is offered: the runtime runs 48 kHz only.
+    DeviceProfiles::Audio::StaticAudioEndpointPlan plan{};
+    plan.profileBuilder = DeviceProfiles::Audio::ProfileBuilderId::TerraTecPhase88;
+    plan.streamTraits.wire.forcedStreamMode = DeviceProfiles::Audio::ForcedStreamMode::Blocking;
+    const auto config = BuildGraphAudioConfig(
+        {.guid = kPhase88.guid, .vendorId = 0x000AAC, .modelId = 3, .modelName = "PHASE 88 Rack FW"},
+        plan, *graph, {48000U});
+    ASSERT_TRUE(config.has_value());
+    EXPECT_EQ(config->sampleRates, std::vector<uint32_t>{48000U});
+    EXPECT_EQ(config->currentSampleRate, 48000U);
+    EXPECT_EQ(config->inputChannelCount, 10U);
+    EXPECT_EQ(config->outputChannelCount, 10U);
+    ASSERT_EQ(config->playbackStreams.size(), 1U);
+    EXPECT_EQ(config->playbackStreams[0].am824Slots, 11U);
+    EXPECT_EQ(config->playbackStreams[0].pcmSlotMap.SlotFor(0), 1U);
+    EXPECT_EQ(config->streamMode, Audio::Model::StreamMode::kBlocking);
 
     rig.ExpectGolden("phase88__attach_discovery");
 }
@@ -630,4 +666,29 @@ TEST(AvcGoldenTests, GenericInterimAndTimeout) {
     EXPECT_TRUE(timeoutDone);
 
     rig.ExpectGolden("generic__interim_and_timeout");
+}
+
+// ============================================================================
+// Extension inventory runs inside the discovery status
+// ============================================================================
+
+TEST(AvcGoldenTests, ExtensionInventoryHoldsDiscoveryOpenUntilItFinishes) {
+    std::function<void()> finish;
+    AvcGoldenRigOptions opts;
+    opts.unitOptions.extensionInventory = [&finish](AVCUnit&, std::function<void()> done) {
+        finish = std::move(done);
+    };
+    AvcGoldenRig rig(kDuet, opts);
+
+    bool completed = false;
+    rig.Unit()->Initialize([&](bool) { completed = true; });
+    // A refresh polls this status: it must not read Completed while the
+    // vendor inventory is still on the wire.
+    ASSERT_TRUE(finish);
+    EXPECT_FALSE(completed);
+    EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Running);
+
+    finish();
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Completed);
 }

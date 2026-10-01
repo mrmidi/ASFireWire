@@ -18,7 +18,6 @@
 #include "../../DriverKit/Config/MOTU/MotuV2Profile.hpp"
 #include "../../Engine/Direct/Rx/RxCaptureChannelMap.hpp"
 #include "../../Families/BeBoB/MAudio/MAudioCaptureChannelMap.hpp"
-#include "../BeBoB/BeBoBChannelMaps.hpp"
 #include "../AudioTypes.hpp"
 #include "../IDeviceProtocol.hpp"
 
@@ -363,15 +362,8 @@ class DuplexStreamProfileResolver final {
                     policy->plan.profileBuilder, caps.hostInputPcmChannels);
         }
 
-        // A BeBoB device that CAN answer the channel-position query registered
-        // its own capture map at discovery (AVCDiscovery::PublishBeBoBAudioConfig).
-        // The M-Audio catalog map above wins when it applies. The playback map
-        // reaches the TX engine in ArmPrimaryTxProducer.
-        const auto deviceCaptureMap = ::ASFW::Audio::BeBoB::DeviceChannelMapsFor(record.guid).capture;
-        if (profile.captureChannelMap.IsIdentity() &&
-            deviceCaptureMap.FitsWithin(caps.hostInputPcmChannels, caps.deviceToHostAm824Slots)) {
-            static_cast<Wire::PcmSlotMap&>(profile.captureChannelMap) = deviceCaptureMap;
-        }
+        // A device's own capture slot order comes from its discovered graph;
+        // RestartRoutine applies it to this profile (AvcGraphBind).
 
         using DeviceProfiles::Audio::StreamStartShape;
         switch (traits.start.startShape) {

@@ -104,11 +104,21 @@ enum AvcReportTextFormatter {
         }
     }
 
+    /// What an exchange came to. A refusal of a format-list query at an index
+    /// is how a device says the list ended, not an error.
+    static func exchangeResult(_ record: AvcReportSnapshot.Exchange) -> String {
+        guard record.outcome == "response" else { return record.outcome }
+        guard let code = record.response.first else { return "empty reply" }
+        let command = record.command
+        let isListQuery = command.count > 3 && (command[2] == 0x2F || command[2] == 0xBF) && command[3] == 0xC1
+        if isListQuery && (code == 0x0A || code == 0x08) { return "end of list" }
+        return responseName(code)
+    }
+
     static func exchangeSummary(_ log: AvcReportSnapshot.ExchangeLog) -> String {
         var counts: [String: Int] = [:]
         for record in log.records {
-            let key = record.outcome == "response" ? (record.response.first.map(responseName) ?? "empty reply") : record.outcome
-            counts[key, default: 0] += 1
+            counts[exchangeResult(record), default: 0] += 1
         }
         let parts = counts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
             .map { "\($0.key) \($0.value)" }
@@ -121,12 +131,13 @@ enum AvcReportTextFormatter {
         lines += ["", title, "  " + exchangeSummary(log)]
         let hex: ([UInt8]) -> String = { $0.map { String(format: "%02X", $0) }.joined(separator: " ") }
         for record in log.records {
-            let result = record.outcome == "response"
-                ? (record.response.first.map(responseName) ?? "empty reply") : record.outcome
+            let result = exchangeResult(record)
             var flags = ""
             if record.interim { flags += " after INTERIM" }
             if record.retries > 0 { flags += " after \(record.retries) retries" }
-            lines.append(String(format: "  #%04u g%u %@%@", record.sequence, record.generation, result, flags))
+            let code = record.response.first.map { String(format: " (%@)", responseName($0)) } ?? ""
+            let shown = result == "end of list" ? result + code : result
+            lines.append(String(format: "  #%04u g%u %@%@", record.sequence, record.generation, shown, flags))
             lines.append("    > " + hex(record.command))
             if !record.response.isEmpty { lines.append("    < " + hex(record.response)) }
         }

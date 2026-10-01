@@ -31,10 +31,9 @@ enum class AvcProbeDecision : uint8_t {
     /// No current catalog plan (unknown non-standard unit, hazardous identity,
     /// stale route). Unrecognised is the unsafe state for AV/C: no traffic.
     NoPolicy,
-    /// UNIT INFO, SUBUNIT INFO, then music/audio subunit descriptors.
+    /// Everything the unit answers: UNIT INFO, SUBUNIT INFO, plugs, music and
+    /// audio subunit descriptors, then the chip's extension inventory.
     GenericDiscovery,
-    /// BridgeCo plug probes only; no generic UNIT/SUBUNIT INFO.
-    BeBoBPlug0,
     /// No probe at all; the catalog's fixed geometry is published (M-Audio
     /// special firmware freezes on generic probes).
     ProfileOwned,
@@ -57,10 +56,11 @@ enum class AvcProbeDecision : uint8_t {
         return AvcProbeDecision::NoPolicy;
     }
     switch (ASFW::Audio::SelectProbeBootstrap(*plan)) {
+        // A BeBoB unit gets the generic discovery too: discovery reads all a
+        // device answers. The BridgeCo probes follow as its extension inventory.
         case ProbeBootstrap::AvcInitializeThenPlug0:
-            return AvcProbeDecision::GenericDiscovery;
         case ProbeBootstrap::BeBoBPlug0Only:
-            return AvcProbeDecision::BeBoBPlug0;
+            return AvcProbeDecision::GenericDiscovery;
         case ProbeBootstrap::BeBoBUnprobed:
             return AvcProbeDecision::ProfileOwned;
         case ProbeBootstrap::FireworksEfc:
@@ -73,6 +73,31 @@ enum class AvcProbeDecision : uint8_t {
             return AvcProbeDecision::Refused;
     }
     return AvcProbeDecision::Refused;
+}
+
+/// The read-only vendor extension inventory that follows generic discovery.
+enum class AvcExtensionInventory : uint8_t {
+    kNone,
+    /// BridgeCo EXTENDED PLUG INFO and the 0x2F format list (Linux
+    /// bebob_stream.c:908-940), plus plug signal formats.
+    kBridgeCo,
+    /// Oxford stream-format lists, both directions (Linux oxfw-stream.c:552-622).
+    kOxford,
+};
+
+/// Only chips the catalog has identified get vendor commands; an unknown unit
+/// gets the standard commands alone.
+[[nodiscard]] inline AvcExtensionInventory ExtensionInventoryFor(
+    const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) noexcept {
+    using DeviceProfiles::Audio::AudioFamilyProviderId;
+    switch (plan.family) {
+        case AudioFamilyProviderId::BeBoB:
+            return AvcExtensionInventory::kBridgeCo;
+        case AudioFamilyProviderId::OXFW:
+            return AvcExtensionInventory::kOxford;
+        default:
+            return AvcExtensionInventory::kNone;
+    }
 }
 
 } // namespace ASFW::Protocols::AVC

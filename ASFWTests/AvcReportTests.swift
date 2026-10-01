@@ -204,6 +204,33 @@ struct AvcReportTests {
         #expect(store.reportText.contains("< 0C FF 30"))
     }
 
+    @Test func listEndIsNotCountedAsAnError() async throws {
+        let source = Source()
+        source.status = 0x82
+        source.exchangeLog = .init(session: 1, dropped: 0, records: [
+            .init(sequence: 1, generation: 1, outcome: "response", interim: false, retries: 0,
+                  command: [0x01, 0xFF, 0x2F, 0xC1, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x05, 0x00],
+                  response: [0x0A, 0xFF, 0x2F, 0xC1, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x05, 0x00]),
+            .init(sequence: 2, generation: 1, outcome: "response", interim: false, retries: 0,
+                  command: [0x01, 0xFF, 0x30, 0xFF], response: [0x0A, 0xFF, 0x30, 0xFF])])
+        let store = AvcReportStore(connector: source)
+        await store.refresh()
+        #expect(store.reportText.contains("end of list 1"))
+        #expect(store.reportText.contains("REJECTED 1"))
+        #expect(store.reportText.contains("#0001 g1 end of list (REJECTED)"))
+    }
+
+    @Test func unitPlugsAreNotReportedWhenNoDiscoveryRan() async throws {
+        let source = Source()
+        source.status = 0x84  // skipped: the probe policy sends nothing
+        let store = AvcReportStore(connector: source)
+        await store.refresh()
+        let device = try #require(store.snapshot?.devices.first)
+        #expect(device.avcUnit == nil)
+        #expect(device.notes.contains { $0.contains("were not read") })
+        #expect(!store.reportText.contains("ISO inputs (playback): 0"))
+    }
+
     @Test func versionOneDumpsStillOpen() throws {
         var snapshot = report()
         snapshot.schemaVersion = 1

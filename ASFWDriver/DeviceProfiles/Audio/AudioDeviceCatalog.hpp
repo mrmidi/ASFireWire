@@ -263,8 +263,10 @@ struct IsochResourcePolicy final {
 struct StreamStartPolicy final {
     StreamStartShape startShape{StreamStartShape::Default};
 
-    /// Fixed or default start sample rate in Hz (e.g. 48000 for Duet, 44100 for Onyx-i / Onyx 400F).
-    /// 0 means no pin (use standard 48 kHz default or requested session clock).
+    /// The one sample rate the device's runtime supports (48000 for Duet,
+    /// 44100 for Onyx-i / Onyx 400F): it is published as the only rate and
+    /// every start uses it. 0 means no pin (use the discovered rates and the
+    /// requested session clock).
     uint32_t startRatePinHz{0};
 
     /// Start at, and offer only, the rate the device reported at discovery.

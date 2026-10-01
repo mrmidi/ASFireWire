@@ -77,7 +77,13 @@ final class AvcReportStore: ObservableObject {
             if let rom, !rom.isExactGenerationMatch {
                 notes.append("Config ROM cache belongs to a different generation; bytes omitted.")
             }
-            let exportUnit = unit?.diagnosticState == 1 ? nil : unit
+            // Plug counts and subunits are only real once a discovery ran;
+            // otherwise they are zeros the device never reported.
+            let discoveryRan = [UInt8(2), 3].contains(unit?.diagnosticState ?? 0)
+            let exportUnit = discoveryRan ? unit : nil
+            if unit != nil && !discoveryRan && unit?.diagnosticState != 1 {
+                notes.append("Unit plugs and subunits were not read: this device's probe policy sends it no discovery commands.")
+            }
             let exchanges = unit == nil ? nil : connector.getFCPExchangeLog(guid: device.guid)
             if unit != nil && exchanges == nil {
                 notes.append("FCP exchange log unavailable; the installed driver may predate it.")
