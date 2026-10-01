@@ -49,6 +49,10 @@ public:
     
     void MaskInterrupts(class HardwareInterface* hw, uint32_t bits);
     void UnmaskInterrupts(class HardwareInterface* hw, uint32_t bits);
+    /// Clears and sets masterIntEnable, leaving the event mask as it is. With an
+    /// enabled event still pending this deasserts and reasserts the interrupt
+    /// output, so the controller sends a new MSI (InterruptDrain.hpp).
+    void RetriggerPendingInterrupt(class HardwareInterface* hw);
 
 private:
     OSSharedPtr<IOInterruptDispatchSource> source_;

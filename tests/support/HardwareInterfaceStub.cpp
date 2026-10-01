@@ -172,7 +172,9 @@ void HardwareInterface::WriteScoped(Register32 reg, uint32_t value) const noexce
         state.registers[KeyFor(reg)] = value;
         state.operations.push_back(TestOperation::Write);
 
-        if (reg == Register32::kIntMaskSet) {
+        if (reg == Register32::kIntEventClear) {
+            state.registers[KeyFor(Register32::kIntEvent)] &= ~value;
+        } else if (reg == Register32::kIntMaskSet) {
             state.registers[KeyFor(Register32::kIntMaskSet)] |= value;
         } else if (reg == Register32::kIntMaskClear) {
             state.registers[KeyFor(Register32::kIntMaskSet)] &=

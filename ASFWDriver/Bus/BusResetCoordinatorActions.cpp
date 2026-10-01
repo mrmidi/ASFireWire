@@ -77,40 +77,11 @@ void BusResetCoordinator::ForceUnmaskBusResetIfNeeded() {
     busResetMasked_ = false;
 }
 
-void BusResetCoordinator::ClearStaleSelfIDComplete2() {
-    if (hardware_ == nullptr) {
-        return;
-    }
-
-    // OHCI 1.1 §6.1 / Table 6-1 and §11.5: `selfIDComplete2` retains state
-    // across bus resets and is cleared only through `IntEventClear`.
-    if (auto access = hardware_->TryBeginAccess()) {
-        access.WriteAndFlush(Register32::kIntEventClear, IntEventBits::kSelfIDComplete2);
-    }
-    selfIdLatch_.stickyComplete = false;
-    selfIdLatch_.stickyCompleteTimeNs = 0;
-}
-
-void BusResetCoordinator::ClearConsumedSelfIDInterrupts() {
-    if (hardware_ == nullptr) {
-        selfIdLatch_.Reset();
-        return;
-    }
-
-    uint32_t clearMask = 0;
-    if (selfIdLatch_.complete) {
-        clearMask |= IntEventBits::kSelfIDComplete;
-    }
-    if (selfIdLatch_.stickyComplete) {
-        clearMask |= IntEventBits::kSelfIDComplete2;
-    }
-
-    if (clearMask != 0U) {
-        if (auto access = hardware_->TryBeginAccess()) {
-            access.WriteAndFlush(Register32::kIntEventClear, clearMask);
-        }
-    }
-
+// The interrupt handler acknowledges selfIDComplete and selfIDComplete2 in
+// hardware as it latches them (ControllerCore::HandleInterrupt). Clearing them
+// here as well could erase the completion of a reset the handler has not yet
+// seen, so consuming a completion only drops the latch.
+void BusResetCoordinator::ConsumeSelfIDLatch() {
     selfIdLatch_.Reset();
 }
 
@@ -321,13 +292,13 @@ void BusResetCoordinator::HandleStraySelfID() {
     }
 
     if (!CanAttemptSelfIDDecode()) {
-        ClearConsumedSelfIDInterrupts();
+        ConsumeSelfIDLatch();
         return;
     }
 
     ASFW_LOG_V2(BusReset, "Handling late Self-ID completion outside active reset flow");
     const bool decoded = DecodeSelfID();
-    ClearConsumedSelfIDInterrupts();
+    ConsumeSelfIDLatch();
     if (decoded) {
         TransitionTo(State::QuiescingAT, "Late Self-ID completion");
     }

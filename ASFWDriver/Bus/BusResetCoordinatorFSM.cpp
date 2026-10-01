@@ -36,7 +36,6 @@ namespace ASFW::Driver {
 
 void BusResetCoordinator::BeginNewResetCycle() {
     pendingBusResetEdge_ = false;
-    selfIdLatch_.Reset();
     stopFlushIssued_ = false;
     filtersEnabled_ = false;
     atArmed_ = false;
@@ -62,9 +61,8 @@ void BusResetCoordinator::BeginNewResetCycle() {
         topologyMapService_->Invalidate();
     }
 
+    // OnIrq has already masked busReset and reset the Self-ID latch.
     TransitionTo(State::Detecting, "busReset edge observed");
-    MaskBusReset();
-    ClearStaleSelfIDComplete2();
 }
 
 BusResetCoordinator::StepResult BusResetCoordinator::StepIdle() {
@@ -98,7 +96,7 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepWaitingSelfID() {
         ArmSoftwareResetHoldoffAfterSelfIDCompletion(completionTime);
 
         const bool decoded = DecodeSelfID();
-        ClearConsumedSelfIDInterrupts();
+        ConsumeSelfIDLatch();
         if (decoded) {
             // Anchor post-reset timing gates to Self-ID completion, BEFORE the
             // topology graph is built, so they stay armed even if that build
@@ -120,7 +118,7 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepWaitingSelfID() {
     if (waitedNs >= static_cast<uint64_t>(kSelfIDTimeoutMs) * 1'000'000ULL) {
         RecordRecoveryReason("Self-ID timeout");
         RecordRecoveryReasonCode(RecoveryReasonCode::SelfIDTimeout);
-        ClearConsumedSelfIDInterrupts();
+        ConsumeSelfIDLatch();
         RequestSoftwareReset(
             {ResetRequestKind::Recovery, ResetFlavor::Short, std::nullopt, "Self-ID timeout"});
         TransitionTo(State::QuiescingAT, "Self-ID timeout");

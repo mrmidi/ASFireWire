@@ -9,11 +9,15 @@
 #include <memory>
 #include <vector>
 
+#include "../ASFWDriver/Bus/BusResetCoordinator.hpp"
 #include "../ASFWDriver/Bus/SelfIDCapture.hpp"
 #include "../ASFWDriver/Bus/TopologyManager.hpp"
 #include "../ASFWDriver/Controller/ControllerCore.hpp"
 #include "../ASFWDriver/Controller/ControllerStateMachine.hpp"
 #include "../ASFWDriver/Hardware/HardwareInterface.hpp"
+#include "../ASFWDriver/Hardware/InterruptDrain.hpp"
+#include "../ASFWDriver/Hardware/InterruptManager.hpp"
+#include "../ASFWDriver/Hardware/RegisterMap.hpp"
 
 namespace ASFW::Driver {
 
@@ -120,6 +124,101 @@ TEST_F(ControllerCoreInterruptTest, CycleTooLongLeavesCycleMasterOffWhenNotOurs)
 
     EXPECT_FALSE(CycleMasterSet());
     EXPECT_EQ(core_->GetCyclePolicyCoordinator()->Snapshot().cycleMasterRestoreCount, 0U);
+}
+
+// The interrupt path the dext runs: the handler with the reset coordinator
+// and interrupt mask wired, serviced until the interrupt deasserts.
+class ControllerCoreInterruptLineTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        busReset_->Initialize(hardware_.get(), OSSharedPtr<IODispatchQueue>{}, nullptr, nullptr,
+                              nullptr, interrupts_.get(), topology_.get());
+        ControllerCore::Dependencies deps{};
+        deps.hardware = hardware_;
+        deps.stateMachine = stateMachine_;
+        deps.topology = topology_;
+        deps.interrupts = interrupts_;
+        deps.busReset = busReset_;
+        core_ = std::make_shared<ControllerCore>(ControllerConfig{}, RolePolicy::MakeLiveDefault(),
+                                                 std::move(deps));
+        ASSERT_EQ(stateMachine_->TransitionTo(ControllerState::kStarting, "test", 0),
+                  TransitionDisposition::kApplied);
+        ASSERT_EQ(stateMachine_->TransitionTo(ControllerState::kRunning, "test", 0),
+                  TransitionDisposition::kApplied);
+        interrupts_->UnmaskInterrupts(hardware_.get(), kBaseIntMask);
+    }
+
+    void Raise(uint32_t events) {
+        hardware_->SetTestRegister(Register32::kIntEvent,
+                                   hardware_->GetTestRegister(Register32::kIntEvent) | events);
+    }
+
+    // The controller's interrupt output: an enabled event is pending.
+    uint32_t Asserted() const {
+        return hardware_->GetTestRegister(Register32::kIntEvent) &
+               hardware_->GetTestRegister(Register32::kIntMaskSet);
+    }
+
+    // `arrivals[i]` lands just after pass i read IntEvent.
+    uint32_t Service(std::vector<uint32_t> arrivals = {}) {
+        size_t pass = 0;
+        return ServiceUntilDeasserted(
+            [&] { return hardware_->CaptureInterruptSnapshot(0); },
+            [&] { return interrupts_->EnabledMask(); },
+            [&](const InterruptSnapshot& snap) {
+                if (pass < arrivals.size()) {
+                    Raise(arrivals[pass]);
+                }
+                ++pass;
+                core_->HandleInterrupt(snap);
+            });
+    }
+
+    std::shared_ptr<HardwareInterface> hardware_ = std::make_shared<HardwareInterface>();
+    std::shared_ptr<ControllerStateMachine> stateMachine_ = std::make_shared<ControllerStateMachine>();
+    std::shared_ptr<TopologyManager> topology_ = std::make_shared<TopologyManager>();
+    std::shared_ptr<InterruptManager> interrupts_ = std::make_shared<InterruptManager>();
+    std::shared_ptr<BusResetCoordinator> busReset_ = std::make_shared<BusResetCoordinator>();
+    std::shared_ptr<ControllerCore> core_;
+};
+
+// Hardware, 2026-10-01: after a reset the handler returned with busReset and
+// the Self-ID completions still pending and enabled. The MSI controller sent
+// no message for anything after that, and the next reset went unheard.
+TEST_F(ControllerCoreInterruptLineTest, ResetHandlingLeavesTheInterruptDeasserted) {
+    Raise(IntEventBits::kBusReset | IntEventBits::kSelfIDComplete |
+          IntEventBits::kSelfIDComplete2 | IntEventBits::kRQPkt);
+
+    EXPECT_EQ(Service(), 0U);
+
+    EXPECT_EQ(Asserted(), 0U);
+    // busReset itself stays set until the FSM has quiesced AT (OHCI 1.1
+    // §7.2.3.2); it is masked instead.
+    EXPECT_NE(hardware_->GetTestRegister(Register32::kIntEvent) & IntEventBits::kBusReset, 0U);
+}
+
+// An event landing after the handler read IntEvent gets no MSI of its own
+// while the output is still asserted. The handler must see it before it
+// returns.
+TEST_F(ControllerCoreInterruptLineTest, EventArrivingDuringTheHandlerIsServicedBeforeReturning) {
+    Raise(IntEventBits::kBusReset);
+
+    EXPECT_EQ(Service({IntEventBits::kSelfIDComplete | IntEventBits::kSelfIDComplete2,
+                       IntEventBits::kRQPkt}),
+              0U);
+
+    EXPECT_EQ(Asserted(), 0U);
+}
+
+TEST(InterruptDrainTest, GivesUpOnAnEventThatNeverClears) {
+    int passes = 0;
+    const uint32_t pending = ServiceUntilDeasserted(
+        [] { return InterruptSnapshot{.intEvent = IntEventBits::kRQPkt}; },
+        [] { return IntEventBits::kRQPkt; },
+        [&](const InterruptSnapshot&) { ++passes; });
+
+    EXPECT_EQ(pending, IntEventBits::kRQPkt);
+    EXPECT_EQ(passes, kMaxInterruptPasses);
 }
 
 } // namespace ASFW::Driver

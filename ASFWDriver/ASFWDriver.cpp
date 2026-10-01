@@ -56,6 +56,7 @@
 #include "Discovery/DeviceRegistry.hpp"
 #include "Discovery/FWDevice.hpp"
 #include "Hardware/HardwareInterface.hpp"
+#include "Hardware/InterruptDrain.hpp"
 #include "Hardware/InterruptManager.hpp"
 #include "Hardware/OHCIConstants.hpp"
 #include "Hardware/RegisterMap.hpp"
@@ -919,11 +920,28 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
     // defeated the IEEE 1394-2008 §8.2.1 two-second repeated-reset holdoff and
     // forced the Annex H post-reset timing gates permanently open.
     const uint64_t timestampNs = ASFW::Timing::hostTicksToNanos(time);
-    auto snap = ctx.deps.hardware->CaptureInterruptSnapshot(timestampNs);
-    ASFW_LOG_V2(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x", snap.intEvent);
-    ctx.interruptDispatcher.HandleSnapshot(snap, *ctx.controller, *ctx.deps.hardware,
-                                           *ctx.workQueue, ctx.isoch, ctx.statusPublisher,
-                                           ctx.deps.asyncController.get());
+    auto& hardware = *ctx.deps.hardware;
+    auto* interrupts = ctx.deps.interrupts.get();
+    const uint32_t stillPending = ASFW::Driver::ServiceUntilDeasserted(
+        [&] { return hardware.CaptureInterruptSnapshot(timestampNs); },
+        [&] { return interrupts != nullptr ? interrupts->EnabledMask() : 0U; },
+        [&](const ASFW::Driver::InterruptSnapshot& snap) {
+            ASFW_LOG_V2(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x",
+                        snap.intEvent);
+            ctx.interruptDispatcher.HandleSnapshot(snap, *ctx.controller, hardware,
+                                                   *ctx.workQueue, ctx.isoch,
+                                                   ctx.statusPublisher,
+                                                   ctx.deps.asyncController.get());
+        });
+    if (stillPending != 0U && interrupts != nullptr) {
+        // An event that will not acknowledge. Returning with it pending would
+        // leave the driver deaf; make the controller send a fresh MSI instead.
+        ASFW_LOG_ERROR(Controller,
+                       "InterruptOccurred: events 0x%08x still pending after %d passes; "
+                       "retriggering the interrupt",
+                       stillPending, ASFW::Driver::kMaxInterruptPasses);
+        interrupts->RetriggerPendingInterrupt(&hardware);
+    }
 }
 
 void ASFWDriver::ScheduleAsyncWatchdog(uint64_t delayUsec) {
