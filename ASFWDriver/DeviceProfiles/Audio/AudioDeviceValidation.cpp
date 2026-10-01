@@ -211,11 +211,13 @@ enum ClauseConstraintBit : uint16_t {
         case ProfileBuilderId::PreSonusStudioLive1602:
         case ProfileBuilderId::PreSonusStudioLive2442:
         case ProfileBuilderId::PreSonusFireStudioProject:
+        case ProfileBuilderId::GenericDice:
             return ProtocolImplementationId::DiceTcat;
         case ProfileBuilderId::FocusriteSPro24Dsp:
             return ProtocolImplementationId::DiceSPro24Dsp;
         case ProfileBuilderId::WeissInt202:
         case ProfileBuilderId::WeissInt203:
+        case ProfileBuilderId::WeissDac:
             return ProtocolImplementationId::DiceWeissInt;
         case ProfileBuilderId::ApogeeDuet:
             return ProtocolImplementationId::ApogeeDuet;

@@ -427,7 +427,9 @@ TEST(DiceProfileTests, EverySupportedBuilderResolvesToAProfile) {
             << "definition " << static_cast<uint32_t>(definition.id)
             << " is Supported with builder " << builderId
             << " but no profile object resolves it";
-        if (profile != nullptr) {
+        // GenericDice names the generic profile on purpose; any other builder
+        // reaching it lost its own.
+        if (profile != nullptr && definition.profileBuilder != ProfileBuilderId::GenericDice) {
             EXPECT_STRNE(profile->Name(), "Generic DICE")
                 << "definition " << static_cast<uint32_t>(definition.id)
                 << " resolved the generic fallback";

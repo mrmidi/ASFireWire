@@ -174,8 +174,15 @@ void ReadGeneralSectionsAtSpeed(
                  io.Generation().value, io.NodeId().value,
                  100u << static_cast<uint8_t>(speed));
 
-        GeneralSections sections = GeneralSections::Deserialize(payload.data());
         LogSectionPreview("ReadGeneralSections", payload.data(), payload.size());
+        // A unit that does not answer like a DICE gets no further traffic; the
+        // owner claim that follows is a write.
+        if (!GeneralSections::IsPlausibleWire(payload.data())) {
+            ASFW_LOG(DICE, "ReadGeneralSections: section table is not a DICE layout; refusing");
+            Common::InvokeSharedCallback(callbackState, kIOReturnUnsupported, GeneralSections{});
+            return;
+        }
+        GeneralSections sections = GeneralSections::Deserialize(payload.data());
         
         ASFW_LOG(DICE, "ReadGeneralSections: global=%u/%u tx=%u/%u rx=%u/%u",
                  sections.global.offset, sections.global.size,
@@ -271,6 +278,7 @@ void DICETransaction::ReadGlobalStateSized(const GeneralSections& sections,
         }
         if (size >= 0x64) {
             state.version = ReadBE32(data + GlobalOffset::kVersion);
+            state.hasVersion = true;
         }
         if (size >= 0x68) {
             state.clockCaps = ReadBE32(data + GlobalOffset::kClockCaps);

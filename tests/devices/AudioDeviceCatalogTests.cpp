@@ -352,7 +352,8 @@ TEST(AudioDeviceCatalog, AnAbsentModelIdDoesNotMatchARowThatRequiresZero) {
 }
 
 // The end of vendor-wide matching, stated as a test. The TCD3070 Pro 40 shares
-// the Focusrite OUI and nothing else; it must not inherit the Pro 24's builder.
+// the Focusrite OUI and nothing else; it runs its own row (generic DICE), never
+// the Pro 24's builder.
 TEST(AudioDeviceCatalog, TheTcd3070Pro40DoesNotInheritASiblingsBuilder) {
     const auto device = MakeDevice(0x00130E'0404C00000ULL, kFocusriteVendorId,
                                    kSPro40Tcd3070ModelId,
@@ -361,8 +362,10 @@ TEST(AudioDeviceCatalog, TheTcd3070Pro40DoesNotInheritASiblingsBuilder) {
                                      .version = kDiceInterfaceVersion}});
     const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
     ASSERT_TRUE(plan.has_value());
-    EXPECT_EQ(plan->support, SupportDisposition::RecognizedUnsupported);
-    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
+    EXPECT_EQ(plan->support, SupportDisposition::Supported);
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::GenericDice);
+    EXPECT_EQ(plan->candidates,
+              std::vector<DeviceDefinitionId>{DeviceDefinitionId::FocusriteSPro40Tcd3070});
 }
 
 // A definition constrains the unit it selected, so a non-audio sibling unit on

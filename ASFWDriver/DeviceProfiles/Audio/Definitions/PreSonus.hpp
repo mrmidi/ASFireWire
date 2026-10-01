@@ -18,9 +18,9 @@ inline constexpr std::array kPreSonusDefinitions{
                kStudioLive1602ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::PreSonusStudioLive1642, kPreSonusVendorId,
                kStudioLive1642ModelId, AudioFamilyProviderId::DICE,
-               ProbePolicyId::None, ProfileBuilderId::None,
-               ProtocolImplementationId::None,
-               SupportDisposition::RecognizedUnsupported, kPreSonusVendorName,
+               ProbePolicyId::DiceTcat, ProfileBuilderId::GenericDice,
+               ProtocolImplementationId::DiceTcat,
+               SupportDisposition::Supported, kPreSonusVendorName,
                kStudioLive1642ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     // Anna's 24.4.2 (GUID 0x000A9204049204CB): profile landed in #122, the
     // DeviceProtocolFactory clause it was missing in #124. Its playback side is
@@ -33,9 +33,9 @@ inline constexpr std::array kPreSonusDefinitions{
                kStudioLive2442ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     Definition(DeviceDefinitionId::PreSonusStudioLive3242, kPreSonusVendorId,
                kStudioLive3242ModelId, AudioFamilyProviderId::DICE,
-               ProbePolicyId::None, ProfileBuilderId::None,
-               ProtocolImplementationId::None,
-               SupportDisposition::RecognizedUnsupported, kPreSonusVendorName,
+               ProbePolicyId::DiceTcat, ProfileBuilderId::GenericDice,
+               ProtocolImplementationId::DiceTcat,
+               SupportDisposition::Supported, kPreSonusVendorName,
                kStudioLive3242ModelName, std::nullopt, BootloaderCuePolicy::None, kDiceTraits),
     // Streamed at 44.1/48 kHz on #105's branch (raw PCM playback, S/PDIF
     // tones, GarageBand). Geometry and rates come from its registers like any

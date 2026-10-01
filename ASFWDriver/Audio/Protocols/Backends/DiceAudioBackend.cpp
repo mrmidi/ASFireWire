@@ -805,6 +805,18 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // scalars and must not have to re-derive it.
     dev.profileBuilderId = profileBuilderId;
     dev.deviceName = profile->Name();
+    // The shared profiles carry no model name of their own; the catalog row
+    // or, for an unlisted unit, the Config ROM text has it.
+    if (choice.has_value() &&
+        (choice->builder == DeviceProfiles::Audio::ProfileBuilderId::GenericDice ||
+         choice->builder == DeviceProfiles::Audio::ProfileBuilderId::WeissDac)) {
+        const auto& plan = policy->plan;
+        if (!plan.modelName.empty()) {
+            dev.deviceName = plan.vendorName.empty()
+                                 ? plan.modelName
+                                 : plan.vendorName + " " + plan.modelName;
+        }
+    }
     // Channel counts come from the device's caps below; the profile states none.
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";

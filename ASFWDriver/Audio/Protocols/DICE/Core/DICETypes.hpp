@@ -93,7 +93,35 @@ struct GeneralSections {
     static GeneralSections FromWire(const uint8_t* data) {
         return Deserialize(data);
     }
+
+    /// True when the raw table (10 big-endian quadlets, offsets and sizes in
+    /// quadlets) answers like a DICE: GLOBAL, TX and RX start past the table and
+    /// hold the registers every host reads, and nothing points outside the
+    /// private space. Same bounds as Linux dice-transaction.c:266-301.
+    [[nodiscard]] static constexpr bool IsPlausibleWire(const uint8_t* data) noexcept {
+        constexpr uint32_t kMinimum[10] = {
+            10, 0x60 / 4,  // GLOBAL offset, size
+            10, 0x18 / 4,  // TX
+            10, 0x18 / 4,  // RX
+            0,  0,         // EXT_SYNC
+            0,  0,         // reserved
+        };
+        constexpr uint32_t kPrivateSpaceQuadlets = 0x40000;
+        for (size_t i = 0; i < 10; ++i) {
+            const uint8_t* q = data + i * 4;
+            const uint32_t value = (uint32_t{q[0]} << 24) | (uint32_t{q[1]} << 16) |
+                                   (uint32_t{q[2]} << 8) | uint32_t{q[3]};
+            if (value < kMinimum[i] || value >= kPrivateSpaceQuadlets) {
+                return false;
+            }
+        }
+        return true;
+    }
 };
+
+/// The GLOBAL_VERSION major this driver implements. Checked only when GLOBAL is
+/// long enough to hold the register (Linux dice-transaction.c:303-322).
+inline constexpr uint32_t kDiceSupportedMajorVersion = 0x01;
 
 // ============================================================================
 // TCAT Extension Sections
@@ -647,6 +675,7 @@ struct GlobalState {
     uint32_t extStatus{0};       ///< External status
     uint32_t sampleRate{0};      ///< Current sample rate (Hz)
     uint32_t version{0};         ///< DICE version
+    bool hasVersion{false};      ///< The GLOBAL section was long enough to hold version
     uint32_t clockCaps{0};       ///< Clock capabilities bitmask
     bool hasClockCaps{false};    ///< The GLOBAL section was long enough to hold clockCaps
     
