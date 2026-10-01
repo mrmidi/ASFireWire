@@ -330,6 +330,18 @@ TEST_P(DiceWireScenarios, ForeignOwner) {
     rig.ExpectGolden("foreign-owner");
 }
 
+// GLOBAL_VERSION with a major other than 1 is refused before the owner claim,
+// the first write (Linux dice-transaction.c:303-322).
+TEST(DiceWireVersionGate, AnUnknownMajorVersionIsRefusedBeforeTheClaim) {
+    DiceDeviceImage image = DiceDeviceImages::kFirestudioProject;
+    image.version = 0x02000000;
+    DiceRig rig(image);
+    const uint64_t ownerBefore = rig.bus.Device().Owner();
+    EXPECT_EQ(rig.Start(48000), kIOReturnUnsupported);
+    EXPECT_EQ(rig.bus.Device().Owner(), ownerBefore);
+    EXPECT_EQ(rig.bus.Device().Enable(), 0U);
+}
+
 TEST_P(DiceWireScenarios, BusResetDuringClockChange) {
     DiceRig rig(*GetParam());
     rig.SetClock(kClockSelect44kInternal, ClockRateIndex::k44100, true);

@@ -358,6 +358,15 @@ IOReturn DiceFamilyDriver::ClaimAndClock(const AudioDuplexChannels& channels) {
     if (!preClaim) {
         return Rollback(preClaim.error());
     }
+    // Checked before the claim, the first write. GLOBAL_VERSION exists only
+    // when GLOBAL reaches it; older firmware stops short (Linux
+    // dice-transaction.c:303-322).
+    if (preClaim->hasVersion &&
+        (preClaim->version >> 24U) != kDiceSupportedMajorVersion) {
+        ASFW_LOG(DICE, "PrepareDuplex48k: unsupported DICE version 0x%08x; refusing",
+                 preClaim->version);
+        return Rollback(kIOReturnUnsupported);
+    }
     preClaimClockSelect_ = preClaim->clockSelect;
     preClaimStatus_ = preClaim->status;
     preClaimSampleRate_ = preClaim->sampleRate;

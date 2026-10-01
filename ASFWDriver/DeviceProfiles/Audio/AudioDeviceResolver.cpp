@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 
 #include "AudioDeviceCatalog.hpp"
+#include "DiceIdentity.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -33,7 +34,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
     const Discovery::UnitIdentityEvidence& unit,
     std::span<const AudioDeviceDefinition> definitions,
     std::span<const AudioSafetyRule> safetyRules,
-    bool allowGenericAvcFallback,
+    bool allowGenericFallback,
     Discovery::DeviceInstanceId instanceId) noexcept {
     for (const auto& rule : safetyRules) {
         for (uint8_t i = 0; i < rule.clauseCount; ++i) {
@@ -58,13 +59,42 @@ AudioDeviceCatalog::ResolveWithDefinitions(
     }
 
     if (matches.empty()) {
+        if (!allowGenericFallback) {
+            return std::unexpected(CatalogResolutionError::NoMatch);
+        }
+        // An unlisted DICE unit: its registers describe its streams, so the
+        // generic DICE path needs nothing from a catalog row. The GUID rule
+        // keeps a non-DICE unit that merely uses version 1 out.
+        if (IsDiceIdentity(device.observedGuid, unit.specifierId, unit.version,
+                           unit.modelId)) {
+            return StaticAudioEndpointPlan{
+                .unit = Discovery::UnitInstanceId{instanceId,
+                                                   unit.unitDirectoryOffset},
+                .unitVersion = unit.version.value_or(0U),
+                .exactVariantId = std::nullopt,
+                .family = AudioFamilyProviderId::DICE,
+                .probePolicy = ProbePolicyId::DiceTcat,
+                .support = SupportDisposition::GenericFallback,
+                .guidReliability = GuidReliability::ReliableWhenUnique,
+                .persistentKeyRecipe = PersistentKeyRecipeId::ReliableObservedEui64,
+                .candidates = {DeviceDefinitionId::GenericDice},
+                .provenance = {{DeviceDefinitionId::GenericDice, 0}},
+                .profileBuilder = ProfileBuilderId::GenericDice,
+                .protocolImplementation = ProtocolImplementationId::DiceTcat,
+                // Linux drives every DICE stream blocking (dice-stream.c:508).
+                .streamTraits = {.wire = {.forcedStreamMode = ForcedStreamMode::Blocking}},
+                .vendorName = device.rootVendorName,
+                .modelName = device.rootModelName.empty()
+                                 ? "Generic DICE Audio"
+                                 : device.rootModelName,
+            };
+        }
         // 1394 TA general AV/C units advertise this exact specifier/version
         // pair. DICE uses a vendor specifier with interface version 0x000001,
         // so an unknown DICE unit cannot fall through into an FCP probe.
         // Cross-validated with protocols/ta1394/general/README.md:78 and Linux
         // firewire/dice/dice.c:248-262.
-        if (!allowGenericAvcFallback ||
-            unit.specifierId.value_or(0) != 0x00A02D ||
+        if (unit.specifierId.value_or(0) != 0x00A02D ||
             unit.version.value_or(0) != 0x010001) {
             return std::unexpected(CatalogResolutionError::NoMatch);
         }
@@ -142,7 +172,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
     }
     // Recognition without a vendor profile does not veto standard AV/C discovery.
     // Keep explicit firmware hazards and non-AV/C families on their own paths.
-    if (allowGenericAvcFallback && plan.support == SupportDisposition::RecognizedUnsupported &&
+    if (allowGenericFallback && plan.support == SupportDisposition::RecognizedUnsupported &&
         (plan.family == AudioFamilyProviderId::BeBoB || plan.family == AudioFamilyProviderId::OXFW) &&
         plan.probePolicy == ProbePolicyId::None && unit.specifierId.value_or(0) == 0x00A02D) {
         plan.family = AudioFamilyProviderId::GenericAvc;
@@ -163,12 +193,12 @@ AudioDeviceCatalog::ResolveWithDefinitions(
     const Discovery::UnitIdentityEvidence& unit,
     std::span<const AudioDeviceDefinition> definitions,
     std::span<const AudioSafetyRule> safetyRules,
-    bool allowGenericAvcFallback) noexcept {
+    bool allowGenericFallback) noexcept {
     if (!device.instanceId || FindUnit(device, unit.unitDirectoryOffset) == nullptr) {
         return std::unexpected(CatalogResolutionError::InvalidUnit);
     }
     return ResolveWithDefinitions(device.identity, unit, definitions, safetyRules,
-                                  allowGenericAvcFallback,
+                                  allowGenericFallback,
                                   device.instanceId);
 }
 

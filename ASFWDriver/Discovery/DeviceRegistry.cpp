@@ -220,7 +220,6 @@ DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolic
     }
 
     // TODO: Generic AV/C devices should work purely via MusicSubunit discovery; vendor protocols are only for extra controls.
-    // TODO: Generic DICE/TCAT discovery (non-hardcoded vendor/model) is not implemented yet.
     
     device.link = link;
 

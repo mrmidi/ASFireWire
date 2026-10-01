@@ -399,3 +399,10 @@ add_device_test(MAudioTxClockBridgeTests
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioPresentationObserver.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
 )
+
+# The generic DICE identity rule, the catalog fallback it drives, and the
+# section-table bounds checked before the first write to an unknown unit.
+add_device_test(DiceIdentityTests
+    DiceIdentityTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
+)

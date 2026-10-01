@@ -210,16 +210,20 @@ TEST(DeviceStreamTraitsAgreement, BeBoBStartShapesRemainModelSpecific) {
 }
 
 TEST(DeviceStreamTraitsAgreement, WeissIsTheOnlyTransmitFirstDevice) {
-    for (const uint32_t modelId : {kWeissInt202ModelId, kWeissInt203ModelId}) {
+    for (const uint32_t modelId :
+         {kWeissInt202ModelId, kWeissInt203ModelId, kWeissVestaModelId, kWeissDac2ModelId,
+          kWeissDac202ModelId, kWeissMayaModelId, kWeissMan301ModelId}) {
         EXPECT_EQ(ResolveTraits(
                       DiceIdentity(kWeissVendorId, modelId)).start.startShape,
                   StreamStartShape::TransmitFirst);
     }
-    // A Weiss part we do not stream keeps the default: the transmit-first order
-    // is a property of the INT interfaces, not of the vendor.
-    EXPECT_EQ(ResolveTraits(
-                  DiceIdentity(kWeissVendorId, kWeissDac202ModelId)).start.startShape,
-              StreamStartShape::Default);
+    // The ADC2 and AFI1 keep the default: the transmit-first order belongs to
+    // the output-only policy, not to the vendor.
+    for (const uint32_t modelId : {kWeissAdc2ModelId, kWeissAfi1ModelId}) {
+        EXPECT_EQ(ResolveTraits(
+                      DiceIdentity(kWeissVendorId, modelId)).start.startShape,
+                  StreamStartShape::Default);
+    }
 }
 
 TEST(DeviceStreamTraitsAgreement, OnlyTheTwoLoudRunsDistrustTheCaptureStride) {

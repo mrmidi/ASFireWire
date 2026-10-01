@@ -91,7 +91,9 @@ DiceProfile gAlesisMultiMixProfile{{.name = "Alesis MultiMix FireWire (DICE)",
 DiceProfile gWeissIntProfile{{.name = "Weiss INT (DICE)",
                               .txEncoding = Encoding::AudioWireFormat::kAM824,
                               .preserveFdfInNoDataPackets = false}};
-// The registry's last resort, for a nub whose builder did not travel.
+// GenericDice's profile, and the registry's last resort for a nub whose
+// builder did not travel. DiceAudioBackend names the device from its identity,
+// not from this profile.
 DiceProfile gGenericDiceProfile{{.name = "Generic DICE",
                                  .txEncoding = Encoding::AudioWireFormat::kAM824,
                                  .preserveFdfInNoDataPackets = false}};
@@ -121,7 +123,10 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
             return &gFocusriteProfile;
         case Builder::WeissInt202:
         case Builder::WeissInt203:
+        case Builder::WeissDac:
             return &gWeissIntProfile;
+        case Builder::GenericDice:
+            return &gGenericDiceProfile;
         case Builder::AlesisMultiMix:
             return &gAlesisMultiMixProfile;
         case Builder::MidasVeniceF32:
@@ -211,6 +216,8 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         case Builder::PreSonusStudioLive1602:
         case Builder::PreSonusStudioLive2442:
         case Builder::PreSonusFireStudioProject:
+        case Builder::GenericDice:
+        case Builder::WeissDac:
         case Builder::GenericAvc:
         case Builder::None:
             break;

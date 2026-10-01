@@ -17,13 +17,13 @@ inline constexpr std::array kAlesisDefinitions{
                SupportDisposition::Supported, kAlesisVendorName,
                kAlesisMultiMixModelName, std::nullopt, BootloaderCuePolicy::None,
                DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking}}),
-    // Recognition only -- its geometry has never been captured, so it names no
-    // builder and nothing streams it.
+    // Generic DICE: its stream counts come from its registers like the
+    // MultiMix's. Not run on hardware.
     Definition(DeviceDefinitionId::AlesisIo, kAlesisVendorId, kAlesisIoModelId,
-               AudioFamilyProviderId::DICE, ProbePolicyId::None,
-               ProfileBuilderId::None,
-               ProtocolImplementationId::None,
-               SupportDisposition::RecognizedUnsupported,
+               AudioFamilyProviderId::DICE, ProbePolicyId::DiceTcat,
+               ProfileBuilderId::GenericDice,
+               ProtocolImplementationId::DiceTcat,
+               SupportDisposition::Supported,
                kAlesisVendorName, kAlesisIoModelName, std::nullopt,
                BootloaderCuePolicy::None,
                DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking}}),

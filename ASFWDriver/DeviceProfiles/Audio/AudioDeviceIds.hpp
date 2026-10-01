@@ -57,9 +57,8 @@ inline constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 = 0x13;
 
 // ---- Weiss Engineering (DICE / TCAT family) ----
 // Model identifiers are from the vendor/model match table in Linux
-// sound/firewire/dice/dice.c. Only INT202/INT203 are audio-enabled below; the
-// remainder are recognized for identity so future verified profiles do not
-// need to rediscover their Config-ROM identity.
+// sound/firewire/dice/dice.c. All are audio-enabled; only INT202/INT203 carry
+// their own builders, the rest run GenericDice or WeissDac (Weiss.hpp).
 inline constexpr uint32_t kWeissVendorId          = 0x001c6a;
 inline constexpr uint32_t kWeissAdc2ModelId       = 0x000001;
 inline constexpr uint32_t kWeissVestaModelId      = 0x000002;
@@ -103,9 +102,9 @@ inline constexpr uint32_t kMidasVeniceModelId  = 0x000001;
 //   - latter production: TCAT DICE with the LOUD category quirk (0x10 in the GUID
 //     category byte instead of the standard 0x04) — Linux snd-dice check_dice_category();
 //     its Kconfig lists "Onyx 820i/1220i/1620i/1640i (latter models)".
-// Documented family identities, recognition-only (same policy as the PreSonus StudioLive
-// siblings: identity from the libffado 2.5.0 device database; audio stays off until the
-// stream geometry is captured from hardware). Provenance per id, from
+// Documented family identities (from the libffado 2.5.0 device database). The DICE-run
+// ids stream on the generic DICE path, geometry from their registers; the Oxford-run
+// 1640i stays recognition-only. Provenance per id, from
 // references/libffado-2.5.0/configuration device_definitions:
 //   0x081216 "Onyx-i"          OXFORD driver (H. Dehnhardt entry) — the shared model id of
 //                              the OXFW971 production run; units differ by name string
@@ -121,8 +120,8 @@ inline constexpr uint32_t kMidasVeniceModelId  = 0x000001;
 //   is 0x04, not the 0x10 Linux snd-dice requires for Loud DICE units, so the DICE gate
 //   rejects it and snd-oxfw's name match ("Onyx-i") claims it — consistent on all axes.
 // The DICE-run 820i/1220i/1620i model ids remain unpublished (ALSA and libffado match
-// them vendor-wide/generically), so the DICE-run 820i placeholder below stays
-// sentinel-gated until captured from a real DICE-run unit.
+// them vendor-wide/generically). The generic DICE rule (DiceIdentity.hpp) admits them
+// by their GUID; the DICE-run 820i placeholder below stays sentinel-gated.
 inline constexpr uint32_t kMackieVendorId              = 0x000ff2;
 inline constexpr uint32_t kMackieModelIdPendingCapture = 0xffffffff;  // sentinel; real model ids are 24-bit
 inline constexpr uint32_t kOnyxIOxfwModelId            = 0x081216;

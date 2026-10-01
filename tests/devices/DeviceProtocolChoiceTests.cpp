@@ -184,23 +184,36 @@ TEST(DeviceProtocolChoice, MotuCarriesItsUnitVersionToTheProtocol) {
 // And nothing else does
 // ---------------------------------------------------------------------------
 
-TEST(DeviceProtocolChoice, ARecognisedButUnplayableDeviceGetsNoProtocol) {
-    // Every one of these shares an OUI with a device we do stream. Before the
-    // catalog, FocusriteSaffireProfile::Matches keyed on vendor alone.
-    const std::pair<uint32_t, uint32_t> unplayable[] = {
+TEST(DeviceProtocolChoice, AnOuiSiblingGetsItsOwnRowsProtocol) {
+    // Every one of these shares an OUI with a device that has its own builder.
+    // Before the catalog, FocusriteSaffireProfile::Matches keyed on vendor
+    // alone; now each runs its own row's generic policy, never a sibling's.
+    const std::pair<uint32_t, uint32_t> genericDice[] = {
         {kFocusriteVendorId, kSPro40Tcd3070ModelId},
         {kFocusriteVendorId, kLiquidS56ModelId},
         {kFocusriteVendorId, kSPro26ModelId},
-        {kWeissVendorId, kWeissDac202ModelId},
-        {kWeissVendorId, kWeissMan301ModelId},
+        {kWeissVendorId, kWeissAdc2ModelId},
+        {kWeissVendorId, kWeissAfi1ModelId},
         {kPreSonusVendorId, kStudioLive1642ModelId},
         {kPreSonusVendorId, kStudioLive3242ModelId},
+        {kAlesisVendorId, kAlesisIoModelId},
+        {kMackieVendorId, kOnyx1640iDiceModelId},
         {kMackieVendorId, kOnyxBlackbirdModelId},
     };
-    for (const auto& [vendorId, modelId] : unplayable) {
-        const auto device = DiceDevice(vendorId, modelId);
-        EXPECT_FALSE(ChoiceFor(device).has_value())
+    for (const auto& [vendorId, modelId] : genericDice) {
+        const auto choice = ChoiceFor(DiceDevice(vendorId, modelId));
+        ASSERT_TRUE(choice.has_value())
             << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
+        EXPECT_EQ(choice->builder, ProfileBuilderId::GenericDice);
+        EXPECT_EQ(choice->implementation, ProtocolImplementationId::DiceTcat);
+    }
+    const uint32_t weissDacs[] = {kWeissVestaModelId, kWeissDac2ModelId, kWeissDac202ModelId,
+                                  kWeissMayaModelId, kWeissMan301ModelId};
+    for (const uint32_t modelId : weissDacs) {
+        const auto choice = ChoiceFor(DiceDevice(kWeissVendorId, modelId));
+        ASSERT_TRUE(choice.has_value()) << "Weiss model 0x" << std::hex << modelId;
+        EXPECT_EQ(choice->builder, ProfileBuilderId::WeissDac);
+        EXPECT_EQ(choice->implementation, ProtocolImplementationId::DiceWeissInt);
     }
 }
 
@@ -312,10 +325,12 @@ TEST(DeviceProtocolChoice, TheTcd3070IsTheSameDeviceByEitherRoute) {
     unit.version = kDiceInterfaceVersion;
     byGuid.identity.units.push_back(unit);
 
-    EXPECT_FALSE(ChoiceFor(byGuid).has_value());
-    EXPECT_FALSE(
-        ChoiceFor(DiceDevice(kFocusriteVendorId, kSPro40Tcd3070ModelId))
-            .has_value());
+    const auto viaGuid = ChoiceFor(byGuid);
+    const auto viaModel = ChoiceFor(DiceDevice(kFocusriteVendorId, kSPro40Tcd3070ModelId));
+    ASSERT_TRUE(viaGuid.has_value());
+    ASSERT_TRUE(viaModel.has_value());
+    EXPECT_EQ(viaGuid->builder, ProfileBuilderId::GenericDice);
+    EXPECT_EQ(viaModel->builder, ProfileBuilderId::GenericDice);
 }
 
 // ---------------------------------------------------------------------------
@@ -361,22 +376,7 @@ TEST(DeviceProtocolChoice, BackendRoutingMatchesWhatTheProfileRegistrySays) {
 
 // A recognised-but-unplayable DICE device is rejected by ChooseAudioBackend
 // (returning nullopt), matching ChooseDeviceProtocol().
-TEST(DeviceProtocolChoice, ARecognisedButUnplayableDeviceReturnsNullopt) {
-    using ASFW::Audio::AudioBackendKind;
-    using ASFW::Audio::ChooseAudioBackend;
-
-    const std::pair<uint32_t, uint32_t> unplayableDice[] = {
-        {kFocusriteVendorId, kSPro40Tcd3070ModelId},
-        {kFocusriteVendorId, kLiquidS56ModelId},
-        {kPreSonusVendorId, kStudioLive3242ModelId},
-        {kWeissVendorId, kWeissMan301ModelId},
-    };
-    for (const auto& [vendorId, modelId] : unplayableDice) {
-        EXPECT_EQ(BackendFor(DiceDevice(vendorId, modelId)),
-                  std::nullopt)
-            << "vendor 0x" << std::hex << vendorId << " model 0x" << modelId;
-    }
-
+TEST(DeviceProtocolChoice, AnUnverifiedMotuSiblingReturnsNullopt) {
     for (const uint32_t version :
          {kMotu896hdSwVersion, kMotuTravelerSwVersion, kMotu8preSwVersion}) {
         const auto device = MakeDevice(kMotuVendorId, 0U,

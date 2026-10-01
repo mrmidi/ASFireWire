@@ -96,15 +96,16 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
         },
         // 3. Focusrite Saffire Pro 40 (TCD3070 GUID quirk)
         {
-            .description = "Focusrite Saffire Pro 40 TCD3070 (GUID quirk, recognized unsupported)",
+            .description = "Focusrite Saffire Pro 40 TCD3070 (GUID quirk, generic DICE)",
             .evidence = MakeEvidence(kFocusriteVendorId, 0,
                                      MakeFocusriteGuid(kFocusriteGuidModelSPro40Tcd3070),
                                      std::nullopt, 0x000001),
-            .expectedSupport = SupportDisposition::RecognizedUnsupported,
+            .expectedSupport = SupportDisposition::Supported,
             .expectedFamily = AudioFamilyProviderId::DICE,
-            .expectedProfileBuilder = ProfileBuilderId::None,
+            .expectedProfileBuilder = ProfileBuilderId::GenericDice,
             .expectedModelName = kSPro40Tcd3070ModelName,
-            .expectedBackend = std::nullopt, // unsupported DICE devices do not route to any backend
+            .expectedBackend = Audio::AudioBackendKind::Dice,
+            .expectedBootstrap = Audio::ProbeBootstrap::DiceProtocol,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
         },

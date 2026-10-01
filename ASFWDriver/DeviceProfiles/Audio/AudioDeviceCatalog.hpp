@@ -67,6 +67,8 @@ enum class DeviceDefinitionId : uint32_t {
     RmeFireface400,
     RmeFireface800,
     AvidMboxPro,
+    /// An unlisted unit that passes the DICE identity rule (DiceIdentity.hpp).
+    GenericDice,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -161,7 +163,12 @@ enum class ProfileBuilderId : uint16_t {
     // with a bare kIOReturnBadArgument. Extend the enum above this line and the
     // bounds follow.
     AvidMboxPro,
-    kLastValid = AvidMboxPro,
+    /// A DICE unit with no model-specific needs: name from the catalog or the
+    /// Config ROM, geometry and rates from its own registers.
+    GenericDice,
+    /// The Weiss DACs: same wire policy as the INT202/203 (DiceWeissInt).
+    WeissDac,
+    kLastValid = WeissDac,
 };
 
 /// Concrete protocol class chosen by the catalog. This is deliberately
@@ -407,7 +414,7 @@ public:
                            const Discovery::UnitIdentityEvidence& unit,
                            std::span<const AudioDeviceDefinition> definitions,
                            std::span<const AudioSafetyRule> safetyRules,
-                           bool allowGenericAvcFallback,
+                           bool allowGenericFallback,
                            Discovery::DeviceInstanceId instanceId = {}) noexcept;
 
     // Pure injection point used by host fixtures and future family-local
@@ -417,7 +424,7 @@ public:
                            const Discovery::UnitIdentityEvidence& unit,
                            std::span<const AudioDeviceDefinition> definitions,
                            std::span<const AudioSafetyRule> safetyRules,
-                           bool allowGenericAvcFallback) noexcept;
+                           bool allowGenericFallback) noexcept;
 
     [[nodiscard]] static std::optional<const AudioSafetyRule*>
     MatchSafetyRule(const Discovery::DeviceIdentityEvidence& device,
