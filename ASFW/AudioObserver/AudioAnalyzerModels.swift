@@ -1,5 +1,13 @@
 import Foundation
 
+enum AudioAnalyzerGeometry {
+    /// Keep one third of the active ring between the oldest plotted sample
+    /// and the writer, leaving overwrite slack for GPU execution.
+    static func goniometerWindowFrames(activeRingFrames: UInt32) -> UInt32 {
+        activeRingFrames - activeRingFrames / 3
+    }
+}
+
 enum AudioMeasurementStatus: Sendable, Equatable {
     case unsupported
     case warmingUp
@@ -81,6 +89,13 @@ struct AudioStereoMetrics: Sendable, Equatable {
     /// 10*log10(E_mid / E_stereo); zero for identical in-phase channels.
     var monoEnergyRetentionDB: AudioMeasurement<Float> = .warmingUp
     var cancellationRisk: AudioCancellationRisk = .insufficientSignal
+}
+
+struct AudioStereoHistoryPoint: Sendable, Equatable {
+    var endFrame: UInt64
+    var correlation: Float
+    var sideEnergyFraction: Float
+    var breakBefore = false
 }
 
 struct AudioLoudnessMetrics: Sendable, Equatable {

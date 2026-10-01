@@ -1,0 +1,394 @@
+ASFW 1394 DIAGNOSTICS REPORT
+════════════════════════════════════════════════════════════
+Report Generated:              2026-09-30 13:47:01 +0000
+System Uptime (since boot):    164h 09m 18s
+System Uptime (ns):            590958882233333
+Driver Build:                  v0.3.1 (6b51d1a DIRTY @ fix/bebob-planar-channel-map)
+ABI Version:                   11
+Generation:                    3
+Snapshot Sequence:             0
+
+=== Bus Contract ===
+────────────────────
+Bus ID:                        1023
+Local Node:                    node 1 / 0xFFC1
+Root Node:                     node 1 / 0xFFC1
+IRM Node:                      node 1 / 0xFFC1
+BM Node:                       none
+Node Count:                    2
+Gap Count:                     63
+Max Hops:                      1
+Remote Cycle Continuity:       No
+Cycle Evidence Source Node:    none (not observed)
+Local Cycle Master Enabled:    Yes
+Local Cycle Timer Enabled:     Yes
+ASFW-Initiated Reset Count:    0
+Role Forcing Mode:             Standard (no forced root)
+Role Verdict (last action):    Root unverified — diagnostic only (no bus action)
+
+=== Topology & Self-ID ===
+──────────────────────────
+Topology Valid:                Yes
+Self-ID Sequence Count:        2
+Enumerator Error:              No
+Topology Node Count:           2
+
+Decoded Node Details:
+  NodeID   Local   Root    Contender  Speed Power       LinkActive Ports   
+  ─────────────────────────────────────────────────────────────────────────
+  0        No      No      Yes        S400  bus≤3W      Yes        P       
+  1        Yes     Yes     Yes        S800  bus≤3W      Yes        -C-     
+
+Topology Tree (rooted at bus root):
+  Node 1  S800  [root,IRM,local,reset-init]
+  └─ Node 0  S400 (400 Mbps link)
+
+Raw Self-ID Quadlets (3):
+  [00]: 0x0003D265
+  [01]: 0x807F8C80
+  [02]: 0x817FCC76
+
+=== Legacy Role Coordinator Policy Engine ===
+─────────────────────────────────────────────
+Role Forcing Mode:             Standard (no forced root)
+Last Decision:                 Root unverified — diagnostic only (no bus action)
+Last Action:                   Root unverified — diagnostic only (no bus action)
+Last Reset Flavor:             None
+Root CMC Known (evidence):     Yes
+Root CMC Capable (evidence):   No
+Local Cycle Master Enabled (HW): Yes
+Legacy Remote CMSTR:           not used by this engine
+Reason:                        Live BM cycle writes are reported in Cycle Master Policy
+Remote Cycle Continuity:       No
+Cycle Evidence Source Node:    none (not observed)
+Reset Guard Active:            No
+BM Retry Count:                0
+Gap Mismatch Detected:         No
+
+=== Bus Manager & IRM Role Runtime ===
+──────────────────────────────────────
+Configured Role Mode:          IRM Server Only
+Advertised BMC:                No
+Advertised IRMC:               Yes
+Advertised CMC:                No
+Advertised ISC:                No
+Local Node is IRM:             Yes
+Local Node is BM:              No
+Local Node is Root:            Yes
+BM Owner Source:               Unknown
+Last BM ID Value:              none
+Stale Election Aborts:         0
+Failed Elections:              0
+Unexpected software resource accesses: 0
+Local IRM Resource State:      ready (defaults)
+Local IRM Readback Valid:      Yes
+CSRControl Last Status:        OK
+BUS_MANAGER_ID local:          none
+BANDWIDTH_AVAILABLE local:     4915
+CHANNELS_AVAILABLE_HI local:   0xFFFFFFFE
+CHANNELS_AVAILABLE_LO local:   0xFFFFFFFF
+Topology Map Valid:            Yes
+Topology Map CSR Generation:   3
+Topology Map Self-ID Count:    2
+Topology Map CRC:              0xB5B6
+Topology Map DMA Ready:        Yes
+BM Policy Verdict:             ObserveOnly
+Root CMC Known:                Yes
+Root CMC Capable:              No
+Remote Cycle Continuity:       No
+Cycle Evidence Source:         none (not observed)
+Legacy CMSTR Allowed:          No
+Remote CMSTR Status:           not armed
+
+=== Bus Manager Election (Milestone 3) ===
+──────────────────────────────────────────
+BM Candidate Class:            Not a candidate
+Incumbent BM Local Flag:       No
+Election Decision Action:      none (DoNotContend)
+Election In-Flight:            No
+Election Attempt Path:         none
+Election Compare Value:        0x0000003F
+Election Swap Value:           0x000000FF
+Last BUS_MANAGER_ID Old Value: 0x0000003F
+Election Attempted Gen:        0
+Attempts This Gen:             0
+Stale Election Abort Count:    0
+Failed Election Count:         0
+BM Mutation Capability:        none (ObserveOnly)
+
+=== IRM Fallback Planner (Milestone 4) ===
+──────────────────────────────────────────
+Fallback State:                NoBMDetected
+Planned Action:                LocalRootEnableCycleMasterRequired
+BUS_MANAGER_ID Probe Status:   Success
+Probed BUS_MANAGER_ID Raw:     0x0000003F
+Annex H Fallback Gate:         Open
+Mutation Performed:            No
+Full BM Activity Level:        ObserveOnly (BM-passive, IRM-visible)
+
+=== Cycle Master Policy (Milestone 5) ===
+─────────────────────────────────────────
+Cycle Decision:                AlreadySatisfiedLocalCycleMasterEnabled
+Cycle Action:                  None
+Cycle Target Node:             none
+Local Master Before:           Yes
+Local Master After:            Yes
+Remote CMSTR In Flight:        No
+Local Enable Count:            1
+Local Clear Count:             0
+Remote Submit Count:           0
+Cycle Master Policy:           Suppressed until CyclePolicyAllowed.
+
+=== Root Selection / Force-Root Policy (Milestone 6) ===
+────────────────────────────────────────────────────────
+Decision:                      None
+Action:                        None
+Previous Root:                 none
+Selected Root:                 none
+Reason:                        none
+Attempts This Topology:        0 / 5
+Total Attempts:                0
+Reset Requested:               No
+Current Gap Count:             63
+Requested Gap Count:           preserve current gap
+Gap Optimization:              disabled; M7 owns optimization
+
+=== Gap Count Policy (Milestone 7) ===
+──────────────────────────────────────
+Decision:                      SuppressedByActivityLevel
+Action:                        None
+Current Gap:                   63
+Expected Gap:                  5
+Requested Gap:                 5
+Gap Matches Target:            No
+Computation Source:            1394a table (max hops)
+Max Hops From Root:            1
+Observed Gap Fields Agree:     Yes
+Beta Repeaters:                Known No
+Target Root:                   node 1
+Combined with M6:              No
+Attempts This Topology:        0 / 5
+Reset Requested:               No
+
+=== Power / Link-On Policy (Milestone 8) ===
+────────────────────────────────────────────
+Decision:                      SuppressedByPolicyLevel
+Action:                        None
+Power Budget:                  Insufficient
+Power Available:               0 mW
+Power Required:                6000 mW (6.0 W)
+Power Margin:                  -6000 mW (6.0 W)
+Unknown Power Classes:         0
+Eligible Nodes:                0
+Attempts This Generation:      0 / 1
+Submitted:                     0
+Succeeded:                     0
+Failed:                        0
+
+=== CSR Compliance / Maps (Milestone 9) ===
+───────────────────────────────────────────
+TOPOLOGY_MAP Owner:            Software
+TOPOLOGY_MAP State:            Valid
+TOPOLOGY_MAP Generation:       3
+TOPOLOGY_MAP Self-IDs:         2
+SPEED_MAP Owner:               Software (legacy; obsolete in IEEE 1394-2008)
+SPEED_MAP State:               Valid
+SPEED_MAP Generation:          3
+SPEED_MAP Nodes:               2
+SPEED_MAP Encoding:            256 quadlets
+Core IRM CSRs Owner:           OHCI hardware (remote telemetry not observable)
+Unexpected SW Hits:            0
+CSR Verdict Scope:             ownership + TOPOLOGY_MAP; SPEED_MAP is legacy/obsolete
+CSR Contract Verdict:          OK
+SPEED_MAP Legacy Health:       fresh
+
+=== Post-Reset Timing ===
+─────────────────────────
+Self-ID Complete:              Yes
+Generation:                    3
+Self-ID Age:                   194382467.617 ms
+BM Incumbent Gate:             Open
+BM Non-Incumbent Gate:         Open
+IRM Fallback Gate:             Open
+New ISO Allocation Gate:       Open
+BM Candidate Class:            Not a candidate
+Stale Timer Firings:           0
+Suppressed By Generation:      0
+Suppressed By Role Policy:     0
+
+=== OHCI Link/Controller Snapshot ===
+─────────────────────────────────────
+OHCI Version:                  0x00010010
+GUID ROM Present:              No
+AT Tx Retries:                 0x0000082F (req=15 resp=2 phys=8 cycleLimit=0)
+CSR Control Register:          0x80000000
+Config ROM Header Reg:         0x04040FEA
+Bus Options Register:          0x8000B003
+Node ID Register:              0xC800FFC1
+PHY Control Register:          0x8F000F00
+Cycle Timer Register:          0x828423C8
+GUID (64-bit Hex):             0x000A270200752966
+HC Control Register (Set):     0x804E0000
+Link Control Register (Set):   0x00300600
+Interrupt Event (Active):      0x00780000
+Interrupt Mask (Enabled):      0x878783FF
+Self-ID Buffer Pointer:        0x80198000
+Self-ID Count Register:        0x00030014
+
+=== PHY Interface Snapshot ===
+──────────────────────────────
+Link On:                       Yes
+Contender:                     Yes
+PHY Gap Count:                 63
+Last PhyConfig Root ID:        none
+Last PhyConfig Gap Count:      0
+Last PHY Reset Reason:         0
+
+PHY Registers (raw):
+  Reg 00: 0xFF
+  Reg 01: 0x3F
+  Reg 02: 0xE3
+  Reg 03: 0xEF
+  Reg 04: 0xFC
+  Reg 05: 0x13
+  Reg 06: 0x50
+  Reg 07: 0x00
+  Reg 08: 0xF8
+  Reg 09: 0x00
+  Reg 10: 0x7B
+  Reg 11: 0x00
+  Reg 12: 0x00
+  Reg 13: 0x00
+  Reg 14: 0x00
+  Reg 15: 0x00
+
+=== PHY Interpretation ===
+──────────────────────────
+Reg00:                         not read (rdDone not set) — reg 0 is redundant; identity from OHCI NodeID
+Reg00 physical_id:             1 (from OHCI NodeID)
+Reg00 root:                    Yes (from OHCI NodeID)
+Reg00 power_status:            n/a (reg 0 not read)
+Reg01 root_holdoff:            No
+Reg01 initiate_reset:          No
+Reg01 gap_count:               63
+Reg02 extended:                Yes (0b111)
+Reg02 total_ports:             3
+Reg03 max_speed_field:         7
+Reg03 repeater_delay:          7 (~284 ns)
+Reg04 link_on:                 Yes
+Reg04 contender:               Yes
+Reg04 jitter:                  7
+Reg04 power_class:             4 / bus≤3W
+Reg05 pwr_fail:                Yes (may be latched, verify)
+Reg05 loop:                    No
+Reg05 timeout:                 No
+Reg05 port_event:              No
+Reg06 page_select:             2
+Reg06 port_select:             0
+
+=== PHY Consistency ===
+───────────────────────
+OHCI NodeID (authoritative):   valid, node 1 / 0xFFC1
+Topology local node:           node 1 / 0xFFC1
+PHY Reg00 physical_id:         not read (using OHCI NodeID)
+Verdict:                       OK (with notes)
+
+Notes (informational, not problems):
+  ℹ NOTE_PHY_REG00_NOT_READ
+      Reg00 read did not complete (rdDone not set). Benign: reg 0 is redundant — node identity is taken from OHCI NodeID, and the Linux firewire-ohci reference never reads PHY reg 0 either.
+  ℹ NOTE_PWR_FAIL_LATCHED
+      pwr_fail=1; this rcu bit latches on PHY power-up / cable-power loss and stays set until software clears it — not fatal on its own.
+  ℹ NOTE_VENDOR_PAGE
+      page_select=2; Regs 08–15 are vendor-dependent and not decoded as standard.
+
+=== Software-Visible CSR Telemetry ===
+──────────────────────────────────────
+Config ROM Reads:              0
+STATE_SET Writes:              0
+STATE_CLEAR Writes:            0
+BUS_MANAGER_ID Accesses:       not observable (OHCI-owned)
+BANDWIDTH_AVAILABLE Accesses:  not observable (OHCI-owned)
+CHANNELS_AVAILABLE Accesses:   not observable (OHCI-owned)
+Broadcast Channel Reads:       0
+Broadcast Channel Writes:      0
+Topology Map Reads:            0
+Speed Map Reads:               0
+Unsupported CSR Requests:      0
+Dropped CSR Requests:          0
+
+=== CSR Contract Allocations ===
+────────────────────────────────
+  CSR Name                 Offset Address   Owner        Reads        Writes      
+  ────────────────────────────────────────────────────────────────────────
+  STATE_CLEAR              0x00000000       Software     0            0           
+  STATE_SET                0x00000004       Software     0            0           
+  BUS_MANAGER_ID           0x0000021C       Hardware     0            0           
+  BANDWIDTH_AVAILABLE      0x00000220       Hardware     0            0           
+  CHANNELS_AVAILABLE_HI    0x00000224       Hardware     0            0           
+  CHANNELS_AVAILABLE_LO    0x00000228       Hardware     0            0           
+  BROADCAST_CHANNEL        0x00000234       Software     0            0           
+  CONFIG_ROM               0x00000400       Hardware     0            0           
+  TOPOLOGY_MAP             0x00001000       Software     0            0           
+  SPEED_MAP                0x00002000       Software     0            0           
+
+=== Recent Async Transactions Trace ===
+───────────────────────────────────────
+Trace Event Count:             50
+Dropped Trace Events:          0
+
+Transaction History (most recent last, Δt relative to oldest shown):
+  Δt(us)     Dir Ctx    TL  TCode    Speed Src    Dst    Address        Ack       RCode    
+  ────────────────────────────────────────────────────────────────────────────────────────────
+  0.0        RX  ARReq  1   WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  84.5       TX  ATRsp  1   WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  553725.8   TX  ATReq  52  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  554020.1   RX  ARRsp  52  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  554419.0   RX  ARReq  3   WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  554452.8   TX  ATRsp  3   WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  1047364.2  TX  ATReq  53  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  1047670.3  RX  ARRsp  53  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  1047780.7  RX  ARReq  5   WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  1047805.5  TX  ATRsp  5   WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  1544646.5  TX  ATReq  54  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  1544961.5  RX  ARRsp  54  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  1545054.0  RX  ARReq  7   WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  1545090.0  TX  ATRsp  7   WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  2051962.5  TX  ATReq  55  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  2052301.4  RX  ARRsp  55  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  2052393.6  RX  ARReq  9   WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  2052449.8  TX  ATRsp  9   WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  2539859.2  TX  ATReq  56  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  2540178.0  RX  ARRsp  56  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  2540361.9  RX  ARReq  11  WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  2540396.5  TX  ATRsp  11  WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  3033865.1  TX  ATReq  57  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  3034192.6  RX  ARRsp  57  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  3034280.0  RX  ARReq  13  WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  3034314.4  TX  ATRsp  13  WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  3182288.1  TX  ATReq  58  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  3182606.6  RX  ARRsp  58  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  3182799.0  RX  ARReq  15  WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  3182843.7  TX  ATRsp  15  WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  3327446.9  TX  ATReq  59  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  3327768.5  RX  ARRsp  59  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  3327966.4  RX  ARReq  17  WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  3328017.9  TX  ATRsp  17  WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  3471426.3  TX  ATReq  60  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  3471751.6  RX  ARRsp  60  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  3471863.5  RX  ARReq  19  WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  3471906.5  TX  ATRsp  19  WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  3606906.1  TX  ATReq  61  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  3607219.0  RX  ARRsp  61  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  3607326.0  RX  ARReq  21  WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  3607378.3  TX  ATRsp  21  WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  3756303.8  TX  ATReq  62  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  3756622.7  RX  ARRsp  62  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  3756740.7  RX  ARReq  23  WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  3756796.4  TX  ATRsp  23  WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+  3902691.9  TX  ATReq  63  WrBlock  S100  0xFFC1 0xFFC0 0xFFFFF0000B00 0x00      complete 
+  3902997.1  RX  ARRsp  63  WrResp   S?    0xFFC0 0xFFC1 -              0x11      complete 
+  3903115.4  RX  ARReq  25  WrBlock  S?    0xFFC0 0xFFC1 0xFFFFF0000D00 0x12      0x0F     
+  3903162.1  TX  ATRsp  25  WrResp   S400  0xFFC1 0xFFC0 -              0x00      complete 
+
+════════════════════════════════════════════════════════════
+END OF REPORT

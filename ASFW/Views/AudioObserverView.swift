@@ -119,118 +119,241 @@ struct AudioObserverPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Audio Analyzer").font(.title2.bold())
-                    Text(deviceName).font(.subheadline).foregroundStyle(.secondary)
-                }
-                Spacer()
-                channelPicker("L / A", selection: $leftChannel)
-                    .onChange(of: leftChannel) { _, value in model.setChannels(left: value, right: rightChannel) }
-                channelPicker("R / B", selection: $rightChannel)
-                    .onChange(of: rightChannel) { _, value in model.setChannels(left: leftChannel, right: value) }
-                Label(String(format: "%.1f kHz · %u ch", Double(model.snapshot.sampleRateHz) / 1_000,
-                             model.snapshot.channels),
-                      systemImage: model.snapshot.ioRunning ? "waveform" : "pause.circle")
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            }
-
-            HStack(alignment: .top, spacing: 12) {
-                panel("Monitor", subtitle: "Live levels and stereo summary") {
-                    StereoMetersView(metrics: model.metrics, active: model.snapshot.ioRunning)
-                    HStack {
-                        valueTile("L True Peak", dbtpValue(model.metrics.analysis.levels.left.truePeak))
-                        valueTile("R True Peak", dbtpValue(model.metrics.analysis.levels.right.truePeak))
-                        valueTile("Correlation", model.metrics.correlationValid
-                                  ? String(format: "%+.2f", model.metrics.correlation) : "—")
-                        valueTile("Side energy", String(format: "%.1f%%", 100 * model.metrics.meterValues[7]))
+        GeometryReader { geometry in
+            let compact = geometry.size.width < 1_040 || geometry.size.height < 680
+            Group {
+                if compact {
+                    ScrollView {
+                        compactDashboard
                     }
-                }
-                panel("Stereo", subtitle: "Goniometer · selected output pair") {
-                    scopePlot(mode: .phaseScope).frame(maxWidth: .infinity).aspectRatio(1, contentMode: .fit)
-                    HStack {
-                        valueTile("Balance", String(format: "%+.2f", model.metrics.meterValues[6]))
-                        valueTile("Mono retention", db(model.metrics.analysis.stereo.monoEnergyRetentionDB.value))
-                        valueTile("Side energy", String(format: "%.1f%%", 100 * model.metrics.meterValues[7]))
-                        valueTile("Mono cancellation", cancellationRiskText)
-                    }
-                }
-            }
-
-            panel("Spectrum", subtitle: "2048-point periodic Hann · logarithmic frequency") {
-                HStack {
-                    Picker("Basis", selection: $midSide) {
-                        Text("L/R").tag(false); Text("M/S").tag(true)
-                    }.pickerStyle(.segmented).frame(width: 150)
-                    Picker("Average", selection: $slowSpectrum) {
-                        Text("Fast · 150 ms").tag(false); Text("Slow · 1 s").tag(true)
-                    }.pickerStyle(.segmented).frame(width: 230)
-                    Toggle("Peak hold", isOn: $peakHold).toggleStyle(.checkbox)
-                    Picker("Layout", selection: $stereoSpectrum) {
-                        Text("Mono").tag(false); Text("Stereo").tag(true)
-                    }.pickerStyle(.segmented).frame(width: 140)
-                    Spacer()
-                }
-                HStack(spacing: 12) {
-                    spectrumPlot(channel: leftChannel, side: false)
-                    if stereoSpectrum { spectrumPlot(channel: rightChannel, side: true) }
-                }.frame(height: 270)
-            }
-
-            HStack(alignment: .top, spacing: 12) {
-                panel("Loudness", subtitle: "EBU R128 / ITU-R BS.1770 · 48 kHz measurement path") {
-                    HStack {
-                        valueTile("Momentary", measurementText(model.metrics.analysis.loudness.momentaryLUFS))
-                        valueTile("Short-term", measurementText(model.metrics.analysis.loudness.shortTermLUFS))
-                        valueTile("Integrated", measurementText(model.metrics.analysis.loudness.integratedLUFS))
-                        valueTile(model.metrics.analysis.loudness.loudnessRangeIsProvisional
-                                  ? "LRA · provisional" : "LRA",
-                                  measurementText(model.metrics.analysis.loudness.loudnessRangeLU))
-                        valueTile("Max True Peak",
-                                  dbtpText(model.metrics.analysis.loudness.maximumTruePeakDBTP))
-                    }
-                    HStack {
-                        valueTile("Max Momentary",
-                                  measurementText(model.metrics.analysis.loudness.maximumMomentaryLUFS))
-                        valueTile("Max Short-term",
-                                  measurementText(model.metrics.analysis.loudness.maximumShortTermLUFS))
-                        valueTile("PLR", dbValue(model.metrics.analysis.loudness.plrDB, unit: "dB"))
-                        valueTile("Session crest",
-                                  dbValue(model.metrics.analysis.loudness.crestFactorDB, unit: "dB"))
-                    }
-                    HStack(spacing: 8) {
-                        loudnessSessionControls
-                        Spacer()
-                        Text(String(format: "Included %.1f s · 24 h maximum",
-                                    Double(model.metrics.analysis.loudness.includedAudioFrames) / 48_000))
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    }
-                    Text("Momentary and Short-term are live. Integrated, LRA, and maximum True Peak accumulate only while the measurement session runs; a stream discontinuity freezes them until Reset.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                panel("Diagnostics", subtitle: "Ring state, observer quality, and timing") {
-                    HStack {
-                        Picker("View", selection: $model.mode) {
-                            Text("Waveform").tag(AudioObserverDisplayMode.waveform)
-                            Text("Performance").tag(AudioObserverDisplayMode.phaseScope)
-                        }.pickerStyle(.segmented).frame(width: 200)
-                        Text(model.status).font(.caption).foregroundStyle(.secondary)
-                    }
-                    if model.mode == .waveform { scopePlot(mode: .waveform).frame(height: 150) }
-                    diagnosticsRow("Ring / mapped", "\(model.snapshot.activeRingFrames) / \(model.snapshot.mappedFrames) frames")
-                    diagnosticsRow("Write end / epoch", "\(model.snapshot.writeEndFrame) · \(model.snapshot.sessionEpoch)/\(model.snapshot.discontinuityEpoch)")
-                    diagnosticsRow("CPU / queued / GPU", "\(milliseconds(model.metrics.cpuEncodeMilliseconds)) / \(milliseconds(model.metrics.scheduledToStartMilliseconds)) / \(milliseconds(model.metrics.gpuMilliseconds))")
-                    diagnosticsRow("Age / overwrite margin", "\(milliseconds(model.metrics.sampleAgeMilliseconds)) / \(milliseconds(model.metrics.overwriteMarginMilliseconds))")
-                    diagnosticsRow("In flight / wrap / unsafe", "\(model.metrics.inFlight) / \(model.metrics.windowsCrossingWrap) / \(model.metrics.unsafeWindows)")
-                    diagnosticsRow("Invalid samples / over-range L·R", "\(model.metrics.invalidSampleCount) / \(model.metrics.analysis.levels.left.overRangeSamples) · \(model.metrics.analysis.levels.right.overRangeSamples)")
+                } else {
+                    standardDashboard(in: geometry.size)
                 }
             }
         }
-        .padding(16)
         .background(.thinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .task { await model.run() }
+    }
+
+    private var dashboardHeader: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Audio Analyzer").font(.headline)
+                Text(deviceName).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            channelPicker("L / A", selection: $leftChannel)
+                .onChange(of: leftChannel) { _, value in model.setChannels(left: value, right: rightChannel) }
+            channelPicker("R / B", selection: $rightChannel)
+                .onChange(of: rightChannel) { _, value in model.setChannels(left: leftChannel, right: value) }
+            Label(String(format: "%.1f kHz · %u ch", Double(model.snapshot.sampleRateHz) / 1_000,
+                         model.snapshot.channels),
+                  systemImage: model.snapshot.ioRunning ? "waveform" : "pause.circle")
+                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                .fixedSize()
+        }
+    }
+
+    private func standardDashboard(in size: CGSize) -> some View {
+        let inset: CGFloat = 12
+        let gap: CGFloat = 10
+        let headerHeight: CGFloat = 42
+        let width = max(0, size.width - inset * 2)
+        let height = max(0, size.height - inset * 2)
+        let rowHeight = max(0, (height - headerHeight - gap * 2) / 2)
+        let topPanelWidth = max(0, (width - gap * 2) * 0.38)
+        let stereoPanelWidth = max(0, (width - gap * 2) * 0.32)
+        let spectrumPanelWidth = max(0, width - gap * 2 - topPanelWidth - stereoPanelWidth)
+        let bottomPanelWidth = max(0, width - gap)
+
+        return VStack(spacing: gap) {
+            dashboardHeader.frame(height: headerHeight)
+            VStack(spacing: gap) {
+                HStack(spacing: gap) {
+                    monitorPanel.frame(width: topPanelWidth, height: rowHeight)
+                    stereoPanel.frame(width: stereoPanelWidth, height: rowHeight)
+                    spectrumPanel.frame(width: spectrumPanelWidth, height: rowHeight)
+                }
+                HStack(spacing: gap) {
+                    loudnessPanel.frame(width: bottomPanelWidth * 0.51, height: rowHeight)
+                    diagnosticsPanel.frame(width: bottomPanelWidth * 0.49, height: rowHeight)
+                }
+            }
+            .frame(height: rowHeight * 2 + gap)
+        }
+        .padding(inset)
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+    }
+
+    private var compactDashboard: some View {
+        VStack(spacing: 10) {
+            dashboardHeader
+            monitorPanel.frame(height: 260)
+            stereoPanel.frame(height: 470)
+            spectrumPanel.frame(height: 330)
+            loudnessPanel.frame(height: 300)
+            diagnosticsPanel.frame(height: 300)
+        }
+        .padding(12)
+    }
+
+    private var monitorPanel: some View {
+        panel("Monitor", subtitle: "Live levels and stereo summary") {
+            StereoMetersView(metrics: model.metrics, active: model.snapshot.ioRunning)
+                .frame(maxHeight: .infinity, alignment: .center)
+            HStack(spacing: 8) {
+                valueTile("L True Peak", dbtpValue(model.metrics.analysis.levels.left.truePeak))
+                valueTile("R True Peak", dbtpValue(model.metrics.analysis.levels.right.truePeak))
+                valueTile("Correlation", model.metrics.correlationValid
+                          ? String(format: "%+.2f", model.metrics.correlation) : "—")
+                valueTile("Side energy", String(format: "%.1f%%", 100 * model.metrics.meterValues[7]))
+            }
+            .frame(height: 48)
+        }
+    }
+
+    private var stereoPanel: some View {
+        panel("Stereo", subtitle: "Goniometer · \(phasePersistenceText) · selected pair") {
+            VStack(spacing: 8) {
+                GeometryReader { geometry in
+                    let scopeSide = min(CGFloat(230),
+                                        min(geometry.size.height, geometry.size.width * 0.62))
+                    HStack(spacing: 8) {
+                        scopePlot(mode: .phaseScope)
+                            .frame(width: scopeSide, height: scopeSide)
+                        StereoHistoryView(points: model.metrics.stereoHistory,
+                                          sampleRateHz: model.snapshot.sampleRateHz,
+                                          active: model.snapshot.ioRunning)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .frame(maxHeight: .infinity)
+                HStack(spacing: 8) {
+                    valueTile("Balance", String(format: "%+.2f", model.metrics.meterValues[6]))
+                    valueTile("Mono retention", db(model.metrics.analysis.stereo.monoEnergyRetentionDB.value))
+                    valueTile("Side energy", String(format: "%.1f%%", 100 * model.metrics.meterValues[7]))
+                    valueTile("Mono cancellation", cancellationRiskText)
+                }
+                .frame(height: 48)
+            }
+        }
+    }
+
+    private var spectrumPanel: some View {
+        panel("Spectrum", subtitle: "2048-point periodic Hann · logarithmic frequency") {
+            VStack(spacing: 7) {
+                HStack(spacing: 8) {
+                    Text("Basis")
+                    Picker("Basis", selection: $midSide) {
+                        Text("L/R").tag(false); Text("M/S").tag(true)
+                    }
+                    .labelsHidden().pickerStyle(.segmented).frame(width: 90)
+                    Text("Average")
+                    Picker("Average", selection: $slowSpectrum) {
+                        Text("Fast").tag(false); Text("Slow").tag(true)
+                    }
+                    .labelsHidden().pickerStyle(.segmented).frame(width: 100)
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 8) {
+                    Toggle("Peak hold", isOn: $peakHold).toggleStyle(.checkbox)
+                    Picker("Layout", selection: $stereoSpectrum) {
+                        Text("Mono").tag(false); Text("Stereo").tag(true)
+                    }
+                    .labelsHidden().pickerStyle(.segmented).frame(width: 110)
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 8) {
+                    spectrumPlot(channel: leftChannel, side: false)
+                    if stereoSpectrum { spectrumPlot(channel: rightChannel, side: true) }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                HStack(spacing: 14) {
+                    spectrumLegend(.mint, midSide ? "Mid" : "Output \(leftChannel + 1)")
+                    if stereoSpectrum {
+                        spectrumLegend(.orange, midSide ? "Side" : "Output \(rightChannel + 1)")
+                    }
+                    if peakHold { spectrumLegend(Color(red: 0.75, green: 0.55, blue: 0.22), "Peak hold") }
+                    Spacer(minLength: 0)
+                }
+                .font(.caption2)
+            }
+        }
+    }
+
+    private var loudnessPanel: some View {
+        panel("Loudness", subtitle: "EBU R128 / ITU-R BS.1770 · 48 kHz measurement path") {
+            HStack(spacing: 8) {
+                valueTile("Momentary", measurementText(model.metrics.analysis.loudness.momentaryLUFS))
+                valueTile("Short-term", measurementText(model.metrics.analysis.loudness.shortTermLUFS))
+                valueTile("Integrated", measurementText(model.metrics.analysis.loudness.integratedLUFS))
+                valueTile(model.metrics.analysis.loudness.loudnessRangeIsProvisional
+                          ? "LRA · provisional" : "LRA",
+                          measurementText(model.metrics.analysis.loudness.loudnessRangeLU))
+                valueTile("Max True Peak", dbtpText(model.metrics.analysis.loudness.maximumTruePeakDBTP))
+            }
+            HStack(spacing: 8) {
+                valueTile("Max Momentary",
+                          measurementText(model.metrics.analysis.loudness.maximumMomentaryLUFS))
+                valueTile("Max Short-term",
+                          measurementText(model.metrics.analysis.loudness.maximumShortTermLUFS))
+                valueTile("PLR", dbValue(model.metrics.analysis.loudness.plrDB, unit: "dB"))
+                valueTile("Session crest",
+                          dbValue(model.metrics.analysis.loudness.crestFactorDB, unit: "dB"))
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                loudnessSessionControls
+                Spacer()
+                Text(String(format: "Included %.1f s · 24 h max",
+                            Double(model.metrics.analysis.loudness.includedAudioFrames) / 48_000))
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
+            Text("Integrated, LRA, and maximum True Peak accumulate while measurement runs.")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+
+    private var diagnosticsPanel: some View {
+        panel("Diagnostics", subtitle: "Ring state, observer quality, and timing") {
+            HStack(spacing: 8) {
+                Picker("View", selection: $model.mode) {
+                    Text("Waveform").tag(AudioObserverDisplayMode.waveform)
+                    Text("Performance").tag(AudioObserverDisplayMode.phaseScope)
+                }
+                .labelsHidden().pickerStyle(.segmented).frame(width: 170)
+                Text(model.status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            if model.mode == .waveform {
+                scopePlot(mode: .waveform)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 100)
+            }
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 7) {
+                    diagnosticsRow("Ring / mapped", "\(model.snapshot.activeRingFrames) / \(model.snapshot.mappedFrames) frames")
+                    diagnosticsRow("Write end / epoch", "\(model.snapshot.writeEndFrame) · \(model.snapshot.sessionEpoch)/\(model.snapshot.discontinuityEpoch)")
+                    diagnosticsRow("In flight / wrap / unsafe", "\(model.metrics.inFlight) / \(model.metrics.windowsCrossingWrap) / \(model.metrics.unsafeWindows)")
+                }
+                VStack(alignment: .leading, spacing: 7) {
+                    diagnosticsRow("CPU / queued / GPU", "\(milliseconds(model.metrics.cpuEncodeMilliseconds)) / \(milliseconds(model.metrics.scheduledToStartMilliseconds)) / \(milliseconds(model.metrics.gpuMilliseconds))")
+                    diagnosticsRow("Age / overwrite margin", "\(milliseconds(model.metrics.sampleAgeMilliseconds)) / \(milliseconds(model.metrics.overwriteMarginMilliseconds))")
+                    diagnosticsRow("Invalid samples / over-range L·R", "\(model.metrics.invalidSampleCount) / \(model.metrics.analysis.levels.left.overRangeSamples) · \(model.metrics.analysis.levels.right.overRangeSamples)")
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .font(.caption)
+        }
+    }
+
+    private func spectrumLegend(_ color: Color, _ title: String) -> some View {
+        HStack(spacing: 4) {
+            Capsule().fill(color).frame(width: 10, height: 4)
+            Text(title).foregroundStyle(.secondary)
+        }
     }
 
     private func channelPicker(_ title: String, selection: Binding<UInt32>) -> some View {
@@ -264,7 +387,8 @@ struct AudioObserverPanel: View {
 
     private func spectrumPlot(channel: UInt32, side: Bool) -> some View {
         VStack(spacing: 4) {
-            Text(midSide ? (side ? "Side · (L−R)/√2" : "Mid · (L+R)/√2") : "Output \(channel + 1)").font(.caption)
+            Text(midSide ? (side ? "Side · (L−R)/√2" : "Mid · (L+R)/√2") : "Output \(channel + 1)")
+                .font(.caption2)
             ZStack {
                 Color(red: 0.025, green: 0.035, blue: 0.05)
                 if model.snapshot.validHistoryFrames >= 2048 {
@@ -281,20 +405,21 @@ struct AudioObserverPanel: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func panel<Content: View>(_ title: String, subtitle: String,
                                       @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 7) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline)
                 Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.85)
             }
             content()
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color.primary.opacity(0.035))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
@@ -338,8 +463,10 @@ struct AudioObserverPanel: View {
     private func diagnosticsRow(_ title: String, _ value: String) -> some View {
         HStack {
             Text(title).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.75)
             Spacer(minLength: 12)
-            Text(value).font(.system(.caption, design: .monospaced)).multilineTextAlignment(.trailing)
+            Text(value).font(.system(.caption, design: .monospaced))
+                .multilineTextAlignment(.trailing).lineLimit(1).minimumScaleFactor(0.65)
         }
     }
 
@@ -388,6 +515,16 @@ struct AudioObserverPanel: View {
         case .normal: "Low"
         case .risk: "Potential"
         }
+    }
+
+    private var phasePersistenceText: String {
+        guard model.snapshot.sampleRateHz > 0,
+              model.snapshot.activeRingFrames > 0 else { return "ring persistence" }
+        let frames = AudioAnalyzerGeometry.goniometerWindowFrames(
+            activeRingFrames: model.snapshot.activeRingFrames)
+        let milliseconds = Double(frames)
+            / Double(model.snapshot.sampleRateHz) * 1_000
+        return String(format: "%.0f ms persistence", milliseconds)
     }
 
     private func measurementText(_ measurement: AudioMeasurement<Float>) -> String {

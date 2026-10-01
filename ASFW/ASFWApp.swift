@@ -12,6 +12,6 @@ struct ASFWApp: App {
         WindowGroup {
             ModernContentView()
         }
-        .defaultSize(width: 1000, height: 700)
+        .defaultSize(width: 1440, height: 900)
     }
 }

@@ -27,10 +27,9 @@ struct AudioAnalyzerView: View {
 
             if let device = devicesModel.selectedDevice,
                let guid = ASFWAudioObserverClient.guid(fromDeviceUID: device.uid) {
-                ScrollView {
-                    AudioObserverPanel(guid: guid, deviceName: device.name)
-                        .id(guid)
-                }
+                AudioObserverPanel(guid: guid, deviceName: device.name)
+                    .id(guid)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView(
                     "No ASFW Audio Device",

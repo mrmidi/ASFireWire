@@ -18,6 +18,7 @@ struct AudioObserverSnapshot: Sendable {
 
 struct AudioObserverMetrics: Sendable {
     var analysis = AudioAnalyzerSnapshot()
+    var stereoHistory: [AudioStereoHistoryPoint] = []
     var cpuEncodeMilliseconds: Double?
     var scheduledToStartMilliseconds: Double?
     var gpuMilliseconds: Double?
@@ -214,8 +215,14 @@ final class AudioObserverRenderState: @unchecked Sendable {
 }
 
 final class AudioObserverMetricsState: @unchecked Sendable {
+    private static let stereoHistoryCapacity = 600
     private let lock = NSLock()
     private var value = AudioObserverMetrics()
+    private var stereoHistory = [AudioStereoHistoryPoint?](repeating: nil,
+                                                           count: stereoHistoryCapacity)
+    private var stereoHistoryWriteIndex = 0
+    private var stereoHistoryCount = 0
+    private var nextStereoHistoryFrame: UInt64?
     private var lastMeterTime = Date.distantPast
     private var meterKey: String?
     private var loudnessEnergyRing = [AudioLoudnessEnergyChunk?](repeating: nil, count: 300)
@@ -226,7 +233,9 @@ final class AudioObserverMetricsState: @unchecked Sendable {
     func read() -> AudioObserverMetrics {
         lock.lock()
         defer { lock.unlock() }
-        return value
+        var snapshot = value
+        snapshot.stereoHistory = orderedStereoHistory()
+        return snapshot
     }
 
     func submitted(crossesWrap: Bool) {
@@ -302,6 +311,7 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         value.analysis.stereo.monoEnergyRetentionDB = .valid(Float(bitPattern: floats[15]))
         value.analysis.stereo.cancellationRisk = correlationValid && Float(bitPattern: floats[2]) < 0
             ? .risk : (correlationValid ? .normal : .insufficientSignal)
+        appendStereoHistory(token: token, correlationValid: correlationValid)
         value.analysis.diagnostics.cursor = .valid(token.endFrame)
         value.analysis.diagnostics.sampleAgeMilliseconds = .valid(sampleAgeMilliseconds)
         value.analysis.diagnostics.overwriteMarginMilliseconds = .valid(overwriteMarginMilliseconds)
@@ -380,6 +390,7 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         value.analysis.diagnostics.unsafeRanges = value.unsafeWindows
         value.analysis.diagnostics.rejectedRanges = value.unsafeWindows
         meterKey = nil
+        clearStereoHistory()
         lock.unlock()
     }
 
@@ -400,6 +411,7 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         loudnessSession.markDiscontinuous()
         publishLoudnessSessionState()
         meterKey = nil
+        clearStereoHistory()
         lock.unlock()
     }
 
@@ -416,7 +428,57 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         loudnessSession.markDiscontinuous()
         publishLoudnessSessionState()
         meterKey = nil
+        clearStereoHistory()
         lock.unlock()
+    }
+
+    private func appendStereoHistory(token: AudioFrameToken, correlationValid: Bool) {
+        guard correlationValid,
+              let correlation = value.analysis.stereo.rollingCorrelation.value,
+              let sideEnergy = value.analysis.stereo.sideEnergyFraction.value else {
+            return
+        }
+        let interval = max(UInt64(1), UInt64(token.geometry.sampleRateHz) / 10)
+        let endFrame = token.endFrame
+        let nextFrame = nextStereoHistoryFrame ?? endFrame
+        guard endFrame >= nextFrame else { return }
+        let breakBefore: Bool
+        if let last = latestStereoHistoryPoint {
+            breakBefore = endFrame - last.endFrame > interval * 2
+        } else {
+            breakBefore = false
+        }
+        stereoHistory[stereoHistoryWriteIndex] = AudioStereoHistoryPoint(
+            endFrame: endFrame,
+            correlation: correlation,
+            sideEnergyFraction: sideEnergy,
+            breakBefore: breakBefore)
+        stereoHistoryWriteIndex = (stereoHistoryWriteIndex + 1) % stereoHistory.count
+        stereoHistoryCount = min(stereoHistory.count, stereoHistoryCount + 1)
+        nextStereoHistoryFrame = endFrame &+ interval
+    }
+
+    private var latestStereoHistoryPoint: AudioStereoHistoryPoint? {
+        guard stereoHistoryCount > 0 else { return nil }
+        let index = (stereoHistoryWriteIndex + stereoHistory.count - 1) % stereoHistory.count
+        return stereoHistory[index]
+    }
+
+    private func orderedStereoHistory() -> [AudioStereoHistoryPoint] {
+        guard stereoHistoryCount > 0 else { return [] }
+        let first = (stereoHistoryWriteIndex + stereoHistory.count - stereoHistoryCount)
+            % stereoHistory.count
+        return (0..<stereoHistoryCount).compactMap { offset in
+            stereoHistory[(first + offset) % stereoHistory.count]
+        }
+    }
+
+    private func clearStereoHistory() {
+        stereoHistory = [AudioStereoHistoryPoint?](repeating: nil, count: Self.stereoHistoryCapacity)
+        stereoHistoryWriteIndex = 0
+        stereoHistoryCount = 0
+        nextStereoHistoryFrame = nil
+        value.stereoHistory = []
     }
 
     @discardableResult

@@ -71,7 +71,6 @@ private struct ObserverParams {
 }
 
 final class AudioObserverRenderer: NSObject, MTKViewDelegate {
-    private static let phaseWindowFrames: UInt32 = 1024
     private static let waveformWindowFrames: UInt32 = 960
 
     private let buffer: MTLBuffer?
@@ -99,8 +98,11 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         let snapshot = renderState.read()
+        // Read two thirds of the active ring directly. The unused third is
+        // overwrite slack while the GPU consumes this best-effort view.
         let desiredWindow = mode == .phaseScope
-            ? Self.phaseWindowFrames
+            ? AudioAnalyzerGeometry.goniometerWindowFrames(
+                activeRingFrames: snapshot.activeRingFrames)
             : Self.waveformWindowFrames
         let validFrames = min(snapshot.validHistoryFrames,
                               snapshot.activeRingFrames,
