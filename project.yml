@@ -155,7 +155,7 @@ targets:
     type: application
     platform: macOS
     sources:
-      # Includes the AV/C report model, formatter, store and view; also shared Metal plots, Views/LoudnessHistoryView.swift, AnalyzerLivePanel.swift, and analyzer shaders.
+      # Includes the AV/C report model, formatter, store and view; also AnalyzerRenderSubmission.swift, shared Metal plots, Views/AnalyzerPanelCanvas.swift, AnalyzerScalarText.swift, AnalyzerLivePanel.swift, and analyzer shaders.
       - path: ASFW
     dependencies:
       - target: ASFWDriver
@@ -202,7 +202,7 @@ targets:
     type: bundle.unit-test
     platform: macOS
     sources:
-      # Includes AudioObserver spectrum and scalar-publication regression tests.
+      # Includes AudioObserver spectrum, scalar/readout-publication, autonomous acquisition, shared-canvas layout, and render-batching regression tests.
       - path: ASFWTests
     dependencies:
       - target: ASFW

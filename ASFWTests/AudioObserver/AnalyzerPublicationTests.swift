@@ -1,4 +1,5 @@
 import Combine
+import Foundation
 import Testing
 @testable import ASFW
 
@@ -33,5 +34,30 @@ struct AnalyzerPublicationTests {
         #expect(monitor == 1)
         #expect(diagnostics == 2)
         withExtendedLifetime(subscriptions) {}
+    }
+}
+
+struct AnalyzerScalarPublicationTests {
+    @MainActor
+    @Test func subDecimalChangesDoNotInvalidateTheDisplayedNumber() {
+        let state = AnalyzerPanelUIState(section: .monitor)
+        let readout = AnalyzerScalarReadout(state: state) { metrics, _ in
+            String(format: "%.1f", metrics.analysis.stereo.correlation.value ?? 0)
+        }
+        var invalidations = 0
+        let subscription = readout.objectWillChange.sink { invalidations += 1 }
+        var metrics = AudioObserverMetrics()
+        metrics.analysis.stereo.correlation = .valid(0.811)
+        state.publish(metrics, snapshot: AudioObserverSnapshot())
+        #expect(readout.text == "0.8")
+        #expect(invalidations == 1)
+        metrics.analysis.stereo.correlation = .valid(0.819)
+        state.publish(metrics, snapshot: AudioObserverSnapshot())
+        #expect(invalidations == 1)
+        metrics.analysis.stereo.correlation = .valid(0.91)
+        state.publish(metrics, snapshot: AudioObserverSnapshot())
+        #expect(readout.text == "0.9")
+        #expect(invalidations == 2)
+        withExtendedLifetime(subscription) {}
     }
 }

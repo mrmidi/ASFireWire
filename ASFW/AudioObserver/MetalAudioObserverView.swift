@@ -1,6 +1,7 @@
 import Metal
 import MetalKit
 import SwiftUI
+import QuartzCore
 
 enum AudioObserverDisplayMode: Sendable, Equatable {
     case phaseScope
@@ -29,8 +30,11 @@ struct MetalAudioObserverView: NSViewRepresentable {
         configure(view, coordinator: context.coordinator)
         context.coordinator.drawObserver = NotificationCenter.default.addObserver(
             forName: .asfwAnalysisCompleted, object: client.renderState, queue: .main
-        ) { [weak view] _ in
-            MainActor.assumeIsolated { view?.draw() }
+        ) { [weak view, weak coordinator = context.coordinator] _ in
+            MainActor.assumeIsolated {
+                guard let coordinator, coordinator.cadence.shouldDraw(now: CACurrentMediaTime(), hz: mode == .phaseScope ? 60 : 30) else { return }
+                view?.draw()
+            }
         }
         return view
     }
@@ -51,7 +55,8 @@ struct MetalAudioObserverView: NSViewRepresentable {
                 mode: mode,
                 leftChannel: leftChannel,
                 rightChannel: rightChannel,
-                renderState: client.renderState)
+                renderState: client.renderState,
+                submission: client.renderSubmission)
             coordinator.renderer = renderer
             view.delegate = renderer
         } else {
@@ -61,6 +66,7 @@ struct MetalAudioObserverView: NSViewRepresentable {
     }
 
     final class Coordinator {
+        var cadence = AnalyzerDrawCadence()
         var drawObserver: NSObjectProtocol?
         deinit { if let drawObserver { NotificationCenter.default.removeObserver(drawObserver) } }
 
@@ -69,7 +75,7 @@ struct MetalAudioObserverView: NSViewRepresentable {
     }
 }
 
-private struct ObserverParams {
+struct ObserverParams {
     var writeEndFrame: UInt64
     var ringFrames: UInt32
     var channels: UInt32
@@ -87,7 +93,7 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
     private let rightChannel: UInt32
     private let mode: AudioObserverDisplayMode
     private let renderState: AudioObserverRenderState
-    private let commandQueue: MTLCommandQueue?
+    private let submission: AnalyzerRenderSubmission
     private let slots = DispatchSemaphore(value: 2)
     private var lastWriteEnd: UInt64?
 
@@ -96,14 +102,15 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
          mode: AudioObserverDisplayMode,
          leftChannel: UInt32,
          rightChannel: UInt32,
-         renderState: AudioObserverRenderState) {
+         renderState: AudioObserverRenderState,
+         submission: AnalyzerRenderSubmission) {
         self.buffer = buffer
         self.renderPipeline = renderPipeline
         self.mode = mode
         self.leftChannel = leftChannel
         self.rightChannel = rightChannel
         self.renderState = renderState
-        self.commandQueue = renderPipeline.device.makeCommandQueue()
+        self.submission = submission
     }
 
     func draw(in view: MTKView) {
@@ -126,7 +133,7 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
               snapshot.activeRingFrames > 0,
               let pass = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
-              let commandBuffer = commandQueue?.makeCommandBuffer() else {
+              let commandBuffer = submission.commandBuffer(for: renderPipeline.device) else {
             return
         }
 
@@ -163,7 +170,7 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
         commandBuffer.addCompletedHandler { _ in slots.signal() }
         submitted = true
         lastWriteEnd = snapshot.writeEndFrame
-        commandBuffer.commit()
+        submission.commit(commandBuffer)
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}

@@ -2,7 +2,7 @@ import Foundation
 import IOKit
 import Metal
 
-struct AudioObserverSnapshot: Sendable, Equatable {
+nonisolated struct AudioObserverSnapshot: Sendable, Equatable {
     var writeEndFrame: UInt64 = 0
     var oldestValidFrame: UInt64 = 0
     var sessionEpoch: UInt64 = 0
@@ -16,7 +16,7 @@ struct AudioObserverSnapshot: Sendable, Equatable {
     var ioRunning = false
 }
 
-struct AudioObserverMetrics: Sendable, Equatable {
+nonisolated struct AudioObserverMetrics: Sendable, Equatable {
     var analysis = AudioAnalyzerSnapshot()
     var stereoHistory: [AudioStereoHistoryPoint] = []
     var cpuEncodeMilliseconds: Double?
@@ -50,7 +50,7 @@ struct AudioObserverMetrics: Sendable, Equatable {
     }
 }
 
-struct AudioObserverWireState: Sendable {
+nonisolated struct AudioObserverWireState: Sendable {
     let writeEndFrame: UInt64
     let oldestValidFrame: UInt64
     let sessionEpoch: UInt64
@@ -60,44 +60,6 @@ struct AudioObserverWireState: Sendable {
     let activeRingFrames: UInt32
     let channels: UInt32
     let sampleRateHz: UInt32
-}
-
-/// Keeps synchronous IOKit state reads off SwiftUI's main actor.
-actor AudioObserverPoller {
-    private let reader: AudioObserverStateReader
-    private let mappedSize: UInt64
-
-    init(reader: AudioObserverStateReader, mappedSize: UInt64) {
-        self.reader = reader
-        self.mappedSize = mappedSize
-    }
-
-    func poll() throws -> AudioObserverSnapshot {
-        let state = try reader.read()
-        guard state.memoryGeneration == state.mappedGeneration else {
-            throw AudioObserverError.memoryGenerationChanged
-        }
-        let bytesPerFrame = UInt64(state.channels) * UInt64(MemoryLayout<Float>.stride)
-        guard bytesPerFrame > 0 else { throw AudioObserverError.invalidGeometry }
-        let mappedFrames = mappedSize / bytesPerFrame
-        guard mappedFrames >= UInt64(state.activeRingFrames) else {
-            throw AudioObserverError.invalidGeometry
-        }
-        let valid = state.writeEndFrame >= state.oldestValidFrame
-            ? min(UInt64(state.activeRingFrames), state.writeEndFrame - state.oldestValidFrame)
-            : 0
-        return AudioObserverSnapshot(writeEndFrame: state.writeEndFrame,
-                                      oldestValidFrame: state.oldestValidFrame,
-                                      sessionEpoch: state.sessionEpoch,
-                                      discontinuityEpoch: state.discontinuityEpoch,
-                                      memoryGeneration: state.memoryGeneration,
-                                      activeRingFrames: state.activeRingFrames,
-                                      channels: state.channels,
-                                      sampleRateHz: state.sampleRateHz,
-                                      mappedFrames: mappedFrames,
-                                      validHistoryFrames: UInt32(valid),
-                                      ioRunning: valid > 0)
-    }
 }
 
 private final class AudioObserverMappingLifetime: @unchecked Sendable {
@@ -115,7 +77,11 @@ private final class AudioObserverMappingLifetime: @unchecked Sendable {
     }
 }
 
-final class AudioObserverStateReader: @unchecked Sendable {
+nonisolated protocol AudioAnalysisStateReading: Sendable {
+    func read() throws -> AudioObserverWireState
+}
+
+nonisolated final class AudioObserverStateReader: AudioAnalysisStateReading, @unchecked Sendable {
     nonisolated private static let selector: UInt32 = 67
     private let connection: io_connect_t
     private let guid: UInt64
@@ -156,7 +122,7 @@ final class AudioObserverStateReader: @unchecked Sendable {
     }
 }
 
-enum AudioObserverError: LocalizedError, Sendable {
+nonisolated enum AudioObserverError: LocalizedError, Sendable {
     case serviceUnavailable
     case openFailed(kern_return_t)
     case selectionFailed(kern_return_t)
@@ -197,7 +163,7 @@ enum AudioObserverError: LocalizedError, Sendable {
     }
 }
 
-final class AudioObserverRenderState: @unchecked Sendable {
+nonisolated final class AudioObserverRenderState: @unchecked Sendable {
     private let lock = NSLock()
     private var snapshot = AudioObserverSnapshot()
 
@@ -214,7 +180,7 @@ final class AudioObserverRenderState: @unchecked Sendable {
     }
 }
 
-final class AudioObserverMetricsState: @unchecked Sendable {
+nonisolated final class AudioObserverMetricsState: @unchecked Sendable {
     private static let stereoHistoryCapacity = 600
     private let lock = NSLock()
     private var value = AudioObserverMetrics()
@@ -633,8 +599,6 @@ final class ASFWAudioObserverClient {
     private var mappedSize: mach_vm_size_t = 0
     private var mappingLifetime: AudioObserverMappingLifetime?
     private(set) var stateReader: AudioObserverStateReader?
-    private var poller: AudioObserverPoller?
-    private(set) var snapshot = AudioObserverSnapshot()
 
     let renderState = AudioObserverRenderState()
     let metrics = AudioObserverMetricsState()
@@ -642,6 +606,7 @@ final class ASFWAudioObserverClient {
     private(set) var ringBuffer: MTLBuffer?
     private(set) var phaseRenderPipeline: MTLRenderPipelineState?
     let plotHistory = AnalyzerPlotHistoryState()
+    let renderSubmission = AnalyzerRenderSubmission()
     private(set) var waveformRenderPipeline: MTLRenderPipelineState?
 
     init(guid: UInt64) {
@@ -709,7 +674,6 @@ final class ASFWAudioObserverClient {
             closeConnection()
             throw AudioObserverError.invalidGeometry
         }
-        poller = AudioObserverPoller(reader: stateReader, mappedSize: UInt64(length))
 
         guard let device = MTLCreateSystemDefaultDevice() else {
             closeConnection()
@@ -745,7 +709,7 @@ final class ASFWAudioObserverClient {
             closeConnection()
             throw AudioObserverError.pipelineFailed
         }
-        snapshot = AudioObserverSnapshot(writeEndFrame: initialState.writeEndFrame,
+        let snapshot = AudioObserverSnapshot(writeEndFrame: initialState.writeEndFrame,
                                           oldestValidFrame: initialState.oldestValidFrame,
                                           sessionEpoch: initialState.sessionEpoch,
                                           discontinuityEpoch: initialState.discontinuityEpoch,
@@ -759,15 +723,6 @@ final class ASFWAudioObserverClient {
                                                 ? initialState.writeEndFrame - initialState.oldestValidFrame : 0)),
                                           ioRunning: initialState.writeEndFrame > initialState.oldestValidFrame)
         renderState.update(snapshot)
-    }
-
-    func poll() async throws -> AudioObserverSnapshot {
-        guard mappedAddress != 0, let poller else {
-            throw AudioObserverError.serviceUnavailable
-        }
-        snapshot = try await poller.poll()
-        renderState.update(snapshot)
-        return snapshot
     }
 
     func close() {
@@ -790,7 +745,6 @@ final class ASFWAudioObserverClient {
         waveformRenderPipeline = nil
         metalDevice = nil
         stateReader = nil
-        poller = nil
         if mappingLifetime != nil {
             mappingLifetime = nil
             connection = IO_OBJECT_NULL

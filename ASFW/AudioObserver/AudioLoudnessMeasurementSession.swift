@@ -2,7 +2,7 @@ import Foundation
 
 /// Owns the user-controlled Integrated Loudness interval. It receives only
 /// 10 ms GPU-produced energy records, never PCM samples.
-struct AudioLoudnessMeasurementSession: Sendable {
+nonisolated struct AudioLoudnessMeasurementSession: Sendable {
     static let supportedSampleRate: UInt32 = 48_000
     static let maximumDurationSeconds: UInt64 = 24 * 60 * 60
     private static let shortTermWindowChunks = 300

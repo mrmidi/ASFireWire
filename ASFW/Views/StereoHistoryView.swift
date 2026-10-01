@@ -14,7 +14,7 @@ struct StereoHistoryView: View {
     }
 
     let client: ASFWAudioObserverClient
-    let points: [AudioStereoHistoryPoint]
+    let state: AnalyzerPanelUIState
     let sampleRateHz: UInt32
     let active: Bool
 
@@ -25,13 +25,14 @@ struct StereoHistoryView: View {
                     HStack {
                         Text(series.rawValue).font(.caption.weight(.medium))
                         Spacer()
-                        Text(currentValue(for: series))
+                        AnalyzerScalarText(state: state) { metrics, _ in
+                            currentValue(for: series, metrics: metrics)
+                        }
                             .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
                     ZStack {
                         Canvas { context, size in draw(series, in: &context, size: size) }
-                        MetalAnalyzerPlotView(client: client, mode: 2,
-                                              index: series == .correlation ? 0 : 1, historyState: client.plotHistory)
+                        AnalyzerCanvasSlot(mode: 2, index: series == .correlation ? 0 : 1)
                             .padding(.leading, 34).padding(.trailing, 6)
                             .padding(.top, 5).padding(.bottom, 16)
                     }
@@ -46,11 +47,11 @@ struct StereoHistoryView: View {
         }
     }
 
-    private func currentValue(for series: Series) -> String {
-        guard let point = points.last else { return "—" }
+    private func currentValue(for series: Series, metrics: AudioObserverMetrics) -> String {
+        guard metrics.correlationValid else { return "—" }
         switch series {
-        case .correlation: return String(format: "%+.2f", point.correlation)
-        case .sideEnergy: return String(format: "%.1f%%", point.sideEnergyFraction * 100)
+        case .correlation: return String(format: "%+.2f", metrics.correlationAverage)
+        case .sideEnergy: return String(format: "%.1f%%", (metrics.analysis.stereo.sideEnergyFraction.value ?? 0) * 100)
         }
     }
 

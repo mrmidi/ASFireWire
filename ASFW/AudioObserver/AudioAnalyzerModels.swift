@@ -6,7 +6,7 @@ extension Notification.Name {
 
 // Matches the GPU result layout in AudioObserver.metal. Header words 0...94
 // never overlap the fixed-capacity loudness chunk region.
-enum AudioAnalysisLayout {
+nonisolated enum AudioAnalysisLayout {
     static let chunkOffset = 96
     static let chunkWords = 8
     static let chunkCapacity = 4
@@ -18,7 +18,7 @@ enum AudioAnalysisLayout {
     }
 }
 
-enum AudioAnalyzerGeometry {
+nonisolated enum AudioAnalyzerGeometry {
     /// Keep one third of the active ring between the oldest plotted sample
     /// and the writer, leaving overwrite slack for GPU execution.
     static func goniometerWindowFrames(activeRingFrames: UInt32) -> UInt32 {
@@ -26,7 +26,7 @@ enum AudioAnalyzerGeometry {
     }
 }
 
-enum AudioMeasurementStatus: Sendable, Equatable {
+nonisolated enum AudioMeasurementStatus: Sendable, Equatable {
     case unsupported
     case warmingUp
     case valid
@@ -34,7 +34,7 @@ enum AudioMeasurementStatus: Sendable, Equatable {
     case discontinuous
 }
 
-struct AudioMeasurement<Value: Sendable & Equatable>: Sendable, Equatable {
+nonisolated struct AudioMeasurement<Value: Sendable & Equatable>: Sendable, Equatable {
     var value: Value?
     var status: AudioMeasurementStatus
 
@@ -47,7 +47,7 @@ struct AudioMeasurement<Value: Sendable & Equatable>: Sendable, Equatable {
     }
 }
 
-struct AudioChannelPair: Sendable, Equatable {
+nonisolated struct AudioChannelPair: Sendable, Equatable {
     /// Zero-based indices into the mapped interleaved CoreAudio output ring.
     var leftIndex: UInt32 = 0
     var rightIndex: UInt32 = 1
@@ -60,7 +60,7 @@ struct AudioChannelPair: Sendable, Equatable {
     }
 }
 
-struct AudioRingGeometry: Sendable, Equatable {
+nonisolated struct AudioRingGeometry: Sendable, Equatable {
     var sampleRateHz: UInt32
     var channels: UInt32
     var activeFrames: UInt32
@@ -68,7 +68,7 @@ struct AudioRingGeometry: Sendable, Equatable {
     var memoryGeneration: UInt64
 }
 
-struct AudioFrameToken: Sendable, Equatable {
+nonisolated struct AudioFrameToken: Sendable, Equatable {
     var geometry: AudioRingGeometry
     var sessionEpoch: UInt64
     var discontinuityEpoch: UInt64
@@ -77,27 +77,27 @@ struct AudioFrameToken: Sendable, Equatable {
     var endFrame: UInt64
 }
 
-struct AudioChannelLevelMetrics: Sendable, Equatable {
+nonisolated struct AudioChannelLevelMetrics: Sendable, Equatable {
     var samplePeak: AudioMeasurement<Float> = .warmingUp
     var rms: AudioMeasurement<Float> = .warmingUp
     var truePeak: AudioMeasurement<Float> = .unsupported
     var overRangeSamples: UInt32 = 0
 }
 
-struct AudioLevelMetrics: Sendable, Equatable {
+nonisolated struct AudioLevelMetrics: Sendable, Equatable {
     var left = AudioChannelLevelMetrics()
     var right = AudioChannelLevelMetrics()
     var mid = AudioChannelLevelMetrics()
     var side = AudioChannelLevelMetrics()
 }
 
-enum AudioCancellationRisk: Sendable, Equatable {
+nonisolated enum AudioCancellationRisk: Sendable, Equatable {
     case insufficientSignal
     case normal
     case risk
 }
 
-struct AudioStereoMetrics: Sendable, Equatable {
+nonisolated struct AudioStereoMetrics: Sendable, Equatable {
     var correlation: AudioMeasurement<Float> = .warmingUp
     var rollingCorrelation: AudioMeasurement<Float> = .warmingUp
     /// Normalized energy imbalance: -1 is left-only and +1 is right-only.
@@ -109,14 +109,14 @@ struct AudioStereoMetrics: Sendable, Equatable {
     var cancellationRisk: AudioCancellationRisk = .insufficientSignal
 }
 
-struct AudioStereoHistoryPoint: Sendable, Equatable {
+nonisolated struct AudioStereoHistoryPoint: Sendable, Equatable {
     var endFrame: UInt64
     var correlation: Float
     var sideEnergyFraction: Float
     var breakBefore = false
 }
 
-struct AudioLoudnessMetrics: Sendable, Equatable {
+nonisolated struct AudioLoudnessMetrics: Sendable, Equatable {
     var momentaryLUFS: AudioMeasurement<Float> = .unsupported
     var shortTermLUFS: AudioMeasurement<Float> = .unsupported
     var integratedLUFS: AudioMeasurement<Float> = .unsupported
@@ -133,7 +133,7 @@ struct AudioLoudnessMetrics: Sendable, Equatable {
     var loudnessRangeIsProvisional = false
 }
 
-enum AudioLoudnessSessionPhase: Sendable, Equatable {
+nonisolated enum AudioLoudnessSessionPhase: Sendable, Equatable {
     case idle
     case running
     case paused
@@ -141,7 +141,7 @@ enum AudioLoudnessSessionPhase: Sendable, Equatable {
     case complete
 }
 
-struct AudioLoudnessEnergyChunk: Sendable, Equatable {
+nonisolated struct AudioLoudnessEnergyChunk: Sendable, Equatable {
     var endFrame: UInt64
     var weightedEnergy: Float
     /// Sum of squared, unweighted L/R samples for the same 10 ms interval.
@@ -152,7 +152,7 @@ struct AudioLoudnessEnergyChunk: Sendable, Equatable {
     var frameCount: UInt32
 }
 
-struct AudioDiagnosticsMetrics: Sendable, Equatable {
+nonisolated struct AudioDiagnosticsMetrics: Sendable, Equatable {
     var cursor: AudioMeasurement<UInt64> = .warmingUp
     var sampleAgeMilliseconds: AudioMeasurement<Double> = .warmingUp
     var overwriteMarginMilliseconds: AudioMeasurement<Double> = .warmingUp
@@ -166,7 +166,7 @@ struct AudioDiagnosticsMetrics: Sendable, Equatable {
     var invalidSamples: UInt64 = 0
 }
 
-struct AudioAnalyzerSnapshot: Sendable, Equatable {
+nonisolated struct AudioAnalyzerSnapshot: Sendable, Equatable {
     var token: AudioFrameToken?
     var selectedPair = AudioChannelPair()
     var streamStatus: AudioMeasurementStatus = .warmingUp

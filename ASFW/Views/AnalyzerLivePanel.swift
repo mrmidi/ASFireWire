@@ -4,7 +4,7 @@ import SwiftUI
 /// Only this child subscribes to its panel's scalar publication.
 @MainActor
 final class AnalyzerPanelUIState: ObservableObject {
-    enum Section { case monitor, stereo, loudness, diagnostics }
+    enum Section { case monitor, stereo, loudness, loudnessControls, diagnostics }
     let section: Section
     init(section: Section = .diagnostics) { self.section = section }
 
@@ -19,6 +19,7 @@ final class AnalyzerPanelUIState: ObservableObject {
                 self.metrics.analysis.stereo != metrics.analysis.stereo
         case .stereo: changed = self.metrics.analysis.stereo != metrics.analysis.stereo
         case .loudness: changed = self.metrics.analysis.loudness != metrics.analysis.loudness
+        case .loudnessControls: changed = self.metrics.analysis.loudness.sessionPhase != metrics.analysis.loudness.sessionPhase
         case .diagnostics: changed = self.metrics != metrics || self.snapshot != snapshot
         }
         guard changed || self.snapshot.ioRunning != snapshot.ioRunning else { return }

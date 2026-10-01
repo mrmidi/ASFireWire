@@ -2,7 +2,7 @@ import Foundation
 @preconcurrency import Metal
 import QuartzCore
 
-private struct ConsumeRangeParams {
+nonisolated private struct ConsumeRangeParams {
     var startFrame: UInt64
     var frameCount: UInt32
     var ringFrames: UInt32
@@ -11,7 +11,7 @@ private struct ConsumeRangeParams {
     var rightChannel: UInt32
 }
 
-private final class AnalysisScheduledTimestamp: @unchecked Sendable {
+nonisolated private final class AnalysisScheduledTimestamp: @unchecked Sendable {
     private let lock = NSLock()
     private var timestamp: Double?
 
@@ -30,21 +30,20 @@ private final class AnalysisScheduledTimestamp: @unchecked Sendable {
 
 /// The command buffer writes this shared result only on the GPU; the immutable
 /// Metal buffer is read after command completion, then copied into Sendable scalars.
-private final class AnalysisOutputSlot: @unchecked Sendable {
+nonisolated private final class AnalysisOutputSlot: @unchecked Sendable {
     private let buffer: MTLBuffer
 
     init(_ buffer: MTLBuffer) { self.buffer = buffer }
 
     func copyValues(count: Int) -> [UInt32] {
         let pointer = buffer.contents().assumingMemoryBound(to: UInt32.self)
-        return (0..<count).map { pointer[$0] }
+        return Array(UnsafeBufferPointer(start: pointer, count: count))
     }
 }
 
 /// Serial, cursor-driven consumer for newly written output frames. It never
 /// reads PCM on the CPU and publishes only scalar GPU reductions.
-@MainActor
-final class AudioAnalysisEngine {
+actor AudioAnalysisEngine {
     private let ringBuffer: MTLBuffer
     private let outputBuffer: MTLBuffer
     private let pipeline: MTLComputePipelineState
@@ -52,24 +51,92 @@ final class AudioAnalysisEngine {
     private var committedFilterState: MTLBuffer
     private var provisionalFilterState: MTLBuffer
     private let queue: MTLCommandQueue
-    private let stateReader: AudioObserverStateReader
+    private let stateReader: any AudioAnalysisStateReading
     private let metrics: AudioObserverMetricsState
-    var onCompletion: (() -> Void)?
+    private let plotHistory: AnalyzerPlotHistoryState
+    private var loudnessHistory: [AnalyzerHistoryVertex] = []
+    private var lastHistoryPublish: Double = -.infinity
+    private var lastCompletionPublish: Double = -.infinity
+    private var completionNotificationPending = false
+    private var onCompletion: (@MainActor @Sendable () -> Void)?
+    private var stopWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func setCompletionHandler(_ handler: @escaping @MainActor @Sendable () -> Void) {
+        guard !stopped else { return }
+        onCompletion = handler
+    }
     private var cursor: UInt64?
     private var lastSessionEpoch: UInt64?
     private var lastDiscontinuityEpoch: UInt64?
     private var lastMemoryGeneration: UInt64?
     private var lastGeometry: AudioRingGeometry?
     private var pair = AudioChannelPair()
+    private var pendingPair: AudioChannelPair?
     private var inFlight = false
     private var stopped = false
     private var resetFilterState = true
     private let writerHeadroomFrames: UInt64 = 4_096
 
+    /// The acquisition clock belongs to the engine, never to SwiftUI. No PCM is
+    /// copied: only the small control snapshot is read on this actor.
+    func run(renderState: AudioObserverRenderState,
+             onLifecycle: @escaping @MainActor @Sendable (AudioObserverSnapshot) -> Void) async throws {
+        var previous: AudioObserverSnapshot?
+        var lastWrite: UInt64?
+        var lastProgress = CACurrentMediaTime()
+        while !Task.isCancelled && !stopped {
+            let wire = try stateReader.read()
+            guard wire.memoryGeneration == wire.mappedGeneration else {
+                throw AudioObserverError.memoryGenerationChanged
+            }
+            let bytesPerFrame = UInt64(wire.channels) * 4
+            guard bytesPerFrame > 0, UInt64(ringBuffer.length) / bytesPerFrame >= UInt64(wire.activeRingFrames) else {
+                throw AudioObserverError.invalidGeometry
+            }
+            let now = CACurrentMediaTime()
+            if lastWrite != wire.writeEndFrame { lastWrite = wire.writeEndFrame; lastProgress = now }
+            let running = now - lastProgress < 0.5 && wire.writeEndFrame > wire.oldestValidFrame
+            let valid = wire.writeEndFrame >= wire.oldestValidFrame
+                ? min(UInt64(wire.activeRingFrames), wire.writeEndFrame - wire.oldestValidFrame) : 0
+            let snapshot = AudioObserverSnapshot(writeEndFrame: wire.writeEndFrame,
+                oldestValidFrame: wire.oldestValidFrame, sessionEpoch: wire.sessionEpoch,
+                discontinuityEpoch: wire.discontinuityEpoch, memoryGeneration: wire.memoryGeneration,
+                activeRingFrames: wire.activeRingFrames, channels: wire.channels, sampleRateHz: wire.sampleRateHz,
+                mappedFrames: UInt64(ringBuffer.length) / bytesPerFrame,
+                validHistoryFrames: running ? UInt32(valid) : 0, ioRunning: running)
+            renderState.update(snapshot)
+            if previous?.ioRunning != snapshot.ioRunning || previous?.memoryGeneration != snapshot.memoryGeneration ||
+                previous?.sessionEpoch != snapshot.sessionEpoch || previous?.discontinuityEpoch != snapshot.discontinuityEpoch ||
+                previous?.sampleRateHz != snapshot.sampleRateHz || previous?.channels != snapshot.channels ||
+                previous?.activeRingFrames != snapshot.activeRingFrames {
+                if !running { metrics.markIdle() }
+                // Rare lifecycle changes may notify the UI; acquiring the next
+                // range never waits for its main executor.
+                Task { @MainActor in onLifecycle(snapshot) }
+            }
+            previous = snapshot
+            if running { consume(snapshot) }
+            // Twenty milliseconds amortizes submission/completion overhead.
+            // consume remains cursor based, so every accepted frame is measured.
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    /// Pipeline setup is also CPU work and must not stall the UI on connection.
+    @concurrent
+    static func make(device: MTLDevice, ringBuffer: MTLBuffer,
+                     stateReader: any AudioAnalysisStateReading,
+                     metrics: AudioObserverMetricsState,
+                     plotHistory: AnalyzerPlotHistoryState) async throws -> AudioAnalysisEngine {
+        try AudioAnalysisEngine(device: device, ringBuffer: ringBuffer,
+            stateReader: stateReader, metrics: metrics, plotHistory: plotHistory)
+    }
+
     init(device: MTLDevice,
          ringBuffer: MTLBuffer,
-         stateReader: AudioObserverStateReader,
-         metrics: AudioObserverMetricsState) throws {
+         stateReader: any AudioAnalysisStateReading,
+         metrics: AudioObserverMetricsState,
+         plotHistory: AnalyzerPlotHistoryState) throws {
         guard device.maxThreadsPerThreadgroup.width >= 256,
               let library = device.makeDefaultLibrary(),
               let function = library.makeFunction(name: "asfwConsumeOutputRange"),
@@ -86,6 +153,7 @@ final class AudioAnalysisEngine {
         self.ringBuffer = ringBuffer
         self.stateReader = stateReader
         self.metrics = metrics
+        self.plotHistory = plotHistory
         self.queue = queue
         self.outputBuffer = output
         committedFilterState = committed
@@ -100,7 +168,12 @@ final class AudioAnalysisEngine {
         }
     }
 
-    func setPair(left: UInt32, right: UInt32, generation: UInt64) {
+    func setPair(_ next: AudioChannelPair) {
+        guard !stopped, next.generation >= (pendingPair ?? pair).generation else { return }
+        pendingPair = next
+    }
+
+    private func setPair(left: UInt32, right: UInt32, generation: UInt64) {
         let next = AudioChannelPair(leftIndex: left, rightIndex: right, generation: generation)
         guard pair != next else { return }
         pair = next
@@ -109,8 +182,15 @@ final class AudioAnalysisEngine {
         metrics.markDiscontinuous()
     }
 
-    func consume(_ snapshot: AudioObserverSnapshot) {
-        guard !stopped, snapshot.ioRunning,
+    func consume(_ snapshot: AudioObserverSnapshot, pair nextPair: AudioChannelPair? = nil) {
+        guard !stopped else { return }
+        if let nextPair { setPair(nextPair) }
+        guard !inFlight else { return }
+        if let next = pendingPair {
+            pendingPair = nil
+            setPair(left: next.leftIndex, right: next.rightIndex, generation: next.generation)
+        }
+        guard snapshot.ioRunning,
               snapshot.activeRingFrames > 0,
               snapshot.channels >= 2,
               let resolvedPair = pair.resolved(channelCount: snapshot.channels) else { return }
@@ -260,51 +340,112 @@ final class AudioAnalysisEngine {
             let marginFrames = Int64(token.geometry.activeFrames) -
                 Int64(clamping: advancedFromStart) - Int64(4_096)
             let marginMilliseconds = Double(marginFrames) / Double(token.geometry.sampleRateHz) * 1_000
-            Task { @MainActor in
-                self.inFlight = false
-                guard !self.stopped else {
-                    metrics.discardInFlight()
-                    return
-                }
-                guard self.pair == resolvedPair else {
-                    self.cursor = postState?.writeEndFrame
-                    metrics.discardInFlight()
-                    return
-                }
-                if completed.status == .completed, geometryStillMatches,
-                   let postState, outputValues.count == AudioAnalysisLayout.outputWords {
-                    outputValues.withUnsafeBufferPointer { values in
-                        metrics.accept(token: token,
-                                       pair: resolvedPair,
-                                       result: values,
-                                       correlationValid: outputValues[12] != 0,
-                                       cpuEncodeMilliseconds: encodeMilliseconds,
-                                       scheduledToStartMilliseconds: queueMilliseconds,
-                                       gpuMilliseconds: gpuMilliseconds,
-                                       completionMilliseconds: (completionTime - encodeStart) * 1_000,
-                                       sampleAgeMilliseconds: sampleAge,
-                                       overwriteMarginMilliseconds: marginMilliseconds,
-                                       meterKey: key)
-                    }
-                    self.cursor = token.endFrame
-                    self.lastSessionEpoch = postState.sessionEpoch
-                    self.lastDiscontinuityEpoch = postState.discontinuityEpoch
-                    if usesKWeight {
-                        swap(&self.committedFilterState, &self.provisionalFilterState)
-                    }
-                } else {
-                    self.cursor = postState?.writeEndFrame
-                    if usesKWeight { self.resetFilterState = true }
-                    metrics.rejected()
-                }
-                self.onCompletion?()
+            let completedSuccessfully = completed.status == .completed
+            Task {
+                await self.finish(token: token, pair: resolvedPair, postState: postState,
+                    values: outputValues, completedSuccessfully: completedSuccessfully,
+                    geometryStillMatches: geometryStillMatches, usesKWeight: usesKWeight,
+                    encodeMilliseconds: encodeMilliseconds, queueMilliseconds: queueMilliseconds,
+                    gpuMilliseconds: gpuMilliseconds, completionMilliseconds: (completionTime - encodeStart) * 1_000,
+                    sampleAge: sampleAge, marginMilliseconds: marginMilliseconds, key: key)
             }
         }
         commandBuffer.commit()
         cursor = end
     }
 
-    func stop() {
+    private func finish(token: AudioFrameToken, pair resolvedPair: AudioChannelPair,
+                        postState: AudioObserverWireState?, values outputValues: [UInt32],
+                        completedSuccessfully: Bool, geometryStillMatches: Bool, usesKWeight: Bool,
+                        encodeMilliseconds: Double, queueMilliseconds: Double?, gpuMilliseconds: Double?,
+                        completionMilliseconds: Double, sampleAge: Double, marginMilliseconds: Double,
+                        key: String) {
+        inFlight = false
+        defer {
+            let waiters = stopWaiters
+            stopWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+        guard !self.stopped else {
+            metrics.discardInFlight()
+            return
+        }
+        guard self.pair == resolvedPair else {
+            self.cursor = postState?.writeEndFrame
+            metrics.discardInFlight()
+            return
+        }
+        if completedSuccessfully, geometryStillMatches,
+           let postState, outputValues.count == AudioAnalysisLayout.outputWords {
+            outputValues.withUnsafeBufferPointer { values in
+                metrics.accept(token: token,
+                               pair: resolvedPair,
+                               result: values,
+                               correlationValid: outputValues[12] != 0,
+                               cpuEncodeMilliseconds: encodeMilliseconds,
+                               scheduledToStartMilliseconds: queueMilliseconds,
+                               gpuMilliseconds: gpuMilliseconds,
+                               completionMilliseconds: completionMilliseconds,
+                               sampleAgeMilliseconds: sampleAge,
+                               overwriteMarginMilliseconds: marginMilliseconds,
+                               meterKey: key)
+            }
+            self.cursor = token.endFrame
+            self.lastSessionEpoch = postState.sessionEpoch
+            self.lastDiscontinuityEpoch = postState.discontinuityEpoch
+            if usesKWeight {
+                swap(&self.committedFilterState, &self.provisionalFilterState)
+            }
+        } else {
+            self.cursor = postState?.writeEndFrame
+            if usesKWeight { self.resetFilterState = true }
+            metrics.rejected()
+        }
+        publishPlotHistory()
+        let now = CACurrentMediaTime()
+        // At most one UI notification may be queued. A busy main actor must
+        // not accumulate stale completion tasks while GPU analysis continues.
+        if let onCompletion, !completionNotificationPending,
+           now - lastCompletionPublish >= 1.0 / 60.0 {
+            lastCompletionPublish = now
+            completionNotificationPending = true
+            Task { @MainActor in
+                onCompletion()
+                await self.didPublishCompletion()
+            }
+        }
+    }
+
+    private func didPublishCompletion() { completionNotificationPending = false }
+
+    private func publishPlotHistory() {
+        let now = CACurrentMediaTime()
+        guard now - lastHistoryPublish >= 0.1 else { return }
+        lastHistoryPublish = now
+        let snapshot = metrics.read(includeHistory: false)
+        if let token = snapshot.analysis.token {
+            let loudness = snapshot.analysis.loudness
+            let frame = token.endFrame
+            if let last = loudnessHistory.last, frame < last.frame { loudnessHistory.removeAll() }
+            if loudnessHistory.last?.frame != frame {
+                loudnessHistory.append(AnalyzerHistoryVertex(frame: frame,
+                    correlation: loudness.momentaryLUFS.value ?? .nan,
+                    sideEnergy: loudness.shortTermLUFS.value ?? .nan,
+                    breakBefore: snapshot.analysis.streamStatus == .discontinuous ? 1 : 0,
+                    integrated: loudness.integratedLUFS.value ?? .nan))
+                let duration = UInt64(token.geometry.sampleRateHz) * 60
+                loudnessHistory.removeAll { frame > $0.frame && frame - $0.frame > duration }
+            }
+        }
+        plotHistory.update(stereo: metrics.readStereoHistory(), loudness: loudnessHistory)
+    }
+
+    /// Quiesce before the owner closes the mapping. Suspension releases this
+    /// actor so the pending completion can discard its result and resume us.
+    func stop() async {
         stopped = true
+        onCompletion = nil
+        guard inFlight else { return }
+        await withCheckedContinuation { stopWaiters.append($0) }
     }
 }

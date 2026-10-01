@@ -1,5 +1,6 @@
 import MetalKit
 import SwiftUI
+import QuartzCore
 
 struct AnalyzerPlotParams {
     var mode: UInt32
@@ -15,7 +16,7 @@ struct AnalyzerPlotParams {
     var height: Float
 }
 
-struct AnalyzerHistoryVertex {
+nonisolated struct AnalyzerHistoryVertex: Sendable {
     var frame: UInt64
     var correlation: Float
     var sideEnergy: Float
@@ -23,17 +24,33 @@ struct AnalyzerHistoryVertex {
     var integrated: Float = .nan
 }
 
-@MainActor
-final class AnalyzerPlotHistoryState {
-    var stereo: [AudioStereoHistoryPoint] = []
-    var loudness: [AnalyzerHistoryVertex] = []
-    var revision: UInt64 = 0
+/// Non-observable cross-executor history. Every read/update is protected by
+/// the lock; immutable Array snapshots keep storage alive during GPU upload.
+nonisolated final class AnalyzerPlotHistoryState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data: (stereo: [AudioStereoHistoryPoint], loudness: [AnalyzerHistoryVertex], revision: UInt64) = ([], [], 0)
+    var stereo: [AudioStereoHistoryPoint] { read().stereo }
+    var loudness: [AnalyzerHistoryVertex] { read().loudness }
+    var revision: UInt64 { read().revision }
+
+    func read() -> (stereo: [AudioStereoHistoryPoint], loudness: [AnalyzerHistoryVertex], revision: UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
+    }
+
+    func update(stereo: [AudioStereoHistoryPoint], loudness: [AnalyzerHistoryVertex]) {
+        lock.lock()
+        defer { lock.unlock() }
+        data = (stereo, loudness, data.revision &+ 1)
+    }
 }
 
 struct AnalyzerPlotRegion: Equatable {
     var mode: UInt32
     var index: UInt32
     var rect: CGRect
+    var otherChannel: UInt32 = 0
 }
 
 /// Only scalar reductions/history cross the CPU. Geometry and trace drawing
@@ -47,7 +64,6 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
     var regions: [AnalyzerPlotRegion]? = nil
     var loudnessPoints: [AnalyzerHistoryVertex] = []
     var historyState: AnalyzerPlotHistoryState?
-    private static var queues: [ObjectIdentifier: MTLCommandQueue] = [:]
     private static var pipelines: [ObjectIdentifier: MTLRenderPipelineState] = [:]
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -73,6 +89,9 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
         ) { [weak view, weak coordinator] _ in
             MainActor.assumeIsolated {
                 guard let view, let coordinator else { return }
+                let hasFastPlots = coordinator.regions?.contains { $0.mode == 0 || $0.mode == 1 || $0.mode == 5 } ?? (mode < 2)
+                guard !client.renderState.read().ioRunning ||
+                    coordinator.cadence.shouldDraw(now: CACurrentMediaTime(), hz: hasFastPlots ? 60 : 10) else { return }
                 // Constant representable inputs can cause SwiftUI to elide
                 // updateNSView after client.open(). GPU completion is also
                 // responsible for attaching the renderer in that case.
@@ -92,7 +111,7 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
             context.coordinator.renderer?.updateHistory(points)
             context.coordinator.renderer?.updateLoudnessHistory(loudnessPoints)
         } else { context.coordinator.renderer?.updateLiveHistory(historyState) }
-        view.draw()
+        // GPU completion schedules the next visual frame.
     }
 
     // SwiftUI creates the panel before client.open() makes Metal available.
@@ -102,55 +121,59 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
             view.delegate = nil
             coordinator.renderer = nil
             coordinator.deviceKey = nil
+            coordinator.ringKey = nil
             view.device = nil
             return
         }
         let key = ObjectIdentifier(device)
-        guard coordinator.deviceKey != key || coordinator.renderer == nil else { return }
-        guard let pipeline = Self.pipeline(device), let queue = Self.commandQueue(device) else { return }
+        let ringKey = client.ringBuffer.map { ObjectIdentifier($0) }
+        guard coordinator.deviceKey != key || coordinator.ringKey != ringKey || coordinator.renderer == nil else { return }
+        guard let pipeline = Self.pipeline(device) else { return }
         view.device = device
         // The view may already have been laid out with a nil device. Assigning
         // a device does not imply a subsequent AppKit resize notification.
         let scale = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
         view.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
-        let renderer = AnalyzerPlotRenderer(device: device, pipeline: pipeline, queue: queue,
+        let renderer = AnalyzerPlotRenderer(device: device, pipeline: pipeline, submission: client.renderSubmission,
                                             metrics: client.metrics, state: client.renderState,
-                                            mode: mode, index: index)
+                                            mode: mode, index: index, ring: client.ringBuffer,
+                                            phasePipeline: client.phaseRenderPipeline)
+        renderer.regions = coordinator.regions
         if historyState == nil {
             renderer.updateHistory(points)
             renderer.updateLoudnessHistory(loudnessPoints)
         } else { renderer.updateLiveHistory(historyState) }
-        renderer.regions = coordinator.regions
         coordinator.renderer = renderer
         coordinator.deviceKey = key
+        coordinator.ringKey = ringKey
         view.delegate = renderer
     }
 
-    private static func commandQueue(_ device: MTLDevice) -> MTLCommandQueue? {
-        let key = ObjectIdentifier(device)
-        if let queue = queues[key] { return queue }
-        guard let queue = device.makeCommandQueue() else { return nil }
-        queues[key] = queue
-        return queue
-    }
-
-    private static func pipeline(_ device: MTLDevice) -> MTLRenderPipelineState? {
+    static func pipeline(_ device: MTLDevice) -> MTLRenderPipelineState? {
         let key = ObjectIdentifier(device)
         if let pipeline = pipelines[key] { return pipeline }
         guard let library = device.makeDefaultLibrary() else { return nil }
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = library.makeFunction(name: "asfwAnalyzerPlotVertex")
         descriptor.fragmentFunction = library.makeFunction(name: "asfwAnalyzerPlotFragment")
-        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        let attachment = descriptor.colorAttachments[0]!
+        attachment.pixelFormat = .bgra8Unorm
+        attachment.isBlendingEnabled = true
+        attachment.sourceRGBBlendFactor = .sourceAlpha
+        attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        attachment.sourceAlphaBlendFactor = .one
+        attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
         guard let pipeline = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
         pipelines[key] = pipeline
         return pipeline
     }
 
     final class Coordinator {
+        var cadence = AnalyzerDrawCadence()
         fileprivate var renderer: AnalyzerPlotRenderer?
         var observer: NSObjectProtocol?
         var deviceKey: ObjectIdentifier?
+        var ringKey: ObjectIdentifier?
         var regions: [AnalyzerPlotRegion]?
         var historyState: AnalyzerPlotHistoryState?
         deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
@@ -160,42 +183,50 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
 private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private let device: MTLDevice
     private let pipeline: MTLRenderPipelineState
-    private let queue: MTLCommandQueue?
+    private let submission: AnalyzerRenderSubmission
     private let metrics: AudioObserverMetricsState
     private let state: AudioObserverRenderState
     private let mode: UInt32
     private let index: UInt32
     private let slots = DispatchSemaphore(value: 2)
-    private var history: MTLBuffer?
-    private var count = 0
-    private var latestFrame: UInt64 = 0
+    private var stereoHistory: MTLBuffer?
+    private var loudnessHistory: MTLBuffer?
+    private var stereoCount = 0
+    private var loudnessCount = 0
+    private var stereoFrame: UInt64 = 0
+    private var loudnessFrame: UInt64 = 0
+    private let ring: MTLBuffer?
+    private let phasePipeline: MTLRenderPipelineState?
     private var historyRevision: UInt64?
     var regions: [AnalyzerPlotRegion]?
 
-    init(device: MTLDevice, pipeline: MTLRenderPipelineState, queue: MTLCommandQueue,
+    init(device: MTLDevice, pipeline: MTLRenderPipelineState, submission: AnalyzerRenderSubmission,
          metrics: AudioObserverMetricsState, state: AudioObserverRenderState,
-         mode: UInt32, index: UInt32) {
-        self.device = device; self.pipeline = pipeline; self.queue = queue
+         mode: UInt32, index: UInt32, ring: MTLBuffer?, phasePipeline: MTLRenderPipelineState?) {
+        self.device = device; self.pipeline = pipeline; self.submission = submission
         self.metrics = metrics; self.state = state; self.mode = mode; self.index = index
+        self.ring = ring; self.phasePipeline = phasePipeline
     }
 
     @MainActor
     func updateLiveHistory(_ state: AnalyzerPlotHistoryState?) {
-        guard let state, historyRevision != state.revision else { return }
-        historyRevision = state.revision
-        if mode == 2 { updateHistory(state.stereo) }
-        if mode == 3 { updateLoudnessHistory(state.loudness) }
+        guard let state else { return }
+        let snapshot = state.read()
+        guard historyRevision != snapshot.revision else { return }
+        historyRevision = snapshot.revision
+        let plots = regions ?? [AnalyzerPlotRegion(mode: mode, index: index, rect: .zero)]
+        if plots.contains(where: { $0.mode == 2 }) { updateHistory(snapshot.stereo) }
+        if plots.contains(where: { $0.mode == 3 }) { updateLoudnessHistory(snapshot.loudness) }
     }
 
     func updateHistory(_ points: [AudioStereoHistoryPoint]) {
-        guard mode == 2 else { return }
-        count = points.count
-        latestFrame = points.last?.endFrame ?? 0
-        guard !points.isEmpty else { history = nil; return }
+        stereoCount = points.count
+        stereoFrame = points.last?.endFrame ?? 0
+        guard !points.isEmpty else { stereoHistory = nil; return }
         let vertices = points.map { AnalyzerHistoryVertex(frame: $0.endFrame,
             correlation: $0.correlation, sideEnergy: $0.sideEnergyFraction,
             breakBefore: $0.breakBefore ? 1 : 0) }
-        history = vertices.withUnsafeBufferPointer { buffer in
+        stereoHistory = vertices.withUnsafeBufferPointer { buffer in
             device.makeBuffer(bytes: buffer.baseAddress!,
                               length: buffer.count * MemoryLayout<AnalyzerHistoryVertex>.stride,
                               options: .storageModeShared)
@@ -203,11 +234,10 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     }
 
     func updateLoudnessHistory(_ vertices: [AnalyzerHistoryVertex]) {
-        guard mode == 3 else { return }
-        count = vertices.count
-        latestFrame = vertices.last?.frame ?? 0
-        guard !vertices.isEmpty else { history = nil; return }
-        history = vertices.withUnsafeBufferPointer {
+        loudnessCount = vertices.count
+        loudnessFrame = vertices.last?.frame ?? 0
+        guard !vertices.isEmpty else { loudnessHistory = nil; return }
+        loudnessHistory = vertices.withUnsafeBufferPointer {
             device.makeBuffer(bytes: $0.baseAddress!, length: $0.count * MemoryLayout<AnalyzerHistoryVertex>.stride,
                               options: .storageModeShared)
         }
@@ -223,7 +253,7 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
         var submitted = false
         defer { if !submitted { slots.signal() } }
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
-              let command = queue?.makeCommandBuffer(),
+              let command = submission.commandBuffer(for: device),
               let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return }
         let snapshot = state.read()
         encoder.setRenderPipelineState(pipeline)
@@ -235,6 +265,26 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
                 width: rect.width * scale, height: rect.height * scale, znear: 0, zfar: 1))
             encoder.setScissorRect(MTLScissorRect(x: Int(rect.minX * scale), y: Int(rect.minY * scale),
                 width: max(1, Int(rect.width * scale)), height: max(1, Int(rect.height * scale))))
+            if plot.mode == 5 {
+                guard snapshot.ioRunning, snapshot.channels >= 2, snapshot.activeRingFrames > 0,
+                      let ring, let phasePipeline else { continue }
+                let frames = min(snapshot.validHistoryFrames,
+                    AudioAnalyzerGeometry.goniometerWindowFrames(activeRingFrames: snapshot.activeRingFrames))
+                guard frames > 1 else { continue }
+                var phase = ObserverParams(writeEndFrame: snapshot.writeEndFrame,
+                    ringFrames: snapshot.activeRingFrames, channels: snapshot.channels, windowFrames: frames,
+                    channel: min(plot.index, snapshot.channels - 1),
+                    rightChannel: min(plot.otherChannel, snapshot.channels - 1))
+                encoder.setRenderPipelineState(phasePipeline)
+                encoder.setVertexBuffer(ring, offset: 0, index: 0)
+                encoder.setVertexBytes(&phase, length: MemoryLayout<ObserverParams>.stride, index: 1)
+                encoder.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: Int(frames))
+                continue
+            }
+            encoder.setRenderPipelineState(pipeline)
+            let count = plot.mode == 2 ? stereoCount : loudnessCount
+            let latestFrame = plot.mode == 2 ? stereoFrame : loudnessFrame
+            let history = plot.mode == 2 ? stereoHistory : loudnessHistory
             let (value, peak, valid) = metrics.plotValues(mode: plot.mode, index: plot.index)
             var params = AnalyzerPlotParams(mode: plot.mode, index: plot.index,
                 active: snapshot.ioRunning && valid ? 1 : 0, count: UInt32(count),
@@ -256,7 +306,7 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
         command.present(drawable)
         command.addCompletedHandler { _ in slots.signal() }
         submitted = true
-        command.commit()
+        submission.commit(command)
     }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 }

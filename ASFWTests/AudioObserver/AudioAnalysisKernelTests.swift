@@ -193,7 +193,7 @@ struct AudioAnalysisKernelTests {
     @Test func monitorMetalViewsReceiveUsableSizesFromSwiftUILayout() throws {
         let client = ASFWAudioObserverClient(guid: 0)
         let host = NSHostingView(rootView: StereoMetersView(client: client,
-            metrics: AudioObserverMetrics(), active: true))
+            state: AnalyzerPanelUIState(section: .monitor), active: true))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 300),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host
@@ -252,15 +252,11 @@ struct AudioAnalysisKernelTests {
         #expect(recoveredRenderer !== firstRenderer)
     }
 
+    @MainActor
     @Test(arguments: [UInt32(0), 1, 2, 3, 4])
     func analyzerPlotsRenderOnTheGPU(mode: UInt32) throws {
         let device = try #require(MTLCreateSystemDefaultDevice())
-        let library = try #require(device.makeDefaultLibrary())
-        let descriptor = MTLRenderPipelineDescriptor()
-        descriptor.vertexFunction = library.makeFunction(name: "asfwAnalyzerPlotVertex")
-        descriptor.fragmentFunction = library.makeFunction(name: "asfwAnalyzerPlotFragment")
-        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-        let pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        let pipeline = try #require(MetalAnalyzerPlotView.pipeline(device))
         let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 64, height: 64, mipmapped: false)
         textureDescriptor.storageMode = .shared
         textureDescriptor.usage = .renderTarget
@@ -296,8 +292,8 @@ struct AudioAnalysisKernelTests {
             texture.getBytes($0.baseAddress!, bytesPerRow: 64 * 4,
                              from: MTLRegionMake2D(0, 0, 64, 64), mipmapLevel: 0)
         }
-        #expect(stride(from: 1, to: pixels.count, by: 4).contains { pixels[$0] > 128 },
-                "Meter, indicator, and history shaders must draw visible geometry")
+        #expect(stride(from: 3, to: pixels.count, by: 4).contains { pixels[$0] > 128 },
+                "Plots must leave visible alpha on the transparent canvas; hidden rectangles must not erase earlier geometry")
     }
 
     @Test func kWeightingProducesTheExpectedStereoOneKilohertzLoudness() throws {

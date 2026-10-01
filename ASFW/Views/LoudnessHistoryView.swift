@@ -2,7 +2,7 @@ import SwiftUI
 
 struct LoudnessHistoryView: View {
     let client: ASFWAudioObserverClient
-    let hasHistory: Bool
+    let state: AnalyzerPanelUIState
 
     var body: some View {
         GeometryReader { geometry in
@@ -10,9 +10,11 @@ struct LoudnessHistoryView: View {
                               height: max(1, geometry.size.height - 30))
             ZStack {
                 Color.black.opacity(0.35)
-                MetalAnalyzerPlotView(client: client, mode: 3, index: 0,
-                    regions: (0..<3).map { AnalyzerPlotRegion(mode: 3, index: UInt32($0), rect: rect) },
-                    historyState: client.plotHistory)
+                ForEach(0..<3) { index in
+                    AnalyzerCanvasSlot(mode: 3, index: UInt32(index))
+                        .padding(.leading, 36).padding(.trailing, 10)
+                        .padding(.top, 8).padding(.bottom, 22)
+                }
                 Canvas { context, size in
                     func label(_ text: String, _ point: CGPoint, _ anchor: UnitPoint = .center) {
                         context.draw(Text(text).font(.system(size: 9, design: .monospaced))
@@ -37,9 +39,9 @@ struct LoudnessHistoryView: View {
                               second == 0 ? .leading : second == 60 ? .trailing : .center)
                     }
                 }.allowsHitTesting(false)
-                if !hasHistory {
-                    Text("History appears during playback").font(.caption).foregroundStyle(.secondary)
-                }
+                AnalyzerScalarText(state: state) { metrics, _ in
+                    metrics.analysis.token == nil ? "History appears during playback" : ""
+                }.font(.caption).foregroundStyle(.secondary)
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
