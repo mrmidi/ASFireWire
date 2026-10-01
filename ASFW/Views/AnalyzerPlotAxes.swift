@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AnalyzerPlotAxes: View {
-    enum Kind { case goniometer; case spectrum(sampleRate: UInt32) }
+    enum Kind { case goniometer; case waveform; case spectrum(sampleRate: UInt32) }
     let kind: Kind
 
     var body: some View {
@@ -27,6 +27,12 @@ struct AnalyzerPlotAxes: View {
                 label("0", at: CGPoint(x: plot.midX - 8, y: plot.midY + 12))
                 label("Y: (L+R)/√2 · in phase", at: CGPoint(x: size.width / 2, y: 12))
                 label("X: (L−R)/√2 · opposite phase", at: CGPoint(x: size.width / 2, y: size.height - 12))
+            case .waveform:
+                let plot = CGRect(x: 24, y: 12, width: max(1, size.width - 36), height: max(1, size.height - 24))
+                line(CGPoint(x: plot.minX, y: plot.midY), CGPoint(x: plot.maxX, y: plot.midY))
+                label("+1", at: CGPoint(x: 10, y: plot.minY))
+                label("0", at: CGPoint(x: 10, y: plot.midY))
+                label("−1", at: CGPoint(x: 10, y: plot.maxY))
             case .spectrum(let rate):
                 let plot = CGRect(x: 38, y: 12, width: max(1, size.width - 50), height: max(1, size.height - 42))
                 for db in [6, 0, -30, -60, -90, -120] {

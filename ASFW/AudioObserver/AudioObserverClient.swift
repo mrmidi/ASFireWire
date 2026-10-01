@@ -17,12 +17,7 @@ struct AudioObserverSnapshot: Sendable {
 }
 
 struct AudioObserverMetrics: Sendable {
-    var leftPeak: Float = 0
-    var rightPeak: Float = 0
-    var correlation: Float = 0
-    var correlationAverage: Float = 0
-    var correlationValid = false
-    var meterValues: [Float] = Array(repeating: 0, count: 8)
+    var analysis = AudioAnalyzerSnapshot()
     var cpuEncodeMilliseconds: Double?
     var scheduledToStartMilliseconds: Double?
     var gpuMilliseconds: Double?
@@ -32,7 +27,26 @@ struct AudioObserverMetrics: Sendable {
     var windowsRendered: UInt64 = 0
     var windowsCrossingWrap: UInt64 = 0
     var unsafeWindows: UInt64 = 0
+    var invalidSampleCount: UInt64 = 0
     var inFlight = 0
+
+    // Transitional accessors keep the existing renderer/UI stable while its
+    // results are migrated to the shared AudioAnalyzerSnapshot.
+    var leftPeak: Float { analysis.levels.left.samplePeak.value ?? 0 }
+    var rightPeak: Float { analysis.levels.right.samplePeak.value ?? 0 }
+    var correlation: Float { analysis.stereo.correlation.value ?? 0 }
+    var correlationAverage: Float { analysis.stereo.rollingCorrelation.value ?? 0 }
+    var correlationValid: Bool { analysis.stereo.correlation.status == .valid }
+    var meterValues: [Float] {
+        [analysis.levels.mid.samplePeak.value ?? 0,
+         analysis.levels.side.samplePeak.value ?? 0,
+         analysis.levels.left.rms.value ?? 0,
+         analysis.levels.right.rms.value ?? 0,
+         analysis.levels.mid.rms.value ?? 0,
+         analysis.levels.side.rms.value ?? 0,
+         analysis.stereo.balance.value ?? 0,
+         analysis.stereo.sideEnergyFraction.value ?? 0]
+    }
 }
 
 struct AudioObserverWireState: Sendable {
@@ -45,6 +59,44 @@ struct AudioObserverWireState: Sendable {
     let activeRingFrames: UInt32
     let channels: UInt32
     let sampleRateHz: UInt32
+}
+
+/// Keeps synchronous IOKit state reads off SwiftUI's main actor.
+actor AudioObserverPoller {
+    private let reader: AudioObserverStateReader
+    private let mappedSize: UInt64
+
+    init(reader: AudioObserverStateReader, mappedSize: UInt64) {
+        self.reader = reader
+        self.mappedSize = mappedSize
+    }
+
+    func poll() throws -> AudioObserverSnapshot {
+        let state = try reader.read()
+        guard state.memoryGeneration == state.mappedGeneration else {
+            throw AudioObserverError.memoryGenerationChanged
+        }
+        let bytesPerFrame = UInt64(state.channels) * UInt64(MemoryLayout<Float>.stride)
+        guard bytesPerFrame > 0 else { throw AudioObserverError.invalidGeometry }
+        let mappedFrames = mappedSize / bytesPerFrame
+        guard mappedFrames >= UInt64(state.activeRingFrames) else {
+            throw AudioObserverError.invalidGeometry
+        }
+        let valid = state.writeEndFrame >= state.oldestValidFrame
+            ? min(UInt64(state.activeRingFrames), state.writeEndFrame - state.oldestValidFrame)
+            : 0
+        return AudioObserverSnapshot(writeEndFrame: state.writeEndFrame,
+                                      oldestValidFrame: state.oldestValidFrame,
+                                      sessionEpoch: state.sessionEpoch,
+                                      discontinuityEpoch: state.discontinuityEpoch,
+                                      memoryGeneration: state.memoryGeneration,
+                                      activeRingFrames: state.activeRingFrames,
+                                      channels: state.channels,
+                                      sampleRateHz: state.sampleRateHz,
+                                      mappedFrames: mappedFrames,
+                                      validHistoryFrames: UInt32(valid),
+                                      ioRunning: valid > 0)
+    }
 }
 
 private final class AudioObserverMappingLifetime: @unchecked Sendable {
@@ -63,7 +115,7 @@ private final class AudioObserverMappingLifetime: @unchecked Sendable {
 }
 
 final class AudioObserverStateReader: @unchecked Sendable {
-    private static let selector: UInt32 = 67
+    nonisolated private static let selector: UInt32 = 67
     private let connection: io_connect_t
     private let guid: UInt64
     private let lock = NSLock()
@@ -73,7 +125,7 @@ final class AudioObserverStateReader: @unchecked Sendable {
         self.guid = guid
     }
 
-    func read() throws -> AudioObserverWireState {
+    nonisolated func read() throws -> AudioObserverWireState {
         lock.lock()
         defer { lock.unlock() }
         var values = [UInt64](repeating: 0, count: 9)
@@ -103,7 +155,7 @@ final class AudioObserverStateReader: @unchecked Sendable {
     }
 }
 
-enum AudioObserverError: LocalizedError {
+enum AudioObserverError: LocalizedError, Sendable {
     case serviceUnavailable
     case openFailed(kern_return_t)
     case selectionFailed(kern_return_t)
@@ -166,6 +218,9 @@ final class AudioObserverMetricsState: @unchecked Sendable {
     private var value = AudioObserverMetrics()
     private var lastMeterTime = Date.distantPast
     private var meterKey: String?
+    private var loudnessEnergyRing = [AudioLoudnessEnergyChunk?](repeating: nil, count: 300)
+    private var loudnessWriteIndex = 0
+    private var loudnessCount = 0
 
     func read() -> AudioObserverMetrics {
         lock.lock()
@@ -180,42 +235,184 @@ final class AudioObserverMetricsState: @unchecked Sendable {
         lock.unlock()
     }
 
-    func completed(leftPeak: Float,
-                   rightPeak: Float,
-                   correlation: Float,
-                   correlationValid: Bool,
-                   meterValues: [Float],
-                   meterKey: String,
-                   cpuEncodeMilliseconds: Double,
-                   scheduledToStartMilliseconds: Double?,
-                   gpuMilliseconds: Double?,
-                   completionMilliseconds: Double,
-                   sampleAgeMilliseconds: Double?,
-                   overwriteMarginMilliseconds: Double?,
-                   safe: Bool) {
+    func accept(token: AudioFrameToken,
+                pair: AudioChannelPair,
+                result: UnsafeBufferPointer<UInt32>,
+                correlationValid: Bool,
+                cpuEncodeMilliseconds: Double,
+                scheduledToStartMilliseconds: Double?,
+                gpuMilliseconds: Double?,
+                completionMilliseconds: Double,
+                sampleAgeMilliseconds: Double,
+                overwriteMarginMilliseconds: Double,
+                meterKey: String) {
+        guard result.count >= 16 else { return }
+        let floats = result
         lock.lock()
         value.inFlight = max(0, value.inFlight - 1)
         value.windowsRendered += 1
-        if safe {
-            value.leftPeak = leftPeak
-            value.rightPeak = rightPeak
-            value.correlationValid = correlationValid
+        let meterValues = (4...11).map { Float(bitPattern: floats[$0]) }
+        value.analysis.levels.left.samplePeak = .valid(Float(bitPattern: floats[0]))
+        value.analysis.levels.right.samplePeak = .valid(Float(bitPattern: floats[1]))
+        value.analysis.levels.mid.samplePeak = .valid(meterValues[0])
+        value.analysis.levels.side.samplePeak = .valid(meterValues[1])
+        value.analysis.levels.left.rms = .valid(meterValues[2])
+        value.analysis.levels.right.rms = .valid(meterValues[3])
+        value.analysis.levels.mid.rms = .valid(meterValues[4])
+        value.analysis.levels.side.rms = .valid(meterValues[5])
+        if correlationValid {
             let now = Date()
-            let alpha = self.meterKey == meterKey ? Float(exp(-now.timeIntervalSince(lastMeterTime))) : 0
-            value.correlationAverage = alpha * value.correlationAverage + (1 - alpha) * correlation
+            let alpha = self.meterKey == meterKey
+                ? Float(exp(-now.timeIntervalSince(lastMeterTime))) : 0
+            let previousAverage = value.analysis.stereo.rollingCorrelation.value ?? 0
+            value.analysis.stereo.rollingCorrelation = .valid(
+                alpha * previousAverage + (1 - alpha) * Float(bitPattern: floats[2]))
             lastMeterTime = now
             self.meterKey = meterKey
-            value.correlation = correlation
-            value.meterValues = meterValues
+            value.analysis.stereo.correlation = .valid(Float(bitPattern: floats[2]))
+        } else {
+            self.meterKey = nil
+            value.analysis.stereo.correlation = .warmingUp
+            value.analysis.stereo.rollingCorrelation = .warmingUp
         }
+        value.analysis.stereo.balance = .valid(meterValues[6])
+        value.analysis.stereo.sideEnergyFraction = .valid(meterValues[7])
+        value.analysis.token = token
+        value.analysis.selectedPair = pair
+        value.analysis.streamStatus = .valid
+        value.analysis.levels.left.overRangeSamples = floats[13]
+        value.analysis.levels.right.overRangeSamples = floats[14]
+        value.invalidSampleCount &+= UInt64(floats[90]) + UInt64(floats[91])
+        value.analysis.diagnostics.invalidSamples = value.invalidSampleCount
+        value.analysis.stereo.monoEnergyRetentionDB = .valid(Float(bitPattern: floats[15]))
+        value.analysis.stereo.cancellationRisk = .insufficientSignal
+        value.analysis.diagnostics.cursor = .valid(token.endFrame)
+        value.analysis.diagnostics.sampleAgeMilliseconds = .valid(sampleAgeMilliseconds)
+        value.analysis.diagnostics.overwriteMarginMilliseconds = .valid(overwriteMarginMilliseconds)
+        value.analysis.diagnostics.cpuSubmissionMilliseconds = .valid(cpuEncodeMilliseconds)
+        if let gpuMilliseconds {
+            value.analysis.diagnostics.gpuMilliseconds = .valid(gpuMilliseconds)
+        } else {
+            value.analysis.diagnostics.gpuMilliseconds = .warmingUp
+        }
+        value.analysis.diagnostics.completionMilliseconds = .valid(completionMilliseconds)
+        value.analysis.diagnostics.inFlight = UInt32(max(0, value.inFlight))
+        value.analysis.diagnostics.wrapWindows = value.windowsCrossingWrap
+        value.analysis.diagnostics.unsafeRanges = value.unsafeWindows
+        value.analysis.diagnostics.rejectedRanges = value.unsafeWindows
         value.cpuEncodeMilliseconds = cpuEncodeMilliseconds
         value.scheduledToStartMilliseconds = scheduledToStartMilliseconds
         value.gpuMilliseconds = gpuMilliseconds
         value.completionMilliseconds = completionMilliseconds
         value.sampleAgeMilliseconds = sampleAgeMilliseconds
         value.overwriteMarginMilliseconds = overwriteMarginMilliseconds
-        if !safe { value.unsafeWindows += 1 }
+        if token.geometry.sampleRateHz == 48_000 {
+            let chunkCount = min(Int(floats[16]), (floats.count - 17) / 4)
+            for index in 0..<chunkCount {
+                let word = 17 + index * 4
+                let endFrame = UInt64(floats[word]) | (UInt64(floats[word + 1]) << 32)
+                let energy = Float(bitPattern: floats[word + 2]) + Float(bitPattern: floats[word + 3])
+                loudnessEnergyRing[loudnessWriteIndex] = AudioLoudnessEnergyChunk(
+                    endFrame: endFrame, weightedEnergy: energy, frameCount: 480)
+                loudnessWriteIndex = (loudnessWriteIndex + 1) % loudnessEnergyRing.count
+                loudnessCount = min(loudnessEnergyRing.count, loudnessCount + 1)
+                value.analysis.loudness.acceptedAudioFrames &+= 480
+                if let momentary = loudnessValue(forLastChunks: 40) {
+                    value.analysis.loudness.momentaryLUFS = .valid(momentary)
+                    value.analysis.loudness.maximumMomentaryLUFS = .valid(
+                        max(value.analysis.loudness.maximumMomentaryLUFS.value ?? -Float.infinity,
+                            momentary))
+                } else {
+                    value.analysis.loudness.momentaryLUFS = .warmingUp
+                }
+                if let shortTerm = loudnessValue(forLastChunks: 300) {
+                    value.analysis.loudness.shortTermLUFS = .valid(shortTerm)
+                    value.analysis.loudness.maximumShortTermLUFS = .valid(
+                        max(value.analysis.loudness.maximumShortTermLUFS.value ?? -Float.infinity,
+                            shortTerm))
+                } else {
+                    value.analysis.loudness.shortTermLUFS = .warmingUp
+                }
+            }
+        } else {
+            value.analysis.loudness.momentaryLUFS = .unsupported
+            value.analysis.loudness.shortTermLUFS = .unsupported
+        }
         lock.unlock()
+    }
+
+    func rejected() {
+        lock.lock()
+        value.inFlight = max(0, value.inFlight - 1)
+        value.unsafeWindows += 1
+        value.analysis.streamStatus = .discontinuous
+        value.analysis.levels = AudioLevelMetrics()
+        value.analysis.stereo = AudioStereoMetrics()
+        clearLoudnessHistory(status: .discontinuous)
+        value.analysis.diagnostics.inFlight = UInt32(max(0, value.inFlight))
+        value.analysis.diagnostics.unsafeRanges = value.unsafeWindows
+        value.analysis.diagnostics.rejectedRanges = value.unsafeWindows
+        meterKey = nil
+        lock.unlock()
+    }
+
+    func discardInFlight() {
+        lock.lock()
+        value.inFlight = max(0, value.inFlight - 1)
+        value.analysis.diagnostics.inFlight = UInt32(max(0, value.inFlight))
+        lock.unlock()
+    }
+
+    func markDiscontinuous() {
+        lock.lock()
+        value.analysis.token = nil
+        value.analysis.streamStatus = .discontinuous
+        value.analysis.levels = AudioLevelMetrics()
+        value.analysis.stereo = AudioStereoMetrics()
+        clearLoudnessHistory(status: .discontinuous)
+        meterKey = nil
+        lock.unlock()
+    }
+
+    func markIdle() {
+        lock.lock()
+        guard value.analysis.streamStatus != .idle else {
+            lock.unlock()
+            return
+        }
+        value.analysis.streamStatus = .idle
+        value.analysis.levels = AudioLevelMetrics()
+        value.analysis.stereo = AudioStereoMetrics()
+        clearLoudnessHistory(status: .idle)
+        meterKey = nil
+        lock.unlock()
+    }
+
+    private func loudnessValue(forLastChunks count: Int) -> Float? {
+        guard loudnessCount >= count else { return nil }
+        let first = (loudnessWriteIndex - count + loudnessEnergyRing.count) % loudnessEnergyRing.count
+        var energy: Float = 0
+        var frames: UInt32 = 0
+        for offset in 0..<count {
+            guard let chunk = loudnessEnergyRing[(first + offset) % loudnessEnergyRing.count] else {
+                return nil
+            }
+            energy += chunk.weightedEnergy
+            frames += chunk.frameCount
+        }
+        guard energy > 0, frames > 0 else { return -.infinity }
+        return -0.691 + 10 * log10(energy / Float(frames))
+    }
+
+    private func clearLoudnessHistory(status: AudioMeasurementStatus) {
+        loudnessEnergyRing = [AudioLoudnessEnergyChunk?](repeating: nil, count: 300)
+        loudnessWriteIndex = 0
+        loudnessCount = 0
+        value.analysis.loudness.momentaryLUFS = AudioMeasurement(value: nil, status: status)
+        value.analysis.loudness.shortTermLUFS = AudioMeasurement(value: nil, status: status)
+        value.analysis.loudness.maximumMomentaryLUFS = .warmingUp
+        value.analysis.loudness.maximumShortTermLUFS = .warmingUp
+        value.analysis.loudness.acceptedAudioFrames = 0
     }
 }
 
@@ -227,6 +424,7 @@ final class ASFWAudioObserverClient {
     private var mappedSize: mach_vm_size_t = 0
     private var mappingLifetime: AudioObserverMappingLifetime?
     private(set) var stateReader: AudioObserverStateReader?
+    private var poller: AudioObserverPoller?
     private(set) var snapshot = AudioObserverSnapshot()
 
     let renderState = AudioObserverRenderState()
@@ -235,8 +433,6 @@ final class ASFWAudioObserverClient {
     private(set) var ringBuffer: MTLBuffer?
     private(set) var phaseRenderPipeline: MTLRenderPipelineState?
     private(set) var waveformRenderPipeline: MTLRenderPipelineState?
-    private(set) var analysisPipeline: MTLComputePipelineState?
-    private(set) var analysisBuffer: MTLBuffer?
 
     init(guid: UInt64) {
         self.guid = guid
@@ -289,7 +485,7 @@ final class ASFWAudioObserverClient {
                                                     address: address)
         mappingLifetime = lifetime
 
-        guard let initialState = try? stateReader?.read() else {
+        guard let stateReader, let initialState = try? stateReader.read() else {
             closeConnection()
             throw AudioObserverError.invalidGeometry
         }
@@ -303,6 +499,7 @@ final class ASFWAudioObserverClient {
             closeConnection()
             throw AudioObserverError.invalidGeometry
         }
+        poller = AudioObserverPoller(reader: stateReader, mappedSize: UInt64(length))
 
         guard let device = MTLCreateSystemDefaultDevice() else {
             closeConnection()
@@ -322,8 +519,7 @@ final class ASFWAudioObserverClient {
         guard let library = device.makeDefaultLibrary(),
               let phaseVertex = library.makeFunction(name: "asfwPhaseVertex"),
               let waveformVertex = library.makeFunction(name: "asfwWaveformVertex"),
-              let fragment = library.makeFunction(name: "asfwAudioFragment"),
-              let analysis = library.makeFunction(name: "asfwAnalyzeRing") else {
+              let fragment = library.makeFunction(name: "asfwAudioFragment") else {
             closeConnection()
             throw AudioObserverError.shaderUnavailable
         }
@@ -334,61 +530,37 @@ final class ASFWAudioObserverClient {
         do {
             phaseRenderPipeline = try device.makeRenderPipelineState(descriptor: phaseDescriptor)
             waveformRenderPipeline = try device.makeRenderPipelineState(descriptor: waveformDescriptor)
-            analysisPipeline = try device.makeComputePipelineState(function: analysis)
         } catch {
             closeConnection()
             throw AudioObserverError.pipelineFailed
         }
-        guard let analysisBuffer = device.makeBuffer(
-            length: 36 * MemoryLayout<UInt32>.stride,
-            options: .storageModeShared) else {
-            closeConnection()
-            throw AudioObserverError.pipelineFailed
-        }
-        self.analysisBuffer = analysisBuffer
-        snapshot = Self.makeSnapshot(initialState, mappedFrames: mappedFrames)
+        snapshot = AudioObserverSnapshot(writeEndFrame: initialState.writeEndFrame,
+                                          oldestValidFrame: initialState.oldestValidFrame,
+                                          sessionEpoch: initialState.sessionEpoch,
+                                          discontinuityEpoch: initialState.discontinuityEpoch,
+                                          memoryGeneration: initialState.memoryGeneration,
+                                          activeRingFrames: initialState.activeRingFrames,
+                                          channels: initialState.channels,
+                                          sampleRateHz: initialState.sampleRateHz,
+                                          mappedFrames: mappedFrames,
+                                          validHistoryFrames: UInt32(min(UInt64(initialState.activeRingFrames),
+                                              initialState.writeEndFrame >= initialState.oldestValidFrame
+                                                ? initialState.writeEndFrame - initialState.oldestValidFrame : 0)),
+                                          ioRunning: initialState.writeEndFrame > initialState.oldestValidFrame)
         renderState.update(snapshot)
     }
 
-    func poll() throws -> AudioObserverSnapshot {
-        guard mappedAddress != 0, let stateReader else {
+    func poll() async throws -> AudioObserverSnapshot {
+        guard mappedAddress != 0, let poller else {
             throw AudioObserverError.serviceUnavailable
         }
-        let state = try stateReader.read()
-        guard state.memoryGeneration == state.mappedGeneration else {
-            throw AudioObserverError.memoryGenerationChanged
-        }
-        let bytesPerFrame = UInt64(state.channels) * UInt64(MemoryLayout<Float>.stride)
-        let mappedFrames = UInt64(mappedSize) / bytesPerFrame
-        guard mappedFrames >= UInt64(state.activeRingFrames) else {
-            throw AudioObserverError.invalidGeometry
-        }
-        snapshot = Self.makeSnapshot(state, mappedFrames: mappedFrames)
+        snapshot = try await poller.poll()
         renderState.update(snapshot)
         return snapshot
     }
 
     func close() {
         closeConnection()
-    }
-
-    private static func makeSnapshot(_ state: AudioObserverWireState,
-                                     mappedFrames: UInt64) -> AudioObserverSnapshot {
-        let valid = state.writeEndFrame >= state.oldestValidFrame
-            ? min(UInt64(state.activeRingFrames), state.writeEndFrame - state.oldestValidFrame)
-            : 0
-        return AudioObserverSnapshot(
-            writeEndFrame: state.writeEndFrame,
-            oldestValidFrame: state.oldestValidFrame,
-            sessionEpoch: state.sessionEpoch,
-            discontinuityEpoch: state.discontinuityEpoch,
-            memoryGeneration: state.memoryGeneration,
-            activeRingFrames: state.activeRingFrames,
-            channels: state.channels,
-            sampleRateHz: state.sampleRateHz,
-            mappedFrames: mappedFrames,
-            validHistoryFrames: UInt32(valid),
-            ioRunning: valid > 0)
     }
 
     private static func renderDescriptor(vertex: MTLFunction,
@@ -405,10 +577,9 @@ final class ASFWAudioObserverClient {
         ringBuffer = nil
         phaseRenderPipeline = nil
         waveformRenderPipeline = nil
-        analysisPipeline = nil
-        analysisBuffer = nil
         metalDevice = nil
         stateReader = nil
+        poller = nil
         if mappingLifetime != nil {
             mappingLifetime = nil
             connection = IO_OBJECT_NULL
