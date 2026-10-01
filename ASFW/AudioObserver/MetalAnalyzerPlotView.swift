@@ -1,7 +1,7 @@
 import MetalKit
 import SwiftUI
 
-private struct AnalyzerPlotParams {
+struct AnalyzerPlotParams {
     var mode: UInt32
     var index: UInt32
     var active: UInt32
@@ -15,7 +15,7 @@ private struct AnalyzerPlotParams {
     var height: Float
 }
 
-private struct AnalyzerHistoryVertex {
+struct AnalyzerHistoryVertex {
     var frame: UInt64
     var correlation: Float
     var sideEnergy: Float
@@ -43,23 +43,58 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
         view.isPaused = true
         view.enableSetNeedsDisplay = true
         view.layer?.isOpaque = false
-        if let device = client.metalDevice, let pipeline = Self.pipeline(device),
-           let queue = Self.commandQueue(device) {
-            let renderer = AnalyzerPlotRenderer(device: device, pipeline: pipeline, queue: queue,
-                                                metrics: client.metrics, state: client.renderState,
-                                                mode: mode, index: index)
-            context.coordinator.renderer = renderer
-            view.delegate = renderer
-        }
-        context.coordinator.observer = NotificationCenter.default.addObserver(
-            forName: .asfwAnalysisCompleted, object: client.renderState, queue: .main
-        ) { [weak view] _ in MainActor.assumeIsolated { view?.draw() } }
+        configure(view, coordinator: context.coordinator, device: client.metalDevice)
+        observeCompletions(view, coordinator: context.coordinator) { client.metalDevice }
         return view
     }
 
+    func observeCompletions(_ view: MTKView, coordinator: Coordinator,
+                            deviceProvider: @escaping @MainActor () -> MTLDevice?) {
+        coordinator.observer = NotificationCenter.default.addObserver(
+            forName: .asfwAnalysisCompleted, object: client.renderState, queue: .main
+        ) { [weak view, weak coordinator] _ in
+            MainActor.assumeIsolated {
+                guard let view, let coordinator else { return }
+                // Constant representable inputs can cause SwiftUI to elide
+                // updateNSView after client.open(). GPU completion is also
+                // responsible for attaching the renderer in that case.
+                configure(view, coordinator: coordinator, device: deviceProvider())
+                view.draw()
+            }
+        }
+    }
+
     func updateNSView(_ view: MTKView, context: Context) {
+        configure(view, coordinator: context.coordinator, device: client.metalDevice)
         context.coordinator.renderer?.updateHistory(points)
         view.draw()
+    }
+
+    // SwiftUI creates the panel before client.open() makes Metal available.
+    // Retry on updates, and drop the old renderer when the client disconnects.
+    func configure(_ view: MTKView, coordinator: Coordinator, device: MTLDevice?) {
+        guard let device else {
+            view.delegate = nil
+            coordinator.renderer = nil
+            coordinator.deviceKey = nil
+            view.device = nil
+            return
+        }
+        let key = ObjectIdentifier(device)
+        guard coordinator.deviceKey != key || coordinator.renderer == nil else { return }
+        guard let pipeline = Self.pipeline(device), let queue = Self.commandQueue(device) else { return }
+        view.device = device
+        // The view may already have been laid out with a nil device. Assigning
+        // a device does not imply a subsequent AppKit resize notification.
+        let scale = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        view.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
+        let renderer = AnalyzerPlotRenderer(device: device, pipeline: pipeline, queue: queue,
+                                            metrics: client.metrics, state: client.renderState,
+                                            mode: mode, index: index)
+        renderer.updateHistory(points)
+        coordinator.renderer = renderer
+        coordinator.deviceKey = key
+        view.delegate = renderer
     }
 
     private static func commandQueue(_ device: MTLDevice) -> MTLCommandQueue? {
@@ -86,6 +121,7 @@ struct MetalAnalyzerPlotView: NSViewRepresentable {
     final class Coordinator {
         fileprivate var renderer: AnalyzerPlotRenderer?
         var observer: NSObjectProtocol?
+        var deviceKey: ObjectIdentifier?
         deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
     }
 }
@@ -126,6 +162,10 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+        guard view.bounds.width > 0, view.bounds.height > 0 else { return }
+        let scale = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        let size = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
+        if view.drawableSize != size { view.drawableSize = size }
         guard slots.wait(timeout: .now()) == .success else { return }
         let slots = self.slots
         var submitted = false

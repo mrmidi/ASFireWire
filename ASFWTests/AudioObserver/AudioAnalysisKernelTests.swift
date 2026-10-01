@@ -1,5 +1,7 @@
 import Foundation
 import Metal
+import MetalKit
+import SwiftUI
 import Testing
 @testable import ASFW
 
@@ -170,6 +172,86 @@ struct AudioAnalysisKernelTests {
         #expect(state.contents().assumingMemoryBound(to: UInt32.self)[18] == 0)
     }
 
+    @MainActor
+    @Test func gpuCompletionAttachesRendererWithoutASwiftUIUpdate() throws {
+        let client = ASFWAudioObserverClient(guid: 0)
+        let plot = MetalAnalyzerPlotView(client: client, mode: 0, index: 0)
+        let coordinator = plot.makeCoordinator()
+        let view = MTKView(frame: NSRect(x: 0, y: 0, width: 38, height: 200), device: nil)
+        var availableDevice: MTLDevice?
+        plot.configure(view, coordinator: coordinator, device: nil)
+        plot.observeCompletions(view, coordinator: coordinator) { availableDevice }
+        #expect(view.delegate == nil)
+        availableDevice = try #require(MTLCreateSystemDefaultDevice())
+        // No updateNSView call: the view's client/mode/index inputs are unchanged.
+        NotificationCenter.default.post(name: .asfwAnalysisCompleted, object: client.renderState)
+        try #require(view.delegate)
+        #expect(view.device?.registryID == availableDevice?.registryID)
+    }
+
+    @MainActor
+    @Test func monitorMetalViewsReceiveUsableSizesFromSwiftUILayout() throws {
+        let client = ASFWAudioObserverClient(guid: 0)
+        let host = NSHostingView(rootView: StereoMetersView(client: client,
+            metrics: AudioObserverMetrics(), active: true))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 300),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        window.layoutIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        func metalViews(_ view: NSView) -> [MTKView] {
+            if let metal = view as? MTKView { return [metal] }
+            return view.subviews.flatMap(metalViews)
+        }
+        let plots = metalViews(host)
+        try #require(plots.count == 7)
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        for plot in plots {
+            #expect(plot.bounds.width > 0)
+            #expect(plot.bounds.height > 0)
+            let representable = MetalAnalyzerPlotView(client: client, mode: 0, index: 0)
+            let coordinator = representable.makeCoordinator()
+            representable.configure(plot, coordinator: coordinator, device: device)
+            #expect(plot.drawableSize.width == plot.bounds.width * window.backingScaleFactor)
+            #expect(plot.drawableSize.height == plot.bounds.height * window.backingScaleFactor)
+            try #require(plot.currentRenderPassDescriptor)
+        }
+    }
+
+    @Test func plotParameterLayoutMatchesTheMetalShader() {
+        #expect(MemoryLayout<AnalyzerPlotParams>.stride == 48)
+        #expect(MemoryLayout<AnalyzerPlotParams>.offset(of: \.mode) == 0)
+        #expect(MemoryLayout<AnalyzerPlotParams>.offset(of: \.index) == 4)
+        #expect(MemoryLayout<AnalyzerPlotParams>.offset(of: \.active) == 8)
+        #expect(MemoryLayout<AnalyzerPlotParams>.offset(of: \.latestFrame) == 16)
+        #expect(MemoryLayout<AnalyzerPlotParams>.offset(of: \.value) == 32)
+        #expect(MemoryLayout<AnalyzerPlotParams>.offset(of: \.height) == 44)
+        #expect(MemoryLayout<AnalyzerHistoryVertex>.stride == 24)
+    }
+
+    @MainActor
+    @Test(arguments: [UInt32(0), 1, 2])
+    func plotViewRecoversWhenMetalBecomesAvailableAfterCreation(mode: UInt32) throws {
+        let client = ASFWAudioObserverClient(guid: 0)
+        let plot = MetalAnalyzerPlotView(client: client, mode: mode, index: 0)
+        let coordinator = plot.makeCoordinator()
+        let view = MTKView(frame: .zero, device: nil)
+        plot.configure(view, coordinator: coordinator, device: nil)
+        #expect(view.delegate == nil)
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        plot.configure(view, coordinator: coordinator, device: device)
+        let firstRenderer = try #require(view.delegate)
+        #expect(view.device?.registryID == device.registryID)
+        // Ordinary updates must preserve the renderer and its history.
+        plot.configure(view, coordinator: coordinator, device: device)
+        #expect(view.delegate === firstRenderer)
+        plot.configure(view, coordinator: coordinator, device: nil)
+        #expect(view.delegate == nil)
+        plot.configure(view, coordinator: coordinator, device: device)
+        let recoveredRenderer = try #require(view.delegate)
+        #expect(recoveredRenderer !== firstRenderer)
+    }
+
     @Test(arguments: [UInt32(0), 1, 2])
     func analyzerPlotsRenderOnTheGPU(mode: UInt32) throws {
         let device = try #require(MTLCreateSystemDefaultDevice())
@@ -177,9 +259,9 @@ struct AudioAnalysisKernelTests {
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = library.makeFunction(name: "asfwAnalyzerPlotVertex")
         descriptor.fragmentFunction = library.makeFunction(name: "asfwAnalyzerPlotFragment")
-        descriptor.colorAttachments[0].pixelFormat = .rgba8Unorm
+        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         let pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
-        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: 64, height: 64, mipmapped: false)
+        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 64, height: 64, mipmapped: false)
         textureDescriptor.storageMode = .shared
         textureDescriptor.usage = .renderTarget
         let texture = try #require(device.makeTexture(descriptor: textureDescriptor))
@@ -189,9 +271,8 @@ struct AudioAnalysisKernelTests {
         pass.colorAttachments[0].storeAction = .store
         pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0)
         // Packed layout matches AnalyzerPlotParams and AnalyzerHistoryVertex.
-        let params: [UInt32] = [mode, 0, 1, 601, 2_880_000, 0, 48_000, 0,
-                                Float(0.5).bitPattern, Float(0.75).bitPattern,
-                                Float(64).bitPattern, Float(64).bitPattern]
+        var params = AnalyzerPlotParams(mode: mode, index: 0, active: 1, count: 601,
+            latestFrame: 2_880_000, sampleRate: 48_000, value: 0.5, peak: 0.75, width: 64, height: 64)
         let points: [UInt32] = (0...600).flatMap { i in
             [UInt32(i * 4_800), 0, Float(0.5).bitPattern, Float(0.1).bitPattern, 0, 0]
         }
@@ -200,8 +281,10 @@ struct AudioAnalysisKernelTests {
         let command = try #require(queue.makeCommandBuffer())
         let encoder = try #require(command.makeRenderCommandEncoder(descriptor: pass))
         encoder.setRenderPipelineState(pipeline)
-        params.withUnsafeBytes { encoder.setVertexBytes($0.baseAddress!, length: $0.count, index: 0) }
-        encoder.setVertexBuffer(pointBuffer, offset: 0, index: 1)
+        encoder.setVertexBytes(&params, length: MemoryLayout<AnalyzerPlotParams>.stride, index: 0)
+        var emptyPoint = AnalyzerHistoryVertex(frame: 0, correlation: 0, sideEnergy: 0, breakBefore: 0)
+        if mode == 2 { encoder.setVertexBuffer(pointBuffer, offset: 0, index: 1) }
+        else { encoder.setVertexBytes(&emptyPoint, length: MemoryLayout<AnalyzerHistoryVertex>.stride, index: 1) }
         encoder.drawPrimitives(type: mode == 2 ? .line : .triangle,
                                vertexStart: 0, vertexCount: mode == 2 ? 1_200 : 12)
         encoder.endEncoding()
