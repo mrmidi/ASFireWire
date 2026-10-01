@@ -67,7 +67,7 @@ final class AvcReportStore: ObservableObject {
                 switch state {
                 case 2: notes.append("Manual discovery completed.")
                 case 3: notes.append("Manual discovery failed; available partial data follows.")
-                case 4: notes.append("Manual discovery skipped by the device probe safety policy; existing parsed data follows.")
+                case 4: notes.append("Refresh sent nothing: this device's probe policy forbids discovery commands. The exchange log is what the driver has sent it since attach.")
                 case 1: notes.append("Manual discovery timed out; capture is incomplete.")
                 default: notes.append("No terminal manual discovery result was recorded.")
                 }
@@ -78,6 +78,12 @@ final class AvcReportStore: ObservableObject {
                 notes.append("Config ROM cache belongs to a different generation; bytes omitted.")
             }
             let exportUnit = unit?.diagnosticState == 1 ? nil : unit
+            let exchanges = unit == nil ? nil : connector.getFCPExchangeLog(guid: device.guid)
+            if unit != nil && exchanges == nil {
+                notes.append("FCP exchange log unavailable; the installed driver may predate it.")
+            } else if let exchanges, exchanges.dropped > 0 {
+                notes.append("The exchange log was full: \(exchanges.dropped) later exchanges were not kept.")
+            }
             let subunits: [AvcReportSnapshot.Subunit] = exportUnit?.subunits.map { subunit in
                 let capabilities = subunit.type == 0x0C
                     ? connector.getSubunitCapabilitiesData(guid: device.guid, type: subunit.type, id: subunit.subunitID) : nil
@@ -95,7 +101,8 @@ final class AvcReportStore: ObservableObject {
                 romUnits: device.units.map { .init(offset: $0.romOffset, specifierID: $0.specId, version: $0.swVersion) },
                 configROM: rom?.isExactGenerationMatch == true ? rom?.data : nil,
                 avcUnit: exportUnit.map { .init(isoInputPlugs: $0.isoInputPlugs, isoOutputPlugs: $0.isoOutputPlugs,
-                    externalInputPlugs: $0.extInputPlugs, externalOutputPlugs: $0.extOutputPlugs, subunits: subunits) }, notes: notes))
+                    externalInputPlugs: $0.extInputPlugs, externalOutputPlugs: $0.extOutputPlugs, subunits: subunits) }, notes: notes,
+                exchanges: exchanges))
         }
         guard !Task.isCancelled else { return }
         guard connector.isConnected, let after = connector.getDiscoveredDevices(),

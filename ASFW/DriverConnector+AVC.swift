@@ -207,6 +207,44 @@ extension ASFWDriverConnector {
         return out
     }
 
+    /// Every FCP exchange the driver had with this unit since attach or the
+    /// last refresh, read page by page.
+    func getFCPExchangeLog(guid: UInt64) -> AvcReportSnapshot.ExchangeLog? {
+        guard isConnected, connection != 0 else { return nil }
+        var log: AvcReportSnapshot.ExchangeLog?
+        var next: UInt32 = 0
+        // The log holds at most 1024 records, so this is bounded; the cap also
+        // stops a page that keeps arriving empty-but-incomplete.
+        for _ in 0..<1100 {
+            let scalarInputs: [UInt64] = [guid >> 32, guid & 0xFFFF_FFFF, UInt64(next)]
+            var outSize = 4 * 1024
+            var out = Data(count: outSize)
+            let kr = out.withUnsafeMutableBytes { outPtr in
+                scalarInputs.withUnsafeBufferPointer { scalarPtr in
+                    IOConnectCallMethod(connection, Method.getFCPExchangeLog.rawValue,
+                                        scalarPtr.baseAddress, 3, nil, 0, nil, nil,
+                                        outPtr.baseAddress?.assumingMemoryBound(to: UInt8.self), &outSize)
+                }
+            }
+            guard kr == KERN_SUCCESS else {
+                print("[Connector] ❌ getFCPExchangeLog failed: \(interpretIOReturn(kr))")
+                return nil
+            }
+            out.count = outSize
+            guard let page = AvcReportSnapshot.ExchangeLog.parsePage(out) else { return nil }
+            if log == nil {
+                log = .init(session: page.session, dropped: page.dropped, records: [])
+            }
+            // A refresh started mid-read: the pages no longer belong together.
+            guard page.session == log?.session else { return nil }
+            log?.dropped = page.dropped
+            log?.records += page.records
+            next += UInt32(page.records.count)
+            if page.records.isEmpty || next >= page.totalRecords { return log }
+        }
+        return log
+    }
+
     func sendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32 = 15_000) -> Data? {
         guard isConnected else {
             log("sendRawFCPCommand: Not connected", level: .warning)

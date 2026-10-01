@@ -16,6 +16,8 @@ the rest still runs.
 Usage:
   python3 avc_discover.py --mcp [--guid 0x...] [--no-controls] [--strip-guid] [--out DIR] [--dump FILE]
   python3 avc_discover.py --replay DUMP.json [DUMP.json ...]
+      DUMP may also be an ASFW AV/C Report: its snapshot.json (pick a device with --guid when it
+      holds several) or a per-device <GUID>-fcp-exchanges.json from "Save Binary Dump Folder".
   uv run avc_discover.py --mcp ...                     (same thing through uv)
 Exactly one of --mcp / --replay is required, so hardware is never touched by accident.
 Endpoint: --endpoint, else $ASFW_MCP_ENDPOINT, else http://127.0.0.1:8766/mcp.
@@ -164,6 +166,45 @@ class Device:
         return outcome, resp
 
 
+def quadlet_padded(frame):
+    """The driver pads FCP commands to whole quadlets with zeros; the tool does not."""
+    return tuple(frame) + (0,) * (-len(frame) % 4)
+
+
+def descriptor_chunk(command, response):
+    """(subunit, specifier hex, offset, data) from a READ DESCRIPTOR exchange, else None.
+
+    Layout after the opcode: specifier, read result status, reserved, data length (2), address (2),
+    then the data. The specifier's length isn't in the frame, so take the shortest one for which the
+    reply's length and address fields agree with what follows."""
+    if len(command) < 10 or command[2] != 0x09 or not response or response[0] != 0x09:
+        return None
+    for spec_len in range(1, 13):
+        head = 3 + spec_len + 6
+        if len(response) < head or list(command[3:3 + spec_len]) != list(response[3:3 + spec_len]):
+            continue
+        length = u16(response, 3 + spec_len + 2)
+        if 0 <= len(response) - head - length < 4 and list(command[3 + spec_len + 4:head]) == list(response[3 + spec_len + 4:head]):
+            return (response[1], bytes(response[3:3 + spec_len]).hex(), u16(response, 3 + spec_len + 4),
+                    bytes(response[head:head + length]))
+    return None
+
+
+def expand_report(d, guid_arg):
+    """An ASFW AV/C Report snapshot -> one device's dump, in this tool's own format."""
+    devices = [x for x in d["devices"] if x.get("exchanges")]
+    if guid_arg:
+        devices = [x for x in devices if int(x["guid"]) == int(guid_arg, 16)]
+    if len(devices) != 1:
+        listing = ", ".join(f"{int(x['guid']):#018x} {x.get('modelName')}" for x in d["devices"])
+        sys.exit(f"pick one device with --guid: {listing or 'the report has no exchange logs'}")
+    x = devices[0]
+    return {"device": {"vendorName": x.get("vendorName"), "modelName": x.get("modelName"),
+                       "guid": f"{int(x['guid']):#018x}", "nodeId": x.get("nodeID"),
+                       "generation": x.get("generation")},
+            "records": x["exchanges"]["records"]}
+
+
 class ReplayDevice(Device):
     CHUNK = 142  # the Phase 88's descriptor READ chunk size
 
@@ -174,6 +215,14 @@ class ReplayDevice(Device):
             for r in d.get("records", []):
                 if r.get("response"):
                     self.answers.setdefault(tuple(r["command"]), r["response"])
+                    self.answers.setdefault(quadlet_padded(r["command"]), r["response"])
+                    chunk = descriptor_chunk(r["command"], r["response"])
+                    if chunk:
+                        sub, spec, off, data = chunk
+                        whole = bytearray(self.desc.get((sub, spec), b""))
+                        whole.extend(bytes(max(0, off + len(data) - len(whole))))
+                        whole[off:off + len(data)] = data
+                        self.desc[(sub, spec)] = bytes(whole)
             for x in d.get("descriptors", []):
                 if x.get("bytes"):
                     self.desc[(int(str(x["subunit"]), 0), x["specifier"])] = bytes.fromhex(x["bytes"])
@@ -191,7 +240,7 @@ class ReplayDevice(Device):
                 done = off + len(chunk) >= len(data)
                 return [0x09, sub, 0x09, *spec, 0x10 if done else 0x11, 0xFF,
                         len(chunk) >> 8, len(chunk) & 0xFF, off >> 8, off & 0xFF, *chunk]
-        return self.answers.get(tuple(frame))
+        return self.answers.get(tuple(frame)) or self.answers.get(quadlet_padded(frame))
 
     def send(self, name, frame, intent="status"):
         resp = self.answer(frame) or []
@@ -567,6 +616,7 @@ def main():
 
     if a.replay:
         dumps = [json.load(open(f)) for f in a.replay]
+        dumps = [expand_report(d, a.guid) if "devices" in d else d for d in dumps]
         info = next(d["device"] for d in dumps if "device" in d)
         node = {"vendorName": info.get("vendorName"), "modelName": f"{info.get('modelName')} (REPLAY)",
                 "nodeId": info.get("nodeId")}

@@ -130,6 +130,19 @@ public:
         discoveryStatus_.store(AVCDiscoveryStatus::Running, std::memory_order_release);
         return true;
     }
+    /// End a rescan begun with TryBeginRescan() that a family bring-up ran
+    /// instead of Initialize (BeBoB plug probes).
+    void FinishExternalRescan(bool success) noexcept {
+        discoveryStatus_.store(success ? AVCDiscoveryStatus::Completed : AVCDiscoveryStatus::Failed,
+                               std::memory_order_release);
+        rescanInProgress_.store(false, std::memory_order_release);
+    }
+    /// Start a new exchange log for this unit (manual refresh).
+    void BeginExchangeSession() { if (fcpTransport_) fcpTransport_->BeginExchangeSession(); }
+    /// Every FCP exchange with this unit since the session started.
+    [[nodiscard]] FcpExchangeLog CopyExchangeLog() const {
+        return fcpTransport_ ? fcpTransport_->CopyExchangeLog() : FcpExchangeLog{};
+    }
     void ProbeUnitInfo(std::function<void(bool)> completion);
 
     void SubmitCommand(const AVCCdb& cdb, AVCCompletion completion) override;

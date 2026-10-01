@@ -130,6 +130,10 @@ add_protocols_test(BeBoBBootloaderPreparationTests
 target_link_libraries(BeBoBBootloaderPreparationTests PRIVATE asfw_catalog_host)
 
 # FCP transport lifecycle tests (write completion, cancellable timeout, teardown)
+add_protocols_test(AVCExchangeLogWireTests
+    AVCExchangeLogWireTests.cpp
+)
+
 add_protocols_test(FCPTransportTests
     FCPTransportTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"

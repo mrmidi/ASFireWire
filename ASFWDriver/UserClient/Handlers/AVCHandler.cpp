@@ -15,6 +15,7 @@
 #include "../../Protocols/AVC/Core/IAvcUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../WireFormats/AVCExchangeLogWire.hpp"
 #include "../../Shared/SharedDataModels.hpp"
 
 #include <algorithm>
@@ -840,6 +841,33 @@ kern_return_t AVCHandler::GetRawFCPCommandResult(IOUserClientMethodArguments* ar
     args->structureOutput = response;
     args->structureOutputDescriptor = nullptr;
     return kIOReturnSuccess;
+}
+
+kern_return_t AVCHandler::GetFCPExchangeLog(IOUserClientMethodArguments* args) {
+    if (!discovery_) {
+        return kIOReturnNotReady;
+    }
+    if (!args || args->scalarInputCount < 3) {
+        return kIOReturnBadArgument;
+    }
+    const uint64_t guid = (static_cast<uint64_t>(args->scalarInput[0]) << 32) | args->scalarInput[1];
+    const auto firstIndex = static_cast<uint32_t>(args->scalarInput[2]);
+
+    for (auto* unit : discovery_->GetAllAVCUnits()) {
+        const auto device = unit ? unit->GetDevice() : nullptr;
+        if (!device || device->GetGUID() != guid) {
+            continue;
+        }
+        const auto page = Wire::SerializeExchangePage(unit->CopyExchangeLog(), firstIndex, kMaxWireSize);
+        OSData* osData = OSData::withBytes(page.data(), static_cast<uint32_t>(page.size()));
+        if (!osData) {
+            return kIOReturnNoMemory;
+        }
+        args->structureOutput = osData;
+        args->structureOutputDescriptor = nullptr;
+        return kIOReturnSuccess;
+    }
+    return kIOReturnNotFound;
 }
 
 kern_return_t AVCHandler::ReScanAVCUnits(IOUserClientMethodArguments* args) {

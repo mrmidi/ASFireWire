@@ -6,7 +6,7 @@ enum AvcReportTextFormatter {
                      "Captured: \(report.capturedAt.formatted(.iso8601))",
                      "Report app: \(report.appVersion)",
                      "Driver: \(report.driverVersion ?? "<unavailable>")",
-                     "Scope: manual AV/C discovery using the normal driver discovery flow.",
+                     "Scope: Refresh reruns each device's own AV/C bring-up; the exchange log is every FCP command the driver sent and the reply.",
                      "Capture time is the export time, not the original discovery time.",
                      "Missing data means unavailable in the export; it does not prove unsupported hardware.",
                      "Device count: \(report.devices.count)"]
@@ -33,6 +33,11 @@ enum AvcReportTextFormatter {
             } else {
                 lines += ["", "AV/C UNIT: <unavailable in discovery export>"]
             }
+            if let log = device.exchanges {
+                lines += ["", "FCP EXCHANGES", "  " + exchangeSummary(log)]
+            } else {
+                lines += ["", "FCP EXCHANGES: <unavailable in discovery export>"]
+            }
             if !device.notes.isEmpty { lines += ["", "NOTES"] + device.notes.map { "- \($0)" } }
         }
 
@@ -43,6 +48,10 @@ enum AvcReportTextFormatter {
             let guid = String(format: "%016llX", device.guid)
             rawIndex += 1
             appendBytes(device.configROM, title: "RAW \(rawIndex): CONFIG ROM (GUID \(guid))", into: &lines)
+            if let log = device.exchanges {
+                rawIndex += 1
+                appendExchanges(log, title: "RAW \(rawIndex): FCP EXCHANGES (GUID \(guid), session \(log.session))", into: &lines)
+            }
             for subunit in device.avcUnit?.subunits ?? [] {
                 rawIndex += 1
                 appendBytes(subunit.capabilities, title: String(format: "RAW %u: SUBUNIT CAPABILITIES (GUID %@, type 0x%02X, id %u; ASFW user-client serialization, not an AV/C reply)", rawIndex, guid, subunit.type, subunit.id), into: &lines)
@@ -79,6 +88,48 @@ enum AvcReportTextFormatter {
             }
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// AV/C response codes (the first byte of a reply).
+    static func responseName(_ code: UInt8) -> String {
+        switch code {
+        case 0x08: "NOT IMPLEMENTED"
+        case 0x09: "ACCEPTED"
+        case 0x0A: "REJECTED"
+        case 0x0B: "IN TRANSITION"
+        case 0x0C: "STABLE"
+        case 0x0D: "CHANGED"
+        case 0x0F: "INTERIM"
+        default: String(format: "code 0x%02X", code)
+        }
+    }
+
+    static func exchangeSummary(_ log: AvcReportSnapshot.ExchangeLog) -> String {
+        var counts: [String: Int] = [:]
+        for record in log.records {
+            let key = record.outcome == "response" ? (record.response.first.map(responseName) ?? "empty reply") : record.outcome
+            counts[key, default: 0] += 1
+        }
+        let parts = counts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .map { "\($0.key) \($0.value)" }
+        return "\(log.records.count) exchanges in session \(log.session)" +
+            (parts.isEmpty ? "" : ": " + parts.joined(separator: ", ")) +
+            (log.dropped > 0 ? "; \(log.dropped) not kept (log full)" : "")
+    }
+
+    private static func appendExchanges(_ log: AvcReportSnapshot.ExchangeLog, title: String, into lines: inout [String]) {
+        lines += ["", title, "  " + exchangeSummary(log)]
+        let hex: ([UInt8]) -> String = { $0.map { String(format: "%02X", $0) }.joined(separator: " ") }
+        for record in log.records {
+            let result = record.outcome == "response"
+                ? (record.response.first.map(responseName) ?? "empty reply") : record.outcome
+            var flags = ""
+            if record.interim { flags += " after INTERIM" }
+            if record.retries > 0 { flags += " after \(record.retries) retries" }
+            lines.append(String(format: "  #%04u g%u %@%@", record.sequence, record.generation, result, flags))
+            lines.append("    > " + hex(record.command))
+            if !record.response.isEmpty { lines.append("    < " + hex(record.response)) }
+        }
     }
 
     private static func typeName(_ type: UInt8) -> String {

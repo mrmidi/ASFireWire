@@ -1479,23 +1479,46 @@ void AVCDiscovery::ReScanAllUnits() {
     IOLockUnlock(lock_);
 
     ASFW_LOG(AVC, "[AVCDiag] manual discovery requested units=%zu", scanUnits.size());
-    std::vector<std::pair<uint64_t, std::shared_ptr<AVCUnit>>> eligible;
+    // Each unit reruns its own bring-up -- the same commands attach sends --
+    // into a fresh exchange log, so the report shows the complete discovery.
+    // Devices whose policy sends nothing keep their existing log.
+    std::vector<std::pair<uint64_t, std::shared_ptr<AVCUnit>>> generic;
+    std::vector<std::pair<uint64_t, std::shared_ptr<AVCUnit>>> bebob;
     for (const auto& [guid, avcUnit] : scanUnits) {
         const auto plan = CurrentPolicyPlan(deviceRegistry_, guid);
         const auto unit = avcUnit->GetFWUnit();
-        if (!unit || ProbeDecisionFor(unit->GetUnitSpecID(), plan) != AvcProbeDecision::GenericDiscovery) {
-            ASFW_LOG(AVC, "[AVCDiag] GUID=%llx skipped by probe policy", guid);
+        const auto decision = unit ? ProbeDecisionFor(unit->GetUnitSpecID(), plan)
+                                   : AvcProbeDecision::NoPolicy;
+        auto* target = decision == AvcProbeDecision::GenericDiscovery ? &generic
+                     : decision == AvcProbeDecision::BeBoBPlug0       ? &bebob
+                                                                       : nullptr;
+        if (target == nullptr) {
+            ASFW_LOG(AVC, "[AVCDiag] GUID=%llx skipped by probe policy decision=%u", guid,
+                     static_cast<unsigned>(decision));
             avcUnit->MarkRescanSkipped();
             continue;
         }
-        if (avcUnit->TryBeginRescan()) eligible.emplace_back(guid, avcUnit);
+        if (avcUnit->TryBeginRescan()) {
+            avcUnit->BeginExchangeSession();
+            target->emplace_back(guid, avcUnit);
+        }
     }
     // Publish every unit's synchronous state before any async probe can finish.
-    for (const auto& [guid, avcUnit] : eligible) {
+    for (const auto& [guid, avcUnit] : generic) {
         avcUnit->ReScanAlreadyBegun([avcUnit, guid](bool success) {
             ASFW_LOG(AVC, "[AVCDiag] GUID=%llx result=%{public}s", guid, success ? "completed" : "failed");
             // Per-unit status is finalized before this callback; no discovery lock is held.
         });
+    }
+    // Read-only BridgeCo inventory, as at attach; it does not republish audio.
+    for (const auto& [guid, avcUnit] : bebob) {
+        ::ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery(
+            *avcUnit, guid, [avcUnit, guid](const ::ASFW::Audio::BeBoB::DeviceModel& model) {
+                const bool success = model.unitPlugCounts.has_value();
+                avcUnit->FinishExternalRescan(success);
+                ASFW_LOG(AVC, "[AVCDiag] GUID=%llx bebob inventory result=%{public}s", guid,
+                         success ? "completed" : "failed");
+            });
     }
 }
 

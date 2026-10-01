@@ -164,6 +164,68 @@ struct AvcReportTests {
         #expect(throws: CocoaError.self) { try AvcReportExporter.export(report(), to: directory) }
     }
 
+    // MARK: - FCP exchange log
+
+    private static let unitInfoExchange = AvcReportSnapshot.Exchange(
+        sequence: 7, generation: 4, outcome: "response", interim: true, retries: 1,
+        command: [0x01, 0xFF, 0x30, 0xFF], response: [0x0C, 0xFF, 0x30])
+
+    @Test func parsesTheDriversExchangePage() throws {
+        // Layout from UserClient/WireFormats/AVCExchangeLogWire.hpp, little-endian.
+        var page: [UInt8] = []
+        func u32(_ v: UInt32) { page += [UInt8(v & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 24)] }
+        func u16(_ v: UInt16) { page += [UInt8(v & 0xFF), UInt8(v >> 8)] }
+        u32(3); u32(2); u32(2); u32(0); u32(2); u32(0)
+        u32(7); u32(4); page += [0, 1, 1, 0]; u16(4); u16(3)
+        page += [0x01, 0xFF, 0x30, 0xFF, 0x0C, 0xFF, 0x30, 0x00]
+        u32(8); u32(4); page += [1, 0, 0, 0]; u16(3); u16(0)
+        page += [0x01, 0xFF, 0x31, 0x00]
+        let parsed = try #require(AvcReportSnapshot.ExchangeLog.parsePage(Data(page)))
+        #expect(parsed.session == 3)
+        #expect(parsed.dropped == 2)
+        #expect(parsed.totalRecords == 2)
+        #expect(parsed.records.first == Self.unitInfoExchange)
+        #expect(parsed.records.last?.outcome == "timeout")
+        #expect(parsed.records.last?.response.isEmpty == true)
+        #expect(AvcReportSnapshot.ExchangeLog.parsePage(Data(page.prefix(30))) == nil)
+    }
+
+    @Test func refreshCarriesTheExchangeLogIntoTheReport() async throws {
+        let source = Source()
+        source.status = 0x82
+        source.exchangeLog = .init(session: 2, dropped: 0, records: [Self.unitInfoExchange])
+        let store = AvcReportStore(connector: source)
+        await store.refresh()
+        let device = try #require(store.snapshot?.devices.first)
+        #expect(device.exchanges?.records == [Self.unitInfoExchange])
+        #expect(store.reportText.contains("1 exchanges in session 2: STABLE 1"))
+        #expect(store.reportText.contains("#0007 g4 STABLE after INTERIM after 1 retries"))
+        #expect(store.reportText.contains("> 01 FF 30 FF"))
+        #expect(store.reportText.contains("< 0C FF 30"))
+    }
+
+    @Test func versionOneDumpsStillOpen() throws {
+        var snapshot = report()
+        snapshot.schemaVersion = 1
+        let restored = try AvcReportSnapshot.load(snapshot.jsonData())
+        #expect(restored.devices.first?.exchanges == nil)
+    }
+
+    @Test func binaryExportWritesAReplayableExchangeDump() throws {
+        var snapshot = report()
+        snapshot.devices[0].exchanges = .init(session: 1, dropped: 0, records: [Self.unitInfoExchange])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try AvcReportExporter.export(snapshot, to: directory)
+        let file = directory.appendingPathComponent("0003DB0000000001-fcp-exchanges.json")
+        let json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        let device = try #require(json["device"] as? [String: Any])
+        #expect(device["guid"] as? String == "0x0003db0000000001")
+        let records = try #require(json["records"] as? [[String: Any]])
+        #expect(records.first?["command"] as? [Int] == [0x01, 0xFF, 0x30, 0xFF])
+        #expect(records.first?["response"] as? [Int] == [0x0C, 0xFF, 0x30])
+    }
+
     @MainActor
     private final class Source: AvcReportSource {
         var isConnected = true
@@ -197,5 +259,7 @@ struct AvcReportTests {
         }
         func getSubunitCapabilitiesData(guid: UInt64, type: UInt8, id: UInt8) -> Data? { nil }
         func getSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) -> Data? { nil }
+        var exchangeLog: AvcReportSnapshot.ExchangeLog?
+        func getFCPExchangeLog(guid: UInt64) -> AvcReportSnapshot.ExchangeLog? { exchangeLog }
     }
 }

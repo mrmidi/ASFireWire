@@ -11,6 +11,7 @@ protocol AvcReportSource {
     func getConfigROM(nodeId: UInt8, generation: UInt16) -> ASFWDriverConnector.ConfigROMFetchResult?
     func getSubunitCapabilitiesData(guid: UInt64, type: UInt8, id: UInt8) -> Data?
     func getSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) -> Data?
+    func getFCPExchangeLog(guid: UInt64) -> AvcReportSnapshot.ExchangeLog?
 }
 
 extension ASFWDriverConnector: AvcReportSource {}
