@@ -101,6 +101,54 @@ add_protocols_test(AvcGoldenTests
 )
 
 
+# AVCDiscovery lifecycle (attach, bus reset, resume, rescan)
+add_protocols_test(AvcDiscoveryLifecycleTests
+    AvcDiscoveryLifecycleTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCDiscovery.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/BeBoB/Bootloader/BeBoBBootloaderCue.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/BeBoB/Bootloader/BeBoBBootloaderPreparation.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/BeBoB/Bootloader/BeBoBBootloaderPreparationCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
+    "${ASFW_TESTS_DIR}/support/SimulatedAvcUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AvcAudioConfig.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AvcExtensionInventory.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeParamsSerdes.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfwStreamFormats.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+)
+
 # FCP Packet Parsing Tests
 add_executable(FCPPacketParsingTests
     FCPPacketParsingTests.cpp

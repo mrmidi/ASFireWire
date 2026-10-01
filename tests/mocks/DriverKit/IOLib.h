@@ -156,8 +156,13 @@ inline uint64_t mach_continuous_time_stub() {
 // IOLock shim for host tests (maps to std::mutex)
 //------------------------------------------------------------------------------
 
+// The dext's IOLock is an os_unfair_lock: locking it again on the owning thread
+// aborts the process ("BUG IN CLIENT OF LIBPLATFORM: Trying to recursively lock
+// an os_unfair_lock"). A plain std::mutex would deadlock or be undefined
+// instead, so the host lock records its owner and aborts the same way.
 struct IOLock {
     std::mutex m;
+    std::atomic<std::thread::id> owner{};
 };
 
 inline IOLock * IOLockAlloc() {
@@ -170,12 +175,19 @@ inline void IOLockFree(IOLock *lock) {
 
 inline void IOLockLock(IOLock *lock) {
     if (lock) {
+        if (lock->owner.load(std::memory_order_relaxed) == std::this_thread::get_id()) {
+            std::fprintf(stderr, "IOLockLock: recursive lock of a non-recursive IOLock "
+                                 "(the dext aborts here: os_unfair_lock)\n");
+            std::abort();
+        }
         lock->m.lock();
+        lock->owner.store(std::this_thread::get_id(), std::memory_order_relaxed);
     }
 }
 
 inline void IOLockUnlock(IOLock *lock) {
     if (lock) {
+        lock->owner.store(std::thread::id{}, std::memory_order_relaxed);
         lock->m.unlock();
     }
 }
@@ -184,7 +196,11 @@ inline bool IOLockTryLock(IOLock *lock) {
     if (!lock) {
         return false;
     }
-    return lock->m.try_lock();
+    if (!lock->m.try_lock()) {
+        return false;
+    }
+    lock->owner.store(std::this_thread::get_id(), std::memory_order_relaxed);
+    return true;
 }
 
 // A very lightweight assert stub; you can make this stricter if you want.

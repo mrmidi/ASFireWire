@@ -852,13 +852,13 @@ void AVCDiscovery::OnBusReset(uint32_t newGeneration) {
     // ControllerCore invalidates DeviceRegistry routes before this callback.
     std::vector<Scheduling::TimerToken> cancelledRescans;
 
-    // Notify all AVCUnits of bus reset
+    // Invalidate in-flight rescans first, then notify the units with the lock
+    // released: a unit fails its pending FCP command on reset, and the whole
+    // discovery chain then unwinds synchronously into completions that take
+    // lock_ (IsRescanCurrent). Notifying under the lock aborted the dext on a
+    // recursive os_unfair_lock when a Phase 88 reset mid-rescan.
+    std::vector<std::shared_ptr<AVCUnit>> units;
     IOLockLock(lock_);
-
-    for (auto& [guid, avcUnit] : units_) {
-        avcUnit->OnBusReset(newGeneration);
-    }
-
     activeRescanSerialByGuid_.clear();
     for (const auto& [guid, token] : rescanTimersByGuid_) {
         (void)guid;
@@ -867,11 +867,18 @@ void AVCDiscovery::OnBusReset(uint32_t newGeneration) {
         }
     }
     rescanTimersByGuid_.clear();
-
+    units.reserve(units_.size());
+    for (const auto& [guid, avcUnit] : units_) {
+        (void)guid;
+        units.push_back(avcUnit);
+    }
     IOLockUnlock(lock_);
 
     for (const auto token : cancelledRescans) {
         timerScheduler_.Cancel(token);
+    }
+    for (const auto& avcUnit : units) {
+        avcUnit->OnBusReset(newGeneration);
     }
 
     // Rebuild node ID map (node IDs changed)
