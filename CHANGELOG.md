@@ -16,9 +16,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **Best effort, no guarantees.** This release enables audio for many AV/C and DICE devices that have never been run on ASFireWire. Some will work, some won't. Turn your volume down before the first attach, and please report every result, including "it just works": https://asfirewire.mistermidi.chatgpt.site/test-device/
+
 ### Added
 
-- Avid Mbox Pro (3rd generation) DICE audio interface support, including its startup router and mixer configuration. (#162)
+- Avid Mbox Pro (3rd generation) DICE audio interface support, including its startup router and mixer configuration. Contributed and hardware-tested by KinoLab07. (#162)
+- AV/C: generic discovery and streaming for AV/C audio devices (BeBoB, Oxford) that have no catalog entry. The driver reads what the device reports about itself (plugs, stream formats, the Music and Audio Subunit descriptors, channel names) and publishes it from that, then streams with the standard IEC 61883 plug-connection sequence at the rate the device is already running. Only command forms already proven on real hardware are sent. Known devices keep their own tested setup. Untested on most hardware. Limits: one sample rate per device, playback-only devices are not published yet, and units that send no usable timestamps (some Oxford 970) may play but not record. (#165)
+- DICE: every DICE model the catalog recognises now streams through the generic DICE path, with channel counts and rates read from the device: Focusrite Liquid Saffire 56, Saffire Pro 26 and Saffire Pro 40 (TCD3070); PreSonus StudioLive 16.4.2 and 32.4.2; Alesis iO14 / iO26; Mackie Onyx 1640i (DICE run) and Onyx Blackbird; Weiss ADC2, AFI1, Vesta, DAC2, DAC202, Maya and MAN301. The Weiss DACs, the Vesta and the MAN301 use the INT202's output-only policy. None has run on this code. (#166)
+- DICE: a DICE unit with no catalog entry is recognised from its Config ROM alone, by the same rule as Linux (interface version 1, unit specifier equal to the GUID's vendor ID, the vendor's category byte, GUID product field equal to the unit model), and streams through the generic DICE path. (#166)
+- AV/C Report screen in the app: reruns AV/C discovery on every device and saves the complete FCP conversation as a text report, a JSON dump or a binary dump folder. This is the report to attach for AV/C devices. (#165)
+- Audio Analyzer screen (preview): levels and true peak, goniometer and correlation, spectrum (L/R or M/S, peak hold), EBU R128 loudness at 48 kHz, waveform and ring-buffer diagnostics, read directly from the driver's output ring on the GPU. Not yet optimised: about 20% of one CPU core while the screen is open in our measurements, and it may keep running while its window is hidden. Close the screen when you're not using it.
+
+### Changed
+
+- Audio: the largest buffer size macOS offers is now 4096 frames at 32–96 kHz (it was 576), so applications such as Pro Tools can use 1024 and 2048-frame buffers. Larger buffers have not yet been tried in a DAW. (#149)
+- AV/C (internal): the AV/C layer is rebuilt as typed frame and command codecs, one FCP transaction engine, plain-data unit and subunit models, and Music/Audio Subunit descriptor parsing. Devices are published from what discovery found, not from per-device publishers; the per-device BeBoB profile chain is gone. The stream-format command tries `0xBF` first and falls back to `0x2F` once, remembering the answer only after it works; BridgeCo units start on `0x2F`. (#165)
+- AV/C: UNIT INFO is always sent with its five operands, as Linux and Apple send it. The bare form wedged a TerraTec Phase 88 badly enough to need a power cycle. (#165)
+- AV/C: before a manual rescan, the app asks you to turn speakers and headphones down, since a misbehaving device can reset the bus during playback. (#165)
+- DICE: before the first write to a device, the driver now checks that its section table is plausible and that its `GLOBAL_VERSION` major is 1, as Linux does, and refuses the device otherwise. (#166)
+- Build: the driver and host tests are compiled as C++26; CI builds on the Xcode 27 image. (#165)
+
+### Fixed
+
+- OHCI: after a bus reset, the driver could stop handling interrupts entirely. Unplugging one device and plugging in another then left the new device undetected until the driver was restarted. The interrupt handler now masks the bus-reset event itself, acknowledges the Self-ID events it has read, and runs again until no enabled event is pending. Hardware confirmation of the replug case is pending. (#164)
+- AV/C: a bus reset during discovery could crash the driver in two ways. The failed commands' completions ran nested inside each other until the stack overflowed (a 227-command Phase 88 attach); they now run one after another. And the reset was passed to AV/C units while the discovery lock was held, which aborted the driver on a recursive lock; each restart reset the bus again, so it looked like the device was boot-looping. The units are now notified after the lock is released. (#165)
 
 ## [0.3.2] - 2026-09-28
 
