@@ -6,7 +6,8 @@
 #include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
-#include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
+#include "Audio/DriverKit/Config/AVC/GenericAvcProfile.hpp"
+#include "Audio/DriverKit/Config/ResolvedStreamConfig.hpp"
 #include "../support/MAudioSpecialHappyPathFixture.inc"
 
 #include "TxPacketizerTestSupport.hpp"
@@ -480,10 +481,15 @@ TEST(AmdtpDirectTxTests, DevicePlaybackMapMovesPhase88ChannelsToPlanarSlots) {
     ASFW::Audio::Wire::PcmSlotMap deviceMap{};
     ASSERT_TRUE(deviceMap.SetSlots(kPlanarSlots));
 
-    ASFW::Isoch::Audio::AVC::Profiles::Phase88Profile profile{};
+    // The shape comes from discovery: 10 PCM + 1 MIDI, as the device publishes
+    // it, framed the way StartIO frames it.
+    ASFW::Isoch::Audio::AVC::Profiles::GenericAvcProfile profile{};
+    const ASFW::Isoch::Audio::ParsedWireStream published{
+        .pcmChannels = 10, .am824Slots = 11, .midiPorts = 1};
     ASFW::Isoch::Audio::AudioStreamConfig config{};
-    ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(config));
+    ASSERT_TRUE(ASFW::Isoch::Audio::BuildResolvedTxStreamConfig(profile, &published, 1, 0, config));
     ASSERT_EQ(config.pcmChannels, 10U);
+    ASSERT_EQ(config.midiSlots, 1U);
     ASSERT_EQ(config.dbs, 11U);
 
     constexpr uint32_t kFrames = 8;

@@ -33,8 +33,8 @@
 #include <cstdint>
 #include <span>
 
-namespace ASFW::Protocols::AVC {
-    class FCPTransport;
+namespace ASFW::AVC {
+class IAvcUnit;
 }
 
 namespace ASFW::IRM {
@@ -70,7 +70,6 @@ public:
                        Protocols::Ports::FireWireBusInfo& busInfo,
                        Discovery::DeviceRouteToken route,
                        Discovery::DeviceRegistry* routeRegistry = nullptr,
-                       Protocols::AVC::FCPTransport* fcpTransport = nullptr,
                        IRM::IRMClient* irmClient = nullptr,
                        CMP::CMPClient* cmpClient = nullptr,
                        uint32_t formatSettleDelayMs = 100U,
@@ -94,13 +93,9 @@ public:
     }
     [[nodiscard]] IOReturn StopDuplex() override { return duplex_.StopDuplex(); }
 
-    /// May be null before the runtime context is bound; callers must check.
-    [[nodiscard]] Protocols::AVC::FCPTransport* GetFCPTransport() const noexcept {
-        return runtime_.fcpTransport;
-    }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                              Protocols::AVC::FCPTransport* transport) override {
-        duplex_.UpdateRuntimeContext(route, transport);
+                              std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override {
+        duplex_.UpdateRuntimeContext(route, std::move(avcUnit));
     }
 
     /// Discovery applies the 48 kHz formation before publishing, holding the

@@ -55,6 +55,7 @@ final class AvcReportStore: ObservableObject {
             units.contains { $0.guid == device.guid }
         }
         var captured: [AvcReportSnapshot.Device] = []
+        var cancelledCapture = false
         for device in candidates {
             await Task.yield()
             guard !Task.isCancelled else { return }
@@ -68,6 +69,7 @@ final class AvcReportStore: ObservableObject {
                 case 2: notes.append("Manual discovery completed.")
                 case 3: notes.append("Manual discovery failed; available partial data follows.")
                 case 4: notes.append("Refresh sent nothing: this device's probe policy forbids discovery commands. The exchange log is what the driver has sent it since attach.")
+                case 5: notes.append("Refresh sent nothing: audio is active on this device, and diagnostics never probe a streaming device. Stop audio, then refresh. The data below is from the last discovery.")
                 case 1: notes.append("Manual discovery timed out; capture is incomplete.")
                 default: notes.append("No terminal manual discovery result was recorded.")
                 }
@@ -90,6 +92,13 @@ final class AvcReportStore: ObservableObject {
             } else if let exchanges, exchanges.dropped > 0 {
                 notes.append("The exchange log was full: \(exchanges.dropped) later exchanges were not kept.")
             }
+            let documentData = unit == nil ? nil : connector.getAVCDiscoveryDocument(guid: device.guid)
+            let discovery = documentData.flatMap { try? JSONDecoder().decode(JSONValue.self, from: $0) }
+            let summary = documentData.flatMap { try? JSONDecoder().decode(AvcDiscoveryDocument.Summary.self, from: $0) }
+            if unit != nil && discovery == nil {
+                notes.append("Discovery document unavailable; the installed driver may predate it.")
+            }
+            if summary?.snapshot?.cancelled == true { cancelledCapture = true }
             let subunits: [AvcReportSnapshot.Subunit] = exportUnit?.subunits.map { subunit in
                 // The driver serializes capabilities for Music subunits only and
                 // keeps the Music status and Audio identifier descriptors.
@@ -117,9 +126,13 @@ final class AvcReportStore: ObservableObject {
                     : (rom?.isExactGenerationMatch == true ? nil : "the cached Config ROM is from another bus generation"),
                 avcUnit: exportUnit.map { .init(isoInputPlugs: $0.isoInputPlugs, isoOutputPlugs: $0.isoOutputPlugs,
                     externalInputPlugs: $0.extInputPlugs, externalOutputPlugs: $0.extOutputPlugs, subunits: subunits) }, notes: notes,
-                exchanges: exchanges))
+                exchanges: exchanges, discovery: discovery))
         }
         guard !Task.isCancelled else { return }
+        guard !cancelledCapture else {
+            error = "A discovery was cancelled during capture (the device left or the bus reset). The previous report was retained; refresh once the device is stable."
+            return
+        }
         guard connector.isConnected, let after = connector.getDiscoveredDevices(),
               candidates.allSatisfy({ before in
                   after.contains { $0.guid == before.guid && $0.nodeId == before.nodeId && $0.generation == before.generation }

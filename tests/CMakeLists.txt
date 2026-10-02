@@ -156,6 +156,14 @@ target_link_libraries(asfw_test_support PUBLIC asfw_catalog_host)
 # 6. AVC codecs host library
 add_library(asfw_avc_codecs STATIC
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/AVC/DiscoveryCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/DiscoveryGraph.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Discovery/DiscoveryReducer.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Discovery/DiscoverySession.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
 )

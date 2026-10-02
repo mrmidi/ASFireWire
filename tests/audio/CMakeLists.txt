@@ -224,7 +224,7 @@ add_audio_test(IsochServiceTxPreparationTests
 add_audio_test(AmdtpDirectTxTests
     AmdtpDirectTxTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
@@ -315,10 +315,8 @@ add_audio_test(DiceProfileTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )
@@ -339,10 +337,8 @@ add_audio_test(DiceProfileEquivalenceTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )
@@ -353,10 +349,8 @@ set(ASFW_TIMING_PROFILE_SOURCES
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )

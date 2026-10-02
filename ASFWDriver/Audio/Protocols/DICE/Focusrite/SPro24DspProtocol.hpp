@@ -83,7 +83,7 @@ public:
     
     IOReturn StopDuplex() override;
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                              Protocols::AVC::FCPTransport* transport) override;
+                              std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;
     
     // ========================================================================
     // Async Initialization

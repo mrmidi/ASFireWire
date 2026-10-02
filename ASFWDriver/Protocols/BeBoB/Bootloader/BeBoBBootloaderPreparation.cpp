@@ -31,6 +31,7 @@ const char* RetireReasonName(RetireReason reason) noexcept {
         case RetireReason::InfoUnavailable: return "info-unavailable";
         case RetireReason::CueWriteFailed: return "cue-write-failed";
         case RetireReason::GenerationChanged: return "generation-changed";
+        case RetireReason::LoaderStillActiveAfterCue: return "loader-still-active-after-cue";
     }
     return "unknown";
 }

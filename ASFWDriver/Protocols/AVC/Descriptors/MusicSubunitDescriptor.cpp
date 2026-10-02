@@ -7,22 +7,17 @@
 #include "MusicSubunitDescriptor.hpp"
 
 #include <algorithm>
+#include <numeric>
 
 namespace ASFW::Protocols::AVC::Descriptors {
 
 namespace {
-
-inline uint16_t ReadBE16(const uint8_t* p) noexcept {
-    return (static_cast<uint16_t>(p[0]) << 8) | p[1];
+/// Trailing NUL/CR/LF are padding, not text.
+std::string TrimmedText(std::span<const uint8_t> bytes) {
+    std::string text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n')) text.pop_back();
+    return text;
 }
-
-inline uint32_t ReadBE32(const uint8_t* p) noexcept {
-    return (static_cast<uint32_t>(p[0]) << 24) |
-           (static_cast<uint32_t>(p[1]) << 16) |
-           (static_cast<uint32_t>(p[2]) << 8) |
-           static_cast<uint32_t>(p[3]);
-}
-
 } // namespace
 
 const MusicSubunitPlug* MusicSubunitStatus::FindPlug(uint8_t plugId, bool isDest) const noexcept {
@@ -56,14 +51,7 @@ std::string MusicSubunitDescriptorParser::ExtractName(const AVCInfoBlock& block)
         }
     }
     if (rawTextBlock && !rawTextBlock->GetPrimaryData().empty()) {
-        const auto& data = rawTextBlock->GetPrimaryData();
-        std::string text(reinterpret_cast<const char*>(data.data()), data.size());
-        while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n')) {
-            text.pop_back();
-        }
-        if (!text.empty()) {
-            return text;
-        }
+        if (auto text = TrimmedText(rawTextBlock->GetPrimaryData()); !text.empty()) return text;
     }
 
     // 2. Try Name Info Block (0x000B)
@@ -80,82 +68,66 @@ std::string MusicSubunitDescriptorParser::ExtractName(const AVCInfoBlock& block)
     if (nameBlock && !nameBlock->GetPrimaryData().empty()) {
         const auto& data = nameBlock->GetPrimaryData();
 
-        // 2a. Check for inline 0x000A Info Block inside 0x000B primary data after 4-byte header
-        // [0..3]: name info header (e.g. 0x0000ffff)
-        // [4..5]: compound_length, [6..7]: type (0x000A), [8..9]: primary_fields_length
-        if (data.size() >= 10 && data[6] == 0x00 && data[7] == 0x0A) {
-            const uint16_t plen = ReadBE16(data.data() + 8);
-            const size_t textLen = std::min(data.size() - 10, static_cast<size_t>(plen));
-            std::string text(reinterpret_cast<const char*>(data.data() + 10), textLen);
-            while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n')) {
-                text.pop_back();
-            }
-            if (!text.empty()) {
-                return text;
+        // 2a. An inline raw-text info block after the 4-byte name info header:
+        // [0..3] header, [4..5] compound_length, [6..7] type 0x000A,
+        // [8..9] primary_fields_length, then the text (clipped to what exists).
+        ParseReader inline_(data);
+        uint16_t compoundLength{}, inlineType{}, textLength{};
+        if (inline_.Take(4) && inline_.Fields(compoundLength, inlineType, textLength) && inlineType == 0x000A) {
+            if (auto bytes = inline_.Take(std::min<size_t>(inline_.Remaining(), textLength))) {
+                if (auto text = TrimmedText(*bytes); !text.empty()) return text;
             }
         }
 
         // 2b. IEEE 1212 text descriptor header (16 bytes)
         constexpr size_t kTextDescHeaderLen = 16;
         if (data.size() > kTextDescHeaderLen) {
-            std::string text(reinterpret_cast<const char*>(data.data() + kTextDescHeaderLen),
-                             data.size() - kTextDescHeaderLen);
-            while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n')) {
-                text.pop_back();
-            }
-            if (!text.empty()) {
+            if (auto text = TrimmedText(std::span<const uint8_t>(data).subspan(kTextDescHeaderLen)); !text.empty())
                 return text;
-            }
         }
     }
 
     return {};
 }
 
-std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
+Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
     std::span<const uint8_t> data) noexcept {
-    if (data.size() < 2) {
-        return std::nullopt;
-    }
-
+    auto body = DescriptorBody(data);
+    if (!body) return std::unexpected(body.error());
     MusicSubunitStatus status;
-    status.declaredLength = ReadBE16(data.data());
-
-    const size_t advertisedEnd = 2 + static_cast<size_t>(status.declaredLength);
-    const size_t parseEnd = std::min(data.size(), advertisedEnd);
+    status.declaredLength = static_cast<uint16_t>(data.size() - 2);
+    const size_t parseEnd = data.size();
     size_t offset = 2;
 
     uint8_t destPlugsSeen = 0;
 
-    while (offset + 6 <= parseEnd) {
+    while (offset < parseEnd) {
         size_t consumed = 0;
         const size_t remaining = parseEnd - offset;
-        auto blockResult = AVCInfoBlock::Parse(data.data() + offset, remaining, consumed);
-        if (!blockResult || consumed == 0) {
-            // Skip invalid quadlet and continue scanning
-            offset += 4;
-            continue;
-        }
+        auto blockResult = AVCInfoBlock::Parse(data.subspan(offset, remaining), consumed, offset);
+        if (!blockResult) return std::unexpected(blockResult.error());
 
         const auto& block = *blockResult;
         const uint16_t type = block.GetType();
         const auto& primaryData = block.GetPrimaryData();
 
         switch (type) {
-            case 0x8100: // GMSSA
-                if (primaryData.size() >= 6) {
-                    status.capabilities.hasGeneralCapability = true;
-                    status.capabilities.transmitCapabilityFlags = primaryData[0];
-                    status.capabilities.receiveCapabilityFlags = primaryData[1];
-                    status.capabilities.latencyCapability = ReadBE32(primaryData.data() + 2);
+            case 0x8100: { // GMSSA
+                auto& caps = status.capabilities;
+                uint8_t tx{}, rx{}; uint32_t latency{};
+                if (ParseReader(primaryData).Fields(tx, rx, latency)) {
+                    caps.hasGeneralCapability = true;
+                    caps.transmitCapabilityFlags = tx; caps.receiveCapabilityFlags = rx; caps.latencyCapability = latency;
                 }
                 break;
+            }
 
-            case 0x8101: // Audio Capability
-                if (primaryData.size() >= 5) {
+            case 0x8101: { // Audio Capability
+                uint8_t formats{}; uint16_t maxIn{}, maxOut{};
+                if (ParseReader(primaryData).Fields(formats, maxIn, maxOut)) {
                     status.capabilities.hasAudioCapability = true;
-                    status.capabilities.maxAudioInputChannels = ReadBE16(primaryData.data() + 1);
-                    status.capabilities.maxAudioOutputChannels = ReadBE16(primaryData.data() + 3);
+                    status.capabilities.maxAudioInputChannels = maxIn;
+                    status.capabilities.maxAudioOutputChannels = maxOut;
                 }
                 // Parse nested 0x8102 Plug Status Area -> 0x8103 Audio Info Area
                 for (const auto& plugStatus : block.GetNestedBlocks()) {
@@ -185,17 +157,19 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                     }
                 }
                 break;
+            }
 
-            case 0x8102: // MIDI Capability
-                if (primaryData.size() >= 6) {
-                    status.capabilities.hasMidiCapability = true;
-                    status.capabilities.midiVersionMajor = primaryData[0] >> 4;
-                    status.capabilities.midiVersionMinor = primaryData[0] & 0x0F;
-                    status.capabilities.midiAdaptationLayerVersion = primaryData[1];
-                    status.capabilities.maxMidiInputPorts = ReadBE16(primaryData.data() + 2);
-                    status.capabilities.maxMidiOutputPorts = ReadBE16(primaryData.data() + 4);
+            case 0x8102: { // MIDI Capability
+                uint8_t version{}, adaptation{}; uint16_t ins{}, outs{};
+                if (ParseReader(primaryData).Fields(version, adaptation, ins, outs)) {
+                    auto& caps = status.capabilities;
+                    caps.hasMidiCapability = true;
+                    caps.midiVersionMajor = version >> 4; caps.midiVersionMinor = version & 0x0F;
+                    caps.midiAdaptationLayerVersion = adaptation;
+                    caps.maxMidiInputPorts = ins; caps.maxMidiOutputPorts = outs;
                 }
                 break;
+            }
 
             case 0x8103: // SMPTE Time Code Capability
                 if (!primaryData.empty()) {
@@ -246,44 +220,41 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                         // Child Cluster Info Blocks (0x810A)
                         const auto clusterBlocks = child.FindAllNestedRecursive(0x810A);
                         for (const auto& clusterBlock : clusterBlocks) {
-                            const auto& cData = clusterBlock.GetPrimaryData();
-                            if (cData.size() < 3) continue;
-
-                            MusicClusterInfo cluster;
-                            cluster.streamFormatCode = cData[0];
-                            cluster.portType = cData[1];
-                            const uint8_t numSignals = cData[2];
-                            cluster.channelCount = numSignals;
-                            cluster.name = ExtractName(clusterBlock);
-
-                            for (uint8_t sigIdx = 0;
-                                 sigIdx < numSignals && (3 + (sigIdx + 1) * 4) <= cData.size();
-                                 ++sigIdx) {
-                                const size_t sigOffset = 3 + sigIdx * 4;
-                                cluster.signals.push_back(MusicClusterSignal{
-                                    .musicPlugId = ReadBE16(cData.data() + sigOffset),
-                                    .position = cData[sigOffset + 2],
-                                });
+                            // Cluster info (TA 2001007 Table 6.10): format, port type,
+                            // signal count, then 4 bytes per signal.
+                            ParseReader cluster(clusterBlock.GetPrimaryData(), offset);
+                            MusicClusterInfo info;
+                            uint8_t numSignals{};
+                            if (!cluster.Fields(info.streamFormatCode, info.portType, numSignals))
+                                return std::unexpected(ParseError{offset, ParseErrorKind::Truncated});
+                            info.channelCount = numSignals;
+                            info.name = ExtractName(clusterBlock);
+                            for (uint8_t signal = 0; signal < numSignals; ++signal) {
+                                MusicClusterSignal entry;
+                                uint8_t location{};
+                                if (!cluster.Fields(entry.musicPlugId, entry.position, location))
+                                    return std::unexpected(ParseError{offset, ParseErrorKind::Truncated});
+                                info.signals.push_back(entry);
                             }
-                            plug.clusters.push_back(std::move(cluster));
+                            plug.clusters.push_back(std::move(info));
                         }
 
                         status.plugs.push_back(std::move(plug));
-                    } else if (childType == 0x810B && childData.size() >= 3) { // Music Plug Info
+                    } else if (childType == 0x810B) { // Music Plug Info (TA 2001007 Table 6.11)
+                        ParseReader fields(childData);
                         MusicPlugDetail mp;
-                        mp.portType = childData[0];
-                        mp.musicPlugId = ReadBE16(childData.data() + 1);
+                        if (!fields.Fields(mp.portType, mp.musicPlugId)) continue;
                         mp.name = ExtractName(child);
-                        if (childData.size() >= 14) {
-                            const auto endpoint = [&childData](size_t at) {
-                                return MusicPlugEndpoint{.functionType = childData[at],
-                                                         .plugId = childData[at + 1],
-                                                         .functionBlockId = childData[at + 2],
-                                                         .streamPosition = childData[at + 3],
-                                                         .streamLocation = childData[at + 4]};
-                            };
-                            mp.source = endpoint(4);
-                            mp.destination = endpoint(9);
+                        const auto endpoint = [&fields]() -> std::optional<MusicPlugEndpoint> {
+                            MusicPlugEndpoint e;
+                            if (!fields.Fields(e.functionType, e.plugId, e.functionBlockId, e.streamPosition, e.streamLocation))
+                                return std::nullopt;
+                            return e;
+                        };
+                        // One reserved byte, then source and destination (5 bytes each).
+                        if (fields.Remaining() >= 11 && fields.Take(1)) {
+                            mp.source = endpoint();
+                            mp.destination = endpoint();
                         }
                         status.musicPlugs.push_back(std::move(mp));
                     }
@@ -295,7 +266,7 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                 break;
         }
 
-        offset += consumed;
+        offset = std::add_sat(offset, consumed);
     }
 
     AssignMusicPlugLabels(status);

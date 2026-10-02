@@ -110,8 +110,8 @@ public:
     FCPTransport() = default;
     ~FCPTransport() override;
 
-    FCPTransport(const FCPTransport&) = delete;
-    FCPTransport& operator=(const FCPTransport&) = delete;
+    FCPTransport(const FCPTransport&) = delete("one transport per unit owns the single outstanding FCP transaction");
+    FCPTransport& operator=(const FCPTransport&) = delete("one transport per unit owns the single outstanding FCP transaction");
 
     bool init(Protocols::Ports::FireWireBusOps* busOps,
               Protocols::Ports::FireWireBusInfo* busInfo,
@@ -179,6 +179,8 @@ private:
         FW::Generation generation{0U};
         uint8_t retriesLeft{0};
         bool sawInterim{false};
+        /// When the first write was issued (timer clock); 0 = never started.
+        uint64_t startedNs{0};
     };
 
     // Phases of the active transaction.

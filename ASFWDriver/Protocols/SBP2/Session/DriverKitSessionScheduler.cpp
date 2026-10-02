@@ -229,6 +229,11 @@ void DriverKitSessionScheduler::ArmTimerUnlocked(IOTimerDispatchSource* timer,
 #endif
 }
 
+uint64_t DriverKitSessionScheduler::NowNs() const noexcept {
+    (void)ASFW::Timing::initializeHostTimebase();
+    return ASFW::Timing::hostTicksToNanos(mach_absolute_time());
+}
+
 uint64_t DriverKitSessionScheduler::DeadlineTicksFromNow(uint64_t delayNs) const noexcept {
     (void)ASFW::Timing::initializeHostTimebase();
     uint64_t deltaTicks = ASFW::Timing::nanosToHostTicks(delayNs);

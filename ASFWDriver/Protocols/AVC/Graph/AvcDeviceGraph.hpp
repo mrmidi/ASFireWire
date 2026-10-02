@@ -12,7 +12,7 @@
 
 #pragma once
 
-#include "../../../Audio/Wire/AMDTP/PcmSlotMap.hpp"
+#include "../../../Common/PcmSlotMap.hpp"
 #include "../Descriptors/AudioSubunitDescriptor.hpp"
 #include "../Descriptors/MusicSubunitDescriptor.hpp"
 
@@ -28,6 +28,7 @@ struct StreamChannelInfo {
     uint8_t slotIndex{0};           ///< AM824 stream position / slot index
     std::string name;               ///< Resolved channel name
     std::string clusterName;        ///< Name of the containing cluster
+    uint16_t musicPlugId{0xFFFF};
     uint8_t formatCode{0};          ///< Stream format code (e.g. 0x06 MBLA)
 };
 
@@ -54,9 +55,11 @@ struct StreamGraph {
     std::vector<uint32_t> supportedSampleRates;
     uint32_t channelCount{0};       ///< Total PCM audio channels
     uint32_t midiStreamCount{0};    ///< MIDI port/stream count
-    ASFW::Audio::Wire::PcmSlotMap slotMap; ///< Mapped AM824 slots for PCM channels
+    ASFW::Common::PcmSlotMap slotMap; ///< Mapped AM824 slots for PCM channels
     std::vector<StreamChannelInfo> channels;
     std::vector<std::string> channelNames;
+    std::vector<Descriptors::MusicClusterInfo> clusters;
+    bool routeAmbiguous{false};
     bool usingFallbackMap{false};   ///< true if descriptor map was rejected or unavailable
     SlotMapValidation slotMapValidation{SlotMapValidation::kNoDataBlockSize};
 };
@@ -101,6 +104,7 @@ struct AudioSelectorInfo {
     uint8_t functionBlockId{0};
     std::string name;
     std::vector<Descriptors::AudioSourceId> declaredInputs;
+    std::optional<uint8_t> currentInput; ///< Confirmed by STATUS.
 };
 
 enum class ConfirmedFeatureControl : uint8_t {
@@ -143,6 +147,8 @@ struct ControlBlockInfo {
     bool isMasterVolume{false};
 };
 
+struct RoutingEdge { std::array<uint8_t, 2> source, destination; };
+
 /// Complete device graph built from descriptor discovery
 struct DeviceGraph {
     std::string modelName;
@@ -153,6 +159,7 @@ struct DeviceGraph {
     std::vector<SyncDestinationInfo> syncDestinations;
     std::vector<AudioSelectorInfo> selectors;
     std::vector<ControlBlockInfo> controls;
+    std::vector<RoutingEdge> routes;
 };
 
 } // namespace ASFW::Protocols::AVC::Graph

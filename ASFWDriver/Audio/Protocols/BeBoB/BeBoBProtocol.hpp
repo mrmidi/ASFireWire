@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "BeBoBMixerMap.hpp"
+
 #include "../Duplex/FamilyDriver.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../../../Protocols/Ports/FireWireBusPort.hpp"
@@ -24,10 +26,6 @@
 #include <cstdint>
 #include <functional>
 #include <vector>
-
-namespace ASFW::Protocols::AVC {
-class FCPTransport;
-}
 
 namespace ASFW::IRM {
 class IRMClient;
@@ -50,7 +48,7 @@ public:
     IOReturn Shutdown() override;
     FamilyDriver* AsFamilyDriver() noexcept override { return this; }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                              Protocols::AVC::FCPTransport* transport) override;
+                              std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;
 
     // The general BeBoB lifecycle, as callback chains over CMP and AV/C. The
     // FamilyDriver steps below start them and wait; tests drive them directly.
@@ -97,12 +95,16 @@ protected:
     [[nodiscard]] virtual std::vector<uint32_t> SupportedRates() const = 0;
     virtual void ReadClockHealth(HealthCallback callback);
 
-    // Async mixer configuration. Override in devices that need FB mixer programming
-    // at stream start (e.g. Phase88 ships muted). Default: no-op (matches Linux
-    // bebob_stream.c behavior — no mixer programming at start).
+    // Async mixer configuration at stream start. Default: no-op (matches Linux
+    // bebob_stream.c, which programs no mixer). GenericAvcProtocol runs a
+    // startup MixerMap when its catalog row supplies one (the PHASE 88 ships muted).
     using MixerCompletion = std::function<void(IOReturn)>;
     enum class MixerFailurePolicy { kRequired, kBestEffort };
     virtual void ConfigureMixer(MixerFailurePolicy policy, MixerCompletion completion);
+
+    /// Program a device's startup mixer: selectors, then mutes, then volumes,
+    /// one CONTROL at a time. kRequired stops at the first failure.
+    void RunMixerMap(const MixerMap& map, MixerFailurePolicy policy, MixerCompletion completion);
 
     // FB framework helpers — async FCP operations for subclasses.
     void SetSelectorBlock(uint8_t fbId, uint8_t value, MixerCompletion completion);
@@ -143,7 +145,8 @@ protected:
     Discovery::DeviceRouteToken route_{};
     IRM::IRMClient* irmClient_{nullptr};
     CMP::CMPClient* cmpClient_{nullptr};
-    Protocols::AVC::FCPTransport* fcpTransport_{nullptr};
+    /// The device's AV/C unit (owned lease; every frame goes through its Submit).
+    std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit_;
     Scheduling::ITimerScheduler* timerScheduler_{nullptr};
     uint64_t preparedRouteEpoch_{0};
     AudioDuplexChannels duplexChannels_{};

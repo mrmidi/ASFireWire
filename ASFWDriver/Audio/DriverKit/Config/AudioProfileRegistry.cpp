@@ -6,10 +6,8 @@
 
 #include "AudioProfileRegistry.hpp"
 #include "MOTU/MotuV2Profile.hpp"
-#include "AVC/ApogeeDuetProfile.hpp"
-#include "AVC/MackieOnyx820iProfile.hpp"
 #include "AVC/MackieOnyx400FProfile.hpp"
-#include "AVC/Phase88Profile.hpp"
+#include "AVC/GenericAvcProfile.hpp"
 #include "AVC/MAudioSpecialProfile.hpp"
 #include "RME/FirefaceProfile.hpp"
 
@@ -98,9 +96,11 @@ DiceProfile gGenericDiceProfile{{.name = "Generic DICE",
                                  .txEncoding = Encoding::AudioWireFormat::kAM824,
                                  .preserveFdfInNoDataPackets = false}};
 
-AVC::Profiles::ApogeeDuetProfile gApogeeDuetProfile{};
-AVC::Profiles::Phase88Profile gPhase88Profile{};
-AVC::Profiles::MackieOnyx820iProfile gMackieOnyx820iProfile{};
+// Every AV/C unit published from generic discovery, BeBoB or Oxford: its
+// geometry, rates and name travel on the nub, so one host-side profile serves
+// all of them. Device-specific code is controls only, and lives in the
+// protocol (the Duet's knob, params and meters).
+AVC::Profiles::GenericAvcProfile gGenericAvcProfile{};
 AVC::Profiles::MackieOnyx400FProfile gMackieOnyx400FProfile{};
 AVC::Profiles::MAudioSpecialProfile gMAudio1814Profile{false};
 AVC::Profiles::MAudioSpecialProfile gMAudioProjectMixProfile{true};
@@ -170,19 +170,16 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         return dice;
     }
     switch (builder) {
-        case Builder::ApogeeDuet:
-            return &gApogeeDuetProfile;
-        case Builder::TerraTecPhase88:
-            return &gPhase88Profile;
         case Builder::MAudioFireWire1814:
             return &gMAudio1814Profile;
         case Builder::MAudioProjectMix:
             return &gMAudioProjectMixProfile;
-        // Asymmetric 8-in/2-out, captured from a real 820i. Falling through to
-        // the generic DICE profile would hand it a symmetric 2x2/DBS-2 geometry
-        // that the RX path rejects on every 8-channel packet.
+        // Its controls are the Duet protocol's; its streams are discovered.
+        case Builder::ApogeeDuet:
+        case Builder::TerraTecPhase88:
         case Builder::MackieOnyxIOxfw:
-            return &gMackieOnyx820iProfile;
+        case Builder::GenericAvc:
+            return &gGenericAvcProfile;
         // Static 10x10. FireworksProtocol logs the device's HWINFO counts and
         // refuses to stream if they disagree, so a wrong guess here is loud.
         case Builder::MackieOnyx400F:
@@ -218,7 +215,6 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         case Builder::PreSonusFireStudioProject:
         case Builder::GenericDice:
         case Builder::WeissDac:
-        case Builder::GenericAvc:
         case Builder::None:
             break;
     }

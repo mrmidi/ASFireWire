@@ -3,7 +3,7 @@
 //
 // AvcCodecTests.cpp - Unit tests for the rebuilt AV/C frame codec (ASFW::AVC).
 //
-// Tests conform to docs/avc-rebuild/phase-1.md Steps 1.2 and 1.3:
+// Tests conform to documentation/avc-rebuild/phase-1.md Steps 1.2 and 1.3:
 // - CommandFrame::Make (headers, boundary checks, extended address rejection, quadlet padding)
 // - ParseResponse (bounds, non-response detection, response code mapping)
 // - ParseResponseFor (address/opcode echo checks)
@@ -201,7 +201,7 @@ TEST(AvcFrameTests, ParseResponseForValidatesAddressAndOpcodeMatch) {
 // ===========================================================================
 
 TEST(GeneralCommandsTests, BuildUnitInfoStatusSendsFiveOperands) {
-    // ta1394 general.rs:41-49; the bare form wedged a Phase 88.
+    // ta1394 general.rs:41-49; preserve the captured five-operand form.
     Cmd::UnitInfoCommand cmd{};
     auto frame = cmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(frame.has_value());

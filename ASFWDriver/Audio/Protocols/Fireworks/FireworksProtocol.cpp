@@ -87,9 +87,9 @@ IOReturn FireworksProtocol::Shutdown() {
 }
 
 void FireworksProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                                             Protocols::AVC::FCPTransport* transport) {
+                                             std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
     const bool routeChanged = (route_ != route);
-    BeBoBProtocol::UpdateRuntimeContext(route, transport);
+    BeBoBProtocol::UpdateRuntimeContext(route, std::move(avcUnit));
     efc_->SetRoute(route);
     if (routeChanged) {
         ResetDeviceSession();

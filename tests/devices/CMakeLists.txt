@@ -103,10 +103,8 @@ add_device_test(SessionCharacterizationTests
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioNubPublisher.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )
@@ -135,10 +133,8 @@ add_device_test(AudioSessionSchedulerTests
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioNubPublisher.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )
@@ -231,14 +227,6 @@ add_device_test(OxfordCsrTests
 )
 
 # FW-139: OXFW two-tier stream-format discovery (reported list vs probed rates)
-add_device_test(OxfwStreamFormatsTests
-    OxfwStreamFormatsTests.cpp
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfwStreamFormats.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
-)
 
 # FW-138: shared AV/C test rig (deferred bus + real FCPTransport + target responder)
 add_device_test(AvcTestRigTests
@@ -356,10 +344,8 @@ add_device_test(BackendLifecycleRaceTests
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )

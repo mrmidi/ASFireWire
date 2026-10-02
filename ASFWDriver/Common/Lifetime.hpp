@@ -24,6 +24,8 @@ public:
     LifetimeAnchor& operator=(const LifetimeAnchor&) noexcept { return *this; }
 
     [[nodiscard]] std::weak_ptr<const void> Token() const noexcept { return token_; }
+    /// Retire callbacks before a destructor invokes external completions.
+    void Invalidate() noexcept { token_.reset(); }
 
 private:
     std::shared_ptr<const void> token_{std::make_shared<const bool>(true)};

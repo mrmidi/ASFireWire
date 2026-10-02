@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 #include "ASFWDriver/Protocols/AVC/Descriptors/AVCInfoBlock.hpp"
-#include "ASFWDriver/Protocols/AVC/AVCDefs.hpp"
 #include <vector>
 
 using namespace ASFW::Protocols::AVC;
@@ -82,10 +81,10 @@ TEST_F(AVCInfoBlockTests, ParseTooShort) {
     std::vector<uint8_t> data = {0x00, 0x01, 0x02}; // Only 3 bytes, need 6
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(data.data(), data.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(data), consumed);
 
     EXPECT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(), AVCResult::kInvalidResponse);
+    EXPECT_EQ(result.error().kind, ParseErrorKind::Truncated);
     EXPECT_EQ(consumed, 0);
 }
 
@@ -94,7 +93,7 @@ TEST_F(AVCInfoBlockTests, ParseMinimalBlock) {
     auto data = CreateSimpleBlock(0x1234, {});
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(data.data(), data.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(data), consumed);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->GetType(), 0x1234);
@@ -111,7 +110,7 @@ TEST_F(AVCInfoBlockTests, ParseBlockWithPrimaryData) {
     auto data = CreateSimpleBlock(0x5678, primaryData);
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(data.data(), data.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(data), consumed);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->GetType(), 0x5678);
@@ -130,10 +129,10 @@ TEST_F(AVCInfoBlockTests, InvalidCompoundLength) {
     };
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(data.data(), data.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(data), consumed);
 
     EXPECT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(), AVCResult::kInvalidResponse);
+    EXPECT_EQ(result.error().kind, ParseErrorKind::Truncated);
 }
 
 TEST_F(AVCInfoBlockTests, InvalidPrimaryFieldsLength) {
@@ -145,10 +144,10 @@ TEST_F(AVCInfoBlockTests, InvalidPrimaryFieldsLength) {
     };
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(data.data(), data.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(data), consumed);
 
-    // Robust parser should truncate PFL and succeed
-    EXPECT_TRUE(result.has_value());
+    // Untrusted lengths are rejected rather than silently clamped.
+    EXPECT_FALSE(result.has_value());
 }
 
 //==============================================================================
@@ -163,7 +162,7 @@ TEST_F(AVCInfoBlockTests, ParseSingleNestedBlock) {
     auto parentBlock = CreateBlockWithNested(0x9999, {0xFF}, {nestedBlock1});
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(parentBlock.data(), parentBlock.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(parentBlock), consumed);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->GetType(), 0x9999);
@@ -188,7 +187,7 @@ TEST_F(AVCInfoBlockTests, ParseMultipleNestedBlocks) {
     auto parent = CreateBlockWithNested(0xAAAA, {}, {nested1, nested2, nested3});
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(parent.data(), parent.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(parent), consumed);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->GetType(), 0xAAAA);
@@ -208,7 +207,7 @@ TEST_F(AVCInfoBlockTests, ParseDeeplyNestedBlocks) {
     auto root = CreateBlockWithNested(0x0000, {}, {level1});
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(root.data(), root.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(root), consumed);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->GetType(), 0x0000);
@@ -239,7 +238,7 @@ TEST_F(AVCInfoBlockTests, FindNested) {
     auto parent = CreateBlockWithNested(0x9999, {}, {nested1, nested2, nested3});
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(parent.data(), parent.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(parent), consumed);
     ASSERT_TRUE(result.has_value());
 
     // Find existing types
@@ -263,7 +262,7 @@ TEST_F(AVCInfoBlockTests, FindAllNested) {
     auto parent = CreateBlockWithNested(0x9999, {}, {block1, block2, block3, block4});
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(parent.data(), parent.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(parent), consumed);
     ASSERT_TRUE(result.has_value());
 
     // Find all blocks of type 0x1111
@@ -295,7 +294,7 @@ TEST_F(AVCInfoBlockTests, FindNestedRecursive) {
     auto root = CreateBlockWithNested(0x0000, {}, {level1, other});
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(root.data(), root.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(root), consumed);
     ASSERT_TRUE(result.has_value());
 
     // Recursive search should find deeply nested block
@@ -338,7 +337,7 @@ TEST_F(AVCInfoBlockTests, MusicSubunitPlugInfoPattern) {
     auto plugBlock = CreateBlockWithNested(0x8109, plugPrimary, {nameBlock});
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(plugBlock.data(), plugBlock.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(plugBlock), consumed);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->GetType(), 0x8109);
@@ -377,11 +376,10 @@ TEST_F(AVCInfoBlockTests, TruncatedNestedBlock) {
     // Missing data!
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(data.data(), data.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(data), consumed);
 
-    // Should parse the parent, nested block parsing stops gracefully
-    EXPECT_TRUE(result.has_value());
-    // Check that the nested block list is empty or contains valid parts
+    // A truncated compound cannot establish safe child boundaries.
+    EXPECT_FALSE(result.has_value());
 }
 
 TEST_F(AVCInfoBlockTests, ExtraDataAfterBlock) {
@@ -392,7 +390,7 @@ TEST_F(AVCInfoBlockTests, ExtraDataAfterBlock) {
     block.push_back(0xFF);
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(block.data(), block.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(block), consumed);
 
     // Should parse successfully and only consume the block size
     ASSERT_TRUE(result.has_value());
@@ -417,7 +415,7 @@ TEST_F(AVCInfoBlockTests, RoutingStatus_PrimaryFieldsParsing) {
     auto routingBlock = CreateSimpleBlock(0x8108, routingPrimary);
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(routingBlock.data(), routingBlock.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(routingBlock), consumed);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->GetType(), 0x8108);
@@ -457,7 +455,7 @@ TEST_F(AVCInfoBlockTests, RoutingStatus_PlugDirectionFromPosition) {
     auto routingBlock = CreateBlockWithNested(0x8108, routingPrimary, {plug0, plug1, plug2});
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(routingBlock.data(), routingBlock.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(routingBlock), consumed);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->GetType(), 0x8108);
@@ -494,7 +492,7 @@ TEST_F(AVCInfoBlockTests, RoutingStatus_SubunitPlugInfoPrimaryFields) {
     auto plugBlock = CreateSimpleBlock(0x8109, plugPrimary);
 
     size_t consumed = 0;
-    auto result = AVCInfoBlock::Parse(plugBlock.data(), plugBlock.size(), consumed);
+    auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(plugBlock), consumed);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->GetType(), 0x8109);
@@ -508,4 +506,21 @@ TEST_F(AVCInfoBlockTests, RoutingStatus_SubunitPlugInfoPrimaryFields) {
     EXPECT_EQ(primary[3], 0x04); // usage
     EXPECT_EQ((primary[4] << 8) | primary[5], 2);   // numClusters
     EXPECT_EQ((primary[6] << 8) | primary[7], 8);   // numChannels
+}
+TEST_F(AVCInfoBlockTests, StructuredErrorHasAbsoluteOffset) {
+    const std::array<uint8_t, 6> bytes{0, 4, 0x81, 0x09, 0, 8};
+    size_t used = 9;
+    auto result = AVCInfoBlock::Parse(bytes, used, 100);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().offset, 106);
+    EXPECT_EQ(result.error().kind, ParseErrorKind::Truncated);
+    EXPECT_EQ(used, 0);
+}
+TEST_F(AVCInfoBlockTests, NestedDepthBudgetRejectsDeviceData) {
+    auto bytes = CreateSimpleBlock(0x7777, {});
+    for (size_t i = 0; i < kMaxInfoBlockDepth; ++i) bytes = CreateBlockWithNested(0x7777, {}, {bytes});
+    size_t used = 0;
+    auto result = AVCInfoBlock::Parse(bytes, used);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().kind, ParseErrorKind::BudgetExceeded);
 }

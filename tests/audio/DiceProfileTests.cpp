@@ -13,11 +13,8 @@
 #include "Audio/DriverKit/Config/DICE/DiceProfile.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "Discovery/DiscoveryTypes.hpp"
-#include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
-#include "Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
-#include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
-#include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "Audio/DriverKit/Config/AVC/GenericAvcProfile.hpp"
 
 namespace {
 
@@ -188,38 +185,37 @@ TEST(DiceProfileTests, WeissIntProfileSendsAm824) {
     }
 }
 
-TEST(DiceProfileTests, ResolvesApogeeDuetProfileWithoutDICEName) {
-    const auto* profile = FindAvcProfile(0x0003DB, 0x01DDDD, 0x0003DB0A0000D112ULL);
+// The Duet, the PHASE 88, the Onyx-i and any unlisted AV/C unit are published from
+// generic discovery, so they share one host-side profile. It states no
+// channels and no rates: those travel on the nub from discovery and the
+// catalog row. A per-device copy of either is a second source of truth.
+TEST(DiceProfileTests, DiscoveredAvcUnitsShareOneGeometryFreeProfile) {
+    const auto* generic = AudioProfileRegistry::ProfileForBuilderId(
+        static_cast<uint32_t>(ProfileBuilderId::GenericAvc));
+    ASSERT_NE(generic, nullptr);
+    EXPECT_STREQ(generic->Name(), "Generic AV/C");
+    EXPECT_EQ(AudioProfileRegistry::ProfileForBuilderId(
+                  static_cast<uint32_t>(ProfileBuilderId::TerraTecPhase88)), generic);
+    EXPECT_EQ(AudioProfileRegistry::ProfileForBuilderId(
+                  static_cast<uint32_t>(ProfileBuilderId::MackieOnyxIOxfw)), generic);
+    EXPECT_EQ(FindAvcProfile(0x000AAC, 0x000003, 0x000AAC0300B1D1F7ULL), generic);
+    EXPECT_EQ(FindAvcProfile(0x0003DB, 0x01DDDD, 0x0003DB0A0000D112ULL), generic);
 
-    ASSERT_NE(profile, nullptr);
-    EXPECT_STREQ(profile->Name(), "Duet");
-    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
-    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
-    EXPECT_EQ(profile->TxChannelCount(), 2u);
-    EXPECT_EQ(profile->RxChannelCount(), 2u);
-    EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{48000u}));
-}
+    EXPECT_EQ(generic->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(generic->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(generic->TxChannelCount(), 0U);
+    EXPECT_EQ(generic->RxChannelCount(), 0U);
+    EXPECT_TRUE(generic->SupportedSampleRates().empty());
 
-TEST(DiceProfileTests, ResolvesPhase88AsAvcWireProfileNotGenericDice) {
-    const auto* profile = FindAvcProfile(0x000AAC, 0x000003, 0x000AAC0300B1D1F7ULL);
-
-    ASSERT_NE(profile, nullptr);
-    EXPECT_STREQ(profile->Name(), "PHASE 88 Rack FW");
-    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
-    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
-    EXPECT_EQ(profile->TxChannelCount(), 10U);
-    EXPECT_EQ(profile->RxChannelCount(), 10U);
-    EXPECT_EQ(profile->TxMidiSlots(), 1U);
-    EXPECT_EQ(profile->RxMidiSlots(), 1U);
-    EXPECT_EQ(profile->TxDbs(), 11U);
-    EXPECT_EQ(profile->RxDbs(), 11U);
-    EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{48000U}));
-
-    const auto* wireProfile = static_cast<const IAudioStreamProfile*>(profile);
+    const auto* stream = static_cast<const IAudioStreamProfile*>(generic);
     AudioStreamConfig tx{};
-    ASSERT_TRUE(wireProfile->BuildDefaultTxStreamConfig(tx));
+    ASSERT_TRUE(stream->BuildDefaultTxStreamConfig(tx));
     EXPECT_EQ(tx.framesPerDataPacket, 8U);
-    EXPECT_EQ(8U + tx.framesPerDataPacket * tx.dbs * 4U, 360U);
+    EXPECT_EQ(tx.fmt, 0x10U);
+    EXPECT_EQ(tx.streamMode, ASFW::Encoding::StreamMode::kBlocking);
+    EXPECT_TRUE(stream->TxStreamPolicy().emptyPacketsDuringIdle);
+    // BeBoB sends NO-DATA for about a second after the start.
+    EXPECT_EQ(stream->InitialClockAnchorTimeoutMs(), 4000U);
 }
 
 TEST(DiceProfileTests, FocusriteAsymmetricSafetyOffsetsAndLatencies) {
@@ -525,49 +521,6 @@ TEST(DiceProfileTests, GenericDiceUsesThePacketScaledLadder) {
     EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 128);
     EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 29);
     EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 29);
-}
-
-TEST(DiceProfileTests, ResolvesMackieOnyx820iAsymmetricProfileNotGenericDice) {
-    const uint32_t kMackieVendorId = 0x000FF2;
-    const uint32_t kOnyxIOxfwModelId = 0x081216;
-    const auto* profile =
-        FindAvcProfile(kMackieVendorId, kOnyxIOxfwModelId);
-
-    ASSERT_NE(profile, nullptr);
-    // Falling through to "Generic DICE" would hand the device a symmetric 2x2
-    // geometry that the RX path rejects on every 8-channel packet.
-    EXPECT_STREQ(profile->Name(), "Onyx-i (Oxford)");
-
-    // Asymmetric duplex captured from a real 820i: 8-in (device->host), 2-out.
-    EXPECT_EQ(profile->TxChannelCount(), 2);
-    EXPECT_EQ(profile->RxChannelCount(), 8);
-    EXPECT_EQ(profile->TxMidiSlots(), 0);
-    EXPECT_EQ(profile->RxMidiSlots(), 0);
-
-    // Stream-config builders live on the DICE profile interface; exercise the
-    // concrete class for the wire geometry.
-    const AVC::Profiles::MackieOnyx820iProfile concrete{};
-
-    DiceStreamConfig tx{};
-    ASSERT_TRUE(concrete.BuildDefaultTxStreamConfig(tx));
-    EXPECT_EQ(tx.pcmChannels, 2u);
-    EXPECT_EQ(tx.dbs, 2u);
-    EXPECT_EQ(tx.sampleRate, 44100u);
-    EXPECT_EQ(tx.streamMode, ASFW::Encoding::StreamMode::kBlocking);
-
-    DiceStreamConfig rx{};
-    ASSERT_TRUE(concrete.BuildDefaultRxStreamConfig(rx));
-    EXPECT_EQ(rx.pcmChannels, 8u);
-    EXPECT_EQ(rx.dbs, 8u);
-    EXPECT_EQ(rx.sampleRate, 44100u);
-    EXPECT_EQ(rx.streamMode, ASFW::Encoding::StreamMode::kBlocking);
-
-    // 44.1 kHz only until the ADK reconfig path supports AV/C rate changes —
-    // offering 48 kHz re-arms the stale-pendingClock regression (see
-    // MackieOnyxProtocol::SupportedRates).
-    const auto rates = concrete.SupportedSampleRates();
-    ASSERT_EQ(rates.size(), 1u);
-    EXPECT_EQ(rates.front(), 44100u);
 }
 
 } // namespace

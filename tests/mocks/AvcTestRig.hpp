@@ -83,7 +83,8 @@ public:
     [[nodiscard]] Discovery::DeviceRegistry& Routes() noexcept { return routes_; }
     [[nodiscard]] FakeTimerScheduler& Timers() noexcept { return timers_; }
     [[nodiscard]] AvcTargetResponder& Target() noexcept { return *target_; }
-    [[nodiscard]] Protocols::AVC::FCPTransport* Transport() noexcept { return transport_.get(); }
+    /// Owned, as production hands the AV/C unit to family code.
+    [[nodiscard]] const std::shared_ptr<Protocols::AVC::FCPTransport>& Transport() noexcept { return transport_; }
 
     [[nodiscard]] Discovery::DeviceRouteToken Route() const {
         const auto route = routes_.CurrentRoute(options_.guid);

@@ -5,6 +5,13 @@
     {0, 96000, 59, 59, 128, 288},  // Generic DICE
     {0, 176400, 119, 119, 320, 640},  // Generic DICE
     {0, 192000, 119, 119, 320, 640},  // Generic DICE
+    {1, 32000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {1, 44100, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {1, 48000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {1, 88200, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {1, 96000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {1, 176400, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {1, 192000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
     {2, 32000, 52, 53, 24, 80},  // Focusrite Saffire (DICE)
     {2, 44100, 52, 53, 24, 80},  // Focusrite Saffire (DICE)
     {2, 48000, 52, 53, 24, 80},  // Focusrite Saffire (DICE)
@@ -40,20 +47,20 @@
     {6, 96000, 59, 59, 128, 288},  // Weiss INT (DICE)
     {6, 176400, 119, 119, 320, 640},  // Weiss INT (DICE)
     {6, 192000, 119, 119, 320, 640},  // Weiss INT (DICE)
-    {7, 32000, 128, 128, 64, 128},  // Duet
-    {7, 44100, 128, 128, 64, 128},  // Duet
-    {7, 48000, 128, 128, 64, 128},  // Duet
-    {7, 88200, 128, 128, 64, 128},  // Duet
-    {7, 96000, 128, 128, 64, 128},  // Duet
-    {7, 176400, 128, 128, 64, 128},  // Duet
-    {7, 192000, 128, 128, 64, 128},  // Duet
-    {8, 32000, 128, 128, 64, 64},  // PHASE 88 Rack FW
-    {8, 44100, 128, 128, 64, 64},  // PHASE 88 Rack FW
-    {8, 48000, 128, 128, 64, 64},  // PHASE 88 Rack FW
-    {8, 88200, 128, 128, 64, 64},  // PHASE 88 Rack FW
-    {8, 96000, 128, 128, 64, 64},  // PHASE 88 Rack FW
-    {8, 176400, 128, 128, 64, 64},  // PHASE 88 Rack FW
-    {8, 192000, 128, 128, 64, 64},  // PHASE 88 Rack FW
+    {7, 32000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 44100, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 48000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 88200, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 96000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 176400, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 192000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {8, 32000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {8, 44100, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {8, 48000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {8, 88200, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {8, 96000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {8, 176400, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {8, 192000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
     {9, 32000, 29, 29, 48, 128},  // Alesis MultiMix FireWire (DICE)
     {9, 44100, 29, 29, 48, 128},  // Alesis MultiMix FireWire (DICE)
     {9, 48000, 29, 29, 48, 128},  // Alesis MultiMix FireWire (DICE)
@@ -117,13 +124,13 @@
     {18, 96000, 128, 128, 64, 64},  // UltraLite
     {18, 176400, 128, 128, 64, 64},  // UltraLite
     {18, 192000, 128, 128, 64, 64},  // UltraLite
-    {19, 32000, 256, 256, 192, 256},  // Onyx-i (Oxford)
-    {19, 44100, 256, 256, 192, 256},  // Onyx-i (Oxford)
-    {19, 48000, 256, 256, 192, 256},  // Onyx-i (Oxford)
-    {19, 88200, 256, 256, 192, 256},  // Onyx-i (Oxford)
-    {19, 96000, 256, 256, 192, 256},  // Onyx-i (Oxford)
-    {19, 176400, 256, 256, 192, 256},  // Onyx-i (Oxford)
-    {19, 192000, 256, 256, 192, 256},  // Onyx-i (Oxford)
+    {19, 32000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {19, 44100, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {19, 48000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {19, 88200, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {19, 96000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {19, 176400, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {19, 192000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
     {20, 32000, 256, 256, 192, 256},  // Onyx 400F
     {20, 44100, 256, 256, 192, 256},  // Onyx 400F
     {20, 48000, 256, 256, 192, 256},  // Onyx 400F

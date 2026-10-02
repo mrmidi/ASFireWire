@@ -63,8 +63,8 @@ bool MackieOnyx400FProfile::BuildDefaultRxStreamConfig(
 
 std::vector<uint32_t> MackieOnyx400FProfile::SupportedSampleRates() const {
     // Single rate until the ADK transport reconfiguration supports rate changes
-    // for AV/C static-profile devices (see MackieOnyx820iProfile for the
-    // field-verified failure chain). Must stay in lockstep with
+    // for AV/C static-profile devices (offering more left a stale pending
+    // clock on the Onyx-i, field regression 2026-08-17). Must stay in lockstep with
     // FireworksProtocol::SupportedRates and the published nub config.
     return {kSampleRateHz};
 }

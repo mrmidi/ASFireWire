@@ -290,6 +290,22 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 0)
     }
 
+    @Test func discoveryDocumentToolReturnsTheDocumentWithoutBusTraffic() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        let result = await transport.callTool("asfw_avc_get_discovery_document",
+                                              arguments: .object(["targetGuid": .uint64(0x0011223344556677)]))
+        let data = try object(result)
+        #expect(result.ok)
+        #expect(data["kind"] == .string("avcDiscoveryDocument"))
+        guard case .object(let document)? = data["document"] else { Issue.record("no document object"); return }
+        #expect(document["format"] == .string("asfw.avc.discovery"))
+        #expect(document["version"] == .int(1))
+        guard case .object(let snapshot)? = document["snapshot"] else { Issue.record("no snapshot"); return }
+        #expect(snapshot["complete"] == .bool(true))
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
     @Test func avcDescriptorReturnsDescriptorHexForDiscoveredSubunit() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))

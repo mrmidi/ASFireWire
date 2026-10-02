@@ -4,6 +4,8 @@
 // AvcSimulatedUnitTests.cpp - Tests for SimulatedAvcUnit and RecordingFireWireBus FCP integration.
 
 #include <gtest/gtest.h>
+#include "ASFWDriver/Common/OnceCompletion.hpp"
+#include "ASFWDriver/Protocols/AVC/Discovery/DiscoverySession.hpp"
 
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/FunctionBlockCommand.hpp"
@@ -11,7 +13,6 @@
 #include "ASFWDriver/Protocols/AVC/Descriptors/DescriptorAccessor.hpp"
 #include "ASFWDriver/Protocols/AVC/Descriptors/MusicSubunitDescriptor.hpp"
 #include "ASFWDriver/Protocols/AVC/Descriptors/AudioSubunitDescriptor.hpp"
-#include "ASFWDriver/Protocols/AVC/Audio/AudioSubunit.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/IAvcUnit.hpp"
 #include "ASFWDriver/Protocols/AVC/Extensions/BridgeCoPlugInfo.hpp"
 #include "RecordingFireWireBus.hpp"
@@ -19,6 +20,16 @@
 #include "Phase88DescriptorFixtures.hpp"
 
 namespace ASFW::AVC::Testing {
+
+namespace {
+/// The audio subunit identifier discovery committed, if any.
+const ASFW::Protocols::AVC::Descriptors::AudioSubunitIdentifier* AudioIdentifier(
+    const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot) {
+    for (const auto& contents : snapshot.contents)
+        if (contents.id.type == ASFW::AVC::SubunitType::kAudio && contents.audio) return &*contents.audio;
+    return nullptr;
+}
+} // namespace
 
 class AvcSimulatedUnitTests : public ::testing::Test {
 protected:
@@ -177,26 +188,27 @@ TEST_F(AvcSimulatedUnitTests, Phase88AudioDescriptorTraversalUsesSessionsAndReta
     // chunk and nested descriptor callback runs after its submitting frame returns.
     Protocols::AVC::DescriptorAccessor unopened(phase88Unit_, SubunitAddress::FromByte(0x08));
     std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> unopenedResult;
-    unopened.readComplete(Protocols::AVC::DescriptorSpecifier::forUnitIdentifier(),
+    unopened.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(),
         [&](const auto& result) { unopenedResult = result; });
     ASSERT_TRUE(unopenedResult.has_value());
-    EXPECT_FALSE(unopenedResult->success);
+    EXPECT_TRUE(unopenedResult->success);
 
     phase88Unit_.SetDeferredResponses(true);
-    Protocols::AVC::Audio::AudioSubunit audio(Protocols::AVC::AVCSubunitType::kAudio, 0);
-    std::optional<bool> completed;
-    audio.ReadIdentifierDescriptor(phase88Unit_, [&](bool ok) { completed = ok; });
-    for (size_t i = 0; i < 80 && !completed; ++i) {
+    namespace Engine = ASFW::AVC::DiscoveryEngine;
+    Engine::SnapshotLease snapshot;
+    auto session = Engine::Session::Create(phase88Unit_, {7}, [&](auto result) { snapshot = std::move(result); });
+    session->Start();
+    for (size_t i = 0; i < 2000 && !snapshot; ++i) {
         phase88Unit_.FlushDeferredResponses();
     }
-    ASSERT_TRUE(completed.has_value());
-    EXPECT_TRUE(*completed);
-    ASSERT_TRUE(audio.GetIdentifier().has_value());
-    const auto* master = audio.GetIdentifier()->FindBlock(
+    ASSERT_TRUE(snapshot);
+    const auto* identifier = AudioIdentifier(*snapshot);
+    ASSERT_NE(identifier, nullptr);
+    const auto* master = identifier->FindBlock(
         Descriptors::AudioFunctionBlockType::kFeature, 1);
     ASSERT_NE(master, nullptr);
     EXPECT_EQ(master->name, "Mixer Output Level");
-    const auto* input = audio.GetIdentifier()->FindBlock(
+    const auto* input = identifier->FindBlock(
         Descriptors::AudioFunctionBlockType::kFeature, 2);
     ASSERT_NE(input, nullptr);
     EXPECT_EQ(input->name, "Mixer Input LineIn 1/2 Level");
@@ -207,16 +219,14 @@ TEST_F(AvcSimulatedUnitTests, DescriptorReadRejectsPrematureEmptyChunk) {
     phase88Unit_.SetDescriptor(0x08, {0x10, 0x12, 0x34},
                                {0x00, 0x14, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00});
     Protocols::AVC::DescriptorAccessor accessor(phase88Unit_, SubunitAddress::FromByte(0x08));
-    auto specifier = Protocols::AVC::DescriptorSpecifier{
-        .type = Protocols::AVC::DescriptorSpecifierType::kListID,
-        .typeSpecificFields = {0x12, 0x34},
-    };
+    const auto specifier = ASFW::AVC::Cmd::DescriptorSpecifier::ListById(0x1234);
     std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> result;
-    accessor.readWithOpenCloseSequence(specifier,
+    accessor.Read(specifier,
         [&](const auto& read) { result = read; });
     ASSERT_TRUE(result.has_value());
     EXPECT_FALSE(result->success);
-    EXPECT_EQ(result->avcResult, Protocols::AVC::AVCResult::kInvalidResponse);
+    ASSERT_TRUE(result->primaryError.has_value());
+    EXPECT_EQ(result->primaryError->kind, ASFW::AVC::AvcErrorKind::kMalformedOperands);
 }
 
 TEST_F(AvcSimulatedUnitTests, FaultKnobs_TimeoutAndInterimAndRejections) {
@@ -325,13 +335,14 @@ TEST_F(AvcSimulatedUnitTests, DescriptorChunkedServing) {
     // Access descriptor via DescriptorAccessor
     Protocols::AVC::DescriptorAccessor accessor(duetUnit_, SubunitAddress::Of(SubunitType::kMusic, 0));
     std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> readResult;
-    accessor.readStatusDescriptor(0x80, [&](const Protocols::AVC::DescriptorAccessor::ReadDescriptorResult& res) {
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitStatus(), [&](const Protocols::AVC::DescriptorAccessor::ReadDescriptorResult& res) {
         readResult = res;
     });
 
     ASSERT_TRUE(readResult.has_value());
     EXPECT_TRUE(readResult->success);
-    EXPECT_EQ(readResult->avcResult, Protocols::AVC::AVCResult::kAccepted);
+    EXPECT_TRUE(readResult->success);
+    EXPECT_FALSE(readResult->primaryError.has_value());
     EXPECT_EQ(readResult->data.size(), 464u);
     EXPECT_EQ(readResult->data, descriptorBytes);
 
@@ -345,14 +356,14 @@ TEST_F(AvcSimulatedUnitTests, DescriptorChunkedServing) {
     // Test ClearDescriptors
     duetUnit_.ClearDescriptors();
     std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> failedResult;
-    accessor.readStatusDescriptor(0x80, [&](const Protocols::AVC::DescriptorAccessor::ReadDescriptorResult& res) {
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitStatus(), [&](const Protocols::AVC::DescriptorAccessor::ReadDescriptorResult& res) {
         failedResult = res;
     });
     ASSERT_TRUE(failedResult.has_value());
     EXPECT_FALSE(failedResult->success);
 }
 
-TEST_F(AvcSimulatedUnitTests, AudioSubunitReadIdentifierDescriptor_DuetIntegration) {
+TEST_F(AvcSimulatedUnitTests, DuetAudioIdentifierIsDiscovered) {
     const std::string duetAudioHex =
         "0036000200020000002c002a00010026000000040202c0000181000100188101ffff01f00000040202c00000090802000003000200020000";
 
@@ -366,19 +377,15 @@ TEST_F(AvcSimulatedUnitTests, AudioSubunitReadIdentifierDescriptor_DuetIntegrati
     // Audio Subunit 0 address is 0x08 (0x01 << 3 | 0), identifier specifier is 0x00
     duetUnit_.SetDescriptor(0x08, {0x00}, descriptorBytes);
 
-    Protocols::AVC::Audio::AudioSubunit audioSubunit(Protocols::AVC::AVCSubunitType::kAudio, 0);
-    EXPECT_FALSE(audioSubunit.GetIdentifier().has_value());
 
-    std::optional<bool> readOk;
-    audioSubunit.ReadIdentifierDescriptor(duetUnit_, [&](bool success) {
-        readOk = success;
-    });
+    namespace Engine = ASFW::AVC::DiscoveryEngine;
+    Engine::SnapshotLease snapshot;
+    auto session = Engine::Session::Create(duetUnit_, {8}, [&](auto result) { snapshot = std::move(result); });
+    session->Start();
+    ASSERT_TRUE(snapshot);
 
-    ASSERT_TRUE(readOk.has_value());
-    EXPECT_TRUE(*readOk);
-
-    const auto& id = audioSubunit.GetIdentifier();
-    ASSERT_TRUE(id.has_value());
+    const auto* id = AudioIdentifier(*snapshot);
+    ASSERT_NE(id, nullptr);
     EXPECT_EQ(id->generationId, 0);
     ASSERT_EQ(id->functionBlocks.size(), 1u);
     EXPECT_EQ(id->functionBlocks[0].id, 1);
@@ -389,3 +396,311 @@ TEST_F(AvcSimulatedUnitTests, AudioSubunitReadIdentifierDescriptor_DuetIntegrati
 }
 
 } // namespace ASFW::AVC::Testing
+
+namespace {
+namespace Avc = ASFW::AVC;
+namespace Legacy = ASFW::Protocols::AVC;
+class DescriptorTestUnit final : public Avc::IAvcUnit {
+public:
+    std::vector<std::vector<uint8_t>> commands;
+    std::vector<uint8_t> descriptor{0, 2, 0xAA, 0xBB};
+    bool rejectOpen{false}, rejectClose{false}, rejectRead{false}, deferred{false};
+    uint32_t generation{1};
+    struct Pending { Avc::CommandFrame frame; ResponseCallback callback; };
+    std::vector<Pending> pending;
+    ASFW::FW::NodeId NodeId() const noexcept override { return ASFW::FW::NodeId{1}; }
+    ASFW::FW::Generation CurrentGeneration() const noexcept override { return ASFW::FW::Generation{generation}; }
+    uint64_t Guid() const noexcept override { return 1; }
+    void Submit(const Avc::CommandFrame& frame, ASFW::FW::Generation, ResponseCallback callback) override {
+        commands.emplace_back(frame.Bytes().begin(), frame.Bytes().end());
+        if (deferred) pending.push_back(Pending{frame, std::move(callback)});
+        else Reply(frame, std::move(callback));
+    }
+    void FlushOne() {
+        ASSERT_FALSE(pending.empty());
+        auto item = std::move(pending.front()); pending.erase(pending.begin());
+        Reply(item.frame, std::move(item.callback));
+    }
+    void Reply(const Avc::CommandFrame& frame, ResponseCallback callback) {
+        const auto command = frame.Bytes();
+        std::vector<uint8_t> response(command.begin(), command.end());
+        response[0] = 9;
+        if (command[2] == 8) {
+            if ((command[4] == 1 && rejectOpen) || (command[4] == 0 && rejectClose)) response[0] = 10;
+        } else if (command[2] == 9) {
+            if (rejectRead) response[0] = 10;
+            else {
+                const size_t offset = (static_cast<size_t>(command[8]) << 8) | command[9];
+                const size_t requested = (static_cast<size_t>(command[6]) << 8) | command[7];
+                const size_t count = offset <= descriptor.size() ? std::min(requested, descriptor.size() - offset) : 0;
+                response.resize(10);
+                response[4] = 0x11; // Deliberately inaccurate at EOF: length wins.
+                response[6] = static_cast<uint8_t>(count >> 8); response[7] = static_cast<uint8_t>(count);
+                response.insert(response.end(), descriptor.begin() + offset, descriptor.begin() + offset + count);
+            }
+        }
+        callback(Avc::ParseResponseFor(frame, response));
+    }
+};
+using ReadResult = Legacy::DescriptorAccessor::ReadDescriptorResult;
+TEST(DescriptorOperation, NoReadWithoutSuccessfulOpen) {
+    DescriptorTestUnit unit; unit.rejectOpen = true;
+    Legacy::DescriptorAccessor accessor(unit);
+    std::optional<ReadResult> result;
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { result = value; });
+    ASSERT_TRUE(result); EXPECT_FALSE(result->success);
+    ASSERT_EQ(unit.commands.size(), 1); EXPECT_EQ(unit.commands[0][2], 8);
+}
+TEST(DescriptorOperation, DeclaredLengthWinsAndCloseFailureIsSeparate) {
+    DescriptorTestUnit unit; unit.rejectClose = true;
+    Legacy::DescriptorAccessor accessor(unit);
+    std::optional<ReadResult> result;
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { result = value; });
+    ASSERT_TRUE(result); EXPECT_TRUE(result->success); EXPECT_EQ(result->data, unit.descriptor);
+    EXPECT_FALSE(result->primaryError); ASSERT_TRUE(result->cleanupError);
+    ASSERT_EQ(unit.commands.size(), 3); EXPECT_EQ(unit.commands[2][4], 0);
+}
+TEST(DescriptorOperation, FailedReadStillCloses) {
+    DescriptorTestUnit unit; unit.rejectRead = true;
+    Legacy::DescriptorAccessor accessor(unit);
+    std::optional<ReadResult> result;
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { result = value; });
+    ASSERT_TRUE(result); EXPECT_FALSE(result->success); EXPECT_TRUE(result->primaryError);
+    ASSERT_EQ(unit.commands.size(), 3); EXPECT_EQ(unit.commands.back()[4], 0);
+}
+TEST(DescriptorOperation, ResetDuringReadDoesNotCloseNewRoute) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    Legacy::DescriptorAccessor accessor(unit);
+    size_t completions = 0;
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { ++completions; EXPECT_TRUE(value.cancelled); });
+    unit.FlushOne(); // successful OPEN, queued READ
+    ++unit.generation;
+    unit.FlushOne();
+    EXPECT_EQ(completions, 1); EXPECT_EQ(unit.commands.size(), 2);
+}
+TEST(DescriptorOperation, DestroyAccessorDuringOpenStillClosesWithoutReading) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    size_t completions = 0;
+    auto accessor = std::make_unique<Legacy::DescriptorAccessor>(unit);
+    accessor->Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { ++completions; EXPECT_TRUE(value.cancelled); });
+    accessor.reset();
+    unit.FlushOne(); // OPEN succeeds after cancellation: only CLOSE may follow.
+    ASSERT_EQ(unit.commands.size(), 2); EXPECT_EQ(unit.commands.back()[2], 8); EXPECT_EQ(unit.commands.back()[4], 0);
+    unit.FlushOne();
+    EXPECT_EQ(completions, 1);
+}
+TEST(DescriptorOperation, DuplicateRequestIsBusyAndDoesNotSubmit) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    Legacy::DescriptorAccessor accessor(unit);
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [](const auto&) {});
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [](const auto& value) {
+        ASSERT_TRUE(value.primaryError.has_value());
+        EXPECT_EQ(value.primaryError->kind, ASFW::AVC::AvcErrorKind::kBusy);
+    });
+    EXPECT_EQ(unit.commands.size(), 1);
+    unit.FlushOne(); unit.FlushOne(); unit.FlushOne();
+}
+TEST(DescriptorOperation, OversizedDescriptorClosesBeforeFailing) {
+    DescriptorTestUnit unit; unit.descriptor = {0x10, 0x00, 0, 0};
+    Legacy::DescriptorAccessor accessor(unit);
+    std::optional<ReadResult> result;
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { result = value; });
+    ASSERT_TRUE(result); EXPECT_FALSE(result->success);
+    ASSERT_EQ(unit.commands.size(), 3); EXPECT_EQ(unit.commands.back()[4], 0);
+}
+} // namespace
+
+TEST(OnceCompletion, MoveDisarmsAndAbandonmentCancelsOnce) {
+    int calls = 0;
+    {
+        ASFW::Common::OnceCompletion<int> source([&](int result) { ++calls; EXPECT_EQ(result, -1); }, -1);
+        auto target = std::move(source);
+    }
+    EXPECT_EQ(calls, 1);
+}
+TEST(OnceCompletion, InvocationConsumesCallback) {
+    int calls = 0;
+    {
+        ASFW::Common::OnceCompletion<int> completion([&](int result) { ++calls; EXPECT_EQ(result, 7); }, -1);
+        completion.Invoke(7);
+        completion.Invoke(8);
+    }
+    EXPECT_EQ(calls, 1);
+}
+
+namespace {
+namespace Engine = ASFW::AVC::DiscoveryEngine;
+TEST(DiscoveryReducer, AcceptsOnlyMatchingSessionSerialAndRoute) {
+    DescriptorTestUnit unit;
+    auto t = Engine::Step({}, Engine::Start{{7}, *unit.CurrentRoute(), unit.Identity(),
+        Avc::IAvcUnit::StreamFormatOpcodePolicy::kLearn});
+    ASSERT_EQ(t.actions.size(), 1u);
+    const auto send = std::get<Engine::Send>(t.actions.front());
+    for (unsigned mismatch = 0; mismatch != 3; ++mismatch) {
+        auto identity = send.operation;
+        if (mismatch == 0) ++identity.session.value;
+        if (mismatch == 1) ++identity.serial.value;
+        if (mismatch == 2) ++identity.route.generation.value;
+        auto ignored = Engine::Step(t.state, Engine::Reply{identity, Avc::Fail(Avc::AvcErrorKind::kTransportError)});
+        EXPECT_TRUE(ignored.actions.empty());
+        EXPECT_EQ(std::get<Engine::Probing>(ignored.state.phase).operation, send.operation);
+    }
+    auto cancelled = Engine::Step(t.state, Engine::Cancel{});
+    ASSERT_EQ(cancelled.actions.size(), 1u);
+    const auto snapshot = std::get<Engine::Commit>(cancelled.actions.front()).snapshot;
+    EXPECT_TRUE(snapshot->cancelled);
+    auto stale = Engine::Step(std::move(cancelled.state), Engine::Reply{send.operation, Avc::Fail(Avc::AvcErrorKind::kTransportError)});
+    EXPECT_TRUE(stale.actions.empty());
+}
+TEST(DiscoverySession, SimulatedFixturesProduceOwnedContents) {
+    for (auto fixture : {ASFW::AVC::Testing::kPhase88}) {
+        ASFW::AVC::Testing::SimulatedAvcUnit unit{fixture};
+        namespace F = ASFW::AVC::Testing::Fixtures;
+        unit.SetDescriptor(0x60, {0x80}, F::Phase88MusicStatus());
+        unit.SetDescriptor(0x08, {0x00}, F::kPhase88AudioIdentifier);
+        unit.SetDescriptor(0x08, {0x10, 0x18, 0x00}, F::kPhase88TextRoot);
+        unit.SetDescriptor(0x08, {0x10, 0x18, 0x01}, F::kPhase88TextChild);
+        Engine::SnapshotLease result;
+        unsigned calls = 0;
+        auto session = Engine::Session::Create(unit, {11}, [&](auto snapshot) { ++calls; result = std::move(snapshot); });
+        session->Start();
+        ASSERT_TRUE(result);
+        EXPECT_TRUE(result->complete);
+        EXPECT_FALSE(result->cancelled);
+        EXPECT_EQ(result->unit.subunits.size(), 2u);
+        EXPECT_FALSE(result->descriptors.empty());
+        EXPECT_TRUE(std::any_of(result->contents.begin(), result->contents.end(), [](const auto& c) { return c.music.has_value(); }));
+        EXPECT_TRUE(std::any_of(result->contents.begin(), result->contents.end(), [](const auto& c) { return c.audio.has_value(); }));
+        session.reset();
+        EXPECT_EQ(calls, 1u);
+        EXPECT_EQ(result->session.value, 11u); // A lease survives session destruction.
+    }
+}
+TEST(DiscoverySession, CancellationAndLateReplyCannotCompleteTwice) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    unsigned calls = 0; Engine::SnapshotLease result;
+    auto session = Engine::Session::Create(unit, {1}, [&](auto r) { ++calls; result = std::move(r); });
+    session->Start();
+    session->Cancel();
+    ASSERT_TRUE(result); EXPECT_TRUE(result->cancelled);
+    unit.FlushOne();
+    EXPECT_EQ(calls, 1u);
+    EXPECT_EQ(unit.commands.size(), 1u);
+}
+TEST(DiscoverySession, RouteReplacementRejectsLateReply) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    unsigned calls = 0; Engine::SnapshotLease result;
+    auto session = Engine::Session::Create(unit, {1}, [&](auto r) { ++calls; result = std::move(r); });
+    session->Start(); ++unit.generation; unit.FlushOne();
+    ASSERT_TRUE(result); ASSERT_TRUE(result->terminalError);
+    EXPECT_EQ(result->terminalError->kind, Avc::AvcErrorKind::kBusReset);
+    EXPECT_EQ(calls, 1u); EXPECT_EQ(unit.commands.size(), 1u);
+}
+TEST(DiscoverySession, DestructionDisarmsLateCallbacks) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    unsigned calls = 0;
+    auto session = Engine::Session::Create(unit, {1}, [&](auto r) { ++calls; EXPECT_FALSE(r); });
+    session->Start(); session.reset();
+    EXPECT_EQ(calls, 1u); unit.FlushOne(); EXPECT_EQ(calls, 1u);
+}
+}
+namespace {
+TEST(DiscoveryReducer, OwnedEventReplayReconstructsSnapshotAndActions) {
+    ASFW::AVC::Testing::SimulatedAvcUnit unit{ASFW::AVC::Testing::kPhase88};
+    namespace F = ASFW::AVC::Testing::Fixtures;
+    unit.SetDescriptor(0x60, {0x80}, F::Phase88MusicStatus());
+    unit.SetDescriptor(0x08, {0x00}, F::kPhase88AudioIdentifier);
+    unit.SetDescriptor(0x08, {0x10, 0x18, 0x00}, F::kPhase88TextRoot);
+    unit.SetDescriptor(0x08, {0x10, 0x18, 0x01}, F::kPhase88TextChild);
+    std::vector<Engine::Event> events{Engine::Start{{1}, *unit.CurrentRoute(), unit.Identity(),
+        Avc::IAvcUnit::StreamFormatOpcodePolicy::kSupportOnly}};
+    std::vector<std::vector<uint8_t>> frames;
+    Engine::State state;
+    Engine::SnapshotLease original;
+    for (size_t i = 0; i < events.size(); ++i) {
+        auto transition = Engine::Step(std::move(state), events[i]); state = std::move(transition.state);
+        for (const auto& action : transition.actions) {
+            if (const auto* send = std::get_if<Engine::Send>(&action)) {
+                frames.emplace_back(send->frame.Bytes().begin(), send->frame.Bytes().end());
+                unit.Submit(send->frame, send->operation.route.generation, [&](auto r) {
+                    Avc::Expected<Engine::OwnedResponse> owned = r ?
+                        Avc::Expected<Engine::OwnedResponse>{Engine::OwnedResponse{r->code, r->address, r->opcode,
+                            {r->operands.begin(), r->operands.end()}}} : Avc::Expected<Engine::OwnedResponse>{std::unexpected(r.error())};
+                    events.emplace_back(Engine::Reply{send->operation, std::move(owned)});
+                });
+            } else if (const auto* descriptor = std::get_if<Engine::ReadDescriptor>(&action)) {
+                Legacy::DescriptorAccessor reader{unit, descriptor->probe.subunit.type == Avc::SubunitType::kUnit ?
+                    Avc::SubunitAddress::Unit() : descriptor->probe.subunit.ToAddress()};
+                reader.Read(descriptor->probe.specifier,
+                    [&](const auto& r) { events.emplace_back(Engine::DescriptorReply{descriptor->operation, r}); });
+            } else if (const auto* extension = std::get_if<Engine::RunExtension>(&action)) {
+                events.emplace_back(Engine::ExtensionComplete{extension->operation});
+            } else if (const auto* commit = std::get_if<Engine::Commit>(&action)) original = commit->snapshot;
+        }
+    }
+    ASSERT_TRUE(original); ASSERT_TRUE(original->complete);
+    Engine::State replay;
+    Engine::SnapshotLease reconstructed;
+    std::vector<std::vector<uint8_t>> replayFrames;
+    for (const auto& event : events) {
+        const auto before = replay;
+        if (std::holds_alternative<Engine::Probing>(before.phase)) {
+            // Every recorded operation boundary is independently cancellable;
+            // its original reply cannot install a snapshot afterward.
+            auto cancelled = Engine::Step(before, Engine::Cancel{});
+            ASSERT_EQ(cancelled.actions.size(), 1u);
+            EXPECT_TRUE(std::get<Engine::Commit>(cancelled.actions.front()).snapshot->cancelled);
+            auto stale = Engine::Step(std::move(cancelled.state), event);
+            EXPECT_TRUE(stale.actions.empty());
+            auto lost = Engine::Step(before, Engine::RouteLost{});
+            ASSERT_EQ(lost.actions.size(), 1u);
+            EXPECT_EQ(std::get<Engine::Commit>(lost.actions.front()).snapshot->terminalError->kind, Avc::AvcErrorKind::kBusReset);
+        }
+        auto transition = Engine::Step(std::move(replay), event); replay = std::move(transition.state);
+        for (const auto& action : transition.actions) {
+            if (const auto* send = std::get_if<Engine::Send>(&action))
+                replayFrames.emplace_back(send->frame.Bytes().begin(), send->frame.Bytes().end());
+            if (const auto* commit = std::get_if<Engine::Commit>(&action)) reconstructed = commit->snapshot;
+        }
+    }
+    ASSERT_TRUE(reconstructed);
+    EXPECT_EQ(replayFrames, frames);
+    EXPECT_EQ(reconstructed->unit.subunits, original->unit.subunits);
+    ASSERT_EQ(reconstructed->descriptors.size(), original->descriptors.size());
+    for (size_t i = 0; i < original->descriptors.size(); ++i) EXPECT_EQ(reconstructed->descriptors[i].bytes, original->descriptors[i].bytes);
+    EXPECT_EQ(reconstructed->contents[0].audio->functionBlocks[0].name, original->contents[0].audio->functionBlocks[0].name);
+    EXPECT_EQ(reconstructed->plugs.size(), original->plugs.size());
+    EXPECT_EQ(reconstructed->features.size(), original->features.size());
+}
+TEST(DiscoveryReducer, OptionalUnitInfoFailureContinuesButTransportFailureTerminates) {
+    DescriptorTestUnit unit;
+    auto t = Engine::Step({}, Engine::Start{{1}, *unit.CurrentRoute(), unit.Identity(),
+        Avc::IAvcUnit::StreamFormatOpcodePolicy::kLearn});
+    const auto send = std::get<Engine::Send>(t.actions.front());
+    auto optional = Engine::Step(t.state, Engine::Reply{send.operation,
+        std::unexpected(Avc::AvcError::Unexpected(Avc::ResponseCode::kNotImplemented))});
+    ASSERT_EQ(optional.actions.size(), 1u);
+    EXPECT_EQ(std::get<Engine::Send>(optional.actions.front()).frame.OpcodeValue(), Avc::Opcode::kSubunitInfo);
+    auto failed = Engine::Step(std::move(t.state), Engine::Reply{send.operation, Avc::Fail(Avc::AvcErrorKind::kTransportError)});
+    ASSERT_EQ(failed.actions.size(), 1u);
+    EXPECT_EQ(std::get<Engine::Commit>(failed.actions.front()).snapshot->terminalError->kind, Avc::AvcErrorKind::kTransportError);
+}
+}
+
+TEST(LiveRefTests, YieldsNullOnceTheTargetIsGoneAndCopiesHaveTheirOwnLifetime) {
+    struct Target {
+        ASFW::Common::LifetimeAnchor anchor;
+        [[nodiscard]] std::weak_ptr<const void> LifetimeToken() const noexcept { return anchor.Token(); }
+    };
+    auto first = std::make_unique<Target>();
+    const ASFW::Common::LiveRef<Target> ref(*first);
+    EXPECT_EQ(ref.Get(), first.get());
+
+    auto copy = std::make_unique<Target>(*first);
+    const ASFW::Common::LiveRef<Target> copyRef(*copy);
+    first.reset();
+    EXPECT_EQ(ref.Get(), nullptr);
+    EXPECT_FALSE(ref);
+    EXPECT_EQ(copyRef.Get(), copy.get()) << "a copy does not share the original's lifetime";
+}
+

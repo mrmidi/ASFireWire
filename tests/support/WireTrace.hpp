@@ -142,10 +142,9 @@ private:
 
 // Compare `trace` with tests/golden/<relativePath>. With ASFW_UPDATE_GOLDEN set
 // the file is (re)written instead and the comparison passes.
-inline void ExpectMatchesGolden(const WireTrace& trace, std::string_view relativePath) {
+inline void ExpectTextMatchesGolden(const std::string& actual, std::string_view relativePath) {
     const auto path = ::ASFW::Tests::ResolveRepoRoot() / "tests" / "golden" /
                       std::filesystem::path(relativePath);
-    const std::string actual = trace.Text();
 
     if (const char* update = std::getenv("ASFW_UPDATE_GOLDEN"); update && *update && *update != '0') {
         std::filesystem::create_directories(path.parent_path());
@@ -196,6 +195,10 @@ inline void ExpectMatchesGolden(const WireTrace& trace, std::string_view relativ
                   << " (golden " << want.size() << " lines, actual " << got.size()
                   << " lines)\n" << report
                   << "If the change is intended, rerun with ASFW_UPDATE_GOLDEN=1 and review the diff.";
+}
+
+inline void ExpectMatchesGolden(const WireTrace& trace, std::string_view relativePath) {
+    ExpectTextMatchesGolden(trace.Text(), relativePath);
 }
 
 } // namespace ASFW::Testing

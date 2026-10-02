@@ -7,7 +7,7 @@
 
 #include "../../Engine/Direct/Rx/RxCaptureChannelMap.hpp"
 #include "../../Wire/AMDTP/PcmSlotMap.hpp"
-#include "BeBoBPlug0StreamDiscovery.hpp"
+#include "BridgeCoInventory.hpp"
 
 #include <array>
 #include <cstdint>
@@ -23,20 +23,20 @@ namespace ASFW::Audio::BeBoBProbe {
 /// AM824 data block, and MIDI sections do not consume a PCM channel. Unlike
 /// Linux, malformed or duplicate positions fail closed to identity rather than
 /// allowing an accidental overwrite to relabel audio.
-[[nodiscard]] inline Wire::PcmSlotMap ChannelMapFromProbe(
-    const BeBoB::IsochronousPlugModel& capturePlug,
+[[nodiscard]] inline Wire::PcmSlotMap ChannelMapFromSections(
+    std::span<const BeBoB::ChannelSection> sections,
     uint32_t pcmChannels, uint32_t dataBlockSize) noexcept {
     using Map = Wire::PcmSlotMap;
     constexpr uint8_t kMidiSectionType = 0x0a;
     if (pcmChannels == 0 || pcmChannels > Encoding::kMaxPcmChannels ||
-        dataBlockSize < pcmChannels || capturePlug.channelSections.empty()) {
+        dataBlockSize < pcmChannels || sections.empty()) {
         return {};
     }
 
     std::array<uint8_t, Encoding::kMaxPcmChannels> slots{};
     std::array<bool, Encoding::kMaxPcmChannels> assigned{};
     uint32_t pcmOffset = 0;
-    for (const auto& section : capturePlug.channelSections) {
+    for (const auto& section : sections) {
         if (!section.type.has_value()) return {};
         const uint32_t sectionChannels = static_cast<uint32_t>(section.positions.size());
         if (*section.type == kMidiSectionType) continue;
@@ -75,19 +75,11 @@ namespace ASFW::Audio::BeBoBProbe {
 }
 
 [[nodiscard]] inline AudioEngine::Direct::Rx::RxCaptureChannelMap
-CaptureChannelMapFromProbe(
-    const BeBoB::IsochronousPlugModel& capturePlug,
-    uint32_t pcmChannels, uint32_t dataBlockSize) noexcept {
+CaptureChannelMapFromSections(std::span<const BeBoB::ChannelSection> sections,
+                              uint32_t pcmChannels, uint32_t dataBlockSize) noexcept {
     AudioEngine::Direct::Rx::RxCaptureChannelMap captureMap{};
-    static_cast<Wire::PcmSlotMap&>(captureMap) =
-        ChannelMapFromProbe(capturePlug, pcmChannels, dataBlockSize);
+    static_cast<Wire::PcmSlotMap&>(captureMap) = ChannelMapFromSections(sections, pcmChannels, dataBlockSize);
     return captureMap;
-}
-
-[[nodiscard]] inline Wire::PcmSlotMap PlaybackChannelMapFromProbe(
-    const BeBoB::IsochronousPlugModel& playbackPlug,
-    uint32_t pcmChannels, uint32_t dataBlockSize) noexcept {
-    return ChannelMapFromProbe(playbackPlug, pcmChannels, dataBlockSize);
 }
 
 } // namespace ASFW::Audio::BeBoBProbe

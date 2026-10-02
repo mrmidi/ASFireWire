@@ -1,0 +1,146 @@
+{
+ "device": "Duet",
+ "rates": [
+  44100,
+  48000,
+  88200,
+  96000
+ ],
+ "streams": {
+  "playback": {
+   "id": 0,
+   "channels": 2,
+   "clusters": [
+    {
+     "name": "Analog Out",
+     "format": "MBLA",
+     "port": "line",
+     "signals": [
+      {
+       "musicPlug": 0,
+       "position": 0,
+       "location": 255
+      },
+      {
+       "musicPlug": 1,
+       "position": 1,
+       "location": 255
+      }
+     ]
+    }
+   ]
+  },
+  "capture": {
+   "id": 0,
+   "channels": 2,
+   "clusters": [
+    {
+     "name": "Analog In",
+     "format": "MBLA",
+     "port": "line",
+     "signals": [
+      {
+       "musicPlug": 2,
+       "position": 0,
+       "location": 255
+      },
+      {
+       "musicPlug": 3,
+       "position": 1,
+       "location": 255
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "clock": [
+  {
+   "syncDestPlug": 2,
+   "fedBy": "6002"
+  }
+ ],
+ "controls": [
+  {
+   "kind": "feature",
+   "id": 1,
+   "name": null,
+   "inputs": [
+    "f000"
+   ],
+   "channels": 2
+  }
+ ],
+ "captureSource": "SIGNAL SOURCE",
+ "musicPlugs": [
+  {
+   "id": 0,
+   "type": 0,
+   "name": "Analog Out 1",
+   "from": {
+    "destPlug": 0,
+    "position": 0
+   },
+   "to": {
+    "sourcePlug": 1,
+    "position": 0
+   }
+  },
+  {
+   "id": 1,
+   "type": 0,
+   "name": "Analog Out 2",
+   "from": {
+    "destPlug": 0,
+    "position": 1
+   },
+   "to": {
+    "sourcePlug": 1,
+    "position": 1
+   }
+  },
+  {
+   "id": 2,
+   "type": 0,
+   "name": "Analog In 1",
+   "from": {
+    "destPlug": 1,
+    "position": 0
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 0
+   }
+  },
+  {
+   "id": 3,
+   "type": 0,
+   "name": "Analog In 2",
+   "from": {
+    "destPlug": 1,
+    "position": 1
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 1
+   }
+  },
+  {
+   "id": 4,
+   "type": 128,
+   "name": null,
+   "from": {
+    "destPlug": 2,
+    "position": 0
+   },
+   "to": {
+    "sourcePlug": 2,
+    "position": 0
+   }
+  }
+ ],
+ "captureChannelNames": [
+  "Analog In 1",
+  "Analog In 2"
+ ]
+}

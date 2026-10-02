@@ -79,6 +79,7 @@ enum {
     // 66/67: the analyzer's observer. 65 belongs to the FCP exchange log (#165).
     kMethodSelectAudioObserver = 66,
     kMethodGetAudioObserverState = 67,
+    kMethodGetAVCDiscoveryDocument = 68,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -221,6 +222,8 @@ MethodDispatchResult DispatchAVCMethods(ASFW::UserClient::UserClientRuntimeState
         return runtimeState.AVC().GetRawFCPCommandResult(arguments);
     case kMethodGetFCPExchangeLog:
         return runtimeState.AVC().GetFCPExchangeLog(arguments);
+    case kMethodGetAVCDiscoveryDocument:
+        return runtimeState.AVC().GetAVCDiscoveryDocument(arguments);
     default:
         return std::nullopt;
     }

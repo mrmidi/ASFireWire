@@ -82,7 +82,7 @@ public:
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                              Protocols::AVC::FCPTransport* transport) override;
+                              std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
 

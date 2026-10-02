@@ -33,6 +33,9 @@ enum AvcReportTextFormatter {
             } else {
                 lines += ["", "AV/C UNIT: <unavailable in discovery export>"]
             }
+            if let document = device.discovery, let summary = AvcDiscoveryDocument.summary(document) {
+                lines += ["", "DISCOVERY (driver document v\(summary.version), session \(summary.session))"] + discoveryLines(summary)
+            }
             if let log = device.exchanges {
                 lines += ["", "FCP EXCHANGES", "  " + exchangeSummary(log)]
             } else {
@@ -125,6 +128,30 @@ enum AvcReportTextFormatter {
         return "\(log.records.count) exchanges in session \(log.session)" +
             (parts.isEmpty ? "" : ": " + parts.joined(separator: ", ")) +
             (log.dropped > 0 ? "; \(log.dropped) not kept (log full)" : "")
+    }
+
+    static func discoveryLines(_ summary: AvcDiscoveryDocument.Summary) -> [String] {
+        var lines: [String] = []
+        if let snapshot = summary.snapshot {
+            let state = snapshot.cancelled ? "cancelled" : (snapshot.complete ? "complete" : "incomplete")
+            lines.append("  Result: \(state)" + (snapshot.terminalError.map { " (\($0.kind))" } ?? ""))
+            if let count = snapshot.probeCount {
+                lines.append("  Probes: \(count), failed: \(snapshot.failedProbes?.count ?? 0)")
+            }
+        } else {
+            lines.append("  Result: no discovery has finished for this unit")
+        }
+        if let graph = summary.graph {
+            for (name, stream) in [("Playback", graph.playback), ("Capture", graph.capture)] where stream.channels > 0 {
+                let rates = stream.rates.map(String.init).joined(separator: ", ")
+                lines.append("  \(name): \(stream.channels) PCM + \(stream.midi) MIDI, block \(stream.dataBlockSize), \(stream.rate) Hz (rates: \(rates))")
+                if !stream.channelNames.isEmpty { lines.append("    Names: " + stream.channelNames.joined(separator: " | ")) }
+            }
+        }
+        let totalUs = summary.exchanges.records.reduce(0) { $0 + $1.elapsedUs }
+        lines.append(String(format: "  Exchanges: %d (dropped %d), total time %.1f ms",
+                            summary.exchanges.records.count, summary.exchanges.dropped, Double(totalUs) / 1000))
+        return lines
     }
 
     private static func appendExchanges(_ log: AvcReportSnapshot.ExchangeLog, title: String, into lines: inout [String]) {

@@ -72,7 +72,7 @@ public:
         nowNs_ = target;
     }
 
-    [[nodiscard]] uint64_t NowNs() const noexcept { return nowNs_; }
+    [[nodiscard]] uint64_t NowNs() const noexcept override { return nowNs_; }
 
     [[nodiscard]] std::size_t PendingCount() const noexcept {
         std::size_t n = 0;

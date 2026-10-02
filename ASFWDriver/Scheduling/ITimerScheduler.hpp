@@ -25,6 +25,10 @@ public:
 
     // After Cancel() returns, a callback associated with `token` will not run.
     virtual void Cancel(TimerToken token) = 0;
+
+    /// Monotonic time on the same clock the timers use, in nanoseconds. Only
+    /// differences are meaningful (exchange durations, deadlines).
+    [[nodiscard]] virtual uint64_t NowNs() const noexcept = 0;
 };
 
 } // namespace ASFW::Scheduling

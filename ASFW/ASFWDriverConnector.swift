@@ -63,6 +63,7 @@ final class ASFWDriverConnector: ObservableObject {
         case stopAudioStreaming = 63
         // One unit's FCP exchange log, paged (UserClient/WireFormats/AVCExchangeLogWire.hpp).
         case getFCPExchangeLog = 65
+        case getAVCDiscoveryDocument = 68
         // Read-only audio telemetry diagnostics.
         case getAudioTelemetry = 1013
         // Driver-owned LogRing category names and named filter presets.

@@ -74,7 +74,10 @@ struct SignalSourceOperands {
             };
             return w.Append(ops);
         }
-        if (t == CommandType::kControl) {
+        // FFADO avc_signal_source.cpp:137-141 serializes CONTROL and
+        // SPECIFIC INQUIRY alike; phase88.json inquiry_signal_source_0xFF
+        // captures firstByte=FF and the explicit candidate source.
+        if (t == CommandType::kControl || t == CommandType::kSpecificInquiry) {
             if (!source.has_value()) {
                 return Fail(AvcErrorKind::kInvalidArgument);
             }

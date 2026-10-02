@@ -1,0 +1,779 @@
+{
+ "device": "PHASE 88 Rack FW",
+ "rates": [
+  32000,
+  44100,
+  48000,
+  88200,
+  96000
+ ],
+ "streams": {
+  "playback": {
+   "id": 0,
+   "channels": 11,
+   "clusters": [
+    {
+     "name": "PHASE88 FW Multichannel Out",
+     "format": "MBLA",
+     "port": "line",
+     "signals": [
+      {
+       "musicPlug": 0,
+       "position": 1,
+       "location": 1
+      },
+      {
+       "musicPlug": 1,
+       "position": 6,
+       "location": 2
+      },
+      {
+       "musicPlug": 2,
+       "position": 2,
+       "location": 3
+      },
+      {
+       "musicPlug": 3,
+       "position": 7,
+       "location": 4
+      },
+      {
+       "musicPlug": 4,
+       "position": 3,
+       "location": 5
+      },
+      {
+       "musicPlug": 5,
+       "position": 8,
+       "location": 6
+      },
+      {
+       "musicPlug": 6,
+       "position": 4,
+       "location": 7
+      },
+      {
+       "musicPlug": 7,
+       "position": 9,
+       "location": 8
+      }
+     ]
+    },
+    {
+     "name": "SPDIF/AC3 Out",
+     "format": "IEC60958",
+     "port": "spdif",
+     "signals": [
+      {
+       "musicPlug": 8,
+       "position": 0,
+       "location": 1
+      },
+      {
+       "musicPlug": 9,
+       "position": 5,
+       "location": 2
+      }
+     ]
+    },
+    {
+     "name": "MidiSection.0",
+     "format": "MIDI",
+     "port": "midi",
+     "signals": [
+      {
+       "musicPlug": 10,
+       "position": 10,
+       "location": 1
+      },
+      {
+       "musicPlug": 10,
+       "position": 10,
+       "location": 2
+      }
+     ]
+    }
+   ]
+  },
+  "capture": {
+   "id": 0,
+   "channels": 11,
+   "clusters": [
+    {
+     "name": "Line In 1/2",
+     "format": "MBLA",
+     "port": "line",
+     "signals": [
+      {
+       "musicPlug": 12,
+       "position": 1,
+       "location": 1
+      },
+      {
+       "musicPlug": 13,
+       "position": 6,
+       "location": 2
+      }
+     ]
+    },
+    {
+     "name": "Line In 3/4",
+     "format": "MBLA",
+     "port": "line",
+     "signals": [
+      {
+       "musicPlug": 14,
+       "position": 2,
+       "location": 1
+      },
+      {
+       "musicPlug": 15,
+       "position": 7,
+       "location": 2
+      }
+     ]
+    },
+    {
+     "name": "Line In 5/6",
+     "format": "MBLA",
+     "port": "line",
+     "signals": [
+      {
+       "musicPlug": 16,
+       "position": 3,
+       "location": 1
+      },
+      {
+       "musicPlug": 17,
+       "position": 8,
+       "location": 2
+      }
+     ]
+    },
+    {
+     "name": "Line In 7/8",
+     "format": "MBLA",
+     "port": "line",
+     "signals": [
+      {
+       "musicPlug": 18,
+       "position": 4,
+       "location": 1
+      },
+      {
+       "musicPlug": 19,
+       "position": 9,
+       "location": 2
+      }
+     ]
+    },
+    {
+     "name": "SPDIF In",
+     "format": "MBLA",
+     "port": "spdif",
+     "signals": [
+      {
+       "musicPlug": 20,
+       "position": 0,
+       "location": 1
+      },
+      {
+       "musicPlug": 21,
+       "position": 5,
+       "location": 2
+      }
+     ]
+    },
+    {
+     "name": "MidiSection.0",
+     "format": "MIDI",
+     "port": "midi",
+     "signals": [
+      {
+       "musicPlug": 22,
+       "position": 10,
+       "location": 1
+      },
+      {
+       "musicPlug": 22,
+       "position": 10,
+       "location": 2
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "clock": [
+  {
+   "syncDestPlug": 8,
+   "fedBy": "fffe"
+  },
+  {
+   "syncDestPlug": 9,
+   "fedBy": "fffe"
+  }
+ ],
+ "controls": [
+  {
+   "kind": "feature",
+   "id": 1,
+   "name": "Mixer Output Level",
+   "inputs": [
+    "8201"
+   ],
+   "channels": 8
+  },
+  {
+   "kind": "feature",
+   "id": 2,
+   "name": "Mixer Input LineIn 1/2 Level",
+   "inputs": [
+    "f002"
+   ],
+   "channels": 2
+  },
+  {
+   "kind": "feature",
+   "id": 3,
+   "name": "Mixer Input LineIn 3/4 Level",
+   "inputs": [
+    "f003"
+   ],
+   "channels": 2
+  },
+  {
+   "kind": "feature",
+   "id": 4,
+   "name": "Mixer Input LineIn 5/6 Level",
+   "inputs": [
+    "f004"
+   ],
+   "channels": 2
+  },
+  {
+   "kind": "feature",
+   "id": 5,
+   "name": "Mixer Input LineIn 7/8 Level",
+   "inputs": [
+    "f005"
+   ],
+   "channels": 2
+  },
+  {
+   "kind": "feature",
+   "id": 6,
+   "name": "Mixer Input S/PDIF In Level",
+   "inputs": [
+    "f006"
+   ],
+   "channels": 2
+  },
+  {
+   "kind": "feature",
+   "id": 7,
+   "name": "Mixer Input Waveplay Level",
+   "inputs": [
+    "8007"
+   ],
+   "channels": 2
+  },
+  {
+   "kind": "selector",
+   "id": 1,
+   "name": "LineOut 1/2 Selector",
+   "inputs": [
+    "8202",
+    "8006"
+   ],
+   "channels": null
+  },
+  {
+   "kind": "selector",
+   "id": 2,
+   "name": "LineOut 3/4 Selector",
+   "inputs": [
+    "8203",
+    "8006"
+   ],
+   "channels": null
+  },
+  {
+   "kind": "selector",
+   "id": 3,
+   "name": "LineOut 5/6 Selector",
+   "inputs": [
+    "8204",
+    "8006"
+   ],
+   "channels": null
+  },
+  {
+   "kind": "selector",
+   "id": 4,
+   "name": "LineOut 7/8 Selector",
+   "inputs": [
+    "8205",
+    "8006"
+   ],
+   "channels": null
+  },
+  {
+   "kind": "selector",
+   "id": 5,
+   "name": "S/PDIF Out Selector",
+   "inputs": [
+    "f001",
+    "8006"
+   ],
+   "channels": null
+  },
+  {
+   "kind": "selector",
+   "id": 6,
+   "name": "Mixer Output Selector FB",
+   "inputs": [
+    "8101",
+    "8101",
+    "8101",
+    "8101",
+    "8101",
+    "8101"
+   ],
+   "channels": null
+  },
+  {
+   "kind": "selector",
+   "id": 7,
+   "name": "Waveplay Selector",
+   "inputs": [
+    "f001",
+    "8202",
+    "8203",
+    "8204",
+    "8205"
+   ],
+   "channels": null
+  },
+  {
+   "kind": "selector",
+   "id": 8,
+   "name": "external Clocksource Selector",
+   "inputs": [
+    "f006",
+    "f007"
+   ],
+   "channels": null
+  },
+  {
+   "kind": "selector",
+   "id": 9,
+   "name": "Clock Selector",
+   "inputs": [
+    "feff",
+    "8008"
+   ],
+   "channels": null
+  },
+  {
+   "kind": "selector",
+   "id": 10,
+   "name": "Input 7/8 Selector",
+   "inputs": [
+    "f005",
+    "feff"
+   ],
+   "channels": null
+  },
+  {
+   "kind": "processing",
+   "id": 1,
+   "name": "Main Mixer",
+   "inputs": [
+    "8107",
+    "8102",
+    "8103",
+    "8104",
+    "8105",
+    "8106"
+   ],
+   "channels": 8
+  },
+  {
+   "kind": "processing",
+   "id": 2,
+   "name": "Channel 1/2",
+   "inputs": [
+    "f000"
+   ],
+   "channels": 2
+  },
+  {
+   "kind": "processing",
+   "id": 3,
+   "name": "Channel 3/4",
+   "inputs": [
+    "f000"
+   ],
+   "channels": 2
+  },
+  {
+   "kind": "processing",
+   "id": 4,
+   "name": "Channel 5/6",
+   "inputs": [
+    "f000"
+   ],
+   "channels": 2
+  },
+  {
+   "kind": "processing",
+   "id": 5,
+   "name": "Channel 7/8",
+   "inputs": [
+    "f000"
+   ],
+   "channels": 2
+  }
+ ],
+ "captureSource": "SIGNAL SOURCE",
+ "musicPlugs": [
+  {
+   "id": 0,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 1
+   },
+   "to": {
+    "sourcePlug": 1,
+    "position": 0
+   }
+  },
+  {
+   "id": 1,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 6
+   },
+   "to": {
+    "sourcePlug": 1,
+    "position": 4
+   }
+  },
+  {
+   "id": 2,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 2
+   },
+   "to": {
+    "sourcePlug": 1,
+    "position": 1
+   }
+  },
+  {
+   "id": 3,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 7
+   },
+   "to": {
+    "sourcePlug": 1,
+    "position": 5
+   }
+  },
+  {
+   "id": 4,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 3
+   },
+   "to": {
+    "sourcePlug": 1,
+    "position": 2
+   }
+  },
+  {
+   "id": 5,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 8
+   },
+   "to": {
+    "sourcePlug": 1,
+    "position": 6
+   }
+  },
+  {
+   "id": 6,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 4
+   },
+   "to": {
+    "sourcePlug": 1,
+    "position": 3
+   }
+  },
+  {
+   "id": 7,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 9
+   },
+   "to": {
+    "sourcePlug": 1,
+    "position": 7
+   }
+  },
+  {
+   "id": 8,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 0
+   },
+   "to": {
+    "sourcePlug": 2,
+    "position": 0
+   }
+  },
+  {
+   "id": 9,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 5
+   },
+   "to": {
+    "sourcePlug": 2,
+    "position": 1
+   }
+  },
+  {
+   "id": 10,
+   "type": 1,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 10
+   },
+   "to": {
+    "sourcePlug": 255,
+    "position": 0
+   }
+  },
+  {
+   "id": 11,
+   "type": 1,
+   "name": null,
+   "from": {
+    "destPlug": 0,
+    "position": 10
+   },
+   "to": {
+    "sourcePlug": 255,
+    "position": 0
+   }
+  },
+  {
+   "id": 12,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 1,
+    "position": 0
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 1
+   }
+  },
+  {
+   "id": 13,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 1,
+    "position": 1
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 6
+   }
+  },
+  {
+   "id": 14,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 2,
+    "position": 0
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 2
+   }
+  },
+  {
+   "id": 15,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 2,
+    "position": 1
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 7
+   }
+  },
+  {
+   "id": 16,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 3,
+    "position": 0
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 3
+   }
+  },
+  {
+   "id": 17,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 3,
+    "position": 1
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 8
+   }
+  },
+  {
+   "id": 18,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 4,
+    "position": 0
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 4
+   }
+  },
+  {
+   "id": 19,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 4,
+    "position": 1
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 9
+   }
+  },
+  {
+   "id": 20,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 5,
+    "position": 0
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 0
+   }
+  },
+  {
+   "id": 21,
+   "type": 0,
+   "name": null,
+   "from": {
+    "destPlug": 5,
+    "position": 1
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 5
+   }
+  },
+  {
+   "id": 22,
+   "type": 1,
+   "name": null,
+   "from": {
+    "destPlug": 6,
+    "position": 0
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 10
+   }
+  },
+  {
+   "id": 23,
+   "type": 1,
+   "name": null,
+   "from": {
+    "destPlug": 6,
+    "position": 1
+   },
+   "to": {
+    "sourcePlug": 0,
+    "position": 10
+   }
+  },
+  {
+   "id": 24,
+   "type": 128,
+   "name": null,
+   "from": {
+    "destPlug": 8,
+    "position": 0
+   },
+   "to": {
+    "sourcePlug": 5,
+    "position": 0
+   }
+  }
+ ],
+ "captureChannelNames": [
+  "Line_1/2 left PHASE88 FW",
+  "Line_1/2 right PHASE88 FW",
+  "Line_3/4 left PHASE88 FW",
+  "Line_3/4 right PHASE88 FW",
+  "Line_5/6 left PHASE88 FW",
+  "Line_5/6 right PHASE88 FW",
+  "Line_7/8 left PHASE88 FW",
+  "Line_7/8 right PHASE88 FW",
+  "SPDIF left PHASE88 FW",
+  "SPDIF right PHASE88 FW"
+ ]
+}

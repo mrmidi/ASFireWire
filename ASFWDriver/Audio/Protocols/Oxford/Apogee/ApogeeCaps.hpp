@@ -125,9 +125,8 @@ struct ApogeeDuetSpec {
     // Streaming quirks (oxfw.c:164-167, flags at oxfw.h:35-60)
     //--------------------------------------------------------------------------
 
-    /// SND_OXFW_QUIRK_BLOCKING_TRANSMISSION. Already honoured as
-    /// StreamMode::kBlocking in ApogeeDuetProfile.cpp; recorded here so the
-    /// fact has a citation rather than living unsourced in a profile.
+    /// SND_OXFW_QUIRK_BLOCKING_TRANSMISSION. Honoured by the Duet's catalog
+    /// row (forcedStreamMode Blocking); recorded here with its citation.
     static constexpr bool kBlockingTransmission = true;
 
     /// SND_OXFW_QUIRK_IGNORE_NO_INFO_PACKET. Per the kernel, the Duet skips

@@ -63,7 +63,7 @@ struct ApogeeDuetDuplex::ClockTransition {
 
     uint64_t epoch{0};
     FW::Generation generation{FW::Generation{0}};
-    Protocols::AVC::FCPTransport* transportAtStart{nullptr};
+    std::shared_ptr<ASFW::AVC::IAvcUnit> unitAtStart;
     Scheduling::TimerToken settleTimer{Scheduling::kInvalidTimerToken};
     std::atomic<bool> completed{false};
 
@@ -110,10 +110,10 @@ void ApogeeDuetDuplex::Shutdown() noexcept {
 }
 
 void ApogeeDuetDuplex::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                                              Protocols::AVC::FCPTransport* transport) {
-    // A replacement transport or node identity denotes a newly discovered bus
+                                              std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
+    // A replacement unit or node identity denotes a newly discovered bus
     // epoch. Do not carry the AV/C configuration cache across that boundary.
-    if (runtime_.route != route || runtime_.fcpTransport != transport) {
+    if (runtime_.route != route || runtime_.avcUnit != avcUnit) {
         CancelClockTransition(kIOReturnAborted);
         clockConfigApplied_ = false;
         if (runtime_.cmpClient && runtime_.route) {
@@ -122,7 +122,7 @@ void ApogeeDuetDuplex::UpdateRuntimeContext(const Discovery::DeviceRouteToken& r
         preparedRouteEpoch_ = 0;
     }
     runtime_.route = route;
-    runtime_.fcpTransport = transport;
+    runtime_.avcUnit = std::move(avcUnit);
 }
 
 bool ApogeeDuetDuplex::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
@@ -143,9 +143,9 @@ bool ApogeeDuetDuplex::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps
 void ApogeeDuetDuplex::PrepareDuplex(const AudioDuplexChannels& channels,
                                        const AudioClockConfig& desiredClock,
                                        PrepareCallback callback) {
-    if (!runtime_.cmpClient || !runtime_.irmClient || !runtime_.fcpTransport) {
+    if (!runtime_.cmpClient || !runtime_.irmClient || !runtime_.avcUnit) {
         ASFW_LOG_ERROR(Oxfw, "PrepareDuplex: not ready (cmp=%d irm=%d fcp=%d)",
-                       runtime_.cmpClient != nullptr, runtime_.irmClient != nullptr, runtime_.fcpTransport != nullptr);
+                       runtime_.cmpClient != nullptr, runtime_.irmClient != nullptr, runtime_.avcUnit != nullptr);
         callback(kIOReturnNotReady, {});
         return;
     }
@@ -201,7 +201,7 @@ void ApogeeDuetDuplex::SetAssignedChannels(const AudioDuplexChannels& channels) 
 
 void ApogeeDuetDuplex::ApplyClockConfig(const AudioClockConfig& desiredClock,
                                           ClockApplyCallback callback) {
-    if (!runtime_.fcpTransport) {
+    if (!runtime_.avcUnit) {
         callback(kIOReturnNotReady, {});
         return;
     }
@@ -242,7 +242,7 @@ void ApogeeDuetDuplex::ApplyClockConfig(const AudioClockConfig& desiredClock,
     auto transition = std::make_shared<ClockTransition>();
     transition->epoch = ++nextClockTransitionEpoch_;
     transition->generation = runtime_.busInfo.GetGeneration();
-    transition->transportAtStart = runtime_.fcpTransport;
+    transition->unitAtStart = runtime_.avcUnit;
     transition->desiredClock = desiredClock;
     transition->desiredSfc = *sampleRate;
     transition->completion = std::move(callback);
@@ -255,7 +255,7 @@ void ApogeeDuetDuplex::ApplyClockConfig(const AudioClockConfig& desiredClock,
 
 void ApogeeDuetDuplex::AdvanceClockTransition(
     const std::shared_ptr<ClockTransition>& transition) {
-    if (!transition || !IsActive(*transition) || !runtime_.fcpTransport) {
+    if (!transition || !IsActive(*transition) || !runtime_.avcUnit) {
         if (transition && !transition->completed.load(std::memory_order_acquire)) {
             FailClockTransition(transition, kIOReturnNotReady);
         }
@@ -272,7 +272,7 @@ void ApogeeDuetDuplex::AdvanceClockTransition(
                 .query = AVC::Cmd::SignalFormatQuery::kAllWildcard,
             }
         };
-        runtime_.fcpTransport->Status(cmd, [this, transition, isInput, captureBefore, nextPhase](
+        runtime_.avcUnit->Status(cmd, [this, transition, isInput, captureBefore, nextPhase](
                                                AVC::Expected<AVC::Cmd::PlugSignalFormat> reply) {
             if (!IsActive(*transition)) {
                 return;
@@ -321,7 +321,7 @@ void ApogeeDuetDuplex::AdvanceClockTransition(
                         .format = AVC::Cmd::Am824SignalFormat(0, transition->desiredSfc),
                     }
                 };
-                runtime_.fcpTransport->Control(cmd, [this, transition](
+                runtime_.avcUnit->Control(cmd, [this, transition](
                                                        AVC::Expected<AVC::Cmd::PlugSignalFormat> reply) {
                     if (!IsActive(*transition)) {
                         return;
@@ -350,7 +350,7 @@ void ApogeeDuetDuplex::AdvanceClockTransition(
                         .format = AVC::Cmd::Am824SignalFormat(0, transition->desiredSfc),
                     }
                 };
-                runtime_.fcpTransport->Control(cmd, [this, transition](
+                runtime_.avcUnit->Control(cmd, [this, transition](
                                                        AVC::Expected<AVC::Cmd::PlugSignalFormat> reply) {
                     if (!IsActive(*transition)) {
                         return;
@@ -382,7 +382,7 @@ void ApogeeDuetDuplex::AdvanceClockTransition(
                 [this, transition, currentEpoch]() {
                     transition->settleTimer = Scheduling::kInvalidTimerToken;
                     if (!IsActive(*transition) ||
-                        transition->transportAtStart != runtime_.fcpTransport ||
+                        transition->unitAtStart != runtime_.avcUnit ||
                         transition->generation != runtime_.busInfo.GetGeneration()) {
                         return;
                     }
@@ -418,7 +418,7 @@ void ApogeeDuetDuplex::AdvanceClockTransition(
                             .format = AVC::Cmd::Am824SignalFormat(0, *origSfc),
                         }
                     };
-                    runtime_.fcpTransport->Control(cmd, [this, transition](
+                    runtime_.avcUnit->Control(cmd, [this, transition](
                                                            AVC::Expected<AVC::Cmd::PlugSignalFormat>) {
                         CompleteClockTransition(transition, transition->failureStatus);
                     });
@@ -472,7 +472,7 @@ void ApogeeDuetDuplex::FailClockTransition(const std::shared_ptr<ClockTransition
                     .format = AVC::Cmd::Am824SignalFormat(0, *origSfc),
                 }
             };
-            runtime_.fcpTransport->Control(cmd, [this, transition](
+            runtime_.avcUnit->Control(cmd, [this, transition](
                                                    AVC::Expected<AVC::Cmd::PlugSignalFormat>) {
                 if (!IsActive(*transition)) {
                     return;

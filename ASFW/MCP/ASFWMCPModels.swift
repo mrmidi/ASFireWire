@@ -65,6 +65,31 @@ enum ASFWMCPValue: Equatable, Sendable {
     case object([String: ASFWMCPValue])
 }
 
+extension ASFWMCPValue {
+    /// A Foundation JSON object (JSONSerialization) as an MCP value. Integers
+    /// stay integers; booleans are told apart from numbers by their CF type.
+    init?(jsonObject: Any) {
+        switch jsonObject {
+        case is NSNull: self = .null
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { self = .bool(number.boolValue) }
+            else if CFNumberIsFloatType(number) { self = .string(number.stringValue) }
+            else if number.int64Value >= 0, number.uint64Value > UInt64(Int.max) { self = .uint64(number.uint64Value) }
+            else { self = .int(number.intValue) }
+        case let text as String: self = .string(text)
+        case let array as [Any]:
+            var values: [ASFWMCPValue] = []
+            for element in array { guard let value = ASFWMCPValue(jsonObject: element) else { return nil }; values.append(value) }
+            self = .array(values)
+        case let object as [String: Any]:
+            var values: [String: ASFWMCPValue] = [:]
+            for (key, element) in object { guard let value = ASFWMCPValue(jsonObject: element) else { return nil }; values[key] = value }
+            self = .object(values)
+        default: return nil
+        }
+    }
+}
+
 struct ASFWMCPResourceError: Equatable, Sendable {
     let code: ASFWMCPErrorCode
     let reason: String

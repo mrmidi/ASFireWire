@@ -22,12 +22,12 @@ namespace ASFW::Audio::Oxford::Apogee {
 
 namespace VendorFcp {
 
-void Send(AVC::IAvcUnit* transport,
+void Send(const std::shared_ptr<AVC::IAvcUnit>& unit,
           const ApogeeVendorCommand& command,
           bool isStatus,
           ResultCallback callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    if (!transport) {
+    if (!unit) {
         Common::InvokeSharedCallback(callbackState, kIOReturnNotReady, command);
         return;
     }
@@ -77,13 +77,50 @@ void Send(AVC::IAvcUnit* transport,
     };
 
     if (isStatus) {
-        transport->Status(cmd, std::move(completion));
+        unit->Status(cmd, std::move(completion));
     } else {
-        transport->Control(cmd, std::move(completion));
+        unit->Control(cmd, std::move(completion));
     }
 }
 
-void ExecuteSequence(AVC::IAvcUnit* transport,
+namespace {
+struct SequenceState {
+    std::vector<ApogeeVendorCommand> commands;
+    std::vector<ApogeeVendorCommand> responses;
+    size_t index{0};
+    bool isStatus{false};
+    std::shared_ptr<AVC::IAvcUnit> unit;
+    SequenceCallback completion;
+};
+
+/// One step; each completion schedules the next. The state is owned only by
+/// the pending completion, so it is released when the sequence ends.
+void RunStep(const std::shared_ptr<SequenceState>& state) {
+    if (state->index >= state->commands.size()) {
+        state->completion(kIOReturnSuccess, state->responses);
+        return;
+    }
+    Send(state->unit, state->commands[state->index], state->isStatus,
+         [state](IOReturn status, const ApogeeVendorCommand& response) {
+             if (status != kIOReturnSuccess) {
+                 // Abort the rest: a half-applied params group is worse than a
+                 // failed one, and the caller retries the whole set. Send hands
+                 // the originating command back on every failure path, so
+                 // `response` names the step that aborted.
+                 ASFW_LOG_ERROR(Oxfw, "vendor sequence aborted at %zu/%zu code=0x%02x status=0x%08x",
+                                state->index, state->commands.size(),
+                                static_cast<unsigned>(response.code), static_cast<unsigned>(status));
+                 state->completion(status, {});
+                 return;
+             }
+             state->responses.push_back(response);
+             ++state->index;
+             RunStep(state);
+         });
+}
+} // namespace
+
+void ExecuteSequence(const std::shared_ptr<AVC::IAvcUnit>& unit,
                      const std::vector<ApogeeVendorCommand>& commands,
                      bool isStatus,
                      SequenceCallback callback) {
@@ -91,53 +128,13 @@ void ExecuteSequence(AVC::IAvcUnit* transport,
         callback(kIOReturnSuccess, {});
         return;
     }
-
-    struct SequenceState {
-        std::vector<ApogeeVendorCommand> commands;
-        std::vector<ApogeeVendorCommand> responses;
-        size_t index{0};
-        bool isStatus{false};
-        AVC::IAvcUnit* transport{nullptr};
-        SequenceCallback completion;
-    };
-
     auto state = std::make_shared<SequenceState>();
     state->commands = commands;
     state->responses.reserve(commands.size());
     state->isStatus = isStatus;
-    state->transport = transport;
+    state->unit = unit;
     state->completion = std::move(callback);
-
-    auto step = std::make_shared<std::function<void()>>();
-    *step = [state, step]() {
-        if (state->index >= state->commands.size()) {
-            state->completion(kIOReturnSuccess, state->responses);
-            return;
-        }
-
-        const ApogeeVendorCommand command = state->commands[state->index];
-        Send(state->transport, command, state->isStatus,
-             [state, step](IOReturn status, const ApogeeVendorCommand& response) {
-                 if (status != kIOReturnSuccess) {
-                     // Abort the rest: a half-applied params group is worse
-                     // than a failed one, and the caller retries the whole set.
-                     // Send hands the originating command back on every failure
-                     // path, so `response` names the step that aborted.
-                     ASFW_LOG_ERROR(Oxfw,
-                                    "vendor sequence aborted at %zu/%zu code=0x%02x status=0x%08x",
-                                    state->index, state->commands.size(),
-                                    static_cast<unsigned>(response.code),
-                                    static_cast<unsigned>(status));
-                     state->completion(status, {});
-                     return;
-                 }
-                 state->responses.push_back(response);
-                 ++state->index;
-                 (*step)();
-             });
-    };
-
-    (*step)();
+    RunStep(state);
 }
 
 } // namespace VendorFcp

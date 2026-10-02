@@ -35,7 +35,7 @@ public:
     }
     FamilyDriver* AsFamilyDriver() noexcept override { return &family_; }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                              Protocols::AVC::FCPTransport*) override {
+                              std::shared_ptr<ASFW::AVC::IAvcUnit>) override {
         io_.UpdateRoute(route);
         if (const auto record = registry_.SnapshotByGuid(route.guid)) {
             family_.SetLinkSpeed(record->link.isochToNode == FW::FwSpeed::S800);
