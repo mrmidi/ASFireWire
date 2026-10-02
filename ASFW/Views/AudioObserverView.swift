@@ -142,6 +142,7 @@ struct AudioObserverPanel: View {
     @StateObject private var model: AudioObserverPanelModel
     @State private var leftChannel: UInt32 = 0
     @State private var rightChannel: UInt32 = 1
+    @State private var spectrogram = false
     @State private var fftSize: UInt32 = 2048
     @State private var spectrumWindow: UInt32 = 0
     @State private var diagnosticTab = "Performance"
@@ -296,7 +297,7 @@ struct AudioObserverPanel: View {
     }
 
     private var spectrumPanel: some View {
-        panel("Spectrum", subtitle: "Frequency domain analysis · stereo power / mid–side") {
+        panel("Spectrum", subtitle: "Frequency domain analysis · stereo power / mid–side", spectrumSelector: true) {
             VStack(spacing: 7) {
                 HStack(spacing: 8) {
                     Text("Basis")
@@ -314,13 +315,15 @@ struct AudioObserverPanel: View {
                     }.labelsHidden().frame(width: 100)
                     Spacer(minLength: 0)
                 }
-                HStack(spacing: 8) {
-                    Text("Average")
-                    Picker("Average", selection: $slowSpectrum) {
-                        Text("Fast · 150 ms").tag(false); Text("Slow · 1 s").tag(true)
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 190)
-                    Toggle("Peak hold · 2 s / 12 dB/s", isOn: $peakHold).toggleStyle(.checkbox)
-                    Spacer(minLength: 0)
+                if !spectrogram {
+                    HStack(spacing: 8) {
+                        Text("Average")
+                        Picker("Average", selection: $slowSpectrum) {
+                            Text("Fast · 150 ms").tag(false); Text("Slow · 1 s").tag(true)
+                        }.labelsHidden().pickerStyle(.segmented).frame(width: 190)
+                        Toggle("Peak hold · 2 s / 12 dB/s", isOn: $peakHold).toggleStyle(.checkbox)
+                        Spacer(minLength: 0)
+                    }
                 }
                 HStack(spacing: 8) {
                     spectrumPlot(channel: leftChannel, side: false)
@@ -334,22 +337,47 @@ struct AudioObserverPanel: View {
                                 guard let anchor = anchors[transform] else { return nil }
                                 return SpectrumPlotRegion(transform: transform, rect: geometry[anchor])
                             }
-                            MetalSpectrumView(client: model.client, channel: leftChannel, otherChannel: rightChannel,
-                                slow: slowSpectrum, peakHold: peakHold, fftSize: fftSize, window: spectrumWindow, regions: regions)
-                                .id("\(model.snapshot.memoryGeneration)-\(leftChannel)-\(rightChannel)-\(midSide)-\(slowSpectrum)-\(peakHold)-\(fftSize)-\(spectrumWindow)")
-                                .allowsHitTesting(false).accessibilityHidden(true)
+                            if spectrogram {
+                                MetalSpectrogramView(client: model.client, channel: leftChannel, otherChannel: rightChannel,
+                                    fftSize: fftSize, window: spectrumWindow, regions: regions)
+                                    .id("spectrogram-\(model.snapshot.memoryGeneration)-\(leftChannel)-\(rightChannel)-\(midSide)-\(fftSize)-\(spectrumWindow)")
+                                    .allowsHitTesting(false).accessibilityHidden(true)
+                            } else {
+                                MetalSpectrumView(client: model.client, channel: leftChannel, otherChannel: rightChannel,
+                                    slow: slowSpectrum, peakHold: peakHold, fftSize: fftSize, window: spectrumWindow, regions: regions)
+                                    .id("\(model.snapshot.memoryGeneration)-\(leftChannel)-\(rightChannel)-\(midSide)-\(slowSpectrum)-\(peakHold)-\(fftSize)-\(spectrumWindow)")
+                                    .allowsHitTesting(false).accessibilityHidden(true)
+                            }
                         }
                     }
                 }
-                HStack(spacing: 14) {
-                    spectrumLegend(.mint, midSide ? "Mid" : "Stereo power")
-                    if midSide {
-                        spectrumLegend(.orange, midSide ? "Side" : "Output \(rightChannel + 1)")
+                if spectrogram {
+                    HStack(spacing: 8) {
+                        Text("−100 dBFS")
+                        LinearGradient(stops: [
+                            .init(color: Color(red: 0.025, green: 0.035, blue: 0.05), location: 0),
+                            .init(color: Color(red: 0.08, green: 0.2, blue: 0.55), location: 0.33),
+                            .init(color: Color(red: 0.1, green: 0.85, blue: 0.7), location: 0.66),
+                            .init(color: Color(red: 1, green: 0.8, blue: 0.2), location: 0.85),
+                            .init(color: Color(red: 1, green: 0.4, blue: 0.08), location: 0.93),
+                            .init(color: Color(red: 1, green: 0.08, blue: 0.04), location: 1)
+                        ], startPoint: .leading, endPoint: .trailing)
+                            .frame(width: 100, height: 6).clipShape(Capsule())
+                        Text("0 dBFS")
+                        Spacer(minLength: 0)
+                        Text("New audio →")
+                    }.font(.caption2).foregroundStyle(.secondary)
+                } else {
+                    HStack(spacing: 14) {
+                        spectrumLegend(.mint, midSide ? "Mid" : "Stereo power")
+                        if midSide {
+                            spectrumLegend(.orange, midSide ? "Side" : "Output \(rightChannel + 1)")
+                        }
+                        if peakHold { spectrumLegend(Color(red: 0.75, green: 0.55, blue: 0.22), "Peak hold") }
+                        Spacer(minLength: 0)
                     }
-                    if peakHold { spectrumLegend(Color(red: 0.75, green: 0.55, blue: 0.22), "Peak hold") }
-                    Spacer(minLength: 0)
+                    .font(.caption2)
                 }
-                .font(.caption2)
             }.font(.caption)
         }
     }
@@ -571,20 +599,31 @@ struct AudioObserverPanel: View {
                 } else {
                     Text("Waiting for audio").foregroundStyle(.secondary)
                 }
-                AnalyzerPlotAxes(kind: .spectrum(sampleRate: model.snapshot.sampleRateHz))
+                AnalyzerPlotAxes(kind: spectrogram
+                    ? .spectrogram(sampleRate: model.snapshot.sampleRateHz, seconds: SpectrogramTimeline.duration(sampleRate: model.snapshot.sampleRateHz == 0 ? 48000 : model.snapshot.sampleRateHz))
+                    : .spectrum(sampleRate: model.snapshot.sampleRateHz))
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func panel<Content: View>(_ title: String, subtitle: String,
+    private func panel<Content: View>(_ title: String, subtitle: String, spectrumSelector: Bool = false,
                                       @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.title3.weight(.semibold))
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(1).minimumScaleFactor(0.85)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.title3.weight(.semibold))
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).minimumScaleFactor(0.85)
+                }
+                if spectrumSelector {
+                    Spacer(minLength: 8)
+                    Picker("Visualization", selection: $spectrogram) {
+                        Text("Spectrum").tag(false)
+                        Text("2D Spectrogram").tag(true)
+                    }.labelsHidden().pickerStyle(.menu).fixedSize()
+                }
             }
             content()
         }
