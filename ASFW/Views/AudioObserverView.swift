@@ -149,6 +149,7 @@ struct AudioObserverPanel: View {
     @State private var spectrumWindow: UInt32 = 0
     @State private var diagnosticTab = "GPU"
     @State private var gpuDetails = false
+    @State private var gpuKernelTimings = false
     @State private var testSignal = "1 kHz Sine"
     @State private var testLevel = "−6 dBFS"
     @State private var testMode = "L = R (Mono)"
@@ -546,6 +547,11 @@ struct AudioObserverPanel: View {
                         return String(format: "%.2f%% / core", a + v)
                     }
                     liveDiagnosticsRow("Frame budget", interval: 1) { m, _ in milliseconds(m.analysisGPU.frameBudgetMilliseconds) }
+                    if gpuKernelTimings {
+                        liveDiagnosticsRow("Reduction GPU", interval: 1) { m, _ in milliseconds(m.reductionGPU.mean) }
+                        liveDiagnosticsRow("True peak GPU", interval: 1) { m, _ in milliseconds(m.truePeakGPU.mean) }
+                        liveDiagnosticsRow("K-weight GPU", interval: 1) { m, _ in milliseconds(m.kWeightGPU.mean) }
+                    }
                     if gpuDetails {
                         liveDiagnosticsRow("CPU encode avg", interval: 1) { m, _ in milliseconds(m.analysisCPU.mean) }
                         liveDiagnosticsRow("Scheduled → start", interval: 1) { m, _ in milliseconds(m.analysisQueue.mean) }
@@ -597,6 +603,9 @@ struct AudioObserverPanel: View {
                 Button("Reset measurements") { model.client.metrics.resetGPUTiming() }
                 Button("Copy measurements") { copyGPUMeasurements() }
                 Spacer()
+                Toggle("Kernel timings", isOn: $gpuKernelTimings).toggleStyle(.checkbox)
+                    .onChange(of: gpuKernelTimings) { _, enabled in model.client.metrics.setKernelTimingEnabled(enabled) }
+                    .help("Apple GPU hardware timestamps for compute passes. Adds profiling overhead; unsupported counters show —. Values average the previous second.")
                 Toggle("Details", isOn: $gpuDetails).toggleStyle(.checkbox)
                 Image(systemName: "info.circle").foregroundStyle(.secondary)
                     .help("Avg / fastest / longest: previous second. Run: since reset. CPU load estimates encode/prep wall time, excluding drawable acquisition; not process CPU utilization. GPU load sums overlapping spans, not utilization. FFT window is not playback latency.")
@@ -607,7 +616,8 @@ struct AudioObserverPanel: View {
     private func copyGPUMeasurements() {
         let m = model.client.metrics.read(includeHistory: false)
         let stages: [(String, AnalyzerTimingStatistics)] = [
-            ("Audio GPU", m.analysisGPU), ("Visual GPU (FFT/STFT + plots)", m.visualGPU),
+            ("Audio GPU", m.analysisGPU), ("Reduction GPU", m.reductionGPU),
+            ("True peak GPU", m.truePeakGPU), ("K-weighting GPU", m.kWeightGPU), ("Visual GPU (FFT/STFT + plots)", m.visualGPU),
             ("Analysis encode → visual GPU finish", m.analysisToVisual),
             ("Analysis CPU encode", m.analysisCPU), ("Visual frame elapsed", m.visualCPU),
             ("Visual drawable acquisition", m.visualDrawable), ("Visual prep/encode excluding drawable", m.visualEncode)]

@@ -19,6 +19,9 @@ nonisolated struct AudioObserverSnapshot: Sendable, Equatable {
 nonisolated struct AudioObserverMetrics: Sendable, Equatable {
     var analysis = AudioAnalyzerSnapshot()
     var analysisGPU = AnalyzerTimingStatistics()
+    var reductionGPU = AnalyzerTimingStatistics()
+    var truePeakGPU = AnalyzerTimingStatistics()
+    var kWeightGPU = AnalyzerTimingStatistics()
     var visualGPU = AnalyzerTimingStatistics()
     var visualCPU = AnalyzerTimingStatistics()
     var visualDrawable = AnalyzerTimingStatistics()
@@ -217,6 +220,22 @@ nonisolated final class AudioObserverMetricsState: @unchecked Sendable {
         return snapshot
     }
 
+    private var kernelTiming = false
+    func setKernelTimingEnabled(_ enabled: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        kernelTiming = enabled
+    }
+    func kernelTimingEnabled() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return kernelTiming
+    }
+    func recordKernels(reduction: Double?, truePeak: Double?, weighting: Double?, at timestamp: Double) {
+        lock.lock(); defer { lock.unlock() }
+        value.reductionGPU.append(milliseconds: reduction, at: timestamp)
+        value.truePeakGPU.append(milliseconds: truePeak, at: timestamp)
+        value.kWeightGPU.append(milliseconds: weighting, at: timestamp)
+    }
+
     func visualOrigin() -> Double? {
         lock.lock(); defer { lock.unlock() }
         return value.analysisStartedAt
@@ -224,6 +243,8 @@ nonisolated final class AudioObserverMetricsState: @unchecked Sendable {
 
     func resetGPUTiming() {
         lock.lock(); defer { lock.unlock() }
+        value.reductionGPU = AnalyzerTimingStatistics(); value.truePeakGPU = AnalyzerTimingStatistics()
+        value.kWeightGPU = AnalyzerTimingStatistics()
         value.analysisGPU = AnalyzerTimingStatistics(); value.visualGPU = AnalyzerTimingStatistics()
         value.visualDrawable = AnalyzerTimingStatistics(); value.visualEncode = AnalyzerTimingStatistics()
         value.visualCPU = AnalyzerTimingStatistics(); value.visualQueue = AnalyzerTimingStatistics()

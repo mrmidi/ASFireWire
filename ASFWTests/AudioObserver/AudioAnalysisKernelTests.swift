@@ -21,6 +21,24 @@ private func makeLoudnessTestParams(startFrame: UInt64, frameCount: UInt32,
                            leftChannel: 0, rightChannel: 1)
 }
 
+private func encodeTruePeak(_ command: MTLCommandBuffer, device: MTLDevice,
+                            library: MTLLibrary, source: MTLBuffer, state: MTLBuffer,
+                            params: ConsumeRangeTestParams) throws -> MTLBuffer {
+    let pipeline = try device.makeComputePipelineState(function: #require(library.makeFunction(name: "asfwTruePeakRange")))
+    let peaks = try #require(device.makeBuffer(length: Int(params.frameCount) * 8, options: .storageModePrivate))
+    let encoder = try #require(command.makeComputeCommandEncoder())
+    var params = params
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(source, offset: 0, index: 0)
+    encoder.setBuffer(state, offset: 0, index: 1)
+    encoder.setBuffer(peaks, offset: 0, index: 2)
+    encoder.setBytes(&params, length: MemoryLayout<ConsumeRangeTestParams>.stride, index: 3)
+    encoder.dispatchThreads(MTLSize(width: Int(params.frameCount), height: 1, depth: 1),
+                            threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+    encoder.endEncoding()
+    return peaks
+}
+
 private func scalarTruePeak(_ interleaved: [Float], channel: Int) -> Float {
     let phases: [[Float]] = [
         [0.001708984375, 0.010986328125, -0.0196533203125, 0.033203125,
@@ -137,7 +155,9 @@ struct AudioAnalysisKernelTests {
             first.setBytes(&params, length: MemoryLayout<ConsumeRangeTestParams>.stride, index: 2)
             first.dispatchThreads(MTLSize(width: 256, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
             first.endEncoding()
+            let peaks = try encodeTruePeak(command, device: device, library: library, source: source, state: state, params: params)
             let second = try #require(command.makeComputeCommandEncoder())
+            second.setBuffer(peaks, offset: 0, index: 4)
             second.setComputePipelineState(weighting)
             second.setBuffer(source, offset: 0, index: 0)
             second.setBuffer(state, offset: 0, index: 1)
@@ -318,9 +338,11 @@ struct AudioAnalysisKernelTests {
                                                     options: .storageModeShared))
         let queue = try #require(device.makeCommandQueue())
         let command = try #require(queue.makeCommandBuffer())
-        let encoder = try #require(command.makeComputeCommandEncoder())
         var params = makeLoudnessTestParams(startFrame: 0, frameCount: UInt32(sampleCount),
                                             ringFrames: UInt32(sampleCount), channels: 2)
+        let peaks = try encodeTruePeak(command, device: device, library: library, source: source, state: state, params: params)
+        let encoder = try #require(command.makeComputeCommandEncoder())
+        encoder.setBuffer(peaks, offset: 0, index: 4)
         encoder.setComputePipelineState(pipeline)
         encoder.setBuffer(source, offset: 0, index: 0)
         encoder.setBuffer(state, offset: 0, index: 1)
@@ -372,9 +394,11 @@ struct AudioAnalysisKernelTests {
 
         func runRange(start: UInt64, count: UInt32) throws -> Float {
             let command = try #require(queue.makeCommandBuffer())
-            let encoder = try #require(command.makeComputeCommandEncoder())
             var params = makeLoudnessTestParams(startFrame: start, frameCount: count,
                                                 ringFrames: 480, channels: 2)
+            let peaks = try encodeTruePeak(command, device: device, library: library, source: source, state: state, params: params)
+            let encoder = try #require(command.makeComputeCommandEncoder())
+            encoder.setBuffer(peaks, offset: 0, index: 4)
             encoder.setComputePipelineState(pipeline)
             encoder.setBuffer(source, offset: 0, index: 0)
             encoder.setBuffer(state, offset: 0, index: 1)
@@ -402,4 +426,64 @@ struct AudioAnalysisKernelTests {
         // inter-sample overshoot with the BS.1770 four-phase FIR.
         #expect(expected > samplePeak * 1.005)
     }
+    @Test func parallelTruePeakPreservesShortRangesChunksAndWrappedHistory() throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let library = try #require(device.makeDefaultLibrary())
+        let weighting = try device.makeComputePipelineState(function: #require(library.makeFunction(name: "asfwKWeightRange")))
+        let queue = try #require(device.makeCommandQueue())
+        let capacity = 1024
+        let source = try #require(device.makeBuffer(length: capacity * 2 * 4, options: .storageModeShared))
+        let state = try #require(device.makeBuffer(length: 49 * 4, options: .storageModeShared))
+        state.contents().initializeMemory(as: UInt8.self, repeating: 0, count: state.length)
+        let output = try #require(device.makeBuffer(length: AudioAnalysisLayout.outputWords * 4, options: .storageModeShared))
+        var samples: [Float] = (0..<960).flatMap { i in
+            [0.99 * Float(sin(Double(i) * 1.31)), 0.7 * Float(cos(Double(i) * 0.91))]
+        }
+        samples[420] = .nan; samples[731] = .infinity
+        let sanitized = samples.map { $0.isFinite ? $0 : 0 }
+        let pcm = source.contents().assumingMemoryBound(to: Float.self)
+        let words = output.contents().assumingMemoryBound(to: UInt32.self)
+        var offset = 0
+        var maximum = SIMD2<Float>(repeating: 0)
+        var chunks = 0
+        for count in [1, 3, 7, 200, 301, 448] {
+            // Old ring contents are deliberately unavailable. Only state may supply the halo.
+            for i in 0..<(capacity * 2) { pcm[i] = .nan }
+            for i in offset..<(offset + count) {
+                let frame = (900 + i) % capacity
+                pcm[frame * 2] = samples[i * 2]; pcm[frame * 2 + 1] = samples[i * 2 + 1]
+            }
+            var params = makeLoudnessTestParams(startFrame: UInt64(900 + offset), frameCount: UInt32(count),
+                                               ringFrames: UInt32(capacity), channels: 2)
+            let command = try #require(queue.makeCommandBuffer())
+            let peaks = try encodeTruePeak(command, device: device, library: library, source: source, state: state, params: params)
+            let encoder = try #require(command.makeComputeCommandEncoder())
+            encoder.setComputePipelineState(weighting)
+            encoder.setBuffer(source, offset: 0, index: 0)
+            encoder.setBuffer(state, offset: 0, index: 1)
+            encoder.setBuffer(output, offset: 0, index: 2)
+            encoder.setBuffer(peaks, offset: 0, index: 4)
+            encoder.setBytes(&params, length: MemoryLayout<ConsumeRangeTestParams>.stride, index: 3)
+            encoder.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
+            encoder.endEncoding(); command.commit(); command.waitUntilCompleted()
+            try #require(command.status == .completed)
+            offset += count
+            #expect(words[94] == (offset >= 12 ? 1 : 0))
+            maximum = SIMD2(max(maximum.x, Float(bitPattern: words[92])), max(maximum.y, Float(bitPattern: words[93])))
+            for chunk in 0..<Int(words[16]) {
+                let base = AudioAnalysisLayout.chunkOffset + chunk * AudioAnalysisLayout.chunkWords
+                let begin = max(0, chunks * 480 - 11)
+                let end = (chunks + 1) * 480
+                let reference = Array(sanitized[(begin * 2)..<(end * 2)])
+                #expect(abs(Float(bitPattern: words[base + 6]) - scalarTruePeak(reference, channel: 0)) < 1e-5)
+                #expect(abs(Float(bitPattern: words[base + 7]) - scalarTruePeak(reference, channel: 1)) < 1e-5)
+                chunks += 1
+            }
+        }
+        #expect(chunks == 2)
+        #expect(abs(maximum.x - scalarTruePeak(sanitized, channel: 0)) < 1e-5)
+        #expect(abs(maximum.y - scalarTruePeak(sanitized, channel: 1)) < 1e-5)
+        #expect(state.contents().assumingMemoryBound(to: UInt32.self)[18] == 0)
+    }
+
 }

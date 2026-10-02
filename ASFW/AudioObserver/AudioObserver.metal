@@ -101,6 +101,38 @@ constant float asfwTruePeakCoefficients[4][12] = {
       0.0332031250000f, -0.0196533203125f, 0.0109863281250f, 0.0017089843750f }
 };
 
+// Independent FIR evaluations: prior-batch samples come from committed history,
+// never from ring frames that the writer may already have overwritten.
+kernel void asfwTruePeakRange(
+    device const float* samples [[buffer(0)]],
+    device const uint* state [[buffer(1)]],
+    device float2* peaks [[buffer(2)]],
+    constant ConsumeRangeParams& params [[buffer(3)]],
+    uint i [[thread_position_in_grid]]) {
+    if (i >= params.frameCount || params.frameCount > analysisMaximumBatchFrames) return;
+    float2 peak = 0;
+    if (state[44] + i + 1 >= 12) {
+        float2 interpolated[4] = {};
+        for (uint tap = 0; tap < 12; ++tap) {
+            float2 value;
+            if (tap > i) {
+                const uint history = tap - i - 1;
+                value = float2(as_type<float>(state[20 + history]), as_type<float>(state[32 + history]));
+            } else {
+                const uint frame = uint((params.startFrame + ulong(i - tap)) % params.ringFrames);
+                const ulong base = ulong(frame) * params.channels;
+                value = float2(samples[base + params.leftChannel], samples[base + params.rightChannel]);
+                value = select(float2(0), value, isfinite(value));
+            }
+            for (uint phase = 0; phase < 4; ++phase)
+                interpolated[phase] += asfwTruePeakCoefficients[phase][tap] * value;
+        }
+        for (uint phase = 0; phase < 4; ++phase)
+            peak = max(peak, select(float2(0), abs(interpolated[phase]), isfinite(interpolated[phase])));
+    }
+    peaks[i] = peak;
+}
+
 // Stateful 48 kHz BS.1770 K-weighting. State words contain two direct-form
 // biquads per selected channel plus unfinished 10 ms channel-energy sums.
 kernel void asfwKWeightRange(
@@ -108,6 +140,7 @@ kernel void asfwKWeightRange(
     device uint* state [[buffer(1)]],
     device uint* output [[buffer(2)]],
     constant ConsumeRangeParams& params [[buffer(3)]],
+    device const float2* peaks [[buffer(4)]],
     uint tid [[thread_position_in_grid]]) {
     if (tid != 0) return;
     if (params.frameCount > analysisMaximumBatchFrames) { output[16] = 0; output[94] = 0; return; }
@@ -155,36 +188,12 @@ kernel void asfwKWeightRange(
         const float left = isfinite(rawLeft) ? rawLeft : 0.0f;
         const float right = isfinite(rawRight) ? rawRight : 0.0f;
 
-        for (int tap = 11; tap > 0; --tap) {
-            truePeakHistoryLeft[tap] = truePeakHistoryLeft[tap - 1];
-            truePeakHistoryRight[tap] = truePeakHistoryRight[tap - 1];
-        }
-        truePeakHistoryLeft[0] = left;
-        truePeakHistoryRight[0] = right;
-        truePeakHistoryFrames = min(12u, truePeakHistoryFrames + 1);
-        if (truePeakHistoryFrames >= 12) {
-            truePeakValid = true;
-            float frameTruePeakLeft = 0.0f;
-            float frameTruePeakRight = 0.0f;
-            for (uint phase = 0; phase < 4; ++phase) {
-                float interpolatedLeft = 0.0f;
-                float interpolatedRight = 0.0f;
-                for (uint tap = 0; tap < 12; ++tap) {
-                    interpolatedLeft += asfwTruePeakCoefficients[phase][tap] * truePeakHistoryLeft[tap];
-                    interpolatedRight += asfwTruePeakCoefficients[phase][tap] * truePeakHistoryRight[tap];
-                }
-                if (isfinite(interpolatedLeft)) {
-                    frameTruePeakLeft = max(frameTruePeakLeft, abs(interpolatedLeft));
-                }
-                if (isfinite(interpolatedRight)) {
-                    frameTruePeakRight = max(frameTruePeakRight, abs(interpolatedRight));
-                }
-            }
-            truePeakLeft = max(truePeakLeft, frameTruePeakLeft);
-            truePeakRight = max(truePeakRight, frameTruePeakRight);
-            chunkTruePeakLeft = max(chunkTruePeakLeft, frameTruePeakLeft);
-            chunkTruePeakRight = max(chunkTruePeakRight, frameTruePeakRight);
-        }
+        const float2 frameTruePeak = peaks[i];
+        truePeakLeft = max(truePeakLeft, frameTruePeak.x);
+        truePeakRight = max(truePeakRight, frameTruePeak.y);
+        chunkTruePeakLeft = max(chunkTruePeakLeft, frameTruePeak.x);
+        chunkTruePeakRight = max(chunkTruePeakRight, frameTruePeak.y);
+        truePeakValid = truePeakValid || truePeakHistoryFrames + i + 1 >= 12;
 
         rawEnergy += left * left + right * right;
         samplePeak = max(samplePeak, max(abs(left), abs(right)));
@@ -240,10 +249,19 @@ kernel void asfwKWeightRange(
     state[17] = as_type<uint>(energyRight);
     state[18] = partialFrames;
     for (uint tap = 0; tap < 12; ++tap) {
-        state[20 + tap] = as_type<uint>(truePeakHistoryLeft[tap]);
-        state[32 + tap] = as_type<uint>(truePeakHistoryRight[tap]);
+        float2 value;
+        if (tap < params.frameCount) {
+            const uint frame = uint((params.startFrame + params.frameCount - 1 - tap) % params.ringFrames);
+            const ulong base = ulong(frame) * params.channels;
+            value = float2(samples[base + params.leftChannel], samples[base + params.rightChannel]);
+            value = select(float2(0), value, isfinite(value));
+        } else {
+            value = float2(truePeakHistoryLeft[tap - params.frameCount], truePeakHistoryRight[tap - params.frameCount]);
+        }
+        state[20 + tap] = as_type<uint>(value.x);
+        state[32 + tap] = as_type<uint>(value.y);
     }
-    state[44] = truePeakHistoryFrames;
+    state[44] = min(12u, truePeakHistoryFrames + params.frameCount);
     state[45] = as_type<uint>(rawEnergy);
     state[46] = as_type<uint>(samplePeak);
     state[47] = as_type<uint>(chunkTruePeakLeft);

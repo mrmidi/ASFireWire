@@ -88,4 +88,34 @@ struct AnalyzerTimingStatisticsTests {
         #expect(value.analysisToVisual.count == 0) // no analysis origin in this isolated GPU test
     }
 
+    @Test func hardwareCountersMeasureAnExistingComputePass() throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        guard device.supportsFamily(.apple1), device.supportsCounterSampling(.atStageBoundary) else { return }
+        let timing = try #require(AnalyzerKernelTiming(device: device))
+        let library = try #require(device.makeDefaultLibrary())
+        let pipeline = try device.makeComputePipelineState(function: #require(library.makeFunction(name: "asfwConsumeOutputRange")))
+        let source = try #require(device.makeBuffer(length: 256 * 2 * 4, options: .storageModeShared))
+        source.contents().initializeMemory(as: UInt8.self, repeating: 0, count: source.length)
+        let output = try #require(device.makeBuffer(length: AudioAnalysisLayout.outputWords * 4, options: .storageModeShared))
+        let queue = try #require(device.makeCommandQueue())
+        let command = try #require(queue.makeCommandBuffer())
+        let encoder = try #require(timing.encoder(command, stage: 0))
+        struct Params {
+            var startFrame: UInt64; var frameCount: UInt32; var ringFrames: UInt32
+            var channels: UInt32; var leftChannel: UInt32; var rightChannel: UInt32
+        }
+        var params = Params(startFrame: 0, frameCount: 256, ringFrames: 256,
+                                        channels: 2, leftChannel: 0, rightChannel: 1)
+        encoder.setComputePipelineState(pipeline)
+        encoder.setBuffer(source, offset: 0, index: 0)
+        encoder.setBuffer(output, offset: 0, index: 1)
+        encoder.setBytes(&params, length: MemoryLayout<Params>.stride, index: 2)
+        encoder.dispatchThreads(MTLSize(width: 256, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        encoder.endEncoding(); command.commit(); command.waitUntilCompleted()
+        try #require(command.status == .completed)
+        let duration = try #require(timing.milliseconds(stage: 0))
+        let whole = (command.gpuEndTime - command.gpuStartTime) * 1_000
+        #expect(duration >= 0 && duration <= whole + 0.1, "counter \(duration) ms, command \(whole) ms")
+    }
+
 }
