@@ -186,3 +186,26 @@ only**, no attach/probing in this phase; state this limitation in the PR.
 
 Hardware validation is deferred until all software stages are ready, per the user’s
 request to batch validation of the single PR. No Phase 4 hardware claim is made.
+
+## Legacy removal (after phase 4, 2026-10-02)
+
+User: no duplicate paths. Commits 85dcc574..b2a271d7 on feat/avc-phase4.
+- User client served from the discovery snapshot (outputs pinned byte for byte
+  first). Deleted Subunit/MusicSubunit/AudioSubunit/MusicSubunitCapabilities, the
+  StreamFormats parser and a duplicate wire header. Declared change: Sync-plug
+  formats (90 00 40 ..) report rate 0xFF instead of a coincidental 0x04.
+- Family protocols take an owned IAvcUnit (UpdateRuntimeContext); the raw
+  FCPTransport* lookup is gone (LiveUnit replaces it).
+- Legacy descriptor/result/definition types removed; AVCDefs.hpp holds only
+  FCP addresses, frame limits and timing.
+- BridgeCo inventory reads formations and rate from the snapshot and sends only
+  channel positions and section types (17 fewer frames at Phase 88 attach).
+- Phase 88 runs on GenericAvcProtocol with its startup mixer map;
+  Phase88Protocol deleted.
+- Oxford inventory deleted (it re-read generic discovery's lists); Oxford units
+  use generic discovery alone (10 fewer frames at Duet attach).
+
+Still open: Phase88Profile keeps its own copy of the stream geometry for StartIO
+framing (the two-sources-of-truth item); the Onyx-i has no capture of the generic
+probes (only its format list), so its attach is untested against real answers.
+
