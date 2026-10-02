@@ -10,10 +10,10 @@
 
 #pragma once
 
-#include "Graph/AvcDeviceGraph.hpp"
-#include "../../Audio/DriverKit/Config/IAudioDeviceProfile.hpp"
-#include "../../Audio/Model/ASFWAudioDevice.hpp"
-#include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
+#include "../../../Protocols/AVC/Graph/AvcDeviceGraph.hpp"
+#include "../../DriverKit/Config/IAudioDeviceProfile.hpp"
+#include "../../Model/ASFWAudioDevice.hpp"
+#include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 #include <cstdint>
 #include <optional>

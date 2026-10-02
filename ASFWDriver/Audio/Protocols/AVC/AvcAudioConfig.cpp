@@ -5,7 +5,7 @@
 
 #include "AvcAudioConfig.hpp"
 
-#include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
+#include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
 
 #include <algorithm>
 

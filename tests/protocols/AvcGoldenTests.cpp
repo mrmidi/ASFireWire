@@ -33,8 +33,8 @@
 #include "ASFWDriver/Discovery/FWUnit.hpp"
 
 #include "ASFWDriver/Protocols/AVC/AVCUnit.hpp"
-#include "ASFWDriver/Protocols/AVC/AvcAudioConfig.hpp"
-#include "ASFWDriver/Protocols/AVC/AvcExtensionInventory.hpp"
+#include "ASFWDriver/Audio/Protocols/AVC/AvcAudioConfig.hpp"
+#include "ASFWDriver/Audio/Protocols/AVC/AvcExtensionInventory.hpp"
 #include "ASFWDriver/Protocols/AVC/FCPTransport.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/RateCodes.hpp"
@@ -359,6 +359,10 @@ TEST(AvcGoldenTests, DuetAttachDiscovery) {
 
     // Attach as AVCDiscovery runs it: generic discovery, then the Oxford
     // stream-format lists in both directions.
+    std::vector<uint8_t> audioIdentifier;
+    for (size_t i = 0; i < Fixtures::kDuetAudioIdentifierHex.size(); i += 2)
+        audioIdentifier.push_back(static_cast<uint8_t>(std::stoul(Fixtures::kDuetAudioIdentifierHex.substr(i, 2), nullptr, 16)));
+    rig.Sim().SetDescriptor(0x08, {0x00}, std::move(audioIdentifier));
     rig.Mark("## AVCUnit::Initialize + Oxford inventory");
     bool initOk = false;
     rig.Unit()->Initialize([&](bool ok) { initOk = ok; });
@@ -571,6 +575,40 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
 
     rig.ExpectGolden("phase88__phase4_attach_discovery");
     ExpectOnlyMeasuredFrames(rig.Sim(), kPhase88Uncaptured);
+}
+
+TEST(AvcGoldenTests, Phase88GeometryWithoutAnyDescriptorComesFromBridgeCoFormations) {
+    // No descriptor answers at all: formations and the current signal format
+    // still give both streams' geometry, rates and the BridgeCo slot map.
+    AvcGoldenRigOptions opts;
+    opts.guid = kPhase88.guid;
+    opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
+    opts.generation = kPhase88.generation;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
+    AvcGoldenRig rig(kPhase88, opts);
+    bool initOk = false;
+    rig.Unit()->Initialize([&](bool ok) { initOk = ok; });
+    rig.Settle();
+    ASSERT_TRUE(initOk);
+    const auto snapshot = rig.Unit()->GetDiscoverySnapshot();
+    ASSERT_TRUE(snapshot);
+    EXPECT_TRUE(std::none_of(snapshot->contents.begin(), snapshot->contents.end(),
+                             [](const auto& c) { return c.music.has_value(); }));
+    const auto graph = rig.Unit()->GetDiscoveredGraph();
+    ASSERT_NE(graph, nullptr);
+    for (const auto* stream : {&graph->playback, &graph->capture}) {
+        EXPECT_EQ(stream->channelCount, 10U);
+        EXPECT_EQ(stream->dataBlockSize, 11U);
+        EXPECT_EQ(stream->currentSampleRate, 48000U);
+        EXPECT_EQ(stream->supportedSampleRates.size(), 5U);
+    }
+    // The attach image holds no BridgeCo channel-position answers, so the
+    // inventory reports no map and the stream keeps the identity layout; the
+    // graph uses exactly what the inventory reported, never a guess.
+    EXPECT_EQ(graph->playback.slotMap, snapshot->extension.playback.pcmSlots);
+    EXPECT_EQ(graph->capture.slotMap, snapshot->extension.capture.pcmSlots);
+    // Frame admission is pinned by Phase88AttachDiscovery; here the descriptor
+    // OPENs are refused by the image rather than answered from a capture.
 }
 
 // ============================================================================
@@ -809,8 +847,8 @@ TEST(AvcGoldenTests, GenericInterimAndTimeout) {
 TEST(AvcGoldenTests, ExtensionInventoryHoldsDiscoveryOpenUntilItFinishes) {
     std::function<void()> finish;
     AvcGoldenRigOptions opts;
-    opts.unitOptions.extensionInventory = [&finish](AVCUnit&, std::function<void()> done) {
-        finish = std::move(done);
+    opts.unitOptions.extensionInventory = [&finish](AVCUnit&, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
+        finish = [done = std::move(done)] { done({}); };
     };
     AvcGoldenRig rig(kDuet, opts);
 

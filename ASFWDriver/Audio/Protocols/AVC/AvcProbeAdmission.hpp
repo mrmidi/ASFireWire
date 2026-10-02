@@ -9,8 +9,9 @@
 
 #pragma once
 
-#include "../../Audio/Protocols/SelectProbeBootstrap.hpp"
-#include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
+#include "../SelectProbeBootstrap.hpp"
+#include "../../../Protocols/AVC/Core/AvcTypes.hpp"
+#include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 #include <cstdint>
 
@@ -19,7 +20,7 @@ namespace ASFW::Protocols::AVC {
 /// 1394 Trade Association specifier in a unit directory. Linux BeBoB and
 /// OXFW match on it (bebob.c:355-364, oxfw.c:315-326); OXFW also requires
 /// AV/C version 0x010001, BeBoB does not (bebob.c:352-354).
-inline constexpr uint32_t kTa1394SpecifierId = 0x00A02D;
+using ASFW::AVC::kTa1394SpecifierId;
 
 [[nodiscard]] constexpr bool IsTa1394Unit(uint32_t specifierId) noexcept {
     return (specifierId & 0xFFFFFFU) == kTa1394SpecifierId;

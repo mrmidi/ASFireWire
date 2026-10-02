@@ -6,7 +6,7 @@
 
 #include <gtest/gtest.h>
 
-#include "ASFWDriver/Protocols/AVC/AvcAudioConfig.hpp"
+#include "ASFWDriver/Audio/Protocols/AVC/AvcAudioConfig.hpp"
 
 namespace {
 

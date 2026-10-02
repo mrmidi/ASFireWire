@@ -18,6 +18,7 @@ StreamGraph AvcGraphBuilder::BuildStreamGraph(
     StreamGraph sg;
     sg.subunitPlugId = plug.plugId;
     sg.isDestination = plug.isDestination;
+    sg.clusters = plug.clusters;
 
     std::vector<uint8_t> slots;
 
@@ -34,6 +35,7 @@ StreamGraph AvcGraphBuilder::BuildStreamGraph(
             StreamChannelInfo info;
             info.logicalIndex = static_cast<uint32_t>(sg.channels.size());
             info.slotIndex = signal.position;
+            info.musicPlugId = signal.musicPlugId;
             info.clusterName = cluster.name;
             info.formatCode = cluster.streamFormatCode;
 

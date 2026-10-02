@@ -22,8 +22,6 @@
 
 namespace ASFW::Protocols::AVC {
 
-class AVCUnit; // Forward declaration
-
 /// Abstract base class for AV/C subunits
 class Subunit {
 public:
@@ -56,14 +54,6 @@ public:
     void SetPlugCounts(PlugCounts counts) {
         numDestPlugs_ = counts.dest;
         numSrcPlugs_ = counts.src;
-    }
-
-    /// Parse capabilities (optional, override in subclasses)
-    /// @param unit Pointer to parent AVCUnit (for sending commands)
-    /// @param completion Callback when done
-    virtual void ParseCapabilities(AVCUnit& unit, std::function<void(bool)> completion) {
-        // Default implementation: do nothing, just succeed
-        completion(true);
     }
 
     /// Get human-readable name

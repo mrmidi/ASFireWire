@@ -17,7 +17,10 @@ struct ReadingInfo final { uint8_t attempt{0}; };
 struct AwaitingReenumeration final { uint32_t protocolVersion{0}; };
 enum class RetireReason : uint8_t {
     FirmwareAlreadyRunning, UnsupportedBuild, InfoUnavailable,
-    CueWriteFailed, GenerationChanged
+    CueWriteFailed, GenerationChanged,
+    /// The loader is still active although this incarnation was already cued
+    /// once. The cue is never sent twice; the attach fails visibly instead.
+    LoaderStillActiveAfterCue
 };
 struct Retired final { RetireReason reason{RetireReason::FirmwareAlreadyRunning}; };
 using PreparationState = std::variant<ReadingInfo, AwaitingReenumeration, Retired>;

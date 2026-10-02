@@ -7,6 +7,7 @@
 //
 
 #define _LIBCPP_NO_ABI_TAG 1
+#include "Audio/Protocols/AVC/DiscoveryCoordinator.hpp"
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IODispatchQueue.h>
@@ -437,7 +438,8 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         auto& bus = ctx.controller->Bus();
         ctx.deps.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
             this, *ctx.deps.deviceRegistry, *ctx.deps.deviceManager, bus, bus, *ctx.deps.sbp2SessionScheduler,
-            ctx.audioCoordinator.get());
+            std::make_shared<ASFW::Audio::AVC::DiscoveryCoordinator>(
+                *ctx.deps.deviceRegistry, bus, bus, ctx.audioCoordinator.get()));
         ctx.controller->SetAVCDiscovery(ctx.deps.avcDiscovery);
         ASFW_LOG(Controller, "✅ AVCDiscovery initialized");
     }

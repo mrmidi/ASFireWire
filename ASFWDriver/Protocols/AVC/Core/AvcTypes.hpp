@@ -16,6 +16,7 @@
 #include <cstdint>
 
 namespace ASFW::AVC {
+inline constexpr uint32_t kTa1394SpecifierId = 0x00A02D;
 
 /// Command type ("ctype"): the low nibble of byte 0 of a command frame. The high
 /// nibble (CTS) is 0 for AV/C. ta1394 general/src/lib.rs:231-235.

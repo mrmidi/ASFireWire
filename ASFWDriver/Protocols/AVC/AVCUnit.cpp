@@ -12,13 +12,11 @@
 #include <algorithm>
 #include "../../Common/CallbackUtils.hpp"
 #include "../../Logging/Logging.hpp"
-#include "Descriptors/DescriptorAccessor.hpp"
 #include "Commands/GeneralCommands.hpp"
 #include "Commands/SignalSourceCommand.hpp"
 #include "Commands/StreamFormatCommand.hpp"
 #include "Core/RateCodes.hpp"
 #include "Music/MusicSubunit.hpp"
-#include "Camera/CameraSubunit.hpp"
 #include "Audio/AudioSubunit.hpp"
 
 using namespace ASFW::Protocols::AVC;
@@ -70,13 +68,6 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
         }
         // Family code that talks to the transport directly asks with the same opcode.
         fcpTransport_->SetStreamFormatOpcodePolicy(options_.streamFormatOpcode);
-
-        // Create DescriptorAccessor for unit-level descriptors (Phase 5)
-        descriptorAccessor_ = std::make_shared<DescriptorAccessor>(*this, kAVCSubunitUnit);
-
-        if (!descriptorAccessor_) {
-            ASFW_LOG_ERROR(Discovery, "AVCUnit: Failed to allocate DescriptorAccessor");
-        }
     } else {
         ASFW_LOG_V1(AVC, "AVCUnit: Failed to allocate FCPTransport");
     }
@@ -89,10 +80,10 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
 void AVCUnit::Submit(const ASFW::AVC::CommandFrame& frame,
                      FW::Generation generation,
                      ResponseCallback completion) {
-    const auto device = device_.lock();
+    // Route admission here; the transport is the single allowlist admission
+    // point (its filter is fixed from Config ROM before the first frame).
     const auto route = CurrentRoute();
-    if (!device || !route || route->generation != generation || !IsCurrentRoute(*route) ||
-        !FrameIsPermitted(PermittedFramesFor(device->GetAvcCommandFilter()), frame.WireBytes())) {
+    if (!route || route->generation != generation || !IsCurrentRoute(*route)) {
         completion(ASFW::AVC::Fail(ASFW::AVC::AvcErrorKind::kRefused)); return;
     }
     if (fcpTransport_) {
@@ -122,24 +113,10 @@ bool AVCUnit::IsCurrentRoute(const Discovery::DeviceRouteToken& route) const noe
     return routeRegistry_.IsCurrent(route);
 }
 
-void AVCUnit::ProbeUnitInfo(std::function<void(bool)> completion) {
-    auto completionState = Common::ShareCallback(std::move(completion));
-    ASFW::AVC::Cmd::UnitInfoCommand cmd{};
-    Status(cmd, [this, completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::UnitInfo> info) {
-        if (!info) {
-            ASFW_LOG_V1(AVC, "AVCUnit: UNIT_INFO failed");
-            Common::InvokeSharedCallback(completionState, false);
-            return;
-        }
-        model_.info = *info;
-        ASFW_LOG_V2(AVC, "AVCUnit: UNIT_INFO succeeded: type=0x%02x id=%u company=0x%06x",
-                    static_cast<uint8_t>(info->unitType), info->unitId,
-                    ASFW::AVC::ToOui(info->companyId));
-        Common::InvokeSharedCallback(completionState, true);
-    });
-}
-
 AVCUnit::~AVCUnit() {
+    // Retire every LiveRef to this unit first: a discovery completion reached
+    // from Shutdown() must not touch a unit that is being destroyed.
+    RetireLifetime();
     Shutdown();
     ASFW_LOG_V1(AVC, "AVCUnit: Destroyed (GUID=%llx)", GetGUID());
 }
@@ -193,12 +170,11 @@ void AVCUnit::InitializeAlreadyBegun(std::function<void(bool)> completion) {
             unit->FinishExternalRescan(success);
             if (completion) completion(success);
         },
-        [live](E::SnapshotLease snapshot, std::function<void()> done) {
+        [live](E::SnapshotLease snapshot, std::function<void(E::ExtensionFacts)> done) {
             auto* unit = live.Get();
-            if (!unit || snapshot->terminalError || !unit->IsCurrentRoute(snapshot->route)) { done(); return; }
-            unit->ApplySnapshot(*snapshot);
+            if (!unit || snapshot->terminalError || !unit->IsCurrentRoute(snapshot->route)) { done({}); return; }
             if (unit->options_.extensionInventory) unit->options_.extensionInventory(*unit, std::move(done));
-            else done();
+            else done({});
         });
     sessionSlot_ = E::RunningSlot{session};
     session->Start();
@@ -216,129 +192,6 @@ void AVCUnit::ReScan(std::function<void(bool)> completion) {
 void AVCUnit::ReScanAlreadyBegun(std::function<void(bool)> completion) {
     // Retain the previous committed snapshot while replacement discovery runs.
     InitializeAlreadyBegun(std::move(completion));
-}
-
-//==============================================================================
-// Subunit Probing
-//==============================================================================
-
-#include "Music/MusicSubunit.hpp"
-#include "Camera/CameraSubunit.hpp"
-#include "Audio/AudioSubunit.hpp"
-
-//==============================================================================
-// Subunit Probing
-//==============================================================================
-
-
-
-
-
-
-
-
-
-//==============================================================================
-// Plug Probing
-//==============================================================================
-
-
-
-
-
-
-
-bool AVCUnit::CompleteStream(Graph::StreamGraph& stream, uint32_t pcmChannels, uint32_t midiChannels,
-                             uint32_t rateHz, std::vector<uint32_t> rates) const {
-    if (stream.selectionEvidence == Graph::StreamSelectionEvidence::kUnresolved ||
-        stream.channelCount != pcmChannels || pcmChannels == 0 || rateHz == 0) {
-        return false;
-    }
-    const auto music = std::find_if(subunits_.begin(), subunits_.end(),
-        [](const auto& subunit) { return subunit->GetType() == AVCSubunitType::kMusic; });
-    if (music == subunits_.end()) return false;
-    const auto& status = static_cast<const Music::MusicSubunit&>(**music).GetParsedStatus();
-    if (!status) return false;
-    const auto* descriptor = status->FindPlug(stream.subunitPlugId, stream.isDestination);
-    if (descriptor == nullptr) return false;
-    stream.dataBlockSize = pcmChannels + midiChannels;
-    stream.midiStreamCount = midiChannels;
-    stream.currentSampleRate = rateHz;
-    stream.supportedSampleRates = rates.empty() ? std::vector<uint32_t>{rateHz} : std::move(rates);
-    const auto validated = Graph::AvcGraphBuilder::BuildStreamGraph(*descriptor, *status, stream.dataBlockSize);
-    stream.slotMap = validated.slotMap;
-    stream.slotMapValidation = validated.slotMapValidation;
-    stream.usingFallbackMap = validated.usingFallbackMap;
-    return true;
-}
-
-void AVCUnit::CompleteGraphFromUnitPlugFormations(std::span<const UnitPlugFormation> playback,
-                                                  std::span<const UnitPlugFormation> capture,
-                                                  uint32_t currentRateHz) {
-    if (!discoveredGraph_ || currentRateHz == 0) return;
-    auto graph = *discoveredGraph_;
-    // The unit's live formations are current by definition; a size from the
-    // music subunit may not be (the Phase 88 descriptor is identical at every
-    // rate). Keep the existing size only when no live formation matches.
-    const auto complete = [&](Graph::StreamGraph& stream, std::span<const UnitPlugFormation> formations) {
-        const auto current = std::find_if(formations.begin(), formations.end(), [&](const auto& f) {
-            return f.rateHz == currentRateHz && f.pcmChannels == stream.channelCount;
-        });
-        if (current == formations.end()) return stream.dataBlockSize != 0;
-        std::vector<uint32_t> rates;
-        for (const auto& f : formations) {
-            if (f.pcmChannels == current->pcmChannels && f.midiChannels == current->midiChannels &&
-                std::find(rates.begin(), rates.end(), f.rateHz) == rates.end()) {
-                rates.push_back(f.rateHz);
-            }
-        }
-        return CompleteStream(stream, current->pcmChannels, current->midiChannels, currentRateHz, std::move(rates));
-    };
-    const bool playbackOk = complete(graph.playback, playback);
-    const bool captureOk = complete(graph.capture, capture);
-    ASFW_LOG(AVC, "[AvcGeometry] guid=%llx source=unit-plug-formations rate=%u playback=%{public}s capture=%{public}s",
-             Guid(), currentRateHz, playbackOk ? "sized" : "unsized", captureOk ? "sized" : "unsized");
-    discoveredGraph_ = std::make_shared<Graph::DeviceGraph>(std::move(graph));
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-//==============================================================================
-// Command Submission
-//==============================================================================
-
-void AVCUnit::GetPlugInfo(std::function<void(AVCResult, const ASFW::AVC::Cmd::UnitPlugCounts&)> completion) {
-    if (initialized_) {
-        // Return cached result
-        completion(AVCResult::kImplementedStable, model_.unitPlugs);
-        return;
-    }
-
-    auto completionState = Common::ShareCallback(std::move(completion));
-    ASFW::AVC::Cmd::PlugInfoCommand cmd{
-        .operands = ASFW::AVC::Cmd::PlugInfoOperands{
-            .form = ASFW::AVC::Cmd::PlugInfoForm::kUnitIsoExternal
-        }
-    };
-
-    Status(cmd, [this, completionState](ASFW::AVC::Expected<ASFW::AVC::Cmd::PlugInfoReply> reply) {
-        if (!reply) {
-            Common::InvokeSharedCallback(completionState, AVCResult::kNotImplemented, ASFW::AVC::Cmd::UnitPlugCounts{});
-            return;
-        }
-        model_.unitPlugs = reply->unit;
-        Common::InvokeSharedCallback(completionState, AVCResult::kImplementedStable, model_.unitPlugs);
-    });
 }
 
 //==============================================================================

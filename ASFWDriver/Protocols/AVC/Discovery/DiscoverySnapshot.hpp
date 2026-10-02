@@ -8,6 +8,7 @@
 #include "../Descriptors/MusicSubunitDescriptor.hpp"
 #include "../Descriptors/AudioSubunitDescriptor.hpp"
 #include <memory>
+#include "../../../Common/PcmSlotMap.hpp"
 
 namespace ASFW::AVC::DiscoveryEngine {
 namespace ParsedDescriptors = ASFW::Protocols::AVC::Descriptors;
@@ -47,7 +48,6 @@ struct SelectorStatus {
     SubunitId subunit;
     uint8_t blockId{};
     std::optional<Cmd::SelectorValue> value;
-    std::vector<uint8_t> selectableInputs;
 };
 struct SubunitContents {
     SubunitId id;
@@ -62,6 +62,13 @@ struct ProbeOutcome {
     Opcode opcode{Opcode::kUnitInfo};
     std::optional<AvcError> error;
 };
+struct Formation { uint32_t rateHz{}, pcmChannels{}, midiChannels{}; };
+struct ExtensionPlug {
+    std::vector<Formation> formations;
+    Common::PcmSlotMap pcmSlots;
+    uint32_t currentRateHz{};
+};
+struct ExtensionFacts { ExtensionPlug playback, capture; };
 struct DiscoverySnapshot {
     SessionId session;
     ASFW::Discovery::DeviceRouteToken route;
@@ -74,6 +81,7 @@ struct DiscoverySnapshot {
     std::vector<Cmd::SignalSource> confirmedClockRoutes;
     std::vector<ProbeOutcome> outcomes;
     std::vector<TextReferenceDiagnostic> textReferences;
+    ExtensionFacts extension;
     bool complete{false}, cancelled{false};
     std::optional<AvcError> terminalError;
 };

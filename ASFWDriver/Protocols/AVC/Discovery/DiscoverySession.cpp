@@ -75,14 +75,14 @@ void Session::Execute(Action action) {
                         if (auto* session = live.Get()) session->Deliver(DescriptorReply{identity, result});
                     });
             } else if constexpr (std::is_same_v<A, RunExtension>) {
-                const auto done = [live, identity = a.operation] {
+                const auto done = [live, identity = a.operation](ExtensionFacts facts) {
                     if (auto* session = live.Get()) {
                         auto* owner = session->unit_.Get();
                         if (!owner || !owner->IsCurrentRoute(identity.route)) session->RouteLost();
-                        else session->Deliver(ExtensionComplete{identity});
+                        else session->Deliver(ExtensionComplete{identity, std::move(facts)});
                     }
                 };
-                if (extension_) extension_(std::make_shared<const DiscoverySnapshot>(state_.builder), done); else done();
+                if (extension_) extension_(std::make_shared<const DiscoverySnapshot>(state_.builder), done); else done({});
             }
         }
     }, std::move(action));

@@ -6,9 +6,12 @@
 namespace ASFW::AVC::DiscoveryEngine {
 inline constexpr size_t kMaxProbeOperations = 8192;
 inline constexpr uint8_t kMaxFormatEntries = 32;
+/// Optional probes survive a timeout (the engine has already retried), but a
+/// unit that stops answering altogether ends discovery after this many in a row.
+inline constexpr uint8_t kMaxConsecutiveTimeouts = 2;
 struct FormatProbe { Cmd::StreamFormatCommand command; bool fallback{false}; };
 struct DescriptorProbe { SubunitId subunit; Cmd::DescriptorSpecifier specifier; size_t depth{0}; std::vector<uint16_t> ancestors; };
-struct SelectorProbe { Cmd::SelectorCommand command; bool inquiry{false}; };
+struct SelectorProbe { Cmd::SelectorCommand command; };
 struct ClockProbe { Cmd::SignalSourceCommand command; };
 enum class Checkpoint : uint8_t { Formats, Descriptors, Routes, Controls, Extension, Commit };
 using Probe = std::variant<Cmd::UnitInfoCommand, Cmd::SubunitInfoCommand, Cmd::PlugInfoCommand,
@@ -27,6 +30,7 @@ struct State {
     IAvcUnit::StreamFormatOpcodePolicy opcodePolicy{IAvcUnit::StreamFormatOpcodePolicy::kLearn};
     bool usesSupportOpcode{false};
     uint64_t serial{0};
+    uint8_t consecutiveTimeouts{0};
 };
 struct Start {
     SessionId session;
@@ -46,7 +50,7 @@ struct DescriptorReply {
     OperationIdentity operation;
     ASFW::Protocols::AVC::DescriptorAccessor::ReadDescriptorResult result;
 };
-struct ExtensionComplete { OperationIdentity operation; };
+struct ExtensionComplete { OperationIdentity operation; ExtensionFacts facts; };
 struct Cancel {};
 struct RouteLost {};
 using Event = std::variant<Start, Reply, DescriptorReply, ExtensionComplete, Cancel, RouteLost>;

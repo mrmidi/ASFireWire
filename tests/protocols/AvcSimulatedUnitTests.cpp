@@ -185,14 +185,16 @@ TEST_F(AvcSimulatedUnitTests, Phase88AudioDescriptorTraversalUsesSessionsAndReta
     EXPECT_TRUE(unopenedResult->success);
 
     phase88Unit_.SetDeferredResponses(true);
-    Protocols::AVC::Audio::AudioSubunit audio(Protocols::AVC::AVCSubunitType::kAudio, 0);
-    std::optional<bool> completed;
-    audio.ReadIdentifierDescriptor(phase88Unit_, [&](bool ok) { completed = ok; });
-    for (size_t i = 0; i < 80 && !completed; ++i) {
+    namespace Engine = ASFW::AVC::DiscoveryEngine;
+    Engine::SnapshotLease snapshot;
+    auto session = Engine::Session::Create(phase88Unit_, {7}, [&](auto result) { snapshot = std::move(result); });
+    session->Start();
+    for (size_t i = 0; i < 2000 && !snapshot; ++i) {
         phase88Unit_.FlushDeferredResponses();
     }
-    ASSERT_TRUE(completed.has_value());
-    EXPECT_TRUE(*completed);
+    ASSERT_TRUE(snapshot);
+    Protocols::AVC::Audio::AudioSubunit audio(Protocols::AVC::AVCSubunitType::kAudio, 0);
+    audio.LoadSnapshot(*snapshot);
     ASSERT_TRUE(audio.GetIdentifier().has_value());
     const auto* master = audio.GetIdentifier()->FindBlock(
         Descriptors::AudioFunctionBlockType::kFeature, 1);
@@ -371,13 +373,12 @@ TEST_F(AvcSimulatedUnitTests, AudioSubunitReadIdentifierDescriptor_DuetIntegrati
     Protocols::AVC::Audio::AudioSubunit audioSubunit(Protocols::AVC::AVCSubunitType::kAudio, 0);
     EXPECT_FALSE(audioSubunit.GetIdentifier().has_value());
 
-    std::optional<bool> readOk;
-    audioSubunit.ReadIdentifierDescriptor(duetUnit_, [&](bool success) {
-        readOk = success;
-    });
-
-    ASSERT_TRUE(readOk.has_value());
-    EXPECT_TRUE(*readOk);
+    namespace Engine = ASFW::AVC::DiscoveryEngine;
+    Engine::SnapshotLease snapshot;
+    auto session = Engine::Session::Create(duetUnit_, {8}, [&](auto result) { snapshot = std::move(result); });
+    session->Start();
+    ASSERT_TRUE(snapshot);
+    audioSubunit.LoadSnapshot(*snapshot);
 
     const auto& id = audioSubunit.GetIdentifier();
     ASSERT_TRUE(id.has_value());

@@ -24,9 +24,9 @@
 #include "../../Discovery/DeviceRouteToken.hpp"
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
-#include "../../Audio/Core/IAVCAudioConfigListener.hpp"
+#include "Discovery/DiscoveryOwner.hpp"
 #include "../../Scheduling/ITimerScheduler.hpp"
-#include "../BeBoB/Bootloader/BeBoBBootloaderPreparationCoordinator.hpp"
+
 
 // Forward declarations
 namespace ASFW::Discovery { class DeviceRegistry; struct DeviceRecord; }
@@ -50,7 +50,7 @@ public:
                  Protocols::Ports::FireWireBusOps& busOps,
                  Protocols::Ports::FireWireBusInfo& busInfo,
                  Scheduling::ITimerScheduler& timerScheduler,
-                 ASFW::Audio::IAVCAudioConfigListener* audioConfigListener);
+                 std::shared_ptr<DiscoveryOwner> owner);
 
     ~AVCDiscovery() override;
 
@@ -89,13 +89,8 @@ private:
     uint64_t GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const;
 
     void RebuildNodeIDMap();
-    void PrepareMAudioBootloader(const std::shared_ptr<Discovery::FWDevice>& device);
+    void OnPreparedUnit(std::shared_ptr<Discovery::FWUnit> unit);
 
-    void HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit);
-    /// A unit whose policy forbids discovery traffic publishes its catalog
-    /// profile's fixed geometry (M-Audio special firmware, Fireworks).
-    void PublishProfileOwnedConfig(uint64_t guid, const Discovery::FWDevice& device);
-    void PublishReadyAudioConfig(uint64_t guid, const ::ASFW::Audio::Model::ASFWAudioDevice& config);
     void ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit);
     [[nodiscard]] bool IsRescanCurrent(const Discovery::DeviceRouteToken& route,
                                        uint64_t operationSerial) const noexcept;
@@ -104,11 +99,9 @@ private:
     Discovery::DeviceRegistry& deviceRegistry_;
     Discovery::IDeviceManager& deviceManager_;
     Protocols::Ports::FireWireBusOps& busOps_;
-    ASFW::Protocols::BeBoB::Bootloader::BeBoBBootloaderPreparationCoordinator
-        bootloaderPreparation_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
     Scheduling::ITimerScheduler& timerScheduler_;
-    ASFW::Audio::IAVCAudioConfigListener* audioConfigListener_{nullptr};
+    std::shared_ptr<DiscoveryOwner> owner_;
 
     IOLock* lock_{nullptr};
 

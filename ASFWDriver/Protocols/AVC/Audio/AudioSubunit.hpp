@@ -14,10 +14,6 @@
 #include <optional>
 #include "../Discovery/DiscoverySnapshot.hpp"
 
-namespace ASFW::AVC {
-class IAvcUnit;
-}
-
 namespace ASFW::Protocols::AVC::Audio {
 
 /// Audio plug information
@@ -35,8 +31,6 @@ public:
         : Subunit(type, id) {}
     
     std::string GetName() const override { return "Audio"; }
-    
-    void ParseCapabilities(AVCUnit& unit, std::function<void(bool)> completion) override;
     
     void LoadSnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot);
 
@@ -56,9 +50,6 @@ public:
         return descriptorData_;
     }
 
-    /// Read and parse Audio Subunit Identifier Descriptor (§5.1, §8.1)
-    void ReadIdentifierDescriptor(ASFW::AVC::IAvcUnit& unit, std::function<void(bool)> completion);
-
 private:
     uint8_t numInputPlugs_{0};
     uint8_t numOutputPlugs_{0};
@@ -66,24 +57,7 @@ private:
     std::vector<AudioPlugInfo> outputPlugs_;
     std::optional<Descriptors::AudioSubunitIdentifier> identifier_;
     std::optional<std::vector<uint8_t>> descriptorData_;
-    
-    void QueryPlugCounts(AVCUnit& unit, std::function<void(bool)> completion);
-    void QueryPlugFormats(AVCUnit& unit, size_t plugIndex, bool isInput,
-                         std::function<void(bool)> completion);
 
-    /// Set volume for a function block (plug)
-    /// @param unit AVCUnit for command submission
-    /// @param plugId Plug ID (Function Block ID)
-    /// @param volume Volume level (0x7FFF = 0dB, etc.)
-    /// @param completion Callback
-    void SetAudioVolume(AVCUnit& unit, uint8_t plugId, int16_t volume, std::function<void(bool)> completion);
-
-    /// Set mute for a function block (plug)
-    /// @param unit AVCUnit for command submission
-    /// @param plugId Plug ID (Function Block ID)
-    /// @param mute True to mute, false to unmute
-    /// @param completion Callback
-    void SetAudioMute(AVCUnit& unit, uint8_t plugId, bool mute, std::function<void(bool)> completion);
 };
 
 } // namespace ASFW::Protocols::AVC::Audio

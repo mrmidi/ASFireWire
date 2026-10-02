@@ -9,9 +9,16 @@ template<class... T> struct Visit : T... { using T::operator()...; };
 template<class... T> Visit(T...) -> Visit<T...>;
 using D = ParsedDescriptors::AudioSubunitDescriptorParser;
 
+// Route loss and a broken transport end discovery. A timeout or an allowlist
+// refusal (nothing was sent) only fails that probe: optional discovery is
+// independent, and a device that ignores one opcode must not lose the rest.
 bool TransportFailure(const AvcError& e) {
-    return e.kind == AvcErrorKind::kBusReset || e.kind == AvcErrorKind::kTransportError ||
-           e.kind == AvcErrorKind::kTimeout || e.kind == AvcErrorKind::kRefused;
+    return e.kind == AvcErrorKind::kBusReset || e.kind == AvcErrorKind::kTransportError;
+}
+/// Count a probe's timeout; true when the unit has stopped answering.
+bool UnitStoppedAnswering(State& s, const std::optional<AvcError>& error) {
+    if (!error || error->kind != AvcErrorKind::kTimeout) { s.consecutiveTimeouts = 0; return false; }
+    return ++s.consecutiveTimeouts >= kMaxConsecutiveTimeouts;
 }
 void Finish(Transition& t, std::optional<AvcError> error = {}, bool cancelled = false) {
     ++t.state.serial; // Invalidate an outstanding reply before freezing/releasing the builder.
@@ -95,23 +102,31 @@ void Expand(State& s, Checkpoint point) {
         for (const auto& c : s.builder.contents) {
             if (!c.audio) continue;
             for (const auto& block : c.audio->functionBlocks) {
-                if (block.type == ParsedDescriptors::AudioFunctionBlockType::kSelector) {
+                // Current selector input by STATUS (Linux bebob terratec/phase88.rs:74-81,232).
+                // No SPECIFIC INQUIRY of inputs: no reference sends it.
+                if (block.type == ParsedDescriptors::AudioFunctionBlockType::kSelector)
                     s.probes.emplace_back(SelectorProbe{Cmd::SelectorCommand{.address = c.id.ToAddress(),
                         .operands = {.functionBlockId = block.id}}});
-                    for (size_t input = 0; input < block.inputSources.size(); ++input)
-                        s.probes.emplace_back(SelectorProbe{Cmd::SelectorCommand{.address = c.id.ToAddress(),
-                            .operands = {.functionBlockId = block.id, .inputPlug = static_cast<uint8_t>(input)}}, true});
-                }
                 if (block.type != ParsedDescriptors::AudioFunctionBlockType::kFeature) continue;
-                for (size_t ch = 0; ch <= block.channelControls.size(); ++ch) {
-                    const uint16_t bits = ch == 0 ? block.masterControls : block.channelControls[ch - 1];
-                    // Audio Subunit 1.0 Table 8.3: first control occupies the
-                    // most significant bit. Keep advertised and confirmed separate.
-                    for (size_t bit = 0; bit < Cmd::kFeatureControlWidths.size(); ++bit)
-                        if ((bits & (0x8000u >> bit)) && Cmd::kFeatureControlWidths[bit].width)
+                // Controls are confirmed by STATUS; the descriptor bitmap is only a hint.
+                // The Duet's bitmap matches neither bit order while STATUS shows mute and
+                // volume on channels 0-2 (documentation/avc-rebuild/fixtures/duet_descriptors.md),
+                // so mute and volume are always asked on the master and every cluster
+                // channel (Linux bebob lib.rs:312-321 reads volume this way). Other
+                // controls only where the bitmap advertises them (Audio Subunit 1.0
+                // Table 8.3: the first control occupies the most significant bit).
+                const size_t channels = std::max<size_t>(block.channelControls.size(), block.clusterChannels);
+                for (size_t ch = 0; ch <= channels; ++ch) {
+                    const uint16_t bits = ch == 0 ? block.masterControls :
+                        (ch - 1 < block.channelControls.size() ? block.channelControls[ch - 1] : 0);
+                    for (size_t bit = 0; bit < Cmd::kFeatureControlWidths.size(); ++bit) {
+                        const auto control = Cmd::kFeatureControlWidths[bit].control;
+                        const bool always = control == Cmd::FeatureControl::kMute || control == Cmd::FeatureControl::kVolume;
+                        if ((always || (bits & (0x8000u >> bit))) && Cmd::kFeatureControlWidths[bit].width)
                             s.probes.emplace_back(Cmd::FeatureCommand{.address = c.id.ToAddress(),
                                 .operands = {.functionBlockId = block.id, .channel = static_cast<uint8_t>(ch),
-                                    .control = Cmd::kFeatureControlWidths[bit].control}});
+                                    .control = control}});
+                    }
                 }
             }
         }
@@ -144,7 +159,9 @@ Expected<CommandFrame> Encode(State& s, Probe& p) {
                 Cmd::StreamFormatOpcode::kStreamFormatSupport : Cmd::StreamFormatOpcode::kExtendedStreamFormat;
             return f.command.Encode(CommandType::kStatus);
         },
-        [](SelectorProbe& f) { return f.command.Encode(f.inquiry ? CommandType::kSpecificInquiry : CommandType::kStatus); },
+        [](SelectorProbe& f) { return f.command.Encode(CommandType::kStatus); },
+        // Sync-connection candidates by SPECIFIC INQUIRY, as FFADO
+        // avc_plug.cpp:670-690 (inquireConnnection) from avc_unit.cpp:823-845.
         [](ClockProbe& f) { return f.command.Encode(CommandType::kSpecificInquiry); },
         [](DescriptorProbe&) -> Expected<CommandFrame> { return Fail(AvcErrorKind::kInvalidArgument); },
         [](Checkpoint&) -> Expected<CommandFrame> { return Fail(AvcErrorKind::kInvalidArgument); },
@@ -197,6 +214,7 @@ void Handle(Transition& t, size_t index, const Reply& reply) {
     Probe probe = s.probes[index]; // Processing may insert/reallocate the queue.
     auto bytes = Validate(s, probe, reply.response);
     if (!bytes && TransportFailure(bytes.error())) { Finish(t, bytes.error()); return; }
+    if (UnitStoppedAnswering(s, bytes ? std::nullopt : std::optional{bytes.error()})) { Finish(t, bytes.error()); return; }
     auto frame = Encode(s, probe);
     if (frame) s.builder.outcomes.push_back({frame->Address(), frame->OpcodeValue(), bytes ? std::nullopt : std::optional{bytes.error()}});
     bool retry = false;
@@ -237,7 +255,11 @@ void Handle(Transition& t, size_t index, const Reply& reply) {
         [&](FormatProbe f) {
             auto r = Decode(f.command, bytes, decodeError);
             if (!r) {
-                if (!f.fallback && s.opcodePolicy == IAvcUnit::StreamFormatOpcodePolicy::kLearn &&
+                // Learn only from a plug's first query: NOT IMPLEMENTED past the
+                // end of a list is that list's terminator, not opcode evidence.
+                const bool firstQuery = f.command.operands.form == Cmd::StreamFormatSubfunction::kSingle ||
+                                        f.command.operands.index == 0;
+                if (!f.fallback && firstQuery && s.opcodePolicy == IAvcUnit::StreamFormatOpcodePolicy::kLearn &&
                     f.command.operands.opcode == Cmd::StreamFormatOpcode::kExtendedStreamFormat &&
                     r.error().response == ResponseCode::kNotImplemented) {
                     f.fallback = true; s.probes[index] = f; retry = true;
@@ -281,8 +303,7 @@ void Handle(Transition& t, size_t index, const Reply& reply) {
                 s.builder.selectors.push_back({id, c.operands.functionBlockId}); it = std::prev(s.builder.selectors.end());
             }
             if (!r || r->functionBlockId != c.operands.functionBlockId) return;
-            if (!probe.inquiry) it->value = *r;
-            else if (r->inputPlug == c.operands.inputPlug) it->selectableInputs.push_back(r->inputPlug);
+            it->value = *r;
         },
         [&](const ClockProbe& c) {
             if (auto r = Decode(c.command, bytes, decodeError); r && r->destination == c.command.operands.destination &&
@@ -303,7 +324,8 @@ void Descriptor(Transition& t, size_t index, const DescriptorReply& reply) {
     const auto probe = std::get<DescriptorProbe>(s.probes[index]);
     const auto& result = reply.result;
     DescriptorBlob blob{probe.subunit, probe.specifier, result.data, result.primaryError, result.cleanupError};
-    if (result.cancelled || (result.primaryError && TransportFailure(*result.primaryError))) {
+    if (result.cancelled || (result.primaryError && TransportFailure(*result.primaryError)) ||
+        UnitStoppedAnswering(s, result.primaryError)) {
         s.builder.descriptors.push_back(std::move(blob));
         Finish(t, result.primaryError, result.cancelled); return;
     }
@@ -382,7 +404,9 @@ Transition Step(State state, Event event) {
             if (reply.operation == operation && std::holds_alternative<DescriptorProbe>(t.state.probes[index])) Descriptor(t, index, reply);
         },
         [&](const ExtensionComplete& reply) {
-            if (reply.operation == operation && std::holds_alternative<Checkpoint>(t.state.probes[index])) Advance(t, index + 1);
+            if (reply.operation == operation && std::holds_alternative<Checkpoint>(t.state.probes[index])) {
+                t.state.builder.extension = reply.facts; Advance(t, index + 1);
+            }
         },
         [&](Cancel) { Finish(t, {}, true); },
         [&](RouteLost) { Finish(t, AvcError::Of(AvcErrorKind::kBusReset)); },

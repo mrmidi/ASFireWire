@@ -9,7 +9,7 @@
 
 #include "ASFWDriver/DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "ASFWDriver/DeviceProfiles/Audio/AudioDeviceIds.hpp"
-#include "ASFWDriver/Protocols/AVC/AvcProbeAdmission.hpp"
+#include "ASFWDriver/Audio/Protocols/AVC/AvcProbeAdmission.hpp"
 
 #include <optional>
 #include <vector>

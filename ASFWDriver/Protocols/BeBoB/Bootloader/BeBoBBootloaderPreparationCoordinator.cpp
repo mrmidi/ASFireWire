@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <memory>
+#include <utility>
 
 namespace ASFW::Protocols::BeBoB::Bootloader {
 namespace {
@@ -15,9 +16,11 @@ public:
                    Discovery::DeviceRegistry& registry,
                    Discovery::DeviceRouteToken route,
                    FW::FwSpeed speed,
-                   std::function<bool()> ownerAlive)
+                   std::function<bool()> ownerAlive, std::function<void(PreparationState)> completion,
+                   bool cueAllowed, std::function<void()> cueIssued, std::function<void()> finished)
         : bus_(bus), registry_(registry), route_(route), speed_(speed),
-          ownerAlive_(std::move(ownerAlive)) {}
+          ownerAlive_(std::move(ownerAlive)), completion_(std::move(completion)),
+          cueAllowed_(cueAllowed), cueIssued_(std::move(cueIssued)), finished_(std::move(finished)) {}
 
     void Start() { ReadInfo(); }
 
@@ -69,12 +72,22 @@ private:
         LogIfRetired();
         if (std::holds_alternative<ReadInfoBlock>(step.action)) {
             ReadInfo();
+        } else if (std::holds_alternative<WriteCue>(step.action) && !cueAllowed_) {
+            ASFW_LOG(AVC, "[BootloaderCue] loader still active after this incarnation's cue "
+                     "GUID=0x%016llx gen=%u; not cueing again", route_.guid, route_.generation.value);
+            state_ = Retired{RetireReason::LoaderStillActiveAfterCue};
+            LogIfRetired();
+            Finished();
+            if (completion_) { auto completion = std::exchange(completion_, {}); completion(state_); }
         } else if (const auto* cue = std::get_if<WriteCue>(&step.action)) {
             ASFW_LOG(AVC,
                      "[BootloaderCue] loader active; writing start-firmware cue "
                      "GUID=0x%016llx gen=%u protocol=%u",
                      route_.guid, route_.generation.value, cue->cue.ProtocolVersion());
             Write(*cue);
+        } else if (!std::holds_alternative<ReadingInfo>(state_)) {
+            Finished();
+            if (completion_) { auto completion = std::exchange(completion_, {}); completion(state_); }
         }
     }
 
@@ -83,6 +96,8 @@ private:
         auto step = AdvancePreparation(state_, event);
         state_ = std::move(step.state);
         LogIfRetired();
+        Finished();
+        if (completion_) { auto completion = std::exchange(completion_, {}); completion(state_); }
     }
 
     // Bring-up path, at most a few records per device incarnation. Without
@@ -103,6 +118,7 @@ private:
             Retire(GenerationInvalidated{});
             return;
         }
+        if (cueIssued_) std::exchange(cueIssued_, {})();
         const auto self = shared_from_this();
         const auto completed = std::make_shared<std::atomic<bool>>(false);
         const auto handle = bus_.WriteBlock(
@@ -130,6 +146,12 @@ private:
     const Discovery::DeviceRouteToken route_;
     const FW::FwSpeed speed_;
     std::function<bool()> ownerAlive_;
+    std::function<void(PreparationState)> completion_;
+    void Finished() { if (finished_) std::exchange(finished_, {})(); }
+
+    bool cueAllowed_{true};
+    std::function<void()> cueIssued_;
+    std::function<void()> finished_;
     PreparationState state_{BeginPreparation().state};
     bool retireLogged_{false};
 };
@@ -151,20 +173,30 @@ bool BeBoBBootloaderPreparationCoordinator::Prepare(
     const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
     uint32_t vendorId, uint32_t modelId,
     const Discovery::DeviceRouteToken& route, FW::FwSpeed speed,
-    std::function<bool()> ownerAlive) {
+    std::function<bool()> ownerAlive, std::function<void(PreparationState)> completion) {
     if (!lock_ || !ShouldPrepareBootloader(plan, vendorId, modelId) || !ownerAlive ||
         !registry_.IsCurrent(route)) {
         return false;
     }
+    const std::pair key{route.guid, route.deviceIncarnation};
     IOLockLock(lock_);
-    const bool firstAttempt =
-        attemptsByIncarnation_.emplace(route.guid, route.deviceIncarnation).second;
+    const bool started = runsInFlight_.insert(key).second;
+    const bool cueAllowed = !cuedIncarnations_.contains(key);
     IOLockUnlock(lock_);
-    if (!firstAttempt) {
+    if (!started) {
         return false;
     }
+    // The coordinator outlives every run that can still call back: a run only
+    // calls these after ownerAlive() confirmed its owner (our owner) alive.
+    auto cueIssued = [this, key] {
+        IOLockLock(lock_); cuedIncarnations_.insert(key); IOLockUnlock(lock_);
+    };
+    auto finished = [this, key] {
+        IOLockLock(lock_); runsInFlight_.erase(key); IOLockUnlock(lock_);
+    };
     auto run = std::make_shared<PreparationRun>(bus_, registry_, route, speed,
-                                               std::move(ownerAlive));
+                                               std::move(ownerAlive), std::move(completion),
+                                               cueAllowed, std::move(cueIssued), std::move(finished));
     run->Start();
     return true;
 }

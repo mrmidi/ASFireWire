@@ -5,10 +5,11 @@
 // generic AV/C discovery.
 
 #include "AvcExtensionInventory.hpp"
+#include "../BeBoB/BeBoBCaptureChannelMap.hpp"
 
-#include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
-#include "../../Audio/Protocols/Oxford/OxfwStreamFormats.hpp"
-#include "../../Logging/Logging.hpp"
+#include "../../Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "../../Protocols/Oxford/OxfwStreamFormats.hpp"
+#include "../../../Logging/Logging.hpp"
 
 #include <vector>
 
@@ -25,7 +26,7 @@ AVCUnit::DiscoveryOptions DiscoveryOptionsFor(AvcExtensionInventory inventory) {
             // sends only 0x2F on every BeBoB plug (avc_extended_stream_format.cpp:296),
             // and a Phase 88 answers 0xBF NOT IMPLEMENTED.
             options.streamFormatOpcode = ASFW::AVC::IAvcUnit::StreamFormatOpcodePolicy::kSupportOnly;
-            options.extensionInventory = [](AVCUnit& unit, std::function<void()> done) {
+            options.extensionInventory = [](AVCUnit& unit, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
                 const uint64_t guid = unit.Guid();
                 ::ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery(
                     unit, guid,
@@ -33,7 +34,7 @@ AVCUnit::DiscoveryOptions DiscoveryOptionsFor(AvcExtensionInventory inventory) {
                         const ::ASFW::Audio::BeBoB::DeviceModel& model) {
                         // BridgeCo "input" is the unit ISO input plug: host playback.
                         const auto formations = [](const ::ASFW::Audio::BeBoB::IsochronousPlugModel& plug) {
-                            std::vector<UnitPlugFormation> out;
+                            std::vector<ASFW::AVC::DiscoveryEngine::Formation> out;
                             for (const auto& formation : plug.supportedFormations) {
                                 if (const auto hz = formation.RateHz()) {
                                     out.push_back({.rateHz = *hz, .pcmChannels = formation.pcmChannels,
@@ -47,13 +48,19 @@ AVCUnit::DiscoveryOptions DiscoveryOptionsFor(AvcExtensionInventory inventory) {
                         const uint32_t rate = model.CurrentRateHz().value_or(0);
                         ASFW_LOG(AVC, "[AvcInventory] guid=%llx bridgeco plugCounts=%d formations in=%zu out=%zu rate=%u",
                                  guid, model.unitPlugCounts.has_value() ? 1 : 0, playback.size(), capture.size(), rate);
-                        keepAlive->CompleteGraphFromUnitPlugFormations(playback, capture, rate);
-                        done();
+                        ASFW::AVC::DiscoveryEngine::ExtensionFacts facts;
+                        facts.playback.formations = playback; facts.capture.formations = capture;
+                        facts.playback.currentRateHz = rate; facts.capture.currentRateHz = rate;
+                        for (const auto& f : playback) if (f.rateHz == rate)
+                            facts.playback.pcmSlots = ::ASFW::Audio::BeBoBProbe::PlaybackChannelMapFromProbe(model.input, f.pcmChannels, f.pcmChannels + f.midiChannels);
+                        for (const auto& f : capture) if (f.rateHz == rate)
+                            facts.capture.pcmSlots = ::ASFW::Audio::BeBoBProbe::ChannelMapFromProbe(model.output, f.pcmChannels, f.pcmChannels + f.midiChannels);
+                        done(std::move(facts));
                     });
             };
             break;
         case AvcExtensionInventory::kOxford:
-            options.extensionInventory = [](AVCUnit& unit, std::function<void()> done) {
+            options.extensionInventory = [](AVCUnit& unit, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
                 const uint64_t guid = unit.Guid();
                 auto keepAlive = unit.shared_from_this();
                 ::ASFW::Audio::Oxford::DetectStreamFormats(
@@ -67,7 +74,7 @@ AVCUnit::DiscoveryOptions DiscoveryOptionsFor(AvcExtensionInventory inventory) {
                                 IOReturn outStatus, const ::ASFW::Audio::Oxford::StreamFormatSet& out) {
                                 ASFW_LOG(AVC, "[AvcInventory] guid=%llx oxford formats in=0x%x/%zu out=0x%x/%zu",
                                          guid, inStatus, inRates, outStatus, out.Rates().size());
-                                done();
+                                done({});
                             });
                     });
             };

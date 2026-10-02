@@ -59,8 +59,8 @@ add_protocols_test(AvcGoldenTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/AvcAudioConfig.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/AvcExtensionInventory.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/AVC/AvcAudioConfig.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/AVC/AvcExtensionInventory.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
@@ -79,7 +79,6 @@ add_protocols_test(AvcGoldenTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
@@ -108,8 +107,8 @@ add_protocols_test(AvcDiscoveryLifecycleTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/AvcAudioConfig.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/AvcExtensionInventory.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/AVC/AvcAudioConfig.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/AVC/AvcExtensionInventory.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
@@ -128,7 +127,6 @@ add_protocols_test(AvcDiscoveryLifecycleTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
@@ -170,7 +168,7 @@ target_link_libraries(BeBoBBootloaderPreparationTests PRIVATE asfw_catalog_host)
 # FCP transport lifecycle tests (write completion, cancellable timeout, teardown)
 add_protocols_test(AvcAudioConfigTests
     AvcAudioConfigTests.cpp
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/AvcAudioConfig.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/AVC/AvcAudioConfig.cpp"
 )
 
 add_protocols_test(AVCExchangeLogWireTests
@@ -223,7 +221,6 @@ add_executable(MusicSubunitIdentifierParserTests
     "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
     "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
 )
@@ -287,7 +284,6 @@ add_executable(MusicSubunitTests
     "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
     "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
 )
 target_link_libraries(MusicSubunitTests PRIVATE
     asfw_packet_serdes
@@ -317,7 +313,6 @@ add_executable(AVCHandlerTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
@@ -348,7 +343,6 @@ add_executable(AVCCapabilitiesSerializerTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"

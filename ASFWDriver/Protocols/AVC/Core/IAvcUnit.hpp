@@ -176,6 +176,11 @@ public:
         }
     }
 
+protected:
+    /// A concrete unit calls this first in its destructor, before any teardown
+    /// that can reach external completions, so no LiveRef sees a dying unit.
+    void RetireLifetime() noexcept { lifetime_.Invalidate(); }
+
 private:
     Common::LifetimeAnchor lifetime_;
     StreamFormatOpcodePolicy opcodePolicy_{StreamFormatOpcodePolicy::kLearn};

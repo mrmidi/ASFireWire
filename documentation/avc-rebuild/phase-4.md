@@ -123,7 +123,20 @@ only**, no attach/probing in this phase; state this limitation in the PR.
   and contents; every recorded boundary covers cancellation/route loss. Removing
   reply identity admission was detected by the lifecycle mutation test. Original
   wire traces remain; new phase-4 attach traces pin the intended discovery order.
-- Commit 3: pending, hardware gate pending.
+- Commit 3: implemented. Publication, startup policy and bootloader preparation
+  moved to `Audio/Protocols/AVC/` (`DiscoveryCoordinator` behind `DiscoveryOwner`);
+  no AV/C unit exists before preparation confirms the firmware. Preparation keeps
+  one record per incarnation, re-reads after a cue on a new route and never cues
+  twice (`LoaderStillActiveAfterCue` fails visibly). Old nested subunit discovery
+  (`ParseCapabilities`, `ReadIdentifierDescriptor`, `Query*`, `Set*`, Camera
+  subunit, `ProbeUnitInfo`, `GetPlugInfo`) deleted; subunits are snapshot
+  projections. Reducer: optional probes survive a timeout or refusal (two
+  consecutive timeouts end discovery); opcode learned only from a plug's first
+  query; mute+volume STATUS always asked per feature channel (Duet golden now
+  matches the measured FB1 frames); selector INQUIRY dropped (no reference);
+  sync-candidate INQUIRY cites FFADO avc_plug.cpp:670-690. 2,708 C++ cases pass,
+  signed app/dext built, arm64e verified. Mutations caught: second cue allowed,
+  manual refresh republishing. Hardware gate pending (batched).
 - Commit 4: pending, hardware report gate pending.
 
 Hardware validation is deferred until all software stages are ready, per the user’s

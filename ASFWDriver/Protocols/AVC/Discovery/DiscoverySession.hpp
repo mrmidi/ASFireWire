@@ -10,7 +10,7 @@ namespace ASFW::AVC::DiscoveryEngine {
 class Session final : public std::enable_shared_from_this<Session> {
 public:
     using Completion = std::function<void(SnapshotLease)>;
-    using Extension = std::function<void(SnapshotLease, std::function<void()>)>;
+    using Extension = std::function<void(SnapshotLease, std::function<void(ExtensionFacts)>)>;
     static std::shared_ptr<Session> Create(IAvcUnit& unit, SessionId id, Completion completion,
                                            Extension extension = {});
     ~Session();

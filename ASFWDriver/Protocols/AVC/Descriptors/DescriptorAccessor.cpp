@@ -40,8 +40,9 @@ AVCResult LegacyError(const Avc::AvcError& error) {
 }
 } // namespace
 
-/// All callbacks borrow through LiveRef; the accessor owns the operation. No
-/// callback retains a parser span or prolongs an invalid unit lifetime.
+/// Each submitted frame's callback holds the operation (a lease), so an
+/// operation whose accessor is gone still finishes its CLOSE. The operation
+/// reaches its unit only through LiveRef; no callback retains a parser span.
 class DescriptorReadOperation final : public std::enable_shared_from_this<DescriptorReadOperation> {
 public:
     DescriptorReadOperation(Avc::IAvcUnit& unit, Avc::SubunitAddress address,
@@ -49,7 +50,6 @@ public:
                             DescriptorAccessor::ReadCompletion completion)
         : unit_(unit), route_(unit.CurrentRoute()), address_(address), specifier_(specifier), id_(id),
           completion_([completion = std::move(completion)](auto result) { completion(result); }, Cancelled()) {}
-    [[nodiscard]] auto LifetimeToken() const noexcept { return lifetime_.Token(); }
     [[nodiscard]] bool IsDone() const noexcept { return std::holds_alternative<Done>(phase_); }
 
     void Abort() {
@@ -82,7 +82,6 @@ public:
             pending_ = true;
             const ReplyIdentity identity{id_, OperationSerial{++serial_.value}, *route_};
             inFlightSerial_ = identity.serial;
-            Common::LiveRef<DescriptorReadOperation> live(*this);
             if (auto* reading = std::get_if<Reading>(&phase_)) {
                 if (++reading->chunks > DescriptorAccessor::kMaxChunks) {
                     pending_ = false;
@@ -97,10 +96,8 @@ public:
                 command.operands = {.specifier = specifier_, .offset = static_cast<uint16_t>(reading->offset),
                                     .length = requested};
                 unit->Control(command, ASFW::FW::Generation{route_->generation},
-                    [live, lease = shared_from_this(), identity, requested](Avc::Expected<Cmd::ReadDescriptorReply> reply) {
-                        (void)lease;
-                        if (auto* operation = live.Get(); operation && operation->Accept(identity))
-                            operation->OnRead(reply, requested);
+                    [lease = shared_from_this(), identity, requested](Avc::Expected<Cmd::ReadDescriptorReply> reply) {
+                        if (lease->Accept(identity)) lease->OnRead(reply, requested);
                     });
             } else {
                 const bool opening = std::holds_alternative<Opening>(phase_);
@@ -110,10 +107,8 @@ public:
                 command.operands.subfunction = opening ? Cmd::OpenDescriptorSubfunction::kReadOpen
                                                       : Cmd::OpenDescriptorSubfunction::kClose;
                 unit->Control(command, ASFW::FW::Generation{route_->generation},
-                    [live, lease = shared_from_this(), identity, opening](Avc::Expected<Cmd::OpenDescriptorReply> reply) {
-                        (void)lease;
-                        if (auto* operation = live.Get(); operation && operation->Accept(identity))
-                            operation->OnOpenClose(reply, opening);
+                    [lease = shared_from_this(), identity, opening](Avc::Expected<Cmd::OpenDescriptorReply> reply) {
+                        if (lease->Accept(identity)) lease->OnOpenClose(reply, opening);
                     });
             }
         }
@@ -150,8 +145,10 @@ private:
         if (reply && reply->subfunction != expected) reply = Avc::Fail(Avc::AvcErrorKind::kMalformedOperands);
         if (opening) {
             if (!reply) {
-                DescriptorAccessor::ReadDescriptorResult result;
-                result.avcResult = LegacyError(reply.error()); result.primaryError = reply.error();
+                // Nothing is open, so nothing to close. A cancelled request
+                // reports the cancellation, not the OPEN answer.
+                DescriptorAccessor::ReadDescriptorResult result = cancelled_ ? Cancelled() : DescriptorAccessor::ReadDescriptorResult{};
+                if (!cancelled_) { result.avcResult = LegacyError(reply.error()); result.primaryError = reply.error(); }
                 Finish(std::move(result));
             } else if (cancelled_) phase_ = Closing{Cancelled()};
             else phase_ = Reading{};
@@ -191,7 +188,6 @@ private:
         }
         Pump();
     }
-    Common::LifetimeAnchor lifetime_;
     Common::LiveRef<Avc::IAvcUnit> unit_;
     std::optional<Discovery::DeviceRouteToken> route_;
     Avc::SubunitAddress address_;

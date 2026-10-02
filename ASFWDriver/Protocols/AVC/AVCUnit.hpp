@@ -76,21 +76,13 @@ struct UnitDescriptorInfo {
 
 class AVCUnit;
 
-/// One unit isochronous plug formation, learned outside the music subunit (a
-/// chip's format list). Directions are the host's: playback = unit ISO input.
-struct UnitPlugFormation {
-    uint32_t rateHz{0};
-    uint32_t pcmChannels{0};
-    uint32_t midiChannels{0};
-};
-
 // What discovery runs beyond the standard AV/C commands. The unit's owner sets
 // it from the catalog plan; the unit itself never reads the catalog.
 struct AVCUnitDiscoveryOptions {
     // The chip's read-only extension inventory (BridgeCo, Oxford). Runs after
     // the generic discovery and before the discovery status completes, at
     // attach and on every refresh; it must call `done` exactly once.
-    std::function<void(AVCUnit& unit, std::function<void()> done)> extensionInventory;
+    std::function<void(AVCUnit& unit, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done)> extensionInventory;
     // Which stream-format opcode the chip is asked with (BridgeCo: 0x2F only).
     ASFW::AVC::IAvcUnit::StreamFormatOpcodePolicy streamFormatOpcode{
         ASFW::AVC::IAvcUnit::StreamFormatOpcodePolicy::kLearn};
@@ -160,23 +152,10 @@ public:
     [[nodiscard]] FcpExchangeLog CopyExchangeLog() const {
         return fcpTransport_ ? fcpTransport_->CopyExchangeLog() : FcpExchangeLog{};
     }
-    void ProbeUnitInfo(std::function<void(bool)> completion);
-
-
-    void GetPlugInfo(std::function<void(AVCResult, const ASFW::AVC::Cmd::UnitPlugCounts&)> completion);
-
     const ASFW::AVC::Cmd::UnitPlugCounts& GetCachedPlugCounts() const { return model_.unitPlugs; }
     const ASFW::AVC::UnitModel& GetModel() const noexcept { return model_; }
     std::shared_ptr<const Graph::DeviceGraph> GetDiscoveredGraph() const noexcept { return discoveredGraph_; }
     [[nodiscard]] ASFW::AVC::DiscoveryEngine::SnapshotLease GetDiscoverySnapshot() const noexcept { return snapshot_; }
-    /// Size the graph's selected streams from the unit's live plug formations
-    /// at its current rate. A device whose music subunit rejects the
-    /// current-format query (Phase 88) still lists them, and they win over any
-    /// size the music subunit gave; a stream with no matching formation keeps
-    /// what it had.
-    void CompleteGraphFromUnitPlugFormations(std::span<const UnitPlugFormation> playback,
-                                             std::span<const UnitPlugFormation> capture,
-                                             uint32_t currentRateHz);
     ASFW::AVC::UnitModel& GetModel() noexcept { return model_; }
 
     const std::vector<std::shared_ptr<Subunit>>& GetSubunits() const { return subunits_; }
@@ -209,10 +188,6 @@ private:
     void ReScanAlreadyBegun(std::function<void(bool success)> completion);
 
     void ApplySnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot);
-    [[nodiscard]] bool CompleteStream(Graph::StreamGraph& stream, uint32_t pcmChannels,
-                                      uint32_t midiChannels, uint32_t rateHz,
-                                      std::vector<uint32_t> rates) const;
-
     std::weak_ptr<Discovery::FWDevice> device_;
     std::weak_ptr<Discovery::FWUnit> unit_;
     Discovery::DeviceRegistry& routeRegistry_;
@@ -223,8 +198,6 @@ private:
     const DiscoveryOptions options_;
 
     std::shared_ptr<FCPTransport> fcpTransport_;
-
-    std::shared_ptr<DescriptorAccessor> descriptorAccessor_;
 
     std::vector<std::shared_ptr<Subunit>> subunits_;
     ASFW::AVC::UnitModel model_{};

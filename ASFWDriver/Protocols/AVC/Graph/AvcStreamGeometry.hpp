@@ -25,7 +25,7 @@ inline constexpr uint32_t kMaxMidiDataChannels = 1;
     const auto rate = ASFW::AVC::ToHz(compound.rate);
     const auto pcm = compound.PcmChannels();
     const auto dbs = pcm + compound.MidiChannels();
-    if (!rate || pcm == 0 || pcm > ASFW::Encoding::kMaxPcmChannels ||
+    if (!rate || pcm == 0 || pcm > ASFW::Common::kMaxPcmSlots ||
         compound.MidiChannels() > kMaxMidiDataChannels || dbs > 255)
         return std::nullopt;
     StreamGraph stream;
