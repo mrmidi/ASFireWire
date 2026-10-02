@@ -2,7 +2,7 @@
 // ASFWAudioDriverGraph.cpp
 // ASFWDriver
 //
-// ADK graph construction/teardown for ASFWAudioDriver.
+// ADK graph construction for ASFWAudioDriver (teardown: ASFWAudioDriverTeardown.cpp).
 //
 #include <new>
 
@@ -131,8 +131,9 @@ void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept {
 
 kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                               IOService* provider,
-                              ASFWAudioDriver_IVars& ivars,
-                              AudioGraphStartState& state) noexcept {
+                              ASFWAudioDriver_IVars& ivars) noexcept {
+    auto& state = ivars.graphState;
+    state = {};
     if (!provider) {
         ASFW_LOG(Audio, "ASFWAudioDriver: BuildAudioGraph failed - null provider");
         return kIOReturnBadArgument;
@@ -840,41 +841,6 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              ivars.device.outputChannelCount,
              ivars.device.channelCount);
     return kIOReturnSuccess;
-}
-
-void TearDownAudioGraph(ASFWAudioDriver& driver,
-                        ASFWAudioDriver_IVars& ivars,
-                        AudioGraphStartState* state) noexcept {
-    ivars.runtime.isRunning.store(false, std::memory_order_release);
-    UnbindDirectAudioSkeleton(ivars);
-
-    if (ivars.audioDevice && state) {
-        if (state->outputStreamAdded && ivars.outputStream) {
-            (void)ivars.audioDevice->RemoveStream(ivars.outputStream.get());
-            state->outputStreamAdded = false;
-        }
-        if (state->inputStreamAdded && ivars.inputStream) {
-            (void)ivars.audioDevice->RemoveStream(ivars.inputStream.get());
-            state->inputStreamAdded = false;
-        }
-    }
-
-    if (state && state->audioDeviceAdded && ivars.audioDevice) {
-        (void)driver.RemoveObject(ivars.audioDevice.get());
-        state->audioDeviceAdded = false;
-    }
-
-    ivars.outputStream.reset();
-    ivars.inputStream.reset();
-    ivars.outputMap.reset();
-    ivars.inputMap.reset();
-    ivars.controlMap.reset();
-    ivars.outputBuffer.reset();
-    ivars.inputBuffer.reset();
-    ivars.controlBuffer.reset();
-    ivars.audioDevice.reset();
-    ivars.workQueue.reset();
-    ivars.device.audioNub = nullptr;
 }
 
 } // namespace ASFW::Audio::DriverKit

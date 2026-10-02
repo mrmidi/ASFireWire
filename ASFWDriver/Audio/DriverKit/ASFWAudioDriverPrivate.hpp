@@ -268,7 +268,16 @@ struct AudioDriverRuntimeState {
     ASFW::Audio::Wire::MotuTxTimingStamper motuTxTimingStamper;
 };
 
+// What BuildAudioGraph has attached to ADK, so TearDownAudioGraph removes
+// exactly that, from a failed Start or from Stop.
+struct AudioGraphStartState {
+    bool inputStreamAdded{false};
+    bool outputStreamAdded{false};
+    bool audioDeviceAdded{false};
+};
+
 struct ASFWAudioDriver_IVars {
+    AudioGraphStartState graphState;
     OSSharedPtr<IODispatchQueue> workQueue;
     OSSharedPtr<ASFWAudioDevice> audioDevice;
     OSSharedPtr<IOUserAudioStream> inputStream;
@@ -306,12 +315,6 @@ struct ASFWAudioDriver_IVars {
 
     AudioDriverDeviceState device;
     AudioDriverRuntimeState runtime;
-};
-
-struct AudioGraphStartState {
-    bool inputStreamAdded{false};
-    bool outputStreamAdded{false};
-    bool audioDeviceAdded{false};
 };
 
 namespace ASFW::Audio::DriverKit {
@@ -382,11 +385,17 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept;
 
 [[nodiscard]] kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                                             IOService* provider,
-                                            ASFWAudioDriver_IVars& ivars,
-                                            AudioGraphStartState& state) noexcept;
-void TearDownAudioGraph(ASFWAudioDriver& driver,
-                        ASFWAudioDriver_IVars& ivars,
-                        AudioGraphStartState* state) noexcept;
+                                            ASFWAudioDriver_IVars& ivars) noexcept;
+/// Detach and release everything BuildAudioGraph created: streams off the
+/// device, the device off the driver, the device's link back to these ivars,
+/// the boolean controls, every buffer and map, and the work queue. Leaves the
+/// driver holding no ADK object, so a Stop that runs it lets the driver free.
+void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept;
+/// What ASFWAudioDriver::Stop does before super::Stop: stop the nub's
+/// streaming, withdraw every action registered with it, drop the actions and
+/// their queues, then TearDownAudioGraph. Afterwards the driver holds no ADK
+/// object and nothing in the nub points back at it.
+void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept;
 void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
 /// One [Timing] line per resolution (graph build, rate change). This replaces
 /// the old "TimingCursorPolicy (fallback, not applied)" line: it prints what is

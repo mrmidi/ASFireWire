@@ -5,6 +5,7 @@
 #include <DriverKit/OSObject.h>
 
 #include <cstdint>
+#include <vector>
 
 using IOUserAudioObjectID = uint64_t;
 using IOUserAudioClassID = uint32_t;
@@ -36,9 +37,17 @@ struct IOUserAudioStreamBasicDescription {
     uint32_t mReserved{0};
 };
 
+class IOUserAudioStream;
+
 class IOUserAudioDevice {
 public:
     virtual ~IOUserAudioDevice() = default;
+
+    virtual kern_return_t RemoveStream(IOUserAudioStream* stream) {
+        removedStreams.push_back(stream);
+        return kIOReturnSuccess;
+    }
+    std::vector<IOUserAudioStream*> removedStreams;
 
     virtual void GetCurrentZeroTimestamp(uint64_t* sampleTime, uint64_t* hostTime) {
         if (sampleTime) {

@@ -32,7 +32,6 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         return error;
     }
 
-    AudioGraphStartState graphState{};
     auto failStart = [&](kern_return_t status, const char* stage) -> kern_return_t {
         const kern_return_t result = (status == kIOReturnSuccess) ? kIOReturnError : status;
         ASFW_LOG(Audio,
@@ -51,12 +50,12 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         ivars->ztsQueue.reset();
         ivars->txPreparationAction.reset();
         ivars->txPreparationQueue.reset();
-        TearDownAudioGraph(*this, *ivars, &graphState);
+        TearDownAudioGraph(*this, *ivars);
         (void)Stop(provider, SUPERDISPATCH);
         return result;
     };
 
-    error = BuildAudioGraph(*this, provider, *ivars, graphState);
+    error = BuildAudioGraph(*this, provider, *ivars);
     if (error != kIOReturnSuccess) {
         return failStart(error, "BuildAudioGraph");
     }
@@ -200,28 +199,7 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
     ASFW_LOG(Audio, "ASFWAudioDriver: Stop()");
 
     if (ivars) {
-        ivars->runtime.isRunning.store(false, std::memory_order_release);
-        if (ivars->device.audioNub) {
-            kern_return_t stopKr = ivars->device.audioNub->StopAudioStreaming();
-            if (stopKr != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in Stop(): 0x%x", stopKr);
-            }
-            (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
-            (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
-            (void)ivars->device.audioNub->RegisterDeviceClockChangedAction(nullptr);
-            (void)ivars->device.audioNub->RegisterIoRestartRequiredAction(nullptr);
-        }
-        ivars->txPreparationAction.reset();
-        ivars->txPreparationQueue.reset();
-        ivars->deviceClockChangedAction.reset();
-        ivars->ioRestartRequiredAction.reset();
-        ivars->ztsAnchorAction.reset();
-        ivars->ztsQueue.reset();
-        ivars->device.audioNub = nullptr;
-    }
-
-    if (ivars && ivars->audioDevice) {
-        RemoveObject(ivars->audioDevice.get());
+        ASFW::Audio::DriverKit::StopAudioDriverGraph(*this, *ivars);
     }
 
     return Stop(provider, SUPERDISPATCH);

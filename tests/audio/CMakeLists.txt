@@ -265,6 +265,30 @@ target_include_directories(AudioDriverTxProducerTests PRIVATE
     "${ASFW_TESTS_DIR}/mocks/net.mrmidi.ASFW.ASFWDriver"
 )
 
+# ASFWAudioDriver graph teardown: Stop leaves the driver holding no ADK object
+# (the dext process outlived an unplug while it did).
+add_audio_test(AudioDriverTeardownTests
+    AudioDriverTeardownTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverTeardown.cpp"
+    # What constructing ASFWAudioDriver_IVars links.
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/MAudioInternalTxTiming.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioTxClockBridge.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioPresentationObserver.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
+)
+target_include_directories(AudioDriverTeardownTests PRIVATE
+    "${ASFW_TESTS_DIR}/mocks/net.mrmidi.ASFW.ASFWDriver"
+)
+
 add_audio_test(AmdtpRateGeometryTests
     AmdtpRateGeometryTests.cpp
 )
