@@ -86,8 +86,8 @@ IOReturn MotuV2Protocol::Shutdown() {
 }
 
 void MotuV2Protocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                                          Protocols::AVC::FCPTransport* transport) {
-    (void)transport; // MOTU v2 is register-based; no AV/C transport.
+                                          std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
+    (void)avcUnit; // MOTU v2 is register-based; no AV/C.
     io_.UpdateRoute(route);
 }
 

@@ -116,7 +116,7 @@ public:
             if (activeTransport_) {
                 activeTransport_->OnFCPResponse(srcNode, gen, payload);
             } else if (avcUnit_) {
-                avcUnit_->GetFCPTransport().OnFCPResponse(srcNode, gen, payload);
+                avcUnit_->GetFCPTransportShared()->OnFCPResponse(srcNode, gen, payload);
             }
         });
 
@@ -163,7 +163,11 @@ public:
     [[nodiscard]] Discovery::DeviceRegistry& Routes() noexcept { return routes_; }
     [[nodiscard]] std::shared_ptr<AVCUnit> Unit() noexcept { return avcUnit_; }
     [[nodiscard]] Protocols::AVC::FCPTransport& Transport() noexcept {
-        return activeTransport_ ? *activeTransport_ : avcUnit_->GetFCPTransport();
+        return activeTransport_ ? *activeTransport_ : *avcUnit_->GetFCPTransportShared();
+    }
+    /// The transport as family code receives it: owned.
+    [[nodiscard]] std::shared_ptr<Protocols::AVC::FCPTransport> TransportShared() noexcept {
+        return activeTransport_ ? activeTransport_ : avcUnit_->GetFCPTransportShared();
     }
     [[nodiscard]] SimulatedAvcUnit& Sim() noexcept { return *simUnit_; }
 
@@ -481,7 +485,8 @@ TEST(AvcGoldenTests, DuetStreamingStartStop) {
     IRM::IRMClient irm(rig.Bus());
     CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
     Audio::Oxford::Apogee::ApogeeDuetProtocol protocol(
-        rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &rig.Transport(), &irm, &cmp);
+        rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &irm, &cmp);
+    protocol.UpdateRuntimeContext(rig.Route(), rig.TransportShared());
     auto& duplex = protocol.Duplex();
 
     bool rxDone = false;
@@ -817,7 +822,7 @@ public:
     std::shared_ptr<AVCUnit> Unit(uint64_t) override { return unit_; }
     std::vector<std::shared_ptr<AVCUnit>> Units() override { return {unit_}; }
     void ReScanAllUnits() override {}
-    FCPTransport* GetFCPTransportForNodeID(uint16_t) override { return nullptr; }
+    std::shared_ptr<ASFW::AVC::IAvcUnit> LiveUnit(uint64_t) override { return nullptr; }
     std::shared_ptr<FCPTransport> AcquireFCPTransportForNodeID(uint16_t) override { return nullptr; }
 private:
     std::shared_ptr<AVCUnit> unit_;

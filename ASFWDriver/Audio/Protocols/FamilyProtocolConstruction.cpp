@@ -139,10 +139,9 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // --- OXFW Family ---
         case ProtocolImplementationId::ApogeeDuet:
             ASFW_LOG(Audio, "Creating ApogeeDuetProtocol node=0x%04x", nodeId);
-            // Factory path intentionally does not bind FCP transport yet.
-            // AVCDiscovery wires transport for live command execution.
+            // The AV/C unit is bound later through UpdateRuntimeContext.
             return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(
-                busOps, busInfo, route, &routeRegistry, nullptr, irmClient, cmpClient,
+                busOps, busInfo, route, &routeRegistry, irmClient, cmpClient,
                 100U, timerScheduler);
 
         // Mackie Onyx-i, Oxford run (shared id 0x081216; geometry verified on a

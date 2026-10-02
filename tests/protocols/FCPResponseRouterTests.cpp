@@ -34,7 +34,7 @@ public:
     std::shared_ptr<AVCUnit> Unit(uint64_t) override { return nullptr; }
     std::vector<std::shared_ptr<AVCUnit>> Units() override { return {}; }
     void ReScanAllUnits() override {}
-    FCPTransport* GetFCPTransportForNodeID(uint16_t) override { return nullptr; }
+    std::shared_ptr<ASFW::AVC::IAvcUnit> LiveUnit(uint64_t) override { return nullptr; }
 
     std::shared_ptr<FCPTransport> AcquireFCPTransportForNodeID(uint16_t nodeID) override {
         acquiredNodeID_ = nodeID;

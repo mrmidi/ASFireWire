@@ -31,8 +31,8 @@ class DeviceRegistry;
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
 #include "../../../../Scheduling/ITimerScheduler.hpp"
 
-namespace ASFW::Protocols::AVC {
-class FCPTransport;
+namespace ASFW::AVC {
+class IAvcUnit;
 }
 
 namespace ASFW::IRM {
@@ -47,7 +47,7 @@ struct CMPDevice;
 namespace ASFW::Audio::Oxford::Apogee {
 
 /// The device identity and bus services both halves of the Duet need. Held by
-/// ApogeeDuetProtocol; the duplex controller mutates `route` and `fcpTransport`
+/// ApogeeDuetProtocol; the duplex controller mutates `route` and `avcUnit`
 /// through UpdateRuntimeContext, and the parameter path reads the same fields.
 struct DuetRuntime {
     Protocols::Ports::FireWireBusOps& busOps;
@@ -57,7 +57,8 @@ struct DuetRuntime {
     /// this per use rather than trusting `route`, which is a construction-time
     /// snapshot (FW-142).
     Discovery::DeviceRegistry* routeRegistry{nullptr};
-    Protocols::AVC::FCPTransport* fcpTransport{nullptr};
+    /// The device's AV/C unit (owned lease), bound by UpdateRuntimeContext.
+    std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit;
     IRM::IRMClient* irmClient{nullptr};
     CMP::CMPClient* cmpClient{nullptr};
     Scheduling::ITimerScheduler* timerScheduler{nullptr};
@@ -115,7 +116,7 @@ public:
     [[nodiscard]] IOReturn Stop() override;
 
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                              Protocols::AVC::FCPTransport* transport);
+                              std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit);
 
 private:
     struct ClockTransition;

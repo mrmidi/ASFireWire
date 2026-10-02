@@ -55,7 +55,7 @@ public:
     const char* GetName() const override;
 
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                              Protocols::AVC::FCPTransport* transport) override;
+                              std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;
 
     /// Report the device's stream geometry. Before PrepareDuplex has run this answers
     /// from the model's fixed chunk table rather than failing, so the nub can be

@@ -462,8 +462,9 @@ TEST(ApogeeDuetDuplexAdapter, Applies48kToInputThenOutputUnitPlugsOnlyOnce) {
     DuetFormatModel device;
     device.Reset(0x01U, 0x01U);
     rig.Target().SetDeviceModel(std::ref(device));
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), rig.Transport(), nullptr,
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr,
                                 nullptr, 0);
+    protocol.UpdateRuntimeContext(rig.Route(), rig.Transport());
 
     IOReturn completionStatus = kIOReturnNotReady;
     protocol.ApplyClockConfig(
@@ -514,7 +515,8 @@ TEST(ApogeeDuetDuplexAdapter, PrepareDuplexRevalidates48kBeforeResourceAllocatio
 
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), rig.Transport(), &irm, &cmp, 0);
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &irm, &cmp, 0);
+    protocol.UpdateRuntimeContext(rig.Route(), rig.Transport());
     auto& duplex = protocol.Duplex();
     ASFW::Audio::AudioDuplexChannels channels{};
     IOReturn completionStatus = kIOReturnNotReady;
@@ -549,8 +551,9 @@ TEST(ApogeeDuetDuplexAdapter, MapsRequested44100RateIntoUnitPlugSignalFormat) {
     AvcTestRig rig;
     DuetFormatModel device;
     rig.Target().SetDeviceModel(std::ref(device));
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), rig.Transport(), nullptr,
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr,
                                 nullptr, 0);
+    protocol.UpdateRuntimeContext(rig.Route(), rig.Transport());
 
     IOReturn completionStatus = kIOReturnNotReady;
     protocol.ApplyClockConfig(
@@ -573,8 +576,9 @@ TEST(ApogeeDuetDuplexAdapter, RestoresInputFormationWhenOutputFormatControlFails
     device.Reset(0x01U, 0x01U);
     device.failNextOutputFormatControl = true;
     rig.Target().SetDeviceModel(std::ref(device));
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), rig.Transport(), nullptr,
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr,
                                 nullptr, 0);
+    protocol.UpdateRuntimeContext(rig.Route(), rig.Transport());
 
     IOReturn completionStatus = kIOReturnSuccess;
     protocol.ApplyClockConfig(
@@ -600,7 +604,7 @@ TEST(ApogeeDuetDuplexAdapter, ProgramsIRMChannelIntoOutputPCR) {
     MapCmpRegisters(rig);
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &irm, &cmp);
     auto& duplex = protocol.Duplex();
     ASFW::Audio::AudioDuplexChannels channels{};
     channels.deviceToHostIsoChannel = 5;
@@ -654,7 +658,7 @@ TEST(ApogeeDuetDuplexAdapter, ProgramRxReturnsBeforeItsCmpCompletionArrives) {
     MapCmpRegisters(rig);
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &irm, &cmp);
     auto& duplex = protocol.Duplex();
 
     // CMP completions are delivered on the same queue the stage runs on. A
@@ -681,7 +685,7 @@ TEST(ApogeeDuetDuplexAdapter, ProgramTxReturnsBeforeItsCmpCompletionArrives) {
     MapCmpRegisters(rig);
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &irm, &cmp);
     auto& duplex = protocol.Duplex();
 
     rig.Bus().SetDeferLocks(true);
@@ -731,7 +735,7 @@ TEST(ApogeeDuetDuplexAdapter, StopDuplexIssuesBothBreaksWithoutWaitingForThem) {
     MapCmpRegisters(rig);
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &irm, &cmp);
     auto& duplex = protocol.Duplex();
 
     ConnectBothPlugsAndReflectThemInPcrReads(rig, duplex);
@@ -755,7 +759,7 @@ TEST(ApogeeDuetDuplexAdapter, StopDuplexCompletionsOutliveTheProtocolSafely) {
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
 
     {
-        ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
+        ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &irm, &cmp);
         auto& duplex = protocol.Duplex();
         ConnectBothPlugsAndReflectThemInPcrReads(rig, duplex);
 
@@ -772,7 +776,7 @@ TEST(ApogeeDuetDuplexAdapter, MapsCompletedCmpFailureToErrorRatherThanTimeout) {
     MapCmpRegisters(rig);
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &irm, &cmp);
     auto& duplex = protocol.Duplex();
 
     IOReturn rxStatus = kIOReturnNotReady;
@@ -793,7 +797,7 @@ TEST(ApogeeDuetFamilyDriver, StepsRunTheSameCmpStages) {
     MapCmpRegisters(rig);
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &irm, &cmp);
     ASFW::Audio::FamilyDriver& family = *protocol.AsFamilyDriver();
 
     EXPECT_EQ(family.LoadGeometry(), kIOReturnSuccess);
@@ -810,7 +814,7 @@ TEST(ApogeeDuetFamilyDriver, TeardownAbortsAStepWaitingOnTheBus) {
     MapCmpRegisters(rig);
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, &irm, &cmp);
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &irm, &cmp);
     ASFW::Audio::FamilyDriver& family = *protocol.AsFamilyDriver();
 
     // The connect stays in flight; teardown must not wait out the stage bound.

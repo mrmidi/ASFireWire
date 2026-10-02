@@ -605,10 +605,8 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
             return kIOReturnNotReady;
         }
         if (*backend == ASFW::Audio::AudioBackendKind::Avc) {
-            auto* transport = binding.avcDiscovery
-                ? binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId)
-                : nullptr;
-            if (!ASFW::Audio::HasReadyAVCStartRoute(binding.device->nodeId, transport != nullptr)) {
+            auto avcUnit = binding.avcDiscovery ? binding.avcDiscovery->LiveUnit(binding.device->guid) : nullptr;
+            if (!ASFW::Audio::HasReadyAVCStartRoute(binding.device->nodeId, avcUnit != nullptr)) {
                 ASFW_LOG(Audio,
                          "ASFWAudioNub: deferring AV/C stream start until route is rebound GUID=0x%016llx node=%u",
                          ivars->guid,
@@ -620,7 +618,7 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
                                                     .deviceIncarnation = binding.device->deviceIncarnation,
                                                     .routeEpoch = binding.device->routeEpoch,
                                                     .generation = binding.device->gen,
-                                                    .nodeId = binding.device->nodeId}, transport);
+                                                    .nodeId = binding.device->nodeId}, std::move(avcUnit));
             ASFW_LOG(Audio,
                      "ASFWAudioNub: refreshed AV/C protocol route GUID=0x%016llx node=%u",
                      ivars->guid,
@@ -853,8 +851,8 @@ kern_return_t IMPL(ASFWAudioNub, GetProtocolBooleanControl)
         return kIOReturnUnsupported;
     }
 
-    auto* transport = binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId);
-    if (!transport) {
+    auto avcUnit = binding.avcDiscovery->LiveUnit(binding.device->guid);
+    if (!avcUnit) {
         return kIOReturnNotReady;
     }
 
@@ -863,7 +861,7 @@ kern_return_t IMPL(ASFWAudioNub, GetProtocolBooleanControl)
                                             .deviceIncarnation = binding.device->deviceIncarnation,
                                             .routeEpoch = binding.device->routeEpoch,
                                             .generation = binding.device->gen,
-                                            .nodeId = binding.device->nodeId}, transport);
+                                            .nodeId = binding.device->nodeId}, std::move(avcUnit));
 
     bool value = false;
     const kern_return_t status = binding.protocol->GetBooleanControlValue(classIdFourCC, element, value);
@@ -889,8 +887,8 @@ kern_return_t IMPL(ASFWAudioNub, SetProtocolBooleanControl)
         return kIOReturnUnsupported;
     }
 
-    auto* transport = binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId);
-    if (!transport) {
+    auto avcUnit = binding.avcDiscovery->LiveUnit(binding.device->guid);
+    if (!avcUnit) {
         return kIOReturnNotReady;
     }
 
@@ -899,6 +897,6 @@ kern_return_t IMPL(ASFWAudioNub, SetProtocolBooleanControl)
                                             .deviceIncarnation = binding.device->deviceIncarnation,
                                             .routeEpoch = binding.device->routeEpoch,
                                             .generation = binding.device->gen,
-                                            .nodeId = binding.device->nodeId}, transport);
+                                            .nodeId = binding.device->nodeId}, std::move(avcUnit));
     return binding.protocol->SetBooleanControlValue(classIdFourCC, element, value);
 }

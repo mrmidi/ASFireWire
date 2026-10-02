@@ -27,7 +27,6 @@ ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                        Protocols::Ports::FireWireBusInfo& busInfo,
                                        Discovery::DeviceRouteToken route,
                                        Discovery::DeviceRegistry* routeRegistry,
-                                       Protocols::AVC::FCPTransport* fcpTransport,
                                        IRM::IRMClient* irmClient,
                                        CMP::CMPClient* cmpClient,
                                        uint32_t formatSettleDelayMs,
@@ -37,7 +36,6 @@ ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
           .busInfo = busInfo,
           .route = route,
           .routeRegistry = routeRegistry,
-          .fcpTransport = fcpTransport,
           .irmClient = irmClient,
           .cmpClient = cmpClient,
           .timerScheduler = timerScheduler,
@@ -61,13 +59,13 @@ IOReturn ApogeeDuetProtocol::Shutdown() {
 void ApogeeDuetProtocol::SendVendorCommand(const VendorCommand& command,
                                            bool isStatus,
                                            VendorResultCallback callback) {
-    VendorFcp::Send(runtime_.fcpTransport, command, isStatus, std::move(callback));
+    VendorFcp::Send(runtime_.avcUnit, command, isStatus, std::move(callback));
 }
 
 void ApogeeDuetProtocol::ExecuteVendorSequence(const std::vector<VendorCommand>& commands,
                                                bool isStatus,
                                                VendorSequenceCallback callback) {
-    VendorFcp::ExecuteSequence(runtime_.fcpTransport, commands, isStatus, std::move(callback));
+    VendorFcp::ExecuteSequence(runtime_.avcUnit, commands, isStatus, std::move(callback));
 }
 
 void ApogeeDuetProtocol::GetKnobState(ResultCallback<KnobState> callback) {

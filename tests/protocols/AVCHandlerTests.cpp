@@ -26,7 +26,7 @@ public:
     MOCK_METHOD(std::shared_ptr<AVCUnit>, Unit, (uint64_t guid), (override));
     MOCK_METHOD(std::vector<std::shared_ptr<AVCUnit>>, Units, (), (override));
     MOCK_METHOD(void, ReScanAllUnits, (), (override));
-    MOCK_METHOD(FCPTransport*, GetFCPTransportForNodeID, (uint16_t nodeID), (override));
+    MOCK_METHOD(std::shared_ptr<ASFW::AVC::IAvcUnit>, LiveUnit, (uint64_t guid), (override));
     MOCK_METHOD(std::shared_ptr<FCPTransport>, AcquireFCPTransportForNodeID, (uint16_t nodeID), (override));
 };
 

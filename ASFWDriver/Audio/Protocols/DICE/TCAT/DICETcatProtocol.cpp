@@ -495,8 +495,8 @@ IOReturn DICETcatProtocol::StopDuplex() {
 }
 
 void DICETcatProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                                            Protocols::AVC::FCPTransport* transport) {
-    (void)transport;
+                                            std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
+    (void)avcUnit; // DICE is register-based; no AV/C.
     io_.UpdateRoute(route);
 }
 

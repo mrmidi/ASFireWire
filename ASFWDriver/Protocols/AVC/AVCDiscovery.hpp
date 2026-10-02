@@ -67,13 +67,12 @@ public:
 
     std::shared_ptr<AVCUnit> Unit(uint64_t guid) override;
     std::vector<std::shared_ptr<AVCUnit>> Units() override;
+    std::shared_ptr<ASFW::AVC::IAvcUnit> LiveUnit(uint64_t guid) override;
 
     void ReScanAllUnits() override;
 
     /// Stop every FCP producer before the async subsystem is dismantled.
     void Shutdown();
-
-    FCPTransport* GetFCPTransportForNodeID(uint16_t nodeID) override;
 
     std::shared_ptr<FCPTransport> AcquireFCPTransportForNodeID(uint16_t nodeID) override;
 

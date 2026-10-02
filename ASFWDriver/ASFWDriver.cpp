@@ -1141,8 +1141,8 @@ kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {
                        "device-config", guid, record.has_value(), protocol != nullptr);
         return kIOReturnNotReady;
     }
-    auto* transport = ctx.deps.avcDiscovery->GetFCPTransportForNodeID(record->nodeId);
-    if (!ASFW::Audio::HasReadyAVCStartRoute(record->nodeId, transport != nullptr)) {
+    auto avcUnit = ctx.deps.avcDiscovery->LiveUnit(guid);
+    if (!ASFW::Audio::HasReadyAVCStartRoute(record->nodeId, avcUnit != nullptr)) {
         ASFW_LOG(Audio,
                  "[BeBoB] developer stream start refused; no live FCP route GUID=0x%016llx node=%u",
                  guid, record->nodeId);
@@ -1152,7 +1152,7 @@ kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {
     if (!route) {
         return kIOReturnNotReady;
     }
-    protocol->UpdateRuntimeContext(*route, transport);
+    protocol->UpdateRuntimeContext(*route, std::move(avcUnit));
     ASFW_LOG(Audio, "[BeBoB] developer stream start GUID=0x%016llx", guid);
     return ctx.audioCoordinator->StartStreaming(guid);
 }

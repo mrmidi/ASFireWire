@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <functional>
 #include <span>
+#include <memory>
 #include <vector>
 
 #include "ApogeeTypes.hpp"
@@ -53,7 +54,7 @@ using SequenceCallback = std::function<void(IOReturn, const std::vector<ApogeeVe
 ///
 /// `isStatus` selects the AV/C ctype: a status query omits the value operands
 /// and expects them back, a control command carries them.
-void Send(AVC::IAvcUnit* transport,
+void Send(const std::shared_ptr<AVC::IAvcUnit>& unit,
           const ApogeeVendorCommand& command,
           bool isStatus,
           ResultCallback callback);
@@ -62,7 +63,7 @@ void Send(AVC::IAvcUnit* transport,
 /// first failure. The Duet's params groups are read and written as sequences,
 /// and a partially applied group is worse than a failed one - so an error
 /// aborts rather than continuing with the rest.
-void ExecuteSequence(AVC::IAvcUnit* transport,
+void ExecuteSequence(const std::shared_ptr<AVC::IAvcUnit>& unit,
                      const std::vector<ApogeeVendorCommand>& commands,
                      bool isStatus,
                      SequenceCallback callback);

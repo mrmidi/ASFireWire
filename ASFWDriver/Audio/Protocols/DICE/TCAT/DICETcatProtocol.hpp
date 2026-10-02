@@ -115,7 +115,7 @@ public:
     [[nodiscard]] IOReturn Stop() override;
 
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                              Protocols::AVC::FCPTransport* transport) override;
+                              std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;
 
     [[nodiscard]] Protocols::Ports::ProtocolRegisterIO& IO() noexcept { return io_; }
     [[nodiscard]] DICETransaction& Transaction() noexcept { return diceReader_; }

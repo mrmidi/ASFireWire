@@ -85,13 +85,13 @@ IOReturn MAudioSpecialProtocol::Shutdown() {
 
 void MAudioSpecialProtocol::UpdateRuntimeContext(
     const Discovery::DeviceRouteToken& route,
-    Protocols::AVC::FCPTransport* transport) {
-    if (route_ != route || fcpTransport_ != transport) {
+    std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
+    if (route_ != route || avcUnit_ != avcUnit) {
         runtimeContextEpoch_->fetch_add(1, std::memory_order_acq_rel);
         routingAppliedGeneration_->store(0, std::memory_order_release);
         CancelPostStartTimer();
     }
-    BeBoBProtocol::UpdateRuntimeContext(route, transport);
+    BeBoBProtocol::UpdateRuntimeContext(route, std::move(avcUnit));
 }
 
 void MAudioSpecialProtocol::ConfigureMixer(MixerFailurePolicy,
@@ -208,7 +208,7 @@ void MAudioSpecialProtocol::ApplyClockConfig(const AudioClockConfig& desiredCloc
                                              ClockApplyCallback callback) {
     CancelClockApply();
     CancelPostStartTimer();
-    if (!fcpTransport_) {
+    if (!avcUnit_) {
         callback(kIOReturnNotReady, {});
         return;
     }
@@ -223,7 +223,7 @@ void MAudioSpecialProtocol::ApplyClockConfig(const AudioClockConfig& desiredCloc
         callback(kIOReturnBadArgument, {});
         return;
     }
-    fcpTransport_->Control(*clockCommand, [this, alive = alive_, desiredClock,
+    avcUnit_->Control(*clockCommand, [this, alive = alive_, desiredClock,
                                            callback = std::move(callback)](
                                               AVC::Expected<AVC::Cmd::RawVendorDependentReply> reply) mutable {
         if (!alive->load()) {
@@ -309,7 +309,7 @@ void MAudioSpecialProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
 
 void MAudioSpecialProtocol::SetSignalFormat(uint32_t rateHz, bool input,
                                              std::function<void(IOReturn)> completion) {
-    if (!fcpTransport_) {
+    if (!avcUnit_) {
         completion(kIOReturnNotReady);
         return;
     }
@@ -320,7 +320,7 @@ void MAudioSpecialProtocol::SetSignalFormat(uint32_t rateHz, bool input,
     }
     const auto dir = input ? AVC::Cmd::PlugSignalDirection::kInput
                            : AVC::Cmd::PlugSignalDirection::kOutput;
-    fcpTransport_->Control(
+    avcUnit_->Control(
         AVC::Cmd::PlugSignalFormatCommand{
             .operands = {
                 .direction = dir,

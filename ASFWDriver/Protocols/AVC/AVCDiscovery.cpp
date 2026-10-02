@@ -409,6 +409,13 @@ std::shared_ptr<AVCUnit> AVCDiscovery::Unit(uint64_t guid) {
     return result;
 }
 
+std::shared_ptr<ASFW::AVC::IAvcUnit> AVCDiscovery::LiveUnit(uint64_t guid) {
+    auto unit = Unit(guid);
+    if (!unit) return nullptr;
+    const auto fwUnit = unit->GetFWUnit();
+    return fwUnit && fwUnit->IsReady() && unit->CurrentRoute() ? unit : nullptr;
+}
+
 std::vector<std::shared_ptr<AVCUnit>> AVCDiscovery::Units() {
     IOLockLock(lock_);
     std::vector<std::shared_ptr<AVCUnit>> result;
@@ -460,13 +467,6 @@ void AVCDiscovery::ReScanAllUnits() {
             // Per-unit status is finalized before this callback; no discovery lock is held.
         });
     }
-}
-
-FCPTransport* AVCDiscovery::GetFCPTransportForNodeID(uint16_t nodeID) {
-    // Legacy borrowing API. New asynchronous callers must use Acquire...()
-    // and retain the returned shared owner across their complete operation.
-    const auto transport = AcquireFCPTransportForNodeID(nodeID);
-    return transport.get();
 }
 
 std::shared_ptr<FCPTransport> AVCDiscovery::AcquireFCPTransportForNodeID(uint16_t nodeID) {

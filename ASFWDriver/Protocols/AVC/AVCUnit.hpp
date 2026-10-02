@@ -147,8 +147,6 @@ public:
 
     std::shared_ptr<Discovery::FWDevice> GetDevice() const { return device_.lock(); }
 
-    FCPTransport& GetFCPTransport() { return *fcpTransport_; }
-    const FCPTransport& GetFCPTransport() const { return *fcpTransport_; }
     std::shared_ptr<FCPTransport> GetFCPTransportShared() const { return fcpTransport_; }
 
     void OnBusReset(uint32_t newGeneration);

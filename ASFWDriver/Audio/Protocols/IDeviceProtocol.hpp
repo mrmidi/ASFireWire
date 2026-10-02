@@ -11,11 +11,12 @@
 #include <DriverKit/IOReturn.h>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
-namespace ASFW::Protocols::AVC {
-    class FCPTransport;
+namespace ASFW::AVC {
+class IAvcUnit;
 }
 
 namespace ASFW::IRM {
@@ -96,10 +97,13 @@ public:
 
 
     /// Update volatile runtime context that can change across bus resets.
+    /// `avcUnit` is the device's AV/C unit (owned: the audio nub calls in on its
+    /// own queue), or null for a device without AV/C. Every frame goes through
+    /// IAvcUnit::Submit, which checks the route and the command allowlist.
     virtual void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                                      Protocols::AVC::FCPTransport* transport) {
+                                      std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
         (void)route;
-        (void)transport;
+        (void)avcUnit;
     }
 
     /// Check if protocol can expose/control a boolean control.

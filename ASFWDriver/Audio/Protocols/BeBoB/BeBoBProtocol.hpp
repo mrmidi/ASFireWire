@@ -26,7 +26,6 @@
 #include <vector>
 
 namespace ASFW::Protocols::AVC {
-class FCPTransport;
 }
 
 namespace ASFW::IRM {
@@ -50,7 +49,7 @@ public:
     IOReturn Shutdown() override;
     FamilyDriver* AsFamilyDriver() noexcept override { return this; }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                              Protocols::AVC::FCPTransport* transport) override;
+                              std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;
 
     // The general BeBoB lifecycle, as callback chains over CMP and AV/C. The
     // FamilyDriver steps below start them and wait; tests drive them directly.
@@ -143,7 +142,8 @@ protected:
     Discovery::DeviceRouteToken route_{};
     IRM::IRMClient* irmClient_{nullptr};
     CMP::CMPClient* cmpClient_{nullptr};
-    Protocols::AVC::FCPTransport* fcpTransport_{nullptr};
+    /// The device's AV/C unit (owned lease; every frame goes through its Submit).
+    std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit_;
     Scheduling::ITimerScheduler* timerScheduler_{nullptr};
     uint64_t preparedRouteEpoch_{0};
     AudioDuplexChannels duplexChannels_{};

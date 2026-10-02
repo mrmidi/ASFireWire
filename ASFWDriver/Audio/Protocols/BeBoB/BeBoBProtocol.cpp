@@ -70,8 +70,8 @@ IOReturn BeBoBProtocol::Shutdown() {
 }
 
 void BeBoBProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                                         Protocols::AVC::FCPTransport* transport) {
-    if (route_ != route || fcpTransport_ != transport) {
+                                         std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
+    if (route_ != route || avcUnit_ != avcUnit) {
         CancelClockApply();
         if (cmpClient_ && route_) {
             cmpClient_->InvalidateRoute(route_);
@@ -81,7 +81,7 @@ void BeBoBProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& rout
         preparedRouteEpoch_ = 0;
     }
     route_ = route;
-    fcpTransport_ = transport;
+    avcUnit_ = std::move(avcUnit);
 }
 
 CMP::CMPDevice BeBoBProtocol::CurrentCMPDevice() const noexcept {
@@ -132,7 +132,7 @@ void BeBoBProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
         callback(kIOReturnUnsupported, {});
         return;
     }
-    if (!fcpTransport_) {
+    if (!avcUnit_) {
         callback(kIOReturnNotReady, {});
         return;
     }
@@ -178,7 +178,7 @@ void BeBoBProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
 
 void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
                                         std::function<void(IOReturn)> completion) {
-    if (!fcpTransport_) {
+    if (!avcUnit_) {
         completion(kIOReturnNotReady);
         return;
     }
@@ -188,7 +188,7 @@ void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
         return;
     }
     const uint8_t outPlug = StreamPlug(false);
-    fcpTransport_->Control(
+    avcUnit_->Control(
         AVC::Cmd::PlugSignalFormatCommand{
             .operands = AVC::Cmd::PlugSignalFormatOperands{
                 .direction = AVC::Cmd::PlugSignalDirection::kOutput,
@@ -206,18 +206,18 @@ void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
                 return;
             }
 
-            if (!fcpTransport_) {
+            if (!avcUnit_) {
                 completion(kIOReturnNotReady);
                 return;
             }
             const uint8_t inPlug = StreamPlug(true);
             auto finalCompletion = std::make_shared<std::function<void(IOReturn)>>(std::move(completion));
             auto submitInput = [this, inPlug, sfc, finalCompletion]() mutable {
-                if (!fcpTransport_) {
+                if (!avcUnit_) {
                     (*finalCompletion)(kIOReturnNotReady);
                     return;
                 }
-                fcpTransport_->Control(
+                avcUnit_->Control(
                     AVC::Cmd::PlugSignalFormatCommand{
                         .operands = AVC::Cmd::PlugSignalFormatOperands{
                             .direction = AVC::Cmd::PlugSignalDirection::kInput,
@@ -273,11 +273,11 @@ bool BeBoBProtocol::IsRateSupported(uint32_t hz) const {
 }
 
 void BeBoBProtocol::SetSelectorBlock(uint8_t fbId, uint8_t value, MixerCompletion completion) {
-    if (!fcpTransport_) {
+    if (!avcUnit_) {
         completion(kIOReturnNotReady);
         return;
     }
-    fcpTransport_->Control(
+    avcUnit_->Control(
         AVC::Cmd::SelectorCommand{
             .address = AVC::kAudioSubunit0,
             .operands = AVC::Cmd::SelectorOperands{
@@ -292,11 +292,11 @@ void BeBoBProtocol::SetSelectorBlock(uint8_t fbId, uint8_t value, MixerCompletio
 
 void BeBoBProtocol::SetFeatureMute(uint8_t fbId, uint8_t channel, bool unmute,
                                    MixerCompletion completion) {
-    if (!fcpTransport_) {
+    if (!avcUnit_) {
         completion(kIOReturnNotReady);
         return;
     }
-    fcpTransport_->Control(
+    avcUnit_->Control(
         AVC::Cmd::FeatureCommand{
             .address = AVC::kAudioSubunit0,
             .operands = AVC::Cmd::FeatureOperands::Mute(fbId, channel, !unmute),
@@ -308,11 +308,11 @@ void BeBoBProtocol::SetFeatureMute(uint8_t fbId, uint8_t channel, bool unmute,
 
 void BeBoBProtocol::SetFeatureVolume(uint8_t fbId, uint8_t channel, uint16_t value,
                                      MixerCompletion completion) {
-    if (!fcpTransport_) {
+    if (!avcUnit_) {
         completion(kIOReturnNotReady);
         return;
     }
-    fcpTransport_->Control(
+    avcUnit_->Control(
         AVC::Cmd::FeatureCommand{
             .address = AVC::kAudioSubunit0,
             .operands = AVC::Cmd::FeatureOperands::Volume(

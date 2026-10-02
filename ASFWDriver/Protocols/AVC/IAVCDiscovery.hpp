@@ -12,6 +12,10 @@
 #include <cstdint>
 #include <memory>
 
+namespace ASFW::AVC {
+class IAvcUnit;
+}
+
 namespace ASFW::Protocols::AVC {
 
 class AVCUnit;
@@ -28,14 +32,15 @@ public:
     /// Every AV/C unit, as owning handles.
     virtual std::vector<std::shared_ptr<AVCUnit>> Units() = 0;
 
+    /// The unit with this GUID if it can carry traffic now: its FireWire unit
+    /// is ready and its route is current. Family code receives this handle.
+    virtual std::shared_ptr<ASFW::AVC::IAvcUnit> LiveUnit(uint64_t guid) = 0;
+
     /**
      * @brief Re-scan all AV/C units
      * Triggers re-initialization for all discovered units.
      */
     virtual void ReScanAllUnits() = 0;
-
-    /// Resolve live FCP transport for a node ID.
-    virtual FCPTransport* GetFCPTransportForNodeID(uint16_t nodeID) = 0;
 
     /// Acquire a transport lease for asynchronous response delivery. The caller
     /// keeps the returned owner until it has finished using the transport.

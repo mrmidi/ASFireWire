@@ -119,8 +119,8 @@ IOReturn SPro24DspProtocol::StopDuplex() {
 }
 
 void SPro24DspProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                                             Protocols::AVC::FCPTransport* transport) {
-    tcat_.UpdateRuntimeContext(route, transport);
+                                             std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
+    tcat_.UpdateRuntimeContext(route, std::move(avcUnit));
 }
 
 void SPro24DspProtocol::ReadAppQuad(uint32_t offset,
