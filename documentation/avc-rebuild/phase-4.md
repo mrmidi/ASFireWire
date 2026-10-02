@@ -202,6 +202,8 @@ User: no duplicate paths. Commits 85dcc574..b2a271d7 on feat/avc-phase4.
   channel positions and section types (17 fewer frames at Phase 88 attach).
 - Phase 88 runs on GenericAvcProtocol with its startup mixer map;
   Phase88Protocol deleted.
+- Onyx-i runs on GenericAvcProtocol (MackieOnyxProtocol deleted); geometry from
+  discovery, rate from its row's 44.1 kHz pin.
 - Oxford inventory deleted (it re-read generic discovery's lists); Oxford units
   use generic discovery alone (10 fewer frames at Duet attach).
 
