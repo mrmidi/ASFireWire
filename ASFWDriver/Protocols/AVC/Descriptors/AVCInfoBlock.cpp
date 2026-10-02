@@ -70,13 +70,6 @@ Parsed<AVCInfoBlock> AVCInfoBlock::Parse(std::span<const uint8_t> bytes,
     });
 }
 
-std::expected<AVCInfoBlock, AVCResult> AVCInfoBlock::Parse(
-    const uint8_t* bytes, size_t length, size_t& consumed) {
-    auto result = Parse(std::span<const uint8_t>(bytes, length), consumed);
-    if (!result) return std::unexpected(AVCResult::kInvalidResponse);
-    return std::move(*result);
-}
-
 //==============================================================================
 // AVCInfoBlock - Navigation Helpers
 //==============================================================================

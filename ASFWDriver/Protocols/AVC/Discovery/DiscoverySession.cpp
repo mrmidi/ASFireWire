@@ -70,7 +70,7 @@ void Session::Execute(Action action) {
                 const auto address = a.probe.subunit.type == SubunitType::kUnit ? SubunitAddress::Unit() : a.probe.subunit.ToAddress();
                 descriptor_ = std::make_shared<ASFW::Protocols::AVC::DescriptorAccessor>(*unit, address);
                 const auto accessor = descriptor_; // Immediate callbacks may replace the session's accessor.
-                accessor->readWithOpenCloseSequence(a.probe.specifier,
+                accessor->Read(a.probe.specifier,
                     [live, identity = a.operation](const auto& result) {
                         if (auto* session = live.Get()) session->Deliver(DescriptorReply{identity, result});
                     });

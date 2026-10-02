@@ -52,7 +52,7 @@ struct DuetFormatModel {
     }
 
     std::optional<AvcReply> operator()(std::span<const uint8_t> command) {
-        using ASFW::Protocols::AVC::AVCCommandType;
+        using ASFW::AVC::CommandType;
         if (command.size() < 6U || command[1] != 0xFFU) {
             return std::nullopt;
         }
@@ -61,12 +61,12 @@ struct DuetFormatModel {
         }
 
         const bool isInput = command[2] == 0x19U;
-        if (command[0] == static_cast<uint8_t>(AVCCommandType::kStatus)) {
+        if (command[0] == static_cast<uint8_t>(CommandType::kStatus)) {
             return AvcReply::ImplementedStable()
                 .WithPatch(4U, 0x90U)
                 .WithPatch(5U, isInput ? inputFrequency : outputFrequency);
         }
-        if (command[0] == static_cast<uint8_t>(AVCCommandType::kControl)) {
+        if (command[0] == static_cast<uint8_t>(CommandType::kControl)) {
             if (!isInput && failNextOutputFormatControl) {
                 failNextOutputFormatControl = false;
                 return AvcReply::WriteFailure();

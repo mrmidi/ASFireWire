@@ -82,7 +82,7 @@ protected:
         size_t offset = 0;
         while (offset < length) {
             size_t consumed = 0;
-            auto result = AVCInfoBlock::Parse(data + offset, length - offset, consumed);
+            auto result = AVCInfoBlock::Parse(std::span<const uint8_t>(data + offset, length - offset), consumed);
             if (result.has_value()) {
                 allBlocks_.push_back(std::move(result.value()));
                 offset += consumed;

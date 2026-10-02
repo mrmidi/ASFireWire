@@ -390,7 +390,7 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
         return;
     }
 
-    if (payload[0] == static_cast<uint8_t>(AVCResponseType::kInterim)) {
+    if (payload[0] == static_cast<uint8_t>(ASFW::AVC::ResponseCode::kInterim)) {
         active_->txn.sawInterim = true;
         active_->phase = AwaitingResponse{.attempt = *attempt};
         ArmTimer(config_.interimTimeoutMs);

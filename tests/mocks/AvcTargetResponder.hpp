@@ -42,20 +42,20 @@ struct AvcReply {
     };
 
     Kind kind{Kind::kEcho};
-    uint8_t responseCode{static_cast<uint8_t>(Protocols::AVC::AVCResponseType::kAccepted)};
+    uint8_t responseCode{static_cast<uint8_t>(ASFW::AVC::ResponseCode::kAccepted)};
     std::vector<uint8_t> raw{};
     std::optional<size_t> truncateTo{};
     std::vector<std::pair<size_t, uint8_t>> patches{};
 
-    [[nodiscard]] static AvcReply Accepted() { return WithCode(Protocols::AVC::AVCResponseType::kAccepted); }
+    [[nodiscard]] static AvcReply Accepted() { return WithCode(ASFW::AVC::ResponseCode::kAccepted); }
     [[nodiscard]] static AvcReply ImplementedStable() {
-        return WithCode(Protocols::AVC::AVCResponseType::kImplementedStable);
+        return WithCode(ASFW::AVC::ResponseCode::kImplementedStable);
     }
-    [[nodiscard]] static AvcReply Rejected() { return WithCode(Protocols::AVC::AVCResponseType::kRejected); }
+    [[nodiscard]] static AvcReply Rejected() { return WithCode(ASFW::AVC::ResponseCode::kRejected); }
     [[nodiscard]] static AvcReply NotImplemented() {
-        return WithCode(Protocols::AVC::AVCResponseType::kNotImplemented);
+        return WithCode(ASFW::AVC::ResponseCode::kNotImplemented);
     }
-    [[nodiscard]] static AvcReply Interim() { return WithCode(Protocols::AVC::AVCResponseType::kInterim); }
+    [[nodiscard]] static AvcReply Interim() { return WithCode(ASFW::AVC::ResponseCode::kInterim); }
 
     [[nodiscard]] static AvcReply NoResponse() {
         AvcReply reply{};
@@ -108,7 +108,7 @@ struct AvcReply {
     }
 
 private:
-    [[nodiscard]] static AvcReply WithCode(Protocols::AVC::AVCResponseType type) {
+    [[nodiscard]] static AvcReply WithCode(ASFW::AVC::ResponseCode type) {
         AvcReply reply{};
         reply.kind = Kind::kEcho;
         reply.responseCode = static_cast<uint8_t>(type);

@@ -25,20 +25,9 @@ struct ReplyIdentity {
 };
 DescriptorAccessor::ReadDescriptorResult Cancelled() {
     DescriptorAccessor::ReadDescriptorResult result;
-    result.avcResult = AVCResult::kBusReset;
     result.primaryError = Avc::AvcError::Of(Avc::AvcErrorKind::kBusReset);
     result.cancelled = true;
     return result;
-}
-AVCResult LegacyError(const Avc::AvcError& error) {
-    if (error.response) return CTypeToResult(static_cast<uint8_t>(*error.response));
-    switch (error.kind) {
-        case Avc::AvcErrorKind::kTimeout: return AVCResult::kTimeout;
-        case Avc::AvcErrorKind::kBusReset: return AVCResult::kBusReset;
-        case Avc::AvcErrorKind::kTransportError: return AVCResult::kTransportError;
-        case Avc::AvcErrorKind::kBusy: return AVCResult::kBusy;
-        default: return AVCResult::kInvalidResponse;
-    }
 }
 } // namespace
 
@@ -94,7 +83,7 @@ public:
                 }
                 const auto remaining = reading->declaredTotal ? reading->declaredTotal - reading->offset
                                                               : DescriptorAccessor::kMaxDescriptorBytes;
-                const auto requested = static_cast<uint16_t>(std::min<size_t>(MAX_DESCRIPTOR_CHUNK_SIZE, remaining));
+                const auto requested = static_cast<uint16_t>(std::min<size_t>(DescriptorAccessor::kChunkBytes, remaining));
                 Cmd::ReadDescriptorCommand command;
                 command.address = address_;
                 command.operands = {.specifier = specifier_, .offset = static_cast<uint16_t>(reading->offset),
@@ -140,7 +129,6 @@ private:
     }
     void FailRead(Avc::AvcError error) {
         DescriptorAccessor::ReadDescriptorResult result;
-        result.avcResult = LegacyError(error);
         result.primaryError = error;
         phase_ = Closing{std::move(result)};
     }
@@ -152,7 +140,7 @@ private:
                 // Nothing is open, so nothing to close. A cancelled request
                 // reports the cancellation, not the OPEN answer.
                 DescriptorAccessor::ReadDescriptorResult result = cancelled_ ? Cancelled() : DescriptorAccessor::ReadDescriptorResult{};
-                if (!cancelled_) { result.avcResult = LegacyError(reply.error()); result.primaryError = reply.error(); }
+                if (!cancelled_) result.primaryError = reply.error();
                 Finish(std::move(result));
             } else if (cancelled_) phase_ = Closing{Cancelled()};
             else phase_ = Reading{};
@@ -189,7 +177,7 @@ private:
         // when read_result_status is inaccurate. No additional read at EOF.
         if (reading.offset == reading.declaredTotal) {
             DescriptorAccessor::ReadDescriptorResult result;
-            result.success = true; result.avcResult = AVCResult::kAccepted; result.data = std::move(data_);
+            result.success = true; result.data = std::move(data_);
             phase_ = Closing{std::move(result)};
         }
         Pump();
@@ -206,8 +194,6 @@ private:
     bool pending_{false}, pumping_{false}, cancelled_{false};
 };
 
-DescriptorAccessor::DescriptorAccessor(Avc::IAvcUnit& unit, uint8_t address)
-    : DescriptorAccessor(unit, Avc::SubunitAddress::FromByte(address)) {}
 DescriptorAccessor::DescriptorAccessor(Avc::IAvcUnit& unit, Avc::SubunitAddress address)
     : unit_(unit), address_(address) {}
 DescriptorAccessor::~DescriptorAccessor() { Cancel(); }
@@ -219,33 +205,15 @@ void DescriptorAccessor::Cancel() {
     auto operation = std::move(operation_);
     if (operation) operation->Cancel();
 }
-void DescriptorAccessor::readUnitIdentifier(ReadCompletion completion) {
-    readWithOpenCloseSequence(DescriptorSpecifier::forUnitIdentifier(), std::move(completion));
-}
-void DescriptorAccessor::readStatusDescriptor(uint8_t type, ReadCompletion completion) {
-    readWithOpenCloseSequence(DescriptorSpecifier{.type = static_cast<DescriptorSpecifierType>(type),
-                                                .typeSpecificFields = {}}, std::move(completion));
-}
-void DescriptorAccessor::readComplete(const DescriptorSpecifier& specifier, ReadCompletion completion) {
-    readWithOpenCloseSequence(specifier, std::move(completion));
-}
-void DescriptorAccessor::readWithOpenCloseSequence(const DescriptorSpecifier& specifier, ReadCompletion completion) {
-    const auto bytes = specifier.buildSpecifier();
-    if (bytes.empty() || bytes.size() > Cmd::DescriptorSpecifier::kMaxBytes) {
-        ReadDescriptorResult result; result.avcResult = AVCResult::kInvalidResponse;
-        result.primaryError = Avc::AvcError::Of(Avc::AvcErrorKind::kInvalidArgument); completion(result); return;
-    }
-    readWithOpenCloseSequence(Cmd::DescriptorSpecifier::Raw(bytes), std::move(completion));
-}
-void DescriptorAccessor::readWithOpenCloseSequence(const Cmd::DescriptorSpecifier& specifier, ReadCompletion completion) {
+void DescriptorAccessor::Read(const Cmd::DescriptorSpecifier& specifier, ReadCompletion completion) {
     if (operation_ && !operation_->IsDone()) {
-        ReadDescriptorResult result; result.avcResult = AVCResult::kBusy;
+        ReadDescriptorResult result;
         result.primaryError = Avc::AvcError::Of(Avc::AvcErrorKind::kBusy); completion(result); return;
     }
     auto* unit = unit_.Get();
     if (!unit) { completion(Cancelled()); return; }
     if (specifier.length == 0 || specifier.length > Cmd::DescriptorSpecifier::kMaxBytes) {
-        ReadDescriptorResult result; result.avcResult = AVCResult::kInvalidResponse;
+        ReadDescriptorResult result;
         result.primaryError = Avc::AvcError::Of(Avc::AvcErrorKind::kInvalidArgument); completion(result); return;
     }
     static uint64_t nextSession = 0; // Driver serial queue; no concurrent access.

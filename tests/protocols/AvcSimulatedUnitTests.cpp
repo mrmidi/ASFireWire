@@ -188,7 +188,7 @@ TEST_F(AvcSimulatedUnitTests, Phase88AudioDescriptorTraversalUsesSessionsAndReta
     // chunk and nested descriptor callback runs after its submitting frame returns.
     Protocols::AVC::DescriptorAccessor unopened(phase88Unit_, SubunitAddress::FromByte(0x08));
     std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> unopenedResult;
-    unopened.readComplete(Protocols::AVC::DescriptorSpecifier::forUnitIdentifier(),
+    unopened.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(),
         [&](const auto& result) { unopenedResult = result; });
     ASSERT_TRUE(unopenedResult.has_value());
     EXPECT_TRUE(unopenedResult->success);
@@ -219,16 +219,14 @@ TEST_F(AvcSimulatedUnitTests, DescriptorReadRejectsPrematureEmptyChunk) {
     phase88Unit_.SetDescriptor(0x08, {0x10, 0x12, 0x34},
                                {0x00, 0x14, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00});
     Protocols::AVC::DescriptorAccessor accessor(phase88Unit_, SubunitAddress::FromByte(0x08));
-    auto specifier = Protocols::AVC::DescriptorSpecifier{
-        .type = Protocols::AVC::DescriptorSpecifierType::kListID,
-        .typeSpecificFields = {0x12, 0x34},
-    };
+    const auto specifier = ASFW::AVC::Cmd::DescriptorSpecifier::ListById(0x1234);
     std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> result;
-    accessor.readWithOpenCloseSequence(specifier,
+    accessor.Read(specifier,
         [&](const auto& read) { result = read; });
     ASSERT_TRUE(result.has_value());
     EXPECT_FALSE(result->success);
-    EXPECT_EQ(result->avcResult, Protocols::AVC::AVCResult::kInvalidResponse);
+    ASSERT_TRUE(result->primaryError.has_value());
+    EXPECT_EQ(result->primaryError->kind, ASFW::AVC::AvcErrorKind::kMalformedOperands);
 }
 
 TEST_F(AvcSimulatedUnitTests, FaultKnobs_TimeoutAndInterimAndRejections) {
@@ -337,13 +335,14 @@ TEST_F(AvcSimulatedUnitTests, DescriptorChunkedServing) {
     // Access descriptor via DescriptorAccessor
     Protocols::AVC::DescriptorAccessor accessor(duetUnit_, SubunitAddress::Of(SubunitType::kMusic, 0));
     std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> readResult;
-    accessor.readStatusDescriptor(0x80, [&](const Protocols::AVC::DescriptorAccessor::ReadDescriptorResult& res) {
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitStatus(), [&](const Protocols::AVC::DescriptorAccessor::ReadDescriptorResult& res) {
         readResult = res;
     });
 
     ASSERT_TRUE(readResult.has_value());
     EXPECT_TRUE(readResult->success);
-    EXPECT_EQ(readResult->avcResult, Protocols::AVC::AVCResult::kAccepted);
+    EXPECT_TRUE(readResult->success);
+    EXPECT_FALSE(readResult->primaryError.has_value());
     EXPECT_EQ(readResult->data.size(), 464u);
     EXPECT_EQ(readResult->data, descriptorBytes);
 
@@ -357,7 +356,7 @@ TEST_F(AvcSimulatedUnitTests, DescriptorChunkedServing) {
     // Test ClearDescriptors
     duetUnit_.ClearDescriptors();
     std::optional<Protocols::AVC::DescriptorAccessor::ReadDescriptorResult> failedResult;
-    accessor.readStatusDescriptor(0x80, [&](const Protocols::AVC::DescriptorAccessor::ReadDescriptorResult& res) {
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitStatus(), [&](const Protocols::AVC::DescriptorAccessor::ReadDescriptorResult& res) {
         failedResult = res;
     });
     ASSERT_TRUE(failedResult.has_value());
@@ -448,7 +447,7 @@ TEST(DescriptorOperation, NoReadWithoutSuccessfulOpen) {
     DescriptorTestUnit unit; unit.rejectOpen = true;
     Legacy::DescriptorAccessor accessor(unit);
     std::optional<ReadResult> result;
-    accessor.readUnitIdentifier([&](const auto& value) { result = value; });
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { result = value; });
     ASSERT_TRUE(result); EXPECT_FALSE(result->success);
     ASSERT_EQ(unit.commands.size(), 1); EXPECT_EQ(unit.commands[0][2], 8);
 }
@@ -456,7 +455,7 @@ TEST(DescriptorOperation, DeclaredLengthWinsAndCloseFailureIsSeparate) {
     DescriptorTestUnit unit; unit.rejectClose = true;
     Legacy::DescriptorAccessor accessor(unit);
     std::optional<ReadResult> result;
-    accessor.readUnitIdentifier([&](const auto& value) { result = value; });
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { result = value; });
     ASSERT_TRUE(result); EXPECT_TRUE(result->success); EXPECT_EQ(result->data, unit.descriptor);
     EXPECT_FALSE(result->primaryError); ASSERT_TRUE(result->cleanupError);
     ASSERT_EQ(unit.commands.size(), 3); EXPECT_EQ(unit.commands[2][4], 0);
@@ -465,7 +464,7 @@ TEST(DescriptorOperation, FailedReadStillCloses) {
     DescriptorTestUnit unit; unit.rejectRead = true;
     Legacy::DescriptorAccessor accessor(unit);
     std::optional<ReadResult> result;
-    accessor.readUnitIdentifier([&](const auto& value) { result = value; });
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { result = value; });
     ASSERT_TRUE(result); EXPECT_FALSE(result->success); EXPECT_TRUE(result->primaryError);
     ASSERT_EQ(unit.commands.size(), 3); EXPECT_EQ(unit.commands.back()[4], 0);
 }
@@ -473,7 +472,7 @@ TEST(DescriptorOperation, ResetDuringReadDoesNotCloseNewRoute) {
     DescriptorTestUnit unit; unit.deferred = true;
     Legacy::DescriptorAccessor accessor(unit);
     size_t completions = 0;
-    accessor.readUnitIdentifier([&](const auto& value) { ++completions; EXPECT_TRUE(value.cancelled); });
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { ++completions; EXPECT_TRUE(value.cancelled); });
     unit.FlushOne(); // successful OPEN, queued READ
     ++unit.generation;
     unit.FlushOne();
@@ -483,7 +482,7 @@ TEST(DescriptorOperation, DestroyAccessorDuringOpenStillClosesWithoutReading) {
     DescriptorTestUnit unit; unit.deferred = true;
     size_t completions = 0;
     auto accessor = std::make_unique<Legacy::DescriptorAccessor>(unit);
-    accessor->readUnitIdentifier([&](const auto& value) { ++completions; EXPECT_TRUE(value.cancelled); });
+    accessor->Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { ++completions; EXPECT_TRUE(value.cancelled); });
     accessor.reset();
     unit.FlushOne(); // OPEN succeeds after cancellation: only CLOSE may follow.
     ASSERT_EQ(unit.commands.size(), 2); EXPECT_EQ(unit.commands.back()[2], 8); EXPECT_EQ(unit.commands.back()[4], 0);
@@ -493,8 +492,11 @@ TEST(DescriptorOperation, DestroyAccessorDuringOpenStillClosesWithoutReading) {
 TEST(DescriptorOperation, DuplicateRequestIsBusyAndDoesNotSubmit) {
     DescriptorTestUnit unit; unit.deferred = true;
     Legacy::DescriptorAccessor accessor(unit);
-    accessor.readUnitIdentifier([](const auto&) {});
-    accessor.readUnitIdentifier([](const auto& value) { EXPECT_EQ(value.avcResult, Legacy::AVCResult::kBusy); });
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [](const auto&) {});
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [](const auto& value) {
+        ASSERT_TRUE(value.primaryError.has_value());
+        EXPECT_EQ(value.primaryError->kind, ASFW::AVC::AvcErrorKind::kBusy);
+    });
     EXPECT_EQ(unit.commands.size(), 1);
     unit.FlushOne(); unit.FlushOne(); unit.FlushOne();
 }
@@ -502,7 +504,7 @@ TEST(DescriptorOperation, OversizedDescriptorClosesBeforeFailing) {
     DescriptorTestUnit unit; unit.descriptor = {0x10, 0x00, 0, 0};
     Legacy::DescriptorAccessor accessor(unit);
     std::optional<ReadResult> result;
-    accessor.readUnitIdentifier([&](const auto& value) { result = value; });
+    accessor.Read(ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier(), [&](const auto& value) { result = value; });
     ASSERT_TRUE(result); EXPECT_FALSE(result->success);
     ASSERT_EQ(unit.commands.size(), 3); EXPECT_EQ(unit.commands.back()[4], 0);
 }
@@ -629,7 +631,7 @@ TEST(DiscoveryReducer, OwnedEventReplayReconstructsSnapshotAndActions) {
             } else if (const auto* descriptor = std::get_if<Engine::ReadDescriptor>(&action)) {
                 Legacy::DescriptorAccessor reader{unit, descriptor->probe.subunit.type == Avc::SubunitType::kUnit ?
                     Avc::SubunitAddress::Unit() : descriptor->probe.subunit.ToAddress()};
-                reader.readWithOpenCloseSequence(descriptor->probe.specifier,
+                reader.Read(descriptor->probe.specifier,
                     [&](const auto& r) { events.emplace_back(Engine::DescriptorReply{descriptor->operation, r}); });
             } else if (const auto* extension = std::get_if<Engine::RunExtension>(&action)) {
                 events.emplace_back(Engine::ExtensionComplete{extension->operation});
