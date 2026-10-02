@@ -150,7 +150,7 @@ void AudioSubunit::ReadIdentifierDescriptor(ASFW::AVC::IAvcUnit& unit, std::func
             return;
         }
 
-        identifier_ = std::move(parsed);
+        identifier_ = std::move(*parsed);
         ASFW_LOG_INFO(Discovery, "AudioSubunit: Parsed Identifier Descriptor: %zu function blocks, %zu root lists",
                      identifier_->functionBlocks.size(), identifier_->rootListIds.size());
 

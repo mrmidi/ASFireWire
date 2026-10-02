@@ -31,4 +31,4 @@ The parent rejected duplicated vendor framing, a self-retaining callback cycle, 
 
 Production does not yet populate SIGNAL SOURCE selections, selectable-clock inquiry results, or STATUS-confirmed feature controls into the graph. The cached graph intentionally leaves these unavailable. Graph publication/UI consumers and broad legacy-command replacement remain unfinished phase work. The graph's pre-existing dependency on the audio slot-map type still deserves a separate layer-boundary cleanup. Generic-device factory integration is not completed merely by correcting the discovery model and profile geometry.
 
-The earlier Python prototype remains under `docs/avc-rebuild/fixtures/graph_build.py`; both fixture runs were checked during the original review. No rewrite of the prototype or hardware-specific clock/mixer programming was introduced here.
+The earlier Python prototype remains under `documentation/avc-rebuild/fixtures/graph_build.py`; both fixture runs were checked during the original review. No rewrite of the prototype or hardware-specific clock/mixer programming was introduced here.

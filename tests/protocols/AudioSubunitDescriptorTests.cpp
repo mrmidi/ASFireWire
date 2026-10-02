@@ -105,6 +105,10 @@ TEST(AudioSubunitDescriptorTests, Phase88AudioIdentifierParsing) {
     ASSERT_EQ(fb1->inputSources.size(), 1u);
     EXPECT_EQ(fb1->inputSources[0].type, 0x82); // Fed by Processing 1 (Main Mixer)
     EXPECT_EQ(fb1->inputSources[0].id, 1);
+    EXPECT_EQ(fb1->generalTag, 0);
+    EXPECT_EQ(fb1->masterControls, 0xC000);
+    ASSERT_EQ(fb1->channelControls.size(), 8);
+    for (auto bitmap : fb1->channelControls) EXPECT_EQ(bitmap, 0xC000);
     EXPECT_EQ(fb1->clusterChannels, 8); // 8-channel multichannel master
 
     // Feature 2..7 (Inputs)

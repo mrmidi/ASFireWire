@@ -12,11 +12,11 @@ namespace ASFW::Protocols::AVC::Descriptors {
 
 namespace {
 
-inline uint16_t ReadBE16(const uint8_t* p) noexcept {
+inline uint16_t ReadBE16(std::span<const uint8_t> p) noexcept {
     return (static_cast<uint16_t>(p[0]) << 8) | p[1];
 }
 
-inline uint32_t ReadBE32(const uint8_t* p) noexcept {
+inline uint32_t ReadBE32(std::span<const uint8_t> p) noexcept {
     return (static_cast<uint32_t>(p[0]) << 24) |
            (static_cast<uint32_t>(p[1]) << 16) |
            (static_cast<uint32_t>(p[2]) << 8) |
@@ -84,9 +84,9 @@ std::string MusicSubunitDescriptorParser::ExtractName(const AVCInfoBlock& block)
         // [0..3]: name info header (e.g. 0x0000ffff)
         // [4..5]: compound_length, [6..7]: type (0x000A), [8..9]: primary_fields_length
         if (data.size() >= 10 && data[6] == 0x00 && data[7] == 0x0A) {
-            const uint16_t plen = ReadBE16(data.data() + 8);
+            const uint16_t plen = ReadBE16(std::span<const uint8_t>(data).subspan(8));
             const size_t textLen = std::min(data.size() - 10, static_cast<size_t>(plen));
-            std::string text(reinterpret_cast<const char*>(data.data() + 10), textLen);
+            std::string text(reinterpret_cast<const char*>(std::span<const uint8_t>(data).subspan(10).data()), textLen);
             while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n')) {
                 text.pop_back();
             }
@@ -98,7 +98,7 @@ std::string MusicSubunitDescriptorParser::ExtractName(const AVCInfoBlock& block)
         // 2b. IEEE 1212 text descriptor header (16 bytes)
         constexpr size_t kTextDescHeaderLen = 16;
         if (data.size() > kTextDescHeaderLen) {
-            std::string text(reinterpret_cast<const char*>(data.data() + kTextDescHeaderLen),
+            std::string text(reinterpret_cast<const char*>(std::span<const uint8_t>(data).subspan(kTextDescHeaderLen).data()),
                              data.size() - kTextDescHeaderLen);
             while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n')) {
                 text.pop_back();
@@ -112,30 +112,22 @@ std::string MusicSubunitDescriptorParser::ExtractName(const AVCInfoBlock& block)
     return {};
 }
 
-std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
+Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
     std::span<const uint8_t> data) noexcept {
-    if (data.size() < 2) {
-        return std::nullopt;
-    }
-
+    auto body = DescriptorBody(data);
+    if (!body) return std::unexpected(body.error());
     MusicSubunitStatus status;
-    status.declaredLength = ReadBE16(data.data());
-
-    const size_t advertisedEnd = 2 + static_cast<size_t>(status.declaredLength);
-    const size_t parseEnd = std::min(data.size(), advertisedEnd);
+    status.declaredLength = static_cast<uint16_t>(data.size() - 2);
+    const size_t parseEnd = data.size();
     size_t offset = 2;
 
     uint8_t destPlugsSeen = 0;
 
-    while (offset + 6 <= parseEnd) {
+    while (offset < parseEnd) {
         size_t consumed = 0;
         const size_t remaining = parseEnd - offset;
-        auto blockResult = AVCInfoBlock::Parse(data.data() + offset, remaining, consumed);
-        if (!blockResult || consumed == 0) {
-            // Skip invalid quadlet and continue scanning
-            offset += 4;
-            continue;
-        }
+        auto blockResult = AVCInfoBlock::Parse(data.subspan(offset, remaining), consumed, offset);
+        if (!blockResult) return std::unexpected(blockResult.error());
 
         const auto& block = *blockResult;
         const uint16_t type = block.GetType();
@@ -147,15 +139,15 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                     status.capabilities.hasGeneralCapability = true;
                     status.capabilities.transmitCapabilityFlags = primaryData[0];
                     status.capabilities.receiveCapabilityFlags = primaryData[1];
-                    status.capabilities.latencyCapability = ReadBE32(primaryData.data() + 2);
+                    status.capabilities.latencyCapability = ReadBE32(std::span<const uint8_t>(primaryData).subspan(2));
                 }
                 break;
 
             case 0x8101: // Audio Capability
                 if (primaryData.size() >= 5) {
                     status.capabilities.hasAudioCapability = true;
-                    status.capabilities.maxAudioInputChannels = ReadBE16(primaryData.data() + 1);
-                    status.capabilities.maxAudioOutputChannels = ReadBE16(primaryData.data() + 3);
+                    status.capabilities.maxAudioInputChannels = ReadBE16(std::span<const uint8_t>(primaryData).subspan(1));
+                    status.capabilities.maxAudioOutputChannels = ReadBE16(std::span<const uint8_t>(primaryData).subspan(3));
                 }
                 // Parse nested 0x8102 Plug Status Area -> 0x8103 Audio Info Area
                 for (const auto& plugStatus : block.GetNestedBlocks()) {
@@ -192,8 +184,8 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                     status.capabilities.midiVersionMajor = primaryData[0] >> 4;
                     status.capabilities.midiVersionMinor = primaryData[0] & 0x0F;
                     status.capabilities.midiAdaptationLayerVersion = primaryData[1];
-                    status.capabilities.maxMidiInputPorts = ReadBE16(primaryData.data() + 2);
-                    status.capabilities.maxMidiOutputPorts = ReadBE16(primaryData.data() + 4);
+                    status.capabilities.maxMidiInputPorts = ReadBE16(std::span<const uint8_t>(primaryData).subspan(2));
+                    status.capabilities.maxMidiOutputPorts = ReadBE16(std::span<const uint8_t>(primaryData).subspan(4));
                 }
                 break;
 
@@ -247,12 +239,14 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                         const auto clusterBlocks = child.FindAllNestedRecursive(0x810A);
                         for (const auto& clusterBlock : clusterBlocks) {
                             const auto& cData = clusterBlock.GetPrimaryData();
-                            if (cData.size() < 3) continue;
+                            if (cData.size() < 3) return std::unexpected(ParseError{offset, ParseErrorKind::Truncated});
 
                             MusicClusterInfo cluster;
                             cluster.streamFormatCode = cData[0];
                             cluster.portType = cData[1];
                             const uint8_t numSignals = cData[2];
+                            if (static_cast<size_t>(numSignals) > (cData.size() - 3) / 4)
+                                return std::unexpected(ParseError{offset, ParseErrorKind::Truncated});
                             cluster.channelCount = numSignals;
                             cluster.name = ExtractName(clusterBlock);
 
@@ -261,7 +255,7 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                                  ++sigIdx) {
                                 const size_t sigOffset = 3 + sigIdx * 4;
                                 cluster.signals.push_back(MusicClusterSignal{
-                                    .musicPlugId = ReadBE16(cData.data() + sigOffset),
+                                    .musicPlugId = ReadBE16(std::span<const uint8_t>(cData).subspan(sigOffset)),
                                     .position = cData[sigOffset + 2],
                                 });
                             }
@@ -272,7 +266,7 @@ std::optional<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescr
                     } else if (childType == 0x810B && childData.size() >= 3) { // Music Plug Info
                         MusicPlugDetail mp;
                         mp.portType = childData[0];
-                        mp.musicPlugId = ReadBE16(childData.data() + 1);
+                        mp.musicPlugId = ReadBE16(std::span<const uint8_t>(childData).subspan(1));
                         mp.name = ExtractName(child);
                         if (childData.size() >= 14) {
                             const auto endpoint = [&childData](size_t at) {

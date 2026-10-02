@@ -4,6 +4,7 @@
 // AvcSimulatedUnitTests.cpp - Tests for SimulatedAvcUnit and RecordingFireWireBus FCP integration.
 
 #include <gtest/gtest.h>
+#include "ASFWDriver/Common/OnceCompletion.hpp"
 
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/FunctionBlockCommand.hpp"
@@ -180,7 +181,7 @@ TEST_F(AvcSimulatedUnitTests, Phase88AudioDescriptorTraversalUsesSessionsAndReta
     unopened.readComplete(Protocols::AVC::DescriptorSpecifier::forUnitIdentifier(),
         [&](const auto& result) { unopenedResult = result; });
     ASSERT_TRUE(unopenedResult.has_value());
-    EXPECT_FALSE(unopenedResult->success);
+    EXPECT_TRUE(unopenedResult->success);
 
     phase88Unit_.SetDeferredResponses(true);
     Protocols::AVC::Audio::AudioSubunit audio(Protocols::AVC::AVCSubunitType::kAudio, 0);
@@ -389,3 +390,131 @@ TEST_F(AvcSimulatedUnitTests, AudioSubunitReadIdentifierDescriptor_DuetIntegrati
 }
 
 } // namespace ASFW::AVC::Testing
+
+namespace {
+namespace Avc = ASFW::AVC;
+namespace Legacy = ASFW::Protocols::AVC;
+class DescriptorTestUnit final : public Avc::IAvcUnit {
+public:
+    std::vector<std::vector<uint8_t>> commands;
+    std::vector<uint8_t> descriptor{0, 2, 0xAA, 0xBB};
+    bool rejectOpen{false}, rejectClose{false}, rejectRead{false}, deferred{false};
+    uint32_t generation{1};
+    struct Pending { Avc::CommandFrame frame; ResponseCallback callback; };
+    std::vector<Pending> pending;
+    ASFW::FW::NodeId NodeId() const noexcept override { return ASFW::FW::NodeId{1}; }
+    ASFW::FW::Generation CurrentGeneration() const noexcept override { return ASFW::FW::Generation{generation}; }
+    uint64_t Guid() const noexcept override { return 1; }
+    void Submit(const Avc::CommandFrame& frame, ASFW::FW::Generation, ResponseCallback callback) override {
+        commands.emplace_back(frame.Bytes().begin(), frame.Bytes().end());
+        if (deferred) pending.push_back(Pending{frame, std::move(callback)});
+        else Reply(frame, std::move(callback));
+    }
+    void FlushOne() {
+        ASSERT_FALSE(pending.empty());
+        auto item = std::move(pending.front()); pending.erase(pending.begin());
+        Reply(item.frame, std::move(item.callback));
+    }
+    void Reply(const Avc::CommandFrame& frame, ResponseCallback callback) {
+        const auto command = frame.Bytes();
+        std::vector<uint8_t> response(command.begin(), command.end());
+        response[0] = 9;
+        if (command[2] == 8) {
+            if ((command[4] == 1 && rejectOpen) || (command[4] == 0 && rejectClose)) response[0] = 10;
+        } else if (command[2] == 9) {
+            if (rejectRead) response[0] = 10;
+            else {
+                const size_t offset = (static_cast<size_t>(command[8]) << 8) | command[9];
+                const size_t requested = (static_cast<size_t>(command[6]) << 8) | command[7];
+                const size_t count = offset <= descriptor.size() ? std::min(requested, descriptor.size() - offset) : 0;
+                response.resize(10);
+                response[4] = 0x11; // Deliberately inaccurate at EOF: length wins.
+                response[6] = static_cast<uint8_t>(count >> 8); response[7] = static_cast<uint8_t>(count);
+                response.insert(response.end(), descriptor.begin() + offset, descriptor.begin() + offset + count);
+            }
+        }
+        callback(Avc::ParseResponseFor(frame, response));
+    }
+};
+using ReadResult = Legacy::DescriptorAccessor::ReadDescriptorResult;
+TEST(DescriptorOperation, NoReadWithoutSuccessfulOpen) {
+    DescriptorTestUnit unit; unit.rejectOpen = true;
+    Legacy::DescriptorAccessor accessor(unit);
+    std::optional<ReadResult> result;
+    accessor.readUnitIdentifier([&](const auto& value) { result = value; });
+    ASSERT_TRUE(result); EXPECT_FALSE(result->success);
+    ASSERT_EQ(unit.commands.size(), 1); EXPECT_EQ(unit.commands[0][2], 8);
+}
+TEST(DescriptorOperation, DeclaredLengthWinsAndCloseFailureIsSeparate) {
+    DescriptorTestUnit unit; unit.rejectClose = true;
+    Legacy::DescriptorAccessor accessor(unit);
+    std::optional<ReadResult> result;
+    accessor.readUnitIdentifier([&](const auto& value) { result = value; });
+    ASSERT_TRUE(result); EXPECT_TRUE(result->success); EXPECT_EQ(result->data, unit.descriptor);
+    EXPECT_FALSE(result->primaryError); ASSERT_TRUE(result->cleanupError);
+    ASSERT_EQ(unit.commands.size(), 3); EXPECT_EQ(unit.commands[2][4], 0);
+}
+TEST(DescriptorOperation, FailedReadStillCloses) {
+    DescriptorTestUnit unit; unit.rejectRead = true;
+    Legacy::DescriptorAccessor accessor(unit);
+    std::optional<ReadResult> result;
+    accessor.readUnitIdentifier([&](const auto& value) { result = value; });
+    ASSERT_TRUE(result); EXPECT_FALSE(result->success); EXPECT_TRUE(result->primaryError);
+    ASSERT_EQ(unit.commands.size(), 3); EXPECT_EQ(unit.commands.back()[4], 0);
+}
+TEST(DescriptorOperation, ResetDuringReadDoesNotCloseNewRoute) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    Legacy::DescriptorAccessor accessor(unit);
+    size_t completions = 0;
+    accessor.readUnitIdentifier([&](const auto& value) { ++completions; EXPECT_TRUE(value.cancelled); });
+    unit.FlushOne(); // successful OPEN, queued READ
+    ++unit.generation;
+    unit.FlushOne();
+    EXPECT_EQ(completions, 1); EXPECT_EQ(unit.commands.size(), 2);
+}
+TEST(DescriptorOperation, DestroyAccessorDuringOpenStillClosesWithoutReading) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    size_t completions = 0;
+    auto accessor = std::make_unique<Legacy::DescriptorAccessor>(unit);
+    accessor->readUnitIdentifier([&](const auto& value) { ++completions; EXPECT_TRUE(value.cancelled); });
+    accessor.reset();
+    unit.FlushOne(); // OPEN succeeds after cancellation: only CLOSE may follow.
+    ASSERT_EQ(unit.commands.size(), 2); EXPECT_EQ(unit.commands.back()[2], 8); EXPECT_EQ(unit.commands.back()[4], 0);
+    unit.FlushOne();
+    EXPECT_EQ(completions, 1);
+}
+TEST(DescriptorOperation, DuplicateRequestIsBusyAndDoesNotSubmit) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    Legacy::DescriptorAccessor accessor(unit);
+    accessor.readUnitIdentifier([](const auto&) {});
+    accessor.readUnitIdentifier([](const auto& value) { EXPECT_EQ(value.avcResult, Legacy::AVCResult::kBusy); });
+    EXPECT_EQ(unit.commands.size(), 1);
+    unit.FlushOne(); unit.FlushOne(); unit.FlushOne();
+}
+TEST(DescriptorOperation, OversizedDescriptorClosesBeforeFailing) {
+    DescriptorTestUnit unit; unit.descriptor = {0x10, 0x00, 0, 0};
+    Legacy::DescriptorAccessor accessor(unit);
+    std::optional<ReadResult> result;
+    accessor.readUnitIdentifier([&](const auto& value) { result = value; });
+    ASSERT_TRUE(result); EXPECT_FALSE(result->success);
+    ASSERT_EQ(unit.commands.size(), 3); EXPECT_EQ(unit.commands.back()[4], 0);
+}
+} // namespace
+
+TEST(OnceCompletion, MoveDisarmsAndAbandonmentCancelsOnce) {
+    int calls = 0;
+    {
+        ASFW::Common::OnceCompletion<int> source([&](int result) { ++calls; EXPECT_EQ(result, -1); }, -1);
+        auto target = std::move(source);
+    }
+    EXPECT_EQ(calls, 1);
+}
+TEST(OnceCompletion, InvocationConsumesCallback) {
+    int calls = 0;
+    {
+        ASFW::Common::OnceCompletion<int> completion([&](int result) { ++calls; EXPECT_EQ(result, 7); }, -1);
+        completion.Invoke(7);
+        completion.Invoke(8);
+    }
+    EXPECT_EQ(calls, 1);
+}

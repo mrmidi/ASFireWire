@@ -819,7 +819,7 @@ void MusicSubunit::ParseDescriptorBlock(const uint8_t* data, size_t length) {
     if (!statusDescriptorData_.has_value()) {
         statusDescriptorData_ = std::vector<uint8_t>(data, data + length);
     }
-    parsedStatus_ = std::move(statusOpt);
+    parsedStatus_ = std::move(*statusOpt);
     const auto& status = *parsedStatus_;
     ASFW_LOG_V1(MusicSubunit, "Parsed Status Descriptor: Declared Length=%u, Plugs=%zu, MusicPlugs=%zu",
                 status.declaredLength, status.plugs.size(), status.musicPlugs.size());

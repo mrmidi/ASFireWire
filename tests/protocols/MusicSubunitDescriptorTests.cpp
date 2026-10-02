@@ -48,7 +48,7 @@ std::vector<uint8_t> InfoBlock(uint16_t type, std::vector<uint8_t> primary,
 
 // Source plug 0 labelled with `labels` (one raw text block), and audio music
 // plugs 12, 13, 14 routed from destination plug 1 to source plug 0.
-std::optional<MusicSubunitStatus> ParseSourcePlugLabels(const std::string& labels) {
+Parsed<MusicSubunitStatus> ParseSourcePlugLabels(const std::string& labels) {
     const auto raw = InfoBlock(0x000A, std::vector<uint8_t>(labels.begin(), labels.end()));
     std::vector<uint8_t> namePrimary{0x00, 0x00, 0xFF, 0xFF};
     namePrimary.insert(namePrimary.end(), raw.begin(), raw.end());
@@ -168,6 +168,13 @@ TEST(MusicSubunitDescriptorTests, Phase88MusicStatusDescriptorParsing) {
     ASSERT_TRUE(result.has_value());
 
     EXPECT_EQ(result->declaredLength, 2408);
+    const auto* capture = result->FindPlug(0, false);
+    ASSERT_NE(capture, nullptr);
+    std::vector<uint8_t> slots;
+    for (const auto& cluster : capture->clusters)
+        for (const auto& signal : cluster.signals) slots.push_back(signal.position);
+    EXPECT_EQ(slots, (std::vector<uint8_t>{1, 6, 2, 7, 3, 8, 4, 9, 0, 5, 10, 10}));
+
 
     // General Capabilities (0x8100)
     EXPECT_TRUE(result->capabilities.hasGeneralCapability);

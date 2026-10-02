@@ -12,10 +12,6 @@
 
 namespace ASFW::Protocols::AVC::Descriptors {
 
-/// Helper to read big-endian uint16_t
-static inline uint16_t ReadBE16(const uint8_t* data) {
-    return (static_cast<uint16_t>(data[0]) << 8) | data[1];
-}
 
 //==============================================================================
 // AVCInfoBlock - Construction
@@ -41,177 +37,39 @@ AVCInfoBlock::AVCInfoBlock(
 // AVCInfoBlock - Parsing
 //==============================================================================
 
-std::expected<AVCInfoBlock, AVCResult> AVCInfoBlock::Parse(
-    const uint8_t* data,
-    size_t length,
-    size_t& bytesConsumed
-) {
-    bytesConsumed = 0;
-
-    // Minimum: 6 bytes header (compound_length + type + primary_fields_length)
-    if (length < 6) {
-        ASFW_LOG_ERROR(Discovery, "Info block too short (%zu bytes, need >=6)", length);
-        return std::unexpected(AVCResult::kInvalidResponse);
+Parsed<AVCInfoBlock> AVCInfoBlock::Parse(std::span<const uint8_t> bytes,
+                                             size_t& consumed, size_t baseOffset, size_t depth) {
+    consumed = 0;
+    if (depth >= kMaxInfoBlockDepth)
+        return std::unexpected(ParseError{baseOffset, ParseErrorKind::BudgetExceeded});
+    // Music Subunit Table 6.1: length excludes its own two bytes; type precedes
+    // primary length. FFADO avc_descriptor_music.cpp:164-167 shares this header.
+    ParseReader outer(bytes, baseOffset);
+    auto fields = outer.Section(); if (!fields) return std::unexpected(fields.error());
+    auto type = fields->BE16(); if (!type) return std::unexpected(type.error());
+    auto primaryLength = fields->BE16(); if (!primaryLength) return std::unexpected(primaryLength.error());
+    auto primary = fields->Take(*primaryLength); if (!primary) return std::unexpected(primary.error());
+    std::vector<AVCInfoBlock> children;
+    while (fields->Remaining()) {
+        const auto childBase = fields->Offset();
+        auto remaining = fields->Take(fields->Remaining());
+        size_t used = 0;
+        auto child = Parse(*remaining, used, childBase, depth + 1);
+        if (!child) return std::unexpected(child.error());
+        children.push_back(std::move(*child));
+        // Rebuild a cursor on the unconsumed suffix, preserving absolute offset.
+        *fields = ParseReader(remaining->subspan(used), childBase + used);
     }
-
-    // Parse header per TA 1999045 Table 4.1
-    // [0-1] compound_length
-    // [2-3] info_block_type
-    // [4-5] primary_fields_length
-    uint16_t compoundLength = ReadBE16(data);
-    uint16_t type = ReadBE16(data + 2);
-    uint16_t primaryFieldsLength = ReadBE16(data + 4);
-
-    ASFW_LOG_V3(Discovery, "Parsing info block: type=0x%04x, compound_len=%u, primary_len=%u",
-                  type, compoundLength, primaryFieldsLength);
-
-    // NOTE: The "Apogee Header Quirk" was removed. Analysis confirmed that the
-    // Apogee Duet returns a spec-compliant descriptor with GMSSA (0x8100) placed
-    // before RoutingStatus (0x8108). Per TA 1999045 and TA 2002013, Info Block
-    // ordering is not mandated. The old workaround misfired during nested parsing
-    // when 0x000A (Name Info Block type) appeared adjacent to 0x8100, causing
-    // severe parser misalignment and cascading failures (truncated blocks,
-    // garbage type values like 0x0100, and FCP timeouts).
-
-    // Validate compound length with ROBUST handling
-    // compound_length excludes itself (2 bytes), so total size is +2
-    size_t claimedTotalSize = static_cast<size_t>(compoundLength) + 2;
-    size_t effectiveLength = length;
-
-    // compound_length includes Type(2) + PrimLen(2) + Fields...
-    // So minimum valid compound_length is 4.
-    if (compoundLength < 4) {
-        ASFW_LOG_ERROR(Discovery, "Invalid compound_length %u (must be >=4)", compoundLength);
-        return std::unexpected(AVCResult::kInvalidResponse);
-    }
-
-    // Check for overflow/truncation
-    if (claimedTotalSize > length) {
-        ASFW_LOG_V3(Discovery,
-            "Info block truncated: claimed %zu bytes (len=%u), available %zu bytes. Parsing what is available.",
-            claimedTotalSize, compoundLength, length);
-        effectiveLength = length;
-    } else {
-        effectiveLength = claimedTotalSize;
-    }
-
-    // Validate primary fields length
-    // Max possible primary length is (effectiveLength - 6)
-    // Header is 6 bytes (Len+Type+PrimLen)
-    size_t maxPrimary = (effectiveLength >= 6u) ? (effectiveLength - 6u) : 0u;
-    
-    if (primaryFieldsLength > maxPrimary) {
-        ASFW_LOG_V3(Discovery,
-            "Primary fields truncated: claimed %u bytes, available %zu bytes.",
-            primaryFieldsLength, maxPrimary);
-        primaryFieldsLength = static_cast<uint16_t>(maxPrimary);
-    }
-
-    // Extract primary data (skip 6-byte header)
-    std::vector<uint8_t> primaryData;
-    if (primaryFieldsLength > 0) {
-        primaryData.assign(data + 6, data + 6 + primaryFieldsLength);
-    }
-
-    // Parse nested info blocks (if any)
-    std::vector<AVCInfoBlock> nestedBlocks;
-    size_t nestedDataOffset = 6 + primaryFieldsLength;
-    
-    if (nestedDataOffset < effectiveLength) {
-        size_t nestedDataLength = effectiveLength - nestedDataOffset;
-        
-        ASFW_LOG_V3(Discovery, "Parsing nested blocks (%zu bytes)", nestedDataLength);
-
-        size_t nestedBytesConsumed = 0;
-        auto nestedResult = ParseNestedBlocks(
-            data + nestedDataOffset,
-            nestedDataLength,
-            nestedBytesConsumed
-        );
-
-        if (nestedResult) {
-            nestedBlocks = std::move(*nestedResult);
-        } else {
-            // Log error but don't fail the whole block - return what we parsed
-            ASFW_LOG_V3(Discovery, "Failed to parse some nested blocks (error %d)", 
-                           static_cast<int>(nestedResult.error()));
-        }
-    }
-
-    // Bytes consumed is the effective length used from the buffer
-    bytesConsumed = effectiveLength;
-
-    return AVCInfoBlock(
-        compoundLength,
-        primaryFieldsLength,
-        type,
-        std::move(primaryData),
-        std::move(nestedBlocks)
-    );
+    consumed = outer.Offset() - baseOffset;
+    return AVCInfoBlock(static_cast<uint16_t>(consumed - 2), *primaryLength, *type,
+                        std::vector<uint8_t>(primary->begin(), primary->end()), std::move(children));
 }
 
-std::expected<std::vector<AVCInfoBlock>, AVCResult> AVCInfoBlock::ParseNestedBlocks(
-    const uint8_t* data,
-    size_t length,
-    size_t& bytesConsumed
-) {
-    std::vector<AVCInfoBlock> blocks;
-    bytesConsumed = 0;
-
-    while (bytesConsumed < length) {
-        size_t remaining = length - bytesConsumed;
-
-        // Need at least 6 bytes for next block header
-        if (remaining < 6) {
-            // Not enough for a header, stop parsing nested blocks
-            break; 
-        }
-
-        // Peek at size to handle truncation logic
-        uint16_t nextCompoundLen = (data[bytesConsumed] << 8) | data[bytesConsumed + 1];
-        size_t nextTotalSize = static_cast<size_t>(nextCompoundLen) + 2;
-        
-        // FWA FALLBACK: Check for invalid block sizes (padding/garbage)
-        // ASFW requires 6 bytes for header (len+type+primLen), so anything less is invalid.
-        if (nextTotalSize < 6 || nextCompoundLen == 0xFFFF) {
-             ASFW_LOG_V3(Discovery, "Invalid nested block size at offset %zu (size=%zu). Scanning... (skipping 4 bytes)", 
-                            bytesConsumed, nextTotalSize);
-             bytesConsumed += 4;
-             continue;
-        }
-        
-        // Check if next block fits
-        bool blockTruncated = false;
-        size_t bytesToParse = nextTotalSize;
-        
-        if (nextTotalSize > remaining) {
-            ASFW_LOG_V3(Discovery, 
-                "Nested block at offset %zu truncated: claimed %zu (len=%u), remaining %zu. Parsing partial.",
-                bytesConsumed, nextTotalSize, nextCompoundLen, remaining);
-            blockTruncated = true;
-            bytesToParse = remaining;
-        }
-
-        size_t blockBytesConsumed = 0;
-        auto blockResult = Parse(data + bytesConsumed, bytesToParse, blockBytesConsumed);
-
-        if (!blockResult) {
-            ASFW_LOG_V3(Discovery, "Failed to parse nested block at offset %zu. Scanning... (skipping 4 bytes)", bytesConsumed);
-            // Don't break! FWA fallback: skip header and try to find next valid block.
-            bytesConsumed += 4;
-            continue;
-        }
-
-        blocks.push_back(std::move(*blockResult));
-        bytesConsumed += blockBytesConsumed;
-
-        if (blockTruncated) {
-            // If this block was truncated, we can't trust alignment for subsequent blocks
-            break;
-        }
-    }
-
-    return blocks;
+std::expected<AVCInfoBlock, AVCResult> AVCInfoBlock::Parse(
+    const uint8_t* bytes, size_t length, size_t& consumed) {
+    auto result = Parse(std::span<const uint8_t>(bytes, length), consumed);
+    if (!result) return std::unexpected(AVCResult::kInvalidResponse);
+    return std::move(*result);
 }
 
 //==============================================================================

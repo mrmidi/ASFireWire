@@ -147,8 +147,8 @@ TEST_F(AVCInfoBlockTests, InvalidPrimaryFieldsLength) {
     size_t consumed = 0;
     auto result = AVCInfoBlock::Parse(data.data(), data.size(), consumed);
 
-    // Robust parser should truncate PFL and succeed
-    EXPECT_TRUE(result.has_value());
+    // Untrusted lengths are rejected rather than silently clamped.
+    EXPECT_FALSE(result.has_value());
 }
 
 //==============================================================================
@@ -379,9 +379,8 @@ TEST_F(AVCInfoBlockTests, TruncatedNestedBlock) {
     size_t consumed = 0;
     auto result = AVCInfoBlock::Parse(data.data(), data.size(), consumed);
 
-    // Should parse the parent, nested block parsing stops gracefully
-    EXPECT_TRUE(result.has_value());
-    // Check that the nested block list is empty or contains valid parts
+    // A truncated compound cannot establish safe child boundaries.
+    EXPECT_FALSE(result.has_value());
 }
 
 TEST_F(AVCInfoBlockTests, ExtraDataAfterBlock) {
@@ -508,4 +507,21 @@ TEST_F(AVCInfoBlockTests, RoutingStatus_SubunitPlugInfoPrimaryFields) {
     EXPECT_EQ(primary[3], 0x04); // usage
     EXPECT_EQ((primary[4] << 8) | primary[5], 2);   // numClusters
     EXPECT_EQ((primary[6] << 8) | primary[7], 8);   // numChannels
+}
+TEST_F(AVCInfoBlockTests, StructuredErrorHasAbsoluteOffset) {
+    const std::array<uint8_t, 6> bytes{0, 4, 0x81, 0x09, 0, 8};
+    size_t used = 9;
+    auto result = AVCInfoBlock::Parse(bytes, used, 100);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().offset, 106);
+    EXPECT_EQ(result.error().kind, ParseErrorKind::Truncated);
+    EXPECT_EQ(used, 0);
+}
+TEST_F(AVCInfoBlockTests, NestedDepthBudgetRejectsDeviceData) {
+    auto bytes = CreateSimpleBlock(0x7777, {});
+    for (size_t i = 0; i < kMaxInfoBlockDepth; ++i) bytes = CreateBlockWithNested(0x7777, {}, {bytes});
+    size_t used = 0;
+    auto result = AVCInfoBlock::Parse(bytes, used);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().kind, ParseErrorKind::BudgetExceeded);
 }

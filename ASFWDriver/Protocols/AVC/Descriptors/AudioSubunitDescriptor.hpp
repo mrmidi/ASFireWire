@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include "ParseReader.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -130,18 +131,18 @@ class AudioSubunitDescriptorParser {
 public:
     /// Parse the Audio Subunit Identifier Descriptor (specifier 0x00).
     /// @param data Raw descriptor bytes starting from header (excluding FCP/AV/C headers)
-    [[nodiscard]] static std::optional<AudioSubunitIdentifier> ParseIdentifierDescriptor(
+    [[nodiscard]] static Parsed<AudioSubunitIdentifier> ParseIdentifierDescriptor(
         std::span<const uint8_t> data) noexcept;
 
     /// Parse a Text Database List Descriptor (specifier 0x10 <list_id:2>, e.g. 0x1801).
     /// Extracts mapping from object_position (index) to name string.
     [[nodiscard]] static TextDatabase ParseTextDatabaseList(
         std::span<const uint8_t> data) noexcept;
-    [[nodiscard]] static std::optional<TextDatabase> ParseTextDatabaseListChecked(
+    [[nodiscard]] static Parsed<TextDatabase> ParseTextDatabaseListChecked(
         std::span<const uint8_t> data) noexcept;
 
     /// Return child list IDs from a structurally valid list descriptor.
-    [[nodiscard]] static std::optional<std::vector<uint16_t>> ParseChildListIds(
+    [[nodiscard]] static Parsed<std::vector<uint16_t>> ParseChildListIds(
         std::span<const uint8_t> data, uint8_t listIdSize = 2,
         uint8_t objectIdSize = 0) noexcept;
 

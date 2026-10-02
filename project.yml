@@ -97,6 +97,7 @@ targets:
     type: com.apple.product-type.driver-extension
     platform: macOS
     sources:
+      # Includes the owned descriptor FSM, OnceCompletion and bounded parsers.
       - path: ASFWDriver
         excludes:
           - "Info.plist"

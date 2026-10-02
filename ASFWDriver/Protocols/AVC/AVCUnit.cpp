@@ -104,6 +104,14 @@ uint64_t AVCUnit::Guid() const noexcept {
     return fcpTransport_ ? fcpTransport_->Guid() : GetGUID();
 }
 
+std::optional<ASFW::Discovery::DeviceRouteToken> AVCUnit::CurrentRoute() const noexcept {
+    return routeRegistry_.CurrentRoute(Guid());
+}
+
+bool AVCUnit::IsCurrentRoute(const Discovery::DeviceRouteToken& route) const noexcept {
+    return routeRegistry_.IsCurrent(route);
+}
+
 void AVCUnit::ProbeUnitInfo(std::function<void(bool)> completion) {
     auto completionState = Common::ShareCallback(std::move(completion));
     ASFW::AVC::Cmd::UnitInfoCommand cmd{};
@@ -177,9 +185,6 @@ void AVCUnit::InitializeAlreadyBegun(std::function<void(bool)> completion) {
                 if (!unitOk) {
                     // UNIT_INFO is an optional AV/C discovery hint, not a prerequisite
                     // for the independent SUBUNIT_INFO and PLUG_INFO probes below.
-                    // TerraTec PHASE 88 Rack FW acknowledges the FCP request but does
-                    // not return an FCP response for this opcode (FireBug capture,
-                    // 2026-07-16). Continue so its BridgeCo-specific probe can run.
                     ASFW_LOG_V1(AVC,
                                 "AVCUnit: UNIT_INFO unavailable; continuing with subunit/plug discovery");
                 }
@@ -426,7 +431,7 @@ void AVCUnit::ResolveDiscoveredGraph(std::function<void(bool)> completion) {
     const auto generation = CurrentGeneration();
     // Capture is the source feeding unit ISO output 0, not source plug 0 by convention.
     // Cross-validated: FFADO libavc/ccm/avc_signal_source.cpp:45-95;
-    // docs/avc-rebuild/fixtures/graph_build.py:133-139.
+    // documentation/avc-rebuild/fixtures/graph_build.py:133-139.
     ASFW::AVC::Cmd::SignalSourceCommand command{
         .address = ASFW::AVC::SubunitAddress::Unit(),
         .operands = {.destination = ASFW::AVC::Cmd::SignalAddress::UnitIsochronousPlug(0)}};

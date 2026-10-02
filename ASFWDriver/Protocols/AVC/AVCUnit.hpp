@@ -122,6 +122,9 @@ public:
     [[nodiscard]] FW::Generation CurrentGeneration() const noexcept override;
     [[nodiscard]] uint64_t Guid() const noexcept override;
 
+    [[nodiscard]] std::optional<Discovery::DeviceRouteToken> CurrentRoute() const noexcept override;
+    [[nodiscard]] bool IsCurrentRoute(const Discovery::DeviceRouteToken& route) const noexcept override;
+
     void Initialize(std::function<void(bool success)> completion);
 
     void ReScan(std::function<void(bool success)> completion);

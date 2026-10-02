@@ -3,7 +3,7 @@
 //
 // AvcUnitModel.hpp - Plain-data model representing an AV/C unit.
 //
-// Conforms to Phase 2c specification (docs/avc-rebuild/phase-2.md §2c):
+// Conforms to Phase 2c specification (documentation/avc-rebuild/phase-2.md §2c):
 // - Plain data: identity, info, unit/subunit plug counts, subunit list.
 // - Directly stores Cmd::UnitPlugCounts, Cmd::UnitAsyncPlugCounts, and
 //   Cmd::SubunitPlugCounts without parallel structs or duplicate count fields.

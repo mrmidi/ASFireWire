@@ -12,8 +12,8 @@
 //
 // Structure (per TA 1999045):
 //   [0-1] compound_length (16-bit BE) - Total block size including nested blocks
-//   [2-3] primary_fields_length (16-bit BE) - Size of primary data only
-//   [4-5] info_block_type (16-bit BE) - Type identifier (see InfoBlockTypes.hpp)
+//   [2-3] info_block_type (16-bit BE) - Type identifier
+//   [4-5] primary_fields_length (16-bit BE) - Size of primary data only
 //   [6...] primary_fields - Type-specific primary data
 //   [...] nested_info_blocks - Optional nested blocks (recursive structure)
 //
@@ -26,6 +26,7 @@
 #include <expected>
 #include "../AVCDefs.hpp"
 #include "InfoBlockTypes.hpp"
+#include "ParseReader.hpp"
 
 namespace ASFW::Protocols::AVC::Descriptors {
 
@@ -33,6 +34,9 @@ namespace ASFW::Protocols::AVC::Descriptors {
 /// Reference: TA Document 1999045, TA Document 2002013
 class AVCInfoBlock {
 public:
+    [[nodiscard]] static Parsed<AVCInfoBlock> Parse(std::span<const uint8_t> bytes,
+                                                   size_t& consumed,
+                                                   size_t baseOffset = 0, size_t depth = 0);
     /// Parse info block from raw bytes
     /// @param data Pointer to info block data (starts at compound_length field)
     /// @param length Available data length
@@ -115,12 +119,6 @@ private:
     std::vector<uint8_t> primaryData_;  ///< Type-specific primary data
     std::vector<AVCInfoBlock> nestedBlocks_;  ///< Recursively parsed nested blocks
 
-    /// Helper: Parse nested info blocks from data after primary fields
-    static std::expected<std::vector<AVCInfoBlock>, AVCResult> ParseNestedBlocks(
-        const uint8_t* data,
-        size_t length,
-        size_t& bytesConsumed
-    );
 };
 
 } // namespace ASFW::Protocols::AVC::Descriptors

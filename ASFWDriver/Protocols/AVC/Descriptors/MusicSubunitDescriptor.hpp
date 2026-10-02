@@ -136,7 +136,7 @@ struct MusicSubunitStatus {
 
 class MusicSubunitDescriptorParser {
 public:
-    [[nodiscard]] static std::optional<MusicSubunitStatus> ParseStatusDescriptor(
+    [[nodiscard]] static Parsed<MusicSubunitStatus> ParseStatusDescriptor(
         std::span<const uint8_t> data) noexcept;
 
     [[nodiscard]] static std::string ExtractName(const AVCInfoBlock& block) noexcept;

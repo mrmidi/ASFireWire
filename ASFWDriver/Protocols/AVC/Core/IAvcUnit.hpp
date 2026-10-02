@@ -3,7 +3,7 @@
 //
 // IAvcUnit.hpp - The AV/C Unit runtime interface and typed command dispatch seam.
 //
-// Concept source: Apple IOFireWireAVCUnit (behaviour only; see docs/avc-rebuild/00-overview.md).
+// Concept source: Apple IOFireWireAVCUnit (behaviour only; see documentation/avc-rebuild/00-overview.md).
 //
 // Contract:
 // - Asynchronous and callback-based; non-blocking.
@@ -18,6 +18,7 @@
 #include "AvcError.hpp"
 #include "AvcFrame.hpp"
 #include "AvcTypes.hpp"
+#include "../../../Discovery/DeviceRouteToken.hpp"
 #include "../../../Common/FWTypes.hpp"
 #include "../../../Common/Lifetime.hpp"
 
@@ -98,6 +99,16 @@ public:
             .nodeId = NodeId(),
             .generation = CurrentGeneration(),
         };
+    }
+
+    /// Full route identity for generation-bound multi-command operations.
+    /// Simulators use a stable synthetic incarnation; concrete units override.
+    [[nodiscard]] virtual std::optional<Discovery::DeviceRouteToken> CurrentRoute() const noexcept {
+        return Discovery::DeviceRouteToken{Guid(), 1, 1, CurrentGeneration(),
+                                           NodeId().value};
+    }
+    [[nodiscard]] virtual bool IsCurrentRoute(const Discovery::DeviceRouteToken& route) const noexcept {
+        return CurrentRoute() == route;
     }
 
     /// Dispatch a STATUS command.

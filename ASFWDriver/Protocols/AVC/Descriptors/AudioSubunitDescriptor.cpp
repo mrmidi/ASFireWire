@@ -1,363 +1,156 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright (c) 2026 ASFireWire Project
-//
-// AudioSubunitDescriptor.cpp - AV/C Audio Subunit Descriptor Parser
-//
-
 #include "AudioSubunitDescriptor.hpp"
-
-#include <algorithm>
-#include <cstring>
+#include "AVCInfoBlock.hpp"
 
 namespace ASFW::Protocols::AVC::Descriptors {
+// Local propagation shorthand: every field access is checked at its source.
+#define AVC_FIELD(name, expression) \
+    auto name##Result = (expression); \
+    if (!name##Result) return std::unexpected(name##Result.error()); \
+    auto name = std::move(*name##Result)
 
 namespace {
-
-[[nodiscard]] inline uint16_t ReadBE16(const uint8_t* p) noexcept {
-    return (static_cast<uint16_t>(p[0]) << 8) | p[1];
+Parsed<AudioSourceId> Source(ParseReader& reader) {
+    AVC_FIELD(type, reader.U8()); AVC_FIELD(id, reader.U8());
+    return AudioSourceId{type, id};
 }
-
+Parsed<void> Feature(ParseReader reader, AudioFunctionBlockInfo& block) {
+    // Audio Subunit Table 8.3 (local spec text:2304-2340). The Duet capture
+    // uses one-byte length/width; only its exact 08 02 00 layout is accepted.
+    AVC_FIELD(bytes, reader.Take(reader.Remaining()));
+    ParseReader fields(bytes, reader.Offset() - bytes.size());
+    if (bytes.size() == 9 && bytes[0] == 8 && bytes[1] == 2 && bytes[2] == 0) {
+        AVC_FIELD(shortLength, fields.U8());
+        (void)shortLength;
+        AVC_FIELD(width, fields.U8());
+        (void)width;
+    } else {
+        AVC_FIELD(specific, fields.Section());
+        auto end = fields.End(); if (!end) return std::unexpected(end.error());
+        fields = specific;
+        AVC_FIELD(width, fields.BE16());
+        if (width != 1 && width != 2)
+            return std::unexpected(ParseError{fields.Offset() - 2, ParseErrorKind::InvalidValue});
+        AVC_FIELD(tag, fields.U8()); block.generalTag = tag;
+        const auto readControl = [&fields, width]() -> Parsed<uint16_t> {
+            if (width == 1) return fields.U8().transform([](uint8_t value) { return static_cast<uint16_t>(value); });
+            return fields.BE16();
+        };
+        AVC_FIELD(master, readControl()); block.masterControls = master;
+        while (fields.Remaining()) { AVC_FIELD(channel, readControl()); block.channelControls.push_back(channel); }
+        return {};
+    }
+    AVC_FIELD(tag, fields.U8()); block.generalTag = tag;
+    AVC_FIELD(master, fields.BE16()); block.masterControls = master;
+    while (fields.Remaining()) { AVC_FIELD(channel, fields.BE16()); block.channelControls.push_back(channel); }
+    return {};
+}
+Parsed<AudioFunctionBlockInfo> FunctionBlock(ParseReader& configuration) {
+    AVC_FIELD(reader, configuration.Section());
+    AudioFunctionBlockInfo block;
+    AVC_FIELD(type, reader.U8()); block.type = static_cast<AudioFunctionBlockType>(type);
+    AVC_FIELD(id, reader.U8()); block.id = id;
+    AVC_FIELD(name, reader.BE16()); block.nameIndex = name;
+    AVC_FIELD(inputs, reader.U8());
+    for (size_t i = 0; i < inputs; ++i) { AVC_FIELD(source, Source(reader)); block.inputSources.push_back(source); }
+    AVC_FIELD(cluster, reader.Section());
+    if (cluster.Remaining()) { AVC_FIELD(channels, cluster.U8()); block.clusterChannels = channels; }
+    AVC_FIELD(dependent, reader.Section());
+    if (block.type == AudioFunctionBlockType::kFeature && dependent.Remaining()) {
+        auto result = Feature(dependent, block); if (!result) return std::unexpected(result.error());
+    } else if (block.type == AudioFunctionBlockType::kProcessing && dependent.Remaining()) {
+        AVC_FIELD(process, dependent.U8()); block.processType = process;
+    }
+    // Additional dependent bytes are reserved/device-specific, not reparsed as
+    // another block. Their bounds have already been validated by Section().
+    return block;
+}
+Parsed<ParseReader> ListEntries(std::span<const uint8_t> data) {
+    AVC_FIELD(reader, DescriptorBody(data));
+    AVC_FIELD(type, reader.U8());
+    if (type != 0x86) return std::unexpected(ParseError{2, ParseErrorKind::InvalidValue});
+    AVC_FIELD(attributes, reader.U8()); (void)attributes;
+    AVC_FIELD(specific, reader.Section()); (void)specific;
+    return reader;
+}
+std::string Text(std::span<const uint8_t> bytes) {
+    std::string text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n')) text.pop_back();
+    return text;
+}
 } // namespace
 
-std::optional<AudioSubunitIdentifier> AudioSubunitDescriptorParser::ParseIdentifierDescriptor(
-    std::span<const uint8_t> data) noexcept {
-    // Descriptor header:
-    // [0..1]: descriptor_length (2)
-    // [2]: generation_ID (1)
-    // [3]: size_of_list_ID (1)
-    // [4]: size_of_object_ID (1)
-    // [5]: size_of_object_position (1)
-    // [6..7]: number_of_root_object_lists (2)
-    if (data.size() < 8) {
-        return std::nullopt;
-    }
-    if (static_cast<size_t>(ReadBE16(data.data())) + 2 != data.size()) {
-        return std::nullopt;
-    }
-
-    AudioSubunitIdentifier id{};
-    id.generationId = data[2];
-    id.sizeOfListId = data[3];
-    id.sizeOfObjectId = data[4];
-    id.sizeOfObjectPosition = data[5];
-
-    const uint16_t numRootLists = ReadBE16(&data[6]);
-    size_t offset = 8;
-
-    const size_t listIdSize = id.sizeOfListId > 0 ? id.sizeOfListId : 2;
-    if (numRootLists != 0 && listIdSize != 2) return std::nullopt;
-    for (uint16_t i = 0; i < numRootLists; ++i) {
-        if (offset + listIdSize > data.size()) {
-            return std::nullopt;
-        }
-        if (listIdSize == 2) {
-            id.rootListIds.push_back(ReadBE16(&data[offset]));
-        }
-        offset += listIdSize;
-    }
-
-    if (offset + 2 > data.size()) return std::nullopt;
-
-    const uint16_t subunitDepLen = ReadBE16(&data[offset]);
-    offset += 2;
-    if (static_cast<size_t>(subunitDepLen) > data.size() - offset) return std::nullopt;
-    const size_t subunitDepEnd = offset + subunitDepLen;
-
-    if (offset + 2 > subunitDepEnd) {
-        return std::nullopt;
-    }
-
-    const uint16_t configDepLen = ReadBE16(&data[offset]);
-    offset += 2;
-    if (static_cast<size_t>(configDepLen) > subunitDepEnd - offset) return std::nullopt;
-    const size_t configDepEnd = offset + configDepLen;
-
-    if (offset + 4 > configDepEnd) {
-        return std::nullopt;
-    }
-
-    // Skip configuration_ID (2)
-    offset += 2;
-
-    const uint16_t configInfoLen = ReadBE16(&data[offset]);
-    offset += 2;
-    if (static_cast<size_t>(configInfoLen) > configDepEnd - offset) return std::nullopt;
-    const size_t configInfoEnd = offset + configInfoLen;
-
-    if (offset + 4 > configInfoEnd) {
-        return std::nullopt;
-    }
-
-    // Skip configuration_name (2)
-    offset += 2;
-
-    // Cluster information: [cluster_info_len: 2][cluster_info...]
-    const uint16_t clusterLen = ReadBE16(&data[offset]);
-    offset += 2;
-    if (clusterLen > configInfoEnd - offset) return std::nullopt;
-    offset += clusterLen;
-
-    if (offset >= configInfoEnd) {
-        return std::nullopt;
-    }
-
-    // Subunit source plugs count and links
-    const uint8_t numSourcePlugs = data[offset++];
-    if (static_cast<size_t>(numSourcePlugs) > (configInfoEnd - offset) / 2) return std::nullopt;
-    for (uint8_t i = 0; i < numSourcePlugs; ++i) {
-        if (offset + 2 > configInfoEnd) {
-            return std::nullopt;
-        }
-        id.sourcePlugLinks.push_back(AudioSourceId{
-            .type = data[offset],
-            .id = data[offset + 1],
-        });
-        offset += 2;
-    }
-
-    if (offset >= configInfoEnd) return std::nullopt;
-
-    // Function blocks count
-    const uint8_t numFunctionBlocks = data[offset++];
-
-    for (uint8_t fbIdx = 0; fbIdx < numFunctionBlocks; ++fbIdx) {
-        if (offset + 2 > configInfoEnd) return std::nullopt;
-        const uint16_t fbLen = ReadBE16(&data[offset]);
-        offset += 2;
-        if (fbLen > configInfoEnd - offset) return std::nullopt;
-        const size_t fbEnd = offset + fbLen;
-
-        if (offset + 4 > fbEnd) {
-            return std::nullopt;
-        }
-
-        AudioFunctionBlockInfo fbInfo{};
-        fbInfo.type = static_cast<AudioFunctionBlockType>(data[offset]);
-        fbInfo.id = data[offset + 1];
-        fbInfo.nameIndex = ReadBE16(&data[offset + 2]);
-        offset += 4;
-
-        if (offset < fbEnd) {
-            const uint8_t numInputs = data[offset++];
-            if (static_cast<size_t>(numInputs) > (fbEnd - offset) / 2) return std::nullopt;
-            for (uint8_t inIdx = 0; inIdx < numInputs; ++inIdx) {
-                fbInfo.inputSources.push_back(AudioSourceId{
-                    .type = data[offset],
-                    .id = data[offset + 1],
-                });
-                offset += 2;
-            }
-        } else return std::nullopt;
-
-        // Cluster info
-        if (offset + 2 > fbEnd) return std::nullopt;
-        const uint16_t fbClusterLen = ReadBE16(&data[offset]);
-        offset += 2;
-        if (fbClusterLen > fbEnd - offset) return std::nullopt;
-        if (fbClusterLen > 0) fbInfo.clusterChannels = data[offset];
-        offset += fbClusterLen;
-
-        // Type-dependent info (Controls for Feature block, or Process type for Processing block)
-        if (offset + 2 > fbEnd) return std::nullopt;
-        {
-            const uint16_t typeDepLen = ReadBE16(&data[offset]);
-            offset += 2;
-            if (typeDepLen > fbEnd - offset) return std::nullopt;
-            const size_t typeDepEnd = offset + typeDepLen;
-
-            if (fbInfo.type == AudioFunctionBlockType::kFeature && offset < typeDepEnd) {
-                // Table 8.3: Feature function block dependent information
-                // Both 8-bit length (Duet) and 16-bit length (Phase 88) are found in hardware:
-                uint8_t sizeOfControls = 2;
-                if (data[offset] != 0) {
-                    // 8-bit length format (e.g. Duet: 0x08 0x02 0x00 ...)
-                    // offset+0: controls_specific_information_length (1 byte)
-                    // offset+1: size_of_controls (1 byte)
-                    // offset+2: general_tag (1 byte)
-                    if (offset + 3 <= typeDepEnd) {
-                        sizeOfControls = data[offset + 1];
-                        fbInfo.generalTag = data[offset + 2];
-                        offset += 3;
-                    }
-                } else {
-                    // 16-bit length format (e.g. Phase 88: 0x0015 0x0002 ...)
-                    // offset+0..1: controls_specific_information_length (2 bytes BE)
-                    // offset+2..3: size_of_controls (2 bytes BE)
-                    if (offset + 4 <= typeDepEnd) {
-                        sizeOfControls = static_cast<uint8_t>(ReadBE16(&data[offset + 2]));
-                        offset += 4;
-                    }
-                }
-
-                if (sizeOfControls > 0 && offset + sizeOfControls <= typeDepEnd) {
-                    uint16_t masterCtrl = 0;
-                    if (sizeOfControls == 1) {
-                        masterCtrl = data[offset];
-                    } else {
-                        masterCtrl = ReadBE16(&data[offset]);
-                    }
-                    fbInfo.masterControls = masterCtrl;
-                    offset += sizeOfControls;
-
-                    // Channel controls
-                    while (offset + sizeOfControls <= typeDepEnd) {
-                        uint16_t chCtrl = 0;
-                        if (sizeOfControls == 1) {
-                            chCtrl = data[offset];
-                        } else {
-                            chCtrl = ReadBE16(&data[offset]);
-                        }
-                        fbInfo.channelControls.push_back(chCtrl);
-                        offset += sizeOfControls;
-                    }
-                }
-            } else if (fbInfo.type == AudioFunctionBlockType::kProcessing && offset < typeDepEnd) {
-                fbInfo.processType = data[offset];
-            }
-        }
-
-        id.functionBlocks.push_back(std::move(fbInfo));
-        offset = fbEnd;
-    }
-
-    return id;
+Parsed<AudioSubunitIdentifier> AudioSubunitDescriptorParser::ParseIdentifierDescriptor(std::span<const uint8_t> data) noexcept {
+    AVC_FIELD(reader, DescriptorBody(data));
+    AudioSubunitIdentifier identifier;
+    AVC_FIELD(generation, reader.U8()); identifier.generationId = generation;
+    AVC_FIELD(listWidth, reader.U8()); identifier.sizeOfListId = listWidth;
+    AVC_FIELD(objectWidth, reader.U8()); identifier.sizeOfObjectId = objectWidth;
+    AVC_FIELD(positionWidth, reader.U8()); identifier.sizeOfObjectPosition = positionWidth;
+    AVC_FIELD(rootCount, reader.BE16());
+    if (rootCount && listWidth != 2) return std::unexpected(ParseError{3, ParseErrorKind::InvalidValue});
+    for (size_t i = 0; i < rootCount; ++i) { AVC_FIELD(id, reader.BE16()); identifier.rootListIds.push_back(id); }
+    AVC_FIELD(dependent, reader.Section());
+    AVC_FIELD(configuration, dependent.Section());
+    AVC_FIELD(configurationId, configuration.BE16()); (void)configurationId;
+    AVC_FIELD(info, configuration.Section());
+    AVC_FIELD(name, info.BE16()); (void)name;
+    AVC_FIELD(cluster, info.Section()); (void)cluster;
+    AVC_FIELD(sourceCount, info.U8());
+    for (size_t i = 0; i < sourceCount; ++i) { AVC_FIELD(source, Source(info)); identifier.sourcePlugLinks.push_back(source); }
+    AVC_FIELD(blockCount, info.U8());
+    for (size_t i = 0; i < blockCount; ++i) { AVC_FIELD(block, FunctionBlock(info)); identifier.functionBlocks.push_back(std::move(block)); }
+    return identifier;
 }
 
-TextDatabase AudioSubunitDescriptorParser::ParseTextDatabaseList(
-    std::span<const uint8_t> data) noexcept {
-    auto parsed = ParseTextDatabaseListChecked(data);
-    return parsed ? std::move(*parsed) : TextDatabase{};
+TextDatabase AudioSubunitDescriptorParser::ParseTextDatabaseList(std::span<const uint8_t> data) noexcept {
+    auto result = ParseTextDatabaseListChecked(data); return result ? std::move(*result) : TextDatabase{};
 }
-
-std::optional<TextDatabase> AudioSubunitDescriptorParser::ParseTextDatabaseListChecked(
-    std::span<const uint8_t> data) noexcept {
-    TextDatabase db;
-    // List descriptor header:
-    // [0..1]: descriptor_length (2 bytes)
-    // [2]: list_type (0x86)
-    // [3]: list_attributes
-    // [4..5]: size_of_list_specific_information (2 bytes BE)
-    // Followed by list_specific_information, then number_of_entries (2 bytes BE)
-    if (data.size() < 8 || data[2] != 0x86 ||
-        static_cast<size_t>(ReadBE16(data.data())) + 2 != data.size()) {
-        return std::nullopt;
-    }
-
-    const uint16_t listSpecLen = ReadBE16(&data[4]);
-    const size_t entryCountOffset = 6 + listSpecLen;
-    if (entryCountOffset + 2 > data.size()) {
-        return std::nullopt;
-    }
-
-    const uint16_t numEntries = ReadBE16(&data[entryCountOffset]);
-    size_t offset = entryCountOffset + 2;
-
-    uint16_t entryIndex = 0;
-    while (entryIndex < numEntries) {
-        if (offset + 2 > data.size()) return std::nullopt;
-        const uint16_t entryLen = ReadBE16(&data[offset]);
-        offset += 2;
-        if (entryLen > data.size() - offset) return std::nullopt;
-        const size_t entryEnd = offset + entryLen;
-
-        // Entry header:
-        // [0]: entry_type (0x93 = Text Database Object)
-        // [1]: entry_attributes
-        // [2..3]: compound_length / size_of_entry_info
-        // [4..6]: 0x00 0x01 0x03
-        // Info blocks begin at offset + 7
-        if (entryEnd - offset < 7) return std::nullopt;
-        {
-            const uint8_t entryType = data[offset];
-            if (entryType == 0x93) {
-                size_t scan = offset + 7;
-                while (scan < entryEnd) {
-                    if (entryEnd - scan < 6) return std::nullopt;
-                    const uint16_t blockLen = ReadBE16(&data[scan]);
-                    const uint16_t blockType = ReadBE16(&data[scan + 2]);
-                    const uint16_t primaryLen = ReadBE16(&data[scan + 4]);
-                    if (blockLen < 4 || blockLen > entryEnd - scan - 2 ||
-                        primaryLen > blockLen - 4) return std::nullopt;
-
-                    if (blockType == 0x000A) { // Text info block
-                        const size_t textStart = scan + 6;
-                        const size_t textLen = primaryLen;
-                        std::string text(reinterpret_cast<const char*>(&data[textStart]), textLen);
-                        while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n')) {
-                            text.pop_back();
-                        }
-                        db[entryIndex] = std::move(text);
-                        break;
-                    }
-
-                    scan += 2 + blockLen;
-                }
-            }
+Parsed<TextDatabase> AudioSubunitDescriptorParser::ParseTextDatabaseListChecked(std::span<const uint8_t> data) noexcept {
+    AVC_FIELD(entries, ListEntries(data));
+    AVC_FIELD(count, entries.BE16());
+    TextDatabase database;
+    for (size_t i = 0; i < count; ++i) {
+        AVC_FIELD(entry, entries.Section());
+        AVC_FIELD(type, entry.U8());
+        AVC_FIELD(attributes, entry.U8()); (void)attributes;
+        if (type != 0x93) continue;
+        AVC_FIELD(header, entry.Take(5)); (void)header;
+        while (entry.Remaining()) {
+            const auto base = entry.Offset();
+            AVC_FIELD(bytes, entry.Take(entry.Remaining()));
+            size_t used = 0;
+            AVC_FIELD(block, AVCInfoBlock::Parse(bytes, used, base));
+            if (block.GetType() == 0x000A) database[static_cast<uint16_t>(i)] = Text(block.GetPrimaryData());
+            entry = ParseReader(bytes.subspan(used), base + used);
         }
-
-        entryIndex++;
-        offset = entryEnd;
     }
-
-    if (offset != data.size()) return std::nullopt;
-
-    return db;
+    auto end = entries.End(); if (!end) return std::unexpected(end.error());
+    return database;
 }
-
-std::optional<std::vector<uint16_t>> AudioSubunitDescriptorParser::ParseChildListIds(
+Parsed<std::vector<uint16_t>> AudioSubunitDescriptorParser::ParseChildListIds(
     std::span<const uint8_t> data, uint8_t listIdSize, uint8_t objectIdSize) noexcept {
-    if (data.size() < 8 || listIdSize != 2 ||
-        static_cast<size_t>(ReadBE16(data.data())) + 2 != data.size()) {
-        return std::nullopt;
-    }
-    const uint8_t listAttributes = data[3];
-    const uint16_t listSpecificLength = ReadBE16(&data[4]);
-    size_t offset = 6;
-    if (listSpecificLength > data.size() - offset ||
-        offset + listSpecificLength + 2 > data.size()) return std::nullopt;
-    offset += listSpecificLength;
-    const uint16_t entryCount = ReadBE16(&data[offset]);
-    offset += 2;
-
-    std::vector<uint16_t> childIds;
-    for (uint16_t i = 0; i < entryCount; ++i) {
-        if (offset + 2 > data.size()) return std::nullopt;
-        const uint16_t entryLength = ReadBE16(&data[offset]);
-        offset += 2;
-        if (entryLength > data.size() - offset) return std::nullopt;
-        const size_t end = offset + entryLength;
-        if (end - offset < 4) return std::nullopt;
-        const uint8_t attributes = data[offset + 1];
-        size_t fieldOffset = offset + 2;
-        if (attributes & 0x20) {
-            if (end - fieldOffset < listIdSize) return std::nullopt;
-            childIds.push_back(ReadBE16(&data[fieldOffset]));
-            fieldOffset += listIdSize;
+    if (listIdSize != 2) return std::unexpected(ParseError{0, ParseErrorKind::InvalidValue});
+    AVC_FIELD(entries, ListEntries(data));
+    AVC_FIELD(count, entries.BE16());
+    std::vector<uint16_t> ids;
+    for (size_t i = 0; i < count; ++i) {
+        AVC_FIELD(entry, entries.Section());
+        AVC_FIELD(type, entry.U8()); (void)type;
+        AVC_FIELD(attributes, entry.U8());
+        if (attributes & 0x20) { AVC_FIELD(id, entry.BE16()); ids.push_back(id); }
+        if (data[3] & 0x10) {
+            if (!objectIdSize) return std::unexpected(ParseError{entry.Offset(), ParseErrorKind::InvalidValue});
+            AVC_FIELD(object, entry.Take(objectIdSize)); (void)object;
         }
-        if (listAttributes & 0x10) {
-            if (objectIdSize == 0 || objectIdSize > end - fieldOffset) return std::nullopt;
-            fieldOffset += objectIdSize;
-        }
-        if (end - fieldOffset < 2) return std::nullopt;
-        const uint16_t specificLength = ReadBE16(&data[fieldOffset]);
-        fieldOffset += 2;
-        if (specificLength > end - fieldOffset) return std::nullopt;
-        offset = end;
+        AVC_FIELD(specific, entry.Section()); (void)specific;
     }
-    if (offset != data.size()) return std::nullopt;
-    return childIds;
+    auto end = entries.End(); if (!end) return std::unexpected(end.error());
+    return ids;
 }
-
-void AudioSubunitDescriptorParser::ResolveNames(
-    AudioSubunitIdentifier& identifier, const TextDatabase& textDb) noexcept {
-    for (auto& fb : identifier.functionBlocks) {
-        if (fb.nameIndex != 0xFFFF) {
-            auto it = textDb.find(fb.nameIndex);
-            if (it != textDb.end()) {
-                fb.name = it->second;
-            }
-        }
-    }
+void AudioSubunitDescriptorParser::ResolveNames(AudioSubunitIdentifier& identifier, const TextDatabase& database) noexcept {
+    for (auto& block : identifier.functionBlocks)
+        if (auto found = database.find(block.nameIndex); found != database.end()) block.name = found->second;
 }
-
+#undef AVC_FIELD
 } // namespace ASFW::Protocols::AVC::Descriptors
