@@ -19,7 +19,6 @@
 #include <span>
 #include <vector>
 #include "FCPTransport.hpp"
-#include "Subunit.hpp"
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
@@ -43,34 +42,6 @@ enum class AVCDiscoveryStatus : uint8_t {
 //==============================================================================
 class DescriptorAccessor;
 namespace Graph { struct DeviceGraph; struct StreamGraph; }
-
-//==============================================================================
-// Unit Descriptor Information (Phase 5 Discovery)
-//==============================================================================
-
-/// Information extracted from Unit Identifier Descriptor
-/// Ref: TA Document 2002013 Section 6.2.1
-struct UnitDescriptorInfo {
-    // Descriptor sizes from Unit Identifier
-    uint8_t generationID{0};
-    uint8_t sizeOfListID{0};
-    uint8_t sizeOfObjectID{0};
-    uint8_t sizeOfEntryPosition{0};
-
-    // Root object lists
-    uint16_t numberOfRootObjectLists{0};
-    std::vector<uint64_t> rootListIDs;  // Variable-size IDs
-
-    // Traversed root list contents (object IDs in each list)
-    struct RootListContents {
-        uint64_t listID;
-        std::vector<uint64_t> objectIDs;
-    };
-    std::vector<RootListContents> rootListContents;
-
-    // Support status
-    bool descriptorMechanismSupported{false};
-};
 
 //==============================================================================
 // AV/C Unit
@@ -165,15 +136,12 @@ public:
     [[nodiscard]] FcpExchangeLog CopyExchangeLog() const {
         return fcpTransport_ ? fcpTransport_->CopyExchangeLog() : FcpExchangeLog{};
     }
-    const ASFW::AVC::Cmd::UnitPlugCounts& GetCachedPlugCounts() const { return model_.unitPlugs; }
-    const ASFW::AVC::UnitModel& GetModel() const noexcept { return model_; }
     std::shared_ptr<const Graph::DeviceGraph> GetDiscoveredGraph() const noexcept { return discoveredGraph_; }
+    /// The last committed discovery: unit, subunits, plugs, descriptors,
+    /// controls. Immutable; every consumer reads discovered facts from here.
     [[nodiscard]] ASFW::AVC::DiscoveryEngine::SnapshotLease GetDiscoverySnapshot() const noexcept { return snapshot_; }
-    ASFW::AVC::UnitModel& GetModel() noexcept { return model_; }
 
-    const std::vector<std::shared_ptr<Subunit>>& GetSubunits() const { return subunits_; }
 
-    const UnitDescriptorInfo& GetDescriptorInfo() const { return descriptorInfo_; }
 
     std::shared_ptr<Discovery::FWUnit> GetFWUnit() const { return unit_.lock(); }
 
@@ -212,10 +180,7 @@ private:
 
     std::shared_ptr<FCPTransport> fcpTransport_;
 
-    std::vector<std::shared_ptr<Subunit>> subunits_;
-    ASFW::AVC::UnitModel model_{};
     std::shared_ptr<const Graph::DeviceGraph> discoveredGraph_{};
-    UnitDescriptorInfo descriptorInfo_;
 
     ASFW::AVC::DiscoveryEngine::SessionSlot sessionSlot_{ASFW::AVC::DiscoveryEngine::IdleSlot{}};
     ASFW::AVC::DiscoveryEngine::SnapshotLease snapshot_;

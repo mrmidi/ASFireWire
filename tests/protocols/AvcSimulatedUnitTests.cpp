@@ -13,7 +13,6 @@
 #include "ASFWDriver/Protocols/AVC/Descriptors/DescriptorAccessor.hpp"
 #include "ASFWDriver/Protocols/AVC/Descriptors/MusicSubunitDescriptor.hpp"
 #include "ASFWDriver/Protocols/AVC/Descriptors/AudioSubunitDescriptor.hpp"
-#include "ASFWDriver/Protocols/AVC/Audio/AudioSubunit.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/IAvcUnit.hpp"
 #include "ASFWDriver/Protocols/AVC/Extensions/BridgeCoPlugInfo.hpp"
 #include "RecordingFireWireBus.hpp"
@@ -21,6 +20,16 @@
 #include "Phase88DescriptorFixtures.hpp"
 
 namespace ASFW::AVC::Testing {
+
+namespace {
+/// The audio subunit identifier discovery committed, if any.
+const ASFW::Protocols::AVC::Descriptors::AudioSubunitIdentifier* AudioIdentifier(
+    const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot) {
+    for (const auto& contents : snapshot.contents)
+        if (contents.id.type == ASFW::AVC::SubunitType::kAudio && contents.audio) return &*contents.audio;
+    return nullptr;
+}
+} // namespace
 
 class AvcSimulatedUnitTests : public ::testing::Test {
 protected:
@@ -193,14 +202,13 @@ TEST_F(AvcSimulatedUnitTests, Phase88AudioDescriptorTraversalUsesSessionsAndReta
         phase88Unit_.FlushDeferredResponses();
     }
     ASSERT_TRUE(snapshot);
-    Protocols::AVC::Audio::AudioSubunit audio(Protocols::AVC::AVCSubunitType::kAudio, 0);
-    audio.LoadSnapshot(*snapshot);
-    ASSERT_TRUE(audio.GetIdentifier().has_value());
-    const auto* master = audio.GetIdentifier()->FindBlock(
+    const auto* identifier = AudioIdentifier(*snapshot);
+    ASSERT_NE(identifier, nullptr);
+    const auto* master = identifier->FindBlock(
         Descriptors::AudioFunctionBlockType::kFeature, 1);
     ASSERT_NE(master, nullptr);
     EXPECT_EQ(master->name, "Mixer Output Level");
-    const auto* input = audio.GetIdentifier()->FindBlock(
+    const auto* input = identifier->FindBlock(
         Descriptors::AudioFunctionBlockType::kFeature, 2);
     ASSERT_NE(input, nullptr);
     EXPECT_EQ(input->name, "Mixer Input LineIn 1/2 Level");
@@ -356,7 +364,7 @@ TEST_F(AvcSimulatedUnitTests, DescriptorChunkedServing) {
     EXPECT_FALSE(failedResult->success);
 }
 
-TEST_F(AvcSimulatedUnitTests, AudioSubunitReadIdentifierDescriptor_DuetIntegration) {
+TEST_F(AvcSimulatedUnitTests, DuetAudioIdentifierIsDiscovered) {
     const std::string duetAudioHex =
         "0036000200020000002c002a00010026000000040202c0000181000100188101ffff01f00000040202c00000090802000003000200020000";
 
@@ -370,18 +378,15 @@ TEST_F(AvcSimulatedUnitTests, AudioSubunitReadIdentifierDescriptor_DuetIntegrati
     // Audio Subunit 0 address is 0x08 (0x01 << 3 | 0), identifier specifier is 0x00
     duetUnit_.SetDescriptor(0x08, {0x00}, descriptorBytes);
 
-    Protocols::AVC::Audio::AudioSubunit audioSubunit(Protocols::AVC::AVCSubunitType::kAudio, 0);
-    EXPECT_FALSE(audioSubunit.GetIdentifier().has_value());
 
     namespace Engine = ASFW::AVC::DiscoveryEngine;
     Engine::SnapshotLease snapshot;
     auto session = Engine::Session::Create(duetUnit_, {8}, [&](auto result) { snapshot = std::move(result); });
     session->Start();
     ASSERT_TRUE(snapshot);
-    audioSubunit.LoadSnapshot(*snapshot);
 
-    const auto& id = audioSubunit.GetIdentifier();
-    ASSERT_TRUE(id.has_value());
+    const auto* id = AudioIdentifier(*snapshot);
+    ASSERT_NE(id, nullptr);
     EXPECT_EQ(id->generationId, 0);
     ASSERT_EQ(id->functionBlocks.size(), 1u);
     EXPECT_EQ(id->functionBlocks[0].id, 1);
@@ -679,3 +684,21 @@ TEST(DiscoveryReducer, OptionalUnitInfoFailureContinuesButTransportFailureTermin
     EXPECT_EQ(std::get<Engine::Commit>(failed.actions.front()).snapshot->terminalError->kind, Avc::AvcErrorKind::kTransportError);
 }
 }
+
+TEST(LiveRefTests, YieldsNullOnceTheTargetIsGoneAndCopiesHaveTheirOwnLifetime) {
+    struct Target {
+        ASFW::Common::LifetimeAnchor anchor;
+        [[nodiscard]] std::weak_ptr<const void> LifetimeToken() const noexcept { return anchor.Token(); }
+    };
+    auto first = std::make_unique<Target>();
+    const ASFW::Common::LiveRef<Target> ref(*first);
+    EXPECT_EQ(ref.Get(), first.get());
+
+    auto copy = std::make_unique<Target>(*first);
+    const ASFW::Common::LiveRef<Target> copyRef(*copy);
+    first.reset();
+    EXPECT_EQ(ref.Get(), nullptr);
+    EXPECT_FALSE(ref);
+    EXPECT_EQ(copyRef.Get(), copy.get()) << "a copy does not share the original's lifetime";
+}
+

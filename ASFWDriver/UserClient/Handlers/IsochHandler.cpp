@@ -76,12 +76,12 @@ kern_return_t IsochHandler::TestIRMAllocation(IOUserClientMethodArguments* args)
     // 1. Get AVC Unit to set Sample Rate
     // Note: We scan for the first available AVC unit for this test
     auto* avcDiscovery = controllerCore->GetAVCDiscovery();
-    auto units = avcDiscovery->GetAllAVCUnits();
+    const auto units = avcDiscovery->Units();
     if (units.empty()) {
         ASFW_LOG(UserClient, "❌ No AVC Unit found for sample rate configuration.");
         return kIOReturnNotFound;
     }
-    auto* avcUnit = units[0]; // Assume first unit is target
+    const auto& avcUnit = units[0]; // Assume first unit is target
 
     // 2. Set Sample Rate to 48kHz using Unit Plug Signal Format (Oxford/Linux style)
     // The Linux driver sets format on Unit Plug 0 (Input and Output).

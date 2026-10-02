@@ -21,11 +21,12 @@ class IAVCDiscovery {
 public:
     virtual ~IAVCDiscovery() = default;
 
-    /**
-     * @brief Get all AV/C units
-     * @return Vector of pointers to AVCUnit instances
-     */
-    virtual std::vector<AVCUnit*> GetAllAVCUnits() = 0;
+    /// The unit with this GUID, or null. The caller holds an owning handle: a
+    /// unit removed meanwhile stays valid (its transport refuses new frames).
+    virtual std::shared_ptr<AVCUnit> Unit(uint64_t guid) = 0;
+
+    /// Every AV/C unit, as owning handles.
+    virtual std::vector<std::shared_ptr<AVCUnit>> Units() = 0;
 
     /**
      * @brief Re-scan all AV/C units

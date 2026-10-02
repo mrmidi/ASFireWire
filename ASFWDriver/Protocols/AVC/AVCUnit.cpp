@@ -6,18 +6,12 @@
 //
 
 #include "AVCUnit.hpp"
-#include "Graph/AvcGraphBuilder.hpp"
 #include "Graph/DiscoveryGraph.hpp"
-#include "Graph/AvcStreamGeometry.hpp"
 #include <algorithm>
-#include "../../Common/CallbackUtils.hpp"
 #include "../../Logging/Logging.hpp"
 #include "Commands/GeneralCommands.hpp"
 #include "Commands/SignalSourceCommand.hpp"
 #include "Commands/StreamFormatCommand.hpp"
-#include "Core/RateCodes.hpp"
-#include "Music/MusicSubunit.hpp"
-#include "Audio/AudioSubunit.hpp"
 
 using namespace ASFW::Protocols::AVC;
 
@@ -213,7 +207,6 @@ void AVCUnit::OnBusReset(uint32_t newGeneration) {
     if (fcpTransport_) {
         fcpTransport_->OnBusReset(newGeneration);
     }
-    model_.identity = Identity();
 
     // v1: Keep cached state (subunits, plugs rarely change)
     // Caller can re-Initialize() if topology changed
@@ -227,7 +220,6 @@ void AVCUnit::OnRouteRevalidated() {
     if (fcpTransport_ && route.has_value()) {
         fcpTransport_->OnRouteRevalidated(*route);
     }
-    model_.identity = Identity();
 }
 
 //==============================================================================
@@ -251,30 +243,6 @@ uint32_t AVCUnit::GetSpecID() const {
 }
 
 void AVCUnit::ApplySnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot) {
-    model_ = snapshot.unit;
-    subunits_.clear(); descriptorInfo_ = {};
-    for (const auto& sub : snapshot.unit.subunits) {
-        const auto type = static_cast<AVCSubunitType>(sub.id.type);
-        std::shared_ptr<Subunit> projection;
-        if (sub.id.type == ASFW::AVC::SubunitType::kMusic) {
-            auto music = std::make_shared<Music::MusicSubunit>(type, sub.id.id);
-            music->LoadSnapshot(snapshot); projection = std::move(music);
-        } else if (sub.id.type == ASFW::AVC::SubunitType::kAudio) {
-            auto audio = std::make_shared<Audio::AudioSubunit>(type, sub.id.id);
-            audio->LoadSnapshot(snapshot); projection = std::move(audio);
-        } else {
-            class InventorySubunit final : public Subunit {
-            public:
-                InventorySubunit(AVCSubunitType type, uint8_t id) : Subunit(type, id) {}
-                std::string GetName() const override { return "Generic"; }
-            };
-            projection = std::make_shared<InventorySubunit>(type, sub.id.id);
-        }
-        projection->SetPlugCounts({sub.plugs.destinationPlugs, sub.plugs.sourcePlugs});
-        subunits_.push_back(std::move(projection));
-    }
-    for (const auto& blob : snapshot.descriptors)
-        if (!blob.primaryError && !blob.bytes.empty()) descriptorInfo_.descriptorMechanismSupported = true;
     std::string name;
     if (auto device = device_.lock()) name = std::string(device->GetModelName());
     discoveredGraph_ = std::make_shared<const Graph::DeviceGraph>(Graph::BuildDiscoveryGraph(snapshot, std::move(name)));

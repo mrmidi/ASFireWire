@@ -401,38 +401,20 @@ void AVCDiscovery::OnDeviceRemoved(Discovery::Guid64 guid) {
 // Public API
 //==============================================================================
 
-AVCUnit* AVCDiscovery::GetAVCUnit(uint64_t guid) {
+std::shared_ptr<AVCUnit> AVCDiscovery::Unit(uint64_t guid) {
     IOLockLock(lock_);
-
-    auto it = units_.find(guid);
-    AVCUnit* result = (it != units_.end()) ? it->second.get() : nullptr;
-
+    const auto it = units_.find(guid);
+    auto result = it != units_.end() ? it->second : nullptr;
     IOLockUnlock(lock_);
-
     return result;
 }
 
-AVCUnit* AVCDiscovery::GetAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) {
-    if (!unit) {
-        return nullptr;
-    }
-
-    uint64_t guid = GetUnitGUID(unit);
-    return GetAVCUnit(guid);
-}
-
-std::vector<AVCUnit*> AVCDiscovery::GetAllAVCUnits() {
+std::vector<std::shared_ptr<AVCUnit>> AVCDiscovery::Units() {
     IOLockLock(lock_);
-
-    std::vector<AVCUnit*> result;
+    std::vector<std::shared_ptr<AVCUnit>> result;
     result.reserve(units_.size());
-
-    for (auto& [guid, avcUnit] : units_) {
-        result.push_back(avcUnit.get());
-    }
-
+    for (const auto& [guid, avcUnit] : units_) result.push_back(avcUnit);
     IOLockUnlock(lock_);
-
     return result;
 }
 

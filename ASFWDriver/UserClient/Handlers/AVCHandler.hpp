@@ -13,8 +13,6 @@
 #include <DriverKit/OSString.h>
 #include <DriverKit/OSNumber.h>
 #include <memory>
-// Include MusicSubunit for static helper types
-#include "../../Protocols/AVC/Music/MusicSubunit.hpp" // Adjusted path: Handler is under UserClient/Handlers. Music is Protocols/AVC/Music/
 
 struct IOUserClientMethodArguments;
 
@@ -27,8 +25,9 @@ namespace ASFW::UserClient {
 /**
  * @brief Handler for AV/C protocol queries
  *
- * Provides GUI access to discovered AV/C units and their subunits.
- * Serializes AV/C unit information from AVCDiscovery into wire format.
+ * Provides GUI access to discovered AV/C units and their subunits. Every
+ * answer is serialized from the unit's immutable discovery snapshot; the
+ * wire layouts (Shared/SharedDataModels.hpp) are unchanged for the app.
  */
 class AVCHandler {
 public:
@@ -57,15 +56,6 @@ public:
      * @return kIOReturnSuccess on success
      */
     kern_return_t GetSubunitCapabilities(IOUserClientMethodArguments* args);
-
-    // Helper for testing: Serialize music capabilities to wire format
-    // Static and public to allow unit testing without full AVCHandler/AVCDiscovery setup
-    static kern_return_t SerializeMusicCapabilities(
-        const ASFW::Protocols::AVC::Music::MusicSubunitCapabilities& caps,
-        const std::vector<ASFW::Protocols::AVC::Music::MusicSubunit::PlugInfo>& plugs,
-        const std::vector<ASFW::Protocols::AVC::Music::MusicSubunit::MusicPlugChannel>& channels,
-        IOUserClientMethodArguments* args
-    );
 
     /**
      * @brief Get raw descriptor data for a specific subunit

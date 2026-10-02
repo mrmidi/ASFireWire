@@ -185,7 +185,7 @@ TEST(AvcDiscoveryLifecycle, BusResetDuringResumeRescanDoesNotReenterTheDiscovery
     // Attach starts, and its first command goes unanswered.
     rig.Sim().SetTimeoutNext();
     rig.Discovery().OnUnitPublished(rig.Unit());
-    auto* unit = rig.Discovery().GetAVCUnit(kGuid);
+    const auto unit = rig.Discovery().Unit(kGuid);
     ASSERT_NE(unit, nullptr);
     EXPECT_EQ(unit->GetDiscoveryStatus(), AVCDiscoveryStatus::Running);
 
@@ -217,7 +217,7 @@ TEST(AvcDiscoveryLifecycle, ResumeRescansAFailedAttachOnlyOnce) {
     rig.Timers().Advance(kRescanDelayNs);
     rig.BusReset(3);
 
-    auto* unit = rig.Discovery().GetAVCUnit(kGuid);
+    const auto unit = rig.Discovery().Unit(kGuid);
     ASSERT_NE(unit, nullptr);
     ASSERT_EQ(unit->GetDiscoveryStatus(), AVCDiscoveryStatus::Failed);
     rig.Resume(3);
@@ -231,7 +231,7 @@ TEST(AvcDiscoveryLifecycle, AFinishedAttachEndsInAVisiblePublicationState) {
     DiscoveryRig rig;
     rig.Discovery().OnUnitPublished(rig.Unit());
     rig.Settle();
-    auto* unit = rig.Discovery().GetAVCUnit(kGuid);
+    const auto unit = rig.Discovery().Unit(kGuid);
     ASSERT_NE(unit, nullptr);
     ASSERT_NE(unit->GetDiscoveryStatus(), AVCDiscoveryStatus::Running);
     const auto status = rig.Coordinator().Status(kGuid);
@@ -256,7 +256,7 @@ TEST(AvcDiscoveryLifecycle, ARefreshIsRefusedWhileTheDeviceStreams) {
     DiscoveryRig rig;
     rig.Discovery().OnUnitPublished(rig.Unit());
     rig.Settle();
-    auto* unit = rig.Discovery().GetAVCUnit(kGuid);
+    const auto unit = rig.Discovery().Unit(kGuid);
     ASSERT_NE(unit, nullptr);
     const auto session = unit->CopyExchangeLog().session;
     const auto writes = rig.FcpWrites();
@@ -278,7 +278,7 @@ TEST(AvcDiscoveryLifecycle, ASecondRefreshWhileOneRunsIsBusyNotASecondSession) {
     DiscoveryRig rig;
     rig.Discovery().OnUnitPublished(rig.Unit());
     rig.Settle();
-    auto* unit = rig.Discovery().GetAVCUnit(kGuid);
+    const auto unit = rig.Discovery().Unit(kGuid);
     ASSERT_NE(unit, nullptr);
     const auto session = unit->CopyExchangeLog().session;
     rig.Sim().SetTimeoutNext(); // Keep the first refresh in flight.
@@ -392,7 +392,7 @@ TEST(AvcBootloaderPreparation, ColdBootCuesOnceAndTheFirmwarePersonaGetsTheOnlyP
     // (no transport producer), no FCP frame, no publication, no failure.
     EXPECT_EQ(rig.InfoReads(), 1U);
     EXPECT_EQ(rig.Cues(), 1U);
-    EXPECT_EQ(rig.discovery_->GetAVCUnit(kGuid1814), nullptr);
+    EXPECT_EQ(rig.discovery_->Unit(kGuid1814), nullptr);
     EXPECT_EQ(rig.FcpWrites(), 0U);
     EXPECT_EQ(rig.listener_.published, 0U);
     EXPECT_TRUE(Is<ASFW::Audio::AVC::WaitingForDiscovery>(rig.Status()));
@@ -401,7 +401,7 @@ TEST(AvcBootloaderPreparation, ColdBootCuesOnceAndTheFirmwarePersonaGetsTheOnlyP
     rig.Appear(2, kFirmwarePersonaModel);
     EXPECT_EQ(rig.InfoReads(), 1U);
     EXPECT_EQ(rig.Cues(), 1U);
-    EXPECT_NE(rig.discovery_->GetAVCUnit(kGuid1814), nullptr);
+    EXPECT_NE(rig.discovery_->Unit(kGuid1814), nullptr);
     EXPECT_EQ(rig.FcpWrites(), 0U); // Profile-owned: discovery sends no AV/C.
     EXPECT_EQ(rig.listener_.published, 1U);
     EXPECT_TRUE(Is<ASFW::Audio::AVC::Ready>(rig.Status()));
@@ -413,7 +413,7 @@ TEST(AvcBootloaderPreparation, LoaderStillActiveOnANewRouteIsReadAgainNeverCuedA
     rig.Appear(2, Boot::kFireWire1814BootloaderModelId); // The cue did not take.
     EXPECT_EQ(rig.InfoReads(), 2U);
     EXPECT_EQ(rig.Cues(), 1U);
-    EXPECT_EQ(rig.discovery_->GetAVCUnit(kGuid1814), nullptr);
+    EXPECT_EQ(rig.discovery_->Unit(kGuid1814), nullptr);
     EXPECT_EQ(rig.listener_.published, 0U);
     EXPECT_TRUE(Is<ASFW::Audio::AVC::Failed>(rig.Status()));
 }
@@ -427,7 +427,7 @@ TEST(AvcBootloaderPreparation, ConfirmedFirmwareIsReusedOnANewRouteOfTheSameInca
     EXPECT_EQ(rig.Cues(), 0U);
     EXPECT_FALSE(Is<ASFW::Audio::AVC::Failed>(rig.Status()));
     // The loader persona itself is never an AV/C producer.
-    EXPECT_EQ(rig.discovery_->GetAVCUnit(kGuid1814), nullptr);
+    EXPECT_EQ(rig.discovery_->Unit(kGuid1814), nullptr);
     EXPECT_EQ(rig.FcpWrites(), 0U);
 }
 

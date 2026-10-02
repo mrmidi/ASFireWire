@@ -31,7 +31,6 @@
 // Forward declarations
 namespace ASFW::Discovery { class DeviceRegistry; struct DeviceRecord; }
 namespace ASFW::Audio::Model { struct ASFWAudioDevice; }
-namespace ASFW::Protocols::AVC::Music { class MusicSubunit; }
 
 namespace ASFW::Protocols::AVC {
 
@@ -66,11 +65,8 @@ public:
     void OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) override;
     void OnDeviceRemoved(Discovery::Guid64 guid) override;
 
-    AVCUnit* GetAVCUnit(uint64_t guid);
-
-    AVCUnit* GetAVCUnit(std::shared_ptr<Discovery::FWUnit> unit);
-
-    std::vector<AVCUnit*> GetAllAVCUnits() override;
+    std::shared_ptr<AVCUnit> Unit(uint64_t guid) override;
+    std::vector<std::shared_ptr<AVCUnit>> Units() override;
 
     void ReScanAllUnits() override;
 

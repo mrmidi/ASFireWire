@@ -814,7 +814,8 @@ namespace UserClientGolden {
 class OneUnitDiscovery final : public IAVCDiscovery {
 public:
     explicit OneUnitDiscovery(std::shared_ptr<AVCUnit> unit) : unit_(std::move(unit)) {}
-    std::vector<AVCUnit*> GetAllAVCUnits() override { return {unit_.get()}; }
+    std::shared_ptr<AVCUnit> Unit(uint64_t) override { return unit_; }
+    std::vector<std::shared_ptr<AVCUnit>> Units() override { return {unit_}; }
     void ReScanAllUnits() override {}
     FCPTransport* GetFCPTransportForNodeID(uint16_t) override { return nullptr; }
     std::shared_ptr<FCPTransport> AcquireFCPTransportForNodeID(uint16_t) override { return nullptr; }
@@ -852,7 +853,7 @@ std::string Capture(const std::shared_ptr<AVCUnit>& unit, uint64_t guid) {
         if (args.structureOutput) args.structureOutput->release();
     };
     call("GetAVCUnits", &UserClient::AVCHandler::GetAVCUnits, {});
-    for (const auto& sub : unit->GetModel().subunits) {
+    for (const auto& sub : unit->GetDiscoverySnapshot()->unit.subunits) {
         const auto type = static_cast<uint64_t>(sub.id.type);
         const std::vector<uint64_t> scalars{guid >> 32, guid & 0xFFFFFFFFu, type, sub.id.id};
         char name[64];

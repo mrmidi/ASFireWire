@@ -48,14 +48,13 @@ add_protocols_test(AvcSimulatedUnitTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
 )
 
 # AVC Golden Wire Characterization Tests (Phase 2a)
 add_protocols_test(AvcGoldenTests
     AvcGoldenTests.cpp
     "${ASFW_DRIVER_DIR}/UserClient/Handlers/AVCHandler.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/AVCMusicCapabilities.cpp"
     "${ASFW_DRIVER_DIR}/UserClient/WireFormats/AVCDiscoveryDocument.cpp"
     "${ASFW_TESTS_DIR}/support/SimulatedAvcUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
@@ -80,15 +79,11 @@ add_protocols_test(AvcGoldenTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
 )
-
 
 # AVCDiscovery lifecycle (attach, bus reset, resume, rescan)
 add_protocols_test(AvcDiscoveryLifecycleTests
@@ -128,9 +123,6 @@ add_protocols_test(AvcDiscoveryLifecycleTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
@@ -206,33 +198,6 @@ add_protocols_test(CMPConnectionTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
-# Music Subunit Identifier Parser Tests
-add_executable(MusicSubunitIdentifierParserTests
-    MusicSubunitIdentifierParserTests.cpp
-    "../support/AsyncSubsystemStub.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
-    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
-    "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
-)
-target_link_libraries(MusicSubunitIdentifierParserTests PRIVATE
-    asfw_packet_serdes
-    asfw_test_support
-    GTest::gtest_main
-)
-gtest_discover_tests(MusicSubunitIdentifierParserTests)
-
 # AVC Info Block Tests
 add_protocols_test(AVCInfoBlockTests
     AVCInfoBlockTests.cpp
@@ -268,59 +233,23 @@ add_protocols_test(AvcGraphBuilderTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
 )
 
-
-# Music Subunit Tests
-add_executable(MusicSubunitTests
-    MusicSubunitTests.cpp
-    "../support/AsyncSubsystemStub.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
-    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
-    "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
-)
-target_link_libraries(MusicSubunitTests PRIVATE
-    asfw_packet_serdes
-    asfw_test_support
-    GTest::gtest_main
-    GTest::gmock
-)
-gtest_discover_tests(MusicSubunitTests)
-
 # Stream Format Parser Tests
-add_protocols_test(StreamFormatParserTests
-    StreamFormatParserTests.cpp
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
-)
 
 # Music Subunit Capabilities Tests
-add_protocols_test(MusicSubunitCapabilitiesTests
-    MusicSubunitCapabilitiesTests.cpp
-)
 
 # AVCHandler Tests
 add_executable(AVCHandlerTests
     AVCHandlerTests.cpp
     "../support/AsyncSubsystemStub.cpp"
     "${ASFW_DRIVER_DIR}/UserClient/Handlers/AVCHandler.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/AVCMusicCapabilities.cpp"
     "${ASFW_DRIVER_DIR}/UserClient/WireFormats/AVCDiscoveryDocument.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
@@ -335,37 +264,6 @@ target_link_libraries(AVCHandlerTests PRIVATE
     GTest::gmock
 )
 gtest_discover_tests(AVCHandlerTests)
-
-# AVCCapabilitiesSerializerTests
-add_executable(AVCCapabilitiesSerializerTests
-    AVCCapabilitiesSerializerTests.cpp
-    "../support/AsyncSubsystemStub.cpp"
-    "${ASFW_DRIVER_DIR}/UserClient/Handlers/AVCHandler.cpp"
-    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/AVCDiscoveryDocument.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/MusicSubunitDescriptor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AudioSubunitDescriptor.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
-    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
-    "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
-)
-target_link_libraries(AVCCapabilitiesSerializerTests PRIVATE
-    asfw_packet_serdes
-    asfw_test_support
-    GTest::gtest_main
-    GTest::gmock
-)
-gtest_discover_tests(AVCCapabilitiesSerializerTests)
-
 
 add_protocols_test(PCRCodecTests
     PCRCodecTests.cpp
@@ -487,7 +385,6 @@ add_protocols_test(SBP2HandlerTests
 add_protocols_test(AVCCommandFilterTests
     AVCCommandFilterTests.cpp
 )
-
 
 # M-Audio special firmware stream formation geometry
 add_protocols_test(MAudioSpecialFormationTests
