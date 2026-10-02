@@ -52,6 +52,11 @@ public:
     [[nodiscard]] auto LifetimeToken() const noexcept { return lifetime_.Token(); }
     [[nodiscard]] bool IsDone() const noexcept { return std::holds_alternative<Done>(phase_); }
 
+    void Abort() {
+        if (IsDone()) return;
+        ++serial_.value;
+        Finish(Cancelled());
+    }
     void Cancel() {
         if (IsDone()) return;
         ++serial_.value; // No cancelled reply can resume reading.
@@ -204,6 +209,10 @@ DescriptorAccessor::DescriptorAccessor(Avc::IAvcUnit& unit, uint8_t address)
 DescriptorAccessor::DescriptorAccessor(Avc::IAvcUnit& unit, Avc::SubunitAddress address)
     : unit_(unit), address_(address) {}
 DescriptorAccessor::~DescriptorAccessor() { Cancel(); }
+void DescriptorAccessor::Abort() {
+    auto operation = std::move(operation_);
+    if (operation) operation->Abort();
+}
 void DescriptorAccessor::Cancel() {
     auto operation = std::move(operation_);
     if (operation) operation->Cancel();
@@ -219,20 +228,27 @@ void DescriptorAccessor::readComplete(const DescriptorSpecifier& specifier, Read
     readWithOpenCloseSequence(specifier, std::move(completion));
 }
 void DescriptorAccessor::readWithOpenCloseSequence(const DescriptorSpecifier& specifier, ReadCompletion completion) {
+    const auto bytes = specifier.buildSpecifier();
+    if (bytes.empty() || bytes.size() > Cmd::DescriptorSpecifier::kMaxBytes) {
+        ReadDescriptorResult result; result.avcResult = AVCResult::kInvalidResponse;
+        result.primaryError = Avc::AvcError::Of(Avc::AvcErrorKind::kInvalidArgument); completion(result); return;
+    }
+    readWithOpenCloseSequence(Cmd::DescriptorSpecifier::Raw(bytes), std::move(completion));
+}
+void DescriptorAccessor::readWithOpenCloseSequence(const Cmd::DescriptorSpecifier& specifier, ReadCompletion completion) {
     if (operation_ && !operation_->IsDone()) {
         ReadDescriptorResult result; result.avcResult = AVCResult::kBusy;
         result.primaryError = Avc::AvcError::Of(Avc::AvcErrorKind::kBusy); completion(result); return;
     }
     auto* unit = unit_.Get();
     if (!unit) { completion(Cancelled()); return; }
-    const auto bytes = specifier.buildSpecifier();
-    if (bytes.empty() || bytes.size() > Cmd::DescriptorSpecifier::kMaxBytes) {
+    if (specifier.length == 0 || specifier.length > Cmd::DescriptorSpecifier::kMaxBytes) {
         ReadDescriptorResult result; result.avcResult = AVCResult::kInvalidResponse;
         result.primaryError = Avc::AvcError::Of(Avc::AvcErrorKind::kInvalidArgument); completion(result); return;
     }
     static uint64_t nextSession = 0; // Driver serial queue; no concurrent access.
     auto operation = std::make_shared<DescriptorReadOperation>(*unit, address_,
-        Cmd::DescriptorSpecifier::Raw(bytes), SessionId{++nextSession}, std::move(completion));
+        specifier, SessionId{++nextSession}, std::move(completion));
     operation_ = operation;
     operation->Pump();
 }

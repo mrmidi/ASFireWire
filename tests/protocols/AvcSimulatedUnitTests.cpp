@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 #include "ASFWDriver/Common/OnceCompletion.hpp"
+#include "ASFWDriver/Protocols/AVC/Discovery/DiscoverySession.hpp"
 
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/FunctionBlockCommand.hpp"
@@ -517,4 +518,163 @@ TEST(OnceCompletion, InvocationConsumesCallback) {
         completion.Invoke(8);
     }
     EXPECT_EQ(calls, 1);
+}
+
+namespace {
+namespace Engine = ASFW::AVC::DiscoveryEngine;
+TEST(DiscoveryReducer, AcceptsOnlyMatchingSessionSerialAndRoute) {
+    DescriptorTestUnit unit;
+    auto t = Engine::Step({}, Engine::Start{{7}, *unit.CurrentRoute(), unit.Identity(),
+        Avc::IAvcUnit::StreamFormatOpcodePolicy::kLearn});
+    ASSERT_EQ(t.actions.size(), 1u);
+    const auto send = std::get<Engine::Send>(t.actions.front());
+    for (unsigned mismatch = 0; mismatch != 3; ++mismatch) {
+        auto identity = send.operation;
+        if (mismatch == 0) ++identity.session.value;
+        if (mismatch == 1) ++identity.serial.value;
+        if (mismatch == 2) ++identity.route.generation.value;
+        auto ignored = Engine::Step(t.state, Engine::Reply{identity, Avc::Fail(Avc::AvcErrorKind::kTransportError)});
+        EXPECT_TRUE(ignored.actions.empty());
+        EXPECT_EQ(std::get<Engine::Probing>(ignored.state.phase).operation, send.operation);
+    }
+    auto cancelled = Engine::Step(t.state, Engine::Cancel{});
+    ASSERT_EQ(cancelled.actions.size(), 1u);
+    const auto snapshot = std::get<Engine::Commit>(cancelled.actions.front()).snapshot;
+    EXPECT_TRUE(snapshot->cancelled);
+    auto stale = Engine::Step(std::move(cancelled.state), Engine::Reply{send.operation, Avc::Fail(Avc::AvcErrorKind::kTransportError)});
+    EXPECT_TRUE(stale.actions.empty());
+}
+TEST(DiscoverySession, SimulatedFixturesProduceOwnedContents) {
+    for (auto fixture : {ASFW::AVC::Testing::kPhase88}) {
+        ASFW::AVC::Testing::SimulatedAvcUnit unit{fixture};
+        namespace F = ASFW::AVC::Testing::Fixtures;
+        unit.SetDescriptor(0x60, {0x80}, F::Phase88MusicStatus());
+        unit.SetDescriptor(0x08, {0x00}, F::kPhase88AudioIdentifier);
+        unit.SetDescriptor(0x08, {0x10, 0x18, 0x00}, F::kPhase88TextRoot);
+        unit.SetDescriptor(0x08, {0x10, 0x18, 0x01}, F::kPhase88TextChild);
+        Engine::SnapshotLease result;
+        unsigned calls = 0;
+        auto session = Engine::Session::Create(unit, {11}, [&](auto snapshot) { ++calls; result = std::move(snapshot); });
+        session->Start();
+        ASSERT_TRUE(result);
+        EXPECT_TRUE(result->complete);
+        EXPECT_FALSE(result->cancelled);
+        EXPECT_EQ(result->unit.subunits.size(), 2u);
+        EXPECT_FALSE(result->descriptors.empty());
+        EXPECT_TRUE(std::any_of(result->contents.begin(), result->contents.end(), [](const auto& c) { return c.music.has_value(); }));
+        EXPECT_TRUE(std::any_of(result->contents.begin(), result->contents.end(), [](const auto& c) { return c.audio.has_value(); }));
+        session.reset();
+        EXPECT_EQ(calls, 1u);
+        EXPECT_EQ(result->session.value, 11u); // A lease survives session destruction.
+    }
+}
+TEST(DiscoverySession, CancellationAndLateReplyCannotCompleteTwice) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    unsigned calls = 0; Engine::SnapshotLease result;
+    auto session = Engine::Session::Create(unit, {1}, [&](auto r) { ++calls; result = std::move(r); });
+    session->Start();
+    session->Cancel();
+    ASSERT_TRUE(result); EXPECT_TRUE(result->cancelled);
+    unit.FlushOne();
+    EXPECT_EQ(calls, 1u);
+    EXPECT_EQ(unit.commands.size(), 1u);
+}
+TEST(DiscoverySession, RouteReplacementRejectsLateReply) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    unsigned calls = 0; Engine::SnapshotLease result;
+    auto session = Engine::Session::Create(unit, {1}, [&](auto r) { ++calls; result = std::move(r); });
+    session->Start(); ++unit.generation; unit.FlushOne();
+    ASSERT_TRUE(result); ASSERT_TRUE(result->terminalError);
+    EXPECT_EQ(result->terminalError->kind, Avc::AvcErrorKind::kBusReset);
+    EXPECT_EQ(calls, 1u); EXPECT_EQ(unit.commands.size(), 1u);
+}
+TEST(DiscoverySession, DestructionDisarmsLateCallbacks) {
+    DescriptorTestUnit unit; unit.deferred = true;
+    unsigned calls = 0;
+    auto session = Engine::Session::Create(unit, {1}, [&](auto r) { ++calls; EXPECT_FALSE(r); });
+    session->Start(); session.reset();
+    EXPECT_EQ(calls, 1u); unit.FlushOne(); EXPECT_EQ(calls, 1u);
+}
+}
+namespace {
+TEST(DiscoveryReducer, OwnedEventReplayReconstructsSnapshotAndActions) {
+    ASFW::AVC::Testing::SimulatedAvcUnit unit{ASFW::AVC::Testing::kPhase88};
+    namespace F = ASFW::AVC::Testing::Fixtures;
+    unit.SetDescriptor(0x60, {0x80}, F::Phase88MusicStatus());
+    unit.SetDescriptor(0x08, {0x00}, F::kPhase88AudioIdentifier);
+    unit.SetDescriptor(0x08, {0x10, 0x18, 0x00}, F::kPhase88TextRoot);
+    unit.SetDescriptor(0x08, {0x10, 0x18, 0x01}, F::kPhase88TextChild);
+    std::vector<Engine::Event> events{Engine::Start{{1}, *unit.CurrentRoute(), unit.Identity(),
+        Avc::IAvcUnit::StreamFormatOpcodePolicy::kSupportOnly}};
+    std::vector<std::vector<uint8_t>> frames;
+    Engine::State state;
+    Engine::SnapshotLease original;
+    for (size_t i = 0; i < events.size(); ++i) {
+        auto transition = Engine::Step(std::move(state), events[i]); state = std::move(transition.state);
+        for (const auto& action : transition.actions) {
+            if (const auto* send = std::get_if<Engine::Send>(&action)) {
+                frames.emplace_back(send->frame.Bytes().begin(), send->frame.Bytes().end());
+                unit.Submit(send->frame, send->operation.route.generation, [&](auto r) {
+                    Avc::Expected<Engine::OwnedResponse> owned = r ?
+                        Avc::Expected<Engine::OwnedResponse>{Engine::OwnedResponse{r->code, r->address, r->opcode,
+                            {r->operands.begin(), r->operands.end()}}} : Avc::Expected<Engine::OwnedResponse>{std::unexpected(r.error())};
+                    events.emplace_back(Engine::Reply{send->operation, std::move(owned)});
+                });
+            } else if (const auto* descriptor = std::get_if<Engine::ReadDescriptor>(&action)) {
+                Legacy::DescriptorAccessor reader{unit, descriptor->probe.subunit.type == Avc::SubunitType::kUnit ?
+                    Avc::SubunitAddress::Unit() : descriptor->probe.subunit.ToAddress()};
+                reader.readWithOpenCloseSequence(descriptor->probe.specifier,
+                    [&](const auto& r) { events.emplace_back(Engine::DescriptorReply{descriptor->operation, r}); });
+            } else if (const auto* extension = std::get_if<Engine::RunExtension>(&action)) {
+                events.emplace_back(Engine::ExtensionComplete{extension->operation});
+            } else if (const auto* commit = std::get_if<Engine::Commit>(&action)) original = commit->snapshot;
+        }
+    }
+    ASSERT_TRUE(original); ASSERT_TRUE(original->complete);
+    Engine::State replay;
+    Engine::SnapshotLease reconstructed;
+    std::vector<std::vector<uint8_t>> replayFrames;
+    for (const auto& event : events) {
+        const auto before = replay;
+        if (std::holds_alternative<Engine::Probing>(before.phase)) {
+            // Every recorded operation boundary is independently cancellable;
+            // its original reply cannot install a snapshot afterward.
+            auto cancelled = Engine::Step(before, Engine::Cancel{});
+            ASSERT_EQ(cancelled.actions.size(), 1u);
+            EXPECT_TRUE(std::get<Engine::Commit>(cancelled.actions.front()).snapshot->cancelled);
+            auto stale = Engine::Step(std::move(cancelled.state), event);
+            EXPECT_TRUE(stale.actions.empty());
+            auto lost = Engine::Step(before, Engine::RouteLost{});
+            ASSERT_EQ(lost.actions.size(), 1u);
+            EXPECT_EQ(std::get<Engine::Commit>(lost.actions.front()).snapshot->terminalError->kind, Avc::AvcErrorKind::kBusReset);
+        }
+        auto transition = Engine::Step(std::move(replay), event); replay = std::move(transition.state);
+        for (const auto& action : transition.actions) {
+            if (const auto* send = std::get_if<Engine::Send>(&action))
+                replayFrames.emplace_back(send->frame.Bytes().begin(), send->frame.Bytes().end());
+            if (const auto* commit = std::get_if<Engine::Commit>(&action)) reconstructed = commit->snapshot;
+        }
+    }
+    ASSERT_TRUE(reconstructed);
+    EXPECT_EQ(replayFrames, frames);
+    EXPECT_EQ(reconstructed->unit.subunits, original->unit.subunits);
+    ASSERT_EQ(reconstructed->descriptors.size(), original->descriptors.size());
+    for (size_t i = 0; i < original->descriptors.size(); ++i) EXPECT_EQ(reconstructed->descriptors[i].bytes, original->descriptors[i].bytes);
+    EXPECT_EQ(reconstructed->contents[0].audio->functionBlocks[0].name, original->contents[0].audio->functionBlocks[0].name);
+    EXPECT_EQ(reconstructed->plugs.size(), original->plugs.size());
+    EXPECT_EQ(reconstructed->features.size(), original->features.size());
+}
+TEST(DiscoveryReducer, OptionalUnitInfoFailureContinuesButTransportFailureTerminates) {
+    DescriptorTestUnit unit;
+    auto t = Engine::Step({}, Engine::Start{{1}, *unit.CurrentRoute(), unit.Identity(),
+        Avc::IAvcUnit::StreamFormatOpcodePolicy::kLearn});
+    const auto send = std::get<Engine::Send>(t.actions.front());
+    auto optional = Engine::Step(t.state, Engine::Reply{send.operation,
+        std::unexpected(Avc::AvcError::Unexpected(Avc::ResponseCode::kNotImplemented))});
+    ASSERT_EQ(optional.actions.size(), 1u);
+    EXPECT_EQ(std::get<Engine::Send>(optional.actions.front()).frame.OpcodeValue(), Avc::Opcode::kSubunitInfo);
+    auto failed = Engine::Step(std::move(t.state), Engine::Reply{send.operation, Avc::Fail(Avc::AvcErrorKind::kTransportError)});
+    ASSERT_EQ(failed.actions.size(), 1u);
+    EXPECT_EQ(std::get<Engine::Commit>(failed.actions.front()).snapshot->terminalError->kind, Avc::AvcErrorKind::kTransportError);
+}
 }

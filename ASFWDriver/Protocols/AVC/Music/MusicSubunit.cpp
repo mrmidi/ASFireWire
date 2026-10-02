@@ -1134,3 +1134,34 @@ void MusicSubunit::SetAudioMute(ASFW::AVC::IAvcUnit& unit, uint8_t plugId, bool 
 }
 
 } // namespace ASFW::Protocols::AVC::Music
+
+void ASFW::Protocols::AVC::Music::MusicSubunit::LoadSnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot) {
+    const ASFW::AVC::SubunitId id{ASFW::AVC::SubunitType::kMusic, GetID()};
+    for (const auto& blob : snapshot.descriptors) if (blob.subunit == id && !blob.primaryError && !blob.bytes.empty()) {
+        statusDescriptorData_ = blob.bytes;
+        ParseDescriptorBlock(blob.bytes.data(), blob.bytes.size());
+    }
+    for (const auto& fact : snapshot.plugs) {
+        if (fact.address != id.ToAddress()) continue;
+        auto found = std::find_if(plugs_.begin(), plugs_.end(), [&](const auto& plug) {
+            return plug.plugID == fact.id.value && plug.IsInput() == (fact.direction == ASFW::AVC::Cmd::PlugDirection::kInput);
+        });
+        if (found == plugs_.end()) continue;
+        if (fact.current) {
+            auto raw = fact.current->Raw();
+            if (auto format = StreamFormats::StreamFormatParser::Parse(raw.data(), raw.size())) found->currentFormat = *format;
+        }
+        for (const auto& formation : fact.formations) {
+            auto raw = formation.Raw();
+            if (auto format = StreamFormats::StreamFormatParser::Parse(raw.data(), raw.size())) found->supportedFormats.push_back(*format);
+        }
+        if (fact.route) {
+            const auto& source = fact.route->source;
+            found->connectionInfo = StreamFormats::ConnectionInfo{
+                .sourceSubunitType = static_cast<StreamFormats::SourceSubunitType>(source.Subunit().Type()),
+                .sourceSubunitID = source.Subunit().Id(), .sourcePlugNumber = source.PlugId(),
+                .sourceIsExternalUnitPlug = source.IsExternalUnitPlug()};
+        }
+    }
+    UpdateCapabilitiesFromPlugs();
+}

@@ -122,13 +122,9 @@ AVCDiscovery::AVCDiscovery(IOService* driver,
         os_log_error(log_, "AVCDiscovery: Failed to allocate lock");
     }
 
-    IODispatchQueue* queue = nullptr;
-    auto kr = IODispatchQueue::Create("com.asfw.avc.rescan", 0, 0, &queue);
-    if (kr == kIOReturnSuccess && queue) {
-        rescanQueue_ = OSSharedPtr(queue, OSNoRetain);
-    } else if (kr != kIOReturnSuccess) {
-        os_log_error(log_, "AVCDiscovery: Failed to create rescan queue (0x%x)", kr);
-    }
+    // The injected timer is prepared on ctx.workQueue (DriverContext.cpp).
+    // Keep discovery there with FCP delivery and teardown: LiveRef is a serial
+    // queue lifetime guard, not synchronization across a separate rescan queue.
 
     // Register as discovery observers
     deviceManager_.RegisterUnitObserver(this);
@@ -549,11 +545,7 @@ void AVCDiscovery::ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>&
                 });
             };
 
-            if (self->rescanQueue_) {
-                self->rescanQueue_->DispatchAsync(^{ work(); });
-            } else {
-                work();
-            }
+            work();
         });
 
     if (lock_) {

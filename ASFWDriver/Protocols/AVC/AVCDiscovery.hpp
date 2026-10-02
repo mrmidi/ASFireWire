@@ -120,7 +120,6 @@ private:
     std::unordered_map<uint64_t, uint64_t> activeRescanSerialByGuid_;
     uint64_t nextRescanOperationSerial_{0};
 
-    OSSharedPtr<IODispatchQueue> rescanQueue_;
 
     std::atomic<bool> shuttingDown_{false};
 

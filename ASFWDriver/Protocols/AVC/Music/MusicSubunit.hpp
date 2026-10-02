@@ -14,6 +14,7 @@
 #include "../Descriptors/MusicSubunitDescriptor.hpp"
 #include "../StreamFormats/StreamFormatTypes.hpp"
 #include <span>
+#include "../Discovery/DiscoverySnapshot.hpp"
 
 class MusicSubunitIdentifierParserTests;
 class MusicSubunitTests;
@@ -30,6 +31,9 @@ public:
 
     /// Parse capabilities
     void ParseCapabilities(AVCUnit& unit, std::function<void(bool)> completion) override;
+
+    /// Compatibility projection only; discovery owns all transport and facts.
+    void LoadSnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot);
 
     /// Get human-readable name
     std::string GetName() const override { return "Music"; }
@@ -48,20 +52,20 @@ public:
     void QueryConnections(ASFW::AVC::IAvcUnit& unit, std::function<void(bool)> completion);
 
     /// Set sample rate for all plugs
-    /// @param submitter Command submitter
+    /// @param unit Command submitter
     /// @param sampleRate Sample rate in Hz
     /// @param completion Callback with success/failure
     void SetSampleRate(ASFW::AVC::IAvcUnit& unit, uint32_t sampleRate, std::function<void(bool)> completion);
 
     /// Set volume for a function block (plug) targeting Audio Subunit (0x01)
-    /// @param submitter Command submitter
+    /// @param unit Command submitter
     /// @param plugId Plug ID (Function Block ID)
     /// @param volume Volume level (0x7FFF = 0dB, etc.)
     /// @param completion Callback
     void SetAudioVolume(ASFW::AVC::IAvcUnit& unit, uint8_t plugId, int16_t volume, std::function<void(bool)> completion);
 
     /// Set mute for a function block (plug) targeting Audio Subunit (0x01)
-    /// @param submitter Command submitter
+    /// @param unit Command submitter
     /// @param plugId Plug ID (Function Block ID)
     /// @param mute True to mute, false to unmute
     /// @param completion Callback

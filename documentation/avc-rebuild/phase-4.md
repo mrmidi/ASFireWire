@@ -117,6 +117,14 @@ only**, no attach/probing in this phase; state this limitation in the PR.
 
 - Commit 1: implemented and validated; 2,703 registered C++ cases, six existing skips;
   signed app/dext build and arm64e verified. Four mutations detected/restored.
-- Commit 2: pending.
+- Commit 2: discovery now runs through the owned session/reducer; immutable snapshots
+  back the compatibility projections. 2,710 registered C++ cases pass (six existing
+  skips), signed app/dext and arm64e verified. Owned-event replay reproduces commands
+  and contents; every recorded boundary covers cancellation/route loss. Removing
+  reply identity admission was detected by the lifecycle mutation test. Original
+  wire traces remain; new phase-4 attach traces pin the intended discovery order.
 - Commit 3: pending, hardware gate pending.
 - Commit 4: pending, hardware report gate pending.
+
+Hardware validation is deferred until all software stages are ready, per the user’s
+request to batch validation of the single PR. No Phase 4 hardware claim is made.

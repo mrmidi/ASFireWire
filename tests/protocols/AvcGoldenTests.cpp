@@ -265,6 +265,15 @@ constexpr UncapturedFrame kAppleUnitOpenDescriptor{"00ff088001ff0000", "Apple, i
 
 constexpr UncapturedFrame kDuetUncaptured[] = {
     kAppleUnitOpenDescriptor,
+    // Phase 4 now collects lists for all inventoried audio plugs, routing,
+    // and descriptor-advertised control STATUS. Codec layouts are cross-checked
+    // with ta1394 stream-format lib.rs:785-1060, FFADO avc_signal_source.cpp:125-171,
+    // and ta1394 audio lib.rs:820-862; these are reference-backed, not HW evidence.
+    {"0108(bf|2f)c1.*", "ta1394 stream-format lib.rs:785-1060"},
+    {"01ff1afffffe(ff|08|60)..", "FFADO avc_signal_source.cpp:125-171"},
+    {"(01|02)08b8(80|81).*", "ta1394 audio lib.rs:280-350,820-862"},
+    {"02ff1aff.*", "FFADO avc_signal_source.cpp:137-141"},
+
     // Music subunit status descriptor OPEN and READ: Apple, isitduet.txt:157,168.
     {"0060088001ff0000", "Apple, isitduet.txt:157"},
     {"00600980ff0000800+", "Apple, isitduet.txt:168"},
@@ -276,6 +285,15 @@ constexpr UncapturedFrame kDuetUncaptured[] = {
 
 constexpr UncapturedFrame kPhase88Uncaptured[] = {
     kAppleUnitOpenDescriptor,
+    // Phase 4 now collects lists for all inventoried audio plugs, routing,
+    // and descriptor-advertised control STATUS. Codec layouts are cross-checked
+    // with ta1394 stream-format lib.rs:785-1060, FFADO avc_signal_source.cpp:125-171,
+    // and ta1394 audio lib.rs:820-862; these are reference-backed, not HW evidence.
+    {"0108(bf|2f)c1.*", "ta1394 stream-format lib.rs:785-1060"},
+    {"01ff1afffffe(ff|08|60)..", "FFADO avc_signal_source.cpp:125-171"},
+    {"(01|02)08b8(80|81).*", "ta1394 audio lib.rs:280-350,820-862"},
+    {"02ff1aff.*", "FFADO avc_signal_source.cpp:137-141"},
+
     // Audio subunit plug formats, 0x2F only: FFADO avc_plug.cpp:231-249 with
     // avc_extended_stream_format.cpp:296.
     {"01082fc0.*", "FFADO avc_plug.cpp:231"},
@@ -348,7 +366,7 @@ TEST(AvcGoldenTests, DuetAttachDiscovery) {
     EXPECT_TRUE(initOk);
     EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Completed);
 
-    rig.ExpectGolden("duet__attach_discovery");
+    rig.ExpectGolden("duet__phase4_attach_discovery");
     ExpectOnlyMeasuredFrames(rig.Sim(), kDuetUncaptured);
 }
 
@@ -381,7 +399,7 @@ TEST(AvcGoldenTests, DescriptorGraphSelectsRoutedStreamsAndValidatesGeometry) {
     EXPECT_EQ(graph->capture.subunitPlugId, 1);
     EXPECT_EQ(graph->capture.channelNames[0], "Analog Out 1");
     EXPECT_EQ(graph->playback.dataBlockSize, 2);
-    EXPECT_EQ(graph->capture.currentSampleRate, 44100);
+    EXPECT_EQ(graph->capture.currentSampleRate, 48000); // Unit signal STATUS is authoritative.
     EXPECT_EQ(graph->capture.slotMapValidation, Graph::SlotMapValidation::kValidated);
 }
 
@@ -551,7 +569,7 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     EXPECT_EQ(config->playbackStreams[0].pcmSlotMap.SlotFor(0), 1U);
     EXPECT_EQ(config->streamMode, Audio::Model::StreamMode::kBlocking);
 
-    rig.ExpectGolden("phase88__attach_discovery");
+    rig.ExpectGolden("phase88__phase4_attach_discovery");
     ExpectOnlyMeasuredFrames(rig.Sim(), kPhase88Uncaptured);
 }
 

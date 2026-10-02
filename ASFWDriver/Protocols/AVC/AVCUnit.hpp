@@ -26,6 +26,7 @@
 #include "../../Scheduling/ITimerScheduler.hpp"
 #include "Core/AvcUnitModel.hpp"
 #include "Core/IAvcUnit.hpp"
+#include "Discovery/DiscoverySession.hpp"
 
 namespace ASFW::Protocols::AVC {
 
@@ -167,6 +168,7 @@ public:
     const ASFW::AVC::Cmd::UnitPlugCounts& GetCachedPlugCounts() const { return model_.unitPlugs; }
     const ASFW::AVC::UnitModel& GetModel() const noexcept { return model_; }
     std::shared_ptr<const Graph::DeviceGraph> GetDiscoveredGraph() const noexcept { return discoveredGraph_; }
+    [[nodiscard]] ASFW::AVC::DiscoveryEngine::SnapshotLease GetDiscoverySnapshot() const noexcept { return snapshot_; }
     /// Size the graph's selected streams from the unit's live plug formations
     /// at its current rate. A device whose music subunit rejects the
     /// current-format query (Phase 88) still lists them, and they win over any
@@ -206,34 +208,10 @@ private:
     void InitializeAlreadyBegun(std::function<void(bool success)> completion);
     void ReScanAlreadyBegun(std::function<void(bool success)> completion);
 
-    void ProbeDescriptorMechanism(std::function<void(bool)> completion);
-
-    bool ParseUnitIdentifier(const std::vector<uint8_t>& data);
-
-    void TraverseRootLists(size_t listIndex, std::function<void(bool)> completion);
-
-    void ReadRootObjectList(uint64_t listID,
-                           std::function<void(bool success, std::vector<uint64_t> objectIDs)> completion);
-
-    void ProbeSubunits(std::function<void(bool)> completion);
-
-    void ProbePlugs(std::function<void(bool)> completion);
-
-    void PopulateKnownSubunitPlugCounts();
-
-    void ResolveDiscoveredGraph(std::function<void(bool)> completion);
-    void ResolveUnitStreamGraph(std::function<void(bool)> completion);
-    /// Size a selected stream from a format found outside the music subunit,
-    /// keeping its descriptor names and validating its slot map at that width.
+    void ApplySnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot);
     [[nodiscard]] bool CompleteStream(Graph::StreamGraph& stream, uint32_t pcmChannels,
                                       uint32_t midiChannels, uint32_t rateHz,
                                       std::vector<uint32_t> rates) const;
-
-    void ProbeSignalFormat(std::function<void(bool)> completion);
-
-    void StoreSubunitInfo(const ASFW::AVC::Cmd::SubunitInfo& info);
-
-    void ParseSubunitCapabilities(size_t index, std::function<void(bool)> completion);
 
     std::weak_ptr<Discovery::FWDevice> device_;
     std::weak_ptr<Discovery::FWUnit> unit_;
@@ -253,6 +231,9 @@ private:
     std::shared_ptr<const Graph::DeviceGraph> discoveredGraph_{};
     UnitDescriptorInfo descriptorInfo_;
 
+    ASFW::AVC::DiscoveryEngine::SessionSlot sessionSlot_{ASFW::AVC::DiscoveryEngine::IdleSlot{}};
+    ASFW::AVC::DiscoveryEngine::SnapshotLease snapshot_;
+    uint64_t nextSession_{0};
     bool initialized_{false};
     std::atomic<AVCDiscoveryStatus> discoveryStatus_{AVCDiscoveryStatus::Idle};
     std::atomic<bool> rescanInProgress_{false};

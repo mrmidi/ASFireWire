@@ -37,9 +37,12 @@ public:
     void readUnitIdentifier(ReadCompletion completion);
     void readStatusDescriptor(uint8_t type, ReadCompletion completion);
     void readWithOpenCloseSequence(const DescriptorSpecifier& specifier, ReadCompletion completion);
+    void readWithOpenCloseSequence(const ASFW::AVC::Cmd::DescriptorSpecifier& specifier, ReadCompletion completion);
     /// No naked READ API: this compatibility entry point also acquires OPEN.
     void readComplete(const DescriptorSpecifier& specifier, ReadCompletion completion);
     void Cancel();
+    /// Route loss/shutdown terminates an operation without another submission.
+    void Abort();
 private:
     Common::LiveRef<ASFW::AVC::IAvcUnit> unit_;
     ASFW::AVC::SubunitAddress address_;

@@ -12,6 +12,7 @@
 #include "../Descriptors/AudioSubunitDescriptor.hpp"
 #include <vector>
 #include <optional>
+#include "../Discovery/DiscoverySnapshot.hpp"
 
 namespace ASFW::AVC {
 class IAvcUnit;
@@ -37,6 +38,8 @@ public:
     
     void ParseCapabilities(AVCUnit& unit, std::function<void(bool)> completion) override;
     
+    void LoadSnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot);
+
     // Accessors
     uint8_t GetNumInputPlugs() const { return numInputPlugs_; }
     uint8_t GetNumOutputPlugs() const { return numOutputPlugs_; }

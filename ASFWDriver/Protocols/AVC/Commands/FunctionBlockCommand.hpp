@@ -209,7 +209,9 @@ struct SelectorOperands {
     using Reply = SelectorValue;
 
     [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept {
-        const uint8_t plug = (t == CommandType::kControl) ? inputPlug : 0xFF;
+        // FFADO avc_function_block.cpp:348-358 retains the requested
+        // selector input; INQUIRY asks whether that CONTROL would be accepted.
+        const uint8_t plug = (t == CommandType::kControl || t == CommandType::kSpecificInquiry) ? inputPlug : 0xFF;
         const std::array<uint8_t, 6> ops = {
             static_cast<uint8_t>(FunctionBlockType::kSelector),
             functionBlockId,
