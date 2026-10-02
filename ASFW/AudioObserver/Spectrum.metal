@@ -94,6 +94,62 @@ vertex SpectrogramVertex asfwSpectrogramVertex(uint id [[vertex_id]]) {
     float2 uv = float2((id << 1) & 2, id & 2);
     return { float4(uv * 2 - 1, 0, 1), float2(uv.x, 1 - uv.y) };
 }
+// Shared amplitude palette for both history views and their legend.
+inline float3 spectrogramColor(float db) {
+    float t = clamp((db + 100) / 100, 0.0f, 1.0f);
+    float3 color = t < 0.33f ? mix(float3(0.025,0.035,0.05), float3(0.08,0.2,0.55), t / 0.33f)
+        : t < 0.66f ? mix(float3(0.08,0.2,0.55), float3(0.1,0.85,0.7), (t-0.33f)/0.33f)
+        : t < 0.85f ? mix(float3(0.1,0.85,0.7), float3(1,0.8,0.2), (t-0.66f)/0.19f)
+        : t < 0.93f ? mix(float3(1,0.8,0.2), float3(1,0.4,0.08), (t-0.85f)/0.08f)
+        : mix(float3(1,0.4,0.08), float3(1,0.08,0.04), (t-0.93f)/0.07f);
+    return color;
+}
+
+struct WaterfallCamera { float4x4 matrix; float4 dimensions; };
+inline float4 waterfallPosition(float frequency, float age, float level, constant WaterfallCamera& camera) {
+    return camera.matrix * float4((frequency - 0.5f) * camera.dimensions.x,
+                                 level * camera.dimensions.y, -age * camera.dimensions.z, 1);
+}
+struct WaterfallVertex { float4 position [[position]]; float4 color; };
+inline WaterfallVertex waterfallRidge(uint vid, uint ridge, bool curtain,
+    texture2d<float, access::read> history, device const ulong* stamps,
+    constant SpectrogramDisplay& p, constant WaterfallCamera& camera) {
+    uint count = uint(camera.dimensions.w);
+    uint age = (count - 1 - ridge) * (p.columns - 1) / (count - 1);
+    if (p.latestSlice < age) return { float4(0, 0, -1, 1), float4(0) };
+    ulong slice = p.latestSlice - age;
+    uint column = uint(slice % p.columns);
+    if (stamps[column] != slice + 1) return { float4(0, 0, -1, 1), float4(0) };
+    float frequency = float(curtain ? vid / 2 : vid) / 255;
+    float ratio = min(20000.0f, float(p.sampleRate) / 2) / 20;
+    float bin = clamp(20 * pow(ratio, frequency) * p.fftSize / p.sampleRate, 0.0f, float(p.fftSize / 2));
+    uint lo = uint(bin), hi = min(lo + 1, p.fftSize / 2);
+    float db = mix(history.read(uint2(column, lo)).x, history.read(uint2(column, hi)).x, fract(bin));
+    uint first = uint(ceil(20 * pow(ratio, max(0.0f, frequency - 0.5f / 255)) * p.fftSize / p.sampleRate));
+    uint last = min(uint(20 * pow(ratio, min(1.0f, frequency + 0.5f / 255)) * p.fftSize / p.sampleRate), p.fftSize / 2);
+    for (uint b = first; b <= last; ++b) db = max(db, history.read(uint2(column, b)).x);
+    float depth = float(age) / (p.columns - 1);
+    float level = clamp((db + 100) / 100, 0.0f, 1.0f);
+    float fade = mix(1.0f, 0.45f, depth);
+    bool top = !curtain || (vid & 1);
+    float3 color = spectrogramColor(db) * fade;
+    if (curtain) color = mix(float3(0.025, 0.035, 0.05), color * 0.3f, top ? 0.65f : 0.08f);
+    else if (age == 0) color = min(color * 1.2f + float3(0.04), float3(1));
+    return { waterfallPosition(frequency, depth, top ? level : 0, camera), float4(color, 1) };
+}
+vertex WaterfallVertex asfwWaterfallVertex(uint vid [[vertex_id]], uint ridge [[instance_id]],
+    texture2d<float, access::read> history [[texture(0)]], device const ulong* stamps [[buffer(0)]],
+    constant SpectrogramDisplay& p [[buffer(1)]], constant WaterfallCamera& camera [[buffer(2)]]) {
+    return waterfallRidge(vid, ridge, false, history, stamps, p, camera);
+}
+vertex WaterfallVertex asfwWaterfallCurtainVertex(uint vid [[vertex_id]], uint ridge [[instance_id]],
+    texture2d<float, access::read> history [[texture(0)]], device const ulong* stamps [[buffer(0)]],
+    constant SpectrogramDisplay& p [[buffer(1)]], constant WaterfallCamera& camera [[buffer(2)]]) {
+    return waterfallRidge(vid, ridge, true, history, stamps, p, camera);
+}
+fragment float4 asfwWaterfallFragment(WaterfallVertex in [[stage_in]]) { return in.color; }
+
+
 fragment float4 asfwSpectrogramFragment(SpectrogramVertex in [[stage_in]],
     texture2d<float, access::read> history [[texture(0)]], device const ulong* stamps [[buffer(0)]],
     constant SpectrogramDisplay& p [[buffer(1)]]) {
@@ -112,13 +168,7 @@ fragment float4 asfwSpectrogramFragment(SpectrogramVertex in [[stage_in]],
     uint first = uint(ceil(20 * pow(ratio, max(0.0f, 1 - in.uv.y - halfRow)) * p.fftSize / p.sampleRate));
     uint last = min(uint(20 * pow(ratio, min(1.0f, 1 - in.uv.y + halfRow)) * p.fftSize / p.sampleRate), p.fftSize / 2);
     for (uint b = first; b <= last; ++b) db = max(db, history.read(uint2(column, b)).x);
-    float t = clamp((db + 100) / 100, 0.0f, 1.0f);
-    float3 color = t < 0.33f ? mix(float3(0.025,0.035,0.05), float3(0.08,0.2,0.55), t / 0.33f)
-        : t < 0.66f ? mix(float3(0.08,0.2,0.55), float3(0.1,0.85,0.7), (t-0.33f)/0.33f)
-        : t < 0.85f ? mix(float3(0.1,0.85,0.7), float3(1,0.8,0.2), (t-0.66f)/0.19f)
-        : t < 0.93f ? mix(float3(1,0.8,0.2), float3(1,0.4,0.08), (t-0.85f)/0.08f)
-        : mix(float3(1,0.4,0.08), float3(1,0.08,0.04), (t-0.93f)/0.07f);
-    return float4(color, 1);
+    return float4(spectrogramColor(db), 1);
 }
 
 vertex SpectrumVertex asfwSpectrumVertex(uint vid [[vertex_id]],

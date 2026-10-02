@@ -9,6 +9,7 @@ struct MetalSpectrogramView: NSViewRepresentable {
     var fftSize: UInt32 = 2048
     var window: UInt32 = 0
     var regions: [SpectrumPlotRegion] = []
+    var waterfall = false
 
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> NSView {
@@ -20,11 +21,13 @@ struct MetalSpectrogramView: NSViewRepresentable {
         }
         let view = MTKView(frame: .zero, device: device)
         view.colorPixelFormat = .bgra8Unorm
+        view.depthStencilPixelFormat = .depth32Float
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         view.layer?.isOpaque = false
         view.isPaused = true
         view.enableSetNeedsDisplay = true
         view.preferredFramesPerSecond = 60
+        renderer.waterfall = waterfall
         context.coordinator.renderer = renderer
         view.delegate = renderer
         context.coordinator.drawObserver = NotificationCenter.default.addObserver(
@@ -37,7 +40,10 @@ struct MetalSpectrogramView: NSViewRepresentable {
         }
         return view
     }
-    func updateNSView(_ view: NSView, context: Context) { context.coordinator.renderer?.regions = regions }
+    func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.renderer?.regions = regions
+        context.coordinator.renderer?.waterfall = waterfall
+    }
     final class Coordinator {
         var cadence = AnalyzerDrawCadence()
         var renderer: SpectrogramRenderer?
@@ -59,6 +65,11 @@ final class SpectrogramRenderer: NSObject, MTKViewDelegate {
     private let ring: MTLBuffer
     private let compute: MTLComputePipelineState
     private let render: MTLRenderPipelineState
+    private let waterfallRender: MTLRenderPipelineState
+    private let curtainRender: MTLRenderPipelineState
+    private let depthWrite: MTLDepthStencilState
+    private let depthRead: MTLDepthStencilState
+    var waterfall = false
     private let submission: AnalyzerRenderSubmission
     private let state: AudioObserverRenderState
     private let channel: UInt32, otherChannel: UInt32, fftSize: UInt32, window: UInt32
@@ -80,7 +91,19 @@ final class SpectrogramRenderer: NSObject, MTKViewDelegate {
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = vertex; descriptor.fragmentFunction = fragment
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        descriptor.depthAttachmentPixelFormat = .depth32Float
         guard let render = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
+        descriptor.vertexFunction = library.makeFunction(name: "asfwWaterfallVertex")
+        descriptor.fragmentFunction = library.makeFunction(name: "asfwWaterfallFragment")
+        guard let waterfallRender = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
+        descriptor.vertexFunction = library.makeFunction(name: "asfwWaterfallCurtainVertex")
+        guard let curtainRender = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
+        let depthDescriptor = MTLDepthStencilDescriptor()
+        depthDescriptor.depthCompareFunction = .lessEqual
+        depthDescriptor.isDepthWriteEnabled = true
+        guard let depthWrite = device.makeDepthStencilState(descriptor: depthDescriptor) else { return nil }
+        depthDescriptor.isDepthWriteEnabled = false
+        guard let depthRead = device.makeDepthStencilState(descriptor: depthDescriptor) else { return nil }
         let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float,
             width: SpectrogramTimeline.columns, height: Int(fftSize / 2 + 1), mipmapped: false)
         textureDescriptor.storageMode = .private
@@ -95,6 +118,8 @@ final class SpectrogramRenderer: NSObject, MTKViewDelegate {
         guard !lanes.isEmpty else { return nil }
         self.lanes = lanes; self.regions = regions; self.ring = ring; self.state = state
         self.submission = submission; self.compute = compute; self.render = render
+        self.waterfallRender = waterfallRender
+        self.curtainRender = curtainRender; self.depthWrite = depthWrite; self.depthRead = depthRead
         self.channel = channel; self.otherChannel = otherChannel; self.fftSize = fftSize; self.window = window
     }
     func draw(in view: MTKView) {
@@ -130,8 +155,11 @@ final class SpectrogramRenderer: NSObject, MTKViewDelegate {
                 threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         }
         encoder.endEncoding()
+        pass.depthAttachment.loadAction = .clear
+        pass.depthAttachment.clearDepth = 1
+        pass.depthAttachment.storeAction = .dontCare
         guard let drawing = command.makeRenderCommandEncoder(descriptor: pass) else { slots.signal(); return }
-        drawing.setRenderPipelineState(render)
+        drawing.setRenderPipelineState(waterfall ? waterfallRender : render)
         let scale = view.window?.backingScaleFactor ?? 1
         for lane in lanes {
             let rect = (regions.first { $0.transform == lane.transform }?.rect ?? .zero).intersection(view.bounds)
@@ -141,10 +169,26 @@ final class SpectrogramRenderer: NSObject, MTKViewDelegate {
             drawing.setScissorRect(MTLScissorRect(x: Int(rect.minX * scale), y: Int(rect.minY * scale),
                 width: max(1, Int(rect.width * scale)), height: max(1, Int(rect.height * scale))))
             var display = SpectrogramDisplay(latestSlice: slices.upperBound, fftSize: fftSize, sampleRate: snapshot.sampleRateHz, pixelHeight: UInt32(max(1, rect.height * scale)))
-            drawing.setFragmentTexture(lane.texture, index: 0)
-            drawing.setFragmentBuffer(lane.stamps, offset: 0, index: 0)
-            drawing.setFragmentBytes(&display, length: MemoryLayout<SpectrogramDisplay>.stride, index: 1)
-            drawing.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            if waterfall {
+                drawing.setVertexTexture(lane.texture, index: 0)
+                drawing.setVertexBuffer(lane.stamps, offset: 0, index: 0)
+                drawing.setVertexBytes(&display, length: MemoryLayout<SpectrogramDisplay>.stride, index: 1)
+                var camera = WaterfallProjection.uniforms
+                drawing.setVertexBytes(&camera, length: MemoryLayout<WaterfallCameraUniforms>.stride, index: 2)
+                drawing.setRenderPipelineState(curtainRender)
+                drawing.setDepthStencilState(depthWrite)
+                drawing.setDepthBias(0, slopeScale: 0, clamp: 0)
+                drawing.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 512, instanceCount: WaterfallProjection.ridgeCount)
+                drawing.setRenderPipelineState(waterfallRender)
+                drawing.setDepthStencilState(depthRead)
+                drawing.setDepthBias(-0.00001, slopeScale: 0, clamp: 0)
+                drawing.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: 256, instanceCount: WaterfallProjection.ridgeCount)
+            } else {
+                drawing.setFragmentTexture(lane.texture, index: 0)
+                drawing.setFragmentBuffer(lane.stamps, offset: 0, index: 0)
+                drawing.setFragmentBytes(&display, length: MemoryLayout<SpectrogramDisplay>.stride, index: 1)
+                drawing.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            }
         }
         drawing.endEncoding(); command.present(drawable)
         command.addCompletedHandler { _ in slots.signal() }

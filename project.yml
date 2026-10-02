@@ -157,7 +157,7 @@ targets:
     type: application
     platform: macOS
     sources:
-      # Includes the AV/C report model, formatter, store and view; also AnalyzerRenderSubmission.swift, AnalyzerDisplaySmoother.swift, shared Metal plots, Views/AnalyzerPanelCanvas.swift, AnalyzerGlyphAtlas.swift, AnalyzerLivePanel.swift, MetalSpectrogramView.swift, SpectrogramTimeline.swift, and analyzer shaders.
+      # Includes the AV/C report model, formatter, store and view; also AnalyzerRenderSubmission.swift, AnalyzerDisplaySmoother.swift, shared Metal plots, Views/AnalyzerPanelCanvas.swift, AnalyzerGlyphAtlas.swift, AnalyzerLivePanel.swift, MetalSpectrogramView.swift, SpectrogramTimeline.swift, SpectrumVisualization.swift, WaterfallProjection.swift, and analyzer shaders.
       - path: ASFW
     dependencies:
       - target: ASFWDriver

@@ -142,7 +142,7 @@ struct AudioObserverPanel: View {
     @StateObject private var model: AudioObserverPanelModel
     @State private var leftChannel: UInt32 = 0
     @State private var rightChannel: UInt32 = 1
-    @State private var spectrogram = false
+    @State private var spectrumVisualization: SpectrumVisualization = .spectrum
     @State private var fftSize: UInt32 = 2048
     @State private var spectrumWindow: UInt32 = 0
     @State private var diagnosticTab = "Performance"
@@ -315,7 +315,7 @@ struct AudioObserverPanel: View {
                     }.labelsHidden().frame(width: 100)
                     Spacer(minLength: 0)
                 }
-                if !spectrogram {
+                if !spectrumVisualization.usesHistory {
                     HStack(spacing: 8) {
                         Text("Average")
                         Picker("Average", selection: $slowSpectrum) {
@@ -337,9 +337,9 @@ struct AudioObserverPanel: View {
                                 guard let anchor = anchors[transform] else { return nil }
                                 return SpectrumPlotRegion(transform: transform, rect: geometry[anchor])
                             }
-                            if spectrogram {
+                            if spectrumVisualization.usesHistory {
                                 MetalSpectrogramView(client: model.client, channel: leftChannel, otherChannel: rightChannel,
-                                    fftSize: fftSize, window: spectrumWindow, regions: regions)
+                                    fftSize: fftSize, window: spectrumWindow, regions: regions, waterfall: spectrumVisualization == .waterfall)
                                     .id("spectrogram-\(model.snapshot.memoryGeneration)-\(leftChannel)-\(rightChannel)-\(midSide)-\(fftSize)-\(spectrumWindow)")
                                     .allowsHitTesting(false).accessibilityHidden(true)
                             } else {
@@ -351,7 +351,7 @@ struct AudioObserverPanel: View {
                         }
                     }
                 }
-                if spectrogram {
+                if spectrumVisualization.usesHistory {
                     HStack(spacing: 8) {
                         Text("−100 dBFS")
                         LinearGradient(stops: [
@@ -365,7 +365,7 @@ struct AudioObserverPanel: View {
                             .frame(width: 100, height: 6).clipShape(Capsule())
                         Text("0 dBFS")
                         Spacer(minLength: 0)
-                        Text("New audio →")
+                        Text(spectrumVisualization == .waterfall ? "Newest at front" : "New audio →")
                     }.font(.caption2).foregroundStyle(.secondary)
                 } else {
                     HStack(spacing: 14) {
@@ -586,6 +586,16 @@ struct AudioObserverPanel: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
+    private var historyPlotAxes: AnalyzerPlotAxes.Kind {
+        let rate = model.snapshot.sampleRateHz
+        let seconds = SpectrogramTimeline.duration(sampleRate: rate == 0 ? 48000 : rate)
+        switch spectrumVisualization {
+        case .spectrum: return .spectrum(sampleRate: rate)
+        case .spectrogram: return .spectrogram(sampleRate: rate, seconds: seconds)
+        case .waterfall: return .waterfall(sampleRate: rate, seconds: seconds)
+        }
+    }
+
     private func spectrumPlot(channel: UInt32, side: Bool) -> some View {
         VStack(spacing: 4) {
             Text(midSide ? (side ? "Side · (L−R)/√2" : "Mid · (L+R)/√2") : "L/R · averaged channel power")
@@ -599,9 +609,7 @@ struct AudioObserverPanel: View {
                 } else {
                     Text("Waiting for audio").foregroundStyle(.secondary)
                 }
-                AnalyzerPlotAxes(kind: spectrogram
-                    ? .spectrogram(sampleRate: model.snapshot.sampleRateHz, seconds: SpectrogramTimeline.duration(sampleRate: model.snapshot.sampleRateHz == 0 ? 48000 : model.snapshot.sampleRateHz))
-                    : .spectrum(sampleRate: model.snapshot.sampleRateHz))
+                AnalyzerPlotAxes(kind: historyPlotAxes)
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
@@ -619,9 +627,10 @@ struct AudioObserverPanel: View {
                 }
                 if spectrumSelector {
                     Spacer(minLength: 8)
-                    Picker("Visualization", selection: $spectrogram) {
-                        Text("Spectrum").tag(false)
-                        Text("2D Spectrogram").tag(true)
+                    Picker("Visualization", selection: $spectrumVisualization) {
+                        ForEach(SpectrumVisualization.allCases, id: \.self) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
                     }.labelsHidden().pickerStyle(.menu).fixedSize()
                 }
             }
