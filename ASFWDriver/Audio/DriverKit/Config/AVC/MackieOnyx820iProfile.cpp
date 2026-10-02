@@ -58,9 +58,9 @@ std::vector<uint32_t> MackieOnyx820iProfile::SupportedSampleRates() const {
     // 44.1 kHz only until the ADK transport reconfiguration supports rate
     // changes for AV/C static-profile devices — offering 48 kHz lets CoreAudio
     // attempt a change that fails at reconfig and leaves a stale
-    // session.pendingClock behind (see MackieOnyxProtocol::SupportedRates for
-    // the field-verified failure chain). Must stay in lockstep with the
-    // runtime protocol's rate set and the published nub config.
+    // session.pendingClock behind (field regression 2026-08-17). Must stay in
+    // lockstep with the catalog row's 44.1 kHz start-rate pin, which sets the
+    // published config and so the runtime protocol's rate set.
     return {44100u};
 }
 

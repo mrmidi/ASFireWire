@@ -562,8 +562,8 @@ TEST(DiceProfileTests, ResolvesMackieOnyx820iAsymmetricProfileNotGenericDice) {
     EXPECT_EQ(rx.streamMode, ASFW::Encoding::StreamMode::kBlocking);
 
     // 44.1 kHz only until the ADK reconfig path supports AV/C rate changes —
-    // offering 48 kHz re-arms the stale-pendingClock regression (see
-    // MackieOnyxProtocol::SupportedRates).
+    // offering 48 kHz re-arms the stale-pendingClock regression (the
+    // catalog row pins 44.1 kHz for the same reason).
     const auto rates = concrete.SupportedSampleRates();
     ASSERT_EQ(rates.size(), 1u);
     EXPECT_EQ(rates.front(), 44100u);

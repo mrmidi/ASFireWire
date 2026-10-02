@@ -27,9 +27,6 @@
 #include <functional>
 #include <vector>
 
-namespace ASFW::Protocols::AVC {
-}
-
 namespace ASFW::IRM {
 class IRMClient;
 }
@@ -98,9 +95,9 @@ protected:
     [[nodiscard]] virtual std::vector<uint32_t> SupportedRates() const = 0;
     virtual void ReadClockHealth(HealthCallback callback);
 
-    // Async mixer configuration. Override in devices that need FB mixer programming
-    // at stream start (e.g. Phase88 ships muted). Default: no-op (matches Linux
-    // bebob_stream.c behavior — no mixer programming at start).
+    // Async mixer configuration at stream start. Default: no-op (matches Linux
+    // bebob_stream.c, which programs no mixer). GenericAvcProtocol runs a
+    // startup MixerMap when its catalog row supplies one (the PHASE 88 ships muted).
     using MixerCompletion = std::function<void(IOReturn)>;
     enum class MixerFailurePolicy { kRequired, kBestEffort };
     virtual void ConfigureMixer(MixerFailurePolicy policy, MixerCompletion completion);

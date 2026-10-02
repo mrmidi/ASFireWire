@@ -10,7 +10,6 @@
 #include "DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "DICE/TCAT/DICETcatProtocol.hpp"
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
-#include "Oxford/Mackie/MackieOnyxProtocol.hpp"
 #include "Fireworks/FireworksProtocol.hpp"
 #include "BeBoB/Phase88MixerData.hpp"
 #include "BeBoB/MAudioSpecialProtocol.hpp"
@@ -144,12 +143,17 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                 busOps, busInfo, route, &routeRegistry, irmClient, cmpClient,
                 100U, timerScheduler);
 
-        // Mackie Onyx-i, Oxford run (shared id 0x081216; geometry verified on a
-        // real 820i). Plain AV/C + CMP duplex on the shared base -- no vendor codec.
+        // Mackie Onyx-i, Oxford run (shared id 0x081216; 8 in / 2 out on a real
+        // 820i). Plain AV/C + CMP with discovered geometry. Its row pins the
+        // start rate to 44.1 kHz, so the published config, and with it the
+        // only rate this protocol accepts, is 44.1 kHz (AvcAudioConfig
+        // ApplyRatePolicy). That keeps a stale 48 kHz pending clock refused,
+        // the field regression of 2026-08-17.
         case ProtocolImplementationId::MackieOnyx:
-            ASFW_LOG(Audio, "Creating MackieOnyxProtocol node=0x%04x", nodeId);
-            return std::make_unique<Oxford::Mackie::MackieOnyxProtocol>(
-                busOps, busInfo, route, irmClient, cmpClient, timerScheduler);
+            ASFW_LOG(Audio, "Creating generic AV/C protocol for the Mackie Onyx-i node=0x%04x", nodeId);
+            return std::make_unique<GenericAvcProtocol>(
+                busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
+                nullptr, "Mackie Onyx-i (Oxford)");
 
         // --- Fireworks Family ---
         // Mackie Onyx 400F, Echo Fireworks run: EFC-controlled clock on top of
@@ -172,10 +176,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                 busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
                 &BeBoB::kPhase88MixerMap, "TerraTec PHASE 88 Rack FW");
 
-        // Conservative defaults -- plug-0, CMP, no mixer programming. No catalog
-        // row selects this today (the one BeBoB device on this branch, the
-        // PHASE 88, has its own builder), so it is reachable only when a future
-        // row names it.
+        // M-Audio FireWire 1814 and ProjectMix special firmware.
         case ProtocolImplementationId::BeBoBMAudioSpecial:
             if (plan.profileBuilder != DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 &&
                 plan.profileBuilder != DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix) {
