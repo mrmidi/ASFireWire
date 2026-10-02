@@ -16,6 +16,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0-beta.2] - 2026-10-02
+
+> Includes the changes since 0.4.0-beta.1, with critical BeBoB/AV/C fixes and an expanded Audio Analyzer. Device coverage remains best effort; please report hardware results.
+
+### Added
+
+- Audio Analyzer: scrolling 2D spectrogram and interactive 3D waterfall views, including a surface view and optional contours. (#170)
+- Audio Analyzer: GPU diagnostics with per-pass timings, frame-budget measurements, and controls to reset or copy measurements. (#170)
+- AV/C Report: a versioned discovery document containing plugs, descriptors, confirmed controls, clock routes, stream graphs, failed probes and timed FCP exchanges. Reports preserve this document, and older report files still open. A read-only MCP tool exposes the same cached document without sending bus traffic. (#169)
+- BeBoB: startup mixer diagnostics show which selectors, mutes and volumes were sent, what failed, and what applied. (#171)
+
+### Changed
+
+- AV/C: discovery now owns its sessions and publishes an immutable snapshot. BridgeCo channel discovery reuses that snapshot, and Oxford devices no longer receive duplicate stream-format queries. Phase 88, Onyx-i and Duet use the generic AV/C profile with device geometry read from discovery. (#168, #169)
+- AV/C: devices prefer 48 kHz at startup when available; device-specific rate pins remain in effect. Generic AV/C devices advertise the single rate their streaming path can start. Phase 88 host buffering also uses the timing values previously used for Onyx-i. (#168, #169)
+- Audio Analyzer: true-peak calculation, K-weighting and loudness reductions run in parallel on the GPU; plot readouts use cached batches. (#170)
+
+### Fixed
+
+- BeBoB/AV/C: acknowledge a device's FCP response before submitting the next command. Previously the next command could arrive while the device was still waiting for that acknowledgement, causing a Phase 88 to stop answering and reboot during discovery. (#168)
+- AV/C: commands use one transaction engine with explicit response, write-completion and reset states. STATUS/INQUIRY retries are separated from CONTROL/NOTIFY commands, and a completed response cannot be failed again by a late timeout, write completion or reset. (#168)
+- AV/C: descriptor reads own their operation lifetime and use bounded parsing; discovery callbacks validate their session and bus generation before publishing results. (#168, #169)
+- AV/C: manual discovery refresh is refused while that unit's audio is streaming or reconciling, and a cancelled refresh preserves the previous report. (#169)
+- Audio: Stop releases the AudioDriverKit device, stream and control graph so the audio driver can be freed after unplug. Dispatch sources and actions finish cancellation before the main service completes Stop, and user-client transaction callbacks release their ownership when completed or discarded. (#171)
+
+### Known issues
+
+- The main driver extension process can still remain alive after unplug. The audio driver is freed, but a remaining ownership hold is unresolved. Further teardown investigation is backlogged; this release does not claim to fix extension-process exit.
+
 ## [0.4.0-beta.1] - 2026-10-02
 
 > **First release since 0.3.1.** Version 0.3.2 was prepared but never tagged; its changes ship here and are merged into the lists below.
@@ -123,5 +152,6 @@ Use these headings, omitting any that are empty:
 ### Security
 -->
 
-[Unreleased]: https://github.com/mrmidi/ASFireWire/compare/v0.4.0-beta.1...main
+[Unreleased]: https://github.com/mrmidi/ASFireWire/compare/v0.4.0-beta.2...main
+[0.4.0-beta.2]: https://github.com/mrmidi/ASFireWire/releases/tag/v0.4.0-beta.2
 [0.4.0-beta.1]: https://github.com/mrmidi/ASFireWire/releases/tag/v0.4.0-beta.1
