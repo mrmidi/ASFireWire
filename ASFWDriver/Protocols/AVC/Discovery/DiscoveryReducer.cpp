@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "DiscoveryReducer.hpp"
 #include <algorithm>
+#include <utility>
 #include <type_traits>
 
 namespace ASFW::AVC::DiscoveryEngine {
@@ -339,8 +340,11 @@ void Descriptor(Transition& t, size_t index, const DescriptorReply& reply) {
             if (parsed) {
                 content.audio = std::move(*parsed);
                 std::vector<Probe> next;
-                for (auto id : content.audio->rootListIds)
-                    next.emplace_back(DescriptorProbe{probe.subunit, Cmd::DescriptorSpecifier::ListById(id), 1, {id}});
+                for (auto id : content.audio->rootListIds) {
+                    ListAncestry root;
+                    (void)root.push_back(id); // Capacity is the depth budget (>= 1).
+                    next.emplace_back(DescriptorProbe{probe.subunit, Cmd::DescriptorSpecifier::ListById(id), 1, root});
+                }
                 Insert(s, index, std::move(next));
             } else blob.parseError = parsed.error();
         } else {
@@ -369,8 +373,12 @@ void Descriptor(Transition& t, size_t index, const DescriptorReply& reply) {
                         blob.parseError = ParsedDescriptors::ParseError{0, ParsedDescriptors::ParseErrorKind::BudgetExceeded};
                         s.builder.textReferences.push_back({probe.subunit, id, TextReferenceKind::BudgetExceeded}); break;
                     }
-                    auto ancestors = probe.ancestors; ancestors.push_back(id);
-                    next.emplace_back(DescriptorProbe{probe.subunit, specifier, probe.depth + 1, std::move(ancestors)});
+                    auto ancestors = probe.ancestors;
+                    if (!ancestors.push_back(id)) { // Deeper than the budget allows.
+                        blob.parseError = ParsedDescriptors::ParseError{0, ParsedDescriptors::ParseErrorKind::BudgetExceeded};
+                        s.builder.textReferences.push_back({probe.subunit, id, TextReferenceKind::BudgetExceeded}); break;
+                    }
+                    next.emplace_back(DescriptorProbe{probe.subunit, specifier, probe.depth + 1, ancestors});
                 }
                 Insert(s, index, std::move(next));
             } else if (!blob.parseError) blob.parseError = children.error();

@@ -9,13 +9,14 @@ namespace ASFW::AVC::DiscoveryEngine {
 /// Its callbacks carry LiveRef; immutable results may outlive the session.
 class Session final : public std::enable_shared_from_this<Session> {
 public:
-    using Completion = std::function<void(SnapshotLease)>;
+    /// Runs exactly once with the committed (or cancelled) snapshot.
+    using Completion = Common::MoveOnlyCallback<void(SnapshotLease)>;
     using Extension = std::function<void(SnapshotLease, std::function<void(ExtensionFacts)>)>;
     static std::shared_ptr<Session> Create(IAvcUnit& unit, SessionId id, Completion completion,
                                            Extension extension = {});
     ~Session();
-    Session(const Session&) = delete;
-    Session& operator=(const Session&) = delete;
+    Session(const Session&) = delete("a session owns its outstanding probe and its exactly-once completion");
+    Session& operator=(const Session&) = delete("a session owns its outstanding probe and its exactly-once completion");
     [[nodiscard]] std::weak_ptr<const void> LifetimeToken() const noexcept { return lifetime_.Token(); }
     void Start();
     void Cancel();

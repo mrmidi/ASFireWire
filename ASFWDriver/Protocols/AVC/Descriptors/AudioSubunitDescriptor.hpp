@@ -108,7 +108,7 @@ struct AudioSubunitIdentifier {
     std::vector<AudioFunctionBlockInfo> functionBlocks;
 
     /// Look up a function block by type and ID
-    [[nodiscard]] const AudioFunctionBlockInfo* FindBlock(AudioFunctionBlockType type, uint8_t id) const noexcept {
+    [[nodiscard]] constexpr const AudioFunctionBlockInfo* FindBlock(AudioFunctionBlockType type, uint8_t id) const noexcept {
         for (const auto& fb : functionBlocks) {
             if (fb.type == type && fb.id == id) return &fb;
         }
@@ -131,7 +131,8 @@ class AudioSubunitDescriptorParser {
 public:
     /// Parse the Audio Subunit Identifier Descriptor (specifier 0x00).
     /// @param data Raw descriptor bytes starting from header (excluding FCP/AV/C headers)
-    [[nodiscard]] static Parsed<AudioSubunitIdentifier> ParseIdentifierDescriptor(
+    /// constexpr: captured fixtures are parsed in static_asserts.
+    [[nodiscard]] static constexpr Parsed<AudioSubunitIdentifier> ParseIdentifierDescriptor(
         std::span<const uint8_t> data) noexcept;
 
     /// Parse a Text Database List Descriptor (specifier 0x10 <list_id:2>, e.g. 0x1801).
@@ -150,6 +151,140 @@ public:
     static void ResolveNames(AudioSubunitIdentifier& identifier, const TextDatabase& textDb) noexcept;
 };
 
+
+//==============================================================================
+// Identifier descriptor parsing (Audio Subunit 1.0 §5.1, §8.1; Descriptor 1.2)
+// Every length is a bounded Section(); the pipeline stops at the first error.
+//==============================================================================
+
+namespace AudioIdentifierParse {
+[[nodiscard]] constexpr Parsed<void> Fail(size_t offset, ParseErrorKind kind) {
+    return std::unexpected(ParseError{offset, kind});
+}
+[[nodiscard]] constexpr Parsed<void> Sources(ParseReader& reader, size_t count, std::vector<AudioSourceId>& out) {
+    for (size_t i = 0; i < count; ++i) {
+        AudioSourceId source{};
+        if (auto read = reader.Fields(source.type, source.id); !read) return read;
+        out.push_back(source);
+    }
+    return {};
+}
+[[nodiscard]] constexpr Parsed<void> ListIds(ParseReader& reader, size_t count, std::vector<uint16_t>& out) {
+    for (size_t i = 0; i < count; ++i) {
+        auto id = reader.BE16();
+        if (!id) return std::unexpected(id.error());
+        out.push_back(*id);
+    }
+    return {};
+}
+/// Master then per-channel control bitmaps, each `width` bytes (1 or 2).
+[[nodiscard]] constexpr Parsed<void> Controls(ParseReader& fields, uint16_t width, AudioFunctionBlockInfo& block) {
+    const auto read = [&fields, width]() -> Parsed<uint16_t> {
+        if (width == 1) return fields.U8().transform([](uint8_t value) { return static_cast<uint16_t>(value); });
+        return fields.BE16();
+    };
+    return read().and_then([&](uint16_t master) -> Parsed<void> {
+        block.masterControls = master;
+        while (fields.Remaining()) {
+            auto channel = read();
+            if (!channel) return std::unexpected(channel.error());
+            block.channelControls.push_back(*channel);
+        }
+        return {};
+    });
+}
+/// Feature function block specific fields (Audio Subunit Table 8.3, local
+/// spec text:2304-2340). The Duet uses one-byte length/width fields; only its
+/// exact captured 08 02 00 layout is accepted for that form.
+[[nodiscard]] constexpr Parsed<void> Feature(ParseReader reader, AudioFunctionBlockInfo& block) {
+    const auto base = reader.Offset();
+    return reader.Take(reader.Remaining()).and_then([&](std::span<const uint8_t> bytes) -> Parsed<void> {
+        ParseReader fields(bytes, base);
+        if (bytes.size() == 9 && bytes[0] == 8 && bytes[1] == 2 && bytes[2] == 0) {
+            uint8_t shortLength{}, width{};
+            return fields.Fields(shortLength, width, block.generalTag)
+                .and_then([&] { return Controls(fields, 2, block); });
+        }
+        return fields.Section().and_then([&](ParseReader specific) {
+            return fields.End().and_then([&]() -> Parsed<void> {
+                const auto widthAt = specific.Offset();
+                return specific.BE16().and_then([&](uint16_t width) -> Parsed<void> {
+                    if (width != 1 && width != 2) return Fail(widthAt, ParseErrorKind::InvalidValue);
+                    return specific.Fields(block.generalTag).and_then([&] { return Controls(specific, width, block); });
+                });
+            });
+        });
+    });
+}
+[[nodiscard]] constexpr Parsed<AudioFunctionBlockInfo> FunctionBlock(ParseReader& configuration) {
+    return configuration.Section().and_then([](ParseReader reader) -> Parsed<AudioFunctionBlockInfo> {
+        AudioFunctionBlockInfo block;
+        uint8_t type{}, inputs{};
+        return reader.Fields(type, block.id, block.nameIndex, inputs)
+            .and_then([&] {
+                block.type = static_cast<AudioFunctionBlockType>(type);
+                return Sources(reader, inputs, block.inputSources);
+            })
+            .and_then([&] { return reader.Section(); })
+            .and_then([&](ParseReader cluster) -> Parsed<void> {
+                if (!cluster.Remaining()) return {};
+                return cluster.Fields(block.clusterChannels);
+            })
+            .and_then([&] { return reader.Section(); })
+            .and_then([&](ParseReader dependent) -> Parsed<void> {
+                // Bytes past the known fields are reserved/device-specific; their
+                // bounds were already checked by Section().
+                if (!dependent.Remaining()) return {};
+                if (block.type == AudioFunctionBlockType::kFeature) return Feature(dependent, block);
+                if (block.type == AudioFunctionBlockType::kProcessing) return dependent.Fields(block.processType);
+                return {};
+            })
+            .transform([&] { return std::move(block); });
+    });
+}
+/// Audio subunit information: name, cluster, source plug links, function blocks.
+[[nodiscard]] constexpr Parsed<void> Information(ParseReader info, AudioSubunitIdentifier& identifier) {
+    uint16_t name{};
+    uint8_t sourceCount{}, blockCount{};
+    return info.Fields(name)
+        .and_then([&] { return info.Section(); })
+        .and_then([&](ParseReader) { return info.Fields(sourceCount); })
+        .and_then([&] { return Sources(info, sourceCount, identifier.sourcePlugLinks); })
+        .and_then([&] { return info.Fields(blockCount); })
+        .and_then([&]() -> Parsed<void> {
+            for (size_t i = 0; i < blockCount; ++i) {
+                auto block = FunctionBlock(info);
+                if (!block) return std::unexpected(block.error());
+                identifier.functionBlocks.push_back(std::move(*block));
+            }
+            return {};
+        });
+}
+} // namespace AudioIdentifierParse
+
+constexpr Parsed<AudioSubunitIdentifier> AudioSubunitDescriptorParser::ParseIdentifierDescriptor(
+    std::span<const uint8_t> data) noexcept {
+    using namespace AudioIdentifierParse;
+    return DescriptorBody(data).and_then([](ParseReader reader) -> Parsed<AudioSubunitIdentifier> {
+        AudioSubunitIdentifier identifier;
+        uint16_t rootCount{};
+        return reader.Fields(identifier.generationId, identifier.sizeOfListId,
+                             identifier.sizeOfObjectId, identifier.sizeOfObjectPosition, rootCount)
+            .and_then([&]() -> Parsed<void> {
+                if (rootCount && identifier.sizeOfListId != 2) return Fail(3, ParseErrorKind::InvalidValue);
+                return ListIds(reader, rootCount, identifier.rootListIds);
+            })
+            .and_then([&] { return reader.Section(); })                               // dependent info
+            .and_then([](ParseReader dependent) { return dependent.Section(); })      // configuration
+            .and_then([&](ParseReader configuration) {
+                uint16_t configurationId{};
+                return configuration.Fields(configurationId)
+                    .and_then([&] { return configuration.Section(); })
+                    .and_then([&](ParseReader info) { return Information(info, identifier); });
+            })
+            .transform([&] { return std::move(identifier); });
+    });
+}
 } // namespace ASFW::Protocols::AVC::Descriptors
 
 namespace ASFW::AVC::Descriptors {

@@ -6,6 +6,7 @@
 #include "../../DriverKit/Config/AudioProfileRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
 #include <algorithm>
+#include <utility>
 namespace ASFW::Audio::AVC {
 namespace P = Protocols::AVC;
 namespace B = Protocols::BeBoB::Bootloader;
@@ -80,6 +81,7 @@ void DiscoveryCoordinator::PrepareDevice(std::shared_ptr<Discovery::FWDevice> de
         preparation.waiters.push_back(std::move(ready));
         return;
     }
+    std::unreachable(); // Exhaustive over our own state enum; no device value reaches it.
 }
 void DiscoveryCoordinator::StartPreparation(const Discovery::DeviceRouteToken& route, uint32_t vendorId, uint32_t modelId,
                                             std::vector<std::function<void(bool)>> waiters) {
@@ -134,6 +136,7 @@ void DiscoveryCoordinator::OnPrepared(const Discovery::DeviceRouteToken& route, 
         Fail(route.guid, std::string("preparation-") + B::RetireReasonName(retired->reason));
         finish(false); return;
     }
+    std::unreachable(); // Exhaustive over the preparation FSM's own reasons.
 }
 void DiscoveryCoordinator::UnitCreated(const std::shared_ptr<P::AVCUnit>& unit) {
     if (stopped_ || !unit) return;

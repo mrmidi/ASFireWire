@@ -34,12 +34,11 @@ AVCUnit::DiscoveryOptions DiscoveryOptionsFor(AvcExtensionInventory inventory) {
                         const ::ASFW::Audio::BeBoB::DeviceModel& model) {
                         // BridgeCo "input" is the unit ISO input plug: host playback.
                         const auto formations = [](const ::ASFW::Audio::BeBoB::IsochronousPlugModel& plug) {
-                            std::vector<ASFW::AVC::DiscoveryEngine::Formation> out;
+                            decltype(ASFW::AVC::DiscoveryEngine::ExtensionPlug::formations) out;
                             for (const auto& formation : plug.supportedFormations) {
-                                if (const auto hz = formation.RateHz()) {
-                                    out.push_back({.rateHz = *hz, .pcmChannels = formation.pcmChannels,
-                                                   .midiChannels = formation.midiSlots});
-                                }
+                                const auto hz = formation.RateHz();
+                                if (hz && !out.push_back({.rateHz = *hz, .pcmChannels = formation.pcmChannels,
+                                                          .midiChannels = formation.midiSlots})) break; // Full.
                             }
                             return out;
                         };

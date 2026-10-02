@@ -110,8 +110,8 @@ public:
     FCPTransport() = default;
     ~FCPTransport() override;
 
-    FCPTransport(const FCPTransport&) = delete;
-    FCPTransport& operator=(const FCPTransport&) = delete;
+    FCPTransport(const FCPTransport&) = delete("one transport per unit owns the single outstanding FCP transaction");
+    FCPTransport& operator=(const FCPTransport&) = delete("one transport per unit owns the single outstanding FCP transaction");
 
     bool init(Protocols::Ports::FireWireBusOps* busOps,
               Protocols::Ports::FireWireBusInfo* busInfo,

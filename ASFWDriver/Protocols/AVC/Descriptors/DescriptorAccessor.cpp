@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "DescriptorAccessor.hpp"
 #include "../../../Common/OnceCompletion.hpp"
+#include "ParseReader.hpp"
 #include <algorithm>
+#include <numeric>
 #include <variant>
 
 namespace ASFW::Protocols::AVC {
@@ -49,7 +51,9 @@ public:
                             Cmd::DescriptorSpecifier specifier, SessionId id,
                             DescriptorAccessor::ReadCompletion completion)
         : unit_(unit), route_(unit.CurrentRoute()), address_(address), specifier_(specifier), id_(id),
-          completion_([completion = std::move(completion)](auto result) { completion(result); }, Cancelled()) {}
+          completion_([completion = std::move(completion)](DescriptorAccessor::ReadDescriptorResult result) mutable {
+              completion(result);
+          }, Cancelled()) {}
     [[nodiscard]] bool IsDone() const noexcept { return std::holds_alternative<Done>(phase_); }
 
     void Abort() {
@@ -169,7 +173,9 @@ private:
         }
         if (reading.offset == 0) {
             if (bytes.size() < 2) { FailRead(Avc::AvcError::Of(Avc::AvcErrorKind::kOperandsTooShort)); Pump(); return; }
-            reading.declaredTotal = (static_cast<size_t>(bytes[0]) << 8) + bytes[1] + 2;
+            // descriptor_length excludes itself (TA 2002013 §5). Saturating, so
+            // no declared length can wrap into a small "complete" total.
+            reading.declaredTotal = std::add_sat<size_t>(Descriptors::ParseReader(bytes).BE16().value_or(0), 2);
             if (reading.declaredTotal > DescriptorAccessor::kMaxDescriptorBytes) {
                 FailRead(Avc::AvcError::Of(Avc::AvcErrorKind::kMalformedOperands)); Pump(); return;
             }
@@ -178,7 +184,7 @@ private:
             FailRead(Avc::AvcError::Of(Avc::AvcErrorKind::kMalformedOperands)); Pump(); return;
         }
         data_.insert(data_.end(), bytes.begin(), bytes.end()); // Own before callback returns.
-        reading.offset += bytes.size();
+        reading.offset = std::add_sat(reading.offset, bytes.size());
         // Apple MusicSubunitController.cpp:929-937 uses declared length even
         // when read_result_status is inaccurate. No additional read at EOF.
         if (reading.offset == reading.declaredTotal) {

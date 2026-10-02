@@ -11,6 +11,8 @@ struct Ready {};
 struct WaitingForDiscovery {};
 struct Failed { std::string reason; };
 using PublicationState = std::variant<Ready, WaitingForDiscovery, Failed>;
+// Exceptions are off: a variant that became valueless would abort.
+static_assert(std::is_nothrow_move_constructible_v<PublicationState>);
 /// Audio-owned publication, policy and preparation. Runs on the driver's work
 /// queue; evaluation is triggered by discovery/extension completion, not timers.
 class DiscoveryCoordinator final : public Protocols::AVC::DiscoveryOwner,

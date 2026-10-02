@@ -10,7 +10,10 @@ inline constexpr uint8_t kMaxFormatEntries = 32;
 /// unit that stops answering altogether ends discovery after this many in a row.
 inline constexpr uint8_t kMaxConsecutiveTimeouts = 2;
 struct FormatProbe { Cmd::StreamFormatCommand command; bool fallback{false}; };
-struct DescriptorProbe { SubunitId subunit; Cmd::DescriptorSpecifier specifier; size_t depth{0}; std::vector<uint16_t> ancestors; };
+/// Text-list ancestry: bounded by the list depth budget, so device data can
+/// never grow it.
+using ListAncestry = Common::BoundedList<uint16_t, ParsedDescriptors::kMaxTextListDepth>;
+struct DescriptorProbe { SubunitId subunit; Cmd::DescriptorSpecifier specifier; size_t depth{0}; ListAncestry ancestors; };
 struct SelectorProbe { Cmd::SelectorCommand command; };
 struct ClockProbe { Cmd::SignalSourceCommand command; };
 enum class Checkpoint : uint8_t { Formats, Descriptors, Routes, Controls, Extension, Commit };

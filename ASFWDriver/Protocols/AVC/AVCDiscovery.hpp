@@ -54,8 +54,8 @@ public:
 
     ~AVCDiscovery() override;
 
-    AVCDiscovery(const AVCDiscovery&) = delete;
-    AVCDiscovery& operator=(const AVCDiscovery&) = delete;
+    AVCDiscovery(const AVCDiscovery&) = delete("discovery owns every AV/C unit on the bus; there is exactly one");
+    AVCDiscovery& operator=(const AVCDiscovery&) = delete("discovery owns every AV/C unit on the bus; there is exactly one");
 
     void OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) override;
     void OnUnitSuspended(std::shared_ptr<Discovery::FWUnit> unit) override;

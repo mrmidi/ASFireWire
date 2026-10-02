@@ -23,9 +23,9 @@ public:
                                           Discovery::DeviceRegistry& registry) noexcept;
     ~BeBoBBootloaderPreparationCoordinator();
 
-    BeBoBBootloaderPreparationCoordinator(const BeBoBBootloaderPreparationCoordinator&) = delete;
+    BeBoBBootloaderPreparationCoordinator(const BeBoBBootloaderPreparationCoordinator&) = delete("runs call back into this coordinator; it must keep one address");
     BeBoBBootloaderPreparationCoordinator& operator=(
-        const BeBoBBootloaderPreparationCoordinator&) = delete;
+        const BeBoBBootloaderPreparationCoordinator&) = delete("runs call back into this coordinator; it must keep one address");
 
     [[nodiscard]] bool Prepare(const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
                                uint32_t vendorId, uint32_t modelId,

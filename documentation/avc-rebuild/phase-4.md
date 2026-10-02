@@ -29,6 +29,24 @@ separate privacy work. Phases 5–6 and broader 1814 probing are excluded.
   acceptable. Use verified C++26 features where useful; no move_only_function,
   inplace_vector, reflection, contracts or #embed.
 
+### Where the C++23/26 features are used (verified on Xcode 27 / DriverKit 27)
+
+| Feature | Use |
+|---|---|
+| `std::expected` `and_then`/`transform` | Descriptor parsers are pipelines: `DescriptorBody(...).and_then(...)`, `ParseReader::Fields` folds field reads with `and_then` and stops at the first error (`ParseReader.hpp`, `AudioSubunitDescriptor.hpp/.cpp`, `AVCInfoBlock.cpp`). No try-macros. |
+| `std::add_sat` | Reader offsets, info-block and text-entry cursors, descriptor `declaredTotal` and read offset (`ParseReader.hpp`, `AVCInfoBlock.cpp`, `DescriptorAccessor.cpp`, `MusicSubunitDescriptor.cpp`). |
+| `std::byteswap` + `std::endian` + `std::bit_cast` | `FromBigEndian` and `ParseReader::Field<T>`; the music descriptor's hand-indexed BE reads are gone. |
+| Deducing `this` | Recursive info-block searches (`AVCInfoBlock::FindNestedRecursive`, `FindAllNestedRecursive`) as recursive lambdas. |
+| `std::unreachable()` | After exhaustive switches over our own enums only (`DiscoveryCoordinator`): never on a device value. |
+| `= delete("reason")` | Copies of units, transports, discovery, accessors, sessions, the bootloader coordinator, `OnceCompletion` and `MoveOnlyCallback`. |
+| constexpr parsers | `ParseIdentifierDescriptor` is constexpr; the captured Duet and Phase 88 audio identifiers are parsed in `static_assert`s (`AudioSubunitDescriptorTests.cpp`); the reader's own checks are `static_assert`s. A parser regression fails the build. |
+| Move-only callback (`Common/MoveOnlyCallback.hpp`) | Replaces the absent `std::move_only_function`: `OnceCompletion`, `Session::Completion`, `DescriptorAccessor::ReadCompletion`. |
+| Bounded list (`Common/BoundedList.hpp`) | Replaces the absent `std::inplace_vector`: text-list ancestry (depth budget) and extension formations. |
+| noexcept variant moves | `static_assert`s on every phase/slot/publication variant. |
+
+Not used: the music status descriptor parser is not constexpr (its labels live in
+maps); its field reads go through the bounded reader instead.
+
 ## Commit 1: baseline and descriptors (4.1 + 4.2)
 
 Move plan/source fixtures into tracked documentation with provenance; update

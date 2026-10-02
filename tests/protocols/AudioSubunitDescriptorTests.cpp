@@ -10,11 +10,48 @@
 #include "ASFWDriver/Protocols/AVC/Descriptors/AudioSubunitDescriptor.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/DescriptorCommands.hpp"
 #include "tests/support/Phase88DescriptorFixtures.hpp"
+#include "tests/support/DuetDescriptorFixture.hpp"
 
 #include <string>
 #include <vector>
 
 namespace ASFW::Protocols::AVC::Descriptors::Test {
+
+
+// Compile-time regression checks: the captured device descriptors are parsed by
+// the same constexpr parser the driver uses. A parser change that breaks either
+// device fails the build, not just a test run.
+namespace ConstexprFixtures {
+namespace F = ASFW::AVC::Testing::Fixtures;
+constexpr bool DuetIdentifierParses() {
+    const auto parsed = AudioSubunitDescriptorParser::ParseIdentifierDescriptor(F::kDuetAudioIdentifierBytes);
+    if (!parsed || parsed->functionBlocks.size() != 1) return false;
+    const auto& block = parsed->functionBlocks[0];
+    return block.id == 1 && block.type == AudioFunctionBlockType::kFeature && block.clusterChannels == 2 &&
+           (block.masterControls & FeatureControlMask::kVolume) && (block.masterControls & FeatureControlMask::kMute);
+}
+constexpr size_t Phase88Selectors() {
+    const auto parsed = AudioSubunitDescriptorParser::ParseIdentifierDescriptor(F::kPhase88AudioIdentifierBytes);
+    if (!parsed) return 0;
+    size_t selectors = 0;
+    for (const auto& block : parsed->functionBlocks) selectors += block.type == AudioFunctionBlockType::kSelector;
+    return selectors;
+}
+constexpr bool Phase88FeatureBlocksParse() {
+    const auto parsed = AudioSubunitDescriptorParser::ParseIdentifierDescriptor(F::kPhase88AudioIdentifierBytes);
+    return parsed && parsed->FindBlock(AudioFunctionBlockType::kFeature, 1) &&
+           parsed->FindBlock(AudioFunctionBlockType::kFeature, 2);
+}
+constexpr bool TruncatedPhase88IdentifierIsRejected() {
+    std::array<uint8_t, 40> head{};
+    for (size_t i = 0; i < head.size(); ++i) head[i] = F::kPhase88AudioIdentifierBytes[i];
+    return !AudioSubunitDescriptorParser::ParseIdentifierDescriptor(head).has_value();
+}
+static_assert(DuetIdentifierParses());
+static_assert(Phase88FeatureBlocksParse());
+static_assert(Phase88Selectors() == 10);
+static_assert(TruncatedPhase88IdentifierIsRejected());
+} // namespace ConstexprFixtures
 
 namespace {
 

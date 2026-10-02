@@ -9,6 +9,7 @@
 #include "../Descriptors/AudioSubunitDescriptor.hpp"
 #include <memory>
 #include "../../../Common/PcmSlotMap.hpp"
+#include "../../../Common/BoundedList.hpp"
 
 namespace ASFW::AVC::DiscoveryEngine {
 namespace ParsedDescriptors = ASFW::Protocols::AVC::Descriptors;
@@ -62,9 +63,15 @@ struct ProbeOutcome {
     Opcode opcode{Opcode::kUnitInfo};
     std::optional<AvcError> error;
 };
-struct Formation { uint32_t rateHz{}, pcmChannels{}, midiChannels{}; };
+struct Formation {
+    uint32_t rateHz{}, pcmChannels{}, midiChannels{};
+    friend constexpr bool operator==(const Formation&, const Formation&) = default;
+};
+/// Formations a chip extension reports per plug; the capacity matches the
+/// stream-format list bound (one formation per list entry).
+inline constexpr size_t kMaxExtensionFormations = 32;
 struct ExtensionPlug {
-    std::vector<Formation> formations;
+    Common::BoundedList<Formation, kMaxExtensionFormations> formations;
     Common::PcmSlotMap pcmSlots;
     uint32_t currentRateHz{};
 };

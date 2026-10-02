@@ -5,6 +5,7 @@
 #include "../Commands/DescriptorCommands.hpp"
 #include "../Core/IAvcUnit.hpp"
 #include "../AVCDefs.hpp"
+#include "../../../Common/MoveOnlyCallback.hpp"
 #include <functional>
 #include <memory>
 #include <optional>
@@ -27,12 +28,13 @@ public:
         std::optional<ASFW::AVC::AvcError> cleanupError;
         bool cancelled{false};
     };
-    using ReadCompletion = std::function<void(const ReadDescriptorResult&)>;
+    /// Runs exactly once; move-only so it can never be duplicated.
+    using ReadCompletion = Common::MoveOnlyCallback<void(const ReadDescriptorResult&)>;
     DescriptorAccessor(ASFW::AVC::IAvcUnit& unit, uint8_t address = 0xFF);
     DescriptorAccessor(ASFW::AVC::IAvcUnit& unit, ASFW::AVC::SubunitAddress address);
     ~DescriptorAccessor();
-    DescriptorAccessor(const DescriptorAccessor&) = delete;
-    DescriptorAccessor& operator=(const DescriptorAccessor&) = delete;
+    DescriptorAccessor(const DescriptorAccessor&) = delete("an accessor owns its in-flight OPEN/READ/CLOSE operation");
+    DescriptorAccessor& operator=(const DescriptorAccessor&) = delete("an accessor owns its in-flight OPEN/READ/CLOSE operation");
 
     void readUnitIdentifier(ReadCompletion completion);
     void readStatusDescriptor(uint8_t type, ReadCompletion completion);

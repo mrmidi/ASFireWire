@@ -103,8 +103,8 @@ public:
 
     ~AVCUnit() override;
 
-    AVCUnit(const AVCUnit&) = delete;
-    AVCUnit& operator=(const AVCUnit&) = delete;
+    AVCUnit(const AVCUnit&) = delete("a unit owns its FCP transport and discovery session; there is one per device");
+    AVCUnit& operator=(const AVCUnit&) = delete("a unit owns its FCP transport and discovery session; there is one per device");
 
     // --- IAvcUnit implementation ---
     void Submit(const ASFW::AVC::CommandFrame& frame,
