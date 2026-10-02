@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "BeBoBMixerMap.hpp"
+
 #include "../Duplex/FamilyDriver.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../../../Protocols/Ports/FireWireBusPort.hpp"
@@ -102,6 +104,10 @@ protected:
     using MixerCompletion = std::function<void(IOReturn)>;
     enum class MixerFailurePolicy { kRequired, kBestEffort };
     virtual void ConfigureMixer(MixerFailurePolicy policy, MixerCompletion completion);
+
+    /// Program a device's startup mixer: selectors, then mutes, then volumes,
+    /// one CONTROL at a time. kRequired stops at the first failure.
+    void RunMixerMap(const MixerMap& map, MixerFailurePolicy policy, MixerCompletion completion);
 
     // FB framework helpers — async FCP operations for subclasses.
     void SetSelectorBlock(uint8_t fbId, uint8_t value, MixerCompletion completion);

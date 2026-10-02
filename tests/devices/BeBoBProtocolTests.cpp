@@ -11,6 +11,7 @@
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialRouting.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/Phase88MixerData.hpp"
+#include "ASFWDriver/Protocols/AVC/Commands/FunctionBlockCommand.hpp"
 #include "ASFWDriver/Protocols/BeBoB/VirtualUart/BeBoBVirtualUartCommand.hpp"
 #include "ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
@@ -621,3 +622,51 @@ TEST_F(BeBoBProtocolTest, GenericAvcUsesObservedAsymmetricGeometryAndRejectsOthe
     protocol.ApplyClockConfig({.sampleRateHz = 48000}, [&status](IOReturn result, const auto&) { status = result; });
     EXPECT_EQ(status, kIOReturnUnsupported);
 }
+
+TEST(Phase88OnGenericAvcTests, StartAppliesTheRateThenTheWholeStartupMixerInOrder) {
+    // The PHASE 88 row is the generic protocol plus its startup mixer map. Its
+    // start sends both signal-format CONTROLs, then every selector, mute and
+    // volume of the map, one at a time and in that order.
+    ASFW::Testing::AvcTestRig rig;
+    ASSERT_TRUE(rig.IsReady());
+    const auto route = rig.Route();
+    ASFW::Audio::GenericAvcProtocol protocol(rig.Bus(), rig.Bus(), route, nullptr, nullptr, &rig.Timers(),
+                                             &ASFW::Audio::BeBoB::kPhase88MixerMap, "TerraTec PHASE 88 Rack FW");
+    protocol.UpdateRuntimeContext(route, rig.Transport());
+    ASFW::Audio::AudioStreamRuntimeCaps geometry{};
+    geometry.sampleRateHz = 48000;
+    geometry.hostInputPcmChannels = geometry.hostOutputPcmChannels = 10;
+    geometry.deviceToHostAm824Slots = geometry.hostToDeviceAm824Slots = 11;
+    protocol.AdoptDiscoveredGeometry(geometry);
+
+    IOReturn result = kIOReturnBusy;
+    protocol.ApplyClockConfig({.sampleRateHz = 48000}, [&result](IOReturn status, auto) { result = status; });
+    for (int i = 0; i < 64 && result == kIOReturnBusy; ++i) { (void)rig.Drain(); rig.Timers().Advance(1'000'000'000ULL); }
+    ASSERT_EQ(result, kIOReturnSuccess);
+
+    using namespace ASFW::AVC;
+    std::vector<std::vector<uint8_t>> expected;
+    for (const auto& sel : ASFW::Audio::BeBoB::kPhase88MixerMap.selectors) {
+        const auto frame = Cmd::SelectorCommand{.address = kAudioSubunit0,
+            .operands = {.functionBlockId = sel.fbId, .inputPlug = sel.value}}.Encode(CommandType::kControl);
+        expected.emplace_back(frame->WireBytes().begin(), frame->WireBytes().end());
+    }
+    const auto& commands = rig.Target().Commands();
+    ASSERT_GE(commands.size(), 2U + 10U) << "two signal formats, then 2 selectors + 4 mutes + 4 volumes";
+    // Signal formats first (opcodes 0x18 output, 0x19 input), then the map.
+    EXPECT_EQ(commands[0].data[2], 0x18);
+    EXPECT_EQ(commands[1].data[2], 0x19);
+    size_t mixerFrames = 0;
+    for (size_t i = 2; i < commands.size(); ++i) {
+        ASSERT_EQ(commands[i].data[0], 0x00) << "CONTROL";
+        ASSERT_EQ(commands[i].data[1], 0x08) << "audio subunit 0";
+        ASSERT_EQ(commands[i].data[2], 0xB8) << "FUNCTION BLOCK";
+        ++mixerFrames;
+    }
+    EXPECT_EQ(mixerFrames, 10U);
+    for (size_t i = 0; i < expected.size(); ++i) {
+        const std::vector<uint8_t> sent(commands[2 + i].data.begin(), commands[2 + i].data.begin() + commands[2 + i].length);
+        EXPECT_EQ(sent, expected[i]) << "selector " << i;
+    }
+}
+

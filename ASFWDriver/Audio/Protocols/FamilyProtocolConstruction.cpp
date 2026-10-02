@@ -12,7 +12,7 @@
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "Oxford/Mackie/MackieOnyxProtocol.hpp"
 #include "Fireworks/FireworksProtocol.hpp"
-#include "BeBoB/Phase88Protocol.hpp"
+#include "BeBoB/Phase88MixerData.hpp"
 #include "BeBoB/MAudioSpecialProtocol.hpp"
 #include "MOTU/MotuV2Protocol.hpp"
 #include "RME/FirefaceDeviceProtocol.hpp"
@@ -163,10 +163,14 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                 Fireworks::kOnyx400FGeometry);
 
         // --- BeBoB Family ---
+        // The PHASE 88 is a generic BridgeCo AV/C device: discovered geometry,
+        // plain plug-0 CMP. Its one difference is data -- it ships with its
+        // mixer muted, so the startup mixer map unmutes it (Phase88MixerData.hpp).
         case ProtocolImplementationId::BeBoBPhase88:
-            ASFW_LOG(Audio, "Creating Phase88Protocol BeBoB/CMP backend node=0x%04x", nodeId);
-            return std::make_unique<BeBoB::Phase88Protocol>(
-                busOps, busInfo, route, irmClient, cmpClient, timerScheduler);
+            ASFW_LOG(Audio, "Creating generic AV/C protocol with the PHASE 88 startup mixer node=0x%04x", nodeId);
+            return std::make_unique<GenericAvcProtocol>(
+                busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
+                &BeBoB::kPhase88MixerMap, "TerraTec PHASE 88 Rack FW");
 
         // Conservative defaults -- plug-0, CMP, no mixer programming. No catalog
         // row selects this today (the one BeBoB device on this branch, the
