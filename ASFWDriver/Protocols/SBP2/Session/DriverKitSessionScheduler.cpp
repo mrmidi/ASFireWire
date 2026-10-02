@@ -1,3 +1,4 @@
+#include "../../../Common/ActionTeardown.hpp"
 #include "DriverKitSessionScheduler.hpp"
 
 #include "../../../Common/TimingUtils.hpp"
@@ -49,8 +50,10 @@ DriverKitSessionScheduler::~DriverKitSessionScheduler() {
     }
 }
 
-kern_return_t DriverKitSessionScheduler::Prepare(::ASFWDriver& service,
-                                                 OSSharedPtr<IODispatchQueue> workQueue) {
+kern_return_t DriverKitSessionScheduler::Prepare(
+    ::ASFWDriver& service, OSSharedPtr<IODispatchQueue> workQueue,
+    std::shared_ptr<ASFW::Common::TeardownCompletion> completion) {
+    teardownCompletion_ = std::move(completion);
     if (!workQueue) {
         return kIOReturnNotReady;
     }
@@ -102,11 +105,27 @@ void DriverKitSessionScheduler::Reset() noexcept {
         pending_.clear();
     }
 
+    // Disabling alone leaves the handler retained (IOTimerDispatchSource.iig,
+    // SetHandler). Cancel terminally, keeping the source and its driver-targeted
+    // action alive until queued callbacks have returned, as the watchdog does.
     if (timer_) {
-        (void)timer_->SetEnableWithCompletion(false, nullptr);
+        auto* timer = timer_.detach();
+        auto* action = action_.detach();
+        ASFW_LOG(Controller, "[Teardown] SBP2 timer cancel requested source=%p action=%p", timer, action);
+        auto done = teardownCompletion_ ? teardownCompletion_->Begin() : std::function<void()>{};
+        const kern_return_t kr = timer->Cancel(^{
+            ASFW_LOG(Controller, "[Teardown] SBP2 timer cancel completed source=%p action=%p", timer, action);
+            timer->release();
+            ASFW::Common::CancelAndReleaseOwnedAction(action, "SBP2 timer", done);
+        });
+        if (kr != kIOReturnSuccess) {
+            ASFW_LOG_ERROR(Controller, "[SBP2Timer] cancellation failed: 0x%x", kr);
+            timer->release();
+            ASFW::Common::CancelAndReleaseOwnedAction(action, "SBP2 timer", done);
+        }
+    } else {
+        action_.reset();
     }
-    action_.reset();
-    timer_.reset();
     workQueue_.reset();
 }
 

@@ -111,6 +111,10 @@ targets:
           # so generation gives the same pbxproj whether or not it exists
           # (fresh checkouts / CI don't have it).
           - "Version/DriverVersion.hpp"
+          - "Common/ActionTeardown.hpp"
+          - "Common/TeardownCompletion.hpp"
+      - path: ASFWDriver/Common/ActionTeardown.hpp
+      - path: ASFWDriver/Common/TeardownCompletion.hpp
     preBuildScripts:
       - name: Bump Version
         shell: /bin/sh

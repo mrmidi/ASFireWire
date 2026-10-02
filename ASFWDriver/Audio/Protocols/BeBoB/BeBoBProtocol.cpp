@@ -273,35 +273,72 @@ bool BeBoBProtocol::IsRateSupported(uint32_t hz) const {
 }
 
 void BeBoBProtocol::RunMixerMap(const MixerMap& map, MixerFailurePolicy policy, MixerCompletion completion) {
+    // One labelled step per CONTROL, so a failure names the block it hit.
+    struct Step {
+        const char* kind;
+        uint8_t fbId;
+        uint8_t channel;
+        int32_t value;
+        std::function<void(MixerCompletion)> submit;
+    };
     struct State {
-        std::vector<std::function<void(MixerCompletion)>> steps;
+        std::vector<Step> steps;
         size_t next{0};
+        uint32_t failed{0};
         MixerFailurePolicy policy{MixerFailurePolicy::kRequired};
         MixerCompletion completion;
+        const char* device{nullptr};
     };
     auto state = std::make_shared<State>();
     state->policy = policy;
     state->completion = std::move(completion);
+    state->device = DeviceName();
     for (const auto& sel : map.selectors)
-        state->steps.push_back([this, sel](MixerCompletion cb) { SetSelectorBlock(sel.fbId, sel.value, std::move(cb)); });
+        state->steps.push_back({"selector", sel.fbId, 0, sel.value,
+            [this, sel](MixerCompletion cb) { SetSelectorBlock(sel.fbId, sel.value, std::move(cb)); }});
     for (const auto& mute : map.mutes)
-        state->steps.push_back([this, mute](MixerCompletion cb) { SetFeatureMute(mute.fbId, mute.channel, mute.unmute, std::move(cb)); });
+        state->steps.push_back({mute.unmute ? "unmute" : "mute", mute.fbId, mute.channel, 0,
+            [this, mute](MixerCompletion cb) { SetFeatureMute(mute.fbId, mute.channel, mute.unmute, std::move(cb)); }});
     for (const auto& vol : map.volumes)
-        state->steps.push_back([this, vol](MixerCompletion cb) { SetFeatureVolume(vol.fbId, vol.channel, vol.value, std::move(cb)); });
+        // Volume is signed 1/256 dB; the log shows whole dB.
+        state->steps.push_back({"volume", vol.fbId, vol.channel, static_cast<int16_t>(vol.value) / 256,
+            [this, vol](MixerCompletion cb) { SetFeatureVolume(vol.fbId, vol.channel, vol.value, std::move(cb)); }});
+    ASFW_LOG(Audio, "[BeBoB] %{public}s startup mixer: %zu selectors, %zu mutes, %zu volumes (%{public}s)",
+             state->device, map.selectors.size(), map.mutes.size(), map.volumes.size(),
+             policy == MixerFailurePolicy::kRequired ? "required" : "best effort");
     // Each completion schedules the next step; the state lives only in the
     // pending completion, so it is released when the map finishes.
     struct Runner {
+        static void Finish(const std::shared_ptr<State>& state, IOReturn status) {
+            const auto total = state->steps.size();
+            if (status == kIOReturnSuccess && state->failed == 0) {
+                ASFW_LOG(Audio, "[BeBoB] %{public}s startup mixer applied %zu/%zu",
+                         state->device, total, total);
+            } else {
+                ASFW_LOG_WARNING(Audio,
+                                 "[BeBoB] %{public}s startup mixer applied %zu/%zu, %u failed%{public}s",
+                                 state->device, state->next - state->failed, total, state->failed,
+                                 status == kIOReturnSuccess ? "" : ", stopped at the first failure");
+            }
+            state->completion(status);
+        }
         static void Next(const std::shared_ptr<State>& state, IOReturn last) {
-            if (last != kIOReturnSuccess && state->policy == MixerFailurePolicy::kRequired) {
-                state->completion(last);
-                return;
+            if (last != kIOReturnSuccess) {
+                const auto& step = state->steps[state->next - 1];
+                ++state->failed;
+                ASFW_LOG_WARNING(Audio, "[BeBoB] %{public}s mixer %{public}s fb=0x%02x ch=%u value=%d failed: 0x%x",
+                                 state->device, step.kind, step.fbId, step.channel, step.value, last);
+                if (state->policy == MixerFailurePolicy::kRequired) {
+                    Finish(state, last);
+                    return;
+                }
             }
             if (state->next >= state->steps.size()) {
-                state->completion(kIOReturnSuccess);
+                Finish(state, kIOReturnSuccess);
                 return;
             }
             auto& step = state->steps[state->next++];
-            step([state](IOReturn status) { Next(state, status); });
+            step.submit([state](IOReturn status) { Next(state, status); });
         }
     };
     Runner::Next(state, kIOReturnSuccess);

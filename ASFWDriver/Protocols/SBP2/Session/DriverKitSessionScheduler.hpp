@@ -1,4 +1,5 @@
 #pragma once
+#include "../../../Common/TeardownCompletion.hpp"
 
 #include "ISessionScheduler.hpp"
 
@@ -32,7 +33,8 @@ public:
     DriverKitSessionScheduler& operator=(const DriverKitSessionScheduler&) = delete;
 
     [[nodiscard]] kern_return_t Prepare(::ASFWDriver& service,
-                                        OSSharedPtr<IODispatchQueue> workQueue);
+                                        OSSharedPtr<IODispatchQueue> workQueue,
+                                        std::shared_ptr<ASFW::Common::TeardownCompletion> completion = {});
     void Reset() noexcept;
 
     [[nodiscard]] SchedulerToken ScheduleAfter(uint64_t delayNs,
@@ -43,6 +45,10 @@ public:
     void HandleTimerFired() noexcept;
 
 private:
+    std::shared_ptr<ASFW::Common::TeardownCompletion> teardownCompletion_;
+#ifdef ASFW_HOST_TEST
+    friend struct SessionSchedulerTestPeer;
+#endif
     struct PendingCallback {
         uint64_t deadlineTicks{0};
         std::function<void()> fn;

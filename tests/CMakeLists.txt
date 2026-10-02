@@ -49,7 +49,18 @@ set(ASFW_COMMON_INCLUDES
 # Leak detection is off by default because LeakSanitizer is unsupported on
 # macOS/arm64; set ASFW_ENABLE_LSAN=ON where it is available.
 option(ASFW_ENABLE_ASAN "Build the host tests with AddressSanitizer + UBSan" OFF)
+option(ASFW_ENABLE_TSAN "Build the host tests with ThreadSanitizer" OFF)
 option(ASFW_ENABLE_LSAN "Also enable LeakSanitizer (unsupported on macOS/arm64)" OFF)
+
+if(ASFW_ENABLE_ASAN AND ASFW_ENABLE_TSAN)
+    message(FATAL_ERROR "ASan and TSan require separate build directories")
+endif()
+
+if(ASFW_ENABLE_TSAN)
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=thread)
+    message(STATUS "ASFW: ThreadSanitizer enabled for host tests")
+endif()
 
 if(ASFW_ENABLE_ASAN)
     set(ASFW_SANITIZER_FLAGS

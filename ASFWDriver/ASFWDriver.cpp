@@ -29,6 +29,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include "Common/ActionTeardown.hpp"
 #include <string>
 
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h>           // generated from .iig
@@ -307,6 +308,7 @@ bool ASFWDriver::init() {
 }
 
 void ASFWDriver::free() {
+    ASFW_LOG(Controller, "ASFWDriver: free()");
     if (ivars) {
         if (ivars->context) {
             ivars->context->Reset();
@@ -406,7 +408,8 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     // Initialize AsyncSubsystem (requires hardware, workQueue, and a completion action)
     if (ctx.deps.asyncSubsystem && ctx.deps.hardware && ctx.workQueue && ctx.interruptAction) {
         kr = ctx.deps.asyncSubsystem->Start(*ctx.deps.hardware, this, ctx.workQueue.get(),
-                                            ctx.interruptAction.get());
+                                            ctx.interruptAction.get(), size_t{64} * 1024u,
+                                            ctx.teardownCompletion);
         if (kr != kIOReturnSuccess) {
             ASFW_LOG(Controller, "AsyncSubsystem::Start() failed: 0x%08x", kr);
             return failStart(kr, "async subsystem start failed");
@@ -524,7 +527,20 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 }
 
 kern_return_t IMPL(ASFWDriver, Stop) {
+    if (ivars && ivars->stopPending) {
+        return kIOReturnSuccess;
+    }
+    if (ivars) ivars->stopPending = true;
+    auto completion = ivars && ivars->context
+        ? ivars->context->teardownCompletion
+        : std::make_shared<ASFW::Common::TeardownCompletion>();
+    // Keep the service/provider valid until the deferred superclass Stop.
+    // No synchronous wait: cancellation completions need the Default queue.
+    retain();
+    provider->retain();
+    ASFW_LOG(Controller, "[Teardown] ASFWDriver Stop begin driver=%p", this);
     RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kPlannedStop));
+    ASFW_LOG(Controller, "[Teardown] ASFWDriver Stop runtime quiesce returned");
     if (ivars) {
         if (ivars->wakeVerifyTimer) {
             // Final stop is terminal.  DriverKit retains the timer's action
@@ -534,22 +550,30 @@ kern_return_t IMPL(ASFWDriver, Stop) {
             auto* action = ivars->wakeVerifyAction;
             ivars->wakeVerifyTimer = nullptr;
             ivars->wakeVerifyAction = nullptr;
+            ASFW_LOG(Controller, "[Teardown] wake verify cancel requested source=%p action=%p", timer, action);
+            auto done = completion->Begin();
             const kern_return_t kr = timer->Cancel(^{
-                if (action) {
-                    action->release();
-                }
+                ASFW_LOG(Controller, "[Teardown] wake verify cancel completed source=%p action=%p", timer, action);
                 timer->release();
+                ASFW::Common::CancelAndReleaseOwnedAction(action, "wake verify", done);
             });
             if (kr != kIOReturnSuccess) {
-                if (action) {
-                    action->release();
-                }
+                ASFW_LOG_ERROR(Controller, "[Teardown] wake verify cancel failed kr=0x%x", kr);
                 timer->release();
+                ASFW::Common::CancelAndReleaseOwnedAction(action, "wake verify", done);
             }
         }
         ivars->powerProvider = nullptr;
     }
-    return Stop(provider, SUPERDISPATCH);
+    ASFW_LOG(Controller, "[Teardown] ASFWDriver Stop waiting for cancellation drain");
+    completion->FinishWhenDrained([this, provider] {
+        ASFW_LOG(Controller, "[Teardown] ASFWDriver cancellations drained; calling superclass Stop");
+        const auto kr = Stop(provider, SUPERDISPATCH);
+        ASFW_LOG(Controller, "[Teardown] ASFWDriver Stop complete kr=0x%x", kr);
+        provider->release();
+        release();
+    });
+    return kIOReturnSuccess;
 }
 
 void ASFWDriver::RequestRuntimeQuiesce(uint32_t rawReason) {
@@ -882,6 +906,7 @@ kern_return_t IMPL(ASFWDriver, NewUserClient) {
         return kIOReturnNoResources;
     }
 
+    ASFW_LOG(UserClient, "[Lifecycle] NewUserClient manual Start client=%p provider=%p", client, this);
     ret = client->Start(this);
     if (ret != kIOReturnSuccess) {
         ASFW_LOG(Controller, "NewUserClient Start failed: 0x%08x", ret);

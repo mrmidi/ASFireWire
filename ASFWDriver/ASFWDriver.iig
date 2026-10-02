@@ -150,6 +150,7 @@ public:
 struct ASFWDriver_IVars {
     ServiceContext* context;
     IOService* powerProvider;   // borrowed from Start; cleared in Stop
+    bool stopPending;           // final Stop waits for asynchronous retirement
     bool serviceRegistered;     // RegisterService() must run once per instance
 
     // Wake-verify timer. Lives on the default queue (stable for the service

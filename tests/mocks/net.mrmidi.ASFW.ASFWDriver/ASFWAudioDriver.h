@@ -15,6 +15,7 @@
 #include "ASFWAudioNub.h"
 
 #include <cstdint>
+#include <vector>
 
 struct ASFWAudioDriver_IVars;
 
@@ -28,6 +29,13 @@ struct ASFWAudioDriver_IVars;
 class ASFWAudioDriver : public IOService {
 public:
     ASFWAudioDriver_IVars* ivars{nullptr};
+
+    // IOUserAudioDriver::RemoveObject: records what the graph teardown detaches.
+    kern_return_t RemoveObject(OSObject* object) {
+        removedObjects.push_back(object);
+        return kIOReturnSuccess;
+    }
+    std::vector<OSObject*> removedObjects;
 
     void ZtsAnchorReady_Impl(ASFWAudioDriver_ZtsAnchorReady_Args);
     void TxPreparationReady_Impl(ASFWAudioDriver_TxPreparationReady_Args);

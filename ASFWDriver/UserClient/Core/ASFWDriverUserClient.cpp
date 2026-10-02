@@ -489,6 +489,7 @@ bool ASFWDriverUserClient::init() {
 }
 
 void ASFWDriverUserClient::free() {
+    ASFW_LOG(UserClient, "[Teardown] ASFWDriverUserClient free() client=%p", this);
     if (ivars) {
         if (ivars->driver && ivars->statusRegistered) {
             ivars->driver->UnregisterStatusListener(this);
@@ -522,6 +523,7 @@ void ASFWDriverUserClient::free() {
 }
 
 kern_return_t IMPL(ASFWDriverUserClient, Start) {
+    ASFW_LOG(UserClient, "[Lifecycle] Start client=%p provider=%p count=%u", this, provider, ++ivars->startCount);
     kern_return_t ret = Start(provider, SUPERDISPATCH);
     if (ret != kIOReturnSuccess) {
         return ret;
@@ -556,6 +558,11 @@ kern_return_t IMPL(ASFWDriverUserClient, Start) {
 }
 
 kern_return_t IMPL(ASFWDriverUserClient, Stop) {
+    IOLockLock(ivars->actionLock);
+    const auto transactionHolds = ivars->transactionHolds;
+    IOLockUnlock(ivars->actionLock);
+    ASFW_LOG(UserClient, "[Lifecycle] Stop client=%p provider=%p starts=%u stops=%u transactionHolds=%u",
+             this, provider, ivars->startCount, ++ivars->stopCount, transactionHolds);
     if (ivars && ivars->actionLock) {
         IOLockLock(ivars->actionLock);
         ivars->stopping = true;
@@ -581,8 +588,9 @@ kern_return_t IMPL(ASFWDriverUserClient, Stop) {
         runtimeState->ResetHandlers();
     }
 
-    ASFW_LOG(UserClient, "Stop() completed");
-    return Stop(provider, SUPERDISPATCH);
+    const auto kr = Stop(provider, SUPERDISPATCH);
+    ASFW_LOG(UserClient, "[Lifecycle] superclass Stop completed client=%p provider=%p kr=0x%08x", this, provider, kr);
+    return kr;
 }
 
 kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,

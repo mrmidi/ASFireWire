@@ -13,8 +13,17 @@
 #include <cstdint>
 #include <vector>
 
+struct ASFWAudioDriver_IVars;
+
 class ASFWAudioDevice : public OSObject, public IOUserAudioDevice {
 public:
+    void SetDriverIvars(ASFWAudioDriver_IVars* ivars) {
+        driverIvars = ivars;
+        ++driverIvarsWrites;
+    }
+    ASFWAudioDriver_IVars* driverIvars{nullptr};
+    uint32_t driverIvarsWrites{0};
+
     struct ZeroTimestamp final {
         uint64_t sampleTime{0};
         uint64_t hostTime{0};

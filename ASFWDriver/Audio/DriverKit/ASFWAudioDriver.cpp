@@ -40,33 +40,18 @@ void ASFWAudioDriver::free()
     ASFW_LOG(Audio, "ASFWAudioDriver: free()");
 
     if (ivars) {
-        ASFW::Audio::DriverKit::UnbindDirectAudioSkeleton(*ivars);
-
         if (ivars->device.audioNub) {
             (void)ivars->device.audioNub->RegisterTxPreparationAction(
                 nullptr);
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(
                 nullptr);
         }
-        ivars->device.audioNub = nullptr;
-        ivars->device.boolControlCount = 0;
-        ASFW::Isoch::Audio::ResetBoolControlSlots(ivars->device.boolControls,
-                                                  ASFW::Isoch::Audio::kMaxBoolControls);
-
-        ivars->outputStream.reset();
-        ivars->inputStream.reset();
-        ivars->outputMap.reset();
-        ivars->inputMap.reset();
-        ivars->controlMap.reset();
-        ivars->outputBuffer.reset();
-        ivars->inputBuffer.reset();
-        ivars->controlBuffer.reset();
-        ivars->audioDevice.reset();
+        // Stop already ran this; it only matters for a driver that never started.
+        ASFW::Audio::DriverKit::TearDownAudioGraph(*this, *ivars);
         ivars->txPreparationAction.reset();
         ivars->txPreparationQueue.reset();
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();
-        ivars->workQueue.reset();
         ivars->~ASFWAudioDriver_IVars();
         IOSafeDeleteNULL(ivars, ASFWAudioDriver_IVars, 1);
     }

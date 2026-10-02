@@ -1,4 +1,5 @@
 #pragma once
+#include "../Common/TeardownCompletion.hpp"
 
 #include <DriverKit/IOReturn.h>
 
@@ -24,7 +25,8 @@ public:
 
     kern_return_t Initialise(IOService* owner,
                              OSSharedPtr<IODispatchQueue> queue,
-                             OSSharedPtr<OSAction> handler);
+                             OSSharedPtr<OSAction> handler,
+                             std::shared_ptr<ASFW::Common::TeardownCompletion> completion = {});
 
     // True once Initialise() has created the dispatch source. The source is
     // deliberately kept across sleep/wake (see ServiceContext::Reset ForSuspend):
@@ -55,6 +57,7 @@ public:
     void RetriggerPendingInterrupt(class HardwareInterface* hw);
 
 private:
+    std::shared_ptr<ASFW::Common::TeardownCompletion> teardownCompletion_;
     OSSharedPtr<IOInterruptDispatchSource> source_;
     OSSharedPtr<IODispatchQueue> queue_;
     OSSharedPtr<OSAction> handler_;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include "../Common/TeardownCompletion.hpp"
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -57,6 +58,10 @@ struct ServiceContext {
     std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
     std::shared_ptr<ASFW::Protocols::SBP2::SBP2NubPublisher> sbp2NubPublisher;
     std::shared_ptr<ASFW::Protocols::SBP2::SBP2TargetBridge> sbp2Bridge;
+
+    // Kept across Reset: cancellation callbacks outlive the runtime graph.
+    std::shared_ptr<ASFW::Common::TeardownCompletion> teardownCompletion{
+        std::make_shared<ASFW::Common::TeardownCompletion>()};
 
     void DisarmProviderNotifications();
 

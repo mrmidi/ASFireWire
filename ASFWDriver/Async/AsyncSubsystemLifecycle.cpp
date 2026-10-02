@@ -49,7 +49,9 @@
 namespace ASFW::Async {
 
 AsyncSubsystem::AsyncSubsystem() = default;
-AsyncSubsystem::~AsyncSubsystem() = default;
+AsyncSubsystem::~AsyncSubsystem() {
+    ASFW_LOG(Controller, "[Teardown] AsyncSubsystem destructor object=%p", this);
+}
 
 namespace {
 uint64_t GetCurrentMonotonicTimeUsec() {
@@ -338,7 +340,7 @@ kern_return_t AsyncSubsystem::InitializeCoreStartState(size_t completionQueueCap
 
     std::unique_ptr<CompletionQueue> completionQueue;
     const kern_return_t kr = CompletionQueue::Create(workloopQueue_, completionQueueCapacityBytes,
-                                                     completionAction_.get(), completionQueue);
+                                                     completionAction_.get(), completionQueue, teardownCompletion_);
     if (kr != kIOReturnSuccess || !completionQueue) {
         ASFW_LOG(Async, "FAILED: CompletionQueue::Create returned 0x%08x", kr);
         failureStage = "CompletionQueue";
@@ -465,7 +467,8 @@ kern_return_t AsyncSubsystem::FailStart(const char* failureStage, kern_return_t 
 
 kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw, OSObject* owner,
                                     IODispatchQueue* workloopQueue, OSAction* completionAction,
-                                    size_t completionQueueCapacityBytes) {
+                                    size_t completionQueueCapacityBytes,
+                                    std::shared_ptr<Common::TeardownCompletion> teardownCompletion) {
     if (isRunning_) {
         ASFW_LOG(Async, "Already running, returning success");
         return kIOReturnSuccess;
@@ -485,6 +488,7 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw, OSObject* own
     hardware_ = &hw;
     owner_ = owner;
     workloopQueue_ = workloopQueue;
+    teardownCompletion_ = std::move(teardownCompletion);
     completionAction_ = OSSharedPtr(completionAction, OSRetain);
 
     const char* failureStage = nullptr;

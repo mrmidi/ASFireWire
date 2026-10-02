@@ -159,6 +159,7 @@ bool ASFWSCSIController::init()
 
 void ASFWSCSIController::free()
 {
+    ASFW_LOG(Controller, "[SCSIHBA] free()");
     if (ivars != nullptr) {
         // Queues are released here, not in Stop: lifecycle blocks retain the
         // controller, so free() only runs once every queued block has finished

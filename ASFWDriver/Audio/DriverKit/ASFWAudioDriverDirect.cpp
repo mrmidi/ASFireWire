@@ -218,12 +218,4 @@ bool UpdateDirectAudioGeometry(ASFWAudioDriver_IVars& ivars) noexcept {
     return true;
 }
 
-void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
-    ivars.runtime.directAudioSkeletonBound.store(false, std::memory_order_release);
-    ivars.runtime.directAudioGraph = {};
-    ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);
-    ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
-    ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
-}
-
 } // namespace ASFW::Audio::DriverKit

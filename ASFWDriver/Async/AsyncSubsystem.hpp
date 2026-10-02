@@ -89,7 +89,8 @@ class AsyncSubsystem : public IAsyncControllerPort {
 
     kern_return_t Start(Driver::HardwareInterface& hw, OSObject* owner,
                         ::IODispatchQueue* workloopQueue, ::OSAction* completionAction,
-                        size_t completionQueueCapacityBytes = size_t{64} * 1024u);
+                        size_t completionQueueCapacityBytes = size_t{64} * 1024u,
+                        std::shared_ptr<Common::TeardownCompletion> teardownCompletion = {});
 
     kern_return_t ArmDMAContexts();
 
@@ -237,6 +238,7 @@ class AsyncSubsystem : public IAsyncControllerPort {
     Driver::HardwareInterface* hardware_{nullptr};
     ::OSObject* owner_{nullptr};
     ::IODispatchQueue* workloopQueue_{nullptr};
+    std::shared_ptr<Common::TeardownCompletion> teardownCompletion_;
     ::IOLock* sharedLock_{nullptr};
 
     std::unique_ptr<LabelAllocator> labelAllocator_;

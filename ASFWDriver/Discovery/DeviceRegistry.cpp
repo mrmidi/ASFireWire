@@ -139,6 +139,7 @@ DeviceRegistry::DeviceRegistry()
     : lock_(IOLockAlloc()) {}
 
 DeviceRegistry::~DeviceRegistry() {
+    ASFW_LOG(Controller, "[Teardown] DeviceRegistry destructor object=%p", this);
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
