@@ -8,11 +8,11 @@
 #include "MAudioSpecialFormation.hpp"
 #include "MAudioSpecialRouting.hpp"
 #include "MAudioSpecialStartPolicy.hpp"
-#include "../../../Protocols/AVC/AVCCommand.hpp"
 #include "../../../Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "../../../Protocols/AVC/Core/AvcError.hpp"
 #include "../../../Protocols/AVC/Core/RateCodes.hpp"
-#include "../../../Protocols/AVC/MAudioSpecialCommand.hpp"
+#include "../../../Protocols/AVC/Extensions/MAudioSpecialClock.hpp"
+#include "../../../Protocols/AVC/FCPTransport.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -21,28 +21,6 @@
 
 namespace ASFW::Audio::BeBoB {
 namespace {
-
-[[nodiscard]] IOReturn ToIOReturn(Protocols::AVC::AVCResult result) noexcept {
-    using Protocols::AVC::AVCResult;
-    switch (result) {
-        case AVCResult::kAccepted:
-        case AVCResult::kImplementedStable:
-        case AVCResult::kChanged:
-            return kIOReturnSuccess;
-        case AVCResult::kNotImplemented:
-            return kIOReturnUnsupported;
-        case AVCResult::kInTransition:
-        case AVCResult::kInterim:
-        case AVCResult::kBusy:
-            return kIOReturnBusy;
-        case AVCResult::kTimeout:
-            return kIOReturnTimeout;
-        case AVCResult::kBusReset:
-            return kIOReturnNotResponding;
-        default:
-            return kIOReturnError;
-    }
-}
 
 [[nodiscard]] AudioStreamRuntimeCaps MakeCaps(uint32_t rateHz) noexcept {
     const auto formation = MAudioFormationFor(MAudioDigitalFormat::SPDIF,
@@ -240,21 +218,19 @@ void MAudioSpecialProtocol::ApplyClockConfig(const AudioClockConfig& desiredCloc
         return;
     }
 
-    const auto clockCdb = Protocols::AVC::BuildMAudioSpecialInitialClockCommand();
-    if (!clockCdb) {
+    const auto clockCommand = AVC::MAudio::SpecialInitialClockCommand();
+    if (!clockCommand) {
         callback(kIOReturnBadArgument, {});
         return;
     }
-    auto command = std::make_shared<Protocols::AVC::AVCCommand>(*fcpTransport_, *clockCdb);
-    command->Submit([this, alive = alive_, desiredClock,
-                     callback = std::move(callback), command](
-                        Protocols::AVC::AVCResult result,
-                        const Protocols::AVC::AVCCdb&) mutable {
+    fcpTransport_->Control(*clockCommand, [this, alive = alive_, desiredClock,
+                                           callback = std::move(callback)](
+                                              AVC::Expected<AVC::Cmd::RawVendorDependentReply> reply) mutable {
         if (!alive->load()) {
             callback(kIOReturnAborted, {});
             return;
         }
-        const IOReturn status = ToIOReturn(result);
+        const IOReturn status = reply ? kIOReturnSuccess : AVC::ToIOReturn(reply.error());
         if (status != kIOReturnSuccess) {
             callback(status, {});
             return;

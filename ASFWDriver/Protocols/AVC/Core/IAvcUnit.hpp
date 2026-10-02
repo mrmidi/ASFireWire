@@ -19,6 +19,7 @@
 #include "AvcFrame.hpp"
 #include "AvcTypes.hpp"
 #include "../../../Common/FWTypes.hpp"
+#include "../../../Common/Lifetime.hpp"
 
 #include <concepts>
 #include <cstdint>
@@ -67,6 +68,13 @@ void SendCommand(IAvcUnit& unit, const Cmd& cmd, CommandType type, FW::Generatio
 class IAvcUnit {
 public:
     virtual ~IAvcUnit() = default;
+
+    /// Expires when this unit is destroyed. A continuation that holds the unit
+    /// by raw pointer or reference checks it before using the unit: the
+    /// transaction engine can deliver a completion after its unit is gone (its
+    /// bus callbacks and timers keep it alive). Everything runs on the driver's
+    /// one work queue, so checking and destruction cannot interleave.
+    [[nodiscard]] std::weak_ptr<const void> LifetimeToken() const noexcept { return lifetime_.Token(); }
 
     using ResponseCallback = std::function<void(Expected<Response>)>;
 
@@ -125,14 +133,42 @@ public:
         Inquiry(cmd, CurrentGeneration(), std::forward<Callback>(completion));
     }
 
-    /// True once this unit answered STREAM FORMAT SUPPORT (0x2F) where it had
-    /// refused EXTENDED STREAM FORMAT (0xBF). Every later stream-format command
-    /// then goes out as 0x2F directly. See Cmd::SendStreamFormat.
-    [[nodiscard]] bool UsesStreamFormatSupportOpcode() const noexcept { return streamFormatSupportOnly_; }
-    void LearnStreamFormatSupportOpcode() noexcept { streamFormatSupportOnly_ = true; }
+    /// Which stream-format opcode this unit is asked with: EXTENDED STREAM
+    /// FORMAT (0xBF, TA 2001002) or STREAM FORMAT SUPPORT (0x2F, BridgeCo).
+    /// Fixed by the catalog, or learned once (see Cmd::SendStreamFormat).
+    enum class StreamFormatOpcodePolicy : uint8_t {
+        /// 0xBF until the unit refuses it with NOT IMPLEMENTED and then answers
+        /// 0x2F; 0x2F for good after that (AVCVideoServices
+        /// MusicSubunitController.cpp:150, 1784-1789).
+        kLearn,
+        /// Always 0x2F (BridgeCo: Linux bebob_command.c sends only 0x2F).
+        kSupportOnly,
+        /// Always 0xBF; a refusal is an answer, not a reason to switch.
+        kExtendedOnly,
+    };
+
+    void SetStreamFormatOpcodePolicy(StreamFormatOpcodePolicy policy) noexcept { opcodePolicy_ = policy; }
+    [[nodiscard]] StreamFormatOpcodePolicy GetStreamFormatOpcodePolicy() const noexcept { return opcodePolicy_; }
+
+    /// True when stream-format commands go out as 0x2F: fixed so, or learned.
+    [[nodiscard]] bool UsesStreamFormatSupportOpcode() const noexcept {
+        return opcodePolicy_ == StreamFormatOpcodePolicy::kSupportOnly || learnedSupportOpcode_;
+    }
+    /// True when a NOT IMPLEMENTED 0xBF may be retried once as 0x2F.
+    [[nodiscard]] bool MayLearnStreamFormatOpcode() const noexcept {
+        return opcodePolicy_ == StreamFormatOpcodePolicy::kLearn && !learnedSupportOpcode_;
+    }
+    /// The unit answered 0x2F where it had refused 0xBF. Only under kLearn.
+    void LearnStreamFormatSupportOpcode() noexcept {
+        if (opcodePolicy_ == StreamFormatOpcodePolicy::kLearn) {
+            learnedSupportOpcode_ = true;
+        }
+    }
 
 private:
-    bool streamFormatSupportOnly_{false};
+    Common::LifetimeAnchor lifetime_;
+    StreamFormatOpcodePolicy opcodePolicy_{StreamFormatOpcodePolicy::kLearn};
+    bool learnedSupportOpcode_{false};
 };
 
 /// Helper to asynchronously dispatch a strongly typed AV/C command to an IAvcUnit with a specific CommandType.

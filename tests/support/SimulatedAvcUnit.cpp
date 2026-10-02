@@ -110,11 +110,27 @@ void SimulatedAvcUnit::AttachToBus(
     ::ASFW::Testing::RecordingFireWireBus& bus,
     FcpResponseSink responseSink) {
 
-    bus.SetWriteResponder([this, responseSink = std::move(responseSink)](
+    bus.SetWriteResponder([this, sink = std::move(responseSink)](
                               Async::FWAddress address,
                               std::span<const uint8_t> data) {
+        // The response frame is the unit's own block write to FCP_RESPONSE. Its
+        // transaction stays open until the host's write response, which the
+        // host sends when its receive handler returns, i.e. when the sink
+        // returns (TA 2004006 AV/C General 4.2 §6.5, Figure 13).
+        const auto responseSink = [this, &sink](uint16_t node, uint32_t gen, std::span<const uint8_t> bytes) {
+            responseTransactionOpen_ = true;
+            sink(node, gen, bytes);
+            responseTransactionOpen_ = false;
+        };
         // FCP command register is 0xFFFFF0000B00
         if (address.addressHi == 0xFFFF && address.addressLo == 0xF0000B00) {
+            if (responseTransactionOpen_) {
+                // A Phase 88 neither acks nor answers a command written while
+                // its response transaction is open (hardware, 2026-10-02).
+                commandsWhileResponseOpen_.emplace_back(data.begin(), data.end());
+                return;
+            }
+
             if (faults_.timeoutNext) {
                 faults_.timeoutNext = false;
                 return;

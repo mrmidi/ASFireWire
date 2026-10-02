@@ -523,6 +523,7 @@ TEST(MAudioSpecialRoutingTests, Captured1814HappyPathReplaysThroughRealFcpAndCmp
             break;
         }
     }
+    rig.Timers().Advance(0);
     EXPECT_TRUE(confirmed);
     EXPECT_EQ(confirmStatus, kIOReturnSuccess);
     ASSERT_EQ(rig.Target().CommandCount(), capturedCommands.size());

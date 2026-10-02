@@ -17,6 +17,7 @@
 #include <string>
 #include <functional>
 #include "AVCDefs.hpp"
+#include "../../Common/Lifetime.hpp"
 #include "../../Logging/Logging.hpp"
 
 namespace ASFW::Protocols::AVC {
@@ -27,6 +28,9 @@ class AVCUnit; // Forward declaration
 class Subunit {
 public:
     virtual ~Subunit() = default;
+
+    /// Expires when this subunit is destroyed; see IAvcUnit::LifetimeToken.
+    [[nodiscard]] std::weak_ptr<const void> LifetimeToken() const noexcept { return lifetime_.Token(); }
 
     /// Get subunit type
     AVCSubunitType GetType() const { return type_; }
@@ -71,6 +75,7 @@ protected:
 
     AVCSubunitType type_;
     uint8_t id_;
+    Common::LifetimeAnchor lifetime_;
     uint8_t numDestPlugs_{0};
     uint8_t numSrcPlugs_{0};
 };

@@ -539,19 +539,6 @@ void BeBoBProtocol::BreakBothConnections(VoidCallback callback) {
     });
 }
 
-void BeBoBProtocol::SubmitCommand(const Protocols::AVC::AVCCdb& cdb,
-                                  Protocols::AVC::AVCCompletion completion) {
-    if (!fcpTransport_) {
-        completion(Protocols::AVC::AVCResult::kTransportError, cdb);
-        return;
-    }
-    auto cmd = std::make_shared<Protocols::AVC::AVCCommand>(*fcpTransport_, cdb);
-    cmd->Submit([cmd, completion = std::move(completion)](
-                    Protocols::AVC::AVCResult result, const Protocols::AVC::AVCCdb& responseCdb) {
-        completion(result, responseCdb);
-    });
-}
-
 // ---------------------------------------------------------------------------
 // FamilyDriver
 // ---------------------------------------------------------------------------

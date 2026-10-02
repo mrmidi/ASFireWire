@@ -213,13 +213,17 @@ constexpr size_t kAVCOperandMaxLength = kAVCFrameMaxSize - kAVCFrameMinSize;
 // FCP Timeouts
 //==============================================================================
 
-/// Initial FCP timeout (milliseconds)
-constexpr uint32_t kFCPTimeoutInitial = 2000;
+/// Response deadline after the command write completes (milliseconds). A target
+/// answers within 100 ms (TA 2004006 AV/C General 4.2 §6.2); Apple waits 250 ms
+/// (IOFireWireAVCCommand.cpp:89), Linux 125 ms (sound/firewire/fcp.c:26).
+constexpr uint32_t kFCPTimeoutInitial = 250;
 
-/// FCP timeout after interim response (milliseconds)
+/// Response deadline after an INTERIM response (milliseconds). Apple's
+/// kInterimTimeout (IOFireWireAVCCommand.cpp:168).
 constexpr uint32_t kFCPTimeoutAfterInterim = 10000;
 
-/// Maximum FCP retry attempts
+/// Replays of a STATUS/INQUIRY after a lost response. Apple's fMaxRetries
+/// (IOFireWireAVCCommand.cpp:325).
 constexpr uint8_t kFCPMaxRetries = 4;
 
 //==============================================================================

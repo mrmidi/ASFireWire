@@ -125,6 +125,13 @@ public:
         return unmeasured_;
     }
 
+    /// Commands written to FCP_COMMAND while the unit's previous response
+    /// transaction was still open, i.e. before the host's write response to
+    /// it. The simulator drops them, as a Phase 88 does.
+    [[nodiscard]] const std::vector<std::vector<uint8_t>>& CommandsWhileResponseOpen() const noexcept {
+        return commandsWhileResponseOpen_;
+    }
+
 private:
     void Deliver(ResponseCallback completion, Expected<Response> response);
     void DeliverResponse(const CommandFrame& frame, ResponseCallback completion,
@@ -148,6 +155,8 @@ private:
     SimulatedAvcFaults faults_{};
     std::vector<OverrideEntry> overrides_;
     std::vector<std::vector<uint8_t>> unmeasured_;
+    std::vector<std::vector<uint8_t>> commandsWhileResponseOpen_;
+    bool responseTransactionOpen_{false};
     mutable std::vector<DescriptorEntry> descriptors_;
     mutable std::vector<uint8_t> dynamicResponseStorage_;
     bool deferResponses_{false};

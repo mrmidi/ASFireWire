@@ -19,7 +19,6 @@
 #include <span>
 #include <vector>
 #include "FCPTransport.hpp"
-#include "IAVCCommandSubmitter.hpp"
 #include "Subunit.hpp"
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
@@ -91,12 +90,12 @@ struct AVCUnitDiscoveryOptions {
     // the generic discovery and before the discovery status completes, at
     // attach and on every refresh; it must call `done` exactly once.
     std::function<void(AVCUnit& unit, std::function<void()> done)> extensionInventory;
-    // The chip answers only STREAM FORMAT SUPPORT (0x2F), so 0xBF is never sent.
-    bool streamFormatSupportOnly{false};
+    // Which stream-format opcode the chip is asked with (BridgeCo: 0x2F only).
+    ASFW::AVC::IAvcUnit::StreamFormatOpcodePolicy streamFormatOpcode{
+        ASFW::AVC::IAvcUnit::StreamFormatOpcodePolicy::kLearn};
 };
 
 class AVCUnit : public std::enable_shared_from_this<AVCUnit>,
-                public IAVCCommandSubmitter,
                 public ASFW::AVC::IAvcUnit {
 public:
     using DiscoveryOptions = AVCUnitDiscoveryOptions;
@@ -159,8 +158,6 @@ public:
     }
     void ProbeUnitInfo(std::function<void(bool)> completion);
 
-    void SubmitCommand(const AVCCdb& cdb, AVCCompletion completion) override;
-    [[nodiscard]] ASFW::AVC::IAvcUnit* AsAvcUnit() noexcept override { return this; }
 
     void GetPlugInfo(std::function<void(AVCResult, const ASFW::AVC::Cmd::UnitPlugCounts&)> completion);
 

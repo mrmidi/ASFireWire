@@ -64,7 +64,7 @@ struct AvcReply {
     }
 
     /// The command block write itself fails, which the transport reports as
-    /// FCPStatus::kTransportError rather than a timeout.
+    /// AvcErrorKind::kTransportError rather than a timeout.
     [[nodiscard]] static AvcReply WriteFailure() {
         AvcReply reply{};
         reply.kind = Kind::kWriteFailure;

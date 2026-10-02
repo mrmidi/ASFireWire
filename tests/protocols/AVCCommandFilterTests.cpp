@@ -147,7 +147,7 @@ TEST(AVCCommandFilterTests, VendorClockOperandsAreFreeButItsPaddingIsNot) {
 
 TEST(AVCCommandFilterTests, AdmitsOnlyTheExactBlankSlateInputSelector) {
     // The original kext emits this as the second half of
-    // SetBlankSlateClockSource. The three trailing bytes are AVCCdb's quadlet
+    // SetBlankSlateClockSource. The three trailing bytes are the frame's quadlet
     // padding and are intentionally part of the filter boundary.
     const auto exact = Frame({0x00, 0x08, 0xB8, 0x80, 0x04, 0x10,
                               0x02, 0x00, 0x01, 0x00, 0x00, 0x00});

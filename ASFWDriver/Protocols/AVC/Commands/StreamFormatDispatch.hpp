@@ -33,7 +33,8 @@ void SendStreamFormat(IAvcUnit& unit, StreamFormatCommand cmd, CommandType type,
         [&unit, cmd, type, generation, cb = std::forward<Callback>(completion)](
             Expected<StreamFormatReply> reply) mutable {
         if (reply || reply.error().response != ResponseCode::kNotImplemented ||
-            cmd.operands.opcode != StreamFormatOpcode::kExtendedStreamFormat) {
+            cmd.operands.opcode != StreamFormatOpcode::kExtendedStreamFormat ||
+            !unit.MayLearnStreamFormatOpcode()) {
             cb(std::move(reply));
             return;
         }

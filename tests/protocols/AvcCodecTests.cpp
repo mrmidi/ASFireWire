@@ -883,6 +883,20 @@ TEST(AvcUnitSeamTests, IdentityAndDispatchSuccess) {
     EXPECT_EQ((*callbackResult)->unitId, 0x00);
 }
 
+TEST(AvcCodecTests, PlugSignalFormatResponseDecodesFormatAndRate) {
+    const uint8_t respBytes[] = {0x0C, 0xFF, 0x19, 0x00, 0x90, 0x02, 0xFF, 0xFF}; // 48 kHz
+    auto resp = ParseResponse(respBytes);
+    ASSERT_TRUE(resp.has_value());
+
+    auto fmt = Cmd::PlugSignalFormatOperands::Read(resp->operands);
+    ASSERT_TRUE(fmt.has_value());
+    EXPECT_EQ(fmt->plugId, 0);
+    EXPECT_EQ(fmt->fmt, 0x90);
+    auto sfc = Cmd::SfcOf(*fmt);
+    ASSERT_TRUE(sfc.has_value());
+    EXPECT_EQ(*sfc, CipSfc::k48000);
+}
+
 namespace {
 
 Cmd::StreamFormatCommand UnitIsoInSingle() {
