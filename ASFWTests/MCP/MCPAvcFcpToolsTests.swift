@@ -43,7 +43,8 @@ struct MCPAvcFcpToolsTests {
         let names = await toolNames(config(.readOnlyDeveloper), nodes: MockASFWDriverControl.defaultNodes)
         #expect(names.isSuperset(of: [
             "asfw_avc_list_units", "asfw_avc_get_subunit_capabilities",
-            "asfw_avc_get_subunit_descriptor", "asfw_fcp_send_command", "asfw_fcp_get_recent_responses"
+            "asfw_avc_get_subunit_descriptor", "asfw_avc_get_discovery_document",
+            "asfw_fcp_send_command", "asfw_fcp_get_recent_responses"
         ]))
         #expect(names.contains("asfw_fcp_send_command_dev") == false)
     }

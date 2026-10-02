@@ -22,6 +22,7 @@ public:
                          Protocols::Ports::FireWireBusInfo& busInfo, IAVCAudioConfigListener* listener);
     void PrepareProducer(std::shared_ptr<Discovery::FWUnit> unit, std::function<void(bool)> ready) override;
     bool AllowsDiscovery(const Discovery::FWUnit& unit) const override;
+    bool AllowsManualDiagnostics(const Discovery::FWUnit& unit) const override;
     Protocols::AVC::AVCUnit::DiscoveryOptions OptionsFor(const Discovery::FWUnit& unit) const override;
     void UnitCreated(const std::shared_ptr<Protocols::AVC::AVCUnit>& unit) override;
     void UnitCompleted(const std::shared_ptr<Protocols::AVC::AVCUnit>& unit, bool success) override;

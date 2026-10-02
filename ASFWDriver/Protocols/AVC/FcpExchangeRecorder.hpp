@@ -38,6 +38,8 @@ struct FcpExchangeRecord {
     FcpExchangeOutcome outcome{FcpExchangeOutcome::kResponse};
     bool interim{false};
     uint8_t retries{0};
+    /// From the first write to the outcome, replays included; 0 if never sent.
+    uint64_t elapsedNs{0};
     std::vector<uint8_t> command;
     std::vector<uint8_t> response;
 };
@@ -71,7 +73,8 @@ public:
     }
 
     void Record(uint32_t generation, FcpExchangeOutcome outcome, bool interim, uint8_t retries,
-                std::span<const uint8_t> command, std::span<const uint8_t> response) {
+                std::span<const uint8_t> command, std::span<const uint8_t> response,
+                uint64_t elapsedNs = 0) {
         const size_t size = command.size() + response.size();
         ++sequence_;
         if (log_.records.size() >= maxRecords_ || bytes_ + size > maxBytes_) {
@@ -85,6 +88,7 @@ public:
             .outcome = outcome,
             .interim = interim,
             .retries = retries,
+            .elapsedNs = elapsedNs,
             .command = {command.begin(), command.end()},
             .response = {response.begin(), response.end()},
         });

@@ -55,6 +55,7 @@ add_protocols_test(AvcSimulatedUnitTests
 # AVC Golden Wire Characterization Tests (Phase 2a)
 add_protocols_test(AvcGoldenTests
     AvcGoldenTests.cpp
+    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/AVCDiscoveryDocument.cpp"
     "${ASFW_TESTS_DIR}/support/SimulatedAvcUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
@@ -309,6 +310,7 @@ add_executable(AVCHandlerTests
     AVCHandlerTests.cpp
     "../support/AsyncSubsystemStub.cpp"
     "${ASFW_DRIVER_DIR}/UserClient/Handlers/AVCHandler.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/AVCDiscoveryDocument.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
@@ -338,6 +340,7 @@ add_executable(AVCCapabilitiesSerializerTests
     AVCCapabilitiesSerializerTests.cpp
     "../support/AsyncSubsystemStub.cpp"
     "${ASFW_DRIVER_DIR}/UserClient/Handlers/AVCHandler.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/AVCDiscoveryDocument.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"

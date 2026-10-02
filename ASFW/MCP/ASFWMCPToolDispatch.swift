@@ -102,6 +102,8 @@ extension ASFWMCPCore {
             return await recentFcpResponsesResult(toolName: name, decoder: decoder)
         case "asfw_avc_get_subunit_descriptor":
             return await avcSubunitDescriptorResult(toolName: name, decoder: decoder)
+        case "asfw_avc_get_discovery_document":
+            return await avcDiscoveryDocumentResult(toolName: name, decoder: decoder)
         case "asfw_fcp_send_command":
             return await dispatchFcpReadCommand(name, decoder: decoder)
         case "asfw_apogee_duet_apply_format_dev":
@@ -1940,6 +1942,32 @@ private extension ASFWMCPCore {
                     "hex": .string(hex),
                 ])
             )
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func avcDiscoveryDocumentResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let guid = try decoder.uint64("targetGuid")
+            guard let data = await driver.avcDiscoveryDocument(guid: guid) else {
+                return .failure(toolName: toolName, code: .capabilityUnavailable,
+                                reason: "No discovery document for this unit (unknown GUID, a driver that predates it, or pages changed during every read).")
+            }
+            guard let json = try? JSONSerialization.jsonObject(with: data),
+                  let document = ASFWMCPValue(jsonObject: json) else {
+                return .failure(toolName: toolName, code: .capabilityUnavailable,
+                                reason: "The driver returned a discovery document that is not valid JSON.")
+            }
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("avcDiscoveryDocument"),
+                "targetGuid": .string(String(format: "0x%016llX", guid)),
+                "byteCount": .int(data.count),
+                "document": document,
+            ]))
         } catch {
             return malformedToolResult(toolName, reason: error.localizedDescription)
         }

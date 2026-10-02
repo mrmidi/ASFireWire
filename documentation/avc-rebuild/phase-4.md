@@ -155,7 +155,30 @@ only**, no attach/probing in this phase; state this limitation in the PR.
   sync-candidate INQUIRY cites FFADO avc_plug.cpp:670-690. 2,708 C++ cases pass,
   signed app/dext built, arm64e verified. Mutations caught: second cue allowed,
   manual refresh republishing. Hardware gate pending (batched).
-- Commit 4: pending, hardware report gate pending.
+- Commit 4: implemented.
+  - Discovery document `asfw.avc.discovery` v1 (`UserClient/WireFormats/AVCDiscoveryDocument`):
+    committed snapshot (plugs, descriptors with primary/cleanup/parse errors, confirmed
+    controls, selectors, clock routes, failed probes, text references, extension facts),
+    graph, and the timed FCP exchange log. Selector 68 serves it in pages of at most 4 KiB;
+    every page carries session, generation, total length and an FNV-1a checksum of the
+    whole document. The app restarts on mixed pages or a checksum mismatch. Legacy
+    selectors and layouts are unchanged; descriptor APIs stay cached.
+  - Timed exchanges: `ITimerScheduler::NowNs`; each FCP exchange records elapsed time
+    from its first write to its outcome.
+  - Streaming exclusion: the driver refuses a manual refresh while the device's audio
+    is streaming or reconciling (`AVCDiscoveryStatus::BlockedByAudio`, state 5); the app
+    reports it. A second refresh while one runs is busy, not a second session.
+    Not done: audio start does not wait for a running manual discovery (the transport
+    still serialises one command at a time).
+  - Report schema v3 carries the document unchanged; v1/v2 dumps open. A cancelled
+    discovery or a route change never replaces the previous report.
+  - Replay: an exported exchange log replays through the same session/reducer
+    (`tests/support/ExchangeReplayUnit.hpp`) into the same contents and graph (Duet:
+    whole graph; Phase 88: generic graph, since BridgeCo facts come from family code).
+  - MCP: `asfw_avc_get_discovery_document` (read-only, no bus traffic). The existing
+    `asfw_avc_get_subunit_descriptor` already served the cached descriptor.
+  - 2,713 C++ cases and the Swift suite pass; signed app/dext built; arm64e verified.
+    Mutation caught: streaming check removed.
 
 Hardware validation is deferred until all software stages are ready, per the user’s
 request to batch validation of the single PR. No Phase 4 hardware claim is made.

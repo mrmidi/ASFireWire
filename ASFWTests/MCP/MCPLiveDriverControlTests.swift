@@ -410,6 +410,7 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     func mcpAVCSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) -> Data? {
         avcSubunitDescriptor
     }
+    func mcpAVCDiscoveryDocument(guid: UInt64) -> Data? { nil }
 
     func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {
         reads += 1

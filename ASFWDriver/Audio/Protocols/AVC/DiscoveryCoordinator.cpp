@@ -36,6 +36,11 @@ PublicationState DiscoveryCoordinator::Status(uint64_t guid) const {
 bool DiscoveryCoordinator::AllowsDiscovery(const Discovery::FWUnit& unit) const {
     return !stopped_ && Decision(registry_, unit) == P::AvcProbeDecision::GenericDiscovery;
 }
+bool DiscoveryCoordinator::AllowsManualDiagnostics(const Discovery::FWUnit& unit) const {
+    const auto device = unit.GetDevice();
+    // Unknown audio state is treated as active: refuse rather than probe blind.
+    return AllowsDiscovery(unit) && device && listener_ && !listener_->IsAudioActive(device->GetGUID());
+}
 P::AVCUnit::DiscoveryOptions DiscoveryCoordinator::OptionsFor(const Discovery::FWUnit& unit) const {
     const auto device = unit.GetDevice(); const auto plan = device ? Policy(registry_, device->GetGUID()) : std::nullopt;
     return P::DiscoveryOptionsFor(plan ? P::ExtensionInventoryFor(*plan) : P::AvcExtensionInventory::kNone);

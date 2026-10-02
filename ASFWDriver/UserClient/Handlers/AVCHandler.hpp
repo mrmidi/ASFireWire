@@ -121,6 +121,16 @@ public:
      */
     kern_return_t GetFCPExchangeLog(IOUserClientMethodArguments* args);
 
+    /**
+     * @brief One page of a unit's versioned discovery document
+     *
+     * Scalar inputs: [0] GUID high 32 bits, [1] GUID low 32 bits, [2] byte offset.
+     * Structure output: Wire::AVCDiscoveryPageWire followed by document bytes
+     * (<= 4096 bytes). Pages carry session, generation and a whole-document
+     * checksum; a reader restarts when they disagree.
+     */
+    kern_return_t GetAVCDiscoveryDocument(IOUserClientMethodArguments* args);
+
 private:
     Protocols::AVC::IAVCDiscovery* discovery_;
 };

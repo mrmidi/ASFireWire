@@ -38,6 +38,7 @@ public:
     [[nodiscard]] SchedulerToken ScheduleAfter(uint64_t delayNs,
                                                std::function<void()> fn) override;
     void Cancel(SchedulerToken token) override;
+    [[nodiscard]] uint64_t NowNs() const noexcept override;
 
     void HandleTimerFired() noexcept;
 

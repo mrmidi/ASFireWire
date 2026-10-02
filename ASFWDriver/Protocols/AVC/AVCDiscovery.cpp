@@ -461,6 +461,11 @@ void AVCDiscovery::ReScanAllUnits() {
             avcUnit->MarkRescanSkipped();
             continue;
         }
+        if (!owner_->AllowsManualDiagnostics(*unit)) {
+            ASFW_LOG(AVC, "[AVCDiag] GUID=%llx refused: audio is active", guid);
+            avcUnit->MarkRescanBlockedByAudio();
+            continue;
+        }
         if (avcUnit->TryBeginRescan()) {
             avcUnit->BeginExchangeSession();
             eligible.emplace_back(guid, avcUnit);

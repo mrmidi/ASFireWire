@@ -179,6 +179,8 @@ private:
         FW::Generation generation{0U};
         uint8_t retriesLeft{0};
         bool sawInterim{false};
+        /// When the first write was issued (timer clock); 0 = never started.
+        uint64_t startedNs{0};
     };
 
     // Phases of the active transaction.

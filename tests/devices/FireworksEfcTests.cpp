@@ -313,6 +313,7 @@ public:
         return ASFW::Scheduling::kInvalidTimerToken;
     }
     void Cancel(ASFW::Scheduling::TimerToken) override {}
+    [[nodiscard]] uint64_t NowNs() const noexcept override { return 0; }
 };
 
 class StubBusInfo final : public ASFW::Async::IFireWireBusInfo {

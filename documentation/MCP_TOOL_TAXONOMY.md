@@ -228,6 +228,7 @@ Tools:
 | `asfw_avc_list_units` | read-only | List AV/C units, subunits, plugs, vendor/model IDs. |
 | `asfw_avc_get_subunit_capabilities` | read-only | Return decoded subunit capabilities where available. |
 | `asfw_avc_get_subunit_descriptor` | read-only | Return bounded descriptor bytes and parsed summary when available. |
+| `asfw_avc_get_discovery_document` | read-only | Return the unit's versioned discovery document (snapshot, graph, timed exchanges). Driver state only; no bus traffic. |
 | `asfw_fcp_send_command` | read-only by default | Send raw FCP/AV/C command that is inquiry/status-only by schema. |
 | `asfw_apogee_duet_apply_format_dev` | developer-write | Apply one validated Apogee Duet AM824 format (32/44.1/48 kHz): verify the discovered Duet Music subunit and format support, capture both unit-plug formations, set input then output, wait, and re-read both plugs. Requires explicit interruption acknowledgement. |
 | `asfw_fcp_send_command_dev` | developer-write | Developer-tier raw FCP command for commands that may mutate device state; requires target GUID, node ID, and generation and returns an FCP receipt. |

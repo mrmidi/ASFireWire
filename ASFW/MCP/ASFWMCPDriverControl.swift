@@ -12,6 +12,8 @@ protocol ASFWDriverControlling {
     func listAVCUnits() async -> [ASFWMCPAVCUnitSummary]
     func avcSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWMCPAVCSubunitCapabilities?
     func avcSubunitDescriptor(guid: UInt64, type: UInt8, id: UInt8) async -> Data?
+    /// The unit's versioned discovery document (driver state; no bus traffic).
+    func avcDiscoveryDocument(guid: UInt64) async -> Data?
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent]
     func executeReadQuadlet(_ request: ASFWMCPReadQuadletRequest) async -> ASFWMCPTransactionResult
     func executeReadBlock(_ request: ASFWMCPReadBlockRequest) async -> ASFWMCPTransactionResult
@@ -280,6 +282,11 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             return nil
         }
         return Data([0x00, 0x08, 0x02, 0x02, 0x02, 0x02, 0x00, 0x00])
+    }
+
+    func avcDiscoveryDocument(guid: UInt64) async -> Data? {
+        guard (await listAVCUnits()).contains(where: { $0.guid == guid }) else { return nil }
+        return Data(#"{"format":"asfw.avc.discovery","version":1,"session":1,"route":{"guid":"0x0011223344556677","generation":1,"node":0},"snapshot":{"complete":true,"cancelled":false,"terminalError":null,"probeCount":3,"failedProbes":[]},"graph":null,"exchanges":{"session":1,"dropped":0,"records":[]}}"#.utf8)
     }
 
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent] {

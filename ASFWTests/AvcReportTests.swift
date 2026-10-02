@@ -262,6 +262,105 @@ struct AvcReportTests {
         #expect(records.first?["response"] as? [Int] == [0x0C, 0xFF, 0x30])
     }
 
+    // MARK: Discovery document (phase 4.5)
+
+    private static let sampleDocument = Data(#"""
+    {"format":"asfw.avc.discovery","version":1,"session":3,"route":{"guid":"0x000aac0000000003","generation":4,"node":1},
+     "snapshot":{"complete":true,"cancelled":false,"terminalError":null,"probeCount":12,
+       "failedProbes":[{"address":255,"opcode":48,"error":{"kind":"timeout","response":null,"operandOffset":0}}]},
+     "graph":{"playback":{"channels":10,"dataBlockSize":11,"midi":1,"rate":48000,"rates":[44100,48000],"channelNames":["Out 1","Out 2"]},
+              "capture":{"channels":10,"dataBlockSize":11,"midi":1,"rate":48000,"rates":[48000],"channelNames":[]}},
+     "exchanges":{"session":3,"dropped":0,"records":[{"elapsedUs":1500},{"elapsedUs":500}]}}
+    """#.utf8)
+
+    /// Pages laid out as the driver serves them (AVCDiscoveryPageWire).
+    private static func pages(_ document: Data, session: UInt32 = 3, chunk: Int = 64) -> [UInt32: Data] {
+        func le(_ value: UInt32) -> [UInt8] { (0..<4).map { UInt8(truncatingIfNeeded: value >> (8 * $0)) } }
+        func le16(_ value: UInt16) -> [UInt8] { [UInt8(value & 0xFF), UInt8(value >> 8)] }
+        var result: [UInt32: Data] = [:]
+        var offset = 0
+        repeat {
+            let length = min(chunk, document.count - offset)
+            var page = le(AvcDiscoveryDocument.PageHeader.magic) + le16(1) + le16(32) + le(session) + le(4)
+            page += le(UInt32(document.count)) + le(UInt32(offset)) + le(UInt32(length)) + le(AvcDiscoveryDocument.fnv1a(document))
+            result[UInt32(offset)] = Data(page) + document.subdata(in: offset..<(offset + length))
+            offset += length
+        } while offset < document.count
+        return result
+    }
+
+    @Test func discoveryPagesAssembleIntoTheDocument() throws {
+        let pages = Self.pages(Self.sampleDocument)
+        #expect(pages.count > 1)
+        let assembled = try AvcDiscoveryDocument.assemble { pages[$0] }.get()
+        #expect(assembled == Self.sampleDocument)
+    }
+
+    @Test func pagesFromTwoDocumentsAreRejected() {
+        let first = Self.pages(Self.sampleDocument, session: 3)
+        let second = Self.pages(Self.sampleDocument, session: 4)
+        // A refresh landed between the first and second page.
+        let result = AvcDiscoveryDocument.assemble { $0 == 0 ? first[0] : second[$0] }
+        #expect(result == .failure(.mixedPages))
+    }
+
+    @Test func aCorruptedDocumentFailsItsChecksum() {
+        var pages = Self.pages(Self.sampleDocument)
+        var last = pages[pages.keys.max()!]!
+        last[last.count - 2] ^= 0x01
+        pages[pages.keys.max()!] = last
+        #expect(AvcDiscoveryDocument.assemble { pages[$0] } == .failure(.checksumMismatch))
+    }
+
+    @Test func refreshCarriesTheDiscoveryDocumentIntoTheReport() async throws {
+        let source = Source()
+        source.status = 0x82
+        source.discoveryDocument = Self.sampleDocument
+        let store = AvcReportStore(connector: source)
+        await store.refresh()
+        let device = try #require(store.snapshot?.devices.first)
+        #expect(device.discovery != nil)
+        #expect(store.reportText.contains("DISCOVERY (driver document v1, session 3)"))
+        #expect(store.reportText.contains("Result: complete"))
+        #expect(store.reportText.contains("Probes: 12, failed: 1"))
+        #expect(store.reportText.contains("Playback: 10 PCM + 1 MIDI, block 11, 48000 Hz (rates: 44100, 48000)"))
+        #expect(store.reportText.contains("total time 2.0 ms"))
+        // The export keeps the document whole and still opens.
+        let restored = try AvcReportSnapshot.load(try #require(store.snapshot).jsonData())
+        #expect(restored.schemaVersion == 3)
+        #expect(restored.devices.first?.discovery == device.discovery)
+    }
+
+    @Test func aCancelledDiscoveryNeverReplacesTheReport() async {
+        let source = Source()
+        source.status = 0x82
+        let store = AvcReportStore(connector: source)
+        await store.refresh()
+        let text = store.reportText
+        source.discoveryDocument = Data(String(decoding: Self.sampleDocument, as: UTF8.self)
+            .replacingOccurrences(of: #""cancelled":false"#, with: #""cancelled":true"#).utf8)
+        await store.refresh()
+        #expect(store.reportText == text)
+        #expect(store.error?.contains("cancelled") == true)
+    }
+
+    @Test func aStreamingDeviceIsReportedNotProbed() async throws {
+        let source = Source()
+        source.status = 0x85
+        let store = AvcReportStore(connector: source)
+        await store.refresh()
+        let device = try #require(store.snapshot?.devices.first)
+        #expect(device.notes.contains { $0.contains("audio is active") })
+        #expect(device.avcUnit == nil)
+    }
+
+    @Test func versionTwoDumpsStillOpen() throws {
+        var snapshot = report()
+        snapshot.schemaVersion = 2
+        let restored = try AvcReportSnapshot.load(snapshot.jsonData())
+        #expect(restored.devices.first?.discovery == nil)
+    }
+
     @MainActor
     private final class Source: AvcReportSource {
         var isConnected = true
@@ -301,5 +400,7 @@ struct AvcReportTests {
         }
         var exchangeLog: AvcReportSnapshot.ExchangeLog?
         func getFCPExchangeLog(guid: UInt64) -> AvcReportSnapshot.ExchangeLog? { exchangeLog }
+        var discoveryDocument: Data?
+        func getAVCDiscoveryDocument(guid: UInt64) -> Data? { discoveryDocument }
     }
 }

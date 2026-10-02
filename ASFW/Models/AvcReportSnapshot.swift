@@ -3,8 +3,9 @@ import Foundation
 /// Portable discovery evidence. Data fields use JSON's base64 representation;
 /// the text report renders the same bytes as offset-labelled hexadecimal.
 struct AvcReportSnapshot: Codable, Sendable {
-    /// 2 adds each device's FCP exchange log; version 1 dumps still open.
-    static let currentVersion = 2
+    /// 2 adds each device's FCP exchange log; 3 adds the driver's discovery
+    /// document. Versions 1 and 2 still open.
+    static let currentVersion = 3
     var schemaVersion = currentVersion
     var capturedAt = Date()
     var appVersion: String
@@ -30,6 +31,9 @@ struct AvcReportSnapshot: Codable, Sendable {
         /// or the last refresh. This is the raw discovery: tools/avc/avc_discover.py
         /// --replay rebuilds the capability graph from it.
         var exchanges: ExchangeLog? = nil
+        /// The driver's discovery document for this unit, unchanged
+        /// (AvcDiscoveryDocument): snapshot, graph and timed exchanges.
+        var discovery: JSONValue? = nil
     }
 
     struct ExchangeLog: Codable, Sendable, Equatable {
@@ -101,6 +105,7 @@ struct AvcReportSnapshot: Codable, Sendable {
                       ($0.capabilities?.count ?? 0) <= 4096 && ($0.descriptor?.count ?? 0) <= 4096
                   } ?? true) &&
                   (device.exchanges?.records.count ?? 0) <= 4096 &&
+                  ((try? JSONEncoder().encode(device.discovery))?.count ?? 0) <= AvcDiscoveryDocument.maxBytes &&
                   (device.exchanges?.records.allSatisfy { $0.command.count <= 512 && $0.response.count <= 512 } ?? true)
               }) else { throw ImportError.invalidSize }
         return report

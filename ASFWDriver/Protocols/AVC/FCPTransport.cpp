@@ -199,6 +199,7 @@ void FCPTransport::Start(Transaction txn) {
         Deliver(Delivery{std::move(txn), std::unexpected(ErrorOf(AvcErrorKind::kTransportError))});
         return;
     }
+    txn.startedNs = timerScheduler_ ? timerScheduler_->NowNs() : 0;
     active_.emplace(Active{.txn = std::move(txn), .phase = Writing{}});
     IOLockUnlock(lock_);
     IssueWrite();
@@ -574,9 +575,11 @@ void FCPTransport::Record(const Transaction& txn, const Result& result) {
                                 ? static_cast<uint8_t>(config_.maxRetries - txn.retriesLeft)
                                 : 0;
     const auto command = txn.frame.WireBytes();
+    // Never-sent exchanges (refused, busy) have no duration.
+    const uint64_t elapsedNs = txn.startedNs && timerScheduler_ ? timerScheduler_->NowNs() - txn.startedNs : 0;
     recorder_.Record(CurrentGeneration().value, OutcomeFor(result), txn.sawInterim, replays,
                      command.first(std::min(command.size(), kAVCFrameMaxSize)),
-                     result ? result->Payload() : std::span<const uint8_t>{});
+                     result ? result->Payload() : std::span<const uint8_t>{}, elapsedNs);
 }
 
 void FCPTransport::Deliver(Delivery delivery) {

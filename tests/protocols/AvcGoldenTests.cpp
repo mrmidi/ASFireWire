@@ -23,6 +23,10 @@
 #include "RecordingFireWireBus.hpp"
 #include "SimulatedAvcUnit.hpp"
 #include "WireTrace.hpp"
+#include "ExchangeReplayUnit.hpp"
+#include "ASFWDriver/Protocols/AVC/Discovery/DiscoverySession.hpp"
+#include "ASFWDriver/Protocols/AVC/Graph/DiscoveryGraph.hpp"
+#include "ASFWDriver/UserClient/WireFormats/AVCDiscoveryDocument.hpp"
 #include "DuetDescriptorFixture.hpp"
 #include "Phase88DescriptorFixtures.hpp"
 #include "ASFWDriver/Protocols/AVC/Graph/AvcDeviceGraph.hpp"
@@ -48,6 +52,7 @@
 #include "ASFWDriver/Bus/IRM/IRMClient.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -609,6 +614,169 @@ TEST(AvcGoldenTests, Phase88GeometryWithoutAnyDescriptorComesFromBridgeCoFormati
     EXPECT_EQ(graph->capture.slotMap, snapshot->extension.capture.pcmSlots);
     // Frame admission is pinned by Phase88AttachDiscovery; here the descriptor
     // OPENs are refused by the image rather than answered from a capture.
+}
+
+
+// ============================================================================
+// Export -> replay -> same contents and graph (phase 4.5)
+// ============================================================================
+
+namespace ReplayChecks {
+namespace E = ASFW::AVC::DiscoveryEngine;
+
+E::SnapshotLease Replay(const std::shared_ptr<AVCUnit>& unit, ExchangeReplayUnit*& replayOut,
+                        std::unique_ptr<ExchangeReplayUnit>& owner) {
+    const auto original = unit->GetDiscoverySnapshot();
+    owner = std::make_unique<ExchangeReplayUnit>(unit->CopyExchangeLog(), original->route.guid,
+                                                 FW::NodeId{static_cast<uint8_t>(original->route.nodeId)},
+                                                 original->route.generation);
+    owner->SetStreamFormatOpcodePolicy(unit->GetStreamFormatOpcodePolicy());
+    replayOut = owner.get();
+    E::SnapshotLease replayed;
+    auto session = E::Session::Create(*owner, original->session, [&](E::SnapshotLease r) { replayed = std::move(r); });
+    session->Start();
+    return replayed;
+}
+
+void ExpectSameContents(const E::DiscoverySnapshot& a, const E::DiscoverySnapshot& b) {
+    EXPECT_EQ(a.complete, b.complete);
+    EXPECT_EQ(a.unit.subunits, b.unit.subunits);
+    ASSERT_EQ(a.plugs.size(), b.plugs.size());
+    for (size_t i = 0; i < a.plugs.size(); ++i) {
+        const auto& x = a.plugs[i]; const auto& y = b.plugs[i];
+        EXPECT_EQ(x.address, y.address); EXPECT_EQ(x.direction, y.direction); EXPECT_EQ(x.id.value, y.id.value);
+        EXPECT_EQ(x.current.has_value(), y.current.has_value());
+        if (x.current && y.current) EXPECT_TRUE(std::ranges::equal(x.current->Raw(), y.current->Raw()));
+        ASSERT_EQ(x.formations.size(), y.formations.size()) << "plug " << i;
+        for (size_t f = 0; f < x.formations.size(); ++f)
+            EXPECT_TRUE(std::ranges::equal(x.formations[f].Raw(), y.formations[f].Raw()));
+        EXPECT_EQ(x.route.has_value(), y.route.has_value());
+    }
+    ASSERT_EQ(a.descriptors.size(), b.descriptors.size());
+    for (size_t i = 0; i < a.descriptors.size(); ++i) EXPECT_EQ(a.descriptors[i].bytes, b.descriptors[i].bytes);
+    EXPECT_EQ(a.features.size(), b.features.size());
+    EXPECT_EQ(a.selectors.size(), b.selectors.size());
+    EXPECT_EQ(a.confirmedClockRoutes.size(), b.confirmedClockRoutes.size());
+}
+
+void ExpectSameGraph(const Graph::DeviceGraph& a, const Graph::DeviceGraph& b) {
+    for (const auto& [x, y] : {std::pair{&a.playback, &b.playback}, std::pair{&a.capture, &b.capture}}) {
+        EXPECT_EQ(x->channelCount, y->channelCount);
+        EXPECT_EQ(x->dataBlockSize, y->dataBlockSize);
+        EXPECT_EQ(x->currentSampleRate, y->currentSampleRate);
+        EXPECT_EQ(x->supportedSampleRates, y->supportedSampleRates);
+        EXPECT_EQ(x->slotMap, y->slotMap);
+        EXPECT_EQ(x->channelNames, y->channelNames);
+    }
+    EXPECT_EQ(a.clockSources.size(), b.clockSources.size());
+    EXPECT_EQ(a.selectors.size(), b.selectors.size());
+}
+} // namespace ReplayChecks
+
+TEST(AvcGoldenTests, DuetExchangeLogReplaysToTheSameContentsAndGraph) {
+    AvcGoldenRigOptions opts;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kOxford);
+    AvcGoldenRig rig(kDuet, opts);
+    std::vector<uint8_t> audioIdentifier(Fixtures::kDuetAudioIdentifierBytes.begin(), Fixtures::kDuetAudioIdentifierBytes.end());
+    rig.Sim().SetDescriptor(0x08, {0x00}, std::move(audioIdentifier));
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    ASSERT_TRUE(ok);
+    const auto original = rig.Unit()->GetDiscoverySnapshot();
+    ExchangeReplayUnit* replay = nullptr;
+    std::unique_ptr<ExchangeReplayUnit> owner;
+    const auto replayed = ReplayChecks::Replay(rig.Unit(), replay, owner);
+    ASSERT_TRUE(replayed);
+    EXPECT_TRUE(replay->Unmatched().empty()) << "replay sent a frame the capture never saw";
+    EXPECT_GT(replay->Replayed(), 40U);
+    ReplayChecks::ExpectSameContents(*original, *replayed);
+    // The Oxford inventory reports no facts, so the whole graph must match.
+    ReplayChecks::ExpectSameGraph(Graph::BuildDiscoveryGraph(*original, "Duet"), Graph::BuildDiscoveryGraph(*replayed, "Duet"));
+}
+
+TEST(AvcGoldenTests, Phase88ExchangeLogReplaysToTheSameGenericContents) {
+    AvcGoldenRigOptions opts;
+    opts.guid = kPhase88.guid;
+    opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
+    opts.generation = kPhase88.generation;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
+    AvcGoldenRig rig(kPhase88, opts);
+    rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    ASSERT_TRUE(ok);
+    const auto original = rig.Unit()->GetDiscoverySnapshot();
+    ExchangeReplayUnit* replay = nullptr;
+    std::unique_ptr<ExchangeReplayUnit> owner;
+    const auto replayed = ReplayChecks::Replay(rig.Unit(), replay, owner);
+    ASSERT_TRUE(replayed);
+    EXPECT_TRUE(replay->Unmatched().empty()) << "replay sent a frame the capture never saw";
+    EXPECT_GT(replay->Replayed(), 40U);
+    ReplayChecks::ExpectSameContents(*original, *replayed);
+    // BridgeCo facts come from family code, not the generic reducer: compare
+    // the graphs both built without them.
+    auto generic = *original;
+    generic.extension = {};
+    ReplayChecks::ExpectSameGraph(Graph::BuildDiscoveryGraph(generic, "Phase 88"),
+                                  Graph::BuildDiscoveryGraph(*replayed, "Phase 88"));
+}
+
+TEST(AvcGoldenTests, Phase88DiscoveryDocumentPagesReassembleWithinTheWireLimit) {
+    AvcGoldenRigOptions opts;
+    opts.guid = kPhase88.guid;
+    opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
+    opts.generation = kPhase88.generation;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
+    AvcGoldenRig rig(kPhase88, opts);
+    rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    ASSERT_TRUE(ok);
+    const auto snapshot = rig.Unit()->GetDiscoverySnapshot();
+    const auto graph = rig.Unit()->GetDiscoveredGraph();
+    const auto document = UserClient::Wire::BuildAVCDiscoveryDocument(snapshot.get(), graph.get(), rig.Unit()->CopyExchangeLog());
+
+    // Well-formed: brackets balance outside strings, and the key facts are there.
+    int depth = 0; bool inString = false, escaped = false;
+    for (const char c : document) {
+        if (inString) { if (escaped) escaped = false; else if (c == '\\') escaped = true; else if (c == '"') inString = false; continue; }
+        if (c == '"') inString = true;
+        else if (c == '{' || c == '[') ++depth;
+        else if (c == '}' || c == ']') { --depth; ASSERT_GE(depth, 0); }
+        ASSERT_TRUE(static_cast<unsigned char>(c) >= 0x20 && static_cast<unsigned char>(c) < 0x7F);
+    }
+    EXPECT_EQ(depth, 0);
+    EXPECT_FALSE(inString);
+    EXPECT_NE(document.find("\"format\":\"asfw.avc.discovery\""), std::string::npos);
+    EXPECT_NE(document.find("\"complete\":true"), std::string::npos);
+    EXPECT_NE(document.find("\"channels\":10"), std::string::npos);
+    EXPECT_NE(document.find("\"elapsedUs\":"), std::string::npos);
+
+    std::string reassembled;
+    const auto checksum = UserClient::Wire::Fnv1a32(document);
+    for (uint32_t offset = 0;;) {
+        const auto page = UserClient::Wire::SerializeDiscoveryPage(document, static_cast<uint32_t>(snapshot->session.value),
+                                                                   snapshot->route.generation.value, offset, 4096);
+        ASSERT_LE(page.size(), 4096U);
+        UserClient::Wire::AVCDiscoveryPageWire header{};
+        std::memcpy(&header, page.data(), sizeof(header));
+        EXPECT_EQ(header.magic, UserClient::Wire::kAVCDiscoveryDocumentMagic);
+        EXPECT_EQ(header.totalBytes, document.size());
+        EXPECT_EQ(header.checksum, checksum);
+        EXPECT_EQ(header.offset, offset);
+        if (header.length == 0) break;
+        reassembled.append(reinterpret_cast<const char*>(page.data() + sizeof(header)), header.length);
+        offset += header.length;
+    }
+    EXPECT_EQ(reassembled, document);
+    EXPECT_GT(document.size(), 4096U) << "the Phase 88 document should need several pages";
 }
 
 // ============================================================================

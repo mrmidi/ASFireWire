@@ -127,6 +127,12 @@ public:
     [[nodiscard]] std::shared_ptr<Discovery::FWUnit> Unit() const noexcept { return unit_; }
     [[nodiscard]] ASFW::Audio::AVC::DiscoveryCoordinator& Coordinator() noexcept { return *coordinator_; }
     [[nodiscard]] unsigned Published() const noexcept { return listener_.published; }
+    void SetAudioActive(bool active) noexcept { listener_.streaming = active; }
+    [[nodiscard]] size_t FcpWrites() const {
+        return static_cast<size_t>(std::ranges::count_if(bus_.Operations(), [](const RecordedOp& op) {
+            return op.kind == OpKind::Write && op.addressLo == 0xF0000B00U;
+        }));
+    }
     /// Let 40 s of driver time pass: deferred completions, FCP timeouts, retries.
     void Settle() { for (int i = 0; i < 4000; ++i) timers_.Advance(10ULL * 1000 * 1000); }
 
@@ -153,7 +159,9 @@ private:
 
     struct Listener final : ASFW::Audio::IAVCAudioConfigListener {
         void OnAVCAudioConfigurationReady(uint64_t, const ASFW::Audio::Model::ASFWAudioDevice&) noexcept override { ++published; }
+        bool IsAudioActive(uint64_t) const noexcept override { return streaming; }
         unsigned published{0};
+        bool streaming{false};
     } listener_;
     RecordingFireWireBus bus_;
     FakeTimerScheduler timers_;
@@ -244,6 +252,44 @@ TEST(AvcDiscoveryLifecycle, AManualRefreshNeverRepublishes) {
     EXPECT_TRUE(std::holds_alternative<ASFW::Audio::AVC::Ready>(rig.Coordinator().Status(kGuid)));
 }
 
+TEST(AvcDiscoveryLifecycle, ARefreshIsRefusedWhileTheDeviceStreams) {
+    DiscoveryRig rig;
+    rig.Discovery().OnUnitPublished(rig.Unit());
+    rig.Settle();
+    auto* unit = rig.Discovery().GetAVCUnit(kGuid);
+    ASSERT_NE(unit, nullptr);
+    const auto session = unit->CopyExchangeLog().session;
+    const auto writes = rig.FcpWrites();
+    rig.SetAudioActive(true);
+    rig.Discovery().ReScanAllUnits();
+    rig.Settle();
+    EXPECT_EQ(rig.FcpWrites(), writes) << "no diagnostic frame may reach a streaming device";
+    EXPECT_EQ(unit->GetDiscoveryStatus(), AVCDiscoveryStatus::BlockedByAudio);
+    EXPECT_EQ(unit->CopyExchangeLog().session, session) << "the attach log is kept";
+    // Idle again: the refresh runs.
+    rig.SetAudioActive(false);
+    rig.Discovery().ReScanAllUnits();
+    rig.Settle();
+    EXPECT_GT(rig.FcpWrites(), writes);
+    EXPECT_EQ(unit->GetDiscoveryStatus(), AVCDiscoveryStatus::Completed);
+}
+
+TEST(AvcDiscoveryLifecycle, ASecondRefreshWhileOneRunsIsBusyNotASecondSession) {
+    DiscoveryRig rig;
+    rig.Discovery().OnUnitPublished(rig.Unit());
+    rig.Settle();
+    auto* unit = rig.Discovery().GetAVCUnit(kGuid);
+    ASSERT_NE(unit, nullptr);
+    const auto session = unit->CopyExchangeLog().session;
+    rig.Sim().SetTimeoutNext(); // Keep the first refresh in flight.
+    rig.Discovery().ReScanAllUnits();
+    ASSERT_EQ(unit->GetDiscoveryStatus(), AVCDiscoveryStatus::Running);
+    rig.Discovery().ReScanAllUnits();
+    EXPECT_EQ(unit->CopyExchangeLog().session, session + 1) << "one refresh, one log session";
+    rig.Settle();
+    EXPECT_EQ(unit->GetDiscoveryStatus(), AVCDiscoveryStatus::Completed);
+}
+
 // ---------------------------------------------------------------------------
 // 1814 bootloader preparation gates the producer (phase 4.4).
 // ---------------------------------------------------------------------------
@@ -257,6 +303,7 @@ public:
     void OnAVCAudioConfigurationReady(uint64_t, const ASFW::Audio::Model::ASFWAudioDevice&) noexcept override {
         ++published;
     }
+    bool IsAudioActive(uint64_t) const noexcept override { return false; }
     unsigned published{0};
 };
 

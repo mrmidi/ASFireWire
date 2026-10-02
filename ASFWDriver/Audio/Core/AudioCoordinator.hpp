@@ -64,6 +64,9 @@ public:
     // IAVCAudioConfigListener
     void OnAVCAudioConfigurationReady(uint64_t guid,
                                       const Model::ASFWAudioDevice& config) noexcept override;
+    [[nodiscard]] bool IsAudioActive(uint64_t guid) const noexcept override {
+        return sessions_.IsStreaming(guid) || sessions_.IsReconciling(guid);
+    }
     void HandleCycleInconsistent() noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept;

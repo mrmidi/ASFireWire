@@ -219,6 +219,38 @@ extension ASFWDriverConnector {
         return log
     }
 
+    /// The unit's discovery document, read page by page. Pages that disagree
+    /// (a refresh or new FCP traffic between reads) restart the read, at most
+    /// three times.
+    func getAVCDiscoveryDocument(guid: UInt64) -> Data? {
+        guard isConnected, connection != 0 else { return nil }
+        let fetch: (UInt32) -> Data? = { [self] offset in
+            let scalarInputs: [UInt64] = [guid >> 32, guid & 0xFFFF_FFFF, UInt64(offset)]
+            var outSize = 4 * 1024
+            var out = Data(count: outSize)
+            let kr = out.withUnsafeMutableBytes { outPtr in
+                scalarInputs.withUnsafeBufferPointer { scalarPtr in
+                    IOConnectCallMethod(connection, Method.getAVCDiscoveryDocument.rawValue,
+                                        scalarPtr.baseAddress, 3, nil, 0, nil, nil,
+                                        outPtr.baseAddress?.assumingMemoryBound(to: UInt8.self), &outSize)
+                }
+            }
+            guard kr == KERN_SUCCESS else { return nil }
+            out.count = outSize
+            return out
+        }
+        for _ in 0..<3 {
+            switch AvcDiscoveryDocument.assemble(fetch: fetch) {
+            case .success(let document): return document
+            case .failure(.mixedPages), .failure(.checksumMismatch): continue
+            case .failure(let error):
+                print("[Connector] ❌ getAVCDiscoveryDocument failed: \(error)")
+                return nil
+            }
+        }
+        return nil
+    }
+
     func sendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32 = 15_000) -> Data? {
         guard isConnected else {
             log("sendRawFCPCommand: Not connected", level: .warning)

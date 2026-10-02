@@ -33,7 +33,9 @@ namespace ASFW::Protocols::AVC {
 class AVCDiscovery;
 
 enum class AVCDiscoveryStatus : uint8_t {
-    Idle = 0, Running = 1, Completed = 2, Failed = 3, Skipped = 4
+    Idle = 0, Running = 1, Completed = 2, Failed = 3, Skipped = 4,
+    /// A manual refresh was refused because the device's audio is active.
+    BlockedByAudio = 5
 };
 
 //==============================================================================
@@ -123,6 +125,13 @@ public:
     void ReScan(std::function<void(bool success)> completion);
     [[nodiscard]] AVCDiscoveryStatus GetDiscoveryStatus() const noexcept {
         return discoveryStatus_.load(std::memory_order_acquire);
+    }
+    void MarkRescanBlockedByAudio() noexcept {
+        if (rescanInProgress_.load(std::memory_order_acquire)) return;
+        auto status = discoveryStatus_.load(std::memory_order_acquire);
+        while (status != AVCDiscoveryStatus::Running &&
+               !discoveryStatus_.compare_exchange_weak(status, AVCDiscoveryStatus::BlockedByAudio,
+                                                       std::memory_order_acq_rel)) {}
     }
     void MarkRescanSkipped() noexcept {
         if (rescanInProgress_.load(std::memory_order_acquire)) return;
