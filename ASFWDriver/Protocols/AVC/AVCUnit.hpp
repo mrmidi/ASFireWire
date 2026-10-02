@@ -84,7 +84,11 @@ struct AVCUnitDiscoveryOptions {
     // The chip's read-only extension inventory (BridgeCo, Oxford). Runs after
     // the generic discovery and before the discovery status completes, at
     // attach and on every refresh; it must call `done` exactly once.
-    std::function<void(AVCUnit& unit, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done)> extensionInventory;
+    // It reaches the unit only through IAvcUnit and holds it by LiveRef, never
+    // by ownership: replay runs the same inventory against a recorded unit, and
+    // a destroyed unit ends it silently (done is then never called, because
+    // the session that would receive it was destroyed with the unit).
+    std::function<void(ASFW::AVC::IAvcUnit& unit, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done)> extensionInventory;
     // Which stream-format opcode the chip is asked with (BridgeCo: 0x2F only).
     ASFW::AVC::IAvcUnit::StreamFormatOpcodePolicy streamFormatOpcode{
         ASFW::AVC::IAvcUnit::StreamFormatOpcodePolicy::kLearn};

@@ -172,9 +172,13 @@ only**, no attach/probing in this phase; state this limitation in the PR.
     still serialises one command at a time).
   - Report schema v3 carries the document unchanged; v1/v2 dumps open. A cancelled
     discovery or a route change never replaces the previous report.
-  - Replay: an exported exchange log replays through the same session/reducer
-    (`tests/support/ExchangeReplayUnit.hpp`) into the same contents and graph (Duet:
-    whole graph; Phase 88: generic graph, since BridgeCo facts come from family code).
+  - Replay: an exported exchange log replays through the same session/reducer and the
+    same chip inventory (`tests/support/ExchangeReplayUnit.hpp`) into the same contents,
+    extension facts and full graph, consuming every recorded exchange. Phase 88: the
+    published 10+1 @ 48 kHz shape, five rates and the slot map reproduce. The inventory
+    hook takes `IAvcUnit&`; the BridgeCo probe and Oxford detector hold the unit by
+    `LiveRef` instead of keeping it alive (lifecycle tests pin a reply after unit
+    destruction).
   - MCP: `asfw_avc_get_discovery_document` (read-only, no bus traffic). The existing
     `asfw_avc_get_subunit_descriptor` already served the cached descriptor.
   - 2,713 C++ cases and the Swift suite pass; signed app/dext built; arm64e verified.

@@ -624,8 +624,10 @@ TEST(AvcGoldenTests, Phase88GeometryWithoutAnyDescriptorComesFromBridgeCoFormati
 namespace ReplayChecks {
 namespace E = ASFW::AVC::DiscoveryEngine;
 
-E::SnapshotLease Replay(const std::shared_ptr<AVCUnit>& unit, ExchangeReplayUnit*& replayOut,
-                        std::unique_ptr<ExchangeReplayUnit>& owner) {
+/// Replay through the same session/reducer, with the same chip inventory as
+/// attach (the hook takes IAvcUnit, so it runs against the recorded unit).
+E::SnapshotLease Replay(const std::shared_ptr<AVCUnit>& unit, AvcExtensionInventory inventory,
+                        ExchangeReplayUnit*& replayOut, std::unique_ptr<ExchangeReplayUnit>& owner) {
     const auto original = unit->GetDiscoverySnapshot();
     owner = std::make_unique<ExchangeReplayUnit>(unit->CopyExchangeLog(), original->route.guid,
                                                  FW::NodeId{static_cast<uint8_t>(original->route.nodeId)},
@@ -633,7 +635,16 @@ E::SnapshotLease Replay(const std::shared_ptr<AVCUnit>& unit, ExchangeReplayUnit
     owner->SetStreamFormatOpcodePolicy(unit->GetStreamFormatOpcodePolicy());
     replayOut = owner.get();
     E::SnapshotLease replayed;
-    auto session = E::Session::Create(*owner, original->session, [&](E::SnapshotLease r) { replayed = std::move(r); });
+    const auto options = DiscoveryOptionsFor(inventory);
+    auto* recorded = owner.get();
+    E::Session::Extension extension;
+    if (options.extensionInventory) {
+        extension = [recorded, run = options.extensionInventory](E::SnapshotLease, std::function<void(E::ExtensionFacts)> done) {
+            run(*recorded, std::move(done));
+        };
+    }
+    auto session = E::Session::Create(*owner, original->session, [&](E::SnapshotLease r) { replayed = std::move(r); },
+                                      std::move(extension));
     session->Start();
     return replayed;
 }
@@ -657,6 +668,12 @@ void ExpectSameContents(const E::DiscoverySnapshot& a, const E::DiscoverySnapsho
     EXPECT_EQ(a.features.size(), b.features.size());
     EXPECT_EQ(a.selectors.size(), b.selectors.size());
     EXPECT_EQ(a.confirmedClockRoutes.size(), b.confirmedClockRoutes.size());
+    for (const auto& [x, y] : {std::pair{&a.extension.playback, &b.extension.playback},
+                               std::pair{&a.extension.capture, &b.extension.capture}}) {
+        EXPECT_EQ(x->formations, y->formations);
+        EXPECT_EQ(x->pcmSlots, y->pcmSlots);
+        EXPECT_EQ(x->currentRateHz, y->currentRateHz);
+    }
 }
 
 void ExpectSameGraph(const Graph::DeviceGraph& a, const Graph::DeviceGraph& b) {
@@ -686,16 +703,16 @@ TEST(AvcGoldenTests, DuetExchangeLogReplaysToTheSameContentsAndGraph) {
     const auto original = rig.Unit()->GetDiscoverySnapshot();
     ExchangeReplayUnit* replay = nullptr;
     std::unique_ptr<ExchangeReplayUnit> owner;
-    const auto replayed = ReplayChecks::Replay(rig.Unit(), replay, owner);
+    const auto replayed = ReplayChecks::Replay(rig.Unit(), AvcExtensionInventory::kOxford, replay, owner);
     ASSERT_TRUE(replayed);
     EXPECT_TRUE(replay->Unmatched().empty()) << "replay sent a frame the capture never saw";
+    EXPECT_EQ(replay->Unused(), 0U) << "part of the capture was never replayed";
     EXPECT_GT(replay->Replayed(), 40U);
     ReplayChecks::ExpectSameContents(*original, *replayed);
-    // The Oxford inventory reports no facts, so the whole graph must match.
     ReplayChecks::ExpectSameGraph(Graph::BuildDiscoveryGraph(*original, "Duet"), Graph::BuildDiscoveryGraph(*replayed, "Duet"));
 }
 
-TEST(AvcGoldenTests, Phase88ExchangeLogReplaysToTheSameGenericContents) {
+TEST(AvcGoldenTests, Phase88ExchangeLogReplaysToTheSamePublishedShape) {
     AvcGoldenRigOptions opts;
     opts.guid = kPhase88.guid;
     opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
@@ -713,17 +730,21 @@ TEST(AvcGoldenTests, Phase88ExchangeLogReplaysToTheSameGenericContents) {
     const auto original = rig.Unit()->GetDiscoverySnapshot();
     ExchangeReplayUnit* replay = nullptr;
     std::unique_ptr<ExchangeReplayUnit> owner;
-    const auto replayed = ReplayChecks::Replay(rig.Unit(), replay, owner);
+    const auto replayed = ReplayChecks::Replay(rig.Unit(), AvcExtensionInventory::kBridgeCo, replay, owner);
     ASSERT_TRUE(replayed);
     EXPECT_TRUE(replay->Unmatched().empty()) << "replay sent a frame the capture never saw";
+    EXPECT_EQ(replay->Unused(), 0U) << "part of the capture was never replayed";
     EXPECT_GT(replay->Replayed(), 40U);
     ReplayChecks::ExpectSameContents(*original, *replayed);
-    // BridgeCo facts come from family code, not the generic reducer: compare
-    // the graphs both built without them.
-    auto generic = *original;
-    generic.extension = {};
-    ReplayChecks::ExpectSameGraph(Graph::BuildDiscoveryGraph(generic, "Phase 88"),
-                                  Graph::BuildDiscoveryGraph(*replayed, "Phase 88"));
+    // The BridgeCo inventory replays too, so the published shape must match:
+    // 10 PCM + 1 MIDI at 48 kHz, five rates, and the slot map.
+    EXPECT_FALSE(replayed->extension.playback.formations.empty());
+    const auto replayedGraph = Graph::BuildDiscoveryGraph(*replayed, "Phase 88");
+    ReplayChecks::ExpectSameGraph(*rig.Unit()->GetDiscoveredGraph(), replayedGraph);
+    EXPECT_EQ(replayedGraph.playback.channelCount, 10U);
+    EXPECT_EQ(replayedGraph.playback.dataBlockSize, 11U);
+    EXPECT_EQ(replayedGraph.playback.currentSampleRate, 48000U);
+    EXPECT_EQ(replayedGraph.playback.supportedSampleRates.size(), 5U);
 }
 
 TEST(AvcGoldenTests, Phase88DiscoveryDocumentPagesReassembleWithinTheWireLimit) {
@@ -1015,7 +1036,7 @@ TEST(AvcGoldenTests, GenericInterimAndTimeout) {
 TEST(AvcGoldenTests, ExtensionInventoryHoldsDiscoveryOpenUntilItFinishes) {
     std::function<void()> finish;
     AvcGoldenRigOptions opts;
-    opts.unitOptions.extensionInventory = [&finish](AVCUnit&, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
+    opts.unitOptions.extensionInventory = [&finish](ASFW::AVC::IAvcUnit&, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
         finish = [done = std::move(done)] { done({}); };
     };
     AvcGoldenRig rig(kDuet, opts);

@@ -8,6 +8,9 @@
 #include "ASFWDriver/Audio/Protocols/Oxford/OxfwStreamFormats.hpp"
 
 #include "AvcTestRig.hpp"
+#include "tests/support/DeferredAvcUnit.hpp"
+
+#include <memory>
 
 #include <optional>
 #include <span>
@@ -126,6 +129,22 @@ void RunDetect(AvcTestRig& rig, DetectOutcome& outcome, bool isOutput = false) {
                                     outcome.set = set;
                                 });
     rig.Drain();
+}
+
+TEST(OxfwStreamFormats, AReplyForADestroyedUnitEndsDetectionWithoutTouchingIt) {
+    // Detection holds the unit by LiveRef, not ownership: a reply that arrives
+    // after the unit is gone must neither submit the next list entry nor call back.
+    auto pending = std::make_shared<ASFW::AVC::Testing::DeferredAvcUnit::Pending>();
+    auto unit = std::make_unique<ASFW::AVC::Testing::DeferredAvcUnit>(pending);
+    bool called = false;
+    Oxford::DetectStreamFormats(*unit, false, [&called](IOReturn, const Oxford::StreamFormatSet&) { called = true; });
+    ASSERT_TRUE(pending->callback.has_value());
+    unit.reset();
+    auto reply = std::move(*pending->callback);
+    pending->callback.reset();
+    reply(std::unexpected(ASFW::AVC::AvcError::Unexpected(ASFW::AVC::ResponseCode::kNotImplemented)));
+    EXPECT_EQ(pending->submitted, 1U);
+    EXPECT_FALSE(called);
 }
 
 } // namespace

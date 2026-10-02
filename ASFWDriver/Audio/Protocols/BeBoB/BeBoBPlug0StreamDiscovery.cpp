@@ -64,6 +64,15 @@ public:
 
 private:
     void SubmitNext() {
+        // Continuations run after the submitting call returned; the unit may be
+        // gone by then. A dead unit ends the probe silently, before completing:
+        // its completion belonged to the unit's discovery session, which died
+        // with it.
+        auto* unit = unit_.Get();
+        if (!unit) {
+            ASFW_LOG(AVC, "BeBoBProbe: unit gone; inventory abandoned GUID=0x%016llx", guid_);
+            return;
+        }
         if (next_ == queue_.size()) {
             ASFW_LOG(AVC, "BeBoBProbe: inventory complete GUID=0x%016llx", guid_);
             if (completion_) completion_(model_);
@@ -74,7 +83,7 @@ private:
 
         switch (request.command) {
             case ReadOnlyProbeCommand::kUnitPlugCounts: {
-                unit_.Status(
+                unit->Status(
                     ASFW::AVC::Cmd::PlugInfoCommand{
                         .operands = ASFW::AVC::Cmd::PlugInfoOperands{
                             .form = ASFW::AVC::Cmd::PlugInfoForm::kUnitIsoExternal,
@@ -94,7 +103,7 @@ private:
             case ReadOnlyProbeCommand::kIsochPlugType: {
                 const auto dir = request.direction == PlugDirection::kInput ?
                     ASFW::AVC::Cmd::PlugDirection::kInput : ASFW::AVC::Cmd::PlugDirection::kOutput;
-                unit_.Status(
+                unit->Status(
                     ASFW::AVC::BridgeCo::ExtendedPlugInfoCommand{
                         .operands = ASFW::AVC::BridgeCo::ExtendedPlugInfoOperands{
                             .plug = ASFW::AVC::Cmd::PlugAddress::UnitPlug(dir, ASFW::AVC::Cmd::UnitPlugType::kPcr, 0),
@@ -120,7 +129,7 @@ private:
             case ReadOnlyProbeCommand::kStreamFormatList: {
                 const auto dir = request.direction == PlugDirection::kInput ?
                     ASFW::AVC::Cmd::PlugDirection::kInput : ASFW::AVC::Cmd::PlugDirection::kOutput;
-                unit_.Status(
+                unit->Status(
                     ASFW::AVC::Cmd::StreamFormatCommand{
                         .operands = ASFW::AVC::Cmd::StreamFormatOperands{
                             .form = ASFW::AVC::Cmd::StreamFormatSubfunction::kList,
@@ -143,7 +152,7 @@ private:
             case ReadOnlyProbeCommand::kChannelPositions: {
                 const auto dir = request.direction == PlugDirection::kInput ?
                     ASFW::AVC::Cmd::PlugDirection::kInput : ASFW::AVC::Cmd::PlugDirection::kOutput;
-                unit_.Status(
+                unit->Status(
                     ASFW::AVC::BridgeCo::ExtendedPlugInfoCommand{
                         .operands = ASFW::AVC::BridgeCo::ExtendedPlugInfoOperands{
                             .plug = ASFW::AVC::Cmd::PlugAddress::UnitPlug(dir, ASFW::AVC::Cmd::UnitPlugType::kPcr, 0),
@@ -163,7 +172,7 @@ private:
             case ReadOnlyProbeCommand::kSectionType: {
                 const auto dir = request.direction == PlugDirection::kInput ?
                     ASFW::AVC::Cmd::PlugDirection::kInput : ASFW::AVC::Cmd::PlugDirection::kOutput;
-                unit_.Status(
+                unit->Status(
                     ASFW::AVC::BridgeCo::ExtendedPlugInfoCommand{
                         .operands = ASFW::AVC::BridgeCo::ExtendedPlugInfoOperands{
                             .plug = ASFW::AVC::Cmd::PlugAddress::UnitPlug(dir, ASFW::AVC::Cmd::UnitPlugType::kPcr, 0),
@@ -197,7 +206,7 @@ private:
             case ReadOnlyProbeCommand::kSignalFormat: {
                 const auto dir = request.direction == PlugDirection::kInput ?
                     ASFW::AVC::Cmd::PlugSignalDirection::kInput : ASFW::AVC::Cmd::PlugSignalDirection::kOutput;
-                unit_.Status(
+                unit->Status(
                     ASFW::AVC::Cmd::PlugSignalFormatCommand{
                         .operands = ASFW::AVC::Cmd::PlugSignalFormatOperands{
                             .direction = dir,
@@ -336,7 +345,7 @@ private:
         return direction == PlugDirection::kInput ? model_.input : model_.output;
     }
 
-    ASFW::AVC::IAvcUnit& unit_;
+    ASFW::Common::LiveRef<ASFW::AVC::IAvcUnit> unit_;
     uint64_t guid_{0};
     std::vector<Request> queue_{};
     size_t next_{0};

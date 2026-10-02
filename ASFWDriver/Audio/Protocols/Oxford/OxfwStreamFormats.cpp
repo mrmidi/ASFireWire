@@ -25,7 +25,9 @@ constexpr uint8_t kPcrPlug0 = 0x00;
 constexpr uint8_t kMaxListEntries = 32;
 
 struct DetectState {
-    AVC::IAvcUnit& unit;
+    /// The unit may be destroyed between steps; a dead unit ends detection
+    /// silently (its caller's discovery session died with it).
+    Common::LiveRef<AVC::IAvcUnit> unit;
     bool isOutput{false};
     StreamFormatSetCallback callback;
     StreamFormatSet set{};
@@ -41,6 +43,7 @@ void BeginAssumedPath(const StatePtr& state);
 void ProbeNextRate(const StatePtr& state);
 
 void Finish(const StatePtr& state, IOReturn status) {
+    if (!state->unit) return; // Unit gone: its caller's session went with it.
     if (status == kIOReturnSuccess && state->set.entries.empty()) {
         // "Answered, but advertised nothing" is not a usable format set, and
         // reporting it as success would push an empty rate list downstream.
@@ -74,7 +77,9 @@ void Finish(const StatePtr& state, IOReturn status) {
 void QueryListEntry(const StatePtr& state) {
     const auto dir = state->isOutput ? AVC::Cmd::PlugDirection::kOutput : AVC::Cmd::PlugDirection::kInput;
 
-    state->unit.Status(
+    auto* unit = state->unit.Get();
+    if (!unit) return;
+    unit->Status(
         AVC::Cmd::StreamFormatCommand{
             .operands = AVC::Cmd::StreamFormatOperands{
                 .form = AVC::Cmd::StreamFormatSubfunction::kList,
@@ -124,7 +129,9 @@ void QueryListEntry(const StatePtr& state) {
 void BeginAssumedPath(const StatePtr& state) {
     const auto dir = state->isOutput ? AVC::Cmd::PlugDirection::kOutput : AVC::Cmd::PlugDirection::kInput;
 
-    state->unit.Status(
+    auto* unit = state->unit.Get();
+    if (!unit) return;
+    unit->Status(
         AVC::Cmd::StreamFormatCommand{
             .operands = AVC::Cmd::StreamFormatOperands{
                 .form = AVC::Cmd::StreamFormatSubfunction::kSingle,
@@ -169,7 +176,9 @@ void ProbeNextRate(const StatePtr& state) {
     const auto plugDir = state->isOutput ? AVC::Cmd::PlugSignalDirection::kOutput
                                          : AVC::Cmd::PlugSignalDirection::kInput;
 
-    state->unit.Inquiry(
+    auto* unit = state->unit.Get();
+    if (!unit) return;
+    unit->Inquiry(
         AVC::Cmd::PlugSignalFormatCommand{
             .operands = AVC::Cmd::PlugSignalFormatOperands{
                 .direction = plugDir,
@@ -217,7 +226,7 @@ void DetectStreamFormats(AVC::IAvcUnit& unit,
                          bool isOutput,
                          StreamFormatSetCallback callback) {
     auto state = std::make_shared<DetectState>(DetectState{
-        .unit = unit,
+        .unit = Common::LiveRef<AVC::IAvcUnit>(unit),
         .isOutput = isOutput,
         .callback = std::move(callback),
     });

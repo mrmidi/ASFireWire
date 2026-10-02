@@ -44,6 +44,8 @@ public:
     [[nodiscard]] uint64_t Guid() const noexcept override { return guid_; }
 
     [[nodiscard]] size_t Replayed() const noexcept { return replayed_; }
+    /// Recorded exchanges the replay never asked for (0: the whole capture replayed).
+    [[nodiscard]] size_t Unused() const noexcept { return log_.records.size() - replayed_; }
     [[nodiscard]] const std::vector<std::vector<uint8_t>>& Unmatched() const noexcept { return unmatched_; }
 
 private:

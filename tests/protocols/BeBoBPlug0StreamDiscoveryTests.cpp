@@ -12,6 +12,8 @@
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/StreamFormatCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/Extensions/BridgeCoPlugInfo.hpp"
+#include "tests/support/DeferredAvcUnit.hpp"
+#include <memory>
 
 namespace {
 
@@ -423,4 +425,21 @@ TEST(BridgeCoReadOnlyProbeTests, ConflictingDirectionalCurrentRatesAreUnavailabl
     EXPECT_FALSE(model.SelectDuplexRateHz().has_value());
 }
 
+TEST(BeBoBPlug0StreamDiscoveryTests, AReplyForADestroyedUnitEndsTheProbeWithoutTouchingIt) {
+    // The probe holds the unit by LiveRef, not ownership: a reply that arrives
+    // after the unit is gone must neither submit again nor complete.
+    auto pending = std::make_shared<ASFW::AVC::Testing::DeferredAvcUnit::Pending>();
+    auto unit = std::make_unique<ASFW::AVC::Testing::DeferredAvcUnit>(pending);
+    bool completed = false;
+    StartBeBoBPlug0Discovery(*unit, 0x000aac0300b1d1f7ULL, [&completed](const auto&) { completed = true; });
+    ASSERT_TRUE(pending->callback.has_value());
+    unit.reset();
+    auto reply = std::move(*pending->callback);
+    pending->callback.reset();
+    reply(std::unexpected(AvcError::Of(AvcErrorKind::kTimeout)));
+    EXPECT_EQ(pending->submitted, 1U);
+    EXPECT_FALSE(completed);
+}
+
 } // namespace
+
