@@ -79,11 +79,10 @@ enum class AvcProbeDecision : uint8_t {
 /// The read-only vendor extension inventory that follows generic discovery.
 enum class AvcExtensionInventory : uint8_t {
     kNone,
-    /// BridgeCo EXTENDED PLUG INFO and the 0x2F format list (Linux
-    /// bebob_stream.c:908-940), plus plug signal formats.
+    /// BridgeCo EXTENDED PLUG INFO channel positions and section types (Linux
+    /// bebob_command.c:91-107, 289-328). Formations and rate come from generic
+    /// discovery, which asks BridgeCo with 0x2F.
     kBridgeCo,
-    /// Oxford stream-format lists, both directions (Linux oxfw-stream.c:552-622).
-    kOxford,
 };
 
 /// Only chips the catalog has identified get vendor commands; an unknown unit
@@ -94,8 +93,6 @@ enum class AvcExtensionInventory : uint8_t {
     switch (plan.family) {
         case AudioFamilyProviderId::BeBoB:
             return AvcExtensionInventory::kBridgeCo;
-        case AudioFamilyProviderId::OXFW:
-            return AvcExtensionInventory::kOxford;
         default:
             return AvcExtensionInventory::kNone;
     }

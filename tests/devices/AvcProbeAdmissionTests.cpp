@@ -111,7 +111,7 @@ TEST(AvcProbeAdmission, IdentifiedChipsAddTheirExtensionInventory) {
               AvcExtensionInventory::kBridgeCo);
     EXPECT_EQ(inventory(MakeDevice(0x0003DB0A0000D112ULL, kApogeeVendorId, kApogeeDuetModelId,
                                    kTa1394Specifier, kAvcVersion)),
-              AvcExtensionInventory::kOxford);
+              AvcExtensionInventory::kNone) << "Oxford units need nothing beyond generic discovery";
     EXPECT_EQ(inventory(MakeDevice(0x00ABCD0000000001ULL, kUnknownVendor, 0x000001,
                                    kTa1394Specifier, kAvcVersion)),
               AvcExtensionInventory::kNone);

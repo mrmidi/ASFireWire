@@ -8,7 +8,6 @@
 #include "../BeBoB/BeBoBCaptureChannelMap.hpp"
 #include "../BeBoB/BridgeCoInventory.hpp"
 
-#include "../../Protocols/Oxford/OxfwStreamFormats.hpp"
 #include "../../../Logging/Logging.hpp"
 
 #include <vector>
@@ -53,28 +52,6 @@ AVCUnit::DiscoveryOptions DiscoveryOptionsFor(AvcExtensionInventory inventory) {
                              sections.playback.size(), sections.capture.size());
                     done(std::move(facts));
                 });
-            };
-            break;
-        case AvcExtensionInventory::kOxford:
-            options.extensionInventory = [](ASFW::AVC::IAvcUnit& unit, ASFW::AVC::DiscoveryEngine::SnapshotLease,
-                                            std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
-                const uint64_t guid = unit.Guid();
-                ::ASFW::Audio::Oxford::DetectStreamFormats(
-                    unit, /*isOutput=*/false,
-                    [liveUnit = ASFW::Common::LiveRef<ASFW::AVC::IAvcUnit>(unit), guid, done = std::move(done)](
-                        IOReturn inStatus, const ::ASFW::Audio::Oxford::StreamFormatSet& in) mutable {
-                        auto* unit = liveUnit.Get();
-                        if (!unit) return; // Unit gone: its session went with it.
-                        const size_t inRates = in.Rates().size();
-                        ::ASFW::Audio::Oxford::DetectStreamFormats(
-                            *unit, /*isOutput=*/true,
-                            [guid, inStatus, inRates, done = std::move(done)](
-                                IOReturn outStatus, const ::ASFW::Audio::Oxford::StreamFormatSet& out) {
-                                ASFW_LOG(AVC, "[AvcInventory] guid=%llx oxford formats in=0x%x/%zu out=0x%x/%zu",
-                                         guid, inStatus, inRates, outStatus, out.Rates().size());
-                                done({});
-                            });
-                    });
             };
             break;
         case AvcExtensionInventory::kNone:

@@ -4,10 +4,10 @@
 // AvcGoldenTests.cpp - Golden wire traces of TODAY's AV/C stack behaviour.
 //
 // Characterizes exact bus writes and sequences for:
-// - Duet attach discovery (AVCUnit::Initialize + OxfwStreamFormats)
+// - Duet attach discovery (AVCUnit::Initialize, generic discovery)
 // - Duet streaming start/stop (SignalFormat rate control + CMP)
 // - Phase 88 attach discovery (AVCUnit::Initialize + BridgeCo inventory)
-// - Onyx-i Oxford discovery (OxfwStreamFormats against documented Onyx-i capture)
+// - Onyx-i attach discovery (generic discovery against the documented Onyx-i capture)
 // - 1814 allowlist enforcement (admitted probes vs refused commands)
 // - Generic bus reset recovery (idempotent replay across generations)
 // - Generic interim deferral and timeout handling
@@ -49,7 +49,6 @@
 
 #include "ASFWDriver/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.hpp"
-#include "ASFWDriver/Audio/Protocols/Oxford/OxfwStreamFormats.hpp"
 
 #include "ASFWDriver/Protocols/AVC/CMP/CMPClient.hpp"
 #include "ASFWDriver/Bus/IRM/IRMClient.hpp"
@@ -366,7 +365,7 @@ TEST(AvcGoldenTests, ChainedCommandsDoNotGrowTheStack) {
 
 TEST(AvcGoldenTests, DuetAttachDiscovery) {
     AvcGoldenRigOptions opts;
-    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kOxford);
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
     AvcGoldenRig rig(kDuet, opts);
 
     // Attach as AVCDiscovery runs it: generic discovery, then the Oxford
@@ -700,7 +699,7 @@ void ExpectSameGraph(const Graph::DeviceGraph& a, const Graph::DeviceGraph& b) {
 
 TEST(AvcGoldenTests, DuetExchangeLogReplaysToTheSameContentsAndGraph) {
     AvcGoldenRigOptions opts;
-    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kOxford);
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
     AvcGoldenRig rig(kDuet, opts);
     std::vector<uint8_t> audioIdentifier(Fixtures::kDuetAudioIdentifierBytes.begin(), Fixtures::kDuetAudioIdentifierBytes.end());
     rig.Sim().SetDescriptor(0x08, {0x00}, std::move(audioIdentifier));
@@ -711,7 +710,7 @@ TEST(AvcGoldenTests, DuetExchangeLogReplaysToTheSameContentsAndGraph) {
     const auto original = rig.Unit()->GetDiscoverySnapshot();
     ExchangeReplayUnit* replay = nullptr;
     std::unique_ptr<ExchangeReplayUnit> owner;
-    const auto replayed = ReplayChecks::Replay(rig.Unit(), AvcExtensionInventory::kOxford, replay, owner);
+    const auto replayed = ReplayChecks::Replay(rig.Unit(), AvcExtensionInventory::kNone, replay, owner);
     ASSERT_TRUE(replayed);
     EXPECT_TRUE(replay->Unmatched().empty()) << "replay sent a frame the capture never saw";
     EXPECT_EQ(replay->Unused(), 0U) << "part of the capture was never replayed";
@@ -874,7 +873,7 @@ std::string Capture(const std::shared_ptr<AVCUnit>& unit, uint64_t guid) {
 
 TEST(AvcGoldenTests, DuetUserClientOutputsAreUnchanged) {
     AvcGoldenRigOptions opts;
-    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kOxford);
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
     AvcGoldenRig rig(kDuet, opts);
     std::vector<uint8_t> music;
     for (size_t i = 0; i < Fixtures::kDuetMusicStatusHex.size(); i += 2)
@@ -913,29 +912,28 @@ TEST(AvcGoldenTests, Phase88UserClientOutputsAreUnchanged) {
 // 4. Onyx-i Attach Discovery
 // ============================================================================
 
-TEST(AvcGoldenTests, OnyxiAttachDiscovery) {
-    AvcGoldenRigOptions opts;
-    opts.guid = OnyxiData::kOnyxi.guid;
-    opts.nodeId = static_cast<uint16_t>(OnyxiData::kOnyxi.nodeId);
-    opts.generation = OnyxiData::kOnyxi.generation;
-    AvcGoldenRig rig(OnyxiData::kOnyxi, opts);
-
-    rig.Mark("## OxfwStreamFormats::DetectStreamFormats");
-    bool detectFired = false;
-    Audio::Oxford::DetectStreamFormats(
-        rig.Transport(), false, [&](IOReturn status, const Audio::Oxford::StreamFormatSet& set) {
-            detectFired = true;
-            EXPECT_EQ(status, kIOReturnSuccess);
-            EXPECT_FALSE(set.assumed);
-            EXPECT_EQ(set.Rates(), (std::vector<uint32_t>{44100, 48000, 96000, 88200}));
-            ASSERT_EQ(set.entries.size(), 4U);
-            EXPECT_EQ(set.entries[0].pcmChannels, 8);
-            EXPECT_EQ(set.entries[0].midiSlots, 0);
-        });
-    rig.Settle();
-    EXPECT_TRUE(detectFired);
-
-    rig.ExpectGolden("onyxi__attach_discovery");
+TEST(AvcGoldenTests, OnyxiCapturedFormationsDecodeWithTheCanonicalCodec) {
+    // The documented Onyx-i capture holds only its unit ISO input plug 0
+    // stream-format list (0xBF C1, four entries then REJECTED). It has no
+    // PLUG INFO answer, so generic discovery cannot be replayed against it;
+    // what it proves is the decode: four compound formats of 8 PCM, no MIDI.
+    std::vector<uint32_t> rates;
+    for (const auto& command : OnyxiData::kOnyxi.records) {
+        if (command.responseCode != 0x0C) continue;
+        const auto response = ParseResponse(command.response);
+        ASSERT_TRUE(response.has_value()) << command.name;
+        const auto reply = Cmd::StreamFormatCommand{
+            .operands = {.form = Cmd::StreamFormatSubfunction::kList,
+                         .opcode = Cmd::StreamFormatOpcode::kExtendedStreamFormat,
+                         .plug = Cmd::PlugAddress::UnitPlug(Cmd::PlugDirection::kInput, Cmd::UnitPlugType::kPcr, 0),
+                         .index = command.command[10]}}.Decode(response->operands);
+        ASSERT_TRUE(reply.has_value()) << command.name;
+        ASSERT_EQ(reply->format.kind, Cmd::StreamFormat::Kind::kCompoundAm824) << command.name;
+        EXPECT_EQ(reply->format.compound.PcmChannels(), 8U);
+        EXPECT_EQ(reply->format.compound.MidiChannels(), 0U);
+        rates.push_back(*ToHz(reply->format.compound.rate));
+    }
+    EXPECT_EQ(rates, (std::vector<uint32_t>{44100, 48000, 96000, 88200}));
 }
 
 // ============================================================================
