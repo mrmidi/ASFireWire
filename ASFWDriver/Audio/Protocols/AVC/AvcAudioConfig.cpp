@@ -67,8 +67,7 @@ void PreferDefaultStartRate(ASFWAudioDevice& config) {
 
 std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& identity,
                                                      const StaticAudioEndpointPlan& plan,
-                                                     const Graph::DeviceGraph& graph,
-                                                     const std::vector<uint32_t>& runtimeRates) {
+                                                     const Graph::DeviceGraph& graph) {
     const auto& playback = graph.playback;
     const auto& capture = graph.capture;
     if (playback.currentSampleRate == 0 || playback.currentSampleRate != capture.currentSampleRate ||
@@ -91,16 +90,16 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
             config.sampleRates.push_back(hz);
         }
     }
-    if (!runtimeRates.empty()) {
-        std::erase_if(config.sampleRates, [&runtimeRates](uint32_t hz) {
-            return std::ranges::find(runtimeRates, hz) == runtimeRates.end();
-        });
-    }
     ApplyRatePolicy(config, plan);
     if (config.sampleRates.empty()) {
         return std::nullopt;
     }
     PreferDefaultStartRate(config);
+    // The AV/C runtime runs the rate it was published at and nothing else
+    // (GenericAvcProtocol::SupportedRates): another rate needs fresh geometry.
+    // Offering CoreAudio more leaves a change the start refuses and a stale
+    // pending clock behind (Onyx-i field regression 2026-08-17).
+    config.sampleRates = {config.currentSampleRate};
     config.inputChannelNames = capture.channelNames;
     config.outputChannelNames = playback.channelNames;
     config.playbackStreams = {{.pcmChannels = playback.channelCount,

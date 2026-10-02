@@ -568,13 +568,13 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     EXPECT_EQ(graph->playback.channelNames[8], "SPDIF/AC3 left PHASE88 FW");
     EXPECT_EQ(graph->playback.channelNames[9], "SPDIF/AC3 right PHASE88 FW");
 
-    // What CoreAudio is offered: the runtime runs 48 kHz only.
+    // What CoreAudio is offered: the one rate the device starts at.
     DeviceProfiles::Audio::StaticAudioEndpointPlan plan{};
     plan.profileBuilder = DeviceProfiles::Audio::ProfileBuilderId::TerraTecPhase88;
     plan.streamTraits.wire.forcedStreamMode = DeviceProfiles::Audio::ForcedStreamMode::Blocking;
     const auto config = BuildGraphAudioConfig(
         {.guid = kPhase88.guid, .vendorId = 0x000AAC, .modelId = 3, .modelName = "PHASE 88 Rack FW"},
-        plan, *graph, {48000U});
+        plan, *graph);
     ASSERT_TRUE(config.has_value());
     EXPECT_EQ(config->sampleRates, std::vector<uint32_t>{48000U});
     EXPECT_EQ(config->currentSampleRate, 48000U);

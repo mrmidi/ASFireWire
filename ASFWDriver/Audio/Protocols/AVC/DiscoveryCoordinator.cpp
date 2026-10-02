@@ -164,9 +164,8 @@ void DiscoveryCoordinator::UnitCompleted(const std::shared_ptr<P::AVCUnit>& unit
     const auto snapshot = unit->GetDiscoverySnapshot(); const auto graph = unit->GetDiscoveredGraph();
     if (!device || !plan || !snapshot || !registry_.IsCurrent(snapshot->route)) { Fail(guid, "stale-discovery-route"); return; }
     if (!graph) { Fail(guid, "missing-terminal-graph"); return; }
-    const auto* profile = Isoch::Audio::AudioProfileRegistry::ProfileForBuilderId(static_cast<uint32_t>(plan->profileBuilder));
     const auto config = P::BuildGraphAudioConfig({guid, device->GetVendorID(), device->GetModelID(), std::string(device->GetModelName())},
-        *plan, *graph, profile ? profile->SupportedSampleRates() : std::vector<uint32_t>{});
+        *plan, *graph);
     if (!config) { Fail(guid, "unusable-terminal-graph-geometry"); return; }
     Publish(guid, *config);
 }

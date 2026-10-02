@@ -26,24 +26,20 @@ StreamGraph Stream(uint32_t pcm, uint32_t dbs, std::vector<uint32_t> rates, uint
     return stream;
 }
 
-TEST(AvcAudioConfig, GraphRatesAreBoundedByTheRuntimeAndThePin) {
+// The AV/C runtime runs the rate it was published at and nothing else, so the
+// graph offers exactly the rate it starts at.
+TEST(AvcAudioConfig, GraphOffersOnlyTheRateItStartsAt) {
     DeviceGraph graph;
     graph.playback = Stream(2, 3, {44100, 48000, 96000}, 44100);
     graph.capture = Stream(2, 3, {44100, 48000, 96000}, 44100);
     StaticAudioEndpointPlan plan{};
 
+    // Found at 44.1, but every device starts at 48 kHz when it can.
     const auto open = BuildGraphAudioConfig({.guid = 1, .modelName = "Device"}, plan, graph);
     ASSERT_TRUE(open);
-    EXPECT_EQ(open->sampleRates, (std::vector<uint32_t>{44100, 48000, 96000}));
-    // Found at 44.1, but every device starts at 48 kHz when it can.
+    EXPECT_EQ(open->sampleRates, std::vector<uint32_t>{48000});
     EXPECT_EQ(open->currentSampleRate, 48000U);
     EXPECT_EQ(open->inputPlugName, "Device Inputs");
-
-    // The runtime runs 48 kHz only: the device found at 44.1 is offered 48.
-    const auto runtime = BuildGraphAudioConfig({.guid = 1}, plan, graph, {48000});
-    ASSERT_TRUE(runtime);
-    EXPECT_EQ(runtime->sampleRates, std::vector<uint32_t>{48000});
-    EXPECT_EQ(runtime->currentSampleRate, 48000U);
 
     // Without 48 kHz the device keeps the rate it reported.
     DeviceGraph no48;
@@ -51,10 +47,14 @@ TEST(AvcAudioConfig, GraphRatesAreBoundedByTheRuntimeAndThePin) {
     no48.capture = Stream(2, 3, {44100, 88200}, 88200);
     const auto kept = BuildGraphAudioConfig({.guid = 1}, plan, no48);
     ASSERT_TRUE(kept);
+    EXPECT_EQ(kept->sampleRates, std::vector<uint32_t>{88200});
     EXPECT_EQ(kept->currentSampleRate, 88200U);
 
-    // No rate in common: nothing to publish.
-    EXPECT_FALSE(BuildGraphAudioConfig({.guid = 1}, plan, graph, {192000}));
+    // No rate both directions can run: nothing to publish.
+    DeviceGraph disjoint;
+    disjoint.playback = Stream(2, 3, {44100}, 44100);
+    disjoint.capture = Stream(2, 3, {48000}, 44100);
+    EXPECT_FALSE(BuildGraphAudioConfig({.guid = 1}, plan, disjoint));
 
     plan.streamTraits.start.startRatePinHz = 96000;
     const auto pinned = BuildGraphAudioConfig({.guid = 1}, plan, graph);

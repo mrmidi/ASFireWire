@@ -31,14 +31,13 @@ struct AvcEndpointIdentity {
 
 /// The endpoint the graph describes, or nullopt when its geometry is unusable
 /// (unresolved streams, mismatched current rates, too wide for the wire, no
-/// rate the runtime can run). `runtimeRates`, when non-empty, are the rates the
-/// device's runtime profile supports: the published rates are the graph's
-/// rates among them.
+/// rate in common). It offers exactly one rate, the one it starts at: the
+/// catalog pin, else 48 kHz when both directions can run it, else the rate the
+/// device reported.
 [[nodiscard]] std::optional<::ASFW::Audio::Model::ASFWAudioDevice> BuildGraphAudioConfig(
     const AvcEndpointIdentity& identity,
     const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
-    const Graph::DeviceGraph& graph,
-    const std::vector<uint32_t>& runtimeRates = {});
+    const Graph::DeviceGraph& graph);
 
 /// The endpoint a catalog profile fixes, for a unit that is never probed.
 [[nodiscard]] std::optional<::ASFW::Audio::Model::ASFWAudioDevice> BuildProfileOwnedAudioConfig(

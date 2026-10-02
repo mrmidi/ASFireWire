@@ -207,7 +207,19 @@ User: no duplicate paths. Commits 85dcc574..b2a271d7 on feat/avc-phase4.
 - Oxford inventory deleted (it re-read generic discovery's lists); Oxford units
   use generic discovery alone (10 fewer frames at Duet attach).
 
-Still open: Phase88Profile keeps its own copy of the stream geometry for StartIO
-framing (the two-sources-of-truth item); the Onyx-i has no capture of the generic
-probes (only its format list), so its attach is untested against real answers.
+- Phase88Profile and MackieOnyx820iProfile deleted. Every AV/C unit published
+  from discovery (Phase 88, Onyx-i, unlisted units) shares one GenericAvcProfile
+  that holds only AM824 framing constants, the TX policy and host timing. StartIO
+  frames from the geometry published on the nub. Declared changes: the Phase 88
+  takes the Onyx-i's field-tuned timing (safety 192/256, latency 256/256, was
+  64/64 and 128/128); unlisted AV/C units leave the generic DICE profile for
+  this one (4000 ms first-packet budget, NO-DATA while idle).
+- The graph publishes exactly the rate it starts at (pin, else 48 kHz, else the
+  reported rate), because GenericAvcProtocol runs only that rate. The profile no
+  longer filters rates. Phase 88 and Onyx-i rates unchanged; unlisted units no
+  longer offer rates their start would refuse.
+
+Still open: the Onyx-i has no capture of the generic probes (only its format
+list), so its attach is untested against real answers. AV/C rate switching is
+not supported; it needs fresh geometry per rate.
 
