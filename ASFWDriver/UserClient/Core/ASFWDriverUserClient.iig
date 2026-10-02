@@ -176,6 +176,9 @@ struct ASFWDriverUserClient_IVars {
     void* runtimeState;
     IOLock* actionLock;
     bool stopping;
+    uint32_t startCount;
+    uint32_t stopCount;
+    uint32_t transactionHolds;
     uint64_t audioObserverGuid;
     uint64_t audioObserverMappingGeneration;
     bool audioObserverMemoryRequested;

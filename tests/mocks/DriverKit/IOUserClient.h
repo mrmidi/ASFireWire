@@ -3,9 +3,10 @@
 #include <DriverKit/IOReturn.h>
 
 struct IOUserClientMethodArguments {
+    class OSAction* completion;
     uint64_t* scalarInput;
     uint32_t scalarInputCount;
-    void* structureInput;
+    OSObject* structureInput;
     class IOMemoryDescriptor* structureInputDescriptor;
     uint64_t structureInputSize;
 

@@ -1,3 +1,4 @@
+#include "../Common/ActionTeardown.hpp"
 #include "InterruptManager.hpp"
 
 #ifndef ASFW_HOST_TEST
@@ -17,9 +18,10 @@ namespace ASFW::Driver {
 InterruptManager::InterruptManager() = default;
 InterruptManager::~InterruptManager() { Teardown(); }
 
-kern_return_t InterruptManager::Initialise(IOService* owner,
-                                           OSSharedPtr<IODispatchQueue> queue,
-                                           OSSharedPtr<OSAction> handler) {
+kern_return_t InterruptManager::Initialise(
+    IOService* owner, OSSharedPtr<IODispatchQueue> queue, OSSharedPtr<OSAction> handler,
+    std::shared_ptr<ASFW::Common::TeardownCompletion> completion) {
+    teardownCompletion_ = std::move(completion);
     queue_ = std::move(queue);
     handler_ = std::move(handler);
 
@@ -85,18 +87,18 @@ void InterruptManager::Teardown() {
     // 2026-07-11 IOSharedInterruptController panic.)
     IOInterruptDispatchSource* source = source_.detach();
     OSAction* handler = handler_.detach();
+    ASFW_LOG(Controller, "[Teardown] interrupt cancel requested source=%p action=%p", source, handler);
+    auto done = teardownCompletion_ ? teardownCompletion_->Begin() : std::function<void()>{};
     const kern_return_t kr = source->Cancel(^{
-        if (handler) {
-            handler->release();
-        }
+        ASFW_LOG(Controller, "[Teardown] interrupt cancel completed source=%p action=%p", source, handler);
         source->release();
+        ASFW::Common::CancelAndReleaseOwnedAction(handler, "interrupt", done);
     });
     if (kr != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Controller, "[Teardown] interrupt cancel failed kr=0x%x", kr);
         // Completion will never run; fall back to direct release.
-        if (handler) {
-            handler->release();
-        }
         source->release();
+        ASFW::Common::CancelAndReleaseOwnedAction(handler, "interrupt", done);
     }
     queue_.reset();
 }

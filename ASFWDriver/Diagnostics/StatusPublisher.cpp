@@ -1,4 +1,5 @@
 #include "StatusPublisher.hpp"
+#include "../Logging/Logging.hpp"
 
 #include <string>
 
@@ -56,6 +57,7 @@ kern_return_t StatusPublisher::Prepare() {
 }
 
 void StatusPublisher::Reset() {
+    ASFW_LOG(UserClient, "[Lifecycle] status publisher reset releasing client=%p", statusListener_.get());
     statusListener_.reset();
     statusBlock_ = nullptr;
     statusMemory_.reset();
@@ -139,6 +141,7 @@ void StatusPublisher::Publish(ControllerCore* controller,
 }
 
 void StatusPublisher::BindListener(::ASFWDriverUserClient* client) {
+    ASFW_LOG(UserClient, "[Lifecycle] status listener bind client=%p replacing=%p", client, statusListener_.get());
     if (client) {
         statusListener_.reset(static_cast<OSObject*>(client), OSRetain);
     } else {
@@ -148,6 +151,7 @@ void StatusPublisher::BindListener(::ASFWDriverUserClient* client) {
 
 void StatusPublisher::UnbindListener(::ASFWDriverUserClient* client) {
     if (statusListener_ && statusListener_.get() == static_cast<OSObject*>(client)) {
+        ASFW_LOG(UserClient, "[Lifecycle] status listener unbind releasing client=%p", client);
         statusListener_.reset();
     }
 }

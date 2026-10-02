@@ -87,7 +87,15 @@ private:
     mutable std::atomic<int> refCount_{1};
 };
 
-class OSAction : public OSObject {};
+class OSAction : public OSObject {
+public:
+    virtual kern_return_t Cancel(void (^handler)(void)) {
+        if (handler) {
+            handler();
+        }
+        return kIOReturnSuccess;
+    }
+};
 
 class OSDictionary;
 
@@ -305,7 +313,12 @@ public:
     }
 
     kern_return_t SetTimeout(uint64_t, uint64_t, void*) { return kIOReturnUnsupported; }
-    kern_return_t Cancel(void*) { return kIOReturnUnsupported; }
+    virtual kern_return_t Cancel(void (^handler)(void)) {
+        if (handler) {
+            handler();
+        }
+        return kIOReturnSuccess;
+    }
 };
 
 class IODataQueueDispatchSource : public OSObject {
@@ -319,7 +332,10 @@ public:
     }
     
     kern_return_t SetEnable(bool) { return kIOReturnUnsupported; }
-    kern_return_t Cancel(void*) { return kIOReturnUnsupported; }
+    virtual kern_return_t Cancel(void (^handler)(void)) {
+        if (handler) handler();
+        return kIOReturnSuccess;
+    }
 };
 
 class IOPCIDevice : public IOService {

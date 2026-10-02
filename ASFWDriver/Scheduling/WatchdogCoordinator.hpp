@@ -1,4 +1,5 @@
 #pragma once
+#include "../Common/TeardownCompletion.hpp"
 
 #include <cstdint>
 
@@ -32,7 +33,8 @@ class WatchdogCoordinator {
     WatchdogCoordinator() = default;
     ~WatchdogCoordinator() = default;
 
-    kern_return_t Prepare(::ASFWDriver& service, OSSharedPtr<IODispatchQueue> workQueue);
+    kern_return_t Prepare(::ASFWDriver& service, OSSharedPtr<IODispatchQueue> workQueue,
+                                        std::shared_ptr<ASFW::Common::TeardownCompletion> completion = {});
     void Stop();
     void Reset();
 
@@ -44,6 +46,7 @@ class WatchdogCoordinator {
                     StatusPublisher& statusPublisher);
 
   private:
+    std::shared_ptr<ASFW::Common::TeardownCompletion> teardownCompletion_;
     void TickAsyncSubsystem(ASFW::Async::IAsyncSubsystemPort* asyncSubsystem,
                             StatusPublisher& statusPublisher) const;
     void TickIsochReceive(ASFW::Isoch::IsochReceiveContext* isochReceiveContext);

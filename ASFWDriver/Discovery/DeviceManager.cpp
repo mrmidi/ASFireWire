@@ -54,6 +54,7 @@ DeviceManager::DeviceManager() : mutex_(IOLockAlloc()) {
 }
 
 DeviceManager::~DeviceManager() {
+    ASFW_LOG(Controller, "[Teardown] DeviceManager destructor object=%p", this);
     // Terminate all devices on shutdown
     for (auto& [guid, device] : devicesByGuid_) {
         if (device) {

@@ -1,3 +1,4 @@
+#include "../Common/ActionTeardown.hpp"
 #include "DriverContext.hpp"
 
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h>
@@ -47,17 +48,17 @@ void ServiceContext::DisarmProviderNotifications() {
         // DriverKit reports that all queued notification handlers completed.
         auto* source = providerNotifications.detach();
         auto* action = providerNotificationAction.detach();
+        ASFW_LOG(Controller, "[Teardown] provider notifications cancel requested source=%p action=%p", source, action);
+        auto done = teardownCompletion->Begin();
         const kern_return_t kr = source->Cancel(^{
-            if (action) {
-                action->release();
-            }
+            ASFW_LOG(Controller, "[Teardown] provider notifications cancel completed source=%p action=%p", source, action);
             source->release();
+            ASFW::Common::CancelAndReleaseOwnedAction(action, "provider notifications", done);
         });
         if (kr != kIOReturnSuccess) {
-            if (action) {
-                action->release();
-            }
+            ASFW_LOG_ERROR(Controller, "[Teardown] provider notifications cancel failed kr=0x%x", kr);
             source->release();
+            ASFW::Common::CancelAndReleaseOwnedAction(action, "provider notifications", done);
         }
         return;
     }
@@ -66,6 +67,7 @@ void ServiceContext::DisarmProviderNotifications() {
 }
 
 void ServiceContext::Reset(ResetMode mode) {
+    ASFW_LOG(Controller, "[Teardown] ServiceContext reset begin full=%d", mode == ResetMode::Full);
     // Runtime stopping is owned by RuntimeLifecycleCoordinator. Reset only
     // releases resources after its quiesce executor has stopped them.
     if (mode == ResetMode::Full && sbp2NubPublisher) {
@@ -82,7 +84,9 @@ void ServiceContext::Reset(ResetMode mode) {
     // The registry is co-owned by the controller's own deps_ copy, which must be dropped
     // explicitly: ~ControllerCore destroys busImpl_ before deps_, so letting the registry
     // die with the controller would call through a dangling bus.
+    ASFW_LOG(Controller, "[Teardown] release audio coordinator begin");
     audioCoordinator.reset();
+    ASFW_LOG(Controller, "[Teardown] release audio coordinator complete");
     if (controller) {
         controller->ReleaseAudioRuntimeRegistry();
         // ROMScanner borrows the controller-owned IFireWireBus. Drop the
@@ -99,10 +103,13 @@ void ServiceContext::Reset(ResetMode mode) {
     if (controller) {
         controller->SetSbp2SessionRegistry(nullptr);
     }
+    ASFW_LOG(Controller, "[Teardown] release SBP2 session registry begin");
     deps.sbp2SessionRegistry.reset();
+    ASFW_LOG(Controller, "[Teardown] release SBP2 session registry complete");
     // Drop the context's remaining scanner reference before destroying the
     // controller. EnsureRomScanner will bind a fresh scanner after rebuild.
     deps.romScanner.reset();
+    ASFW_LOG(Controller, "[Teardown] release controller and bus dependencies begin");
     controller.reset();
     deps.hardware.reset();
     deps.busReset.reset();
@@ -119,16 +126,26 @@ void ServiceContext::Reset(ResetMode mode) {
     deps.topologyMapService.reset();
     deps.busManagerElectionDriver.reset();
     deps.fcpResponseRouter.reset(); // Clean up FCP router
+    ASFW_LOG(Controller, "[Teardown] release controller and bus dependencies complete");
+    ASFW_LOG(Controller, "[Teardown] release SBP2 scheduler and address space begin");
     deps.sbp2SessionScheduler.reset();
     deps.sbp2AddressSpaceManager.reset();
+    ASFW_LOG(Controller, "[Teardown] release SBP2 scheduler and address space complete");
+    ASFW_LOG(Controller, "[Teardown] release AVC discovery begin");
     deps.avcDiscovery.reset();      // Clean up AV/C discovery
+    ASFW_LOG(Controller, "[Teardown] release AVC discovery complete");
+    ASFW_LOG(Controller, "[Teardown] release IRM client begin");
     deps.irmClient.reset();         // Clean up IRM client
+    ASFW_LOG(Controller, "[Teardown] release IRM client complete");
+    ASFW_LOG(Controller, "[Teardown] release async subsystem begin");
     deps.asyncController.reset();
     deps.asyncSubsystem.reset(); // Stop and cleanup asyncSubsystem
+    ASFW_LOG(Controller, "[Teardown] release async subsystem complete");
     // No local request is delivered once the async subsystem is gone, and the
     // DICE protocols and backend that register with the router went with the
     // audio runtime above. The router borrows the device registry, so it goes
     // before it.
+    ASFW_LOG(Controller, "[Teardown] release discovery graph begin");
     deps.diceNotifications.reset();
     if (mode == ResetMode::Full) {
         // A new provider incarnation must rediscover remote hardware. Retaining
@@ -139,14 +156,20 @@ void ServiceContext::Reset(ResetMode mode) {
     }
     deps.busResetStartedCallback = {};
     deps.cycleInconsistentCallback = {};
+    ASFW_LOG(Controller, "[Teardown] release discovery graph complete");
+    ASFW_LOG(Controller, "[Teardown] release status publisher and watchdog begin");
     statusPublisher.Reset();
     watchdog.Reset();
+    ASFW_LOG(Controller, "[Teardown] release status publisher and watchdog complete");
     DisarmProviderNotifications();
     if (mode == ResetMode::Full) {
+        ASFW_LOG(Controller, "[Teardown] release work queue, interrupt action and lifecycle begin");
         workQueue.reset();
         interruptAction.reset();
         lifecycle.reset();
+        ASFW_LOG(Controller, "[Teardown] release work queue, interrupt action and lifecycle complete");
     }
+    ASFW_LOG(Controller, "[Teardown] ServiceContext reset complete full=%d", mode == ResetMode::Full);
 }
 
 namespace ASFW::Driver {
@@ -276,7 +299,7 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
     if (!d.sbp2SessionScheduler) {
         d.sbp2SessionScheduler =
             std::make_shared<ASFW::Protocols::SBP2::DriverKitSessionScheduler>();
-        const auto kr = d.sbp2SessionScheduler->Prepare(service, ctx.workQueue);
+        const auto kr = d.sbp2SessionScheduler->Prepare(service, ctx.workQueue, ctx.teardownCompletion);
         if (kr != kIOReturnSuccess) {
             d.sbp2SessionScheduler.reset();
             return kr;
@@ -396,7 +419,7 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
         ctx.interruptAction = OSSharedPtr(action, OSNoRetain);
     }
 
-    auto kr = intrMgr->Initialise(provider, ctx.workQueue, ctx.interruptAction);
+    auto kr = intrMgr->Initialise(provider, ctx.workQueue, ctx.interruptAction, ctx.teardownCompletion);
     if (kr != kIOReturnSuccess) {
         ctx.interruptAction.reset();
         return kr;
@@ -405,7 +428,7 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
 }
 
 kern_return_t DriverWiring::PrepareWatchdog(ASFWDriver& service, ::ServiceContext& ctx) {
-    return ctx.watchdog.Prepare(service, ctx.workQueue);
+    return ctx.watchdog.Prepare(service, ctx.workQueue, ctx.teardownCompletion);
 }
 
 } // namespace ASFW::Driver

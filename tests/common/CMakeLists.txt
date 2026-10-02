@@ -108,3 +108,15 @@ add_common_test(RuntimeLifecycleCoordinatorTests
     "${ASFW_DRIVER_DIR}/Controller/ControllerStateMachine.cpp"
     "${ASFW_DRIVER_DIR}/Service/Lifecycle/RuntimeLifecycleCoordinator.cpp"
 )
+
+add_executable(UserClientTransactionLifetimeTests
+    UserClientTransactionLifetimeTests.cpp
+    "${ASFW_DRIVER_DIR}/Async/Core/Transaction.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Core/TransactionManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Memory/PayloadHandle.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/Handlers/TransactionHandler.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/Storage/TransactionStorage.cpp"
+)
+target_include_directories(UserClientTransactionLifetimeTests BEFORE PRIVATE "${ASFW_TESTS_DIR}/mocks/userclient")
+target_link_libraries(UserClientTransactionLifetimeTests PRIVATE asfw_test_support GTest::gtest_main)
+gtest_discover_tests(UserClientTransactionLifetimeTests)

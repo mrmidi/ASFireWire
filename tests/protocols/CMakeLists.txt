@@ -391,3 +391,10 @@ add_protocols_test(MAudioSpecialFormationTests
 add_protocols_test(MAudioSpecialStartPolicyTests
     MAudioSpecialStartPolicyTests.cpp
 )
+
+add_protocols_test(DriverKitSessionSchedulerTeardownTests
+    DriverKitSessionSchedulerTeardownTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/DriverKitSessionScheduler.cpp"
+)
+
+add_protocols_test(CompletionQueueTeardownTests CompletionQueueTeardownTests.cpp)

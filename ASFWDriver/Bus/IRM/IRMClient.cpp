@@ -113,7 +113,9 @@ IRMClient::IRMClient(Async::IFireWireBus& bus, LocalIRMAccess localIRMAccess)
 {
 }
 
-IRMClient::~IRMClient() = default;
+IRMClient::~IRMClient() {
+    ASFW_LOG(Controller, "[Teardown] IRMClient destructor object=%p", this);
+}
 
 AllocationStatus IRMClient::MapAsyncStatus(const Async::AsyncStatus status) noexcept {
     switch (status) {

@@ -20,6 +20,7 @@
 #endif
 
 #include "../../Logging/Logging.hpp"
+#include "../../Common/TeardownCompletion.hpp"
 
 namespace ASFW::Shared {
 
@@ -67,7 +68,8 @@ public:
     static kern_return_t Create(::IODispatchQueue* consumerQueue,
                                 size_t capacityBytes,
                                 OSAction* dataAvailableAction,
-                                std::unique_ptr<CompletionQueue<TokenT>>& outQueue) {
+                                std::unique_ptr<CompletionQueue<TokenT>>& outQueue,
+                                std::shared_ptr<Common::TeardownCompletion> teardownCompletion = {}) {
         if (consumerQueue == nullptr || dataAvailableAction == nullptr || capacityBytes == 0) {
             return kIOReturnBadArgument;
         }
@@ -90,17 +92,12 @@ public:
         auto queue = std::unique_ptr<CompletionQueue<TokenT>>(new CompletionQueue<TokenT>());
         queue->source_ = OSSharedPtr(rawSource, OSNoRetain);
         queue->capacityBytes_ = capacityBytes;
+        queue->teardownCompletion_ = std::move(teardownCompletion);
         outQueue = std::move(queue);
         return kIOReturnSuccess;
     }
 
-    ~CompletionQueue() {
-        if (source_) {
-            source_->SetEnable(false);
-            source_->Cancel(nullptr);
-            source_.reset();
-        }
-    }
+    ~CompletionQueue() { CancelSource(); }
 
     /**
      * Activate queue (must be called after Create, before any Push calls)
@@ -125,8 +122,7 @@ public:
         ASFW_LOG(Async, "CompletionQueue::Deactivate() - queue now inactive");
         // CRITICAL: Disable and cancel notifications during runtime teardown
         if (source_) {
-            source_->SetEnable(false);
-            source_->Cancel(nullptr);
+            CancelSource();
         }
     }
 
@@ -237,6 +233,30 @@ public:
     uint64_t OversizeDroppedCount() const { return oversizeDropped_.load(std::memory_order_relaxed); }
 
 private:
+#ifdef ASFW_HOST_TEST
+    friend struct CompletionQueueTestPeer;
+#endif
+    void CancelSource() noexcept {
+        if (!source_) return;
+        // Transfer ownership to the completion; it must outlive this wrapper.
+        auto* source = source_.get();
+        source->retain();
+        source_.reset();
+        source->SetEnable(false);
+        auto done = teardownCompletion_ ? teardownCompletion_->Begin() : std::function<void()>{};
+        ASFW_LOG(Async, "[Teardown] completion queue source cancel requested source=%p", source);
+        auto kr = source->Cancel(^{
+            ASFW_LOG(Async, "[Teardown] completion queue source cancel completed source=%p", source);
+            source->release();
+            if (done) done();
+        });
+        if (kr != kIOReturnSuccess) {
+            ASFW_LOG(Async, "[Teardown] completion queue source cancel failed source=%p kr=0x%08x", source, kr);
+            source->release();
+            if (done) done();
+        }
+    }
+    std::shared_ptr<Common::TeardownCompletion> teardownCompletion_;
     CompletionQueue() = default;
 
     OSSharedPtr<IODataQueueDispatchSource> source_{};
