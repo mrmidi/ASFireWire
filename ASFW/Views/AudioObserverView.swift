@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import AppKit
 
 @MainActor
 final class AudioObserverPanelModel: ObservableObject {
@@ -143,9 +144,11 @@ struct AudioObserverPanel: View {
     @State private var leftChannel: UInt32 = 0
     @State private var rightChannel: UInt32 = 1
     @State private var spectrumVisualization: SpectrumVisualization = .spectrum
+    @State private var waterfallContours = false
     @State private var fftSize: UInt32 = 2048
     @State private var spectrumWindow: UInt32 = 0
-    @State private var diagnosticTab = "Performance"
+    @State private var diagnosticTab = "GPU"
+    @State private var gpuDetails = false
     @State private var testSignal = "1 kHz Sine"
     @State private var testLevel = "−6 dBFS"
     @State private var testMode = "L = R (Mono)"
@@ -325,6 +328,13 @@ struct AudioObserverPanel: View {
                         Spacer(minLength: 0)
                     }
                 }
+                if spectrumVisualization == .waterfall {
+                    HStack {
+                        Text("Frequency → · Level ↑ · History ↗").foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                        Toggle("Contours", isOn: $waterfallContours).toggleStyle(.checkbox)
+                    }
+                }
                 HStack(spacing: 8) {
                     spectrumPlot(channel: leftChannel, side: false)
                     if midSide { spectrumPlot(channel: rightChannel, side: true) }
@@ -339,7 +349,7 @@ struct AudioObserverPanel: View {
                             }
                             if spectrumVisualization.usesHistory {
                                 MetalSpectrogramView(client: model.client, channel: leftChannel, otherChannel: rightChannel,
-                                    fftSize: fftSize, window: spectrumWindow, regions: regions, waterfall: spectrumVisualization == .waterfall)
+                                    fftSize: fftSize, window: spectrumWindow, regions: regions, waterfall: spectrumVisualization == .waterfall, wireOverlay: waterfallContours)
                                     .id("spectrogram-\(model.snapshot.memoryGeneration)-\(leftChannel)-\(rightChannel)-\(midSide)-\(fftSize)-\(spectrumWindow)")
                                     .allowsHitTesting(false).accessibilityHidden(true)
                             } else {
@@ -450,11 +460,13 @@ struct AudioObserverPanel: View {
     private var diagnosticsPanel: some View {
         panel("Diagnostics", subtitle: "Signal, performance and development tools") {
             Picker("Diagnostics", selection: $diagnosticTab) {
-                ForEach(["Waveform", "Ring Buffer", "Performance", "Calibration", "Test Signal", "Log"], id: \.self) {
+                ForEach(["Waveform", "Ring Buffer", "GPU", "Calibration", "Test Signal", "Log"], id: \.self) {
                     Text($0).tag($0)
                 }
             }.labelsHidden().pickerStyle(.segmented)
-            if diagnosticTab == "Performance" || diagnosticTab == "Ring Buffer" || diagnosticTab == "Waveform" {
+            if diagnosticTab == "GPU" {
+                gpuDiagnostics
+            } else if diagnosticTab == "Ring Buffer" || diagnosticTab == "Waveform" {
                 HStack(alignment: .top, spacing: 10) {
                     diagnosticCard("Ring Buffer") {
                         liveDiagnosticsRow("Active") { metrics, snapshot in "\(snapshot.activeRingFrames) frames" }
@@ -464,11 +476,7 @@ struct AudioObserverPanel: View {
                         liveDiagnosticsRow("Epoch") { metrics, snapshot in "\(snapshot.sessionEpoch) / \(snapshot.discontinuityEpoch)" }
                     }
                     if diagnosticTab != "Waveform" {
-                        diagnosticCard("Performance · last frame") {
-                            liveDiagnosticsRow("CPU encode") { metrics, snapshot in milliseconds(metrics.cpuEncodeMilliseconds) }
-                            liveDiagnosticsRow("Queued → GPU") { metrics, snapshot in milliseconds(metrics.scheduledToStartMilliseconds) }
-                            liveDiagnosticsRow("GPU") { metrics, snapshot in milliseconds(metrics.gpuMilliseconds) }
-                            Divider()
+                        diagnosticCard("Buffer safety") {
                             liveDiagnosticsRow("Sample age") { metrics, snapshot in milliseconds(metrics.sampleAgeMilliseconds) }
                             liveDiagnosticsRow("Overwrite margin") { metrics, snapshot in milliseconds(metrics.overwriteMarginMilliseconds) }
                             liveDiagnosticsRow("In flight") { metrics, snapshot in "\(metrics.inFlight)" }
@@ -499,41 +507,150 @@ struct AudioObserverPanel: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
             }
-            HStack(alignment: .top, spacing: 10) {
-                diagnosticCard("Test Signal Generator · preview") {
-                    HStack {
-                        Picker("Signal", selection: $testSignal) {
-                            Text("1 kHz Sine").tag("1 kHz Sine"); Text("Pink Noise").tag("Pink Noise"); Text("White Noise").tag("White Noise")
+            if diagnosticTab != "GPU" {
+                HStack(alignment: .top, spacing: 10) {
+                    diagnosticCard("Test Signal Generator · preview") {
+                        HStack {
+                            Picker("Signal", selection: $testSignal) {
+                                Text("1 kHz Sine").tag("1 kHz Sine"); Text("Pink Noise").tag("Pink Noise"); Text("White Noise").tag("White Noise")
+                            }
+                            Picker("Level", selection: $testLevel) {
+                                ForEach(["−6 dBFS", "−12 dBFS", "−18 dBFS"], id: \.self) { Text($0).tag($0) }
+                            }
                         }
-                        Picker("Level", selection: $testLevel) {
-                            ForEach(["−6 dBFS", "−12 dBFS", "−18 dBFS"], id: \.self) { Text($0).tag($0) }
+                        HStack {
+                            Picker("Mode", selection: $testMode) {
+                                ForEach(["L = R (Mono)", "L = −R", "Left only", "Right only"], id: \.self) { Text($0).tag($0) }
+                            }
+                            Button("Play", systemImage: "play.fill") {}.disabled(true)
+                                .help("Preview only — no audio is generated")
                         }
                     }
-                    HStack {
-                        Picker("Mode", selection: $testMode) {
-                            ForEach(["L = R (Mono)", "L = −R", "Left only", "Right only"], id: \.self) { Text($0).tag($0) }
-                        }
-                        Button("Play", systemImage: "play.fill") {}.disabled(true)
-                            .help("Preview only — no audio is generated")
-                    }
-                }
-                diagnosticCard("Validation · unavailable") {
-                    diagnosticsRow("Peak / RMS", "— / —")
-                    diagnosticsRow("Correlation", "—")
-                    diagnosticsRow("Side Energy", "—")
-                }.frame(maxWidth: 180)
-            }.frame(height: 105)
+                    diagnosticCard("Validation · unavailable") {
+                        diagnosticsRow("Peak / RMS", "— / —")
+                        diagnosticsRow("Correlation", "—")
+                        diagnosticsRow("Side Energy", "—")
+                    }.frame(maxWidth: 180)
+                }.frame(height: 105)
+            }
         }
     }
 
 
-    private func liveDiagnosticsRow(_ title: String,
+    private var gpuDiagnostics: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                gpuTimingCard("Audio analysis", keyPath: \.analysisGPU) {
+                    liveDiagnosticsRow("CPU load", interval: 1) { m, _ in
+                        guard let a = m.analysisCPU.spanPercent, let v = m.visualEncode.spanPercent else { return "—" }
+                        return String(format: "%.2f%% / core", a + v)
+                    }
+                    liveDiagnosticsRow("Frame budget", interval: 1) { m, _ in milliseconds(m.analysisGPU.frameBudgetMilliseconds) }
+                    if gpuDetails {
+                        liveDiagnosticsRow("CPU encode avg", interval: 1) { m, _ in milliseconds(m.analysisCPU.mean) }
+                        liveDiagnosticsRow("Scheduled → start", interval: 1) { m, _ in milliseconds(m.analysisQueue.mean) }
+                        liveDiagnosticsRow("Batch", interval: 1) { m, _ in
+                            guard m.analysisBatchSampleRate > 0 else { return "—" }
+                            return String(format: "%llu / %.1f ms", m.analysisBatchFrames,
+                                Double(m.analysisBatchFrames) / Double(m.analysisBatchSampleRate) * 1_000)
+                    }
+                    }
+                }
+                gpuTimingCard("FFT/STFT + plots", keyPath: \.visualGPU) {
+                    liveDiagnosticsRow("CPU prep / encode", interval: 1) { m, _ in milliseconds(m.visualEncode.mean) }
+                    liveDiagnosticsRow("Drawable acquire", interval: 1) { m, _ in milliseconds(m.visualDrawable.mean) }
+                    if gpuDetails {
+                        liveDiagnosticsRow("Frame prep elapsed", interval: 1) { m, _ in milliseconds(m.visualCPU.mean) }
+                        liveDiagnosticsRow("CPU prep load", interval: 1) { m, _ in
+                            m.visualEncode.spanPercent.map { String(format: "%.2f%% / core", $0) } ?? "—"
+                    }
+                    liveDiagnosticsRow("Commit → start", interval: 1) { m, _ in milliseconds(m.visualQueue.mean) }
+                    }
+                    Text("\(spectrumVisualization.rawValue) · FFT \(fftSize)").font(.caption2).foregroundStyle(.secondary)
+                        .help("GPU timing includes FFT/STFT and all visible Metal panels.")
+                }
+                gpuTimingCard("Visuals ready", keyPath: \.analysisToVisual) {
+                    liveDiagnosticsRow("GPU timeline load", interval: 1) { m, _ in
+                        guard let a = m.analysisGPU.spanPercent, let v = m.visualGPU.spanPercent else { return "—" }
+                        return String(format: "%.2f%% spans", a + v)
+                    }
+                    if gpuDetails {
+                        liveDiagnosticsRow("GPU work / s", interval: 1) { m, _ in
+                            guard let a = m.analysisGPU.millisecondsPerSecond,
+                                  let v = m.visualGPU.millisecondsPerSecond else { return "—" }
+                            return String(format: "%.1f ms/s", a + v)
+                    }
+                    liveDiagnosticsRow("FFT window", interval: 1) { [fftSize] m, _ in
+                        guard m.analysisBatchSampleRate > 0 else { return "—" }
+                        return milliseconds(Double(fftSize) / Double(m.analysisBatchSampleRate) * 1_000)
+                    }
+                    liveDiagnosticsRow("FFT center offset", interval: 1) { [fftSize] m, _ in
+                        guard m.analysisBatchSampleRate > 0 else { return "—" }
+                        return milliseconds(Double(fftSize) / Double(m.analysisBatchSampleRate) * 500)
+                    }
+                    }
+                    Text("Encode → GPU finish").font(.caption2).foregroundStyle(.secondary)
+                        .help("Analysis encode start → visual GPU finish. Excludes screen presentation and audio-window latency.")
+                }
+            }
+            HStack {
+                Button("Reset measurements") { model.client.metrics.resetGPUTiming() }
+                Button("Copy measurements") { copyGPUMeasurements() }
+                Spacer()
+                Toggle("Details", isOn: $gpuDetails).toggleStyle(.checkbox)
+                Image(systemName: "info.circle").foregroundStyle(.secondary)
+                    .help("Avg / fastest / longest: previous second. Run: since reset. CPU load estimates encode/prep wall time, excluding drawable acquisition; not process CPU utilization. GPU load sums overlapping spans, not utilization. FFT window is not playback latency.")
+            }
+        }.frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private func copyGPUMeasurements() {
+        let m = model.client.metrics.read(includeHistory: false)
+        let stages: [(String, AnalyzerTimingStatistics)] = [
+            ("Audio GPU", m.analysisGPU), ("Visual GPU (FFT/STFT + plots)", m.visualGPU),
+            ("Analysis encode → visual GPU finish", m.analysisToVisual),
+            ("Analysis CPU encode", m.analysisCPU), ("Visual frame elapsed", m.visualCPU),
+            ("Visual drawable acquisition", m.visualDrawable), ("Visual prep/encode excluding drawable", m.visualEncode)]
+        let lines = stages.map { name, stats in
+            "\(name): run avg \(milliseconds(stats.runMean)), fastest \(milliseconds(stats.runFastest)), longest \(milliseconds(stats.runPeak)); \(stats.count) completions; latest 1s avg \(milliseconds(stats.mean))"
+        }
+        let report = (["ASFW GPU measurements · \(spectrumVisualization.rawValue) · FFT \(fftSize) · \(m.analysisBatchSampleRate) Hz",
+                       "Batch: \(m.analysisBatchFrames) audio frames. Run statistics are since reset."] + lines +
+                      ["GPU spans may overlap. Chain excludes display presentation and audio-window latency."]).joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(report, forType: .string)
+    }
+
+    private func gpuTimingCard<Content: View>(_ title: String,
+        keyPath: KeyPath<AudioObserverMetrics, AnalyzerTimingStatistics>,
+        @ViewBuilder content: () -> Content) -> some View {
+        diagnosticCard(title) {
+            liveDiagnosticsRow("Avg · 1 s", id: "\(title).mean", interval: 1) { m, _ in milliseconds(m[keyPath: keyPath].mean) }
+            liveDiagnosticsRow("Fastest · 1 s", id: "\(title).fastest", interval: 1) { m, _ in milliseconds(m[keyPath: keyPath].fastest) }
+            liveDiagnosticsRow("Longest · 1 s", id: "\(title).peak", interval: 1) { m, _ in milliseconds(m[keyPath: keyPath].peak) }
+            Divider()
+            if gpuDetails {
+                liveDiagnosticsRow("Run avg", id: "\(title).runMean", interval: 1) { m, _ in milliseconds(m[keyPath: keyPath].runMean) }
+                liveDiagnosticsRow("Run fastest", id: "\(title).runFastest", interval: 1) { m, _ in milliseconds(m[keyPath: keyPath].runFastest) }
+                liveDiagnosticsRow("Run longest", id: "\(title).runPeak", interval: 1) { m, _ in milliseconds(m[keyPath: keyPath].runPeak) }
+                liveDiagnosticsRow("Completed", id: "\(title).count", interval: 1) { m, _ in "\(m[keyPath: keyPath].count)" }
+                liveDiagnosticsRow("Rate · 1 s", id: "\(title).rate", interval: 1) { m, _ in
+                    m[keyPath: keyPath].rate.map { String(format: "%.0f Hz", $0) } ?? "—"
+            }
+            Divider()
+            }
+            content()
+        }
+    }
+
+    private func liveDiagnosticsRow(_ title: String, id: String? = nil,
+        interval: Double = AnalyzerTextSpec.diagnostics,
         value: @escaping (AudioObserverMetrics, AudioObserverSnapshot) -> String) -> some View {
         HStack {
             Text(title).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
             Spacer(minLength: 12)
-            AnalyzerMetalText("diag.\(title)", style: .captionMono, template: "000000000000",
-                              alignment: .trailing, interval: AnalyzerTextSpec.diagnostics, format: value)
+            AnalyzerMetalText("diag.\(id ?? title)", style: .captionMono, template: "000000000000",
+                              alignment: .trailing, interval: interval, format: value)
         }
     }
 

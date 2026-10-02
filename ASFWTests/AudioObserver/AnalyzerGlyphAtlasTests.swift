@@ -88,4 +88,28 @@ struct AnalyzerGlyphAtlasTests {
         #expect(texture.width == gpu.width && texture.height == gpu.height)
         #expect(texture.pixelFormat == .r8Unorm)
     }
+    @MainActor @Test func readoutBatchReusesBuffersAndInvalidatesChangedGeometry() throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let atlas = AnalyzerGlyphAtlas(font: AnalyzerTextStyle.captionMono.font(scale: 2), device: device)
+        let batch = AnalyzerReadoutBatch()
+        func item(_ key: Int, _ text: String, x: CGFloat = 0,
+                  tone: AnalyzerTextSpec.Tone = .primary) -> AnalyzerReadoutBatch.Item {
+            .init(key: key, text: text, rect: CGRect(x: x, y: 0, width: 100, height: 30),
+                  atlas: atlas, alignment: .trailing, tone: tone)
+        }
+        let items = [item(1, "1.23"), item(2, "4.56", x: 100)]
+        batch.update(items, device: device)
+        let first = try #require(batch.buffer)
+        #expect(batch.draws.count == 1)
+        #expect(batch.draws[0].count == 48)
+        batch.update(items, device: device)
+        #expect(batch.rebuilds == 1 && batch.buffer === first)
+        batch.update([item(1, "7.89"), items[1]], device: device)
+        #expect(batch.rebuilds == 2 && batch.buffer !== first)
+        batch.update([item(1, "7.89", x: 10), item(2, "4.56", x: 100, tone: .secondary)], device: device)
+        #expect(batch.rebuilds == 3 && batch.draws.count == 2)
+        batch.update([], device: device)
+        #expect(batch.buffer == nil && batch.draws.isEmpty)
+    }
+
 }

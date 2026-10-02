@@ -47,23 +47,31 @@ struct AnalyzerPlotAxes: View {
                 line(projected(0, 0), projected(0, 0, 1))
                 let maximum = min(20000.0, Double(rate == 0 ? 48000 : rate) / 2)
                 for hz in [20.0, 100, 1000, 10000, 20000] where hz <= maximum {
-                    let p = projected(log(hz / 20) / log(maximum / 20), 0)
+                    let frequency = log(hz / 20) / log(maximum / 20)
+                    let p = projected(frequency, 0)
+                    line(p, projected(frequency, 1))
+                    line(p, CGPoint(x: p.x, y: p.y + 4))
                     label(hz >= 1000 ? "\(Int(hz / 1000))k" : "\(Int(hz))",
                           at: CGPoint(x: p.x, y: p.y + 10))
                 }
                 for db in [-100, -50, 0] {
                     let p = projected(0, 0, Double(db + 100) / 100)
+                    line(p, CGPoint(x: p.x - 4, y: p.y))
                     label("\(db)", at: CGPoint(x: p.x - 5, y: p.y), anchor: .trailing)
                 }
                 for tick in 0...3 {
                     let age = Double(tick) / 3
                     let p = projected(1, age)
+                    line(projected(0, age), p)
                     let text = tick == 0 ? "now" : String(format: "−%.1fs", seconds * age)
                     label(text, at: CGPoint(x: p.x + 8, y: p.y), anchor: .leading)
                 }
                 let front = projected(0.5, 0)
                 label("Frequency · Hz →", at: CGPoint(x: front.x, y: front.y + 26))
-                label("dBFS", at: CGPoint(x: 18, y: 10))
+                let level = projected(0, 0, 1)
+                label("Level · dBFS", at: CGPoint(x: level.x, y: level.y - 14), anchor: .leading)
+                let time = projected(1, 1)
+                label("History · s", at: CGPoint(x: time.x, y: time.y - 16), anchor: .trailing)
             case .spectrogram(let rate, let seconds):
                 let plot = CGRect(x: 38, y: 12, width: max(1, size.width - 50), height: max(1, size.height - 42))
                 let maximum = min(20000.0, Double(rate == 0 ? 48000 : rate) / 2)

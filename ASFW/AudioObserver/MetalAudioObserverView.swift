@@ -131,8 +131,7 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
                               desiredWindow)
         guard let buffer, snapshot.channels >= 2,
               snapshot.activeRingFrames > 0,
-              let pass = view.currentRenderPassDescriptor,
-              let drawable = view.currentDrawable,
+              let surface = submission.drawable(for: view),
               let commandBuffer = submission.commandBuffer(for: renderPipeline.device) else {
             return
         }
@@ -144,7 +143,7 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
             windowFrames: validFrames,
             channel: min(leftChannel, snapshot.channels - 1),
                 rightChannel: min(rightChannel, snapshot.channels - 1))
-        guard let render = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else {
+        guard let render = commandBuffer.makeRenderCommandEncoder(descriptor: surface.pass) else {
             return
         }
 
@@ -166,7 +165,7 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
             }
         }
         render.endEncoding()
-        commandBuffer.present(drawable)
+        commandBuffer.present(surface.drawable)
         commandBuffer.addCompletedHandler { _ in slots.signal() }
         submitted = true
         lastWriteEnd = snapshot.writeEndFrame

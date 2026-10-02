@@ -60,11 +60,11 @@ nonisolated enum AnalyzerTextStyle: Hashable, Sendable {
 
 /// One readout drawn by a panel canvas. `format` runs on the main actor at
 /// most every `interval` seconds; every frame redraws the cached string.
-nonisolated enum AnalyzerTextAlignment: Sendable { case leading, center, trailing }
+nonisolated enum AnalyzerTextAlignment: Sendable, Equatable { case leading, center, trailing }
 
 struct AnalyzerTextSpec {
     typealias Alignment = AnalyzerTextAlignment
-    enum Tone: Sendable { case primary, secondary }
+    enum Tone: Sendable, Equatable { case primary, secondary }
 
     /// Canvas-anchor key: unique per readout id within a canvas.
     let key: Int

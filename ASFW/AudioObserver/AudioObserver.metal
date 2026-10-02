@@ -430,7 +430,7 @@ struct AnalyzerGlyphVertex { float2 position; float2 uv; };
 struct AnalyzerGlyphOut { float4 position [[position]]; float2 uv; };
 
 vertex AnalyzerGlyphOut asfwAnalyzerGlyphVertex(uint vid [[vertex_id]],
-    constant AnalyzerGlyphVertex* vertices [[buffer(0)]],
+    device const AnalyzerGlyphVertex* vertices [[buffer(0)]],
     constant float2& drawableSize [[buffer(1)]]) {
     AnalyzerGlyphVertex v = vertices[vid];
     float2 ndc = float2(v.position.x / drawableSize.x * 2 - 1, 1 - v.position.y / drawableSize.y * 2);

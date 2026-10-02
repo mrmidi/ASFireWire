@@ -348,7 +348,7 @@ actor AudioAnalysisEngine {
                     values: outputValues, completedSuccessfully: completedSuccessfully,
                     geometryStillMatches: geometryStillMatches, usesKWeight: usesKWeight,
                     encodeMilliseconds: encodeMilliseconds, queueMilliseconds: queueMilliseconds,
-                    gpuMilliseconds: gpuMilliseconds, completionMilliseconds: (completionTime - encodeStart) * 1_000,
+                    gpuMilliseconds: gpuMilliseconds, completionMilliseconds: (completionTime - encodeStart) * 1_000, analysisStartedAt: encodeStart,
                     sampleAge: sampleAge, marginMilliseconds: marginMilliseconds, key: key)
             }
         }
@@ -360,7 +360,7 @@ actor AudioAnalysisEngine {
                         postState: AudioObserverWireState?, values outputValues: [UInt32],
                         completedSuccessfully: Bool, geometryStillMatches: Bool, usesKWeight: Bool,
                         encodeMilliseconds: Double, queueMilliseconds: Double?, gpuMilliseconds: Double?,
-                        completionMilliseconds: Double, sampleAge: Double, marginMilliseconds: Double,
+                        completionMilliseconds: Double, analysisStartedAt: Double, sampleAge: Double, marginMilliseconds: Double,
                         key: String) {
         inFlight = false
         defer {
@@ -390,7 +390,7 @@ actor AudioAnalysisEngine {
                                completionMilliseconds: completionMilliseconds,
                                sampleAgeMilliseconds: sampleAge,
                                overwriteMarginMilliseconds: marginMilliseconds,
-                               meterKey: key)
+                               meterKey: key, analysisStartedAt: analysisStartedAt)
             }
             self.cursor = token.endFrame
             self.lastSessionEpoch = postState.sessionEpoch

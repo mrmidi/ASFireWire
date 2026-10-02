@@ -110,17 +110,26 @@ inline float4 waterfallPosition(float frequency, float age, float level, constan
     return camera.matrix * float4((frequency - 0.5f) * camera.dimensions.x,
                                  level * camera.dimensions.y, -age * camera.dimensions.z, 1);
 }
-struct WaterfallVertex { float4 position [[position]]; float4 color; };
-inline WaterfallVertex waterfallRidge(uint vid, uint ridge, bool curtain,
-    texture2d<float, access::read> history, device const ulong* stamps,
-    constant SpectrogramDisplay& p, constant WaterfallCamera& camera) {
+// Check every intervening STFT stamp once per time interval, rather than
+// joining across a missing column merely because both endpoints survived.
+kernel void asfwWaterfallContinuity(device const ulong* stamps [[buffer(0)]],
+    device uint* valid [[buffer(1)]], constant SpectrogramDisplay& p [[buffer(2)]],
+    constant WaterfallCamera& camera [[buffer(3)]], uint segment [[thread_position_in_grid]]) {
     uint count = uint(camera.dimensions.w);
-    uint age = (count - 1 - ridge) * (p.columns - 1) / (count - 1);
-    if (p.latestSlice < age) return { float4(0, 0, -1, 1), float4(0) };
-    ulong slice = p.latestSlice - age;
-    uint column = uint(slice % p.columns);
-    if (stamps[column] != slice + 1) return { float4(0, 0, -1, 1), float4(0) };
-    float frequency = float(curtain ? vid / 2 : vid) / 255;
+    if (segment >= count - 1) return;
+    uint first = segment * (p.columns - 1) / (count - 1);
+    uint last = (segment + 1) * (p.columns - 1) / (count - 1);
+    valid[segment] = 0;
+    if (p.latestSlice < last) return;
+    for (uint age = first; age <= last; ++age) {
+        ulong slice = p.latestSlice - age;
+        if (stamps[uint(slice % p.columns)] != slice + 1) return;
+    }
+    valid[segment] = 1;
+}
+struct WaterfallVertex { float4 position [[position]]; float db; };
+inline float waterfallDB(float frequency, uint column, texture2d<float, access::read> history,
+                         constant SpectrogramDisplay& p) {
     float ratio = min(20000.0f, float(p.sampleRate) / 2) / 20;
     float bin = clamp(20 * pow(ratio, frequency) * p.fftSize / p.sampleRate, 0.0f, float(p.fftSize / 2));
     uint lo = uint(bin), hi = min(lo + 1, p.fftSize / 2);
@@ -128,26 +137,39 @@ inline WaterfallVertex waterfallRidge(uint vid, uint ridge, bool curtain,
     uint first = uint(ceil(20 * pow(ratio, max(0.0f, frequency - 0.5f / 255)) * p.fftSize / p.sampleRate));
     uint last = min(uint(20 * pow(ratio, min(1.0f, frequency + 0.5f / 255)) * p.fftSize / p.sampleRate), p.fftSize / 2);
     for (uint b = first; b <= last; ++b) db = max(db, history.read(uint2(column, b)).x);
-    float depth = float(age) / (p.columns - 1);
-    float level = clamp((db + 100) / 100, 0.0f, 1.0f);
-    float fade = mix(1.0f, 0.45f, depth);
-    bool top = !curtain || (vid & 1);
-    float3 color = spectrogramColor(db) * fade;
-    if (curtain) color = mix(float3(0.025, 0.035, 0.05), color * 0.3f, top ? 0.65f : 0.08f);
-    else if (age == 0) color = min(color * 1.2f + float3(0.04), float3(1));
-    return { waterfallPosition(frequency, depth, top ? level : 0, camera), float4(color, 1) };
+    return db;
 }
-vertex WaterfallVertex asfwWaterfallVertex(uint vid [[vertex_id]], uint ridge [[instance_id]],
+inline WaterfallVertex waterfallSample(float frequency, uint row,
+    texture2d<float, access::read> history, device const ulong* stamps,
+    constant SpectrogramDisplay& p, constant WaterfallCamera& camera) {
+    uint age = row * (p.columns - 1) / (uint(camera.dimensions.w) - 1);
+    if (p.latestSlice < age) return { float4(0, 0, -1, 1), -100 };
+    ulong slice = p.latestSlice - age;
+    uint column = uint(slice % p.columns);
+    if (stamps[column] != slice + 1) return { float4(0, 0, -1, 1), -100 };
+    float db = waterfallDB(frequency, column, history, p);
+    return { waterfallPosition(frequency, float(age) / (p.columns - 1),
+                              clamp((db + 100) / 100, 0.0f, 1.0f), camera), db };
+}
+vertex WaterfallVertex asfwWaterfallSurfaceVertex(uint vid [[vertex_id]], uint segment [[instance_id]],
+    texture2d<float, access::read> history [[texture(0)]], device const ulong* stamps [[buffer(0)]],
+    constant SpectrogramDisplay& p [[buffer(1)]], constant WaterfallCamera& camera [[buffer(2)]],
+    device const uint* valid [[buffer(3)]]) {
+    if (!valid[segment]) return { float4(0, 0, -1, 1), -100 };
+    // Alternating vertices from adjacent measured rows form the two triangles
+    // of each frequency/time cell. No CPU interpolation or mesh uploads.
+    return waterfallSample(float(vid / 2) / 255, segment + (vid & 1), history, stamps, p, camera);
+}
+vertex WaterfallVertex asfwWaterfallVertex(uint vid [[vertex_id]], uint row [[instance_id]],
     texture2d<float, access::read> history [[texture(0)]], device const ulong* stamps [[buffer(0)]],
     constant SpectrogramDisplay& p [[buffer(1)]], constant WaterfallCamera& camera [[buffer(2)]]) {
-    return waterfallRidge(vid, ridge, false, history, stamps, p, camera);
+    return waterfallSample(float(vid) / 255, row, history, stamps, p, camera);
 }
-vertex WaterfallVertex asfwWaterfallCurtainVertex(uint vid [[vertex_id]], uint ridge [[instance_id]],
-    texture2d<float, access::read> history [[texture(0)]], device const ulong* stamps [[buffer(0)]],
-    constant SpectrogramDisplay& p [[buffer(1)]], constant WaterfallCamera& camera [[buffer(2)]]) {
-    return waterfallRidge(vid, ridge, true, history, stamps, p, camera);
+fragment float4 asfwWaterfallFragment(WaterfallVertex in [[stage_in]]) {
+    // Color depends solely on interpolated measured dBFS, never on age or lighting.
+    return float4(spectrogramColor(in.db), 1);
 }
-fragment float4 asfwWaterfallFragment(WaterfallVertex in [[stage_in]]) { return in.color; }
+fragment float4 asfwWaterfallWireFragment() { return float4(0.015, 0.025, 0.035, 0.3); }
 
 
 fragment float4 asfwSpectrogramFragment(SpectrogramVertex in [[stage_in]],

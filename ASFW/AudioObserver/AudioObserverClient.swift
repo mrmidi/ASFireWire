@@ -18,6 +18,19 @@ nonisolated struct AudioObserverSnapshot: Sendable, Equatable {
 
 nonisolated struct AudioObserverMetrics: Sendable, Equatable {
     var analysis = AudioAnalyzerSnapshot()
+    var analysisGPU = AnalyzerTimingStatistics()
+    var visualGPU = AnalyzerTimingStatistics()
+    var visualCPU = AnalyzerTimingStatistics()
+    var visualDrawable = AnalyzerTimingStatistics()
+    var visualEncode = AnalyzerTimingStatistics()
+    var visualQueue = AnalyzerTimingStatistics()
+    var analysisToVisual = AnalyzerTimingStatistics()
+    var analysisCPU = AnalyzerTimingStatistics()
+    var analysisQueue = AnalyzerTimingStatistics()
+    var analysisBatchFrames: UInt64 = 0
+    var analysisBatchSampleRate: UInt32 = 0
+    var analysisStartedAt: Double?
+
     var stereoHistory: [AudioStereoHistoryPoint] = []
     var cpuEncodeMilliseconds: Double?
     var scheduledToStartMilliseconds: Double?
@@ -204,6 +217,31 @@ nonisolated final class AudioObserverMetricsState: @unchecked Sendable {
         return snapshot
     }
 
+    func visualOrigin() -> Double? {
+        lock.lock(); defer { lock.unlock() }
+        return value.analysisStartedAt
+    }
+
+    func resetGPUTiming() {
+        lock.lock(); defer { lock.unlock() }
+        value.analysisGPU = AnalyzerTimingStatistics(); value.visualGPU = AnalyzerTimingStatistics()
+        value.visualDrawable = AnalyzerTimingStatistics(); value.visualEncode = AnalyzerTimingStatistics()
+        value.visualCPU = AnalyzerTimingStatistics(); value.visualQueue = AnalyzerTimingStatistics()
+        value.analysisToVisual = AnalyzerTimingStatistics()
+        value.analysisCPU = AnalyzerTimingStatistics(); value.analysisQueue = AnalyzerTimingStatistics()
+    }
+
+    func recordVisual(gpu: Double?, cpu: Double?, queue: Double?, chain: Double?, drawable: Double? = nil, at timestamp: Double) {
+        lock.lock(); defer { lock.unlock() }
+        value.visualGPU.append(milliseconds: gpu, at: timestamp)
+        value.visualCPU.append(milliseconds: cpu, at: timestamp)
+        value.visualDrawable.append(milliseconds: drawable, at: timestamp)
+        let encode = cpu.flatMap { total in drawable.map { max(0, total - $0) } }
+        value.visualEncode.append(milliseconds: encode, at: timestamp)
+        value.visualQueue.append(milliseconds: queue, at: timestamp)
+        value.analysisToVisual.append(milliseconds: chain, at: timestamp)
+    }
+
     func readStereoHistory() -> [AudioStereoHistoryPoint] {
         lock.lock()
         defer { lock.unlock() }
@@ -247,7 +285,7 @@ nonisolated final class AudioObserverMetricsState: @unchecked Sendable {
                 completionMilliseconds: Double,
                 sampleAgeMilliseconds: Double,
                 overwriteMarginMilliseconds: Double,
-                meterKey: String) {
+                meterKey: String, analysisStartedAt: Double? = nil) {
         guard result.count >= AudioAnalysisLayout.outputWords else { return }
         let floats = result
         lock.lock()
@@ -318,6 +356,13 @@ nonisolated final class AudioObserverMetricsState: @unchecked Sendable {
         value.analysis.diagnostics.wrapWindows = value.windowsCrossingWrap
         value.analysis.diagnostics.unsafeRanges = value.unsafeWindows
         value.analysis.diagnostics.rejectedRanges = value.unsafeWindows
+        let time = ProcessInfo.processInfo.systemUptime
+        value.analysisGPU.append(milliseconds: gpuMilliseconds, at: time)
+        value.analysisCPU.append(milliseconds: cpuEncodeMilliseconds, at: time)
+        value.analysisQueue.append(milliseconds: scheduledToStartMilliseconds, at: time)
+        value.analysisBatchFrames = token.endFrame - token.startFrame
+        value.analysisBatchSampleRate = token.geometry.sampleRateHz
+        value.analysisStartedAt = analysisStartedAt
         value.cpuEncodeMilliseconds = cpuEncodeMilliseconds
         value.scheduledToStartMilliseconds = scheduledToStartMilliseconds
         value.gpuMilliseconds = gpuMilliseconds
@@ -606,10 +651,11 @@ final class ASFWAudioObserverClient {
     private(set) var ringBuffer: MTLBuffer?
     private(set) var phaseRenderPipeline: MTLRenderPipelineState?
     let plotHistory = AnalyzerPlotHistoryState()
-    let renderSubmission = AnalyzerRenderSubmission()
+    let renderSubmission: AnalyzerRenderSubmission
     private(set) var waveformRenderPipeline: MTLRenderPipelineState?
 
     init(guid: UInt64) {
+        renderSubmission = AnalyzerRenderSubmission(metrics: metrics)
         self.guid = guid
     }
 
