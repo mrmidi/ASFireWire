@@ -35,7 +35,8 @@ TEST(AvcAudioConfig, GraphRatesAreBoundedByTheRuntimeAndThePin) {
     const auto open = BuildGraphAudioConfig({.guid = 1, .modelName = "Device"}, plan, graph);
     ASSERT_TRUE(open);
     EXPECT_EQ(open->sampleRates, (std::vector<uint32_t>{44100, 48000, 96000}));
-    EXPECT_EQ(open->currentSampleRate, 44100U);
+    // Found at 44.1, but every device starts at 48 kHz when it can.
+    EXPECT_EQ(open->currentSampleRate, 48000U);
     EXPECT_EQ(open->inputPlugName, "Device Inputs");
 
     // The runtime runs 48 kHz only: the device found at 44.1 is offered 48.
@@ -43,6 +44,14 @@ TEST(AvcAudioConfig, GraphRatesAreBoundedByTheRuntimeAndThePin) {
     ASSERT_TRUE(runtime);
     EXPECT_EQ(runtime->sampleRates, std::vector<uint32_t>{48000});
     EXPECT_EQ(runtime->currentSampleRate, 48000U);
+
+    // Without 48 kHz the device keeps the rate it reported.
+    DeviceGraph no48;
+    no48.playback = Stream(2, 3, {44100, 88200}, 88200);
+    no48.capture = Stream(2, 3, {44100, 88200}, 88200);
+    const auto kept = BuildGraphAudioConfig({.guid = 1}, plan, no48);
+    ASSERT_TRUE(kept);
+    EXPECT_EQ(kept->currentSampleRate, 88200U);
 
     // No rate in common: nothing to publish.
     EXPECT_FALSE(BuildGraphAudioConfig({.guid = 1}, plan, graph, {192000}));
@@ -65,6 +74,8 @@ TEST(AvcAudioConfig, GraphWithMismatchedOrMissingGeometryIsNotPublished) {
 
 class FixedProfile final : public ASFW::Isoch::Audio::IAudioDeviceProfile {
 public:
+    std::vector<uint32_t> rates{48000};
+    std::vector<uint32_t> SupportedSampleRates() const override { return rates; }
     const char* Name() const noexcept override { return "M-Audio ProjectMix I/O"; }
     ASFW::Encoding::AudioWireFormat TxWireFormat() const noexcept override {
         return ASFW::Encoding::AudioWireFormat::kAM824;
@@ -104,6 +115,20 @@ TEST(AvcAudioConfig, ProfileOwnedEndpointCarriesTheProfilesGeometry) {
     EXPECT_TRUE(config->resolvedGeometryRequired);
     EXPECT_FALSE(config->graphResolved);
     EXPECT_EQ(config->streamMode, ASFW::Audio::Model::StreamMode::kBlocking);
+}
+
+TEST(AvcAudioConfig, ProfileOwnedEndpointStartsAt48kWhenOffered) {
+    FixedProfile profile;
+    profile.rates = {44100, 48000};
+    const auto config = BuildProfileOwnedAudioConfig({.guid = 7}, StaticAudioEndpointPlan{}, profile);
+    ASSERT_TRUE(config);
+    EXPECT_EQ(config->sampleRates, (std::vector<uint32_t>{44100, 48000}));
+    EXPECT_EQ(config->currentSampleRate, 48000U);
+
+    profile.rates = {44100, 88200};
+    const auto without48 = BuildProfileOwnedAudioConfig({.guid = 7}, StaticAudioEndpointPlan{}, profile);
+    ASSERT_TRUE(without48);
+    EXPECT_EQ(without48->currentSampleRate, 44100U);
 }
 
 } // namespace

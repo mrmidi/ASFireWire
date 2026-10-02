@@ -44,6 +44,25 @@ void ApplyRatePolicy(ASFWAudioDevice& config, const StaticAudioEndpointPlan& pla
     }
 }
 
+// Every AV/C device starts at 48 kHz when it can run it, whatever rate it was
+// left at: 48 kHz is the rate the runtimes are validated at, and DICE, MOTU and
+// RME already start there (DiceInitialRate, SessionScheduler DefaultStartRate).
+// The first start writes the rate to the device (BeBoBProtocol::
+// ApplyClockConfig). A device that cannot run 48 kHz starts at the rate it
+// reported, or else at the first rate offered.
+constexpr uint32_t kDefaultStartRateHz = 48000;
+
+void PreferDefaultStartRate(ASFWAudioDevice& config) {
+    const auto offered = [&config](uint32_t hz) {
+        return std::ranges::find(config.sampleRates, hz) != config.sampleRates.end();
+    };
+    if (offered(kDefaultStartRateHz)) {
+        config.currentSampleRate = kDefaultStartRateHz;
+    } else if (!offered(config.currentSampleRate)) {
+        config.currentSampleRate = config.sampleRates.front();
+    }
+}
+
 } // namespace
 
 std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& identity,
@@ -81,10 +100,7 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
     if (config.sampleRates.empty()) {
         return std::nullopt;
     }
-    // A device found at a rate it is not offered at starts at the first offered one.
-    if (std::ranges::find(config.sampleRates, config.currentSampleRate) == config.sampleRates.end()) {
-        config.currentSampleRate = config.sampleRates.front();
-    }
+    PreferDefaultStartRate(config);
     config.inputChannelNames = capture.channelNames;
     config.outputChannelNames = playback.channelNames;
     config.playbackStreams = {{.pcmChannels = playback.channelCount,
@@ -124,6 +140,7 @@ std::optional<ASFWAudioDevice> BuildProfileOwnedAudioConfig(
     config.sampleRates = rates;
     config.currentSampleRate = rates.front();
     ApplyRatePolicy(config, plan);
+    PreferDefaultStartRate(config);
     config.captureStreams = {{.pcmChannels = input,
                               .am824Slots = profile.RxDbs(),
                               .midiPorts = profile.RxMidiPorts()}};
