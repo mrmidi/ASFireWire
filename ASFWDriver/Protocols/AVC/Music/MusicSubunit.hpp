@@ -8,7 +8,7 @@
 #pragma once
 
 #include "../Subunit.hpp"
-#include "../IAVCCommandSubmitter.hpp"
+#include "../Core/IAvcUnit.hpp"
 #include "MusicSubunitCapabilities.hpp"
 #include "../Descriptors/AVCInfoBlock.hpp"
 #include "../Descriptors/MusicSubunitDescriptor.hpp"
@@ -40,32 +40,32 @@ public:
     /// Query supported formats for all plugs (Phase 4)
     /// Enumerates the supported format list for each plug using STREAM FORMAT SUPPORT (0xC1)
     /// This populates PlugInfo.supportedFormats
-    void QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, std::function<void(bool)> completion);
+    void QuerySupportedFormats(ASFW::AVC::IAvcUnit& unit, std::function<void(bool)> completion);
 
     /// Query connection topology for all plugs (Phase 4)
     /// Uses SIGNAL SOURCE command (0x1A) to discover plug connections
     /// This populates PlugInfo.connectionInfo for destination plugs
-    void QueryConnections(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, std::function<void(bool)> completion);
+    void QueryConnections(ASFW::AVC::IAvcUnit& unit, std::function<void(bool)> completion);
 
     /// Set sample rate for all plugs
     /// @param submitter Command submitter
     /// @param sampleRate Sample rate in Hz
     /// @param completion Callback with success/failure
-    void SetSampleRate(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, uint32_t sampleRate, std::function<void(bool)> completion);
+    void SetSampleRate(ASFW::AVC::IAvcUnit& unit, uint32_t sampleRate, std::function<void(bool)> completion);
 
     /// Set volume for a function block (plug) targeting Audio Subunit (0x01)
     /// @param submitter Command submitter
     /// @param plugId Plug ID (Function Block ID)
     /// @param volume Volume level (0x7FFF = 0dB, etc.)
     /// @param completion Callback
-    void SetAudioVolume(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, uint8_t plugId, int16_t volume, std::function<void(bool)> completion);
+    void SetAudioVolume(ASFW::AVC::IAvcUnit& unit, uint8_t plugId, int16_t volume, std::function<void(bool)> completion);
 
     /// Set mute for a function block (plug) targeting Audio Subunit (0x01)
     /// @param submitter Command submitter
     /// @param plugId Plug ID (Function Block ID)
     /// @param mute True to mute, false to unmute
     /// @param completion Callback
-    void SetAudioMute(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, uint8_t plugId, bool mute, std::function<void(bool)> completion);
+    void SetAudioMute(ASFW::AVC::IAvcUnit& unit, uint8_t plugId, bool mute, std::function<void(bool)> completion);
 
     // Use comprehensive PlugInfo from StreamFormats infrastructure
     using PlugInfo = StreamFormats::PlugInfo;
@@ -128,6 +128,20 @@ private:
     uint16_t statusDescriptorExpectedPlugCount_{0};
 
 private:
+    /// A discovery continuation runs after the call that started it returned,
+    /// and reaches this subunit and its unit by raw pointer. Either may be gone
+    /// by then. A continuation for a dead unit does nothing (its completion
+    /// belongs to the unit); one for a dead subunit completes with false.
+    struct ChainGuard {
+        Common::LiveRef<const ASFW::AVC::IAvcUnit> unit;
+        Common::LiveRef<const MusicSubunit> subunit;
+        [[nodiscard]] bool UnitGone() const noexcept { return !unit; }
+        [[nodiscard]] bool SubunitGone() const noexcept { return !subunit; }
+    };
+    [[nodiscard]] ChainGuard GuardFor(const ASFW::AVC::IAvcUnit& unit) const noexcept {
+        return {Common::LiveRef<const ASFW::AVC::IAvcUnit>(unit), Common::LiveRef<const MusicSubunit>(*this)};
+    }
+
     void ParseSignalFormats(AVCUnit& unit, std::function<void(bool)> completion);
     void QueryPlugFormats(AVCUnit& unit, size_t plugIndex, std::function<void(bool)> completion);
     void ContinueAfterPlugFormatQueries(AVCUnit& unit, std::function<void(bool)> completion);

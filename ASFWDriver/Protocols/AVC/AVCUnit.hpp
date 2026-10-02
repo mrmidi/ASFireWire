@@ -19,7 +19,6 @@
 #include <span>
 #include <vector>
 #include "FCPTransport.hpp"
-#include "IAVCCommandSubmitter.hpp"
 #include "Subunit.hpp"
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
@@ -97,7 +96,6 @@ struct AVCUnitDiscoveryOptions {
 };
 
 class AVCUnit : public std::enable_shared_from_this<AVCUnit>,
-                public IAVCCommandSubmitter,
                 public ASFW::AVC::IAvcUnit {
 public:
     using DiscoveryOptions = AVCUnitDiscoveryOptions;
@@ -160,8 +158,6 @@ public:
     }
     void ProbeUnitInfo(std::function<void(bool)> completion);
 
-    void SubmitCommand(const AVCCdb& cdb, AVCCompletion completion) override;
-    [[nodiscard]] ASFW::AVC::IAvcUnit* AsAvcUnit() noexcept override { return this; }
 
     void GetPlugInfo(std::function<void(AVCResult, const ASFW::AVC::Cmd::UnitPlugCounts&)> completion);
 

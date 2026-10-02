@@ -925,20 +925,6 @@ void AVCUnit::ReadRootObjectList(
 // Command Submission
 //==============================================================================
 
-// Implement IAVCCommandSubmitter
-void AVCUnit::SubmitCommand(const AVCCdb& cdb, AVCCompletion completion) {
-    if (!fcpTransport_) {
-        completion(AVCResult::kTransportError, cdb);
-        return;
-    }
-
-    // Create AVCCommand to handle the transaction
-    // Note: AVCCommand manages its own lifetime via shared_from_this during the transaction
-    auto cmd = std::make_shared<AVCCommand>(*fcpTransport_, cdb);
-    cmd->Submit(completion);
-}
-
-
 void AVCUnit::GetPlugInfo(std::function<void(AVCResult, const ASFW::AVC::Cmd::UnitPlugCounts&)> completion) {
     if (initialized_) {
         // Return cached result

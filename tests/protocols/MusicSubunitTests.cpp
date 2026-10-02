@@ -7,8 +7,11 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+
+#include <array>
+#include <functional>
+#include <optional>
 #include "Protocols/AVC/Music/MusicSubunit.hpp"
-#include "Protocols/AVC/IAVCCommandSubmitter.hpp"
 #include "Protocols/AVC/AVCDefs.hpp"
 #include "Protocols/AVC/Core/IAvcUnit.hpp"
 
@@ -18,22 +21,32 @@ using namespace ASFW::Protocols::AVC::Music;
 using namespace ASFW::Protocols::AVC::StreamFormats;
 using namespace testing;
 
-// Mock IAVCCommandSubmitter & IAvcUnit
-class MockAVCCommandSubmitter : public IAVCCommandSubmitter, public ASFW::AVC::IAvcUnit {
+// The frame a test sees and answers: ctype/response code, address, opcode, operands.
+struct TestFrame {
+    uint8_t ctype{0};
+    uint8_t subunit{0xFF};
+    uint8_t opcode{0};
+    std::array<uint8_t, kAVCOperandMaxLength> operands{};
+    size_t operandLength{0};
+};
+using TestRespond = std::function<void(AVCResult, const TestFrame&)>;
+
+// An IAvcUnit whose every command is answered by the mocked SubmitCommand.
+class MockAVCCommandSubmitter : public ASFW::AVC::IAvcUnit {
 public:
-    MOCK_METHOD(void, SubmitCommand, (const AVCCdb& cdb, AVCCompletion completion), (override));
+    MOCK_METHOD(void, SubmitCommand, (const TestFrame& cdb, TestRespond completion));
 
     void Submit(const ASFW::AVC::CommandFrame& frame,
                 ASFW::FW::Generation,
                 ResponseCallback completion) override {
-        AVCCdb cdb{};
+        TestFrame cdb{};
         cdb.ctype = frame.Bytes()[0];
         cdb.subunit = frame.Bytes()[1];
         cdb.opcode = frame.Bytes()[2];
         cdb.operandLength = static_cast<uint16_t>(frame.Operands().size());
         std::copy(frame.Operands().begin(), frame.Operands().end(), cdb.operands.begin());
 
-        SubmitCommand(cdb, [completion = std::move(completion)](AVCResult res, const AVCCdb& respCdb) {
+        SubmitCommand(cdb, [completion = std::move(completion)](AVCResult res, const TestFrame& respCdb) {
             if (res != AVCResult::kAccepted && res != AVCResult::kImplementedStable) {
                 completion(std::unexpected(ASFW::AVC::AvcError{ASFW::AVC::AvcErrorKind::kRefused}));
                 return;
@@ -55,7 +68,6 @@ public:
     ASFW::FW::NodeId NodeId() const noexcept override { return ASFW::FW::NodeId(0); }
     ASFW::FW::Generation CurrentGeneration() const noexcept override { return ASFW::FW::Generation(1); }
     uint64_t Guid() const noexcept override { return 0; }
-    [[nodiscard]] ASFW::AVC::IAvcUnit* AsAvcUnit() noexcept override { return this; }
 };
 
 class MusicSubunitTests : public Test {
@@ -85,7 +97,7 @@ protected:
 TEST_F(MusicSubunitTests, QuerySupportedFormats_Sends0xBF) {
     // Expect SubmitCommand to be called with 0xBF
     EXPECT_CALL(mockSubmitter, SubmitCommand(_, _))
-        .WillRepeatedly(Invoke([](const AVCCdb& cdb, AVCCompletion completion) {
+        .WillRepeatedly(Invoke([](const TestFrame& cdb, TestRespond completion) {
             // Verify Opcode is 0xBF (Stream Format Support)
             EXPECT_EQ(cdb.opcode, 0xBF);
             
@@ -93,7 +105,7 @@ TEST_F(MusicSubunitTests, QuerySupportedFormats_Sends0xBF) {
             EXPECT_EQ(cdb.operands[0], 0xC1);
 
             // Simulate a response
-            AVCCdb response = cdb;
+            TestFrame response = cdb;
             response.ctype = static_cast<uint8_t>(AVCResponseType::kAccepted); // Accepted
             
             // Add a dummy format to the response so it stops iterating
@@ -126,7 +138,7 @@ TEST_F(MusicSubunitTests, QuerySupportedFormats_Sends0xBF) {
 TEST_F(MusicSubunitTests, SetSampleRate_Sends0xBF_Control) {
     // Expect command submission
     EXPECT_CALL(mockSubmitter, SubmitCommand(_, _))
-        .WillOnce(Invoke([&](const AVCCdb& cdb, AVCCompletion completion) {
+        .WillOnce(Invoke([&](const TestFrame& cdb, TestRespond completion) {
             EXPECT_EQ(cdb.ctype, static_cast<uint8_t>(AVCCommandType::kControl));
             EXPECT_EQ(cdb.opcode, 0xBF); // Output Plug Signal Format
             EXPECT_EQ(cdb.operands[0], 0xC0); // Current
@@ -144,7 +156,7 @@ TEST_F(MusicSubunitTests, SetSampleRate_Sends0xBF_Control) {
             EXPECT_EQ(cdb.operands[9], 0x04); // 48kHz
             
             // Simulate a response (ACCEPTED)
-            AVCCdb response = cdb;
+            TestFrame response = cdb;
             response.ctype = static_cast<uint8_t>(AVCResponseType::kAccepted);
             completion(AVCResult::kAccepted, response);
         }));
@@ -172,7 +184,7 @@ TEST_F(MusicSubunitTests, QueryConnections_Sends0x1A_Status) {
 
     // Expect command submission for Input plug only
     EXPECT_CALL(mockSubmitter, SubmitCommand(_, _))
-        .WillOnce(Invoke([&](const AVCCdb& cdb, AVCCompletion completion) {
+        .WillOnce(Invoke([&](const TestFrame& cdb, TestRespond completion) {
             EXPECT_EQ(cdb.ctype, static_cast<uint8_t>(AVCCommandType::kStatus));
             EXPECT_EQ(cdb.opcode, 0x1A); // SIGNAL SOURCE
             
@@ -185,7 +197,7 @@ TEST_F(MusicSubunitTests, QueryConnections_Sends0x1A_Status) {
             EXPECT_EQ(cdb.operands[4], 0x00);
             
             // Simulate response: Connected to Unit Plug 0 (Iso)
-            AVCCdb response = cdb;
+            TestFrame response = cdb;
             response.ctype = static_cast<uint8_t>(AVCResponseType::kImplementedStable); // Stable/Implemented
             
             response.operandLength = 5;
@@ -212,13 +224,13 @@ TEST_F(MusicSubunitTests, QueryConnections_UsesUnitAddress) {
     AddPlug(*subunit, 0, ASFW::Protocols::AVC::StreamFormats::PlugDirection::kInput);
 
     EXPECT_CALL(mockSubmitter, SubmitCommand(_, _))
-        .WillOnce(Invoke([&](const AVCCdb& cdb, AVCCompletion completion) {
+        .WillOnce(Invoke([&](const TestFrame& cdb, TestRespond completion) {
             EXPECT_EQ(cdb.subunit, 0xFF); // Unit Address (0xFF)
             EXPECT_EQ(cdb.opcode, 0x1A);
             EXPECT_EQ(cdb.operands[3], 0x60);
             EXPECT_EQ(cdb.operands[4], 0x00);
 
-            AVCCdb response = cdb;
+            TestFrame response = cdb;
             response.ctype = static_cast<uint8_t>(AVCResponseType::kImplementedStable);
             response.operandLength = 5;
             response.operands[0] = 0xFF;
@@ -250,8 +262,8 @@ TEST_F(MusicSubunitTests, QueryConnections_UsesUnitAddress) {
 TEST_F(MusicSubunitTests, QueryConnections_PreservesExternalUnitPlugAddress) {
     AddPlug(*subunit, 0, ASFW::Protocols::AVC::StreamFormats::PlugDirection::kInput);
     EXPECT_CALL(mockSubmitter, SubmitCommand(_, _))
-        .WillOnce(Invoke([&](const AVCCdb& cdb, AVCCompletion completion) {
-            AVCCdb response = cdb;
+        .WillOnce(Invoke([&](const TestFrame& cdb, TestRespond completion) {
+            TestFrame response = cdb;
             response.ctype = static_cast<uint8_t>(AVCResponseType::kImplementedStable);
             response.operandLength = 5;
             response.operands[0] = 0xFF;
@@ -278,7 +290,7 @@ TEST_F(MusicSubunitTests, SetAudioVolume_SendsCorrectCDB) {
     int16_t volume = 0x7FFF; // 0dB
     
     EXPECT_CALL(mockSubmitter, SubmitCommand(_, _))
-        .WillOnce(Invoke([&](const AVCCdb& cdb, AVCCompletion completion) {
+        .WillOnce(Invoke([&](const TestFrame& cdb, TestRespond completion) {
             EXPECT_EQ(cdb.ctype, static_cast<uint8_t>(AVCCommandType::kControl));
             // Target Audio Subunit 0 (0x01 << 3 | 0 = 0x08)
             EXPECT_EQ(cdb.subunit, 0x08); 
@@ -294,7 +306,7 @@ TEST_F(MusicSubunitTests, SetAudioVolume_SendsCorrectCDB) {
             EXPECT_EQ(cdb.operands[7], 0x7F);
             EXPECT_EQ(cdb.operands[8], 0xFF);
             
-            AVCCdb response = cdb;
+            TestFrame response = cdb;
             response.ctype = static_cast<uint8_t>(AVCResponseType::kAccepted);
             completion(AVCResult::kAccepted, response);
         }));
@@ -360,4 +372,95 @@ TEST_F(MusicSubunitTests, ParseDescriptorBlock_DuetFixtureIntegration) {
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(status->declaredLength, 462);
     EXPECT_TRUE(status->capabilities.hasGeneralCapability);
+}
+
+// --- Lifecycle: a continuation outliving its unit or its subunit ---------------
+
+namespace {
+
+// A unit that never answers by itself: the test holds the pending callback and
+// fires it later, after destroying the unit or the subunit.
+class PendingUnit final : public ASFW::AVC::IAvcUnit {
+public:
+    PendingUnit(std::optional<ResponseCallback>& pending, int& submits) : pending_(pending), submits_(submits) {}
+
+    void Submit(const ASFW::AVC::CommandFrame&, ASFW::FW::Generation, ResponseCallback completion) override {
+        ++submits_;
+        pending_.emplace(std::move(completion));
+    }
+    ASFW::FW::NodeId NodeId() const noexcept override { return ASFW::FW::NodeId(0); }
+    ASFW::FW::Generation CurrentGeneration() const noexcept override { return ASFW::FW::Generation(1); }
+    uint64_t Guid() const noexcept override { return 0; }
+
+private:
+    std::optional<ResponseCallback>& pending_;
+    int& submits_;
+};
+
+// SIGNAL SOURCE STATUS answer: source unit isoch plug 0 feeds music subunit dest plug 0.
+std::vector<uint8_t> SignalSourceAnswer() {
+    return {0x0C, 0xFF, 0x1A, 0xFF, 0xFF, 0x00, 0x60, 0x00};
+}
+
+} // namespace
+
+TEST_F(MusicSubunitTests, ContinuationForADestroyedUnitDoesNothing) {
+    AddPlug(*subunit, 0, PlugDirection::kInput);
+    AddPlug(*subunit, 1, PlugDirection::kInput);
+    std::optional<ASFW::AVC::IAvcUnit::ResponseCallback> pending;
+    int submits = 0;
+    int completions = 0;
+    auto unit = std::make_unique<PendingUnit>(pending, submits);
+
+    subunit->QueryConnections(*unit, [&](bool) { ++completions; });
+    ASSERT_EQ(submits, 1);
+    ASSERT_TRUE(pending.has_value());
+
+    // The unit goes away while its query is still with the engine. The late
+    // answer must not reach it: no next query, no completion into a dead owner.
+    unit.reset();
+    const auto bytes = SignalSourceAnswer();
+    auto callback = std::move(*pending);
+    pending.reset();
+    callback(*ASFW::AVC::ParseResponse(bytes));
+    EXPECT_EQ(submits, 1);
+    EXPECT_EQ(completions, 0);
+}
+
+TEST_F(MusicSubunitTests, ContinuationForADestroyedSubunitCompletesWithFalse) {
+    AddPlug(*subunit, 0, PlugDirection::kInput);
+    AddPlug(*subunit, 1, PlugDirection::kInput);
+    std::optional<ASFW::AVC::IAvcUnit::ResponseCallback> pending;
+    int submits = 0;
+    std::vector<bool> completions;
+    PendingUnit unit(pending, submits);
+
+    subunit->QueryConnections(unit, [&](bool ok) { completions.push_back(ok); });
+    ASSERT_TRUE(pending.has_value());
+
+    // The subunit goes away; the unit (the completion's owner) is still there.
+    subunit.reset();
+    const auto bytes = SignalSourceAnswer();
+    auto callback = std::move(*pending);
+    pending.reset();
+    callback(*ASFW::AVC::ParseResponse(bytes));
+    EXPECT_EQ(submits, 1) << "no query for the next plug of a dead subunit";
+    EXPECT_EQ(completions, std::vector<bool>{false});
+}
+
+TEST(LiveRefTests, YieldsNullOnceTheTargetIsGoneAndCopiesHaveTheirOwnLifetime) {
+    struct Target {
+        ASFW::Common::LifetimeAnchor anchor;
+        [[nodiscard]] std::weak_ptr<const void> LifetimeToken() const noexcept { return anchor.Token(); }
+    };
+    auto first = std::make_unique<Target>();
+    const ASFW::Common::LiveRef<Target> ref(*first);
+    EXPECT_EQ(ref.Get(), first.get());
+
+    auto copy = std::make_unique<Target>(*first);
+    const ASFW::Common::LiveRef<Target> copyRef(*copy);
+    first.reset();
+    EXPECT_EQ(ref.Get(), nullptr);
+    EXPECT_FALSE(ref);
+    EXPECT_EQ(copyRef.Get(), copy.get()) << "a copy does not share the original's lifetime";
 }

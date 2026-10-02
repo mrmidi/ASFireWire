@@ -47,7 +47,7 @@ public:
     }
 
     /// Bytes() zero-padded to a quadlet boundary: what the transport writes to
-    /// the FCP command register. Matches legacy AVCCdb::Encode (hardware-proven
+    /// the FCP command register. Matches the retired AVCCdb::Encode (hardware-proven
     /// on Phase 88 and Duet). Linux fcp.c:250-253 writes exactly what callers pass,
     /// and its callers size buffers in whole quadlets.
     [[nodiscard]] std::span<const uint8_t> WireBytes() const noexcept {

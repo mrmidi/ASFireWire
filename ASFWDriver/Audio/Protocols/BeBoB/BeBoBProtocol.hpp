@@ -33,13 +33,11 @@ namespace ASFW::IRM {
 class IRMClient;
 }
 
-#include "../../../Protocols/AVC/IAVCCommandSubmitter.hpp"
 
 namespace ASFW::Audio::BeBoB {
 
 class BeBoBProtocol : public IDeviceProtocol,
-                      public FamilyDriver,
-                      public Protocols::AVC::IAVCCommandSubmitter {
+                      public FamilyDriver {
 public:
     BeBoBProtocol(Protocols::Ports::FireWireBusOps& busOps,
                   Protocols::Ports::FireWireBusInfo& busInfo,
@@ -53,9 +51,6 @@ public:
     FamilyDriver* AsFamilyDriver() noexcept override { return this; }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
-
-    // IAVCCommandSubmitter
-    void SubmitCommand(const Protocols::AVC::AVCCdb& cdb, Protocols::AVC::AVCCompletion completion) override;
 
     // The general BeBoB lifecycle, as callback chains over CMP and AV/C. The
     // FamilyDriver steps below start them and wait; tests drive them directly.

@@ -36,18 +36,6 @@ add_protocols_test(AvcFixtureTests
 )
 
 # AVC Differential Tests (Legacy vs New ASFW::AVC Codecs)
-add_protocols_test(AvcDifferentialTests
-    AvcDifferentialTests.cpp
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
-    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
-)
 
 # AVC Simulated Unit Tests
 add_protocols_test(AvcSimulatedUnitTests

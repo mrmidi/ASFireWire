@@ -19,6 +19,7 @@
 #include "AvcFrame.hpp"
 #include "AvcTypes.hpp"
 #include "../../../Common/FWTypes.hpp"
+#include "../../../Common/Lifetime.hpp"
 
 #include <concepts>
 #include <cstdint>
@@ -67,6 +68,13 @@ void SendCommand(IAvcUnit& unit, const Cmd& cmd, CommandType type, FW::Generatio
 class IAvcUnit {
 public:
     virtual ~IAvcUnit() = default;
+
+    /// Expires when this unit is destroyed. A continuation that holds the unit
+    /// by raw pointer or reference checks it before using the unit: the
+    /// transaction engine can deliver a completion after its unit is gone (its
+    /// bus callbacks and timers keep it alive). Everything runs on the driver's
+    /// one work queue, so checking and destruction cannot interleave.
+    [[nodiscard]] std::weak_ptr<const void> LifetimeToken() const noexcept { return lifetime_.Token(); }
 
     using ResponseCallback = std::function<void(Expected<Response>)>;
 
@@ -158,6 +166,7 @@ public:
     }
 
 private:
+    Common::LifetimeAnchor lifetime_;
     StreamFormatOpcodePolicy opcodePolicy_{StreamFormatOpcodePolicy::kLearn};
     bool learnedSupportOpcode_{false};
 };

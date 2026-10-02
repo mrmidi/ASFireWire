@@ -273,7 +273,11 @@ void MusicSubunit::ParseCapabilities(AVCUnit& unit, std::function<void(bool)> co
     // OPEN -> READ -> CLOSE only (FFADO avc_descriptor.cpp:165-284). A descriptor
     // the device would not open is never read: reading it anyway left firmware
     // descriptor state behind on a Phase 88.
-    accessor->readWithOpenCloseSequence(specifier, [this, unitPtr, accessor, completion](const DescriptorAccessor::ReadDescriptorResult& result) {
+    accessor->readWithOpenCloseSequence(specifier, [this, unitPtr, accessor, completion, guard = GuardFor(unit)](const DescriptorAccessor::ReadDescriptorResult& result) {
+        if (guard.SubunitGone()) {
+            completion(false);
+            return;
+        }
         if (result.success && !result.data.empty()) {
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: status descriptor read (%zu bytes)", result.data.size());
             statusDescriptorReadOk_ = true;
@@ -316,21 +320,39 @@ void MusicSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, std::functi
     };
 
     Cmd::SendStreamFormat(unit, cmd, ::ASFW::AVC::CommandType::kStatus,
-                          [this, &unit, plugIndex, completion](Expected<Cmd::StreamFormatReply> reply) {
+                          [this, unitRef = Common::LiveRef<AVCUnit>(unit), plugIndex, completion,
+                           guard = GuardFor(unit)](Expected<Cmd::StreamFormatReply> reply) {
+        AVCUnit* const live = unitRef.Get();
+        if (live == nullptr) {
+            return;
+        }
+        if (guard.SubunitGone()) {
+            completion(false);
+            return;
+        }
         if (reply && reply->format.rawLength > 0) {
             auto parsed = StreamFormats::StreamFormatParser::Parse(reply->format.rawBytes.data(), reply->format.rawLength);
             HandlePlugFormatResult(plugIndex, AVCResult::kImplementedStable, parsed);
         } else {
             HandlePlugFormatResult(plugIndex, AVCResult::kNotImplemented, std::nullopt);
         }
-        QueryPlugFormats(unit, plugIndex + 1, completion);
+        QueryPlugFormats(*live, plugIndex + 1, completion);
     });
 }
 
 void MusicSubunit::ContinueAfterPlugFormatQueries(AVCUnit& unit, std::function<void(bool)> completion) {
-    QuerySupportedFormats(unit, [this, &unit, completion](bool) {
-        QueryConnections(unit, [this, &unit, completion](bool) {
-            ParsePlugNames(unit, completion);
+    const Common::LiveRef<AVCUnit> unitRef(unit);
+    QuerySupportedFormats(unit, [this, unitRef, completion](bool) {
+        AVCUnit* const live = unitRef.Get();
+        if (live == nullptr) {
+            return;
+        }
+        QueryConnections(*live, [this, unitRef, completion](bool) {
+            AVCUnit* const again = unitRef.Get();
+            if (again == nullptr) {
+                return;
+            }
+            ParsePlugNames(*again, completion);
         });
     });
 }
@@ -402,7 +424,7 @@ void MusicSubunit::HandlePlugFormatResult(size_t plugIndex,
     }
 }
 
-void MusicSubunit::QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, std::function<void(bool)> completion) {
+void MusicSubunit::QuerySupportedFormats(ASFW::AVC::IAvcUnit& unit, std::function<void(bool)> completion) {
     using namespace StreamFormats;
 
     // Helper to recursively query supported formats for each plug
@@ -418,7 +440,7 @@ void MusicSubunit::QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmit
     // Use shared_ptr to allow capturing itself
     auto queryNextPlug = std::make_shared<std::function<void()>>();
     
-    *queryNextPlug = [this, &submitter, state, queryNextPlug]() {
+    *queryNextPlug = [this, unitRef = Common::LiveRef<ASFW::AVC::IAvcUnit>(unit), state, queryNextPlug]() {
         // Done with all plugs?
         if (state->plugIndex >= plugs_.size()) {
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Supported format enumeration complete");
@@ -435,14 +457,12 @@ void MusicSubunit::QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmit
         auto formats = std::make_shared<std::vector<AudioStreamFormat>>();
         auto iteration = std::make_shared<uint8_t>(0);
         auto queryNextList = std::make_shared<std::function<void()>>();
-        auto avcUnit = submitter.AsAvcUnit();
-        if (!avcUnit) {
-            state->plugIndex++;
-            (*queryNextPlug)();
-            return;
-        }
-
-        *queryNextList = [this, avcUnit, currentPlugIndex, &plug, formats, iteration, state, queryNextPlug, queryNextList]() {
+        *queryNextList = [this, unitRef, currentPlugIndex, formats, iteration, state, queryNextPlug, queryNextList]() {
+            ASFW::AVC::IAvcUnit* const avcUnit = unitRef.Get();
+            if (avcUnit == nullptr) {
+                return;
+            }
+            const auto& plug = plugs_[currentPlugIndex];
             if (*iteration >= 16) {
                 if (!formats->empty()) {
                     plugs_[currentPlugIndex].supportedFormats = std::move(*formats);
@@ -464,7 +484,15 @@ void MusicSubunit::QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmit
             };
 
             Cmd::SendStreamFormat(*avcUnit, cmd, ::ASFW::AVC::CommandType::kStatus,
-                [formats, iteration, queryNextList, currentPlugIndex, this, state, queryNextPlug](Expected<Cmd::StreamFormatReply> reply) {
+                [formats, iteration, queryNextList, currentPlugIndex, this, state, queryNextPlug,
+                 guard = GuardFor(*avcUnit)](Expected<Cmd::StreamFormatReply> reply) {
+                if (guard.UnitGone()) {
+                    return;
+                }
+                if (guard.SubunitGone()) {
+                    state->completion(false);
+                    return;
+                }
                 if (reply && reply->format.rawLength > 0) {
                     auto parsed = StreamFormats::StreamFormatParser::Parse(reply->format.rawBytes.data(), reply->format.rawLength);
                     if (parsed) {
@@ -488,15 +516,8 @@ void MusicSubunit::QuerySupportedFormats(ASFW::Protocols::AVC::IAVCCommandSubmit
     (*queryNextPlug)();
 }
 
-void MusicSubunit::QueryConnections(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, std::function<void(bool)> completion) {
+void MusicSubunit::QueryConnections(ASFW::AVC::IAvcUnit& unit, std::function<void(bool)> completion) {
     using namespace StreamFormats;
-
-    auto* avcUnit = submitter.AsAvcUnit();
-    if (!avcUnit) {
-        ASFW_LOG_V1(MusicSubunit, "MusicSubunit: submitter is not an IAvcUnit");
-        completion(false);
-        return;
-    }
 
     // Helper to recursively query connections for each destination (input) plug
     struct QueryState {
@@ -516,7 +537,12 @@ void MusicSubunit::QueryConnections(ASFW::Protocols::AVC::IAVCCommandSubmitter& 
     state->completion = completion;
 
     // Define the recursive function
-    state->queryNext = [this, avcUnit, state]() {
+    state->queryNext = [this, unitRef = Common::LiveRef<ASFW::AVC::IAvcUnit>(unit), state]() {
+        ASFW::AVC::IAvcUnit* const avcUnit = unitRef.Get();
+        if (avcUnit == nullptr) {
+            state->queryNext = nullptr;  // the unit is gone; end the chain
+            return;
+        }
         // Done with all plugs?
         if (state->plugIndex >= plugs_.size()) {
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Connection topology query complete");
@@ -551,7 +577,18 @@ void MusicSubunit::QueryConnections(ASFW::Protocols::AVC::IAVCCommandSubmitter& 
             },
         };
         const auto expectedDestination = cmd.operands.destination;
-        avcUnit->Status(cmd, [this, currentPlugIndex, state, expectedDestination](Expected<Cmd::SignalSource> reply) {
+        avcUnit->Status(cmd, [this, currentPlugIndex, state, expectedDestination,
+                              guard = GuardFor(*avcUnit)](Expected<Cmd::SignalSource> reply) {
+            if (guard.UnitGone()) {
+                state->queryNext = nullptr;  // break the cycle; the chain ends here
+                return;
+            }
+            if (guard.SubunitGone()) {
+                auto completion = state->completion;
+                state->queryNext = nullptr;
+                completion(false);
+                return;
+            }
             if (reply && reply->destination == expectedDestination) {
                 const auto connInfo = ToConnectionInfo(*reply);
                 plugs_[currentPlugIndex].connectionInfo = connInfo;
@@ -978,7 +1015,11 @@ void MusicSubunit::ReadStatusDescriptor(AVCUnit& unit, std::function<void(bool)>
     specifier.type = static_cast<DescriptorSpecifierType>(0x80);
     specifier.typeSpecificFields = {};
 
-    accessor->readWithOpenCloseSequence(specifier, [this, unitPtr, accessor, completion](const DescriptorAccessor::ReadDescriptorResult& result) {
+    accessor->readWithOpenCloseSequence(specifier, [this, unitPtr, accessor, completion, guard = GuardFor(unit)](const DescriptorAccessor::ReadDescriptorResult& result) {
+        if (guard.SubunitGone()) {
+            completion(false);
+            return;
+        }
         if (result.success && !result.data.empty()) {
             statusDescriptorReadOk_ = true;
             statusDescriptorData_ = result.data;
@@ -990,15 +1031,9 @@ void MusicSubunit::ReadStatusDescriptor(AVCUnit& unit, std::function<void(bool)>
     });
 }
 
-void MusicSubunit::SetSampleRate(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, uint32_t sampleRate, std::function<void(bool)> completion) {
+void MusicSubunit::SetSampleRate(ASFW::AVC::IAvcUnit& unit, uint32_t sampleRate, std::function<void(bool)> completion) {
     using namespace StreamFormats;
 
-    auto avcUnit = submitter.AsAvcUnit();
-    if (!avcUnit) {
-        ASFW_LOG_V1(MusicSubunit, "MusicSubunit: submitter is not an IAvcUnit");
-        completion(false);
-        return;
-    }
 
     const auto rateCode = ASFW::AVC::StreamFormatRateFromHz(sampleRate);
     if (!rateCode.has_value()) {
@@ -1038,7 +1073,7 @@ void MusicSubunit::SetSampleRate(ASFW::Protocols::AVC::IAVCCommandSubmitter& sub
         }
     };
 
-    Cmd::SendStreamFormat(*avcUnit, cmd, ::ASFW::AVC::CommandType::kControl,
+    Cmd::SendStreamFormat(unit, cmd, ::ASFW::AVC::CommandType::kControl,
                           [completion](Expected<Cmd::StreamFormatReply> reply) {
         if (reply.has_value()) {
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: SetSampleRate succeeded");
@@ -1065,20 +1100,14 @@ void MusicSubunit::LogConnection(size_t index, const StreamFormats::ConnectionIn
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void MusicSubunit::SetAudioVolume(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, uint8_t plugId, int16_t volume, std::function<void(bool)> completion) {
-    auto* avcUnit = submitter.AsAvcUnit();
-    if (!avcUnit) {
-        ASFW_LOG_V1(MusicSubunit, "MusicSubunit: submitter is not an IAvcUnit");
-        completion(false);
-        return;
-    }
+void MusicSubunit::SetAudioVolume(ASFW::AVC::IAvcUnit& unit, uint8_t plugId, int16_t volume, std::function<void(bool)> completion) {
 
     Cmd::FeatureCommand cmd{
         .address = SubunitAddress::Of(SubunitType::kAudio, 0),
         .operands = Cmd::FeatureOperands::Volume(
             plugId, Cmd::kMasterChannel, ASFW::AVC::AvcVolume::FromRaw(volume)),
     };
-    avcUnit->Control(cmd, [completion = std::move(completion), plugId](Expected<Cmd::FeatureReply> result) mutable {
+    unit.Control(cmd, [completion = std::move(completion), plugId](Expected<Cmd::FeatureReply> result) mutable {
         if (result) {
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Set Audio Volume success (plug %d)", plugId);
         } else {
@@ -1089,19 +1118,13 @@ void MusicSubunit::SetAudioVolume(ASFW::Protocols::AVC::IAVCCommandSubmitter& su
     });
 }
 
-void MusicSubunit::SetAudioMute(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, uint8_t plugId, bool mute, std::function<void(bool)> completion) {
-    auto* avcUnit = submitter.AsAvcUnit();
-    if (!avcUnit) {
-        ASFW_LOG_V1(MusicSubunit, "MusicSubunit: submitter is not an IAvcUnit");
-        completion(false);
-        return;
-    }
+void MusicSubunit::SetAudioMute(ASFW::AVC::IAvcUnit& unit, uint8_t plugId, bool mute, std::function<void(bool)> completion) {
 
     Cmd::FeatureCommand cmd{
         .address = SubunitAddress::Of(SubunitType::kAudio, 0),
         .operands = Cmd::FeatureOperands::Mute(plugId, Cmd::kMasterChannel, mute),
     };
-    avcUnit->Control(cmd, [completion = std::move(completion)](Expected<Cmd::FeatureReply> result) mutable {
+    unit.Control(cmd, [completion = std::move(completion)](Expected<Cmd::FeatureReply> result) mutable {
         if (!result) {
             ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Set Audio Mute failed: error=%u",
                         static_cast<unsigned>(result.error().kind));
