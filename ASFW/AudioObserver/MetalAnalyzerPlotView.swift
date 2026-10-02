@@ -217,6 +217,10 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private let glyphPipeline: MTLRenderPipelineState?
     private var glyphAtlases: [AnalyzerTextStyle: (scale: CGFloat, atlas: AnalyzerGlyphAtlas)] = [:]
     private var readoutText = AnalyzerTextCache()
+    private let readoutBatch = AnalyzerReadoutBatch()
+    private var readoutAppearance: String?
+    private var readoutPrimary = SIMD4<Float>(1, 1, 1, 1)
+    private var readoutSecondary = SIMD4<Float>(1, 1, 1, 0.55)
     private let submission: AnalyzerRenderSubmission
     private let metrics: AudioObserverMetricsState
     private let state: AudioObserverRenderState
@@ -290,9 +294,9 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
         let slots = self.slots
         var submitted = false
         defer { if !submitted { slots.signal() } }
-        guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
+        guard let surface = submission.drawable(for: view),
               let command = submission.commandBuffer(for: device),
-              let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return }
+              let encoder = command.makeRenderCommandEncoder(descriptor: surface.pass) else { return }
         let snapshot = state.read()
         let now = CACurrentMediaTime()
         let epoch = (snapshot.sessionEpoch, snapshot.discontinuityEpoch, snapshot.memoryGeneration)
@@ -359,7 +363,7 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
         drawReadouts(plots.filter { $0.text != nil }, encoder: encoder,
                      view: view, scale: scale, now: now)
         encoder.endEncoding()
-        command.present(drawable)
+        command.present(surface.drawable)
         command.addCompletedHandler { _ in slots.signal() }
         submitted = true
         submission.commit(command)
@@ -372,16 +376,18 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private func drawReadouts(_ slots: [AnalyzerPlotRegion], encoder: MTLRenderCommandEncoder,
                               view: MTKView, scale: CGFloat, now: Double) {
         guard !slots.isEmpty, let glyphPipeline else { return }
-        var primary = SIMD4<Float>(1, 1, 1, 1)
-        var secondary = SIMD4<Float>(1, 1, 1, 0.55)
-        view.effectiveAppearance.performAsCurrentDrawingAppearance {
-            func rgba(_ color: NSColor) -> SIMD4<Float>? {
-                color.usingColorSpace(.sRGB).map {
-                    SIMD4(Float($0.redComponent), Float($0.greenComponent), Float($0.blueComponent), Float($0.alphaComponent))
+        let appearance = view.effectiveAppearance.name.rawValue
+        if readoutAppearance != appearance {
+            view.effectiveAppearance.performAsCurrentDrawingAppearance {
+                func rgba(_ color: NSColor) -> SIMD4<Float>? {
+                    color.usingColorSpace(.sRGB).map {
+                        SIMD4(Float($0.redComponent), Float($0.greenComponent), Float($0.blueComponent), Float($0.alphaComponent))
+                    }
                 }
+                readoutPrimary = rgba(.labelColor) ?? readoutPrimary
+                readoutSecondary = rgba(.secondaryLabelColor) ?? readoutSecondary
             }
-            primary = rgba(.labelColor) ?? primary
-            secondary = rgba(.secondaryLabelColor) ?? secondary
+            readoutAppearance = appearance
         }
         var metricsSnapshot: AudioObserverMetrics?
         let readMetrics = { [metrics] () -> AudioObserverMetrics in
@@ -397,25 +403,24 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
         encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: Int(drawableSize.x), height: Int(drawableSize.y)))
         encoder.setRenderPipelineState(glyphPipeline)
         encoder.setVertexBytes(&drawableSize, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+        var items: [AnalyzerReadoutBatch.Item] = []
+        items.reserveCapacity(slots.count)
         for slot in slots {
-            guard let spec = slot.text, let atlas = atlas(for: spec.style, scale: scale),
-                  let texture = atlas.texture else { continue }
+            guard let spec = slot.text, let atlas = atlas(for: spec.style, scale: scale) else { continue }
             let text = readoutText.text(for: spec, now: now, metrics: readMetrics, snapshot: { stateSnapshot })
             let rect = CGRect(x: slot.rect.minX * scale, y: slot.rect.minY * scale,
                               width: slot.rect.width * scale, height: slot.rect.height * scale)
-            let vertices = atlas.vertices(for: text, in: rect, alignment: spec.alignment)
-            guard !vertices.isEmpty else { continue }
-            var color = spec.tone == .primary ? primary : secondary
+            items.append(.init(key: spec.key, text: text, rect: rect, atlas: atlas,
+                               alignment: spec.alignment, tone: spec.tone))
+        }
+        readoutBatch.update(items, device: device)
+        guard let buffer = readoutBatch.buffer else { return }
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        for draw in readoutBatch.draws {
+            var color = draw.tone == .primary ? readoutPrimary : readoutSecondary
             encoder.setFragmentBytes(&color, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
-            let length = vertices.count * MemoryLayout<AnalyzerGlyphVertex>.stride
-            if length <= 4096 {
-                vertices.withUnsafeBytes { encoder.setVertexBytes($0.baseAddress!, length: length, index: 0) }
-            } else if let buffer = vertices.withUnsafeBytes({
-                device.makeBuffer(bytes: $0.baseAddress!, length: length, options: .storageModeShared) }) {
-                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
-            } else { continue }
-            encoder.setFragmentTexture(texture, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: vertices.count)
+            encoder.setFragmentTexture(draw.texture, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: draw.start, vertexCount: draw.count)
         }
     }
 

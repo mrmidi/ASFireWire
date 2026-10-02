@@ -47,7 +47,11 @@ actor AudioAnalysisEngine {
     private let ringBuffer: MTLBuffer
     private let outputBuffer: MTLBuffer
     private let pipeline: MTLComputePipelineState
+    private let kWeightBlocks: KWeightBlockPipeline
     private let kWeightPipeline: MTLComputePipelineState
+    private let truePeakPipeline: MTLComputePipelineState
+    private let truePeakBuffer: MTLBuffer
+    private let kernelTiming: AnalyzerKernelTiming?
     private var committedFilterState: MTLBuffer
     private var provisionalFilterState: MTLBuffer
     private let queue: MTLCommandQueue
@@ -143,6 +147,8 @@ actor AudioAnalysisEngine {
               let library = device.makeDefaultLibrary(),
               let function = library.makeFunction(name: "asfwConsumeOutputRange"),
               let kFunction = library.makeFunction(name: "asfwKWeightRange"),
+              let tpFunction = library.makeFunction(name: "asfwTruePeakRange"),
+              let tpBuffer = device.makeBuffer(length: Int(AudioAnalysisLayout.maximumBatchFrames) * MemoryLayout<SIMD2<Float>>.stride, options: .storageModePrivate),
               let queue = device.makeCommandQueue(),
               let output = device.makeBuffer(length: AudioAnalysisLayout.outputWords * MemoryLayout<UInt32>.stride,
                                              options: .storageModeShared),
@@ -158,6 +164,9 @@ actor AudioAnalysisEngine {
         self.plotHistory = plotHistory
         self.queue = queue
         self.outputBuffer = output
+        truePeakBuffer = tpBuffer
+        kernelTiming = AnalyzerKernelTiming(device: device)
+        kWeightBlocks = try KWeightBlockPipeline(device: device, library: library)
         committedFilterState = committed
         provisionalFilterState = provisional
         committed.contents().initializeMemory(as: UInt8.self, repeating: 0, count: committed.length)
@@ -165,6 +174,7 @@ actor AudioAnalysisEngine {
         do {
             pipeline = try device.makeComputePipelineState(function: function)
             kWeightPipeline = try device.makeComputePipelineState(function: kFunction)
+            truePeakPipeline = try device.makeComputePipelineState(function: tpFunction)
         } catch {
             throw AudioObserverError.pipelineFailed
         }
@@ -260,7 +270,8 @@ actor AudioAnalysisEngine {
                       size: committedFilterState.length)
             blit.endEncoding()
         }
-        guard let encoder = commandBuffer.makeComputeCommandEncoder() else {
+        let timing = metrics.kernelTimingEnabled() ? kernelTiming : nil
+        guard let encoder = timing != nil ? timing!.encoder(commandBuffer, stage: 0) : commandBuffer.makeComputeCommandEncoder() else {
             cursor = end
             metrics.rejected()
             return
@@ -280,7 +291,24 @@ actor AudioAnalysisEngine {
                                 threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         encoder.endEncoding()
         if usesKWeight {
-            guard let kEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            guard let tpEncoder = timing != nil ? timing!.encoder(commandBuffer, stage: 1) : commandBuffer.makeComputeCommandEncoder() else {
+                cursor = end; metrics.rejected(); return
+            }
+            tpEncoder.setComputePipelineState(truePeakPipeline)
+            tpEncoder.setBuffer(ringBuffer, offset: 0, index: 0)
+            tpEncoder.setBuffer(provisionalFilterState, offset: 0, index: 1)
+            tpEncoder.setBuffer(truePeakBuffer, offset: 0, index: 2)
+            tpEncoder.setBytes(&params, length: MemoryLayout<ConsumeRangeParams>.stride, index: 3)
+            tpEncoder.dispatchThreads(MTLSize(width: Int(distance), height: 1, depth: 1),
+                                     threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            tpEncoder.endEncoding()
+            do {
+                try withUnsafePointer(to: &params) { pointer in
+                    try kWeightBlocks.encode(command: commandBuffer, ring: ringBuffer, state: provisionalFilterState,
+                        truePeaks: truePeakBuffer, params: pointer, paramsLength: MemoryLayout<ConsumeRangeParams>.stride, frames: Int(distance), timing: timing)
+                }
+            } catch { cursor = end; metrics.rejected(); return }
+            guard let kEncoder = timing != nil ? timing!.encoder(commandBuffer, stage: 2, start: false, end: true) : commandBuffer.makeComputeCommandEncoder() else {
                 cursor = end
                 metrics.rejected()
                 return
@@ -289,6 +317,10 @@ actor AudioAnalysisEngine {
             kEncoder.setBuffer(ringBuffer, offset: 0, index: 0)
             kEncoder.setBuffer(provisionalFilterState, offset: 0, index: 1)
             kEncoder.setBuffer(outputBuffer, offset: 0, index: 2)
+            kEncoder.setBuffer(truePeakBuffer, offset: 0, index: 4)
+            kEncoder.setBuffer(kWeightBlocks.filtered, offset: 0, index: 5)
+            kEncoder.setBuffer(kWeightBlocks.shelf, offset: 0, index: 6)
+            kEncoder.setBuffer(kWeightBlocks.chunks, offset: 0, index: 7)
             kEncoder.setBytes(&params, length: MemoryLayout<ConsumeRangeParams>.stride, index: 3)
             kEncoder.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1),
                                      threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
@@ -314,6 +346,12 @@ actor AudioAnalysisEngine {
         commandBuffer.addScheduledHandler { _ in scheduled.set(CACurrentMediaTime()) }
         commandBuffer.addCompletedHandler { completed in
             let completionTime = CACurrentMediaTime()
+            if completed.status == .completed, let timing {
+                metrics.recordKernels(reduction: timing.milliseconds(stage: 0),
+                    truePeak: usesKWeight ? timing.milliseconds(stage: 1) : nil,
+                    weighting: usesKWeight ? timing.milliseconds(stage: 2) : nil,
+                    at: ProcessInfo.processInfo.systemUptime)
+            }
             let outputValues = output.copyValues(count: AudioAnalysisLayout.outputWords)
             let gpuStart = completed.gpuStartTime
             let gpuEnd = completed.gpuEndTime
@@ -348,7 +386,7 @@ actor AudioAnalysisEngine {
                     values: outputValues, completedSuccessfully: completedSuccessfully,
                     geometryStillMatches: geometryStillMatches, usesKWeight: usesKWeight,
                     encodeMilliseconds: encodeMilliseconds, queueMilliseconds: queueMilliseconds,
-                    gpuMilliseconds: gpuMilliseconds, completionMilliseconds: (completionTime - encodeStart) * 1_000,
+                    gpuMilliseconds: gpuMilliseconds, completionMilliseconds: (completionTime - encodeStart) * 1_000, analysisStartedAt: encodeStart,
                     sampleAge: sampleAge, marginMilliseconds: marginMilliseconds, key: key)
             }
         }
@@ -360,7 +398,7 @@ actor AudioAnalysisEngine {
                         postState: AudioObserverWireState?, values outputValues: [UInt32],
                         completedSuccessfully: Bool, geometryStillMatches: Bool, usesKWeight: Bool,
                         encodeMilliseconds: Double, queueMilliseconds: Double?, gpuMilliseconds: Double?,
-                        completionMilliseconds: Double, sampleAge: Double, marginMilliseconds: Double,
+                        completionMilliseconds: Double, analysisStartedAt: Double, sampleAge: Double, marginMilliseconds: Double,
                         key: String) {
         inFlight = false
         defer {
@@ -390,7 +428,7 @@ actor AudioAnalysisEngine {
                                completionMilliseconds: completionMilliseconds,
                                sampleAgeMilliseconds: sampleAge,
                                overwriteMarginMilliseconds: marginMilliseconds,
-                               meterKey: key)
+                               meterKey: key, analysisStartedAt: analysisStartedAt)
             }
             self.cursor = token.endFrame
             self.lastSessionEpoch = postState.sessionEpoch

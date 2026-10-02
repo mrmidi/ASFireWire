@@ -4,16 +4,11 @@ struct SpectrumParams { ulong writeEnd; uint ringFrames; uint channels; uint cha
 struct SpectrumVertex { float4 position [[position]]; };
 
 // One threadgroup performs a radix-2 DIT FFT. Bit-reversed input followed by
-// eleven butterfly stages produces natural-order frequency bins.
-kernel void asfwSpectrumFFT(device const float* ring [[buffer(0)]],
-                            device float* amplitudes [[buffer(1)]],
-                            constant SpectrumParams& p [[buffer(2)]],
-                            uint tid [[thread_index_in_threadgroup]],
-                            uint3 groupSize [[threads_per_threadgroup]]) {
-    const uint threads = groupSize.x;
+// log2(FFT size) butterfly stages produces natural-order frequency bins.
+inline void spectrumTransform(device const float* ring, thread const SpectrumParams& p,
+                              threadgroup float2* values, uint tid, uint threads) {
     const uint fftSize = p.fftSize;
     const uint stages = uint(log2(float(fftSize)));
-    threadgroup float2 values[4096];
     for (uint i = tid; i < fftSize; i += threads) {
         uint reversed = 0;
         uint bits = i;
@@ -47,22 +42,155 @@ kernel void asfwSpectrumFFT(device const float* ring [[buffer(0)]],
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-    for (uint bin = tid; bin <= fftSize / 2; bin += threads) {
-        // Single-sided peak amplitude: a bin-centred full-scale sine is 0 dBFS.
-        float gain = p.window == 1 ? 0.54f : p.window == 2 ? 0.42f : 0.5f;
-        float scale = (bin == 0 || bin == fftSize / 2) ? 1.0f / (fftSize * gain) : 2.0f / (fftSize * gain);
-        float amplitude = length(values[bin]);
-        if (p.transform == 3) {
-            // Two real FFTs packed into one complex FFT. Average channel power
-            // keeps the stereo spectrum independent of phase cancellation.
-            float2 a = values[bin];
-            float2 b = values[(fftSize - bin) % fftSize] * float2(1, -1);
-            float2 left = (a + b) * 0.5f;
-            float2 right = float2(a.y - b.y, b.x - a.x) * 0.5f;
-            amplitude = sqrt((dot(left, left) + dot(right, right)) * 0.5f);
-        }
-        amplitudes[bin] = amplitude * scale;
+}
+inline float spectrumAmplitude(threadgroup float2* values, thread const SpectrumParams& p, uint bin) {
+    uint fftSize = p.fftSize;
+    // Single-sided peak amplitude: a bin-centred full-scale sine is 0 dBFS.
+    float gain = p.window == 1 ? 0.54f : p.window == 2 ? 0.42f : 0.5f;
+    float scale = (bin == 0 || bin == fftSize / 2) ? 1.0f / (fftSize * gain) : 2.0f / (fftSize * gain);
+    float amplitude = length(values[bin]);
+    if (p.transform == 3) {
+        // Two real FFTs packed into one complex FFT. Average channel power
+        // keeps the stereo spectrum independent of phase cancellation.
+        float2 a = values[bin];
+        float2 b = values[(fftSize - bin) % fftSize] * float2(1, -1);
+        float2 left = (a + b) * 0.5f;
+        float2 right = float2(a.y - b.y, b.x - a.x) * 0.5f;
+        amplitude = sqrt((dot(left, left) + dot(right, right)) * 0.5f);
     }
+    return amplitude * scale;
+}
+kernel void asfwSpectrumFFT(device const float* ring [[buffer(0)]],
+    device float* amplitudes [[buffer(1)]], constant SpectrumParams& params [[buffer(2)]],
+    uint tid [[thread_index_in_threadgroup]], uint3 size [[threads_per_threadgroup]]) {
+    SpectrumParams p = params;
+    threadgroup float2 values[4096];
+    spectrumTransform(ring, p, values, tid, size.x);
+    for (uint bin = tid; bin <= p.fftSize / 2; bin += size.x)
+        amplitudes[bin] = spectrumAmplitude(values, p, bin);
+}
+
+struct SpectrogramParams { SpectrumParams fft; ulong firstSlice; uint hop; uint columns; };
+kernel void asfwSpectrogramSTFT(device const float* ring [[buffer(0)]],
+    device ulong* stamps [[buffer(1)]], constant SpectrogramParams& params [[buffer(2)]],
+    texture2d<float, access::write> history [[texture(0)]],
+    uint tid [[thread_index_in_threadgroup]], uint3 group [[threadgroup_position_in_grid]],
+    uint3 size [[threads_per_threadgroup]]) {
+    ulong slice = params.firstSlice + group.x;
+    SpectrumParams p = params.fft;
+    p.writeEnd = slice * params.hop;
+    threadgroup float2 values[4096];
+    spectrumTransform(ring, p, values, tid, size.x);
+    uint column = uint(slice % params.columns);
+    for (uint bin = tid; bin <= p.fftSize / 2; bin += size.x) {
+        float db = 20.0f * log10(max(spectrumAmplitude(values, p, bin), 1e-6f));
+        history.write(float4(db), uint2(column, bin));
+    }
+    if (tid == 0) stamps[column] = slice + 1;
+}
+struct SpectrogramDisplay { ulong latestSlice; uint columns; uint fftSize; uint sampleRate; uint pixelHeight; };
+struct SpectrogramVertex { float4 position [[position]]; float2 uv; };
+vertex SpectrogramVertex asfwSpectrogramVertex(uint id [[vertex_id]]) {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return { float4(uv * 2 - 1, 0, 1), float2(uv.x, 1 - uv.y) };
+}
+// Shared amplitude palette for both history views and their legend.
+inline float3 spectrogramColor(float db) {
+    float t = clamp((db + 100) / 100, 0.0f, 1.0f);
+    float3 color = t < 0.33f ? mix(float3(0.025,0.035,0.05), float3(0.08,0.2,0.55), t / 0.33f)
+        : t < 0.66f ? mix(float3(0.08,0.2,0.55), float3(0.1,0.85,0.7), (t-0.33f)/0.33f)
+        : t < 0.85f ? mix(float3(0.1,0.85,0.7), float3(1,0.8,0.2), (t-0.66f)/0.19f)
+        : t < 0.93f ? mix(float3(1,0.8,0.2), float3(1,0.4,0.08), (t-0.85f)/0.08f)
+        : mix(float3(1,0.4,0.08), float3(1,0.08,0.04), (t-0.93f)/0.07f);
+    return color;
+}
+
+struct WaterfallCamera { float4x4 matrix; float4 dimensions; };
+inline float4 waterfallPosition(float frequency, float age, float level, constant WaterfallCamera& camera) {
+    return camera.matrix * float4((frequency - 0.5f) * camera.dimensions.x,
+                                 level * camera.dimensions.y, -age * camera.dimensions.z, 1);
+}
+// Check every intervening STFT stamp once per time interval, rather than
+// joining across a missing column merely because both endpoints survived.
+kernel void asfwWaterfallContinuity(device const ulong* stamps [[buffer(0)]],
+    device uint* valid [[buffer(1)]], constant SpectrogramDisplay& p [[buffer(2)]],
+    constant WaterfallCamera& camera [[buffer(3)]], uint segment [[thread_position_in_grid]]) {
+    uint count = uint(camera.dimensions.w);
+    if (segment >= count - 1) return;
+    uint first = segment * (p.columns - 1) / (count - 1);
+    uint last = (segment + 1) * (p.columns - 1) / (count - 1);
+    valid[segment] = 0;
+    if (p.latestSlice < last) return;
+    for (uint age = first; age <= last; ++age) {
+        ulong slice = p.latestSlice - age;
+        if (stamps[uint(slice % p.columns)] != slice + 1) return;
+    }
+    valid[segment] = 1;
+}
+struct WaterfallVertex { float4 position [[position]]; float db; };
+inline float waterfallDB(float frequency, uint column, texture2d<float, access::read> history,
+                         constant SpectrogramDisplay& p) {
+    float ratio = min(20000.0f, float(p.sampleRate) / 2) / 20;
+    float bin = clamp(20 * pow(ratio, frequency) * p.fftSize / p.sampleRate, 0.0f, float(p.fftSize / 2));
+    uint lo = uint(bin), hi = min(lo + 1, p.fftSize / 2);
+    float db = mix(history.read(uint2(column, lo)).x, history.read(uint2(column, hi)).x, fract(bin));
+    uint first = uint(ceil(20 * pow(ratio, max(0.0f, frequency - 0.5f / 255)) * p.fftSize / p.sampleRate));
+    uint last = min(uint(20 * pow(ratio, min(1.0f, frequency + 0.5f / 255)) * p.fftSize / p.sampleRate), p.fftSize / 2);
+    for (uint b = first; b <= last; ++b) db = max(db, history.read(uint2(column, b)).x);
+    return db;
+}
+inline WaterfallVertex waterfallSample(float frequency, uint row,
+    texture2d<float, access::read> history, device const ulong* stamps,
+    constant SpectrogramDisplay& p, constant WaterfallCamera& camera) {
+    uint age = row * (p.columns - 1) / (uint(camera.dimensions.w) - 1);
+    if (p.latestSlice < age) return { float4(0, 0, -1, 1), -100 };
+    ulong slice = p.latestSlice - age;
+    uint column = uint(slice % p.columns);
+    if (stamps[column] != slice + 1) return { float4(0, 0, -1, 1), -100 };
+    float db = waterfallDB(frequency, column, history, p);
+    return { waterfallPosition(frequency, float(age) / (p.columns - 1),
+                              clamp((db + 100) / 100, 0.0f, 1.0f), camera), db };
+}
+vertex WaterfallVertex asfwWaterfallSurfaceVertex(uint vid [[vertex_id]], uint segment [[instance_id]],
+    texture2d<float, access::read> history [[texture(0)]], device const ulong* stamps [[buffer(0)]],
+    constant SpectrogramDisplay& p [[buffer(1)]], constant WaterfallCamera& camera [[buffer(2)]],
+    device const uint* valid [[buffer(3)]]) {
+    if (!valid[segment]) return { float4(0, 0, -1, 1), -100 };
+    // Alternating vertices from adjacent measured rows form the two triangles
+    // of each frequency/time cell. No CPU interpolation or mesh uploads.
+    return waterfallSample(float(vid / 2) / 255, segment + (vid & 1), history, stamps, p, camera);
+}
+vertex WaterfallVertex asfwWaterfallVertex(uint vid [[vertex_id]], uint row [[instance_id]],
+    texture2d<float, access::read> history [[texture(0)]], device const ulong* stamps [[buffer(0)]],
+    constant SpectrogramDisplay& p [[buffer(1)]], constant WaterfallCamera& camera [[buffer(2)]]) {
+    return waterfallSample(float(vid) / 255, row, history, stamps, p, camera);
+}
+fragment float4 asfwWaterfallFragment(WaterfallVertex in [[stage_in]]) {
+    // Color depends solely on interpolated measured dBFS, never on age or lighting.
+    return float4(spectrogramColor(in.db), 1);
+}
+fragment float4 asfwWaterfallWireFragment() { return float4(0.015, 0.025, 0.035, 0.3); }
+
+
+fragment float4 asfwSpectrogramFragment(SpectrogramVertex in [[stage_in]],
+    texture2d<float, access::read> history [[texture(0)]], device const ulong* stamps [[buffer(0)]],
+    constant SpectrogramDisplay& p [[buffer(1)]]) {
+    uint age = min(uint((1 - clamp(in.uv.x, 0.0f, 1.0f)) * p.columns), p.columns - 1);
+    if (p.latestSlice < age) return float4(0.025, 0.035, 0.05, 1);
+    ulong slice = p.latestSlice - age;
+    uint column = uint(slice % p.columns);
+    if (stamps[column] != slice + 1) return float4(0.025, 0.035, 0.05, 1);
+    float hz = 20 * pow(min(20000.0f, float(p.sampleRate) / 2) / 20, 1 - in.uv.y);
+    float bin = clamp(hz * p.fftSize / p.sampleRate, 0.0f, float(p.fftSize / 2));
+    uint lo = uint(bin), hi = min(lo + 1, p.fftSize / 2);
+    float db = mix(history.read(uint2(column, lo)).x, history.read(uint2(column, hi)).x, fract(bin));
+    // Keep narrow tones visible when a logarithmic row covers several FFT bins.
+    float halfRow = 0.5f / max(1.0f, float(p.pixelHeight));
+    float ratio = min(20000.0f, float(p.sampleRate) / 2) / 20;
+    uint first = uint(ceil(20 * pow(ratio, max(0.0f, 1 - in.uv.y - halfRow)) * p.fftSize / p.sampleRate));
+    uint last = min(uint(20 * pow(ratio, min(1.0f, 1 - in.uv.y + halfRow)) * p.fftSize / p.sampleRate), p.fftSize / 2);
+    for (uint b = first; b <= last; ++b) db = max(db, history.read(uint2(column, b)).x);
+    return float4(spectrogramColor(db), 1);
 }
 
 vertex SpectrumVertex asfwSpectrumVertex(uint vid [[vertex_id]],

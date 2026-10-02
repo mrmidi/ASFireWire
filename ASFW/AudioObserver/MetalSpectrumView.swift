@@ -157,8 +157,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         guard snapshot.ioRunning, snapshot.writeEndFrame != lastWriteEnd,
               snapshot.validHistoryFrames >= UInt64(fftSize), snapshot.sampleRateHz > 40,
               channel < snapshot.channels, otherChannel < snapshot.channels,
-              let pass = view.currentRenderPassDescriptor,
-              let drawable = view.currentDrawable,
+              let surface = submission.drawable(for: view),
               slots.wait(timeout: .now()) == .success else { return }
         let slots = self.slots
         guard let command = submission.commandBuffer(for: compute.device) else { slots.signal(); return }
@@ -188,7 +187,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
                 threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
             filtering.endEncoding()
         }
-        guard let drawing = command.makeRenderCommandEncoder(descriptor: pass) else { slots.signal(); return }
+        guard let drawing = command.makeRenderCommandEncoder(descriptor: surface.pass) else { slots.signal(); return }
         let scale = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
         for lane in lanes {
             let rect = (regions.first { $0.transform == lane.transform }?.rect ?? view.bounds).intersection(view.bounds)
@@ -209,7 +208,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
             }
         }
         drawing.endEncoding()
-        command.present(drawable)
+        command.present(surface.drawable)
         command.addCompletedHandler { _ in slots.signal() }
         lastTime = now; epoch = key; lastWriteEnd = snapshot.writeEndFrame
         submission.commit(command)
