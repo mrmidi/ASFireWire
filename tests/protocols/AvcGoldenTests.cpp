@@ -27,6 +27,10 @@
 #include "ASFWDriver/Protocols/AVC/Discovery/DiscoverySession.hpp"
 #include "ASFWDriver/Protocols/AVC/Graph/DiscoveryGraph.hpp"
 #include "ASFWDriver/UserClient/WireFormats/AVCDiscoveryDocument.hpp"
+#include "ASFWDriver/UserClient/Handlers/AVCHandler.hpp"
+#include "ASFWDriver/Protocols/AVC/IAVCDiscovery.hpp"
+#include <DriverKit/IOUserClient.h>
+#include <DriverKit/OSData.h>
 #include "DuetDescriptorFixture.hpp"
 #include "Phase88DescriptorFixtures.hpp"
 #include "ASFWDriver/Protocols/AVC/Graph/AvcDeviceGraph.hpp"
@@ -798,6 +802,106 @@ TEST(AvcGoldenTests, Phase88DiscoveryDocumentPagesReassembleWithinTheWireLimit) 
     }
     EXPECT_EQ(reassembled, document);
     EXPECT_GT(document.size(), 4096U) << "the Phase 88 document should need several pages";
+}
+
+
+// ============================================================================
+// User-client outputs pinned byte for byte (legacy removal bar)
+// ============================================================================
+
+namespace UserClientGolden {
+/// The unit as the user client sees it through discovery.
+class OneUnitDiscovery final : public IAVCDiscovery {
+public:
+    explicit OneUnitDiscovery(std::shared_ptr<AVCUnit> unit) : unit_(std::move(unit)) {}
+    std::vector<AVCUnit*> GetAllAVCUnits() override { return {unit_.get()}; }
+    void ReScanAllUnits() override {}
+    FCPTransport* GetFCPTransportForNodeID(uint16_t) override { return nullptr; }
+    std::shared_ptr<FCPTransport> AcquireFCPTransportForNodeID(uint16_t) override { return nullptr; }
+private:
+    std::shared_ptr<AVCUnit> unit_;
+};
+
+std::string Hex(const OSData* data) {
+    if (!data) return "<none>\n";
+    const auto* bytes = static_cast<const uint8_t*>(data->getBytesNoCopy());
+    std::string out;
+    for (size_t i = 0; i < data->getLength(); ++i) {
+        char buf[4];
+        std::snprintf(buf, sizeof(buf), "%02x", bytes[i]);
+        out += buf;
+        out += (i % 32 == 31) ? '\n' : ' ';
+    }
+    return out + "\n";
+}
+
+/// Every user-client output derived from discovery, as text.
+std::string Capture(const std::shared_ptr<AVCUnit>& unit, uint64_t guid) {
+    OneUnitDiscovery discovery(unit);
+    UserClient::AVCHandler handler(&discovery);
+    std::string out;
+    const auto call = [&](const char* name, auto method, std::vector<uint64_t> scalars) {
+        IOUserClientMethodArguments args{};
+        args.scalarInput = scalars.data();
+        args.scalarInputCount = static_cast<uint32_t>(scalars.size());
+        const auto kr = (handler.*method)(&args);
+        char header[96];
+        std::snprintf(header, sizeof(header), "## %s kr=0x%08x\n", name, static_cast<unsigned>(kr));
+        out += header;
+        out += Hex(kr == kIOReturnSuccess ? args.structureOutput : nullptr);
+        if (args.structureOutput) args.structureOutput->release();
+    };
+    call("GetAVCUnits", &UserClient::AVCHandler::GetAVCUnits, {});
+    for (const auto& sub : unit->GetModel().subunits) {
+        const auto type = static_cast<uint64_t>(sub.id.type);
+        const std::vector<uint64_t> scalars{guid >> 32, guid & 0xFFFFFFFFu, type, sub.id.id};
+        char name[64];
+        std::snprintf(name, sizeof(name), "GetSubunitCapabilities type=%02llx id=%u",
+                      static_cast<unsigned long long>(type), sub.id.id);
+        call(name, &UserClient::AVCHandler::GetSubunitCapabilities, scalars);
+        std::snprintf(name, sizeof(name), "GetSubunitDescriptor type=%02llx id=%u",
+                      static_cast<unsigned long long>(type), sub.id.id);
+        call(name, &UserClient::AVCHandler::GetSubunitDescriptor, scalars);
+    }
+    return out;
+}
+} // namespace UserClientGolden
+
+TEST(AvcGoldenTests, DuetUserClientOutputsAreUnchanged) {
+    AvcGoldenRigOptions opts;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kOxford);
+    AvcGoldenRig rig(kDuet, opts);
+    std::vector<uint8_t> music;
+    for (size_t i = 0; i < Fixtures::kDuetMusicStatusHex.size(); i += 2)
+        music.push_back(static_cast<uint8_t>(std::stoul(Fixtures::kDuetMusicStatusHex.substr(i, 2), nullptr, 16)));
+    rig.Sim().SetDescriptor(0x60, {0x80}, std::move(music));
+    rig.Sim().SetDescriptor(0x08, {0x00}, std::vector<uint8_t>(Fixtures::kDuetAudioIdentifierBytes.begin(),
+                                                              Fixtures::kDuetAudioIdentifierBytes.end()));
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    ASSERT_TRUE(ok);
+    ::ASFW::Testing::ExpectTextMatchesGolden(UserClientGolden::Capture(rig.Unit(), kDuet.guid),
+                                             "avc/duet__user_client.txt");
+}
+
+TEST(AvcGoldenTests, Phase88UserClientOutputsAreUnchanged) {
+    AvcGoldenRigOptions opts;
+    opts.guid = kPhase88.guid;
+    opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
+    opts.generation = kPhase88.generation;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
+    AvcGoldenRig rig(kPhase88, opts);
+    rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    ASSERT_TRUE(ok);
+    ::ASFW::Testing::ExpectTextMatchesGolden(UserClientGolden::Capture(rig.Unit(), kPhase88.guid),
+                                             "avc/phase88__user_client.txt");
 }
 
 // ============================================================================
