@@ -130,6 +130,10 @@ public:
     }
 
     ~AvcGoldenRig() {
+        // Every command must follow our write response to the previous answer.
+        EXPECT_TRUE(simUnit_->CommandsWhileResponseOpen().empty())
+            << simUnit_->CommandsWhileResponseOpen().size()
+            << " command(s) written before the previous response was acknowledged";
         if (activeTransport_) {
             activeTransport_->Shutdown();
         }
@@ -144,6 +148,9 @@ public:
 
     [[nodiscard]] RecordingFireWireBus& Bus() noexcept { return bus_; }
     [[nodiscard]] FakeTimerScheduler& Timers() noexcept { return timers_; }
+    /// Run the work queued for after the receive handler: FCP delivers each
+    /// response once our write response to it is out (FCPTransport::OnFCPResponse).
+    void Settle() { timers_.Advance(0); }
     [[nodiscard]] Discovery::DeviceRegistry& Routes() noexcept { return routes_; }
     [[nodiscard]] std::shared_ptr<AVCUnit> Unit() noexcept { return avcUnit_; }
     [[nodiscard]] Protocols::AVC::FCPTransport& Transport() noexcept {
@@ -304,6 +311,7 @@ TEST(AvcGoldenTests, ChainedCommandsDoNotGrowTheStack) {
         });
     };
     next();
+    rig.Settle();
     EXPECT_EQ(answered, kCommands);
     EXPECT_LT(highest - lowest, 64U * 1024U) << "completions nest: the stack grows with each command";
 }
@@ -322,6 +330,7 @@ TEST(AvcGoldenTests, DuetAttachDiscovery) {
     rig.Mark("## AVCUnit::Initialize + Oxford inventory");
     bool initOk = false;
     rig.Unit()->Initialize([&](bool ok) { initOk = ok; });
+    rig.Settle();
     EXPECT_TRUE(initOk);
     EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Completed);
 
@@ -350,6 +359,7 @@ TEST(AvcGoldenTests, DescriptorGraphSelectsRoutedStreamsAndValidatesGeometry) {
     }
     bool done = false;
     rig.Unit()->Initialize([&](bool ok) { done = ok; });
+    rig.Settle();
     ASSERT_TRUE(done);
     const auto graph = rig.Unit()->GetDiscoveredGraph();
     ASSERT_TRUE(graph);
@@ -381,6 +391,7 @@ TEST(AvcGoldenTests, DuetStreamingStartStop) {
         queryDone = true;
         EXPECT_TRUE(res.has_value());
     });
+    rig.Settle();
     EXPECT_TRUE(queryDone);
 
     rig.Mark("## SignalFormat::Set44100");
@@ -399,6 +410,7 @@ TEST(AvcGoldenTests, DuetStreamingStartStop) {
         set44Done = true;
         EXPECT_TRUE(res.has_value());
     });
+    rig.Settle();
     EXPECT_TRUE(set44Done);
 
     rig.Mark("## SignalFormat::Set48000");
@@ -417,6 +429,7 @@ TEST(AvcGoldenTests, DuetStreamingStartStop) {
         set48Done = true;
         EXPECT_TRUE(res.has_value());
     });
+    rig.Settle();
     EXPECT_TRUE(set48Done);
 
     rig.Mark("## ApogeeDuetDuplex::ProgramRx");
@@ -431,6 +444,7 @@ TEST(AvcGoldenTests, DuetStreamingStartStop) {
         rxDone = true;
         EXPECT_EQ(status, kIOReturnSuccess);
     });
+    rig.Settle();
     EXPECT_TRUE(rxDone);
 
     rig.Mark("## ApogeeDuetDuplex::ProgramTxAndEnable");
@@ -439,6 +453,7 @@ TEST(AvcGoldenTests, DuetStreamingStartStop) {
         txDone = true;
         EXPECT_EQ(status, kIOReturnSuccess);
     });
+    rig.Settle();
     EXPECT_TRUE(txDone);
 
     rig.Mark("## ApogeeDuetDuplex::StopDuplex");
@@ -472,6 +487,7 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     rig.Mark("## AVCUnit::Initialize + BridgeCo inventory");
     bool initOk = false;
     rig.Unit()->Initialize([&](bool ok) { initOk = ok; });
+    rig.Settle();
     EXPECT_TRUE(initOk);
     EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Completed);
 
@@ -548,6 +564,7 @@ TEST(AvcGoldenTests, OnyxiAttachDiscovery) {
             EXPECT_EQ(set.entries[0].pcmChannels, 8);
             EXPECT_EQ(set.entries[0].midiSlots, 0);
         });
+    rig.Settle();
     EXPECT_TRUE(detectFired);
 
     rig.ExpectGolden("onyxi__attach_discovery");
@@ -581,6 +598,7 @@ TEST(AvcGoldenTests, Fw1814AllowlistEnforcement) {
         inDone = true;
         EXPECT_EQ(status, FCPStatus::kOk);
     });
+    rig.Settle();
     EXPECT_TRUE(inDone);
 
     rig.Mark("## Allowed: OutputSignalFormatProbe");
@@ -601,6 +619,7 @@ TEST(AvcGoldenTests, Fw1814AllowlistEnforcement) {
         outDone = true;
         EXPECT_EQ(status, FCPStatus::kOk);
     });
+    rig.Settle();
     EXPECT_TRUE(outDone);
 
     rig.Mark("## Allowed: RateControl48k");
@@ -616,6 +635,7 @@ TEST(AvcGoldenTests, Fw1814AllowlistEnforcement) {
         ctrlDone = true;
         EXPECT_EQ(status, FCPStatus::kOk);
     });
+    rig.Settle();
     EXPECT_TRUE(ctrlDone);
 
     // Refused commands (must never appear on wire)
@@ -706,6 +726,8 @@ TEST(AvcGoldenTests, GenericBusResetRecovery) {
         EXPECT_EQ(status, FCPStatus::kOk);
     }, policy);
 
+    rig.Settle();
+
     EXPECT_TRUE(done);
     rig.ExpectGolden("generic__bus_reset_recovery");
 }
@@ -748,6 +770,7 @@ TEST(AvcGoldenTests, GenericInterimAndTimeout) {
         interimDone = true;
         EXPECT_EQ(status, FCPStatus::kOk);
     });
+    rig.Settle();
     EXPECT_TRUE(interimDone);
 
     // Part 2: Timeout response
@@ -760,6 +783,7 @@ TEST(AvcGoldenTests, GenericInterimAndTimeout) {
         EXPECT_EQ(status, FCPStatus::kTimeout);
     });
     rig.Timers().Advance(51ULL * 1'000'000ULL);
+    rig.Settle();
     EXPECT_TRUE(timeoutDone);
 
     rig.ExpectGolden("generic__interim_and_timeout");
@@ -779,6 +803,7 @@ TEST(AvcGoldenTests, ExtensionInventoryHoldsDiscoveryOpenUntilItFinishes) {
 
     bool completed = false;
     rig.Unit()->Initialize([&](bool) { completed = true; });
+    rig.Settle();
     // A refresh polls this status: it must not read Completed while the
     // vendor inventory is still on the wire.
     ASSERT_TRUE(finish);
@@ -786,6 +811,7 @@ TEST(AvcGoldenTests, ExtensionInventoryHoldsDiscoveryOpenUntilItFinishes) {
     EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Running);
 
     finish();
+    rig.Settle();
     EXPECT_TRUE(completed);
     EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Completed);
 }

@@ -184,6 +184,7 @@ TEST(AvcTestRig, InterimResponseDefersCompletionUntilTheFinalFrame) {
 
     // The target's final answer arrives on the same pending command.
     rig.Transport()->OnFCPResponse(2, 1, std::vector<uint8_t>{0x09, 0xFF, 0x30});
+    rig.Drain();
     EXPECT_EQ(capture.count, 1);
     EXPECT_EQ(capture.status, FCPStatus::kOk);
 }

@@ -250,6 +250,11 @@ private:
         bool awaitingRouteRevalidation{false};
         std::optional<Discovery::DeviceRouteToken> resetRoute;
         bool gotInterim{false};
+        /// The final response has been accepted and its completion is waiting
+        /// to run after the receive handler returns (see OnFCPResponse). The
+        /// command stays pending so later submissions keep their order, but
+        /// nothing may retry, time out or fail it any more.
+        bool answered{false};
 
         Async::AsyncHandle asyncHandle;
         Scheduling::TimerToken timeoutToken{Scheduling::kInvalidTimerToken};

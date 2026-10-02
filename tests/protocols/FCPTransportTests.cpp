@@ -109,6 +109,8 @@ TEST_F(FCPTransportTests, AcceptsResponseBeforeCommandWriteCompletion) {
     ASSERT_EQ(bus_.PendingWriteCount(), 1U);
 
     transport_->OnFCPResponse(2, 1, response);
+
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 1);
     EXPECT_EQ(completionStatus, FCPStatus::kOk);
 
@@ -129,9 +131,12 @@ TEST_F(FCPTransportTests, IgnoresResponseFromDifferentGeneration) {
 
     const auto response = MakeAcceptedUnitInfoResponse();
     transport_->OnFCPResponse(2, 2, response);
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 0);
 
     transport_->OnFCPResponse(2, 1, response);
+
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 1);
 }
 
@@ -153,9 +158,12 @@ TEST_F(FCPTransportTests, RejectsResponseForInvalidatedRouteAfterRebind) {
 
     const auto response = MakeAcceptedUnitInfoResponse();
     transport_->OnFCPResponse(3, 1, response);
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 0);
 
     transport_->OnFCPResponse(2, 1, response);
+
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 0);
 }
 
@@ -177,9 +185,12 @@ TEST_F(FCPTransportTests, RejectsWriteCompletionFromInvalidatedRoute) {
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
     const auto response = MakeAcceptedUnitInfoResponse();
     transport_->OnFCPResponse(3, 2, response);
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 0);
 
     transport_->OnFCPResponse(2, 1, response);
+
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 0);
 }
 
@@ -225,6 +236,8 @@ TEST_F(FCPTransportTests, CancellingCommandCancelsItsTimeout) {
     EXPECT_EQ(completionCount, 1);
 
     transport_->OnFCPResponse(2, 1, MakeAcceptedUnitInfoResponse());
+
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 1);
 }
 
@@ -271,12 +284,14 @@ TEST_F(FCPTransportTests, InterimResponseExtendsDeadlineWithoutCompletingCommand
 
     constexpr std::array<uint8_t, 3> interim{0x0F, 0xFF, 0x30};
     transport_->OnFCPResponse(2, 1, interim);
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 0);
     EXPECT_EQ(scheduler_.PendingCount(), 1U);
 
     scheduler_.Advance(config_.timeoutMs * kMillisecondNs);
     EXPECT_EQ(completionCount, 0);
     transport_->OnFCPResponse(2, 1, MakeAcceptedUnitInfoResponse());
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 1);
 }
 
@@ -319,6 +334,7 @@ TEST_F(FCPTransportTests, ResetRetryWaitsForRevalidatedRouteBeforeResubmission) 
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
     const auto response = MakeAcceptedUnitInfoResponse();
     transport_->OnFCPResponse(3, 2, response);
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 1);
 }
 
@@ -442,6 +458,8 @@ TEST_F(FCPTransportTests, ShutdownCompletesPendingAndQueuedCommandsExactlyOnce) 
     EXPECT_EQ(bus_.PendingWriteCount(), 0U);
 
     transport_->OnFCPResponse(2, 1, MakeAcceptedUnitInfoResponse());
+
+    scheduler_.Advance(0);
     EXPECT_EQ(completions.size(), 2U);
 }
 
@@ -505,6 +523,7 @@ TEST_F(FCPTransportTests, IdempotentCommandRetriesAfterTimeout) {
 
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
     transport_->OnFCPResponse(2, 1, MakeAcceptedUnitInfoResponse());
+    scheduler_.Advance(0);
     EXPECT_EQ(completionStatus, FCPStatus::kOk);
 }
 
@@ -528,10 +547,12 @@ TEST_F(FCPTransportTests, CommandSpecificMatcherRejectsSameOpcodeStaleResponse) 
 
     constexpr std::array<uint8_t, 4> stale{0x09, 0xFF, 0x30, 0x00};
     transport_->OnFCPResponse(2, 1, stale);
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 0);
 
     constexpr std::array<uint8_t, 4> matching{0x09, 0xFF, 0x30, 0xA5};
     transport_->OnFCPResponse(2, 1, matching);
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 1);
     EXPECT_EQ(completionStatus, FCPStatus::kOk);
 }
@@ -560,11 +581,13 @@ TEST_F(FCPTransportTests, QueuesCommandsFifoAndAllowsQueuedCancellation) {
 
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
     transport_->OnFCPResponse(2, 1, MakeAcceptedUnitInfoResponse());
+    scheduler_.Advance(0);
     EXPECT_EQ(completions, (std::vector<uint32_t>{3, 1}));
     EXPECT_EQ(bus_.WriteCount(), 2U);
 
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
     transport_->OnFCPResponse(2, 1, MakeAcceptedUnitInfoResponse());
+    scheduler_.Advance(0);
     EXPECT_EQ(completions, (std::vector<uint32_t>{3, 1, 2}));
     EXPECT_EQ(bus_.WriteCount(), 2U);
 }
@@ -581,7 +604,9 @@ TEST_F(FCPTransportTests, ExchangeLogKeepsCommandResponseAndInterim) {
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
     constexpr std::array<uint8_t, 3> interim{0x0F, 0xFF, 0x30};
     transport_->OnFCPResponse(2, 1, interim);
+    scheduler_.Advance(0);
     transport_->OnFCPResponse(2, 1, MakeAcceptedUnitInfoResponse());
+    scheduler_.Advance(0);
 
     const auto log = transport_->CopyExchangeLog();
     EXPECT_EQ(log.session, 1U);
@@ -639,6 +664,7 @@ TEST_F(FCPTransportTests, NewExchangeSessionStartsAnEmptyLog) {
                     .IsValid());
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
     transport_->OnFCPResponse(2, 1, MakeAcceptedUnitInfoResponse());
+    scheduler_.Advance(0);
     ASSERT_EQ(transport_->CopyExchangeLog().records.size(), 1U);
 
     transport_->BeginExchangeSession();

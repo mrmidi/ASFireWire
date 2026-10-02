@@ -448,7 +448,7 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
                                  std::span<const uint8_t> payload) {
     IOLockLock(lock_);
 
-    if (shuttingDown_ || !pending_) {
+    if (shuttingDown_ || !pending_ || pending_->answered) {
         IOLockUnlock(lock_);
         ASFW_LOG_V3(FCP,
                      "FCPTransport: Spurious response (no pending command)");
@@ -541,9 +541,33 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
         return;
     }
 
+    // The response arrived as the target's block write, and this runs inside
+    // the receive handler: our write response to it goes out only after the
+    // handler returns. Completing here would let the completion submit the next
+    // command first, while the target is still inside its response transaction
+    // (TA 2004006 AV/C General 4.2 §6.5, Figure 13). A Phase 88 does not ack a
+    // command written then, and wedges after a few. Linux's response handler
+    // only wakes the waiting caller (sound/firewire/fcp.c:338-374) and Apple's
+    // completes a command whose caller resumes on another thread
+    // (IOFireWireAVCCommand.cpp:171-181), so both acknowledge the response
+    // before the next command. Accept it now; deliver it from the work queue.
+    pending_->answered = true;
+    CancelTimeout();
+    const uint32_t transactionID = pending_->transactionID;
     IOLockUnlock(lock_);
 
-    CompleteCommand(FCPStatus::kOk, response);
+    const auto self = weak_from_this().lock();
+    if (self && timerScheduler_) {
+        const auto token = timerScheduler_->ScheduleAfter(
+            0, [self, response, transactionID] {
+            self->CompleteCommand(FCPStatus::kOk, response, transactionID);
+        });
+        if (token != Scheduling::kInvalidTimerToken) {
+            return;
+        }
+        ASFW_LOG_V1(FCP, "FCPTransport: Failed to defer response delivery; completing inline");
+    }
+    CompleteCommand(FCPStatus::kOk, response, transactionID);
 }
 
 //==============================================================================
@@ -556,7 +580,7 @@ void FCPTransport::OnAsyncWriteComplete(FCPWriteAttempt writeAttempt,
     (void)response;
     IOLockLock(lock_);
 
-    if (shuttingDown_ || !pending_) {
+    if (shuttingDown_ || !pending_ || pending_->answered) {
         IOLockUnlock(lock_);
         return;
     }
@@ -614,7 +638,7 @@ void FCPTransport::OnAsyncWriteComplete(FCPWriteAttempt writeAttempt,
 void FCPTransport::OnCommandTimeout() {
     IOLockLock(lock_);
 
-    if (shuttingDown_ || !pending_) {
+    if (shuttingDown_ || !pending_ || pending_->answered) {
         IOLockUnlock(lock_);
         return;
     }
@@ -730,7 +754,9 @@ void FCPTransport::RetryCommand() {
 void FCPTransport::OnBusReset(uint32_t newGeneration) {
     IOLockLock(lock_);
 
-    if (shuttingDown_ || !pending_) {
+    // An answered command's response belongs to the generation it arrived in;
+    // its delivery is already queued.
+    if (shuttingDown_ || !pending_ || pending_->answered) {
         IOLockUnlock(lock_);
         return;
     }

@@ -113,6 +113,11 @@ TEST_F(FCPResponseRouterTests, RoutesResponseFromWithinRegisteredResponseSpace) 
 
     EXPECT_EQ(router.RouteBlockWrite(request), BlockWriteDisposition::kComplete);
     EXPECT_EQ(discovery.AcquiredNodeID(), 2);
+    // Our write response goes out when RouteBlockWrite returns; the command
+    // completes, and may submit the next one, only after that (AV/C General
+    // 4.2 §6.5).
+    EXPECT_EQ(completionCount, 0);
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 1);
     EXPECT_EQ(completionStatus, FCPStatus::kOk);
     EXPECT_TRUE(weakTransport.expired());
@@ -162,6 +167,8 @@ TEST_F(FCPResponseRouterTests, UsesCapturedGenerationRatherThanCurrentBusGenerat
     };
 
     EXPECT_EQ(router.RouteBlockWrite(request), BlockWriteDisposition::kComplete);
+    EXPECT_EQ(completionCount, 0);
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 1);
     EXPECT_TRUE(weakTransport.expired());
 }
@@ -195,6 +202,7 @@ TEST_F(FCPResponseRouterTests, DoesNotRouteResponseWithoutCapturedGeneration) {
         .payload = response,
     };
     EXPECT_EQ(router.RouteBlockWrite(taggedRequest), BlockWriteDisposition::kComplete);
+    scheduler_.Advance(0);
     EXPECT_EQ(completionCount, 1);
     EXPECT_EQ(discovery.AcquiredNodeID(), 2);
 }

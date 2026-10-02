@@ -90,8 +90,22 @@ public:
         return route.value_or(Discovery::DeviceRouteToken{});
     }
 
-    /// Settle every queued bus write and the AV/C responses they provoke.
-    size_t Drain(size_t maxSteps = 256) { return target_->Drain(maxSteps); }
+    /// Settle every queued bus write and the AV/C responses they provoke. FCP
+    /// delivers a response from the work queue, after our write response to it
+    /// (FCPTransport::OnFCPResponse), so run that work between bus steps.
+    size_t Drain(size_t maxSteps = 256) {
+        size_t steps = 0;
+        for (;;) {
+            timers_.Advance(0);
+            const size_t n = target_->Drain(maxSteps - steps);
+            steps += n;
+            if (n == 0 || steps >= maxSteps) {
+                break;
+            }
+        }
+        timers_.Advance(0);
+        return steps;
+    }
 
     /// Advance the virtual clock far enough to trip the FCP response timeout.
     void ExpireFcpTimeout() {
