@@ -88,6 +88,12 @@ struct AnalyzerTimingStatisticsTests {
         #expect(value.analysisToVisual.count == 0) // no analysis origin in this isolated GPU test
     }
 
+    @Test func timestampCalibrationRejectsStationaryClocksAndCanRecover() {
+        #expect(AnalyzerKernelTiming.scale(cpuStart: 100, gpuStart: 200, cpuEnd: 101, gpuEnd: 200) == nil)
+        #expect(AnalyzerKernelTiming.scale(cpuStart: 100, gpuStart: 200, cpuEnd: 100, gpuEnd: 201) == nil)
+        #expect(AnalyzerKernelTiming.scale(cpuStart: 100, gpuStart: 200, cpuEnd: 2_000_100, gpuEnd: 1_000_200) == 0.000002)
+    }
+
     @Test func hardwareCountersMeasureAnExistingComputePass() throws {
         let device = try #require(MTLCreateSystemDefaultDevice())
         guard device.supportsFamily(.apple1), device.supportsCounterSampling(.atStageBoundary) else { return }
@@ -111,10 +117,23 @@ struct AnalyzerTimingStatisticsTests {
         encoder.setBuffer(output, offset: 0, index: 1)
         encoder.setBytes(&params, length: MemoryLayout<Params>.stride, index: 2)
         encoder.dispatchThreads(MTLSize(width: 256, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
-        encoder.endEncoding(); command.commit(); command.waitUntilCompleted()
+        encoder.endEncoding()
+        // K-weight timing now spans multiple compute encoders in one command.
+        for index in 0..<2 {
+            let pass = try #require(timing.encoder(command, stage: 2, start: index == 0, end: index == 1))
+            pass.setComputePipelineState(pipeline)
+            pass.setBuffer(source, offset: 0, index: 0)
+            pass.setBuffer(output, offset: 0, index: 1)
+            pass.setBytes(&params, length: MemoryLayout<Params>.stride, index: 2)
+            pass.dispatchThreads(MTLSize(width: 256, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            pass.endEncoding()
+        }
+        command.commit(); command.waitUntilCompleted()
         try #require(command.status == .completed)
+        let multiple = try #require(timing.milliseconds(stage: 2))
         let duration = try #require(timing.milliseconds(stage: 0))
         let whole = (command.gpuEndTime - command.gpuStartTime) * 1_000
+        #expect(multiple > 0 && multiple <= whole + 0.1)
         #expect(duration >= 0 && duration <= whole + 0.1, "counter \(duration) ms, command \(whole) ms")
     }
 

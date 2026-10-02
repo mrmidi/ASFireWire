@@ -39,6 +39,19 @@ private func encodeTruePeak(_ command: MTLCommandBuffer, device: MTLDevice,
     return peaks
 }
 
+private func encodeKWeightBlocks(_ command: MTLCommandBuffer, device: MTLDevice,
+                               library: MTLLibrary, source: MTLBuffer, state: MTLBuffer, peaks: MTLBuffer,
+                               params: ConsumeRangeTestParams) throws -> KWeightBlockPipeline {
+    let blocks = try KWeightBlockPipeline(device: device, library: library)
+    var params = params
+    let frames = Int(params.frameCount)
+    try withUnsafePointer(to: &params) {
+        try blocks.encode(command: command, ring: source, state: state, truePeaks: peaks, params: $0,
+                          paramsLength: MemoryLayout<ConsumeRangeTestParams>.stride, frames: frames)
+    }
+    return blocks
+}
+
 private func scalarTruePeak(_ interleaved: [Float], channel: Int) -> Float {
     let phases: [[Float]] = [
         [0.001708984375, 0.010986328125, -0.0196533203125, 0.033203125,
@@ -156,8 +169,11 @@ struct AudioAnalysisKernelTests {
             first.dispatchThreads(MTLSize(width: 256, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
             first.endEncoding()
             let peaks = try encodeTruePeak(command, device: device, library: library, source: source, state: state, params: params)
+            let blocks = try encodeKWeightBlocks(command, device: device, library: library, source: source, state: state, peaks: peaks, params: params)
             let second = try #require(command.makeComputeCommandEncoder())
             second.setBuffer(peaks, offset: 0, index: 4)
+            second.setBuffer(blocks.filtered, offset: 0, index: 5)
+            second.setBuffer(blocks.shelf, offset: 0, index: 6); second.setBuffer(blocks.chunks, offset: 0, index: 7)
             second.setComputePipelineState(weighting)
             second.setBuffer(source, offset: 0, index: 0)
             second.setBuffer(state, offset: 0, index: 1)
@@ -341,8 +357,11 @@ struct AudioAnalysisKernelTests {
         var params = makeLoudnessTestParams(startFrame: 0, frameCount: UInt32(sampleCount),
                                             ringFrames: UInt32(sampleCount), channels: 2)
         let peaks = try encodeTruePeak(command, device: device, library: library, source: source, state: state, params: params)
+        let blocks = try encodeKWeightBlocks(command, device: device, library: library, source: source, state: state, peaks: peaks, params: params)
         let encoder = try #require(command.makeComputeCommandEncoder())
         encoder.setBuffer(peaks, offset: 0, index: 4)
+        encoder.setBuffer(blocks.filtered, offset: 0, index: 5)
+        encoder.setBuffer(blocks.shelf, offset: 0, index: 6); encoder.setBuffer(blocks.chunks, offset: 0, index: 7)
         encoder.setComputePipelineState(pipeline)
         encoder.setBuffer(source, offset: 0, index: 0)
         encoder.setBuffer(state, offset: 0, index: 1)
@@ -397,8 +416,11 @@ struct AudioAnalysisKernelTests {
             var params = makeLoudnessTestParams(startFrame: start, frameCount: count,
                                                 ringFrames: 480, channels: 2)
             let peaks = try encodeTruePeak(command, device: device, library: library, source: source, state: state, params: params)
+            let blocks = try encodeKWeightBlocks(command, device: device, library: library, source: source, state: state, peaks: peaks, params: params)
             let encoder = try #require(command.makeComputeCommandEncoder())
             encoder.setBuffer(peaks, offset: 0, index: 4)
+            encoder.setBuffer(blocks.filtered, offset: 0, index: 5)
+            encoder.setBuffer(blocks.shelf, offset: 0, index: 6); encoder.setBuffer(blocks.chunks, offset: 0, index: 7)
             encoder.setComputePipelineState(pipeline)
             encoder.setBuffer(source, offset: 0, index: 0)
             encoder.setBuffer(state, offset: 0, index: 1)
@@ -457,12 +479,15 @@ struct AudioAnalysisKernelTests {
                                                ringFrames: UInt32(capacity), channels: 2)
             let command = try #require(queue.makeCommandBuffer())
             let peaks = try encodeTruePeak(command, device: device, library: library, source: source, state: state, params: params)
+            let blocks = try encodeKWeightBlocks(command, device: device, library: library, source: source, state: state, peaks: peaks, params: params)
             let encoder = try #require(command.makeComputeCommandEncoder())
             encoder.setComputePipelineState(weighting)
             encoder.setBuffer(source, offset: 0, index: 0)
             encoder.setBuffer(state, offset: 0, index: 1)
             encoder.setBuffer(output, offset: 0, index: 2)
             encoder.setBuffer(peaks, offset: 0, index: 4)
+            encoder.setBuffer(blocks.filtered, offset: 0, index: 5)
+            encoder.setBuffer(blocks.shelf, offset: 0, index: 6); encoder.setBuffer(blocks.chunks, offset: 0, index: 7)
             encoder.setBytes(&params, length: MemoryLayout<ConsumeRangeTestParams>.stride, index: 3)
             encoder.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
             encoder.endEncoding(); command.commit(); command.waitUntilCompleted()
@@ -484,6 +509,105 @@ struct AudioAnalysisKernelTests {
         #expect(abs(maximum.x - scalarTruePeak(sanitized, channel: 0)) < 1e-5)
         #expect(abs(maximum.y - scalarTruePeak(sanitized, channel: 1)) < 1e-5)
         #expect(state.contents().assumingMemoryBound(to: UInt32.self)[18] == 0)
+    }
+
+    @Test func blockKWeightingMatchesScalarCascadeThroughLongStatefulRanges() throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let library = try #require(device.makeDefaultLibrary())
+        let blocks = try KWeightBlockPipeline(device: device, library: library)
+        let weighting = try device.makeComputePipelineState(function: #require(library.makeFunction(name: "asfwKWeightRange")))
+        let queue = try #require(device.makeCommandQueue())
+        let capacity = Int(AudioAnalysisLayout.maximumBatchFrames)
+        let source = try #require(device.makeBuffer(length: capacity * 8, options: .storageModeShared))
+        let state = try #require(device.makeBuffer(length: 49 * 4, options: .storageModeShared))
+        let output = try #require(device.makeBuffer(length: AudioAnalysisLayout.outputWords * 4, options: .storageModeShared))
+        let readback = try #require(device.makeBuffer(length: capacity * 8, options: .storageModeShared))
+        state.contents().initializeMemory(as: UInt8.self, repeating: 0, count: state.length)
+        let coefficients: [[Double]] = [
+            [1.5351248596, -2.6916961894, 1.1983928109, 1.6906592932, -0.7324807742],
+            [1, -2, 1, 1.9900474548, -0.9900722504]
+        ].map { $0.map { Double(Float($0)) } }
+        var history = Array(repeating: Array(repeating: 0.0, count: 4), count: 4)
+        var seed: UInt32 = 73
+        var offset = 0
+        var squaredError = 0.0, squaredReference = 0.0, maximumError = 0.0
+        var chunkEnergy = [0.0, 0.0]
+        var chunkFrames = 0
+        for count in [1, 3, 11, 31, 32, 33, 127, 480, 2048, 5760] + Array(repeating: 2048, count: 96) {
+            let pcm = source.contents().assumingMemoryBound(to: Float.self)
+            var expected: [Double] = []
+            for i in 0..<count {
+                for channel in 0..<2 {
+                    seed = seed &* 1664525 &+ 1013904223
+                    let noise = Float(Int32(bitPattern: seed)) / Float(Int32.max) * 0.3
+                    // Buffer-only vectors: DC, noise, impulse and silence; never played.
+                    let value: Float = offset + i < 48_000 ? (channel == 0 ? 0.25 : -0.1)
+                        : offset + i < 96_000 ? noise : (offset + i == 96_000 ? 1 : 0)
+                    pcm[((offset + i) % capacity) * 2 + channel] = value
+                    var x = Double(value)
+                    for stage in 0..<2 {
+                        let index = channel * 2 + stage
+                        let c = coefficients[stage], h = history[index]
+                        let y = c[0] * x + c[1] * h[0] + c[2] * h[1] + c[3] * h[2] + c[4] * h[3]
+                        history[index] = [x, h[0], y, h[2]]; x = y
+                    }
+                    expected.append(x)
+                }
+            }
+            var params = makeLoudnessTestParams(startFrame: UInt64(offset), frameCount: UInt32(count), ringFrames: UInt32(capacity), channels: 2)
+            let command = try #require(queue.makeCommandBuffer())
+            let peaks = try encodeTruePeak(command, device: device, library: library, source: source, state: state, params: params)
+            try withUnsafePointer(to: &params) { pointer in
+                try blocks.encode(command: command, ring: source, state: state, truePeaks: peaks, params: pointer,
+                    paramsLength: MemoryLayout<ConsumeRangeTestParams>.stride, frames: count)
+            }
+            let encoder = try #require(command.makeComputeCommandEncoder())
+            encoder.setComputePipelineState(weighting)
+            encoder.setBuffer(source, offset: 0, index: 0); encoder.setBuffer(state, offset: 0, index: 1)
+            encoder.setBuffer(output, offset: 0, index: 2); encoder.setBuffer(peaks, offset: 0, index: 4)
+            encoder.setBuffer(blocks.filtered, offset: 0, index: 5); encoder.setBuffer(blocks.shelf, offset: 0, index: 6); encoder.setBuffer(blocks.chunks, offset: 0, index: 7)
+            encoder.setBytes(&params, length: MemoryLayout<ConsumeRangeTestParams>.stride, index: 3)
+            encoder.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
+            encoder.endEncoding()
+            let blit = try #require(command.makeBlitCommandEncoder())
+            blit.copy(from: blocks.filtered, sourceOffset: 0, to: readback, destinationOffset: 0, size: count * 8)
+            blit.endEncoding(); command.commit(); command.waitUntilCompleted()
+            try #require(command.status == .completed)
+            let actual = readback.contents().assumingMemoryBound(to: Float.self)
+            let words = output.contents().assumingMemoryBound(to: UInt32.self)
+            var chunk = 0
+            for i in 0..<count {
+                for channel in 0..<2 {
+                    let value = Double(actual[i * 2 + channel]), reference = expected[i * 2 + channel]
+                    try #require(value.isFinite)
+                    let error = value - reference
+                    squaredError += error * error; squaredReference += reference * reference
+                    maximumError = max(maximumError, abs(error))
+                    chunkEnergy[channel] += reference * reference
+                }
+                chunkFrames += 1
+                if chunkFrames == 480 {
+                    let base = AudioAnalysisLayout.chunkOffset + chunk * AudioAnalysisLayout.chunkWords
+                    let measured = Double(Float(bitPattern: words[base + 2])) + Double(Float(bitPattern: words[base + 3]))
+                    let reference = chunkEnergy[0] + chunkEnergy[1]
+                    // Relative dB accuracy is meaningful above the BS.1770 absolute
+                    // gate. Below it, bound absolute energy error instead of dividing
+                    // by an exponentially vanishing impulse/DC tail.
+                    let absoluteGateEnergy = 480 * pow(10.0, (-70.0 + 0.691) / 10.0)
+                    if reference > absoluteGateEnergy {
+                        #expect(abs(10 * log10(measured / reference)) < 0.02, "loudness energy mismatch at \(offset + i): measured \(measured), reference \(reference)")
+                    }
+                    else {
+                        #expect(abs(measured - reference) < 480e-9)
+                    }
+                    chunkEnergy = [0, 0]; chunkFrames = 0; chunk += 1
+                }
+            }
+            #expect(Int(words[16]) == chunk)
+            offset += count
+        }
+        #expect(maximumError < 0.0003, "maximum error \(maximumError)")
+        #expect(sqrt(squaredError / squaredReference) < 0.0002)
     }
 
 }

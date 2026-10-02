@@ -47,6 +47,7 @@ actor AudioAnalysisEngine {
     private let ringBuffer: MTLBuffer
     private let outputBuffer: MTLBuffer
     private let pipeline: MTLComputePipelineState
+    private let kWeightBlocks: KWeightBlockPipeline
     private let kWeightPipeline: MTLComputePipelineState
     private let truePeakPipeline: MTLComputePipelineState
     private let truePeakBuffer: MTLBuffer
@@ -165,6 +166,7 @@ actor AudioAnalysisEngine {
         self.outputBuffer = output
         truePeakBuffer = tpBuffer
         kernelTiming = AnalyzerKernelTiming(device: device)
+        kWeightBlocks = try KWeightBlockPipeline(device: device, library: library)
         committedFilterState = committed
         provisionalFilterState = provisional
         committed.contents().initializeMemory(as: UInt8.self, repeating: 0, count: committed.length)
@@ -300,7 +302,13 @@ actor AudioAnalysisEngine {
             tpEncoder.dispatchThreads(MTLSize(width: Int(distance), height: 1, depth: 1),
                                      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
             tpEncoder.endEncoding()
-            guard let kEncoder = timing != nil ? timing!.encoder(commandBuffer, stage: 2) : commandBuffer.makeComputeCommandEncoder() else {
+            do {
+                try withUnsafePointer(to: &params) { pointer in
+                    try kWeightBlocks.encode(command: commandBuffer, ring: ringBuffer, state: provisionalFilterState,
+                        truePeaks: truePeakBuffer, params: pointer, paramsLength: MemoryLayout<ConsumeRangeParams>.stride, frames: Int(distance), timing: timing)
+                }
+            } catch { cursor = end; metrics.rejected(); return }
+            guard let kEncoder = timing != nil ? timing!.encoder(commandBuffer, stage: 2, start: false, end: true) : commandBuffer.makeComputeCommandEncoder() else {
                 cursor = end
                 metrics.rejected()
                 return
@@ -310,6 +318,9 @@ actor AudioAnalysisEngine {
             kEncoder.setBuffer(provisionalFilterState, offset: 0, index: 1)
             kEncoder.setBuffer(outputBuffer, offset: 0, index: 2)
             kEncoder.setBuffer(truePeakBuffer, offset: 0, index: 4)
+            kEncoder.setBuffer(kWeightBlocks.filtered, offset: 0, index: 5)
+            kEncoder.setBuffer(kWeightBlocks.shelf, offset: 0, index: 6)
+            kEncoder.setBuffer(kWeightBlocks.chunks, offset: 0, index: 7)
             kEncoder.setBytes(&params, length: MemoryLayout<ConsumeRangeParams>.stride, index: 3)
             kEncoder.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1),
                                      threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))

@@ -133,34 +133,21 @@ kernel void asfwTruePeakRange(
     peaks[i] = peak;
 }
 
-// Stateful 48 kHz BS.1770 K-weighting. State words contain two direct-form
-// biquads per selected channel plus unfinished 10 ms channel-energy sums.
+// Summarise the parallel K-weighted samples, keep unfinished 10 ms sums,
+// and commit the cascade/FIR terminal histories after all filtering passes.
 kernel void asfwKWeightRange(
     device const float* samples [[buffer(0)]],
     device uint* state [[buffer(1)]],
     device uint* output [[buffer(2)]],
     constant ConsumeRangeParams& params [[buffer(3)]],
     device const float2* peaks [[buffer(4)]],
+    device const float2* filtered [[buffer(5)]],
+    device const float2* shelf [[buffer(6)]],
+    device const float4* chunks [[buffer(7)]],
     uint tid [[thread_position_in_grid]]) {
     if (tid != 0) return;
     if (params.frameCount > analysisMaximumBatchFrames) { output[16] = 0; output[94] = 0; return; }
 
-    float l1x1 = as_type<float>(state[0]);
-    float l1x2 = as_type<float>(state[1]);
-    float l1y1 = as_type<float>(state[2]);
-    float l1y2 = as_type<float>(state[3]);
-    float r1x1 = as_type<float>(state[4]);
-    float r1x2 = as_type<float>(state[5]);
-    float r1y1 = as_type<float>(state[6]);
-    float r1y2 = as_type<float>(state[7]);
-    float l2x1 = as_type<float>(state[8]);
-    float l2x2 = as_type<float>(state[9]);
-    float l2y1 = as_type<float>(state[10]);
-    float l2y2 = as_type<float>(state[11]);
-    float r2x1 = as_type<float>(state[12]);
-    float r2x2 = as_type<float>(state[13]);
-    float r2y1 = as_type<float>(state[14]);
-    float r2y2 = as_type<float>(state[15]);
     float energyLeft = as_type<float>(state[16]);
     float energyRight = as_type<float>(state[17]);
     uint partialFrames = state[18];
@@ -180,71 +167,62 @@ kernel void asfwKWeightRange(
     bool truePeakValid = false;
     uint chunkCount = 0;
 
-    for (uint i = 0; i < params.frameCount; ++i) {
-        const uint frame = uint((params.startFrame + ulong(i)) % params.ringFrames);
-        const ulong base = ulong(frame) * params.channels;
-        const float rawLeft = samples[base + params.leftChannel];
-        const float rawRight = samples[base + params.rightChannel];
-        const float left = isfinite(rawLeft) ? rawLeft : 0.0f;
-        const float right = isfinite(rawRight) ? rawRight : 0.0f;
-
-        const float2 frameTruePeak = peaks[i];
-        truePeakLeft = max(truePeakLeft, frameTruePeak.x);
-        truePeakRight = max(truePeakRight, frameTruePeak.y);
-        chunkTruePeakLeft = max(chunkTruePeakLeft, frameTruePeak.x);
-        chunkTruePeakRight = max(chunkTruePeakRight, frameTruePeak.y);
-        truePeakValid = truePeakValid || truePeakHistoryFrames + i + 1 >= 12;
-
-        rawEnergy += left * left + right * right;
-        samplePeak = max(samplePeak, max(abs(left), abs(right)));
-
-        const float leftStage1 = 1.5351248596f * left - 2.6916961894f * l1x1
-            + 1.1983928109f * l1x2 + 1.6906592932f * l1y1 - 0.7324807742f * l1y2;
-        l1x2 = l1x1; l1x1 = left; l1y2 = l1y1; l1y1 = leftStage1;
-        const float leftFiltered = leftStage1 - 2.0f * l2x1 + l2x2
-            + 1.9900474548f * l2y1 - 0.9900722504f * l2y2;
-        l2x2 = l2x1; l2x1 = leftStage1; l2y2 = l2y1; l2y1 = leftFiltered;
-
-        const float rightStage1 = 1.5351248596f * right - 2.6916961894f * r1x1
-            + 1.1983928109f * r1x2 + 1.6906592932f * r1y1 - 0.7324807742f * r1y2;
-        r1x2 = r1x1; r1x1 = right; r1y2 = r1y1; r1y1 = rightStage1;
-        const float rightFiltered = rightStage1 - 2.0f * r2x1 + r2x2
-            + 1.9900474548f * r2y1 - 0.9900722504f * r2y2;
-        r2x2 = r2x1; r2x1 = rightStage1; r2y2 = r2y1; r2y1 = rightFiltered;
-
-        energyLeft += leftFiltered * leftFiltered;
-        energyRight += rightFiltered * rightFiltered;
-        ++partialFrames;
-        if (partialFrames == 480) {
-            const ulong endFrame = params.startFrame + ulong(i) + 1;
-            const uint base = analysisChunkOffset + chunkCount * 8;
-            output[base] = uint(endFrame & 0xfffffffful);
-            output[base + 1] = uint(endFrame >> 32);
-            output[base + 2] = as_type<uint>(energyLeft);
-            output[base + 3] = as_type<uint>(energyRight);
-            output[base + 4] = as_type<uint>(rawEnergy);
-            output[base + 5] = as_type<uint>(samplePeak);
-            output[base + 6] = as_type<uint>(chunkTruePeakLeft);
-            output[base + 7] = as_type<uint>(chunkTruePeakRight);
-            ++chunkCount;
-            energyLeft = 0.0f;
-            energyRight = 0.0f;
-            rawEnergy = 0.0f;
-            samplePeak = 0.0f;
-            chunkTruePeakLeft = 0.0f;
-            chunkTruePeakRight = 0.0f;
-            partialFrames = 0;
+    const uint oldPartial = partialFrames;
+    chunkCount = (oldPartial + params.frameCount) / 480;
+    partialFrames = (oldPartial + params.frameCount) % 480;
+    truePeakValid = truePeakHistoryFrames + params.frameCount >= 12;
+    // Only compact group results are visited (at most 13), never PCM frames.
+    for (uint chunk = 0; chunk <= chunkCount; ++chunk) {
+        float4 value = chunks[chunk * 2];
+        float2 peak = chunks[chunk * 2 + 1].xy;
+        truePeakLeft = max(truePeakLeft, peak.x);
+        truePeakRight = max(truePeakRight, peak.y);
+        if (chunk == 0) {
+            value.xyz += float3(energyLeft, energyRight, rawEnergy);
+            value.w = max(value.w, samplePeak);
+            peak = max(peak, float2(chunkTruePeakLeft, chunkTruePeakRight));
+        }
+        if (chunk < chunkCount) {
+            const ulong endFrame = params.startFrame + ulong((chunk + 1) * 480 - oldPartial);
+            const uint base = analysisChunkOffset + chunk * 8;
+            output[base] = uint(endFrame); output[base + 1] = uint(endFrame >> 32);
+            output[base + 2] = as_type<uint>(value.x); output[base + 3] = as_type<uint>(value.y);
+            output[base + 4] = as_type<uint>(value.z); output[base + 5] = as_type<uint>(value.w);
+            output[base + 6] = as_type<uint>(peak.x); output[base + 7] = as_type<uint>(peak.y);
+        } else {
+            energyLeft = value.x; energyRight = value.y; rawEnergy = value.z;
+            samplePeak = value.w; chunkTruePeakLeft = peak.x; chunkTruePeakRight = peak.y;
         }
     }
 
-    state[0] = as_type<uint>(l1x1); state[1] = as_type<uint>(l1x2);
-    state[2] = as_type<uint>(l1y1); state[3] = as_type<uint>(l1y2);
-    state[4] = as_type<uint>(r1x1); state[5] = as_type<uint>(r1x2);
-    state[6] = as_type<uint>(r1y1); state[7] = as_type<uint>(r1y2);
-    state[8] = as_type<uint>(l2x1); state[9] = as_type<uint>(l2x2);
-    state[10] = as_type<uint>(l2y1); state[11] = as_type<uint>(l2y2);
-    state[12] = as_type<uint>(r2x1); state[13] = as_type<uint>(r2x2);
-    state[14] = as_type<uint>(r2y1); state[15] = as_type<uint>(r2y2);
+    if (params.frameCount > 0) {
+        const uint last = params.frameCount - 1;
+        const uint frame = uint((params.startFrame + last) % params.ringFrames);
+        const ulong base = ulong(frame) * params.channels;
+        float2 raw(samples[base + params.leftChannel], samples[base + params.rightChannel]);
+        raw = select(float2(0), raw, isfinite(raw));
+        float2 rawPrevious(as_type<float>(state[0]), as_type<float>(state[4]));
+        float2 shelfPrevious(as_type<float>(state[2]), as_type<float>(state[6]));
+        float2 passInputPrevious(as_type<float>(state[8]), as_type<float>(state[12]));
+        float2 passPrevious(as_type<float>(state[10]), as_type<float>(state[14]));
+        if (last > 0) {
+            const uint previousFrame = uint((params.startFrame + last - 1) % params.ringFrames);
+            const ulong previousBase = ulong(previousFrame) * params.channels;
+            rawPrevious = float2(samples[previousBase + params.leftChannel], samples[previousBase + params.rightChannel]);
+            rawPrevious = select(float2(0), rawPrevious, isfinite(rawPrevious));
+            shelfPrevious = shelf[last - 1]; passInputPrevious = shelfPrevious;
+            passPrevious = filtered[last - 1];
+        }
+        const float2 s = shelf[last], y = filtered[last];
+        state[0] = as_type<uint>(raw.x); state[1] = as_type<uint>(rawPrevious.x);
+        state[2] = as_type<uint>(s.x); state[3] = as_type<uint>(shelfPrevious.x);
+        state[4] = as_type<uint>(raw.y); state[5] = as_type<uint>(rawPrevious.y);
+        state[6] = as_type<uint>(s.y); state[7] = as_type<uint>(shelfPrevious.y);
+        state[8] = as_type<uint>(s.x); state[9] = as_type<uint>(passInputPrevious.x);
+        state[10] = as_type<uint>(y.x); state[11] = as_type<uint>(passPrevious.x);
+        state[12] = as_type<uint>(s.y); state[13] = as_type<uint>(passInputPrevious.y);
+        state[14] = as_type<uint>(y.y); state[15] = as_type<uint>(passPrevious.y);
+    }
     state[16] = as_type<uint>(energyLeft);
     state[17] = as_type<uint>(energyRight);
     state[18] = partialFrames;
