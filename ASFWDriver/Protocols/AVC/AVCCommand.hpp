@@ -164,9 +164,8 @@ public:
 
     virtual ~AVCCommand() = default;
 
-    /// Submit command (async)
+    /// Submit command (async) through the unit's transaction engine.
     ///
-    /// Encodes CDB to FCP frame and submits to transport.
     /// Completion callback invoked when response received or error occurs.
     ///
     /// @param completion Callback with result and response CDB
@@ -176,98 +175,62 @@ public:
             Common::InvokeSharedCallback(completionState, AVCResult::kInvalidResponse, cdb_);
             return;
         }
-
-        FCPFrame frame = cdb_.Encode();
+        auto frame = ASFW::AVC::CommandFrame::Make(
+            static_cast<ASFW::AVC::CommandType>(cdb_.ctype & 0x0F),
+            ASFW::AVC::SubunitAddress::FromByte(cdb_.subunit),
+            static_cast<ASFW::AVC::Opcode>(cdb_.opcode),
+            std::span<const uint8_t>(cdb_.operands.data(), cdb_.operandLength));
+        if (!frame) {
+            Common::InvokeSharedCallback(completionState, AVCResult::kInvalidResponse, cdb_);
+            return;
+        }
 
         // Use weak_from_this() to check ownership without throwing bad_weak_ptr
-        auto weakSelf = weak_from_this();
-        auto self = weakSelf.lock();
-        
+        auto self = weak_from_this().lock();
         if (!self) {
              ASFW_LOG(AVC, "AVCCommand::Submit called without shared ownership - command dropped");
              Common::InvokeSharedCallback(completionState, AVCResult::kTransportError, cdb_);
              return;
         }
-        
-        FCPCommandPolicy policy{};
-        // AV/C STATUS reads are observational; a CONTROL command can mutate
-        // device state and must not be replayed after a lost response.
-        if (cdb_.ctype == static_cast<uint8_t>(AVCCommandType::kStatus)) {
-            policy.retryClass = FCPRetryClass::kIdempotent;
-        }
-
-        fcpHandle_ = transport_.SubmitCommand(frame,
-            [self, completionState](FCPStatus fcpStatus, const FCPFrame& response) {
-                self->OnFCPComplete(fcpStatus, response, completionState);
-            }, std::move(policy));
-    }
-
-    /// Cancel command
-    ///
-    /// Attempts to cancel outstanding FCP command.
-    /// Completion callback will be invoked with kTransportError if successful.
-    void Cancel() {
-        if (fcpHandle_.IsValid()) {
-            transport_.CancelCommand(fcpHandle_);
-            fcpHandle_.Invalidate();
-        }
+        transport_.Submit(*frame, transport_.CurrentGeneration(),
+            [self, completionState](ASFW::AVC::Expected<ASFW::AVC::Response> response) {
+                self->OnResponse(response, completionState);
+            });
     }
 
     /// Get original CDB
     const AVCCdb& GetCdb() const { return cdb_; }
 
 protected:
-    /// FCP completion handler (virtual for extensibility)
-    ///
-    /// Maps FCP status → AVCResult and decodes response CDB.
-    ///
-    /// @param fcpStatus FCP transport status
-    /// @param response FCP response frame
-    /// @param completion User completion callback
-    virtual void OnFCPComplete(FCPStatus fcpStatus,
-                               const FCPFrame& response,
-                               const std::shared_ptr<AVCCompletion>& completion) {
-        // Handle FCP-level errors
-        if (fcpStatus != FCPStatus::kOk) {
-            AVCResult result = MapFCPStatus(fcpStatus);
-            Common::InvokeSharedCallback(completion, result, cdb_);
+    /// Map the engine's result to an AVCResult and the response CDB.
+    virtual void OnResponse(const ASFW::AVC::Expected<ASFW::AVC::Response>& response,
+                            const std::shared_ptr<AVCCompletion>& completion) {
+        if (!response) {
+            Common::InvokeSharedCallback(completion, ResultFor(response.error()), cdb_);
             return;
         }
-
-        // Decode AV/C response
-        auto responseCdb = AVCCdb::Decode(response);
-        if (!responseCdb) {
-            Common::InvokeSharedCallback(completion, AVCResult::kInvalidResponse, cdb_);
-            return;
-        }
-
-        // Map ctype to result
-        AVCResult result = CTypeToResult(responseCdb->ctype);
-        Common::InvokeSharedCallback(completion, result, *responseCdb);
+        AVCCdb responseCdb;
+        responseCdb.ctype = static_cast<uint8_t>(response->code);
+        responseCdb.subunit = response->address.Byte();
+        responseCdb.opcode = static_cast<uint8_t>(response->opcode);
+        responseCdb.operandLength = std::min(response->operands.size(), kAVCOperandMaxLength);
+        std::copy_n(response->operands.begin(), responseCdb.operandLength, responseCdb.operands.begin());
+        Common::InvokeSharedCallback(completion, CTypeToResult(responseCdb.ctype), responseCdb);
     }
 
-    /// Map FCP status to AV/C result
-    ///
-    /// @param status FCP transport status
-    /// @return Corresponding AVCResult
-    AVCResult MapFCPStatus(FCPStatus status) {
-        switch (status) {
-            case FCPStatus::kOk:
-                return AVCResult::kAccepted;  // Should not reach here
-            case FCPStatus::kTimeout:
-                return AVCResult::kTimeout;
-            case FCPStatus::kBusReset:
-                return AVCResult::kBusReset;
-            case FCPStatus::kBusy:
-                return AVCResult::kBusy;
-            default:
-                return AVCResult::kTransportError;
+    [[nodiscard]] static AVCResult ResultFor(const ASFW::AVC::AvcError& error) noexcept {
+        switch (error.kind) {
+            case ASFW::AVC::AvcErrorKind::kTimeout: return AVCResult::kTimeout;
+            case ASFW::AVC::AvcErrorKind::kBusReset: return AVCResult::kBusReset;
+            case ASFW::AVC::AvcErrorKind::kBusy: return AVCResult::kBusy;
+            case ASFW::AVC::AvcErrorKind::kTransportError:
+            case ASFW::AVC::AvcErrorKind::kRefused: return AVCResult::kTransportError;
+            default: return AVCResult::kInvalidResponse;
         }
     }
 
     FCPTransport& transport_;
     AVCCdb cdb_;
-    FCPHandle fcpHandle_;
 };
 
 

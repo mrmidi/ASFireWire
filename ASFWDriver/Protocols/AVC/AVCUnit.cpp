@@ -37,9 +37,7 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
       busInfo_(busInfo),
       timerScheduler_(timerScheduler),
       options_(options) {
-    if (options_.streamFormatSupportOnly) {
-        LearnStreamFormatSupportOpcode();
-    }
+    SetStreamFormatOpcodePolicy(options_.streamFormatOpcode);
 
     // Check for custom FCP addresses in Config ROM (optional)
     // For now, use standard addresses
@@ -66,6 +64,8 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
             fcpTransport_.reset();
             return;
         }
+        // Family code that talks to the transport directly asks with the same opcode.
+        fcpTransport_->SetStreamFormatOpcodePolicy(options_.streamFormatOpcode);
 
         // Create DescriptorAccessor for unit-level descriptors (Phase 5)
         descriptorAccessor_ = std::make_shared<DescriptorAccessor>(*this, kAVCSubunitUnit);

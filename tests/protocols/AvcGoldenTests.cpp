@@ -284,6 +284,20 @@ constexpr UncapturedFrame kPhase88Uncaptured[] = {
     {"01ff02c00[01]000000ff07..00", "Linux bebob_command.c:214"},
 };
 
+using Reply = ASFW::AVC::Expected<ASFW::AVC::Response>;
+
+// A frame given as wire bytes: ctype, address, opcode, operands.
+ASFW::AVC::CommandFrame FrameOf(std::span<const uint8_t> bytes) {
+    return *ASFW::AVC::CommandFrame::Make(static_cast<CommandType>(bytes[0] & 0x0F),
+                                          ASFW::AVC::SubunitAddress::FromByte(bytes[1]),
+                                          static_cast<ASFW::AVC::Opcode>(bytes[2]), bytes.subspan(3));
+}
+
+// nullopt for a response, else the error the engine reported.
+std::optional<ASFW::AVC::AvcErrorKind> KindOf(const Reply& reply) {
+    return reply ? std::nullopt : std::optional<ASFW::AVC::AvcErrorKind>{reply.error().kind};
+}
+
 TEST(AvcGoldenTests, ChainedCommandsDoNotGrowTheStack) {
     // Every completion submits the next command, and the simulated unit answers
     // inside the write -- as a bus reset fails every remaining command inside
@@ -590,13 +604,10 @@ TEST(AvcGoldenTests, Fw1814AllowlistEnforcement) {
     };
     auto inFrame = inCmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(inFrame.has_value());
-    FCPFrame inFcp{};
-    std::copy(inFrame->WireBytes().begin(), inFrame->WireBytes().end(), inFcp.data.begin());
-    inFcp.length = inFrame->WireBytes().size();
     bool inDone = false;
-    (void)rig.Transport().SubmitCommand(inFcp, [&](FCPStatus status, const FCPFrame&) {
+    rig.Transport().Submit(*inFrame, rig.Route().generation, [&](Reply reply) {
         inDone = true;
-        EXPECT_EQ(status, FCPStatus::kOk);
+        EXPECT_EQ(KindOf(reply), std::nullopt);
     });
     rig.Settle();
     EXPECT_TRUE(inDone);
@@ -611,13 +622,10 @@ TEST(AvcGoldenTests, Fw1814AllowlistEnforcement) {
     };
     auto outFrame = outCmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(outFrame.has_value());
-    FCPFrame outFcp{};
-    std::copy(outFrame->WireBytes().begin(), outFrame->WireBytes().end(), outFcp.data.begin());
-    outFcp.length = outFrame->WireBytes().size();
     bool outDone = false;
-    (void)rig.Transport().SubmitCommand(outFcp, [&](FCPStatus status, const FCPFrame&) {
+    rig.Transport().Submit(*outFrame, rig.Route().generation, [&](Reply reply) {
         outDone = true;
-        EXPECT_EQ(status, FCPStatus::kOk);
+        EXPECT_EQ(KindOf(reply), std::nullopt);
     });
     rig.Settle();
     EXPECT_TRUE(outDone);
@@ -626,14 +634,11 @@ TEST(AvcGoldenTests, Fw1814AllowlistEnforcement) {
     rig.Sim().SetResponseOverride(
         {0x00, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF},
         {0x09, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF});
-    FCPFrame ctrlFrame{};
-    const uint8_t ctrlBytes[] = {0x00, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF};
-    std::copy(std::begin(ctrlBytes), std::end(ctrlBytes), ctrlFrame.data.begin());
-    ctrlFrame.length = sizeof(ctrlBytes);
+    constexpr uint8_t ctrlBytes[] = {0x00, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF};
     bool ctrlDone = false;
-    (void)rig.Transport().SubmitCommand(ctrlFrame, [&](FCPStatus status, const FCPFrame&) {
+    rig.Transport().Submit(FrameOf(ctrlBytes), rig.Route().generation, [&](Reply reply) {
         ctrlDone = true;
-        EXPECT_EQ(status, FCPStatus::kOk);
+        EXPECT_EQ(KindOf(reply), std::nullopt);
     });
     rig.Settle();
     EXPECT_TRUE(ctrlDone);
@@ -641,13 +646,11 @@ TEST(AvcGoldenTests, Fw1814AllowlistEnforcement) {
     // Refused commands (must never appear on wire)
     auto expectRefused = [&](const char* label, std::initializer_list<uint8_t> bytes) {
         rig.Mark(std::string("## Refused: ") + label);
-        FCPFrame f{};
-        std::copy(bytes.begin(), bytes.end(), f.data.begin());
-        f.length = bytes.size();
+        const std::vector<uint8_t> wire(bytes);
         bool refused = false;
-        (void)rig.Transport().SubmitCommand(f, [&](FCPStatus status, const FCPFrame&) {
+        rig.Transport().Submit(FrameOf(wire), rig.Route().generation, [&](Reply reply) {
             refused = true;
-            EXPECT_EQ(status, FCPStatus::kRefusedByFilter);
+            EXPECT_EQ(KindOf(reply), ASFW::AVC::AvcErrorKind::kRefused);
         });
         EXPECT_TRUE(refused);
     };
@@ -712,19 +715,13 @@ TEST(AvcGoldenTests, GenericBusResetRecovery) {
         }
     });
 
-    FCPFrame cmd{};
-    const uint8_t queryBytes[] = {0x01, 0xFF, 0x18, 0x00, 0xFF, 0xFF, 0xFF, 0xFF};
-    std::copy(std::begin(queryBytes), std::end(queryBytes), cmd.data.begin());
-    cmd.length = sizeof(queryBytes);
-
-    FCPCommandPolicy policy{};
-    policy.retryClass = FCPRetryClass::kIdempotent;
-
+    // A STATUS: idempotent, so the reset may replay it on the rebound route.
+    constexpr uint8_t queryBytes[] = {0x01, 0xFF, 0x18, 0x00, 0xFF, 0xFF, 0xFF, 0xFF};
     bool done = false;
-    (void)rig.Transport().SubmitCommand(cmd, [&](FCPStatus status, const FCPFrame&) {
+    rig.Transport().Submit(FrameOf(queryBytes), rig.Route().generation, [&](Reply reply) {
         done = true;
-        EXPECT_EQ(status, FCPStatus::kOk);
-    }, policy);
+        EXPECT_EQ(KindOf(reply), std::nullopt);
+    });
 
     rig.Settle();
 
@@ -760,15 +757,13 @@ TEST(AvcGoldenTests, GenericInterimAndTimeout) {
     rig.Mark("## InterimResponse");
     rig.Sim().SetInterimNext(true);
 
-    FCPFrame cmd{};
-    const uint8_t queryBytes[] = {0x01, 0xFF, 0x18, 0x00, 0xFF, 0xFF, 0xFF, 0xFF};
-    std::copy(std::begin(queryBytes), std::end(queryBytes), cmd.data.begin());
-    cmd.length = sizeof(queryBytes);
+    constexpr uint8_t queryBytes[] = {0x01, 0xFF, 0x18, 0x00, 0xFF, 0xFF, 0xFF, 0xFF};
+    const auto cmd = FrameOf(queryBytes);
 
     bool interimDone = false;
-    (void)rig.Transport().SubmitCommand(cmd, [&](FCPStatus status, const FCPFrame&) {
+    rig.Transport().Submit(cmd, rig.Route().generation, [&](Reply reply) {
         interimDone = true;
-        EXPECT_EQ(status, FCPStatus::kOk);
+        EXPECT_EQ(KindOf(reply), std::nullopt);
     });
     rig.Settle();
     EXPECT_TRUE(interimDone);
@@ -778,9 +773,9 @@ TEST(AvcGoldenTests, GenericInterimAndTimeout) {
     rig.Sim().SetTimeoutNext(true);
 
     bool timeoutDone = false;
-    (void)rig.Transport().SubmitCommand(cmd, [&](FCPStatus status, const FCPFrame&) {
+    rig.Transport().Submit(cmd, rig.Route().generation, [&](Reply reply) {
         timeoutDone = true;
-        EXPECT_EQ(status, FCPStatus::kTimeout);
+        EXPECT_EQ(KindOf(reply), ASFW::AVC::AvcErrorKind::kTimeout);
     });
     rig.Timers().Advance(51ULL * 1'000'000ULL);
     rig.Settle();

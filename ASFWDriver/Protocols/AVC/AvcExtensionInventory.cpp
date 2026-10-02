@@ -24,7 +24,7 @@ AVCUnit::DiscoveryOptions DiscoveryOptionsFor(AvcExtensionInventory inventory) {
             // BridgeCo is 0x2F-only: Linux bebob_command.c sends only 0x2F, FFADO
             // sends only 0x2F on every BeBoB plug (avc_extended_stream_format.cpp:296),
             // and a Phase 88 answers 0xBF NOT IMPLEMENTED.
-            options.streamFormatSupportOnly = true;
+            options.streamFormatOpcode = ASFW::AVC::IAvcUnit::StreamFormatOpcodePolicy::kSupportOnly;
             options.extensionInventory = [](AVCUnit& unit, std::function<void()> done) {
                 const uint64_t guid = unit.Guid();
                 ::ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery(

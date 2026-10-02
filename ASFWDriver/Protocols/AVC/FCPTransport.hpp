@@ -2,8 +2,24 @@
 // FCPTransport.hpp
 // ASFWDriver - AV/C Protocol Layer
 //
-// FCP (Function Control Protocol) transport layer
-// Manages command/response exchange via IEEE 1394 async block writes
+// The AV/C transaction engine for one unit: FCP command/response exchange over
+// IEEE 1394 block writes (IEC 61883-1 §9, TA 2004006 AV/C General 4.2 §6).
+//
+// One transaction is active at a time; later submissions wait in FIFO order.
+// The active transaction moves through explicit phases (see Phase below),
+// following Apple's command states (IOFireWireAVCCommand.cpp:66-74) and Linux
+// fcp_avc_transaction (sound/firewire/fcp.c:231-286):
+//
+//   Writing          the command block write is in flight
+//   AwaitingResponse the write reached the target; waiting for the response
+//                    (an INTERIM response extends the deadline)
+//   AwaitingRoute    a bus reset interrupted a STATUS/INQUIRY that may be
+//                    replayed once discovery rebinds the unit
+//   Answered         the final response was accepted; it is delivered from the
+//                    work queue, after our write response to it (§6.5)
+//
+// Callers submit through IAvcUnit::Submit only. Every failure is an AvcError;
+// ToIOReturn(AvcError) is the one mapping to IOReturn.
 //
 
 #pragma once
@@ -21,6 +37,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <variant>
 #include "AVCDefs.hpp"
 #include "AVCCommandFilter.hpp"
 #include "FcpExchangeRecorder.hpp"
@@ -33,138 +50,68 @@
 namespace ASFW::Protocols::AVC {
 
 //==============================================================================
-// FCP Status Codes
-//==============================================================================
-
-/// FCP transport-level status
-enum class FCPStatus : uint8_t {
-    kOk = 0,                ///< Success
-    kTimeout,               ///< Command timed out
-    kBusReset,              ///< Bus reset during command
-    kTransportError,        ///< Async write/read error
-    kInvalidPayload,        ///< Payload size invalid
-    kResponseMismatch,      ///< Response doesn't match command
-    kBusy,                  ///< Command already pending
-    kRefusedByFilter,       ///< Not in this device's permitted command set
-};
-
-//==============================================================================
 // FCP Frame
 //==============================================================================
 
-/// FCP frame (command or response payload)
+/// An FCP frame (command or response payload) as it travels on the bus.
 struct FCPFrame {
     std::array<uint8_t, kAVCFrameMaxSize> data{};
     size_t length{0};
 
-    /// Get payload as read-only span
-    std::span<const uint8_t> Payload() const {
-        return {data.data(), length};
-    }
+    std::span<const uint8_t> Payload() const { return {data.data(), length}; }
+    std::span<uint8_t> MutablePayload() { return {data.data(), length}; }
 
-    /// Get payload as mutable span
-    std::span<uint8_t> MutablePayload() {
-        return {data.data(), length};
-    }
-
-    /// Validate frame size
     bool IsValid() const {
         return length >= kAVCFrameMinSize && length <= kAVCFrameMaxSize;
     }
 };
 
 //==============================================================================
-// FCP Completion Callback
+// Configuration
 //==============================================================================
 
-/// Completion callback for FCP command submission
-///
-/// @param status FCP transport status
-/// @param response Response frame (valid only if status == kOk)
-using FCPCompletion = std::function<void(FCPStatus status,
-                                         const FCPFrame& response)>;
-
-// A command can require response fields beyond the AV/C address/opcode pair.
-// It is evaluated only after structural bounds checks and the transport's
-// default matcher have accepted the frame.
-using FCPResponseMatcher = std::function<bool(std::span<const uint8_t> command,
-                                              std::span<const uint8_t> response)>;
-
-enum class FCPRetryClass : uint8_t {
-    // Control/state-changing commands are never replayed automatically.
-    kNever,
-    // Safe read-only/status requests may retry after timeout/write failure and
-    // (when enabled by transport config) a bus reset.
-    kIdempotent,
-};
-
-struct FCPCommandPolicy {
-    FCPResponseMatcher responseMatcher{};
-    FCPRetryClass retryClass{FCPRetryClass::kNever};
-};
-
-enum class FCPQueuePolicy : uint8_t {
-    kReject,
-    kFifo,
-};
-
-//==============================================================================
-// FCP Handle
-//==============================================================================
-
-/// FCP transaction handle (opaque identifier)
-struct FCPHandle {
-    uint32_t transactionID{0};
-
-    bool IsValid() const { return transactionID != 0; }
-    void Invalidate() { transactionID = 0; }
-};
-
-//==============================================================================
-// FCP Transport Configuration
-//==============================================================================
-
-/// FCP transport configuration
 struct FCPTransportConfig {
-    /// FCP command CSR address (target receives commands here)
+    /// FCP command CSR address (the target receives commands here).
     uint64_t commandAddress{kFCPCommandAddress};
 
-    /// FCP response CSR address (initiator receives responses here)
+    /// FCP response CSR address (we receive responses here).
     uint64_t responseAddress{kFCPResponseAddress};
 
-    /// Initial timeout (milliseconds)
+    /// Response deadline after the command write completes (milliseconds).
     uint32_t timeoutMs{kFCPTimeoutInitial};
 
-    /// Timeout after interim response (milliseconds)
+    /// Response deadline after an INTERIM response (milliseconds).
     uint32_t interimTimeoutMs{kFCPTimeoutAfterInterim};
 
-    /// Maximum retry attempts
+    /// Replays of a STATUS/INQUIRY after a lost response or failed write.
+    /// CONTROL and NOTIFY are never replayed.
     uint8_t maxRetries{kFCPMaxRetries};
 
-    /// Allow bus reset retry (default: false, fail on reset)
+    /// Let a STATUS/INQUIRY interrupted by a bus reset replay once discovery
+    /// rebinds the unit (default: fail it with kBusReset).
     bool allowBusResetRetry{false};
-
-    /// Commands submitted while one is active either queue FIFO or fail Busy.
-    FCPQueuePolicy queuePolicy{FCPQueuePolicy::kFifo};
 
     /// Allowlist of command shapes this device may be sent. Empty (the default)
     /// means unrestricted, which is what every ordinary device carries. When
-    /// non-empty, SubmitCommand refuses any frame that matches no entry — the
-    /// guard for firmware that hangs on unimplemented AV/C. The span is
-    /// non-owning and must point at storage outliving the transport; all
-    /// tables in AVCCommandFilter.hpp are constexpr statics.
+    /// non-empty, Submit refuses any frame that matches no entry: the guard for
+    /// firmware that hangs on unimplemented AV/C. The span is non-owning and
+    /// must outlive the transport; all tables in AVCCommandFilter.hpp are
+    /// constexpr statics.
     std::span<const FCPPermittedFrame> permittedFrames;
 };
 
 //==============================================================================
-// FCP Transport
+// Transaction engine
 //==============================================================================
 
-class FCPTransport : public std::enable_shared_from_this<FCPTransport>,
-                     public ASFW::AVC::IAvcUnit {
+class FCPTransport final : public std::enable_shared_from_this<FCPTransport>,
+                           public ASFW::AVC::IAvcUnit {
 public:
     FCPTransport() = default;
     ~FCPTransport() override;
+
+    FCPTransport(const FCPTransport&) = delete;
+    FCPTransport& operator=(const FCPTransport&) = delete;
 
     bool init(Protocols::Ports::FireWireBusOps* busOps,
               Protocols::Ports::FireWireBusInfo* busInfo,
@@ -173,10 +120,10 @@ public:
               Scheduling::ITimerScheduler& timerScheduler,
               const FCPTransportConfig& config = {});
 
-    FCPTransport(const FCPTransport&) = delete;
-    FCPTransport& operator=(const FCPTransport&) = delete;
-
-    // --- IAvcUnit implementation ---
+    // --- IAvcUnit ---
+    /// Queue `frame` for this unit. STATUS and INQUIRY may be replayed on a lost
+    /// response; CONTROL and NOTIFY never are. The command is refused with
+    /// kBusReset if the unit's route is no longer in `generation`.
     void Submit(const ASFW::AVC::CommandFrame& frame,
                 FW::Generation generation,
                 ResponseCallback completion) override;
@@ -185,27 +132,21 @@ public:
     [[nodiscard]] FW::Generation CurrentGeneration() const noexcept override;
     [[nodiscard]] uint64_t Guid() const noexcept override;
 
-    [[nodiscard]] FCPHandle SubmitCommand(const FCPFrame& command,
-                                          FCPCompletion completion);
-    [[nodiscard]] FCPHandle SubmitCommand(const FCPFrame& command,
-                                          FCPCompletion completion,
-                                          FCPCommandPolicy policy);
-
-    /// Stop retries and complete any outstanding command without more bus I/O.
-    void Shutdown();
-
-    bool CancelCommand(FCPHandle handle);
-
+    // --- Events from the bus and discovery ---
+    /// The target wrote a response frame to our FCP_RESPONSE register. Runs
+    /// inside the receive handler.
     void OnFCPResponse(uint16_t srcNodeID,
                        uint32_t generation,
                        std::span<const uint8_t> payload);
 
     void OnBusReset(uint32_t newGeneration);
 
-    /// Resume an explicitly idempotent command only after discovery has
-    /// rebound this transport's device to the reset generation. Calling this
-    /// before the device is ready is deliberately a no-op.
+    /// Resume an interrupted STATUS/INQUIRY only after discovery has rebound
+    /// this unit to the reset generation. A no-op unless one is waiting.
     void OnRouteRevalidated(const Discovery::DeviceRouteToken& route);
+
+    /// Complete every transaction with kTransportError; no more bus I/O.
+    void Shutdown();
 
     const FCPTransportConfig& GetConfig() const { return config_; }
 
@@ -215,90 +156,92 @@ public:
     [[nodiscard]] FcpExchangeLog CopyExchangeLog() const;
 
 private:
-    /// Immutable route token for one FCP block-write attempt. A response may
-    /// match only after this exact attempt has completed successfully.
-    /// Linux pairs destination identity with generation at request issue
-    /// (core-transaction.c:285-303, 363-372); Apple's AVC stack retains the
-    /// equivalent fWriteNodeID/fWriteGen on its write command
-    /// (IOFireWireAVCCommand.cpp:481-491).  We reproduce that behavior, not
-    /// their implementation.
-    struct FCPWriteAttempt {
+    using Result = ASFW::AVC::Expected<FCPFrame>;
+
+    /// One block write of a command. A response matches only after this exact
+    /// attempt was issued on this route. Linux pairs destination identity with
+    /// generation at request issue (core-transaction.c:285-303, 363-372); Apple
+    /// keeps fWriteNodeID/fWriteGen on its write command
+    /// (IOFireWireAVCCommand.cpp:481-491).
+    struct WriteAttempt {
         uint64_t id{0};
         Discovery::DeviceRouteToken route{};
     };
 
-    struct OutstandingCommand {
-        FCPFrame command;
-        FCPCompletion completion;
-        FCPCommandPolicy policy;
-        /// IAvcUnit callers bind work to the generation in which it was built.
-        /// Raw FCP callers leave this empty and use the current route.
-        std::optional<FW::Generation> requiredGeneration;
-        uint32_t transactionID{0};
-        uint8_t retriesLeft;
-        bool allowBusResetRetry;
-        /// The currently submitted async write. Cleared before cancellation
-        /// so its late completion cannot affect a replacement attempt.
-        std::optional<FCPWriteAttempt> activeWriteAttempt;
-        /// Set only by the success completion of `activeWriteAttempt`. Response
-        /// matching reads this value and never mutable device/bus state.
-        std::optional<FCPWriteAttempt> successfulWriteAttempt;
-        /// A reset may invalidate the route between write and response. An
-        /// explicitly idempotent request waits here until discovery confirms a
-        /// fresh route token; it must never replay immediately
-        /// on the reset interrupt path.
-        bool awaitingRouteRevalidation{false};
-        std::optional<Discovery::DeviceRouteToken> resetRoute;
-        bool gotInterim{false};
-        /// The final response has been accepted and its completion is waiting
-        /// to run after the receive handler returns (see OnFCPResponse). The
-        /// command stays pending so later submissions keep their order, but
-        /// nothing may retry, time out or fail it any more.
-        bool answered{false};
-
-        Async::AsyncHandle asyncHandle;
-        Scheduling::TimerToken timeoutToken{Scheduling::kInvalidTimerToken};
-        uint64_t timeoutEpoch{0};
+    struct Transaction {
+        uint32_t id{0};
+        ASFW::AVC::CommandFrame frame;
+        ResponseCallback completion;
+        /// STATUS/INQUIRY: safe to replay. CONTROL/NOTIFY: never replayed.
+        bool idempotent{false};
+        /// The generation the command was built for. A bus-reset replay moves
+        /// it to the rebound route's generation.
+        FW::Generation generation{0U};
+        uint8_t retriesLeft{0};
+        bool sawInterim{false};
     };
 
-    void OnAsyncWriteComplete(FCPWriteAttempt writeAttempt,
-                              Async::AsyncStatus status,
-                              std::span<const uint8_t> response);
+    // Phases of the active transaction.
+    struct Writing {
+        WriteAttempt attempt;
+        Async::AsyncHandle handle{};
+    };
+    struct AwaitingResponse {
+        WriteAttempt attempt;
+    };
+    struct AwaitingRoute {
+        std::optional<Discovery::DeviceRouteToken> resetRoute;
+    };
+    struct Answered {};
+    using Phase = std::variant<Writing, AwaitingResponse, AwaitingRoute, Answered>;
 
-    Async::AsyncHandle SubmitWriteCommand(const FCPFrame& frame,
-                                          FCPWriteAttempt writeAttempt);
+    struct Active {
+        Transaction txn;
+        Phase phase;
+        Scheduling::TimerToken timer{Scheduling::kInvalidTimerToken};
+        uint64_t timerEpoch{0};
+    };
 
-    [[nodiscard]] bool StartPendingWrite();
-    void StartNextQueuedCommand();
-    /// Log a command that never reached the bus. Must NOT be called with lock_ held.
-    void RecordUnsent(FCPStatus status, const FCPFrame& command);
+    struct Delivery {
+        Transaction txn;
+        Result result;
+    };
 
-    [[nodiscard]] FCPHandle SubmitCommand(const FCPFrame& command,
-                                          FCPCompletion completion,
-                                          FCPCommandPolicy policy,
-                                          std::optional<FW::Generation> requiredGeneration);
+    // Event handlers take lock_ themselves and are called without it. The
+    // helpers marked "lock held" must be called with it.
 
-    void OnCommandTimeout();
+    /// Make `txn` active and issue its first write.
+    void Start(Transaction txn);
+    /// Issue the active transaction's write on the current route.
+    void IssueWrite();
+    /// The active transaction's write finished.
+    void OnWriteComplete(WriteAttempt attempt, Async::AsyncStatus status);
+    void OnTimeout(uint64_t epoch);
+    /// Replay the active transaction (idempotent only).
+    void Replay();
+    /// Start the next queued transaction if none is active.
+    void StartNext();
 
-    void RetryCommand();
+    [[nodiscard]] static std::optional<WriteAttempt> AttemptOf(const Phase& phase) noexcept;
+    [[nodiscard]] static bool ResponseMatches(const Transaction& txn, std::span<const uint8_t> response);
 
-    bool ValidateResponse(std::span<const uint8_t> response) const;
+    void ArmTimer(uint32_t timeoutMs);  // lock held
+    void DisarmTimer();                 // lock held
 
-    void CompleteCommand(FCPStatus status,
-                         const FCPFrame& response,
-                         std::optional<uint32_t> expectedTransactionID = std::nullopt);
+    /// Take the active transaction out with `result` for delivery. Lock held.
+    [[nodiscard]] Delivery Finish(Result result);
+    /// Finish the active transaction if it is still `id`.
+    void FinishIfActive(uint32_t id, Result result);
+    /// Record an exchange in the log. Lock held.
+    void Record(const Transaction& txn, const Result& result);
 
-    /// Run a command's completion, then start the next queued command. A
-    /// completion that submits again, and a submit that fails or is answered
-    /// at once, would otherwise nest one call chain per command: a bus reset
-    /// fails every remaining discovery command synchronously. Deliveries made
-    /// while one is running are queued and run by the outermost call, so the
-    /// stack depth stays constant. Must NOT be called with lock_ held.
-    void Deliver(FCPCompletion completion, FCPStatus status, const FCPFrame& response);
-
-    void ScheduleTimeout(uint32_t timeoutMs);
-
-    void CancelTimeout();
+    /// Run deliveries in a loop at constant stack depth, starting the next
+    /// queued transaction after each. A completion may submit again, and a
+    /// submission may fail at once; nested, a 227-command attach overflowed
+    /// the stack.
+    void Deliver(Delivery delivery);
+    /// Parse and hand one result to its caller.
+    static void Invoke(Delivery& delivery);
 
     Protocols::Ports::FireWireBusOps* busOps_{nullptr};
     Protocols::Ports::FireWireBusInfo* busInfo_{nullptr};
@@ -308,27 +251,16 @@ private:
     FCPTransportConfig config_;
 
     IOLock* lock_{nullptr};
-
-    uint64_t nextTimeoutEpoch_{0};
-    uint64_t nextWriteAttempt_{0};
-
-    // Protected by lock_. Timeout and async-completion blocks capture shared
-    // ownership, so destruction cannot race their callback target.
     bool shuttingDown_{false};
-
-    std::unique_ptr<OutstandingCommand> pending_;
-    /// Guarded by lock_.
-    FcpExchangeRecorder recorder_;
-    std::deque<std::unique_ptr<OutstandingCommand>> queued_;
     uint32_t nextTransactionID_{0};
+    uint64_t nextWriteAttempt_{0};
+    uint64_t nextTimerEpoch_{0};
 
-    struct PendingDelivery {
-        FCPCompletion completion;
-        FCPStatus status;
-        FCPFrame response;
-    };
-    /// Guarded by lock_. Completions waiting for the outermost Deliver().
-    std::deque<PendingDelivery> deliveries_;
+    std::optional<Active> active_;
+    std::deque<Transaction> queue_;
+    FcpExchangeRecorder recorder_;
+
+    std::deque<Delivery> deliveries_;
     bool delivering_{false};
 };
 
