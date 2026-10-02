@@ -6,7 +6,6 @@
 
 #include "AudioProfileRegistry.hpp"
 #include "MOTU/MotuV2Profile.hpp"
-#include "AVC/ApogeeDuetProfile.hpp"
 #include "AVC/MackieOnyx400FProfile.hpp"
 #include "AVC/GenericAvcProfile.hpp"
 #include "AVC/MAudioSpecialProfile.hpp"
@@ -97,10 +96,10 @@ DiceProfile gGenericDiceProfile{{.name = "Generic DICE",
                                  .txEncoding = Encoding::AudioWireFormat::kAM824,
                                  .preserveFdfInNoDataPackets = false}};
 
-AVC::Profiles::ApogeeDuetProfile gApogeeDuetProfile{};
 // Every AV/C unit published from generic discovery, BeBoB or Oxford: its
 // geometry, rates and name travel on the nub, so one host-side profile serves
-// all of them.
+// all of them. Device-specific code is controls only, and lives in the
+// protocol (the Duet's knob, params and meters).
 AVC::Profiles::GenericAvcProfile gGenericAvcProfile{};
 AVC::Profiles::MackieOnyx400FProfile gMackieOnyx400FProfile{};
 AVC::Profiles::MAudioSpecialProfile gMAudio1814Profile{false};
@@ -171,12 +170,12 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         return dice;
     }
     switch (builder) {
-        case Builder::ApogeeDuet:
-            return &gApogeeDuetProfile;
         case Builder::MAudioFireWire1814:
             return &gMAudio1814Profile;
         case Builder::MAudioProjectMix:
             return &gMAudioProjectMixProfile;
+        // Its controls are the Duet protocol's; its streams are discovered.
+        case Builder::ApogeeDuet:
         case Builder::TerraTecPhase88:
         case Builder::MackieOnyxIOxfw:
         case Builder::GenericAvc:

@@ -13,7 +13,6 @@
 #include "Audio/DriverKit/Config/DICE/DiceProfile.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "Discovery/DiscoveryTypes.hpp"
-#include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/GenericAvcProfile.hpp"
 
@@ -186,19 +185,7 @@ TEST(DiceProfileTests, WeissIntProfileSendsAm824) {
     }
 }
 
-TEST(DiceProfileTests, ResolvesApogeeDuetProfileWithoutDICEName) {
-    const auto* profile = FindAvcProfile(0x0003DB, 0x01DDDD, 0x0003DB0A0000D112ULL);
-
-    ASSERT_NE(profile, nullptr);
-    EXPECT_STREQ(profile->Name(), "Duet");
-    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
-    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
-    EXPECT_EQ(profile->TxChannelCount(), 2u);
-    EXPECT_EQ(profile->RxChannelCount(), 2u);
-    EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{48000u}));
-}
-
-// The PHASE 88, the Onyx-i and any unlisted AV/C unit are published from
+// The Duet, the PHASE 88, the Onyx-i and any unlisted AV/C unit are published from
 // generic discovery, so they share one host-side profile. It states no
 // channels and no rates: those travel on the nub from discovery and the
 // catalog row. A per-device copy of either is a second source of truth.
@@ -212,6 +199,7 @@ TEST(DiceProfileTests, DiscoveredAvcUnitsShareOneGeometryFreeProfile) {
     EXPECT_EQ(AudioProfileRegistry::ProfileForBuilderId(
                   static_cast<uint32_t>(ProfileBuilderId::MackieOnyxIOxfw)), generic);
     EXPECT_EQ(FindAvcProfile(0x000AAC, 0x000003, 0x000AAC0300B1D1F7ULL), generic);
+    EXPECT_EQ(FindAvcProfile(0x0003DB, 0x01DDDD, 0x0003DB0A0000D112ULL), generic);
 
     EXPECT_EQ(generic->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
     EXPECT_EQ(generic->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);

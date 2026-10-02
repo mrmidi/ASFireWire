@@ -219,7 +219,18 @@ User: no duplicate paths. Commits 85dcc574..b2a271d7 on feat/avc-phase4.
   longer filters rates. Phase 88 and Onyx-i rates unchanged; unlisted units no
   longer offer rates their start would refuse.
 
-Still open: the Onyx-i has no capture of the generic probes (only its format
+- ApogeeDuetProfile deleted; the Duet uses GenericAvcProfile (its controls stay
+  in ApogeeDuetProtocol). Declared: Duet timing 192/256 safety, 256 latency (was
+  64/128 and 128/128), and NO-DATA packets while output is idle (was off).
+
+Still open: stream mode has two sources. The TX packetizer frames from the
+profile's mode constant (DiceTxStreamEngine::Configure), the timing geometry from
+the nub's. DICE and MOTU publish no mode (nub default non-blocking) while their
+profiles frame blocking. AV/C rows that force blocking are unaffected; an
+unlisted non-blocking AV/C unit would be framed blocking. The Duet supports both
+modes (FFADO); its row forces blocking.
+
+Also open: the Onyx-i has no capture of the generic probes (only its format
 list), so its attach is untested against real answers. AV/C rate switching is
 not supported; it needs fresh geometry per rate.
 

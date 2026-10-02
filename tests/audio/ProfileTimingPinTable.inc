@@ -47,13 +47,13 @@
     {6, 96000, 59, 59, 128, 288},  // Weiss INT (DICE)
     {6, 176400, 119, 119, 320, 640},  // Weiss INT (DICE)
     {6, 192000, 119, 119, 320, 640},  // Weiss INT (DICE)
-    {7, 32000, 128, 128, 64, 128},  // Duet
-    {7, 44100, 128, 128, 64, 128},  // Duet
-    {7, 48000, 128, 128, 64, 128},  // Duet
-    {7, 88200, 128, 128, 64, 128},  // Duet
-    {7, 96000, 128, 128, 64, 128},  // Duet
-    {7, 176400, 128, 128, 64, 128},  // Duet
-    {7, 192000, 128, 128, 64, 128},  // Duet
+    {7, 32000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 44100, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 48000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 88200, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 96000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 176400, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 192000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
     {8, 32000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
     {8, 44100, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
     {8, 48000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
