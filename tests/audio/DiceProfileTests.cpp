@@ -17,7 +17,6 @@
 #include "Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
-#include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
 namespace {
 

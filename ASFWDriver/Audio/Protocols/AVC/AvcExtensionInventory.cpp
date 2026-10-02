@@ -6,8 +6,8 @@
 
 #include "AvcExtensionInventory.hpp"
 #include "../BeBoB/BeBoBCaptureChannelMap.hpp"
+#include "../BeBoB/BridgeCoInventory.hpp"
 
-#include "../../Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 #include "../../Protocols/Oxford/OxfwStreamFormats.hpp"
 #include "../../../Logging/Logging.hpp"
 
@@ -27,40 +27,37 @@ AVCUnit::DiscoveryOptions DiscoveryOptionsFor(AvcExtensionInventory inventory) {
             // sends only 0x2F on every BeBoB plug (avc_extended_stream_format.cpp:296),
             // and a Phase 88 answers 0xBF NOT IMPLEMENTED.
             options.streamFormatOpcode = ASFW::AVC::IAvcUnit::StreamFormatOpcodePolicy::kSupportOnly;
-            options.extensionInventory = [](ASFW::AVC::IAvcUnit& unit, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
+            options.extensionInventory = [](ASFW::AVC::IAvcUnit& unit,
+                                            ASFW::AVC::DiscoveryEngine::SnapshotLease discovered,
+                                            std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
+                namespace B = ::ASFW::Audio::BeBoB;
                 const uint64_t guid = unit.Guid();
-                ::ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery(
-                    unit, guid,
-                    [guid, done = std::move(done)](
-                        const ::ASFW::Audio::BeBoB::DeviceModel& model) {
-                        // BridgeCo "input" is the unit ISO input plug: host playback.
-                        const auto formations = [](const ::ASFW::Audio::BeBoB::IsochronousPlugModel& plug) {
-                            decltype(ASFW::AVC::DiscoveryEngine::ExtensionPlug::formations) out;
-                            for (const auto& formation : plug.supportedFormations) {
-                                const auto hz = formation.RateHz();
-                                if (hz && !out.push_back({.rateHz = *hz, .pcmChannels = formation.pcmChannels,
-                                                          .midiChannels = formation.midiSlots})) break; // Full.
-                            }
-                            return out;
-                        };
-                        const auto playback = formations(model.input);
-                        const auto capture = formations(model.output);
-                        const uint32_t rate = model.CurrentRateHz().value_or(0);
-                        ASFW_LOG(AVC, "[AvcInventory] guid=%llx bridgeco plugCounts=%d formations in=%zu out=%zu rate=%u",
-                                 guid, model.unitPlugCounts.has_value() ? 1 : 0, playback.size(), capture.size(), rate);
-                        ASFW::AVC::DiscoveryEngine::ExtensionFacts facts;
-                        facts.playback.formations = playback; facts.capture.formations = capture;
-                        facts.playback.currentRateHz = rate; facts.capture.currentRateHz = rate;
-                        for (const auto& f : playback) if (f.rateHz == rate)
-                            facts.playback.pcmSlots = ::ASFW::Audio::BeBoBProbe::PlaybackChannelMapFromProbe(model.input, f.pcmChannels, f.pcmChannels + f.midiChannels);
-                        for (const auto& f : capture) if (f.rateHz == rate)
-                            facts.capture.pcmSlots = ::ASFW::Audio::BeBoBProbe::ChannelMapFromProbe(model.output, f.pcmChannels, f.pcmChannels + f.midiChannels);
-                        done(std::move(facts));
-                    });
+                if (!discovered || !B::HasDuplexIsoPlugPair(*discovered)) {
+                    ASFW_LOG(AVC, "[AvcInventory] guid=%llx bridgeco: no duplex ISO plug pair", guid);
+                    done({});
+                    return;
+                }
+                // Formations and rate are what generic discovery read; only the
+                // channel sections are BridgeCo-specific.
+                auto facts = B::BridgeCoFormationFacts(*discovered);
+                B::ProbeChannelSections(unit, guid, [guid, facts, done = std::move(done)](B::ChannelSections sections) mutable {
+                    const uint32_t rate = facts.playback.currentRateHz;
+                    for (const auto& f : facts.playback.formations) if (f.rateHz == rate)
+                        facts.playback.pcmSlots = ::ASFW::Audio::BeBoBProbe::ChannelMapFromSections(
+                            sections.playback, f.pcmChannels, f.pcmChannels + f.midiChannels);
+                    for (const auto& f : facts.capture.formations) if (f.rateHz == rate)
+                        facts.capture.pcmSlots = ::ASFW::Audio::BeBoBProbe::ChannelMapFromSections(
+                            sections.capture, f.pcmChannels, f.pcmChannels + f.midiChannels);
+                    ASFW_LOG(AVC, "[AvcInventory] guid=%llx bridgeco formations in=%zu out=%zu rate=%u sections in=%zu out=%zu",
+                             guid, facts.playback.formations.size(), facts.capture.formations.size(), rate,
+                             sections.playback.size(), sections.capture.size());
+                    done(std::move(facts));
+                });
             };
             break;
         case AvcExtensionInventory::kOxford:
-            options.extensionInventory = [](ASFW::AVC::IAvcUnit& unit, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
+            options.extensionInventory = [](ASFW::AVC::IAvcUnit& unit, ASFW::AVC::DiscoveryEngine::SnapshotLease,
+                                            std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
                 const uint64_t guid = unit.Guid();
                 ::ASFW::Audio::Oxford::DetectStreamFormats(
                     unit, /*isOutput=*/false,

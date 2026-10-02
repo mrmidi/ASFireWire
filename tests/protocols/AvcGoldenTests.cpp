@@ -6,7 +6,7 @@
 // Characterizes exact bus writes and sequences for:
 // - Duet attach discovery (AVCUnit::Initialize + OxfwStreamFormats)
 // - Duet streaming start/stop (SignalFormat rate control + CMP)
-// - Phase 88 attach discovery (AVCUnit::Initialize + BeBoBPlug0StreamDiscovery)
+// - Phase 88 attach discovery (AVCUnit::Initialize + BridgeCo inventory)
 // - Onyx-i Oxford discovery (OxfwStreamFormats against documented Onyx-i capture)
 // - 1814 allowlist enforcement (admitted probes vs refused commands)
 // - Generic bus reset recovery (idempotent replay across generations)
@@ -47,7 +47,6 @@
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/RateCodes.hpp"
 
-#include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 #include "ASFWDriver/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.hpp"
 #include "ASFWDriver/Audio/Protocols/Oxford/OxfwStreamFormats.hpp"
@@ -648,8 +647,8 @@ E::SnapshotLease Replay(const std::shared_ptr<AVCUnit>& unit, AvcExtensionInvent
     auto* recorded = owner.get();
     E::Session::Extension extension;
     if (options.extensionInventory) {
-        extension = [recorded, run = options.extensionInventory](E::SnapshotLease, std::function<void(E::ExtensionFacts)> done) {
-            run(*recorded, std::move(done));
+        extension = [recorded, run = options.extensionInventory](E::SnapshotLease discovered, std::function<void(E::ExtensionFacts)> done) {
+            run(*recorded, std::move(discovered), std::move(done));
         };
     }
     auto session = E::Session::Create(*owner, original->session, [&](E::SnapshotLease r) { replayed = std::move(r); },
@@ -1146,7 +1145,8 @@ TEST(AvcGoldenTests, GenericInterimAndTimeout) {
 TEST(AvcGoldenTests, ExtensionInventoryHoldsDiscoveryOpenUntilItFinishes) {
     std::function<void()> finish;
     AvcGoldenRigOptions opts;
-    opts.unitOptions.extensionInventory = [&finish](ASFW::AVC::IAvcUnit&, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
+    opts.unitOptions.extensionInventory = [&finish](ASFW::AVC::IAvcUnit&, ASFW::AVC::DiscoveryEngine::SnapshotLease,
+                                                    std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done) {
         finish = [done = std::move(done)] { done({}); };
     };
     AvcGoldenRig rig(kDuet, opts);

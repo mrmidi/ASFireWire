@@ -65,7 +65,7 @@ add_protocols_test(AvcGoldenTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BridgeCoInventory.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.cpp"
@@ -109,7 +109,7 @@ add_protocols_test(AvcDiscoveryLifecycleTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/AvcGraphBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BridgeCoInventory.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.cpp"
@@ -140,13 +140,13 @@ target_link_libraries(FCPPacketParsingTests PRIVATE
 )
 gtest_discover_tests(FCPPacketParsingTests)
 
-# BeBoB STATUS-only inventory codec tests (plug-0 scope)
-add_protocols_test(BeBoBPlug0StreamDiscoveryTests
-    BeBoBPlug0StreamDiscoveryTests.cpp
+# BridgeCo inventory: channel-section probe and facts from the snapshot
+add_protocols_test(BridgeCoInventoryTests
+    BridgeCoInventoryTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Commands/StreamFormatCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BridgeCoInventory.cpp"
 )
 
 # M-Audio bootloader cue codec and preparation FSM (pure host logic only).

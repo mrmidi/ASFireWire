@@ -59,7 +59,10 @@ struct AVCUnitDiscoveryOptions {
     // by ownership: replay runs the same inventory against a recorded unit, and
     // a destroyed unit ends it silently (done is then never called, because
     // the session that would receive it was destroyed with the unit).
-    std::function<void(ASFW::AVC::IAvcUnit& unit, std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done)> extensionInventory;
+    // `discovered` is what generic discovery found so far; the inventory reads
+    // it instead of asking the device again.
+    std::function<void(ASFW::AVC::IAvcUnit& unit, ASFW::AVC::DiscoveryEngine::SnapshotLease discovered,
+                       std::function<void(ASFW::AVC::DiscoveryEngine::ExtensionFacts)> done)> extensionInventory;
     // Which stream-format opcode the chip is asked with (BridgeCo: 0x2F only).
     ASFW::AVC::IAvcUnit::StreamFormatOpcodePolicy streamFormatOpcode{
         ASFW::AVC::IAvcUnit::StreamFormatOpcodePolicy::kLearn};

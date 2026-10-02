@@ -167,7 +167,7 @@ void AVCUnit::InitializeAlreadyBegun(std::function<void(bool)> completion) {
         [live](E::SnapshotLease snapshot, std::function<void(E::ExtensionFacts)> done) {
             auto* unit = live.Get();
             if (!unit || snapshot->terminalError || !unit->IsCurrentRoute(snapshot->route)) { done({}); return; }
-            if (unit->options_.extensionInventory) unit->options_.extensionInventory(*unit, std::move(done));
+            if (unit->options_.extensionInventory) unit->options_.extensionInventory(*unit, std::move(snapshot), std::move(done));
             else done({});
         });
     sessionSlot_ = E::RunningSlot{session};
