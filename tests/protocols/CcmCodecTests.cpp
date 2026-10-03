@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// CcmCodecTests.cpp - Tests for the AV/C CCM codecs: SIGNAL SOURCE, INPUT SELECT,
-// OUTPUT PRESET, CCM PROFILE (TA 2002010, AV/C CCM Specification 1.1).
+// CcmCodecTests.cpp - Tests for the AV/C CCM vocabulary and the SIGNAL SOURCE codec
+// (TA 2002010, AV/C CCM Specification 1.1).
 //
 // Frames come from three places, named in each test:
 // - the spec's own worked examples (Annex C Tables C.1, C.2, C.6);
@@ -14,10 +14,7 @@
 
 #include <gtest/gtest.h>
 
-#include "ASFWDriver/Protocols/AVC/Commands/CcmProfileCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/CcmTypes.hpp"
-#include "ASFWDriver/Protocols/AVC/Commands/InputSelectCommand.hpp"
-#include "ASFWDriver/Protocols/AVC/Commands/OutputPresetCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/SignalSourceCommand.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/AvcFrame.hpp"
 #include "ASFWDriver/Protocols/AVC/Core/AvcTypes.hpp"
@@ -72,7 +69,6 @@ TEST(CcmVocabularyTests, UnitPlugIdNamedValues) {
     EXPECT_EQ(P::External(0).Raw(), 0x80);
     EXPECT_EQ(P::External(30).Raw(), 0x9E);
     EXPECT_EQ(P::AnyAvailableSerialBus().Raw(), 0x7F);   // Tables 7.2, 7.4
-    EXPECT_EQ(P::NotApplicable().Raw(), 0x7F);           // Tables 7.15, 7.19
     EXPECT_EQ(P::AnyAvailableExternal().Raw(), 0xFF);
     EXPECT_EQ(P::Invalid().Raw(), 0xFE);
     EXPECT_EQ(P::External(5).Number(), 5);
@@ -351,229 +347,6 @@ TEST(SignalSourceCcmTests, ReservedOutputStatusIsReportedNotRejected) {
     EXPECT_FALSE(reply.Status().Status().has_value());
     EXPECT_TRUE(Cmd::CheckStatusAgainstSpec(reply.Status(), Cmd::DestinationPlugKind::kSerialBusOutputPlug)
                     .reservedOutputStatus);
-}
-
-// ===========================================================================
-// INPUT SELECT
-// ===========================================================================
-
-TEST(InputSelectCcmTests, StatusRequestFillsUnusedFieldsWithOnes) {
-    const auto command = Cmd::QueryInputPlug(Cmd::UnitPlugId::SerialBus(1));
-    auto frame = command.Encode(CommandType::kStatus);
-    ASSERT_TRUE(frame.has_value());
-    EXPECT_EQ(frame->OpcodeValue(), Opcode::kInputSelect);
-    EXPECT_EQ(Operands(*frame),
-              (std::vector<uint8_t>{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0xFF, 0xFE, 0x00}));
-}
-
-TEST(InputSelectCcmTests, ControlRequestsCarryEachSubfunction) {
-    const auto node = Cmd::BusNodeId::FromRaw(0xFFC2);
-    const auto outPlug = Cmd::UnitPlugId::SerialBus(2);
-    struct Case {
-        Cmd::InputSelectCommand command;
-        uint8_t subfunction;  // Table 7.14
-        uint8_t inputPlug;
-    };
-    const std::array<Case, 3> cases{{
-        {Cmd::ConnectInput(node, outPlug), 0x00, 0xFF},
-        {Cmd::ChangeInputPath(node, outPlug), 0x01, 0xFF},
-        {Cmd::SelectInput(node, outPlug), 0x02, 0xFF},
-    }};
-    for (const auto& c : cases) {
-        auto frame = c.command.Encode(CommandType::kControl);
-        ASSERT_TRUE(frame.has_value());
-        EXPECT_EQ(Operands(*frame),
-                  (std::vector<uint8_t>{c.subfunction, 0x0F, 0xFF, 0xC2, 0x02, c.inputPlug, 0xFF, 0xFE, 0x00}));
-    }
-}
-
-TEST(InputSelectCcmTests, DisconnectNamesTheInputPlug) {
-    // §7.2.1 4): the one subfunction with a specific input_plug; no destination.
-    const auto command = Cmd::DisconnectInput(Cmd::BusNodeId::FromRaw(0xFFC1), Cmd::UnitPlugId::SerialBus(0),
-                                              Cmd::UnitPlugId::SerialBus(1));
-    auto frame = command.Encode(CommandType::kControl);
-    ASSERT_TRUE(frame.has_value());
-    EXPECT_EQ(Operands(*frame), (std::vector<uint8_t>{0x03, 0x0F, 0xFF, 0xC1, 0x00, 0x01, 0xFF, 0xFE, 0x00}));
-}
-
-TEST(InputSelectCcmTests, SignalDestinationIsCarried) {
-    const auto command = Cmd::ConnectInput(Cmd::BusNodeId::FromRaw(0xFFC0), Cmd::UnitPlugId::External(1),
-                                           Cmd::SignalAddress::SubunitPlug(kMusicSubunit0, 4));
-    auto frame = command.Encode(CommandType::kSpecificInquiry);
-    ASSERT_TRUE(frame.has_value());
-    EXPECT_EQ(frame->Type(), CommandType::kSpecificInquiry);
-    EXPECT_EQ(Operands(*frame), (std::vector<uint8_t>{0x00, 0x0F, 0xFF, 0xC0, 0x81, 0xFF, 0x60, 0x04, 0x00}));
-}
-
-TEST(InputSelectCcmTests, NotifyIsNotDefined) {
-    const auto command = Cmd::QueryInputPlug(Cmd::UnitPlugId::SerialBus(0));
-    auto frame = command.Encode(CommandType::kNotify);
-    ASSERT_FALSE(frame.has_value());
-    EXPECT_EQ(frame.error().kind, AvcErrorKind::kInvalidArgument);
-}
-
-TEST(InputSelectCcmTests, ControlReplyDecodesResultStatus) {
-    const auto command = Cmd::SelectInput(Cmd::BusNodeId::FromRaw(0xFFC2), Cmd::UnitPlugId::SerialBus(2));
-    // ACCEPTED, no error, target chose iPCR[1], destination = subunit 0x60 plug 0.
-    auto accepted = DecodeReply<Cmd::InputSelect>(
-        command, {0x09, 0xFF, 0x1B, 0x02, 0x00, 0xFF, 0xC2, 0x02, 0x01, 0x60, 0x00, 0x00});
-    const auto reading = accepted.AsControl();
-    EXPECT_EQ(reading.subfunction, Cmd::InputSelectSubfunction::kSelect);
-    EXPECT_EQ(reading.result, Cmd::InputSelectResult::kNoError);
-    EXPECT_EQ(accepted.node, Cmd::BusNodeId::FromRaw(0xFFC2));
-    EXPECT_EQ(accepted.outputPlug, Cmd::UnitPlugId::SerialBus(2));
-    EXPECT_EQ(accepted.inputPlug, Cmd::UnitPlugId::SerialBus(1));
-    EXPECT_EQ(accepted.destination, Cmd::SignalAddress::SubunitPlug(kMusicSubunit0, 0));
-
-    // REJECTED, p-to-p (not owner) (Table 7.18).
-    auto rejected = DecodeReply<Cmd::InputSelect>(
-        command, {0x0A, 0xFF, 0x1B, 0x02, 0x03, 0xFF, 0xC2, 0x02, 0xFF, 0xFF, 0xFE, 0x00});
-    EXPECT_EQ(rejected.AsControl().result, Cmd::InputSelectResult::kPointToPointNotOwner);
-
-    // Reserved result_status 9 is kept, not named.
-    auto reserved = DecodeReply<Cmd::InputSelect>(
-        command, {0x0A, 0xFF, 0x1B, 0x02, 0x09, 0xFF, 0xC2, 0x02, 0xFF, 0xFF, 0xFE, 0x00});
-    EXPECT_FALSE(reserved.AsControl().result.has_value());
-    EXPECT_EQ(reserved.AsControl().resultCode, 9);
-}
-
-TEST(InputSelectCcmTests, StatusReplyDecodesPlugStatus) {
-    const auto command = Cmd::QueryInputPlug(Cmd::UnitPlugId::SerialBus(0));
-    // status 2 (no selection): node FFFF, output_plug FE, destination FF FE (Figure 7.27).
-    auto idle = DecodeReply<Cmd::InputSelect>(
-        command, {0x0C, 0xFF, 0x1B, 0xFF, 0x2F, 0xFF, 0xFF, 0xFE, 0x00, 0xFF, 0xFE, 0x00});
-    EXPECT_EQ(idle.AsStatus().status, Cmd::InputPlugStatus::kNoSelection);
-    EXPECT_TRUE(idle.node.IsUnspecified());
-    EXPECT_EQ(idle.outputPlug, Cmd::UnitPlugId::Invalid());
-    EXPECT_EQ(idle.destination.Kind(), Cmd::SignalAddressKind::kNoSignal);
-
-    // status 0 (active) from node FFC1 oPCR[3].
-    auto active = DecodeReply<Cmd::InputSelect>(
-        command, {0x0C, 0xFF, 0x1B, 0xFF, 0x0F, 0xFF, 0xC1, 0x03, 0x00, 0xFF, 0xFD, 0x00});
-    EXPECT_EQ(active.AsStatus().status, Cmd::InputPlugStatus::kActive);
-    EXPECT_EQ(active.node, Cmd::BusNodeId::FromRaw(0xFFC1));
-    EXPECT_EQ(active.destination.Kind(), Cmd::SignalAddressKind::kMultiple);  // Figure 7.26
-
-    // status 7 is reserved.
-    auto reserved = DecodeReply<Cmd::InputSelect>(
-        command, {0x0C, 0xFF, 0x1B, 0xFF, 0x7F, 0xFF, 0xC1, 0x03, 0x00, 0xFF, 0xFE, 0x00});
-    EXPECT_FALSE(reserved.AsStatus().status.has_value());
-    EXPECT_EQ(reserved.AsStatus().statusCode, 7);
-}
-
-TEST(InputSelectCcmTests, ShortReplyIsRefused) {
-    auto reply = Cmd::InputSelectOperands::Read(std::array<uint8_t, 8>{});
-    ASSERT_FALSE(reply.has_value());
-    EXPECT_EQ(reply.error().kind, AvcErrorKind::kOperandsTooShort);
-}
-
-// ===========================================================================
-// OUTPUT PRESET
-// ===========================================================================
-
-TEST(OutputPresetCcmTests, StatusRequestsFillUnusedFieldsWithOnes) {
-    auto count = Cmd::QueryPresetCount().Encode(CommandType::kStatus);
-    ASSERT_TRUE(count.has_value());
-    EXPECT_EQ(count->OpcodeValue(), Opcode::kOutputPreset);
-    EXPECT_EQ(Operands(*count), (std::vector<uint8_t>{0x7F, 0xFF, 0xFF, 0xFF, 0xFF}));  // 7F = how many entries
-    auto entry = Cmd::QueryPreset(3).Encode(CommandType::kStatus);
-    ASSERT_TRUE(entry.has_value());
-    EXPECT_EQ(Operands(*entry), (std::vector<uint8_t>{0x03, 0xFF, 0xFF, 0xFF, 0xFF}));
-}
-
-TEST(OutputPresetCcmTests, AddPresetAsksForANewEntry) {
-    const auto command = Cmd::AddPreset(Cmd::BusNodeId::FromRaw(0xFFC3),
-                                        Cmd::SignalAddress::SubunitPlug(kMusicSubunit0, 2));
-    auto frame = command.Encode(CommandType::kControl);
-    ASSERT_TRUE(frame.has_value());
-    EXPECT_EQ(Operands(*frame), (std::vector<uint8_t>{0x7F, 0xFF, 0xC3, 0x60, 0x02}));  // Figure 7.28
-
-    auto unspecified = Cmd::AddPreset(Cmd::BusNodeId::FromRaw(0xFFC3)).Encode(CommandType::kControl);
-    ASSERT_TRUE(unspecified.has_value());
-    EXPECT_EQ(Operands(*unspecified), (std::vector<uint8_t>{0x7F, 0xFF, 0xC3, 0xFF, 0xFE}));  // Figure 7.29
-}
-
-TEST(OutputPresetCcmTests, CancelClearsNodeAndDestination) {
-    auto frame = Cmd::CancelPreset(2).Encode(CommandType::kControl);  // §7.3.1: all ones
-    ASSERT_TRUE(frame.has_value());
-    EXPECT_EQ(Operands(*frame), (std::vector<uint8_t>{0x02, 0xFF, 0xFF, 0xFF, 0xFF}));
-}
-
-TEST(OutputPresetCcmTests, EntryNumberKeepsBit7Clear) {
-    auto frame = Cmd::QueryPreset(0xFF).Encode(CommandType::kStatus);
-    ASSERT_TRUE(frame.has_value());
-    EXPECT_EQ(Operands(*frame)[0], 0x7F);
-}
-
-TEST(OutputPresetCcmTests, NotifyIsNotDefined) {
-    EXPECT_FALSE(Cmd::QueryPresetCount().Encode(CommandType::kNotify).has_value());
-}
-
-TEST(OutputPresetCcmTests, StatusReplyDecodesSelfAndOccupancy) {
-    const auto command = Cmd::QueryPreset(2);
-    // Entry 2, set locally (self bit), node FFC3, destination subunit 0x60 plug 2.
-    auto occupied = DecodeReply<Cmd::OutputPreset>(command, {0x0C, 0xFF, 0x1C, 0x82, 0xFF, 0xC3, 0x60, 0x02});
-    EXPECT_EQ(occupied.EntryNumber(), 2);
-    EXPECT_TRUE(occupied.IsSelf());
-    EXPECT_FALSE(occupied.IsUnoccupied());
-    EXPECT_EQ(occupied.destinationNode, Cmd::BusNodeId::FromRaw(0xFFC3));
-    EXPECT_EQ(occupied.destination, Cmd::SignalAddress::SubunitPlug(kMusicSubunit0, 2));
-
-    // §7.3.5: an unoccupied entry leaves node and destination at FF FF.
-    auto empty = DecodeReply<Cmd::OutputPreset>(command, {0x0C, 0xFF, 0x1C, 0x03, 0xFF, 0xFF, 0xFF, 0xFF});
-    EXPECT_FALSE(empty.IsSelf());
-    EXPECT_TRUE(empty.IsUnoccupied());
-}
-
-TEST(OutputPresetCcmTests, CountReplyCarriesTheEntryNumber) {
-    auto reply = DecodeReply<Cmd::OutputPreset>(Cmd::QueryPresetCount(),
-                                                {0x0C, 0xFF, 0x1C, 0x04, 0xFF, 0xFF, 0xFF, 0xFF});
-    EXPECT_EQ(reply.EntryNumber(), 4);  // highest entry plus one (§7.3.5)
-}
-
-TEST(OutputPresetCcmTests, ShortReplyIsRefused) {
-    auto reply = Cmd::OutputPresetOperands::Read(std::array<uint8_t, 4>{});
-    ASSERT_FALSE(reply.has_value());
-    EXPECT_EQ(reply.error().kind, AvcErrorKind::kOperandsTooShort);
-}
-
-// ===========================================================================
-// CCM PROFILE
-// ===========================================================================
-
-TEST(CcmProfileTests, StatusRequestSelectsTheSourceSubfunction) {
-    auto frame = Cmd::QueryCcmProfile().Encode(CommandType::kStatus);
-    ASSERT_TRUE(frame.has_value());
-    EXPECT_EQ(frame->OpcodeValue(), Opcode::kCcmProfile);
-    EXPECT_EQ(frame->Address(), SubunitAddress::Unit());
-    EXPECT_EQ(Operands(*frame), (std::vector<uint8_t>{0x00, 0xFF, 0xFF, 0xFF, 0xFF}));
-}
-
-TEST(CcmProfileTests, OnlyStatusIsDefined) {
-    const auto command = Cmd::QueryCcmProfile();
-    EXPECT_FALSE(command.Encode(CommandType::kControl).has_value());
-    EXPECT_FALSE(command.Encode(CommandType::kNotify).has_value());
-    EXPECT_FALSE(command.Encode(CommandType::kSpecificInquiry).has_value());
-}
-
-TEST(CcmProfileTests, ReplyDecodesProfileBits) {
-    const auto command = Cmd::QueryCcmProfile();
-    auto both = DecodeReply<Cmd::CcmProfile>(command, {0x0C, 0xFF, 0x1D, 0x00, 0x03, 0x00, 0x00, 0x00});
-    EXPECT_TRUE(both.IsSourceReply());
-    EXPECT_TRUE(both.ConformsToCcm10());
-    EXPECT_TRUE(both.ConformsToDigitalAnalogChangeover());
-    auto onlyCcm10 = DecodeReply<Cmd::CcmProfile>(command, {0x0C, 0xFF, 0x1D, 0x00, 0x01, 0x00, 0x00, 0x00});
-    EXPECT_TRUE(onlyCcm10.ConformsToCcm10());
-    EXPECT_FALSE(onlyCcm10.ConformsToDigitalAnalogChangeover());
-    auto onlyDa = DecodeReply<Cmd::CcmProfile>(command, {0x0C, 0xFF, 0x1D, 0x00, 0x02, 0x00, 0x00, 0x00});
-    EXPECT_FALSE(onlyDa.ConformsToCcm10());
-    EXPECT_TRUE(onlyDa.ConformsToDigitalAnalogChangeover());
-}
-
-TEST(CcmProfileTests, ShortReplyIsRefused) {
-    auto reply = Cmd::CcmProfileOperands::Read(std::array<uint8_t, 4>{});
-    ASSERT_FALSE(reply.has_value());
-    EXPECT_EQ(reply.error().kind, AvcErrorKind::kOperandsTooShort);
 }
 
 } // namespace ASFW::AVC::Test

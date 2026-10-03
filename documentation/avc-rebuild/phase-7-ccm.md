@@ -14,14 +14,11 @@ value is not a parse error; `CheckStatusAgainstSpec` reports the departure as da
 
 | File (under `ASFWDriver/Protocols/AVC/Commands/`) | Contents |
 |---|---|
-| `CcmTypes.hpp` | `UnitPlugId`, `BusNodeId`, `SignalAddress` (+ `SignalAddressKind`), `OutputStatus`, `SignalModifications`, `SignalSourceStatusField`, `SignalSourceControlField`, `SignalSourceResult`, `DestinationPlugKind`, `StatusDeviations`, `CheckStatusAgainstSpec`. `static_assert`s pin Table C.1 / C.2 values. |
+| `CcmTypes.hpp` | `UnitPlugId`, `SignalAddress` (+ `SignalAddressKind`), `OutputStatus`, `SignalModifications`, `SignalSourceStatusField`, `SignalSourceControlField`, `SignalSourceResult`, `DestinationPlugKind`, `StatusDeviations`, `CheckStatusAgainstSpec`. `static_assert`s pin Table C.1 / C.2 values. |
 | `SignalSourceCommand.hpp` | SIGNAL SOURCE `0x1A`. Requests: `QuerySignalSource` (STATUS), `ConnectSignalSource` (CONTROL), `CanConnectSignalSource` (SPECIFIC INQUIRY), `WatchSignalSource` (NOTIFY). Reply views: `Status()`, `Control()`, `AsVirtualOutput()`. |
-| `InputSelectCommand.hpp` | INPUT SELECT `0x1B`. Requests: `QueryInputPlug`, `ConnectInput`, `ChangeInputPath`, `SelectInput`, `DisconnectInput`. Reply views: `AsControl()`, `AsStatus()`. |
-| `OutputPresetCommand.hpp` | OUTPUT PRESET `0x1C`. Requests: `QueryPresetCount`, `QueryPreset`, `AddPreset`, `CancelPreset`. |
-| `CcmProfileCommand.hpp` | CCM PROFILE `0x1D` (STATUS only). Request: `QueryCcmProfile`. |
 | `Core/AvcTypes.hpp` | `Opcode::kInputSelect`, `kOutputPreset`, `kCcmProfile` (Table 7.1). |
 
-Tests: `tests/protocols/CcmCodecTests.cpp` (46 cases): the spec's Annex C frames (Tables C.1, C.2, C.6), every field of
+Tests: `tests/protocols/CcmCodecTests.cpp` (26 cases): the spec's Annex C frames (Tables C.1, C.2, C.6), every field of
 every figure, and Phase 88 / Duet STATUS replies including the departures they show. Existing SIGNAL SOURCE tests and
 the discovery reducer use the named requests.
 
@@ -69,3 +66,12 @@ the discovery reducer use the named requests.
 - **Hardware:** six STATUS frames ran on the streaming Duet (read-only, MCP, 2026-10-03); the running dext (`b1cb7031`)
   predates this branch. **Not run:** the new `0F` INQUIRY frame on any device, and attach with the new frames. Needed: attach the Phase 88 and the Duet with the new INQUIRY frames and compare with the
   previous attach; then the read-only `0F` re-run of the sync-plug inquiries (open item 8).
+
+## Removed: INPUT SELECT, OUTPUT PRESET, CCM PROFILE codecs
+
+`InputSelectCommand.hpp`, `OutputPresetCommand.hpp`, `CcmProfileCommand.hpp` and `BusNodeId` were written with
+their tests and then had no caller and no device that answers them. Dead code is a second path to debug, so
+they were deleted. The opcodes stay in `Core/AvcTypes.hpp` and the name table, so a device that sends one is
+logged as `INPUT SELECT(0x1b)` rather than `UNKNOWN`. The codecs are recoverable from commit `46e4ae8f`
+(`git show 46e4ae8f:ASFWDriver/Protocols/AVC/Commands/InputSelectCommand.hpp`, and likewise the other two) when a
+use exists.

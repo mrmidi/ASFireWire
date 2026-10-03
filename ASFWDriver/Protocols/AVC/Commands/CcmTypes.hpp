@@ -34,9 +34,7 @@ namespace ASFW::AVC::Cmd {
 
 /// A unit plug number as a plug_ID field carries it: serial bus PCR 0..30, external
 /// plug 0..30, or one of a few named special values. The same value can mean
-/// different things in different fields (0x7F is "any available serial bus plug" in
-/// signal_source and "not applicable" in INPUT SELECT), so each meaning has its own
-/// factory.
+/// different things in different fields, so each meaning has its own factory.
 class UnitPlugId {
 public:
     static constexpr uint8_t kMaxPlugNumber = 0x1E;     ///< PCR[0..30], external plug zero..30.
@@ -52,8 +50,6 @@ public:
     }
     /// "Any available serial bus plug" (Tables 7.2, 7.4, 7.16, 7.24).
     [[nodiscard]] static constexpr UnitPlugId AnyAvailableSerialBus() noexcept { return UnitPlugId{0x7F}; }
-    /// "Not applicable" in the INPUT SELECT output_plug / input_plug fields (Tables 7.15, 7.19, 7.20).
-    [[nodiscard]] static constexpr UnitPlugId NotApplicable() noexcept { return UnitPlugId{0x7F}; }
     /// "Any available external plug" (Tables 7.2, 7.4, 7.15, 7.16, 7.24).
     [[nodiscard]] static constexpr UnitPlugId AnyAvailableExternal() noexcept { return UnitPlugId{0xFF}; }
     /// "Invalid" (Tables 7.2-7.5, 7.15, 7.19, 7.20).
@@ -85,30 +81,6 @@ static_assert(UnitPlugId::External(0).IsExternal() && UnitPlugId::External(0).Nu
 static_assert(UnitPlugId::External(30).Number() == 30);
 static_assert(!UnitPlugId::AnyAvailableSerialBus().Number().has_value());
 static_assert(!UnitPlugId::Invalid().Number().has_value());
-
-// ---------------------------------------------------------------------------
-// Bus node ID (INPUT SELECT node_ID, OUTPUT PRESET destination_node_ID)
-// ---------------------------------------------------------------------------
-
-/// 16-bit serial bus node ID, most significant byte first on the wire (CCM §7.2.1, §7.3.1).
-class BusNodeId {
-public:
-    [[nodiscard]] static constexpr BusNodeId FromRaw(uint16_t raw) noexcept { return BusNodeId{raw}; }
-    /// "Not specified": node_ID FFFF in an INPUT SELECT status reply (§7.2.5) and in a
-    /// cancelling OUTPUT PRESET (§7.3.1).
-    [[nodiscard]] static constexpr BusNodeId Unspecified() noexcept { return BusNodeId{0xFFFF}; }
-
-    [[nodiscard]] constexpr uint16_t Raw() const noexcept { return raw_; }
-    [[nodiscard]] constexpr uint8_t HighByte() const noexcept { return static_cast<uint8_t>(raw_ >> 8); }
-    [[nodiscard]] constexpr uint8_t LowByte() const noexcept { return static_cast<uint8_t>(raw_); }
-    [[nodiscard]] constexpr bool IsUnspecified() const noexcept { return raw_ == 0xFFFF; }
-
-    friend constexpr bool operator==(BusNodeId, BusNodeId) noexcept = default;
-
-private:
-    explicit constexpr BusNodeId(uint16_t raw) noexcept : raw_(raw) {}
-    uint16_t raw_;
-};
 
 // ---------------------------------------------------------------------------
 // Signal address: signal_source / signal_destination (CCM Figures 7.2-7.5, 7.11-7.16)
