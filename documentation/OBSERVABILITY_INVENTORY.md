@@ -73,6 +73,8 @@ Perturbation classes used below:
 | `ZtsTelemetryRing` (`Isoch/Receive/ZtsTelemetry.hpp`) → `[Zts]` | ZTS seed/update records | the RX consumer | the watchdog drain → log; `tools/zts_sim.py` | low ring + verbose drain (verbosity ≥ 1) | **keep, but move**: ZTS is an audio clock concept living under `Isoch/`. The midi branch moved it to `Audio/Runtime/`. Port that move with milestone 3 |
 | `[Isoch]` | context start/stop/error | `Isoch/` | the log | gated | **keep** |
 | IT refill latency buckets, `LogStatistics`, `LogHardwareState`, `isochLogDivider_`, `itLogDivider_` | periodic IT/IR statistics | — | — | — | **removed (FW-171)**: no consumer, and periodic output on the hot path |
+| `IT: Sample` (`IsochTransmitContext::LogStatistics`) | IT `ContextControl` and `CommandPtr` | `WatchdogCoordinator::TickIsochTransmit`, every 1000 ticks while IT runs | the log | ~1 Hz, off the packet path | **restored for MOTU 828 Mk3 bring-up**: a flat `CommandPtr` separates a primed-but-unfetched ring from one that ran |
+| `IT: Seed-window dump` | descriptors and CIP header of the first 48 primed packets | `IsochTransmitContext::DoRefillOnce`, once per start at the first completion | the log | one-shot, ~200 records | **restored for MOTU 828 Mk3 bring-up**: compares the TX seed with a capture of the official driver |
 | Selectors 3 / 34 / 35 (`GetMetricsSnapshot`, `GetIsochRxMetrics`, …) and `ControllerMetrics` | the old metrics snapshot | — | — | — | **removed (FW-171)**. The numbers are left unassigned |
 
 ## 3. Audio

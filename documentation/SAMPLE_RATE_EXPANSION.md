@@ -9,6 +9,13 @@ document is the implementation decision derived from it, after completing the
 cross-check its open question #6 required: validation against the Linux ALSA
 FireWire stack, now present in-tree.
 
+**MOTU 828 Mk3 rate encoding (added 2026-07-31):** the rate index occupies bits 8-10 of the
+config word written to `0xffff:f0000b14`, and the vendor's own `kSampleRates` table has six
+entries for this model: `0`=44100, `1`=48000, `2`=88200, `3`=96000, `4`=176400,
+`5`=192000. Read from the official driver, and consistent with the existing
+`SampleRateFromClockStatus(0x08000100)` -> 48 kHz. The 44.1 family below therefore needs no guess
+about how to ask the device for it.
+
 **Reference pinning:** Linux citations below refer to
 `references/linux-sound-firewire-stack/` (symlink into a sparse clone of
 `github.com/torvalds/linux`, commit `2c7c88a412aa` fetched 2026-07-09,
