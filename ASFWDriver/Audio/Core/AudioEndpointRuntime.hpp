@@ -9,6 +9,8 @@
 #include "../Config/AudioConstants.hpp"
 #include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Shared/ASFWAudioStreamMetricsABI.h"
+#include "../../Shared/ASFWIsochOracleCaptureABI.h"
 
 #include <DriverKit/IOLib.h>
 
@@ -27,6 +29,14 @@
 
 namespace ASFW::Audio {
 
+// The oracle chunk is filled by copying runtime records verbatim, so the two
+// layouts must not drift apart silently.
+static_assert(sizeof(ASFWIsochOracleRecordV1) ==
+                  sizeof(Runtime::IsochOracleRecord),
+              "oracle export record must mirror the runtime record layout");
+static_assert(ASFW_ISOCH_ORACLE_CAPTURE_CHUNK_RECORDS <=
+                  Runtime::kIsochOracleCaptureRecords,
+              "a chunk must never claim more records than a section can hold");
 struct AudioOutputObserverState final {
     uint64_t writeEndFrame{0};
     uint64_t oldestValidFrame{0};
@@ -333,6 +343,236 @@ public:
         out.valid = true;
         IOLockUnlock(lock_);
         return true;
+    }
+
+    void CopyAudioStreamMetricsSnapshot(
+        ASFWAudioStreamMetricsSnapshotV1& out) const noexcept {
+        out = {};
+        out.abiVersion = ASFW_AUDIO_STREAM_METRICS_ABI_VERSION;
+        out.structSize = sizeof(out);
+        out.status = ASFWAudioStreamMetricsStatusUnavailable;
+        out.guid = guid_;
+
+        if (streaming_.load(std::memory_order_acquire)) {
+            out.stateFlags |= ASFWAudioStreamMetricsStateStreaming;
+        }
+        if (!lock_) {
+            return;
+        }
+
+        IOLockLock(lock_);
+        if (configValid_.load(std::memory_order_acquire)) {
+            out.stateFlags |= ASFWAudioStreamMetricsStateConfigAvailable;
+            out.sampleRateHz = config_.currentSampleRate;
+            out.outputChannels = config_.outputChannelCount
+                ? config_.outputChannelCount
+                : config_.channelCount;
+            out.inputChannels = config_.inputChannelCount
+                ? config_.inputChannelCount
+                : config_.channelCount;
+        }
+
+        out.endpointGeneration = directGeneration_;
+        if (!HasCompleteDirectAudioMemoryLocked()) {
+            IOLockUnlock(lock_);
+            return;
+        }
+
+        out.stateFlags |= ASFWAudioStreamMetricsStateControlAvailable;
+        out.sampleRateHz = directSampleRateHz_;
+        out.outputChannels = directOutputChannels_;
+        out.inputChannels = directInputChannels_;
+
+        const Runtime::AudioTransportControlBlock* control = directControl_;
+        bool consistent = false;
+        for (uint32_t attempt = 0; attempt < 4; ++attempt) {
+            const uint64_t sequenceBefore =
+                control->metricsSnapshotSequence.load(std::memory_order_acquire);
+            if ((sequenceBefore & 1u) != 0) {
+                continue;
+            }
+            const uint64_t generationBefore =
+                control->generation.load(std::memory_order_acquire);
+
+            out.streamGeneration = generationBefore;
+            out.ioCallbackGeneration =
+                control->ioCallbackGeneration.load(std::memory_order_relaxed);
+            out.ioCallbackErrorGeneration =
+                control->ioCallbackErrorGeneration.load(std::memory_order_relaxed);
+            out.fatalGeneration =
+                control->fatalGeneration.load(std::memory_order_relaxed);
+            out.discontinuities =
+                control->discontinuities.load(std::memory_order_relaxed);
+            out.ioLastError = control->ioLastError.load(std::memory_order_relaxed);
+            out.fatalReason = static_cast<uint32_t>(
+                control->fatalReason.load(std::memory_order_relaxed));
+
+            out.outputClientWriteEndFrame =
+                control->client.outputClientWriteEndFrame.load(std::memory_order_relaxed);
+            out.outputConsumedEndFrame =
+                control->outputConsumedEndFrame.load(std::memory_order_relaxed);
+            out.outputUnderruns =
+                control->outputUnderruns.load(std::memory_order_relaxed);
+            out.playbackRingWriteFrame =
+                control->playbackRingWriteFrame.load(std::memory_order_relaxed);
+            out.playbackRingReadFrame =
+                control->playbackRingReadFrame.load(std::memory_order_relaxed);
+            out.playbackRingOldestValidFrame =
+                control->playbackRingOldestValidFrame.load(std::memory_order_relaxed);
+            out.playbackRingUnderruns =
+                control->playbackRingUnderruns.load(std::memory_order_relaxed);
+            out.playbackRingOverruns =
+                control->playbackRingOverruns.load(std::memory_order_relaxed);
+            out.txPackets =
+                control->counters.txPackets.load(std::memory_order_relaxed);
+            out.txDataPackets =
+                control->counters.txDataPackets.load(std::memory_order_relaxed);
+            out.txNoDataPackets =
+                control->counters.txNoDataPackets.load(std::memory_order_relaxed);
+            out.txSilenceSubstitutions =
+                control->counters.txSilenceSubstitutions.load(std::memory_order_relaxed);
+            out.txPcmFramesEncoded =
+                control->counters.txPcmFramesEncoded.load(std::memory_order_relaxed);
+            out.txPcmNonzeroPackets =
+                control->counters.txPcmNonzeroPackets.load(std::memory_order_relaxed);
+            out.txPcmAllZeroPackets =
+                control->counters.txPcmAllZeroPackets.load(std::memory_order_relaxed);
+            // txScheduledSampleFrame, txCompletedSampleFrame and rxDbcFrameCount
+            // left the control block as dead surfaces (de3fe1c7, T2).
+            // Their snapshot fields stay in the ABI and read as zero.
+            out.txScheduledSampleFrame = 0;
+            out.txCompletedSampleFrame = 0;
+            out.txReplayEntries =
+                control->txReplayEntries.load(std::memory_order_relaxed);
+            out.txReplayUnderflows =
+                control->txReplayUnderflows.load(std::memory_order_relaxed);
+            out.txReplayInvalidSyt =
+                control->txReplayInvalidSyt.load(std::memory_order_relaxed);
+
+            out.inputClientReadEndFrame =
+                control->client.inputClientReadEndFrame.load(std::memory_order_relaxed);
+            out.inputProducedEndFrame =
+                control->inputProducedEndFrame.load(std::memory_order_relaxed);
+            out.inputOverruns =
+                control->inputOverruns.load(std::memory_order_relaxed);
+            out.rxDbcFrameCount = 0;
+            out.captureRingWriteFrame =
+                control->captureRingWriteFrame.load(std::memory_order_relaxed);
+            out.captureRingReadFrame =
+                control->captureRingReadFrame.load(std::memory_order_relaxed);
+            out.captureRingOverruns =
+                control->captureRingOverruns.load(std::memory_order_relaxed);
+            out.captureRingStarvations =
+                control->captureRingStarvations.load(std::memory_order_relaxed);
+            out.rxPackets =
+                control->counters.rxPackets.load(std::memory_order_relaxed);
+            out.rxDecodedFrames =
+                control->counters.rxDecodedFrames.load(std::memory_order_relaxed);
+            out.rxDiscontinuities =
+                control->counters.rxDiscontinuities.load(std::memory_order_relaxed);
+            out.rxReplayEntries =
+                control->rxReplayEntries.load(std::memory_order_relaxed);
+            out.rxReplayEpochResets =
+                control->rxReplayEpochResets.load(std::memory_order_relaxed);
+            out.ztsRxAdkPublished =
+                control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed);
+
+            out.txMinimumPreparationDistance =
+                control->txMinimumPreparationDistance.load(std::memory_order_relaxed);
+            out.txMinimumCommittedMarginPackets =
+                control->txMinimumCommittedMarginPackets.load(std::memory_order_relaxed);
+            out.rxTransferDelayTicks =
+                control->rxTransferDelayTicks.load(std::memory_order_relaxed);
+            out.txTransferDelayTicks =
+                control->txTransferDelayTicks.load(std::memory_order_relaxed);
+
+            std::atomic_thread_fence(std::memory_order_acquire);
+            const uint64_t generationAfter =
+                control->generation.load(std::memory_order_relaxed);
+            const uint64_t sequenceAfter =
+                control->metricsSnapshotSequence.load(std::memory_order_relaxed);
+            if (sequenceBefore == sequenceAfter &&
+                (sequenceAfter & 1u) == 0 &&
+                generationBefore == generationAfter) {
+                consistent = true;
+                break;
+            }
+        }
+
+        if (consistent) {
+            out.stateFlags |= ASFWAudioStreamMetricsStateConsistent;
+            out.status = ASFWAudioStreamMetricsStatusOK;
+        } else {
+            out.status = ASFWAudioStreamMetricsStatusBusy;
+        }
+        IOLockUnlock(lock_);
+    }
+
+    // Reads one chunk of the bounded start-window oracle capture. Unlike the
+    // metrics snapshot there is no consistency sequence to honour: the capture
+    // is append-only within a generation, and the chunk reports that
+    // generation so a reader that straddles a restart can discard the mix
+    // rather than silently splice two starts together.
+    void CopyIsochOracleCaptureChunk(
+        ASFWIsochOracleCaptureChunkV1& out,
+        uint32_t direction,
+        uint32_t startIndex) const noexcept {
+        const uint64_t guid = guid_;
+        out = {};
+        out.abiVersion = ASFW_ISOCH_ORACLE_CAPTURE_ABI_VERSION;
+        out.structSize = sizeof(out);
+        out.status = ASFWIsochOracleCaptureStatusUnavailable;
+        out.guid = guid;
+        out.direction = direction;
+        out.startIndex = startIndex;
+        out.sectionCapacity = Runtime::kIsochOracleCaptureRecords;
+
+        if (direction != ASFWIsochOracleCaptureDirectionTx &&
+            direction != ASFWIsochOracleCaptureDirectionRx) {
+            out.status = ASFWIsochOracleCaptureStatusBadDirection;
+            return;
+        }
+        if (!lock_) {
+            return;
+        }
+
+        IOLockLock(lock_);
+        if (!HasCompleteDirectAudioMemoryLocked() || !directControl_) {
+            IOLockUnlock(lock_);
+            return;
+        }
+
+        const auto& capture = directControl_->isochOracleCapture;
+        const auto& section = capture.Section(
+            direction == ASFWIsochOracleCaptureDirectionTx
+                ? Runtime::IsochOracleDirection::kTx
+                : Runtime::IsochOracleDirection::kRx);
+
+        out.captureGeneration = capture.Generation();
+        out.sectionCount = section.Count();
+        out.frozen = section.Frozen() ? 1u : 0u;
+        out.suppressed = section.Suppressed();
+        out.lostCycles = section.LostCycles();
+        out.backfilled = section.Backfilled();
+
+        if (startIndex > out.sectionCount) {
+            out.status = ASFWIsochOracleCaptureStatusOutOfRange;
+            IOLockUnlock(lock_);
+            return;
+        }
+
+        uint32_t emitted = 0;
+        while (emitted < ASFW_ISOCH_ORACLE_CAPTURE_CHUNK_RECORDS) {
+            Runtime::IsochOracleRecord record{};
+            if (!section.ReadRecord(startIndex + emitted, record)) {
+                break;
+            }
+            std::memcpy(&out.records[emitted], &record, sizeof(record));
+            ++emitted;
+        }
+        out.recordCount = emitted;
+        out.status = ASFWIsochOracleCaptureStatusOK;
+        IOLockUnlock(lock_);
     }
 
     [[nodiscard]] bool IsCurrentStreamingRxEpoch(uint64_t epoch) noexcept {

@@ -65,6 +65,12 @@ public:
     // Selector 1014: LogRing category names and driver-defined presets.
     kern_return_t GetLogCatalog(IOUserClientMethodArguments* args);
 
+    // Selector 1015: synchronized read-only direct-audio TX/RX snapshot
+    kern_return_t GetAudioStreamMetrics(IOUserClientMethodArguments* args);
+
+    // Selector 1016: one chunk of the bounded start-window oracle capture
+    kern_return_t GetIsochOracleCapture(IOUserClientMethodArguments* args);
+
 private:
     ASFWDriver* driver_{nullptr};
     Diagnostics::DiagnosticsService* service_{nullptr};
