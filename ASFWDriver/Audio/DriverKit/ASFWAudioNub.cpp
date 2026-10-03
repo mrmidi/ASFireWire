@@ -917,6 +917,7 @@ kern_return_t IMPL(ASFWAudioNub, SetAvcFeatureControl) {
     const auto discovery = context->deps.avcDiscovery;
     const auto queue = context->workQueue;
     const uint64_t guid = ivars->guid;
+    ASFW_LOG(Audio, "[AvcControl] request guid=0x%016llx token=0x%06x mute=%u requestedRaw=%d", guid, token, muteControl, value);
     const auto active = std::make_shared<std::atomic<bool>>(true);
     const auto result = ASFW::Audio::WaitForAsyncResult<int32_t>([=](auto done) {
         queue->DispatchAsync(^{
@@ -932,8 +933,13 @@ kern_return_t IMPL(ASFWAudioNub, SetAvcFeatureControl) {
             if (found == graph->featureChannels.end()) { done(kIOReturnUnsupported, 0); return; }
             const auto subunit = found->subunit;
             ASFW::Audio::SetAvcFeature(unit, *route, *found, muteControl, value,
-                [unit, route = *route, subunit, muteControl, done](auto reply) {
-                    if (!reply) { done(kIOReturnError, 0); return; }
+                [unit, route = *route, subunit, muteControl, token, done](auto reply) {
+                    if (!reply) {
+                        const auto& error = reply.error();
+                        ASFW_LOG(Audio, "[AvcControl] transaction failed guid=0x%016llx token=0x%06x errorKind=%u response=%d operandOffset=%u", route.guid, token, static_cast<unsigned>(error.kind), error.response ? static_cast<int>(*error.response) : -1, error.operandOffset);
+                        done(A::ToIOReturn(error), 0); return;
+                    }
+                    ASFW_LOG(Audio, "[AvcControl] readback guid=0x%016llx token=0x%06x mute=%u confirmedRaw=%d generation=%u", route.guid, token, muteControl, muteControl ? static_cast<int32_t>(reply->AsMute()) : reply->AsVolume().Raw(), route.generation.value);
                     unit->RememberConfirmedFeature(route, subunit, *reply);
                     done(kIOReturnSuccess, muteControl ? static_cast<int32_t>(reply->AsMute()) : reply->AsVolume().Raw());
                 }, [active] { return active->load(std::memory_order_acquire); });
@@ -941,5 +947,6 @@ kern_return_t IMPL(ASFWAudioNub, SetAvcFeatureControl) {
     }, 2000, kIOReturnTimeout, nullptr, 1);
     active->store(false, std::memory_order_release);
     if (result.status == kIOReturnSuccess) *outConfirmedValue = result.value;
+    ASFW_LOG(Audio, "[AvcControl] request complete guid=0x%016llx token=0x%06x kr=0x%x confirmedRaw=%d", guid, token, result.status, result.value);
     return result.status;
 }

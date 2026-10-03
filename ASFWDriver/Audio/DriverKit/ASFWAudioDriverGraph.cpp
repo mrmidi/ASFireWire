@@ -764,6 +764,12 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // Restoration travels through the same checked write/readback callbacks.
     // Other families keep their existing physical-control authority policy.
     ivars.audioDevice->SetWantsControlsRestored(ivars.device.avcControlCount != 0);
+    ASFW_LOG(Audio, "[AvcControl] restoration controls=%u streamFormats=1 descriptors=%u initialValues=discovery hostRestoreSource=unspecified", ivars.device.avcControlCount != 0, ivars.device.avcControlCount);
+    ASFW_LOG(Audio, "[AvcControl] init-state guid=0x%016llx sampleRate=%.0f source=nub hostRestore=requested completion=not-observable", ivars.device.guid, ivars.device.currentSampleRate);
+    for (uint32_t index = 0; index < ivars.device.avcControlCount; ++index) {
+        const auto& descriptor = ivars.device.avcControls[index];
+        ASFW_LOG(Audio, "[AvcControl] init-state token=0x%06x name=%{public}s volumeKnown=%u volumeDb=%f muteKnown=%u muted=%u source=device-discovery", descriptor.token, descriptor.name, descriptor.hasVolume, ASFW::Audio::Model::AvcVolumeRange::Decibels(descriptor.current), descriptor.hasMute, descriptor.muted);
+    }
     if (!requireAdkSuccess(
             "driver.SetTransportType",
             driver.SetTransportType(
