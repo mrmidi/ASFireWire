@@ -98,6 +98,26 @@ public:
         return index < segmentCount_ ? &segments_[index] : nullptr;
     }
 
+    // Inverse of the fragment resolution above: map a device address that a
+    // descriptor already carries back to its offset in the payload slab, so a
+    // CPU-side reader can look at the very bytes that descriptor points at.
+    // Diagnostics only -- the transmit path never needs this direction.
+    [[nodiscard]] bool ResolveSlabOffset(std::uint32_t deviceAddress,
+                                         std::uint64_t& slabOffset) const noexcept {
+        if (!IsValid() || deviceAddress == 0) {
+            return false;
+        }
+        for (std::size_t i = 0; i < segmentCount_; ++i) {
+            const auto& segment = segments_[i];
+            if (deviceAddress >= segment.deviceAddress &&
+                deviceAddress < segment.deviceAddress + segment.length) {
+                slabOffset = segment.slabOffset + (deviceAddress - segment.deviceAddress);
+                return true;
+            }
+        }
+        return false;
+    }
+
     [[nodiscard]] bool ResolveTwoFragments(
         std::uint64_t slabOffset,
         std::uint32_t length,

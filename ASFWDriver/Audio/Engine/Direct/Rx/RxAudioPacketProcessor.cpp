@@ -12,6 +12,13 @@ namespace ASFW::AudioEngine::Direct::Rx {
 
 static constexpr size_t kIsochHeaderSize = 8; // Timestamp (4) + 1394 Isoch Header (4)
 
+// The header every 828 Mk3 capture packet carries in the CIP position. Matched
+// byte for byte, as observed on hardware: it is not an
+// IEC 61883 CIP header (EOH1 is clear), so no field of it is interpreted.
+static constexpr uint8_t kMotuV3CaptureHeader[8] = {
+    0x0d, 0x04, 0x04, 0x00, 0x22, 0xff, 0xff, 0xff,
+};
+
 RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     const uint8_t* payload,
     size_t length,
@@ -26,6 +33,8 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     RxAudioPacketProcessorResult result{};
 
     const bool headerless = framing == ::ASFW::Encoding::AudioPacketFraming::kHeaderless;
+    const bool motuV3Header =
+        framing == ::ASFW::Encoding::AudioPacketFraming::kMotuV3Header;
     if (length < kIsochHeaderSize + (headerless ? 0U : 8U)) {
         result.status = DirectRxWriteStatus::kShortPacket;
         return result;
@@ -38,7 +47,20 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     const uint8_t* data = payload + kIsochHeaderSize;
     size_t payloadBytes = length - kIsochHeaderSize;
     uint8_t cipDBS = 0;
-    if (!headerless) {
+    if (motuV3Header) {
+        if (std::memcmp(data, kMotuV3CaptureHeader, sizeof(kMotuV3CaptureHeader)) != 0) {
+            result.status = DirectRxWriteStatus::kInvalidCipHeader;
+            return result;
+        }
+        // Reported as a valid header with SYT NO_INFO, as the V3 decoder always
+        // did: MOTU carries presentation time in each block's SPH instead.
+        result.hasValidCip = true;
+        result.syt = 0xFFFF;
+        result.fdf = data[4];
+        result.dbs = data[1];
+        data += sizeof(kMotuV3CaptureHeader);
+        payloadBytes -= sizeof(kMotuV3CaptureHeader);
+    } else if (!headerless) {
         const auto* quadlets = reinterpret_cast<const uint32_t*>(data);
         const auto cip = ASFW::Isoch::CIPHeader::Decode(quadlets[0], quadlets[1]);
         if (!cip) {
@@ -75,13 +97,21 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
 
     // Headerless streams have no DBS field to bound each sample frame, so their
     // payload must consist of complete codec-defined frames.
-    if (headerless && payloadBytes % strideBytes != 0) {
+    // The V3 header has no trustworthy DBS either, so the same rule applies.
+    if ((headerless || motuV3Header) && payloadBytes % strideBytes != 0) {
         result.status = DirectRxWriteStatus::kGeometryMismatch;
         return result;
     }
 
     const size_t eventCount = payloadBytes / strideBytes;
     result.framesDecoded = static_cast<uint32_t>(eventCount);
+    if (motuV3Header && eventCount != 0) {
+        result.firstMotuSph = (static_cast<uint32_t>(data[0]) << 24) |
+                              (static_cast<uint32_t>(data[1]) << 16) |
+                              (static_cast<uint32_t>(data[2]) << 8) |
+                              static_cast<uint32_t>(data[3]);
+        result.hasMotuSph = true;
+    }
 
     if (eventCount == 0) {
         result.status = DirectRxWriteStatus::kAvailable;

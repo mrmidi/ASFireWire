@@ -22,6 +22,8 @@
 #include "Audio/DriverKit/ASFWAudioDriverPrivate.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/DiceProfile.hpp"
+#include "Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.hpp"
+#include "Audio/Wire/AMDTP/MotuV3WireFormat.hpp"
 #include "Audio/DriverKit/Config/ResolvedStreamConfig.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "Isoch/Core/IsochTxQueue.hpp"
@@ -232,6 +234,18 @@ public:
     // device -- the only mode the reference Saffire capture shows (host
     // packets are 8 or 296 bytes, device packets up to 552 = 8 x DBS 17).
     void FeedBlockingRx(uint32_t dataBlocksPerPacket) { rxBlocksPerPacket_ = dataBlocksPerPacket; }
+
+    // MOTU protocol-v3 capture as the V3 observer leaves it: replay entries
+    // carry block counts but never a valid SYT (the device sends NO_INFO), and
+    // every DATA packet publishes the device's cumulative SPH clock for the TX
+    // servo -- here a device running at exactly 512 ticks per frame.
+    void FeedMotuV3Rx(uint32_t dataBlocksPerPacket) {
+        rxBlocksPerPacket_ = dataBlocksPerPacket;
+        rxMotuV3_ = true;
+    }
+
+    // The bus cycle the rig's IT context started in.
+    [[nodiscard]] static constexpr uint64_t StartCycle() { return kStartCycle; }
 
     // CoreAudio's side of playback. Each IO cycle CoreAudio fills its output
     // ring for [sampleTime, sampleTime + ioFrames) and calls WriteEnd; this
@@ -447,7 +461,16 @@ private:
             entry.dbc = rxDbc_;
             entry.flags = ASFW::Audio::Runtime::RxSequenceFlags::kValidCip;
             entry.firstAudioFrame = rxFrames_;
-            if (phase != 3) {
+            if (phase != 3 && rxMotuV3_) {
+                entry.dataBlocks = static_cast<uint16_t>(rxBlocksPerPacket_);
+                entry.sytOffset = ASFW::Audio::Runtime::RxSequenceReplayState::kNoInfo;
+                rxFrames_ += rxBlocksPerPacket_;
+                rxDbc_ = static_cast<uint8_t>(rxDbc_ + rxBlocksPerPacket_);
+                (void)control_->motuRxSphClock.Publish(
+                    {.streamGeneration = control_->generation.load(),
+                     .rxFrames = rxFrames_,
+                     .rxTicks = static_cast<int64_t>(rxFrames_) * 512});
+            } else if (phase != 3) {
                 const uint64_t presentation = (kStartCycle + cycle) * 3072ULL + phase * 1024ULL + rxDelay;
                 const auto syt = static_cast<uint16_t>((((presentation / 3072) & 0xF) << 12) |
                                                        (presentation % 3072));
@@ -510,6 +533,7 @@ private:
     bool clockFromZts_{false};
 
     uint32_t rxBlocksPerPacket_{0};
+    bool rxMotuV3_{false};
     uint64_t rxCycles_{0};
     uint64_t rxFrames_{0};
     uint8_t rxDbc_{0};
@@ -692,6 +716,215 @@ TEST(AudioDriverTxProducerTests, SaffireReplaysRxTimingOnceReplayEstablishes) {
     ASSERT_LT(firstData, wire.size());
     EXPECT_LE(firstData, Geometry::kTxSharedSlotPackets);
     EXPECT_GE(dataPackets, (wire.size() - firstData) * 3 / 4 - 1);
+}
+
+// The 828 Mk3 through the real producer. Its capture carries no
+// SYT, so TX DATA exists only because the V3 stamper makes the engine
+// SYT-unaware; every block's SPH comes from the stamper's free-running clock,
+// seeded from the first DATA packet's transmit cycle plus the three-cycle
+// presentation lead; and the producer's servo hook keeps PCM muted until the
+// loop locks, then lets the host's samples through.
+TEST(AudioDriverTxProducerTests, Motu828Mk3StreamsServoTimedSphAndUnmutesOnLock) {
+    ASFW::Isoch::Audio::MOTU::Profiles::MOTU828Mk3Profile profile;
+    TxProducerRig rig;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+    // The acquisition mute is armed from the start, before any decision.
+    EXPECT_TRUE(rig.Ivars().runtime.motuV3PayloadWriter.IsPcmMuted());
+    rig.FeedMotuV3Rx(8);
+    rig.EnableHostOutput({});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+
+    namespace V3 = ASFW::Protocols::Audio::AMDTP::MotuV3Wire;
+    constexpr uint32_t kDbs = 13;
+    constexpr size_t kDataBytes = 8 + 8 * kDbs * 4;
+    const auto blockSph = [](const WirePacket& packet, uint32_t block) {
+        return packet.Quadlet(8 + block * kDbs * 4);
+    };
+    const auto sphTicks = [](uint32_t sph) {
+        return static_cast<int64_t>((sph >> 12) & 0x1FFF) * V3::kTicksPerCycle + (sph & 0xFFF);
+    };
+    // Main L is host channel 0 at PCM chunk 10, 24-bit big-endian behind the
+    // SPH quadlet and two message chunks.
+    const auto mainL = [](const WirePacket& packet, uint32_t block) {
+        const size_t at = 8 + block * kDbs * 4 + 10 + 10 * 3;
+        return (uint32_t{packet.bytes[at]} << 16) | (uint32_t{packet.bytes[at + 1]} << 8) |
+               uint32_t{packet.bytes[at + 2]};
+    };
+
+    const auto& wire = rig.Wire();
+    ASSERT_EQ(wire.size(), kSteadyStatePackets);
+    const WirePacket* previousData = nullptr;
+    const WirePacket* firstData = nullptr;
+    size_t dataPackets = 0;
+    for (const auto& packet : wire) {
+        ASSERT_TRUE(packet.bytes.size() == 8 || packet.bytes.size() == kDataBytes)
+            << "packet " << packet.index << " is " << packet.bytes.size() << " bytes";
+        // The captured V3 header on every packet: SPH octet 0x04, FMT 0x02,
+        // FDF 0x22, SYT NO_INFO.
+        ASSERT_EQ(packet.bytes[2], 0x04) << "packet " << packet.index;
+        ASSERT_EQ(packet.Quadlet(4), 0x8222FFFFu) << "packet " << packet.index;
+        if (packet.bytes.size() != kDataBytes) {
+            continue;
+        }
+        ++dataPackets;
+        if (firstData == nullptr) {
+            firstData = &packet;
+        }
+        // One sample period per block, across packet boundaries: a device at
+        // exactly 512 ticks/frame leaves the servo at the nominal step.
+        for (uint32_t block = 0; block < 8; ++block) {
+            const uint32_t sph = blockSph(packet, block);
+            const int64_t expectedPrevious =
+                block > 0 ? sphTicks(blockSph(packet, block - 1))
+                          : (previousData ? sphTicks(blockSph(*previousData, 7)) : -1);
+            if (expectedPrevious >= 0) {
+                const int64_t step =
+                    (sphTicks(sph) - expectedPrevious + static_cast<int64_t>(V3::kTickDomain)) %
+                    static_cast<int64_t>(V3::kTickDomain);
+                ASSERT_EQ(step, 512) << "packet " << packet.index << " block " << block;
+            }
+        }
+        previousData = &packet;
+    }
+    ASSERT_NE(firstData, nullptr);
+    EXPECT_GE(dataPackets, (wire.size() - firstData->index) * 3 / 4 - 1);
+    // The seed: the first DATA packet's own transmit cycle, plus the lead.
+    const int64_t firstCycle =
+        static_cast<int64_t>((TxProducerRig::StartCycle() + firstData->index) % kCyclesPerSecond);
+    EXPECT_EQ(blockSph(*firstData, 0),
+              V3::EncodeSph(firstCycle * V3::kTicksPerCycle + V3::kPresentationLeadTicks));
+
+    // The loop locked once and lifted the mute. On a clean start it locks
+    // while the prefilled NO-DATA lap is still draining -- the hook runs before
+    // every prepared packet, NO-DATA included -- so the acquisition window
+    // closes before the first DATA packet exists and silences no host frame.
+    // The muted fill itself is pinned in MotuV3TxTimingStamperTests.
+    auto& ivars = rig.Ivars();
+    EXPECT_FALSE(ivars.runtime.motuV3PayloadWriter.IsPcmMuted());
+    EXPECT_EQ(ivars.runtime.motuV3PayloadWriter.FramesIntentionallyMuted(), 0u);
+    // Silence diagnostics (2e3) on the real fill path: every tagged sample is at
+    // least one 24-bit LSB, so no frame is silent and no placed packet is zero --
+    // in particular none that lost the host's signal.
+    const auto& silence = ivars.runtime.motuV3PayloadWriter.SilenceCounters();
+    EXPECT_GT(silence.framesSourceNonZero.load(), 0u);
+    EXPECT_EQ(silence.framesSourceZero.load(), 0u);
+    EXPECT_EQ(silence.payloadZeroPackets.load(), 0u);
+    EXPECT_EQ(silence.payloadZeroPacketsWithSignal.load(), 0u);
+    const auto servo = ivars.runtime.motuV3TxTimingStamper.ServoTelemetrySnapshot();
+    EXPECT_GE(servo.decisions, 2u);
+    EXPECT_TRUE(servo.locked);
+    EXPECT_EQ(servo.muteTransitions, 1u);
+    EXPECT_EQ(servo.unmuteTransitions, 1u);
+    EXPECT_EQ(servo.hardResyncRequests, 0u);
+    EXPECT_EQ(servo.observationDrops, servo.dropBridgeNotAdvanced);
+    EXPECT_EQ(ivars.runtime.txStreamEngine.Counters().timingUnavailableReverts.load(), 0u);
+    size_t audibleTail = 0;
+    for (size_t i = wire.size() - 1000; i < wire.size(); ++i) {
+        if (wire[i].bytes.size() != kDataBytes) {
+            continue;
+        }
+        for (uint32_t block = 0; block < 8; ++block) {
+            ASSERT_NE(mainL(wire[i], block), 0u) << "packet " << wire[i].index;
+        }
+        ++audibleTail;
+    }
+    EXPECT_GE(audibleTail, 700u);
+}
+
+// The release instruments see exactly what goes on the wire.
+// The phase trace is what [RxPhaseRel] and the motuRelPhase bridge read back
+// into the servo; the oracle capture is the start window compared against the
+// passive bus capture of the official driver offline.
+TEST(AudioDriverTxProducerTests, Motu828Mk3ReleaseInstrumentsReadTheWireSph) {
+    ASFW::Isoch::Audio::MOTU::Profiles::MOTU828Mk3Profile profile;
+    TxProducerRig rig;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+    rig.FeedMotuV3Rx(8);
+    rig.EnableHostOutput({});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+
+    constexpr size_t kDataBytes = 8 + 8 * 13 * 4;
+    const auto& wire = rig.Wire();
+    ASSERT_EQ(wire.size(), kSteadyStatePackets);
+    const auto isData = [&](uint64_t index) {
+        return index < wire.size() && wire[index].bytes.size() == kDataBytes;
+    };
+    size_t dataPackets = 0;
+    for (const auto& packet : wire) {
+        dataPackets += packet.bytes.size() == kDataBytes ? 1 : 0;
+    }
+    ASSERT_GT(dataPackets, 0u);
+
+    auto& control = *rig.Ivars().runtime.directAudioGraph.control;
+
+    // Once per cadence period (three DATA packets at 48 kHz), not per packet:
+    // per-packet publication is what put the 1024-tick lattice into
+    // [RxPhaseRel]. The window carries the whole period, read from the
+    // released bytes, and an OUTPUT_LAST reference older than its packets.
+    ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample period{};
+    uint64_t updates = 0;
+    ASSERT_TRUE(control.motuPhaseTrace.ReadLatest(period, updates));
+    // Released, not transmitted: preparation runs a ring lap ahead of the wire.
+    const uint64_t releasedData =
+        rig.Ivars().runtime.txStreamEngine.Counters().dataPacketsPrepared.load();
+    EXPECT_NEAR(static_cast<double>(updates), static_cast<double>(releasedData) / 3.0, 1.0);
+    ASSERT_EQ(period.count, 3u);
+    for (uint32_t bucket = 0; bucket < 3; ++bucket) {
+        const uint64_t index = period.packetIndex[bucket];
+        if (index >= wire.size()) {
+            continue; // released ahead of the last transmitted packet
+        }
+        ASSERT_TRUE(isData(index)) << "bucket " << bucket << " packet " << index;
+        EXPECT_EQ(period.firstSph[bucket], wire[index].Quadlet(8)) << "bucket " << bucket;
+    }
+    EXPECT_LT(period.packetIndex[0], period.packetIndex[1]);
+    EXPECT_LT(period.packetIndex[1], period.packetIndex[2]);
+    ASSERT_TRUE(period.hasOutputLast);
+    EXPECT_LT(period.outputLastPacketIndex, period.packetIndex[0]);
+    EXPECT_TRUE(ASFW::Audio::Runtime::ComputeMotuTxPhaseResidualCadenceMean(period).valid);
+
+    // Oracle TX half: one record per released packet, in order from the
+    // start, wire facts from the released bytes.
+    const auto& capture = control.isochOracleCapture;
+    const auto& tx = capture.Tx();
+    ASSERT_GE(tx.Count(), wire.size());
+    uint32_t withCycle = 0;
+    for (uint32_t i = 0; i < wire.size(); ++i) {
+        ASFW::Audio::Runtime::IsochOracleRecord record{};
+        ASSERT_TRUE(tx.ReadRecord(i, record));
+        ASSERT_EQ(record.packetIndex, i);
+        const auto& packet = wire[i];
+        ASSERT_EQ(record.wireLengthBytes, packet.bytes.size()) << "packet " << i;
+        ASSERT_EQ(record.dbc, packet.Dbc()) << "packet " << i;
+        const bool data = packet.bytes.size() == kDataBytes;
+        ASSERT_EQ((record.flags & ASFW::Audio::Runtime::kIsochOracleFlagData) != 0, data);
+        ASSERT_EQ((record.flags & ASFW::Audio::Runtime::kIsochOracleFlagHasSph) != 0, data);
+        if (data) {
+            ASSERT_EQ(record.firstSph, packet.Quadlet(8)) << "packet " << i;
+        }
+        if ((record.flags & ASFW::Audio::Runtime::kIsochOracleFlagHasCycle) != 0) {
+            const uint64_t cycle = TxProducerRig::StartCycle() + i;
+            ASSERT_EQ(record.cycleTimestamp,
+                      static_cast<uint32_t>((((cycle / kCyclesPerSecond) & 0x7F) << 25) |
+                                            ((cycle % kCyclesPerSecond) << 12)))
+                << "packet " << i;
+            ++withCycle;
+        }
+    }
+    // Completion cycles are drained at release, from a 32-stamp ring, so the
+    // start -- completions before the producer releases again -- can outrun
+    // the drain. That loss is counted, never inferred (on hardware: 164-210
+    // of 4096), and steady state keeps up.
+    EXPECT_EQ(tx.Backfilled() + tx.LostCycles(), capture.TxCompletionCursor());
+    EXPECT_EQ(withCycle, tx.Backfilled());
+    for (uint32_t i = static_cast<uint32_t>(wire.size()) - 1000; i < wire.size(); ++i) {
+        ASFW::Audio::Runtime::IsochOracleRecord record{};
+        ASSERT_TRUE(tx.ReadRecord(i, record));
+        ASSERT_NE(record.flags & ASFW::Audio::Runtime::kIsochOracleFlagHasCycle, 0)
+            << "packet " << i;
+    }
+    // Nothing on the receive side here: the rig feeds the observer, not the
+    // consumer that records the oracle's RX half.
 }
 
 // ---------------------------------------------------------------------------

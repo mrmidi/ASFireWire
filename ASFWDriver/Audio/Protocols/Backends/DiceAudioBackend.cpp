@@ -8,7 +8,6 @@
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
-#include "../DICE/Core/DiceNotificationRouter.hpp"
 #include "../DICE/Core/DICETypes.hpp"
 
 #include <algorithm>
@@ -183,14 +182,12 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
                                    Session::AudioSessions& sessions,
-                                   Driver::HardwareInterface& hardware,
-                                   DICE::DiceNotificationRouter& notifications) noexcept
+                                   Driver::HardwareInterface& hardware) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
     , hardware_(hardware)
-    , sessions_(sessions)
-    , notifications_(notifications) {
+    , sessions_(sessions) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: Failed to allocate lock");
@@ -203,8 +200,6 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
     } else {
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: Failed to create work queue (0x%x)", kr);
     }
-
-    notifications_.SetObserver(this, &DiceAudioBackend::NotificationObserverThunk);
 }
 
 DiceAudioBackend::~DiceAudioBackend() noexcept {
@@ -212,7 +207,6 @@ DiceAudioBackend::~DiceAudioBackend() noexcept {
     // shape. Normal lifecycle calls BeginTeardown() explicitly before destruction;
     // this only covers a destructor-only path. Idempotent by exchange latch.
     BeginTeardown();
-    notifications_.ClearObserver(this);
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
@@ -221,7 +215,6 @@ DiceAudioBackend::~DiceAudioBackend() noexcept {
 
 void DiceAudioBackend::BeginTeardown() noexcept {
     stopping_.store(true, std::memory_order_release);
-    notifications_.ClearObserver(this);
 
     if (teardownComplete_.load(std::memory_order_acquire)) {
         return;
@@ -507,6 +500,12 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason re
 }
 
 void DiceAudioBackend::HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept {
+    // The address handler logs raw bits for every family; the DICE reading of
+    // them belongs here.
+    char notifyStr[96];
+    ASFW_LOG(DICE, "DICE notification quadlet: GUID=0x%016llx bits=0x%08x meaning=%{public}s",
+             guid, bits, DICE::FormatNotification(bits, notifyStr, sizeof(notifyStr)));
+
     // The device changed its stream configuration: restart the running
     // streams on the new one (TCAT NotificationWriteCallback, AUDIO_SESSION_REDESIGN.md §2.4).
     if ((bits & (DICE::Notify::kRxConfigChange | DICE::Notify::kTxConfigChange)) != 0) {
@@ -723,14 +722,6 @@ void DiceAudioBackend::FinishRecovery(uint64_t guid) noexcept {
     IOLockLock(lock_);
     recoveringGuids_.erase(guid);
     IOLockUnlock(lock_);
-}
-
-void DiceAudioBackend::NotificationObserverThunk(void* context, uint64_t guid, uint32_t bits) noexcept {
-    auto* self = static_cast<DiceAudioBackend*>(context);
-    if (!self) {
-        return;
-    }
-    self->HandleDeviceNotification(guid, bits);
 }
 
 void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {

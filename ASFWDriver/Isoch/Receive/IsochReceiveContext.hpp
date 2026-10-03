@@ -86,6 +86,7 @@ class IsochReceiveContext final
     // interpretation and any state derived from it.
     void SetReceiveConsumer(IIsochReceiveConsumer* consumer) noexcept;
 
+    void CheckReceiveClockLiveness();
     void DrainZtsTelemetry(uint32_t maxRecords);
     void ServiceConsumerDiagnostics();
 

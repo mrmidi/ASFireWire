@@ -875,7 +875,10 @@ void IsochTxDmaRing::DumpAtCmdPtr(Driver::HardwareInterface& hw, uint8_t context
 #endif
 }
 
-void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {
+void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket,
+                                        uint32_t numPackets,
+                                        const uint8_t* payloadBase,
+                                        const TxPayloadDmaMap* payloadDmaMap) const noexcept {
     const auto desc = slab_.DescriptorRegion();
     if (!desc.virtualBase) {
         ASFW_LOG(Isoch, "IT: DumpDescriptorRing - no descriptor ring allocated");
@@ -925,6 +928,11 @@ void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPacket
 
         auto* desc3 =
             slab_.GetDescriptorPtr(descBase + Layout::kCompletionBlock);
+        // The controller owns statusWord; pull it back before it is decoded.
+        if (dmaMemory_) {
+            dmaMemory_->FetchFromDevice(reinterpret_cast<const std::byte*>(desc3),
+                                        sizeof(*desc3));
+        }
         const uint32_t ctl2 = desc3->control;
         const uint32_t i2 = (ctl2 >> 18) & 0x3;
         const uint32_t b2 = (ctl2 >> 16) & 0x3;
@@ -933,6 +941,15 @@ void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPacket
         const uint32_t branchZ = desc3->branchWord & 0xF;
         const uint16_t xferStatus =
             static_cast<uint16_t>(desc3->statusWord >> 16);
+        const uint16_t completionTimestamp =
+            static_cast<uint16_t>(desc3->statusWord & 0xFFFF);
+
+        // xferStatus mirrors ContextControl[15:0]: event code in bits 4:0,
+        // active/dead/run above it (OHCI 1.1 §3.1.2, Table 3-2).
+        const auto eventCode = static_cast<Async::OHCIEventCode>(
+            xferStatus & ContextControl::kEventCodeMask);
+        const uint32_t evtActive = (xferStatus >> 10) & 0x1;
+        const uint32_t evtDead = (xferStatus >> 11) & 0x1;
 
         const uint32_t computedIOVA = slab_.GetDescriptorIOVA(descBase);
 
@@ -941,20 +958,81 @@ void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPacket
                  itQ0, spd, tag, chan, tcode, sy,
                  itQ1, dataLen);
         ASFW_LOG(Isoch,
-                 "         OM:  ctl=0x%08x req=%u data=0x%08x",
+                 "         OM:  ctl=0x%08x req=%u data=0x%08x | OL: ctl=0x%08x i=%u b=%u req=%u data=0x%08x br=0x%08x|%u",
                  ctl1,
                  reqCount1,
-                 desc2->dataAddress);
-        ASFW_LOG(Isoch,
-                 "         OL:  ctl=0x%08x i=%u b=%u req=%u data=0x%08x br=0x%08x|%u st=0x%04x",
+                 desc2->dataAddress,
                  ctl2,
                  i2,
                  b2,
                  reqCount2,
                  desc3->dataAddress,
                  branchAddr,
-                 branchZ,
-                 xferStatus);
+                 branchZ);
+        ASFW_LOG(Isoch,
+                 "         OL st=0x%04x evt=0x%02x(%{public}s) active=%u dead=%u ts=0x%04x",
+                 xferStatus,
+                 static_cast<uint32_t>(eventCode),
+                 Async::ToString(eventCode),
+                 evtActive,
+                 evtDead,
+                 completionTimestamp);
+
+        // Payload head, purely as bytes: the first two quadlets of the
+        // packet, i.e. the IEC 61883-1 CIP header. The transmit ring stays
+        // opaque to their meaning -- the field split below is a diagnostic
+        // convenience for the content layer and never feeds back into
+        // transmission. ResolveTwoFragments splits an unsegmented payload
+        // evenly across OM/OL (see TxPayloadDmaMap::ResolveTwoFragments), so
+        // an 8-byte NO_DATA payload lands as Q0 in OM and Q1 in OL -- read
+        // across both fragments rather than assuming the header fits in OM.
+        uint8_t cipBytes[8] = {};
+        uint32_t cipBytesAvailable = 0;
+        if (payloadBase != nullptr && payloadDmaMap != nullptr) {
+            uint64_t omOffset = 0;
+            if (reqCount1 > 0 &&
+                payloadDmaMap->ResolveSlabOffset(desc2->dataAddress, omOffset)) {
+                const uint32_t take = std::min<uint32_t>(reqCount1, sizeof(cipBytes));
+                __builtin_memcpy(cipBytes, payloadBase + omOffset, take);
+                cipBytesAvailable = take;
+            }
+            if (cipBytesAvailable < sizeof(cipBytes) && reqCount2 > 0) {
+                uint64_t olOffset = 0;
+                if (payloadDmaMap->ResolveSlabOffset(desc3->dataAddress, olOffset)) {
+                    const uint32_t need = sizeof(cipBytes) - cipBytesAvailable;
+                    const uint32_t take = std::min<uint32_t>(reqCount2, need);
+                    __builtin_memcpy(cipBytes + cipBytesAvailable,
+                                     payloadBase + olOffset, take);
+                    cipBytesAvailable += take;
+                }
+            }
+        }
+
+        if (cipBytesAvailable == sizeof(cipBytes)) {
+            uint32_t q0 = 0;
+            uint32_t q1 = 0;
+            __builtin_memcpy(&q0, cipBytes, sizeof(q0));
+            __builtin_memcpy(&q1, cipBytes + sizeof(q0), sizeof(q1));
+            q0 = OSSwapBigToHostInt32(q0);
+            q1 = OSSwapBigToHostInt32(q1);
+            ASFW_LOG(Isoch,
+                     "         CIP: q0=0x%08x q1=0x%08x sid=%u dbs=%u fn=%u qpc=%u dbc=%u fmt=0x%02x fdf=0x%02x syt=0x%04x",
+                     q0,
+                     q1,
+                     (q0 >> 24) & 0x3F,
+                     (q0 >> 16) & 0xFF,
+                     (q0 >> 14) & 0x03,
+                     (q0 >> 11) & 0x07,
+                     q0 & 0xFF,
+                     (q1 >> 24) & 0x3F,
+                     (q1 >> 16) & 0xFF,
+                     q1 & 0xFFFF);
+        } else {
+            ASFW_LOG(Isoch,
+                     "         CIP: unavailable (have=%u req1=%u req2=%u data1=0x%08x data2=0x%08x)",
+                     cipBytesAvailable, reqCount1, reqCount2,
+                     desc2->dataAddress, desc3->dataAddress);
+        }
     }
 }
 

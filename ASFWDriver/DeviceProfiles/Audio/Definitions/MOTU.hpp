@@ -38,6 +38,17 @@ inline constexpr std::array kMotuDefinitions{
                    ProfileBuilderId::None,
                    ProtocolImplementationId::None,
                    SupportDisposition::RecognizedUnsupported, kMotu8preModelName),
+    // Protocol v3. Matched on Unit_Spec_Id + Unit_Sw_Version 0x000015 (828mk3
+    // FireWire-only, Config ROM read on the device); its root directory has no
+    // Model_Id, hence the unconstrained root model. Pinned to 48 kHz: the only
+    // rate the hardware evidence covers.
+    MotuDefinition(DeviceDefinitionId::Motu828mk3, kMotu828mk3SwVersion,
+                   ProfileBuilderId::Motu828mk3,
+                   ProtocolImplementationId::MotuV3,
+                   SupportDisposition::Supported,
+                   kMotu828Mk3ModelName,
+                   DeviceStreamTraits{.start = {.startRatePinHz = 48000U}},
+                   MotuRootModel::Unconstrained),
 };
 
 [[nodiscard]] constexpr const char* MotuModelNameForSwVersion(uint32_t swVersion) noexcept {

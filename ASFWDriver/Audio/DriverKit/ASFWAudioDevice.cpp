@@ -109,6 +109,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProvider.metadataRing = nullptr;
             ivars.runtime.txSlotProvider.queueControl = nullptr;
             ivars.runtime.txSlotProvider.numSlots = 0;
+            ivars.runtime.txSlotProvider.motuV3Instruments = nullptr;
+            ivars.runtime.motuV3TxPublishInstruments.Unbind();
             ivars.runtime.txExecutionTimeline.queueControl = nullptr;
 
             // Secondary playback stream resources.
@@ -680,6 +682,8 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.txSlotProvider.metadataRing = nullptr;
         ivars.runtime.txSlotProvider.queueControl = nullptr;
         ivars.runtime.txSlotProvider.numSlots = 0;
+        ivars.runtime.txSlotProvider.motuV3Instruments = nullptr;
+        ivars.runtime.motuV3TxPublishInstruments.Unbind();
         ivars.runtime.txExecutionTimeline.queueControl = nullptr;
 
         // Secondary playback stream teardown. Drop txSecondaryActive first so the

@@ -286,6 +286,10 @@ void IsochReceiveContext::SetReceiveConsumer(
     receiveConsumer_ = consumer;
 }
 
+void IsochReceiveContext::CheckReceiveClockLiveness() {
+    if (receiveConsumer_) receiveConsumer_->CheckReceiveClockLiveness();
+}
+
 void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
     if (receiveConsumer_) receiveConsumer_->DrainReceiveTelemetry(maxRecords);
 }

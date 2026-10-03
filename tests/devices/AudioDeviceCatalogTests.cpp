@@ -351,6 +351,49 @@ TEST(AudioDeviceCatalog, AnAbsentModelIdDoesNotMatchARowThatRequiresZero) {
     EXPECT_FALSE(plan.has_value());
 }
 
+// The other half of the rule above. The 828 Mk3 root directory has no
+// Model_Id key (Config ROM read on the device), so its row leaves the field
+// unconstrained and matches on Unit_Spec_Id + Unit_Sw_Version 0x000015 alone.
+// It must resolve to exactly one row: no V2 version collides with 0x15.
+TEST(AudioDeviceCatalog, The828Mk3IsMatchedFromItsUnitDirectoryWithoutAModelId) {
+    const auto device = MakeDevice(0x0001F2'0400000000ULL, kMotuVendorId,
+                                   /*modelId=*/std::nullopt,
+                                   {{.offset = 5,
+                                     .specifierId = kMotuVendorId,
+                                     .version = kMotu828mk3SwVersion}});
+    const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(plan->candidates.size(), 1U);
+    EXPECT_EQ(plan->candidates.front(), DeviceDefinitionId::Motu828mk3);
+    EXPECT_EQ(plan->support, SupportDisposition::Supported);
+    EXPECT_EQ(plan->family, AudioFamilyProviderId::MotuRegister);
+    EXPECT_EQ(plan->probePolicy, ProbePolicyId::MotuRegister);
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::Motu828mk3);
+    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::MotuV3);
+    EXPECT_EQ(plan->unitVersion, kMotu828mk3SwVersion);
+    EXPECT_EQ(plan->modelName, kMotu828Mk3ModelName);
+    EXPECT_EQ(plan->streamTraits.start.startRatePinHz, 48000U);
+    EXPECT_EQ(plan->streamTraits.resource.irmChannelMask, 0U);
+}
+
+// The protocol-v2 rows keep requiring a published model_id of 0 (the 828mk2
+// Config ROM); the Mk3 row's unconstrained root model did not leak into them.
+TEST(AudioDeviceCatalog, OnlyTheMk3RowLeavesTheRootModelUnconstrained) {
+    for (const auto& definition : AudioDeviceCatalog::Definitions()) {
+        if (definition.family != AudioFamilyProviderId::MotuRegister) {
+            continue;
+        }
+        ASSERT_EQ(definition.clauseCount, 1U);
+        const auto& rootModel = definition.clauses[0].rootModelId;
+        if (definition.id == DeviceDefinitionId::Motu828mk3) {
+            EXPECT_FALSE(rootModel.has_value());
+        } else {
+            ASSERT_TRUE(rootModel.has_value()) << static_cast<uint32_t>(definition.id);
+            EXPECT_EQ(rootModel->value, 0U) << static_cast<uint32_t>(definition.id);
+        }
+    }
+}
+
 // The end of vendor-wide matching, stated as a test. The TCD3070 Pro 40 shares
 // the Focusrite OUI and nothing else; it runs its own row (generic DICE), never
 // the Pro 24's builder.
@@ -471,6 +514,7 @@ TEST(AudioDeviceCatalog, TheDevicesThisBranchStreamsAreAllSupported) {
         DeviceDefinitionId::PreSonusFireStudioProject,
         DeviceDefinitionId::Motu828mk2,
         DeviceDefinitionId::MotuUltralite,
+        DeviceDefinitionId::Motu828mk3,
         DeviceDefinitionId::MackieOnyxIOxfw,
         DeviceDefinitionId::MackieOnyx400F,
     };

@@ -19,7 +19,9 @@ struct RxAudioPacketProcessorResult final {
     uint32_t framesDecoded{0};
     bool hasValidCip{false};
     bool hasReceiveCycleTimestamp{false};
+    bool hasMotuSph{false};
     uint16_t receiveCycleTimestamp{0};
+    uint32_t firstMotuSph{0};
     uint16_t syt{0xFFFF};
     uint8_t fdf{0};
     /// What the CIP header claimed, always — some devices lie here, which is exactly

@@ -23,6 +23,7 @@ class RecordingReceiveConsumer final : public IIsochReceiveConsumer {
   public:
     void OnReceiveActivated() noexcept override { ++activationCount; }
     void OnReceiveQuiesced() noexcept override { ++quiesceCount; }
+    void CheckReceiveClockLiveness() override { ++livenessCheckCount; }
 
     void BeginReceiveBatch(const IsochReceiveBatch& batch) noexcept override {
         ++batchCount;
@@ -41,6 +42,7 @@ class RecordingReceiveConsumer final : public IIsochReceiveConsumer {
     uint32_t lastPacketBytes{0};
     uint32_t activationCount{0};
     uint32_t quiesceCount{0};
+    uint32_t livenessCheckCount{0};
     IsochReceiveBatch lastBatch{};
 };
 
@@ -208,4 +210,14 @@ TEST_F(IsochReceiveContextTest, PollPublishesTheBatchToAContentConsumer) {
     hardware_->SetTestRegister(controlSet, 0);
     EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
     EXPECT_EQ(consumer.quiesceCount, 1u);
+}
+
+TEST_F(IsochReceiveContextTest, ClockLivenessCheckStaysBehindTheContentSeam) {
+    RecordingReceiveConsumer consumer;
+    context_->SetReceiveConsumer(&consumer);
+
+    context_->CheckReceiveClockLiveness();
+    context_->CheckReceiveClockLiveness();
+
+    EXPECT_EQ(consumer.livenessCheckCount, 2u);
 }

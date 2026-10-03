@@ -305,23 +305,43 @@ class DuplexStreamProfileResolver final {
         if (policy != nullptr && policy->plan.family ==
                                      DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister) {
             // MOTU is chunk-framed in both directions. The chunk counts come from the
-            // device's own registers via PrepareDuplex, which MotuV2Protocol reports as
-            // runtime caps -- there is no profile table to read them from, since model_id
-            // is 0.
-            profile.captureWireFormat = Encoding::AudioWireFormat::kMotuV2;
-            profile.playbackWireFormat = Encoding::AudioWireFormat::kMotuV2;
+            // device's own registers via PrepareDuplex, which the MOTU protocols report
+            // as runtime caps -- there is no profile table to read them from, since
+            // model_id is 0 (V2) or absent (V3).
             profile.captureMotuPcmChunks = caps.deviceToHostPcmChunks != 0
                                                ? caps.deviceToHostPcmChunks
                                                : caps.hostInputPcmChannels;
             profile.playbackMotuPcmChunks = caps.hostToDevicePcmChunks != 0
                                                 ? caps.hostToDevicePcmChunks
                                                 : caps.hostOutputPcmChannels;
-            // The version of the unit the catalog actually matched, not the
-            // flat shim, which takes the first non-zero value across every unit
-            // directory and so can name a version no single unit published.
-            const auto choice = policy->plan.unitVersion;
-            profile.captureMotuPorts = Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(
-                choice != 0 ? choice : record.unitSwVersion.value_or(0U));
+            if (policy->plan.protocolImplementation ==
+                DeviceProfiles::Audio::ProtocolImplementationId::MotuV3) {
+                // Protocol v3 (828 Mk3) shares the V2 block layout, so the V2 codec
+                // decodes its capture in wire order, with no port map. Its capture
+                // header is not a CIP header: kMotuV3Header framing owns it.
+                profile.captureWireFormat = Encoding::AudioWireFormat::kMotuV3Packed;
+                profile.playbackWireFormat = Encoding::AudioWireFormat::kMotuV3Packed;
+                profile.capturePacketFraming = Encoding::AudioPacketFraming::kMotuV3Header;
+                // The captured Apple lifecycle starts host IT before IR, with FETCH
+                // set only after both contexts run; the protocol's Confirm stage owns
+                // FETCH. Its stop takes the directions down one at a time.
+                profile.startOrder.startOrder = {
+                    DuplexHostDirection::kTransmit,
+                    DuplexHostDirection::kReceive,
+                };
+                profile.startOrder.postDeviceEnableDelayMs = 0;
+                profile.stopOrder
+                    .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive = true;
+            } else {
+                profile.captureWireFormat = Encoding::AudioWireFormat::kMotuV2;
+                profile.playbackWireFormat = Encoding::AudioWireFormat::kMotuV2;
+                // The version of the unit the catalog actually matched, not the
+                // flat shim, which takes the first non-zero value across every unit
+                // directory and so can name a version no single unit published.
+                const auto choice = policy->plan.unitVersion;
+                profile.captureMotuPorts = Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(
+                    choice != 0 ? choice : record.unitSwVersion.value_or(0U));
+            }
         }
 
         // Runtime-conditional on purpose: this device switches wire format with

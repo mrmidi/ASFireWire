@@ -379,6 +379,78 @@ TEST(DuplexStreamProfileTests, MotuCaptureCarriesTheModelPortMap) {
     EXPECT_EQ(profile.captureMotuPorts.data(), ASFW::Encoding::Motu::kUltraLiteCapture);
 }
 
+// The 828 Mk3 root directory has no Model_Id at all, so the record carries
+// none; the catalog matches it on the unit directory (Unit_Sw_Version 0x15).
+// An identity check on model_id 0 would have selected it -- and would have
+// claimed every V2 unit as well.
+TEST(DuplexStreamProfileTests, Motu828Mk3SelectsV3WireAndCapturedLifecycleRecipe) {
+    const DeviceRecord record = MakeRecord(
+        ASFW::DeviceProfiles::Audio::kMotuVendorId, std::nullopt,
+        ASFW::DeviceProfiles::Audio::kMotuVendorId,
+        ASFW::DeviceProfiles::Audio::kMotu828mk3SwVersion);
+    AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 18,
+        .hostOutputPcmChannels = 14,
+        .deviceToHostAm824Slots = 16,
+        .hostToDeviceAm824Slots = 13,
+        .sampleRateHz = 48000,
+        .deviceToHostIsoChannel = 1,
+        .hostToDeviceIsoChannel = 0,
+        .deviceToHostStreamCount = 1,
+        .hostToDeviceStreamCount = 1,
+    };
+
+    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+
+    ASSERT_TRUE(profile.policyResolved);
+    EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kMotuV3Packed);
+    EXPECT_EQ(profile.playbackWireFormat, AudioWireFormat::kMotuV3Packed);
+    EXPECT_EQ(profile.capturePacketFraming, ASFW::Encoding::AudioPacketFraming::kMotuV3Header);
+    EXPECT_EQ(profile.playbackPacketFraming, ASFW::Encoding::AudioPacketFraming::kCip);
+    // The V2 codec decodes V3 blocks in wire order: chunk count from the caps,
+    // no port map (IsochRxTimingTests, MotuV2CodecDecodesV3BlocksBitForBit...).
+    EXPECT_EQ(profile.captureMotuPcmChunks, 18U);
+    EXPECT_EQ(profile.playbackMotuPcmChunks, 14U);
+    EXPECT_TRUE(profile.captureMotuPorts.empty());
+    EXPECT_EQ(profile.captureStreams[0].am824Slots, 16U);
+    EXPECT_EQ(profile.playbackStreams[0].am824Slots, 13U);
+    // MOTU pre-claims channels 0/1 through its own register protocol. A
+    // one-channel mask is what lets the IRM reservation fall back to that
+    // channel on a bus with no IRM (DuplexIRMAdvisory, SoleChannelInMask).
+    EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, uint64_t{1} << 0U);
+    EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, uint64_t{1} << 1U);
+    EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kTransmit);
+    EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kReceive);
+    EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U);
+    EXPECT_TRUE(profile.stopOrder
+                    .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive);
+}
+
+// The V2 rows keep the V2 wire and the default lifecycle: the V3 recipe is
+// chosen by the protocol implementation, not by the MOTU family.
+TEST(DuplexStreamProfileTests, MotuV2KeepsItsWireAndDefaultLifecycle) {
+    AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 14,
+        .hostOutputPcmChannels = 14,
+        .sampleRateHz = 48000,
+        .deviceToHostStreamCount = 1,
+        .hostToDeviceStreamCount = 1,
+    };
+    const DeviceRecord record = MakeRecord(
+        ASFW::DeviceProfiles::Audio::kMotuVendorId, 0U,
+        ASFW::DeviceProfiles::Audio::kMotuVendorId,
+        ASFW::DeviceProfiles::Audio::kMotu828mk2SwVersion);
+
+    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+
+    EXPECT_EQ(profile.playbackWireFormat, AudioWireFormat::kMotuV2);
+    EXPECT_EQ(profile.capturePacketFraming, ASFW::Encoding::AudioPacketFraming::kCip);
+    EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kReceive);
+    EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 2U);
+    EXPECT_FALSE(profile.stopOrder
+                     .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive);
+}
+
 TEST(DuplexStreamProfileTests, NonMotuDevicesCarryNoPortMap) {
     DeviceRecord record{};
     AudioStreamRuntimeCaps caps{.hostInputPcmChannels = 2, .hostOutputPcmChannels = 2};

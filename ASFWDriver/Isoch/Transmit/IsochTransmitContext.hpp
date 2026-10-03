@@ -110,6 +110,9 @@ public:
     
     uint64_t PacketsAssembled() const noexcept { return packetsAssembled_; }
     
+    // Samples ContextControl and CommandPtr; called by the watchdog about once
+    // per second while the context runs.
+    void LogStatistics() const noexcept;
     void DumpDescriptorRing(uint32_t startPacket = 0, uint32_t numPackets = 8) const noexcept;
 
 #ifdef ASFW_HOST_TEST
@@ -145,6 +148,9 @@ private:
     uint64_t lastInterruptCountSeen_{0};
     uint32_t irqStallTicks_{0};
 
+    // One-shot descriptor-ring snapshot armed by Start(), taken at the first
+    // completion event (TX seed window).
+    bool seedDumpPending_{false};
     // Consecutive watchdog kicks with zero interrupts observed. The watchdog
     // bridges interrupt-delivery jitter only. Before the finite IT queue (T5)
     // a watchdog-carried stream re-transmitted stale ring laps between kicks;

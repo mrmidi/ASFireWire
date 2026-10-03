@@ -107,6 +107,9 @@ TEST(MotuProfileTests, ResolvesKnownMotuSwVersionsToNames) {
     EXPECT_STREQ(AudioDeviceCatalog::MotuModelNameForSwVersion(kMotuTravelerSwVersion), "Traveler");
     EXPECT_STREQ(AudioDeviceCatalog::MotuModelNameForSwVersion(kMotuUltraliteSwVersion), "UltraLite");
     EXPECT_STREQ(AudioDeviceCatalog::MotuModelNameForSwVersion(kMotu8preSwVersion), "8pre");
+    EXPECT_STREQ(AudioDeviceCatalog::MotuModelNameForSwVersion(
+                     ASFW::DeviceProfiles::Audio::kMotu828mk3SwVersion),
+                 "828 Mk3 FireWire");
     EXPECT_EQ(AudioDeviceCatalog::MotuModelNameForSwVersion(0xFFFFFF), nullptr);
 }
 

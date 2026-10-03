@@ -5,6 +5,7 @@
 // Global profile registry dispatcher.
 
 #include "AudioProfileRegistry.hpp"
+#include "MOTU/MOTU828Mk3Profile.hpp"
 #include "MOTU/MotuV2Profile.hpp"
 #include "AVC/MackieOnyx400FProfile.hpp"
 #include "AVC/GenericAvcProfile.hpp"
@@ -108,6 +109,14 @@ MOTU::Profiles::MotuV2Profile gMotuUltraliteProfile{
     DeviceProfiles::Audio::kMotuUltraliteSwVersion};
 MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
     DeviceProfiles::Audio::kMotu828mk2SwVersion};
+MOTU::Profiles::MOTU828Mk3Profile gMotu828mk3Profile{};
+
+// Motu828mk3 was appended after WeissDac and kLastValid moved by hand. The
+// range checks below are runtime ones: a bound left behind would let the device
+// publish a nub and then fail Start() with a bare kIOReturnBadArgument.
+static_assert(DeviceProfiles::Audio::ProfileBuilderId::kLastValid ==
+                  DeviceProfiles::Audio::ProfileBuilderId::Motu828mk3,
+              "ProfileBuilderId::kLastValid must name the last builder");
 
 /// The DICE half, kept separate so DICE callers get the DICE profile without a
 /// downcast. Returns nullptr for every non-DICE builder.
@@ -148,6 +157,7 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         case Builder::MackieOnyx400F:
         case Builder::Motu828mk2:
         case Builder::MotuUltralite:
+        case Builder::Motu828mk3:
         case Builder::GenericAvc:
         case Builder::MAudioFireWire1814:
         case Builder::MAudioProjectMix:
@@ -193,6 +203,9 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
             return &gMotu828mk2Profile;
         case Builder::MotuUltralite:
             return &gMotuUltraliteProfile;
+        // Protocol v3: its own wire format (kMotuV3Packed) and geometry.
+        case Builder::Motu828mk3:
+            return &gMotu828mk3Profile;
         case Builder::RmeFireface400:
             return &gRmeFireface400Profile;
         case Builder::RmeFireface800:

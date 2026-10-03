@@ -3,6 +3,7 @@
 #include "DirectRxTypes.hpp"
 #include "RxCaptureChannelMap.hpp"
 #include "../../../Wire/AM824/AM824Decoder.hpp"
+#include <cstddef>
 #include <cstdint>
 
 namespace ASFW::AudioEngine::Direct::Rx {
@@ -81,6 +82,21 @@ inline void SilenceDelayedChannels(uint32_t pcmChannels,
         if (map.IsDelayed(ch)) {
             outPcmFrame[ch] = 0.0f;
         }
+    }
+}
+
+inline void DecodeMotuV3Frame(const uint8_t* pcmBase,
+                              uint32_t pcmChannels,
+                              float* outPcmFrame) noexcept {
+    for (uint32_t channel = 0; channel < pcmChannels; ++channel) {
+        const uint8_t* bytes = pcmBase + static_cast<size_t>(channel) * 3U;
+        int32_t sample = (static_cast<int32_t>(bytes[0]) << 16) |
+                         (static_cast<int32_t>(bytes[1]) << 8) |
+                         static_cast<int32_t>(bytes[2]);
+        if ((sample & 0x00800000) != 0) {
+            sample |= static_cast<int32_t>(0xFF000000U);
+        }
+        outPcmFrame[channel] = Detail::Signed24ToFloat32(sample);
     }
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// MotuAudioBackend.hpp - MOTU protocol-v2 audio backend.
+// MotuAudioBackend.hpp - MOTU audio backend, protocol v2 and v3 (828 Mk3).
 //
 // Much smaller than DiceAudioBackend, and deliberately so. Most of that backend's bulk
 // is DICE-specific machinery MOTU has no equivalent for: a notification mailbox, the
@@ -12,12 +12,19 @@
 //
 // So this backend does the part that is genuinely shared: gate on teardown, make sure a
 // nub and a bound runtime endpoint exist, and hand streaming to the audio session,
-// which drives the device through the FamilyDriver MotuV2Protocol implements.
+// which drives the device through its FamilyDriver (MotuV2Protocol or
+// MOTU828Mk3Protocol, chosen by the catalog's protocol implementation).
+//
+// Protocol v3 differs in two places here. Its nub is published from MOTU828Mk3Profile
+// until the device's registers have been read. And the 828 Mk3 writes a status word to
+// the host's notification address; a buffer fault in it restarts the streams, as the
+// vendor driver does (MotuStatusWord.hpp).
 
 #pragma once
 
 #include "IAudioBackend.hpp"
 #include "PublicationGate.hpp"
+#include "../Duplex/DuplexControlTypes.hpp"
 
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOLib.h>
@@ -68,6 +75,10 @@ public:
     void CancelRemoteDeviceWork(uint64_t guid) noexcept override;
     void HandleHostTimingLoss(uint64_t guid) noexcept override { (void)QueueTimingRecovery(guid); }
     void OnStreamsRestarted(uint64_t guid) noexcept override { EnsureNubForGuid(guid); }
+    // The 828 Mk3's status word (protocol v3 only; other MOTU families lay the
+    // bits out differently). Bit 31 discards the word; either buffer-fault bit
+    // queues a kRecoverAfterDeviceBufferFault restart of the running streams.
+    void HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept override;
     [[nodiscard]] bool QueueTimingRecovery(uint64_t guid) noexcept;
 
 #ifdef ASFW_HOST_TEST
@@ -83,6 +94,8 @@ private:
     std::function<void()> onSecondaryTeardown_{};
 #endif
     void EnsureNubForGuid(uint64_t guid) noexcept;
+    [[nodiscard]] bool QueueRecovery(uint64_t guid, DuplexRestartReason reason,
+                                     const char* what) noexcept;
 
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;

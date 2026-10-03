@@ -46,6 +46,8 @@ struct ZtsTelemetryRecord final {
     uint32_t hostNanosPerSampleQ8{0}; // (1e9 << 8) / sampleRateHz — nominal rate scalar
     uint16_t rawRxTs{0};              // raw 16-bit descriptor SYT-domain timestamp
     uint16_t syt{0};                  // CIP SYT of the source packet
+    uint32_t motuRxSph{0};            // raw first-block MOTU V3 SPH (wire byte order)
+    bool hasMotuRxSph{false};
     uint8_t  kind{0};                 // ZtsEventKind
 };
 

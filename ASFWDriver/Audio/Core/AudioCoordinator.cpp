@@ -32,10 +32,12 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                     auto endpoint = runtime_.FindEndpointRuntime(guid);
                     return endpoint ? endpoint.get() : nullptr;
                 })
-    , dice_(publisher_, registry_, runtime_, sessions_, hardware, diceNotifications)
+    , dice_(publisher_, registry_, runtime_, sessions_, hardware)
     , motu_(publisher_, registry_, runtime_, sessions_, hardware)
     , rme_(publisher_, registry_, runtime_, sessions_)
-    , avc_(publisher_, registry_, runtime_, hostTransport_, sessions_, hardware) {
+    , avc_(publisher_, registry_, runtime_, hostTransport_, sessions_, hardware)
+    , deviceNotifications_(diceNotifications,
+                           [this](uint64_t guid) { return BackendForGuid(guid); }) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AudioCoordinator: Failed to allocate lock");
@@ -61,6 +63,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
 }
 
 AudioCoordinator::~AudioCoordinator() noexcept {
+    deviceNotifications_.Close();
     deviceManager_.UnregisterDeviceObserver(this);
     hostTransport_.SetTimingLossCallback({});
 
@@ -217,16 +220,7 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
 }
 
 IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
-    if (guid == 0) return nullptr;
-
-    const auto record = registry_.SnapshotByGuid(guid);
-    if (!record.has_value()) {
-        return nullptr;
-    }
-
-    const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(*record);
-    if (!policy || !registry_.IsCurrent(policy->route)) return nullptr;
-    const auto backendKind = ChooseAudioBackend(policy->plan);
+    const auto backendKind = CurrentAudioBackendKind(registry_, guid);
     if (!backendKind.has_value()) {
         return nullptr;
     }
@@ -412,6 +406,9 @@ void AudioCoordinator::BeginTeardown() noexcept {
     // Block new backend recovery callbacks before draining either backend
     // queue. The coordinator owns this one subscription for every family.
     hostTransport_.SetTimingLossCallback({});
+    // Likewise device notifications: once this returns none is running, so no
+    // backend is asked to recover while it drains.
+    deviceNotifications_.Close();
     dice_.BeginTeardown();
     motu_.BeginTeardown();
     rme_.BeginTeardown();

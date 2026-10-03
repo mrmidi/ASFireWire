@@ -1,4 +1,6 @@
 #include "Audio/DriverKit/Runtime/AudioTransportControlBlock.hpp"
+#include "Audio/DriverKit/Runtime/MotuRxSphRateMeter.hpp"
+#include "Audio/DriverKit/Runtime/MotuServoStallDetector.hpp"
 #include "Audio/Runtime/AudioTelemetrySnapshot.hpp"
 
 #include <gtest/gtest.h>
@@ -14,6 +16,195 @@ using ASFW::Audio::Runtime::TxPreparationRequestState;
 using ASFW::Audio::Runtime::TxProducerFaultReason;
 using ASFW::Audio::Runtime::TxProducerFaultRecord;
 using ASFW::Audio::Runtime::TxProducerFaultStage;
+using ASFW::Audio::Runtime::AudioTelemetryEndpointSnapshot;
+using ASFW::Audio::Runtime::MotuRxSphClockSample;
+using ASFW::Audio::Runtime::MotuRxSphRateMeter;
+using ASFW::Audio::Runtime::MotuServoStallDetector;
+using ASFW::Audio::Runtime::MotuServoStallEvent;
+namespace MotuV3Wire = ASFW::Protocols::Audio::AMDTP::MotuV3Wire;
+
+
+TEST(AudioTransportControlBlockTests, MotuRxSphClockBridgePublishesOnlyMonotonicCurrentGeneration) {
+    AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t streamGeneration =
+        control.generation.load(std::memory_order_acquire);
+
+    MotuRxSphClockSample observed{};
+    uint64_t updates = 0;
+    EXPECT_FALSE(control.motuRxSphClock.ReadLatest(observed, updates));
+
+    ASSERT_TRUE(control.motuRxSphClock.Publish({
+        .streamGeneration = streamGeneration,
+        .rxFrames = 192000,
+        .rxTicks = 98304000,
+    }));
+    ASSERT_TRUE(control.motuRxSphClock.ReadLatest(observed, updates));
+    EXPECT_EQ(updates, 1U);
+    EXPECT_EQ(observed.streamGeneration, streamGeneration);
+    EXPECT_EQ(observed.rxFrames, 192000U);
+    EXPECT_EQ(observed.rxTicks, 98304000);
+
+    EXPECT_FALSE(control.motuRxSphClock.Publish({
+        .streamGeneration = streamGeneration,
+        .rxFrames = 191992,
+        .rxTicks = 98299904,
+    }));
+    EXPECT_FALSE(control.motuRxSphClock.Publish({
+        .streamGeneration = streamGeneration + 1,
+        .rxFrames = 192008,
+        .rxTicks = 98308096,
+    }));
+
+    ASSERT_TRUE(control.motuRxSphClock.Publish({
+        .streamGeneration = streamGeneration,
+        .rxFrames = 192008,
+        .rxTicks = 98308096,
+    }));
+    ASSERT_TRUE(control.motuRxSphClock.ReadLatest(observed, updates));
+    EXPECT_EQ(updates, 2U);
+    EXPECT_EQ(observed.rxFrames, 192008U);
+    EXPECT_EQ(observed.rxTicks, 98308096);
+}
+
+TEST(AudioTransportControlBlockTests, MotuRxSphClockBridgeRebasesOnStartGeneration) {
+    AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t firstGeneration =
+        control.generation.load(std::memory_order_acquire);
+    ASSERT_TRUE(control.motuRxSphClock.Publish({
+        .streamGeneration = firstGeneration,
+        .rxFrames = 192000,
+        .rxTicks = 98304000,
+    }));
+
+    control.ResetForStart();
+    const uint64_t secondGeneration =
+        control.generation.load(std::memory_order_acquire);
+    ASSERT_EQ(secondGeneration, firstGeneration + 1);
+
+    MotuRxSphClockSample observed{};
+    uint64_t updates = 0;
+    EXPECT_FALSE(control.motuRxSphClock.ReadLatest(observed, updates));
+    EXPECT_FALSE(control.motuRxSphClock.Publish({
+        .streamGeneration = firstGeneration,
+        .rxFrames = 192008,
+        .rxTicks = 98308096,
+    }));
+
+    ASSERT_TRUE(control.motuRxSphClock.Publish({
+        .streamGeneration = secondGeneration,
+        .rxFrames = 8,
+        .rxTicks = 4096,
+    }));
+    ASSERT_TRUE(control.motuRxSphClock.ReadLatest(observed, updates));
+    EXPECT_EQ(updates, 1U);
+    EXPECT_EQ(observed.streamGeneration, secondGeneration);
+    EXPECT_EQ(observed.rxFrames, 8U);
+    EXPECT_EQ(observed.rxTicks, 4096);
+}
+
+TEST(AudioTransportControlBlockTests,
+     ReceiveReactivationWithinSameGenerationPreservesMotuClockBridgeProgress) {
+    AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t streamGeneration =
+        control.generation.load(std::memory_order_acquire);
+
+    // First model the measurement accumulated before a receive-context restart
+    // and publish it normally.
+    MotuRxSphRateMeter meter{};
+    meter.Observe(MotuV3Wire::EncodeSph(0), 8U, 48000U);
+    meter.Observe(MotuV3Wire::EncodeSph(4096), 8U, 48000U);
+    meter.Observe(MotuV3Wire::EncodeSph(8192), 8U, 48000U);
+    const auto beforeRestart = meter.CumulativeSnapshot();
+    ASSERT_TRUE(beforeRestart.valid);
+    ASSERT_EQ(beforeRestart.frames, 16U);
+    ASSERT_EQ(beforeRestart.ticks, 8192);
+    ASSERT_TRUE(control.motuRxSphClock.Publish({
+        .streamGeneration = streamGeneration,
+        .rxFrames = beforeRestart.frames,
+        .rxTicks = beforeRestart.ticks,
+    }));
+
+    // An internal IR reactivation does not run AudioTransportControlBlock's
+    // ResetForStart(). Reanchor only breaks the step across the inactive gap,
+    // leaving cumulative high-water marks monotonic in the same generation.
+    meter.Reanchor();
+    meter.Observe(MotuV3Wire::EncodeSph(1048576), 8U, 48000U);
+    meter.Observe(MotuV3Wire::EncodeSph(1052672), 8U, 48000U);
+    const auto afterReactivation = meter.CumulativeSnapshot();
+    ASSERT_TRUE(afterReactivation.valid);
+    ASSERT_EQ(afterReactivation.frames, 24U);
+    ASSERT_EQ(afterReactivation.ticks, 12288);
+
+    EXPECT_TRUE(control.motuRxSphClock.Publish({
+        .streamGeneration = streamGeneration,
+        .rxFrames = afterReactivation.frames,
+        .rxTicks = afterReactivation.ticks,
+    }));
+
+    MotuRxSphClockSample observed{};
+    uint64_t updates = 0;
+    ASSERT_TRUE(control.motuRxSphClock.ReadLatest(observed, updates));
+    EXPECT_EQ(updates, 2U);
+    EXPECT_EQ(observed.streamGeneration, streamGeneration);
+    EXPECT_EQ(observed.rxFrames, afterReactivation.frames);
+    EXPECT_EQ(observed.rxTicks, afterReactivation.ticks);
+}
+
+TEST(AudioTransportControlBlockTests,
+     MotuServoStallDetectorReportsMeterRegressionOnlyOncePerActivation) {
+    MotuServoStallDetector detector{};
+    MotuServoStallEvent event{};
+    const MotuRxSphClockSample bridge{
+        .streamGeneration = 7,
+        .rxFrames = 16000,
+        .rxTicks = 8192000,
+    };
+
+    EXPECT_FALSE(detector.Observe(
+        7, {.valid = true, .frames = 16000, .ticks = 8192000},
+        bridge, 2000, event));
+    ASSERT_TRUE(detector.Observe(
+        7, {.valid = true, .frames = 8000, .ticks = 4096000},
+        bridge, 2000, event));
+    EXPECT_EQ(event.streamGeneration, 7U);
+    EXPECT_EQ(event.bridgeUpdates, 2000U);
+    EXPECT_EQ(event.bridgeFrames, 16000U);
+    EXPECT_EQ(event.bridgeTicks, 8192000);
+    EXPECT_EQ(event.meterFrames, 8000U);
+    EXPECT_EQ(event.meterTicks, 4096000);
+
+    EXPECT_FALSE(detector.Observe(
+        7, {.valid = true, .frames = 8016, .ticks = 4104192},
+        bridge, 2000, event));
+
+    detector.Reset();
+    EXPECT_TRUE(detector.Observe(
+        7, {.valid = true, .frames = 8, .ticks = 4096},
+        bridge, 2000, event));
+}
+
+TEST(AudioTransportControlBlockTests,
+     MotuServoStallDetectorIgnoresIncompleteOrDifferentGenerationSnapshots) {
+    MotuServoStallDetector detector{};
+    MotuServoStallEvent event{};
+    const MotuRxSphClockSample bridge{
+        .streamGeneration = 9,
+        .rxFrames = 16000,
+        .rxTicks = 8192000,
+    };
+
+    EXPECT_FALSE(detector.Observe(
+        9, {.valid = false, .frames = 0, .ticks = 0}, bridge, 2000, event));
+    EXPECT_FALSE(detector.Observe(
+        8, {.valid = true, .frames = 8000, .ticks = 4096000},
+        bridge, 2000, event));
+    EXPECT_FALSE(detector.Observe(
+        9, {.valid = true, .frames = 8000, .ticks = 4096000},
+        bridge, 0, event));
+}
 using ASFW::Audio::Runtime::AudioTelemetryEndpointSnapshot;
 
 TEST(AudioTransportControlBlockTests, PreparationRequestsAreMonotonicAndCoalescible) {

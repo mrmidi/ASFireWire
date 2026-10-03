@@ -85,6 +85,19 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
             motuRxCodecs_[streamIndex]->StrideQuadlets(0), diagnosticGuid_);
 
         consumer->SetTimingObserver(motuRxTimingObservers_[streamIndex].get());
+    } else if (format.wireFormat == ::ASFW::Encoding::AudioWireFormat::kMotuV3Packed) {
+        // Protocol-v3 shares the V2 block layout, so the V2 codec decodes it
+        // unchanged; only the header (kMotuV3Header framing) and the timing
+        // differ. V3 does not replay RX timing onto TX: its observer is the
+        // establishment gate plus the SPH servo's RX measurements, published
+        // to the control block it reads from the binding source.
+        motuRxCodecs_[streamIndex] = std::make_unique<::ASFW::Audio::Wire::MotuRxPayloadCodec>(
+            format.motuPcmChunks, format.motuPorts);
+        consumer->SetPayloadCodec(motuRxCodecs_[streamIndex].get());
+
+        motuV3RxTimingObservers_[streamIndex] =
+            std::make_unique<::ASFW::Audio::Wire::MotuV3RxTimingObserver>(bindingSource);
+        consumer->SetTimingObserver(motuV3RxTimingObservers_[streamIndex].get());
     }
     consumer->SetTimingLossCallback([this] { isoch_.NotifyReceiveTimingLoss(); });
     consumer->SetReplayReadyCallback([this] { isoch_.NotifyReceiveReplayEstablished(); });
@@ -102,6 +115,7 @@ void IsochDuplexHostTransport::DetachReceiveConsumers() noexcept {
         receiveConsumers_[streamIndex].reset();
         motuRxCodecs_[streamIndex].reset();
         motuRxTimingObservers_[streamIndex].reset();
+        motuV3RxTimingObservers_[streamIndex].reset();
     }
 }
 

@@ -11,6 +11,7 @@
 #include "../Core/IsochTxQueue.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
+#include "../../Hardware/OHCIEventCodes.hpp"
 #include "../../Hardware/RegisterMap.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Common/BarrierUtils.hpp"
@@ -156,7 +157,12 @@ public:
 
     // Debug helpers (delegated by IsochTransmitContext)
     void DumpAtCmdPtr(Driver::HardwareInterface& hw, uint8_t contextIndex) const noexcept;
-    void DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept;
+    // Payload view is optional and diagnostic-only: with it the dump can also
+    // show the first two quadlets each descriptor actually points at.
+    void DumpDescriptorRing(uint32_t startPacket,
+                            uint32_t numPackets,
+                            const uint8_t* payloadBase = nullptr,
+                            const TxPayloadDmaMap* payloadDmaMap = nullptr) const noexcept;
 
     [[nodiscard]] const Counters& RTCounters() const noexcept { return counters_; }
     [[nodiscard]] uint32_t LastHwTimestamp() const noexcept { return lastHwTimestamp_; }

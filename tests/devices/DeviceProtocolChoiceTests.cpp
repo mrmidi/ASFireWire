@@ -156,6 +156,13 @@ struct Expectation {
                                   .specifierId = kMotuVendorId,
                                   .version = kMotuUltraliteSwVersion}}),
                      ProfileBuilderId::MotuUltralite});
+    // No root Model_Id: the 828 Mk3 root directory does not carry one.
+    cases.push_back({"MOTU 828 Mk3",
+                     MakeDevice(kMotuVendorId, std::nullopt,
+                                {{.offset = 5,
+                                  .specifierId = kMotuVendorId,
+                                  .version = kMotu828mk3SwVersion}}),
+                     ProfileBuilderId::Motu828mk3});
     return cases;
 }
 
@@ -352,6 +359,7 @@ TEST(DeviceProtocolChoice, BackendRoutingMatchesWhatTheProfileRegistrySays) {
         switch (choice->builder) {
             case ProfileBuilderId::Motu828mk2:
             case ProfileBuilderId::MotuUltralite:
+            case ProfileBuilderId::Motu828mk3:
                 EXPECT_EQ(backend, AudioBackendKind::MotuRegister) << expected.what;
                 break;
             case ProfileBuilderId::FocusriteSPro14:

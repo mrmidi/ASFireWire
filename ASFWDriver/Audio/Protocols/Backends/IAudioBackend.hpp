@@ -28,6 +28,15 @@ public:
     // A restart request rebuilt the device's streams (at once, or after the
     // family's quiet period). Families that republish geometry do it here.
     virtual void OnStreamsRestarted(uint64_t guid) noexcept { (void)guid; }
+    // A quadlet the device wrote to the host's notification address, already
+    // attributed to `guid` by its source node. Only the backend driving that
+    // device receives it, because the bits are the family's own: a DICE
+    // notification for DICE, a status word for the MOTU 828 Mk3. Runs on the
+    // Default queue under the router's lock, so it must not block.
+    virtual void HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept {
+        (void)guid;
+        (void)bits;
+    }
 
     virtual void BeginTeardown() noexcept = 0;
 };

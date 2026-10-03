@@ -100,6 +100,13 @@ public:
 
     [[nodiscard]] virtual bool IsTimingEstablished() const noexcept = 0;
     virtual void Reset() noexcept = 0;
+
+    /// Off-hot-path telemetry, called from the consumer's receive-telemetry
+    /// drain on the watchdog cadence. Formatting and logging belong here, never
+    /// in the packet callbacks above.
+    virtual void DrainTelemetry(uint32_t maxRecords) noexcept {
+        (void)maxRecords;
+    }
 };
 
 } // namespace ASFW::Audio

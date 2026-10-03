@@ -88,6 +88,7 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     absoluteFrameCursor_ = 0;
     cursorInitialized_ = false;
     primeCaptureDelayLine_ = false;
+    inputMeter_.Reset(0);
     drainBusWraps_ = 0;
     lastDrainOffsets_ = -1;
     ztsPublishCount_ = 0;
@@ -181,6 +182,55 @@ void DirectAudioReceiveConsumer::BeginReceiveBatch(
     lastBindingGeneration_ = snapshot.generation;
 }
 
+void DirectAudioReceiveConsumer::MeterDecodedFrames(uint32_t frames,
+                                                    uint32_t channels) noexcept {
+    // Reads back what the decoder just wrote, so the line reports the input
+    // buffer CoreAudio reads, after the capture channel map.
+    const uint64_t first = absoluteFrameCursor_ - frames;
+    for (uint32_t i = 0; i < frames; ++i) {
+        const float* frame = inputWriter_.Frame(first + i);
+        if (frame == nullptr) {
+            return;
+        }
+        if (inputMeter_.ObserveFrame(frame + configuration_.channelOffset, channels)) {
+            ASFW_LOG_RING_ONLY(DirectAudio, ::ASFW::Logging::LogLevel::Notice,
+                               "[RxInputMeter] off=%u %s", configuration_.channelOffset,
+                               inputMeter_.Line());
+        }
+    }
+}
+
+void DirectAudioReceiveConsumer::RecordOracleCapture(
+    const ::ASFW::Isoch::IsochReceivePacket& packet,
+    const RxAudioPacketProcessorResult& result) noexcept {
+    // One RX channel is captured, for the same reason the oracle recorded one:
+    // a secondary slice is a different slice of the same packets, not a second
+    // stream, and interleaving the two would corrupt the cadence.
+    if (configuration_.isSecondary || !inputView_.control ||
+        configuration_.framing != ::ASFW::Encoding::AudioPacketFraming::kMotuV3Header) {
+        return;
+    }
+
+    auto& capture = inputView_.control->isochOracleCapture;
+    const uint64_t generation = capture.Generation();
+    if (generation != oracleCaptureGeneration_) {
+        oracleCaptureGeneration_ = generation;
+        oracleRxPacketIndex_ = 0;
+    }
+    capture.RecordRxPacket(
+        oracleRxPacketIndex_++,
+        static_cast<uint32_t>(packet.payload.size()),
+        packet.transferStatus,
+        packet.residualCount,
+        result.framesDecoded > 0,
+        result.hasValidCip,
+        result.dbc,
+        result.firstMotuSph,
+        result.hasMotuSph,
+        result.receiveCycleTimestamp,
+        result.hasReceiveCycleTimestamp);
+}
+
 void DirectAudioReceiveConsumer::ConsumePacket(
     const ::ASFW::Isoch::IsochReceiveBatch& batch,
     const ::ASFW::Isoch::IsochReceivePacket& packet) noexcept {
@@ -251,6 +301,10 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     if (primeDelayLine && result.framesDecoded != 0) {
         primeCaptureDelayLine_ = false;
     }
+    // Recorded before any early return below: NO-DATA packets and packets the
+    // decoder rejects are part of the cadence the reference capture counted, so a
+    // capture that saw only the accepted ones would compare the wrong stream.
+    RecordOracleCapture(packet, result);
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {
@@ -272,8 +326,12 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             default:
                 break;
         }
+        // NO-DATA means a packet without data blocks (IEC 61883-6), the same
+        // test the oracle record uses. SYT is not the criterion: the MOTU v3
+        // header carries 0xFFFF on every packet, so counting by SYT reported a
+        // streaming 828 Mk3 as NO-DATA only.
         if (result.hasValidCip) {
-            if (result.syt == 0xffff) {
+            if (result.framesDecoded == 0) {
                 counters->rxNoDataPackets.fetch_add(1, std::memory_order_relaxed);
             } else {
                 counters->rxDataPackets.fetch_add(1, std::memory_order_relaxed);
@@ -284,6 +342,9 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     if (result.status == DirectRxWriteStatus::kAvailable ||
         result.status == DirectRxWriteStatus::kInvalidBinding) {
         absoluteFrameCursor_ += result.framesDecoded;
+        if (result.status == DirectRxWriteStatus::kAvailable) {
+            MeterDecodedFrames(result.framesDecoded, channels);
+        }
     } else {
         ResetReplayEpochForDiscontinuity(
             ReplayResetReason::kPacketProcessorStatus,
@@ -757,6 +818,11 @@ void DirectAudioReceiveConsumer::DrainReceiveTelemetry(uint32_t maxRecords) {
     if (dropped != 0) {
         ASFW_LOG(Zts, "drain overflow: dropped=%llu (capacity=%u)", dropped,
                  ::ASFW::Isoch::Rx::ZtsTelemetryRing::kCapacity);
+    }
+    // Master stream only, matching ObservePacket: the observer's device-timing
+    // measurements come from the master's packets.
+    if (timingObserver_ != nullptr && !configuration_.isSecondary) {
+        timingObserver_->DrainTelemetry(maxRecords);
     }
 }
 

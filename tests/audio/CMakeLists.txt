@@ -20,6 +20,8 @@ add_executable(IsochReceiveContextTests
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/DirectInputWriter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuV3DeviceTiming.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
@@ -113,6 +115,43 @@ add_audio_test(MotuTxTimingTests
 # MOTU capture-side presentation timing (SPH -> replay offset)
 add_audio_test(MotuRxTimingTests
     MotuRxTimingTests.cpp
+)
+
+# MOTU protocol-v3: SPH clock, servo and mute gate behind the stamper seam
+add_audio_test(MotuV3TxTimingStamperTests
+    MotuV3TxTimingStamperTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuV3TxTimingStamper.cpp"
+)
+
+add_audio_test(RxInputContentMeterTests
+    RxInputContentMeterTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+)
+
+add_audio_test(MotuV3ServoTelemetryFormatTests
+    MotuV3ServoTelemetryFormatTests.cpp
+)
+
+add_audio_test(MotuV3PayloadWriterTests
+    MotuV3PayloadWriterTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
 )
 
 # MOTU host->device payload placement tests
@@ -224,6 +263,7 @@ add_audio_test(IsochServiceTxPreparationTests
 add_audio_test(AmdtpDirectTxTests
     AmdtpDirectTxTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
@@ -255,6 +295,8 @@ add_audio_test(AudioDriverTxProducerTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuV3TxTimingStamper.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/MAudioInternalTxTiming.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioTxClockBridge.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioPresentationObserver.cpp"
@@ -280,6 +322,7 @@ add_audio_test(AudioDriverTeardownTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuV3TxTimingStamper.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/MAudioInternalTxTiming.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioTxClockBridge.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioPresentationObserver.cpp"
@@ -293,9 +336,67 @@ add_audio_test(AmdtpRateGeometryTests
     AmdtpRateGeometryTests.cpp
 )
 
+add_audio_test(Motu828Mk3GeometryTests
+    Motu828Mk3GeometryTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
+)
+
+add_audio_test(Motu828Mk3RegisterModelTests
+    Motu828Mk3RegisterModelTests.cpp
+)
+
+# The register IO addresses the device through a route token, so both targets
+# link the device registry that owns it.
+add_audio_test(Motu828Mk3RegisterIOTests
+    Motu828Mk3RegisterIOTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MOTU828Mk3RegisterIO.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+
+add_audio_test(Motu828Mk3ProtocolTests
+    Motu828Mk3ProtocolTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MOTU828Mk3Protocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MOTU828Mk3RegisterIO.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
 
 add_audio_test(RxDrivenTimingTests
     RxDrivenTimingTests.cpp
+)
+
+# Measured MOTU RX SPH slope (device sample period) — observation only
+add_audio_test(MotuRxSphRateMeterTests
+    MotuRxSphRateMeterTests.cpp
+)
+
+# MOTU V3 SPH wire shape pinned to a bus capture of the official driver
+add_audio_test(MotuV3SphWireParityTests
+    MotuV3SphWireParityTests.cpp
+)
+
+# The 1024-tick lattice `[RxPhaseRel]` sits on, reproduced host-only
+add_audio_test(MotuTxPhaseResidualQuantizationTests
+    MotuTxPhaseResidualQuantizationTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuV3TxTimingStamper.cpp"
+)
+
+# Pure MOTU SPH feedback controller -- no runtime/wire integration yet
+add_audio_test(MotuSphClockServoTests
+    MotuSphClockServoTests.cpp
+)
+
+# Fold about the operating point, and correct the +/-1024 cadence-lattice hop
+add_audio_test(MotuRelPhaseConditionerTests
+    MotuRelPhaseConditionerTests.cpp
 )
 
 # TX refill generation/range coverage (decides margin-race vs coverage bug)
@@ -339,6 +440,7 @@ add_audio_test(DiceProfileTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
@@ -353,6 +455,7 @@ add_audio_test(ZtsCharacterizationTests
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/DirectInputWriter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )
 
@@ -361,6 +464,7 @@ add_audio_test(DiceProfileEquivalenceTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
@@ -373,6 +477,7 @@ set(ASFW_TIMING_PROFILE_SOURCES
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"

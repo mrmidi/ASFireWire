@@ -61,8 +61,11 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
         return false;
     }
     // FDF (AM824 SFC) must match the actual rate, not whatever the profile
-    // defaulted (profiles hardcode the 48 kHz SFC 0x02).
-    config.fdf = geometry->fdf;
+    // defaulted (profiles hardcode the 48 kHz SFC 0x02). A format whose FDF is
+    // not an AM824 SFC keeps the profile's value (MOTU v3: 0x22).
+    if (!config.fdfIsFixed) {
+        config.fdf = geometry->fdf;
+    }
     if (config.dbs == 0) {
         config.dbs = static_cast<uint8_t>(config.pcmChannels + config.midiSlots);
     }
@@ -96,7 +99,7 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     cipConfig.dbs = config.dbs;
     cipConfig.fn = 0;
     cipConfig.qpc = 0;
-    cipConfig.sph = false;
+    cipConfig.sph = config.cipSph;
     cipConfig.fmt = config.fmt;
     cipConfig.fdf = config.fdf;
     cipConfig.noDataFdf =
@@ -314,9 +317,13 @@ void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,
         // not label 0x00. Cross-validated with Linux amdtp-am824.c:209-220
         // (write_pcm_silence, used at :362 when no PCM is available). Slots
         // follow the playback channel map as the payload writer does.
+        // MOTU V3 has no quadlet slots: its PCM silence is the zero just
+        // written. 0x40000000 would land in the SPH quadlet, both message
+        // chunks and a byte of most PCM chunks -- the top byte of every fourth
+        // one, a half-scale offset wherever the payload writer does not reach.
         const uint32_t silence =
             PcmSlotCodec::EncodeFloat32(0.0f, txPolicy_.hostToDevicePcmEncoding);
-        if (silence != 0) {
+        if (silence != 0 && txPolicy_.payloadLayout == TxPayloadLayout::QuadletSlots) {
             const uint32_t dbs = streamConfig_.dbs;
             const uint32_t pcmSlots = streamConfig_.pcmChannels < dbs
                                           ? streamConfig_.pcmChannels

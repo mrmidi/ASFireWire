@@ -50,6 +50,7 @@ namespace {
     case DuplexRestartReason::kRecoverAfterCycleInconsistent:
     case DuplexRestartReason::kRecoverAfterLockLoss:
     case DuplexRestartReason::kRecoverAfterTxFault:
+    case DuplexRestartReason::kRecoverAfterDeviceBufferFault:
         return true;
     case DuplexRestartReason::kBusResetRebind:
     case DuplexRestartReason::kInitialStart:

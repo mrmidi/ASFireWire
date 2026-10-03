@@ -9,6 +9,7 @@
 
 #include "IAVCAudioConfigListener.hpp"
 #include "AudioNubPublisher.hpp"
+#include "DeviceNotificationDispatch.hpp"
 #include "../Protocols/Backends/AVCAudioBackend.hpp"
 #include "../Protocols/Backends/DiceAudioBackend.hpp"
 #include "../Protocols/Backends/MotuAudioBackend.hpp"
@@ -109,6 +110,9 @@ private:
     MotuAudioBackend motu_;
     RmeAudioBackend rme_;
     AVCAudioBackend avc_;
+    // The notification router's one observer. Declared after the backends so
+    // it closes before any of them is destroyed.
+    DeviceNotificationDispatch deviceNotifications_;
 
     IOLock* lock_{nullptr};
     uint64_t activeGuid_{0};

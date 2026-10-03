@@ -97,18 +97,32 @@ constexpr AudioDeviceDefinition Definition(
     return result;
 }
 
+/// Whether a MOTU row also requires the root directory's Model_Id to read 0.
+/// The protocol-v2 rows do (828mk2 Config ROM, 2026-07-26). The 828 Mk3 root
+/// directory carries no Model_Id key at all (read from a real unit),
+/// and a constrained field never matches missing evidence, so its row leaves
+/// the field unconstrained and matches on the unit directory alone.
+enum class MotuRootModel : uint8_t {
+    RequireZero,
+    Unconstrained,
+};
+
 constexpr AudioDeviceDefinition MotuDefinition(DeviceDefinitionId id,
                                                uint32_t swVersion,
                                                ProfileBuilderId builder,
                                                ProtocolImplementationId implementation,
                                                SupportDisposition support,
-                                               const char* modelName) {
+                                               const char* modelName,
+                                               DeviceStreamTraits streamTraits = {},
+                                               MotuRootModel rootModel = MotuRootModel::RequireZero) {
     return AudioDeviceDefinition{
         .id = id,
         .variantId = static_cast<uint32_t>(id),
         .clauses = {IdentityMatchClause{
                         .rootVendorId = MaskedValue32{kMotuVendorId},
-                        .rootModelId = MaskedValue32{0},
+                        .rootModelId = rootModel == MotuRootModel::RequireZero
+                                           ? std::optional<MaskedValue32>{MaskedValue32{0}}
+                                           : std::nullopt,
                         .unitSpecifierId = MaskedValue32{kMotuVendorId},
                         .unitVersion = MaskedValue32{swVersion},
                     },
@@ -122,6 +136,7 @@ constexpr AudioDeviceDefinition MotuDefinition(DeviceDefinitionId id,
         .protocolImplementation = implementation,
         .support = support,
         .guidReliability = GuidReliability::ReliableWhenUnique,
+        .streamTraits = streamTraits,
         .vendorName = kMotuVendorName,
         .modelName = modelName,
     };
