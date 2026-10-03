@@ -4,6 +4,7 @@
 // AVCDiscoveryDocument.cpp - see AVCDiscoveryDocument.hpp.
 
 #include "AVCDiscoveryDocument.hpp"
+#include "../../Protocols/AVC/Commands/CommandNames.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -162,9 +163,21 @@ void Snapshot(Json& j, const E::DiscoverySnapshot& s) {
         j.Key("formations").Open('[');
         for (const auto& f : p.formations) j.Hex(f.Raw());
         j.Close(']').Key("route");
-        if (p.route) j.Open('{').Key("source").Hex(p.route->source.bytes)
-                         .Key("destination").Hex(p.route->destination.bytes).Close('}');
-        else j.Null();
+        if (p.route) {
+            // The bytes as the device sent them, then the same answer by spec name (TA 2002010 Tables 7.6-7.10):
+            // a reader of this document sees `ready`, not 0x31.
+            const auto status = p.route->Status();
+            const auto kind = A::Cmd::DestinationKindOf(p.route->destination);
+            j.Open('{').Key("source").Hex(p.route->source.bytes)
+                .Key("destination").Hex(p.route->destination.bytes)
+                .Key("firstOperand").Number(p.route->first.Raw())
+                .Key("sourceName").String(A::Cmd::Describe(p.route->source, A::Cmd::SignalRole::kSource))
+                .Key("destinationName").String(A::Cmd::Describe(p.route->destination, A::Cmd::SignalRole::kDestination))
+                .Key("status").String(A::Cmd::Describe(status))
+                .Key("deviations").String(kind ? A::Cmd::Describe(A::Cmd::CheckStatusAgainstSpec(status, *kind))
+                                               : std::string("n/a"))
+                .Close('}');
+        } else j.Null();
         j.Close('}');
     }
     j.Close(']');

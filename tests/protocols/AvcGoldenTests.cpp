@@ -27,6 +27,7 @@
 #include "ASFWDriver/Protocols/AVC/Discovery/DiscoverySession.hpp"
 #include "ASFWDriver/Protocols/AVC/Graph/DiscoveryGraph.hpp"
 #include "ASFWDriver/UserClient/WireFormats/AVCDiscoveryDocument.hpp"
+#include "ASFWDriver/Protocols/AVC/Discovery/DiscoveryLog.hpp"
 #include "ASFWDriver/UserClient/Handlers/AVCHandler.hpp"
 #include "ASFWDriver/Protocols/AVC/IAVCDiscovery.hpp"
 #include <DriverKit/IOUserClient.h>
@@ -887,6 +888,87 @@ TEST(AvcGoldenTests, DuetUserClientOutputsAreUnchanged) {
     ASSERT_TRUE(ok);
     ::ASFW::Testing::ExpectTextMatchesGolden(UserClientGolden::Capture(rig.Unit(), kDuet.guid),
                                              "avc/duet__user_client.txt");
+}
+
+// What the driver ring shows for an attach: every discovered fact by its spec name, every unnamed value as
+// UNKNOWN. The golden pins each name, so a renamed or dropped table entry fails here.
+namespace {
+[[nodiscard]] std::string JoinLines(const std::vector<std::string>& lines) {
+    std::string text;
+    for (const auto& line : lines) text += line + "\n";
+    return text;
+}
+} // namespace
+
+TEST(AvcGoldenTests, Phase88DiscoveryLogNamesEveryFact) {
+    AvcGoldenRigOptions opts;
+    opts.guid = kPhase88.guid;
+    opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
+    opts.generation = kPhase88.generation;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
+    AvcGoldenRig rig(kPhase88, opts);
+    rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
+    rig.Sim().SetResponseOverride({0x01, 0xFF, 0x1A, 0xFF, 0xFF, 0xFE, 0xFF, 0x00},
+                                  {0x0C, 0xFF, 0x1A, 0x10, 0x60, 0x00, 0xFF, 0x00});
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    ASSERT_TRUE(ok);
+    const auto lines = ASFW::AVC::DiscoveryEngine::DescribeDiscovery(*rig.Unit()->GetDiscoverySnapshot(),
+                                                                     rig.Unit()->GetDiscoveredGraph().get());
+    for (const auto& line : lines) EXPECT_LE(line.size(), ASFW::AVC::DiscoveryEngine::kMaxDiscoveryLogLine) << line;
+    ::ASFW::Testing::ExpectTextMatchesGolden(JoinLines(lines), "avc/phase88__discovery_log.txt");
+}
+
+TEST(AvcGoldenTests, DuetDiscoveryLogNamesEveryFact) {
+    AvcGoldenRigOptions opts;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
+    AvcGoldenRig rig(kDuet, opts);
+    std::vector<uint8_t> music;
+    for (size_t i = 0; i < Fixtures::kDuetMusicStatusHex.size(); i += 2)
+        music.push_back(static_cast<uint8_t>(std::stoul(Fixtures::kDuetMusicStatusHex.substr(i, 2), nullptr, 16)));
+    rig.Sim().SetDescriptor(0x60, {0x80}, std::move(music));
+    rig.Sim().SetDescriptor(0x08, {0x00}, std::vector<uint8_t>(Fixtures::kDuetAudioIdentifierBytes.begin(),
+                                                              Fixtures::kDuetAudioIdentifierBytes.end()));
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    ASSERT_TRUE(ok);
+    const auto lines = ASFW::AVC::DiscoveryEngine::DescribeDiscovery(*rig.Unit()->GetDiscoverySnapshot(),
+                                                                     rig.Unit()->GetDiscoveredGraph().get());
+    for (const auto& line : lines) EXPECT_LE(line.size(), ASFW::AVC::DiscoveryEngine::kMaxDiscoveryLogLine) << line;
+    ::ASFW::Testing::ExpectTextMatchesGolden(JoinLines(lines), "avc/duet__discovery_log.txt");
+}
+
+// The route's STATUS byte used to be dropped from the discovery document. It is there now, with the
+// spec names beside the bytes, so a document reader sees `ready` and the departure from Table 7.7.
+TEST(AvcGoldenTests, DuetDiscoveryDocumentCarriesTheDecodedRouteStatus) {
+    AvcGoldenRigOptions opts;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
+    AvcGoldenRig rig(kDuet, opts);
+    std::vector<uint8_t> music;
+    for (size_t i = 0; i < Fixtures::kDuetMusicStatusHex.size(); i += 2)
+        music.push_back(static_cast<uint8_t>(std::stoul(Fixtures::kDuetMusicStatusHex.substr(i, 2), nullptr, 16)));
+    rig.Sim().SetDescriptor(0x60, {0x80}, std::move(music));
+    rig.Sim().SetDescriptor(0x08, {0x00}, std::vector<uint8_t>(Fixtures::kDuetAudioIdentifierBytes.begin(),
+                                                              Fixtures::kDuetAudioIdentifierBytes.end()));
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    ASSERT_TRUE(ok);
+    const auto snapshot = rig.Unit()->GetDiscoverySnapshot();
+    const auto graph = rig.Unit()->GetDiscoveredGraph();
+    const std::string document = UserClient::Wire::BuildAVCDiscoveryDocument(snapshot.get(), graph.get(), rig.Unit()->CopyExchangeLog());
+
+    EXPECT_NE(document.find("\"firstOperand\":112"), std::string::npos);
+    EXPECT_NE(document.find("\"status\":\"output_status=ready(0x3) conv=can change format(1) signal_status=identical(0x0)\""),
+              std::string::npos);
+    EXPECT_NE(document.find("\"sourceName\":\"iPCR[0] [ff 00]\""), std::string::npos);
+    EXPECT_NE(document.find("\"deviations\":\"output_status beyond effective/not effective; conv set on a plug that is not an oPCR\""),
+              std::string::npos);
 }
 
 TEST(AvcGoldenTests, Phase88UserClientOutputsAreUnchanged) {

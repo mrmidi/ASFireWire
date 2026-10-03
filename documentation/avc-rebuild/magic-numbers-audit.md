@@ -124,17 +124,39 @@ It comes from the pre-phase-3 `FCPTransport` and nothing supports it: Apple comp
 (`IOFireWireAVCCommand.cpp:154-157`). A response whose opcode differs only in bit 7 is accepted. Candidate fix:
 compare all eight bits, then run the goldens and a hardware attach.
 
-**F7. The music status-descriptor parser reads `8101`-`8105` as capability blocks.**
-In the status descriptor (`ParseStatusDescriptor`), `8101` is the Music Output Plug Status Area, whose primary data
-is one byte (`number_of_source_plugs`) followed by nested `8102` blocks (TA 2001007 §6.2.2, Fig 6.4);
-`8102`-`8107` are nested plug-status blocks (§6.2.3). The parser handles that nesting correctly, but it *also* reads
-`8101` as "Audio Capability" (a five-byte field that does not exist there) and top-level `8102`-`8105` as MIDI, SMPTE,
-sample-count and audio-sync capability. In the identifier descriptor the same capabilities are plain fields
-(§5.2.2-§5.2.6), not typed `81xx` blocks. So those top-level reads cannot match a conforming status descriptor, and
-their output (`hasAudioCapability`, `maxMidiInputPorts`, ...) feeds `AVCMusicCapabilities`. Only the `8100` read
-(general capability) is exercised by tests. The case labels now carry the spec names and an `AUDIT F7` comment.
-Candidate: delete the dead reads, or move capability parsing to the identifier descriptor, after checking that no
-captured device sends those top-level blocks.
+**F7. The music status-descriptor parser reads `8101`-`8105` as capability blocks (unverified).**
+Two descriptors, two layouts (TA 2001007 1.0). The *identifier* descriptor (§5) holds the capabilities as plain fields
+inside `music_subunit_specific_information` (Figure 5.3), switched on by the bits of a `capability_attributes` byte
+(Table 5.4: bit 0 general, 1 audio, 2 MIDI, 3 SMPTE, 4 sample count, 5 audio SYNC); they have no info block type
+numbers. The *status* descriptor (§6) is made of typed info blocks: `8100` general status area (§6.2.1), `8101` music
+output plug status area (§6.2.2: `[number_of_source_plugs]` + nested `8102`), `8102` source plug status (§6.2.3:
+`[source_plug_number]` + nested `8103`-`8107`), `8103` audio info, `8104` MIDI info, `8105` SMPTE, `8106` sample count,
+`8107` audio SYNC (§6.2.3.1-§6.2.3.5). The captures match the spec exactly: the Phase 88 status descriptor is `8100`
+(`02 03 FF FF FF FF`), `8101` (primary `04` = 4 source plugs) containing `8102` (primary `00`) containing `8103`
+(primary `0A` = 10 audio streams) and `8104` (primary `02` = 2 MIDI streams), then the non-spec `8108` routing block;
+the Duet has only `8100` and `8108`.
+
+The parser walks that nesting correctly, but it also reads top-level `8101`-`8105` with the *identifier-descriptor*
+capability layouts (audio capability: a first-entry channel count; MIDI capability: version, adaptation layer, port
+counts; SMPTE, sample count, audio SYNC: Tx/Rx and Ex/Bus bits). What is and is not known:
+- On the Phase 88 the audio read fails for lack of bytes (the real `8101` primary field is one byte), and `8102`-`8105`
+  appear only nested in both captures, never at top level.
+- FFADO's status-descriptor loop handles only `8100`, `8101` and `8108` at top level and skips every other type;
+  Apple's header names `8101` the Music Output Plug Status Area.
+- So the reads are **unreachable on the two captured devices and on any spec-conforming device. Nothing is known about
+  other devices**, and no reference shows any device sending the identifier layouts at top level of a status descriptor.
+- They were written on 2026-09-30 (`af12d89b`, the new status parser, from the January snapshot's labels), not taken
+  from a reference.
+- The app's capability flags and counts do not depend on them: `BuildMusicCapabilities` also derives audio and MIDI
+  presence and counts from the discovered plugs. Only `8100` (tx/rx capability, same bit layout as Tables 5.5 and 5.6)
+  is exercised and used.
+- **The one real risk is a misread, not an empty value:** a device whose `8101` carried a primary field longer than the
+  spec's one byte would have the audio read take those bytes as "max channels".
+
+The case labels carry the spec names and an `AUDIT F7` comment. Options, none applied: (a) keep everything and record
+unrecognised top-level blocks in the AV/C Report so a third device shows itself; (b) as (a), plus skip the capability
+read of `8101` whenever it has nested `8102` children (the spec shape), which removes the misread on conforming
+devices and keeps the guess for the rest; (c) delete the reads once more devices are captured.
 
 **F8. The feature-control bitmap bit order has four disagreeing sources.**
 TA 1999008 Table 8.3 says "Bit 0: Mute, Bit 1: Volume, ..." without fixing the numbering direction.
@@ -193,8 +215,8 @@ and keep the golden `fw1814__allowlist_enforcement.trace` as the guard.
 | Where | Literal | Meaning | Source | Status |
 |---|---|---|---|---|
 | `MackieOnyx400FProfile.cpp` | `fdf = 0x01`, `fmt = 0x10` | SFC 44.1 kHz, CIP FMT | IEC 61883-6 Table 20, Table 2 (Fireworks/EFC, not AV/C) | left: converting it would make an EFC profile depend on an AV/C header; wants a shared CIP constants header |
-| `Audio/Wire/AMDTP/AmdtpTypes.hpp:70,79` | `0x80000000`, `0xCF000000` | non-audio slot word, cadence slot word | AM824 label byte; label table not located | unverified |
-| `PcmSlotCodec.cpp`, `AM824Encoder.hpp` | `0x40000000` | AM824 MBLA label 40 | IEC 61883-6 (label table not located) | unverified |
+| `Audio/Wire/AMDTP/AmdtpTypes.hpp:70,79` | `0x80000000`, `0xCF000000` | non-audio slot word (label 80 = MIDI conformant), cadence slot word (label CF = ancillary data) | TA 2001007 §5.2.2 Table 5.8 (AM824 label values: 80-83 MIDI, C0-EF ancillary) | spec for the labels; why these exact words is unverified |
+| `PcmSlotCodec.cpp`, `AM824Encoder.hpp` | `0x40000000` | AM824 label 40 = multi-bit linear audio | TA 2001007 Table 5.8 (40-4F) | spec |
 
 ### C4. Positional offsets and sizes (decimal)
 
@@ -210,7 +232,7 @@ the descriptor code):
 | `Commands/StreamFormatCommand.cpp` | 19 (the list/single reply offsets are now named) |
 | `Extensions/BridgeCoPlugInfo.cpp` | 10 |
 | `FCPTransport.cpp` | 9 |
-| `Commands/InputSelectCommand.hpp`, `StreamFormatCommand.hpp`, `SignalSourceCommand.hpp`, `OutputPresetCommand.hpp` | 8, 6, 5, 5 |
+| `Commands/StreamFormatCommand.hpp`, `SignalSourceCommand.hpp` (and the since-deleted `InputSelectCommand.hpp`, `OutputPresetCommand.hpp`: 8, 5) | 6, 5 |
 | `Descriptors/*.cpp` | 7 |
 
 ### C5. Not magic
@@ -243,3 +265,58 @@ that is now a named `kUnset*` marker.
   instead of a result, and rebuilds after each restore.
 - Not run: hardware. The conversions are byte-identical by construction and by the unchanged goldens, but no device
   was attached.
+
+## E. Runtime visibility: every discovered value is logged by name (2026-10-03)
+
+Naming the constants in source is half of the hardening; the other half is that a log reader sees the
+same names. Before this pass a finished discovery reached the driver ring as `result=completed`, the
+discovery document dropped the SIGNAL SOURCE status byte, and `FCPTransport` logged raw `ctype=0x%02x`.
+
+**One path, no duplicates.** `Discovery/DiscoveryLog.{hpp,cpp}` turns a committed `DiscoverySnapshot` (and
+the graph built from it) into lines; `AVCUnit::LogDiscovery` is the single caller and writes them to the
+ring. Every line starts with `[AvcCaps]`. Query it with
+`asfw_log_query {"categories":["AVC"],"contains":"[AvcCaps]","maxRecords":200}` (the dext has no os_log
+categories, so the tag is the filter).
+
+**The contract** (`Core/AvcNames.hpp`): a value a table knows prints as `name(0xNN)`; a value it does not
+prints as `UNKNOWN(<table>:0xNN)`. It is never dropped and never guessed. A log that contains `UNKNOWN(` is
+a device sending a value nobody has named. The tables are in `Core/AvcNames.hpp`,
+`Commands/CommandNames.hpp` and `Descriptors/DescriptorNames.hpp`, and each cites the spec table (or, where
+the local TA copy is silent, the Apple/FFADO source) that defines its values.
+
+What is logged: unit and plug counts, subunits, every plug's signal format / current format / supported
+formats (compound AM824 entry by entry), every route with the SIGNAL SOURCE status byte split into
+`output_status`, `conv`, `signal_status` plus a `route_check` line naming any departure from TA 2002010
+Tables 7.7-7.10, every descriptor read with its errors, every top-level info block of the music status
+descriptor **by type, whether or not the parser reads it**, music plug usage / port type / plug type /
+routing support, audio function blocks and their sources, feature and selector status, failed probes
+(aggregated with counts), extension formations, and the resulting graph. Lines carry the subunit
+address byte once (on the `subunit` line) and `Type(0xNN)#id` after that.
+
+Also changed in the same pass:
+- `FCPTransport` now logs `STATUS(0x1) SIGNAL SOURCE(0x1a)` and, new, the named response code of each
+  accepted response, in place of raw `ctype=0x%02x opcode=0x%02x`.
+- The discovery document's route object gained `firstOperand`, `sourceName`, `destinationName`, `status`
+  and `deviations` (additive; the schema version is unchanged).
+- Music plug usage (`!= 3`, `== 0x04 || 0x05`) and music plug type (`kAudioMusicPlug`) are named constants;
+  the 810B `routing_support` byte, previously skipped as "reserved", is read (FFADO
+  `avc_descriptor_music.cpp:376-470`, Apple `MusicSubunitController.h:148-165`).
+
+**What the new log showed on the two captured devices** (goldens `tests/golden/avc/*__discovery_log.txt`):
+- No `UNKNOWN(` on either device: every value they send is named.
+- Duet: every subunit-plug route answers `output_status=ready, conv=1`. TA 2002010 allows only
+  `effective` / `not effective` on a subunit destination plug and `conv` only on an oPCR, so
+  `route_check` flags both on each of the five plugs. This is the device, not the decoder.
+- Phase 88: its music status descriptor carries a top-level **0x8101 "music output plug status area"
+  block of 705 bytes** that the parser recognises by type and does not read (audit F7). Its
+  routing-status block says 4 source plugs; the unit's SUBUNIT INFO says 6.
+
+**Not covered, on purpose:** the bytes inside an info block whose type is known but whose layout the
+parser does not read (8101's 705 bytes) are logged by type and size only. Dumping them would be a second
+decoder with no spec behind it.
+
+Verification: `DiscoveryLogTests` (16 cases: every table has a known and an unknown case, unknown top-level
+block / plug usage / port type are flagged, a 400-character name is wrapped without loss, the route status
+and its deviations are logged), the two golden logs, and `DuetDiscoveryDocumentCarriesTheDecodedRouteStatus`.
+Dropping one table entry fails the unit test and both goldens. Host suite 2775/2775; dext builds. Not yet
+run on hardware.

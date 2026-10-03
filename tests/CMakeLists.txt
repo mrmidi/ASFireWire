@@ -170,6 +170,7 @@ add_library(asfw_avc_codecs STATIC
     "${ASFW_DRIVER_DIR}/Audio/Protocols/AVC/DiscoveryCoordinator.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Graph/DiscoveryGraph.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Discovery/DiscoveryReducer.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Discovery/DiscoveryLog.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Discovery/DiscoverySession.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"

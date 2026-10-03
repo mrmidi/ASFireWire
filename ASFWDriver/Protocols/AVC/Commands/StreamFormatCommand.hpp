@@ -181,6 +181,10 @@ enum class Am824Format : uint8_t {
     kIec61937_7 = 0x05,
     kMultiBitLinearAudioRaw = 0x06,  ///< MBLA (Phase 88: 8 channels)
     kMultiBitLinearAudioDvd = 0x07,
+    kOneBitAudioPlainRaw = 0x08,       ///< TA 2001002 Table 5.5
+    kOneBitAudioPlainSacd = 0x09,
+    kOneBitAudioEncodedRaw = 0x0A,
+    kOneBitAudioEncodedSacd = 0x0B,
     kHighPrecisionMultiBitLinearAudio = 0x0C,
     kMidiConformant = 0x0D,
     kSmpteTimeCode = 0x0E,

@@ -7,6 +7,7 @@
 
 #include "AVCUnit.hpp"
 #include "Graph/DiscoveryGraph.hpp"
+#include "Discovery/DiscoveryLog.hpp"
 #include <algorithm>
 #include "../../Logging/Logging.hpp"
 #include "Commands/GeneralCommands.hpp"
@@ -159,6 +160,7 @@ void AVCUnit::InitializeAlreadyBegun(std::function<void(bool)> completion) {
             }
             if (!success && unit->snapshot_ && unit->IsCurrentRoute(unit->snapshot_->route))
                 unit->ApplySnapshot(*unit->snapshot_);
+            if (snapshot) unit->LogDiscovery(*snapshot);
             unit->initialized_ = success;
             unit->sessionSlot_ = E::IdleSlot{};
             unit->FinishExternalRescan(success);
@@ -240,6 +242,15 @@ uint32_t AVCUnit::GetSpecID() const {
         return 0;
     }
     return unit->GetUnitSpecID();
+}
+
+void AVCUnit::LogDiscovery(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot) const {
+    // The one place discovery reaches the ring: every fact by its spec name, every unnamed value as UNKNOWN.
+    // The graph is the one built from this snapshot only when it applied; otherwise it is left out.
+    const bool applied = snapshot.complete && IsCurrentRoute(snapshot.route);
+    for (const auto& line : ASFW::AVC::DiscoveryEngine::DescribeDiscovery(snapshot, applied ? discoveredGraph_.get() : nullptr)) {
+        ASFW_LOG(AVC, "%{public}s", line.c_str());
+    }
 }
 
 void AVCUnit::ApplySnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot) {

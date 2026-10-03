@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "DiscoveryReducer.hpp"
+#include "../Descriptors/DescriptorTypeCodes.hpp"
 #include <algorithm>
 #include <utility>
 #include <type_traits>
@@ -142,7 +143,7 @@ void Expand(State& s, Checkpoint point) {
         for (const auto& c : s.builder.contents) {
             if (!c.music) continue;
             for (const auto& plug : c.music->plugs) {
-                if (!plug.isDestination || plug.usage != 3) continue;
+                if (!plug.isDestination || plug.usage != ParsedDescriptors::kMusicPlugUsageSync) continue;
                 const auto destination = Cmd::SignalAddress::SubunitPlug(c.id.ToAddress(), plug.plugId);
                 std::vector<Cmd::SignalAddress> candidates;
                 for (unsigned i = 0; i < s.builder.unit.unitPlugs.isochronousInputs; ++i)

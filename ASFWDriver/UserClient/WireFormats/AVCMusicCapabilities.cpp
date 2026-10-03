@@ -4,6 +4,7 @@
 // AVCMusicCapabilities.cpp - see AVCMusicCapabilities.hpp.
 
 #include "AVCMusicCapabilities.hpp"
+#include "../../Protocols/AVC/Descriptors/DescriptorTypeCodes.hpp"
 #include "../../Shared/SharedDataModels.hpp"
 
 #include <algorithm>
@@ -139,8 +140,10 @@ std::optional<std::vector<uint8_t>> BuildMusicCapabilities(const E::DiscoverySna
         if (c.hasSmpteTimeCodeCapability) caps.smpte = true;
         for (const auto& p : status.plugs) {
             Plug plug{.id = p.plugId, .input = p.isDestination,
-                      // Usage 4/5 (TA 2001007 Table 6.9) are audio streams.
-                      .type = (p.usage == 0x04 || p.usage == 0x05) ? kAudioPlug : p.usage, .name = p.name};
+                      // Analog and digital audio usage are audio streams (Apple MusicSubunitController.h:96-105).
+                      .type = (p.usage == Protocols::AVC::Descriptors::kMusicPlugUsageAnalogAudio ||
+                               p.usage == Protocols::AVC::Descriptors::kMusicPlugUsageDigitalAudio)
+                                  ? kAudioPlug : p.usage, .name = p.name};
             if (!p.clusters.empty()) plug.current = FromClusters(p.clusters);
             plugs.push_back(std::move(plug));
         }

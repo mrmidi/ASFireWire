@@ -100,7 +100,8 @@ struct MusicPlugEndpoint {
 
 struct MusicPlugDetail {
     uint16_t musicPlugId{0};
-    uint8_t portType{0};
+    uint8_t plugType{0};        ///< music_plug_type: audio, MIDI, SMPTE, sample count or sync (kMusicPlugType*)
+    uint8_t routingSupport{0};  ///< routing_support: fixed, cluster or flexible (kMusicRoutingSupport*)
     std::string name;
     std::optional<MusicPlugEndpoint> source;
     std::optional<MusicPlugEndpoint> destination;
@@ -110,8 +111,17 @@ struct MusicPlugDetail {
 // Music Subunit Status Descriptor (Top-Level Parsed Model)
 //==============================================================================
 
+/// A top-level info block of the status descriptor, recorded whether or not the parser reads it, so a log
+/// can name every block a device sent (TA 2001007 §6.2).
+struct InfoBlockSeen {
+    uint16_t type{0};
+    uint16_t totalBytes{0};     ///< The block's whole length, header included
+    uint16_t primaryLength{0};
+};
+
 struct MusicSubunitStatus {
     uint16_t declaredLength{0};
+    std::vector<InfoBlockSeen> topLevelBlocks;
     MusicCapabilities capabilities;
     uint8_t numDestPlugs{0};
     uint8_t numSrcPlugs{0};

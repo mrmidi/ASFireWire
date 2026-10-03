@@ -7,6 +7,7 @@
 
 #include "FCPTransport.hpp"
 #include "../../Logging/Logging.hpp"
+#include "Core/AvcNames.hpp"
 
 #include <algorithm>
 #include <utility>
@@ -157,8 +158,9 @@ void FCPTransport::Submit(const ASFW::AVC::CommandFrame& frame,
     // user-client raw path whose payload comes from user space. Devices whose
     // firmware hangs on unimplemented AV/C carry a non-empty allowlist.
     if (!FrameIsPermitted(config_.permittedFrames, wire)) {
-        ASFW_LOG_ERROR(FCP, "FCPTransport: refused ctype=0x%02x opcode=0x%02x — not in this device's permitted command set",
-                       wire[0], wire[2]);
+        ASFW_LOG_ERROR(FCP, "FCPTransport: refused %{public}s %{public}s — not in this device's permitted command set",
+                       ASFW::AVC::Describe(static_cast<ASFW::AVC::CommandType>(wire[0])).c_str(),
+                       ASFW::AVC::Describe(static_cast<ASFW::AVC::Opcode>(wire[2])).c_str());
         refuse(AvcErrorKind::kRefused);
         return;
     }
@@ -249,9 +251,10 @@ void FCPTransport::IssueWrite() {
         return;
     }
     const Async::FWAddress address = FW::Unpack(config_.commandAddress);  // 48-bit address, node ID 0
-    ASFW_LOG_HEX(FCP, "FCPTransport: write attempt=%llu node=0x%04x gen=%u ctype=0x%02x opcode=0x%02x len=%zu",
+    ASFW_LOG_HEX(FCP, "FCPTransport: write attempt=%llu node=0x%04x gen=%u %{public}s %{public}s len=%zu",
                  attempt.id, attempt.route.nodeId, attempt.route.generation.value,
-                 command.data[0], command.data[2], command.length);
+                 ASFW::AVC::Describe(static_cast<ASFW::AVC::CommandType>(command.data[0])).c_str(),
+                 ASFW::AVC::Describe(static_cast<ASFW::AVC::Opcode>(command.data[2])).c_str(), command.length);
     const auto handle = busOps_->WriteBlock(
         FW::Generation{attempt.route.generation.value},
         FW::NodeId{FW::NodeNumberOf(attempt.route.nodeId)},
@@ -413,6 +416,9 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
     DisarmTimer();
     const uint32_t id = active_->txn.id;
     IOLockUnlock(lock_);
+    ASFW_LOG_V2(FCP, "FCPTransport: response %{public}s to %{public}s len=%zu",
+                ASFW::AVC::Describe(static_cast<ASFW::AVC::ResponseCode>(payload[0])).c_str(),
+                ASFW::AVC::Describe(static_cast<ASFW::AVC::Opcode>(payload[2])).c_str(), payload.size());
 
     const FCPFrame response = FrameOf(payload);
     const auto self = weak_from_this().lock();

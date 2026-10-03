@@ -33,6 +33,12 @@ add_protocols_test(CcmCodecTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
 )
 
+# Naming layer and the discovery log: every wire value by spec name, UNKNOWN for the unnamed
+add_protocols_test(DiscoveryLogTests
+    DiscoveryLogTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)
+
 # AVC Hardware Fixture Tests (Phase 88 / Duet)
 add_protocols_test(AvcFixtureTests
     AvcFixtureTests.cpp

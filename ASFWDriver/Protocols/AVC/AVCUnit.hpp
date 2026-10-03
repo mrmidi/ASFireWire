@@ -170,6 +170,8 @@ private:
     void ReScanAlreadyBegun(std::function<void(bool success)> completion);
 
     void ApplySnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot);
+    /// Writes everything the snapshot found to the driver ring, by spec name (Discovery/DiscoveryLog.hpp).
+    void LogDiscovery(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot) const;
     std::weak_ptr<Discovery::FWDevice> device_;
     std::weak_ptr<Discovery::FWUnit> unit_;
     Discovery::DeviceRegistry& routeRegistry_;

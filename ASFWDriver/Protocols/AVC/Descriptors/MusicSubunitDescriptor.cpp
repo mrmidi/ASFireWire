@@ -111,6 +111,8 @@ Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
         const auto& block = *blockResult;
         const uint16_t type = block.GetType();
         const auto& primaryData = block.GetPrimaryData();
+        status.topLevelBlocks.push_back(InfoBlockSeen{type, static_cast<uint16_t>(consumed),
+                                                      static_cast<uint16_t>(primaryData.size())});
 
         switch (type) {
             case kMusicInfoBlockGeneralStatusArea: {
@@ -125,8 +127,9 @@ Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
 
             case kMusicInfoBlockOutputPlugStatusArea: {
                 // AUDIT (magic-numbers-audit.md F7): in a status descriptor this block is the Music Output
-                // Plug Status Area (TA 2001007 §6.2.2: [number_of_source_plugs] + nested 8102). The
-                // capability read below uses identifier-descriptor meanings and finds nothing real.
+                // Plug Status Area (TA 2001007 §6.2.2: [number_of_source_plugs] + nested 8102), as both captured
+                // devices and FFADO treat it. The capability read below uses identifier-descriptor meanings
+                // (§5.2.2); it is unverified on any device and could misread a longer primary field.
                 uint8_t formats{}; uint16_t maxIn{}, maxOut{};
                 if (ParseReader(primaryData).Fields(formats, maxIn, maxOut)) {
                     status.capabilities.hasAudioCapability = true;
@@ -247,7 +250,7 @@ Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
                     } else if (childType == kMusicInfoBlockMusicPlugInfo) { // Music Plug Info (TA 2001007 Table 6.11)
                         ParseReader fields(childData);
                         MusicPlugDetail mp;
-                        if (!fields.Fields(mp.portType, mp.musicPlugId)) continue;
+                        if (!fields.Fields(mp.plugType, mp.musicPlugId)) continue;
                         mp.name = ExtractName(child);
                         const auto endpoint = [&fields]() -> std::optional<MusicPlugEndpoint> {
                             MusicPlugEndpoint e;
@@ -255,8 +258,9 @@ Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
                                 return std::nullopt;
                             return e;
                         };
-                        // One reserved byte, then source and destination (5 bytes each).
-                        if (fields.Remaining() >= 11 && fields.Take(1)) {
+                        // routing_support, then source and destination (5 bytes each); FFADO
+                        // avc_descriptor_music.cpp:455-466, Apple MusicSubunitController.h:156-165.
+                        if (fields.Remaining() >= 11 && fields.Fields(mp.routingSupport)) {
                             mp.source = endpoint();
                             mp.destination = endpoint();
                         }
@@ -278,11 +282,10 @@ Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
 }
 
 void MusicSubunitDescriptorParser::AssignMusicPlugLabels(MusicSubunitStatus& status) {
-    constexpr uint8_t kAudioMusicPlug = 0x00;
     for (const auto& [sourcePlug, labels] : status.perPlugChannelNames) {
         std::vector<uint16_t> routed;
         for (const auto& mp : status.musicPlugs) {
-            if (mp.portType == kAudioMusicPlug && mp.destination &&
+            if (mp.plugType == kMusicPlugTypeAudio && mp.destination &&
                 mp.destination->functionType == MusicPlugEndpoint::kSubunitSourcePlug &&
                 mp.destination->plugId == sourcePlug) {
                 routed.push_back(mp.musicPlugId);
