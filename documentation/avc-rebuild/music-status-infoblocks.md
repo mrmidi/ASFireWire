@@ -41,8 +41,10 @@ Nothing in the spec or in Apple's tool reads `8101`-`8105` at the top level of a
   it (`:84-103`), so FFADO never reads the nested `8102`-`8107` either. Every other type is skipped as unknown.
 - **Apple AVCVideoServices**: decodes all of `8100`-`8107` as above, as a dumper.
 
-So the labels and activity bits in `8102`-`8107` have exactly one working reader outside us, Apple's AppleFWAudio
-discovery, which builds its channel names from them.
+So outside our own parser, only Apple's dumper decodes `8102`-`8107`. Apple's driver does not use the per-plug
+label lists under `8101`/`8103` for channel names; it uses cluster and music-plug names
+(`applefwaudio-graph-rules.md`, "The per-plug name lists under `8101`/`8103` ... are NOT used"). That makes
+`8101`-`8107` the least-exercised part of the descriptor in every stack we have.
 
 ## What our parser does with each (`MusicSubunitDescriptor.cpp`)
 
