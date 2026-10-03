@@ -16,6 +16,7 @@ struct ModernContentView: View {
     @StateObject private var diagnosticsStore: DiagnosticsStore
     @StateObject private var diceReportStore: DiceReportStore
     @StateObject private var avcReportStore: AvcReportStore
+    @StateObject private var avcUnitsStore: AvcUnitsStore
     @StateObject private var mcpVM: ASFWMCPControlViewModel
     @State private var selectedSection: SidebarSection? = .overview
     @State private var loggingPreset: LoggingPreset = .standard
@@ -36,6 +37,7 @@ struct ModernContentView: View {
         _diagnosticsStore = StateObject(wrappedValue: DiagnosticsStore(connector: debugViewModel.connector))
         _diceReportStore = StateObject(wrappedValue: DiceReportStore(connector: debugViewModel.connector))
         _avcReportStore = StateObject(wrappedValue: AvcReportStore(connector: debugViewModel.connector))
+        _avcUnitsStore = StateObject(wrappedValue: AvcUnitsStore(connector: debugViewModel.connector))
         _mcpVM = StateObject(wrappedValue: ASFWMCPControlViewModel(connector: debugViewModel.connector))
     }
 
@@ -115,7 +117,7 @@ struct ModernContentView: View {
                 case .devices:
                     DeviceDiscoveryView(viewModel: debugVM)
                 case .avcUnits:
-                    AVCDebugView(viewModel: debugVM)
+                    AvcUnitsView(store: avcUnitsStore, connector: debugVM.connector, developerTools: loggingPreset == .debug)
                 case .avcCommands:
                     AVCCommandView(viewModel: debugVM)
                 case .ping:
