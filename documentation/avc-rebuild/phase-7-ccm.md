@@ -53,6 +53,8 @@ the discovery reducer use the named requests.
 - Both measured devices break Tables 7.8-7.10: they report `ready` (3) on external-output and subunit-destination
   plugs and set `conv` on every reply. `CheckStatusAgainstSpec` flags exactly those two; both are in the tests.
 - `conv = 1` on a unit iso-out plug advertises that OUTPUT PLUG SIGNAL FORMAT CONTROL works (both devices do).
+- The Duet answers `0x70` ("ready") on every plug **while streaming**, identical to idle (read-only STATUS via MCP,
+  `fixtures/duet_signal_source_streaming.json`). `output_status` is therefore not a generic "audio is flowing" probe.
 
 ## Verification (2026-10-03)
 
@@ -64,5 +66,6 @@ the discovery reducer use the named requests.
   PROFILE bits, opcode value). The first run of the virtual-output mutation passed because the script wrote the header
   inside the same second as the previous build (make compares mtimes at 1 s); the script now waits.
 - Not run: pydice (`pytest` is not installed for this Python; no pydice file changed).
-- **Hardware not run.** Needed: attach the Phase 88 and the Duet with the new INQUIRY frames and compare with the
+- **Hardware:** six STATUS frames ran on the streaming Duet (read-only, MCP, 2026-10-03); the running dext (`b1cb7031`)
+  predates this branch. **Not run:** the new `0F` INQUIRY frame on any device, and attach with the new frames. Needed: attach the Phase 88 and the Duet with the new INQUIRY frames and compare with the
   previous attach; then the read-only `0F` re-run of the sync-plug inquiries (open item 8).

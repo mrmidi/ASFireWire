@@ -48,7 +48,9 @@ sync-plug selection".
 way (`AM824AVC::GetSignalSourceInfo`, `0x11d82`). For an oPCR, 0 = packets flowing, 3 = ready (no isochronous
 connection); for other plugs the spec allows only 0 and 1. Both devices return 3 and conv=1 on non-oPCR plugs, which
 the spec reserves. Not the signal-format command. The spec is `1papers/2002010-2.pdf`; text in `tmp/specs/2002010.txt`.
-Details in `applefwaudio-graph-rules.md`.
+**Measured on the streaming Duet (2026-10-03): `0x70` on every plug, identical to idle, so this byte is not a general
+"audio is flowing" probe** (`fixtures/duet_signal_source_streaming.json`; the Phase 88 does report `0x10` on its
+streaming plugs). Details in `applefwaudio-graph-rules.md`.
 
 **Item 8 (2026-10-03): SIGNAL SOURCE CONTROL/INQUIRY first byte. Codec fixed, hardware re-run open.** The spec
 (Figure 7.1, Table C.2), Apple (`QuerySyncPlugReconnect`, `SyncPlugReconnect`) and FFADO send `0F`; we sent `FF`. The
@@ -56,3 +58,8 @@ codec now sends `0F` for CONTROL and INQUIRY and `FF` for STATUS/NOTIFY (declare
 INQUIRY frames; goldens updated). **Still open:** the Phase 88 / Duet INQUIRY fixtures were captured with `FF`; re-run the
 sync-plug inquiries with `0F` (read-only, needs the device) before trusting "Apple finds no clock sources on the
 Phase 88", and confirm on hardware that attach still works with the new frames. Never send CONTROL for this command.
+
+**Item 9 (2026-10-03): magic-number audit findings.** F1-F11 in `magic-numbers-audit.md`. Decisions needed, none of
+them made: F1 (UNIT INFO operand[0], the spec and Apple send FF), F6 (opcode compare ignores bit 7; Apple compares all
+bits), F7 (music status descriptor reads 8101-8105 as capabilities), F8 (feature control bitmap bit order), F9
+(duplicate definitions). Each that touches the wire needs a capture first.

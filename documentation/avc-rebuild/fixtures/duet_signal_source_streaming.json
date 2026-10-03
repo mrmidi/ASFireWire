@@ -1,0 +1,166 @@
+{
+ "device": {
+  "vendorName": "Apogee Electronics",
+  "modelName": "Duet",
+  "guid": "0x0003DB0A0000D112",
+  "nodeId": 1,
+  "generation": 2
+ },
+ "captured": "2026-10-03, MCP asfw_fcp_send_command (STATUS only), intent=status",
+ "runningDext": {
+  "gitCommit": "b1cb7031a149010019350a61030429303ec3aa72",
+  "branch": "fix/audio-driver-teardown",
+  "dirty": true,
+  "buildTimestamp": "2026-10-02T18:48:20Z"
+ },
+ "audioState": {
+  "verdict": "receivingData",
+  "streaming": true,
+  "sampleRateHz": 48000,
+  "dataPackets": 19347367,
+  "noDataPackets": 6449123,
+  "packetsSeen": 25796490,
+  "note": "read just before the probes; the stream kept running"
+ },
+ "finding": "Every SIGNAL SOURCE STATUS reply is byte-identical to the idle capture in duet_descriptors.json: output_status 3 (ready), conv 1, signal_status 0 on every plug, including unit iso-out 0 while the Duet transmits data. The Duet does not report 'effective'.",
+ "records": [
+  {
+   "name": "unit iso out 0",
+   "command": [
+    1,
+    255,
+    26,
+    255,
+    255,
+    254,
+    255,
+    0
+   ],
+   "response": [
+    12,
+    255,
+    26,
+    112,
+    96,
+    0,
+    255,
+    0
+   ]
+  },
+  {
+   "name": "unit ext out 0",
+   "command": [
+    1,
+    255,
+    26,
+    255,
+    255,
+    254,
+    255,
+    128
+   ],
+   "response": [
+    12,
+    255,
+    26,
+    112,
+    8,
+    0,
+    255,
+    128
+   ]
+  },
+  {
+   "name": "audio dest 0",
+   "command": [
+    1,
+    255,
+    26,
+    255,
+    255,
+    254,
+    8,
+    0
+   ],
+   "response": [
+    12,
+    255,
+    26,
+    112,
+    96,
+    1,
+    8,
+    0
+   ]
+  },
+  {
+   "name": "music dest 0",
+   "command": [
+    1,
+    255,
+    26,
+    255,
+    255,
+    254,
+    96,
+    0
+   ],
+   "response": [
+    12,
+    255,
+    26,
+    112,
+    255,
+    0,
+    96,
+    0
+   ]
+  },
+  {
+   "name": "music dest 1",
+   "command": [
+    1,
+    255,
+    26,
+    255,
+    255,
+    254,
+    96,
+    1
+   ],
+   "response": [
+    12,
+    255,
+    26,
+    112,
+    8,
+    1,
+    96,
+    1
+   ]
+  },
+  {
+   "name": "music dest 2",
+   "command": [
+    1,
+    255,
+    26,
+    255,
+    255,
+    254,
+    96,
+    2
+   ],
+   "response": [
+    12,
+    255,
+    26,
+    112,
+    96,
+    2,
+    96,
+    2
+   ]
+  }
+ ]
+}

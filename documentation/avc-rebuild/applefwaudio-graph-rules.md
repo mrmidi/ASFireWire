@@ -234,9 +234,12 @@ names this document). Text extract: `tmp/specs/2002010.txt` (read lines 1553-173
   - `signal_status` is 0 everywhere, even where the audio subunit's mixer sits on the path (spec: `processed`).
   So only `effective` / `not effective` can be trusted on those plugs, and `ready` there just means "connected,
   idle".
-- **Practical use (untested on hardware):**
-  - "is the device sending" = STATUS on the unit iso-out plug, `output_status == 0`;
-  - "is the device receiving our stream" = STATUS on the music dest fed by the unit iso-in plug, `== 0`.
+- **Measured on the Duet while it streams (2026-10-03, `fixtures/duet_signal_source_streaming.json`): the byte does not
+  track streaming there.** With `receivingData` and 19 million data packets, unit iso-out 0 still answered `0x70`
+  (ready), the same as the idle capture, and every other probed plug matched the idle reply byte for byte. So
+  `effective` is something the Phase 88 reports on its streaming plugs and the Duet never does. The earlier idea of a
+  generic "is the device sending" probe from this byte is **retracted**: it holds, at most, for BridgeCo units, and the
+  Phase 88 fixtures do not record whether audio ran, so even there it is an inference.
 - An INQUIRY reply uses a different first-byte meaning (FFADO: `resultStatus`, low nibble): the Phase 88 answered
   `0x30` to the INQUIRY for its existing music dest 0 route.
 - FFADO (`references/libffado-2.5.0/src/libavc/ccm/avc_signal_source.h`, `eOutputStatus`) uses the same names for
