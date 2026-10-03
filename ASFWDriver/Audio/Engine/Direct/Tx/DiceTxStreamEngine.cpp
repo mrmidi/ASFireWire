@@ -17,6 +17,8 @@ AMDTP::AmdtpStreamConfig DiceStreamConfigMapper::ToAmdtpConfig(
     config.midiSlots = streamConfig.midiSlots;
     config.fmt = streamConfig.fmt;
     config.fdf = streamConfig.fdf;
+    config.cipSph = streamConfig.cipSph;
+    config.fdfIsFixed = streamConfig.fdfIsFixed;
     config.framesPerDataPacket = streamConfig.framesPerDataPacket;
     config.sourceChannelOffset = streamConfig.sourceChannelOffset;
     config.packetFraming = (streamConfig.packetFraming ==
@@ -212,6 +214,12 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
             policy.hostToDevicePcmEncoding = AMDTP::PcmSlotEncoding::Am824MBLA;
             break;
     }
+    // Protocol-v3 is packed 3-byte chunks behind an SPH quadlet, not quadlet
+    // slots; the layout keeps the packetizer from arming AM824 silence in it.
+    policy.payloadLayout =
+        streamPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV3Packed
+            ? AMDTP::TxPayloadLayout::MotuV3Packed
+            : AMDTP::TxPayloadLayout::QuadletSlots;
     policy.dbsPolicy = streamPolicy.variableDbs
                        ? AMDTP::DbsPolicy::VariablePerPacket
                        : AMDTP::DbsPolicy::Constant;

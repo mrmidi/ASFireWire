@@ -9,6 +9,7 @@
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
+#include "Runtime/MotuV3TxPublishInstruments.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
 #include "../Families/BeBoB/MAudio/MAudioTxClockBridge.hpp"
@@ -17,6 +18,8 @@
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "../Wire/MOTU/MotuPayloadWriter.hpp"
 #include "../Wire/MOTU/MotuDeviceTiming.hpp"
+#include "../Wire/MOTU/MotuV3PayloadWriter.hpp"
+#include "../Wire/MOTU/MotuV3TxTimingStamper.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Common/TimingUtils.hpp"
@@ -133,6 +136,9 @@ public:
     ASFW::Isoch::IsochTxQueueControl* queueControl{nullptr};
     uint32_t numSlots{0};
     uint32_t slotStrideBytes{0};
+    // MOTU protocol-v3 release instruments (phase trace, oracle capture); bound
+    // by the producer for a V3 stream only, null for every other family.
+    ASFW::Audio::Runtime::MotuV3TxPublishInstruments* motuV3Instruments{nullptr};
 
     bool AcquireWritableSlot(
         uint64_t packetIndex,
@@ -193,6 +199,13 @@ public:
         // firewire/ohci.h:287-288 and firewire/ohci.c:3383.
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
             static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
+
+        // Content inspection belongs to Audio and runs immediately before the
+        // release commit. Transport receives only opaque bytes and metadata.
+        if (motuV3Instruments != nullptr && payloadBase != nullptr) {
+            motuV3Instruments->OnPublish(
+                packet, payloadBase + static_cast<uint64_t>(slotIdx) * slotStrideBytes);
+        }
 
         // Compute expected generation and release-store it last.
         const uint64_t generation =
@@ -265,7 +278,17 @@ struct AudioDriverRuntimeState {
     std::atomic<bool> txSecondaryActive{false};
 
     ASFW::Encoding::Motu::MotuPayloadWriter motuPayloadWriter;
+    ASFW::Audio::Wire::MotuV3PayloadWriter motuV3PayloadWriter;
     ASFW::Audio::Wire::MotuTxTimingStamper motuTxTimingStamper;
+    // MOTU protocol-v3: SPH clock and servo, fed by the producer before every
+    // packet; the payload writer's mute follows its gate. Set per start.
+    ASFW::Audio::Wire::MotuV3TxTimingStamper motuV3TxTimingStamper;
+    std::atomic<bool> motuV3TxActive{false};
+    // Phase trace and oracle capture at packet release; txSlotProvider points
+    // at it while a V3 stream is armed.
+    ASFW::Audio::Runtime::MotuV3TxPublishInstruments motuV3TxPublishInstruments;
+    // One [RxPhaseBridge] rejected line per start (TX preparation queue).
+    bool motuRelPhaseMismatchLogged{false};
 };
 
 // What BuildAudioGraph has attached to ADK, so TearDownAudioGraph removes

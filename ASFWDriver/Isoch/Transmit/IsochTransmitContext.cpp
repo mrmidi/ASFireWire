@@ -292,6 +292,8 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     irqWatchdogKicks_.store(0, std::memory_order_relaxed);
 
+    seedDumpPending_ = true;
+
     ring_.ResetForStart();
     ring_.SeedCycleTracking(*hardware_);
 
@@ -459,10 +461,19 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
         state_ = State::Stopped;
         refillInProgress_.clear(std::memory_order_release);
         const auto& ringCounters = ring_.RTCounters();
+        // Report the final CommandPtr next to the counters: `pkts` alone cannot
+        // separate "ring primed but DMA never fetched" from "DMA ran", because
+        // packetsAssembled_ is seeded with the full prime before RUN is set.
+        uint32_t finalCmdPtr = 0;
+        if (auto cmdAccess = hardware_->TryBeginAccess()) {
+            finalCmdPtr = cmdAccess.Read(
+                static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex_)));
+        }
         ASFW_LOG(Isoch,
-                 "IT: Stopped. Stats: %llu pkts IRQs=%llu minGap=%u criticalGaps=%llu "
-                 "maxDelta=%u exhausted=%llu",
+                 "IT: Stopped. Stats: %llu pkts IRQs=%llu Ctl=0x%08x Cmd=0x%08x "
+                 "minGap=%u criticalGaps=%llu maxDelta=%u exhausted=%llu",
                  packetsAssembled_, interruptCount_.load(std::memory_order_relaxed),
+                 control, finalCmdPtr,
                  ringCounters.minDmaGapPackets.load(std::memory_order_relaxed),
                  ringCounters.criticalGapEvents.load(std::memory_order_relaxed),
                  ringCounters.maxDeltaConsumed.load(std::memory_order_relaxed),
@@ -486,6 +497,25 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
 
     if (!metadataRing_ || !controlBlock_) {
         return;
+    }
+
+    // Seed-window snapshot: the first completion event is
+    // the last moment the ring still holds the primed program untouched by a
+    // refill, so dump it before Refill() overwrites the consumed packets.
+    // Only the head of the window: bring-up compared the first 48 packets with
+    // the official-driver reference, back when they were the whole ring. The
+    // ring is now 504 packets, and dumping all of it would put ~2000 log
+    // records on this interrupt-driven path.
+    if (seedDumpPending_) {
+        seedDumpPending_ = false;
+        constexpr uint32_t kSeedWindowDumpPackets =
+            std::min<uint32_t>(48, Tx::Layout::kNumPackets);
+        ASFW_LOG(Isoch,
+                 "IT: Seed-window dump BEGIN (first completion event, %u of %u packets)",
+                 kSeedWindowDumpPackets, Tx::Layout::kNumPackets);
+        ring_.DumpDescriptorRing(0, kSeedWindowDumpPackets, payloadBase_,
+                                 &payloadDmaMap_);
+        ASFW_LOG(Isoch, "IT: Seed-window dump END");
     }
 
     const uint32_t numSlots = controlBlock_->numSlots;
@@ -668,8 +698,47 @@ void IsochTransmitContext::HandleInterrupt() noexcept {
     refillInProgress_.clear(std::memory_order_release);
 }
 
+void IsochTransmitContext::LogStatistics() const noexcept {
+    if (!hardware_) {
+        return;
+    }
+    // The IT context is host-side: once RUN is set, its DMA advances on the bus
+    // clock regardless of what the target device does. So a CommandPtr that does
+    // not move is a host/OHCI fact and carries no information about the device.
+    // Sampled by the 1 ms watchdog (~1 Hz), a stall shows up as a flat series --
+    // which the single post-start readback in Start() cannot distinguish from a
+    // context that ran and then wrapped.
+    const auto ctrlSetReg =
+        static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex_));
+    const auto cmdPtrReg =
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
+    uint32_t control = 0;
+    uint32_t cmdPtr = 0;
+    {
+        // Revocable scope: after Detach there is nothing to sample.
+        auto access = hardware_->TryBeginAccess();
+        if (!access) {
+            return;
+        }
+        control = access.Read(ctrlSetReg);
+        cmdPtr = access.Read(cmdPtrReg);
+    }
+    ASFW_LOG(Isoch,
+             "IT: Sample Ctl=0x%08x (run=%u active=%u dead=%u evt=0x%02x) Cmd=0x%08x "
+             "pkts=%llu IRQs=%llu kicks=%llu",
+             control,
+             (control & Driver::ContextControl::kRun) != 0 ? 1u : 0u,
+             (control & Driver::ContextControl::kActive) != 0 ? 1u : 0u,
+             (control & Driver::ContextControl::kDead) != 0 ? 1u : 0u,
+             control & Driver::ContextControl::kEventCodeMask,
+             cmdPtr,
+             packetsAssembled_,
+             interruptCount_.load(std::memory_order_relaxed),
+             irqWatchdogKicks_.load(std::memory_order_relaxed));
+}
+
 void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {
-    ring_.DumpDescriptorRing(startPacket, numPackets);
+    ring_.DumpDescriptorRing(startPacket, numPackets, payloadBase_, &payloadDmaMap_);
 }
 
 } // namespace ASFW::Isoch

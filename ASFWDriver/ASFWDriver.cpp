@@ -79,6 +79,7 @@
 #include "SCSIController/SBP2NubPublisher.hpp"
 #include "SCSIController/SBP2TargetBridge.hpp"
 #include "Shared/Memory/DMAMemoryManager.hpp"
+#include "Version/DriverVersion.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 
 using namespace ASFW::Driver;
@@ -493,6 +494,13 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     // initialization trace (and everything after) is captured. Appends
     // before this point are silent no-ops by design.
     ASFW::Logging::LogRing::Shared().Initialize();
+    // ControllerCore::Start logged the build banner before the ring existed, so
+    // it reached os_log only. Repeat it ring-only: freshness checks through MCP
+    // need the running build's identity in the ring.
+    ASFW_LOG_RING_ONLY(Controller, ::ASFW::Logging::LogLevel::Notice, "%s",
+                       ASFW::Version::kFullVersionString);
+    ASFW_LOG_RING_ONLY(Controller, ::ASFW::Logging::LogLevel::Notice, "%s",
+                       ASFW::Version::kBuildInfoString);
     ASFW::LogConfig::Shared().Initialize(this);
 
     ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),

@@ -9,6 +9,7 @@ namespace ASFW::Tests::AudioRuntime {
 using ASFW::Audio::Runtime::AudioTransportControlBlock;
 using ASFW::Audio::Runtime::HostClockAnchorSample;
 using ASFW::Audio::Runtime::HostClockAnchorState;
+using ASFW::Audio::Runtime::MotuPhaseTraceSample;
 
 TEST(HostClockAnchorTests, ResetState) {
     HostClockAnchorState state{};
@@ -152,6 +153,79 @@ TEST(HostClockAnchorTests, RxPublisherFollowsTheTimelineSource) {
     EXPECT_TRUE(publisher.Publish(36864, 3000, 300).accepted);
     ASSERT_TRUE(control.hostClockAnchor.TryReadLatest(anchor.generation, anchor));
     EXPECT_EQ(anchor.timelineEpoch, receive);
+}
+
+TEST(HostClockAnchorTests, MotuPhaseTracePublishesLatestPacketAndOutputLastReference) {
+    AudioTransportControlBlock control{};
+    control.ResetForStart();
+
+    ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample period{};
+    uint64_t updates = 0;
+    EXPECT_FALSE(control.motuPhaseTrace.ReadLatest(period, updates));
+
+    // One publication is a whole cadence period, so the bridge
+    // round-trip has to carry every bucket, not just the newest.
+    ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample published{};
+    ASFW::Audio::Runtime::PushMotuPhaseTraceCadencePacket(published, 410, 0x0f123454u);
+    ASFW::Audio::Runtime::PushMotuPhaseTraceCadencePacket(published, 411, 0x0f123455u);
+    ASFW::Audio::Runtime::PushMotuPhaseTraceCadencePacket(published, 412, 0x0f123456u);
+    published.outputLastPacketIndex = 400;
+    published.outputLastCycleTimer = 0x04234000u;
+    control.motuPhaseTrace.Publish(published);
+
+    ASSERT_TRUE(control.motuPhaseTrace.ReadLatest(period, updates));
+    EXPECT_EQ(updates, 1U);
+    EXPECT_EQ(period.count, 3U);
+    EXPECT_EQ(period.packetIndex[0], 410U);
+    EXPECT_EQ(period.packetIndex[2], 412U);
+    EXPECT_EQ(period.firstSph[0], 0x0f123454u);
+    EXPECT_EQ(period.firstSph[2], 0x0f123456u);
+    EXPECT_EQ(period.outputLastPacketIndex, 400U);
+    EXPECT_EQ(period.outputLastCycleTimer, 0x04234000u);
+    EXPECT_FALSE(period.hasOutputLast);
+
+    // The per-packet view the `[MotuPhase]` line uses is still available.
+    const auto newest = ASFW::Audio::Runtime::NewestMotuPhaseTraceSample(period);
+    EXPECT_EQ(newest.packetIndex, 412U);
+    EXPECT_EQ(newest.firstSph, 0x0f123456u);
+}
+
+TEST(HostClockAnchorTests, MotuPhaseResidualUsesOutputLastPacketDistanceAndLead) {
+    constexpr uint32_t kOutputLast = 0x04234000u;
+    constexpr uint64_t kCompletedPacket = 400;
+    constexpr uint64_t kPreparedPacket = 412;
+    const int64_t expectedTicks = ASFW::Audio::Runtime::NormalizeMotuTicks(
+        ASFW::Timing::encodedTstampToOffsets(kOutputLast) +
+        static_cast<int64_t>(kPreparedPacket - kCompletedPacket) *
+            ASFW::Timing::kTicksPerCycle +
+        ASFW::Protocols::Audio::AMDTP::MotuV3Wire::kPresentationLeadTicks);
+    const auto residual = ASFW::Audio::Runtime::ComputeMotuTxPhaseResidual({
+        .packetIndex = kPreparedPacket,
+        .outputLastPacketIndex = kCompletedPacket,
+        .firstSph = ASFW::Protocols::Audio::AMDTP::MotuV3Wire::EncodeSph(expectedTicks + 512),
+        .outputLastCycleTimer = kOutputLast,
+        .hasOutputLast = true,
+    });
+
+    ASSERT_TRUE(residual.valid);
+    EXPECT_EQ(residual.packetLead, 12U);
+    EXPECT_EQ(residual.expectedSphTicks, expectedTicks);
+    EXPECT_EQ(residual.residualTicks, 512);
+}
+
+// The SPH carries no seconds and the cycle timer counts to 128 s, so the two
+// only compare once both are folded into the SPH's one-second domain. Read
+// straight, this pair would differ by the host clock's seven whole seconds.
+TEST(HostClockAnchorTests, MotuRxSphCycleDifferenceFoldsHostSecondsAway) {
+    const auto sph = ASFW::Protocols::Audio::AMDTP::MotuV3Wire::EncodeSph(1024);
+    const auto cycle = ASFW::Timing::encodeCycleTimer(7, 7999, 2048);
+    EXPECT_EQ(ASFW::Audio::Runtime::MotuRxSphMinusCycleTimerTicks(sph, cycle), 2048);
+
+    // Same instant within the second, a different host second: the phase this
+    // field reports must not move. Before the domain fix it moved by seconds.
+    const auto laterCycle = ASFW::Timing::encodeCycleTimer(93, 7999, 2048);
+    EXPECT_EQ(ASFW::Audio::Runtime::MotuRxSphMinusCycleTimerTicks(sph, laterCycle),
+              2048);
 }
 
 } // namespace ASFW::Tests::AudioRuntime

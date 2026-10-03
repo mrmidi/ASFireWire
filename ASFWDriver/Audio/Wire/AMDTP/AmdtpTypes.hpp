@@ -35,6 +35,11 @@ enum class DbsPolicy : uint8_t {
     VariablePerPacket = 1,
 };
 
+enum class TxPayloadLayout : uint8_t {
+    QuadletSlots = 0,
+    MotuV3Packed = 1,
+};
+
 struct AmdtpStreamConfig final {
     uint32_t sampleRate{48000};
     StreamMode streamMode{StreamMode::Blocking};
@@ -46,6 +51,11 @@ struct AmdtpStreamConfig final {
 
     uint8_t fmt{0x10};
     uint8_t fdf{0x02};
+    /// CIP SPH bit (Q0 bit 10); see Isoch::Audio::AudioStreamConfig::cipSph.
+    bool cipSph{false};
+    /// Keep `fdf` instead of deriving the AM824 SFC from the rate; see
+    /// Isoch::Audio::AudioStreamConfig::fdfIsFixed.
+    bool fdfIsFixed{false};
 
     uint8_t framesPerDataPacket{8};
     uint32_t maxPacketBytes{512};
@@ -65,6 +75,7 @@ struct AmdtpStreamConfig final {
 
 struct AmdtpTxPolicy final {
     PcmSlotEncoding hostToDevicePcmEncoding{PcmSlotEncoding::Am824MBLA};
+    TxPayloadLayout payloadLayout{TxPayloadLayout::QuadletSlots};
     DbsPolicy dbsPolicy{DbsPolicy::Constant};
 
     uint32_t defaultNonAudioSlotWord{0x80000000};
@@ -113,6 +124,8 @@ struct PreparedTxPacket final {
     uint8_t isochSync{0};
     uint8_t dbc{0};
     uint16_t syt{0xFFFF};
+    uint32_t firstMotuSph{0};
+    bool hasMotuSph{false};
 
     uint64_t firstAudioFrame{0};
     uint32_t framesInPacket{0};
@@ -138,6 +151,10 @@ struct AmdtpTimingState final {
     /// it (write_sph, amdtp-motu.c:373-393); families that time by SYT ignore it.
     uint32_t transmitCycle{0};
     bool transmitCycleValid{false};
+    /// The same transmit time in full, on the cycle-timer offset domain and with the
+    /// anchoring completion stamp's sub-cycle phase; valid with transmitCycleValid.
+    /// MOTU V3 seeds its free-running SPH clock from it (MotuV3TxTimingStamper).
+    int64_t transmitTicks{0};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP
@@ -158,11 +175,19 @@ enum class AudioWireFormat : uint8_t {
     kMotuV2 = 2,
     /// Headerless RME-style signed 24-in-32 with significant bits at [31:8].
     kRawPcm24Upper24In32LE = 3,
+    // MOTU protocol-v3 (828 Mk3): the same block layout as kMotuV2 behind a
+    // CIP header whose EOH1 bit is clear. Deliberately not 2: that value is
+    // kMotuV2, and sharing it would route V3 through every V2 branch.
+    kMotuV3Packed = 4,
 };
 
 enum class AudioPacketFraming : uint8_t {
     kCip = 0,
     kHeaderless = 1,
+    /// MOTU protocol-v3 capture: an eight-byte header in the CIP position whose
+    /// EOH1 bit is clear, so the IEC 61883 decoder rejects it. It carries no
+    /// usable DBS, DBC or SYT; the block stride comes from the payload codec.
+    kMotuV3Header = 2,
 };
 
 } // namespace ASFW::Encoding

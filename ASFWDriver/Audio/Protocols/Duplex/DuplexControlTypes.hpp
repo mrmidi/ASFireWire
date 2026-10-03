@@ -36,6 +36,10 @@ enum class DuplexRestartReason : uint8_t {
     // The device announced a stream-configuration change (DICE RX/TX_CFG_CHG).
     // TCAT restarts streaming on it (NotificationWriteCallback).
     kDeviceConfigChange,
+    // The device reported that its receive buffer ran dry or overfilled (MOTU
+    // 828 Mk3 status word, MotuStatusWord.hpp). The vendor driver restarts on
+    // it with the device clock still locked, so no clock check gates it.
+    kRecoverAfterDeviceBufferFault,
 };
 
 // How far a device-side bring-up got. Reported in stage results and logs.

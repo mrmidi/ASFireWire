@@ -28,18 +28,13 @@ namespace ASFW::Audio {
 
 class AudioRuntimeRegistry;
 
-namespace DICE {
-class DiceNotificationRouter;
-}
-
 class DiceAudioBackend final : public IAudioBackend {
 public:
     DiceAudioBackend(AudioNubPublisher& publisher,
                      Discovery::DeviceRegistry& registry,
                      AudioRuntimeRegistry& runtime,
                      Session::AudioSessions& sessions,
-                     Driver::HardwareInterface& hardware,
-                     DICE::DiceNotificationRouter& notifications) noexcept;
+                     Driver::HardwareInterface& hardware) noexcept;
     ~DiceAudioBackend() noexcept override;
 
     DiceAudioBackend(const DiceAudioBackend&) = delete;
@@ -55,6 +50,9 @@ public:
     void OnStreamsRestarted(uint64_t guid) noexcept override;
     void HandleHostTimingLoss(uint64_t guid) noexcept override;
     void HandleCycleInconsistent(uint64_t guid) noexcept override;
+    // Reaches only DICE devices: AudioCoordinator dispatches the router's words
+    // by family (DeviceNotificationDispatch).
+    void HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept override;
     void HandleRecoveryEvent(uint64_t guid, DuplexRestartReason reason) noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
@@ -77,7 +75,6 @@ private:
     // stays blocked. The TODO at the definition is the design.
     [[nodiscard]] bool RebuildEndpointForNewGeometry(uint64_t guid,
                                                      const Model::ASFWAudioDevice& newConfig) noexcept;
-    void HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept;
     void ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept;
     // Blocking device-health read (dice queue only). Returns true ONLY when the device
     // confirms a locked, healthy clock reference (sourceLocked && clockReferenceHealthy).
@@ -86,7 +83,6 @@ private:
     [[nodiscard]] bool DeviceReportsHealthyClock(uint64_t guid) noexcept;
     [[nodiscard]] bool TryBeginRecovery(uint64_t guid) noexcept;
     void FinishRecovery(uint64_t guid) noexcept;
-    static void NotificationObserverThunk(void* context, uint64_t guid, uint32_t bits) noexcept;
 
 
     AudioNubPublisher& publisher_;
@@ -98,7 +94,6 @@ private:
     std::atomic<bool> teardownComplete_{false};
     PublicationGate publicationGate_{};
     Session::AudioSessions& sessions_;
-    DICE::DiceNotificationRouter& notifications_;
 
 #ifdef ASFW_HOST_TEST
 public:

@@ -26,6 +26,30 @@ TEST(AudioEndpointRuntime, MissingConfigDoesNotPublishBinding) {
     EXPECT_FALSE(snapshot.valid);
 }
 
+TEST(AudioEndpointRuntime, MetricsSnapshotReportsUnavailableWithoutControlMemory) {
+    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
+
+    ASFWAudioStreamMetricsSnapshotV1 missing{};
+    runtime.CopyAudioStreamMetricsSnapshot(missing);
+    EXPECT_EQ(missing.abiVersion, ASFW_AUDIO_STREAM_METRICS_ABI_VERSION);
+    EXPECT_EQ(missing.structSize, sizeof(missing));
+    EXPECT_EQ(missing.status, ASFWAudioStreamMetricsStatusUnavailable);
+    EXPECT_EQ(missing.guid, 0x1020304050607080ULL);
+    EXPECT_EQ(missing.stateFlags, 0u);
+
+    runtime.UpdateConfig(MakeDeviceConfig());
+    ASFWAudioStreamMetricsSnapshotV1 configured{};
+    runtime.CopyAudioStreamMetricsSnapshot(configured);
+    EXPECT_EQ(configured.status, ASFWAudioStreamMetricsStatusUnavailable);
+    EXPECT_NE(
+        configured.stateFlags & ASFWAudioStreamMetricsStateConfigAvailable, 0u);
+    EXPECT_EQ(
+        configured.stateFlags & ASFWAudioStreamMetricsStateControlAvailable, 0u);
+    EXPECT_EQ(configured.sampleRateHz, 48000u);
+    EXPECT_EQ(configured.outputChannels, 4u);
+    EXPECT_EQ(configured.inputChannels, 6u);
+}
+
 TEST(AudioEndpointRuntime, BadCopyArgsZeroOutputs) {
     ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
     runtime.UpdateConfig(MakeDeviceConfig());
@@ -116,6 +140,72 @@ TEST(AudioEndpointRuntime, CopyDirectAudioMemoryAllocatesCompleteDuplexBinding) 
     EXPECT_EQ(snapshot.inputChannels, inputChannels);
     EXPECT_EQ(snapshot.sampleRateHz, sampleRateHz);
     EXPECT_EQ(snapshot.generation, generation);
+
+    outputMemory->release();
+    inputMemory->release();
+    controlMemory->release();
+}
+
+TEST(AudioEndpointRuntime, MetricsSnapshotCopiesStableTxRxPointSample) {
+    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
+    runtime.UpdateConfig(MakeDeviceConfig());
+
+    IOMemoryDescriptor* outputMemory = nullptr;
+    IOMemoryDescriptor* inputMemory = nullptr;
+    IOMemoryDescriptor* controlMemory = nullptr;
+    uint32_t outputFrames = 0;
+    uint32_t outputChannels = 0;
+    uint32_t inputFrames = 0;
+    uint32_t inputChannels = 0;
+    uint32_t sampleRateHz = 0;
+    uint64_t endpointGeneration = 0;
+    ASSERT_EQ(runtime.CopyDirectAudioMemory(
+                  &outputMemory, &inputMemory, &controlMemory,
+                  &outputFrames, &outputChannels, &inputFrames, &inputChannels,
+                  &sampleRateHz, &endpointGeneration),
+              kIOReturnSuccess);
+
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot binding{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(binding));
+    ASSERT_NE(binding.control, nullptr);
+    binding.control->client.outputClientWriteEndFrame.store(1200);
+    binding.control->outputConsumedEndFrame.store(1100);
+    binding.control->counters.txPackets.store(200);
+    binding.control->counters.txDataPackets.store(198);
+    binding.control->txReplayUnderflows.store(3);
+    binding.control->client.inputClientReadEndFrame.store(900);
+    binding.control->inputProducedEndFrame.store(1000);
+    binding.control->counters.rxPackets.store(180);
+    binding.control->rxReplayEpochResets.store(2);
+    runtime.MarkStreaming(true);
+
+    ASFWAudioStreamMetricsSnapshotV1 snapshot{};
+    runtime.CopyAudioStreamMetricsSnapshot(snapshot);
+
+    EXPECT_EQ(snapshot.status, ASFWAudioStreamMetricsStatusOK);
+    EXPECT_NE(
+        snapshot.stateFlags & ASFWAudioStreamMetricsStateControlAvailable, 0u);
+    EXPECT_NE(snapshot.stateFlags & ASFWAudioStreamMetricsStateStreaming, 0u);
+    EXPECT_NE(snapshot.stateFlags & ASFWAudioStreamMetricsStateConsistent, 0u);
+    EXPECT_EQ(snapshot.endpointGeneration, endpointGeneration);
+    EXPECT_GT(snapshot.streamGeneration, 0u);
+    EXPECT_EQ(snapshot.outputClientWriteEndFrame, 1200u);
+    EXPECT_EQ(snapshot.outputConsumedEndFrame, 1100u);
+    EXPECT_EQ(snapshot.txPackets, 200u);
+    EXPECT_EQ(snapshot.txDataPackets, 198u);
+    EXPECT_EQ(snapshot.txReplayUnderflows, 3u);
+    EXPECT_EQ(snapshot.inputClientReadEndFrame, 900u);
+    EXPECT_EQ(snapshot.inputProducedEndFrame, 1000u);
+    EXPECT_EQ(snapshot.rxPackets, 180u);
+    EXPECT_EQ(snapshot.rxReplayEpochResets, 2u);
+
+    binding.control->metricsSnapshotSequence.fetch_add(1);
+    ASFWAudioStreamMetricsSnapshotV1 busy{};
+    runtime.CopyAudioStreamMetricsSnapshot(busy);
+    EXPECT_EQ(busy.status, ASFWAudioStreamMetricsStatusBusy);
+    EXPECT_EQ(
+        busy.stateFlags & ASFWAudioStreamMetricsStateConsistent, 0u);
+    binding.control->metricsSnapshotSequence.fetch_add(1);
 
     outputMemory->release();
     inputMemory->release();

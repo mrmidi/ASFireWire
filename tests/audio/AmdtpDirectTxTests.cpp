@@ -7,7 +7,9 @@
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/GenericAvcProfile.hpp"
+#include "Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.hpp"
 #include "Audio/DriverKit/Config/ResolvedStreamConfig.hpp"
+#include "Audio/Wire/AMDTP/MotuV3WireFormat.hpp"
 #include "../support/MAudioSpecialHappyPathFixture.inc"
 
 #include "TxPacketizerTestSupport.hpp"
@@ -1075,4 +1077,98 @@ TEST(AmdtpDirectTxTests, RevertedEndEventPacketRestoresDbc) {
     ASSERT_TRUE(packetizer.PrepareNextPacket(slot, timing, plan, packet));
     EXPECT_EQ(packet.dbc, 2U);
     EXPECT_EQ(packet.firstAudioFrame, 100U);
+}
+
+namespace {
+
+class LargeCaptureTxSlotProvider final : public IAmdtpTxSlotProvider {
+public:
+    std::array<uint8_t, 512> bytes{};
+    PreparedTxPacket published{};
+
+    bool AcquireWritableSlot(uint64_t packetIndex,
+                             TxPacketSlotView& outSlot) noexcept override {
+        outSlot = {packetIndex, bytes.data(), static_cast<uint32_t>(bytes.size())};
+        return true;
+    }
+    bool PublishSlot(const PreparedTxPacket& packet) noexcept override {
+        published = packet;
+        return true;
+    }
+    uint32_t SlotCount() const noexcept override { return 1; }
+};
+
+uint32_t ReadBE32(const uint8_t* p) {
+    return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+           (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
+}
+
+} // namespace
+
+// The Mk3 profile's CIP fields drive the generic CIP builder to the
+// captured V3 header -- SPH set, FMT 0x02, FDF 0x22 kept against the 48 kHz AM824 SFC,
+// SYT NO_INFO -- in both packet kinds. MotuV3Wire::BuildCipQ0/Q1 is the reference.
+TEST(AmdtpDirectTxTests, Mk3ProfileCipHeaderIsTheCapturedV3HeaderThroughTheGenericBuilder) {
+    ASFW::Isoch::Audio::MOTU::Profiles::MOTU828Mk3Profile profile;
+    ASFW::Isoch::Audio::AudioStreamConfig config{};
+    ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(config));
+    ASSERT_TRUE(config.cipSph);
+    ASSERT_TRUE(config.fdfIsFixed);
+    DiceTxStreamEngine engine{};
+    ASSERT_TRUE(engine.Configure(profile, config));
+    LargeCaptureTxSlotProvider provider{};
+    engine.BindSlotProvider(&provider);
+    engine.ResetForStart(0, 0);
+
+    AmdtpTimingState timing{};
+    timing.replayValid = true;
+    timing.disposition = AmdtpPacketDisposition::NoData;
+    ASSERT_EQ(engine.PrepareNextTransmitSlot(0, timing), TxSlotPrepareResult::kPrepared);
+    EXPECT_FALSE(provider.published.isData);
+    EXPECT_EQ(provider.published.byteCount, 8U);
+    EXPECT_EQ(ReadBE32(provider.bytes.data()),
+              MotuV3Wire::BuildCipQ0(config.sid, config.dbs, 0));
+    EXPECT_EQ(ReadBE32(provider.bytes.data() + 4),
+              MotuV3Wire::BuildCipQ1(config.fmt, config.fdf));
+
+    // DATA as the SYT-unaware producer path builds it: a replayed block count and
+    // SYT NO_INFO (V3 capture never carries a valid SYT to replay).
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.replayDataBlocks = config.framesPerDataPacket;
+    timing.txClockValid = true;
+    timing.nextDataSyt = 0xFFFF;
+    ASSERT_EQ(engine.PrepareNextTransmitSlot(1, timing), TxSlotPrepareResult::kPrepared);
+    ASSERT_TRUE(provider.published.isData);
+    EXPECT_EQ(provider.published.byteCount,
+              8U + config.framesPerDataPacket * config.dbs * 4U);
+    EXPECT_EQ(ReadBE32(provider.bytes.data()),
+              MotuV3Wire::BuildCipQ0(config.sid, config.dbs, 0));
+    EXPECT_EQ(ReadBE32(provider.bytes.data() + 4),
+              MotuV3Wire::BuildCipQ1(config.fmt, config.fdf));
+    // The captured DATA header literally: SID 0, DBS 13, the 0x04 FN/QPC/SPH octet,
+    // DBC 0; then FMT 0x02 (0x90 here would be AM824), FDF 0x22 rather than the 48 kHz
+    // SFC 0x02, SYT NO_INFO.
+    const std::array<uint8_t, 8> captured{0x00, 0x0d, 0x04, 0x00, 0x82, 0x22, 0xff, 0xff};
+    EXPECT_TRUE(std::equal(captured.begin(), captured.end(), provider.bytes.begin()));
+}
+
+// The new fields default off, so every other profile's header is unchanged: AM824
+// keeps SPH clear and re-derives FDF from the rate.
+TEST(AmdtpDirectTxTests, CipSphAndFixedFdfDefaultOffForEveryOtherStream) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+    AmdtpStreamConfig config = BlockingStereoConfig();
+    config.fdf = 0x22;  // a profile value the rate must override when not fixed
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(config, AmdtpTxPolicy{}));
+    std::array<uint8_t, 128> bytes{};
+    TxPresentationPlan plan{};
+    plan.disposition = AmdtpPacketDisposition::Data;
+    plan.frameCount = 8;
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket({0, bytes.data(), bytes.size()}, {}, plan, packet));
+    EXPECT_EQ(bytes[2] & 0x04, 0);
+    EXPECT_EQ(bytes[5], 0x02);
 }

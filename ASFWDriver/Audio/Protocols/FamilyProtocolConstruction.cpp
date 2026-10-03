@@ -14,6 +14,7 @@
 #include "BeBoB/Phase88MixerData.hpp"
 #include "BeBoB/MAudioSpecialProtocol.hpp"
 #include "MOTU/MotuV2Protocol.hpp"
+#include "MOTU/MOTU828Mk3Protocol.hpp"
 #include "RME/FirefaceDeviceProtocol.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Logging/Logging.hpp"
@@ -28,7 +29,7 @@ static_assert(
 
 static_assert(
     static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::kLastValid) ==
-    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::GenericAvc),
+    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::MotuV3),
     "ProtocolImplementationId member added without updating family protocol construction");
 
 std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
@@ -199,6 +200,16 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      plan.unitVersion, nodeId);
             return std::make_unique<Motu::MotuV2Protocol>(
                 busOps, busInfo, routeRegistry, route, plan.unitVersion, irmClient);
+
+        // Protocol v3 reads its stream geometry from the device's registers
+        // (LoadGeometry), so the unit version only names it. The timer runs the
+        // deactivate->activate settle in ProgramRx; Initialize refuses without it.
+        case ProtocolImplementationId::MotuV3:
+            ASFW_LOG(Audio,
+                     "Creating MOTU828Mk3Protocol version=0x%06x node=0x%04x",
+                     plan.unitVersion, nodeId);
+            return std::make_unique<MOTU::MOTU828Mk3Protocol>(
+                busOps, busInfo, routeRegistry, route, irmClient, timerScheduler);
 
         case ProtocolImplementationId::RmeFireface: {
             const auto definition = plan.candidates.empty()

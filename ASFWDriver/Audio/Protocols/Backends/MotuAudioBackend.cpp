@@ -11,10 +11,13 @@
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include "../../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../../../Discovery/DeviceRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../IDeviceProtocol.hpp"
+#include "../MOTU/MotuStatusWord.hpp"
 #include "../MOTU/MotuV2Protocol.hpp"
+#include "../../DriverKit/Config/AudioProfileRegistry.hpp"
 #include "../../Wire/MOTU/MotuBlockLayout.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
 
@@ -117,6 +120,27 @@ void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         return;
     }
 
+    // Protocol v3 has a profile, and the nub must name it: the audio driver
+    // resolves its profile from the builder id the nub carries, and without one
+    // it falls back to the generic DICE profile -- AM824 transmit and a 500 ms
+    // first-anchor timeout instead of the Mk3's packed layout and 3 s.
+    const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(*record);
+    const bool isV3 = policy != nullptr &&
+                      policy->plan.protocolImplementation ==
+                          DeviceProfiles::Audio::ProtocolImplementationId::MotuV3;
+    const uint32_t v3Builder =
+        isV3 ? static_cast<uint32_t>(policy->plan.profileBuilder) : 0U;
+    const auto* v3Profile =
+        isV3 ? ASFW::Isoch::Audio::AudioProfileRegistry::ProfileForBuilderId(v3Builder)
+             : nullptr;
+    if (isV3 && v3Profile == nullptr) {
+        ASFW_LOG_ERROR(Audio,
+                       "MotuAudioBackend::EnsureNubForGuid: no profile for protocol-v3 "
+                       "GUID=0x%016llx builder=%u; not publishing",
+                       guid, v3Builder);
+        return;
+    }
+
     // MOTU has no profile registry to consult. The device's geometry comes from its own
     // registers via PrepareDuplex, which MotuV2Protocol reports through runtime caps --
     // so the nub is built from the hardware's answer rather than a table keyed on
@@ -138,6 +162,11 @@ void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.outputPlugName = "Output";
     dev.sampleRates = {44100u, 48000u};
     dev.currentSampleRate = 48000u;
+    if (v3Profile != nullptr) {
+        dev.profileBuilderId = v3Builder;
+        // 48 kHz only, as the catalog pins the start rate.
+        dev.sampleRates = v3Profile->SupportedSampleRates();
+    }
 
     // Geometry: prefer the device's live answer, but fall back to the model's known
     // chunk layout.
@@ -157,6 +186,17 @@ void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         dev.inputChannelCount = caps.hostInputPcmChannels;
         dev.outputChannelCount = caps.hostOutputPcmChannels;
         dev.currentSampleRate = caps.sampleRateHz;
+    } else if (v3Profile != nullptr) {
+        // The Mk3 is not a fixed-chunk v2 model: its fallback is its own profile,
+        // the geometry it streams with at 48 kHz until LoadGeometry reads the
+        // registers.
+        dev.inputChannelCount = v3Profile->RxChannelCount();
+        dev.outputChannelCount = v3Profile->TxChannelCount();
+        dev.currentSampleRate = 48000u;
+        ASFW_LOG(Audio,
+                 "MotuAudioBackend::EnsureNubForGuid: no live caps yet for GUID=0x%016llx; "
+                 "publishing %{public}s geometry (%u in x %u out @ 48k)",
+                 guid, v3Profile->Name(), dev.inputChannelCount, dev.outputChannelCount);
     } else {
         const uint32_t fixedChunks = ::ASFW::Encoding::Motu::k828mk2FixedPcmChunks[0];
         dev.inputChannelCount = fixedChunks;
@@ -243,7 +283,33 @@ IOReturn MotuAudioBackend::StopStreaming(uint64_t guid) noexcept {
     return status;
 }
 
+void MotuAudioBackend::HandleDeviceNotification(uint64_t guid, uint32_t bits) noexcept {
+    if (!MOTU::MotuStatus::HasBufferFault(bits)) {
+        return;
+    }
+    // Only the 828 Mk3's bit map is known (MotuStatusWord.hpp); a v2 device
+    // writing here would mean something else by the same bits.
+    const auto record = registry_.SnapshotByGuid(guid);
+    const auto* policy = record ? DeviceProfiles::Audio::CurrentAudioPolicy(*record) : nullptr;
+    if (policy == nullptr || policy->plan.protocolImplementation !=
+                                 DeviceProfiles::Audio::ProtocolImplementationId::MotuV3) {
+        return;
+    }
+    char decoded[128];
+    ASFW_LOG(Audio,
+             "[MotuStatus] device reports buffer fault GUID=%llx word=0x%08x meaning=%{public}s "
+             "(sticky: emptied and/or filled at least once since last report)",
+             guid, bits, MOTU::FormatMotuStatus(bits, decoded, sizeof(decoded)));
+    (void)QueueRecovery(guid, DuplexRestartReason::kRecoverAfterDeviceBufferFault,
+                        "device buffer fault");
+}
+
 bool MotuAudioBackend::QueueTimingRecovery(uint64_t guid) noexcept {
+    return QueueRecovery(guid, DuplexRestartReason::kRecoverAfterTimingLoss, "timing loss");
+}
+
+bool MotuAudioBackend::QueueRecovery(uint64_t guid, DuplexRestartReason reason,
+                                     const char* what) noexcept {
     PublicationGate::AdmissionScope admission(recoveryAdmission_);
     if (!admission.IsAdmitted()) return false;
     if (guid == 0 || stopping_.load(std::memory_order_acquire)) {
@@ -261,7 +327,7 @@ bool MotuAudioBackend::QueueTimingRecovery(uint64_t guid) noexcept {
     }
 
 #ifdef ASFW_HOST_TEST
-    auto recover = [this, guid, observedRun] {
+    auto recover = [this, guid, observedRun, reason, what] {
 #else
     auto recover = ^{
 #endif
@@ -271,22 +337,21 @@ bool MotuAudioBackend::QueueTimingRecovery(uint64_t guid) noexcept {
         }
 
         ASFW_LOG(Audio,
-                 "MotuAudioBackend: scheduling async recovery for timing loss GUID=0x%016llx",
-                 guid);
-        const IOReturn status = sessions_.RequestRestart(
-            guid, DuplexRestartReason::kRecoverAfterTimingLoss, observedRun);
+                 "MotuAudioBackend: scheduling async recovery for %{public}s GUID=0x%016llx",
+                 what, guid);
+        const IOReturn status = sessions_.RequestRestart(guid, reason, observedRun);
         if (status == kIOReturnSuccess) {
             ASFW_LOG(Audio,
-                     "MotuAudioBackend: timing-loss recovery succeeded GUID=0x%016llx",
-                     guid);
+                     "MotuAudioBackend: %{public}s recovery succeeded GUID=0x%016llx",
+                     what, guid);
         } else if (status == kIOReturnUnsupported || status == kIOReturnAborted) {
             ASFW_LOG(Audio,
-                     "MotuAudioBackend: timing-loss recovery not applicable GUID=0x%016llx kr=0x%x",
-                     guid, status);
+                     "MotuAudioBackend: %{public}s recovery not applicable GUID=0x%016llx kr=0x%x",
+                     what, guid, status);
         } else {
             ASFW_LOG_ERROR(Audio,
-                           "MotuAudioBackend: timing-loss recovery failed GUID=0x%016llx kr=0x%x",
-                           guid, status);
+                           "MotuAudioBackend: %{public}s recovery failed GUID=0x%016llx kr=0x%x",
+                           what, guid, status);
         }
         recoveryInFlight_.store(false, std::memory_order_release);
     };

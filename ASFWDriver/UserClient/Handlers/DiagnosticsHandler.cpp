@@ -3,10 +3,14 @@
 #include "../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../Audio/Runtime/AudioTelemetrySnapshot.hpp"
 #include "../../Diagnostics/DiagnosticsService.hpp"
+#include "../../Audio/Core/AudioEndpointRuntime.hpp"
+#include "../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../Async/AsyncSubsystem.hpp"
 #include "../../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../../Debug/AsyncTraceCapture.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Shared/ASFWAudioStreamMetricsABI.h"
+#include "../../Shared/ASFWIsochOracleCaptureABI.h"
 #include "ASFWDriver.h"
 #include "ControllerCoreAccess.hpp"
 #include "../WireFormats/DiagnosticsWireEnvelope.hpp"
@@ -211,6 +215,63 @@ kern_return_t DiagnosticsHandler::GetLogStats(IOUserClientMethodArguments* args)
     return kIOReturnSuccess;
 }
 
+kern_return_t DiagnosticsHandler::GetAudioStreamMetrics(
+    IOUserClientMethodArguments* args) {
+    if (!args || !args->structureInput) {
+        return kIOReturnBadArgument;
+    }
+
+#ifdef ASFW_HOST_TEST
+    auto* input = static_cast<OSData*>(args->structureInput);
+#else
+    auto* input = OSDynamicCast(OSData, args->structureInput);
+#endif
+    if (!input || input->getLength() < sizeof(ASFWAudioStreamMetricsRequestV1)) {
+        return kIOReturnBadArgument;
+    }
+
+    ASFWAudioStreamMetricsRequestV1 request{};
+    memcpy(&request, input->getBytesNoCopy(), sizeof(request));
+    if (request.abiVersion != ASFW_AUDIO_STREAM_METRICS_ABI_VERSION ||
+        request.structSize < sizeof(request) ||
+        request.guid == 0) {
+        return kIOReturnBadArgument;
+    }
+
+    ASFWAudioStreamMetricsSnapshotV1 snapshot{};
+    snapshot.abiVersion = ASFW_AUDIO_STREAM_METRICS_ABI_VERSION;
+    snapshot.structSize = sizeof(snapshot);
+    snapshot.status = ASFWAudioStreamMetricsStatusUnavailable;
+    snapshot.guid = request.guid;
+
+    auto* controller = GetControllerCorePtr(driver_);
+    auto* registry = controller ? controller->GetAudioRuntimeRegistry() : nullptr;
+    auto endpoint = registry ? registry->FindEndpointRuntime(request.guid) : nullptr;
+    if (endpoint) {
+        endpoint->CopyAudioStreamMetricsSnapshot(snapshot);
+    }
+    snapshot.timestampNs = ASFW::LogDetail::NowNs();
+
+    ASFW_LOG_RL(Metrics,
+                "audio_stream_metrics/snapshot",
+                1000,
+                OS_LOG_TYPE_DEFAULT,
+                "[AudioMetricsSnapshot] guid=0x%016llx status=%u flags=0x%x endpointGen=%llu streamGen=%llu",
+                snapshot.guid,
+                snapshot.status,
+                snapshot.stateFlags,
+                snapshot.endpointGeneration,
+                snapshot.streamGeneration);
+
+    OSData* metricsData = OSData::withBytes(&snapshot, sizeof(snapshot));
+    if (!metricsData) {
+        return kIOReturnNoMemory;
+    }
+    args->structureOutput = metricsData;
+    args->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
 kern_return_t DiagnosticsHandler::GetLogCatalog(IOUserClientMethodArguments* args) {
     if (!args) {
         return kIOReturnBadArgument;
@@ -247,6 +308,54 @@ kern_return_t DiagnosticsHandler::GetAudioTelemetry(
         return kIOReturnInternalError;
     }
     OSData* data = OSData::withBytes(wire.data(), bytes);
+    if (!data) {
+        return kIOReturnNoMemory;
+    }
+    args->structureOutput = data;
+    args->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
+kern_return_t DiagnosticsHandler::GetIsochOracleCapture(
+    IOUserClientMethodArguments* args) {
+    if (!args || !args->structureInput) {
+        return kIOReturnBadArgument;
+    }
+
+#ifdef ASFW_HOST_TEST
+    auto* input = static_cast<OSData*>(args->structureInput);
+#else
+    auto* input = OSDynamicCast(OSData, args->structureInput);
+#endif
+    if (!input || input->getLength() < sizeof(ASFWIsochOracleCaptureRequestV1)) {
+        return kIOReturnBadArgument;
+    }
+
+    ASFWIsochOracleCaptureRequestV1 request{};
+    memcpy(&request, input->getBytesNoCopy(), sizeof(request));
+    if (request.abiVersion != ASFW_ISOCH_ORACLE_CAPTURE_ABI_VERSION ||
+        request.structSize < sizeof(request) ||
+        request.guid == 0) {
+        return kIOReturnBadArgument;
+    }
+
+    ASFWIsochOracleCaptureChunkV1 chunk{};
+    chunk.abiVersion = ASFW_ISOCH_ORACLE_CAPTURE_ABI_VERSION;
+    chunk.structSize = sizeof(chunk);
+    chunk.status = ASFWIsochOracleCaptureStatusUnavailable;
+    chunk.guid = request.guid;
+    chunk.direction = request.direction;
+    chunk.startIndex = request.startIndex;
+
+    auto* controller = GetControllerCorePtr(driver_);
+    auto* registry = controller ? controller->GetAudioRuntimeRegistry() : nullptr;
+    auto endpoint = registry ? registry->FindEndpointRuntime(request.guid) : nullptr;
+    if (endpoint) {
+        endpoint->CopyIsochOracleCaptureChunk(chunk, request.direction,
+                                              request.startIndex);
+    }
+
+    OSData* data = OSData::withBytes(&chunk, sizeof(chunk));
     if (!data) {
         return kIOReturnNoMemory;
     }

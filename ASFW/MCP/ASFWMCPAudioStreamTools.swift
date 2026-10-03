@@ -73,7 +73,7 @@ struct ASFWMCPAudioStreamHealth: Equatable {
         case "packetsRejected":
             return "Packets arrived but were rejected before decode (runt, undecodable CIP header, or zero data block size). The device may be streaming correctly."
         case "deviceSendsOnlyNoData":
-            return "Valid CIP headers arrived carrying SYT 0xFFFF and no audio frames. The device is in NO-DATA. This states what the device sent; it is not evidence about what the device is waiting for."
+            return "Valid CIP headers arrived without data blocks. The device is in NO-DATA. This states what the device sent; it is not evidence about what the device is waiting for."
         case "dataNotAccepted":
             return "Data-bearing packets with valid SYT arrived but no replay entry was published. Inspect the SYT cadence detector rather than the device."
         default:

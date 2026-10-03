@@ -23,6 +23,8 @@ constexpr uint32_t kZtsRecordsPerDrain = 8;
 // Consumer-owned diagnostics (IO-callback error reports recorded by the
 // real-time path) are serviced every 100 ticks (~100 ms), off that path.
 constexpr uint32_t kConsumerDiagnosticsIntervalTicks = 100;
+// IT ContextControl/CommandPtr sample: ~1 Hz while the context runs.
+constexpr uint32_t kItStatisticsIntervalTicks = 1000;
 
 uint64_t MicrosecondsToMachTicks(uint64_t usec) {
     static mach_timebase_info_data_t timebase{0, 0};
@@ -112,6 +114,7 @@ void WatchdogCoordinator::Reset() {
     }
     ztsLogDivider_ = 0;
     consumerDiagnosticsDivider_ = 0;
+    itStatisticsDivider_ = 0;
     lastDrainEligible_ = true;
 }
 
@@ -194,6 +197,7 @@ void WatchdogCoordinator::TickIsochReceive(
     if (drainEligible) {
         if (++ztsLogDivider_ >= kZtsDrainIntervalTicks) {
             ztsLogDivider_ = 0;
+            isochReceiveContext->CheckReceiveClockLiveness();
             isochReceiveContext->DrainZtsTelemetry(kZtsRecordsPerDrain);
         }
     }
@@ -209,6 +213,14 @@ void WatchdogCoordinator::TickIsochTransmit(
         isochTransmitContext->GetState() == ASFW::Isoch::ITState::Running;
     if (isRunning) {
         isochTransmitContext->Poll();
+    }
+
+    if (++itStatisticsDivider_ < kItStatisticsIntervalTicks) {
+        return;
+    }
+    itStatisticsDivider_ = 0;
+    if (isRunning) {
+        isochTransmitContext->LogStatistics();
     }
 }
 

@@ -389,6 +389,7 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var localIrmResourceSnapshot: ASFWMCPLocalIrmResourceSnapshot?
     var logQueryResponse: ASFWLogRingQueryResponse?
     var logStats: ASFWLogRingStats?
+    var audioMetricsSnapshot: ASFWAudioStreamMetricsSnapshot?
 
     func mcpDriverVersion() -> DriverVersionInfo? { driverVersion }
 
@@ -467,6 +468,10 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
 
     func mcpLogRingStats() -> ASFWLogRingStats? {
         logStats
+    }
+
+    func mcpAudioStreamMetricsSnapshot(guid: UInt64) -> ASFWAudioStreamMetricsSnapshot? {
+        audioMetricsSnapshot
     }
 
     // Audio telemetry is not exercised by these transaction-path tests; the

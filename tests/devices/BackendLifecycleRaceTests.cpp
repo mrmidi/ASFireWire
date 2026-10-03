@@ -7,7 +7,6 @@
 
 #include <gtest/gtest.h>
 
-#include "Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
 
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Core/AudioNubPublisher.hpp"
@@ -123,9 +122,8 @@ struct TestFixture {
             return nullptr;
         }};
     AudioNubPublisher publisher{nullptr};
-    ASFW::Audio::DICE::DiceNotificationRouter diceNotifications{registry};
     AVCAudioBackend avc{publisher, registry, runtime, hostTransport, sessions, hardware};
-    DiceAudioBackend dice{publisher, registry, runtime, sessions, hardware, diceNotifications};
+    DiceAudioBackend dice{publisher, registry, runtime, sessions, hardware};
 
     void SeedDiceDevice(uint64_t guid) {
         ConfigROM rom{};

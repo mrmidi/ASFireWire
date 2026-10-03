@@ -17,6 +17,7 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
+#include "MotuV3ServoTelemetryFormat.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Wire/IEC61883/Syt.hpp"
@@ -47,6 +48,174 @@ uint64_t ProjectTxFrameCursor(uint64_t rxFirstFrame,
     return rxFirstFrame +
            (presentationDeltaTicks * sampleRate) / ASFW::Timing::kTicksPerSecond;
 }
+
+namespace {
+
+// The servo input hook: before EVERY packet, NO-DATA included, so the
+// controller sees the packet cadence rather than the DATA cadence. The stamper owns the controller
+// and the SPH clock; this only bridges a generation-checked latest RX sample
+// and makes the payload writer's mute follow the stamper's gate.
+void ApplyMotuV3ServoInput(ASFWAudioDriver_IVars& ivars,
+                           ASFW::Audio::Runtime::AudioTransportControlBlock& control) noexcept {
+    auto& stamper = ivars.runtime.motuV3TxTimingStamper;
+
+    ASFW::Audio::Runtime::MotuRxSphClockSample rxClock{};
+    uint64_t rxClockUpdates = 0;
+    const bool haveRxClock = control.motuRxSphClock.ReadLatest(rxClock, rxClockUpdates);
+    const uint64_t controlGeneration = control.generation.load(std::memory_order_acquire);
+
+    // The conditioned `rel` phase rides the same queue, from its own
+    // bridge. Generation-checked exactly like the clock sample: a `rel` measured
+    // in a previous stream describes a phase this one never had, and seeding the
+    // loop with it would actuate on history.
+    ASFW::Audio::Runtime::MotuRelPhaseSampleRecord relPhase{};
+    uint64_t relPhaseUpdates = 0;
+    const bool relPhasePublished = control.motuRelPhase.ReadLatest(relPhase, relPhaseUpdates);
+    const bool haveRelPhase =
+        relPhasePublished && relPhase.streamGeneration == controlGeneration;
+
+    // The other half of telling "RX published nothing" from "the reader
+    // rejected it". One line the first time a published sample fails the
+    // generation check -- the exact failure that once made a whole hardware run
+    // measure nothing.
+    if (relPhasePublished && !haveRelPhase && !ivars.runtime.motuRelPhaseMismatchLogged) {
+        ivars.runtime.motuRelPhaseMismatchLogged = true;
+        ASFW_LOG(DirectAudio, "[RxPhaseBridge] rejected gen=%llu expected=%llu updates=%llu",
+                 relPhase.streamGeneration, controlGeneration, relPhaseUpdates);
+    }
+
+    const auto servoResult = stamper.ApplyServoInput({
+        .valid = haveRxClock,
+        .streamGeneration = rxClock.streamGeneration,
+        .expectedStreamGeneration = controlGeneration,
+        .bridgeUpdates = rxClockUpdates,
+        .rxFrames = rxClock.rxFrames,
+        .rxTicks = rxClock.rxTicks,
+        .haveRelPhase = haveRelPhase,
+        .relPhaseTicks = relPhase.ticks,
+        .relPhaseCenterTicks = relPhase.centerTicks,
+    });
+    // The gate's state, not the result's: a dropped or too-early observation
+    // leaves the result's outputMuted false while the gate may still be closed.
+    ivars.runtime.motuV3PayloadWriter.SetPcmMuted(stamper.IsOutputMuted());
+
+    // One record, on the single update that injected the step. The run
+    // needs the boundary marked in the same ring as `rel`, not inferred from
+    // wall time -- the two clocks are exactly what is in question. Never fires
+    // in a production build, where the injection constant is zero.
+    if (servoResult.decision.phaseInjectionApplied) {
+        ASFW_LOG_RING_ONLY(
+            DirectAudio, ::ASFW::Logging::LogLevel::Notice,
+            "[MotuSphInject] ticks=%lld afterFrames=%llu rxFrames=%llu phaseErrorTicks=%lld",
+            static_cast<long long>(ASFW::Audio::Wire::kMotuSphPhaseInjectionTicks),
+            static_cast<unsigned long long>(ASFW::Audio::Wire::kMotuSphPhaseInjectionAfterFrames),
+            static_cast<unsigned long long>(rxClock.rxFrames),
+            static_cast<long long>(servoResult.decision.phaseErrorTicks));
+    }
+
+    // Deliberately an edge-only ring record. It does not run in the payload
+    // writer, does not change servo input or output, and never logs while the
+    // hard-resync gate merely remains muted.
+    if (ASFW::Audio::Wire::MotuSphHardResyncEventOccurred(servoResult)) {
+        const auto servoSnapshot = stamper.ServoTelemetrySnapshot();
+        ASFW_LOG_RING_ONLY(
+            DirectAudio, ::ASFW::Logging::LogLevel::Notice,
+            "[MotuSphHard] g=%llu p=%lld hard=%u repair=%u mute=%u "
+            "unmute=%u muted=%u counts=%llu/%llu/%llu/%llu",
+            servoSnapshot.streamGeneration,
+            static_cast<long long>(servoSnapshot.phaseErrorTicks),
+            servoSnapshot.hardResyncRequired ? 1u : 0u,
+            servoResult.phaseRepairApplied ? 1u : 0u,
+            servoResult.muteActivated ? 1u : 0u,
+            servoResult.unmuteActivated ? 1u : 0u,
+            servoSnapshot.outputMuted ? 1u : 0u,
+            servoSnapshot.hardResyncRequests,
+            servoSnapshot.phaseRepairs,
+            servoSnapshot.muteTransitions,
+            servoSnapshot.unmuteTransitions);
+    }
+}
+
+// The servo's periodic telemetry, rate-limited to one line per 2 s. MOTU's TX
+// has no work in the IO callback, so it runs after each preparation pass.
+void LogMotuV3ServoTelemetry(const ASFWAudioDriver_IVars& ivars) noexcept {
+    const auto servoSnapshot = ivars.runtime.motuV3TxTimingStamper.ServoTelemetrySnapshot();
+    if (servoSnapshot.decisions != 0) {
+        // Two lines, because one no longer fits a ring record: formats and the
+        // reason in MotuV3ServoTelemetryFormat.hpp. `locked` sits right after
+        // stepQ32 -- offline analysers match the prefix up to `stepQ32=`, so
+        // nothing may be inserted before it.
+        ASFW_LOG_RING_ONLY_RL(
+            DirectAudio, ASFW_MOTU_SPH_SERVO_KEY, 2000u, ::ASFW::Logging::LogLevel::Notice,
+            ASFW_MOTU_SPH_SERVO_FORMAT,
+            servoSnapshot.streamGeneration, servoSnapshot.bridgeUpdates,
+            servoSnapshot.decisions, servoSnapshot.rxFrames,
+            static_cast<long long>(servoSnapshot.rxTicks),
+            static_cast<long long>(servoSnapshot.txCorrectionQ32),
+            static_cast<long long>(servoSnapshot.stepQ32),
+            servoSnapshot.locked ? 1u : 0u,
+            static_cast<long long>(servoSnapshot.phaseErrorTicks));
+        ASFW_LOG_RING_ONLY_RL(
+            DirectAudio, ASFW_MOTU_SPH_STATE_KEY, 2000u, ::ASFW::Logging::LogLevel::Notice,
+            ASFW_MOTU_SPH_STATE_FORMAT,
+            servoSnapshot.streamGeneration,
+            static_cast<long long>(servoSnapshot.measuredStepQ32),
+            servoSnapshot.feedbackUpdated ? 1u : 0u,
+            servoSnapshot.phaseReferenceReset ? 1u : 0u,
+            servoSnapshot.stepClamped ? 1u : 0u,
+            servoSnapshot.hardResyncRequired ? 1u : 0u,
+            servoSnapshot.phaseRepairApplied ? 1u : 0u,
+            servoSnapshot.outputMuted ? 1u : 0u,
+            servoSnapshot.hardResyncRequests,
+            servoSnapshot.phaseRepairs,
+            servoSnapshot.muteTransitions,
+            servoSnapshot.unmuteTransitions,
+            static_cast<unsigned long long>(
+                ivars.runtime.motuV3PayloadWriter.FramesIntentionallyMuted()));
+
+        // Its own short line, NOT extra fields on `[MotuSphServo]`: that one
+        // lost trailing fields to the 232-byte LogRing record, which went
+        // unnoticed for a long time. Emitted unconditionally
+        // rather than only on an anomaly: an anomaly-only line cannot tell "no
+        // event occurred" from "this logging path never worked", the ambiguity
+        // that made three soaks of silent `[MotuSphHard]` worthless as evidence.
+        ASFW_LOG_RING_ONLY_RL(
+            DirectAudio, "motu-sph-ref", 2000u, ::ASFW::Logging::LogLevel::Notice,
+            "[MotuSphRef] gen=%llu cause=%u stalled=%u "
+            "seed=%u rxFrameReg=%u rxTickReg=%u "
+            "tickStall=%u bridgeStall=%u",
+            servoSnapshot.streamGeneration,
+            static_cast<uint32_t>(servoSnapshot.referenceCause),
+            servoSnapshot.bridgeStalled ? 1u : 0u,
+            servoSnapshot.seedReReferences,
+            servoSnapshot.rxFrameRegressions,
+            servoSnapshot.rxTickRegressions,
+            servoSnapshot.nonAdvancingTicks,
+            servoSnapshot.bridgeStalls);
+    }
+
+    // Deliberately OUTSIDE the `decisions != 0` guard above: the case
+    // this line exists to report is a stamper that drops every observation
+    // before the servo runs, and then `decisions` stays 0. A `gen=0` here with
+    // a non-zero `drops` is that state, stated rather than inferred. `Same` and
+    // `Back` are separate on purpose: a repeat is the benign, frequent case; any
+    // non-zero `Back` is a counter that moved backwards.
+    ASFW_LOG_RING_ONLY_RL(
+        DirectAudio, "motu-sph-drop", 2000u, ::ASFW::Logging::LogLevel::Notice,
+        "[MotuSphDrop] gen=%llu drops=%u bridgeSame=%u "
+        "bridgeBack=%u frameSame=%u frameBack=%u "
+        "tickSame=%u tickBack=%u",
+        servoSnapshot.streamGeneration,
+        servoSnapshot.observationDrops,
+        servoSnapshot.dropBridgeNotAdvanced,
+        servoSnapshot.dropBridgeRegressed,
+        servoSnapshot.dropRxFramesNotAdvanced,
+        servoSnapshot.dropRxFramesRegressed,
+        servoSnapshot.dropRxTicksNotAdvanced,
+        servoSnapshot.dropRxTicksRegressed);
+}
+
+} // namespace
 
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                              uint64_t startPacketIndex,
@@ -253,6 +422,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                  ASFW::Timing::kTicksPerCycle) %
                 ASFW::Timing::kCyclesPerSecond);
             timing.transmitCycleValid = true;
+            timing.transmitTicks = packetAnchorTicks;
 
             // A replay stall is transient, not fatal. RX bumps its replay epoch
             // on every rebind/discontinuity (aggregate StartIO/StopIO churn, a
@@ -557,6 +727,10 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             }
         }
 
+        if (ivars.runtime.motuV3TxActive.load(std::memory_order_relaxed)) {
+            ApplyMotuV3ServoInput(ivars, *directControl);
+        }
+
         const auto prepareResult =
             ivars.runtime.txStreamEngine.PrepareNextTransmitSlot(
                 nextPacketToPrepare,
@@ -768,6 +942,9 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         return {kIOReturnError, "ConfigureTxStreamEngine"};
     }
     ivars.runtime.txStreamEngine.SetTimingLossCallback({});
+    ivars.runtime.motuV3TxActive.store(false, std::memory_order_relaxed);
+    ivars.runtime.txSlotProvider.motuV3Instruments = nullptr;
+    ivars.runtime.motuV3TxPublishInstruments.Unbind();
     const auto txPolicy = profile.TxStreamPolicy();
     if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV2) {
         ivars.runtime.motuPayloadWriter.Configure(
@@ -789,6 +966,36 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         });
         ivars.runtime.motuTxTimingStamper.Configure(txConfig.dbs);
         ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
+    } else if (txPolicy.hostToDevicePcmEncoding ==
+               ASFW::Encoding::AudioWireFormat::kMotuV3Packed) {
+        // Protocol-v3 places PCM exactly like v2 (MotuV3PayloadWriter.hpp), under the
+        // Mk3 port map, and times it with the SPH servo rather than a replay. The
+        // stamper also makes the engine SYT-unaware, which is what lets the replay
+        // path below send V3's NO_INFO SYT. The output starts muted until the loop
+        // locks; ApplyMotuV3ServoInput keeps the writer on the gate.
+        if (!ivars.runtime.motuV3TxTimingStamper.Configure(txConfig)) {
+            ASFW_LOG(Audio, "ASFWAudioDevice: MOTU V3 SPH servo has no policy for rate=%u fpdp=%u",
+                     txConfig.sampleRate, txConfig.framesPerDataPacket);
+            return {kIOReturnUnsupported, "ConfigureMotuV3TxTiming"};
+        }
+        ivars.runtime.motuV3PayloadWriter.Configure(
+            ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
+                .pcmChunks = txConfig.pcmChannels,
+                .sourceChannelOffset = txConfig.sourceChannelOffset,
+                .ports = txPolicy.motuPlaybackPorts});
+        ivars.runtime.motuV3PayloadWriter.SetPcmMuted(
+            ivars.runtime.motuV3TxTimingStamper.IsOutputMuted());
+        ivars.runtime.motuV3PayloadWriter.BindTimeline(
+            &ivars.runtime.txStreamEngine.Timeline());
+        ivars.runtime.txStreamEngine.SetPayloadWriter(&ivars.runtime.motuV3PayloadWriter);
+        ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuV3TxTimingStamper);
+        // The phase trace feeds [RxPhaseRel] and the motuRelPhase bridge back
+        // into the servo above; the oracle capture records the start window.
+        ivars.runtime.motuV3TxPublishInstruments.Bind(control, memory.queueControl);
+        ivars.runtime.txSlotProvider.motuV3Instruments =
+            &ivars.runtime.motuV3TxPublishInstruments;
+        ivars.runtime.motuRelPhaseMismatchLogged = false;
+        ivars.runtime.motuV3TxActive.store(true, std::memory_order_relaxed);
     }
     ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);
     ivars.runtime.txStreamEngine.ResetForStart(0, 0);
@@ -801,6 +1008,8 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         ivars.runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load(
             std::memory_order_relaxed) +
         ivars.runtime.motuPayloadWriter.Counters().framesMissedFinality.load(
+            std::memory_order_relaxed) +
+        ivars.runtime.motuV3PayloadWriter.Counters().framesMissedFinality.load(
             std::memory_order_relaxed);
     ivars.runtime.txReplayReader.Reset();
     ivars.runtime.rxReplayLossRun.store(0, std::memory_order_relaxed);
@@ -957,6 +1166,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             ASFW::IsochTransport::AudioTimingGeometry::
                 kTxPreparationLeadPackets,
             replayEstablished);
+    if (ivars->runtime.motuV3TxActive.load(std::memory_order_relaxed)) {
+        ASFW::Audio::DriverKit::LogMotuV3ServoTelemetry(*ivars);
+    }
 
 
     // [TxPrepRange] Refill-coverage instrumentation. Answers the decisive
@@ -1298,6 +1510,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 ivars->runtime.txStreamEngine.PayloadWriterCounters()
                     .framesMissedFinality.load(std::memory_order_relaxed) +
                 ivars->runtime.motuPayloadWriter.Counters()
+                    .framesMissedFinality.load(std::memory_order_relaxed) +
+                ivars->runtime.motuV3PayloadWriter.Counters()
                     .framesMissedFinality.load(std::memory_order_relaxed);
             const int64_t sOutMin =
                 ivars->runtime.txStreamEngine.TakeMinFinalityMarginPackets();

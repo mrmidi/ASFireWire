@@ -26,6 +26,7 @@ protocol ASFWDriverControlling {
     func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot
     func queryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse?
     func logRingStats() async -> ASFWLogRingStats?
+    func audioStreamMetricsSnapshot(guid: UInt64) async -> ASFWAudioStreamMetricsSnapshot?
     func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth]
     /// Full stable audio telemetry summary (wire v4), or nil when unavailable.
     func fetchAudioTelemetry() async -> ASFWMCPValue?
@@ -611,6 +612,15 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             capacityRecords: 40_000,
             perCategory: ["CMP": 18, "Async": 9, "Audio": 15]
         )
+    }
+
+    func audioStreamMetricsSnapshot(guid: UInt64) async -> ASFWAudioStreamMetricsSnapshot? {
+        guard nodes.contains(where: {
+            $0.guid == String(format: "0x%016llX", guid)
+        }) else {
+            return nil
+        }
+        return .mock(guid: guid)
     }
 
     func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth] {

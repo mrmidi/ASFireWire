@@ -3,6 +3,13 @@ import Foundation
 struct ASFWMCPCore<Driver: ASFWDriverControlling> {
     let configuration: ASFWMCPRuntimeConfiguration
     let driver: Driver
+    let audioMetricsCapture: ASFWMCPAudioMetricsCaptureSession<Driver>
+
+    init(configuration: ASFWMCPRuntimeConfiguration, driver: Driver) {
+        self.configuration = configuration
+        self.driver = driver
+        audioMetricsCapture = ASFWMCPAudioMetricsCaptureSession(driver: driver)
+    }
 
     func listTools() async -> [ASFWMCPToolDefinition] {
         guard configuration.mode != .disabled else { return [] }

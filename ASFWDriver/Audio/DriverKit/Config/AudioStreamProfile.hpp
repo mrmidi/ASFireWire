@@ -29,6 +29,11 @@ struct AudioStreamConfig final {
     uint8_t framesPerDataPacket{8};
     uint8_t fdf{0x02};
     uint8_t fmt{0x10};
+    /// CIP SPH bit (Q0 bit 10). AM824 streams leave it clear; MOTU protocol-v3 sets it.
+    bool cipSph{false};
+    /// Transmit `fdf` as given rather than the rate's AM824 SFC. For formats whose FDF
+    /// is not an AM824 SFC at all -- MOTU protocol-v3's captured 0x22.
+    bool fdfIsFixed{false};
     uint8_t sourceChannelOffset{0};
     Encoding::AudioPacketFraming packetFraming{Encoding::AudioPacketFraming::kCip};
     ::ASFW::Audio::Wire::PcmSlotMap pcmSlotMap{};

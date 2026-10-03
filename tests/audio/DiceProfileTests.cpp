@@ -433,6 +433,23 @@ TEST(DiceProfileTests, EverySupportedBuilderResolvesToAProfile) {
     }
 }
 
+// Motu828mk3 sits after WeissDac with kLastValid moved by hand. The registry's
+// range checks are runtime ones, so a stale bound would hand the Mk3 nothing
+// and fail its Start() with a bare kIOReturnBadArgument instead of a build break.
+TEST(DiceProfileTests, TheLastBuilderResolvesThroughTheRangeChecks) {
+    using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
+    static_assert(ProfileBuilderId::kLastValid == ProfileBuilderId::Motu828mk3);
+    const auto id = static_cast<uint32_t>(ProfileBuilderId::Motu828mk3);
+    EXPECT_EQ(id, 28U);
+    const auto* profile = AudioProfileRegistry::ProfileForBuilderId(id);
+    ASSERT_NE(profile, nullptr);
+    EXPECT_EQ(AudioProfileRegistry::FindProfile(0, 0, 0, id), profile);
+    const auto* stream = dynamic_cast<const IAudioStreamProfile*>(profile);
+    ASSERT_NE(stream, nullptr);
+    EXPECT_EQ(stream->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kMotuV3Packed);
+    EXPECT_EQ(stream->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kMotuV3Packed);
+}
+
 // A builder that is not a DICE one must not come back through the DICE-typed
 // accessor: the caller would use the richer interface on an object that does
 // not implement it.
@@ -444,6 +461,7 @@ TEST(DiceProfileTests, TheDiceAccessorReturnsOnlyDiceProfiles) {
                                ProfileBuilderId::MackieOnyx400F,
                                ProfileBuilderId::Motu828mk2,
                                ProfileBuilderId::MotuUltralite,
+                               ProfileBuilderId::Motu828mk3,
                                ProfileBuilderId::MAudioFireWire1814,
                                ProfileBuilderId::MAudioProjectMix,
                                ProfileBuilderId::None}) {

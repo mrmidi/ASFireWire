@@ -57,6 +57,7 @@ What is real today:
 - **Per-channel names** (device nickname plus per-channel TX/RX labels) are read from DICE devices and surfaced to CoreAudio.
 - **New in 0.4.0-beta.1, best effort:** a rebuilt AV/C stack (#165) discovers and streams AV/C audio devices (BeBoB, Oxford) that have no catalog entry, from what each device reports about itself. Generic DICE support (#166) enables every recognised DICE model (Focusrite Liquid Saffire 56, Saffire Pro 26, Saffire Pro 40 TCD3070; PreSonus StudioLive 16.4.2 and 32.4.2; Alesis iO14/iO26; Mackie Onyx 1640i DICE run and Blackbird; Weiss ADC2, AFI1, Vesta, DAC2, DAC202, Maya, MAN301) plus DICE units recognised from their Config ROM. None of these has a hardware result yet: some will work, some won't. Turn your volume down before the first attach, and please report every result.
 - MOTU 896HD, Traveler and 8pre, and the Mackie Onyx 1200F (Echo Fireworks run), are recognized by name only — their layouts have not been captured.
+- **MOTU 828 Mk3 (protocol v3)** plays and records at 48 kHz on real hardware (playback on Main Out L/R, capture on analog inputs 1–8). Other sample rates and the optical banks are not enabled yet — see [`documentation/MOTU_828MK3.md`](documentation/MOTU_828MK3.md) for what is and is not verified.
 - The project is still not stable enough to recommend as a drop-in replacement for Apple's old FireWire stack.
 
 ## Call for testing
@@ -142,6 +143,7 @@ Audio-device support in tree today:
 - Midas Venice F16 and F24 (same catalog row as the F32; the variant is named from reported geometry)
 - Alesis MultiMix 8 / 12 / 16 (one row for the range — all three publish the same vendor/model; enabled from a contributed dump of a 12-input unit)
 - Weiss INT202 and INT203 (DICE 2-channel layout; wired up but **never run against real hardware**)
+- MOTU 828 Mk3 FireWire (protocol v3; 48 kHz only, analog channels only — see [`documentation/MOTU_828MK3.md`](documentation/MOTU_828MK3.md))
 - MOTU 828mkII and UltraLite (protocol v2; the 828mkII's Config ROM was captured from a real unit, but **no audio-verified report is on record**)
 - Mackie Onyx 400F (Echo Fireworks: EFC clock/transport control on the AV/C+CMP base; static 10x10 geometry gated on the device's HWINFO — **never run against real hardware**)
 - Mackie Onyx-i series, Oxford run (built on a live **Onyx 820i** identity and stream-format capture; that capture is not an audio-verified result)
@@ -159,6 +161,7 @@ Verified working by contributors on their own hardware:
 - Focusrite Saffire Pro 40 (20×20 full duplex at 48 kHz on a MacBook Pro and iMac) — [@evan-luther](https://github.com/evan-luther)
 - Nikon Coolscan 9000 and Coolscan 4000 — SBP-2/SCSI film scanners, plug and play — [@mhellevang](https://github.com/mhellevang)
 - Panasonic MiniDV camcorder — DV capture and tape transport — [@hoffmabc](https://github.com/hoffmabc)
+- MOTU 828 Mk3 FireWire (48 kHz playback and capture on a MacBook M3; other rates and the optical banks not yet validated) — [@cube666999](https://github.com/cube666999)
 
 A fuller breakdown, including recognized-but-not-enabled devices and how to report your
 own results, lives on the

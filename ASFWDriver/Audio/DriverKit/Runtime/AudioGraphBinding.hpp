@@ -24,6 +24,8 @@ enum class AudioWireFormat : uint32_t {
     // kUnknown), so a value added to either must be added to both.
     kMotuV2 = 3,
     kRawPcm24Upper24In32LE = 4,
+    // Mirrors ASFW::Encoding::AudioWireFormat::kMotuV3Packed (MOTU protocol-v3).
+    kMotuV3Packed = 5,
 };
 
 struct AudioGraphBinding final {

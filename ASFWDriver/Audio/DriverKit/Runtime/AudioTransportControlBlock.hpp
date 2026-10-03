@@ -2,6 +2,9 @@
 
 #include "AudioClientCursor.hpp"
 #include "AudioRtCounters.hpp"
+#include "IsochOracleCapture.hpp"
+#include "MotuPhaseTrace.hpp"
+#include "MotuRxSphClockSnapshot.hpp"
 #include "../../Runtime/HardwareSampleTimeline.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Runtime/Seqlock.hpp"
@@ -451,6 +454,9 @@ struct TxPreparationRequestState final {
 };
 
 struct AudioTransportControlBlock final {
+    // Even = stable for diagnostic reads; odd = ResetForStart is mutating the
+    // counter set. Continuous runtime updates remain independent atomics.
+    std::atomic<uint64_t> metricsSnapshotSequence{0};
     std::atomic<uint64_t> generation{0};
 
     AudioClientCursor client{};
@@ -487,6 +493,7 @@ struct AudioTransportControlBlock final {
 
     // TX control block members
 
+    MotuPhaseTraceLatest motuPhaseTrace{};
     TxPreparationRequestState txPreparationRequests{};
     TxProducerFaultSnapshot txProducerFault{};
 
@@ -562,6 +569,17 @@ struct AudioTransportControlBlock final {
         ::ASFW::Encoding::kAmdtpReferenceBlockingTransferDelayTicks};
     std::atomic<uint32_t> txTransferDelayTicks{
         ::ASFW::Encoding::kAmdtpReferenceBlockingTransferDelayTicks};
+    // Audio-owned latest-value bridge from the master RX clock measurement to
+    // the TX SPH servo. The serialized TX producer consumes it only when its
+    // generation matches this control block.
+    MotuRxSphClockLatest motuRxSphClock{};
+    // Audio-owned latest-value bridge for the conditioned `rel` phase, formed in
+    // the RX telemetry gate and consumed by the same serialized TX producer as
+    // the clock sample above. Separate bridge, not extra fields on that one:
+    // `rel` is formed once per four-second window while the clock sample is
+    // published far more often, and merging them would either throttle the
+    // clock or stamp `rel` onto windows that never measured it.
+    MotuRelPhaseLatest motuRelPhase{};
     std::atomic<uint64_t> rxReplayEntries{0};
     std::atomic<uint64_t> rxReplayEpochResets{0};
 
@@ -611,6 +629,11 @@ struct AudioTransportControlBlock final {
     std::atomic<bool> captureRingFirstCompleteRead{false};
     RxCaptureBufferTelemetry rxCaptureBufferTelemetry{};
 
+    // Deliberately last: this is by far the largest member, and keeping it at
+    // the tail leaves the hot counters above sharing their cache lines as
+    // before.  Diagnostic-only; freezes after the start window.
+    IsochOracleCapture isochOracleCapture{};
+
     [[nodiscard]] HostClockAnchorPublishResult PublishHostClockAnchor(
         uint64_t sampleFrame,
         uint64_t hostTicks,
@@ -621,6 +644,7 @@ struct AudioTransportControlBlock final {
     }
 
     void ResetForStart() noexcept {
+        metricsSnapshotSequence.fetch_add(1, std::memory_order_acq_rel);
         client.Reset();
         counters.Reset();
         hostClockAnchor.Reset();
@@ -648,6 +672,7 @@ struct AudioTransportControlBlock final {
         discontinuities.store(0, std::memory_order_release);
 
         // Reset TX members
+        motuPhaseTrace.Reset();
         txPreparationRequests.Reset();
         txProducerFault.Reset();
 
@@ -699,6 +724,7 @@ struct AudioTransportControlBlock final {
         // Reset RX members
         rxSytCadence.Reset();
         rxSequenceReplay.Reset();
+        motuRelPhase.Reset();
         motuEventOffsets.Reset();
         rxReplayEntries.store(0, std::memory_order_relaxed);
         rxReplayEpochResets.store(0, std::memory_order_relaxed);
@@ -725,7 +751,18 @@ struct AudioTransportControlBlock final {
         captureRingFirstCompleteRead.store(false, std::memory_order_relaxed);
         rxCaptureBufferTelemetry.Reset();
 
-        generation.fetch_add(1, std::memory_order_acq_rel);
+        const uint64_t armedGeneration =
+            generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+        motuRxSphClock.Reset(armedGeneration);
+
+        // Armed last, with the generation it belongs to, so a start that
+        // aborts midway through this reset cannot leave a capture stamped
+        // with a generation the rest of the block never reached.  ResetForStart
+        // runs before the IT/IR contexts are armed, which is what makes this a
+        // start-window capture rather than a mid-stream sample.
+        isochOracleCapture.Reset(armedGeneration);
+
+        metricsSnapshotSequence.fetch_add(1, std::memory_order_release);
     }
 };
 

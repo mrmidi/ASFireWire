@@ -180,6 +180,11 @@ inline constexpr uint32_t kMotuTravelerSwVersion = 0x000009;
 inline constexpr uint32_t kMotuUltraliteSwVersion = 0x00000d;
 inline constexpr uint32_t kMotu8preSwVersion     = 0x00000f;
 
+// MOTU protocol-v3: the 828 Mk3 is told apart by its unit directory, like the
+// V2 rows above. Its root directory carries no Model_Id (read from a real
+// unit's Config ROM), so a model-id match would claim every MOTU.
+inline constexpr uint32_t kMotu828mk3SwVersion   = 0x000015;
+
 // ---- Display names ----
 inline constexpr const char* kFocusriteVendorName     = "Focusrite";
 inline constexpr const char* kSPro40ModelName         = "Saffire Pro 40";
@@ -231,5 +236,6 @@ inline constexpr const char* kMotu896hdModelName      = "896HD";
 inline constexpr const char* kMotuTravelerModelName   = "Traveler";
 inline constexpr const char* kMotuUltraliteModelName  = "UltraLite";
 inline constexpr const char* kMotu8preModelName       = "8pre";
+inline constexpr const char* kMotu828Mk3ModelName     = "828 Mk3 FireWire";
 
 } // namespace ASFW::DeviceProfiles::Audio

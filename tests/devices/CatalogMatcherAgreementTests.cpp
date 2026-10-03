@@ -46,7 +46,7 @@ struct DeviceTestCase {
 
 Discovery::DeviceIdentityEvidence MakeEvidence(
     uint32_t rootVendorId,
-    uint32_t rootModelId,
+    std::optional<uint32_t> rootModelId,
     std::optional<uint64_t> guid = std::nullopt,
     std::optional<uint32_t> unitSpecId = std::nullopt,
     std::optional<uint32_t> unitVersion = std::nullopt) {
@@ -213,6 +213,21 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBackend = Audio::AudioBackendKind::MotuRegister,
             .expectedBootstrap = Audio::ProbeBootstrap::MotuRegister,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+        },
+        // 10a. MOTU 828 Mk3: no root Model_Id at all (Config ROM read on the
+        // device), protocol v3, pinned to 48 kHz.
+        {
+            .description = "MOTU 828 Mk3 (MotuRegister, protocol v3, supported)",
+            .evidence = MakeEvidence(kMotuVendorId, std::nullopt, std::nullopt,
+                                     kMotuVendorId, kMotu828mk3SwVersion),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::MotuRegister,
+            .expectedProfileBuilder = ProfileBuilderId::Motu828mk3,
+            .expectedModelName = kMotu828Mk3ModelName,
+            .expectedBackend = Audio::AudioBackendKind::MotuRegister,
+            .expectedBootstrap = Audio::ProbeBootstrap::MotuRegister,
+            .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            .expectedStartRatePinHz = 48000U,
         },
         // 11. M-Audio FireWire 1814
         {
@@ -454,7 +469,10 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
                 case AudioFamilyProviderId::MotuRegister:
                     EXPECT_EQ(*backend, Audio::AudioBackendKind::MotuRegister);
                     EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::MotuRegister);
-                    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::MotuV2);
+                    EXPECT_EQ(plan->protocolImplementation,
+                              plan->profileBuilder == ProfileBuilderId::Motu828mk3
+                                  ? ProtocolImplementationId::MotuV3
+                                  : ProtocolImplementationId::MotuV2);
                     break;
                 case AudioFamilyProviderId::RmeRegister:
                     EXPECT_EQ(*backend, Audio::AudioBackendKind::RmeRegister);

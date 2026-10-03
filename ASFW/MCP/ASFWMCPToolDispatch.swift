@@ -58,6 +58,18 @@ extension ASFWMCPCore {
             return await dispatchLogQuery(name, decoder: decoder)
         case "asfw_log_stats":
             return await logStatsResult(toolName: name)
+        case "asfw_audio_stream_snapshot":
+            return await dispatchAudioStreamSnapshot(name, decoder: decoder)
+        case "asfw_audio_stream_capture_start":
+            return await dispatchAudioStreamCaptureStart(name, decoder: decoder)
+        case "asfw_audio_stream_capture_mark":
+            return await audioStreamCaptureResult(name, operation: .mark)
+        case "asfw_audio_stream_capture_status":
+            return await audioStreamCaptureResult(name, operation: .status)
+        case "asfw_audio_stream_capture_stop":
+            return await audioStreamCaptureResult(name, operation: .stop)
+        case "asfw_audio_stream_capture_export":
+            return await audioStreamCaptureResult(name, operation: .export)
         case "asfw_bus_reset_dev":
             return await dispatchBusReset(name, decoder: decoder)
         case "asfw_read_quadlet":
@@ -355,6 +367,103 @@ extension ASFWMCPCore {
             return .failure(toolName: toolName, code: .driverNotConnected, reason: "Driver log ring is unavailable.")
         }
         return .success(toolName: toolName, data: stats.mcpValue)
+    }
+
+    private func dispatchAudioStreamSnapshot(
+        _ name: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let guid = try decoder.uint64("guid")
+            guard guid != 0 else {
+                return malformedToolResult(name, reason: "guid must be non-zero.")
+            }
+            let guidText = String(format: "0x%016llX", guid)
+            guard await driver.listNodes().contains(where: { $0.guid == guidText }) else {
+                return .failure(
+                    toolName: name,
+                    code: .capabilityUnavailable,
+                    reason: "The requested GUID is not a currently discovered FireWire node."
+                )
+            }
+            guard let snapshot = await driver.audioStreamMetricsSnapshot(guid: guid) else {
+                return .failure(
+                    toolName: name,
+                    code: .driverNotConnected,
+                    reason: "Audio stream metrics are unavailable for the requested GUID."
+                )
+            }
+            return .success(toolName: name, data: snapshot.mcpValue)
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    private enum AudioStreamCaptureOperation {
+        case mark
+        case status
+        case stop
+        case export
+    }
+
+    private func dispatchAudioStreamCaptureStart(
+        _ name: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let guid = try decoder.uint64("guid")
+            guard guid != 0 else {
+                return malformedToolResult(name, reason: "guid must be non-zero.")
+            }
+            let guidText = String(format: "0x%016llX", guid)
+            guard await driver.listNodes().contains(where: { $0.guid == guidText }) else {
+                return .failure(
+                    toolName: name,
+                    code: .capabilityUnavailable,
+                    reason: "The requested GUID is not a currently discovered FireWire node."
+                )
+            }
+            guard let data = await audioMetricsCapture.start(guid: guid) else {
+                return .failure(
+                    toolName: name,
+                    code: .driverNotConnected,
+                    reason: "The capture is already active or its read-only metrics surfaces are unavailable."
+                )
+            }
+            return .success(toolName: name, data: data)
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    private func audioStreamCaptureResult(
+        _ name: String,
+        operation: AudioStreamCaptureOperation
+    ) async -> ASFWMCPToolCallResult {
+        let data: ASFWMCPValue?
+        let unavailableReason: String
+        switch operation {
+        case .mark:
+            data = await audioMetricsCapture.markMisframe()
+            unavailableReason = "No active audio metrics capture is available to mark."
+        case .status:
+            data = await audioMetricsCapture.status()
+            unavailableReason = "No audio metrics capture is available."
+        case .stop:
+            data = await audioMetricsCapture.stop()
+            unavailableReason = "No audio metrics capture is available."
+        case .export:
+            data = await audioMetricsCapture.export()
+            unavailableReason = "No audio metrics capture is available."
+        }
+        guard let data else {
+            return .failure(
+                toolName: name,
+                code: .capabilityUnavailable,
+                reason: unavailableReason
+            )
+        }
+        return .success(toolName: name, data: data)
     }
 
     private static func logLevel(named value: String) -> UInt8? {

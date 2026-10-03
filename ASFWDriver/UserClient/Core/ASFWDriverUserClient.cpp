@@ -408,6 +408,10 @@ constexpr uint64_t kMethodDiagGetLogRecords       = 1011;
 constexpr uint64_t kMethodDiagGetLogStats         = 1012;
 constexpr uint64_t kMethodDiagGetAudioTelemetry   = 1013;
 constexpr uint64_t kMethodDiagGetLogCatalog       = 1014;
+// Audio stream metrics and the bounded isoch oracle capture. Selector numbers
+// are an ABI: the Swift side must move with them.
+constexpr uint64_t kMethodDiagGetAudioStreamMetrics = 1015;
+constexpr uint64_t kMethodDiagGetIsochOracleCapture = 1016;
 
 MethodDispatchResult DispatchDiagnosticsMethods(
     ASFW::UserClient::UserClientRuntimeState& runtimeState,
@@ -443,6 +447,10 @@ MethodDispatchResult DispatchDiagnosticsMethods(
         return runtimeState.Diagnostics().GetAudioTelemetry(arguments);
     case kMethodDiagGetLogCatalog:
         return runtimeState.Diagnostics().GetLogCatalog(arguments);
+    case kMethodDiagGetAudioStreamMetrics:
+        return runtimeState.Diagnostics().GetAudioStreamMetrics(arguments);
+    case kMethodDiagGetIsochOracleCapture:
+        return runtimeState.Diagnostics().GetIsochOracleCapture(arguments);
     default:
         return std::nullopt;
     }

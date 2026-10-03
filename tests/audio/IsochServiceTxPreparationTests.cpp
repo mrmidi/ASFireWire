@@ -1,13 +1,17 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
 
 #include "../ASFWDriver/Hardware/HardwareInterface.hpp"
 #include "../ASFWDriver/Isoch/IsochService.hpp"
 #include "../ASFWDriver/Isoch/Transmit/IsochTxLayout.hpp"
 #include "../ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp"
 #include "../ASFWDriver/Isoch/Core/IsochTxQueue.hpp"
+#include "../ASFWDriver/Logging/LogRing.hpp"
 
 namespace {
 
@@ -32,6 +36,29 @@ void MarkPacketsSent(ASFW::Isoch::IsochTransmitContext& context,
             slot * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
         completion->statusWord = (0x0011u << 16) | (completion->statusWord & 0xFFFFu);
     }
+}
+
+// Records in the shared driver log ring after `afterSequence` whose message
+// contains `needle` (the IT instruments report only there).
+std::vector<std::string> RingMessagesContaining(uint64_t afterSequence, const char* needle) {
+    ASFW::Logging::LogRingQuery query{};
+    query.afterSequence = afterSequence;
+    std::strncpy(query.contains, needle, sizeof(query.contains) - 1);
+    std::vector<ASFW::Logging::LogRecord> records(64);
+    std::vector<std::string> messages;
+    for (;;) {
+        const auto result = ASFW::Logging::LogRing::Shared().Query(
+            query, records.data(), static_cast<uint32_t>(records.size()));
+        for (uint32_t i = 0; i < result.recordCount; ++i) {
+            messages.emplace_back(records[i].message);
+        }
+        if (result.nextSequence > result.latestSequence ||
+            result.nextSequence == query.afterSequence) {
+            break;
+        }
+        query.afterSequence = result.nextSequence;
+    }
+    return messages;
 }
 
 class RecordingReceiveConsumer final : public ASFW::Isoch::IIsochReceiveConsumer {
@@ -118,6 +145,102 @@ TEST(IsochServiceTxPreparation, CallbackRegisteredBeforeContextCreationSurvivesS
     EXPECT_EQ(callbackCount, 1U);
     EXPECT_EQ(callbackGeneration, 1U);
     EXPECT_EQ(control->refillRequestGeneration.load(std::memory_order_acquire), 1U);
+}
+
+// The first completion event dumps the primed seed window once, with the CIP header read back through the payload DMA map --
+// across the OM/OL split, since an 8-byte payload lands as one quadlet in each.
+// The watchdog's statistics sample reports the live CommandPtr.
+TEST(IsochServiceTxPreparation, ItInstrumentsDumpSeedWindowOnceAndSampleCommandPtr) {
+    auto& ring = ASFW::Logging::LogRing::Shared();
+    ring.Initialize();
+    ASSERT_TRUE(ring.IsInitialized());
+
+    IsochService service;
+    HardwareInterface hardware;
+    service.SetTxPreparationCallback([](uint64_t) {});
+
+    IOMemoryDescriptor* payloadDescriptor = nullptr;
+    IOMemoryDescriptor* metadataDescriptor = nullptr;
+    IOMemoryDescriptor* controlDescriptor = nullptr;
+    ASSERT_EQ(service.AllocateTxIsochResources(
+                  /*streamIndex=*/0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor, &metadataDescriptor,
+                  &controlDescriptor),
+              kIOReturnSuccess);
+
+    IOAddressSegment metadataRange{};
+    ASSERT_EQ(metadataDescriptor->GetAddressRange(&metadataRange), kIOReturnSuccess);
+    std::memset(reinterpret_cast<void*>(metadataRange.address), 0, metadataRange.length);
+    auto* metadata = reinterpret_cast<IsochTxPacketMeta*>(metadataRange.address);
+    for (uint64_t packetIndex = 0; packetIndex < AudioTimingGeometry::kTxSharedSlotPackets;
+         ++packetIndex) {
+        auto& meta = metadata[packetIndex];
+        meta.packetIndex = packetIndex;
+        meta.payloadLength = 8;
+        meta.operation = ASFW::Isoch::IsochTxOperation::Packet;
+        meta.commitGeneration.store(
+            ExpectedTxCommitGeneration(packetIndex, AudioTimingGeometry::kTxSharedSlotPackets),
+            std::memory_order_release);
+    }
+
+    // Packet 0's slot: a NO-DATA CIP header, big-endian on the wire.
+    IOAddressSegment payloadRange{};
+    ASSERT_EQ(payloadDescriptor->GetAddressRange(&payloadRange), kIOReturnSuccess);
+    std::memset(reinterpret_cast<void*>(payloadRange.address), 0, payloadRange.length);
+    const uint8_t cipHeader[8] = {0x3F, 0x1A, 0x00, 0x00, 0x82, 0x22, 0xFF, 0xFF};
+    std::memcpy(reinterpret_cast<void*>(payloadRange.address), cipHeader, sizeof(cipHeader));
+
+    IOAddressSegment controlRange{};
+    ASSERT_EQ(controlDescriptor->GetAddressRange(&controlRange), kIOReturnSuccess);
+    std::memset(reinterpret_cast<void*>(controlRange.address), 0, controlRange.length);
+    auto* control = reinterpret_cast<IsochTxQueueControl*>(controlRange.address);
+    control->committedEnd.store(AudioTimingGeometry::kTxPreparationLeadPackets,
+                                std::memory_order_release);
+
+    const uint64_t cursor = ring.Stats().latestSequence;
+    ASSERT_EQ(service.StartTransmit(/*channel=*/3, hardware,
+                                    /*sid=*/0x3f, ASFW::FW::FwSpeed::S400),
+              kIOReturnSuccess);
+    auto* context = service.TransmitContext();
+    ASSERT_NE(context, nullptr);
+    EXPECT_TRUE(RingMessagesContaining(cursor, "Seed-window dump").empty())
+        << "the dump waits for the first completion event";
+
+    const Register32 commandPtrRegister =
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0));
+    const uint32_t descriptorBase = hardware.GetTestRegister(commandPtrRegister) & 0xfffffff0U;
+    const uint32_t completedPackets = AudioTimingGeometry::kTxPacketsPerGroup;
+    hardware.SetTestRegister(
+        commandPtrRegister,
+        (descriptorBase +
+         completedPackets * Layout::kBlocksPerPacket * Layout::kDescriptorStride) |
+            Layout::kBlocksPerPacket);
+    MarkPacketsSent(*context, 0, completedPackets);
+    context->HandleInterrupt();
+
+    EXPECT_EQ(RingMessagesContaining(cursor, "Seed-window dump BEGIN").size(), 1U);
+    EXPECT_EQ(RingMessagesContaining(cursor, "Seed-window dump END").size(), 1U);
+    const auto cipLines = RingMessagesContaining(cursor, "CIP: q0=0x3f1a0000 q1=0x8222ffff");
+    ASSERT_EQ(cipLines.size(), 1U);
+    EXPECT_NE(cipLines[0].find("sid=63 dbs=26 fn=0 qpc=0 dbc=0 fmt=0x02 fdf=0x22 syt=0xffff"),
+              std::string::npos)
+        << cipLines[0];
+    EXPECT_TRUE(RingMessagesContaining(cursor, "CIP: unavailable").empty());
+    // Bounded to the 48-packet head the 4a reference covers, not the whole ring.
+    EXPECT_EQ(RingMessagesContaining(cursor, "CIP: q0=").size(), 48U);
+
+    // One-shot: the next completion event refills without dumping again.
+    MarkPacketsSent(*context, completedPackets, completedPackets);
+    context->HandleInterrupt();
+    EXPECT_EQ(RingMessagesContaining(cursor, "Seed-window dump BEGIN").size(), 1U);
+
+    const uint32_t liveCommandPtr = hardware.GetTestRegister(commandPtrRegister);
+    context->LogStatistics();
+    char expectedCmd[24];
+    std::snprintf(expectedCmd, sizeof(expectedCmd), "Cmd=0x%08x", liveCommandPtr);
+    const auto samples = RingMessagesContaining(cursor, "IT: Sample Ctl=");
+    ASSERT_EQ(samples.size(), 1U);
+    EXPECT_NE(samples[0].find(expectedCmd), std::string::npos) << samples[0];
 }
 
 TEST(IsochServiceTxPreparation, ActiveTransmitStopRetainsQueueUntilHardwareQuiesces) {

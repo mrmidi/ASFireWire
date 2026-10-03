@@ -9,6 +9,12 @@ macro(add_device_test TARGET_NAME)
     gtest_discover_tests(${TARGET_NAME})
 endmacro()
 
+# MOTU vendor status word decode (header-only; pins the bit map against words
+# actually captured on an 828 Mk3)
+add_device_test(MotuStatusWordTests
+    MotuStatusWordTests.cpp
+)
+
 # DICE / Focusrite protocol serialization tests
 add_device_test(DiceFocusriteSerializationTests
     DiceFocusriteSerializationTests.cpp
@@ -103,10 +109,45 @@ add_device_test(SessionCharacterizationTests
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioNubPublisher.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
+)
+
+# MOTU backend, protocol v3: device notifications go to the
+# backend of the device's family, the 828 Mk3 status word restarts on a buffer
+# fault, and the Mk3 nub carries its own profile before the first start.
+add_device_test(MotuAudioBackendTests
+    MotuAudioBackendTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Session/RestartRoutine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Session/SessionScheduler.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Session/StopRoutine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/TCAT/DICETcatProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspTypes.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SaffireproCommon.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/DiceAudioBackend.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Core/AudioNubPublisher.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/MotuAudioBackend.cpp"
 )
 
 # Session scheduler: overlapping requests, faults, teardown (AUDIO_SESSION_REDESIGN.md S2).
@@ -133,6 +174,7 @@ add_device_test(AudioSessionSchedulerTests
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioNubPublisher.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
@@ -145,6 +187,11 @@ add_device_test(DuplexStreamProfileTests
     DuplexStreamProfileTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+)
+
+# When a failed IRM reservation may be downgraded to advisory, and when it may not.
+add_device_test(DuplexIRMAdvisoryTests
+    DuplexIRMAdvisoryTests.cpp
 )
 
 # BeBoBProtocol base-class: async ApplyClockConfig chain, timer settle, epoch cancel.
@@ -344,6 +391,7 @@ add_device_test(BackendLifecycleRaceTests
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MOTU828Mk3Profile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"

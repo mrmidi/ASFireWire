@@ -150,6 +150,27 @@ extension ASFWMCPToolDefinition {
                 "type": .string("object"),
                 "additionalProperties": .bool(false)
             ])
+        case "asfw_audio_stream_snapshot":
+            return .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "guid": .object([
+                        "oneOf": .array([
+                            .object([
+                                "type": .string("integer"),
+                                "minimum": .int(1),
+                            ]),
+                            .object([
+                                "type": .string("string"),
+                                "description": .string(
+                                    "Device GUID as decimal or 0x-prefixed hexadecimal.")
+                            ]),
+                        ]),
+                    ]),
+                ]),
+                "required": .array([.string("guid")]),
+                "additionalProperties": .bool(false)
+            ])
         default:
             return .object([
                 "type": .string("object"),

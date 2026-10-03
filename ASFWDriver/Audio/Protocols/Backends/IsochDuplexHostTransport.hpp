@@ -11,6 +11,7 @@
 #include "../../Engine/Direct/Rx/DirectAudioReceiveConsumer.hpp"
 #include "../../Wire/MOTU/MotuPayloadCodec.hpp"
 #include "../../Wire/MOTU/MotuDeviceTiming.hpp"
+#include "../../Wire/MOTU/MotuV3DeviceTiming.hpp"
 #include "../../Wire/MOTU/MotuRxDiagnosticCapture.hpp"
 #include "DirectRxFormatDescriptor.hpp"
 #include "DuplexIRMReservations.hpp"
@@ -34,6 +35,10 @@ class IIsochDuplexHostTransport {
     virtual ~IIsochDuplexHostTransport() = default;
 
     [[nodiscard]] virtual kern_return_t BeginSplitDuplex(uint64_t guid) noexcept = 0;
+    // `deviceOwnsChannel` marks a stream whose channel the device already fixed
+    // through its own protocol (DuplexStreamProfile geometry). For those the IRM
+    // round-trip is an announcement, not a selection, so a bus with no IRM
+    // responder degrades to the device-assigned channel instead of failing.
     [[nodiscard]] virtual kern_return_t
     ReservePlaybackResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient,
                              uint64_t allowedChannels, uint32_t packetBandwidthUnits,
@@ -143,6 +148,8 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         motuRxDiagnosticCaptures_[Driver::IsochService::kMaxStreamsPerDirection]{};
     std::unique_ptr<ASFW::Audio::Wire::MotuRxTimingObserver>
         motuRxTimingObservers_[Driver::IsochService::kMaxStreamsPerDirection]{};
+    std::unique_ptr<ASFW::Audio::Wire::MotuV3RxTimingObserver>
+        motuV3RxTimingObservers_[Driver::IsochService::kMaxStreamsPerDirection]{};
     uint64_t diagnosticGuid_{0};
     Backends::DuplexIRMReservationPair reservations_{};
 };

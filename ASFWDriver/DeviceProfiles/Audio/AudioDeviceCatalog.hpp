@@ -69,6 +69,9 @@ enum class DeviceDefinitionId : uint32_t {
     AvidMboxPro,
     /// An unlisted unit that passes the DICE identity rule (DiceIdentity.hpp).
     GenericDice,
+    /// MOTU protocol-v3. Appended rather than placed with the V2 rows above so
+    /// no existing id shifts.
+    Motu828mk3,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -168,7 +171,11 @@ enum class ProfileBuilderId : uint16_t {
     GenericDice,
     /// The Weiss DACs: same wire policy as the INT202/203 (DiceWeissInt).
     WeissDac,
-    kLastValid = WeissDac,
+    /// MOTU 828 Mk3 (protocol v3). Appended after WeissDac, so the numbers
+    /// above -- pinned by the dice-profiles goldens -- stay put; kLastValid is
+    /// moved by hand and a static_assert in AudioProfileRegistry.cpp holds it.
+    Motu828mk3,
+    kLastValid = Motu828mk3,
 };
 
 /// Concrete protocol class chosen by the catalog. This is deliberately
@@ -189,7 +196,10 @@ enum class ProtocolImplementationId : uint8_t {
     MotuV2,
     RmeFireface,
     GenericAvc,
-    kLastValid = GenericAvc,
+    /// MOTU protocol-v3 (828 Mk3): same register family as MotuV2, its own
+    /// protocol class, wire format and start recipe.
+    MotuV3,
+    kLastValid = MotuV3,
 };
 
 /// AMDTP cadence a device must be driven at regardless of what it reports.

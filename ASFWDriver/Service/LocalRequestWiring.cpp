@@ -163,17 +163,19 @@ public:
         }
         const uint32_t bits = ASFW::Audio::DICE::DecodeNotificationQuadlet(ctx.writePayload.data());
         const uint64_t guid = router_ ? router_->Deliver(ctx.generation, ctx.sourceID, bits) : 0;
-        char notifyStr[96];
-        ASFW::Audio::DICE::FormatNotification(bits, notifyStr, sizeof(notifyStr));
+        // Raw bits only. Not every writer here is DICE -- the MOTU 828 Mk3
+        // writes its status word to the same address, where 0x02 is "clock
+        // locked", not TX_CFG_CHG -- so the meaning is logged by the backend
+        // that owns the device (DeviceNotificationDispatch.hpp). Kept in the
+        // DICE category, where the notification path has always logged.
         if (guid == 0) {
             ASFW_LOG_RL(DICE, "dice/notify-unknown-source", 1000, OS_LOG_TYPE_DEFAULT,
-                        "DICE notification from unknown node 0x%04x gen=%u bits=0x%08x "
-                        "meaning=%{public}s: dropped",
-                        ctx.sourceID, ctx.generation, bits, notifyStr);
+                        "Device notification from unknown node 0x%04x gen=%u bits=0x%08x: dropped",
+                        ctx.sourceID, ctx.generation, bits);
             return LocalRequestResult::Write(ResponseCode::Complete);
         }
-        ASFW_LOG(DICE, "DICE notification quadlet: GUID=0x%016llx node=0x%04x bits=0x%08x meaning=%{public}s",
-                 guid, ctx.sourceID, bits, notifyStr);
+        ASFW_LOG(DICE, "Device notification quadlet: GUID=0x%016llx node=0x%04x bits=0x%08x",
+                 guid, ctx.sourceID, bits);
         return LocalRequestResult::Write(ResponseCode::Complete);
     }
 

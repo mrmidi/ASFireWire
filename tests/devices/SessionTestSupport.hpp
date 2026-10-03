@@ -26,6 +26,7 @@
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Core/AudioNubPublisher.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
+#include "Audio/Core/DeviceNotificationDispatch.hpp"
 #include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "Audio/Protocols/Backends/DiceAudioBackend.hpp"
 #include "Audio/Protocols/Backends/IsochDuplexHostTransport.hpp"
@@ -546,7 +547,15 @@ struct SessionRig {
         if (IsDice()) {
             // The real DICE backend listens, as in the driver: every DICE
             // golden also shows which notifications it turns into restarts.
-            diceBackend.emplace(publisher, registry, runtime, sessions, hardware, notifications);
+            // The words reach it the way AudioCoordinator routes them.
+            diceBackend.emplace(publisher, registry, runtime, sessions, hardware);
+            notificationDispatch.emplace(
+                notifications, [this](uint64_t g) -> ASFW::Audio::IAudioBackend* {
+                    return ASFW::Audio::CurrentAudioBackendKind(registry, g) ==
+                                   ASFW::Audio::AudioBackendKind::Dice
+                               ? &*diceBackend
+                               : nullptr;
+                });
         }
         bus.Trace().Clear();
     }
@@ -680,6 +689,8 @@ struct SessionRig {
     ASFW::Audio::Session::AudioSessions sessions;
     ASFW::Audio::AudioNubPublisher publisher{nullptr};
     std::optional<ASFW::Audio::DiceAudioBackend> diceBackend;
+    // After the backend, so it closes first.
+    std::optional<ASFW::Audio::DeviceNotificationDispatch> notificationDispatch;
 };
 
 } // namespace ASFW::Testing::Session

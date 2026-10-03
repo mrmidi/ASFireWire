@@ -11,6 +11,7 @@
 #include "../AudioClockPublisher.hpp"
 #include "../DirectInputWriter.hpp"
 #include "RxAudioPacketProcessor.hpp"
+#include "RxInputContentMeter.hpp"
 #include "../../../Wire/AM824/Am824PayloadCodec.hpp"
 #include "../../../Wire/RawPcm24In32/RawPcm24In32PayloadCodec.hpp"
 #include "../../../Wire/RawPcm24In32/RawPcm24Upper24In32LEPayloadCodec.hpp"
@@ -111,13 +112,26 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
                                      const RxAudioPacketProcessorResult& result,
                                      uint64_t packetHostTicks) noexcept;
 
+    // RX half of the bounded start-window capture compared offline against
+    // a passive capture of the official driver (IsochOracleCapture). MOTU protocol-v3 only;
+    // the TX half is MotuV3TxPublishInstruments.
+    void MeterDecodedFrames(uint32_t frames, uint32_t channels) noexcept;
+    void RecordOracleCapture(const ::ASFW::Isoch::IsochReceivePacket& packet,
+                             const RxAudioPacketProcessorResult& result) noexcept;
+
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
     uint64_t lastBindingGeneration_{0};
     Configuration configuration_{};
     ::ASFW::AudioEngine::Direct::DirectInputWriter inputWriter_{};
     ::ASFW::AudioEngine::Direct::Rx::RxAudioPacketProcessor processor_{inputWriter_};
+    RxInputContentMeter inputMeter_{};
     ::ASFW::Audio::Runtime::AudioGraphBinding inputView_{};
     ::ASFW::AudioEngine::Direct::AudioClockPublisher clockPublisher_{};
+
+    // RX packets carry no absolute index on the wire, so the oracle capture
+    // numbers them itself, from zero per capture generation.
+    uint64_t oracleRxPacketIndex_{0};
+    uint64_t oracleCaptureGeneration_{0};
 
     bool secondaryAnchored_{false};
     uint64_t secondaryAnchorEpoch_{0};

@@ -102,7 +102,21 @@ inline constexpr MotuPort k828mk2Capture[] = {
     {"Mix Return L", 0}, {"Mix Return R", 1},
 };
 
+// 828 Mk3 (protocol v3) playback. The v3 block shares the v2 layout, so these are PCM
+// chunk indices from byte 10 like every table above; the order is the captured El Capitan
+// CoreAudio-to-wire mapping, MotuV3Wire::kCoreToWireChunk minus the two message chunks
+// (MotuV3PayloadWriter.hpp pins the equality). Only Main L/R is identified on the wire
+// (PCM positions 10/11); the other ports are named by host position until they are
+// identified on hardware.
+inline constexpr MotuPort kMk3Playback[] = {
+    {"Main L", 10},   {"Main R", 11},   {"Output 3", 2},  {"Output 4", 3},
+    {"Output 5", 4},  {"Output 6", 5},  {"Output 7", 6},  {"Output 8", 7},
+    {"Output 9", 8},  {"Output 10", 9}, {"Output 11", 0}, {"Output 12", 1},
+    {"Output 13", 12}, {"Output 14", 13},
+};
+
 static_assert(IsChunkPermutation(kV2Playback));
+static_assert(IsChunkPermutation(kMk3Playback));
 static_assert(IsChunkPermutation(kUltraLiteCapture));
 static_assert(IsChunkPermutation(k828mk2Capture));
 
