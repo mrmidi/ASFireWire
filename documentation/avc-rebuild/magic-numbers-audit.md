@@ -308,12 +308,15 @@ Also changed in the same pass:
   `effective` / `not effective` on a subunit destination plug and `conv` only on an oPCR, so
   `route_check` flags both on each of the five plugs. This is the device, not the decoder.
 - Phase 88: its music status descriptor carries a top-level **0x8101 "music output plug status area"
-  block of 705 bytes** that the parser recognises by type and does not read (audit F7). Its
-  routing-status block says 4 source plugs; the unit's SUBUNIT INFO says 6.
+  block (705 bytes including its nested blocks)**. TA 2001007 §6.2.2 defines it (`number_of_source_plugs`,
+  then nested `8102` source plug status blocks); the parser walks it and reads the audio stream labels.
+  What audit F7 questions is the separate top-level capability read of `8101`-`8105`, not this block.
+  Its routing-status block says 4 source plugs; the unit's SUBUNIT INFO says 6. §6.2.2 calls the 8101
+  count the plugs "currently configured", so the gap may be configured vs maximum (not checked).
 
-**Not covered, on purpose:** the bytes inside an info block whose type is known but whose layout the
-parser does not read (8101's 705 bytes) are logged by type and size only. Dumping them would be a second
-decoder with no spec behind it.
+**Not covered, on purpose:** the bytes inside an info block are not dumped; a block is logged by type and
+size, and what the parser reads from it is logged as the facts it produced (plug labels, clusters, plugs).
+A raw dump would be a second decoder.
 
 Verification: `DiscoveryLogTests` (16 cases: every table has a known and an unknown case, unknown top-level
 block / plug usage / port type are flagged, a 400-character name is wrapped without loss, the route status
