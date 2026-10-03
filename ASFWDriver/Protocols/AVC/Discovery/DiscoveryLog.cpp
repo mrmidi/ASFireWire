@@ -251,6 +251,78 @@ void DescribePlugs(const DiscoverySnapshot& s, Lines& out) {
     }
 }
 
+/// An AM824 label byte by Table 5.8 of TA 2001007 (the ranges), or UNKNOWN for a reserved one.
+[[nodiscard]] std::string DescribeAm824Label(uint8_t label) {
+    const auto in = [label](unsigned low, unsigned high) { return label >= low && label <= high; };
+    const char* name = in(0x00, 0x3F)   ? "IEC 60958 conformant"
+                       : in(0x40, 0x4F) ? "multi-bit linear audio"
+                       : in(0x50, 0x57) ? "one bit audio (plain)"
+                       : in(0x58, 0x5F) ? "one bit audio (encoded)"
+                       : in(0x60, 0x67) ? "high precision multi-bit linear audio"
+                       : in(0x80, 0x83) ? "MIDI conformant"
+                       : in(0x88, 0x8B) ? "SMPTE time code conformant"
+                       : in(0x8C, 0x8F) ? "sample count"
+                       : in(0xC0, 0xEF) ? "ancillary data"
+                                        : nullptr;
+    if (!name) return "UNKNOWN(am824_label:" + Hex(label) + ")";
+    return std::string(name) + "(" + Hex(label) + ")";
+}
+
+/// The capability_attributes first byte by the fields it announces (TA 2001007 Table 5.4).
+[[nodiscard]] std::string DescribeCapabilityAttributes(const std::vector<uint8_t>& attributes) {
+    std::string text;
+    const auto add = [&text](const char* name) { text += (text.empty() ? "" : ", ") + std::string(name); };
+    const uint8_t first = attributes.empty() ? 0 : attributes.front();
+    if (first & D::kMusicCapabilityGeneralBit) add("general");
+    if (first & D::kMusicCapabilityAudioBit) add("audio");
+    if (first & D::kMusicCapabilityMidiBit) add("MIDI");
+    if (first & D::kMusicCapabilitySmpteBit) add("SMPTE time code");
+    if (first & D::kMusicCapabilitySampleCountBit) add("sample count");
+    if (first & D::kMusicCapabilityAudioSyncBit) add("audio SYNC");
+    constexpr uint8_t kKnownBits = 0x3F;
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        if ((first & (1u << bit)) && !((kKnownBits | D::kMusicHasMoreAttributesBit) & (1u << bit))) {
+            add(("UNKNOWN(capability_bit:" + std::to_string(bit) + ")").c_str());
+        }
+    }
+    return text.empty() ? "none" : text;
+}
+
+void DescribeMusicIdentifier(const SubunitContents& c, Lines& out) {
+    const auto& id = *c.musicIdentifier;
+    const std::string context = "music_identifier " + Label(c.id);
+    out.Add(context, "generation_id=" + std::to_string(id.generationId) + " version=" + std::to_string(id.version >> 4) +
+                         "." + std::to_string(id.version & 0x0F) + "(" + Hex(id.version) + ") list_id_size=" +
+                         std::to_string(id.sizeOfListId) + " root_lists=" + std::to_string(id.rootListIds.size()) +
+                         " attributes=" + HexBytes(id.attributes) + " optional_info_bytes=" + std::to_string(id.optionalInfoBytes) +
+                         " manufacturer_info_bytes=" + std::to_string(id.manufacturerInformationBytes));
+    out.Add(context, "capabilities=" + Hex(id.capabilityAttributes.empty() ? 0 : id.capabilityAttributes.front()) + " [" +
+                         DescribeCapabilityAttributes(id.capabilityAttributes) + "]");
+    if (id.general) {
+        out.Add(context, "general transmit=" + DescribeCapabilityBits(id.general->transmit) + " receive=" +
+                             DescribeCapabilityBits(id.general->receive) + " latency=" + Hex(id.general->latency, 8));
+    }
+    if (id.audio) {
+        size_t i = 0;
+        for (const auto& format : *id.audio) {
+            const std::string sfc = format.fdf <= 0x07 ? Describe(static_cast<CipSfc>(format.fdf))
+                                                       : "UNKNOWN(fdf:" + Hex(format.fdf) + ")";
+            out.Add(context, "audio_format[" + std::to_string(i++) + "] max_input_channels=" +
+                                 std::to_string(format.maxInputChannels) + " max_output_channels=" +
+                                 std::to_string(format.maxOutputChannels) + " fdf=" + sfc +
+                                 " am824_label=" + DescribeAm824Label(format.am824Label));
+        }
+    }
+    if (id.midi) {
+        out.Add(context, "midi version=" + std::to_string(id.midi->version) + "." + std::to_string(id.midi->revision) +
+                             " adaptation_layer=" + Hex(id.midi->adaptationLayerVersion) + " max_input_ports=" +
+                             std::to_string(id.midi->maxInputPorts) + " max_output_ports=" + std::to_string(id.midi->maxOutputPorts));
+    }
+    if (id.smpteTimeCode) out.Add(context, "smpte_time_code " + DescribeActivity(*id.smpteTimeCode, "rx", "tx"));
+    if (id.sampleCount) out.Add(context, "sample_count " + DescribeActivity(*id.sampleCount, "rx", "tx"));
+    if (id.audioSync) out.Add(context, "audio_sync " + DescribeActivity(*id.audioSync, "bus", "external"));
+}
+
 void DescribeMusic(const SubunitContents& c, Lines& out) {
     const auto& m = *c.music;
     const std::string context = "music " + Label(c.id);
@@ -523,6 +595,7 @@ std::vector<std::string> DescribeDiscovery(const DiscoverySnapshot& snapshot, co
     DescribeDescriptors(snapshot, out);
     for (const auto& c : snapshot.contents) {
         if (c.music) DescribeMusic(c, out);
+        if (c.musicIdentifier) DescribeMusicIdentifier(c, out);
         if (c.audio) DescribeAudio(c, out);
     }
     DescribeStatuses(snapshot, out);

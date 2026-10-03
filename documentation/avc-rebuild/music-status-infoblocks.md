@@ -84,5 +84,5 @@ label lists under `8101`/`8103` for channel names; it uses cluster and music-plu
 
 ## Still open
 
-- Read the Music identifier descriptor (specifier `00`) in discovery. Captured once from a Phase 88 on 2026-10-03
-  (`fixtures/phase88_music_identifier.json`), so the frames are now proven on that device, not on any other.
+- ~~Read the Music identifier descriptor (specifier `00`) in discovery~~: done 2026-10-03, after the status read, logged as
+  `music_identifier` lines. Captured on a Phase 88 only (`fixtures/phase88_music_identifier.json`).

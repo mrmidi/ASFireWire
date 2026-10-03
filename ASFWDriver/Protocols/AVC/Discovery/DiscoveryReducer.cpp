@@ -342,8 +342,17 @@ void Descriptor(Transition& t, size_t index, const DescriptorReply& reply) {
     if (result.success && probe.subunit.type != SubunitType::kUnit) {
         auto& content = Contents(s, probe.subunit);
         if (probe.subunit.type == SubunitType::kMusic) {
-            auto parsed = ParsedDescriptors::MusicSubunitDescriptorParser::ParseStatusDescriptor(result.data);
-            if (parsed) content.music = std::move(*parsed); else blob.parseError = parsed.error();
+            if (probe.specifier == Cmd::DescriptorSpecifier::SubunitIdentifier()) {
+                // The static capabilities (TA 2001007 §5). Captured on a Phase 88; a failure here costs the
+                // capabilities only, never the discovery.
+                auto parsed = ParsedDescriptors::MusicSubunitIdentifierParser::Parse(result.data);
+                if (parsed) content.musicIdentifier = std::move(*parsed); else blob.parseError = parsed.error();
+            } else {
+                auto parsed = ParsedDescriptors::MusicSubunitDescriptorParser::ParseStatusDescriptor(result.data);
+                if (parsed) content.music = std::move(*parsed); else blob.parseError = parsed.error();
+                // Read the identifier only from a subunit that has just answered OPEN / READ DESCRIPTOR.
+                Insert(s, index, {DescriptorProbe{probe.subunit, Cmd::DescriptorSpecifier::SubunitIdentifier()}});
+            }
         } else if (probe.specifier == Cmd::DescriptorSpecifier::SubunitIdentifier()) {
             auto parsed = D::ParseIdentifierDescriptor(result.data);
             if (parsed) {

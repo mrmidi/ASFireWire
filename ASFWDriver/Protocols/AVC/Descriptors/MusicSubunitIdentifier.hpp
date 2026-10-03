@@ -11,8 +11,9 @@
 //
 // Seen on one device: a TerraTec Phase 88 answered OPEN / READ / CLOSE of specifier 00 on 2026-10-03 with this
 // descriptor (documentation/avc-rebuild/fixtures/phase88_music_identifier.json), and the parser reads it with every
-// length adding up. No reference stack (Linux, FFADO, Apple IOFireWire / AVCVideoServices) reads it. Discovery does
-// not read it: it asks the Music subunit for its status descriptor only.
+// length adding up. No reference stack (Linux, FFADO, Apple IOFireWire / AVCVideoServices) reads it. Discovery reads
+// it once per Music subunit, after that subunit's status descriptor was read (DiscoveryReducer.cpp); a device that
+// refuses or fails it costs the capabilities only.
 
 // Layout (nesting from Figures 5.1 and 5.2, read the way the Audio subunit's is):
 //   descriptor_length (2) | generation_ID | size_of_list_ID | size_of_object_ID |

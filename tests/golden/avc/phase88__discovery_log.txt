@@ -317,6 +317,7 @@
 [AvcCaps] descriptor Audio(0x01)#0 list descriptor by list_ID(0x10) [10 18 00] bytes=35 primary_error=none cleanup_error=none parse_error=none
 [AvcCaps] descriptor Audio(0x01)#0 list descriptor by list_ID(0x10) [10 18 01] bytes=3895 primary_error=none cleanup_error=none parse_error=none
 [AvcCaps] descriptor Music(0x0c)#0 subunit dependent descriptor(0x80) [80] bytes=2410 primary_error=none cleanup_error=none parse_error=none
+[AvcCaps] descriptor Music(0x0c)#0 (sub)unit identifier descriptor(0x00) [00] bytes=67 primary_error=none cleanup_error=none parse_error=none
 [AvcCaps] audio Audio(0x01)#0 generation_id=2 list_id_size=2 object_id_size=0 object_position_size=2 root_lists=[0x1800] text_database_entries=80
 [AvcCaps] audio Audio(0x01)#0 subunit_source_plug[0] fed_by subunit destination plug 2 [f0 02]
 [AvcCaps] audio Audio(0x01)#0 subunit_source_plug[1] fed_by subunit destination plug 3 [f0 03]
@@ -577,6 +578,16 @@
 [AvcCaps] music Music(0x0c)#0 source plug #0 midi_streams declared=2 labelled=2
 [AvcCaps] music Music(0x0c)#0 source plug #0 midi_stream_label[0]="MidiPort_1"
 [AvcCaps] music Music(0x0c)#0 source plug #0 midi_stream_label[1]="MidiPort_2"
+[AvcCaps] music_identifier Music(0x0c)#0 generation_id=2 version=1.0(0x10) list_id_size=0 root_lists=0 attributes=00 optional_info_bytes=0 manufacturer_info_bytes=0
+[AvcCaps] music_identifier Music(0x0c)#0 capabilities=0x27 [general, audio, MIDI, audio SYNC]
+[AvcCaps] music_identifier Music(0x0c)#0 general transmit=blocking(0x02) receive=non-blocking+blocking(0x03) latency=0xffffffff
+[AvcCaps] music_identifier Music(0x0c)#0 audio_format[0] max_input_channels=10 max_output_channels=10 fdf=32 kHz(0x00) am824_label=multi-bit linear audio(0x40)
+[AvcCaps] music_identifier Music(0x0c)#0 audio_format[1] max_input_channels=10 max_output_channels=10 fdf=44.1 kHz(0x01) am824_label=multi-bit linear audio(0x40)
+[AvcCaps] music_identifier Music(0x0c)#0 audio_format[2] max_input_channels=10 max_output_channels=10 fdf=48 kHz(0x02) am824_label=multi-bit linear audio(0x40)
+[AvcCaps] music_identifier Music(0x0c)#0 audio_format[3] max_input_channels=10 max_output_channels=10 fdf=88.2 kHz(0x03) am824_label=multi-bit linear audio(0x40)
+[AvcCaps] music_identifier Music(0x0c)#0 audio_format[4] max_input_channels=10 max_output_channels=10 fdf=96 kHz(0x04) am824_label=multi-bit linear audio(0x40)
+[AvcCaps] music_identifier Music(0x0c)#0 midi version=1.0 adaptation_layer=0x00 max_input_ports=4 max_output_ports=0
+[AvcCaps] music_identifier Music(0x0c)#0 audio_sync bus+external(0x03)
 [AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) data=[60] not muted(off)
 [AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) data=[00 00] volume_raw=0x0000 0 dB
 [AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=1 control=MUTE_CONTROL(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)

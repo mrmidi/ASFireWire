@@ -87,6 +87,7 @@
 [AvcCaps] descriptor Unit(0x1f) subunit dependent descriptor(0x80) [80] bytes=0 primary_error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8) cleanup_error=none parse_error=none
 [AvcCaps] descriptor Audio(0x01)#0 (sub)unit identifier descriptor(0x00) [00] bytes=56 primary_error=none cleanup_error=none parse_error=none
 [AvcCaps] descriptor Music(0x0c)#0 subunit dependent descriptor(0x80) [80] bytes=464 primary_error=none cleanup_error=none parse_error=none
+[AvcCaps] descriptor Music(0x0c)#0 (sub)unit identifier descriptor(0x00) [00] bytes=0 primary_error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8) cleanup_error=none parse_error=none
 [AvcCaps] audio Audio(0x01)#0 generation_id=0 list_id_size=2 object_id_size=0 object_position_size=2 root_lists=[] text_database_entries=0
 [AvcCaps] audio Audio(0x01)#0 subunit_source_plug[0] fed_by Feature(0x81) function block 0 [81 00]
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 name="" name_index=none

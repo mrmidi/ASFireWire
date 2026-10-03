@@ -6,6 +6,7 @@
 #include "../Commands/FunctionBlockCommand.hpp"
 #include "../Descriptors/DescriptorAccessor.hpp"
 #include "../Descriptors/MusicSubunitDescriptor.hpp"
+#include "../Descriptors/MusicSubunitIdentifier.hpp"
 #include "../Descriptors/AudioSubunitDescriptor.hpp"
 #include <memory>
 #include "../../../Common/PcmSlotMap.hpp"
@@ -53,6 +54,9 @@ struct SelectorStatus {
 struct SubunitContents {
     SubunitId id;
     std::optional<ParsedDescriptors::MusicSubunitStatus> music;
+    /// The Music subunit's identifier descriptor (TA 2001007 §5): its static capabilities. Read only after the
+    /// status descriptor of the same subunit was, so a subunit that answered descriptor commands.
+    std::optional<ParsedDescriptors::MusicSubunitIdentifier> musicIdentifier;
     std::optional<ParsedDescriptors::AudioSubunitIdentifier> audio;
     ParsedDescriptors::TextDatabase text;
 };

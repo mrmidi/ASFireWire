@@ -26,10 +26,13 @@ address, 0 or more than 72 subcommands, a subfunction in a STATUS entry).
 
 ## What is deliberately not wired
 
-- Discovery does not probe any of these commands and does not read the identifier descriptor. It reads the
-  status descriptor (0x80) only (`DiscoveryReducer.cpp`).
-- Per `avc-attach-sends-only-captured-frames`: an unproven frame can freeze Phase 88 / M-Audio firmware.
-  These frames are unproven. A device with a command allowlist refuses them (`kRefused`).
+- Discovery does not probe the six commands. It reads the Music status descriptor (0x80) and, **since 2026-10-03, the
+  identifier descriptor (0x00)** of the same subunit, right after the status read succeeded (so only from a subunit
+  that has just answered OPEN / READ DESCRIPTOR). A refused or failed identifier read costs the capabilities only.
+- Per `avc-attach-sends-only-captured-frames`: the identifier read is captured on a Phase 88 only. Every other Music
+  subunit is sent this frame for the first time at its next attach: on the Duet's golden it is simulated as NOT
+  IMPLEMENTED, unverified on the real device. A device with a command allowlist refuses it (`kRefused`).
+- The six commands are unproven frames and can freeze Phase 88 / M-Audio firmware. A device with an allowlist refuses them.
 - Adding a probe means: pick a device that is not Phase 88, send one MUSIC PLUG INFO STATUS, capture the
   reply, and turn that capture into a fixture before widening.
 
@@ -80,7 +83,9 @@ value the status descriptor's `8107` reports as activity. The 10 / 10 channels m
 
 This descriptor is where the **capability** fields live (max audio channels, MIDI version, SMPTE / sample
 count / sync). The status parser no longer guesses them (audit F7 resolved); `MusicCapabilities` holds only `8100`'s
-fields. The identifier parser exists and is tested; discovery does not read the descriptor yet.
+fields. Discovery reads the identifier descriptor and logs it as `music_identifier ...` lines; the app's capability
+flags take the identifier's audio / MIDI / SMPTE capability first and the plugs then refine the counts (the Phase 88's
+MIDI flag, wrongly false before, is true now).
 
 ## Naming change
 

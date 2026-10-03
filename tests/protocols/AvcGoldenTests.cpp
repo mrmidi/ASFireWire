@@ -525,6 +525,7 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     // The device's own descriptors and its unit ISO output 0 source (captured
     // 2026-09-28): the attach image predates descriptor capture.
     rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
@@ -728,6 +729,7 @@ TEST(AvcGoldenTests, Phase88ExchangeLogReplaysToTheSamePublishedShape) {
     opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
     AvcGoldenRig rig(kPhase88, opts);
     rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
@@ -763,6 +765,7 @@ TEST(AvcGoldenTests, Phase88DiscoveryDocumentPagesReassembleWithinTheWireLimit) 
     opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
     AvcGoldenRig rig(kPhase88, opts);
     rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
     bool ok = false;
     rig.Unit()->Initialize([&](bool done) { ok = done; });
@@ -908,6 +911,7 @@ TEST(AvcGoldenTests, Phase88DiscoveryLogNamesEveryFact) {
     opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
     AvcGoldenRig rig(kPhase88, opts);
     rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
@@ -979,6 +983,7 @@ TEST(AvcGoldenTests, Phase88UserClientOutputsAreUnchanged) {
     opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
     AvcGoldenRig rig(kPhase88, opts);
     rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);

@@ -132,6 +132,19 @@ std::optional<std::vector<uint8_t>> BuildMusicCapabilities(const E::DiscoverySna
     std::vector<Plug> plugs;
     const auto contents = std::find_if(snapshot.contents.begin(), snapshot.contents.end(),
                                        [&](const auto& c) { return c.id == subunit; });
+    // The identifier descriptor's static capabilities (TA 2001007 §5.2), first: the plugs below replace the
+    // channel and port counts with what the subunit really exposes.
+    if (contents != snapshot.contents.end() && contents->musicIdentifier) {
+        const auto& id = *contents->musicIdentifier;
+        if (id.audio && !id.audio->empty()) {
+            caps.audio = true;
+            uint16_t in = 0, out = 0;
+            for (const auto& format : *id.audio) { in = std::max(in, format.maxInputChannels); out = std::max(out, format.maxOutputChannels); }
+            caps.audioIn = in; caps.audioOut = out;
+        }
+        if (id.midi) { caps.midi = true; caps.midiIn = id.midi->maxInputPorts; caps.midiOut = id.midi->maxOutputPorts; }
+        if (id.smpteTimeCode && *id.smpteTimeCode != 0) caps.smpte = true;
+    }
     if (contents != snapshot.contents.end() && contents->music) {
         const auto& status = *contents->music;
         // SMPTE time code is present when the subunit describes an SMPTE music plug (810B, type 02) or a
