@@ -24,8 +24,10 @@
 #include "ASFWDriver/Protocols/BeBoB/Bootloader/BeBoBBootloaderCue.hpp"
 #include "ASFWDriver/Protocols/BeBoB/Bootloader/BeBoBBootloaderPreparation.hpp"
 #include "ASFWDriver/Audio/Model/ASFWAudioDevice.hpp"
+#include "ASFWDriver/Logging/LogRing.hpp"
 
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -237,6 +239,27 @@ TEST(AvcDiscoveryLifecycle, AFinishedAttachEndsInAVisiblePublicationState) {
     const auto status = rig.Coordinator().Status(kGuid);
     EXPECT_FALSE(std::holds_alternative<ASFW::Audio::AVC::WaitingForDiscovery>(status));
     EXPECT_EQ(rig.Published(), std::holds_alternative<ASFW::Audio::AVC::Ready>(status) ? 1U : 0U);
+}
+
+TEST(AvcDiscoveryLifecycle, ACompletedDiscoveryReachesTheRingByName) {
+    // Found on a Phase 88: the commit moved the snapshot away before logging it, so only a failed
+    // discovery was ever logged. A completed one must leave its [AvcCaps] lines in the ring.
+    Logging::LogRing::Shared().Initialize();
+    const auto countCapsLines = [] {
+        Logging::LogRingQuery query{};
+        query.categoryMask = 1U << static_cast<uint32_t>(Logging::LogCategory::AVC);
+        std::strncpy(query.contains, "[AvcCaps]", sizeof(query.contains) - 1);
+        std::vector<Logging::LogRecord> records(64);
+        return Logging::LogRing::Shared().Query(query, records.data(), static_cast<uint32_t>(records.size())).recordCount;
+    };
+    const auto before = countCapsLines();
+    DiscoveryRig rig;
+    rig.Discovery().OnUnitPublished(rig.Unit());
+    rig.Settle();
+    const auto unit = rig.Discovery().Unit(kGuid);
+    ASSERT_NE(unit, nullptr);
+    ASSERT_EQ(unit->GetDiscoveryStatus(), AVCDiscoveryStatus::Completed);
+    EXPECT_GT(countCapsLines(), before);
 }
 
 TEST(AvcDiscoveryLifecycle, AManualRefreshNeverRepublishes) {

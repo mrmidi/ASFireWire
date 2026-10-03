@@ -154,13 +154,13 @@ void AVCUnit::InitializeAlreadyBegun(std::function<void(bool)> completion) {
             if (!unit) { if (completion) completion(false); return; }
             const bool current = snapshot && unit->IsCurrentRoute(snapshot->route);
             const bool success = current && snapshot->complete;
-            if (success) {
-                unit->ApplySnapshot(*snapshot);
-                unit->snapshot_ = std::move(snapshot);
-            }
+            if (success) unit->ApplySnapshot(*snapshot);
             if (!success && unit->snapshot_ && unit->IsCurrentRoute(unit->snapshot_->route))
                 unit->ApplySnapshot(*unit->snapshot_);
+            // Log before the lease moves into snapshot_: a moved-from lease is empty, and a successful
+            // discovery is the one that must be logged.
             if (snapshot) unit->LogDiscovery(*snapshot);
+            if (success) unit->snapshot_ = std::move(snapshot);
             unit->initialized_ = success;
             unit->sessionSlot_ = E::IdleSlot{};
             unit->FinishExternalRescan(success);
