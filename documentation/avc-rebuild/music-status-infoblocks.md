@@ -64,8 +64,11 @@ label lists under `8101`/`8103` for channel names; it uses cluster and music-plu
   blocks, **"MidiPort_1" and "MidiPort_2"** (`fixtures/phase88_descriptors.json`). The device sends spec-defined
   MIDI labels that nothing reads.
 - Duet: `8100` and `8108` only; no `8101`.
-- `8101` says 4 source plugs, the unit's SUBUNIT INFO says 6. §6.2.2 says "currently configured", so this may be
-  configured versus maximum. Not checked.
+- `8101` says 4 source plugs, the unit's SUBUNIT INFO says 6. **Checked live on a Phase 88 (2026-10-03,
+  `asfw_avc_get_discovery_document`):** the 4 is the number of nested `8102` blocks, and they are sparse: source plugs
+  0 (10 audio + 2 MIDI streams), 1 (8 audio), 2 (2 audio) and 5 (`8107` audio SYNC, activity `03`). Plugs 3 and 4 have
+  no status block. So `number_of_source_plugs` counts the plugs the status area describes, not the subunit's
+  plug total, and plug numbers are not 0..n-1. One device; do not assume it for others.
 
 ## Open (not applied)
 
