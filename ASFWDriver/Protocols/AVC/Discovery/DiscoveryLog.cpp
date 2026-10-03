@@ -5,7 +5,9 @@
 
 #include "DiscoveryLog.hpp"
 
+#include "../Commands/AudioNames.hpp"
 #include "../Commands/CommandNames.hpp"
+#include "../Descriptors/AudioControlBits.hpp"
 #include "../Core/AvcNames.hpp"
 #include "../Descriptors/DescriptorNames.hpp"
 
@@ -312,6 +314,44 @@ void DescribeMusic(const SubunitContents& c, Lines& out) {
     }
 }
 
+void DescribeTypeInfo(const D::AudioFunctionBlockInfo& fb, const std::string& context, Lines& out) {
+    const bool codec = fb.type == D::AudioFunctionBlockType::kCodec;
+    const auto fbType = static_cast<Cmd::FunctionBlockType>(static_cast<uint8_t>(fb.type));
+    if (fb.typeInfoError) {
+        out.Add(context, std::string(codec ? "codec_type" : "process_type") + "=" +
+                             (fb.processType ? Cmd::DescribeSubType(fbType, fb.processType) : std::string("unread")) +
+                             " type_dependent_info_error=" + D::DescribeParseError(*fb.typeInfoError));
+        return;
+    }
+    if (!fb.typeInfo) {
+        out.Add(context, std::string(codec ? "codec_type" : "process_type") + "=none (empty type dependent information)");
+        return;
+    }
+    const auto& info = *fb.typeInfo;
+    const bool mixer = !codec && info.subType == static_cast<uint8_t>(Cmd::ProcessingType::kMixer);
+    std::string bits;
+    for (const uint8_t byte : info.controls) bits += Hex(byte);
+    if (mixer) {
+        // The mixer's Controls is an input x output matrix of programmable cells, not a list (§8.4.1).
+        size_t programmable = 0;
+        for (size_t bit = 0; bit < info.controls.size() * 8; ++bit) programmable += info.ControlsBit(bit) ? 1 : 0;
+        out.Add(context, "process_type=" + Cmd::DescribeSubType(fbType, info.subType) + " programmable_mixer_controls=" +
+                             std::to_string(programmable) + " controls_bytes=" + std::to_string(info.controls.size()));
+        return;
+    }
+    out.Add(context, std::string(codec ? "codec_type=" : "process_type=") + Cmd::DescribeSubType(fbType, info.subType) +
+                         " controls_bytes=" + std::to_string(info.controls.size()) + " controls=[" +
+                         D::DescribeControlBits(fb.type, info.subType, info.controls) + "]");
+    for (size_t i = 0; i < info.modes.size(); ++i) {
+        out.Add(context, "mode[" + std::to_string(i) + "]=" + Hex(info.modes[i], info.sizeOfModes * 2u) + " (active channels, " +
+                             std::to_string(info.sizeOfModes) + " bytes)");
+    }
+    if (!info.guid.empty()) {
+        out.Add(context, "guid=" + HexBytes(info.guid) + " guid_information_bytes=" + std::to_string(info.guidInformation.size()));
+    }
+    if (!info.codecSpecific.empty()) out.Add(context, "decoder_specific=[" + HexBytes(info.codecSpecific) + "]");
+}
+
 void DescribeAudio(const SubunitContents& c, Lines& out) {
     const auto& a = *c.audio;
     const std::string context = "audio " + Label(c.id);
@@ -331,15 +371,18 @@ void DescribeAudio(const SubunitContents& c, Lines& out) {
                                (fb.nameIndex == D::kNoNameIndex ? std::string("none") : std::to_string(fb.nameIndex)));
         for (const auto& source : fb.inputSources) out.Add(fbContext, "input " + D::Describe(source));
         if (fb.type == D::AudioFunctionBlockType::kFeature) {
-            // The bitmap is a descriptor hint only; STATUS decides which controls exist (audit F8).
+            // The bitmap is a descriptor hint only; STATUS decides which controls exist (audit F8). Bits are
+            // numbered from the most significant bit (Phase 88 confirms it, the Duet's reads the other way).
             std::string channels;
             for (size_t i = 0; i < fb.channelControls.size(); ++i) channels += (i ? ", " : "") + Hex(fb.channelControls[i], 4);
+            const std::array<uint8_t, 2> master = {static_cast<uint8_t>(fb.masterControls >> 8), static_cast<uint8_t>(fb.masterControls & 0xFF)};
             out.Add(fbContext, "cluster_channels=" + std::to_string(fb.clusterChannels) + " general_tag=" +
                                    std::to_string(fb.generalTag));
-            out.Add(fbContext, "advertised_controls master=" + Hex(fb.masterControls, 4) + " channels=[" + channels +
-                                   "] (hint, bit order unverified, F8)");
-        } else if (fb.type == D::AudioFunctionBlockType::kProcessing) {
-            out.Add(fbContext, "process_type=" + Hex(fb.processType));
+            out.Add(fbContext, "advertised_controls master=" + Hex(fb.masterControls, 4) + " [" +
+                                   D::DescribeControlBits(fb.type, 0, master) + "] channels=[" + channels +
+                                   "] (hint: bits from the MSB)");
+        } else if (fb.type == D::AudioFunctionBlockType::kProcessing || fb.type == D::AudioFunctionBlockType::kCodec) {
+            DescribeTypeInfo(fb, fbContext, out);
         }
     }
 }

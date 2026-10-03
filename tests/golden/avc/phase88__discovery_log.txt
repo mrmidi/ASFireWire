@@ -332,32 +332,32 @@
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 name="Mixer Output Level" name_index=2
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 input Processing(0x82) function block 1 [82 01]
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 cluster_channels=8 general_tag=0
-[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 advertised_controls master=0xc000 channels=[0xc000, 0xc000, 0xc000, 0xc000, 0xc000, 0xc000, 0xc000, 0xc000] (hint, bit order unverified,
-[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 (cont 2) F8)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000, 0xc000, 0xc000, 0xc000, 0xc000,
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 (cont 2) 0xc000, 0xc000] (hint: bits from the MSB)
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #2 name="Mixer Input LineIn 1/2 Level" name_index=11
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #2 input subunit destination plug 2 [f0 02]
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #2 cluster_channels=2 general_tag=0
-[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #2 advertised_controls master=0xc000 channels=[0xc000, 0xc000] (hint, bit order unverified, F8)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #2 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #3 name="Mixer Input LineIn 3/4 Level" name_index=14
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #3 input subunit destination plug 3 [f0 03]
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #3 cluster_channels=2 general_tag=0
-[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #3 advertised_controls master=0xc000 channels=[0xc000, 0xc000] (hint, bit order unverified, F8)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #3 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #4 name="Mixer Input LineIn 5/6 Level" name_index=17
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #4 input subunit destination plug 4 [f0 04]
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #4 cluster_channels=2 general_tag=0
-[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #4 advertised_controls master=0xc000 channels=[0xc000, 0xc000] (hint, bit order unverified, F8)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #4 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #5 name="Mixer Input LineIn 7/8 Level" name_index=20
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #5 input subunit destination plug 5 [f0 05]
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #5 cluster_channels=2 general_tag=0
-[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #5 advertised_controls master=0xc000 channels=[0xc000, 0xc000] (hint, bit order unverified, F8)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #5 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #6 name="Mixer Input S/PDIF In Level" name_index=23
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #6 input subunit destination plug 6 [f0 06]
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #6 cluster_channels=2 general_tag=0
-[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #6 advertised_controls master=0xc000 channels=[0xc000, 0xc000] (hint, bit order unverified, F8)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #6 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #7 name="Mixer Input Waveplay Level" name_index=26
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #7 input Selector(0x80) function block 7 [80 07]
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #7 cluster_channels=2 general_tag=0
-[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #7 advertised_controls master=0xc000 channels=[0xc000, 0xc000] (hint, bit order unverified, F8)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #7 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
 [AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #1 name="LineOut 1/2 Selector" name_index=29
 [AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #1 input Processing(0x82) function block 2 [82 02]
 [AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #1 input Selector(0x80) function block 6 [80 06]
@@ -402,19 +402,19 @@
 [AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 input Feature(0x81) function block 4 [81 04]
 [AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 input Feature(0x81) function block 5 [81 05]
 [AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 input Feature(0x81) function block 6 [81 06]
-[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 process_type=0x01
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 process_type=MIXER(0x01) programmable_mixer_controls=0 controls_bytes=0
 [AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #2 name="Channel 1/2" name_index=68
 [AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #2 input subunit destination plug 0 [f0 00]
-[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #2 process_type=0x01
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #2 process_type=MIXER(0x01) programmable_mixer_controls=0 controls_bytes=0
 [AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #3 name="Channel 3/4" name_index=71
 [AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #3 input subunit destination plug 0 [f0 00]
-[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #3 process_type=0x01
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #3 process_type=MIXER(0x01) programmable_mixer_controls=0 controls_bytes=0
 [AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #4 name="Channel 5/6" name_index=74
 [AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #4 input subunit destination plug 0 [f0 00]
-[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #4 process_type=0x01
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #4 process_type=MIXER(0x01) programmable_mixer_controls=0 controls_bytes=0
 [AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #5 name="Channel 7/8" name_index=77
 [AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #5 input subunit destination plug 0 [f0 00]
-[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #5 process_type=0x01
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #5 process_type=MIXER(0x01) programmable_mixer_controls=0 controls_bytes=0
 [AvcCaps] music Music(0x0c)#0 descriptor_length=2408
 [AvcCaps] music Music(0x0c)#0 top_level_block[0] general music subunit status area(0x8100) bytes=12 primary=6
 [AvcCaps] music Music(0x0c)#0 top_level_block[1] music output plug status area(0x8101) bytes=705 primary=1

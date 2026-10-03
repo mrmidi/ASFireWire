@@ -167,6 +167,10 @@ one-byte elements that test is wrong. (4) The Duet's bitmap fits neither order
 (`fixtures/duet_descriptors.md`). Mute and volume are always probed with STATUS, so audio works, but every other
 control is probed or skipped by an order the code cannot justify. `kControlBitmapFirstBit` names the reducer's
 assumption. Rule already recorded: confirm controls by STATUS, never by the descriptor.
+*Update 2026-10-03:* the discovery log now names the bits MSB-first (`Descriptors/AudioControlBits.hpp`, the order
+the spec's own mixer figure uses). Phase 88 prints `[MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)]`; the Duet's
+`0x0003` prints `[UNKNOWN(control_bit:14), UNKNOWN(control_bit:15)]`, so the disagreement shows in every attach log
+and is pinned by the golden. The probe rule is unchanged.
 
 **F9. Duplicated definitions.**
 `AudioFunctionBlockType` (Descriptors) and `Cmd::FunctionBlockType` hold the same values and cite different section

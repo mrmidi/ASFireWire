@@ -92,7 +92,7 @@
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 name="" name_index=none
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 input subunit destination plug 0 [f0 00]
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 cluster_channels=2 general_tag=0
-[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 advertised_controls master=0x0003 channels=[0x0002, 0x0002] (hint, bit order unverified, F8)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 advertised_controls master=0x0003 [UNKNOWN(control_bit:14), UNKNOWN(control_bit:15)] channels=[0x0002, 0x0002] (hint: bits from the MSB)
 [AvcCaps] music Music(0x0c)#0 descriptor_length=462
 [AvcCaps] music Music(0x0c)#0 top_level_block[0] general music subunit status area(0x8100) bytes=12 primary=6
 [AvcCaps] music Music(0x0c)#0 top_level_block[1] routing status(0x8108) bytes=450 primary=4
