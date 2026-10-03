@@ -476,7 +476,7 @@ std::shared_ptr<FCPTransport> AVCDiscovery::AcquireFCPTransportForNodeID(uint16_
     IOLockLock(lock_);
 
     // Normalize to node number (low 6 bits) to match map keys
-    const uint16_t nodeNumber = static_cast<uint16_t>(nodeID & 0x3Fu);
+    const uint16_t nodeNumber = FW::NodeNumberOf(nodeID);
 
     auto it = fcpTransportsByNodeID_.find(nodeNumber);
     std::shared_ptr<FCPTransport> result = (it != fcpTransportsByNodeID_.end())
@@ -558,7 +558,7 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
         return false;
     }
 
-    return (unit->GetUnitSpecID() & 0xFFFFFFu) == ASFW::AVC::kTa1394SpecifierId;
+    return (unit->GetUnitSpecID() & ASFW::AVC::kSpecifierIdMask) == ASFW::AVC::kTa1394SpecifierId;
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {
@@ -597,7 +597,7 @@ void AVCDiscovery::RebuildNodeIDMap() {
 
         // Normalize to node number (low 6 bits) to tolerate full vs short IDs
         const uint16_t fullNodeID = device->GetNodeID();
-        const uint16_t nodeNumber = static_cast<uint16_t>(fullNodeID & 0x3Fu);
+        const uint16_t nodeNumber = FW::NodeNumberOf(fullNodeID);
         
         auto transport = avcUnit->GetFCPTransportShared();
         if (!transport) {

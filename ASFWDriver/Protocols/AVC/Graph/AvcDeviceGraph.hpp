@@ -22,13 +22,17 @@
 
 namespace ASFW::Protocols::AVC::Graph {
 
+/// Our "not set" markers for ids that are optional in the graph. They are not wire values.
+inline constexpr uint16_t kUnsetMusicPlugId = 0xFFFF;
+inline constexpr uint8_t kUnsetFunctionBlockType = 0xFF;
+
 /// A single audio channel in a stream
 struct StreamChannelInfo {
     uint32_t logicalIndex{0};       ///< 0-based audio channel index
     uint8_t slotIndex{0};           ///< AM824 stream position / slot index
     std::string name;               ///< Resolved channel name
     std::string clusterName;        ///< Name of the containing cluster
-    uint16_t musicPlugId{0xFFFF};
+    uint16_t musicPlugId{kUnsetMusicPlugId};
     uint8_t formatCode{0};          ///< Stream format code (e.g. 0x06 MBLA)
 };
 
@@ -77,7 +81,7 @@ struct ClockEndpointId {
     ClockEndpointKind kind{ClockEndpointKind::kUnitIsochronousInput};
     uint8_t subunitId{0};
     uint8_t endpointId{0};
-    uint8_t functionBlockType{0xFF};
+    uint8_t functionBlockType{kUnsetFunctionBlockType};
 
     friend constexpr bool operator==(const ClockEndpointId&, const ClockEndpointId&) noexcept = default;
 };

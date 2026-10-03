@@ -199,6 +199,20 @@ TEST(AudioSubunitDescriptorTests, Phase88TextDatabaseParsingAndResolution) {
     EXPECT_EQ(fb2->name, "Mixer Input LineIn 1/2 Level");
 }
 
+TEST(AudioSubunitDescriptorTests, SourceIdSentinelsFollowTheFunctionBlockTypeTable) {
+    // TA 1999008 Tables 8.2 and 9.1: F0 = subunit destination plug, F1 = subunit source plug,
+    // 80..8F = audio function blocks, FE = not connected.
+    using ASFW::Protocols::AVC::Descriptors::AudioSourceId;
+    EXPECT_FALSE((AudioSourceId{.type = 0xFE, .id = 0}).IsConnected());
+    EXPECT_TRUE((AudioSourceId{.type = 0xF0, .id = 1}).IsConnected());
+    EXPECT_TRUE((AudioSourceId{.type = 0xF0, .id = 1}).IsSubunitDestPlug());
+    EXPECT_FALSE((AudioSourceId{.type = 0xF1, .id = 1}).IsSubunitDestPlug());
+    EXPECT_TRUE((AudioSourceId{.type = 0x81, .id = 3}).IsFunctionBlock());
+    EXPECT_TRUE((AudioSourceId{.type = 0x8F, .id = 3}).IsFunctionBlock());
+    EXPECT_FALSE((AudioSourceId{.type = 0xF1, .id = 3}).IsFunctionBlock());
+    EXPECT_FALSE(AudioSourceId{}.IsConnected());  // a default source id is "not connected"
+}
+
 TEST(AudioSubunitDescriptorTests, RejectsTruncatedAndLengthMismatchedDescriptors) {
     auto identifier = ASFW::AVC::Testing::Fixtures::kPhase88AudioIdentifier;
     identifier.pop_back();

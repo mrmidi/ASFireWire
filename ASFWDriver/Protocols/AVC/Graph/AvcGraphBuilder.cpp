@@ -5,6 +5,8 @@
 //
 
 #include "AvcGraphBuilder.hpp"
+#include "../Commands/StreamFormatCommand.hpp"
+#include "../Descriptors/DescriptorTypeCodes.hpp"
 
 #include <algorithm>
 
@@ -23,8 +25,9 @@ StreamGraph AvcGraphBuilder::BuildStreamGraph(
     std::vector<uint8_t> slots;
 
     for (const auto& cluster : plug.clusters) {
-        // Detect MIDI: port type 0x0A (MIDI) or stream format 0x0D (AM824 MIDI)
-        const bool isMidi = (cluster.portType == 0x0A || cluster.streamFormatCode == 0x0D);
+        // Detect MIDI: port type MIDI, or the AM824 MIDI conformant stream format
+        const bool isMidi = (cluster.portType == Descriptors::kMusicPortTypeMidi ||
+                             cluster.streamFormatCode == static_cast<uint8_t>(::ASFW::AVC::Cmd::Am824Format::kMidiConformant));
         if (isMidi) {
             sg.midiStreamCount += cluster.channelCount;
             continue;
@@ -125,7 +128,7 @@ DeviceGraph AvcGraphBuilder::BuildGraph(
     const Options& options) noexcept {
 
     DeviceGraph dg;
-    dg.supportsBlockingTransmit = (musicStatus.capabilities.transmitCapabilityFlags & 0x02) != 0;
+    dg.supportsBlockingTransmit = (musicStatus.capabilities.transmitCapabilityFlags & Descriptors::kMusicCapabilityBlockingBit) != 0;
     dg.modelName = options.modelName;
 
     // 1. Find Playback plug (destination plug)
@@ -183,7 +186,7 @@ DeviceGraph AvcGraphBuilder::BuildGraph(
     for (const auto& plug : musicStatus.plugs) {
         if (!plug.isDestination) continue;
         for (const auto& cluster : plug.clusters) {
-            if (cluster.streamFormatCode == 0x40) {
+            if (cluster.streamFormatCode == static_cast<uint8_t>(::ASFW::AVC::Cmd::Am824Format::kSyncStream)) {
                 dg.syncDestinations.push_back(SyncDestinationInfo{
                     .subunitPlugId = plug.plugId,
                     .name = plug.name,

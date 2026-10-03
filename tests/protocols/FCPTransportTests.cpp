@@ -188,6 +188,57 @@ TEST_F(FCPTransportTests, IgnoresResponseWithAnotherAddressOrOpcode) {
     EXPECT_EQ(completionCount, 1);
 }
 
+TEST_F(FCPTransportTests, TapeTransportStateAcceptsAModeOpcodeAsItsResponse) {
+    // Apple IOFireWireAVCCommand.cpp:122-125: a tape subunit answers TRANSPORT STATE with the current
+    // mode as the opcode (Play, Wind, Record or LoadMedium, i.e. C1..C4), or with D0 itself.
+    const auto tapeAddress = ASFW::AVC::SubunitAddress::Of(ASFW::AVC::SubunitType::kTape, 0);
+    // The literal on purpose: it is the wire value (TRANSPORT STATE), independent of the constant under test.
+    const auto transportState = static_cast<ASFW::AVC::Opcode>(0xD0);
+    for (const uint8_t opcode : {uint8_t{0xD0}, uint8_t{0xC1}, uint8_t{0xC2}, uint8_t{0xC3}, uint8_t{0xC4}}) {
+        int completionCount = 0;
+        transport_->Submit(*ASFW::AVC::CommandFrame::Make(CommandType::kControl, tapeAddress, transportState, {}),
+                           Generation{1}, [&](Reply) { ++completionCount; });
+        ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
+        const std::array<uint8_t, 3> response{0x09, 0x20, opcode};
+        transport_->OnFCPResponse(2, 1, response);
+        scheduler_.Advance(0);
+        EXPECT_EQ(completionCount, 1) << "opcode " << int{opcode};
+    }
+}
+
+TEST_F(FCPTransportTests, TapeTransportStateIgnoresOpcodesOutsideTheModeRange) {
+    const auto tapeAddress = ASFW::AVC::SubunitAddress::Of(ASFW::AVC::SubunitType::kTape, 0);
+    // The literal on purpose: it is the wire value (TRANSPORT STATE), independent of the constant under test.
+    const auto transportState = static_cast<ASFW::AVC::Opcode>(0xD0);
+    int completionCount = 0;
+    transport_->Submit(*ASFW::AVC::CommandFrame::Make(CommandType::kControl, tapeAddress, transportState, {}),
+                       Generation{1}, [&](Reply) { ++completionCount; });
+    ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
+    for (const uint8_t opcode : {uint8_t{0xC0}, uint8_t{0xC5}, uint8_t{0xD1}, uint8_t{0x30}}) {
+        const std::array<uint8_t, 3> response{0x09, 0x20, opcode};
+        transport_->OnFCPResponse(2, 1, response);
+        scheduler_.Advance(0);
+        EXPECT_EQ(completionCount, 0) << "opcode " << int{opcode};
+    }
+    const std::array<uint8_t, 3> answer{0x09, 0x20, 0xD0};
+    transport_->OnFCPResponse(2, 1, answer);
+    scheduler_.Advance(0);
+    EXPECT_EQ(completionCount, 1);
+}
+
+TEST_F(FCPTransportTests, ResponseOpcodeDifferingOnlyInBit7IsAcceptedForNow) {
+    // CHARACTERIZATION of legacy behaviour (audit finding F6): the opcode is compared without bit 7.
+    // Apple compares all eight bits (IOFireWireAVCCommand.cpp:154-157). When F6 is decided and the
+    // comparison tightened, this test flips to "ignored".
+    int completionCount = 0;
+    Send([&](Reply) { ++completionCount; });
+    ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
+    const std::array<uint8_t, 3> bit7Set{0x09, 0xFF, 0xB0};  // UNIT INFO (30) with bit 7 set
+    transport_->OnFCPResponse(2, 1, bit7Set);
+    scheduler_.Advance(0);
+    EXPECT_EQ(completionCount, 1);
+}
+
 TEST_F(FCPTransportTests, RejectsResponseForInvalidatedRouteAfterRebind) {
     // This command never completes (the route is invalidated below), so its completion
     // is fired by Shutdown() during TearDown -- see outstandingCompletionCount_.

@@ -92,9 +92,17 @@ struct InputSelect {
         }
         const uint8_t code = static_cast<uint8_t>(second & kLowNibble);
         std::optional<InputSelectResult> result;
-        switch (code) {
-            case 0x0: case 0x1: case 0x2: case 0x3: case 0x4: case 0x5: case 0x6: case 0x7:
-            case 0xE: case 0xF:
+        switch (static_cast<InputSelectResult>(code)) {  // Table 7.18; 8..D are reserved
+            case InputSelectResult::kNoError:
+            case InputSelectResult::kDisabled:
+            case InputSelectResult::kLocked:
+            case InputSelectResult::kPointToPointNotOwner:
+            case InputSelectResult::kInsufficientResource:
+            case InputSelectResult::kSourceNotFound:
+            case InputSelectResult::kNotSelected:
+            case InputSelectResult::kNotRegistered:
+            case InputSelectResult::kAnyOtherReason:
+            case InputSelectResult::kNoInformation:
                 result = static_cast<InputSelectResult>(code);
                 break;
             default:

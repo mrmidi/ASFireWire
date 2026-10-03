@@ -316,6 +316,20 @@ TEST(AvcGraphBuilderTests, UnresolvedStreamsAndClockSourcesRequireExplicitEviden
     EXPECT_TRUE(graph.clockSources[0].isCurrent);
 }
 
+TEST(AvcGraphBuilderTests, BlockingTransmitFollowsTheMusicCapabilityBit) {
+    // TA 2001007 §5.2.1 Table 5.5: transmit capability bit 0 = non-blocking, bit 1 = blocking.
+    Descriptors::MusicSubunitStatus status;
+    AvcGraphBuilder::Options options{};
+    const auto supportsBlocking = [&](uint8_t flags) {
+        status.capabilities.transmitCapabilityFlags = flags;
+        return AvcGraphBuilder::BuildGraph(status, nullptr, options).supportsBlockingTransmit;
+    };
+    EXPECT_FALSE(supportsBlocking(0x00));
+    EXPECT_FALSE(supportsBlocking(0x01));
+    EXPECT_TRUE(supportsBlocking(0x02));
+    EXPECT_TRUE(supportsBlocking(0x03));
+}
+
 TEST(AvcGraphBuilderTests, DescriptorMapRejectionWhenSlotExceedsDataBlockSize) {
     auto musicOpt = Descriptors::MusicSubunitDescriptorParser::ParseStatusDescriptor(
         HexToBytes(kPhase88MusicStatusHex));

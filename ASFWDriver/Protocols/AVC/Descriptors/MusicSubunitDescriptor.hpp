@@ -90,11 +90,12 @@ struct MusicSubunitPlug {
 struct MusicPlugEndpoint {
     static constexpr uint8_t kSubunitDestinationPlug = 0xF0;
     static constexpr uint8_t kSubunitSourcePlug = 0xF1;
-    uint8_t functionType{0xFF};
-    uint8_t plugId{0xFF};
-    uint8_t functionBlockId{0xFF};
-    uint8_t streamPosition{0xFF};
-    uint8_t streamLocation{0xFF};
+    static constexpr uint8_t kUnset = 0xFF;  ///< our "not set" marker; FF is also the field's "no value" on the wire
+    uint8_t functionType{kUnset};
+    uint8_t plugId{kUnset};
+    uint8_t functionBlockId{kUnset};
+    uint8_t streamPosition{kUnset};
+    uint8_t streamLocation{kUnset};
 };
 
 struct MusicPlugDetail {

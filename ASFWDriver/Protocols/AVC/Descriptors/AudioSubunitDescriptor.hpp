@@ -39,13 +39,26 @@ enum class AudioFunctionBlockType : uint8_t {
 // Describes the input connection of a function block plug or subunit source plug.
 //==============================================================================
 
-struct AudioSourceId {
-    uint8_t type{0xFE};  ///< 0xF0 = Subunit Destination Plug, 0x80..0x83 = Function Block, 0xFE = Not Connected
-    uint8_t id{0xFF};    ///< Destination plug number or Function Block ID
+/// function_block_type values of a source_ID (TA 1999008 Table 8.2, Table 9.1): F0 = subunit
+/// destination plug, F1 = subunit source plug, 80..8F = audio subunit function blocks, FE = not connected.
+inline constexpr uint8_t kSourceIdSubunitDestinationPlug = 0xF0;
+inline constexpr uint8_t kSourceIdNotConnected = 0xFE;
+inline constexpr uint8_t kFunctionBlockTypeClassMask = 0xF0;  ///< high nibble of an audio function block type
+inline constexpr uint8_t kFunctionBlockTypeClass = 0x80;      ///< 80..8F: audio subunit dependent (Table 9.1)
+/// Our "no id yet" marker. FF is reserved for extension in the spec (§9.1.3), so it never names a block.
+inline constexpr uint8_t kUnsetSourceId = 0xFF;
+/// Our "no name" marker for a text database object position.
+inline constexpr uint16_t kNoNameIndex = 0xFFFF;
 
-    [[nodiscard]] constexpr bool IsSubunitDestPlug() const noexcept { return type == 0xF0; }
-    [[nodiscard]] constexpr bool IsFunctionBlock() const noexcept { return (type & 0xF0) == 0x80; }
-    [[nodiscard]] constexpr bool IsConnected() const noexcept { return type != 0xFE; }
+struct AudioSourceId {
+    uint8_t type{kSourceIdNotConnected};  ///< kSourceIdSubunitDestinationPlug, 0x80..0x83 function block, or not connected
+    uint8_t id{kUnsetSourceId};           ///< Destination plug number or Function Block ID
+
+    [[nodiscard]] constexpr bool IsSubunitDestPlug() const noexcept { return type == kSourceIdSubunitDestinationPlug; }
+    [[nodiscard]] constexpr bool IsFunctionBlock() const noexcept {
+        return (type & kFunctionBlockTypeClassMask) == kFunctionBlockTypeClass;
+    }
+    [[nodiscard]] constexpr bool IsConnected() const noexcept { return type != kSourceIdNotConnected; }
 
     [[nodiscard]] constexpr bool operator==(const AudioSourceId& other) const noexcept {
         return type == other.type && id == other.id;
@@ -78,7 +91,7 @@ namespace FeatureControlMask {
 struct AudioFunctionBlockInfo {
     AudioFunctionBlockType type{AudioFunctionBlockType::kFeature};
     uint8_t id{0};
-    uint16_t nameIndex{0xFFFF};           ///< Text DB object position or 0xFFFF if none
+    uint16_t nameIndex{kNoNameIndex};     ///< Text DB object position or kNoNameIndex if none
     std::string name;                     ///< Resolved from text DB if available
 
     std::vector<AudioSourceId> inputSources; ///< Upstream sources for input fb-plugs (p elements)

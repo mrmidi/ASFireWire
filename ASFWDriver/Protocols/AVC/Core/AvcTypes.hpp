@@ -17,6 +17,8 @@
 
 namespace ASFW::AVC {
 inline constexpr uint32_t kTa1394SpecifierId = 0x00A02D;
+/// A Config ROM specifier_ID is the 24-bit value field of a directory entry (IEEE 1212).
+inline constexpr uint32_t kSpecifierIdMask = 0x00FFFFFF;
 
 /// Command type ("ctype"): the low nibble of byte 0 of a command frame. The high
 /// nibble (CTS) is 0 for AV/C. ta1394 general/src/lib.rs:231-235.
@@ -42,6 +44,20 @@ enum class ResponseCode : uint8_t {
 
 inline constexpr uint8_t kCtsMask = 0xF0;
 inline constexpr uint8_t kCodeMask = 0x0F;
+
+/// ctype codes are 0..4 (TA 2004006 §5.3.1 Table 8); 8..F are reserved for response codes, so a
+/// frame whose code nibble is below this is a command, not a response.
+inline constexpr uint8_t kFirstResponseCode = 0x08;
+
+/// Operand bytes a command leaves unspecified are all ones: "all FF16" in the STATUS command
+/// frames of TA 2004006 Figure 26 (UNIT INFO), 28 (SUBUNIT INFO), 36 (PLUG INFO), 57 (INPUT PLUG
+/// SIGNAL FORMAT). Also the "don't care" value of many fields in the stream format spec
+/// (TA 2001002 Tables 5.2, 5.5, 5.8).
+inline constexpr uint8_t kUnspecifiedOperand = 0xFF;
+
+/// The two bytes of a 16-bit operand, most significant first (AV/C operands are big-endian).
+[[nodiscard]] constexpr uint8_t HighByte(uint16_t value) noexcept { return static_cast<uint8_t>(value >> 8); }
+[[nodiscard]] constexpr uint8_t LowByte(uint16_t value) noexcept { return static_cast<uint8_t>(value); }
 
 /// True for every response code that ends a transaction. INTERIM is the only
 /// non-final one: the final response follows as a separate frame.
@@ -71,16 +87,24 @@ enum class SubunitType : uint8_t {
     kUnit = 0x1F,
 };
 
+/// Layout of the address byte (TA 2004006 §5.3.4.1, Tables 11 and 13): subunit_type in bits 7..3,
+/// subunit_ID in bits 2..0. The unit is subunit_type 1F with subunit_ID 7 ("ignore, used when
+/// addressing units"), byte FF.
+inline constexpr unsigned kSubunitTypeShift = 3;
+inline constexpr uint8_t kSubunitTypeMask = 0x1F;
+inline constexpr uint8_t kSubunitIdMask = 0x07;
+inline constexpr uint8_t kUnitAddressByte = 0xFF;
+
 /// Byte 1 of every frame: a subunit (type << 3 | id) or the unit (0xFF).
 /// ta1394 general/src/lib.rs:131-165 (shift 3, type mask 0x1F, id mask 0x07),
 /// :187 (unit address 0xFF).
 class SubunitAddress {
 public:
-    [[nodiscard]] static constexpr SubunitAddress Unit() noexcept { return SubunitAddress{0xFF}; }
+    [[nodiscard]] static constexpr SubunitAddress Unit() noexcept { return SubunitAddress{kUnitAddressByte}; }
 
     [[nodiscard]] static constexpr SubunitAddress Of(SubunitType type, uint8_t id) noexcept {
-        return SubunitAddress{static_cast<uint8_t>(((static_cast<uint8_t>(type) & 0x1F) << 3) |
-                                                   (id & 0x07))};
+        return SubunitAddress{static_cast<uint8_t>(((static_cast<uint8_t>(type) & kSubunitTypeMask) << kSubunitTypeShift) |
+                                                   (id & kSubunitIdMask))};
     }
 
     [[nodiscard]] static constexpr SubunitAddress FromByte(uint8_t byte) noexcept {
@@ -89,10 +113,10 @@ public:
 
     [[nodiscard]] constexpr uint8_t Byte() const noexcept { return byte_; }
     [[nodiscard]] constexpr SubunitType Type() const noexcept {
-        return static_cast<SubunitType>((byte_ >> 3) & 0x1F);
+        return static_cast<SubunitType>((byte_ >> kSubunitTypeShift) & kSubunitTypeMask);
     }
-    [[nodiscard]] constexpr uint8_t Id() const noexcept { return byte_ & 0x07; }
-    [[nodiscard]] constexpr bool IsUnit() const noexcept { return byte_ == 0xFF; }
+    [[nodiscard]] constexpr uint8_t Id() const noexcept { return byte_ & kSubunitIdMask; }
+    [[nodiscard]] constexpr bool IsUnit() const noexcept { return byte_ == kUnitAddressByte; }
 
     /// The type continues in the next byte. This layer does not model extended
     /// addressing; codecs reject it with AvcErrorKind::kUnsupported.
@@ -114,6 +138,7 @@ inline constexpr SubunitAddress kMusicSubunit0 = SubunitAddress::Of(SubunitType:
 // Linux addresses the audio subunit as 0x08 (bebob_command.c:21) and the music
 // subunit as 0x60 (bebob.h:189).
 static_assert(kUnitAddress.Byte() == 0xFF);
+static_assert(kUnitAddressByte == ((static_cast<uint8_t>(SubunitType::kUnit) << kSubunitTypeShift) | kSubunitIdMask));
 static_assert(kAudioSubunit0.Byte() == 0x08);
 static_assert(kMusicSubunit0.Byte() == 0x60);
 static_assert(kMusicSubunit0.Type() == SubunitType::kMusic && kMusicSubunit0.Id() == 0);

@@ -5,6 +5,14 @@
 #include <type_traits>
 
 namespace ASFW::AVC::DiscoveryEngine {
+
+namespace {
+/// Controls[] bit 0 is read as the most significant bit of the element: this matches the Phase 88
+/// capture (`c0 00` = Mute + Volume), not a literal reading of TA 1999008 Table 8.3 ("Bit 0: Mute"),
+/// and the Duet's bitmap fits neither order, so mute and volume are always probed and every other
+/// control is probed only if this bit says so. Open question F8 in magic-numbers-audit.md.
+constexpr uint16_t kControlBitmapFirstBit = 0x8000;
+} // namespace
 namespace {
 template<class... T> struct Visit : T... { using T::operator()...; };
 template<class... T> Visit(T...) -> Visit<T...>;
@@ -123,7 +131,7 @@ void Expand(State& s, Checkpoint point) {
                     for (size_t bit = 0; bit < Cmd::kFeatureControlWidths.size(); ++bit) {
                         const auto control = Cmd::kFeatureControlWidths[bit].control;
                         const bool always = control == Cmd::FeatureControl::kMute || control == Cmd::FeatureControl::kVolume;
-                        if ((always || (bits & (0x8000u >> bit))) && Cmd::kFeatureControlWidths[bit].width)
+                        if ((always || (bits & (kControlBitmapFirstBit >> bit))) && Cmd::kFeatureControlWidths[bit].width)
                             s.probes.emplace_back(Cmd::FeatureCommand{.address = c.id.ToAddress(),
                                 .operands = {.functionBlockId = block.id, .channel = static_cast<uint8_t>(ch),
                                     .control = control}});
@@ -368,7 +376,8 @@ void Descriptor(Transition& t, size_t index, const DescriptorReply& reply) {
                     if (probe.depth >= ParsedDescriptors::kMaxTextListDepth ||
                         std::count_if(s.probes.begin(), s.probes.end(), [&](const Probe& queued) {
                             auto* p = std::get_if<DescriptorProbe>(&queued);
-                            return p && p->subunit == probe.subunit && p->specifier.bytes[0] == 0x10;
+                            return p && p->subunit == probe.subunit &&
+                                   p->specifier.bytes[0] == static_cast<uint8_t>(Cmd::DescriptorSpecifierType::kListById);
                         }) + next.size() >= ParsedDescriptors::kMaxTextListNodes) {
                         blob.parseError = ParsedDescriptors::ParseError{0, ParsedDescriptors::ParseErrorKind::BudgetExceeded};
                         s.builder.textReferences.push_back({probe.subunit, id, TextReferenceKind::BudgetExceeded}); break;

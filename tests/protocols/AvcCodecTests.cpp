@@ -1427,4 +1427,72 @@ TEST(AvcReshapedTests, DescriptorCommands_OpenAndRead) {
     EXPECT_EQ(readDecoded->data[3], 0x04);
 }
 
+// ===========================================================================
+// Wire constants pinned after the magic-number audit
+// (documentation/avc-rebuild/magic-numbers-audit.md): each test fails if the
+// named constant it covers is changed.
+// ===========================================================================
+
+TEST(GeneralCommandsTests, SubunitInfoPageSitsInBits6To4) {
+    // TA 2004006 Figure 28: operand[0] = 0 | page (3 bits) | 0 | extension_code (3 bits).
+    Cmd::SubunitInfoCommand command{.operands = {.page = 3}};
+    auto frame = command.Encode(CommandType::kStatus);
+    ASSERT_TRUE(frame.has_value());
+    EXPECT_EQ(frame->Operands()[0], 0x37);
+
+    const uint8_t reply[] = {0x0C, 0xFF, 0x31, 0x37, 0x48, 0xFF, 0xFF, 0xFF};
+    auto response = ParseResponse(reply);
+    ASSERT_TRUE(response.has_value());
+    auto info = Cmd::SubunitInfoOperands::Read(response->operands);
+    ASSERT_TRUE(info.has_value());
+    EXPECT_EQ(info->page, 3);
+    EXPECT_EQ(info->extensionCode, Cmd::kSubunitInfoExtensionCode);
+    ASSERT_EQ(info->entryCount, 1);
+    EXPECT_EQ(info->entries[0].type, SubunitType::kPanel);  // 48 = type 9, max id 0
+    EXPECT_EQ(info->entries[0].maximumId, 0);
+}
+
+TEST(GeneralCommandsTests, SfcIsBits2To0OfTheFdfAndIgnoresTheRateControlBit) {
+    // IEC 61883-6 Table 16: FDF 0000 1xxx is AM824 with command-based rate control; the SFC is
+    // still the low three bits. 0x0A = rate control bit + SFC 2 (48 kHz).
+    Cmd::PlugSignalFormat format{.plugId = 0, .fmt = Cmd::kFmtAm824, .fdf = {0x0A, 0xFF, 0xFF}};
+    EXPECT_EQ(Cmd::SfcOf(format), CipSfc::k48000);
+    // Building a format never lets a stray high bit into the FDF.
+    EXPECT_EQ(Cmd::Am824SignalFormat(0, static_cast<CipSfc>(0x0A)).fdf[0], 0x02);
+    // A format that is not AM824 carries no SFC.
+    format.fmt = Cmd::kFmtEohBit | 0x20;
+    EXPECT_FALSE(Cmd::SfcOf(format).has_value());
+}
+
+TEST(StreamFormatTests, CompoundAm824FlagsByteLayout) {
+    // [90][40][rate][flags][entry count]: bit 2 = sync source, bits 1..0 = rate control
+    // (ta1394 stream-format lib.rs:545-549, 570-572; draft, not in TA 2001002).
+    Cmd::CompoundAm824 format{};
+    format.rate = StreamFormatRate::k48000;
+    format.syncSource = true;
+    format.rateControl = Cmd::RateControl::kDontCare;
+    std::array<uint8_t, 8> out{};
+    auto size = Cmd::EncodeCompoundAm824(format, out);
+    ASSERT_TRUE(size.has_value());
+    ASSERT_EQ(*size, 5u);
+    EXPECT_EQ(out[3], 0x05);
+
+    format.syncSource = false;
+    format.rateControl = Cmd::RateControl::kNotSupported;
+    ASSERT_TRUE(Cmd::EncodeCompoundAm824(format, out).has_value());
+    EXPECT_EQ(out[3], 0x02);
+
+    const uint8_t syncAndNotSupported[] = {0x90, 0x40, 0x04, 0x06, 0x00};
+    auto both = Cmd::DecodeStreamFormatBlock(syncAndNotSupported);
+    ASSERT_TRUE(both.has_value());
+    EXPECT_TRUE(both->compound.syncSource);
+    EXPECT_EQ(both->compound.rateControl, Cmd::RateControl::kNotSupported);
+
+    const uint8_t strayBit3[] = {0x90, 0x40, 0x04, 0x08, 0x00};
+    auto stray = Cmd::DecodeStreamFormatBlock(strayBit3);
+    ASSERT_TRUE(stray.has_value());
+    EXPECT_FALSE(stray->compound.syncSource);
+    EXPECT_EQ(stray->compound.rateControl, Cmd::RateControl::kSupported);
+}
+
 } // namespace ASFW::AVC::Test

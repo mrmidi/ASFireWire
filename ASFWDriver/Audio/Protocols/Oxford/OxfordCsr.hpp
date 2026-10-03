@@ -53,10 +53,7 @@ enum class Asic : uint8_t {
 
 [[nodiscard]] constexpr Async::FWAddress AddressFor(uint64_t offset) noexcept {
     const uint64_t address = kCsrRegisterBase + offset;
-    return Async::FWAddress{Async::FWAddress::AddressParts{
-        .addressHi = static_cast<uint16_t>((address >> 32U) & 0xFFFFU),
-        .addressLo = static_cast<uint32_t>(address & 0xFFFFFFFFU),
-    }};
+    return FW::Unpack(address);  // 48-bit address, node ID 0
 }
 
 [[nodiscard]] constexpr Async::FWAddress FirmwareIdAddress() noexcept {

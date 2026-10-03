@@ -193,11 +193,7 @@ void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
             .operands = AVC::Cmd::PlugSignalFormatOperands{
                 .direction = AVC::Cmd::PlugSignalDirection::kOutput,
                 .plugId = outPlug,
-                .format = AVC::Cmd::PlugSignalFormat{
-                    .plugId = outPlug,
-                    .fmt = 0x90,
-                    .fdf = {static_cast<uint8_t>(*sfc), 0xFF, 0xFF},
-                },
+                .format = AVC::Cmd::Am824SignalFormat(outPlug, *sfc),
             },
         },
         [this, sfc, completion = std::move(completion)](AVC::Expected<AVC::Cmd::PlugSignalFormat> outputResult) mutable {
@@ -222,11 +218,7 @@ void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
                         .operands = AVC::Cmd::PlugSignalFormatOperands{
                             .direction = AVC::Cmd::PlugSignalDirection::kInput,
                             .plugId = inPlug,
-                            .format = AVC::Cmd::PlugSignalFormat{
-                                .plugId = inPlug,
-                                .fmt = 0x90,
-                                .fdf = {static_cast<uint8_t>(*sfc), 0xFF, 0xFF},
-                            },
+                            .format = AVC::Cmd::Am824SignalFormat(inPlug, *sfc),
                         },
                     },
                     [finalCompletion](AVC::Expected<AVC::Cmd::PlugSignalFormat> inputResult) mutable {

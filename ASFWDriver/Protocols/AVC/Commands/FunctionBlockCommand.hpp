@@ -32,6 +32,7 @@ enum class FunctionBlockType : uint8_t {
     kSelector = 0x80,
     kFeature = 0x81,
     kProcessing = 0x82,
+    kCodec = 0x83,  ///< TA 1999008 Table 10.2; no codec block is used by any supported device.
 };
 
 enum class ControlAttribute : uint8_t {
@@ -65,6 +66,22 @@ inline constexpr uint8_t kSelectorControl = 0x01;   ///< ta1394 lib.rs:289
 inline constexpr uint8_t kMasterChannel = 0x00;     ///< ta1394 lib.rs:961
 inline constexpr uint8_t kBooleanTrue = 0x70;       ///< ta1394 lib.rs:815 (mute on)
 inline constexpr uint8_t kBooleanFalse = 0x60;      ///< ta1394 lib.rs:816 (mute off)
+
+/// FUNCTION BLOCK selector_length counts the audio_selector_data plus the control_selector and not
+/// itself (TA 1999008 §10, Figure 10.1). Selector blocks send 2 (input fb-plug number, control
+/// selector; §10.2, Figure 10.2). Feature blocks always send 2 (audio channel number, control
+/// selector; §10.3).
+inline constexpr uint8_t kSelectorBlockSelectorLength = 2;
+inline constexpr uint8_t kFeatureBlockSelectorLength = 2;
+
+/// Selector STATUS: the input fb-plug number is FF in the command and the reply fills in the current
+/// setting; a CONTROL command must not use FF there (TA 1999008 §10.2).
+inline constexpr uint8_t kInputPlugUnspecified = kUnspecifiedOperand;
+
+/// Feature STATUS control_data placeholder. FF is the "invalid" marker of the mute control (TA 1999008
+/// §10.3.1). The volume control's own invalid value is 7FFF (§10.3.2), so the FF FF a volume STATUS
+/// sends is a convention of ta1394 and Apple that the Duet and Phase 88 accept, not a spec value.
+inline constexpr uint8_t kUnspecifiedControlData = kUnspecifiedOperand;
 
 /// Per-control data widths from ta1394 audio/src/lib.rs:820-862;
 /// zero denotes the variable-width graphic equalizer payload.
@@ -197,26 +214,26 @@ using FunctionBlockCommand = Command<FunctionBlockOperands>;
 
 struct SelectorValue {
     uint8_t functionBlockId{0};
-    uint8_t inputPlug{0xFF};
+    uint8_t inputPlug{kInputPlugUnspecified};
 };
 
 struct SelectorOperands {
     static constexpr Opcode kOpcode = Opcode::kFunctionBlock;
 
     uint8_t functionBlockId{0};
-    uint8_t inputPlug{0xFF};
+    uint8_t inputPlug{kInputPlugUnspecified};
 
     using Reply = SelectorValue;
 
     [[nodiscard]] Expected<void> Write(OperandWriter& w, CommandType t) const noexcept {
         // FFADO avc_function_block.cpp:348-358 retains the requested
         // selector input; INQUIRY asks whether that CONTROL would be accepted.
-        const uint8_t plug = (t == CommandType::kControl || t == CommandType::kSpecificInquiry) ? inputPlug : 0xFF;
+        const uint8_t plug = (t == CommandType::kControl || t == CommandType::kSpecificInquiry) ? inputPlug : kInputPlugUnspecified;
         const std::array<uint8_t, 6> ops = {
             static_cast<uint8_t>(FunctionBlockType::kSelector),
             functionBlockId,
             static_cast<uint8_t>(ControlAttribute::kCurrent),
-            0x02,
+            kSelectorBlockSelectorLength,
             plug,
             kSelectorControl,
         };
@@ -230,7 +247,7 @@ struct SelectorOperands {
         if (in[0] != static_cast<uint8_t>(FunctionBlockType::kSelector)) {
             return FailAt(AvcErrorKind::kMalformedOperands, 0);
         }
-        if (in[3] != 0x02) {
+        if (in[3] != kSelectorBlockSelectorLength) {
             return FailAt(AvcErrorKind::kMalformedOperands, 3);
         }
         if (in[5] != kSelectorControl) {
@@ -316,7 +333,7 @@ struct FeatureOperands {
             .channel = ch,
             .control = FeatureControl::kVolume,
             .attribute = attr,
-            .data = { static_cast<uint8_t>((raw >> 8) & 0xFF), static_cast<uint8_t>(raw & 0xFF) },
+            .data = { HighByte(raw), LowByte(raw) },
             .dataLength = 2,
         };
         return op;
@@ -340,7 +357,7 @@ struct FeatureOperands {
             static_cast<uint8_t>(FunctionBlockType::kFeature),
             functionBlockId,
             static_cast<uint8_t>(attribute),
-            0x02,
+            kFeatureBlockSelectorLength,
             channel,
             static_cast<uint8_t>(control),
         };
@@ -365,7 +382,7 @@ struct FeatureOperands {
             auto r2 = w.Append(*width);
             if (!r2) return r2;
             for (uint8_t i = 0; i < *width; ++i) {
-                auto r3 = w.Append(0xFF);
+                auto r3 = w.Append(kUnspecifiedControlData);
                 if (!r3) return r3;
             }
             return {};
@@ -380,7 +397,7 @@ struct FeatureOperands {
         if (in[0] != static_cast<uint8_t>(FunctionBlockType::kFeature)) {
             return FailAt(AvcErrorKind::kMalformedOperands, 0);
         }
-        if (in[3] != 0x02) {
+        if (in[3] != kFeatureBlockSelectorLength) {
             return FailAt(AvcErrorKind::kMalformedOperands, 3);
         }
 

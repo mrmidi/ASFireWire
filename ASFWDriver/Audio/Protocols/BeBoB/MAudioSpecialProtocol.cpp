@@ -325,11 +325,7 @@ void MAudioSpecialProtocol::SetSignalFormat(uint32_t rateHz, bool input,
             .operands = {
                 .direction = dir,
                 .plugId = 0,
-                .format = AVC::Cmd::PlugSignalFormat{
-                    .plugId = 0,
-                    .fmt = 0x90,
-                    .fdf = {static_cast<uint8_t>(*sfc), 0xFF, 0xFF},
-                },
+                .format = AVC::Cmd::Am824SignalFormat(0, *sfc),
             },
         },
         [completion = std::move(completion)](AVC::Expected<AVC::Cmd::PlugSignalFormat> res) mutable {
