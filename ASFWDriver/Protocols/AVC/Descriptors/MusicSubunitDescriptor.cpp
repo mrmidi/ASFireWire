@@ -142,16 +142,10 @@ Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
             }
 
             case kMusicInfoBlockOutputPlugStatusArea: {
-                // AUDIT (magic-numbers-audit.md F7): in a status descriptor this block is the Music Output
-                // Plug Status Area (TA 2001007 §6.2.2: [number_of_source_plugs] + nested 8102), as both captured
-                // devices and FFADO treat it. The capability read below uses identifier-descriptor meanings
-                // (§5.2.2); it is unverified on any device and could misread a longer primary field.
-                uint8_t formats{}; uint16_t maxIn{}, maxOut{};
-                if (ParseReader(primaryData).Fields(formats, maxIn, maxOut)) {
-                    status.capabilities.hasAudioCapability = true;
-                    status.capabilities.maxAudioInputChannels = maxIn;
-                    status.capabilities.maxAudioOutputChannels = maxOut;
-                }
+                // Music Output Plug Status Area (TA 2001007 §6.2.2): number_of_source_plugs, then one nested 8102
+                // per source plug it describes. Phase 88 sends 4 with source plugs 0, 1, 2 and 5 (SUBUNIT INFO
+                // says 6): the count is of the plugs described, and their numbers are not 0..n-1.
+                if (!primaryData.empty()) status.declaredSourcePlugs = primaryData[0];
                 // Parse nested 0x8102 Plug Status Area -> 0x8103 Audio Info Area
                 for (const auto& plugStatus : block.GetNestedBlocks()) {
                     if (plugStatus.GetType() == kMusicInfoBlockSourcePlugStatus && !plugStatus.GetPrimaryData().empty()) {
@@ -162,6 +156,16 @@ Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
                                 if (const std::string text = ExtractName(info); !text.empty()) {
                                     status.perPlugChannelNames[plugId] = SplitLabels(text);
                                 }
+                            } else if (info.GetType() == kMusicInfoBlockSmpteTimeCodeInfo ||
+                                       info.GetType() == kMusicInfoBlockSampleCountInfo ||
+                                       info.GetType() == kMusicInfoBlockAudioSyncInfo) {
+                                // SMPTE time code, sample count and audio SYNC activity (§6.2.3.3-§6.2.3.5): one byte.
+                                if (info.GetPrimaryData().empty()) continue;
+                                auto& activity = status.perPlugActivity[plugId];
+                                const uint8_t bits = info.GetPrimaryData()[0];
+                                if (info.GetType() == kMusicInfoBlockSmpteTimeCodeInfo) activity.smpteTimeCode = bits;
+                                else if (info.GetType() == kMusicInfoBlockSampleCountInfo) activity.sampleCount = bits;
+                                else activity.audioSync = bits;
                             } else if (info.GetType() == kMusicInfoBlockMidiInfo) {
                                 // number_of_MIDI_streams, then one name_info_block per stream (§6.2.3.2).
                                 MusicMidiStreams midi;
@@ -177,39 +181,6 @@ Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
                 }
                 break;
             }
-
-            case kMusicInfoBlockSourcePlugStatus: {  // AUDIT F7: read as MIDI capability, see above
-                uint8_t version{}, adaptation{}; uint16_t ins{}, outs{};
-                if (ParseReader(primaryData).Fields(version, adaptation, ins, outs)) {
-                    auto& caps = status.capabilities;
-                    caps.hasMidiCapability = true;
-                    caps.midiVersionMajor = version >> 4; caps.midiVersionMinor = version & 0x0F;
-                    caps.midiAdaptationLayerVersion = adaptation;
-                    caps.maxMidiInputPorts = ins; caps.maxMidiOutputPorts = outs;
-                }
-                break;
-            }
-
-            case kMusicInfoBlockAudioInfo:  // AUDIT F7: read as SMPTE capability, see above
-                if (!primaryData.empty()) {
-                    status.capabilities.hasSmpteTimeCodeCapability = true;
-                    status.capabilities.smpteTimeCodeCapabilityFlags = primaryData[0];
-                }
-                break;
-
-            case kMusicInfoBlockMidiInfo:  // AUDIT F7: read as sample count capability, see above
-                if (!primaryData.empty()) {
-                    status.capabilities.hasSampleCountCapability = true;
-                    status.capabilities.sampleCountCapabilityFlags = primaryData[0];
-                }
-                break;
-
-            case kMusicInfoBlockSmpteTimeCodeInfo:  // AUDIT F7: read as audio sync capability, see above
-                if (!primaryData.empty()) {
-                    status.capabilities.hasAudioSyncCapability = true;
-                    status.capabilities.audioSyncCapabilityFlags = primaryData[0];
-                }
-                break;
 
             case kMusicInfoBlockRoutingStatus: {
                 if (primaryData.size() >= 2) {

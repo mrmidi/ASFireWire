@@ -134,10 +134,14 @@ std::optional<std::vector<uint8_t>> BuildMusicCapabilities(const E::DiscoverySna
                                        [&](const auto& c) { return c.id == subunit; });
     if (contents != snapshot.contents.end() && contents->music) {
         const auto& status = *contents->music;
-        const auto& c = status.capabilities;
-        if (c.hasAudioCapability) { caps.audio = true; caps.audioIn = c.maxAudioInputChannels; caps.audioOut = c.maxAudioOutputChannels; }
-        if (c.hasMidiCapability) { caps.midi = true; caps.midiIn = c.maxMidiInputPorts; caps.midiOut = c.maxMidiOutputPorts; }
-        if (c.hasSmpteTimeCodeCapability) caps.smpte = true;
+        // SMPTE time code is present when the subunit describes an SMPTE music plug (810B, type 02) or a
+        // source plug reports SMPTE activity (8105, §6.2.3.3).
+        for (const auto& mp : status.musicPlugs) {
+            if (mp.plugType == Protocols::AVC::Descriptors::kMusicPlugTypeSmpte) caps.smpte = true;
+        }
+        for (const auto& [plugId, activity] : status.perPlugActivity) {
+            if (activity.smpteTimeCode) caps.smpte = true;
+        }
         for (const auto& p : status.plugs) {
             Plug plug{.id = p.plugId, .input = p.isDestination,
                       // Analog and digital audio usage are audio streams (Apple MusicSubunitController.h:96-105).

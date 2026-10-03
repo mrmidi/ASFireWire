@@ -124,39 +124,12 @@ It comes from the pre-phase-3 `FCPTransport` and nothing supports it: Apple comp
 (`IOFireWireAVCCommand.cpp:154-157`). A response whose opcode differs only in bit 7 is accepted. Candidate fix:
 compare all eight bits, then run the goldens and a hardware attach.
 
-**F7. The music status-descriptor parser reads `8101`-`8105` as capability blocks (unverified).**
-Two descriptors, two layouts (TA 2001007 1.0). The *identifier* descriptor (§5) holds the capabilities as plain fields
-inside `music_subunit_specific_information` (Figure 5.3), switched on by the bits of a `capability_attributes` byte
-(Table 5.4: bit 0 general, 1 audio, 2 MIDI, 3 SMPTE, 4 sample count, 5 audio SYNC); they have no info block type
-numbers. The *status* descriptor (§6) is made of typed info blocks: `8100` general status area (§6.2.1), `8101` music
-output plug status area (§6.2.2: `[number_of_source_plugs]` + nested `8102`), `8102` source plug status (§6.2.3:
-`[source_plug_number]` + nested `8103`-`8107`), `8103` audio info, `8104` MIDI info, `8105` SMPTE, `8106` sample count,
-`8107` audio SYNC (§6.2.3.1-§6.2.3.5). The captures match the spec exactly: the Phase 88 status descriptor is `8100`
-(`02 03 FF FF FF FF`), `8101` (primary `04` = 4 source plugs) containing `8102` (primary `00`) containing `8103`
-(primary `0A` = 10 audio streams) and `8104` (primary `02` = 2 MIDI streams), then the non-spec `8108` routing block;
-the Duet has only `8100` and `8108`.
-
-The parser walks that nesting correctly, but it also reads top-level `8101`-`8105` with the *identifier-descriptor*
-capability layouts (audio capability: a first-entry channel count; MIDI capability: version, adaptation layer, port
-counts; SMPTE, sample count, audio SYNC: Tx/Rx and Ex/Bus bits). What is and is not known:
-- On the Phase 88 the audio read fails for lack of bytes (the real `8101` primary field is one byte), and `8102`-`8105`
-  appear only nested in both captures, never at top level.
-- FFADO's status-descriptor loop handles only `8100`, `8101` and `8108` at top level and skips every other type;
-  Apple's header names `8101` the Music Output Plug Status Area.
-- So the reads are **unreachable on the two captured devices and on any spec-conforming device. Nothing is known about
-  other devices**, and no reference shows any device sending the identifier layouts at top level of a status descriptor.
-- They were written on 2026-09-30 (`af12d89b`, the new status parser, from the January snapshot's labels), not taken
-  from a reference.
-- The app's capability flags and counts do not depend on them: `BuildMusicCapabilities` also derives audio and MIDI
-  presence and counts from the discovered plugs. Only `8100` (tx/rx capability, same bit layout as Tables 5.5 and 5.6)
-  is exercised and used.
-- **The one real risk is a misread, not an empty value:** a device whose `8101` carried a primary field longer than the
-  spec's one byte would have the audio read take those bytes as "max channels".
-
-The case labels carry the spec names and an `AUDIT F7` comment. Options, none applied: (a) keep everything and record
-unrecognised top-level blocks in the AV/C Report so a third device shows itself; (b) as (a), plus skip the capability
-read of `8101` whenever it has nested `8102` children (the spec shape), which removes the misread on conforming
-devices and keeps the guess for the rest; (c) delete the reads once more devices are captured.
+**F7. RESOLVED 2026-10-03.** The music status-descriptor parser used to read top-level `8101`-`8105` as the identifier
+descriptor's capability fields (§5.2); in a status descriptor those numbers are the output plug status area and its
+nested per-plug blocks (§6.2.2-§6.2.3). No captured device had populated the removed fields. The guessed reads are
+deleted; `8101` count, `8104` MIDI labels and `8105`-`8107` activity are read from their spec position
+(`music-status-infoblocks.md`). The capabilities themselves are parsed from the identifier descriptor
+(`MusicSubunitIdentifier.hpp`), not yet read in discovery.
 
 **F8. The feature-control bitmap bit order has four disagreeing sources.**
 TA 1999008 Table 8.3 says "Bit 0: Mute, Bit 1: Volume, ..." without fixing the numbering direction.

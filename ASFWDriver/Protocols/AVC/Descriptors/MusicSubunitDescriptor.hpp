@@ -23,40 +23,18 @@
 namespace ASFW::Protocols::AVC::Descriptors {
 
 //==============================================================================
-// Music Subunit Capabilities (Info Blocks 0x8100 - 0x8105)
+// General Music Subunit Status Area (Info Block 0x8100)
 //==============================================================================
 
+/// 0x8100 (TA 2001007 §6.2.1): what the subunit can transmit and receive. The Music subunit's other
+/// capabilities (audio channels, MIDI ports, SMPTE, sample count, sync) are fields of its IDENTIFIER descriptor
+/// (§5.2, MusicSubunitIdentifier.hpp), not blocks of the status descriptor: the status descriptor's 8101-8107 are
+/// the output plug status area and its nested per-plug status (§6.2.2-§6.2.3).
 struct MusicCapabilities {
-    // 0x8100: General Music Subunit Status Area (GMSSA)
     bool hasGeneralCapability{false};
     uint8_t transmitCapabilityFlags{0};
     uint8_t receiveCapabilityFlags{0};
     std::optional<uint32_t> latencyCapability{};
-
-    // 0x8101: Audio Capability Status Area
-    bool hasAudioCapability{false};
-    std::optional<uint16_t> maxAudioInputChannels{};
-    std::optional<uint16_t> maxAudioOutputChannels{};
-
-    // 0x8102: MIDI Capability Status Area
-    bool hasMidiCapability{false};
-    uint8_t midiVersionMajor{0};
-    uint8_t midiVersionMinor{0};
-    uint8_t midiAdaptationLayerVersion{0};
-    std::optional<uint16_t> maxMidiInputPorts{};
-    std::optional<uint16_t> maxMidiOutputPorts{};
-
-    // 0x8103: SMPTE Time Code Capability
-    bool hasSmpteTimeCodeCapability{false};
-    uint8_t smpteTimeCodeCapabilityFlags{0};
-
-    // 0x8104: Sample Count Capability
-    bool hasSampleCountCapability{false};
-    uint8_t sampleCountCapabilityFlags{0};
-
-    // 0x8105: Audio Sync Capability
-    bool hasAudioSyncCapability{false};
-    uint8_t audioSyncCapabilityFlags{0};
 };
 
 //==============================================================================
@@ -125,6 +103,14 @@ struct MusicMidiStreams {
     std::vector<std::string> labels;   ///< one per name_info_block, in order
 };
 
+/// What a source plug reports about SMPTE time code, sample count and audio SYNC. Each byte is the activity
+/// field of its block: bit 0 is Rx (SMPTE, sample count) or Bus (audio SYNC), bit 1 is Tx or Ex.
+struct MusicSourcePlugActivity {
+    std::optional<uint8_t> smpteTimeCode;
+    std::optional<uint8_t> sampleCount;
+    std::optional<uint8_t> audioSync;
+};
+
 struct MusicSubunitStatus {
     uint16_t declaredLength{0};
     std::vector<InfoBlockSeen> topLevelBlocks;
@@ -142,6 +128,12 @@ struct MusicSubunitStatus {
     /// the block declares and the label of each, one name_info_block per stream (Figure 6.9) or CR LF separated
     /// in one (Table 6.5). An unlabelled stream is "".
     std::unordered_map<uint8_t, MusicMidiStreams> perPlugMidiStreams;
+    /// 0x8101 number_of_source_plugs: how many source plugs the status area describes (§6.2.2), not the subunit's
+    /// plug total, and the described plugs are not numbered 0..n-1. nullopt when the block is absent.
+    std::optional<uint8_t> declaredSourcePlugs;
+    /// The SMPTE time code, sample count and audio SYNC activity of each source plug that reports it
+    /// (0x8105-0x8107, §6.2.3.3-§6.2.3.5).
+    std::unordered_map<uint8_t, MusicSourcePlugActivity> perPlugActivity;
     /// The label of each audio music plug: the k-th audio music plug routed to
     /// a source plug, in music plug ID order, carries that plug's k-th label
     /// (TA 2001007 Table 6.2). Holds non-empty labels only.

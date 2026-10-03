@@ -72,11 +72,8 @@ bounded section; the parser stops at the first error and reports the absolute of
   A descriptor that ends before the manufacturer length is accepted.
 
 This descriptor is where the **capability** fields live (max audio channels, MIDI version, SMPTE / sample
-count / sync). `MusicSubunitDescriptorParser::ParseStatusDescriptor` currently fills the same
-`MusicCapabilities` struct from info blocks 8101-8107 of the *status* descriptor with these §5.2 layouts.
-That is the F7 problem in `magic-numbers-audit.md` and `music-status-infoblocks.md`; it is a separate task.
-When it is done, `MusicCapabilities` should come from this parser and the status parser should stop
-producing it.
+count / sync). The status parser no longer guesses them (audit F7 resolved); `MusicCapabilities` holds only `8100`'s
+fields. The identifier parser exists and is tested; discovery does not read the descriptor yet.
 
 ## Naming change
 

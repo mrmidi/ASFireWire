@@ -91,6 +91,19 @@ Parsed<MusicSubunitStatus> ParseMidiInfo(uint8_t declared, const std::vector<std
     return MusicSubunitDescriptorParser::ParseStatusDescriptor(descriptor);
 }
 
+// Source plug 0 carrying the three activity blocks, as 8101 -> 8102 -> 8105 / 8106 / 8107.
+Parsed<MusicSubunitStatus> ParseActivity(uint8_t smpte, uint8_t sampleCount, uint8_t audioSync, uint8_t declaredPlugs = 1) {
+    std::vector<uint8_t> nested;
+    for (const auto& block : {InfoBlock(0x8105, {smpte}), InfoBlock(0x8106, {sampleCount}), InfoBlock(0x8107, {audioSync})}) {
+        nested.insert(nested.end(), block.begin(), block.end());
+    }
+    const auto sourceStatus = InfoBlock(0x8102, {0}, nested);
+    const auto outputArea = InfoBlock(0x8101, {declaredPlugs}, sourceStatus);
+    std::vector<uint8_t> descriptor{static_cast<uint8_t>(outputArea.size() >> 8), static_cast<uint8_t>(outputArea.size())};
+    descriptor.insert(descriptor.end(), outputArea.begin(), outputArea.end());
+    return MusicSubunitDescriptorParser::ParseStatusDescriptor(descriptor);
+}
+
 } // namespace
 
 // =============================================================================
@@ -255,6 +268,15 @@ TEST(MusicSubunitDescriptorTests, Phase88MusicStatusDescriptorParsing) {
     EXPECT_EQ(result->perPlugMidiStreams.at(0).declaredStreams, 2);
     EXPECT_EQ(result->perPlugMidiStreams.at(0).labels, (std::vector<std::string>{"MidiPort_1", "MidiPort_2"}));
     EXPECT_EQ(result->perPlugMidiStreams.size(), 1u);
+
+    // 0x8101 number_of_source_plugs (§6.2.2) is 4, the number of 8102 blocks present: source plugs 0, 1, 2 and 5,
+    // not 0..3. Plug 5 reports audio SYNC activity 03: Bus and Ex (§6.2.3.5, Table 6.8).
+    EXPECT_EQ(result->declaredSourcePlugs, 4);
+    ASSERT_EQ(result->perPlugActivity.size(), 1u);
+    ASSERT_TRUE(result->perPlugActivity.contains(5));
+    EXPECT_EQ(result->perPlugActivity.at(5).audioSync, 0x03);
+    EXPECT_FALSE(result->perPlugActivity.at(5).smpteTimeCode.has_value());
+    EXPECT_FALSE(result->perPlugActivity.at(5).sampleCount.has_value());
 }
 
 TEST(MusicSubunitDescriptorTests, UnlabelledStreamKeepsItsPlaceInTheLabelList) {
@@ -301,6 +323,38 @@ TEST(MusicSubunitDescriptorTests, ADeclaredCountThatDisagreesWithTheLabelsIsKept
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(status->perPlugMidiStreams.at(0).declaredStreams, 3);
     EXPECT_EQ(status->perPlugMidiStreams.at(0).labels.size(), 2u);
+}
+
+TEST(MusicSubunitDescriptorTests, ActivityBlocksAreReadFromTheirSpecPosition) {
+    // §6.2.3.3-§6.2.3.5: SMPTE and sample count activity (bit 0 Rx, bit 1 Tx), audio SYNC (bit 0 Bus, bit 1 Ex),
+    // each nested in the source plug's 8102.
+    const auto status = ParseActivity(0x01, 0x02, 0x03, 7);
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(status->declaredSourcePlugs, 7);  // the declared number is kept as sent, not the blocks counted
+    const auto& activity = status->perPlugActivity.at(0);
+    EXPECT_EQ(activity.smpteTimeCode, 0x01);
+    EXPECT_EQ(activity.sampleCount, 0x02);
+    EXPECT_EQ(activity.audioSync, 0x03);
+}
+
+TEST(MusicSubunitDescriptorTests, TopLevelBlocksAreNoLongerReadAsCapabilities) {
+    // Audit F7: 8102-8105 at the top level of a status descriptor are not defined (§6.2 nests them), and the
+    // capabilities they were once read as live in the identifier descriptor. They are recorded and not read.
+    std::vector<uint8_t> body;
+    for (const auto& block : {InfoBlock(0x8101, {1, 0x00, 0x08, 0x00, 0x08}),
+                              InfoBlock(0x8102, {0x10, 0x00, 0x00, 0x01, 0x00, 0x01}), InfoBlock(0x8103, {0x03}),
+                              InfoBlock(0x8104, {0x03}), InfoBlock(0x8105, {0x03})}) {
+        body.insert(body.end(), block.begin(), block.end());
+    }
+    std::vector<uint8_t> descriptor{static_cast<uint8_t>(body.size() >> 8), static_cast<uint8_t>(body.size())};
+    descriptor.insert(descriptor.end(), body.begin(), body.end());
+    const auto status = MusicSubunitDescriptorParser::ParseStatusDescriptor(descriptor);
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(status->topLevelBlocks.size(), 5u);
+    EXPECT_FALSE(status->capabilities.hasGeneralCapability);
+    EXPECT_EQ(status->declaredSourcePlugs, 1);  // 8101 is the output plug status area: its first byte is the count
+    EXPECT_TRUE(status->perPlugActivity.empty());
+    EXPECT_TRUE(status->perPlugMidiStreams.empty());
 }
 
 } // namespace ASFW::Protocols::AVC::Descriptors::Test

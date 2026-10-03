@@ -136,6 +136,20 @@ void DescribeRoute(const std::string& context, const Cmd::SignalSource& route, L
     return text + "(" + Hex(bits) + ")";
 }
 
+/// An activity byte (TA 2001007 Tables 6.6-6.8): bit 0 and bit 1 by their names, "none" for neither, and any
+/// other set bit as UNKNOWN(bit:N), so a reserved bit is shown and not dropped.
+[[nodiscard]] std::string DescribeActivity(uint8_t bits, std::string_view bit0, std::string_view bit1) {
+    std::string text;
+    const auto add = [&text](const std::string& name) { text += (text.empty() ? "" : "+") + name; };
+    if (bits & D::kMusicCapabilityRxBit) add(std::string(bit0));
+    if (bits & D::kMusicCapabilityTxBit) add(std::string(bit1));
+    for (unsigned bit = 2; bit < 8; ++bit) {
+        if (bits & (1u << bit)) add("UNKNOWN(bit:" + std::to_string(bit) + ")");
+    }
+    if (text.empty()) text = "none";
+    return text + "(" + Hex(bits) + ")";
+}
+
 [[nodiscard]] std::string DescribeFormation(const Formation& f) {
     return std::to_string(f.rateHz) + " Hz " + std::to_string(f.pcmChannels) + " PCM + " + std::to_string(f.midiChannels) + " MIDI";
 }
@@ -252,25 +266,6 @@ void DescribeMusic(const SubunitContents& c, Lines& out) {
                              " receive=" + DescribeCapabilityBits(caps.receiveCapabilityFlags) +
                              " latency=" + (caps.latencyCapability ? Hex(*caps.latencyCapability, 8) : std::string("n/a")));
     }
-    // The capability readings below come from top-level blocks 8101-8105, a layout of the identifier
-    // descriptor (TA 2001007 §5.2). They are unverified on any device (audit F7); logged only when read.
-    if (caps.hasAudioCapability) {
-        out.Add(context, "capability_from_top_level_block audio max_input_channels=" +
-                             std::to_string(caps.maxAudioInputChannels.value_or(0)) +
-                             " max_output_channels=" + std::to_string(caps.maxAudioOutputChannels.value_or(0)) +
-                             " (unverified, F7)");
-    }
-    if (caps.hasMidiCapability) {
-        out.Add(context, "capability_from_top_level_block MIDI version=" + std::to_string(caps.midiVersionMajor) + "." +
-                             std::to_string(caps.midiVersionMinor) + " adaptation_layer=" + Hex(caps.midiAdaptationLayerVersion) +
-                             " max_input_ports=" + std::to_string(caps.maxMidiInputPorts.value_or(0)) +
-                             " max_output_ports=" + std::to_string(caps.maxMidiOutputPorts.value_or(0)) + " (unverified, F7)");
-    }
-    if (caps.hasSmpteTimeCodeCapability || caps.hasSampleCountCapability || caps.hasAudioSyncCapability) {
-        out.Add(context, "capability_from_top_level_block smpte=" + Hex(caps.smpteTimeCodeCapabilityFlags) +
-                             " sample_count=" + Hex(caps.sampleCountCapabilityFlags) + " audio_sync=" +
-                             Hex(caps.audioSyncCapabilityFlags) + " (unverified, F7)");
-    }
     if (m.hasRoutingStatus) {
         out.Add(context, "routing_status destination_plugs=" + std::to_string(m.numDestPlugs) +
                              " source_plugs=" + std::to_string(m.numSrcPlugs));
@@ -311,6 +306,29 @@ void DescribeMusic(const SubunitContents& c, Lines& out) {
             out.Add(context + " source plug #" + std::to_string(plugId),
                     "audio_stream_label[" + std::to_string(position++) + "]=" + Quoted(label));
         }
+    }
+    // 8101 number_of_source_plugs against the 8102 blocks present (§6.2.2): a count that differs is shown.
+    if (m.declaredSourcePlugs) {
+        std::string described;
+        std::vector<uint8_t> plugIds;
+        for (const auto& [plugId, labels] : m.perPlugChannelNames) plugIds.push_back(plugId);
+        for (const auto& [plugId, midi] : m.perPlugMidiStreams) plugIds.push_back(plugId);
+        for (const auto& [plugId, activity] : m.perPlugActivity) plugIds.push_back(plugId);
+        std::ranges::sort(plugIds);
+        plugIds.erase(std::ranges::unique(plugIds).begin(), plugIds.end());
+        for (const uint8_t id : plugIds) described += (described.empty() ? "" : ",") + std::to_string(id);
+        out.Add(context, "output_plug_status declared_source_plugs=" + std::to_string(*m.declaredSourcePlugs) +
+                             " plugs_with_stream_info=[" + described + "]");
+    }
+    std::vector<uint8_t> activityPlugs;
+    for (const auto& [plugId, activity] : m.perPlugActivity) activityPlugs.push_back(plugId);
+    std::ranges::sort(activityPlugs);
+    for (const uint8_t plugId : activityPlugs) {
+        const auto& activity = m.perPlugActivity.at(plugId);
+        const std::string plugContext = context + " source plug #" + std::to_string(plugId);
+        if (activity.smpteTimeCode) out.Add(plugContext, "smpte_time_code_activity=" + DescribeActivity(*activity.smpteTimeCode, "rx", "tx"));
+        if (activity.sampleCount) out.Add(plugContext, "sample_count_activity=" + DescribeActivity(*activity.sampleCount, "rx", "tx"));
+        if (activity.audioSync) out.Add(plugContext, "audio_sync_activity=" + DescribeActivity(*activity.audioSync, "bus", "external"));
     }
     std::vector<uint8_t> midiPlugs;
     for (const auto& [plugId, midi] : m.perPlugMidiStreams) midiPlugs.push_back(plugId);

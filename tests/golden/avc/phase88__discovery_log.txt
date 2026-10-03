@@ -572,6 +572,8 @@
 [AvcCaps] music Music(0x0c)#0 source plug #1 audio_stream_label[7]="Multichannel 8 PHASE88 FW"
 [AvcCaps] music Music(0x0c)#0 source plug #2 audio_stream_label[0]="SPDIF/AC3 left PHASE88 FW"
 [AvcCaps] music Music(0x0c)#0 source plug #2 audio_stream_label[1]="SPDIF/AC3 right PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 output_plug_status declared_source_plugs=4 plugs_with_stream_info=[0,1,2,5]
+[AvcCaps] music Music(0x0c)#0 source plug #5 audio_sync_activity=bus+external(0x03)
 [AvcCaps] music Music(0x0c)#0 source plug #0 midi_streams declared=2 labelled=2
 [AvcCaps] music Music(0x0c)#0 source plug #0 midi_stream_label[0]="MidiPort_1"
 [AvcCaps] music Music(0x0c)#0 source plug #0 midi_stream_label[1]="MidiPort_2"

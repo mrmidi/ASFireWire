@@ -51,11 +51,11 @@ label lists under `8101`/`8103` for channel names; it uses cluster and music-plu
 | Block | Read? |
 |---|---|
 | 8100 | Yes: tx / rx capability and latency. |
-| 8101 | Nested walk: yes. `number_of_source_plugs` is **not stored** (the 8108 count is used instead). Also read as an identifier-style audio capability (F7). |
-| 8102 | `source_plug_number` used as the key for labels. Also read as a MIDI capability at top level (F7). |
+| 8101 | Yes: `number_of_source_plugs` (`declaredSourcePlugs`) and the nested walk. |
+| 8102 | Yes: `source_plug_number` keys every per-plug field. |
 | 8103 | Yes: audio stream labels, per source plug. |
 | 8104 | Yes (nested in `8102`): declared stream count and the labels. |
-| 8105 / 8106 / 8107 | **No** (nested). Read only as top-level identifier-style flags (F7). |
+| 8105 / 8106 / 8107 | Yes (nested in `8102`): SMPTE, sample count and audio SYNC activity bytes (`perPlugActivity`). |
 
 ## Evidence from the captures
 
@@ -70,9 +70,19 @@ label lists under `8101`/`8103` for channel names; it uses cluster and music-plu
   no status block. So `number_of_source_plugs` counts the plugs the status area describes, not the subunit's
   plug total, and plug numbers are not 0..n-1. One device; do not assume it for others.
 
-## Open (not applied)
+## Done 2026-10-03 (F7 resolved)
 
-1. ~~Read the MIDI labels from nested `8104`~~ — done 2026-10-03: `MusicSubunitStatus::perPlugMidiStreams` (declared count + one label per stream, one name block per stream or CR LF separated), logged as `midi_streams` / `midi_stream_label[n]`. Phase 88: plug 0, "MidiPort_1", "MidiPort_2".
-2. Read the `8105`-`8107` activity bits from their spec position (nested in `8102`).
-3. Store `8101` `number_of_source_plugs`.
-4. F7 itself: delete or guard the top-level capability reads. Apple's tool shows no use of them.
+1. MIDI labels from nested `8104`: `perPlugMidiStreams` (declared count + labels).
+2. `8105`-`8107` activity bits from their spec position: `perPlugActivity` (bit 0 Rx / Bus, bit 1 Tx / Ex).
+3. `8101` `number_of_source_plugs`: `declaredSourcePlugs`. Measured on Phase 88: it counts the `8102` blocks present
+   (plugs 0, 1, 2, 5), not the subunit's plug total.
+4. The top-level capability reads of `8101`-`8105` are deleted. `MusicCapabilities` now holds only `8100`'s fields;
+   audio channels, MIDI ports, SMPTE, sample count and sync are fields of the identifier descriptor
+   (`MusicSubunitIdentifier.hpp`), which discovery does not read yet. No captured device had populated the removed fields
+   (Phase 88's `8101` primary is one byte; the Duet has no `8101`), and the app's capability flags still come from the
+   plugs; SMPTE comes from an SMPTE music plug or SMPTE activity.
+
+## Still open
+
+- Read the Music identifier descriptor (specifier `00`) in discovery. It is a new READ DESCRIPTOR on the Music subunit;
+  not captured on any device, so not sent at attach (`avc-attach-sends-only-captured-frames`).
