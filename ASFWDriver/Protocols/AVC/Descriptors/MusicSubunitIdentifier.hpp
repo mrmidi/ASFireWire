@@ -9,10 +9,11 @@
 // MusicSubunitDescriptor.hpp), whose info blocks 8100-8107 reuse the same numbers for
 // different things.
 //
-// NOT SEEN ON A WIRE. No reference stack (Linux, FFADO, Apple IOFireWire / AVCVideoServices)
-// reads this descriptor, and no capture holds one, so the layout is the spec text alone.
-// Discovery does not read it: it asks the Music subunit for its status descriptor only.
-//
+// Seen on one device: a TerraTec Phase 88 answered OPEN / READ / CLOSE of specifier 00 on 2026-10-03 with this
+// descriptor (documentation/avc-rebuild/fixtures/phase88_music_identifier.json), and the parser reads it with every
+// length adding up. No reference stack (Linux, FFADO, Apple IOFireWire / AVCVideoServices) reads it. Discovery does
+// not read it: it asks the Music subunit for its status descriptor only.
+
 // Layout (nesting from Figures 5.1 and 5.2, read the way the Audio subunit's is):
 //   descriptor_length (2) | generation_ID | size_of_list_ID | size_of_object_ID |
 //   size_of_object_position | number_of_root_object_lists (2) | root_object_list_id[n] |

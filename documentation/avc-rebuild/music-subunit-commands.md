@@ -71,6 +71,13 @@ bounded section; the parser stops at the first error and reports the absolute of
 - Optional info blocks (§5.1, "for future expansion") and manufacturer bytes are counted, not read.
   A descriptor that ends before the manufacturer length is accepted.
 
+**Captured 2026-10-03 from a Phase 88** (`fixtures/phase88_music_identifier.json`): OPEN, one READ of 67 bytes, CLOSE,
+all ACCEPTED, no wedge. Generation 2, version 1.0, capability attributes `27` (general, audio, MIDI, audio SYNC):
+general = transmit blocking / receive non-blocking+blocking (same as `8100`); audio = 5 formats, 10 in / 10 out
+channels, FDFs 00-04 (the five rates of its plugs), label 0x40; MIDI 1.0, adaptation layer 0, **max input ports 4, max
+output ports 0** (odd for a device with MIDI in and out; as reported, not yet explained); audio SYNC `03`, the same
+value the status descriptor's `8107` reports as activity. The 10 / 10 channels match the nub's published geometry.
+
 This descriptor is where the **capability** fields live (max audio channels, MIDI version, SMPTE / sample
 count / sync). The status parser no longer guesses them (audit F7 resolved); `MusicCapabilities` holds only `8100`'s
 fields. The identifier parser exists and is tested; discovery does not read the descriptor yet.

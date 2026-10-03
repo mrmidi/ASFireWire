@@ -690,4 +690,47 @@ TEST(MusicIdentifierTests, ManufacturerInformationMayBeAbsent) {
     EXPECT_FALSE(parsed->hasManufacturerInformation);
 }
 
+TEST(MusicIdentifierTests, ParsesTheDescriptorCapturedFromAPhase88) {
+    // documentation/avc-rebuild/fixtures/phase88_music_identifier.json: OPEN / READ / CLOSE on 2026-10-03, specifier 00
+    // of the Music subunit. The first capture of this descriptor on any device.
+    const std::vector<uint8_t> bytes = {
+        0x00, 0x41, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x37, 0x00, 0x35, 0x00, 0x10, 0x00, 0x31, 0x27, 0x06, 0x02,
+        0x03, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0x05, 0x00, 0x0A, 0x00, 0x0A, 0x00, 0x40, 0x00, 0x0A, 0x00, 0x0A, 0x01, 0x40,
+        0x00, 0x0A, 0x00, 0x0A, 0x02, 0x40, 0x00, 0x0A, 0x00, 0x0A, 0x03, 0x40, 0x00, 0x0A, 0x00, 0x0A, 0x04, 0x40, 0x06,
+        0x10, 0x00, 0x00, 0x04, 0x00, 0x00, 0x01, 0x03, 0x00, 0x00};
+    ASSERT_EQ(bytes.size(), 67u);
+    const auto parsed = D::MusicSubunitIdentifierParser::Parse(bytes);
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->generationId, D::kMusicGenerationAvc40);
+    EXPECT_EQ(parsed->sizeOfListId, 0);
+    EXPECT_TRUE(parsed->rootListIds.empty());
+    EXPECT_EQ(parsed->version, D::kMusicSubunitVersion10);
+    EXPECT_EQ(parsed->capabilityAttributes, (std::vector<uint8_t>{0x27}));  // general, audio, MIDI, audio SYNC
+    ASSERT_TRUE(parsed->general.has_value());
+    EXPECT_EQ(parsed->general->transmit, D::kMusicCapabilityBlockingBit);
+    EXPECT_EQ(parsed->general->receive, D::kMusicCapabilityBlockingBit | D::kMusicCapabilityNonBlockingBit);
+    EXPECT_EQ(parsed->general->latency, D::kMusicLatencyNotSpecified);
+    ASSERT_TRUE(parsed->audio.has_value());
+    ASSERT_EQ(parsed->audio->size(), 5u);
+    for (size_t i = 0; i < parsed->audio->size(); ++i) {
+        EXPECT_EQ((*parsed->audio)[i].maxInputChannels, 10);
+        EXPECT_EQ((*parsed->audio)[i].maxOutputChannels, 10);
+        EXPECT_EQ((*parsed->audio)[i].fdf, i);          // 32, 44.1, 48, 88.2, 96 kHz: the five rates of the plugs
+        EXPECT_EQ((*parsed->audio)[i].am824Label, 0x40);  // multi-bit linear audio (Table 5.8)
+    }
+    ASSERT_TRUE(parsed->midi.has_value());
+    EXPECT_EQ(parsed->midi->version, 1);
+    EXPECT_EQ(parsed->midi->revision, 0);
+    EXPECT_EQ(parsed->midi->adaptationLayerVersion, 0);
+    EXPECT_EQ(parsed->midi->maxInputPorts, 4);
+    EXPECT_EQ(parsed->midi->maxOutputPorts, 0);
+    EXPECT_FALSE(parsed->smpteTimeCode.has_value());
+    EXPECT_FALSE(parsed->sampleCount.has_value());
+    // The same 03 the status descriptor's 8107 reports as activity (Bus + Ex).
+    EXPECT_EQ(parsed->audioSync, D::kMusicCapabilityRxBit | D::kMusicCapabilityTxBit);
+    EXPECT_TRUE(parsed->hasManufacturerInformation);
+    EXPECT_EQ(parsed->manufacturerInformationBytes, 0u);
+    EXPECT_EQ(parsed->optionalInfoBytes, 0u);
+}
+
 } // namespace ASFW::AVC::Test

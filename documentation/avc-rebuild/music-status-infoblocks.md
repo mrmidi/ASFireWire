@@ -84,5 +84,5 @@ label lists under `8101`/`8103` for channel names; it uses cluster and music-plu
 
 ## Still open
 
-- Read the Music identifier descriptor (specifier `00`) in discovery. It is a new READ DESCRIPTOR on the Music subunit;
-  not captured on any device, so not sent at attach (`avc-attach-sends-only-captured-frames`).
+- Read the Music identifier descriptor (specifier `00`) in discovery. Captured once from a Phase 88 on 2026-10-03
+  (`fixtures/phase88_music_identifier.json`), so the frames are now proven on that device, not on any other.
