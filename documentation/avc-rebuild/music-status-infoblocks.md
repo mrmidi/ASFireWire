@@ -54,7 +54,7 @@ label lists under `8101`/`8103` for channel names; it uses cluster and music-plu
 | 8101 | Nested walk: yes. `number_of_source_plugs` is **not stored** (the 8108 count is used instead). Also read as an identifier-style audio capability (F7). |
 | 8102 | `source_plug_number` used as the key for labels. Also read as a MIDI capability at top level (F7). |
 | 8103 | Yes: audio stream labels, per source plug. |
-| 8104 | **No.** The MIDI labels are not read. |
+| 8104 | Yes (nested in `8102`): declared stream count and the labels. |
 | 8105 / 8106 / 8107 | **No** (nested). Read only as top-level identifier-style flags (F7). |
 
 ## Evidence from the captures
@@ -72,7 +72,7 @@ label lists under `8101`/`8103` for channel names; it uses cluster and music-plu
 
 ## Open (not applied)
 
-1. Read the MIDI labels from nested `8104` (`name_info_block[0..n-1]`), the same way as the `8103` labels.
+1. ~~Read the MIDI labels from nested `8104`~~ — done 2026-10-03: `MusicSubunitStatus::perPlugMidiStreams` (declared count + one label per stream, one name block per stream or CR LF separated), logged as `midi_streams` / `midi_stream_label[n]`. Phase 88: plug 0, "MidiPort_1", "MidiPort_2".
 2. Read the `8105`-`8107` activity bits from their spec position (nested in `8102`).
 3. Store `8101` `number_of_source_plugs`.
 4. F7 itself: delete or guard the top-level capability reads. Apple's tool shows no use of them.

@@ -91,6 +91,22 @@ std::string MusicSubunitDescriptorParser::ExtractName(const AVCInfoBlock& block)
     return {};
 }
 
+std::vector<std::string> MusicSubunitDescriptorParser::SplitLabels(const std::string& text) {
+    std::vector<std::string> labels;
+    size_t start = 0;
+    while (start < text.size()) {
+        const size_t end = text.find("\r\n", start);
+        if (end == std::string::npos) {
+            labels.push_back(text.substr(start));
+            break;
+        }
+        labels.push_back(text.substr(start, end - start));
+        start = end + 2;
+    }
+    if (labels.empty()) labels.emplace_back();  // a stream with no text keeps its place
+    return labels;
+}
+
 Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
     std::span<const uint8_t> data) noexcept {
     auto body = DescriptorBody(data);
@@ -140,25 +156,21 @@ Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
                 for (const auto& plugStatus : block.GetNestedBlocks()) {
                     if (plugStatus.GetType() == kMusicInfoBlockSourcePlugStatus && !plugStatus.GetPrimaryData().empty()) {
                         const uint8_t plugId = plugStatus.GetPrimaryData()[0];
-                        for (const auto& audioInfo : plugStatus.GetNestedBlocks()) {
-                            if (audioInfo.GetType() == kMusicInfoBlockAudioInfo) {
-                                // Labels are separated by CR LF; an unlabelled
-                                // stream is an empty entry (TA 2001007 §6.2.3.1).
-                                const std::string text = ExtractName(audioInfo);
-                                if (!text.empty()) {
-                                    std::vector<std::string> names;
-                                    size_t start = 0;
-                                    while (start < text.size()) {
-                                        size_t end = text.find("\r\n", start);
-                                        if (end == std::string::npos) {
-                                            names.push_back(text.substr(start));
-                                            break;
-                                        }
-                                        names.push_back(text.substr(start, end - start));
-                                        start = end + 2;
-                                    }
-                                    status.perPlugChannelNames[plugId] = std::move(names);
+                        for (const auto& info : plugStatus.GetNestedBlocks()) {
+                            if (info.GetType() == kMusicInfoBlockAudioInfo) {
+                                // An unlabelled stream is an empty entry (TA 2001007 §6.2.3.1).
+                                if (const std::string text = ExtractName(info); !text.empty()) {
+                                    status.perPlugChannelNames[plugId] = SplitLabels(text);
                                 }
+                            } else if (info.GetType() == kMusicInfoBlockMidiInfo) {
+                                // number_of_MIDI_streams, then one name_info_block per stream (§6.2.3.2).
+                                MusicMidiStreams midi;
+                                if (!info.GetPrimaryData().empty()) midi.declaredStreams = info.GetPrimaryData()[0];
+                                for (const auto& name : info.GetNestedBlocks()) {
+                                    if (name.GetType() != kInfoBlockName) continue;
+                                    for (auto& label : SplitLabels(ExtractName(name))) midi.labels.push_back(std::move(label));
+                                }
+                                status.perPlugMidiStreams[plugId] = std::move(midi);
                             }
                         }
                     }

@@ -572,6 +572,9 @@
 [AvcCaps] music Music(0x0c)#0 source plug #1 audio_stream_label[7]="Multichannel 8 PHASE88 FW"
 [AvcCaps] music Music(0x0c)#0 source plug #2 audio_stream_label[0]="SPDIF/AC3 left PHASE88 FW"
 [AvcCaps] music Music(0x0c)#0 source plug #2 audio_stream_label[1]="SPDIF/AC3 right PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #0 midi_streams declared=2 labelled=2
+[AvcCaps] music Music(0x0c)#0 source plug #0 midi_stream_label[0]="MidiPort_1"
+[AvcCaps] music Music(0x0c)#0 source plug #0 midi_stream_label[1]="MidiPort_2"
 [AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) data=[60] not muted(off)
 [AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) data=[00 00] volume_raw=0x0000 0 dB
 [AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=1 control=MUTE_CONTROL(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)

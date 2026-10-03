@@ -119,6 +119,12 @@ struct InfoBlockSeen {
     uint16_t primaryLength{0};
 };
 
+/// The MIDI streams a source plug carries (MIDI info block 8104).
+struct MusicMidiStreams {
+    uint8_t declaredStreams{0};        ///< number_of_MIDI_streams
+    std::vector<std::string> labels;   ///< one per name_info_block, in order
+};
+
 struct MusicSubunitStatus {
     uint16_t declaredLength{0};
     std::vector<InfoBlockSeen> topLevelBlocks;
@@ -132,6 +138,10 @@ struct MusicSubunitStatus {
     /// Audio stream labels per subunit source plug, from its audio info block
     /// (TA 2001007 §6.2.3.1). One entry per stream; an unlabelled one is "".
     std::unordered_map<uint8_t, std::vector<std::string>> perPlugChannelNames;
+    /// The MIDI streams of each subunit source plug, from its MIDI info block (TA 2001007 §6.2.3.2): how many
+    /// the block declares and the label of each, one name_info_block per stream (Figure 6.9) or CR LF separated
+    /// in one (Table 6.5). An unlabelled stream is "".
+    std::unordered_map<uint8_t, MusicMidiStreams> perPlugMidiStreams;
     /// The label of each audio music plug: the k-th audio music plug routed to
     /// a source plug, in music plug ID order, carries that plug's k-th label
     /// (TA 2001007 Table 6.2). Holds non-empty labels only.
@@ -151,6 +161,8 @@ public:
         std::span<const uint8_t> data) noexcept;
 
     [[nodiscard]] static std::string ExtractName(const AVCInfoBlock& block) noexcept;
+    /// Labels separated by CR LF (TA 2001007 Tables 6.2, 6.5); a missing label is an empty entry.
+    [[nodiscard]] static std::vector<std::string> SplitLabels(const std::string& text);
 
 private:
     static void AssignMusicPlugLabels(MusicSubunitStatus& status);

@@ -71,6 +71,26 @@ Parsed<MusicSubunitStatus> ParseSourcePlugLabels(const std::string& labels) {
     return MusicSubunitDescriptorParser::ParseStatusDescriptor(descriptor);
 }
 
+
+// Source plug 0 with a MIDI info block: `declared` streams and `nameBlocks` name_info_blocks, each holding one
+// raw text block with the given text.
+Parsed<MusicSubunitStatus> ParseMidiInfo(uint8_t declared, const std::vector<std::string>& nameBlocks) {
+    std::vector<uint8_t> names;
+    for (const auto& text : nameBlocks) {
+        const auto raw = InfoBlock(0x000A, std::vector<uint8_t>(text.begin(), text.end()));
+        std::vector<uint8_t> namePrimary{0x00, 0x00, 0xFF, 0xFF};
+        namePrimary.insert(namePrimary.end(), raw.begin(), raw.end());
+        const auto name = InfoBlock(0x000B, namePrimary);
+        names.insert(names.end(), name.begin(), name.end());
+    }
+    const auto midiInfo = InfoBlock(0x8104, {declared}, names);
+    const auto sourceStatus = InfoBlock(0x8102, {0}, midiInfo);
+    const auto outputArea = InfoBlock(0x8101, {1}, sourceStatus);
+    std::vector<uint8_t> descriptor{static_cast<uint8_t>(outputArea.size() >> 8), static_cast<uint8_t>(outputArea.size())};
+    descriptor.insert(descriptor.end(), outputArea.begin(), outputArea.end());
+    return MusicSubunitDescriptorParser::ParseStatusDescriptor(descriptor);
+}
+
 } // namespace
 
 // =============================================================================
@@ -228,6 +248,13 @@ TEST(MusicSubunitDescriptorTests, Phase88MusicStatusDescriptorParsing) {
     EXPECT_EQ(result->musicPlugLabels.at(12), "Line_1/2 left PHASE88 FW");
     EXPECT_EQ(result->musicPlugLabels.at(21), "SPDIF right PHASE88 FW");
     EXPECT_FALSE(result->musicPlugLabels.contains(10)); // MIDI plug: no audio label
+
+    // MIDI streams from 0x8101 -> 0x8102 -> 0x8104 (TA 2001007 §6.2.3.2): source plug 0 declares two and sends
+    // one name_info_block per stream. Plugs 1, 2 and 5 carry no MIDI info block.
+    ASSERT_TRUE(result->perPlugMidiStreams.contains(0));
+    EXPECT_EQ(result->perPlugMidiStreams.at(0).declaredStreams, 2);
+    EXPECT_EQ(result->perPlugMidiStreams.at(0).labels, (std::vector<std::string>{"MidiPort_1", "MidiPort_2"}));
+    EXPECT_EQ(result->perPlugMidiStreams.size(), 1u);
 }
 
 TEST(MusicSubunitDescriptorTests, UnlabelledStreamKeepsItsPlaceInTheLabelList) {
@@ -243,6 +270,37 @@ TEST(MusicSubunitDescriptorTests, UnlabelledStreamKeepsItsPlaceInTheLabelList) {
     EXPECT_EQ(status->musicPlugLabels.at(12), "A");
     EXPECT_FALSE(status->musicPlugLabels.contains(13));
     EXPECT_EQ(status->musicPlugLabels.at(14), "C");
+}
+
+TEST(MusicSubunitDescriptorTests, MidiLabelsOneNameBlockPerStream) {
+    // Figure 6.9: number_of_MIDI_streams, then a name_info_block for each.
+    const auto status = ParseMidiInfo(3, {"STRING_1", "BRASS_1", "DRUM_1"});
+    ASSERT_TRUE(status.has_value());
+    const auto& midi = status->perPlugMidiStreams.at(0);
+    EXPECT_EQ(midi.declaredStreams, 3);
+    EXPECT_EQ(midi.labels, (std::vector<std::string>{"STRING_1", "BRASS_1", "DRUM_1"}));
+}
+
+TEST(MusicSubunitDescriptorTests, MidiLabelsInOneNameBlockAreCrLfSeparated) {
+    // Table 6.5: one raw_text_info_block carrying every label, each ended by CR LF; a missing label is two
+    // consecutive CR LF.
+    const auto status = ParseMidiInfo(4, {"STRING_1\r\nSTRING_2\r\n\r\nChorus\r\n"});
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(status->perPlugMidiStreams.at(0).labels, (std::vector<std::string>{"STRING_1", "STRING_2", "", "Chorus"}));
+}
+
+TEST(MusicSubunitDescriptorTests, AMidiStreamWithoutTextKeepsItsPlace) {
+    const auto status = ParseMidiInfo(2, {"", "B"});
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(status->perPlugMidiStreams.at(0).labels, (std::vector<std::string>{"", "B"}));
+}
+
+TEST(MusicSubunitDescriptorTests, ADeclaredCountThatDisagreesWithTheLabelsIsKept) {
+    // The block says three streams and names two: both numbers are kept so a log can show the difference.
+    const auto status = ParseMidiInfo(3, {"A", "B"});
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(status->perPlugMidiStreams.at(0).declaredStreams, 3);
+    EXPECT_EQ(status->perPlugMidiStreams.at(0).labels.size(), 2u);
 }
 
 } // namespace ASFW::Protocols::AVC::Descriptors::Test

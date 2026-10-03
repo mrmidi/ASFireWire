@@ -312,6 +312,21 @@ void DescribeMusic(const SubunitContents& c, Lines& out) {
                     "audio_stream_label[" + std::to_string(position++) + "]=" + Quoted(label));
         }
     }
+    std::vector<uint8_t> midiPlugs;
+    for (const auto& [plugId, midi] : m.perPlugMidiStreams) midiPlugs.push_back(plugId);
+    std::ranges::sort(midiPlugs);
+    for (const uint8_t plugId : midiPlugs) {
+        const auto& midi = m.perPlugMidiStreams.at(plugId);
+        const std::string plugContext = context + " source plug #" + std::to_string(plugId);
+        // §6.2.3.2: number_of_MIDI_streams, and one label per stream; a count that disagrees is shown.
+        out.Add(plugContext, "midi_streams declared=" + std::to_string(midi.declaredStreams) +
+                                 " labelled=" + std::to_string(midi.labels.size()) +
+                                 (midi.declaredStreams == midi.labels.size() ? "" : " (count differs)"));
+        size_t position = 0;
+        for (const auto& label : midi.labels) {
+            out.Add(plugContext, "midi_stream_label[" + std::to_string(position++) + "]=" + Quoted(label));
+        }
+    }
 }
 
 void DescribeTypeInfo(const D::AudioFunctionBlockInfo& fb, const std::string& context, Lines& out) {
