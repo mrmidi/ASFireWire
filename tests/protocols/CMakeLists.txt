@@ -27,6 +27,12 @@ add_protocols_test(AvcCodecTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
 )
 
+# AV/C CCM codecs: SIGNAL SOURCE, INPUT SELECT, OUTPUT PRESET, CCM PROFILE (TA 2002010)
+add_protocols_test(CcmCodecTests
+    CcmCodecTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)
+
 # AVC Hardware Fixture Tests (Phase 88 / Duet)
 add_protocols_test(AvcFixtureTests
     AvcFixtureTests.cpp

@@ -127,7 +127,10 @@ enum class Opcode : uint8_t {
     kReadDescriptor = 0x09,          ///< READ DESCRIPTOR; TA 2002013 §7.5
     kOutputPlugSignalFormat = 0x18,  ///< OUTPUT PLUG SIGNAL FORMAT; General 4.2 §10.11, general.rs:560
     kInputPlugSignalFormat = 0x19,   ///< INPUT PLUG SIGNAL FORMAT; General 4.2 §10.10, general.rs:521
-    kSignalSource = 0x1A,            ///< SIGNAL SOURCE (CCM); ta1394 ccm/src/lib.rs:213
+    kSignalSource = 0x1A,            ///< SIGNAL SOURCE (CCM); TA 2002010 Table 7.1, §7.1; ta1394 ccm/src/lib.rs:213
+    kInputSelect = 0x1B,             ///< INPUT SELECT (CCM); TA 2002010 Table 7.1, §7.2
+    kOutputPreset = 0x1C,            ///< OUTPUT PRESET (CCM); TA 2002010 Table 7.1, §7.3
+    kCcmProfile = 0x1D,              ///< CCM PROFILE (CCM 1.1); TA 2002010 Table 7.1, §7.4
     kStreamFormatSupport = 0x2F,     ///< STREAM FORMAT SUPPORT; TA 2001002 (BridgeCo, Linux bebob_command.c:302)
     kUnitInfo = 0x30,                ///< UNIT INFO; ta1394 general.rs:37
     kSubunitInfo = 0x31,             ///< SUBUNIT INFO; ta1394 general.rs:130

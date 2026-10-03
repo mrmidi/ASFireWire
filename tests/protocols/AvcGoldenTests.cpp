@@ -281,9 +281,9 @@ constexpr UncapturedFrame kDuetUncaptured[] = {
     // with ta1394 stream-format lib.rs:785-1060, FFADO avc_signal_source.cpp:125-171,
     // and ta1394 audio lib.rs:820-862; these are reference-backed, not HW evidence.
     {"0108(bf|2f)c1.*", "ta1394 stream-format lib.rs:785-1060"},
-    {"01ff1afffffe(ff|08|60)..", "FFADO avc_signal_source.cpp:125-171"},
+    {"01ff1afffffe(ff|08|60)..", "TA 2002010 Figure 7.7, Table C.1; FFADO avc_signal_source.cpp:125-171"},
     {"(01|02)08b8(80|81).*", "ta1394 audio lib.rs:280-350,820-862"},
-    {"02ff1aff.*", "FFADO avc_signal_source.cpp:137-141"},
+    {"02ff1a0f.*", "TA 2002010 Figure 7.1, Apple QuerySyncPlugReconnect 0x10f18, FFADO avc_signal_source.cpp (resultStatus & 0xF)"},
 
     // Music subunit status descriptor OPEN and READ: Apple, isitduet.txt:157,168.
     {"0060088001ff0000", "Apple, isitduet.txt:157"},
@@ -301,9 +301,9 @@ constexpr UncapturedFrame kPhase88Uncaptured[] = {
     // with ta1394 stream-format lib.rs:785-1060, FFADO avc_signal_source.cpp:125-171,
     // and ta1394 audio lib.rs:820-862; these are reference-backed, not HW evidence.
     {"0108(bf|2f)c1.*", "ta1394 stream-format lib.rs:785-1060"},
-    {"01ff1afffffe(ff|08|60)..", "FFADO avc_signal_source.cpp:125-171"},
+    {"01ff1afffffe(ff|08|60)..", "TA 2002010 Figure 7.7, Table C.1; FFADO avc_signal_source.cpp:125-171"},
     {"(01|02)08b8(80|81).*", "ta1394 audio lib.rs:280-350,820-862"},
-    {"02ff1aff.*", "FFADO avc_signal_source.cpp:137-141"},
+    {"02ff1a0f.*", "TA 2002010 Figure 7.1, Apple QuerySyncPlugReconnect 0x10f18, FFADO avc_signal_source.cpp (resultStatus & 0xF)"},
 
     // Audio subunit plug formats, 0x2F only: FFADO avc_plug.cpp:231-249 with
     // avc_extended_stream_format.cpp:296.

@@ -514,12 +514,7 @@ TEST(StreamFormatTests, BuildAndParseStreamFormatListAndSingle) {
 
 TEST(SignalSourceTests, BuildStatusAndControl) {
     const auto dst = Cmd::SignalAddress::SubunitPlug(kMusicSubunit0, 0);
-    Cmd::SignalSourceCommand statusCmd{
-        .address = SubunitAddress::Unit(),
-        .operands = Cmd::SignalSourceOperands{
-            .destination = dst,
-        }
-    };
+    const auto statusCmd = Cmd::QuerySignalSource(dst);
     auto statusFrame = statusCmd.Encode(CommandType::kStatus);
     ASSERT_TRUE(statusFrame.has_value());
     EXPECT_EQ(statusFrame->Type(), CommandType::kStatus);
@@ -531,22 +526,17 @@ TEST(SignalSourceTests, BuildStatusAndControl) {
     ASSERT_EQ(ops.size(), 5u);
     EXPECT_EQ(ops[0], 0xFF);
     EXPECT_EQ(ops[1], 0xFF);
-    EXPECT_EQ(ops[2], 0xFE); // Wildcard per ta1394 ccm lib.rs:183
+    EXPECT_EQ(ops[2], 0xFE); // "no signal source" placeholder, CCM Figure 7.7 (ta1394 ccm lib.rs:183)
     EXPECT_EQ(ops[3], 0x60); // Music subunit 0
     EXPECT_EQ(ops[4], 0x00); // Plug 0
 
     // Control frame: connects isochronous unit plug 0 to destination
     const auto src = Cmd::SignalAddress::UnitIsochronousPlug(0);
-    Cmd::SignalSourceCommand ctrlCmd{
-        .address = SubunitAddress::Unit(),
-        .operands = Cmd::SignalSourceOperands{
-            .destination = dst,
-            .source = src,
-        }
-    };
+    const auto ctrlCmd = Cmd::ConnectSignalSource(src, dst);
     auto ctrlFrame = ctrlCmd.Encode(CommandType::kControl);
     ASSERT_TRUE(ctrlFrame.has_value());
     EXPECT_EQ(ctrlFrame->Type(), CommandType::kControl);
+    EXPECT_EQ(ctrlFrame->Operands()[0], 0x0F);  // CCM Figure 7.1: reserved 0, result_status F
     EXPECT_EQ(ctrlFrame->Operands()[1], 0xFF);
     EXPECT_EQ(ctrlFrame->Operands()[2], 0x00);
 }
@@ -558,7 +548,7 @@ TEST(SignalSourceTests, ParseSignalSourceResponse) {
 
     auto sig = Cmd::SignalSourceOperands::Read(resp->operands);
     ASSERT_TRUE(sig.has_value());
-    EXPECT_EQ(sig->firstByte, 0xFF);
+    EXPECT_EQ(sig->first.Raw(), 0xFF);
     EXPECT_TRUE(sig->source.IsUnit());
     EXPECT_EQ(sig->source.PlugId(), 0);
     EXPECT_FALSE(sig->destination.IsUnit());

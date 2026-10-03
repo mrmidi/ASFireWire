@@ -92,11 +92,11 @@ void Expand(State& s, Checkpoint point) {
     case Checkpoint::Routes:
         for (const auto& plug : s.builder.plugs) {
             if (plug.address.IsUnit() && plug.direction == Cmd::PlugDirection::kOutput)
-                s.probes.emplace_back(Cmd::SignalSourceCommand{.operands = {
-                    .destination = Cmd::SignalAddress::UnitIsochronousPlug(plug.id.value)}});
+                s.probes.emplace_back(Cmd::QuerySignalSource(
+                    Cmd::SignalAddress::UnitIsochronousPlug(plug.id.value)));
             else if (!plug.address.IsUnit() && plug.direction == Cmd::PlugDirection::kInput)
-                s.probes.emplace_back(Cmd::SignalSourceCommand{.operands = {
-                    .destination = Cmd::SignalAddress::SubunitPlug(plug.address, plug.id.value)}});
+                s.probes.emplace_back(Cmd::QuerySignalSource(
+                    Cmd::SignalAddress::SubunitPlug(plug.address, plug.id.value)));
         }
         s.probes.emplace_back(Checkpoint::Controls); break;
     case Checkpoint::Controls:
@@ -143,8 +143,8 @@ void Expand(State& s, Checkpoint point) {
                     candidates.push_back(Cmd::SignalAddress::UnitExternalPlug(static_cast<uint8_t>(i)));
                 for (const auto& source : c.music->plugs) if (!source.isDestination)
                     candidates.push_back(Cmd::SignalAddress::SubunitPlug(c.id.ToAddress(), source.plugId));
-                for (auto source : candidates) s.probes.emplace_back(ClockProbe{Cmd::SignalSourceCommand{
-                    .operands = {.destination = destination, .source = source}}});
+                for (auto source : candidates)
+                    s.probes.emplace_back(ClockProbe{Cmd::CanConnectSignalSource(source, destination)});
             }
         }
         s.probes.emplace_back(Checkpoint::Extension); break;
