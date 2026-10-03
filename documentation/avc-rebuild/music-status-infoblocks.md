@@ -31,6 +31,19 @@ from Apple's headers and the captures, and are documented in `applefwaudio-graph
 Nothing in the spec or in Apple's tool reads `8101`-`8105` at the top level of a status descriptor as a
 *capability* block (the identifier-descriptor layouts of §5.2). That read exists only in our parser (audit F7).
 
+## What the other reference stacks do (checked 2026-10-03)
+
+- **Linux** (`references/linux-sound-firewire-stack`, the `snd-firewire-ctl-services` crates): never reads a music
+  subunit descriptor. No READ DESCRIPTOR or OPEN DESCRIPTOR anywhere; bebob uses plug info and stream formats
+  only. It has nothing on `8100`-`8107`.
+- **FFADO** (`avc_descriptor_music.cpp:734-748`): the status-descriptor loop handles `8100`, `8101` and `8108`
+  only. `8101` is `AVCMusicOutputPlugStatusInfoBlock`, whose `deserialize` warns "not supported, skipping" and skips
+  it (`:84-103`), so FFADO never reads the nested `8102`-`8107` either. Every other type is skipped as unknown.
+- **Apple AVCVideoServices**: decodes all of `8100`-`8107` as above, as a dumper.
+
+So the labels and activity bits in `8102`-`8107` have exactly one working reader outside us, Apple's AppleFWAudio
+discovery, which builds its channel names from them.
+
 ## What our parser does with each (`MusicSubunitDescriptor.cpp`)
 
 | Block | Read? |
