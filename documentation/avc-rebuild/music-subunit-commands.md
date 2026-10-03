@@ -30,8 +30,8 @@ address, 0 or more than 72 subcommands, a subfunction in a STATUS entry).
   identifier descriptor (0x00)** of the same subunit, right after the status read succeeded (so only from a subunit
   that has just answered OPEN / READ DESCRIPTOR). A refused or failed identifier read costs the capabilities only.
 - Per `avc-attach-sends-only-captured-frames`: the identifier read is captured on a Phase 88 only. Every other Music
-  subunit is sent this frame for the first time at its next attach: on the Duet's golden it is simulated as NOT
-  IMPLEMENTED, unverified on the real device. A device with a command allowlist refuses it (`kRefused`).
+  subunit is sent this frame for the first time at its next attach. The Duet's golden simulates NOT IMPLEMENTED; the
+  owner reports (2026-10-03) the real Duet attached and ran fine with the new probe (no log capture of its answer). A device with a command allowlist refuses it (`kRefused`).
 - The six commands are unproven frames and can freeze Phase 88 / M-Audio firmware. A device with an allowlist refuses them.
 - Adding a probe means: pick a device that is not Phase 88, send one MUSIC PLUG INFO STATUS, capture the
   reply, and turn that capture into a fixture before widening.
