@@ -4,6 +4,7 @@
 // AvcAudioConfig.cpp - The audio endpoint an AV/C unit publishes.
 
 #include "AvcAudioConfig.hpp"
+#include "AvcControlMapping.hpp"
 #include "../../../Protocols/AVC/Descriptors/DescriptorTypeCodes.hpp"
 #include "../Duplex/AudioClockConfig.hpp"
 
@@ -123,23 +124,25 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
     config.resolvedGeometryRequired = true;
     config.deviceSampleRates = true;
     config.graphResolved = true;
-    // A lone feature block on the playback destination is unambiguous. Mixer
-    // blocks are published as named play-through controls, not system output
-    // volume: their channel numbers belong to their own clusters.
-    const auto featureCount = std::ranges::count_if(graph.controls, [](const auto& block) {
-        return block.type == Descriptors::AudioFunctionBlockType::kFeature;
-    });
     for (const auto& channel : graph.featureChannels) {
-        const auto block = std::ranges::find_if(graph.controls, [&](const auto& item) { return item.id == channel.block; });
+        const auto block = std::ranges::find_if(graph.controls, [&](const auto& item) { return item.type == Descriptors::AudioFunctionBlockType::kFeature && item.audioSubunitId == channel.subunit && item.id == channel.block; });
         if (block == graph.controls.end()) continue;
-        const bool playback = plan.protocolImplementation == DeviceProfiles::Audio::ProtocolImplementationId::ApogeeDuet &&
-            featureCount == 1 && block->inputSources.size() == 1 &&
-            block->inputSources.front().IsSubunitDestPlug() && block->inputSources.front().id == 0 &&
-            block->channelCount == graph.playback.channelCount;
+        auto placement = PlaceAvcControl(graph, *block, channel.channel);
+        // Validated Duet override when discovery lacks the boundary route.
+        // Generic devices require explicit stream-channel evidence above.
+        if (placement.scope == static_cast<uint32_t>('ptru') &&
+            graph.playbackAudioChannels.empty() && !graph.playback.routeAmbiguous &&
+            plan.protocolImplementation == DeviceProfiles::Audio::ProtocolImplementationId::ApogeeDuet &&
+            block->audioSubunitId == 0 && block->channelCount == playback.channelCount &&
+            block->inputSources.size() == 1 && block->inputSources.front().IsSubunitDestPlug() &&
+            block->inputSources.front().id == 0 &&
+            std::ranges::count_if(graph.controls, [](const auto& b) {
+                return b.type == Descriptors::AudioFunctionBlockType::kFeature;
+            }) == 1) placement = {static_cast<uint32_t>('outp'), channel.channel};
         ::ASFW::Audio::Model::AvcPublishedControl control;
         control.token = ::ASFW::Audio::Model::AvcControlToken(channel.subunit, channel.block, channel.channel);
-        control.scope = playback ? static_cast<uint32_t>('outp') : static_cast<uint32_t>('ptru');
-        control.element = playback ? channel.channel : 1u + (uint32_t{channel.block} * 256u) + channel.channel;
+        control.scope = placement.scope;
+        control.element = placement.element;
         snprintf(control.name, sizeof(control.name), "%s %s %u",
                  block->name.empty() ? ("Feature " + std::to_string(block->id)).c_str() : block->name.c_str(),
                  channel.channel == 0 ? "Master" : "Channel", channel.channel);
@@ -151,6 +154,20 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
                 control.current >= control.range.minimum && control.current <= control.range.maximum;
         }
         if (control.hasMute || control.hasVolume) config.avcControls.push_back(control);
+    }
+
+    // Resolve collisions using the complete candidate set, before modifying it.
+    // Volume and mute can share a HAL address; duplicate controls of the same
+    // class cannot. Retain colliding controls under stable internal addresses.
+    std::vector<bool> collisions(config.avcControls.size(), false);
+    for (size_t i = 0; i < config.avcControls.size(); ++i) for (size_t j = i + 1; j < config.avcControls.size(); ++j) {
+        const auto& a = config.avcControls[i]; const auto& b = config.avcControls[j];
+        if (a.scope != static_cast<uint32_t>('ptru') && a.scope == b.scope && a.element == b.element &&
+            ((a.hasMute && b.hasMute) || (a.hasVolume && b.hasVolume))) collisions[i] = collisions[j] = true;
+    }
+    for (size_t i = 0; i < config.avcControls.size(); ++i) if (collisions[i]) {
+        config.avcControls[i].scope = static_cast<uint32_t>('ptru');
+        config.avcControls[i].element = config.avcControls[i].token + 1;
     }
 
     const auto forced = plan.streamTraits.wire.forcedStreamMode;

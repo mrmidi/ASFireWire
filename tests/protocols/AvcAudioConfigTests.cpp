@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Audio/Protocols/AVC/AvcAudioConfig.hpp"
+#include "ASFWDriver/Audio/Protocols/AVC/AvcControlMapping.hpp"
 
 namespace {
 
@@ -156,6 +157,7 @@ TEST(AvcAudioConfig, PublishesOnlyConfirmedControlsWithDeviceReportedRanges) {
     ASFW::Protocols::AVC::Graph::ControlBlockInfo block;
     block.id = 1; block.channelCount = 2; block.inputSources = {{0xf0, 0}}; block.name = "Output";
     graph.controls.push_back(block);
+    graph.playbackAudioChannels = {{0, 0, 0, 0}, {1, 0, 0, 1}};
     graph.featureChannels.push_back({.subunit = 0, .block = 1, .channel = 0, .mute = false,
         .volume = 0, .minimum = -16384, .maximum = 0, .resolution = 1});
     graph.featureChannels.push_back({.subunit = 0, .block = 1, .channel = 1, .mute = true, .volume = 0});
@@ -184,6 +186,89 @@ TEST(AvcAudioConfig, MixerElementsAreDistinctAndDoNotBecomeSystemVolume) {
     const auto config = BuildGraphAudioConfig({}, StaticAudioEndpointPlan{}, graph);
     ASSERT_TRUE(config); ASSERT_EQ(config->avcControls.size(), 2);
     EXPECT_EQ(config->avcControls[0].scope, static_cast<uint32_t>('ptru'));
+    EXPECT_NE(config->avcControls[0].element, config->avcControls[1].element);
+}
+namespace G = ASFW::Protocols::AVC::Graph;
+namespace D = ASFW::Protocols::AVC::Descriptors;
+using ASFW::Protocols::AVC::PlaceAvcControl;
+G::ControlBlockInfo Feature(uint8_t id, uint8_t channels, D::AudioSourceId source, uint8_t subunit = 0) {
+    G::ControlBlockInfo result;
+    result.id = id; result.channelCount = channels; result.inputSources = {source}; result.audioSubunitId = subunit;
+    return result;
+}
+TEST(AvcControlMapping, OutputMappingNeedsNoDeviceIdentityAndPreservesChannelOrder) {
+    DeviceGraph graph; graph.playback.channelCount = 4;
+    graph.controls = {Feature(9, 2, {0xf0, 3})};
+    graph.playbackAudioChannels = {{2, 0, 3, 1}, {3, 0, 3, 0}};
+    auto placement = PlaceAvcControl(graph, graph.controls[0], 1);
+    EXPECT_EQ(placement.scope, static_cast<uint32_t>('outp')); EXPECT_EQ(placement.element, 4);
+    EXPECT_EQ(PlaceAvcControl(graph, graph.controls[0], 2).element, 3);
+    // A two-channel master is not a master for all four output channels.
+    EXPECT_EQ(PlaceAvcControl(graph, graph.controls[0], 0).scope, static_cast<uint32_t>('ptru'));
+}
+TEST(AvcControlMapping, FullStreamMasterMapsToMainElement) {
+    DeviceGraph graph; graph.playback.channelCount = 2;
+    graph.controls = {Feature(9, 2, {0xf0, 3})};
+    graph.playbackAudioChannels = {{0, 0, 3, 1}, {1, 0, 3, 0}};
+    const auto placement = PlaceAvcControl(graph, graph.controls[0], 0);
+    EXPECT_EQ(placement.scope, static_cast<uint32_t>('outp')); EXPECT_EQ(placement.element, 0);
+}
+TEST(AvcControlMapping, CaptureMappingFollowsSourcePlugFeatureChain) {
+    DeviceGraph graph; graph.capture.channelCount = 4;
+    graph.controls = {Feature(4, 2, {0xf0, 8}), Feature(7, 2, {0x81, 4})};
+    graph.audioSourcePlugs = {{0, 6, {0x81, 7}}};
+    graph.captureAudioChannels = {{2, 0, 6, 0}, {3, 0, 6, 1}};
+    const auto placement = PlaceAvcControl(graph, graph.controls[0], 2);
+    EXPECT_EQ(placement.scope, static_cast<uint32_t>('inpt')); EXPECT_EQ(placement.element, 4);
+}
+TEST(AvcControlMapping, MonitorInputBranchDoesNotBecomeRecordedInputGain) {
+    DeviceGraph graph; graph.capture.channelCount = 2;
+    graph.controls = {Feature(4, 2, {0xf0, 8})};
+    graph.audioSourcePlugs = {{0, 6, {0xf0, 8}}};
+    graph.captureAudioChannels = {{0, 0, 6, 0}, {1, 0, 6, 1}};
+    EXPECT_EQ(PlaceAvcControl(graph, graph.controls[0], 1).scope, static_cast<uint32_t>('ptru'));
+}
+TEST(AvcControlMapping, CyclesMixersAndSelectableRoutesStayInternal) {
+    DeviceGraph graph; graph.playback.channelCount = 2;
+    graph.playbackAudioChannels = {{0, 0, 3, 0}, {1, 0, 3, 1}};
+    graph.controls = {Feature(1, 2, {0x81, 2}), Feature(2, 2, {0x81, 1})};
+    EXPECT_EQ(PlaceAvcControl(graph, graph.controls[0], 1).scope, static_cast<uint32_t>('ptru'));
+    graph.controls[1].type = D::AudioFunctionBlockType::kProcessing;
+    graph.controls[0].inputSources = {{0x82, 2}}; graph.controls[1].inputSources = {{0xf0, 3}};
+    EXPECT_EQ(PlaceAvcControl(graph, graph.controls[0], 1).scope, static_cast<uint32_t>('ptru'));
+    graph.controls[1].type = D::AudioFunctionBlockType::kSelector;
+    graph.controls[0].inputSources = {{0x80, 2}}; graph.controls[1].inputSources = {{0xf0, 3}, {0xf0, 4}};
+    EXPECT_EQ(PlaceAvcControl(graph, graph.controls[0], 1).scope, static_cast<uint32_t>('ptru'));
+}
+TEST(AvcControlMapping, MissingDuplicateAndAmbiguousChannelEvidenceStayInternal) {
+    DeviceGraph graph; graph.playback.channelCount = 2;
+    graph.controls = {Feature(1, 2, {0xf0, 3})};
+    graph.playbackAudioChannels = {{0, 0, 3, 0}};
+    EXPECT_EQ(PlaceAvcControl(graph, graph.controls[0], 1).scope, static_cast<uint32_t>('ptru'));
+    graph.playbackAudioChannels.push_back({1, 0, 3, 0});
+    EXPECT_EQ(PlaceAvcControl(graph, graph.controls[0], 1).scope, static_cast<uint32_t>('ptru'));
+    graph.playbackAudioChannels[1].position = 1; graph.playback.routeAmbiguous = true;
+    EXPECT_EQ(PlaceAvcControl(graph, graph.controls[0], 1).scope, static_cast<uint32_t>('ptru'));
+}
+TEST(AvcControlMapping, SharedDirectionsAndSubunitIdentitiesAreNotConflated) {
+    DeviceGraph graph; graph.playback.channelCount = graph.capture.channelCount = 2;
+    graph.controls = {Feature(1, 2, {0xf0, 3}, 1)};
+    graph.playbackAudioChannels = {{0, 0, 3, 0}, {1, 0, 3, 1}};
+    EXPECT_EQ(PlaceAvcControl(graph, graph.controls[0], 1).scope, static_cast<uint32_t>('ptru'));
+    graph.playbackAudioChannels = {{0, 1, 3, 0}, {1, 1, 3, 1}};
+    graph.audioSourcePlugs = {{1, 6, {0x81, 1}}};
+    graph.captureAudioChannels = {{0, 1, 6, 0}, {1, 1, 6, 1}};
+    EXPECT_EQ(PlaceAvcControl(graph, graph.controls[0], 1).scope, static_cast<uint32_t>('ptru'));
+}
+TEST(AvcControlMapping, CollidingHardwareControlsRemainDistinctInternalControls) {
+    DeviceGraph graph; graph.playback = graph.capture = Stream(2, 2, {48000}, 48000);
+    graph.controls = {Feature(1, 2, {0xf0, 3}), Feature(2, 2, {0x81, 1})};
+    graph.playbackAudioChannels = {{0, 0, 3, 0}, {1, 0, 3, 1}};
+    for (uint8_t block : {1, 2}) graph.featureChannels.push_back({.subunit=0, .block=block, .channel=1, .mute=false});
+    const auto config = BuildGraphAudioConfig({}, {}, graph);
+    ASSERT_TRUE(config); ASSERT_EQ(config->avcControls.size(), 2);
+    EXPECT_EQ(config->avcControls[0].scope, static_cast<uint32_t>('ptru'));
+    EXPECT_EQ(config->avcControls[1].scope, static_cast<uint32_t>('ptru'));
     EXPECT_NE(config->avcControls[0].element, config->avcControls[1].element);
 }
 TEST(AvcAudioConfig, PrefersBlockingFromBothDirectionsAndHonorsValidatedOverrides) {

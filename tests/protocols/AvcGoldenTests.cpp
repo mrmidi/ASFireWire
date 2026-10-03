@@ -43,6 +43,7 @@
 
 #include "ASFWDriver/Protocols/AVC/AVCUnit.hpp"
 #include "ASFWDriver/Audio/Protocols/AVC/AvcAudioConfig.hpp"
+#include "ASFWDriver/Audio/Protocols/AVC/AvcControlMapping.hpp"
 #include "ASFWDriver/Audio/Protocols/AVC/AvcExtensionInventory.hpp"
 #include "ASFWDriver/Protocols/AVC/FCPTransport.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
@@ -548,6 +549,7 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     EXPECT_EQ(graph->playback.channelCount, 10U);
     EXPECT_EQ(graph->playback.dataBlockSize, 11U);
     EXPECT_EQ(graph->capture.channelCount, 10U);
+    EXPECT_EQ(graph->captureAudioChannels.size(), 10U);
     EXPECT_EQ(graph->capture.dataBlockSize, 11U);
     EXPECT_EQ(graph->playback.currentSampleRate, 48000U);
     EXPECT_EQ(graph->capture.currentSampleRate, 48000U);
@@ -719,6 +721,13 @@ TEST(AvcGoldenTests, DuetExchangeLogReplaysToTheSameContentsAndGraph) {
     EXPECT_GT(replay->Replayed(), 40U);
     ReplayChecks::ExpectSameContents(*original, *replayed);
     ReplayChecks::ExpectSameGraph(Graph::BuildDiscoveryGraph(*original, "Duet"), Graph::BuildDiscoveryGraph(*replayed, "Duet"));
+    // This exchange fixture has no Audio-to-Music boundary evidence. A
+    // descriptor's limits alone must not invent a playback assignment.
+    const auto graph = Graph::BuildDiscoveryGraph(*original, "Duet");
+    EXPECT_TRUE(graph.playbackAudioChannels.empty());
+    for (const auto& block : graph.controls)
+        EXPECT_EQ(PlaceAvcControl(graph, block, 0).scope, static_cast<uint32_t>('ptru'));
+
 }
 
 TEST(AvcGoldenTests, Phase88ExchangeLogReplaysToTheSamePublishedShape) {
@@ -755,6 +764,15 @@ TEST(AvcGoldenTests, Phase88ExchangeLogReplaysToTheSamePublishedShape) {
     EXPECT_EQ(replayedGraph.playback.dataBlockSize, 11U);
     EXPECT_EQ(replayedGraph.playback.currentSampleRate, 48000U);
     EXPECT_EQ(replayedGraph.playback.supportedSampleRates.size(), 5U);
+    EXPECT_TRUE(replayedGraph.captureAudioChannels.empty()); // no capture boundary in this exchange fixture
+    for (const auto& feature : replayedGraph.controls) {
+        if (feature.type != ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kFeature) continue;
+        // Captured PHASE88 features are on monitor-mixer branches; none changes
+        // recorded input gain or has a fixed one-to-one playback channel map.
+        for (uint8_t channel = 0; channel <= feature.channelCount; ++channel)
+            EXPECT_EQ(PlaceAvcControl(replayedGraph, feature, channel).scope, static_cast<uint32_t>('ptru'));
+    }
+
 }
 
 TEST(AvcGoldenTests, Phase88DiscoveryDocumentPagesReassembleWithinTheWireLimit) {

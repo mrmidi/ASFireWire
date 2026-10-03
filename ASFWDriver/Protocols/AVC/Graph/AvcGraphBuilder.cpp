@@ -203,9 +203,12 @@ DeviceGraph AvcGraphBuilder::BuildGraph(
 
     // 4. Function blocks and controls
     if (audioIdentifier) {
+        for (size_t plug = 0; plug < audioIdentifier->sourcePlugLinks.size(); ++plug)
+            dg.audioSourcePlugs.push_back({options.audioSubunitId, static_cast<uint8_t>(plug), audioIdentifier->sourcePlugLinks[plug]});
         for (const auto& fb : audioIdentifier->functionBlocks) {
             ControlBlockInfo cbi;
             cbi.type = fb.type;
+            cbi.audioSubunitId = options.audioSubunitId;
             cbi.id = fb.id;
             cbi.name = fb.name;
             cbi.channelCount = fb.clusterChannels;

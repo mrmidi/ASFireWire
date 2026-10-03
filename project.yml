@@ -97,7 +97,7 @@ targets:
     type: com.apple.product-type.driver-extension
     platform: macOS
     sources:
-      # Includes graph-backed ASFWAvcLevelControl (IIG/CPP), volume limits, and
+      # Includes generic AvcControlMapping.hpp, graph-backed ASFWAvcLevelControl (IIG/CPP), volume limits, and
       # the owned descriptor FSM, discovery reducer/session, snapshot graph,
       # OnceCompletion and bounded parsers.
       - path: ASFWDriver
@@ -166,6 +166,7 @@ targets:
     platform: macOS
     sources:
       # Includes the AV/C report model, formatter, store and view; also AnalyzerRenderSubmission.swift, AnalyzerDisplaySmoother.swift, shared Metal plots, Views/AnalyzerPanelCanvas.swift, AnalyzerGlyphAtlas.swift, AnalyzerLivePanel.swift, MetalSpectrogramView.swift, SpectrogramTimeline.swift, SpectrumVisualization.swift, SpectrumFFTLayout.swift, WaterfallProjection.swift, AnalyzerTimingStatistics.swift, AnalyzerReadoutBatch.swift, AnalyzerKernelTiming.swift, KWeightBlockPipeline.swift, KWeightBlocks.metal, and analyzer shaders.
+      # Includes CoreAudio/AvcHardwareControls.swift and interactive AV/C controls.
       - path: ASFW
     dependencies:
       - target: ASFWDriver

@@ -680,6 +680,18 @@ void Graph(Json& j, const G::DeviceGraph& g) {
         }
         j.Close('}');
     }
+    j.Close(']');
+    for (bool playback : {true, false}) {
+        j.Key(playback ? "playbackAudioChannels" : "captureAudioChannels").Open('[');
+        for (const auto& binding : playback ? g.playbackAudioChannels : g.captureAudioChannels)
+            j.Open('{').Key("logicalIndex").Number(binding.logicalIndex).Key("subunit").Number(binding.audioSubunitId)
+                .Key("plug").Number(binding.plugId).Key("position").Number(binding.position).Close('}');
+        j.Close(']');
+    }
+    j.Key("audioSourcePlugs").Open('[');
+    for (const auto& plug : g.audioSourcePlugs)
+        j.Open('{').Key("subunit").Number(plug.audioSubunitId).Key("plug").Number(plug.plugId)
+            .Key("sourceType").Number(plug.source.type).Key("sourceId").Number(plug.source.id).Close('}');
     j.Close(']').Close('}');
 }
 

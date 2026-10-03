@@ -186,6 +186,35 @@ DeviceGraph BuildDiscoveryGraph(const E::DiscoverySnapshot& snapshot, std::strin
     graph.playback.routeAmbiguous = playbackAmbiguous;
     for (const auto& plug : snapshot.plugs) if (plug.route)
         graph.routes.push_back({plug.route->source.bytes, plug.route->destination.bytes});
+    // Join channel-level Music routes to confirmed inter-subunit SIGNAL SOURCE
+    // routes. Music endpoint layout cross-checked with FFADO
+    // avc_descriptor_music.cpp:451-461; Audio source IDs retain type + ID.
+    if (music) for (bool playback : {true, false}) {
+        const auto& stream = playback ? graph.playback : graph.capture;
+        auto& bindings = playback ? graph.playbackAudioChannels : graph.captureAudioChannels;
+        if (stream.routeAmbiguous || stream.selectionEvidence == StreamSelectionEvidence::kUnresolved) continue;
+        for (const auto& channel : stream.channels) {
+            const auto* detail = music->music->FindMusicPlug(channel.musicPlugId);
+            if (!detail) continue;
+            const auto& endpoint = playback ? detail->destination : detail->source;
+            const auto expectedType = playback ? Descriptors::MusicPlugEndpoint::kSubunitSourcePlug : Descriptors::MusicPlugEndpoint::kSubunitDestinationPlug;
+            if (!endpoint || endpoint->functionType != expectedType ||
+                endpoint->streamPosition == Descriptors::MusicPlugEndpoint::kUnset) continue;
+            const std::array<uint8_t, 2> musicEndpoint{music->id.ToAddress().Byte(), endpoint->plugId};
+            std::optional<AudioStreamChannelBinding> binding;
+            bool ambiguous = false;
+            for (const auto& route : graph.routes) {
+                if ((playback ? route.source : route.destination) != musicEndpoint) continue;
+                const auto& peer = playback ? route.destination : route.source;
+                const auto address = A::SubunitAddress::FromByte(peer[0]);
+                if (address.Type() != A::SubunitType::kAudio) continue;
+                AudioStreamChannelBinding candidate{channel.logicalIndex, address.Id(), peer[1], endpoint->streamPosition};
+                if (binding && (binding->audioSubunitId != candidate.audioSubunitId || binding->plugId != candidate.plugId || binding->position != candidate.position)) ambiguous = true;
+                binding = candidate;
+            }
+            if (binding && !ambiguous) bindings.push_back(*binding);
+        }
+    }
     for (const auto& route : snapshot.confirmedClockRoutes) {
         ClockSourceInfo clock;
         clock.endpoint.subunitId = route.source.Subunit().Id(); clock.endpoint.endpointId = route.source.PlugId();

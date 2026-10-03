@@ -150,6 +150,7 @@ struct ControlBlockInfo {
     ConfirmedFeatureStatus confirmedControls{};
     std::vector<Descriptors::AudioSourceId> inputSources;
     bool isMasterVolume{false};
+    uint8_t audioSubunitId{0};
 };
 
 struct RoutingEdge { std::array<uint8_t, 2> source, destination; };
@@ -173,6 +174,17 @@ struct FeatureChannelState {
     std::optional<int16_t> volume, minimum, maximum, resolution;
 };
 
+/// A PCM channel's confirmed boundary with the Audio subunit. Logical index
+/// is Core Audio order; position is the descriptor channel position at that plug.
+struct AudioStreamChannelBinding {
+    uint32_t logicalIndex{};
+    uint8_t audioSubunitId{}, plugId{}, position{};
+};
+struct AudioSourcePlugConnection {
+    uint8_t audioSubunitId{}, plugId{};
+    Descriptors::AudioSourceId source;
+};
+
 /// Complete device graph built from descriptor discovery
 struct DeviceGraph {
     std::string modelName;
@@ -186,6 +198,8 @@ struct DeviceGraph {
     std::vector<ControlBlockInfo> controls;
     std::vector<FeatureChannelState> featureChannels;
     std::vector<RoutingEdge> routes;
+    std::vector<AudioStreamChannelBinding> playbackAudioChannels, captureAudioChannels;
+    std::vector<AudioSourcePlugConnection> audioSourcePlugs;
     std::vector<ProbeResult> probeResults;
 };
 
