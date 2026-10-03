@@ -767,6 +767,8 @@ TEST(AvcGoldenTests, Phase88DiscoveryDocumentPagesReassembleWithinTheWireLimit) 
     rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
     rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
     bool ok = false;
     rig.Unit()->Initialize([&](bool done) { ok = done; });
     rig.Settle();
@@ -809,6 +811,8 @@ TEST(AvcGoldenTests, Phase88DiscoveryDocumentPagesReassembleWithinTheWireLimit) 
     }
     EXPECT_EQ(reassembled, document);
     EXPECT_GT(document.size(), 4096U) << "the Phase 88 document should need several pages";
+    // The whole document, pinned: the Swift app's fixture is this file (ASFWTests/Fixtures).
+    ::ASFW::Testing::ExpectTextMatchesGolden(document + "\n", "avc/phase88__discovery_document.json");
 }
 
 

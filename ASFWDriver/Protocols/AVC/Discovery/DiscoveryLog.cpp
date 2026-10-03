@@ -8,6 +8,7 @@
 #include "../Commands/AudioNames.hpp"
 #include "../Commands/CommandNames.hpp"
 #include "../Descriptors/AudioControlBits.hpp"
+#include "../Descriptors/MusicCapabilityNames.hpp"
 #include "../Core/AvcNames.hpp"
 #include "../Descriptors/DescriptorNames.hpp"
 
@@ -129,25 +130,12 @@ void DescribeRoute(const std::string& context, const Cmd::SignalSource& route, L
 }
 
 [[nodiscard]] std::string DescribeCapabilityBits(uint8_t bits) {
-    std::string text;
-    if ((bits & D::kMusicCapabilityNonBlockingBit) != 0) text += "non-blocking";
-    if ((bits & D::kMusicCapabilityBlockingBit) != 0) text += std::string(text.empty() ? "" : "+") + "blocking";
-    if (text.empty()) text = "none";
-    return text + "(" + Hex(bits) + ")";
+    return D::TransferCapabilityName(bits) + "(" + Hex(bits) + ")";
 }
 
-/// An activity byte (TA 2001007 Tables 6.6-6.8): bit 0 and bit 1 by their names, "none" for neither, and any
-/// other set bit as UNKNOWN(bit:N), so a reserved bit is shown and not dropped.
+/// An activity byte (TA 2001007 Tables 6.6-6.8) by name, with its raw value.
 [[nodiscard]] std::string DescribeActivity(uint8_t bits, std::string_view bit0, std::string_view bit1) {
-    std::string text;
-    const auto add = [&text](const std::string& name) { text += (text.empty() ? "" : "+") + name; };
-    if (bits & D::kMusicCapabilityRxBit) add(std::string(bit0));
-    if (bits & D::kMusicCapabilityTxBit) add(std::string(bit1));
-    for (unsigned bit = 2; bit < 8; ++bit) {
-        if (bits & (1u << bit)) add("UNKNOWN(bit:" + std::to_string(bit) + ")");
-    }
-    if (text.empty()) text = "none";
-    return text + "(" + Hex(bits) + ")";
+    return D::ActivityName(bits, std::string(bit0), std::string(bit1)) + "(" + Hex(bits) + ")";
 }
 
 [[nodiscard]] std::string DescribeFormation(const Formation& f) {
@@ -253,38 +241,14 @@ void DescribePlugs(const DiscoverySnapshot& s, Lines& out) {
 
 /// An AM824 label byte by Table 5.8 of TA 2001007 (the ranges), or UNKNOWN for a reserved one.
 [[nodiscard]] std::string DescribeAm824Label(uint8_t label) {
-    const auto in = [label](unsigned low, unsigned high) { return label >= low && label <= high; };
-    const char* name = in(0x00, 0x3F)   ? "IEC 60958 conformant"
-                       : in(0x40, 0x4F) ? "multi-bit linear audio"
-                       : in(0x50, 0x57) ? "one bit audio (plain)"
-                       : in(0x58, 0x5F) ? "one bit audio (encoded)"
-                       : in(0x60, 0x67) ? "high precision multi-bit linear audio"
-                       : in(0x80, 0x83) ? "MIDI conformant"
-                       : in(0x88, 0x8B) ? "SMPTE time code conformant"
-                       : in(0x8C, 0x8F) ? "sample count"
-                       : in(0xC0, 0xEF) ? "ancillary data"
-                                        : nullptr;
-    if (!name) return "UNKNOWN(am824_label:" + Hex(label) + ")";
-    return std::string(name) + "(" + Hex(label) + ")";
+    const auto name = D::Am824LabelName(label);
+    return name ? *name + "(" + Hex(label) + ")" : "UNKNOWN(am824_label:" + Hex(label) + ")";
 }
 
 /// The capability_attributes first byte by the fields it announces (TA 2001007 Table 5.4).
 [[nodiscard]] std::string DescribeCapabilityAttributes(const std::vector<uint8_t>& attributes) {
     std::string text;
-    const auto add = [&text](const char* name) { text += (text.empty() ? "" : ", ") + std::string(name); };
-    const uint8_t first = attributes.empty() ? 0 : attributes.front();
-    if (first & D::kMusicCapabilityGeneralBit) add("general");
-    if (first & D::kMusicCapabilityAudioBit) add("audio");
-    if (first & D::kMusicCapabilityMidiBit) add("MIDI");
-    if (first & D::kMusicCapabilitySmpteBit) add("SMPTE time code");
-    if (first & D::kMusicCapabilitySampleCountBit) add("sample count");
-    if (first & D::kMusicCapabilityAudioSyncBit) add("audio SYNC");
-    constexpr uint8_t kKnownBits = 0x3F;
-    for (unsigned bit = 0; bit < 8; ++bit) {
-        if ((first & (1u << bit)) && !((kKnownBits | D::kMusicHasMoreAttributesBit) & (1u << bit))) {
-            add(("UNKNOWN(capability_bit:" + std::to_string(bit) + ")").c_str());
-        }
-    }
+    for (const auto& name : D::CapabilityAttributeNames(attributes)) text += (text.empty() ? "" : ", ") + name;
     return text.empty() ? "none" : text;
 }
 
