@@ -63,7 +63,7 @@ inline constexpr std::array kMusicPlugTypes{
     NameEntry{kMusicPlugTypeMidi, "MIDI"},
     NameEntry{kMusicPlugTypeSmpte, "SMPTE time code"},
     NameEntry{kMusicPlugTypeSampleCount, "sample count"},
-    NameEntry{kMusicPlugTypeSync, "sync"},
+    NameEntry{kMusicPlugTypeSync, "audio SYNC"},  // TA 2001007 Table 7.3
 };
 inline constexpr std::array kMusicRoutingSupports{
     NameEntry{kMusicRoutingSupportFixed, "fixed"},

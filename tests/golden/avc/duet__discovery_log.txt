@@ -128,7 +128,7 @@
 [AvcCaps] music Music(0x0c)#0 music_plug 3 type=audio(0x00) routing_support=fixed(0x00) name="Analog In 2"
 [AvcCaps] music Music(0x0c)#0 music_plug 3 source subunit destination plug(0xf0) plug=1 fb=none position=1 location=none
 [AvcCaps] music Music(0x0c)#0 music_plug 3 destination subunit source plug(0xf1) plug=0 fb=none position=1 location=none
-[AvcCaps] music Music(0x0c)#0 music_plug 4 type=sync(0x80) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 4 type=audio SYNC(0x80) routing_support=fixed(0x00) name=""
 [AvcCaps] music Music(0x0c)#0 music_plug 4 source subunit destination plug(0xf0) plug=2 fb=none position=0 location=none
 [AvcCaps] music Music(0x0c)#0 music_plug 4 destination subunit source plug(0xf1) plug=2 fb=none position=0 location=none
 [AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=mute(0x01) attribute=current(0x10) data=[70] muted(on)

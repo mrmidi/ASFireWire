@@ -89,6 +89,33 @@ inline constexpr uint8_t kMusicCapabilityNonBlockingBit = 0x01;
 inline constexpr uint8_t kMusicCapabilityBlockingBit = 0x02;
 
 // ---------------------------------------------------------------------------
+// Music Subunit identifier descriptor (TA 2001007 §5)
+// ---------------------------------------------------------------------------
+
+inline constexpr uint8_t kMusicGenerationAvc30 = 0x00;         ///< Table 5.1: General Specification 3.0
+inline constexpr uint8_t kMusicGenerationAvc30Enhanced = 0x01; ///< Table 5.1: 3.0 and its Enhancement 1.0, 1.1
+inline constexpr uint8_t kMusicGenerationAvc40 = 0x02;         ///< Table 5.1: General Specification 4.0
+inline constexpr uint8_t kMusicSubunitVersion10 = 0x10;        ///< Table 5.3: Music Subunit 1.0 (major in the high nibble)
+
+/// An attributes byte with this bit set is followed by another attributes byte (Tables 5.2, 5.4).
+inline constexpr uint8_t kMusicHasMoreAttributesBit = 0x80;
+
+// capability_attributes, first byte (Table 5.4): which capability fields follow, in this order.
+inline constexpr uint8_t kMusicCapabilityGeneralBit = 0x01;
+inline constexpr uint8_t kMusicCapabilityAudioBit = 0x02;
+inline constexpr uint8_t kMusicCapabilityMidiBit = 0x04;
+inline constexpr uint8_t kMusicCapabilitySmpteBit = 0x08;
+inline constexpr uint8_t kMusicCapabilitySampleCountBit = 0x10;
+inline constexpr uint8_t kMusicCapabilityAudioSyncBit = 0x20;
+
+// SMPTE time code, sample count and audio SYNC capability bytes (Tables 5.10-5.12, 7.21-7.23).
+inline constexpr uint8_t kMusicCapabilityRxBit = 0x01;   ///< SMPTE, sample count: can receive. Audio SYNC: from the 1394 bus.
+inline constexpr uint8_t kMusicCapabilityTxBit = 0x02;   ///< SMPTE, sample count: can transmit. Audio SYNC: from a sync source.
+
+/// "FFFF FFFF": the only latency_capability this version of the spec allows (§5.2.1).
+inline constexpr uint32_t kMusicLatencyNotSpecified = 0xFFFFFFFF;
+
+// ---------------------------------------------------------------------------
 // Audio Subunit object lists (TA 1999008)
 // ---------------------------------------------------------------------------
 

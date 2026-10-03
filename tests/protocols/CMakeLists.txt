@@ -33,6 +33,12 @@ add_protocols_test(CcmCodecTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
 )
 
+# AV/C Music subunit commands (TA 2001007 §7) and the identifier descriptor (§5)
+add_protocols_test(MusicCommandTests
+    MusicCommandTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)
+
 # Naming layer and the discovery log: every wire value by spec name, UNKNOWN for the unnamed
 add_protocols_test(DiscoveryLogTests
     DiscoveryLogTests.cpp

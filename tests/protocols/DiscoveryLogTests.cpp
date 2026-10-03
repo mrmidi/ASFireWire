@@ -181,7 +181,7 @@ TEST(DescriptorNamesTests, KnownAndUnknownMusicPlugCodes) {
     EXPECT_EQ(D::DescribeMusicPortType(0x42), "UNKNOWN(music_port_type:0x42)");
     EXPECT_EQ(D::DescribeMusicPlugUsage(D::kMusicPlugUsageSync), "sync(0x03)");
     EXPECT_EQ(D::DescribeMusicPlugUsage(0x77), "UNKNOWN(music_plug_usage:0x77)");
-    EXPECT_EQ(D::DescribeMusicPlugType(D::kMusicPlugTypeSync), "sync(0x80)");
+    EXPECT_EQ(D::DescribeMusicPlugType(D::kMusicPlugTypeSync), "audio SYNC(0x80)");
     EXPECT_EQ(D::DescribeMusicPlugType(0x09), "UNKNOWN(music_plug_type:0x09)");
     EXPECT_EQ(D::DescribeMusicRoutingSupport(D::kMusicRoutingSupportFlexible), "flexible(0x02)");
 }

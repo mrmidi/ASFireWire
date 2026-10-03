@@ -156,6 +156,12 @@ enum class Opcode : uint8_t {
     kInputSelect = 0x1B,             ///< INPUT SELECT (CCM); TA 2002010 Table 7.1, §7.2
     kOutputPreset = 0x1C,            ///< OUTPUT PRESET (CCM); TA 2002010 Table 7.1, §7.3
     kCcmProfile = 0x1D,              ///< CCM PROFILE (CCM 1.1); TA 2002010 Table 7.1, §7.4
+    kDestinationPlugConfigure = 0x40,  ///< DESTINATION PLUG CONFIGURE (Music subunit); TA 2001007 Table 7.1, §7.1
+    kSourcePlugConfigure = 0x41,       ///< SOURCE PLUG CONFIGURE (Music subunit); TA 2001007 Table 7.1, §7.2
+    kDestinationConfigurations = 0x42, ///< DESTINATION CONFIGURATIONS (Music subunit); TA 2001007 Table 7.1, §7.3
+    kSourceConfigurations = 0x43,      ///< SOURCE CONFIGURATIONS (Music subunit); TA 2001007 Table 7.1, §7.4
+    kMusicPlugInfo = 0xC0,             ///< MUSIC PLUG INFO (Music subunit); TA 2001007 Table 7.1, §7.5
+    kCurrentCapability = 0xC1,         ///< CURRENT CAPABILITY (Music subunit); TA 2001007 Table 7.1, §7.6
     kStreamFormatSupport = 0x2F,     ///< STREAM FORMAT SUPPORT; TA 2001002 (BridgeCo, Linux bebob_command.c:302)
     kUnitInfo = 0x30,                ///< UNIT INFO; ta1394 general.rs:37
     kSubunitInfo = 0x31,             ///< SUBUNIT INFO; ta1394 general.rs:130

@@ -120,7 +120,7 @@ inline constexpr std::array kSubunitTypes{
 };
 
 // The opcode names are the spec's: TA 2004006 §9-§10, TA 2002010 Table 7.1, TA 2002013 §7, TA 2001002,
-// TA 1999008 §10. 0xBF is the unpublished extended stream format draft.
+// TA 1999008 §10, TA 2001007 Table 7.1. 0xBF is the unpublished extended stream format draft.
 inline constexpr std::array kOpcodes{
     NameEntry{static_cast<uint32_t>(Opcode::kVendorDependent), "VENDOR-DEPENDENT"},
     NameEntry{static_cast<uint32_t>(Opcode::kPlugInfo), "PLUG INFO"},
@@ -132,6 +132,12 @@ inline constexpr std::array kOpcodes{
     NameEntry{static_cast<uint32_t>(Opcode::kInputSelect), "INPUT SELECT"},
     NameEntry{static_cast<uint32_t>(Opcode::kOutputPreset), "OUTPUT PRESET"},
     NameEntry{static_cast<uint32_t>(Opcode::kCcmProfile), "CCM PROFILE"},
+    NameEntry{static_cast<uint32_t>(Opcode::kDestinationPlugConfigure), "DESTINATION PLUG CONFIGURE"},
+    NameEntry{static_cast<uint32_t>(Opcode::kSourcePlugConfigure), "SOURCE PLUG CONFIGURE"},
+    NameEntry{static_cast<uint32_t>(Opcode::kDestinationConfigurations), "DESTINATION CONFIGURATIONS"},
+    NameEntry{static_cast<uint32_t>(Opcode::kSourceConfigurations), "SOURCE CONFIGURATIONS"},
+    NameEntry{static_cast<uint32_t>(Opcode::kMusicPlugInfo), "MUSIC PLUG INFO"},
+    NameEntry{static_cast<uint32_t>(Opcode::kCurrentCapability), "CURRENT CAPABILITY"},
     NameEntry{static_cast<uint32_t>(Opcode::kStreamFormatSupport), "STREAM FORMAT SUPPORT"},
     NameEntry{static_cast<uint32_t>(Opcode::kUnitInfo), "UNIT INFO"},
     NameEntry{static_cast<uint32_t>(Opcode::kSubunitInfo), "SUBUNIT INFO"},

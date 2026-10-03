@@ -549,7 +549,7 @@
 [AvcCaps] music Music(0x0c)#0 music_plug 23 type=MIDI(0x01) routing_support=fixed(0x00) name=""
 [AvcCaps] music Music(0x0c)#0 music_plug 23 source subunit destination plug(0xf0) plug=6 fb=none position=1 location=2
 [AvcCaps] music Music(0x0c)#0 music_plug 23 destination subunit source plug(0xf1) plug=0 fb=none position=10 location=1
-[AvcCaps] music Music(0x0c)#0 music_plug 24 type=sync(0x80) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 24 type=audio SYNC(0x80) routing_support=fixed(0x00) name=""
 [AvcCaps] music Music(0x0c)#0 music_plug 24 source subunit destination plug(0xf0) plug=8 fb=none position=0 location=1
 [AvcCaps] music Music(0x0c)#0 music_plug 24 destination subunit source plug(0xf1) plug=5 fb=none position=0 location=1
 [AvcCaps] music Music(0x0c)#0 source plug #0 audio_stream_label[0]="Line_1/2 left PHASE88 FW"
