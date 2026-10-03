@@ -10,7 +10,7 @@ struct AvcCapabilitiesTab: View {
                 MusicIdentifierCard(identifier: identifier, status: unit.musicStatus)
             }
             if !unit.audioBlocks.isEmpty {
-                AudioBlocksCard(blocks: unit.audioBlocks)
+                AudioBlocksCard(blocks: unit.audioBlocks, confirmedNames: unit.confirmedFeatureNames)
             }
             if unit.musicIdentifier == nil && unit.audioBlocks.isEmpty {
                 AvcNoticeCard(title: "No capability data", message: unit.needsDocumentUpdate ? unit.documentUpdateMessage : "No parsed capabilities were reported. Open Diagnostics to check descriptor reads and parsing results.", systemImage: "list.bullet.rectangle")
@@ -82,6 +82,7 @@ private struct MusicIdentifierCard: View {
 
 private struct AudioBlocksCard: View {
     let blocks: [AvcUnitDocument.FunctionBlock]
+    let confirmedNames: [String]
 
     private var census: [(name: String, count: Int)] {
         var order: [String] = []
@@ -110,8 +111,7 @@ private struct AudioBlocksCard: View {
                         ForEach(census, id: \.name) { AvcChip(text: "\($0.count) \($0.name.lowercased())", tint: .purple) }
                     }
                     if !features.isEmpty {
-                        let names = Set(features.flatMap { $0.controls?.masterNames ?? [] }).sorted()
-                        AvcFact(label: "Feature controls", value: names.isEmpty ? "none advertised" : names.joined(separator: ", "))
+                        AvcFact(label: "Confirmed feature controls", value: confirmedNames.isEmpty ? "none confirmed by STATUS" : confirmedNames.joined(separator: ", "))
                     }
                     if !mixers.isEmpty {
                         let programmable = mixers.reduce(0) { $0 + ($1.programmableMixerControls ?? 0) }

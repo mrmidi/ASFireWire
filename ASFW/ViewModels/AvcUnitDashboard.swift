@@ -143,11 +143,18 @@ struct AvcUnitDashboard: Identifiable {
     }
 
     /// The feature controls the driver read, grouped by function block and channel.
+    var confirmedFeatureNames: [String] {
+        let confirmed = (document?.snapshot?.features ?? []).filter {
+            ($0.attribute == nil || $0.attribute == 0x10) && $0.error == nil && $0.decoded != nil
+        }
+        return Set(confirmed.compactMap(\.controlName)).sorted()
+    }
+
     var controlBlocks: [ControlBlock] {
         let features = document?.snapshot?.features ?? []
         var order: [String] = []
         var grouped: [String: [AvcUnitDocument.Feature]] = [:]
-        for feature in features {
+        for feature in features where feature.attribute == nil || feature.attribute == 0x10 {
             let key = "\(feature.subunit.type)-\(feature.subunit.id)-\(feature.block)"
             if grouped[key] == nil { order.append(key) }
             grouped[key, default: []].append(feature)
@@ -220,15 +227,29 @@ struct AvcUnitDashboard: Identifiable {
     var failedProbeGroups: [ProbeGroup] {
         var order: [String] = []
         var groups: [String: ProbeGroup] = [:]
-        for probe in document?.snapshot?.failedProbes ?? [] {
+        let probes: [AvcUnitDocument.FailedProbe]
+        if let results = document?.graph?.probeResults {
+            probes = results.compactMap { result in
+                guard var error = result.error else { return nil }
+                if error.kind == "unexpectedResponse" {
+                    error.response = result.responseCode ?? error.response
+                    error.responseName = result.responseName ?? error.responseName
+                }
+                return .init(address: result.address, opcode: result.opcode, addressText: result.addressText,
+                             opcodeName: result.opcodeName, error: error)
+            }
+        } else {
+            probes = document?.snapshot?.failedProbes ?? []
+        }
+        for probe in probes {
             let address = probe.addressText.map { Self.withoutRawValue($0) } ?? probe.address.map { String(format: "Address 0x%02X", $0) } ?? "Address not reported"
             let opcode = probe.opcodeName.map { Self.withoutRawValue($0) } ?? probe.opcode.map { String(format: "Opcode 0x%02X", $0) } ?? "Opcode not reported"
-            let key = "\(address)|\(opcode)|\(probe.error.kind)"
+            let key = "\(address)|\(opcode)|\(probe.error.kind)|\(probe.error.response.map(String.init) ?? "none")"
             if let existing = groups[key] {
-                groups[key] = ProbeGroup(id: key, address: address, opcode: opcode, error: Self.humanized(probe.error.kind), count: existing.count + 1)
+                groups[key] = ProbeGroup(id: key, address: address, opcode: opcode, error: probe.error.displayText, count: existing.count + 1)
             } else {
                 order.append(key)
-                groups[key] = ProbeGroup(id: key, address: address, opcode: opcode, error: Self.humanized(probe.error.kind), count: 1)
+                groups[key] = ProbeGroup(id: key, address: address, opcode: opcode, error: probe.error.displayText, count: 1)
             }
         }
         return order.compactMap { groups[$0] }
@@ -255,7 +276,7 @@ struct AvcUnitDashboard: Identifiable {
     }
 
     /// "unexpectedResponse" → "unexpected response": the driver's error kinds are camel case.
-    static func humanized(_ camelCase: String) -> String {
+    nonisolated static func humanized(_ camelCase: String) -> String {
         var out = ""
         for character in camelCase {
             if character.isUppercase, !out.isEmpty { out += " " }

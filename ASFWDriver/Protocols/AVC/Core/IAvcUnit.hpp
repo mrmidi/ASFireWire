@@ -117,6 +117,9 @@ public:
     /// Transport-only implementations and simulators have no discovery cache.
     virtual void RememberConfirmedDuplexRate(const Discovery::DeviceRouteToken&, uint32_t) {}
 
+    /// Startup defaults must not overwrite explicit HAL writes/restoration.
+    [[nodiscard]] virtual bool HasUserFeaturePreference(uint8_t, uint8_t) const noexcept { return false; }
+
     /// Dispatch a STATUS command.
     template <AvcCommand Cmd, typename Callback>
     void Status(const Cmd& cmd, FW::Generation generation, Callback&& completion) {

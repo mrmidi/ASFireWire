@@ -124,7 +124,7 @@ void Expand(State& s, Checkpoint point) {
                 // so mute and volume are always asked on the master and every cluster
                 // channel (Linux bebob lib.rs:312-321 reads volume this way). Other
                 // controls only where the bitmap advertises them (Audio Subunit 1.0
-                // Table 8.3: the first control occupies the most significant bit).
+                // Table 8.3; bit order remains an assumption, see audit F8).
                 const size_t channels = std::max<size_t>(block.channelControls.size(), block.clusterChannels);
                 for (size_t ch = 0; ch <= channels; ++ch) {
                     const uint16_t bits = ch == 0 ? block.masterControls :
@@ -223,10 +223,22 @@ void Handle(Transition& t, size_t index, const Reply& reply) {
     auto& s = t.state;
     Probe probe = s.probes[index]; // Processing may insert/reallocate the queue.
     auto bytes = Validate(s, probe, reply.response);
+    auto frame = Encode(s, probe);
+    if (frame) {
+        ProbeOutcome outcome{frame->Address(), frame->OpcodeValue(), bytes ? std::nullopt : std::optional{bytes.error()}};
+        outcome.command.assign(frame->WireBytes().begin(), frame->WireBytes().end());
+        if (reply.response) {
+            outcome.responseCode = reply.response->code;
+            outcome.responseAddress = reply.response->address.Byte();
+            outcome.responseOpcode = static_cast<uint8_t>(reply.response->opcode);
+            outcome.responseOperands = reply.response->operands;
+        } else if (reply.response.error().response) {
+            outcome.responseCode = reply.response.error().response;
+        }
+        s.builder.outcomes.push_back(std::move(outcome));
+    }
     if (!bytes && TransportFailure(bytes.error())) { Finish(t, bytes.error()); return; }
     if (UnitStoppedAnswering(s, bytes ? std::nullopt : std::optional{bytes.error()})) { Finish(t, bytes.error()); return; }
-    auto frame = Encode(s, probe);
-    if (frame) s.builder.outcomes.push_back({frame->Address(), frame->OpcodeValue(), bytes ? std::nullopt : std::optional{bytes.error()}});
     bool retry = false;
     std::optional<AvcError> decodeError;
     std::visit(Visit{
@@ -297,9 +309,22 @@ void Handle(Transition& t, size_t index, const Reply& reply) {
             auto r = Decode(c, bytes, decodeError);
             FeatureStatus status{{c.address.Type(), c.address.Id()}, c.operands.functionBlockId,
                 c.operands.channel, c.operands.control};
-            if (r && r->functionBlockId == c.operands.functionBlockId && r->channel == c.operands.channel && r->control == c.operands.control)
+            status.attribute = c.operands.attribute;
+            if (r && r->functionBlockId == c.operands.functionBlockId && r->channel == c.operands.channel && r->control == c.operands.control && r->attribute == c.operands.attribute)
                 status.value = *r;
             else status.error = r ? AvcError::Of(AvcErrorKind::kMalformedOperands) : r.error();
+            // TA 1999008 10.3.2: limits are attributes of each channel's volume,
+            // not descriptor capabilities. Ask only after CURRENT was confirmed.
+            if (status.value && c.operands.control == Cmd::FeatureControl::kVolume &&
+                c.operands.attribute == Cmd::ControlAttribute::kCurrent) {
+                std::vector<Probe> limits;
+                for (auto attribute : {Cmd::ControlAttribute::kMinimum, Cmd::ControlAttribute::kMaximum,
+                                       Cmd::ControlAttribute::kResolution})
+                    limits.emplace_back(Cmd::FeatureCommand{.address = c.address,
+                        .operands = Cmd::FeatureOperands::VolumeStatus(c.operands.functionBlockId,
+                                                                       c.operands.channel, attribute)});
+                Insert(s, index, std::move(limits));
+            }
             s.builder.features.push_back(std::move(status));
         },
         [&](const SelectorProbe& probe) {

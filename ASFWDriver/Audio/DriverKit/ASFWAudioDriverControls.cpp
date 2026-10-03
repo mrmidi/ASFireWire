@@ -30,3 +30,9 @@ kern_return_t ASFWAudioDriver::ReadProtocolBooleanControl(uint32_t classIdFourCC
     }
     return ivars->device.audioNub->GetProtocolBooleanControl(classIdFourCC, element, outValue);
 }
+
+kern_return_t ASFWAudioDriver::ApplyAvcFeatureControl(uint32_t token, bool muteControl,
+                                                     int32_t value, int32_t* outConfirmedValue) {
+    if (!ivars || !ivars->device.audioNub) return kIOReturnNotReady;
+    return ivars->device.audioNub->SetAvcFeatureControl(token, muteControl, value, outConfirmedValue);
+}

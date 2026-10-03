@@ -160,6 +160,11 @@ public:
     // advertise.
     virtual kern_return_t RequestSampleRateChange(uint32_t sampleRateHz);
 
+    // Confirmed graph-backed controls. token encodes subunit/block/channel;
+    // the nub validates it against the current graph before sending traffic.
+    virtual kern_return_t SetAvcFeatureControl(uint32_t token, bool muteControl,
+                                               int32_t value, int32_t* outConfirmedValue);
+
     // Protocol-backed boolean control bridge. Same process as above - this
     // crosses dispatch queues, not processes. No device currently answers these:
     // the phantom/polarity path they served was removed with the CoreAudio

@@ -71,7 +71,7 @@ struct AvcDiagnosticsTab: View {
                             Text(read.subunit.title).font(.callout).frame(width: 90, alignment: .leading)
                             Text(read.specifierText ?? read.specifier.map { "Specifier 0x\($0)" } ?? "descriptor").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             Spacer()
-                            if let error = read.primaryError { AvcChip(text: AvcUnitDashboard.humanized(error.kind), tint: .orange) }
+                            if let error = read.primaryError { AvcChip(text: error.displayText, tint: .orange) }
                             if let parse = read.parseError { AvcChip(text: "parse: \(AvcUnitDashboard.humanized(parse.kind)) @\(parse.offset)", tint: .red) }
                             Text("\(read.bytes) B").font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
                             if let data = read.data, !data.isEmpty {

@@ -422,3 +422,8 @@ add_protocols_test(DriverKitSessionSchedulerTeardownTests
 )
 
 add_protocols_test(CompletionQueueTeardownTests CompletionQueueTeardownTests.cpp)
+
+add_protocols_test(AvcFeatureControlTests
+    AvcFeatureControlTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)

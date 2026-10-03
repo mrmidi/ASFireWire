@@ -4,8 +4,9 @@
 // AudioControlBits.hpp - Which control each bit of a function block's Controls bitmap stands for.
 //
 // Source: TA 1999008 Table 8.3 (Feature), Tables 8.4-8.15 (Processing), Tables 8.16-8.22 (CODEC). Bits are
-// numbered from the most significant bit of the first byte: that is how the Phase 88 captures read
-// (Feature controls `C0 00` = mute and volume), and how the spec's own mixer figure is drawn (§8.4.1).
+// interpreted from the most significant bit of the first byte: that is how the Phase 88 captures read
+// (Feature controls `C0 00` = mute and volume). Table 8.3 does not explicitly settle
+// Feature bit numbering; the MSB-first mixer matrix rule in 8.4.1 is separate.
 // The Duet's Feature bitmaps (`00 03`) read the other way round; the bitmap is a hint either way, and
 // STATUS decides which controls a device really has (DiscoveryReducer.cpp).
 //
@@ -132,7 +133,7 @@ inline constexpr std::array kDts{  // Table 8.18: two bits that §10.6.4.1 and T
         }
         const std::string where = "(bit " + std::to_string(bit) + ")";
         if (!known) {
-            add("UNKNOWN(control_bit:" + std::to_string(bit) + ")");
+            add(std::string(block == AudioFunctionBlockType::kFeature && bit >= 12 ? "RESERVED" : "UNKNOWN") + "(control_bit:" + std::to_string(bit) + ")");
         } else if (known->control.selector == 0) {
             add(std::string(known->name) + where);
         } else {

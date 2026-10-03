@@ -92,6 +92,12 @@ kern_return_t ASFWProtocolBooleanControl::HandleChangeControlValue(bool in_contr
         return kIOReturnNotReady;
     }
 
+    if (ivars->classIdFourCC == static_cast<uint32_t>(IOUserAudioClassID::MuteControl)) {
+        int32_t confirmed{};
+        const auto status = ivars->ownerDriver->ApplyAvcFeatureControl(ivars->routedElement, true,
+                                                                      in_control_value ? 1 : 0, &confirmed);
+        return status == kIOReturnSuccess ? SetControlValue(confirmed != 0) : status;
+    }
     const kern_return_t applyStatus =
         ivars->ownerDriver->ApplyProtocolBooleanControl(ivars->classIdFourCC,
                                                         ivars->routedElement,

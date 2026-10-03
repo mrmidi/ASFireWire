@@ -118,6 +118,8 @@ void Error(Json& j, const std::optional<A::AvcError>& error) {
     if (!error) { j.Null(); return; }
     j.Open('{').Key("kind").String(ErrorKindName(error->kind)).Key("response");
     if (error->response) j.Number(static_cast<uint8_t>(*error->response)); else j.Null();
+    j.Key("responseName");
+    if (error->response) j.String(A::Describe(*error->response)); else j.Null();
     j.Key("operandOffset").Number(error->operandOffset).Close('}');
 }
 
@@ -541,7 +543,8 @@ void Snapshot(Json& j, const E::DiscoverySnapshot& s) {
     for (const auto& f : s.features) {
         j.Open('{').Key("subunit"); Subunit(j, f.subunit);
         j.Key("block").Number(f.blockId).Key("channel").Number(f.channel)
-            .Key("control").Number(static_cast<uint8_t>(f.control)).Key("value");
+            .Key("control").Number(static_cast<uint8_t>(f.control))
+            .Key("attribute").Number(static_cast<uint8_t>(f.attribute)).Key("value");
         if (f.value) j.Hex(std::span<const uint8_t>(f.value->data.data(), f.value->dataLength)); else j.Null();
         j.Key("error"); Error(j, f.error);
         j.Key("blockName");
@@ -638,6 +641,8 @@ void Stream(Json& j, const G::StreamGraph& s) {
 void Graph(Json& j, const G::DeviceGraph& g) {
     j.Open('{').Key("playback"); Stream(j, g.playback);
     j.Key("capture"); Stream(j, g.capture);
+    j.Key("transmitModes"); if (g.transmitModes) j.Number(*g.transmitModes); else j.Null();
+    j.Key("receiveModes"); if (g.receiveModes) j.Number(*g.receiveModes); else j.Null();
     j.Key("clockSources").Open('[');
     for (const auto& c : g.clockSources)
         j.Open('{').Key("name").String(c.name).Key("current").Bool(c.isCurrent).Close('}');
@@ -647,7 +652,35 @@ void Graph(Json& j, const G::DeviceGraph& g) {
         if (sel.currentInput) j.Number(*sel.currentInput); else j.Null();
         j.Close('}');
     }
-    j.Close(']').Key("routes").Number(g.routes.size()).Close('}');
+    j.Close(']').Key("routes").Number(g.routes.size()).Key("probeResults").Open('[');
+    for (const auto& probe : g.probeResults) {
+        const auto address = A::SubunitAddress::FromByte(probe.address);
+        j.Open('{').Key("address").Number(probe.address).Key("addressText").String(A::Describe(address))
+            .Key("opcode").Number(probe.opcode).Key("opcodeName").String(A::Describe(address.Type(), static_cast<A::Opcode>(probe.opcode)))
+            .Key("command").Hex(probe.command).Key("responseCode");
+        if (probe.responseCode) j.Number(static_cast<uint8_t>(*probe.responseCode)); else j.Null();
+        j.Key("responseName");
+        if (probe.responseCode) j.String(A::Describe(*probe.responseCode)); else j.Null();
+        j.Key("responseAddress");
+        if (probe.responseAddress) j.Number(*probe.responseAddress); else j.Null();
+        j.Key("responseOpcode");
+        if (probe.responseOpcode) j.Number(*probe.responseOpcode); else j.Null();
+        j.Key("responseOperands");
+        if (probe.responseCode) j.Hex(probe.responseOperands); else j.Null();
+        j.Key("error"); Error(j, probe.error);
+        j.Close('}');
+    }
+    j.Close(']').Key("featureChannels").Open('[');
+    for (const auto& channel : g.featureChannels) {
+        j.Open('{').Key("subunit").Number(channel.subunit).Key("block").Number(channel.block).Key("channel").Number(channel.channel);
+        j.Key("mute"); if (channel.mute) j.Bool(*channel.mute); else j.Null();
+        for (const auto& field : {std::pair{"volume", channel.volume}, std::pair{"minimum", channel.minimum},
+                                  std::pair{"maximum", channel.maximum}, std::pair{"resolution", channel.resolution}}) {
+            j.Key(field.first); if (field.second) j.RawNumber(std::to_string(*field.second)); else j.Null();
+        }
+        j.Close('}');
+    }
+    j.Close(']').Close('}');
 }
 
 void Exchanges(Json& j, const Protocols::AVC::FcpExchangeLog& log) {

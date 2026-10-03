@@ -38,3 +38,15 @@ nothing to a device. "Re-scan" asks the driver to run discovery again (behind th
 `tests/golden/avc/phase88__discovery_document.json`) to a PNG. Set `TEST_RUNNER_ASFW_RENDER_DIR=<dir>` to keep them.
 The simulated Phase 88 names its capture channels "Input N" (the sim does not answer the signal-source probes that select
 the capture plug); a live device gives "Line_1/2 left" and so on.
+
+## Actual probe replies
+
+`graph.probeResults` retains each ordinary discovery command (padded wire bytes), the device's
+response code, returned address/opcode and operand bytes, plus the independent validation/operation
+error. A missing response stays null. Successful replies are retained too. `error.responseName`
+and `probeResults.responseName` are supplied by the driver's existing response-name table.
+The dashboard uses these names rather than calling REJECTED or NOT IMPLEMENTED "unexpected";
+groups include the exact response code. Older documents retain their numeric response code display.
+Descriptor errors use the same response-name field. The timed exchange log continues to hold the
+full captured descriptor transactions. This is a storage/presentation change; discovery sends the
+same frames and applies the same acceptance policy.

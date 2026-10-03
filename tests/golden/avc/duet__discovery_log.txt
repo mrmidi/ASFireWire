@@ -93,7 +93,7 @@
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 name="" name_index=none
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 input subunit destination plug 0 [f0 00]
 [AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 cluster_channels=2 general_tag=0
-[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 advertised_controls master=0x0003 [UNKNOWN(control_bit:14), UNKNOWN(control_bit:15)] channels=[0x0002, 0x0002] (hint: bits from the MSB)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 advertised_controls master=0x0003 [RESERVED(control_bit:14), RESERVED(control_bit:15)] channels=[0x0002, 0x0002] (hint: bits from the MSB)
 [AvcCaps] music Music(0x0c)#0 descriptor_length=462
 [AvcCaps] music Music(0x0c)#0 top_level_block[0] general music subunit status area(0x8100) bytes=12 primary=6
 [AvcCaps] music Music(0x0c)#0 top_level_block[1] routing status(0x8108) bytes=450 primary=4
@@ -132,19 +132,22 @@
 [AvcCaps] music Music(0x0c)#0 music_plug 4 type=audio SYNC(0x80) routing_support=fixed(0x00) name=""
 [AvcCaps] music Music(0x0c)#0 music_plug 4 source subunit destination plug(0xf0) plug=2 fb=none position=0 location=none
 [AvcCaps] music Music(0x0c)#0 music_plug 4 destination subunit source plug(0xf1) plug=2 fb=none position=0 location=none
-[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) data=[70] muted(on)
-[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) data=[00 00] volume_raw=0x0000 0 dB
-[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=1 control=MUTE_CONTROL(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
-[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=1 control=VOLUME_CONTROL(0x02) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
-[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=2 control=MUTE_CONTROL(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
-[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=2 control=VOLUME_CONTROL(0x02) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[70] muted(on)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=VOLUME_CONTROL(0x02) attribute=MINIMUM(0x02) attribute=MINIMUM(0x02) data=[c0 00] volume_raw=0xc000 -64 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=VOLUME_CONTROL(0x02) attribute=MAXIMUM(0x03) attribute=MAXIMUM(0x03) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=VOLUME_CONTROL(0x02) attribute=RESOLUTION(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=1 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=1 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=2 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=2 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
 [AvcCaps] probe_failed Unit(0x1f) opcode=EXTENDED STREAM FORMAT INFORMATION(0xbf) error=unexpected response(0x05) response=REJECTED(0xa) count=2
 [AvcCaps] probe_failed Audio(0x01)#0 opcode=EXTENDED STREAM FORMAT INFORMATION(0xbf) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8) count=4
 [AvcCaps] probe_failed Audio(0x01)#0 opcode=STREAM FORMAT SUPPORT(0x2f) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8) count=4
 [AvcCaps] probe_failed Music(0x0c)#0 opcode=EXTENDED STREAM FORMAT INFORMATION(0xbf) error=unexpected response(0x05) response=REJECTED(0xa) count=6
 [AvcCaps] probe_failed Unit(0x1f) opcode=SIGNAL SOURCE(0x1a) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8) count=7
-[AvcCaps] probe_failed Audio(0x01)#0 opcode=FUNCTION BLOCK(0xb8) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8) count=4
-[AvcCaps] probes total=80 failed=27
+[AvcCaps] probe_failed Audio(0x01)#0 opcode=FUNCTION BLOCK(0xb8) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8) count=5
+[AvcCaps] probes total=83 failed=28
 [AvcCaps] extension playback none reported
 [AvcCaps] extension capture none reported
 [AvcCaps] graph model="" supports_blocking_transmit=no

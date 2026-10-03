@@ -471,7 +471,7 @@ void DescribeDescriptors(const DiscoverySnapshot& s, Lines& out) {
 void DescribeStatuses(const DiscoverySnapshot& s, Lines& out) {
     for (const auto& f : s.features) {
         const std::string context = "feature_status " + Label(f.subunit) + " fb=" + std::to_string(f.blockId) +
-                                    " channel=" + std::to_string(f.channel) + " control=" + Cmd::Describe(f.control);
+                                    " channel=" + std::to_string(f.channel) + " control=" + Cmd::Describe(f.control) + " attribute=" + Cmd::Describe(f.attribute);
         out.Add(context, f.value ? DescribeFeatureReply(*f.value) : "error=" + DescribeError(f.error));
     }
     for (const auto& sel : s.selectors) {

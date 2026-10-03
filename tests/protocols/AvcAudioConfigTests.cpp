@@ -63,6 +63,23 @@ TEST(AvcAudioConfig, GraphOffersOnlyTheRateItStartsAt) {
     EXPECT_EQ(pinned->currentSampleRate, 96000U);
 }
 
+TEST(AvcAudioConfig, ReconfigurableDevicesOfferOnlySharedStreamableRates) {
+    DeviceGraph graph;
+    graph.playback = Stream(2, 2, {32000, 44100, 48000, 96000}, 96000);
+    graph.capture = Stream(2, 2, {44100, 48000, 96000}, 96000);
+    for (const auto implementation : {
+             ASFW::DeviceProfiles::Audio::ProtocolImplementationId::ApogeeDuet,
+             ASFW::DeviceProfiles::Audio::ProtocolImplementationId::BeBoBPhase88}) {
+        StaticAudioEndpointPlan plan;
+        plan.protocolImplementation = implementation;
+        plan.streamTraits.start.startAtObservedRate = true;
+        const auto config = BuildGraphAudioConfig({}, plan, graph);
+        ASSERT_TRUE(config);
+        EXPECT_EQ(config->sampleRates, (std::vector<uint32_t>{44100, 48000}));
+        EXPECT_EQ(config->currentSampleRate, 48000U);
+    }
+}
+
 TEST(AvcAudioConfig, GraphWithMismatchedOrMissingGeometryIsNotPublished) {
     DeviceGraph graph;
     graph.playback = Stream(2, 3, {48000}, 48000);
@@ -129,6 +146,61 @@ TEST(AvcAudioConfig, ProfileOwnedEndpointStartsAt48kWhenOffered) {
     const auto without48 = BuildProfileOwnedAudioConfig({.guid = 7}, StaticAudioEndpointPlan{}, profile);
     ASSERT_TRUE(without48);
     EXPECT_EQ(without48->currentSampleRate, 44100U);
+}
+
+
+TEST(AvcAudioConfig, PublishesOnlyConfirmedControlsWithDeviceReportedRanges) {
+    DeviceGraph graph;
+    graph.playback = Stream(2, 2, {44100, 48000}, 48000);
+    graph.capture = graph.playback;
+    ASFW::Protocols::AVC::Graph::ControlBlockInfo block;
+    block.id = 1; block.channelCount = 2; block.inputSources = {{0xf0, 0}}; block.name = "Output";
+    graph.controls.push_back(block);
+    graph.featureChannels.push_back({.subunit = 0, .block = 1, .channel = 0, .mute = false,
+        .volume = 0, .minimum = -16384, .maximum = 0, .resolution = 1});
+    graph.featureChannels.push_back({.subunit = 0, .block = 1, .channel = 1, .mute = true, .volume = 0});
+    StaticAudioEndpointPlan plan;
+    plan.protocolImplementation = ASFW::DeviceProfiles::Audio::ProtocolImplementationId::ApogeeDuet;
+    auto config = BuildGraphAudioConfig({.guid = 42}, plan, graph);
+    ASSERT_TRUE(config); ASSERT_EQ(config->avcControls.size(), 2);
+    EXPECT_EQ(config->sampleRates, (std::vector<uint32_t>{44100, 48000}));
+    EXPECT_EQ(config->avcControls[0].scope, static_cast<uint32_t>('outp'));
+    EXPECT_EQ(config->avcControls[0].element, 0);
+    EXPECT_TRUE(config->avcControls[0].hasVolume); EXPECT_TRUE(config->avcControls[0].hasMute);
+    EXPECT_FALSE(config->avcControls[1].hasVolume); EXPECT_TRUE(config->avcControls[1].hasMute);
+    EXPECT_STREQ(config->avcControls[0].name, "Output Master 0");
+    graph.featureChannels[0].resolution = 0;
+    config = BuildGraphAudioConfig({.guid = 42}, plan, graph);
+    ASSERT_TRUE(config); EXPECT_FALSE(config->avcControls[0].hasVolume);
+}
+TEST(AvcAudioConfig, MixerElementsAreDistinctAndDoNotBecomeSystemVolume) {
+    DeviceGraph graph;
+    graph.playback = Stream(10, 10, {48000}, 48000); graph.capture = graph.playback;
+    for (uint8_t block = 1; block <= 2; ++block) {
+        ASFW::Protocols::AVC::Graph::ControlBlockInfo info; info.id = block; graph.controls.push_back(info);
+        graph.featureChannels.push_back({.subunit = 0, .block = block, .channel = 0, .mute = true,
+            .volume = -256, .minimum = -16384, .maximum = 0, .resolution = 256});
+    }
+    const auto config = BuildGraphAudioConfig({}, StaticAudioEndpointPlan{}, graph);
+    ASSERT_TRUE(config); ASSERT_EQ(config->avcControls.size(), 2);
+    EXPECT_EQ(config->avcControls[0].scope, static_cast<uint32_t>('ptru'));
+    EXPECT_NE(config->avcControls[0].element, config->avcControls[1].element);
+}
+TEST(AvcAudioConfig, PrefersBlockingFromBothDirectionsAndHonorsValidatedOverrides) {
+    DeviceGraph graph; graph.playback = Stream(2, 2, {48000}, 48000); graph.capture = graph.playback;
+    StaticAudioEndpointPlan plan;
+    graph.transmitModes = 3; graph.receiveModes = 3;
+    auto config = BuildGraphAudioConfig({}, plan, graph);
+    ASSERT_TRUE(config); EXPECT_EQ(config->streamMode, ASFW::Audio::Model::StreamMode::kBlocking);
+    graph.receiveModes = 1;
+    config = BuildGraphAudioConfig({}, plan, graph);
+    ASSERT_TRUE(config); EXPECT_EQ(config->streamMode, ASFW::Audio::Model::StreamMode::kNonBlocking);
+    plan.streamTraits.wire.forcedStreamMode = ForcedStreamMode::Blocking;
+    config = BuildGraphAudioConfig({}, plan, graph);
+    ASSERT_TRUE(config); EXPECT_EQ(config->streamMode, ASFW::Audio::Model::StreamMode::kBlocking);
+    plan.streamTraits.wire.forcedStreamMode = ForcedStreamMode::Unspecified;
+    graph.transmitModes = 2;
+    EXPECT_FALSE(BuildGraphAudioConfig({}, plan, graph));
 }
 
 } // namespace

@@ -26,23 +26,29 @@ public:
 
     const char* GetName() const override { return name_; }
     void AdoptDiscoveredGeometry(const AudioStreamRuntimeCaps& caps) noexcept override { caps_ = caps; }
+    void AdoptDiscoveredRates(std::span<const uint32_t> rates) override { rates_.assign(rates.begin(), rates.end()); }
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& caps) const override {
         if (caps_.sampleRateHz == 0 || caps_.hostInputPcmChannels == 0 ||
             caps_.hostOutputPcmChannels == 0) return false;
-        caps = caps_;
+        caps = DeviceCaps();
         return true;
     }
 protected:
     const char* DeviceName() const override { return name_; }
-    AudioStreamRuntimeCaps DeviceCaps() const override { return caps_; }
-    // Start at the observed rate. A different rate requires fresh geometry.
-    std::vector<uint32_t> SupportedRates() const override { return {caps_.sampleRateHz}; }
+    AudioStreamRuntimeCaps DeviceCaps() const override {
+        auto caps = caps_;
+        if (appliedClock_.sampleRateHz) caps.sampleRateHz = appliedClock_.sampleRateHz;
+        return caps;
+    }
+    // Only formations with the same PCM/slot geometry are offered by discovery.
+    std::vector<uint32_t> SupportedRates() const override { return rates_.empty() ? std::vector<uint32_t>{caps_.sampleRateHz} : rates_; }
     void ConfigureMixer(MixerFailurePolicy policy, MixerCompletion completion) override {
         if (!startupMixer_) { BeBoBProtocol::ConfigureMixer(policy, std::move(completion)); return; }
         RunMixerMap(*startupMixer_, policy, std::move(completion));
     }
 private:
     AudioStreamRuntimeCaps caps_{};
+    std::vector<uint32_t> rates_;
     const BeBoB::MixerMap* startupMixer_;
     const char* name_;
 };

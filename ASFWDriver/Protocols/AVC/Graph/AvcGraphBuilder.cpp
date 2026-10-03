@@ -129,6 +129,10 @@ DeviceGraph AvcGraphBuilder::BuildGraph(
 
     DeviceGraph dg;
     dg.supportsBlockingTransmit = (musicStatus.capabilities.transmitCapabilityFlags & Descriptors::kMusicCapabilityBlockingBit) != 0;
+    if (musicStatus.capabilities.hasGeneralCapability) {
+        dg.transmitModes = musicStatus.capabilities.transmitCapabilityFlags;
+        dg.receiveModes = musicStatus.capabilities.receiveCapabilityFlags;
+    }
     dg.modelName = options.modelName;
 
     // 1. Find Playback plug (destination plug)

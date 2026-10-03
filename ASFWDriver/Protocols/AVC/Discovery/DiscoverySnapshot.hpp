@@ -45,6 +45,7 @@ struct FeatureStatus {
     Cmd::FeatureControl control{Cmd::FeatureControl::kMute};
     std::optional<Cmd::FeatureReply> value;
     std::optional<AvcError> error;
+    Cmd::ControlAttribute attribute{Cmd::ControlAttribute::kCurrent};
 };
 struct SelectorStatus {
     SubunitId subunit;
@@ -66,6 +67,10 @@ struct ProbeOutcome {
     SubunitAddress address{SubunitAddress::Unit()};
     Opcode opcode{Opcode::kUnitInfo};
     std::optional<AvcError> error;
+    std::optional<ResponseCode> responseCode;
+    std::vector<uint8_t> command;
+    std::vector<uint8_t> responseOperands;
+    std::optional<uint8_t> responseAddress, responseOpcode;
 };
 struct Formation {
     uint32_t rateHz{}, pcmChannels{}, midiChannels{};

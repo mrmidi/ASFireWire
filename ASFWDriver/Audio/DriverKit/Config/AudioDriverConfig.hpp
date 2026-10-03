@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "../../Model/AvcVolumeMapping.hpp"
 #include "../../Wire/AMDTP/PcmSlotMap.hpp"
 
 // Forward declarations to avoid pulling in DriverKit headers
@@ -90,6 +91,8 @@ struct ParsedAudioDriverConfig {
     /// The sample rates above came from the device; keep them over a profile's.
     bool deviceSampleRates{false};
 
+    uint32_t avcControlCount{0};
+    ::ASFW::Audio::Model::AvcPublishedControl avcControls[::ASFW::Audio::Model::kMaxAvcControls]{};
     uint32_t boolControlCount{0};
     BoolControlDescriptor boolControls[kMaxBoolControls]{};
 

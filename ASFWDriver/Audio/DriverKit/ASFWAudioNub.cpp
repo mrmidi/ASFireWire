@@ -22,6 +22,11 @@
 #include "../Protocols/DICE/Core/DICETypes.hpp"
 #include "../Protocols/Duplex/DuplexControlTypes.hpp"
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
+#include "../../Protocols/AVC/AVCUnit.hpp"
+#include "../../Protocols/AVC/AVCDiscovery.hpp"
+#include "../Model/AvcVolumeMapping.hpp"
+#include "../Protocols/AVC/AvcFeatureControl.hpp"
+#include "../Protocols/Backends/SyncAsyncBridge.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
 #include "../../Service/DriverContext.hpp"
 #include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
@@ -899,4 +904,42 @@ kern_return_t IMPL(ASFWAudioNub, SetProtocolBooleanControl)
                                             .generation = binding.device->gen,
                                             .nodeId = binding.device->nodeId}, std::move(avcUnit));
     return binding.protocol->SetBooleanControlValue(classIdFourCC, element, value);
+}
+
+// The nub queue may wait; the controller Default queue must never wait on FCP.
+// Queue-confined graph lookup and all continuations run on that controller queue.
+// Callbacks own their unit and wait state, so a timeout never leaves stack borrows.
+kern_return_t IMPL(ASFWAudioNub, SetAvcFeatureControl) {
+    if (!ivars || !outConfirmedValue) return kIOReturnBadArgument;
+    auto* parent = GetParentASFWDriver(ivars);
+    auto* context = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    if (!context || !context->workQueue || !context->deps.avcDiscovery) return kIOReturnNotReady;
+    const auto discovery = context->deps.avcDiscovery;
+    const auto queue = context->workQueue;
+    const uint64_t guid = ivars->guid;
+    const auto active = std::make_shared<std::atomic<bool>>(true);
+    const auto result = ASFW::Audio::WaitForAsyncResult<int32_t>([=](auto done) {
+        queue->DispatchAsync(^{
+            namespace A = ASFW::AVC;
+            const auto unit = discovery->Unit(guid);
+            const auto route = unit ? unit->CurrentRoute() : std::nullopt;
+            const auto graph = unit ? unit->GetDiscoveredGraph() : nullptr;
+            if (!unit || !route || !unit->IsCurrentRoute(*route) || !graph) { done(kIOReturnNotReady, 0); return; }
+            auto found = graph->featureChannels.end();
+            for (auto it = graph->featureChannels.begin(); it != graph->featureChannels.end(); ++it) {
+                if (ASFW::Audio::Model::AvcControlToken(it->subunit, it->block, it->channel) == token) { found = it; break; }
+            }
+            if (found == graph->featureChannels.end()) { done(kIOReturnUnsupported, 0); return; }
+            const auto subunit = found->subunit;
+            ASFW::Audio::SetAvcFeature(unit, *route, *found, muteControl, value,
+                [unit, route = *route, subunit, muteControl, done](auto reply) {
+                    if (!reply) { done(kIOReturnError, 0); return; }
+                    unit->RememberConfirmedFeature(route, subunit, *reply);
+                    done(kIOReturnSuccess, muteControl ? static_cast<int32_t>(reply->AsMute()) : reply->AsVolume().Raw());
+                }, [active] { return active->load(std::memory_order_acquire); });
+        });
+    }, 2000, kIOReturnTimeout, nullptr, 1);
+    active->store(false, std::memory_order_release);
+    if (result.status == kIOReturnSuccess) *outConfirmedValue = result.value;
+    return result.status;
 }

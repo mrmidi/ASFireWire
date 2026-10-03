@@ -971,6 +971,20 @@ TEST(AvcGoldenTests, DuetDiscoveryDocumentCarriesTheDecodedRouteStatus) {
     const auto graph = rig.Unit()->GetDiscoveredGraph();
     const std::string document = UserClient::Wire::BuildAVCDiscoveryDocument(snapshot.get(), graph.get(), rig.Unit()->CopyExchangeLog());
 
+    ASSERT_EQ(graph->probeResults.size(), snapshot->outcomes.size());
+    bool rejected = false, unsupported = false, stable = false;
+    for (const auto& probe : graph->probeResults) {
+        EXPECT_FALSE(probe.command.empty());
+        if (probe.responseCode == ResponseCode::kRejected) rejected = true;
+        if (probe.responseCode == ResponseCode::kNotImplemented) unsupported = true;
+        if (probe.responseCode == ResponseCode::kImplementedStable) {
+            stable = true;
+            EXPECT_FALSE(probe.responseOperands.empty());
+        }
+    }
+    EXPECT_TRUE(rejected && unsupported && stable);
+    EXPECT_NE(document.find("\"probeResults\":"), std::string::npos);
+    EXPECT_NE(document.find("\"responseName\":\"NOT IMPLEMENTED(0x8)\""), std::string::npos);
     EXPECT_NE(document.find("\"firstOperand\":112"), std::string::npos);
     EXPECT_NE(document.find("\"status\":\"output_status=ready(0x3) conv=can change format(1) signal_status=identical(0x0)\""),
               std::string::npos);
@@ -1324,4 +1338,45 @@ TEST(AvcGoldenTests, DuetConfirmedRateUpdatesGraphAndDocumentButFailedReadbackDo
             EXPECT_EQ(rig.Unit()->GetDiscoveredGraph(), after);
         }
     }
+}
+
+TEST(AvcGoldenTests, VolumeLimitsAreReadPerConfirmedChannelAndRetainedInTheGraph) {
+    AvcGoldenRigOptions opts; opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
+    AvcGoldenRig rig(kDuet, opts);
+    rig.Sim().SetDescriptor(0x08, {0x00}, std::vector<uint8_t>(Fixtures::kDuetAudioIdentifierBytes.begin(),
+                                                          Fixtures::kDuetAudioIdentifierBytes.end()));
+    // Synthetic per-channel limits exercise the discovery logic. These are not
+    // new hardware observations or assumptions about the Duet master channel.
+    for (uint8_t channel = 0; channel <= 2; ++channel) {
+        for (uint8_t attribute : {uint8_t{0x10}, uint8_t{2}, uint8_t{3}, uint8_t{1}}) {
+            std::vector<uint8_t> command{1, 8, 0xb8, 0x81, 1, attribute, 2, channel, 2, 2, 0xff, 0xff};
+            auto response = command; response[0] = 0x0c;
+            response[10] = attribute == 2 ? 0xc0 : attribute == 1 ? 1 : 0;
+            response[11] = 0;
+            rig.Sim().SetResponseOverride(command, response);
+        }
+    }
+    bool initialized{};
+    rig.Unit()->Initialize([&](bool ok) { initialized = ok; }); rig.Settle(); ASSERT_TRUE(initialized);
+    const auto graph = rig.Unit()->GetDiscoveredGraph(); ASSERT_TRUE(graph); ASSERT_EQ(graph->featureChannels.size(), 3);
+    for (const auto& channel : graph->featureChannels) {
+        EXPECT_EQ(channel.volume, 0); EXPECT_EQ(channel.minimum, -16384); EXPECT_EQ(channel.maximum, 0); EXPECT_EQ(channel.resolution, 256);
+    }
+    const auto snapshot = rig.Unit()->GetDiscoverySnapshot(); ASSERT_TRUE(snapshot);
+    EXPECT_EQ(std::ranges::count_if(snapshot->features, [](const auto& status) {
+        return status.control == Cmd::FeatureControl::kVolume && status.attribute != Cmd::ControlAttribute::kCurrent;
+    }), 9);
+    auto changed = Cmd::FeatureReply{.functionBlockId = 1, .channel = 0, .control = Cmd::FeatureControl::kVolume,
+                                    .data = {0xff, 0x00}, .dataLength = 2};
+    rig.Unit()->RememberConfirmedFeature(rig.Route(), 0, changed);
+    EXPECT_TRUE(rig.Unit()->HasUserFeaturePreference(0, 1));
+    EXPECT_EQ(rig.Unit()->GetDiscoveredGraph()->featureChannels.front().volume, -256);
+    EXPECT_EQ(graph->featureChannels.front().volume, 0); // previous immutable lease remains valid
+    auto stale = rig.Route(); ++stale.routeEpoch;
+    changed.data = {0xfe, 0x00};
+    rig.Unit()->RememberConfirmedFeature(stale, 0, changed);
+    EXPECT_EQ(rig.Unit()->GetDiscoveredGraph()->featureChannels.front().volume, -256);
+    const auto document = UserClient::Wire::BuildAVCDiscoveryDocument(snapshot.get(), rig.Unit()->GetDiscoveredGraph().get(), {});
+    EXPECT_NE(document.find("\"featureChannels\""), std::string::npos);
+    EXPECT_NE(document.find("\"minimum\":-16384"), std::string::npos);
 }

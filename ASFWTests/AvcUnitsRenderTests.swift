@@ -91,6 +91,23 @@ struct AvcUnitsRenderTests {
         #expect(unit.subunits.map { $0.ref.title } == ["Subunit 0x1", "Subunit 0xc"])
     }
 
+    @Test func graphRepliesKeepRejectedAndNotImplementedSeparate() throws {
+        var json = try #require(JSONSerialization.jsonObject(with: Self.fixtureData()) as? [String: Any])
+        var graph = try #require(json["graph"] as? [String: Any])
+        graph["probeResults"] = [
+            ["address": 255, "opcode": 26, "responseCode": 8, "responseName": "NOT IMPLEMENTED(0x8)", "error": ["kind": "unexpectedResponse", "response": 8]],
+            ["address": 255, "opcode": 26, "responseCode": 10, "responseName": "REJECTED(0xa)", "error": ["kind": "unexpectedResponse", "response": 10]],
+            ["address": 255, "opcode": 26, "responseCode": 8, "responseName": "NOT IMPLEMENTED(0x8)", "error": ["kind": "unexpectedResponse", "response": 8]]
+        ]
+        json["graph"] = graph
+        let document = try #require(AvcUnitDocument.decode(JSONSerialization.data(withJSONObject: json)))
+        let unit = AvcUnitDashboard(guid: 1, nodeID: 1, vendorID: 0, modelID: 0, vendorName: nil, modelName: nil, deviceState: nil, wireUnit: nil, document: document)
+        #expect(unit.failedProbeGroups.count == 2)
+        #expect(unit.failedProbeGroups[0].error == "NOT IMPLEMENTED(0x8)")
+        #expect(unit.failedProbeGroups[0].count == 2)
+        #expect(unit.failedProbeGroups[1].error == "REJECTED(0xa)")
+    }
+
     @Test func everyTabRenders() throws {
         let unit = try Self.dashboard()
         let directory = ProcessInfo.processInfo.environment["ASFW_RENDER_DIR"].map { URL(fileURLWithPath: $0) }

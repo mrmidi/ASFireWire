@@ -16,6 +16,7 @@
 #include "../Descriptors/AudioSubunitDescriptor.hpp"
 #include "../Descriptors/MusicSubunitDescriptor.hpp"
 
+#include "../Core/AvcError.hpp"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -153,17 +154,39 @@ struct ControlBlockInfo {
 
 struct RoutingEdge { std::array<uint8_t, 2> source, destination; };
 
+/// The observed answer is independent of whether the operation accepted it.
+/// No answer (timeout/refusal) stays null; REJECTED/NOT IMPLEMENTED stay exact device codes.
+struct ProbeResult {
+    uint8_t address{}, opcode{};
+    std::optional<::ASFW::AVC::AvcError> error;
+    std::optional<::ASFW::AVC::ResponseCode> responseCode;
+    std::vector<uint8_t> command;
+    std::vector<uint8_t> responseOperands;
+    std::optional<uint8_t> responseAddress, responseOpcode;
+};
+
+/// Values are signed 1/256 dB. Missing attributes remain unknown.
+struct FeatureChannelState {
+    uint8_t subunit{}, block{}, channel{};
+    bool userPreference{false};
+    std::optional<bool> mute;
+    std::optional<int16_t> volume, minimum, maximum, resolution;
+};
+
 /// Complete device graph built from descriptor discovery
 struct DeviceGraph {
     std::string modelName;
     bool supportsBlockingTransmit{false};
+    std::optional<uint8_t> transmitModes, receiveModes;
     StreamGraph playback;
     StreamGraph capture;
     std::vector<ClockSourceInfo> clockSources;
     std::vector<SyncDestinationInfo> syncDestinations;
     std::vector<AudioSelectorInfo> selectors;
     std::vector<ControlBlockInfo> controls;
+    std::vector<FeatureChannelState> featureChannels;
     std::vector<RoutingEdge> routes;
+    std::vector<ProbeResult> probeResults;
 };
 
 } // namespace ASFW::Protocols::AVC::Graph

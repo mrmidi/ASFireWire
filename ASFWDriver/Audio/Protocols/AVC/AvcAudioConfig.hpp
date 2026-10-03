@@ -31,9 +31,9 @@ struct AvcEndpointIdentity {
 
 /// The endpoint the graph describes, or nullopt when its geometry is unusable
 /// (unresolved streams, mismatched current rates, too wide for the wire, no
-/// rate in common). It offers exactly one rate, the one it starts at: the
-/// catalog pin, else 48 kHz when both directions can run it, else the rate the
-/// device reported.
+/// rate in common). Reconfigurable Duet/Phase88 endpoints offer shared rates
+/// supported by this build; other endpoints offer only their startup rate.
+/// Catalog pins and validated device stream-mode overrides remain authoritative.
 [[nodiscard]] std::optional<::ASFW::Audio::Model::ASFWAudioDevice> BuildGraphAudioConfig(
     const AvcEndpointIdentity& identity,
     const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,

@@ -14,6 +14,14 @@ struct AvcUnitDocument: Decodable, Sendable {
     struct Failure: Decodable, Sendable, Hashable {
         var kind: String
         var response: Int?
+        var responseName: String?
+        var displayText: String {
+            if kind == "unexpectedResponse" {
+                if let responseName { return responseName }
+                if let response { return String(format: "Response 0x%02X", response) }
+            }
+            return AvcUnitDashboard.humanized(kind)
+        }
     }
 
     struct SubunitRef: Decodable, Sendable, Hashable {
@@ -94,6 +102,7 @@ struct AvcUnitDocument: Decodable, Sendable {
     }
 
     struct Feature: Decodable, Sendable {
+        var attribute: Int?
         var subunit: SubunitRef
         var block: Int
         var channel: Int
@@ -289,10 +298,25 @@ struct AvcUnitDocument: Decodable, Sendable {
 
     struct ClockSource: Decodable, Sendable { var name: String; var current: Bool }
 
+    struct ProbeResult: Decodable, Sendable {
+        var address: Int?
+        var opcode: Int?
+        var addressText: String?
+        var opcodeName: String?
+        var command: String?
+        var responseCode: Int?
+        var responseName: String?
+        var responseOperands: String?
+        var responseAddress: Int?
+        var responseOpcode: Int?
+        var error: Failure?
+    }
+
     struct Graph: Decodable, Sendable {
         var playback: Stream
         var capture: Stream
         var clockSources: [ClockSource]?
+        var probeResults: [ProbeResult]?
     }
 
     struct Exchange: Decodable, Sendable {

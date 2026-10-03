@@ -71,7 +71,7 @@ void LogReservationSummary(uint64_t guid, FW::Generation generation, FW::FwSpeed
         return AudioClockConfig{.sampleRateHz = policy->plan.streamTraits.start.startRatePinHz};
     }
     if (policy != nullptr && policy->plan.streamTraits.start.startAtObservedRate &&
-        discoveredConfig && discoveredConfig->currentSampleRate != 0) {
+        discoveredConfig && discoveredConfig->sampleRates.size() == 1 && discoveredConfig->currentSampleRate != 0) {
         return AudioClockConfig{.sampleRateHz = discoveredConfig->currentSampleRate};
     }
     return requested;
@@ -200,6 +200,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     // Offer the discovered geometry; a family that reads its own ignores it,
     // and the graph check below still requires the two to agree.
     if (request.discoveredConfig) {
+        family.AdoptDiscoveredRates(request.discoveredConfig->sampleRates);
         if (const auto discovered = DiscoveredCaps(*request.discoveredConfig)) {
             family.AdoptDiscoveredGeometry(*discovered);
         }

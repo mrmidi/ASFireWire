@@ -270,3 +270,22 @@ void AVCUnit::RememberConfirmedDuplexRate(const Discovery::DeviceRouteToken& rou
     updated->capture.currentSampleRate = rateHz;
     discoveredGraph_ = std::move(updated);
 }
+
+void AVCUnit::RememberConfirmedFeature(const Discovery::DeviceRouteToken& route, uint8_t subunit,
+                                       const ASFW::AVC::Cmd::FeatureReply& reply) {
+    if (!IsCurrentRoute(route) || !snapshot_ || snapshot_->route != route || !discoveredGraph_) return;
+    auto updated = std::make_shared<Graph::DeviceGraph>(*discoveredGraph_);
+    for (auto& channel : updated->featureChannels) {
+        if (channel.subunit != subunit || channel.block != reply.functionBlockId || channel.channel != reply.channel) continue;
+        channel.userPreference = true;
+        if (reply.control == ASFW::AVC::Cmd::FeatureControl::kMute) channel.mute = reply.AsMute();
+        if (reply.control == ASFW::AVC::Cmd::FeatureControl::kVolume) channel.volume = reply.AsVolume().Raw();
+    }
+    discoveredGraph_ = std::move(updated);
+}
+
+bool AVCUnit::HasUserFeaturePreference(uint8_t subunit, uint8_t block) const noexcept {
+    return discoveredGraph_ && std::ranges::any_of(discoveredGraph_->featureChannels, [=](const auto& channel) {
+        return channel.subunit == subunit && channel.block == block && channel.userPreference;
+    });
+}

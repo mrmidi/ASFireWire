@@ -107,7 +107,7 @@ DeviceGraph BuildDiscoveryGraph(const E::DiscoverySnapshot& snapshot, std::strin
         confirmed.status.channels.resize(block.channelControls.size());
         for (const auto& status : snapshot.features) if (status.subunit == audio->id && status.blockId == block.id) {
             if (confirmed.status.state == FeatureStatusState::kNotProbed) confirmed.status.state = FeatureStatusState::kUnsupported;
-            if (!status.value) continue;
+            if (!status.value || status.attribute != A::Cmd::ControlAttribute::kCurrent) continue;
             confirmed.status.state = FeatureStatusState::kConfirmed;
             const auto control = static_cast<ConfirmedFeatureControl>(static_cast<uint8_t>(status.control) - 1);
             if (status.channel == 0) confirmed.status.master.push_back(control);
@@ -116,7 +116,38 @@ DeviceGraph BuildDiscoveryGraph(const E::DiscoverySnapshot& snapshot, std::strin
         options.confirmedFeatureControls.push_back(std::move(confirmed));
     }
     DeviceGraph graph = music ? AvcGraphBuilder::BuildGraph(*music->music, audio ? &*audio->audio : nullptr, options) : DeviceGraph{};
+    // Identifier advertises supported modes; status advertises current modes.
+    // TA 2001007 Tables 5.5/5.6 and Figure 6.3. Prefer the identifier when read.
+    if (music && music->musicIdentifier && music->musicIdentifier->general) {
+        graph.transmitModes = music->musicIdentifier->general->transmit;
+        graph.receiveModes = music->musicIdentifier->general->receive;
+        graph.supportsBlockingTransmit = (*graph.transmitModes & Descriptors::kMusicCapabilityBlockingBit) != 0;
+    }
     graph.modelName = options.modelName;
+    for (const auto& status : snapshot.features) {
+        if (!status.value) continue;
+        auto it = std::find_if(graph.featureChannels.begin(), graph.featureChannels.end(), [&](const auto& item) {
+            return item.subunit == status.subunit.id && item.block == status.blockId && item.channel == status.channel;
+        });
+        if (it == graph.featureChannels.end()) {
+            graph.featureChannels.push_back({status.subunit.id, status.blockId, status.channel});
+            it = std::prev(graph.featureChannels.end());
+        }
+        if (status.control == A::Cmd::FeatureControl::kMute && status.attribute == A::Cmd::ControlAttribute::kCurrent &&
+            status.value->dataLength == 1 && (status.value->data[0] == A::Cmd::kBooleanTrue || status.value->data[0] == A::Cmd::kBooleanFalse))
+            it->mute = status.value->AsMute();
+        if (status.control != A::Cmd::FeatureControl::kVolume || status.value->dataLength != 2) continue;
+        const auto volume = status.value->AsVolume();
+        if (!volume.IsValid()) continue;
+        switch (status.attribute) {
+        case A::Cmd::ControlAttribute::kCurrent: it->volume = volume.Raw(); break;
+        case A::Cmd::ControlAttribute::kMinimum: it->minimum = volume.Raw(); break;
+        case A::Cmd::ControlAttribute::kMaximum: it->maximum = volume.Raw(); break;
+        case A::Cmd::ControlAttribute::kResolution: it->resolution = volume.Raw(); break;
+        default: break;
+        }
+    }
+
     for (bool input : {true, false}) {
         auto& stream = input ? graph.playback : graph.capture;
         auto geometry = Geometry(Find(snapshot, A::SubunitAddress::Unit(), input, 0), input);
@@ -164,6 +195,10 @@ DeviceGraph BuildDiscoveryGraph(const E::DiscoverySnapshot& snapshot, std::strin
         for (const auto& plug : snapshot.plugs)
             if (plug.route && plug.route->destination == route.destination && plug.route->source == route.source) clock.isCurrent = true;
         graph.clockSources.push_back(std::move(clock));
+    }
+    for (const auto& outcome : snapshot.outcomes) {
+        graph.probeResults.push_back({outcome.address.Byte(), static_cast<uint8_t>(outcome.opcode),
+            outcome.error, outcome.responseCode, outcome.command, outcome.responseOperands, outcome.responseAddress, outcome.responseOpcode});
     }
     return graph;
 }

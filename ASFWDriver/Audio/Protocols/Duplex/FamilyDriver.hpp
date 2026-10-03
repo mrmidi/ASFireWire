@@ -19,6 +19,7 @@
 // bus completions they wait for are delivered.
 
 #pragma once
+#include <span>
 
 #include "DuplexControlTypes.hpp"
 
@@ -53,6 +54,7 @@ public:
 
     // Geometry discovery derived from descriptors or plug formats, offered
     // before LoadGeometry. A family that reads its own geometry ignores it.
+    virtual void AdoptDiscoveredRates(std::span<const uint32_t>) {}
     virtual void AdoptDiscoveredGeometry(const AudioStreamRuntimeCaps& caps) noexcept { (void)caps; }
     // Read the device's stream geometry so channel planning sees every stream.
     [[nodiscard]] virtual IOReturn LoadGeometry() = 0;

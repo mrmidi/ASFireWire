@@ -8,6 +8,7 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
+#include "ASFWAvcLevelControl.h"
 #include "Config/AudioProfileRegistry.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
@@ -43,6 +44,8 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     device.sampleRateCount = parsedConfig.sampleRateCount;
     device.currentSampleRate = parsedConfig.currentSampleRate;
     device.streamModeRaw = std::to_underlying(parsedConfig.streamMode);
+    device.avcControlCount = parsedConfig.avcControlCount;
+    std::copy_n(parsedConfig.avcControls, device.avcControlCount, device.avcControls);
     device.boolControlCount = parsedConfig.boolControlCount;
 
     for (uint32_t index = 0; index < ASFW::Isoch::Audio::kMaxSampleRates; ++index) {
@@ -390,11 +393,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
     ivars.audioDevice->SetDriverIvars(&ivars);
 
-    // Do not let the host save/restore a stale stream format from a prior
-    // session: the device must come up at the rate this graph selects below,
-    // and we drive rate changes explicitly through HandleChangeSampleRate.
-    // (Default behavior is restore-enabled; see IOUserAudioDevice header.)
-    ivars.audioDevice->SetWantsStreamFormatsRestored(false);
+    // Restore the user's stream format under the stable GUID-based device UID.
+    // HandleChangeSampleRate still validates rates against the published formats.
+    ivars.audioDevice->SetWantsStreamFormatsRestored(true);
 
     const uint32_t current_period = ivars.audioDevice->GetZeroTimestampPeriod();
     ASFW_LOG(Audio, "ASFWAudioDriver: IOUserAudioDevice created. GetZeroTimestampPeriod() confirmed: %u frames", current_period);
@@ -730,6 +731,26 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         }
     }
 
+    for (uint32_t index = 0; index < ivars.device.avcControlCount; ++index) {
+        const auto& descriptor = ivars.device.avcControls[index];
+        auto controlName = OSSharedPtr(OSString::withCString(descriptor.name), OSNoRetain);
+        if (!controlName) return kIOReturnNoMemory;
+        if (descriptor.hasVolume) {
+            auto volume = ASFWAvcLevelControl::Create(&driver, descriptor);
+            if (!volume) return kIOReturnNoMemory;
+            if ((error = volume->SetName(controlName.get())) != kIOReturnSuccess ||
+                (error = ivars.audioDevice->AddControl(volume.get())) != kIOReturnSuccess) return error;
+        }
+        if (descriptor.hasMute) {
+            auto mute = ASFWProtocolBooleanControl::Create(&driver, true, descriptor.muted, descriptor.element,
+                static_cast<IOUserAudioObjectPropertyScope>(descriptor.scope), IOUserAudioClassID::MuteControl,
+                static_cast<uint32_t>(IOUserAudioClassID::MuteControl), descriptor.token);
+            if (!mute) return kIOReturnNoMemory;
+            if ((error = mute->SetName(controlName.get())) != kIOReturnSuccess ||
+                (error = ivars.audioDevice->AddControl(mute.get())) != kIOReturnSuccess) return error;
+        }
+    }
+
     error = ASFW::Isoch::Audio::AddBooleanControlsToDevice(
         driver,
         *ivars.audioDevice,
@@ -739,11 +760,10 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return error;
     }
 
-    // The device is the source of truth for its own control state - we poll
-    // HwState to track the physical knob - so a host plist restore at publish
-    // time would fight the hardware (IOUserAudioClockDevice.iig:878-891).
-    // Device-wide with no per-control opt-out, hence a single decision here.
-    ivars.audioDevice->SetWantsControlsRestored(false);
+    // Confirmed AV/C controls opt in to the host's durable settings store.
+    // Restoration travels through the same checked write/readback callbacks.
+    // Other families keep their existing physical-control authority policy.
+    ivars.audioDevice->SetWantsControlsRestored(ivars.device.avcControlCount != 0);
     if (!requireAdkSuccess(
             "driver.SetTransportType",
             driver.SetTransportType(

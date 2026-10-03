@@ -226,6 +226,25 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
         return;
     }
 
+    if (auto* controls = OSDynamicCast(OSArray, properties->getObject(::ASFW::Audio::Model::kAvcControlsProperty))) {
+        inOutConfig.avcControlCount = 0;
+        for (uint32_t i = 0; i < std::min(controls->getCount(), ::ASFW::Audio::Model::kMaxAvcControls); ++i) {
+            auto* entry = OSDynamicCast(OSDictionary, controls->getObject(i));
+            if (!entry) continue;
+            const auto get = [&](const char* key) -> uint32_t {
+                auto* value = OSDynamicCast(OSNumber, entry->getObject(key));
+                return value != nullptr ? value->unsigned32BitValue() : 0;
+            };
+            auto& control = inOutConfig.avcControls[inOutConfig.avcControlCount++];
+            if (auto* name = OSDynamicCast(OSString, entry->getObject("Name")))
+                strlcpy(control.name, name->getCStringNoCopy(), sizeof(control.name));
+            control.token = get("Token"); control.scope = get("Scope"); control.element = get("Element");
+            control.hasMute = get("HasMute") != 0; control.muted = get("Muted") != 0;
+            control.hasVolume = get("HasVolume") != 0; control.current = static_cast<int16_t>(get("Current"));
+            control.range = {static_cast<int16_t>(get("Minimum")), static_cast<int16_t>(get("Maximum")), static_cast<int16_t>(get("Resolution"))};
+            if (!control.range.Valid()) control.hasVolume = false;
+        }
+    }
     ParseIdentityProperties(properties, inOutConfig);
     ParseDevicePresentationProperties(properties, inOutConfig);
     ParseSampleRates(properties, inOutConfig);

@@ -290,13 +290,17 @@ void BeBoBProtocol::RunMixerMap(const MixerMap& map, MixerFailurePolicy policy, 
     for (const auto& sel : map.selectors)
         state->steps.push_back({"selector", sel.fbId, 0, sel.value,
             [this, sel](MixerCompletion cb) { SetSelectorBlock(sel.fbId, sel.value, std::move(cb)); }});
-    for (const auto& mute : map.mutes)
+    for (const auto& mute : map.mutes) {
+        if (avcUnit_ && avcUnit_->HasUserFeaturePreference(0, mute.fbId)) continue;
         state->steps.push_back({mute.unmute ? "unmute" : "mute", mute.fbId, mute.channel, 0,
             [this, mute](MixerCompletion cb) { SetFeatureMute(mute.fbId, mute.channel, mute.unmute, std::move(cb)); }});
-    for (const auto& vol : map.volumes)
+    }
+    for (const auto& vol : map.volumes) {
+        if (avcUnit_ && avcUnit_->HasUserFeaturePreference(0, vol.fbId)) continue;
         // Volume is signed 1/256 dB; the log shows whole dB.
         state->steps.push_back({"volume", vol.fbId, vol.channel, static_cast<int16_t>(vol.value) / 256,
             [this, vol](MixerCompletion cb) { SetFeatureVolume(vol.fbId, vol.channel, vol.value, std::move(cb)); }});
+    }
     ASFW_LOG(Audio, "[BeBoB] %{public}s startup mixer: %zu selectors, %zu mutes, %zu volumes (%{public}s)",
              state->device, map.selectors.size(), map.mutes.size(), map.volumes.size(),
              policy == MixerFailurePolicy::kRequired ? "required" : "best effort");
