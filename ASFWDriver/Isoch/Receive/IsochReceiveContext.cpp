@@ -80,7 +80,17 @@ kern_return_t IsochReceiveContext::Start() {
         return kIOReturnInternalError;
     }
     const uint32_t contextMatch = 0xF0000000 | (channel_ & 0x3F);
-    const uint32_t ctlValue = Driver::ContextControl::kRun | Driver::ContextControl::kIsochHeader;
+    // kRun (bit 15) | kWake (bit 12) | kIsochHeader (bit 30).
+    //   - kWake is what makes the context actually fetch from CommandPtr — without it the
+    //     context arms (RUN set, readback shows active) but the IR DMA never runs and the
+    //     receive drain never completes (-> ZTS timeout 0xe00002d6). Confirmed on a
+    //     MOTU 828 Mk3.
+    //   - kIsochHeader (OHCI 1.1 section 10.6.2.1) unchanged.
+    // The register writes themselves now go through the revocable access scope below;
+    // this only names the value.
+    const uint32_t ctlValue = Driver::ContextControl::kRun |
+                              Driver::ContextControl::kWake |
+                              Driver::ContextControl::kIsochHeader;
     const uint32_t contextMask = 1u << contextIndex_;
     uint32_t ctrlBefore = 0;
     uint32_t pendingEvents = 0;
@@ -104,6 +114,19 @@ kern_return_t IsochReceiveContext::Start() {
     }
     ASFW_LOG(Isoch, "IR: start ctx=%u ctrlBefore=0x%08x pendingEvents=0x%08x",
              contextIndex_, ctrlBefore, pendingEvents);
+
+    // Readback proves kWake actually landed (bit 10 = ACTIVE) instead of just arming RUN.
+    // Reads go through a revocable access scope; a revoked
+    // scope leaves this 0, which reads as "not active" and is the honest answer.
+    uint32_t readCtl = 0;
+    if (auto access = hardware_->TryBeginAccess()) {
+        readCtl = access.Read(registers_.ContextControlSet);
+    }
+    ASFW_LOG(Isoch, "Start: IR readback Ctl=0x%08x (run=%u wake=%u active=%u)",
+             readCtl,
+             (readCtl & Driver::ContextControl::kRun) != 0,
+             (readCtl & Driver::ContextControl::kWake) != 0,
+             (readCtl & Driver::ContextControl::kActive) != 0);
 
     while (rxLock_.test_and_set(std::memory_order_acquire)) {
     }
