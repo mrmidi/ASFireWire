@@ -30,6 +30,7 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32?
     func mcpQueryLogRecords(_ query: ASFWLogRingQuery) -> ASFWLogRingQueryResponse?
     func mcpLogRingStats() -> ASFWLogRingStats?
+    func mcpAudioStreamMetricsSnapshot(guid: UInt64) -> ASFWAudioStreamMetricsSnapshot?
     func mcpAudioTelemetry() -> AudioTelemetrySnapshot?
 }
 
@@ -158,6 +159,10 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
 
     func mcpLogRingStats() -> ASFWLogRingStats? {
         logRingStats()
+    }
+
+    func mcpAudioStreamMetricsSnapshot(guid: UInt64) -> ASFWAudioStreamMetricsSnapshot? {
+        audioStreamMetricsSnapshot(guid: guid)
     }
 }
 
@@ -835,6 +840,11 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     func logRingStats() async -> ASFWLogRingStats? {
         guard backend.mcpIsConnected else { return nil }
         return backend.mcpLogRingStats()
+    }
+
+    func audioStreamMetricsSnapshot(guid: UInt64) async -> ASFWAudioStreamMetricsSnapshot? {
+        guard backend.mcpIsConnected else { return nil }
+        return backend.mcpAudioStreamMetricsSnapshot(guid: guid)
     }
 
     func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth] {

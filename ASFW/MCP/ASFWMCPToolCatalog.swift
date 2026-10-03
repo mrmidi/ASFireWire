@@ -23,6 +23,7 @@ enum ASFWMCPToolCatalog {
             + bebobTools
             + audioStreamTools
             + loggingTools
+            + audioMetricsTools
     }
 
     static let coreTools: [ASFWMCPToolDefinition] = [
