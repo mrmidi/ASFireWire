@@ -5,11 +5,47 @@
 
 #include "../../../Common/DriverKitOwnership.hpp"
 #include "../../../Logging/Logging.hpp"
+#include "DuplexIRMAdvisory.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 #include <new>
 #include <utility>
 
 namespace ASFW::Audio {
+namespace {
+
+// Shared by both directions. Returns kIOReturnSuccess with `reservation` describing
+// the channel to use when the caller may proceed - either because the IRM confirmed
+// the reservation, or because there is no IRM and the device already owns the
+// channel. The policy itself lives in DuplexIRMAdvisory.hpp so it can be unit-tested
+// on the host. A device-assigned channel is the one-bit mask RestartRoutine passes
+// for register-protocol families (DICE, MOTU); CMP families pass every usable
+// channel and therefore never degrade.
+[[nodiscard]] kern_return_t ResolveReservedChannel(const char* direction,
+                                                   Backends::IRMReservationResult& reservation,
+                                                   uint64_t allowedChannels) noexcept {
+    if (reservation.status == kIOReturnSuccess) {
+        return kIOReturnSuccess;
+    }
+    const bool deviceOwnsChannel =
+        Backends::SoleChannelInMask(allowedChannels) != AudioStreamWireInfo::kInvalidIsoChannel;
+    const uint8_t fallback = Backends::AdvisoryFallbackChannel(reservation.status, allowedChannels,
+                                                               deviceOwnsChannel);
+    if (fallback == AudioStreamWireInfo::kInvalidIsoChannel) {
+        return reservation.status;
+    }
+    ASFW_LOG(IRM,
+             "[IRMAdvisory] %s: no IRM responder (status=0x%08x) - proceeding on "
+             "device-assigned channel %u without a bus reservation",
+             direction, reservation.status, fallback);
+    // Nothing was charged on the bus, so the result carries no bandwidth.
+    reservation.status = kIOReturnSuccess;
+    reservation.channel = fallback;
+    reservation.failure = Backends::IsochReserveFailure::kNone;
+    reservation.charge = {};
+    return kIOReturnSuccess;
+}
+
+} // namespace
 
 kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
     uint32_t streamIndex, ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
@@ -88,8 +124,9 @@ kern_return_t IsochDuplexHostTransport::ReservePlaybackResources(
     // channels and consumes the returned value for CMP + OHCI programming.
     outResult = reservations_.ReserveAnyPlayback(irmClient, allowedChannels,
                                                  packetBandwidthUnits);
-    if (outResult.status != kIOReturnSuccess) {
-        return outResult.status;
+    const kern_return_t resolved = ResolveReservedChannel("playback", outResult, allowedChannels);
+    if (resolved != kIOReturnSuccess) {
+        return resolved;
     }
     const kern_return_t bookkeeping =
         isoch_.ReservePlaybackResources(guid, irmClient, outResult.channel, outResult.charge.Total());
@@ -105,8 +142,9 @@ kern_return_t IsochDuplexHostTransport::ReserveCaptureResources(
     uint32_t packetBandwidthUnits, Backends::IRMReservationResult& outResult) noexcept {
     outResult = reservations_.ReserveAnyCapture(irmClient, allowedChannels,
                                                 packetBandwidthUnits);
-    if (outResult.status != kIOReturnSuccess) {
-        return outResult.status;
+    const kern_return_t resolved = ResolveReservedChannel("capture", outResult, allowedChannels);
+    if (resolved != kIOReturnSuccess) {
+        return resolved;
     }
     const kern_return_t bookkeeping =
         isoch_.ReserveCaptureResources(guid, irmClient, outResult.channel, outResult.charge.Total());

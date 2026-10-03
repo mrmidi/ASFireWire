@@ -147,6 +147,11 @@ add_device_test(DuplexStreamProfileTests
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
 )
 
+# When a failed IRM reservation may be downgraded to advisory, and when it may not.
+add_device_test(DuplexIRMAdvisoryTests
+    DuplexIRMAdvisoryTests.cpp
+)
+
 # BeBoBProtocol base-class: async ApplyClockConfig chain, timer settle, epoch cancel.
 add_device_test(BeBoBProtocolTests
     BeBoBProtocolTests.cpp
