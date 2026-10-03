@@ -162,6 +162,10 @@ enum class Opcode : uint8_t {
     kSourceConfigurations = 0x43,      ///< SOURCE CONFIGURATIONS (Music subunit); TA 2001007 Table 7.1, §7.4
     kMusicPlugInfo = 0xC0,             ///< MUSIC PLUG INFO (Music subunit); TA 2001007 Table 7.1, §7.5
     kCurrentCapability = 0xC1,         ///< CURRENT CAPABILITY (Music subunit); TA 2001007 Table 7.1, §7.6
+    /// CHANGE CONFIGURATION (Audio subunit); TA 1999008 §11.1. Same value as MUSIC PLUG INFO: the opcodes
+    /// from 0x40 up that a subunit type defines mean different things per subunit type, so name one with
+    /// Describe(SubunitType, Opcode).
+    kChangeConfiguration = 0xC0,
     kStreamFormatSupport = 0x2F,     ///< STREAM FORMAT SUPPORT; TA 2001002 (BridgeCo, Linux bebob_command.c:302)
     kUnitInfo = 0x30,                ///< UNIT INFO; ta1394 general.rs:37
     kSubunitInfo = 0x31,             ///< SUBUNIT INFO; ta1394 general.rs:130

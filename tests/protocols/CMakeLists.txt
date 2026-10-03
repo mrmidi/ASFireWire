@@ -39,6 +39,12 @@ add_protocols_test(MusicCommandTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
 )
 
+# AV/C Audio subunit FUNCTION BLOCK (TA 1999008 §10) and CHANGE CONFIGURATION (§11.1)
+add_protocols_test(AudioFunctionBlockTests
+    AudioFunctionBlockTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)
+
 # Naming layer and the discovery log: every wire value by spec name, UNKNOWN for the unnamed
 add_protocols_test(DiscoveryLogTests
     DiscoveryLogTests.cpp

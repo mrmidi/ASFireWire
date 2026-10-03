@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "AudioControlTypes.hpp"
 #include "CcmTypes.hpp"
 #include "DescriptorCommands.hpp"
 #include "FunctionBlockCommand.hpp"
@@ -136,29 +137,14 @@ inline constexpr std::array kFunctionBlockTypes{
 };
 // TA 1999008 §9.1.4 control_attribute.
 inline constexpr std::array kControlAttributes{
-    NameEntry{static_cast<uint32_t>(ControlAttribute::kResolution), "resolution"},
-    NameEntry{static_cast<uint32_t>(ControlAttribute::kMinimum), "minimum"},
-    NameEntry{static_cast<uint32_t>(ControlAttribute::kMaximum), "maximum"},
-    NameEntry{static_cast<uint32_t>(ControlAttribute::kDefault), "default"},
-    NameEntry{static_cast<uint32_t>(ControlAttribute::kDuration), "duration"},
-    NameEntry{static_cast<uint32_t>(ControlAttribute::kCurrent), "current"},
-    NameEntry{static_cast<uint32_t>(ControlAttribute::kMove), "move"},
-    NameEntry{static_cast<uint32_t>(ControlAttribute::kDelta), "delta"},
-};
-// TA 1999008 §10.3 control selectors; ta1394 audio lib.rs:802-813.
-inline constexpr std::array kFeatureControls{
-    NameEntry{static_cast<uint32_t>(FeatureControl::kMute), "mute"},
-    NameEntry{static_cast<uint32_t>(FeatureControl::kVolume), "volume"},
-    NameEntry{static_cast<uint32_t>(FeatureControl::kLrBalance), "LR balance"},
-    NameEntry{static_cast<uint32_t>(FeatureControl::kFrBalance), "FR balance"},
-    NameEntry{static_cast<uint32_t>(FeatureControl::kBass), "bass"},
-    NameEntry{static_cast<uint32_t>(FeatureControl::kMid), "mid"},
-    NameEntry{static_cast<uint32_t>(FeatureControl::kTreble), "treble"},
-    NameEntry{static_cast<uint32_t>(FeatureControl::kGraphicEqualizer), "graphic equalizer"},
-    NameEntry{static_cast<uint32_t>(FeatureControl::kAutomaticGain), "automatic gain control"},
-    NameEntry{static_cast<uint32_t>(FeatureControl::kDelay), "delay"},
-    NameEntry{static_cast<uint32_t>(FeatureControl::kBassBoost), "bass boost"},
-    NameEntry{static_cast<uint32_t>(FeatureControl::kLoudness), "loudness"},
+    NameEntry{static_cast<uint32_t>(ControlAttribute::kResolution), "RESOLUTION"},
+    NameEntry{static_cast<uint32_t>(ControlAttribute::kMinimum), "MINIMUM"},
+    NameEntry{static_cast<uint32_t>(ControlAttribute::kMaximum), "MAXIMUM"},
+    NameEntry{static_cast<uint32_t>(ControlAttribute::kDefault), "DEFAULT"},
+    NameEntry{static_cast<uint32_t>(ControlAttribute::kDuration), "DURATION"},
+    NameEntry{static_cast<uint32_t>(ControlAttribute::kCurrent), "CURRENT"},
+    NameEntry{static_cast<uint32_t>(ControlAttribute::kMove), "MOVE"},
+    NameEntry{static_cast<uint32_t>(ControlAttribute::kDelta), "DELTA"},
 };
 // TA 2002013 §6.1 Table 14.
 inline constexpr std::array kDescriptorSpecifierTypes{
@@ -214,8 +200,18 @@ inline constexpr std::array kSignalSourceResults{
 [[nodiscard]] inline std::string Describe(ControlAttribute value) {
     return DescribeValue(names::kControlAttributes, "control_attribute", static_cast<uint32_t>(value), 2);
 }
+/// A control_selector by the spec's identifier, in the block it was sent to: "MUTE_CONTROL(0x01)", or
+/// UNKNOWN(control_selector:0x2a) when Table A.4 defines none. `subType` is the block's process or CODEC type
+/// when known (kAnySubType otherwise: Enable and Mode still resolve). One table names every control: the
+/// catalogue in AudioControlTypes.hpp.
+[[nodiscard]] inline std::string DescribeControl(FunctionBlockType block, uint8_t subType, uint8_t selector) {
+    if (const auto* spec = FindControl(block, subType, selector)) {
+        return std::string(spec->name) + "(" + Hex(selector) + ")";
+    }
+    return "UNKNOWN(control_selector:" + Hex(selector) + ")";
+}
 [[nodiscard]] inline std::string Describe(FeatureControl value) {
-    return DescribeValue(names::kFeatureControls, "control_selector", static_cast<uint32_t>(value), 2);
+    return DescribeControl(FunctionBlockType::kFeature, kAnySubType, static_cast<uint8_t>(value));
 }
 [[nodiscard]] inline std::string Describe(OutputStatus value) {
     return DescribeValue(names::kOutputStatuses, "output_status", static_cast<uint32_t>(value), 1);

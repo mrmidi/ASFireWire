@@ -107,7 +107,6 @@ TEST(AvcNamesTests, NoTableHoldsTwoNamesForOneValue) {
     EXPECT_TRUE(unique(names::kErrorKinds));
     EXPECT_TRUE(unique(Cmd::names::kAm824Formats));
     EXPECT_TRUE(unique(Cmd::names::kOutputStatuses));
-    EXPECT_TRUE(unique(Cmd::names::kFeatureControls));
     EXPECT_TRUE(unique(Cmd::names::kControlAttributes));
     EXPECT_TRUE(unique(D::names::kInfoBlockTypes));
     EXPECT_TRUE(unique(D::names::kMusicPortTypes));

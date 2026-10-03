@@ -374,7 +374,7 @@ void DescribeOutcomes(const DiscoverySnapshot& s, Lines& out) {
     for (const auto& o : s.outcomes) {
         if (!o.error) continue;
         ++failed;
-        const std::string key = "probe_failed " + Label(o.address) + " opcode=" + Describe(o.opcode) + " error=" + DescribeError(o.error);
+        const std::string key = "probe_failed " + Label(o.address) + " opcode=" + Describe(o.address.Type(), o.opcode) + " error=" + DescribeError(o.error);
         const auto found = std::ranges::find_if(failures, [&key](const auto& f) { return f.first == key; });
         if (found == failures.end()) failures.emplace_back(key, 1); else ++found->second;
     }

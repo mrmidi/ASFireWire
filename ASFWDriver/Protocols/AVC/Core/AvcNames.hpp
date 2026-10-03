@@ -120,7 +120,8 @@ inline constexpr std::array kSubunitTypes{
 };
 
 // The opcode names are the spec's: TA 2004006 §9-§10, TA 2002010 Table 7.1, TA 2002013 §7, TA 2001002,
-// TA 1999008 §10, TA 2001007 Table 7.1. 0xBF is the unpublished extended stream format draft.
+// TA 1999008 §10. These are the opcodes whose meaning does not depend on the subunit type. A subunit type
+// defines its own (below); the same number means different commands in different subunit types. 0xBF is the unpublished extended stream format draft.
 inline constexpr std::array kOpcodes{
     NameEntry{static_cast<uint32_t>(Opcode::kVendorDependent), "VENDOR-DEPENDENT"},
     NameEntry{static_cast<uint32_t>(Opcode::kPlugInfo), "PLUG INFO"},
@@ -132,17 +133,26 @@ inline constexpr std::array kOpcodes{
     NameEntry{static_cast<uint32_t>(Opcode::kInputSelect), "INPUT SELECT"},
     NameEntry{static_cast<uint32_t>(Opcode::kOutputPreset), "OUTPUT PRESET"},
     NameEntry{static_cast<uint32_t>(Opcode::kCcmProfile), "CCM PROFILE"},
+    NameEntry{static_cast<uint32_t>(Opcode::kStreamFormatSupport), "STREAM FORMAT SUPPORT"},
+    NameEntry{static_cast<uint32_t>(Opcode::kUnitInfo), "UNIT INFO"},
+    NameEntry{static_cast<uint32_t>(Opcode::kSubunitInfo), "SUBUNIT INFO"},
+    NameEntry{static_cast<uint32_t>(Opcode::kFunctionBlock), "FUNCTION BLOCK"},
+    NameEntry{static_cast<uint32_t>(Opcode::kExtendedStreamFormat), "EXTENDED STREAM FORMAT INFORMATION"},
+};
+
+// TA 2001007 Table 7.1: the opcodes of the Music subunit.
+inline constexpr std::array kMusicOpcodes{
     NameEntry{static_cast<uint32_t>(Opcode::kDestinationPlugConfigure), "DESTINATION PLUG CONFIGURE"},
     NameEntry{static_cast<uint32_t>(Opcode::kSourcePlugConfigure), "SOURCE PLUG CONFIGURE"},
     NameEntry{static_cast<uint32_t>(Opcode::kDestinationConfigurations), "DESTINATION CONFIGURATIONS"},
     NameEntry{static_cast<uint32_t>(Opcode::kSourceConfigurations), "SOURCE CONFIGURATIONS"},
     NameEntry{static_cast<uint32_t>(Opcode::kMusicPlugInfo), "MUSIC PLUG INFO"},
     NameEntry{static_cast<uint32_t>(Opcode::kCurrentCapability), "CURRENT CAPABILITY"},
-    NameEntry{static_cast<uint32_t>(Opcode::kStreamFormatSupport), "STREAM FORMAT SUPPORT"},
-    NameEntry{static_cast<uint32_t>(Opcode::kUnitInfo), "UNIT INFO"},
-    NameEntry{static_cast<uint32_t>(Opcode::kSubunitInfo), "SUBUNIT INFO"},
-    NameEntry{static_cast<uint32_t>(Opcode::kFunctionBlock), "FUNCTION BLOCK"},
-    NameEntry{static_cast<uint32_t>(Opcode::kExtendedStreamFormat), "EXTENDED STREAM FORMAT INFORMATION"},
+};
+
+// TA 1999008 §11.1: the subunit-specific opcode of the Audio subunit (FUNCTION BLOCK is common, in kOpcodes).
+inline constexpr std::array kAudioOpcodes{
+    NameEntry{static_cast<uint32_t>(Opcode::kChangeConfiguration), "CHANGE CONFIGURATION"},
 };
 
 // What went wrong in a codec or transaction (AvcError.hpp).
@@ -175,8 +185,26 @@ inline constexpr std::array kErrorKinds{
 [[nodiscard]] inline std::string Describe(SubunitType value) {
     return DescribeValue(names::kSubunitTypes, "subunit_type", static_cast<uint32_t>(value), 2);
 }
+/// The name of an opcode that does not depend on the subunit type. A subunit-specific opcode (CHANGE
+/// CONFIGURATION, MUSIC PLUG INFO, ...) prints as UNKNOWN here: name it with the overload below.
 [[nodiscard]] inline std::string Describe(Opcode value) {
     return DescribeValue(names::kOpcodes, "opcode", static_cast<uint32_t>(value), 2);
+}
+/// The name of an opcode in a command addressed to a subunit of `subunit`: the subunit type's own opcodes
+/// first (Music, Audio), then the common ones.
+[[nodiscard]] inline std::string Describe(SubunitType subunit, Opcode value) {
+    const auto raw = static_cast<uint32_t>(value);
+    if (subunit == SubunitType::kMusic) {
+        if (const auto name = LookupName(names::kMusicOpcodes, raw)) return std::string(*name) + "(" + Hex(raw, 2) + ")";
+    } else if (subunit == SubunitType::kAudio) {
+        if (const auto name = LookupName(names::kAudioOpcodes, raw)) return std::string(*name) + "(" + Hex(raw, 2) + ")";
+    }
+    return Describe(value);
+}
+/// The same for a frame's address byte (subunit_type, subunit_ID) and opcode byte.
+[[nodiscard]] inline std::string DescribeOpcodeOf(uint8_t addressByte, uint8_t opcodeByte) {
+    const auto address = SubunitAddress::FromByte(addressByte);
+    return Describe(address.Type(), static_cast<Opcode>(opcodeByte));
 }
 [[nodiscard]] inline std::string Describe(AvcErrorKind value) {
     return DescribeValue(names::kErrorKinds, "error", static_cast<uint32_t>(value), 2);

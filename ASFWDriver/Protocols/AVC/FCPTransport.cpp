@@ -160,7 +160,7 @@ void FCPTransport::Submit(const ASFW::AVC::CommandFrame& frame,
     if (!FrameIsPermitted(config_.permittedFrames, wire)) {
         ASFW_LOG_ERROR(FCP, "FCPTransport: refused %{public}s %{public}s — not in this device's permitted command set",
                        ASFW::AVC::Describe(static_cast<ASFW::AVC::CommandType>(wire[0])).c_str(),
-                       ASFW::AVC::Describe(static_cast<ASFW::AVC::Opcode>(wire[2])).c_str());
+                       ASFW::AVC::DescribeOpcodeOf(wire[1], wire[2]).c_str());
         refuse(AvcErrorKind::kRefused);
         return;
     }
@@ -254,7 +254,7 @@ void FCPTransport::IssueWrite() {
     ASFW_LOG_HEX(FCP, "FCPTransport: write attempt=%llu node=0x%04x gen=%u %{public}s %{public}s len=%zu",
                  attempt.id, attempt.route.nodeId, attempt.route.generation.value,
                  ASFW::AVC::Describe(static_cast<ASFW::AVC::CommandType>(command.data[0])).c_str(),
-                 ASFW::AVC::Describe(static_cast<ASFW::AVC::Opcode>(command.data[2])).c_str(), command.length);
+                 ASFW::AVC::DescribeOpcodeOf(command.data[1], command.data[2]).c_str(), command.length);
     const auto handle = busOps_->WriteBlock(
         FW::Generation{attempt.route.generation.value},
         FW::NodeId{FW::NodeNumberOf(attempt.route.nodeId)},
@@ -418,7 +418,7 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
     IOLockUnlock(lock_);
     ASFW_LOG_V2(FCP, "FCPTransport: response %{public}s to %{public}s len=%zu",
                 ASFW::AVC::Describe(static_cast<ASFW::AVC::ResponseCode>(payload[0])).c_str(),
-                ASFW::AVC::Describe(static_cast<ASFW::AVC::Opcode>(payload[2])).c_str(), payload.size());
+                ASFW::AVC::DescribeOpcodeOf(payload[1], payload[2]).c_str(), payload.size());
 
     const FCPFrame response = FrameOf(payload);
     const auto self = weak_from_this().lock();

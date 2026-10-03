@@ -480,12 +480,12 @@ TEST(CurrentCapabilityTests, ShortReplyIsAnError) {
 // ===========================================================================
 
 TEST(MusicNamesTests, EveryOpcodeAndFieldValueHasItsSpecName) {
-    EXPECT_EQ(Describe(Opcode::kDestinationPlugConfigure), "DESTINATION PLUG CONFIGURE(0x40)");
-    EXPECT_EQ(Describe(Opcode::kSourcePlugConfigure), "SOURCE PLUG CONFIGURE(0x41)");
-    EXPECT_EQ(Describe(Opcode::kDestinationConfigurations), "DESTINATION CONFIGURATIONS(0x42)");
-    EXPECT_EQ(Describe(Opcode::kSourceConfigurations), "SOURCE CONFIGURATIONS(0x43)");
-    EXPECT_EQ(Describe(Opcode::kMusicPlugInfo), "MUSIC PLUG INFO(0xc0)");
-    EXPECT_EQ(Describe(Opcode::kCurrentCapability), "CURRENT CAPABILITY(0xc1)");
+    EXPECT_EQ(Describe(SubunitType::kMusic, Opcode::kDestinationPlugConfigure), "DESTINATION PLUG CONFIGURE(0x40)");
+    EXPECT_EQ(Describe(SubunitType::kMusic, Opcode::kSourcePlugConfigure), "SOURCE PLUG CONFIGURE(0x41)");
+    EXPECT_EQ(Describe(SubunitType::kMusic, Opcode::kDestinationConfigurations), "DESTINATION CONFIGURATIONS(0x42)");
+    EXPECT_EQ(Describe(SubunitType::kMusic, Opcode::kSourceConfigurations), "SOURCE CONFIGURATIONS(0x43)");
+    EXPECT_EQ(Describe(SubunitType::kMusic, Opcode::kMusicPlugInfo), "MUSIC PLUG INFO(0xc0)");
+    EXPECT_EQ(Describe(SubunitType::kMusic, Opcode::kCurrentCapability), "CURRENT CAPABILITY(0xc1)");
     EXPECT_EQ(Cmd::Describe(Cmd::PlugConfigureSubfunction::kChangeConnection), "CHANGE_CONNECTION(0x01)");
     EXPECT_EQ(Cmd::Describe(Cmd::PlugConfigureControlResult::kMusicPlugAlreadyConnected),
               "music_plug already connected(0x05)");
