@@ -111,6 +111,12 @@ public:
         return CurrentRoute() == route;
     }
 
+    /// Publish a completed duplex rate change to driver-owned discovery state.
+    /// Called only after the family has successfully applied/confirmed both directions.
+    /// The route binds the update to the operation's device incarnation/generation.
+    /// Transport-only implementations and simulators have no discovery cache.
+    virtual void RememberConfirmedDuplexRate(const Discovery::DeviceRouteToken&, uint32_t) {}
+
     /// Dispatch a STATUS command.
     template <AvcCommand Cmd, typename Callback>
     void Status(const Cmd& cmd, FW::Generation generation, Callback&& completion) {

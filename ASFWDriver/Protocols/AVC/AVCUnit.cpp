@@ -155,8 +155,7 @@ void AVCUnit::InitializeAlreadyBegun(std::function<void(bool)> completion) {
             const bool current = snapshot && unit->IsCurrentRoute(snapshot->route);
             const bool success = current && snapshot->complete;
             if (success) unit->ApplySnapshot(*snapshot);
-            if (!success && unit->snapshot_ && unit->IsCurrentRoute(unit->snapshot_->route))
-                unit->ApplySnapshot(*unit->snapshot_);
+            // A failed rescan preserves the committed graph, including later confirmed rate changes.
             // Log before the lease moves into snapshot_: a moved-from lease is empty, and a successful
             // discovery is the one that must be logged.
             if (snapshot) unit->LogDiscovery(*snapshot);
@@ -248,7 +247,8 @@ void AVCUnit::LogDiscovery(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& 
     // The one place discovery reaches the ring: every fact by its spec name, every unnamed value as UNKNOWN.
     // The graph is the one built from this snapshot only when it applied; otherwise it is left out.
     const bool applied = snapshot.complete && IsCurrentRoute(snapshot.route);
-    for (const auto& line : ASFW::AVC::DiscoveryEngine::DescribeDiscovery(snapshot, applied ? discoveredGraph_.get() : nullptr)) {
+    const auto graph = GetDiscoveredGraph();
+    for (const auto& line : ASFW::AVC::DiscoveryEngine::DescribeDiscovery(snapshot, applied ? graph.get() : nullptr)) {
         ASFW_LOG(AVC, "%{public}s", line.c_str());
     }
 }
@@ -257,4 +257,16 @@ void AVCUnit::ApplySnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot&
     std::string name;
     if (auto device = device_.lock()) name = std::string(device->GetModelName());
     discoveredGraph_ = std::make_shared<const Graph::DeviceGraph>(Graph::BuildDiscoveryGraph(snapshot, std::move(name)));
+}
+
+void AVCUnit::RememberConfirmedDuplexRate(const Discovery::DeviceRouteToken& route, uint32_t rateHz) {
+    // Keep the original descriptor/probe snapshot as captured. Publish a fresh graph so readers
+    // holding the previous immutable lease remain valid across a rate change.
+    if (rateHz == 0 || !IsCurrentRoute(route) || !snapshot_ || snapshot_->route != route) return;
+    const auto previous = GetDiscoveredGraph();
+    if (!previous || (previous->playback.currentSampleRate == rateHz && previous->capture.currentSampleRate == rateHz)) return;
+    auto updated = std::make_shared<Graph::DeviceGraph>(*previous);
+    updated->playback.currentSampleRate = rateHz;
+    updated->capture.currentSampleRate = rateHz;
+    discoveredGraph_ = std::move(updated);
 }

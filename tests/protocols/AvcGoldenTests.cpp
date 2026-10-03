@@ -1254,3 +1254,74 @@ TEST(AvcGoldenTests, ExtensionInventoryHoldsDiscoveryOpenUntilItFinishes) {
     EXPECT_TRUE(completed);
     EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Completed);
 }
+
+// A successful clock operation must update the published graph, not merely the family's
+// appliedClock_. The device readback is supplied only after the settle delay.
+TEST(AvcGoldenTests, DuetConfirmedRateUpdatesGraphAndDocumentButFailedReadbackDoesNot) {
+    for (const bool confirm : {false, true}) {
+        SCOPED_TRACE(confirm);
+        AvcGoldenRigOptions opts;
+        opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
+        AvcGoldenRig rig(kDuet, opts);
+        bool discovered = false;
+        rig.Unit()->Initialize([&](bool ok) { discovered = ok; });
+        rig.Settle();
+        ASSERT_TRUE(discovered);
+        const auto before = rig.Unit()->GetDiscoveredGraph();
+        ASSERT_NE(before, nullptr);
+        const auto originalRate = before->playback.currentSampleRate;
+        const auto snapshot = rig.Unit()->GetDiscoverySnapshot();
+        const auto query = [&](uint8_t opcode, uint8_t sfc) {
+            rig.Sim().SetResponseOverride({0x01, 0xff, opcode, 0x00, 0xff, 0xff, 0xff, 0xff},
+                                          {0x0c, 0xff, opcode, 0x00, 0x90, sfc, 0xff, 0xff});
+        };
+        query(0x19, 0x01); query(0x18, 0x01);
+        for (uint8_t opcode : {uint8_t{0x19}, uint8_t{0x18}}) {
+            rig.Sim().SetResponseOverride({0x00, 0xff, opcode, 0x00, 0x90, 0x02, 0xff, 0xff},
+                                          {0x09, 0xff, opcode, 0x00, 0x90, 0x02, 0xff, 0xff});
+            rig.Sim().SetResponseOverride({0x00, 0xff, opcode, 0x00, 0x90, 0x01, 0xff, 0xff},
+                                          {0x09, 0xff, opcode, 0x00, 0x90, 0x01, 0xff, 0xff});
+        }
+        Audio::Oxford::Apogee::ApogeeDuetProtocol protocol(
+            rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, nullptr, 100U, &rig.Timers());
+        protocol.UpdateRuntimeContext(rig.Route(), rig.Unit());
+        bool completed = false;
+        protocol.ApplyClockConfig(Audio::AudioClockConfig{.sampleRateHz = 48000},
+            [&](IOReturn status, const Audio::DuplexClockApplyResult&) {
+                completed = true;
+                EXPECT_EQ(status == kIOReturnSuccess, confirm);
+                EXPECT_EQ(rig.Unit()->GetDiscoveredGraph()->playback.currentSampleRate,
+                          confirm ? 48000U : originalRate);
+            });
+        rig.Settle();
+        EXPECT_FALSE(completed);
+        EXPECT_EQ(rig.Unit()->GetDiscoveredGraph(), before);
+        rig.Sim().ClearOverrides();
+        query(0x19, 0x02); query(0x18, confirm ? 0x02 : 0x01);
+        rig.Timers().Advance(101ULL * 1'000'000ULL);
+        rig.Settle();
+        EXPECT_TRUE(completed);
+        const auto after = rig.Unit()->GetDiscoveredGraph();
+        EXPECT_EQ(before->playback.currentSampleRate, originalRate); // old lease stays immutable
+        EXPECT_EQ(after->capture.currentSampleRate, confirm ? 48000U : before->capture.currentSampleRate);
+        EXPECT_EQ(rig.Unit()->GetDiscoverySnapshot(), snapshot); // captured probes remain intact
+        if (confirm) {
+            const auto document = UserClient::Wire::BuildAVCDiscoveryDocument(snapshot.get(), after.get(), {});
+            EXPECT_NE(document.find("\"rate\":48000"), std::string::npos);
+            auto staleRoute = rig.Route();
+            ++staleRoute.routeEpoch;
+            rig.Unit()->RememberConfirmedDuplexRate(staleRoute, 96000);
+            rig.Unit()->RememberConfirmedDuplexRate(rig.Route(), 0);
+            EXPECT_EQ(rig.Unit()->GetDiscoveredGraph(), after);
+            rig.Sim().ClearOverrides();
+            rig.Sim().SetResponseOverride({0x01, 0xff, 0x31}, {0x08, 0xff, 0x31, 0x07, 0xff, 0xff, 0xff, 0xff});
+            bool rescanCompleted = false;
+            rig.Unit()->Initialize([&](bool ok) { rescanCompleted = true; EXPECT_FALSE(ok); });
+            rig.Settle();
+            rig.Timers().Advance(2'000'000'000ULL);
+            rig.Settle();
+            EXPECT_TRUE(rescanCompleted);
+            EXPECT_EQ(rig.Unit()->GetDiscoveredGraph(), after);
+        }
+    }
+}

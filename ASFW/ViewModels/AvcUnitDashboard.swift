@@ -17,6 +17,15 @@ struct AvcUnitDashboard: Identifiable {
     let wireUnit: AVCUnitInfo?
     let document: AvcUnitDocument?
 
+    /// Older documents omit parsed contents and names even when descriptors were read.
+    var needsDocumentUpdate: Bool {
+        document?.snapshot != nil && document?.snapshot?.contents == nil
+    }
+
+    var documentUpdateMessage: String {
+        "The running driver reports an older discovery document. Install the current driver and reconnect to show parsed capabilities, controls, and plug details. Re-scanning with the older driver will not add these fields."
+    }
+
     var id: UInt64 { guid }
     var guidHex: String { String(format: "0x%016llX", guid) }
     var title: String {
@@ -57,9 +66,9 @@ struct AvcUnitDashboard: Identifiable {
     var playback: AvcUnitDocument.Stream? { document?.graph?.playback }
     var capture: AvcUnitDocument.Stream? { document?.graph?.capture }
 
-    /// The current sample rate in Hz, from whichever direction reports one.
+    /// The graph retains the last device rate confirmed by discovery or a successful clock change.
     var sampleRate: Int? {
-        [playback?.rate, capture?.rate].compactMap { $0 }.first { $0 > 0 }
+        return [playback?.rate, capture?.rate].compactMap { $0 }.first { $0 > 0 }
     }
 
     /// Every rate the streams support, ascending, without duplicates.
@@ -212,8 +221,8 @@ struct AvcUnitDashboard: Identifiable {
         var order: [String] = []
         var groups: [String: ProbeGroup] = [:]
         for probe in document?.snapshot?.failedProbes ?? [] {
-            let address = probe.addressText.map(Self.withoutRawValue) ?? "?"
-            let opcode = probe.opcodeName.map(Self.withoutRawValue) ?? "?"
+            let address = probe.addressText.map { Self.withoutRawValue($0) } ?? probe.address.map { String(format: "Address 0x%02X", $0) } ?? "Address not reported"
+            let opcode = probe.opcodeName.map { Self.withoutRawValue($0) } ?? probe.opcode.map { String(format: "Opcode 0x%02X", $0) } ?? "Opcode not reported"
             let key = "\(address)|\(opcode)|\(probe.error.kind)"
             if let existing = groups[key] {
                 groups[key] = ProbeGroup(id: key, address: address, opcode: opcode, error: Self.humanized(probe.error.kind), count: existing.count + 1)

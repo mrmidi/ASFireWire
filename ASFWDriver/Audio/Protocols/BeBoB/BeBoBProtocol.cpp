@@ -158,6 +158,7 @@ void BeBoBProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
             // Cross-validated with Linux bebob_stream.c:96-115 (300 ms settle).
             auto epoch = std::make_shared<ClockApplyEpoch>();
             epoch->generation = busInfo_.GetGeneration();
+            epoch->routeAtStart = route_;
             epoch->completion = std::move(callback);
             epoch->appliedClock = desiredClock;
             activeClockApply_ = epoch.get();
@@ -168,6 +169,7 @@ void BeBoBProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
                     // Guard: epoch may have been cancelled by Shutdown/bus reset.
                     if (activeClockApply_ != epoch.get()) return;
                     appliedClock_ = epoch->appliedClock;
+                    if (avcUnit_) avcUnit_->RememberConfirmedDuplexRate(epoch->routeAtStart, appliedClock_.sampleRateHz);
                     BBPTRACE("ApplyClockConfig settle complete: rate=%uHz",
                              epoch->appliedClock.sampleRateHz);
                     FinishClockApply(epoch.get(), kIOReturnSuccess);

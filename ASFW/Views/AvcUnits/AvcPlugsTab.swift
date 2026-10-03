@@ -71,7 +71,7 @@ private struct SubunitPlugCard: View {
         let plugs = unit.plugs(of: subunit.ref)
         AvcCard(padding: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                AvcSectionHeader(title: "\(subunit.typeName ?? "Subunit") #\(subunit.id)", caption: "\(subunit.destinationPlugs) destination · \(subunit.sourcePlugs) source plugs",
+                AvcSectionHeader(title: "\(subunit.ref.title) #\(subunit.id)", caption: "\(subunit.destinationPlugs) destination · \(subunit.sourcePlugs) source plugs",
                                  systemImage: icon, tint: tint) {
                     AvcFlow(spacing: 4) {
                         AvcChip(text: "\(subunit.destinationPlugs) in", tint: AvcPalette.playback)
@@ -107,7 +107,7 @@ private struct SubunitPlugCard: View {
                 }
                 if contents?.music?.plugs.isEmpty != false && plugs.isEmpty {
                     Divider()
-                    Text("No plug detail was read for this subunit.").font(.callout).foregroundStyle(.secondary).padding(16)
+                    Text(unit.needsDocumentUpdate ? "Plug details are not included in this older driver document." : "No plug detail was read for this subunit.").font(.callout).foregroundStyle(.secondary).padding(16)
                 }
             }
         }
@@ -153,7 +153,7 @@ private struct PlugFormatRow: View {
                 Text("\(plug.isInput ? "Input" : "Output") plug \(plug.id)").font(.callout).fontWeight(.medium)
                 if let status = plug.route?.outputStatusName { AvcChip(text: status, tint: status == "effective" ? .green : .secondary) }
                 Spacer(minLength: 0)
-                if let rate = plug.currentDecoded?.rate { AvcChip(text: rate, tint: .indigo, filled: true) }
+                if let rate = plug.currentDecoded?.rate { AvcChip(text: "\(rate) at discovery", tint: .indigo) }
             }
             if let entries = plug.currentDecoded?.entries, !entries.isEmpty {
                 AvcFlow(spacing: 4) {

@@ -69,7 +69,7 @@ struct AvcDiagnosticsTab: View {
                     ForEach(reads) { read in
                         HStack(spacing: 10) {
                             Text(read.subunit.title).font(.callout).frame(width: 90, alignment: .leading)
-                            Text(read.specifierText ?? "descriptor").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Text(read.specifierText ?? read.specifier.map { "Specifier 0x\($0)" } ?? "descriptor").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             Spacer()
                             if let error = read.primaryError { AvcChip(text: AvcUnitDashboard.humanized(error.kind), tint: .orange) }
                             if let parse = read.parseError { AvcChip(text: "parse: \(AvcUnitDashboard.humanized(parse.kind)) @\(parse.offset)", tint: .red) }

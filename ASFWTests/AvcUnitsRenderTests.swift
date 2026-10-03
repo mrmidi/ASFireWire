@@ -61,6 +61,36 @@ struct AvcUnitsRenderTests {
         #expect(AvcUnitDocument.decode(Data(#"{"format":"other","version":1,"session":0}"#.utf8)) == nil)
     }
 
+    @Test func legacyDocumentPreservesProbeIdentityAndSignalsMissingExtension() throws {
+        let json = #"{"format":"asfw.avc.discovery","version":1,"session":1,"snapshot":{"complete":true,"cancelled":false,"failedProbes":[{"address":8,"opcode":184,"error":{"kind":"unexpectedResponse"}},{"address":96,"opcode":9,"error":{"kind":"unexpectedResponse"}}],"descriptors":[{"subunit":{"type":1,"id":0},"bytes":56,"data":"0003"}]}}"#
+        let document = try #require(AvcUnitDocument.decode(Data(json.utf8)))
+        let unit = AvcUnitDashboard(guid: 1, nodeID: 1, vendorID: 0, modelID: 0, vendorName: nil, modelName: nil, deviceState: nil, wireUnit: nil, document: document)
+        #expect(unit.needsDocumentUpdate)
+        #expect(unit.document?.snapshot?.descriptors?.first?.bytes == 56)
+        #expect(unit.failedProbeGroups.count == 2)
+        #expect(unit.failedProbeGroups[0].address == "Address 0x08")
+        #expect(unit.failedProbeGroups[0].opcode == "Opcode 0xB8")
+        #expect(unit.failedProbeGroups[1].address == "Address 0x60")
+        #expect(unit.document?.snapshot?.descriptors?.first?.subunit.title == "Subunit 0x1")
+        #expect(try !Self.dashboard().needsDocumentUpdate)
+    }
+
+    @Test func capturedDuetLegacyDocumentDecodesWithoutLosingDescriptors() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("documentation/avc-rebuild/fixtures/duet_discovery_6253bee_2026-10-03.json")
+        let document = try #require(AvcUnitDocument.decode(Data(contentsOf: url)))
+        let unit = AvcUnitDashboard(guid: 0x0003DB0A0000D112, nodeID: 1, vendorID: 0x0003DB, modelID: 0x01DDDD, vendorName: "Apogee", modelName: "Duet", deviceState: "ready", wireUnit: nil, document: document)
+        #expect(unit.needsDocumentUpdate)
+        #expect(unit.sampleRate == 44100)
+        let descriptors = try #require(document.snapshot?.descriptors)
+        #expect(descriptors.map(\.bytes) == [0, 56, 464, 0])
+        #expect(Set(descriptors.map(\.id)).count == descriptors.count)
+        #expect(unit.failedProbeGroups.count > 1)
+        #expect(unit.failedProbeGroups.allSatisfy { $0.address != "?" && $0.opcode != "?" })
+        #expect(document.snapshot?.features?.count == 6)
+        #expect(unit.subunits.map { $0.ref.title } == ["Subunit 0x1", "Subunit 0xc"])
+    }
+
     @Test func everyTabRenders() throws {
         let unit = try Self.dashboard()
         let directory = ProcessInfo.processInfo.environment["ASFW_RENDER_DIR"].map { URL(fileURLWithPath: $0) }

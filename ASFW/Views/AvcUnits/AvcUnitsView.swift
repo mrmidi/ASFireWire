@@ -141,6 +141,9 @@ struct AvcUnitDashboardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             AvcDeviceHeader(unit: unit)
+            if unit.needsDocumentUpdate {
+                AvcNoticeCard(title: "Driver update needed", message: unit.documentUpdateMessage, systemImage: "arrow.down.circle")
+            }
             AvcTabBar(selection: $tab)
             switch tab {
             case .signal: AvcSignalTab(unit: unit)

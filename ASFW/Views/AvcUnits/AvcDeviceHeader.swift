@@ -60,6 +60,7 @@ struct AvcDeviceHeader: View {
             if let rate = unit.sampleRate {
                 AvcStatTile(title: "Sample rate", value: AvcUnitDashboard.rateLabel(rate).replacingOccurrences(of: " kHz", with: ""),
                             unit: "kHz", systemImage: "waveform", tint: .indigo) {
+                    Text("Last confirmed rate").font(.caption).foregroundStyle(.secondary)
                     AvcFlow(spacing: 4) {
                         ForEach(unit.supportedRates, id: \.self) { hz in
                             AvcChip(text: AvcUnitDashboard.rateLabel(hz).replacingOccurrences(of: " kHz", with: ""),
@@ -88,7 +89,7 @@ struct AvcDeviceHeader: View {
             }
             if !unit.subunits.isEmpty {
                 AvcStatTile(title: "Subunits", value: "\(unit.subunits.count)", systemImage: "square.stack.3d.up", tint: AvcPalette.control) {
-                    Text(unit.subunits.map { "\($0.typeName ?? "Subunit") #\($0.id)" }.joined(separator: " · "))
+                    Text(unit.subunits.map { "\($0.ref.title) #\($0.id)" }.joined(separator: " · "))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
             }

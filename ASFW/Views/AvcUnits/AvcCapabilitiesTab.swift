@@ -13,7 +13,7 @@ struct AvcCapabilitiesTab: View {
                 AudioBlocksCard(blocks: unit.audioBlocks)
             }
             if unit.musicIdentifier == nil && unit.audioBlocks.isEmpty {
-                AvcNoticeCard(title: "No capability data", message: "The subunits' descriptors were not read. Re-scan the bus, or open Diagnostics to see why.", systemImage: "list.bullet.rectangle")
+                AvcNoticeCard(title: "No capability data", message: unit.needsDocumentUpdate ? unit.documentUpdateMessage : "No parsed capabilities were reported. Open Diagnostics to check descriptor reads and parsing results.", systemImage: "list.bullet.rectangle")
             }
         }
     }

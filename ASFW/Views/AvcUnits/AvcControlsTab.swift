@@ -8,7 +8,7 @@ struct AvcControlsTab: View {
         let blocks = unit.controlBlocks
         VStack(alignment: .leading, spacing: 14) {
             if blocks.isEmpty {
-                AvcNoticeCard(title: "No control values", message: "Discovery read no feature controls from this device. They appear here when it has mute or volume controls and discovery completed.", systemImage: "slider.horizontal.3")
+                AvcNoticeCard(title: "No control values", message: unit.needsDocumentUpdate ? unit.documentUpdateMessage : "Discovery reported no decoded mute or volume values. Open Diagnostics to check probe results.", systemImage: "slider.horizontal.3")
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "eye").foregroundStyle(.secondary)

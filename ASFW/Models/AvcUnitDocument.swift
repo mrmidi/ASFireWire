@@ -242,18 +242,21 @@ struct AvcUnitDocument: Decodable, Sendable {
 
     struct DescriptorRead: Decodable, Sendable, Identifiable {
         var subunit: SubunitRef
+        var specifier: String?
         var specifierText: String?
         var bytes: Int
         /// The descriptor as the device sent it, hex.
         var data: String?
         var primaryError: Failure?
         var parseError: ParseFailure?
-        var id: String { "\(subunit.type)-\(subunit.id)-\(specifierText ?? "?")" }
+        var id: String { "\(subunit.type)-\(subunit.id)-\(specifier ?? specifierText ?? "?")" }
     }
 
     struct ParseFailure: Decodable, Sendable { var kind: String; var offset: Int }
 
     struct FailedProbe: Decodable, Sendable {
+        var address: Int?
+        var opcode: Int?
         var addressText: String?
         var opcodeName: String?
         var error: Failure
