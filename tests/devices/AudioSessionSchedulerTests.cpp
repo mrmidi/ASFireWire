@@ -544,16 +544,15 @@ TEST_F(ApogeeTest, ClockGateFailureRollsBackBeforeAnyHostStart) {
     EXPECT_EQ(Count("H stop all"), 1);
 }
 
-// The Duet runs at 48 kHz until dynamic rate changes exist: a start after a
-// manual 44.1 kHz request still prepares the device at 48 kHz.
-TEST_F(ApogeeTest, StartIsPinnedTo48kEvenAfterAnotherRateWasApplied) {
+// A Duet start preserves the clock selected by a successful rate change.
+TEST_F(ApogeeTest, StartPreservesTheAppliedRate) {
     ASSERT_EQ(rig.sessions.ChangeClock(rig.guid, AudioClockConfig{.sampleRateHz = 44100},
                                        DuplexRestartReason::kManualReconfigure),
               kIOReturnSuccess);
     EXPECT_EQ(Count("D apply clock rate=44100"), 1);
     ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
-    EXPECT_EQ(Count("D prepare rate=48000"), 1);
-    EXPECT_EQ(Snapshot().appliedClock.sampleRateHz, 48000U);
+    EXPECT_EQ(Count("D prepare rate=44100"), 1);
+    EXPECT_EQ(Snapshot().appliedClock.sampleRateHz, 44100U);
 }
 
 // FW-61: the staged stop reaches both directions even when steps fail, and

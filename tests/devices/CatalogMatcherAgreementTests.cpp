@@ -121,7 +121,7 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBackend = Audio::AudioBackendKind::Avc,
             .expectedBootstrap = Audio::ProbeBootstrap::AvcInitializeThenPlug0,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
-            .expectedStartRatePinHz = 48000U,
+            .expectedStartRatePinHz = 0U,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
             .expectedStartShape = StreamStartShape::ApogeeInterleaved,
             .expectedIrmChoosesAnyChannel = true,
