@@ -93,7 +93,9 @@ class BeBoBBus final : public IFireWireBus {
 public:
     AsyncHandle ReadBlock(Generation, NodeId node, FWAddress address, uint32_t,
                           FwSpeed, InterfaceCompletionCallback callback) override {
-        const uint32_t value = pcrByNode_[node.value];
+        const bool master = address.addressLo == ASFW::CMP::PCRRegisters::kIMPR ||
+                            address.addressLo == ASFW::CMP::PCRRegisters::kOMPR;
+        const uint32_t value = master ? 0x80000001U : pcrByNode_[node.value];
         const uint32_t wire = OSSwapHostToBigInt32(value);
         std::array<uint8_t, 4> payload{};
         std::memcpy(payload.data(), &wire, sizeof(wire));
@@ -644,8 +646,11 @@ TEST(Phase88OnGenericAvcTests, StartAppliesTheRateThenTheWholeStartupMixerInOrde
     const auto& commands = rig.Target().Commands();
     ASSERT_GE(commands.size(), 2U + 8U) << "two signal formats, then 2 selectors + 4 mutes + 2 WavePlay volumes";
     // Signal formats first (opcodes 0x18 output, 0x19 input), then the map.
-    EXPECT_EQ(commands[0].data[2], 0x18);
-    EXPECT_EQ(commands[1].data[2], 0x19);
+    // Exact frames accepted by live Phase88 via MCP; Linux writes OUT then IN.
+    const std::vector<uint8_t> output48{0x00, 0xff, 0x18, 0x00, 0x90, 0x02, 0xff, 0xff};
+    const std::vector<uint8_t> input48{0x00, 0xff, 0x19, 0x00, 0x90, 0x02, 0xff, 0xff};
+    EXPECT_EQ(std::vector<uint8_t>(commands[0].data.begin(), commands[0].data.begin() + commands[0].length), output48);
+    EXPECT_EQ(std::vector<uint8_t>(commands[1].data.begin(), commands[1].data.begin() + commands[1].length), input48);
     size_t mixerFrames = 0;
     for (size_t i = 2; i < commands.size(); ++i) {
         ASSERT_EQ(commands[i].data[0], 0x00) << "CONTROL";
@@ -660,3 +665,25 @@ TEST(Phase88OnGenericAvcTests, StartAppliesTheRateThenTheWholeStartupMixerInOrde
     }
 }
 
+
+TEST_F(BeBoBProtocolTest, StopUsesCmpOwnershipEvenWhenConnectedFlagIsFalse) {
+    TestBeBoBProtocol proto(busOps_, bus_, route_, nullptr, &cmp_, &timer_);
+    cmp_.ConnectIPCR({route_}, 0, 5,
+        [](ASFW::CMP::CMPStatus status) { ASSERT_EQ(status, ASFW::CMP::CMPStatus::Success); });
+    ASSERT_EQ(bus_.pcrByNode_[kNode], 0x81050000U);
+    EXPECT_TRUE(proto.GetStopPolicy().stopHostContextsBeforeDevice);
+    EXPECT_EQ(proto.Stop(), kIOReturnSuccess);
+    EXPECT_EQ(bus_.pcrByNode_[kNode], 0x80050000U);
+}
+
+TEST_F(BeBoBProtocolTest, StopReportsCmpFailureAndAllowsLaterCleanup) {
+    TestBeBoBProtocol proto(busOps_, bus_, route_, nullptr, &cmp_, &timer_);
+    cmp_.ConnectIPCR({route_}, 0, 5,
+        [](ASFW::CMP::CMPStatus status) { ASSERT_EQ(status, ASFW::CMP::CMPStatus::Success); });
+    bus_.pcrByNode_[kNode] = 0x81070000U;
+    EXPECT_EQ(proto.Stop(), kIOReturnError);
+    EXPECT_EQ(bus_.pcrByNode_[kNode], 0x81070000U);
+    bus_.pcrByNode_[kNode] = 0x81050000U;
+    EXPECT_EQ(proto.Stop(), kIOReturnSuccess);
+    EXPECT_EQ(bus_.pcrByNode_[kNode], 0x80050000U);
+}

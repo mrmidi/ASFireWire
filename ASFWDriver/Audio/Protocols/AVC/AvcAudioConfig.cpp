@@ -76,7 +76,10 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
                                                      const Graph::DeviceGraph& graph) {
     const auto& playback = graph.playback;
     const auto& capture = graph.capture;
-    if (playback.currentSampleRate == 0 || playback.currentSampleRate != capture.currentSampleRate ||
+    // Initial plug rates can differ. Configure writes OUTPUT then INPUT before
+    // arming transport (Linux bebob_stream.c:96-115); publication must allow
+    // that synchronization when the graph has a common same-shape rate.
+    if (playback.currentSampleRate == 0 || capture.currentSampleRate == 0 ||
         playback.dataBlockSize == 0 || capture.dataBlockSize == 0 ||
         playback.channelCount == 0 || capture.channelCount == 0 ||
         playback.channelCount > Encoding::kMaxPcmChannels ||

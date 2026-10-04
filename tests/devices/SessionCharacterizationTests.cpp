@@ -384,3 +384,18 @@ INSTANTIATE_TEST_SUITE_P(Recorded, SessionShapes, ::testing::ValuesIn(kShapes),
                          });
 
 } // namespace
+
+TEST(SessionFamilyResourcePolicy, FailedCmpDisconnectRetainsReservationsUntilRetry) {
+    SessionRig rig(kShapes[3].shape); // AV/C interleaved stop
+    ASSERT_EQ(rig.Start(), kIOReturnSuccess);
+    ASSERT_GT(rig.host.AssignedChannelsForTest(), 0U);
+    rig.FailDevice("disconnect_playback");
+    EXPECT_EQ(rig.Stop(), kIOReturnError);
+    EXPECT_GT(rig.host.AssignedChannelsForTest(), 0U);
+    const auto& lines = rig.bus.Trace().Lines();
+    EXPECT_NE(std::find(lines.begin(), lines.end(), "H stop tx"), lines.end());
+    EXPECT_NE(std::find(lines.begin(), lines.end(), "H stop rx"), lines.end());
+    EXPECT_EQ(std::find(lines.begin(), lines.end(), "H stop all"), lines.end());
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+    EXPECT_EQ(rig.host.AssignedChannelsForTest(), 0U);
+}

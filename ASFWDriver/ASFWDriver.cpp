@@ -946,6 +946,11 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
     // ticks made every downstream "now(ns) − timestamp" ≈ uptime, which silently
     // defeated the IEEE 1394-2008 §8.2.1 two-second repeated-reset holdoff and
     // forced the Annex H post-reset timing gates permanently open.
+    ctx.irqEntries.fetch_add(1, std::memory_order_relaxed);
+    struct IrqExit {
+        ServiceContext& context;
+        ~IrqExit() { context.irqExits.fetch_add(1, std::memory_order_release); }
+    } irqExit{ctx};
     const uint64_t timestampNs = ASFW::Timing::hostTicksToNanos(time);
     auto& hardware = *ctx.deps.hardware;
     auto* interrupts = ctx.deps.interrupts.get();
@@ -1001,6 +1006,42 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
         // chain permanently on a transient non-running state; the chain's
         // real kill switch is the timer disable in watchdog.Stop()/Reset().
         if (ctx.lifecycle && ctx.lifecycle->AdmitsNormalWork()) {
+            // Read-only anomaly probe. Linux ohci.c:2203-2225 samples IntEvent
+            // before acknowledging it; this probe deliberately never clears it.
+            // 100 ms sampling avoids MMIO/logging on each watchdog or IRQ tick.
+            if (++ctx.irqProbeTicks >= 100 && ctx.deps.hardware && ctx.deps.interrupts) {
+                ctx.irqProbeTicks = 0;
+                auto access = ctx.deps.hardware->TryBeginAccess();
+                if (access) {
+                    using namespace ASFW::Driver;
+                    const auto events = access.Read(Register32::kIntEventSet);
+                    const auto mask = access.Read(Register32::kIntMaskSet);
+                    constexpr uint32_t relevant = IntEventBits::kReqTxComplete | IntEventBits::kRespTxComplete |
+                        IntEventBits::kARRQ | IntEventBits::kARRS | IntEventBits::kRQPkt | IntEventBits::kRSPkt |
+                        IntEventBits::kBusReset | IntEventBits::kSelfIDComplete;
+                    const auto pending = events & mask & relevant;
+                    const auto entries = ctx.irqEntries.load(std::memory_order_acquire);
+                    const auto exits = ctx.irqExits.load(std::memory_order_acquire);
+                    if (events != UINT32_MAX && pending && entries == ctx.irqProbeLastEntries) {
+                        ++ctx.irqPendingSamples;
+                        if (ctx.irqPendingSamples >= 5 && ctx.irqProbeReports < 3) {
+                            ++ctx.irqProbeReports;
+                            ASFW_LOG_ERROR(Controller,
+                                "[IrqStall] pending=0x%08x events=0x%08x mask=0x%08x shadow=0x%08x entries=%llu exits=%llu samples=%u node=0x%08x atReq=0x%08x atRsp=0x%08x arReq=0x%08x arRsp=0x%08x",
+                                pending, events, mask, ctx.deps.interrupts->EnabledMask(), entries, exits,
+                                ctx.irqPendingSamples, access.Read(Register32::kNodeID),
+                                access.Read(static_cast<Register32>(DMAContextHelpers::AsReqTrContextControlSet)),
+                                access.Read(static_cast<Register32>(DMAContextHelpers::AsRspTrContextControlSet)),
+                                access.Read(static_cast<Register32>(DMAContextHelpers::AsReqRcvContextControlSet)),
+                                access.Read(static_cast<Register32>(DMAContextHelpers::AsRspRcvContextControlSet)));
+                        }
+                    } else {
+                        ctx.irqPendingSamples = 0;
+                        ctx.irqProbeReports = 0;
+                    }
+                    ctx.irqProbeLastEntries = entries;
+                }
+            }
             ctx.watchdog.HandleTick(ctx.controller.get(), ctx.deps.asyncController.get(),
                                     ctx.isoch.ReceiveContext(), ctx.isoch.TransmitContext(),
                                     ctx.statusPublisher);

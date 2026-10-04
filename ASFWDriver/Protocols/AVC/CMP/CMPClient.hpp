@@ -42,6 +42,9 @@ using PCRReadCallback = std::function<void(bool success, uint32_t value)>;
 
 // Host-side CMP initiator. A lease is keyed by (GUID, PCR direction, plug),
 // preventing a disconnect from decrementing another device's p2p count.
+// Connect is exclusive and requires a channel reserved by the caller's IRM
+// owner. Timeout reconciliation is confined to the exact submitted transition
+// and route; arbitrary occupied PCRs are never adopted or cleared.
 class CMPClient {
 public:
     CMPClient(Async::IFireWireBusOps& busOps, Async::IFireWireBusInfo& busInfo,
@@ -87,11 +90,15 @@ private:
                    (static_cast<size_t>(key.direction) << 8U) ^ key.plugNum;
         }
     };
-    enum class LeaseState : uint8_t { kConnecting, kConnected, kDisconnecting };
+    enum class LeaseState : uint8_t { kConnecting, kConnected, kUncertain, kDisconnecting };
     struct Lease {
         CMPDevice device;
         uint8_t channel;
         LeaseState state;
+        uint32_t before{0};
+        uint32_t after{0};
+        bool casSubmitted{false};
+        bool uncertain{false};
     };
 
     using CompareSwapCallback = std::function<void(CMPStatus, uint32_t observed)>;
@@ -110,6 +117,12 @@ private:
     void AttemptDisconnect(const LeaseKey& key, const Lease& lease, uint8_t attempt,
                            CMPCallback callback);
 
+    void RecordConnectIntent(const LeaseKey& key, uint32_t before, uint32_t after,
+                             bool submitted = true);
+    void ReconcileConnect(const LeaseKey& key, const CMPDevice& device, uint8_t channel,
+                          FW::FwSpeed speed, uint8_t attempt, uint32_t before,
+                          uint32_t after, CMPCallback callback);
+    [[nodiscard]] bool HasLease(const LeaseKey& key);
     [[nodiscard]] bool BeginConnect(const LeaseKey& key, const CMPDevice& device, uint8_t channel);
     [[nodiscard]] bool BeginDisconnect(const LeaseKey& key, const CMPDevice& device, Lease& outLease);
     void CompleteConnect(const LeaseKey& key, const CMPDevice& device, uint8_t channel,

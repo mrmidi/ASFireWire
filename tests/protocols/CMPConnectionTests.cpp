@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstring>
+#include <deque>
 #include <unordered_map>
 
 namespace {
@@ -29,6 +30,11 @@ public:
     ASFW::Discovery::DeviceRegistry routes;
     AsyncHandle ReadBlock(Generation, NodeId node, FWAddress address, uint32_t,
                           FwSpeed, InterfaceCompletionCallback callback) override {
+        if (failNextRead) {
+            failNextRead = false;
+            callback(AsyncStatus::kTimeout, {});
+            return NextHandle();
+        }
         const bool isMpr = address.addressLo == PCRRegisters::kOMPR ||
                            address.addressLo == PCRRegisters::kIMPR;
         const uint32_t value = isMpr ? mprValue : pcrByNode_[node.value];
@@ -45,10 +51,17 @@ public:
         return NextHandle();
     }
 
-    AsyncHandle Lock(Generation, NodeId node, FWAddress, ASFW::FW::LockOp,
-                     std::span<const uint8_t> operand, uint32_t, FwSpeed,
+    AsyncHandle Lock(Generation, NodeId node, FWAddress address, ASFW::FW::LockOp op,
+                     std::span<const uint8_t> operand, uint32_t responseLength, FwSpeed,
                      InterfaceCompletionCallback callback) override {
         ++lockCount;
+        EXPECT_EQ(op, ASFW::FW::LockOp::kCompareSwap);
+        EXPECT_EQ(operand.size(), 8U);
+        EXPECT_EQ(responseLength, 4U);
+        EXPECT_EQ(address.addressHi, 0xFFFFU);
+        if (operand.size() != 8) { callback(AsyncStatus::kHardwareError, {}); return NextHandle(); }
+        Fault fault{};
+        if (!faults.empty()) { fault = faults.front(); faults.pop_front(); }
         uint32_t expectedWire = 0;
         uint32_t desiredWire = 0;
         std::memcpy(&expectedWire, operand.data(), sizeof(expectedWire));
@@ -59,13 +72,21 @@ public:
         if (conflictOnce) {
             conflictOnce = false;
             observed ^= 0x00000001U;
-        } else if (observed == expected) {
+        } else if (observed == expected && fault.apply) {
             pcrByNode_[node.value] = desired;
         }
         const uint32_t observedWire = OSSwapHostToBigInt32(observed);
         std::array<uint8_t, 4> payload{};
         std::memcpy(payload.data(), &observedWire, sizeof(observedWire));
-        callback(AsyncStatus::kSuccess, payload);
+        if (fault.failRead) failNextRead = true;
+        if (fault.reset) routes.InvalidateLiveMappingsForBusReset();
+        if (deferLock) {
+            deferLock = false;
+            pending = std::move(callback);
+            pendingPayload = payload;
+            return NextHandle();
+        }
+        callback(fault.status, fault.status == AsyncStatus::kSuccess ? std::span<const uint8_t>{payload}.first(fault.responseBytes) : std::span<const uint8_t>{});
         return NextHandle();
     }
 
@@ -80,6 +101,18 @@ public:
     FwSpeed routeSpeed{FwSpeed::S400};
     uint8_t gapCount{63};
     std::unordered_map<uint8_t, uint32_t> pcrByNode_{{2, 0x80000000U}, {3, 0x80000000U}};
+    struct Fault {
+        AsyncStatus status{AsyncStatus::kSuccess};
+        bool apply{true};
+        bool failRead{false};
+        bool reset{false};
+        size_t responseBytes{4};
+    };
+    std::deque<Fault> faults;
+    bool failNextRead{false};
+    bool deferLock{false};
+    InterfaceCompletionCallback pending;
+    std::array<uint8_t, 4> pendingPayload{};
     bool conflictOnce{false};
     uint32_t lockCount{0};
 
@@ -222,6 +255,204 @@ TEST(CMPConnectionTests, RejectsRouteInvalidatedBeforeCMPAdmission) {
 
     EXPECT_EQ(status, CMPStatus::Failed);
     EXPECT_EQ(bus.lockCount, 0U);
+}
+
+
+TEST(CMPConnectionTests, AppliedConnectWithLostResponseReconcilesWithoutDoubleIncrement) {
+    CMPBus bus;
+    bus.faults.push_back({AsyncStatus::kTimeout, true});
+    CMPClient cmp(bus, bus, bus.routes);
+    const auto device = Device(bus.routes, 0xA, 2);
+    int callbacks = 0;
+    cmp.ConnectIPCR(device, 0, 5, [&](CMPStatus status) {
+        ++callbacks;
+        EXPECT_EQ(status, CMPStatus::Success);
+    });
+    EXPECT_EQ(callbacks, 1);
+    EXPECT_EQ(bus.lockCount, 1U);
+    EXPECT_EQ(bus.pcrByNode_[2], 0x81050000U);
+    cmp.DisconnectIPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    EXPECT_EQ(bus.pcrByNode_[2], 0x80050000U);
+}
+
+TEST(CMPConnectionTests, UnappliedTimeoutRetriesWithinBound) {
+    CMPBus bus;
+    bus.faults.push_back({AsyncStatus::kTimeout, false});
+    CMPClient cmp(bus, bus, bus.routes);
+    cmp.ConnectIPCR(Device(bus.routes, 0xA, 2), 0, 5,
+        [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    EXPECT_EQ(bus.lockCount, 2U);
+    EXPECT_EQ(bus.pcrByNode_[2], 0x81050000U);
+}
+
+TEST(CMPConnectionTests, PersistentTimeoutIsBoundedAndCleanupDoesNotInventConnection) {
+    CMPBus bus;
+    for (int i = 0; i < 3; ++i) bus.faults.push_back({AsyncStatus::kTimeout, false});
+    CMPClient cmp(bus, bus, bus.routes);
+    const auto device = Device(bus.routes, 0xA, 2);
+    int callbacks = 0;
+    cmp.ConnectIPCR(device, 0, 5, [&](CMPStatus status) {
+        ++callbacks;
+        EXPECT_EQ(status, CMPStatus::Timeout);
+    });
+    EXPECT_EQ(callbacks, 1);
+    EXPECT_EQ(bus.lockCount, 3U);
+    cmp.DisconnectIPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    EXPECT_EQ(bus.lockCount, 3U);
+    EXPECT_EQ(bus.pcrByNode_[2], 0x80000000U);
+}
+
+TEST(CMPConnectionTests, FailedReadbackRetainsIntentForCleanup) {
+    CMPBus bus;
+    bus.faults.push_back({AsyncStatus::kTimeout, true, true});
+    CMPClient cmp(bus, bus, bus.routes);
+    const auto device = Device(bus.routes, 0xA, 2);
+    cmp.ConnectIPCR(device, 0, 5, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Timeout); });
+    // A second admission must not erase the unresolved transition.
+    cmp.ConnectIPCR(device, 0, 5, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Failed); });
+    cmp.DisconnectIPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    EXPECT_EQ(bus.lockCount, 2U);
+    EXPECT_EQ(bus.pcrByNode_[2], 0x80050000U);
+}
+
+TEST(CMPConnectionTests, UncertainCleanupDoesNotTouchUnrelatedConnection) {
+    CMPBus bus;
+    bus.faults.push_back({AsyncStatus::kTimeout, true, true});
+    CMPClient cmp(bus, bus, bus.routes);
+    const auto device = Device(bus.routes, 0xA, 2);
+    cmp.ConnectIPCR(device, 0, 5, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Timeout); });
+    bus.pcrByNode_[2] = 0x81070000U;
+    cmp.DisconnectIPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Failed); });
+    EXPECT_EQ(bus.lockCount, 1U);
+    EXPECT_EQ(bus.pcrByNode_[2], 0x81070000U);
+}
+
+TEST(CMPConnectionTests, AppliedDisconnectWithLostResponseDoesNotDecrementTwice) {
+    CMPBus bus;
+    CMPClient cmp(bus, bus, bus.routes);
+    const auto device = Device(bus.routes, 0xA, 2);
+    cmp.ConnectIPCR(device, 0, 5, [](CMPStatus status) { ASSERT_EQ(status, CMPStatus::Success); });
+    bus.faults.push_back({AsyncStatus::kTimeout, true});
+    cmp.DisconnectIPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    cmp.DisconnectIPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    EXPECT_EQ(bus.lockCount, 2U);
+    EXPECT_EQ(bus.pcrByNode_[2], 0x80050000U);
+}
+
+TEST(CMPConnectionTests, ResetDuringCASNeverAdoptsOldRoute) {
+    CMPBus bus;
+    bus.faults.push_back({AsyncStatus::kTimeout, true, false, true});
+    CMPClient cmp(bus, bus, bus.routes);
+    const auto device = Device(bus.routes, 0xA, 2);
+    cmp.ConnectIPCR(device, 0, 5,
+        [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::GenerationMismatch); });
+    cmp.DisconnectIPCR(device, 0,
+        [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::GenerationMismatch); });
+    EXPECT_EQ(bus.lockCount, 1U);
+}
+
+TEST(CMPConnectionTests, SharedQuadletCASRejectsMalformedResponse) {
+    CMPBus bus;
+    bus.faults.push_back({AsyncStatus::kSuccess, true, false, false, 2});
+    CMPClient cmp(bus, bus, bus.routes);
+    const auto device = Device(bus.routes, 0xA, 2);
+    cmp.ConnectIPCR(device, 0, 5, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Failed); });
+    cmp.DisconnectIPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    EXPECT_EQ(bus.pcrByNode_[2], 0x80050000U);
+}
+
+
+TEST(CMPConnectionTests, SharedCASUsesBigEndianCompareThenReplacementAndDecodesOldValue) {
+    CMPBus bus;
+    bus.pcrByNode_[2] = 0x00112233U;
+    int callbacks = 0;
+    bus.CompareSwapQuad(Generation{1}, NodeId{2},
+        FWAddress{FWAddress::AddressParts{0xFFFF, 0xF0000984}},
+        0x00112233U, 0x44556677U, FwSpeed::S400,
+        [&](AsyncStatus status, uint32_t oldValue) {
+            ++callbacks;
+            EXPECT_EQ(status, AsyncStatus::kSuccess);
+            EXPECT_EQ(oldValue, 0x00112233U);
+        });
+    EXPECT_EQ(callbacks, 1);
+    EXPECT_EQ(bus.pcrByNode_[2], 0x44556677U);
+}
+
+TEST(CMPConnectionTests, AppliedOutputCASTimeoutPreservesSpeedOverheadAndPayload) {
+    CMPBus bus;
+    bus.pcrByNode_[2] = 0x8000002CU;
+    bus.faults.push_back({AsyncStatus::kTimeout, true});
+    CMPClient cmp(bus, bus, bus.routes);
+    const auto device = Device(bus.routes, 0xA, 2);
+    cmp.ConnectOPCR(device, 0, 5, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    EXPECT_EQ(bus.pcrByNode_[2], 0x8105802CU);
+    cmp.DisconnectOPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    EXPECT_EQ(bus.pcrByNode_[2], 0x8005802CU);
+}
+
+TEST(CMPConnectionTests, InvalidDisconnectDoesNotClaimSuccessOrModifyPCR) {
+    CMPBus bus;
+    CMPClient cmp(bus, bus, bus.routes);
+    cmp.DisconnectIPCR(Device(bus.routes, 0xA, 2), 31,
+        [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Failed); });
+    EXPECT_EQ(bus.lockCount, 0U);
+}
+
+
+TEST(CMPConnectionTests, PendingConnectCannotBeDisconnectedOrAdmittedTwice) {
+    CMPBus bus;
+    bus.deferLock = true;
+    CMPClient cmp(bus, bus, bus.routes);
+    const auto device = Device(bus.routes, 0xA, 2);
+    int completions = 0;
+    cmp.ConnectIPCR(device, 0, 5, [&](CMPStatus status) {
+        ++completions;
+        EXPECT_EQ(status, CMPStatus::Success);
+    });
+    EXPECT_EQ(completions, 0);
+    cmp.ConnectIPCR(device, 0, 5, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Failed); });
+    cmp.DisconnectIPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Failed); });
+    EXPECT_EQ(bus.lockCount, 1U);
+    auto pending = std::move(bus.pending);
+    ASSERT_TRUE(pending);
+    pending(AsyncStatus::kSuccess, bus.pendingPayload);
+    EXPECT_EQ(completions, 1);
+    cmp.DisconnectIPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    EXPECT_EQ(bus.lockCount, 2U);
+}
+
+TEST(CMPConnectionTests, ExistingP2POnSameChannelIsNotAdoptedWithoutIntent) {
+    CMPBus bus;
+    bus.pcrByNode_[2] = 0x81050000U;
+    CMPClient cmp(bus, bus, bus.routes);
+    cmp.ConnectIPCR(Device(bus.routes, 0xA, 2), 0, 5,
+        [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::NoResources); });
+    EXPECT_EQ(bus.lockCount, 0U);
+    EXPECT_EQ(bus.pcrByNode_[2], 0x81050000U);
+}
+
+TEST(CMPConnectionTests, DisconnectReadbackFailureRetainsOwnedLeaseUntilRetry) {
+    CMPBus bus;
+    CMPClient cmp(bus, bus, bus.routes);
+    const auto device = Device(bus.routes, 0xA, 2);
+    cmp.ConnectIPCR(device, 0, 5, [](CMPStatus status) { ASSERT_EQ(status, CMPStatus::Success); });
+    bus.faults.push_back({AsyncStatus::kTimeout, true, true});
+    cmp.DisconnectIPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Failed); });
+    cmp.DisconnectIPCR(device, 0, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    EXPECT_EQ(bus.lockCount, 2U);
+    EXPECT_EQ(bus.pcrByNode_[2], 0x80050000U);
+}
+
+
+TEST(CMPConnectionTests, KnownCASMismatchDoesNotLeaveUncertainLeaseAfterReadFailure) {
+    CMPBus bus;
+    bus.conflictOnce = true;
+    bus.faults.push_back({AsyncStatus::kSuccess, true, true});
+    CMPClient cmp(bus, bus, bus.routes);
+    const auto device = Device(bus.routes, 0xA, 2);
+    cmp.ConnectIPCR(device, 0, 5, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Failed); });
+    cmp.ConnectIPCR(device, 0, 5, [](CMPStatus status) { EXPECT_EQ(status, CMPStatus::Success); });
+    EXPECT_EQ(bus.lockCount, 2U);
 }
 
 } // namespace

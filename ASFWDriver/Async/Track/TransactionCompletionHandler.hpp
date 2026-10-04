@@ -181,7 +181,8 @@ public:
      * definitive completion event. Even if AT completion reported errors,
      * successful AR response means transaction succeeded.
      */
-    void OnARResponse(const MatchKey& key, uint8_t rcode, std::span<const uint8_t> data) noexcept {
+    void OnARResponse(const MatchKey& key, uint8_t rcode, std::span<const uint8_t> data,
+                      uint8_t tCode = 0, uint16_t hardwareStamp = 0) noexcept {
         if (!txnMgr_) {
             return;
         }
@@ -194,9 +195,18 @@ public:
 
         Transaction* txn = txnMgr_->FindByMatchKey(key);
         if (!txn) {
-            ASFW_LOG(Async, "⚠️  OnARResponse: No transaction for key");
+            ASFW_LOG(Async, "[AsyncLateResponse] tLabel=%u node=0x%04x gen=%u tCode=0x%x rCode=0x%x bytes=%zu hwStamp=0x%04x previousHwStamp=0x%04x sincePreviousUs=%llu hostUs=%llu",
+                     key.label.value, key.node.value, key.generation.value, tCode, rcode,
+                     data.size(), hardwareStamp, lastResponseStamp_,
+                     static_cast<unsigned long long>(lastResponseUs_ ? Engine::NowUs() - lastResponseUs_ : 0),
+                     static_cast<unsigned long long>(Engine::NowUs()));
+            lastResponseStamp_ = hardwareStamp;
+            lastResponseUs_ = Engine::NowUs();
             return;
         }
+
+        lastResponseStamp_ = hardwareStamp;
+        lastResponseUs_ = Engine::NowUs();
 
         // Verify we're in correct state
         const auto state = txn->state();
@@ -292,8 +302,10 @@ public:
             TransactionState state = txn->state();
 
             ASFW_LOG_V1(Async,
-                        "⏱️ OnTimeout: tLabel=%u state=%{public}s ackCode=0x%X retries=%u",
-                        txn->label().value, ToString(state), ackCode, txn->retryCount());
+                        "[AsyncTimeout] tLabel=%u node=0x%04x gen=%u requestTCode=0x%x state=%{public}s ackCode=0x%X retries=%u hostUs=%llu",
+                        txn->label().value, txn->nodeID().value, txn->generation().value,
+                        txn->tCode(), ToString(state), ackCode, txn->retryCount(),
+                        static_cast<unsigned long long>(Engine::NowUs()));
 
             if (HandleBusyTimeout(*txn) ||
                 HandleATPostedTimeout(*txn) ||
@@ -326,6 +338,8 @@ public:
     }
 
 private:
+    uint16_t lastResponseStamp_{0};
+    uint64_t lastResponseUs_{0};
     enum class ATPostAction {
         kNone,
         kCompleteSuccess,
@@ -572,13 +586,13 @@ private:
             txn.IncrementRetry();
             txn.SetDeadline(Engine::NowUs() + 250000);
             ASFW_LOG_V1(Async,
-                        "🔄 RECOVERY: tLabel=%u AwaitingAR timeout with ackCode=0x%X. Device acknowledged but response late. Extending deadline +250ms (attempt %u/%u)",
+                        "🔄 RECOVERY: tLabel=%u AwaitingAR timeout with ackCode=0x%X. No AR completion observed. Extending deadline +250ms (attempt %u/%u)",
                         txn.label().value, ackCode, txn.retryCount(), kMaxPendingRetries);
             return true;
         }
 
         ASFW_LOG_V1(Async,
-                    "❌ FAILED: tLabel=%u AwaitingAR with ackCode=0x%X - max retries (%u) exhausted. Device never sent response.",
+                    "❌ FAILED: tLabel=%u AwaitingAR with ackCode=0x%X - max retries (%u) exhausted. No AR response observed; device silence or host receive/interrupt failure.",
                     txn.label().value, ackCode, kMaxPendingRetries);
         return false;
     }

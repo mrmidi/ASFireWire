@@ -283,7 +283,8 @@ public:
             .label = TLabel{response.tLabel}
         };
 
-        txnHandler_->OnARResponse(key, response.rCode, response.payload);
+        txnHandler_->OnARResponse(key, response.rCode, response.payload,
+                                  response.tCode, response.hardwareTimeStamp);
     }
 
 

@@ -166,6 +166,33 @@ public:
         return ReadBlock(generation, nodeId, address, 4, speed, std::move(callback));
     }
 
+    // Shared remote quadlet CAS encoding used by IRM and CMP. IEEE 1394
+    // compare_swap (extTCode=2): compare quadlet then replacement, big-endian;
+    // response is the previous quadlet. No allocation/ownership policy here.
+    AsyncHandle CompareSwapQuad(
+        FW::Generation generation, FW::NodeId node, FWAddress address,
+        uint32_t expected, uint32_t desired, FW::FwSpeed speed,
+        std::function<void(AsyncStatus, uint32_t)> callback)
+    {
+        const auto bytes = [](uint32_t value) {
+            return std::array<uint8_t, 4>{static_cast<uint8_t>(value >> 24),
+                static_cast<uint8_t>(value >> 16), static_cast<uint8_t>(value >> 8),
+                static_cast<uint8_t>(value)};
+        };
+        const auto compare = bytes(expected);
+        const auto replacement = bytes(desired);
+        const std::array<uint8_t, 8> operand{compare[0], compare[1], compare[2], compare[3],
+            replacement[0], replacement[1], replacement[2], replacement[3]};
+        return Lock(generation, node, address, FW::LockOp::kCompareSwap, operand, 4, speed,
+            [callback = std::move(callback)](AsyncStatus status, std::span<const uint8_t> payload) {
+                if (status != AsyncStatus::kSuccess) { callback(status, 0); return; }
+                if (payload.size() != 4) { callback(AsyncStatus::kShortRead, 0); return; }
+                const uint32_t oldValue = (uint32_t{payload[0]} << 24) |
+                    (uint32_t{payload[1]} << 16) | (uint32_t{payload[2]} << 8) | payload[3];
+                callback(status, oldValue);
+            });
+    }
+
     /**
      * @brief Write 4-byte quadlet (non-virtual helper).
      *

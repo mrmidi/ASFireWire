@@ -92,3 +92,60 @@ those device levels and leaves master-volume writes to Core Audio. This removes
 the preset, not existing stored attenuation; previously applied channel levels
 are not automatically reset to unity. WavePlay setup and selector routing are
 unchanged.
+
+### Interrupt delivery diagnostics
+
+The read-only `[IrqStall]` watchdog probe samples enabled async/reset events every
+100 watchdog ticks. Five consecutive samples with pending events and no interrupt
+callback entry produce a bounded report (at most three until progress resumes).
+Reports include hardware event/mask, software mask, callback entries/exits, NodeID,
+and AT request/response and AR request/response context control registers.
+Unequal entry/exit counts indicate a callback still in progress; equal counts with
+pending enabled events indicate no callback progress during the observation window.
+This is evidence of stalled servicing, not proof of a lost MSI. The probe performs
+no acknowledgements, reset, retrigger, or context restart. Watchdog starvation itself
+will prevent this probe from reporting. Async response timeout text explicitly leaves
+open both device silence and host receive/interrupt failure.
+
+For a reproduction, query the driver log ring for `contains: "[IrqStall]"` in
+Controller, then correlate Audio start failures and Async timeouts by sequence.
+
+### CMP ambiguous completion and response tracing
+
+Remote IRM and CMP quadlet compare-and-swap now share
+`IFireWireBusOps::CompareSwapQuad`: extended opcode `0x0002`, an eight-byte
+big-endian compare/replacement operand, and a four-byte old-value response.
+The IRM's local OHCI CSR backend remains distinct from remote bus transactions.
+Reference behavior: Apple `IOFireWireAVCUserClient.cpp:632-755`, Linux
+`sound/firewire/cmp.c:74-107`, IEC 61883-1 section 7.9, and TA 1999032 section 5.1.1.
+
+CMP reserves an exclusive local lease before submitting its connection CAS.
+A timeout triggers bounded, same-route readback of the exact attempted PCR
+transition. The intended post-CAS value confirms the connection without another
+increment; the original pre-CAS value permits a bounded retry. Failed readback
+or an unrelated value retains an uncertain lease, preventing a new admission
+from discarding the outstanding intent. This reconciliation assumes the caller
+owns the requested IRM channel; it is not permission to adopt an arbitrary
+occupied PCR or to implement multi-owner overlay connections.
+
+Disconnect reads before CAS and reconciles lost responses without decrementing
+twice. A foreign channel, broadcast connection, or changed point-to-point count
+is not cleared. BeBoB stop uses the existing asynchronous stage wait and reports
+BREAK failures. Host DMA can stop, but a current route with unresolved device
+connections retains its IRM reservations until cleanup succeeds or a reset
+invalidates the route. Bus-reset cleanup must not BREAK an old lease on a new
+route. Linux `bebob_stream.c:609-610` stops its AMDTP domain before BREAK.
+
+Anomaly records `[AsyncTimeout]` and `[AsyncLateResponse]` include node,
+generation, transaction label, transaction code, and host time. Late responses
+also include their OHCI hardware timestamp, the preceding response's hardware
+timestamp, and the host gap since that preceding response. Compare those stamps
+with the host gap to investigate delayed device response versus delayed host
+receive processing; account for the hardware timestamp's wrap before drawing a
+conclusion. `[CMP] ReconcileConnect` records the before/after/observed PCR values.
+`[CmpReservationHeld]` means local DMA stopped but device disconnect was not
+confirmed. None of these diagnostics resets hardware or retransmits blindly.
+
+Use the driver ring, e.g. `asfw_log_query` with `categories:["Async"]` and
+`contains:"[AsyncLateResponse]"`, then correlate its transaction label with
+`[AsyncTimeout]` and the surrounding Audio-category `[CMP]` records.

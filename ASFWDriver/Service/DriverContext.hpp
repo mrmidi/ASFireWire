@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <atomic>
 #include "../Common/TeardownCompletion.hpp"
 
 #ifdef ASFW_HOST_TEST
@@ -33,6 +34,10 @@ class SBP2TargetBridge;
 }
 
 struct ServiceContext {
+    // Interrupt callback progress is sampled only by the watchdog diagnostics.
+    std::atomic<uint64_t> irqEntries{0}, irqExits{0};
+    uint32_t irqProbeTicks{0}, irqPendingSamples{0}, irqProbeReports{0};
+    uint64_t irqProbeLastEntries{0};
     ASFW::Driver::ControllerCore::Dependencies deps;
     ASFW::Driver::ControllerConfig config{}; // immutable identity/static config
     // Initial (wiring-time) role policy. The runtime-mutable copy is owned by

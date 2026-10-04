@@ -542,35 +542,29 @@ void BeBoBProtocol::ReadClockHealth(HealthCallback callback) {
 }
 
 void BeBoBProtocol::DisconnectPlayback(VoidCallback callback) {
-    if (!cmpClient_ || !inputConnected_) {
-        inputConnected_ = false;
-        callback(kIOReturnSuccess);
-        return;
-    }
-    inputConnected_ = false;
+    if (!cmpClient_) { callback(kIOReturnNotReady); return; }
+    // CMP owns the lease, including an uncertain connect. The boolean is only
+    // a streaming-health observation, not authority to skip remote cleanup.
     cmpClient_->DisconnectIPCR(CurrentCMPDevice(), StreamPlug(true),
-                               [callback = std::move(callback)](CMP::CMPStatus status) mutable {
-        callback(status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError);
-    });
+        [this, callback = std::move(callback)](CMP::CMPStatus status) mutable {
+            if (status == CMP::CMPStatus::Success) inputConnected_ = false;
+            callback(status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError);
+        });
 }
 
 void BeBoBProtocol::DisconnectCapture(VoidCallback callback) {
-    if (!cmpClient_ || !outputConnected_) {
-        outputConnected_ = false;
-        callback(kIOReturnSuccess);
-        return;
-    }
-    outputConnected_ = false;
+    if (!cmpClient_) { callback(kIOReturnNotReady); return; }
     cmpClient_->DisconnectOPCR(CurrentCMPDevice(), StreamPlug(false),
-                               [callback = std::move(callback)](CMP::CMPStatus status) mutable {
-        callback(status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError);
-    });
+        [this, callback = std::move(callback)](CMP::CMPStatus status) mutable {
+            if (status == CMP::CMPStatus::Success) outputConnected_ = false;
+            callback(status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError);
+        });
 }
 
 IOReturn BeBoBProtocol::StopDuplex() {
-    DisconnectPlayback([](IOReturn) {});
-    DisconnectCapture([](IOReturn) {});
-    return kIOReturnSuccess;
+    // Stop must report completion, not release IRM resources while BREAK is
+    // still pending. Reuse the existing asynchronous stage wait.
+    return BreakConnections();
 }
 
 void BeBoBProtocol::EnsurePlugFree(CMP::PCRDirection dir, uint8_t plug,
@@ -599,13 +593,10 @@ void BeBoBProtocol::EnsurePlugFree(CMP::PCRDirection dir, uint8_t plug,
 }
 
 void BeBoBProtocol::BreakBothConnections(VoidCallback callback) {
-    if (!cmpClient_) {
-        callback(kIOReturnNotReady);
-        return;
-    }
-    cmpClient_->BreakBothConnections(CurrentCMPDevice(), StreamPlug(true),
-                                     [callback = std::move(callback)](CMP::CMPStatus status) {
-        callback(status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError);
+    DisconnectPlayback([this, callback = std::move(callback)](IOReturn playback) mutable {
+        DisconnectCapture([playback, callback = std::move(callback)](IOReturn capture) mutable {
+            callback(playback != kIOReturnSuccess ? playback : capture);
+        });
     });
 }
 

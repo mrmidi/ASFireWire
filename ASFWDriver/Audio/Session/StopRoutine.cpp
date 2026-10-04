@@ -48,11 +48,19 @@ IOReturn StopRoutine::Run(uint64_t guid,
 
     if (profile.stopOrder.disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive) {
         // AV/C: break each PCR connection before stopping the host context that
-        // fed it. The disconnect statuses are advisory; the host stops decide.
-        (void)family.DisconnectPlayback();
+        // fed it. A failed/uncertain BREAK must retain the channel reservation
+        // while the current remote PCR may still reference it (TA 1999032 5.1.1).
+        const IOReturn playback = family.DisconnectPlayback();
         const kern_return_t transmit = host_.StopPreparedTransmit();
-        (void)family.DisconnectCapture();
+        const IOReturn capture = family.DisconnectCapture();
         const kern_return_t receive = host_.StopPreparedReceive();
+        if ((playback != kIOReturnSuccess || capture != kIOReturnSuccess) &&
+            registry_.IsCurrent(policy->route)) {
+            ASFW_LOG_ERROR(Audio,
+                "[CmpReservationHeld] guid=0x%016llx playback=0x%08x capture=0x%08x tx=0x%08x rx=0x%08x; remote disconnect unresolved",
+                guid, playback, capture, transmit, receive);
+            return playback != kIOReturnSuccess ? playback : capture;
+        }
         // The contexts are already stopped; StopAll releases the reservation and
         // the active GUID without another wire action.
         const kern_return_t cleanup = host_.StopAll();

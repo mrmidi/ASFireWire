@@ -81,6 +81,30 @@ TEST(AvcAudioConfig, ReconfigurableDevicesOfferOnlySharedStreamableRates) {
     }
 }
 
+TEST(AvcAudioConfig, DifferentInitialPlugRatesPublishACommonStartupRate) {
+    DeviceGraph graph;
+    graph.playback = Stream(10, 11, {32000, 44100, 48000, 88200, 96000}, 44100);
+    graph.capture = Stream(10, 11, {32000, 44100, 48000, 88200, 96000}, 48000);
+    for (const auto implementation : {
+             ASFW::DeviceProfiles::Audio::ProtocolImplementationId::BeBoBPhase88,
+             ASFW::DeviceProfiles::Audio::ProtocolImplementationId::ApogeeDuet}) {
+        StaticAudioEndpointPlan plan{};
+        plan.protocolImplementation = implementation;
+        auto config = BuildGraphAudioConfig({}, plan, graph);
+        ASSERT_TRUE(config);
+        EXPECT_EQ(config->currentSampleRate, 48000U);
+        EXPECT_EQ(config->inputChannelCount, 10U);
+        EXPECT_EQ(config->outputChannelCount, 10U);
+        EXPECT_EQ(config->sampleRates, (std::vector<uint32_t>{32000, 44100, 48000}));
+    }
+    // The generic startup also sets both plug formats, with one published rate.
+    auto generic = BuildGraphAudioConfig({}, StaticAudioEndpointPlan{}, graph);
+    ASSERT_TRUE(generic);
+    EXPECT_EQ(generic->sampleRates, (std::vector<uint32_t>{48000}));
+    graph.capture.currentSampleRate = 0;
+    EXPECT_FALSE(BuildGraphAudioConfig({}, StaticAudioEndpointPlan{}, graph));
+}
+
 TEST(AvcAudioConfig, GraphWithMismatchedOrMissingGeometryIsNotPublished) {
     DeviceGraph graph;
     graph.playback = Stream(2, 3, {48000}, 48000);

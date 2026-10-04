@@ -126,8 +126,10 @@ void CMPClient::DisconnectOPCR(const CMPDevice& device, uint8_t plugNum, CMPCall
     if (!IsCurrent(device) || plugNum > kMaxPlugNumber || !BeginDisconnect(key, device, lease)) {
         // No local lease means this client never established the remote p2p
         // count. Treat BREAK as idempotent without touching a foreign stream.
-        CMPTRACE("DisconnectOPCR: no local lease, returning Success");
-        callback(CMPStatus::Success);
+        CMPTRACE("DisconnectOPCR: no idle owned lease (absent is idempotent; busy is failure)");
+        callback(!IsCurrent(device) ? CMPStatus::GenerationMismatch :
+                 (plugNum > kMaxPlugNumber ? CMPStatus::Failed :
+                  (HasLease(key) ? CMPStatus::Failed : CMPStatus::Success)));
         return;
     }
     AttemptDisconnect(key, lease, 0, std::move(callback));
@@ -139,8 +141,10 @@ void CMPClient::DisconnectIPCR(const CMPDevice& device, uint8_t plugNum, CMPCall
     CMPTRACE("DisconnectIPCR entry: guid=0x%016llx node=%u gen=%u plug=%u",
              device.route.guid, device.route.nodeId, device.route.generation.value, plugNum);
     if (!IsCurrent(device) || plugNum > kMaxPlugNumber || !BeginDisconnect(key, device, lease)) {
-        CMPTRACE("DisconnectIPCR: no local lease, returning Success");
-        callback(CMPStatus::Success);
+        CMPTRACE("DisconnectIPCR: no idle owned lease (absent is idempotent; busy is failure)");
+        callback(!IsCurrent(device) ? CMPStatus::GenerationMismatch :
+                 (plugNum > kMaxPlugNumber ? CMPStatus::Failed :
+                  (HasLease(key) ? CMPStatus::Failed : CMPStatus::Success)));
         return;
     }
     AttemptDisconnect(key, lease, 0, std::move(callback));
@@ -215,40 +219,17 @@ void CMPClient::CompareSwap(const CMPDevice& device, uint32_t address, uint32_t 
         .addressHi = PCRRegisters::kAddressHi,
         .addressLo = address,
     }};
-    alignas(uint32_t) std::array<uint8_t, 8> operand{};
-    const uint32_t expectedBE = OSSwapHostToBigInt32(expected);
-    const uint32_t desiredBE = OSSwapHostToBigInt32(desired);
-    __builtin_memcpy(operand.data(), &expectedBE, sizeof(expectedBE));
-    __builtin_memcpy(operand.data() + sizeof(expectedBE), &desiredBE, sizeof(desiredBE));
-
-    CMPTRACE("CompareSwap SUBMIT: gen=%u node=%u addr=0x%08x expected=0x%08x desired=0x%08x",
+    CMPTRACE("CompareSwap SUBMIT: gen=%u node=%u addr=0x%08x expected=0x%08x desired=0x%08x ext=0x0002 operandBytes=8 responseBytes=4",
              device.route.generation.value, device.route.nodeId, address, expected, desired);
-    busOps_.Lock(device.route.generation, FW::NodeId{static_cast<uint8_t>(device.route.nodeId)}, target, FW::LockOp::kCompareSwap,
-                 operand, sizeof(uint32_t), speed,
-                 [this, device, callback = std::move(callback), address, expected, desired](Async::AsyncStatus status,
-                                                                                               std::span<const uint8_t> payload) mutable {
-        if (!IsCurrent(device)) {
-            callback(CMPStatus::Failed, 0);
-            return;
-        }
-        if (status != Async::AsyncStatus::kSuccess) {
-            CMPTRACE("CompareSwap DONE: addr=0x%08x status=%{public}s (async FAIL)", address,
-                     ASFW::Async::ToString(status));
-            callback(MapAsyncStatus(status), 0);
-            return;
-        }
-        if (payload.size() != sizeof(uint32_t)) {
-            CMPTRACE("CompareSwap DONE: addr=0x%08x payload=%zu (SIZE FAIL)", address, payload.size());
-            callback(CMPStatus::Failed, 0);
-            return;
-        }
-        uint32_t raw = 0;
-        std::memcpy(&raw, payload.data(), sizeof(raw));
-        const uint32_t observed = OSSwapBigToHostInt32(raw);
-        CMPTRACE("CompareSwap DONE: addr=0x%08x expected=0x%08x desired=0x%08x observed=0x%08x (%{public}s)",
-                 address, expected, desired, observed,
-                 observed == expected ? "MATCH" : "MISMATCH");
-        callback(CMPStatus::Success, observed);
+    busOps_.CompareSwapQuad(device.route.generation,
+                 FW::NodeId{static_cast<uint8_t>(device.route.nodeId)}, target,
+                 expected, desired, speed,
+                 [this, device, callback = std::move(callback), address, expected, desired]
+                 (Async::AsyncStatus status, uint32_t observed) mutable {
+        if (!IsCurrent(device)) { callback(CMPStatus::GenerationMismatch, 0); return; }
+        CMPTRACE("CompareSwap DONE: addr=0x%08x status=%{public}s expected=0x%08x desired=0x%08x observed=0x%08x",
+                 address, Async::ToString(status), expected, desired, observed);
+        callback(MapAsyncStatus(status), observed);
     });
 }
 
@@ -315,9 +296,15 @@ void CMPClient::AttemptConnect(const LeaseKey& key, const CMPDevice& device, uin
             desired = PCRBits::SetOverheadId(desired, OverheadIdForGapCount(busInfo_.GetGapCount()));
         }
         CMPTRACE("AttemptConnect: PCR=0x%08x → desired=0x%08x (p2p=1, ch=%u)", current, desired, channel);
+        RecordConnectIntent(key, current, desired);
         CompareSwap(device, PCRAddress(key.direction, key.plugNum), current, desired, speed,
-                    [this, key, device, channel, speed, attempt, current, callback = std::move(callback)]
+                    [this, key, device, channel, speed, attempt, current, desired, callback = std::move(callback)]
                     (CMPStatus status, uint32_t observed) mutable {
+            if (status == CMPStatus::Timeout) {
+                ReconcileConnect(key, device, channel, speed, attempt, current, desired,
+                                 std::move(callback));
+                return;
+            }
             if (status != CMPStatus::Success) {
                 CMPTRACE("AttemptConnect: CAS failed status=%u", status);
                 CompleteConnect(key, device, channel, status, std::move(callback));
@@ -328,6 +315,9 @@ void CMPClient::AttemptConnect(const LeaseKey& key, const CMPDevice& device, uin
                 CompleteConnect(key, device, channel, CMPStatus::Success, std::move(callback));
                 return;
             }
+            // A successful lock response that did not match proves this CAS
+            // made no change. A later read failure must not create an uncertain lease.
+            RecordConnectIntent(key, current, desired, false);
             if (attempt + 1U >= kMaxCompareSwapAttempts) {
                 CMPTRACE("AttemptConnect: CAS mismatch, max retries (%u) reached", attempt);
                 CompleteConnect(key, device, channel, CMPStatus::NoResources, std::move(callback));
@@ -340,6 +330,53 @@ void CMPClient::AttemptConnect(const LeaseKey& key, const CMPDevice& device, uin
     });
 }
 
+// CAS completion is not proof that a timed-out request did not take effect.
+// Keep the original transition, never increment twice. Same-generation readback
+// reconciles only that exact transition on the caller's reserved channel.
+// IEC 61883-1 7.9; ownership: TA 1999032 5.1.1. This timeout reconciliation is
+// additional to Apple IOFireWireAVCUserClient.cpp:632-755 / Linux cmp.c:74-107.
+void CMPClient::RecordConnectIntent(const LeaseKey& key, uint32_t before, uint32_t after,
+                                    bool submitted) {
+    IOLockLock(lock_);
+    const auto it = leases_.find(key);
+    if (it != leases_.end()) {
+        it->second.before = before;
+        it->second.after = after;
+        it->second.casSubmitted = submitted;
+    }
+    IOLockUnlock(lock_);
+}
+
+bool CMPClient::HasLease(const LeaseKey& key) {
+    if (!lock_) return false;
+    IOLockLock(lock_);
+    const bool present = leases_.contains(key);
+    IOLockUnlock(lock_);
+    return present;
+}
+
+void CMPClient::ReconcileConnect(const LeaseKey& key, const CMPDevice& device, uint8_t channel,
+                                FW::FwSpeed speed, uint8_t attempt, uint32_t before,
+                                uint32_t after, CMPCallback callback) {
+    ReadQuadlet(device, PCRAddress(key.direction, key.plugNum), speed,
+        [this, key, device, channel, speed, attempt, before, after,
+         callback = std::move(callback)](bool success, uint32_t observed) mutable {
+            CMPTRACE("ReconcileConnect: gen=%u node=%u plug=%u read=%u before=0x%08x after=0x%08x observed=0x%08x attempt=%u",
+                     device.route.generation.value, device.route.nodeId, key.plugNum,
+                     success, before, after, observed, attempt);
+            if (!IsCurrent(device)) {
+                CompleteConnect(key, device, channel, CMPStatus::GenerationMismatch, std::move(callback));
+            } else if (success && observed == after) {
+                CompleteConnect(key, device, channel, CMPStatus::Success, std::move(callback));
+            } else if (success && observed == before && attempt + 1U < kMaxCompareSwapAttempts) {
+                AttemptConnect(key, device, channel, speed, attempt + 1U, std::move(callback));
+            } else {
+                // A failed read or unrelated value cannot settle ownership.
+                CompleteConnect(key, device, channel, CMPStatus::Timeout, std::move(callback));
+            }
+        });
+}
+
 void CMPClient::AttemptDisconnect(const LeaseKey& key, const Lease& lease, uint8_t attempt,
                                   CMPCallback callback) {
     const FW::FwSpeed speed = busInfo_.GetSpeed(FW::NodeId{static_cast<uint8_t>(lease.device.route.nodeId)});
@@ -347,6 +384,15 @@ void CMPClient::AttemptDisconnect(const LeaseKey& key, const Lease& lease, uint8
                 [this, key, lease, speed, attempt, callback = std::move(callback)]
                 (bool success, uint32_t current) mutable {
         if (!success) {
+            CompleteDisconnect(key, CMPStatus::Failed, std::move(callback));
+            return;
+        }
+        if (PCRBits::GetP2P(current) == 0 && !PCRBits::IsBroadcast(current)) {
+            CompleteDisconnect(key, CMPStatus::Success, std::move(callback));
+            return;
+        }
+        if (lease.uncertain && current != lease.after) {
+            CMPTRACE("ReconcileDisconnect: unrelated PCR=0x%08x intended=0x%08x; preserving uncertain lease", current, lease.after);
             CompleteDisconnect(key, CMPStatus::Failed, std::move(callback));
             return;
         }
@@ -361,6 +407,11 @@ void CMPClient::AttemptDisconnect(const LeaseKey& key, const Lease& lease, uint8
         CompareSwap(lease.device, PCRAddress(key.direction, key.plugNum), current, desired, speed,
                     [this, key, lease, attempt, current, callback = std::move(callback)]
                     (CMPStatus status, uint32_t observed) mutable {
+            if (status == CMPStatus::Timeout && attempt + 1U < kMaxCompareSwapAttempts) {
+                // Re-read before another CAS: a lost response must not decrement twice.
+                AttemptDisconnect(key, lease, attempt + 1U, std::move(callback));
+                return;
+            }
             if (status != CMPStatus::Success) {
                 CompleteDisconnect(key, status, std::move(callback));
                 return;
@@ -403,7 +454,8 @@ bool CMPClient::BeginDisconnect(const LeaseKey& key, const CMPDevice& device, Le
     }
     IOLockLock(lock_);
     const auto it = leases_.find(key);
-    if (it == leases_.end() || it->second.state != LeaseState::kConnected) {
+    if (it == leases_.end() || (it->second.state != LeaseState::kConnected &&
+                                    it->second.state != LeaseState::kUncertain)) {
         IOLockUnlock(lock_);
         return false;
     }
@@ -420,6 +472,8 @@ bool CMPClient::BeginDisconnect(const LeaseKey& key, const CMPDevice& device, Le
 
 void CMPClient::CompleteConnect(const LeaseKey& key, const CMPDevice& device, uint8_t channel,
                                 CMPStatus status, CMPCallback callback) {
+    const bool currentRoute = IsCurrent(device);
+    bool retained = false;
     if (lock_) {
         IOLockLock(lock_);
         const auto it = leases_.find(key);
@@ -427,14 +481,20 @@ void CMPClient::CompleteConnect(const LeaseKey& key, const CMPDevice& device, ui
             it->second.channel == channel) {
             if (status == CMPStatus::Success) {
                 it->second.state = LeaseState::kConnected;
+                it->second.uncertain = false;
+            } else if (it->second.casSubmitted && currentRoute &&
+                       (status == CMPStatus::Timeout || status == CMPStatus::Failed)) {
+                it->second.state = LeaseState::kUncertain;
+                it->second.uncertain = true;
             } else {
                 leases_.erase(it);
             }
         }
+        retained = leases_.contains(key);
         IOLockUnlock(lock_);
     }
     CMPTRACE("CompleteConnect: status=%u lease=%{public}s dir=%{public}s plug=%u ch=%u",
-             status, lock_ ? "found" : "no-lock",
+             status, retained ? "retained" : "none",
              key.direction == PCRDirection::kInput ? "Input" : "Output",
              key.plugNum, channel);
     callback(status);
@@ -448,7 +508,7 @@ void CMPClient::CompleteDisconnect(const LeaseKey& key, CMPStatus status, CMPCal
             if (status == CMPStatus::Success) {
                 leases_.erase(it);
             } else {
-                it->second.state = LeaseState::kConnected;
+                it->second.state = it->second.uncertain ? LeaseState::kUncertain : LeaseState::kConnected;
             }
         }
         IOLockUnlock(lock_);

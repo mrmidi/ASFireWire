@@ -558,20 +558,24 @@ TEST_F(ApogeeTest, StartPreservesTheAppliedRate) {
 // FW-61: the staged stop reaches both directions even when steps fail, and
 // reports the failure, so a context that did not quiesce is not treated as
 // safely releasable.
-TEST_F(ApogeeTest, StagedStopFinishesAndReportsTheFirstHostFailure) {
+TEST_F(ApogeeTest, StagedStopReportsDisconnectFailureAndRetainsReservations) {
     ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
     rig.bus.Trace().Clear();
     rig.failures["device.disconnect_playback"] = kIOReturnTimeout;
     rig.failures["device.disconnect_capture"] = kIOReturnError;
     rig.failures["host.stop_transmit"] = kIOReturnError;
     rig.failures["host.stop_receive"] = kIOReturnTimeout;
-    EXPECT_EQ(rig.sessions.Detach(rig.guid), kIOReturnError);
+    EXPECT_EQ(rig.sessions.Detach(rig.guid), kIOReturnTimeout);
     EXPECT_EQ(Count("D disconnect playback"), 1);
     EXPECT_EQ(Count("H stop tx"), 1);
     EXPECT_EQ(Count("D disconnect capture"), 1);
     EXPECT_EQ(Count("H stop rx"), 1);
-    EXPECT_EQ(Count("H stop all"), 1);
+    EXPECT_EQ(Count("H stop all"), 0);
+    EXPECT_GT(rig.host.AssignedChannelsForTest(), 0U);
     EXPECT_EQ(Count("D stop"), 0);
+    EXPECT_EQ(rig.sessions.Detach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(Count("H stop all"), 1);
+    EXPECT_EQ(rig.host.AssignedChannelsForTest(), 0U);
 }
 
 } // namespace

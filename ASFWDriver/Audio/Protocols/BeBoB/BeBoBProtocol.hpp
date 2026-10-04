@@ -86,6 +86,11 @@ public:
     [[nodiscard]] IOReturn DisconnectPlayback() override;
     [[nodiscard]] IOReturn DisconnectCapture() override;
     [[nodiscard]] IOReturn BreakConnections() override;
+    // Linux bebob_stream.c:609-610: stop the AMDTP domain before breaking
+    // connections. Host reservations remain until the device BREAK completes.
+    [[nodiscard]] StopPolicy GetStopPolicy() const noexcept override {
+        return {.stopHostContextsBeforeDevice = true};
+    }
     [[nodiscard]] IOReturn Stop() override;
 
 protected:
