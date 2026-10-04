@@ -39,13 +39,26 @@ enum class AudioFunctionBlockType : uint8_t {
 // Describes the input connection of a function block plug or subunit source plug.
 //==============================================================================
 
-struct AudioSourceId {
-    uint8_t type{0xFE};  ///< 0xF0 = Subunit Destination Plug, 0x80..0x83 = Function Block, 0xFE = Not Connected
-    uint8_t id{0xFF};    ///< Destination plug number or Function Block ID
+/// function_block_type values of a source_ID (TA 1999008 Table 8.2, Table 9.1): F0 = subunit
+/// destination plug, F1 = subunit source plug, 80..8F = audio subunit function blocks, FE = not connected.
+inline constexpr uint8_t kSourceIdSubunitDestinationPlug = 0xF0;
+inline constexpr uint8_t kSourceIdNotConnected = 0xFE;
+inline constexpr uint8_t kFunctionBlockTypeClassMask = 0xF0;  ///< high nibble of an audio function block type
+inline constexpr uint8_t kFunctionBlockTypeClass = 0x80;      ///< 80..8F: audio subunit dependent (Table 9.1)
+/// Our "no id yet" marker. FF is reserved for extension in the spec (§9.1.3), so it never names a block.
+inline constexpr uint8_t kUnsetSourceId = 0xFF;
+/// Our "no name" marker for a text database object position.
+inline constexpr uint16_t kNoNameIndex = 0xFFFF;
 
-    [[nodiscard]] constexpr bool IsSubunitDestPlug() const noexcept { return type == 0xF0; }
-    [[nodiscard]] constexpr bool IsFunctionBlock() const noexcept { return (type & 0xF0) == 0x80; }
-    [[nodiscard]] constexpr bool IsConnected() const noexcept { return type != 0xFE; }
+struct AudioSourceId {
+    uint8_t type{kSourceIdNotConnected};  ///< kSourceIdSubunitDestinationPlug, 0x80..0x83 function block, or not connected
+    uint8_t id{kUnsetSourceId};           ///< Destination plug number or Function Block ID
+
+    [[nodiscard]] constexpr bool IsSubunitDestPlug() const noexcept { return type == kSourceIdSubunitDestinationPlug; }
+    [[nodiscard]] constexpr bool IsFunctionBlock() const noexcept {
+        return (type & kFunctionBlockTypeClassMask) == kFunctionBlockTypeClass;
+    }
+    [[nodiscard]] constexpr bool IsConnected() const noexcept { return type != kSourceIdNotConnected; }
 
     [[nodiscard]] constexpr bool operator==(const AudioSourceId& other) const noexcept {
         return type == other.type && id == other.id;
@@ -72,13 +85,37 @@ namespace FeatureControlMask {
 }
 
 //==============================================================================
+// Processing and CODEC dependent information (Audio Subunit 1.0 §8.4, §8.5)
+//==============================================================================
+
+/// What a Processing or CODEC block's function_block_type_dependent_information says (Tables 8.4-8.22):
+/// its sub-type, which controls it supports, and what is particular to its type. Selector blocks have none
+/// (§8.2) and Feature blocks have their own fields below.
+struct AudioTypeInfo {
+    uint8_t subType{0};                ///< process_type (Table A.2) or CODEC_type (Table A.3)
+    std::vector<uint8_t> controls;     ///< The Controls bitmap bytes as sent. Bit 0 is the most significant bit of byte 0.
+    uint8_t sizeOfModes{0};            ///< Up/Down-mix, Dolby Pro Logic and CODEC blocks: the width of each mode
+    std::vector<uint32_t> modes;       ///< Modes[]: the logical channels active in mode i (a bit per channel)
+    std::vector<uint8_t> guid;         ///< Generic processing: the GUID (RAC_ID + 40 bits), 8 bytes
+    std::vector<uint8_t> guidInformation;  ///< Generic processing: GUID_dependent_information, owner defined
+    std::vector<uint8_t> codecSpecific;    ///< CODEC: the decoder-specific bytes after the modes (Tables 8.17, 8.19, 8.21), unsplit
+
+    /// Bit `bit` of the Controls bitmap, numbered from the most significant bit of the first byte: the order
+    /// the Phase 88 captures confirm and the spec's mixer figure uses (§8.4.1).
+    [[nodiscard]] constexpr bool ControlsBit(size_t bit) const noexcept {
+        const size_t byte = bit / 8;
+        return byte < controls.size() && (controls[byte] & (0x80u >> (bit % 8))) != 0;
+    }
+};
+
+//==============================================================================
 // Function Block Information
 //==============================================================================
 
 struct AudioFunctionBlockInfo {
     AudioFunctionBlockType type{AudioFunctionBlockType::kFeature};
     uint8_t id{0};
-    uint16_t nameIndex{0xFFFF};           ///< Text DB object position or 0xFFFF if none
+    uint16_t nameIndex{kNoNameIndex};     ///< Text DB object position or kNoNameIndex if none
     std::string name;                     ///< Resolved from text DB if available
 
     std::vector<AudioSourceId> inputSources; ///< Upstream sources for input fb-plugs (p elements)
@@ -91,6 +128,11 @@ struct AudioFunctionBlockInfo {
 
     // Processing Block specifics (e.g. Mixer)
     uint8_t processType{0};
+
+    // Processing and CODEC dependent information (Tables 8.4-8.22). Reading it never fails the descriptor:
+    // a layout this parser does not follow is recorded in typeInfoError and the rest of the descriptor stands.
+    std::optional<AudioTypeInfo> typeInfo;
+    std::optional<ParseError> typeInfoError;
 };
 
 //==============================================================================
@@ -216,6 +258,66 @@ namespace AudioIdentifierParse {
         });
     });
 }
+/// `count` mode fields of `size` bytes each, big-endian (Tables 8.6, 8.8, 8.16). A mode wider than four bytes
+/// cannot be held.
+[[nodiscard]] constexpr Parsed<void> Modes(ParseReader& reader, AudioTypeInfo& info) {
+    uint8_t count{}, size{};
+    if (auto read = reader.Fields(count, size); !read) return read;
+    if (size == 0 || size > sizeof(uint32_t)) return Fail(reader.Offset() - 1, ParseErrorKind::InvalidValue);
+    info.sizeOfModes = size;
+    for (size_t i = 0; i < count; ++i) {
+        auto bytes = reader.Take(size);
+        if (!bytes) return std::unexpected(bytes.error());
+        uint32_t mode = 0;
+        for (const uint8_t b : *bytes) mode = (mode << 8) | b;
+        info.modes.push_back(mode);
+    }
+    return {};
+}
+/// Processing function_block_type_dependent_information: process_type, size_of_controls (2), Controls, then
+/// what the type adds: modes (Up/Down-mix, Dolby Pro Logic) or the GUID (Generic). Mixer, 3D stereo extender,
+/// reverberation, chorus and compression add nothing (Tables 8.4-8.14).
+[[nodiscard]] constexpr Parsed<void> ProcessingInformation(ParseReader reader, AudioFunctionBlockInfo& block) {
+    AudioTypeInfo info;
+    uint16_t sizeOfControls{};
+    if (auto read = reader.Fields(info.subType, sizeOfControls); !read) return read;
+    block.processType = info.subType;
+    auto controls = reader.Take(sizeOfControls);
+    if (!controls) return std::unexpected(controls.error());
+    info.controls.assign(controls->begin(), controls->end());
+    constexpr uint8_t kGenericProcess = 0x02, kUpDownMixProcess = 0x03, kDolbyProLogicProcess = 0x04;  // Table A.2
+    constexpr size_t kGuidBytes = 8;  // RAC_ID (24 bits) + 40 bits (§8.4.2)
+    if (info.subType == kUpDownMixProcess || info.subType == kDolbyProLogicProcess) {
+        if (auto read = Modes(reader, info); !read) return read;
+    } else if (info.subType == kGenericProcess) {
+        auto guid = reader.Take(kGuidBytes);
+        if (!guid) return std::unexpected(guid.error());
+        info.guid.assign(guid->begin(), guid->end());
+        auto guidInformation = reader.Section();
+        if (!guidInformation) return std::unexpected(guidInformation.error());
+        auto rest = guidInformation->Take(guidInformation->Remaining());
+        if (!rest) return std::unexpected(rest.error());
+        info.guidInformation.assign(rest->begin(), rest->end());
+    }
+    block.typeInfo = std::move(info);
+    return {};
+}
+/// CODEC function_block_type_dependent_information (Table 8.16): CODEC_type, size_of_controls (2), Controls,
+/// the modes, then the decoder-specific bytes (DTS Table 8.17, MPEG 8.19, AC-3 8.21), kept unsplit.
+[[nodiscard]] constexpr Parsed<void> CodecInformation(ParseReader reader, AudioFunctionBlockInfo& block) {
+    AudioTypeInfo info;
+    uint16_t sizeOfControls{};
+    if (auto read = reader.Fields(info.subType, sizeOfControls); !read) return read;
+    auto controls = reader.Take(sizeOfControls);
+    if (!controls) return std::unexpected(controls.error());
+    info.controls.assign(controls->begin(), controls->end());
+    if (auto read = Modes(reader, info); !read) return read;
+    auto specific = reader.Take(reader.Remaining());
+    if (!specific) return std::unexpected(specific.error());
+    info.codecSpecific.assign(specific->begin(), specific->end());
+    block.typeInfo = std::move(info);
+    return {};
+}
 [[nodiscard]] constexpr Parsed<AudioFunctionBlockInfo> FunctionBlock(ParseReader& configuration) {
     return configuration.Section().and_then([](ParseReader reader) -> Parsed<AudioFunctionBlockInfo> {
         AudioFunctionBlockInfo block;
@@ -236,7 +338,15 @@ namespace AudioIdentifierParse {
                 // bounds were already checked by Section().
                 if (!dependent.Remaining()) return {};
                 if (block.type == AudioFunctionBlockType::kFeature) return Feature(dependent, block);
-                if (block.type == AudioFunctionBlockType::kProcessing) return dependent.Fields(block.processType);
+                if (block.type == AudioFunctionBlockType::kProcessing || block.type == AudioFunctionBlockType::kCodec) {
+                    // Never fatal: the descriptor's other blocks stand if this layout is not the spec's.
+                    const auto detail = block.type == AudioFunctionBlockType::kCodec ? CodecInformation(dependent, block)
+                                                                                     : ProcessingInformation(dependent, block);
+                    if (!detail) {
+                        block.typeInfo.reset();
+                        block.typeInfoError = detail.error();
+                    }
+                }
                 return {};
             })
             .transform([&] { return std::move(block); });

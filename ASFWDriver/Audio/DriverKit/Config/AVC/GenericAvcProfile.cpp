@@ -5,6 +5,7 @@
 // generic discovery.
 
 #include "GenericAvcProfile.hpp"
+#include "../../../../Protocols/AVC/Commands/GeneralCommands.hpp"
 
 namespace ASFW::Isoch::Audio::AVC::Profiles {
 
@@ -24,8 +25,9 @@ void FillFraming(AudioStreamConfig& out, AudioStreamDirection direction) noexcep
     out.midiSlots = 0;
     out.dbs = 0;
     out.framesPerDataPacket = 8;
-    out.fdf = 0x02;
-    out.fmt = 0x10;
+    // Placeholder FDF for 48 kHz (IEC 61883-6 Table 20, SFC 2); the packetizer takes the FDF from the live rate.
+    out.fdf = static_cast<uint8_t>(::ASFW::AVC::CipSfc::k48000);
+    out.fmt = ::ASFW::AVC::Cmd::kFmtAudioMusic;
 }
 
 } // namespace

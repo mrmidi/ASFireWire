@@ -97,7 +97,8 @@ targets:
     type: com.apple.product-type.driver-extension
     platform: macOS
     sources:
-      # Includes the owned descriptor FSM, discovery reducer/session, snapshot graph,
+      # Includes generic AvcControlMapping.hpp, graph-backed ASFWAvcLevelControl (IIG/CPP), volume limits, and
+      # the owned descriptor FSM, discovery reducer/session, snapshot graph,
       # OnceCompletion and bounded parsers.
       - path: ASFWDriver
         excludes:
@@ -124,6 +125,9 @@ targets:
           $SRCROOT/bump.sh
     settings:
       base:
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/ASFWDriver/Audio/Model"
         SDKROOT: driverkit
         DRIVERKIT_DEPLOYMENT_TARGET: "25.0"
         PRODUCT_NAME: net.mrmidi.ASFW.ASFWDriver

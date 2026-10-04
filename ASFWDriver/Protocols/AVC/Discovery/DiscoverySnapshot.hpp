@@ -6,6 +6,7 @@
 #include "../Commands/FunctionBlockCommand.hpp"
 #include "../Descriptors/DescriptorAccessor.hpp"
 #include "../Descriptors/MusicSubunitDescriptor.hpp"
+#include "../Descriptors/MusicSubunitIdentifier.hpp"
 #include "../Descriptors/AudioSubunitDescriptor.hpp"
 #include <memory>
 #include "../../../Common/PcmSlotMap.hpp"
@@ -44,6 +45,7 @@ struct FeatureStatus {
     Cmd::FeatureControl control{Cmd::FeatureControl::kMute};
     std::optional<Cmd::FeatureReply> value;
     std::optional<AvcError> error;
+    Cmd::ControlAttribute attribute{Cmd::ControlAttribute::kCurrent};
 };
 struct SelectorStatus {
     SubunitId subunit;
@@ -53,6 +55,9 @@ struct SelectorStatus {
 struct SubunitContents {
     SubunitId id;
     std::optional<ParsedDescriptors::MusicSubunitStatus> music;
+    /// The Music subunit's identifier descriptor (TA 2001007 §5): its static capabilities. Read only after the
+    /// status descriptor of the same subunit was, so a subunit that answered descriptor commands.
+    std::optional<ParsedDescriptors::MusicSubunitIdentifier> musicIdentifier;
     std::optional<ParsedDescriptors::AudioSubunitIdentifier> audio;
     ParsedDescriptors::TextDatabase text;
 };
@@ -62,6 +67,10 @@ struct ProbeOutcome {
     SubunitAddress address{SubunitAddress::Unit()};
     Opcode opcode{Opcode::kUnitInfo};
     std::optional<AvcError> error;
+    std::optional<ResponseCode> responseCode;
+    std::vector<uint8_t> command;
+    std::vector<uint8_t> responseOperands;
+    std::optional<uint8_t> responseAddress, responseOpcode;
 };
 struct Formation {
     uint32_t rateHz{}, pcmChannels{}, midiChannels{};

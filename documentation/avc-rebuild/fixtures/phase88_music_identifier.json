@@ -1,0 +1,21 @@
+{
+  "device": "TerraTec PHASE 88 Rack FW, GUID 0x000AAC0300B1D1F7",
+  "captured": "2026-10-03, dext c485860, node 1 generation 1",
+  "what": "Music subunit identifier descriptor (specifier 00, subunit 0x60), TA 2001007 §5. First capture of this descriptor on any device.",
+  "frames": [
+    {"step": "OPEN DESCRIPTOR (read open)", "command": "00600800 01ff0000", "response": "09600800 01ff0000"},
+    {"step": "READ DESCRIPTOR addr 0000 len 0080", "command": "00600900 ff000080 00000000", "response": "09600900 16000067 0000 <67 bytes>", "note": "read_result_status 0x16, data_length 0x0067, one read returns the whole descriptor"},
+    {"step": "CLOSE DESCRIPTOR", "command": "00600800 00ff0000", "response": "09600800 00ff0000"}
+  ],
+  "descriptor_hex": "0041020000000000003700350010003127060203ffffffff1f05000a000a0040000a000a0140000a000a0240000a000a0340000a000a04400610000004000001030000",
+  "decoded": {
+    "descriptor_length": 65, "generation_ID": 2, "size_of_list_ID": 0, "root_object_lists": 0,
+    "music_subunit_version": "0x10 (1.0)",
+    "capability_attributes": "0x27: general, audio, MIDI, audio SYNC",
+    "general": "transmit 0x02 (blocking), receive 0x03 (non-blocking + blocking), latency FFFFFFFF",
+    "audio": "5 formats, max 10 in / 10 out channels, FDF 00,01,02,03,04, AM824 label 0x40",
+    "midi": "version/revision 0x10, adaptation layer 0, max input ports 4, max output ports 0 (as the device reports it)",
+    "audio_sync": "0x03 (bus + external)",
+    "manufacturer_information_length": 0
+  }
+}

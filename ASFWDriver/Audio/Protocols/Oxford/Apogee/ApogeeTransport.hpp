@@ -87,10 +87,7 @@ inline constexpr uint32_t kMixerBlockBytes = 16;
 
 [[nodiscard]] constexpr Async::FWAddress AddressFor(uint32_t offset) noexcept {
     const uint64_t address = kBaseAddress + offset;
-    return Async::FWAddress{Async::FWAddress::AddressParts{
-        .addressHi = static_cast<uint16_t>((address >> 32U) & 0xFFFFU),
-        .addressLo = static_cast<uint32_t>(address & 0xFFFFFFFFU),
-    }};
+    return FW::Unpack(address);  // 48-bit address, node ID 0
 }
 
 [[nodiscard]] constexpr Async::FWAddress InputAddress() noexcept {

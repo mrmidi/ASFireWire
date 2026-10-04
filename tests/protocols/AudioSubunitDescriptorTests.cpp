@@ -7,11 +7,13 @@
 
 #include <gtest/gtest.h>
 
+#include "ASFWDriver/Protocols/AVC/Descriptors/AudioControlBits.hpp"
 #include "ASFWDriver/Protocols/AVC/Descriptors/AudioSubunitDescriptor.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/DescriptorCommands.hpp"
 #include "tests/support/Phase88DescriptorFixtures.hpp"
 #include "tests/support/DuetDescriptorFixture.hpp"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -199,6 +201,20 @@ TEST(AudioSubunitDescriptorTests, Phase88TextDatabaseParsingAndResolution) {
     EXPECT_EQ(fb2->name, "Mixer Input LineIn 1/2 Level");
 }
 
+TEST(AudioSubunitDescriptorTests, SourceIdSentinelsFollowTheFunctionBlockTypeTable) {
+    // TA 1999008 Tables 8.2 and 9.1: F0 = subunit destination plug, F1 = subunit source plug,
+    // 80..8F = audio function blocks, FE = not connected.
+    using ASFW::Protocols::AVC::Descriptors::AudioSourceId;
+    EXPECT_FALSE((AudioSourceId{.type = 0xFE, .id = 0}).IsConnected());
+    EXPECT_TRUE((AudioSourceId{.type = 0xF0, .id = 1}).IsConnected());
+    EXPECT_TRUE((AudioSourceId{.type = 0xF0, .id = 1}).IsSubunitDestPlug());
+    EXPECT_FALSE((AudioSourceId{.type = 0xF1, .id = 1}).IsSubunitDestPlug());
+    EXPECT_TRUE((AudioSourceId{.type = 0x81, .id = 3}).IsFunctionBlock());
+    EXPECT_TRUE((AudioSourceId{.type = 0x8F, .id = 3}).IsFunctionBlock());
+    EXPECT_FALSE((AudioSourceId{.type = 0xF1, .id = 3}).IsFunctionBlock());
+    EXPECT_FALSE(AudioSourceId{}.IsConnected());  // a default source id is "not connected"
+}
+
 TEST(AudioSubunitDescriptorTests, RejectsTruncatedAndLengthMismatchedDescriptors) {
     auto identifier = ASFW::AVC::Testing::Fixtures::kPhase88AudioIdentifier;
     identifier.pop_back();
@@ -236,6 +252,161 @@ TEST(AudioSubunitDescriptorTests, ReadReplyRejectsReportedLengthBeyondPayload) {
     };
     ASFW::AVC::Cmd::ReadDescriptorOperands offsetZero{};
     EXPECT_FALSE(offsetZero.Read(wrongOffset).has_value());
+}
+
+// =============================================================================
+// Processing and CODEC dependent information (TA 1999008 §8.4, §8.5)
+// =============================================================================
+
+namespace {
+
+namespace P = AudioIdentifierParse;
+
+std::vector<uint8_t> Phase88Bytes() {
+    const auto& fixture = ASFW::AVC::Testing::Fixtures::kPhase88AudioIdentifierBytes;
+    return {fixture.begin(), fixture.end()};
+}
+
+/// Reads `bytes` as the type dependent information of a block of `type`.
+Parsed<AudioFunctionBlockInfo> ReadTypeInfo(AudioFunctionBlockType type, std::vector<uint8_t> bytes) {
+    AudioFunctionBlockInfo block;
+    block.type = type;
+    ParseReader reader(bytes);
+    const auto read = type == AudioFunctionBlockType::kCodec ? P::CodecInformation(reader, block)
+                                                             : P::ProcessingInformation(reader, block);
+    if (!read) return std::unexpected(read.error());
+    return block;
+}
+
+} // namespace
+
+TEST(AudioDependentInfoTests, Phase88MixersCarryNoProgrammableControls) {
+    // The five processing blocks of the captured Phase 88: process_type 01 (mixer), size_of_controls 0000.
+    const auto bytes = Phase88Bytes();
+    const auto result = AudioSubunitDescriptorParser::ParseIdentifierDescriptor(bytes);
+    ASSERT_TRUE(result.has_value());
+    size_t mixers = 0;
+    for (const auto& block : result->functionBlocks) {
+        if (block.type != AudioFunctionBlockType::kProcessing) continue;
+        ++mixers;
+        ASSERT_TRUE(block.typeInfo.has_value());
+        EXPECT_FALSE(block.typeInfoError.has_value());
+        EXPECT_EQ(block.typeInfo->subType, 0x01);
+        EXPECT_EQ(block.processType, 0x01);
+        EXPECT_TRUE(block.typeInfo->controls.empty());
+    }
+    EXPECT_EQ(mixers, 5u);
+}
+
+TEST(AudioDependentInfoTests, ABadTypeInformationDoesNotLoseTheRestOfTheDescriptor) {
+    // Claim five bytes of Controls in the second mixer, which carries none. The block records the error and
+    // every other block still parses.
+    auto bytes = Phase88Bytes();
+    const std::vector<uint8_t> second = {0x02, 0x02, 0x80, 0x01, 0x40, 0x01, 0x00, 0x45, 0x00, 0x46, 0x00, 0x03, 0x01, 0x00, 0x00};
+    const auto at = std::search(bytes.begin(), bytes.end(), second.begin(), second.end());
+    ASSERT_NE(at, bytes.end());
+    *(at + second.size() - 1) = 0x05;  // size_of_controls = 5
+    const auto result = AudioSubunitDescriptorParser::ParseIdentifierDescriptor(bytes);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->functionBlocks.size(), 22u);
+    const auto* broken = result->FindBlock(AudioFunctionBlockType::kProcessing, 2);
+    ASSERT_NE(broken, nullptr);
+    EXPECT_FALSE(broken->typeInfo.has_value());
+    ASSERT_TRUE(broken->typeInfoError.has_value());
+    EXPECT_EQ(broken->typeInfoError->kind, ParseErrorKind::Truncated);
+    EXPECT_EQ(broken->processType, 0x01);  // what was read before the failure is kept
+    EXPECT_TRUE(result->FindBlock(AudioFunctionBlockType::kProcessing, 3)->typeInfo.has_value());
+}
+
+TEST(AudioDependentInfoTests, DolbyProLogicListsItsModes) {
+    // Table 8.8: process_type 04, size_of_controls 1, Controls (Enable, Mode), number_of_modes, size 2, Modes.
+    // The five modes are Table 8.7's.
+    const auto block = ReadTypeInfo(AudioFunctionBlockType::kProcessing,
+                                    {0x04, 0x00, 0x01, 0xC0, 0x05, 0x02, 0x00, 0x07, 0x08, 0x07, 0x01, 0x03, 0x01, 0x07,
+                                     0x09, 0x07});
+    ASSERT_TRUE(block.has_value());
+    const auto& info = *block->typeInfo;
+    EXPECT_EQ(info.subType, 0x04);
+    EXPECT_EQ(info.sizeOfModes, 2);
+    EXPECT_EQ(info.modes, (std::vector<uint32_t>{0x0007, 0x0807, 0x0103, 0x0107, 0x0907}));
+    EXPECT_TRUE(info.ControlsBit(0));
+    EXPECT_TRUE(info.ControlsBit(1));
+    EXPECT_FALSE(info.ControlsBit(2));
+    EXPECT_EQ(DescribeControlBits(block->type, info.subType, info.controls), "ENABLE_CONTROL(bit 0), MODE_CONTROL(bit 1)");
+}
+
+TEST(AudioDependentInfoTests, UpDownMixModesCanBeOneByteWide) {
+    const auto block = ReadTypeInfo(AudioFunctionBlockType::kProcessing,
+                                    {0x03, 0x00, 0x01, 0x80, 0x02, 0x01, 0x03, 0x0F});
+    ASSERT_TRUE(block.has_value());
+    EXPECT_EQ(block->typeInfo->sizeOfModes, 1);
+    EXPECT_EQ(block->typeInfo->modes, (std::vector<uint32_t>{0x03, 0x0F}));
+}
+
+TEST(AudioDependentInfoTests, GenericProcessingCarriesAGuid) {
+    // Table 8.5: Controls, the 8-byte GUID (RAC_ID + 40 bits), GUID_dependent_information_length (2) and data.
+    const auto block = ReadTypeInfo(AudioFunctionBlockType::kProcessing,
+                                    {0x02, 0x00, 0x01, 0xC0, 0x00, 0x03, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x03,
+                                     0xAA, 0xBB, 0xCC});
+    ASSERT_TRUE(block.has_value());
+    EXPECT_EQ(block->typeInfo->guid, (std::vector<uint8_t>{0x00, 0x03, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x01}));
+    EXPECT_EQ(block->typeInfo->guidInformation, (std::vector<uint8_t>{0xAA, 0xBB, 0xCC}));
+}
+
+TEST(AudioDependentInfoTests, TypeSpecificControlBitsKeepTheSpecsOrder) {
+    const auto names = [](uint8_t subType, uint8_t bits) {
+        const auto block = ReadTypeInfo(AudioFunctionBlockType::kProcessing, {subType, 0x00, 0x01, bits});
+        EXPECT_TRUE(block.has_value());
+        return block ? DescribeControlBits(AudioFunctionBlockType::kProcessing, subType, block->typeInfo->controls) : std::string();
+    };
+    // Table 8.10: the reverberation bit order (Enable, Type, Level, Time, Delay Feedback, Early Time) is not
+    // the selector order (Type 03, Level 04, Time 05, Early Time 06, Delay 07).
+    EXPECT_EQ(names(0x06, 0xFC),
+              "ENABLE_CONTROL(bit 0), REVERBTYPE_CONTROL(bit 1), REVERBLEVEL_CONTROL(bit 2), REVERBTIME_CONTROL(bit 3), "
+              "REVERBDELAY_CONTROL(bit 4), REVERBEARLYTIME_CONTROL(bit 5)");
+    // Table 8.12: Chorus Level has a bit but no control_selector (Table A.4): named by the spec, not invented a value.
+    EXPECT_EQ(names(0x07, 0xF0),
+              "ENABLE_CONTROL(bit 0), CHORUSLEVEL_CONTROL(bit 1), CHORUSRATE_CONTROL(bit 2), CHORUSDEPTH_CONTROL(bit 3)");
+    // Table 8.15.
+    EXPECT_EQ(names(0x08, 0xFC),
+              "ENABLE_CONTROL(bit 0), COMPRESSION_RATIO_CONTROL(bit 1), MAXAMPL_CONTROL(bit 2), THRESHOLD_CONTROL(bit 3), "
+              "ATTACKTIME_CONTROL(bit 4), RELEASETIME_CONTROL(bit 5)");
+    // Table 8.9.
+    EXPECT_EQ(names(0x05, 0xC0), "ENABLE_CONTROL(bit 0), SPACIOUSNESS_CONTROL(bit 1)");
+    // A set bit the table does not define is shown as unknown, not dropped.
+    EXPECT_EQ(names(0x08, 0x02), "UNKNOWN(control_bit:6)");
+}
+
+TEST(AudioDependentInfoTests, CodecBlocksCarryModesAndDecoderSpecificBytes) {
+    // Table 8.16 then the AC-3 decoder bytes (Table 8.21): BSID 8 and AC3Features 0x0F (all four modes).
+    const auto ac3 = ReadTypeInfo(AudioFunctionBlockType::kCodec,
+                                  {0x01, 0x00, 0x01, 0xC0, 0x01, 0x02, 0x00, 0x3F, 0x08, 0x0F});
+    ASSERT_TRUE(ac3.has_value());
+    EXPECT_EQ(ac3->typeInfo->subType, 0x01);
+    EXPECT_EQ(ac3->typeInfo->modes, (std::vector<uint32_t>{0x003F}));
+    EXPECT_EQ(ac3->typeInfo->codecSpecific, (std::vector<uint8_t>{0x08, 0x0F}));
+    EXPECT_EQ(DescribeControlBits(AudioFunctionBlockType::kCodec, 0x01, ac3->typeInfo->controls),
+              "ENABLE_CONTROL(bit 0), MODE_CONTROL(bit 1)");
+    // DTS (Table 8.18): two more bits, named by the spec though no control_selector exists for them.
+    const auto dts = ReadTypeInfo(AudioFunctionBlockType::kCodec,
+                                  {0x03, 0x00, 0x01, 0xF0, 0x01, 0x02, 0x00, 0x3F, 0x05, 0x01});
+    ASSERT_TRUE(dts.has_value());
+    EXPECT_EQ(DescribeControlBits(AudioFunctionBlockType::kCodec, 0x03, dts->typeInfo->controls),
+              "ENABLE_CONTROL(bit 0), MODE_CONTROL(bit 1), LFE_Select(bit 2), Matrixed_Stereo_Select(bit 3)");
+}
+
+TEST(AudioDependentInfoTests, MalformedTypeInformationIsAnErrorWithAnOffset) {
+    // Controls cut short.
+    EXPECT_FALSE(ReadTypeInfo(AudioFunctionBlockType::kProcessing, {0x06, 0x00, 0x03, 0xFC}).has_value());
+    // A mode field of width 0, or wider than four bytes, cannot be held.
+    const auto zero = ReadTypeInfo(AudioFunctionBlockType::kProcessing, {0x03, 0x00, 0x01, 0x80, 0x01, 0x00});
+    ASSERT_FALSE(zero.has_value());
+    EXPECT_EQ(zero.error().kind, ParseErrorKind::InvalidValue);
+    EXPECT_FALSE(ReadTypeInfo(AudioFunctionBlockType::kProcessing, {0x03, 0x00, 0x01, 0x80, 0x01, 0x05, 1, 2, 3, 4, 5}).has_value());
+    // Fewer modes than announced.
+    EXPECT_FALSE(ReadTypeInfo(AudioFunctionBlockType::kCodec, {0x01, 0x00, 0x01, 0xC0, 0x02, 0x02, 0x00, 0x3F}).has_value());
+    // A generic block whose GUID is cut short.
+    EXPECT_FALSE(ReadTypeInfo(AudioFunctionBlockType::kProcessing, {0x02, 0x00, 0x01, 0xC0, 0x00, 0x03}).has_value());
 }
 
 } // namespace ASFW::Protocols::AVC::Descriptors::Test

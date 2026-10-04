@@ -59,6 +59,8 @@ public:
                                    uint32_t reason)
         TYPE(ASFWAudioNub::IoRestartRequired);
 
+    kern_return_t ApplyAvcFeatureControl(uint32_t token, bool muteControl,
+                                        int32_t value, int32_t* outConfirmedValue) LOCALONLY;
     // Protocol-backed boolean control bridge (used by custom control subclass).
     kern_return_t ApplyProtocolBooleanControl(uint32_t classIdFourCC,
                                               uint32_t element,

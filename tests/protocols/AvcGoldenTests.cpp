@@ -27,6 +27,7 @@
 #include "ASFWDriver/Protocols/AVC/Discovery/DiscoverySession.hpp"
 #include "ASFWDriver/Protocols/AVC/Graph/DiscoveryGraph.hpp"
 #include "ASFWDriver/UserClient/WireFormats/AVCDiscoveryDocument.hpp"
+#include "ASFWDriver/Protocols/AVC/Discovery/DiscoveryLog.hpp"
 #include "ASFWDriver/UserClient/Handlers/AVCHandler.hpp"
 #include "ASFWDriver/Protocols/AVC/IAVCDiscovery.hpp"
 #include <DriverKit/IOUserClient.h>
@@ -42,6 +43,7 @@
 
 #include "ASFWDriver/Protocols/AVC/AVCUnit.hpp"
 #include "ASFWDriver/Audio/Protocols/AVC/AvcAudioConfig.hpp"
+#include "ASFWDriver/Audio/Protocols/AVC/AvcControlMapping.hpp"
 #include "ASFWDriver/Audio/Protocols/AVC/AvcExtensionInventory.hpp"
 #include "ASFWDriver/Protocols/AVC/FCPTransport.hpp"
 #include "ASFWDriver/Protocols/AVC/Commands/GeneralCommands.hpp"
@@ -281,9 +283,9 @@ constexpr UncapturedFrame kDuetUncaptured[] = {
     // with ta1394 stream-format lib.rs:785-1060, FFADO avc_signal_source.cpp:125-171,
     // and ta1394 audio lib.rs:820-862; these are reference-backed, not HW evidence.
     {"0108(bf|2f)c1.*", "ta1394 stream-format lib.rs:785-1060"},
-    {"01ff1afffffe(ff|08|60)..", "FFADO avc_signal_source.cpp:125-171"},
+    {"01ff1afffffe(ff|08|60)..", "TA 2002010 Figure 7.7, Table C.1; FFADO avc_signal_source.cpp:125-171"},
     {"(01|02)08b8(80|81).*", "ta1394 audio lib.rs:280-350,820-862"},
-    {"02ff1aff.*", "FFADO avc_signal_source.cpp:137-141"},
+    {"02ff1a0f.*", "TA 2002010 Figure 7.1, Apple QuerySyncPlugReconnect 0x10f18, FFADO avc_signal_source.cpp (resultStatus & 0xF)"},
 
     // Music subunit status descriptor OPEN and READ: Apple, isitduet.txt:157,168.
     {"0060088001ff0000", "Apple, isitduet.txt:157"},
@@ -301,9 +303,9 @@ constexpr UncapturedFrame kPhase88Uncaptured[] = {
     // with ta1394 stream-format lib.rs:785-1060, FFADO avc_signal_source.cpp:125-171,
     // and ta1394 audio lib.rs:820-862; these are reference-backed, not HW evidence.
     {"0108(bf|2f)c1.*", "ta1394 stream-format lib.rs:785-1060"},
-    {"01ff1afffffe(ff|08|60)..", "FFADO avc_signal_source.cpp:125-171"},
+    {"01ff1afffffe(ff|08|60)..", "TA 2002010 Figure 7.7, Table C.1; FFADO avc_signal_source.cpp:125-171"},
     {"(01|02)08b8(80|81).*", "ta1394 audio lib.rs:280-350,820-862"},
-    {"02ff1aff.*", "FFADO avc_signal_source.cpp:137-141"},
+    {"02ff1a0f.*", "TA 2002010 Figure 7.1, Apple QuerySyncPlugReconnect 0x10f18, FFADO avc_signal_source.cpp (resultStatus & 0xF)"},
 
     // Audio subunit plug formats, 0x2F only: FFADO avc_plug.cpp:231-249 with
     // avc_extended_stream_format.cpp:296.
@@ -524,6 +526,7 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     // The device's own descriptors and its unit ISO output 0 source (captured
     // 2026-09-28): the attach image predates descriptor capture.
     rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
@@ -546,6 +549,15 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     EXPECT_EQ(graph->playback.channelCount, 10U);
     EXPECT_EQ(graph->playback.dataBlockSize, 11U);
     EXPECT_EQ(graph->capture.channelCount, 10U);
+    EXPECT_EQ(graph->captureAudioChannels.size(), 10U);
+    const auto mixerMaster = std::ranges::find_if(graph->controls, [](const auto& block) {
+        return block.type == ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kFeature && block.id == 1;
+    });
+    ASSERT_NE(mixerMaster, graph->controls.end());
+    EXPECT_TRUE(IsAvcOutputMaster(*graph, *mixerMaster));
+    for (const auto& block : graph->controls)
+        if (block.type == ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kFeature && block.id != 1)
+            EXPECT_FALSE(IsAvcOutputMaster(*graph, block));
     EXPECT_EQ(graph->capture.dataBlockSize, 11U);
     EXPECT_EQ(graph->playback.currentSampleRate, 48000U);
     EXPECT_EQ(graph->capture.currentSampleRate, 48000U);
@@ -717,6 +729,13 @@ TEST(AvcGoldenTests, DuetExchangeLogReplaysToTheSameContentsAndGraph) {
     EXPECT_GT(replay->Replayed(), 40U);
     ReplayChecks::ExpectSameContents(*original, *replayed);
     ReplayChecks::ExpectSameGraph(Graph::BuildDiscoveryGraph(*original, "Duet"), Graph::BuildDiscoveryGraph(*replayed, "Duet"));
+    // This exchange fixture has no Audio-to-Music boundary evidence. A
+    // descriptor's limits alone must not invent a playback assignment.
+    const auto graph = Graph::BuildDiscoveryGraph(*original, "Duet");
+    EXPECT_TRUE(graph.playbackAudioChannels.empty());
+    for (const auto& block : graph.controls)
+        EXPECT_EQ(PlaceAvcControl(graph, block, 0).scope, static_cast<uint32_t>('ptru'));
+
 }
 
 TEST(AvcGoldenTests, Phase88ExchangeLogReplaysToTheSamePublishedShape) {
@@ -727,6 +746,7 @@ TEST(AvcGoldenTests, Phase88ExchangeLogReplaysToTheSamePublishedShape) {
     opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
     AvcGoldenRig rig(kPhase88, opts);
     rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
@@ -752,6 +772,15 @@ TEST(AvcGoldenTests, Phase88ExchangeLogReplaysToTheSamePublishedShape) {
     EXPECT_EQ(replayedGraph.playback.dataBlockSize, 11U);
     EXPECT_EQ(replayedGraph.playback.currentSampleRate, 48000U);
     EXPECT_EQ(replayedGraph.playback.supportedSampleRates.size(), 5U);
+    EXPECT_TRUE(replayedGraph.captureAudioChannels.empty()); // no capture boundary in this exchange fixture
+    for (const auto& feature : replayedGraph.controls) {
+        if (feature.type != ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kFeature) continue;
+        // Captured PHASE88 features are on monitor-mixer branches; none changes
+        // recorded input gain or has a fixed one-to-one playback channel map.
+        for (uint8_t channel = 0; channel <= feature.channelCount; ++channel)
+            EXPECT_EQ(PlaceAvcControl(replayedGraph, feature, channel).scope, static_cast<uint32_t>('ptru'));
+    }
+
 }
 
 TEST(AvcGoldenTests, Phase88DiscoveryDocumentPagesReassembleWithinTheWireLimit) {
@@ -762,7 +791,10 @@ TEST(AvcGoldenTests, Phase88DiscoveryDocumentPagesReassembleWithinTheWireLimit) 
     opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
     AvcGoldenRig rig(kPhase88, opts);
     rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
     bool ok = false;
     rig.Unit()->Initialize([&](bool done) { ok = done; });
     rig.Settle();
@@ -805,6 +837,8 @@ TEST(AvcGoldenTests, Phase88DiscoveryDocumentPagesReassembleWithinTheWireLimit) 
     }
     EXPECT_EQ(reassembled, document);
     EXPECT_GT(document.size(), 4096U) << "the Phase 88 document should need several pages";
+    // The whole document, pinned: the Swift app's fixture is this file (ASFWTests/Fixtures).
+    ::ASFW::Testing::ExpectTextMatchesGolden(document + "\n", "avc/phase88__discovery_document.json");
 }
 
 
@@ -871,6 +905,30 @@ std::string Capture(const std::shared_ptr<AVCUnit>& unit, uint64_t guid) {
 }
 } // namespace UserClientGolden
 
+TEST(AvcGoldenTests, CapturedDuetOutputBoundaryPublishesMasterWithoutModelOverride) {
+    AvcGoldenRigOptions opts; opts.unitOptions=DiscoveryOptionsFor(AvcExtensionInventory::kNone);
+    AvcGoldenRig rig(kDuet,opts);
+    std::vector<uint8_t> music;
+    for (size_t i=0;i<Fixtures::kDuetMusicStatusHex.size();i+=2)
+        music.push_back(static_cast<uint8_t>(std::stoul(Fixtures::kDuetMusicStatusHex.substr(i,2),nullptr,16)));
+    rig.Sim().SetDescriptor(0x60,{0x80},std::move(music));
+    rig.Sim().SetDescriptor(0x08,{0x00},std::vector<uint8_t>(Fixtures::kDuetAudioIdentifierBytes.begin(),Fixtures::kDuetAudioIdentifierBytes.end()));
+    // Exercise an incomplete PLUG_INFO inventory: Audio destination 0 must
+    // still be queried from the identifier's declared feature input.
+    rig.Sim().SetResponseOverride({0x01,0x08,0x02,0x00,0xff,0xff,0xff,0xff},
+        {0x0c,0x08,0x02,0x00,0x00,0x01,0xff,0xff});
+    // Exact captured STATUS replies in duet_descriptors.json, 2026-09-28.
+    rig.Sim().SetResponseOverride({0x01,0xff,0x1a,0xff,0xff,0xfe,0x08,0x00},
+        {0x0c,0xff,0x1a,0x70,0x60,0x01,0x08,0x00});
+    rig.Sim().SetResponseOverride({0x01,0xff,0x1a,0xff,0xff,0xfe,0xff,0x00},
+        {0x0c,0xff,0x1a,0x70,0x60,0x00,0xff,0x00});
+    bool ok=false; rig.Unit()->Initialize([&](bool result){ok=result;});rig.Settle();ASSERT_TRUE(ok);
+    const auto graph=rig.Unit()->GetDiscoveredGraph();ASSERT_TRUE(graph);
+    ASSERT_EQ(graph->playbackAudioChannels.size(),2U);
+    const auto feature=std::ranges::find_if(graph->controls,[](const auto& b){return b.type==ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kFeature;});
+    ASSERT_NE(feature,graph->controls.end());EXPECT_TRUE(IsAvcOutputMaster(*graph,*feature));
+}
+
 TEST(AvcGoldenTests, DuetUserClientOutputsAreUnchanged) {
     AvcGoldenRigOptions opts;
     opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
@@ -889,6 +947,102 @@ TEST(AvcGoldenTests, DuetUserClientOutputsAreUnchanged) {
                                              "avc/duet__user_client.txt");
 }
 
+// What the driver ring shows for an attach: every discovered fact by its spec name, every unnamed value as
+// UNKNOWN. The golden pins each name, so a renamed or dropped table entry fails here.
+namespace {
+[[nodiscard]] std::string JoinLines(const std::vector<std::string>& lines) {
+    std::string text;
+    for (const auto& line : lines) text += line + "\n";
+    return text;
+}
+} // namespace
+
+TEST(AvcGoldenTests, Phase88DiscoveryLogNamesEveryFact) {
+    AvcGoldenRigOptions opts;
+    opts.guid = kPhase88.guid;
+    opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
+    opts.generation = kPhase88.generation;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
+    AvcGoldenRig rig(kPhase88, opts);
+    rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
+    rig.Sim().SetResponseOverride({0x01, 0xFF, 0x1A, 0xFF, 0xFF, 0xFE, 0xFF, 0x00},
+                                  {0x0C, 0xFF, 0x1A, 0x10, 0x60, 0x00, 0xFF, 0x00});
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    ASSERT_TRUE(ok);
+    const auto lines = ASFW::AVC::DiscoveryEngine::DescribeDiscovery(*rig.Unit()->GetDiscoverySnapshot(),
+                                                                     rig.Unit()->GetDiscoveredGraph().get());
+    for (const auto& line : lines) EXPECT_LE(line.size(), ASFW::AVC::DiscoveryEngine::kMaxDiscoveryLogLine) << line;
+    ::ASFW::Testing::ExpectTextMatchesGolden(JoinLines(lines), "avc/phase88__discovery_log.txt");
+}
+
+TEST(AvcGoldenTests, DuetDiscoveryLogNamesEveryFact) {
+    AvcGoldenRigOptions opts;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
+    AvcGoldenRig rig(kDuet, opts);
+    std::vector<uint8_t> music;
+    for (size_t i = 0; i < Fixtures::kDuetMusicStatusHex.size(); i += 2)
+        music.push_back(static_cast<uint8_t>(std::stoul(Fixtures::kDuetMusicStatusHex.substr(i, 2), nullptr, 16)));
+    rig.Sim().SetDescriptor(0x60, {0x80}, std::move(music));
+    rig.Sim().SetDescriptor(0x08, {0x00}, std::vector<uint8_t>(Fixtures::kDuetAudioIdentifierBytes.begin(),
+                                                              Fixtures::kDuetAudioIdentifierBytes.end()));
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    ASSERT_TRUE(ok);
+    const auto lines = ASFW::AVC::DiscoveryEngine::DescribeDiscovery(*rig.Unit()->GetDiscoverySnapshot(),
+                                                                     rig.Unit()->GetDiscoveredGraph().get());
+    for (const auto& line : lines) EXPECT_LE(line.size(), ASFW::AVC::DiscoveryEngine::kMaxDiscoveryLogLine) << line;
+    ::ASFW::Testing::ExpectTextMatchesGolden(JoinLines(lines), "avc/duet__discovery_log.txt");
+}
+
+// The route's STATUS byte used to be dropped from the discovery document. It is there now, with the
+// spec names beside the bytes, so a document reader sees `ready` and the departure from Table 7.7.
+TEST(AvcGoldenTests, DuetDiscoveryDocumentCarriesTheDecodedRouteStatus) {
+    AvcGoldenRigOptions opts;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
+    AvcGoldenRig rig(kDuet, opts);
+    std::vector<uint8_t> music;
+    for (size_t i = 0; i < Fixtures::kDuetMusicStatusHex.size(); i += 2)
+        music.push_back(static_cast<uint8_t>(std::stoul(Fixtures::kDuetMusicStatusHex.substr(i, 2), nullptr, 16)));
+    rig.Sim().SetDescriptor(0x60, {0x80}, std::move(music));
+    rig.Sim().SetDescriptor(0x08, {0x00}, std::vector<uint8_t>(Fixtures::kDuetAudioIdentifierBytes.begin(),
+                                                              Fixtures::kDuetAudioIdentifierBytes.end()));
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    ASSERT_TRUE(ok);
+    const auto snapshot = rig.Unit()->GetDiscoverySnapshot();
+    const auto graph = rig.Unit()->GetDiscoveredGraph();
+    const std::string document = UserClient::Wire::BuildAVCDiscoveryDocument(snapshot.get(), graph.get(), rig.Unit()->CopyExchangeLog());
+
+    ASSERT_EQ(graph->probeResults.size(), snapshot->outcomes.size());
+    bool rejected = false, unsupported = false, stable = false;
+    for (const auto& probe : graph->probeResults) {
+        EXPECT_FALSE(probe.command.empty());
+        if (probe.responseCode == ResponseCode::kRejected) rejected = true;
+        if (probe.responseCode == ResponseCode::kNotImplemented) unsupported = true;
+        if (probe.responseCode == ResponseCode::kImplementedStable) {
+            stable = true;
+            EXPECT_FALSE(probe.responseOperands.empty());
+        }
+    }
+    EXPECT_TRUE(rejected && unsupported && stable);
+    EXPECT_NE(document.find("\"probeResults\":"), std::string::npos);
+    EXPECT_NE(document.find("\"responseName\":\"NOT IMPLEMENTED(0x8)\""), std::string::npos);
+    EXPECT_NE(document.find("\"firstOperand\":112"), std::string::npos);
+    EXPECT_NE(document.find("\"status\":\"output_status=ready(0x3) conv=can change format(1) signal_status=identical(0x0)\""),
+              std::string::npos);
+    EXPECT_NE(document.find("\"sourceName\":\"iPCR[0] [ff 00]\""), std::string::npos);
+    EXPECT_NE(document.find("\"deviations\":\"output_status beyond effective/not effective; conv set on a plug that is not an oPCR\""),
+              std::string::npos);
+}
+
 TEST(AvcGoldenTests, Phase88UserClientOutputsAreUnchanged) {
     AvcGoldenRigOptions opts;
     opts.guid = kPhase88.guid;
@@ -897,6 +1051,7 @@ TEST(AvcGoldenTests, Phase88UserClientOutputsAreUnchanged) {
     opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
     AvcGoldenRig rig(kPhase88, opts);
     rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
     rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
@@ -1162,4 +1317,116 @@ TEST(AvcGoldenTests, ExtensionInventoryHoldsDiscoveryOpenUntilItFinishes) {
     rig.Settle();
     EXPECT_TRUE(completed);
     EXPECT_EQ(rig.Unit()->GetDiscoveryStatus(), Protocols::AVC::AVCDiscoveryStatus::Completed);
+}
+
+// A successful clock operation must update the published graph, not merely the family's
+// appliedClock_. The device readback is supplied only after the settle delay.
+TEST(AvcGoldenTests, DuetConfirmedRateUpdatesGraphAndDocumentButFailedReadbackDoesNot) {
+    for (const bool confirm : {false, true}) {
+        SCOPED_TRACE(confirm);
+        AvcGoldenRigOptions opts;
+        opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
+        AvcGoldenRig rig(kDuet, opts);
+        bool discovered = false;
+        rig.Unit()->Initialize([&](bool ok) { discovered = ok; });
+        rig.Settle();
+        ASSERT_TRUE(discovered);
+        const auto before = rig.Unit()->GetDiscoveredGraph();
+        ASSERT_NE(before, nullptr);
+        const auto originalRate = before->playback.currentSampleRate;
+        const auto snapshot = rig.Unit()->GetDiscoverySnapshot();
+        const auto query = [&](uint8_t opcode, uint8_t sfc) {
+            rig.Sim().SetResponseOverride({0x01, 0xff, opcode, 0x00, 0xff, 0xff, 0xff, 0xff},
+                                          {0x0c, 0xff, opcode, 0x00, 0x90, sfc, 0xff, 0xff});
+        };
+        query(0x19, 0x01); query(0x18, 0x01);
+        for (uint8_t opcode : {uint8_t{0x19}, uint8_t{0x18}}) {
+            rig.Sim().SetResponseOverride({0x00, 0xff, opcode, 0x00, 0x90, 0x02, 0xff, 0xff},
+                                          {0x09, 0xff, opcode, 0x00, 0x90, 0x02, 0xff, 0xff});
+            rig.Sim().SetResponseOverride({0x00, 0xff, opcode, 0x00, 0x90, 0x01, 0xff, 0xff},
+                                          {0x09, 0xff, opcode, 0x00, 0x90, 0x01, 0xff, 0xff});
+        }
+        Audio::Oxford::Apogee::ApogeeDuetProtocol protocol(
+            rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, nullptr, 100U, &rig.Timers());
+        protocol.UpdateRuntimeContext(rig.Route(), rig.Unit());
+        bool completed = false;
+        protocol.ApplyClockConfig(Audio::AudioClockConfig{.sampleRateHz = 48000},
+            [&](IOReturn status, const Audio::DuplexClockApplyResult&) {
+                completed = true;
+                EXPECT_EQ(status == kIOReturnSuccess, confirm);
+                EXPECT_EQ(rig.Unit()->GetDiscoveredGraph()->playback.currentSampleRate,
+                          confirm ? 48000U : originalRate);
+            });
+        rig.Settle();
+        EXPECT_FALSE(completed);
+        EXPECT_EQ(rig.Unit()->GetDiscoveredGraph(), before);
+        rig.Sim().ClearOverrides();
+        query(0x19, 0x02); query(0x18, confirm ? 0x02 : 0x01);
+        rig.Timers().Advance(101ULL * 1'000'000ULL);
+        rig.Settle();
+        EXPECT_TRUE(completed);
+        const auto after = rig.Unit()->GetDiscoveredGraph();
+        EXPECT_EQ(before->playback.currentSampleRate, originalRate); // old lease stays immutable
+        EXPECT_EQ(after->capture.currentSampleRate, confirm ? 48000U : before->capture.currentSampleRate);
+        EXPECT_EQ(rig.Unit()->GetDiscoverySnapshot(), snapshot); // captured probes remain intact
+        if (confirm) {
+            const auto document = UserClient::Wire::BuildAVCDiscoveryDocument(snapshot.get(), after.get(), {});
+            EXPECT_NE(document.find("\"rate\":48000"), std::string::npos);
+            auto staleRoute = rig.Route();
+            ++staleRoute.routeEpoch;
+            rig.Unit()->RememberConfirmedDuplexRate(staleRoute, 96000);
+            rig.Unit()->RememberConfirmedDuplexRate(rig.Route(), 0);
+            EXPECT_EQ(rig.Unit()->GetDiscoveredGraph(), after);
+            rig.Sim().ClearOverrides();
+            rig.Sim().SetResponseOverride({0x01, 0xff, 0x31}, {0x08, 0xff, 0x31, 0x07, 0xff, 0xff, 0xff, 0xff});
+            bool rescanCompleted = false;
+            rig.Unit()->Initialize([&](bool ok) { rescanCompleted = true; EXPECT_FALSE(ok); });
+            rig.Settle();
+            rig.Timers().Advance(2'000'000'000ULL);
+            rig.Settle();
+            EXPECT_TRUE(rescanCompleted);
+            EXPECT_EQ(rig.Unit()->GetDiscoveredGraph(), after);
+        }
+    }
+}
+
+TEST(AvcGoldenTests, VolumeLimitsAreReadPerConfirmedChannelAndRetainedInTheGraph) {
+    AvcGoldenRigOptions opts; opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kNone);
+    AvcGoldenRig rig(kDuet, opts);
+    rig.Sim().SetDescriptor(0x08, {0x00}, std::vector<uint8_t>(Fixtures::kDuetAudioIdentifierBytes.begin(),
+                                                          Fixtures::kDuetAudioIdentifierBytes.end()));
+    // Synthetic per-channel limits exercise the discovery logic. These are not
+    // new hardware observations or assumptions about the Duet master channel.
+    for (uint8_t channel = 0; channel <= 2; ++channel) {
+        for (uint8_t attribute : {uint8_t{0x10}, uint8_t{2}, uint8_t{3}, uint8_t{1}}) {
+            std::vector<uint8_t> command{1, 8, 0xb8, 0x81, 1, attribute, 2, channel, 2, 2, 0xff, 0xff};
+            auto response = command; response[0] = 0x0c;
+            response[10] = attribute == 2 ? 0xc0 : attribute == 1 ? 1 : 0;
+            response[11] = 0;
+            rig.Sim().SetResponseOverride(command, response);
+        }
+    }
+    bool initialized{};
+    rig.Unit()->Initialize([&](bool ok) { initialized = ok; }); rig.Settle(); ASSERT_TRUE(initialized);
+    const auto graph = rig.Unit()->GetDiscoveredGraph(); ASSERT_TRUE(graph); ASSERT_EQ(graph->featureChannels.size(), 3);
+    for (const auto& channel : graph->featureChannels) {
+        EXPECT_EQ(channel.volume, 0); EXPECT_EQ(channel.minimum, -16384); EXPECT_EQ(channel.maximum, 0); EXPECT_EQ(channel.resolution, 256);
+    }
+    const auto snapshot = rig.Unit()->GetDiscoverySnapshot(); ASSERT_TRUE(snapshot);
+    EXPECT_EQ(std::ranges::count_if(snapshot->features, [](const auto& status) {
+        return status.control == Cmd::FeatureControl::kVolume && status.attribute != Cmd::ControlAttribute::kCurrent;
+    }), 9);
+    auto changed = Cmd::FeatureReply{.functionBlockId = 1, .channel = 0, .control = Cmd::FeatureControl::kVolume,
+                                    .data = {0xff, 0x00}, .dataLength = 2};
+    rig.Unit()->RememberConfirmedFeature(rig.Route(), 0, changed);
+    EXPECT_TRUE(rig.Unit()->HasUserFeaturePreference(0, 1));
+    EXPECT_EQ(rig.Unit()->GetDiscoveredGraph()->featureChannels.front().volume, -256);
+    EXPECT_EQ(graph->featureChannels.front().volume, 0); // previous immutable lease remains valid
+    auto stale = rig.Route(); ++stale.routeEpoch;
+    changed.data = {0xfe, 0x00};
+    rig.Unit()->RememberConfirmedFeature(stale, 0, changed);
+    EXPECT_EQ(rig.Unit()->GetDiscoveredGraph()->featureChannels.front().volume, -256);
+    const auto document = UserClient::Wire::BuildAVCDiscoveryDocument(snapshot.get(), rig.Unit()->GetDiscoveredGraph().get(), {});
+    EXPECT_NE(document.find("\"featureChannels\""), std::string::npos);
+    EXPECT_NE(document.find("\"minimum\":-16384"), std::string::npos);
 }

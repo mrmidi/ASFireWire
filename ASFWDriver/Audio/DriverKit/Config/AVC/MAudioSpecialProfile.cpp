@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 
 #include "MAudioSpecialProfile.hpp"
+#include "../../../../Protocols/AVC/Commands/GeneralCommands.hpp"
 
 namespace ASFW::Isoch::Audio::AVC::Profiles {
 namespace {
@@ -18,8 +19,9 @@ void Fill(AudioStreamConfig& out, AudioStreamDirection direction,
     out.midiSlots = 1;
     out.dbs = static_cast<uint8_t>(pcmChannels + 1);
     out.framesPerDataPacket = 8;
-    out.fdf = 0x02;
-    out.fmt = 0x10;
+    // Placeholder FDF for 48 kHz (IEC 61883-6 Table 20, SFC 2); the packetizer takes the FDF from the live rate.
+    out.fdf = static_cast<uint8_t>(::ASFW::AVC::CipSfc::k48000);
+    out.fmt = ::ASFW::AVC::Cmd::kFmtAudioMusic;
 }
 
 uint32_t SafetyFrames(double) noexcept {

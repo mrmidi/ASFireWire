@@ -86,7 +86,7 @@ enum class StreamFormatRate : uint8_t {
 }
 
 [[nodiscard]] constexpr std::optional<CipSfc> CipSfcFromHz(uint32_t hz) noexcept {
-    for (uint8_t raw = 0; raw <= 0x06; ++raw) {
+    for (uint8_t raw = 0; raw <= static_cast<uint8_t>(CipSfc::k192000); ++raw) {  // IEC 61883-6 Table 20: codes 0..6
         if (ToHz(static_cast<CipSfc>(raw)) == hz) {
             return static_cast<CipSfc>(raw);
         }

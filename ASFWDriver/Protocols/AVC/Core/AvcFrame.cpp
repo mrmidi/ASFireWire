@@ -55,7 +55,7 @@ Expected<Response> ParseResponse(std::span<const uint8_t> frame) noexcept {
     }
 
     const uint8_t codeNibble = frame[0] & kCodeMask;
-    if (codeNibble < 0x08) {
+    if (codeNibble < kFirstResponseCode) {
         return Fail(AvcErrorKind::kNotAResponse);
     }
 

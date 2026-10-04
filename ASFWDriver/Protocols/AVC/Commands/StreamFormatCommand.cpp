@@ -28,7 +28,7 @@ namespace ASFW::AVC::Cmd {
 // ---------------------------------------------------------------------------
 
 Expected<PlugAddress> PlugAddress::Decode(std::span<const uint8_t> raw) noexcept {
-    if (raw.size() < 5) {
+    if (raw.size() < kPlugAddressBytes) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(raw.size()));
     }
 
@@ -49,11 +49,11 @@ Expected<PlugAddress> PlugAddress::Decode(std::span<const uint8_t> raw) noexcept
             }
             const auto unitPlugType = static_cast<UnitPlugType>(raw[2]);
             const uint8_t plugId = raw[3];
-            return PlugAddress{direction, mode, unitPlugType, 0xFF, 0xFF, plugId};
+            return PlugAddress{direction, mode, unitPlugType, kUnusedPlugAddressByte, kUnusedPlugAddressByte, plugId};
         }
         case PlugAddressMode::kSubunit: {
             const uint8_t plugId = raw[2];
-            return PlugAddress{direction, mode, UnitPlugType::kPcr, 0xFF, 0xFF, plugId};
+            return PlugAddress{direction, mode, UnitPlugType::kPcr, kUnusedPlugAddressByte, kUnusedPlugAddressByte, plugId};
         }
         case PlugAddressMode::kFunctionBlock: {
             const uint8_t fbType = raw[2];
@@ -84,7 +84,7 @@ Expected<StreamFormat> DecodeStreamFormatBlock(std::span<const uint8_t> block) n
     }
 
     // Compound AM824: [90][40][rate][flags][entry count][count, format]...
-    if (block.size() < 5) {
+    if (block.size() < kCompoundHeaderBytes) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(block.size()));
     }
 
@@ -93,21 +93,21 @@ Expected<StreamFormat> DecodeStreamFormatBlock(std::span<const uint8_t> block) n
         return Fail(AvcErrorKind::kUnsupported);
     }
 
-    const size_t requiredSize = 5u + 2u * static_cast<size_t>(entryCount);
+    const size_t requiredSize = kCompoundHeaderBytes + kCompoundEntryBytes * static_cast<size_t>(entryCount);
     if (block.size() < requiredSize) {
         return FailAt(AvcErrorKind::kMalformedOperands, 4);
     }
 
     CompoundAm824 compound{};
     compound.rate = static_cast<StreamFormatRate>(block[2]);
-    compound.syncSource = (block[3] & 0x04) != 0;
-    compound.rateControl = static_cast<RateControl>(block[3] & 0x03);
+    compound.syncSource = (block[3] & kCompoundSyncSourceBit) != 0;
+    compound.rateControl = static_cast<RateControl>(block[3] & kCompoundRateControlMask);
     compound.entryCount = entryCount;
 
     for (size_t i = 0; i < entryCount; ++i) {
         compound.entries[i] = CompoundEntry{
-            .count = block[5 + 2 * i],
-            .format = static_cast<Am824Format>(block[5 + 2 * i + 1]),
+            .count = block[kCompoundHeaderBytes + kCompoundEntryBytes * i],
+            .format = static_cast<Am824Format>(block[kCompoundHeaderBytes + kCompoundEntryBytes * i + 1]),
         };
     }
 
@@ -125,7 +125,7 @@ Expected<size_t> EncodeCompoundAm824(const CompoundAm824& format, std::span<uint
         return Fail(AvcErrorKind::kUnsupported);
     }
 
-    const size_t requiredSize = 5u + 2u * static_cast<size_t>(format.entryCount);
+    const size_t requiredSize = kCompoundHeaderBytes + kCompoundEntryBytes * static_cast<size_t>(format.entryCount);
     if (out.size() < requiredSize) {
         return Fail(AvcErrorKind::kFrameTooLong);
     }
@@ -134,16 +134,16 @@ Expected<size_t> EncodeCompoundAm824(const CompoundAm824& format, std::span<uint
     out[1] = kFormatLevel1CompoundAm824;
     out[2] = static_cast<uint8_t>(format.rate);
 
-    uint8_t flags = static_cast<uint8_t>(format.rateControl) & 0x03;
+    uint8_t flags = static_cast<uint8_t>(format.rateControl) & kCompoundRateControlMask;
     if (format.syncSource) {
-        flags |= 0x04;
+        flags |= kCompoundSyncSourceBit;
     }
     out[3] = flags;
     out[4] = format.entryCount;
 
     for (size_t i = 0; i < format.entryCount; ++i) {
-        out[5 + 2 * i] = format.entries[i].count;
-        out[5 + 2 * i + 1] = static_cast<uint8_t>(format.entries[i].format);
+        out[kCompoundHeaderBytes + kCompoundEntryBytes * i] = format.entries[i].count;
+        out[kCompoundHeaderBytes + kCompoundEntryBytes * i + 1] = static_cast<uint8_t>(format.entries[i].format);
     }
 
     return requiredSize;
@@ -152,6 +152,15 @@ Expected<size_t> EncodeCompoundAm824(const CompoundAm824& format, std::span<uint
 // ---------------------------------------------------------------------------
 // StreamFormatOperands
 // ---------------------------------------------------------------------------
+
+namespace {
+// Operand layout of both opcodes: [subfunction][plug address, 5][support status][index, list only][format...]
+constexpr size_t kPlugAddressOffset = 1;
+constexpr size_t kSupportStatusOffset = kPlugAddressOffset + kPlugAddressBytes;  // 6
+constexpr size_t kListIndexOffset = kSupportStatusOffset + 1;                    // 7
+constexpr size_t kSingleFormatOffset = kSupportStatusOffset + 1;                 // 7
+constexpr size_t kListFormatOffset = kListIndexOffset + 1;                       // 8
+} // namespace
 
 Expected<void> StreamFormatOperands::Write(OperandWriter& w, CommandType t) const noexcept {
     if (form == StreamFormatSubfunction::kList && t != CommandType::kStatus) {
@@ -175,7 +184,7 @@ Expected<void> StreamFormatOperands::Write(OperandWriter& w, CommandType t) cons
         return w.Append(index);
     }
     if (t == CommandType::kControl) {
-        std::array<uint8_t, 5 + 2 * kMaxCompoundEntries> buf{};
+        std::array<uint8_t, kCompoundHeaderBytes + kCompoundEntryBytes * kMaxCompoundEntries> buf{};
         auto encoded = EncodeCompoundAm824(*controlFormat, buf);
         if (!encoded) return std::unexpected(encoded.error());
         return w.Append(std::span<const uint8_t>{buf.data(), *encoded});
@@ -184,23 +193,23 @@ Expected<void> StreamFormatOperands::Write(OperandWriter& w, CommandType t) cons
 }
 
 Expected<StreamFormatReply> StreamFormatOperands::Read(std::span<const uint8_t> in) const noexcept {
-    const size_t minimum = form == StreamFormatSubfunction::kList ? 8 : 7;
+    const size_t minimum = form == StreamFormatSubfunction::kList ? kListFormatOffset : kSingleFormatOffset;
     if (in.size() < minimum) {
         return FailAt(AvcErrorKind::kOperandsTooShort, static_cast<uint16_t>(in.size()));
     }
     if (in[0] != static_cast<uint8_t>(form)) {
         return FailAt(AvcErrorKind::kMalformedOperands, 0);
     }
-    auto plugResult = PlugAddress::Decode(in.subspan(1, 5));
+    auto plugResult = PlugAddress::Decode(in.subspan(kPlugAddressOffset, kPlugAddressBytes));
     if (!plugResult) return std::unexpected(plugResult.error());
-    if (form == StreamFormatSubfunction::kList && in[7] != index) {
-        return FailAt(AvcErrorKind::kMalformedOperands, 7);
+    if (form == StreamFormatSubfunction::kList && in[kListIndexOffset] != index) {
+        return FailAt(AvcErrorKind::kMalformedOperands, kListIndexOffset);
     }
     StreamFormatReply reply{
         .form = form,
         .plug = *plugResult,
-        .status = static_cast<SupportStatus>(in[6]),
-        .index = form == StreamFormatSubfunction::kList ? in[7] : uint8_t{0},
+        .status = static_cast<SupportStatus>(in[kSupportStatusOffset]),
+        .index = form == StreamFormatSubfunction::kList ? in[kListIndexOffset] : uint8_t{0},
     };
     if (in.size() > minimum) {
         auto formatResult = DecodeStreamFormatBlock(in.subspan(minimum));

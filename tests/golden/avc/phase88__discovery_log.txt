@@ -1,0 +1,760 @@
+[AvcCaps] discovery guid=0x000aac0300b1d1f7 node=1 generation=1 session=1 complete=yes cancelled=no terminal_error=none
+[AvcCaps] unit unit_type=Audio(0x01) unit=7 company_id=0x000aac
+[AvcCaps] unit plugs isochronous_in=2 isochronous_out=2 external_in=8 external_out=7 async_in=0 async_out=0
+[AvcCaps] subunit Audio(0x01)#0 (0x08) destination_plugs=8 source_plugs=11 plugs_discovered=yes
+[AvcCaps] subunit Music(0x0c)#0 (0x60) destination_plugs=10 source_plugs=6 plugs_discovered=yes
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 signal_format fmt=audio and music (eoh 1, form 0, FMT 10)(0x90) fdf=[02 ff ff] sfc=48 kHz(0x02)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 current_format compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 current_format entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 current_format entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 current_format entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[0] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[0] entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[0] entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[1] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[1] entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[1] entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[2] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[2] entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[2] entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[3] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[3] entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[3] entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[4] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[4] entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Unit(0x1f) input(0x00) #0 supported_format[4] entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) input(0x00) #1 signal_format fmt=audio and music (eoh 1, form 0, FMT 10)(0x90) fdf=[01 ff ff] sfc=44.1 kHz(0x01)
+[AvcCaps] plug Unit(0x1f) input(0x00) #1 current_format format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 3f ff]
+[AvcCaps] plug Unit(0x1f) input(0x00) #1 supported_format[0] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 2f ff]
+[AvcCaps] plug Unit(0x1f) input(0x00) #1 supported_format[1] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 3f ff]
+[AvcCaps] plug Unit(0x1f) input(0x00) #1 supported_format[2] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 4f ff]
+[AvcCaps] plug Unit(0x1f) input(0x00) #1 supported_format[3] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff af ff]
+[AvcCaps] plug Unit(0x1f) input(0x00) #1 supported_format[4] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 5f ff]
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 signal_format fmt=audio and music (eoh 1, form 0, FMT 10)(0x90) fdf=[02 ff ff] sfc=48 kHz(0x02)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 current_format compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 current_format entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 current_format entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 current_format entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 current_format entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 current_format entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 current_format entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[0] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[0] entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[0] entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[0] entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[0] entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[0] entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[1] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[1] entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[1] entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[1] entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[1] entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[1] entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[2] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[2] entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[2] entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[2] entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[2] entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[2] entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[3] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[3] entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[3] entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[3] entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[3] entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[3] entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[4] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[4] entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[4] entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[4] entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[4] entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 supported_format[4] entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 route source=Music(0x0c)#0 (0x60) source plug 0 [60 00] destination=oPCR[0] [ff 00]
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 route_status first_operand=0x10 output_status=effective(0x0) conv=can change format(1) signal_status=identical(0x0)
+[AvcCaps] plug Unit(0x1f) output(0x01) #0 route_check destination_kind=serial bus oPCR deviations=none
+[AvcCaps] plug Unit(0x1f) output(0x01) #1 signal_format fmt=audio and music (eoh 1, form 0, FMT 10)(0x90) fdf=[01 ff ff] sfc=44.1 kHz(0x01)
+[AvcCaps] plug Unit(0x1f) output(0x01) #1 current_format format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 3f ff]
+[AvcCaps] plug Unit(0x1f) output(0x01) #1 supported_format[0] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 2f ff]
+[AvcCaps] plug Unit(0x1f) output(0x01) #1 supported_format[1] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 3f ff]
+[AvcCaps] plug Unit(0x1f) output(0x01) #1 supported_format[2] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 4f ff]
+[AvcCaps] plug Unit(0x1f) output(0x01) #1 supported_format[3] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff af ff]
+[AvcCaps] plug Unit(0x1f) output(0x01) #1 supported_format[4] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 5f ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 current_format compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 current_format entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 current_format entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 current_format entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[0] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[0] entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[0] entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[1] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[1] entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[1] entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[2] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[2] entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[2] entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[3] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[3] entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[3] entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[4] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[4] entry[1] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 supported_format[4] entry[2] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 route source=iPCR[0] [ff 00] destination=Music(0x0c)#0 (0x60) destination plug 0 [60 00]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 route_status first_operand=0x70 output_status=ready(0x3) conv=can change format(1) signal_status=identical(0x0)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #0 route_check destination_kind=subunit destination plug deviations=output_status beyond effective/not effective; conv set on a plug that is not an oPCR
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 current_format compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 current_format entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 supported_format[0] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 supported_format[1] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 supported_format[2] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 supported_format[3] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 supported_format[4] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 route source=Audio(0x01)#0 (0x08) source plug 0 [08 00] destination=Music(0x0c)#0 (0x60) destination plug 1 [60 01]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 route_status first_operand=0x70 output_status=ready(0x3) conv=can change format(1) signal_status=identical(0x0)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #1 route_check destination_kind=subunit destination plug deviations=output_status beyond effective/not effective; conv set on a plug that is not an oPCR
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 current_format compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 current_format entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 supported_format[0] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 supported_format[1] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 supported_format[2] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 supported_format[3] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 supported_format[4] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 route source=Audio(0x01)#0 (0x08) source plug 1 [08 01] destination=Music(0x0c)#0 (0x60) destination plug 2 [60 02]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 route_status first_operand=0x70 output_status=ready(0x3) conv=can change format(1) signal_status=identical(0x0)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #2 route_check destination_kind=subunit destination plug deviations=output_status beyond effective/not effective; conv set on a plug that is not an oPCR
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 current_format compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 current_format entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 supported_format[0] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 supported_format[1] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 supported_format[2] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 supported_format[3] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 supported_format[4] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 route source=Audio(0x01)#0 (0x08) source plug 2 [08 02] destination=Music(0x0c)#0 (0x60) destination plug 3 [60 03]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 route_status first_operand=0x70 output_status=ready(0x3) conv=can change format(1) signal_status=identical(0x0)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #3 route_check destination_kind=subunit destination plug deviations=output_status beyond effective/not effective; conv set on a plug that is not an oPCR
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 current_format compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 current_format entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 supported_format[0] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 supported_format[1] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 supported_format[2] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 supported_format[3] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 supported_format[4] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 route source=Audio(0x01)#0 (0x08) source plug 3 [08 03] destination=Music(0x0c)#0 (0x60) destination plug 4 [60 04]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 route_status first_operand=0x70 output_status=ready(0x3) conv=can change format(1) signal_status=identical(0x0)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #4 route_check destination_kind=subunit destination plug deviations=output_status beyond effective/not effective; conv set on a plug that is not an oPCR
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 current_format compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 current_format entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 supported_format[0] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 supported_format[1] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 supported_format[2] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 supported_format[3] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 supported_format[4] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 route source=Audio(0x01)#0 (0x08) source plug 4 [08 04] destination=Music(0x0c)#0 (0x60) destination plug 5 [60 05]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 route_status first_operand=0x70 output_status=ready(0x3) conv=can change format(1) signal_status=identical(0x0)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #5 route_check destination_kind=subunit destination plug deviations=output_status beyond effective/not effective; conv set on a plug that is not an oPCR
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 current_format compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 current_format entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 supported_format[0] entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 supported_format[1] entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 supported_format[2] entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 supported_format[3] entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 supported_format[4] entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 route source=external input plug 5 [ff 85] destination=Music(0x0c)#0 (0x60) destination plug 6 [60 06]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 route_status first_operand=0x70 output_status=ready(0x3) conv=can change format(1) signal_status=identical(0x0)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #6 route_check destination_kind=subunit destination plug deviations=output_status beyond effective/not effective; conv set on a plug that is not an oPCR
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 current_format compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 current_format entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 supported_format[0] entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 supported_format[1] entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 supported_format[2] entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 supported_format[3] entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 supported_format[4] entry[0] 2 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 route source=external input plug 6 [ff 86] destination=Music(0x0c)#0 (0x60) destination plug 7 [60 07]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 route_status first_operand=0x70 output_status=ready(0x3) conv=can change format(1) signal_status=identical(0x0)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #7 route_check destination_kind=subunit destination plug deviations=output_status beyond effective/not effective; conv set on a plug that is not an oPCR
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #8 current_format format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 3f ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #8 supported_format[0] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 2f ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #8 supported_format[1] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 3f ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #8 supported_format[2] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 4f ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #8 supported_format[3] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff af ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #8 supported_format[4] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 5f ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #8 route source=no signal source [ff fe] destination=Music(0x0c)#0 (0x60) destination plug 8 [60 08]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #8 route_status first_operand=0x30 output_status=not effective(0x1) conv=can change format(1) signal_status=identical(0x0)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #8 route_check destination_kind=subunit destination plug deviations=conv set on a plug that is not an oPCR
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #9 current_format format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 3f ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #9 supported_format[0] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 2f ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #9 supported_format[1] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 3f ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #9 supported_format[2] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 4f ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #9 supported_format[3] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff af ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #9 supported_format[4] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 5f ff]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #9 route source=no signal source [ff fe] destination=Music(0x0c)#0 (0x60) destination plug 9 [60 09]
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #9 route_status first_operand=0x30 output_status=not effective(0x1) conv=can change format(1) signal_status=identical(0x0)
+[AvcCaps] plug Music(0x0c)#0 input(0x00) #9 route_check destination_kind=subunit destination plug deviations=conv set on a plug that is not an oPCR
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 current_format compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 current_format entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 current_format entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 current_format entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 current_format entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 current_format entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 current_format entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[0] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[0] entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[0] entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[0] entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[0] entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[0] entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[1] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[1] entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[1] entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[1] entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[1] entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[1] entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[2] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[2] entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[2] entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[2] entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[2] entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[2] entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[3] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[3] entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[3] entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[3] entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[3] entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[3] entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[4] entry[0] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[4] entry[1] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[4] entry[2] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[4] entry[3] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[4] entry[4] 2 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #0 supported_format[4] entry[5] 1 x MIDI conformant(0x0d)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 current_format compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 current_format entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 supported_format[0] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 supported_format[1] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 supported_format[2] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 supported_format[3] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #1 supported_format[4] entry[0] 8 x multi-bit linear audio (raw)(0x06)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 current_format compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 current_format entry[0] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 supported_format[0] compound AM824 rate=32 kHz(0x02) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 supported_format[0] entry[0] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 supported_format[1] compound AM824 rate=44.1 kHz(0x03) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 supported_format[1] entry[0] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 supported_format[2] compound AM824 rate=48 kHz(0x04) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 supported_format[2] entry[0] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 supported_format[3] compound AM824 rate=88.2 kHz(0x0a) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 supported_format[3] entry[0] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 supported_format[4] compound AM824 rate=96 kHz(0x05) sync_source=no rate_control=don't care(0x01)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #2 supported_format[4] entry[0] 2 x IEC 60958-3(0x00)
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #3 current_format format root=invalid(0xff) level1=don't care(0xff) bytes=[ff ff ff ff ff ff]
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #4 current_format format root=invalid(0xff) level1=don't care(0xff) bytes=[ff ff ff ff ff ff]
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #5 current_format format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 3f ff]
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #5 supported_format[0] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 2f ff]
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #5 supported_format[1] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 3f ff]
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #5 supported_format[2] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 4f ff]
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #5 supported_format[3] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff af ff]
+[AvcCaps] plug Music(0x0c)#0 output(0x01) #5 supported_format[4] format root=Audio & Music(0x90) level1=AM824(0x00) bytes=[90 00 40 ff 5f ff]
+[AvcCaps] descriptor Unit(0x1f) subunit dependent descriptor(0x80) [80] bytes=0 primary_error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8) cleanup_error=none parse_error=none
+[AvcCaps] descriptor Audio(0x01)#0 (sub)unit identifier descriptor(0x00) [00] bytes=658 primary_error=none cleanup_error=none parse_error=none
+[AvcCaps] descriptor Audio(0x01)#0 list descriptor by list_ID(0x10) [10 18 00] bytes=35 primary_error=none cleanup_error=none parse_error=none
+[AvcCaps] descriptor Audio(0x01)#0 list descriptor by list_ID(0x10) [10 18 01] bytes=3895 primary_error=none cleanup_error=none parse_error=none
+[AvcCaps] descriptor Music(0x0c)#0 subunit dependent descriptor(0x80) [80] bytes=2410 primary_error=none cleanup_error=none parse_error=none
+[AvcCaps] descriptor Music(0x0c)#0 (sub)unit identifier descriptor(0x00) [00] bytes=67 primary_error=none cleanup_error=none parse_error=none
+[AvcCaps] audio Audio(0x01)#0 generation_id=2 list_id_size=2 object_id_size=0 object_position_size=2 root_lists=[0x1800] text_database_entries=80
+[AvcCaps] audio Audio(0x01)#0 subunit_source_plug[0] fed_by subunit destination plug 2 [f0 02]
+[AvcCaps] audio Audio(0x01)#0 subunit_source_plug[1] fed_by subunit destination plug 3 [f0 03]
+[AvcCaps] audio Audio(0x01)#0 subunit_source_plug[2] fed_by subunit destination plug 4 [f0 04]
+[AvcCaps] audio Audio(0x01)#0 subunit_source_plug[3] fed_by Selector(0x80) function block 10 [80 0a]
+[AvcCaps] audio Audio(0x01)#0 subunit_source_plug[4] fed_by subunit destination plug 6 [f0 06]
+[AvcCaps] audio Audio(0x01)#0 subunit_source_plug[5] fed_by Selector(0x80) function block 9 [80 09]
+[AvcCaps] audio Audio(0x01)#0 subunit_source_plug[6] fed_by Selector(0x80) function block 1 [80 01]
+[AvcCaps] audio Audio(0x01)#0 subunit_source_plug[7] fed_by Selector(0x80) function block 2 [80 02]
+[AvcCaps] audio Audio(0x01)#0 subunit_source_plug[8] fed_by Selector(0x80) function block 3 [80 03]
+[AvcCaps] audio Audio(0x01)#0 subunit_source_plug[9] fed_by Selector(0x80) function block 4 [80 04]
+[AvcCaps] audio Audio(0x01)#0 subunit_source_plug[10] fed_by Selector(0x80) function block 5 [80 05]
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 name="Mixer Output Level" name_index=2
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 input Processing(0x82) function block 1 [82 01]
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 cluster_channels=8 general_tag=0
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000, 0xc000, 0xc000, 0xc000, 0xc000,
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #1 (cont 2) 0xc000, 0xc000] (hint: bits from the MSB)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #2 name="Mixer Input LineIn 1/2 Level" name_index=11
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #2 input subunit destination plug 2 [f0 02]
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #2 cluster_channels=2 general_tag=0
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #2 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #3 name="Mixer Input LineIn 3/4 Level" name_index=14
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #3 input subunit destination plug 3 [f0 03]
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #3 cluster_channels=2 general_tag=0
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #3 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #4 name="Mixer Input LineIn 5/6 Level" name_index=17
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #4 input subunit destination plug 4 [f0 04]
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #4 cluster_channels=2 general_tag=0
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #4 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #5 name="Mixer Input LineIn 7/8 Level" name_index=20
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #5 input subunit destination plug 5 [f0 05]
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #5 cluster_channels=2 general_tag=0
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #5 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #6 name="Mixer Input S/PDIF In Level" name_index=23
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #6 input subunit destination plug 6 [f0 06]
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #6 cluster_channels=2 general_tag=0
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #6 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #7 name="Mixer Input Waveplay Level" name_index=26
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #7 input Selector(0x80) function block 7 [80 07]
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #7 cluster_channels=2 general_tag=0
+[AvcCaps] audio Audio(0x01)#0 function_block Feature(0x81) #7 advertised_controls master=0xc000 [MUTE_CONTROL(bit 0), VOLUME_CONTROL(bit 1)] channels=[0xc000, 0xc000] (hint: bits from the MSB)
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #1 name="LineOut 1/2 Selector" name_index=29
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #1 input Processing(0x82) function block 2 [82 02]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #1 input Selector(0x80) function block 6 [80 06]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #2 name="LineOut 3/4 Selector" name_index=32
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #2 input Processing(0x82) function block 3 [82 03]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #2 input Selector(0x80) function block 6 [80 06]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #3 name="LineOut 5/6 Selector" name_index=35
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #3 input Processing(0x82) function block 4 [82 04]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #3 input Selector(0x80) function block 6 [80 06]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #4 name="LineOut 7/8 Selector" name_index=38
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #4 input Processing(0x82) function block 5 [82 05]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #4 input Selector(0x80) function block 6 [80 06]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #5 name="S/PDIF Out Selector" name_index=41
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #5 input subunit destination plug 1 [f0 01]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #5 input Selector(0x80) function block 6 [80 06]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #6 name="Mixer Output Selector FB" name_index=44
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #6 input Feature(0x81) function block 1 [81 01]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #6 input Feature(0x81) function block 1 [81 01]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #6 input Feature(0x81) function block 1 [81 01]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #6 input Feature(0x81) function block 1 [81 01]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #6 input Feature(0x81) function block 1 [81 01]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #6 input Feature(0x81) function block 1 [81 01]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #7 name="Waveplay Selector" name_index=47
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #7 input subunit destination plug 1 [f0 01]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #7 input Processing(0x82) function block 2 [82 02]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #7 input Processing(0x82) function block 3 [82 03]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #7 input Processing(0x82) function block 4 [82 04]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #7 input Processing(0x82) function block 5 [82 05]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #8 name="external Clocksource Selector" name_index=50
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #8 input subunit destination plug 6 [f0 06]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #8 input subunit destination plug 7 [f0 07]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #9 name="Clock Selector" name_index=53
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #9 input not connected [fe ff]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #9 input Selector(0x80) function block 8 [80 08]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #10 name="Input 7/8 Selector" name_index=56
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #10 input subunit destination plug 5 [f0 05]
+[AvcCaps] audio Audio(0x01)#0 function_block Selector(0x80) #10 input not connected [fe ff]
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 name="Main Mixer" name_index=59
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 input Feature(0x81) function block 7 [81 07]
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 input Feature(0x81) function block 2 [81 02]
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 input Feature(0x81) function block 3 [81 03]
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 input Feature(0x81) function block 4 [81 04]
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 input Feature(0x81) function block 5 [81 05]
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 input Feature(0x81) function block 6 [81 06]
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #1 process_type=MIXER(0x01) programmable_mixer_controls=0 controls_bytes=0
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #2 name="Channel 1/2" name_index=68
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #2 input subunit destination plug 0 [f0 00]
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #2 process_type=MIXER(0x01) programmable_mixer_controls=0 controls_bytes=0
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #3 name="Channel 3/4" name_index=71
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #3 input subunit destination plug 0 [f0 00]
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #3 process_type=MIXER(0x01) programmable_mixer_controls=0 controls_bytes=0
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #4 name="Channel 5/6" name_index=74
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #4 input subunit destination plug 0 [f0 00]
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #4 process_type=MIXER(0x01) programmable_mixer_controls=0 controls_bytes=0
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #5 name="Channel 7/8" name_index=77
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #5 input subunit destination plug 0 [f0 00]
+[AvcCaps] audio Audio(0x01)#0 function_block Processing(0x82) #5 process_type=MIXER(0x01) programmable_mixer_controls=0 controls_bytes=0
+[AvcCaps] music Music(0x0c)#0 descriptor_length=2408
+[AvcCaps] music Music(0x0c)#0 top_level_block[0] general music subunit status area(0x8100) bytes=12 primary=6
+[AvcCaps] music Music(0x0c)#0 top_level_block[1] music output plug status area(0x8101) bytes=705 primary=1
+[AvcCaps] music Music(0x0c)#0 top_level_block[2] routing status(0x8108) bytes=1691 primary=4
+[AvcCaps] music Music(0x0c)#0 general_status transmit=blocking(0x02) receive=non-blocking+blocking(0x03) latency=0xffffffff
+[AvcCaps] music Music(0x0c)#0 routing_status destination_plugs=10 source_plugs=4
+[AvcCaps] music Music(0x0c)#0 plug destination #0 usage=isochronous stream(0x00) name="PHASE88 FW Multichannel Out" clusters=3
+[AvcCaps] music Music(0x0c)#0 plug destination #0 cluster[0] stream_format=multi-bit linear audio (raw)(0x06) port_type=line(0x03) channels=8 name="PHASE88 FW Multichannel Out"
+[AvcCaps] music Music(0x0c)#0 plug destination #0 cluster[0] signals=[plug 0@1, plug 1@6, plug 2@2, plug 3@7, plug 4@3, plug 5@8, plug 6@4, plug 7@9]
+[AvcCaps] music Music(0x0c)#0 plug destination #0 cluster[1] stream_format=IEC 60958-3(0x00) port_type=S/PDIF(0x04) channels=2 name="SPDIF/AC3 Out"
+[AvcCaps] music Music(0x0c)#0 plug destination #0 cluster[1] signals=[plug 8@0, plug 9@5]
+[AvcCaps] music Music(0x0c)#0 plug destination #0 cluster[2] stream_format=MIDI conformant(0x0d) port_type=MIDI(0x0a) channels=2 name="MidiSection.0"
+[AvcCaps] music Music(0x0c)#0 plug destination #0 cluster[2] signals=[plug 10@10, plug 10@10]
+[AvcCaps] music Music(0x0c)#0 plug destination #1 usage=isochronous stream(0x00) name="Line In 1/2" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug destination #1 cluster[0] stream_format=multi-bit linear audio (raw)(0x06) port_type=line(0x03) channels=2 name="Line In 1/2"
+[AvcCaps] music Music(0x0c)#0 plug destination #1 cluster[0] signals=[plug 12@0, plug 13@1]
+[AvcCaps] music Music(0x0c)#0 plug destination #2 usage=isochronous stream(0x00) name="Line In 3/4" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug destination #2 cluster[0] stream_format=multi-bit linear audio (raw)(0x06) port_type=line(0x03) channels=2 name="Line In 3/4"
+[AvcCaps] music Music(0x0c)#0 plug destination #2 cluster[0] signals=[plug 14@0, plug 15@1]
+[AvcCaps] music Music(0x0c)#0 plug destination #3 usage=isochronous stream(0x00) name="Line In 5/6" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug destination #3 cluster[0] stream_format=multi-bit linear audio (raw)(0x06) port_type=line(0x03) channels=2 name="Line In 5/6"
+[AvcCaps] music Music(0x0c)#0 plug destination #3 cluster[0] signals=[plug 16@0, plug 17@1]
+[AvcCaps] music Music(0x0c)#0 plug destination #4 usage=isochronous stream(0x00) name="Line In 7/8" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug destination #4 cluster[0] stream_format=multi-bit linear audio (raw)(0x06) port_type=line(0x03) channels=2 name="Line In 7/8"
+[AvcCaps] music Music(0x0c)#0 plug destination #4 cluster[0] signals=[plug 18@0, plug 19@1]
+[AvcCaps] music Music(0x0c)#0 plug destination #5 usage=isochronous stream(0x00) name="SPDIF In" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug destination #5 cluster[0] stream_format=multi-bit linear audio (raw)(0x06) port_type=S/PDIF(0x04) channels=2 name="SPDIF In"
+[AvcCaps] music Music(0x0c)#0 plug destination #5 cluster[0] signals=[plug 20@0, plug 21@1]
+[AvcCaps] music Music(0x0c)#0 plug destination #6 usage=MIDI(0x02) name="MidiSection" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug destination #6 cluster[0] stream_format=MIDI conformant(0x0d) port_type=MIDI(0x0a) channels=2 name="MidiSection"
+[AvcCaps] music Music(0x0c)#0 plug destination #6 cluster[0] signals=[plug 22@0, plug 23@1]
+[AvcCaps] music Music(0x0c)#0 plug destination #7 usage=MIDI(0x02) name="MidiSection" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug destination #7 cluster[0] stream_format=MIDI conformant(0x0d) port_type=MIDI(0x0a) channels=0 name="MidiSection"
+[AvcCaps] music Music(0x0c)#0 plug destination #7 cluster[0] signals=[]
+[AvcCaps] music Music(0x0c)#0 plug destination #8 usage=sync(0x03) name="Synch" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug destination #8 cluster[0] stream_format=sync stream(0x40) port_type=digital(0x09) channels=1 name="Synch"
+[AvcCaps] music Music(0x0c)#0 plug destination #8 cluster[0] signals=[plug 24@0]
+[AvcCaps] music Music(0x0c)#0 plug destination #9 usage=sync(0x03) name="Synch" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug destination #9 cluster[0] stream_format=sync stream(0x40) port_type=digital(0x09) channels=0 name="Synch"
+[AvcCaps] music Music(0x0c)#0 plug destination #9 cluster[0] signals=[]
+[AvcCaps] music Music(0x0c)#0 plug source #0 usage=isochronous stream(0x00) name="Line In 1/2" clusters=6
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[0] stream_format=multi-bit linear audio (raw)(0x06) port_type=line(0x03) channels=2 name="Line In 1/2"
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[0] signals=[plug 12@1, plug 13@6]
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[1] stream_format=multi-bit linear audio (raw)(0x06) port_type=line(0x03) channels=2 name="Line In 3/4"
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[1] signals=[plug 14@2, plug 15@7]
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[2] stream_format=multi-bit linear audio (raw)(0x06) port_type=line(0x03) channels=2 name="Line In 5/6"
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[2] signals=[plug 16@3, plug 17@8]
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[3] stream_format=multi-bit linear audio (raw)(0x06) port_type=line(0x03) channels=2 name="Line In 7/8"
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[3] signals=[plug 18@4, plug 19@9]
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[4] stream_format=multi-bit linear audio (raw)(0x06) port_type=S/PDIF(0x04) channels=2 name="SPDIF In"
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[4] signals=[plug 20@0, plug 21@5]
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[5] stream_format=MIDI conformant(0x0d) port_type=MIDI(0x0a) channels=2 name="MidiSection.0"
+[AvcCaps] music Music(0x0c)#0 plug source #0 cluster[5] signals=[plug 22@10, plug 22@10]
+[AvcCaps] music Music(0x0c)#0 plug source #1 usage=isochronous stream(0x00) name="PHASE88 FW Multichannel Out" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug source #1 cluster[0] stream_format=multi-bit linear audio (raw)(0x06) port_type=line(0x03) channels=8 name="PHASE88 FW Multichannel Out"
+[AvcCaps] music Music(0x0c)#0 plug source #1 cluster[0] signals=[plug 0@0, plug 1@4, plug 2@1, plug 3@5, plug 4@2, plug 5@6, plug 6@3, plug 7@7]
+[AvcCaps] music Music(0x0c)#0 plug source #2 usage=isochronous stream(0x00) name="SPDIF/AC3 Out" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug source #2 cluster[0] stream_format=IEC 60958-3(0x00) port_type=S/PDIF(0x04) channels=2 name="SPDIF/AC3 Out"
+[AvcCaps] music Music(0x0c)#0 plug source #2 cluster[0] signals=[plug 8@0, plug 9@1]
+[AvcCaps] music Music(0x0c)#0 plug source #5 usage=sync(0x03) name="Synch" clusters=1
+[AvcCaps] music Music(0x0c)#0 plug source #5 cluster[0] stream_format=sync stream(0x40) port_type=digital(0x09) channels=1 name="Synch"
+[AvcCaps] music Music(0x0c)#0 plug source #5 cluster[0] signals=[plug 24@0]
+[AvcCaps] music Music(0x0c)#0 music_plug 0 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 0 source subunit destination plug(0xf0) plug=0 fb=none position=1 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 0 destination subunit source plug(0xf1) plug=1 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 1 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 1 source subunit destination plug(0xf0) plug=0 fb=none position=6 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 1 destination subunit source plug(0xf1) plug=1 fb=none position=4 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 2 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 2 source subunit destination plug(0xf0) plug=0 fb=none position=2 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 2 destination subunit source plug(0xf1) plug=1 fb=none position=1 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 3 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 3 source subunit destination plug(0xf0) plug=0 fb=none position=7 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 3 destination subunit source plug(0xf1) plug=1 fb=none position=5 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 4 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 4 source subunit destination plug(0xf0) plug=0 fb=none position=3 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 4 destination subunit source plug(0xf1) plug=1 fb=none position=2 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 5 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 5 source subunit destination plug(0xf0) plug=0 fb=none position=8 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 5 destination subunit source plug(0xf1) plug=1 fb=none position=6 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 6 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 6 source subunit destination plug(0xf0) plug=0 fb=none position=4 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 6 destination subunit source plug(0xf1) plug=1 fb=none position=3 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 7 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 7 source subunit destination plug(0xf0) plug=0 fb=none position=9 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 7 destination subunit source plug(0xf1) plug=1 fb=none position=7 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 8 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 8 source subunit destination plug(0xf0) plug=0 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 8 destination subunit source plug(0xf1) plug=2 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 9 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 9 source subunit destination plug(0xf0) plug=0 fb=none position=5 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 9 destination subunit source plug(0xf1) plug=2 fb=none position=1 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 10 type=MIDI(0x01) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 10 source subunit destination plug(0xf0) plug=0 fb=none position=10 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 10 destination subunit source plug(0xf1) plug=none fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 11 type=MIDI(0x01) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 11 source subunit destination plug(0xf0) plug=0 fb=none position=10 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 11 destination subunit source plug(0xf1) plug=none fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 12 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 12 source subunit destination plug(0xf0) plug=1 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 12 destination subunit source plug(0xf1) plug=0 fb=none position=1 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 13 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 13 source subunit destination plug(0xf0) plug=1 fb=none position=1 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 13 destination subunit source plug(0xf1) plug=0 fb=none position=6 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 14 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 14 source subunit destination plug(0xf0) plug=2 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 14 destination subunit source plug(0xf1) plug=0 fb=none position=2 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 15 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 15 source subunit destination plug(0xf0) plug=2 fb=none position=1 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 15 destination subunit source plug(0xf1) plug=0 fb=none position=7 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 16 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 16 source subunit destination plug(0xf0) plug=3 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 16 destination subunit source plug(0xf1) plug=0 fb=none position=3 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 17 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 17 source subunit destination plug(0xf0) plug=3 fb=none position=1 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 17 destination subunit source plug(0xf1) plug=0 fb=none position=8 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 18 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 18 source subunit destination plug(0xf0) plug=4 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 18 destination subunit source plug(0xf1) plug=0 fb=none position=4 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 19 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 19 source subunit destination plug(0xf0) plug=4 fb=none position=1 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 19 destination subunit source plug(0xf1) plug=0 fb=none position=9 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 20 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 20 source subunit destination plug(0xf0) plug=5 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 20 destination subunit source plug(0xf1) plug=0 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 21 type=audio(0x00) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 21 source subunit destination plug(0xf0) plug=5 fb=none position=1 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 21 destination subunit source plug(0xf1) plug=0 fb=none position=5 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 22 type=MIDI(0x01) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 22 source subunit destination plug(0xf0) plug=6 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 22 destination subunit source plug(0xf1) plug=0 fb=none position=10 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 23 type=MIDI(0x01) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 23 source subunit destination plug(0xf0) plug=6 fb=none position=1 location=2
+[AvcCaps] music Music(0x0c)#0 music_plug 23 destination subunit source plug(0xf1) plug=0 fb=none position=10 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 24 type=audio SYNC(0x80) routing_support=fixed(0x00) name=""
+[AvcCaps] music Music(0x0c)#0 music_plug 24 source subunit destination plug(0xf0) plug=8 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 music_plug 24 destination subunit source plug(0xf1) plug=5 fb=none position=0 location=1
+[AvcCaps] music Music(0x0c)#0 source plug #0 audio_stream_label[0]="Line_1/2 left PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #0 audio_stream_label[1]="Line_1/2 right PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #0 audio_stream_label[2]="Line_3/4 left PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #0 audio_stream_label[3]="Line_3/4 right PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #0 audio_stream_label[4]="Line_5/6 left PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #0 audio_stream_label[5]="Line_5/6 right PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #0 audio_stream_label[6]="Line_7/8 left PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #0 audio_stream_label[7]="Line_7/8 right PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #0 audio_stream_label[8]="SPDIF left PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #0 audio_stream_label[9]="SPDIF right PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #1 audio_stream_label[0]="Multichannel 1 PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #1 audio_stream_label[1]="Multichannel 2 PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #1 audio_stream_label[2]="Multichannel 3 PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #1 audio_stream_label[3]="Multichannel 4 PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #1 audio_stream_label[4]="Multichannel 5 PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #1 audio_stream_label[5]="Multichannel 6 PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #1 audio_stream_label[6]="Multichannel 7 PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #1 audio_stream_label[7]="Multichannel 8 PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #2 audio_stream_label[0]="SPDIF/AC3 left PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 source plug #2 audio_stream_label[1]="SPDIF/AC3 right PHASE88 FW"
+[AvcCaps] music Music(0x0c)#0 output_plug_status declared_source_plugs=4 plugs_with_stream_info=[0,1,2,5]
+[AvcCaps] music Music(0x0c)#0 source plug #5 audio_sync_activity=bus+external(0x03)
+[AvcCaps] music Music(0x0c)#0 source plug #0 midi_streams declared=2 labelled=2
+[AvcCaps] music Music(0x0c)#0 source plug #0 midi_stream_label[0]="MidiPort_1"
+[AvcCaps] music Music(0x0c)#0 source plug #0 midi_stream_label[1]="MidiPort_2"
+[AvcCaps] music_identifier Music(0x0c)#0 generation_id=2 version=1.0(0x10) list_id_size=0 root_lists=0 attributes=00 optional_info_bytes=0 manufacturer_info_bytes=0
+[AvcCaps] music_identifier Music(0x0c)#0 capabilities=0x27 [general, audio, MIDI, audio SYNC]
+[AvcCaps] music_identifier Music(0x0c)#0 general transmit=blocking(0x02) receive=non-blocking+blocking(0x03) latency=0xffffffff
+[AvcCaps] music_identifier Music(0x0c)#0 audio_format[0] max_input_channels=10 max_output_channels=10 fdf=32 kHz(0x00) am824_label=multi-bit linear audio(0x40)
+[AvcCaps] music_identifier Music(0x0c)#0 audio_format[1] max_input_channels=10 max_output_channels=10 fdf=44.1 kHz(0x01) am824_label=multi-bit linear audio(0x40)
+[AvcCaps] music_identifier Music(0x0c)#0 audio_format[2] max_input_channels=10 max_output_channels=10 fdf=48 kHz(0x02) am824_label=multi-bit linear audio(0x40)
+[AvcCaps] music_identifier Music(0x0c)#0 audio_format[3] max_input_channels=10 max_output_channels=10 fdf=88.2 kHz(0x03) am824_label=multi-bit linear audio(0x40)
+[AvcCaps] music_identifier Music(0x0c)#0 audio_format[4] max_input_channels=10 max_output_channels=10 fdf=96 kHz(0x04) am824_label=multi-bit linear audio(0x40)
+[AvcCaps] music_identifier Music(0x0c)#0 midi version=1.0 adaptation_layer=0x00 max_input_ports=4 max_output_ports=0
+[AvcCaps] music_identifier Music(0x0c)#0 audio_sync bus+external(0x03)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[60] not muted(off)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=VOLUME_CONTROL(0x02) attribute=MINIMUM(0x02) attribute=MINIMUM(0x02) data=[9c 00] volume_raw=0x9c00 -100 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=VOLUME_CONTROL(0x02) attribute=MAXIMUM(0x03) attribute=MAXIMUM(0x03) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=0 control=VOLUME_CONTROL(0x02) attribute=RESOLUTION(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=1 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=1 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=2 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=2 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=3 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=3 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=4 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=4 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=5 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=5 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=6 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=6 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=7 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=7 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=8 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=1 channel=8 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=2 channel=0 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[60] not muted(off)
+[AvcCaps] feature_status Audio(0x01)#0 fb=2 channel=0 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=2 channel=0 control=VOLUME_CONTROL(0x02) attribute=MINIMUM(0x02) attribute=MINIMUM(0x02) data=[9c 00] volume_raw=0x9c00 -100 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=2 channel=0 control=VOLUME_CONTROL(0x02) attribute=MAXIMUM(0x03) attribute=MAXIMUM(0x03) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=2 channel=0 control=VOLUME_CONTROL(0x02) attribute=RESOLUTION(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=2 channel=1 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=2 channel=1 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=2 channel=2 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=2 channel=2 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=3 channel=0 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[60] not muted(off)
+[AvcCaps] feature_status Audio(0x01)#0 fb=3 channel=0 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=3 channel=0 control=VOLUME_CONTROL(0x02) attribute=MINIMUM(0x02) attribute=MINIMUM(0x02) data=[9c 00] volume_raw=0x9c00 -100 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=3 channel=0 control=VOLUME_CONTROL(0x02) attribute=MAXIMUM(0x03) attribute=MAXIMUM(0x03) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=3 channel=0 control=VOLUME_CONTROL(0x02) attribute=RESOLUTION(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=3 channel=1 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=3 channel=1 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=3 channel=2 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=3 channel=2 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=4 channel=0 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[60] not muted(off)
+[AvcCaps] feature_status Audio(0x01)#0 fb=4 channel=0 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=4 channel=0 control=VOLUME_CONTROL(0x02) attribute=MINIMUM(0x02) attribute=MINIMUM(0x02) data=[9c 00] volume_raw=0x9c00 -100 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=4 channel=0 control=VOLUME_CONTROL(0x02) attribute=MAXIMUM(0x03) attribute=MAXIMUM(0x03) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=4 channel=0 control=VOLUME_CONTROL(0x02) attribute=RESOLUTION(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=4 channel=1 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=4 channel=1 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=4 channel=2 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=4 channel=2 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=5 channel=0 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[60] not muted(off)
+[AvcCaps] feature_status Audio(0x01)#0 fb=5 channel=0 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=5 channel=0 control=VOLUME_CONTROL(0x02) attribute=MINIMUM(0x02) attribute=MINIMUM(0x02) data=[9c 00] volume_raw=0x9c00 -100 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=5 channel=0 control=VOLUME_CONTROL(0x02) attribute=MAXIMUM(0x03) attribute=MAXIMUM(0x03) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=5 channel=0 control=VOLUME_CONTROL(0x02) attribute=RESOLUTION(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=5 channel=1 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=5 channel=1 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=5 channel=2 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=5 channel=2 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=6 channel=0 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[60] not muted(off)
+[AvcCaps] feature_status Audio(0x01)#0 fb=6 channel=0 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=6 channel=0 control=VOLUME_CONTROL(0x02) attribute=MINIMUM(0x02) attribute=MINIMUM(0x02) data=[9c 00] volume_raw=0x9c00 -100 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=6 channel=0 control=VOLUME_CONTROL(0x02) attribute=MAXIMUM(0x03) attribute=MAXIMUM(0x03) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=6 channel=0 control=VOLUME_CONTROL(0x02) attribute=RESOLUTION(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=6 channel=1 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=6 channel=1 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=6 channel=2 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=6 channel=2 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=7 channel=0 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[60] not muted(off)
+[AvcCaps] feature_status Audio(0x01)#0 fb=7 channel=0 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) attribute=CURRENT(0x10) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=7 channel=0 control=VOLUME_CONTROL(0x02) attribute=MINIMUM(0x02) attribute=MINIMUM(0x02) data=[9c 00] volume_raw=0x9c00 -100 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=7 channel=0 control=VOLUME_CONTROL(0x02) attribute=MAXIMUM(0x03) attribute=MAXIMUM(0x03) data=[00 00] volume_raw=0x0000 0 dB
+[AvcCaps] feature_status Audio(0x01)#0 fb=7 channel=0 control=VOLUME_CONTROL(0x02) attribute=RESOLUTION(0x01) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=7 channel=1 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=7 channel=1 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=7 channel=2 control=MUTE_CONTROL(0x01) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] feature_status Audio(0x01)#0 fb=7 channel=2 control=VOLUME_CONTROL(0x02) attribute=CURRENT(0x10) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8)
+[AvcCaps] selector_status Audio(0x01)#0 fb=1 input_plug=0
+[AvcCaps] selector_status Audio(0x01)#0 fb=2 input_plug=0
+[AvcCaps] selector_status Audio(0x01)#0 fb=3 input_plug=0
+[AvcCaps] selector_status Audio(0x01)#0 fb=4 input_plug=0
+[AvcCaps] selector_status Audio(0x01)#0 fb=5 input_plug=0
+[AvcCaps] selector_status Audio(0x01)#0 fb=6 input_plug=1
+[AvcCaps] selector_status Audio(0x01)#0 fb=7 input_plug=1
+[AvcCaps] selector_status Audio(0x01)#0 fb=8 input_plug=1
+[AvcCaps] selector_status Audio(0x01)#0 fb=9 input_plug=0
+[AvcCaps] selector_status Audio(0x01)#0 fb=10 input_plug=1
+[AvcCaps] probe_failed Unit(0x1f) opcode=STREAM FORMAT SUPPORT(0x2f) error=unexpected response(0x05) response=REJECTED(0xa) count=4
+[AvcCaps] probe_failed Audio(0x01)#0 opcode=STREAM FORMAT SUPPORT(0x2f) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8) count=38
+[AvcCaps] probe_failed Music(0x0c)#0 opcode=STREAM FORMAT SUPPORT(0x2f) error=unexpected response(0x05) response=REJECTED(0xa) count=16
+[AvcCaps] probe_failed Unit(0x1f) opcode=SIGNAL SOURCE(0x1a) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8) count=37
+[AvcCaps] probe_failed Audio(0x01)#0 opcode=FUNCTION BLOCK(0xb8) error=unexpected response(0x05) response=NOT IMPLEMENTED(0x8) count=47
+[AvcCaps] probes total=311 failed=142
+[AvcCaps] extension playback current_rate=48000 Hz pcm_slots=0 pcm_channels=0
+[AvcCaps] extension playback formation[0] 32000 Hz 10 PCM + 1 MIDI
+[AvcCaps] extension playback formation[1] 44100 Hz 10 PCM + 1 MIDI
+[AvcCaps] extension playback formation[2] 48000 Hz 10 PCM + 1 MIDI
+[AvcCaps] extension playback formation[3] 88200 Hz 10 PCM + 1 MIDI
+[AvcCaps] extension playback formation[4] 96000 Hz 10 PCM + 1 MIDI
+[AvcCaps] extension capture current_rate=48000 Hz pcm_slots=0 pcm_channels=0
+[AvcCaps] extension capture formation[0] 32000 Hz 10 PCM + 1 MIDI
+[AvcCaps] extension capture formation[1] 44100 Hz 10 PCM + 1 MIDI
+[AvcCaps] extension capture formation[2] 48000 Hz 10 PCM + 1 MIDI
+[AvcCaps] extension capture formation[3] 88200 Hz 10 PCM + 1 MIDI
+[AvcCaps] extension capture formation[4] 96000 Hz 10 PCM + 1 MIDI
+[AvcCaps] graph model="" supports_blocking_transmit=yes
+[AvcCaps] graph playback subunit_plug=0 selected_by=SIGNAL SOURCE inquiry route_ambiguous=no
+[AvcCaps] graph playback data_block_size=11 pcm_channels=10 midi_streams=1 slot_map=validated fallback_map=no
+[AvcCaps] graph playback current_rate=48000 rates=[32000, 44100, 48000, 88200, 96000]
+[AvcCaps] graph playback channel 0 slot=1 name="Multichannel 1 PHASE88 FW" cluster="PHASE88 FW Multichannel Out" format=multi-bit linear audio (raw)(0x06) music_plug=0
+[AvcCaps] graph playback channel 1 slot=6 name="Multichannel 2 PHASE88 FW" cluster="PHASE88 FW Multichannel Out" format=multi-bit linear audio (raw)(0x06) music_plug=1
+[AvcCaps] graph playback channel 2 slot=2 name="Multichannel 3 PHASE88 FW" cluster="PHASE88 FW Multichannel Out" format=multi-bit linear audio (raw)(0x06) music_plug=2
+[AvcCaps] graph playback channel 3 slot=7 name="Multichannel 4 PHASE88 FW" cluster="PHASE88 FW Multichannel Out" format=multi-bit linear audio (raw)(0x06) music_plug=3
+[AvcCaps] graph playback channel 4 slot=3 name="Multichannel 5 PHASE88 FW" cluster="PHASE88 FW Multichannel Out" format=multi-bit linear audio (raw)(0x06) music_plug=4
+[AvcCaps] graph playback channel 5 slot=8 name="Multichannel 6 PHASE88 FW" cluster="PHASE88 FW Multichannel Out" format=multi-bit linear audio (raw)(0x06) music_plug=5
+[AvcCaps] graph playback channel 6 slot=4 name="Multichannel 7 PHASE88 FW" cluster="PHASE88 FW Multichannel Out" format=multi-bit linear audio (raw)(0x06) music_plug=6
+[AvcCaps] graph playback channel 7 slot=9 name="Multichannel 8 PHASE88 FW" cluster="PHASE88 FW Multichannel Out" format=multi-bit linear audio (raw)(0x06) music_plug=7
+[AvcCaps] graph playback channel 8 slot=0 name="SPDIF/AC3 left PHASE88 FW" cluster="SPDIF/AC3 Out" format=IEC 60958-3(0x00) music_plug=8
+[AvcCaps] graph playback channel 9 slot=5 name="SPDIF/AC3 right PHASE88 FW" cluster="SPDIF/AC3 Out" format=IEC 60958-3(0x00) music_plug=9
+[AvcCaps] graph capture subunit_plug=0 selected_by=SIGNAL SOURCE inquiry route_ambiguous=no
+[AvcCaps] graph capture data_block_size=11 pcm_channels=10 midi_streams=1 slot_map=validated fallback_map=no
+[AvcCaps] graph capture current_rate=48000 rates=[32000, 44100, 48000, 88200, 96000]
+[AvcCaps] graph capture channel 0 slot=1 name="Line_1/2 left PHASE88 FW" cluster="Line In 1/2" format=multi-bit linear audio (raw)(0x06) music_plug=12
+[AvcCaps] graph capture channel 1 slot=6 name="Line_1/2 right PHASE88 FW" cluster="Line In 1/2" format=multi-bit linear audio (raw)(0x06) music_plug=13
+[AvcCaps] graph capture channel 2 slot=2 name="Line_3/4 left PHASE88 FW" cluster="Line In 3/4" format=multi-bit linear audio (raw)(0x06) music_plug=14
+[AvcCaps] graph capture channel 3 slot=7 name="Line_3/4 right PHASE88 FW" cluster="Line In 3/4" format=multi-bit linear audio (raw)(0x06) music_plug=15
+[AvcCaps] graph capture channel 4 slot=3 name="Line_5/6 left PHASE88 FW" cluster="Line In 5/6" format=multi-bit linear audio (raw)(0x06) music_plug=16
+[AvcCaps] graph capture channel 5 slot=8 name="Line_5/6 right PHASE88 FW" cluster="Line In 5/6" format=multi-bit linear audio (raw)(0x06) music_plug=17
+[AvcCaps] graph capture channel 6 slot=4 name="Line_7/8 left PHASE88 FW" cluster="Line In 7/8" format=multi-bit linear audio (raw)(0x06) music_plug=18
+[AvcCaps] graph capture channel 7 slot=9 name="Line_7/8 right PHASE88 FW" cluster="Line In 7/8" format=multi-bit linear audio (raw)(0x06) music_plug=19
+[AvcCaps] graph capture channel 8 slot=0 name="SPDIF left PHASE88 FW" cluster="SPDIF In" format=multi-bit linear audio (raw)(0x06) music_plug=20
+[AvcCaps] graph capture channel 9 slot=5 name="SPDIF right PHASE88 FW" cluster="SPDIF In" format=multi-bit linear audio (raw)(0x06) music_plug=21
+[AvcCaps] graph sync_destination music_plug=8 name="Synch"
+[AvcCaps] graph sync_destination music_plug=9 name="Synch"
+[AvcCaps] graph selector audio_subunit=0 fb=1 name="LineOut 1/2 Selector" current_input=0
+[AvcCaps] graph selector audio_subunit=0 fb=1 declared_input Processing(0x82) function block 2 [82 02]
+[AvcCaps] graph selector audio_subunit=0 fb=1 declared_input Selector(0x80) function block 6 [80 06]
+[AvcCaps] graph selector audio_subunit=0 fb=2 name="LineOut 3/4 Selector" current_input=0
+[AvcCaps] graph selector audio_subunit=0 fb=2 declared_input Processing(0x82) function block 3 [82 03]
+[AvcCaps] graph selector audio_subunit=0 fb=2 declared_input Selector(0x80) function block 6 [80 06]
+[AvcCaps] graph selector audio_subunit=0 fb=3 name="LineOut 5/6 Selector" current_input=0
+[AvcCaps] graph selector audio_subunit=0 fb=3 declared_input Processing(0x82) function block 4 [82 04]
+[AvcCaps] graph selector audio_subunit=0 fb=3 declared_input Selector(0x80) function block 6 [80 06]
+[AvcCaps] graph selector audio_subunit=0 fb=4 name="LineOut 7/8 Selector" current_input=0
+[AvcCaps] graph selector audio_subunit=0 fb=4 declared_input Processing(0x82) function block 5 [82 05]
+[AvcCaps] graph selector audio_subunit=0 fb=4 declared_input Selector(0x80) function block 6 [80 06]
+[AvcCaps] graph selector audio_subunit=0 fb=5 name="S/PDIF Out Selector" current_input=0
+[AvcCaps] graph selector audio_subunit=0 fb=5 declared_input subunit destination plug 1 [f0 01]
+[AvcCaps] graph selector audio_subunit=0 fb=5 declared_input Selector(0x80) function block 6 [80 06]
+[AvcCaps] graph selector audio_subunit=0 fb=6 name="Mixer Output Selector FB" current_input=1
+[AvcCaps] graph selector audio_subunit=0 fb=6 declared_input Feature(0x81) function block 1 [81 01]
+[AvcCaps] graph selector audio_subunit=0 fb=6 declared_input Feature(0x81) function block 1 [81 01]
+[AvcCaps] graph selector audio_subunit=0 fb=6 declared_input Feature(0x81) function block 1 [81 01]
+[AvcCaps] graph selector audio_subunit=0 fb=6 declared_input Feature(0x81) function block 1 [81 01]
+[AvcCaps] graph selector audio_subunit=0 fb=6 declared_input Feature(0x81) function block 1 [81 01]
+[AvcCaps] graph selector audio_subunit=0 fb=6 declared_input Feature(0x81) function block 1 [81 01]
+[AvcCaps] graph selector audio_subunit=0 fb=7 name="Waveplay Selector" current_input=1
+[AvcCaps] graph selector audio_subunit=0 fb=7 declared_input subunit destination plug 1 [f0 01]
+[AvcCaps] graph selector audio_subunit=0 fb=7 declared_input Processing(0x82) function block 2 [82 02]
+[AvcCaps] graph selector audio_subunit=0 fb=7 declared_input Processing(0x82) function block 3 [82 03]
+[AvcCaps] graph selector audio_subunit=0 fb=7 declared_input Processing(0x82) function block 4 [82 04]
+[AvcCaps] graph selector audio_subunit=0 fb=7 declared_input Processing(0x82) function block 5 [82 05]
+[AvcCaps] graph selector audio_subunit=0 fb=8 name="external Clocksource Selector" current_input=1
+[AvcCaps] graph selector audio_subunit=0 fb=8 declared_input subunit destination plug 6 [f0 06]
+[AvcCaps] graph selector audio_subunit=0 fb=8 declared_input subunit destination plug 7 [f0 07]
+[AvcCaps] graph selector audio_subunit=0 fb=9 name="Clock Selector" current_input=0
+[AvcCaps] graph selector audio_subunit=0 fb=9 declared_input not connected [fe ff]
+[AvcCaps] graph selector audio_subunit=0 fb=9 declared_input Selector(0x80) function block 8 [80 08]
+[AvcCaps] graph selector audio_subunit=0 fb=10 name="Input 7/8 Selector" current_input=1
+[AvcCaps] graph selector audio_subunit=0 fb=10 declared_input subunit destination plug 5 [f0 05]
+[AvcCaps] graph selector audio_subunit=0 fb=10 declared_input not connected [fe ff]
+[AvcCaps] graph control_blocks=22 routing_edges=11

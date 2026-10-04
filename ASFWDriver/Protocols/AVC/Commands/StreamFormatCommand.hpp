@@ -72,20 +72,27 @@ enum class UnitPlugType : uint8_t {
     kAsync = 0x02,
 };
 
+/// Bytes of the 5-byte plug address a mode does not use are FF ("don't care", TA 2001002
+/// Tables 5.1-5.8 use FF16 for it; ta1394 lib.rs:785-1060 pads the address the same way).
+inline constexpr uint8_t kUnusedPlugAddressByte = kUnspecifiedOperand;
+inline constexpr size_t kPlugAddressBytes = 5;
+
 struct PlugAddress {
     PlugDirection direction{PlugDirection::kInput};
     PlugAddressMode mode{PlugAddressMode::kUnit};
     UnitPlugType unitPlugType{UnitPlugType::kPcr};  ///< kUnit only
-    uint8_t functionBlockType{0xFF};                ///< kFunctionBlock only
-    uint8_t functionBlockId{0xFF};                  ///< kFunctionBlock only
+    uint8_t functionBlockType{kUnusedPlugAddressByte};  ///< kFunctionBlock only
+    uint8_t functionBlockId{kUnusedPlugAddressByte};    ///< kFunctionBlock only
     uint8_t plugId{0};
 
     [[nodiscard]] static constexpr PlugAddress UnitPlug(PlugDirection direction, UnitPlugType type,
                                                         uint8_t plugId) noexcept {
-        return PlugAddress{direction, PlugAddressMode::kUnit, type, 0xFF, 0xFF, plugId};
+        return PlugAddress{direction, PlugAddressMode::kUnit, type, kUnusedPlugAddressByte,
+                           kUnusedPlugAddressByte, plugId};
     }
     [[nodiscard]] static constexpr PlugAddress SubunitPlug(PlugDirection direction, uint8_t plugId) noexcept {
-        return PlugAddress{direction, PlugAddressMode::kSubunit, UnitPlugType::kPcr, 0xFF, 0xFF, plugId};
+        return PlugAddress{direction, PlugAddressMode::kSubunit, UnitPlugType::kPcr, kUnusedPlugAddressByte,
+                           kUnusedPlugAddressByte, plugId};
     }
     [[nodiscard]] static constexpr PlugAddress FunctionBlockPlug(PlugDirection direction, uint8_t fbType,
                                                                  uint8_t fbId, uint8_t plugId) noexcept {
@@ -96,8 +103,10 @@ struct PlugAddress {
     /// Unit:          [dir][00][type][plug][FF]
     /// Subunit:       [dir][01][plug][FF][FF]
     /// FunctionBlock: [dir][02][fb type][fb id][plug]
-    [[nodiscard]] constexpr std::array<uint8_t, 5> Encode() const noexcept {
-        std::array<uint8_t, 5> raw{static_cast<uint8_t>(direction), static_cast<uint8_t>(mode), 0xFF, 0xFF, 0xFF};
+    [[nodiscard]] constexpr std::array<uint8_t, kPlugAddressBytes> Encode() const noexcept {
+        std::array<uint8_t, kPlugAddressBytes> raw{static_cast<uint8_t>(direction), static_cast<uint8_t>(mode),
+                                                   kUnusedPlugAddressByte, kUnusedPlugAddressByte,
+                                                   kUnusedPlugAddressByte};
         switch (mode) {
             case PlugAddressMode::kUnit:
                 raw[2] = static_cast<uint8_t>(unitPlugType);
@@ -124,10 +133,10 @@ struct PlugAddress {
 
 // Phase 88 input plug 0, as in the capture above.
 static_assert(PlugAddress::UnitPlug(PlugDirection::kInput, UnitPlugType::kPcr, 0).Encode() ==
-              std::array<uint8_t, 5>{0x00, 0x00, 0x00, 0x00, 0xFF});
+              std::array<uint8_t, kPlugAddressBytes>{0x00, 0x00, 0x00, 0x00, 0xFF});
 // Linux bebob.h:185-195 music-subunit plug address, operand part.
 static_assert(PlugAddress::SubunitPlug(PlugDirection::kOutput, 2).Encode() ==
-              std::array<uint8_t, 5>{0x01, 0x01, 0x02, 0xFF, 0xFF});
+              std::array<uint8_t, kPlugAddressBytes>{0x01, 0x01, 0x02, 0xFF, 0xFF});
 
 /// ta1394 lib.rs:1080-1083.
 enum class SupportStatus : uint8_t {
@@ -138,8 +147,10 @@ enum class SupportStatus : uint8_t {
 };
 
 // ---------------------------------------------------------------------------
-// Format block. Root 0x90 = AM (ta1394 lib.rs:724); level 1: 0x00 AM824,
-// 0x40 compound AM824 (lib.rs:646-649).
+// Format block. Root 0x90 = Audio & Music (TA 2001002 Table 5.1; ta1394 lib.rs:724);
+// level 1: 0x00 AM824 (TA 2001002 Table 5.4), 0x40 compound AM824. The compound form is NOT in
+// TA 2001002 (Table 5.4 reserves 03..FE); it comes from the unpublished extended stream format
+// draft, via ta1394 lib.rs:646-649.
 // Compound AM824: [90][40][rate][flags][entry count][count, format]...
 //   rate:  StreamFormatRate (lib.rs:535-543)
 //   flags: bit 2 = sync source, bits 1..0 = rate control (lib.rs:545-549, 570-572)
@@ -150,8 +161,17 @@ inline constexpr uint8_t kFormatRootAm = 0x90;
 inline constexpr uint8_t kFormatLevel1Am824 = 0x00;
 inline constexpr uint8_t kFormatLevel1CompoundAm824 = 0x40;
 
-/// Compound AM824 entry format codes. ta1394 lib.rs:379-392. Holds any byte the
-/// device sent; unknown values pass through unchanged.
+/// Compound AM824 flags byte (ta1394 lib.rs:545-549, 570-572; draft, not in TA 2001002).
+inline constexpr uint8_t kCompoundSyncSourceBit = 0x04;
+inline constexpr uint8_t kCompoundRateControlMask = 0x03;
+/// Compound AM824 block layout: 5 header bytes ([90][40][rate][flags][entry count]), then
+/// 2 bytes per entry ([channel count][format code]).
+inline constexpr size_t kCompoundHeaderBytes = 5;
+inline constexpr size_t kCompoundEntryBytes = 2;
+
+/// Compound AM824 entry format codes. 00..0D are TA 2001002 Table 5.5 (IEC60958-3 .. MIDI
+/// Conformant); 0F, 10 and 40 are not in that table (0E..FE reserved) and come from the draft via
+/// ta1394 lib.rs:379-392. Holds any byte the device sent; unknown values pass through unchanged.
 enum class Am824Format : uint8_t {
     kIec60958_3 = 0x00,  ///< IEC 60958 conformant; Linux treats it as MBLA (Phase 88: 2 channels)
     kIec61937_3 = 0x01,
@@ -161,6 +181,10 @@ enum class Am824Format : uint8_t {
     kIec61937_7 = 0x05,
     kMultiBitLinearAudioRaw = 0x06,  ///< MBLA (Phase 88: 8 channels)
     kMultiBitLinearAudioDvd = 0x07,
+    kOneBitAudioPlainRaw = 0x08,       ///< TA 2001002 Table 5.5
+    kOneBitAudioPlainSacd = 0x09,
+    kOneBitAudioEncodedRaw = 0x0A,
+    kOneBitAudioEncodedSacd = 0x0B,
     kHighPrecisionMultiBitLinearAudio = 0x0C,
     kMidiConformant = 0x0D,
     kSmpteTimeCode = 0x0E,
@@ -253,7 +277,7 @@ struct StreamFormat {
 [[nodiscard]] Expected<StreamFormat> DecodeStreamFormatBlock(std::span<const uint8_t> block) noexcept;
 
 /// Encode a compound AM824 block into `out`; returns the byte count
-/// (5 + 2 * entryCount). kFrameTooLong when `out` is too small.
+/// (kCompoundHeaderBytes + kCompoundEntryBytes * entryCount). kFrameTooLong when `out` is too small.
 [[nodiscard]] Expected<size_t> EncodeCompoundAm824(const CompoundAm824& format, std::span<uint8_t> out) noexcept;
 
 // ---------------------------------------------------------------------------

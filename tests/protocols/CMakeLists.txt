@@ -27,6 +27,30 @@ add_protocols_test(AvcCodecTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Extensions/BridgeCoPlugInfo.cpp"
 )
 
+# AV/C CCM codecs: SIGNAL SOURCE, INPUT SELECT, OUTPUT PRESET, CCM PROFILE (TA 2002010)
+add_protocols_test(CcmCodecTests
+    CcmCodecTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)
+
+# AV/C Music subunit commands (TA 2001007 §7) and the identifier descriptor (§5)
+add_protocols_test(MusicCommandTests
+    MusicCommandTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)
+
+# AV/C Audio subunit FUNCTION BLOCK (TA 1999008 §10) and CHANGE CONFIGURATION (§11.1)
+add_protocols_test(AudioFunctionBlockTests
+    AudioFunctionBlockTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)
+
+# Naming layer and the discovery log: every wire value by spec name, UNKNOWN for the unnamed
+add_protocols_test(DiscoveryLogTests
+    DiscoveryLogTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)
+
 # AVC Hardware Fixture Tests (Phase 88 / Duet)
 add_protocols_test(AvcFixtureTests
     AvcFixtureTests.cpp
@@ -398,3 +422,8 @@ add_protocols_test(DriverKitSessionSchedulerTeardownTests
 )
 
 add_protocols_test(CompletionQueueTeardownTests CompletionQueueTeardownTests.cpp)
+
+add_protocols_test(AvcFeatureControlTests
+    AvcFeatureControlTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)

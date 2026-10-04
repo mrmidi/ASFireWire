@@ -660,7 +660,7 @@ TEST(AudioDeviceCatalog, ResolutionCarriesBuilderAndStreamTraits) {
     ASSERT_TRUE(plan.has_value());
 
     EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::ApogeeDuet);
-    EXPECT_EQ(plan->streamTraits.start.startRatePinHz, 48000U);
+    EXPECT_EQ(plan->streamTraits.start.startRatePinHz, 0U);
     EXPECT_EQ(plan->streamTraits.start.startShape, StreamStartShape::ApogeeInterleaved);
 }
 

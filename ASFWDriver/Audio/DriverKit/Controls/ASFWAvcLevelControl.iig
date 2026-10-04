@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: Apache-2.0
+#ifndef ASFWAvcLevelControl_h
+#define ASFWAvcLevelControl_h
+#include <AudioDriverKit/IOUserAudioLevelControl.iig>
+#include "AvcVolumeMapping.hpp"
+class ASFWAudioDriver;
+class ASFWAvcLevelControl : public IOUserAudioLevelControl {
+public:
+    static OSSharedPtr<ASFWAvcLevelControl> Create(ASFWAudioDriver* driver,
+        ASFW::Audio::Model::AvcPublishedControl descriptor) LOCALONLY;
+    bool init(ASFWAudioDriver* driver, ASFW::Audio::Model::AvcPublishedControl descriptor) LOCALONLY;
+    void free() override;
+    kern_return_t HandleChangeDecibelValue(float value) override;
+    kern_return_t HandleChangeScalarValue(float value) override;
+};
+struct ASFWAvcLevelControl_IVars {
+    ASFWAudioDriver* driver;
+    ASFW::Audio::Model::AvcPublishedControl descriptor;
+};
+#endif

@@ -22,8 +22,7 @@ inline constexpr std::array kApogeeDefinitions{
                // blocking -- forcing it keeps host and device aligned.
                DeviceStreamTraits{.wire = {.forcedStreamMode = ForcedStreamMode::Blocking},
                                   .resource = {.irmChannelMask = kAnyIsoChannel},
-                                  .start = {.startShape = StreamStartShape::ApogeeInterleaved,
-                                            .startRatePinHz = 48000U}}),
+                                  .start = {.startShape = StreamStartShape::ApogeeInterleaved}}),
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions

@@ -82,13 +82,11 @@ bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
     // action.
     const uint64_t requestGeneration =
         control.txPreparationRequests.PublishRequest(hostTime);
-    if (ivars.device.audioNub &&
+    if (ivars.device.audioNub && ivars.txPreparationAction &&
         control.txPreparationRequests.TryScheduleWake()) {
-        const kern_return_t requestKr =
-            ivars.device.audioNub->RequestTxPreparation(requestGeneration);
-        if (requestKr != kIOReturnSuccess) {
-            control.txPreparationRequests.FinishWake();
-        }
+        // OSAction-targeted, one-way dispatch goes directly to TxPreparation.
+        // Never wait behind a device-control RPC on the nub's Default queue.
+        ivars.device.audioNub->TxPreparationReady(ivars.txPreparationAction.get(), requestGeneration);
     }
 
     control.counters.CountWriteEnd();

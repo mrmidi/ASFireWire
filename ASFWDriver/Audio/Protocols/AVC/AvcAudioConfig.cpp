@@ -4,10 +4,14 @@
 // AvcAudioConfig.cpp - The audio endpoint an AV/C unit publishes.
 
 #include "AvcAudioConfig.hpp"
+#include "AvcControlMapping.hpp"
+#include "../../../Protocols/AVC/Descriptors/DescriptorTypeCodes.hpp"
+#include "../Duplex/AudioClockConfig.hpp"
 
 #include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace ASFW::Protocols::AVC {
 
@@ -40,7 +44,9 @@ void ApplyRatePolicy(ASFWAudioDevice& config, const StaticAudioEndpointPlan& pla
         config.sampleRates = {start.startRatePinHz};
         config.currentSampleRate = start.startRatePinHz;
     } else if (start.startAtObservedRate) {
-        config.sampleRates = {config.currentSampleRate};
+        const bool canReconfigure = plan.protocolImplementation == DeviceProfiles::Audio::ProtocolImplementationId::ApogeeDuet ||
+                                    plan.protocolImplementation == DeviceProfiles::Audio::ProtocolImplementationId::BeBoBPhase88;
+        if (!canReconfigure) config.sampleRates = {config.currentSampleRate};
     }
 }
 
@@ -95,11 +101,16 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
         return std::nullopt;
     }
     PreferDefaultStartRate(config);
-    // The AV/C runtime runs the rate it was published at and nothing else
-    // (GenericAvcProtocol::SupportedRates): another rate needs fresh geometry.
-    // Offering CoreAudio more leaves a change the start refuses and a stale
-    // pending clock behind (Onyx-i field regression 2026-08-17).
-    config.sampleRates = {config.currentSampleRate};
+    // Duet and Phase88 can reconfigure among the graph's same-shape formations.
+    // Other generic devices retain the single-rate policy (Onyx-i regression).
+    const bool canReconfigure = plan.protocolImplementation == DeviceProfiles::Audio::ProtocolImplementationId::ApogeeDuet ||
+                                plan.protocolImplementation == DeviceProfiles::Audio::ProtocolImplementationId::BeBoBPhase88;
+    if (!canReconfigure) config.sampleRates = {config.currentSampleRate};
+    else {
+        std::erase_if(config.sampleRates, [](uint32_t rate) { return !::ASFW::Audio::IsSupportedAudioClockConfig({rate}); });
+        if (config.sampleRates.empty()) return std::nullopt;
+        PreferDefaultStartRate(config);
+    }
     config.inputChannelNames = capture.channelNames;
     config.outputChannelNames = playback.channelNames;
     config.playbackStreams = {{.pcmChannels = playback.channelCount,
@@ -113,10 +124,59 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
     config.resolvedGeometryRequired = true;
     config.deviceSampleRates = true;
     config.graphResolved = true;
+    // Descriptor purpose resolves competing output stages. It identifies the
+    // intended master, never invents mute/volume support or its limits.
+    const bool declaredOutputMaster = std::ranges::any_of(graph.featureChannels, [&](const auto& channel) {
+        if (channel.channel != 0 || (!channel.volume && !channel.mute)) return false;
+        return std::ranges::any_of(graph.controls, [&](const auto& block) {
+            return block.audioSubunitId == channel.subunit && block.id == channel.block &&
+                block.volumePurpose == 1 && IsAvcOutputMaster(graph, block);
+        });
+    });
+    for (const auto& channel : graph.featureChannels) {
+        const auto block = std::ranges::find_if(graph.controls, [&](const auto& item) { return item.type == Descriptors::AudioFunctionBlockType::kFeature && item.audioSubunitId == channel.subunit && item.id == channel.block; });
+        if (block == graph.controls.end() || channel.channel != 0) continue;
+        if (!IsAvcOutputMaster(graph, *block) || (declaredOutputMaster && block->volumePurpose != 1)) continue;
+        ::ASFW::Audio::Model::AvcPublishedControl control;
+        control.token = ::ASFW::Audio::Model::AvcControlToken(channel.subunit, channel.block, channel.channel);
+        control.scope = static_cast<uint32_t>('outp');
+        control.element = 0;
+        snprintf(control.name, sizeof(control.name), "%s %s %u",
+                 block->name.empty() ? ("Feature " + std::to_string(block->id)).c_str() : block->name.c_str(),
+                 channel.channel == 0 ? "Master" : "Channel", channel.channel);
+        control.hasMute = channel.mute.has_value(); control.muted = channel.mute.value_or(false);
+        if (channel.volume && channel.minimum && channel.maximum && channel.resolution) {
+            control.range = {*channel.minimum, *channel.maximum, *channel.resolution};
+            control.current = *channel.volume;
+            control.hasVolume = control.range.Valid() && control.current != INT16_MIN &&
+                control.current >= control.range.minimum && control.current <= control.range.maximum;
+        }
+        if (control.hasMute || control.hasVolume) config.avcControls.push_back(control);
+    }
+
+    // One output master per control class. Competing volume/mute candidates
+    // are omitted rather than publishing duplicate HAL main-element controls.
+    const auto volumeCount = std::ranges::count_if(config.avcControls, [](const auto& c) { return c.hasVolume; });
+    const auto muteCount = std::ranges::count_if(config.avcControls, [](const auto& c) { return c.hasMute; });
+    for (auto& control : config.avcControls) {
+        if (volumeCount > 1) control.hasVolume = false;
+        if (muteCount > 1) control.hasMute = false;
+    }
+    std::erase_if(config.avcControls, [](const auto& c) { return !c.hasVolume && !c.hasMute; });
+
     const auto forced = plan.streamTraits.wire.forcedStreamMode;
     const bool blocking = forced == ForcedStreamMode::Blocking ||
                           (forced == ForcedStreamMode::Unspecified && graph.supportsBlockingTransmit);
     config.streamMode = blocking ? StreamMode::kBlocking : StreamMode::kNonBlocking;
+    if (graph.transmitModes && graph.receiveModes) {
+        const uint8_t common = *graph.transmitModes & *graph.receiveModes;
+        // Validated device quirks override advertised flags (Duet: Linux oxfw.c:164-167).
+        if (forced == ForcedStreamMode::Unspecified) {
+            if (common & Descriptors::kMusicCapabilityBlockingBit) config.streamMode = StreamMode::kBlocking;
+            else if (common & Descriptors::kMusicCapabilityNonBlockingBit) config.streamMode = StreamMode::kNonBlocking;
+            else return std::nullopt;
+        }
+    }
     return config;
 }
 

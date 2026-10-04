@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "DiscoveryReducer.hpp"
+#include "../Descriptors/DescriptorTypeCodes.hpp"
 #include <algorithm>
 #include <utility>
 #include <type_traits>
 
 namespace ASFW::AVC::DiscoveryEngine {
+
+namespace {
+/// Controls[] bit 0 is read as the most significant bit of the element: this matches the Phase 88
+/// capture (`c0 00` = Mute + Volume), not a literal reading of TA 1999008 Table 8.3 ("Bit 0: Mute"),
+/// and the Duet's bitmap fits neither order, so mute and volume are always probed and every other
+/// control is probed only if this bit says so. Open question F8 in magic-numbers-audit.md.
+constexpr uint16_t kControlBitmapFirstBit = 0x8000;
+} // namespace
 namespace {
 template<class... T> struct Visit : T... { using T::operator()...; };
 template<class... T> Visit(T...) -> Visit<T...>;
@@ -90,13 +99,28 @@ void Expand(State& s, Checkpoint point) {
         }
         s.probes.emplace_back(Checkpoint::Routes); break;
     case Checkpoint::Routes:
+        // Identifier descriptors can expose Audio destination plugs even when
+        // PLUG_INFO is unavailable. Query those declared endpoints instead of
+        // losing the Audio/Music boundary (captured Duet audio_dest_0 reply).
+        // Audio Subunit 1.0 source_ID F0 denotes a destination plug; FFADO
+        // bebob_functionblock.cpp:140-155 discovers plug connections separately.
+        for (const auto& contents : s.builder.contents) {
+            if (!contents.audio) continue;
+            const auto ensure = [&](const auto& source) {
+                if (source.IsSubunitDestPlug())
+                    (void)Plug(s, contents.id.ToAddress(), Cmd::PlugDirection::kInput, source.id);
+            };
+            for (const auto& source : contents.audio->sourcePlugLinks) ensure(source);
+            for (const auto& block : contents.audio->functionBlocks)
+                for (const auto& source : block.inputSources) ensure(source);
+        }
         for (const auto& plug : s.builder.plugs) {
             if (plug.address.IsUnit() && plug.direction == Cmd::PlugDirection::kOutput)
-                s.probes.emplace_back(Cmd::SignalSourceCommand{.operands = {
-                    .destination = Cmd::SignalAddress::UnitIsochronousPlug(plug.id.value)}});
+                s.probes.emplace_back(Cmd::QuerySignalSource(
+                    Cmd::SignalAddress::UnitIsochronousPlug(plug.id.value)));
             else if (!plug.address.IsUnit() && plug.direction == Cmd::PlugDirection::kInput)
-                s.probes.emplace_back(Cmd::SignalSourceCommand{.operands = {
-                    .destination = Cmd::SignalAddress::SubunitPlug(plug.address, plug.id.value)}});
+                s.probes.emplace_back(Cmd::QuerySignalSource(
+                    Cmd::SignalAddress::SubunitPlug(plug.address, plug.id.value)));
         }
         s.probes.emplace_back(Checkpoint::Controls); break;
     case Checkpoint::Controls:
@@ -115,7 +139,7 @@ void Expand(State& s, Checkpoint point) {
                 // so mute and volume are always asked on the master and every cluster
                 // channel (Linux bebob lib.rs:312-321 reads volume this way). Other
                 // controls only where the bitmap advertises them (Audio Subunit 1.0
-                // Table 8.3: the first control occupies the most significant bit).
+                // Table 8.3; bit order remains an assumption, see audit F8).
                 const size_t channels = std::max<size_t>(block.channelControls.size(), block.clusterChannels);
                 for (size_t ch = 0; ch <= channels; ++ch) {
                     const uint16_t bits = ch == 0 ? block.masterControls :
@@ -123,7 +147,7 @@ void Expand(State& s, Checkpoint point) {
                     for (size_t bit = 0; bit < Cmd::kFeatureControlWidths.size(); ++bit) {
                         const auto control = Cmd::kFeatureControlWidths[bit].control;
                         const bool always = control == Cmd::FeatureControl::kMute || control == Cmd::FeatureControl::kVolume;
-                        if ((always || (bits & (0x8000u >> bit))) && Cmd::kFeatureControlWidths[bit].width)
+                        if ((always || (bits & (kControlBitmapFirstBit >> bit))) && Cmd::kFeatureControlWidths[bit].width)
                             s.probes.emplace_back(Cmd::FeatureCommand{.address = c.id.ToAddress(),
                                 .operands = {.functionBlockId = block.id, .channel = static_cast<uint8_t>(ch),
                                     .control = control}});
@@ -134,7 +158,7 @@ void Expand(State& s, Checkpoint point) {
         for (const auto& c : s.builder.contents) {
             if (!c.music) continue;
             for (const auto& plug : c.music->plugs) {
-                if (!plug.isDestination || plug.usage != 3) continue;
+                if (!plug.isDestination || plug.usage != ParsedDescriptors::kMusicPlugUsageSync) continue;
                 const auto destination = Cmd::SignalAddress::SubunitPlug(c.id.ToAddress(), plug.plugId);
                 std::vector<Cmd::SignalAddress> candidates;
                 for (unsigned i = 0; i < s.builder.unit.unitPlugs.isochronousInputs; ++i)
@@ -143,8 +167,8 @@ void Expand(State& s, Checkpoint point) {
                     candidates.push_back(Cmd::SignalAddress::UnitExternalPlug(static_cast<uint8_t>(i)));
                 for (const auto& source : c.music->plugs) if (!source.isDestination)
                     candidates.push_back(Cmd::SignalAddress::SubunitPlug(c.id.ToAddress(), source.plugId));
-                for (auto source : candidates) s.probes.emplace_back(ClockProbe{Cmd::SignalSourceCommand{
-                    .operands = {.destination = destination, .source = source}}});
+                for (auto source : candidates)
+                    s.probes.emplace_back(ClockProbe{Cmd::CanConnectSignalSource(source, destination)});
             }
         }
         s.probes.emplace_back(Checkpoint::Extension); break;
@@ -214,10 +238,22 @@ void Handle(Transition& t, size_t index, const Reply& reply) {
     auto& s = t.state;
     Probe probe = s.probes[index]; // Processing may insert/reallocate the queue.
     auto bytes = Validate(s, probe, reply.response);
+    auto frame = Encode(s, probe);
+    if (frame) {
+        ProbeOutcome outcome{frame->Address(), frame->OpcodeValue(), bytes ? std::nullopt : std::optional{bytes.error()}};
+        outcome.command.assign(frame->WireBytes().begin(), frame->WireBytes().end());
+        if (reply.response) {
+            outcome.responseCode = reply.response->code;
+            outcome.responseAddress = reply.response->address.Byte();
+            outcome.responseOpcode = static_cast<uint8_t>(reply.response->opcode);
+            outcome.responseOperands = reply.response->operands;
+        } else if (reply.response.error().response) {
+            outcome.responseCode = reply.response.error().response;
+        }
+        s.builder.outcomes.push_back(std::move(outcome));
+    }
     if (!bytes && TransportFailure(bytes.error())) { Finish(t, bytes.error()); return; }
     if (UnitStoppedAnswering(s, bytes ? std::nullopt : std::optional{bytes.error()})) { Finish(t, bytes.error()); return; }
-    auto frame = Encode(s, probe);
-    if (frame) s.builder.outcomes.push_back({frame->Address(), frame->OpcodeValue(), bytes ? std::nullopt : std::optional{bytes.error()}});
     bool retry = false;
     std::optional<AvcError> decodeError;
     std::visit(Visit{
@@ -288,9 +324,22 @@ void Handle(Transition& t, size_t index, const Reply& reply) {
             auto r = Decode(c, bytes, decodeError);
             FeatureStatus status{{c.address.Type(), c.address.Id()}, c.operands.functionBlockId,
                 c.operands.channel, c.operands.control};
-            if (r && r->functionBlockId == c.operands.functionBlockId && r->channel == c.operands.channel && r->control == c.operands.control)
+            status.attribute = c.operands.attribute;
+            if (r && r->functionBlockId == c.operands.functionBlockId && r->channel == c.operands.channel && r->control == c.operands.control && r->attribute == c.operands.attribute)
                 status.value = *r;
             else status.error = r ? AvcError::Of(AvcErrorKind::kMalformedOperands) : r.error();
+            // TA 1999008 10.3.2: limits are attributes of each channel's volume,
+            // not descriptor capabilities. Ask only after CURRENT was confirmed.
+            if (status.value && c.operands.control == Cmd::FeatureControl::kVolume &&
+                c.operands.attribute == Cmd::ControlAttribute::kCurrent) {
+                std::vector<Probe> limits;
+                for (auto attribute : {Cmd::ControlAttribute::kMinimum, Cmd::ControlAttribute::kMaximum,
+                                       Cmd::ControlAttribute::kResolution})
+                    limits.emplace_back(Cmd::FeatureCommand{.address = c.address,
+                        .operands = Cmd::FeatureOperands::VolumeStatus(c.operands.functionBlockId,
+                                                                       c.operands.channel, attribute)});
+                Insert(s, index, std::move(limits));
+            }
             s.builder.features.push_back(std::move(status));
         },
         [&](const SelectorProbe& probe) {
@@ -333,8 +382,17 @@ void Descriptor(Transition& t, size_t index, const DescriptorReply& reply) {
     if (result.success && probe.subunit.type != SubunitType::kUnit) {
         auto& content = Contents(s, probe.subunit);
         if (probe.subunit.type == SubunitType::kMusic) {
-            auto parsed = ParsedDescriptors::MusicSubunitDescriptorParser::ParseStatusDescriptor(result.data);
-            if (parsed) content.music = std::move(*parsed); else blob.parseError = parsed.error();
+            if (probe.specifier == Cmd::DescriptorSpecifier::SubunitIdentifier()) {
+                // The static capabilities (TA 2001007 §5). Captured on a Phase 88; a failure here costs the
+                // capabilities only, never the discovery.
+                auto parsed = ParsedDescriptors::MusicSubunitIdentifierParser::Parse(result.data);
+                if (parsed) content.musicIdentifier = std::move(*parsed); else blob.parseError = parsed.error();
+            } else {
+                auto parsed = ParsedDescriptors::MusicSubunitDescriptorParser::ParseStatusDescriptor(result.data);
+                if (parsed) content.music = std::move(*parsed); else blob.parseError = parsed.error();
+                // Read the identifier only from a subunit that has just answered OPEN / READ DESCRIPTOR.
+                Insert(s, index, {DescriptorProbe{probe.subunit, Cmd::DescriptorSpecifier::SubunitIdentifier()}});
+            }
         } else if (probe.specifier == Cmd::DescriptorSpecifier::SubunitIdentifier()) {
             auto parsed = D::ParseIdentifierDescriptor(result.data);
             if (parsed) {
@@ -368,7 +426,8 @@ void Descriptor(Transition& t, size_t index, const DescriptorReply& reply) {
                     if (probe.depth >= ParsedDescriptors::kMaxTextListDepth ||
                         std::count_if(s.probes.begin(), s.probes.end(), [&](const Probe& queued) {
                             auto* p = std::get_if<DescriptorProbe>(&queued);
-                            return p && p->subunit == probe.subunit && p->specifier.bytes[0] == 0x10;
+                            return p && p->subunit == probe.subunit &&
+                                   p->specifier.bytes[0] == static_cast<uint8_t>(Cmd::DescriptorSpecifierType::kListById);
                         }) + next.size() >= ParsedDescriptors::kMaxTextListNodes) {
                         blob.parseError = ParsedDescriptors::ParseError{0, ParsedDescriptors::ParseErrorKind::BudgetExceeded};
                         s.builder.textReferences.push_back({probe.subunit, id, TextReferenceKind::BudgetExceeded}); break;

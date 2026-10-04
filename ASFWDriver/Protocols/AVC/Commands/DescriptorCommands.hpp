@@ -24,6 +24,19 @@ namespace ASFW::AVC::Cmd {
 // Descriptor Specifier (TA 2002013 §6.1, §6.2)
 //==============================================================================
 
+/// descriptor_specifier_type (TA 2002013 §6.1, Table 14). Only the values this layer builds are named;
+/// the table also defines 20..25 (entry descriptors) and 30, 31 (info blocks).
+enum class DescriptorSpecifierType : uint8_t {
+    kUnitOrSubunitIdentifier = 0x00,  ///< (Sub)unit identifier descriptor, §6.2.1
+    kListById = 0x10,                 ///< List descriptor specified by list_ID, §6.2.2
+    kListByType = 0x11,               ///< List descriptor specified by list_type, §6.2.3
+    kSubunitDependentFirst = 0x80,    ///< 80..BF: subunit dependent descriptors (Table 14)
+};
+
+/// The subunit status descriptor of the music subunit is specifier type 80 (a subunit dependent
+/// value; TA 2001007 and Apple's capture, FireBug isitduet.txt:157).
+inline constexpr DescriptorSpecifierType kSubunitStatusSpecifierType = DescriptorSpecifierType::kSubunitDependentFirst;
+
 /// Represents a variable-length descriptor specifier in inline storage.
 struct DescriptorSpecifier {
     static constexpr size_t kMaxBytes = 8;
@@ -36,25 +49,27 @@ struct DescriptorSpecifier {
 
     /// 6.2.1 (Sub)unit identifier descriptor specifier: [0x00]
     [[nodiscard]] static constexpr DescriptorSpecifier SubunitIdentifier() noexcept {
-        return DescriptorSpecifier{.bytes = {0x00}, .length = 1};
+        return DescriptorSpecifier{.bytes = {static_cast<uint8_t>(DescriptorSpecifierType::kUnitOrSubunitIdentifier)},
+                                   .length = 1};
     }
 
     /// Subunit status descriptor specifier: [0x80]
     [[nodiscard]] static constexpr DescriptorSpecifier SubunitStatus() noexcept {
-        return DescriptorSpecifier{.bytes = {0x80}, .length = 1};
+        return DescriptorSpecifier{.bytes = {static_cast<uint8_t>(kSubunitStatusSpecifierType)}, .length = 1};
     }
 
     /// 6.2.2 List descriptor specified by list_ID: [0x10, id_hi, id_lo]
     [[nodiscard]] static constexpr DescriptorSpecifier ListById(uint16_t listId) noexcept {
         return DescriptorSpecifier{
-            .bytes = {0x10, static_cast<uint8_t>(listId >> 8), static_cast<uint8_t>(listId & 0xFF)},
+            .bytes = {static_cast<uint8_t>(DescriptorSpecifierType::kListById), HighByte(listId), LowByte(listId)},
             .length = 3
         };
     }
 
     /// 6.2.3 List descriptor specified by list_type: [0x11, list_type]
     [[nodiscard]] static constexpr DescriptorSpecifier ListByType(uint8_t listType) noexcept {
-        return DescriptorSpecifier{.bytes = {0x11, listType}, .length = 2};
+        return DescriptorSpecifier{.bytes = {static_cast<uint8_t>(DescriptorSpecifierType::kListByType), listType},
+                                   .length = 2};
     }
 
     /// Raw specifier bytes factory
@@ -75,6 +90,9 @@ struct DescriptorSpecifier {
 // OPEN DESCRIPTOR Command (0x08)
 // TA 2002013 §7.1 Table 28 & 29
 //==============================================================================
+
+/// The reserved byte after the subfunction of OPEN DESCRIPTOR: we send FF as Apple does.
+inline constexpr uint8_t kOpenDescriptorReservedByte = kUnspecifiedOperand;
 
 enum class OpenDescriptorSubfunction : uint8_t {
     kClose     = 0x00,  ///< Close descriptor session
@@ -102,11 +120,11 @@ struct OpenDescriptorOperands {
         if (!res) return res;
         res = w.Append(static_cast<uint8_t>(subfunction));
         if (!res) return res;
-        // Reserved byte. TA 2002013 Table 30 says 00 and FFADO sends 00
+        // Reserved byte (kOpenDescriptorReservedByte). TA 2002013 Table 30 says 00 and FFADO sends 00
         // (avc_descriptor_cmd.cpp:43); Apple sends FF (FireBug isitduet.txt:157),
         // and the Duet and Phase 88 were captured accepting FF. The response
         // echoes it, so it is not a status: success is the ACCEPTED code.
-        return w.Append(0xFF);
+        return w.Append(kOpenDescriptorReservedByte);
     }
 
     [[nodiscard]] constexpr Expected<Reply> Read(std::span<const uint8_t> in) const noexcept {
@@ -130,6 +148,11 @@ using OpenDescriptorCommand = Command<OpenDescriptorOperands>;
 // READ DESCRIPTOR Command (0x09)
 // TA 2002013 §7.5 Table 35 & 36
 //==============================================================================
+
+/// A READ DESCRIPTOR command carries read_result_status FF ("not yet known") and a zero reserved byte
+/// (TA 2002013 §7.5, Table 35).
+inline constexpr uint8_t kReadResultStatusRequest = kUnspecifiedOperand;
+inline constexpr uint8_t kReadDescriptorReservedByte = 0x00;
 
 enum class ReadResultStatus : uint8_t {
     kComplete           = 0x10,  ///< Complete read: entire requested data returned
@@ -159,12 +182,12 @@ struct ReadDescriptorOperands {
         auto res = w.Append(specifier.Bytes());
         if (!res) return res;
         const uint8_t params[] = {
-            0xFF, // read_result_status = 0xFF
-            0x00, // reserved = 0x00 per TA 2002013 Table 35
-            static_cast<uint8_t>(length >> 8),
-            static_cast<uint8_t>(length & 0xFF),
-            static_cast<uint8_t>(offset >> 8),
-            static_cast<uint8_t>(offset & 0xFF),
+            kReadResultStatusRequest,
+            kReadDescriptorReservedByte,  // TA 2002013 Table 35
+            HighByte(length),
+            LowByte(length),
+            HighByte(offset),
+            LowByte(offset),
         };
         return w.Append(params);
     }

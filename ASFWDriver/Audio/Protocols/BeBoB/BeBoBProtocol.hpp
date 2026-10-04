@@ -126,6 +126,7 @@ protected:
 
     // Exactly-once completion guard for the async ApplyClockConfig chain.
     struct ClockApplyEpoch {
+        Discovery::DeviceRouteToken routeAtStart{};
         FW::Generation generation{FW::Generation{0}};
         Scheduling::TimerToken settleTimer{Scheduling::kInvalidTimerToken};
         std::atomic<bool> completed{false};

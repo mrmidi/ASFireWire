@@ -4,7 +4,7 @@ D apply clock rate=44100
 ## StartStreaming
 D geometry
 H begin
-D prepare rate=48000 cap=1[1] play=1[0]
+D prepare rate=44100 cap=1[1] play=1[0]
 H reserve playback allowed=ffffffffffffffff bw=308 -> ch=0
 H reserve capture allowed=ffffffffffffffff bw=308 -> ch=1
 D assign cap=1[1] play=1[0]

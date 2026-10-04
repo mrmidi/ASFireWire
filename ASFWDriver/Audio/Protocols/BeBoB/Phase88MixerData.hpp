@@ -5,7 +5,7 @@
 //
 // PHASE 88 ships with its internal hardware mixer muted and at minimum volume.
 // After signal format programming, the stream playback path (FB 0x07) and mixer
-// output path (FB 0x00/0x01) must be explicitly unmuted and set to maximum gain,
+// output path (FB 0x01) is explicitly unmuted; only WavePlay input gain is set,
 // or streaming is silent despite working CIP DMA.
 //
 // This is an ASFW-specific workaround not present in Linux bebob_terratec.c
@@ -24,7 +24,8 @@
 // Volume is a signed 16-bit value in 1/256 dB. The Phase 88 reports -100 dB
 // (0x9C00) to 0 dB (0x0000) in 1 dB steps for the Master (STATUS min/max/
 // resolution, 2026-09-27). The unit has no output volume knob, so the Master
-// starts at a listening level instead of full scale.
+// retains its existing channel levels; the discovered channel-0 master is
+// published to Core Audio instead of installing a listening-level preset.
 
 #pragma once
 
@@ -40,10 +41,6 @@ inline constexpr std::array kPhase88Selectors{
     SelectorRoute{0x07, 0x01},  // Mixer Stream Source = stream-input-1/2
 };
 
-/// Master volume at stream start: -35 dB, chosen by ear on the user's unit.
-inline constexpr uint16_t kPhase88MasterVolume = 0xDD00;  // -35 * 256
-static_assert(static_cast<int16_t>(kPhase88MasterVolume) == -35 * 256);
-
 inline constexpr std::array kPhase88Mutes{
     ChannelMute{0x07, 1, true},   // Unmute Stream Playback Left
     ChannelMute{0x07, 2, true},   // Unmute Stream Playback Right
@@ -54,8 +51,6 @@ inline constexpr std::array kPhase88Mutes{
 inline constexpr std::array kPhase88Volumes{
     ChannelVolume{0x07, 1, 0x0000},                // Stream Playback Left, 0 dB
     ChannelVolume{0x07, 2, 0x0000},                // Stream Playback Right, 0 dB
-    ChannelVolume{0x01, 1, kPhase88MasterVolume},  // Master Left
-    ChannelVolume{0x01, 2, kPhase88MasterVolume},  // Master Right
 };
 
 inline constexpr MixerMap kPhase88MixerMap{

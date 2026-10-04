@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "AudioSubunitDescriptor.hpp"
 #include "AVCInfoBlock.hpp"
+#include "DescriptorTypeCodes.hpp"
 
 namespace ASFW::Protocols::AVC::Descriptors {
 namespace {
-/// A list descriptor (type 0x86): its entries, after header and specific info.
+/// A list descriptor (type kAudioListTypeTextDatabase): its entries, after header and specific info.
 Parsed<ParseReader> ListEntries(std::span<const uint8_t> data) {
     return DescriptorBody(data).and_then([](ParseReader reader) -> Parsed<ParseReader> {
         uint8_t type{}, attributes{};
         return reader.Fields(type, attributes)
             .and_then([&]() -> Parsed<void> {
-                if (type != 0x86) return std::unexpected(ParseError{2, ParseErrorKind::InvalidValue});
+                if (type != kAudioListTypeTextDatabase) return std::unexpected(ParseError{2, ParseErrorKind::InvalidValue});
                 return {};
             })
             .and_then([&] { return reader.Section(); })
@@ -22,7 +23,7 @@ std::string Text(std::span<const uint8_t> bytes) {
     while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n')) text.pop_back();
     return text;
 }
-/// One text entry (type 0x93): its info blocks, keeping the name (0x000A) one.
+/// One text entry (type kAudioEntryTypeTextDatabase): its info blocks, keeping the name (kInfoBlockRawText) one.
 Parsed<void> TextEntry(ParseReader entry, uint16_t position, TextDatabase& database) {
     return entry.Take(5).and_then([&](auto) -> Parsed<void> {
         while (entry.Remaining()) {
@@ -32,7 +33,7 @@ Parsed<void> TextEntry(ParseReader entry, uint16_t position, TextDatabase& datab
             size_t used = 0;
             auto block = AVCInfoBlock::Parse(*bytes, used, base);
             if (!block) return std::unexpected(block.error());
-            if (block->GetType() == 0x000A) database[position] = Text(block->GetPrimaryData());
+            if (block->GetType() == kInfoBlockRawText) database[position] = Text(block->GetPrimaryData());
             entry = ParseReader(bytes->subspan(used), std::add_sat(base, used));
         }
         return {};
@@ -52,7 +53,7 @@ Parsed<TextDatabase> AudioSubunitDescriptorParser::ParseTextDatabaseListChecked(
                 if (!entry) return std::unexpected(entry.error());
                 uint8_t type{}, attributes{};
                 if (auto read = entry->Fields(type, attributes); !read) return std::unexpected(read.error());
-                if (type != 0x93) continue;
+                if (type != kAudioEntryTypeTextDatabase) continue;
                 if (auto text = TextEntry(*entry, i, database); !text) return std::unexpected(text.error());
             }
             return entries.End().transform([&] { return std::move(database); });
@@ -64,7 +65,7 @@ Parsed<std::vector<uint16_t>> AudioSubunitDescriptorParser::ParseChildListIds(
     if (listIdSize != 2) return std::unexpected(ParseError{0, ParseErrorKind::InvalidValue});
     return ListEntries(data).and_then([&](ParseReader entries) -> Parsed<std::vector<uint16_t>> {
         // ListEntries checked the header, so the list attributes byte exists.
-        const bool hasObjectIds = (data[3] & 0x10) != 0;
+        const bool hasObjectIds = (data[3] & kListAttributeEntriesHaveObjectId) != 0;
         return entries.BE16().and_then([&](uint16_t count) -> Parsed<std::vector<uint16_t>> {
             std::vector<uint16_t> ids;
             for (uint16_t i = 0; i < count; ++i) {
@@ -73,7 +74,7 @@ Parsed<std::vector<uint16_t>> AudioSubunitDescriptorParser::ParseChildListIds(
                 uint8_t type{}, attributes{};
                 auto read = entry->Fields(type, attributes)
                     .and_then([&]() -> Parsed<void> {
-                        if (!(attributes & 0x20)) return {};
+                        if (!(attributes & kEntryAttributeHasChildId)) return {};
                         return entry->BE16().transform([&](uint16_t id) { ids.push_back(id); });
                     })
                     .and_then([&]() -> Parsed<void> {

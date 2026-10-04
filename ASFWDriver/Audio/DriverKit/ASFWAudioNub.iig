@@ -84,14 +84,11 @@ public:
      */
     virtual kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer);
 
+    // OSAction-targeted one-way notification: bypasses the nub control queue.
     virtual void TxPreparationReady(OSAction* action TARGET,
                                     uint64_t generation);
     virtual kern_return_t RegisterTxPreparationAction(
         OSAction* action TYPE(TxPreparationReady));
-    // Audio-owned write-frontier request. It reuses the registered action so
-    // packet preparation is dispatched on ASFWAudioDriver's TxPreparation
-    // queue rather than on the CoreAudio real-time callback.
-    virtual kern_return_t RequestTxPreparation(uint64_t generation);
     // Void RPC is one-way: TX preparation must never wait on the nub queue.
     virtual void RequestTimingRecovery(uint64_t rxEpoch);
 
@@ -159,6 +156,11 @@ public:
     // chain valid. Returns kIOReturnUnsupported for a rate the device does not
     // advertise.
     virtual kern_return_t RequestSampleRateChange(uint32_t sampleRateHz);
+
+    // Confirmed graph-backed controls. token encodes subunit/block/channel;
+    // the nub validates it against the current graph before sending traffic.
+    virtual kern_return_t SetAvcFeatureControl(uint32_t token, bool muteControl,
+                                               int32_t value, int32_t* outConfirmedValue);
 
     // Protocol-backed boolean control bridge. Same process as above - this
     // crosses dispatch queues, not processes. No device currently answers these:

@@ -158,6 +158,7 @@ void BeBoBProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
             // Cross-validated with Linux bebob_stream.c:96-115 (300 ms settle).
             auto epoch = std::make_shared<ClockApplyEpoch>();
             epoch->generation = busInfo_.GetGeneration();
+            epoch->routeAtStart = route_;
             epoch->completion = std::move(callback);
             epoch->appliedClock = desiredClock;
             activeClockApply_ = epoch.get();
@@ -168,6 +169,7 @@ void BeBoBProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
                     // Guard: epoch may have been cancelled by Shutdown/bus reset.
                     if (activeClockApply_ != epoch.get()) return;
                     appliedClock_ = epoch->appliedClock;
+                    if (avcUnit_) avcUnit_->RememberConfirmedDuplexRate(epoch->routeAtStart, appliedClock_.sampleRateHz);
                     BBPTRACE("ApplyClockConfig settle complete: rate=%uHz",
                              epoch->appliedClock.sampleRateHz);
                     FinishClockApply(epoch.get(), kIOReturnSuccess);
@@ -193,11 +195,7 @@ void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
             .operands = AVC::Cmd::PlugSignalFormatOperands{
                 .direction = AVC::Cmd::PlugSignalDirection::kOutput,
                 .plugId = outPlug,
-                .format = AVC::Cmd::PlugSignalFormat{
-                    .plugId = outPlug,
-                    .fmt = 0x90,
-                    .fdf = {static_cast<uint8_t>(*sfc), 0xFF, 0xFF},
-                },
+                .format = AVC::Cmd::Am824SignalFormat(outPlug, *sfc),
             },
         },
         [this, sfc, completion = std::move(completion)](AVC::Expected<AVC::Cmd::PlugSignalFormat> outputResult) mutable {
@@ -222,11 +220,7 @@ void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
                         .operands = AVC::Cmd::PlugSignalFormatOperands{
                             .direction = AVC::Cmd::PlugSignalDirection::kInput,
                             .plugId = inPlug,
-                            .format = AVC::Cmd::PlugSignalFormat{
-                                .plugId = inPlug,
-                                .fmt = 0x90,
-                                .fdf = {static_cast<uint8_t>(*sfc), 0xFF, 0xFF},
-                            },
+                            .format = AVC::Cmd::Am824SignalFormat(inPlug, *sfc),
                         },
                     },
                     [finalCompletion](AVC::Expected<AVC::Cmd::PlugSignalFormat> inputResult) mutable {
@@ -296,13 +290,17 @@ void BeBoBProtocol::RunMixerMap(const MixerMap& map, MixerFailurePolicy policy, 
     for (const auto& sel : map.selectors)
         state->steps.push_back({"selector", sel.fbId, 0, sel.value,
             [this, sel](MixerCompletion cb) { SetSelectorBlock(sel.fbId, sel.value, std::move(cb)); }});
-    for (const auto& mute : map.mutes)
+    for (const auto& mute : map.mutes) {
+        if (avcUnit_ && avcUnit_->HasUserFeaturePreference(0, mute.fbId)) continue;
         state->steps.push_back({mute.unmute ? "unmute" : "mute", mute.fbId, mute.channel, 0,
             [this, mute](MixerCompletion cb) { SetFeatureMute(mute.fbId, mute.channel, mute.unmute, std::move(cb)); }});
-    for (const auto& vol : map.volumes)
+    }
+    for (const auto& vol : map.volumes) {
+        if (avcUnit_ && avcUnit_->HasUserFeaturePreference(0, vol.fbId)) continue;
         // Volume is signed 1/256 dB; the log shows whole dB.
         state->steps.push_back({"volume", vol.fbId, vol.channel, static_cast<int16_t>(vol.value) / 256,
             [this, vol](MixerCompletion cb) { SetFeatureVolume(vol.fbId, vol.channel, vol.value, std::move(cb)); }});
+    }
     ASFW_LOG(Audio, "[BeBoB] %{public}s startup mixer: %zu selectors, %zu mutes, %zu volumes (%{public}s)",
              state->device, map.selectors.size(), map.mutes.size(), map.volumes.size(),
              policy == MixerFailurePolicy::kRequired ? "required" : "best effort");

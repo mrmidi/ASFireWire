@@ -7,6 +7,7 @@
 
 #include "AVCUnit.hpp"
 #include "Graph/DiscoveryGraph.hpp"
+#include "Discovery/DiscoveryLog.hpp"
 #include <algorithm>
 #include "../../Logging/Logging.hpp"
 #include "Commands/GeneralCommands.hpp"
@@ -153,12 +154,12 @@ void AVCUnit::InitializeAlreadyBegun(std::function<void(bool)> completion) {
             if (!unit) { if (completion) completion(false); return; }
             const bool current = snapshot && unit->IsCurrentRoute(snapshot->route);
             const bool success = current && snapshot->complete;
-            if (success) {
-                unit->ApplySnapshot(*snapshot);
-                unit->snapshot_ = std::move(snapshot);
-            }
-            if (!success && unit->snapshot_ && unit->IsCurrentRoute(unit->snapshot_->route))
-                unit->ApplySnapshot(*unit->snapshot_);
+            if (success) unit->ApplySnapshot(*snapshot);
+            // A failed rescan preserves the committed graph, including later confirmed rate changes.
+            // Log before the lease moves into snapshot_: a moved-from lease is empty, and a successful
+            // discovery is the one that must be logged.
+            if (snapshot) unit->LogDiscovery(*snapshot);
+            if (success) unit->snapshot_ = std::move(snapshot);
             unit->initialized_ = success;
             unit->sessionSlot_ = E::IdleSlot{};
             unit->FinishExternalRescan(success);
@@ -242,8 +243,49 @@ uint32_t AVCUnit::GetSpecID() const {
     return unit->GetUnitSpecID();
 }
 
+void AVCUnit::LogDiscovery(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot) const {
+    // The one place discovery reaches the ring: every fact by its spec name, every unnamed value as UNKNOWN.
+    // The graph is the one built from this snapshot only when it applied; otherwise it is left out.
+    const bool applied = snapshot.complete && IsCurrentRoute(snapshot.route);
+    const auto graph = GetDiscoveredGraph();
+    for (const auto& line : ASFW::AVC::DiscoveryEngine::DescribeDiscovery(snapshot, applied ? graph.get() : nullptr)) {
+        ASFW_LOG(AVC, "%{public}s", line.c_str());
+    }
+}
+
 void AVCUnit::ApplySnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot) {
     std::string name;
     if (auto device = device_.lock()) name = std::string(device->GetModelName());
     discoveredGraph_ = std::make_shared<const Graph::DeviceGraph>(Graph::BuildDiscoveryGraph(snapshot, std::move(name)));
+}
+
+void AVCUnit::RememberConfirmedDuplexRate(const Discovery::DeviceRouteToken& route, uint32_t rateHz) {
+    // Keep the original descriptor/probe snapshot as captured. Publish a fresh graph so readers
+    // holding the previous immutable lease remain valid across a rate change.
+    if (rateHz == 0 || !IsCurrentRoute(route) || !snapshot_ || snapshot_->route != route) return;
+    const auto previous = GetDiscoveredGraph();
+    if (!previous || (previous->playback.currentSampleRate == rateHz && previous->capture.currentSampleRate == rateHz)) return;
+    auto updated = std::make_shared<Graph::DeviceGraph>(*previous);
+    updated->playback.currentSampleRate = rateHz;
+    updated->capture.currentSampleRate = rateHz;
+    discoveredGraph_ = std::move(updated);
+}
+
+void AVCUnit::RememberConfirmedFeature(const Discovery::DeviceRouteToken& route, uint8_t subunit,
+                                       const ASFW::AVC::Cmd::FeatureReply& reply) {
+    if (!IsCurrentRoute(route) || !snapshot_ || snapshot_->route != route || !discoveredGraph_) return;
+    auto updated = std::make_shared<Graph::DeviceGraph>(*discoveredGraph_);
+    for (auto& channel : updated->featureChannels) {
+        if (channel.subunit != subunit || channel.block != reply.functionBlockId || channel.channel != reply.channel) continue;
+        channel.userPreference = true;
+        if (reply.control == ASFW::AVC::Cmd::FeatureControl::kMute) channel.mute = reply.AsMute();
+        if (reply.control == ASFW::AVC::Cmd::FeatureControl::kVolume) channel.volume = reply.AsVolume().Raw();
+    }
+    discoveredGraph_ = std::move(updated);
+}
+
+bool AVCUnit::HasUserFeaturePreference(uint8_t subunit, uint8_t block) const noexcept {
+    return discoveredGraph_ && std::ranges::any_of(discoveredGraph_->featureChannels, [=](const auto& channel) {
+        return channel.subunit == subunit && channel.block == block && channel.userPreference;
+    });
 }

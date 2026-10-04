@@ -180,6 +180,12 @@ struct NodeId {
     constexpr bool operator!=(const NodeId& other) const { return value != other.value; }
 };
 
+/// The physical node number inside a node_ID: node_ID = bus[15:10] | node[5:0].
+inline constexpr uint16_t kNodeNumberMask = 0x3F;
+[[nodiscard]] constexpr uint8_t NodeNumberOf(uint16_t nodeId) noexcept {
+    return static_cast<uint8_t>(nodeId & kNodeNumberMask);
+}
+
 inline constexpr NodeId kInvalidNodeId{0xFF};
 inline constexpr NodeId kBroadcastNodeId{0x3F};
 

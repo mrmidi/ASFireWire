@@ -331,7 +331,11 @@ kern_return_t AVCHandler::GetSubunitDescriptor(IOUserClientMethodArguments* args
     const std::vector<uint8_t>* bytes = nullptr;
     for (const auto& blob : snapshot->descriptors) {
         if (blob.subunit != id || blob.primaryError) continue;
-        if (music ? !blob.bytes.empty() : blob.specifier == ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier())
+        // The Music subunit's STATUS descriptor (its identifier descriptor is read too, and is in the discovery
+        // document); the Audio subunit's identifier.
+        const auto wanted = music ? ASFW::AVC::Cmd::DescriptorSpecifier::SubunitStatus()
+                                  : ASFW::AVC::Cmd::DescriptorSpecifier::SubunitIdentifier();
+        if (blob.specifier == wanted && !blob.bytes.empty())
             bytes = &blob.bytes; // The last read wins, as discovery recorded them.
     }
     if (!bytes) {

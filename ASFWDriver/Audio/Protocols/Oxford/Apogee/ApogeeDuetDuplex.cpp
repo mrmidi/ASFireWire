@@ -64,6 +64,7 @@ struct ApogeeDuetDuplex::ClockTransition {
     uint64_t epoch{0};
     FW::Generation generation{FW::Generation{0}};
     std::shared_ptr<ASFW::AVC::IAvcUnit> unitAtStart;
+    Discovery::DeviceRouteToken routeAtStart{};
     Scheduling::TimerToken settleTimer{Scheduling::kInvalidTimerToken};
     std::atomic<bool> completed{false};
 
@@ -243,6 +244,7 @@ void ApogeeDuetDuplex::ApplyClockConfig(const AudioClockConfig& desiredClock,
     transition->epoch = ++nextClockTransitionEpoch_;
     transition->generation = runtime_.busInfo.GetGeneration();
     transition->unitAtStart = runtime_.avcUnit;
+    transition->routeAtStart = runtime_.route;
     transition->desiredClock = desiredClock;
     transition->desiredSfc = *sampleRate;
     transition->completion = std::move(callback);
@@ -524,6 +526,9 @@ void ApogeeDuetDuplex::FinishClockTransition(
     }
 
     appliedClock_ = transition->desiredClock;
+    if (runtime_.avcUnit) {
+        transition->unitAtStart->RememberConfirmedDuplexRate(transition->routeAtStart, appliedClock_.sampleRateHz);
+    }
     clockConfigApplied_ = true;
     ASFW_LOG(Oxfw, "clock transition epoch=%llu applied rate=%u",
              static_cast<unsigned long long>(transition->epoch),

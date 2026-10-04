@@ -948,6 +948,16 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     const uint64_t audioRequested = directControl
         ? directControl->txPreparationRequests.RequestedGeneration()
         : 0;
+    const uint64_t preparationBegin = mach_absolute_time();
+    const uint64_t hardwareRequestedAt = txControl->refillRequestHostTicks.load(std::memory_order_relaxed);
+    const uint64_t queueDelayUs = hardwareWakePending && preparationBegin >= hardwareRequestedAt
+        ? ASFW::Timing::hostTicksToNanos(preparationBegin - hardwareRequestedAt) / 1000 : 0;
+    if (queueDelayUs >= 5000) {
+        ASFW_LOG(DirectAudio, "[TxPrepStall] phase=begin queue=TxPreparation generation=%llu queueDelayUs=%llu completion=%llu committed=%llu clientFrame=%llu clientHost=%llu",
+            requested, queueDelayUs, completionCursor, exposeCursor,
+            directControl ? directControl->client.outputClientWriteEndFrame.load(std::memory_order_acquire) : 0,
+            directControl ? directControl->client.outputWriteEndHostTicks.load(std::memory_order_relaxed) : 0);
+    }
     const uint32_t slotsPrepared =
         ASFW::Audio::DriverKit::PrepareTransmitSlots(
             *ivars,
@@ -958,6 +968,13 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 kTxPreparationLeadPackets,
             replayEstablished);
 
+    const uint64_t preparationUs = ASFW::Timing::hostTicksToNanos(mach_absolute_time() - preparationBegin) / 1000;
+    if (queueDelayUs >= 5000 || preparationUs >= 5000) {
+        ASFW_LOG(DirectAudio, "[TxPrepStall] phase=end queue=TxPreparation generation=%llu queueDelayUs=%llu preparationUs=%llu prepared=%u clientFrame=%llu clientHost=%llu",
+            requested, queueDelayUs, preparationUs, slotsPrepared,
+            directControl ? directControl->client.outputClientWriteEndFrame.load(std::memory_order_acquire) : 0,
+            directControl ? directControl->client.outputWriteEndHostTicks.load(std::memory_order_relaxed) : 0);
+    }
 
     // [TxPrepRange] Refill-coverage instrumentation. Answers the decisive
     // question: did the producer's range reach `target` this wake, or stop
@@ -1377,12 +1394,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         }
     }
 
-    if (scheduleAudioFollowUp && ivars->device.audioNub) {
-        const kern_return_t requestKr =
-            ivars->device.audioNub->RequestTxPreparation(
-                directControl->txPreparationRequests.RequestedGeneration());
-        if (requestKr != kIOReturnSuccess) {
-            directControl->txPreparationRequests.FinishWake();
-        }
+    if (scheduleAudioFollowUp && ivars->device.audioNub && ivars->txPreparationAction) {
+        // Same direct, one-way OSAction path as the hardware refill callback.
+        ivars->device.audioNub->TxPreparationReady(ivars->txPreparationAction.get(),
+            directControl->txPreparationRequests.RequestedGeneration());
     }
 }

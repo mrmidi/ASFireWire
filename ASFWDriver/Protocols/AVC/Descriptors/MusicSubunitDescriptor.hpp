@@ -23,40 +23,18 @@
 namespace ASFW::Protocols::AVC::Descriptors {
 
 //==============================================================================
-// Music Subunit Capabilities (Info Blocks 0x8100 - 0x8105)
+// General Music Subunit Status Area (Info Block 0x8100)
 //==============================================================================
 
+/// 0x8100 (TA 2001007 §6.2.1): what the subunit can transmit and receive. The Music subunit's other
+/// capabilities (audio channels, MIDI ports, SMPTE, sample count, sync) are fields of its IDENTIFIER descriptor
+/// (§5.2, MusicSubunitIdentifier.hpp), not blocks of the status descriptor: the status descriptor's 8101-8107 are
+/// the output plug status area and its nested per-plug status (§6.2.2-§6.2.3).
 struct MusicCapabilities {
-    // 0x8100: General Music Subunit Status Area (GMSSA)
     bool hasGeneralCapability{false};
     uint8_t transmitCapabilityFlags{0};
     uint8_t receiveCapabilityFlags{0};
     std::optional<uint32_t> latencyCapability{};
-
-    // 0x8101: Audio Capability Status Area
-    bool hasAudioCapability{false};
-    std::optional<uint16_t> maxAudioInputChannels{};
-    std::optional<uint16_t> maxAudioOutputChannels{};
-
-    // 0x8102: MIDI Capability Status Area
-    bool hasMidiCapability{false};
-    uint8_t midiVersionMajor{0};
-    uint8_t midiVersionMinor{0};
-    uint8_t midiAdaptationLayerVersion{0};
-    std::optional<uint16_t> maxMidiInputPorts{};
-    std::optional<uint16_t> maxMidiOutputPorts{};
-
-    // 0x8103: SMPTE Time Code Capability
-    bool hasSmpteTimeCodeCapability{false};
-    uint8_t smpteTimeCodeCapabilityFlags{0};
-
-    // 0x8104: Sample Count Capability
-    bool hasSampleCountCapability{false};
-    uint8_t sampleCountCapabilityFlags{0};
-
-    // 0x8105: Audio Sync Capability
-    bool hasAudioSyncCapability{false};
-    uint8_t audioSyncCapabilityFlags{0};
 };
 
 //==============================================================================
@@ -90,16 +68,18 @@ struct MusicSubunitPlug {
 struct MusicPlugEndpoint {
     static constexpr uint8_t kSubunitDestinationPlug = 0xF0;
     static constexpr uint8_t kSubunitSourcePlug = 0xF1;
-    uint8_t functionType{0xFF};
-    uint8_t plugId{0xFF};
-    uint8_t functionBlockId{0xFF};
-    uint8_t streamPosition{0xFF};
-    uint8_t streamLocation{0xFF};
+    static constexpr uint8_t kUnset = 0xFF;  ///< our "not set" marker; FF is also the field's "no value" on the wire
+    uint8_t functionType{kUnset};
+    uint8_t plugId{kUnset};
+    uint8_t functionBlockId{kUnset};
+    uint8_t streamPosition{kUnset};
+    uint8_t streamLocation{kUnset};
 };
 
 struct MusicPlugDetail {
     uint16_t musicPlugId{0};
-    uint8_t portType{0};
+    uint8_t plugType{0};        ///< music_plug_type: audio, MIDI, SMPTE, sample count or sync (kMusicPlugType*)
+    uint8_t routingSupport{0};  ///< routing_support: fixed, cluster or flexible (kMusicRoutingSupport*)
     std::string name;
     std::optional<MusicPlugEndpoint> source;
     std::optional<MusicPlugEndpoint> destination;
@@ -109,8 +89,31 @@ struct MusicPlugDetail {
 // Music Subunit Status Descriptor (Top-Level Parsed Model)
 //==============================================================================
 
+/// A top-level info block of the status descriptor, recorded whether or not the parser reads it, so a log
+/// can name every block a device sent (TA 2001007 §6.2).
+struct InfoBlockSeen {
+    uint16_t type{0};
+    uint16_t totalBytes{0};     ///< The block's whole length, header included
+    uint16_t primaryLength{0};
+};
+
+/// The MIDI streams a source plug carries (MIDI info block 8104).
+struct MusicMidiStreams {
+    uint8_t declaredStreams{0};        ///< number_of_MIDI_streams
+    std::vector<std::string> labels;   ///< one per name_info_block, in order
+};
+
+/// What a source plug reports about SMPTE time code, sample count and audio SYNC. Each byte is the activity
+/// field of its block: bit 0 is Rx (SMPTE, sample count) or Bus (audio SYNC), bit 1 is Tx or Ex.
+struct MusicSourcePlugActivity {
+    std::optional<uint8_t> smpteTimeCode;
+    std::optional<uint8_t> sampleCount;
+    std::optional<uint8_t> audioSync;
+};
+
 struct MusicSubunitStatus {
     uint16_t declaredLength{0};
+    std::vector<InfoBlockSeen> topLevelBlocks;
     MusicCapabilities capabilities;
     uint8_t numDestPlugs{0};
     uint8_t numSrcPlugs{0};
@@ -121,6 +124,16 @@ struct MusicSubunitStatus {
     /// Audio stream labels per subunit source plug, from its audio info block
     /// (TA 2001007 §6.2.3.1). One entry per stream; an unlabelled one is "".
     std::unordered_map<uint8_t, std::vector<std::string>> perPlugChannelNames;
+    /// The MIDI streams of each subunit source plug, from its MIDI info block (TA 2001007 §6.2.3.2): how many
+    /// the block declares and the label of each, one name_info_block per stream (Figure 6.9) or CR LF separated
+    /// in one (Table 6.5). An unlabelled stream is "".
+    std::unordered_map<uint8_t, MusicMidiStreams> perPlugMidiStreams;
+    /// 0x8101 number_of_source_plugs: how many source plugs the status area describes (§6.2.2), not the subunit's
+    /// plug total, and the described plugs are not numbered 0..n-1. nullopt when the block is absent.
+    std::optional<uint8_t> declaredSourcePlugs;
+    /// The SMPTE time code, sample count and audio SYNC activity of each source plug that reports it
+    /// (0x8105-0x8107, §6.2.3.3-§6.2.3.5).
+    std::unordered_map<uint8_t, MusicSourcePlugActivity> perPlugActivity;
     /// The label of each audio music plug: the k-th audio music plug routed to
     /// a source plug, in music plug ID order, carries that plug's k-th label
     /// (TA 2001007 Table 6.2). Holds non-empty labels only.
@@ -140,6 +153,8 @@ public:
         std::span<const uint8_t> data) noexcept;
 
     [[nodiscard]] static std::string ExtractName(const AVCInfoBlock& block) noexcept;
+    /// Labels separated by CR LF (TA 2001007 Tables 6.2, 6.5); a missing label is an empty entry.
+    [[nodiscard]] static std::vector<std::string> SplitLabels(const std::string& text);
 
 private:
     static void AssignMusicPlugLabels(MusicSubunitStatus& status);

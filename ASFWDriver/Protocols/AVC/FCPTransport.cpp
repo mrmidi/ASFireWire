@@ -7,6 +7,7 @@
 
 #include "FCPTransport.hpp"
 #include "../../Logging/Logging.hpp"
+#include "Core/AvcNames.hpp"
 
 #include <algorithm>
 #include <utility>
@@ -157,8 +158,9 @@ void FCPTransport::Submit(const ASFW::AVC::CommandFrame& frame,
     // user-client raw path whose payload comes from user space. Devices whose
     // firmware hangs on unimplemented AV/C carry a non-empty allowlist.
     if (!FrameIsPermitted(config_.permittedFrames, wire)) {
-        ASFW_LOG_ERROR(FCP, "FCPTransport: refused ctype=0x%02x opcode=0x%02x — not in this device's permitted command set",
-                       wire[0], wire[2]);
+        ASFW_LOG_ERROR(FCP, "FCPTransport: refused %{public}s %{public}s — not in this device's permitted command set",
+                       ASFW::AVC::Describe(static_cast<ASFW::AVC::CommandType>(wire[0])).c_str(),
+                       ASFW::AVC::DescribeOpcodeOf(wire[1], wire[2]).c_str());
         refuse(AvcErrorKind::kRefused);
         return;
     }
@@ -248,16 +250,14 @@ void FCPTransport::IssueWrite() {
         FinishIfActive(id, std::unexpected(ErrorOf(AvcErrorKind::kTransportError)));
         return;
     }
-    const Async::FWAddress address{Async::FWAddress::AddressParts{
-        .addressHi = static_cast<uint16_t>((config_.commandAddress >> 32U) & 0xFFFFU),
-        .addressLo = static_cast<uint32_t>(config_.commandAddress & 0xFFFFFFFFU),
-    }};
-    ASFW_LOG_HEX(FCP, "FCPTransport: write attempt=%llu node=0x%04x gen=%u ctype=0x%02x opcode=0x%02x len=%zu",
+    const Async::FWAddress address = FW::Unpack(config_.commandAddress);  // 48-bit address, node ID 0
+    ASFW_LOG_HEX(FCP, "FCPTransport: write attempt=%llu node=0x%04x gen=%u %{public}s %{public}s len=%zu",
                  attempt.id, attempt.route.nodeId, attempt.route.generation.value,
-                 command.data[0], command.data[2], command.length);
+                 ASFW::AVC::Describe(static_cast<ASFW::AVC::CommandType>(command.data[0])).c_str(),
+                 ASFW::AVC::DescribeOpcodeOf(command.data[1], command.data[2]).c_str(), command.length);
     const auto handle = busOps_->WriteBlock(
         FW::Generation{attempt.route.generation.value},
-        FW::NodeId{static_cast<uint8_t>(attempt.route.nodeId & 0x3Fu)},
+        FW::NodeId{FW::NodeNumberOf(attempt.route.nodeId)},
         address, command.Payload(), FW::FwSpeed::S100,
         [self, attempt](Async::AsyncStatus status, std::span<const uint8_t>) {
             self->OnWriteComplete(attempt, status);
@@ -357,11 +357,13 @@ bool FCPTransport::ResponseMatches(const Transaction& txn, std::span<const uint8
     }
     // The tape subunit answers TRANSPORT STATE with the current transport mode
     // as the opcode (IOFireWireAVCCommand.cpp:136-140).
-    if ((command[1] & 0xF8) == 0x20 && command[2] == 0xD0) {
+    if (ASFW::AVC::SubunitAddress::FromByte(command[1]).Type() == ASFW::AVC::SubunitType::kTape &&
+        command[2] == kTapeTransportStateOpcode) {
         const uint8_t opcode = response[2];
-        return opcode == 0xD0 || opcode == 0xC1 || opcode == 0xC2 || opcode == 0xC3 || opcode == 0xC4;
+        return opcode == kTapeTransportStateOpcode ||
+               (opcode >= kTapeTransportModeOpcodeFirst && opcode <= kTapeTransportModeOpcodeLast);
     }
-    return (response[2] & 0x7F) == (command[2] & 0x7F);
+    return (response[2] & kResponseOpcodeCompareMask) == (command[2] & kResponseOpcodeCompareMask);
 }
 
 void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
@@ -381,7 +383,7 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
         return;
     }
     const uint16_t expected = attempt->route.nodeId;
-    const bool nodeMatches = srcNodeID == expected || (srcNodeID & 0x3F) == (expected & 0x3F);
+    const bool nodeMatches = srcNodeID == expected || FW::NodeNumberOf(srcNodeID) == FW::NodeNumberOf(expected);
     if (!routeRegistry_ || !routeRegistry_->IsCurrent(attempt->route) || !nodeMatches ||
         generation != attempt->route.generation.value || !ResponseMatches(active_->txn, payload)) {
         IOLockUnlock(lock_);
@@ -414,6 +416,9 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
     DisarmTimer();
     const uint32_t id = active_->txn.id;
     IOLockUnlock(lock_);
+    ASFW_LOG_V2(FCP, "FCPTransport: response %{public}s to %{public}s len=%zu",
+                ASFW::AVC::Describe(static_cast<ASFW::AVC::ResponseCode>(payload[0])).c_str(),
+                ASFW::AVC::DescribeOpcodeOf(payload[1], payload[2]).c_str(), payload.size());
 
     const FCPFrame response = FrameOf(payload);
     const auto self = weak_from_this().lock();

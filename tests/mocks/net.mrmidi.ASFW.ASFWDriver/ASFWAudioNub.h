@@ -16,10 +16,9 @@ public:
     void NotifyDeviceClockChanged(uint32_t) noexcept {}
     // No audio driver in the host suite: restarts stay in place.
     bool NotifyIoRestartRequired(uint32_t) noexcept { return false; }
-    kern_return_t RequestTxPreparation(uint64_t generation) {
+    void TxPreparationReady(OSAction*, uint64_t generation) {
         ++txPreparationRequests;
         lastTxPreparationGeneration = generation;
-        return kIOReturnSuccess;
     }
     void RequestTimingRecovery(uint64_t rxEpoch) { lastTimingRecoveryEpoch = rxEpoch; }
 

@@ -75,6 +75,7 @@ bool ASFWProtocolBooleanControl::init(
     ivars->ownerDriver = ownerDriver;
     ivars->classIdFourCC = classIdFourCC;
     ivars->routedElement = routedElement;
+    ASFW_LOG(Audio, "[AvcControl] init boolean class=0x%08x route=0x%06x scope=0x%08x element=%u value=%u settable=%u", classIdFourCC, routedElement, static_cast<uint32_t>(controlScope), controlElement, controlValue, isSettable);
     return true;
 }
 
@@ -88,10 +89,19 @@ void ASFWProtocolBooleanControl::free()
 
 kern_return_t ASFWProtocolBooleanControl::HandleChangeControlValue(bool in_control_value)
 {
+    ASFW_LOG(Audio, "[AvcControl] callback boolean class=0x%08x route=0x%06x requested=%u ready=%u", ivars ? ivars->classIdFourCC : 0, ivars ? ivars->routedElement : 0, in_control_value, ivars && ivars->ownerDriver);
     if (!ivars || !ivars->ownerDriver) {
         return kIOReturnNotReady;
     }
 
+    if (ivars->classIdFourCC == static_cast<uint32_t>(IOUserAudioClassID::MuteControl)) {
+        int32_t confirmed{};
+        const auto status = ivars->ownerDriver->ApplyAvcFeatureControl(ivars->routedElement, true,
+                                                                      in_control_value ? 1 : 0, &confirmed);
+        const auto halStatus = status == kIOReturnSuccess ? SetControlValue(confirmed != 0) : status;
+        ASFW_LOG(Audio, "[AvcControl] mute complete token=0x%06x confirmed=%d applyKr=0x%x halKr=0x%x", ivars->routedElement, confirmed, status, halStatus);
+        return halStatus;
+    }
     const kern_return_t applyStatus =
         ivars->ownerDriver->ApplyProtocolBooleanControl(ivars->classIdFourCC,
                                                         ivars->routedElement,
@@ -106,5 +116,7 @@ kern_return_t ASFWProtocolBooleanControl::HandleChangeControlValue(bool in_contr
         return applyStatus;
     }
 
-    return SetControlValue(in_control_value);
+    const auto status = SetControlValue(in_control_value);
+    ASFW_LOG(Audio, "[AvcControl] boolean complete class=0x%08x route=0x%06x kr=0x%x", ivars->classIdFourCC, ivars->routedElement, status);
+    return status;
 }

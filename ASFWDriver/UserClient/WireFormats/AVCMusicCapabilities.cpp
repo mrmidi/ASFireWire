@@ -4,6 +4,7 @@
 // AVCMusicCapabilities.cpp - see AVCMusicCapabilities.hpp.
 
 #include "AVCMusicCapabilities.hpp"
+#include "../../Protocols/AVC/Descriptors/DescriptorTypeCodes.hpp"
 #include "../../Shared/SharedDataModels.hpp"
 
 #include <algorithm>
@@ -131,16 +132,35 @@ std::optional<std::vector<uint8_t>> BuildMusicCapabilities(const E::DiscoverySna
     std::vector<Plug> plugs;
     const auto contents = std::find_if(snapshot.contents.begin(), snapshot.contents.end(),
                                        [&](const auto& c) { return c.id == subunit; });
+    // The identifier descriptor's static capabilities (TA 2001007 §5.2), first: the plugs below replace the
+    // channel and port counts with what the subunit really exposes.
+    if (contents != snapshot.contents.end() && contents->musicIdentifier) {
+        const auto& id = *contents->musicIdentifier;
+        if (id.audio && !id.audio->empty()) {
+            caps.audio = true;
+            uint16_t in = 0, out = 0;
+            for (const auto& format : *id.audio) { in = std::max(in, format.maxInputChannels); out = std::max(out, format.maxOutputChannels); }
+            caps.audioIn = in; caps.audioOut = out;
+        }
+        if (id.midi) { caps.midi = true; caps.midiIn = id.midi->maxInputPorts; caps.midiOut = id.midi->maxOutputPorts; }
+        if (id.smpteTimeCode && *id.smpteTimeCode != 0) caps.smpte = true;
+    }
     if (contents != snapshot.contents.end() && contents->music) {
         const auto& status = *contents->music;
-        const auto& c = status.capabilities;
-        if (c.hasAudioCapability) { caps.audio = true; caps.audioIn = c.maxAudioInputChannels; caps.audioOut = c.maxAudioOutputChannels; }
-        if (c.hasMidiCapability) { caps.midi = true; caps.midiIn = c.maxMidiInputPorts; caps.midiOut = c.maxMidiOutputPorts; }
-        if (c.hasSmpteTimeCodeCapability) caps.smpte = true;
+        // SMPTE time code is present when the subunit describes an SMPTE music plug (810B, type 02) or a
+        // source plug reports SMPTE activity (8105, §6.2.3.3).
+        for (const auto& mp : status.musicPlugs) {
+            if (mp.plugType == Protocols::AVC::Descriptors::kMusicPlugTypeSmpte) caps.smpte = true;
+        }
+        for (const auto& [plugId, activity] : status.perPlugActivity) {
+            if (activity.smpteTimeCode) caps.smpte = true;
+        }
         for (const auto& p : status.plugs) {
             Plug plug{.id = p.plugId, .input = p.isDestination,
-                      // Usage 4/5 (TA 2001007 Table 6.9) are audio streams.
-                      .type = (p.usage == 0x04 || p.usage == 0x05) ? kAudioPlug : p.usage, .name = p.name};
+                      // Analog and digital audio usage are audio streams (Apple MusicSubunitController.h:96-105).
+                      .type = (p.usage == Protocols::AVC::Descriptors::kMusicPlugUsageAnalogAudio ||
+                               p.usage == Protocols::AVC::Descriptors::kMusicPlugUsageDigitalAudio)
+                                  ? kAudioPlug : p.usage, .name = p.name};
             if (!p.clusters.empty()) plug.current = FromClusters(p.clusters);
             plugs.push_back(std::move(plug));
         }

@@ -140,6 +140,11 @@ public:
         return fcpTransport_ ? fcpTransport_->CopyExchangeLog() : FcpExchangeLog{};
     }
     std::shared_ptr<const Graph::DeviceGraph> GetDiscoveredGraph() const noexcept { return discoveredGraph_; }
+    void RememberConfirmedDuplexRate(const Discovery::DeviceRouteToken& route, uint32_t rateHz) override;
+    [[nodiscard]] bool HasUserFeaturePreference(uint8_t subunit, uint8_t block) const noexcept override;
+    void RememberConfirmedFeature(const Discovery::DeviceRouteToken& route, uint8_t subunit,
+                                  const ASFW::AVC::Cmd::FeatureReply& reply);
+
     /// The last committed discovery: unit, subunits, plugs, descriptors,
     /// controls. Immutable; every consumer reads discovered facts from here.
     [[nodiscard]] ASFW::AVC::DiscoveryEngine::SnapshotLease GetDiscoverySnapshot() const noexcept { return snapshot_; }
@@ -170,6 +175,8 @@ private:
     void ReScanAlreadyBegun(std::function<void(bool success)> completion);
 
     void ApplySnapshot(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot);
+    /// Writes everything the snapshot found to the driver ring, by spec name (Discovery/DiscoveryLog.hpp).
+    void LogDiscovery(const ASFW::AVC::DiscoveryEngine::DiscoverySnapshot& snapshot) const;
     std::weak_ptr<Discovery::FWDevice> device_;
     std::weak_ptr<Discovery::FWUnit> unit_;
     Discovery::DeviceRegistry& routeRegistry_;

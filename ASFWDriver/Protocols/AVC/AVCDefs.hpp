@@ -41,6 +41,24 @@ constexpr size_t kAVCFrameMinSize = 3;
 constexpr size_t kAVCFrameMaxSize = 512;
 
 //==============================================================================
+// Response matching
+//==============================================================================
+
+/// A tape recorder/player subunit answers TRANSPORT STATE (opcode D0) with the current transport
+/// mode as the response opcode: Apple says "Play, Wind, Record, or LoadMedium"
+/// (IOFireWireAVCCommand.cpp:122-125, 136-140). Those are the four values C1..C4; which opcode is
+/// which mode is not in any local spec (the Tape Recorder/Player subunit specification is not in
+/// 1papers), so they are named as a range.
+constexpr uint8_t kTapeTransportStateOpcode = 0xD0;
+constexpr uint8_t kTapeTransportModeOpcodeFirst = 0xC1;
+constexpr uint8_t kTapeTransportModeOpcodeLast = 0xC4;
+
+/// Response and command opcodes are compared without bit 7. This is legacy ASFW behaviour
+/// (carried over from the pre-phase-3 transport); Apple compares the whole byte
+/// (IOFireWireAVCCommand.cpp:154-157) and no spec supports ignoring the bit. Source unknown.
+constexpr uint8_t kResponseOpcodeCompareMask = 0x7F;
+
+//==============================================================================
 // FCP Timeouts
 //==============================================================================
 
