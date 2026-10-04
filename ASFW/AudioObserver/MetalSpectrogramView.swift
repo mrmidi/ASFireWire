@@ -66,6 +66,7 @@ private struct SpectrogramLane { let transform: UInt32; let texture: MTLTexture;
 
 final class SpectrogramRenderer: NSObject, MTKViewDelegate {
     private let ring: MTLBuffer
+    private let stereoScratch: MTLBuffer
     private let compute: MTLComputePipelineState
     private let render: MTLRenderPipelineState
     private let waterfallRender: MTLRenderPipelineState
@@ -92,7 +93,10 @@ final class SpectrogramRenderer: NSObject, MTKViewDelegate {
               let vertex = library.makeFunction(name: "asfwSpectrogramVertex"),
               let fragment = library.makeFunction(name: "asfwSpectrogramFragment"),
               let compute = try? device.makeComputePipelineState(function: fft),
-              compute.maxTotalThreadsPerThreadgroup >= 256 else { return nil }
+              compute.maxTotalThreadsPerThreadgroup >= 256,
+              SpectrumFFTLayout.sizes.contains(fftSize),
+              compute.staticThreadgroupMemoryLength + SpectrumFFTLayout.scratchBytes(fftSize) <= device.maxThreadgroupMemoryLength,
+              let stereoScratch = device.makeBuffer(length: SpectrumFFTLayout.binCount(fftSize) * SpectrogramTimeline.maximumSlicesPerUpdate * 4, options: .storageModePrivate) else { return nil }
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = vertex; descriptor.fragmentFunction = fragment
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
@@ -132,6 +136,7 @@ final class SpectrogramRenderer: NSObject, MTKViewDelegate {
             lanes.append(SpectrogramLane(transform: region.transform, texture: texture, stamps: stamps, continuity: continuity))
         }
         guard !lanes.isEmpty else { return nil }
+        self.stereoScratch = stereoScratch
         self.lanes = lanes; self.regions = regions; self.ring = ring; self.state = state
         self.submission = submission; self.compute = compute; self.render = render
         self.waterfallRender = waterfallRender
@@ -158,6 +163,8 @@ final class SpectrogramRenderer: NSObject, MTKViewDelegate {
         }
         guard let encoder = command.makeComputeCommandEncoder() else { slots.signal(); return }
         encoder.setComputePipelineState(compute)
+        encoder.setThreadgroupMemoryLength(SpectrumFFTLayout.scratchBytes(fftSize), index: 0)
+        encoder.setBuffer(stereoScratch, offset: 0, index: 3)
         encoder.setBuffer(ring, offset: 0, index: 0)
         for lane in lanes {
             var params = SpectrogramParams(fft: SpectrogramFFTParams(ringFrames: snapshot.activeRingFrames,

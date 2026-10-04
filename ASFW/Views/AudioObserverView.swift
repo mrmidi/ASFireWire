@@ -311,7 +311,7 @@ struct AudioObserverPanel: View {
                     .labelsHidden().pickerStyle(.segmented).frame(width: 90)
                     Text("FFT Size")
                     Picker("FFT Size", selection: $fftSize) {
-                        ForEach([UInt32(1024), 2048, 4096], id: \.self) { Text(String($0)).tag($0) }
+                        ForEach(SpectrumFFTLayout.sizes, id: \.self) { Text(String($0)).tag($0) }
                     }.labelsHidden().frame(width: 78)
                     Text("Window")
                     Picker("Window", selection: $spectrumWindow) {
