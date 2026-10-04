@@ -399,3 +399,16 @@ TEST(SessionFamilyResourcePolicy, FailedCmpDisconnectRetainsReservationsUntilRet
     EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
     EXPECT_EQ(rig.host.AssignedChannelsForTest(), 0U);
 }
+
+TEST(SessionFamilyResourcePolicy, StartAfterFailedStopMustCompleteCleanupBeforeRestart) {
+    SessionRig rig(kShapes[3].shape);
+    ASSERT_EQ(rig.Start(), kIOReturnSuccess);
+    rig.FailDevice("disconnect_playback");
+    ASSERT_EQ(rig.Stop(), kIOReturnError);
+    rig.FailDevice("disconnect_playback");
+    EXPECT_EQ(rig.Start(), kIOReturnError);
+    EXPECT_GT(rig.host.AssignedChannelsForTest(), 0U);
+    EXPECT_EQ(rig.Start(), kIOReturnSuccess);
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+    EXPECT_EQ(rig.host.AssignedChannelsForTest(), 0U);
+}

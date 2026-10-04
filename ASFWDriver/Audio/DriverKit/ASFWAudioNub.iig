@@ -49,7 +49,7 @@ public:
                                                 uint32_t* outSampleRateHz,
                                                 uint64_t* outGeneration);
 
-    virtual kern_return_t StartAudioStreaming();
+    virtual kern_return_t StartAudioStreaming(uint32_t sampleRateHz);
     virtual kern_return_t StopAudioStreaming();
 
     /**

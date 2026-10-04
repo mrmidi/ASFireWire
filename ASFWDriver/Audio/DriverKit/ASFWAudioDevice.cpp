@@ -434,7 +434,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         // StopAudioStreaming rather than trusting failure to be side-effect free.
         streamingStarted = true;
         const kern_return_t startKr =
-            ivars.device.audioNub->StartAudioStreaming();
+            ivars.device.audioNub->StartAudioStreaming(
+                static_cast<uint32_t>(ivars.device.currentSampleRate));
         if (startKr != kIOReturnSuccess) {
             ASFW_LOG(Audio,
                      "ASFWAudioDevice: StartAudioStreaming failed: 0x%x",
