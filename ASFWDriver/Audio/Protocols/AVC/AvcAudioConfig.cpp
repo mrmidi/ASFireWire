@@ -124,33 +124,23 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
     config.resolvedGeometryRequired = true;
     config.deviceSampleRates = true;
     config.graphResolved = true;
+    // Descriptor purpose resolves competing output stages. It identifies the
+    // intended master, never invents mute/volume support or its limits.
+    const bool declaredOutputMaster = std::ranges::any_of(graph.featureChannels, [&](const auto& channel) {
+        if (channel.channel != 0 || (!channel.volume && !channel.mute)) return false;
+        return std::ranges::any_of(graph.controls, [&](const auto& block) {
+            return block.audioSubunitId == channel.subunit && block.id == channel.block &&
+                block.volumePurpose == 1 && IsAvcOutputMaster(graph, block);
+        });
+    });
     for (const auto& channel : graph.featureChannels) {
         const auto block = std::ranges::find_if(graph.controls, [&](const auto& item) { return item.type == Descriptors::AudioFunctionBlockType::kFeature && item.audioSubunitId == channel.subunit && item.id == channel.block; });
         if (block == graph.controls.end() || channel.channel != 0) continue;
-        auto placement = PlaceAvcControl(graph, *block, channel.channel);
-        // Validated Duet override when discovery lacks the boundary route.
-        // Generic devices require explicit stream-channel evidence above.
-        if (placement.scope == static_cast<uint32_t>('ptru') &&
-            graph.playbackAudioChannels.empty() && !graph.playback.routeAmbiguous &&
-            plan.protocolImplementation == DeviceProfiles::Audio::ProtocolImplementationId::ApogeeDuet &&
-            block->audioSubunitId == 0 && block->channelCount == playback.channelCount &&
-            block->inputSources.size() == 1 && block->inputSources.front().IsSubunitDestPlug() &&
-            block->inputSources.front().id == 0 &&
-            std::ranges::count_if(graph.controls, [](const auto& b) {
-                return b.type == Descriptors::AudioFunctionBlockType::kFeature;
-            }) == 1) placement = {static_cast<uint32_t>('outp'), channel.channel};
-        // PHASE88's verified output mixer is FB1, not its input/waveplay
-        // features. Captured phase88_descriptors.md:66,91 and FFADO
-        // support/mixer-qt4/ffado/mixer/phase88control.py:43-44 identify FB1.
-        // This is hardware mixer master gain; direct routes can bypass it.
-        if (plan.protocolImplementation == DeviceProfiles::Audio::ProtocolImplementationId::BeBoBPhase88 &&
-            block->audioSubunitId == 0 && block->id == 1 && block->channelCount == 8)
-            placement = {static_cast<uint32_t>('outp'), 0};
-        if (placement.scope != static_cast<uint32_t>('outp') || placement.element != 0) continue;
+        if (!IsAvcOutputMaster(graph, *block) || (declaredOutputMaster && block->volumePurpose != 1)) continue;
         ::ASFW::Audio::Model::AvcPublishedControl control;
         control.token = ::ASFW::Audio::Model::AvcControlToken(channel.subunit, channel.block, channel.channel);
-        control.scope = placement.scope;
-        control.element = placement.element;
+        control.scope = static_cast<uint32_t>('outp');
+        control.element = 0;
         snprintf(control.name, sizeof(control.name), "%s %s %u",
                  block->name.empty() ? ("Feature " + std::to_string(block->id)).c_str() : block->name.c_str(),
                  channel.channel == 0 ? "Master" : "Channel", channel.channel);

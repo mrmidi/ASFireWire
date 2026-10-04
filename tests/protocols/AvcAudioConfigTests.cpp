@@ -265,14 +265,18 @@ TEST(AvcControlMapping, CompetingOutputMastersAreNotPublished) {
     const auto config = BuildGraphAudioConfig({}, {}, graph);
     ASSERT_TRUE(config); EXPECT_TRUE(config->avcControls.empty());
 }
-TEST(AvcAudioConfig, Phase88PublishesOnlyVerifiedMixerOutputMaster) {
+TEST(AvcAudioConfig, GenericOutputSelectorFrontierPublishesOnlyMixerMaster) {
     DeviceGraph graph; graph.playback = graph.capture = Stream(10, 10, {48000}, 48000);
     graph.controls = {Feature(1, 8, {0x82, 1}), Feature(2, 2, {0xf0, 2})};
+    G::ControlBlockInfo selector; selector.type=D::AudioFunctionBlockType::kSelector; selector.id=6;
+    selector.inputSources={{0x81,1}, {0xf0,0}};
+    graph.controls.push_back(selector);
+    graph.audioSourcePlugs={{0,0,{0xf0,2}}, {0,6,{0x80,6}}};
+    for (uint32_t i=0; i<10; ++i) graph.captureAudioChannels.push_back({i,0,0,static_cast<uint8_t>(i)});
     for (uint8_t block : {1, 2}) for (uint8_t channel : {0, 1})
         graph.featureChannels.push_back({.subunit=0, .block=block, .channel=channel, .mute=false,
             .volume=-256, .minimum=-25600, .maximum=0, .resolution=256});
     StaticAudioEndpointPlan plan;
-    plan.protocolImplementation = ASFW::DeviceProfiles::Audio::ProtocolImplementationId::BeBoBPhase88;
     auto config = BuildGraphAudioConfig({}, plan, graph);
     ASSERT_TRUE(config); ASSERT_EQ(config->avcControls.size(), 1U);
     EXPECT_EQ(config->avcControls[0].token, 0x100U);
@@ -287,6 +291,35 @@ TEST(AvcAudioConfig, Phase88PublishesOnlyVerifiedMixerOutputMaster) {
     config = BuildGraphAudioConfig({}, plan, graph);
     ASSERT_TRUE(config); ASSERT_EQ(config->avcControls.size(), 1U);
     EXPECT_TRUE(config->avcControls[0].hasVolume); EXPECT_FALSE(config->avcControls[0].hasMute);
+}
+TEST(AvcControlMapping, OutputFrontierNeedsCompleteCaptureIdentityAndRejectsSharedGain) {
+    DeviceGraph graph; graph.playback=graph.capture=Stream(2,2,{48000},48000);
+    graph.controls={Feature(9,2,{0x82,1}), Feature(10,2,{0xf0,2})};
+    G::ControlBlockInfo selector; selector.type=D::AudioFunctionBlockType::kSelector; selector.id=4;
+    selector.inputSources={{0x81,9},{0x80,4}}; graph.controls.push_back(selector);
+    graph.audioSourcePlugs={{0,3,{0x80,4}}, {0,1,{0xf0,2}}};
+    EXPECT_FALSE(ASFW::Protocols::AVC::IsAvcOutputMaster(graph, graph.controls[0]));
+    graph.captureAudioChannels={{0,0,1,0},{1,0,1,1}};
+    EXPECT_TRUE(ASFW::Protocols::AVC::IsAvcOutputMaster(graph, graph.controls[0]));
+    graph.controls[0].volumePurpose=2;
+    EXPECT_FALSE(ASFW::Protocols::AVC::IsAvcOutputMaster(graph,graph.controls[0]));
+    graph.controls[0].volumePurpose=3;
+    EXPECT_FALSE(ASFW::Protocols::AVC::IsAvcOutputMaster(graph,graph.controls[0]));
+    graph.controls[0].volumePurpose=0;
+    EXPECT_FALSE(ASFW::Protocols::AVC::IsAvcOutputMaster(graph, graph.controls[1]));
+    graph.captureAudioChannels={{0,0,3,0},{1,0,3,1}};
+    EXPECT_FALSE(ASFW::Protocols::AVC::IsAvcOutputMaster(graph, graph.controls[0]));
+}
+TEST(AvcAudioConfig, DescriptorMasterPurposeResolvesCompetingOutputStages) {
+    DeviceGraph graph; graph.playback=graph.capture=Stream(2,2,{48000},48000);
+    graph.controls={Feature(5,2,{0xf0,0}),Feature(7,2,{0x81,5})};
+    graph.controls[1].volumePurpose=1;
+    graph.playbackAudioChannels={{0,0,0,0},{1,0,0,1}};
+    for (uint8_t block : {5,7}) graph.featureChannels.push_back({.subunit=0,.block=block,.channel=0,.mute=false,
+        .volume=0,.minimum=-16384,.maximum=0,.resolution=1});
+    const auto config=BuildGraphAudioConfig({}, {}, graph);
+    ASSERT_TRUE(config); ASSERT_EQ(config->avcControls.size(),1U);
+    EXPECT_EQ(config->avcControls[0].token,0x700U);
 }
 TEST(AvcAudioConfig, PrefersBlockingFromBothDirectionsAndHonorsValidatedOverrides) {
     DeviceGraph graph; graph.playback = Stream(2, 2, {48000}, 48000); graph.capture = graph.playback;

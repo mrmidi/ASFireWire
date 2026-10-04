@@ -11,9 +11,14 @@ Volume uses IOUserAudioLevelControl (VolumeControl), in dB. The scalar callback 
 The nub dispatches graph lookup and AV/C commands to the controller queue and waits on its own queue. The transaction owns its unit/route across CONTROL then CURRENT STATUS. Only a stable matching readback updates HAL and the graph. Rejected writes, wrong-channel replies, transition responses, or stale routes fail. A timed-out caller retires the continuation; already-submitted device commands cannot be undone. No transport/audio-buffer pointers cross this control seam.
 
 Core Audio publishes only output-master channel 0 volume and mute. Generic
-mapping requires a fixed, channel-preserving output path covering the stream.
-Verified overrides select Duet's single playback feature and Phase88's FB1
-Mixer Output Level. Each control class publishes only when exactly one eligible
+mapping accepts a fixed, channel-preserving playback master or an output-facing
+feature reached through selectors from non-capture Audio source plugs. The latter
+requires a complete capture channel identity map so a capture gain cannot be
+mistaken for output gain, and stops at processing blocks instead of crossing a
+mixer into input gains. Descriptor general_tag master purpose prefers a declared
+output master among candidates. There are no Duet/Phase88 model or block-ID
+checks. Missing/malformed routing can leave a control unpublished, including
+Duet's broken feature reference when its playback boundary is absent. Each control class publishes only when exactly one eligible
 master has confirmed state (and, for volume, valid device-reported limits and
 step). Per-channel, input and internal mixer controls stay in discovery but are
 not published to HAL. Competing master candidates are omitted independently
@@ -70,3 +75,20 @@ Use the MCP driver ring query for `[AvcControlTrace]` in Audio and
 should have normal control traces and no preparation-stall records. Hardware
 reproduction is still required after installation; host tests do not execute
 DriverKit dispatch queues.
+
+
+Generic master discovery no longer selects Duet/Phase88 by protocol ID or block
+number. Audio destination plugs declared in the descriptor are included in
+SIGNAL SOURCE STATUS discovery even if PLUG_INFO omits them (duplicate declared
+plugs are queried once). Captured Duet Audio destination 0 to Music source 1
+establishes its playback boundary without repairing its broken source-link
+reference. The captured Phase88 graph identifies its output-facing mixer
+feature through selectors while rejecting mixer input features. Explicit
+input/output trim purpose does not become system master volume. Ambiguous
+masters remain unpublished rather than being selected by label or model.
+
+The Phase88 startup map no longer writes -35 dB to FB1 channels 1/2. It retains
+those device levels and leaves master-volume writes to Core Audio. This removes
+the preset, not existing stored attenuation; previously applied channel levels
+are not automatically reset to unity. WavePlay setup and selector routing are
+unchanged.

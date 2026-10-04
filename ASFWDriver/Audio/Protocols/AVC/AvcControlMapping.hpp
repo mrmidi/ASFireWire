@@ -92,4 +92,40 @@ inline AvcControlPlacement PlaceAvcControl(const Graph::DeviceGraph& graph,
     if (output && input) return internal;
     return output ? *output : input ? *input : internal;
 }
+// A mixer output master need not have the PCM stream's width: selectors can
+// distribute its outputs among physical plugs. Resolve only the output-facing
+// feature frontier, never through a processing/mixer block into its input gains.
+inline bool IsAvcOutputMaster(const Graph::DeviceGraph& graph, const Graph::ControlBlockInfo& feature) {
+    if (feature.type != Descriptors::AudioFunctionBlockType::kFeature || !feature.channelCount ||
+        feature.volumePurpose == 2 || feature.volumePurpose == 3) return false;
+    const auto fixed = PlaceAvcControl(graph, feature, 0);
+    if (fixed.scope == static_cast<uint32_t>('outp') && fixed.element == 0) return true;
+    if (graph.capture.routeAmbiguous || graph.playback.routeAmbiguous ||
+        graph.captureAudioChannels.size() != graph.capture.channelCount || !graph.capture.channelCount) return false;
+    std::vector<bool> seen(graph.capture.channelCount, false);
+    for (const auto& channel : graph.captureAudioChannels) {
+        if (channel.logicalIndex >= seen.size() || seen[channel.logicalIndex]) return false;
+        seen[channel.logicalIndex] = true;
+    }
+    const ControlMapping::Source target{static_cast<uint8_t>(feature.type), feature.id};
+    const auto reaches = [&](auto&& self, ControlMapping::Source source,
+                             std::vector<ControlMapping::Source> visited) -> bool {
+        if (source == target) return true;
+        if (!source.IsFunctionBlock() || std::ranges::find(visited, source) != visited.end()) return false;
+        visited.push_back(source);
+        const auto* block = ControlMapping::Find(graph, feature.audioSubunitId, source);
+        if (!block || block->type != Descriptors::AudioFunctionBlockType::kSelector) return false;
+        return std::ranges::any_of(block->inputSources, [&](auto input) { return self(self, input, visited); });
+    };
+    bool output = false;
+    for (const auto& plug : graph.audioSourcePlugs) {
+        if (plug.audioSubunitId != feature.audioSubunitId || !reaches(reaches, plug.source, {})) continue;
+        const bool capture = std::ranges::any_of(graph.captureAudioChannels, [&](const auto& channel) {
+            return channel.audioSubunitId == plug.audioSubunitId && channel.plugId == plug.plugId;
+        });
+        if (capture) return false; // a shared capture/output gain is not an output-only master
+        output = true;
+    }
+    return output;
+}
 } // namespace ASFW::Protocols::AVC

@@ -99,6 +99,21 @@ void Expand(State& s, Checkpoint point) {
         }
         s.probes.emplace_back(Checkpoint::Routes); break;
     case Checkpoint::Routes:
+        // Identifier descriptors can expose Audio destination plugs even when
+        // PLUG_INFO is unavailable. Query those declared endpoints instead of
+        // losing the Audio/Music boundary (captured Duet audio_dest_0 reply).
+        // Audio Subunit 1.0 source_ID F0 denotes a destination plug; FFADO
+        // bebob_functionblock.cpp:140-155 discovers plug connections separately.
+        for (const auto& contents : s.builder.contents) {
+            if (!contents.audio) continue;
+            const auto ensure = [&](const auto& source) {
+                if (source.IsSubunitDestPlug())
+                    (void)Plug(s, contents.id.ToAddress(), Cmd::PlugDirection::kInput, source.id);
+            };
+            for (const auto& source : contents.audio->sourcePlugLinks) ensure(source);
+            for (const auto& block : contents.audio->functionBlocks)
+                for (const auto& source : block.inputSources) ensure(source);
+        }
         for (const auto& plug : s.builder.plugs) {
             if (plug.address.IsUnit() && plug.direction == Cmd::PlugDirection::kOutput)
                 s.probes.emplace_back(Cmd::QuerySignalSource(

@@ -149,6 +149,7 @@ struct ControlBlockInfo {
     std::vector<uint16_t> advertisedChannelControls;
     ConfirmedFeatureStatus confirmedControls{};
     std::vector<Descriptors::AudioSourceId> inputSources;
+    uint8_t volumePurpose{0}; ///< Audio descriptor general_tag: general/master/input trim/output trim
     bool isMasterVolume{false};
     uint8_t audioSubunitId{0};
 };

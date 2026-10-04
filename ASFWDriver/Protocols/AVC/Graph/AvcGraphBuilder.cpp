@@ -235,6 +235,7 @@ DeviceGraph AvcGraphBuilder::BuildGraph(
                 if (confirmed != options.confirmedFeatureControls.end()) {
                     cbi.confirmedControls = confirmed->status;
                 }
+                cbi.volumePurpose = fb.generalTag & 0x03; // Audio Subunit 1.0 Table 8.3
                 cbi.isMasterVolume = fb.generalTag == 1 &&
                     cbi.confirmedControls.state == FeatureStatusState::kConfirmed &&
                     std::find(cbi.confirmedControls.master.begin(), cbi.confirmedControls.master.end(),

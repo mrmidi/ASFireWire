@@ -550,6 +550,14 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     EXPECT_EQ(graph->playback.dataBlockSize, 11U);
     EXPECT_EQ(graph->capture.channelCount, 10U);
     EXPECT_EQ(graph->captureAudioChannels.size(), 10U);
+    const auto mixerMaster = std::ranges::find_if(graph->controls, [](const auto& block) {
+        return block.type == ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kFeature && block.id == 1;
+    });
+    ASSERT_NE(mixerMaster, graph->controls.end());
+    EXPECT_TRUE(IsAvcOutputMaster(*graph, *mixerMaster));
+    for (const auto& block : graph->controls)
+        if (block.type == ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kFeature && block.id != 1)
+            EXPECT_FALSE(IsAvcOutputMaster(*graph, block));
     EXPECT_EQ(graph->capture.dataBlockSize, 11U);
     EXPECT_EQ(graph->playback.currentSampleRate, 48000U);
     EXPECT_EQ(graph->capture.currentSampleRate, 48000U);
@@ -896,6 +904,30 @@ std::string Capture(const std::shared_ptr<AVCUnit>& unit, uint64_t guid) {
     return out;
 }
 } // namespace UserClientGolden
+
+TEST(AvcGoldenTests, CapturedDuetOutputBoundaryPublishesMasterWithoutModelOverride) {
+    AvcGoldenRigOptions opts; opts.unitOptions=DiscoveryOptionsFor(AvcExtensionInventory::kNone);
+    AvcGoldenRig rig(kDuet,opts);
+    std::vector<uint8_t> music;
+    for (size_t i=0;i<Fixtures::kDuetMusicStatusHex.size();i+=2)
+        music.push_back(static_cast<uint8_t>(std::stoul(Fixtures::kDuetMusicStatusHex.substr(i,2),nullptr,16)));
+    rig.Sim().SetDescriptor(0x60,{0x80},std::move(music));
+    rig.Sim().SetDescriptor(0x08,{0x00},std::vector<uint8_t>(Fixtures::kDuetAudioIdentifierBytes.begin(),Fixtures::kDuetAudioIdentifierBytes.end()));
+    // Exercise an incomplete PLUG_INFO inventory: Audio destination 0 must
+    // still be queried from the identifier's declared feature input.
+    rig.Sim().SetResponseOverride({0x01,0x08,0x02,0x00,0xff,0xff,0xff,0xff},
+        {0x0c,0x08,0x02,0x00,0x00,0x01,0xff,0xff});
+    // Exact captured STATUS replies in duet_descriptors.json, 2026-09-28.
+    rig.Sim().SetResponseOverride({0x01,0xff,0x1a,0xff,0xff,0xfe,0x08,0x00},
+        {0x0c,0xff,0x1a,0x70,0x60,0x01,0x08,0x00});
+    rig.Sim().SetResponseOverride({0x01,0xff,0x1a,0xff,0xff,0xfe,0xff,0x00},
+        {0x0c,0xff,0x1a,0x70,0x60,0x00,0xff,0x00});
+    bool ok=false; rig.Unit()->Initialize([&](bool result){ok=result;});rig.Settle();ASSERT_TRUE(ok);
+    const auto graph=rig.Unit()->GetDiscoveredGraph();ASSERT_TRUE(graph);
+    ASSERT_EQ(graph->playbackAudioChannels.size(),2U);
+    const auto feature=std::ranges::find_if(graph->controls,[](const auto& b){return b.type==ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kFeature;});
+    ASSERT_NE(feature,graph->controls.end());EXPECT_TRUE(IsAvcOutputMaster(*graph,*feature));
+}
 
 TEST(AvcGoldenTests, DuetUserClientOutputsAreUnchanged) {
     AvcGoldenRigOptions opts;
