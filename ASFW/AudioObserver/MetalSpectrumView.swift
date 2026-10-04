@@ -14,7 +14,7 @@ private struct SpectrumParams {
     var window: UInt32
 }
 
-private struct SmoothingParams { var alpha: Float; var elapsed: Float; var reset: UInt32; var unused: UInt32 = 0 }
+private struct SmoothingParams { var alpha: Float; var elapsed: Float; var reset: UInt32; var binCount: UInt32 }
 
 struct SpectrumPlotRegion: Equatable {
     let transform: UInt32
@@ -41,11 +41,12 @@ private struct SpectrumLane {
     let history: MTLBuffer
     let average: MTLBuffer
     let peaks: MTLBuffer
-    init?(device: MTLDevice, transform: UInt32) {
-        guard let amplitudes = device.makeBuffer(length: 2049 * 4, options: .storageModePrivate),
-              let history = device.makeBuffer(length: 2049 * 16, options: .storageModePrivate),
-              let average = device.makeBuffer(length: 2049 * 4, options: .storageModePrivate),
-              let peaks = device.makeBuffer(length: 2049 * 4, options: .storageModePrivate) else { return nil }
+    init?(device: MTLDevice, transform: UInt32, fftSize: UInt32) {
+        let bins = SpectrumFFTLayout.binCount(fftSize)
+        guard let amplitudes = device.makeBuffer(length: bins * 4, options: .storageModePrivate),
+              let history = device.makeBuffer(length: bins * 16, options: .storageModePrivate),
+              let average = device.makeBuffer(length: bins * 4, options: .storageModePrivate),
+              let peaks = device.makeBuffer(length: bins * 4, options: .storageModePrivate) else { return nil }
         self.transform = transform; self.amplitudes = amplitudes
         self.history = history; self.average = average; self.peaks = peaks
     }
@@ -128,9 +129,11 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
               let vertex = library.makeFunction(name: "asfwSpectrumVertex"),
               let fragment = library.makeFunction(name: "asfwAudioFragment"),
               let compute = try? device.makeComputePipelineState(function: fft),
-              compute.maxTotalThreadsPerThreadgroup >= 256 else { return nil }
+              compute.maxTotalThreadsPerThreadgroup >= 256,
+              SpectrumFFTLayout.sizes.contains(fftSize),
+              compute.staticThreadgroupMemoryLength + SpectrumFFTLayout.scratchBytes(fftSize) <= device.maxThreadgroupMemoryLength else { return nil }
         let transforms = regions.isEmpty ? [transform] : regions.map(\.transform)
-        let lanes = transforms.compactMap { SpectrumLane(device: device, transform: $0) }
+        let lanes = transforms.compactMap { SpectrumLane(device: device, transform: $0, fftSize: fftSize) }
         guard lanes.count == transforms.count else { return nil }
         self.lanes = lanes; self.regions = regions
         let descriptor = MTLRenderPipelineDescriptor()
@@ -165,11 +168,12 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         let key = "\(snapshot.sessionEpoch)-\(snapshot.discontinuityEpoch)"
         let elapsed = Float(min(0.25, max(0, now - (lastTime ?? now))))
         var smoothing = SmoothingParams(alpha: exp(-elapsed / (slow ? 1.0 : 0.15)), elapsed: elapsed,
-            reset: epoch == key && now - (lastTime ?? now) < 0.5 ? 0 : 1)
+            reset: epoch == key && now - (lastTime ?? now) < 0.5 ? 0 : 1, binCount: fftSize / 2 + 1)
         for lane in lanes {
             guard let encoder = command.makeComputeCommandEncoder() else { slots.signal(); return }
             var params = parameters(snapshot, transform: lane.transform)
             encoder.setComputePipelineState(compute)
+            encoder.setThreadgroupMemoryLength(SpectrumFFTLayout.scratchBytes(fftSize), index: 0)
             encoder.setBuffer(ring, offset: 0, index: 0)
             encoder.setBuffer(lane.amplitudes, offset: 0, index: 1)
             encoder.setBytes(&params, length: MemoryLayout<SpectrumParams>.stride, index: 2)

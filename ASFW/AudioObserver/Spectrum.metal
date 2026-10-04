@@ -3,88 +3,111 @@ using namespace metal;
 struct SpectrumParams { ulong writeEnd; uint ringFrames; uint channels; uint channel; uint sampleRate; uint otherChannel; uint transform; uint fftSize; uint window; };
 struct SpectrumVertex { float4 position [[position]]; };
 
-// One threadgroup performs a radix-2 DIT FFT. Bit-reversed input followed by
-// log2(FFT size) butterfly stages produces natural-order frequency bins.
+// Real FFT: pack windowed even/odd samples into an N/2 complex transform.
+// Dynamic threadgroup storage is N/2 * sizeof(float2): 32 KiB at N=8192.
+// Stereo power uses two transforms, reusing this storage, never averaging PCM.
+inline float spectrumSample(device const float* ring, thread const SpectrumParams& p,
+                            uint i, bool otherLane) {
+    const uint frame = uint((p.writeEnd - p.fftSize + i) % p.ringFrames);
+    const ulong base = ulong(frame) * p.channels;
+    float sample = ring[base + p.channel], other = ring[base + p.otherChannel];
+    sample = isfinite(sample) ? sample : 0;
+    other = isfinite(other) ? other : 0;
+    if (p.transform == 1) sample = (sample + other) * 0.70710678118f;
+    else if (p.transform == 2) sample = (sample - other) * 0.70710678118f;
+    else if (otherLane) sample = other;
+    const float angle = 2.0f * M_PI_F * float(i) / float(p.fftSize);
+    const float window = p.window == 1 ? 0.54f - 0.46f * cos(angle)
+        : p.window == 2 ? 0.42f - 0.5f * cos(angle) + 0.08f * cos(2 * angle)
+        : 0.5f - 0.5f * cos(angle);
+    return sample * window;
+}
 inline void spectrumTransform(device const float* ring, thread const SpectrumParams& p,
-                              threadgroup float2* values, uint tid, uint threads) {
-    const uint fftSize = p.fftSize;
-    const uint stages = uint(log2(float(fftSize)));
-    for (uint i = tid; i < fftSize; i += threads) {
-        uint reversed = 0;
-        uint bits = i;
+                              threadgroup float2* values, uint tid, uint threads, bool otherLane) {
+    const uint complexSize = p.fftSize / 2;
+    const uint stages = uint(log2(float(complexSize)));
+    for (uint i = tid; i < complexSize; i += threads) {
+        uint reversed = 0, bits = i;
         for (uint j = 0; j < stages; ++j) { reversed = (reversed << 1) | (bits & 1); bits >>= 1; }
-        uint frame = uint((p.writeEnd - fftSize + i) % p.ringFrames);
-        // Periodic Hann has coherent gain exactly 1/2.
-        float angle = 2.0f * M_PI_F * float(i) / float(fftSize);
-        float window = p.window == 1 ? 0.54f - 0.46f * cos(angle)
-            : p.window == 2 ? 0.42f - 0.5f * cos(angle) + 0.08f * cos(2 * angle)
-            : 0.5f - 0.5f * cos(angle);
-        float sample = ring[ulong(frame) * p.channels + p.channel];
-        float other = ring[ulong(frame) * p.channels + p.otherChannel];
-        if (p.transform == 1) sample = (sample + other) * 0.70710678118f;
-        if (p.transform == 2) sample = (sample - other) * 0.70710678118f;
-        values[reversed] = float2(sample * window, p.transform == 3 ? other * window : 0);
+        values[reversed] = float2(spectrumSample(ring, p, 2 * i, otherLane),
+                                 spectrumSample(ring, p, 2 * i + 1, otherLane));
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint width = 2; width <= fftSize; width <<= 1) {
-        uint halfWidth = width >> 1;
-        for (uint butterfly = tid; butterfly < fftSize / 2; butterfly += threads) {
-            uint j = butterfly % halfWidth;
-            uint a = (butterfly / halfWidth) * width + j;
-            uint b = a + halfWidth;
-            float angle = -2.0f * M_PI_F * float(j) / float(width);
-            float2 v = values[b];
-            float2 product = float2(v.x * cos(angle) - v.y * sin(angle),
-                                    v.x * sin(angle) + v.y * cos(angle));
-            float2 u = values[a];
-            values[a] = u + product;
-            values[b] = u - product;
+    for (uint width = 2; width <= complexSize; width <<= 1) {
+        const uint halfWidth = width >> 1;
+        for (uint butterfly = tid; butterfly < complexSize / 2; butterfly += threads) {
+            const uint j = butterfly % halfWidth;
+            const uint a = (butterfly / halfWidth) * width + j, b = a + halfWidth;
+            const float angle = -2.0f * M_PI_F * float(j) / float(width);
+            const float2 v = values[b], u = values[a];
+            const float2 product(v.x * cos(angle) - v.y * sin(angle),
+                                 v.x * sin(angle) + v.y * cos(angle));
+            values[a] = u + product; values[b] = u - product;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 }
 inline float spectrumAmplitude(threadgroup float2* values, thread const SpectrumParams& p, uint bin) {
-    uint fftSize = p.fftSize;
-    // Single-sided peak amplitude: a bin-centred full-scale sine is 0 dBFS.
-    float gain = p.window == 1 ? 0.54f : p.window == 2 ? 0.42f : 0.5f;
-    float scale = (bin == 0 || bin == fftSize / 2) ? 1.0f / (fftSize * gain) : 2.0f / (fftSize * gain);
-    float amplitude = length(values[bin]);
-    if (p.transform == 3) {
-        // Two real FFTs packed into one complex FFT. Average channel power
-        // keeps the stereo spectrum independent of phase cancellation.
-        float2 a = values[bin];
-        float2 b = values[(fftSize - bin) % fftSize] * float2(1, -1);
-        float2 left = (a + b) * 0.5f;
-        float2 right = float2(a.y - b.y, b.x - a.x) * 0.5f;
-        amplitude = sqrt((dot(left, left) + dot(right, right)) * 0.5f);
-    }
-    return amplitude * scale;
+    const uint halfSize = p.fftSize / 2;
+    // Reconstruct X[k] = E[k] + exp(-i*2*pi*k/N)*O[k]. Modulo also
+    // handles DC/Nyquist: Z[0].real +/- Z[0].imag, with no doubled gain.
+    const float2 a = values[bin % halfSize];
+    const float2 b = values[(halfSize - bin) % halfSize] * float2(1, -1);
+    const float2 even = (a + b) * 0.5f, difference = a - b;
+    const float2 odd(difference.y * 0.5f, -difference.x * 0.5f);
+    const float angle = -2.0f * M_PI_F * float(bin) / float(p.fftSize);
+    const float2 full = even + float2(odd.x * cos(angle) - odd.y * sin(angle),
+                                     odd.x * sin(angle) + odd.y * cos(angle));
+    const float gain = p.window == 1 ? 0.54f : p.window == 2 ? 0.42f : 0.5f;
+    const float scale = (bin == 0 || bin == halfSize) ? 1.0f / (p.fftSize * gain) : 2.0f / (p.fftSize * gain);
+    return length(full) * scale;
 }
 kernel void asfwSpectrumFFT(device const float* ring [[buffer(0)]],
     device float* amplitudes [[buffer(1)]], constant SpectrumParams& params [[buffer(2)]],
+    threadgroup float2* values [[threadgroup(0)]],
     uint tid [[thread_index_in_threadgroup]], uint3 size [[threads_per_threadgroup]]) {
     SpectrumParams p = params;
-    threadgroup float2 values[4096];
-    spectrumTransform(ring, p, values, tid, size.x);
+    spectrumTransform(ring, p, values, tid, size.x, false);
     for (uint bin = tid; bin <= p.fftSize / 2; bin += size.x)
         amplitudes[bin] = spectrumAmplitude(values, p, bin);
+    if (p.transform == 3) {
+        // Every lane finishes reading the first transform before scratch reuse.
+        threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+        spectrumTransform(ring, p, values, tid, size.x, true);
+        for (uint bin = tid; bin <= p.fftSize / 2; bin += size.x) {
+            const float left = amplitudes[bin], right = spectrumAmplitude(values, p, bin);
+            amplitudes[bin] = sqrt((left * left + right * right) * 0.5f);
+        }
+    }
 }
 
 struct SpectrogramParams { SpectrumParams fft; ulong firstSlice; uint hop; uint columns; };
 kernel void asfwSpectrogramSTFT(device const float* ring [[buffer(0)]],
     device ulong* stamps [[buffer(1)]], constant SpectrogramParams& params [[buffer(2)]],
+    device float* stereoScratch [[buffer(3)]],
     texture2d<float, access::write> history [[texture(0)]],
+    threadgroup float2* values [[threadgroup(0)]],
     uint tid [[thread_index_in_threadgroup]], uint3 group [[threadgroup_position_in_grid]],
     uint3 size [[threads_per_threadgroup]]) {
-    ulong slice = params.firstSlice + group.x;
+    const ulong slice = params.firstSlice + group.x;
     SpectrumParams p = params.fft;
     p.writeEnd = slice * params.hop;
-    threadgroup float2 values[4096];
-    spectrumTransform(ring, p, values, tid, size.x);
-    uint column = uint(slice % params.columns);
-    for (uint bin = tid; bin <= p.fftSize / 2; bin += size.x) {
-        float db = 20.0f * log10(max(spectrumAmplitude(values, p, bin), 1e-6f));
-        history.write(float4(db), uint2(column, bin));
+    const uint bins = p.fftSize / 2 + 1;
+    const uint column = uint(slice % params.columns);
+    spectrumTransform(ring, p, values, tid, size.x, false);
+    for (uint bin = tid; bin < bins; bin += size.x) {
+        const float amplitude = spectrumAmplitude(values, p, bin);
+        if (p.transform == 3) stereoScratch[group.x * bins + bin] = amplitude;
+        else history.write(float4(20.0f * log10(max(amplitude, 1e-6f))), uint2(column, bin));
+    }
+    if (p.transform == 3) {
+        threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+        spectrumTransform(ring, p, values, tid, size.x, true);
+        for (uint bin = tid; bin < bins; bin += size.x) {
+            const float left = stereoScratch[group.x * bins + bin], right = spectrumAmplitude(values, p, bin);
+            const float amplitude = sqrt((left * left + right * right) * 0.5f);
+            history.write(float4(20.0f * log10(max(amplitude, 1e-6f))), uint2(column, bin));
+        }
     }
     if (tid == 0) stamps[column] = slice + 1;
 }
@@ -213,13 +236,13 @@ vertex SpectrumVertex asfwSpectrumVertex(uint vid [[vertex_id]],
     return { float4(-1.0f + 2.0f * float(vid) / 511.0f, y, 0, 1) };
 }
 
-struct SmoothingParams { float alpha; float elapsed; uint reset; uint unused; };
+struct SmoothingParams { float alpha; float elapsed; uint reset; uint binCount; };
 // Average linear power. Peak holds for two seconds, then decays 12 dB/second.
 kernel void asfwSpectrumSmooth(device const float* raw [[buffer(0)]],
     device float4* history [[buffer(1)]], device float* average [[buffer(2)]],
     device float* peaks [[buffer(3)]], constant SmoothingParams& p [[buffer(4)]],
     uint bin [[thread_position_in_grid]]) {
-    if (bin > 2048) return;
+    if (bin >= p.binCount) return;
     float a = raw[bin];
     float4 h = p.reset ? float4(a*a, a, 0, 0) : history[bin];
     h.x = mix(a*a, h.x, p.alpha);
