@@ -16,6 +16,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0-beta.4] - 2026-10-04
+
+> Fixes AV/C audio-device publication when the streaming plugs initially report different sample rates, and hardens CMP connection cleanup. Phase 88 startup and streaming were confirmed on hardware after these changes.
+
+### Fixed
+
+- AV/C: differing initial playback/capture sample rates no longer prevent audio-device publication when discovery establishes a common rate with compatible stream geometry. Startup programs the device's output plug, then its input plug, before streaming begins.
+- CMP: reconcile timed-out connection compare-and-swaps against the exact attempted PCR transition instead of assuming the device made no change. Retain uncertain leases when readback cannot settle the outcome, use bounded retries, and avoid incrementing or decrementing a connection twice after a lost response.
+- AV/C stop: wait for CMP disconnect completion, including leases whose connection was never confirmed. Report failed disconnects and retain host-owned IRM reservations while a current remote connection may still use them. BeBoB stops host contexts before device disconnect and resource release.
+
+### Changed
+
+- IRM and CMP share the remote quadlet compare-and-swap encoding and response validation through the existing asynchronous bus interface. The local IRM hardware CSR path remains separate.
+
+### Added
+
+- Diagnostics: identify timed-out and late asynchronous responses by node, generation, transaction label and transaction code. Late-response records include hardware timestamps for correlation with host processing; CMP records include reconciliation values and unresolved reservation ownership.
+- Diagnostics: bounded interrupt-stall snapshots capture pending events and handler entry/exit counts without writing registers or resetting the controller.
+- Regression tests cover ambiguous CAS completion, bounded retries, malformed responses, route invalidation, pending-operation admission, foreign connections and reservation retention. The full local C++ suite completed with 2,880 cases, six skipped and no failures.
+
+### Known issues
+
+- The cause of the previously observed delayed CMP response remains under investigation. This release adds attribution and recovery; the clean hardware run does not establish why that earlier response was delayed.
+- The discovery-snapshot, Duet standard-mute and driver-extension process-lifetime limitations listed in 0.4.0-beta.3 remain.
+
 ## [0.4.0-beta.3] - 2026-10-04
 
 > Expands AV/C discovery and adds hardware output-master controls in Core Audio. Duet and Phase 88 have been exercised on hardware; support for other AV/C devices depends on what their descriptors and routing establish.
@@ -183,7 +208,8 @@ Use these headings, omitting any that are empty:
 ### Security
 -->
 
-[Unreleased]: https://github.com/mrmidi/ASFireWire/compare/v0.4.0-beta.3...main
+[Unreleased]: https://github.com/mrmidi/ASFireWire/compare/v0.4.0-beta.4...main
+[0.4.0-beta.4]: https://github.com/mrmidi/ASFireWire/releases/tag/v0.4.0-beta.4
 [0.4.0-beta.3]: https://github.com/mrmidi/ASFireWire/releases/tag/v0.4.0-beta.3
 [0.4.0-beta.2]: https://github.com/mrmidi/ASFireWire/releases/tag/v0.4.0-beta.2
 [0.4.0-beta.1]: https://github.com/mrmidi/ASFireWire/releases/tag/v0.4.0-beta.1
