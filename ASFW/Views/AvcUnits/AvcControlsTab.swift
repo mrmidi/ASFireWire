@@ -3,39 +3,20 @@ import SwiftUI
 /// The mute and volume state the driver read from the device's feature blocks, one card per block.
 struct AvcControlsTab: View {
     let unit: AvcUnitDashboard
-    @State private var hardware: [AvcHardwareControl] = []
-    @State private var bridge = AvcHardwareControls()
 
     var body: some View {
         let blocks = unit.controlBlocks
         VStack(alignment: .leading, spacing: 14) {
-            if !hardware.isEmpty {
-                Label("Hardware volume and mute. Changes apply to the device; audio samples are not scaled.", systemImage: "slider.horizontal.3")
-                    .font(.callout).foregroundStyle(.secondary)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16)], alignment: .leading, spacing: 16) {
-                    ForEach(hardware) { control in
-                        AvcHardwareControlCard(control: control, guid: unit.guid, bridge: bridge)
-                    }
-                }
-            } else if blocks.isEmpty {
+            if blocks.isEmpty {
                 AvcNoticeCard(title: "No control values", message: unit.needsDocumentUpdate ? unit.documentUpdateMessage : "Discovery reported no decoded mute or volume values. Open Diagnostics to check probe results.", systemImage: "slider.horizontal.3")
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "eye").foregroundStyle(.secondary)
-                    Text("Discovery values. No published hardware controls are currently available for editing.").font(.callout).foregroundStyle(.secondary)
+                    Text("Values as of the last discovery. This screen does not change the device.").font(.callout).foregroundStyle(.secondary)
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16, alignment: .top)], alignment: .leading, spacing: 16) {
                     ForEach(blocks) { block in AvcControlBlockCard(block: block) }
                 }
-            }
-        }
-        .task(id: unit.guid) {
-            hardware = []
-            while !Task.isCancelled {
-                let values = await bridge.load(guid: unit.guid)
-                guard !Task.isCancelled else { return }
-                hardware = values
-                do { try await Task.sleep(for: .seconds(1)) } catch { return }
             }
         }
     }

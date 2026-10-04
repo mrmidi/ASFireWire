@@ -126,7 +126,7 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
     config.graphResolved = true;
     for (const auto& channel : graph.featureChannels) {
         const auto block = std::ranges::find_if(graph.controls, [&](const auto& item) { return item.type == Descriptors::AudioFunctionBlockType::kFeature && item.audioSubunitId == channel.subunit && item.id == channel.block; });
-        if (block == graph.controls.end()) continue;
+        if (block == graph.controls.end() || channel.channel != 0) continue;
         auto placement = PlaceAvcControl(graph, *block, channel.channel);
         // Validated Duet override when discovery lacks the boundary route.
         // Generic devices require explicit stream-channel evidence above.
@@ -139,6 +139,14 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
             std::ranges::count_if(graph.controls, [](const auto& b) {
                 return b.type == Descriptors::AudioFunctionBlockType::kFeature;
             }) == 1) placement = {static_cast<uint32_t>('outp'), channel.channel};
+        // PHASE88's verified output mixer is FB1, not its input/waveplay
+        // features. Captured phase88_descriptors.md:66,91 and FFADO
+        // support/mixer-qt4/ffado/mixer/phase88control.py:43-44 identify FB1.
+        // This is hardware mixer master gain; direct routes can bypass it.
+        if (plan.protocolImplementation == DeviceProfiles::Audio::ProtocolImplementationId::BeBoBPhase88 &&
+            block->audioSubunitId == 0 && block->id == 1 && block->channelCount == 8)
+            placement = {static_cast<uint32_t>('outp'), 0};
+        if (placement.scope != static_cast<uint32_t>('outp') || placement.element != 0) continue;
         ::ASFW::Audio::Model::AvcPublishedControl control;
         control.token = ::ASFW::Audio::Model::AvcControlToken(channel.subunit, channel.block, channel.channel);
         control.scope = placement.scope;
@@ -156,19 +164,15 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
         if (control.hasMute || control.hasVolume) config.avcControls.push_back(control);
     }
 
-    // Resolve collisions using the complete candidate set, before modifying it.
-    // Volume and mute can share a HAL address; duplicate controls of the same
-    // class cannot. Retain colliding controls under stable internal addresses.
-    std::vector<bool> collisions(config.avcControls.size(), false);
-    for (size_t i = 0; i < config.avcControls.size(); ++i) for (size_t j = i + 1; j < config.avcControls.size(); ++j) {
-        const auto& a = config.avcControls[i]; const auto& b = config.avcControls[j];
-        if (a.scope != static_cast<uint32_t>('ptru') && a.scope == b.scope && a.element == b.element &&
-            ((a.hasMute && b.hasMute) || (a.hasVolume && b.hasVolume))) collisions[i] = collisions[j] = true;
+    // One output master per control class. Competing volume/mute candidates
+    // are omitted rather than publishing duplicate HAL main-element controls.
+    const auto volumeCount = std::ranges::count_if(config.avcControls, [](const auto& c) { return c.hasVolume; });
+    const auto muteCount = std::ranges::count_if(config.avcControls, [](const auto& c) { return c.hasMute; });
+    for (auto& control : config.avcControls) {
+        if (volumeCount > 1) control.hasVolume = false;
+        if (muteCount > 1) control.hasMute = false;
     }
-    for (size_t i = 0; i < config.avcControls.size(); ++i) if (collisions[i]) {
-        config.avcControls[i].scope = static_cast<uint32_t>('ptru');
-        config.avcControls[i].element = config.avcControls[i].token + 1;
-    }
+    std::erase_if(config.avcControls, [](const auto& c) { return !c.hasVolume && !c.hasMute; });
 
     const auto forced = plan.streamTraits.wire.forcedStreamMode;
     const bool blocking = forced == ForcedStreamMode::Blocking ||

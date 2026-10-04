@@ -10,7 +10,15 @@ Volume uses IOUserAudioLevelControl (VolumeControl), in dB. The scalar callback 
 
 The nub dispatches graph lookup and AV/C commands to the controller queue and waits on its own queue. The transaction owns its unit/route across CONTROL then CURRENT STATUS. Only a stable matching readback updates HAL and the graph. Rejected writes, wrong-channel replies, transition responses, or stale routes fail. A timed-out caller retires the continuation; already-submitted device commands cannot be undone. No transport/audio-buffer pointers cross this control seam.
 
-Scope assignment is generic across AV/C devices. The graph joins Music channel positions to confirmed Audio/Music SIGNAL SOURCE boundaries, retaining logical channel, plug and subunit identities. Fixed, channel-preserving feature chains map to playback output or capture input elements. A master becomes the main element only when it covers the whole stream. Missing or duplicate positions, cycles, processors, mixers, multiple-input selectors, shared input/output gain and colliding controls remain named play-through controls with distinct addresses. The verified single-feature Duet override remains available when boundary evidence is missing. Phase88 monitor-mixer features are separate from its direct capture paths and remain internal; AMIS need not show those as input/output sliders.
+Core Audio publishes only output-master channel 0 volume and mute. Generic
+mapping requires a fixed, channel-preserving output path covering the stream.
+Verified overrides select Duet's single playback feature and Phase88's FB1
+Mixer Output Level. Each control class publishes only when exactly one eligible
+master has confirmed state (and, for volume, valid device-reported limits and
+step). Per-channel, input and internal mixer controls stay in discovery but are
+not published to HAL. Competing master candidates are omitted independently
+for volume and mute. Phase88's mixer master does not attenuate direct routes
+that bypass the mixer; publication does not change selectors.
 
 These controls affect hardware only. Volume and mute callbacks send AV/C commands and confirm device readback; they do not scale or silence the PCM output buffer. There is no second software attenuation stage. A monitor-mixer gain may affect monitoring without changing recorded samples or the direct playback path.
 
@@ -31,20 +39,34 @@ Control diagnostics use `[AvcControl]` in the Audio log category. Initialization
 Initialization emits an `[AvcControl] init-state` summary with GUID/sample rate and every descriptor's name, known-state flags, dB value, and mute state. This is the device-discovery/nub baseline, not a claimed completed host restoration. Subsequent callback/readback records identify what was actually applied; restoration has no completion/source notification in this API.
 
 
-The ASFW Controls tab enumerates HAL control objects on the exact GUID-bound
-`ASFW-%016llX` device UID. Volume and mute objects are paired by scope/element;
-ambiguous duplicate objects are disabled. The tab displays hardware names and
-scope, reported dB limits, a dB slider, and mute buttons. A slider commits on
-release. Writes serialize on an actor away from the main UI actor, re-resolve
-the device/control identity, check writability, and use the existing driver
-callbacks. Failed writes show an error and reload confirmed HAL values. A
-one-second refresh reads HAL state only; it does not add device STATUS polling
-or detect front-panel changes the driver has not received. Read-only discovery
-cards remain available when no published HAL controls can be enumerated.
+The ASFW Controls tab remains read-only, using the grouped discovery cards.
+Blocks sort by subunit type/ID and numeric block ID; channels sort numerically,
+with master first. No HAL enumeration, periodic refresh, write buttons or
+progress indicators are installed in this view. Hardware changes are made
+through Core Audio output-master controls. All discovery feature data remains
+available for diagnostics.
 
-Phase88 selector-dependent physical output routing remains internal. Cross-check:
-`references/alsa-userspace-control-protocols-impl/protocols/bebob/src/terratec/phase88.rs:248-296`
-changes output selectors together with mixer selection. A permanent output scope
-assignment would be wrong after such changes. The generic fixed-chain mapper is
-retained; routing-dependent assignments require routing change notification and
-linked-control synchronization before they can safely appear as AMIS sliders.
+
+TX wake independence (2026-10-04): Core Audio output-write and TX preparation
+follow-up wakes send `TxPreparationReady(action, generation)` directly to the
+retained OSAction. Generated IIG sets `kIORPCMessageOneway` and targets the
+action, which is bound to the dedicated `TxPreparation` queue. The synchronous
+`RequestTxPreparation` nub RPC was removed: it could wait behind a synchronous
+AV/C control request on the nub queue. The same direct action path already
+serves hardware refill wakes. Coalescing and teardown ownership remain intact.
+AV/C control setters still return confirmed hardware state or an error; their
+wait no longer gates those audio wake notifications.
+
+`[AvcControlTrace]` records a request ID and wait-begin/controller-begin/
+device-complete/wait-end with elapsed microseconds. It identifies controller
+queue delay separately from device response time. `[TxPrepStall]` is emitted
+only for queue or packet-preparation delays of at least 5 ms, with generation,
+queueDelayUs, preparationUs, prepared count and PCM client frame/host cursor.
+Client host ticks are the HAL cursor timestamp, not a measured callback-entry
+time. Compare cursor advancement and queue delay to distinguish missing PCM
+from an unscheduled producer; the packetizer already arms encoded silence.
+Use the MCP driver ring query for `[AvcControlTrace]` in Audio and
+`[TxPrepStall]` in DirectAudio, and preserve Isoch fatal records. A clean run
+should have normal control traces and no preparation-stall records. Hardware
+reproduction is still required after installation; host tests do not execute
+DriverKit dispatch queues.

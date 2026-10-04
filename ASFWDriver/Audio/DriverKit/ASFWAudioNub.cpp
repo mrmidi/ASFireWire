@@ -14,6 +14,7 @@
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Common/TimingUtils.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../Core/AudioCoordinator.hpp"
 #include "../Protocols/AVCStartReadiness.hpp"
@@ -401,14 +402,7 @@ kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
     return kIOReturnSuccess;
 }
 
-kern_return_t IMPL(ASFWAudioNub, RequestTxPreparation)
-{
-    if (!ivars || !ivars->txPreparationAction) {
-        return kIOReturnNotReady;
-    }
-    TxPreparationReady(ivars->txPreparationAction, generation);
-    return kIOReturnSuccess;
-}
+
 
 void IMPL(ASFWAudioNub, RequestTimingRecovery)
 {
@@ -917,10 +911,15 @@ kern_return_t IMPL(ASFWAudioNub, SetAvcFeatureControl) {
     const auto discovery = context->deps.avcDiscovery;
     const auto queue = context->workQueue;
     const uint64_t guid = ivars->guid;
+    static std::atomic<uint64_t> nextTraceId{0};
+    const uint64_t traceId = nextTraceId.fetch_add(1, std::memory_order_relaxed) + 1;
+    const uint64_t traceBegin = mach_absolute_time();
+    ASFW_LOG(Audio, "[AvcControlTrace] id=%llu phase=wait-begin queue=nub-control guid=0x%016llx token=0x%06x hostTicks=%llu", traceId, guid, token, traceBegin);
     ASFW_LOG(Audio, "[AvcControl] request guid=0x%016llx token=0x%06x mute=%u requestedRaw=%d", guid, token, muteControl, value);
     const auto active = std::make_shared<std::atomic<bool>>(true);
     const auto result = ASFW::Audio::WaitForAsyncResult<int32_t>([=](auto done) {
         queue->DispatchAsync(^{
+            ASFW_LOG(Audio, "[AvcControlTrace] id=%llu phase=controller-begin queue=controller elapsedUs=%llu", traceId, ASFW::Timing::hostTicksToNanos(mach_absolute_time() - traceBegin) / 1000);
             namespace A = ASFW::AVC;
             const auto unit = discovery->Unit(guid);
             const auto route = unit ? unit->CurrentRoute() : std::nullopt;
@@ -933,7 +932,8 @@ kern_return_t IMPL(ASFWAudioNub, SetAvcFeatureControl) {
             if (found == graph->featureChannels.end()) { done(kIOReturnUnsupported, 0); return; }
             const auto subunit = found->subunit;
             ASFW::Audio::SetAvcFeature(unit, *route, *found, muteControl, value,
-                [unit, route = *route, subunit, muteControl, token, done](auto reply) {
+                [unit, route = *route, subunit, muteControl, token, done, traceId, traceBegin](auto reply) {
+                    ASFW_LOG(Audio, "[AvcControlTrace] id=%llu phase=device-complete queue=controller elapsedUs=%llu ok=%u", traceId, ASFW::Timing::hostTicksToNanos(mach_absolute_time() - traceBegin) / 1000, reply.has_value());
                     if (!reply) {
                         const auto& error = reply.error();
                         ASFW_LOG(Audio, "[AvcControl] transaction failed guid=0x%016llx token=0x%06x errorKind=%u response=%d operandOffset=%u", route.guid, token, static_cast<unsigned>(error.kind), error.response ? static_cast<int>(*error.response) : -1, error.operandOffset);
@@ -946,6 +946,7 @@ kern_return_t IMPL(ASFWAudioNub, SetAvcFeatureControl) {
         });
     }, 2000, kIOReturnTimeout, nullptr, 1);
     active->store(false, std::memory_order_release);
+    ASFW_LOG(Audio, "[AvcControlTrace] id=%llu phase=wait-end queue=nub-control elapsedUs=%llu kr=0x%x", traceId, ASFW::Timing::hostTicksToNanos(mach_absolute_time() - traceBegin) / 1000, result.status);
     if (result.status == kIOReturnSuccess) *outConfirmedValue = result.value;
     ASFW_LOG(Audio, "[AvcControl] request complete guid=0x%016llx token=0x%06x kr=0x%x confirmedRaw=%d", guid, token, result.status, result.value);
     return result.status;

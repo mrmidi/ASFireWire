@@ -159,6 +159,10 @@ struct AvcUnitDashboard: Identifiable {
             if grouped[key] == nil { order.append(key) }
             grouped[key, default: []].append(feature)
         }
+        order.sort { lhs, rhs in
+            guard let a = grouped[lhs]?.first, let b = grouped[rhs]?.first else { return lhs < rhs }
+            return [a.subunit.type, a.subunit.id, a.block].lexicographicallyPrecedes([b.subunit.type, b.subunit.id, b.block])
+        }
         return order.compactMap { key in
             guard let items = grouped[key], let first = items.first else { return nil }
             var channelOrder: [Int] = []

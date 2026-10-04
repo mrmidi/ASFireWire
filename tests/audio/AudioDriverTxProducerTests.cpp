@@ -138,6 +138,7 @@ public:
         device_->zeroTimestampPeriod = ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames;
         ivars_.audioDevice = OSSharedPtr<ASFWAudioDevice>(device_, OSNoRetain);
         ivars_.device.audioNub = &nub_;
+        ivars_.txPreparationAction = OSSharedPtr<OSAction>(new OSAction(), OSNoRetain);
         ivars_.runtime.directAudioGraph.control = control_.get();
         driver_.ivars = &ivars_;
     }
