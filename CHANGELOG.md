@@ -16,6 +16,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0-beta.3] - 2026-10-04
+
+> Expands AV/C discovery and adds hardware output-master controls in Core Audio. Duet and Phase 88 have been exercised on hardware; support for other AV/C devices depends on what their descriptors and routing establish.
+
+### Added
+
+- AV/C Units: a per-device dashboard with Signal, Controls, Plugs, Capabilities and Diagnostics tabs. It displays parsed Audio/Music descriptors, channel and MIDI names, selector routes, confirmed feature values and grouped probe results from the driver's cached discovery document. The Controls tab remains read-only. (#174)
+- Core Audio: hardware output-master volume and mute for AV/C devices whose discovered topology identifies an unambiguous output master. Volume uses the device's confirmed minimum, maximum and step, with conversion between AV/C units, decibels and Core Audio scalar values. Mute can be published independently of volume. Ambiguous controls or volume controls without confirmed limits are omitted. (#174)
+- Audio: AV/C controls and stream formats opt into Core Audio's host settings restoration under a stable device UID. Initialization, control callbacks and hardware readback are logged for diagnosis. Phase 88 volume restoration after a power cycle was confirmed on hardware. (#174)
+- AV/C discovery: Music identifier capabilities and Audio function-block details, with named controls and wire values in discovery logs. Cached reports retain actual probe replies, including response codes and operands, alongside validation errors. (#174)
+- Audio Analyzer: an 8192-point FFT option, using real-signal packing for spectrum and spectrogram processing. (#173)
+
+### Changed
+
+- AV/C: output-master control placement uses generic descriptor and routing rules instead of Duet/Phase 88 placement overrides. These controls change hardware gain and mute; the driver does not also scale the audio samples. (#174)
+- AV/C: Duet and Phase 88 expose supported rates with compatible discovered stream geometry; Duet no longer has a fixed 48 kHz startup pin. Other generic devices retain their existing single-rate policy. Streaming mode prefers blocking when the discovered capabilities allow it. (#174)
+- Phase 88: startup no longer forces mixer output channels 1–2 to −35 dB. Existing device levels are preserved; its startup routing and WavePlay setup remain in place. (#174)
+
+### Fixed
+
+- Audio: transmit preparation wakes no longer wait for synchronous cross-service calls on the queue handling AV/C controls. This prevents volume changes from stalling playback while a device command completes. (#174)
+- AV/C: confirmed sample-rate changes update the discovered graph instead of leaving the startup rate cached indefinitely. (#174)
+- AV/C discovery: query Audio destination plugs declared by descriptors even when PLUG_INFO omits them, allowing captured Duet playback routing to establish its output master without a model-specific override. (#174)
+- AV/C: correct Audio feature-control bitmap interpretation and Music status descriptor block parsing; preserve subunit, command and descriptor names so old or incomplete documents do not masquerade as complete capability data. (#174)
+
+### Known issues
+
+- AV/C Units displays discovery snapshots. A snapshot taken before Core Audio restores a saved volume can show the device's initial level rather than its restored level.
+- Duet's standard AV/C mute was observed to clear itself shortly after being set. This release does not claim to resolve that device behavior.
+- The unresolved driver-extension process lifetime after unplug remains as described in 0.4.0-beta.2.
+
 ## [0.4.0-beta.2] - 2026-10-02
 
 > Includes the changes since 0.4.0-beta.1, with critical BeBoB/AV/C fixes and an expanded Audio Analyzer. Device coverage remains best effort; please report hardware results.
@@ -152,6 +183,7 @@ Use these headings, omitting any that are empty:
 ### Security
 -->
 
-[Unreleased]: https://github.com/mrmidi/ASFireWire/compare/v0.4.0-beta.2...main
+[Unreleased]: https://github.com/mrmidi/ASFireWire/compare/v0.4.0-beta.3...main
+[0.4.0-beta.3]: https://github.com/mrmidi/ASFireWire/releases/tag/v0.4.0-beta.3
 [0.4.0-beta.2]: https://github.com/mrmidi/ASFireWire/releases/tag/v0.4.0-beta.2
 [0.4.0-beta.1]: https://github.com/mrmidi/ASFireWire/releases/tag/v0.4.0-beta.1
