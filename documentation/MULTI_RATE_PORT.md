@@ -64,7 +64,11 @@ hardware support.
    separate silent ConfigurationProbeDevice now exercises all seven rates,
    16/12/8-channel layouts and host configuration windows without FireWire.
    See `ADKVirtualAudioLab/CONFIGURATION_PROBE.md`. The source build is not
-   evidence of the runtime contract; the first manual activation/run is pending.
+   evidence of the runtime contract. Initial idle and active nominal/physical
+   stream-format runs now pass all seven rates with stable device/stream IDs
+   and automatic IO resumption. See
+   `documentation/validation/FW221_ADK_CONFIGURATION_PROBE_2026-10-05.md` for
+   evidence and the remaining runtime failure/abort coverage.
 2. Connect candidate resolution and reducer effects to main's scheduler/nub/ADK
    boundary, replacing pendingSampleRateHz rather than keeping a second path.
 3. Implement family formation catalogs and confirmed hardware outcomes; connect

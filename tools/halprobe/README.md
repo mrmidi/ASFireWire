@@ -71,6 +71,21 @@ delivered. The original size is restored afterwards — also on Ctrl-C and on
 exit. It refuses to run if the current size or its range cannot be read, since
 it could not restore them.
 
+## Virtual configuration lifecycle test
+
+`hal_rate_probe` is restricted to the exact `ASFWConfigurationProbe` UID and
+cannot operate a physical endpoint. It starts one silent IOProc, changes all
+seven rates through the nominal-rate property, checks duplex formats, synthetic
+16/12/8-channel layouts and ZTS periods, and requires that the same IOProc resume
+without another Start call. Device and stream HAL IDs must remain unchanged.
+`hal_rate_probe --stream-format` uses the physical stream-format property instead.
+The virtual-format property is a separate host conversion setting.
+
+It emits JSON lines and restores the original nominal rate before stopping IO,
+including after an error or interruption. Exit 2 means a request, coherent
+resumption or restoration check failed. This proves the silent lab HAL behavior;
+it does not validate FireWire framing, hardware rate programming or physical audio.
+
 ## JSON
 
 Schema `asfw.hal_geometry.v1`: `provenance` (tool SHA, UTC timestamp, OS,
