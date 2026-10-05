@@ -36,8 +36,9 @@ struct StereoHistoryView: View {
                             .padding(.top, 5).padding(.bottom, 16)
                     }
                     .frame(height: 74)
-                    .background(Color.black.opacity(0.22))
+                    .background(Color(red: 0.025, green: 0.035, blue: 0.05))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
                 }
             }
             Text(active ? "60-second history" : "History appears during playback")
@@ -56,7 +57,7 @@ struct StereoHistoryView: View {
 
     private func draw(_ series: Series, in context: inout GraphicsContext, size: CGSize) {
         let plot = CGRect(x: 34, y: 5, width: max(1, size.width - 40), height: max(1, size.height - 21))
-        let grid = Color.white.opacity(0.14)
+        let grid = Color.white.opacity(0.12)
         for fraction in [CGFloat(0), 0.5, 1] {
             let y = plot.minY + plot.height * fraction
             var line = Path()
@@ -73,8 +74,8 @@ struct StereoHistoryView: View {
         }
 
         func label(_ value: String, at point: CGPoint, anchor: UnitPoint = .center) {
-            context.draw(Text(value).font(.system(size: 8, design: .monospaced))
-                .foregroundStyle(.secondary), at: point, anchor: anchor)
+            context.draw(Text(value).font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(red: 0.72, green: 0.78, blue: 0.85)), at: point, anchor: anchor)
         }
         label(series.topLabel, at: CGPoint(x: 29, y: plot.minY), anchor: .trailing)
         label(series.middleLabel, at: CGPoint(x: 29, y: plot.midY), anchor: .trailing)

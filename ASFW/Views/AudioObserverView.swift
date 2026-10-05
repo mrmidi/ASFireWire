@@ -170,6 +170,9 @@ struct AudioObserverPanel: View {
     @State private var midSide = false
     @State private var slowSpectrum = false
     @State private var peakHold = true
+    @State private var isEditingOffset = false
+    @State private var offsetInputText = ""
+    @FocusState private var isOffsetFocused: Bool
     private let deviceName: String
 
     init(guid: UInt64, deviceName: String) {
@@ -621,34 +624,73 @@ struct AudioObserverPanel: View {
 
             HStack(spacing: 12) {
                 diagnosticCard("Offset Control") {
-                    HStack(spacing: 12) {
-                        Slider(value: Binding(
-                            get: { calibrationState.config.offsetDB },
-                            set: { calibrationState.setOffset($0) }
-                        ), in: AnalyzerCalibrationConfig.minimumOffsetDB...AnalyzerCalibrationConfig.maximumOffsetDB, step: 0.1)
-                        .disabled(!calibrationState.config.isEnabled)
+                    HStack(spacing: 10) {
+                        if isEditingOffset {
+                            TextField("0.0", text: $offsetInputText)
+                                .textFieldStyle(.plain)
+                                .font(.system(.title2, design: .monospaced).weight(.bold))
+                                .focused($isOffsetFocused)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .frame(width: 100)
+                                .background(themeState.mode.isLight ? Color.white : Color.black.opacity(0.4))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.orange, lineWidth: 1.5))
+                                .onSubmit { commitOffsetEdit() }
+                                .onExitCommand { isEditingOffset = false; isOffsetFocused = false }
+                                .onChange(of: isOffsetFocused) { _, focused in
+                                    if !focused && isEditingOffset {
+                                        commitOffsetEdit()
+                                    }
+                                }
 
-                        Text(String(format: "%+.1f dB", calibrationState.config.offsetDB))
-                            .font(.system(.body, design: .monospaced).weight(.bold))
-                            .foregroundStyle(calibrationState.config.isEnabled ? (calibrationState.config.effectiveOffsetDB != 0 ? Color.orange : themeState.mode.primaryTextColor) : themeState.mode.secondaryTextColor)
-                            .frame(width: 80, alignment: .trailing)
+                            Button("Done") { commitOffsetEdit() }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.orange)
+                                .controlSize(.small)
+                        } else {
+                            Button {
+                                offsetInputText = String(format: "%+.1f", calibrationState.config.offsetDB)
+                                isEditingOffset = true
+                                isOffsetFocused = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(String(format: "%+.1f", calibrationState.config.offsetDB))
+                                        .font(.system(size: 24, weight: .bold, design: .monospaced))
+                                    Text("dB")
+                                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                                        .foregroundStyle(themeState.mode.secondaryTextColor)
+                                }
+                                .foregroundStyle(calibrationState.config.isEnabled ? (calibrationState.config.effectiveOffsetDB != 0 ? Color.orange : themeState.mode.primaryTextColor) : themeState.mode.secondaryTextColor)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(themeState.mode.isLight ? Color.black.opacity(0.05) : Color.white.opacity(0.06))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Click or double-click to enter calibration offset directly")
 
-                        Stepper("", value: Binding(
-                            get: { calibrationState.config.offsetDB },
-                            set: { calibrationState.setOffset($0) }
-                        ), in: AnalyzerCalibrationConfig.minimumOffsetDB...AnalyzerCalibrationConfig.maximumOffsetDB, step: 0.1)
-                        .labelsHidden()
-                        .disabled(!calibrationState.config.isEnabled)
-                    }
+                            Stepper("", value: Binding(
+                                get: { calibrationState.config.offsetDB },
+                                set: { calibrationState.setOffset($0) }
+                            ), in: AnalyzerCalibrationConfig.minimumOffsetDB...AnalyzerCalibrationConfig.maximumOffsetDB, step: 0.1)
+                            .labelsHidden()
+                            .disabled(!calibrationState.config.isEnabled)
+                        }
 
-                    HStack(spacing: 8) {
+                        Spacer()
+
                         Button("Reset (0 dB)") {
                             calibrationState.reset()
                         }
                         .disabled(calibrationState.config.offsetDB == 0.0)
+                    }
 
+                    HStack {
+                        Text("Click number for manual entry · Stepper adjusts ±0.1 dB")
+                            .font(.caption2)
+                            .foregroundStyle(themeState.mode.secondaryTextColor)
                         Spacer()
-
                         Text(String(format: "Linear: ×%.3f · Energy: ×%.3f",
                                     calibrationState.config.linearGain,
                                     calibrationState.config.energyScale))
@@ -686,6 +728,17 @@ struct AudioObserverPanel: View {
         }
         .padding(.top, 4)
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private func commitOffsetEdit() {
+        let cleaned = offsetInputText.replacingOccurrences(of: "dB", with: "", options: .caseInsensitive)
+                                     .replacingOccurrences(of: "+", with: "")
+                                     .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let val = Double(cleaned) {
+            calibrationState.setOffset(val)
+        }
+        isEditingOffset = false
+        isOffsetFocused = false
     }
 
 
