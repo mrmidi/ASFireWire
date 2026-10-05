@@ -15,9 +15,10 @@ targets:
       - path: Info.plist
     settings:
       SDKROOT: driverkit
+      DRIVERKIT_DEPLOYMENT_TARGET: "25.0"
       ARCHS: x86_64 arm64e
       ENABLE_HARDENED_RUNTIME: NO
-      CURRENT_PROJECT_VERSION: 3
+      CURRENT_PROJECT_VERSION: 4
       MARKETING_VERSION: "1.2"
       DEXT_INSTALL_PATH: /System/Library/DriverExtensions
       AD_HOC_CODE_SIGNING_ALLOWED: YES
