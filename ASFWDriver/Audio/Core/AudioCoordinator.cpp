@@ -392,7 +392,12 @@ IOReturn AudioCoordinator::RequestClockConfig(
     // the binding stays at the publish-time rate (48 kHz) while the device runs
     // 44.1 kHz, and CoreAudio churns StartIO/StopIO on the clock mismatch.
     if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
-        endpoint->SetCurrentSampleRate(desiredClock.sampleRateHz);
+        Model::ASFWAudioDevice config;
+        // An AV/C CONTROL result does not commit an audio configuration. Its
+        // host-window transaction installs rate, formations and epoch after
+        // STATUS confirmation. The existing DICE path remains unchanged.
+        if (!endpoint->CopyConfig(config) || config.rateFormationCandidates.empty())
+            endpoint->SetCurrentSampleRate(desiredClock.sampleRateHz);
     }
 
     ASFW_LOG(Audio,

@@ -169,7 +169,8 @@ void BeBoBProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
                     // Guard: epoch may have been cancelled by Shutdown/bus reset.
                     if (activeClockApply_ != epoch.get()) return;
                     appliedClock_ = epoch->appliedClock;
-                    if (avcUnit_) avcUnit_->RememberConfirmedDuplexRate(epoch->routeAtStart, appliedClock_.sampleRateHz);
+                    // CONTROL acceptance plus settle is not a STATUS readback.
+                    // The configuration window publishes the graph after observation.
                     BBPTRACE("ApplyClockConfig settle complete: rate=%uHz",
                              epoch->appliedClock.sampleRateHz);
                     FinishClockApply(epoch.get(), kIOReturnSuccess);
