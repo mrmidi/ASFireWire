@@ -116,7 +116,9 @@ TEST(ResolvedAudioConfigurationTests, ModelProjectionUsesIndependentDuplexShapes
 
 TEST(ResolvedAudioConfigurationTests, StreamCountCannotOverflowFixedProductionArrays) {
     auto formation = Formation(48000, 2);
-    formation.playback.assign(5, formation.playback[0]);
+    // assign can reallocate: its fill value must not alias the old storage.
+    const auto stream = formation.playback.front();
+    formation.playback.assign(5, stream);
     const auto result = ResolveAudioConfiguration(48000, {&formation, 1}, policy, allocation, 0);
     ASSERT_FALSE(result);
     EXPECT_EQ(result.error(), ConfigurationError::InvalidFormation);
