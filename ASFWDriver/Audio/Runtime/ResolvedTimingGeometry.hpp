@@ -124,7 +124,8 @@ struct ResolvedTimingGeometry final {
 [[nodiscard]] constexpr std::expected<ResolvedTimingGeometry, TimingGeometryError>
 ResolveTimingGeometry(uint32_t sampleRateHz,
                       Encoding::StreamMode streamMode,
-                      const DeviceTimingPolicy& policy) noexcept {
+                      const DeviceTimingPolicy& policy,
+                      uint32_t allocatedFrameRingFrames = IsochTransport::kAllocatedFrameRingFrames) noexcept {
     const auto wire = Encoding::AmdtpRateGeometryForSampleRate(sampleRateHz);
     if (!wire) {
         return std::unexpected(TimingGeometryError::kUnsupportedSampleRate);
@@ -134,7 +135,7 @@ ResolveTimingGeometry(uint32_t sampleRateHz,
     if (!IsochTransport::IsValidAudioHalBufferProfile(hal)) {
         return std::unexpected(TimingGeometryError::kInvalidHalProfile);
     }
-    if (!IsochTransport::ProfileFitsAllocation(hal)) {
+    if (hal.frameRingFrames > allocatedFrameRingFrames) {
         return std::unexpected(TimingGeometryError::kExceedsAllocation);
     }
 
@@ -155,7 +156,7 @@ ResolveTimingGeometry(uint32_t sampleRateHz,
         .fdf = wire->fdf,
         .sytIntervalFrames = wire->sytIntervalFrames,
         .frameRingFrames = hal.frameRingFrames,
-        .allocatedFrameRingFrames = IsochTransport::kAllocatedFrameRingFrames,
+        .allocatedFrameRingFrames = allocatedFrameRingFrames,
         .zeroTimestampPeriodFrames = hal.zeroTimestampPeriodFrames,
         .clientIoBudgetFrames = hal.clientIoBudgetFrames,
         .outputLatencyFrames = policy.outputLatencyFrames,

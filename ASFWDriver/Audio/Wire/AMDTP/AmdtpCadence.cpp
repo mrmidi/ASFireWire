@@ -1,6 +1,7 @@
 #include "AmdtpCadence.hpp"
 
 #include "AmdtpTiming.hpp"
+#include "AmdtpRateGeometry.hpp"
 
 namespace ASFW::Protocols::Audio::AMDTP {
 
@@ -19,7 +20,6 @@ namespace ASFW::Protocols::Audio::AMDTP {
 // is owned by the timing model, not the cadence.
 
 namespace {
-constexpr uint8_t kFramesPerCycle48k = 6;
 
 constexpr uint64_t AccumulatorEquivalentSeedSubticks(
     uint8_t sytIntervalFrames) noexcept {
@@ -55,26 +55,34 @@ void BlockingCadence::AdvanceCycle() noexcept {
     engine_.AdvanceCycle();
 }
 
-// Non-blocking mode at 48 kHz: the per-cycle frame count is integral (6), so
-// every cycle is a data packet carrying exactly 6 frames; no no-data packets.
+bool NonBlockingCadence::Configure(uint32_t sampleRateHz) noexcept {
+    sampleRateHz_ = Encoding::AmdtpRateGeometryForSampleRate(sampleRateHz)
+                        ? sampleRateHz : 0;
+    Reset();
+    return sampleRateHz_ != 0;
+}
 
-void NonBlocking48kCadence::Reset() noexcept {
+void NonBlockingCadence::Reset() noexcept {
+    remainder_ = 7999;
     totalCycles_ = 0;
 }
 
-bool NonBlocking48kCadence::CurrentCycleIsData() const noexcept {
-    return true;
+bool NonBlockingCadence::CurrentCycleIsData() const noexcept {
+    return CurrentCycleDataFrames() != 0;
 }
 
-uint8_t NonBlocking48kCadence::CurrentCycleDataFrames() const noexcept {
-    return kFramesPerCycle48k;
+uint8_t NonBlockingCadence::CurrentCycleDataFrames() const noexcept {
+    return sampleRateHz_ == 0 ? 0 :
+        static_cast<uint8_t>((remainder_ + sampleRateHz_) / 8000);
 }
 
-uint64_t NonBlocking48kCadence::TotalCycles() const noexcept {
+uint64_t NonBlockingCadence::TotalCycles() const noexcept {
     return totalCycles_;
 }
 
-void NonBlocking48kCadence::AdvanceCycle() noexcept {
+void NonBlockingCadence::AdvanceCycle() noexcept {
+    if (sampleRateHz_ == 0) return;
+    remainder_ = (remainder_ + sampleRateHz_) % 8000;
     ++totalCycles_;
 }
 

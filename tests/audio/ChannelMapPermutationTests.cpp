@@ -212,8 +212,10 @@ TEST(ChannelMapPermutationTests, TxInjectedMapDemonstrablyChangesWirePlacement) 
     config.streamMode = StreamMode::Blocking;
     config.dbs = kChannels;
     config.pcmChannels = kChannels;
-    config.framesPerDataPacket = 1;
-    config.maxPacketBytes = 128;
+    // Allocate for a legal 48 kHz blocking packet; replay below exercises
+    // a single frame independently of the maximum packet capacity.
+    config.framesPerDataPacket = 8;
+    config.maxPacketBytes = 256;
 
     AmdtpTimingState timing{};
     timing.txClockValid = true;
@@ -236,7 +238,7 @@ TEST(ChannelMapPermutationTests, TxInjectedMapDemonstrablyChangesWirePlacement) 
     writerIdentity.Configure(config, policyIdentity);
     writerIdentity.BindTimeline(&timelineIdentity);
 
-    std::array<uint8_t, 128> bytesIdentity{};
+    std::array<uint8_t, 256> bytesIdentity{};
     PreparedTxPacket preparedIdentity{};
     ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(packetizerIdentity,
         {0, bytesIdentity.data(), bytesIdentity.size()}, timing, packetizerIdentityFrame, preparedIdentity));
@@ -279,7 +281,7 @@ TEST(ChannelMapPermutationTests, TxInjectedMapDemonstrablyChangesWirePlacement) 
     writerPermuted.Configure(config, policyPermuted);
     writerPermuted.BindTimeline(&timelinePermuted);
 
-    std::array<uint8_t, 128> bytesPermuted{};
+    std::array<uint8_t, 256> bytesPermuted{};
     PreparedTxPacket preparedPermuted{};
     ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(packetizerPermuted,
         {0, bytesPermuted.data(), bytesPermuted.size()}, timing, packetizerPermutedFrame, preparedPermuted));

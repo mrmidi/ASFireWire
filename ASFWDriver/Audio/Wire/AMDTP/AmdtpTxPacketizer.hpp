@@ -58,8 +58,8 @@ private:
     IEC61883::CipHeaderBuilder cipBuilder_{};
     IEC61883::DbcCounter dbcCounter_{};
 
-    Blocking48kCadence blocking48kCadence_{};
-    NonBlocking48kCadence nonBlocking48kCadence_{};
+    BlockingCadence blockingCadence_{};
+    NonBlockingCadence nonBlockingCadence_{};
     IAmdtpCadence* cadence_{nullptr};
 
     AmdtpPacketTimeline* timeline_{nullptr};

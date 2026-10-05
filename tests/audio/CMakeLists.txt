@@ -416,3 +416,9 @@ add_audio_test(HardwareSampleTimelineTests
 add_audio_test(TxCycleAnchorTests
     TxCycleAnchorTests.cpp
 )
+
+add_audio_test(ResolvedAudioConfigurationTests ResolvedAudioConfigurationTests.cpp)
+
+add_audio_test(DeviceConfigurationStateMachineTests
+    DeviceConfigurationStateMachineTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Runtime/Configuration/DeviceConfigurationStateMachine.cpp")

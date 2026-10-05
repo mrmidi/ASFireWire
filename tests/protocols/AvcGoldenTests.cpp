@@ -631,6 +631,19 @@ TEST(AvcGoldenTests, Phase88GeometryWithoutAnyDescriptorComesFromBridgeCoFormati
     // graph uses exactly what the inventory reported, never a guess.
     EXPECT_EQ(graph->playback.slotMap, snapshot->extension.playback.pcmSlots);
     EXPECT_EQ(graph->capture.slotMap, snapshot->extension.capture.pcmSlots);
+    // A different-width rate remains a real capability even though the
+    // current single-rate endpoint must not publish that shape yet.
+    auto changed = *snapshot;
+    changed.extension.capture.formations.clear();
+    ASSERT_TRUE(changed.extension.capture.formations.push_back({48000, 10, 1}));
+    ASSERT_TRUE(changed.extension.capture.formations.push_back({96000, 6, 1}));
+    const auto rateGraph = Graph::BuildDiscoveryGraph(changed, "Phase 88");
+    ASSERT_EQ(rateGraph.capture.formations.size(), 2U);
+    EXPECT_EQ(rateGraph.capture.formations[1].sampleRateHz, 96000U);
+    EXPECT_EQ(rateGraph.capture.formations[1].pcmChannels, 6U);
+    EXPECT_EQ(rateGraph.capture.formations[1].dataBlockSize, 7U);
+    EXPECT_EQ(rateGraph.capture.supportedSampleRates, (std::vector<uint32_t>{48000}));
+    EXPECT_EQ(rateGraph.capture.channelCount, 10U);
     // Frame admission is pinned by Phase88AttachDiscovery; here the descriptor
     // OPENs are refused by the image rather than answered from a capture.
 }
