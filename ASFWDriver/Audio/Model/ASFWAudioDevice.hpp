@@ -10,6 +10,7 @@
 #include "AudioPropertyKeys.hpp"
 #include "AvcVolumeMapping.hpp"
 #include "../Wire/AMDTP/PcmSlotMap.hpp"
+#include "../Runtime/ResolvedAudioConfiguration.hpp"
 
 #include <DriverKit/OSArray.h>
 #include <DriverKit/OSBoolean.h>
@@ -73,6 +74,9 @@ struct ASFWAudioDevice {
     // and is wrong for any device whose streams are not all the same width.
     std::vector<ASFWAudioWireStream> playbackStreams{};  // host -> device (DICE RX)
     std::vector<ASFWAudioWireStream> captureStreams{};   // device -> host (DICE TX)
+    // Complete capability candidates, separate from HAL advertisement. A
+    // discovery observation never grants hardware validation by itself.
+    std::vector<Runtime::RateFormation> rateFormationCandidates;
 
     /// The audio side must use the resolved geometry above and must NOT fall
     /// back to profile constants. Set by families that always resolve before

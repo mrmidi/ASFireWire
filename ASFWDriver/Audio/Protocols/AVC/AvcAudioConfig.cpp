@@ -176,6 +176,43 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
             else return std::nullopt;
         }
     }
+    const auto inventory = [](const Graph::StreamGraph& stream) {
+        auto formations = stream.formations;
+        if (formations.empty()) {
+            // Legacy documents only offer same-shape rates. Do not extrapolate
+            // their channel count to rates absent from that explicit list.
+            for (uint32_t rate : stream.supportedSampleRates)
+                formations.push_back({rate, stream.channelCount, stream.dataBlockSize,
+                    stream.midiStreamCount, stream.slotMap, false});
+        }
+        return formations;
+    };
+    const auto playbackInventory = inventory(playback);
+    const auto captureInventory = inventory(capture);
+    for (const auto& output : playbackInventory) {
+        if (!Encoding::AmdtpRateGeometryForSampleRate(output.sampleRateHz)) continue;
+        // One complete formation per direction is required. Ambiguous same-rate
+        // alternatives need explicit protocol selection, not a first-match guess.
+        if (std::ranges::count_if(playbackInventory, [&](const auto& f) {
+                return f.sampleRateHz == output.sampleRateHz;
+            }) != 1 || std::ranges::count_if(captureInventory, [&](const auto& f) {
+                return f.sampleRateHz == output.sampleRateHz;
+            }) != 1) continue;
+        const auto input = std::ranges::find_if(captureInventory, [&](const auto& f) {
+            return f.sampleRateHz == output.sampleRateHz;
+        });
+        config.rateFormationCandidates.push_back({
+            .sampleRateHz = output.sampleRateHz,
+            .mode = config.streamMode == StreamMode::kBlocking
+                ? Encoding::StreamMode::kBlocking : Encoding::StreamMode::kNonBlocking,
+            .playback = {{output.pcmChannels, output.dataBlockSize, output.midiSlots, output.pcmSlots}},
+            .capture = {{input->pcmChannels, input->dataBlockSize, input->midiSlots, input->pcmSlots}},
+            .protocolSupported = true,
+            .hardwareValidated = false,
+        });
+    }
+    std::ranges::sort(config.rateFormationCandidates, {},
+        &::ASFW::Audio::Runtime::RateFormation::sampleRateHz);
     return config;
 }
 

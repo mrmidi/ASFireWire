@@ -25,6 +25,10 @@ hardware support.
   intents are busy; unknown hardware or failed projection enters recovery.
 - AV/C discovery retains different-width formations separately from the legacy
   same-shape supported-rate projection. This adds no discovery transactions.
+- The AV/C endpoint model retains the duplex intersection as sorted formation
+  candidates, preserving rate-specific channel counts and maps. Ambiguous
+  same-rate alternatives and unknown wire rates are excluded. Candidates remain
+  hardware-unvalidated and do not expand HAL advertisement.
 
 ## Current-main rate assumption inventory
 

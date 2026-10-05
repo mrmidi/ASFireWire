@@ -64,6 +64,43 @@ TEST(AvcAudioConfig, GraphOffersOnlyTheRateItStartsAt) {
     EXPECT_EQ(pinned->currentSampleRate, 96000U);
 }
 
+TEST(AvcAudioConfig, RetainsCompleteRateCandidatesWithoutUnlockingAdvertisement) {
+    DeviceGraph graph;
+    graph.playback = Stream(16, 17, {48000}, 48000);
+    graph.capture = Stream(16, 17, {48000}, 48000);
+    graph.supportsBlockingTransmit = true;
+    graph.playback.formations = {{48000, 16, 17, 1, {}, false}, {96000, 12, 13, 1, {}, false},
+        {192000, 8, 9, 1, {}, false}};
+    graph.capture.formations = graph.playback.formations;
+    StaticAudioEndpointPlan plan;
+    const auto config = BuildGraphAudioConfig({.guid = 1}, plan, graph);
+    ASSERT_TRUE(config);
+    EXPECT_EQ(config->sampleRates, std::vector<uint32_t>{48000});
+    ASSERT_EQ(config->rateFormationCandidates.size(), 3);
+    const auto& high = config->rateFormationCandidates[1];
+    EXPECT_EQ(high.sampleRateHz, 96000);
+    EXPECT_EQ(high.capture[0].pcmChannels, 12);
+    EXPECT_EQ(high.playback[0].dataBlockSize, 13);
+    EXPECT_EQ(high.mode, ASFW::Encoding::StreamMode::kBlocking);
+    EXPECT_TRUE(high.protocolSupported);
+    EXPECT_FALSE(high.hardwareValidated);
+    EXPECT_EQ(config->inputChannelCount, 16);
+}
+
+TEST(AvcAudioConfig, CandidateIntersectionRejectsAmbiguityAndUnknownWireRates) {
+    DeviceGraph graph;
+    graph.playback = Stream(2, 2, {48000}, 48000);
+    graph.capture = Stream(2, 2, {48000}, 48000);
+    graph.playback.formations = {{48000, 2, 2, 0, {}, false}, {96000, 2, 2, 0, {}, false},
+        {96000, 4, 4, 0, {}, false}, {12345, 2, 2, 0, {}, false}, {88200, 2, 2, 0, {}, false}};
+    graph.capture.formations = {{48000, 2, 2, 0, {}, false}, {96000, 2, 2, 0, {}, false},
+        {12345, 2, 2, 0, {}, false}};
+    const auto config = BuildGraphAudioConfig({.guid = 1}, {}, graph);
+    ASSERT_TRUE(config);
+    ASSERT_EQ(config->rateFormationCandidates.size(), 1);
+    EXPECT_EQ(config->rateFormationCandidates[0].sampleRateHz, 48000);
+}
+
 TEST(AvcAudioConfig, AvcDevicesPublishOnlyStartupRateUntilTransactionalMultiRate) {
     DeviceGraph graph;
     graph.playback = Stream(2, 2, {32000, 44100, 48000, 96000}, 96000);
