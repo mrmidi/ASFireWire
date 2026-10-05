@@ -44,6 +44,10 @@ inline constexpr const char* kStreamMode = "ASFWStreamMode";
 // capture is device -> host (DICE TX).
 inline constexpr const char* kPlaybackStreams = "ASFWPlaybackStreams";
 inline constexpr const char* kCaptureStreams = "ASFWCaptureStreams";
+// Candidate inventory only: it does not expand HAL advertisement.
+inline constexpr const char* kRateFormations = "ASFWRateFormations";
+inline constexpr const char* kFormationProtocolSupported = "ProtocolSupported";
+inline constexpr const char* kFormationHardwareValidated = "HardwareValidated";
 
 // Keys within one stream entry.
 inline constexpr const char* kStreamPcmChannels = "PCM";

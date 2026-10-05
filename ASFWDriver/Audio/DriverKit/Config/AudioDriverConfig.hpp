@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "../../Model/AvcVolumeMapping.hpp"
 #include "../../Wire/AMDTP/PcmSlotMap.hpp"
+#include "../../Runtime/ResolvedAudioConfiguration.hpp"
 
 // Forward declarations to avoid pulling in DriverKit headers
 class OSArray;
@@ -75,6 +76,7 @@ struct ParsedAudioDriverConfig {
     double currentSampleRate{kDefaultSampleRate};
 
     StreamMode streamMode{StreamMode::kNonBlocking};
+    std::vector<::ASFW::Audio::Runtime::RateFormation> rateFormationCandidates;
 
     // Resolved per-stream geometry from the publisher. A count of zero means
     // none was published and the profile's constants are the only description

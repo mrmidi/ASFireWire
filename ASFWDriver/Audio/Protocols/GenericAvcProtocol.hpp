@@ -27,6 +27,12 @@ public:
     const char* GetName() const override { return name_; }
     void AdoptDiscoveredGeometry(const AudioStreamRuntimeCaps& caps) noexcept override { caps_ = caps; }
     void AdoptDiscoveredRates(std::span<const uint32_t> rates) override { rates_.assign(rates.begin(), rates.end()); }
+    void AdoptDiscoveredFormations(std::span<const Runtime::RateFormation> formations) override {
+        formations_.assign(formations.begin(), formations.end());
+    }
+    [[nodiscard]] std::span<const Runtime::RateFormation> DiscoveredFormations() const noexcept {
+        return formations_;
+    }
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& caps) const override {
         if (caps_.sampleRateHz == 0 || caps_.hostInputPcmChannels == 0 ||
             caps_.hostOutputPcmChannels == 0) return false;
@@ -49,6 +55,7 @@ protected:
 private:
     AudioStreamRuntimeCaps caps_{};
     std::vector<uint32_t> rates_;
+    std::vector<Runtime::RateFormation> formations_;
     const BeBoB::MixerMap* startupMixer_;
     const char* name_;
 };

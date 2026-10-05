@@ -615,6 +615,26 @@ TEST_F(BeBoBProtocolTest, GenericAvcUsesObservedAsymmetricGeometryAndRejectsOthe
     EXPECT_EQ(status, kIOReturnUnsupported);
 }
 
+TEST_F(BeBoBProtocolTest, GenericAvcOwnsFormationInventoryWithoutUnlockingRates) {
+    ASFW::Audio::GenericAvcProtocol protocol(busOps_, bus_, route_, nullptr, &cmp_, &timer_);
+    ASFW::Audio::AudioStreamRuntimeCaps geometry{};
+    geometry.sampleRateHz = 48000;
+    geometry.hostInputPcmChannels = geometry.hostOutputPcmChannels = 2;
+    protocol.AdoptDiscoveredGeometry(geometry);
+    std::vector<ASFW::Audio::Runtime::RateFormation> catalog(1);
+    catalog[0].sampleRateHz = 96000;
+    catalog[0].protocolSupported = true;
+    protocol.AdoptDiscoveredFormations(catalog);
+    catalog.clear();
+    ASSERT_EQ(protocol.DiscoveredFormations().size(), 1U);
+    EXPECT_EQ(protocol.DiscoveredFormations()[0].sampleRateHz, 96000U);
+    EXPECT_FALSE(protocol.DiscoveredFormations()[0].hardwareValidated);
+    IOReturn status = kIOReturnSuccess;
+    protocol.ApplyClockConfig({.sampleRateHz = 96000}, [&status](IOReturn result, const auto&) { status = result; });
+    EXPECT_EQ(status, kIOReturnUnsupported);
+    EXPECT_EQ(protocol.RuntimeCaps()->sampleRateHz, 48000U);
+}
+
 TEST(Phase88OnGenericAvcTests, StartAppliesTheRateThenTheWholeStartupMixerInOrder) {
     // The PHASE 88 row is the generic protocol plus its startup mixer map. Its
     // start sends both signal-format CONTROLs, then every selector, mute and

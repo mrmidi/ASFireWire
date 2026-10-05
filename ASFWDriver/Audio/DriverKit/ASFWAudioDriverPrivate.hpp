@@ -53,6 +53,7 @@ struct AudioDriverDeviceState {
     // PerformDeviceConfigurationChange commits it inside the host's window.
     std::atomic<uint32_t> pendingSampleRateHz{0};
     uint32_t streamModeRaw{0};
+    std::vector<ASFW::Audio::Runtime::RateFormation> rateFormationCandidates;
     uint32_t avcControlCount{0};
     ASFW::Audio::Model::AvcPublishedControl avcControls[ASFW::Audio::Model::kMaxAvcControls]{};
     uint32_t boolControlCount{0};

@@ -177,6 +177,40 @@ struct ASFWAudioDevice {
             !PublishWireStreams(properties, PropertyKeys::kCaptureStreams, captureStreams)) {
             return false;
         }
+        if (!rateFormationCandidates.empty()) {
+            auto catalog = OSSharedPtr(OSArray::withCapacity(
+                static_cast<uint32_t>(rateFormationCandidates.size())), OSNoRetain);
+            if (!catalog) return false;
+            for (const auto& formation : rateFormationCandidates) {
+                auto entry = OSSharedPtr(OSDictionary::withCapacity(6), OSNoRetain);
+                if (!entry) return false;
+                const auto add = [&](const char* key, uint32_t value) {
+                    auto number = OSSharedPtr(OSNumber::withNumber(value, 32), OSNoRetain);
+                    if (!number) return false;
+                    entry->setObject(key, number.get());
+                    return true;
+                };
+                const auto streams = [](const auto& direction) {
+                    std::vector<ASFWAudioWireStream> result;
+                    uint32_t offset = 0;
+                    for (const auto& stream : direction) {
+                        result.push_back({stream.pcmChannels, stream.dataBlockSize,
+                            stream.midiSlots, offset, stream.pcmSlots});
+                        offset += stream.pcmChannels;
+                    }
+                    return result;
+                };
+                if (!add(PropertyKeys::kCurrentSampleRate, formation.sampleRateHz) ||
+                    !add(PropertyKeys::kStreamMode,
+                         formation.mode == Encoding::StreamMode::kBlocking ? 1U : 0U) ||
+                    !add(PropertyKeys::kFormationProtocolSupported, formation.protocolSupported) ||
+                    !add(PropertyKeys::kFormationHardwareValidated, formation.hardwareValidated) ||
+                    !PublishWireStreams(entry.get(), PropertyKeys::kPlaybackStreams, streams(formation.playback)) ||
+                    !PublishWireStreams(entry.get(), PropertyKeys::kCaptureStreams, streams(formation.capture))) return false;
+                catalog->setObject(entry.get());
+            }
+            properties->setObject(PropertyKeys::kRateFormations, catalog.get());
+        }
         if (resolvedGeometryRequired) {
             auto required = OSSharedPtr(OSNumber::withNumber(uint64_t{1}, 32), OSNoRetain);
             if (!required) {

@@ -201,6 +201,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     // and the graph check below still requires the two to agree.
     if (request.discoveredConfig) {
         family.AdoptDiscoveredRates(request.discoveredConfig->sampleRates);
+        family.AdoptDiscoveredFormations(request.discoveredConfig->rateFormationCandidates);
         if (const auto discovered = DiscoveredCaps(*request.discoveredConfig)) {
             family.AdoptDiscoveredGeometry(*discovered);
         }

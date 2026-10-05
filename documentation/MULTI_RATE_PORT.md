@@ -2,6 +2,11 @@
 
 Status: **in progress; additional production rates remain gated**.
 
+Current scope: integrate the real AV/C driver directly using the completed lab
+happy-path evidence. Further lab failure experiments are deferred by the user.
+DICE multi-rate integration is backlogged: its rate-mode channel inventory and
+EAP-independent discovery need a separate design. DICE retains existing behavior.
+
 The clean 48 kHz AV/C endpoint is the regression baseline. The implementation
 must not remove the single-rate HAL publication until the production transaction
 and ADK layout experiment are complete. Passing host tests does not establish
@@ -29,6 +34,9 @@ hardware support.
   candidates, preserving rate-specific channel counts and maps. Ambiguous
   same-rate alternatives and unknown wire rates are excluded. Candidates remain
   hardware-unvalidated and do not expand HAL advertisement.
+- The formation inventory is copied through nub properties into ADK device
+  state and offered to the generic AV/C family by the session. Neither boundary
+  changes advertised rates or grants hardware validation.
 
 ## Current-main rate assumption inventory
 

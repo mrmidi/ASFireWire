@@ -44,6 +44,7 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     device.sampleRateCount = parsedConfig.sampleRateCount;
     device.currentSampleRate = parsedConfig.currentSampleRate;
     device.streamModeRaw = std::to_underlying(parsedConfig.streamMode);
+    device.rateFormationCandidates = parsedConfig.rateFormationCandidates;
     device.avcControlCount = parsedConfig.avcControlCount;
     std::copy_n(parsedConfig.avcControls, device.avcControlCount, device.avcControls);
     device.boolControlCount = parsedConfig.boolControlCount;
