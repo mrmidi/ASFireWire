@@ -127,6 +127,56 @@ nonisolated enum AnalyzerThemeMode: String, CaseIterable, Identifiable, Sendable
             return Color.black
         }
     }
+
+    var plotBackground: Color {
+        switch self {
+        case .studioLight:
+            return Color(red: 0.94, green: 0.955, blue: 0.97)
+        case .oledBlack:
+            return Color.black
+        case .studioDark, .highContrast:
+            return Color(red: 0.025, green: 0.035, blue: 0.05)
+        }
+    }
+
+    var plotBorder: Color {
+        switch self {
+        case .studioLight:
+            return Color.black.opacity(0.10)
+        case .oledBlack:
+            return Color.white.opacity(0.15)
+        case .highContrast:
+            return Color.white.opacity(0.25)
+        case .studioDark:
+            return Color.white.opacity(0.12)
+        }
+    }
+
+    var plotGridLine: Color {
+        switch self {
+        case .studioLight:
+            return Color.black.opacity(0.08)
+        case .oledBlack:
+            return Color.white.opacity(0.14)
+        case .highContrast:
+            return Color.white.opacity(0.25)
+        case .studioDark:
+            return Color.white.opacity(0.10)
+        }
+    }
+
+    var plotLabelColor: Color {
+        switch self {
+        case .studioLight:
+            return Color(red: 0.28, green: 0.33, blue: 0.40)
+        case .oledBlack:
+            return Color(red: 0.70, green: 0.75, blue: 0.80)
+        case .highContrast:
+            return Color.white
+        case .studioDark:
+            return Color(red: 0.75, green: 0.82, blue: 0.90)
+        }
+    }
 }
 
 /// Global shared theme provider for SwiftUI and Metal plot views.

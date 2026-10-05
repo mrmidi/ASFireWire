@@ -24,8 +24,12 @@ struct MetalAudioObserverView: NSViewRepresentable {
         view.isPaused = true
         view.enableSetNeedsDisplay = true
         view.preferredFramesPerSecond = 60
-        view.clearColor = MTLClearColor(red: 0.025, green: 0.035,
-                                        blue: 0.05, alpha: 1)
+        if mode == .phaseScope {
+            view.clearColor = MTLClearColor(red: 0.025, green: 0.035, blue: 0.05, alpha: 1)
+        } else {
+            view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+            view.layer?.isOpaque = false
+        }
 
         configure(view, coordinator: context.coordinator)
         context.coordinator.drawObserver = NotificationCenter.default.addObserver(
@@ -157,7 +161,17 @@ final class AudioObserverRenderer: NSObject, MTKViewDelegate {
                     let height = view.drawableSize.height / 2
                     render.setViewport(MTLViewport(originX: 0, originY: Double(lane) * height,
                         width: view.drawableSize.width, height: height, znear: 0, zfar: 1))
-                    var color = lane == 0 ? SIMD4<Float>(0.2, 0.91, 0.73, 1) : SIMD4<Float>(1, 0.55, 0.1, 1)
+                    let isLight = AnalyzerThemeState.shared.mode.isLight
+                    var color: SIMD4<Float>
+                    if isLight {
+                        color = lane == 0
+                            ? SIMD4<Float>(0.04, 0.48, 0.68, 1.0)
+                            : SIMD4<Float>(0.85, 0.28, 0.05, 1.0)
+                    } else {
+                        color = lane == 0
+                            ? SIMD4<Float>(0.2, 0.91, 0.73, 1.0)
+                            : SIMD4<Float>(1.0, 0.55, 0.10, 1.0)
+                    }
                     render.setFragmentBytes(&color, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
                 }
                 render.setVertexBytes(&params, length: MemoryLayout<ObserverParams>.stride, index: 1)

@@ -347,7 +347,7 @@ kernel void asfwConsumeOutputRange(
 
 struct AnalyzerPlotParams {
     uint mode; uint index; uint active; uint count;
-    ulong latestFrame; uint sampleRate; uint padding;
+    ulong latestFrame; uint sampleRate; uint isLight;
     float value; float peak; float width; float height;
 };
 struct AnalyzerHistoryVertex {
@@ -368,11 +368,23 @@ vertex AnalyzerPlotVertex asfwAnalyzerPlotVertex(uint vid [[vertex_id]],
         float age = float(p.latestFrame - point.frame) / max(1.0f, float(p.sampleRate));
         float x = 1.0f - 2.0f * age / 60.0f;
         float y = p.index == 0 ? point.correlation : point.sideEnergy * 2.0f - 1.0f;
-        color = p.index == 0 ? float4(0.1f, 0.9f, 0.3f, 1) : float4(0.1f, 0.8f, 1, 1);
+        if (p.isLight != 0) {
+            color = p.index == 0 ? float4(0.08f, 0.65f, 0.25f, 1) : float4(0.05f, 0.45f, 0.85f, 1);
+        } else {
+            color = p.index == 0 ? float4(0.1f, 0.9f, 0.3f, 1) : float4(0.1f, 0.8f, 1, 1);
+        }
         if (p.mode == 3) {
             float value = p.index == 0 ? point.correlation : p.index == 1 ? point.sideEnergy : point.integrated;
             y = 2.0f * (value + 36.0f) / 30.0f - 1.0f;
-            color = p.index == 0 ? float4(0.1f,0.9f,0.4f,1) : p.index == 1 ? float4(0.1f,0.55f,1,1) : float4(0.65f,0.25f,1,1);
+            if (p.isLight != 0) {
+                color = p.index == 0 ? float4(0.08f, 0.60f, 0.22f, 1)
+                      : p.index == 1 ? float4(0.08f, 0.42f, 0.88f, 1)
+                      : float4(0.55f, 0.15f, 0.85f, 1);
+            } else {
+                color = p.index == 0 ? float4(0.1f,0.9f,0.4f,1)
+                      : p.index == 1 ? float4(0.1f,0.55f,1,1)
+                      : float4(0.65f,0.25f,1,1);
+            }
             AnalyzerHistoryVertex other = points[segment + 1 - vid % 2];
             float otherValue = p.index == 0 ? other.correlation : p.index == 1 ? other.sideEnergy : other.integrated;
             if (!isfinite(value) || !isfinite(otherValue)) color.a = 0;
@@ -389,7 +401,15 @@ vertex AnalyzerPlotVertex asfwAnalyzerPlotVertex(uint vid [[vertex_id]],
     if (p.mode == 4) {
         float level = clamp((p.value + 60.0f) / 60.0f, 0.0f, 1.0f);
         lo = float2(-1,-1); hi = float2(-1 + 2 * level,1);
-        color = p.index == 0 ? float4(0.1f,0.9f,0.4f,1) : p.index == 1 ? float4(0.1f,0.55f,1,1) : float4(0.65f,0.25f,1,1);
+        if (p.isLight != 0) {
+            color = p.index == 0 ? float4(0.08f, 0.60f, 0.22f, 1)
+                  : p.index == 1 ? float4(0.08f, 0.42f, 0.88f, 1)
+                  : float4(0.55f, 0.15f, 0.85f, 1);
+        } else {
+            color = p.index == 0 ? float4(0.1f,0.9f,0.4f,1)
+                  : p.index == 1 ? float4(0.1f,0.55f,1,1)
+                  : float4(0.65f,0.25f,1,1);
+        }
         if (!p.active || rectangle == 1) color.a = 0;
     } else if (p.mode == 0) {
         float level = clamp((20.0f * log10(max(p.value, 1.0e-6f)) + 60) / 66, 0.0f, 1.0f);

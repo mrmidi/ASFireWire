@@ -13,7 +13,7 @@ private struct SpectrumParams {
     var fftSize: UInt32
     var window: UInt32
     var calibrationOffsetDB: Float = 0
-    var padding: UInt32 = 0
+    var isLight: UInt32 = 0
 }
 
 private struct SmoothingParams { var alpha: Float; var elapsed: Float; var reset: UInt32; var binCount: UInt32 }
@@ -126,10 +126,10 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         guard let library = device.makeDefaultLibrary(),
               let smoothing = library.makeFunction(name: "asfwSpectrumSmooth"),
               let smooth = try? device.makeComputePipelineState(function: smoothing),
-              let peakFragment = library.makeFunction(name: "asfwSpectrumPeakFragment"),
+              let lineFragment = library.makeFunction(name: "asfwSpectrumLineFragment"),
               let fft = library.makeFunction(name: "asfwSpectrumFFT"),
               let vertex = library.makeFunction(name: "asfwSpectrumVertex"),
-              let fragment = library.makeFunction(name: "asfwAudioFragment"),
+              let peakVertex = library.makeFunction(name: "asfwSpectrumPeakVertex"),
               let compute = try? device.makeComputePipelineState(function: fft),
               compute.maxTotalThreadsPerThreadgroup >= 256,
               SpectrumFFTLayout.sizes.contains(fftSize),
@@ -140,10 +140,11 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         self.lanes = lanes; self.regions = regions
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = vertex
-        descriptor.fragmentFunction = fragment
+        descriptor.fragmentFunction = lineFragment
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         guard let render = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
-        descriptor.fragmentFunction = peakFragment
+        descriptor.vertexFunction = peakVertex
+        descriptor.fragmentFunction = lineFragment
         guard let peakRender = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
         self.smooth = smooth; self.peakRender = peakRender
         self.otherChannel = otherChannel
@@ -210,6 +211,7 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
             if peakHold {
                 drawing.setRenderPipelineState(peakRender)
                 drawing.setVertexBuffer(lane.peaks, offset: 0, index: 0)
+                drawing.setVertexBytes(&params, length: MemoryLayout<SpectrumParams>.stride, index: 1)
                 drawing.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: 512)
             }
         }
@@ -221,10 +223,11 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
     }
     private func parameters(_ snapshot: AudioObserverSnapshot, transform: UInt32) -> SpectrumParams {
         let offset = Float(AnalyzerCalibrationState.shared.config.effectiveOffsetDB)
+        let isLight: UInt32 = AnalyzerThemeState.shared.mode.isLight ? 1 : 0
         return SpectrumParams(writeEnd: snapshot.writeEndFrame, ringFrames: snapshot.activeRingFrames,
             channels: snapshot.channels, channel: channel, sampleRate: snapshot.sampleRateHz,
             otherChannel: otherChannel, transform: transform, fftSize: fftSize, window: window,
-            calibrationOffsetDB: offset, padding: 0)
+            calibrationOffsetDB: offset, isLight: isLight)
     }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 }

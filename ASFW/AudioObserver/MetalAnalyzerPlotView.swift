@@ -9,7 +9,7 @@ struct AnalyzerPlotParams {
     var count: UInt32
     var latestFrame: UInt64
     var sampleRate: UInt32
-    var padding: UInt32 = 0
+    var isLight: UInt32 = 0
     var value: Float
     var peak: Float
     var width: Float
@@ -343,9 +343,10 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
                 displaySmoothers[key] = smoother
                 value = smoothed.value; peak = smoothed.peak
             }
+            let isLight: UInt32 = AnalyzerThemeState.shared.mode.isLight ? 1 : 0
             var params = AnalyzerPlotParams(mode: plot.mode, index: plot.index,
                 active: snapshot.ioRunning && valid ? 1 : 0, count: UInt32(count),
-                latestFrame: latestFrame, sampleRate: snapshot.sampleRateHz,
+                latestFrame: latestFrame, sampleRate: snapshot.sampleRateHz, isLight: isLight,
                 value: value, peak: peak, width: Float(rect.width * scale), height: Float(rect.height * scale))
             encoder.setVertexBytes(&params, length: MemoryLayout<AnalyzerPlotParams>.stride, index: 0)
             var emptyPoint = AnalyzerHistoryVertex(frame: 0, correlation: 0, sideEnergy: 0, breakBefore: 0)

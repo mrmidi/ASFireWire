@@ -1,7 +1,7 @@
 #include <metal_stdlib>
 using namespace metal;
-struct SpectrumParams { ulong writeEnd; uint ringFrames; uint channels; uint channel; uint sampleRate; uint otherChannel; uint transform; uint fftSize; uint window; float calibrationOffsetDB; uint padding; };
-struct SpectrumVertex { float4 position [[position]]; };
+struct SpectrumParams { ulong writeEnd; uint ringFrames; uint channels; uint channel; uint sampleRate; uint otherChannel; uint transform; uint fftSize; uint window; float calibrationOffsetDB; uint isLight; };
+struct SpectrumVertex { float4 position [[position]]; float4 color; };
 
 // Real FFT: pack windowed even/odd samples into an N/2 complex transform.
 // Dynamic threadgroup storage is N/2 * sizeof(float2): 32 KiB at N=8192.
@@ -233,7 +233,39 @@ vertex SpectrumVertex asfwSpectrumVertex(uint vid [[vertex_id]],
         amplitude = max(amplitude, amplitudes[bin]);
     float db = 20.0f * log10(max(amplitude, 1.0e-6f)) + p.calibrationOffsetDB;
     float y = 2.0f * (clamp(db, -120.0f, 6.0f) + 120.0f) / 126.0f - 1.0f;
-    return { float4(-1.0f + 2.0f * float(vid) / 511.0f, y, 0, 1) };
+
+    float4 color;
+    if (p.isLight != 0) {
+        color = p.transform == 2 ? float4(0.85f, 0.28f, 0.05f, 1.0f)
+                                 : float4(0.04f, 0.48f, 0.68f, 1.0f);
+    } else {
+        color = p.transform == 2 ? float4(1.0f, 0.55f, 0.1f, 1.0f)
+                                 : float4(0.20f, 0.91f, 0.73f, 1.0f);
+    }
+    return { float4(-1.0f + 2.0f * float(vid) / 511.0f, y, 0, 1), color };
+}
+
+vertex SpectrumVertex asfwSpectrumPeakVertex(uint vid [[vertex_id]],
+    device const float* amplitudes [[buffer(0)]],
+    constant SpectrumParams& p [[buffer(1)]]) {
+    uint fftSize = p.fftSize;
+    float maximumHz = min(20000.0f, float(p.sampleRate) * 0.5f);
+    float ratio = maximumHz / 20.0f;
+    float hz = 20.0f * pow(ratio, float(vid) / 511.0f);
+    float nextHz = 20.0f * pow(ratio, float(min(vid + 1, 511u)) / 511.0f);
+    float binPosition = hz * fftSize / p.sampleRate;
+    uint lo = min(uint(binPosition), fftSize / 2);
+    uint hi = min(lo + 1, fftSize / 2);
+    float amplitude = mix(amplitudes[lo], amplitudes[hi], fract(binPosition));
+    for (uint bin = uint(ceil(binPosition)); bin <= min(uint(nextHz * fftSize / p.sampleRate), fftSize / 2); ++bin)
+        amplitude = max(amplitude, amplitudes[bin]);
+    float db = 20.0f * log10(max(amplitude, 1.0e-6f)) + p.calibrationOffsetDB;
+    float y = 2.0f * (clamp(db, -120.0f, 6.0f) + 120.0f) / 126.0f - 1.0f;
+
+    float4 color = p.isLight != 0
+        ? float4(0.82f, 0.45f, 0.05f, 1.0f)
+        : float4(0.85f, 0.65f, 0.25f, 1.0f);
+    return { float4(-1.0f + 2.0f * float(vid) / 511.0f, y, 0, 1), color };
 }
 
 struct SmoothingParams { float alpha; float elapsed; uint reset; uint binCount; };
@@ -253,4 +285,5 @@ kernel void asfwSpectrumSmooth(device const float* raw [[buffer(0)]],
     average[bin] = sqrt(max(0.0f, h.x));
     peaks[bin] = h.y;
 }
+fragment float4 asfwSpectrumLineFragment(SpectrumVertex in [[stage_in]]) { return in.color; }
 fragment float4 asfwSpectrumPeakFragment() { return float4(0.75, 0.55, 0.22, 1); }

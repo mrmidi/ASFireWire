@@ -161,5 +161,10 @@ struct AnalyzerCalibrationTests {
         let oled = AnalyzerThemeMode.oledBlack
         #expect(!oled.isLight)
         #expect(oled.cardBackgroundTop == Color.black)
+        #expect(oled.plotBackground == Color.black)
+
+        // Verify plotBackground adapts: studioLight is off-white, dark modes are dark CRT/black
+        #expect(dark.plotBackground == Color(red: 0.025, green: 0.035, blue: 0.05))
+        #expect(light.plotBackground == Color(red: 0.94, green: 0.955, blue: 0.97))
     }
 }

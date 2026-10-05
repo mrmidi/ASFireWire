@@ -446,11 +446,15 @@ struct AudioObserverPanel: View {
                     }.font(.caption2).foregroundStyle(.secondary)
                 } else {
                     HStack(spacing: 14) {
-                        spectrumLegend(.mint, midSide ? "Mid" : "Stereo power")
+                        let isLight = themeState.mode.isLight
+                        let mainColor: Color = isLight ? Color(red: 0.04, green: 0.48, blue: 0.68) : .mint
+                        let sideColor: Color = isLight ? Color(red: 0.85, green: 0.28, blue: 0.05) : .orange
+                        let peakColor: Color = isLight ? Color(red: 0.82, green: 0.45, blue: 0.05) : Color(red: 0.75, green: 0.55, blue: 0.22)
+                        spectrumLegend(mainColor, midSide ? "Mid" : "Stereo power")
                         if midSide {
-                            spectrumLegend(.orange, midSide ? "Side" : "Output \(rightChannel + 1)")
+                            spectrumLegend(sideColor, midSide ? "Side" : "Output \(rightChannel + 1)")
                         }
-                        if peakHold { spectrumLegend(Color(red: 0.75, green: 0.55, blue: 0.22), "Peak hold") }
+                        if peakHold { spectrumLegend(peakColor, "Peak hold") }
                         Spacer(minLength: 0)
                     }
                     .font(.caption2)
@@ -490,9 +494,10 @@ struct AudioObserverPanel: View {
                 .foregroundStyle(themeState.mode.primaryTextColor)
             LoudnessHistoryView(client: model.client).frame(maxHeight: .infinity)
             HStack(spacing: 14) {
-                spectrumLegend(.green, "Momentary")
-                spectrumLegend(.blue, "Short-term")
-                spectrumLegend(.purple, "Integrated")
+                let isLight = themeState.mode.isLight
+                spectrumLegend(isLight ? Color(red: 0.08, green: 0.60, blue: 0.22) : .green, "Momentary")
+                spectrumLegend(isLight ? Color(red: 0.08, green: 0.42, blue: 0.88) : .blue, "Short-term")
+                spectrumLegend(isLight ? Color(red: 0.55, green: 0.15, blue: 0.85) : .purple, "Integrated")
                 Spacer()
                 AnalyzerLivePanel(state: model.loudnessControlsUI) { metrics, _ in
                     loudnessSessionControls(metrics.analysis.loudness)
@@ -882,7 +887,7 @@ struct AudioObserverPanel: View {
     private func spectrumLegend(_ color: Color, _ title: String) -> some View {
         HStack(spacing: 4) {
             Capsule().fill(color).frame(width: 10, height: 4)
-            Text(title).foregroundStyle(.secondary)
+            Text(title).foregroundStyle(themeState.mode.secondaryTextColor)
         }
     }
 
@@ -896,26 +901,32 @@ struct AudioObserverPanel: View {
     }
 
     private func scopePlot(mode: AudioObserverDisplayMode) -> some View {
-        ZStack {
-            Color(red: 0.025, green: 0.035, blue: 0.05)
+        let isPhaseScope = mode == .phaseScope
+        return ZStack {
+            if isPhaseScope {
+                Color(red: 0.025, green: 0.035, blue: 0.05)
+            } else {
+                themeState.mode.plotBackground
+            }
             if model.snapshot.ioRunning {
-                if mode == .phaseScope {
+                if isPhaseScope {
                     AnalyzerCanvasSlot(mode: 5, index: leftChannel, otherChannel: rightChannel).padding(30)
                 } else {
                     MetalAudioObserverView(client: model.client, mode: mode,
                                            leftChannel: leftChannel, rightChannel: rightChannel)
-                        .id("\(model.snapshot.memoryGeneration)-\(mode)-\(leftChannel)-\(rightChannel)")
+                        .id("\(model.snapshot.memoryGeneration)-\(mode)-\(leftChannel)-\(rightChannel)-\(themeState.mode.rawValue)")
                 }
             } else {
-                Text("Waiting for audio").foregroundStyle(.secondary)
+                Text("Waiting for audio").foregroundStyle(isPhaseScope ? Color.gray : themeState.mode.secondaryTextColor)
             }
-            if mode == .phaseScope {
+            if isPhaseScope {
                 AnalyzerPlotAxes(kind: .goniometer)
             } else {
                 AnalyzerPlotAxes(kind: .waveform)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(isPhaseScope ? Color.white.opacity(0.12) : themeState.mode.plotBorder, lineWidth: 1))
     }
 
     private var historyPlotAxes: AnalyzerPlotAxes.Kind {
@@ -929,21 +940,28 @@ struct AudioObserverPanel: View {
     }
 
     private func spectrumPlot(channel: UInt32, side: Bool) -> some View {
-        VStack(spacing: 4) {
+        let usesHistory3D = spectrumVisualization.usesHistory
+        return VStack(spacing: 4) {
             Text(midSide ? (side ? "Side · (L−R)/√2" : "Mid · (L+R)/√2") : "L/R · averaged channel power")
                 .font(.caption2)
+                .foregroundStyle(themeState.mode.secondaryTextColor)
             ZStack {
-                Color(red: 0.025, green: 0.035, blue: 0.05)
+                if usesHistory3D {
+                    Color(red: 0.025, green: 0.035, blue: 0.05)
+                } else {
+                    themeState.mode.plotBackground
+                }
                 if model.snapshot.ioRunning {
                     SpectrumCanvasSlot(transform: midSide ? (side ? 2 : 1) : 3)
                         .padding(.leading, 38).padding(.trailing, 12)
                         .padding(.top, 12).padding(.bottom, 30)
                 } else {
-                    Text("Waiting for audio").foregroundStyle(.secondary)
+                    Text("Waiting for audio").foregroundStyle(usesHistory3D ? Color.gray : themeState.mode.secondaryTextColor)
                 }
                 AnalyzerPlotAxes(kind: historyPlotAxes)
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(usesHistory3D ? Color.white.opacity(0.12) : themeState.mode.plotBorder, lineWidth: 1))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
