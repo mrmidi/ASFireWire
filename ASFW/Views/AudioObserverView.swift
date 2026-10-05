@@ -493,11 +493,13 @@ struct AudioObserverPanel: View {
             Text("Loudness History").font(.caption.weight(.medium))
                 .foregroundStyle(themeState.mode.primaryTextColor)
             LoudnessHistoryView(client: model.client).frame(maxHeight: .infinity)
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
                 let isLight = themeState.mode.isLight
                 spectrumLegend(isLight ? Color(red: 0.08, green: 0.60, blue: 0.22) : .green, "Momentary")
                 spectrumLegend(isLight ? Color(red: 0.08, green: 0.42, blue: 0.88) : .blue, "Short-term")
                 spectrumLegend(isLight ? Color(red: 0.55, green: 0.15, blue: 0.85) : .purple, "Integrated")
+                targetLegend(isLight ? Color(red: 0.02, green: 0.45, blue: 0.75) : .cyan, "−14 Streaming")
+                targetLegend(isLight ? Color(red: 0.80, green: 0.38, blue: 0.02) : .orange, "−23 EBU R128")
                 Spacer()
                 AnalyzerLivePanel(state: model.loudnessControlsUI) { metrics, _ in
                     loudnessSessionControls(metrics.analysis.loudness)
@@ -891,6 +893,16 @@ struct AudioObserverPanel: View {
         }
     }
 
+    private func targetLegend(_ color: Color, _ title: String) -> some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 2) {
+                RoundedRectangle(cornerRadius: 1).fill(color).frame(width: 4, height: 2)
+                RoundedRectangle(cornerRadius: 1).fill(color).frame(width: 4, height: 2)
+            }
+            Text(title).foregroundStyle(themeState.mode.secondaryTextColor)
+        }
+    }
+
     private func channelPicker(_ title: String, selection: Binding<UInt32>) -> some View {
         Picker(title, selection: selection) {
             ForEach(0..<max(2, Int(model.snapshot.channels)), id: \.self) { channel in
@@ -903,11 +915,7 @@ struct AudioObserverPanel: View {
     private func scopePlot(mode: AudioObserverDisplayMode) -> some View {
         let isPhaseScope = mode == .phaseScope
         return ZStack {
-            if isPhaseScope {
-                Color(red: 0.025, green: 0.035, blue: 0.05)
-            } else {
-                themeState.mode.plotBackground
-            }
+            themeState.mode.plotBackground
             if model.snapshot.ioRunning {
                 if isPhaseScope {
                     AnalyzerCanvasSlot(mode: 5, index: leftChannel, otherChannel: rightChannel).padding(30)
@@ -917,7 +925,7 @@ struct AudioObserverPanel: View {
                         .id("\(model.snapshot.memoryGeneration)-\(mode)-\(leftChannel)-\(rightChannel)-\(themeState.mode.rawValue)")
                 }
             } else {
-                Text("Waiting for audio").foregroundStyle(isPhaseScope ? Color.gray : themeState.mode.secondaryTextColor)
+                Text("Waiting for audio").foregroundStyle(themeState.mode.secondaryTextColor)
             }
             if isPhaseScope {
                 AnalyzerPlotAxes(kind: .goniometer)
@@ -926,7 +934,7 @@ struct AudioObserverPanel: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(isPhaseScope ? Color.white.opacity(0.12) : themeState.mode.plotBorder, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(themeState.mode.plotBorder, lineWidth: 1))
     }
 
     private var historyPlotAxes: AnalyzerPlotAxes.Kind {

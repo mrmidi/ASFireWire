@@ -325,6 +325,10 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
                 encoder.setRenderPipelineState(phasePipeline)
                 encoder.setVertexBuffer(ring, offset: 0, index: 0)
                 encoder.setVertexBytes(&phase, length: MemoryLayout<ObserverParams>.stride, index: 1)
+                var phaseColor = AnalyzerThemeState.shared.mode.isLight
+                    ? SIMD4<Float>(0.02, 0.52, 0.40, 1.0)
+                    : SIMD4<Float>(0.20, 0.91, 0.73, 1.0)
+                encoder.setFragmentBytes(&phaseColor, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
                 encoder.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: Int(frames))
                 continue
             }

@@ -63,7 +63,7 @@ struct LoudnessHistoryView: View {
                     let streamColor = isLight ? Color(red: 0.02, green: 0.45, blue: 0.75) : Color.cyan
                     context.stroke(streamPath, with: .color(streamColor.opacity(isLight ? 0.75 : 0.60)),
                                    style: StrokeStyle(lineWidth: 1.0, dash: [4, 4]))
-                    label("-14 STR", CGPoint(x: rect.maxX - 4, y: yStream - 7), .trailing,
+                    label("−14", CGPoint(x: rect.minX + 4, y: yStream - 7), .leading,
                           color: streamColor.opacity(isLight ? 0.95 : 0.85))
 
                     // Target line: -23 LUFS (EBU R128 broadcast standard)
@@ -74,7 +74,7 @@ struct LoudnessHistoryView: View {
                     let ebuColor = isLight ? Color(red: 0.80, green: 0.38, blue: 0.02) : Color.orange
                     context.stroke(ebuPath, with: .color(ebuColor.opacity(isLight ? 0.75 : 0.65)),
                                    style: StrokeStyle(lineWidth: 1.0, dash: [4, 4]))
-                    label("-23 EBU", CGPoint(x: rect.maxX - 4, y: yEBU - 7), .trailing,
+                    label("−23", CGPoint(x: rect.minX + 4, y: yEBU - 7), .leading,
                           color: ebuColor.opacity(isLight ? 0.95 : 0.85))
 
                     // Time grid lines (60s window)

@@ -775,7 +775,7 @@ final class ASFWAudioObserverClient {
             throw AudioObserverError.shaderUnavailable
         }
         let phaseDescriptor = Self.renderDescriptor(vertex: phaseVertex,
-                                                    fragment: fragment)
+                                                    fragment: waveformFragment)
         let waveformDescriptor = Self.renderDescriptor(vertex: waveformVertex,
                                                        fragment: waveformFragment)
         do {

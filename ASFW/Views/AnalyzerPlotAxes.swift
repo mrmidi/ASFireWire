@@ -3,7 +3,7 @@ import SwiftUI
 struct AnalyzerPlotAxes: View {
     @ObservedObject private var themeState = AnalyzerThemeState.shared
 
-    enum Kind {
+    enum Kind: Sendable, Equatable {
         case goniometer
         case waveform
         case spectrum(sampleRate: UInt32)
@@ -15,9 +15,9 @@ struct AnalyzerPlotAxes: View {
 
     private var staysOnDarkBackground: Bool {
         switch kind {
-        case .goniometer, .spectrogram, .waterfall:
+        case .spectrogram, .waterfall:
             return true
-        case .waveform, .spectrum:
+        case .goniometer, .waveform, .spectrum:
             return false
         }
     }
@@ -25,7 +25,9 @@ struct AnalyzerPlotAxes: View {
     var body: some View {
         let mode = themeState.mode
         let useLightScheme = mode.isLight && !staysOnDarkBackground
-        let gridLineColor = useLightScheme ? mode.plotGridLine : Color.white.opacity(0.20)
+        let gridLineColor = useLightScheme
+            ? (kind == .goniometer ? Color.black.opacity(0.18) : mode.plotGridLine)
+            : Color.white.opacity(0.20)
         let labelColor = useLightScheme ? mode.plotLabelColor : Color(red: 0.72, green: 0.78, blue: 0.85)
 
         Canvas { context, size in
