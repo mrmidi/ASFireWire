@@ -871,6 +871,20 @@ kern_return_t IMPL(ASFWAudioNub, ApplyAvcRate) {
         !ASFW::Audio::Runtime::AvcRateEnabled(*found, config.currentSampleRate)) return kIOReturnUnsupported;
     auto* coordinator = GetAudioCoordinator(ivars);
     if (!coordinator) return kIOReturnNotReady;
+    // The first idle rate request can precede StartAudioStreaming, which used
+    // to be the only path supplying the protocol's live AV/C unit. Observation
+    // can succeed through discovery while BeBoB ApplyClockConfig sees no unit.
+    // Bind the same generation-checked context here before programming clocks.
+    auto avcUnit = binding.avcDiscovery
+        ? binding.avcDiscovery->LiveUnit(binding.device->guid) : nullptr;
+    if (!ASFW::Audio::HasReadyAVCStartRoute(binding.device->nodeId, avcUnit != nullptr)) {
+        ASFW_LOG(Audio, "[RateTxn] phase=bind result=not-ready guid=%016llx gen=%u epoch=%llu",
+                 ivars->guid, expectedBusGeneration, expectedRouteEpoch);
+        return kIOReturnNotReady;
+    }
+    binding.protocol->UpdateRuntimeContext(route, std::move(avcUnit));
+    ASFW_LOG(Audio, "[RateTxn] phase=bind result=ready guid=%016llx gen=%u epoch=%llu",
+             ivars->guid, expectedBusGeneration, expectedRouteEpoch);
     ivars->avcObservationValid = false;
     return coordinator->RequestClockConfig(ivars->guid, {.sampleRateHz = sampleRateHz},
         ASFW::Audio::DuplexRestartReason::kSampleRateChange);

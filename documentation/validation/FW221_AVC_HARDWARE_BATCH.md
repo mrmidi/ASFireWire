@@ -119,3 +119,19 @@ boundary and finality regression; signed production Debug build and signature
 verification passed, with x86_64/arm64e slices. Continue the remaining hardware
 matrix and measure fill duration/latency before claiming complete multi-rate
 validation.
+
+### First idle rate request after replug
+
+Phase88 run on 2026-10-05: the first two 96 kHz requests returned
+`kIOReturnNotReady` (0xe00002d8) before CONTROL, with both plugs still at
+44.1 kHz. After 44.1 playback started and refreshed the live protocol context,
+44.1 → 48 succeeded in the same generation/session. The subsequent 48 → 96
+transaction confirmed both plugs at 96 kHz and committed revision 3; the user
+reported playback without clicks. `ApplyAvcRate` now binds
+the current discovery unit and validated route before requesting clock apply,
+so it does not depend on a previous StartIO. The bounded `phase=bind` record
+identifies missing context separately from a hardware rejection.
+
+Regression batch: after fresh replug, change rate while idle before any
+playback; confirm bind/apply/duplex readback/commit, then begin playback. Repeat
+44.1 → 96 and return to 48. Missing or stale route must leave clocks unchanged.
