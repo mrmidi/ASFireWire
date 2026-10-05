@@ -12,6 +12,8 @@ private struct SpectrumParams {
     var transform: UInt32
     var fftSize: UInt32
     var window: UInt32
+    var calibrationOffsetDB: Float = 0
+    var padding: UInt32 = 0
 }
 
 private struct SmoothingParams { var alpha: Float; var elapsed: Float; var reset: UInt32; var binCount: UInt32 }
@@ -218,9 +220,11 @@ final class SpectrumRenderer: NSObject, MTKViewDelegate {
         submission.commit(command)
     }
     private func parameters(_ snapshot: AudioObserverSnapshot, transform: UInt32) -> SpectrumParams {
-        SpectrumParams(writeEnd: snapshot.writeEndFrame, ringFrames: snapshot.activeRingFrames,
+        let offset = Float(AnalyzerCalibrationState.shared.config.effectiveOffsetDB)
+        return SpectrumParams(writeEnd: snapshot.writeEndFrame, ringFrames: snapshot.activeRingFrames,
             channels: snapshot.channels, channel: channel, sampleRate: snapshot.sampleRateHz,
-            otherChannel: otherChannel, transform: transform, fftSize: fftSize, window: window)
+            otherChannel: otherChannel, transform: transform, fftSize: fftSize, window: window,
+            calibrationOffsetDB: offset, padding: 0)
     }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 }

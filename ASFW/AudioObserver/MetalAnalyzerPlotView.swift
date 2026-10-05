@@ -218,7 +218,6 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private var glyphAtlases: [AnalyzerTextStyle: (scale: CGFloat, atlas: AnalyzerGlyphAtlas)] = [:]
     private var readoutText = AnalyzerTextCache()
     private let readoutBatch = AnalyzerReadoutBatch()
-    private var readoutAppearance: String?
     private var readoutPrimary = SIMD4<Float>(1, 1, 1, 1)
     private var readoutSecondary = SIMD4<Float>(1, 1, 1, 0.55)
     private let submission: AnalyzerRenderSubmission
@@ -376,19 +375,9 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private func drawReadouts(_ slots: [AnalyzerPlotRegion], encoder: MTLRenderCommandEncoder,
                               view: MTKView, scale: CGFloat, now: Double) {
         guard !slots.isEmpty, let glyphPipeline else { return }
-        let appearance = view.effectiveAppearance.name.rawValue
-        if readoutAppearance != appearance {
-            view.effectiveAppearance.performAsCurrentDrawingAppearance {
-                func rgba(_ color: NSColor) -> SIMD4<Float>? {
-                    color.usingColorSpace(.sRGB).map {
-                        SIMD4(Float($0.redComponent), Float($0.greenComponent), Float($0.blueComponent), Float($0.alphaComponent))
-                    }
-                }
-                readoutPrimary = rgba(.labelColor) ?? readoutPrimary
-                readoutSecondary = rgba(.secondaryLabelColor) ?? readoutSecondary
-            }
-            readoutAppearance = appearance
-        }
+        let theme = AnalyzerThemeState.shared.mode
+        readoutPrimary = theme.readoutPrimary
+        readoutSecondary = theme.readoutSecondary
         var metricsSnapshot: AudioObserverMetrics?
         let readMetrics = { [metrics] () -> AudioObserverMetrics in
             if let metricsSnapshot { return metricsSnapshot }

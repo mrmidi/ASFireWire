@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 using namespace metal;
-struct SpectrumParams { ulong writeEnd; uint ringFrames; uint channels; uint channel; uint sampleRate; uint otherChannel; uint transform; uint fftSize; uint window; };
+struct SpectrumParams { ulong writeEnd; uint ringFrames; uint channels; uint channel; uint sampleRate; uint otherChannel; uint transform; uint fftSize; uint window; float calibrationOffsetDB; uint padding; };
 struct SpectrumVertex { float4 position [[position]]; };
 
 // Real FFT: pack windowed even/odd samples into an N/2 complex transform.
@@ -98,7 +98,7 @@ kernel void asfwSpectrogramSTFT(device const float* ring [[buffer(0)]],
     for (uint bin = tid; bin < bins; bin += size.x) {
         const float amplitude = spectrumAmplitude(values, p, bin);
         if (p.transform == 3) stereoScratch[group.x * bins + bin] = amplitude;
-        else history.write(float4(20.0f * log10(max(amplitude, 1e-6f))), uint2(column, bin));
+        else history.write(float4(20.0f * log10(max(amplitude, 1e-6f)) + p.calibrationOffsetDB), uint2(column, bin));
     }
     if (p.transform == 3) {
         threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
@@ -106,7 +106,7 @@ kernel void asfwSpectrogramSTFT(device const float* ring [[buffer(0)]],
         for (uint bin = tid; bin < bins; bin += size.x) {
             const float left = stereoScratch[group.x * bins + bin], right = spectrumAmplitude(values, p, bin);
             const float amplitude = sqrt((left * left + right * right) * 0.5f);
-            history.write(float4(20.0f * log10(max(amplitude, 1e-6f))), uint2(column, bin));
+            history.write(float4(20.0f * log10(max(amplitude, 1e-6f)) + p.calibrationOffsetDB), uint2(column, bin));
         }
     }
     if (tid == 0) stamps[column] = slice + 1;
@@ -231,7 +231,7 @@ vertex SpectrumVertex asfwSpectrumVertex(uint vid [[vertex_id]],
     // Peak aggregation retains narrow peaks when logarithmic pixels span bins.
     for (uint bin = uint(ceil(binPosition)); bin <= min(uint(nextHz * fftSize / p.sampleRate), fftSize / 2); ++bin)
         amplitude = max(amplitude, amplitudes[bin]);
-    float db = 20.0f * log10(max(amplitude, 1.0e-6f));
+    float db = 20.0f * log10(max(amplitude, 1.0e-6f)) + p.calibrationOffsetDB;
     float y = 2.0f * (clamp(db, -120.0f, 6.0f) + 120.0f) / 126.0f - 1.0f;
     return { float4(-1.0f + 2.0f * float(vid) / 511.0f, y, 0, 1) };
 }
