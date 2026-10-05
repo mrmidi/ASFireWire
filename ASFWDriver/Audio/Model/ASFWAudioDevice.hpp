@@ -48,6 +48,9 @@ struct ASFWAudioWireStream {
 
 struct ASFWAudioDevice {
     uint64_t guid{0};
+    uint64_t avcRouteIncarnation{0};
+    uint64_t avcRouteEpoch{0};
+    uint32_t avcBusGeneration{0};
     uint32_t vendorId{0};
     uint32_t modelId{0};
     /// The device catalog's resolved ProfileBuilderId, as a raw uint32 so this
@@ -178,6 +181,14 @@ struct ASFWAudioDevice {
             return false;
         }
         if (!rateFormationCandidates.empty()) {
+            for (const auto& [key, value] : std::array<std::pair<const char*, uint64_t>, 3>{{
+                {PropertyKeys::kAvcRouteIncarnation, avcRouteIncarnation},
+                {PropertyKeys::kAvcRouteEpoch, avcRouteEpoch},
+                {PropertyKeys::kAvcBusGeneration, avcBusGeneration}}}) {
+                auto number = OSSharedPtr(OSNumber::withNumber(value, 64), OSNoRetain);
+                if (!number) return false;
+                properties->setObject(key, number.get());
+            }
             auto catalog = OSSharedPtr(OSArray::withCapacity(
                 static_cast<uint32_t>(rateFormationCandidates.size())), OSNoRetain);
             if (!catalog) return false;

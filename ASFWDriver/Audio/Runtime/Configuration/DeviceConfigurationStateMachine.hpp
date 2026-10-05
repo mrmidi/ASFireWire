@@ -196,6 +196,14 @@ struct RecoveryCompleted final {
     HardwareConfigurationOutcome outcome{};
 };
 
+// Bounded rollback within an already granted host window. Both hardware and
+// the complete HAL projection must be confirmed before IO becomes available.
+struct RecoveryRestoredInWindow final {
+    ConfigurationIdentity identity{};
+    ConfirmedHardwareConfiguration confirmed{};
+    bool projectionSucceeded{false};
+};
+
 using ConfigurationEvent = std::variant<
     ControlIntent,
     CoreAudioRateIntent,
@@ -208,7 +216,8 @@ using ConfigurationEvent = std::variant<
     ProjectionFinished,
     ADKAborted,
     RouteInvalidated,
-    RecoveryCompleted>;
+    RecoveryCompleted,
+    RecoveryRestoredInWindow>;
 
 struct ResolveCandidateEffect final {
     ConfigurationIdentity identity{};

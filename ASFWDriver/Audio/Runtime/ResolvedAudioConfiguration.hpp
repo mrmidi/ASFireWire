@@ -6,6 +6,7 @@
 
 #include <span>
 #include <vector>
+#include <algorithm>
 
 namespace ASFW::Audio::Runtime {
 
@@ -42,6 +43,10 @@ enum class ConfigurationError : uint8_t {
     InvalidFormation, InvalidTiming, ExceedsAllocation,
 };
 
+// Hardware batches use an explicitly opted-in build. This exemption never
+// changes the capability's hardwareValidated record.
+enum class ConfigurationValidationPolicy : uint8_t { ValidatedOnly, HardwareBatch };
+
 struct ResolvedAudioConfiguration final {
     uint64_t revision{0};
     RateFormation formation;
@@ -60,7 +65,8 @@ struct ResolvedAudioConfiguration final {
 ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formations,
                           const DeviceTimingPolicy& policy,
                           ConfigurationAllocation allocation,
-                          uint64_t revision) {
+                          uint64_t revision,
+                          ConfigurationValidationPolicy validation = ConfigurationValidationPolicy::ValidatedOnly) {
     const RateFormation* selected = nullptr;
     for (const auto& formation : formations) {
         if (formation.sampleRateHz != rate) continue;
@@ -69,7 +75,8 @@ ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formatio
     }
     if (!selected) return std::unexpected(ConfigurationError::RateNotOffered);
     if (!selected->protocolSupported) return std::unexpected(ConfigurationError::ProtocolUnsupported);
-    if (!selected->hardwareValidated) return std::unexpected(ConfigurationError::HardwareUnvalidated);
+    if (!selected->hardwareValidated && validation != ConfigurationValidationPolicy::HardwareBatch)
+        return std::unexpected(ConfigurationError::HardwareUnvalidated);
     if ((selected->mode != Encoding::StreamMode::kBlocking &&
          selected->mode != Encoding::StreamMode::kNonBlocking) ||
         allocation.playbackChannelCapacity > Encoding::kMaxPcmChannels ||
@@ -80,6 +87,8 @@ ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formatio
     const auto geometry = Encoding::AmdtpRateGeometryForSampleRate(rate);
     const uint32_t packetFrames = selected->mode == Encoding::StreamMode::kBlocking
         ? geometry->sytIntervalFrames : geometry->nominalFramesPerCycle;
+    if (selected->playback.size() > 4 || selected->capture.size() > 4)
+        return std::unexpected(ConfigurationError::InvalidFormation);
     if (selected->playback.empty() && selected->capture.empty())
         return std::unexpected(ConfigurationError::InvalidFormation);
     const auto validateDirection = [&](const auto& streams, uint32_t capacity)
@@ -117,6 +126,29 @@ ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formatio
         .playbackAllocationBytes = uint64_t(allocation.frameCapacity) * allocation.playbackChannelCapacity * 4,
         .captureAllocationBytes = uint64_t(allocation.frameCapacity) * allocation.captureChannelCapacity * 4,
     };
+}
+
+// Capacity is independent of the active format. Reserve once for the largest
+// complete formation; changing a rate must not replace mappings held by ADK.
+[[nodiscard]] inline std::expected<ConfigurationAllocation, ConfigurationError>
+MaximumFormationAllocation(std::span<const RateFormation> formations,
+                           ConfigurationAllocation baseline) {
+    constexpr ConfigurationAllocation ceiling{49152, 32, 32, 4104};
+    constexpr DeviceTimingPolicy probePolicy{64, 64, 128, 128};
+    auto result = baseline;
+    for (const auto& formation : formations) {
+        const auto resolved = ResolveAudioConfiguration(formation.sampleRateHz, formations,
+            probePolicy, ceiling, 0, ConfigurationValidationPolicy::HardwareBatch);
+        if (!resolved) return std::unexpected(resolved.error());
+        result.frameCapacity = std::max(result.frameCapacity, resolved->timing.frameRingFrames);
+        result.playbackChannelCapacity = std::max(result.playbackChannelCapacity, resolved->playbackChannels);
+        result.captureChannelCapacity = std::max(result.captureChannelCapacity, resolved->captureChannels);
+        for (const auto& direction : {std::span(formation.playback), std::span(formation.capture)})
+            for (const auto& stream : direction)
+                result.maxPacketBytes = std::max(result.maxPacketBytes,
+                    8U + resolved->maxPacketFrames * stream.dataBlockSize * 4U);
+    }
+    return result;
 }
 
 } // namespace ASFW::Audio::Runtime

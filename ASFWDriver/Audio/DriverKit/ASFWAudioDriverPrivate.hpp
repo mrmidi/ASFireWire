@@ -36,6 +36,9 @@ class ASFWAudioDevice;
 struct AudioDriverDeviceState {
     ASFWAudioNub* audioNub{nullptr};
     uint64_t guid{0};
+    uint64_t avcRouteIncarnation{0};
+    uint64_t avcRouteEpoch{0};
+    uint32_t avcBusGeneration{0};
     uint32_t vendorId{0};
     uint32_t modelId{0};
     /// The device catalog's resolved ProfileBuilderId, carried across the nub.

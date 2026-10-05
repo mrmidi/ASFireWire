@@ -248,6 +248,12 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
     ParseIdentityProperties(properties, inOutConfig);
     ParseDevicePresentationProperties(properties, inOutConfig);
     ParseSampleRates(properties, inOutConfig);
+    if (auto* value = OSDynamicCast(OSNumber, properties->getObject(Keys::kAvcRouteIncarnation)))
+        inOutConfig.avcRouteIncarnation = value->unsigned64BitValue();
+    if (auto* value = OSDynamicCast(OSNumber, properties->getObject(Keys::kAvcRouteEpoch)))
+        inOutConfig.avcRouteEpoch = value->unsigned64BitValue();
+    if (auto* value = OSDynamicCast(OSNumber, properties->getObject(Keys::kAvcBusGeneration)))
+        inOutConfig.avcBusGeneration = value->unsigned32BitValue();
     inOutConfig.rateFormationCandidates.clear();
     if (auto* catalog = OSDynamicCast(OSArray, properties->getObject(Keys::kRateFormations))) {
         std::vector<::ASFW::Audio::Runtime::RateFormation> parsed;

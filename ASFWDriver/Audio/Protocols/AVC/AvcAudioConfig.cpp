@@ -1,3 +1,6 @@
+#include "../../Model/AvcRateConfiguration.hpp"
+#include "../BeBoB/MAudioSpecialFormation.hpp"
+#include "../../Runtime/AvcRateValidation.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
@@ -104,12 +107,7 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
         return std::nullopt;
     }
     PreferDefaultStartRate(config);
-    // Interim single-rate HAL contract. ADK streams accept advertised formats
-    // independently of the deferred hardware clock transaction. Until that
-    // transaction updates/rolls back the whole graph atomically, advertising
-    // alternatives can leave HAL streams at 32 kHz with transport at 48 kHz.
-    // Keep discovered capabilities intact; narrow only the published endpoint.
-    config.sampleRates = {config.currentSampleRate};
+    // Advertisement below comes from complete, transaction-resolvable formations.
     config.inputChannelNames = capture.channelNames;
     config.outputChannelNames = playback.channelNames;
     config.playbackStreams = {{.pcmChannels = playback.channelCount,
@@ -213,7 +211,21 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
     }
     std::ranges::sort(config.rateFormationCandidates, {},
         &::ASFW::Audio::Runtime::RateFormation::sampleRateHz);
-    return config;
+    // Pick the startup shape from the complete inventory too. The device may
+    // have been discovered in a different rate tier with a narrower ADAT shape.
+    // Merely changing currentSampleRate would publish the wrong buffer stride.
+    if (plan.streamTraits.start.startRatePinHz == 0 &&
+        std::ranges::find(config.rateFormationCandidates, kDefaultStartRateHz,
+        &::ASFW::Audio::Runtime::RateFormation::sampleRateHz) != config.rateFormationCandidates.end())
+        config.currentSampleRate = kDefaultStartRateHz;
+    config.sampleRates.clear();
+    for (const auto& formation : config.rateFormationCandidates)
+        if (::ASFW::Audio::Runtime::AvcRateEnabled(formation, config.currentSampleRate))
+            config.sampleRates.push_back(formation.sampleRateHz);
+    if (config.sampleRates.empty()) return std::nullopt;
+    const auto initial = ::ASFW::Audio::Model::WithAvcRateFormation(config, config.currentSampleRate);
+    if (!initial) return std::nullopt;
+    return *initial;
 }
 
 std::optional<ASFWAudioDevice> BuildProfileOwnedAudioConfig(
@@ -248,6 +260,29 @@ std::optional<ASFWAudioDevice> BuildProfileOwnedAudioConfig(
     config.streamMode = plan.streamTraits.wire.forcedStreamMode == ForcedStreamMode::NonBlocking
                             ? StreamMode::kNonBlocking
                             : StreamMode::kBlocking;
+    // The special firmware's existing initialization explicitly selects SPDIF
+    // independently in both directions. Resolve that exact vendor state from
+    // its tables, without sending generic discovery to the hazardous firmware.
+    if (plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
+        plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix) {
+        const auto count = plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814
+            ? ::ASFW::Audio::BeBoB::kMAudioFireWire1814RateCount : ::ASFW::Audio::BeBoB::kMAudioProjectMixRateCount;
+        for (size_t i = 0; i < count; ++i) {
+            const auto rate = ::ASFW::Audio::BeBoB::kMAudioSpecialRatesHz[i];
+            const auto formation = ::ASFW::Audio::BeBoB::MAudioFormationFor(::ASFW::Audio::BeBoB::MAudioDigitalFormat::SPDIF,
+                ::ASFW::Audio::BeBoB::MAudioDigitalFormat::SPDIF, rate);
+            if (!formation) continue;
+            config.rateFormationCandidates.push_back({rate, Encoding::StreamMode::kBlocking,
+                {{formation->playbackPcmChannels, formation->playbackPcmChannels + formation->midiDataBlocks,
+                    formation->midiDataBlocks, {}}},
+                {{formation->capturePcmChannels, formation->capturePcmChannels + formation->midiDataBlocks,
+                    formation->midiDataBlocks, {}}}, true, false});
+        }
+        config.sampleRates.clear();
+        for (const auto& formation : config.rateFormationCandidates)
+            if (::ASFW::Audio::Runtime::AvcRateEnabled(formation, config.currentSampleRate))
+                config.sampleRates.push_back(formation.sampleRateHz);
+    }
     return config;
 }
 

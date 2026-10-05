@@ -399,6 +399,27 @@ Reduce(const Machine& machine, const ConfigurationEvent& event) noexcept {
             TransitionResult result{.next = std::move(next)};
             (void)result.effects.push(QuiesceTransportEffect{.endpointId = value.endpointId});
             return result;
+        } else if constexpr (std::is_same_v<Event, RecoveryRestoredInWindow>) {
+            const auto* recovery = std::get_if<Recovering>(&machine.state);
+            if (!recovery) return std::unexpected(StateMachineError::InvalidEvent);
+            if (!recovery->failedIdentity || !SameIdentity(*recovery->failedIdentity, value.identity))
+                return std::unexpected(StateMachineError::StaleToken);
+            Machine next = machine;
+            if (!value.projectionSucceeded || !value.confirmed.configuration.resolved ||
+                !SameConfiguration(value.confirmed.configuration, recovery->lastCoherent.configuration)) {
+                next.state = Unavailable{recovery->lastCoherent,
+                    {FailureReason::HardwareStateUnknown}};
+                return TransitionResult{.next = std::move(next)};
+            }
+            auto committed = recovery->lastCoherent;
+            ++committed.revision;
+            auto resolved = std::make_shared<Audio::Runtime::ResolvedAudioConfiguration>(*committed.configuration.resolved);
+            resolved->revision = committed.revision;
+            committed.configuration.resolved = std::move(resolved);
+            next.state = Idle{committed, recovery->failure};
+            TransitionResult result{.next = std::move(next)};
+            (void)result.effects.push(PublishSnapshotEffect{committed});
+            return result;
         } else if constexpr (std::is_same_v<Event, RecoveryCompleted>) {
             const auto* recovery = std::get_if<Recovering>(&machine.state);
             if (!recovery) return std::unexpected(StateMachineError::InvalidEvent);

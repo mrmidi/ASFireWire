@@ -355,5 +355,34 @@ TEST(DeviceConfigurationStateMachineTests, ObservationCannotReplacePendingTransa
     EXPECT_EQ(observed.error(), StateMachineError::Busy);
 }
 
+TEST(DeviceConfigurationStateMachineTests, InWindowRollbackRequiresVerifiedPriorAndProjection) {
+    const auto baseline = Baseline();
+    const ConfigurationIdentity identity{kEndpointId, 99, kGeneration};
+    Machine recovering = baseline;
+    recovering.state = Recovering{std::get<Idle>(baseline.state).committed, identity,
+        {FailureReason::ProjectionFailed}};
+    auto restored = Reduce(recovering, RecoveryRestoredInWindow{identity, {Config(48000)}, true});
+    ASSERT_TRUE(restored);
+    ASSERT_TRUE(std::holds_alternative<Idle>(restored->next.state));
+    EXPECT_EQ(std::get<Idle>(restored->next.state).committed.revision, 5U);
+    EXPECT_EQ(std::get<Idle>(restored->next.state).committed.configuration.resolved->revision, 5U);
+    ASSERT_EQ(restored->effects.size(), 1U);
+    EXPECT_TRUE(std::holds_alternative<PublishSnapshotEffect>(restored->effects[0]));
+    for (const auto& event : {RecoveryRestoredInWindow{identity, {Config(44100)}, true},
+                            RecoveryRestoredInWindow{identity, {Config(48000)}, false},
+                            RecoveryRestoredInWindow{identity, {}, true}}) {
+        const auto failed = Reduce(recovering, event);
+        ASSERT_TRUE(failed);
+        EXPECT_TRUE(std::holds_alternative<Unavailable>(failed->next.state));
+    }
+    auto stale = identity; ++stale.token;
+    const auto rejected = Reduce(recovering, RecoveryRestoredInWindow{stale, {Config(48000)}, true});
+    ASSERT_FALSE(rejected);
+    EXPECT_EQ(rejected.error(), StateMachineError::StaleToken);
+    const auto invalidated = Reduce(recovering, RouteInvalidated{kEndpointId, kGeneration + 1});
+    ASSERT_TRUE(invalidated);
+    EXPECT_FALSE(Reduce(invalidated->next, RecoveryRestoredInWindow{identity, {Config(48000)}, true}));
+}
+
 } // namespace
 } // namespace ASFW::Configuration

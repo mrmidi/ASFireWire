@@ -278,10 +278,14 @@ TEST(NubGeometryRoundTrip, RateCatalogPreservesDifferentWidthsMapsAndValidationG
     high.playback = {{1, 1, 0, {}}};
     high.capture = high.playback;
     device.rateFormationCandidates = {base, high};
+    device.avcRouteIncarnation = 12; device.avcRouteEpoch = 34; device.avcBusGeneration = 56;
     bool published = false;
     auto parsed = RoundTrip(device, published);
     ASSERT_TRUE(published);
     EXPECT_EQ(parsed.rateFormationCandidates, device.rateFormationCandidates);
+    EXPECT_EQ(parsed.avcRouteIncarnation, 12U);
+    EXPECT_EQ(parsed.avcRouteEpoch, 34U);
+    EXPECT_EQ(parsed.avcBusGeneration, 56U);
     EXPECT_EQ(parsed.sampleRateCount, 2U); // original advertisement, not catalog
     EXPECT_EQ(parsed.sampleRates[1], 48000);
     device.rateFormationCandidates.clear(); // parsed owns a value copy

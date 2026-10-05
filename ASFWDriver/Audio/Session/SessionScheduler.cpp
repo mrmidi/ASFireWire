@@ -1,3 +1,5 @@
+#include "../Model/DiscoveredRuntimeCaps.hpp"
+#include "../Runtime/AvcRateValidation.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 
@@ -25,8 +27,15 @@ namespace {
     if (policy != nullptr &&
         (policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
          policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix)) {
-        return IsSupportedMAudioSpecialClockConfig(clock);
+        return Runtime::kAvcHardwareBatch
+            ? (clock.sampleRateHz != 32000 && Encoding::AmdtpRateGeometryForSampleRate(clock.sampleRateHz).has_value())
+            : IsSupportedMAudioSpecialClockConfig(clock);
     }
+    if (Runtime::kAvcHardwareBatch && policy &&
+        (policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::GenericAvc ||
+         policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::TerraTecPhase88 ||
+         policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::ApogeeDuet))
+        return Encoding::AmdtpRateGeometryForSampleRate(clock.sampleRateHz).has_value();
     return IsSupportedAudioClockConfig(clock);
 }
 
@@ -716,7 +725,8 @@ IOReturn SessionScheduler::StartStreams(const Wanted& wanted, const Discovery::D
     std::optional<Model::ASFWAudioDevice> discoveredConfig;
     if (auto endpoint = deps_.runtime.FindEndpointRuntime(guid_)) {
         Model::ASFWAudioDevice config;
-        if (endpoint->CopyConfig(config) && config.graphResolved) discoveredConfig = std::move(config);
+        if (endpoint->CopyConfig(config) && (config.graphResolved || !config.rateFormationCandidates.empty()))
+            discoveredConfig = std::move(config);
     }
     FamilyDriver& family = BindFamily(*protocol);
     const auto result = restart_.Run(RestartRoutine::Request{
@@ -797,6 +807,14 @@ IOReturn SessionScheduler::ApplyClockIdle(const AudioClockConfig& clock,
                                           const std::shared_ptr<IDeviceProtocol>& protocol) noexcept {
     Actual actual = LoadActual();
     FamilyDriver& family = BindFamily(*protocol);
+    if (auto endpoint = deps_.runtime.FindEndpointRuntime(guid_)) {
+        Model::ASFWAudioDevice config;
+        if (endpoint->CopyConfig(config) && !config.rateFormationCandidates.empty()) {
+            family.AdoptDiscoveredRates(config.sampleRates);
+            family.AdoptDiscoveredFormations(config.rateFormationCandidates);
+            if (const auto caps = DiscoveredCaps(config)) family.AdoptDiscoveredGeometry(*caps);
+        }
+    }
     const auto applied = family.ApplyClockIdle(clock);
     if (!applied) {
         actual.state = SessionState::Failed;
