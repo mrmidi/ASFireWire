@@ -11,6 +11,7 @@
 //   ASFW_DUMP_PROFILE_TIMING=1 ./ProfileTimingPinTests --gtest_filter='*Pinned*'
 
 #include "Audio/DriverKit/Config/AudioProfileRegistry.hpp"
+#include "Audio/DriverKit/Config/AVC/GenericAvcProfile.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 #include <gtest/gtest.h>
@@ -42,6 +43,26 @@ constexpr PinnedTiming kPinned[] = {
 #include "ProfileTimingPinTable.inc"
 };
 // clang-format on
+
+TEST(ProfileTimingPinTests, AvcSchedulingBudgetDoesNotShrinkAtHighRates) {
+    const ASFW::Isoch::Audio::AVC::Profiles::GenericAvcProfile profile;
+    for (const uint32_t rate : kRates) {
+        SCOPED_TRACE(rate);
+        const uint64_t tx = profile.TxSafetyOffsetFrames(rate);
+        const uint64_t rx = profile.RxSafetyOffsetFrames(rate);
+        // At least the established 4 ms / 5.333 ms host scheduling budget.
+        EXPECT_GE(tx * 48000U, 192ULL * rate);
+        EXPECT_GE(rx * 48000U, 256ULL * rate);
+        if (rate <= 48000U) {
+            EXPECT_EQ(tx, 192U);
+            EXPECT_EQ(rx, 256U);
+        } else {
+            // Round up by less than one frame, including fractional tiers.
+            EXPECT_LT(tx * 48000U - 192ULL * rate, 48000U);
+            EXPECT_LT(rx * 48000U - 256ULL * rate, 48000U);
+        }
+    }
+}
 
 TEST(ProfileTimingPinTests, PinnedDeclarationsAtEveryRate) {
     const bool dump = std::getenv("ASFW_DUMP_PROFILE_TIMING") != nullptr;

@@ -7,17 +7,16 @@ not a claim that every descriptor-supported rate has passed hardware testing.
 
 ## Build
 
-Normal builds keep the existing baseline advertisement. Enable candidates for
-this batch explicitly:
+Ordinary Xcode builds enable complete AV/C rate candidates by default through
+`project.yml`. No multi-rate build override is required:
 
 ```sh
 ./build.sh --no-bump --verbose \
-  --set ASFW_AVC_MULTIRATE_VALIDATION=1 \
   --set CODE_SIGNING_ALLOWED=YES --set CODE_SIGNING_REQUIRED=YES \
   --set CODE_SIGN_IDENTITY=-
 ```
 
-The dext must contain arm64e and have a verified signature. The hardware opt-in
+The dext must contain arm64e and have a verified signature. The advertisement policy
 never changes the catalog's `hardwareValidated` evidence. The existing lab-only
 HAL probe remains restricted to its virtual UID; do not use its synthetic
 16/12/8 channel expectations on a physical device.
@@ -85,5 +84,38 @@ telemetry and coarse heartbeat stay in place.
 Accept a configuration only when the hardware's confirmed clock, HAL duplex
 formats, active transport geometry and timing agree; audio is continuous; buffers
 and clock slope stay stable; and return to 48 is deterministic. Mark validation
-per device/protocol/rate/mode, not from the generic unit-test table. Keep high rates
-gated in normal builds until those records exist.
+per device/protocol/rate/mode, not from the generic unit-test table. Default
+advertisement does not replace those hardware-validation records. To build with
+baseline-only advertisement, set `ASFW_AVC_MULTIRATE_VALIDATION=0` explicitly.
+
+## Duet 96 kHz milestone — 2026-10-05
+
+**User-confirmed clean 96 kHz playback after removing redundant timeline scans
+from the CoreAudio IO hot path.** This is a playback result for the attached
+Duet, not validation of every family, rate, capture path or soak duration.
+
+The initial 96 kHz run had growing `missedFinality`. Preserving the 48 kHz
+scheduling budget in time at higher rates removed those misses, but the user
+still heard clicks. The subsequent trace had zero deadline misses, healthy RX
+geometry/CIP counters and ample packet preparation margin. Increasing buffering
+alone had therefore not resolved the audible problem.
+
+The PCM writer performed a bounded scan of up to 1,512 timeline slots for every
+sample frame, repeating the same packet lookup 16 times per 96 kHz DATA packet.
+It now reuses a packet snapshot for consecutive frames while checking its
+seqlock generation and exposed state on every reuse. Crossing a packet boundary
+or observing invalidation falls back to lookup. This removes redundant hot-path
+work without relaxing finality, retirement or channel/ring mapping checks.
+After this change, the user reported clean 96 kHz audio.
+
+**Performance rule: remove repeated work from IO callbacks before increasing
+buffers or introducing another scheduling path.** A zero missed-finality counter
+is necessary evidence, but does not prove the entire callback met its timing
+budget. The existing coarse `[TxPrep]` heartbeat now includes `fillUs`, the
+maximum PCM fill duration in the interval; no per-callback logging is added.
+
+Validation: 2,932 C++ tests passed (six skipped), including a 96 kHz packet/ring
+boundary and finality regression; signed production Debug build and signature
+verification passed, with x86_64/arm64e slices. Continue the remaining hardware
+matrix and measure fill duration/latency before claiming complete multi-rate
+validation.

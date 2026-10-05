@@ -539,7 +539,15 @@ kern_return_t IMPL(ASFWDriver, Stop) {
     retain();
     provider->retain();
     ASFW_LOG(Controller, "[Teardown] ASFWDriver Stop begin driver=%p", this);
-    RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kPlannedStop));
+    // Stop is also delivered on surprise PCI removal. The provider's
+    // Terminated notification can still be queued on this same dispatch
+    // queue, so waiting for it before revoking BAR access is too late.
+    // Terminal service Stop must use the existing software-only teardown;
+    // planned runtime quiesce while the provider is alive is separate.
+    if (ivars && ivars->context && ivars->context->deps.hardware) {
+        ivars->context->deps.hardware->LatchProviderRevokedAndDrain();
+    }
+    RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kProviderRevoked));
     ASFW_LOG(Controller, "[Teardown] ASFWDriver Stop runtime quiesce returned");
     if (ivars) {
         if (ivars->wakeVerifyTimer) {

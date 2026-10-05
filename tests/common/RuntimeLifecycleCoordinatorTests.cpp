@@ -80,6 +80,26 @@ TEST_F(RuntimeLifecycleCoordinatorTests, RevocationDominatesActivePlannedTeardow
     EXPECT_EQ(coordinator_.CurrentState(), ControllerState::kStopped);
 }
 
+TEST_F(RuntimeLifecycleCoordinatorTests, TerminalStopDoesNotWaitForProviderNotification) {
+    ASSERT_TRUE(coordinator_.BeginStart("start", 1));
+    ASSERT_TRUE(coordinator_.CompleteStart("running", 2));
+
+    // Terminal IOService Stop uses the revoked path even when the separate
+    // provider notification has not yet arrived on the service queue.
+    const auto stop = coordinator_.BeginQuiesce(QuiesceReason::kProviderRevoked, "service stop", 3);
+    ASSERT_TRUE(stop.has_value());
+    EXPECT_TRUE(stop->revokeImmediately);
+    EXPECT_TRUE(stop->runTeardown);
+    EXPECT_FALSE(coordinator_.AdmitsNormalWork());
+    EXPECT_EQ(coordinator_.CurrentState(), ControllerState::kRevoked);
+
+    const auto notification = coordinator_.BeginQuiesce(QuiesceReason::kProviderRevoked, "late notification", 4);
+    ASSERT_TRUE(notification.has_value());
+    EXPECT_FALSE(notification->runTeardown);
+    coordinator_.CompleteQuiesce(*stop, "released", 5);
+    EXPECT_EQ(coordinator_.CurrentState(), ControllerState::kStopped);
+}
+
 TEST_F(RuntimeLifecycleCoordinatorTests, SuspendEndsSuspendedAndResumeStartsAgain) {
     ASSERT_TRUE(coordinator_.BeginStart("start", 1));
     ASSERT_TRUE(coordinator_.CompleteStart("running", 2));

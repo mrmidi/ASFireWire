@@ -163,6 +163,7 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     hostBuffer.frameCapacity = memory.outputFrameCapacity;
     hostBuffer.channels = memory.outputChannels;
 
+    const uint64_t fillStarted = TxHostNow();
     ivars.runtime.txStreamEngine.FillFromHostOutput(hostBuffer, firstWritable);
     // The secondary stream carries host channels [16, 32) of the same frames
     // (its writer's sourceChannelOffset), so both streams take one decision.
@@ -170,6 +171,12 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
         ivars.runtime.txStreamEngineSecondary.FillFromHostOutput(hostBuffer, firstWritable);
     }
 
+    const uint64_t fillDuration = TxHostNow() - fillStarted;
+    auto& maxDuration = ivars.runtime.txFillMaxDurationTicks;
+    uint64_t observed = maxDuration.load(std::memory_order_relaxed);
+    while (fillDuration > observed &&
+           !maxDuration.compare_exchange_weak(observed, fillDuration,
+                                             std::memory_order_relaxed)) {}
     filled += hostBuffer.frameCount;
     control->playbackRingReadFrame.store(filled, std::memory_order_release);
 }

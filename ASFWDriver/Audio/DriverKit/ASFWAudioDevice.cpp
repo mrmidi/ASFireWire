@@ -37,6 +37,9 @@ struct ASFWAudioDevice_IVars {
     ASFW::Configuration::Machine rateMachine{};
     std::atomic<bool> rateUnavailable{false};
     std::atomic<bool> projectingRate{false};
+    // An unresolved stop must not be disguised as a stopped configuration
+    // window. Keep the mappings alive until a subsequent stop succeeds.
+    std::atomic<kern_return_t> transportStopStatus{kIOReturnSuccess};
 
 };
 
@@ -105,6 +108,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
              static_cast<uint64_t>(in_flags));
 
     if (this->ivars->rateUnavailable.load(std::memory_order_acquire)) return kIOReturnNotReady;
+    const auto stopStatus = this->ivars->transportStopStatus.load(std::memory_order_acquire);
+    if (stopStatus != kIOReturnSuccess) return stopStatus;
     IOLockLock(this->ivars->rateLock);
     const bool pendingRate = !std::holds_alternative<ASFW::Configuration::Idle>(this->ivars->rateMachine.state) &&
         !std::holds_alternative<ASFW::Configuration::Uninitialized>(this->ivars->rateMachine.state);
@@ -163,11 +168,14 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 const kern_return_t stopKr =
                     ivars.device.audioNub->StopAudioStreaming();
                 if (stopKr != kIOReturnSuccess) {
+                    this->ivars->transportStopStatus.store(stopKr, std::memory_order_release);
                     ASFW_LOG(
                         Audio,
                         "ASFWAudioDevice: StopAudioStreaming failed while unwinding %{public}s: 0x%x",
                         stage,
                         stopKr);
+                    ASFW_LOG(Audio, "[StreamStop] unwind failed; retaining TX mappings stage=%{public}s kr=0x%x", stage, stopKr);
+                    return result;
                 }
             }
             releaseTxResources();
@@ -194,6 +202,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.mAudioInternalTxTiming.Disarm();
         ivars.runtime.mAudioTxClockBridge.Disarm();
         ivars.runtime.mAudioInternalTxActive = false;
+
         ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);
         ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
         ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
@@ -302,6 +311,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets;
             const uint32_t maxPacketBytes =
                 ASFW::Isoch::Audio::TxPacketBytesForStreamConfig(txConfig);
+            ASFW_LOG(Audio,
+                "[TxWire] rate=%u mode=%u fdf=0x%02x dbs=%u pcm=%u midi=%u frames=%u maxBytes=%u ring=%u allocationBytes=%llu",
+                txConfig.sampleRate, static_cast<uint32_t>(txConfig.streamMode), txConfig.fdf,
+                txConfig.dbs, txConfig.pcmChannels, txConfig.midiSlots, txConfig.framesPerDataPacket,
+                maxPacketBytes, ivars.runtime.directAudioGraph.memory.outputFrameCapacity,
+                ivars.outputMap ? ivars.outputMap->GetLength() : 0ULL);
             const uint32_t interruptInterval =
                 ASFW::IsochTransport::AudioTimingGeometry::kTimingGroupPackets;
 
@@ -676,6 +691,15 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.mAudioTxClockBridge.Disarm();
         ivars.runtime.mAudioInternalTxActive = false;
 
+        const auto& fill = ivars.runtime.txStreamEngine.PayloadWriterCounters();
+        ASFW_LOG(Audio,
+                 "[TxFillSummary] visited=%llu written=%llu withoutPacket=%llu outsidePacket=%llu missedFinality=%llu",
+                 fill.framesVisited.load(std::memory_order_relaxed),
+                 fill.framesWritten.load(std::memory_order_relaxed),
+                 fill.framesWithoutPacket.load(std::memory_order_relaxed),
+                 fill.framesOutsidePacket.load(std::memory_order_relaxed),
+                 fill.framesMissedFinality.load(std::memory_order_relaxed));
+
         if (ivars.runtime.directAudioGraph.control) {
             const auto* control = ivars.runtime.directAudioGraph.control;
             ASFW_LOG(DirectAudio,
@@ -696,8 +720,15 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
 
         if (ivars.device.audioNub) {
             const kern_return_t stopKr = ivars.device.audioNub->StopAudioStreaming();
+            this->ivars->transportStopStatus.store(stopKr, std::memory_order_release);
             if (stopKr != kIOReturnSuccess) {
                 ASFW_LOG(Audio, "ASFWAudioDevice: StopAudioStreaming failed: 0x%x", stopKr);
+                ASFW_LOG(Audio, "[StreamStop] failed; retaining TX mappings and refusing rate/start work kr=0x%x", stopKr);
+                // Stop HAL IO even when the remote connection cannot be
+                // released, but propagate the failure and retain DMA memory.
+                (void)super::StopIO(in_flags);
+                kr = stopKr;
+                return;
             }
         }
 
@@ -1010,6 +1041,11 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
                  static_cast<void*>(ivars ? ivars->driverIvars : nullptr));
         return kIOReturnNotReady;
     }
+    const auto stopStatus = ivars->transportStopStatus.load(std::memory_order_acquire);
+    if (stopStatus != kIOReturnSuccess) {
+        ASFW_LOG(Audio, "[RateTxn] phase=refused reason=unresolved-stop requested=%.0f kr=0x%x", in_sample_rate, stopStatus);
+        return stopStatus;
+    }
     auto& ivars = *this->ivars->driverIvars;
 
     if (!std::isfinite(in_sample_rate) || in_sample_rate <= 0.0 || in_sample_rate > 192000.0 ||
@@ -1142,6 +1178,14 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
             IOLockUnlock(local.rateLock); return kIOReturnAborted;
         }
         const auto transaction = waiting->transition;
+        const auto stopStatus = local.transportStopStatus.load(std::memory_order_acquire);
+        if (stopStatus != kIOReturnSuccess) {
+            auto aborted = Reduce(local.rateMachine, ADKAborted{transaction.identity});
+            if (aborted) local.rateMachine = std::move(aborted->next);
+            IOLockUnlock(local.rateLock);
+            ASFW_LOG(Audio, "[RateTxn] phase=refused reason=unresolved-stop token=%llu kr=0x%x", transaction.identity.token, stopStatus);
+            return stopStatus;
+        }
         std::array<char, sizeof(driver.device.inputChannelNames)> priorInputNames{};
         std::array<char, sizeof(driver.device.outputChannelNames)> priorOutputNames{};
         memcpy(priorInputNames.data(), driver.device.inputChannelNames, priorInputNames.size());

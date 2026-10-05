@@ -129,8 +129,8 @@ targets:
         HEADER_SEARCH_PATHS:
           - "$(inherited)"
           - "$(SRCROOT)/ASFWDriver/Audio/Model"
-        # Opt in only for batched AV/C hardware validation. DICE is unaffected.
-        ASFW_AVC_MULTIRATE_VALIDATION: "0"
+        # Expose complete AV/C rate formations in ordinary Xcode builds. DICE is unaffected.
+        ASFW_AVC_MULTIRATE_VALIDATION: "1"
         GCC_PREPROCESSOR_DEFINITIONS:
           - "$(inherited)"
           - "ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)"

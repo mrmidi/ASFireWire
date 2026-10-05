@@ -7,8 +7,8 @@
 #endif
 
 namespace ASFW::Audio::Runtime {
-// Explicit hardware-batch build opt-in. Shipping builds do not turn descriptor
-// support into a claim of hardware validation.
+// Xcode builds enable complete AV/C candidates by default. This build policy
+// does not turn descriptor support into hardware-validation evidence.
 inline constexpr bool kAvcHardwareBatch = ASFW_AVC_MULTIRATE_VALIDATION != 0;
 [[nodiscard]] inline bool AvcRateEnabled(const RateFormation& formation, uint32_t baseline) noexcept {
     return formation.protocolSupported &&

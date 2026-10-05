@@ -570,6 +570,55 @@ TEST(ApogeeDuetDuplexAdapter, MapsRequested44100RateIntoUnitPlugSignalFormat) {
     EXPECT_EQ(frames[3].Payload()[5], 0x01U);
 }
 
+TEST(ApogeeDuetDuplexAdapter, AppliesAndPrepares96kWithInputBeforeOutput) {
+    AvcTestRig rig;
+    MapCmpRegisters(rig);
+    DuetFormatModel device;
+    rig.Target().SetDeviceModel(std::ref(device));
+    ASFW::IRM::IRMClient irm(rig.Bus());
+    ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), &irm, &cmp, 0);
+    protocol.UpdateRuntimeContext(rig.Route(), rig.Transport());
+    IOReturn status = kIOReturnNotReady;
+    protocol.ApplyClockConfig(
+        ASFW::Audio::AudioClockConfig{.sampleRateHz = 96000U},
+        [&status](IOReturn result, ASFW::Audio::DuplexClockApplyResult) { status = result; });
+    rig.Drain();
+    ASSERT_EQ(status, kIOReturnSuccess);
+    const auto& frames = rig.Target().Commands();
+    ASSERT_EQ(frames.size(), 6U);
+    EXPECT_EQ(frames[2].Payload()[2], 0x19U);
+    EXPECT_EQ(frames[3].Payload()[2], 0x18U);
+    EXPECT_EQ(frames[2].Payload()[5], 0x04U);
+    EXPECT_EQ(frames[3].Payload()[5], 0x04U);
+    EXPECT_EQ(device.inputFrequency, 0x04U);
+    EXPECT_EQ(device.outputFrequency, 0x04U);
+
+    rig.Target().ClearCommands();
+    status = kIOReturnNotReady;
+    protocol.Duplex().PrepareDuplex(
+        ASFW::Audio::AudioDuplexChannels{},
+        ASFW::Audio::AudioClockConfig{.sampleRateHz = 96000U},
+        [&status](IOReturn result, ASFW::Audio::DuplexPrepareResult) { status = result; });
+    rig.Drain();
+    EXPECT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(device.inputFrequency, 0x04U);
+    EXPECT_EQ(device.outputFrequency, 0x04U);
+}
+
+TEST(ApogeeDuetDuplexAdapter, RejectsUnencodableRateWithoutDeviceCommands) {
+    AvcTestRig rig;
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, nullptr, 0);
+    protocol.UpdateRuntimeContext(rig.Route(), rig.Transport());
+    IOReturn status = kIOReturnSuccess;
+    protocol.ApplyClockConfig(
+        ASFW::Audio::AudioClockConfig{.sampleRateHz = 50000U},
+        [&status](IOReturn result, ASFW::Audio::DuplexClockApplyResult) { status = result; });
+    rig.Drain();
+    EXPECT_EQ(status, kIOReturnUnsupported);
+    EXPECT_EQ(rig.Target().CommandCount(), 0U);
+}
+
 TEST(ApogeeDuetDuplexAdapter, RestoresInputFormationWhenOutputFormatControlFails) {
     AvcTestRig rig;
     DuetFormatModel device;

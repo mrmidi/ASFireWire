@@ -799,6 +799,51 @@ TEST(AmdtpDirectTxTests, ArmedDataPacketCarriesValidSilenceAndFillChangesOnlySam
     }
 }
 
+// A single host write crosses 16-frame packets and wraps the host ring.
+// Reusing a lookup must preserve finality classification and wire samples.
+TEST(AmdtpDirectTxTests, PayloadWriter96kCrossesPacketsAndHostRingWrap) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
+    std::array<std::array<uint8_t, 136>, 2> bytes{};
+    for (uint32_t i = 0; i < 2; ++i) {
+        PreparedTxPacket packet{};
+        packet.packetIndex = 10 + i;
+        packet.isData = true;
+        packet.firstAudioFrame = 16 + i * 16;
+        packet.framesInPacket = 16;
+        packet.dbs = 2;
+        ASSERT_TRUE(timeline.ExposeDataPacket(packet, bytes[i].data(), bytes[i].size()));
+    }
+    auto config = BlockingStereoConfig();
+    config.sampleRate = 96000;
+    config.framesPerDataPacket = 16;
+    config.maxPacketBytes = 136;
+    AmdtpPayloadWriter writer{};
+    writer.Configure(config, AmdtpTxPolicy{});
+    writer.BindTimeline(&timeline);
+    std::array<float, 40> ring{};
+    for (size_t i = 0; i < ring.size(); ++i) ring[i] = 0.01f * static_cast<float>(i);
+    writer.WriteFloat32Interleaved({ring.data(), 24, 24, 20, 2}, 11);
+    EXPECT_EQ(writer.Counters().framesVisited.load(), 24U);
+    EXPECT_EQ(writer.Counters().framesMissedFinality.load(), 8U);
+    EXPECT_EQ(writer.Counters().framesWritten.load(), 16U);
+    EXPECT_EQ(writer.Counters().framesOutsidePacket.load(), 0U);
+    for (uint32_t frame = 0; frame < 16; ++frame) {
+        for (uint32_t ch = 0; ch < 2; ++ch) {
+            const float sample = ring[((32 + frame) % 20) * 2 + ch];
+            const uint32_t expected = PcmSlotCodec::EncodeFloat32(
+                sample, PcmSlotEncoding::Am824MBLA);
+            const size_t offset = 8 + (frame * 2 + ch) * 4;
+            const auto& data = bytes[1];
+            const uint32_t actual = (uint32_t(data[offset]) << 24) |
+                (uint32_t(data[offset + 1]) << 16) |
+                (uint32_t(data[offset + 2]) << 8) | data[offset + 3];
+            EXPECT_EQ(actual, expected);
+        }
+    }
+}
+
 TEST(AmdtpDirectTxTests, PayloadWriterCountsFramesWithoutPacket) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 4> timelineSlots{};
