@@ -6,6 +6,7 @@
 #include <os/log.h>
 #include "VirtualAudioDriver.h"
 #include "VirtualAudioDevice.h"
+#include "ConfigurationProbeDevice.h"
 
 #include "../Lab/PacketDumpBlob.hpp"
 #include "../Core/LabAudioGeometry.hpp"
@@ -16,6 +17,7 @@ struct VirtualAudioDriver_IVars
 {
     OSSharedPtr<IODispatchQueue> workQueue;
     OSSharedPtr<VirtualAudioDevice> audioDevice;
+    OSSharedPtr<ConfigurationProbeDevice> configurationProbe;
 };
 
 bool VirtualAudioDriver::init()
@@ -35,8 +37,10 @@ bool VirtualAudioDriver::init()
 void VirtualAudioDriver::free()
 {
     if (ivars != nullptr) {
+        if (ivars->configurationProbe) ivars->configurationProbe->Shutdown();
         ivars->workQueue.reset();
         ivars->audioDevice.reset();
+        ivars->configurationProbe.reset();
     }
     IOSafeDeleteNULL(ivars, VirtualAudioDriver_IVars, 1);
     super::free();
@@ -95,6 +99,19 @@ kern_return_t VirtualAudioDriver::Start_Impl(IOService* provider)
         return kr;
     }
     
+    ivars->configurationProbe = OSSharedPtr(OSTypeAlloc(ConfigurationProbeDevice), OSNoRetain);
+    auto probeUID = OSSharedPtr(OSString::withCString("ASFWConfigurationProbe"), OSNoRetain);
+    if (!ivars->configurationProbe || !probeUID ||
+        !ivars->configurationProbe->init(this, false, probeUID.get(), modelUID.get(),
+            manufacturerUID.get(), geometry.zeroTimestampPeriodFrames)) {
+        if (ivars->configurationProbe) ivars->configurationProbe->Shutdown();
+        return kIOReturnInternalError;
+    }
+    kr = ivars->configurationProbe->SetName(probeUID.get());
+    if (kr != kIOReturnSuccess) return kr;
+    kr = AddObject(ivars->configurationProbe.get());
+    if (kr != kIOReturnSuccess) return kr;
+
     LAB_LOG("Registering service");
     kr = RegisterService();
     if (kr != kIOReturnSuccess) {
@@ -109,6 +126,11 @@ kern_return_t VirtualAudioDriver::Start_Impl(IOService* provider)
 kern_return_t VirtualAudioDriver::Stop_Impl(IOService* provider)
 {
     LAB_LOG("Stop_Impl");
+    if (ivars->configurationProbe) {
+        ivars->configurationProbe->Shutdown();
+        RemoveObject(ivars->configurationProbe.get());
+        ivars->configurationProbe.reset();
+    }
     
     if (ivars->audioDevice) {
         RemoveObject(ivars->audioDevice.get());
@@ -156,7 +178,8 @@ kern_return_t VirtualAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
 {
     LAB_LOG("StartDevice 0x%{public}x", (uint32_t)in_object_id);
     
-    if (!ivars->audioDevice || in_object_id != ivars->audioDevice->GetObjectID()) {
+    if ((!ivars->audioDevice || in_object_id != ivars->audioDevice->GetObjectID()) &&
+        (!ivars->configurationProbe || in_object_id != ivars->configurationProbe->GetObjectID())) {
         LAB_LOG("StartDevice - unknown object id 0x%{public}x", (uint32_t)in_object_id);
         return kIOReturnBadArgument;
     }
@@ -177,7 +200,8 @@ kern_return_t VirtualAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
 {
     LAB_LOG("StopDevice 0x%{public}x", (uint32_t)in_object_id);
     
-    if (!ivars->audioDevice || in_object_id != ivars->audioDevice->GetObjectID()) {
+    if ((!ivars->audioDevice || in_object_id != ivars->audioDevice->GetObjectID()) &&
+        (!ivars->configurationProbe || in_object_id != ivars->configurationProbe->GetObjectID())) {
         LAB_LOG("StopDevice - unknown object id 0x%{public}x", (uint32_t)in_object_id);
         return kIOReturnBadArgument;
     }

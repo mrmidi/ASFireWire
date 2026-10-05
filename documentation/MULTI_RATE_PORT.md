@@ -60,8 +60,11 @@ hardware support.
 
 1. Prove nominal-rate and stream-format callback ordering, failed projection,
    channel-count changes and stable device identity in ADKVirtualAudioLab.
-   Its current dext still has a 48 kHz-only timing model; host tests alone cannot
-   answer these runtime questions.
+   The original packet-verifier device retains its 48 kHz timing model. A
+   separate silent ConfigurationProbeDevice now exercises all seven rates,
+   16/12/8-channel layouts and host configuration windows without FireWire.
+   See `ADKVirtualAudioLab/CONFIGURATION_PROBE.md`. The source build is not
+   evidence of the runtime contract; the first manual activation/run is pending.
 2. Connect candidate resolution and reducer effects to main's scheduler/nub/ADK
    boundary, replacing pendingSampleRateHz rather than keeping a second path.
 3. Implement family formation catalogs and confirmed hardware outcomes; connect
